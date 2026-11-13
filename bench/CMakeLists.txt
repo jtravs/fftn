@@ -66,6 +66,164 @@ else()
   message(STATUS "fbench: FFTW backend not built (set FFTN_BENCH_FFTW_ROOT to an installation)")
 endif()
 
+# ---- Further competitors (task 0.7; DESIGN.md 16.2) ----------------------------------------
+# Each is built only when configured, from a CMake or environment variable of the same name,
+# and never from a default search path (AGENTS.md section 6). How each library is built is in
+# bench/README.md ("Competitor backends").
+
+# The value of a configuration variable: the CMake variable, else the environment's.
+function(fbench_setting name out)
+  if(DEFINED ${name} AND NOT "${${name}}" STREQUAL "")
+    set(${out} "${${name}}" PARENT_SCOPE)
+  else()
+    set(${out} "$ENV{${name}}" PARENT_SCOPE)
+  endif()
+endfunction()
+
+set(_fbench_competitors "")
+
+# pocketfft (BSD-3-Clause), header-only: fetched pinned by SHA-256 (offline:
+# FETCHCONTENT_SOURCE_DIR_FBENCH_POCKETFFT, a directory holding pocketfft_hdronly.h). Compiled
+# into its backend with the build's vector extension, as a user compiling it would: on x86-64
+# for the build machine (FFTN_BENCH_POCKETFFT_ARCH_FLAGS overrides). Benchmark binaries are
+# run where they are built and never distributed.
+fbench_setting(FFTN_BENCH_POCKETFFT _fbench_pocketfft)
+if(_fbench_pocketfft)
+  include(FetchContent)
+  set(_fbench_pocketfft_commit 4d865cba24359b05b37da4e75aee24498c3b78e7)
+  FetchContent_Declare(fbench_pocketfft
+    URL https://raw.githubusercontent.com/mreineck/pocketfft/${_fbench_pocketfft_commit}/pocketfft_hdronly.h
+    URL_HASH SHA256=518a95c552aeaee352aa30122137cd9e135d23c91e2863d9272aaa758744c86d
+    DOWNLOAD_NO_EXTRACT TRUE
+    SOURCE_SUBDIR fftn-unpack-only)
+  FetchContent_MakeAvailable(fbench_pocketfft)
+  if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$")
+    set(_fbench_pocketfft_arch_default "-march=native")
+  else()
+    set(_fbench_pocketfft_arch_default "")
+  endif()
+  set(FFTN_BENCH_POCKETFFT_ARCH_FLAGS "${_fbench_pocketfft_arch_default}" CACHE STRING
+    "Instruction-set flags for the pocketfft backend (benchmark binary only)")
+  separate_arguments(_fbench_pocketfft_flags UNIX_COMMAND "${FFTN_BENCH_POCKETFFT_ARCH_FLAGS}")
+  fbench_add_backend(pocketfft)
+  target_include_directories(fbench-pocketfft SYSTEM PRIVATE ${fbench_pocketfft_SOURCE_DIR})
+  # The library's code is compiled here, so it gets what a user's build would give it:
+  # contraction to FMA allowed (FFTN's own -ffp-contract=off is for FFTN's code).
+  target_compile_options(fbench-pocketfft PRIVATE ${_fbench_pocketfft_flags} -ffp-contract=fast)
+  target_compile_definitions(fbench-pocketfft PRIVATE
+    "FBENCH_POCKETFFT_COMMIT=\"${_fbench_pocketfft_commit}\""
+    "FBENCH_POCKETFFT_ARCH_FLAGS=\"${FFTN_BENCH_POCKETFFT_ARCH_FLAGS}\"")
+  list(APPEND _fbench_competitors pocketfft)
+  message(STATUS "fbench: pocketfft backend (flags: '${FFTN_BENCH_POCKETFFT_ARCH_FLAGS}')")
+else()
+  message(STATUS "fbench: pocketfft backend not built (set FFTN_BENCH_POCKETFFT=ON)")
+endif()
+
+# KFR (GPL-2.0-or-later or commercial), from an installation of KFR's own CMake build.
+fbench_setting(FFTN_BENCH_KFR_ROOT _fbench_kfr_root)
+if(_fbench_kfr_root)
+  find_package(KFR CONFIG REQUIRED PATHS ${_fbench_kfr_root} NO_DEFAULT_PATH)
+  # A multi-architecture build installs one kfr_dft_<arch> library per instruction set.
+  set(_fbench_kfr_archs "")
+  foreach(_arch IN ITEMS sse2 sse41 avx avx2 avx512)
+    if(TARGET kfr_dft_${_arch})
+      list(APPEND _fbench_kfr_archs ${_arch})
+    endif()
+  endforeach()
+  if(NOT _fbench_kfr_archs)
+    set(_fbench_kfr_archs "single target")
+  endif()
+  string(REPLACE ";" "," _fbench_kfr_archs "${_fbench_kfr_archs}")
+  fbench_add_backend(kfr kfr_dft)
+  target_compile_definitions(fbench-kfr PRIVATE "FBENCH_KFR_ROOT=\"${_fbench_kfr_root}\""
+                                                "FBENCH_KFR_ARCHS=\"${_fbench_kfr_archs}\"")
+  list(APPEND _fbench_competitors kfr)
+  message(STATUS "fbench: KFR ${KFR_VERSION} backend from ${_fbench_kfr_root} (${_fbench_kfr_archs})")
+else()
+  message(STATUS "fbench: KFR backend not built (set FFTN_BENCH_KFR_ROOT to an installation)")
+endif()
+
+# Apple Accelerate (vDSP), macOS only: part of the system.
+fbench_setting(FFTN_BENCH_ACCELERATE _fbench_accelerate)
+if(_fbench_accelerate AND APPLE)
+  fbench_add_backend(accelerate "-framework Accelerate")
+  list(APPEND _fbench_competitors accelerate)
+  message(STATUS "fbench: Accelerate backend")
+elseif(_fbench_accelerate)
+  message(STATUS "fbench: Accelerate backend not built (macOS only)")
+else()
+  message(STATUS "fbench: Accelerate backend not built (set FFTN_BENCH_ACCELERATE=ON on macOS)")
+endif()
+
+# Intel oneMKL (DFTI), from an installation root: LP64 interface, sequential threading.
+fbench_setting(FFTN_BENCH_MKL_ROOT _fbench_mkl_root)
+if(_fbench_mkl_root)
+  find_path(_fbench_mkl_include mkl_dfti.h PATHS ${_fbench_mkl_root}/include NO_DEFAULT_PATH
+            NO_CACHE)
+  set(_fbench_mkl_libs "")
+  foreach(_lib IN ITEMS mkl_intel_lp64 mkl_sequential mkl_core)
+    find_library(_fbench_mkl_${_lib} ${_lib} PATHS ${_fbench_mkl_root}/lib
+                 ${_fbench_mkl_root}/lib/intel64 NO_DEFAULT_PATH NO_CACHE)
+    if(NOT _fbench_mkl_${_lib})
+      message(FATAL_ERROR "fbench: no ${_lib} under ${_fbench_mkl_root}")
+    endif()
+    list(APPEND _fbench_mkl_libs ${_fbench_mkl_${_lib}})
+  endforeach()
+  if(NOT _fbench_mkl_include)
+    message(FATAL_ERROR "fbench: no mkl_dfti.h under ${_fbench_mkl_root}/include")
+  endif()
+  find_package(Threads REQUIRED)
+  fbench_add_backend(mkl ${_fbench_mkl_libs} Threads::Threads ${CMAKE_DL_LIBS} m)
+  target_include_directories(fbench-mkl SYSTEM PRIVATE ${_fbench_mkl_include})
+  target_compile_definitions(fbench-mkl PRIVATE "FBENCH_MKL_ROOT=\"${_fbench_mkl_root}\"")
+  list(APPEND _fbench_competitors mkl)
+  message(STATUS "fbench: MKL backend from ${_fbench_mkl_root}")
+else()
+  message(STATUS "fbench: MKL backend not built (set FFTN_BENCH_MKL_ROOT to a oneMKL root)")
+endif()
+
+# FFTL.jl through libfftl (MIT), from a libfftl directory built with its build.sh. The
+# embedded Julia runtime catches SIGSEGV for its garbage collector's safepoints, which the
+# sanitizers' handlers break, so it is not built in sanitizer builds.
+fbench_setting(FFTN_BENCH_FFTL_ROOT _fbench_fftl_root)
+if(_fbench_fftl_root AND FFTN_SANITIZE)
+  message(STATUS "fbench: FFTL backend not built in a sanitizer build")
+elseif(_fbench_fftl_root)
+  find_path(_fbench_fftl_include fftl.h PATHS ${_fbench_fftl_root}/include NO_DEFAULT_PATH
+            NO_CACHE)
+  find_library(_fbench_fftl_lib fftl PATHS ${_fbench_fftl_root}/build/lib
+               ${_fbench_fftl_root}/lib NO_DEFAULT_PATH NO_CACHE)
+  if(NOT _fbench_fftl_include OR NOT _fbench_fftl_lib)
+    message(FATAL_ERROR "fbench: no include/fftl.h and build/lib/libfftl under "
+                        "${_fbench_fftl_root}")
+  endif()
+  if(APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "arm64")
+    set(_fbench_fftl_target_default "apple-m1 (build.sh default)")
+  elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$")
+    set(_fbench_fftl_target_default "x86-64-v3 (build.sh default)")
+  else()
+    set(_fbench_fftl_target_default "generic (build.sh default)")
+  endif()
+  set(FFTN_BENCH_FFTL_CPU_TARGET "${_fbench_fftl_target_default}" CACHE STRING
+    "JULIA_CPU_TARGET libfftl was built with (reported by the backend)")
+  fbench_add_backend(fftl ${_fbench_fftl_lib})
+  target_include_directories(fbench-fftl SYSTEM PRIVATE ${_fbench_fftl_include})
+  target_compile_definitions(fbench-fftl PRIVATE
+    "FBENCH_FFTL_ROOT=\"${_fbench_fftl_root}\""
+    "FBENCH_FFTL_CPU_TARGET=\"${FFTN_BENCH_FFTL_CPU_TARGET}\"")
+  list(APPEND _fbench_competitors fftl)
+  message(STATUS "fbench: FFTL backend against ${_fbench_fftl_lib}")
+else()
+  message(STATUS "fbench: FFTL backend not built (set FFTN_BENCH_FFTL_ROOT to a libfftl build)")
+endif()
+
+if(FFTN_BUILD_TESTS)
+  foreach(_lib IN LISTS _fbench_competitors)
+    add_test(NAME bench.harness_selftest_${_lib} COMMAND fbench-${_lib} selftest)
+  endforeach()
+endif()
+# ---- End of further competitors ------------------------------------------------------------
+
 # The harness's reference DFT and check, the driver's statistics, and smoke end to end over
 # every backend of this build, under every gate preset (so the sanitizers see the harness).
 if(FFTN_BUILD_TESTS)
