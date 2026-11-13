@@ -10,13 +10,13 @@
 #include "platform/sysctl_values.hpp"
 
 #include <array>
-#include <cstddef>
 #include <cstdint>
 #include <string_view>
 
 #if defined(__x86_64__) || defined(_M_X64)
 #define FFTN_PLATFORM_X86_64 1
 #ifdef _MSC_VER
+#include <cstddef>
 #include <intrin.h>
 #else
 #include <cpuid.h>
