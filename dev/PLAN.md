@@ -6,35 +6,57 @@ session; update a phase when its tasks or findings change.
 
 ## Status
 
-**As of 2026-11-13.** Phase: 0, in progress. No library code exists yet.
+**As of 2026-11-13.** Phase: 0, in progress. Wave 1 (tasks 0.1–0.4, 0.6) is merged; wave 2
+(0.5, 0.7, 0.8, then 0.5b) is next.
 
 Done:
 
-- Research: source studies of FFTW, FFTL.jl, KFR, zldsp::fft, ducc0 and RustFFT, a review
-  of the prototype and its benchmark rig, a threading and Kokkos study, a literature and
-  landscape survey, header-only dispatch experiments.
-- Initial documents: DESIGN.md, this plan, AGENTS.md, README.md.
-- An independent review of the first draft; its findings are applied (see the decision
-  log in DESIGN.md).
-- Gate skeleton: `scripts/check.sh` with the repository-hygiene stages live (SPDX,
-  document links, switch registry, format, ruff, shell); code stages switch on as their
-  CMake presets appear.
+- Research, initial documents and their independent review (see the decision log in
+  DESIGN.md).
+- 0.1 Repository skeleton: CMake presets for every gate stage, the static library with one
+  unit per instruction set, the coverage gate, the snippet check, the uv project, Doxygen as
+  a linter. Gate green on macOS (Clang 23, Apple Clang 21) and Linux x86-64 (GCC 14.4,
+  15.2).
+- 0.2 Platform layer: CPU features (x86, AArch64 Linux, macOS; Windows compile-only),
+  topology and cache geometry from recorded snapshots or the live system, aligned buffers,
+  the planning clock. Fixtures recorded on Apple M5 Max, Xeon Gold 6240 and EPYC 7763.
+- 0.3 ISA regions and the `scalar`, `neon_fcma` and `avx2` vocabularies in double and
+  float, dispatch, the disassembly test. Second reader's findings fixed. Green with Clang
+  23 on AArch64 and GCC 14/15 on AVX-512 hardware.
+- 0.4 Test infrastructure: quadruple-precision reference, derived tolerances, analytic and
+  reference suites over both precisions, contract helpers, FFTW as an oracle; every seeded
+  fault caught.
+- 0.6 fbench v0: acceptance met on Apple M5 Max, Xeon Gold 6240 and EPYC 7763 (A/A: no
+  evidence; a seeded 5 % slowdown: detected; perturbed output: flagged).
+- Experiment B1 done (regions hold; GCC builds need `-Werror=psabi`).
 
 Next actions (in order):
 
-1. Maintainer review of DESIGN.md.
-2. Phase 0, tasks 0.1–0.4 (skeleton, platform layer, ISA regions, test infrastructure).
-   These are independent enough for two or three agents in parallel worktrees.
-3. Phase 0, task 0.6 (fbench v0) can start at once, in parallel, against FFTW alone.
+1. 0.5 walking skeleton (the public API: needed by 0.5b, the fbench FFTN backend and 0.9).
+2. In parallel: 0.7 (fbench backends, client catalogue) and 0.8 (CI; B2 runs there on the
+   Windows runner, since no Windows machine is available).
+3. 0.5b after 0.5. Then stop for the API review (0.9).
 
-Open questions: see DESIGN.md section 18.2. Decided so far (decision log): Apache-2.0;
-no header-only configuration; the first draft's working assumptions.
+Open from wave 1:
 
-Claims (2026-11-13): 0.1 lead; 0.2 agent-platform; 0.3 agent-isa; 0.4 agent-tests;
-0.6 agent-fbench. The lead reviews and merges; agents work in separate worktrees on
+- B2 (Windows clang): deferred to 0.8's Windows runner. FCMA and PAuth detection on Windows
+  on Arm report "absent" until then.
+- The AArch64 Linux feature path (`getauxval`) and Windows paths are compiled but not yet
+  run anywhere: CI (0.8) or a Graviton/Neoverse machine.
+- The FFTN fbench backend is a stub until 0.5 (about 30 lines, listed in
+  `bench/backends/fftn.cpp`).
+- Phase 0 exit still needs: CI on four platforms (0.8), fbench baselines for the 0.7
+  backends.
+
+Open questions: see DESIGN.md section 18.2.
+
+Claims (2026-11-13): 0.5 agent-skeleton; 0.7 agent-backends; 0.8 agent-ci; 0.5b after
+0.5. The lead reviews and merges; agents work in separate worktrees on
 `task/<id>-<slug>` branches.
 
-Handoff notes: none yet.
+Handoff notes: wave 1 is merged and green. Remote runs need a non-snap `uv` first on the
+job's PATH on machines whose uv is a snap (setuid confinement clears `setarch -R`, which
+GCC 14's TSan needs).
 
 ## How this plan works
 
