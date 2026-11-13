@@ -1209,8 +1209,9 @@ What the experiments still require of the build:
 - CMake 3.25 or newer with presets; `FetchContent`-friendly with an offline override;
   installed package config (`find_package(fftn)`) and pkg-config; all symbols in
   `namespace fftn`, all macros prefixed `FFTN_`, all targets namespaced.
-- Test-only dependencies (GoogleTest, FFTW, Boost.Multiprecision) and benchmark-only dependencies are fetched
-  pinned by commit and treated as system code.
+- Test-only dependencies (GoogleTest, FFTW, Boost.Multiprecision) and benchmark-only
+  dependencies are fetched pinned by URL and content hash (SHA-256), with an offline
+  override, and treated as system code.
 - A generated single-file amalgamation is a possible release artefact (phase 6); it is
   the same implementation concatenated, not a separate code path.
 
@@ -1226,13 +1227,18 @@ What the experiments still require of the build:
    multi-dimensional transforms, convolution with a pure delay.
 2. **A direct DFT in quadruple precision** (`tests/reference`), O(n²), for moderate n;
    for large n, comparison at sampled output bins. It uses Boost.Multiprecision's
-   113-bit binary float, standalone and header-only, as a test-only dependency. Native
+   113-bit binary float, standalone and header-only, as a test-only dependency (with
+   Boost.Config, which its standalone mode requires; nothing else of Boost). Native
    types do not cover the platforms: `long double` is plain double on Apple silicon and
    with the MSVC ABI, and `__float128` is rejected by Clang on Apple silicon (GCC accepts
-   it there). A 1024-point reference DFT takes about 0.3 s. The library's own twiddle
-   tables, which it builds with a few lines of double-double arithmetic, are checked
-   against the same reference, so the reference shares no code with the library.
-3. **FFTW**, as an independent implementation, for large sizes and every shape.
+   it there). A 1024-point reference DFT takes about 0.15 s on an Apple M5 Max. The
+   library's own twiddle tables, which it builds with a few lines of double-double
+   arithmetic, are checked against the same reference entry by entry (correctly rounded),
+   so the reference shares no code with the library.
+3. **FFTW**, as an independent implementation, for large sizes and every shape. Test
+   builds compile FFTW 3.3.11 from source in both precisions (plain C, about 20 s), or use
+   an existing install (`FFTN_FFTW_ROOT`); `FFTN_TEST_WITH_FFTW=OFF` builds without it and
+   the tests that need it skip.
 4. **The generator's own check** of each codelet against the exact DFT at emission.
 
 ### 15.2 Tolerances
@@ -1241,8 +1247,16 @@ Derived before the test runs from machine epsilon, the length and the algorithm:
 transform of length n built from stable butterflies has relative RMS error of order
 ε·√(log₂ n), and FFTN's bound for the test is a small multiple of that (the prototype
 measured 4–5·10⁻¹⁶ against a tolerance 700 times looser; FFTN's tolerances are within
-about 10× of the measured error). Bluestein paths have their own, looser, derived bound.
-Accuracy is also reported by fbench next to speed for every library.
+about 10× of the measured error). With L = max(1, log₂ n), the tests require a relative
+RMS error ‖Y − X‖₂/‖X‖₂ ≤ 3ε√L and a largest error ‖Y − X‖∞/‖X‖∞ ≤ 3εL
+(`tests/support/tolerance.hpp`, which records the derivation and the measurements: FFTW
+and a careful naive DFT sit 3–10 times below the first and 7–40 times below the
+second). These catch errors of order one and twiddle errors that grow with the index (a
+base twiddle one ulp off, propagated by powers, from about 64 points on). A single table
+entry one ulp off is below the rounding of every correct implementation and no output
+tolerance sees it, so twiddle tables are checked against the reference entry by entry.
+Bluestein paths have their own, looser, derived bound. Accuracy is also reported by
+fbench next to speed for every library.
 
 ### 15.3 What is tested
 
@@ -1492,6 +1506,9 @@ implementation are listed here until settled.
 | 2026-11-13 | Vocabulary names `cv`, `rv`, `tw`, `C`, `W`, `tw_reals`, `fused` through `vec<T>`; the real-register family in namespace `real`; x86 FMA naming | Vector types must never be template arguments (B1); the two families share one machine type on SIMD targets |
 | 2026-11-13 | Region text has internal linkage; only each target's function table is exported | Removes, by construction, the linker picking one target's copy of a shared inline function for another caller |
 | 2026-11-13 | `neon_fcma` runs only where the processor has FCMA and pointer authentication; PAuth instructions are allowed in its code and nowhere else outside the hint space | Branch protection may emit RETAA in an Armv8.3 region (seen with GCC 16 and Clang 23); both features are mandatory from Armv8.3, so only rare FCMA-only cores lose the target |
+| 2026-11-13 | Test tolerances: relative RMS error ≤ 3ε√L and largest error ≤ 3εL, L = max(1, log₂ n) | Measured FFTW and naive-DFT errors sit 3–10× (RMS) and 7–40× (largest) below; every seeded fault of task 0.4 is caught |
+| 2026-11-13 | "One-ulp twiddle error" is tested two ways: entry-by-entry table checks for a single entry, output tolerances for an error propagated from the base twiddle | A single entry one ulp off changes outputs by less than correct rounding does, at any n; a propagated one grows like n |
+| 2026-11-13 | FFTW, the test oracle, is built from source by the test build (or taken from `FFTN_FFTW_ROOT`), without UBSan | No system FFTW is assumed; FFTW 3.3.11's planners do null-pointer arithmetic that UBSan reports |
 
 ---
 
