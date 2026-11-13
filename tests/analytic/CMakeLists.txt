@@ -6,6 +6,6 @@
 # build type to keep the Debug (coverage) run short.
 
 fftn_add_test(fftn_analytic_tests
-  SOURCES analytic_suite_test.cpp
+  SOURCES analytic_suite_test.cpp seeded_faults_test.cpp
   LIBRARIES fftn_test_support)
-fftn_always_optimise(analytic_suite_test.cpp)
+fftn_always_optimise(analytic_suite_test.cpp seeded_faults_test.cpp)
