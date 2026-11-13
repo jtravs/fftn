@@ -5,6 +5,9 @@
 # every public declaration in include/fftn/ must carry a comment. Its XML output (needed
 # only because Doxygen insists on one format) goes to build/ and is discarded; nothing is
 # kept. Run from the repository root: doxygen docs/Doxyfile
+#
+# The optional fftn/kokkos.hpp is linted with the rest although this stage has no Kokkos:
+# Doxygen parses the headers without compiling them, so Kokkos' names need not resolve.
 PROJECT_NAME           = FFTN
 INPUT                  = include/fftn
 RECURSIVE              = YES

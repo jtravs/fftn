@@ -16,13 +16,19 @@
 #                       libfftw3 and libfftw3f. Consumers always link this target; the
 #                       definition FFTN_TEST_HAVE_FFTW (0 or 1) tells them whether FFTW is
 #                       there, and tests that need it skip themselves when it is not.
+#   Kokkos::kokkos      Kokkos core 5.2.1 with the Serial back end only, for the tests and
+#                       the example of the optional header fftn/kokkos.hpp
+#                       (FFTN_TEST_WITH_KOKKOS, default ON; it builds in seconds). The
+#                       library never links it: the header is compiled in its user's
+#                       translation units. Consumers test `if(TARGET Kokkos::kokkos)`.
 #
 # Licence: FFTW is GPL-2.0-or-later. Only test executables link it; they are built for our
 # own use and never distributed (AGENTS.md section 10). Boost is under the Boost Software
-# License.
+# License; Kokkos under Apache-2.0 WITH LLVM-exception.
 #
-# Offline builds: FETCHCONTENT_SOURCE_DIR_BOOST_CONFIG, FETCHCONTENT_SOURCE_DIR_BOOST_MP and
-# FETCHCONTENT_SOURCE_DIR_FFTN_FFTW point at unpacked copies of the archives below.
+# Offline builds: FETCHCONTENT_SOURCE_DIR_BOOST_CONFIG, FETCHCONTENT_SOURCE_DIR_BOOST_MP,
+# FETCHCONTENT_SOURCE_DIR_FFTN_KOKKOS and FETCHCONTENT_SOURCE_DIR_FFTN_FFTW point at unpacked
+# copies of the archives below.
 
 include_guard(GLOBAL)
 include(FetchContent)
@@ -46,6 +52,48 @@ add_library(fftn_test_boost_mp INTERFACE)
 target_include_directories(fftn_test_boost_mp SYSTEM INTERFACE
   ${boost_mp_SOURCE_DIR}/include ${boost_config_SOURCE_DIR}/include)
 target_compile_definitions(fftn_test_boost_mp INTERFACE BOOST_MP_STANDALONE)
+
+# Kokkos is a CMake subproject (its targets are linked, so its build joins ours) and SYSTEM, so
+# its headers never meet FFTN's warning flags. The tarball and its SHA-256 are the official
+# release assets of github.com/kokkos/kokkos (kokkos-5.2.1.tar.gz and
+# kokkos-5.2.1-SHA-256.txt); the hash was also computed from the downloaded file.
+# Off by default in GCC ThreadSanitizer builds: GCC warns that TSan does not support
+# atomic_thread_fence (-Wtsan) for Kokkos' desul atomics after they are inlined into our test
+# units, where SYSTEM cannot silence it, and the gate builds with -Werror. The adapter runs
+# serially, so TSan has nothing of ours to check there; Clang's TSan builds still run these tests.
+set(_fftn_kokkos_default ON)
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND FFTN_SANITIZE MATCHES "thread")
+  set(_fftn_kokkos_default OFF)
+endif()
+option(FFTN_TEST_WITH_KOKKOS "Test fftn/kokkos.hpp against Kokkos 5.2.1 (Serial back end)"
+       ${_fftn_kokkos_default})
+if(FFTN_TEST_WITH_KOKKOS)
+  FetchContent_Declare(fftn_kokkos
+    URL https://github.com/kokkos/kokkos/releases/download/5.2.1/kokkos-5.2.1.tar.gz
+    URL_HASH SHA256=3f754c99aa6130b1dd6520d904db7b2fd44ed618cd91e0dfd921956f23f6812d
+    SYSTEM)
+  set(Kokkos_ENABLE_SERIAL ON CACHE BOOL "" FORCE)
+  set(Kokkos_ENABLE_OPENMP OFF CACHE BOOL "" FORCE)
+  set(Kokkos_ENABLE_THREADS OFF CACHE BOOL "" FORCE)
+  set(Kokkos_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
+  set(Kokkos_ENABLE_EXAMPLES OFF CACHE BOOL "" FORCE)
+  set(Kokkos_ENABLE_BENCHMARKS OFF CACHE BOOL "" FORCE)
+  FetchContent_MakeAvailable(fftn_kokkos)
+endif()
+
+# fftn_link_kokkos(<target>): links Kokkos into a test or example of fftn/kokkos.hpp. The
+# clang static analyzer reports a leak in every allocating View constructor: Kokkos keeps the
+# allocation record's address in a tagged pointer (impl/Kokkos_SharedAlloc.hpp) that the
+# analyzer cannot follow, and the report sits in Kokkos' header where no NOLINT can reach. Only
+# these targets turn that one check off.
+function(fftn_link_kokkos target)
+  target_link_libraries(${target} PRIVATE Kokkos::kokkos)
+  get_target_property(tidy ${target} CXX_CLANG_TIDY)
+  if(tidy)
+    list(APPEND tidy "--checks=-clang-analyzer-cplusplus.NewDeleteLeaks")
+    set_target_properties(${target} PROPERTIES CXX_CLANG_TIDY "${tidy}")
+  endif()
+endfunction()
 
 option(FFTN_TEST_WITH_FFTW "Use FFTW 3.3.11 as a test oracle (GPL; test binaries only)" ON)
 set(FFTN_FFTW_ROOT "" CACHE PATH

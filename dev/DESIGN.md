@@ -1212,9 +1212,17 @@ What the experiments still require of the build:
 - CMake 3.25 or newer with presets; `FetchContent`-friendly with an offline override;
   installed package config (`find_package(fftn)`) and pkg-config; all symbols in
   `namespace fftn`, all macros prefixed `FFTN_`, all targets namespaced.
-- Test-only dependencies (GoogleTest, FFTW, Boost.Multiprecision) and benchmark-only
-  dependencies are fetched pinned by URL and content hash (SHA-256), with an offline
-  override, and treated as system code.
+- Test-only dependencies (GoogleTest, FFTW, Boost.Multiprecision, and Kokkos for the
+  optional adapter's tests and example) and benchmark-only dependencies are fetched pinned
+  by URL and content hash (SHA-256), with an offline override, and treated as system code.
+  The library itself links none of them; `fftn/kokkos.hpp` is compiled in its user's
+  translation units against the user's Kokkos. Kokkos' back ends are chosen by forcing its
+  `Kokkos_ENABLE_*` cache entries (Serial only); task 3.5's OpenMP and Threads test
+  configurations need that reworked. FetchContent also brings Kokkos' install rules into the
+  build, to be excluded when packaging lands (`EXCLUDE_FROM_ALL` on the declaration needs
+  CMake 3.28). GCC ThreadSanitizer builds leave the Kokkos tests out by default: GCC's
+  `-Wtsan` fires on Kokkos' fences once inlined into our units, beyond the reach of SYSTEM,
+  and the adapter is serial; Clang's TSan builds run them.
 - A generated single-file amalgamation is a possible release artefact (phase 6); it is
   the same implementation concatenated, not a separate code path.
 
@@ -1442,6 +1450,7 @@ infrastructure to maintain.
 | `README.md` | what FFTN is, a first example, links | Markdown |
 | `docs/conventions.md` | every convention, stated exactly: the formula each transform computes, signs, normalisation, the layout of every input and output (r2c and c2r sizes and padding, multi-dimensional halving), strides and distances, in-place rules, what is and is not preserved, alignment, accuracy bounds, the determinism contract | Markdown |
 | `docs/guide.md` | task-oriented: rows, planes, volumes, real transforms, choosing lengths, workspaces, planning effort and wisdom | Markdown with examples |
+| `docs/kokkos.md` | the optional Kokkos adapter: View-based construction, the Kokkos-FFT-shaped plan, moving a Kokkos-FFT call site, the rules for Views and axes, normalisation, and every difference from Kokkos-FFT | Markdown with examples |
 | `docs/threading.md` | each integration model with a complete example: serial, inside an OpenMP region, the OpenMP executor, Kokkos, a custom pool, the built-in pool; what FFTN never does to the caller's runtime | Markdown with examples |
 | `docs/fusion.md` | edge operations, convolution, transform pairs, block callbacks | Markdown with examples |
 | `docs/building.md` | CMake use, supported compilers and platforms, instruction sets and how one is chosen, options | Markdown |
@@ -1559,6 +1568,94 @@ each item, and the outcome goes to the decision log.
 19. *`direction`'s underlying type is `std::int8_t`*, not `int` as sketched in 5.2 (the
     gate's clang-tidy asks for the smallest type); the values are still −1 and +1.
 
+Task 0.5b added a first `fftn/kokkos.hpp` (section 5.5, `docs/kokkos.md`). Where it settles
+or departs from sections 5.5 and 13.6, or from Kokkos-FFT 2.0's `KokkosFFT::Plan`:
+
+20. *Two levels.* View-based construction returns ordinary core types: `shape_of(in, out,
+    dir, axes)` gives an `fftn::shape`, `make_plan` an `fftn::plan` (in place when the Views
+    share their first element), `data_of(view)` the pointer (`Kokkos::complex<T>*` read as
+    `std::complex<T>*`, which has the same layout). Over it, `fftn::kokkos::plan<ExecutionSpace,
+    InView, OutView, Dim = 1>` has Kokkos-FFT's constructors (`axis` with optional `n`;
+    `axis_type<Dim>` with optional `shape_type<Dim>`) and `execute(in, out, norm)`, plus the free
+    `execute(plan, in, out, norm)`. The constructors are `explicit`, as Kokkos-FFT's. The
+    member is `execute`; Kokkos-FFT's `execute_impl` is not provided (call sites use the free
+    function). Added: `fftn_plan()` and `describe()`. Reading a `Kokkos::complex<T>` array
+    through a `std::complex<T>*` is not a language guarantee (the types are not similar): it
+    relies on their identical layout, which `data_of` checks (size and alignment), and on
+    the library touching the data only through `void*` and `T` scalars in its own
+    translation units, as Kokkos-FFT does with FFTW's complex type.
+21. *Kokkos-FFT's spellings live in `fftn::kokkos::compat`* (`Plan`, `Direction`,
+    `Normalization`, `axis_type`, `shape_type`, `execute`), aliases of the snake_case names: a
+    call site changes its include and namespace only. This is a deliberate exception to the
+    naming rule of AGENTS.md section 4, confined to that namespace. The alternative is to put
+    the PascalCase names in `fftn::kokkos` itself (one namespace fewer at call sites, mixed
+    styles in the adapter). CTAD through the `Plan` alias needs Clang 19 or GCC; the class
+    itself deduces everywhere.
+22. *`compat::Direction` is `fftn::direction`*: the same spellings, but the values are −1/+1
+    where Kokkos-FFT's are 0/1, so code that converts a direction to an integer changes.
+23. *Normalisation* follows Kokkos-FFT in the plan class only: `execute`'s `normalization`
+    defaults to `backward`. It is a separate pass after the transform, each part multiplied by
+    the coefficient computed in `double` and rounded once to `T` (as Kokkos-FFT for complex
+    outputs; for real `float` outputs Kokkos-FFT multiplies in `double`). The core stays
+    unnormalised; `options::scale` (5.3) can later fuse it into the last pass.
+24. *The plan class owns its workspace*, made at construction and lent to each execution
+    through a borrowing `workspace` (no `mutable` scratch), so one plan runs one execution at
+    a time. Misuse is detected: an atomic busy flag (the one `mutable` member) is claimed on
+    entry and released on exit, also when execute throws, and a second concurrent execution
+    throws `std::logic_error` instead of computing wrong results. Concurrent executions use
+    `make_plan` and a workspace each. Kokkos-FFT's plan holds no scratch (it allocates its
+    temporaries, when it needs any, in every execute call). Alternatives for the review: a
+    small pool of workspaces claimed atomically; a workspace per thread; an execute overload
+    taking the caller's `workspace`; or leave it to 3.5, whose executor brings per-execution
+    contexts.
+25. *The plan class's `execute` validates and may throw*: it checks the Views' extents and
+    strides against the plan's and whether they share their first element, throws
+    `std::invalid_argument` naming `in` or `out` (overlapping Views of an out-of-place plan
+    too), and is not `noexcept`. It allocates nothing: the fence's label, a `std::string` as
+    Kokkos requires, is built once at construction, and a host fence allocates nothing unless a
+    Kokkos Tools library is loaded. It first fences the plan's execution-space instance (which
+    takes the instance's mutex), then runs on the calling thread; so it must not be called
+    inside a Kokkos kernel, and the "serial when called inside a kernel" of 13.6 is offered
+    only by the `make_plan` route for now.
+26. *Layouts.* Views are read through their extents and strides, so `LayoutStride` works
+    (Kokkos-FFT takes `LayoutLeft` and `LayoutRight` only). Zero strides are refused.
+    Dimensions of extent 1 never step, so their strides are ignored (0 included, and the
+    in-place rules do not apply to them). Non-transformed dimensions become batch dimensions:
+    extent-1 ones are dropped, nested ones merged, and more than two remaining are refused
+    (the shape's capacity).
+27. *In-place real transforms take the padding from the real View's strides*, which must show
+    FFTW's padded rows (for example a subview of the first n of 2(n/2 + 1) columns).
+    Kokkos-FFT assumes the padding whatever the real View says, so a tight real View it
+    accepts in place is refused here.
+28. *No cropping or padding*: `n` and `s` are accepted only as the Views' own lengths (or 0),
+    and extents that disagree are refused rather than reshaped.
+29. *Host accessibility is checked at compile time* (`static_assert` on the Views' memory
+    spaces and the execution space), not by `std::invalid_argument` at construction: it is a
+    property of the types. A device View does not compile against the adapter; the
+    "compiles out or forwards under CUDA and HIP" of 13.6 is not done yet, so an application
+    selects the provider per build.
+30. *Errors* are `std::invalid_argument` with the prefix `fftn::kokkos:` and the argument
+    (`in.extent(1)`, `out.stride(0)`, `axes[0]`, `dir`, `n`, `s[1]`, `in, out`); a layout the
+    core plan refuses is reported as `in, out` with the core's message attached. Kokkos-FFT
+    throws `std::runtime_error`. The direction of real plans is checked as in Kokkos-FFT.
+31. *The plan class is neither copyable nor movable*, as Kokkos-FFT's (the core plan is
+    copyable).
+32. *Not provided yet*: the executor and threaded execution (task 3.5), and with them the
+    transforms as named Kokkos Tools regions of 13.6 (only the fence is named now); the
+    one-shot functions (`KokkosFFT::fft` and the rest; an application calls `fft` once,
+    which would allocate a plan per call and belongs with the convenience layer of 5.4);
+    `DynPlan`.
+33. *Open: the class name.* Under using-directives for both `fftn` and `fftn::kokkos`,
+    `plan` is ambiguous between `fftn::plan` and `fftn::kokkos::plan`. Alternatives: name the
+    adapter's class `view_plan`, or offer the class only as `compat::Plan`.
+34. *Open: `shape_type`* sits beside `fftn::shape` and `shape_of` while meaning only
+    Kokkos-FFT's crop-and-pad lengths, which FFTN refuses. Alternative: offer it only in
+    `compat`.
+35. *Open: more than two batch loops.* Views whose non-transformed dimensions leave more than
+    two loops that do not nest are refused, a gap against Kokkos-FFT, which transposes such
+    Views into a temporary. Alternatives: a third batch dimension in the shape, or a loop in
+    the adapter over the outermost dimension.
+
 ---
 
 ## 19. Decision log
@@ -1605,6 +1702,7 @@ each item, and the outcome goes to the decision log.
 | 2026-11-13 | The chain passes exist only on the scalar target in phase 0; the per-target table carries them as a member that is null elsewhere, and a plan takes the fastest target whose table has them | The skeleton's passes assume one complex per register; phase 1 replaces them with generated, lane-aware ones on every target |
 | 2026-11-13 | Twiddle tables hold forward roots only, computed in double-double with Dekker's exact product (no FMA) and rounded once; backward passes multiply by conjugates | The tables are then the same on every processor and build; conjugation is exact, so backward tables are correctly rounded too |
 | 2026-11-13 | A multi-dimensional c2r out of place keeps its intermediate in a workspace block of one transform's half spectrum (a whole volume's, for now) | The input is preserved by default (9.1); pencil-block scratch arrives with phase 4's volumes |
+| 2026-11-13 | Kokkos core 5.2.1, Serial back end, is a test-only dependency: fetched pinned by URL and SHA-256 (the release's own checksum file, checked against the download), built as a CMake subproject, SYSTEM, in every gate stage that builds; the library still has no dependency, since `fftn/kokkos.hpp` is header-only and compiled in its user's translation units | The adapter's call sites must compile and run in the gate so they cannot rot (task 0.5b); a Serial-only Kokkos builds in seconds |
 | 2026-11-13 | Windows on Arm reads FCMA and pointer authentication from the registry copies of the ID registers | No `IsProcessorFeaturePresent` flag exists for either (SDK 10.0.26100) and MRS faults; on the CI's Cobalt 100 the registry fields agreed with executing FCMLA and XPACI (B2) |
 
 ---

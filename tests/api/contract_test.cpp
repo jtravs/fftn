@@ -103,8 +103,9 @@ template <class T> void check_alignment(const fftn::test::subject<T>& s) {
   const auto r2c0 = fftn::test::run_r2c<T>(s, tight(fftn::test::kind::r2c), xr);
   const cvec<T> half(x.begin(), x.begin() + static_cast<std::ptrdiff_t>((n / 2 + 1) * count));
   const auto c2r0 = fftn::test::run_c2r<T>(s, tight(fftn::test::kind::c2r), half);
-  for (const std::size_t in_off : {std::size_t{0}, sizeof(T), 2 * sizeof(T), 24UL, 40UL}) {
-    for (const std::size_t out_off : {std::size_t{0}, sizeof(T), 3 * sizeof(T), 56UL}) {
+  for (const std::size_t in_off :
+       {std::size_t{0}, sizeof(T), 2 * sizeof(T), std::size_t{24}, std::size_t{40}}) {
+    for (const std::size_t out_off : {std::size_t{0}, sizeof(T), 3 * sizeof(T), std::size_t{56}}) {
       const fftn::test::run_options o{.in_offset = in_off, .out_offset = out_off};
       const auto a = fftn::test::run_c2c<T>(s, fftn::test::direction::forward,
                                             tight(fftn::test::kind::c2c), x, o);
