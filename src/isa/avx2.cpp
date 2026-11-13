@@ -18,6 +18,8 @@ FFTN_ISA_BEGIN(avx2)
 
 #include "isa/kernels.inl"
 
+#include "passes/chain_absent.inl"
+
 #include "isa/table.inl"
 
 FFTN_ISA_END

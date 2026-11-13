@@ -5,7 +5,13 @@
 /// The main FFTN header: includes the whole core API.
 #pragma once
 
-#include "fftn/config.hpp"
+#include "fftn/config.hpp"       // IWYU pragma: export
+#include "fftn/isa.hpp"          // IWYU pragma: export
+#include "fftn/options.hpp"      // IWYU pragma: export
+#include "fftn/plan.hpp"         // IWYU pragma: export
+#include "fftn/shape.hpp"        // IWYU pragma: export
+#include "fftn/small_vector.hpp" // IWYU pragma: export
+#include "fftn/workspace.hpp"    // IWYU pragma: export
 
 /// @namespace fftn
 /// FFTN: fast Fourier transforms for CPUs.
