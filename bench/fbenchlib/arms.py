@@ -210,14 +210,11 @@ def timing_problem(info: dict) -> str | None:
 
 
 def configuration(binary: Binary, arm: Arm) -> str:
-    """What an arm measures, for refusing arms that are meant to differ but do not."""
+    """What an arm measures, for refusing arms that are meant to differ but do not: two
+    build directories of the same commit, compiler, flags and library are the same arm.
+    The commit is the one recorded at configure time (or the one fbench built)."""
     info = {k: v for k, v in binary.describe.items() if k != "options"}
     return json.dumps(
-        {
-            "describe": info,
-            "commit": binary.commit,
-            "path": str(binary.path),
-            "options": sorted(arm.options),
-        },
+        {"describe": info, "commit": binary.commit, "options": sorted(arm.options)},
         sort_keys=True,
     )

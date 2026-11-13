@@ -17,7 +17,7 @@
 #include <cstddef>
 #include <cstdint>
 
-extern "C" {
+// The values below are the ABI (plain 32-bit integers); the names are for C++ backends.
 
 /// Transform kinds (fbench_case::kind).
 inline constexpr std::int32_t fbench_c2c = 0;
@@ -29,6 +29,8 @@ inline constexpr std::int32_t fbench_ok = 0;
 /// The library cannot do this case; not an error (the report lists it).
 inline constexpr std::int32_t fbench_unsupported = 1;
 inline constexpr std::int32_t fbench_error = 2;
+
+extern "C" {
 
 /// One case: `batch` transforms of a row-major array of `rank` dimensions, FFTW's layout
 /// conventions. Complex data is interleaved double. Lengths are in elements: complex

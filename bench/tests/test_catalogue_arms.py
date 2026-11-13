@@ -108,6 +108,19 @@ class ArmGrammar(unittest.TestCase):
         for name in arms.HARNESS_OPTIONS | arms.DRIVER_OPTIONS:
             self.assertFalse(name.startswith("FFTN_X_"))
 
+    def test_identical_configuration(self):
+        desc = {"library": "fftn", "harness": {"commit": "abc", "flags": "-O3"}}
+        a = arms.Binary(Path("/x/bench/fbench-fftn"), describe=dict(desc))
+        b = arms.Binary(Path("/y/bench/fbench-fftn"), describe=dict(desc))
+        arm = arms.parse("A=fftn")
+        # Two build directories of one commit and configuration are one arm.
+        self.assertEqual(arms.configuration(a, arm), arms.configuration(b, arm))
+        self.assertNotEqual(
+            arms.configuration(a, arm), arms.configuration(a, arms.parse("A=fftn+DELAY=0.1"))
+        )
+        other = arms.Binary(b.path, describe={**desc, "harness": {"commit": "def"}})
+        self.assertNotEqual(arms.configuration(a, arm), arms.configuration(other, arm))
+
     def test_refusals(self):
         ok = {"loaded_from": "/opt/fftw/lib/libfftw3.so", "expected_root": "/opt/fftw"}
         self.assertIsNone(arms.library_problem(ok))

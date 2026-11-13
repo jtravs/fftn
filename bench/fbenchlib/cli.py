@@ -355,8 +355,9 @@ def report(records: list[dict], stat: str | None = None, min_band: float | None 
         if x.get("busy") is not None
     ]
     out = [
-        f"run {run['run']}  catalogue {run['catalogue']['name']}, tier {run.get('tier')}, "
-        f"{len(cases)} cases, {run['settings']['mode']}, statistic {stat}",
+        f"run {run['run']}  catalogue {run['catalogue']['name']}, tier {run.get('tier')}"
+        + (f", filter {run['filter']!r}" if run.get("filter") else "")
+        + f", {len(cases)} cases, {run['settings']['mode']}, statistic {stat}",
         f"host {host['cpu']}, {host['logical_cpus']} CPUs, {host['os']} (id {host['host_id']})",
     ]
     if loads:
