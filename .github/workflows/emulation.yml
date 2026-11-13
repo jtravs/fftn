@@ -109,9 +109,31 @@ jobs:
 
   qemu:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
-    name: aarch64 under QEMU
+    # One job per emulated processor: run one after another the five took over the 60-minute
+    # limit once the walking skeleton's oracle suites and the Kokkos tests arrived.
+    name: aarch64 under QEMU (${{ matrix.model }})
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - model: Cortex-A72 (Armv8.0; phase 1 target neon)
+            cpu: cortex-a72
+            expect: "neon 1;fcma 0;pauth 0;best_target scalar"
+          - model: Neoverse N1 (Armv8.2, no FCMA; phase 1 target neon)
+            cpu: neoverse-n1
+            expect: "neon 1;fcma 0;pauth 0;best_target scalar"
+          # FCMA without pointer authentication: neon_fcma must not be chosen (DESIGN.md 6.4).
+          - model: A64FX (FCMA, no pointer authentication; phase 1 target neon)
+            cpu: a64fx
+            expect: "neon 1;fcma 1;pauth 0;best_target scalar"
+          - model: QEMU max without pointer authentication (phase 1 target neon)
+            cpu: max,pauth=off
+            expect: "neon 1;fcma 1;pauth 0;best_target scalar"
+          - model: Neoverse V1 (FCMA and pointer authentication; target neon_fcma)
+            cpu: neoverse-v1
+            expect: "neon 1;fcma 1;pauth 1;best_target neon_fcma"
     env:
       CXX: g++-14
     steps:
@@ -133,35 +155,9 @@ jobs:
       - *build
       - name: What the runner reports natively
         run: build/check-release/tests/platform/fftn_platform_dump
-      - name: Cortex-A72 (Armv8.0; phase 1 target neon)
-        if: success() || failure()
-        run: >
-          bash .github/scripts/emulate.sh build/check-release
-          "neon 1;fcma 0;pauth 0;best_target scalar"
-          "$QEMU" -cpu cortex-a72
-      - name: Neoverse N1 (Armv8.2, no FCMA; phase 1 target neon)
-        if: success() || failure()
-        run: >
-          bash .github/scripts/emulate.sh build/check-release
-          "neon 1;fcma 0;pauth 0;best_target scalar"
-          "$QEMU" -cpu neoverse-n1
-      # FCMA without pointer authentication: neon_fcma must not be chosen (DESIGN.md 6.4).
-      - name: A64FX (FCMA, no pointer authentication; phase 1 target neon)
-        if: success() || failure()
-        run: >
-          bash .github/scripts/emulate.sh build/check-release
-          "neon 1;fcma 1;pauth 0;best_target scalar"
-          "$QEMU" -cpu a64fx
-      - name: QEMU max without pointer authentication (phase 1 target neon)
-        if: success() || failure()
-        run: >
-          bash .github/scripts/emulate.sh build/check-release
-          "neon 1;fcma 1;pauth 0;best_target scalar"
-          "$QEMU" -cpu max,pauth=off
-      - name: Neoverse V1 (FCMA and pointer authentication; target neon_fcma)
-        if: success() || failure()
-        run: >
-          bash .github/scripts/emulate.sh build/check-release
-          "neon 1;fcma 1;pauth 1;best_target neon_fcma"
-          "$QEMU" -cpu neoverse-v1
+      - name: ${{ matrix.model }}
+        env:
+          EXPECT: ${{ matrix.expect }}
+          CPU: ${{ matrix.cpu }}
+        run: bash .github/scripts/emulate.sh build/check-release "$EXPECT" "$QEMU" -cpu "$CPU"
       - *fetchcontent-collect
