@@ -57,7 +57,16 @@ target_compile_definitions(fftn_test_boost_mp INTERFACE BOOST_MP_STANDALONE)
 # its headers never meet FFTN's warning flags. The tarball and its SHA-256 are the official
 # release assets of github.com/kokkos/kokkos (kokkos-5.2.1.tar.gz and
 # kokkos-5.2.1-SHA-256.txt); the hash was also computed from the downloaded file.
-option(FFTN_TEST_WITH_KOKKOS "Test fftn/kokkos.hpp against Kokkos 5.2.1 (Serial back end)" ON)
+# Off by default in GCC ThreadSanitizer builds: GCC warns that TSan does not support
+# atomic_thread_fence (-Wtsan) for Kokkos' desul atomics after they are inlined into our test
+# units, where SYSTEM cannot silence it, and the gate builds with -Werror. The adapter runs
+# serially, so TSan has nothing of ours to check there; Clang's TSan builds still run these tests.
+set(_fftn_kokkos_default ON)
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND FFTN_SANITIZE MATCHES "thread")
+  set(_fftn_kokkos_default OFF)
+endif()
+option(FFTN_TEST_WITH_KOKKOS "Test fftn/kokkos.hpp against Kokkos 5.2.1 (Serial back end)"
+       ${_fftn_kokkos_default})
 if(FFTN_TEST_WITH_KOKKOS)
   FetchContent_Declare(fftn_kokkos
     URL https://github.com/kokkos/kokkos/releases/download/5.2.1/kokkos-5.2.1.tar.gz

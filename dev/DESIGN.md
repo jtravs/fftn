@@ -1217,7 +1217,9 @@ What the experiments still require of the build:
   `Kokkos_ENABLE_*` cache entries (Serial only); task 3.5's OpenMP and Threads test
   configurations need that reworked. FetchContent also brings Kokkos' install rules into the
   build, to be excluded when packaging lands (`EXCLUDE_FROM_ALL` on the declaration needs
-  CMake 3.28).
+  CMake 3.28). GCC ThreadSanitizer builds leave the Kokkos tests out by default: GCC's
+  `-Wtsan` fires on Kokkos' fences once inlined into our units, beyond the reach of SYSTEM,
+  and the adapter is serial; Clang's TSan builds run them.
 - A generated single-file amalgamation is a possible release artefact (phase 6); it is
   the same implementation concatenated, not a separate code path.
 
