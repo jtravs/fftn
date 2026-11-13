@@ -228,32 +228,36 @@ endif()
 # ---- Experiment X15: pass-level timing of radix4_pass (bench/x15/passes.cpp) ---------------
 # Each copy of the scalar kernel text is its own object library made from x15/variant.cpp,
 # with the harness's flags only (never the library's experimental ones). Deleted with the
-# experiment (dev/experiments/X15-compiler-vectorised-scalar.md).
-fftn_always_optimise(x15/variant.cpp)
-function(fbench_x15_variant name avx2 simd)
-  add_library(x15_${name} OBJECT x15/variant.cpp)
-  fftn_configure_target(x15_${name})
-  target_include_directories(x15_${name} PRIVATE ${PROJECT_SOURCE_DIR}/include
-                                                 ${PROJECT_SOURCE_DIR}/src)
-  target_compile_definitions(x15_${name} PRIVATE X15_REGION=x15_${name} X15_AVX2=${avx2})
-  target_compile_options(x15_${name} PRIVATE $<$<CXX_COMPILER_ID:GNU>:-Werror=psabi>)
-  if(simd)
-    fftn_x15_omp_simd(x15_${name})
+# experiment (dev/experiments/X15-compiler-vectorised-scalar.md). Not built under the
+# sanitizers: a timing harness means nothing there, and their instrumentation stops Clang
+# vectorising the omp simd loops, which it reports as an error (-Wpass-failed).
+if(NOT FFTN_SANITIZE)
+  fftn_always_optimise(x15/variant.cpp)
+  function(fbench_x15_variant name avx2 simd)
+    add_library(x15_${name} OBJECT x15/variant.cpp)
+    fftn_configure_target(x15_${name})
+    target_include_directories(x15_${name} PRIVATE ${PROJECT_SOURCE_DIR}/include
+                                                   ${PROJECT_SOURCE_DIR}/src)
+    target_compile_definitions(x15_${name} PRIVATE X15_REGION=x15_${name} X15_AVX2=${avx2})
+    target_compile_options(x15_${name} PRIVATE $<$<CXX_COMPILER_ID:GNU>:-Werror=psabi>)
+    if(simd)
+      fftn_x15_omp_simd(x15_${name})
+    endif()
+  endfunction()
+  fbench_x15_variant(scalar 0 OFF)
+  fbench_x15_variant(scalar_simd 0 ON)
+  fbench_x15_variant(avx2_text 1 OFF)
+  fbench_x15_variant(avx2_text_simd 1 ON)
+  add_executable(x15-passes x15/passes.cpp)
+  fftn_configure_target(x15-passes)
+  target_include_directories(x15-passes PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                                                ${CMAKE_CURRENT_BINARY_DIR} ${PROJECT_SOURCE_DIR}/src)
+  target_link_libraries(x15-passes PRIVATE fftn::fftn x15_scalar x15_scalar_simd x15_avx2_text
+                                           x15_avx2_text_simd)
+  fftn_x15_consumer(x15-passes)
+  if(FFTN_BUILD_TESTS)
+    add_test(NAME bench.x15_passes_check COMMAND x15-passes --check)
   endif()
-endfunction()
-fbench_x15_variant(scalar 0 OFF)
-fbench_x15_variant(scalar_simd 0 ON)
-fbench_x15_variant(avx2_text 1 OFF)
-fbench_x15_variant(avx2_text_simd 1 ON)
-add_executable(x15-passes x15/passes.cpp)
-fftn_configure_target(x15-passes)
-target_include_directories(x15-passes PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
-                                              ${CMAKE_CURRENT_BINARY_DIR} ${PROJECT_SOURCE_DIR}/src)
-target_link_libraries(x15-passes PRIVATE fftn::fftn x15_scalar x15_scalar_simd x15_avx2_text
-                                         x15_avx2_text_simd)
-fftn_x15_consumer(x15-passes)
-if(FFTN_BUILD_TESTS)
-  add_test(NAME bench.x15_passes_check COMMAND x15-passes --check)
 endif()
 # ---- End of experiment X15 -----------------------------------------------------------------
 
