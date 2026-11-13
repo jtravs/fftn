@@ -19,8 +19,12 @@ from pathlib import Path
 from . import analysis, arms, catalogue, machine, stats, store
 
 DEFAULT_BUILD = store.REPO / "build" / "check-release"
-# Options a library gets in smoke runs (correctness only, so the cheapest planning).
-SMOKE_OPTIONS = {"fftw": {"PLANNER": "ESTIMATE"}}
+# Option sets a library is smoke-tested with (correctness only, so the cheapest planning);
+# a library with several code paths behind an option gets one run per path.
+SMOKE_OPTIONS = {
+    "fftw": [{"PLANNER": "ESTIMATE"}],
+    "accelerate": [{"API": "dft"}, {"API": "interleaved"}],
+}
 # The relative output error the guard's self-check injects.
 SMOKE_PERTURB = "1e-6"
 
@@ -452,6 +456,79 @@ def cmd_list(args: argparse.Namespace) -> int:
 # ---- smoke --------------------------------------------------------------------------------
 
 
+def smoke_one(
+    exe: Path,
+    library: str,
+    info: dict,
+    opts: dict[str, str],
+    cases: list[catalogue.Case],
+    work: Path,
+    timeout: float,
+    failures: list[str],
+    require_partial: bool = True,
+) -> None:
+    """One backend with one option set over the smoke cases, then the guard's self-check."""
+    name = "+".join([library, *(f"{k}={v}" for k, v in opts.items())])
+    # Unsupported cases fail for the kinds a backend says it supports. A kind it supports
+    # only partly (some lengths or ranks) must still pass somewhere, so that a backend that
+    # turns everything down is not counted as correct; that needs cases chosen to contain
+    # such lengths (the standard smoke tier), so other selections skip it.
+    supported = set(info.get("supports", []))
+    partial = set(info.get("partial", []))
+    kind_of = {c.id: c.kind for c in cases}
+    options = options_text(opts)
+    base = ["--cases", str(work / "cases.txt"), "--options", options, "--check-only"]
+    _, results, error = run_process(exe, base, timeout)
+    if error:
+        failures.append(f"{name}: {error}")
+    counts = {"pass": 0, "fail": 0, "unsupported": 0, "error": 0}
+    passed_kinds: set[str] = set()
+    first_ok = None
+    for res in results:
+        if res.get("status") == "ok":
+            if res["check"]["pass"]:
+                counts["pass"] += 1
+                passed_kinds.add(kind_of.get(res["id"], ""))
+                first_ok = first_ok or res["id"]
+            else:
+                counts["fail"] += 1
+                failures.append(
+                    f"{name} {res['id']}: wrong output (rms {res['check']['err_rms']:.2e},"
+                    f" max {res['check']['err_max']:.2e}, tol {res['check']['tol']:.2e})"
+                )
+        elif res.get("status") == "unsupported":
+            counts["unsupported"] += 1
+            if kind_of.get(res.get("id", "")) in supported:
+                failures.append(
+                    f"{name} {res['id']}: unsupported, but {library} declares "
+                    f"{kind_of[res['id']]} supported"
+                )
+        else:
+            counts["error"] += 1
+            failures.append(f"{name} {res.get('id', '?')}: {res.get('message')}")
+    missing = len(cases) - len(results)
+    if missing and not error:
+        failures.append(f"{name}: {missing} cases produced no result")
+    required = supported | partial if require_partial else supported
+    for kind in sorted((required & set(kind_of.values())) - passed_kinds):
+        failures.append(f"{name}: declares {kind} but passed no {kind} case")
+    print(
+        f"smoke {name} ({info.get('version')}, isa {info.get('isa')}): "
+        f"{counts['pass']} pass, {counts['fail']} wrong, {counts['unsupported']} "
+        f"unsupported, {counts['error']} errors of {len(cases)}"
+    )
+    if first_ok:
+        # The guard's self-check: the same case with a perturbed output must fail.
+        one = work / f"guard-{library}.txt"
+        one.write_text(next(c.line() for c in cases if c.id == first_ok) + "\n")
+        guard = ["--cases", str(one), "--options", options, "--check-only"]
+        _, res, error = run_process(exe, [*guard, "--perturb", SMOKE_PERTURB], 60)
+        flagged = bool(res) and res[0].get("status") == "ok" and not res[0]["check"]["pass"]
+        print(f"smoke {name}: guard {'flags' if flagged else 'MISSES'} a perturbed output")
+        if not flagged:
+            failures.append(f"{name}: the correctness guard missed a perturbed output")
+
+
 def cmd_smoke(args: argparse.Namespace) -> int:
     """Correctness only, every backend in the build, plus a self-check of the guard."""
     build = Path(args.build)
@@ -468,6 +545,11 @@ def cmd_smoke(args: argparse.Namespace) -> int:
     work.mkdir(parents=True, exist_ok=True)
     cases_file = work / "cases.txt"
     cases_file.write_text("".join(c.line() + "\n" for c in cases))
+    standard_smoke = (
+        cat.path.resolve() == catalogue.resolve("standard").resolve()
+        and args.tier == "smoke"
+        and not args.filter
+    )
     failures: list[str] = []
     for exe in exes:
         library = exe.name.removeprefix("fbench-")
@@ -487,55 +569,18 @@ def cmd_smoke(args: argparse.Namespace) -> int:
         )
         if selftest.returncode != 0:
             failures.append(f"{library}: {(selftest.stdout + selftest.stderr).strip()}")
-        # Unsupported cases fail only for the kinds a backend says it supports.
-        supported = set(info.get("supports", []))
-        kind_of = {c.id: c.kind for c in cases}
-        options = options_text(SMOKE_OPTIONS.get(library, {}))
-        base = ["--cases", str(cases_file), "--options", options, "--check-only"]
-        _, results, error = run_process(exe, base, args.process_timeout)
-        if error:
-            failures.append(f"{library}: {error}")
-        counts = {"pass": 0, "fail": 0, "unsupported": 0, "error": 0}
-        first_ok = None
-        for res in results:
-            if res.get("status") == "ok":
-                if res["check"]["pass"]:
-                    counts["pass"] += 1
-                    first_ok = first_ok or res["id"]
-                else:
-                    counts["fail"] += 1
-                    failures.append(
-                        f"{library} {res['id']}: wrong output (rms {res['check']['err_rms']:.2e},"
-                        f" max {res['check']['err_max']:.2e}, tol {res['check']['tol']:.2e})"
-                    )
-            elif res.get("status") == "unsupported":
-                counts["unsupported"] += 1
-                if kind_of.get(res.get("id", "")) in supported:
-                    failures.append(
-                        f"{library} {res['id']}: unsupported, but {library} declares "
-                        f"{kind_of[res['id']]} supported"
-                    )
-            else:
-                counts["error"] += 1
-                failures.append(f"{library} {res.get('id', '?')}: {res.get('message')}")
-        missing = len(cases) - len(results)
-        if missing and not error:
-            failures.append(f"{library}: {missing} cases produced no result")
-        print(
-            f"smoke {library} ({info.get('version')}, isa {info.get('isa')}): "
-            f"{counts['pass']} pass, {counts['fail']} wrong, {counts['unsupported']} "
-            f"unsupported, {counts['error']} errors of {len(cases)}"
-        )
-        if first_ok:
-            # The guard's self-check: the same case with a perturbed output must fail.
-            one = work / f"guard-{library}.txt"
-            one.write_text(next(c.line() for c in cases if c.id == first_ok) + "\n")
-            guard = ["--cases", str(one), "--options", options, "--check-only"]
-            _, res, error = run_process(exe, [*guard, "--perturb", SMOKE_PERTURB], 60)
-            flagged = bool(res) and res[0].get("status") == "ok" and not res[0]["check"]["pass"]
-            print(f"smoke {library}: guard {'flags' if flagged else 'MISSES'} a perturbed output")
-            if not flagged:
-                failures.append(f"{library}: the correctness guard missed a perturbed output")
+        for opts in SMOKE_OPTIONS.get(library, [{}]):
+            smoke_one(
+                exe,
+                library,
+                info,
+                opts,
+                cases,
+                work,
+                args.process_timeout,
+                failures,
+                require_partial=standard_smoke,
+            )
     for f in failures:
         print(f"smoke FAILURE: {f}")
     return 1 if failures and args.strict else 0
