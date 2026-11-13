@@ -8,4 +8,8 @@
 target_sources(fftn PRIVATE
   cpu_features.cpp
   cpu_list.cpp
-  sysctl_values.cpp)
+  sysctl_values.cpp
+  topology.cpp
+  topology_linux.cpp
+  topology_macos.cpp
+  topology_windows.cpp)
