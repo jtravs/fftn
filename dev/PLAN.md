@@ -232,7 +232,7 @@ running, done (with verdict).
 | ID | Question | Phase | Status |
 |---|---|---|---|
 | [B1](experiments/B1-isa-regions-gcc-linux.md) | Do ISA attribute regions hold on Linux x86-64 with GCC 14 and 15 (inlining, by-value vector ABI at -O0, two-TU link, disassembly)? | 0 | done: regions hold; GCC needs `-Werror=psabi` |
-| B2 | The same on Windows with clang on the MSVC ABI | 0 | planned |
+| [B2](experiments/B2-isa-regions-windows-clang.md) | The same on Windows with clang on the MSVC ABI (x64 and Arm64); how to detect FCMA and pointer authentication on Windows on Arm | 0 | planned (runs in CI, task 0.8) |
 | B3 | Library build time and size as codelets and targets grow; which codelets are worth instantiating per target? | 1 | planned |
 | X1 | Complex-register against split arithmetic, per target (FCMA included) and pass position (first, middle, last; short and long rows) | 1 | planned |
 | X2 | Best radix sets and orders per target by exhaustive search over the standard lengths; how far are simple rules from the optimum? | 1 | planned |
