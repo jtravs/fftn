@@ -1,0 +1,167 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# The test programs on emulated processors (DESIGN.md 15.4): instruction sets and old
+# machines the runners lack. Each job builds the check-release preset natively once, then
+# .github/scripts/emulate.sh runs every test program on each processor model, after checking
+# what fftn_platform_dump reports there (the features and the target a plan would choose).
+# A model's "expect" lists those lines; when phase 1 adds a target, its expected
+# best_target changes here (the comments name the target each model should get then).
+name: emulation
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  UV_VERSION: "0.13.6"
+  # Intel SDE (Intel Simplified Software License; downloaded at run time, never committed).
+  SDE_URL: https://downloadmirror.intel.com/924984/sde-external-10.13.1-2026-07-28-lin.tar.xz
+  SDE_SHA256: 94e97d623fec54385686e1e7ba65ebc9941748c05ee451423948334892bf2b50
+  # QEMU 11.1.3 user mode, statically linked: Debian's qemu-user package for arm64.
+  QEMU_URL: https://snapshot.debian.org/archive/debian/20261029T211301Z/pool/main/q/qemu/qemu-user_11.1.3%2Bds-1_arm64.deb
+  QEMU_SHA256: 65580ec3be90fbb51e66c10e06b816759e313271896780af780b0720956cf1e5
+
+jobs:
+  sde:
+    # Pushes, and pull requests from forks (a branch of this repository ran on its push).
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    name: x86-64 under Intel SDE
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CXX: g++-14
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - &uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: |
+            uv.lock
+            scripts/check.sh
+          prune-cache: false
+          cache-python: true
+      - name: Intel SDE (pinned)
+        run: |
+          .github/scripts/fetch.sh "$SDE_URL" "$SDE_SHA256" "$RUNNER_TEMP/sde.tar.xz"
+          mkdir -p "$RUNNER_TEMP/sde"
+          tar -xJf "$RUNNER_TEMP/sde.tar.xz" -C "$RUNNER_TEMP/sde" --strip-components=1
+          echo "SDE=$RUNNER_TEMP/sde/sde64" >> "$GITHUB_ENV"
+      - &fetchcontent-restore
+        name: FetchContent archives (restore)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/fftn-fetchcontent
+          key: fetchcontent-${{ hashFiles('cmake/*.cmake') }}
+      - &fetchcontent-place
+        name: FetchContent archives (place)
+        run: .github/scripts/fetchcontent-cache.sh restore ~/.cache/fftn-fetchcontent
+      - &build
+        name: Build (check-release)
+        run: |
+          cmake --preset check-release
+          cmake --build --preset check-release
+      - name: What the runner reports natively
+        run: build/check-release/tests/platform/fftn_platform_dump
+      # One step per model. The chip check is limited to the test programs themselves
+      # (-chip_check_exe_only): FFTN is linked into them statically, and the C and C++
+      # runtimes are the system's business.
+      - name: Nehalem (x86-64-v2 class; phase 1 target x86_v2)
+        if: success() || failure()
+        run: >
+          .github/scripts/emulate.sh build/check-release
+          "sse42 1;popcnt 1;avx 0;avx2 0;fma 0;best_target scalar"
+          "$SDE" -nhm -chip_check_exe_only --
+      - name: Sandy Bridge (AVX without AVX2 or FMA; phase 1 target avx or x86_v2, X14)
+        if: success() || failure()
+        run: >
+          .github/scripts/emulate.sh build/check-release
+          "sse42 1;avx 1;avx2 0;fma 0;avx512f 0;best_target scalar"
+          "$SDE" -snb -chip_check_exe_only --
+      - name: Haswell (AVX2 and FMA; target avx2)
+        if: success() || failure()
+        run: >
+          .github/scripts/emulate.sh build/check-release
+          "avx 1;avx2 1;fma 1;avx512f 0;best_target avx2"
+          "$SDE" -hsw -chip_check_exe_only --
+      - name: Skylake-SP (AVX-512 F, DQ, BW, VL; phase 1 target avx512)
+        if: success() || failure()
+        run: >
+          .github/scripts/emulate.sh build/check-release
+          "avx2 1;avx512f 1;avx512dq 1;avx512bw 1;avx512vl 1;best_target avx2"
+          "$SDE" -skx -chip_check_exe_only --
+      - &fetchcontent-collect
+        name: FetchContent archives (collect)
+        if: always()
+        run: .github/scripts/fetchcontent-cache.sh save ~/.cache/fftn-fetchcontent
+
+  qemu:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    name: aarch64 under QEMU
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    env:
+      CXX: g++-14
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - *uv
+      - name: Ninja
+        run: command -v ninja || { sudo apt-get update && sudo apt-get install -y --no-install-recommends ninja-build; }
+      - name: QEMU user mode (pinned)
+        run: |
+          .github/scripts/fetch.sh "$QEMU_URL" "$QEMU_SHA256" "$RUNNER_TEMP/qemu-user.deb"
+          mkdir -p "$RUNNER_TEMP/qemu"
+          dpkg-deb -x "$RUNNER_TEMP/qemu-user.deb" "$RUNNER_TEMP/qemu"
+          echo "QEMU=$RUNNER_TEMP/qemu/usr/bin/qemu-aarch64" >> "$GITHUB_ENV"
+          "$RUNNER_TEMP/qemu/usr/bin/qemu-aarch64" -version
+      - *fetchcontent-restore
+      - *fetchcontent-place
+      - *build
+      - name: What the runner reports natively
+        run: build/check-release/tests/platform/fftn_platform_dump
+      - name: Cortex-A72 (Armv8.0; phase 1 target neon)
+        if: success() || failure()
+        run: >
+          .github/scripts/emulate.sh build/check-release
+          "neon 1;fcma 0;pauth 0;best_target scalar"
+          "$QEMU" -cpu cortex-a72
+      - name: Neoverse N1 (Armv8.2, no FCMA; phase 1 target neon)
+        if: success() || failure()
+        run: >
+          .github/scripts/emulate.sh build/check-release
+          "neon 1;fcma 0;pauth 0;best_target scalar"
+          "$QEMU" -cpu neoverse-n1
+      # FCMA without pointer authentication: neon_fcma must not be chosen (DESIGN.md 6.4).
+      - name: A64FX (FCMA, no pointer authentication; phase 1 target neon)
+        if: success() || failure()
+        run: >
+          .github/scripts/emulate.sh build/check-release
+          "neon 1;fcma 1;pauth 0;best_target scalar"
+          "$QEMU" -cpu a64fx
+      - name: QEMU max without pointer authentication (phase 1 target neon)
+        if: success() || failure()
+        run: >
+          .github/scripts/emulate.sh build/check-release
+          "neon 1;fcma 1;pauth 0;best_target scalar"
+          "$QEMU" -cpu max,pauth=off
+      - name: Neoverse V1 (FCMA and pointer authentication; target neon_fcma)
+        if: success() || failure()
+        run: >
+          .github/scripts/emulate.sh build/check-release
+          "neon 1;fcma 1;pauth 1;best_target neon_fcma"
+          "$QEMU" -cpu neoverse-v1
+      - *fetchcontent-collect
