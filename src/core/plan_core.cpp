@@ -94,10 +94,9 @@ side resolve(const shape_view& s, const std::vector<std::size_t>& extent, std::s
   std::ptrdiff_t span = 1;
   for (std::size_t i = r; i > 0; --i) {
     const std::size_t d = i - 1;
-    const std::string name = axis_name(d) + (input ? ".in_stride" : ".out_stride");
     const std::ptrdiff_t given = input ? s.axes[d].in_stride : s.axes[d].out_stride;
     out.stride[d] = given != 0 ? given : span;
-    span = checked_mul(span, to_signed(d + 1 == r ? last_physical : extent[d], name),
+    span = checked_mul(span, to_signed(d + 1 == r ? last_physical : extent[d], axis_name(d) + ".n"),
                        axis_name(d) + ".n");
   }
   out.dist.assign(s.batches.size(), 0);
