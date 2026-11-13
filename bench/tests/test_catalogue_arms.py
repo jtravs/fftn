@@ -129,6 +129,12 @@ class ArmGrammar(unittest.TestCase):
         prefix = {"loaded_from": "/opt/fftw-old/lib/libfftw3.so", "expected_root": "/opt/fftw"}
         self.assertIsNotNone(arms.library_problem(prefix))
         self.assertIsNone(arms.library_problem({}))
+        # On Linux a symbol's address seen from the executable names the executable.
+        with tempfile.TemporaryDirectory() as tmp:
+            exe = Path(tmp) / "fbench-fftw"
+            exe.touch()
+            itself = {"loaded_from": str(exe), "expected_root": tmp}
+            self.assertIn("executable itself", arms.library_problem(itself, exe))
         release = {"harness": {"build_type": "Release", "sanitize": ""}}
         self.assertIsNone(arms.timing_problem(release))
         asan = {"harness": {"build_type": "RelWithDebInfo", "sanitize": "address"}}

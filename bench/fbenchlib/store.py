@@ -12,6 +12,7 @@ Record types, each with "type" and "run":
 from __future__ import annotations
 
 import json
+import re
 import secrets
 import time
 from pathlib import Path
@@ -24,6 +25,23 @@ def new_run_id() -> str:
     return time.strftime("%Y%m%d-%H%M%S") + "-" + secrets.token_hex(2)
 
 
+def scrub(value: object, prefixes: list[tuple[str, str]]) -> object:
+    """Replaces path prefixes by tokens in every string of a record (longest first).
+
+    The store may be copied between machines; absolute paths would carry user names and
+    directory layouts with it, and mean nothing elsewhere.
+    """
+    if isinstance(value, str):
+        for prefix, token in prefixes:
+            value = re.sub(re.escape(prefix) + r"(?=/|$|[\s\"'])", token, value)
+        return value
+    if isinstance(value, list):
+        return [scrub(v, prefixes) for v in value]
+    if isinstance(value, dict):
+        return {k: scrub(v, prefixes) for k, v in value.items()}
+    return value
+
+
 class RunStore:
     def __init__(self, out_dir: Path, run_id: str) -> None:
         self.run_id = run_id
@@ -32,9 +50,23 @@ class RunStore:
         self.path = self.dir / f"{run_id}.jsonl"
         self.work = self.dir / f"{run_id}.work"
         self.work.mkdir(exist_ok=True)
+        # Paths under the checkout are stored as <repo>/..., under the directory that holds
+        # bench-out (the checkout, a build directory or a remote job's directory) as
+        # <base>/..., and the rest of the home directory as ~/... (longest prefix wins).
+        self.prefixes: list[tuple[str, str]] = []
+        for path in {str(out_dir.absolute().parent), str(out_dir.resolve().parent)}:
+            self.add_prefix(path, "<base>")
+        self.add_prefix(str(REPO), "<repo>")
+        for path in {str(Path.home()), str(Path.home().resolve())}:
+            self.add_prefix(path, "~")
+
+    def add_prefix(self, path: str, token: str) -> None:
+        if path and path != "/" and all(p != path for p, _ in self.prefixes):
+            self.prefixes.append((path.rstrip("/"), token))
+            self.prefixes.sort(key=lambda p: -len(p[0]))
 
     def append(self, record: dict) -> None:
-        record = {"run": self.run_id, **record}
+        record = scrub({"run": self.run_id, **record}, self.prefixes)
         with self.path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(record, separators=(",", ":"), sort_keys=False) + "\n")
 

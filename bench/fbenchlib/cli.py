@@ -8,6 +8,7 @@ import argparse
 import hashlib
 import json
 import math
+import platform
 import random
 import re
 import subprocess
@@ -106,10 +107,11 @@ def cmd_run(args: argparse.Namespace) -> int:
     run_id = store.new_run_id()
     st = store.RunStore(out_dir, run_id)
     binaries: dict[str, arms.Binary] = {}
+    roots: list[str] = []
     for arm in arm_list:
         binary = arms.resolve(arm, Path(args.build), out_dir, log)
         binary.describe = arms.describe(binary, arm.backend_options())
-        problem = arms.library_problem(binary.describe)
+        problem = arms.library_problem(binary.describe, binary.path)
         if problem:
             log(f"arm {arm.label}: refused: {problem}")
             return 2
@@ -118,6 +120,11 @@ def cmd_run(args: argparse.Namespace) -> int:
             log(f"arm {arm.label}: refused for timing: {problem} (--allow-debug-build overrides)")
             return 2
         binaries[arm.label] = binary
+        root = binary.describe.get("expected_root")
+        if root and root not in roots:
+            # Library installations are stored as <fftw-root>, <fftw-root-2>, ...
+            roots.append(root)
+            st.add_prefix(root, f"<{arm.library}-root{'' if len(roots) == 1 else len(roots)}>")
     configs: dict[str, str] = {}
     for arm in arm_list:
         if arm.control:
@@ -152,6 +159,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             "type": "run",
             "started": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
             "argv": sys.argv[1:],
+            "python": platform.python_version(),
             "host": host,
             "thermal": machine.thermal_note(),
             "source": arms.source_identity(),
@@ -469,10 +477,19 @@ def cmd_smoke(args: argparse.Namespace) -> int:
         except RuntimeError as e:
             failures.append(f"{library}: {e}")
             continue
-        problem = arms.library_problem(info)
+        problem = arms.library_problem(info, exe)
         if problem:
             failures.append(f"{library}: {problem}")
             continue
+        # The harness's own self-test: the reference, the check and describe.
+        selftest = subprocess.run(
+            [str(exe), "selftest"], capture_output=True, text=True, timeout=120, check=False
+        )
+        if selftest.returncode != 0:
+            failures.append(f"{library}: {(selftest.stdout + selftest.stderr).strip()}")
+        # Unsupported cases fail only for the kinds a backend says it supports.
+        supported = set(info.get("supports", []))
+        kind_of = {c.id: c.kind for c in cases}
         options = options_text(SMOKE_OPTIONS.get(library, {}))
         base = ["--cases", str(cases_file), "--options", options, "--check-only"]
         _, results, error = run_process(exe, base, args.process_timeout)
@@ -493,6 +510,11 @@ def cmd_smoke(args: argparse.Namespace) -> int:
                     )
             elif res.get("status") == "unsupported":
                 counts["unsupported"] += 1
+                if kind_of.get(res.get("id", "")) in supported:
+                    failures.append(
+                        f"{library} {res['id']}: unsupported, but {library} declares "
+                        f"{kind_of[res['id']]} supported"
+                    )
             else:
                 counts["error"] += 1
                 failures.append(f"{library} {res.get('id', '?')}: {res.get('message')}")
