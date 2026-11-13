@@ -130,7 +130,6 @@ void stockham_pass(const pass_args* a, std::size_t first, std::size_t last) {
     const std::size_t q0 = b % s;
     const std::size_t q1 = last - b < s - q0 ? q0 + (last - b) : s;
     const T* wp = table + tw_reals<T> * (R - 1) * p;
-    FFTN_SIMD_LOOP
     for (std::size_t q = q0; q < q1; ++q) {
       cv<T> v[R]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
       for (std::size_t j = 0; j < R; ++j) {
@@ -213,7 +212,6 @@ template <class T> void copy_pass(const pass_args* a, std::size_t first, std::si
   T* y = static_cast<T*>(a->dst);
   const std::ptrdiff_t xs = 2 * a->src_stride;
   const std::ptrdiff_t ys = 2 * a->dst_stride;
-  FFTN_SIMD_LOOP
   for (std::size_t i = first; i < last; ++i) {
     store(y + at(i, ys), load(x + at(i, xs)));
   }
@@ -227,7 +225,6 @@ template <class T> void r2c_pack_pairs(const pass_args* a, std::size_t first, st
   T* z = static_cast<T*>(a->dst);
   const std::ptrdiff_t xs = a->src_stride;
   const std::ptrdiff_t zs = 2 * a->dst_stride;
-  FFTN_SIMD_LOOP
   for (std::size_t j = first; j < last; ++j) {
     z[at(j, zs)] = x[at(2 * j, xs)];
     z[at(j, zs) + 1] = x[at(2 * j + 1, xs)];
@@ -248,7 +245,6 @@ template <class T> void r2c_post(const pass_args* a, std::size_t first, std::siz
   const std::ptrdiff_t ys = 2 * a->dst_stride;
   const std::size_t h = a->n / 2;
   const T* table = static_cast<const T*>(a->twiddles);
-  FFTN_SIMD_LOOP
   for (std::size_t k = first; k < last; ++k) {
     if (k == 0) {
       // Bins 0 and h are real: Re Z_0 +- Im Z_0.
@@ -281,7 +277,6 @@ template <class T> void r2c_pack(const pass_args* a, std::size_t first, std::siz
   T* z = static_cast<T*>(a->dst);
   const std::ptrdiff_t xs = a->src_stride;
   const std::ptrdiff_t zs = 2 * a->dst_stride;
-  FFTN_SIMD_LOOP
   for (std::size_t j = first; j < last; ++j) {
     z[at(j, zs)] = x[at(j, xs)];
     z[at(j, zs) + 1] = T(0);
@@ -294,7 +289,6 @@ template <class T> void r2c_store(const pass_args* a, std::size_t first, std::si
   T* y = static_cast<T*>(a->dst);
   const std::ptrdiff_t zs = 2 * a->src_stride;
   const std::ptrdiff_t ys = 2 * a->dst_stride;
-  FFTN_SIMD_LOOP
   for (std::size_t k = first; k < last; ++k) {
     store(y + at(k, ys), load(z + at(k, zs)));
   }
@@ -319,7 +313,6 @@ template <class T> void c2r_pre(const pass_args* a, std::size_t first, std::size
   const std::ptrdiff_t zs = 2 * a->dst_stride;
   const std::size_t h = a->n / 2;
   const T* table = static_cast<const T*>(a->twiddles);
-  FFTN_SIMD_LOOP
   for (std::size_t k = first; k < last; ++k) {
     if (k == 0) {
       const T x0 = x[0];
@@ -345,7 +338,6 @@ template <class T> void c2r_unpack_pairs(const pass_args* a, std::size_t first, 
   T* x = static_cast<T*>(a->dst);
   const std::ptrdiff_t zs = 2 * a->src_stride;
   const std::ptrdiff_t xs = a->dst_stride;
-  FFTN_SIMD_LOOP
   for (std::size_t j = first; j < last; ++j) {
     x[at(2 * j, xs)] = z[at(j, zs)];
     x[at(2 * j + 1, xs)] = z[at(j, zs) + 1];
@@ -362,7 +354,6 @@ template <class T> void c2r_expand(const pass_args* a, std::size_t first, std::s
   const std::ptrdiff_t xs = 2 * a->src_stride;
   const std::ptrdiff_t zs = 2 * a->dst_stride;
   const std::size_t n = a->n;
-  FFTN_SIMD_LOOP
   for (std::size_t k = first; k < last; ++k) {
     if (k == 0) {
       z[0] = x[0];
@@ -381,7 +372,6 @@ template <class T> void c2r_store(const pass_args* a, std::size_t first, std::si
   T* x = static_cast<T*>(a->dst);
   const std::ptrdiff_t zs = 2 * a->src_stride;
   const std::ptrdiff_t xs = a->dst_stride;
-  FFTN_SIMD_LOOP
   for (std::size_t j = first; j < last; ++j) {
     x[at(j, xs)] = z[at(j, zs)];
   }

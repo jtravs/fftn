@@ -9,21 +9,3 @@
 # owner = "name"
 # experiment = "X1"
 # expires = "2026-12-01"
-
-# Experiment X15 (dev/experiments/X15-compiler-vectorised-scalar.md); CMake options in
-# cmake/FftnExperiments.cmake, all OFF by default.
-
-[FFTN_X_OMP_SIMD]
-owner = "lead"
-experiment = "X15"
-expires = "2026-12-13"
-
-[FFTN_X_AVX2_SCALAR_TEXT]
-owner = "lead"
-experiment = "X15"
-expires = "2026-12-13"
-
-[FFTN_X_NATIVE]
-owner = "lead"
-experiment = "X15"
-expires = "2026-12-13"

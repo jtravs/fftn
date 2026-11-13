@@ -8,7 +8,6 @@ target_include_directories(fftn
   PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_compile_features(fftn PUBLIC cxx_std_20)
 fftn_configure_target(fftn)
-fftn_x15_library(fftn)
 # Symbols are hidden: two copies of FFTN in one process must not interpose (DESIGN.md 14.2).
 set_target_properties(fftn PROPERTIES CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
 

@@ -6,9 +6,6 @@
 # universal and cross builds need no CMake logic. Kernel units are always optimised.
 
 set(fftn_isa_units scalar.cpp avx2.cpp neon_fcma.cpp)
-if(FFTN_X_AVX2_SCALAR_TEXT) # experiment X15 arm C (cmake/FftnExperiments.cmake)
-  list(APPEND fftn_isa_units avx2_scalar_text.cpp)
-endif()
 target_sources(fftn PRIVATE ${fftn_isa_units} target.cpp)
 fftn_always_optimise(${fftn_isa_units})
 

@@ -22,58 +22,43 @@ namespace {
 // forward twiddles exp(-2 pi i jp / n) as three rows j = 1, 2, 3 of m twiddles each, in
 // this target's storage (pack_twiddles). Vectorised along p: the four outputs of C
 // consecutive p are transposed in registers into contiguous stores. Needs m % C == 0 and
-// 4 % C == 0. radix4_group computes the butterflies p .. p + C - 1.
-template <class T, int Sign>
-FFTN_FORCE_INLINE void radix4_group(const T* x, T* y, const T* twiddles, std::size_t m,
-                                    std::size_t p) {
-  const cv<T> a = load(x + 2 * p);
-  const cv<T> b = load(x + 2 * (p + m));
-  const cv<T> c = load(x + 2 * (p + 2 * m));
-  const cv<T> d = load(x + 2 * (p + 3 * m));
-  const cv<T> apc = add(a, c);
-  const cv<T> amc = sub(a, c);
-  const cv<T> bpd = add(b, d);
-  const cv<T> bmd = sub(b, d);
-  cv<T> v[4]; // NOLINT(modernize-avoid-c-arrays): std::array is not allowed in a region
-  v[0] = add(apc, bpd);
-  v[2] = sub(apc, bpd);
-  if constexpr (Sign < 0) {
-    v[1] = subj(amc, bmd);
-    v[3] = addj(amc, bmd);
-  } else {
-    v[1] = addj(amc, bmd);
-    v[3] = subj(amc, bmd);
-  }
-  for (std::size_t j = 1; j < 4; ++j) {
-    const tw<T> w = load_tw(twiddles + tw_reals<T> * ((j - 1) * m + p));
-    if constexpr (Sign < 0) {
-      v[j] = mul(v[j], w);
-    } else {
-      v[j] = mulc(v[j], w);
-    }
-  }
-  // Block b holds outputs j = bC .. bC + C - 1 for the C values of p; after the transpose
-  // its register r holds them for p + r, which are contiguous in y.
-  for (std::size_t blk = 0; blk < 4 / C<T>; ++blk) {
-    transpose(v + blk * C<T>);
-    for (std::size_t r = 0; r < C<T>; ++r) {
-      store(y + 2 * (4 * (p + r) + blk * C<T>), v[blk * C<T> + r]);
-    }
-  }
-}
-
+// 4 % C == 0.
 template <class T, int Sign>
 FFTN_FORCE_INLINE void radix4_pass_impl(const T* x, T* y, const T* twiddles, std::size_t m) {
-  if constexpr (id == target::scalar) {
-    // Experiment X15: the scalar vocabulary's loop may carry omp simd (region.hpp); a hand
-    // vocabulary's loop is left exactly as written.
-    FFTN_SIMD_LOOP
-    for (std::size_t p = 0; p < m; ++p) {
-      radix4_group<T, Sign>(x, y, twiddles, m, p);
+  for (std::size_t p = 0; p < m; p += C<T>) {
+    const cv<T> a = load(x + 2 * p);
+    const cv<T> b = load(x + 2 * (p + m));
+    const cv<T> c = load(x + 2 * (p + 2 * m));
+    const cv<T> d = load(x + 2 * (p + 3 * m));
+    const cv<T> apc = add(a, c);
+    const cv<T> amc = sub(a, c);
+    const cv<T> bpd = add(b, d);
+    const cv<T> bmd = sub(b, d);
+    cv<T> v[4]; // NOLINT(modernize-avoid-c-arrays): std::array is not allowed in a region
+    v[0] = add(apc, bpd);
+    v[2] = sub(apc, bpd);
+    if constexpr (Sign < 0) {
+      v[1] = subj(amc, bmd);
+      v[3] = addj(amc, bmd);
+    } else {
+      v[1] = addj(amc, bmd);
+      v[3] = subj(amc, bmd);
     }
-  } else {
-    for (std::size_t p = 0; p < m; p += C<T>) {
-      radix4_group<T, Sign>(x, y, twiddles, m, p);
+    for (std::size_t j = 1; j < 4; ++j) {
+      const tw<T> w = load_tw(twiddles + tw_reals<T> * ((j - 1) * m + p));
+      if constexpr (Sign < 0) {
+        v[j] = mul(v[j], w);
+      } else {
+        v[j] = mulc(v[j], w);
+      }
+    }
+    // Block b holds outputs j = bC .. bC + C - 1 for the C values of p; after the transpose
+    // its register r holds them for p + r, which are contiguous in y.
+    for (std::size_t blk = 0; blk < 4 / C<T>; ++blk) {
+      transpose(v + blk * C<T>);
+      for (std::size_t r = 0; r < C<T>; ++r) {
+        store(y + 2 * (4 * (p + r) + blk * C<T>), v[blk * C<T> + r]);
+      }
     }
   }
 }
