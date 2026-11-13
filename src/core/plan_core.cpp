@@ -543,7 +543,7 @@ void execute_core(const plan_core& core, std::size_t first, std::size_t count, c
                   void* out, const workspace& ws) noexcept {
   assert(ws.size() >= core.bytes && "fftn: workspace smaller than plan::workspace_bytes()");
   assert(first <= core.prog.transforms && count <= core.prog.transforms - first &&
-         "fftn: execute_rows beyond the batch");
+         "fftn: execute_transforms beyond the batch");
   assert((!core.in_place || in == out) && "fftn: in-place plan executed with in != out");
   slot_addresses at{.in = static_cast<const std::byte*>(in), .out = static_cast<std::byte*>(out)};
   if (core.bytes != 0) {

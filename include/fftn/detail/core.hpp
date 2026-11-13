@@ -71,7 +71,7 @@ class plan_core;
                                                               const options& opts);
 
 // Runs transforms [first, first + count) of the batch; in and out address element 0 of
-// transform 0. Preconditions as for plan<In, Out>::execute_rows.
+// transform 0. Preconditions as for plan<In, Out>::execute_transforms.
 void execute_core(const plan_core& core, std::size_t first, std::size_t count, const void* in,
                   void* out, const workspace& ws) noexcept;
 

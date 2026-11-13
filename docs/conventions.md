@@ -58,9 +58,9 @@ For one transform of logical lengths n₀ × … × n_{r−1} (r = 1, 2 or 3 axe
 ## Shapes and layouts
 
 A shape lists its transformed axes (`shape::axes`, slowest first, one to three) and its
-batch dimensions (`shape::batches`, slowest first, any number; none means one transform). Transforms are
-numbered in batch order with the last batch dimension fastest; `execute_rows` uses these
-numbers.
+batch dimensions (`shape::batches`, slowest first, any number; none means one transform).
+Transforms are numbered in batch order with the last batch dimension fastest;
+`execute_transforms` uses these numbers.
 
 - **Units.** Strides and distances count elements of each side's own type: real values
   on the real side of r2c and c2r, complex values on the complex side. They may be
@@ -150,7 +150,7 @@ For a given plan, results are bitwise identical:
 
 - across repeated executions, copies of the plan and concurrent executions;
 - for every transform of a batch, whatever its position, through `execute` or through
-  `execute_rows` with any `first`;
+  `execute_transforms` with any `first`;
 - at any alignment of the arrays and the workspace.
 
 Results may differ in the last bits between instruction sets, between plans built with

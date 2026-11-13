@@ -1314,11 +1314,11 @@ them as well as the kernels: a stray newer instruction anywhere faults.
   prototype).
 - **Bitwise identical** for a given plan across: serial and threaded execution, any team
   size, executor and schedule; repeated runs; batch position (row 0 and row 1000 of a
-  batch get the same arithmetic, as do the rows of `execute_rows` for any `first`). The
-  rule that guarantees the last: within a plan every row goes through the same sequence
-  of codelets; lane tails and leftover rows use narrower instantiations or padded tiles
-  of the same program, never a different route. Tests compare row k against row 0 for
-  every k modulo the lane count.
+  batch get the same arithmetic, as do the transforms of `execute_transforms` for any
+  `first`). The rule that guarantees the last: within a plan every row goes through the
+  same sequence of codelets; lane tails and leftover rows use narrower instantiations or
+  padded tiles of the same program, never a different route. Tests compare row k against
+  row 0 for every k modulo the lane count.
 - **May differ in the last bits** between: instruction sets; plans built with different
   options (width hint without `strict_layout`, edge operations, in place versus out of
   place); plans chosen by measurement on different runs, unless pinned by wisdom; library

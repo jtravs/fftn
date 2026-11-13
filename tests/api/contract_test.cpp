@@ -3,7 +3,7 @@
 
 // The contracts of plan, workspace and shape (DESIGN.md 15.3, AGENTS.md section 5): no
 // allocation in execute, any alignment, bitwise independence of a transform's position in
-// the batch (execute_rows with any first included), plan reuse across copies and threads,
+// the batch (execute_transforms with any first included), plan reuse across copies and threads,
 // caller-supplied workspaces, and std::invalid_argument naming the argument for every
 // invalid shape. Memory outside the rows (canaries) and input preservation are checked by
 // the harness on every run of the oracle suites; they are exercised here too through it.
@@ -70,7 +70,7 @@ void expect_no_allocation(const fftn::shape<In, Out>& s, std::size_t in_count,
       in_place ? reinterpret_cast<Out*>(in) : reinterpret_cast<Out*>(storage.data() + in_count + 1);
   const fftn::test::allocation_counter counter;
   p.execute(in, out, ws);
-  p.execute_rows(0, 1, in, out, ws);
+  p.execute_transforms(0, 1, in, out, ws);
   EXPECT_EQ(counter.allocations(), 0U) << p.describe();
   EXPECT_EQ(counter.deallocations(), 0U);
 }
@@ -127,7 +127,7 @@ TYPED_TEST(Contracts, AnyAlignmentGivesTheSameBits) {
 
 // ---- A transform's result does not depend on its position in the batch.
 
-// Runs every transform of `p` once through execute and once through execute_rows from
+// Runs every transform of `p` once through execute and once through execute_transforms from
 // several starting points, on a batch whose transforms all hold the same input; every
 // transform's output must equal transform 0's bit for bit (DESIGN.md 15.5).
 template <class In, class Out>
@@ -149,10 +149,10 @@ void check_positions(const fftn::plan<In, Out>& p, std::size_t transforms, std::
   }
   for (const std::size_t start : {std::size_t{1}, transforms / 2, transforms - 1}) {
     std::vector<Out> part(out.size());
-    p.execute_rows(start, transforms - start, in.data(), part.data(), ws);
+    p.execute_transforms(start, transforms - start, in.data(), part.data(), ws);
     for (std::size_t t = start; t < transforms; ++t) {
       EXPECT_TRUE(same_bits<Out>(std::span<const Out>(&part[t * out_dist], out_len), first))
-          << "execute_rows from " << start << ", transform " << t;
+          << "execute_transforms from " << start << ", transform " << t;
     }
     // The transforms before `start` are not touched.
     const std::vector<Out> zero(start * out_dist);
@@ -322,7 +322,7 @@ TEST(ExecutionDeathTest, PreconditionsAreAssertedInDebugBuilds) {
   fftn::workspace small(rows.workspace_bytes() - 1);
   EXPECT_DEATH(rows.execute(x.data(), y.data(), small), "workspace smaller");
   fftn::workspace enough(rows);
-  EXPECT_DEATH(rows.execute_rows(1, 2, x.data(), y.data(), enough), "beyond the batch");
+  EXPECT_DEATH(rows.execute_transforms(1, 2, x.data(), y.data(), enough), "beyond the batch");
 #endif
 }
 

@@ -81,6 +81,7 @@ public:
   /// Transforms `count` transforms of the batch, starting with transform `first`, serially
   /// on the calling thread: for callers that share a batch out themselves.
   ///
+  /// A transform is one row, plane or volume, as the shape has one, two or three axes.
   /// Transforms are numbered in batch order (the last batch dimension varies fastest).
   /// `in` and `out` are the same addresses as for `execute`: element 0 of transform 0, not
   /// of transform `first`.
@@ -90,8 +91,8 @@ public:
   ///
   /// Guarantees: as for `execute`; each transform's result is bitwise identical to what
   /// `execute` gives it.
-  void execute_rows(std::size_t first, std::size_t count, const In* in, Out* out,
-                    workspace& ws) const noexcept {
+  void execute_transforms(std::size_t first, std::size_t count, const In* in, Out* out,
+                          workspace& ws) const noexcept {
     detail::execute_core(*core_, first, count, in, out, ws);
   }
 
