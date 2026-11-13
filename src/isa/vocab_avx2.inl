@@ -55,7 +55,7 @@ FFTN_FORCE_INLINE __m256d bcast(const double* p) {
   return _mm256_set_m128d(x, x);
 }
 // Built from scalars rather than an 8-byte load through a cast pointer: std::complex<float>
-// is only 4-byte aligned. Compilers emit a single broadcast.
+// is only 4-byte aligned. Clang 23 emits a single VBROADCASTSD for it.
 FFTN_FORCE_INLINE __m256 bcast(const float* p) {
   const __m128 x = _mm_setr_ps(p[0], p[1], p[0], p[1]);
   return _mm256_set_m128(x, x);
