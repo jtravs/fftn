@@ -24,6 +24,19 @@ FFTN_ISA_BEGIN(avx2)
 [[gnu::noinline]] inline __m256d fault_helper(__m256d a) { return _mm256_add_pd(a, a); }
 void fault_call(double* p) { _mm256_storeu_pd(p, fault_helper(_mm256_loadu_pd(p))); }
 
+// The same through an internal-linkage helper: ELF assemblers relocate such a call against
+// the helper's section (.text._ZN... under -ffunction-sections), not against its name.
+namespace {
+[[gnu::noinline]] double fault_internal_helper(double x) { return x * x + 1.0; }
+} // namespace
+void fault_internal_call(double* p) { p[0] = fault_internal_helper(p[1]); }
+
+// A lambda that is not inlined: a local entity (_ZZN...) of a region function.
+void fault_lambda(double* p) {
+  const auto square = [](double x) __attribute__((noinline)) { return x * x; };
+  p[0] = square(p[1]);
+}
+
 // AVX-512 code in the avx2 namespace.
 __attribute__((target("avx512f"))) void fault_evex(double* p) {
   _mm512_storeu_pd(p, _mm512_add_pd(_mm512_loadu_pd(p), _mm512_loadu_pd(p + 8)));
@@ -47,6 +60,19 @@ FFTN_ISA_BEGIN(neon_fcma)
 // A vector helper that is not force-inlined: the region calls it.
 [[gnu::noinline]] inline float64x2_t fault_helper(float64x2_t a) { return vcaddq_rot90_f64(a, a); }
 void fault_call(double* p) { vst1q_f64(p, fault_helper(vld1q_f64(p))); }
+
+// The same through an internal-linkage helper: ELF assemblers relocate such a call against
+// the helper's section (.text._ZN... under -ffunction-sections), not against its name.
+namespace {
+[[gnu::noinline]] double fault_internal_helper(double x) { return x * x + 1.0; }
+} // namespace
+void fault_internal_call(double* p) { p[0] = fault_internal_helper(p[1]); }
+
+// A lambda that is not inlined: a local entity (_ZZN...) of a region function.
+void fault_lambda(double* p) {
+  const auto square = [](double x) __attribute__((noinline)) { return x * x; };
+  p[0] = square(p[1]);
+}
 
 // FJCVTZS, which "arch=armv8.3-a" allows beside FCMA. (Pointer authentication, such as the
 // RETAA that branch protection may emit here, is allowed in neon_fcma: DESIGN.md 6.4.)

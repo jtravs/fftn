@@ -51,7 +51,7 @@ RELOC = re.compile(
 )
 INSN = re.compile(r"^\s*(?P<addr>[0-9a-f]+):\s+(?P<mn>\S+)\s*(?P<ops>.*)$")
 TARGET_REF = re.compile(r"(?P<addr>[0-9a-f]+) <(?P<sym>[^>+]+)(?:\+0x[0-9a-f]+)?>")
-OFFSET = re.compile(r"[+-]0x[0-9a-f]+$")
+RELOC_TARGET = re.compile(r"^(?P<base>.+?)(?P<addend>[+-]0x[0-9a-f]+)?$")
 # Itanium names (_Z, with Mach-O's extra underscore) and Microsoft names (?), which list a
 # name's namespaces innermost first, ending in "@@": ?f@?A0x1@avx2@detail@v0@fftn@@...
 MANGLED = re.compile(r"^(?:_{1,2}Z|\?)")
@@ -73,6 +73,8 @@ class Call:
     mnemonic: str
     symbol: str  # from the relocation, or as the disassembler printed the operand
     addr: int | None  # the resolved target address when no relocation names it
+    # A relocation against a section symbol (an ELF local function): section and offset.
+    section_ref: tuple[str, int] | None = None
 
 
 @dataclass
@@ -94,8 +96,11 @@ class Function:
 
 
 def components(mangled: str) -> list[str]:
-    """The leading source names of an Itanium nested name: _ZN4fftn2v06detail4avx2..."""
-    m = re.match(r"^_*ZN[rVKRO]*", mangled)
+    """The leading source names of an Itanium nested name: _ZN4fftn2v06detail4avx2...
+
+    A local entity (_ZZN..., a lambda or block-scope static) yields the names of the
+    function it belongs to, so a lambda in a region counts as that target's code."""
+    m = re.match(r"^_*ZZ?N[rVKRO]*", mangled)
     if not m:
         return []
     out, i = [], m.end()
@@ -147,6 +152,28 @@ def llvm_flavour(objdump: str) -> bool:
     return "LLVM" in out.stdout
 
 
+def section_call(call: Call, target: str) -> None:
+    """Records a call relocated against target, which may be a section symbol.
+
+    ELF assemblers relocate calls to internal-linkage functions against their section.
+    With -ffunction-sections that section is named after the function (.text._ZN...,
+    .text.unlikely._ZN...), and the name is taken from it; otherwise (.text,
+    .text.unlikely, .text.startup) the section and offset are resolved later."""
+    m = RELOC_TARGET.match(target)
+    base, addend = (m.group("base"), m.group("addend")) if m else (target, None)
+    call.addr = None
+    if not base.startswith("."):
+        call.symbol = base
+        return
+    for prefix in (".text.unlikely.", ".text.hot.", ".text.startup.", ".text.exit.", ".text."):
+        rest = base.removeprefix(prefix)
+        if rest != base and MANGLED.match(rest):
+            call.symbol = rest
+            return
+    call.symbol = ""
+    call.section_ref = (base, int(addend, 16) if addend else 0)
+
+
 def disassemble(objdump: str, path: str) -> tuple[str, list[Function]]:
     args = [objdump, "-d", "-r", "--no-show-raw-insn"]
     if llvm_flavour(objdump):
@@ -177,8 +204,7 @@ def disassemble(objdump: str, path: str) -> tuple[str, list[Function]]:
             continue
         elif m := RELOC.match(line):
             if pending is not None:
-                pending.symbol = OFFSET.sub("", m.group("sym"))
-                pending.addr = None
+                section_call(pending, m.group("sym"))
                 pending = None
         elif m := INSN.match(line):
             mn, ops = m.group("mn"), m.group("ops")
@@ -189,11 +215,16 @@ def disassemble(objdump: str, path: str) -> tuple[str, list[Function]]:
                 pending = Call(mn, ref.group("sym"), int(ref.group("addr"), 16)) if ref else None
                 if pending is not None:
                     cur.calls.append(pending)
-    resolve(funcs)
+    resolve(funcs, arch)
     return arch, funcs
 
 
-def resolve(funcs: list[Function]) -> None:
+def same_function(a: str, b: str) -> bool:
+    """b is a or a part GCC split from it (a.cold, a.cold.1)."""
+    return a == b or b.startswith((a + ".cold", a.split(".")[0] + ".cold"))
+
+
+def resolve(funcs: list[Function], arch: str) -> None:
     """Sets each function's end, and names the target of calls the assembler resolved.
 
     A resolved branch prints the nearest symbol before its target, which may be a
@@ -209,10 +240,17 @@ def resolve(funcs: list[Function]) -> None:
             a.end = b.addr
     for f in funcs:
         for call in f.calls:
-            if call.addr is None:
-                continue
-            callee = [g for g in starts[(f.obj, f.section)] if g.addr == call.addr]
-            call.symbol = callee[0].name if callee and callee[0] is not f else ""
+            if call.section_ref is not None:
+                section, addend = call.section_ref
+                # x86-64 rel32 addends count from the end of the 4-byte field.
+                target = addend + (4 if arch == "x86" else 0)
+                owner = [g for g in starts.get((f.obj, section), []) if g.addr <= target < g.end]
+                call.symbol = owner[0].name if owner else f"{section}+{target:#x} (unresolved)"
+            elif call.addr is not None:
+                callee = [g for g in starts[(f.obj, f.section)] if g.addr == call.addr]
+                call.symbol = callee[0].name if callee and callee[0] is not f else ""
+            if same_function(f.name, call.symbol) or same_function(call.symbol, f.name):
+                call.symbol = ""
 
 
 def is_pauth(base: str) -> bool:
@@ -253,7 +291,9 @@ def check_group(objdump: str, group: list[str], baseline_has: set[str]) -> list[
         for f in fs:
             for call in f.calls:
                 sym = call.symbol
-                if sym and (is_fftn(sym) or is_std(sym)):
+                if sym.endswith("(unresolved)"):
+                    errors.append(f"{t}: {f.name} calls {sym}, which cannot be checked")
+                elif sym and (is_fftn(sym) or is_std(sym)):
                     errors.append(f"{t}: {f.name} calls {sym} ({call.mnemonic}); must inline")
 
     mnemonics = {t: {mn for f in fs for mn, _ in f.insns} for t, fs in by_target.items()}
