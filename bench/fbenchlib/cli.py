@@ -23,7 +23,7 @@ DEFAULT_BUILD = store.REPO / "build" / "check-release"
 # a library with several code paths behind an option gets one run per path.
 SMOKE_OPTIONS = {
     "fftw": [{"PLANNER": "ESTIMATE"}],
-    "accelerate": [{"API": "interleaved"}, {"API": "dft"}],
+    "accelerate": [{"API": "dft"}, {"API": "interleaved"}],
 }
 # The relative output error the guard's self-check injects.
 SMOKE_PERTURB = "1e-6"
@@ -465,12 +465,14 @@ def smoke_one(
     work: Path,
     timeout: float,
     failures: list[str],
+    require_partial: bool = True,
 ) -> None:
     """One backend with one option set over the smoke cases, then the guard's self-check."""
     name = "+".join([library, *(f"{k}={v}" for k, v in opts.items())])
     # Unsupported cases fail for the kinds a backend says it supports. A kind it supports
     # only partly (some lengths or ranks) must still pass somewhere, so that a backend that
-    # turns everything down is not counted as correct.
+    # turns everything down is not counted as correct; that needs cases chosen to contain
+    # such lengths (the standard smoke tier), so other selections skip it.
     supported = set(info.get("supports", []))
     partial = set(info.get("partial", []))
     kind_of = {c.id: c.kind for c in cases}
@@ -507,7 +509,8 @@ def smoke_one(
     missing = len(cases) - len(results)
     if missing and not error:
         failures.append(f"{name}: {missing} cases produced no result")
-    for kind in sorted(((supported | partial) & set(kind_of.values())) - passed_kinds):
+    required = supported | partial if require_partial else supported
+    for kind in sorted((required & set(kind_of.values())) - passed_kinds):
         failures.append(f"{name}: declares {kind} but passed no {kind} case")
     print(
         f"smoke {name} ({info.get('version')}, isa {info.get('isa')}): "
@@ -542,6 +545,11 @@ def cmd_smoke(args: argparse.Namespace) -> int:
     work.mkdir(parents=True, exist_ok=True)
     cases_file = work / "cases.txt"
     cases_file.write_text("".join(c.line() + "\n" for c in cases))
+    standard_smoke = (
+        cat.path.resolve() == catalogue.resolve("standard").resolve()
+        and args.tier == "smoke"
+        and not args.filter
+    )
     failures: list[str] = []
     for exe in exes:
         library = exe.name.removeprefix("fbench-")
@@ -562,7 +570,17 @@ def cmd_smoke(args: argparse.Namespace) -> int:
         if selftest.returncode != 0:
             failures.append(f"{library}: {(selftest.stdout + selftest.stderr).strip()}")
         for opts in SMOKE_OPTIONS.get(library, [{}]):
-            smoke_one(exe, library, info, opts, cases, work, args.process_timeout, failures)
+            smoke_one(
+                exe,
+                library,
+                info,
+                opts,
+                cases,
+                work,
+                args.process_timeout,
+                failures,
+                require_partial=standard_smoke,
+            )
     for f in failures:
         print(f"smoke FAILURE: {f}")
     return 1 if failures and args.strict else 0

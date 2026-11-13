@@ -6,16 +6,18 @@
 //
 // vDSP has DFTs of rows only, of lengths 2^k and f 2^k for small f; anything else (planes,
 // volumes, other lengths) is reported unsupported. Two interfaces, chosen with API=:
-//   interleaved (default)  vDSP_DFT_Interleaved_CreateSetupD / _ExecuteD (macOS 12): works
-//                          on interleaved complex data, FFTW's layout, so nothing is
-//                          converted. Lengths f 2^k, f in {2, 3, 5, 9, 15, 25}, k >= 2
-//                          (complex length; a real transform of n uses n/2).
-//   dft                    vDSP_DFT_zop / zrop_CreateSetupD and vDSP_DFT_ExecuteD, Apple's
-//                          recommended split-complex routines: each row is converted from
-//                          and to interleaved data with vDSP_ctozD / vDSP_ztocD around the
-//                          transform. Lengths 2^k and f 2^k, f in {3, 5, 15} (k >= 3 for
-//                          complex, k >= 4 for real).
-// The default was chosen by an fbench A/B of the two (bench/README.md).
+//   dft (default)  vDSP_DFT_zop / zrop_CreateSetupD and vDSP_DFT_ExecuteD, Apple's
+//                  recommended split-complex routines: each row is converted from and to
+//                  interleaved data with vDSP_ctozD / vDSP_ztocD around the transform.
+//                  Lengths 2^k and f 2^k, f in {3, 5, 15} (k >= 3 for complex, k >= 4 for
+//                  real), up to 2^20 and beyond.
+//   interleaved    vDSP_DFT_Interleaved_CreateSetupD / _ExecuteD (macOS 12): works on
+//                  interleaved complex data, FFTW's layout, so nothing is converted. Its
+//                  header promises f 2^k, f in {2, 3, 5, 9, 15, 25}, but on macOS 27 it
+//                  refuses every complex length above 4096 and lengths such as 1536 and
+//                  3072, so it covers few of the client-like shapes; it is kept as an
+//                  option for short rows.
+// dft is the default because it is the interface that can do the shapes users have.
 //
 // What is timed, beyond the transform: rows are executed one by one (vDSP has no batched
 // DFT). Real transforms use vDSP's packed format, {2 X[0], 2 X[n/2]} in the first complex
@@ -24,7 +26,7 @@
 // input; its inverse then equals FFTW's unscaled c2r). With API=dft the conversions to and
 // from split complex are timed too: an application holding interleaved data pays them.
 //
-// Options: API=interleaved|dft.
+// Options: API=dft|interleaved.
 
 #include "backends/common.hpp"
 #include "harness/backend.hpp"
@@ -45,7 +47,7 @@ namespace {
 enum class api : std::uint8_t { interleaved, dft };
 
 struct backend_state {
-  api interface = api::interleaved;
+  api interface = api::dft;
   std::string description;
 };
 
@@ -65,7 +67,7 @@ std::string sysctl_text(const char* name) {
 
 struct plan_record {
   std::int32_t kind = fbench_c2c;
-  api interface = api::interleaved;
+  api interface = api::dft;
   std::size_t n = 0; // logical length
   std::size_t batch = 1;
   std::size_t in_dist = 0;  // in doubles
@@ -155,7 +157,7 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
       s.interface = val == "dft" ? api::dft : api::interleaved;
     } else {
       fbench::backends::say(message, message_size,
-                            "Accelerate options: API=interleaved|dft (got " + key + ")");
+                            "Accelerate options: API=dft|interleaved (got " + key + ")");
       return fbench_error;
     }
   }

@@ -56,7 +56,7 @@ other arm is compared with it. The label may be omitted (it defaults to the libr
 |---|---|---|
 | `PLANNER=ESTIMATE\|MEASURE\|PATIENT\|EXHAUSTIVE` | fftw | planning effort (default MEASURE) |
 | `WISDOM=run\|none\|<file>` | fftw | wisdom: fresh per run and shared by that run's processes with the same binary and planner (default), none at all, or imported read-only from a file |
-| `API=interleaved\|dft` | accelerate | vDSP's interleaved DFT (default) or its split-complex DFT with conversions (see below) |
+| `API=dft\|interleaved` | accelerate | vDSP's split-complex DFT with conversions (default) or its interleaved DFT (see below) |
 | `DELAY=<fraction>` | any (test only) | spin for that fraction of every measured batch: a seeded slowdown that proves the statistics |
 | `PERTURB=<eps>` | any (test only) | multiply every output value by 1 ± eps before the check: proves the correctness guard |
 
@@ -138,9 +138,10 @@ guard flags a perturbed output. It is the gate's `bench` stage and the CTest tes
 `bench.smoke`. An unsupported case fails when its kind is in the backend's `supports` list
 and is only counted otherwise (the FFTN backend supports nothing until it has a plan). A
 kind in the backend's `partial` list (supported for some lengths or ranks only, as with
-Accelerate) may be unsupported case by case, but must pass at least one smoke case. A
-library with several code paths behind an option is smoke-tested once per path
-(`SMOKE_OPTIONS` in `fbenchlib/cli.py`).
+Accelerate) may be unsupported case by case, but must pass at least one case of the
+standard smoke tier (other selections need not contain lengths it can do). A library with
+several code paths behind an option is smoke-tested once per path (`SMOKE_OPTIONS` in
+`fbenchlib/cli.py`).
 
 ## Catalogues
 
@@ -243,12 +244,14 @@ batch is a loop over transforms. An in-place real plane or volume is copied to a
 real array (KFR's multidimensional real transforms take one), and that copy is timed.
 
 **Apple Accelerate** (vDSP): rows only, of the lengths vDSP implements (planes, volumes and
-other lengths are unsupported; `describe` lists the kinds as `partial`). `API=interleaved`
-(default) uses `vDSP_DFT_Interleaved_ExecuteD` on the caller's interleaved data;
-`API=dft` uses Apple's recommended split-complex `vDSP_DFT_zop`/`zrop` with `vDSP_ctozD` and
-`vDSP_ztocD` around each row, conversions timed. Real transforms convert vDSP's packed
-format (2 X[0] and 2 X[n/2] in the first value, 2 X[k] after it) to FFTW's inside the timed
-call. Rows are executed one by one; vDSP has no batched DFT.
+other lengths are unsupported; `describe` lists the kinds as `partial`). `API=dft`
+(default) uses Apple's recommended split-complex `vDSP_DFT_zop`/`zrop` with `vDSP_ctozD` and
+`vDSP_ztocD` around each row, conversions timed (lengths 2^k and 3, 5 or 15 times 2^k).
+`API=interleaved` uses `vDSP_DFT_Interleaved_ExecuteD` on the caller's interleaved data with
+no conversion, but on macOS 27 it refuses every complex length above 4096 and some below
+(1536, 3072), so it covers few realistic shapes and is not the default. Real transforms
+convert vDSP's packed format (2 X[0] and 2 X[n/2] in the first value, 2 X[k] after it) to
+FFTW's inside the timed call. Rows are executed one by one; vDSP has no batched DFT.
 
 **Intel oneMKL** (2024.1 or newer; Linux x86-64): the root of an install (oneAPI's
 `mkl/<version>`, or a `mkl-devel` environment with `include/` and `lib/`). The backend links

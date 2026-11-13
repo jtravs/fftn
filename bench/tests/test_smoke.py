@@ -47,10 +47,20 @@ class SmokeKinds(unittest.TestCase):
         self.tmp.cleanup()
         os.environ.pop("FAKE_PASS", None)
 
-    def smoke(self, info: dict, passing: str) -> list[str]:
+    def smoke(self, info: dict, passing: str, require_partial: bool = True) -> list[str]:
         os.environ["FAKE_PASS"] = passing
         failures: list[str] = []
-        cli.smoke_one(self.exe, "fake", info, {}, self.cases, self.work, 60, failures)
+        cli.smoke_one(
+            self.exe,
+            "fake",
+            info,
+            {},
+            self.cases,
+            self.work,
+            60,
+            failures,
+            require_partial=require_partial,
+        )
         return failures
 
     def test_unsupported_case_of_a_supported_kind_fails(self):
@@ -61,6 +71,10 @@ class SmokeKinds(unittest.TestCase):
         self.assertEqual(self.smoke({"supports": [], "partial": ["c2c", "r2c"]}, "c2c,r2c"), [])
         failures = self.smoke({"supports": [], "partial": ["c2c", "r2c"]}, "c2c")
         self.assertEqual(failures, ["fake: declares r2c but passed no r2c case"])
+
+    def test_partial_kinds_need_no_pass_outside_the_standard_smoke_tier(self):
+        info = {"supports": [], "partial": ["c2c", "r2c"]}
+        self.assertEqual(self.smoke(info, "c2c", require_partial=False), [])
 
     def test_undeclared_kinds_may_be_unsupported(self):
         self.assertEqual(self.smoke({"supports": []}, ""), [])
