@@ -15,8 +15,8 @@
 /// - `fftn::kokkos::view_plan`, a plan class with the constructor and execute shape of
 ///   Kokkos-FFT 2.0's `KokkosFFT::Plan`, and the free `execute(plan, in, out, norm)`.
 ///   `fftn::kokkos::compat` spells these as Kokkos-FFT does (`Plan`, `Direction`,
-///   `Normalization`, `axis_type`, `execute`), so code written for Kokkos-FFT changes only
-///   its include and its namespace.
+///   `Normalization`, `axis_type`, `shape_type`, `execute`), so code written for Kokkos-FFT
+///   changes only its include and its namespace.
 ///
 /// Execution is serial, on the calling thread. How this differs from Kokkos-FFT, and the
 /// rules for each argument, are in docs/kokkos.md.
@@ -60,10 +60,6 @@ enum class normalization : std::int8_t {
 /// The axes to transform, as Kokkos-FFT's `axis_type`: indices into a View's dimensions,
 /// negative values counting from the end (-1 is the last dimension).
 template <std::size_t Dim> using axis_type = std::array<int, Dim>;
-
-/// Kokkos-FFT's `shape_type`, the lengths of the transformed axes. FFTN accepts only the
-/// lengths the Views already have (0 standing for them): it does not crop or pad.
-template <std::size_t Dim> using shape_type = std::array<std::size_t, Dim>;
 
 namespace detail {
 
@@ -441,21 +437,24 @@ public:
   explicit view_plan(const ExecutionSpace& exec_space, const InView& in, const OutView& out,
                      direction dir, int axis, std::optional<std::size_t> n = std::nullopt)
     requires(Dim == 1)
-      : view_plan(exec_space, in, out, dir, axis_type<1>{axis}, shape_type<1>{n.value_or(0)}) {}
+      : view_plan(exec_space, in, out, dir, axis_type<1>{axis},
+                  std::array<std::size_t, 1>{n.value_or(0)}) {}
 
   /// A plan of a transform over the dimensions `axes` of the Views (negative entries count
   /// from the end), as Kokkos-FFT's constructor; for real transforms the last axis listed is
   /// halved.
   ///
-  /// `s`, Kokkos-FFT's transform lengths, may hold 0 (the Views' length) or the length the
-  /// Views already have along each axis (the real side's length for real transforms).
+  /// `s`, Kokkos-FFT's transform lengths (`compat::shape_type`), may hold 0 (the Views'
+  /// length) or the length the Views already have along each axis (the real side's length
+  /// for real transforms).
   ///
   /// Throws `std::invalid_argument` naming the argument: `dir` for a real-to-complex plan
   /// that is not forward or a complex-to-real plan that is not backward (as Kokkos-FFT);
   /// `s` (or `n`) for a length the Views do not have; and everything `make_plan` refuses.
   /// Throws `std::bad_alloc` when memory runs out. Never touches the Views' values.
   explicit view_plan(const ExecutionSpace& exec_space, const InView& in, const OutView& out,
-                     direction dir, const axis_type<Dim>& axes, const shape_type<Dim>& s = {})
+                     direction dir, const axis_type<Dim>& axes,
+                     const std::array<std::size_t, Dim>& s = {})
       : view_plan(exec_space, in, out, checked_shape(in, out, dir, axes, s)) {}
 
   /// Not copyable, as Kokkos-FFT's plan.
@@ -545,7 +544,7 @@ private:
 
   static shape<in_element, out_element> checked_shape(const InView& in, const OutView& out,
                                                       direction dir, const axis_type<Dim>& axes,
-                                                      const shape_type<Dim>& s) {
+                                                      const std::array<std::size_t, Dim>& s) {
     if (std::is_floating_point_v<in_element> && dir != direction::forward) {
       detail::reject("dir", "must be forward for a real-to-complex plan");
     }
@@ -664,8 +663,10 @@ using Normalization = kokkos::normalization;
 /// `KokkosFFT::axis_type`: the adapter's `axis_type`.
 template <std::size_t Dim> using axis_type = kokkos::axis_type<Dim>;
 
-/// `KokkosFFT::shape_type`: the adapter's `shape_type`.
-template <std::size_t Dim> using shape_type = kokkos::shape_type<Dim>;
+/// `KokkosFFT::shape_type`: the lengths of the transformed axes, which the plan
+/// constructors take as `s`. FFTN accepts only the lengths the Views already have (0
+/// standing for them): it does not crop or pad.
+template <std::size_t Dim> using shape_type = std::array<std::size_t, Dim>;
 
 /// `KokkosFFT::execute`: the adapter's `execute`.
 using kokkos::execute;

@@ -16,6 +16,7 @@
 #include <Kokkos_Core.hpp>
 #include <gtest/gtest.h>
 
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -328,7 +329,7 @@ TYPED_TEST(KokkosAdapterValidation, AxesExtentsAndDirections) {
       [&] {
         fftn::kokkos::view_plan<host, c2, c2, 2>(host{}, a, b, direction::forward,
                                                  fftn::kokkos::axis_type<2>{0, 1},
-                                                 fftn::kokkos::shape_type<2>{3, 16});
+                                                 std::array<std::size_t, 2>{3, 16});
       },
       "s[1]");
 }
