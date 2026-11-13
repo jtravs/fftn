@@ -41,7 +41,7 @@ template <class T, class Layout> void check_c2c_rows(direction dir, bool in_plac
   fill(x, 7);
   const auto input = complexes_of(reals_of(x));
   const auto& out = in_place ? x : y;
-  const fftn::kokkos::plan p(host{}, x, out, dir, right ? -1 : 0);
+  const fftn::kokkos::view_plan p(host{}, x, out, dir, right ? -1 : 0);
   p.execute(x, out, normalization::none);
   const auto s = fftn::rows_c2c<T>(n, rows, dir);
   const auto want = in_place ? core_in_place<T>(s, input) : core_out_of_place(s, input, n * rows);
@@ -68,12 +68,12 @@ template <class T, class Layout> void check_r2c_c2r_rows() {
   const complex2<T, Layout> y("y", right ? rows : h, right ? h : rows);
   const real2<T, Layout> z("z", right ? rows : n, right ? n : rows);
   fill(x, 11);
-  const fftn::kokkos::plan forward(host{}, x, y, direction::forward, right ? -1 : 0);
+  const fftn::kokkos::view_plan forward(host{}, x, y, direction::forward, right ? -1 : 0);
   forward.execute(x, y, normalization::none);
   const auto spectrum = core_out_of_place(fftn::rows_r2c<T>(n, rows), reals_of(x), h * rows);
   expect_same_bits(reals_of(y), reals_from(spectrum));
 
-  const fftn::kokkos::plan backward(host{}, y, z, direction::backward, right ? -1 : 0);
+  const fftn::kokkos::view_plan backward(host{}, y, z, direction::backward, right ? -1 : 0);
   backward.execute(y, z, normalization::none);
   expect_same_bits(reals_of(z), core_out_of_place(fftn::rows_c2r<T>(n, rows), spectrum, n * rows));
 }
@@ -104,12 +104,12 @@ template <class T, class Layout> void check_real_rows_in_place() {
   fill(c, 5);
   const auto start = complexes_of(reals_of(c));
 
-  const fftn::kokkos::plan forward(host{}, r, c, direction::forward, right ? -1 : 0);
+  const fftn::kokkos::view_plan forward(host{}, r, c, direction::forward, right ? -1 : 0);
   forward.execute(r, c, normalization::none);
   const auto spectrum = core_in_place<T>(fftn::rows_r2c<T>(n, rows), start);
   expect_same_bits(reals_of(c), reals_from(spectrum));
 
-  const fftn::kokkos::plan backward(host{}, c, r, direction::backward, right ? -1 : 0);
+  const fftn::kokkos::view_plan backward(host{}, c, r, direction::backward, right ? -1 : 0);
   backward.execute(c, r, normalization::none);
   const auto back = core_in_place<T>(fftn::rows_c2r<T>(n, rows), spectrum);
   expect_same_bits(reals_of(c), reals_from(back));
@@ -132,8 +132,8 @@ TYPED_TEST(KokkosAdapter, BatchedPlanesInPlaceMatchTheCoreApi) {
   for (const direction dir : {direction::forward, direction::backward}) {
     fill(v, 3);
     const auto start = complexes_of(reals_of(v));
-    const fftn::kokkos::plan<host, view, view, 2> p(host{}, v, v, dir,
-                                                    fftn::kokkos::axis_type<2>{-2, -1});
+    const fftn::kokkos::view_plan<host, view, view, 2> p(host{}, v, v, dir,
+                                                         fftn::kokkos::axis_type<2>{-2, -1});
     p.execute(v, v, normalization::none);
     const auto want = core_in_place<T>(fftn::planes_c2c<T>(ny, nx, count, dir), start);
     expect_same_bits(reals_of(v), reals_from(want));
@@ -165,7 +165,7 @@ TYPED_TEST(KokkosAdapter, NormalisationScalesAsKokkosFft) {
            scaled_case{direction::backward, normalization::ortho, ortho},
            scaled_case{direction::backward, normalization::none, 1.0},
        }) {
-    const fftn::kokkos::plan p(host{}, x, y, k.dir, -1);
+    const fftn::kokkos::view_plan p(host{}, x, y, k.dir, -1);
     p.execute(x, y, k.norm);
     auto want = reals_from(core_out_of_place(fftn::rows_c2c<T>(n, rows, k.dir), input, n * rows));
     if (k.coefficient != 1.0) {
@@ -180,7 +180,7 @@ TYPED_TEST(KokkosAdapter, NormalisationScalesAsKokkosFft) {
   const complex2<T> c("c", rows, n / 2 + 1);
   const real2<T> r("r", rows, n);
   fill(c, 13);
-  const fftn::kokkos::plan c2r(host{}, c, r, direction::backward, -1);
+  const fftn::kokkos::view_plan c2r(host{}, c, r, direction::backward, -1);
   fftn::kokkos::execute(c2r, c, r);
   auto want = core_out_of_place(fftn::rows_c2r<T>(n, rows), complexes_of(reals_of(c)), n * rows);
   for (T& w : want) {
@@ -245,7 +245,7 @@ TYPED_TEST(KokkosAdapter, MakePlanGivesACorePlan) {
   static_assert(std::is_same_v<decltype(core), const fftn::r2c_plan<T>>);
   fftn::workspace ws(core);
   core.execute(fftn::kokkos::data_of(x), fftn::kokkos::data_of(y), ws);
-  const fftn::kokkos::plan p(host{}, x, z, direction::forward, -1);
+  const fftn::kokkos::view_plan p(host{}, x, z, direction::forward, -1);
   p.execute(x, z, normalization::none);
   expect_same_bits(reals_of(y), reals_of(z));
   EXPECT_EQ(p.fftn_plan().workspace_bytes(), core.workspace_bytes());
@@ -254,7 +254,7 @@ TYPED_TEST(KokkosAdapter, MakePlanGivesACorePlan) {
   const Kokkos::View<std::complex<T>*, Kokkos::HostSpace> u("u", n);
   const Kokkos::View<std::complex<T>*, Kokkos::HostSpace> v("v", n);
   fill(u, 23);
-  const fftn::kokkos::plan q(host{}, u, v, direction::backward, 0);
+  const fftn::kokkos::view_plan q(host{}, u, v, direction::backward, 0);
   q.execute(u, v, normalization::none);
   auto one = fftn::rows_c2c<T>(n, 1, direction::backward);
   one.batches = {};
@@ -277,7 +277,7 @@ TYPED_TEST(KokkosAdapter, StridesAndRanksAreReadFromTheView) {
   columns.batches.push_back(fftn::batch{.count = cols, .in_dist = 1, .out_dist = 1});
   const auto want = reals_from(core_out_of_place(columns, input, n * cols));
 
-  const fftn::kokkos::plan p(host{}, x, y, direction::backward, 0);
+  const fftn::kokkos::view_plan p(host{}, x, y, direction::backward, 0);
   p.execute(x, y, normalization::none);
   expect_same_bits(reals_of(y), want);
 
@@ -285,7 +285,7 @@ TYPED_TEST(KokkosAdapter, StridesAndRanksAreReadFromTheView) {
   const strided xs(x.data(), Kokkos::LayoutStride(n, cols, cols, 1));
   const strided ys(y.data(), Kokkos::LayoutStride(n, cols, cols, 1));
   fill(y, 0);
-  const fftn::kokkos::plan q(host{}, xs, ys, direction::backward, -2);
+  const fftn::kokkos::view_plan q(host{}, xs, ys, direction::backward, -2);
   q.execute(xs, ys, normalization::none);
   expect_same_bits(reals_of(y), want);
 
@@ -293,7 +293,7 @@ TYPED_TEST(KokkosAdapter, StridesAndRanksAreReadFromTheView) {
   const rank4 u("u", 2, 1, 3, 8);
   const rank4 w("w", 2, 1, 3, 8);
   fill(u, 19);
-  const fftn::kokkos::plan r(host{}, u, w, direction::forward, 3);
+  const fftn::kokkos::view_plan r(host{}, u, w, direction::forward, 3);
   r.execute(u, w, normalization::none);
   expect_same_bits(reals_of(w),
                    reals_from(core_out_of_place(fftn::rows_c2c<T>(8, 6, direction::forward),
@@ -340,16 +340,20 @@ void check_real_multi_axis(const std::array<std::size_t, 3>& dims, std::size_t t
   if (transformed == 2) {
     const fftn::kokkos::axis_type<2> axes =
         right ? fftn::kokkos::axis_type<2>{1, 2} : fftn::kokkos::axis_type<2>{1, 0};
-    const fftn::kokkos::plan<host, real3, complex3, 2> f(host{}, x, y, direction::forward, axes);
-    const fftn::kokkos::plan<host, complex3, real3, 2> b(host{}, y, z, direction::backward, axes);
+    const fftn::kokkos::view_plan<host, real3, complex3, 2> f(host{}, x, y, direction::forward,
+                                                              axes);
+    const fftn::kokkos::view_plan<host, complex3, real3, 2> b(host{}, y, z, direction::backward,
+                                                              axes);
     f.execute(x, y, normalization::none);
     expect_same_bits(reals_of(y), reals_from(spectrum));
     b.execute(y, z, normalization::none);
   } else {
     const fftn::kokkos::axis_type<3> axes =
         right ? fftn::kokkos::axis_type<3>{-3, -2, -1} : fftn::kokkos::axis_type<3>{2, 1, 0};
-    const fftn::kokkos::plan<host, real3, complex3, 3> f(host{}, x, y, direction::forward, axes);
-    const fftn::kokkos::plan<host, complex3, real3, 3> b(host{}, y, z, direction::backward, axes);
+    const fftn::kokkos::view_plan<host, real3, complex3, 3> f(host{}, x, y, direction::forward,
+                                                              axes);
+    const fftn::kokkos::view_plan<host, complex3, real3, 3> b(host{}, y, z, direction::backward,
+                                                              axes);
     f.execute(x, y, normalization::none);
     expect_same_bits(reals_of(y), reals_from(spectrum));
     b.execute(y, z, normalization::none);
@@ -384,7 +388,8 @@ TYPED_TEST(KokkosAdapter, AxesOutOfMemoryOrderFollowTheList) {
   c.axes.push_back(fftn::axis{.n = nx, .in_stride = 1, .out_stride = 1});
   c.axes.push_back(fftn::axis{.n = ny, .in_stride = nxs, .out_stride = nxs});
   c.batches.push_back(fftn::batch{.count = count, .in_dist = 30, .out_dist = 30});
-  const fftn::kokkos::plan<host, complex3, complex3, 2> p(host{}, x, y, direction::forward, axes);
+  const fftn::kokkos::view_plan<host, complex3, complex3, 2> p(host{}, x, y, direction::forward,
+                                                               axes);
   p.execute(x, y, normalization::none);
   expect_same_bits(reals_of(y),
                    reals_from(core_out_of_place(c, complexes_of(reals_of(x)), count * ny * nx)));
@@ -397,7 +402,8 @@ TYPED_TEST(KokkosAdapter, AxesOutOfMemoryOrderFollowTheList) {
   r.axes.push_back(fftn::axis{.n = nx, .in_stride = 1, .out_stride = 1});
   r.axes.push_back(fftn::axis{.n = ny, .in_stride = nxs, .out_stride = nxs});
   r.batches.push_back(fftn::batch{.count = count, .in_dist = 30, .out_dist = 20});
-  const fftn::kokkos::plan<host, real3, complex3, 2> q(host{}, xr, yh, direction::forward, axes);
+  const fftn::kokkos::view_plan<host, real3, complex3, 2> q(host{}, xr, yh, direction::forward,
+                                                            axes);
   q.execute(xr, yh, normalization::none);
   expect_same_bits(reals_of(yh), reals_from(core_out_of_place(r, reals_of(xr), count * hy * nx)));
 }
@@ -410,8 +416,8 @@ TYPED_TEST(KokkosAdapter, LayoutLeftPlanesInPlaceMatchTheCoreApi) {
   const left3 v("v", 8, 15, 3);
   fill(v, 73);
   const auto start = complexes_of(reals_of(v));
-  const fftn::kokkos::plan<host, left3, left3, 2> p(host{}, v, v, direction::backward,
-                                                    fftn::kokkos::axis_type<2>{1, 0});
+  const fftn::kokkos::view_plan<host, left3, left3, 2> p(host{}, v, v, direction::backward,
+                                                         fftn::kokkos::axis_type<2>{1, 0});
   p.execute(v, v, normalization::none);
   const auto want = core_in_place<T>(fftn::planes_c2c<T>(15, 8, 3, direction::backward), start);
   expect_same_bits(reals_of(v), reals_from(want));
@@ -430,7 +436,7 @@ TYPED_TEST(KokkosAdapter, TwoBatchLoopsRemainForAMiddleAxis) {
   want_shape.axes.push_back(fftn::axis{.n = 8, .in_stride = 4, .out_stride = 4});
   want_shape.batches.push_back(fftn::batch{.count = 3, .in_dist = 32, .out_dist = 32});
   want_shape.batches.push_back(fftn::batch{.count = 4, .in_dist = 1, .out_dist = 1});
-  const fftn::kokkos::plan p(host{}, x, y, direction::forward, 1);
+  const fftn::kokkos::view_plan p(host{}, x, y, direction::forward, 1);
   p.execute(x, y, normalization::none);
   expect_same_bits(reals_of(y),
                    reals_from(core_out_of_place(want_shape, complexes_of(reals_of(x)), 96)));
@@ -459,10 +465,12 @@ TYPED_TEST(KokkosAdapter, ThreeBatchLoopsThatDoNotNest) {
                   {.count = 2, .in_dist = 1, .out_dist = 1}},
   };
   const auto input = complexes_of(reals_of(x));
-  const fftn::kokkos::plan<host, complex5, complex5, 2> p(host{}, x, y, direction::forward, axes);
+  const fftn::kokkos::view_plan<host, complex5, complex5, 2> p(host{}, x, y, direction::forward,
+                                                               axes);
   p.execute(x, y, normalization::none);
   expect_same_bits(reals_of(y), reals_from(core_out_of_place(c, input, 288)));
-  const fftn::kokkos::plan<host, complex5, complex5, 2> q(host{}, x, x, direction::forward, axes);
+  const fftn::kokkos::view_plan<host, complex5, complex5, 2> q(host{}, x, x, direction::forward,
+                                                               axes);
   q.execute(x, x, normalization::none);
   expect_same_bits(reals_of(x), reals_from(core_in_place<T>(c, input)));
 
@@ -486,8 +494,10 @@ TYPED_TEST(KokkosAdapter, ThreeBatchLoopsThatDoNotNest) {
   for (const fftn::batch& b : rf.batches) {
     rb.batches.push_back({.count = b.count, .in_dist = b.out_dist, .out_dist = b.in_dist});
   }
-  const fftn::kokkos::plan<host, real5, complex5, 2> f(host{}, xr, yh, direction::forward, axes);
-  const fftn::kokkos::plan<host, complex5, real5, 2> b(host{}, yh, zr, direction::backward, axes);
+  const fftn::kokkos::view_plan<host, real5, complex5, 2> f(host{}, xr, yh, direction::forward,
+                                                            axes);
+  const fftn::kokkos::view_plan<host, complex5, real5, 2> b(host{}, yh, zr, direction::backward,
+                                                            axes);
   f.execute(xr, yh, normalization::none);
   const auto spectrum = core_out_of_place(rf, reals_of(xr), 192);
   expect_same_bits(reals_of(yh), reals_from(spectrum));
@@ -501,7 +511,7 @@ TYPED_TEST(KokkosAdapter, ThreeBatchLoopsThatDoNotNest) {
   const strided4 u(pool.data(), loose);
   const strided4 v(pool2.data(), loose);
   fill(pool, 101);
-  const fftn::kokkos::plan<host, strided4, strided4> r(host{}, u, v, direction::backward, -1);
+  const fftn::kokkos::view_plan<host, strided4, strided4> r(host{}, u, v, direction::backward, -1);
   r.execute(u, v, normalization::none);
   const fftn::shape<std::complex<T>, std::complex<T>> loose_shape{
       .dir = direction::backward,
@@ -538,11 +548,11 @@ TYPED_TEST(KokkosAdapter, RealKindsThroughLayoutStride) {
   b.batches.push_back(fftn::batch{.count = rows, .in_dist = 8, .out_dist = 13});
   // The core's view of the same memory, whole stores: gaps stay zero on both sides.
   const auto spectrum = core_out_of_place(f, reals_of(real_store), rows * (h + 2));
-  const fftn::kokkos::plan pf(host{}, x, y, direction::forward, -1);
+  const fftn::kokkos::view_plan pf(host{}, x, y, direction::forward, -1);
   pf.execute(x, y, normalization::none);
   expect_same_bits(reals_of(complex_store), reals_from(spectrum));
   const auto back = core_out_of_place(b, spectrum, rows * (n + 3));
-  const fftn::kokkos::plan pb(host{}, y, z, direction::backward, -1);
+  const fftn::kokkos::view_plan pb(host{}, y, z, direction::backward, -1);
   pb.execute(y, z, normalization::none);
   expect_same_bits(reals_of(back_store), back);
 }

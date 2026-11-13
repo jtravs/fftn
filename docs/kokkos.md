@@ -10,10 +10,10 @@ transforms themselves follow [the conventions](conventions.md).
 
 The header offers two levels:
 
-- **The Kokkos-FFT-shaped plan.** `fftn::kokkos::plan` has the constructor and execute
-  shape of Kokkos-FFT 2.0's `KokkosFFT::Plan`, and `fftn::kokkos::execute(plan, in, out,
-  norm)` is its free `KokkosFFT::execute`. The namespace `fftn::kokkos::compat` spells them
-  as Kokkos-FFT does (`Plan`, `Direction`, `Normalization`, `axis_type`, `shape_type`,
+- **The Kokkos-FFT-shaped plan.** `fftn::kokkos::view_plan` has the constructor and
+  execute shape of Kokkos-FFT 2.0's `KokkosFFT::Plan`, and `fftn::kokkos::execute(plan, in,
+  out, norm)` is its free `KokkosFFT::execute`. The namespace `fftn::kokkos::compat` spells
+  them as Kokkos-FFT does (`Plan`, `Direction`, `Normalization`, `axis_type`, `shape_type`,
   `execute`), so code written for Kokkos-FFT changes only its include and its namespace.
 - **View-based construction for the core API.** `shape_of(in, out, dir, axes)` gives the
   `fftn::shape` of a pair of Views, `make_plan` the ordinary `fftn::plan`, and `data_of(view)`
@@ -58,10 +58,10 @@ const planes original("original", count, ny, nx);
 
 // In place (the same View twice): a 2-D transform of every plane, over the last two axes.
 const fftn::kokkos::axis_type<2> axes{-2, -1};
-const fftn::kokkos::plan<host, planes, planes, 2> forward(exec, v, v, fftn::direction::forward,
-                                                          axes);
-const fftn::kokkos::plan<host, planes, planes, 2> backward(exec, v, v, fftn::direction::backward,
-                                                           axes);
+const fftn::kokkos::view_plan<host, planes, planes, 2> forward(exec, v, v,
+                                                               fftn::direction::forward, axes);
+const fftn::kokkos::view_plan<host, planes, planes, 2> backward(exec, v, v,
+                                                                fftn::direction::backward, axes);
 
 for (std::size_t p = 0; p < count; ++p) {
   for (std::size_t iy = 0; iy < ny; ++iy) {

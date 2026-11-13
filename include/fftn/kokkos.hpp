@@ -12,7 +12,7 @@
 ///   transform into an ordinary `fftn::shape` or `fftn::plan`, and `data_of` gives the
 ///   pointers to execute it with. Views of `LayoutRight`, `LayoutLeft` and `LayoutStride`
 ///   are read through their extents and strides.
-/// - `fftn::kokkos::plan`, a plan class with the constructor and execute shape of
+/// - `fftn::kokkos::view_plan`, a plan class with the constructor and execute shape of
 ///   Kokkos-FFT 2.0's `KokkosFFT::Plan`, and the free `execute(plan, in, out, norm)`.
 ///   `fftn::kokkos::compat` spells these as Kokkos-FFT does (`Plan`, `Direction`,
 ///   `Normalization`, `axis_type`, `execute`), so code written for Kokkos-FFT changes only
@@ -135,7 +135,7 @@ template <class InView, class OutView> bool overlapping(const InView& in, const 
 // so that execute never allocates (Kokkos itself allocates nothing for a fence on a host
 // back end unless a Kokkos Tools library is loaded).
 inline const std::string& fence_label() {
-  static const std::string label("fftn::kokkos::plan::execute: fence before the transform");
+  static const std::string label("fftn::kokkos::view_plan::execute: fence before the transform");
   return label;
 }
 
@@ -423,11 +423,11 @@ make_plan(const InView& in, const OutView& out, direction dir, const axis_type<D
 ///
 /// Guarantees: the results are those of the `fftn::plan` it holds, bit for bit, then scaled
 /// as the execute call's `normalization` asks. Not copyable or movable, as Kokkos-FFT's.
-template <class ExecutionSpace, class InView, class OutView, std::size_t Dim = 1> class plan {
+template <class ExecutionSpace, class InView, class OutView, std::size_t Dim = 1> class view_plan {
   static_assert(Kokkos::is_execution_space_v<ExecutionSpace>,
-                "fftn::kokkos::plan: ExecutionSpace must be a Kokkos execution space");
+                "fftn::kokkos::view_plan: ExecutionSpace must be a Kokkos execution space");
   static_assert(Kokkos::SpaceAccessibility<ExecutionSpace, Kokkos::HostSpace>::accessible,
-                "fftn::kokkos::plan: ExecutionSpace must run on the host");
+                "fftn::kokkos::view_plan: ExecutionSpace must run on the host");
   static constexpr std::size_t rank = InView::rank();
   using in_element = element_t<InView>;
   using out_element = element_t<OutView>;
@@ -438,10 +438,10 @@ public:
   ///
   /// `n`, Kokkos-FFT's output length, may be given only as the length the Views already
   /// have (FFTN does not crop or pad). Otherwise as the constructor taking `axes`.
-  explicit plan(const ExecutionSpace& exec_space, const InView& in, const OutView& out,
-                direction dir, int axis, std::optional<std::size_t> n = std::nullopt)
+  explicit view_plan(const ExecutionSpace& exec_space, const InView& in, const OutView& out,
+                     direction dir, int axis, std::optional<std::size_t> n = std::nullopt)
     requires(Dim == 1)
-      : plan(exec_space, in, out, dir, axis_type<1>{axis}, shape_type<1>{n.value_or(0)}) {}
+      : view_plan(exec_space, in, out, dir, axis_type<1>{axis}, shape_type<1>{n.value_or(0)}) {}
 
   /// A plan of a transform over the dimensions `axes` of the Views (negative entries count
   /// from the end), as Kokkos-FFT's constructor; for real transforms the last axis listed is
@@ -454,20 +454,20 @@ public:
   /// that is not forward or a complex-to-real plan that is not backward (as Kokkos-FFT);
   /// `s` (or `n`) for a length the Views do not have; and everything `make_plan` refuses.
   /// Throws `std::bad_alloc` when memory runs out. Never touches the Views' values.
-  explicit plan(const ExecutionSpace& exec_space, const InView& in, const OutView& out,
-                direction dir, const axis_type<Dim>& axes, const shape_type<Dim>& s = {})
-      : plan(exec_space, in, out, checked_shape(in, out, dir, axes, s)) {}
+  explicit view_plan(const ExecutionSpace& exec_space, const InView& in, const OutView& out,
+                     direction dir, const axis_type<Dim>& axes, const shape_type<Dim>& s = {})
+      : view_plan(exec_space, in, out, checked_shape(in, out, dir, axes, s)) {}
 
   /// Not copyable, as Kokkos-FFT's plan.
-  plan(const plan&) = delete;
+  view_plan(const view_plan&) = delete;
   /// Not copyable, as Kokkos-FFT's plan.
-  plan& operator=(const plan&) = delete;
+  view_plan& operator=(const view_plan&) = delete;
   /// Not movable, as Kokkos-FFT's plan.
-  plan(plan&&) = delete;
+  view_plan(view_plan&&) = delete;
   /// Not movable, as Kokkos-FFT's plan.
-  plan& operator=(plan&&) = delete;
+  view_plan& operator=(view_plan&&) = delete;
   /// Releases the FFTN plan and the workspace.
-  ~plan() = default;
+  ~view_plan() = default;
 
   /// Transforms `in` into `out`, then scales the output as `norm` says (Kokkos-FFT's
   /// default: backward transforms by 1/N).
@@ -503,7 +503,7 @@ public:
       detail::reject("out", "overlaps in, and the plan is out of place");
     }
     if (busy_.exchange(true, std::memory_order_acquire)) {
-      throw std::logic_error("fftn::kokkos: plan::execute was called while another execution "
+      throw std::logic_error("fftn::kokkos: view_plan::execute was called while another execution "
                              "of the same plan was running; one plan runs one execution at a "
                              "time (use a plan per thread, or make_plan and a workspace each)");
     }
@@ -525,8 +525,8 @@ public:
   [[nodiscard]] std::string describe() const { return plan_.describe(); }
 
 private:
-  plan(ExecutionSpace exec_space, const InView& in, const OutView& out,
-       const shape<in_element, out_element>& s)
+  view_plan(ExecutionSpace exec_space, const InView& in, const OutView& out,
+            const shape<in_element, out_element>& s)
       : exec_space_(std::move(exec_space)),
         plan_(detail::plan_of(s, detail::same_first_element(in, out))),
         workspace_(plan_.workspace_bytes()), dir_(s.dir),
@@ -636,9 +636,9 @@ private:
 /// Executes `p` on `in` and `out` with normalisation `norm`, as Kokkos-FFT's free
 /// `KokkosFFT::execute`: the same as `p.execute(in, out, norm)`.
 ///
-/// Preconditions, exceptions and guarantees: those of `plan::execute`.
+/// Preconditions, exceptions and guarantees: those of `view_plan::execute`.
 template <class ExecutionSpace, class InView, class OutView, std::size_t Dim>
-void execute(const plan<ExecutionSpace, InView, OutView, Dim>& p,
+void execute(const view_plan<ExecutionSpace, InView, OutView, Dim>& p,
              const std::type_identity_t<InView>& in, const std::type_identity_t<OutView>& out,
              normalization norm = normalization::backward) {
   p.execute(in, out, norm);
@@ -650,9 +650,9 @@ void execute(const plan<ExecutionSpace, InView, OutView, Dim>& p,
 /// adapter's own.
 namespace compat {
 
-/// `KokkosFFT::Plan`: the adapter's `plan`.
+/// `KokkosFFT::Plan`: the adapter's `view_plan`.
 template <class ExecutionSpace, class InViewType, class OutViewType, std::size_t Dim = 1>
-using Plan = kokkos::plan<ExecutionSpace, InViewType, OutViewType, Dim>;
+using Plan = kokkos::view_plan<ExecutionSpace, InViewType, OutViewType, Dim>;
 
 /// `KokkosFFT::Direction`: FFTN's `direction`, whose `forward` and `backward` are spelled the
 /// same.

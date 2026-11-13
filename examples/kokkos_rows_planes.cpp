@@ -68,10 +68,10 @@ double planes_round_trip(const host& exec) {
 
   // In place (the same View twice): a 2-D transform of every plane, over the last two axes.
   const fftn::kokkos::axis_type<2> axes{-2, -1};
-  const fftn::kokkos::plan<host, planes, planes, 2> forward(exec, v, v, fftn::direction::forward,
-                                                            axes);
-  const fftn::kokkos::plan<host, planes, planes, 2> backward(exec, v, v, fftn::direction::backward,
-                                                             axes);
+  const fftn::kokkos::view_plan<host, planes, planes, 2> forward(exec, v, v,
+                                                                 fftn::direction::forward, axes);
+  const fftn::kokkos::view_plan<host, planes, planes, 2> backward(exec, v, v,
+                                                                  fftn::direction::backward, axes);
 
   for (std::size_t p = 0; p < count; ++p) {
     for (std::size_t iy = 0; iy < ny; ++iy) {
