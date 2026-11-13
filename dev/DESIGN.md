@@ -561,7 +561,7 @@ high-precision verification. It is documented in `gen/README.md` (section 17).
    |---|---|
    | 2, 4, 8, 16, 32, 64 | conjugate-pair split radix; twiddles that are multiples of N/4 are free, N/8 is (1 ± i)·√½ |
    | 6, 10, 12, 15, 20, 24, … (coprime factors) | Good–Thomas index mapping: no internal twiddle multiplies |
-   | 3, 5, 7, 11, 13 | symmetric-pair form: sums and differences of x_j and x_{R−j}, then cosine/sine combinations |
+   | 3, 5, 7, 11, 13 | symmetric-pair form: sums and differences of x_j and x_{R−j}, then cosine/sine combinations, with the mean of each cosine row taken out first (m² − m + 1 multiplies instead of m² for m pairs, same additions) |
    | 9, 25, 27 | Cooley–Tukey with constant internal rotations |
 
 2. **Track pending rotations.** Every node carries a pending factor (−i)^k. Combining two
@@ -574,14 +574,20 @@ high-precision verification. It is documented in `gen/README.md` (section 17).
    (evaluate each node at random inputs in high precision and hash), dead-code elimination
    for pruned inputs and outputs.
 4. **Lower** to one of two forms:
-   - *complex-register*: nodes map directly onto the complex vocabulary;
+   - *complex-register*: nodes map directly onto the complex vocabulary, one operation per
+     node. Each node's register holds its value times a rotation chosen backwards from the
+     stores, so that no output needs an extra operation; a scale with a single user fuses
+     into `fmadd_r`, a shared one stays one multiply;
    - *split*: each complex node expands to real and imaginary nodes, followed by a second
      simplification and **FMA shaping** (emit a ± b·c directly; factor rotations as
      c·(x − t·y) with t = s/c where the outer multiply can be absorbed).
-5. **Order** the emission depth-first by recursive partition of the DAG (finish one
-   sub-transform before starting the next), and place each store next to the operation
-   that produces its value. This keeps the number of live values near the minimum, which
-   matters for radix ≥ 16 on 16 registers and ≥ 32 on 32. A codelet whose radix exceeds
+5. **Order** the emission by greedy list scheduling: the ready operation that adds the
+   fewest live values goes next, ties to the one that uses the most recently computed value,
+   which finishes one sub-transform before starting the next; place each load just before
+   its first use and each store next to the operation that produces its value. This keeps
+   the number of live values near the minimum, which matters for radix ≥ 16 on 16
+   registers and ≥ 32 on 32. (The recursive partition of Frigo's PLDI 1999 paper was tried
+   first and kept more values live: `gen/fftn_gen/schedule.py`.) A codelet whose radix exceeds
    the register count necessarily keeps some values on the stack; that is acceptable when
    the spills are few and ordered (FFTW's radix-32 and radix-64 codelets work this way),
    and ruinous when they are not: the prototype's hand-built radix 20, 24 and 32
@@ -591,8 +597,14 @@ high-precision verification. It is documented in `gen/README.md` (section 17).
    the exact DFT for random and basis inputs. A codelet that fails is not written.
 7. **Emit** C++ against the vocabulary: one text for all targets per lowering, included
    in each target's region, with a per-target selection of which codelets to instantiate.
-   Alongside it, emit a metadata table: radix, variant, operation counts (adds,
-   multiplies, FMAs, complex multiplies), peak live values, twiddle count. The planner's
+   The complex-register text is `src/gen/complex_codelets.inl`: `cdft<R>` with static
+   member templates `plain`, `dit` and `dif` over `T` and `Sign`, which take the caller's
+   accessor objects (`in.get(j)`, `out.put(k, v)`, `twid.get(k)`), so that pass kinds, edge
+   variants and layouts change only the accessors (the calling convention is in
+   `gen/README.md`).
+   Alongside it, emit a metadata table (`src/gen/codelets.hpp`): radix, variant,
+   direction, lowering, operation counts (adds, multiplies, FMAs, complex multiplies,
+   vocabulary operations, forced rotations), peak live values, twiddle count. The planner's
    cost model, the kernel registry and the tests are driven from this table, so there are
    no hand-maintained lists of radices anywhere.
 
@@ -602,7 +614,9 @@ For each radix the generator can emit:
 
 - **plain** (no twiddles): leaves and last passes;
 - **DIF twiddle** (multiply outputs) and **DIT twiddle** (multiply inputs, with the
-  multiply fused into the first butterfly layer as `madd` where the target has it);
+  multiply fused into the first butterfly layer as `madd` where a product has a single
+  user; in the radix 2–16 codelets none has, since every twiddled input feeds a sum and a
+  difference, and fusing both would repeat the multiply);
 - **forward and backward**: generated separately for the complex-register form; for the
   split form the backward transform reuses the forward codelet with real and imaginary
   registers exchanged at load and store;
@@ -611,9 +625,15 @@ For each radix the generator can emit:
 - **fused-edge**: the real-transform post- or pre-processing folded into the codelet of
   the last or first pass (section 9.1).
 
+Generated so far (task 1.1): the complex-register form of plain, DIT and DIF, forward and
+backward, for radices 2–16. The split form, pruned and fused-edge variants follow with
+tasks 1.5 and 2.1.
+
 Reference values for regression: the generator's operation counts are compared with the
 best published counts for each size (for example a size-16 complex DFT in 144 additions
-and 24 multiplications in scalar split form). Reaching them means nothing is missing.
+and 24 multiplications in scalar split form). Reaching them means nothing is missing. The
+table and the recorded gaps are in `gen/fftn_gen/reference.py`; the one gap so far is 13,
+where the reference uses Rader's algorithm.
 
 ### 7.4 What the generator does not do
 
@@ -1513,6 +1533,16 @@ plan plus `workspace(plan)`) and stay cheap only while two properties hold: twid
 do not depend on the direction, and a workspace is plain bytes sized by
 `workspace_bytes()`, not tied to one plan. Do not break either without revisiting this.
 
+**Generator (task 1.1).** (a) A vocabulary operation that multiplies by a constant complex
+number: two `FCMLA` on NEON+FCMA, where the complex-register codelets now spend two
+`scale` and one `addj` or `subj` on each generic constant root (four in radix 16, four in
+9). It touches every target's vocabulary, so it is weighed with the split lowering's FMA
+shaping (task 1.5). (b) Rader's algorithm for 13 (and the primes above 16): the
+symmetric-pair form costs 192 additions and 134 multiplies against Rader's 176 and 68.
+(c) The twiddle of a lane pass is the same in every lane; the vocabulary has no broadcast
+of a `tw` (`bcast` is for `cv`), so task 1.2 either stores each twiddle replicated C times
+or adds `bcast_tw` to the vocabulary.
+
 **API decisions reviewed in task 0.9 (settled; see the decision log).** Task 0.5 implemented section 5 for what the
 walking skeleton needs. Where it departs from section 5, or settles something section 5
 leaves open, it is listed here with the reason; the review accepts, changes or rejects
@@ -1722,6 +1752,10 @@ or departs from sections 5.5 and 13.6, or from Kokkos-FFT 2.0's `KokkosFFT::Plan
 | 2026-11-13 | API review (task 0.9): the maintainer took every recommendation of the review of DESIGN 18.2 items 1–35. Accepted as built: 1, 3, 4, 6–21, 23–32. Changed: axes and batch dimensions become `std::vector` and `small_vector` goes (2); the shape takes more batch dimensions, so Views with more than two non-nesting loops work in the adapter (35); `execute_rows` becomes `execute_transforms` (5); the adapter's class becomes `fftn::kokkos::view_plan`, with `compat::Plan` as its alias (33); `shape_type` lives only in `compat` (34); `compat::Direction` takes Kokkos-FFT's values 0 and 1 (22, so that nothing in `compat` differs from Kokkos-FFT on purpose) | Plan construction allocates anyway, so an inline container buys nothing and freezes the rank limit into the type; names should be exact before anyone depends on them; the adapter should stay a faithful mirror of Kokkos-FFT, which keeps open an FFTN host backend inside Kokkos-FFT later |
 | 2026-11-13 | FFTN is unreleased: until the first tagged release the API may change in any way, and a wrong choice is fixed rather than kept (README, AGENTS section 1, section 5) | Maintainer's decision at the API review |
 | 2026-11-13 | Deferred, not rejected: a two-way plan (forward and backward over one table set) and an object owning a plan and its workspace | Small gain for more API surface; both can be added later without changing the API as long as twiddle tables stay direction-independent and a workspace stays plain bytes sized by `workspace_bytes()` (18.2) |
+| 2026-11-13 | Codelet calling convention: `cdft<R>::plain`, `dit` and `dif`, static member templates over `T` and `Sign` (−1 forward, +1 backward), taking the caller's accessor objects `in.get(j)`, `out.put(k, v)` and `twid.get(k)`; twiddles are forward roots, multiplied by `mulc` backward (gen/README.md) | One codelet text then serves every pass kind, edge variant and layout, which differ only in their accessors; stores stay next to their producers inside the codelet; the accessors hold pointers, never vectors, so no vector crosses a non-inlined boundary |
+| 2026-11-13 | Task 1.1 generates the complex-register lowering only, for radices 2–16: plain, DIT and DIF, forward and backward. They are compiled and tested in test-only region units (`tests/isa/codelets_<target>.cpp`) until task 1.2's passes instantiate them in the library | The split lowering, pruned and fused-edge variants are tasks 1.5 and 2.1; codelets nothing calls do not belong in the library's units |
+| 2026-11-13 | The generator orders codelets by greedy list scheduling for fewest live values, not by the recursive partition of section 7.2's first draft | Over radices 2–16 and all variants the greedy order has a total peak of 502 live values, the partition 598 and the builders' own creation order 549 (forward codelets); a test holds that it is never worse than creation order or stage-by-stage order on any codelet |
+| 2026-11-13 | Operation counts are compared with the best published counts in unfused real arithmetic; a size the generator misses is recorded with its exact counts and reason (`gen/fftn_gen/reference.py`), and only 13 is (Rader's algorithm, 176 + 68 against 192 + 134) | A gap is never widened silently and a closed gap is noticed; the mean removal in the prime form beats the reference at 7, 11 and 14 |
 
 ---
 
