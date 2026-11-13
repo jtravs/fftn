@@ -15,6 +15,12 @@ fftn_add_test(fftn_contract_tests
 # One translation unit per public header, including only that header, all linked into one
 # executable (which also proves the headers define nothing twice across units).
 file(GLOB public_headers CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/include/fftn/*.hpp)
+# kokkos.hpp is the optional adapter: it includes Kokkos_Core.hpp, so its unit is built only
+# when the test build has Kokkos, and that build links Kokkos into the executable.
+list(FILTER public_headers EXCLUDE REGEX "/kokkos\\.hpp$")
+if(TARGET Kokkos::kokkos)
+  list(APPEND public_headers ${PROJECT_SOURCE_DIR}/include/fftn/kokkos.hpp)
+endif()
 set(alone_units "")
 foreach(header IN LISTS public_headers)
   get_filename_component(stem "${header}" NAME_WE)
@@ -28,6 +34,9 @@ endforeach()
 add_executable(fftn_headers_alone headers_alone_main.cpp ${alone_units})
 fftn_configure_target(fftn_headers_alone)
 target_link_libraries(fftn_headers_alone PRIVATE fftn::fftn)
+if(TARGET Kokkos::kokkos)
+  fftn_link_kokkos(fftn_headers_alone)
+endif()
 add_test(NAME api.headers_alone COMMAND fftn_headers_alone)
 
 # A translation unit compiled with fast-math must be refused with FFTN's own message.
