@@ -251,8 +251,9 @@ template <class T> outcome c2c_real_input_symmetry(const subject<T>& s, std::siz
   return o;
 }
 
-// Batches with gaps, odd distances, negative strides and unaligned element 0, against the
-// same rows transformed one at a time. The harness checks that the gaps stay untouched.
+// Batches with gaps, odd distances, negative strides and distances on either side and
+// unaligned element 0, against the same rows transformed one at a time. The harness checks
+// that the gaps stay untouched.
 template <class T> outcome c2c_batched_strided(const subject<T>& s, std::size_t n) {
   outcome o;
   const tolerance tol = tolerance_for(s, n) * 2;
@@ -277,10 +278,29 @@ template <class T> outcome c2c_batched_strided(const subject<T>& s, std::size_t 
           .out_stride = 1,
           .out_dist = in + 1,
       },
+      // Reversed rows with gaps on the output side, rows going forwards and backwards.
+      rows{
+          .n = n,
+          .count = count,
+          .in_stride = 1,
+          .in_dist = in,
+          .out_stride = -2,
+          .out_dist = 2 * in + 1,
+      },
+      rows{
+          .n = n,
+          .count = count,
+          .in_stride = 2,
+          .in_dist = -(2 * in + 1),
+          .out_stride = -1,
+          .out_dist = -(in + 3),
+      },
   };
   const std::array options{
       run_options{.in_offset = sizeof(T), .out_offset = 3 * sizeof(T)},
       run_options{.in_offset = 2 * sizeof(T), .out_offset = sizeof(T), .guard = guard_side::below},
+      run_options{.in_offset = 0, .out_offset = sizeof(T), .guard = guard_side::below},
+      run_options{.in_offset = 3 * sizeof(T), .out_offset = 2 * sizeof(T)},
   };
   for (const direction d : detail::directions) {
     std::vector<std::complex<T>> single;
@@ -500,6 +520,15 @@ template <class T> outcome r2c_batched_strided(const subject<T>& s, std::size_t 
           .out_stride = 1,
           .out_dist = hn + 2,
       },
+      // Reversed output rows, going backwards with a gap.
+      rows{
+          .n = n,
+          .count = count,
+          .in_stride = 1,
+          .in_dist = in + 3,
+          .out_stride = -1,
+          .out_dist = -(hn + 1),
+      },
   };
   const std::array options{
       run_options{.in_offset = sizeof(T), .out_offset = sizeof(T)},
@@ -508,6 +537,7 @@ template <class T> outcome r2c_batched_strided(const subject<T>& s, std::size_t 
           .out_offset = 2 * sizeof(T),
           .guard = guard_side::below,
       },
+      run_options{.in_offset = 2 * sizeof(T), .out_offset = 0, .guard = guard_side::below},
   };
   std::vector<std::complex<T>> single;
   for (std::size_t r = 0; r < count; ++r) {
@@ -696,6 +726,15 @@ template <class T> outcome c2r_batched_strided(const subject<T>& s, std::size_t 
           .out_stride = 1,
           .out_dist = in + 2,
       },
+      // Reversed output rows with gaps, going forwards.
+      rows{
+          .n = n,
+          .count = count,
+          .in_stride = 1,
+          .in_dist = hn,
+          .out_stride = -3,
+          .out_dist = 3 * in + 2,
+      },
   };
   const std::array options{
       run_options{.in_offset = sizeof(T), .out_offset = sizeof(T)},
@@ -704,6 +743,7 @@ template <class T> outcome c2r_batched_strided(const subject<T>& s, std::size_t 
           .out_offset = 3 * sizeof(T),
           .guard = guard_side::below,
       },
+      run_options{.in_offset = 0, .out_offset = sizeof(T), .guard = guard_side::below},
   };
   std::vector<T> single;
   for (std::size_t r = 0; r < count; ++r) {
@@ -856,10 +896,36 @@ outcome plane_batched_strided(const subject<T>& s, std::size_t ny, std::size_t n
           .out_x_stride = 1,
           .out_dist = y * xn,
       },
+      // Output planes reversed along both axes, padded rows, going backwards.
+      planes{
+          .ny = ny,
+          .nx = nx,
+          .count = count,
+          .in_y_stride = xn,
+          .in_x_stride = 1,
+          .in_dist = y * xn,
+          .out_y_stride = -(xn + 1),
+          .out_x_stride = -1,
+          .out_dist = -(y * (xn + 1) + 1),
+      },
+      // Transposed output planes, y reversed, x forwards with a gap.
+      planes{
+          .ny = ny,
+          .nx = nx,
+          .count = count,
+          .in_y_stride = xn,
+          .in_x_stride = 1,
+          .in_dist = y * xn + 1,
+          .out_y_stride = -1,
+          .out_x_stride = y + 2,
+          .out_dist = xn * (y + 2) + 1,
+      },
   };
   const std::array options{
       run_options{.in_offset = sizeof(T), .out_offset = 2 * sizeof(T)},
       run_options{.in_offset = 0, .out_offset = sizeof(T), .guard = guard_side::below},
+      run_options{.in_offset = 2 * sizeof(T), .out_offset = 0, .guard = guard_side::below},
+      run_options{.in_offset = 0, .out_offset = 3 * sizeof(T)},
   };
   for (const direction d : detail::directions) {
     std::vector<std::complex<T>> single;
