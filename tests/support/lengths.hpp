@@ -10,7 +10,8 @@
 //   naive_lengths()  every n <= 64 and a sample up to 2048 (up to 8192 in long runs): for
 //                    O(n^2) subjects such as the naive DFT.
 //   fast_lengths()   every n <= 512 and a sample of larger lengths up to 2^14 (2^18 in long
-//                    runs): for FFTW, and for FFTN's plans in task 0.5.
+//                    runs): for FFTW and FFTN in the analytic and reference suites and
+//                    for FFTN in the comparison with FFTW.
 //   plane_shapes()   (ny, nx) pairs for batched 2-D planes.
 //
 // The samples mix powers of two, smooth composites, prime powers, primes and awkward

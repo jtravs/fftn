@@ -50,9 +50,10 @@ Open from wave 1:
 
 Open questions: see DESIGN.md section 18.2.
 
-Claims (2026-11-13): 0.5 agent-skeleton; 0.7 agent-backends; 0.8 agent-ci; 0.5b after
-0.5. The lead reviews and merges; agents work in separate worktrees on
-`task/<id>-<slug>` branches.
+Claims (2026-11-13, second lead session): 0.5 fixes after the second reader (agent-0.5-fix);
+0.7 merged; 0.8 CI fixes (agent-ci); 0.5b agent-kokkos and X15 agent-x15, both started on
+main + 0.5 before 0.5 merges. The lead reviews and merges; agents work in separate worktrees on
+`task/<id>-<slug>` or `exp/<id>-<slug>` branches.
 
 Handoff notes: wave 1 is merged and green. Remote runs need a non-snap `uv` first on the
 job's PATH on machines whose uv is a snap (setuid confinement clears `setarch -R`, which

@@ -9,6 +9,7 @@
 
 #include "isa/arch.hpp"
 #include "isa/target.hpp"
+#include "passes/pass_args.hpp"
 
 #include <cstddef>
 #include <type_traits>
@@ -27,6 +28,8 @@ template <class T> struct kernels_of {
   std::size_t complex_lanes; // C: complex numbers per complex register
   std::size_t real_lanes;    // W: reals per real register
   std::size_t tw_reals;      // reals stored per twiddle: 2, or 4 where pre-arranged (x86)
+  // The chain strategy's passes (passes/pass_args.hpp); null where the target has none.
+  chain_kernels<T> chain;
 };
 
 struct kernel_table {

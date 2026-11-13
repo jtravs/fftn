@@ -2,9 +2,15 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Build contracts of the public headers (DESIGN.md 15.3): each compiles alone, they link
-# from several translation units, and they refuse fast-math.
+# from several translation units, and they refuse fast-math. Then the API's own contracts.
 
 fftn_add_test(fftn_api_tests SOURCES version_test.cpp)
+
+# The plan, workspace and shape contracts (task 0.5), and transforms of rank 2 and 3 against
+# the reference. The allocation hook replaces operator new in this executable only.
+fftn_add_test(fftn_contract_tests
+  SOURCES contract_test.cpp multidim_test.cpp
+  LIBRARIES fftn_test_support fftn_test_alloc_hook)
 
 # One translation unit per public header, including only that header, all linked into one
 # executable (which also proves the headers define nothing twice across units).

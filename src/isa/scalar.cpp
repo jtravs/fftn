@@ -14,6 +14,8 @@ FFTN_ISA_BEGIN(scalar)
 
 #include "isa/kernels.inl"
 
+#include "passes/chain.inl"
+
 #include "isa/table.inl"
 
 FFTN_ISA_END
