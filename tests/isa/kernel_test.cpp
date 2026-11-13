@@ -3,7 +3,7 @@
 //
 // The kernel text (src/isa/kernels.inl), compiled once per target, against a direct
 // computation in double precision: every runnable target, both precisions, both
-// directions. Two checks per kernel and length:
+// directions. Three checks per kernel and length:
 //
 // - unit twiddles and integer data, where every target's arithmetic is exact, so any
 //   misplaced lane, part or output shows as an exact mismatch;
@@ -11,17 +11,23 @@
 //   output is two levels of additions and one complex product, a radix-2 output one
 //   product and one addition, so with u = eps(T) + eps(double) (the kernel's and the
 //   reference's rounding) each part is within 6u and 4u times the sum of |re| + |im| of
-//   the inputs it combines. A wrong twiddle or sign is off by O(1).
+//   the inputs it combines. A wrong twiddle or sign is off by O(1);
+// - true twiddles and random data, bit for bit against the kernel's own sequence of
+//   operations in T, with each target's products (reference.hpp) and its fused or
+//   unfused FMAs. A bound absorbs one lost rounding; this check does not, so a lost FMA
+//   fails on every fused target. (On the scalar target fused and unfused are the same.)
 //
 // Also checked: the input is preserved and nothing is written outside the output.
 
 #include "isa/kernel_table.hpp"
+#include "isa/reference.hpp"
 #include "isa/target.hpp"
 #include "isa/test_targets.hpp"
 
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <complex>
 #include <cstddef>
@@ -128,7 +134,7 @@ template <class T> void radix4(const kernels_of<T>& k, int sign, std::size_t m, 
   buffer<T> y(n);
   k.radix4_pass(x.ptr(), y.ptr(), storage.data(), m, sign);
 
-  const cd quarter[4] = {{1, 0}, {0, 1}, {-1, 0}, {0, -1}}; // NOLINT(modernize-avoid-c-arrays)
+  const std::array<cd, 4> quarter = {cd{1, 0}, cd{0, 1}, cd{-1, 0}, cd{0, -1}};
   std::vector<cd> ref(n);
   std::vector<double> bound(n);
   for (std::size_t p = 0; p < m; ++p) {
@@ -137,7 +143,7 @@ template <class T> void radix4(const kernels_of<T>& k, int sign, std::size_t m, 
       double size = 0;
       for (std::size_t l = 0; l < 4; ++l) {
         const std::size_t power = (sign < 0 ? 4 - j * l % 4 : j * l) % 4; // i^(sign j l)
-        sum += quarter[power] * x.at(p + l * m);
+        sum += quarter.at(power) * x.at(p + l * m);
         size += norm1(x.at(p + l * m));
       }
       if (j > 0) {
@@ -185,6 +191,107 @@ void radix2_split(const kernels_of<T>& k, int sign, std::size_t m, data_kind kin
   EXPECT_EQ(x.data, x0.data) << "input changed";
 }
 
+using isa_test::cnum;
+
+template <class T> cnum<T> get(const buffer<T>& x, std::size_t k) {
+  return {x.data[2 * k + 1], x.data[2 * k + 2]};
+}
+
+// Compares y with the reference exactly (== on each part, so -0 equals +0).
+template <class T> void compare_exactly(const buffer<T>& y, const std::vector<cnum<T>>& ref) {
+  int reported = 0;
+  for (std::size_t k = 0; k < ref.size() && reported < 4; ++k) {
+    const cnum<T> got = get(y, k);
+    if (!(got.re == ref[k].re && got.im == ref[k].im)) {
+      ADD_FAILURE() << "output " << k << ": got (" << got.re << ", " << got.im << "), expected ("
+                    << ref[k].re << ", " << ref[k].im << ")";
+      ++reported;
+    }
+  }
+  EXPECT_TRUE(y.canaries_intact()) << "wrote outside the output";
+}
+
+template <class T> void radix4_bitwise(const kernel_table& table, int sign, std::size_t m) {
+  SCOPED_TRACE("radix4_pass bit for bit, m = " + std::to_string(m));
+  const kernels_of<T>& k = of<T>(table);
+  const std::size_t n = 4 * m;
+  std::mt19937 gen(static_cast<unsigned>(m + 1));
+  buffer<T> x(n);
+  fill(x, n, data_kind::random, gen);
+  buffer<T> w(3 * m);
+  for (std::size_t j = 1; j < 4; ++j) {
+    for (std::size_t p = 0; p < m; ++p) {
+      w.set((j - 1) * m + p, twiddle<T>(-1, j * p, n));
+    }
+  }
+  std::vector<T> storage(k.tw_reals * 3 * m);
+  k.pack_twiddles(w.ptr(), 3 * m, storage.data());
+  buffer<T> y(n);
+  k.radix4_pass(x.ptr(), y.ptr(), storage.data(), m, sign);
+
+  std::vector<cnum<T>> ref(n);
+  for (std::size_t p = 0; p < m; ++p) {
+    const cnum<T> a = get(x, p);
+    const cnum<T> b = get(x, p + m);
+    const cnum<T> c = get(x, p + 2 * m);
+    const cnum<T> d = get(x, p + 3 * m);
+    const cnum<T> apc{a.re + c.re, a.im + c.im};
+    const cnum<T> amc{a.re - c.re, a.im - c.im};
+    const cnum<T> bpd{b.re + d.re, b.im + d.im};
+    const cnum<T> bmd{b.re - d.re, b.im - d.im};
+    const cnum<T> plus_j{amc.re - bmd.im, amc.im + bmd.re};  // addj
+    const cnum<T> minus_j{amc.re + bmd.im, amc.im - bmd.re}; // subj
+    std::array<cnum<T>, 4> v = {
+        cnum<T>{apc.re + bpd.re, apc.im + bpd.im},
+        sign < 0 ? minus_j : plus_j,
+        cnum<T>{apc.re - bpd.re, apc.im - bpd.im},
+        sign < 0 ? plus_j : minus_j,
+    };
+    for (std::size_t j = 1; j < 4; ++j) {
+      v.at(j) = isa_test::product(table.id, v.at(j), get(w, (j - 1) * m + p), sign > 0);
+    }
+    for (std::size_t j = 0; j < 4; ++j) {
+      ref[4 * p + j] = v.at(j);
+    }
+  }
+  compare_exactly(y, ref);
+}
+
+template <class T> void radix2_bitwise(const kernel_table& table, int sign, std::size_t m) {
+  SCOPED_TRACE("radix2_split_pass bit for bit, m = " + std::to_string(m));
+  const kernels_of<T>& k = of<T>(table);
+  const std::size_t n = 2 * m;
+  std::mt19937 gen(static_cast<unsigned>(m + 1));
+  buffer<T> x(n);
+  fill(x, n, data_kind::random, gen);
+  std::vector<T> twr(m);
+  std::vector<T> twi(m);
+  for (std::size_t j = 0; j < m; ++j) {
+    const cd t = twiddle<T>(-1, j, n);
+    twr[j] = static_cast<T>(t.real());
+    twi[j] = static_cast<T>(t.imag());
+  }
+  buffer<T> y(n);
+  k.radix2_split_pass(x.ptr(), y.ptr(), twr.data(), twi.data(), m, sign);
+
+  // fmadd(a, b, c) of the vocabulary: fused, or a product and then a sum.
+  const auto fmadd = [fused = table.fused](T a, T b, T c) {
+    return fused ? std::fma(a, b, c) : a * b + c;
+  };
+  std::vector<cnum<T>> ref(n);
+  for (std::size_t j = 0; j < m; ++j) {
+    const cnum<T> a = get(x, j);
+    const cnum<T> b = get(x, j + m);
+    const T wr = twr[j];
+    const T wi = twi[j];
+    const cnum<T> t = sign < 0 ? cnum<T>{fmadd(b.re, wr, -(b.im * wi)), fmadd(b.re, wi, b.im * wr)}
+                               : cnum<T>{fmadd(b.re, wr, b.im * wi), fmadd(-b.re, wi, b.im * wr)};
+    ref[j] = {a.re + t.re, a.im + t.im};
+    ref[j + m] = {a.re - t.re, a.im - t.im};
+  }
+  compare_exactly(y, ref);
+}
+
 class kernels : public ::testing::TestWithParam<param> {
 protected:
   template <class T> void check() {
@@ -203,6 +310,14 @@ protected:
            {std::size_t{8}, std::size_t{16}, std::size_t{24}, std::size_t{200}}) {
         radix2_split<T>(k, sign, m, kind);
       }
+    }
+    for (const std::size_t m :
+         {std::size_t{4}, std::size_t{8}, std::size_t{12}, std::size_t{100}}) {
+      radix4_bitwise<T>(*table, sign, m);
+    }
+    for (const std::size_t m :
+         {std::size_t{8}, std::size_t{16}, std::size_t{24}, std::size_t{200}}) {
+      radix2_bitwise<T>(*table, sign, m);
     }
   }
 };

@@ -4,14 +4,16 @@
 // Every vocabulary operation of every runnable target, in both precisions, against a
 // scalar reference written here (not the scalar target: a shared mistake would pass).
 //
-// Exact operations are compared bit for bit on random data. The complex products (mul,
-// mulc, madd) round differently on each target, so they are checked on small integers,
-// where every target's arithmetic is exact and any wrong sign, part or lane shows. The
-// fused operations are compared with std::fma or with multiply-then-add, as the target
-// declares, on data that includes a case where the two differ: a lost FMA fails.
+// Every operation is compared bit for bit on random data. The fused operations are
+// compared with std::fma or with multiply-then-add, as the target declares, on data that
+// includes a case where the two differ. The complex products (mul, mulc, madd) round
+// differently on each target, so their reference is that target's own order of roundings
+// (reference.hpp), and the data is checked to tell it from the unfused order. A lost FMA
+// therefore fails, as does any wrong sign, part or lane.
 
 #include "isa/kernel_table.hpp"
 #include "isa/probe_table.hpp"
+#include "isa/reference.hpp"
 #include "isa/target.hpp"
 #include "isa/test_targets.hpp"
 
@@ -61,18 +63,6 @@ template <class T> operand<T> random_reals(std::mt19937& gen, std::size_t size) 
   return out;
 }
 
-// Integers small enough that products and sums of three of them are exact: |x| <= 2^20 for
-// double (sums below 2^42), 2^10 for float (below 2^22).
-template <class T> operand<T> random_integers(std::mt19937& gen, std::size_t size) {
-  const int bound = sizeof(T) == sizeof(double) ? 1048576 : 1024;
-  std::uniform_int_distribution<int> dist(-bound, bound);
-  operand<T> out(size);
-  for (std::size_t i = 0; i < size; ++i) {
-    out[i] = static_cast<T>(dist(gen));
-  }
-  return out;
-}
-
 // u such that (1 + u)(1 - u) = 1 - u^2 rounds to 1 but is exact when fused.
 template <class T> constexpr T tiny() {
   return sizeof(T) == sizeof(double) ? T(0x1p-30) : T(0x1p-13);
@@ -90,10 +80,10 @@ template <class T> struct expected_and_got {
 template <class T>
 expected_and_got<T> run(const kernel_table& kernels, const probe_table& probes, vop op) {
   std::mt19937 gen(12345); // NOLINT(bugprone-random-generator-seed): reproducible data
-  const bool exact_products = op == vop::c_mul || op == vop::c_mulc || op == vop::c_madd;
-  operand<T> a = exact_products ? random_integers<T>(gen, n) : random_reals<T>(gen, n);
-  operand<T> b = exact_products ? random_integers<T>(gen, n) : random_reals<T>(gen, n);
-  operand<T> c = exact_products ? random_integers<T>(gen, n) : random_reals<T>(gen, n);
+  const bool products = op == vop::c_mul || op == vop::c_mulc || op == vop::c_madd;
+  operand<T> a = random_reals<T>(gen, n);
+  operand<T> b = random_reals<T>(gen, n);
+  operand<T> c = random_reals<T>(gen, n);
   T r = random_reals<T>(gen, 1)[0];
   const bool fused = kernels.fused;
   const std::size_t lanes = of<T>(kernels).complex_lanes;
@@ -101,7 +91,7 @@ expected_and_got<T> run(const kernel_table& kernels, const probe_table& probes, 
 
   // Fused and unfused results differ in the first element (and complex number).
   const T u = tiny<T>();
-  if (!exact_products) {
+  if (!products) {
     a[0] = a[1] = T(1) + u;
     b[0] = T(1) - u;
     c[0] = c[1] = op == vop::r_fmadd || op == vop::c_fmadd_r ? T(-1) : T(1);
@@ -111,6 +101,7 @@ expected_and_got<T> run(const kernel_table& kernels, const probe_table& probes, 
   }
 
   std::vector<T> e(n);
+  std::size_t differ_from_unfused = 0;
   for (std::size_t i = 0; i < n; ++i) {
     const std::size_t re = i & ~std::size_t{1}; // the real part of i's complex number
     const bool odd = (i & 1U) != 0;
@@ -138,14 +129,22 @@ expected_and_got<T> run(const kernel_table& kernels, const probe_table& probes, 
       e[i] = odd ? ai - br : ar + bi;
       break;
     case vop::c_mul:
-      e[i] = odd ? ar * bi + ai * br : ar * br - ai * bi;
-      break;
     case vop::c_mulc:
-      e[i] = odd ? ai * br - ar * bi : ar * br + ai * bi;
+    case vop::c_madd: {
+      const isa_test::cnum<T> x{ar, ai};
+      const isa_test::cnum<T> w{br, bi};
+      const isa_test::cnum<T> acc{c[re], c[re + 1]};
+      const bool conj_w = op == vop::c_mulc;
+      const auto [pr, pi] = op == vop::c_madd ? isa_test::multiply_add(kernels.id, acc, x, w)
+                                              : isa_test::product(kernels.id, x, w, conj_w);
+      const auto [ur, ui] = op == vop::c_madd ? isa_test::multiply_add(target::scalar, acc, x, w)
+                                              : isa_test::product(target::scalar, x, w, conj_w);
+      e[i] = odd ? pi : pr;
+      if (odd ? pi != ui : pr != ur) {
+        ++differ_from_unfused;
+      }
       break;
-    case vop::c_madd:
-      e[i] = c[i] + (odd ? ar * bi + ai * br : ar * br - ai * bi);
-      break;
+    }
     case vop::c_scale:
       e[i] = r * a[i];
       break;
@@ -202,7 +201,11 @@ expected_and_got<T> run(const kernel_table& kernels, const probe_table& probes, 
   const std::size_t tw_size = of<T>(kernels).tw_reals * half;
   operand<T> tw(tw_size);
   of<T>(kernels).pack_twiddles(b.data(), half, tw.data());
-  const T* second = exact_products ? tw.data() : b.data();
+  const T* second = products ? tw.data() : b.data();
+  if (products && kernels.fused) {
+    EXPECT_GT(differ_from_unfused, 0U)
+        << "the data cannot tell a fused product from an unfused one";
+  }
 
   operand<T> got(n);
   if constexpr (sizeof(T) == sizeof(double)) {
