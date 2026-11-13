@@ -1294,6 +1294,10 @@ developers' machines. Old processors are emulated as whole machines too (SDE's N
 and Sandy Bridge models, QEMU's Neoverse N1), which checks detection and dispatch on
 them as well as the kernels: a stray newer instruction anywhere faults.
 
+The workflows in [`.github/workflows/`](../.github/workflows/) are the matrix: which gate
+stages run on which compiler and why, the emulated models with the target each must
+choose, and every pinned version.
+
 ### 15.5 Determinism and the numerical contract
 
 - No fast-math, no flush-to-zero, no approximate reciprocals. FMAs are explicit; the

@@ -33,9 +33,10 @@ env:
   UV_VERSION: "0.13.6"
 
 jobs:
+  # Every job runs for pushes, and for pull requests from forks only: a branch of this
+  # repository already ran on its push. The jobs run in parallel; lint does not gate the
+  # builds, since latency matters more here than runner minutes.
   lint:
-    # Runs for pushes, and for pull requests from forks only: a branch of this repository
-    # already ran on its push. Every other job waits for this one.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     name: lint (hygiene, format, Python, shell, API docs)
     runs-on: ubuntu-24.04
@@ -58,17 +59,17 @@ jobs:
           set -euo pipefail
           t=$RUNNER_TEMP/tools
           mkdir -p "$t/bin"
-          .github/scripts/fetch.sh \
+          bash .github/scripts/fetch.sh \
             https://github.com/doxygen/doxygen/releases/download/Release_1_18_0/doxygen-1.18.0.linux.bin.tar.gz \
             14fa81bdc34171edb5f1f02b1d60e74802f0439b77fa44e592565d517d72df90 "$t/doxygen.tar.gz"
           tar -xzf "$t/doxygen.tar.gz" -C "$t"
           cp "$t/doxygen-1.18.0/bin/doxygen" "$t/bin/"
-          .github/scripts/fetch.sh \
+          bash .github/scripts/fetch.sh \
             https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.gz \
             b7af85e41cc99489dcc21d66c6d5f3685138f06d34651e6d34b42ec6d54fe6f6 "$t/shellcheck.tar.gz"
           tar -xzf "$t/shellcheck.tar.gz" -C "$t"
           cp "$t/shellcheck-v0.11.0/shellcheck" "$t/bin/"
-          .github/scripts/fetch.sh \
+          bash .github/scripts/fetch.sh \
             https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
             8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8 "$t/actionlint.tar.gz"
           tar -xzf "$t/actionlint.tar.gz" -C "$t/bin" actionlint
@@ -78,10 +79,10 @@ jobs:
       - name: Gate, lint stages
         env:
           FFTN_CHECK_STAGES: spdx docs knobs format python shell gen apidoc
-        run: scripts/check.sh
+        run: bash scripts/check.sh
 
   linux:
-    needs: lint
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     name: linux x86-64 ${{ matrix.name }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -121,7 +122,7 @@ jobs:
           cache-python: true
       - name: LLVM ${{ matrix.llvm }}
         if: matrix.llvm
-        run: .github/scripts/install-llvm.sh "${{ matrix.llvm }}"
+        run: bash .github/scripts/install-llvm.sh "${{ matrix.llvm }}"
       - name: Address-space randomisation that every sanitizer runtime supports
         # The image's kernel uses 32 bits of mmap randomisation, which older ASan and TSan
         # runtimes cannot map around; 28 bits is the long-standing default.
@@ -135,9 +136,9 @@ jobs:
       - &fetchcontent-place
         name: FetchContent archives (place)
         shell: bash
-        run: .github/scripts/fetchcontent-cache.sh restore ~/.cache/fftn-fetchcontent
+        run: bash .github/scripts/fetchcontent-cache.sh restore ~/.cache/fftn-fetchcontent
       - name: Gate, ${{ matrix.stages }}
-        run: scripts/check.sh
+        run: bash scripts/check.sh
       - &detected
         name: What FFTN detects here
         if: always()
@@ -153,7 +154,7 @@ jobs:
         name: FetchContent archives (collect)
         if: always()
         shell: bash
-        run: .github/scripts/fetchcontent-cache.sh save ~/.cache/fftn-fetchcontent
+        run: bash .github/scripts/fetchcontent-cache.sh save ~/.cache/fftn-fetchcontent
       - &logs
         name: Build logs
         if: failure()
@@ -167,7 +168,7 @@ jobs:
           retention-days: 14
 
   linux-gcc-current:
-    needs: lint
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     name: linux x86-64 gcc-16
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -200,13 +201,13 @@ jobs:
       - *fetchcontent-restore
       - *fetchcontent-place
       - name: Gate, build sanitize tsan
-        run: scripts/check.sh
+        run: bash scripts/check.sh
       - *detected
       - *fetchcontent-collect
       - *logs
 
   linux-arm64:
-    needs: lint
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     name: linux aarch64 ${{ matrix.name }}
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
@@ -243,19 +244,19 @@ jobs:
         run: command -v ninja || { sudo apt-get update && sudo apt-get install -y --no-install-recommends ninja-build; }
       - name: LLVM ${{ matrix.llvm }}
         if: matrix.llvm
-        run: .github/scripts/install-llvm.sh "${{ matrix.llvm }}"
+        run: bash .github/scripts/install-llvm.sh "${{ matrix.llvm }}"
       - name: Address-space randomisation that every sanitizer runtime supports
         run: sudo sysctl -w vm.mmap_rnd_bits=28 || true
       - *fetchcontent-restore
       - *fetchcontent-place
       - name: Gate, ${{ matrix.stages }}
-        run: scripts/check.sh
+        run: bash scripts/check.sh
       - *detected
       - *fetchcontent-collect
       - *logs
 
   macos:
-    needs: lint
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     name: macos arm64 ${{ matrix.name }}
     runs-on: macos-26
     timeout-minutes: 75
@@ -306,13 +307,13 @@ jobs:
       - *fetchcontent-restore
       - *fetchcontent-place
       - name: Gate, ${{ matrix.stages }}
-        run: scripts/check.sh
+        run: bash scripts/check.sh
       - *detected
       - *fetchcontent-collect
       - *logs
 
   windows:
-    needs: lint
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     name: windows ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -365,7 +366,7 @@ jobs:
       - *fetchcontent-restore
       - *fetchcontent-place
       - name: Gate, build
-        run: scripts/check.sh
+        run: bash scripts/check.sh
       - *detected
       - name: Windows on Arm feature probe (B2)
         if: always() && matrix.arch == 'arm64'
