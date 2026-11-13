@@ -57,7 +57,6 @@ struct loop {
   std::size_t count = 1;
   std::array<std::ptrdiff_t, moving_slots> step{}; // bytes per iteration: in, out, block
   std::uint32_t body_end = 0;                      // records [this + 1, body_end) are the body
-  bool independent = true;                         // iterations may run on different threads
 };
 
 using record = std::variant<stage, loop>;
