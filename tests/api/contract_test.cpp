@@ -523,6 +523,9 @@ TEST(Isa, Names) {
   EXPECT_STREQ(fftn::isa_name(fftn::isa::avx512), "avx512");
   EXPECT_STREQ(fftn::isa_name(fftn::isa::neon), "neon");
   EXPECT_STREQ(fftn::isa_name(fftn::isa::neon_fcma), "neon_fcma");
+  // Out of range: this read past the table of names before it was bounds-checked.
+  // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange): invalid on purpose
+  EXPECT_STREQ(fftn::isa_name(static_cast<fftn::isa>(200)), "unknown");
 }
 
 TEST(SmallVector, HoldsUpToItsCapacity) {
