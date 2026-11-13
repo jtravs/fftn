@@ -3,10 +3,14 @@
 #
 # ISA regions, vocabularies and dispatch (DESIGN.md 6, 15.3).
 
-# The vocabulary probes: one unit per target, like the library's kernel units, compiled
-# into an object library so the disassembly check can read them.
+# The vocabulary probes and the generated codelets' entry points: one unit per target, like
+# the library's kernel units, compiled into an object library so the disassembly check can
+# read them. The codelet units are optimised in every build type, like the library's
+# kernel units: they instantiate every codelet twice per target.
+set(fftn_codelet_units codelets_scalar.cpp codelets_avx2.cpp codelets_neon_fcma.cpp)
 add_library(fftn_isa_probes OBJECT probe_scalar.cpp probe_avx2.cpp probe_neon_fcma.cpp
-                                   probe_tables.cpp)
+                                   probe_tables.cpp ${fftn_codelet_units} codelet_tables.cpp)
+fftn_always_optimise(${fftn_codelet_units})
 fftn_configure_target(fftn_isa_probes)
 # Only fftn's headers: the test executable links the library itself.
 target_include_directories(fftn_isa_probes PRIVATE ${PROJECT_SOURCE_DIR}/include
@@ -14,8 +18,9 @@ target_include_directories(fftn_isa_probes PRIVATE ${PROJECT_SOURCE_DIR}/include
 target_compile_options(fftn_isa_probes PRIVATE $<$<CXX_COMPILER_ID:GNU>:-Werror=psabi>)
 
 fftn_add_test(fftn_isa_tests
-  SOURCES target_test.cpp vocab_test.cpp kernel_test.cpp link_test.cpp test_targets.cpp
-  LIBRARIES fftn_isa_probes)
+  SOURCES target_test.cpp vocab_test.cpp kernel_test.cpp codelet_test.cpp link_test.cpp
+          test_targets.cpp
+  LIBRARIES fftn_isa_probes fftn_test_reference)
 # The link test compares entry-point addresses to show that no target's function stands in
 # for another's (DESIGN.md 6.4). The Microsoft linker folds functions whose machine code is
 # identical (/OPT:ICF, on by default in optimised links), which is harmless but makes two
@@ -99,7 +104,8 @@ if(APPLE AND FFTN_TARGET_IS_AARCH64)
   endif()
   add_library(fftn_isa_generic_baseline OBJECT
     ${PROJECT_SOURCE_DIR}/src/isa/scalar.cpp ${PROJECT_SOURCE_DIR}/src/isa/neon_fcma.cpp
-    ${PROJECT_SOURCE_DIR}/src/isa/target.cpp probe_scalar.cpp probe_neon_fcma.cpp)
+    ${PROJECT_SOURCE_DIR}/src/isa/target.cpp probe_scalar.cpp probe_neon_fcma.cpp
+    codelets_scalar.cpp codelets_neon_fcma.cpp)
   fftn_configure_target(fftn_isa_generic_baseline)
   set_target_properties(fftn_isa_generic_baseline PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
   target_include_directories(fftn_isa_generic_baseline PRIVATE ${PROJECT_SOURCE_DIR}/include
