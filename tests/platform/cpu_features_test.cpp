@@ -8,12 +8,14 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <optional>
 
 namespace {
 
 using fftn::detail::cpu_features;
 using fftn::detail::decode_linux_hwcap;
 using fftn::detail::decode_macos_sysctl;
+using fftn::detail::decode_windows_arm64;
 using fftn::detail::decode_x86_cpuid;
 using fftn::detail::parse_sysctl_text;
 using fftn::detail::x86_cpuid_words;
@@ -150,6 +152,37 @@ hw.optional.arm.caps: -4612108402691149825
   const cpu_features f = decode_macos_sysctl(values);
   EXPECT_TRUE(f.neon && f.fcma && f.pauth);
   EXPECT_EQ(f.sve_bits, 0U);
+}
+
+TEST(CpuFeaturesWindowsArm, DecodesTheRecordedCobalt100) {
+  // CP 4031 of the windows-11-arm runner (Azure Cobalt 100, Neoverse N2; experiment B2):
+  // FCMA 1, APA 5 (QARMA5 with combined FPAC), API 0. Windows recorded no CP 4032.
+  const cpu_features f = decode_windows_arm64(true, 0x0010111101211052U, std::nullopt);
+  EXPECT_TRUE(f.neon && f.fcma && f.pauth);
+  EXPECT_EQ(f.sve_bits, 0U);
+}
+
+TEST(CpuFeaturesWindowsArm, DecodesEachField) {
+  constexpr std::uint64_t fcma = std::uint64_t{1} << 16U;
+  constexpr std::uint64_t apa = std::uint64_t{1} << 4U;
+  constexpr std::uint64_t api = std::uint64_t{1} << 8U;
+  constexpr std::uint64_t apa3 = std::uint64_t{1} << 12U; // in ID_AA64ISAR2_EL1
+  // Missing registry values: only NEON, from IsProcessorFeaturePresent.
+  cpu_features f = decode_windows_arm64(true, std::nullopt, std::nullopt);
+  EXPECT_TRUE(f.neon);
+  EXPECT_FALSE(f.fcma || f.pauth);
+  f = decode_windows_arm64(true, fcma, std::nullopt); // FCMA alone (as A64FX)
+  EXPECT_TRUE(f.fcma);
+  EXPECT_FALSE(f.pauth);
+  EXPECT_TRUE(decode_windows_arm64(true, api, std::nullopt).pauth);
+  EXPECT_TRUE(decode_windows_arm64(true, apa, 0U).pauth);
+  f = decode_windows_arm64(true, fcma, apa3); // QARMA3 is in the second register
+  EXPECT_TRUE(f.fcma && f.pauth);
+  // Neighbouring fields do not count: JSCVT (15:12), LRCPC (23:20), GPA (27:24), GPA3.
+  f = decode_windows_arm64(true, 0x0FF0'F000U, std::uint64_t{0xF} << 8U);
+  EXPECT_FALSE(f.fcma || f.pauth);
+  // FCMA without NEON is not reported.
+  EXPECT_FALSE(decode_windows_arm64(false, fcma, std::nullopt).fcma);
 }
 
 // The running machine's features obey the architectural implications; on the machines

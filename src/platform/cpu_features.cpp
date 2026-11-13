@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: 2026 John C. Travers and contributors
 // SPDX-License-Identifier: Apache-2.0
 //
-// Bit positions are from the Intel SDM (CPUID leaves 1 and 7, XCR0) and the Linux arm64
-// ELF hwcaps documentation (Documentation/arch/arm64/elf_hwcaps.rst).
+// Bit positions are from the Intel SDM (CPUID leaves 1 and 7, XCR0), the Linux arm64 ELF
+// hwcaps documentation (Documentation/arch/arm64/elf_hwcaps.rst) and the Arm Architecture
+// Reference Manual (the ID_AA64ISAR1_EL1 and ID_AA64ISAR2_EL1 field descriptions).
 
 #include "platform/cpu_features.hpp"
 
@@ -10,6 +11,7 @@
 #include "platform/sysctl_values.hpp"
 
 #include <cstdint>
+#include <optional>
 #include <string_view>
 
 #if defined(__x86_64__) || defined(_M_X64)
@@ -110,6 +112,22 @@ cpu_features decode_macos_sysctl(const sysctl_values& values) noexcept {
   return f;
 }
 
+cpu_features decode_windows_arm64(bool neon, std::optional<std::uint64_t> isar1,
+                                  std::optional<std::uint64_t> isar2) noexcept {
+  // ID register fields are four bits wide; zero means "not implemented". FCMA is
+  // ISAR1[19:16]; address authentication is APA (QARMA5, ISAR1[7:4]), API (an
+  // implementation-defined algorithm, ISAR1[11:8]) or APA3 (QARMA3, ISAR2[15:12]), any of
+  // which provides the instructions neon_fcma code may contain.
+  const auto field = [](std::optional<std::uint64_t> reg, unsigned lsb) {
+    return reg.has_value() ? (*reg >> lsb) & 0xFU : 0U;
+  };
+  cpu_features f;
+  f.neon = neon;
+  f.fcma = neon && field(isar1, 16) != 0;
+  f.pauth = field(isar1, 4) != 0 || field(isar1, 8) != 0 || field(isar2, 12) != 0;
+  return f;
+}
+
 namespace {
 
 #ifdef FFTN_PLATFORM_X86_64
@@ -200,15 +218,22 @@ cpu_features compute_features() noexcept {
 
 #elif defined(FFTN_PLATFORM_AARCH64) && defined(_WIN32)
 
+// Processor 0's values stand for the machine, as on Linux, where the kernel reports only
+// what every core has: the cores of one DynamIQ cluster implement the same architecture
+// version, so they agree on FCMA and pointer authentication.
+std::optional<std::uint64_t> registry_id_register(const wchar_t* name) noexcept {
+  std::uint64_t value = 0;
+  DWORD size = sizeof(value);
+  if (RegGetValueW(HKEY_LOCAL_MACHINE, L"HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0", name,
+                   RRF_RT_REG_QWORD, nullptr, &value, &size) != ERROR_SUCCESS) {
+    return std::nullopt;
+  }
+  return value;
+}
+
 cpu_features compute_features() noexcept {
-  cpu_features f;
-  f.neon = IsProcessorFeaturePresent(PF_ARM_NEON_INSTRUCTIONS_AVAILABLE) != 0;
-  // Windows on Arm documents no processor-feature flag for FCMA; it is reported absent
-  // until experiment B2 settles how to detect it (DESIGN.md 14.2). Nor does it document
-  // one for pointer authentication, which is reported absent on the same terms.
-  f.fcma = false;
-  f.pauth = false;
-  return f;
+  return decode_windows_arm64(IsProcessorFeaturePresent(PF_ARM_NEON_INSTRUCTIONS_AVAILABLE) != 0,
+                              registry_id_register(L"CP 4031"), registry_id_register(L"CP 4032"));
 }
 
 #elif defined(FFTN_PLATFORM_AARCH64)

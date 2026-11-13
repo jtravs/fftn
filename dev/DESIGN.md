@@ -1198,8 +1198,11 @@ What the experiments still require of the build:
 - **Detection details**: AVX and AVX-512 are used only when the operating system saves
   their state (XGETBV), not on CPUID alone. macOS on Intel enables the AVX-512 state
   lazily, on a thread's first use, so there `hw.optional.avx512f` stands in for XGETBV.
-  Windows on Arm has no documented feature flag for FCMA; how to detect it there is part
-  of experiment B2, and until then FCMA is reported absent there.
+  Windows on Arm has no processor-feature flag for FCMA or pointer authentication, and
+  reading the ID registers (MRS) faults in user mode; both are decoded from the copies of
+  ID_AA64ISAR1_EL1 and ID_AA64ISAR2_EL1 that Windows keeps in the registry (`CP 4031` and
+  `CP 4032` of processor 0), and reported absent where those values are missing
+  (experiment B2).
 
 ### 14.3 Toolchains and packaging
 
@@ -1527,6 +1530,7 @@ implementation are listed here until settled.
 | 2026-11-13 | "One-ulp twiddle error" is tested two ways: entry-by-entry table checks for a single entry, output tolerances for an error propagated from the base twiddle | A single entry one ulp off changes outputs by less than correct rounding does, at any n; a propagated one grows like n |
 | 2026-11-13 | FFTW, the test oracle, is built from source by the test build (or taken from `FFTN_FFTW_ROOT`), without UBSan | No system FFTW is assumed; FFTW 3.3.11's planners do null-pointer arithmetic that UBSan reports |
 | 2026-11-13 | fbench competitors are optional backends, each configured by one variable (an install root, or a pinned fetch for header-only pocketfft) and never found on default paths; a library that handles some shapes only (Accelerate: rows of vDSP's lengths) declares those kinds `partial`, and smoke requires a pass of each; client catalogues live outside the repository | Handicapped system builds are a trap (Homebrew's FFTW); a backend that refused every case must not count as correct; the client's workload is private |
+| 2026-11-13 | Windows on Arm reads FCMA and pointer authentication from the registry copies of the ID registers | No `IsProcessorFeaturePresent` flag exists for either (SDK 10.0.26100) and MRS faults; on the CI's Cobalt 100 the registry fields agreed with executing FCMLA and XPACI (B2) |
 
 ---
 
