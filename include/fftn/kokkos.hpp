@@ -12,11 +12,11 @@
 ///   transform into an ordinary `fftn::shape` or `fftn::plan`, and `data_of` gives the
 ///   pointers to execute it with. Views of `LayoutRight`, `LayoutLeft` and `LayoutStride`
 ///   are read through their extents and strides.
-/// - `fftn::kokkos::plan`, a plan class with the constructor and execute shape of
+/// - `fftn::kokkos::view_plan`, a plan class with the constructor and execute shape of
 ///   Kokkos-FFT 2.0's `KokkosFFT::Plan`, and the free `execute(plan, in, out, norm)`.
 ///   `fftn::kokkos::compat` spells these as Kokkos-FFT does (`Plan`, `Direction`,
-///   `Normalization`, `axis_type`, `execute`), so code written for Kokkos-FFT changes only
-///   its include and its namespace.
+///   `Normalization`, `axis_type`, `shape_type`, `execute`), so code written for Kokkos-FFT
+///   changes only its include and its namespace.
 ///
 /// Execution is serial, on the calling thread. How this differs from Kokkos-FFT, and the
 /// rules for each argument, are in docs/kokkos.md.
@@ -61,9 +61,30 @@ enum class normalization : std::int8_t {
 /// negative values counting from the end (-1 is the last dimension).
 template <std::size_t Dim> using axis_type = std::array<int, Dim>;
 
-/// Kokkos-FFT's `shape_type`, the lengths of the transformed axes. FFTN accepts only the
-/// lengths the Views already have (0 standing for them): it does not crop or pad.
-template <std::size_t Dim> using shape_type = std::array<std::size_t, Dim>;
+namespace compat {
+
+/// `KokkosFFT::Direction`, declared as Kokkos-FFT 2.0 declares it: the same names, values
+/// and underlying type, so code that converts a direction to an integer sees Kokkos-FFT's
+/// 0 and 1 (FFTN's own `fftn::direction` is the exponent's sign, -1 and +1). `compat::Plan`
+/// takes it and converts it to `fftn::direction`.
+// NOLINTNEXTLINE(performance-enum-size): int, as Kokkos-FFT's, so conversions agree with it
+enum class Direction : int {
+  forward = 0,  ///< the forward transform, exponent -2 pi i jk / n
+  backward = 1, ///< the backward transform, exponent +2 pi i jk / n
+};
+
+/// `KokkosFFT::Normalization`, declared as Kokkos-FFT 2.0 declares it: the same names,
+/// values and underlying type. The plan's `execute` takes it and converts it to the
+/// adapter's `normalization`, whose enumerators mean the same.
+// NOLINTNEXTLINE(performance-enum-size): int, as Kokkos-FFT's, so conversions agree with it
+enum class Normalization : int {
+  forward = 0,  ///< forward transforms are multiplied by 1/N, backward ones are not scaled
+  backward = 1, ///< backward transforms are multiplied by 1/N, forward ones are not scaled
+  ortho = 2,    ///< every transform is multiplied by 1/sqrt(N)
+  none = 3,     ///< nothing is scaled
+};
+
+} // namespace compat
 
 namespace detail {
 
@@ -95,6 +116,34 @@ template <class T> struct is_element<Kokkos::complex<T>> : is_element<T> {};
 
 [[noreturn]] inline void reject(const std::string& argument, const std::string& why) {
   throw std::invalid_argument("fftn::kokkos: " + argument + " " + why);
+}
+
+// Kokkos-FFT's direction as FFTN's. A value that is neither enumerator is refused, as
+// FFTN's plans refuse an invalid fftn::direction.
+inline direction direction_of(compat::Direction dir) {
+  switch (dir) {
+  case compat::Direction::forward:
+    return direction::forward;
+  case compat::Direction::backward:
+    return direction::backward;
+  }
+  reject("dir", "is neither Direction::forward nor Direction::backward");
+}
+
+// Kokkos-FFT's normalisation as the adapter's. A value that is neither enumerator is
+// refused rather than read as one of them.
+inline normalization normalization_of(compat::Normalization norm) {
+  switch (norm) {
+  case compat::Normalization::forward:
+    return normalization::forward;
+  case compat::Normalization::backward:
+    return normalization::backward;
+  case compat::Normalization::ortho:
+    return normalization::ortho;
+  case compat::Normalization::none:
+    return normalization::none;
+  }
+  reject("norm", "is none of Normalization's enumerators");
 }
 
 // Kokkos reports strides as unsigned values; FFTN's are signed. A View's strides address its
@@ -135,7 +184,7 @@ template <class InView, class OutView> bool overlapping(const InView& in, const 
 // so that execute never allocates (Kokkos itself allocates nothing for a fence on a host
 // back end unless a Kokkos Tools library is loaded).
 inline const std::string& fence_label() {
-  static const std::string label("fftn::kokkos::plan::execute: fence before the transform");
+  static const std::string label("fftn::kokkos::view_plan::execute: fence before the transform");
   return label;
 }
 
@@ -202,9 +251,11 @@ template <class View> [[nodiscard]] auto data_of(const View& v) noexcept {
 ///
 /// `axes` lists the transformed dimensions in FFTN's order (`shape::axes`): for real
 /// transforms the last one is halved, as in Kokkos-FFT. Negative entries count from the end.
-/// Every other dimension is a batch dimension; batch dimensions that nest (one spans the
-/// other exactly, in both Views) are merged, and dimensions of extent 1 are dropped.
-/// Strides and distances are the Views' own, so any layout works.
+/// Every other dimension is a batch dimension; dimensions of extent 1 are dropped, the rest
+/// are listed largest input stride first (ties in the Views' dimension order), and
+/// neighbours that nest (one spans the other exactly, in both Views) are merged. That order
+/// fixes how transforms are numbered, which `fftn::plan::execute_transforms` uses on a plan
+/// from `make_plan`. Strides and distances are the Views' own, so any layout works.
 ///
 /// Preconditions: the Views are of equal rank, at least `Dim`; their memory is accessible
 /// from the host (checked at compile time); their values are `float`, `double` or a
@@ -213,11 +264,10 @@ template <class View> [[nodiscard]] auto data_of(const View& v) noexcept {
 /// Throws `std::invalid_argument` naming the argument (`in`, `out`, `axes`) when an axis is
 /// out of range or repeated; an extent is 0; a stride is 0; the extents do not match the
 /// kind (equal everywhere, except along the halved axis of a real transform, where the
-/// complex side has n/2 + 1 for the real side's n); the batch dimensions do not reduce to
-/// two; `in` and `out` overlap without starting at the same address; or, when they do start
-/// at the same address (in place), their strides disagree: equal for c2c, and FFTW's padded
-/// layout for real kinds (the halved axis contiguous on both sides, every other real stride
-/// twice the complex one).
+/// complex side has n/2 + 1 for the real side's n); `in` and `out` overlap without starting
+/// at the same address; or, when they do start at the same address (in place), their
+/// strides disagree: equal for c2c, and FFTW's padded layout for real kinds (the halved axis
+/// contiguous on both sides, every other real stride twice the complex one).
 ///
 /// Guarantees: when `in` and `out` start at the same address the shape is for a plan built
 /// with `options::in_place`; nothing is read or written through the Views.
@@ -378,12 +428,6 @@ shape_of(const InView& in, const OutView& out, direction dir, const axis_type<Di
     }
     loops[merged++] = inner;
   }
-  if (merged > s.batches.capacity()) {
-    detail::reject("in", "has " + std::to_string(merged) +
-                             " batch dimensions that do not nest; FFTN plans loop over at "
-                             "most " +
-                             std::to_string(s.batches.capacity()));
-  }
   for (std::size_t i = 0; i < merged; ++i) {
     s.batches.push_back(loops[i]);
   }
@@ -393,7 +437,8 @@ shape_of(const InView& in, const OutView& out, direction dir, const axis_type<Di
 /// An FFTN plan that transforms the dimensions `axes` of `in` into `out`: the plan of
 /// `shape_of(in, out, dir, axes)`, built in place when `in` and `out` start at the same
 /// address. Execute it with `data_of(in)` and `data_of(out)` (or any Views of the same
-/// layout) and a workspace of its own per concurrent execution.
+/// layout) and a workspace of its own per concurrent execution. Its transforms are numbered
+/// over the batch dimensions in `shape_of`'s order (largest input stride first).
 ///
 /// Preconditions: as for `shape_of`.
 ///
@@ -429,11 +474,11 @@ make_plan(const InView& in, const OutView& out, direction dir, const axis_type<D
 ///
 /// Guarantees: the results are those of the `fftn::plan` it holds, bit for bit, then scaled
 /// as the execute call's `normalization` asks. Not copyable or movable, as Kokkos-FFT's.
-template <class ExecutionSpace, class InView, class OutView, std::size_t Dim = 1> class plan {
+template <class ExecutionSpace, class InView, class OutView, std::size_t Dim = 1> class view_plan {
   static_assert(Kokkos::is_execution_space_v<ExecutionSpace>,
-                "fftn::kokkos::plan: ExecutionSpace must be a Kokkos execution space");
+                "fftn::kokkos::view_plan: ExecutionSpace must be a Kokkos execution space");
   static_assert(Kokkos::SpaceAccessibility<ExecutionSpace, Kokkos::HostSpace>::accessible,
-                "fftn::kokkos::plan: ExecutionSpace must run on the host");
+                "fftn::kokkos::view_plan: ExecutionSpace must run on the host");
   static constexpr std::size_t rank = InView::rank();
   using in_element = element_t<InView>;
   using out_element = element_t<OutView>;
@@ -444,36 +489,59 @@ public:
   ///
   /// `n`, Kokkos-FFT's output length, may be given only as the length the Views already
   /// have (FFTN does not crop or pad). Otherwise as the constructor taking `axes`.
-  explicit plan(const ExecutionSpace& exec_space, const InView& in, const OutView& out,
-                direction dir, int axis, std::optional<std::size_t> n = std::nullopt)
+  explicit view_plan(const ExecutionSpace& exec_space, const InView& in, const OutView& out,
+                     direction dir, int axis, std::optional<std::size_t> n = std::nullopt)
     requires(Dim == 1)
-      : plan(exec_space, in, out, dir, axis_type<1>{axis}, shape_type<1>{n.value_or(0)}) {}
+      : view_plan(exec_space, in, out, dir, axis_type<1>{axis},
+                  std::array<std::size_t, 1>{n.value_or(0)}) {}
 
   /// A plan of a transform over the dimensions `axes` of the Views (negative entries count
   /// from the end), as Kokkos-FFT's constructor; for real transforms the last axis listed is
   /// halved.
   ///
-  /// `s`, Kokkos-FFT's transform lengths, may hold 0 (the Views' length) or the length the
-  /// Views already have along each axis (the real side's length for real transforms).
+  /// `s`, Kokkos-FFT's transform lengths (`compat::shape_type`), may hold 0 (the Views'
+  /// length) or the length the Views already have along each axis (the real side's length
+  /// for real transforms).
   ///
   /// Throws `std::invalid_argument` naming the argument: `dir` for a real-to-complex plan
   /// that is not forward or a complex-to-real plan that is not backward (as Kokkos-FFT);
   /// `s` (or `n`) for a length the Views do not have; and everything `make_plan` refuses.
   /// Throws `std::bad_alloc` when memory runs out. Never touches the Views' values.
-  explicit plan(const ExecutionSpace& exec_space, const InView& in, const OutView& out,
-                direction dir, const axis_type<Dim>& axes, const shape_type<Dim>& s = {})
-      : plan(exec_space, in, out, checked_shape(in, out, dir, axes, s)) {}
+  explicit view_plan(const ExecutionSpace& exec_space, const InView& in, const OutView& out,
+                     direction dir, const axis_type<Dim>& axes,
+                     const std::array<std::size_t, Dim>& s = {})
+      : view_plan(exec_space, in, out, checked_shape(in, out, dir, axes, s)) {}
+
+  /// The one-axis constructor with Kokkos-FFT's `compat::Direction`, the spelling
+  /// `compat::Plan` call sites use: as the one taking `direction`, with `dir` converted.
+  ///
+  /// Throws `std::invalid_argument` naming `dir` when it is neither enumerator, and
+  /// otherwise as the constructor taking `direction`.
+  explicit view_plan(const ExecutionSpace& exec_space, const InView& in, const OutView& out,
+                     compat::Direction dir, int axis, std::optional<std::size_t> n = std::nullopt)
+    requires(Dim == 1)
+      : view_plan(exec_space, in, out, detail::direction_of(dir), axis, n) {}
+
+  /// The multi-axis constructor with Kokkos-FFT's `compat::Direction`, the spelling
+  /// `compat::Plan` call sites use: as the one taking `direction`, with `dir` converted.
+  ///
+  /// Throws `std::invalid_argument` naming `dir` when it is neither enumerator, and
+  /// otherwise as the constructor taking `direction`.
+  explicit view_plan(const ExecutionSpace& exec_space, const InView& in, const OutView& out,
+                     compat::Direction dir, const axis_type<Dim>& axes,
+                     const std::array<std::size_t, Dim>& s = {})
+      : view_plan(exec_space, in, out, detail::direction_of(dir), axes, s) {}
 
   /// Not copyable, as Kokkos-FFT's plan.
-  plan(const plan&) = delete;
+  view_plan(const view_plan&) = delete;
   /// Not copyable, as Kokkos-FFT's plan.
-  plan& operator=(const plan&) = delete;
+  view_plan& operator=(const view_plan&) = delete;
   /// Not movable, as Kokkos-FFT's plan.
-  plan(plan&&) = delete;
+  view_plan(view_plan&&) = delete;
   /// Not movable, as Kokkos-FFT's plan.
-  plan& operator=(plan&&) = delete;
+  view_plan& operator=(view_plan&&) = delete;
   /// Releases the FFTN plan and the workspace.
-  ~plan() = default;
+  ~view_plan() = default;
 
   /// Transforms `in` into `out`, then scales the output as `norm` says (Kokkos-FFT's
   /// default: backward transforms by 1/N).
@@ -509,7 +577,7 @@ public:
       detail::reject("out", "overlaps in, and the plan is out of place");
     }
     if (busy_.exchange(true, std::memory_order_acquire)) {
-      throw std::logic_error("fftn::kokkos: plan::execute was called while another execution "
+      throw std::logic_error("fftn::kokkos: view_plan::execute was called while another execution "
                              "of the same plan was running; one plan runs one execution at a "
                              "time (use a plan per thread, or make_plan and a workspace each)");
     }
@@ -518,6 +586,15 @@ public:
     workspace scratch(workspace_.memory());
     plan_.execute(data_of(in), data_of(out), scratch);
     scale(out, norm);
+  }
+
+  /// `execute` with Kokkos-FFT's `compat::Normalization`, the spelling `compat::Plan` call
+  /// sites use: as the one taking `normalization`, with `norm` converted.
+  ///
+  /// Throws `std::invalid_argument` naming `norm` when it is none of the enumerators, and
+  /// otherwise as `execute` taking `normalization`.
+  void execute(const InView& in, const OutView& out, compat::Normalization norm) const {
+    execute(in, out, detail::normalization_of(norm));
   }
 
   /// The FFTN plan this plan executes.
@@ -531,8 +608,8 @@ public:
   [[nodiscard]] std::string describe() const { return plan_.describe(); }
 
 private:
-  plan(ExecutionSpace exec_space, const InView& in, const OutView& out,
-       const shape<in_element, out_element>& s)
+  view_plan(ExecutionSpace exec_space, const InView& in, const OutView& out,
+            const shape<in_element, out_element>& s)
       : exec_space_(std::move(exec_space)),
         plan_(detail::plan_of(s, detail::same_first_element(in, out))),
         workspace_(plan_.workspace_bytes()), dir_(s.dir),
@@ -551,7 +628,7 @@ private:
 
   static shape<in_element, out_element> checked_shape(const InView& in, const OutView& out,
                                                       direction dir, const axis_type<Dim>& axes,
-                                                      const shape_type<Dim>& s) {
+                                                      const std::array<std::size_t, Dim>& s) {
     if (std::is_floating_point_v<in_element> && dir != direction::forward) {
       detail::reject("dir", "must be forward for a real-to-complex plan");
     }
@@ -642,36 +719,43 @@ private:
 /// Executes `p` on `in` and `out` with normalisation `norm`, as Kokkos-FFT's free
 /// `KokkosFFT::execute`: the same as `p.execute(in, out, norm)`.
 ///
-/// Preconditions, exceptions and guarantees: those of `plan::execute`.
+/// Preconditions, exceptions and guarantees: those of `view_plan::execute`.
 template <class ExecutionSpace, class InView, class OutView, std::size_t Dim>
-void execute(const plan<ExecutionSpace, InView, OutView, Dim>& p,
+void execute(const view_plan<ExecutionSpace, InView, OutView, Dim>& p,
              const std::type_identity_t<InView>& in, const std::type_identity_t<OutView>& out,
              normalization norm = normalization::backward) {
+  p.execute(in, out, norm);
+}
+
+/// `execute(p, in, out, norm)` with Kokkos-FFT's `compat::Normalization`: the same as
+/// `p.execute(in, out, norm)`.
+///
+/// Preconditions, exceptions and guarantees: those of `view_plan::execute`.
+template <class ExecutionSpace, class InView, class OutView, std::size_t Dim>
+void execute(const view_plan<ExecutionSpace, InView, OutView, Dim>& p,
+             const std::type_identity_t<InView>& in, const std::type_identity_t<OutView>& out,
+             compat::Normalization norm) {
   p.execute(in, out, norm);
 }
 
 /// Kokkos-FFT's names for this adapter, so that code written against Kokkos-FFT 2.0 needs
 /// only a new include and namespace: `KokkosFFT::Plan` becomes `fftn::kokkos::compat::Plan`,
 /// and so on. The names break FFTN's snake_case rule on purpose; they are aliases of the
-/// adapter's own.
+/// adapter's own, except `Direction` and `Normalization` (declared above), which are
+/// Kokkos-FFT's own enumerations.
 namespace compat {
 
-/// `KokkosFFT::Plan`: the adapter's `plan`.
+/// `KokkosFFT::Plan`: the adapter's `view_plan`.
 template <class ExecutionSpace, class InViewType, class OutViewType, std::size_t Dim = 1>
-using Plan = kokkos::plan<ExecutionSpace, InViewType, OutViewType, Dim>;
-
-/// `KokkosFFT::Direction`: FFTN's `direction`, whose `forward` and `backward` are spelled the
-/// same.
-using Direction = fftn::direction;
-
-/// `KokkosFFT::Normalization`: the adapter's `normalization`.
-using Normalization = kokkos::normalization;
+using Plan = kokkos::view_plan<ExecutionSpace, InViewType, OutViewType, Dim>;
 
 /// `KokkosFFT::axis_type`: the adapter's `axis_type`.
 template <std::size_t Dim> using axis_type = kokkos::axis_type<Dim>;
 
-/// `KokkosFFT::shape_type`: the adapter's `shape_type`.
-template <std::size_t Dim> using shape_type = kokkos::shape_type<Dim>;
+/// `KokkosFFT::shape_type`: the lengths of the transformed axes, which the plan
+/// constructors take as `s`. FFTN accepts only the lengths the Views already have (0
+/// standing for them): it does not crop or pad.
+template <std::size_t Dim> using shape_type = std::array<std::size_t, Dim>;
 
 /// `KokkosFFT::execute`: the adapter's `execute`.
 using kokkos::execute;
