@@ -15,12 +15,9 @@ fftn_add_test(fftn_contract_tests
 # One translation unit per public header, including only that header, all linked into one
 # executable (which also proves the headers define nothing twice across units).
 file(GLOB public_headers CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/include/fftn/*.hpp)
-# kokkos.hpp is the optional adapter: it includes Kokkos_Core.hpp, so its unit is built only
-# when the test build has Kokkos, and that build links Kokkos into the executable.
+# kokkos.hpp is the optional adapter: it includes Kokkos_Core.hpp, so it gets an executable of
+# its own below, built only when the test build has Kokkos.
 list(FILTER public_headers EXCLUDE REGEX "/kokkos\\.hpp$")
-if(TARGET Kokkos::kokkos)
-  list(APPEND public_headers ${PROJECT_SOURCE_DIR}/include/fftn/kokkos.hpp)
-endif()
 set(alone_units "")
 foreach(header IN LISTS public_headers)
   get_filename_component(stem "${header}" NAME_WE)
@@ -34,10 +31,23 @@ endforeach()
 add_executable(fftn_headers_alone headers_alone_main.cpp ${alone_units})
 fftn_configure_target(fftn_headers_alone)
 target_link_libraries(fftn_headers_alone PRIVATE fftn::fftn)
-if(TARGET Kokkos::kokkos)
-  fftn_link_kokkos(fftn_headers_alone)
-endif()
 add_test(NAME api.headers_alone COMMAND fftn_headers_alone)
+
+# kokkos.hpp alone, in two units linked together (it defines nothing twice), with Kokkos.
+if(TARGET Kokkos::kokkos)
+  set(kokkos_units "")
+  foreach(n IN ITEMS 1 2)
+    set(unit "${CMAKE_CURRENT_BINARY_DIR}/alone_kokkos_${n}.cpp")
+    file(CONFIGURE OUTPUT "${unit}" CONTENT
+      "#include \"fftn/kokkos.hpp\" // NOLINT(misc-include-cleaner): this unit only includes it\n")
+    list(APPEND kokkos_units "${unit}")
+  endforeach()
+  add_executable(fftn_kokkos_header_alone headers_alone_main.cpp ${kokkos_units})
+  fftn_configure_target(fftn_kokkos_header_alone)
+  target_link_libraries(fftn_kokkos_header_alone PRIVATE fftn::fftn)
+  fftn_link_kokkos(fftn_kokkos_header_alone)
+  add_test(NAME api.kokkos_header_alone COMMAND fftn_kokkos_header_alone)
+endif()
 
 # A translation unit compiled with fast-math must be refused with FFTN's own message.
 if(NOT CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
