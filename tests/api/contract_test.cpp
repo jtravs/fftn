@@ -192,7 +192,8 @@ TYPED_TEST(Contracts, PlansAreReusableAcrossCopiesAndThreads) {
   };
   const cvec<T> serial = run(p);
   EXPECT_TRUE(same_bits<std::complex<T>>(run(p), serial));
-  const fftn::c2c_plan<T> copy = p; // NOLINT(performance-unnecessary-copy-initialization)
+  // NOLINTNEXTLINE(performance-unnecessary-copy-initialization): the copy is under test
+  const fftn::c2c_plan<T> copy = p;
   EXPECT_TRUE(same_bits<std::complex<T>>(run(copy), serial));
   constexpr int threads = 4;
   std::array<cvec<T>, threads> results;
@@ -232,12 +233,12 @@ TYPED_TEST(Contracts, MovedFromPlansStayValid) {
   // NOLINTNEXTLINE(performance-move-const-arg): the move is the subject of the test
   fftn::c2c_plan<T> q(std::move(p));
   EXPECT_TRUE(same_bits<std::complex<T>>(run(q), want));
-  // NOLINTNEXTLINE(bugprone-use-after-move,clang-analyzer-cplusplus.Move): on purpose
+  // NOLINTNEXTLINE(bugprone-use-after-move,clang-analyzer-cplusplus.Move): source under test
   EXPECT_TRUE(same_bits<std::complex<T>>(run(p), want));
   fftn::c2c_plan<T> r(fftn::rows_c2c<T>(n, 1, fftn::direction::backward));
   r = std::move(q); // NOLINT(performance-move-const-arg): the move is the subject of the test
   EXPECT_TRUE(same_bits<std::complex<T>>(run(r), want));
-  // NOLINTNEXTLINE(bugprone-use-after-move,clang-analyzer-cplusplus.Move): on purpose
+  // NOLINTNEXTLINE(bugprone-use-after-move,clang-analyzer-cplusplus.Move): source under test
   EXPECT_EQ(q.describe(), r.describe());
   static_assert(std::is_nothrow_move_constructible_v<fftn::c2c_plan<T>> &&
                 std::is_nothrow_move_assignable_v<fftn::c2c_plan<T>>);
@@ -269,7 +270,8 @@ TEST(Workspace, MovesAndEmptyWorkspaces) {
   fftn::workspace b(std::move(a));
   EXPECT_EQ(b.size(), 100U);
   EXPECT_EQ(b.memory().data(), memory);
-  EXPECT_EQ(a.size(), 0U); // NOLINT(bugprone-use-after-move,clang-analyzer-cplusplus.Move)
+  // NOLINTNEXTLINE(bugprone-use-after-move,clang-analyzer-cplusplus.Move): source under test
+  EXPECT_EQ(a.size(), 0U);
   fftn::workspace c;
   c = std::move(b);
   EXPECT_EQ(c.size(), 100U);
