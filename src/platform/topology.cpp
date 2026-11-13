@@ -3,13 +3,13 @@
 
 #include "platform/topology.hpp"
 
+#include "platform/environment.hpp"
 #include "platform/file_source.hpp"
 #include "platform/sysctl_values.hpp"
 #include "platform/topology_sources.hpp"
 
 #include <algorithm>
 #include <cstddef>
-#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -233,10 +233,9 @@ topology load_topology(const std::filesystem::path& path) {
 const topology& system_topology() {
   // The environment is read once, at first use, before any plan exists.
   static const topology t = [] {
-    // NOLINTNEXTLINE(concurrency-mt-unsafe): read once, under the static's guard; never set
-    const char* override_path = std::getenv("FFTN_TOPOLOGY");
-    if (override_path != nullptr && *override_path != '\0') {
-      return load_topology(override_path);
+    const auto override_path = environment_variable("FFTN_TOPOLOGY");
+    if (override_path.has_value() && !override_path->empty()) {
+      return load_topology(*override_path);
     }
     return detect_topology();
   }();

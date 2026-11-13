@@ -11,6 +11,7 @@ fftn_add_test(fftn_platform_tests
     aligned_buffer_test.cpp
     cpu_features_test.cpp
     cpu_list_test.cpp
+    environment_test.cpp
     file_source_test.cpp
     platform_text.cpp
     sysctl_values_test.cpp
