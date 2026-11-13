@@ -6,6 +6,7 @@
 
 #include "platform/cpu_features.hpp"
 
+#include "platform/cpu_feature_sources.hpp"
 #include "platform/sysctl_values.hpp"
 
 #include <array>

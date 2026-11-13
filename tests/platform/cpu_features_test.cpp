@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 John C. Travers and contributors
 // SPDX-License-Identifier: Apache-2.0
 
+#include "platform/cpu_feature_sources.hpp"
 #include "platform/cpu_features.hpp"
 #include "platform/sysctl_values.hpp"
 
