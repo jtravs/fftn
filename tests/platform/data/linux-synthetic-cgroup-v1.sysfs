@@ -1,0 +1,13 @@
+# fftn-sysfs-snapshot 1
+proc/self/cgroup	garbage\n12:memory:/c1\n4:cpu,cpuacct:/c1
+sys/devices/system/cpu/cpu0/topology/core_cpus_list	0
+sys/devices/system/cpu/cpu0/topology/physical_package_id	0
+sys/devices/system/cpu/cpu0/topology/thread_siblings_list	0
+sys/devices/system/cpu/cpu1/topology/core_cpus_list	1
+sys/devices/system/cpu/cpu1/topology/physical_package_id	0
+sys/devices/system/cpu/cpu1/topology/thread_siblings_list	1
+sys/devices/system/cpu/online	0-1
+sys/fs/cgroup/cpu,cpuacct/c1/cpu.cfs_period_us	100000
+sys/fs/cgroup/cpu,cpuacct/c1/cpu.cfs_quota_us	150000
+sys/fs/cgroup/cpu,cpuacct/cpu.cfs_period_us	100000
+sys/fs/cgroup/cpu,cpuacct/cpu.cfs_quota_us	-1
