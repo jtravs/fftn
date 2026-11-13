@@ -248,9 +248,10 @@ TYPED_TEST(KokkosAdapter, CompatDirectionConvertsToFftnDirection) {
   const auto input = complexes_of(reals_of(x));
   EXPECT_EQ(fftn::kokkos::detail::direction_of(kfft::Direction::forward), direction::forward);
   EXPECT_EQ(fftn::kokkos::detail::direction_of(kfft::Direction::backward), direction::backward);
-  for (const auto& [compat_dir, dir] :
-       {std::pair{kfft::Direction::forward, direction::forward},
-        std::pair{kfft::Direction::backward, direction::backward}}) {
+  for (const auto& [compat_dir, dir] : {
+           std::pair{kfft::Direction::forward, direction::forward},
+           std::pair{kfft::Direction::backward, direction::backward},
+       }) {
     const kfft::Plan<host, complex2<T>, complex2<T>> p(host{}, x, y, compat_dir, -1);
     kfft::execute(p, x, y, kfft::Normalization::none);
     const auto want = core_out_of_place(fftn::rows_c2c<T>(n, rows, dir), input, n * rows);
@@ -505,11 +506,17 @@ TYPED_TEST(KokkosAdapter, ThreeBatchLoopsThatDoNotNest) {
   // (2, 4, 3, 6, 2) in C order: strides 144, 36, 12, 2, 1.
   const fftn::shape<std::complex<T>, std::complex<T>> c{
       .dir = direction::forward,
-      .axes = {{.n = 4, .in_stride = 36, .out_stride = 36},
-               {.n = 6, .in_stride = 2, .out_stride = 2}},
-      .batches = {{.count = 2, .in_dist = 144, .out_dist = 144},
-                  {.count = 3, .in_dist = 12, .out_dist = 12},
-                  {.count = 2, .in_dist = 1, .out_dist = 1}},
+      .axes =
+          {
+              {.n = 4, .in_stride = 36, .out_stride = 36},
+              {.n = 6, .in_stride = 2, .out_stride = 2},
+          },
+      .batches =
+          {
+              {.count = 2, .in_dist = 144, .out_dist = 144},
+              {.count = 3, .in_dist = 12, .out_dist = 12},
+              {.count = 2, .in_dist = 1, .out_dist = 1},
+          },
   };
   const auto input = complexes_of(reals_of(x));
   const fftn::kokkos::view_plan<host, complex5, complex5, 2> p(host{}, x, y, direction::forward,
@@ -527,11 +534,17 @@ TYPED_TEST(KokkosAdapter, ThreeBatchLoopsThatDoNotNest) {
   const real5 zr("zr", 2, 4, 3, 6, 2);
   fill(xr, 97);
   const fftn::shape<T, std::complex<T>> rf{
-      .axes = {{.n = 4, .in_stride = 36, .out_stride = 24},
-               {.n = 6, .in_stride = 2, .out_stride = 2}},
-      .batches = {{.count = 2, .in_dist = 144, .out_dist = 96},
-                  {.count = 3, .in_dist = 12, .out_dist = 8},
-                  {.count = 2, .in_dist = 1, .out_dist = 1}},
+      .axes =
+          {
+              {.n = 4, .in_stride = 36, .out_stride = 24},
+              {.n = 6, .in_stride = 2, .out_stride = 2},
+          },
+      .batches =
+          {
+              {.count = 2, .in_dist = 144, .out_dist = 96},
+              {.count = 3, .in_dist = 12, .out_dist = 8},
+              {.count = 2, .in_dist = 1, .out_dist = 1},
+          },
   };
   fftn::shape<std::complex<T>, T> rb;
   rb.dir = direction::backward;
@@ -563,9 +576,12 @@ TYPED_TEST(KokkosAdapter, ThreeBatchLoopsThatDoNotNest) {
   const fftn::shape<std::complex<T>, std::complex<T>> loose_shape{
       .dir = direction::backward,
       .axes = {{.n = 8, .in_stride = 1, .out_stride = 1}},
-      .batches = {{.count = 2, .in_dist = 4000, .out_dist = 4000},
-                  {.count = 2, .in_dist = 1000, .out_dist = 1000},
-                  {.count = 2, .in_dist = 300, .out_dist = 300}},
+      .batches =
+          {
+              {.count = 2, .in_dist = 4000, .out_dist = 4000},
+              {.count = 2, .in_dist = 1000, .out_dist = 1000},
+              {.count = 2, .in_dist = 300, .out_dist = 300},
+          },
   };
   expect_same_bits(reals_of(pool2),
                    reals_from(core_out_of_place(loose_shape, complexes_of(reals_of(pool)), 5400)));

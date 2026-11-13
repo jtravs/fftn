@@ -771,9 +771,12 @@ TYPED_TEST(MultiDim, ManyBatchDimensionsReal) {
             .real = real_twin(complex_in_place),
             .complex = complex_in_place,
             .in_place = true,
-            .options = {.in_offset = 3 * sizeof(T),
-                        .out_offset = 3 * sizeof(T),
-                        .guard = fftn::test::guard_side::below},
+            .options =
+                {
+                    .in_offset = 3 * sizeof(T),
+                    .out_offset = 3 * sizeof(T),
+                    .guard = fftn::test::guard_side::below,
+                },
         },
     };
     for (const layout& lay : layouts) {

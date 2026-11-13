@@ -87,7 +87,10 @@ TYPED_TEST(Contracts, ExecuteNeverAllocates) {
   c2r_planes.axes = {{.n = 6}, {.n = 8}};
   expect_no_allocation(c2r_planes, 6 * 5, 6 * 8); // goes through the block
   expect_no_allocation(fftn::rows_c2c<T>(1, 1, fftn::direction::forward), 1, 1, true);
-  const fftn::shape<T, c> four_batches{.axes = {{10}}, .batches = {{2}, {3}, {1}, {2}}};
+  const fftn::shape<T, c> four_batches{
+      .axes = {{.n = 10}},
+      .batches = {{.count = 2}, {.count = 3}, {.count = 1}, {.count = 2}},
+  };
   expect_no_allocation(four_batches, 12 * 10, 12 * 6);
 }
 
@@ -177,11 +180,20 @@ TYPED_TEST(Contracts, ResultDoesNotDependOnPosition) {
   two.batches = {{.count = 3}, {.count = 4}};
   check_positions(fftn::c2c_plan<T>(two), 12, 12, 12, 12, 12);
   // Three and four batch dimensions, one of count 1: 2 x 3 x 2 and 2 x 1 x 3 x 2.
-  const fftn::shape<c, c> three{.axes = {{9}}, .batches = {{2}, {3}, {2}}};
+  const fftn::shape<c, c> three{
+      .axes = {{.n = 9}},
+      .batches = {{.count = 2}, {.count = 3}, {.count = 2}},
+  };
   check_positions(fftn::c2c_plan<T>(three), 12, 9, 9, 9, 9);
-  const fftn::shape<T, c> four{.axes = {{3}, {8}}, .batches = {{2}, {1}, {3}, {2}}};
+  const fftn::shape<T, c> four{
+      .axes = {{.n = 3}, {.n = 8}},
+      .batches = {{.count = 2}, {.count = 1}, {.count = 3}, {.count = 2}},
+  };
   check_positions(fftn::r2c_plan<T>(four), 12, 24, 15, 24, 15);
-  const fftn::shape<c, T> four_c2r{.axes = {{3}, {8}}, .batches = {{2}, {1}, {3}, {2}}};
+  const fftn::shape<c, T> four_c2r{
+      .axes = {{.n = 3}, {.n = 8}},
+      .batches = {{.count = 2}, {.count = 1}, {.count = 3}, {.count = 2}},
+  };
   check_positions(fftn::c2r_plan<T>(four_c2r), 12, 15, 24, 15, 24);
 }
 
@@ -343,9 +355,15 @@ TEST(Validation, InvalidShapesThrowNamingTheArgument) {
   using c = std::complex<double>;
   const fftn::shape<c, c> no_axes;
   expect_refused(no_axes, "shape.axes");
-  const fftn::shape<c, c> four_axes{.axes = {{2}, {3}, {4}, {5}}, .batches = {{6}}};
+  const fftn::shape<c, c> four_axes{
+      .axes = {{.n = 2}, {.n = 3}, {.n = 4}, {.n = 5}},
+      .batches = {{.count = 6}},
+  };
   expect_refused(four_axes, "shape.axes");
-  const fftn::shape<c, c> zero_third{.axes = {{8}}, .batches = {{2}, {3}, {0}, {4}}};
+  const fftn::shape<c, c> zero_third{
+      .axes = {{.n = 8}},
+      .batches = {{.count = 2}, {.count = 3}, {.count = 0}, {.count = 4}},
+  };
   expect_refused(zero_third, "shape.batches[2].count");
   expect_refused(fftn::rows_c2c<double>(0, 1, fftn::direction::forward), "shape.axes[0].n");
   expect_refused(fftn::planes_c2c<double>(4, 0, 1, fftn::direction::forward), "shape.axes[1].n");
@@ -366,10 +384,12 @@ TEST(Validation, InvalidShapesThrowNamingTheArgument) {
   expect_refused(overlap, "overlap");
   // Four batch dimensions, the outermost colliding with the third: distances 16 and 16.
   overlap.axes = {{.n = 8}};
-  overlap.batches = {{.count = 2, .out_dist = 16},
-                     {.count = 1},
-                     {.count = 2, .out_dist = 16},
-                     {.count = 2, .out_dist = 8}};
+  overlap.batches = {
+      {.count = 2, .out_dist = 16},
+      {.count = 1},
+      {.count = 2, .out_dist = 16},
+      {.count = 2, .out_dist = 8},
+  };
   expect_refused(overlap, "overlap");
 
   // Sizes beyond the address space.
@@ -423,10 +443,12 @@ TEST(Validation, StridesThatOverflowAreRefused) {
   expect_refused(s, "shape.batches[3].in_dist");
   // The byte reach of four batch dimensions together overflows, though each one's fits.
   constexpr std::ptrdiff_t wide = std::numeric_limits<std::ptrdiff_t>::max() / 48;
-  s.batches = {{.count = 2, .in_dist = wide},
-               {.count = 2, .in_dist = wide},
-               {.count = 2, .in_dist = wide},
-               {.count = 2, .in_dist = wide}};
+  s.batches = {
+      {.count = 2, .in_dist = wide},
+      {.count = 2, .in_dist = wide},
+      {.count = 2, .in_dist = wide},
+      {.count = 2, .in_dist = wide},
+  };
   expect_refused(s, "too large");
   // A distance whose byte step overflows although its element count does not.
   s.batches = {{.count = 2, .in_dist = std::numeric_limits<std::ptrdiff_t>::max() / 4}};
@@ -462,9 +484,11 @@ TEST(Validation, DistanceOfASingleTransformIsIgnored) {
   expect_default_result(s);
   s.batches = {{.count = 1, .in_dist = lowest_step, .out_dist = -far_step}};
   expect_default_result(s);
-  s.batches = {{.count = 1, .in_dist = far_step},
-               {.count = 1, .out_dist = lowest_step},
-               {.count = 1, .in_dist = -far_step, .out_dist = far_step}};
+  s.batches = {
+      {.count = 1, .in_dist = far_step},
+      {.count = 1, .out_dist = lowest_step},
+      {.count = 1, .in_dist = -far_step, .out_dist = far_step},
+  };
   expect_default_result(s);
 }
 
@@ -514,6 +538,22 @@ TEST(Validation, ValidEdgeCasesAreAccepted) {
   fftn::shape<double, c> one;
   one.axes = {{.n = 5}};
   EXPECT_NO_THROW(fftn::r2c_plan<double>(one, {.in_place = true}));
+}
+
+// Shapes are plain aggregates of vectors: braced lists build them, positional or designated,
+// and a single braced value is one axis or batch dimension, never a vector's size.
+TEST(Shape, BracedListsBuildShapes) {
+  using c = std::complex<double>;
+  // NOLINTNEXTLINE(modernize-use-designated-initializers): callers write this; it must compile
+  const fftn::shape<c, c> positional{.axes = {{64}}, .batches = {{1000}}};
+  ASSERT_EQ(positional.axes.size(), 1U);
+  EXPECT_EQ(positional.axes[0].n, 64U);
+  ASSERT_EQ(positional.batches.size(), 1U);
+  EXPECT_EQ(positional.batches[0].count, 1000U);
+  const fftn::c2c_plan<double> p(positional);
+  EXPECT_EQ(p.describe(),
+            fftn::c2c_plan<double>(fftn::rows_c2c<double>(64, 1000, fftn::direction::forward))
+                .describe());
 }
 
 // ---- Describe, instruction set.
