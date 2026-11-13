@@ -1,12 +1,15 @@
 // SPDX-FileCopyrightText: 2026 John C. Travers and contributors
 // SPDX-License-Identifier: Apache-2.0
 //
-// fftn_platform_dump: prints what FFTN detects on this machine (CPU features, the planning
-// clock's resolution, the topology) as stable text, to record per machine.
+// fftn_platform_dump: prints what FFTN detects on this machine (CPU features, the target a
+// plan would choose, the planning clock's resolution, the topology) as stable text, to
+// record per machine. The CI's emulated runs compare its feature and target lines with what
+// each emulated processor should give (.github/scripts/emulate.sh).
 //
 //   fftn_platform_dump            the system topology (honours FFTN_TOPOLOGY)
 //   fftn_platform_dump <path>     a recorded topology (a sysfs root or a sysctl file)
 
+#include "isa/target.hpp"
 #include "platform/cpu_features.hpp"
 #include "platform/platform_text.hpp"
 #include "platform/timer.hpp"
@@ -24,7 +27,11 @@ int main(int argc, char** argv) {
       std::fputs("usage: fftn_platform_dump [sysfs root or sysctl file]\n", stderr);
       return 2;
     }
-    std::string text = fftn::test::features_text(fftn::detail::detect_cpu_features());
+    const fftn::detail::cpu_features features = fftn::detail::detect_cpu_features();
+    std::string text = fftn::test::features_text(features);
+    text += "best_target ";
+    text += fftn::detail::target_name(fftn::detail::best_target(features));
+    text += '\n';
     text += "clock_resolution_ns " +
             std::to_string(fftn::detail::measured_clock_resolution().count()) + '\n';
     text += fftn::test::topology_text(args.size() == 2 ? fftn::detail::load_topology(args[1])

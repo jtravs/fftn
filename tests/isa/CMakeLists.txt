@@ -27,6 +27,12 @@ else()
   set(fftn_python ${Python3_EXECUTABLE})
 endif()
 if(NOT CMAKE_OBJDUMP)
+  # CMake looks for no objdump when the compiler has the MSVC front end (clang-cl); the
+  # llvm-objdump beside it reads COFF.
+  get_filename_component(fftn_cxx_dir "${CMAKE_CXX_COMPILER}" DIRECTORY)
+  find_program(CMAKE_OBJDUMP NAMES llvm-objdump HINTS "${fftn_cxx_dir}" NO_DEFAULT_PATH)
+endif()
+if(NOT CMAKE_OBJDUMP)
   message(FATAL_ERROR "isa tests: no objdump found for the disassembly test")
 endif()
 set(fftn_asm_check ${fftn_python} ${PROJECT_SOURCE_DIR}/tools/asm_check.py
