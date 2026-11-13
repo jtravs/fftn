@@ -3,11 +3,12 @@
 #
 # The gate (scripts/check.sh) on every platform of DESIGN.md 15.4. Hygiene and lint stages
 # run once, in the lint job; every other job runs the code stages chosen for its compiler
-# ("stages" in each matrix entry, with the reason beside it). Sanitizers run on GCC and
-# Clang, Linux and macOS, x86-64 and AArch64; clang-tidy on Linux x86-64, Linux AArch64
-# and macOS, since its findings follow the platform's #if branches; coverage with Clang on
-# Linux x86-64 and macOS. Windows builds and tests only (no sanitizer or coverage stage is
-# set up for the MSVC ABI). Emulated processors are in emulation.yml.
+# ("stages" in each matrix entry, with the reason beside it). Sanitizers run with GCC and
+# Clang on Linux x86-64, with Clang on Linux AArch64 and on macOS; clang-tidy on Linux
+# x86-64, Linux AArch64 and macOS, since its findings follow the platform's #if branches;
+# coverage with Clang on Linux x86-64 and macOS. Windows builds and tests only (no
+# sanitizer or coverage stage is set up for the MSVC ABI). Emulated processors are in
+# emulation.yml.
 #
 # Pins: actions by commit; the uv version below; tools by URL and SHA-256
 # (.github/scripts/fetch.sh); the current-GCC image by digest; LLVM 23 from apt.llvm.org
@@ -217,13 +218,15 @@ jobs:
         include:
           # The getauxval feature path runs here for the first time (Neoverse N2 runners:
           # FCMA and pointer authentication, so neon_fcma is forced alongside scalar).
+          # GCC 14's ASan + UBSan took 53 minutes here (CI run 43487560137) against 2.5 on
+          # x86-64; GCC's sanitizers run on x86-64, and AArch64's with Clang.
           - name: gcc-14
             cxx: g++-14
-            stages: build sanitize bench
+            stages: build bench
           - name: clang-23
             llvm: "23"
             cxx: /usr/lib/llvm-23/bin/clang++
-            stages: build tidy tsan
+            stages: build tidy sanitize tsan
     env:
       CXX: ${{ matrix.cxx }}
       FFTN_CHECK_STAGES: ${{ matrix.stages }}
