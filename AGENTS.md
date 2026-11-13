@@ -46,7 +46,7 @@ green on the machine where it was made. In addition:
 
 - A kernel, vocabulary or generator change for an instruction set the machine lacks also
   needs `build` and `sanitize` on a machine that has it (see section 9). Until emulated runs
-  exist in CI, that means AVX2 and AVX-512 on the Xeon or the EPYC cluster (DMOG), and
+  exist in CI, that means AVX2 and AVX-512 on the Xeon or the EPYC cluster, and
   NEON+FCMA on the Mac.
 - Report the compiler, the instruction sets exercised, the build type and every stage that
   was skipped or did not apply. "Green" without that list is not a report.
