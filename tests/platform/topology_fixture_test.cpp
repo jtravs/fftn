@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // The Linux and macOS readers against the fixtures in data/: machines recorded with
-// tools/capture_platform.py (named by CPU model: the Apple M5 Max) and synthetic sysfs snapshots
+// tools/capture_platform.py (named by CPU model: a 2-socket Xeon Gold 6240, an EPYC 7763
+// node seen from inside a 2-CPU batch job, the Apple M5 Max) and synthetic sysfs snapshots
 // for the awkward cases (SMT off, offline CPUs, big.LITTLE, Intel hybrid, no L3, missing and
 // malformed files, cgroup v1 and v2 quotas). Each fixture's known topology is spelled out
 // below.
@@ -85,6 +86,53 @@ topology load(const char* name, std::size_t page_size = 0) {
 
 std::vector<fixture> all_fixtures() {
   return {
+      // Two sockets, 18 cores each, two threads per core; a cgroup v2 chain with no limit.
+      {
+          .path = "linux-intel-xeon-gold-6240.sysfs",
+          .page_size = 4 * KiB,
+          .logical_cpus = 72,
+          .cores = 36,
+          .packages = 2,
+          .numa_nodes = 2,
+          .l2_groups = 36,
+          .l3_groups = 2,
+          .allowed_cpus = 72,
+          .classes =
+              {
+                  {
+                      .capacity = 1024,
+                      .cores = 36,
+                      .logical_cpus = 72,
+                      .l1d = cache(32 * KiB, 64, 8, 2),
+                      .l2 = cache(1 * MiB, 64, 16, 2),
+                      .l3 = cache(25344 * KiB, 64, 11, 36),
+                  },
+              },
+      },
+      // Two sockets of 64 cores, SMT off, 8 NUMA nodes (NPS4), 16 CCXs of 8 cores sharing
+      // an L3. Captured inside a 2-CPU batch job: the allowed CPUs are two, the cgroup chain
+      // (six levels) sets no bandwidth limit.
+      {
+          .path = "linux-amd-epyc-7763.sysfs",
+          .page_size = 4 * KiB,
+          .logical_cpus = 128,
+          .cores = 128,
+          .packages = 2,
+          .numa_nodes = 8,
+          .l2_groups = 128,
+          .l3_groups = 16,
+          .allowed_cpus = 2,
+          .classes =
+              {
+                  {
+                      .cores = 128,
+                      .logical_cpus = 128,
+                      .l1d = cache(32 * KiB, 64, 8, 1),
+                      .l2 = cache(512 * KiB, 64, 8, 1),
+                      .l3 = cache(32 * MiB, 64, 16, 8),
+                  },
+              },
+      },
       {
           .path = "macos-apple-m5-max.sysctl",
           .os_cpu_ids = false,
@@ -320,6 +368,40 @@ INSTANTIATE_TEST_SUITE_P(Fixtures, TopologyFixture, testing::ValuesIn(all_fixtur
                          fixture_name);
 
 // Details the table above does not capture.
+
+TEST(TopologyFixtureDetail, XeonGold6240) {
+  const topology t = load("linux-intel-xeon-gold-6240.sysfs", 4096);
+  EXPECT_EQ(t.cores[0].cpus, (cpus{0, 36}));
+  EXPECT_EQ(t.cores[35].cpus, (cpus{35, 71}));
+  ASSERT_EQ(t.l3_groups.size(), 2U);
+  EXPECT_EQ(fftn::detail::format_cpu_list(t.l3_groups[0].cpus), "0-17,36-53");
+  EXPECT_EQ(fftn::detail::format_cpu_list(t.numa_nodes[1].cpus), "18-35,54-71");
+  EXPECT_EQ(t.packages[1].cpus, t.numa_nodes[1].cpus);
+  EXPECT_EQ(t.cpus[54].package, 1U);
+  EXPECT_EQ(t.cpus[54].l2_group, t.cpus[18].l2_group);
+}
+
+TEST(TopologyFixtureDetail, Epyc7763InsideABatchJob) {
+  const topology t = load("linux-amd-epyc-7763.sysfs", 4096);
+  // The topology is the whole node; the job's two CPUs are recorded beside it.
+  EXPECT_EQ(t.allowed_cpus, (cpus{15, 31}));
+  EXPECT_EQ(t.cpu_quota, 0.0);
+  for (std::size_t n = 0; n < 8; ++n) {
+    EXPECT_EQ(t.numa_nodes[n].id, n);
+    EXPECT_EQ(t.numa_nodes[n].cpus.size(), 16U);
+    EXPECT_EQ(t.numa_nodes[n].cpus.front(), 16 * n);
+  }
+  for (std::size_t g = 0; g < 16; ++g) {
+    EXPECT_EQ(t.l3_groups[g].cpus.size(), 8U);
+    EXPECT_EQ(t.l3_groups[g].cpus.front(), 8 * g);
+  }
+  EXPECT_EQ(fftn::detail::format_cpu_list(t.packages[0].cpus), "0-63");
+  EXPECT_EQ(fftn::detail::format_cpu_list(t.packages[1].cpus), "64-127");
+  // The two allowed CPUs sit in different CCXs of the same NUMA node.
+  EXPECT_NE(t.cpus[15].l3_group, t.cpus[31].l3_group);
+  EXPECT_EQ(t.cpus[15].node, 0U);
+  EXPECT_EQ(t.cpus[31].node, 1U);
+}
 
 // A snapshot written out as a directory tree reads the same through the live-system reader.
 TEST(TopologyFixtureDetail, DirectoryAndSnapshotAgree) {
