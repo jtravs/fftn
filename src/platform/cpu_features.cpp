@@ -9,12 +9,12 @@
 #include "platform/cpu_feature_sources.hpp"
 #include "platform/sysctl_values.hpp"
 
-#include <array>
 #include <cstdint>
 #include <string_view>
 
 #if defined(__x86_64__) || defined(_M_X64)
 #define FFTN_PLATFORM_X86_64 1
+#include <array>
 #ifdef _MSC_VER
 #include <cstddef>
 #include <intrin.h>
@@ -24,8 +24,11 @@
 #elif defined(__aarch64__) || defined(_M_ARM64)
 #define FFTN_PLATFORM_AARCH64 1
 #ifdef __linux__
+#include <elf.h> // AT_HWCAP (sys/auxv.h includes it, but provides only getauxval)
 #include <sys/auxv.h>
 #include <sys/prctl.h>
+#elif defined(__APPLE__)
+#include <array>
 #elif defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
