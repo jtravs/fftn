@@ -1,0 +1,233 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# The standard catalogue (DESIGN.md 16.1): what any FFT library is judged on. Format in
+# bench/README.md. Every case is in tier "full"; a group's `tiers` adds its cases to the
+# smaller tiers. A case listed by several groups is one case with the union of their tiers.
+# Weights are equal here; client catalogues carry the weights of a real workload.
+
+[catalogue]
+name = "standard"
+
+# ---- smoke: correctness of every kind, placement and rank, in seconds (the gate) ----------
+
+[[group]]
+name = "smoke-rows"
+kind = "c2c"
+dims = [2, 3, 5, 7, 8, 12, 16, 17, 60, 97, 128, 1024, 65536]
+batch = 3
+place = ["out", "in"]
+tiers = ["smoke"]
+
+[[group]]
+name = "smoke-rows-backward"
+kind = "c2c"
+dims = [8, 15, 64]
+batch = 2
+direction = "bwd"
+tiers = ["smoke"]
+
+[[group]]
+name = "smoke-real-rows"
+kind = ["r2c", "c2r"]
+dims = [2, 3, 8, 15, 16, 64, 100, 1024, 65536]
+batch = 2
+place = ["out", "in"]
+tiers = ["smoke"]
+
+[[group]]
+name = "smoke-planes"
+kind = ["c2c", "r2c", "c2r"]
+dims = ["8x6", "16x16", "5x7", "32x30"]
+batch = 2
+place = ["out", "in"]
+tiers = ["smoke"]
+
+[[group]]
+name = "smoke-volumes"
+kind = ["c2c", "r2c", "c2r"]
+dims = ["4x6x8", "3x5x4"]
+tiers = ["smoke"]
+
+# ---- the standard catalogue ---------------------------------------------------------------
+
+[[group]]
+name = "pow2-rows"
+kind = "c2c"
+dims = [
+  2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536,
+  131072, 262144, 524288, 1048576, 2097152, 4194304, 8388608, 16777216,
+]
+
+[[group]]
+name = "smooth-rows"
+kind = "c2c"
+dims = [
+  6, 10, 12, 15, 18, 20, 24, 30, 36, 40, 45, 48, 60, 72, 80, 96, 100, 120, 144, 160, 180,
+  192, 210, 240, 243, 300, 360, 384, 480, 500, 640, 720, 768, 960, 1000, 1200, 1440, 1536,
+  1920, 2000, 2187, 2400, 3000, 3125, 3600, 4800, 5000, 6000, 6561, 7200, 10000, 12000,
+  15625, 16807, 20000, 25000, 46080, 100000, 1000000,
+]
+
+[[group]]
+name = "prime-rows"
+kind = "c2c"
+dims = [
+  7, 11, 13, 17, 19, 23, 31, 37, 61, 97, 101, 127, 257, 509, 1009, 2017, 4093, 8191, 16381,
+  65537, 131071, 999983,
+]
+
+[[group]]
+name = "awkward-rows"
+note = "composites of large primes and prime powers"
+kind = "c2c"
+dims = [22, 26, 121, 143, 289, 323, 1018, 2431, 4097, 10403, 65535]
+
+[[group]]
+name = "backward-rows"
+kind = "c2c"
+dims = [64, 1024, 65536]
+direction = "bwd"
+
+[[group]]
+name = "short-row-batches"
+kind = "c2c"
+dims = [8, 16, 32, 64, 128]
+batch = [16, 256, 4096]
+
+[[group]]
+name = "row-batches"
+kind = "c2c"
+dims = [256, 512, 1024, 4096]
+batch = [16, 256, 1024]
+
+[[group]]
+name = "awkward-row-batches"
+kind = "c2c"
+dims = [12, 48, 96, 97, 100, 1000]
+batch = [64, 1024]
+
+[[group]]
+name = "real-rows"
+kind = ["r2c", "c2r"]
+dims = [16, 64, 256, 1024, 4096, 16384, 65536, 262144, 1048576, 97, 100, 1000, 1009, 1536, 10000]
+
+[[group]]
+name = "real-row-batches"
+kind = ["r2c", "c2r"]
+dims = [64, 256, 1024]
+batch = [64, 1024]
+
+[[group]]
+name = "in-place-rows"
+kind = ["c2c", "r2c", "c2r"]
+dims = [64, 1024, 4096, 65536, 1048576, 1000]
+place = "in"
+
+[[group]]
+name = "planes"
+kind = ["c2c", "r2c", "c2r"]
+dims = [
+  "32x32", "64x64", "128x128", "256x256", "512x512", "1024x1024", "2048x2048", "96x96",
+  "100x100", "480x640", "1000x1000", "36x2048", "2048x36",
+]
+place = ["out", "in"]
+
+[[group]]
+name = "plane-batches"
+kind = ["c2c", "r2c"]
+dims = ["32x32", "64x64", "128x128"]
+batch = 16
+
+[[group]]
+name = "volumes"
+kind = ["c2c", "r2c", "c2r"]
+dims = ["16x16x16", "32x32x32", "64x64x64", "128x128x128", "48x48x48", "100x100x100"]
+
+# ---- quick: an A/B in two or three minutes -------------------------------------------------
+
+[[group]]
+name = "quick-rows"
+kind = "c2c"
+dims = [16, 64, 256, 1024, 4096, 16384, 65536, 60, 1000, 97, 1009]
+tiers = ["quick", "tracking"]
+
+[[group]]
+name = "quick-batches"
+kind = "c2c"
+dims = [64, 1024]
+batch = 256
+tiers = ["quick", "tracking"]
+
+[[group]]
+name = "quick-real"
+kind = ["r2c", "c2r"]
+dims = [256, 4096, 65536]
+tiers = ["quick", "tracking"]
+
+[[group]]
+name = "quick-in-place"
+kind = "c2c"
+dims = [1024]
+place = "in"
+tiers = ["quick", "tracking"]
+
+[[group]]
+name = "quick-planes"
+kind = ["c2c", "r2c"]
+dims = ["64x64", "256x256"]
+tiers = ["quick", "tracking"]
+
+# ---- tracking: a fixed set for history (with the quick cases) ------------------------------
+
+[[group]]
+name = "tracking-rows"
+kind = "c2c"
+dims = [8, 128, 262144, 1048576, 4194304, 120, 360, 2187, 46080, 100000, 17, 257, 4093, 65537, 2431, 10403]
+tiers = ["tracking"]
+
+[[group]]
+name = "tracking-batches"
+kind = "c2c"
+dims = [8, 128]
+batch = 4096
+tiers = ["tracking"]
+
+[[group]]
+name = "tracking-awkward-batches"
+kind = "c2c"
+dims = [100]
+batch = 1024
+tiers = ["tracking"]
+
+[[group]]
+name = "tracking-real"
+kind = ["r2c", "c2r"]
+dims = [1000, 1048576]
+tiers = ["tracking"]
+
+[[group]]
+name = "tracking-in-place"
+kind = ["c2c", "r2c"]
+dims = [65536]
+place = "in"
+tiers = ["tracking"]
+
+[[group]]
+name = "tracking-planes"
+kind = ["c2c", "r2c", "c2r"]
+dims = ["1024x1024", "480x640", "2048x36"]
+tiers = ["tracking"]
+
+[[group]]
+name = "tracking-volumes"
+kind = ["c2c", "r2c"]
+dims = ["64x64x64"]
+tiers = ["tracking"]
+
+[[group]]
+name = "tracking-backward"
+kind = "c2c"
+dims = [1024]
+direction = "bwd"
+tiers = ["tracking"]

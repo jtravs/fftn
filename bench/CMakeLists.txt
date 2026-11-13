@@ -66,7 +66,22 @@ else()
   message(STATUS "fbench: FFTW backend not built (set FFTN_BENCH_FFTW_ROOT to an installation)")
 endif()
 
-# The harness's reference DFT and check, under every gate preset (so the sanitizers see it).
+# The harness's reference DFT and check, the driver's statistics, and smoke end to end over
+# every backend of this build, under every gate preset (so the sanitizers see the harness).
 if(FFTN_BUILD_TESTS)
   add_test(NAME bench.harness_selftest COMMAND fbench-fftn selftest)
+  find_program(FFTN_UV uv)
+  if(FFTN_UV)
+    add_test(NAME bench.selftest
+             COMMAND ${FFTN_UV} run --frozen --quiet python -m unittest discover -s bench/tests
+                     -t bench
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    add_test(NAME bench.smoke
+             COMMAND ${FFTN_UV} run --frozen --quiet python bench/fbench.py
+                     --out-dir ${CMAKE_BINARY_DIR}/bench-out smoke --build ${CMAKE_BINARY_DIR}
+                     --strict
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+  else()
+    message(STATUS "fbench: uv not found; the driver's tests are not registered")
+  endif()
 endif()
