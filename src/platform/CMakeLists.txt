@@ -6,5 +6,6 @@
 # guarded by the OS they need, so the parsers are tested everywhere against fixtures.
 
 target_sources(fftn PRIVATE
+  cpu_features.cpp
   cpu_list.cpp
   sysctl_values.cpp)

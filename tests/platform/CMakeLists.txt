@@ -5,5 +5,6 @@
 
 fftn_add_test(fftn_platform_tests
   SOURCES
+    cpu_features_test.cpp
     cpu_list_test.cpp
     sysctl_values_test.cpp)
