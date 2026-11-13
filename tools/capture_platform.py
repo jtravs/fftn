@@ -89,6 +89,8 @@ def capture_cgroup(root: Path, out: Path) -> None:
     lines = (root / "proc/self/cgroup").read_text().splitlines()
     kept = []
     for line in lines:
+        if line.count(":") < 2:
+            continue
         hierarchy, controllers, path = line.split(":", 2)
         parts = [p for p in path.split("/") if p]
         renamed = [f"c{i + 1}" for i in range(len(parts))]
@@ -130,18 +132,18 @@ def capture_linux(out: Path, root: Path) -> str:
         copy(root, out, f"sys/devices/system/node/{node.name}/cpulist")
     for pmu in ("cpu_core", "cpu_atom"):
         copy(root, out, f"sys/devices/{pmu}/cpus")
-    status = (root / "proc/self/status").read_text().splitlines()
-    allowed = [line for line in status if line.startswith("Cpus_allowed_list:")]
-    (out / "proc/self").mkdir(parents=True, exist_ok=True)
-    (out / "proc/self/status").write_text("".join(f"{line}\n" for line in allowed))
+    if (root / "proc/self/status").is_file():
+        status = (root / "proc/self/status").read_text().splitlines()
+        allowed = [line for line in status if line.startswith("Cpus_allowed_list:")]
+        (out / "proc/self").mkdir(parents=True, exist_ok=True)
+        (out / "proc/self/status").write_text("".join(f"{line}\n" for line in allowed))
     if (root / "proc/self/cgroup").is_file():
         capture_cgroup(root, out)
-    model = ""
-    for line in (root / "proc/cpuinfo").read_text().splitlines():
+    cpuinfo = root / "proc/cpuinfo"
+    for line in cpuinfo.read_text().splitlines() if cpuinfo.is_file() else []:
         if line.startswith("model name"):
-            model = line.split(":", 1)[1].strip()
-            break
-    return model
+            return line.split(":", 1)[1].strip()
+    return ""
 
 
 def capture_macos(out: Path) -> str:
