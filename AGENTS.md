@@ -63,7 +63,8 @@ green on the machine where it was made. In addition:
   Warnings: `-Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wshadow`, as errors
   in the gate. Third-party code is `SYSTEM`; its warnings are not ours.
 - **Dependencies.** The library has none beyond the standard library. Tests may use
-  GoogleTest, FFTW and Boost.Multiprecision; benchmarks may use any competitor. Adding a dependency to the
+  GoogleTest, FFTW, Boost.Multiprecision and Kokkos (for the optional `fftn/kokkos.hpp`);
+  benchmarks may use any competitor. Adding a dependency to the
   library needs the maintainer's approval and a decision-log entry.
 - **Ownership and types.** RAII only: no owning raw pointers, no `new`/`delete`. Sizes and
   indices are `std::size_t` or `std::ptrdiff_t` (strides are signed); convert with the
