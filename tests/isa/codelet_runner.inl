@@ -11,7 +11,7 @@ namespace {
 template <class T> struct runner_in {
   const T* p;
   std::size_t stride; // reals between legs
-  FFTN_FORCE_INLINE cv<T> get(std::size_t j) const { return load(p + stride * j); }
+  [[nodiscard]] FFTN_FORCE_INLINE cv<T> get(std::size_t j) const { return load(p + stride * j); }
 };
 
 template <class T> struct runner_out {
@@ -22,7 +22,7 @@ template <class T> struct runner_out {
 
 template <class T> struct runner_twiddles {
   const T* p;
-  FFTN_FORCE_INLINE tw<T> get(std::size_t k) const {
+  [[nodiscard]] FFTN_FORCE_INLINE tw<T> get(std::size_t k) const {
     return load_tw(p + (k - 1) * C<T> * tw_reals<T>);
   }
 };
@@ -43,20 +43,18 @@ void run_codelet(const T* x, std::size_t xs, T* y, std::size_t ys, const T* w) {
   }
 }
 
-template <class T, std::size_t I> constexpr void fill_runs(codelet_runs<T>& runs) {
+template <class T, std::size_t I> constexpr void fill_runs(codelet_runs<T>& runs) noexcept {
   runs.run[I] = &run_codelet<T, I>;
   if constexpr (I + 1 < gen::codelet_count) {
     fill_runs<T, I + 1>(runs);
   }
 }
 
-template <class T> constexpr codelet_runs<T> make_runs() {
+// The entry points of every codelet in precision T; the unit's table holds both precisions.
+template <class T> constexpr codelet_runs<T> make_runs() noexcept {
   codelet_runs<T> runs{};
   fill_runs<T, 0>(runs);
   return runs;
 }
 
 } // namespace
-
-constinit const codelet_table codelet_entries{
-    .id = id, .f64 = make_runs<double>(), .f32 = make_runs<float>()};

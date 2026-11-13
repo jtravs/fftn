@@ -15,4 +15,10 @@ FFTN_ISA_BEGIN(scalar)
 
 #include "isa/codelet_runner.inl"
 
+constinit const codelet_table codelet_entries{
+    .id = id,
+    .f64 = make_runs<double>(),
+    .f32 = make_runs<float>(),
+};
+
 FFTN_ISA_END

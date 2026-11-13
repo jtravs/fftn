@@ -62,7 +62,7 @@ std::string describe(const gen::codelet_info& c) {
          (c.sign < 0 ? " forward" : " backward");
 }
 
-template <class T> struct layout {
+struct layout {
   std::size_t radix;
   std::size_t lanes;  // C
   std::size_t stride; // complex numbers between legs
@@ -73,6 +73,14 @@ template <class T> struct layout {
   }
 };
 
+template <class T> const fftn::detail::codelet_runs<T>& runs_of(const codelet_table& t) {
+  if constexpr (std::is_same_v<T, double>) {
+    return t.f64;
+  } else {
+    return t.f32;
+  }
+}
+
 // Runs codelet c of target table t once and checks every lane.
 template <class T>
 void check_codelet(const codelet_table& t, const kernel_table& k, std::size_t index,
@@ -80,8 +88,8 @@ void check_codelet(const codelet_table& t, const kernel_table& k, std::size_t in
   const gen::codelet_info& c = gen::codelets[index];
   const std::size_t r = c.radix;
   const std::size_t lanes = of<T>(k).complex_lanes;
-  const layout<T> in{r, lanes, lanes + (in_place ? 0 : 1)};
-  const layout<T> out{r, lanes, in_place ? in.stride : lanes + 3};
+  const layout in{.radix = r, .lanes = lanes, .stride = lanes + (in_place ? 0 : 1)};
+  const layout out{.radix = r, .lanes = lanes, .stride = in_place ? in.stride : lanes + 3};
   std::mt19937 gen(static_cast<unsigned>(index * 2 + (in_place ? 1 : 0)));
   std::uniform_real_distribution<double> uniform(-1, 1);
   std::uniform_real_distribution<double> angle(0, 2 * std::numbers::pi);
@@ -111,17 +119,9 @@ void check_codelet(const codelet_table& t, const kernel_table& k, std::size_t in
   }
 
   std::vector<T> y_buffer(out.reals(), T(canary));
-  T* y = in_place ? x.data() + 1 : y_buffer.data() + 1;
   const std::vector<T> x0 = x;
-  const fftn::detail::codelet_runs<T>& runs = [&]() -> const auto& {
-    if constexpr (std::is_same_v<T, double>) {
-      return t.f64;
-    } else {
-      return t.f32;
-    }
-  }();
-  runs.run[index](x.data() + 1, in.stride, y, out.stride, storage.data());
-  const std::vector<T>& y_all = in_place ? x : y_buffer;
+  std::vector<T>& y_all = in_place ? x : y_buffer;
+  runs_of<T>(t).run[index](x.data() + 1, in.stride, y_all.data() + 1, out.stride, storage.data());
 
   fftn::test::tolerance tol = fftn::test::derived_tolerance<T>(r, fftn::test::stable_fft_bound);
   if (c.kind != gen::variant::plain) {
@@ -129,7 +129,7 @@ void check_codelet(const codelet_table& t, const kernel_table& k, std::size_t in
   }
   for (std::size_t l = 0; l < lanes; ++l) {
     SCOPED_TRACE("lane " + std::to_string(l));
-    auto tw_of = [&](std::size_t leg) {
+    const auto tw_of = [&](std::size_t leg) {
       const cd w{static_cast<double>(twiddles[2 * ((leg - 1) * lanes + l)]),
                  static_cast<double>(twiddles[2 * ((leg - 1) * lanes + l) + 1])};
       return c.sign < 0 ? w : std::conj(w);
@@ -236,7 +236,7 @@ TEST(codelet_metadata, complete_and_consistent) {
       }
     }
   }
-  EXPECT_TRUE(std::is_sorted(std::begin(gen::radices), std::end(gen::radices)));
+  EXPECT_TRUE(std::ranges::is_sorted(gen::radices));
 }
 
 } // namespace
