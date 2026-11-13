@@ -90,8 +90,10 @@ struct topology {
 // result is a "fallback" topology of std::thread::hardware_concurrency() CPUs.
 [[nodiscard]] topology detect_topology();
 
-// Reads a recorded topology: a directory is a Linux sysfs root (holding sys/ and proc/), a
-// file is `sysctl` text from macOS. Throws std::runtime_error if the path does not exist.
+// Reads a recorded topology: a directory is a Linux root (holding sys/ and proc/); a file is
+// a sysfs snapshot if it starts with the snapshot header (file_source.hpp), else `sysctl`
+// text from macOS. Throws std::runtime_error if the path cannot be read or a snapshot is
+// malformed.
 [[nodiscard]] topology load_topology(const std::filesystem::path& path);
 
 // The process's topology: load_topology($FFTN_TOPOLOGY) when that variable is set and not

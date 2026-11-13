@@ -3,6 +3,7 @@
 
 #include "platform/topology.hpp"
 
+#include "platform/file_source.hpp"
 #include "platform/sysctl_values.hpp"
 #include "platform/topology_sources.hpp"
 
@@ -196,7 +197,7 @@ std::size_t system_page_size() noexcept {
 
 topology detect_topology() {
 #ifdef __linux__
-  topology t = topology_from_sysfs("/", system_page_size());
+  topology t = topology_from_sysfs(directory_files("/"), system_page_size());
 #elif defined(__APPLE__)
   topology t = topology_from_sysctl(read_topology_sysctl());
 #elif defined(_WIN32)
@@ -214,7 +215,7 @@ topology detect_topology() {
 topology load_topology(const std::filesystem::path& path) {
   std::error_code ec;
   if (std::filesystem::is_directory(path, ec)) {
-    return topology_from_sysfs(path, system_page_size());
+    return topology_from_sysfs(directory_files(path), system_page_size());
   }
   const std::ifstream file(path);
   if (!file) {
@@ -222,7 +223,11 @@ topology load_topology(const std::filesystem::path& path) {
   }
   std::ostringstream text;
   text << file.rdbuf();
-  return topology_from_sysctl(parse_sysctl_text(text.str()));
+  const std::string content = std::move(text).str();
+  if (is_sysfs_snapshot(content)) {
+    return topology_from_sysfs(snapshot_files(content), system_page_size());
+  }
+  return topology_from_sysctl(parse_sysctl_text(content));
 }
 
 const topology& system_topology() {

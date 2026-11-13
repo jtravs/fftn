@@ -11,6 +11,7 @@ fftn_add_test(fftn_platform_tests
     aligned_buffer_test.cpp
     cpu_features_test.cpp
     cpu_list_test.cpp
+    file_source_test.cpp
     platform_text.cpp
     sysctl_values_test.cpp
     timer_test.cpp
@@ -34,7 +35,7 @@ set_tests_properties(platform.dump.system PROPERTIES
 
 add_test(NAME platform.dump.override_sysfs COMMAND fftn_platform_dump)
 set_tests_properties(platform.dump.override_sysfs PROPERTIES
-  ENVIRONMENT "FFTN_TOPOLOGY=${platform_data}/linux-synthetic-2socket-smt"
+  ENVIRONMENT "FFTN_TOPOLOGY=${platform_data}/linux-synthetic-2socket-smt.sysfs"
   PASS_REGULAR_EXPRESSION "source linux-sysfs\n.*logical_cpus 8: 0-7\n")
 
 add_test(NAME platform.dump.override_sysctl COMMAND fftn_platform_dump)
@@ -48,7 +49,7 @@ set_tests_properties(platform.dump.override_missing PROPERTIES
   PASS_REGULAR_EXPRESSION "fftn_platform_dump: fftn: cannot read the topology file")
 
 add_test(NAME platform.dump.path
-         COMMAND fftn_platform_dump ${platform_data}/linux-synthetic-big-little)
+         COMMAND fftn_platform_dump ${platform_data}/linux-synthetic-big-little.sysfs)
 set_tests_properties(platform.dump.path PROPERTIES
   PASS_REGULAR_EXPRESSION "capacity=1024 cores=4 logical_cpus=4 cpus=4-7\n")
 

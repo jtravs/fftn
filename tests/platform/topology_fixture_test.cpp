@@ -2,12 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // The Linux and macOS readers against the fixtures in data/: machines recorded with
-// tools/capture_platform.py (named by CPU model) and synthetic trees for the awkward cases
-// (SMT off, offline CPUs, big.LITTLE, Intel hybrid, no L3, missing and malformed files,
-// cgroup v1 and v2 quotas). Each fixture's known topology is spelled out below.
+// tools/capture_platform.py (named by CPU model: the Apple M5 Max) and synthetic sysfs snapshots
+// for the awkward cases (SMT off, offline CPUs, big.LITTLE, Intel hybrid, no L3, missing and
+// malformed files, cgroup v1 and v2 quotas). Each fixture's known topology is spelled out
+// below.
 
 #include "platform/topology.hpp"
 
+#include "platform/cpu_list.hpp"
+#include "platform/file_source.hpp"
 #include "platform/platform_text.hpp"
 #include "platform/sysctl_values.hpp"
 #include "platform/topology_checks.hpp"
@@ -20,6 +23,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -48,7 +52,7 @@ constexpr cache_geometry cache(std::size_t size, std::size_t line, unsigned ways
 }
 
 struct fixture {
-  const char* path = nullptr; // under data/; a directory is sysfs, a file is sysctl text
+  const char* path = nullptr; // under data/: a .sysfs snapshot or a .sysctl file
   bool os_cpu_ids = true;
   std::size_t page_size = 0;
   std::size_t logical_cpus = 0;
@@ -64,15 +68,19 @@ struct fixture {
 
 // Linux fixtures carry no page size (sysfs does not hold it); the tests pass the one the
 // recorded machine has.
-topology load(const char* name, std::size_t page_size = 0) {
-  const std::filesystem::path path = std::filesystem::path(FFTN_PLATFORM_DATA) / name;
-  if (std::filesystem::is_directory(path)) {
-    return fftn::detail::topology_from_sysfs(path, page_size);
-  }
-  const std::ifstream file(path);
+std::string read_fixture(const char* name) {
+  const std::ifstream file(std::filesystem::path(FFTN_PLATFORM_DATA) / name);
   std::ostringstream text;
   text << file.rdbuf();
-  return fftn::detail::topology_from_sysctl(fftn::detail::parse_sysctl_text(text.str()));
+  return std::move(text).str();
+}
+
+topology load(const char* name, std::size_t page_size = 0) {
+  const std::string text = read_fixture(name);
+  if (fftn::detail::is_sysfs_snapshot(text)) {
+    return fftn::detail::topology_from_sysfs(fftn::detail::snapshot_files(text), page_size);
+  }
+  return fftn::detail::topology_from_sysctl(fftn::detail::parse_sysctl_text(text));
 }
 
 std::vector<fixture> all_fixtures() {
@@ -126,7 +134,7 @@ std::vector<fixture> all_fixtures() {
               },
       },
       {
-          .path = "linux-synthetic-2socket-smt",
+          .path = "linux-synthetic-2socket-smt.sysfs",
           .page_size = 4 * KiB,
           .logical_cpus = 8,
           .cores = 4,
@@ -148,7 +156,7 @@ std::vector<fixture> all_fixtures() {
       },
       // SMT off: the second threads are offline, yet the sibling and sharing lists name them.
       {
-          .path = "linux-synthetic-smt-off",
+          .path = "linux-synthetic-smt-off.sysfs",
           .page_size = 4 * KiB,
           .logical_cpus = 4,
           .cores = 4,
@@ -170,7 +178,7 @@ std::vector<fixture> all_fixtures() {
       },
       // Arm big.LITTLE by cpu_capacity, no L3, the old sibling file name, package id -1.
       {
-          .path = "linux-synthetic-big-little",
+          .path = "linux-synthetic-big-little.sysfs",
           .page_size = 4 * KiB,
           .logical_cpus = 8,
           .cores = 8,
@@ -197,7 +205,7 @@ std::vector<fixture> all_fixtures() {
       },
       // Intel hybrid: P-cores with two threads, four E-cores sharing an L2.
       {
-          .path = "linux-synthetic-hybrid-intel",
+          .path = "linux-synthetic-hybrid-intel.sysfs",
           .page_size = 4 * KiB,
           .logical_cpus = 8,
           .cores = 6,
@@ -228,7 +236,7 @@ std::vector<fixture> all_fixtures() {
       // No online file, topology, NUMA or proc. A malformed size reads as unknown (0) and
       // keeps the fields that did parse; a cache without a type is skipped.
       {
-          .path = "linux-synthetic-missing",
+          .path = "linux-synthetic-missing.sysfs",
           .page_size = 4 * KiB,
           .logical_cpus = 3,
           .cores = 3,
@@ -238,7 +246,7 @@ std::vector<fixture> all_fixtures() {
       },
       // cgroup v2: the tightest quota along the path (2.5 CPUs); a narrower affinity mask.
       {
-          .path = "linux-synthetic-cgroup-v2",
+          .path = "linux-synthetic-cgroup-v2.sysfs",
           .page_size = 64 * KiB,
           .logical_cpus = 4,
           .cores = 4,
@@ -250,7 +258,7 @@ std::vector<fixture> all_fixtures() {
       },
       // cgroup v1: 1.5 CPUs; an unrelated controller and a malformed line are skipped.
       {
-          .path = "linux-synthetic-cgroup-v1",
+          .path = "linux-synthetic-cgroup-v1.sysfs",
           .page_size = 4 * KiB,
           .logical_cpus = 2,
           .cores = 2,
@@ -295,7 +303,7 @@ TEST_P(TopologyFixture, MatchesTheKnownMachine) {
 TEST_P(TopologyFixture, LoadsThroughTheOverridePath) {
   const fixture& f = GetParam();
   topology t = fftn::detail::load_topology(std::filesystem::path(FFTN_PLATFORM_DATA) / f.path);
-  // load_topology gives a sysfs tree this process's page size; the rest is the same.
+  // load_topology gives a sysfs snapshot this process's page size; the rest is the same.
   t.page_size = f.page_size;
   EXPECT_EQ(t, load(f.path, f.page_size));
 }
@@ -313,8 +321,40 @@ INSTANTIATE_TEST_SUITE_P(Fixtures, TopologyFixture, testing::ValuesIn(all_fixtur
 
 // Details the table above does not capture.
 
+// A snapshot written out as a directory tree reads the same through the live-system reader.
+TEST(TopologyFixtureDetail, DirectoryAndSnapshotAgree) {
+  const char* name = "linux-synthetic-cgroup-v2.sysfs";
+  const fftn::detail::snapshot_files snapshot(read_fixture(name));
+  const std::filesystem::path root =
+      std::filesystem::temp_directory_path() / "fftn-platform-test-cgroup-v2";
+  std::filesystem::remove_all(root);
+  std::vector<std::string> pending = {""};
+  while (!pending.empty()) {
+    const std::string dir = pending.back();
+    pending.pop_back();
+    for (const std::string& entry : snapshot.list(dir)) {
+      std::string path = dir;
+      if (!path.empty()) {
+        path += '/';
+      }
+      path += entry;
+      if (const auto content = snapshot.read(path)) {
+        std::filesystem::create_directories((root / path).parent_path());
+        std::ofstream(root / path) << *content << '\n';
+      } else {
+        pending.push_back(path);
+      }
+    }
+  }
+  topology from_tree = fftn::detail::load_topology(root);
+  from_tree.page_size = 64 * KiB;
+  EXPECT_EQ(from_tree, load(name, 64 * KiB));
+  EXPECT_EQ(from_tree.cpu_quota, 2.5);
+  std::filesystem::remove_all(root);
+}
+
 TEST(TopologyFixtureDetail, TwoSocketGroupsFollowIntelNumbering) {
-  const topology t = load("linux-synthetic-2socket-smt", 4096);
+  const topology t = load("linux-synthetic-2socket-smt.sysfs", 4096);
   EXPECT_EQ(t.source, "linux-sysfs");
   EXPECT_EQ(t.allowed_cpus, (cpus{0, 1, 2, 3, 4, 5, 6, 7}));
   EXPECT_EQ(t.cores[0].cpus, (cpus{0, 4}));
@@ -327,14 +367,14 @@ TEST(TopologyFixtureDetail, TwoSocketGroupsFollowIntelNumbering) {
 }
 
 TEST(TopologyFixtureDetail, SmtOffDropsOfflineSiblings) {
-  const topology t = load("linux-synthetic-smt-off", 4096);
+  const topology t = load("linux-synthetic-smt-off.sysfs", 4096);
   EXPECT_EQ(t.cores[0].cpus, cpus{0});
   EXPECT_EQ(t.l3_groups[0].cpus, (cpus{0, 1}));
   EXPECT_EQ(t.numa_nodes[0].cpus, (cpus{0, 1}));
 }
 
 TEST(TopologyFixtureDetail, BigLittleOrdersClassesFastestFirst) {
-  const topology t = load("linux-synthetic-big-little", 4096);
+  const topology t = load("linux-synthetic-big-little.sysfs", 4096);
   EXPECT_EQ(t.cpus[0].core_class, 1U); // a little core
   EXPECT_EQ(t.cpus[7].core_class, 0U);
   EXPECT_EQ(t.cpus[0].l3_group, no_index);
@@ -343,7 +383,7 @@ TEST(TopologyFixtureDetail, BigLittleOrdersClassesFastestFirst) {
 }
 
 TEST(TopologyFixtureDetail, IntelHybridSeparatesCoreAndAtom) {
-  const topology t = load("linux-synthetic-hybrid-intel", 4096);
+  const topology t = load("linux-synthetic-hybrid-intel.sysfs", 4096);
   EXPECT_EQ(t.cpus[1].core_class, 0U);
   EXPECT_EQ(t.cpus[4].core_class, 1U);
   EXPECT_EQ(t.l2_groups[2].cpus, (cpus{4, 5, 6, 7}));
@@ -367,7 +407,7 @@ TEST(TopologyFixtureDetail, IntelMacPairsSmtThreads) {
 
 // The dump's text form is what gets recorded per machine; it must not drift silently.
 TEST(TopologyFixtureDetail, TextFormIsStable) {
-  const topology t = load("linux-synthetic-cgroup-v1", 4096);
+  const topology t = load("linux-synthetic-cgroup-v1.sysfs", 4096);
   EXPECT_EQ(fftn::test::topology_text(t), R"(source linux-sysfs
 os_cpu_ids 1
 page_size 4096

@@ -1,17 +1,18 @@
 // SPDX-FileCopyrightText: 2026 John C. Travers and contributors
 // SPDX-License-Identifier: Apache-2.0
 //
-// The per-OS readers behind detect_topology(). The Linux reader takes a filesystem root and
-// the macOS reader a sysctl snapshot, so tests run both, on any machine, against recorded
-// and synthetic fixtures (tests/platform/data/). Each reader collects per-CPU records;
-// assemble_topology() derives the groups and indices the same way for all of them.
+// The per-OS readers behind detect_topology(). The Linux reader reads through a file_source
+// (the live root, or a sysfs snapshot) and the macOS reader a sysctl snapshot, so tests run
+// both, on any machine, against recorded and synthetic fixtures (tests/platform/data/). Each reader
+// collects per-CPU records; assemble_topology() derives the groups and indices the same way for all
+// of them.
 #pragma once
 
+#include "platform/file_source.hpp"
 #include "platform/sysctl_values.hpp"
 #include "platform/topology.hpp"
 
 #include <cstddef>
-#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -42,11 +43,10 @@ struct topology_parts {
 // recorded CPUs (offline CPUs drop out) and always contain the CPU itself.
 [[nodiscard]] topology assemble_topology(topology_parts parts);
 
-// Linux: reads <root>/sys/devices/system/{cpu,node}, <root>/sys/devices/cpu_{core,atom},
-// <root>/proc/self/{status,cgroup} and <root>/sys/fs/cgroup. The page size is passed in
-// because sysfs does not hold it.
-[[nodiscard]] topology topology_from_sysfs(const std::filesystem::path& root,
-                                           std::size_t page_size);
+// Linux: reads sys/devices/system/{cpu,node}, sys/devices/cpu_{core,atom},
+// proc/self/{status,cgroup} and sys/fs/cgroup, relative to the source's root. The page size
+// is passed in because sysfs does not hold it.
+[[nodiscard]] topology topology_from_sysfs(const file_source& files, std::size_t page_size);
 
 // macOS: reads hw.nperflevels, hw.perflevelN.*, hw.cachelinesize, hw.pagesize and, on Macs
 // without performance levels (Intel), hw.{physical,logical}cpu, hw.l{1d,2,3}cachesize,

@@ -8,6 +8,7 @@
 target_sources(fftn PRIVATE
   cpu_features.cpp
   cpu_list.cpp
+  file_source.cpp
   sysctl_values.cpp
   timer.cpp
   topology.cpp
