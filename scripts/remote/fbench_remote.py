@@ -195,9 +195,29 @@ def sbatch_script(profile: Profile, plan: Plan, after: str | None = None) -> str
 
 
 def job_name(head: str) -> str:
-    """Time, commit and a random suffix: two submissions in the same second must not share
-    a name (the second would find the first's directory and be lost)."""
+    """Time, commit and a random suffix, so names rarely repeat; claim_job makes them unique."""
     return f"fbench-{time.strftime('%Y%m%d-%H%M%S')}-{head[:8]}-{secrets.token_hex(3)}"
+
+
+def claim_job(head: str, name: str | None = None) -> tuple[str, Path]:
+    """A job name with its local directory, created exclusively.
+
+    Two submissions in the same second once shared a name and the second was lost; a random
+    suffix alone only makes that unlikely (200 names in one second collide about once in 800
+    runs), so a name whose directory exists is drawn again. An explicit name is never redrawn.
+    """
+    for _ in range(100):
+        job = name or job_name(head)
+        local = STATE / job
+        local.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            local.mkdir()
+        except FileExistsError:
+            if name:
+                raise SystemExit(f"job {name} exists already: {local}") from None
+            continue
+        return job, local
+    raise SystemExit(f"could not find a free job name under {STATE}")
 
 
 def ssh(profile: Profile, command: str, check: bool = True) -> str:
@@ -218,10 +238,8 @@ def cmd_submit(args: argparse.Namespace) -> int:
             "the working tree has uncommitted changes: commit them first (AGENTS.md 6)"
         )
     profile = load_profile(args.profile)
-    job = args.name or job_name(git("rev-parse", "HEAD"))
+    job, local = claim_job(git("rev-parse", "HEAD"), args.name)
     plan = make_plan(profile, args.arms, args.fbench_args, job)
-    local = STATE / job
-    local.mkdir(parents=True, exist_ok=False)
     for sha in plan.commits:
         out = local / f"src-{sha[:12]}.tar.gz"
         subprocess.run(

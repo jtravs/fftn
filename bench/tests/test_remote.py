@@ -95,13 +95,38 @@ class JobScript(unittest.TestCase):
 
 
 class JobNames(unittest.TestCase):
-    def test_unique_within_one_second(self):
-        # Submissions in the same second once collided and the second one was lost.
-        with mock.patch.object(remote.time, "strftime", return_value="20261113-120000"):
-            names = {remote.job_name(HEAD) for _ in range(200)}
-        self.assertEqual(len(names), 200)
-        for name in names:
-            self.assertTrue(name.startswith(f"fbench-20261113-120000-{HEAD[:8]}-"))
+    # Submissions in the same second once collided and the second one was lost. Uniqueness
+    # comes from claiming the directory, not from the random suffix (an earlier test that
+    # drew 200 suffixes and expected no repeat failed about once in 800 runs).
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        patcher = mock.patch.object(remote, "STATE", Path(self.tmp.name) / "remote")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        patcher = mock.patch.object(remote.time, "strftime", return_value="20261113-120000")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_name_format(self):
+        name = remote.job_name(HEAD)
+        self.assertRegex(name, rf"^fbench-20261113-120000-{HEAD[:8]}-[0-9a-f]{{6}}$")
+
+    def test_repeated_suffix_is_drawn_again(self):
+        suffixes = iter(["aaaaaa", "aaaaaa", "bbbbbb"])
+        with mock.patch.object(remote.secrets, "token_hex", lambda _n: next(suffixes)):
+            first, first_dir = remote.claim_job(HEAD)
+            second, second_dir = remote.claim_job(HEAD)
+        self.assertTrue(first.endswith("-aaaaaa"))
+        self.assertTrue(second.endswith("-bbbbbb"))
+        self.assertTrue(first_dir.is_dir())
+        self.assertTrue(second_dir.is_dir())
+
+    def test_explicit_name_is_never_redrawn(self):
+        remote.claim_job(HEAD, "mine")
+        with self.assertRaises(SystemExit):
+            remote.claim_job(HEAD, "mine")
 
 
 class Config(unittest.TestCase):
