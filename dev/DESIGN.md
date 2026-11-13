@@ -1047,6 +1047,17 @@ which an OpenMP runtime may already have narrowed), macOS `hw.perflevel*`, Windo
 tests. A `lane_map` records which lanes sit in which groups and whether that is verified,
 assumed or looked up per call. FFTN never pins or re-pins threads it does not own.
 
+The readers are plain parsers: the Linux one reads through a small file interface (the
+live root, or a sysfs snapshot: one text file per machine, format in
+`src/platform/file_source.hpp`) and the macOS one a sysctl snapshot, so both run on every
+machine against fixtures recorded with `tools/capture_platform.py` (named by CPU model) and
+synthetic ones. The environment override `FFTN_TOPOLOGY` names such a recording (a sysfs
+snapshot, told apart by its header line, or a sysctl file); the programmatic override is that everything consuming a topology takes it as an argument.
+The process's topology is detected once, into a function-local constant. Unknown values
+are zero, never guessed: macOS reports no associativity, and it does not say which logical
+CPU belongs to which performance level, so there CPUs are numbered in class order (fastest
+first) and the topology says the numbers are not the OS's.
+
 ### 13.6 Integration models
 
 | Caller | How | Notes |
@@ -1107,9 +1118,12 @@ Rosetta. Findings:
   value to any function outside the region. Both are covered by the region rules.
 - The portable target string for FCMA is `arch=armv8.3-a` (`+fcma` fails with Clang's
   NEON header).
-- Not yet run: GCC 14 and 15 on x86-64 Linux, and Clang on Windows (experiments B1, B2;
-  ready-made kits exist). The most important check is whether GCC handles by-value AVX
-  vectors correctly at -O0.
+- On x86-64 Linux (experiment [B1](experiments/B1-isa-regions-gcc-linux.md)) the mechanism
+  holds with GCC 13 to 16 and Clang 18 to 23. But every GCC compiles a vector passed by
+  value from a region into a baseline function with only a `-Wpsabi` warning, and the
+  program then crashes. The library is therefore built with `-Werror=psabi` under GCC, and
+  vector types are never template arguments in region code (GCC drops their attributes).
+- Not yet run: Clang on Windows (experiment B2).
 
 ### 14.2 Decision: a compiled static library
 
@@ -1143,8 +1157,10 @@ What the experiments still require of the build:
   FFTN) must not collide: all symbols sit in a versioned inline namespace and have hidden
   visibility by default.
 - **Detection details**: AVX and AVX-512 are used only when the operating system saves
-  their state (XGETBV), not on CPUID alone. Windows on Arm has no documented feature
-  flag for FCMA; how to detect it there is part of experiment B2.
+  their state (XGETBV), not on CPUID alone. macOS on Intel enables the AVX-512 state
+  lazily, on a thread's first use, so there `hw.optional.avx512f` stands in for XGETBV.
+  Windows on Arm has no documented feature flag for FCMA; how to detect it there is part
+  of experiment B2, and until then FCMA is reported absent there.
 
 ### 14.3 Toolchains and packaging
 
@@ -1404,7 +1420,7 @@ infrastructure to maintain.
 | The generator does not reach FFTL's and FFTW's codelet quality quickly | every speed target depends on it | start from FFTL's small design (rotation tracking), verify against published operation counts, add algorithms one at a time; the walking skeleton keeps the rest of the project moving |
 | Two arithmetic layouts double the kernel surface | compile time, test matrix, planner space | both come from one DAG and one set of pass templates; experiment X1 may show one layout suffices per target, and the loser is deleted there |
 | MKL parity on Intel | MKL leads the prototype by 15–45 % on short smooth lengths | few-big-pass strategy, split arithmetic to avoid port-5 shuffles, per-shape measurement; treated as a target, not a guarantee |
-| Compiler fragility of attribute regions (untested so far on GCC x86-64 and Windows clang) | the whole dispatch mechanism rests on them | experiments B1 and B2 first; strict region rules; a disassembly test; whole-machine emulation of old CPUs in CI |
+| Compiler fragility of attribute regions (Windows clang still untested; B1 passed on Linux) | the whole dispatch mechanism rests on them | experiment B2; strict region rules; a disassembly test; whole-machine emulation of old CPUs in CI |
 | The claiming engine costs more per phase than a barrier | long single rows on few threads | experiment T2; the barrier path is kept if it earns it |
 | Cost model drifts on new CPUs | wrong plans by default | nearest-family profiles, `planning::measure`, `fbench calibrate` as a one-command remedy |
 | Scope creep | the project stalls before the client milestones | phases 1–5 serve the core tier only; the general tier waits for phase 6 |
@@ -1444,6 +1460,9 @@ implementation are listed here until settled.
 | 2026-11-13 | Float is supported and kept alive from phase 1 by correctness tests in CI; tuned in phase 6 | It has users, and precision-generic code that is never instantiated drifts |
 | 2026-11-13 | Bitwise schedule independence is kept | It costs nothing measurable (no cross-thread reductions) and makes threading tests exact; revisit only on experimental evidence |
 | 2026-11-13 | fbench replicates over processes with paired intervals and an A/A control | Process-to-process spread dominated the prototype's noise |
+| 2026-11-13 | ISA regions confirmed on Linux x86-64; GCC builds use `-Werror=psabi`; no vector types as template arguments | Experiment B1: GCC silently miscompiles by-value vectors across a region boundary |
+| 2026-11-13 | Platform readers are parsers over recorded sources (a one-file sysfs snapshot, a sysctl snapshot); `FFTN_TOPOLOGY` names a recording; detection results are function-local constants | The Linux, macOS and x86 logic is tested on any machine; one fixture file per machine rather than thousands; no mutable global state |
+| 2026-11-13 | The planning clock is `std::chrono::steady_clock` (measured step 41 ns on Apple M5 Max) | Planning times whole executions of microseconds; a cycle counter adds per-CPU skew and frequency questions |
 | 2026-11-13 | Test tolerances: relative RMS error ≤ 3ε√L and largest error ≤ 3εL, L = max(1, log₂ n) | Measured FFTW and naive-DFT errors sit 3–10× (RMS) and 7–40× (largest) below; every seeded fault of task 0.4 is caught |
 | 2026-11-13 | "One-ulp twiddle error" is tested two ways: entry-by-entry table checks for a single entry, output tolerances for an error propagated from the base twiddle | A single entry one ulp off changes outputs by less than correct rounding does, at any n; a propagated one grows like n |
 | 2026-11-13 | FFTW, the test oracle, is built from source by the test build (or taken from `FFTN_FFTW_ROOT`), without UBSan | No system FFTW is assumed; FFTW 3.3.11's planners do null-pointer arithmetic that UBSan reports |

@@ -1,0 +1,11 @@
+# fftn-sysfs-snapshot 1
+sys/devices/system/cpu/cpu0/cache/index0/coherency_line_size	64
+sys/devices/system/cpu/cpu0/cache/index0/level	1
+sys/devices/system/cpu/cpu0/cache/index0/size	12Q
+sys/devices/system/cpu/cpu0/cache/index0/type	Data
+sys/devices/system/cpu/cpu0/cache/index1/level	2
+sys/devices/system/cpu/cpu0/cache/index1/size	1024K
+sys/devices/system/cpu/cpu0/uevent	
+sys/devices/system/cpu/cpu1/topology/core_cpus_list	1-x
+sys/devices/system/cpu/cpu1/uevent	
+sys/devices/system/cpu/cpu2/uevent	

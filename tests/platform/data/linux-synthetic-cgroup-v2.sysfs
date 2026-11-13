@@ -1,0 +1,19 @@
+# fftn-sysfs-snapshot 1
+proc/self/cgroup	0::/c1/c2
+proc/self/status	Name:\tfixture\nCpus_allowed:\t3\nCpus_allowed_list:\t0-1
+sys/devices/system/cpu/cpu0/topology/core_cpus_list	0
+sys/devices/system/cpu/cpu0/topology/physical_package_id	0
+sys/devices/system/cpu/cpu0/topology/thread_siblings_list	0
+sys/devices/system/cpu/cpu1/topology/core_cpus_list	1
+sys/devices/system/cpu/cpu1/topology/physical_package_id	0
+sys/devices/system/cpu/cpu1/topology/thread_siblings_list	1
+sys/devices/system/cpu/cpu2/topology/core_cpus_list	2
+sys/devices/system/cpu/cpu2/topology/physical_package_id	0
+sys/devices/system/cpu/cpu2/topology/thread_siblings_list	2
+sys/devices/system/cpu/cpu3/topology/core_cpus_list	3
+sys/devices/system/cpu/cpu3/topology/physical_package_id	0
+sys/devices/system/cpu/cpu3/topology/thread_siblings_list	3
+sys/devices/system/cpu/online	0-3
+sys/fs/cgroup/c1/c2/cpu.max	max 100000
+sys/fs/cgroup/c1/cpu.max	250000 100000
+sys/fs/cgroup/cpu.max	bogus
