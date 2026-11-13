@@ -322,23 +322,29 @@ jobs:
       matrix:
         include:
           # Clang on the MSVC ABI, both drivers (DESIGN.md 14.3), with LLVM as installed on
-          # the image. These jobs are experiment B2's runs.
+          # the image. These jobs are experiment B2's runs. The C compiler (GoogleTest's
+          # project() enables C) is named too: left to itself, CMake finds the GNU-driver
+          # clang.exe beside clang-cl and hands it MSVC-style flags, which it rejects.
           - name: x64 clang-cl
             runner: windows-2025
             arch: x64
+            cc: C:/Program Files/LLVM/bin/clang-cl.exe
             cxx: C:/Program Files/LLVM/bin/clang-cl.exe
           - name: x64 clang++
             runner: windows-2025
             arch: x64
+            cc: C:/Program Files/LLVM/bin/clang.exe
             cxx: C:/Program Files/LLVM/bin/clang++.exe
           - name: arm64 clang-cl
             runner: windows-11-arm
             arch: arm64
+            cc: C:/Program Files/LLVM/bin/clang-cl.exe
             cxx: C:/Program Files/LLVM/bin/clang-cl.exe
     defaults:
       run:
         shell: bash
     env:
+      CC: ${{ matrix.cc }}
       CXX: ${{ matrix.cxx }}
       FFTN_CHECK_STAGES: build
     steps:
@@ -371,13 +377,13 @@ jobs:
       - name: Windows on Arm feature probe (B2)
         if: always() && matrix.arch == 'arm64'
         run: |
+          echo "PF_ARM_* flags that the SDK defines ($WindowsSDKVersion):"
+          winnt="$(cygpath "$WindowsSdkDir")/Include/${WindowsSDKVersion%\\}/um/winnt.h"
+          grep -E '#define PF_ARM_' "$winnt" || echo "none found in $winnt"
           # Options with '-', not '/': Git Bash would rewrite '/x' as a path.
           mkdir -p build
           "$CXX" -nologo -std:c++20 -EHsc -O1 .github/b2/woa_features.cpp \
             -Fe:build/woa_features.exe -link advapi32.lib
           build/woa_features.exe
-          echo "PF_ARM_* flags that the SDK defines ($WindowsSDKVersion):"
-          winnt="$(cygpath "$WindowsSdkDir")/Include/${WindowsSDKVersion%\\}/um/winnt.h"
-          grep -E '#define PF_ARM_' "$winnt" || echo "none found in $winnt"
       - *fetchcontent-collect
       - *logs
