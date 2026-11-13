@@ -23,6 +23,18 @@ if(FFTN_SANITIZE)
   add_compile_options(-fsanitize=${FFTN_SANITIZE} -fno-sanitize-recover=all
                       -fno-omit-frame-pointer)
   add_link_options(-fsanitize=${FFTN_SANITIZE})
+  # Clang links its TSan runtime statically on Linux, and that runtime defines the global
+  # operator new and delete as strong symbols (compiler-rt's tsan_new_delete.cpp; ASan's
+  # are weak), so the tests' counting replacements (tests/support/alloc_hook.cpp) clash
+  # with them at link time. The shared runtime lets them interpose, as GCC's libtsan, a
+  # shared library, always has. Its directory is not on the loader's path: hence the rpath.
+  if(FFTN_SANITIZE MATCHES "thread" AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang"
+     AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    execute_process(COMMAND ${CMAKE_CXX_COMPILER} -print-runtime-dir
+                    OUTPUT_VARIABLE _fftn_runtime_dir OUTPUT_STRIP_TRAILING_WHITESPACE
+                    COMMAND_ERROR_IS_FATAL ANY)
+    add_link_options(-shared-libsan "LINKER:-rpath,${_fftn_runtime_dir}")
+  endif()
 endif()
 
 add_subdirectory(src)
