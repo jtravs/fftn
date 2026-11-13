@@ -208,7 +208,9 @@ dev/                     DESIGN.md, PLAN.md, KNOBS.toml, experiments/
 
 The API has three levels. The core level is pointers plus geometry and is what everything
 else is built on. Names and signatures here are the intended shape; details are settled
-during phase 0 and recorded in the headers.
+during phase 0 and recorded in the headers. Until the first tagged release the API is not
+frozen: a decision that proves wrong is changed, with a line in the decision log, rather
+than kept for compatibility.
 
 ### 5.1 Conventions
 
@@ -1493,7 +1495,15 @@ infrastructure to maintain.
 Decisions taken are in the decision log; questions that arise during implementation are
 listed here until settled.
 
-**API decisions for the review (task 0.9).** Task 0.5 implemented section 5 for what the
+**Deferred API ideas.** (a) A two-way plan: forward and backward programs of one shape over
+one set of twiddle tables, with `forward()` and `backward()`, for real kinds the r2c and c2r
+pair. (b) An object owning one plan and one workspace, executing without a workspace
+argument. Both are additions over the current API (two plans sharing a `table_cache`; a
+plan plus `workspace(plan)`) and stay cheap only while two properties hold: twiddle tables
+do not depend on the direction, and a workspace is plain bytes sized by
+`workspace_bytes()`, not tied to one plan. Do not break either without revisiting this.
+
+**API decisions reviewed in task 0.9 (settled; see the decision log).** Task 0.5 implemented section 5 for what the
 walking skeleton needs. Where it departs from section 5, or settles something section 5
 leaves open, it is listed here with the reason; the review accepts, changes or rejects
 each item, and the outcome goes to the decision log.
@@ -1697,6 +1707,9 @@ or departs from sections 5.5 and 13.6, or from Kokkos-FFT 2.0's `KokkosFFT::Plan
 | 2026-11-13 | A multi-dimensional c2r out of place keeps its intermediate in a workspace block of one transform's half spectrum (a whole volume's, for now) | The input is preserved by default (9.1); pencil-block scratch arrives with phase 4's volumes |
 | 2026-11-13 | Kokkos core 5.2.1, Serial back end, is a test-only dependency: fetched pinned by URL and SHA-256 (the release's own checksum file, checked against the download), built as a CMake subproject, SYSTEM, in every gate stage that builds; the library still has no dependency, since `fftn/kokkos.hpp` is header-only and compiled in its user's translation units | The adapter's call sites must compile and run in the gate so they cannot rot (task 0.5b); a Serial-only Kokkos builds in seconds |
 | 2026-11-13 | No `omp simd` on the scalar pass loops; old-ISA targets (`x86_v2`, `avx`, plain `neon`) get hand vocabularies from the start, not the scalar text compiled in their regions | Experiment X15: `omp simd` gained 5.5 % with Clang on the M5 but cost 2.0× with GCC 16 on Zen 3; the scalar text in the `avx2` region stayed 2.2–3.7× slower than the hand vocabulary per pass, and `-march=native` closed none of that gap |
+| 2026-11-13 | API review (task 0.9): the maintainer took every recommendation of the review of DESIGN 18.2 items 1–35. Accepted as built: 1, 3, 4, 6–21, 23–32. Changed: axes and batch dimensions become `std::vector` and `small_vector` goes (2); the shape takes more batch dimensions, so Views with more than two non-nesting loops work in the adapter (35); `execute_rows` becomes `execute_transforms` (5); the adapter's class becomes `fftn::kokkos::view_plan`, with `compat::Plan` as its alias (33); `shape_type` lives only in `compat` (34); `compat::Direction` takes Kokkos-FFT's values 0 and 1 (22, so that nothing in `compat` differs from Kokkos-FFT on purpose) | Plan construction allocates anyway, so an inline container buys nothing and freezes the rank limit into the type; names should be exact before anyone depends on them; the adapter should stay a faithful mirror of Kokkos-FFT, which keeps open an FFTN host backend inside Kokkos-FFT later |
+| 2026-11-13 | FFTN is unreleased: until the first tagged release the API may change in any way, and a wrong choice is fixed rather than kept (README, AGENTS section 1, section 5) | Maintainer's decision at the API review |
+| 2026-11-13 | Deferred, not rejected: a two-way plan (forward and backward over one table set) and an object owning a plan and its workspace | Small gain for more API surface; both can be added later without changing the API as long as twiddle tables stay direction-independent and a workspace stays plain bytes sized by `workspace_bytes()` (18.2) |
 
 ---
 

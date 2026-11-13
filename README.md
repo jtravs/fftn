@@ -2,8 +2,9 @@
 
 **The Fastest Fourier Transform in the North.**
 
-> FFTN is an experiment under development. Nothing here is released, the API will change,
-> and the performance figures below are targets, not results.
+> FFTN is an experiment under development. Nothing here is released, the API will change
+> (freely, until the first tagged release), and the performance figures below are targets,
+> not results.
 
 FFTN is a C++20 fast Fourier transform library for CPUs, aimed at simulation codes that run
 the same transforms millions of times. It has three aims that existing open-source

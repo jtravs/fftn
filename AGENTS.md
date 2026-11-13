@@ -16,6 +16,10 @@ library with no dependencies. Conventions are FFTW's (signs, no normalisation by
 n/2+1 values). A shape is never silently computed by a slower route without the plan
 saying so (`plan::describe()`).
 
+FFTN is unreleased. Until the first tagged release the public API may change in any way: a
+choice that turns out wrong is fixed, not kept for compatibility. API changes still need the
+maintainer's agreement (section 7).
+
 ## 2. Sources of truth
 
 One fact lives in one place. Do not restate it elsewhere; link to it.
