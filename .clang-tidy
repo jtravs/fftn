@@ -36,5 +36,11 @@ Checks: >
 #   function-cognitive-complexity pass loops are long by nature; review covers them
 #   math-missing-parentheses      index arithmetic is clearer without the noise
 #   uppercase-literal-suffix      style choice
+# Kokkos (tests and examples of fftn/kokkos.hpp only) declares its names in internal headers
+# that it reaches only through Kokkos_Core.hpp and marks for no include tool, so
+# include-cleaner would ask for those internal headers and call Kokkos_Core.hpp unused. Its
+# headers are matched by name, wherever the Kokkos tree lies.
+CheckOptions:
+  misc-include-cleaner.IgnoreHeaders: 'Kokkos_[^/]*\.hpp;KokkosCore_[^/]*;desul/.*;mdspan/.*;experimental/__p[0-9]+_bits/.*'
 WarningsAsErrors: '*'
 FormatStyle: file
