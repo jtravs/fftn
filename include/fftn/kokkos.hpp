@@ -236,10 +236,9 @@ template <class View> [[nodiscard]] auto data_of(const View& v) noexcept {
 /// out of range or repeated; an extent is 0; a stride is 0; the extents do not match the
 /// kind (equal everywhere, except along the halved axis of a real transform, where the
 /// complex side has n/2 + 1 for the real side's n); `in` and `out` overlap without starting
-/// at the same address; or, when they do start
-/// at the same address (in place), their strides disagree: equal for c2c, and FFTW's padded
-/// layout for real kinds (the halved axis contiguous on both sides, every other real stride
-/// twice the complex one).
+/// at the same address; or, when they do start at the same address (in place), their
+/// strides disagree: equal for c2c, and FFTW's padded layout for real kinds (the halved axis
+/// contiguous on both sides, every other real stride twice the complex one).
 ///
 /// Guarantees: when `in` and `out` start at the same address the shape is for a plan built
 /// with `options::in_place`; nothing is read or written through the Views.
