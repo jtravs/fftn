@@ -8,6 +8,7 @@
 add_library(fftn_test_support STATIC canary.cpp)
 fftn_configure_target(fftn_test_support)
 target_include_directories(fftn_test_support PUBLIC ${PROJECT_SOURCE_DIR}/tests)
+target_link_libraries(fftn_test_support PUBLIC fftn_test_reference fftn_test_fftw)
 
 # Replaces the global operator new and delete in every executable that links it.
 add_library(fftn_test_alloc_hook OBJECT alloc_hook.cpp)
@@ -24,5 +25,5 @@ endif()
 target_include_directories(fftn_test_alloc_hook PUBLIC ${PROJECT_SOURCE_DIR}/tests)
 
 fftn_add_test(fftn_support_tests
-  SOURCES alloc_hook_test.cpp canary_test.cpp
+  SOURCES alloc_hook_test.cpp canary_test.cpp exact_test.cpp harness_test.cpp
   LIBRARIES fftn_test_support fftn_test_alloc_hook)
