@@ -6,7 +6,7 @@
 // so the tolerance is the sum of the two derived tolerances (tolerance.hpp). Every run also
 // checks the memory contracts (harness.hpp).
 //
-// Only call these when the build has FFTW (fftw_subject() is not empty).
+// Only call these when the build has FFTW; without it they throw std::logic_error.
 
 #pragma once
 
@@ -18,10 +18,20 @@
 
 #include <complex>
 #include <cstddef>
+#include <optional>
 #include <span>
+#include <stdexcept>
 #include <vector>
 
 namespace fftn::test::fftw_checks {
+
+template <class T> subject<T> fftw_or_throw() {
+  std::optional<subject<T>> s = fftw_subject<T>();
+  if (!s) {
+    throw std::logic_error("fftw_checks: this build has no FFTW");
+  }
+  return *s;
+}
 
 // The tolerance of a comparison of `s` with FFTW for transforms of `points` points.
 template <class T>
@@ -31,7 +41,7 @@ tolerance tolerance_for(const subject<T>& s, const subject<T>& fftw, std::size_t
 
 template <class T> outcome c2c(const subject<T>& s, std::size_t n) {
   outcome o;
-  const subject<T> fftw = *fftw_subject<T>();
+  const subject<T> fftw = fftw_or_throw<T>();
   input_source src(0xF0C2C00ULL + n);
   const auto x = src.complexes<T>(n);
   for (const direction d : {direction::forward, direction::backward}) {
@@ -45,7 +55,7 @@ template <class T> outcome c2c(const subject<T>& s, std::size_t n) {
 
 template <class T> outcome r2c(const subject<T>& s, std::size_t n) {
   outcome o;
-  const subject<T> fftw = *fftw_subject<T>();
+  const subject<T> fftw = fftw_or_throw<T>();
   input_source src(0xF052C00ULL + n);
   const auto x = src.reals<T>(n);
   const auto y = r2c_once<T>(o, s, x, "r2c against FFTW");
@@ -57,7 +67,7 @@ template <class T> outcome r2c(const subject<T>& s, std::size_t n) {
 // The input has imaginary parts at bins 0 and n/2, which both must ignore.
 template <class T> outcome c2r(const subject<T>& s, std::size_t n) {
   outcome o;
-  const subject<T> fftw = *fftw_subject<T>();
+  const subject<T> fftw = fftw_or_throw<T>();
   input_source src(0xF0C2E00ULL + n);
   const auto X = src.complexes<T>(n / 2 + 1);
   const auto y = c2r_once<T>(o, s, n, X, "c2r against FFTW");
@@ -69,7 +79,7 @@ template <class T> outcome c2r(const subject<T>& s, std::size_t n) {
 
 template <class T> outcome planes(const subject<T>& s, std::size_t ny, std::size_t nx) {
   outcome o;
-  const subject<T> fftw = *fftw_subject<T>();
+  const subject<T> fftw = fftw_or_throw<T>();
   input_source src(0xF02D000ULL + ny * 4099 + nx);
   const auto x = src.complexes<T>(ny * nx);
   for (const direction d : {direction::forward, direction::backward}) {

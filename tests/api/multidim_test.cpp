@@ -9,6 +9,7 @@
 // written and, out of place, that the input is unchanged.
 
 #include "reference/reference_dft.hpp"
+#include "support/canary.hpp"
 #include "support/exact.hpp"
 #include "support/harness.hpp"
 #include "support/inputs.hpp"
@@ -186,6 +187,26 @@ template <class T> real_case real_data(const dims_t& dims, std::uint64_t seed) {
   return c;
 }
 
+// The real parts of v, in T: the real data of a real_case, exact in T.
+template <class T> std::vector<T> real_parts(const std::vector<cd>& v) {
+  std::vector<T> r;
+  r.reserve(v.size());
+  for (const cd& z : v) {
+    r.push_back(static_cast<T>(z.real()));
+  }
+  return r;
+}
+
+// v times `factor`: what c2r returns from the spectrum of real data (no normalisation).
+std::vector<cd> scaled(const std::vector<cd>& v, std::size_t factor) {
+  std::vector<cd> r;
+  r.reserve(v.size());
+  for (const cd& z : v) {
+    r.push_back(z * static_cast<double>(factor));
+  }
+  return r;
+}
+
 template <class T> class MultiDim : public ::testing::Test {};
 using precisions = ::testing::Types<double, float>;
 TYPED_TEST_SUITE(MultiDim, precisions);
@@ -239,10 +260,7 @@ TYPED_TEST(MultiDim, RealToComplex) {
     const std::size_t h = n / 2 + 1;
     const std::size_t lines = product(dims) / n;
     const real_case data = real_data<T>(dims, product(dims) + 1);
-    std::vector<T> x;
-    for (const cd& v : data.reals) {
-      x.push_back(static_cast<T>(v.real()));
-    }
+    const std::vector<T> x = real_parts<T>(data.reals);
     const fftn::shape<T, c> s{.axes = axes_of(dims), .batches = {{.count = count}}};
     const auto tol = tolerance_for<T>(dims, false);
     {
@@ -279,10 +297,7 @@ TYPED_TEST(MultiDim, ComplexToReal) {
     // A consistent half spectrum: that of real data, so c2r returns points * x.
     const real_case data = real_data<T>(dims, points + 2);
     std::vector<c> spectrum(data.spectrum.begin(), data.spectrum.end());
-    std::vector<cd> want;
-    for (const cd& v : data.reals) {
-      want.push_back(v * static_cast<double>(points));
-    }
+    const std::vector<cd> want = scaled(data.reals, points);
     const fftn::shape<c, T> s{.axes = axes_of(dims), .batches = {{.count = count}}};
     const auto tol = tolerance_for<T>(dims, true);
     const auto as_complex = [](const std::vector<T>& v) {
@@ -331,8 +346,8 @@ side_layout nested(const dims_t& extent, std::ptrdiff_t last, std::ptrdiff_t pad
   std::ptrdiff_t reach = 0; // of the axes inside, in elements
   for (std::size_t i = extent.size(); i > 0; --i) {
     const std::size_t d = i - 1;
-    const std::ptrdiff_t magnitude =
-        d + 1 == extent.size() ? (last < 0 ? -last : last) : reach + 1 + pad;
+    const std::ptrdiff_t last_magnitude = last < 0 ? -last : last;
+    const std::ptrdiff_t magnitude = d + 1 == extent.size() ? last_magnitude : reach + 1 + pad;
     s.stride[d] = signs[d] < 0 ? -magnitude : magnitude;
     reach += static_cast<std::ptrdiff_t>(extent[d] - 1) * magnitude;
   }
@@ -439,15 +454,33 @@ template <class T> std::vector<real_layout> real_layouts(const dims_t& dims) {
   const side_layout reversed_in_place = nested(cplx, 1, 0, backward_in_place);
   return {
       // Gaps on the real side, everything reversed on the complex side.
-      {nested(dims, 2, 1, forward), nested(cplx, -1, 3, backward), false,
-       off(1, 2, guard_side::above)},
+      {
+          .real = nested(dims, 2, 1, forward),
+          .complex = nested(cplx, -1, 3, backward),
+          .in_place = false,
+          .options = off(1, 2, guard_side::above),
+      },
       // The real side reversed, gaps and mixed directions on the complex side.
-      {nested(dims, -1, 0, backward), nested(cplx, 3, 2, mixed), false,
-       off(3, 0, guard_side::below)},
+      {
+          .real = nested(dims, -1, 0, backward),
+          .complex = nested(cplx, 3, 2, mixed),
+          .in_place = false,
+          .options = off(3, 0, guard_side::below),
+      },
       // In place: padded rows and mixed directions; then every axis but the last reversed.
       // Element 0 is shared, so both sides have the same offset.
-      {real_twin(padded_in_place), padded_in_place, true, off(2, 2, guard_side::below)},
-      {real_twin(reversed_in_place), reversed_in_place, true, off(4, 4, guard_side::above)},
+      {
+          .real = real_twin(padded_in_place),
+          .complex = padded_in_place,
+          .in_place = true,
+          .options = off(2, 2, guard_side::below),
+      },
+      {
+          .real = real_twin(reversed_in_place),
+          .complex = reversed_in_place,
+          .in_place = true,
+          .options = off(4, 4, guard_side::above),
+      },
   };
 }
 
@@ -459,15 +492,9 @@ TYPED_TEST(MultiDim, StridedRealTransforms) {
     const dims_t cplx = halved(dims);
     const std::size_t points = product(dims);
     const real_case data = real_data<T>(dims, points + 3);
-    std::vector<T> x;
-    for (const cd& v : data.reals) {
-      x.push_back(static_cast<T>(v.real()));
-    }
+    const std::vector<T> x = real_parts<T>(data.reals);
     const std::vector<c> spectrum(data.spectrum.begin(), data.spectrum.end());
-    std::vector<cd> want_reals;
-    for (const cd& v : data.reals) {
-      want_reals.push_back(v * static_cast<double>(points));
-    }
+    const std::vector<cd> want_reals = scaled(data.reals, points);
     const auto layouts = real_layouts<T>(dims);
     for (std::size_t l = 0; l < layouts.size(); ++l) {
       const real_layout& lay = layouts[l];
@@ -476,9 +503,11 @@ TYPED_TEST(MultiDim, StridedRealTransforms) {
           run<T, c>(shape_of<T, c>(dims, lay.real, lay.complex), lay.in_place, dims, lay.real, cplx,
                     lay.complex, x, lay.options, describe(dims, "r2c") + tag);
       check.within<T>(y, data.spectrum, tolerance_for<T>(dims, false), describe(dims, "r2c") + tag);
-      const fftn::test::run_options swapped{.in_offset = lay.options.out_offset,
-                                            .out_offset = lay.options.in_offset,
-                                            .guard = lay.options.guard};
+      const fftn::test::run_options swapped{
+          .in_offset = lay.options.out_offset,
+          .out_offset = lay.options.in_offset,
+          .guard = lay.options.guard,
+      };
       const auto z =
           run<c, T>(shape_of<c, T>(dims, lay.complex, lay.real), lay.in_place, cplx, lay.complex,
                     dims, lay.real, spectrum, swapped, describe(dims, "c2r") + tag);
@@ -497,7 +526,7 @@ TYPED_TEST(MultiDim, StridedComplexTransforms) {
     const std::size_t points = product(dims);
     fftn::test::input_source src(points + 4);
     const auto x = src.complexes<T>(points * count);
-    std::vector<int> backward(r + 1, -1);
+    const std::vector<int> backward(r + 1, -1);
     std::vector<int> mixed(r + 1, 1);
     for (std::size_t d = 1; d < r + 1; d += 2) {
       mixed[d] = -1;

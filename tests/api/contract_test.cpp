@@ -228,9 +228,11 @@ TYPED_TEST(Contracts, MovedFromPlansStayValid) {
     plan.execute(x.data(), y.data(), ws);
     return y;
   };
+  // The sources are not const: a const source would be copied whatever plan declared.
+  // NOLINTNEXTLINE(misc-const-correctness): a const source would not exercise a move
   fftn::c2c_plan<T> p(fftn::rows_c2c<T>(n, 1, fftn::direction::forward));
   const cvec<T> want = run(p);
-  // NOLINTNEXTLINE(performance-move-const-arg): the move is the subject of the test
+  // NOLINTNEXTLINE(misc-const-correctness,performance-move-const-arg): the move is under test
   fftn::c2c_plan<T> q(std::move(p));
   EXPECT_TRUE(same_bits<std::complex<T>>(run(q), want));
   // NOLINTNEXTLINE(bugprone-use-after-move,clang-analyzer-cplusplus.Move): source under test
@@ -402,7 +404,7 @@ TEST(Validation, StridesThatOverflowAreRefused) {
 // overflow included, and the result is that of the default layout. One test per way the
 // unused value used to reach arithmetic that overflowed.
 constexpr std::ptrdiff_t lowest_step = std::numeric_limits<std::ptrdiff_t>::min();
-constexpr std::ptrdiff_t far_step = std::ptrdiff_t{1} << 62;
+constexpr std::ptrdiff_t far_step = std::numeric_limits<std::ptrdiff_t>::max() / 2 + 1; // 2^62
 
 // An 8-point c2c of the same input through `s` and through the default layout.
 void expect_default_result(const fftn::shape<std::complex<double>, std::complex<double>>& s) {
