@@ -15,6 +15,7 @@
 #include "fftn/options.hpp"
 #include "fftn/shape.hpp"
 #include "fftn/workspace.hpp"
+#include "isa/arch.hpp"
 #include "isa/kernel_table.hpp"
 #include "isa/target.hpp"
 #include "platform/cpu_features.hpp"
@@ -196,10 +197,21 @@ template <class T> std::vector<std::vector<T>>& tables_of(plan_core& c) {
   }
 }
 
+// The table of target t for the chain passes. Experiment X15 arm C: with its switch, the
+// scalar kernel text compiled in the avx2 region stands in for the avx2 table.
+const kernel_table* chain_kernels_of(target t) {
+#if FFTN_ARCH_X86_64 && defined(FFTN_X_AVX2_SCALAR_TEXT) && FFTN_X_AVX2_SCALAR_TEXT
+  if (t == target::avx2) {
+    return &avx2::scalar_text::table;
+  }
+#endif
+  return find_kernels(t);
+}
+
 // The fastest target whose table has the chain passes for T: scalar in phase 0.
 template <class T> target choose_chain_target() {
   const target best = best_target(detect_cpu_features());
-  const kernel_table* table = find_kernels(best);
+  const kernel_table* table = chain_kernels_of(best);
   if (table != nullptr && of<T>(*table).chain.copy != nullptr) {
     return best;
   }
@@ -277,7 +289,7 @@ template <class T>
 void build(plan_core& c, const shape_view& s, const side& in, const side& out,
            const build_settings& settings) {
   c.isa_target = choose_chain_target<T>();
-  const kernels_of<T>& kernels = of<T>(*find_kernels(c.isa_target));
+  const kernels_of<T>& kernels = of<T>(*chain_kernels_of(c.isa_target));
   chain_builder<T> chain(kernels, tables_of<T>(c), settings.chunk_points);
   program& p = c.prog;
   const std::size_t r = s.axes.size();

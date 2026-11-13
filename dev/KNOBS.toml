@@ -17,3 +17,8 @@
 owner = "lead"
 experiment = "X15"
 expires = "2026-12-13"
+
+[FFTN_X_AVX2_SCALAR_TEXT]
+owner = "lead"
+experiment = "X15"
+expires = "2026-12-13"

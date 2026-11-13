@@ -62,6 +62,13 @@ namespace avx2 {
 extern const kernel_table table;
 }
 #endif
+#if FFTN_ARCH_X86_64 && defined(FFTN_X_AVX2_SCALAR_TEXT) && FFTN_X_AVX2_SCALAR_TEXT
+// Experiment X15 arm C: the scalar kernel text compiled in the avx2 region
+// (isa/avx2_scalar_text.cpp). Its id is target::scalar.
+namespace avx2::scalar_text {
+extern const kernel_table table;
+}
+#endif
 #if FFTN_ARCH_AARCH64
 namespace neon_fcma {
 extern const kernel_table table;

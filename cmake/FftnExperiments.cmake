@@ -12,17 +12,27 @@
 #                             pragmas only; no OpenMP runtime, nothing linked) and the
 #                             innermost unit loops of the scalar kernel text carry
 #                             `omp simd` (FFTN_SIMD_LOOP, src/isa/region.hpp).
+#   FFTN_X_AVX2_SCALAR_TEXT   arm C (x86-64 only): the scalar kernel text, chain passes
+#                             included, compiled a second time inside the avx2 region
+#                             (src/isa/avx2_scalar_text.cpp); plans on AVX2 processors take
+#                             it for the chain passes.
 #
-# fftn_x15_consumer(<target>) gives a test or benchmark FFTN_X15_LIBRARY_SWITCHES, a string
-# naming every switch the library was built with. Never FFTN_X_OMP_SIMD itself: it would
-# turn the pragma on in the consumer's own region text.
+# fftn_x15_consumer(<target>) gives a test or benchmark the definitions it needs to know
+# which arms the library contains: FFTN_X_AVX2_SCALAR_TEXT as the library has it, and
+# FFTN_X15_LIBRARY_SWITCHES, a string naming every switch that is on. Never
+# FFTN_X_OMP_SIMD itself: it would turn the pragma on in the consumer's own region text.
 
 option(FFTN_X_OMP_SIMD "Experiment X15 arm B: omp simd on the scalar pass loops" OFF)
+option(FFTN_X_AVX2_SCALAR_TEXT "Experiment X15 arm C: scalar kernel text in the avx2 region" OFF)
 
 set(_fftn_x15_switches "")
 set(_fftn_x15_consumer_definitions "")
 if(FFTN_X_OMP_SIMD)
   list(APPEND _fftn_x15_switches omp_simd)
+endif()
+if(FFTN_X_AVX2_SCALAR_TEXT)
+  list(APPEND _fftn_x15_switches avx2_scalar_text)
+  list(APPEND _fftn_x15_consumer_definitions FFTN_X_AVX2_SCALAR_TEXT=1)
 endif()
 if(NOT _fftn_x15_switches)
   set(_fftn_x15_switches none)
