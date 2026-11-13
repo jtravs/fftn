@@ -30,7 +30,8 @@ enum class direction : std::int8_t {
 ///
 /// Strides count elements of each side's own type: real values on the real side of a real
 /// transform, complex values on the complex side. They may be negative. Zero means the
-/// tight C-ordered default (docs/conventions.md).
+/// tight C-ordered default (docs/conventions.md). The strides of an axis with `n` = 1 are
+/// never used and are ignored, whatever their value.
 struct axis {
   /// The logical length: the number of points transformed along this axis. At least 1.
   std::size_t n = 1;
@@ -43,7 +44,8 @@ struct axis {
 /// One batch dimension of a shape: a loop over independent transforms.
 ///
 /// Distances count elements of each side's own type, may be negative, and zero means the
-/// tight C-ordered default (docs/conventions.md).
+/// tight C-ordered default (docs/conventions.md). The distances of a dimension with
+/// `count` = 1 are never used and are ignored, whatever their value.
 struct batch {
   /// The number of transforms along this dimension. At least 1.
   std::size_t count = 1;

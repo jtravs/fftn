@@ -72,6 +72,11 @@ numbers.
   apart; each outer batch dimension spans the inner ones. Along the last axis an array
   spans n values, except the complex side of real transforms (n/2 + 1) and the real side
   of in-place real transforms (2(n/2 + 1), see below).
+- **Unused values.** The strides of an axis of length 1 and the distances of a batch
+  dimension of count 1 never step, so they are ignored, whatever their value.
+- **Limits.** Every other stride and distance must be above `PTRDIFF_MIN`, and on each
+  side the farthest element from element 0, in bytes, must be addressable with
+  `std::ptrdiff_t`; plan construction refuses layouts that are not.
 - **Real transforms out of place.** The real side has n values per row and the complex
   side n/2 + 1, each tight by default.
 - **No overlap.** No two output elements may share an address. Plan construction checks
@@ -118,11 +123,25 @@ or does I/O; everything is decided and allocated when the plan is constructed.
 ## Accuracy
 
 With N the number of points in one transform, L = max(1, log₂ N) and ε the machine
-epsilon of `T`, every transform the test suites run satisfies, against a
-quadruple-precision reference, a relative RMS error ‖Y − X‖₂ / ‖X‖₂ ≤ 3ε√L and a largest
-error ‖Y − X‖∞ / ‖X‖∞ ≤ 3εL, for every length up to 512, sampled lengths up to 2¹⁴ (primes
-among them) and both precisions. Measured errors sit 5 or more times below these bounds.
-Twiddle factors are correctly rounded.
+epsilon of `T`, the test suites require a relative RMS error ‖Y − X‖₂ / ‖X‖₂ ≤ 3ε√L and a
+largest error ‖Y − X‖∞ / ‖X‖∞ ≤ 3εL against a quadruple-precision reference, in both
+precisions:
+
+- rows of every kind at every length up to 512 and at sampled lengths up to 2¹⁴ (primes
+  among them), compared at every output up to n = 64 and at 32 sampled outputs beyond;
+- c2c planes up to 96 × 96, compared at every output up to 64 points along each axis and
+  at sampled outputs beyond;
+- complex and real arrays of two and three axes (up to 32 × 30 and 4 × 6 × 8 points) at
+  every output, with default and strided layouts; their bounds add the rounding of the
+  reference's values between axes and, for c2r, of the input spectrum.
+
+The same rows and planes are compared with FFTW at every output, within the sum of the
+two libraries' bounds. Measured on an Apple M-series Mac (Clang 23), the largest error in
+any of these checks is about a fifth of its bound: error/tolerance 0.19 against the
+reference, 0.14 against FFTW, 0.12 for the arrays of several axes, and 0.20 in the
+identity checks (whose bounds include the rounding of their closed-form inputs).
+Twiddle factors are correctly rounded, which is checked entry by entry for every length
+the suites test.
 
 ## Determinism
 

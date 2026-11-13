@@ -1237,8 +1237,10 @@ What the experiments still require of the build:
    library's own twiddle tables, which it builds with a few lines of double-double
    arithmetic, are checked against the same reference entry by entry (correctly rounded),
    so the reference shares no code with the library.
-3. **FFTW**, as an independent implementation, for large sizes and every shape. Test
-   builds compile FFTW 3.3.11 from source in both precisions (plain C, about 20 s), or use
+3. **FFTW**, as an independent implementation, for large sizes and every shape
+   (`tests/fftw`): the library's outputs compared with FFTW's at every output, with the
+   tolerances of both added. FFTW also runs oracles 1 and 2 as a subject, which checks
+   the suites themselves. Test builds compile FFTW 3.3.11 from source in both precisions (plain C, about 20 s), or use
    an existing install (`FFTN_FFTW_ROOT`); `FFTN_TEST_WITH_FFTW=OFF` builds without it and
    the tests that need it skip.
 4. **The generator's own check** of each codelet against the exact DFT at emission.
@@ -1513,13 +1515,22 @@ each item, and the outcome goes to the decision log.
    Output overlap is refused by a sufficient condition (sorted by stride, each stride
    exceeds the reach of the smaller ones), which admits every nested layout but refuses
    a few exotic interleavings that do not actually collide. Sizes whose byte reach does
-   not fit `std::ptrdiff_t` are refused.
+   not fit `std::ptrdiff_t` are refused, and so is a stride or distance of `PTRDIFF_MIN`
+   (its magnitude does not fit). The strides of an axis of length 1 and the distances of
+   a batch dimension of count 1 are ignored, since they never step: refusing them would
+   reject harmless layouts, and using them would let unchecked values into the kernels'
+   arithmetic.
 8. *In place* requires identical layouts for c2c; for r2c and c2r the last axis
    contiguous on both sides and every other real stride and distance twice the complex
    one (FFTW's padded layout). Other in-place layouts are refused, not supported.
 9. *`options`* has only `in_place`; the other members of 5.3 arrive with their phases.
 10. *Plans are copyable*: copies share one immutable core (`std::shared_ptr<const>`), so
-    copying is cheap and thread-safe. There is no default constructor.
+    copying is cheap and thread-safe. There is no default constructor, and every plan is
+    valid: the class declares its copy operations and no move operations, so moving a
+    plan copies it and leaves the source unchanged, for the price of a reference-count
+    increment. The alternative is a documented moved-from state in which only assignment
+    and destruction are allowed; it saves the increment but brings back an invalid plan
+    that every member function would have to rule out.
 11. *Execution preconditions* (workspace large enough, `execute_rows` within the batch,
     the same address for in-place calls) are documented and checked only by assertions
     in debug builds of the library; `execute` stays `noexcept`.

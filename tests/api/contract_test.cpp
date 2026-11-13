@@ -22,6 +22,7 @@
 #include <array>
 #include <complex>
 #include <cstddef>
+#include <limits>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -191,7 +192,8 @@ TYPED_TEST(Contracts, PlansAreReusableAcrossCopiesAndThreads) {
   };
   const cvec<T> serial = run(p);
   EXPECT_TRUE(same_bits<std::complex<T>>(run(p), serial));
-  const fftn::c2c_plan<T> copy = p; // NOLINT(performance-unnecessary-copy-initialization)
+  // NOLINTNEXTLINE(performance-unnecessary-copy-initialization): the copy is under test
+  const fftn::c2c_plan<T> copy = p;
   EXPECT_TRUE(same_bits<std::complex<T>>(run(copy), serial));
   constexpr int threads = 4;
   std::array<cvec<T>, threads> results;
@@ -210,6 +212,38 @@ TYPED_TEST(Contracts, PlansAreReusableAcrossCopiesAndThreads) {
   for (const cvec<T>& r : results) {
     EXPECT_TRUE(same_bits<std::complex<T>>(r, serial));
   }
+}
+
+// Moving a plan copies it: the source stays a valid plan with the same results. Before the
+// copy operations were declared, the implicit move left a null core and every call on the
+// source dereferenced it.
+TYPED_TEST(Contracts, MovedFromPlansStayValid) {
+  using T = TypeParam;
+  constexpr std::size_t n = 12;
+  input_source src(14);
+  const auto x = src.complexes<T>(n);
+  const auto run = [&x](const fftn::c2c_plan<T>& plan) {
+    fftn::workspace ws(plan.workspace_bytes());
+    cvec<T> y(x.size());
+    plan.execute(x.data(), y.data(), ws);
+    return y;
+  };
+  // The sources are not const: a const source would be copied whatever plan declared.
+  // NOLINTNEXTLINE(misc-const-correctness): a const source would not exercise a move
+  fftn::c2c_plan<T> p(fftn::rows_c2c<T>(n, 1, fftn::direction::forward));
+  const cvec<T> want = run(p);
+  // NOLINTNEXTLINE(misc-const-correctness,performance-move-const-arg): the move is under test
+  fftn::c2c_plan<T> q(std::move(p));
+  EXPECT_TRUE(same_bits<std::complex<T>>(run(q), want));
+  // NOLINTNEXTLINE(bugprone-use-after-move,clang-analyzer-cplusplus.Move): source under test
+  EXPECT_TRUE(same_bits<std::complex<T>>(run(p), want));
+  fftn::c2c_plan<T> r(fftn::rows_c2c<T>(n, 1, fftn::direction::backward));
+  r = std::move(q); // NOLINT(performance-move-const-arg): the move is the subject of the test
+  EXPECT_TRUE(same_bits<std::complex<T>>(run(r), want));
+  // NOLINTNEXTLINE(bugprone-use-after-move,clang-analyzer-cplusplus.Move): source under test
+  EXPECT_EQ(q.describe(), r.describe());
+  static_assert(std::is_nothrow_move_constructible_v<fftn::c2c_plan<T>> &&
+                std::is_nothrow_move_assignable_v<fftn::c2c_plan<T>>);
 }
 
 // ---- Workspaces.
@@ -238,7 +272,8 @@ TEST(Workspace, MovesAndEmptyWorkspaces) {
   fftn::workspace b(std::move(a));
   EXPECT_EQ(b.size(), 100U);
   EXPECT_EQ(b.memory().data(), memory);
-  EXPECT_EQ(a.size(), 0U); // NOLINT(bugprone-use-after-move,clang-analyzer-cplusplus.Move)
+  // NOLINTNEXTLINE(bugprone-use-after-move,clang-analyzer-cplusplus.Move): source under test
+  EXPECT_EQ(a.size(), 0U);
   fftn::workspace c;
   c = std::move(b);
   EXPECT_EQ(c.size(), 100U);
@@ -251,6 +286,34 @@ TEST(Workspace, MovesAndEmptyWorkspaces) {
   std::vector<std::complex<double>> y(4);
   p.execute(x.data(), y.data(), none);
   EXPECT_EQ(x, y);
+}
+
+// ---- Execution preconditions: assertions in debug builds of the library (DESIGN.md 18.2,
+// item 11). Builds with NDEBUG (Release and the sanitizer builds) compile them out; the
+// gate's coverage build is a Debug build and runs these.
+
+TEST(ExecutionDeathTest, PreconditionsAreAssertedInDebugBuilds) {
+#ifdef NDEBUG
+  GTEST_SKIP() << "assertions are compiled out of this build type";
+#else
+  GTEST_FLAG_SET(death_test_style, "threadsafe");
+  using c = std::complex<double>;
+  cvec<double> x(16);
+  cvec<double> y(16);
+  // An in-place plan given two addresses: a rank-2 in-place c2r would silently compute
+  // garbage, so every in-place kind is checked.
+  fftn::shape<c, double> planes;
+  planes.axes = {{.n = 2}, {.n = 4}};
+  const fftn::c2r_plan<double> in_place(planes, {.in_place = true});
+  fftn::workspace ws(in_place);
+  EXPECT_DEATH(in_place.execute(x.data(), reinterpret_cast<double*>(y.data()), ws),
+               "in-place plan executed with in != out");
+  const fftn::c2c_plan<double> rows(fftn::rows_c2c<double>(8, 2, fftn::direction::forward));
+  fftn::workspace small(rows.workspace_bytes() - 1);
+  EXPECT_DEATH(rows.execute(x.data(), y.data(), small), "workspace smaller");
+  fftn::workspace enough(rows);
+  EXPECT_DEATH(rows.execute_rows(1, 2, x.data(), y.data(), enough), "beyond the batch");
+#endif
 }
 
 // ---- Invalid shapes are refused at construction, naming the argument.
@@ -315,6 +378,93 @@ TEST(Validation, InvalidShapesThrowNamingTheArgument) {
   expect_refused(real, "options.in_place", {.in_place = true});
 }
 
+// Strides and distances whose magnitudes or derived byte steps do not fit std::ptrdiff_t.
+// Without the checks these built plans whose arithmetic overflowed (UBSan reported it in
+// the plan's construction and in the copy pass).
+TEST(Validation, StridesThatOverflowAreRefused) {
+  using c = std::complex<double>;
+  constexpr std::ptrdiff_t lowest = std::numeric_limits<std::ptrdiff_t>::min();
+  fftn::shape<c, c> s;
+  s.axes = {{.n = 2, .out_stride = lowest}, {.n = 8}};
+  expect_refused(s, "shape.axes[0].out_stride");
+  s.axes = {{.n = 8, .in_stride = lowest}};
+  expect_refused(s, "shape.axes[0].in_stride");
+  s.axes = {{.n = 8}};
+  s.batches = {{.count = 2, .in_dist = lowest}};
+  expect_refused(s, "shape.batches[0].in_dist");
+  s.batches = {{.count = 3, .out_dist = lowest}};
+  expect_refused(s, "shape.batches[0].out_dist");
+  // A distance whose byte step overflows although its element count does not.
+  s.batches = {{.count = 2, .in_dist = std::numeric_limits<std::ptrdiff_t>::max() / 4}};
+  expect_refused(s, "too large");
+}
+
+// The stride of an axis of length 1 and the distance of a batch dimension of count 1 never
+// step, so any value is accepted for them, PTRDIFF_MIN and values whose byte steps would
+// overflow included, and the result is that of the default layout. One test per way the
+// unused value used to reach arithmetic that overflowed.
+constexpr std::ptrdiff_t lowest_step = std::numeric_limits<std::ptrdiff_t>::min();
+constexpr std::ptrdiff_t far_step = std::numeric_limits<std::ptrdiff_t>::max() / 2 + 1; // 2^62
+
+// An 8-point c2c of the same input through `s` and through the default layout.
+void expect_default_result(const fftn::shape<std::complex<double>, std::complex<double>>& s) {
+  input_source src(13);
+  const auto x = src.complexes<double>(8);
+  const auto run = [&x](const fftn::c2c_plan<double>& p) {
+    fftn::workspace ws(p);
+    cvec<double> y(x.size());
+    p.execute(x.data(), y.data(), ws);
+    return y;
+  };
+  const fftn::c2c_plan<double> plain(fftn::rows_c2c<double>(8, 1, fftn::direction::forward));
+  EXPECT_TRUE(same_bits<std::complex<double>>(run(fftn::c2c_plan<double>(s)), run(plain)));
+}
+
+// The batch loop's byte step was computed from the distance even for a count of 1.
+TEST(Validation, DistanceOfASingleTransformIsIgnored) {
+  fftn::shape<std::complex<double>, std::complex<double>> s;
+  s.axes = {{.n = 8}};
+  s.batches = {{.count = 1, .in_dist = far_step, .out_dist = far_step}};
+  expect_default_result(s);
+  s.batches = {{.count = 1, .in_dist = lowest_step, .out_dist = -far_step}};
+  expect_default_result(s);
+}
+
+// The reach and overlap checks took the magnitude of a length-1 axis's stride.
+TEST(Validation, StrideOfALengthOneAxisIsIgnored) {
+  fftn::shape<std::complex<double>, std::complex<double>> s;
+  s.axes = {{.n = 1, .in_stride = lowest_step, .out_stride = far_step}, {.n = 8}};
+  expect_default_result(s);
+  s.axes = {{.n = 8}, {.n = 1, .in_stride = far_step, .out_stride = lowest_step}};
+  expect_default_result(s);
+}
+
+// The copy pass of a one-point line doubled the stride to step over complex values as
+// reals, here for two one-point transforms one element apart; so did the edge passes of
+// a real transform.
+TEST(Validation, StrideOfALengthOneAxisIsNeverDoubled) {
+  using c = std::complex<double>;
+  fftn::shape<c, c> s;
+  s.axes = {{.n = 1, .in_stride = far_step, .out_stride = 1}};
+  s.batches = {{.count = 2, .in_dist = 1, .out_dist = 1}};
+  const fftn::c2c_plan<double> p(s);
+  fftn::workspace ws(p);
+  const cvec<double> x{{1.0, 2.0}, {3.0, 4.0}};
+  cvec<double> y(2);
+  p.execute(x.data(), y.data(), ws);
+  EXPECT_EQ(y, x);
+
+  fftn::shape<double, c> r;
+  r.axes = {{.n = 1, .in_stride = far_step, .out_stride = far_step}};
+  r.batches = {{.count = 2, .in_dist = 1, .out_dist = 1}};
+  const fftn::r2c_plan<double> pr(r);
+  fftn::workspace wr(pr);
+  const std::vector<double> reals{3.0, -2.0};
+  cvec<double> spectrum(2);
+  pr.execute(reals.data(), spectrum.data(), wr);
+  EXPECT_EQ(spectrum, (cvec<double>{{3.0, 0.0}, {-2.0, 0.0}}));
+}
+
 TEST(Validation, ValidEdgeCasesAreAccepted) {
   using c = std::complex<double>;
   // Interleaved rows that do not collide: stride 2, distance 1, two rows.
@@ -377,6 +527,9 @@ TEST(Isa, Names) {
   EXPECT_STREQ(fftn::isa_name(fftn::isa::avx512), "avx512");
   EXPECT_STREQ(fftn::isa_name(fftn::isa::neon), "neon");
   EXPECT_STREQ(fftn::isa_name(fftn::isa::neon_fcma), "neon_fcma");
+  // Out of range: this read past the table of names before it was bounds-checked.
+  // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange): invalid on purpose
+  EXPECT_STREQ(fftn::isa_name(static_cast<fftn::isa>(200)), "unknown");
 }
 
 TEST(SmallVector, HoldsUpToItsCapacity) {

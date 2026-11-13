@@ -42,7 +42,8 @@ enum class target : unsigned char {
 // processor cannot run it.
 [[nodiscard]] target choose_target(const cpu_features& features, std::optional<target> forced);
 
-// The target's name as written in the code ("avx2", "neon_fcma", ...), and back.
+// The target's name as written in the code ("avx2", "neon_fcma", ...), and back. The name
+// of a value outside the enumeration is "unknown".
 [[nodiscard]] std::string_view target_name(target t) noexcept;
 [[nodiscard]] std::optional<target> target_from_name(std::string_view name) noexcept;
 

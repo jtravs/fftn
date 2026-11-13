@@ -23,7 +23,7 @@ enum class isa : unsigned char {
 };
 
 /// The instruction set's name as written in this header: "scalar", "avx2", "neon_fcma"
-/// and so on.
+/// and so on; "unknown" for a value that is not one of the enumerators.
 ///
 /// Guarantees: the pointer refers to a static string and is never null.
 [[nodiscard]] const char* isa_name(isa target) noexcept;
