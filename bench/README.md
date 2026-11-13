@@ -127,10 +127,12 @@ Accuracy is stored with every timing.
 
 ## `smoke`
 
-`smoke --build DIR --strict` runs the smoke tier through every backend in `DIR/bench`,
-correctness only, then checks that the guard flags a perturbed output. It is the gate's
-`bench` stage and the CTest test `bench.smoke`. Cases a backend reports unsupported are
-counted, not failed (the FFTN backend reports every case unsupported until it has a plan).
+`smoke --build DIR --strict` runs every backend in `DIR/bench` through its own `selftest`
+(the reference, the check, and that `describe` names the real library file rather than the
+backend executable) and through the smoke tier, correctness only, then checks that the
+guard flags a perturbed output. It is the gate's `bench` stage and the CTest test
+`bench.smoke`. An unsupported case fails when its kind is in the backend's `supports` list
+and is only counted otherwise (the FFTN backend supports nothing until it has a plan).
 
 ## Catalogues
 
@@ -171,13 +173,21 @@ record per round, arm and case (every batch, median, minimum, plan time, accurac
 point, mflops) and a final `summary`. `show <run-id>` (or a unique prefix, or `latest`)
 recomputes the report from the records. Documents cite run IDs, never copied numbers.
 
+The store may be copied between machines, so it holds no absolute paths: the checkout is
+written `<repo>`, the directory holding `bench-out` `<base>`, a library installation
+`<fftw-root>` (`<fftw-root-2>`, ... for further ones) and the home directory `~`. The run
+record also names the Python version (the checkout pins 3.14 in `.python-version`).
+
 ## Adding a backend
 
 1. Write `backends/<library>.cpp` implementing the six functions of `harness/backend.hpp`.
    Plan in `fbench_create` on the buffers given (their alignment is the one every execute
    will use), refuse unknown options in `fbench_begin`, and report in `fbench_describe` the
-   version and the instruction set actually selected; for a shared library also
-   `loaded_from` (where it was loaded from) and `expected_root` (where it should have been).
+   version, the instruction set actually selected and `supports` (the kinds it claims);
+   for a shared library also `loaded_from` and `expected_root`. `loaded_from` must name the
+   file that defines the library: on Linux, the address of a symbol taken in the
+   executable points into the executable (PLT entry or copy relocation), so resolve a
+   function with `dlsym(RTLD_NEXT, ...)` first, as the FFTW backend does.
 2. In `CMakeLists.txt`, find the library only where the user points
    (`FFTN_BENCH_<LIB>_ROOT`), call `fbench_add_backend(<library> <link targets>)`, and skip
    it with a status message when it is not configured.

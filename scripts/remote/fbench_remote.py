@@ -27,6 +27,7 @@ import argparse
 import json
 import os
 import re
+import secrets
 import shlex
 import subprocess
 import sys
@@ -193,6 +194,12 @@ def sbatch_script(profile: Profile, plan: Plan, after: str | None = None) -> str
     return "\n".join(lines) + "\n"
 
 
+def job_name(head: str) -> str:
+    """Time, commit and a random suffix: two submissions in the same second must not share
+    a name (the second would find the first's directory and be lost)."""
+    return f"fbench-{time.strftime('%Y%m%d-%H%M%S')}-{head[:8]}-{secrets.token_hex(3)}"
+
+
 def ssh(profile: Profile, command: str, check: bool = True) -> str:
     done = subprocess.run(
         ["ssh", "-o", "BatchMode=yes", profile.ssh, command],
@@ -211,7 +218,7 @@ def cmd_submit(args: argparse.Namespace) -> int:
             "the working tree has uncommitted changes: commit them first (AGENTS.md 6)"
         )
     profile = load_profile(args.profile)
-    job = args.name or f"fbench-{time.strftime('%Y%m%d-%H%M%S')}-{git('rev-parse', 'HEAD')[:8]}"
+    job = args.name or job_name(git("rev-parse", "HEAD"))
     plan = make_plan(profile, args.arms, args.fbench_args, job)
     local = STATE / job
     local.mkdir(parents=True, exist_ok=False)

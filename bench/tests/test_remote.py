@@ -94,6 +94,16 @@ class JobScript(unittest.TestCase):
             self.plan(["A=fftn:build/check-release"])
 
 
+class JobNames(unittest.TestCase):
+    def test_unique_within_one_second(self):
+        # Submissions in the same second once collided and the second one was lost.
+        with mock.patch.object(remote.time, "strftime", return_value="20261113-120000"):
+            names = {remote.job_name(HEAD) for _ in range(200)}
+        self.assertEqual(len(names), 200)
+        for name in names:
+            self.assertTrue(name.startswith(f"fbench-20261113-120000-{HEAD[:8]}-"))
+
+
 class Config(unittest.TestCase):
     def test_file_and_environment(self):
         with tempfile.TemporaryDirectory() as tmp:
