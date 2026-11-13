@@ -13,12 +13,12 @@ set(alone_units "")
 foreach(header IN LISTS public_headers)
   get_filename_component(stem "${header}" NAME_WE)
   set(unit "${CMAKE_CURRENT_BINARY_DIR}/alone_${stem}.cpp")
-  file(CONFIGURE OUTPUT "${unit}" CONTENT "#include \"fftn/${stem}.hpp\"\n")
+  # The unit exists only to include the header, which include-cleaner would call unused.
+  # A NOLINT rather than SKIP_LINTING: that property needs CMake 3.27 and FFTN supports 3.25.
+  file(CONFIGURE OUTPUT "${unit}" CONTENT
+    "#include \"fftn/${stem}.hpp\" // NOLINT(misc-include-cleaner): this unit only includes it\n")
   list(APPEND alone_units "${unit}")
 endforeach()
-# The generated units are one #include each: nothing for clang-tidy to check but the header,
-# which it checks through the other units.
-set_source_files_properties(${alone_units} PROPERTIES SKIP_LINTING ON)
 add_executable(fftn_headers_alone headers_alone_main.cpp ${alone_units})
 fftn_configure_target(fftn_headers_alone)
 target_link_libraries(fftn_headers_alone PRIVATE fftn::fftn)
