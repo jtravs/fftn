@@ -284,6 +284,34 @@ TEST(Workspace, MovesAndEmptyWorkspaces) {
   EXPECT_EQ(x, y);
 }
 
+// ---- Execution preconditions: assertions in debug builds of the library (DESIGN.md 18.2,
+// item 11). Builds with NDEBUG (Release and the sanitizer builds) compile them out; the
+// gate's coverage build is a Debug build and runs these.
+
+TEST(ExecutionDeathTest, PreconditionsAreAssertedInDebugBuilds) {
+#ifdef NDEBUG
+  GTEST_SKIP() << "assertions are compiled out of this build type";
+#else
+  GTEST_FLAG_SET(death_test_style, "threadsafe");
+  using c = std::complex<double>;
+  cvec<double> x(16);
+  cvec<double> y(16);
+  // An in-place plan given two addresses: a rank-2 in-place c2r would silently compute
+  // garbage, so every in-place kind is checked.
+  fftn::shape<c, double> planes;
+  planes.axes = {{.n = 2}, {.n = 4}};
+  const fftn::c2r_plan<double> in_place(planes, {.in_place = true});
+  fftn::workspace ws(in_place);
+  EXPECT_DEATH(in_place.execute(x.data(), reinterpret_cast<double*>(y.data()), ws),
+               "in-place plan executed with in != out");
+  const fftn::c2c_plan<double> rows(fftn::rows_c2c<double>(8, 2, fftn::direction::forward));
+  fftn::workspace small(rows.workspace_bytes() - 1);
+  EXPECT_DEATH(rows.execute(x.data(), y.data(), small), "workspace smaller");
+  fftn::workspace enough(rows);
+  EXPECT_DEATH(rows.execute_rows(1, 2, x.data(), y.data(), enough), "beyond the batch");
+#endif
+}
+
 // ---- Invalid shapes are refused at construction, naming the argument.
 
 template <class In, class Out>
