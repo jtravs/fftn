@@ -213,6 +213,36 @@ TYPED_TEST(Contracts, PlansAreReusableAcrossCopiesAndThreads) {
   }
 }
 
+// Moving a plan copies it: the source stays a valid plan with the same results. Before the
+// copy operations were declared, the implicit move left a null core and every call on the
+// source dereferenced it.
+TYPED_TEST(Contracts, MovedFromPlansStayValid) {
+  using T = TypeParam;
+  constexpr std::size_t n = 12;
+  input_source src(14);
+  const auto x = src.complexes<T>(n);
+  const auto run = [&x](const fftn::c2c_plan<T>& plan) {
+    fftn::workspace ws(plan.workspace_bytes());
+    cvec<T> y(x.size());
+    plan.execute(x.data(), y.data(), ws);
+    return y;
+  };
+  fftn::c2c_plan<T> p(fftn::rows_c2c<T>(n, 1, fftn::direction::forward));
+  const cvec<T> want = run(p);
+  // NOLINTNEXTLINE(performance-move-const-arg): the move is the subject of the test
+  fftn::c2c_plan<T> q(std::move(p));
+  EXPECT_TRUE(same_bits<std::complex<T>>(run(q), want));
+  // NOLINTNEXTLINE(bugprone-use-after-move,clang-analyzer-cplusplus.Move): on purpose
+  EXPECT_TRUE(same_bits<std::complex<T>>(run(p), want));
+  fftn::c2c_plan<T> r(fftn::rows_c2c<T>(n, 1, fftn::direction::backward));
+  r = std::move(q); // NOLINT(performance-move-const-arg): the move is the subject of the test
+  EXPECT_TRUE(same_bits<std::complex<T>>(run(r), want));
+  // NOLINTNEXTLINE(bugprone-use-after-move,clang-analyzer-cplusplus.Move): on purpose
+  EXPECT_EQ(q.describe(), r.describe());
+  static_assert(std::is_nothrow_move_constructible_v<fftn::c2c_plan<T>> &&
+                std::is_nothrow_move_assignable_v<fftn::c2c_plan<T>>);
+}
+
 // ---- Workspaces.
 
 TYPED_TEST(Contracts, WorkspaceOverCallerMemoryAtAnyAlignment) {

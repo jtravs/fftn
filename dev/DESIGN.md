@@ -1519,7 +1519,12 @@ each item, and the outcome goes to the decision log.
    one (FFTW's padded layout). Other in-place layouts are refused, not supported.
 9. *`options`* has only `in_place`; the other members of 5.3 arrive with their phases.
 10. *Plans are copyable*: copies share one immutable core (`std::shared_ptr<const>`), so
-    copying is cheap and thread-safe. There is no default constructor.
+    copying is cheap and thread-safe. There is no default constructor, and every plan is
+    valid: the class declares its copy operations and no move operations, so moving a
+    plan copies it and leaves the source unchanged, for the price of a reference-count
+    increment. The alternative is a documented moved-from state in which only assignment
+    and destruction are allowed; it saves the increment but brings back an invalid plan
+    that every member function would have to rule out.
 11. *Execution preconditions* (workspace large enough, `execute_rows` within the batch,
     the same address for in-place calls) are documented and checked only by assertions
     in debug builds of the library; `execute` stays `noexcept`.

@@ -36,7 +36,8 @@ namespace fftn::inline v0 {
 ///   the same arithmetic, whatever its position, and repeated executions agree bit for
 ///   bit. Plans built with different options, or on different instruction sets, may differ
 ///   in the last bits (docs/conventions.md, "Determinism").
-/// - Plans are cheap to copy; copies share their immutable tables.
+/// - Plans are cheap to copy; copies share their immutable tables. There is no empty plan:
+///   moving a plan copies it, so the source of a move stays a valid plan too.
 template <class In, class Out> class plan {
 public:
   /// Builds the plan of `s` with options `opts`.
@@ -47,6 +48,18 @@ public:
   /// layouts that do not agree. Throws `std::bad_alloc` when memory runs out.
   explicit plan(const shape<In, Out>& s, const options& opts = {})
       : core_(detail::make_plan_core(detail::view_of(s), opts)) {}
+
+  /// Makes a plan that shares `other`'s immutable tables: it transforms exactly as `other`
+  /// does. Also used for moves (the class declares no move operations), so the source of
+  /// a move is left unchanged and valid.
+  plan(const plan& other) noexcept = default;
+
+  /// Makes this plan share `other`'s immutable tables, as the copy constructor does; also
+  /// used for move assignment, leaving the source unchanged.
+  plan& operator=(const plan& other) noexcept = default;
+
+  /// Releases this plan's share of the tables; the last plan to go frees them.
+  ~plan() = default;
 
   /// Transforms every transform of the batch, serially on the calling thread.
   ///
