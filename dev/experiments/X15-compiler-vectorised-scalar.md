@@ -91,6 +91,66 @@ test asserts it for every arm the build contains.
   - Any arm whose output is not bitwise equal to A is a bug in the arm, not a result
     (E excepted as stated above).
 
+### Method in detail
+
+Added after the protocol, before any measurement, to make the method exact; the arms,
+the metric and the decision rule above are unchanged.
+
+- **Switches and arms.** CMake options in `cmake/FftnExperiments.cmake`, registered in
+  `dev/KNOBS.toml`, all OFF by default and in no preset: `FFTN_X_OMP_SIMD` (B),
+  `FFTN_X_AVX2_SCALAR_TEXT` (C), `FFTN_X_NATIVE` (E; refused together with
+  `FFTN_WARNINGS_AS_ERRORS`, which every gate preset sets, and loud at configure time).
+  Arm A is the infrastructure commit with every switch off; each other arm is a branch
+  on top of it whose one commit flips the default of its switch: `exp/x15-arm-b`,
+  `exp/x15-arm-c`, `exp/x15-arm-c-simd`, `exp/x15-arm-e`, `exp/x15-arm-e-simd`.
+- **What B annotates.** `omp simd` sits on the innermost unit loop of every chain pass
+  whose units are innermost: the copies `q` of the Stockham passes, `copy_pass` and the
+  eight edge passes of real transforms; and on the `p` loop of `radix4_pass` where the
+  vocabulary is the scalar one. The generic prime pass (its unit loop encloses the
+  pairwise sum) and the hand vocabularies' loops are not touched.
+- **What C is.** `src/isa/avx2_scalar_text.cpp`: the scalar vocabulary, the kernel text and
+  the chain passes inside `FFTN_ISA_BEGIN(avx2)`, in the nested namespace
+  `avx2::scalar_text`. Plans on AVX2 processors take its table for the chain passes and
+  report `avx2`. In such a build two tests fail by design and are not a result: the
+  disassembly test (`isa.asm_check`: avx2 code outside the avx2 unit) and
+  `Describe.NamesTheProgram` (it expects `scalar`).
+- **Bitwise equality.** `tests/isa/x15_arms_test.cpp` compares, in every build, the
+  library's scalar table (A, B or E), the arm C table where the processor runs AVX2, and
+  public plans against the test's own plain copy of the scalar text: c2c both directions,
+  r2c and c2r, every length of `fast_lengths()`, double and float, `memcmp`. Under arm E
+  a difference is printed with its size (max |diff| / max |ref|) and checked against
+  10 ε (1 + log₂ n) instead of failing; that number is what Results records for E.
+  `x15-passes --check` does the same for every variant of the pass-level harness.
+- **Whole transforms (fbench).** fbench v0 times double precision only, so float is
+  covered by the pass level and the bitwise test, not by the whole-transform runs. Two
+  runs per machine, each with every arm in one session and the A/A control:
+  1. *target set* (the decision metric: fbench's weighted geomean of this run),
+     `--filter '^(c2c-(64|96|100|128|256|512|1000|1024|4096)|r2c-(64|256|1024))-b(16|64|256|1024|4096)-op$'`:
+     the 30 c2c and r2c batched-row cases of the standard catalogue with smooth lengths
+     64 to 4096 (the catalogue has no batched rows between 4096 and 16384);
+  2. *collateral*: every c2c and r2c row of the standard catalogue, `--filter
+     '^(c2c|r2c)-(?!(16381|65537|131071|999983|[0-9]{7,})-)[0-9]+-b[0-9]+-(op|ip)(-bwd)?$'`
+     (225 cases). Excluded: the primes 16381 and above, whose generic O(p²) pass makes one
+     call take seconds to minutes in the walking skeleton, and the lengths of a million
+     points and more, which would take most of the budget. B's rule "no case outside the
+     target set slower than A by more than 2 % beyond the band" is read off this run.
+- **Pass level** (`bench/x15/passes.cpp`, driven by `bench/x15/x15_passes.py`).
+  `radix4_pass`, forward, m = 16, 32, …, 4096, double and float. One binary times, in one
+  process, copies of the scalar text compiled with the harness's flags only: `scalar` (A),
+  `scalar_simd` (B), `avx2_text` and `avx2_text_simd` (C, x86-64), the library's hand
+  kernels `avx2` (D) and `neon_fcma` (the Mac's hand vocabulary), and `lib_scalar`, the
+  library's own scalar table as that build made it (A, B or E). `scalar~` is `scalar`
+  timed again: the identical-arm control and the noise band. Residency per m, with a set
+  being one input, output and twiddle table (sized with four reals per twiddle for every
+  variant): `l1`, one set reused, where it fills at most half of L1; `l2`, k ≥ 2 sets in
+  rotation with k S ≥ 4 L1, where they fill at most half of L2; `hot`, one set reused,
+  for every m. Metric: ns per butterfly (m per call), the median over 7 batches of about
+  2 ms in each process, then the median over 12 process rounds; ratios paired by round
+  with 95 % bootstrap intervals, variants in a Williams order, fbench's quiet check
+  before and after every round. A–D come from the arm A commit's binary; E and E+simd
+  are `lib_scalar` in the binaries of `exp/x15-arm-e` and `exp/x15-arm-e-simd`, each
+  against the same process's `scalar` and hand kernel.
+
 ## Results
 
 (To be filled with run IDs, host, compiler, instruction set, thread mode and load.)
