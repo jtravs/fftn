@@ -18,14 +18,15 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
 #include <complex>
 #include <cstddef>
-#include <cstring>
 #include <span>
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -36,8 +37,19 @@ using fftn::test::placement;
 using fftn::test::rows;
 template <class T> using cvec = std::vector<std::complex<T>>;
 
+// Byte-wise equality through std::as_bytes: no raw memory function on std::complex,
+// which GCC's -Wclass-memaccess refuses.
 template <class T> bool same_bits(std::span<const T> a, std::span<const T> b) {
-  return a.size() == b.size() && std::memcmp(a.data(), b.data(), a.size_bytes()) == 0;
+  return a.size() == b.size() && std::ranges::equal(std::as_bytes(a), std::as_bytes(b));
+}
+
+// n random elements of type E (real or complex).
+template <class E> std::vector<E> random_elements(input_source& src, std::size_t n) {
+  if constexpr (std::is_floating_point_v<E>) {
+    return src.reals<E>(n);
+  } else {
+    return src.complexes<typename E::value_type>(n);
+  }
 }
 
 template <class T> class Contracts : public ::testing::Test {};
@@ -119,10 +131,10 @@ void check_positions(const fftn::plan<In, Out>& p, std::size_t transforms, std::
                      std::size_t out_len, std::size_t in_dist, std::size_t out_dist) {
   fftn::workspace ws(p);
   input_source src(in_len);
-  const auto one = src.reals<double>(in_len * sizeof(In) / sizeof(double) + 1);
+  const std::vector<In> one = random_elements<In>(src, in_len);
   std::vector<In> in(in_dist * transforms);
   for (std::size_t t = 0; t < transforms; ++t) {
-    std::memcpy(&in[t * in_dist], one.data(), in_len * sizeof(In));
+    std::ranges::copy(one, in.begin() + static_cast<std::ptrdiff_t>(t * in_dist));
   }
   std::vector<Out> out(out_dist * transforms);
   p.execute(in.data(), out.data(), ws);

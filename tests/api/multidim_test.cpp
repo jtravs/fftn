@@ -16,6 +16,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <complex>
 #include <cstddef>
 #include <cstring>
@@ -219,7 +220,8 @@ TYPED_TEST(MultiDim, ComplexToReal) {
       const std::vector<c> before = spectrum;
       std::vector<T> y(points * count);
       p.execute(spectrum.data(), y.data(), ws);
-      EXPECT_EQ(std::memcmp(before.data(), spectrum.data(), before.size() * sizeof(c)), 0)
+      EXPECT_TRUE(std::ranges::equal(std::as_bytes(std::span<const c>(before)),
+                                     std::as_bytes(std::span<const c>(spectrum))))
           << "c2r out of place changed its input";
       check(y, "c2r");
     }
