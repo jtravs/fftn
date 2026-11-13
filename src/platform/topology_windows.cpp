@@ -18,7 +18,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
+#include <functional>
 #include <map>
 #include <utility>
 #include <vector>
@@ -31,7 +31,7 @@ std::vector<unsigned> cpus_of(const GROUP_AFFINITY& mask) {
   std::vector<unsigned> cpus;
   for (unsigned b = 0; b < 64; ++b) {
     if (((static_cast<std::uint64_t>(mask.Mask) >> b) & 1U) != 0) {
-      cpus.push_back(64U * mask.Group + b);
+      cpus.push_back(64U * static_cast<unsigned>(mask.Group) + b);
     }
   }
   return cpus;
@@ -96,8 +96,8 @@ topology topology_from_windows() {
       // Only the first group's mask: a cache never spans processor groups in practice.
       cache_record r;
       r.sharing = cpus_of(c.GroupMask);
-      r.geometry.size = c.CacheSize;
-      r.geometry.line_size = c.LineSize;
+      r.geometry.size = static_cast<std::size_t>(c.CacheSize);
+      r.geometry.line_size = static_cast<std::size_t>(c.LineSize);
       // CACHE_FULLY_ASSOCIATIVE (0xFF) is reported as unknown ways.
       r.geometry.ways = c.Associativity == CACHE_FULLY_ASSOCIATIVE ? 0U : c.Associativity;
       r.geometry.shared_by = static_cast<unsigned>(r.sharing.size());
@@ -108,7 +108,7 @@ topology topology_from_windows() {
     }
     case RelationNumaNode:
       for (const unsigned cpu : cpus_of(info->NumaNode.GroupMask)) {
-        cpus[cpu].node = info->NumaNode.NodeNumber;
+        cpus[cpu].node = static_cast<unsigned>(info->NumaNode.NodeNumber);
       }
       break;
     default:

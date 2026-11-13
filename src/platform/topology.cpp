@@ -185,7 +185,7 @@ topology fallback_topology(std::size_t logical_cpus) {
 
 std::size_t system_page_size() noexcept {
 #ifdef _WIN32
-  SYSTEM_INFO info;
+  SYSTEM_INFO info{};
   GetSystemInfo(&info);
   return info.dwPageSize;
 #else
