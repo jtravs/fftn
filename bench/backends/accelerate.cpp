@@ -66,7 +66,7 @@ std::string sysctl_text(const char* name) {
 struct plan_record {
   std::int32_t kind = fbench_c2c;
   api interface = api::interleaved;
-  std::size_t n = 0;      // logical length
+  std::size_t n = 0; // logical length
   std::size_t batch = 1;
   std::size_t in_dist = 0;  // in doubles
   std::size_t out_dist = 0; // in doubles

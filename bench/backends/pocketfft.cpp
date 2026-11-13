@@ -42,10 +42,10 @@ std::string& description() {
 struct plan_record {
   std::int32_t kind = fbench_c2c;
   bool forward = true;
-  pf::shape_t shape;     // batch, then the logical dimensions (r2c/c2r: the real array's)
-  pf::stride_t in;       // byte strides
+  pf::shape_t shape; // batch, then the logical dimensions (r2c/c2r: the real array's)
+  pf::stride_t in;   // byte strides
   pf::stride_t out;
-  pf::shape_t axes;      // every dimension but the batch
+  pf::shape_t axes; // every dimension but the batch
   // Keeps the cached plans alive for as long as the case exists.
   std::vector<std::shared_ptr<pf::pocketfft_c<double>>> complex_plans;
   std::shared_ptr<pf::pocketfft_r<double>> real_plan;
@@ -79,6 +79,7 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
                       .raw("supports", R"(["c2c","r2c","c2r"])")
                       .integer("vlen", static_cast<std::int64_t>(pf::VLEN<double>::val))
                       .str("arch_flags", FBENCH_POCKETFFT_ARCH_FLAGS)
+                      .str("fp_contract", "fast")
                       .inner();
   return fbench_ok;
 }
@@ -138,5 +139,7 @@ void fbench_execute(const void* plan, void* in, void* out) {
   }
 }
 
-void fbench_destroy(void* plan) { const std::unique_ptr<plan_record> r(static_cast<plan_record*>(plan)); }
+void fbench_destroy(void* plan) {
+  const std::unique_ptr<plan_record> r(static_cast<plan_record*>(plan));
+}
 }

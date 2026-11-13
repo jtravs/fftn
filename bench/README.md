@@ -5,10 +5,11 @@ every library's output against an independent reference while it times it, and s
 every result for later. The design and its reasons are in
 [DESIGN.md section 16](../dev/DESIGN.md#16-benchmark-rig-fbench); this page is the manual.
 
-**Licence.** The FFTW backend (`fbench-fftw`) links FFTW, which is GPL. Binaries that link
-it are for our own measurements and are never distributed
+**Licence.** The FFTW and KFR backends (`fbench-fftw`, `fbench-kfr`) link GPL libraries and
+the MKL backend links Intel's proprietary oneMKL. Benchmark binaries are for our own
+measurements and are never distributed
 ([AGENTS.md section 10](../AGENTS.md#10-third-party-code-and-licensing)). No code of FFTW,
-benchFFT or the prototype's rig is copied here.
+KFR, benchFFT or the prototype's rig is copied here.
 
 ## Quick start
 
@@ -26,6 +27,8 @@ uv run --frozen python bench/fbench.py show latest                         # its
 
 Without `FFTN_BENCH_FFTW_ROOT` the FFTW backend is not built, `smoke` says so, and the
 gate stays green. The variable may also be given to CMake (`-DFFTN_BENCH_FFTW_ROOT=...`).
+The other competitors are configured the same way; see
+[Competitor backends](#competitor-backends).
 
 ## What is in this directory
 
@@ -34,7 +37,7 @@ gate stays green. The variable may also be given to CMake (`-DFFTN_BENCH_FFTW_RO
 | `fbench.py`, `fbenchlib/` | the driver (Python 3.14, standard library only, run through uv) |
 | `harness/` | the C++ harness shared by every backend: cases, buffers, timing, the check |
 | `harness/backend.hpp` | the C interface a backend implements |
-| `backends/<library>.cpp` | one backend per library, built as `<build>/bench/fbench-<library>` |
+| `backends/<library>.cpp` | one backend per library, built as `<build>/bench/fbench-<library>` (see "Competitor backends") |
 | `catalogues/*.toml` | case catalogues |
 | `tests/` | the driver's self-tests (CTest `bench.selftest`) |
 | [`../scripts/remote/`](../scripts/remote/fbench_remote.py) | the Slurm runner (see "Remote runs") |
@@ -53,6 +56,7 @@ other arm is compared with it. The label may be omitted (it defaults to the libr
 |---|---|---|
 | `PLANNER=ESTIMATE\|MEASURE\|PATIENT\|EXHAUSTIVE` | fftw | planning effort (default MEASURE) |
 | `WISDOM=run\|none\|<file>` | fftw | wisdom: fresh per run and shared by that run's processes with the same binary and planner (default), none at all, or imported read-only from a file |
+| `API=interleaved\|dft` | accelerate | vDSP's interleaved DFT (default) or its split-complex DFT with conversions (see below) |
 | `DELAY=<fraction>` | any (test only) | spin for that fraction of every measured batch: a seeded slowdown that proves the statistics |
 | `PERTURB=<eps>` | any (test only) | multiply every output value by 1 ± eps before the check: proves the correctness guard |
 
@@ -132,7 +136,11 @@ Accuracy is stored with every timing.
 backend executable) and through the smoke tier, correctness only, then checks that the
 guard flags a perturbed output. It is the gate's `bench` stage and the CTest test
 `bench.smoke`. An unsupported case fails when its kind is in the backend's `supports` list
-and is only counted otherwise (the FFTN backend supports nothing until it has a plan).
+and is only counted otherwise (the FFTN backend supports nothing until it has a plan). A
+kind in the backend's `partial` list (supported for some lengths or ranks only, as with
+Accelerate) may be unsupported case by case, but must pass at least one smoke case. A
+library with several code paths behind an option is smoke-tested once per path
+(`SMOKE_OPTIONS` in `fbenchlib/cli.py`).
 
 ## Catalogues
 
@@ -178,12 +186,105 @@ written `<repo>`, the directory holding `bench-out` `<base>`, a library installa
 `<fftw-root>` (`<fftw-root-2>`, ... for further ones) and the home directory `~`. The run
 record also names the Python version (the checkout pins 3.14 in `.python-version`).
 
+## Competitor backends
+
+Every competitor is built the way its best users build it (AGENTS.md section 6) and only
+when configured, by a CMake or environment variable, never from a default search path. Each
+backend's source starts with what it times besides the library, and `describe` reports the
+library's version and the instruction set it selected.
+
+| Backend | Platforms | Configure with | Licence |
+|---|---|---|---|
+| `fftw` | all | `FFTN_BENCH_FFTW_ROOT=<install>` | GPL-2.0-or-later |
+| `pocketfft` | all | `FFTN_BENCH_POCKETFFT=ON` (fetched) | BSD-3-Clause |
+| `kfr` | all | `FFTN_BENCH_KFR_ROOT=<install>` | GPL-2.0-or-later or commercial |
+| `accelerate` | macOS | `FFTN_BENCH_ACCELERATE=ON` | system |
+| `mkl` | Linux x86-64 | `FFTN_BENCH_MKL_ROOT=<oneMKL root>` | Intel Simplified Software License |
+| `fftl` | macOS, Linux | `FFTN_BENCH_FFTL_ROOT=<libfftl directory>` | MIT |
+
+Each configured backend is smoke-tested by `bench.smoke` and has its own CTest
+`bench.harness_selftest_<library>`. With none configured, only the FFTN backend is built.
+
+**FFTW 3.3.11**: an installation built with the SIMD and FMA options for the machine (NEON
+on Apple silicon, whose `fftw_version` ends in `-neon`; SSE2 to AVX-512 and FMA on x86-64),
+never Homebrew's (no SIMD on arm64). MEASURE by default, wisdom fresh per run; `describe`
+reports the SIMD extensions FFTW was built with.
+
+**pocketfft** (the C++ header-only version, `pocketfft_hdronly.h` of
+[mreineck/pocketfft](https://github.com/mreineck/pocketfft), branch `cpp`, commit
+`4d865cb`): fetched by CMake pinned by SHA-256; offline, set
+`FETCHCONTENT_SOURCE_DIR_FBENCH_POCKETFFT` to a directory holding the header. It is compiled
+into the backend as SciPy uses it: the high-level `c2c`/`r2c`/`c2r` over byte-strided arrays,
+with a plan cache of 16 (`POCKETFFT_CACHE_SIZE`), one thread, FMA contraction allowed
+(`-ffp-contract=fast`), and on x86-64 `-march=native` (`FFTN_BENCH_POCKETFFT_ARCH_FLAGS`
+overrides; the binary is run where it is built). `fbench_create` fetches each axis's plan
+from the cache, so twiddle computation is plan time.
+
+**KFR 7.2.0**, from KFR's own CMake build with Clang, installed:
+
+```bash
+curl -LO https://github.com/kfrlib/kfr/archive/refs/tags/7.2.0.tar.gz
+shasum -a 256 7.2.0.tar.gz   # 4f1603d5b6e609c25d25cff58fe7154a371583fd6d379615b342e44223be0763
+tar xzf 7.2.0.tar.gz
+cmake -S kfr-7.2.0 -B kfr-build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_COMPILER=clang \
+  -DCMAKE_INSTALL_PREFIX=$HOME/buildtools/kfr-7.2.0 \
+  -DENABLE_TESTS=OFF -DKFR_ENABLE_DFT=ON -DKFR_ENABLE_AUDIO=OFF -DKFR_ENABLE_IO=OFF
+cmake --build kfr-build && cmake --install kfr-build
+export FFTN_BENCH_KFR_ROOT=$HOME/buildtools/kfr-7.2.0
+```
+
+On x86-64 KFR's run-time dispatch is on by default (`KFR_ENABLE_MULTIARCH`, targets sse2,
+sse41, avx, avx2, avx512): the configure log says "Runtime dispatch is enabled" and
+`describe` lists the installed targets under `archs`. AArch64 has one target, neon64. The
+plans are KFR's `dft_plan`, `dft_plan_real` (CCs packing, FFTW's n/2+1 layout),
+`dft_plan_md` and `dft_plan_md_real`, with the scratch buffer allocated at plan time; a
+batch is a loop over transforms. An in-place real plane or volume is copied to a contiguous
+real array (KFR's multidimensional real transforms take one), and that copy is timed.
+
+**Apple Accelerate** (vDSP): rows only, of the lengths vDSP implements (planes, volumes and
+other lengths are unsupported; `describe` lists the kinds as `partial`). `API=interleaved`
+(default) uses `vDSP_DFT_Interleaved_ExecuteD` on the caller's interleaved data;
+`API=dft` uses Apple's recommended split-complex `vDSP_DFT_zop`/`zrop` with `vDSP_ctozD` and
+`vDSP_ztocD` around each row, conversions timed. Real transforms convert vDSP's packed
+format (2 X[0] and 2 X[n/2] in the first value, 2 X[k] after it) to FFTW's inside the timed
+call. Rows are executed one by one; vDSP has no batched DFT.
+
+**Intel oneMKL** (2024.1 or newer; Linux x86-64): the root of an install (oneAPI's
+`mkl/<version>`, or a `mkl-devel` environment with `include/` and `lib/`). The backend links
+the link-line advisor's one-thread choice, `mkl_intel_lp64`, `mkl_sequential` and `mkl_core`,
+dynamically, with an rpath to the root; do not source `setvars.sh` for runs (it would put
+another oneMKL first on the library path, which the loaded-library check refuses). One DFTI
+descriptor per case (batch, strides and distances, `DFTI_COMPLEX_COMPLEX` storage), no
+scaling. `describe` reports the code path oneMKL chose (`isa`, from `MKLVersion::Processor`)
+and `MKL_ENABLE_INSTRUCTIONS` and `MKL_CBWR`, which must be unset for a fair run.
+
+**FFTL.jl** through libfftl, its C library: FFTL.jl compiled ahead of time with juliac into a
+self-contained shared library (the Julia runtime is embedded; nothing of Julia is needed at
+run time) that implements FFTW's C interface. Building it needs Julia 1.12 or newer (with
+juliaup, `juliaup add 1.13`) and takes about five minutes:
+
+```bash
+git clone https://github.com/jtravs/FFTL.jl && cd FFTL.jl && git checkout 53171e8
+cd libfftl && ./build.sh        # JULIA_CPU_TARGET: apple-m1 on macOS, x86-64-v3 on x86-64
+export FFTN_BENCH_FFTL_ROOT=$PWD
+```
+
+Its instruction set is fixed by `JULIA_CPU_TARGET` at build time and cannot be read from the
+library: set `FFTN_BENCH_FFTL_CPU_TARGET` if the build used another target than
+`build.sh`'s default, so that `describe` says so (on a Xeon, `JULIA_CPU_TARGET=cascadelake`
+builds for AVX-512). Planner flags and wisdom do nothing in FFTL; plans use one thread. The
+backend is not built in sanitizer builds: the embedded runtime handles SIGSEGV for its
+garbage collector, which the sanitizers' own handlers break.
+
 ## Adding a backend
 
-1. Write `backends/<library>.cpp` implementing the six functions of `harness/backend.hpp`.
+1. Write `backends/<library>.cpp` implementing the six functions of `harness/backend.hpp`
+   (`backends/common.hpp` has the shared helpers).
    Plan in `fbench_create` on the buffers given (their alignment is the one every execute
    will use), refuse unknown options in `fbench_begin`, and report in `fbench_describe` the
-   version, the instruction set actually selected and `supports` (the kinds it claims);
+   version, the instruction set actually selected, `supports` (the kinds it claims for
+   every shape) and, if any, `partial` (kinds it supports for some lengths or ranks);
    for a shared library also `loaded_from` and `expected_root`. `loaded_from` must name the
    file that defines the library: on Linux, the address of a symbol taken in the
    executable points into the executable (PLT entry or copy relocation), so resolve a

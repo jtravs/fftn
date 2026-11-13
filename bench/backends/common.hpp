@@ -35,8 +35,7 @@ inline std::vector<std::pair<std::string, std::string>> parse_options(std::strin
       continue;
     }
     const std::size_t eq = token.find('=');
-    out.emplace_back(token.substr(0, eq),
-                     eq == std::string_view::npos ? "" : token.substr(eq + 1));
+    out.emplace_back(token.substr(0, eq), eq == std::string_view::npos ? "" : token.substr(eq + 1));
   }
   return out;
 }

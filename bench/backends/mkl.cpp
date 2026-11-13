@@ -148,13 +148,12 @@ std::int32_t fbench_create(const fbench_case* c, void* /*in*/, void* /*out*/, vo
   set(DFTI_BWD_STRIDES, bwd_strides.data());
   set(DFTI_FWD_DISTANCE, fwd_dist);
   set(DFTI_BWD_DISTANCE, bwd_dist);
-  set(DFTI_THREAD_LIMIT, MKL_LONG{1});
+  set(DFTI_THREAD_LIMIT, static_cast<MKL_LONG>(1));
   if (status == DFTI_NO_ERROR) {
     status = DftiCommitDescriptor(r->handle);
   }
   if (status != DFTI_NO_ERROR) {
-    fbench::backends::say(message, message_size,
-                          std::string("MKL: ") + DftiErrorMessage(status));
+    fbench::backends::say(message, message_size, std::string("MKL: ") + DftiErrorMessage(status));
     return fbench_error;
   }
   *plan = r.release();
