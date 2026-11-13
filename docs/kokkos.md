@@ -102,7 +102,8 @@ namespace per build.
   both are checked at compile time.
 - **Layouts.** `LayoutRight`, `LayoutLeft` and `LayoutStride` are read through the Views'
   extents and strides, so any of them works, subviews included. Strides of 0 (broadcast)
-  are refused.
+  are refused, except on dimensions of extent 1, which never step and whose strides are
+  ignored.
 - **Axes.** Indices into the Views' dimensions, negative ones counting from the end, one to
   three of them, none repeated. They are FFTN's transformed axes in the order given: for real
   transforms the last one listed is halved, as in Kokkos-FFT.
@@ -131,23 +132,30 @@ the core plan bit for bit.
 ## Execution and workspaces
 
 The plan makes its FFTN plan and a workspace when it is constructed; `execute` allocates
-nothing. `execute` first fences the plan's execution-space instance, so that work queued on
-it before the call is complete, then transforms on the calling thread and returns when the
-output is written.
+nothing (with no Kokkos Tools library loaded, which may allocate for the fence). `execute`
+first fences the plan's execution-space instance, so that work queued on it before the call
+is complete, then transforms on the calling thread and returns when the output is written.
+Because it fences, it must not be called inside a Kokkos kernel: a transform inside a kernel
+needs a core plan from `make_plan` and a workspace per thread, the only route that runs
+serially inside a kernel for now.
 
-Because a plan owns one workspace, **one plan runs one execution at a time**. For
-concurrent transforms of one shape, build one plan per thread, or build an `fftn::plan` with
-`make_plan` and give each execution its own `fftn::workspace`.
+Because a plan owns one workspace, **one plan runs one execution at a time**. A second
+execution that starts while one is running throws `std::logic_error` rather than share the
+workspace. For concurrent transforms of one shape, build one plan per thread, or build an
+`fftn::plan` with `make_plan` and give each execution its own `fftn::workspace`.
 
 `execute` checks the Views it is given against those the plan was built with (extents,
-strides and whether they share their first element) and throws `std::invalid_argument`
-naming `in` or `out` on a mismatch. Any Views of the planned layout may be transformed.
+strides, and whether they share their first element), and refuses overlapping Views for an
+out-of-place plan, throwing `std::invalid_argument` naming `in` or `out`. Any Views of the
+planned layout may be transformed.
 
 ## Differences from Kokkos-FFT 2.0
 
 - Serial execution on the calling thread, whatever the execution space; the FFTW back end of
   Kokkos-FFT threads FFTW on OpenMP and Threads builds.
-- One execution per plan at a time (above).
+- One execution per plan at a time (above); a concurrent one throws.
+- No named Kokkos Tools regions around transforms; only the fence is labelled. `execute`
+  must not be called inside a Kokkos kernel.
 - `LayoutStride` Views are accepted; Kokkos-FFT takes `LayoutLeft` and `LayoutRight` only.
 - In-place real transforms read the real side's padding from its View's strides. Kokkos-FFT
   assumes the padding whatever the real View's strides say, so a tight real View that it

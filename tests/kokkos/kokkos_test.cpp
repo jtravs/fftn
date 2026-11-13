@@ -5,130 +5,29 @@
 // compared bit for bit with the same transform through the core API, which the oracle suites
 // cover; then the Kokkos-FFT-shaped plan's normalisation, reuse and validation.
 
+#include "kokkos/kokkos_helpers.hpp"
+
 #include <fftn/fftn.hpp>
 #include <fftn/kokkos.hpp>
 
 #include <Kokkos_Core.hpp>
 #include <gtest/gtest.h>
 
-#include <bit>
+#include <array>
 #include <cmath>
 #include <complex>
 #include <cstddef>
-#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <exception>
-#include <stdexcept>
 #include <string>
 #include <type_traits>
 #include <utility>
-#include <vector>
 
 namespace {
 
-using host = Kokkos::DefaultHostExecutionSpace;
-using fftn::direction;
-using fftn::kokkos::normalization;
+using namespace fftn::test::kokkos_adapter;
 
-template <class T, class Layout = Kokkos::LayoutRight>
-using complex2 = Kokkos::View<Kokkos::complex<T>**, Layout, Kokkos::HostSpace>;
-template <class T, class Layout = Kokkos::LayoutRight>
-using real2 = Kokkos::View<T**, Layout, Kokkos::HostSpace>;
-template <class T, class Layout = Kokkos::LayoutRight>
-using unmanaged_real2 =
-    Kokkos::View<T**, Layout, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
-
-template <class Value> struct real_of {
-  using type = Value;
-};
-template <class T> struct real_of<Kokkos::complex<T>> {
-  using type = T;
-};
-template <class T> struct real_of<std::complex<T>> {
-  using type = T;
-};
-
-// The real numbers in a View's memory, its whole span, in memory order.
-template <class View> auto reals_of(const View& v) {
-  using value = View::non_const_value_type;
-  constexpr bool complex = !std::is_floating_point_v<value>;
-  using T = real_of<value>::type;
-  std::vector<T> r(v.span() * (complex ? 2 : 1));
-  std::memcpy(r.data(), static_cast<const void*>(v.data()), r.size() * sizeof(T));
-  return r;
-}
-
-template <class T> std::vector<std::complex<T>> complexes_of(const std::vector<T>& reals) {
-  std::vector<std::complex<T>> c(reals.size() / 2);
-  for (std::size_t i = 0; i < c.size(); ++i) {
-    c[i] = {reals[2 * i], reals[2 * i + 1]};
-  }
-  return c;
-}
-
-template <class T> std::vector<T> reals_from(const std::vector<std::complex<T>>& c) {
-  std::vector<T> r(2 * c.size());
-  for (std::size_t i = 0; i < c.size(); ++i) {
-    r[2 * i] = c[i].real();
-    r[2 * i + 1] = c[i].imag();
-  }
-  return r;
-}
-
-// Fills a View's whole memory with reproducible values in [-1, 1).
-template <class View> void fill(const View& v, std::uint32_t seed) {
-  using value = View::non_const_value_type;
-  constexpr bool complex = !std::is_floating_point_v<value>;
-  using T = real_of<value>::type;
-  std::vector<T> r(v.span() * (complex ? 2 : 1));
-  std::uint32_t state = seed;
-  for (T& x : r) {
-    state = state * 1664525U + 1013904223U;
-    x = static_cast<T>(static_cast<double>(state >> 8U) / 8388608.0 - 1.0);
-  }
-  std::memcpy(static_cast<void*>(v.data()), r.data(), r.size() * sizeof(T));
-}
-
-template <class T> void expect_same_bits(const std::vector<T>& got, const std::vector<T>& want) {
-  using bits = std::conditional_t<sizeof(T) == 8, std::uint64_t, std::uint32_t>;
-  ASSERT_EQ(got.size(), want.size());
-  for (std::size_t i = 0; i < got.size(); ++i) {
-    ASSERT_EQ(std::bit_cast<bits>(got[i]), std::bit_cast<bits>(want[i])) << "at real " << i;
-  }
-}
-
-// The core API's result for shape s on input x: out of place, or in place on a buffer that
-// starts as `buffer` (whose reals the in-place real kinds read through the same address).
-template <class In, class Out>
-std::vector<Out> core_out_of_place(const fftn::shape<In, Out>& s, const std::vector<In>& x,
-                                   std::size_t out_size) {
-  const fftn::plan<In, Out> p(s);
-  fftn::workspace ws(p);
-  std::vector<Out> y(out_size);
-  p.execute(x.data(), y.data(), ws);
-  return y;
-}
-
-template <class T, class In, class Out>
-std::vector<std::complex<T>> core_in_place(const fftn::shape<In, Out>& s,
-                                           std::vector<std::complex<T>> buffer) {
-  const fftn::plan<In, Out> p(s, {.in_place = true});
-  fftn::workspace ws(p);
-  // The standard allows a std::complex<T> array to be read as an array of T.
-  auto* data = buffer.data();
-  if constexpr (std::is_floating_point_v<In>) {
-    p.execute(reinterpret_cast<const T*>(data), data, ws);
-  } else if constexpr (std::is_floating_point_v<Out>) {
-    p.execute(data, reinterpret_cast<T*>(data), ws);
-  } else {
-    p.execute(data, data, ws);
-  }
-  return buffer;
-}
-
-template <class T> class KokkosAdapter : public ::testing::Test {};
-using precisions = ::testing::Types<double, float>;
 TYPED_TEST_SUITE(KokkosAdapter, precisions);
 
 // Rows of n complex values: LayoutRight (rows, n) along -1 and LayoutLeft (n, rows) along 0
@@ -404,139 +303,170 @@ TYPED_TEST(KokkosAdapter, StridesAndRanksAreReadFromTheView) {
   EXPECT_EQ(s.batches[0].count, 6U);
 }
 
-// Every refusal names its argument.
-template <class F> void expect_refused(F&& f, const std::string& argument) {
-  try {
-    f();
-    ADD_FAILURE() << "accepted; expected a refusal naming " << argument;
-  } catch (const std::invalid_argument& e) {
-    const std::string what = e.what();
-    EXPECT_EQ(what.rfind("fftn::kokkos: " + argument + " ", 0), 0U) << what;
+// Real transforms over several axes, the halved one the last listed: 2-D planes of a batch
+// and a 3-D volume, LayoutRight and LayoutLeft (the LayoutLeft Views list the same memory
+// with the dimensions reversed, so the axes are listed reversed too).
+template <class T, class Layout>
+void check_real_multi_axis(const std::array<std::size_t, 3>& dims, std::size_t transformed) {
+  constexpr bool right = std::is_same_v<Layout, Kokkos::LayoutRight>;
+  using real3 = Kokkos::View<T***, Layout, Kokkos::HostSpace>;
+  using complex3 = Kokkos::View<Kokkos::complex<T>***, Layout, Kokkos::HostSpace>;
+  // dims are C-ordered (slowest first); the last is halved on the complex side.
+  auto half = dims;
+  half[2] = dims[2] / 2 + 1;
+  const auto view_of = [](auto tag, const std::array<std::size_t, 3>& e, const char* label) {
+    using V = decltype(tag)::type;
+    return right ? V(label, e[0], e[1], e[2]) : V(label, e[2], e[1], e[0]);
+  };
+  const real3 x = view_of(std::type_identity<real3>{}, dims, "x");
+  const complex3 y = view_of(std::type_identity<complex3>{}, half, "y");
+  const real3 z = view_of(std::type_identity<real3>{}, dims, "z");
+  fill(x, 29);
+  fftn::shape<T, std::complex<T>> forward_shape;
+  fftn::shape<std::complex<T>, T> backward_shape;
+  backward_shape.dir = direction::backward;
+  for (std::size_t d = 3 - transformed; d < 3; ++d) {
+    forward_shape.axes.push_back(fftn::axis{.n = dims[d]});
+    backward_shape.axes.push_back(fftn::axis{.n = dims[d]});
   }
+  if (transformed == 2) {
+    forward_shape.batches.push_back(fftn::batch{.count = dims[0]});
+    backward_shape.batches.push_back(fftn::batch{.count = dims[0]});
+  }
+  const std::size_t points = dims[0] * dims[1] * dims[2];
+  const std::size_t halves = half[0] * half[1] * half[2];
+  const auto spectrum = core_out_of_place(forward_shape, reals_of(x), halves);
+  const auto back = core_out_of_place(backward_shape, spectrum, points);
+  if (transformed == 2) {
+    const fftn::kokkos::axis_type<2> axes =
+        right ? fftn::kokkos::axis_type<2>{1, 2} : fftn::kokkos::axis_type<2>{1, 0};
+    const fftn::kokkos::plan<host, real3, complex3, 2> f(host{}, x, y, direction::forward, axes);
+    const fftn::kokkos::plan<host, complex3, real3, 2> b(host{}, y, z, direction::backward, axes);
+    f.execute(x, y, normalization::none);
+    expect_same_bits(reals_of(y), reals_from(spectrum));
+    b.execute(y, z, normalization::none);
+  } else {
+    const fftn::kokkos::axis_type<3> axes =
+        right ? fftn::kokkos::axis_type<3>{-3, -2, -1} : fftn::kokkos::axis_type<3>{2, 1, 0};
+    const fftn::kokkos::plan<host, real3, complex3, 3> f(host{}, x, y, direction::forward, axes);
+    const fftn::kokkos::plan<host, complex3, real3, 3> b(host{}, y, z, direction::backward, axes);
+    f.execute(x, y, normalization::none);
+    expect_same_bits(reals_of(y), reals_from(spectrum));
+    b.execute(y, z, normalization::none);
+  }
+  expect_same_bits(reals_of(z), back);
 }
 
-using c2 = complex2<double>;
-using r2 = real2<double>;
-using cplan = fftn::kokkos::plan<host, c2, c2>;
-
-TEST(KokkosAdapterValidation, AxesExtentsAndDirections) {
-  const c2 a("a", 3, 8);
-  const c2 b("b", 3, 8);
-  expect_refused([&] { cplan(host{}, a, b, direction::forward, 2); }, "axes[0]");
-  expect_refused([&] { cplan(host{}, a, b, direction::forward, -3); }, "axes[0]");
-  expect_refused(
-      [&] {
-        fftn::kokkos::plan<host, c2, c2, 2>(host{}, a, b, direction::forward,
-                                            fftn::kokkos::axis_type<2>{-1, 1});
-      },
-      "axes");
-  const c2 empty("empty", 0, 8);
-  expect_refused([&] { cplan(host{}, empty, b, direction::forward, -1); }, "in.extent(0)");
-  expect_refused([&] { cplan(host{}, a, empty, direction::forward, -1); }, "out.extent(0)");
-  const c2 wide("wide", 3, 9);
-  expect_refused([&] { cplan(host{}, a, wide, direction::forward, -1); }, "out.extent(1)");
-
-  const r2 x("x", 3, 8);
-  const c2 half("half", 3, 5);
-  const c2 short_half("short_half", 3, 4);
-  const c2 few("few", 2, 5);
-  using r2c = fftn::kokkos::plan<host, r2, c2>;
-  using c2r = fftn::kokkos::plan<host, c2, r2>;
-  expect_refused([&] { r2c(host{}, x, short_half, direction::forward, -1); }, "out.extent(1)");
-  expect_refused([&] { r2c(host{}, x, few, direction::forward, -1); }, "out.extent(0)");
-  expect_refused([&] { c2r(host{}, short_half, x, direction::backward, -1); }, "in.extent(1)");
-  expect_refused([&] { r2c(host{}, x, half, direction::backward, -1); }, "dir");
-  expect_refused([&] { c2r(host{}, half, x, direction::forward, -1); }, "dir");
-  expect_refused([&] { r2c(host{}, x, half, direction::forward, -1, 10); }, "n");
-  expect_refused(
-      [&] {
-        fftn::kokkos::plan<host, c2, c2, 2>(host{}, a, b, direction::forward,
-                                            fftn::kokkos::axis_type<2>{0, 1},
-                                            fftn::kokkos::shape_type<2>{3, 16});
-      },
-      "s[1]");
+TYPED_TEST(KokkosAdapter, MultiAxisRealPlansHalveTheLastAxisListed) {
+  using T = TypeParam;
+  check_real_multi_axis<T, Kokkos::LayoutRight>({2, 5, 6}, 2);
+  check_real_multi_axis<T, Kokkos::LayoutLeft>({2, 5, 6}, 2);
+  check_real_multi_axis<T, Kokkos::LayoutRight>({3, 4, 7}, 3);
+  check_real_multi_axis<T, Kokkos::LayoutLeft>({3, 4, 7}, 3);
 }
 
-TEST(KokkosAdapterValidation, LayoutsAndPlacement) {
-  using left = complex2<double, Kokkos::LayoutLeft>;
-  using strided = Kokkos::View<Kokkos::complex<double>**, Kokkos::LayoutStride, Kokkos::HostSpace>;
-  const c2 a("a", 4, 4);
-  const left a_left(a.data(), 4, 4);
-  expect_refused(
-      [&] { fftn::kokkos::plan<host, c2, left>(host{}, a, a_left, direction::forward, -1); },
-      "out.stride(0)");
+// Axes listed out of memory order: {-1, -2} transforms x first in FFTN's order, and for a
+// real transform halves y, the last listed, which is not the contiguous dimension.
+TYPED_TEST(KokkosAdapter, AxesOutOfMemoryOrderFollowTheList) {
+  using T = TypeParam;
+  using complex3 = Kokkos::View<Kokkos::complex<T>***, Kokkos::LayoutRight, Kokkos::HostSpace>;
+  using real3 = Kokkos::View<T***, Kokkos::LayoutRight, Kokkos::HostSpace>;
+  const std::size_t count = 2;
+  const std::size_t ny = 6;
+  const std::size_t nx = 5;
+  const auto nxs = static_cast<std::ptrdiff_t>(nx);
+  const fftn::kokkos::axis_type<2> axes{-1, -2};
 
-  // In-place real transforms: the real View must show the padded rows.
-  const c2 c("c", 3, 5);
-  const unmanaged_real2<double> tight(reinterpret_cast<double*>(c.data()), 3, 8);
-  expect_refused(
-      [&] {
-        fftn::kokkos::plan<host, unmanaged_real2<double>, c2>(host{}, tight, c, direction::forward,
-                                                              -1);
-      },
-      "in.stride(0)");
-  // ... with the halved axis contiguous: here it runs down the columns.
-  const c2 cols("cols", 5, 3);
-  const unmanaged_real2<double> cols_real(reinterpret_cast<double*>(cols.data()), 8, 3);
-  expect_refused(
-      [&] {
-        fftn::kokkos::plan<host, c2, unmanaged_real2<double>>(host{}, cols, cols_real,
-                                                              direction::backward, 0);
-      },
-      "out.stride(0)");
+  const complex3 x("x", count, ny, nx);
+  const complex3 y("y", count, ny, nx);
+  fill(x, 67);
+  fftn::shape<std::complex<T>, std::complex<T>> c;
+  c.axes.push_back(fftn::axis{.n = nx, .in_stride = 1, .out_stride = 1});
+  c.axes.push_back(fftn::axis{.n = ny, .in_stride = nxs, .out_stride = nxs});
+  c.batches.push_back(fftn::batch{.count = count, .in_dist = 30, .out_dist = 30});
+  const fftn::kokkos::plan<host, complex3, complex3, 2> p(host{}, x, y, direction::forward, axes);
+  p.execute(x, y, normalization::none);
+  expect_same_bits(reals_of(y),
+                   reals_from(core_out_of_place(c, complexes_of(reals_of(x)), count * ny * nx)));
 
-  // Out of place, the Views must not overlap.
-  const c2 big("big", 4, 8);
-  const auto rows_0_2 = Kokkos::subview(big, std::make_pair(0, 3), Kokkos::ALL);
-  const auto rows_1_3 = Kokkos::subview(big, std::make_pair(1, 4), Kokkos::ALL);
-  expect_refused([&] { fftn::kokkos::plan(host{}, rows_0_2, rows_1_3, direction::forward, -1); },
-                 "out");
-
-  // Broadcast strides; output elements that collide (refused by the core plan, reported
-  // with the Views named); batch dimensions that do not nest.
-  const c2 store("store", 8, 8);
-  const c2 other("other", 8, 8);
-  const strided broadcast(store.data(), Kokkos::LayoutStride(3, 0, 8, 1));
-  const strided fine(other.data(), Kokkos::LayoutStride(3, 8, 8, 1));
-  using splan = fftn::kokkos::plan<host, strided, strided>;
-  expect_refused([&] { splan(host{}, broadcast, fine, direction::forward, -1); }, "in.stride(0)");
-  expect_refused([&] { splan(host{}, fine, broadcast, direction::forward, -1); }, "out.stride(0)");
-  const strided colliding(store.data(), Kokkos::LayoutStride(3, 1, 8, 1));
-  expect_refused([&] { splan(host{}, fine, colliding, direction::forward, -1); }, "in, out");
-  using strided4 =
-      Kokkos::View<Kokkos::complex<double>****, Kokkos::LayoutStride, Kokkos::HostSpace>;
-  const Kokkos::View<Kokkos::complex<double>*, Kokkos::HostSpace> pool("pool", 5400);
-  const Kokkos::View<Kokkos::complex<double>*, Kokkos::HostSpace> pool2("pool2", 5400);
-  const Kokkos::LayoutStride loose(2, 4000, 2, 1000, 2, 300, 8, 1);
-  const strided4 u(pool.data(), loose);
-  const strided4 v(pool2.data(), loose);
-  expect_refused(
-      [&] { fftn::kokkos::plan<host, strided4, strided4>(host{}, u, v, direction::forward, -1); },
-      "in");
+  const std::size_t hy = ny / 2 + 1;
+  const real3 xr("xr", count, ny, nx);
+  const complex3 yh("yh", count, hy, nx);
+  fill(xr, 71);
+  fftn::shape<T, std::complex<T>> r;
+  r.axes.push_back(fftn::axis{.n = nx, .in_stride = 1, .out_stride = 1});
+  r.axes.push_back(fftn::axis{.n = ny, .in_stride = nxs, .out_stride = nxs});
+  r.batches.push_back(fftn::batch{.count = count, .in_dist = 30, .out_dist = 20});
+  const fftn::kokkos::plan<host, real3, complex3, 2> q(host{}, xr, yh, direction::forward, axes);
+  q.execute(xr, yh, normalization::none);
+  expect_same_bits(reals_of(yh), reals_from(core_out_of_place(r, reals_of(xr), count * hy * nx)));
 }
 
-TEST(KokkosAdapterValidation, ExecuteChecksItsViews) {
-  const c2 a("a", 3, 8);
-  const c2 b("b", 3, 8);
-  const c2 other_rows("other_rows", 2, 8);
-  const cplan out_of_place(host{}, a, b, direction::forward, -1);
-  expect_refused([&] { out_of_place.execute(other_rows, b); }, "in.extent(0)");
-  expect_refused([&] { out_of_place.execute(a, other_rows); }, "out.extent(0)");
-  expect_refused([&] { out_of_place.execute(a, a); }, "in, out");
-  const cplan in_place(host{}, a, a, direction::forward, -1);
-  expect_refused([&] { in_place.execute(a, b); }, "in, out");
+// LayoutLeft planes, in place: (nx, ny, count) along {1, 0} is the memory of the core's
+// planes_c2c over (count, ny, nx).
+TYPED_TEST(KokkosAdapter, LayoutLeftPlanesInPlaceMatchTheCoreApi) {
+  using T = TypeParam;
+  using left3 = Kokkos::View<Kokkos::complex<T>***, Kokkos::LayoutLeft, Kokkos::HostSpace>;
+  const left3 v("v", 8, 15, 3);
+  fill(v, 73);
+  const auto start = complexes_of(reals_of(v));
+  const fftn::kokkos::plan<host, left3, left3, 2> p(host{}, v, v, direction::backward,
+                                                    fftn::kokkos::axis_type<2>{1, 0});
+  p.execute(v, v, normalization::none);
+  const auto want = core_in_place<T>(fftn::planes_c2c<T>(15, 8, 3, direction::backward), start);
+  expect_same_bits(reals_of(v), reals_from(want));
+}
 
-  using strided = Kokkos::View<Kokkos::complex<double>**, Kokkos::LayoutStride, Kokkos::HostSpace>;
-  const c2 store("store", 8, 8);
-  const strided tight(store.data(), Kokkos::LayoutStride(3, 8, 8, 1));
-  const strided loose(store.data(), Kokkos::LayoutStride(3, 16, 8, 1));
-  const c2 store_b("store_b", 8, 8);
-  const strided tight_b(store_b.data(), Kokkos::LayoutStride(3, 8, 8, 1));
-  const strided loose_b(store_b.data(), Kokkos::LayoutStride(3, 9, 8, 1));
-  using splan = fftn::kokkos::plan<host, strided, strided>;
-  const splan p(host{}, tight, tight_b, direction::forward, -1);
-  expect_refused([&] { p.execute(loose, tight_b); }, "in.stride(0)");
-  expect_refused([&] { p.execute(tight, loose_b); }, "out.stride(0)");
+// A middle axis leaves two batch loops that do not merge: (3, 8, 4) along axis 1.
+TYPED_TEST(KokkosAdapter, TwoBatchLoopsRemainForAMiddleAxis) {
+  using T = TypeParam;
+  using complex3 = Kokkos::View<Kokkos::complex<T>***, Kokkos::LayoutRight, Kokkos::HostSpace>;
+  const complex3 x("x", 3, 8, 4);
+  const complex3 y("y", 3, 8, 4);
+  fill(x, 79);
+  const auto s = fftn::kokkos::shape_of(x, y, direction::forward, fftn::kokkos::axis_type<1>{1});
+  ASSERT_EQ(s.batches.size(), 2U);
+  fftn::shape<std::complex<T>, std::complex<T>> want_shape;
+  want_shape.axes.push_back(fftn::axis{.n = 8, .in_stride = 4, .out_stride = 4});
+  want_shape.batches.push_back(fftn::batch{.count = 3, .in_dist = 32, .out_dist = 32});
+  want_shape.batches.push_back(fftn::batch{.count = 4, .in_dist = 1, .out_dist = 1});
+  const fftn::kokkos::plan p(host{}, x, y, direction::forward, 1);
+  p.execute(x, y, normalization::none);
+  expect_same_bits(reals_of(y),
+                   reals_from(core_out_of_place(want_shape, complexes_of(reals_of(x)), 96)));
+}
+
+// Real kinds through LayoutStride: rows a few values apart on both sides.
+TYPED_TEST(KokkosAdapter, RealKindsThroughLayoutStride) {
+  using T = TypeParam;
+  using cs = Kokkos::View<Kokkos::complex<T>**, Kokkos::LayoutStride, Kokkos::HostSpace>;
+  using rs = Kokkos::View<T**, Kokkos::LayoutStride, Kokkos::HostSpace>;
+  const std::size_t rows = 3;
+  const std::size_t n = 10;
+  const std::size_t h = n / 2 + 1;
+  const real2<T> real_store("real_store", rows, n + 3);
+  const complex2<T> complex_store("complex_store", rows, h + 2);
+  const real2<T> back_store("back_store", rows, n + 3);
+  fill(real_store, 83);
+  const rs x(real_store.data(), Kokkos::LayoutStride(rows, n + 3, n, 1));
+  const cs y(complex_store.data(), Kokkos::LayoutStride(rows, h + 2, h, 1));
+  const rs z(back_store.data(), Kokkos::LayoutStride(rows, n + 3, n, 1));
+  fftn::shape<T, std::complex<T>> f;
+  f.axes.push_back(fftn::axis{.n = n, .in_stride = 1, .out_stride = 1});
+  f.batches.push_back(fftn::batch{.count = rows, .in_dist = 13, .out_dist = 8});
+  fftn::shape<std::complex<T>, T> b;
+  b.dir = direction::backward;
+  b.axes.push_back(fftn::axis{.n = n, .in_stride = 1, .out_stride = 1});
+  b.batches.push_back(fftn::batch{.count = rows, .in_dist = 8, .out_dist = 13});
+  // The core's view of the same memory, whole stores: gaps stay zero on both sides.
+  const auto spectrum = core_out_of_place(f, reals_of(real_store), rows * (h + 2));
+  const fftn::kokkos::plan pf(host{}, x, y, direction::forward, -1);
+  pf.execute(x, y, normalization::none);
+  expect_same_bits(reals_of(complex_store), reals_from(spectrum));
+  const auto back = core_out_of_place(b, spectrum, rows * (n + 3));
+  const fftn::kokkos::plan pb(host{}, y, z, direction::backward, -1);
+  pb.execute(y, z, normalization::none);
+  expect_same_bits(reals_of(back_store), back);
 }
 
 } // namespace
