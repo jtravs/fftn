@@ -31,10 +31,12 @@ enum class direction : std::int8_t {
 /// Strides count elements of each side's own type: real values on the real side of a real
 /// transform, complex values on the complex side. They may be negative. Zero means the
 /// tight C-ordered default (docs/conventions.md). The strides of an axis with `n` = 1 are
-/// never used and are ignored, whatever their value.
+/// never used and are ignored, whatever their value. `n` must be given: it defaults to 0,
+/// which a plan refuses, so that `.axes{2}` (two value-initialised axes, not one of length
+/// 2) is caught; write `.axes = {{2}}` or `.axes = {{.n = 2}}`.
 struct axis {
   /// The logical length: the number of points transformed along this axis. At least 1.
-  std::size_t n = 1;
+  std::size_t n = 0;
   /// Distance between consecutive input elements along this axis; 0 for the default.
   std::ptrdiff_t in_stride = 0;
   /// Distance between consecutive output elements along this axis; 0 for the default.
@@ -45,10 +47,12 @@ struct axis {
 ///
 /// Distances count elements of each side's own type, may be negative, and zero means the
 /// tight C-ordered default (docs/conventions.md). The distances of a dimension with
-/// `count` = 1 are never used and are ignored, whatever their value.
+/// `count` = 1 are never used and are ignored, whatever their value. `count` must be given:
+/// it defaults to 0, which a plan refuses, so that `.batches{8}` (eight value-initialised
+/// batch dimensions, not one of count 8) is caught; write `.batches = {{8}}`.
 struct batch {
   /// The number of transforms along this dimension. At least 1.
-  std::size_t count = 1;
+  std::size_t count = 0;
   /// Distance between the first input elements of consecutive transforms; 0 for the default.
   std::ptrdiff_t in_dist = 0;
   /// Distance between the first output elements of consecutive transforms; 0 for the

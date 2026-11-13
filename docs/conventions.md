@@ -60,7 +60,9 @@ For one transform of logical lengths n₀ × … × n_{r−1} (r = 1, 2 or 3 axe
 A shape lists its transformed axes (`shape::axes`, slowest first, one to three) and its
 batch dimensions (`shape::batches`, slowest first, any number; none means one transform).
 Transforms are numbered in batch order with the last batch dimension fastest;
-`execute_transforms` uses these numbers.
+`execute_transforms` uses these numbers. Every axis needs its length `n` and every batch dimension
+its `count`: both default to 0, which plan construction refuses, so that `.batches{8}`
+(eight empty batch dimensions, not one of eight) is caught; write `.batches = {{8}}`.
 
 - **Units.** Strides and distances count elements of each side's own type: real values
   on the real side of r2c and c2r, complex values on the complex side. They may be

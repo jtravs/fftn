@@ -540,20 +540,39 @@ TEST(Validation, ValidEdgeCasesAreAccepted) {
   EXPECT_NO_THROW(fftn::r2c_plan<double>(one, {.in_place = true}));
 }
 
-// Shapes are plain aggregates of vectors: braced lists build them, positional or designated,
-// and a single braced value is one axis or batch dimension, never a vector's size.
+// Shapes are plain aggregates of vectors, so braced lists build them, positional or
+// designated: `.axes = {{64}}` and `.axes{{64}}` are one axis of 64. The direct-list form
+// with a bare number, `.batches{8}` or `.axes{2}`, is the vector's size constructor instead:
+// it makes that many value-initialised elements, whose count or length of 0 the plan
+// refuses, naming the argument. With defaults of 1 these were accepted as shapes the caller
+// did not mean (one row instead of eight; two axes that only copy).
 TEST(Shape, BracedListsBuildShapes) {
   using c = std::complex<double>;
+  const fftn::c2c_plan<double> want(fftn::rows_c2c<double>(64, 1000, fftn::direction::forward));
   // NOLINTNEXTLINE(modernize-use-designated-initializers): callers write this; it must compile
   const fftn::shape<c, c> positional{.axes = {{64}}, .batches = {{1000}}};
   ASSERT_EQ(positional.axes.size(), 1U);
   EXPECT_EQ(positional.axes[0].n, 64U);
   ASSERT_EQ(positional.batches.size(), 1U);
   EXPECT_EQ(positional.batches[0].count, 1000U);
-  const fftn::c2c_plan<double> p(positional);
-  EXPECT_EQ(p.describe(),
-            fftn::c2c_plan<double>(fftn::rows_c2c<double>(64, 1000, fftn::direction::forward))
-                .describe());
+  EXPECT_EQ(fftn::c2c_plan<double>(positional).describe(), want.describe());
+  // NOLINTNEXTLINE(modernize-use-designated-initializers): callers write this; it must compile
+  const fftn::shape<c, c> direct{.axes{{64}}, .batches{{1000}}};
+  ASSERT_EQ(direct.axes.size(), 1U);
+  EXPECT_EQ(direct.axes[0].n, 64U);
+  ASSERT_EQ(direct.batches.size(), 1U);
+  EXPECT_EQ(fftn::c2c_plan<double>(direct).describe(), want.describe());
+
+  const fftn::shape<c, c> eight_empty_batches{.axes = {{.n = 64}}, .batches{8}};
+  ASSERT_EQ(eight_empty_batches.batches.size(), 8U);
+  expect_refused(eight_empty_batches, "shape.batches[0].count is 0");
+  const fftn::shape<c, c> two_empty_axes{.axes{2}, .batches = {}};
+  ASSERT_EQ(two_empty_axes.axes.size(), 2U);
+  expect_refused(two_empty_axes, "shape.axes[0].n is 0");
+  // A default axis or batch dimension is refused too: n and count must be given.
+  expect_refused(fftn::shape<c, c>{.axes = {fftn::axis{}}, .batches = {}}, "shape.axes[0].n");
+  expect_refused(fftn::shape<c, c>{.axes = {{.n = 4}}, .batches = {fftn::batch{}}},
+                 "shape.batches[0].count");
 }
 
 // ---- Describe, instruction set.

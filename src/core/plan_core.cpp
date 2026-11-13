@@ -466,12 +466,15 @@ std::shared_ptr<const plan_core> make_plan_core(const shape_view& s, const optio
   }
   for (std::size_t d = 0; d < r; ++d) {
     if (s.axes[d].n == 0) {
-      reject(axis_name(d) + ".n", "must be at least 1");
+      reject(axis_name(d) + ".n", "is 0; every axis needs its length (`.axes{2}` makes two "
+                                  "axes of length 0; write `.axes = {{2}}`)");
     }
   }
   for (std::size_t b = 0; b < s.batches.size(); ++b) {
     if (s.batches[b].count == 0) {
-      reject(batch_name(b) + ".count", "must be at least 1");
+      reject(batch_name(b) + ".count",
+             "is 0; every batch dimension needs its count (`.batches{8}` makes eight empty "
+             "batch dimensions; write `.batches = {{8}}`)");
     }
   }
   if (s.kind == transform_kind::c2c && s.dir != direction::forward &&

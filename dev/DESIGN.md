@@ -255,11 +255,11 @@ namespace fftn {
 enum class direction : std::int8_t { forward = -1, backward = +1 };   // the exponent's sign
 
 struct axis {                 // one transformed dimension
-  std::size_t n = 1;          // logical length
+  std::size_t n = 0;          // logical length; must be given
   std::ptrdiff_t in_stride = 0, out_stride = 0;   // in elements; 0 = tight C-ordered default
 };
 struct batch {                // one loop dimension (not transformed)
-  std::size_t count = 1;
+  std::size_t count = 0;      // must be given
   std::ptrdiff_t in_dist = 0, out_dist = 0;       // in elements; 0 = tight C-ordered default
 };
 
@@ -296,7 +296,10 @@ Points that matter:
   loop of the program (8.3).
 - **Containers.** `axes` and `batches` are `std::vector`s: plan construction allocates
   anyway, so an inline container would buy nothing and would freeze the rank limits into
-  the type. The limits are checked at construction like every other misuse.
+  the type. The limits are checked at construction like every other misuse. `axis::n` and
+  `batch::count` default to 0, which construction refuses, because the direct-list form
+  `.batches{8}` calls the vector's size constructor (eight empty batch dimensions) and must
+  not pass as a shape the caller did not mean.
 - **Directions.** `dir` is ignored by the real kinds (r2c is always forward, c2r always
   backward; `rows_c2r` sets it to backward for readability). A mismatch is not an error.
   `direction`'s underlying type is the smallest that holds its values.
