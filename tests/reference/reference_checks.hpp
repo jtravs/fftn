@@ -169,6 +169,9 @@ template <class T> std::vector<plane_check<T>> plane_checks() {
 // Every entry of a twiddle table w[m] = exp(sign 2 pi i m / n) must be correctly rounded:
 // within half an ulp of the exact value in each component. A table entry one ulp off is
 // invisible in transform outputs (tolerance.hpp), so tables are checked here directly.
+// Task 0.5 must run this on every twiddle table FFTN builds, in both precisions and both
+// directions, for every length its suites test (DESIGN.md 15.1, oracle 2); the suites'
+// output tolerances do not cover a single wrong entry.
 template <class T>
 outcome twiddle_table(std::span<const std::complex<T>> table, int sign, std::size_t n) {
   outcome o;

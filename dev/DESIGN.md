@@ -1170,8 +1170,9 @@ What the experiments still require of the build:
 - CMake 3.25 or newer with presets; `FetchContent`-friendly with an offline override;
   installed package config (`find_package(fftn)`) and pkg-config; all symbols in
   `namespace fftn`, all macros prefixed `FFTN_`, all targets namespaced.
-- Test-only dependencies (GoogleTest, FFTW, Boost.Multiprecision) and benchmark-only dependencies are fetched
-  pinned by commit and treated as system code.
+- Test-only dependencies (GoogleTest, FFTW, Boost.Multiprecision) and benchmark-only
+  dependencies are fetched pinned by URL and content hash (SHA-256), with an offline
+  override, and treated as system code.
 - A generated single-file amalgamation is a possible release artefact (phase 6); it is
   the same implementation concatenated, not a separate code path.
 
