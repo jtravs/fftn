@@ -198,7 +198,8 @@ def describe(binary: Binary, options: dict[str, str]) -> dict:
 
 def library_problem(info: dict, binary: Path | None = None) -> str | None:
     """Why a backend must not be trusted, or None: it loaded a shared library from outside
-    the installation it was built against (DESIGN.md 16.1)."""
+    the installation it was built against (DESIGN.md 16.1). A file reached through the
+    installation's directory is inside it, even when that directory holds symlinks."""
     loaded, root = info.get("loaded_from"), info.get("expected_root")
     if not loaded or not root:
         return None
@@ -206,10 +207,22 @@ def library_problem(info: dict, binary: Path | None = None) -> str | None:
     if binary is not None and loaded_real == os.path.realpath(binary):
         # A backend bug, not a wrong library: it located its own copy of a symbol.
         return f"describe names the backend executable itself ({loaded}) as the library"
-    root_real = os.path.realpath(root)
-    if not loaded_real.startswith(root_real.rstrip("/") + "/"):
+    # Inside the root either as the loader reached it or after resolving symlinks. An
+    # installation may link its lib directory into a build tree, so the real file can lie
+    # outside the real root although it was loaded through the root; what this check catches
+    # is another copy (LD_LIBRARY_PATH, a system install). The lexical test is trusted only
+    # when no ".." in the path walked back out through a symlink.
+    logical = os.path.abspath(loaded)
+    through_root = os.path.realpath(logical) == loaded_real and _under(
+        logical, os.path.abspath(root)
+    )
+    if not (through_root or _under(loaded_real, os.path.realpath(root))):
         return f"loaded {loaded} but was built against {root}"
     return None
+
+
+def _under(path: str, root: str) -> bool:
+    return path.startswith(root.rstrip("/") + "/")
 
 
 def timing_problem(info: dict) -> str | None:

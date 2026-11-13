@@ -68,8 +68,10 @@ options it does not know.
 
 1. Every arm's binary is asked to `describe` itself: library, version, instruction set,
    compiler, build type and commit. fbench refuses a binary that loaded a shared library from
-   outside the installation it was built against, a sanitizer or Debug build, and two arms
-   that are meant to differ but report identical configurations (`--allow-identical`).
+   outside the installation it was built against (a file reached through the installation's
+   directory counts as inside it, even when that directory links elsewhere), a sanitizer or
+   Debug build, and two arms that are meant to differ but report identical configurations
+   (`--allow-identical`).
 2. An identical copy of A, labelled `A~`, joins the run (`--no-control` drops it).
 3. **Rounds.** A round launches every arm once, as a separate process, in an order from a
    Williams design (each arm in each position and after each other arm equally often). All
