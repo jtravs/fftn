@@ -445,6 +445,19 @@ memory (`LD2`/`ST2` on NEON, unpack pairs on x86).
 Each target implements the vocabulary in one header of a few hundred lines. Adding a
 target is adding that header; adding a radix never touches a target.
 
+The names, generic over the real type `T` (`double` and `float`): `cv<T>` and `rv<T>` are
+the register types, `C<T>` and `W<T>` their lane counts, `tw<T>` the twiddle form `mul`,
+`mulc` and `madd` consume, `tw_reals<T>` the reals stored per twiddle (2, or 4 where
+pre-arranged), and `fused` says whether `fmadd` and its relatives round once. They are
+reached through specialisations of a per-target `vec<T>`, so a vector type is never a
+template argument. The real-register family lives in a nested namespace `real`, because
+`cv<T>` and `rv<T>` are one machine type on SIMD targets while `mul` and `bcast` mean
+different things in the two families. The FMA names follow x86: `fmadd(a, b, c)` is
+a·b + c, `fmsub` a·b − c, `fnmadd` c − a·b. `transpose` is a C × C block for now; the
+R × C form arrives with `avx512`, where C = 8 for `float`. The scalar target is never
+fused, so it gives the same bits on every processor. The full contract is
+`src/isa/vocabulary.inl`.
+
 x86 twiddle storage is chosen so `mul` needs no run-time rearrangement: each twiddle is
 stored as the two vectors (wr, wr) and (−wi, wi) the FMA form consumes. That is the
 "pre-arranged" form in the table, and one reason twiddle layout is a per-target, per-pass
@@ -497,9 +510,27 @@ target's entry points in the program. Rules that keep this sound (also in AGENTS
 - no lambdas inside a region (they do not inherit its target);
 - a header is never included for the first time inside a region.
 
+Everything inside a region has internal linkage (the `.inl` texts sit in an unnamed
+namespace within the target's namespace); only the target's function table is exported.
+Each translation unit therefore keeps its own copy of every vocabulary function and
+kernel, and the linker cannot substitute a copy compiled for one target for a caller of
+another. The library is compiled with `-Werror=psabi` under GCC (experiment B1, section
+14.1), always, not only in the gate.
+
+Target strings: `avx2` is `"avx2,fma"`, exactly the features its run-time check requires
+and no AVX-512 feature; `neon_fcma` is `"arch=armv8.3-a"`, because Clang's NEON header
+declares the complex intrinsics for the whole Armv8.3 architecture (`"+fcma"` is
+rejected). That string also allows other Armv8.3 instructions (RCPC, JSCVT, pointer
+authentication), which the disassembly test forbids in `neon_fcma` code. The macros put
+each target pragma last in its expansion: GCC drops the tokens that follow a
+`_Pragma("GCC target ...")` within one macro expansion.
+
 A dedicated test links every instruction set's translation unit into one binary and
-checks the disassembly of each target's kernels for the intended instructions and for the
-absence of calls to out-of-line helpers.
+checks the disassembly of each target's kernels (`tools/asm_check.py`) for the intended
+instructions, for the absence of calls to out-of-line helpers, and for the absence of the
+target's instructions in baseline code. What the build's own baseline already has is
+allowed there: on Apple platforms the compiler targets Apple silicon, which has FCMA, even
+under `-march=armv8-a` (only `-mcpu=generic` removes it).
 
 ---
 
@@ -1107,9 +1138,15 @@ Rosetta. Findings:
   value to any function outside the region. Both are covered by the region rules.
 - The portable target string for FCMA is `arch=armv8.3-a` (`+fcma` fails with Clang's
   NEON header).
-- Not yet run: GCC 14 and 15 on x86-64 Linux, and Clang on Windows (experiments B1, B2;
-  ready-made kits exist). The most important check is whether GCC handles by-value AVX
-  vectors correctly at -O0.
+- On x86-64 Linux (experiment B1, the proof of concept): GCC 13, 15 and 16 accept a
+  256-bit vector passed by value from an AVX2 region into a baseline template with only a
+  `-Wpsabi` warning, and the program then segfaults at -O0 and at -O2; Clang rejects the
+  same code. GCC also warns `-Wignored-attributes` wherever a vector type is a template
+  argument, and a lambda in a region is not inlined at -O0. The safe pattern of section
+  6.4 held on GCC 13 and 16 and Clang 18, 21 and 23 at -O0, -O2 and -O3 with LTO, and
+  under ASan and UBSan. Hence `-Werror=psabi` with GCC, and no vector type as a template
+  argument.
+- Not yet run: Clang on Windows (experiment B2).
 
 ### 14.2 Decision: a compiled static library
 
@@ -1132,6 +1169,8 @@ What the experiments still require of the build:
 - **No ISA flags.** Every instruction set comes from attribute regions, so the library
   can be built at the baseline of any project or wheel and still use AVX-512 or FCMA at
   run time.
+- **ABI warnings are errors.** With GCC the library is built with `-Werror=psabi`
+  (section 14.1).
 - **Its own floating-point flags.** The library sets `-ffp-contract=off`, refuses
   fast-math, and never inherits the including project's flags. All FMAs in kernels are
   explicit.
@@ -1431,6 +1470,9 @@ implementation are listed here until settled.
 | 2026-11-13 | Float is supported and kept alive from phase 1 by correctness tests in CI; tuned in phase 6 | It has users, and precision-generic code that is never instantiated drifts |
 | 2026-11-13 | Bitwise schedule independence is kept | It costs nothing measurable (no cross-thread reductions) and makes threading tests exact; revisit only on experimental evidence |
 | 2026-11-13 | fbench replicates over processes with paired intervals and an A/A control | Process-to-process spread dominated the prototype's noise |
+| 2026-11-13 | Vocabulary names `cv`, `rv`, `tw`, `C`, `W`, `tw_reals`, `fused` through `vec<T>`; the real-register family in namespace `real`; x86 FMA naming | Vector types must never be template arguments (GCC `-Wignored-attributes`, B1); the two families share one machine type on SIMD targets |
+| 2026-11-13 | Region text has internal linkage; only each target's function table is exported | Removes, by construction, the linker picking one target's copy of a shared inline function for another caller |
+| 2026-11-13 | GCC builds of the library use `-Werror=psabi`, always | B1: GCC only warns for a vector passed by value into baseline code, and the program then crashes |
 
 ---
 
