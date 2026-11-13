@@ -138,9 +138,10 @@ The plan makes its FFTN plan and a workspace when it is constructed; `execute` a
 nothing (with no Kokkos Tools library loaded, which may allocate for the fence). `execute`
 first fences the plan's execution-space instance, so that work queued on it before the call
 is complete, then transforms on the calling thread and returns when the output is written.
-Because it fences, it must not be called inside a Kokkos kernel: a transform inside a kernel
-needs a core plan from `make_plan` and a workspace per thread, the only route that runs
-serially inside a kernel for now.
+It is not `noexcept`: it throws on the checks below, and its fence takes the execution-space
+instance's mutex. Because it fences, it must not be called inside a Kokkos kernel: a
+transform inside a kernel needs a core plan from `make_plan` and a workspace per thread, the
+only route that runs serially inside a kernel for now.
 
 Because a plan owns one workspace, **one plan runs one execution at a time**. A second
 execution that starts while one is running throws `std::logic_error` rather than share the
@@ -170,5 +171,7 @@ planned layout may be transformed.
   Kokkos-FFT throws `std::runtime_error`.
 - The plan's direction for real transforms is checked as in Kokkos-FFT (r2c forward, c2r
   backward).
+- The plan executes through `execute` (the member, or the free `execute`); Kokkos-FFT's
+  public member `execute_impl(in, out, norm)` is not provided.
 - Not provided: the one-shot functions (`KokkosFFT::fft`, `rfft`, `fft2` and the rest),
   `DynPlan`, and device Views.

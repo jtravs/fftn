@@ -96,6 +96,8 @@ template <class In, class Out> struct shape {
 
 /// A batch of `count` complex rows of length `n`, stored one after another.
 ///
+/// Throws `std::bad_alloc` when memory runs out (the axes and batch dimensions are vectors).
+///
 /// Guarantees: the shape has one axis and one batch dimension with default (tight) strides
 /// and distances; nothing is validated until a plan is built from it.
 template <class T>
@@ -112,7 +114,7 @@ template <class T>
 /// values. Out of place the rows are tight on both sides; in place (options::in_place) each
 /// real row is padded to the 2(n/2 + 1) reals of its complex row.
 ///
-/// Guarantees: as for rows_c2c.
+/// Exceptions and guarantees: as for rows_c2c.
 template <class T>
 [[nodiscard]] shape<T, std::complex<T>> rows_r2c(std::size_t n, std::size_t count) {
   shape<T, std::complex<T>> s;
@@ -124,7 +126,7 @@ template <class T>
 /// A batch of `count` rows of n/2 + 1 complex values, transformed to real rows of length
 /// `n`. The layouts are those of rows_r2c.
 ///
-/// Guarantees: as for rows_c2c.
+/// Exceptions and guarantees: as for rows_c2c.
 template <class T>
 [[nodiscard]] shape<std::complex<T>, T> rows_c2r(std::size_t n, std::size_t count) {
   shape<std::complex<T>, T> s;
@@ -137,7 +139,7 @@ template <class T>
 /// A batch of `count` complex planes of `ny` rows of `nx` values, C-ordered: x varies
 /// fastest, then y, then the plane. The 2-D transform of each plane.
 ///
-/// Guarantees: as for rows_c2c.
+/// Exceptions and guarantees: as for rows_c2c.
 template <class T>
 [[nodiscard]] shape<std::complex<T>, std::complex<T>> planes_c2c(std::size_t ny, std::size_t nx,
                                                                  std::size_t count, direction dir) {

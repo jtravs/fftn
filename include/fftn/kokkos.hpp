@@ -251,9 +251,11 @@ template <class View> [[nodiscard]] auto data_of(const View& v) noexcept {
 ///
 /// `axes` lists the transformed dimensions in FFTN's order (`shape::axes`): for real
 /// transforms the last one is halved, as in Kokkos-FFT. Negative entries count from the end.
-/// Every other dimension is a batch dimension; batch dimensions that nest (one spans the
-/// other exactly, in both Views) are merged, and dimensions of extent 1 are dropped.
-/// Strides and distances are the Views' own, so any layout works.
+/// Every other dimension is a batch dimension; dimensions of extent 1 are dropped, the rest
+/// are listed largest input stride first (ties in the Views' dimension order), and
+/// neighbours that nest (one spans the other exactly, in both Views) are merged. That order
+/// fixes how transforms are numbered, which `fftn::plan::execute_transforms` uses on a plan
+/// from `make_plan`. Strides and distances are the Views' own, so any layout works.
 ///
 /// Preconditions: the Views are of equal rank, at least `Dim`; their memory is accessible
 /// from the host (checked at compile time); their values are `float`, `double` or a
@@ -435,7 +437,8 @@ shape_of(const InView& in, const OutView& out, direction dir, const axis_type<Di
 /// An FFTN plan that transforms the dimensions `axes` of `in` into `out`: the plan of
 /// `shape_of(in, out, dir, axes)`, built in place when `in` and `out` start at the same
 /// address. Execute it with `data_of(in)` and `data_of(out)` (or any Views of the same
-/// layout) and a workspace of its own per concurrent execution.
+/// layout) and a workspace of its own per concurrent execution. Its transforms are numbered
+/// over the batch dimensions in `shape_of`'s order (largest input stride first).
 ///
 /// Preconditions: as for `shape_of`.
 ///

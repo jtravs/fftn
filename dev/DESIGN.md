@@ -396,8 +396,8 @@ Points that matter:
   (later also from a lane count), owns its memory or borrows the caller's, and reports its
   size, so an application can account for every byte. Every core `execute` takes one; none
   allocates. `workspace_bytes()` includes 64 bytes of slack, so memory of any alignment
-  works. Callers who do not want to manage workspaces use the convenience layer, which
-  caches them.
+  works. Callers who do not want to manage workspaces will use the convenience layer
+  (later, 5.4), which caches them.
 - **Execution preconditions** (a large enough workspace, `execute_transforms` within the
   batch, one address for in-place calls) are documented and checked only by assertions in
   debug builds of the library; `execute` stays `noexcept` and checks nothing in release
@@ -416,7 +416,7 @@ Points that matter:
 
 ### 5.4 Convenience layer
 
-A thin header for users who want the numpy-shaped interface: `fft`, `ifft`, `rfft`,
+*Later* (phase 6, 5.6). A thin header for users who want the numpy-shaped interface: `fft`, `ifft`, `rfft`,
 `irfft`, `fft2`, `fftn`, `rfftn`, `irfftn` over `std::span` and a small strided array view
 (C++20 has no `mdspan`; the view converts from one where available), with `axes`,
 `norm = backward | ortho | forward`, a cache of plans and per-thread workspaces keyed by
@@ -434,12 +434,12 @@ has two levels:
   `fftn::shape`, `make_plan` an `fftn::plan` (in place when the Views share their first
   element), `data_of(view)` the pointer. Views are read through their extents and strides,
   so `LayoutStride` works too; broadcast (zero) strides are refused, except on dimensions of
-  extent 1, which are dropped; the other non-transformed dimensions become batch dimensions,
-  those that
-  nest are merged, and any number may remain, so no View needs the temporary transpose
-  Kokkos-FFT makes. In-place real transforms take FFTW's padding from the real View's
-  strides, which must show it. `n` and `s` are accepted only as the Views' own lengths:
-  FFTN does not crop or pad. Reading a `Kokkos::complex<T>` array through a
+  extent 1, which are dropped; the other non-transformed dimensions become batch
+  dimensions, listed largest input stride first (which fixes their transforms' numbering);
+  those that nest are merged, and any number may remain, so no View needs the temporary
+  transpose Kokkos-FFT makes. In-place real transforms take FFTW's padding from the real
+  View's strides, which must show it. `n` and `s` are accepted only as the Views' own
+  lengths: FFTN does not crop or pad. Reading a `Kokkos::complex<T>` array through a
   `std::complex<T>*` is not a language guarantee (the types are not similar); it relies on
   their identical layout, which `data_of` checks, and on the library touching the data only
   through `void*` and `T` scalars in its own translation units, as Kokkos-FFT does with
@@ -447,7 +447,8 @@ has two levels:
 - *`view_plan<ExecutionSpace, InView, OutView, Dim = 1>`* has the constructors (`axis` with
   optional `n`; `axis_type<Dim>` with optional lengths `s`) and `execute(in, out, norm)` of
   Kokkos-FFT 2.0's `Plan`, plus the free `execute(plan, in, out, norm)`, `fftn_plan()` and
-  `describe()`. It is not named `plan` because `fftn::plan` and `fftn::kokkos::plan` would
+  `describe()`; Kokkos-FFT's public `execute_impl` is not provided (call sites use
+  `execute`). It is not named `plan` because `fftn::plan` and `fftn::kokkos::plan` would
   be ambiguous under using-directives for both namespaces. Its constructors are `explicit`,
   and it is neither copyable nor movable, as Kokkos-FFT's. It owns its workspace, made at
   construction and lent to each execution through a borrowing `workspace`, so one plan runs
@@ -1672,7 +1673,7 @@ do not depend on the direction, and a workspace is plain bytes sized by
 | 2026-11-13 | A multi-dimensional c2r out of place keeps its intermediate in a workspace block of one transform's half spectrum (a whole volume's, for now) | The input is preserved by default (9.1); pencil-block scratch arrives with phase 4's volumes |
 | 2026-11-13 | Kokkos core 5.2.1, Serial back end, is a test-only dependency: fetched pinned by URL and SHA-256 (the release's own checksum file, checked against the download), built as a CMake subproject, SYSTEM, in every gate stage that builds; the library still has no dependency, since `fftn/kokkos.hpp` is header-only and compiled in its user's translation units | The adapter's call sites must compile and run in the gate so they cannot rot (task 0.5b); a Serial-only Kokkos builds in seconds |
 | 2026-11-13 | No `omp simd` on the scalar pass loops; old-ISA targets (`x86_v2`, `avx`, plain `neon`) get hand vocabularies from the start, not the scalar text compiled in their regions | Experiment X15: `omp simd` gained 5.5 % with Clang on the M5 but cost 2.0× with GCC 16 on Zen 3; the scalar text in the `avx2` region stayed 2.2–3.7× slower than the hand vocabulary per pass, and `-march=native` closed none of that gap |
-| 2026-11-13 | API review (task 0.9): the maintainer took every recommendation of the review of DESIGN 18.2 items 1–35. Accepted as built: 1, 3, 4, 6–21, 23–32. Changed: axes and batch dimensions become `std::vector` and `small_vector` goes (2); the shape takes more batch dimensions, so Views with more than two non-nesting loops work in the adapter (35); `execute_rows` becomes `execute_transforms` (5); the adapter's class becomes `fftn::kokkos::view_plan`, with `compat::Plan` as its alias (33); `shape_type` lives only in `compat` (34); `compat::Direction` takes Kokkos-FFT's values 0 and 1 (22, so that nothing in `compat` differs from Kokkos-FFT on purpose) | Plan construction allocates anyway, so an inline container buys nothing and freezes the rank limit into the type; names should be exact before anyone depends on them; the adapter should stay a faithful mirror of Kokkos-FFT, which keeps open an FFTN host backend inside Kokkos-FFT later |
+| 2026-11-13 | API review (task 0.9): the maintainer took every recommendation of the review of DESIGN 18.2 items 1–35 (the list at commit db2183d). Accepted as built: 1, 3, 4, 6–21, 23–32. Changed: axes and batch dimensions become `std::vector` and `small_vector` goes (2); the shape takes more batch dimensions, so Views with more than two non-nesting loops work in the adapter (35); `execute_rows` becomes `execute_transforms` (5); the adapter's class becomes `fftn::kokkos::view_plan`, with `compat::Plan` as its alias (33); `shape_type` lives only in `compat` (34); `compat::Direction` takes Kokkos-FFT's values 0 and 1 (22, so that nothing in `compat` differs from Kokkos-FFT on purpose) | Plan construction allocates anyway, so an inline container buys nothing and freezes the rank limit into the type; names should be exact before anyone depends on them; the adapter should stay a faithful mirror of Kokkos-FFT, which keeps open an FFTN host backend inside Kokkos-FFT later |
 | 2026-11-13 | FFTN is unreleased: until the first tagged release the API may change in any way, and a wrong choice is fixed rather than kept (README, AGENTS section 1, section 5) | Maintainer's decision at the API review |
 | 2026-11-13 | Deferred, not rejected: a two-way plan (forward and backward over one table set) and an object owning a plan and its workspace | Small gain for more API surface; both can be added later without changing the API as long as twiddle tables stay direction-independent and a workspace stays plain bytes sized by `workspace_bytes()` (18.2) |
 | 2026-11-13 | `compat::Direction` is its own enumeration, declared as Kokkos-FFT declares it (underlying `int`); `view_plan` has a twin of each constructor taking it, which converts it to `fftn::direction` and refuses any other value naming `dir` (task 0.10) | Keeps `compat::Plan` an alias of `view_plan`, as the review asked, rather than a second class; a cast-in integer is refused as an invalid `fftn::direction` is |
