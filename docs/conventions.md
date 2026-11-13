@@ -72,6 +72,11 @@ numbers.
   apart; each outer batch dimension spans the inner ones. Along the last axis an array
   spans n values, except the complex side of real transforms (n/2 + 1) and the real side
   of in-place real transforms (2(n/2 + 1), see below).
+- **Unused values.** The strides of an axis of length 1 and the distances of a batch
+  dimension of count 1 never step, so they are ignored, whatever their value.
+- **Limits.** Every other stride and distance must be above `PTRDIFF_MIN`, and on each
+  side the farthest element from element 0, in bytes, must be addressable with
+  `std::ptrdiff_t`; plan construction refuses layouts that are not.
 - **Real transforms out of place.** The real side has n values per row and the complex
   side n/2 + 1, each tight by default.
 - **No overlap.** No two output elements may share an address. Plan construction checks

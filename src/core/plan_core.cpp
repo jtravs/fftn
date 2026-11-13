@@ -68,7 +68,18 @@ std::ptrdiff_t to_signed(std::size_t v, const std::string& what) {
   return static_cast<std::ptrdiff_t>(v);
 }
 
+// Only for strides and distances, which resolve() keeps above PTRDIFF_MIN.
 std::ptrdiff_t magnitude(std::ptrdiff_t v) { return v < 0 ? -v : v; }
+
+// A given stride or distance: its magnitude must be representable, so PTRDIFF_MIN is refused.
+// Everything derived from it at construction or in the kernels (reaches, byte steps, the
+// doubled strides of complex values read as reals) is then bounded by check_reach.
+std::ptrdiff_t given_step(std::ptrdiff_t v, const std::string& what) {
+  if (v == std::numeric_limits<std::ptrdiff_t>::min()) {
+    reject(what, "is too large in magnitude");
+  }
+  return v;
+}
 
 // One side of a transform with every default resolved, in elements of the side's type.
 struct side {
@@ -82,6 +93,10 @@ struct side {
 // The C-ordered defaults: the last axis contiguous (padded to `last_physical`), each axis
 // spanning the ones after it, the innermost batch dimension one whole array apart and each
 // outer one spanning the inner ones.
+//
+// An axis of extent 1 and a batch dimension of count 1 never step, so whatever stride or
+// distance was given for them is replaced by 0: check_reach does not see them (they add
+// (1 - 1) x stride to the reach), so nothing computed from them could be proven in range.
 side resolve(const shape_view& s, const std::vector<std::size_t>& extent, std::size_t last_physical,
              bool input, bool complex, std::ptrdiff_t element_bytes) {
   const std::size_t r = extent.size();
@@ -94,7 +109,11 @@ side resolve(const shape_view& s, const std::vector<std::size_t>& extent, std::s
   for (std::size_t i = r; i > 0; --i) {
     const std::size_t d = i - 1;
     const std::ptrdiff_t given = input ? s.axes[d].in_stride : s.axes[d].out_stride;
-    out.stride[d] = given != 0 ? given : span;
+    if (extent[d] > 1) {
+      out.stride[d] = given != 0
+                          ? given_step(given, axis_name(d) + (input ? ".in_stride" : ".out_stride"))
+                          : span;
+    }
     span = checked_mul(span, to_signed(d + 1 == r ? last_physical : extent[d], axis_name(d) + ".n"),
                        axis_name(d) + ".n");
   }
@@ -102,7 +121,10 @@ side resolve(const shape_view& s, const std::vector<std::size_t>& extent, std::s
   for (std::size_t i = s.batches.size(); i > 0; --i) {
     const std::size_t b = i - 1;
     const std::ptrdiff_t given = input ? s.batches[b].in_dist : s.batches[b].out_dist;
-    out.dist[b] = given != 0 ? given : span;
+    if (s.batches[b].count > 1) {
+      out.dist[b] =
+          given != 0 ? given_step(given, batch_name(b) + (input ? ".in_dist" : ".out_dist")) : span;
+    }
     span = checked_mul(span, to_signed(s.batches[b].count, batch_name(b) + ".count"),
                        batch_name(b) + ".count");
   }
@@ -346,11 +368,15 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out,
         .element_bytes = complex_bytes,
     };
     if (r > 1 && !c.in_place) {
+      // The block is tight and complex. The checks of the two sides do not bound its
+      // bytes (the input may overlap itself; the real output has half the bytes per
+      // element), so its size is checked here.
       std::ptrdiff_t span = 1;
       for (std::size_t i = r; i > 0; --i) {
         block_view.stride[i - 1] = span;
-        span *= static_cast<std::ptrdiff_t>(in.extent[i - 1]);
+        span = checked_mul(span, to_signed(in.extent[i - 1], "shape"), "shape");
       }
+      static_cast<void>(checked_mul(span, complex_bytes, "shape"));
       c.block_elements = static_cast<std::size_t>(span);
     }
     // In place the complex phases work on the output slot, which is the input's memory,

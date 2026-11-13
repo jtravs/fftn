@@ -1509,7 +1509,11 @@ each item, and the outcome goes to the decision log.
    Output overlap is refused by a sufficient condition (sorted by stride, each stride
    exceeds the reach of the smaller ones), which admits every nested layout but refuses
    a few exotic interleavings that do not actually collide. Sizes whose byte reach does
-   not fit `std::ptrdiff_t` are refused.
+   not fit `std::ptrdiff_t` are refused, and so is a stride or distance of `PTRDIFF_MIN`
+   (its magnitude does not fit). The strides of an axis of length 1 and the distances of
+   a batch dimension of count 1 are ignored, since they never step: refusing them would
+   reject harmless layouts, and using them would let unchecked values into the kernels'
+   arithmetic.
 8. *In place* requires identical layouts for c2c; for r2c and c2r the last axis
    contiguous on both sides and every other real stride and distance twice the complex
    one (FFTW's padded layout). Other in-place layouts are refused, not supported.

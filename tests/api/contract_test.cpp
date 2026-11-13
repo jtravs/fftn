@@ -22,6 +22,7 @@
 #include <array>
 #include <complex>
 #include <cstddef>
+#include <limits>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -313,6 +314,93 @@ TEST(Validation, InvalidShapesThrowNamingTheArgument) {
   real.axes = {{.n = 8}};
   real.batches = {{.count = 2, .in_dist = 10, .out_dist = 6}};
   expect_refused(real, "options.in_place", {.in_place = true});
+}
+
+// Strides and distances whose magnitudes or derived byte steps do not fit std::ptrdiff_t.
+// Without the checks these built plans whose arithmetic overflowed (UBSan reported it in
+// the plan's construction and in the copy pass).
+TEST(Validation, StridesThatOverflowAreRefused) {
+  using c = std::complex<double>;
+  constexpr std::ptrdiff_t lowest = std::numeric_limits<std::ptrdiff_t>::min();
+  fftn::shape<c, c> s;
+  s.axes = {{.n = 2, .out_stride = lowest}, {.n = 8}};
+  expect_refused(s, "shape.axes[0].out_stride");
+  s.axes = {{.n = 8, .in_stride = lowest}};
+  expect_refused(s, "shape.axes[0].in_stride");
+  s.axes = {{.n = 8}};
+  s.batches = {{.count = 2, .in_dist = lowest}};
+  expect_refused(s, "shape.batches[0].in_dist");
+  s.batches = {{.count = 3, .out_dist = lowest}};
+  expect_refused(s, "shape.batches[0].out_dist");
+  // A distance whose byte step overflows although its element count does not.
+  s.batches = {{.count = 2, .in_dist = std::numeric_limits<std::ptrdiff_t>::max() / 4}};
+  expect_refused(s, "too large");
+}
+
+// The stride of an axis of length 1 and the distance of a batch dimension of count 1 never
+// step, so any value is accepted for them, PTRDIFF_MIN and values whose byte steps would
+// overflow included, and the result is that of the default layout. One test per way the
+// unused value used to reach arithmetic that overflowed.
+constexpr std::ptrdiff_t lowest_step = std::numeric_limits<std::ptrdiff_t>::min();
+constexpr std::ptrdiff_t far_step = std::ptrdiff_t{1} << 62;
+
+// An 8-point c2c of the same input through `s` and through the default layout.
+void expect_default_result(const fftn::shape<std::complex<double>, std::complex<double>>& s) {
+  input_source src(13);
+  const auto x = src.complexes<double>(8);
+  const auto run = [&x](const fftn::c2c_plan<double>& p) {
+    fftn::workspace ws(p);
+    cvec<double> y(x.size());
+    p.execute(x.data(), y.data(), ws);
+    return y;
+  };
+  const fftn::c2c_plan<double> plain(fftn::rows_c2c<double>(8, 1, fftn::direction::forward));
+  EXPECT_TRUE(same_bits<std::complex<double>>(run(fftn::c2c_plan<double>(s)), run(plain)));
+}
+
+// The batch loop's byte step was computed from the distance even for a count of 1.
+TEST(Validation, DistanceOfASingleTransformIsIgnored) {
+  fftn::shape<std::complex<double>, std::complex<double>> s;
+  s.axes = {{.n = 8}};
+  s.batches = {{.count = 1, .in_dist = far_step, .out_dist = far_step}};
+  expect_default_result(s);
+  s.batches = {{.count = 1, .in_dist = lowest_step, .out_dist = -far_step}};
+  expect_default_result(s);
+}
+
+// The reach and overlap checks took the magnitude of a length-1 axis's stride.
+TEST(Validation, StrideOfALengthOneAxisIsIgnored) {
+  fftn::shape<std::complex<double>, std::complex<double>> s;
+  s.axes = {{.n = 1, .in_stride = lowest_step, .out_stride = far_step}, {.n = 8}};
+  expect_default_result(s);
+  s.axes = {{.n = 8}, {.n = 1, .in_stride = far_step, .out_stride = lowest_step}};
+  expect_default_result(s);
+}
+
+// The copy pass of a one-point line doubled the stride to step over complex values as
+// reals, here for two one-point transforms one element apart; so did the edge passes of
+// a real transform.
+TEST(Validation, StrideOfALengthOneAxisIsNeverDoubled) {
+  using c = std::complex<double>;
+  fftn::shape<c, c> s;
+  s.axes = {{.n = 1, .in_stride = far_step, .out_stride = 1}};
+  s.batches = {{.count = 2, .in_dist = 1, .out_dist = 1}};
+  const fftn::c2c_plan<double> p(s);
+  fftn::workspace ws(p);
+  const cvec<double> x{{1.0, 2.0}, {3.0, 4.0}};
+  cvec<double> y(2);
+  p.execute(x.data(), y.data(), ws);
+  EXPECT_EQ(y, x);
+
+  fftn::shape<double, c> r;
+  r.axes = {{.n = 1, .in_stride = far_step, .out_stride = far_step}};
+  r.batches = {{.count = 2, .in_dist = 1, .out_dist = 1}};
+  const fftn::r2c_plan<double> pr(r);
+  fftn::workspace wr(pr);
+  const std::vector<double> reals{3.0, -2.0};
+  cvec<double> spectrum(2);
+  pr.execute(reals.data(), spectrum.data(), wr);
+  EXPECT_EQ(spectrum, (cvec<double>{{3.0, 0.0}, {-2.0, 0.0}}));
 }
 
 TEST(Validation, ValidEdgeCasesAreAccepted) {
