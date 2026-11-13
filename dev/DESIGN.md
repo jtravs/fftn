@@ -1047,11 +1047,12 @@ which an OpenMP runtime may already have narrowed), macOS `hw.perflevel*`, Windo
 tests. A `lane_map` records which lanes sit in which groups and whether that is verified,
 assumed or looked up per call. FFTN never pins or re-pins threads it does not own.
 
-The readers are plain parsers: the Linux one takes a filesystem root and the macOS one a
-sysctl snapshot, so both run on every machine against fixtures recorded with
-`tools/capture_platform.py` (named by CPU model) and synthetic ones. The environment
-override `FFTN_TOPOLOGY` names such a recording (a sysfs tree or a sysctl file); the
-programmatic override is that everything consuming a topology takes it as an argument.
+The readers are plain parsers: the Linux one reads through a small file interface (the
+live root, or a sysfs snapshot: one text file per machine, format in
+`src/platform/file_source.hpp`) and the macOS one a sysctl snapshot, so both run on every
+machine against fixtures recorded with `tools/capture_platform.py` (named by CPU model) and
+synthetic ones. The environment override `FFTN_TOPOLOGY` names such a recording (a sysfs
+snapshot, told apart by its header line, or a sysctl file); the programmatic override is that everything consuming a topology takes it as an argument.
 The process's topology is detected once, into a function-local constant. Unknown values
 are zero, never guessed: macOS reports no associativity, and it does not say which logical
 CPU belongs to which performance level, so there CPUs are numbered in class order (fastest
@@ -1443,7 +1444,7 @@ implementation are listed here until settled.
 | 2026-11-13 | Float is supported and kept alive from phase 1 by correctness tests in CI; tuned in phase 6 | It has users, and precision-generic code that is never instantiated drifts |
 | 2026-11-13 | Bitwise schedule independence is kept | It costs nothing measurable (no cross-thread reductions) and makes threading tests exact; revisit only on experimental evidence |
 | 2026-11-13 | fbench replicates over processes with paired intervals and an A/A control | Process-to-process spread dominated the prototype's noise |
-| 2026-11-13 | Platform readers are parsers over recorded sources (a sysfs root, a sysctl snapshot); `FFTN_TOPOLOGY` names a recording; detection results are function-local constants | The Linux, macOS and x86 logic is tested on any machine; no mutable global state |
+| 2026-11-13 | Platform readers are parsers over recorded sources (a one-file sysfs snapshot, a sysctl snapshot); `FFTN_TOPOLOGY` names a recording; detection results are function-local constants | The Linux, macOS and x86 logic is tested on any machine; one fixture file per machine rather than thousands; no mutable global state |
 | 2026-11-13 | The planning clock is `std::chrono::steady_clock` (measured step 41 ns on Apple M5 Max) | Planning times whole executions of microseconds; a cycle counter adds per-CPU skew and frequency questions |
 
 ---
