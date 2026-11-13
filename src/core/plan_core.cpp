@@ -38,6 +38,11 @@
 namespace fftn::inline v0::detail {
 namespace {
 
+// The ranks a plan supports: transforms of one to three axes (DESIGN.md 5.6), and up to
+// two batch dimensions.
+constexpr std::size_t max_axes = 3;
+constexpr std::size_t max_batch_dimensions = 2;
+
 [[noreturn]] void reject(const std::string& argument, const std::string& why) {
   throw std::invalid_argument("fftn::plan: " + argument + " " + why);
 }
@@ -456,6 +461,15 @@ std::shared_ptr<const plan_core> make_plan_core(const shape_view& s, const optio
   const std::size_t r = s.axes.size();
   if (r == 0) {
     reject("shape.axes", "must hold at least one axis");
+  }
+  if (r > max_axes) {
+    reject("shape.axes", "holds " + std::to_string(r) + " axes; at most " +
+                             std::to_string(max_axes) + " are transformed");
+  }
+  if (s.batches.size() > max_batch_dimensions) {
+    reject("shape.batches", "holds " + std::to_string(s.batches.size()) +
+                                " batch dimensions; at most " +
+                                std::to_string(max_batch_dimensions) + " are supported");
   }
   for (std::size_t d = 0; d < r; ++d) {
     if (s.axes[d].n == 0) {

@@ -44,8 +44,9 @@ public:
   ///
   /// Throws `std::invalid_argument` when the shape or the options are not valid (the
   /// message names the argument; the rules are in docs/conventions.md): an axis or batch
-  /// count of zero, no axis, overlapping output elements, sizes that overflow, or in-place
-  /// layouts that do not agree. Throws `std::bad_alloc` when memory runs out.
+  /// count of zero, no axis or more than three axes, more than two batch dimensions,
+  /// overlapping output elements, sizes that overflow, or in-place layouts that do not
+  /// agree. Throws `std::bad_alloc` when memory runs out.
   explicit plan(const shape<In, Out>& s, const options& opts = {})
       : core_(detail::make_plan_core(detail::view_of(s), opts)) {}
 

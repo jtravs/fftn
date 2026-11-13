@@ -15,6 +15,7 @@
 #include <complex>
 #include <cstddef>
 #include <memory>
+#include <span>
 #include <string>
 #include <type_traits>
 
@@ -40,16 +41,19 @@ inline constexpr precision precision_of =
     std::is_same_v<In, double> || std::is_same_v<In, std::complex<double>> ? precision::f64
                                                                            : precision::f32;
 
-// A shape with its type information as values.
+// A shape with its type information as values. The axes and batch dimensions are borrowed
+// from the shape's vectors, which must outlive the view (plan construction uses it within one
+// full-expression): only plain structs cross into the library, never a std::vector, and
+// nothing is copied.
 struct shape_view {
   transform_kind kind = transform_kind::c2c;
   precision prec = precision::f64;
   direction dir = direction::forward;
-  small_vector<axis, 3> axes;
-  small_vector<batch, 2> batches;
+  std::span<const axis> axes;
+  std::span<const batch> batches;
 };
 
-template <class In, class Out> shape_view view_of(const shape<In, Out>& s) {
+template <class In, class Out> shape_view view_of(const shape<In, Out>& s) noexcept {
   return {
       .kind = kind_of<In, Out>::value,
       .prec = precision_of<In, Out>,

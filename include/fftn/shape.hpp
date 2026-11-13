@@ -8,12 +8,12 @@
 #pragma once
 
 #include "fftn/config.hpp"
-#include "fftn/small_vector.hpp"
 
 #include <complex>
 #include <cstddef>
 #include <cstdint>
 #include <type_traits>
+#include <vector>
 
 namespace fftn::inline v0 {
 
@@ -83,10 +83,11 @@ template <class In, class Out> struct shape {
   /// The direction of a complex-to-complex transform. Ignored by the real kinds: r2c is
   /// always forward and c2r always backward.
   direction dir = direction::forward;
-  /// The transformed axes, slowest first: one for rows, two for planes, at most three.
-  small_vector<axis, 3> axes;
+  /// The transformed axes, slowest first: one for rows, two for planes, three for volumes.
+  /// A plan refuses a shape with none or with more than three.
+  std::vector<axis> axes;
   /// The batch dimensions, slowest first; none means a single transform.
-  small_vector<batch, 2> batches;
+  std::vector<batch> batches;
 };
 
 /// A batch of `count` complex rows of length `n`, stored one after another.

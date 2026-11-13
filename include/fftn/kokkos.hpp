@@ -378,11 +378,12 @@ shape_of(const InView& in, const OutView& out, direction dir, const axis_type<Di
     }
     loops[merged++] = inner;
   }
-  if (merged > s.batches.capacity()) {
+  constexpr std::size_t max_loops = 2; // the core plan's limit
+  if (merged > max_loops) {
     detail::reject("in", "has " + std::to_string(merged) +
                              " batch dimensions that do not nest; FFTN plans loop over at "
                              "most " +
-                             std::to_string(s.batches.capacity()));
+                             std::to_string(max_loops));
   }
   for (std::size_t i = 0; i < merged; ++i) {
     s.batches.push_back(loops[i]);

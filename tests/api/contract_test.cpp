@@ -334,6 +334,10 @@ TEST(Validation, InvalidShapesThrowNamingTheArgument) {
   using c = std::complex<double>;
   const fftn::shape<c, c> no_axes;
   expect_refused(no_axes, "shape.axes");
+  const fftn::shape<c, c> four_axes{.axes = {{2}, {3}, {4}, {5}}, .batches = {{6}}};
+  expect_refused(four_axes, "shape.axes");
+  const fftn::shape<c, c> three_batches{.axes = {{8}}, .batches = {{2}, {3}, {4}}};
+  expect_refused(three_batches, "shape.batches");
   expect_refused(fftn::rows_c2c<double>(0, 1, fftn::direction::forward), "shape.axes[0].n");
   expect_refused(fftn::planes_c2c<double>(4, 0, 1, fftn::direction::forward), "shape.axes[1].n");
   expect_refused(fftn::rows_c2c<double>(8, 0, fftn::direction::forward), "shape.batches[0].count");
@@ -479,7 +483,7 @@ TEST(Validation, ValidEdgeCasesAreAccepted) {
   EXPECT_NO_THROW(fftn::r2c_plan<double>(one, {.in_place = true}));
 }
 
-// ---- Describe, instruction set, small_vector.
+// ---- Describe, instruction set.
 
 TEST(Describe, NamesTheProgram) {
   const fftn::c2c_plan<double> p(fftn::rows_c2c<double>(28, 3, fftn::direction::forward));
@@ -531,29 +535,6 @@ TEST(Isa, Names) {
   // Out of range: this read past the table of names before it was bounds-checked.
   // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange): invalid on purpose
   EXPECT_STREQ(fftn::isa_name(static_cast<fftn::isa>(200)), "unknown");
-}
-
-TEST(SmallVector, HoldsUpToItsCapacity) {
-  fftn::small_vector<int, 2> v;
-  EXPECT_TRUE(v.empty());
-  v.push_back(1);
-  v.push_back(2);
-  EXPECT_EQ(v.size(), 2U);
-  EXPECT_EQ(v.capacity(), 2U);
-  EXPECT_THROW(v.push_back(3), std::length_error);
-  EXPECT_EQ(v.size(), 2U);
-  int sum = 0;
-  for (const int x : v) {
-    sum += x;
-  }
-  EXPECT_EQ(sum, 3);
-  const fftn::small_vector<int, 2>& cv = v;
-  EXPECT_EQ(cv[1], 2);
-  EXPECT_EQ(*cv.data(), 1);
-  EXPECT_EQ(cv.end() - cv.begin(), 2);
-  EXPECT_THROW((fftn::small_vector<int, 2>{1, 2, 3}), std::length_error);
-  v[0] = 5;
-  EXPECT_EQ(*v.data(), 5);
 }
 
 } // namespace

@@ -137,8 +137,8 @@ std::string describe(const dims_t& dims, const char* what) {
 
 constexpr std::size_t count = 2;
 
-fftn::small_vector<fftn::axis, 3> axes_of(const dims_t& dims) {
-  fftn::small_vector<fftn::axis, 3> a;
+std::vector<fftn::axis> axes_of(const dims_t& dims) {
+  std::vector<fftn::axis> a;
   for (const std::size_t n : dims) {
     a.push_back({.n = n});
   }
