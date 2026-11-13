@@ -1235,8 +1235,10 @@ What the experiments still require of the build:
    library's own twiddle tables, which it builds with a few lines of double-double
    arithmetic, are checked against the same reference entry by entry (correctly rounded),
    so the reference shares no code with the library.
-3. **FFTW**, as an independent implementation, for large sizes and every shape. Test
-   builds compile FFTW 3.3.11 from source in both precisions (plain C, about 20 s), or use
+3. **FFTW**, as an independent implementation, for large sizes and every shape
+   (`tests/fftw`): the library's outputs compared with FFTW's at every output, with the
+   tolerances of both added. FFTW also runs oracles 1 and 2 as a subject, which checks
+   the suites themselves. Test builds compile FFTW 3.3.11 from source in both precisions (plain C, about 20 s), or use
    an existing install (`FFTN_FFTW_ROOT`); `FFTN_TEST_WITH_FFTW=OFF` builds without it and
    the tests that need it skip.
 4. **The generator's own check** of each codelet against the exact DFT at emission.
