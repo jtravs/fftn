@@ -48,7 +48,14 @@ cpu_features neoverse_n1() {
 }
 cpu_features apple_m() {
   cpu_features f = neoverse_n1();
+  f.fcma = f.pauth = true;
+  return f;
+}
+// FCMA without pointer authentication (an Armv8.2 design with SVE).
+cpu_features a64fx() {
+  cpu_features f = neoverse_n1();
   f.fcma = true;
+  f.sve_bits = 512;
   return f;
 }
 
@@ -103,9 +110,12 @@ TEST(target, runs_on_needs_every_feature_the_attribute_enables) {
     f.*feature = false;
     EXPECT_FALSE(runs_on(target::avx512, f));
   }
-  cpu_features fcma_without_neon;
-  fcma_without_neon.fcma = true;
-  EXPECT_FALSE(runs_on(target::neon_fcma, fcma_without_neon));
+  cpu_features without_neon = apple_m();
+  without_neon.neon = false;
+  EXPECT_FALSE(runs_on(target::neon_fcma, without_neon));
+  // neon_fcma code may contain pointer-authentication instructions (branch protection).
+  EXPECT_FALSE(runs_on(target::neon_fcma, a64fx()));
+  EXPECT_TRUE(runs_on(target::neon, a64fx()));
 }
 
 TEST(target, best_is_the_fastest_compiled_target_the_processor_runs) {
@@ -117,6 +127,7 @@ TEST(target, best_is_the_fastest_compiled_target_the_processor_runs) {
   EXPECT_EQ(best_target(skylake_sp()), x86_simd); // avx512 is not compiled yet
   EXPECT_EQ(best_target(neoverse_n1()), target::scalar);
   EXPECT_EQ(best_target(apple_m()), arm_simd);
+  EXPECT_EQ(best_target(a64fx()), target::scalar); // neon is not compiled yet
 }
 
 TEST(target, choose_without_forcing_is_best) {

@@ -77,8 +77,10 @@
 //   and no zmm register can appear (the disassembly test checks this).
 // - neon_fcma: Clang's arm_neon.h declares the FCMLA/FCADD intrinsics with
 //   target("v8.3a"), so "+fcma" is rejected; "arch=armv8.3-a" is the spelling GCC and
-//   Clang both accept. It also allows other Armv8.3 instructions (LRCPC, JSCVT, pointer
-//   authentication); the disassembly test checks that none appears.
+//   Clang both accept. It also allows other Armv8.3 instructions: the disassembly test
+//   checks that no LRCPC or JSCVT instruction appears. Pointer authentication may appear
+//   (branch protection can return with RETAA here), so neon_fcma is chosen only where the
+//   processor has it too (target.cpp).
 #define FFTN_ISA_PUSH_scalar FFTN_ISA_PUSH_NONE
 #define FFTN_ISA_PUSH_avx2 FFTN_ISA_PUSH("avx2,fma")
 #define FFTN_ISA_PUSH_neon_fcma FFTN_ISA_PUSH("arch=armv8.3-a")

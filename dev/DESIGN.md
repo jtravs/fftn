@@ -520,8 +520,11 @@ another. The library is compiled with `-Werror=psabi` under GCC (experiment B1, 
 Target strings: `avx2` is `"avx2,fma"`, exactly the features its run-time check requires
 and no AVX-512 feature; `neon_fcma` is `"arch=armv8.3-a"`, because Clang's NEON header
 declares the complex intrinsics for the whole Armv8.3 architecture (`"+fcma"` is
-rejected). That string also allows other Armv8.3 instructions (RCPC, JSCVT, pointer
-authentication), which the disassembly test forbids in `neon_fcma` code. The macros put
+rejected). That string also allows other Armv8.3 instructions: the disassembly test
+forbids RCPC and JSCVT in `neon_fcma` code. Pointer authentication is allowed there,
+because branch protection may sign that code's returns with RETAA; `neon_fcma` is
+therefore dispatched only on processors with both FCMA and pointer authentication (both
+mandatory from Armv8.3), and a core with FCMA alone (A64FX) gets plain `neon`. The macros put
 each target pragma last in its expansion: GCC drops the tokens that follow a
 `_Pragma("GCC target ...")` within one macro expansion.
 
@@ -1488,6 +1491,7 @@ implementation are listed here until settled.
 | 2026-11-13 | The planning clock is `std::chrono::steady_clock` (measured step 41 ns on Apple M5 Max) | Planning times whole executions of microseconds; a cycle counter adds per-CPU skew and frequency questions |
 | 2026-11-13 | Vocabulary names `cv`, `rv`, `tw`, `C`, `W`, `tw_reals`, `fused` through `vec<T>`; the real-register family in namespace `real`; x86 FMA naming | Vector types must never be template arguments (B1); the two families share one machine type on SIMD targets |
 | 2026-11-13 | Region text has internal linkage; only each target's function table is exported | Removes, by construction, the linker picking one target's copy of a shared inline function for another caller |
+| 2026-11-13 | `neon_fcma` runs only where the processor has FCMA and pointer authentication; PAuth instructions are allowed in its code and nowhere else outside the hint space | Branch protection may emit RETAA in an Armv8.3 region (seen with GCC 16 and Clang 23); both features are mandatory from Armv8.3, so only rare FCMA-only cores lose the target |
 
 ---
 

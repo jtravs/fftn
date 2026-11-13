@@ -34,11 +34,14 @@ set(fftn_asm_check ${fftn_python} ${PROJECT_SOURCE_DIR}/tools/asm_check.py
 # What the build's own baseline already has may appear in baseline code. On Apple platforms
 # the compiler targets Apple silicon (apple-m1 or newer), which has FCMA, and keeps doing so
 # under -march=armv8-a (only -mcpu=generic drops it): scalar code there may use FCADD
-# although __ARM_FEATURE_COMPLEX is not defined. Every Apple arm64 processor has FCMA.
+# although __ARM_FEATURE_COMPLEX is not defined. Every Apple arm64 processor has FCMA, and
+# pointer authentication, which instrumented baseline code there may use (ThreadSanitizer's
+# function-entry hook strips its return address with XPACI).
 include(CheckCXXSourceCompiles)
 set(fftn_baseline_has "")
 set(CMAKE_REQUIRED_QUIET ON)
-foreach(feature IN ITEMS "avx:__AVX__" "avx512:__AVX512F__" "fcma:__ARM_FEATURE_COMPLEX")
+foreach(feature IN ITEMS "avx:__AVX__" "avx512:__AVX512F__" "fcma:__ARM_FEATURE_COMPLEX"
+                        "pauth:__ARM_FEATURE_PAUTH")
   string(REPLACE ":" ";" feature "${feature}")
   list(GET feature 0 name)
   list(GET feature 1 macro)
@@ -49,12 +52,12 @@ foreach(feature IN ITEMS "avx:__AVX__" "avx512:__AVX512F__" "fcma:__ARM_FEATURE_
   endif()
 endforeach()
 unset(CMAKE_REQUIRED_QUIET)
-if(APPLE AND NOT FFTN_BASELINE_HAS_fcma)
-  list(APPEND fftn_baseline_has --baseline-has fcma)
-endif()
-# Instrumented code (never shipped) reads return addresses: see asm_check.py.
-if(FFTN_SANITIZE OR FFTN_COVERAGE)
-  list(APPEND fftn_baseline_has --instrumented)
+if(APPLE)
+  foreach(name IN ITEMS fcma pauth)
+    if(NOT FFTN_BASELINE_HAS_${name})
+      list(APPEND fftn_baseline_has --baseline-has ${name})
+    endif()
+  endforeach()
 endif()
 # With LTO the objects hold compiler IR, not code: the linked tests are checked instead.
 if(CMAKE_INTERPROCEDURAL_OPTIMIZATION)
@@ -83,3 +86,8 @@ endfunction()
 fftn_asm_fault_test(calls "calls .* must inline")
 fftn_asm_fault_test(baseline_isa "baseline: (VEX or EVEX code|FCMA instruction) in")
 fftn_asm_fault_test(target_isa "EVEX feature in|Armv8.3 instruction outside FCMA in")
+check_cxx_source_compiles("#if !defined(__aarch64__) && !defined(_M_ARM64)\n#error\n#endif\nint main() {}"
+                          FFTN_TARGET_IS_AARCH64)
+if(FFTN_TARGET_IS_AARCH64)
+  fftn_asm_fault_test(pauth "pointer authentication outside neon_fcma in")
+endif()

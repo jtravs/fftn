@@ -88,7 +88,9 @@ bool runs_on(target t, const cpu_features& f) noexcept {
   case target::neon:
     return f.neon;
   case target::neon_fcma:
-    return f.neon && f.fcma;
+    // Pointer authentication too: branch protection may sign this target's returns with
+    // instructions outside the hint space (DESIGN.md 6.4). Both are mandatory from Armv8.3.
+    return f.neon && f.fcma && f.pauth;
   }
   return true; // scalar runs anywhere
 }

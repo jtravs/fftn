@@ -16,11 +16,10 @@ namespace, fftn::<version>::detail::<target>::; everything else is baseline code
   vocabulary is always inlined, and nothing standard runs inside a region;
 - x86-64: no VEX or EVEX instruction and no ymm or zmm register outside avx2, and no
   EVEX feature (zmm, mask registers, registers 16-31) inside it;
-- AArch64: no FCMLA or FCADD outside neon_fcma, and in neon_fcma no other instruction that
-  "arch=armv8.3-a" allows: LDAPR, FJCVTZS, or a pointer-authentication instruction
-  outside the hint space (the hint forms, such as PACIASP, are NOPs on Armv8.0 and are
-  what branch protection emits everywhere); --instrumented allows XPACI and XPACD, which
-  Armv8.3 code uses to read its return address for ThreadSanitizer's function-entry hook;
+- AArch64: no FCMLA or FCADD outside neon_fcma; in neon_fcma no LDAPR or FJCVTZS, which
+  "arch=armv8.3-a" also allows; pointer authentication outside the hint space only in
+  neon_fcma, which is dispatched only where the processor has it (the hint forms, such as
+  PACIASP, are NOPs on Armv8.0 and are what branch protection emits everywhere);
 - --baseline-has relaxes the baseline checks for what the build's baseline already has:
   Apple's compilers target Apple silicon by default, which has FCMA, so scalar code there
   may legitimately use FCADD;
@@ -62,6 +61,7 @@ X86_CALLS = ("call", "callq", "jmp", "jmpq")
 ARM_CALLS = ("bl", "b")
 FMA = re.compile(r"^vfn?m(?:add|sub)(?:sub|add)?\d*[ps][sd]$")
 EVEX = re.compile(r"%zmm|%k[0-7]\b|%[xy]mm(?:1[6-9]|2\d|3[01])\b|\{")
+PAUTH_OTHER = {"retaa", "retab", "eretaa", "eretab", "ldraa", "ldrab"}
 PAUTH_HINTS = {
     "paciasp", "pacibsp", "autiasp", "autibsp", "paciaz", "pacibz", "autiaz", "autibz",
     "pacia1716", "pacib1716", "autia1716", "autib1716", "xpaclri",
@@ -215,9 +215,16 @@ def resolve(funcs: list[Function]) -> None:
             call.symbol = callee[0].name if callee and callee[0] is not f else ""
 
 
-def check_group(
-    objdump: str, group: list[str], baseline_has: set[str], instrumented: bool
-) -> list[str]:
+def is_pauth(base: str) -> bool:
+    """A pointer-authentication instruction outside the hint space."""
+    if base in PAUTH_HINTS:
+        return False
+    if base.startswith(("pac", "aut", "xpac")):
+        return True
+    return base in PAUTH_OTHER or re.match(r"^bl?ra[ab]z?$", base) is not None
+
+
+def check_group(objdump: str, group: list[str], baseline_has: set[str]) -> list[str]:
     errors: list[str] = []
     arch = ""
     funcs: list[Function] = []
@@ -278,12 +285,12 @@ def check_group(
         for f in by_target["neon_fcma"]:
             for mn, ops in f.insns:
                 base = mn.split(".")[0]
-                pauth = base.startswith(("pac", "aut", "xpac")) and base not in PAUTH_HINTS
-                pauth = pauth and not (instrumented and base in ("xpaci", "xpacd"))
-                pauth = pauth or base in ("retaa", "retab", "eretaa", "eretab", "ldraa", "ldrab")
-                pauth = pauth or re.match(r"^bl?ra[ab]z?$", base) is not None
-                if pauth or base.startswith("ldapr") or base == "fjcvtzs":
+                if base.startswith("ldapr") or base == "fjcvtzs":
                     errors.append(f"Armv8.3 instruction outside FCMA in {f.name}: {mn} {ops}")
+        for f in by_target["scalar"] + baseline:
+            for mn, _ in f.insns:
+                if is_pauth(mn.split(".")[0]) and "pauth" not in baseline_has:
+                    errors.append(f"pointer authentication outside neon_fcma in {f.name}: {mn}")
 
     for t in TARGETS:
         fs = by_target[t]
@@ -300,15 +307,9 @@ def main() -> int:
         "--baseline-has",
         action="append",
         default=[],
-        choices=["avx", "avx512", "fcma"],
+        choices=["avx", "avx512", "fcma", "pauth"],
         help="the build's baseline already has this (as when the compiler targets Apple"
         " silicon, which has FCMA): baseline code may use it",
-    )
-    ap.add_argument(
-        "--instrumented",
-        action="store_true",
-        help="sanitizer or coverage build: allow XPACI and XPACD, with which Armv8.3 code"
-        " strips the return address that ThreadSanitizer's function-entry hook reads",
     )
     ap.add_argument("groups", nargs="+", help="objects or archives; ';' joins one group")
     opts = ap.parse_args()
@@ -322,7 +323,7 @@ def main() -> int:
             errors.append(f"not found: {', '.join(missing)}")
             continue
         print(f"== {', '.join(Path(p).name for p in group)}")
-        errors += check_group(opts.objdump, group, set(opts.baseline_has), opts.instrumented)
+        errors += check_group(opts.objdump, group, set(opts.baseline_has))
     for e in errors:
         print(f"asm_check: {e}")
     if errors:

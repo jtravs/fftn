@@ -48,9 +48,8 @@ FFTN_ISA_BEGIN(neon_fcma)
 [[gnu::noinline]] inline float64x2_t fault_helper(float64x2_t a) { return vcaddq_rot90_f64(a, a); }
 void fault_call(double* p) { vst1q_f64(p, fault_helper(vld1q_f64(p))); }
 
-// FJCVTZS, which "arch=armv8.3-a" allows beside FCMA. (Return-address signing would also
-// do: with branch protection on, GCC and Clang can return with RETAA in such a region,
-// depending on the CPU they tune for.)
+// FJCVTZS, which "arch=armv8.3-a" allows beside FCMA. (Pointer authentication, such as the
+// RETAA that branch protection may emit here, is allowed in neon_fcma: DESIGN.md 6.4.)
 int fault_jscvt(double x) { return __jcvt(x); }
 
 FFTN_ISA_END
@@ -59,6 +58,11 @@ namespace fftn::inline v0::detail {
 // FCMA code outside every target namespace, where baseline code lives.
 __attribute__((target("arch=armv8.3-a"))) void fault_baseline(double* p) {
   vst1q_f64(p, vcaddq_rot90_f64(vld1q_f64(p), vld1q_f64(p + 2)));
+}
+// Pointer authentication outside the hint space, outside neon_fcma: PACIA X0, X1, written
+// as its encoding so that no assembler needs Armv8.3 enabled to accept it.
+void fault_pauth() {
+  asm volatile(".inst 0xdac10020" ::: "x0"); // NOLINT(portability-no-assembler): the seeded fault
 }
 } // namespace fftn::inline v0::detail
 

@@ -29,7 +29,8 @@ enum class target : unsigned char {
 [[nodiscard]] bool compiled_in(target t) noexcept;
 
 // Whether a processor with these features can run t's code: every feature t's attribute
-// string enables is present (region.hpp).
+// string enables that its code may use is present (region.hpp); for neon_fcma that is
+// FCMA and pointer authentication.
 [[nodiscard]] bool runs_on(target t, const cpu_features& features) noexcept;
 
 // The fastest target this build contains that the features allow.
