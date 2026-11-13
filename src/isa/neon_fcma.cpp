@@ -18,6 +18,8 @@ FFTN_ISA_BEGIN(neon_fcma)
 
 #include "isa/kernels.inl"
 
+#include "passes/chain_absent.inl"
+
 #include "isa/table.inl"
 
 FFTN_ISA_END

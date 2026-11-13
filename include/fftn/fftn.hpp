@@ -6,6 +6,12 @@
 #pragma once
 
 #include "fftn/config.hpp"
+#include "fftn/isa.hpp"
+#include "fftn/options.hpp"
+#include "fftn/plan.hpp"
+#include "fftn/shape.hpp"
+#include "fftn/small_vector.hpp"
+#include "fftn/workspace.hpp"
 
 /// @namespace fftn
 /// FFTN: fast Fourier transforms for CPUs.

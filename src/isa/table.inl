@@ -17,6 +17,7 @@ constinit const kernel_table table{
             .complex_lanes = C<double>,
             .real_lanes = W<double>,
             .tw_reals = tw_reals<double>,
+            .chain = chain_entries<double>,
         },
     .f32 =
         {
@@ -26,5 +27,6 @@ constinit const kernel_table table{
             .complex_lanes = C<float>,
             .real_lanes = W<float>,
             .tw_reals = tw_reals<float>,
+            .chain = chain_entries<float>,
         },
 };
