@@ -23,6 +23,7 @@
 #include <string>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -531,9 +532,21 @@ TYPED_TEST(KokkosAdapter, TwoBatchLoopsRemainForAMiddleAxis) {
                    reals_from(core_out_of_place(want_shape, complexes_of(reals_of(x)), 96)));
 }
 
+// The batch dimensions of a shape, as (count, in_dist, out_dist), equal to `want` in order.
+void expect_batches(const std::vector<fftn::batch>& got,
+                    const std::vector<std::array<std::ptrdiff_t, 3>>& want) {
+  ASSERT_EQ(got.size(), want.size());
+  for (std::size_t b = 0; b < got.size(); ++b) {
+    EXPECT_EQ(static_cast<std::ptrdiff_t>(got[b].count), want[b][0]) << "batch " << b;
+    EXPECT_EQ(got[b].in_dist, want[b][1]) << "batch " << b;
+    EXPECT_EQ(got[b].out_dist, want[b][2]) << "batch " << b;
+  }
+}
+
 // Views whose other dimensions leave three batch loops that do not nest: a rank-5 View along
 // axes {1, 3}, out of place and in place, and the real kinds over it; then a rank-4
-// LayoutStride View along its last axis whose three batch dimensions are padded apart.
+// LayoutStride View along its last axis whose three batch dimensions are padded apart;
+// then in-place real transforms over padded LayoutStride Views with three batch loops.
 TYPED_TEST(KokkosAdapter, ThreeBatchLoopsThatDoNotNest) {
   using T = TypeParam;
   using complex5 = Kokkos::View<Kokkos::complex<T>*****, Kokkos::LayoutRight, Kokkos::HostSpace>;
@@ -542,9 +555,9 @@ TYPED_TEST(KokkosAdapter, ThreeBatchLoopsThatDoNotNest) {
   const complex5 x("x", 2, 4, 3, 6, 2);
   const complex5 y("y", 2, 4, 3, 6, 2);
   fill(x, 89);
-  const auto s = fftn::kokkos::shape_of(x, y, direction::forward, axes);
-  ASSERT_EQ(s.batches.size(), 3U);
   // (2, 4, 3, 6, 2) in C order: strides 144, 36, 12, 2, 1.
+  expect_batches(fftn::kokkos::shape_of(x, y, direction::forward, axes).batches,
+                 {{2, 144, 144}, {3, 12, 12}, {2, 1, 1}});
   const fftn::shape<std::complex<T>, std::complex<T>> c{
       .dir = direction::forward,
       .axes =
@@ -626,6 +639,55 @@ TYPED_TEST(KokkosAdapter, ThreeBatchLoopsThatDoNotNest) {
   };
   expect_same_bits(reals_of(pool2),
                    reals_from(core_out_of_place(loose_shape, complexes_of(reals_of(pool)), 5400)));
+  expect_batches(
+      fftn::kokkos::shape_of(u, v, direction::backward, fftn::kokkos::axis_type<1>{-1}).batches,
+      {{2, 4000, 4000}, {2, 1000, 1000}, {2, 300, 300}});
+
+  // In-place real transforms with three batch loops: complex values (2, 4, 3, 4, 2) along axes
+  // {1, 3}, the halved axis 3 contiguous, batch dimension 4 inside it and dimensions 2 and 0
+  // padded, so no two nest; the real View shows FFTW's padded layout over the same memory
+  // (strides twice the complex ones, the halved axis contiguous, 6 of each 8 reals).
+  using cs5 = Kokkos::View<Kokkos::complex<T>*****, Kokkos::LayoutStride, Kokkos::HostSpace>;
+  using rs5 = Kokkos::View<T*****, Kokkos::LayoutStride, Kokkos::HostSpace>;
+  const Kokkos::View<Kokkos::complex<T>*, Kokkos::HostSpace> store("store", 216);
+  fill(store, 103);
+  const cs5 spec(store.data(), Kokkos::LayoutStride(2, 109, 4, 27, 3, 9, 4, 1, 2, 4));
+  const rs5 real(reinterpret_cast<T*>(store.data()),
+                 Kokkos::LayoutStride(2, 218, 4, 54, 3, 18, 6, 1, 2, 8));
+  expect_batches(fftn::kokkos::shape_of(real, spec, direction::forward, axes).batches,
+                 {{2, 218, 109}, {3, 18, 9}, {2, 8, 4}});
+  const fftn::shape<T, std::complex<T>> in_place_r2c{
+      .axes =
+          {
+              {.n = 4, .in_stride = 54, .out_stride = 27},
+              {.n = 6, .in_stride = 1, .out_stride = 1},
+          },
+      .batches =
+          {
+              {.count = 2, .in_dist = 218, .out_dist = 109},
+              {.count = 3, .in_dist = 18, .out_dist = 9},
+              {.count = 2, .in_dist = 8, .out_dist = 4},
+          },
+  };
+  fftn::shape<std::complex<T>, T> in_place_c2r;
+  in_place_c2r.dir = direction::backward;
+  for (const fftn::axis& a : in_place_r2c.axes) {
+    in_place_c2r.axes.push_back({.n = a.n, .in_stride = a.out_stride, .out_stride = a.in_stride});
+  }
+  for (const fftn::batch& d : in_place_r2c.batches) {
+    in_place_c2r.batches.push_back(
+        {.count = d.count, .in_dist = d.out_dist, .out_dist = d.in_dist});
+  }
+  const auto start = complexes_of(reals_of(store));
+  const fftn::kokkos::view_plan<host, rs5, cs5, 2> rf_in_place(host{}, real, spec,
+                                                               direction::forward, axes);
+  rf_in_place.execute(real, spec, normalization::none);
+  const auto spectrum_in_place = core_in_place<T>(in_place_r2c, start);
+  expect_same_bits(reals_of(store), reals_from(spectrum_in_place));
+  const fftn::kokkos::view_plan<host, cs5, rs5, 2> rb_in_place(host{}, spec, real,
+                                                               direction::backward, axes);
+  rb_in_place.execute(spec, real, normalization::none);
+  expect_same_bits(reals_of(store), reals_from(core_in_place<T>(in_place_c2r, spectrum_in_place)));
 }
 
 // Real kinds through LayoutStride: rows a few values apart on both sides.
