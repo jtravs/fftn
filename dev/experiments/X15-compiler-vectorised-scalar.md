@@ -155,7 +155,33 @@ the metric and the decision rule above are unchanged.
 
 ## Results
 
-(To be filled with run IDs, host, compiler, instruction set, thread mode and load.)
+### Apple M5 Max (arms A, B, E, E + omp simd)
+
+macOS 27 (Darwin 27.0.0), Clang 23.1.4 (Homebrew LLVM), Release, arm64, one thread; the
+chain passes run on the `scalar` target in every arm (`neon_fcma` has none yet). Desktop
+under fbench's quiet check (load at most 9, other processes at most 1.8 cores),
+user-interactive QoS. Arms as commits: A `5e09db7`, B `65fa47c`, E `3af41a6`, E + simd
+`c282825`. Stores: `bench-out/runs/` and `bench-out/x15/runs/` of the X15 worktree.
+
+- **Bitwise.** `fftn_x15_tests` and `x15-passes --check`, each arm built from its commit:
+  A, B, E, E + simd all equal to plain scalar (2116 of 2116 transforms per precision;
+  plans equal). Arm E needed no tolerance: Clang kept every bit under `-mcpu=native`.
+  C and C + simd (x86-64 cross build, Apple Clang 21, under Rosetta 2 with AVX2
+  advertised): all equal.
+- **Whole transforms, target set**, run `20261113-204841-67b6` (30 valid rounds, 21
+  invalid; load average 2.9–4.4, other processes 0.6–1.7 cores). A/A band ±1.00 %.
+  Weighted geomean against A: B 0.945 [0.942, 0.947], E 1.001 [0.999, 1.003], E + simd
+  0.943 [0.941, 0.945]. B: 23 cases faster, 3 no evidence, 4 slower (r2c-64 and r2c-256,
+  both batches); E + simd the same pattern. Run `20261113-204652-6bc7` is superseded (the
+  quick tier by mistake: two cases).
+- **Whole transforms, collateral run:** not run. After the target set the quiet check
+  kept failing (an editor's C++ indexer and Spotlight, about two cores, outside this
+  session's control).
+- **Pass level**, arm A's binary, run `20261113-205645-6831`: incomplete, 8 of 12 valid
+  rounds before the attempt limit (busy machine, as above). Band ±1.0 %. A–B: `scalar_simd`
+  within the band of `scalar` at every m, level and precision; `neon_fcma` (the Mac's
+  hand vocabulary) about 0.53–0.63 of `scalar` in L1 and hot. E and E + simd: not run
+  (run `20261113-210540-b1db` stopped with no valid round).
 
 ## Verdict
 
