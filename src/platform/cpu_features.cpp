@@ -79,14 +79,16 @@ cpu_features decode_x86_cpuid(const x86_cpuid_words& words) noexcept {
 }
 
 cpu_features decode_linux_hwcap(std::uint64_t hwcap, unsigned sve_vector_bytes) noexcept {
-  // HWCAP_ASIMD, HWCAP_FCMA and HWCAP_SVE; spelled out because older C libraries lack the
-  // newer names.
+  // HWCAP_ASIMD, HWCAP_FCMA, HWCAP_SVE and HWCAP_PACA (address authentication); spelled
+  // out because older C libraries lack the newer names.
   constexpr unsigned asimd = 1;
   constexpr unsigned fcma = 14;
   constexpr unsigned sve = 22;
+  constexpr unsigned paca = 30;
   cpu_features f;
   f.neon = bit(hwcap, asimd);
   f.fcma = f.neon && bit(hwcap, fcma);
+  f.pauth = bit(hwcap, paca);
   f.sve_bits = bit(hwcap, sve) ? 8 * sve_vector_bytes : 0;
   return f;
 }
@@ -99,6 +101,8 @@ cpu_features decode_macos_sysctl(const sysctl_values& values) noexcept {
            sysctl_flag(values, "hw.optional.AdvSIMD") || sysctl_flag(values, "hw.optional.neon");
   f.fcma = f.neon && (sysctl_flag(values, "hw.optional.arm.FEAT_FCMA") ||
                       sysctl_flag(values, "hw.optional.armv8_3_compnum"));
+  // macOS 11 has no name for pointer authentication, so it is reported absent there.
+  f.pauth = sysctl_flag(values, "hw.optional.arm.FEAT_PAuth");
   // Apple silicon has SVE only in SME's streaming mode, which ordinary code never enters.
   return f;
 }
@@ -160,13 +164,14 @@ cpu_features compute_features() noexcept {
 #elif defined(FFTN_PLATFORM_AARCH64) && defined(__APPLE__)
 
 cpu_features compute_features() noexcept {
-  static constexpr std::array<sysctl_key, 5> keys{
+  static constexpr std::array<sysctl_key, 6> keys{
       {
           {.name = "hw.optional.arm.AdvSIMD"},
           {.name = "hw.optional.AdvSIMD"},
           {.name = "hw.optional.neon"},
           {.name = "hw.optional.arm.FEAT_FCMA"},
           {.name = "hw.optional.armv8_3_compnum"},
+          {.name = "hw.optional.arm.FEAT_PAuth"},
       },
   };
   cpu_features f = decode_macos_sysctl(read_sysctl(keys));
@@ -196,8 +201,10 @@ cpu_features compute_features() noexcept {
   cpu_features f;
   f.neon = IsProcessorFeaturePresent(PF_ARM_NEON_INSTRUCTIONS_AVAILABLE) != 0;
   // Windows on Arm documents no processor-feature flag for FCMA; it is reported absent
-  // until experiment B2 settles how to detect it (DESIGN.md 14.2).
+  // until experiment B2 settles how to detect it (DESIGN.md 14.2). Nor does it document
+  // one for pointer authentication, which is reported absent on the same terms.
   f.fcma = false;
+  f.pauth = false;
   return f;
 }
 

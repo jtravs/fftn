@@ -445,6 +445,19 @@ memory (`LD2`/`ST2` on NEON, unpack pairs on x86).
 Each target implements the vocabulary in one header of a few hundred lines. Adding a
 target is adding that header; adding a radix never touches a target.
 
+The names, generic over the real type `T` (`double` and `float`): `cv<T>` and `rv<T>` are
+the register types, `C<T>` and `W<T>` their lane counts, `tw<T>` the twiddle form `mul`,
+`mulc` and `madd` consume, `tw_reals<T>` the reals stored per twiddle (2, or 4 where
+pre-arranged), and `fused` says whether `fmadd` and its relatives round once. They are
+reached through specialisations of a per-target `vec<T>`, so a vector type is never a
+template argument. The real-register family lives in a nested namespace `real`, because
+`cv<T>` and `rv<T>` are one machine type on SIMD targets while `mul` and `bcast` mean
+different things in the two families. The FMA names follow x86: `fmadd(a, b, c)` is
+a·b + c, `fmsub` a·b − c, `fnmadd` c − a·b. `transpose` is a C × C block for now; the
+R × C form arrives with `avx512`, where C = 8 for `float`. The scalar target is never
+fused, so it gives the same bits on every processor. The full contract is
+`src/isa/vocabulary.inl`.
+
 x86 twiddle storage is chosen so `mul` needs no run-time rearrangement: each twiddle is
 stored as the two vectors (wr, wr) and (−wi, wi) the FMA form consumes. That is the
 "pre-arranged" form in the table, and one reason twiddle layout is a per-target, per-pass
@@ -497,9 +510,30 @@ target's entry points in the program. Rules that keep this sound (also in AGENTS
 - no lambdas inside a region (they do not inherit its target);
 - a header is never included for the first time inside a region.
 
+Everything inside a region has internal linkage (the `.inl` texts sit in an unnamed
+namespace within the target's namespace); only the target's function table is exported.
+Each translation unit therefore keeps its own copy of every vocabulary function and
+kernel, and the linker cannot substitute a copy compiled for one target for a caller of
+another. The library is compiled with `-Werror=psabi` under GCC (experiment B1, section
+14.1), always, not only in the gate.
+
+Target strings: `avx2` is `"avx2,fma"`, exactly the features its run-time check requires
+and no AVX-512 feature; `neon_fcma` is `"arch=armv8.3-a"`, because Clang's NEON header
+declares the complex intrinsics for the whole Armv8.3 architecture (`"+fcma"` is
+rejected). That string also allows other Armv8.3 instructions: the disassembly test
+forbids RCPC and JSCVT in `neon_fcma` code. Pointer authentication is allowed there,
+because branch protection may sign that code's returns with RETAA; `neon_fcma` is
+therefore dispatched only on processors with both FCMA and pointer authentication (both
+mandatory from Armv8.3), and a core with FCMA alone (A64FX) gets plain `neon`. The macros put
+each target pragma last in its expansion: GCC drops the tokens that follow a
+`_Pragma("GCC target ...")` within one macro expansion.
+
 A dedicated test links every instruction set's translation unit into one binary and
-checks the disassembly of each target's kernels for the intended instructions and for the
-absence of calls to out-of-line helpers.
+checks the disassembly of each target's kernels (`tools/asm_check.py`) for the intended
+instructions, for the absence of calls to out-of-line helpers, and for the absence of the
+target's instructions in baseline code. What the build's own baseline already has is
+allowed there: on Apple platforms the compiler targets Apple silicon, which has FCMA, even
+under `-march=armv8-a` (only `-mcpu=generic` removes it).
 
 ---
 
@@ -1119,10 +1153,13 @@ Rosetta. Findings:
 - The portable target string for FCMA is `arch=armv8.3-a` (`+fcma` fails with Clang's
   NEON header).
 - On x86-64 Linux (experiment [B1](experiments/B1-isa-regions-gcc-linux.md)) the mechanism
-  holds with GCC 13 to 16 and Clang 18 to 23. But every GCC compiles a vector passed by
-  value from a region into a baseline function with only a `-Wpsabi` warning, and the
-  program then crashes. The library is therefore built with `-Werror=psabi` under GCC, and
-  vector types are never template arguments in region code (GCC drops their attributes).
+  holds with GCC 13 to 16 and Clang 18 to 23, at -O0, -O2, -O3 with LTO and under ASan and
+  UBSan. But every GCC compiles a vector passed by value from a region into a baseline
+  function with only a `-Wpsabi` warning, and the program then segfaults (Clang rejects
+  the same code). GCC also warns `-Wignored-attributes` wherever a vector type is a
+  template argument, and does not inline a lambda in a region at -O0. The library is
+  therefore built with `-Werror=psabi` under GCC, and vector types are never template
+  arguments in region code.
 - Not yet run: Clang on Windows (experiment B2).
 
 ### 14.2 Decision: a compiled static library
@@ -1146,6 +1183,8 @@ What the experiments still require of the build:
 - **No ISA flags.** Every instruction set comes from attribute regions, so the library
   can be built at the baseline of any project or wheel and still use AVX-512 or FCMA at
   run time.
+- **ABI warnings are errors.** With GCC the library is built with `-Werror=psabi`
+  (section 14.1).
 - **Its own floating-point flags.** The library sets `-ffp-contract=off`, refuses
   fast-math, and never inherits the including project's flags. All FMAs in kernels are
   explicit.
@@ -1450,6 +1489,9 @@ implementation are listed here until settled.
 | 2026-11-13 | ISA regions confirmed on Linux x86-64; GCC builds use `-Werror=psabi`; no vector types as template arguments | Experiment B1: GCC silently miscompiles by-value vectors across a region boundary |
 | 2026-11-13 | Platform readers are parsers over recorded sources (a one-file sysfs snapshot, a sysctl snapshot); `FFTN_TOPOLOGY` names a recording; detection results are function-local constants | The Linux, macOS and x86 logic is tested on any machine; one fixture file per machine rather than thousands; no mutable global state |
 | 2026-11-13 | The planning clock is `std::chrono::steady_clock` (measured step 41 ns on Apple M5 Max) | Planning times whole executions of microseconds; a cycle counter adds per-CPU skew and frequency questions |
+| 2026-11-13 | Vocabulary names `cv`, `rv`, `tw`, `C`, `W`, `tw_reals`, `fused` through `vec<T>`; the real-register family in namespace `real`; x86 FMA naming | Vector types must never be template arguments (B1); the two families share one machine type on SIMD targets |
+| 2026-11-13 | Region text has internal linkage; only each target's function table is exported | Removes, by construction, the linker picking one target's copy of a shared inline function for another caller |
+| 2026-11-13 | `neon_fcma` runs only where the processor has FCMA and pointer authentication; PAuth instructions are allowed in its code and nowhere else outside the hint space | Branch protection may emit RETAA in an Armv8.3 region (seen with GCC 16 and Clang 23); both features are mandatory from Armv8.3, so only rare FCMA-only cores lose the target |
 
 ---
 

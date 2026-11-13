@@ -28,9 +28,13 @@ struct cpu_features {
   bool avx512bw = false;
   bool avx512vl = false;
   // AArch64. neon is Advanced SIMD (always present on AArch64); fcma is FCMLA/FCADD
-  // (Armv8.3 complex arithmetic). sve_bits is the SVE vector length, 0 without SVE.
+  // (Armv8.3 complex arithmetic); pauth is pointer authentication (FEAT_PAuth, also
+  // Armv8.3), which neon_fcma needs because branch protection may sign its returns with
+  // instructions outside the hint space (DESIGN.md 6.4). sve_bits is the SVE vector
+  // length, 0 without SVE.
   bool neon = false;
   bool fcma = false;
+  bool pauth = false;
   unsigned sve_bits = 0;
 
   bool operator==(const cpu_features&) const = default;

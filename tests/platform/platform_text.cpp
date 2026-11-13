@@ -63,6 +63,7 @@ std::string features_text(const fftn::detail::cpu_features& f) {
   flag("avx512vl", f.avx512vl);
   flag("neon", f.neon);
   flag("fcma", f.fcma);
+  flag("pauth", f.pauth);
   out << "sve_bits " << f.sve_bits << '\n';
   return out.str();
 }
