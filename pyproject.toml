@@ -1,0 +1,13 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# The uv environment for FFTN's Python: the gate's tools, fbench and the codelet generator
+# (AGENTS.md section 4). Not a package; nothing here is installed by users.
+[project]
+name = "fftn-dev"
+version = "0.0.0"
+requires-python = ">=3.14"
+dependencies = []
+
+[tool.uv]
+package = false

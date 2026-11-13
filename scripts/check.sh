@@ -46,33 +46,48 @@ say() { printf '\n== %s\n' "$*"; }
 skip() { printf '   nothing to check yet (%s)\n' "$*"; }
 
 CLANG_FORMAT_VERSION=23.1.0
-CLANG_TIDY_VERSION=23.1.0
+CLANG_TIDY_VERSION=23.1.4  # the PyPI wheels have no 23.1.0
 RUFF_VERSION=0.17.4
 # Line coverage of hand-written code, in percent. Raise it as coverage rises; never lower it.
 COVERAGE_MIN_LINES=${FFTN_COVERAGE_MIN_LINES:-95}
 jobs=${FFTN_CHECK_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)}
 
+# Python tools run in the project's uv environment (pyproject.toml, uv.lock).
+py() { uv run --frozen --quiet python "$@"; }
 files() { git ls-files --cached --others --exclude-standard -- "$@"; }
 have_code() { [[ -f CMakeLists.txt ]]; }
 have_preset() { have_code && cmake --list-presets 2>/dev/null | grep -q "\"$1\""; }
 
-# Configure, build and test one CMake preset; logs go to build/<preset>.log and the tail
-# is shown on failure.
-preset() {
+# Configure one CMake preset and report the compiler; logs go to build/<preset>.log.
+configure() {
   local name=$1
   mkdir -p build
-  if ! { cmake --preset "$name" && cmake --build --preset "$name" -j "$jobs"; } \
-      > "build/$name.log" 2>&1; then
+  if ! cmake --preset "$name" > "build/$name.log" 2>&1; then
+    tail -40 "build/$name.log"
+    echo "configure of preset $name failed: build/$name.log"
+    exit 1
+  fi
+  printf '   compiler: %s (%s)\n' "$(cache_value "$name" FFTN_CXX_COMPILER)" \
+    "$(cache_value "$name" CMAKE_CXX_COMPILER)"
+}
+cache_value() {
+  sed -n "s/^$2:[A-Z]*=//p" "build/$1/CMakeCache.txt" | head -1
+}
+# Build and test a configured preset; the error lines are shown on failure.
+build_and_test() {
+  local name=$1
+  if ! cmake --build --preset "$name" -j "$jobs" >> "build/$name.log" 2>&1; then
     grep -E "error|warning:" -A4 "build/$name.log" | head -80 || true
     echo "build of preset $name failed: build/$name.log"
     exit 1
   fi
   ctest --preset "$name" --output-on-failure
 }
+preset() { configure "$1" && build_and_test "$1"; }
 
-if stage spdx; then say "SPDX headers"; python3 tools/repo_lint.py spdx; fi
-if stage docs; then say "documents"; python3 tools/repo_lint.py docs; fi
-if stage knobs; then say "experimental switches"; python3 tools/repo_lint.py knobs; fi
+if stage spdx; then say "SPDX headers"; py tools/repo_lint.py spdx; fi
+if stage docs; then say "documents"; py tools/repo_lint.py docs; fi
+if stage knobs; then say "experimental switches"; py tools/repo_lint.py knobs; fi
 
 if stage format; then
   say "clang-format $CLANG_FORMAT_VERSION"
@@ -105,15 +120,16 @@ fi
 if stage gen; then
   say "generated codelets are reproducible"
   if [[ -f gen/fftn_gen/__main__.py ]]; then
-    python3 -m gen.fftn_gen --check src/gen
+    py -m gen.fftn_gen --check src/gen
   else skip "no generator"; fi
 fi
 
 if stage apidoc; then
   say "public API documentation and example snippets"
   if [[ -f docs/Doxyfile ]]; then
+    mkdir -p build
     doxygen docs/Doxyfile > build/apidoc.log 2>&1 || { cat build/apidoc.log; exit 1; }
-    python3 tools/repo_lint.py snippets
+    py tools/repo_lint.py snippets
   else skip "no docs/Doxyfile"; fi
 fi
 
@@ -132,7 +148,16 @@ fi
 if stage sanitize; then
   say "ASan + UBSan"
   if have_preset check-sanitize; then
-    UBSAN_OPTIONS=${UBSAN_OPTIONS:-print_stacktrace=1:halt_on_error=1} preset check-sanitize
+    configure check-sanitize
+    # Leak detection is on wherever the runtime has it; Apple Clang's does not.
+    leaks=1
+    if [[ $(cache_value check-sanitize FFTN_CXX_COMPILER) == AppleClang* ]]; then
+      leaks=0
+      echo "   leak detection: not available with Apple Clang (use Homebrew LLVM for it)"
+    fi
+    ASAN_OPTIONS=${ASAN_OPTIONS:-detect_leaks=$leaks} \
+      UBSAN_OPTIONS=${UBSAN_OPTIONS:-print_stacktrace=1:halt_on_error=1} \
+      build_and_test check-sanitize
   else skip "no check-sanitize preset"; fi
 fi
 
@@ -146,15 +171,18 @@ fi
 if stage coverage; then
   say "coverage (hand-written code, at least $COVERAGE_MIN_LINES % of lines)"
   if have_preset check-coverage; then
+    # Profiles from earlier runs would count lines this run did not execute.
+    rm -rf build/check-coverage/profiles
+    if [[ -d build/check-coverage ]]; then find build/check-coverage -name '*.gcda' -delete; fi
     preset check-coverage
-    python3 tools/coverage_gate.py build/check-coverage --min-lines "$COVERAGE_MIN_LINES"
+    py tools/coverage_gate.py build/check-coverage --min-lines "$COVERAGE_MIN_LINES"
   else skip "no check-coverage preset"; fi
 fi
 
 if stage bench; then
   say "fbench smoke (correctness only)"
   if [[ -f bench/fbench.py ]] && have_preset check-release; then
-    python3 bench/fbench.py smoke --build build/check-release --strict
+    py bench/fbench.py smoke --build build/check-release --strict
   else skip "no fbench"; fi
 fi
 

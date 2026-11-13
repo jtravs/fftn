@@ -7,6 +7,18 @@
     tools/repo_lint.py docs    relative links in tracked Markdown resolve; PLAN.md has
                                its status section; no file is referenced that is ignored
     tools/repo_lint.py knobs   experimental switches are registered and not expired
+    tools/repo_lint.py snippets  code blocks in docs/ are quoted from files in examples/
+
+A snippet is a fenced block in docs/*.md whose info string names its source:
+
+    ```cpp file=examples/rows.cpp region=plan
+    ...
+    ```
+
+The block must equal the lines of that file between `// snippet-begin: plan` and
+`// snippet-end: plan` (without `region=`, the whole file after its SPDX header), after
+removing their common indentation. Every C or C++ block in docs/ must name a source, so no
+untested code reaches a document.
 
 Standard library only. Files are taken from git (tracked plus untracked-but-not-ignored),
 so a new file is checked before its first commit.
@@ -134,8 +146,81 @@ def check_knobs(files: list[Path]) -> list[str]:
     return problems
 
 
+FENCE = re.compile(r"^(\s*)```(\S*)(.*)$")
+SNIPPET_LANGS = {"c", "cpp", "c++", "cxx", "h", "hpp"}
+
+
+def dedent(lines: list[str]) -> list[str]:
+    lines = [ln.rstrip() for ln in lines]
+    while lines and not lines[0]:
+        lines.pop(0)
+    while lines and not lines[-1]:
+        lines.pop()
+    indents = [len(ln) - len(ln.lstrip()) for ln in lines if ln]
+    cut = min(indents, default=0)
+    return [ln[cut:] for ln in lines]
+
+
+def snippet_source(path: Path, region: str | None) -> list[str] | str:
+    if not path.is_file():
+        return f"no such file {path.relative_to(ROOT)}"
+    lines = path.read_text(encoding="utf-8").splitlines()
+    if region is None:
+        body = lines
+        while body and (body[0].startswith("//") or not body[0].strip()):
+            body = body[1:]  # SPDX header and file comment
+        return dedent(body)
+    begin = [i for i, ln in enumerate(lines) if ln.strip() == f"// snippet-begin: {region}"]
+    end = [i for i, ln in enumerate(lines) if ln.strip() == f"// snippet-end: {region}"]
+    if len(begin) != 1 or len(end) != 1 or end[0] < begin[0]:
+        return f"region {region!r} not found exactly once in {path.relative_to(ROOT)}"
+    body = [ln for ln in lines[begin[0] + 1 : end[0]] if "// snippet-" not in ln]
+    return dedent(body)
+
+
+def check_snippets(files: list[Path]) -> list[str]:
+    problems = []
+    for f in files:
+        rel = f.relative_to(ROOT)
+        if f.suffix != ".md" or rel.parts[0] != "docs":
+            continue
+        lines = f.read_text(encoding="utf-8").splitlines()
+        i = 0
+        while i < len(lines):
+            m = FENCE.match(lines[i])
+            if not m:
+                i += 1
+                continue
+            start = i
+            i += 1
+            while i < len(lines) and not lines[i].strip().startswith("```"):
+                i += 1
+            block = dedent(lines[start + 1 : i])
+            i += 1
+            lang, info = (
+                m.group(2).lower(),
+                dict(kv.split("=", 1) for kv in m.group(3).split() if "=" in kv),
+            )
+            if lang not in SNIPPET_LANGS:
+                continue
+            if "file" not in info:
+                problems.append(f"{rel}:{start + 1}: {lang} block names no source (file=...)")
+                continue
+            source = snippet_source(ROOT / info["file"], info.get("region"))
+            if isinstance(source, str):
+                problems.append(f"{rel}:{start + 1}: {source}")
+            elif source != block:
+                problems.append(f"{rel}:{start + 1}: block differs from {info['file']}")
+    return problems
+
+
 def main() -> int:
-    checks = {"spdx": check_spdx, "docs": check_docs, "knobs": check_knobs}
+    checks = {
+        "spdx": check_spdx,
+        "docs": check_docs,
+        "knobs": check_knobs,
+        "snippets": check_snippets,
+    }
     wanted = sys.argv[1:] or list(checks)
     files = repo_files()
     failed = False
