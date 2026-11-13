@@ -18,6 +18,7 @@ Checks: >
   -bugprone-easily-swappable-parameters,
   -misc-non-private-member-variables-in-classes,
   -misc-no-recursion,
+  -portability-avoid-pragma-once,
   -modernize-use-trailing-return-type,
   -readability-identifier-length,
   -readability-magic-numbers,
@@ -28,6 +29,7 @@ Checks: >
 #   easily-swappable-parameters   kernels take (in, out, twiddle, n, stride) by design
 #   non-private-member-variables  POD stage records and descriptors are plain structs
 #   no-recursion                  plan construction recurses over factorisations
+#   avoid-pragma-once             every supported compiler has it; guards are names to keep unique
 #   use-trailing-return-type      style choice
 #   identifier-length             n, m, s, p, q, k, w are the domain's names
 #   magic-numbers                 radices and cache constants are named where they matter

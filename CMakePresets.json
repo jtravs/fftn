@@ -1,0 +1,84 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "check-base",
+      "hidden": true,
+      "description": "Gate builds (scripts/check.sh): warnings as errors, tests on.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "FFTN_BUILD_TESTS": "ON",
+        "FFTN_BUILD_BENCH": "ON",
+        "FFTN_WARNINGS_AS_ERRORS": "ON",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "check-release",
+      "inherits": "check-base",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    },
+    {
+      "name": "check-tidy",
+      "inherits": "check-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "FFTN_CLANG_TIDY": "$env{FFTN_CLANG_TIDY}"
+      }
+    },
+    {
+      "name": "check-sanitize",
+      "inherits": "check-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "FFTN_SANITIZE": "address,undefined"
+      }
+    },
+    {
+      "name": "check-tsan",
+      "inherits": "check-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "FFTN_SANITIZE": "thread"
+      }
+    },
+    {
+      "name": "check-coverage",
+      "inherits": "check-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "FFTN_BUILD_BENCH": "OFF",
+        "FFTN_COVERAGE": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "check-release", "configurePreset": "check-release" },
+    { "name": "check-tidy", "configurePreset": "check-tidy" },
+    { "name": "check-sanitize", "configurePreset": "check-sanitize" },
+    { "name": "check-tsan", "configurePreset": "check-tsan" },
+    { "name": "check-coverage", "configurePreset": "check-coverage" }
+  ],
+  "testPresets": [
+    {
+      "name": "check-base",
+      "hidden": true,
+      "output": { "outputOnFailure": true },
+      "execution": { "noTestsAction": "error", "jobs": 8 }
+    },
+    { "name": "check-release", "inherits": "check-base", "configurePreset": "check-release" },
+    { "name": "check-tidy", "inherits": "check-base", "configurePreset": "check-tidy" },
+    { "name": "check-sanitize", "inherits": "check-base", "configurePreset": "check-sanitize" },
+    { "name": "check-tsan", "inherits": "check-base", "configurePreset": "check-tsan" },
+    {
+      "name": "check-coverage",
+      "inherits": "check-base",
+      "configurePreset": "check-coverage",
+      "environment": {
+        "LLVM_PROFILE_FILE": "${sourceDir}/build/check-coverage/profiles/%p.profraw"
+      }
+    }
+  ]
+}
