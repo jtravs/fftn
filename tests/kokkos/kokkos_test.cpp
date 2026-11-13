@@ -230,6 +230,53 @@ TYPED_TEST(KokkosAdapter, PlansServeOtherViewsAndTheCompatNames) {
   EXPECT_NE(p.describe().find("c2c"), std::string::npos) << p.describe();
 }
 
+// compat::Direction is Kokkos-FFT's enumeration (0 and 1, underlying int), converted to
+// fftn::direction by the plan: each value gives the transform of that direction, and a value
+// that is neither is refused naming dir.
+static_assert(std::is_same_v<std::underlying_type_t<fftn::kokkos::compat::Direction>, int>);
+static_assert(static_cast<int>(fftn::kokkos::compat::Direction::forward) == 0);
+static_assert(static_cast<int>(fftn::kokkos::compat::Direction::backward) == 1);
+
+TYPED_TEST(KokkosAdapter, CompatDirectionConvertsToFftnDirection) {
+  using T = TypeParam;
+  namespace kfft = fftn::kokkos::compat;
+  const std::size_t n = 12;
+  const std::size_t rows = 2;
+  const complex2<T> x("x", rows, n);
+  const complex2<T> y("y", rows, n);
+  fill(x, 31);
+  const auto input = complexes_of(reals_of(x));
+  EXPECT_EQ(fftn::kokkos::detail::direction_of(kfft::Direction::forward), direction::forward);
+  EXPECT_EQ(fftn::kokkos::detail::direction_of(kfft::Direction::backward), direction::backward);
+  for (const auto& [compat_dir, dir] :
+       {std::pair{kfft::Direction::forward, direction::forward},
+        std::pair{kfft::Direction::backward, direction::backward}}) {
+    const kfft::Plan<host, complex2<T>, complex2<T>> p(host{}, x, y, compat_dir, -1);
+    kfft::execute(p, x, y, kfft::Normalization::none);
+    const auto want = core_out_of_place(fftn::rows_c2c<T>(n, rows, dir), input, n * rows);
+    expect_same_bits(reals_of(y), reals_from(want));
+    const kfft::Plan<host, complex2<T>, complex2<T>> q(host{}, x, y, compat_dir,
+                                                       kfft::axis_type<1>{-1});
+    q.execute(x, y, kfft::Normalization::none);
+    expect_same_bits(reals_of(y), reals_from(want));
+  }
+  // Real plans check the converted direction as Kokkos-FFT does.
+  const real2<T> r("r", rows, n);
+  const complex2<T> h("h", rows, n / 2 + 1);
+  expect_refused(
+      [&] { kfft::Plan<host, real2<T>, complex2<T>>(host{}, r, h, kfft::Direction::backward, -1); },
+      "dir");
+  // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange): invalid on purpose
+  const auto invalid = static_cast<kfft::Direction>(2);
+  expect_refused([&] { kfft::Plan<host, complex2<T>, complex2<T>>(host{}, x, y, invalid, -1); },
+                 "dir");
+  expect_refused(
+      [&] {
+        kfft::Plan<host, complex2<T>, complex2<T>>(host{}, x, y, invalid, kfft::axis_type<1>{-1});
+      },
+      "dir");
+}
+
 // View-based construction for the core API: make_plan and data_of, executed with the
 // caller's own workspace, give the adapter plan's result.
 TYPED_TEST(KokkosAdapter, MakePlanGivesACorePlan) {

@@ -90,7 +90,9 @@ For host Views, the include and the namespace change and nothing else:
  kfft::execute(forward, in, out, kfft::Normalization::none);
 ```
 
-`kfft::axis_type<2>{-2, -1}` and the multi-axis constructor carry over the same way. An
+`kfft::axis_type<2>{-2, -1}` and the multi-axis constructor carry over the same way.
+`kfft::Direction` is Kokkos-FFT's enumeration, with its values 0 and 1, which the plan
+converts to `fftn::direction` (the exponent's sign, −1 and +1); `view_plan` takes either. An
 application that also builds for GPUs keeps Kokkos-FFT for its device Views and chooses the
 namespace per build.
 

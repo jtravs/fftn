@@ -61,6 +61,20 @@ enum class normalization : std::int8_t {
 /// negative values counting from the end (-1 is the last dimension).
 template <std::size_t Dim> using axis_type = std::array<int, Dim>;
 
+namespace compat {
+
+/// `KokkosFFT::Direction`, declared as Kokkos-FFT 2.0 declares it: the same names, values
+/// and underlying type, so code that converts a direction to an integer sees Kokkos-FFT's
+/// 0 and 1 (FFTN's own `fftn::direction` is the exponent's sign, -1 and +1). `compat::Plan`
+/// takes it and converts it to `fftn::direction`.
+// NOLINTNEXTLINE(performance-enum-size): int, as Kokkos-FFT's, so conversions agree with it
+enum class Direction : int {
+  forward = 0,  ///< the forward transform, exponent -2 pi i jk / n
+  backward = 1, ///< the backward transform, exponent +2 pi i jk / n
+};
+
+} // namespace compat
+
 namespace detail {
 
 template <class Value> struct element_of {
@@ -91,6 +105,18 @@ template <class T> struct is_element<Kokkos::complex<T>> : is_element<T> {};
 
 [[noreturn]] inline void reject(const std::string& argument, const std::string& why) {
   throw std::invalid_argument("fftn::kokkos: " + argument + " " + why);
+}
+
+// Kokkos-FFT's direction as FFTN's. A value that is neither enumerator is refused, as
+// FFTN's plans refuse an invalid fftn::direction.
+inline direction direction_of(compat::Direction dir) {
+  switch (dir) {
+  case compat::Direction::forward:
+    return direction::forward;
+  case compat::Direction::backward:
+    return direction::backward;
+  }
+  reject("dir", "is neither Direction::forward nor Direction::backward");
 }
 
 // Kokkos reports strides as unsigned values; FFTN's are signed. A View's strides address its
@@ -457,6 +483,26 @@ public:
                      const std::array<std::size_t, Dim>& s = {})
       : view_plan(exec_space, in, out, checked_shape(in, out, dir, axes, s)) {}
 
+  /// The one-axis constructor with Kokkos-FFT's `compat::Direction`, the spelling
+  /// `compat::Plan` call sites use: as the one taking `direction`, with `dir` converted.
+  ///
+  /// Throws `std::invalid_argument` naming `dir` when it is neither enumerator, and
+  /// otherwise as the constructor taking `direction`.
+  explicit view_plan(const ExecutionSpace& exec_space, const InView& in, const OutView& out,
+                     compat::Direction dir, int axis, std::optional<std::size_t> n = std::nullopt)
+    requires(Dim == 1)
+      : view_plan(exec_space, in, out, detail::direction_of(dir), axis, n) {}
+
+  /// The multi-axis constructor with Kokkos-FFT's `compat::Direction`, the spelling
+  /// `compat::Plan` call sites use: as the one taking `direction`, with `dir` converted.
+  ///
+  /// Throws `std::invalid_argument` naming `dir` when it is neither enumerator, and
+  /// otherwise as the constructor taking `direction`.
+  explicit view_plan(const ExecutionSpace& exec_space, const InView& in, const OutView& out,
+                     compat::Direction dir, const axis_type<Dim>& axes,
+                     const std::array<std::size_t, Dim>& s = {})
+      : view_plan(exec_space, in, out, detail::direction_of(dir), axes, s) {}
+
   /// Not copyable, as Kokkos-FFT's plan.
   view_plan(const view_plan&) = delete;
   /// Not copyable, as Kokkos-FFT's plan.
@@ -646,16 +692,12 @@ void execute(const view_plan<ExecutionSpace, InView, OutView, Dim>& p,
 /// Kokkos-FFT's names for this adapter, so that code written against Kokkos-FFT 2.0 needs
 /// only a new include and namespace: `KokkosFFT::Plan` becomes `fftn::kokkos::compat::Plan`,
 /// and so on. The names break FFTN's snake_case rule on purpose; they are aliases of the
-/// adapter's own.
+/// adapter's own, except `Direction` (declared above), whose values are Kokkos-FFT's.
 namespace compat {
 
 /// `KokkosFFT::Plan`: the adapter's `view_plan`.
 template <class ExecutionSpace, class InViewType, class OutViewType, std::size_t Dim = 1>
 using Plan = kokkos::view_plan<ExecutionSpace, InViewType, OutViewType, Dim>;
-
-/// `KokkosFFT::Direction`: FFTN's `direction`, whose `forward` and `backward` are spelled the
-/// same.
-using Direction = fftn::direction;
 
 /// `KokkosFFT::Normalization`: the adapter's `normalization`.
 using Normalization = kokkos::normalization;
