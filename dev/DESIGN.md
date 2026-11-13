@@ -469,8 +469,9 @@ has two levels:
   `Normalization`, `axis_type`, `shape_type`, `execute`), so a call site changes its include
   and namespace only. It is a deliberate exception to the naming rule of AGENTS.md section
   4, confined to that namespace, and nothing in it differs from Kokkos-FFT on purpose:
-  `Direction` is Kokkos-FFT's enumeration (0 and 1, converted to `fftn::direction` inside
-  the plan), and `shape_type`, which means only Kokkos-FFT's crop-and-pad lengths, exists
+  `Direction` and `Normalization` are Kokkos-FFT's enumerations (underlying `int`;
+  `Direction` 0 and 1), converted to `fftn::direction` and the adapter's `normalization`
+  inside the plan, and `shape_type`, which means only Kokkos-FFT's crop-and-pad lengths, exists
   only there. Keeping the adapter a faithful mirror keeps open an FFTN host back end inside
   Kokkos-FFT later. CTAD through the `Plan` alias needs Clang 19 or GCC; the class itself
   deduces everywhere.

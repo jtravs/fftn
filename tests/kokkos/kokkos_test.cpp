@@ -278,6 +278,47 @@ TYPED_TEST(KokkosAdapter, CompatDirectionConvertsToFftnDirection) {
       "dir");
 }
 
+// compat::Normalization is Kokkos-FFT's enumeration (0 to 3, underlying int), converted to the
+// adapter's normalization by execute: each value scales as its namesake, through the member and
+// the free function, and a value that is none of them is refused naming norm.
+static_assert(std::is_same_v<std::underlying_type_t<fftn::kokkos::compat::Normalization>, int>);
+static_assert(static_cast<int>(fftn::kokkos::compat::Normalization::forward) == 0);
+static_assert(static_cast<int>(fftn::kokkos::compat::Normalization::backward) == 1);
+static_assert(static_cast<int>(fftn::kokkos::compat::Normalization::ortho) == 2);
+static_assert(static_cast<int>(fftn::kokkos::compat::Normalization::none) == 3);
+
+TYPED_TEST(KokkosAdapter, CompatNormalizationConvertsToTheAdapters) {
+  using T = TypeParam;
+  namespace kfft = fftn::kokkos::compat;
+  const std::size_t n = 16;
+  const std::size_t rows = 2;
+  const complex2<T> x("x", rows, n);
+  const complex2<T> y("y", rows, n);
+  const complex2<T> z("z", rows, n);
+  fill(x, 37);
+  const kfft::Plan<host, complex2<T>, complex2<T>> p(host{}, x, y, kfft::Direction::backward, -1);
+  for (const auto& [compat_norm, norm] : {
+           std::pair{kfft::Normalization::forward, normalization::forward},
+           std::pair{kfft::Normalization::backward, normalization::backward},
+           std::pair{kfft::Normalization::ortho, normalization::ortho},
+           std::pair{kfft::Normalization::none, normalization::none},
+       }) {
+    EXPECT_EQ(fftn::kokkos::detail::normalization_of(compat_norm), norm);
+    p.execute(x, z, norm);
+    const auto want = reals_of(z);
+    fill(y, 0);
+    p.execute(x, y, compat_norm);
+    expect_same_bits(reals_of(y), want);
+    fill(y, 0);
+    kfft::execute(p, x, y, compat_norm);
+    expect_same_bits(reals_of(y), want);
+  }
+  // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange): invalid on purpose
+  const auto invalid = static_cast<kfft::Normalization>(4);
+  expect_refused([&] { p.execute(x, y, invalid); }, "norm");
+  expect_refused([&] { kfft::execute(p, x, y, invalid); }, "norm");
+}
+
 // View-based construction for the core API: make_plan and data_of, executed with the
 // caller's own workspace, give the adapter plan's result.
 TYPED_TEST(KokkosAdapter, MakePlanGivesACorePlan) {

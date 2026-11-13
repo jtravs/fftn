@@ -73,6 +73,17 @@ enum class Direction : int {
   backward = 1, ///< the backward transform, exponent +2 pi i jk / n
 };
 
+/// `KokkosFFT::Normalization`, declared as Kokkos-FFT 2.0 declares it: the same names,
+/// values and underlying type. The plan's `execute` takes it and converts it to the
+/// adapter's `normalization`, whose enumerators mean the same.
+// NOLINTNEXTLINE(performance-enum-size): int, as Kokkos-FFT's, so conversions agree with it
+enum class Normalization : int {
+  forward = 0,  ///< forward transforms are multiplied by 1/N, backward ones are not scaled
+  backward = 1, ///< backward transforms are multiplied by 1/N, forward ones are not scaled
+  ortho = 2,    ///< every transform is multiplied by 1/sqrt(N)
+  none = 3,     ///< nothing is scaled
+};
+
 } // namespace compat
 
 namespace detail {
@@ -117,6 +128,22 @@ inline direction direction_of(compat::Direction dir) {
     return direction::backward;
   }
   reject("dir", "is neither Direction::forward nor Direction::backward");
+}
+
+// Kokkos-FFT's normalisation as the adapter's. A value that is neither enumerator is
+// refused rather than read as one of them.
+inline normalization normalization_of(compat::Normalization norm) {
+  switch (norm) {
+  case compat::Normalization::forward:
+    return normalization::forward;
+  case compat::Normalization::backward:
+    return normalization::backward;
+  case compat::Normalization::ortho:
+    return normalization::ortho;
+  case compat::Normalization::none:
+    return normalization::none;
+  }
+  reject("norm", "is none of Normalization's enumerators");
 }
 
 // Kokkos reports strides as unsigned values; FFTN's are signed. A View's strides address its
@@ -558,6 +585,15 @@ public:
     scale(out, norm);
   }
 
+  /// `execute` with Kokkos-FFT's `compat::Normalization`, the spelling `compat::Plan` call
+  /// sites use: as the one taking `normalization`, with `norm` converted.
+  ///
+  /// Throws `std::invalid_argument` naming `norm` when it is none of the enumerators, and
+  /// otherwise as `execute` taking `normalization`.
+  void execute(const InView& in, const OutView& out, compat::Normalization norm) const {
+    execute(in, out, detail::normalization_of(norm));
+  }
+
   /// The FFTN plan this plan executes.
   [[nodiscard]] const fftn::plan<in_element, out_element>& fftn_plan() const noexcept {
     return plan_;
@@ -688,18 +724,27 @@ void execute(const view_plan<ExecutionSpace, InView, OutView, Dim>& p,
   p.execute(in, out, norm);
 }
 
+/// `execute(p, in, out, norm)` with Kokkos-FFT's `compat::Normalization`: the same as
+/// `p.execute(in, out, norm)`.
+///
+/// Preconditions, exceptions and guarantees: those of `view_plan::execute`.
+template <class ExecutionSpace, class InView, class OutView, std::size_t Dim>
+void execute(const view_plan<ExecutionSpace, InView, OutView, Dim>& p,
+             const std::type_identity_t<InView>& in, const std::type_identity_t<OutView>& out,
+             compat::Normalization norm) {
+  p.execute(in, out, norm);
+}
+
 /// Kokkos-FFT's names for this adapter, so that code written against Kokkos-FFT 2.0 needs
 /// only a new include and namespace: `KokkosFFT::Plan` becomes `fftn::kokkos::compat::Plan`,
 /// and so on. The names break FFTN's snake_case rule on purpose; they are aliases of the
-/// adapter's own, except `Direction` (declared above), whose values are Kokkos-FFT's.
+/// adapter's own, except `Direction` and `Normalization` (declared above), which are
+/// Kokkos-FFT's own enumerations.
 namespace compat {
 
 /// `KokkosFFT::Plan`: the adapter's `view_plan`.
 template <class ExecutionSpace, class InViewType, class OutViewType, std::size_t Dim = 1>
 using Plan = kokkos::view_plan<ExecutionSpace, InViewType, OutViewType, Dim>;
-
-/// `KokkosFFT::Normalization`: the adapter's `normalization`.
-using Normalization = kokkos::normalization;
 
 /// `KokkosFFT::axis_type`: the adapter's `axis_type`.
 template <std::size_t Dim> using axis_type = kokkos::axis_type<Dim>;
