@@ -42,6 +42,7 @@ function(fbench_add_backend library)
 endfunction()
 
 fbench_add_backend(fftn fftn::fftn)
+fftn_x15_consumer(fbench-fftn)
 
 # FFTW only from an explicit installation: never a default search path, so that a
 # handicapped build (Homebrew's FFTW has no SIMD on arm64) cannot be picked up by accident

@@ -76,14 +76,19 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
     return fbench_error;
   }
   const fftn::c2c_plan<double> probe(fftn::rows_c2c<double>(8, 1, fftn::direction::forward));
-  description() = fbench::json()
-                      .str("library", "fftn")
-                      .str("version", fftn::version())
-                      .str("isa", fftn::isa_name(probe.instruction_set()))
-                      .str("precision", "double")
-                      .raw("supports", R"(["c2c","r2c","c2r"])")
-                      .str("strategy", "chain")
-                      .inner();
+  fbench::json j;
+  j.str("library", "fftn")
+      .str("version", fftn::version())
+      .str("isa", fftn::isa_name(probe.instruction_set()))
+      .str("precision", "double")
+      .raw("supports", R"(["c2c","r2c","c2r"])")
+      .str("strategy", "chain")
+      // Experiment X15: the switches the library was built with (cmake/FftnExperiments.cmake).
+      .str("x15_switches", FFTN_X15_LIBRARY_SWITCHES);
+#if defined(FFTN_X_NATIVE) && FFTN_X_NATIVE
+  j.str("distributable", "no: X15 arm E, the whole library built for this machine");
+#endif
+  description() = j.inner();
   return fbench_ok;
 }
 
