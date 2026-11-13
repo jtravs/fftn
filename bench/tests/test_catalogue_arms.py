@@ -142,6 +142,29 @@ class ArmGrammar(unittest.TestCase):
         debug = {"harness": {"build_type": "Debug", "sanitize": ""}}
         self.assertIn("Debug", arms.timing_problem(debug))
 
+    def test_library_through_a_symlinked_root(self):
+        # An installation whose lib directory links into a build tree is the installation;
+        # another copy of the library is not, and neither is a ".." walked through the link.
+        with tempfile.TemporaryDirectory() as tmp:
+            build = Path(tmp) / "build" / "lib"
+            build.mkdir(parents=True)
+            (build / "libx.so").touch()
+            (build.parent / "libx.so").touch()
+            root = Path(tmp) / "prefix"
+            root.mkdir()
+            (root / "lib").symlink_to(build)
+            other = Path(tmp) / "elsewhere" / "lib"
+            other.mkdir(parents=True)
+            (other / "libx.so").touch()
+
+            def problem(loaded: Path) -> str | None:
+                info = {"loaded_from": str(loaded), "expected_root": str(root)}
+                return arms.library_problem(info)
+
+            self.assertIsNone(problem(root / "lib" / "libx.so"))
+            self.assertIn("built against", problem(other / "libx.so"))
+            self.assertIn("built against", problem(root / "lib" / ".." / "libx.so"))
+
 
 if __name__ == "__main__":
     unittest.main()

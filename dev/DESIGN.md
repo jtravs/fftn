@@ -1343,7 +1343,8 @@ over time. It inherits the prototype rig's concepts and replaces its statistics.
     composites; batches from 1 to thousands of rows; r2c and c2r; planes and volumes;
     in place and out of place; strided axes;
   - *client*: shapes captured from an application's trace with weights from its real FFT
-    share (direction, placement and planes included);
+    share (direction, placement and planes included); kept with the client, outside this
+    repository, and given to fbench by path;
   - *threads*: the same shapes at 1, a cache group, a socket and all cores, in library
     mode and in team mode (a team of serial plans, the baseline threading must beat).
 - **Tiers**: smoke (seconds, correctness only, in the gate), quick (2–3 minutes, A/B),
@@ -1525,6 +1526,7 @@ implementation are listed here until settled.
 | 2026-11-13 | Test tolerances: relative RMS error ≤ 3ε√L and largest error ≤ 3εL, L = max(1, log₂ n) | Measured FFTW and naive-DFT errors sit 3–10× (RMS) and 7–40× (largest) below; every seeded fault of task 0.4 is caught |
 | 2026-11-13 | "One-ulp twiddle error" is tested two ways: entry-by-entry table checks for a single entry, output tolerances for an error propagated from the base twiddle | A single entry one ulp off changes outputs by less than correct rounding does, at any n; a propagated one grows like n |
 | 2026-11-13 | FFTW, the test oracle, is built from source by the test build (or taken from `FFTN_FFTW_ROOT`), without UBSan | No system FFTW is assumed; FFTW 3.3.11's planners do null-pointer arithmetic that UBSan reports |
+| 2026-11-13 | fbench competitors are optional backends, each configured by one variable (an install root, or a pinned fetch for header-only pocketfft) and never found on default paths; a library that handles some shapes only (Accelerate: rows of vDSP's lengths) declares those kinds `partial`, and smoke requires a pass of each; client catalogues live outside the repository | Handicapped system builds are a trap (Homebrew's FFTW); a backend that refused every case must not count as correct; the client's workload is private |
 
 ---
 

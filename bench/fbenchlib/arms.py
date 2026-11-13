@@ -106,10 +106,23 @@ def source_identity(cwd: Path = REPO) -> dict:
     return {"commit": commit, "dirty": dirty}
 
 
+# How each competitor backend is configured (bench/CMakeLists.txt); a backend is built only
+# when its variable is set at configure time.
+BACKEND_SETTINGS = {
+    "fftw": "FFTN_BENCH_FFTW_ROOT",
+    "pocketfft": "FFTN_BENCH_POCKETFFT",
+    "kfr": "FFTN_BENCH_KFR_ROOT",
+    "accelerate": "FFTN_BENCH_ACCELERATE",
+    "mkl": "FFTN_BENCH_MKL_ROOT",
+    "fftl": "FFTN_BENCH_FFTL_ROOT",
+}
+
+
 def _build_commit(sha: str, library: str, out_dir: Path, log) -> Path:
-    fftw_root = os.environ.get("FFTN_BENCH_FFTW_ROOT", "")
     cxx = os.environ.get("CXX", "")
-    key = hashlib.sha256(f"{sha}|{cxx}|{fftw_root}".encode()).hexdigest()[:10]
+    # Every backend setting is part of the key: they choose what the build links.
+    settings = sorted((k, v) for k, v in os.environ.items() if k.startswith("FFTN_BENCH_"))
+    key = hashlib.sha256(f"{sha}|{cxx}|{settings}".encode()).hexdigest()[:10]
     root = out_dir / "builds" / f"{sha[:12]}-{key}"
     exe = root / "build" / "bench" / f"fbench-{library}"
     if exe.exists():
@@ -164,11 +177,8 @@ def resolve(arm: Arm, default_build: Path, out_dir: Path, log=print) -> Binary:
         build = _build_commit(commit, arm.library, out_dir, log)
     exe = build / "bench" / f"fbench-{arm.library}"
     if not exe.exists():
-        hint = (
-            " (configure with FFTN_BENCH_FFTW_ROOT set to build it)"
-            if arm.library == "fftw"
-            else ""
-        )
+        setting = BACKEND_SETTINGS.get(arm.library)
+        hint = f" (configure with {setting} set to build it)" if setting else ""
         raise FileNotFoundError(f"arm {arm.label}: no {exe}{hint}")
     return Binary(exe.resolve(), commit)
 
@@ -188,7 +198,8 @@ def describe(binary: Binary, options: dict[str, str]) -> dict:
 
 def library_problem(info: dict, binary: Path | None = None) -> str | None:
     """Why a backend must not be trusted, or None: it loaded a shared library from outside
-    the installation it was built against (DESIGN.md 16.1)."""
+    the installation it was built against (DESIGN.md 16.1). A file reached through the
+    installation's directory is inside it, even when that directory holds symlinks."""
     loaded, root = info.get("loaded_from"), info.get("expected_root")
     if not loaded or not root:
         return None
@@ -196,10 +207,22 @@ def library_problem(info: dict, binary: Path | None = None) -> str | None:
     if binary is not None and loaded_real == os.path.realpath(binary):
         # A backend bug, not a wrong library: it located its own copy of a symbol.
         return f"describe names the backend executable itself ({loaded}) as the library"
-    root_real = os.path.realpath(root)
-    if not loaded_real.startswith(root_real.rstrip("/") + "/"):
+    # Inside the root either as the loader reached it or after resolving symlinks. An
+    # installation may link its lib directory into a build tree, so the real file can lie
+    # outside the real root although it was loaded through the root; what this check catches
+    # is another copy (LD_LIBRARY_PATH, a system install). The lexical test is trusted only
+    # when no ".." in the path walked back out through a symlink.
+    logical = os.path.abspath(loaded)
+    through_root = os.path.realpath(logical) == loaded_real and _under(
+        logical, os.path.abspath(root)
+    )
+    if not (through_root or _under(loaded_real, os.path.realpath(root))):
         return f"loaded {loaded} but was built against {root}"
     return None
+
+
+def _under(path: str, root: str) -> bool:
+    return path.startswith(root.rstrip("/") + "/")
 
 
 def timing_problem(info: dict) -> str | None:
