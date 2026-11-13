@@ -3,8 +3,8 @@
 
 #include "isa/test_targets.hpp"
 
-#include "isa/arch.hpp"
 #include "isa/target.hpp"
+#include "platform/cpu_features.hpp"
 
 #include <cstdlib>
 #include <string>
@@ -37,18 +37,7 @@ bool assumed(target t) {
 
 } // namespace
 
-cpu_features machine_features() {
-  cpu_features f;
-#if FFTN_ARCH_AARCH64
-  f.neon = true;
-#ifdef __APPLE__
-  f.fcma = true;
-#endif
-#elif FFTN_ARCH_X86_64
-  f.sse2 = true;
-#endif
-  return f;
-}
+cpu_features machine_features() { return fftn::detail::detect_cpu_features(); }
 
 std::vector<target> runnable_targets() {
   const cpu_features f = machine_features();

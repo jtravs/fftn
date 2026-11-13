@@ -22,10 +22,7 @@ inline constexpr std::array all_targets = {
     target::avx512, target::neon,   target::neon_fcma,
 };
 
-// The seam to CPU detection: the features of the machine running the tests. Until
-// detect_cpu_features() (task 0.2) is merged, it knows only what the compiler states:
-// AArch64 has NEON, and every Apple silicon core has FCMA; on x86-64 only SSE2 is
-// assumed. Once it is merged, the body becomes `return detect_cpu_features();`.
+// The features of the machine running the tests (detect_cpu_features()).
 [[nodiscard]] cpu_features machine_features();
 
 // Targets that are compiled in and run on machine_features(), plus any named in the
