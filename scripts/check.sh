@@ -81,8 +81,9 @@ build_and_test() {
     echo "build of preset $name failed: build/$name.log"
     exit 1
   fi
-  ctest --preset "$name" --output-on-failure
+  ${test_prefix[@]+"${test_prefix[@]}"} ctest --preset "$name" --output-on-failure
 }
+test_prefix=()
 preset() { configure "$1" && build_and_test "$1"; }
 
 if stage spdx; then say "SPDX headers"; py tools/repo_lint.py spdx; fi
@@ -164,7 +165,14 @@ fi
 if stage tsan; then
   say "ThreadSanitizer"
   if have_preset check-tsan; then
+    # Older TSan runtimes (GCC 14's among them) abort on the high-entropy address
+    # randomisation of recent Linux kernels ("unexpected memory mapping"); tests run with
+    # randomisation off there, which changes nothing else about them.
+    if [[ $(uname -s) == Linux ]] && command -v setarch > /dev/null; then
+      test_prefix=(setarch "$(uname -m)" -R)
+    fi
     TSAN_OPTIONS=${TSAN_OPTIONS:-halt_on_error=1} preset check-tsan
+    test_prefix=()
   else skip "no check-tsan preset"; fi
 fi
 
