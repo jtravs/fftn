@@ -1306,7 +1306,9 @@ MSVC ABI. AVX-512 paths run under Intel SDE and NEON-without-FCMA and SVE paths 
 QEMU where the runner's CPU lacks them, so every kernel is executed in CI, not only on
 developers' machines. Old processors are emulated as whole machines too (SDE's Nehalem
 and Sandy Bridge models, QEMU's Neoverse N1), which checks detection and dispatch on
-them as well as the kernels: a stray newer instruction anywhere faults.
+them as well as the kernels: a stray newer instruction anywhere faults. Emulation runs the
+test programs that contain kernels or detection, not the long oracle suites (those run
+natively), and only on `main`, weekly and on demand.
 
 The workflows in [`.github/workflows/`](../.github/workflows/) are the matrix: which gate
 stages run on which compiler and why, the emulated models with the target each must
@@ -1706,6 +1708,7 @@ or departs from sections 5.5 and 13.6, or from Kokkos-FFT 2.0's `KokkosFFT::Plan
 | 2026-11-13 | Kokkos core 5.2.1, Serial back end, is a test-only dependency: fetched pinned by URL and SHA-256 (the release's own checksum file, checked against the download), built as a CMake subproject, SYSTEM, in every gate stage that builds; the library still has no dependency, since `fftn/kokkos.hpp` is header-only and compiled in its user's translation units | The adapter's call sites must compile and run in the gate so they cannot rot (task 0.5b); a Serial-only Kokkos builds in seconds |
 | 2026-11-13 | No `omp simd` on the scalar pass loops; old-ISA targets (`x86_v2`, `avx`, plain `neon`) get hand vocabularies from the start, not the scalar text compiled in their regions | Experiment X15: `omp simd` gained 5.5 % with Clang on the M5 but cost 2.0× with GCC 16 on Zen 3; the scalar text in the `avx2` region stayed 2.2–3.7× slower than the hand vocabulary per pass, and `-march=native` closed none of that gap |
 | 2026-11-13 | Windows on Arm reads FCMA and pointer authentication from the registry copies of the ID registers | No `IsProcessorFeaturePresent` flag exists for either (SDK 10.0.26100) and MRS faults; on the CI's Cobalt 100 the registry fields agreed with executing FCMLA and XPACI (B2) |
+| 2026-11-13 | Emulated CI runs the instruction-set test programs only, on `main`, weekly and on demand | It checks instruction-set safety, which branch pushes rarely change; the full suites under emulation took over an hour per processor model (maintainer, after the walking skeleton) |
 
 ---
 

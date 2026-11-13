@@ -10,7 +10,10 @@
 # First fftn_platform_dump runs on the emulated processor, and every line of <expected
 # lines> (separated by ';', for example "avx2 0;best_target scalar") must appear in its
 # output exactly: that checks feature detection and the target a plan would choose. Then
-# every test program runs, forcing in turn each target that processor can execute. The
+# the instruction-set test programs run (EMULATED_TESTS below), forcing in turn each target
+# that processor can execute. The long oracle suites run natively in ci.yml; under emulation
+# they cost an hour per model and check arithmetic, not instruction sets. A test program
+# with kernels for a target (phase 1 on) belongs in EMULATED_TESTS. The
 # emulators reject any instruction the emulated processor lacks (SDE's chip check, QEMU's
 # undefined-instruction trap), so a newer instruction reaching code that runs there fails
 # the run, wherever it sits.
@@ -46,7 +49,12 @@ for line in "${want[@]}"; do
 done
 
 shopt -s nullglob
-tests=("$build"/tests/*/fftn_*_tests)
+EMULATED_TESTS=(isa/fftn_isa_tests platform/fftn_platform_tests core/fftn_core_tests
+  support/fftn_support_tests kokkos/fftn_kokkos_tests)
+tests=()
+for t in "${EMULATED_TESTS[@]}"; do
+  if [[ -x $build/tests/$t ]]; then tests+=("$build/tests/$t"); fi
+done
 if ((${#tests[@]} == 0)); then
   echo "emulate: no test programs under $build/tests"
   exit 1

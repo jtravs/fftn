@@ -9,9 +9,13 @@
 # best_target changes here (the comments name the target each model should get then).
 name: emulation
 
+# Emulation checks instruction-set safety, which changes only when kernels or detection do:
+# it runs on main, weekly, and on demand, not on every branch push (maintainer, 2026-11-13).
 on:
   push:
-  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "17 3 * * 1"
   workflow_dispatch:
 
 permissions:
@@ -19,7 +23,7 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: true
 
 env:
   UV_VERSION: "0.13.6"
@@ -32,8 +36,6 @@ env:
 
 jobs:
   sde:
-    # Pushes, and pull requests from forks (a branch of this repository ran on its push).
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     name: x86-64 under Intel SDE
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -108,7 +110,6 @@ jobs:
         run: bash .github/scripts/fetchcontent-cache.sh save ~/.cache/fftn-fetchcontent
 
   qemu:
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     # One job per emulated processor: run one after another the five took over the 60-minute
     # limit once the walking skeleton's oracle suites and the Kokkos tests arrived.
     name: aarch64 under QEMU (${{ matrix.model }})
