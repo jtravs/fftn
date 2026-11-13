@@ -49,7 +49,7 @@ CLANG_FORMAT_VERSION=23.1.0
 CLANG_TIDY_VERSION=23.1.4  # the PyPI wheels have no 23.1.0
 RUFF_VERSION=0.17.4
 # Line coverage of hand-written code, in percent. Raise it as coverage rises; never lower it.
-COVERAGE_MIN_LINES=${FFTN_COVERAGE_MIN_LINES:-95}
+COVERAGE_MIN_LINES=${FFTN_COVERAGE_MIN_LINES:-98}
 jobs=${FFTN_CHECK_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)}
 
 # Python tools run in the project's uv environment (pyproject.toml, uv.lock).

@@ -56,9 +56,12 @@ inline std::vector<std::size_t> sampled(std::size_t n) {
   return v;
 }
 
-// Lengths for the reference suite: every n <= 64 and a sample beyond, longer for fast
-// subjects. The reference costs about 0.14 us per term, so these are fewer than the
-// analytic suites'. Shorter under ThreadSanitizer, for the reason given in lengths.hpp.
+// Lengths for the reference suite. Fast subjects get fast_lengths() (lengths.hpp): every
+// n <= 512 and a sample of larger lengths, compared at every output up to 64 and at the
+// outputs sampled() picks beyond. O(n^2) subjects get a shorter list. The reference costs
+// about 0.14 us per term, so the sampled outputs keep a length of 16384 to a few
+// milliseconds. Under ThreadSanitizer both lists are shorter, for the reason given in
+// lengths.hpp.
 inline std::vector<std::size_t> lengths(bool fast) {
   if (under_thread_sanitizer) {
     auto v = every_length_up_to(32);
@@ -68,15 +71,12 @@ inline std::vector<std::size_t> lengths(bool fast) {
     }
     return v;
   }
+  if (fast) {
+    return fast_lengths();
+  }
   auto v = every_length_up_to(64);
   append(v, {72, 81, 96, 97, 100, 125, 128, 210, 243, 256});
   append(v, {289, 509, 512, 1000, 1024, 2002, 2048});
-  if (fast) {
-    append(v, {4096, 4097, 6561, 10007, 16384});
-  }
-  if (fast && long_tests()) {
-    append(v, {65536, 65537, 262144});
-  }
   return v;
 }
 

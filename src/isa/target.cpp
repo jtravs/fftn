@@ -118,7 +118,11 @@ target choose_target(const cpu_features& features, std::optional<target> forced)
   return *forced;
 }
 
-std::string_view target_name(target t) noexcept { return names[static_cast<std::size_t>(t)]; }
+std::string_view target_name(target t) noexcept {
+  // A value outside the enumeration can reach here through the public isa_name().
+  const auto i = static_cast<std::size_t>(t);
+  return i < names.size() ? names[i] : "unknown";
+}
 
 std::optional<target> target_from_name(std::string_view name) noexcept {
   for (const target t : all_targets) {

@@ -1235,8 +1235,10 @@ What the experiments still require of the build:
    library's own twiddle tables, which it builds with a few lines of double-double
    arithmetic, are checked against the same reference entry by entry (correctly rounded),
    so the reference shares no code with the library.
-3. **FFTW**, as an independent implementation, for large sizes and every shape. Test
-   builds compile FFTW 3.3.11 from source in both precisions (plain C, about 20 s), or use
+3. **FFTW**, as an independent implementation, for large sizes and every shape
+   (`tests/fftw`): the library's outputs compared with FFTW's at every output, with the
+   tolerances of both added. FFTW also runs oracles 1 and 2 as a subject, which checks
+   the suites themselves. Test builds compile FFTW 3.3.11 from source in both precisions (plain C, about 20 s), or use
    an existing install (`FFTN_FFTW_ROOT`); `FFTN_TEST_WITH_FFTW=OFF` builds without it and
    the tests that need it skip.
 4. **The generator's own check** of each codelet against the exact DFT at emission.
@@ -1479,8 +1481,76 @@ infrastructure to maintain.
 
 ### 18.2 Open questions
 
-None at present. Decisions taken are in the decision log; questions that arise during
-implementation are listed here until settled.
+Decisions taken are in the decision log; questions that arise during implementation are
+listed here until settled.
+
+**API decisions for the review (task 0.9).** Task 0.5 implemented section 5 for what the
+walking skeleton needs. Where it departs from section 5, or settles something section 5
+leaves open, it is listed here with the reason; the review accepts, changes or rejects
+each item, and the outcome goes to the decision log.
+
+1. *Headers.* `fftn.hpp` includes everything; one concept per header: `shape.hpp`
+   (`direction`, `axis`, `batch`, `shape`, the shape functions), `small_vector.hpp`,
+   `options.hpp`, `isa.hpp`, `workspace.hpp`, `plan.hpp`. The type-erased core is declared
+   in `detail/core.hpp` and defined in `src/core/`.
+2. *`small_vector<T, N>`* is a fixed-capacity inline array (no heap): `push_back`, a
+   braced list, indexing, iteration, `size`, `capacity`. Going beyond `N` throws
+   `std::length_error`. `T` must be default-constructible.
+3. *Shape functions return concrete types* (`shape<std::complex<T>, std::complex<T>>`
+   and so on), not `auto`, so that their documentation shows the kind.
+4. *`shape::dir` is ignored by the real kinds* (r2c is always forward, c2r backward);
+   `rows_c2r` sets it to backward for readability. A mismatch is not an error.
+5. *Order and numbering.* Axes and batch dimensions are both listed slowest first;
+   transforms are numbered with the last batch dimension fastest, which is the numbering
+   `execute_rows` uses. Its "rows" are the transforms of the batch: planes for a plane
+   shape. The name is section 5's; `execute_transforms` would be more exact.
+6. *Defaults.* A zero stride or distance takes the tight C-ordered default, each zero
+   independently of the values given. For in-place real transforms the real side's
+   default is FFTW's padded row of 2(n/2 + 1), so defaults depend on `options::in_place`
+   as well as on the shape.
+7. *Validation.* An axis length or batch count of zero is refused (not an empty batch).
+   Output overlap is refused by a sufficient condition (sorted by stride, each stride
+   exceeds the reach of the smaller ones), which admits every nested layout but refuses
+   a few exotic interleavings that do not actually collide. Sizes whose byte reach does
+   not fit `std::ptrdiff_t` are refused, and so is a stride or distance of `PTRDIFF_MIN`
+   (its magnitude does not fit). The strides of an axis of length 1 and the distances of
+   a batch dimension of count 1 are ignored, since they never step: refusing them would
+   reject harmless layouts, and using them would let unchecked values into the kernels'
+   arithmetic.
+8. *In place* requires identical layouts for c2c; for r2c and c2r the last axis
+   contiguous on both sides and every other real stride and distance twice the complex
+   one (FFTW's padded layout). Other in-place layouts are refused, not supported.
+9. *`options`* has only `in_place`; the other members of 5.3 arrive with their phases.
+10. *Plans are copyable*: copies share one immutable core (`std::shared_ptr<const>`), so
+    copying is cheap and thread-safe. There is no default constructor, and every plan is
+    valid: the class declares its copy operations and no move operations, so moving a
+    plan copies it and leaves the source unchanged, for the price of a reference-count
+    increment. The alternative is a documented moved-from state in which only assignment
+    and destruction are allowed; it saves the increment but brings back an invalid plan
+    that every member function would have to rule out.
+11. *Execution preconditions* (workspace large enough, `execute_rows` within the batch,
+    the same address for in-place calls) are documented and checked only by assertions
+    in debug builds of the library; `execute` stays `noexcept`.
+12. *`workspace_bytes()` has no lanes parameter* yet (phase 3 adds it). Its value
+    includes 64 bytes of slack so that a workspace of any alignment works.
+13. *`workspace`* owns memory (from a size or a plan) or borrows a `std::span<std::byte>`;
+    it is move-only, default-constructs empty (enough for plans needing 0 bytes) and
+    exposes `size()` and `memory()`.
+14. *`isa`* is a public enumeration of the seven targets of section 6.1 (no `best`, since
+    `options::force_isa` is not added until a second target has the passes), with
+    `isa_name()` for printing. Phase 0 plans always report `isa::scalar`.
+15. *`describe()`* returns free text for people; its format is not stable.
+16. *Any rank up to three for every kind.* The general `shape` is accepted for one to
+    three axes and all three kinds, not only through the four shape functions: the same
+    code serves them all (axis by axis, a transform at a time), and fbench's smoke tier
+    contains real planes and volumes. A c2r of two or more axes out of place keeps its
+    intermediate in a workspace block holding one transform's half spectrum.
+17. *Not added*: `exec_args`, the team and executor overloads, the `In*` twins for plans
+    that may destroy their input, a kind tag, `along_axes`, `volume_c2c`.
+18. *In-place calls* use the same `execute(const In*, Out*, workspace&)`: the caller
+    passes one address twice (for real kinds, the same memory viewed as both types).
+19. *`direction`'s underlying type is `std::int8_t`*, not `int` as sketched in 5.2 (the
+    gate's clang-tidy asks for the smallest type); the values are still −1 and +1.
 
 ---
 
@@ -1523,6 +1593,11 @@ implementation are listed here until settled.
 | 2026-11-13 | "One-ulp twiddle error" is tested two ways: entry-by-entry table checks for a single entry, output tolerances for an error propagated from the base twiddle | A single entry one ulp off changes outputs by less than correct rounding does, at any n; a propagated one grows like n |
 | 2026-11-13 | FFTW, the test oracle, is built from source by the test build (or taken from `FFTN_FFTW_ROOT`), without UBSan | No system FFTW is assumed; FFTW 3.3.11's planners do null-pointer arithmetic that UBSan reports |
 | 2026-11-13 | fbench competitors are optional backends, each configured by one variable (an install root, or a pinned fetch for header-only pocketfft) and never found on default paths; a library that handles some shapes only (Accelerate: rows of vDSP's lengths) declares those kinds `partial`, and smoke requires a pass of each; client catalogues live outside the repository | Handicapped system builds are a trap (Homebrew's FFTW); a backend that refused every case must not count as correct; the client's workload is private |
+| 2026-11-13 | Walking skeleton (task 0.5): a program's stages read and write slots (caller in, caller out, scratch lines a and b, block); every transform is finished before the next, one axis at a time, one line at a time; each line is a Stockham DIF chain whose first pass reads the line where it lies and whose last writes it where it goes, with a and b in between; stages carry chunks of about 2048 points | The smallest structure that serves every kind, rank, stride and placement with one driver, and whose loops and chunks phase 3 can share out unchanged |
+| 2026-11-13 | The generic prime pass sums each output pairwise (a binary counter of partial sums) | A sequential sum's error grows like p: it fails the RMS tolerance for primes of a few hundred, which the suites test |
+| 2026-11-13 | The chain passes exist only on the scalar target in phase 0; the per-target table carries them as a member that is null elsewhere, and a plan takes the fastest target whose table has them | The skeleton's passes assume one complex per register; phase 1 replaces them with generated, lane-aware ones on every target |
+| 2026-11-13 | Twiddle tables hold forward roots only, computed in double-double with Dekker's exact product (no FMA) and rounded once; backward passes multiply by conjugates | The tables are then the same on every processor and build; conjugation is exact, so backward tables are correctly rounded too |
+| 2026-11-13 | A multi-dimensional c2r out of place keeps its intermediate in a workspace block of one transform's half spectrum (a whole volume's, for now) | The input is preserved by default (9.1); pencil-block scratch arrives with phase 4's volumes |
 
 ---
 
