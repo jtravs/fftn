@@ -24,5 +24,6 @@ if(FFTN_CLANG_TIDY)
 endif()
 
 fftn_add_test(fftn_reference_tests
-  SOURCES reference_dft_test.cpp
-  LIBRARIES fftn_test_reference)
+  SOURCES reference_dft_test.cpp reference_suite_test.cpp
+  LIBRARIES fftn_test_support)
+fftn_always_optimise(reference_suite_test.cpp)
