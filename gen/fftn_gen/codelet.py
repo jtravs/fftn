@@ -1,0 +1,112 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+"""Codelets: a radix, a variant and a direction, built, lowered, ordered and verified.
+
+Variants (DESIGN.md 7.3), with w_k the forward twiddle of leg k (k = 1 .. R-1) and
+F the R-point DFT of the codelet's direction:
+  plain  y = F x
+  dit    y = F (x_0, x_1 t_1, ..., x_{R-1} t_{R-1})      (multiply inputs)
+  dif    y_0 = (F x)_0,  y_k = (F x)_k t_k               (multiply outputs)
+with t_k = w_k forward and conj(w_k) backward: twiddle tables hold forward roots only
+(DESIGN.md decision log), and a backward pass multiplies by their conjugates (mulc).
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from .algorithms import dft
+from .ir import Graph
+from .lower import Op, lower
+from .schedule import peak_live, schedule
+from .verify import verify
+
+VARIANTS = ("plain", "dit", "dif")
+SIGNS = (-1, 1)
+
+
+@dataclass(frozen=True, slots=True)
+class Counts:
+    """Operation counts of one codelet (gen/README.md, "Metadata").
+
+    Vocabulary operations: add-type (add, sub, addj, subj), scale, fmadd_r, cmul (mul or
+    mulc by a twiddle) and forced rotations (neg or a multiply by -+i at a store; zero for
+    every codelet so far). Real arithmetic on a fused target, cmuls apart: adds, muls,
+    fmas. Real arithmetic without fused operations and with each cmul as 4 multiplies and
+    2 additions (the convention of the published counts): flops_adds, flops_muls.
+    """
+
+    add_ops: int
+    scale_ops: int
+    fma_ops: int
+    cmuls: int
+    forced: int
+
+    @property
+    def adds(self) -> int:
+        return 2 * self.add_ops
+
+    @property
+    def muls(self) -> int:
+        return 2 * self.scale_ops
+
+    @property
+    def fmas(self) -> int:
+        return 2 * self.fma_ops
+
+    @property
+    def vector_ops(self) -> int:
+        return self.add_ops + self.scale_ops + self.fma_ops + self.cmuls + self.forced
+
+    @property
+    def flops_adds(self) -> int:
+        return self.adds + self.fmas + 2 * self.cmuls + 2 * self.forced
+
+    @property
+    def flops_muls(self) -> int:
+        return self.muls + self.fmas + 4 * self.cmuls
+
+
+@dataclass(frozen=True, slots=True)
+class Codelet:
+    radix: int
+    variant: str
+    sign: int
+    ops: tuple[Op, ...]
+    counts: Counts
+    live: int
+
+    @property
+    def twiddles(self) -> int:
+        return 0 if self.variant == "plain" else self.radix - 1
+
+
+def count(ops: list[Op] | tuple[Op, ...]) -> Counts:
+    kinds = [op.kind for op in ops]
+    return Counts(
+        add_ops=sum(k in ("add", "sub", "addj", "subj") for k in kinds),
+        scale_ops=kinds.count("scale"),
+        fma_ops=kinds.count("fmadd_r"),
+        cmuls=kinds.count("mul") + kinds.count("mulc"),
+        forced=sum(k in ("neg", "rot_m", "rot_p") for k in kinds),
+    )
+
+
+def build_ops(radix: int, variant: str, sign: int) -> list[Op]:
+    """The codelet's operations in topological order, before ordering."""
+    g = Graph(radix, twiddles=radix - 1)
+    x = [g.input(j) for j in range(radix)]
+    conj = sign > 0
+    if variant == "dit":
+        x = [x[0]] + [g.tw_mul(x[j], g.twiddle(j), conj) for j in range(1, radix)]
+    y = dft(g, x, sign)
+    if variant == "dif":
+        y = [y[0]] + [g.tw_mul(y[k], g.twiddle(k), conj) for k in range(1, radix)]
+    return lower(g, y)
+
+
+def build(radix: int, variant: str, sign: int) -> Codelet:
+    """Builds and verifies one codelet; raises VerificationError if it is wrong."""
+    ops = schedule(build_ops(radix, variant, sign))
+    verify(ops, radix, variant, sign)
+    return Codelet(radix, variant, sign, tuple(ops), count(ops), peak_live(ops))
