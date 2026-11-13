@@ -17,6 +17,11 @@ fftn_add_test(fftn_isa_tests
   SOURCES target_test.cpp vocab_test.cpp kernel_test.cpp link_test.cpp test_targets.cpp
   LIBRARIES fftn_isa_probes)
 
+# Experiment X15: every arm the build contains against plain scalar, bit for bit
+# (cmake/FftnExperiments.cmake). Deleted with the experiment.
+fftn_add_test(fftn_x15_tests SOURCES x15_arms_test.cpp)
+fftn_x15_consumer(fftn_x15_tests)
+
 # Disassembly test: the library's units and the probes, per target (tools/asm_check.py).
 # Python runs in the project's uv environment, or any Python 3.14 if uv is missing.
 find_program(FFTN_UV uv)
