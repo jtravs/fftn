@@ -51,6 +51,19 @@
 #define FFTN_FORCE_INLINE inline __attribute__((always_inline))
 
 #define FFTN_PRAGMA(text) _Pragma(#text)
+
+// Experiment X15 (dev/experiments/X15-compiler-vectorised-scalar.md): placed before the
+// innermost unit loops of the scalar kernel text. With the switch FFTN_X_OMP_SIMD (the
+// library is then built with -fopenmp-simd: the simd pragmas only, no OpenMP runtime) it
+// lets the compiler vectorise those loops; the loops have no reductions and the build
+// keeps -ffp-contract=off, so results stay bitwise equal. Off, it expands to nothing, so no
+// -Wunknown-pragmas arises.
+#if defined(FFTN_X_OMP_SIMD) && FFTN_X_OMP_SIMD
+#define FFTN_SIMD_LOOP FFTN_PRAGMA(omp simd)
+#else
+#define FFTN_SIMD_LOOP
+#endif
+
 #ifdef __clang__
 // apply_to = function: free functions, templates, members and lambdas declared in the
 // region all get the attribute (the header-only study, experiment E04).

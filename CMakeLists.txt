@@ -16,6 +16,7 @@ set(FFTN_CXX_COMPILER "${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}" C
 
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
 include(FftnTargets)
+include(FftnExperiments)
 
 # Sanitizers apply to everything, third-party code included: a partly instrumented process
 # gives false reports (TSan in particular).
