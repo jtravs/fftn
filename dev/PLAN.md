@@ -209,7 +209,7 @@ running, done (with verdict).
 
 | ID | Question | Phase | Status |
 |---|---|---|---|
-| [B1](experiments/B1-isa-regions-gcc-linux.md) | Do ISA attribute regions hold on Linux x86-64 with GCC 14 and 15 (inlining, by-value vector ABI at -O0, two-TU link, disassembly)? | 0 | running |
+| [B1](experiments/B1-isa-regions-gcc-linux.md) | Do ISA attribute regions hold on Linux x86-64 with GCC 14 and 15 (inlining, by-value vector ABI at -O0, two-TU link, disassembly)? | 0 | done: regions hold; GCC needs `-Werror=psabi` |
 | B2 | The same on Windows with clang on the MSVC ABI | 0 | planned |
 | B3 | Library build time and size as codelets and targets grow; which codelets are worth instantiating per target? | 1 | planned |
 | X1 | Complex-register against split arithmetic, per target (FCMA included) and pass position (first, middle, last; short and long rows) | 1 | planned |

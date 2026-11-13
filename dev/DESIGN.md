@@ -1107,9 +1107,12 @@ Rosetta. Findings:
   value to any function outside the region. Both are covered by the region rules.
 - The portable target string for FCMA is `arch=armv8.3-a` (`+fcma` fails with Clang's
   NEON header).
-- Not yet run: GCC 14 and 15 on x86-64 Linux, and Clang on Windows (experiments B1, B2;
-  ready-made kits exist). The most important check is whether GCC handles by-value AVX
-  vectors correctly at -O0.
+- On x86-64 Linux (experiment [B1](experiments/B1-isa-regions-gcc-linux.md)) the mechanism
+  holds with GCC 13 to 16 and Clang 18 to 23. But every GCC compiles a vector passed by
+  value from a region into a baseline function with only a `-Wpsabi` warning, and the
+  program then crashes. The library is therefore built with `-Werror=psabi` under GCC, and
+  vector types are never template arguments in region code (GCC drops their attributes).
+- Not yet run: Clang on Windows (experiment B2).
 
 ### 14.2 Decision: a compiled static library
 
@@ -1391,7 +1394,7 @@ infrastructure to maintain.
 | The generator does not reach FFTL's and FFTW's codelet quality quickly | every speed target depends on it | start from FFTL's small design (rotation tracking), verify against published operation counts, add algorithms one at a time; the walking skeleton keeps the rest of the project moving |
 | Two arithmetic layouts double the kernel surface | compile time, test matrix, planner space | both come from one DAG and one set of pass templates; experiment X1 may show one layout suffices per target, and the loser is deleted there |
 | MKL parity on Intel | MKL leads the prototype by 15–45 % on short smooth lengths | few-big-pass strategy, split arithmetic to avoid port-5 shuffles, per-shape measurement; treated as a target, not a guarantee |
-| Compiler fragility of attribute regions (untested so far on GCC x86-64 and Windows clang) | the whole dispatch mechanism rests on them | experiments B1 and B2 first; strict region rules; a disassembly test; whole-machine emulation of old CPUs in CI |
+| Compiler fragility of attribute regions (Windows clang still untested; B1 passed on Linux) | the whole dispatch mechanism rests on them | experiment B2; strict region rules; a disassembly test; whole-machine emulation of old CPUs in CI |
 | The claiming engine costs more per phase than a barrier | long single rows on few threads | experiment T2; the barrier path is kept if it earns it |
 | Cost model drifts on new CPUs | wrong plans by default | nearest-family profiles, `planning::measure`, `fbench calibrate` as a one-command remedy |
 | Scope creep | the project stalls before the client milestones | phases 1–5 serve the core tier only; the general tier waits for phase 6 |
@@ -1431,6 +1434,7 @@ implementation are listed here until settled.
 | 2026-11-13 | Float is supported and kept alive from phase 1 by correctness tests in CI; tuned in phase 6 | It has users, and precision-generic code that is never instantiated drifts |
 | 2026-11-13 | Bitwise schedule independence is kept | It costs nothing measurable (no cross-thread reductions) and makes threading tests exact; revisit only on experimental evidence |
 | 2026-11-13 | fbench replicates over processes with paired intervals and an A/A control | Process-to-process spread dominated the prototype's noise |
+| 2026-11-13 | ISA regions confirmed on Linux x86-64; GCC builds use `-Werror=psabi`; no vector types as template arguments | Experiment B1: GCC silently miscompiles by-value vectors across a region boundary |
 
 ---
 
