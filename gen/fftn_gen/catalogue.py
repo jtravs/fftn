@@ -11,7 +11,7 @@ from __future__ import annotations
 from .codelet import SIGNS, VARIANTS, Codelet, build
 from .emit_cpp import codelet_inl, metadata_hpp
 
-RADICES = tuple(range(2, 16))
+RADICES = tuple(range(2, 17))
 
 
 def all_codelets() -> list[Codelet]:

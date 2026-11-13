@@ -34,7 +34,7 @@ struct codelet_info {
   std::uint16_t live;    // peak live values (complex and twiddle registers)
 };
 
-inline constexpr std::size_t codelet_count = 84;
+inline constexpr std::size_t codelet_count = 90;
 // A C array: ISA regions read it, and they use no standard-library templates.
 inline constexpr codelet_info codelets[codelet_count] = {
     {2, variant::plain, -1, lowering::complex_register, 0, 4, 0, 0, 0, 0, 2, 3},
@@ -121,9 +121,15 @@ inline constexpr codelet_info codelets[codelet_count] = {
     {15, variant::dit, 1, lowering::complex_register, 14, 128, 28, 28, 14, 0, 106, 17},
     {15, variant::dif, -1, lowering::complex_register, 14, 128, 28, 28, 14, 0, 106, 17},
     {15, variant::dif, 1, lowering::complex_register, 14, 128, 28, 28, 14, 0, 106, 17},
+    {16, variant::plain, -1, lowering::complex_register, 0, 144, 24, 0, 0, 0, 84, 18},
+    {16, variant::plain, 1, lowering::complex_register, 0, 144, 24, 0, 0, 0, 84, 18},
+    {16, variant::dit, -1, lowering::complex_register, 15, 144, 24, 0, 15, 0, 99, 18},
+    {16, variant::dit, 1, lowering::complex_register, 15, 144, 24, 0, 15, 0, 99, 18},
+    {16, variant::dif, -1, lowering::complex_register, 15, 144, 24, 0, 15, 0, 99, 18},
+    {16, variant::dif, 1, lowering::complex_register, 15, 144, 24, 0, 15, 0, 99, 18},
 };
 
-inline constexpr std::size_t radix_count = 14;
-inline constexpr std::uint8_t radices[radix_count] = {2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
+inline constexpr std::size_t radix_count = 15;
+inline constexpr std::uint8_t radices[radix_count] = {2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
 
 } // namespace fftn::inline v0::detail::gen
