@@ -36,7 +36,7 @@ TEST(CpuFeaturesX86, DecodesAFullAvx512Machine) {
   EXPECT_TRUE(f.sse2 && f.sse3 && f.ssse3 && f.sse41 && f.sse42 && f.popcnt);
   EXPECT_TRUE(f.avx && f.fma && f.avx2);
   EXPECT_TRUE(f.avx512f && f.avx512dq && f.avx512bw && f.avx512vl);
-  EXPECT_FALSE(f.neon || f.fcma);
+  EXPECT_FALSE(f.neon || f.fcma || f.pauth);
   EXPECT_EQ(f.sve_bits, 0U);
 }
 
@@ -105,13 +105,18 @@ TEST(CpuFeaturesLinuxArm, DecodesHwcap) {
   constexpr std::uint64_t asimd = 1U << 1U;
   constexpr std::uint64_t fcma = 1U << 14U;
   constexpr std::uint64_t sve = 1U << 22U;
-  cpu_features f = decode_linux_hwcap(asimd | fcma | sve, 32);
-  EXPECT_TRUE(f.neon && f.fcma);
+  constexpr std::uint64_t paca = 1U << 30U;
+  cpu_features f = decode_linux_hwcap(asimd | fcma | sve | paca, 32);
+  EXPECT_TRUE(f.neon && f.fcma && f.pauth);
   EXPECT_EQ(f.sve_bits, 256U);      // Graviton 3
   f = decode_linux_hwcap(asimd, 0); // Neoverse N1
   EXPECT_TRUE(f.neon);
-  EXPECT_FALSE(f.fcma);
+  EXPECT_FALSE(f.fcma || f.pauth);
   EXPECT_EQ(f.sve_bits, 0U);
+  f = decode_linux_hwcap(asimd | fcma | sve, 64); // A64FX: FCMA without PAuth
+  EXPECT_TRUE(f.neon && f.fcma);
+  EXPECT_FALSE(f.pauth);
+  EXPECT_EQ(f.sve_bits, 512U);
   // A vector length is ignored without the SVE hwcap, and FCMA without ASIMD.
   f = decode_linux_hwcap(fcma, 16);
   EXPECT_FALSE(f.neon || f.fcma);
@@ -121,13 +126,14 @@ TEST(CpuFeaturesLinuxArm, DecodesHwcap) {
 
 TEST(CpuFeaturesMacos, DecodesSysctl) {
   EXPECT_EQ(decode_macos_sysctl(parse_sysctl_text("")), cpu_features{});
-  cpu_features f = decode_macos_sysctl(
-      parse_sysctl_text("hw.optional.arm.AdvSIMD: 1\nhw.optional.arm.FEAT_FCMA: 1\n"));
-  EXPECT_TRUE(f.neon && f.fcma);
-  // macOS 11 names.
+  cpu_features f = decode_macos_sysctl(parse_sysctl_text(
+      "hw.optional.arm.AdvSIMD: 1\nhw.optional.arm.FEAT_FCMA: 1\nhw.optional.arm.FEAT_PAuth: 1\n"));
+  EXPECT_TRUE(f.neon && f.fcma && f.pauth);
+  // macOS 11 names; it has none for pointer authentication.
   f = decode_macos_sysctl(
       parse_sysctl_text("hw.optional.neon: 1\nhw.optional.armv8_3_compnum: 1\n"));
   EXPECT_TRUE(f.neon && f.fcma);
+  EXPECT_FALSE(f.pauth);
   f = decode_macos_sysctl(
       parse_sysctl_text("hw.optional.AdvSIMD: 1\nhw.optional.arm.FEAT_FCMA: 0\n"));
   EXPECT_TRUE(f.neon);
@@ -137,11 +143,12 @@ TEST(CpuFeaturesMacos, DecodesSysctl) {
 TEST(CpuFeaturesMacos, DecodesTheRecordedM5Max) {
   const auto values = parse_sysctl_text(R"(hw.optional.arm.AdvSIMD: 1
 hw.optional.arm.FEAT_FCMA: 1
+hw.optional.arm.FEAT_PAuth: 1
 hw.optional.arm.FEAT_SME: 1
 hw.optional.arm.caps: -4612108402691149825
 )");
   const cpu_features f = decode_macos_sysctl(values);
-  EXPECT_TRUE(f.neon && f.fcma);
+  EXPECT_TRUE(f.neon && f.fcma && f.pauth);
   EXPECT_EQ(f.sve_bits, 0U);
 }
 
@@ -165,7 +172,7 @@ TEST(CpuFeaturesLive, SelfConsistent) {
   if (f.sse42) {
     EXPECT_TRUE(f.sse41 && f.ssse3 && f.sse3 && f.sse2);
   }
-  if (f.fcma || f.sve_bits != 0) {
+  if (f.fcma || f.pauth || f.sve_bits != 0) {
     EXPECT_TRUE(f.neon);
   }
   EXPECT_EQ(f.sve_bits % 128, 0U);
@@ -176,7 +183,8 @@ TEST(CpuFeaturesLive, SelfConsistent) {
   EXPECT_TRUE(f.neon); // part of AArch64
   EXPECT_FALSE(f.sse2);
 #ifdef __APPLE__
-  EXPECT_TRUE(f.fcma); // every Apple M-series core has FEAT_FCMA
+  EXPECT_TRUE(f.fcma);  // every Apple M-series core has FEAT_FCMA
+  EXPECT_TRUE(f.pauth); // and FEAT_PAuth (macOS 12 and later name it)
 #endif
 #endif
 }
