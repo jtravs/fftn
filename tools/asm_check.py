@@ -28,7 +28,8 @@ namespace, fftn::<version>::detail::<target>::; everything else is baseline code
   that target only, and target code is defined in no other object. A linked executable
   (what an LTO build leaves to check) gets every other check.
 
-Works with llvm-objdump (any object format) and GNU objdump (ELF). Standard library only.
+Works with llvm-objdump (any object format) and GNU objdump (ELF), and with Itanium and
+Microsoft name mangling (the latter is untested on Windows so far). Standard library only.
 """
 
 from __future__ import annotations
@@ -52,6 +53,10 @@ RELOC = re.compile(
 INSN = re.compile(r"^\s*(?P<addr>[0-9a-f]+):\s+(?P<mn>\S+)\s*(?P<ops>.*)$")
 TARGET_REF = re.compile(r"(?P<addr>[0-9a-f]+) <(?P<sym>[^>+]+)(?:\+0x[0-9a-f]+)?>")
 OFFSET = re.compile(r"[+-]0x[0-9a-f]+$")
+# Itanium names (_Z, with Mach-O's extra underscore) and Microsoft names (?), which list a
+# name's namespaces innermost first, ending in "@@": ?f@?A0x1@avx2@detail@v0@fftn@@...
+MANGLED = re.compile(r"^(?:_{1,2}Z|\?)")
+MSVC_TARGET = re.compile(r"@(\w+)@detail@v\d+@fftn@@")
 
 X86_CALLS = ("call", "callq", "jmp", "jmpq")
 ARM_CALLS = ("bl", "b")
@@ -83,7 +88,7 @@ class Function:
     @property
     def name(self) -> str:
         for n in self.names:
-            if "_Z" in n:
+            if MANGLED.match(n):
                 return n
         return self.names[0]
 
@@ -107,14 +112,21 @@ def components(mangled: str) -> list[str]:
 
 
 def is_fftn(sym: str) -> bool:
+    if sym.startswith("?"):
+        return "@fftn@@" in sym
     return components(sym)[:1] == ["fftn"]
 
 
 def is_std(sym: str) -> bool:
+    if sym.startswith("?"):
+        return "@std@@" in sym
     return re.match(r"^_*Z(?:N[rVKRO]*)?St", sym) is not None
 
 
 def target_of(sym: str) -> str | None:
+    if sym.startswith("?"):
+        m = MSVC_TARGET.search(sym)
+        return m.group(1) if m and m.group(1) in TARGETS else None
     c = components(sym)
     if len(c) >= 4 and c[0] == "fftn" and c[2] == "detail" and c[3] in TARGETS:
         return c[3]
