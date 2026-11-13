@@ -1,0 +1,16 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Keeps the commit-pinned GitHub Actions current: one grouped pull request a month.
+# Nothing else is managed here; the other pins (SDE, QEMU, LLVM, tools) change by hand.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "ci"

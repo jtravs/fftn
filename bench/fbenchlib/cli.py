@@ -533,11 +533,11 @@ def cmd_smoke(args: argparse.Namespace) -> int:
     """Correctness only, every backend in the build, plus a self-check of the guard."""
     build = Path(args.build)
     exes = sorted((build / "bench").glob("fbench-*"))
-    exes = [e for e in exes if e.is_file() and not e.suffix]
+    exes = [e for e in exes if e.is_file() and e.suffix == arms.EXE_SUFFIX]
     if not exes:
         log(f"smoke: no fbench backends in {build / 'bench'}")
         return 1 if args.strict else 0
-    if not any(e.name == "fbench-fftw" for e in exes):
+    if not any(e.stem == "fbench-fftw" for e in exes):
         print("smoke: FFTW backend not built (FFTN_BENCH_FFTW_ROOT unset at configure); skipped")
     cat = catalogue.load(args.catalogue)
     cases = cat.select(args.tier, args.filter)
@@ -552,7 +552,7 @@ def cmd_smoke(args: argparse.Namespace) -> int:
     )
     failures: list[str] = []
     for exe in exes:
-        library = exe.name.removeprefix("fbench-")
+        library = exe.stem.removeprefix("fbench-")
         binary = arms.Binary(exe)
         try:
             info = arms.describe(binary, {})

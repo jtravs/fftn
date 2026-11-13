@@ -8,7 +8,8 @@
 #   FFTN_CHECK_STAGES="format build" scripts/check.sh
 #
 # Stages, in order:
-#   spdx      every source file carries the SPDX header            (tools/repo_lint.py)
+#   spdx      every source file carries the SPDX header, and shell scripts are
+#             executable in git                                    (tools/repo_lint.py)
 #   docs      Markdown links resolve, PLAN.md keeps its sections   (tools/repo_lint.py)
 #   knobs     experimental switches are registered and not expired (tools/repo_lint.py)
 #   format    clang-format (pinned), C++ sources and headers

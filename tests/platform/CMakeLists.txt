@@ -11,6 +11,7 @@ fftn_add_test(fftn_platform_tests
     aligned_buffer_test.cpp
     cpu_features_test.cpp
     cpu_list_test.cpp
+    environment_test.cpp
     file_source_test.cpp
     platform_text.cpp
     sysctl_values_test.cpp
@@ -31,7 +32,7 @@ set_property(GLOBAL APPEND PROPERTY FFTN_TEST_EXECUTABLES "$<TARGET_FILE:fftn_pl
 add_test(NAME platform.dump.system COMMAND fftn_platform_dump)
 set_tests_properties(platform.dump.system PROPERTIES
   ENVIRONMENT "FFTN_TOPOLOGY="
-  PASS_REGULAR_EXPRESSION "clock_resolution_ns [0-9]+\n.*logical_cpus [1-9]")
+  PASS_REGULAR_EXPRESSION "best_target [a-z0-9_]+\nclock_resolution_ns [0-9]+\n.*logical_cpus [1-9]")
 
 add_test(NAME platform.dump.override_sysfs COMMAND fftn_platform_dump)
 set_tests_properties(platform.dump.override_sysfs PROPERTIES

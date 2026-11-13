@@ -1200,8 +1200,11 @@ What the experiments still require of the build:
 - **Detection details**: AVX and AVX-512 are used only when the operating system saves
   their state (XGETBV), not on CPUID alone. macOS on Intel enables the AVX-512 state
   lazily, on a thread's first use, so there `hw.optional.avx512f` stands in for XGETBV.
-  Windows on Arm has no documented feature flag for FCMA; how to detect it there is part
-  of experiment B2, and until then FCMA is reported absent there.
+  Windows on Arm has no processor-feature flag for FCMA or pointer authentication, and
+  reading the ID registers (MRS) faults in user mode; both are decoded from the copies of
+  ID_AA64ISAR1_EL1 and ID_AA64ISAR2_EL1 that Windows keeps in the registry (`CP 4031` and
+  `CP 4032` of processor 0), and reported absent where those values are missing
+  (experiment B2).
 
 ### 14.3 Toolchains and packaging
 
@@ -1221,7 +1224,8 @@ What the experiments still require of the build:
   build, to be excluded when packaging lands (`EXCLUDE_FROM_ALL` on the declaration needs
   CMake 3.28). GCC ThreadSanitizer builds leave the Kokkos tests out by default: GCC's
   `-Wtsan` fires on Kokkos' fences once inlined into our units, beyond the reach of SYSTEM,
-  and the adapter is serial; Clang's TSan builds run them.
+  and the adapter is serial; Clang's TSan builds run them. Windows on Arm leaves them out
+  too: Kokkos 5.2.1 passes the x86 option `-mcx16` to every Clang build on Windows.
 - A generated single-file amalgamation is a possible release artefact (phase 6); it is
   the same implementation concatenated, not a separate code path.
 
@@ -1304,7 +1308,13 @@ MSVC ABI. AVX-512 paths run under Intel SDE and NEON-without-FCMA and SVE paths 
 QEMU where the runner's CPU lacks them, so every kernel is executed in CI, not only on
 developers' machines. Old processors are emulated as whole machines too (SDE's Nehalem
 and Sandy Bridge models, QEMU's Neoverse N1), which checks detection and dispatch on
-them as well as the kernels: a stray newer instruction anywhere faults.
+them as well as the kernels: a stray newer instruction anywhere faults. Emulation runs the
+test programs that contain kernels or detection, not the long oracle suites (those run
+natively), and only on `main`, weekly and on demand.
+
+The workflows in [`.github/workflows/`](../.github/workflows/) are the matrix: which gate
+stages run on which compiler and why, the emulated models with the target each must
+choose, and every pinned version.
 
 ### 15.5 Determinism and the numerical contract
 
@@ -1707,6 +1717,8 @@ or departs from sections 5.5 and 13.6, or from Kokkos-FFT 2.0's `KokkosFFT::Plan
 | 2026-11-13 | A multi-dimensional c2r out of place keeps its intermediate in a workspace block of one transform's half spectrum (a whole volume's, for now) | The input is preserved by default (9.1); pencil-block scratch arrives with phase 4's volumes |
 | 2026-11-13 | Kokkos core 5.2.1, Serial back end, is a test-only dependency: fetched pinned by URL and SHA-256 (the release's own checksum file, checked against the download), built as a CMake subproject, SYSTEM, in every gate stage that builds; the library still has no dependency, since `fftn/kokkos.hpp` is header-only and compiled in its user's translation units | The adapter's call sites must compile and run in the gate so they cannot rot (task 0.5b); a Serial-only Kokkos builds in seconds |
 | 2026-11-13 | No `omp simd` on the scalar pass loops; old-ISA targets (`x86_v2`, `avx`, plain `neon`) get hand vocabularies from the start, not the scalar text compiled in their regions | Experiment X15: `omp simd` gained 5.5 % with Clang on the M5 but cost 2.0× with GCC 16 on Zen 3; the scalar text in the `avx2` region stayed 2.2–3.7× slower than the hand vocabulary per pass, and `-march=native` closed none of that gap |
+| 2026-11-13 | Windows on Arm reads FCMA and pointer authentication from the registry copies of the ID registers | No `IsProcessorFeaturePresent` flag exists for either (SDK 10.0.26100) and MRS faults; on the CI's Cobalt 100 the registry fields agreed with executing FCMLA and XPACI (B2) |
+| 2026-11-13 | Emulated CI runs the instruction-set test programs only, on `main`, weekly and on demand | It checks instruction-set safety, which branch pushes rarely change; the full suites under emulation took over an hour per processor model (maintainer, after the walking skeleton) |
 | 2026-11-13 | API review (task 0.9): the maintainer took every recommendation of the review of DESIGN 18.2 items 1–35. Accepted as built: 1, 3, 4, 6–21, 23–32. Changed: axes and batch dimensions become `std::vector` and `small_vector` goes (2); the shape takes more batch dimensions, so Views with more than two non-nesting loops work in the adapter (35); `execute_rows` becomes `execute_transforms` (5); the adapter's class becomes `fftn::kokkos::view_plan`, with `compat::Plan` as its alias (33); `shape_type` lives only in `compat` (34); `compat::Direction` takes Kokkos-FFT's values 0 and 1 (22, so that nothing in `compat` differs from Kokkos-FFT on purpose) | Plan construction allocates anyway, so an inline container buys nothing and freezes the rank limit into the type; names should be exact before anyone depends on them; the adapter should stay a faithful mirror of Kokkos-FFT, which keeps open an FFTN host backend inside Kokkos-FFT later |
 | 2026-11-13 | FFTN is unreleased: until the first tagged release the API may change in any way, and a wrong choice is fixed rather than kept (README, AGENTS section 1, section 5) | Maintainer's decision at the API review |
 | 2026-11-13 | Deferred, not rejected: a two-way plan (forward and backward over one table set) and an object owning a plan and its workspace | Small gain for more API surface; both can be added later without changing the API as long as twiddle tables stay direction-independent and a workspace stays plain bytes sized by `workspace_bytes()` (18.2) |

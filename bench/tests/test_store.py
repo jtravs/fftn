@@ -46,8 +46,9 @@ class Scrub(unittest.TestCase):
                 }
             )
             rec = json.loads(st.path.read_text())
-            self.assertEqual(rec["binary"], "<base>/build/fbench-fftw")
-            self.assertEqual(rec["home"], "~/notes")
+            # The separator after the token is the platform's (a backslash on Windows).
+            self.assertEqual(rec["binary"], str(Path("<base>", "build", "fbench-fftw")))
+            self.assertEqual(rec["home"], str(Path("~", "notes")))
             self.assertEqual(rec["root"], "<fftw-root>/lib")
             self.assertNotIn(str(Path.home()), st.path.read_text())
 

@@ -8,6 +8,7 @@
 target_sources(fftn PRIVATE
   cpu_features.cpp
   cpu_list.cpp
+  environment.cpp
   file_source.cpp
   sysctl_values.cpp
   timer.cpp
@@ -15,3 +16,7 @@ target_sources(fftn PRIVATE
   topology_linux.cpp
   topology_macos.cpp
   topology_windows.cpp)
+# RegGetValueW, for the ID registers Windows on Arm copies into the registry (experiment B2).
+if(WIN32)
+  target_link_libraries(fftn PRIVATE advapi32)
+endif()

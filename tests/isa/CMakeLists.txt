@@ -16,6 +16,14 @@ target_compile_options(fftn_isa_probes PRIVATE $<$<CXX_COMPILER_ID:GNU>:-Werror=
 fftn_add_test(fftn_isa_tests
   SOURCES target_test.cpp vocab_test.cpp kernel_test.cpp link_test.cpp test_targets.cpp
   LIBRARIES fftn_isa_probes)
+# The link test compares entry-point addresses to show that no target's function stands in
+# for another's (DESIGN.md 6.4). The Microsoft linker folds functions whose machine code is
+# identical (/OPT:ICF, on by default in optimised links), which is harmless but makes two
+# entry points equal: on Arm64 the test found neon_fcma sharing one (CI run 43495592375).
+# This executable is linked without folding, so that the test compares symbols.
+if(WIN32)
+  target_link_options(fftn_isa_tests PRIVATE "LINKER:/OPT:NOICF")
+endif()
 
 # Disassembly test: the library's units and the probes, per target (tools/asm_check.py).
 # Python runs in the project's uv environment, or any Python 3.14 if uv is missing.
@@ -25,6 +33,12 @@ if(FFTN_UV)
 else()
   find_package(Python3 3.14 REQUIRED COMPONENTS Interpreter)
   set(fftn_python ${Python3_EXECUTABLE})
+endif()
+if(NOT CMAKE_OBJDUMP)
+  # CMake looks for no objdump when the compiler has the MSVC front end (clang-cl); the
+  # llvm-objdump beside it reads COFF.
+  get_filename_component(fftn_cxx_dir "${CMAKE_CXX_COMPILER}" DIRECTORY)
+  find_program(CMAKE_OBJDUMP NAMES llvm-objdump HINTS "${fftn_cxx_dir}" NO_DEFAULT_PATH)
 endif()
 if(NOT CMAKE_OBJDUMP)
   message(FATAL_ERROR "isa tests: no objdump found for the disassembly test")
@@ -117,7 +131,8 @@ function(fftn_asm_fault_test kind pattern)
 endfunction()
 fftn_asm_fault_test(calls "calls [^ ]*fault_helper[^ ]* .*must inline")
 fftn_asm_fault_test(internal_calls "calls [^ ]*fault_internal_helper[^ ]* .*must inline")
-fftn_asm_fault_test(lambda_calls "calls _*ZZN[^ ]* .*must inline")
+# A lambda's call operator: Itanium (_ZZN...) and Microsoft (??R<lambda_N>...) manglings.
+fftn_asm_fault_test(lambda_calls "calls (_*ZZN|\\?\\?R<lambda)[^ ]* .*must inline")
 fftn_asm_fault_test(baseline_isa "baseline: (VEX or EVEX code|FCMA instruction) in")
 fftn_asm_fault_test(target_isa "EVEX feature in|Armv8.3 instruction outside FCMA in")
 if(FFTN_TARGET_IS_AARCH64)

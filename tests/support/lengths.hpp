@@ -25,10 +25,10 @@
 
 #pragma once
 
+#include "platform/environment.hpp"
+
 #include <cstddef>
-#include <cstdlib>
 #include <initializer_list>
-#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -48,11 +48,7 @@ inline constexpr bool under_thread_sanitizer = true;
 inline constexpr bool under_thread_sanitizer = false;
 #endif
 
-inline bool long_tests() {
-  // NOLINTNEXTLINE(concurrency-mt-unsafe): the tests never set environment variables
-  const char* v = std::getenv("FFTN_TEST_LONG");
-  return v != nullptr && std::string_view(v) == "1";
-}
+inline bool long_tests() { return fftn::detail::environment_variable("FFTN_TEST_LONG") == "1"; }
 
 inline std::vector<std::size_t> every_length_up_to(std::size_t last) {
   std::vector<std::size_t> v;

@@ -33,9 +33,16 @@ class SmokeKinds(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.work = Path(self.tmp.name)
-        self.exe = self.work / "fbench-fake"
-        self.exe.write_text(FAKE.format(python=sys.executable))
-        self.exe.chmod(self.exe.stat().st_mode | stat.S_IXUSR)
+        if os.name == "nt":
+            # Windows runs no script by its #! line; a batch file passes the arguments on.
+            script = self.work / "fake.py"
+            script.write_text(FAKE.format(python=sys.executable))
+            self.exe = self.work / "fbench-fake.bat"
+            self.exe.write_text(f'@"{sys.executable}" "{script}" %*\n')
+        else:
+            self.exe = self.work / "fbench-fake"
+            self.exe.write_text(FAKE.format(python=sys.executable))
+            self.exe.chmod(self.exe.stat().st_mode | stat.S_IXUSR)
         self.cases = [
             catalogue.Case("c2c", (16,), 1, "out", -1),
             catalogue.Case("c2c", (17,), 1, "out", -1),

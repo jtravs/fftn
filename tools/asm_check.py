@@ -139,7 +139,8 @@ def target_of(sym: str) -> str | None:
 
 
 def object_target(obj: str) -> str | None:
-    m = re.search(r"(?:^|[_/(])(scalar|avx2|neon_fcma)\.cpp\.(?:o|obj)\)?$", obj)
+    # Archive members may be named by a Windows path (llvm-lib keeps the path it was given).
+    m = re.search(r"(?:^|[_/\\(])(scalar|avx2|neon_fcma)\.cpp\.(?:o|obj)\)?$", obj)
     return m.group(1) if m else None
 
 

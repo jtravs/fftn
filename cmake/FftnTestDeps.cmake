@@ -61,8 +61,13 @@ target_compile_definitions(fftn_test_boost_mp INTERFACE BOOST_MP_STANDALONE)
 # atomic_thread_fence (-Wtsan) for Kokkos' desul atomics after they are inlined into our test
 # units, where SYSTEM cannot silence it, and the gate builds with -Werror. The adapter runs
 # serially, so TSan has nothing of ours to check there; Clang's TSan builds still run these tests.
+# Off by default on Windows on Arm too: Kokkos 5.2.1 adds -mcx16 for every Clang build on
+# Windows (cmake/kokkos_arch.cmake), an x86 option that clang-cl refuses for Arm64 targets.
 set(_fftn_kokkos_default ON)
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND FFTN_SANITIZE MATCHES "thread")
+  set(_fftn_kokkos_default OFF)
+endif()
+if(WIN32 AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(ARM64|arm64|aarch64)$")
   set(_fftn_kokkos_default OFF)
 endif()
 option(FFTN_TEST_WITH_KOKKOS "Test fftn/kokkos.hpp against Kokkos 5.2.1 (Serial back end)"

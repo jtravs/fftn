@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import math
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -163,7 +164,13 @@ class ArmGrammar(unittest.TestCase):
 
             self.assertIsNone(problem(root / "lib" / "libx.so"))
             self.assertIn("built against", problem(other / "libx.so"))
-            self.assertIn("built against", problem(root / "lib" / ".." / "libx.so"))
+            through_link = problem(root / "lib" / ".." / "libx.so")
+            if os.name == "nt":
+                # Windows removes ".." before it follows links: that path is prefix\libx.so,
+                # inside the installation, and what the loader would have opened.
+                self.assertIsNone(through_link)
+            else:
+                self.assertIn("built against", through_link)
 
 
 if __name__ == "__main__":

@@ -29,6 +29,13 @@ ARM = re.compile(
 HARNESS_OPTIONS = {"DELAY", "PERTURB"}
 # Options the driver handles: FFTW wisdom per campaign.
 DRIVER_OPTIONS = {"WISDOM"}
+# Executables carry a suffix on Windows only.
+EXE_SUFFIX = ".exe" if os.name == "nt" else ""
+
+
+def executable(build: Path, library: str) -> Path:
+    """The path of a library's backend in a build directory."""
+    return build / "bench" / f"fbench-{library}{EXE_SUFFIX}"
 
 
 @dataclass(frozen=True)
@@ -124,7 +131,7 @@ def _build_commit(sha: str, library: str, out_dir: Path, log) -> Path:
     settings = sorted((k, v) for k, v in os.environ.items() if k.startswith("FFTN_BENCH_"))
     key = hashlib.sha256(f"{sha}|{cxx}|{settings}".encode()).hexdigest()[:10]
     root = out_dir / "builds" / f"{sha[:12]}-{key}"
-    exe = root / "build" / "bench" / f"fbench-{library}"
+    exe = executable(root / "build", library)
     if exe.exists():
         return root / "build"
     src = root / "src"
@@ -175,7 +182,7 @@ def resolve(arm: Arm, default_build: Path, out_dir: Path, log=print) -> Binary:
                 f"arm {arm.label}: {arm.build!r} is neither a build directory nor a commit"
             ) from None
         build = _build_commit(commit, arm.library, out_dir, log)
-    exe = build / "bench" / f"fbench-{arm.library}"
+    exe = executable(build, arm.library)
     if not exe.exists():
         setting = BACKEND_SETTINGS.get(arm.library)
         hint = f" (configure with {setting} set to build it)" if setting else ""
@@ -222,7 +229,8 @@ def library_problem(info: dict, binary: Path | None = None) -> str | None:
 
 
 def _under(path: str, root: str) -> bool:
-    return path.startswith(root.rstrip("/") + "/")
+    # Lexical and separator-aware: Windows paths use backslashes after abspath/realpath.
+    return Path(path) != Path(root) and Path(path).is_relative_to(root)
 
 
 def timing_problem(info: dict) -> str | None:
