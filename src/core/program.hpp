@@ -12,7 +12,7 @@
 //
 // A program is
 //
-//   batch loops (zero to two, outermost first), then the body: one transform.
+//   batch loops (one per batch dimension, outermost first), then the body: one transform.
 //
 // The body is, for each transformed axis in turn (a phase), loops over the lines of the
 // other axes enclosing the stages of one line. Every loop's iterations are independent,

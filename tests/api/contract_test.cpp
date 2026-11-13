@@ -87,6 +87,8 @@ TYPED_TEST(Contracts, ExecuteNeverAllocates) {
   c2r_planes.axes = {{.n = 6}, {.n = 8}};
   expect_no_allocation(c2r_planes, 6 * 5, 6 * 8); // goes through the block
   expect_no_allocation(fftn::rows_c2c<T>(1, 1, fftn::direction::forward), 1, 1, true);
+  const fftn::shape<T, c> four_batches{.axes = {{10}}, .batches = {{2}, {3}, {1}, {2}}};
+  expect_no_allocation(four_batches, 12 * 10, 12 * 6);
 }
 
 // ---- Any alignment: the same bits at every offset of the arrays.
@@ -174,6 +176,13 @@ TYPED_TEST(Contracts, ResultDoesNotDependOnPosition) {
   two.axes = {{.n = 12}};
   two.batches = {{.count = 3}, {.count = 4}};
   check_positions(fftn::c2c_plan<T>(two), 12, 12, 12, 12, 12);
+  // Three and four batch dimensions, one of count 1: 2 x 3 x 2 and 2 x 1 x 3 x 2.
+  const fftn::shape<c, c> three{.axes = {{9}}, .batches = {{2}, {3}, {2}}};
+  check_positions(fftn::c2c_plan<T>(three), 12, 9, 9, 9, 9);
+  const fftn::shape<T, c> four{.axes = {{3}, {8}}, .batches = {{2}, {1}, {3}, {2}}};
+  check_positions(fftn::r2c_plan<T>(four), 12, 24, 15, 24, 15);
+  const fftn::shape<c, T> four_c2r{.axes = {{3}, {8}}, .batches = {{2}, {1}, {3}, {2}}};
+  check_positions(fftn::c2r_plan<T>(four_c2r), 12, 15, 24, 15, 24);
 }
 
 // ---- Plans are reusable: repeated runs, copies and concurrent threads agree bit for bit.
@@ -336,8 +345,8 @@ TEST(Validation, InvalidShapesThrowNamingTheArgument) {
   expect_refused(no_axes, "shape.axes");
   const fftn::shape<c, c> four_axes{.axes = {{2}, {3}, {4}, {5}}, .batches = {{6}}};
   expect_refused(four_axes, "shape.axes");
-  const fftn::shape<c, c> three_batches{.axes = {{8}}, .batches = {{2}, {3}, {4}}};
-  expect_refused(three_batches, "shape.batches");
+  const fftn::shape<c, c> zero_third{.axes = {{8}}, .batches = {{2}, {3}, {0}, {4}}};
+  expect_refused(zero_third, "shape.batches[2].count");
   expect_refused(fftn::rows_c2c<double>(0, 1, fftn::direction::forward), "shape.axes[0].n");
   expect_refused(fftn::planes_c2c<double>(4, 0, 1, fftn::direction::forward), "shape.axes[1].n");
   expect_refused(fftn::rows_c2c<double>(8, 0, fftn::direction::forward), "shape.batches[0].count");
@@ -354,6 +363,13 @@ TEST(Validation, InvalidShapesThrowNamingTheArgument) {
   // Interleaved rows that collide: stride 2, distance 1, three rows.
   overlap.axes = {{.n = 8, .out_stride = 2}};
   overlap.batches = {{.count = 3, .out_dist = 1}};
+  expect_refused(overlap, "overlap");
+  // Four batch dimensions, the outermost colliding with the third: distances 16 and 16.
+  overlap.axes = {{.n = 8}};
+  overlap.batches = {{.count = 2, .out_dist = 16},
+                     {.count = 1},
+                     {.count = 2, .out_dist = 16},
+                     {.count = 2, .out_dist = 8}};
   expect_refused(overlap, "overlap");
 
   // Sizes beyond the address space.
@@ -381,6 +397,10 @@ TEST(Validation, InvalidShapesThrowNamingTheArgument) {
   real.axes = {{.n = 8}};
   real.batches = {{.count = 2, .in_dist = 10, .out_dist = 6}};
   expect_refused(real, "options.in_place", {.in_place = true});
+  real.batches = {{.count = 2}, {.count = 3}, {.count = 2, .in_dist = 12, .out_dist = 5}};
+  expect_refused(real, "shape.batches[2]", {.in_place = true});
+  moved.batches = {{.count = 2}, {.count = 2}, {.count = 2}, {.count = 2, .in_dist = 16}};
+  expect_refused(moved, "shape.batches[3]", {.in_place = true});
 }
 
 // Strides and distances whose magnitudes or derived byte steps do not fit std::ptrdiff_t.
@@ -399,6 +419,15 @@ TEST(Validation, StridesThatOverflowAreRefused) {
   expect_refused(s, "shape.batches[0].in_dist");
   s.batches = {{.count = 3, .out_dist = lowest}};
   expect_refused(s, "shape.batches[0].out_dist");
+  s.batches = {{.count = 2}, {.count = 2}, {.count = 2}, {.count = 2, .in_dist = lowest}};
+  expect_refused(s, "shape.batches[3].in_dist");
+  // The byte reach of four batch dimensions together overflows, though each one's fits.
+  constexpr std::ptrdiff_t wide = std::numeric_limits<std::ptrdiff_t>::max() / 48;
+  s.batches = {{.count = 2, .in_dist = wide},
+               {.count = 2, .in_dist = wide},
+               {.count = 2, .in_dist = wide},
+               {.count = 2, .in_dist = wide}};
+  expect_refused(s, "too large");
   // A distance whose byte step overflows although its element count does not.
   s.batches = {{.count = 2, .in_dist = std::numeric_limits<std::ptrdiff_t>::max() / 4}};
   expect_refused(s, "too large");
@@ -432,6 +461,10 @@ TEST(Validation, DistanceOfASingleTransformIsIgnored) {
   s.batches = {{.count = 1, .in_dist = far_step, .out_dist = far_step}};
   expect_default_result(s);
   s.batches = {{.count = 1, .in_dist = lowest_step, .out_dist = -far_step}};
+  expect_default_result(s);
+  s.batches = {{.count = 1, .in_dist = far_step},
+               {.count = 1, .out_dist = lowest_step},
+               {.count = 1, .in_dist = -far_step, .out_dist = far_step}};
   expect_default_result(s);
 }
 

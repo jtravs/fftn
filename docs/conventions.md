@@ -57,8 +57,8 @@ For one transform of logical lengths n₀ × … × n_{r−1} (r = 1, 2 or 3 axe
 
 ## Shapes and layouts
 
-A shape lists its transformed axes (`shape::axes`, slowest first) and its batch
-dimensions (`shape::batches`, slowest first; none means one transform). Transforms are
+A shape lists its transformed axes (`shape::axes`, slowest first, one to three) and its
+batch dimensions (`shape::batches`, slowest first, any number; none means one transform). Transforms are
 numbered in batch order with the last batch dimension fastest; `execute_rows` uses these
 numbers.
 
@@ -132,7 +132,8 @@ precisions:
 - c2c planes up to 96 × 96, compared at every output up to 64 points along each axis and
   at sampled outputs beyond;
 - complex and real arrays of two and three axes (up to 32 × 30 and 4 × 6 × 8 points) at
-  every output, with default and strided layouts; their bounds add the rounding of the
+  every output, with default and strided layouts, and rows and planes with three and four
+  batch dimensions nested in memory in any order; their bounds add the rounding of the
   reference's values between axes and, for c2r, of the input spectrum.
 
 The same rows and planes are compared with FFTW at every output, within the sum of the
