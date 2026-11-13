@@ -86,7 +86,13 @@ TEST(AllocationCounter, ZeroSizedAllocationsAreDistinct) {
   void* b = ::operator new(0);
   EXPECT_NE(a, b);
   ::operator delete(a);
+#ifdef __cpp_sized_deallocation
   ::operator delete(b, std::size_t{0});
+#else
+  // Clang before 19 enables sized deallocation only with -fsized-deallocation: the sized
+  // form is then neither declared nor ever called by compiled code.
+  ::operator delete(b);
+#endif
   EXPECT_EQ(c.allocations(), 2U);
   EXPECT_EQ(c.deallocations(), 2U);
 }
