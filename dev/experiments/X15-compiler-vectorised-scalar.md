@@ -123,7 +123,9 @@ the metric and the decision rule above are unchanged.
   `x15-passes --check` does the same for every variant of the pass-level harness.
 - **Whole transforms (fbench).** fbench v0 times double precision only, so float is
   covered by the pass level and the bitwise test, not by the whole-transform runs. Two
-  runs per machine, each with every arm in one session and the A/A control:
+  runs per machine, each with every arm in one session and the A/A control, and each
+  with `--tier full` (fbench's `run` defaults to the quick tier, where the filters below
+  leave two cases):
   1. *target set* (the decision metric: fbench's weighted geomean of this run),
      `--filter '^(c2c-(64|96|100|128|256|512|1000|1024|4096)|r2c-(64|256|1024))-b(16|64|256|1024|4096)-op$'`:
      the 30 c2c and r2c batched-row cases of the standard catalogue with smooth lengths
