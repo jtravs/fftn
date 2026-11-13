@@ -25,8 +25,9 @@
 #include "harness/backend.hpp"
 #include "harness/json.hpp"
 
-#include <mkl.h>
 #include <mkl_dfti.h>
+#include <mkl_service.h>
+#include <mkl_types.h>
 
 #include <array>
 #include <cstddef>
@@ -160,6 +161,7 @@ std::int32_t fbench_create(const fbench_case* c, void* /*in*/, void* /*out*/, vo
   return fbench_ok;
 }
 
+// NOLINTNEXTLINE(misc-const-correctness): the signature is the interface's
 void fbench_execute(const void* plan, void* in, void* out) {
   const auto* r = static_cast<const plan_record*>(plan);
   if (r->forward && r->in_place) {

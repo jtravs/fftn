@@ -124,6 +124,7 @@ std::int32_t fbench_create(const fbench_case* c, void* /*in*/, void* /*out*/, vo
   }
 }
 
+// NOLINTNEXTLINE(misc-const-correctness): the signature is the interface's
 void fbench_execute(const void* plan, void* in, void* out) {
   const auto* r = static_cast<const plan_record*>(plan);
   using cd = std::complex<double>;

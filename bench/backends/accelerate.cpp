@@ -30,8 +30,8 @@
 #include "harness/backend.hpp"
 #include "harness/json.hpp"
 
-#include <Accelerate/Accelerate.h>
 #include <sys/sysctl.h>
+#include <vecLib/vDSP.h>
 
 #include <array>
 #include <cstddef>
@@ -42,7 +42,7 @@
 
 namespace {
 
-enum class api { interleaved, dft };
+enum class api : std::uint8_t { interleaved, dft };
 
 struct backend_state {
   api interface = api::interleaved;
@@ -119,7 +119,7 @@ void run_interleaved(const plan_record& r, double* in, double* out) {
 }
 
 void run_split(const plan_record& r, double* in, double* out) {
-  const DSPDoubleSplitComplex z{r.re.data(), r.im.data()};
+  const DSPDoubleSplitComplex z{.realp = r.re.data(), .imagp = r.im.data()};
   const std::size_t h = r.kind == fbench_c2c ? r.n : r.n / 2;
   for (std::size_t b = 0; b < r.batch; ++b) {
     double* x = in + b * r.in_dist;

@@ -27,7 +27,13 @@
 #include "harness/backend.hpp"
 #include "harness/json.hpp"
 
-#include <kfr/dft.hpp>
+#include <kfr/base/shape.hpp>
+#include <kfr/base/univector.hpp>
+#include <kfr/dft.hpp> // IWYU pragma: keep (fft.hpp alone lacks the complex functions it uses)
+#include <kfr/dft/fft.hpp>
+#include <kfr/kfr.h>
+#include <kfr/meta/numeric.hpp>
+#include <kfr/simd/complex_type.hpp>
 #include <kfr/version.hpp>
 
 #include <cstddef>
@@ -150,9 +156,8 @@ std::int32_t fbench_create(const fbench_case* c, void* /*in*/, void* /*out*/, vo
     r->in_dist = static_cast<std::size_t>(c->in_dist);
     r->out_dist = static_cast<std::size_t>(c->out_dist);
     r->n_last = static_cast<std::size_t>(c->dims[c->rank - 1]);
-    r->padded = static_cast<std::size_t>(c->kind == fbench_r2c   ? c->in_last
-                                         : c->kind == fbench_c2r ? c->out_last
-                                                                 : c->in_last);
+    // The real array's row length (r2c input, c2r output); unused for c2c.
+    r->padded = static_cast<std::size_t>(c->kind == fbench_c2r ? c->out_last : c->in_last);
     std::vector<kfr::index_t> dims;
     for (int d = 0; d < c->rank; ++d) {
       dims.push_back(static_cast<kfr::index_t>(c->dims[d]));
@@ -188,6 +193,7 @@ std::int32_t fbench_create(const fbench_case* c, void* /*in*/, void* /*out*/, vo
   }
 }
 
+// NOLINTNEXTLINE(misc-const-correctness): the signature is the interface's
 void fbench_execute(const void* plan, void* in, void* out) {
   const auto* r = static_cast<const plan_record*>(plan);
   if (r->kind == fbench_c2c) {

@@ -64,7 +64,7 @@ inline std::string defining_file(const char* symbol) {
 // The widest vector extension this translation unit was compiled for: what a header-only
 // library included here can use.
 constexpr const char* compiled_isa() {
-#if defined(__AVX512F__)
+#ifdef __AVX512F__
   return "avx512f";
 #elif defined(__AVX2__) && defined(__FMA__)
   return "avx2+fma";
