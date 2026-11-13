@@ -253,14 +253,17 @@ no conversion, but on macOS 27 it refuses every complex length above 4096 and so
 convert vDSP's packed format (2 X[0] and 2 X[n/2] in the first value, 2 X[k] after it) to
 FFTW's inside the timed call. Rows are executed one by one; vDSP has no batched DFT.
 
-**Intel oneMKL** (2024.1 or newer; Linux x86-64): the root of an install (oneAPI's
-`mkl/<version>`, or a `mkl-devel` environment with `include/` and `lib/`). The backend links
-the link-line advisor's one-thread choice, `mkl_intel_lp64`, `mkl_sequential` and `mkl_core`,
-dynamically, with an rpath to the root; do not source `setvars.sh` for runs (it would put
-another oneMKL first on the library path, which the loaded-library check refuses). One DFTI
-descriptor per case (batch, strides and distances, `DFTI_COMPLEX_COMPLEX` storage), no
-scaling. `describe` reports the code path oneMKL chose (`isa`, from `MKLVersion::Processor`)
-and `MKL_ENABLE_INSTRUCTIONS` and `MKL_CBWR`, which must be unset for a fair run.
+**Intel oneMKL** (Linux x86-64; compiled against the headers of 2025.2 and 2026.2): the root
+of an install (oneAPI's `mkl/<version>`, or a `mkl-devel` environment with `include/` and
+`lib/`). The backend links the link-line advisor's one-thread choice, `mkl_intel_lp64`,
+`mkl_sequential` and `mkl_core`, dynamically, with an rpath to the root; do not source
+`setvars.sh` for runs (it would put another oneMKL first on the library path, which the
+loaded-library check refuses). One DFTI descriptor per case, for its one direction: the
+batch, the layout through `DFTI_INPUT_`/`OUTPUT_STRIDES` and `_DISTANCE` (which every
+release has; 2025.2 and 2026.1 lack the newer `DFTI_FWD_`/`BWD_STRIDES`), and
+`DFTI_COMPLEX_COMPLEX` storage, with no scaling. `describe` reports the code path oneMKL
+chose (`isa`, from `MKLVersion::Processor`) and `MKL_ENABLE_INSTRUCTIONS` and `MKL_CBWR`,
+which must be unset for a fair run.
 
 **FFTL.jl** through libfftl, its C library: FFTL.jl compiled ahead of time with juliac into a
 self-contained shared library (the Julia runtime is embedded; nothing of Julia is needed at

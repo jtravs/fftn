@@ -2,16 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // fbench backend for Intel oneMKL's DFTI (double precision), built only when
-// FFTN_BENCH_MKL_ROOT names a oneMKL installation (2024.1 or newer: the direction-
-// independent DFTI_FWD_/DFTI_BWD_ layout parameters). oneMKL is proprietary (Intel Simplified
+// FFTN_BENCH_MKL_ROOT names a oneMKL installation. oneMKL is proprietary (Intel Simplified
 // Software License): this executable is for our own measurements and is never distributed.
 //
 // Built as its best users build it, from Intel's link-line advisor for one thread: the LP64
 // interface, the sequential threading layer and the core library, dynamically
 // (mkl_intel_lp64, mkl_sequential, mkl_core), so the timed code is oneMKL's own dispatch to
 // the best code path for the CPU. Every case is one descriptor: the batch is
-// DFTI_NUMBER_OF_TRANSFORMS, the layout is given by DFTI_FWD_/BWD_STRIDES and _DISTANCE
-// (FFTW's layout, padded in place for real data), real transforms use
+// DFTI_NUMBER_OF_TRANSFORMS, the layout is given by DFTI_INPUT_/OUTPUT_STRIDES and _DISTANCE
+// for the case's one direction (FFTW's layout, padded in place for real data: the real side
+// in reals, the complex side in complex values), real transforms use
 // DFTI_CONJUGATE_EVEN_STORAGE = DFTI_COMPLEX_COMPLEX (FFTW's n/2+1 values), and neither
 // direction is scaled (DFTI's defaults), so nothing is converted.
 //
@@ -120,14 +120,12 @@ std::int32_t fbench_create(const fbench_case* c, void* /*in*/, void* /*out*/, vo
   for (int d = 0; d < c->rank; ++d) {
     dims.at(static_cast<std::size_t>(d)) = static_cast<MKL_LONG>(c->dims[d]);
   }
-  // The forward domain is the input of r2c and of a forward c2c; for c2r it is the output.
-  const bool input_is_forward = c->kind == fbench_r2c || (c->kind == fbench_c2c && r->forward);
-  const std::int64_t fwd_last = input_is_forward ? c->in_last : c->out_last;
-  const std::int64_t bwd_last = input_is_forward ? c->out_last : c->in_last;
-  const auto fwd_dist = static_cast<MKL_LONG>(input_is_forward ? c->in_dist : c->out_dist);
-  const auto bwd_dist = static_cast<MKL_LONG>(input_is_forward ? c->out_dist : c->in_dist);
-  const std::array<MKL_LONG, 4> fwd_strides = strides(*c, fwd_last);
-  const std::array<MKL_LONG, 4> bwd_strides = strides(*c, bwd_last);
+  // The layout of the compute call's own input and output (a descriptor serves one direction
+  // here), in elements of each side's type: real for the r2c input and the c2r output.
+  const std::array<MKL_LONG, 4> in_strides = strides(*c, c->in_last);
+  const std::array<MKL_LONG, 4> out_strides = strides(*c, c->out_last);
+  const auto in_dist = static_cast<MKL_LONG>(c->in_dist);
+  const auto out_dist = static_cast<MKL_LONG>(c->out_dist);
 
   MKL_LONG status = c->rank == 1
                         ? DftiCreateDescriptor(&r->handle, DFTI_DOUBLE, domain, 1, dims[0])
@@ -145,10 +143,20 @@ std::int32_t fbench_create(const fbench_case* c, void* /*in*/, void* /*out*/, vo
   if (c->kind != fbench_c2c) {
     set(DFTI_CONJUGATE_EVEN_STORAGE, DFTI_COMPLEX_COMPLEX);
   }
-  set(DFTI_FWD_STRIDES, fwd_strides.data());
-  set(DFTI_BWD_STRIDES, bwd_strides.data());
-  set(DFTI_FWD_DISTANCE, fwd_dist);
-  set(DFTI_BWD_DISTANCE, bwd_dist);
+  // DFTI_INPUT_/OUTPUT_ STRIDES and DISTANCE: every supported oneMKL has them (2025.2 and
+  // 2026.1 have no DFTI_FWD_/BWD_STRIDES); newer headers mark them deprecated in favour of the
+  // direction-independent names, so that warning is silenced here only.
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
+  set(DFTI_INPUT_STRIDES, in_strides.data());
+  set(DFTI_OUTPUT_STRIDES, out_strides.data());
+  set(DFTI_INPUT_DISTANCE, in_dist);
+  set(DFTI_OUTPUT_DISTANCE, out_dist);
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
   set(DFTI_THREAD_LIMIT, static_cast<MKL_LONG>(1));
   if (status == DFTI_NO_ERROR) {
     status = DftiCommitDescriptor(r->handle);
