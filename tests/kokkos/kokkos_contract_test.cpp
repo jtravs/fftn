@@ -366,7 +366,7 @@ TYPED_TEST(KokkosAdapterValidation, LayoutsAndPlacement) {
                  "out");
 
   // Broadcast strides; output elements that collide (refused by the core plan, reported
-  // with the Views named); batch dimensions that do not nest.
+  // with the Views named).
   const c2 store("store", 8, 8);
   const c2 other("other", 8, 8);
   const strided broadcast(store.data(), Kokkos::LayoutStride(3, 0, 8, 1));
@@ -376,15 +376,6 @@ TYPED_TEST(KokkosAdapterValidation, LayoutsAndPlacement) {
   expect_refused([&] { splan(host{}, fine, broadcast, direction::forward, -1); }, "out.stride(0)");
   const strided colliding(store.data(), Kokkos::LayoutStride(3, 1, 8, 1));
   expect_refused([&] { splan(host{}, fine, colliding, direction::forward, -1); }, "in, out");
-  using strided4 = Kokkos::View<Kokkos::complex<T>****, Kokkos::LayoutStride, Kokkos::HostSpace>;
-  const Kokkos::View<Kokkos::complex<T>*, Kokkos::HostSpace> pool("pool", 5400);
-  const Kokkos::View<Kokkos::complex<T>*, Kokkos::HostSpace> pool2("pool2", 5400);
-  const Kokkos::LayoutStride loose(2, 4000, 2, 1000, 2, 300, 8, 1);
-  const strided4 u(pool.data(), loose);
-  const strided4 v(pool2.data(), loose);
-  expect_refused(
-      [&] { fftn::kokkos::plan<host, strided4, strided4>(host{}, u, v, direction::forward, -1); },
-      "in");
 }
 
 TYPED_TEST(KokkosAdapterValidation, ExecuteChecksItsViews) {

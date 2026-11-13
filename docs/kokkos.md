@@ -111,7 +111,7 @@ namespace per build.
   the complex side has n/2 + 1 for the real side's n. Zero extents are refused.
 - **Batch dimensions** are all the other dimensions. Those of extent 1 are dropped, and two
   that nest (one spans the other exactly on both sides, as in any contiguous View) merge
-  into one. At most two may remain, since FFTN plans loop over at most two.
+  into one. Any number may remain: a plan loops over each, with no temporary copy.
 - **Placement.** Views that start at the same address are transformed in place; Views that
   overlap otherwise are refused. In place, the strides must agree as the
   [conventions](conventions.md#in-place) require: equal for c2c, and FFTW's padded layout for

@@ -436,6 +436,84 @@ TYPED_TEST(KokkosAdapter, TwoBatchLoopsRemainForAMiddleAxis) {
                    reals_from(core_out_of_place(want_shape, complexes_of(reals_of(x)), 96)));
 }
 
+// Views whose other dimensions leave three batch loops that do not nest: a rank-5 View along
+// axes {1, 3}, out of place and in place, and the real kinds over it; then a rank-4
+// LayoutStride View along its last axis whose three batch dimensions are padded apart.
+TYPED_TEST(KokkosAdapter, ThreeBatchLoopsThatDoNotNest) {
+  using T = TypeParam;
+  using complex5 = Kokkos::View<Kokkos::complex<T>*****, Kokkos::LayoutRight, Kokkos::HostSpace>;
+  using real5 = Kokkos::View<T*****, Kokkos::LayoutRight, Kokkos::HostSpace>;
+  const fftn::kokkos::axis_type<2> axes{1, 3};
+  const complex5 x("x", 2, 4, 3, 6, 2);
+  const complex5 y("y", 2, 4, 3, 6, 2);
+  fill(x, 89);
+  const auto s = fftn::kokkos::shape_of(x, y, direction::forward, axes);
+  ASSERT_EQ(s.batches.size(), 3U);
+  // (2, 4, 3, 6, 2) in C order: strides 144, 36, 12, 2, 1.
+  const fftn::shape<std::complex<T>, std::complex<T>> c{
+      .dir = direction::forward,
+      .axes = {{.n = 4, .in_stride = 36, .out_stride = 36},
+               {.n = 6, .in_stride = 2, .out_stride = 2}},
+      .batches = {{.count = 2, .in_dist = 144, .out_dist = 144},
+                  {.count = 3, .in_dist = 12, .out_dist = 12},
+                  {.count = 2, .in_dist = 1, .out_dist = 1}},
+  };
+  const auto input = complexes_of(reals_of(x));
+  const fftn::kokkos::plan<host, complex5, complex5, 2> p(host{}, x, y, direction::forward, axes);
+  p.execute(x, y, normalization::none);
+  expect_same_bits(reals_of(y), reals_from(core_out_of_place(c, input, 288)));
+  const fftn::kokkos::plan<host, complex5, complex5, 2> q(host{}, x, x, direction::forward, axes);
+  q.execute(x, x, normalization::none);
+  expect_same_bits(reals_of(x), reals_from(core_in_place<T>(c, input)));
+
+  // Real: (2, 4, 3, 6, 2) reals to (2, 4, 3, 4, 2) complex values, axis 3 halved.
+  const real5 xr("xr", 2, 4, 3, 6, 2);
+  const complex5 yh("yh", 2, 4, 3, 4, 2);
+  const real5 zr("zr", 2, 4, 3, 6, 2);
+  fill(xr, 97);
+  const fftn::shape<T, std::complex<T>> rf{
+      .axes = {{.n = 4, .in_stride = 36, .out_stride = 24},
+               {.n = 6, .in_stride = 2, .out_stride = 2}},
+      .batches = {{.count = 2, .in_dist = 144, .out_dist = 96},
+                  {.count = 3, .in_dist = 12, .out_dist = 8},
+                  {.count = 2, .in_dist = 1, .out_dist = 1}},
+  };
+  fftn::shape<std::complex<T>, T> rb;
+  rb.dir = direction::backward;
+  for (const fftn::axis& a : rf.axes) {
+    rb.axes.push_back({.n = a.n, .in_stride = a.out_stride, .out_stride = a.in_stride});
+  }
+  for (const fftn::batch& b : rf.batches) {
+    rb.batches.push_back({.count = b.count, .in_dist = b.out_dist, .out_dist = b.in_dist});
+  }
+  const fftn::kokkos::plan<host, real5, complex5, 2> f(host{}, xr, yh, direction::forward, axes);
+  const fftn::kokkos::plan<host, complex5, real5, 2> b(host{}, yh, zr, direction::backward, axes);
+  f.execute(xr, yh, normalization::none);
+  const auto spectrum = core_out_of_place(rf, reals_of(xr), 192);
+  expect_same_bits(reals_of(yh), reals_from(spectrum));
+  b.execute(yh, zr, normalization::none);
+  expect_same_bits(reals_of(zr), core_out_of_place(rb, spectrum, 288));
+
+  using strided4 = Kokkos::View<Kokkos::complex<T>****, Kokkos::LayoutStride, Kokkos::HostSpace>;
+  const Kokkos::View<Kokkos::complex<T>*, Kokkos::HostSpace> pool("pool", 5400);
+  const Kokkos::View<Kokkos::complex<T>*, Kokkos::HostSpace> pool2("pool2", 5400);
+  const Kokkos::LayoutStride loose(2, 4000, 2, 1000, 2, 300, 8, 1);
+  const strided4 u(pool.data(), loose);
+  const strided4 v(pool2.data(), loose);
+  fill(pool, 101);
+  const fftn::kokkos::plan<host, strided4, strided4> r(host{}, u, v, direction::backward, -1);
+  r.execute(u, v, normalization::none);
+  const fftn::shape<std::complex<T>, std::complex<T>> loose_shape{
+      .dir = direction::backward,
+      .axes = {{.n = 8, .in_stride = 1, .out_stride = 1}},
+      .batches = {{.count = 2, .in_dist = 4000, .out_dist = 4000},
+                  {.count = 2, .in_dist = 1000, .out_dist = 1000},
+                  {.count = 2, .in_dist = 300, .out_dist = 300}},
+  };
+  expect_same_bits(reals_of(pool2),
+                   reals_from(core_out_of_place(loose_shape, complexes_of(reals_of(pool)), 5400)));
+}
+
 // Real kinds through LayoutStride: rows a few values apart on both sides.
 TYPED_TEST(KokkosAdapter, RealKindsThroughLayoutStride) {
   using T = TypeParam;

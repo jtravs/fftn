@@ -213,8 +213,8 @@ template <class View> [[nodiscard]] auto data_of(const View& v) noexcept {
 /// Throws `std::invalid_argument` naming the argument (`in`, `out`, `axes`) when an axis is
 /// out of range or repeated; an extent is 0; a stride is 0; the extents do not match the
 /// kind (equal everywhere, except along the halved axis of a real transform, where the
-/// complex side has n/2 + 1 for the real side's n); the batch dimensions do not reduce to
-/// two; `in` and `out` overlap without starting at the same address; or, when they do start
+/// complex side has n/2 + 1 for the real side's n); `in` and `out` overlap without starting
+/// at the same address; or, when they do start
 /// at the same address (in place), their strides disagree: equal for c2c, and FFTW's padded
 /// layout for real kinds (the halved axis contiguous on both sides, every other real stride
 /// twice the complex one).
@@ -377,13 +377,6 @@ shape_of(const InView& in, const OutView& out, direction dir, const axis_type<Di
       }
     }
     loops[merged++] = inner;
-  }
-  constexpr std::size_t max_loops = 2; // the core plan's limit
-  if (merged > max_loops) {
-    detail::reject("in", "has " + std::to_string(merged) +
-                             " batch dimensions that do not nest; FFTN plans loop over at "
-                             "most " +
-                             std::to_string(max_loops));
   }
   for (std::size_t i = 0; i < merged; ++i) {
     s.batches.push_back(loops[i]);
