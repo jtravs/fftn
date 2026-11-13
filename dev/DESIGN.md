@@ -1326,10 +1326,12 @@ over time. It inherits the prototype rig's concepts and replaces its statistics.
 
 - **One executable per library.** FFTW-API libraries export the same symbols and OpenMP
   runtimes collide, so each backend is its own binary behind a small C interface
-  (`create(desc)`, `execute`, `destroy`, `describe`). Each binary reports the library
-  version, build flags and the instruction set actually selected; fbench refuses to
-  compare arms that report identical configurations when they are meant to differ, and
-  refuses a binary that resolved the wrong shared library.
+  (`begin(options)`, `create(desc)`, `execute`, `destroy`, `describe`, `end`). A shared
+  harness owns everything else: buffers, data, timing and the correctness check. Each
+  binary reports the library version, build flags, commit and the instruction set actually
+  selected; fbench refuses to compare arms that report identical configurations when they
+  are meant to differ, refuses a binary that resolved the wrong shared library, and refuses
+  to time sanitizer or Debug builds.
 - **Arms** are written `label=library[:build][+OPTION=value…]`. An FFTN arm can be any
   commit (fbench builds it from `git archive`) or any plan option.
 - **Catalogues** are data files of weighted cases:
@@ -1363,20 +1365,29 @@ reported separately for every library.
   counterbalanced order; within a process each case takes several short timed batches and
   contributes its median (and its minimum). Ratios are paired by round.
 - **Report** the median ratio with a bootstrap 95 % confidence interval over rounds. An
-  **identical-arm control** (A against A) runs automatically and sets the noise band; the
+  **identical-arm control** (A against A) runs automatically and sets the noise band: the
+  95th percentile over cases of the control's |median log ratio|, at least 1 %. The
   verdict for each case is faster, slower or no evidence, by whether the interval clears
-  that band. Rounds are added until the target cases resolve or the budget ends.
+  that band. Rounds are added until the target cases resolve (a verdict, or an interval
+  inside the band) or the budget ends. Arm orders follow a Williams design. Test-only arm
+  options seed a known slowdown (`DELAY`) or a wrong output (`PERTURB`) to prove the
+  statistics and the guard.
 - **Same-process A/B** for two FFTN plan options: both plans alternate inside one
   process, which removes page-placement and address-layout effects.
 - **Hot and cold are explicit.** Hot reuses buffers; cold rotates through a pool larger
-  than the last-level cache, plan tables included. Buffers are first touched by the
-  threads that will use them. Buffer offsets within a page are randomised between rounds
-  so an aliasing accident cannot decide a result.
+  than the last-level cache, plan tables included where the library allows it (FFTW
+  shares its twiddle tables between plans, so for FFTW only the data rotates). Buffers are
+  first touched by the threads that will use them. Buffer offsets within a page are
+  randomised between rounds, in multiples of 64 bytes so that alignment is kept, and are
+  shared by all arms of a round so an aliasing accident cannot decide a result.
 - **Validity.** fbench records load, frequency and thermal state where the OS exposes
-  them and marks rounds on a busy machine invalid. On macOS it requests the
-  performance-core class.
-- **Accuracy** (relative RMS and maximum error against the quadruple-precision reference) is
-  stored with every timing.
+  them and marks rounds on a busy machine invalid (load average, and other processes'
+  current CPU use). On macOS it requests the performance-core class.
+- **Accuracy** (relative RMS and maximum error against a double-double direct DFT in the
+  harness, at sampled outputs, plus Parseval over whole rows) is stored with every timing;
+  a wrong output in any round is reported as such, never averaged away.
+- **Competitors' state is per campaign:** FFTW wisdom starts empty in every run and is
+  shared by that run's processes with the same binary and planner.
 - Throughput is reported as ns per point and as mflops = 5·n·log₂n / t for complex
   transforms and 2.5·n·log₂n / t for real ones, the convention of FFTW's published
   benchmarks.
@@ -1500,6 +1511,7 @@ implementation are listed here until settled.
 | 2026-11-13 | Float is supported and kept alive from phase 1 by correctness tests in CI; tuned in phase 6 | It has users, and precision-generic code that is never instantiated drifts |
 | 2026-11-13 | Bitwise schedule independence is kept | It costs nothing measurable (no cross-thread reductions) and makes threading tests exact; revisit only on experimental evidence |
 | 2026-11-13 | fbench replicates over processes with paired intervals and an A/A control | Process-to-process spread dominated the prototype's noise |
+| 2026-11-13 | fbench v0: noise band = 95th percentile of the A/A control's \|median log ratio\| (floor 1 %); double-double reference in the harness; wisdom fresh per run | Simulated, a band from the A/A intervals' reach was as safe but needed about twice the rounds for a 5 % effect; the quadruple-precision test reference needs Boost, which benchmark binaries should not; stale wisdom slowed FFTW 1.3× (E10) |
 | 2026-11-13 | ISA regions confirmed on Linux x86-64; GCC builds use `-Werror=psabi`; no vector types as template arguments | Experiment B1: GCC silently miscompiles by-value vectors across a region boundary |
 | 2026-11-13 | Platform readers are parsers over recorded sources (a one-file sysfs snapshot, a sysctl snapshot); `FFTN_TOPOLOGY` names a recording; detection results are function-local constants | The Linux, macOS and x86 logic is tested on any machine; one fixture file per machine rather than thousands; no mutable global state |
 | 2026-11-13 | The planning clock is `std::chrono::steady_clock` (measured step 41 ns on Apple M5 Max) | Planning times whole executions of microseconds; a cycle counter adds per-CPU skew and frequency questions |
