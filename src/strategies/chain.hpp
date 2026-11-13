@@ -76,6 +76,9 @@ private:
   std::vector<std::vector<T>>& tables_;
   std::size_t chunk_points_;
   std::map<std::size_t, std::vector<std::complex<T>>> roots_;
+  // Keyed on (n, s) alone: the radix and m of the pass with s copies follow from n because
+  // chain_radices(n) is deterministic, so a key never meets two different tables. A
+  // planner that chose among several factorisations of n would have to key on the radix.
   std::map<std::pair<std::size_t, std::size_t>, const T*> stage_tables_; // (n, s)
   std::map<std::pair<std::size_t, std::size_t>, const T*> radix_roots_;  // (n, radix)
   std::map<std::size_t, const T*> edge_tables_;
