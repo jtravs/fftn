@@ -33,7 +33,7 @@ def scrub(value: object, prefixes: list[tuple[str, str]]) -> object:
     """
     if isinstance(value, str):
         for prefix, token in prefixes:
-            value = re.sub(re.escape(prefix) + r"(?=/|$|[\s\"'])", token, value)
+            value = re.sub(re.escape(prefix) + r"(?=[/\\]|$|[\s\"'])", token, value)
         return value
     if isinstance(value, list):
         return [scrub(v, prefixes) for v in value]
@@ -62,7 +62,7 @@ class RunStore:
 
     def add_prefix(self, path: str, token: str) -> None:
         if path and path != "/" and all(p != path for p, _ in self.prefixes):
-            self.prefixes.append((path.rstrip("/"), token))
+            self.prefixes.append((path.rstrip("/\\"), token))
             self.prefixes.sort(key=lambda p: -len(p[0]))
 
     def append(self, record: dict) -> None:
