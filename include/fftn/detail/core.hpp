@@ -36,10 +36,9 @@ template <class T> struct kind_of<std::complex<T>, T> {
 };
 
 template <class In, class Out>
-inline constexpr precision precision_of = std::is_same_v<In, double> ||
-                                                  std::is_same_v<In, std::complex<double>>
-                                              ? precision::f64
-                                              : precision::f32;
+inline constexpr precision precision_of =
+    std::is_same_v<In, double> || std::is_same_v<In, std::complex<double>> ? precision::f64
+                                                                           : precision::f32;
 
 // A shape with its type information as values.
 struct shape_view {

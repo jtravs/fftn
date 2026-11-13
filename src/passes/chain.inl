@@ -260,8 +260,8 @@ template <class T> void r2c_post(const pass_args* a, std::size_t first, std::siz
     const cv<T> zc = conj(load(z + at(h - k, zs)));
     const cv<T> e = scale(add(zk, zc), T(0.5));
     // w^k O = -i (w^k (Z_k - conj Z_h-k) / 2); multiplying by -i is conj(swap_ri(.)).
-    const cv<T> wo = conj(swap_ri(scale(mul(sub(zk, zc), load_tw(table + tw_reals<T> * k)),
-                                        T(0.5))));
+    const cv<T> wo =
+        conj(swap_ri(scale(mul(sub(zk, zc), load_tw(table + tw_reals<T> * k)), T(0.5))));
     store(y + at(k, ys), add(e, wo));
     if (k != h - k) {
       store(y + at(h - k, ys), conj(sub(e, wo)));

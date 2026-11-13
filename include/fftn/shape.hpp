@@ -92,7 +92,7 @@ template <class In, class Out> struct shape {
 /// and distances; nothing is validated until a plan is built from it.
 template <class T>
 [[nodiscard]] shape<std::complex<T>, std::complex<T>> rows_c2c(std::size_t n, std::size_t count,
-                                                                direction dir) {
+                                                               direction dir) {
   shape<std::complex<T>, std::complex<T>> s;
   s.dir = dir;
   s.axes.push_back(axis{.n = n});
@@ -131,8 +131,8 @@ template <class T>
 ///
 /// Guarantees: as for rows_c2c.
 template <class T>
-[[nodiscard]] shape<std::complex<T>, std::complex<T>>
-planes_c2c(std::size_t ny, std::size_t nx, std::size_t count, direction dir) {
+[[nodiscard]] shape<std::complex<T>, std::complex<T>> planes_c2c(std::size_t ny, std::size_t nx,
+                                                                 std::size_t count, direction dir) {
   shape<std::complex<T>, std::complex<T>> s;
   s.dir = dir;
   s.axes.push_back(axis{.n = ny});

@@ -13,3 +13,5 @@ set_target_properties(fftn PROPERTIES CXX_VISIBILITY_PRESET hidden VISIBILITY_IN
 
 add_subdirectory(platform)
 add_subdirectory(isa)
+add_subdirectory(core)
+add_subdirectory(strategies)
