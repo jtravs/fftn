@@ -3,7 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Repository hygiene checks for the FFTN gate (scripts/check.sh).
 
-    tools/repo_lint.py spdx    every source file carries the SPDX header
+    tools/repo_lint.py spdx    every source file carries the SPDX header; shell scripts are
+                               executable in git
     tools/repo_lint.py docs    relative links in tracked Markdown resolve; PLAN.md has
                                its status section; no file is referenced that is ignored
     tools/repo_lint.py knobs   experimental switches are registered and not expired
@@ -27,6 +28,7 @@ so a new file is checked before its first commit.
 from __future__ import annotations
 
 import datetime
+import os
 import re
 import subprocess
 import sys
@@ -37,7 +39,10 @@ ROOT = Path(__file__).resolve().parent.parent
 COPYRIGHT = "SPDX-FileCopyrightText:"
 LICENSE_ID = "Apache-2.0"
 
-SOURCE_SUFFIXES = {".cpp", ".hpp", ".h", ".inl", ".c", ".py", ".sh", ".toml", ".cmake", ".sbatch"}
+SOURCE_SUFFIXES = {
+    ".cpp", ".hpp", ".h", ".inl", ".c", ".py", ".sh", ".toml", ".cmake", ".sbatch",
+    ".yml", ".yaml", ".ps1",
+}  # fmt: skip
 SOURCE_NAMES = {"CMakeLists.txt", ".clang-format", ".clang-tidy"}
 # Generated files carry the header too (the generator writes it); nothing is exempt.
 
@@ -57,6 +62,18 @@ def repo_files() -> list[Path]:
     return [ROOT / line for line in out.splitlines() if line and (ROOT / line).is_file()]
 
 
+def git_modes() -> dict[str, str]:
+    """The mode git records for each tracked file ("100755" when executable)."""
+    out = subprocess.run(
+        ["git", "ls-files", "--stage"], cwd=ROOT, check=True, capture_output=True, text=True
+    ).stdout
+    modes = {}
+    for line in out.splitlines():
+        info, _, path = line.partition("\t")
+        modes[path] = info.split()[0]
+    return modes
+
+
 def is_ignored(path: Path) -> bool:
     try:
         rel = path.relative_to(ROOT)
@@ -68,6 +85,7 @@ def is_ignored(path: Path) -> bool:
 
 def check_spdx(files: list[Path]) -> list[str]:
     problems = []
+    modes = git_modes()
     for f in files:
         if f.suffix not in SOURCE_SUFFIXES and f.name not in SOURCE_NAMES:
             continue
@@ -77,6 +95,13 @@ def check_spdx(files: list[Path]) -> list[str]:
             problems.append(f"{rel}: no {COPYRIGHT} header in the first lines")
         elif f"SPDX-License-Identifier: {LICENSE_ID}" not in head:
             problems.append(f"{rel}: no SPDX-License-Identifier: {LICENSE_ID}")
+        # CI runs scripts from a checkout, which takes the mode from git, not from the disk
+        # of whoever committed them. An untracked script is judged by its mode on disk.
+        if f.suffix == ".sh":
+            mode = modes.get(rel.as_posix())
+            executable = mode == "100755" if mode else os.access(f, os.X_OK)
+            if not executable:
+                problems.append(f"{rel}: not executable (git update-index --chmod=+x {rel})")
     return problems
 
 
