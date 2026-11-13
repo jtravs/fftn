@@ -63,7 +63,7 @@ private:
   const T* stage_twiddles(std::size_t n, std::size_t radix, std::size_t m, std::size_t s);
   const T* radix_roots(std::size_t n, std::size_t radix);
   const T* edge_twiddles(std::size_t n);
-  std::uint32_t chunks_of(std::size_t units, std::size_t points_per_unit) const;
+  [[nodiscard]] std::uint32_t chunks_of(std::size_t units, std::size_t points_per_unit) const;
   // The passes of a chain of n from `from` into scratch, ping-ponging between a and b;
   // returns the slot holding the result.
   slot scratch_chain(std::size_t n, int sign, slot from, std::vector<stage>& stages);

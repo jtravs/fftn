@@ -12,6 +12,7 @@
 
 #include <complex>
 #include <cstddef>
+#include <cstdint>
 #include <type_traits>
 
 namespace fftn::inline v0 {
@@ -20,9 +21,9 @@ namespace fftn::inline v0 {
 ///
 /// `forward` computes y[k] = sum_j x[j] exp(-2 pi i jk / n); `backward` uses +i. Neither
 /// normalises: `backward` after `forward` multiplies by n.
-enum class direction : int {
-  forward = -1, ///< exponent -2 pi i jk / n
-  backward = +1 ///< exponent +2 pi i jk / n
+enum class direction : std::int8_t {
+  forward = -1,  ///< exponent -2 pi i jk / n
+  backward = +1, ///< exponent +2 pi i jk / n
 };
 
 /// One transformed dimension of a shape.

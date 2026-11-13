@@ -23,7 +23,6 @@
 #include <algorithm>
 #include <array>
 #include <cassert>
-#include <complex>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -286,23 +285,26 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out,
 
   p.transforms = 1;
   for (std::size_t b = 0; b < s.batches.size(); ++b) {
-    p.records.emplace_back(
-        loop{.kind = loop_kind::batch,
-             .count = s.batches[b].count,
-             .step = {in.dist[b] * in.element_bytes, out.dist[b] * out.element_bytes, 0}});
+    p.records.emplace_back(loop{
+        .kind = loop_kind::batch,
+        .count = s.batches[b].count,
+        .step = {in.dist[b] * in.element_bytes, out.dist[b] * out.element_bytes, 0},
+    });
     p.transforms *= s.batches[b].count;
   }
   p.batch_loops = s.batches.size();
 
-  const view in_view{slot::in, in.stride, in.element_bytes};
-  const view out_view{slot::out, out.stride, out.element_bytes};
+  const view in_view{.where = slot::in, .stride = in.stride, .element_bytes = in.element_bytes};
+  const view out_view{.where = slot::out, .stride = out.stride, .element_bytes = out.element_bytes};
   std::size_t scratch = 0;
   const auto lines = [&](std::size_t axis, const std::vector<std::size_t>& extent, const view& src,
                          const view& dst, std::size_t line_scratch, std::vector<stage>&& stages) {
     scratch = std::max(scratch, line_scratch);
     add_phase(p, axis, extent, src, dst, std::move(stages));
   };
-  const auto at = [](const view& v, std::size_t axis) { return endpoint{v.where, v.stride[axis]}; };
+  const auto at = [](const view& v, std::size_t axis) {
+    return endpoint{.where = v.where, .stride = v.stride[axis]};
+  };
   const int sign = static_cast<int>(s.dir);
 
   if (s.kind == transform_kind::c2c) {
@@ -338,7 +340,11 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out,
     // c2r: the complex axes first, then the real one, which must come last because the
     // real output cannot hold a complex intermediate. Out of place the input is preserved,
     // so the intermediate goes to the block: one transform's half spectrum (DESIGN.md 9.1).
-    view block_view{slot::block, std::vector<std::ptrdiff_t>(r, 0), complex_bytes};
+    view block_view{
+        .where = slot::block,
+        .stride = std::vector<std::ptrdiff_t>(r, 0),
+        .element_bytes = complex_bytes,
+    };
     if (r > 1 && !c.in_place) {
       std::ptrdiff_t span = 1;
       for (std::size_t i = r; i > 0; --i) {
@@ -349,7 +355,9 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out,
     }
     // In place the complex phases work on the output slot, which is the input's memory,
     // through the input's (complex) strides.
-    const view work = c.in_place ? view{slot::out, in.stride, complex_bytes} : block_view;
+    const view work =
+        c.in_place ? view{.where = slot::out, .stride = in.stride, .element_bytes = complex_bytes}
+                   : block_view;
     for (std::size_t i = r - 1; i > 0; --i) {
       const std::size_t d = i - 1;
       const view& src = d + 2 == r && !c.in_place ? in_view : work;
@@ -441,9 +449,10 @@ std::shared_ptr<const plan_core> make_plan_core(const shape_view& s, const optio
   auto c = std::make_shared<plan_core>();
   c->kind = s.kind;
   c->prec = s.prec;
-  c->dir = s.kind == transform_kind::c2c   ? s.dir
-           : s.kind == transform_kind::r2c ? direction::forward
-                                           : direction::backward;
+  c->dir = s.dir;
+  if (s.kind != transform_kind::c2c) {
+    c->dir = s.kind == transform_kind::r2c ? direction::forward : direction::backward;
+  }
   c->in_place = opts.in_place;
   for (const axis& a : s.axes) {
     c->lengths.push_back(a.n);
@@ -559,7 +568,7 @@ std::string describe(const plan_core& core) {
       ends.push_back(l->body_end);
       continue;
     }
-    const stage& st = std::get<stage>(rec);
+    const auto& st = std::get<stage>(rec);
     o << indent << st.name << ": " << slot_name(st.src) << " -> " << slot_name(st.dst) << ", "
       << st.units << " units in " << st.chunks << (st.chunks == 1 ? " chunk" : " chunks") << "\n";
   }

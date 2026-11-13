@@ -6,6 +6,7 @@
 #include "core/program.hpp"
 #include "core/twiddles.hpp"
 #include "isa/kernel_table.hpp"
+#include "passes/pass_args.hpp"
 
 #include <algorithm>
 #include <complex>
@@ -231,7 +232,8 @@ std::size_t chain_builder<T>::c2c_line(std::size_t n, int sign, endpoint src, en
   endpoint at = src;
   for (std::size_t i = 0; i < radices.size(); ++i) {
     const bool last = i + 1 == radices.size();
-    const endpoint next = last ? dst : endpoint{at.where == slot::a ? slot::b : slot::a, 1};
+    const endpoint next =
+        last ? dst : endpoint{.where = at.where == slot::a ? slot::b : slot::a, .stride = 1};
     add_pass(n, radices[i], s, sign, at, next, stages);
     at = next;
     s *= radices[i];

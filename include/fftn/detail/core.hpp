@@ -50,11 +50,13 @@ struct shape_view {
 };
 
 template <class In, class Out> shape_view view_of(const shape<In, Out>& s) {
-  return {.kind = kind_of<In, Out>::value,
-          .prec = precision_of<In, Out>,
-          .dir = s.dir,
-          .axes = s.axes,
-          .batches = s.batches};
+  return {
+      .kind = kind_of<In, Out>::value,
+      .prec = precision_of<In, Out>,
+      .dir = s.dir,
+      .axes = s.axes,
+      .batches = s.batches,
+  };
 }
 
 class plan_core;

@@ -1537,6 +1537,8 @@ each item, and the outcome goes to the decision log.
     that may destroy their input, a kind tag, `along_axes`, `volume_c2c`.
 18. *In-place calls* use the same `execute(const In*, Out*, workspace&)`: the caller
     passes one address twice (for real kinds, the same memory viewed as both types).
+19. *`direction`'s underlying type is `std::int8_t`*, not `int` as sketched in 5.2 (the
+    gate's clang-tidy asks for the smallest type); the values are still −1 and +1.
 
 ---
 

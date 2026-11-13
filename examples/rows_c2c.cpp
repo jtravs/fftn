@@ -11,10 +11,14 @@
 #include <complex>
 #include <cstddef>
 #include <cstdio>
+#include <exception>
 #include <numbers>
 #include <vector>
 
-int main() {
+namespace {
+
+// The largest error of the round trip forward, then backward divided by n.
+double round_trip_error() {
   // snippet-begin: rows
   const std::size_t n = 12;
   const std::size_t count = 3;
@@ -31,8 +35,8 @@ int main() {
   std::vector<std::complex<double>> x(n * count);
   for (std::size_t r = 0; r < count; ++r) {
     for (std::size_t j = 0; j < n; ++j) {
-      const double phase = 2 * std::numbers::pi * double((r + 1) * j) / double(n);
-      x[r * n + j] = std::polar(1.0, phase);
+      const auto turns = static_cast<double>((r + 1) * j) / static_cast<double>(n);
+      x[r * n + j] = std::polar(1.0, 2 * std::numbers::pi * turns);
     }
   }
 
@@ -46,8 +50,20 @@ int main() {
 
   double error = 0;
   for (std::size_t i = 0; i < n * count; ++i) {
-    error = std::max(error, std::abs(y[i] / double(n) - x[i]));
+    error = std::max(error, std::abs(y[i] / static_cast<double>(n) - x[i]));
   }
-  std::printf("largest round-trip error: %.3g\n", error);
-  return error < 1e-14 ? 0 : 1;
+  return error;
+}
+
+} // namespace
+
+int main() {
+  try {
+    const double error = round_trip_error();
+    std::printf("largest round-trip error: %.3g\n", error);
+    return error < 1e-14 ? 0 : 1;
+  } catch (const std::exception& e) {
+    std::printf("failed: %s\n", e.what());
+    return 1;
+  }
 }

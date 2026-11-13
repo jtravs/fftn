@@ -19,7 +19,6 @@
 #include <complex>
 #include <cstddef>
 #include <cstring>
-#include <functional>
 #include <limits>
 #include <span>
 #include <vector>
@@ -93,8 +92,10 @@ template <class T> fftn::small_vector<fftn::axis, 3> axes_of(const dims_t& dims)
 }
 
 const std::vector<dims_t>& shapes() {
-  static const std::vector<dims_t> v{{8, 6}, {5, 7},    {16, 16},  {32, 30},  {1, 9},    {9, 1},
-                                     {6, 1}, {4, 6, 8}, {3, 5, 4}, {2, 3, 5}, {1, 4, 1}, {7, 1, 3}};
+  static const std::vector<dims_t> v{
+      {8, 6}, {5, 7},    {16, 16},  {32, 30},  {1, 9},    {9, 1},
+      {6, 1}, {4, 6, 8}, {3, 5, 4}, {2, 3, 5}, {1, 4, 1}, {7, 1, 3},
+  };
   return v;
 }
 
@@ -117,7 +118,11 @@ TYPED_TEST(MultiDim, ComplexVolumesAndPlanes) {
         const auto y = dft(static_cast<int>(dir), dims, one);
         want.insert(want.end(), y.begin(), y.end());
       }
-      fftn::shape<c, c> s{.dir = dir, .axes = axes_of<T>(dims), .batches = {{.count = count}}};
+      const fftn::shape<c, c> s{
+          .dir = dir,
+          .axes = axes_of<T>(dims),
+          .batches = {{.count = count}},
+      };
       for (const bool in_place : {false, true}) {
         const fftn::c2c_plan<T> p(s, {.in_place = in_place});
         fftn::workspace ws(p);

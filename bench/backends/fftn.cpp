@@ -58,9 +58,11 @@ template <class In, class Out> fftn::shape<In, Out> shape_of(const fbench_case& 
     in_stride *= last ? c.in_last : c.dims[d];
     out_stride *= last ? c.out_last : c.dims[d];
   }
-  s.batches.push_back({.count = static_cast<std::size_t>(c.batch),
-                       .in_dist = static_cast<std::ptrdiff_t>(c.in_dist),
-                       .out_dist = static_cast<std::ptrdiff_t>(c.out_dist)});
+  s.batches.push_back({
+      .count = static_cast<std::size_t>(c.batch),
+      .in_dist = static_cast<std::ptrdiff_t>(c.in_dist),
+      .out_dist = static_cast<std::ptrdiff_t>(c.out_dist),
+  });
   return s;
 }
 
@@ -112,6 +114,7 @@ std::int32_t fbench_create(const fbench_case* c, void* /*in*/, void* /*out*/, vo
   }
 }
 
+// NOLINTNEXTLINE(misc-const-correctness): the harness fixes this C signature
 void fbench_execute(const void* plan, void* in, void* out) {
   // The workspace is scratch, so a const plan record may lend it out.
   auto* r = const_cast<plan_record*>(static_cast<const plan_record*>(plan));
@@ -119,7 +122,7 @@ void fbench_execute(const void* plan, void* in, void* out) {
     r->c2c->execute(static_cast<const cplx*>(in), static_cast<cplx*>(out), r->ws);
   } else if (r->r2c) {
     r->r2c->execute(static_cast<const double*>(in), static_cast<cplx*>(out), r->ws);
-  } else {
+  } else if (r->c2r) {
     r->c2r->execute(static_cast<const cplx*>(in), static_cast<double*>(out), r->ws);
   }
 }

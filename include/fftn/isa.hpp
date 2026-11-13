@@ -13,13 +13,13 @@ namespace fftn::inline v0 {
 /// constructed (the fastest that both the processor and the build support for the plan's
 /// transform) and reports it through `plan::instruction_set()`.
 enum class isa : unsigned char {
-  scalar,   ///< portable code with no vector instructions; runs on every processor
-  x86_v2,   ///< x86-64, SSE2 to SSE4.2 (the x86-64-v2 level)
-  avx,      ///< x86-64, 256-bit AVX without AVX2 or FMA
-  avx2,     ///< x86-64, AVX2 with FMA (the x86-64-v3 level)
-  avx512,   ///< x86-64, AVX-512 F, DQ and VL (the x86-64-v4 level)
-  neon,     ///< AArch64, Advanced SIMD
-  neon_fcma ///< AArch64, Advanced SIMD with the Armv8.3 complex instructions (FCMA)
+  scalar,    ///< portable code with no vector instructions; runs on every processor
+  x86_v2,    ///< x86-64, SSE2 to SSE4.2 (the x86-64-v2 level)
+  avx,       ///< x86-64, 256-bit AVX without AVX2 or FMA
+  avx2,      ///< x86-64, AVX2 with FMA (the x86-64-v3 level)
+  avx512,    ///< x86-64, AVX-512 F, DQ and VL (the x86-64-v4 level)
+  neon,      ///< AArch64, Advanced SIMD
+  neon_fcma, ///< AArch64, Advanced SIMD with the Armv8.3 complex instructions (FCMA)
 };
 
 /// The instruction set's name as written in this header: "scalar", "avx2", "neon_fcma"

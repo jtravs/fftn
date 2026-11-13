@@ -22,8 +22,8 @@ fftn::workspace ws(std::max(forward.workspace_bytes(), backward.workspace_bytes(
 std::vector<std::complex<double>> x(n * count);
 for (std::size_t r = 0; r < count; ++r) {
   for (std::size_t j = 0; j < n; ++j) {
-    const double phase = 2 * std::numbers::pi * double((r + 1) * j) / double(n);
-    x[r * n + j] = std::polar(1.0, phase);
+    const auto turns = static_cast<double>((r + 1) * j) / static_cast<double>(n);
+    x[r * n + j] = std::polar(1.0, 2 * std::numbers::pi * turns);
   }
 }
 

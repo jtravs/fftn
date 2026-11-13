@@ -19,7 +19,6 @@
 #include <complex>
 #include <cstddef>
 #include <cstring>
-#include <functional>
 #include <set>
 #include <variant>
 #include <vector>
@@ -84,7 +83,8 @@ TEST(Chain, RadicesMultiplyToTheLength) {
   }
   EXPECT_TRUE(fftn::detail::chain_radices(1).empty());
   EXPECT_EQ(fftn::detail::chain_radices(360), (std::vector<std::size_t>{4, 2, 3, 3, 5}));
-  EXPECT_EQ(fftn::detail::chain_radices(2 * 49 * 11), (std::vector<std::size_t>{2, 7, 7, 11}));
+  EXPECT_EQ(fftn::detail::chain_radices(std::size_t{1078}),
+            (std::vector<std::size_t>{2, 7, 7, 11}));
   EXPECT_EQ(fftn::detail::chain_radices(10007), (std::vector<std::size_t>{10007}));
 }
 
@@ -92,7 +92,7 @@ TEST(Chain, RadicesMultiplyToTheLength) {
 std::vector<std::byte> run(const fftn::detail::plan_core& core, std::vector<std::byte> input,
                            std::size_t out_bytes) {
   std::vector<std::byte> output(out_bytes);
-  fftn::workspace ws(fftn::detail::workspace_bytes(core));
+  const fftn::workspace ws(fftn::detail::workspace_bytes(core));
   fftn::detail::execute_core(core, 0, fftn::detail::transform_count(core), input.data(),
                              output.data(), ws);
   return output;
@@ -101,8 +101,13 @@ std::vector<std::byte> run(const fftn::detail::plan_core& core, std::vector<std:
 template <class In, class Out>
 void check_chunking(const fftn::shape<In, Out>& s, std::size_t in_count, std::size_t out_count) {
   const shape_view view = fftn::detail::view_of(s);
-  const auto whole = make_plan_core(view, {}, build_settings{.chunk_points = 1U << 30U});
-  const auto fine = make_plan_core(view, {}, build_settings{.chunk_points = 3});
+  build_settings coarse;
+  coarse.chunk_points = std::size_t{1} << 30U;
+  build_settings tiny;
+  tiny.chunk_points = 3;
+  const fftn::options defaults;
+  const auto whole = make_plan_core(view, defaults, coarse);
+  const auto fine = make_plan_core(view, defaults, tiny);
   // The fine plan really is divided.
   std::size_t chunked = 0;
   for (const auto& rec : fine->prog.records) {
@@ -123,13 +128,12 @@ void check_chunking(const fftn::shape<In, Out>& s, std::size_t in_count, std::si
 // The chunks of a stage are independent ranges fixed by the plan: any division gives the
 // same bits (DESIGN.md 13.2), which is what lets phase 3 share them between threads.
 TEST(Chunks, DivisionDoesNotChangeBits) {
-  check_chunking(fftn::rows_c2c<double>(4 * 9 * 5 * 7, 2, fftn::direction::forward), 2 * 1260,
-                 2 * 1260);
-  check_chunking(fftn::rows_c2c<float>(2 * 1009, 1, fftn::direction::backward), 2018, 2018);
-  check_chunking(fftn::rows_r2c<double>(720, 2), 2 * 720, 2 * 361);
+  check_chunking(fftn::rows_c2c<double>(1260, 2, fftn::direction::forward), 2520, 2520);
+  check_chunking(fftn::rows_c2c<float>(2018, 1, fftn::direction::backward), 2018, 2018);
+  check_chunking(fftn::rows_r2c<double>(720, 2), 1440, 722);
   check_chunking(fftn::rows_r2c<float>(45, 1), 45, 23);
   check_chunking(fftn::rows_c2r<double>(720, 1), 361, 720);
-  check_chunking(fftn::rows_c2r<float>(45, 2), 2 * 23, 2 * 45);
+  check_chunking(fftn::rows_c2r<float>(45, 2), 46, 90);
   check_chunking(fftn::planes_c2c<double>(12, 10, 2, fftn::direction::forward), 240, 240);
 }
 

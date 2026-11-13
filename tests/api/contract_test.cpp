@@ -9,9 +9,9 @@
 // the harness on every run of the oracle suites; they are exercised here too through it.
 
 #include "support/alloc_hook.hpp"
+#include "support/fftn_subject.hpp"
 #include "support/harness.hpp"
 #include "support/inputs.hpp"
-#include "support/subjects.hpp"
 #include "support/transform_under_test.hpp"
 
 #include <fftn/fftn.hpp>
@@ -22,11 +22,11 @@
 #include <complex>
 #include <cstddef>
 #include <cstring>
-#include <functional>
 #include <span>
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -184,6 +184,7 @@ TYPED_TEST(Contracts, PlansAreReusableAcrossCopiesAndThreads) {
   constexpr int threads = 4;
   std::array<cvec<T>, threads> results;
   std::vector<std::thread> pool;
+  pool.reserve(threads);
   for (int t = 0; t < threads; ++t) {
     pool.emplace_back([&, t] {
       for (int i = 0; i < 10; ++i) {
@@ -255,11 +256,13 @@ void expect_refused(const fftn::shape<In, Out>& s, const std::string& names, fft
 
 TEST(Validation, InvalidShapesThrowNamingTheArgument) {
   using c = std::complex<double>;
-  expect_refused(fftn::shape<c, c>{}, "shape.axes");
+  const fftn::shape<c, c> no_axes;
+  expect_refused(no_axes, "shape.axes");
   expect_refused(fftn::rows_c2c<double>(0, 1, fftn::direction::forward), "shape.axes[0].n");
   expect_refused(fftn::planes_c2c<double>(4, 0, 1, fftn::direction::forward), "shape.axes[1].n");
   expect_refused(fftn::rows_c2c<double>(8, 0, fftn::direction::forward), "shape.batches[0].count");
   auto bad_dir = fftn::rows_c2c<double>(8, 1, fftn::direction::forward);
+  // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange): invalid on purpose
   bad_dir.dir = static_cast<fftn::direction>(3);
   expect_refused(bad_dir, "shape.dir");
 
@@ -278,7 +281,7 @@ TEST(Validation, InvalidShapesThrowNamingTheArgument) {
   huge.axes = {{.n = std::size_t{1} << 40U}, {.n = std::size_t{1} << 40U}};
   expect_refused(huge, "too large");
   fftn::shape<c, c> far;
-  far.axes = {{.n = 4, .in_stride = std::ptrdiff_t{1} << 62U}};
+  far.axes = {{.n = 4, .in_stride = static_cast<std::ptrdiff_t>(std::size_t{1} << 62U)}};
   expect_refused(far, "too large");
   expect_refused(fftn::rows_c2c<double>(std::size_t{1} << 63U, 1, fftn::direction::forward),
                  "is too large");
@@ -318,9 +321,17 @@ TEST(Validation, ValidEdgeCasesAreAccepted) {
 TEST(Describe, NamesTheProgram) {
   const fftn::c2c_plan<double> p(fftn::rows_c2c<double>(28, 3, fftn::direction::forward));
   const std::string d = p.describe();
-  for (const char* part :
-       {"c2c forward", "double", "instruction set: scalar", "chain", "radices 4 x 7",
-        "radix-4 forward", "generic radix-7 forward", "loop batch x3", "workspace"}) {
+  for (const char* part : {
+           "c2c forward",
+           "double",
+           "instruction set: scalar",
+           "chain",
+           "radices 4 x 7",
+           "radix-4 forward",
+           "generic radix-7 forward",
+           "loop batch x3",
+           "workspace",
+       }) {
     EXPECT_NE(d.find(part), std::string::npos) << "missing '" << part << "' in\n" << d;
   }
   EXPECT_EQ(p.instruction_set(), fftn::isa::scalar);
@@ -328,8 +339,15 @@ TEST(Describe, NamesTheProgram) {
   fftn::shape<std::complex<float>, float> volume;
   volume.axes = {{.n = 3}, {.n = 4}, {.n = 6}};
   const std::string v = fftn::c2r_plan<float>(volume).describe();
-  for (const char* part : {"c2r", "float", "block of 48 complex", "c2c backward",
-                           "half-length complex chain of 3", "loop lines x3", "out of place"}) {
+  for (const char* part : {
+           "c2r",
+           "float",
+           "block of 48 complex",
+           "c2c backward",
+           "half-length complex chain of 3",
+           "loop lines x3",
+           "out of place",
+       }) {
     EXPECT_NE(v.find(part), std::string::npos) << "missing '" << part << "' in\n" << v;
   }
   const std::string r =

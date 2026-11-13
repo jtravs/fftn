@@ -27,13 +27,13 @@ struct dd {
 dd two_sum(double a, double b) {
   const double s = a + b;
   const double bb = s - a;
-  return {s, (a - (s - bb)) + (b - bb)};
+  return {.hi = s, .lo = (a - (s - bb)) + (b - bb)};
 }
 
 // a + b exactly, given |a| >= |b|.
 dd quick_two_sum(double a, double b) {
   const double s = a + b;
-  return {s, b - (s - a)};
+  return {.hi = s, .lo = b - (s - a)};
 }
 
 // a * b exactly, by Dekker's splitting (no FMA, so the result does not depend on whether
@@ -47,7 +47,7 @@ dd two_prod(double a, double b) {
   const double bh = tb - (tb - b);
   const double bl = b - bh;
   const double p = a * b;
-  return {p, ((ah * bh - p) + ah * bl + al * bh) + al * bl};
+  return {.hi = p, .lo = ((ah * bh - p) + ah * bl + al * bh) + al * bl};
 }
 
 dd operator+(dd x, dd y) {
@@ -57,7 +57,7 @@ dd operator+(dd x, dd y) {
   return quick_two_sum(u.hi, u.lo + t.lo);
 }
 
-dd operator-(dd x) { return {-x.hi, -x.lo}; }
+dd operator-(dd x) { return {.hi = -x.hi, .lo = -x.lo}; }
 
 dd operator*(dd x, dd y) {
   const dd p = two_prod(x.hi, y.hi);
@@ -74,11 +74,11 @@ dd operator/(dd x, double d) {
 
 dd operator/(dd x, dd y) {
   const double q1 = x.hi / y.hi;
-  dd r = x + -(y * dd{q1, 0.0});
+  dd r = x + -(y * dd{.hi = q1, .lo = 0.0});
   const double q2 = r.hi / y.hi;
-  r = r + -(y * dd{q2, 0.0});
+  r = r + -(y * dd{.hi = q2, .lo = 0.0});
   const double q3 = r.hi / y.hi;
-  return quick_two_sum(q1, q2) + dd{q3, 0.0};
+  return quick_two_sum(q1, q2) + dd{.hi = q3, .lo = 0.0};
 }
 
 // An integer below 2^63, exactly.
@@ -87,11 +87,11 @@ dd from_integer(std::uint64_t v) {
   // The remainder is below 2^11 in magnitude and may be negative: wrap-around subtraction
   // reinterpreted as signed gives it exactly.
   const auto rest = static_cast<std::int64_t>(v - static_cast<std::uint64_t>(hi));
-  return {hi, static_cast<double>(rest)};
+  return {.hi = hi, .lo = static_cast<double>(rest)};
 }
 
 // pi / 4 to about 107 bits.
-constexpr dd quarter_pi{0x1.921fb54442d18p-1, 0x1.1a62633145c07p-55};
+constexpr dd quarter_pi{.hi = 0x1.921fb54442d18p-1, .lo = 0x1.1a62633145c07p-55};
 
 // Terms are added until they fall below this, far under the 2^-106 of a double-double.
 constexpr double negligible = 0x1p-112;
@@ -106,7 +106,7 @@ void sin_cos(dd t, dd& sine, dd& cosine) {
     sum = sum + term;
   }
   sine = sum;
-  term = dd{1.0, 0.0};
+  term = dd{.hi = 1.0, .lo = 0.0};
   sum = term;
   for (int k = 1; std::abs(term.hi) > negligible; ++k) {
     term = -(term * t2) / static_cast<double>((2 * k - 1) * (2 * k));
