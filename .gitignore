@@ -1,1 +1,15 @@
-TPL
+# Third-party sources kept locally for study and benchmarking (never committed).
+TPL/
+# Private development notes (not part of the public repository).
+pdev/
+.claude/
+CLAUDE.local.md
+# Build trees, fetched dependencies and local benchmark output.
+build*/
+_deps/
+bench-out/
+# Tool caches.
+.ruff_cache/
+__pycache__/
+*.pyc
+.DS_Store

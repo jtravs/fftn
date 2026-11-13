@@ -1,0 +1,11 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Registry of experimental switches (FFTN_X_*). Every switch in the code must be listed
+# here with an owner, the experiment it serves and an expiry date at most 30 days ahead.
+# The gate (tools/repo_lint.py knobs) fails on unregistered, expired or unused entries.
+#
+# [FFTN_X_EXAMPLE]
+# owner = "name"
+# experiment = "X1"
+# expires = "2026-12-01"

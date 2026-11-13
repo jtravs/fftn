@@ -1,0 +1,9 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# FFTN's C++ format: LLVM style, 100 columns (kernel code is wide).
+BasedOnStyle: LLVM
+ColumnLimit: 100
+DerivePointerAlignment: false
+PointerAlignment: Left
+SortIncludes: CaseSensitive

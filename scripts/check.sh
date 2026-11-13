@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# FFTN's quality gate. A change is finished when this is green (AGENTS.md, "The gate").
+#
+#   scripts/check.sh                              # every stage that applies
+#   FFTN_CHECK_STAGES="format build" scripts/check.sh
+#
+# Stages, in order:
+#   spdx      every source file carries the SPDX header            (tools/repo_lint.py)
+#   docs      Markdown links resolve, PLAN.md keeps its sections   (tools/repo_lint.py)
+#   knobs     experimental switches are registered and not expired (tools/repo_lint.py)
+#   format    clang-format (pinned), C++ sources and headers
+#   python    ruff (pinned): lint and format of tools/, gen/, bench/
+#   shell     bash -n on scripts (shellcheck too when it is installed)
+#   gen       generated codelets are reproducible: regenerate and compare with the tree
+#   build     Release, warnings as errors, tests under every kernel variant the CPU has
+#   tidy      clang-tidy (pinned), warnings as errors
+#   sanitize  ASan + UBSan (leak detection on), tests under every kernel variant
+#   tsan      ThreadSanitizer over the threading tests
+#   coverage  line and branch coverage of hand-written code against the threshold
+#   bench     fbench smoke: FFTN agrees with the reference; no timing claims
+#
+# A stage whose inputs do not exist yet reports "nothing to check" and passes; the code
+# stages switch on when CMakeLists.txt and the named CMake presets appear (dev/PLAN.md,
+# phase 0). Never pipe this script into tail or head inside an && chain: that hides its
+# exit status.
+#
+# The test suites themselves force every kernel variant and instruction set the CPU has
+# (AGENTS.md, section 5), so no stage needs a variant list.
+#
+#   FFTN_CHECK_JOBS            parallel build jobs (default: all CPUs)
+#   FFTN_COVERAGE_MIN_LINES    override the coverage threshold below (to raise it only)
+# The compiler and any offline dependency directory are taken by the CMake presets from
+# the usual CMake and environment variables (CXX, FETCHCONTENT_SOURCE_DIR_<NAME>).
+set -euo pipefail
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+cd "$root"
+all="spdx docs knobs format python shell gen build tidy sanitize tsan coverage bench"
+stages=" ${FFTN_CHECK_STAGES:-$all} "
+stage() { [[ $stages == *" $1 "* ]]; }
+say() { printf '\n== %s\n' "$*"; }
+skip() { printf '   nothing to check yet (%s)\n' "$*"; }
+
+CLANG_FORMAT_VERSION=23.1.0
+CLANG_TIDY_VERSION=23.1.0
+RUFF_VERSION=0.17.4
+# Line coverage of hand-written code, in percent. Raise it as coverage rises; never lower it.
+COVERAGE_MIN_LINES=${FFTN_COVERAGE_MIN_LINES:-95}
+jobs=${FFTN_CHECK_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)}
+
+files() { git ls-files --cached --others --exclude-standard -- "$@"; }
+have_code() { [[ -f CMakeLists.txt ]]; }
+have_preset() { have_code && cmake --list-presets 2>/dev/null | grep -q "\"$1\""; }
+
+# Configure, build and test one CMake preset; logs go to build/<preset>.log and the tail
+# is shown on failure.
+preset() {
+  local name=$1
+  mkdir -p build
+  if ! { cmake --preset "$name" && cmake --build --preset "$name" -j "$jobs"; } \
+      > "build/$name.log" 2>&1; then
+    grep -E "error|warning:" -A4 "build/$name.log" | head -80 || true
+    echo "build of preset $name failed: build/$name.log"
+    exit 1
+  fi
+  ctest --preset "$name" --output-on-failure
+}
+
+if stage spdx; then say "SPDX headers"; python3 tools/repo_lint.py spdx; fi
+if stage docs; then say "documents"; python3 tools/repo_lint.py docs; fi
+if stage knobs; then say "experimental switches"; python3 tools/repo_lint.py knobs; fi
+
+if stage format; then
+  say "clang-format $CLANG_FORMAT_VERSION"
+  cpp=$(files '*.cpp' '*.hpp' '*.h' '*.inl' | grep -v '^src/gen/' || true)
+  if [[ -n $cpp ]]; then
+    # shellcheck disable=SC2086
+    uvx "clang-format==$CLANG_FORMAT_VERSION" --dry-run --Werror $cpp
+  else skip "no C++ sources"; fi
+fi
+
+if stage python; then
+  say "ruff $RUFF_VERSION"
+  py=$(files '*.py')
+  if [[ -n $py ]]; then
+    # shellcheck disable=SC2086
+    uvx "ruff==$RUFF_VERSION" check $py
+    # shellcheck disable=SC2086
+    uvx "ruff==$RUFF_VERSION" format --check $py
+  else skip "no Python sources"; fi
+fi
+
+if stage shell; then
+  say "shell scripts"
+  for f in $(files '*.sh' '*.sbatch'); do
+    bash -n "$f"
+    if command -v shellcheck > /dev/null; then shellcheck "$f"; fi
+  done
+fi
+
+if stage gen; then
+  say "generated codelets are reproducible"
+  if [[ -f gen/fftn_gen/__main__.py ]]; then
+    python3 -m gen.fftn_gen --check src/gen
+  else skip "no generator"; fi
+fi
+
+if stage build; then
+  say "build (Release, warnings as errors) and tests"
+  if have_preset check-release; then preset check-release; else skip "no check-release preset"; fi
+fi
+
+if stage tidy; then
+  say "clang-tidy $CLANG_TIDY_VERSION"
+  if have_preset check-tidy; then
+    FFTN_CLANG_TIDY="uvx;clang-tidy==$CLANG_TIDY_VERSION" preset check-tidy
+  else skip "no check-tidy preset"; fi
+fi
+
+if stage sanitize; then
+  say "ASan + UBSan"
+  if have_preset check-sanitize; then
+    UBSAN_OPTIONS=${UBSAN_OPTIONS:-print_stacktrace=1:halt_on_error=1} preset check-sanitize
+  else skip "no check-sanitize preset"; fi
+fi
+
+if stage tsan; then
+  say "ThreadSanitizer"
+  if have_preset check-tsan; then
+    TSAN_OPTIONS=${TSAN_OPTIONS:-halt_on_error=1} preset check-tsan
+  else skip "no check-tsan preset"; fi
+fi
+
+if stage coverage; then
+  say "coverage (hand-written code, at least $COVERAGE_MIN_LINES % of lines)"
+  if have_preset check-coverage; then
+    preset check-coverage
+    python3 tools/coverage_gate.py build/check-coverage --min-lines "$COVERAGE_MIN_LINES"
+  else skip "no check-coverage preset"; fi
+fi
+
+if stage bench; then
+  say "fbench smoke (correctness only)"
+  if [[ -f bench/fbench.py ]] && have_preset check-release; then
+    python3 bench/fbench.py smoke --build build/check-release --strict
+  else skip "no fbench"; fi
+fi
+
+say "all requested stages passed:${stages}"

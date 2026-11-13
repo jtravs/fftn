@@ -1,0 +1,38 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Deny-list style: whole groups on, with each exclusion explained. Every diagnostic is an
+# error. The header filter is set by CMake from PROJECT_SOURCE_DIR (never a path that
+# depends on the checkout's directory name). Generated codelets (src/gen/) are
+# excluded there too: the generator's own verification covers them.
+Checks: >
+  clang-analyzer-*,
+  bugprone-*,
+  cert-err58-cpp,
+  concurrency-*,
+  misc-*,
+  modernize-*,
+  performance-*,
+  portability-*,
+  readability-*,
+  -bugprone-easily-swappable-parameters,
+  -misc-non-private-member-variables-in-classes,
+  -misc-no-recursion,
+  -modernize-use-trailing-return-type,
+  -readability-identifier-length,
+  -readability-magic-numbers,
+  -readability-function-cognitive-complexity,
+  -readability-math-missing-parentheses,
+  -readability-uppercase-literal-suffix
+# Why each exclusion:
+#   easily-swappable-parameters   kernels take (in, out, twiddle, n, stride) by design
+#   non-private-member-variables  POD stage records and descriptors are plain structs
+#   no-recursion                  plan construction recurses over factorisations
+#   use-trailing-return-type      style choice
+#   identifier-length             n, m, s, p, q, k, w are the domain's names
+#   magic-numbers                 radices and cache constants are named where they matter
+#   function-cognitive-complexity pass loops are long by nature; review covers them
+#   math-missing-parentheses      index arithmetic is clearer without the noise
+#   uppercase-literal-suffix      style choice
+WarningsAsErrors: '*'
+FormatStyle: file
