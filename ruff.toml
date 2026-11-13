@@ -1,10 +1,9 @@
 # SPDX-FileCopyrightText: 2026 John C. Travers and contributors
 # SPDX-License-Identifier: Apache-2.0
 #
-# Python tooling (tools/, gen/, bench/): standard library only unless AGENTS.md says
-# otherwise. Python 3.9 is the floor because cluster system Pythons are old.
+# Python tooling (tools/, gen/, bench/): Python 3.14 or newer, through uv (AGENTS.md).
 line-length = 100
-target-version = "py39"
+target-version = "py314"
 
 [lint]
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]

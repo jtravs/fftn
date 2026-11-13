@@ -27,7 +27,8 @@ One fact lives in one place. Do not restate it elsewhere; link to it.
 | Experiments: hypothesis, protocol, result, verdict | `dev/experiments/<ID>-<slug>.md`, one file each, indexed in `dev/PLAN.md` |
 | Experimental switches | `dev/KNOBS.toml` (owner and expiry date; the gate enforces it) |
 | Benchmark numbers | the fbench results store, cited by run ID; never copied into documents by hand |
-| API and conventions | the public headers' comments, then `README.md` |
+| Public API (signatures, preconditions, guarantees) | comments in the public headers |
+| Conventions and usage | `docs/*.md`, with examples quoted from compiled files in `examples/` |
 
 `dev/DESIGN.md` describes the design as it is intended now. When work changes the design,
 edit the affected section and add a line to the decision log. Do not append history to the
@@ -62,7 +63,7 @@ green on the machine where it was made. In addition:
   Warnings: `-Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wshadow`, as errors
   in the gate. Third-party code is `SYSTEM`; its warnings are not ours.
 - **Dependencies.** The library has none beyond the standard library. Tests may use
-  GoogleTest and FFTW; benchmarks may use any competitor. Adding a dependency to the
+  GoogleTest, FFTW and Boost.Multiprecision; benchmarks may use any competitor. Adding a dependency to the
   library needs the maintainer's approval and a decision-log entry.
 - **Ownership and types.** RAII only: no owning raw pointers, no `new`/`delete`. Sizes and
   indices are `std::size_t` or `std::ptrdiff_t` (strides are signed); convert with the
@@ -95,18 +96,35 @@ green on the machine where it was made. In addition:
   Experimental switches follow section 6.
 - **Naming and layout.** `snake_case` for everything except template parameters
   (`PascalCase`) and macros (`FFTN_UPPER`). Macros only for ISA regions, force-inline and
-  feature detection. One concept per header. Comments say why, not what.
+  feature detection. One concept per header.
+- **Comments and documentation.**
+  - Every public declaration has a comment giving what it does, its preconditions and
+    its guarantees. The public headers are the API reference; the gate checks that
+    nothing public is undocumented.
+  - Internal code, C++ and Python alike, gets no boilerplate docstrings. It gets a
+    comment wherever something is subtle or was learned the hard way, stating the reason
+    and citing the experiment or finding. Comments say why, not what.
+  - A change to the public API or to a convention updates `docs/` and the examples in
+    the same commit. Examples in documents are quoted from files under `examples/` that
+    the build compiles and runs; never paste untested code into a document.
+- **Python.** The generator and all tools target Python 3.14 or newer and run in the
+  project's `uv` environment. Tools use the standard library only; the generator may
+  also use `mpmath`.
 
 ## 5. Correctness and tests
 
 - **Oracles, in order.** (1) Analytic identities: impulses, single bins, real tones,
-  Parseval, shift, linearity, round trips. (2) A direct DFT evaluated in double-double
-  arithmetic (`long double` is plain double on Apple silicon, so it is not a reference).
+  Parseval, shift, linearity, round trips. (2) A direct DFT evaluated in quadruple
+  precision with Boost.Multiprecision (`long double` and `__float128` are not available
+  on every platform, so they are not the reference).
   (3) FFTW as an independent implementation. The generator additionally verifies every
   codelet against an exact DFT before emitting it.
 - **Tolerances** are computed from machine epsilon, the length and the algorithm's error
   bound before the test runs. They are tight enough that a wrong twiddle or a lost FMA
   fails.
+- **Both precisions.** Everything is written generically over the real type. `float` is
+  instantiated and tested alongside `double` from the first kernels on, at least on the
+  scalar target and one SIMD target per architecture.
 - **Every path is exercised.** Each kernel variant, instruction set, pass kind and planner
   strategy the build contains is forced in turn by the parameterised suites. A new path
   comes with its forcing parameter. Coverage of hand-written code is measured by the gate

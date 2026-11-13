@@ -15,6 +15,8 @@
 #   python    ruff (pinned): lint and format of tools/, gen/, bench/
 #   shell     bash -n on scripts (shellcheck too when it is installed)
 #   gen       generated codelets are reproducible: regenerate and compare with the tree
+#   apidoc    every public declaration is documented (Doxygen as a linter; no output kept)
+#             and the code snippets in docs/ match the compiled files in examples/
 #   build     Release, warnings as errors, tests under every kernel variant the CPU has
 #   tidy      clang-tidy (pinned), warnings as errors
 #   sanitize  ASan + UBSan (leak detection on), tests under every kernel variant
@@ -37,7 +39,7 @@
 set -euo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$root"
-all="spdx docs knobs format python shell gen build tidy sanitize tsan coverage bench"
+all="spdx docs knobs format python shell gen apidoc build tidy sanitize tsan coverage bench"
 stages=" ${FFTN_CHECK_STAGES:-$all} "
 stage() { [[ $stages == *" $1 "* ]]; }
 say() { printf '\n== %s\n' "$*"; }
@@ -105,6 +107,14 @@ if stage gen; then
   if [[ -f gen/fftn_gen/__main__.py ]]; then
     python3 -m gen.fftn_gen --check src/gen
   else skip "no generator"; fi
+fi
+
+if stage apidoc; then
+  say "public API documentation and example snippets"
+  if [[ -f docs/Doxyfile ]]; then
+    doxygen docs/Doxyfile > build/apidoc.log 2>&1 || { cat build/apidoc.log; exit 1; }
+    python3 tools/repo_lint.py snippets
+  else skip "no docs/Doxyfile"; fi
 fi
 
 if stage build; then

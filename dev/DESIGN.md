@@ -2,13 +2,13 @@
 
 FFTN: the Fastest Fourier Transform in the North. This document is the design as it is
 intended now. It is a live document: when work changes the design, edit the section and
-add a line to the [decision log](#18-decision-log). The implementation plan and current
+add a line to the [decision log](#19-decision-log). The implementation plan and current
 status are in [PLAN.md](PLAN.md); the working rules are in [AGENTS.md](../AGENTS.md).
 
 Status of this document: initial design, 2026-11-13, before any library code exists. Every
 performance statement about FFTN below is a target or a hypothesis until an experiment in
 [PLAN.md](PLAN.md) confirms it. Statements about other libraries are measurements from the
-prototype's benchmark log or from the studies listed in [References](#19-references).
+prototype's benchmark log or from the studies listed in [References](#20-references).
 
 Contents:
 
@@ -28,9 +28,10 @@ Contents:
 14. [Build and packaging](#14-build-and-packaging)
 15. [Correctness, accuracy and determinism](#15-correctness-accuracy-and-determinism)
 16. [Benchmark rig: fbench](#16-benchmark-rig-fbench)
-17. [Risks and open questions](#17-risks-and-open-questions)
-18. [Decision log](#18-decision-log)
-19. [References](#19-references)
+17. [Documentation](#17-documentation)
+18. [Risks and open questions](#18-risks-and-open-questions)
+19. [Decision log](#19-decision-log)
+20. [References](#20-references)
 
 ---
 
@@ -190,7 +191,9 @@ src/                     the library: platform/, planner/, engine/, strategies/,
 src/isa/                 regions, vocabularies, one translation unit per instruction set
 src/passes/              pass kernels (.inl, included per instruction set)
 src/gen/                 generated codelets and their metadata tables (committed)
-gen/fftn_gen/            the codelet generator (Python)
+gen/fftn_gen/            the codelet generator (Python), with gen/README.md
+docs/                    user documentation (Markdown)
+examples/                compiled, tested examples that the documentation quotes
 tests/                   unit, analytic, reference, contract, threading, property tests
 bench/                   fbench: driver, backends (one binary per library), catalogues
 tools/                   repository tooling (lint, coverage gate, capture, calibration)
@@ -217,8 +220,10 @@ during phase 0 and recorded in the headers.
   as scratch. Such plans execute through overloads that take a non-const input pointer,
   so the permission is visible in the call.
 - Complex data are `std::complex<T>` (interleaved). Split real/imaginary arrays are a
-  layout option (section 5.3). `T` is `double` first; `float` follows (phase 6); the code
-  is templated on `T` from the start.
+  layout option (section 5.3). Both `double` and `float` are supported. `double` is tuned
+  first. `float` is instantiated and tested for correctness in CI from phase 1 (on the
+  scalar target and at least one SIMD target per architecture) so the precision-generic
+  code cannot drift; its remaining targets and its tuning follow in phase 6.
 - Any alignment of at least `alignof(T)` is accepted. Kernels use unaligned loads
   everywhere and there are no aligned-only code paths, so alignment is not part of a plan
   and never changes results. Speed can still depend on it: a 64-byte access to data that
@@ -373,7 +378,7 @@ expressed through the core API; none of it adds kernels.
 | Tier | Contents | Phase |
 |---|---|---|
 | Core | c2c, r2c, c2r; 1-D rows, 2-D planes, 3-D volumes; strides and distances; in place and out of place; any length; double; serial, team and executor execution; edge ops; convolution and transform-pair pipelines | 1–5 |
-| General | float; convenience layer; DCT/DST types I–IV and the discrete Hartley transform as composed plans; split-complex layout; C API; wisdom import and export; `next_fast_length` backed by the cost model | 6 |
+| General | float on every target, tuned where asked for; convenience layer; DCT/DST types I–IV and the discrete Hartley transform as composed plans; split-complex layout; C API; wisdom import and export; `next_fast_length` backed by the cost model | 6 |
 | Later, on demand | FFTW shim; more than three transformed axes; SVE; Python binding | 7 |
 
 ---
@@ -506,7 +511,11 @@ A codelet is a straight-line DFT of small size R on R vector values: the arithme
 of every pass. Hand-written codelets limited the prototype (three kernel families, three
 copies, composites built from generic twiddle multiplies). Every library that leads on
 kernels generates them. FFTN's generator is a Python package (`gen/fftn_gen`), run by
-developers; its output is committed C++, so users need no Python.
+developers; its output is committed C++, so users need no Python. It is a development
+tool run on current machines, so it targets current Python (3.14 or newer, in the
+project's `uv` environment) and uses what that offers: structural pattern matching over
+the DAG's node types, frozen slotted dataclasses for hash-consed nodes, and `mpmath` for
+high-precision verification. It is documented in `gen/README.md` (section 17).
 
 ### 7.2 Pipeline
 
@@ -1145,7 +1154,7 @@ What the experiments still require of the build:
 - CMake 3.25 or newer with presets; `FetchContent`-friendly with an offline override;
   installed package config (`find_package(fftn)`) and pkg-config; all symbols in
   `namespace fftn`, all macros prefixed `FFTN_`, all targets namespaced.
-- Test-only dependencies (GoogleTest, FFTW) and benchmark-only dependencies are fetched
+- Test-only dependencies (GoogleTest, FFTW, Boost.Multiprecision) and benchmark-only dependencies are fetched
   pinned by commit and treated as system code.
 - A generated single-file amalgamation is a possible release artefact (phase 6); it is
   the same implementation concatenated, not a separate code path.
@@ -1160,9 +1169,14 @@ What the experiments still require of the build:
    complex bins and real tones, constant input, Parseval, the shift theorem, linearity,
    forward–backward round trips, conjugate symmetry of real transforms, separability of
    multi-dimensional transforms, convolution with a pure delay.
-2. **A direct DFT in double-double arithmetic** (`tests/reference`), O(n²), for moderate
-   n; for large n, comparison at sampled output bins. `long double` is not used: it is
-   plain double on Apple silicon.
+2. **A direct DFT in quadruple precision** (`tests/reference`), O(n²), for moderate n;
+   for large n, comparison at sampled output bins. It uses Boost.Multiprecision's
+   113-bit binary float, standalone and header-only, as a test-only dependency. Native
+   types do not cover the platforms: `long double` is plain double on Apple silicon and
+   with the MSVC ABI, and `__float128` is rejected by Clang on Apple silicon (GCC accepts
+   it there). A 1024-point reference DFT takes about 0.3 s. The library's own twiddle
+   tables, which it builds with a few lines of double-double arithmetic, are checked
+   against the same reference, so the reference shares no code with the library.
 3. **FFTW**, as an independent implementation, for large sizes and every shape.
 4. **The generator's own check** of each codelet against the exact DFT at emission.
 
@@ -1197,9 +1211,11 @@ Accuracy is also reported by fbench next to speed for every library.
 ### 15.4 Gate and continuous integration
 
 The gate (`scripts/check.sh`) runs: SPDX headers, document links, experimental-switch
-registry, clang-format, ruff, shell syntax, generator reproducibility, Release build with
-warnings as errors and the tests under every kernel variant, clang-tidy, ASan with UBSan (leak detection on), ThreadSanitizer, coverage
-of hand-written code against a threshold that may not fall, and an fbench smoke run.
+registry, clang-format, ruff, shell syntax, generator reproducibility, public-API
+documentation completeness, Release build with warnings as errors and the tests and
+documented examples under every kernel variant, clang-tidy, ASan with UBSan (leak
+detection on), ThreadSanitizer, coverage of hand-written code against a threshold that
+may not fall, and an fbench smoke run.
 
 CI matrix (phase 0 onward, growing): Linux x86-64 with GCC 14 and current GCC and Clang;
 macOS arm64 with Apple Clang and Homebrew LLVM; Linux AArch64; Windows with clang on the
@@ -1290,7 +1306,7 @@ reported separately for every library.
 - **Validity.** fbench records load, frequency and thermal state where the OS exposes
   them and marks rounds on a busy machine invalid. On macOS it requests the
   performance-core class.
-- **Accuracy** (relative RMS and maximum error against the double-double reference) is
+- **Accuracy** (relative RMS and maximum error against the quadruple-precision reference) is
   stored with every timing.
 - Throughput is reported as ns per point and as mflops = 5·n·log₂n / t for complex
   transforms and 2.5·n·log₂n / t for real ones, the convention of FFTW's published
@@ -1323,9 +1339,52 @@ directory and record the commit of every arm.
 
 ---
 
-## 17. Risks and open questions
+## 17. Documentation
 
-### 17.1 Technical risks
+Readers know what an FFT is. They want to know exactly what this library gives them. The
+documentation is therefore small, exact and kept next to the code, with no documentation
+infrastructure to maintain.
+
+### 17.1 What exists
+
+| Document | Content | Form |
+|---|---|---|
+| `README.md` | what FFTN is, a first example, links | Markdown |
+| `docs/conventions.md` | every convention, stated exactly: the formula each transform computes, signs, normalisation, the layout of every input and output (r2c and c2r sizes and padding, multi-dimensional halving), strides and distances, in-place rules, what is and is not preserved, alignment, accuracy bounds, the determinism contract | Markdown |
+| `docs/guide.md` | task-oriented: rows, planes, volumes, real transforms, choosing lengths, workspaces, planning effort and wisdom | Markdown with examples |
+| `docs/threading.md` | each integration model with a complete example: serial, inside an OpenMP region, the OpenMP executor, Kokkos, a custom pool, the built-in pool; what FFTN never does to the caller's runtime | Markdown with examples |
+| `docs/fusion.md` | edge operations, convolution, transform pairs, block callbacks | Markdown with examples |
+| `docs/building.md` | CMake use, supported compilers and platforms, instruction sets and how one is chosen, options | Markdown |
+| API reference | every public type, function, parameter, precondition and guarantee | comments in the public headers |
+| `gen/README.md` | the generator: pipeline, the intermediate representation, how to add a radix, algorithm or lowering, the command line, and its subtleties | Markdown |
+| `bench/README.md` | fbench: commands, catalogues, how to add a backend, how to read a verdict | Markdown |
+
+### 17.2 Rules
+
+- **The public headers are the API reference.** Every public declaration carries a
+  comment stating what it does, its preconditions, and what it guarantees. The Markdown
+  documents explain and link; they do not restate signatures.
+- **Examples are compiled.** Every code example in `docs/` is a snippet of a file under
+  `examples/`, which the build compiles and the tests run. A gate stage checks that the
+  snippets in the documents match the files, so examples cannot rot.
+- **Completeness is checked, not hoped for.** Doxygen is used as a linter only: a gate
+  stage runs it over `include/fftn/` with undocumented public members as errors. It needs
+  one small configuration file and produces nothing that is committed. Rendering an HTML
+  reference from the same comments for a release is one command and optional; the
+  comments are written to read well as plain text in the header first.
+- **Internal code is commented sparingly.** No boilerplate docstrings. A comment is
+  required wherever something is subtle, non-obvious, or was learned the hard way: it
+  states the reason and cites the experiment or finding (for example "radix ≤ 8 here: 2R
+  streams exceed L1 associativity, experiment X4"). The same rule applies to the
+  generator's Python.
+- **Documentation changes with the code**, in the same commit. A change to the public
+  API or a convention without its documentation is not finished.
+
+---
+
+## 18. Risks and open questions
+
+### 18.1 Technical risks
 
 | Risk | Why it matters | Mitigation |
 |---|---|---|
@@ -1337,14 +1396,14 @@ directory and record the commit of every arm.
 | Cost model drifts on new CPUs | wrong plans by default | nearest-family profiles, `planning::measure`, `fbench calibrate` as a one-command remedy |
 | Scope creep | the project stalls before the client milestones | phases 1–5 serve the core tier only; the general tier waits for phase 6 |
 
-### 17.2 Open questions
+### 18.2 Open questions
 
 None at present. Decisions taken are in the decision log; questions that arise during
 implementation are listed here until settled.
 
 ---
 
-## 18. Decision log
+## 19. Decision log
 
 | Date | Decision | Reason |
 |---|---|---|
@@ -1366,11 +1425,16 @@ implementation are listed here until settled.
 | 2026-11-13 | Old x86-64 hardware: best effort. Old targets are timed forced on newer machines and verified by whole-machine emulation | No such hardware is available |
 | 2026-11-13 | Published benchmarks: one generated report per tagged release; the tracking store stays internal | Keep the public record minimal and clean |
 | 2026-11-13 | Minimum Clang 16 as the tested floor; development and release builds use Clang 23; older Clang is neither tested nor deliberately broken | The floor only affects third parties building from source with old toolchains |
+| 2026-11-13 | Documentation: Markdown under `docs/`, the public headers as the API reference, compiled examples, Doxygen as a completeness linter only | Smallest thing that is exact and cannot rot; no documentation infrastructure |
+| 2026-11-13 | Python 3.14 or newer for the generator and all tooling, through `uv` | Development runs on current machines; `uv` supplies Python on the clusters |
+| 2026-11-13 | Reference DFT in quadruple precision through Boost.Multiprecision, test-only | Native quad types are missing with Clang on Apple silicon and on the MSVC ABI; an independent reference should not share the library's arithmetic |
+| 2026-11-13 | Float is supported and kept alive from phase 1 by correctness tests in CI; tuned in phase 6 | It has users, and precision-generic code that is never instantiated drifts |
+| 2026-11-13 | Bitwise schedule independence is kept | It costs nothing measurable (no cross-thread reductions) and makes threading tests exact; revisit only on experimental evidence |
 | 2026-11-13 | fbench replicates over processes with paired intervals and an A/A control | Process-to-process spread dominated the prototype's noise |
 
 ---
 
-## 19. References
+## 20. References
 
 Internal studies (kept outside the public repository) cover: the prototype and its
 benchmark log; FFTW 3.3.11; FFTL.jl; KFR; zldsp::fft; ducc0; RustFFT; threading and
