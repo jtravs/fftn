@@ -16,6 +16,14 @@ target_compile_options(fftn_isa_probes PRIVATE $<$<CXX_COMPILER_ID:GNU>:-Werror=
 fftn_add_test(fftn_isa_tests
   SOURCES target_test.cpp vocab_test.cpp kernel_test.cpp link_test.cpp test_targets.cpp
   LIBRARIES fftn_isa_probes)
+# The link test compares entry-point addresses to show that no target's function stands in
+# for another's (DESIGN.md 6.4). The Microsoft linker folds functions whose machine code is
+# identical (/OPT:ICF, on by default in optimised links), which is harmless but makes two
+# entry points equal: on Arm64 the test found neon_fcma sharing one (CI run 43495592375).
+# This executable is linked without folding, so that the test compares symbols.
+if(WIN32)
+  target_link_options(fftn_isa_tests PRIVATE "LINKER:/OPT:NOICF")
+endif()
 
 # Disassembly test: the library's units and the probes, per target (tools/asm_check.py).
 # Python runs in the project's uv environment, or any Python 3.14 if uv is missing.
