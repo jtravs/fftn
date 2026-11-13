@@ -4,7 +4,7 @@
 // The fbench harness: one process of one arm (DESIGN.md 16). Linked with exactly one backend.
 //
 //   fbench-<lib> describe                     the library and build, one JSON line
-//   fbench-<lib> selftest                     checks the reference DFT and the check
+//   fbench-<lib> selftest                     checks the reference DFT, the check and describe
 //   fbench-<lib> run --cases FILE [options]   plans, checks and times every case
 //
 // Every result is one JSON line on standard output. The driver (bench/fbench.py) owns the
@@ -26,6 +26,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <memory>
@@ -38,6 +39,7 @@
 #include <vector>
 
 #ifdef __APPLE__
+#include <mach-o/dyld.h>
 #include <pthread/qos.h>
 #include <sys/qos.h>
 #endif
@@ -471,6 +473,56 @@ std::string describe_line() {
       .object();
 }
 
+// The path of this executable, or empty where it is not known.
+std::filesystem::path own_executable() {
+#ifdef __APPLE__
+  std::array<char, 4096> path{};
+  auto size = static_cast<std::uint32_t>(path.size());
+  if (_NSGetExecutablePath(path.data(), &size) != 0) {
+    return {};
+  }
+  return path.data();
+#elif defined(__linux__)
+  return "/proc/self/exe";
+#else
+  return {};
+#endif
+}
+
+// A backend that names the shared library it loaded must name the file that really
+// defines the library, never this executable: on Linux, symbol addresses seen from the
+// executable point into the executable itself (PLT entries, copy relocations), which once
+// made every FFTW arm look as if it had resolved the wrong library.
+std::string check_describe() {
+  std::array<char, 512> message{};
+  if (fbench_begin("", message.data(), message.size()) != fbench_ok) {
+    return std::string("fbench_begin failed: ") + message.data();
+  }
+  const std::string text = fbench_describe();
+  fbench_end();
+  const std::string key = R"("loaded_from":")";
+  const std::size_t at = text.find(key);
+  if (at == std::string::npos) {
+    return {};
+  }
+  const std::size_t from = at + key.size();
+  const std::string loaded = text.substr(from, text.find('"', from) - from);
+  const std::filesystem::path self = own_executable();
+  if (loaded.empty() || self.empty()) {
+    return {};
+  }
+  std::error_code ec;
+  const std::filesystem::path library = std::filesystem::canonical(loaded, ec);
+  if (ec) {
+    return "describe names a library that does not exist: " + loaded;
+  }
+  const std::filesystem::path exe = std::filesystem::canonical(self, ec);
+  if (!ec && library == exe) {
+    return "describe says the library was loaded from this executable: " + loaded;
+  }
+  return {};
+}
+
 int command_run(std::span<char* const> args) {
   const settings s = parse_settings(args);
   std::ifstream file(s.cases);
@@ -529,7 +581,10 @@ int main(int argc, char** argv) {
       return 0;
     }
     if (command == "selftest") {
-      const std::string failure = fbench::selftest();
+      std::string failure = fbench::selftest();
+      if (failure.empty()) {
+        failure = check_describe();
+      }
       std::cout << (failure.empty() ? "selftest: ok" : "selftest: " + failure) << '\n';
       return failure.empty() ? 0 : 1;
     }

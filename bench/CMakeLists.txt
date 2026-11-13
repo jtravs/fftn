@@ -70,6 +70,10 @@ endif()
 # every backend of this build, under every gate preset (so the sanitizers see the harness).
 if(FFTN_BUILD_TESTS)
   add_test(NAME bench.harness_selftest COMMAND fbench-fftn selftest)
+  if(TARGET fbench-fftw)
+    # Includes the check that describe names the real FFTW library, not this executable.
+    add_test(NAME bench.harness_selftest_fftw COMMAND fbench-fftw selftest)
+  endif()
   find_program(FFTN_UV uv)
   if(FFTN_UV)
     add_test(NAME bench.selftest

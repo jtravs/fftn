@@ -63,12 +63,19 @@ std::string simd_of(std::string_view version) {
   return dash == std::string_view::npos ? "scalar" : std::string(version.substr(dash + 1));
 }
 
+// The file that defines FFTW's code in this process; empty if FFTW is linked statically.
+// The address of a symbol as seen from the executable is no use on Linux: a function's
+// address is the executable's canonical PLT entry, and a data symbol is copy-relocated
+// into the executable, so dladdr on either names the executable itself. dlsym with
+// RTLD_NEXT searches only the objects loaded after this one, so it finds the real
+// definition (on macOS too).
 std::string loaded_from() {
 #ifdef _WIN32
   return "";
 #else
+  const void* const symbol = dlsym(RTLD_NEXT, "fftw_execute");
   Dl_info info{};
-  if (dladdr(static_cast<const void*>(&fftw_version[0]), &info) == 0 || info.dli_fname == nullptr) {
+  if (symbol == nullptr || dladdr(symbol, &info) == 0 || info.dli_fname == nullptr) {
     return "";
   }
   return info.dli_fname;
@@ -139,6 +146,7 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
                       .str("version", version)
                       .str("isa", simd_of(version))
                       .str("precision", "double")
+                      .raw("supports", R"(["c2c","r2c","c2r"])")
                       .str("planner", s.planner)
                       .str("cc", fftw_cc)
                       .str("codelet_optim", fftw_codelet_optim)

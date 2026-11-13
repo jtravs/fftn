@@ -10,6 +10,8 @@
 //     it, allocate its workspace, and keep both in a heap record returned through `plan`;
 //   - fbench_execute: execute the plan on (in, out) with the record's workspace;
 //   - fbench_destroy: release the record;
+//   - fbench_describe: list the kinds the plan handles in "supports" (from then on smoke
+//     fails on any unsupported case of those kinds);
 //   - fbench_begin: accept FFTN plan options (the arm's +OPTION=value list) and reject
 //     unknown ones; fbench_describe: add the instruction set the plan selected and the
 //     plan's own description.
@@ -46,6 +48,7 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
                       .str("version", fftn::version())
                       .str("isa", "none")
                       .str("precision", "double")
+                      .raw("supports", "[]")
                       .inner();
   return fbench_ok;
 }

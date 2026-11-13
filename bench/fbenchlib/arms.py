@@ -186,13 +186,16 @@ def describe(binary: Binary, options: dict[str, str]) -> dict:
     return info
 
 
-def library_problem(info: dict) -> str | None:
+def library_problem(info: dict, binary: Path | None = None) -> str | None:
     """Why a backend must not be trusted, or None: it loaded a shared library from outside
     the installation it was built against (DESIGN.md 16.1)."""
     loaded, root = info.get("loaded_from"), info.get("expected_root")
     if not loaded or not root:
         return None
     loaded_real = os.path.realpath(loaded)
+    if binary is not None and loaded_real == os.path.realpath(binary):
+        # A backend bug, not a wrong library: it located its own copy of a symbol.
+        return f"describe names the backend executable itself ({loaded}) as the library"
     root_real = os.path.realpath(root)
     if not loaded_real.startswith(root_real.rstrip("/") + "/"):
         return f"loaded {loaded} but was built against {root}"

@@ -59,7 +59,9 @@ void fbench_end();
 /// The library's identity as the members of a JSON object, without braces: at least
 /// "library", "version" and "isa" (the instruction set actually selected), and
 /// "loaded_from" with "expected_root" when the library is a shared library, so that the
-/// driver can refuse a binary that resolved the wrong one. Valid until fbench_end.
+/// driver can refuse a binary that resolved the wrong one; and "supports", the list of kinds
+/// ("c2c", "r2c", "c2r") the backend claims, for which smoke fails on an unsupported case.
+/// Valid until fbench_end.
 const char* fbench_describe();
 
 /// Plans one case. `in` and `out` are buffers of the case's size and of the alignment
