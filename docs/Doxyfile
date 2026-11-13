@@ -1,0 +1,32 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Doxygen as a linter of the public API reference (gate stage `apidoc`, DESIGN.md 17.2):
+# every public declaration in include/fftn/ must carry a comment. Its XML output (needed
+# only because Doxygen insists on one format) goes to build/ and is discarded; nothing is
+# kept. Run from the repository root: doxygen docs/Doxyfile
+PROJECT_NAME           = FFTN
+INPUT                  = include/fftn
+RECURSIVE              = YES
+FILE_PATTERNS          = *.hpp *.h
+EXCLUDE_PATTERNS       = */detail/*
+EXCLUDE_SYMBOLS        = detail
+OUTPUT_DIRECTORY       = build/apidoc
+EXTRACT_ALL            = NO
+EXTRACT_PRIVATE        = NO
+EXTRACT_STATIC         = NO
+ENABLE_PREPROCESSING   = YES
+MACRO_EXPANSION        = NO
+QUIET                  = YES
+WARNINGS               = YES
+WARN_IF_UNDOCUMENTED   = YES
+WARN_IF_DOC_ERROR      = YES
+WARN_IF_INCOMPLETE_DOC = YES
+WARN_NO_PARAMDOC       = NO
+WARN_AS_ERROR          = FAIL_ON_WARNINGS
+GENERATE_HTML          = NO
+GENERATE_LATEX         = NO
+GENERATE_XML           = YES
+GENERATE_MAN           = NO
+GENERATE_RTF           = NO
+HAVE_DOT               = NO

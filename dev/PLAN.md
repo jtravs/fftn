@@ -6,7 +6,7 @@ session; update a phase when its tasks or findings change.
 
 ## Status
 
-**As of 2026-11-13.** Phase: before phase 0. No library code exists.
+**As of 2026-11-13.** Phase: 0, in progress. No library code exists yet.
 
 Done:
 
@@ -30,7 +30,9 @@ Next actions (in order):
 Open questions: see DESIGN.md section 18.2. Decided so far (decision log): Apache-2.0;
 no header-only configuration; the first draft's working assumptions.
 
-Claims: none.
+Claims (2026-11-13): 0.1 lead; 0.2 agent-platform; 0.3 agent-isa; 0.4 agent-tests;
+0.6 agent-fbench. The lead reviews and merges; agents work in separate worktrees on
+`task/<id>-<slug>` branches.
 
 Handoff notes: none yet.
 
@@ -207,7 +209,7 @@ running, done (with verdict).
 
 | ID | Question | Phase | Status |
 |---|---|---|---|
-| B1 | Do ISA attribute regions hold on Linux x86-64 with GCC 14 and 15 (inlining, by-value vector ABI at -O0, two-TU link, disassembly)? | 0 | planned |
+| [B1](experiments/B1-isa-regions-gcc-linux.md) | Do ISA attribute regions hold on Linux x86-64 with GCC 14 and 15 (inlining, by-value vector ABI at -O0, two-TU link, disassembly)? | 0 | running |
 | B2 | The same on Windows with clang on the MSVC ABI | 0 | planned |
 | B3 | Library build time and size as codelets and targets grow; which codelets are worth instantiating per target? | 1 | planned |
 | X1 | Complex-register against split arithmetic, per target (FCMA included) and pass position (first, middle, last; short and long rows) | 1 | planned |
