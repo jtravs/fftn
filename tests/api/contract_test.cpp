@@ -310,9 +310,9 @@ TEST(Workspace, MovesAndEmptyWorkspaces) {
   EXPECT_EQ(x, y);
 }
 
-// ---- Execution preconditions: assertions in debug builds of the library (DESIGN.md 18.2,
-// item 11). Builds with NDEBUG (Release and the sanitizer builds) compile them out; the
-// gate's coverage build is a Debug build and runs these.
+// ---- Execution preconditions: assertions in debug builds of the library (DESIGN.md 5.3).
+// Builds with NDEBUG (Release and the sanitizer builds) compile them out; the gate's
+// coverage build is a Debug build and runs these.
 
 TEST(ExecutionDeathTest, PreconditionsAreAssertedInDebugBuilds) {
 #ifdef NDEBUG
