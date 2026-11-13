@@ -1,6 +1,6 @@
 # X15: what a recent compiler gets from the scalar pass loops
 
-- **Status:** planned
+- **Status:** done
 - **Owner:** lead, 2026-11-13
 - **Phase / task:** 0 (input to 1.2 and 1.3)
 
@@ -183,6 +183,65 @@ user-interactive QoS. Arms as commits: A `5e09db7`, B `65fa47c`, E `3af41a6`, E 
   hand vocabulary) about 0.53–0.63 of `scalar` in L1 and hot. E and E + simd: not run
   (run `20261113-210540-b1db` stopped with no valid round).
 
+### AMD EPYC 7763 (arms A, B, C, C + simd, E, E + simd)
+
+Rocky Linux 9 cluster node, GCC 16.2.0, Release, x86-64 baseline (the `avx2` region by
+attribute), one thread. fbench: an exclusive 128-core node through the `epyc` remote
+profile; the pass level: 16 whole cores of one NUMA domain on an otherwise idle node
+(`--distribution=block:block`), quiet check passing throughout. Arms as commits, built in
+the job: A `5e09db7`, B `65fa47c`, C `f22c6cd`, C + simd `d4bb428`, E `3af41a6`, E + simd
+`c282825`.
+
+- **Bitwise.** `fftn_x15_tests` and `x15-passes --check` on the node, each arm built from
+  its commit: every arm equal to plain scalar (2116 of 2116 transforms per precision,
+  plans equal), the scalar text in the `avx2` region included. Arm E needed no tolerance.
+- **Whole transforms, target set**, run `20261113-211354-2d6f` (40 valid rounds). A/A band
+  ±1.00 %. Weighted geomean against A:
+
+  | Arm | Ratio to A [95 %] | Cases |
+  |---|---|---|
+  | B (omp simd) | 2.030 [2.029, 2.031] | 30 slower |
+  | C (scalar text in `avx2`) | 0.879 [0.878, 0.880] | 30 faster |
+  | C + simd | 1.095 [1.094, 1.095] | 7 faster, 3 no evidence, 20 slower |
+  | E (`-march=native`) | 0.913 [0.912, 0.914] | 30 faster |
+  | E + simd | 1.083 [1.082, 1.084] | 7 faster, 3 no evidence, 20 slower |
+
+- **Whole transforms, collateral run:** started (`x15-epyc-collat`) and cancelled once the
+  target set had decided every arm (B fails the rule on the target set itself).
+- **Pass level** (`radix4_pass`), runs `20261113-211754-c33a` (arm A's binary: scalar,
+  scalar + omp simd, scalar text in `avx2` with and without, hand `avx2`),
+  `20261113-212010-d69e` (E) and `20261113-212225-976d` (E + simd), 12 valid rounds
+  each, band ±1.00 %. Representative rows (ns per butterfly ratio to `scalar`; to hand
+  `avx2` in brackets):
+  - double, m = 64, L1: scalar + omp simd 1.749 (3.88); scalar text in `avx2` 1.069
+    (2.38); with omp simd 1.050 (2.33); hand `avx2` 0.451. Under E the library's scalar
+    table 1.067 (2.39).
+  - float, every m from 16 to 4096, hot/L1/L2: scalar + omp simd 0.92–1.00; scalar text in
+    `avx2` 0.80–0.84, which is 2.2–3.7 times hand `avx2` (0.27–0.37).
+
+### Xeon Gold 6240
+
+Not run. Both jobs were submitted on an exclusive node, but another user's processes held
+about 26 cores outside Slurm for hours and fbench's quiet check (rightly) refused every
+round; the jobs were cancelled. The verdict does not depend on this machine (below).
+
 ## Verdict
 
-(To be filled.)
+- **B (omp simd on the scalar pass loops): rejected; deleted.** The rule needed a weighted
+  ratio ≤ 0.95 on two of three machines and no case slower beyond 2 %. On the M5 with
+  Clang 23 it was 0.945, but on the EPYC with GCC 16 it was 2.03 with every target case
+  slower (the double pass 1.75 times slower): GCC vectorises the one-complex-per-register
+  loops into slower code at the baseline instruction set. The effect depends on the
+  compiler, so the annotation cannot be adopted for a library built by its users' compilers.
+- **C (the scalar text compiled in the `avx2` region): recorded for task 1.3, deleted.**
+  It gains 12 % on whole transforms but stays 2.2–3.7 times slower than the hand `avx2`
+  vocabulary at pass level, far outside the 1.25 threshold. Old-ISA targets (`x86_v2`,
+  `avx`, plain `neon`) need hand vocabularies from the start; compiling the scalar text in
+  their regions is not a stopgap worth having.
+- **E (`-march=native` ceiling): never adoptable; deleted.** Whole transforms 0.913 on the
+  EPYC and 1.001 on the M5; at pass level the compiler closes none of the gap to the hand
+  vocabulary (double 1.07 times scalar against 0.45 for hand `avx2`). Finding for 1.3: the
+  speed comes from the vocabulary's complex-aware operation order and shuffles, which a
+  compiler does not find in this scalar text even with the whole instruction set.
+- Code: the switches, the arms, the pass-level harness and the bitwise test are deleted in
+  `94b5f47`; git keeps them. No default changed. DESIGN decision log: one line (lead).

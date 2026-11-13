@@ -248,7 +248,7 @@ running, done (with verdict).
 | X12 | Beyond-L2 forms: DIF grid, DIT grid, in-place sandwich; block sizes by cache level; the in-place route (scratch of N, permutation pass, or palindromic swap) | 1 | planned |
 | X14 | Is a separate `avx` target (256 bit, no FMA, no AVX2) worth keeping over `x86_v2` on Sandy Bridge-class machines? | 1 | planned |
 | X13 | Next-row prefetch and non-temporal stores per machine for out-of-cache batches | 2 | planned |
-| [X15](experiments/X15-compiler-vectorised-scalar.md) | What does a current compiler get from the scalar pass loops (`omp simd`, the scalar text in the `avx2` region, `-march=native` as a ceiling), against a hand vocabulary? | 0 | planned |
+| [X15](experiments/X15-compiler-vectorised-scalar.md) | What does a current compiler get from the scalar pass loops (`omp simd`, the scalar text in the `avx2` region, `-march=native` as a ceiling), against a hand vocabulary? | 0 | done: omp simd rejected (compiler-dependent); old targets need hand vocabularies |
 | P1 | Cost-model accuracy: rank agreement with measurement across the catalogue per machine | 2 | planned |
 | P2 | Measurement budget: how many candidates and how long before the choice stops improving | 2 | planned |
 | T1 | Dispatch, wake and wait costs per machine and runtime (libgomp, libomp, Kokkos, pool) | 3 | planned |

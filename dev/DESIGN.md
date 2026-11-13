@@ -1587,6 +1587,7 @@ each item, and the outcome goes to the decision log.
 | 2026-11-13 | The chain passes exist only on the scalar target in phase 0; the per-target table carries them as a member that is null elsewhere, and a plan takes the fastest target whose table has them | The skeleton's passes assume one complex per register; phase 1 replaces them with generated, lane-aware ones on every target |
 | 2026-11-13 | Twiddle tables hold forward roots only, computed in double-double with Dekker's exact product (no FMA) and rounded once; backward passes multiply by conjugates | The tables are then the same on every processor and build; conjugation is exact, so backward tables are correctly rounded too |
 | 2026-11-13 | A multi-dimensional c2r out of place keeps its intermediate in a workspace block of one transform's half spectrum (a whole volume's, for now) | The input is preserved by default (9.1); pencil-block scratch arrives with phase 4's volumes |
+| 2026-11-13 | No `omp simd` on the scalar pass loops; old-ISA targets (`x86_v2`, `avx`, plain `neon`) get hand vocabularies from the start, not the scalar text compiled in their regions | Experiment X15: `omp simd` gained 5.5 % with Clang on the M5 but cost 2.0× with GCC 16 on Zen 3; the scalar text in the `avx2` region stayed 2.2–3.7× slower than the hand vocabulary per pass, and `-march=native` closed none of that gap |
 
 ---
 
