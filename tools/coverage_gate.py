@@ -3,12 +3,15 @@
 # SPDX-License-Identifier: Apache-2.0
 """Line coverage of FFTN's hand-written code, against a threshold (gate stage `coverage`).
 
-    tools/coverage_gate.py <build dir> --min-lines <percent>
+    tools/coverage_gate.py <build dir> --min-lines <percent> [--dump <fftn_platform_dump>]
 
 Reads <build dir>/fftn-coverage.json (written by CMake when FFTN_COVERAGE is on), merges
 the profiles the tests left behind, and counts lines in include/fftn/ and src/, excluding
 the generated codelets in src/gen/ (the generator verifies those). A line is covered if
-any test executable or translation unit executed it. Standard library only.
+any test executable or translation unit executed it. With --dump, the vocabulary and region
+unit of every target the processor cannot run (above the best target in its family, as the
+dump reports it) are left out: their lines cannot execute here, and machines and emulated
+runs that have the instruction set cover them. Standard library only.
 """
 
 from __future__ import annotations
@@ -22,6 +25,19 @@ from pathlib import Path
 
 COUNTED = ("include/fftn/", "src/")
 EXCLUDED = ("src/gen/",)
+# Each family's targets from lowest to highest; a processor runs its best one and those below.
+FAMILIES = (("avx2", "avx512"), ("neon", "neon_fcma"))
+
+
+def unrunnable(best: str) -> list[str]:
+    for family in FAMILIES:
+        if best in family:
+            return list(family[family.index(best) + 1 :])
+    return []
+
+
+def target_files(targets: list[str]) -> tuple[str, ...]:
+    return tuple(f for t in targets for f in (f"src/isa/vocab_{t}.inl", f"src/isa/{t}.cpp"))
 
 
 def counted(path: str, root: Path) -> str | None:
@@ -93,6 +109,7 @@ def main() -> int:
     ap.add_argument("build", type=Path)
     ap.add_argument("--min-lines", type=float, required=True)
     ap.add_argument("--show", type=int, default=10, help="list this many least-covered files")
+    ap.add_argument("--dump", type=Path, help="fftn_platform_dump, to leave out unrunnable targets")
     opts = ap.parse_args()
 
     build = opts.build.resolve()
@@ -102,6 +119,14 @@ def main() -> int:
         lines = llvm_lines(manifest, build, root)
     else:
         lines = gcc_lines(manifest, build, root)
+
+    if opts.dump is not None and opts.dump.exists():
+        out = subprocess.run([str(opts.dump)], capture_output=True, text=True, check=False).stdout
+        best = next((ln.split()[1] for ln in out.splitlines() if ln.startswith("best_target ")), "")
+        skip = target_files(unrunnable(best))
+        if skip:
+            print(f"   left out (this processor cannot run them): {', '.join(skip)}")
+        lines = {rel: v for rel, v in lines.items() if rel not in skip}
 
     total = sum(len(v) for v in lines.values())
     if total == 0:

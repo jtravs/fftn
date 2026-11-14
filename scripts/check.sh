@@ -188,7 +188,8 @@ if stage coverage; then
     rm -rf build/check-coverage/profiles
     if [[ -d build/check-coverage ]]; then find build/check-coverage -name '*.gcda' -delete; fi
     preset check-coverage
-    py tools/coverage_gate.py build/check-coverage --min-lines "$COVERAGE_MIN_LINES"
+    py tools/coverage_gate.py build/check-coverage --min-lines "$COVERAGE_MIN_LINES" \
+      --dump build/check-coverage/tests/platform/fftn_platform_dump
   else skip "no check-coverage preset"; fi
 fi
 
