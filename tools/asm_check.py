@@ -13,7 +13,12 @@ namespace, fftn::<version>::detail::<target>::; everything else is baseline code
   x86-64, neon_fcma on AArch64), and that target's code uses its defining instructions
   (an FMA and a ymm register; FCMLA and FCADD);
 - no function of a target calls or tail-calls an FFTN or standard-library function: the
-  vocabulary is always inlined, and nothing standard runs inside a region;
+  vocabulary is always inlined, and nothing standard runs inside a region. One shape is
+  not a call: identical-code folding (GCC's IPA-ICF, seen in sanitizer builds) turns one
+  of two instantiations with identical code into a single jump to the other, so a
+  function whose whole body is one unconditional jump to another instantiation of the
+  same function in the same target is an alias, and the jump's target is checked as a
+  function in its own right (identical_code_alias);
 - x86-64: no VEX or EVEX instruction and no ymm or zmm register outside avx2, and no
   EVEX feature (zmm, mask registers, registers 16-31) inside it;
 - AArch64: no FCMLA or FCADD outside neon_fcma; in neon_fcma no LDAPR or FJCVTZS, which
@@ -254,6 +259,54 @@ def resolve(funcs: list[Function], arch: str) -> None:
                 call.symbol = ""
 
 
+# Instructions a compiler may put before a function's first real instruction.
+LANDING_PADS = {"endbr64", "endbr32", "bti", "nop"}
+JUMPS = {"jmp", "jmpq", "b"}
+# Alignment padding a compiler may put after a function's last instruction (GCC on x86-64
+# pads a folded alias with `data16 nopw %cs:...`); it is never executed after an
+# unconditional jump.
+PADDING = {"nop", "nopw", "nopl", "data16", "int3", "xchg"}
+
+
+def template_name(sym: str) -> list[str] | None:
+    """The nested name of an Itanium-mangled function without its template arguments and
+    parameters, or None where the mangling is not understood (Microsoft names)."""
+    if sym.startswith("?"):
+        return None
+    return components(sym) or None
+
+
+def identical_code_alias(f: Function, call: Call, target: str) -> bool:
+    """Whether f is nothing but a jump to call's target, another instantiation of the same
+    function (or overload) in the same target: the form identical-code folding leaves.
+    Such a jump transfers to code that is checked itself and moves no vector across a
+    boundary that the folded copy would not have moved; any other call still counts."""
+    body = [mn for mn, _ in f.insns if mn.split(".")[0] not in LANDING_PADS]
+    while len(body) > 1 and body[-1] in PADDING and body[0] in JUMPS:
+        body.pop()
+    if len(body) != 1 or body[0] not in JUMPS or f.calls != [call]:
+        return False
+    mine, theirs = template_name(f.name), template_name(call.symbol)
+    return (
+        mine is not None
+        and mine == theirs
+        and target_of(call.symbol) == target
+        and call.symbol != f.name
+    )
+
+
+def call_errors(target: str, f: Function) -> list[str]:
+    """The forbidden calls of f, a function of target."""
+    errors = []
+    for call in f.calls:
+        sym = call.symbol
+        if sym.endswith("(unresolved)"):
+            errors.append(f"{target}: {f.name} calls {sym}, which cannot be checked")
+        elif sym and (is_fftn(sym) or is_std(sym)) and not identical_code_alias(f, call, target):
+            errors.append(f"{target}: {f.name} calls {sym} ({call.mnemonic}); must inline")
+    return errors
+
+
 def is_pauth(base: str) -> bool:
     """A pointer-authentication instruction outside the hint space."""
     if base in PAUTH_HINTS:
@@ -290,12 +343,7 @@ def check_group(objdump: str, group: list[str], baseline_has: set[str]) -> list[
             errors.append(f"no function of target {t} in {';'.join(group)}")
     for t, fs in by_target.items():
         for f in fs:
-            for call in f.calls:
-                sym = call.symbol
-                if sym.endswith("(unresolved)"):
-                    errors.append(f"{t}: {f.name} calls {sym}, which cannot be checked")
-                elif sym and (is_fftn(sym) or is_std(sym)):
-                    errors.append(f"{t}: {f.name} calls {sym} ({call.mnemonic}); must inline")
+            errors += call_errors(t, f)
 
     mnemonics = {t: {mn for f in fs for mn, _ in f.insns} for t, fs in by_target.items()}
     if arch == "x86":

@@ -6,58 +6,44 @@ session; update a phase when its tasks or findings change.
 
 ## Status
 
-**As of 2026-11-13.** Phase: 0, in progress. Wave 1 (tasks 0.1–0.4, 0.6) is merged; wave 2
-(0.5, 0.7, 0.8, then 0.5b) is next.
+**As of 2026-11-13, night.** Phase 0 tasks are done except its last exit item (baselines,
+running); phase 1 (1.1) and phase 3 (3.1–3.2) are in progress in parallel.
 
-Done:
+Done in phase 0 (details in the merge commits and the decision log):
 
-- Research, initial documents and their independent review (see the decision log in
-  DESIGN.md).
-- 0.1 Repository skeleton: CMake presets for every gate stage, the static library with one
-  unit per instruction set, the coverage gate, the snippet check, the uv project, Doxygen as
-  a linter. Gate green on macOS (Clang 23, Apple Clang 21) and Linux x86-64 (GCC 14.4,
-  15.2).
-- 0.2 Platform layer: CPU features (x86, AArch64 Linux, macOS; Windows compile-only),
-  topology and cache geometry from recorded snapshots or the live system, aligned buffers,
-  the planning clock. Fixtures recorded on Apple M5 Max, Xeon Gold 6240 and EPYC 7763.
-- 0.3 ISA regions and the `scalar`, `neon_fcma` and `avx2` vocabularies in double and
-  float, dispatch, the disassembly test. Second reader's findings fixed. Green with Clang
-  23 on AArch64 and GCC 14/15 on AVX-512 hardware.
-- 0.4 Test infrastructure: quadruple-precision reference, derived tolerances, analytic and
-  reference suites over both precisions, contract helpers, FFTW as an oracle; every seeded
-  fault caught.
-- 0.6 fbench v0: acceptance met on Apple M5 Max, Xeon Gold 6240 and EPYC 7763 (A/A: no
-  evidence; a seeded 5 % slowdown: detected; perturbed output: flagged).
-- Experiment B1 done (regions hold; GCC builds need `-Werror=psabi`).
+- 0.1 skeleton, 0.2 platform layer, 0.3 ISA regions and vocabularies, 0.4 test
+  infrastructure, 0.6 fbench v0, B1.
+- 0.5 walking skeleton: the public API, programs and stage driver, the chain strategy on
+  the scalar target, every kind at ranks 1–3, any length; checked against all three oracles
+  at every n ≤ 512. 0.5b: `fftn/kokkos.hpp` (View-based plans, Kokkos-FFT-shaped
+  `view_plan`, `compat` spellings). Both had second readers.
+- 0.7 fbench backends (FFTW, MKL, pocketfft, KFR, FFTL, Accelerate) pass their guards.
+- 0.8 CI: 13 jobs on Linux x86-64/AArch64, macOS, Windows x64/Arm; emulated runs (SDE,
+  QEMU) of the instruction-set tests on `main`, weekly and on demand. B2 done.
+- 0.9 API review: every recommendation taken; 0.10 made the changes (vectors, any number of
+  batch dimensions, `execute_transforms`, `view_plan`, `compat` enums). FFTN is unreleased:
+  the API changes freely until the first tagged release.
+- X15 done: no `omp simd` on scalar loops; old-ISA targets need hand vocabularies.
 
-Next actions (in order):
+Phase 0 exit: gate and CI green on all platforms (done); fbench self-tests trusted on the
+three machines (0.6); baselines for the backends: running (EPYC tracking and client
+catalogue, Xeon tracking, Mac tracking and client catalogue); the Xeon client catalogue is
+still to do in a quiet window (the Xeon is shared).
 
-1. 0.5 walking skeleton (the public API: needed by 0.5b, the fbench FFTN backend and 0.9).
-2. In parallel: 0.7 (fbench backends, client catalogue) and 0.8 (CI; B2 runs there on the
-   Windows runner, since no Windows machine is available).
-3. 0.5b after 0.5. Then stop for the API review (0.9).
-
-Open from wave 1:
-
-- B2 (Windows clang): deferred to 0.8's Windows runner. FCMA and PAuth detection on Windows
-  on Arm report "absent" until then.
-- The AArch64 Linux feature path (`getauxval`) and Windows paths are compiled but not yet
-  run anywhere: CI (0.8) or a Graviton/Neoverse machine.
-- The FFTN fbench backend is a stub until 0.5 (about 30 lines, listed in
-  `bench/backends/fftn.cpp`).
-- Phase 0 exit still needs: CI on four platforms (0.8), fbench baselines for the 0.7
-  backends.
+Next actions (in order): 1.1 generator core → 1.2 pass templates, twiddles, chain strategy
+and rules planner on the generated kernels → 1.3 vocabularies and their experiments. In
+parallel: 3.1–3.2 threading engine and scheduler, then 3.3 adapters. A cloud check for the
+phase 1 exit is authorised up to USD 20 (ledger in the experiment file).
 
 Open questions: see DESIGN.md section 18.2.
 
-Claims (2026-11-13, second lead session): 0.5 fixes after the second reader (agent-0.5-fix);
-0.7 merged; 0.8 CI fixes (agent-ci); 0.5b agent-kokkos and X15 agent-x15, both started on
-main + 0.5 before 0.5 merges. The lead reviews and merges; agents work in separate worktrees on
-`task/<id>-<slug>` or `exp/<id>-<slug>` branches.
+Claims (2026-11-13 night, lead session): 1.1 agent-gen (`task/1.1-generator`); 3.1–3.2
+agent-threads (`task/3.1-threading-engine`); baselines: the lead. Agents work in separate
+worktrees; the lead reviews, merges and pushes.
 
-Handoff notes: wave 1 is merged and green. Remote runs need a non-snap `uv` first on the
-job's PATH on machines whose uv is a snap (setuid confinement clears `setarch -R`, which
-GCC 14's TSan needs).
+Handoff notes: remote gates go to DMOG first (`gate-dmog.sbatch`; LSan off there, ptrace is
+forbidden on its nodes); the Xeon is shared with heavy users outside Slurm, so time there
+only when it is quiet. Keep the Mac quiet while an fbench run that needs it is going.
 
 ## How this plan works
 
