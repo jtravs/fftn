@@ -1,7 +1,6 @@
 # X8: whole-transform leaves above 16
 
-- **Status:** running (plumbing checked on the Mac; the campaign on the three machines is
-  pending)
+- **Status:** done: leaf limit 32 on NEON in double, 16 elsewhere; no leaf of 64
 - **Owner:** the lead session (written with the radix 32 and 64 codelets, 2026-11-14)
 - **Phase / task:** 1.4 (with the codelets of task 1.6)
 
@@ -128,7 +127,26 @@ precision, 14 more for the chain's passes.
 
 ## Results
 
-Plumbing check only (the Mac, shared and loaded: every round under load, A/A band
+Ratios leaf ÷ chain (`LEAF_LIMIT=64` against planner v1), batch 1 / batch 64:
+
+| machine, target | band | n = 32 double | n = 32 float | n = 64 double | n = 64 float |
+|---|---|---|---|---|---|
+| M5 Max, `neon_fcma` | ±1.0 % | 0.78 / 0.84 | 1.04 / 1.05 | 1.10 / 1.14 | 1.72 / 1.86 |
+| M5 Max, `neon` | ±1.0 % | 0.80 / 0.82 | 1.20 / 1.22 | 1.28–2.10 | 1.28–2.10 |
+| EPYC 7763, `avx2` | ±1.3 % | 1.09 / 1.11 | 1.62 / 1.73 | 1.58–2.74 | 1.58–2.74 |
+| Xeon 6240, `avx512` | ±1.0 % | 1.02 / 1.01 | 0.67 / 0.66 | 1.61–1.87 | 1.61–1.87 |
+| Xeon 6240, `avx2` | ±1.0 % | 0.97 / 0.96 | 0.63 / 0.62 † | 1.48–1.73 | 1.48–1.73 |
+
+Runs: the Mac 20261114-103330-d9c2 (39 rounds, both NEON targets in one run), the EPYC
+20261114-104325-2f41, the Xeon 20261114-104239-0e99. † Against the `avx512` chain, the
+run's A arm. A range in an n = 64 cell covers both precisions and batches.
+
+The float leaf of 32 "wins" on the Xeon only because the `avx512` float chain at n = 32
+is pathological: 6.3 ns per point against 3.1 for the `avx2` chain on the same machine, a
+tail and tile problem of the chain's leading radices below C that X16 owns. A leaf that
+idles seven of eight lanes is not the fix, so the rule's literal pass there is overridden.
+
+Earlier plumbing check (the Mac, shared and loaded: every round under load, A/A band
 ±1.26 %), run 20261114-092904-8375, `A=fftn B=fftn+LEAF_LIMIT=64`, `neon_fcma`: the leaf
 of 32 was about 25 % faster than the chain 2 × 16 in double (C = 1) at batch 1 and 64 and
 3–6 % slower in float (C = 2); the leaf of 64 was 9–17 % slower in double and 1.7–1.8
@@ -137,4 +155,11 @@ above is the result.
 
 ## Verdict
 
-Pending the runs above.
+Adopted for NEON in double only. By the rule, the leaf limit rises to 32 for `neon` and
+`neon_fcma` at C = 1 (geometric mean 0.78–0.84, nothing slower) and stays 16 everywhere
+else; 64 fails everywhere (radix 64 spills; 10–14 % slower even at C = 1). The Xeon's float
+pass is set aside as above. `profile_of` sets the limit (`src/planner/rules.cpp`,
+`leaf_limit_of`); DESIGN.md 8.2 and 11.2 say so. The radix 32 and 64 codelets stay in the
+library despite the size (the maintainer prefers speed over build size): the grid strategy
+and X3 may use them as passes. The 64-point leaf instantiations are unused for now; dropping
+them is a B3 decision.

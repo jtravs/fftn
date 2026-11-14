@@ -67,6 +67,9 @@ class Profile:
     sbatch: list[str] = field(default_factory=list)  # extra #SBATCH options
     cxx: str = ""
     uv: str = "uv"
+    # The whole node by default. false shares it (a shared machine whose other jobs must keep
+    # running): fbench's interleaved rounds and A/A band then carry the noise.
+    exclusive: bool = True
 
 
 def config_path() -> Path:
@@ -155,7 +158,7 @@ def sbatch_script(
     lines = [
         "#!/bin/bash",
         f"#SBATCH --job-name={plan.job}",
-        "#SBATCH --exclusive",
+        *(["#SBATCH --exclusive"] if profile.exclusive else []),
         "#SBATCH --nodes=1",
         "#SBATCH --ntasks=1",
         f"#SBATCH --output={plan.jobdir}/slurm-%j.log",

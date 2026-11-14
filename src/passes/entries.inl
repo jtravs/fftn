@@ -169,6 +169,18 @@ inline constexpr pass_kernels<T> pass_table{
                 &copy_pass<T, fac, fac>,
             },
         },
+    .bluestein_in =
+        {
+            &bluestein_in<T, nop>,
+            &bluestein_in<T, scl>,
+            &bluestein_in<T, fac>,
+        },
+    .bluestein_out =
+        {
+            &bluestein_out<T, nop>,
+            &bluestein_out<T, scl>,
+            &bluestein_out<T, fac>,
+        },
     .r2c_pack_pairs = &r2c_pack_pairs<T>,
     .r2c_post =
         {
@@ -192,6 +204,21 @@ inline constexpr pass_kernels<T> pass_table{
         {
             &c2r_store<T, false>,
             &c2r_store<T, true>,
+        },
+    .block_copy =
+        {
+            &block_copy<T, nop>,
+            &block_copy<T, scl>,
+        },
+    .twiddle_transpose =
+        {
+            &twiddle_transpose<T, -1>,
+            &twiddle_transpose<T, +1>,
+        },
+    .twiddle_scatter =
+        {
+            &twiddle_scatter<T, -1>,
+            &twiddle_scatter<T, +1>,
         },
 };
 

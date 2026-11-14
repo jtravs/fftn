@@ -49,14 +49,18 @@ struct target_profile {
   const pass_costs* costs = nullptr; // never null in a profile from profile_of
   // A length n <= leaf_limit with a codelet of radix n is one leaf, a whole transform in
   // registers (DESIGN.md 8.2), instead of a chain. Lengths up to 16 are leaves whatever the
-  // value. Experiment X8 (dev/experiments/X8-leaves.md) decides it per target and precision.
+  // value. From experiment X8 (dev/experiments/X8-leaves.md): 32 on NEON in double (C = 1),
+  // 16 elsewhere.
   std::size_t leaf_limit = default_leaf_limit;
+  // Prime factors above this go through one Bluestein stage at the end of the chain;
+  // those from 17 up to it are generic passes (DESIGN.md 11.2).
+  std::size_t bluestein_above = 0;
 };
 
-// The profile of target t for a precision with `lanes` complex lanes. Only AVX2's tables
-// are measured (X2 on an EPYC 7763): C = 2 (double) and C = 4 (float); every other target
-// takes the table of the nearest C, the C = 2 table for C = 1 and the C = 4 table for
-// C = 8 (unmeasured there).
+// The profile of target t for a precision with `lanes` complex lanes: the table measured
+// for (t, lanes) if there is one, else AVX2's table of the nearest C. Only AVX2's tables
+// are measured (X2 on an EPYC 7763): C = 2 (double) and C = 4 (float); so every other
+// target takes the C = 2 table for C = 1 and the C = 4 table for C = 8 (unmeasured there).
 [[nodiscard]] target_profile profile_of(target t, std::size_t lanes) noexcept;
 
 // The radices of a chain for n, in pass order: empty for n = 1, {n} for n <= 16 and for a
@@ -64,5 +68,10 @@ struct target_profile {
 // Prime factors above 16 are generic passes, ascending, after the codelet passes; radices
 // above 16 are such primes.
 [[nodiscard]] std::vector<std::size_t> rule_radices(std::size_t n, const target_profile& p);
+
+// The convolution length of a Bluestein stage for a transform of q points: the 7-smooth
+// M >= 2q - 1, at most the next power of two, whose chain (rule_radices) plus the two
+// chirp passes cost least; the smallest on a tie. Precondition: q >= 2.
+[[nodiscard]] std::size_t bluestein_length(std::size_t q, const target_profile& p);
 
 } // namespace fftn::inline v0::detail

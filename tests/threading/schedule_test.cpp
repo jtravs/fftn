@@ -35,11 +35,18 @@ using fftn::detail::work_graph;
 // (4 x 4 x 4 x 4 x 12 on 32 registers); planner v1 needs three, a third less work, which
 // moves that row across rule 3's thresholds. The rules are tested on the plan they were
 // written for, forced as the tests force any sequence.
+// Chains: the rules below are stated for a chain's graph (a phase per stage), which long
+// rows would not have on a machine whose caches make them grids (strategies/grid.hpp).
 std::shared_ptr<const fftn::detail::plan_core> rows(std::size_t n, std::size_t count) {
   const fftn::options opts;
   fftn::detail::build_settings settings;
+  settings.strategy = fftn::detail::strategy_choice::chain;
   if (n == 3072) {
     settings.radices = {4, 4, 4, 4, 12};
+  }
+  // The work of a generic pass (below): its prime factor is not a Bluestein stage.
+  if (n == 34) {
+    settings.bluestein_above = static_cast<std::size_t>(-1);
   }
   return fftn::detail::make_plan_core(
       fftn::detail::view_of(fftn::rows_c2c<double>(n, count, fftn::direction::forward)), opts,
@@ -84,10 +91,28 @@ TEST(WorkGraph, PhasesOfRowsAndPlanes) {
   // Every codelet pass moves the 16384 points once, whatever its unit (C > 1 blocks).
   EXPECT_EQ(g.work, 16384.0 * static_cast<double>(g.phases.size()));
   // The same in float, where a neon_fcma or avx2 pass's unit is a block of 2 or 4 copies.
+  fftn::detail::build_settings chain;
+  chain.strategy = fftn::detail::strategy_choice::chain;
   const auto f = fftn::detail::make_plan_core(
       fftn::detail::view_of(fftn::rows_c2c<float>(16384, 1, fftn::direction::forward)),
-      fftn::options(), fftn::detail::build_settings());
+      fftn::options(), chain);
   EXPECT_EQ(f->graph.work, 16384.0 * static_cast<double>(f->graph.phases.size()));
+  // A grid: one phase per phase of the grid, each a loop nest over its blocks of columns
+  // (two loops, over columns c and blocks, after the first phase of three).
+  fftn::detail::build_settings grid;
+  grid.strategy = fftn::detail::strategy_choice::grid;
+  grid.grid_factors = {16, 32, 32};
+  grid.profile.grid_block = 8;
+  const auto gr = fftn::detail::make_plan_core(
+      fftn::detail::view_of(fftn::rows_c2c<double>(16384, 2, fftn::direction::forward)),
+      fftn::options(), grid);
+  ASSERT_EQ(gr->graph.phases.size(), 3U);
+  EXPECT_EQ(gr->graph.phases[0].nest, 1U);
+  EXPECT_EQ(gr->graph.phases[0].units, 1024U / 8); // blocks of the 1024 columns of phase 1
+  EXPECT_EQ(gr->graph.phases[1].nest, 2U);
+  EXPECT_EQ(gr->graph.phases[1].units, 32U * (16 / 8)); // columns c x blocks of L = 16
+  EXPECT_EQ(gr->graph.phases[2].nest, 1U);
+  EXPECT_EQ(gr->graph.phases[2].units, 512U / 8); // blocks of L = 512, the last phase
   // A generic pass of radix r sums r terms per point: 2 x 17 is a grouped radix-2 pass (34
   // points) and a generic radix-17 pass (34 x 17).
   EXPECT_EQ(rows(34, 1)->graph.work, 34.0 + 34.0 * 17);

@@ -131,10 +131,22 @@ TEST(Rules, LeafLimit) {
     profile.leaf_limit = 1; // lengths up to 16 stay leaves
     EXPECT_EQ(rule_radices(16, profile), (std::vector<std::size_t>{16}));
   }
+  // X8's verdict: 32 on NEON in double (C = 1), 16 everywhere else.
+  using fftn::detail::target;
+  for (const target t : {target::scalar, target::x86_v2, target::avx, target::avx2, target::avx512,
+                         target::neon, target::neon_fcma}) {
+    for (const std::size_t lanes : {1U, 2U, 4U, 8U}) {
+      const bool neon_double = (t == target::neon || t == target::neon_fcma) && lanes == 1;
+      const auto p = fftn::detail::profile_of(t, lanes);
+      EXPECT_EQ(p.leaf_limit, neon_double ? 32U : 16U);
+      EXPECT_EQ(rule_radices(32, p).size() == 1, neon_double);
+      EXPECT_GT(rule_radices(64, p).size(), 1U);
+    }
+  }
 }
 
-// Every target has a profile: the lanes it is given, the C = 2 table up to two lanes and the
-// C = 4 table from four.
+// Every target has a profile: the lanes it is given; NEON's own tables at its C (1 and 2),
+// otherwise AVX2's C = 2 table up to two lanes and its C = 4 table from four.
 TEST(Rules, ProfilesOfEveryTarget) {
   using fftn::detail::target;
   for (const target t : {target::scalar, target::x86_v2, target::avx, target::avx2, target::avx512,
@@ -143,7 +155,13 @@ TEST(Rules, ProfilesOfEveryTarget) {
       const auto p = fftn::detail::profile_of(t, lanes);
       EXPECT_EQ(p.lanes, lanes);
       ASSERT_NE(p.costs, nullptr);
-      EXPECT_EQ(p.costs, fftn::detail::profile_of(target::avx2, lanes <= 2 ? 2 : 4).costs);
+      const bool neon_own = (t == target::neon || t == target::neon_fcma) && lanes <= 2;
+      if (neon_own) {
+        EXPECT_NE(p.costs, fftn::detail::profile_of(target::avx2, 2).costs);
+        EXPECT_EQ(p.costs, fftn::detail::profile_of(target::neon_fcma, lanes).costs);
+      } else {
+        EXPECT_EQ(p.costs, fftn::detail::profile_of(target::avx2, lanes <= 2 ? 2 : 4).costs);
+      }
     }
   }
   EXPECT_NE(fftn::detail::profile_of(target::avx2, 2).costs,
@@ -213,7 +231,7 @@ TEST(Rules, MeasuredExamples) {
   EXPECT_EQ(r(42, f64), (v{2, 3, 7}));
   EXPECT_EQ(r(490, f64), (v{2, 7, 5, 7}));
   EXPECT_EQ(r(700, f32), (v{4, 7, 5, 5}));
-  // Primes above the codelets go last, as generic passes.
+  // Primes above the codelets go last (the chain makes them a Bluestein stage).
   EXPECT_EQ(r(34, f64), (v{2, 17}));
 }
 
@@ -234,6 +252,19 @@ TEST(Rules, DescribeSaysWhenRadicesAreForced) {
   EXPECT_NE(with.find("radices 2 x 8 x 16\n"), std::string::npos) << with;
   EXPECT_EQ(without.find("build_settings"), std::string::npos) << without;
   EXPECT_NE(without.find("radices from planner v1\n"), std::string::npos) << without;
+}
+
+// describe() names a Bluestein stage, its convolution length M and M's radices, in the
+// axis line and in the stages (strategies/chain.hpp).
+TEST(Rules, DescribeNamesTheBluesteinStage) {
+  const auto shape = fftn::rows_c2c<double>(4 * 257, 1, fftn::direction::forward);
+  const auto core = make_plan_core(fftn::detail::view_of(shape), {}, build_settings{});
+  const std::string text = describe(*core);
+  EXPECT_NE(text.find("radices 4 x bluestein 257 (M "), std::string::npos) << text;
+  EXPECT_NE(text.find("bluestein in, chirp forward (Q 257, M "), std::string::npos) << text;
+  EXPECT_NE(text.find("bluestein convolution: "), std::string::npos) << text;
+  EXPECT_NE(text.find("bluestein out, chirp forward (Q 257, M "), std::string::npos) << text;
+  EXPECT_NE(text.find("copies 4"), std::string::npos) << text;
 }
 
 std::vector<std::byte> run(const fftn::detail::plan_core& core, std::vector<std::byte> input,
@@ -284,14 +315,28 @@ TEST(Chunks, DivisionDoesNotChangeBits) {
   check_chunking(fftn::planes_c2c<double>(36, 20, 2, fftn::direction::forward), 1440, 1440);
 }
 
-// Long rows are divided by default, so the phase 3 engine has chunks to share.
+// Long rows are divided by default, so the phase 3 engine has chunks to share: a chain's
+// stages into ranges of units, a grid's phases into blocks of columns (its stages run one
+// block each). Which strategy a long row gets depends on the machine's caches, so both are
+// forced here.
 TEST(Chunks, LongRowsHaveSeveralByDefault) {
+  fftn::detail::build_settings chain;
+  chain.strategy = fftn::detail::strategy_choice::chain;
   const auto core = make_plan_core(
-      fftn::detail::view_of(fftn::rows_c2c<double>(16384, 1, fftn::direction::forward)), {});
+      fftn::detail::view_of(fftn::rows_c2c<double>(16384, 1, fftn::direction::forward)), {}, chain);
   for (const auto& rec : core->prog.records) {
     if (const auto* st = std::get_if<fftn::detail::stage>(&rec); st != nullptr) {
       EXPECT_GT(st->chunks, 1U) << st->name;
     }
+  }
+  fftn::detail::build_settings grid;
+  grid.strategy = fftn::detail::strategy_choice::grid;
+  const auto g = make_plan_core(
+      fftn::detail::view_of(fftn::rows_c2c<double>(16384, 1, fftn::direction::forward)), {}, grid);
+  ASSERT_FALSE(g->graph.phases.empty());
+  for (const auto& ph : g->graph.phases) {
+    EXPECT_GT(ph.nest, 0U);
+    EXPECT_GT(ph.chunks, 1U);
   }
 }
 

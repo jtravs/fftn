@@ -13,11 +13,15 @@
 #include "threading/work_graph.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
 
 namespace fftn::inline v0::detail {
+
+// Which strategy builds a c2c row (DESIGN.md 8.5): the planner's choice, or one forced.
+enum class strategy_choice : std::uint8_t { rules, chain, grid };
 
 // Construction knobs for tests; plans built through the public API use the defaults. They
 // force the paths the rules would not take for the lengths at hand (AGENTS.md section 5).
@@ -28,11 +32,23 @@ struct build_settings {
   std::size_t chunk_points = 2048;
   // The radices, in pass order, of every complex line whose length they multiply to,
   // instead of the rules' choice (strategies/chain.hpp). Any radix above 16 goes through
-  // the generic pass.
+  // the generic pass, except trailing radices above the Bluestein threshold, which form
+  // one Bluestein stage.
   std::vector<std::size_t> radices;
   // The planner's leaf limit (planner/rules.hpp, target_profile::leaf_limit) instead of the
   // profile's; 0 keeps the profile's. Experiment X8 compares leaves with chains through it.
   std::size_t leaf_limit = 0;
+  // The strategy of a c2c plan of one axis (rows): the rules' choice (a grid beyond
+  // profile.grid_min_bytes), or the chain or the grid forced. A grid is built only where
+  // the row has a split (strategies/grid.hpp) and no edge factor; elsewhere, forced or not,
+  // the row is a chain, and describe() says which was built. Experiment X12 compares them.
+  strategy_choice strategy = strategy_choice::rules;
+  // The grid's factors in phase order (two or three, multiplying to the row's length),
+  // where they can be a grid; empty: the rules' (strategies/grid.hpp).
+  std::vector<std::size_t> grid_factors;
+  // The Bluestein threshold instead of the profile's when not 0 (strategies/chain.hpp):
+  // 16 sends every prime factor above 16 through Bluestein, SIZE_MAX none.
+  std::size_t bluestein_above = 0;
   // The factor edge operation (DESIGN.md 12.1), which the public API does not offer yet:
   // n complex values of the plan's precision multiplying the input (before the transform)
   // or the output (after it) of every row of a c2c plan of one axis. The arrays must
@@ -71,6 +87,7 @@ public:
   std::vector<std::vector<float>> tables_f32;
   std::vector<std::string> axis_notes; // one line per axis for describe()
   bool radices_forced = false;         // build_settings.radices was given (describe says so)
+  std::string strategy_note;           // describe()'s strategy line
 
   // Workspace: scratch lines a and b of scratch_line complex values each, then the block,
   // each starting on a 64-byte boundary of the aligned workspace; bytes includes the slack

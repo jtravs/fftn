@@ -21,6 +21,9 @@ LONG_TOP = 20  # above it, this many best by the cost estimate, plus v0's choice
 BATCHES = (1, 64)
 LONG_BATCH_POINTS = 1 << 22  # batch 64 only while n * 64 stays within this
 PRECISIONS = ("f64", "f32")
+# C, complex numbers per vector register, in the order of PRECISIONS, per ISA= target
+# (src/isa/: C<double> and C<float> of each vocabulary).
+LANES = {"scalar": (1, 1), "neon": (1, 2), "neon_fcma": (1, 2), "avx2": (2, 4), "avx512": (4, 8)}
 
 Sequence = tuple[int, ...]
 
@@ -89,38 +92,61 @@ def generic_ops(radix: int, twiddled: bool) -> int:
     return 2 * radix * radix + (radix - 1 if twiddled else 0)
 
 
-def cost(seq: Sequence, ops: dict[tuple[int, bool], int]) -> tuple[int, int]:
+def cost(
+    seq: Sequence, ops: dict[tuple[int, bool], int], lanes: int | None = None
+) -> tuple[int, int]:
     """The X2 cost estimate: (passes, vocabulary operations per transform). Every pass but
-    the last applies twiddles; a single radix is a leaf (plain codelet) or one generic pass."""
+    the last applies twiddles; a single radix is a leaf (plain codelet) or one generic pass.
+    With `lanes` (C), each codelet pass's butterflies are padded to whole units of C as the
+    planner counts them (DESIGN.md 11.2 rule 4): the first pass runs ceil(m / C) units, the
+    others m ceil(s / C)."""
     n = math.prod(seq)
     total = 0
+    s = 1
     for i, r in enumerate(seq):
         twiddled = i + 1 < len(seq)
         per = ops[(r, twiddled)] if (r, twiddled) in ops else generic_ops(r, twiddled)
-        total += (n // r) * per
+        butterflies = n // r
+        if lanes is not None and (r, twiddled) in ops and len(seq) > 1:
+            m = n // (r * s)
+            units = -(-m // lanes) if i == 0 else m * -(-s // lanes)
+            butterflies = units * lanes
+        total += butterflies * per
+        s *= r
     return (len(seq), total)
 
 
 def shortlist(
-    n: int, v0: Sequence | None, ops: dict[tuple[int, bool], int], top: int = LONG_TOP
+    n: int,
+    v0: Sequence | None,
+    ops: dict[tuple[int, bool], int],
+    top: int = LONG_TOP,
+    lanes: tuple[int, ...] = (),
 ) -> list[Sequence]:
     """The candidates above SMOOTH_LIMIT: the `top` best by the cost estimate, then v0's
-    choice if it is not among them (it may have more than MAX_PASSES passes)."""
-    ranked = sorted(sequences(n), key=lambda s: (cost(s, ops), s))
-    out = ranked[:top]
+    choice if it is not among them (it may have more than MAX_PASSES passes). With `lanes`
+    (C per precision of a forced target), the union of the `top` best padded to each C."""
+    seqs = sequences(n)
+    out: list[Sequence] = []
+    for c in lanes or (None,):
+        for s in sorted(seqs, key=lambda s: (cost(s, ops, c), s))[:top]:
+            if s not in out:
+                out.append(s)
     if v0 is not None and v0 not in out:
         out.append(v0)
     return out
 
 
-def candidates(n: int, v0: Sequence | None, ops: dict[tuple[int, bool], int]) -> list[Sequence]:
+def candidates(
+    n: int, v0: Sequence | None, ops: dict[tuple[int, bool], int], lanes: tuple[int, ...] = ()
+) -> list[Sequence]:
     """The protocol's candidates of length n, v0's choice included."""
     if n <= SMOOTH_LIMIT:
         out = sequences(n)
         if v0 is not None and v0 not in out:
             out.append(v0)
         return out
-    return shortlist(n, v0, ops)
+    return shortlist(n, v0, ops, lanes=lanes)
 
 
 def label(seq: Sequence) -> str:

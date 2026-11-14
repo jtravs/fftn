@@ -44,19 +44,27 @@ Open questions: see DESIGN.md section 18.2.
 
 Claims (2026-11-14): the lead session holds X2, T1, T5 and the baselines. Task 1.6's
 radix 32 and 64 codelets are generated and wired (every pass kind; the planner prices
-radices up to 16 only) with a planner leaf limit (default 16) for X8; they double the
-kernel code (B3 numbers in X8).
+radices up to 16 only); X8 set the leaf limit to 32 on NEON in double; the codelets double
+the kernel code (B3 numbers in X8) and stay, for the grid and X3.
 
 Baseline runs (fbench run IDs): EPYC 7763-class node (GCC 16): tracking
 20261113-230721-7c95 failed (PATIENT timeout), re-run without PATIENT; pocketfft re-run with
 `-march=native` after a first run built it without; PATIENT vs MEASURE on the quick tier done.
 Xeon Gold 6240 (GCC 14): tracking 20261114-004852-f498. Mac (NEON FFTW): client catalogue
-20261114-030832-198b.
+20261114-030832-198b; FFTL.jl (libfftl at 53171e8, apple-m1) tracking 20261114-095234-2dcf:
+1.11 against FFTW (FFTN 2.20 on the same run: ahead on smooth rows ≤ 4096, far behind on
+primes, long rows and real transforms, which phases 1.7 and 2 build).
 
 Handoff notes: remote gates go to DMOG first (`gate-dmog.sbatch`; LSan off there, ptrace is
 forbidden on its nodes); the Xeon is shared with heavy users outside Slurm, so time there
 with fbench's load-tolerant rounds (its A/A band shows the noise). Keep the Mac quiet
 while an fbench run that needs it is going.
+
+Task 1.7 (branch `task/1.7-grid`): the grid strategy (DESIGN.md 8.5 as built, X12) is the
+default for c2c rows beyond L1; X12's x86 runs (EPYC, Xeon) and the tuning of its profile
+fields there are open, as are fusing the gathers and scatters into the phases' first and
+last passes, and 2^14, 2^20 and 2^22 points on the Mac (1.37–1.43 times FFTW in run
+20261114-110844-8b03; 2^16 and 2^18 within 1.25).
 
 ## How this plan works
 
@@ -137,9 +145,10 @@ against FFTW and FFTL.jl on M-series, Zen 3 and Xeon; within 1.10 of MKL on the 
 the `x86_v2`, `avx` and plain `neon` targets, forced on the same machines, at or below
 FFTW restricted to the same instruction sets. The MKL figure is interim; the end target
 is 1.00. Per-length choices at this stage come from the offline searches of X2 encoded as
-rules; the cost model arrives in phase 2. One cloud check on a Zen 4 or 5 and one on an
-AArch64 Linux machine (Neoverse) confirm that nothing is badly off there; tuning them is
-phase 2 and 6 work.
+rules; the cost model arrives in phase 2. Cloud checks (Google Cloud or AWS) on a Zen 4 or
+5, on a recent Intel Xeon (Sapphire Rapids or newer, with MKL as a competitor: its AVX-512
+behaves differently from the Cascade Lake Xeon's) and on an AArch64 Linux machine
+(Neoverse) confirm that nothing is badly off there; tuning them is phase 2 and 6 work.
 
 ---
 
@@ -235,21 +244,22 @@ running, done (with verdict).
 | [B2](experiments/B2-isa-regions-windows-clang.md) | The same on Windows with clang on the MSVC ABI (x64 and Arm64); how to detect FCMA and pointer authentication on Windows on Arm | 0 | done: regions hold; FCMA and PAuth read from the registry (task 0.8) |
 | B3 | Library build time and size as codelets and targets grow; which codelets are worth instantiating per target? | 1 | planned |
 | X1 | Complex-register against split arithmetic, per target (FCMA included) and pass position (first, middle, last; short and long rows) | 1 | planned |
-| [X2](experiments/X2-radix-sets.md) | Best radix sets and orders per target by exhaustive search over the standard lengths; how far are simple rules from the optimum? | 1 | running: EPYC done (v0 1.25× slower than best in double, 1.44× in single; planner v1 adopted); Mac, long lengths pending |
+| [X2](experiments/X2-radix-sets.md) | Best radix sets and orders per target by exhaustive search over the standard lengths; how far are simple rules from the optimum? | 1 | running: EPYC done (planner v1 adopted); Mac done (own NEON tables, 3.6 % faster); lengths above 1024 and the Xeon pending |
 | X3 | Few big passes (radix 16–64, in the output buffer) against chains for rows of 8–64 thousand points; spill counts per codelet and target. The prototype's radix 20–32 attempts lost everywhere: find out whether generated, ordered codelets change that | 1 | planned |
 | X4 | Padding: incremental addressing cost; pad always, never, or only where the stream rule binds. Also: do edge passes gain from a variant chosen by the caller's base address (cache-line splits on wide registers)? | 1 | planned |
 | X5 | Twiddle modes (full, shared, derived) by length and target | 1 | planned |
 | X6 | Real-input codelets against half-length complex with fused post/pre, even and odd n | 2 | planned |
 | X7 | Lanes against in-row kernels for batches of short rows, by length, target and row count | 2 | planned |
-| [X8](experiments/X8-leaves.md) | Whole-transform leaves for n ≤ 64–256 against two- and three-stage chains | 1 | running: codelets 32 and 64 and the leaf limit built; plumbing checked on the Mac; campaign pending |
+| [X8](experiments/X8-leaves.md) | Whole-transform leaves for n ≤ 64–256 against two- and three-stage chains | 1 | done: leaf limit 32 on NEON in double (16–22 % faster), 16 elsewhere; no leaf of 64 |
 | X9 | Scrambled intermediate order for transform pairs | 5 | planned |
 | X10 | Generated whole passes against templated pass loops | 1 | planned |
 | X11 | SVE at 128 and 256 bits on Graviton 3/4 against NEON | 7 | planned |
-| X12 | Beyond-L2 forms: DIF grid, DIT grid, in-place sandwich; block sizes by cache level; the in-place route (scratch of N, permutation pass, or palindromic swap) | 1 | planned |
+| [X12](experiments/X12-beyond-l2.md) | Beyond-L2 forms: DIF grid, DIT grid, in-place sandwich; block sizes by cache level; the in-place route (scratch of N, permutation pass, or palindromic swap) | 1 | running: DIF grid in two or three phases adopted for rows beyond L1 on the Mac (0.47–0.71 of the chain's time, run 20261114-110844-8b03); x86 runs pending |
 | X14 | Is a separate `avx` target (256 bit, no FMA, no AVX2) worth keeping over `x86_v2` on Sandy Bridge-class machines? | 1 | planned |
 | X13 | Next-row prefetch and non-temporal stores per machine for out-of-cache batches | 2 | planned |
 | [X15](experiments/X15-compiler-vectorised-scalar.md) | What does a current compiler get from the scalar pass loops (`omp simd`, the scalar text in the `avx2` region, `-march=native` as a ceiling), against a hand vocabulary? | 0 | done: omp simd rejected (compiler-dependent); old targets need hand vocabularies |
-| X16 | `avx512` against `avx2` on AVX-512 machines: does `avx512` need its own cost table, or an R × C transpose for leading radices below C? | 1 | planned |
+| [X16](experiments/X16-avx512-table.md) | `avx512` against `avx2` on AVX-512 machines: does `avx512` need its own cost table, or an R × C transpose for leading radices below C? | 1 | running (Xeon campaign) |
+| [X17](experiments/X17-bluestein-threshold.md) | Above which prime does Bluestein beat the generic prime pass, per target? | 2 | done on the Mac: Bluestein from 17 up (threshold 16); x86 to confirm |
 | P1 | Cost-model accuracy: rank agreement with measurement across the catalogue per machine | 2 | planned |
 | P2 | Measurement budget: how many candidates and how long before the choice stops improving | 2 | planned |
 | [T1](experiments/T1-dispatch-wait-costs.md) | Dispatch, wake and wait costs per machine and runtime (libgomp, libomp, Kokkos, pool) | 3 | running (scheduler fixes merged) |

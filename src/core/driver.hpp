@@ -19,6 +19,7 @@ struct slot_addresses {
   std::byte* block = nullptr;
   std::byte* a = nullptr;
   std::byte* b = nullptr;
+  std::ptrdiff_t tw = 0; // the twiddle cursor (program.hpp), in bytes
 };
 
 // Runs transforms [first, first + count) of p's batch, every chunk of every stage in order.

@@ -19,4 +19,7 @@ namespace fftn::inline v0::detail {
 // the exact conjugate of the -1 table. T is double or float. Precondition: n >= 1.
 template <class T> [[nodiscard]] std::vector<std::complex<T>> unit_roots(int sign, std::size_t n);
 
+// Entry m of that table, computed alone (m < n).
+template <class T> [[nodiscard]] std::complex<T> unit_root(int sign, std::size_t m, std::size_t n);
+
 } // namespace fftn::inline v0::detail

@@ -21,6 +21,7 @@
 #include "planner/rules.hpp"
 #include "platform/cpu_features.hpp"
 #include "strategies/chain.hpp"
+#include "strategies/grid.hpp"
 #include "threading/schedule.hpp"
 #include "threading/team_state.hpp"
 #include "threading/work_graph.hpp"
@@ -288,26 +289,15 @@ void add_phase(program& p, std::size_t axis, const std::vector<std::size_t>& ext
   }
 }
 
-std::string radix_list(const std::vector<std::size_t>& radices) {
-  if (radices.empty()) {
-    return "none (a copy)";
-  }
-  std::string text;
-  for (const std::size_t r : radices) {
-    text += (text.empty() ? "" : " x ") + std::to_string(r);
-  }
-  return text;
-}
-
 template <class T>
 std::string real_note(const chain_builder<T>& chain, std::size_t n, const char* kind) {
   if (n % 2 == 0) {
     return std::string(kind) + " through a half-length complex chain of " + std::to_string(n / 2) +
-           ", radices " + radix_list(chain.radices(n / 2)) +
+           ", radices " + chain.radix_text(n / 2) +
            (kind[0] == 'r' ? ", then a post-pass" : ", after a pre-pass");
   }
   return std::string(kind) + " through a full-length complex chain (n odd), radices " +
-         radix_list(chain.radices(n));
+         chain.radix_text(n);
 }
 
 // The edge operations of the c2c phases: the input edge belongs to the first phase, the
@@ -336,6 +326,44 @@ line_edges c2c_edges(const options& opts, const build_settings& settings, bool f
   return e;
 }
 
+// Whether a c2c row of one axis is a grid (DESIGN.md 8.5, experiment X12), and its split:
+// beyond the profile's grid_min_bytes or when forced, if the row is contiguous on both
+// sides, carries no edge factor (the grid applies only the scale, on its output or, with
+// build_settings::scale_on_input, its input), has no
+// forced radices for its whole length and has a split whose phases are codelet chains.
+template <class T>
+grid_split plan_grid(const plan_core& c, const side& in, const side& out,
+                     const build_settings& settings, const chain_builder<T>& chain,
+                     std::size_t lanes) {
+  const std::size_t n = c.lengths[0];
+  if (settings.strategy == strategy_choice::chain || settings.in_factor != nullptr ||
+      settings.out_factor != nullptr || in.stride[0] != 1 || out.stride[0] != 1) {
+    return {};
+  }
+  if (settings.strategy == strategy_choice::rules &&
+      n * 2 * sizeof(T) <= settings.profile.grid_min_bytes) {
+    return {};
+  }
+  std::size_t forced = 1;
+  for (const std::size_t f : settings.radices) {
+    forced *= f;
+  }
+  if (!settings.radices.empty() && forced == n) {
+    return {};
+  }
+  const grid_split g = choose_grid(n, lanes, settings.profile.grid_block_bytes / (4 * sizeof(T)),
+                                   n * 2 * sizeof(T) > settings.profile.grid_three_bytes,
+                                   settings.profile.grid_block, settings.grid_factors);
+  for (std::size_t i = 0; i < g.phases; ++i) {
+    for (const std::size_t radix : chain.radices(g.factors.at(i))) {
+      if (!has_codelet(radix)) {
+        return {}; // forced radices for a phase's length that need the generic pass
+      }
+    }
+  }
+  return g;
+}
+
 template <class T>
 void build(plan_core& c, const shape_view& s, const side& in, const side& out, const options& opts,
            const build_settings& settings) {
@@ -346,7 +374,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     profile.leaf_limit = settings.leaf_limit;
   }
   chain_builder<T> chain(kernels, profile, tables_of<T>(c), settings.chunk_points,
-                         settings.radices);
+                         settings.radices, settings.bluestein_above);
   program& p = c.prog;
   const std::size_t r = s.axes.size();
   const auto complex_bytes = static_cast<std::ptrdiff_t>(2 * sizeof(T));
@@ -375,7 +403,24 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   };
   const int sign = static_cast<int>(s.dir);
 
-  if (s.kind == transform_kind::c2c) {
+  const grid_split grid_plan =
+      s.kind == transform_kind::c2c && r == 1
+          ? plan_grid<T>(c, in, out, settings, chain, kernels.complex_lanes)
+          : grid_split{};
+  if (grid_plan.phases != 0) {
+    grid_builder<T> grid(kernels, chain, tables_of<T>(c));
+    if (grid_builder<T>::uses_block(grid_plan, c.in_place)) {
+      c.block_elements = c.lengths[0];
+    }
+    scratch = grid.c2c_row(grid_plan, sign, c.in_place, opts.scale, settings.scale_on_input, p);
+    c.axis_notes.push_back("axis 0 (n = " + std::to_string(c.lengths[0]) +
+                           "): " + grid.note(grid_plan));
+    c.strategy_note =
+        "grid (Cooley-Tukey in " + std::to_string(grid_plan.phases) +
+        " phases, each depth-first over blocks of columns" +
+        (c.block_elements != 0 ? "; an intermediate array in the workspace block" : "") +
+        "), each transform finished before the next";
+  } else if (s.kind == transform_kind::c2c) {
     for (std::size_t i = r; i > 0; --i) {
       const std::size_t d = i - 1;
       const view& src = d + 1 == r ? in_view : out_view;
@@ -386,7 +431,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
                          c2c_edges(opts, settings, d + 1 == r, d == 0), st);
       lines(d, in.extent, src, out_view, need, std::move(st));
       c.axis_notes.push_back("axis " + std::to_string(d) + " (n = " + std::to_string(c.lengths[d]) +
-                             "): radices " + radix_list(chain.radices(c.lengths[d])));
+                             "): radices " + chain.radix_text(c.lengths[d]));
     }
   } else if (s.kind == transform_kind::r2c) {
     std::vector<stage> st;
@@ -404,7 +449,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
                                                c2c_edges(opts, settings, false, d == 0), cs);
       lines(d, out.extent, out_view, out_view, cneed, std::move(cs));
       c.axis_notes.push_back("axis " + std::to_string(d) + " (n = " + std::to_string(n) +
-                             "): c2c forward, radices " + radix_list(chain.radices(n)));
+                             "): c2c forward, radices " + chain.radix_text(n));
     }
   } else {
     // c2r: the complex axes first, then the real one, which must come last because the
@@ -441,7 +486,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
           chain.c2c_line(n, +1, at(src, d), at(work, d), src.where == work.where, line_edges(), cs);
       lines(d, in.extent, src, work, cneed, std::move(cs));
       c.axis_notes.push_back("axis " + std::to_string(d) + " (n = " + std::to_string(n) +
-                             "): c2c backward, radices " + radix_list(chain.radices(n)));
+                             "): c2c backward, radices " + chain.radix_text(n));
     }
     const view& src = r > 1 && !c.in_place ? block_view : in_view;
     std::vector<stage> st;
@@ -666,11 +711,20 @@ std::string describe(const plan_core& core) {
   o << ", " << core.prog.transforms << (core.prog.transforms == 1 ? " transform" : " transforms")
     << (core.in_place ? ", in place" : ", out of place") << "\n";
   o << "instruction set: " << isa_name(instruction_set(core)) << "\n";
-  o << "strategy: chain (Stockham autosort, breadth-first), one line at a time; each "
-       "transform finished before the next; radices from "
-    << (core.radices_forced ? "build_settings.radices (a test knob) where they multiply to a "
-                              "line's length, otherwise from planner v1\n"
-                            : "planner v1\n");
+  const char* rule = core.strategy_note.empty() ? "planner v1" : "the grid's phase rule";
+  if (!core.strategy_note.empty()) {
+    o << "strategy: " << core.strategy_note << "; radices from ";
+  } else {
+    o << "strategy: chain (Stockham autosort, breadth-first), one line at a time; each "
+         "transform finished before the next; radices from ";
+  }
+  if (core.radices_forced) {
+    o << "build_settings.radices (a test knob) where they multiply to a line's length, "
+         "otherwise from "
+      << rule << "\n";
+  } else {
+    o << rule << "\n";
+  }
   for (const std::string& note : core.axis_notes) {
     o << note << "\n";
   }
@@ -687,7 +741,8 @@ std::string describe(const plan_core& core) {
     if (const loop* l = std::get_if<loop>(&rec)) {
       o << indent << "loop " << (l->kind == loop_kind::batch ? "batch" : "lines") << " x"
         << l->count << " (steps in bytes: in " << l->step[0] << ", out " << l->step[1] << ", block "
-        << l->step[2] << ")\n";
+        << l->step[2] << (l->step[3] != 0 ? ", twiddles " + std::to_string(l->step[3]) : "")
+        << ")\n";
       ends.push_back(l->body_end);
       continue;
     }

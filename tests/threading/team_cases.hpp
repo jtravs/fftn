@@ -179,6 +179,15 @@ void add_cases(std::vector<team_case>& out, const fftn::detail::build_settings& 
                           600, false, settings, target));
   out.push_back(make_case("c2c_planes_150x1x2" + suffix, fftn::planes_c2c<T>(150, 1, 2, fwd), 300,
                           300, false, settings, target));
+  // Grids (strategies/grid.hpp): the blocks of each phase are the lines a team shares.
+  fftn::detail::build_settings grid = settings;
+  grid.strategy = fftn::detail::strategy_choice::grid;
+  grid.grid_factors = {16, 64};
+  out.push_back(make_case("c2c_grid_1024x3" + suffix, fftn::rows_c2c<T>(1024, 3, fwd), 3072, 3072,
+                          false, grid, target));
+  grid.grid_factors = {8, 16, 16};
+  out.push_back(make_case("c2c_grid3_inplace_2048x2" + suffix, fftn::rows_c2c<T>(2048, 2, bwd),
+                          4096, 4096, true, grid, target));
 }
 
 inline std::vector<team_case> standard_cases(const fftn::detail::build_settings& settings) {

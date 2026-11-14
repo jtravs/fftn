@@ -72,6 +72,9 @@ inline constexpr std::size_t edge_op_count = 3;
 [[nodiscard]] constexpr bool has_codelet(std::size_t r) noexcept {
   return codelet_slot(r) < gen::radix_count;
 }
+// Every radix from 2 to this one has a codelet; the planner and the grid choose pass radices
+// up to it, and prime factors above it are the generic pass's or Bluestein's.
+inline constexpr std::size_t dense_codelet_radix = 16;
 
 // The passes of precision T as a target exports them (src/passes/entries.inl). The
 // direction index is 0 forward (exponent -i), 1 backward (+i); edge indices are edge_op
@@ -98,6 +101,10 @@ template <class T> struct pass_kernels {
   pass_fn generic[2][edge_op_count][edge_op_count];
   // y[i] = x[i] with the edges' operations; input edge, output edge.
   pass_fn copy[edge_op_count][edge_op_count];
+  // The chirp multiplications around a Bluestein stage's convolution (passes/bluestein.inl):
+  // into the zero-padded buffer, with the input edge; out of it, with the output edge.
+  pass_fn bluestein_in[edge_op_count];
+  pass_fn bluestein_out[edge_op_count];
   // Real-to-complex edges (DESIGN.md 9.1): even n = 2h through a complex transform of h,
   // odd n through n. The output edges take [scaled].
   pass_fn r2c_pack_pairs;
@@ -109,6 +116,12 @@ template <class T> struct pass_kernels {
   pass_fn c2r_unpack_pairs[2];
   pass_fn c2r_expand;
   pass_fn c2r_store[2];
+  // The grid's passes (src/passes/grid.inl): a block of columns copied row by row,
+  // [scaled]; by direction, the twiddled transpose of the first phase and the twiddled
+  // row copy of the later ones.
+  pass_fn block_copy[2];
+  pass_fn twiddle_transpose[2];
+  pass_fn twiddle_scatter[2];
 };
 // NOLINTEND(modernize-avoid-c-arrays)
 

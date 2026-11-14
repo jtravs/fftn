@@ -924,12 +924,15 @@ parameter, everything else accessors; gen/README.md has the codelet calling conv
   every lane (`bcast_tw`), the DIF codelet in the middle and the plain codelet in the last
   pass (m = 1).
 - The **leaf** is one codelet call on one line, for n ≤ 16 and for a codelet radix up to
-  the profile's leaf limit (16 by default; 32 and 64 have codelets; experiment X8 sets the
-  limit): values are broadcast on loading and lane 0 is stored, so it takes any stride and
-  runs in place, at the cost of C − 1 idle lanes; leaves vectorised across rows are the
-  lanes strategy's (phase 4).
-- The **generic** pass (any radix, the primes above 16) and the copy are lane-form passes
-  on every target; the real-transform edges run one element at a time on every target.
+  the profile's leaf limit (32 on NEON in double, 16 elsewhere; experiment X8): values are
+  broadcast on loading and lane 0 is stored, so it takes any stride and runs in place, at
+  the cost of C − 1 idle lanes; leaves vectorised across rows are the lanes strategy's
+  (phase 4).
+- The **generic** pass (any radix by direct evaluation) and the copy are lane-form passes
+  on every target (the generic pass's lanes run over copies, so a single prime row has one
+  valid lane; with the Bluestein threshold at 16 the rules no longer choose it, X17);
+  the two chirp passes of a Bluestein stage (section 8.5) are elementwise, in blocks of C
+  consecutive elements; the real-transform edges run one element at a time on every target.
 - **Edge variants**: scale and a per-element complex factor, on loading (first passes,
   leaves, generic passes, copies) and on storing (last passes, the same three), as the
   first two edge operations of section 12.1; real edges take the scale on storing. Each
@@ -1017,7 +1020,9 @@ resolves per target.
 
 As built (task 1.2, `src/strategies/chain.cpp`): radices from planner v1 (section 11.2);
 the first pass grouped, then lane passes, a radix above 16 a generic pass in any
-position, a single codelet radix (n ≤ 16, or up to the leaf limit) a leaf, n = 1 a copy. The input edge's operation is applied by the first
+position except the trailing ones above the profile's Bluestein threshold, which form one
+Bluestein stage at the end (below), a single codelet radix (n ≤ 16, or up to the leaf limit)
+a leaf, n = 1 a copy. The input edge's operation is applied by the first
 pass that is not a copy and the output edge's by the last, so neither costs a pass. On
 C > 1 a line whose stride is not 1 (a strided axis, a strided row) is copied into scratch
 before the chain or out of it after: an extra pass that the lanes strategy for strided
@@ -1050,6 +1055,46 @@ Two regimes:
   L1-sized chains. This is also the form that splits across threads: column blocks and
   rows are the independent chunks.
 
+As built (task 1.7, `src/strategies/grid.cpp`, experiment X12): the decimation-in-frequency
+form, generalised to two or three phases (n = N1 N2 or N1 N2 N3), every phase blocked; the
+"few big passes" regime is not built separately. Phase i transforms down adjacent columns
+of what phase i − 1 wrote: with L the product of the factors before it and M of those
+after, element (l, c, r) at l + L (c + M r) becomes (l, k, c) at l + L (k + Ni c), times
+w_(Ni M)^(c k); after the last phase the output is in natural order. Each phase loops over
+blocks of `block` adjacent columns (program loops, one independent iteration per block): a
+block is gathered row by row into tight scratch a, transformed there by a chain of lane
+passes (s ≥ block ≥ C, so none is grouped and none has tails; the radices are the fewest
+passes, most even, not planner v1's, whose tables price a grouped first pass), and written
+back row by row. Phase 1's columns become rows, so it writes through a twiddled transpose
+(C × C tiles transposed in registers) with each element's twiddle w_n^(c k) formed as
+w_n^(q k) w_n^(c0 k) from two small tables (one rounding more than a stored twiddle; a
+table of n values cost memory traffic and plan memory for no measured gain); later phases'
+blocks lie within one column c, so their twiddle is one value per row, applied by the
+scatter, and the last phase's scatter applies the scale. Gathers and scatters, not passes
+reading the block in place, because a block's rows usually lie a power of two apart and
+share cache sets; they prefetch eight rows ahead, since rows a page apart defeat the
+hardware prefetchers. Placement: the last phase writes the positions it read (in place in
+the output); phase 1 writes the output out of place with two phases, otherwise the
+workspace block (n complex values), which is also the in-place route (the scratch of N of
+the list above). The loops step a twiddle cursor (program.hpp) so a block's stage reads its
+own table. Planner: a c2c row of one axis, contiguous on both sides, without edge factors,
+is a grid when its bytes exceed `grid_min_bytes` (default the L1 data cache), in three
+phases beyond `grid_three_bytes` (default an eighth of L2), if it has a split whose factors
+have no prime above 13 and whose first factor and n / N1 are multiples of the block (at
+least max(2, C)). A long row with a prime factor above 13 therefore stays a chain, with
+its Bluestein or generic last pass (9.2): the grid takes only lengths whose every factor a
+codelet chain covers, all below the Bluestein threshold. With `scale_on_input` (a test
+knob) the scale moves to phase 1's gather. The split: the widest block, then the shortest longest factor, then the
+most even, then the shorter first factor; the block is the widest power of two up to 32
+with block × max Ni within `grid_block_bytes` (the L1; twice that with three phases, where
+X12 found wide rows worth more than a chain inside L1). These are machine-profile fields
+(`src/threading/schedule.hpp`) so X12 can tune them per machine; `build_settings` forces
+the strategy, the factors and the block. Not built: a fourth phase (a phase's chain leaves
+L1 for rows beyond about 2^24 points on a 128 KiB L1), DIT order, fusing the gather and
+scatter into the first and last passes where a phase's rows do not share sets, and
+splitting one row's blocks across threads beyond what the work graph already shares (task
+3.6).
+
 **Lanes** (vectorise across rows). C rows, or C neighbouring lines of a strided axis,
 become the lanes of every pass; the whole transform is lane passes. For row-major batches
 the first pass gathers a tile of rows into lanes and the last scatters it; for a strided
@@ -1059,6 +1104,42 @@ vectorise badly (awkward lengths on wide registers) and for every strided axis.
 
 **Bluestein** and the **generic prime pass** cover lengths with large prime factors
 (section 9.2).
+
+As built (task 2.3, `src/strategies/chain.cpp`, `strategies/bluestein.hpp`,
+`passes/bluestein.inl`): a **Bluestein stage** is the last pass of a chain, not a separate
+strategy. The rules give n = n_s · q₁ · q₂ · … with the large primes last (section 11.2);
+the product Q of those above the threshold is one stage with s = n/Q copies and m = 1. Its
+Stockham input x[q + s j] and output y[q + s k] are then s interleaved sequences of length Q,
+copy innermost, in the same positions, which is exactly the layout of s copies of a chain
+of length M: a chain of M whose every pass has its copy count multiplied by s computes s
+interleaved transforms (the passes treat copies as independent and share their twiddles).
+So the stage is a program fragment built from the chain's own passes, nothing recursive:
+
+1. *bluestein in*: z[i] = x[i] · w[i] for i < sQ, zero up to sM (w the chirp
+   exp(±iπ j²/Q), each entry correctly rounded from the root table of 2Q, repeated over the
+   s copies), with the line's input edge when the stage is the first pass;
+2. the chain of M forward over the s copies (its first pass grouped when s = 1, a lane pass
+   otherwise), its last pass multiplying by the kernel spectrum dft(b)/M as an output factor
+   (section 12.1), b = conj(w) on both sides of zero;
+3. the chain of M backward;
+4. *bluestein out*: y[i] = z[i] · w[i] for i < sQ, with the line's output edge.
+
+Both chirp passes are elementwise over i because m = 1, so they vectorise in blocks of C
+whatever s is, and the out pass may write in place, which makes the stage run in place
+(no copy back, unlike a single generic pass). The convolution ping-pongs between the
+scratch lines a and b, an even number of passes, so it ends where it began; the scratch
+lines grow to sM (at most 4n). The plan holds the chirp (sQ entries) and the kernel
+spectrum (sM entries, computed at construction in double by a small mixed-radix transform
+over the root table of M); no allocation at execution, every chunk of every stage a fixed
+range as for any pass. M is the 7-smooth length in [2Q − 1, next power of two] whose chain
+plus chirp passes cost least under the profile (`bluestein_length`, section 11.2).
+Why a pass and not a strategy that wraps the chain: the program and stage design already
+expresses it, the passes before it (codelet and generic) keep their positions and edges,
+r2c and c2r get it through their inner complex chain unchanged, and the threading work
+graph sees ordinary stages. Restricting the stage to m = 1 is what makes its edges
+elementwise; several large primes are therefore one stage of their product rather than
+one per prime (one convolution of about 2Q points instead of passes of about 2qᵢ · Q/qᵢ
+each, which is about the same work). Rader's algorithm is not built (section 9.2).
 
 Strategies compose: a grid's row phase is a chain or a leaf; a plane transform is a lanes
 program for the strided axis around a chain for the contiguous one.
@@ -1094,8 +1175,8 @@ being padding on the real side.
 | Factor | Route |
 |---|---|
 | 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 16, (20, 25, 32, 64) | generated codelets |
-| other primes up to about 100 | one generic looped pass in symmetric form, O(p²) per butterfly, vectorised across lanes (for now every prime above 16, in direct form with pairwise sums) |
-| larger primes | Bluestein: the smooth part of N is split off first; each large prime factor becomes one pass that performs a chirp-z transform through a smooth-length convolution with a precomputed kernel spectrum |
+| primes above 16 up to the profile's threshold | one generic looped pass, O(p²) per butterfly, vectorised across copies, in direct form with pairwise sums; the threshold is 16 on every profile (X17: Bluestein was faster at every prime from 17 up on the Mac), so the rules do not choose it now |
+| larger primes | Bluestein: the smooth part of N is split off first; the product of the large prime factors becomes one stage at the end of the chain that performs a chirp-z transform through a smooth-length convolution with a precomputed kernel spectrum (section 8.5) |
 
 Rader's algorithm is not planned; it shares a convolution object with Bluestein and can be
 added if measurements on prime sizes justify it. The cost model prices these routes.
@@ -1206,12 +1287,18 @@ cost table: for each pass kind and codelet radix R (2 to 16) a cost per unit and
 tail, and a cost per pass. For a line of n points:
 
 1. n = 1: no pass. n ≤ 16, or n a codelet radix (32, 64) no larger than the profile's
-   leaf limit (16 by default until experiment X8 decides): one leaf of radix n.
+   leaf limit (experiment X8: 32 on NEON in double, 16 elsewhere): one leaf of radix n.
 2. A length the table overrides takes the table's radices (the lengths where rule 4 was
    measured more than 2 % slower than planner v0; six on AVX2).
 3. Otherwise write n = n_s q₁ q₂ … with n_s free of primes above 16 and q₁ ≤ q₂ ≤ … the
    prime factors above 16. Each qᵢ is one generic pass, in ascending order, after the
-   codelet passes; if n_s = 1 they are the whole chain.
+   codelet passes; if n_s = 1 they are the whole chain. (`rule_radices` returns this
+   sequence.) Then the trailing qᵢ above the profile's Bluestein threshold (16 on every
+   profile, experiment X17, so all of them) are merged into one Bluestein stage of their
+   product Q at the end of the chain (section 8.5), whose convolution length M is the
+   7-smooth length from 2Q − 1 to the next power of two that minimises twice the cost of
+   rule 4's sequence for M plus two elementwise passes of M points (priced as a last
+   radix-2 pass per point), the smallest on a tie (`bluestein_length`).
 4. The codelet passes are the sequence of radices from 2 to 16 multiplying to n_s with the
    lowest cost, the sum of its passes' costs. The pass of radix R after passes whose
    radices multiply to s has m = n/(R s) and:
@@ -1235,11 +1322,15 @@ and 12's scaled by the codelets' operation counts. What the tables learnt is in 
 shape: tails cost several units, so the first radix wants to be a multiple of C and so
 does every prefix product; and on 16 registers the radices 10 to 16 are cheap enough per
 point that the best sequences have one pass fewer than v0's (2.7 against 3.6 on average up
-to 1024). Every other target takes the table of the nearest C (the C = 2 table for C = 1,
-the C = 4 table for C = 8) with its own C in rule 4, so the structure carries over but the
-costs are unmeasured there: NEON, AVX-512, x86-64-v2, AVX and scalar until X2 runs on them
-(task 1.3 decides AVX-512's table and FFTL's radix-16 gate for it). Lengths above 1024 are
-unmeasured too.
+to 1024). Tables are keyed by target and C (`measured_tables` in `rules.cpp`;
+`bench/x2/fit.py` writes a target's rows from its X2 campaign), so a measured target is
+added without touching the search. A target and C without a table of their own take
+AVX2's table of the nearest C (the C = 2 table for C = 1, the C = 4 table for C = 8) with
+their own C in rule 4, so the structure carries over but the costs are unmeasured there:
+AVX-512, x86-64-v2, AVX and scalar until X2 runs on them (X16 decides AVX-512's table and
+FFTL's radix-16 gate for it). NEON has its own tables (C = 1 and 2), fitted to X2's
+campaign on an Apple M5 Max with `neon_fcma`; plain `neon` takes them too, unmeasured on a
+core without FCMA. Lengths above 1024 are unmeasured.
 
 The search is a shortest path over the divisors of n_s, from 1 to n_s, each step a radix:
 at most a few thousand operations for lengths up to 2²⁴, so plans stay cheap and
@@ -1760,8 +1851,13 @@ second). These catch errors of order one and twiddle errors that grow with the i
 base twiddle one ulp off, propagated by powers, from about 64 points on). A single table
 entry one ulp off is below the rounding of every correct implementation and no output
 tolerance sees it, so twiddle tables are checked against the reference entry by entry.
-Bluestein paths have their own, looser, derived bound. Accuracy is also reported by
-fbench next to speed for every library.
+Bluestein paths have their own, looser, derived bound: three transforms of s M points in
+sequence (forward and inverse at execution, the kernel spectrum at construction, in
+double), adding in quadrature, so 3ε√(3L′) and 3√3·εL′ with L′ = log₂(sM) ≤ log₂ n + 2
+(`bluestein_bound` in `tests/support/tolerance.hpp`, applied to every length with a prime
+factor above 16). Measured on the Mac (task 2.3, primes and products up to 10403, double
+and float): 0.42–0.83 ε√L RMS and 0.13–0.37 εL largest, inside even the stable bound.
+Accuracy is also reported by fbench next to speed for every library.
 
 ### 15.3 What is tested
 
@@ -1823,7 +1919,7 @@ choose, and every pinned version.
   place); plans chosen by measurement on different runs, unless pinned by wisdom; library
   versions.
 - Error grows as O(ε·√log n) RMS for all lengths with codelet factors; Bluestein lengths
-  are documented separately.
+  have the bound of section 15.2 (the same growth in log₂ of the convolution's length).
 
 ---
 
@@ -2255,7 +2351,12 @@ to change before a release.
 | 2026-11-14 | The OpenMP tests are built wherever the compiler has OpenMP, except under ThreadSanitizer; the thread pool and custom executors carry the executor path's TSan coverage | The OpenMP runtimes at hand are not instrumented, and TSan reports the join of every region as a race (shown with Homebrew LLVM 23's libomp) |
 | 2026-11-14 | fbench measures on loaded machines: load is recorded per round, not a reason to invalidate it; a round waits at most 60 s, and only while other processes use more than half the CPUs; `--strict-quiet` keeps the old rule; a process timeout loses that process's unfinished cases for the round, not the run | Maintainer's direction: the shared machines will never be much quieter, and interleaving, repeated rounds and the A/A control already measure the noise the load adds |
 | 2026-11-14 | Planner v1 (experiment X2): the cheapest radix sequence under a per-profile table of measured pass costs (per unit and per padded tail, for first, middle and last passes, plus a cost per pass), found by a shortest path over the divisors of the length, with a short table of measured overrides; profiles carry the precision's lanes C; AVX2's tables (C = 2 and 4) serve every target by nearest C until measured there (section 11.2) | On the EPYC 7763 it reproduces 95.7 % of the measured best sequences and no case is more than 2 % slower than v0, against v0's geometric-mean deficit of 1.25 (double) and 1.44 (float) up to 1024; structural rules (fewest passes, a first radix that is a multiple of C) reached at most 72 %, a cost by operation counts 79 % |
-| 2026-11-14 | Codelets of radix 32 and 64 (task 1.6) in every variant, with all their passes instantiated; the pass table has one row per generated radix (`codelet_slot`), not one per radix value; a planner profile has a leaf limit, 16 by default, above which a codelet radix is a leaf only when the limit allows (`build_settings::leaf_limit`, fbench `LEAF_LIMIT`) | Leaves above 16 and big passes (experiments X8 and X3) need the codelets; their operation counts equal FFTW's n1_32, n1_64, t1_32 and t1_64. They roughly double the kernel code (B3: 33 % of the pass instructions are radix 64's, 14 % radix 32's; numbers in X8), which X8 and X3 must justify or the passes nothing selects are dropped |
+| 2026-11-14 | Bluestein (task 2.3): the product of the prime factors above the profile's threshold is one stage at the end of the chain (m = 1): a chirp pass, the chain of M over the s copies forward with the kernel spectrum as its last pass's output factor, the chain backward, a chirp pass; M the cheapest 7-smooth length in [2Q − 1, next power of two]; the threshold is 16 on every profile (X17) | With m = 1 the chirp passes are elementwise and the s copies are a chain of M with s times the copies, so the stage reuses the chain's passes and slots with no recursion and runs in place; on the Mac it took the primes from 4.3–5184 times FFTW's time to below 1.3 times (section 8.5), and beat the generic pass at every prime from 17 |
+| 2026-11-14 | NEON cost tables (C = 1, 2) from X2's Mac campaign; plain `neon` uses them | Against the AVX2 tables NEON had used, 3.6 % faster on the Mac over 496 cases from 17 to 1024 (124 faster, 9 slower, band 1.7 %, run 20261114-101523-3d56); the three lengths that were 1.25–1.40 times slower keep the old choice as overrides |
+| 2026-11-14 | Planner v1's cost tables are keyed by target and C; a target and C without one take AVX2's table of the nearest C, as before. The X2 fit is a tracked tool (`bench/x2/fit.py`) | An `avx512` table (X16) and NEON tables (X2 on the Mac) drop in as rows; the search and every current choice (`rule_radices.txt`) are unchanged |
+| 2026-11-14 | The grid strategy (task 1.7, section 8.5): decimation in frequency in two or three blocked phases, gathers and scatters around a chain of lane passes on tight scratch, the transpose folded into phase 1's store; chosen for c2c rows beyond the L1 data cache, three phases beyond an eighth of L2; loops carry a twiddle cursor | X12: on the Mac the chain ran 1.85–2.84 times FFTW's time from 2^14 to 2^22 points; the grid ran 0.47–0.71 of the chain's time there, 1.08–1.43 times FFTW's (fbench run 20261114-110844-8b03). Two phases lose beyond L2 because their blocks must narrow to keep a phase in L1; three lose while the row fits L2 |
+| 2026-11-14 | Codelets of radix 32 and 64 (task 1.6) in every variant, with all their passes instantiated; the pass table has one row per generated radix (`codelet_slot`), not one per radix value; a planner profile has a leaf limit, 16 by default, above which a codelet radix is a leaf only when the limit allows (`build_settings::leaf_limit`, fbench `LEAF_LIMIT`) | Leaves above 16 and big passes (experiments X8 and X3) need the codelets; their operation counts equal FFTW's n1_32, n1_64, t1_32 and t1_64. They roughly double the kernel code (B3: 33 % of the pass instructions are radix 64's, 14 % radix 32's; numbers in X8), kept for speed over build size: the grid and X3 may use them as passes |
+| 2026-11-14 | Leaf limit 32 on NEON in double (C = 1), 16 on every other target and precision; no leaf of 64 (experiment X8) | The leaf of 32 was 16–22 % faster than planner v1's chain on the M5 Max in double; with C > 1 it idles lanes and lost on the Mac and the EPYC; 64 spills and lost everywhere. The Xeon's `avx512` float chain at 32 lost to the leaf only through its own tail problem (X16) |
 
 ---
 
