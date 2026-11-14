@@ -483,7 +483,7 @@ def cmd_report(ctx: argparse.Namespace) -> int:
 def cmd_remote(ctx: argparse.Namespace) -> int:
     cases = x2_cases()
     ns = lengths_of(cases)
-    split = [("smooth", f"-{radices.SMOOTH_LIMIT}"), ("long", f"{radices.SMOOTH_LIMIT + 1}-")]
+    split = [("smooth", f"2-{radices.SMOOTH_LIMIT}"), ("long", f"{radices.SMOOTH_LIMIT + 1}-")]
     for profile in ctx.profiles:
         for part, spec in split:
             count = len(select_lengths(ns, spec))
