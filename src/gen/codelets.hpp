@@ -16,7 +16,7 @@
 namespace fftn::inline v0::detail::gen {
 
 enum class variant : std::uint8_t { plain, dit, dif };
-enum class lowering : std::uint8_t { complex_register };
+enum class lowering : std::uint8_t { complex_register, split };
 
 struct codelet_info {
   std::uint8_t radix;
@@ -142,5 +142,58 @@ inline constexpr codelet_info codelets[codelet_count] = {
 
 inline constexpr std::size_t radix_count = 17;
 inline constexpr std::uint8_t radices[radix_count] = {2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 32, 64};
+
+// The split codelets (lowering::split, src/gen/split_codelets.inl): one entry per
+// radix and variant, forward only (the backward transform exchanges the real and
+// imaginary parts). Counts are real-register operations, each on W reals: add and
+// sub; mul (by a constant or a twiddle part); fused multiply-adds; neg.
+struct split_codelet_info {
+  std::uint8_t radix;
+  variant kind;
+  std::uint8_t twiddles; // twiddles read: R - 1, or 0 for plain
+  std::uint16_t adds;
+  std::uint16_t muls;
+  std::uint16_t fmas;
+  std::uint16_t negs;
+  std::uint16_t vops; // all of the above
+  std::uint16_t live; // peak live real values
+};
+
+inline constexpr std::size_t split_codelet_count = 30;
+inline constexpr split_codelet_info split_codelets[split_codelet_count] = {
+    {2, variant::plain, 0, 4, 0, 0, 0, 4, 5},
+    {2, variant::dif, 1, 4, 2, 2, 0, 8, 6},
+    {3, variant::plain, 0, 6, 0, 6, 0, 12, 7},
+    {3, variant::dif, 2, 6, 4, 10, 0, 20, 8},
+    {4, variant::plain, 0, 16, 0, 0, 0, 16, 10},
+    {4, variant::dif, 3, 16, 6, 6, 0, 28, 16},
+    {5, variant::plain, 0, 22, 4, 10, 0, 36, 11},
+    {5, variant::dif, 4, 22, 12, 18, 0, 52, 12},
+    {6, variant::plain, 0, 24, 0, 12, 0, 36, 14},
+    {6, variant::dif, 5, 24, 10, 22, 0, 56, 14},
+    {7, variant::plain, 0, 34, 6, 26, 0, 66, 17},
+    {7, variant::dif, 6, 34, 18, 38, 0, 90, 17},
+    {8, variant::plain, 0, 48, 2, 4, 0, 54, 18},
+    {8, variant::dif, 7, 48, 16, 18, 0, 82, 24},
+    {9, variant::plain, 0, 36, 8, 44, 0, 88, 22},
+    {9, variant::dif, 8, 36, 24, 60, 0, 120, 22},
+    {10, variant::plain, 0, 64, 8, 20, 0, 92, 22},
+    {10, variant::dif, 9, 64, 26, 38, 0, 128, 22},
+    {11, variant::plain, 0, 58, 10, 82, 0, 150, 26},
+    {11, variant::dif, 10, 58, 30, 102, 0, 190, 26},
+    {12, variant::plain, 0, 72, 0, 24, 0, 96, 26},
+    {12, variant::dif, 11, 72, 22, 46, 0, 140, 44},
+    {13, variant::plain, 0, 70, 12, 122, 0, 204, 31},
+    {13, variant::dif, 12, 70, 36, 146, 0, 252, 31},
+    {14, variant::plain, 0, 96, 12, 52, 0, 160, 31},
+    {14, variant::dif, 13, 96, 38, 78, 0, 212, 31},
+    {15, variant::plain, 0, 96, 12, 60, 0, 168, 32},
+    {15, variant::dif, 14, 96, 40, 88, 0, 224, 32},
+    {16, variant::plain, 0, 128, 12, 16, 0, 156, 36},
+    {16, variant::dif, 15, 128, 42, 46, 0, 216, 42},
+};
+
+inline constexpr std::size_t split_radix_count = 15;
+inline constexpr std::uint8_t split_radices[split_radix_count] = {2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
 
 } // namespace fftn::inline v0::detail::gen

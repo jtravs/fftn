@@ -8,23 +8,46 @@ is written from it (DESIGN.md 7.2, step 7). Adding a radix: gen/README.md.
 
 from __future__ import annotations
 
-from .codelet import SIGNS, VARIANTS, Codelet, build
-from .emit_cpp import codelet_inl, metadata_hpp
+from .codelet import (
+    SIGNS,
+    SPLIT_VARIANTS,
+    VARIANTS,
+    Codelet,
+    SplitCodelet,
+    build,
+    build_split,
+)
+from .emit_cpp import codelet_inl, metadata_hpp, split_codelet_inl
 
 # Every size 2 to 16, then the powers of two that whole-transform leaves (experiment X8)
 # and few-big-pass chains (task 1.6, experiment X3) use.
 RADICES = (*range(2, 17), 32, 64)
+
+# The split lowering's radices (task 1.5, experiment X1): the lane passes of a chain, which
+# the planner prices up to 16. A split codelet holds about twice the live registers of a
+# complex one (radix 16: 36 to 42 reals against 18 complex), so 32 and 64 would spill
+# heavily.
+SPLIT_RADICES = tuple(range(2, 17))
 
 
 def all_codelets() -> list[Codelet]:
     return [build(r, v, s) for r in RADICES for v in VARIANTS for s in SIGNS]
 
 
-def generate(codelets: list[Codelet] | None = None) -> dict[str, str]:
+def all_split_codelets() -> list[SplitCodelet]:
+    return [build_split(r, v) for r in SPLIT_RADICES for v in SPLIT_VARIANTS]
+
+
+def generate(
+    codelets: list[Codelet] | None = None, split: list[SplitCodelet] | None = None
+) -> dict[str, str]:
     """File name (under src/gen/) to contents."""
     if codelets is None:
         codelets = all_codelets()
+    if split is None:
+        split = all_split_codelets()
     return {
         "complex_codelets.inl": codelet_inl(codelets),
-        "codelets.hpp": metadata_hpp(codelets),
+        "split_codelets.inl": split_codelet_inl(split),
+        "codelets.hpp": metadata_hpp(codelets, split),
     }

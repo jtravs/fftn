@@ -19,7 +19,8 @@ from .algorithms import dft
 from .ir import Graph
 from .lower import Op, lower
 from .schedule import peak_live, schedule
-from .verify import verify
+from .split import SPLIT_FUSED, expand, lower_split
+from .verify import verify, verify_split
 
 VARIANTS = ("plain", "dit", "dif")
 SIGNS = (-1, 1)
@@ -107,3 +108,72 @@ def build(radix: int, variant: str, sign: int) -> Codelet:
     ops = schedule(build_ops(radix, variant, sign))
     verify(ops, radix, variant, sign)
     return Codelet(radix, variant, sign, tuple(ops), count(ops), peak_live(ops))
+
+
+# Variants of the split lowering: the ones the passes call (src/passes/split.inl). Forward
+# only: the backward transform exchanges real and imaginary parts (split.py).
+SPLIT_VARIANTS = ("plain", "dif")
+
+
+@dataclass(frozen=True, slots=True)
+class SplitCounts:
+    """Real-register operations of a split codelet, each on W reals (gen/README.md,
+    "Metadata"): add and sub; mul and mulk; the fused forms; neg."""
+
+    adds: int
+    muls: int
+    fmas: int
+    negs: int
+
+    @property
+    def vector_ops(self) -> int:
+        return self.adds + self.muls + self.fmas + self.negs
+
+    @property
+    def flops_adds(self) -> int:
+        return self.adds + self.fmas
+
+    @property
+    def flops_muls(self) -> int:
+        return self.muls + self.fmas
+
+
+@dataclass(frozen=True, slots=True)
+class SplitCodelet:
+    radix: int
+    variant: str
+    ops: tuple[Op, ...]
+    counts: SplitCounts
+    live: int
+
+    @property
+    def twiddles(self) -> int:
+        return 0 if self.variant == "plain" else self.radix - 1
+
+
+def count_split(ops: list[Op] | tuple[Op, ...]) -> SplitCounts:
+    kinds = [op.kind for op in ops]
+    return SplitCounts(
+        adds=sum(k in ("add", "sub") for k in kinds),
+        muls=sum(k in ("mul", "mulk") for k in kinds),
+        fmas=sum(k in SPLIT_FUSED for k in kinds),
+        negs=kinds.count("neg"),
+    )
+
+
+def build_split_ops(radix: int, variant: str) -> list[Op]:
+    """The forward split codelet's operations in topological order, before ordering."""
+    g = Graph(radix, twiddles=radix - 1)
+    x = [g.input(j) for j in range(radix)]
+    y = dft(g, x, -1)
+    if variant == "dif":
+        y = [y[0]] + [g.tw_mul(y[k], g.twiddle(k), False) for k in range(1, radix)]
+    h, parts = expand(g, y)
+    return lower_split(h, parts)
+
+
+def build_split(radix: int, variant: str) -> SplitCodelet:
+    """Builds and verifies one forward split codelet."""
+    ops = schedule(build_split_ops(radix, variant))
+    verify_split(ops, radix, variant)
+    return SplitCodelet(radix, variant, tuple(ops), count_split(ops), peak_live(ops))
