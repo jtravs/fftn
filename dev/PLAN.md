@@ -36,8 +36,9 @@ catalogue). Still to do: the Xeon client catalogue.
 
 Next actions: finish X2 (planner v1 against v0 over all 1-D rows on the EPYC; the Mac
 campaign and lengths above 1024; tables for NEON) → X16 (`avx512` against `avx2`, its own
-table or an R × C transpose) → 1.4 (X4, X8) → 1.3b and X14. In parallel: T1 and T5 verdicts
-and the profile constants, then 3.4 and 3.5 (Kokkos executor). A cloud check for the
+table or an R × C transpose) → 1.4 (X4, X8) → 1.3b and X14. In parallel: T1 and T5 are done
+(profile constants set; their follow-up is a dispatch cost that grows with the team's width,
+DESIGN 18.2 item 22), then the rest of 3.4 (T2, T4) and 3.5 (Kokkos executor). A cloud check for the
 phase 1 exit is authorised up to USD 20 (ledger in the experiment file).
 
 Open questions: see DESIGN.md section 18.2.
@@ -265,11 +266,11 @@ running, done (with verdict).
 | [X18](experiments/X18-x86-kernels.md) | Why does FFTN trail FFTW on x86 (Xeon, EPYC), and what closes the gap? | 1 | done: driver divisions and a four-line chain fixed (Xeon 1.50 → 1.25 of FFTW, EPYC 1.37 → 1.29); next X10 addressing, radix 32/64, then X1 |
 | P1 | Cost-model accuracy: rank agreement with measurement across the catalogue per machine | 2 | planned |
 | P2 | Measurement budget: how many candidates and how long before the choice stops improving | 2 | planned |
-| [T1](experiments/T1-dispatch-wait-costs.md) | Dispatch, wake and wait costs per machine and runtime (libgomp, libomp, Kokkos, pool) | 3 | running (scheduler fixes merged) |
+| [T1](experiments/T1-dispatch-wait-costs.md) | Dispatch, wake and wait costs per machine and runtime (libgomp, libomp, Kokkos, pool) | 3 | done: hand-off cost and claim runs adopted on Zen 3; dispatch and work costs wait for a per-lane dispatch term |
 | T2 | Claiming engine against precomputed schedule with spin barriers; keep one or both? | 3 | planned |
 | T3 | Kokkos: cost of one `parallel_for` per transform; `team_barrier` behaviour | 3 | planned |
 | T4 | Run-to-run swings with several concurrent teams: first touch, NUMA balancing, false sharing of synchronisation words | 3 | planned |
-| [T5](experiments/T5-split-thresholds.md) | Thresholds for splitting a row, by cache-group type | 3 | running |
+| [T5](experiments/T5-split-thresholds.md) | Thresholds for splitting a row, by cache-group type | 3 | done: 6144 points (Zen 3 CCX), 8192 (Apple cluster, mesh); 1024 points per member |
 | T6 | Hybrid processors: performance cores only, or all | 3 | planned |
 
 ## Machines

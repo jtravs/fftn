@@ -178,11 +178,24 @@ N/4 and N/8.** The prototype gained 2 % hoisting by hand what the compiler did n
 fork-join, ns: Mac libomp 368 / 485 at 6 threads (with an explicit block time; the default
 is 14 671), Xeon libgomp 708 / 1364 at 6 and 1145 / 3165 at 18, EPYC node 688 / 1701 at 6
 and 2513 / 9799 at 64. A pass of a short row takes 0.5–2 µs, so rows up to about 2k points
-must not be split (prototype; FFTN's T1 measures its own).
+must not be split (prototype). FFTN's own claiming engine, which counts phases instead of
+meeting at barriers, measured per phase hand-off (1 µs chunks, members pinned): 461 ns
+among 6 cores of an M5 cluster, 1141 ns among the 8 of a Zen 3 CCX, 2846 ns among the 18 of
+the Xeon's mesh, and 5.3 / 22 µs across 16 / 64 Zen 3 cores: no cheaper than the
+prototype's barrier inside a group, and it grows about linearly with the members.
+[T1](experiments/T1-dispatch-wait-costs.md).
 
 5.2 **Keep a team inside a cache group.** On Zen 3 a team within one CCX (8 cores, shared
 L3) scales one row from 2048 points; across CCXs it collapses. On the Xeon's mesh a single
-row pays only from about 8k points (prototype).
+row pays only from about 8k points (prototype). FFTN's re-measurement with SIMD kernels,
+splitting a lone row whenever it may against never: on a CCX a 3072-point row gained 0.94
+with 8 OpenMP threads but lost 1.68 behind a 64-thread executor (6144 gained at both); on
+the M5 cluster 4096 lost 1.17 and 8192 gained 0.84; on the Xeon mesh c2c rows gained from
+10240 points but real transforms of 16384 still lost 1.11–1.17, and a threshold of 20480
+points, which those needed, made planes and few rows of 16384 points 1.5–2.4 times slower.
+The smallest transform worth splitting is a time, not a size: about 10–20 µs of serial
+work, roughly ten phase hand-offs plus one dispatch, which a single size threshold over
+all kinds of transform fits only roughly. [T5](experiments/T5-split-thresholds.md).
 
 5.3 **No hidden threads.** A library pool fighting the application's OpenMP team is the
 failure mode of several libraries; run in the caller's threads through an executor.
@@ -190,6 +203,38 @@ failure mode of several libraries; run in the caller's threads through an execut
 5.4 **Bitwise independence of team size costs nothing and makes testing easy.** Every row
 runs the same kernel whatever the split; tests compare threaded results with serial ones
 bit for bit (FFTN's team tests, sizes 1–16).
+
+5.5 **Dispatch cost grows with the width of the team, not just its existence.** Starting
+a team and waiting for its end (one 64-point row per lane, hot), on 2 / 8 / 64 Zen 3
+cores: FFTN's pool 1.7 / 5.6 / 26 µs, libgomp regions through an executor 1.7 / 3.3 /
+35 µs; libgomp's last thread starts 8.3 µs after the fork at 64. An OpenMP region of
+constant width pays the full width even when a few lanes have work. A scheduler that
+models dispatch as one constant either inlines jobs a group runs 2–5 times faster (with
+the full-width cost) or splits lone transforms that then lose to serial behind a wide
+executor (with the group's): T1 needed a per-lane term. On the Xeon (18 cores) the pool
+took 11 µs and the executor 8.6 µs; on the M5 (6 cores) 2.0 and 2.4 µs (the latter with a
+block time, 5.8).
+[T1](experiments/T1-dispatch-wait-costs.md).
+
+5.6 **Waking a blocked thread costs more the longer it slept.** Notify-to-running latency
+of a waiter blocked in `std::atomic::wait` (futex) after 100–300 µs / 1 ms: Zen 3 5.0 /
+5.4 µs (8.5 across CCXs), Xeon 2.5–3.3 / 10–13 µs (deep idle states), M5 5.3–6.6 / 6.4 µs.
+Spinning wakes in 0.1–0.3 µs and a yield loop in 0.2–1.1 µs. Shortening the spin budget to
+the parked latency (9 µs on Zen 3, T1's rule) made back-to-back batches 5–11 % slower, so
+spin budgets should cover the gap between consecutive calls, not just the wake cost.
+[T1](experiments/T1-dispatch-wait-costs.md).
+
+5.7 **A bound OpenMP runtime pins every thread created after it.** With
+`OMP_PROC_BIND` set, libgomp binds the initial thread to one CPU, and `std::thread`s
+created afterwards inherit the one-CPU mask: a thread pool started in such a process ran
+all its threads on one core (32 ms per call at 8 lanes instead of 4.7 µs). Benchmarks that
+mix runtimes in one binary silently measure this (the first T1 campaign's pool numbers in
+its OpenMP binary). [T1](experiments/T1-dispatch-wait-costs.md).
+
+5.8 **libomp on macOS does not spin by default.** On hybrid Apple processors LLVM's runtime
+puts idle threads to sleep at once: a region through an executor cost 20–26 µs at 6
+threads, against 1.6–2.4 µs with `KMP_BLOCKTIME=200`, and split rows up to 10240 points
+were slower than serial, 16384 no faster (prototype: 14.7 µs; FFTN's T1 and T5 on the M5).
 
 ## 6. Toolchain and testing pitfalls
 
