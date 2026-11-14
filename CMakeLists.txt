@@ -23,6 +23,13 @@ if(FFTN_SANITIZE)
   add_compile_options(-fsanitize=${FFTN_SANITIZE} -fno-sanitize-recover=all
                       -fno-omit-frame-pointer)
   add_link_options(-fsanitize=${FFTN_SANITIZE})
+  # GCC folds identical functions under the sanitizers (radix 2's forward and backward
+  # passes, scalar's two twiddle packers), leaving jumps or, under TSan, calling wrappers
+  # that asm_check (tools/asm_check.py) cannot tell from missed inlining. Release builds do
+  # not fold them; turning the folding off here keeps the checked code comparable.
+  if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    add_compile_options(-fno-ipa-icf)
+  endif()
   # Clang links its TSan runtime statically on Linux, and that runtime defines the global
   # operator new and delete as strong symbols (compiler-rt's tsan_new_delete.cpp; ASan's
   # are weak), so the tests' counting replacements (tests/support/alloc_hook.cpp) clash
