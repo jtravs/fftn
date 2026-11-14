@@ -112,8 +112,8 @@ TEST(Rules, RadicesMultiplyToTheLength) {
 // C = 4 table from four.
 TEST(Rules, ProfilesOfEveryTarget) {
   using fftn::detail::target;
-  for (const target t : {target::scalar, target::x86_v2, target::avx, target::avx2,
-                         target::avx512, target::neon, target::neon_fcma}) {
+  for (const target t : {target::scalar, target::x86_v2, target::avx, target::avx2, target::avx512,
+                         target::neon, target::neon_fcma}) {
     for (const std::size_t lanes : {1U, 2U, 4U, 8U}) {
       const auto p = fftn::detail::profile_of(t, lanes);
       EXPECT_EQ(p.lanes, lanes);
