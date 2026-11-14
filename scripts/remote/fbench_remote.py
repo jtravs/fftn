@@ -4,6 +4,7 @@
 """Run fbench on a Slurm machine with an exclusive node (bench/README.md, "Remote runs").
 
     fbench_remote.py submit PROFILE ARM... [--after JOBID] [--dry-run] -- [fbench run options]
+    fbench_remote.py submit PROFILE ARM... --campaign SCRIPT -- [SCRIPT options]
     fbench_remote.py status JOB
     fbench_remote.py log JOB [--lines N]
     fbench_remote.py fetch JOB
@@ -15,6 +16,11 @@ its own inside the job's directory, so no two jobs share a build and no stale ob
 survive a copy (rsync -a keeps mtimes, which once left stale builds). Arms run from those
 builds; the job directory and each arm's commit are recorded locally under
 bench-out/remote/<job>/ and in fbench's own run record.
+
+With --campaign, the job runs a campaign driver from the checkout instead of one fbench
+run (for example bench/x2/x2.py, which runs many): the arms only name the builds it needs,
+and it is called as `SCRIPT --out-dir <job>/bench-out --build <job>/build-<head> ...`.
+Campaign drivers keep their own state in bench-out/campaigns/, which fetch copies too.
 
 Hosts, partitions and paths are private: they come from an untracked TOML file
 ($FFTN_REMOTE_CONFIG, default ~/.config/fftn/remote.toml) or the environment
@@ -104,9 +110,16 @@ class Plan:
     arms: list[str]  # rewritten for the remote build directories
     arm_commits: dict[str, str]  # label -> sha
     fbench_args: list[str]
+    campaign: str | None = None  # a driver script to run instead of `fbench.py run`
 
 
-def make_plan(profile: Profile, arm_specs: list[str], fbench_args: list[str], job: str) -> Plan:
+def make_plan(
+    profile: Profile,
+    arm_specs: list[str],
+    fbench_args: list[str],
+    job: str,
+    campaign: str | None = None,
+) -> Plan:
     head = git("rev-parse", "HEAD")
     jobdir = f"{profile.workdir.rstrip('/')}/{job}"
     commits: dict[str, list[str]] = {}
@@ -128,7 +141,11 @@ def make_plan(profile: Profile, arm_specs: list[str], fbench_args: list[str], jo
         options = "".join(f"+{k}={v}" for k, v in arm.options)
         rewritten.append(f"{arm.label}={arm.library}:{build}{options}")
     commits.setdefault(head, [])
-    return Plan(job, jobdir, head, commits, rewritten, arm_commits, fbench_args)
+    if campaign is not None:
+        path = Path(campaign)
+        if path.is_absolute() or ".." in path.parts or not (REPO / path).is_file():
+            raise SystemExit(f"--campaign {campaign}: not a script of this checkout")
+    return Plan(job, jobdir, head, commits, rewritten, arm_commits, fbench_args, campaign)
 
 
 def sbatch_script(profile: Profile, plan: Plan, after: str | None = None) -> str:
@@ -172,20 +189,26 @@ def sbatch_script(profile: Profile, plan: Plan, after: str | None = None) -> str
             f"-DFFTN_BUILD_TESTS=OFF -DFFTN_BUILD_BENCH=ON -DFBENCH_SOURCE_COMMIT={sha}",
             f'cmake --build build-{short} -j "$jobs" {targets}',
         ]
-    run = [
-        profile.uv,
-        "run",
-        "--frozen",
-        "python",
-        "bench/fbench.py",
-        "--out-dir",
-        f"{plan.jobdir}/bench-out",
-        "run",
-        *plan.arms,
-        "--build",
-        f"{plan.jobdir}/build-{plan.head[:12]}",
-        *plan.fbench_args,
-    ]
+    build = f"{plan.jobdir}/build-{plan.head[:12]}"
+    out_dir = f"{plan.jobdir}/bench-out"
+    if plan.campaign is None:
+        run = [
+            profile.uv,
+            "run",
+            "--frozen",
+            "python",
+            "bench/fbench.py",
+            "--out-dir",
+            out_dir,
+            "run",
+            *plan.arms,
+            "--build",
+            build,
+            *plan.fbench_args,
+        ]
+    else:
+        run = [profile.uv, "run", "--frozen", "python", plan.campaign]
+        run += ["--out-dir", out_dir, "--build", build, *plan.fbench_args]
     lines += [
         f"cd src-{plan.head[:12]}",
         " ".join(q(x) for x in run),
@@ -239,7 +262,7 @@ def cmd_submit(args: argparse.Namespace) -> int:
         )
     profile = load_profile(args.profile)
     job, local = claim_job(git("rev-parse", "HEAD"), args.name)
-    plan = make_plan(profile, args.arms, args.fbench_args, job)
+    plan = make_plan(profile, args.arms, args.fbench_args, job, args.campaign)
     for sha in plan.commits:
         out = local / f"src-{sha[:12]}.tar.gz"
         subprocess.run(
@@ -255,6 +278,7 @@ def cmd_submit(args: argparse.Namespace) -> int:
         "remote_arms": plan.arms,
         "arm_commits": plan.arm_commits,
         "fbench_args": plan.fbench_args,
+        "campaign": plan.campaign,
         "after": args.after,
         "submitted": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     }
@@ -322,6 +346,16 @@ def cmd_fetch(args: argparse.Namespace) -> int:
         ["scp", "-q", "-o", "BatchMode=yes", f"{profile.ssh}:{log}", str(STATE / args.job)],
         check=False,
     )
+    if manifest.get("campaign"):
+        campaigns = REPO / "bench-out" / "campaigns"
+        campaigns.mkdir(parents=True, exist_ok=True)
+        remote_campaigns = f"{manifest['jobdir']}/bench-out/campaigns/*"
+        subprocess.run(
+            ["scp", "-q", "-r", "-o", "BatchMode=yes", f"{profile.ssh}:{remote_campaigns}"]
+            + [str(campaigns)],
+            check=False,
+        )
+        print(f"campaign state copied into {campaigns}")
     listing = ssh(profile, f"ls {shlex.quote(manifest['jobdir'])}/bench-out/runs/", check=False)
     ids = sorted(Path(x).stem for x in listing.split() if x.endswith(".jsonl"))
     for run_id in ids:
@@ -353,6 +387,10 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--name", help="job name (default fbench-<time>-<commit>)")
     s.add_argument("--after", help="Slurm job ID this job waits for (afterok)")
     s.add_argument("--dry-run", action="store_true", help="write the job files only")
+    s.add_argument(
+        "--campaign",
+        help="run this campaign driver of the checkout (e.g. bench/x2/x2.py) instead of fbench",
+    )
     s.set_defaults(func=cmd_submit)
     for name, func in (("status", cmd_status), ("log", cmd_log), ("fetch", cmd_fetch)):
         sp = sub.add_parser(name)

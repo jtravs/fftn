@@ -357,7 +357,11 @@ $R fetch <job>    # copies the run into bench-out/runs/; then fbench show <run-i
 (by content: `rsync -a` keeps mtimes and has left stale builds), unpacks each into its own
 directory in the job's directory, builds each into its own build directory, and records
 the commit of every arm in `bench-out/remote/<job>/manifest.json` and in the run itself.
-`--dry-run` writes the job files without contacting the machine. `--after <jobid>` queues a
+`--dry-run` writes the job files without contacting the machine. `--campaign SCRIPT` runs a
+campaign driver of the checkout in the job instead of one `fbench run` (a driver that runs
+many, such as experiment X2's): the arms then only name the builds it needs, the driver is
+called as `SCRIPT --out-dir <job>/bench-out --build <job>/build-<head> <arguments after -->`,
+and `fetch` also copies its state from `bench-out/campaigns/`. `--after <jobid>` queues a
 job behind another with `afterok`: if the first job fails, the second never starts and
 Slurm reports it only in `squeue` (DependencyNeverSatisfied), so always read the first
 job's log before waiting on a chain.

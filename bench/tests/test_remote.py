@@ -89,6 +89,21 @@ class JobScript(unittest.TestCase):
         plan = self.plan(["A=fftw"])
         self.assertNotIn("rsync", remote.sbatch_script(PROFILE, plan))
 
+    def test_campaign_runs_its_driver_with_the_head_build(self):
+        with mock.patch.object(remote, "git", fake_git):
+            plan = remote.make_plan(
+                PROFILE, ["fftn"], ["all", "--stage", "screen"], "job1", "bench/fbench.py"
+            )
+            with self.assertRaises(SystemExit):
+                remote.make_plan(PROFILE, ["fftn"], [], "job1", "../outside.py")
+        text = remote.sbatch_script(PROFILE, plan)
+        self.assertIn(
+            "uv run --frozen python bench/fbench.py --out-dir /scratch/fbench/job1/bench-out "
+            f"--build /scratch/fbench/job1/build-{HEAD[:12]} all --stage screen",
+            text,
+        )
+        self.assertNotIn(" run fftn", text)
+
     def test_bad_arm_build(self):
         with self.assertRaises(SystemExit):
             self.plan(["A=fftn:build/check-release"])
