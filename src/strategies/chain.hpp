@@ -83,6 +83,8 @@ public:
   // The radices of a chain for n, in pass order (empty for n = 1); the last is a Bluestein
   // stage's when bluestein_last(n).
   [[nodiscard]] std::vector<std::size_t> radices(std::size_t n) const;
+  // Whether a test forces the radices of n (build_settings::radices multiply to n).
+  [[nodiscard]] bool forces(std::size_t n) const;
   [[nodiscard]] bool bluestein_last(std::size_t n) const;
   // The radices for describe(): "4 x 4 x 16", with a Bluestein stage as
   // "bluestein 257 (M 520 = 8 x 5 x 13)".
@@ -99,6 +101,12 @@ public:
                        std::vector<stage>& stages);
   std::size_t c2r_line(std::size_t n, endpoint src, endpoint dst, double scale,
                        std::vector<stage>& stages);
+
+  // For the grid (strategies/grid.hpp), whose phases are lane passes of this builder's
+  // kind: the table of a lane pass of `radix` with s copies in a line of n.
+  const T* lane_twiddles(std::size_t n, std::size_t radix, std::size_t s) {
+    return shared_twiddles(n, radix, s);
+  }
 
 private:
   const std::vector<std::complex<T>>& roots(std::size_t n);

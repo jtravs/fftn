@@ -1051,6 +1051,46 @@ Two regimes:
   L1-sized chains. This is also the form that splits across threads: column blocks and
   rows are the independent chunks.
 
+As built (task 1.7, `src/strategies/grid.cpp`, experiment X12): the decimation-in-frequency
+form, generalised to two or three phases (n = N1 N2 or N1 N2 N3), every phase blocked; the
+"few big passes" regime is not built separately. Phase i transforms down adjacent columns
+of what phase i − 1 wrote: with L the product of the factors before it and M of those
+after, element (l, c, r) at l + L (c + M r) becomes (l, k, c) at l + L (k + Ni c), times
+w_(Ni M)^(c k); after the last phase the output is in natural order. Each phase loops over
+blocks of `block` adjacent columns (program loops, one independent iteration per block): a
+block is gathered row by row into tight scratch a, transformed there by a chain of lane
+passes (s ≥ block ≥ C, so none is grouped and none has tails; the radices are the fewest
+passes, most even, not planner v1's, whose tables price a grouped first pass), and written
+back row by row. Phase 1's columns become rows, so it writes through a twiddled transpose
+(C × C tiles transposed in registers) with each element's twiddle w_n^(c k) formed as
+w_n^(q k) w_n^(c0 k) from two small tables (one rounding more than a stored twiddle; a
+table of n values cost memory traffic and plan memory for no measured gain); later phases'
+blocks lie within one column c, so their twiddle is one value per row, applied by the
+scatter, and the last phase's scatter applies the scale. Gathers and scatters, not passes
+reading the block in place, because a block's rows usually lie a power of two apart and
+share cache sets; they prefetch eight rows ahead, since rows a page apart defeat the
+hardware prefetchers. Placement: the last phase writes the positions it read (in place in
+the output); phase 1 writes the output out of place with two phases, otherwise the
+workspace block (n complex values), which is also the in-place route (the scratch of N of
+the list above). The loops step a twiddle cursor (program.hpp) so a block's stage reads its
+own table. Planner: a c2c row of one axis, contiguous on both sides, without edge factors,
+is a grid when its bytes exceed `grid_min_bytes` (default the L1 data cache), in three
+phases beyond `grid_three_bytes` (default an eighth of L2), if it has a split whose factors
+have no prime above 13 and whose first factor and n / N1 are multiples of the block (at
+least max(2, C)). A long row with a prime factor above 13 therefore stays a chain, with
+its Bluestein or generic last pass (9.2): the grid takes only lengths whose every factor a
+codelet chain covers, all below the Bluestein threshold. With `scale_on_input` (a test
+knob) the scale moves to phase 1's gather. The split: the widest block, then the shortest longest factor, then the
+most even, then the shorter first factor; the block is the widest power of two up to 32
+with block × max Ni within `grid_block_bytes` (the L1; twice that with three phases, where
+X12 found wide rows worth more than a chain inside L1). These are machine-profile fields
+(`src/threading/schedule.hpp`) so X12 can tune them per machine; `build_settings` forces
+the strategy, the factors and the block. Not built: a fourth phase (a phase's chain leaves
+L1 for rows beyond about 2^24 points on a 128 KiB L1), DIT order, fusing the gather and
+scatter into the first and last passes where a phase's rows do not share sets, and
+splitting one row's blocks across threads beyond what the work graph already shares (task
+3.6).
+
 **Lanes** (vectorise across rows). C rows, or C neighbouring lines of a strided axis,
 become the lanes of every pass; the whole transform is lane passes. For row-major batches
 the first pass gathers a tile of rows into lanes and the last scatters it; for a strided
@@ -2309,6 +2349,7 @@ to change before a release.
 | 2026-11-14 | Bluestein (task 2.3): the product of the prime factors above the profile's threshold is one stage at the end of the chain (m = 1): a chirp pass, the chain of M over the s copies forward with the kernel spectrum as its last pass's output factor, the chain backward, a chirp pass; M the cheapest 7-smooth length in [2Q − 1, next power of two]; the threshold is 16 on every profile (X17) | With m = 1 the chirp passes are elementwise and the s copies are a chain of M with s times the copies, so the stage reuses the chain's passes and slots with no recursion and runs in place; on the Mac it took the primes from 4.3–5184 times FFTW's time to below 1.3 times (section 8.5), and beat the generic pass at every prime from 17 |
 | 2026-11-14 | NEON cost tables (C = 1, 2) from X2's Mac campaign; plain `neon` uses them | Against the AVX2 tables NEON had used, 3.6 % faster on the Mac over 496 cases from 17 to 1024 (124 faster, 9 slower, band 1.7 %, run 20261114-101523-3d56); the three lengths that were 1.25–1.40 times slower keep the old choice as overrides |
 | 2026-11-14 | Planner v1's cost tables are keyed by target and C; a target and C without one take AVX2's table of the nearest C, as before. The X2 fit is a tracked tool (`bench/x2/fit.py`) | An `avx512` table (X16) and NEON tables (X2 on the Mac) drop in as rows; the search and every current choice (`rule_radices.txt`) are unchanged |
+| 2026-11-14 | The grid strategy (task 1.7, section 8.5): decimation in frequency in two or three blocked phases, gathers and scatters around a chain of lane passes on tight scratch, the transpose folded into phase 1's store; chosen for c2c rows beyond the L1 data cache, three phases beyond an eighth of L2; loops carry a twiddle cursor | X12: on the Mac the chain ran 1.85–2.84 times FFTW's time from 2^14 to 2^22 points; the grid ran 0.47–0.71 of the chain's time there, 1.08–1.43 times FFTW's (fbench run 20261114-110844-8b03). Two phases lose beyond L2 because their blocks must narrow to keep a phase in L1; three lose while the row fits L2 |
 
 ---
 

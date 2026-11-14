@@ -16,4 +16,6 @@
 
 #include "passes/real.inl"
 
+#include "passes/grid.inl"
+
 #include "passes/entries.inl"

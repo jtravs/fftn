@@ -82,6 +82,16 @@ constexpr std::array size_fields{
         .key = "REMAINDER_SPLIT_MIN_POINTS",
         .member = &fftn::detail::machine_profile::remainder_split_min_points,
     },
+    size_field{.key = "GRID_MIN_BYTES", .member = &fftn::detail::machine_profile::grid_min_bytes},
+    size_field{
+        .key = "GRID_THREE_BYTES",
+        .member = &fftn::detail::machine_profile::grid_three_bytes,
+    },
+    size_field{
+        .key = "GRID_BLOCK_BYTES",
+        .member = &fftn::detail::machine_profile::grid_block_bytes,
+    },
+    size_field{.key = "GRID_BLOCK", .member = &fftn::detail::machine_profile::grid_block},
 };
 constexpr std::array int_fields{
     int_field{

@@ -132,6 +132,9 @@ one; its arms are written `fftn_omp`.
 | `CHUNK_POINTS=P` | fftn, fftn_omp | points per chunk of a stage (the plan's chunking) |
 | `NS_PER_WORK`, `DISPATCH_NS`, `INLINE_MULTIPLE`, `SYNC_NS`, `MIN_POINTS_PER_MEMBER`, `SPLIT_MIN_POINTS`, `SPLIT_MIN_POINTS_MESH`, `MESH_GROUP_LANES`, `REMAINDER_SPLIT_MIN_POINTS`, `SPIN_NS`, `YIELD_NS`, `CLAIM_DIVISOR` | fftn, fftn_omp | the machine profile's field of that name (`src/threading/schedule.hpp`); a size threshold may be `never` |
 | `RADICES=r1.r2...` | fftn, fftn_omp | the chain's radices in pass order (`build_settings::radices`), for c2c rows whose length they multiply to (see below) |
+| `STRATEGY=rules\|chain\|grid` | fftn, fftn_omp | the strategy of c2c rows (`build_settings::strategy`): the planner's choice (default), or the chain or the grid ([DESIGN 8.5](../dev/DESIGN.md)) forced where the row can be one; every case's `note` says which was built. Experiment [X12](../dev/experiments/X12-beyond-l2.md) compares them |
+| `GRID_FACTORS=n1.n2[.n3]` | fftn, fftn_omp | the grid's factors in phase order (`build_settings::grid_factors`), for rows they multiply to; other rows plan as without it |
+| `GRID_MIN_BYTES`, `GRID_THREE_BYTES`, `GRID_BLOCK_BYTES`, `GRID_BLOCK` | fftn, fftn_omp | the planner's grid fields of the machine profile (`src/threading/schedule.hpp`): a row of more bytes than the first is a grid, of more than the second a grid of three phases; blocks widen while one fits the third; the fourth forces the block width (`never` disables the first two) |
 
 The backend builds and executes plans through the functions the public `plan` forwards
 every call to, so an arm with none of these options times exactly the public plan. `ISA`

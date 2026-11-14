@@ -57,6 +57,12 @@ forbidden on its nodes); the Xeon is shared with heavy users outside Slurm, so t
 with fbench's load-tolerant rounds (its A/A band shows the noise). Keep the Mac quiet
 while an fbench run that needs it is going.
 
+Task 1.7 (branch `task/1.7-grid`): the grid strategy (DESIGN.md 8.5 as built, X12) is the
+default for c2c rows beyond L1; X12's x86 runs (EPYC, Xeon) and the tuning of its profile
+fields there are open, as are fusing the gathers and scatters into the phases' first and
+last passes, and 2^14, 2^20 and 2^22 points on the Mac (1.37–1.43 times FFTW in run
+20261114-110844-8b03; 2^16 and 2^18 within 1.25).
+
 ## How this plan works
 
 - **Phases** group work with a shared exit criterion. Phases 1–2 (kernels), 3 (threading)
@@ -245,7 +251,7 @@ running, done (with verdict).
 | X9 | Scrambled intermediate order for transform pairs | 5 | planned |
 | X10 | Generated whole passes against templated pass loops | 1 | planned |
 | X11 | SVE at 128 and 256 bits on Graviton 3/4 against NEON | 7 | planned |
-| X12 | Beyond-L2 forms: DIF grid, DIT grid, in-place sandwich; block sizes by cache level; the in-place route (scratch of N, permutation pass, or palindromic swap) | 1 | planned |
+| [X12](experiments/X12-beyond-l2.md) | Beyond-L2 forms: DIF grid, DIT grid, in-place sandwich; block sizes by cache level; the in-place route (scratch of N, permutation pass, or palindromic swap) | 1 | running: DIF grid in two or three phases adopted for rows beyond L1 on the Mac (0.47–0.71 of the chain's time, run 20261114-110844-8b03); x86 runs pending |
 | X14 | Is a separate `avx` target (256 bit, no FMA, no AVX2) worth keeping over `x86_v2` on Sandy Bridge-class machines? | 1 | planned |
 | X13 | Next-row prefetch and non-temporal stores per machine for out-of-cache batches | 2 | planned |
 | [X15](experiments/X15-compiler-vectorised-scalar.md) | What does a current compiler get from the scalar pass loops (`omp simd`, the scalar text in the `avx2` region, `-march=native` as a ceiling), against a hand vocabulary? | 0 | done: omp simd rejected (compiler-dependent); old targets need hand vocabularies |

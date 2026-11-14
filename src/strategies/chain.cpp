@@ -71,13 +71,19 @@ chain_builder<T>::chain_builder(const kernels_of<T>& kernels, const target_profi
   }
 }
 
-template <class T> std::vector<std::size_t> chain_builder<T>::radices(std::size_t n) const {
-  std::vector<std::size_t> rad;
+template <class T> bool chain_builder<T>::forces(std::size_t n) const {
+  if (forced_.empty()) {
+    return false;
+  }
   std::size_t product = 1;
   for (const std::size_t r : forced_) {
     product *= r;
   }
-  rad = !forced_.empty() && product == n ? forced_ : rule_radices(n, profile_);
+  return product == n;
+}
+
+template <class T> std::vector<std::size_t> chain_builder<T>::radices(std::size_t n) const {
+  std::vector<std::size_t> rad = forces(n) ? forced_ : rule_radices(n, profile_);
   // The trailing radices above the Bluestein threshold (the rules' largest primes) become one
   // Bluestein stage.
   std::size_t q = 1;

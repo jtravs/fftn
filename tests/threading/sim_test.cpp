@@ -301,6 +301,8 @@ TEST(Pathologies, RowSplitAcrossCacheGroups) {
   costs.physical_group = 8;
   fftn::detail::build_settings fine;
   fine.chunk_points = 640; // 16 chunks per pass: one for each lane of the prototype's team
+  // The prototype split chain passes; a grid's blocks are the work of task 3.6.
+  fine.strategy = fftn::detail::strategy_choice::chain;
   const team_case c = fftn::test::make_case(
       "c2c_10240x1", fftn::rows_c2c<double>(10240, 1, fftn::direction::forward), 10240, 10240,
       false, fine);

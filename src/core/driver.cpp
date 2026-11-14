@@ -60,6 +60,7 @@ slot_addresses moved(const slot_addresses& at, const std::array<std::ptrdiff_t, 
   if (step[2] != 0) {
     next.block += step[2] * k;
   }
+  next.tw += step[3] * k;
   return next;
 }
 
@@ -100,6 +101,9 @@ void run_stage_chunks(const stage& st, const slot_addresses& at, std::size_t fir
   pass_args args = st.args;
   args.src = source_of(st.src, at);
   args.dst = destination_of(st.dst, at);
+  if (st.moving_twiddles) {
+    args.twiddles = static_cast<const std::byte*>(args.twiddles) + at.tw;
+  }
   for (std::size_t c = first; c < last; ++c) {
     // Fixed by the plan, so a split across threads runs exactly these ranges.
     st.run(&args, chunk_start(st.units, st.chunks, c), chunk_start(st.units, st.chunks, c + 1));
