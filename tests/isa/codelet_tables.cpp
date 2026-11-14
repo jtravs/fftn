@@ -16,6 +16,8 @@ const codelet_table* find_codelets(target t) noexcept {
     return &avx2::codelet_entries;
 #endif
 #if FFTN_ARCH_AARCH64
+  case target::neon:
+    return &neon::codelet_entries;
   case target::neon_fcma:
     return &neon_fcma::codelet_entries;
 #endif

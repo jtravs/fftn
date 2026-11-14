@@ -34,6 +34,7 @@ template <class T> cnum<T> product(fftn::detail::target t, cnum<T> a, cnum<T> w,
     }
     return {ar * wr - ai * wi, ar * wi + ai * wr};
   case target::neon_fcma: // FCMLA by w's real part onto -0, then by its imaginary part
+  case target::neon:      // the same order: a times (wr, wr), then (-wi, wi) fused onto it
     if (conj_w) {
       return {std::fma(wi, ai, wr * ar), std::fma(-wi, ar, wr * ai)};
     }
@@ -57,6 +58,7 @@ template <class T> cnum<T> multiply_add(fftn::detail::target t, cnum<T> acc, cnu
     return {acc.re + p.re, acc.im + p.im};
   }
   case target::neon_fcma:
+  case target::neon:
     return {
         std::fma(-w.im, a.im, std::fma(w.re, a.re, acc.re)),
         std::fma(w.im, a.re, std::fma(w.re, a.im, acc.im)),

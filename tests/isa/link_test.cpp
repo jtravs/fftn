@@ -57,7 +57,7 @@ TEST(link, every_compiled_target_has_its_own_table) {
       EXPECT_TRUE(seen.insert(e).second) << target_name(t) << " shares an entry point";
     }
   }
-  EXPECT_EQ(tables, (FFTN_ARCH_X86_64 != 0 || FFTN_ARCH_AARCH64 != 0) ? 2 : 1);
+  EXPECT_EQ(tables, FFTN_ARCH_AARCH64 != 0 ? 3 : (FFTN_ARCH_X86_64 != 0 ? 2 : 1));
 }
 
 TEST(link, lane_counts_and_fusion_match_each_target) {
@@ -74,6 +74,14 @@ TEST(link, lane_counts_and_fusion_match_each_target) {
     EXPECT_EQ(a->f64.real_lanes, 4U);
     EXPECT_EQ(a->f32.real_lanes, 8U);
     EXPECT_EQ(a->f64.tw_reals, 4U); // pre-arranged (wr, wr), (-wi, wi)
+  }
+  if (const kernel_table* n = find_kernels(target::neon)) {
+    EXPECT_TRUE(n->fused);
+    EXPECT_EQ(n->f64.complex_lanes, 1U);
+    EXPECT_EQ(n->f32.complex_lanes, 2U);
+    EXPECT_EQ(n->f64.real_lanes, 2U);
+    EXPECT_EQ(n->f32.real_lanes, 4U);
+    EXPECT_EQ(n->f64.tw_reals, 4U); // pre-arranged, as on x86
   }
   if (const kernel_table* f = find_kernels(target::neon_fcma)) {
     EXPECT_TRUE(f->fused);

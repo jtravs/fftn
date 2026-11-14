@@ -80,6 +80,15 @@ int fault_jscvt(double x) { return __jcvt(x); }
 
 FFTN_ISA_END
 
+FFTN_ISA_BEGIN(neon)
+
+// FCMA code in the neon namespace, whose code must run on processors without it.
+__attribute__((target("arch=armv8.3-a"))) void fault_neon_fcma(double* p) {
+  vst1q_f64(p, vcaddq_rot90_f64(vld1q_f64(p), vld1q_f64(p + 2)));
+}
+
+FFTN_ISA_END
+
 namespace fftn::inline v0::detail {
 // FCMA code outside every target namespace, where baseline code lives.
 __attribute__((target("arch=armv8.3-a"))) void fault_baseline(double* p) {

@@ -5,7 +5,7 @@
 # architecture, with no ISA flag; its body is guarded by the architecture it targets, so
 # universal and cross builds need no CMake logic. Kernel units are always optimised.
 
-set(fftn_isa_units scalar.cpp avx2.cpp neon_fcma.cpp)
+set(fftn_isa_units scalar.cpp avx2.cpp neon.cpp neon_fcma.cpp)
 target_sources(fftn PRIVATE ${fftn_isa_units} target.cpp)
 fftn_always_optimise(${fftn_isa_units})
 

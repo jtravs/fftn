@@ -41,8 +41,10 @@ constexpr const kernel_table* avx2_kernels = &avx2::table;
 constexpr const kernel_table* avx2_kernels = nullptr;
 #endif
 #if FFTN_ARCH_AARCH64
+constexpr const kernel_table* neon_kernels = &neon::table;
 constexpr const kernel_table* neon_fcma_kernels = &neon_fcma::table;
 #else
+constexpr const kernel_table* neon_kernels = nullptr;
 constexpr const kernel_table* neon_fcma_kernels = nullptr;
 #endif
 
@@ -62,12 +64,12 @@ bool compiled_in(target t) noexcept {
     return true;
   case target::avx2:
     return FFTN_ARCH_X86_64 != 0;
+  case target::neon:
   case target::neon_fcma:
     return FFTN_ARCH_AARCH64 != 0;
   case target::x86_v2: // phase 1.3
   case target::avx:
   case target::avx512:
-  case target::neon:
     break;
   }
   return false;
@@ -139,12 +141,13 @@ const kernel_table* find_kernels(target t) noexcept {
     return &scalar::table;
   case target::avx2:
     return avx2_kernels;
+  case target::neon:
+    return neon_kernels;
   case target::neon_fcma:
     return neon_fcma_kernels;
   case target::x86_v2: // phase 1.3
   case target::avx:
   case target::avx512:
-  case target::neon:
     break;
   }
   return nullptr;

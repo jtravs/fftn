@@ -11,8 +11,9 @@
 //   cv<T>        complex register: C<T> complex numbers, interleaved (re, im, re, im, ...)
 //   rv<T>        real register: W<T> reals (W = 2C on SIMD targets; 1 on scalar)
 //   tw<T>        C<T> twiddles in the form mul, mulc and madd consume
-//   tw_reals<T>  reals stored per twiddle: 2 (re, im), or 4 on x86, where each twiddle w is
-//                pre-arranged as (wr, wr) and (-wi, wi) so mul needs one shuffle, not three
+//   tw_reals<T>  reals stored per twiddle: 2 (re, im), or 4 on x86 and plain NEON, where each
+//                twiddle w is pre-arranged as (wr, wr) and (-wi, wi) so mul needs one
+//                shuffle and no sign fix-up
 //   fused        whether fmadd and its relatives round once (FMA). Where false they multiply,
 //                then add: two roundings, and the operation order the generator emits for
 //                such targets (DESIGN.md 6.1). The scalar target is never fused, so it gives

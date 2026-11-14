@@ -217,7 +217,7 @@ jobs:
       matrix:
         include:
           # The getauxval feature path runs here for the first time (Neoverse N2 runners:
-          # FCMA and pointer authentication, so neon_fcma is forced alongside scalar).
+          # FCMA and pointer authentication, so neon and neon_fcma are forced beside scalar).
           # GCC 14's ASan + UBSan took 53 minutes here (CI run 43487560137) against 2.5 on
           # x86-64; GCC's sanitizers run on x86-64, and AArch64's with Clang.
           - name: gcc-14

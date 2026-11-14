@@ -119,19 +119,19 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - model: Cortex-A72 (Armv8.0; phase 1 target neon)
+          - model: Cortex-A72 (Armv8.0; target neon)
             cpu: cortex-a72
-            expect: "neon 1;fcma 0;pauth 0;best_target scalar"
-          - model: Neoverse N1 (Armv8.2, no FCMA; phase 1 target neon)
+            expect: "neon 1;fcma 0;pauth 0;best_target neon"
+          - model: Neoverse N1 (Armv8.2, no FCMA; target neon)
             cpu: neoverse-n1
-            expect: "neon 1;fcma 0;pauth 0;best_target scalar"
+            expect: "neon 1;fcma 0;pauth 0;best_target neon"
           # FCMA without pointer authentication: neon_fcma must not be chosen (DESIGN.md 6.4).
-          - model: A64FX (FCMA, no pointer authentication; phase 1 target neon)
+          - model: A64FX (FCMA, no pointer authentication; target neon)
             cpu: a64fx
-            expect: "neon 1;fcma 1;pauth 0;best_target scalar"
-          - model: QEMU max without pointer authentication (phase 1 target neon)
+            expect: "neon 1;fcma 1;pauth 0;best_target neon"
+          - model: QEMU max without pointer authentication (target neon)
             cpu: max,pauth=off
-            expect: "neon 1;fcma 1;pauth 0;best_target scalar"
+            expect: "neon 1;fcma 1;pauth 0;best_target neon"
           - model: Neoverse V1 (FCMA and pointer authentication; target neon_fcma)
             cpu: neoverse-v1
             expect: "neon 1;fcma 1;pauth 1;best_target neon_fcma"

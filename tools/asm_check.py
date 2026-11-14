@@ -9,9 +9,9 @@ A group is an object file, a static library, or several of them joined by ';' (a
 $<TARGET_OBJECTS> writes them). Functions are assigned to a target by their mangled
 namespace, fftn::<version>::detail::<target>::; everything else is baseline code. Checks:
 
-- each group contains the scalar target and the SIMD target of its architecture (avx2 on
-  x86-64, neon_fcma on AArch64), and that target's code uses its defining instructions
-  (an FMA and a ymm register; FCMLA and FCADD);
+- each group contains the scalar target and the SIMD targets of its architecture (avx2 on
+  x86-64, neon and neon_fcma on AArch64), and each target's code uses its defining
+  instructions (an FMA and a ymm register; a vector FMLA; FCMLA and FCADD);
 - no function of a target calls or tail-calls an FFTN or standard-library function: the
   vocabulary is always inlined, and nothing standard runs inside a region. One shape is
   not a call: identical-code folding (GCC's IPA-ICF, seen in sanitizer builds) turns one
@@ -19,16 +19,17 @@ namespace, fftn::<version>::detail::<target>::; everything else is baseline code
   function whose whole body is one unconditional jump to another instantiation of the
   same function in the same target is an alias, and the jump's target is checked as a
   function in its own right (identical_code_alias);
-- x86-64: no VEX or EVEX instruction and no ymm or zmm register outside avx2, and no
-  EVEX feature (zmm, mask registers, registers 16-31) inside it;
-- AArch64: no FCMLA or FCADD outside neon_fcma; in neon_fcma no LDAPR or FJCVTZS, which
+- x86-64: no VEX or EVEX instruction and no ymm or zmm register outside avx2 and avx512,
+  and no EVEX feature (zmm, mask registers, registers 16-31) in avx2;
+- AArch64: no FCMLA or FCADD outside neon_fcma (neon, whose region has no attribute, is
+  held to the baseline's rules); in neon_fcma no LDAPR or FJCVTZS, which
   "arch=armv8.3-a" also allows; pointer authentication outside the hint space only in
   neon_fcma, which is dispatched only where the processor has it (the hint forms, such as
   PACIASP, are NOPs on Armv8.0 and are what branch protection emits everywhere);
 - --baseline-has relaxes the baseline checks for what the build's baseline already has:
-  Apple's compilers target Apple silicon by default, which has FCMA, so scalar code there
-  may legitimately use FCADD;
-- an object named after a target (avx2.cpp.o, probe_avx2.cpp.o) defines FFTN functions of
+  Apple's compilers target Apple silicon by default, which has FCMA, so scalar and neon
+  code there may legitimately use FCADD;
+- an object named after a target (avx2.cpp.o, probe_neon.cpp.o) defines FFTN functions of
   that target only, and target code is defined in no other object. A linked executable
   (what an LTO build leaves to check) gets every other check.
 
@@ -46,8 +47,8 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-TARGETS = ("scalar", "avx2", "neon_fcma")
-SIMD_TARGET = {"x86": "avx2", "arm": "neon_fcma"}
+TARGETS = ("scalar", "avx2", "avx512", "neon", "neon_fcma")
+SIMD_TARGETS = {"x86": ("avx2",), "arm": ("neon", "neon_fcma")}
 
 FILE_FORMAT = re.compile(r"^(?P<name>.*?):\s+file format\s+(?P<fmt>.+)$")
 LABEL = re.compile(r"^(?P<addr>[0-9a-f]+) <(?P<name>.+)>:$")
@@ -145,7 +146,7 @@ def target_of(sym: str) -> str | None:
 
 def object_target(obj: str) -> str | None:
     # Archive members may be named by a Windows path (llvm-lib keeps the path it was given).
-    m = re.search(r"(?:^|[_/\\(])(scalar|avx2|neon_fcma)\.cpp\.(?:o|obj)\)?$", obj)
+    m = re.search(r"(?:^|[_/\\(])(scalar|avx2|avx512|neon|neon_fcma)\.cpp\.(?:o|obj)\)?$", obj)
     return m.group(1) if m else None
 
 
@@ -324,9 +325,9 @@ def check_group(objdump: str, group: list[str], baseline_has: set[str]) -> list[
         a, f = disassemble(objdump, path)
         arch = arch or a
         funcs += f
-    if arch not in SIMD_TARGET:
+    if arch not in SIMD_TARGETS:
         return [f"{group}: unknown architecture (need x86-64 or AArch64 objects)"]
-    simd = SIMD_TARGET[arch]
+    simd = SIMD_TARGETS[arch]
     by_target: dict[str, list[Function]] = {t: [] for t in TARGETS}
     baseline: list[Function] = []
     for f in funcs:
@@ -338,7 +339,7 @@ def check_group(objdump: str, group: list[str], baseline_has: set[str]) -> list[
         if where is not None and is_fftn(f.name) and t != where:
             errors.append(f"{f.obj}: defines FFTN code outside the {where} namespace: {f.name}")
 
-    for t in ("scalar", simd):
+    for t in ("scalar", *simd):
         if not by_target[t]:
             errors.append(f"no function of target {t} in {';'.join(group)}")
     for t, fs in by_target.items():
@@ -347,12 +348,13 @@ def check_group(objdump: str, group: list[str], baseline_has: set[str]) -> list[
 
     mnemonics = {t: {mn for f in fs for mn, _ in f.insns} for t, fs in by_target.items()}
     if arch == "x86":
-        avx2 = by_target["avx2"]
-        if avx2 and not any(FMA.match(mn) for mn in mnemonics["avx2"]):
-            errors.append("avx2: no FMA instruction in the avx2 code")
-        if avx2 and not any("%ymm" in ops for f in avx2 for _, ops in f.insns):
-            errors.append("avx2: no ymm register in the avx2 code")
-        for f in avx2:
+        for t, reg in (("avx2", "%ymm"), ("avx512", "%zmm")):
+            fs = by_target[t]
+            if fs and not any(FMA.match(mn) for mn in mnemonics[t]):
+                errors.append(f"{t}: no FMA instruction in the {t} code")
+            if fs and not any(reg in ops for f in fs for _, ops in f.insns):
+                errors.append(f"{t}: no {reg[1:]} register in the {t} code")
+        for f in by_target["avx2"]:
             for mn, ops in f.insns:
                 if EVEX.search(ops):
                     errors.append(f"avx2: EVEX feature in {f.name}: {mn} {ops}")
@@ -367,16 +369,25 @@ def check_group(objdump: str, group: list[str], baseline_has: set[str]) -> list[
         for want in ("fcmla", "fcadd"):
             if by_target["neon_fcma"] and not any(mn.startswith(want) for mn in fcma):
                 errors.append(f"neon_fcma: no {want.upper()} in the neon_fcma code")
-        for f in by_target["scalar"] + baseline:
-            for mn, ops in f.insns:
-                if mn.startswith(("fcmla", "fcadd")) and "fcma" not in baseline_has:
-                    errors.append(f"baseline: FCMA instruction in {f.name}: {mn} {ops}")
+        neon = by_target["neon"]
+        # The arrangement is in the mnemonic (Apple: fmla.2d) or the operands (fmla v0.2d).
+        if neon and not any(
+            mn.startswith("fmla") and re.search(r"\.(?:2d|4s)\b", f"{mn} {ops}")
+            for f in neon
+            for mn, ops in f.insns
+        ):
+            errors.append("neon: no vector FMLA in the neon code")
+        for where, fs in (("baseline", by_target["scalar"] + baseline), ("neon", neon)):
+            for f in fs:
+                for mn, ops in f.insns:
+                    if mn.startswith(("fcmla", "fcadd")) and "fcma" not in baseline_has:
+                        errors.append(f"{where}: FCMA instruction in {f.name}: {mn} {ops}")
         for f in by_target["neon_fcma"]:
             for mn, ops in f.insns:
                 base = mn.split(".")[0]
                 if base.startswith("ldapr") or base == "fjcvtzs":
                     errors.append(f"Armv8.3 instruction outside FCMA in {f.name}: {mn} {ops}")
-        for f in by_target["scalar"] + baseline:
+        for f in by_target["scalar"] + neon + baseline:
             for mn, _ in f.insns:
                 if is_pauth(mn.split(".")[0]) and "pauth" not in baseline_has:
                     errors.append(f"pointer authentication outside neon_fcma in {f.name}: {mn}")
