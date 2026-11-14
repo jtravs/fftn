@@ -104,7 +104,9 @@ options it does not know. FFTN's own options are listed under [FFTN options](#ff
    so the next round plans its cases again.
 7. **Stopping.** After `--min-rounds` valid rounds, fbench analyses after every round and
    stops when every target case (`--target`, default all) is resolved, or at
-   `--max-rounds` valid rounds or `--budget` seconds.
+   `--max-rounds` valid rounds or `--budget` seconds (defaults 6, 80 and an hour). On a
+   shared machine more rounds are cheaper than waiting for a quiet or exclusive one: a run
+   on a busy machine simply takes more rounds to resolve its cases.
 8. The report is printed and the run is stored. The exit status is 1 if any output was
    wrong.
 
