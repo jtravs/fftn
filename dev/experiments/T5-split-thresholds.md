@@ -106,7 +106,8 @@ codelets changed every row above 2048 points (Zen 3's L1 is 32 KiB, so c2c rows 
 4096 points are grids now). Its never-split arm N was handicapped: a lone unsplittable row
 was still dispatched to a whole group, so N ran 1.05–1.31 times slower than serial on long
 rows (run 20261114-111309-26b4) and every Y ÷ N in it overstates splitting. None of its
-fbench results is used; all four sweeps were re-run at 62958fc (DMOG job 509111).
+fbench results is used; all four sweeps were re-run at ec63bb3 (DMOG job 509111; the DMOG
+and Xeon run records of this campaign carry the label 62958fc, an ancestor, set by mistake).
 
 Runs (fbench, `fftn_omp` unless stated, quick tier; band = the run's A/A noise band):
 
@@ -178,7 +179,7 @@ rows of 3072–6144 points (0.71–0.82 at 512 and 1024) but cut planes' lines t
 different chunk sizes; one value serves both best at 2048.
 
 **Adoption (rule 6).** Whole quick tier (82 cases), 15 rounds, against A (provisional) and
-serial (S), DMOG jobs 509162 and 509163 at 62958fc. Arms: B = T5's values (split 6144,
+serial (S), DMOG jobs 509162 and 509163 at ec63bb3. Arms: B = T5's values (split 6144,
 1024 points per member); F = B with T1's adopted fields (`sync_ns` 1100,
 `claim_divisor` 1), the profile as committed; F4 = F with a 4096-point threshold; F6 = F
 with `inline_multiple` 6 (T1).

@@ -116,20 +116,22 @@ cluster; the profile is chosen by the class, as rule 3 already chooses by group 
 ## Results
 
 Three machines, harness runs stored as JSON lines with the host fingerprint (`t1.py show
-<run>` prints every probe; the run directories are on the machines named):
+<run>` prints every probe; the run directories are on the machines named). The second
+campaign built ec63bb3 (`main` then); its DMOG and Xeon run records carry the label
+62958fc (`FBENCH_SOURCE_COMMIT`, set by mistake to an ancestor), the Mac's say ec63bb3:
 
 | Run | Machine, build, placement | Commit | Probes |
 |---|---|---|---|
 | 20261114-080613-96e1 | EPYC 7763 node, exclusive, cores 0–63 (one socket, 8 CCXs); GCC 15.2 (libgomp), AVX2; `--pin`, `OMP_PLACES=cores OMP_PROC_BIND=close`; 10 rounds (DMOG job 508943) | 148b0d6 | all |
-| 20261114-175237-317d | same node type, `-c 64 --distribution=block:block` (cores 0–63), GCC 15.2; 10 rounds (DMOG job 509110) | 62958fc | `work`, `team` |
-| 20261114-174647-f139, -174721-6158 | Apple M5 Max, the 6 fastest cores (one cluster), Clang 23.1 (libomp), NEON+FCMA; 6 rounds, loaded Mac (load 7); the second with `KMP_BLOCKTIME=200` | 62958fc | all |
-| 20261114-175414-29ab | Xeon Gold 6240, 18 cores of socket 0, shared (load 3–20), GCC 14.4 (libgomp), AVX-512; 6 rounds (Slurm job 15569) | 62958fc | all |
+| 20261114-175237-317d | same node type, `-c 64 --distribution=block:block` (cores 0–63), GCC 15.2; 10 rounds (DMOG job 509110) | ec63bb3 | `work`, `team` |
+| 20261114-174647-f139, -174721-6158 | Apple M5 Max, the 6 fastest cores (one cluster), Clang 23.1 (libomp), NEON+FCMA; 6 rounds, loaded Mac (load 7); the second with `KMP_BLOCKTIME=200` | ec63bb3 | all |
+| 20261114-175414-29ab | Xeon Gold 6240, 18 cores of socket 0, shared (load 3–20), GCC 14.4 (libgomp), AVX-512; 6 rounds (Slurm job 15569) | ec63bb3 | all |
 
 **What the first campaign still says.** Job 508943 ran at 148b0d6, before the scheduler
 fixes 5a1cd72 (dispatch no more members than tasks when nothing splits) and fb91770 (rule 1
 decided at plan construction). The engine, the pool and the waiting code
 (`engine.hpp`, `team_execute.cpp`, `thread_pool.cpp`, `wait.hpp`) did not change between
-148b0d6 and 62958fc, so its `bulk`, `phase`, `claim` and `wake` probes stand. Its `work`
+148b0d6 and ec63bb3, so its `bulk`, `phase`, `claim` and `wake` probes stand. Its `work`
 probe does not (radix-32/64 codelets and the grid strategy changed the passes, and with
 them the work units), and its `team` probe goes through the executor path that fb91770
 changed: both were re-run (job 509110). Its fbench sweeps are T5's and were all re-run
