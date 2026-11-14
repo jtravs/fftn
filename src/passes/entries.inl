@@ -108,6 +108,22 @@ template <class T, std::size_t I> struct radix_entries {
                   &phase_pass<T, R, +1, false, nop, 2>,
               },
           },
+      .r2c_last =
+          {
+              &r2c_last<T, R, false>,
+              &r2c_last<T, R, true>,
+          },
+      .c2r_first = &c2r_first<T, R>,
+      .r2c_leaf =
+          {
+              &r2c_leaf<T, R, false>,
+              &r2c_leaf<T, R, true>,
+          },
+      .c2r_leaf =
+          {
+              &c2r_leaf<T, R, nop>,
+              &c2r_leaf<T, R, scl>,
+          },
   };
 };
 
@@ -216,7 +232,6 @@ inline constexpr pass_kernels<T> pass_table{
                 &bluestein_out<T, fac, true>,
             },
         },
-    .r2c_pack_pairs = &r2c_pack_pairs<T>,
     .r2c_post =
         {
             &r2c_post<T, false>,
@@ -228,17 +243,28 @@ inline constexpr pass_kernels<T> pass_table{
             &r2c_store<T, false>,
             &r2c_store<T, true>,
         },
-    .c2r_pre = &c2r_pre<T>,
-    .c2r_unpack_pairs =
+    .c2r_pre =
         {
-            &c2r_unpack_pairs<T, false>,
-            &c2r_unpack_pairs<T, true>,
+            &c2r_pre<T, false>,
+            &c2r_pre<T, true>,
         },
     .c2r_expand = &c2r_expand<T>,
     .c2r_store =
         {
             &c2r_store<T, false>,
             &c2r_store<T, true>,
+        },
+    .r2c_pack_pairs = &r2c_pack_pairs<T>,
+    .r2c_post_strided =
+        {
+            &r2c_post_strided<T, false>,
+            &r2c_post_strided<T, true>,
+        },
+    .c2r_pre_strided = &c2r_pre_strided<T>,
+    .c2r_unpack_pairs =
+        {
+            &c2r_unpack_pairs<T, false>,
+            &c2r_unpack_pairs<T, true>,
         },
     .block_copy =
         {
