@@ -185,18 +185,28 @@ muls + fmas + 4·cmuls multiplications (`Counts.flops_adds`, `flops_muls`).
 
 ## Operation counts
 
-`reference.py` holds the best published counts per size (split radix for 2^k; for the other
-sizes the counts of FFTW's generated codelets, Frigo 1999). Every codelet must reach them
-(a twiddle variant adds R − 1 complex multiplies), and the tests and `--table` check it.
-The generator does better than the reference at 7, 11 and 14 (fewer multiplies, from the
-mean removal in the prime form) and equals it elsewhere, with one recorded gap:
+`reference.PLAIN` has one entry per radix, and each says where its numbers come from
+(`reference.py` cites them exactly):
+
+- **published**: the counts in the headers of FFTW 3.3's generated codelets (`n1_N`, and
+  `t1_N` for the twiddle variants), and for powers of two the split-radix count
+  4n log₂ n − 6n + 8;
+- **derived**: no count is cited for the size, so the reference is the sum of its parts
+  under the generator's algorithm, from the entries above (`good_thomas(n1, n2)`; at task
+  1.1 this is how 6, 10 and 14 are referenced);
+- **none**, with a reason: the radix is generated without a count check, and `--table`
+  shows "none".
+
+Every codelet must reach its reference (a twiddle variant adds R − 1 complex multiplies),
+and the tests and `--table` check it. `--table` shows where the generator does better
+(at task 1.1: 7, 11 and 14, fewer multiplies from the mean removal in the prime form).
+Where it does worse, the gap is recorded in `reference.GAPS` with the generator's exact
+counts and the reason, so any change, better or worse, fails a test and is looked at. At
+task 1.1 the one gap is:
 
 - **13**: 192 additions and 134 multiplies against 176 and 68. The symmetric-pair form
   costs about m² multiplies per part for m = 6 pairs; the reference uses Rader's algorithm
   (a length-12 cyclic convolution), outside task 1.1.
-
-A gap is recorded in `reference.GAPS` with the generator's exact counts, so any change,
-better or worse, fails a test and is looked at.
 
 ## Adding a radix
 
@@ -206,15 +216,27 @@ better or worse, fails a test and is looked at.
    algorithm first (next section).
 2. Add R to `RADICES` in `catalogue.py`. The metadata fields are `std::uint8_t` and
    `std::uint16_t`: R ≤ 255.
-3. Add R's best published count to `reference.PLAIN`, with its source in a comment if it
-   is not one of those already cited. Run `uv run python -m gen.fftn_gen --table`. If the
-   generator does not reach it, improve the generator or record the gap in
-   `reference.GAPS` with its counts and the reason, and say so in "Operation counts" above.
+3. Give R an entry in `reference.PLAIN` ("Operation counts" above): its best published
+   count with `published(adds, muls, source)`, naming the source exactly; if there is none,
+   a derived one (for 18 = 2 × 9, `good_thomas(2, 9)`); if neither makes sense,
+   `Reference(None, "none: <reason>")`. Without an entry `--table` and the tests stop with
+   a message saying so. Run `uv run python -m gen.fftn_gen --table`. If the generator does
+   not reach the reference, improve the generator or record the gap in `reference.GAPS`
+   with its counts and the reason, and say so in "Operation counts" above.
 4. Regenerate (`uv run python -m gen.fftn_gen`) and run the generator's tests.
 5. Build and run `fftn_isa_tests` (`tests/isa/codelet_test.cpp`): it runs every codelet in
    the metadata table on every target the machine has, so the new radix is tested without
-   any change to the test. Look at `live` for the new codelets: above 16 the 16-register
-   targets (AVX2) spill, above 32 every target does.
+   any change to the test. With the gate's Release preset:
+
+   ```bash
+   cmake --preset check-release
+   cmake --build --preset check-release --target fftn_isa_tests
+   build/check-release/tests/isa/fftn_isa_tests --gtest_filter='*codelet*'
+   ctest --preset check-release -R 'isa\.'   # also the disassembly checks
+   ```
+
+   Look at `live` for the new codelets: above 16 the 16-register targets (AVX2) spill,
+   above 32 every target does.
 6. Commit the generator change and `src/gen/` together. Nothing else lists radices.
 
 ## Adding an algorithm
@@ -249,10 +271,11 @@ before the first store if it may run in place.
   algorithm needs one, `lower` raises `ForcedRotation`: improve the choice, or add the
   rotating operation to the lowering, the verifier and the emitter together, with a
   codelet that exercises it in the C++ test.
-- **Value numbering can merge, never split, wrongly.** Keys keep 2^−150 of 256-bit values,
-  so a missed merge needs a rounding boundary within 2^−100. A wrong merge would need two
-  different linear functions to agree at three random points to that precision; the exact
-  verification would catch it anyway.
+- **Value numbering may, very rarely, miss a merge; it does not merge wrongly.** Keys keep
+  2^−150 of 256-bit values, so a missed merge (two equal values falling either side of a
+  rounding boundary) needs a boundary within 2^−100 of a value, and costs only an
+  operation. A wrong merge would need two different linear functions to agree at three
+  random points to that precision, and the exact verification would catch it anyway.
 - **Mean removal in the prime form.** Each cosine row sums to −1/2, so with t = Σ s_j the
   cosine sums are (x_0 − t/(2m)) + Σ_{j<m} D_kj (s_j − s_m). That needs m(m − 1) + 1
   multiplies instead of m², with the same number of additions and the same number of
@@ -275,9 +298,11 @@ before the first store if it may run in place.
   keeps its register allocator out of trouble. A codelet whose `live` exceeds 16 spills a
   little on AVX2's 16 registers, and above 32 on every target; `--table` shows `live` (at
   task 1.1, radices 14 to 16 were at 17 and 18).
-- **Constants** are printed twice, rounded once from the exact value to double and to float
-  (rounding the double to float would round twice), and `gen_k<T>` picks one. Literals are
-  the shortest strings that round back.
+- **Constants** are printed twice, each the exact value rounded once to its precision (to
+  double, and to float directly: rounding the double to float would round twice), and
+  `gen_k<T>` picks one. The double literal is the shortest decimal that reads back as that
+  double; the float literal has nine significant digits, which always read back as that
+  float. A test checks both roundings.
 - **Determinism.** Random samples come from fixed seeds and every iteration that reaches the
   output is over ordered containers, so the output is identical on every run and machine.
   The gate depends on it.

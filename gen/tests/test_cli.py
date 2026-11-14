@@ -15,6 +15,7 @@ from unittest import mock
 import mpmath
 from fftn_gen import __main__ as cli
 from fftn_gen.catalogue import generate
+from fftn_gen.codelet import build
 from fftn_gen.emit_cpp import literal_double, literal_float
 
 from .test_codelets import codelets
@@ -49,6 +50,16 @@ class CommandLine(unittest.TestCase):
                     case "extra":
                         (path / "stale.inl").write_text("x\n")
                 self.assertEqual(self.run_cli("--check", d), 1)
+
+    def test_table_without_a_reference_entry_fails_with_a_message(self) -> None:
+        err = io.StringIO()
+        with (
+            mock.patch.object(cli, "all_codelets", return_value=[build(18, "plain", -1)]),
+            contextlib.redirect_stdout(io.StringIO()),
+            contextlib.redirect_stderr(err),
+        ):
+            self.assertEqual(cli.main(["--table"]), 1)
+        self.assertIn("radix 18 has no entry", err.getvalue())
 
     def test_the_committed_tree_matches_the_generator(self) -> None:
         root = Path(__file__).resolve().parents[2]

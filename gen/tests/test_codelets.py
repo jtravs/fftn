@@ -123,11 +123,7 @@ class Verification(unittest.TestCase):
             verify(ops, 5, "plain", -1)
 
     def test_a_swapped_rotation_is_caught(self) -> None:
-        c = next(
-            c
-            for c in codelets()
-            if (c.radix, c.variant, c.sign) == (16 if 16 in RADICES else 8, "dit", 1)
-        )
+        c = max((c for c in codelets() if (c.variant, c.sign) == ("dit", 1)), key=lambda c: c.radix)
         ops = list(c.ops)
         i = next(i for i, op in enumerate(ops) if op.kind == "addj")
         ops[i] = dataclasses.replace(ops[i], kind="subj")

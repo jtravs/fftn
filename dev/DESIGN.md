@@ -614,10 +614,10 @@ high-precision verification. It is documented in `gen/README.md` (section 17).
 For each radix the generator can emit:
 
 - **plain** (no twiddles): leaves and last passes;
-- **DIF twiddle** (multiply outputs) and **DIT twiddle** (multiply inputs, with the
-  multiply fused into the first butterfly layer as `madd` where a product has a single
-  user; in the radix 2–16 codelets none has, since every twiddled input feeds a sum and a
-  difference, and fusing both would repeat the multiply);
+- **DIF twiddle** (multiply outputs) and **DIT twiddle** (multiply inputs). Fusing the
+  multiply into the first butterfly layer as `madd` is not done: it pays only where a
+  product has a single user, and in the radix 2–16 codelets every twiddled input feeds a
+  sum and a difference, where fusing both would repeat the multiply;
 - **forward and backward**: generated separately for the complex-register form; for the
   split form the backward transform reuses the forward codelet with real and imaginary
   registers exchanged at load and store;
@@ -626,15 +626,16 @@ For each radix the generator can emit:
 - **fused-edge**: the real-transform post- or pre-processing folded into the codelet of
   the last or first pass (section 9.1).
 
-Generated so far (task 1.1): the complex-register form of plain, DIT and DIF, forward and
-backward, for radices 2–16. The split form, pruned and fused-edge variants follow with
-tasks 1.5 and 2.1.
+Generated so far: the complex-register form of plain, DIT and DIF, forward and backward,
+for the radices listed in `gen/fftn_gen/catalogue.py` (2–16 at task 1.1). The split form,
+pruned and fused-edge variants follow with tasks 1.5 and 2.1.
 
 Reference values for regression: the generator's operation counts are compared with the
 best published counts for each size (for example a size-16 complex DFT in 144 additions
 and 24 multiplications in scalar split form). Reaching them means nothing is missing. The
-table and the recorded gaps are in `gen/fftn_gen/reference.py`; the one gap so far is 13,
-where the reference uses Rader's algorithm.
+table, the source of each entry (published, derived from its parts, or none with a
+reason) and the recorded gaps are in `gen/fftn_gen/reference.py`; at task 1.1 the one gap
+is 13, where the reference uses Rader's algorithm.
 
 ### 7.4 What the generator does not do
 
@@ -1756,7 +1757,7 @@ or departs from sections 5.5 and 13.6, or from Kokkos-FFT 2.0's `KokkosFFT::Plan
 | 2026-11-13 | Codelet calling convention: `cdft<R>::plain`, `dit` and `dif`, static member templates over `T` and `Sign` (−1 forward, +1 backward), taking the caller's accessor objects `in.get(j)`, `out.put(k, v)` and `twid.get(k)`; twiddles are forward roots, multiplied by `mulc` backward (gen/README.md) | One codelet text then serves every pass kind, edge variant and layout, which differ only in their accessors; stores stay next to their producers inside the codelet; the accessors hold pointers, never vectors, so no vector crosses a non-inlined boundary |
 | 2026-11-13 | Task 1.1 generates the complex-register lowering only, for radices 2–16: plain, DIT and DIF, forward and backward. They are compiled and tested in test-only region units (`tests/isa/codelets_<target>.cpp`) until task 1.2's passes instantiate them in the library | The split lowering, pruned and fused-edge variants are tasks 1.5 and 2.1; codelets nothing calls do not belong in the library's units |
 | 2026-11-13 | The generator orders codelets by greedy list scheduling for fewest live values, not by the recursive partition of section 7.2's first draft | Measured over radices 2–16, all variants, both directions, each order with the same load and store placement (commit aa966ef holds the partition and the test): a total peak of 1004 live values for the greedy order, 1196 for the partition and 1098 for the builders' own creation order, and the greedy order no worse than either on any codelet; a test keeps holding it against creation order |
-| 2026-11-13 | Operation counts are compared with the best published counts in unfused real arithmetic; a size the generator misses is recorded with its exact counts and reason (`gen/fftn_gen/reference.py`), and only 13 is (Rader's algorithm, 176 + 68 against 192 + 134) | A gap is never widened silently and a closed gap is noticed; the mean removal in the prime form beats the reference at 7, 11 and 14 |
+| 2026-11-13 | Operation counts are compared with the best published counts in unfused real arithmetic; a size the generator misses is recorded with its exact counts and reason (`gen/fftn_gen/reference.py`); at task 1.1 only 13 is (Rader's algorithm, 176 + 68 against 192 + 134). A size with no published count gets a reference derived from its parts, or none with a reason | A gap is never widened silently and a closed gap is noticed; the mean removal in the prime form beats the reference at 7, 11 and 14 |
 
 ---
 
