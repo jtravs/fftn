@@ -25,6 +25,9 @@ template <class T> struct kernels_of {
   // Converts count interleaved twiddles into this target's twiddle storage, which holds
   // tw_reals reals per twiddle. count % complex_lanes == 0.
   void (*pack_twiddles)(const T* w, std::size_t count, T* out);
+  // The same into broadcast storage, tw_reals reals per twiddle, each read into every lane
+  // (bcast_tw). Any count.
+  void (*pack_bcast_twiddles)(const T* w, std::size_t count, T* out);
   std::size_t complex_lanes; // C: complex numbers per complex register
   std::size_t real_lanes;    // W: reals per real register
   std::size_t tw_reals;      // reals stored per twiddle: 2, or 4 where pre-arranged (x86)

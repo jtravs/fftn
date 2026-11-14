@@ -56,6 +56,14 @@ template <class T> FFTN_FORCE_INLINE void pack_tw(T* out, const T* p) {
     out[k] = p[k];
   }
 }
+// Broadcast storage is the twiddle itself: a 16-byte load for double, a 64-bit load
+// duplicated for float.
+FFTN_FORCE_INLINE float64x2_t bcast_tw(const double* p) { return vld1q_f64(p); }
+FFTN_FORCE_INLINE float32x4_t bcast_tw(const float* p) { return bcast(p); }
+template <class T> FFTN_FORCE_INLINE void pack_tw1(T* out, const T* p) {
+  out[0] = p[0];
+  out[1] = p[1];
+}
 
 FFTN_FORCE_INLINE float64x2_t add(float64x2_t a, float64x2_t b) { return vaddq_f64(a, b); }
 FFTN_FORCE_INLINE float32x4_t add(float32x4_t a, float32x4_t b) { return vaddq_f32(a, b); }
@@ -83,6 +91,9 @@ FFTN_FORCE_INLINE float64x2_t mulc(float64x2_t a, float64x2_t w) {
 FFTN_FORCE_INLINE float32x4_t mulc(float32x4_t a, float32x4_t w) {
   return vcmlaq_rot270_f32(vcmlaq_f32(vdupq_n_f32(-0.0F), w, a), w, a);
 }
+// Twiddle storage is plain complex numbers here, so a register is already a twiddle.
+FFTN_FORCE_INLINE float64x2_t cmul(float64x2_t a, float64x2_t b) { return mul(a, b); }
+FFTN_FORCE_INLINE float32x4_t cmul(float32x4_t a, float32x4_t b) { return mul(a, b); }
 FFTN_FORCE_INLINE float64x2_t scale(float64x2_t a, double r) { return vmulq_n_f64(a, r); }
 FFTN_FORCE_INLINE float32x4_t scale(float32x4_t a, float r) { return vmulq_n_f32(a, r); }
 FFTN_FORCE_INLINE float64x2_t fmadd_r(float64x2_t acc, float64x2_t a, double r) {

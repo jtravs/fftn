@@ -120,4 +120,12 @@ template <class T> void pack_twiddles(const T* w, std::size_t count, T* out) {
   }
 }
 
+// Writes count interleaved twiddles w as this target's broadcast storage (tw_reals<T>
+// reals each, read by bcast_tw). Run once, when a plan's tables are built.
+template <class T> void pack_bcast_twiddles(const T* w, std::size_t count, T* out) {
+  for (std::size_t k = 0; k < count; ++k) {
+    pack_tw1(out + tw_reals<T> * k, w + 2 * k);
+  }
+}
+
 } // namespace
