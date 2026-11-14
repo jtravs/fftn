@@ -196,7 +196,7 @@ TEST(Grid, ScaleIsFusedIntoTheLastPhase) {
     for (const auto& rec : core.prog.records) {
       if (const auto* st = std::get_if<fftn::detail::stage>(&rec); st != nullptr) {
         ++stages;
-        named += st->name.find(part) != std::string::npos ? 1 : 0;
+        named += st->name.find(part) != std::string::npos ? 1U : 0U;
       }
     }
     return std::pair{stages, named};
@@ -262,8 +262,8 @@ TEST(Grid, ScaleOnInputIsTheGathers) {
   for (const auto& rec : core->prog.records) {
     if (const auto* st = std::get_if<fftn::detail::stage>(&rec); st != nullptr) {
       const bool gather = st->name.find("gather") != std::string::npos;
-      in += gather && st->name.find("in: scale") != std::string::npos ? 1 : 0;
-      out += st->name.find("out: scale") != std::string::npos ? 1 : 0;
+      in += gather && st->name.find("in: scale") != std::string::npos ? 1U : 0U;
+      out += st->name.find("out: scale") != std::string::npos ? 1U : 0U;
     }
   }
   EXPECT_EQ(in, 1U);
