@@ -20,7 +20,10 @@
 #include <complex>
 #include <cstddef>
 #include <cstring>
+#include <fstream>
 #include <set>
+#include <sstream>
+#include <string>
 #include <variant>
 #include <vector>
 
@@ -124,7 +127,54 @@ TEST(Rules, ProfilesOfEveryTarget) {
   }
 }
 
-TEST(Rules, PublishedExamples) {
+// The recorded radices of every 73-smooth length up to 20000 for each profile
+// (data/rule_radices.txt): the rules' specification (DESIGN.md 11.2) made exact.
+TEST(Rules, RecordedTable) {
+  std::ifstream in(FFTN_CORE_DATA "/rule_radices.txt");
+  ASSERT_TRUE(in.good()) << "cannot read " << FFTN_CORE_DATA "/rule_radices.txt";
+  const fftn::detail::target_profile profiles[] = {
+      {.registers = 16, .merge = false},
+      {.registers = 32, .merge = true},
+      {.registers = 32, .merge = false},
+  };
+  std::size_t lines = 0;
+  std::size_t failures = 0;
+  std::string line;
+  while (std::getline(in, line)) {
+    if (line.empty() || line[0] == '#') {
+      continue;
+    }
+    std::istringstream fields(line);
+    std::size_t n = 0;
+    fields >> n;
+    for (const auto& profile : profiles) {
+      std::string bar;
+      fields >> bar;
+      ASSERT_EQ(bar, "|") << line;
+      std::vector<std::size_t> want;
+      while (fields.peek() == ' ') {
+        fields.get();
+        if (fields.peek() == '|' || fields.peek() == EOF) {
+          break;
+        }
+        std::size_t r = 0;
+        fields >> r;
+        want.push_back(r);
+      }
+      if (fftn::detail::rule_radices(n, profile) != want && ++failures <= 8) {
+        ADD_FAILURE() << "n = " << n << ", " << profile.registers << " registers"
+                      << (profile.merge ? ", merging" : "") << ": not as recorded";
+      }
+    }
+    ++lines;
+  }
+  EXPECT_EQ(lines, 5208U);
+  EXPECT_EQ(failures, 0U);
+}
+
+// Values from the rules' definition (FFTL.jl's single-line rules) for lengths its own
+// tables list, on 32 registers with merged radices (AArch64) and on 16 without (AVX2).
+TEST(Rules, FftlExamples) {
   using v = std::vector<std::size_t>;
   const fftn::detail::target_profile wide{.registers = 32, .merge = true};
   const fftn::detail::target_profile narrow{.registers = 16, .merge = false};
