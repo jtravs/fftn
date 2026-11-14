@@ -3,7 +3,7 @@
 
 // The contracts of plan, workspace and shape (DESIGN.md 15.3, AGENTS.md section 5): no
 // allocation in execute, any alignment, bitwise independence of a transform's position in
-// the batch (execute_rows with any first included), plan reuse across copies and threads,
+// the batch (execute_transforms with any first included), plan reuse across copies and threads,
 // caller-supplied workspaces, and std::invalid_argument naming the argument for every
 // invalid shape. Memory outside the rows (canaries) and input preservation are checked by
 // the harness on every run of the oracle suites; they are exercised here too through it.
@@ -70,7 +70,7 @@ void expect_no_allocation(const fftn::shape<In, Out>& s, std::size_t in_count,
       in_place ? reinterpret_cast<Out*>(in) : reinterpret_cast<Out*>(storage.data() + in_count + 1);
   const fftn::test::allocation_counter counter;
   p.execute(in, out, ws);
-  p.execute_rows(0, 1, in, out, ws);
+  p.execute_transforms(0, 1, in, out, ws);
   EXPECT_EQ(counter.allocations(), 0U) << p.describe();
   EXPECT_EQ(counter.deallocations(), 0U);
 }
@@ -87,6 +87,11 @@ TYPED_TEST(Contracts, ExecuteNeverAllocates) {
   c2r_planes.axes = {{.n = 6}, {.n = 8}};
   expect_no_allocation(c2r_planes, 6 * 5, 6 * 8); // goes through the block
   expect_no_allocation(fftn::rows_c2c<T>(1, 1, fftn::direction::forward), 1, 1, true);
+  const fftn::shape<T, c> four_batches{
+      .axes = {{.n = 10}},
+      .batches = {{.count = 2}, {.count = 3}, {.count = 1}, {.count = 2}},
+  };
+  expect_no_allocation(four_batches, 12 * 10, 12 * 6);
 }
 
 // ---- Any alignment: the same bits at every offset of the arrays.
@@ -125,7 +130,7 @@ TYPED_TEST(Contracts, AnyAlignmentGivesTheSameBits) {
 
 // ---- A transform's result does not depend on its position in the batch.
 
-// Runs every transform of `p` once through execute and once through execute_rows from
+// Runs every transform of `p` once through execute and once through execute_transforms from
 // several starting points, on a batch whose transforms all hold the same input; every
 // transform's output must equal transform 0's bit for bit (DESIGN.md 15.5).
 template <class In, class Out>
@@ -147,10 +152,10 @@ void check_positions(const fftn::plan<In, Out>& p, std::size_t transforms, std::
   }
   for (const std::size_t start : {std::size_t{1}, transforms / 2, transforms - 1}) {
     std::vector<Out> part(out.size());
-    p.execute_rows(start, transforms - start, in.data(), part.data(), ws);
+    p.execute_transforms(start, transforms - start, in.data(), part.data(), ws);
     for (std::size_t t = start; t < transforms; ++t) {
       EXPECT_TRUE(same_bits<Out>(std::span<const Out>(&part[t * out_dist], out_len), first))
-          << "execute_rows from " << start << ", transform " << t;
+          << "execute_transforms from " << start << ", transform " << t;
     }
     // The transforms before `start` are not touched.
     const std::vector<Out> zero(start * out_dist);
@@ -174,6 +179,22 @@ TYPED_TEST(Contracts, ResultDoesNotDependOnPosition) {
   two.axes = {{.n = 12}};
   two.batches = {{.count = 3}, {.count = 4}};
   check_positions(fftn::c2c_plan<T>(two), 12, 12, 12, 12, 12);
+  // Three and four batch dimensions, one of count 1: 2 x 3 x 2 and 2 x 1 x 3 x 2.
+  const fftn::shape<c, c> three{
+      .axes = {{.n = 9}},
+      .batches = {{.count = 2}, {.count = 3}, {.count = 2}},
+  };
+  check_positions(fftn::c2c_plan<T>(three), 12, 9, 9, 9, 9);
+  const fftn::shape<T, c> four{
+      .axes = {{.n = 3}, {.n = 8}},
+      .batches = {{.count = 2}, {.count = 1}, {.count = 3}, {.count = 2}},
+  };
+  check_positions(fftn::r2c_plan<T>(four), 12, 24, 15, 24, 15);
+  const fftn::shape<c, T> four_c2r{
+      .axes = {{.n = 3}, {.n = 8}},
+      .batches = {{.count = 2}, {.count = 1}, {.count = 3}, {.count = 2}},
+  };
+  check_positions(fftn::c2r_plan<T>(four_c2r), 12, 15, 24, 15, 24);
 }
 
 // ---- Plans are reusable: repeated runs, copies and concurrent threads agree bit for bit.
@@ -289,9 +310,9 @@ TEST(Workspace, MovesAndEmptyWorkspaces) {
   EXPECT_EQ(x, y);
 }
 
-// ---- Execution preconditions: assertions in debug builds of the library (DESIGN.md 18.2,
-// item 11). Builds with NDEBUG (Release and the sanitizer builds) compile them out; the
-// gate's coverage build is a Debug build and runs these.
+// ---- Execution preconditions: assertions in debug builds of the library (DESIGN.md 5.3).
+// Builds with NDEBUG (Release and the sanitizer builds) compile them out; the gate's
+// coverage build is a Debug build and runs these.
 
 TEST(ExecutionDeathTest, PreconditionsAreAssertedInDebugBuilds) {
 #ifdef NDEBUG
@@ -313,7 +334,7 @@ TEST(ExecutionDeathTest, PreconditionsAreAssertedInDebugBuilds) {
   fftn::workspace small(rows.workspace_bytes() - 1);
   EXPECT_DEATH(rows.execute(x.data(), y.data(), small), "workspace smaller");
   fftn::workspace enough(rows);
-  EXPECT_DEATH(rows.execute_rows(1, 2, x.data(), y.data(), enough), "beyond the batch");
+  EXPECT_DEATH(rows.execute_transforms(1, 2, x.data(), y.data(), enough), "beyond the batch");
 #endif
 }
 
@@ -334,6 +355,16 @@ TEST(Validation, InvalidShapesThrowNamingTheArgument) {
   using c = std::complex<double>;
   const fftn::shape<c, c> no_axes;
   expect_refused(no_axes, "shape.axes");
+  const fftn::shape<c, c> four_axes{
+      .axes = {{.n = 2}, {.n = 3}, {.n = 4}, {.n = 5}},
+      .batches = {{.count = 6}},
+  };
+  expect_refused(four_axes, "shape.axes");
+  const fftn::shape<c, c> zero_third{
+      .axes = {{.n = 8}},
+      .batches = {{.count = 2}, {.count = 3}, {.count = 0}, {.count = 4}},
+  };
+  expect_refused(zero_third, "shape.batches[2].count");
   expect_refused(fftn::rows_c2c<double>(0, 1, fftn::direction::forward), "shape.axes[0].n");
   expect_refused(fftn::planes_c2c<double>(4, 0, 1, fftn::direction::forward), "shape.axes[1].n");
   expect_refused(fftn::rows_c2c<double>(8, 0, fftn::direction::forward), "shape.batches[0].count");
@@ -350,6 +381,15 @@ TEST(Validation, InvalidShapesThrowNamingTheArgument) {
   // Interleaved rows that collide: stride 2, distance 1, three rows.
   overlap.axes = {{.n = 8, .out_stride = 2}};
   overlap.batches = {{.count = 3, .out_dist = 1}};
+  expect_refused(overlap, "overlap");
+  // Four batch dimensions, the outermost colliding with the third: distances 16 and 16.
+  overlap.axes = {{.n = 8}};
+  overlap.batches = {
+      {.count = 2, .out_dist = 16},
+      {.count = 1},
+      {.count = 2, .out_dist = 16},
+      {.count = 2, .out_dist = 8},
+  };
   expect_refused(overlap, "overlap");
 
   // Sizes beyond the address space.
@@ -377,6 +417,10 @@ TEST(Validation, InvalidShapesThrowNamingTheArgument) {
   real.axes = {{.n = 8}};
   real.batches = {{.count = 2, .in_dist = 10, .out_dist = 6}};
   expect_refused(real, "options.in_place", {.in_place = true});
+  real.batches = {{.count = 2}, {.count = 3}, {.count = 2, .in_dist = 12, .out_dist = 5}};
+  expect_refused(real, "shape.batches[2]", {.in_place = true});
+  moved.batches = {{.count = 2}, {.count = 2}, {.count = 2}, {.count = 2, .in_dist = 16}};
+  expect_refused(moved, "shape.batches[3]", {.in_place = true});
 
   // Options: a scale that is not finite, an instruction set the build or the processor lacks.
   const auto rows = fftn::rows_c2c<double>(8, 1, fftn::direction::forward);
@@ -405,6 +449,17 @@ TEST(Validation, StridesThatOverflowAreRefused) {
   expect_refused(s, "shape.batches[0].in_dist");
   s.batches = {{.count = 3, .out_dist = lowest}};
   expect_refused(s, "shape.batches[0].out_dist");
+  s.batches = {{.count = 2}, {.count = 2}, {.count = 2}, {.count = 2, .in_dist = lowest}};
+  expect_refused(s, "shape.batches[3].in_dist");
+  // The byte reach of four batch dimensions together overflows, though each one's fits.
+  constexpr std::ptrdiff_t wide = std::numeric_limits<std::ptrdiff_t>::max() / 48;
+  s.batches = {
+      {.count = 2, .in_dist = wide},
+      {.count = 2, .in_dist = wide},
+      {.count = 2, .in_dist = wide},
+      {.count = 2, .in_dist = wide},
+  };
+  expect_refused(s, "too large");
   // A distance whose byte step overflows although its element count does not.
   s.batches = {{.count = 2, .in_dist = std::numeric_limits<std::ptrdiff_t>::max() / 4}};
   expect_refused(s, "too large");
@@ -438,6 +493,12 @@ TEST(Validation, DistanceOfASingleTransformIsIgnored) {
   s.batches = {{.count = 1, .in_dist = far_step, .out_dist = far_step}};
   expect_default_result(s);
   s.batches = {{.count = 1, .in_dist = lowest_step, .out_dist = -far_step}};
+  expect_default_result(s);
+  s.batches = {
+      {.count = 1, .in_dist = far_step},
+      {.count = 1, .out_dist = lowest_step},
+      {.count = 1, .in_dist = -far_step, .out_dist = far_step},
+  };
   expect_default_result(s);
 }
 
@@ -489,7 +550,42 @@ TEST(Validation, ValidEdgeCasesAreAccepted) {
   EXPECT_NO_THROW(fftn::r2c_plan<double>(one, {.in_place = true}));
 }
 
-// ---- Describe, instruction set, small_vector.
+// Shapes are plain aggregates of vectors, so braced lists build them, positional or
+// designated: `.axes = {{64}}` and `.axes{{64}}` are one axis of 64. The direct-list form
+// with a bare number, `.batches{8}` or `.axes{2}`, is the vector's size constructor instead:
+// it makes that many value-initialised elements, whose count or length of 0 the plan
+// refuses, naming the argument. With defaults of 1 these were accepted as shapes the caller
+// did not mean (one row instead of eight; two axes that only copy).
+TEST(Shape, BracedListsBuildShapes) {
+  using c = std::complex<double>;
+  const fftn::c2c_plan<double> want(fftn::rows_c2c<double>(64, 1000, fftn::direction::forward));
+  // NOLINTNEXTLINE(modernize-use-designated-initializers): callers write this; it must compile
+  const fftn::shape<c, c> positional{.axes = {{64}}, .batches = {{1000}}};
+  ASSERT_EQ(positional.axes.size(), 1U);
+  EXPECT_EQ(positional.axes[0].n, 64U);
+  ASSERT_EQ(positional.batches.size(), 1U);
+  EXPECT_EQ(positional.batches[0].count, 1000U);
+  EXPECT_EQ(fftn::c2c_plan<double>(positional).describe(), want.describe());
+  // NOLINTNEXTLINE(modernize-use-designated-initializers): callers write this; it must compile
+  const fftn::shape<c, c> direct{.axes{{64}}, .batches{{1000}}};
+  ASSERT_EQ(direct.axes.size(), 1U);
+  EXPECT_EQ(direct.axes[0].n, 64U);
+  ASSERT_EQ(direct.batches.size(), 1U);
+  EXPECT_EQ(fftn::c2c_plan<double>(direct).describe(), want.describe());
+
+  const fftn::shape<c, c> eight_empty_batches{.axes = {{.n = 64}}, .batches{8}};
+  ASSERT_EQ(eight_empty_batches.batches.size(), 8U);
+  expect_refused(eight_empty_batches, "shape.batches[0].count is 0");
+  const fftn::shape<c, c> two_empty_axes{.axes{2}, .batches = {}};
+  ASSERT_EQ(two_empty_axes.axes.size(), 2U);
+  expect_refused(two_empty_axes, "shape.axes[0].n is 0");
+  // A default axis or batch dimension is refused too: n and count must be given.
+  expect_refused(fftn::shape<c, c>{.axes = {fftn::axis{}}, .batches = {}}, "shape.axes[0].n");
+  expect_refused(fftn::shape<c, c>{.axes = {{.n = 4}}, .batches = {fftn::batch{}}},
+                 "shape.batches[0].count");
+}
+
+// ---- Describe, instruction set.
 
 TEST(Describe, NamesTheProgram) {
   const fftn::c2c_plan<double> p(fftn::rows_c2c<double>(68, 3, fftn::direction::forward));
@@ -552,29 +648,6 @@ TEST(Isa, Names) {
   // Out of range: this read past the table of names before it was bounds-checked.
   // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange): invalid on purpose
   EXPECT_STREQ(fftn::isa_name(static_cast<fftn::isa>(200)), "unknown");
-}
-
-TEST(SmallVector, HoldsUpToItsCapacity) {
-  fftn::small_vector<int, 2> v;
-  EXPECT_TRUE(v.empty());
-  v.push_back(1);
-  v.push_back(2);
-  EXPECT_EQ(v.size(), 2U);
-  EXPECT_EQ(v.capacity(), 2U);
-  EXPECT_THROW(v.push_back(3), std::length_error);
-  EXPECT_EQ(v.size(), 2U);
-  int sum = 0;
-  for (const int x : v) {
-    sum += x;
-  }
-  EXPECT_EQ(sum, 3);
-  const fftn::small_vector<int, 2>& cv = v;
-  EXPECT_EQ(cv[1], 2);
-  EXPECT_EQ(*cv.data(), 1);
-  EXPECT_EQ(cv.end() - cv.begin(), 2);
-  EXPECT_THROW((fftn::small_vector<int, 2>{1, 2, 3}), std::length_error);
-  v[0] = 5;
-  EXPECT_EQ(*v.data(), 5);
 }
 
 } // namespace

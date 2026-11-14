@@ -44,8 +44,9 @@ public:
   ///
   /// Throws `std::invalid_argument` when the shape or the options are not valid (the
   /// message names the argument; the rules are in docs/conventions.md): an axis or batch
-  /// count of zero, no axis, overlapping output elements, sizes that overflow, or in-place
-  /// layouts that do not agree. Throws `std::bad_alloc` when memory runs out.
+  /// count of zero, no axis or more than three axes, overlapping output elements, sizes
+  /// that overflow, or in-place layouts that do not agree. Throws `std::bad_alloc` when
+  /// memory runs out.
   explicit plan(const shape<In, Out>& s, const options& opts = {})
       : core_(detail::make_plan_core(detail::view_of(s), opts)) {}
 
@@ -80,6 +81,7 @@ public:
   /// Transforms `count` transforms of the batch, starting with transform `first`, serially
   /// on the calling thread: for callers that share a batch out themselves.
   ///
+  /// A transform is one row, plane or volume, as the shape has one, two or three axes.
   /// Transforms are numbered in batch order (the last batch dimension varies fastest).
   /// `in` and `out` are the same addresses as for `execute`: element 0 of transform 0, not
   /// of transform `first`.
@@ -89,8 +91,8 @@ public:
   ///
   /// Guarantees: as for `execute`; each transform's result is bitwise identical to what
   /// `execute` gives it.
-  void execute_rows(std::size_t first, std::size_t count, const In* in, Out* out,
-                    workspace& ws) const noexcept {
+  void execute_transforms(std::size_t first, std::size_t count, const In* in, Out* out,
+                          workspace& ws) const noexcept {
     detail::execute_core(*core_, first, count, in, out, ws);
   }
 

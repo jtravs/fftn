@@ -207,24 +207,36 @@ dev/                     DESIGN.md, PLAN.md, KNOBS.toml, experiments/
 ## 5. Public API
 
 The API has three levels. The core level is pointers plus geometry and is what everything
-else is built on. Names and signatures here are the intended shape; details are settled
-during phase 0 and recorded in the headers. Until the first tagged release the API is not
-frozen: a decision that proves wrong is changed, with a line in the decision log, rather
-than kept for compatibility.
+else is built on. The public headers are its reference (signatures, preconditions,
+guarantees) and `docs/conventions.md` states what it computes and how it lays out memory;
+this section gives the shape of the API and the reasons for it. The sketches below are the
+headers abbreviated; members marked *later* are the intent of later phases and do not exist
+yet. Until the first tagged release the API is not frozen: a decision that proves wrong is
+changed, with a line in the decision log, rather than kept for compatibility.
+
+Headers: `fftn.hpp` includes the whole core API, one concept per header: `shape.hpp`
+(`direction`, `axis`, `batch`, `shape` and the shape functions), `options.hpp`, `isa.hpp`,
+`workspace.hpp`, `plan.hpp`. The typed `plan<In, Out>` is a thin wrapper over a type-erased
+core declared in `detail/core.hpp` and defined in `src/core/` (section 14.2): it passes its
+shape across as a `shape_view` of plain structs (the kind and precision as values, the axes
+and batch dimensions as spans borrowed for the call), so no `std::vector` crosses into
+the library and nothing on the execute path sees one.
 
 ### 5.1 Conventions
 
 - FFTW's conventions: forward is exponent −i, backward +i; unnormalised by default;
   r2c writes n/2 + 1 complex values per row; c2r reads n/2 + 1 and ignores the imaginary
   parts of the DC bin and, for even n, the Nyquist bin.
-- **Input is never destroyed** unless the caller asks for in-place operation or grants
-  permission (`options::may_destroy_input`), in which case the planner may use the input
-  as scratch. Such plans execute through overloads that take a non-const input pointer,
-  so the permission is visible in the call.
+- **Input is never destroyed** unless the caller asks for in-place operation
+  (`options::in_place`) or, later, grants permission (`options::may_destroy_input`), in
+  which case the planner may use the input as scratch. Such plans will execute through
+  overloads that take a non-const input pointer, so the permission is visible in the call.
+  In-place plans use the ordinary `execute(const In*, Out*, workspace&)`: the caller passes
+  one address twice (for real kinds, the same memory viewed as both types).
 - Complex data are `std::complex<T>` (interleaved). Split real/imaginary arrays are a
-  layout option (section 5.3). Both `double` and `float` are supported. `double` is tuned
-  first. `float` is instantiated and tested for correctness in CI from phase 1 (on the
-  scalar target and at least one SIMD target per architecture) so the precision-generic
+  later layout option (section 5.3). Both `double` and `float` are supported. `double` is
+  tuned first. `float` is instantiated and tested for correctness in CI from phase 1 (on
+  the scalar target and at least one SIMD target per architecture) so the precision-generic
   code cannot drift; its remaining targets and its tuning follow in phase 6.
 - Any alignment of at least `alignof(T)` is accepted. Kernels use unaligned loads
   everywhere and there are no aligned-only code paths, so alignment is not part of a plan
@@ -234,45 +246,75 @@ than kept for compatibility.
 
 ### 5.2 Shapes
 
-A shape is a kind, the transformed axes and the batch axes, in the manner of FFTW's guru
-interface but typed and with defaults.
+A shape is a kind, the transformed axes and the batch dimensions, in the manner of FFTW's
+guru interface but typed and with defaults.
 
 ```cpp
 namespace fftn {
 
-enum class direction : int { forward = -1, backward = +1 };
+enum class direction : std::int8_t { forward = -1, backward = +1 };   // the exponent's sign
 
 struct axis {                 // one transformed dimension
-  std::size_t n;              // logical length
-  std::ptrdiff_t in_stride = 0, out_stride = 0;   // in elements; 0 = contiguous default
+  std::size_t n = 0;          // logical length; must be given
+  std::ptrdiff_t in_stride = 0, out_stride = 0;   // in elements; 0 = tight C-ordered default
 };
 struct batch {                // one loop dimension (not transformed)
-  std::size_t count = 1;
-  std::ptrdiff_t in_dist = 0, out_dist = 0;       // in elements; 0 = tight default
+  std::size_t count = 0;      // must be given
+  std::ptrdiff_t in_dist = 0, out_dist = 0;       // in elements; 0 = tight C-ordered default
 };
 
 template <class In, class Out>
-struct shape {                // kind is implied by In/Out: complex→complex, real→complex, …
+struct shape {                // kind given by In/Out: complex→complex, real→complex, …
   direction dir = direction::forward;             // c2c only
-  small_vector<axis, 3> axes;                     // last axis is the halved one for real kinds
-  small_vector<batch, 2> batches;
+  std::vector<axis> axes;                         // one to three; last halved for real kinds
+  std::vector<batch> batches;                     // any number; none = one transform
 };
 
-// The common cases, as functions returning shapes:
-template <class T> auto rows_c2c(std::size_t n, std::size_t count, direction);
-template <class T> auto rows_r2c(std::size_t n, std::size_t count);
-template <class T> auto rows_c2r(std::size_t n, std::size_t count);
-template <class T> auto planes_c2c(std::size_t ny, std::size_t nx, std::size_t count, direction);
-template <class T> auto volume_c2c(std::size_t n0, std::size_t n1, std::size_t n2, direction);
-// From an array's extents: transform these axes of a C-ordered (or strided) array.
-template <class T> auto along_axes(std::span<const std::size_t> extents,
-                                   std::span<const int> axes, direction);
+// The common cases, as functions returning concrete shapes:
+template <class T> shape<std::complex<T>, std::complex<T>>
+    rows_c2c(std::size_t n, std::size_t count, direction);
+template <class T> shape<T, std::complex<T>> rows_r2c(std::size_t n, std::size_t count);
+template <class T> shape<std::complex<T>, T> rows_c2r(std::size_t n, std::size_t count);
+template <class T> shape<std::complex<T>, std::complex<T>>
+    planes_c2c(std::size_t ny, std::size_t nx, std::size_t count, direction);
+// later: volume_c2c, and along_axes(extents, axes, direction) for the axes of a strided array
 }
 ```
 
-Zero strides and distances mean the tight C-ordered defaults, so the common cases need no
-arithmetic. Construction validates that rows do not overlap, that size arithmetic cannot
-overflow, and that in-place use is consistent.
+Points that matter:
+
+- **Order and numbering.** Axes and batch dimensions are both listed slowest first, as the
+  dimensions of a C array. Transforms are numbered with the last batch dimension fastest;
+  `plan::execute_transforms` uses these numbers. A transform is a row, a plane or a volume.
+- **Every kind at every rank.** The general `shape` is accepted for one to three axes and
+  all three kinds, not only through the shape functions: the same code serves them all
+  (axis by axis, a transform at a time, section 9.3). A c2r of two or more axes out of place
+  keeps its intermediate in a workspace block, so its input is preserved (9.1). More than
+  three transformed axes is a later tier (5.6).
+- **Batch dimensions** are as many as the caller needs: a `Kokkos::View` of any rank, or a
+  sub-array whose loops do not nest, maps onto one shape without a copy. Each becomes one
+  loop of the program (8.3).
+- **Containers.** `axes` and `batches` are `std::vector`s: plan construction allocates
+  anyway, so an inline container would buy nothing and would freeze the rank limits into
+  the type. The limits are checked at construction like every other misuse. `axis::n` and
+  `batch::count` default to 0, which construction refuses, because the direct-list form
+  `.batches{8}` calls the vector's size constructor (eight empty batch dimensions) and must
+  not pass as a shape the caller did not mean.
+- **Directions.** `dir` is ignored by the real kinds (r2c is always forward, c2r always
+  backward; `rows_c2r` sets it to backward for readability). A mismatch is not an error.
+  `direction`'s underlying type is the smallest that holds its values.
+- **Defaults and validation.** Zero strides and distances take the tight C-ordered
+  defaults, each zero independently, so the common cases need no arithmetic
+  (docs/conventions.md has the rules, including FFTW's padded rows for in-place real
+  transforms). Construction refuses, with `std::invalid_argument` naming the argument: zero
+  lengths and counts; no axis or more than three; output elements that may overlap; sizes
+  whose byte reach does not fit `std::ptrdiff_t` and strides of `PTRDIFF_MIN`; in-place
+  layouts other than identical ones (c2c) and FFTW's padded layout (real kinds). The
+  overlap test is a sufficient condition (sorted by stride, each stride exceeds the reach of
+  the smaller ones): it admits every nested layout and refuses a few exotic interleavings
+  that do not actually collide. The strides of an axis of length 1 and the distances of a
+  batch dimension of count 1 are ignored, since they never step: refusing them would reject
+  harmless layouts, and using them would let unchecked values into the kernels' arithmetic.
 
 ### 5.3 Plans and execution
 
@@ -280,45 +322,53 @@ overflow, and that in-place use is consistent.
 namespace fftn {
 
 struct options {
-  planning effort = planning::rules;   // rules | measure (section 11)
-  int max_lanes = 1;                   // width hint: the most threads this plan will see
-  bool strict_layout = false;          // ignore the width hint when choosing the program
   bool in_place = false;               // in == out at execute
-  bool may_destroy_input = false;
-  double scale = 1.0;                  // fused into an edge pass; 1/n for normalised use
-  edge_ops in_ops, out_ops;            // fused pointwise work (section 12)
-  isa force_isa = isa::best;           // tests and benchmarks only
-  const wisdom* use = nullptr;
-  table_cache* tables = nullptr;       // share twiddle tables between plans (optional)
+  // later, with their phases:
+  // planning effort = planning::rules;   rules | measure (section 11)
+  // int max_lanes = 1;                   width hint: the most threads this plan will see
+  // bool strict_layout = false;          ignore the width hint when choosing the program
+  // bool may_destroy_input = false;
+  // double scale = 1.0;                  fused into an edge pass; 1/n for normalised use
+  // edge_ops in_ops, out_ops;            fused pointwise work (section 12)
+  // isa force_isa = isa::best;           tests and benchmarks only
+  // const wisdom* use = nullptr;
+  // table_cache* tables = nullptr;       share twiddle tables between plans (optional)
 };
 
-struct exec_args {                     // optional per-call data, one struct for all overloads
-  edge_data in, out;                   // arrays for the plan's edge operations (section 12)
+enum class isa : unsigned char { scalar, x86_v2, avx, avx2, avx512, neon, neon_fcma };
+const char* isa_name(isa) noexcept;
+
+class workspace {                      // scratch for one execution at a time; move-only
+public:
+  workspace() noexcept;                // empty: enough for plans that need 0 bytes
+  explicit workspace(std::size_t bytes);
+  template <class In, class Out> explicit workspace(const plan<In, Out>&);
+  explicit workspace(std::span<std::byte> memory) noexcept;   // borrows caller memory
+  std::size_t size() const noexcept;
+  std::span<std::byte> memory() const noexcept;
 };
 
 template <class In, class Out>
 class plan {
 public:
-  explicit plan(const shape<In, Out>&, const options& = {});
+  explicit plan(const shape<In, Out>&, const options& = {});   // copyable, no default
 
   // (1) Serial, on the calling thread.
-  void execute(const In* in, Out* out, workspace&, const exec_args& = {}) const noexcept;
+  void execute(const In* in, Out* out, workspace&) const noexcept;
 
-  // (2) On an executor: anything that can run n callables (section 13).
-  void execute(const In* in, Out* out, executor_ref, workspace&) const;
+  // (2) A sub-range of the batch's transforms, serial: for callers that own the loop.
+  void execute_transforms(std::size_t first, std::size_t count, const In* in, Out* out,
+                          workspace&) const noexcept;
 
-  // (3) Inside the caller's parallel region: every team member calls this.
-  void execute(const In* in, Out* out, const team&, workspace&,
-               completion = completion::all) const noexcept;
+  // later: (3) on an executor, anything that can run n callables (section 13):
+  //   void execute(const In*, Out*, executor_ref, workspace&) const;
+  // later: (4) inside the caller's parallel region, every team member calls it:
+  //   void execute(const In*, Out*, const team&, workspace&, completion = completion::all)
+  //       const noexcept;
+  // later: a trailing exec_args (arrays for the edge operations, section 12) on every
+  // overload, and twins taking In* for plans that may destroy their input.
 
-  // (4) A sub-range of the batch, serial: for callers that own the row loop.
-  void execute_rows(std::size_t first, std::size_t count, const In* in, Out* out,
-                    workspace&) const noexcept;
-
-  // Every overload also accepts a trailing exec_args, and has a twin taking In* for
-  // plans that may destroy their input.
-
-  std::size_t workspace_bytes(int lanes = 1) const noexcept;
+  std::size_t workspace_bytes() const noexcept;   // later: (int lanes = 1)
   std::string describe() const;        // the program, human readable: strategy, radices,
                                        // layouts, instruction set, scratch, threading shape
   isa instruction_set() const noexcept;
@@ -335,24 +385,38 @@ Points that matter:
 - **Kind safety is static.** The element types select the kind, so calling a real plan
   with complex data does not compile. Nothing is checked at execute time. Kinds that the
   element types cannot tell apart (the real-to-real family of phase 6, split-complex
-  arrays) are selected by a kind tag in the shape; the tag defaults from the types.
-- **`workspace`** holds scratch and synchronisation state for one concurrent execution. It
-  is sized from a plan and a lane count, may be built over caller-supplied memory, and
-  reports its size, so an application can account for every byte. Every core `execute`
-  takes one; none allocates. Callers who do not want to manage workspaces use the
-  convenience layer, which caches them.
+  arrays) will be selected by a kind tag in the shape, defaulted from the types.
+- **Plans are values.** Copies share one immutable core (`std::shared_ptr<const>`), so
+  copying is cheap and thread-safe. There is no default constructor and every plan is
+  valid: the class declares its copy operations and no move operations, so moving a plan
+  copies it (for the price of a reference-count increment) and leaves the source usable.
+  The alternative, a moved-from state in which only assignment and destruction are
+  allowed, would bring back an invalid plan that every member function had to rule out.
+- **`workspace`** holds scratch for one concurrent execution. It is sized from a plan
+  (later also from a lane count), owns its memory or borrows the caller's, and reports its
+  size, so an application can account for every byte. Every core `execute` takes one; none
+  allocates. `workspace_bytes()` includes 64 bytes of slack, so memory of any alignment
+  works. Callers who do not want to manage workspaces will use the convenience layer
+  (later, 5.4), which caches them.
+- **Execution preconditions** (a large enough workspace, `execute_transforms` within the
+  batch, one address for in-place calls) are documented and checked only by assertions in
+  debug builds of the library; `execute` stays `noexcept` and checks nothing in release
+  builds.
 - **Plan construction is cheap and safe**: microseconds to a few milliseconds with rules,
   bounded and optional with measurement; it never touches user buffers and uses no
   process-global mutable state. A plan owns its twiddle tables. Plans that should share
-  tables are given the same `table_cache` object, which the caller owns; there is no
+  tables will be given the same `table_cache` object, which the caller owns; there is no
   hidden global cache, and all memory is released when the plans and the cache are
   destroyed.
+- **`isa`** lists the seven targets of section 6.1; `options::force_isa` and `isa::best`
+  arrive with the second target that has the passes. Phase 0 plans report `isa::scalar`.
 - **`describe()`** makes the planner's choice visible, including any slow route (for
-  example Bluestein for a large prime). Nothing is silent.
+  example Bluestein for a large prime). Nothing is silent. Its text is for people; its
+  format is not stable.
 
 ### 5.4 Convenience layer
 
-A thin header for users who want the numpy-shaped interface: `fft`, `ifft`, `rfft`,
+*Later* (phase 6, 5.6). A thin header for users who want the numpy-shaped interface: `fft`, `ifft`, `rfft`,
 `irfft`, `fft2`, `fftn`, `rfftn`, `irfftn` over `std::span` and a small strided array view
 (C++20 has no `mdspan`; the view converts from one where available), with `axes`,
 `norm = backward | ortho | forward`, a cache of plans and per-thread workspaces keyed by
@@ -362,10 +426,68 @@ expressed through the core API; none of it adds kernels.
 
 ### 5.5 Other interfaces
 
-- **`fftn/kokkos.hpp`** (optional, header-only): plans built from host-accessible
-  `Kokkos::View`s of any layout, an executor over an execution-space instance, and a plan
-  class with the constructor and execute shape of Kokkos-FFT's `Plan` so existing call
-  sites need no change (section 13.6).
+**`fftn/kokkos.hpp`** (optional, header-only, compiled in the user's translation units
+against the user's Kokkos; `docs/kokkos.md` lists every difference from Kokkos-FFT). It
+has two levels:
+
+- *View-based construction returns ordinary core types:* `shape_of(in, out, dir, axes)` an
+  `fftn::shape`, `make_plan` an `fftn::plan` (in place when the Views share their first
+  element), `data_of(view)` the pointer. Views are read through their extents and strides,
+  so `LayoutStride` works too; broadcast (zero) strides are refused, except on dimensions of
+  extent 1, which are dropped; the other non-transformed dimensions become batch
+  dimensions, listed largest input stride first (which fixes their transforms' numbering);
+  those that nest are merged, and any number may remain, so no View needs the temporary
+  transpose Kokkos-FFT makes. In-place real transforms take FFTW's padding from the real
+  View's strides, which must show it. `n` and `s` are accepted only as the Views' own
+  lengths: FFTN does not crop or pad. Reading a `Kokkos::complex<T>` array through a
+  `std::complex<T>*` is not a language guarantee (the types are not similar); it relies on
+  their identical layout, which `data_of` checks, and on the library touching the data only
+  through `void*` and `T` scalars in its own translation units, as Kokkos-FFT does with
+  FFTW's complex type.
+- *`view_plan<ExecutionSpace, InView, OutView, Dim = 1>`* has the constructors (`axis` with
+  optional `n`; `axis_type<Dim>` with optional lengths `s`) and `execute(in, out, norm)` of
+  Kokkos-FFT 2.0's `Plan`, plus the free `execute(plan, in, out, norm)`, `fftn_plan()` and
+  `describe()`; Kokkos-FFT's public `execute_impl` is not provided (call sites use
+  `execute`). It is not named `plan` because `fftn::plan` and `fftn::kokkos::plan` would
+  be ambiguous under using-directives for both namespaces. Its constructors are `explicit`,
+  and it is neither copyable nor movable, as Kokkos-FFT's. It owns its workspace, made at
+  construction and lent to each execution through a borrowing `workspace`, so one plan runs
+  one execution at a time: an atomic busy flag (its one `mutable` member) makes a second
+  concurrent execution throw `std::logic_error` rather than compute wrong results;
+  concurrent executions use `make_plan` and a workspace each, until task 3.5's executor
+  brings per-execution contexts. `execute` checks the Views against the plan's extents,
+  strides and placement and throws `std::invalid_argument` naming `in` or `out`; it
+  allocates nothing (the fence's label, a `std::string` as Kokkos requires, is built at
+  construction). It first fences the plan's execution-space instance, so it must not be
+  called inside a Kokkos kernel; the "serial when called inside a kernel" of 13.6 is offered
+  by the `make_plan` route only, for now. Normalisation follows Kokkos-FFT (`backward` by
+  default) as a separate pass after the transform, each part multiplied by the coefficient
+  computed in `double` and rounded once to `T` (Kokkos-FFT multiplies real `float` outputs
+  in `double`); the core stays unnormalised, and `options::scale` can later fuse it into
+  the last pass. The direction of real plans is checked as in Kokkos-FFT (r2c forward, c2r
+  backward).
+- *`fftn::kokkos::compat`* spells all of this as Kokkos-FFT does (`Plan`, `Direction`,
+  `Normalization`, `axis_type`, `shape_type`, `execute`), so a call site changes its include
+  and namespace only. It is a deliberate exception to the naming rule of AGENTS.md section
+  4, confined to that namespace, and nothing in it differs from Kokkos-FFT on purpose:
+  `Direction` and `Normalization` are Kokkos-FFT's enumerations (underlying `int`;
+  `Direction` 0 and 1), converted to `fftn::direction` and the adapter's `normalization`
+  inside the plan, and `shape_type`, which means only Kokkos-FFT's crop-and-pad lengths, exists
+  only there. Keeping the adapter a faithful mirror keeps open an FFTN host back end inside
+  Kokkos-FFT later. CTAD through the `Plan` alias needs Clang 19 or GCC; the class itself
+  deduces everywhere.
+- Host accessibility is a property of the types and is checked at compile time
+  (`static_assert`), so a device View does not compile against the adapter; until the
+  header compiles out or forwards under CUDA and HIP builds (13.6), an application selects
+  the provider per build. Errors are `std::invalid_argument` with the prefix
+  `fftn::kokkos:` and the argument's name (Kokkos-FFT throws `std::runtime_error`).
+- *Not provided yet:* the executor and threaded execution (task 3.5), and with them the
+  transforms as named Kokkos Tools regions (only the fence is named now); the one-shot
+  functions (`KokkosFFT::fft` and the rest, which would make a plan per call and belong
+  with the convenience layer of 5.4); `DynPlan`.
+
+The other interfaces are later work:
+
 - **`fftn/omp.hpp`** (optional, header-only): the OpenMP adapters, compiled in the user's
   translation unit so the process has one OpenMP runtime.
 - **C API** (`fftn/c_api.h`): opaque plans, the same shapes, a
@@ -1415,11 +1537,11 @@ choose, and every pinned version.
   prototype).
 - **Bitwise identical** for a given plan across: serial and threaded execution, any team
   size, executor and schedule; repeated runs; batch position (row 0 and row 1000 of a
-  batch get the same arithmetic, as do the rows of `execute_rows` for any `first`). The
-  rule that guarantees the last: within a plan every row goes through the same sequence
-  of codelets; lane tails and leftover rows use narrower instantiations or padded tiles
-  of the same program, never a different route. Tests compare row k against row 0 for
-  every k modulo the lane count.
+  batch get the same arithmetic, as do the transforms of `execute_transforms` for any
+  `first`). The rule that guarantees the last: within a plan every row goes through the
+  same sequence of codelets; lane tails and leftover rows use narrower instantiations or
+  padded tiles of the same program, never a different route. Tests compare row k against
+  row 0 for every k modulo the lane count.
 - **May differ in the last bits** between: instruction sets; plans built with different
   options (width hint without `strict_layout`, edge operations, in place versus out of
   place); plans chosen by measurement on different runs, unless pinned by wisdom; library
@@ -1630,162 +1752,6 @@ edge operations are known. (e) The phase 0 kernels `radix4_pass` and `radix2_spl
 in `src/isa/kernels.inl` are now used only by their own tests and the disassembly check;
 they can go once the pass kernels take over those tests' role.
 
-**API decisions reviewed in task 0.9 (settled; see the decision log).** Task 0.5 implemented section 5 for what the
-walking skeleton needs. Where it departs from section 5, or settles something section 5
-leaves open, it is listed here with the reason; the review accepts, changes or rejects
-each item, and the outcome goes to the decision log.
-
-1. *Headers.* `fftn.hpp` includes everything; one concept per header: `shape.hpp`
-   (`direction`, `axis`, `batch`, `shape`, the shape functions), `small_vector.hpp`,
-   `options.hpp`, `isa.hpp`, `workspace.hpp`, `plan.hpp`. The type-erased core is declared
-   in `detail/core.hpp` and defined in `src/core/`.
-2. *`small_vector<T, N>`* is a fixed-capacity inline array (no heap): `push_back`, a
-   braced list, indexing, iteration, `size`, `capacity`. Going beyond `N` throws
-   `std::length_error`. `T` must be default-constructible.
-3. *Shape functions return concrete types* (`shape<std::complex<T>, std::complex<T>>`
-   and so on), not `auto`, so that their documentation shows the kind.
-4. *`shape::dir` is ignored by the real kinds* (r2c is always forward, c2r backward);
-   `rows_c2r` sets it to backward for readability. A mismatch is not an error.
-5. *Order and numbering.* Axes and batch dimensions are both listed slowest first;
-   transforms are numbered with the last batch dimension fastest, which is the numbering
-   `execute_rows` uses. Its "rows" are the transforms of the batch: planes for a plane
-   shape. The name is section 5's; `execute_transforms` would be more exact.
-6. *Defaults.* A zero stride or distance takes the tight C-ordered default, each zero
-   independently of the values given. For in-place real transforms the real side's
-   default is FFTW's padded row of 2(n/2 + 1), so defaults depend on `options::in_place`
-   as well as on the shape.
-7. *Validation.* An axis length or batch count of zero is refused (not an empty batch).
-   Output overlap is refused by a sufficient condition (sorted by stride, each stride
-   exceeds the reach of the smaller ones), which admits every nested layout but refuses
-   a few exotic interleavings that do not actually collide. Sizes whose byte reach does
-   not fit `std::ptrdiff_t` are refused, and so is a stride or distance of `PTRDIFF_MIN`
-   (its magnitude does not fit). The strides of an axis of length 1 and the distances of
-   a batch dimension of count 1 are ignored, since they never step: refusing them would
-   reject harmless layouts, and using them would let unchecked values into the kernels'
-   arithmetic.
-8. *In place* requires identical layouts for c2c; for r2c and c2r the last axis
-   contiguous on both sides and every other real stride and distance twice the complex
-   one (FFTW's padded layout). Other in-place layouts are refused, not supported.
-9. *`options`* has only `in_place`; the other members of 5.3 arrive with their phases.
-10. *Plans are copyable*: copies share one immutable core (`std::shared_ptr<const>`), so
-    copying is cheap and thread-safe. There is no default constructor, and every plan is
-    valid: the class declares its copy operations and no move operations, so moving a
-    plan copies it and leaves the source unchanged, for the price of a reference-count
-    increment. The alternative is a documented moved-from state in which only assignment
-    and destruction are allowed; it saves the increment but brings back an invalid plan
-    that every member function would have to rule out.
-11. *Execution preconditions* (workspace large enough, `execute_rows` within the batch,
-    the same address for in-place calls) are documented and checked only by assertions
-    in debug builds of the library; `execute` stays `noexcept`.
-12. *`workspace_bytes()` has no lanes parameter* yet (phase 3 adds it). Its value
-    includes 64 bytes of slack so that a workspace of any alignment works.
-13. *`workspace`* owns memory (from a size or a plan) or borrows a `std::span<std::byte>`;
-    it is move-only, default-constructs empty (enough for plans needing 0 bytes) and
-    exposes `size()` and `memory()`.
-14. *`isa`* is a public enumeration of the seven targets of section 6.1 (no `best`, since
-    `options::force_isa` is not added until a second target has the passes), with
-    `isa_name()` for printing. Phase 0 plans always report `isa::scalar`.
-15. *`describe()`* returns free text for people; its format is not stable.
-16. *Any rank up to three for every kind.* The general `shape` is accepted for one to
-    three axes and all three kinds, not only through the four shape functions: the same
-    code serves them all (axis by axis, a transform at a time), and fbench's smoke tier
-    contains real planes and volumes. A c2r of two or more axes out of place keeps its
-    intermediate in a workspace block holding one transform's half spectrum.
-17. *Not added*: `exec_args`, the team and executor overloads, the `In*` twins for plans
-    that may destroy their input, a kind tag, `along_axes`, `volume_c2c`.
-18. *In-place calls* use the same `execute(const In*, Out*, workspace&)`: the caller
-    passes one address twice (for real kinds, the same memory viewed as both types).
-19. *`direction`'s underlying type is `std::int8_t`*, not `int` as sketched in 5.2 (the
-    gate's clang-tidy asks for the smallest type); the values are still −1 and +1.
-
-Task 0.5b added a first `fftn/kokkos.hpp` (section 5.5, `docs/kokkos.md`). Where it settles
-or departs from sections 5.5 and 13.6, or from Kokkos-FFT 2.0's `KokkosFFT::Plan`:
-
-20. *Two levels.* View-based construction returns ordinary core types: `shape_of(in, out,
-    dir, axes)` gives an `fftn::shape`, `make_plan` an `fftn::plan` (in place when the Views
-    share their first element), `data_of(view)` the pointer (`Kokkos::complex<T>*` read as
-    `std::complex<T>*`, which has the same layout). Over it, `fftn::kokkos::plan<ExecutionSpace,
-    InView, OutView, Dim = 1>` has Kokkos-FFT's constructors (`axis` with optional `n`;
-    `axis_type<Dim>` with optional `shape_type<Dim>`) and `execute(in, out, norm)`, plus the free
-    `execute(plan, in, out, norm)`. The constructors are `explicit`, as Kokkos-FFT's. The
-    member is `execute`; Kokkos-FFT's `execute_impl` is not provided (call sites use the free
-    function). Added: `fftn_plan()` and `describe()`. Reading a `Kokkos::complex<T>` array
-    through a `std::complex<T>*` is not a language guarantee (the types are not similar): it
-    relies on their identical layout, which `data_of` checks (size and alignment), and on
-    the library touching the data only through `void*` and `T` scalars in its own
-    translation units, as Kokkos-FFT does with FFTW's complex type.
-21. *Kokkos-FFT's spellings live in `fftn::kokkos::compat`* (`Plan`, `Direction`,
-    `Normalization`, `axis_type`, `shape_type`, `execute`), aliases of the snake_case names: a
-    call site changes its include and namespace only. This is a deliberate exception to the
-    naming rule of AGENTS.md section 4, confined to that namespace. The alternative is to put
-    the PascalCase names in `fftn::kokkos` itself (one namespace fewer at call sites, mixed
-    styles in the adapter). CTAD through the `Plan` alias needs Clang 19 or GCC; the class
-    itself deduces everywhere.
-22. *`compat::Direction` is `fftn::direction`*: the same spellings, but the values are −1/+1
-    where Kokkos-FFT's are 0/1, so code that converts a direction to an integer changes.
-23. *Normalisation* follows Kokkos-FFT in the plan class only: `execute`'s `normalization`
-    defaults to `backward`. It is a separate pass after the transform, each part multiplied by
-    the coefficient computed in `double` and rounded once to `T` (as Kokkos-FFT for complex
-    outputs; for real `float` outputs Kokkos-FFT multiplies in `double`). The core stays
-    unnormalised; `options::scale` (5.3) can later fuse it into the last pass.
-24. *The plan class owns its workspace*, made at construction and lent to each execution
-    through a borrowing `workspace` (no `mutable` scratch), so one plan runs one execution at
-    a time. Misuse is detected: an atomic busy flag (the one `mutable` member) is claimed on
-    entry and released on exit, also when execute throws, and a second concurrent execution
-    throws `std::logic_error` instead of computing wrong results. Concurrent executions use
-    `make_plan` and a workspace each. Kokkos-FFT's plan holds no scratch (it allocates its
-    temporaries, when it needs any, in every execute call). Alternatives for the review: a
-    small pool of workspaces claimed atomically; a workspace per thread; an execute overload
-    taking the caller's `workspace`; or leave it to 3.5, whose executor brings per-execution
-    contexts.
-25. *The plan class's `execute` validates and may throw*: it checks the Views' extents and
-    strides against the plan's and whether they share their first element, throws
-    `std::invalid_argument` naming `in` or `out` (overlapping Views of an out-of-place plan
-    too), and is not `noexcept`. It allocates nothing: the fence's label, a `std::string` as
-    Kokkos requires, is built once at construction, and a host fence allocates nothing unless a
-    Kokkos Tools library is loaded. It first fences the plan's execution-space instance (which
-    takes the instance's mutex), then runs on the calling thread; so it must not be called
-    inside a Kokkos kernel, and the "serial when called inside a kernel" of 13.6 is offered
-    only by the `make_plan` route for now.
-26. *Layouts.* Views are read through their extents and strides, so `LayoutStride` works
-    (Kokkos-FFT takes `LayoutLeft` and `LayoutRight` only). Zero strides are refused.
-    Dimensions of extent 1 never step, so their strides are ignored (0 included, and the
-    in-place rules do not apply to them). Non-transformed dimensions become batch dimensions:
-    extent-1 ones are dropped, nested ones merged, and more than two remaining are refused
-    (the shape's capacity).
-27. *In-place real transforms take the padding from the real View's strides*, which must show
-    FFTW's padded rows (for example a subview of the first n of 2(n/2 + 1) columns).
-    Kokkos-FFT assumes the padding whatever the real View says, so a tight real View it
-    accepts in place is refused here.
-28. *No cropping or padding*: `n` and `s` are accepted only as the Views' own lengths (or 0),
-    and extents that disagree are refused rather than reshaped.
-29. *Host accessibility is checked at compile time* (`static_assert` on the Views' memory
-    spaces and the execution space), not by `std::invalid_argument` at construction: it is a
-    property of the types. A device View does not compile against the adapter; the
-    "compiles out or forwards under CUDA and HIP" of 13.6 is not done yet, so an application
-    selects the provider per build.
-30. *Errors* are `std::invalid_argument` with the prefix `fftn::kokkos:` and the argument
-    (`in.extent(1)`, `out.stride(0)`, `axes[0]`, `dir`, `n`, `s[1]`, `in, out`); a layout the
-    core plan refuses is reported as `in, out` with the core's message attached. Kokkos-FFT
-    throws `std::runtime_error`. The direction of real plans is checked as in Kokkos-FFT.
-31. *The plan class is neither copyable nor movable*, as Kokkos-FFT's (the core plan is
-    copyable).
-32. *Not provided yet*: the executor and threaded execution (task 3.5), and with them the
-    transforms as named Kokkos Tools regions of 13.6 (only the fence is named now); the
-    one-shot functions (`KokkosFFT::fft` and the rest; an application calls `fft` once,
-    which would allocate a plan per call and belongs with the convenience layer of 5.4);
-    `DynPlan`.
-33. *Open: the class name.* Under using-directives for both `fftn` and `fftn::kokkos`,
-    `plan` is ambiguous between `fftn::plan` and `fftn::kokkos::plan`. Alternatives: name the
-    adapter's class `view_plan`, or offer the class only as `compat::Plan`.
-34. *Open: `shape_type`* sits beside `fftn::shape` and `shape_of` while meaning only
-    Kokkos-FFT's crop-and-pad lengths, which FFTN refuses. Alternative: offer it only in
-    `compat`.
-35. *Open: more than two batch loops.* Views whose non-transformed dimensions leave more than
-    two loops that do not nest are refused, a gap against Kokkos-FFT, which transposes such
-    Views into a temporary. Alternatives: a third batch dimension in the shape, or a loop in
-    the adapter over the outermost dimension.
-
 ---
 
 ## 19. Decision log
@@ -1836,9 +1802,10 @@ or departs from sections 5.5 and 13.6, or from Kokkos-FFT 2.0's `KokkosFFT::Plan
 | 2026-11-13 | No `omp simd` on the scalar pass loops; old-ISA targets (`x86_v2`, `avx`, plain `neon`) get hand vocabularies from the start, not the scalar text compiled in their regions | Experiment X15: `omp simd` gained 5.5 % with Clang on the M5 but cost 2.0× with GCC 16 on Zen 3; the scalar text in the `avx2` region stayed 2.2–3.7× slower than the hand vocabulary per pass, and `-march=native` closed none of that gap |
 | 2026-11-13 | Windows on Arm reads FCMA and pointer authentication from the registry copies of the ID registers | No `IsProcessorFeaturePresent` flag exists for either (SDK 10.0.26100) and MRS faults; on the CI's Cobalt 100 the registry fields agreed with executing FCMLA and XPACI (B2) |
 | 2026-11-13 | Emulated CI runs the instruction-set test programs only, on `main`, weekly and on demand | It checks instruction-set safety, which branch pushes rarely change; the full suites under emulation took over an hour per processor model (maintainer, after the walking skeleton) |
-| 2026-11-13 | API review (task 0.9): the maintainer took every recommendation of the review of DESIGN 18.2 items 1–35. Accepted as built: 1, 3, 4, 6–21, 23–32. Changed: axes and batch dimensions become `std::vector` and `small_vector` goes (2); the shape takes more batch dimensions, so Views with more than two non-nesting loops work in the adapter (35); `execute_rows` becomes `execute_transforms` (5); the adapter's class becomes `fftn::kokkos::view_plan`, with `compat::Plan` as its alias (33); `shape_type` lives only in `compat` (34); `compat::Direction` takes Kokkos-FFT's values 0 and 1 (22, so that nothing in `compat` differs from Kokkos-FFT on purpose) | Plan construction allocates anyway, so an inline container buys nothing and freezes the rank limit into the type; names should be exact before anyone depends on them; the adapter should stay a faithful mirror of Kokkos-FFT, which keeps open an FFTN host backend inside Kokkos-FFT later |
+| 2026-11-13 | API review (task 0.9): the maintainer took every recommendation of the review of DESIGN 18.2 items 1–35 (the list at commit db2183d). Accepted as built: 1, 3, 4, 6–21, 23–32. Changed: axes and batch dimensions become `std::vector` and `small_vector` goes (2); the shape takes more batch dimensions, so Views with more than two non-nesting loops work in the adapter (35); `execute_rows` becomes `execute_transforms` (5); the adapter's class becomes `fftn::kokkos::view_plan`, with `compat::Plan` as its alias (33); `shape_type` lives only in `compat` (34); `compat::Direction` takes Kokkos-FFT's values 0 and 1 (22, so that nothing in `compat` differs from Kokkos-FFT on purpose) | Plan construction allocates anyway, so an inline container buys nothing and freezes the rank limit into the type; names should be exact before anyone depends on them; the adapter should stay a faithful mirror of Kokkos-FFT, which keeps open an FFTN host backend inside Kokkos-FFT later |
 | 2026-11-13 | FFTN is unreleased: until the first tagged release the API may change in any way, and a wrong choice is fixed rather than kept (README, AGENTS section 1, section 5) | Maintainer's decision at the API review |
 | 2026-11-13 | Deferred, not rejected: a two-way plan (forward and backward over one table set) and an object owning a plan and its workspace | Small gain for more API surface; both can be added later without changing the API as long as twiddle tables stay direction-independent and a workspace stays plain bytes sized by `workspace_bytes()` (18.2) |
+| 2026-11-13 | `compat::Direction` is its own enumeration, declared as Kokkos-FFT declares it (underlying `int`); `view_plan` has a twin of each constructor taking it, which converts it to `fftn::direction` and refuses any other value naming `dir` (task 0.10) | Keeps `compat::Plan` an alias of `view_plan`, as the review asked, rather than a second class; a cast-in integer is refused as an invalid `fftn::direction` is |
 | 2026-11-13 | Codelet calling convention: `cdft<R>::plain`, `dit` and `dif`, static member templates over `T` and `Sign` (−1 forward, +1 backward), taking the caller's accessor objects `in.get(j)`, `out.put(k, v)` and `twid.get(k)`; twiddles are forward roots, multiplied by `mulc` backward (gen/README.md) | One codelet text then serves every pass kind, edge variant and layout, which differ only in their accessors; stores stay next to their producers inside the codelet; the accessors hold pointers, never vectors, so no vector crosses a non-inlined boundary |
 | 2026-11-13 | Task 1.1 generates the complex-register lowering only, for radices 2–16: plain, DIT and DIF, forward and backward. They are compiled and tested in test-only region units (`tests/isa/codelets_<target>.cpp`) until task 1.2's passes instantiate them in the library | The split lowering, pruned and fused-edge variants are tasks 1.5 and 2.1; codelets nothing calls do not belong in the library's units |
 | 2026-11-13 | The generator orders codelets by greedy list scheduling for fewest live values, not by the recursive partition of section 7.2's first draft | Measured over radices 2–16, all variants, both directions, each order with the same load and store placement (commit aa966ef holds the partition and the test): a total peak of 1004 live values for the greedy order, 1196 for the partition and 1098 for the builders' own creation order, and the greedy order no worse than either on any codelet; a test keeps holding it against creation order |

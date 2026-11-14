@@ -42,6 +42,9 @@
 namespace fftn::inline v0::detail {
 namespace {
 
+// Transforms of one to three axes (DESIGN.md 5.6); any number of batch dimensions.
+constexpr std::size_t max_axes = 3;
+
 [[noreturn]] void reject(const std::string& argument, const std::string& why) {
   throw std::invalid_argument("fftn::plan: " + argument + " " + why);
 }
@@ -494,14 +497,21 @@ std::shared_ptr<const plan_core> make_plan_core(const shape_view& s, const optio
   if (r == 0) {
     reject("shape.axes", "must hold at least one axis");
   }
+  if (r > max_axes) {
+    reject("shape.axes", "holds " + std::to_string(r) + " axes; at most " +
+                             std::to_string(max_axes) + " are transformed");
+  }
   for (std::size_t d = 0; d < r; ++d) {
     if (s.axes[d].n == 0) {
-      reject(axis_name(d) + ".n", "must be at least 1");
+      reject(axis_name(d) + ".n", "is 0; every axis needs its length (`.axes{2}` makes two "
+                                  "axes of length 0; write `.axes = {{2}}`)");
     }
   }
   for (std::size_t b = 0; b < s.batches.size(); ++b) {
     if (s.batches[b].count == 0) {
-      reject(batch_name(b) + ".count", "must be at least 1");
+      reject(batch_name(b) + ".count",
+             "is 0; every batch dimension needs its count (`.batches{8}` makes eight empty "
+             "batch dimensions; write `.batches = {{8}}`)");
     }
   }
   if (s.kind == transform_kind::c2c && s.dir != direction::forward &&
@@ -585,7 +595,7 @@ void execute_core(const plan_core& core, std::size_t first, std::size_t count, c
                   void* out, const workspace& ws) noexcept {
   assert(ws.size() >= core.bytes && "fftn: workspace smaller than plan::workspace_bytes()");
   assert(first <= core.prog.transforms && count <= core.prog.transforms - first &&
-         "fftn: execute_rows beyond the batch");
+         "fftn: execute_transforms beyond the batch");
   assert((!core.in_place || in == out) && "fftn: in-place plan executed with in != out");
   slot_addresses at{.in = static_cast<const std::byte*>(in), .out = static_cast<std::byte*>(out)};
   if (core.bytes != 0) {

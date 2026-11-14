@@ -36,6 +36,24 @@ class IdenticalCodeAlias(unittest.TestCase):
         f = function(entry("avx2", 1), [("endbr64", ""), ("jmpq", "0x0")], [call])
         self.assertEqual(call_errors("avx2", f), [])
 
+    def test_padding_after_the_jump_is_allowed(self) -> None:
+        # GCC 14 and 15 on x86-64 under the sanitizers: the folded alias is a jump followed
+        # by alignment padding that is never executed.
+        call = jump_to(entry("avx2", 0), "jmpq")
+        f = function(
+            entry("avx2", 1), [("jmpq", "0x0"), ("data16", "nopw %cs:0x0(%rax,%rax,1)")], [call]
+        )
+        self.assertEqual(call_errors("avx2", f), [])
+
+    def test_padding_does_not_excuse_code_before_the_jump(self) -> None:
+        call = jump_to(entry("avx2", 0), "jmpq")
+        f = function(
+            entry("avx2", 1),
+            [("shl", "$0x4,%rsi"), ("jmpq", "0x0"), ("data16", "nopw %cs:0x0(%rax,%rax,1)")],
+            [call],
+        )
+        self.assertEqual(len(call_errors("avx2", f)), 1)
+
 
 class StillCalls(unittest.TestCase):
     def assert_reported(self, target: str, f: Function) -> None:

@@ -10,10 +10,10 @@ transforms themselves follow [the conventions](conventions.md).
 
 The header offers two levels:
 
-- **The Kokkos-FFT-shaped plan.** `fftn::kokkos::plan` has the constructor and execute
-  shape of Kokkos-FFT 2.0's `KokkosFFT::Plan`, and `fftn::kokkos::execute(plan, in, out,
-  norm)` is its free `KokkosFFT::execute`. The namespace `fftn::kokkos::compat` spells them
-  as Kokkos-FFT does (`Plan`, `Direction`, `Normalization`, `axis_type`, `shape_type`,
+- **The Kokkos-FFT-shaped plan.** `fftn::kokkos::view_plan` has the constructor and
+  execute shape of Kokkos-FFT 2.0's `KokkosFFT::Plan`, and `fftn::kokkos::execute(plan, in,
+  out, norm)` is its free `KokkosFFT::execute`. The namespace `fftn::kokkos::compat` spells
+  them as Kokkos-FFT does (`Plan`, `Direction`, `Normalization`, `axis_type`, `shape_type`,
   `execute`), so code written for Kokkos-FFT changes only its include and its namespace.
 - **View-based construction for the core API.** `shape_of(in, out, dir, axes)` gives the
   `fftn::shape` of a pair of Views, `make_plan` the ordinary `fftn::plan`, and `data_of(view)`
@@ -58,10 +58,10 @@ const planes original("original", count, ny, nx);
 
 // In place (the same View twice): a 2-D transform of every plane, over the last two axes.
 const fftn::kokkos::axis_type<2> axes{-2, -1};
-const fftn::kokkos::plan<host, planes, planes, 2> forward(exec, v, v, fftn::direction::forward,
-                                                          axes);
-const fftn::kokkos::plan<host, planes, planes, 2> backward(exec, v, v, fftn::direction::backward,
-                                                           axes);
+const fftn::kokkos::view_plan<host, planes, planes, 2> forward(exec, v, v,
+                                                               fftn::direction::forward, axes);
+const fftn::kokkos::view_plan<host, planes, planes, 2> backward(exec, v, v,
+                                                                fftn::direction::backward, axes);
 
 for (std::size_t p = 0; p < count; ++p) {
   for (std::size_t iy = 0; iy < ny; ++iy) {
@@ -90,7 +90,10 @@ For host Views, the include and the namespace change and nothing else:
  kfft::execute(forward, in, out, kfft::Normalization::none);
 ```
 
-`kfft::axis_type<2>{-2, -1}` and the multi-axis constructor carry over the same way. An
+`kfft::axis_type<2>{-2, -1}` and the multi-axis constructor carry over the same way.
+`kfft::Direction` is Kokkos-FFT's enumeration, with its values 0 and 1, which the plan
+converts to `fftn::direction` (the exponent's sign, −1 and +1); `view_plan` takes either.
+`kfft::Normalization` is Kokkos-FFT's enumeration too, converted to `normalization`. An
 application that also builds for GPUs keeps Kokkos-FFT for its device Views and chooses the
 namespace per build.
 
@@ -111,7 +114,7 @@ namespace per build.
   the complex side has n/2 + 1 for the real side's n. Zero extents are refused.
 - **Batch dimensions** are all the other dimensions. Those of extent 1 are dropped, and two
   that nest (one spans the other exactly on both sides, as in any contiguous View) merge
-  into one. At most two may remain, since FFTN plans loop over at most two.
+  into one. Any number may remain: a plan loops over each, with no temporary copy.
 - **Placement.** Views that start at the same address are transformed in place; Views that
   overlap otherwise are refused. In place, the strides must agree as the
   [conventions](conventions.md#in-place) require: equal for c2c, and FFTW's padded layout for
@@ -135,9 +138,10 @@ The plan makes its FFTN plan and a workspace when it is constructed; `execute` a
 nothing (with no Kokkos Tools library loaded, which may allocate for the fence). `execute`
 first fences the plan's execution-space instance, so that work queued on it before the call
 is complete, then transforms on the calling thread and returns when the output is written.
-Because it fences, it must not be called inside a Kokkos kernel: a transform inside a kernel
-needs a core plan from `make_plan` and a workspace per thread, the only route that runs
-serially inside a kernel for now.
+It is not `noexcept`: it throws on the checks below, and its fence takes the execution-space
+instance's mutex. Because it fences, it must not be called inside a Kokkos kernel: a
+transform inside a kernel needs a core plan from `make_plan` and a workspace per thread, the
+only route that runs serially inside a kernel for now.
 
 Because a plan owns one workspace, **one plan runs one execution at a time**. A second
 execution that starts while one is running throws `std::logic_error` rather than share the
@@ -167,5 +171,7 @@ planned layout may be transformed.
   Kokkos-FFT throws `std::runtime_error`.
 - The plan's direction for real transforms is checked as in Kokkos-FFT (r2c forward, c2r
   backward).
+- The plan executes through `execute` (the member, or the free `execute`); Kokkos-FFT's
+  public member `execute_impl(in, out, norm)` is not provided.
 - Not provided: the one-shot functions (`KokkosFFT::fft`, `rfft`, `fft2` and the rest),
   `DynPlan`, and device Views.
