@@ -42,6 +42,40 @@ function(fbench_add_backend library)
 endfunction()
 
 fbench_add_backend(fftn fftn::fftn)
+# The FFTN backends build plans through the private plan core, so that an arm can set its
+# build settings (the machine profile, chunking) for the threading experiments.
+target_include_directories(fbench-fftn PRIVATE ${PROJECT_SOURCE_DIR}/src)
+
+# fbench-fftn_omp: the same backend with THREADS through fftn::omp::executor (fftn/omp.hpp),
+# linked with the compiler's OpenMP runtime and nothing else that brings one (one runtime per
+# binary, DESIGN.md 16.1). Not built under ThreadSanitizer, whose reports on uninstrumented
+# runtimes are false (cmake/FftnTestDeps.cmake).
+option(FFTN_BENCH_OPENMP "Build the OpenMP fbench backend and threading harness" ON)
+if(FFTN_BENCH_OPENMP AND NOT FFTN_SANITIZE MATCHES "thread")
+  find_package(OpenMP COMPONENTS CXX)
+endif()
+# Links OpenMP into a benchmark target, with the tests' clang-tidy include fix when present.
+function(fbench_link_openmp target)
+  if(COMMAND fftn_link_openmp)
+    fftn_link_openmp(${target})
+  else()
+    target_link_libraries(${target} PRIVATE OpenMP::OpenMP_CXX)
+  endif()
+endfunction()
+if(TARGET OpenMP::OpenMP_CXX AND NOT FFTN_SANITIZE MATCHES "thread")
+  add_executable(fbench-fftn_omp backends/fftn.cpp)
+  fftn_configure_target(fbench-fftn_omp)
+  target_include_directories(fbench-fftn_omp PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                                                     ${PROJECT_SOURCE_DIR}/src)
+  target_compile_definitions(fbench-fftn_omp PRIVATE FBENCH_FFTN_OMP)
+  target_link_libraries(fbench-fftn_omp PRIVATE fbench_harness fftn::fftn ${CMAKE_DL_LIBS})
+  fbench_link_openmp(fbench-fftn_omp)
+  set(_fbench_fftn_omp ON)
+  message(STATUS "fbench: fftn_omp backend (OpenMP ${OpenMP_CXX_VERSION})")
+else()
+  set(_fbench_fftn_omp OFF)
+  message(STATUS "fbench: fftn_omp backend not built (no OpenMP, or a ThreadSanitizer build)")
+endif()
 
 # FFTW only from an explicit installation: never a default search path, so that a
 # handicapped build (Homebrew's FFTW has no SIMD on arm64) cannot be picked up by accident

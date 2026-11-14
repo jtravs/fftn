@@ -1798,6 +1798,15 @@ over time. It inherits the prototype rig's concepts and replaces its statistics.
 - **Tiers**: smoke (seconds, correctness only, in the gate), quick (2–3 minutes, A/B),
   tracking (a fixed set of 30–60 cases), full.
 
+As built for threading (task 3.4): FFTN arms take `THREADS=N` (the executor overload on an
+`fftn::thread_pool`, or on `fftn::omp::executor` in a second backend binary, `fftn_omp`,
+linked with the compiler's OpenMP runtime; `CALL=team` there runs the team overload inside
+a region), `GROUP_SIZE`, and every machine-profile field and the chunk size as options. The
+backend reaches the plan core through the functions the public plan forwards to, and the
+tuning options through its private build settings, as tests do: no library switch exists
+for them. The `threads` catalogue groups shapes by the scheduling rule they exercise; the
+library and team modes against competitors are still to come.
+
 ### 16.2 Competitors
 
 | Platform | Libraries |

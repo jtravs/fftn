@@ -21,9 +21,24 @@ from . import analysis, arms, catalogue, machine, stats, store
 DEFAULT_BUILD = store.REPO / "build" / "check-release"
 # Option sets a library is smoke-tested with (correctness only, so the cheapest planning);
 # a library with several code paths behind an option gets one run per path.
+# FFTN's threaded paths: an executor at the default profile (whose thresholds keep the small
+# smoke cases serial), and one that splits whatever it can into small chunks, so that the
+# claiming engine's every path meets the reference check.
+FFTN_EAGER = {
+    "THREADS": "3",
+    "DISPATCH_NS": "0",
+    "SYNC_NS": "0",
+    "SPLIT_MIN_POINTS": "1",
+    "SPLIT_MIN_POINTS_MESH": "1",
+    "MIN_POINTS_PER_MEMBER": "1",
+    "REMAINDER_SPLIT_MIN_POINTS": "1",
+    "CHUNK_POINTS": "64",
+}
 SMOKE_OPTIONS = {
     "fftw": [{"PLANNER": "ESTIMATE"}],
     "accelerate": [{"API": "dft"}, {"API": "interleaved"}],
+    "fftn": [{}, {"THREADS": "3"}, FFTN_EAGER],
+    "fftn_omp": [{"THREADS": "3"}, FFTN_EAGER, {**FFTN_EAGER, "CALL": "team"}],
 }
 # The relative output error the guard's self-check injects.
 SMOKE_PERTURB = "1e-6"

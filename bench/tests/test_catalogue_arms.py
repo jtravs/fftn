@@ -56,6 +56,44 @@ class Standard(unittest.TestCase):
         self.assertAlmostEqual(d.flops, 5 * 8 * 3)
 
 
+class Threads(unittest.TestCase):
+    """The threads catalogue: a group per scheduling rule (DESIGN.md 13.4)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.cat = catalogue.load("threads")
+
+    def test_tiers(self):
+        quick = {c.id for c in self.cat.select("quick")}
+        tracking = {c.id for c in self.cat.select("tracking")}
+        self.assertTrue(tracking <= quick)
+        self.assertTrue(30 <= len(tracking) <= 70)
+        smoke = self.cat.select("smoke")
+        self.assertEqual({c.kind for c in smoke}, {"c2c", "r2c", "c2r"})
+        self.assertTrue(any(c.batch > 1 for c in smoke))
+
+    def test_rules_have_cases(self):
+        quick = self.cat.select("quick")
+        groups = {c.group for c in quick}
+        for g in ("rows-long", "rows-few", "rows-remainder", "rows-many", "small", "planes"):
+            self.assertIn(g, groups)
+        # A case listed by several groups keeps its first group's name (smoke's, here).
+        long_rows = {
+            c.dims[0] for c in quick if c.kind == "c2c" and len(c.dims) == 1 and c.batch == 1
+        }
+        self.assertTrue({2**k for k in range(10, 21)} <= long_rows)
+        # Leftover rows: one more than 8, 16, 32 and 64 lanes.
+        leftover = {c.batch for c in quick if c.group == "rows-remainder"}
+        self.assertEqual(leftover, {9, 17, 33, 65})
+
+    def test_threaded_arms_parse(self):
+        a = arms.parse("Y=fftn_omp+THREADS=16+SPLIT_MIN_POINTS=never+SYNC_NS=0")
+        self.assertEqual(a.library, "fftn_omp")
+        self.assertEqual(
+            a.backend_options(), {"THREADS": "16", "SPLIT_MIN_POINTS": "never", "SYNC_NS": "0"}
+        )
+
+
 class Format(unittest.TestCase):
     def load(self, text: str) -> catalogue.Catalogue:
         with tempfile.TemporaryDirectory() as tmp:

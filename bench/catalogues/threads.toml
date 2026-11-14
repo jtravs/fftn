@@ -1,0 +1,128 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# The threads catalogue (DESIGN.md 16.1): shapes that put threading's rules to work, for the
+# FFTN backends' threaded arms (THREADS=N; bench/README.md, "FFTN options") and experiments
+# T1 and T5. Each kind of parallel work of DESIGN.md 13.1 has a group: single long rows
+# (split inside a cache group, rule 3), few rows, leftover rows after whole rounds (rule 2,
+# batches of 8, 16, 32 and 64 lanes plus one), many rows (whole rows only), small jobs (rule
+# 1: they must stay as fast as serial) and planes and volumes (split by lines). Format in
+# bench/README.md; weights are equal.
+
+[catalogue]
+name = "threads"
+
+# ---- smoke: correctness of the threaded paths in seconds -----------------------------------
+
+[[group]]
+name = "smoke-threads"
+kind = ["c2c", "r2c", "c2r"]
+dims = [4096, 20000, "64x48"]
+batch = [1, 5]
+tiers = ["smoke"]
+
+# ---- single long rows: rule 3 ---------------------------------------------------------------
+
+[[group]]
+name = "rows-long"
+kind = "c2c"
+dims = [
+  1024, 2048, 3072, 4096, 6144, 8192, 10240, 16384, 20480, 32768, 65536, 131072, 262144,
+  524288, 1048576,
+]
+tiers = ["quick", "tracking"]
+
+[[group]]
+name = "rows-long-real"
+kind = "r2c"
+dims = [4096, 16384, 65536, 262144, 1048576]
+tiers = ["quick", "tracking"]
+
+[[group]]
+name = "rows-long-backward"
+kind = "c2c"
+dims = [16384, 262144]
+direction = "bwd"
+tiers = ["quick"]
+
+[[group]]
+name = "rows-long-c2r"
+kind = "c2r"
+dims = [16384, 262144]
+tiers = ["quick"]
+
+# ---- few rows: fewer transforms than lanes --------------------------------------------------
+
+[[group]]
+name = "rows-few"
+kind = "c2c"
+dims = [4096, 16384, 65536]
+batch = [2, 3, 4]
+tiers = ["quick", "tracking"]
+
+# ---- leftover rows: rule 2 (lanes + 1 for 8, 16, 32 and 64 lanes; half rounds in full) ------
+
+[[group]]
+name = "rows-remainder"
+kind = "c2c"
+dims = [2048, 4096, 8192, 16384, 65536]
+batch = [9, 17, 33, 65]
+tiers = ["quick"]
+
+[[group]]
+name = "rows-remainder-half"
+kind = "c2c"
+dims = [4096, 16384]
+batch = [12, 24, 48, 96]
+
+# ---- many rows: whole rows only -------------------------------------------------------------
+
+[[group]]
+name = "rows-many"
+kind = "c2c"
+dims = [256, 384, 1024, 4096]
+batch = [64, 1024]
+tiers = ["quick", "tracking"]
+
+[[group]]
+name = "rows-many-real"
+kind = "r2c"
+dims = [256, 1024]
+batch = 1024
+tiers = ["quick"]
+
+# ---- small jobs: rule 1 ---------------------------------------------------------------------
+
+[[group]]
+name = "small"
+kind = "c2c"
+dims = [64, 256, 1024]
+batch = [1, 8]
+tiers = ["quick", "tracking"]
+
+# ---- planes and volumes: split by lines -----------------------------------------------------
+
+[[group]]
+name = "planes"
+kind = "c2c"
+dims = ["128x128", "256x256", "512x512", "1024x1024"]
+tiers = ["quick", "tracking"]
+
+[[group]]
+name = "plane-batches"
+kind = ["c2c", "r2c"]
+dims = ["192x192"]
+batch = [8, 64]
+tiers = ["quick"]
+
+[[group]]
+name = "planes-real"
+kind = "r2c"
+dims = ["512x512", "1024x1024"]
+tiers = ["quick"]
+
+[[group]]
+name = "volumes"
+kind = ["c2c", "r2c"]
+dims = ["64x64x64", "128x128x128"]
+tiers = ["quick"]
