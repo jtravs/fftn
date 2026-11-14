@@ -705,6 +705,20 @@ x86 the answer differs by pass, length and core (finding E1). Both forms are gen
 and experiment X1 in [PLAN.md](PLAN.md) settles the defaults for every target, FCMA
 included. Where one form never wins on a target it is not instantiated there.
 
+As built (task 1.5, `src/passes/split.inl`, `strategies/chain.hpp`): split arithmetic runs
+only in a chain's last lane passes, a *split run*: from the pass after the first whose copy
+count is a multiple of the target's `split_block` (W, and on `avx2` the W of `avx512`, so a
+bitwise pair chooses the same passes) to the end, when that is two passes or more of radices
+with split codelets. The run's first pass deinterleaves IL into BL(W), its middle passes go
+BL to BL with no shuffle, its last interleaves into IL with the output edge; so BL never
+leaves a chain and the public layout stays interleaved. The grouped first pass stays
+complex-register: writing BL from it costs an 8 × 8 transpose of reals where IL costs a 4 × 4
+one of complex pairs, the same one shuffle per register as the deinterleave, so the
+conversion is paid at the run's ends either way and only middle passes gain. Split codelets
+are forward only; a backward pass exchanges real and imaginary parts on loading and storing.
+A plan takes split runs where its profile says so (`target_profile::split`) or where a test or
+fbench forces it (`build_settings::layout`, fbench `LAYOUT`).
+
 ### 6.4 ISA regions and safety
 
 All target-specific code sits between `FFTN_ISA_BEGIN(target)` and `FFTN_ISA_END`, which
@@ -851,8 +865,9 @@ For each radix the generator can emit:
 
 Generated so far: the complex-register form of plain, DIT and DIF, forward and backward,
 for the radices listed in `gen/fftn_gen/catalogue.py` (2–16 at task 1.1; 32 and 64 since
-task 1.6, for leaves and big passes). The split form,
-pruned and fused-edge variants follow with tasks 1.5 and 2.1.
+task 1.6, for leaves and big passes); the split form of plain and DIF, forward only, for
+radices 2–16 (task 1.5; `gen/README.md`, "The split lowering"). Pruned and fused-edge
+variants follow with task 2.1.
 
 Reference values for regression: the generator's operation counts are compared with the
 best published counts for each size (for example a size-16 complex DFT in 144 additions
