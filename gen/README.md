@@ -34,6 +34,7 @@ gap.
 | `ir.py` | the DAG: nodes, terms with pending rotations, interning, value numbering, constant roots |
 | `algorithms.py` | DFT builders (split radix, Good–Thomas, symmetric-pair primes, Cooley–Tukey) and `choose()` |
 | `codelet.py` | variants (plain, DIT, DIF) and directions; `build()` runs the pipeline for one codelet |
+| `realify.py` | the real-coefficient form: multiplications by i only at the outputs |
 | `lower.py` | complex-register lowering: one vocabulary operation per node |
 | `schedule.py` | emission order and the peak number of live values |
 | `verify.py` | the exact check of an operation list against the DFT |
@@ -75,25 +76,37 @@ For each radix R, variant and direction (`codelet.build`):
    (cd)·x, 1·x is x), negative constants become a rotation of 2, and a node whose values
    are zero is the zero term, which `add` and `scale` drop. Only nodes reachable from the
    outputs are lowered (dead-code elimination; pruned variants will rely on it).
-4. **Lower** (`lower.py`) each node to one vocabulary operation. The register of a node
+4. **Real-coefficient form** (`realify.py`). The DAG is rebuilt with every node v split
+   into R(v) and I(v), the combinations of the same atoms (inputs, twiddle products) by the
+   real and imaginary parts of v's coefficients, so that every value is a real combination
+   up to a pending rotation and each output is R + i·I, one `addj` or `subj`. An output
+   pair X_k, X_{n−k} shares both parts, so a codelet multiplies by i (a register swap on
+   x86) once per output pair, ⌊(R − 1)/2⌋ values, where the DAG as built did it inside
+   every complex-coefficient node (radix 16: 7 against 19, radix 8: 3 against 6).
+   Value numbering merges the parts that coincide up to sign, so the form never costs more
+   operations (radix 16: 80 vector operations against 84, radix 9: 48 against 54; the
+   unfused additions are the same, multiplies equal or fewer); a test holds that, and the
+   one-swap-per-pair count, on every codelet (experiment X19).
+5. **Lower** (`lower.py`) each node to one vocabulary operation. The register of a node
    holds its value times (−i)^m, with m chosen per node: an `Add` can take either operand
    first, which gives two choices. Wanted rotations are propagated backwards from the
    stores, which need m equal to the output's pending rotation, and each `Add` takes the
    choice that satisfies the nearest store. A store that still disagrees would need a
    `neg` or a multiply by ∓i; no codelet needs one, and `lower` raises `ForcedRotation`
    rather than emit an operation that no codelet has compiled. `acc ± c·x` becomes `fmadd_r(acc, x, ±c)` when the scaled node has no other user.
-5. **Order** (`schedule.py`) by greedy list scheduling: the ready operation that adds the
+6. **Order** (`schedule.py`) by greedy list scheduling: the ready operation that adds the
    fewest live values goes next, ties to the one using the most recently computed value
    (depth first). Loads go just before their first use, stores just after their producer.
-   The peak number of live values is recorded.
-6. **Verify** (`verify.py`) the ordered operation list, the same objects the emitter prints,
+   Where the builders' creation order keeps fewer values live (radix 9), it is kept
+   instead. The peak number of live values is recorded.
+7. **Verify** (`verify.py`) the ordered operation list, the same objects the emitter prints,
    in 256-bit arithmetic on every basis input (every column of the codelet's matrix) and
    three random inputs, each with random twiddles, against the definition of the variant
    with exactly reduced roots of unity. Any output off by more than 2^−200 relative is a
    `VerificationError`. So is any breach of the accessor contract, checked apart from the
    values (`check_shape`): every input leg loaded once, twiddle legs 1 to R − 1 once each
    (none for plain), every output stored once.
-7. **Emit** (`emit_cpp.py`) one statement per operation, with constants printed in both
+8. **Emit** (`emit_cpp.py`) one statement per operation, with constants printed in both
    precisions.
 
 ## The intermediate representation
@@ -293,18 +306,19 @@ before the first store if it may run in place.
   complex-register lowering keeps the shared multiply, so the unfused counts equal the
   algorithm's. FMA shaping proper (tangent-factored rotations) belongs to the split
   lowering.
-- **A constant complex multiply costs three operations** (two `scale` and an `addj` or
-  `subj`); `FCMLA` could do it in two. The vocabulary has no multiply by a constant complex
-  number (DESIGN.md 18.2). Radix 16 has four such multiplies, 9 has four, 12 and the other
-  Good–Thomas sizes none.
-- **Order.** The greedy scheduler keeps no more values live than the builders' own
-  creation order on any codelet, and fewer in total; a test compares the two, with the same
-  load and store placement, over every codelet. The recursive red/blue partition of Frigo
+- **A constant complex multiply** built as two `scale` and an `addj` or `subj` does not
+  survive into the output: the real-coefficient form multiplies the parts R and I by real
+  constants, and the conjugate pairs of split radix (k and q − k) share those products.
+  The vocabulary has no multiply by a constant complex number (DESIGN.md 18.2).
+- **Order.** The greedy scheduler keeps fewer values live in total than the builders' own
+  creation order, and `schedule` takes the creation order on the one codelet where it is
+  better (radix 9); a test compares the two, with the same load and store placement, over
+  every codelet. The recursive red/blue partition of Frigo
   (PLDI 1999) was implemented first and lost to both; `schedule.py` names the commit that
   holds it and its numbers. The compiler reschedules anyway; the order is a hint that
   keeps its register allocator out of trouble. A codelet whose `live` exceeds 16 spills a
   little on AVX2's 16 registers, and above 32 on every target; `--table` shows `live` (at
-  task 1.1, radices 14 to 16 were at 17 and 18).
+  task 1.1, radices 14 to 16 were at 17 and 18, and still are in real-coefficient form).
 - **Constants** are printed twice, each the exact value rounded once to its precision (to
   double, and to float directly: rounding the double to float would round twice), and
   `gen_k<T>` picks one. The double literal is the shortest decimal that reads back as that

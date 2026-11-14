@@ -795,7 +795,11 @@ high-precision verification. It is documented in `gen/README.md` (section 17).
 3. **Simplify.** Constant folding, sign canonicalisation (push negations into consumers;
    treat a − b and b − a as one node), common-subexpression elimination by value numbering
    (evaluate each node at random inputs in high precision and hash), dead-code elimination
-   for pruned inputs and outputs.
+   for pruned inputs and outputs. Then the **real-coefficient form**: every node v is
+   rebuilt as R(v) + i·I(v), the combinations of the inputs by the real and imaginary parts
+   of its coefficients, so that multiplications by i (register swaps on x86) happen only
+   at the outputs, once per output pair X_k, X_{n−k} (radix 16: 7 against 19), at no more
+   operations (experiment X19).
 4. **Lower** to one of two forms:
    - *complex-register*: nodes map directly onto the complex vocabulary, one operation per
      node. Each node's register holds its value times a rotation chosen backwards from the

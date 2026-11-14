@@ -62,6 +62,12 @@ def creation_order(ops: list[Op]) -> list[Op]:
 
 
 def schedule(ops: list[Op]) -> list[Op]:
+    """The greedy order, or the creation order where that keeps fewer values live."""
+    greedy, created = greedy_order(ops), creation_order(ops)
+    return created if peak_live(created) < peak_live(greedy) else greedy
+
+
+def greedy_order(ops: list[Op]) -> list[Op]:
     n = len(ops)
     preds, compute, is_load = _graph(ops)
     # Remaining arithmetic readers of each operation's value (stores are placed afterwards).
