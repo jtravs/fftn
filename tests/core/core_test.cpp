@@ -86,9 +86,8 @@ bool is_prime(std::size_t n) {
   return n >= 2;
 }
 
-// Planner v0's radices multiply to the length, and reproduce the published examples of the
-// rules they come from (FFTL.jl, single lines): on 32 registers with merged radices
-// (AArch64) and on 16 without (AVX2).
+// Planner v0's radices multiply to the length on every profile, and every radix is a
+// codelet's or a prime for the generic pass.
 TEST(Rules, RadicesMultiplyToTheLength) {
   for (const auto t : {
            fftn::detail::target::scalar,

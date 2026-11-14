@@ -161,7 +161,8 @@ public:
   /// Throws `std::bad_alloc` when memory runs out.
   [[nodiscard]] std::string describe() const { return detail::describe(*core_); }
 
-  /// The instruction set the plan's kernels use.
+  /// The instruction set the plan's kernels use: the one `options::force_isa` named, or the
+  /// one the plan chose. Never `isa::best`.
   [[nodiscard]] isa instruction_set() const noexcept { return detail::instruction_set(*core_); }
 
 private:

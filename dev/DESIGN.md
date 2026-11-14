@@ -868,7 +868,7 @@ struct stage {            // one pass over one buffer range
   const void* twiddles;
   std::uint32_t radix, m, s;        // geometry
   std::uint8_t  src, dst;           // buffer slots: caller in, caller out, scratch a/b, block
-  std::uint32_t chunks;             // independent butterfly ranges this pass divides into
+  std::uint32_t chunks;             // independent ranges of units this pass divides into
   …
 };
 struct loop {             // repeat the enclosed records
@@ -886,7 +886,8 @@ planes of a volume. The driver costs a few nanoseconds per record. Two consequen
 - **Blocking and batching are data**, not separate engines.
 - **The threading work graph is read off the program** (section 13.2). Independent loops
   give whole-row, whole-plane and block tasks. Within one row, each stage is a phase and
-  its `chunks` butterfly ranges are the units shared between threads, with the stage
+  its `chunks` ranges of units (blocks of butterflies or copies, as the pass kind defines
+  them) are shared between threads, with the stage
   boundary as the ordering constraint; this is how the prototype split chain passes, and
   the blocked grid adds coarser chunks (column blocks, rows). The division of work is
   fixed by the plan, which is what makes results independent of the schedule.
@@ -907,8 +908,12 @@ planes of a volume. The driver costs a few nanoseconds per record. Two consequen
   read (R − 1) twiddles per group p in broadcast storage (`bcast_tw`), one stored twiddle
   per entry rather than C copies (as FFTL.jl's lane passes read theirs, broadcast from
   memory per vector); the generic pass's roots and the real edges' twiddles are broadcast
-  storage too. Every entry is an entry of the length's root table, which the tests check
-  entry by entry.
+  storage too. Every entry is an entry of the length's root table (the roots of n, or of
+  the radix for the generic pass) or a padding 1: the root tables are what the tests check
+  entry by entry against the reference. The packing into storage forms is exact (copies
+  and sign flips, `pack_tw` and `pack_tw1`), which the vocabulary tests check bit for bit
+  through `load_tw` and `bcast_tw`; the packed tables of a plan are not compared with the
+  reference directly.
 
 ### 8.5 Strategies
 
@@ -1847,8 +1852,9 @@ symmetric-pair form costs 192 additions and 134 multiplies against Rader's 176 a
 **Task 1.2 (for the maintainer).** Public API added in the shape of section 5.3, each a
 choice to confirm: (a) `options::scale` (a `double`, default 1): multiplies every output,
 fused into the pass that writes the output; each output equals the unscaled output times
-the scale rounded once to `T`, bit for bit; plan construction refuses NaN and infinities
-(naming `options.scale`). Alternative: accept them. (b) `options::force_isa` with a new
+the scale rounded once to `T`, bit for bit; plan construction refuses NaN, infinities and,
+for `float` plans, magnitudes beyond `float`'s range or non-zero ones below its smallest
+value (naming `options.scale`). Alternative: accept them. (b) `options::force_isa` with a new
 enumerator `isa::best` (the default), appended after `neon_fcma` so the other values keep
 theirs; `instruction_set()` never returns it and `isa_name` names it "best". A target the
 build lacks or the processor cannot run is refused, naming `options.force_isa`.
