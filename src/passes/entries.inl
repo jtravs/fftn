@@ -26,25 +26,74 @@ template <class T, std::size_t R, bool = codelet_radix<R>> struct radix_entries 
 };
 template <class T, std::size_t R> struct radix_entries<T, R, true> {
   static constexpr radix_passes value{
-      .grouped = {{&grouped_pass<T, R, -1, nop>, &grouped_pass<T, R, -1, scl>,
-                   &grouped_pass<T, R, -1, fac>},
-                  {&grouped_pass<T, R, +1, nop>, &grouped_pass<T, R, +1, scl>,
-                   &grouped_pass<T, R, +1, fac>}},
-      .lane = {&lane_pass<T, R, -1, true, nop>, &lane_pass<T, R, +1, true, nop>},
-      .last = {{&lane_pass<T, R, -1, false, nop>, &lane_pass<T, R, -1, false, scl>,
-                &lane_pass<T, R, -1, false, fac>},
-               {&lane_pass<T, R, +1, false, nop>, &lane_pass<T, R, +1, false, scl>,
-                &lane_pass<T, R, +1, false, fac>}},
-      .leaf = {{{&leaf_pass<T, R, -1, nop, nop>, &leaf_pass<T, R, -1, nop, scl>,
-                 &leaf_pass<T, R, -1, nop, fac>},
-                {&leaf_pass<T, R, -1, scl, nop>, nullptr, &leaf_pass<T, R, -1, scl, fac>},
-                {&leaf_pass<T, R, -1, fac, nop>, &leaf_pass<T, R, -1, fac, scl>,
-                 &leaf_pass<T, R, -1, fac, fac>}},
-               {{&leaf_pass<T, R, +1, nop, nop>, &leaf_pass<T, R, +1, nop, scl>,
-                 &leaf_pass<T, R, +1, nop, fac>},
-                {&leaf_pass<T, R, +1, scl, nop>, nullptr, &leaf_pass<T, R, +1, scl, fac>},
-                {&leaf_pass<T, R, +1, fac, nop>, &leaf_pass<T, R, +1, fac, scl>,
-                 &leaf_pass<T, R, +1, fac, fac>}}},
+      .grouped =
+          {
+              {
+                  &grouped_pass<T, R, -1, nop>,
+                  &grouped_pass<T, R, -1, scl>,
+                  &grouped_pass<T, R, -1, fac>,
+              },
+              {
+                  &grouped_pass<T, R, +1, nop>,
+                  &grouped_pass<T, R, +1, scl>,
+                  &grouped_pass<T, R, +1, fac>,
+              },
+          },
+      .lane =
+          {
+              &lane_pass<T, R, -1, true, nop>,
+              &lane_pass<T, R, +1, true, nop>,
+          },
+      .last =
+          {
+              {
+                  &lane_pass<T, R, -1, false, nop>,
+                  &lane_pass<T, R, -1, false, scl>,
+                  &lane_pass<T, R, -1, false, fac>,
+              },
+              {
+                  &lane_pass<T, R, +1, false, nop>,
+                  &lane_pass<T, R, +1, false, scl>,
+                  &lane_pass<T, R, +1, false, fac>,
+              },
+          },
+      .leaf =
+          {
+              {
+                  {
+                      &leaf_pass<T, R, -1, nop, nop>,
+                      &leaf_pass<T, R, -1, nop, scl>,
+                      &leaf_pass<T, R, -1, nop, fac>,
+                  },
+                  {
+                      &leaf_pass<T, R, -1, scl, nop>,
+                      nullptr,
+                      &leaf_pass<T, R, -1, scl, fac>,
+                  },
+                  {
+                      &leaf_pass<T, R, -1, fac, nop>,
+                      &leaf_pass<T, R, -1, fac, scl>,
+                      &leaf_pass<T, R, -1, fac, fac>,
+                  },
+              },
+              {
+                  {
+                      &leaf_pass<T, R, +1, nop, nop>,
+                      &leaf_pass<T, R, +1, nop, scl>,
+                      &leaf_pass<T, R, +1, nop, fac>,
+                  },
+                  {
+                      &leaf_pass<T, R, +1, scl, nop>,
+                      nullptr,
+                      &leaf_pass<T, R, +1, scl, fac>,
+                  },
+                  {
+                      &leaf_pass<T, R, +1, fac, nop>,
+                      &leaf_pass<T, R, +1, fac, scl>,
+                      &leaf_pass<T, R, +1, fac, fac>,
+                  },
+              },
+          },
   };
 };
 
@@ -72,27 +121,85 @@ inline constexpr pass_kernels<T> pass_table{
             radix_entries<T, 15>::value,
             radix_entries<T, 16>::value,
         },
-    .generic = {{{&generic_pass<T, -1, nop, nop>, &generic_pass<T, -1, nop, scl>,
-                  &generic_pass<T, -1, nop, fac>},
-                 {&generic_pass<T, -1, scl, nop>, nullptr, &generic_pass<T, -1, scl, fac>},
-                 {&generic_pass<T, -1, fac, nop>, &generic_pass<T, -1, fac, scl>,
-                  &generic_pass<T, -1, fac, fac>}},
-                {{&generic_pass<T, +1, nop, nop>, &generic_pass<T, +1, nop, scl>,
-                  &generic_pass<T, +1, nop, fac>},
-                 {&generic_pass<T, +1, scl, nop>, nullptr, &generic_pass<T, +1, scl, fac>},
-                 {&generic_pass<T, +1, fac, nop>, &generic_pass<T, +1, fac, scl>,
-                  &generic_pass<T, +1, fac, fac>}}},
-    .copy = {{&copy_pass<T, nop, nop>, &copy_pass<T, nop, scl>, &copy_pass<T, nop, fac>},
-             {&copy_pass<T, scl, nop>, nullptr, &copy_pass<T, scl, fac>},
-             {&copy_pass<T, fac, nop>, &copy_pass<T, fac, scl>, &copy_pass<T, fac, fac>}},
+    .generic =
+        {
+            {
+                {
+                    &generic_pass<T, -1, nop, nop>,
+                    &generic_pass<T, -1, nop, scl>,
+                    &generic_pass<T, -1, nop, fac>,
+                },
+                {
+                    &generic_pass<T, -1, scl, nop>,
+                    nullptr,
+                    &generic_pass<T, -1, scl, fac>,
+                },
+                {
+                    &generic_pass<T, -1, fac, nop>,
+                    &generic_pass<T, -1, fac, scl>,
+                    &generic_pass<T, -1, fac, fac>,
+                },
+            },
+            {
+                {
+                    &generic_pass<T, +1, nop, nop>,
+                    &generic_pass<T, +1, nop, scl>,
+                    &generic_pass<T, +1, nop, fac>,
+                },
+                {
+                    &generic_pass<T, +1, scl, nop>,
+                    nullptr,
+                    &generic_pass<T, +1, scl, fac>,
+                },
+                {
+                    &generic_pass<T, +1, fac, nop>,
+                    &generic_pass<T, +1, fac, scl>,
+                    &generic_pass<T, +1, fac, fac>,
+                },
+            },
+        },
+    .copy =
+        {
+            {
+                &copy_pass<T, nop, nop>,
+                &copy_pass<T, nop, scl>,
+                &copy_pass<T, nop, fac>,
+            },
+            {
+                &copy_pass<T, scl, nop>,
+                nullptr,
+                &copy_pass<T, scl, fac>,
+            },
+            {
+                &copy_pass<T, fac, nop>,
+                &copy_pass<T, fac, scl>,
+                &copy_pass<T, fac, fac>,
+            },
+        },
     .r2c_pack_pairs = &r2c_pack_pairs<T>,
-    .r2c_post = {&r2c_post<T, false>, &r2c_post<T, true>},
+    .r2c_post =
+        {
+            &r2c_post<T, false>,
+            &r2c_post<T, true>,
+        },
     .r2c_pack = &r2c_pack<T>,
-    .r2c_store = {&r2c_store<T, false>, &r2c_store<T, true>},
+    .r2c_store =
+        {
+            &r2c_store<T, false>,
+            &r2c_store<T, true>,
+        },
     .c2r_pre = &c2r_pre<T>,
-    .c2r_unpack_pairs = {&c2r_unpack_pairs<T, false>, &c2r_unpack_pairs<T, true>},
+    .c2r_unpack_pairs =
+        {
+            &c2r_unpack_pairs<T, false>,
+            &c2r_unpack_pairs<T, true>,
+        },
     .c2r_expand = &c2r_expand<T>,
-    .c2r_store = {&c2r_store<T, false>, &c2r_store<T, true>},
+    .c2r_store =
+        {
+            &c2r_store<T, false>,
+            &c2r_store<T, true>,
+        },
 };
 
 } // namespace
