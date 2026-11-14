@@ -267,13 +267,14 @@ before the first store if it may run in place.
   `subj`); `FCMLA` could do it in two. The vocabulary has no multiply by a constant complex
   number (DESIGN.md 18.2). Radix 16 has four such multiplies, 9 has four, 12 and the other
   Good–Thomas sizes none.
-- **Order.** The recursive red/blue partition of Frigo (PLDI 1999) was implemented first
-  and kept more values live than the builders' own creation order on most codelets; the
-  greedy scheduler beats both in total and is never worse than creation order or
-  stage-by-stage order on any codelet (`schedule.py` has the totals; a test holds it). The
-  compiler reschedules anyway; the order is a hint that keeps its register allocator out
-  of trouble. Radices 13 to 16 peak at 16 to 18 live values, so they spill a little on
-  AVX2's 16 registers, and none spills on 32.
+- **Order.** The greedy scheduler keeps no more values live than the builders' own
+  creation order on any codelet, and fewer in total; a test compares the two, with the same
+  load and store placement, over every codelet. The recursive red/blue partition of Frigo
+  (PLDI 1999) was implemented first and lost to both; `schedule.py` names the commit that
+  holds it and its numbers. The compiler reschedules anyway; the order is a hint that
+  keeps its register allocator out of trouble. A codelet whose `live` exceeds 16 spills a
+  little on AVX2's 16 registers, and above 32 on every target; `--table` shows `live` (at
+  task 1.1, radices 14 to 16 were at 17 and 18).
 - **Constants** are printed twice, rounded once from the exact value to double and to float
   (rounding the double to float would round twice), and `gen_k<T>` picks one. Literals are
   the shortest strings that round back.

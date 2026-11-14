@@ -587,7 +587,8 @@ high-precision verification. It is documented in `gen/README.md` (section 17).
    its first use and each store next to the operation that produces its value. This keeps
    the number of live values near the minimum, which matters for radix ≥ 16 on 16
    registers and ≥ 32 on 32. (The recursive partition of Frigo's PLDI 1999 paper was tried
-   first and kept more values live: `gen/fftn_gen/schedule.py`.) A codelet whose radix exceeds
+   first and kept more values live; the commit that holds it is named in
+   `gen/fftn_gen/schedule.py`.) A codelet whose radix exceeds
    the register count necessarily keeps some values on the stack; that is acceptable when
    the spills are few and ordered (FFTW's radix-32 and radix-64 codelets work this way),
    and ruinous when they are not: the prototype's hand-built radix 20, 24 and 32
@@ -1754,7 +1755,7 @@ or departs from sections 5.5 and 13.6, or from Kokkos-FFT 2.0's `KokkosFFT::Plan
 | 2026-11-13 | Deferred, not rejected: a two-way plan (forward and backward over one table set) and an object owning a plan and its workspace | Small gain for more API surface; both can be added later without changing the API as long as twiddle tables stay direction-independent and a workspace stays plain bytes sized by `workspace_bytes()` (18.2) |
 | 2026-11-13 | Codelet calling convention: `cdft<R>::plain`, `dit` and `dif`, static member templates over `T` and `Sign` (−1 forward, +1 backward), taking the caller's accessor objects `in.get(j)`, `out.put(k, v)` and `twid.get(k)`; twiddles are forward roots, multiplied by `mulc` backward (gen/README.md) | One codelet text then serves every pass kind, edge variant and layout, which differ only in their accessors; stores stay next to their producers inside the codelet; the accessors hold pointers, never vectors, so no vector crosses a non-inlined boundary |
 | 2026-11-13 | Task 1.1 generates the complex-register lowering only, for radices 2–16: plain, DIT and DIF, forward and backward. They are compiled and tested in test-only region units (`tests/isa/codelets_<target>.cpp`) until task 1.2's passes instantiate them in the library | The split lowering, pruned and fused-edge variants are tasks 1.5 and 2.1; codelets nothing calls do not belong in the library's units |
-| 2026-11-13 | The generator orders codelets by greedy list scheduling for fewest live values, not by the recursive partition of section 7.2's first draft | Over radices 2–16 and all variants the greedy order has a total peak of 502 live values, the partition 598 and the builders' own creation order 549 (forward codelets); a test holds that it is never worse than creation order or stage-by-stage order on any codelet |
+| 2026-11-13 | The generator orders codelets by greedy list scheduling for fewest live values, not by the recursive partition of section 7.2's first draft | Measured over radices 2–16, all variants, both directions, each order with the same load and store placement (commit aa966ef holds the partition and the test): a total peak of 1004 live values for the greedy order, 1196 for the partition and 1098 for the builders' own creation order, and the greedy order no worse than either on any codelet; a test keeps holding it against creation order |
 | 2026-11-13 | Operation counts are compared with the best published counts in unfused real arithmetic; a size the generator misses is recorded with its exact counts and reason (`gen/fftn_gen/reference.py`), and only 13 is (Rader's algorithm, 176 + 68 against 192 + 134) | A gap is never widened silently and a closed gap is noticed; the mean removal in the prime form beats the reference at 7, 11 and 14 |
 
 ---

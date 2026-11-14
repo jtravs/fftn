@@ -14,7 +14,7 @@ from fftn_gen.catalogue import RADICES, all_codelets
 from fftn_gen.codelet import build_ops
 from fftn_gen.ir import Graph, rotate
 from fftn_gen.lower import ForcedRotation, lower
-from fftn_gen.schedule import creation_order, partition, peak_live, schedule
+from fftn_gen.schedule import creation_order, peak_live, schedule
 from fftn_gen.verify import VerificationError, verify
 
 
@@ -83,19 +83,17 @@ class Codelets(unittest.TestCase):
     def test_order_keeps_no_more_values_live_than_the_alternatives(self) -> None:
         # Every codelet, both directions, all variants; every order gets the same load and
         # store placement, so only the order of the arithmetic differs (schedule.py).
-        orders = {"greedy": schedule, "creation": creation_order, "partition": partition}
+        orders = {"greedy": schedule, "creation": creation_order}
         totals = dict.fromkeys(orders, 0)
         for radix in RADICES:
             for variant in ("plain", "dit", "dif"):
                 for sign in (-1, 1):
                     ops = build_ops(radix, variant, sign)
                     live = {name: peak_live(f(list(ops))) for name, f in orders.items()}
-                    others = min(live["creation"], live["partition"])
-                    self.assertLessEqual(live["greedy"], others, (radix, variant, sign, live))
+                    self.assertLessEqual(live["greedy"], live["creation"], (radix, variant, sign))
                     for name, value in live.items():
                         totals[name] += value
         self.assertLess(totals["greedy"], totals["creation"], totals)
-        self.assertLess(totals["greedy"], totals["partition"], totals)
 
 
 def _with(ops: list, i: int, **changes: object) -> list:
