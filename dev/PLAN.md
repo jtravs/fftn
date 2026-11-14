@@ -63,6 +63,15 @@ fields there are open, as are fusing the gathers and scatters into the phases' f
 last passes, and 2^14, 2^20 and 2^22 points on the Mac (1.37–1.43 times FFTW in run
 20261114-110844-8b03; 2^16 and 2^18 within 1.25).
 
+Task 2.1 (branch `task/2.1-real`): real transforms as built in DESIGN.md 9.1 (pairing
+fused into the chain's edge pass by the rule of X6, a separate pass elsewhere, the grid for
+long rows). fbench run 20261114-135716-0600 on the Mac: FFTN ÷ FFTW r2c 0.90–0.96 and c2r
+0.82–0.88 up to 4096 (main: 1.04–1.31), 1.19–1.40 at 65536 and 2^20 (main: 1.52–2.18).
+Acceptance not met within L1: real overhead r2c 39–43 %, c2r 15–28 % (beyond L1 2–16 %);
+next is X6's real-input codelets (generator work). Open: x86 runs (`--catalogue x6`), the
+avx2 fusion limit (4, unmeasured), fusing the pairing into the grid's last or first phase,
+odd n (still the full-length complex chain), 2-D r2c of short rows (64 × 64: 1.51).
+
 ## How this plan works
 
 - **Phases** group work with a shared exit criterion. Phases 1–2 (kernels), 3 (threading)
@@ -245,7 +254,7 @@ running, done (with verdict).
 | X3 | Few big passes (radix 16–64, in the output buffer) against chains for rows of 8–64 thousand points; spill counts per codelet and target. The prototype's radix 20–32 attempts lost everywhere: find out whether generated, ordered codelets change that | 1 | planned |
 | X4 | Padding: incremental addressing cost; pad always, never, or only where the stream rule binds. Also: do edge passes gain from a variant chosen by the caller's base address (cache-line splits on wide registers)? | 1 | planned |
 | X5 | Twiddle modes (full, shared, derived) by length and target | 1 | planned |
-| X6 | Real-input codelets against half-length complex with fused post/pre, even and odd n | 2 | planned |
+| [X6](experiments/X6-real-codelets.md) | Real-input codelets against half-length complex with fused post/pre, even and odd n | 2 | planned (needs the generator's pruned variants); the half-length route's fusion rule measured on the Mac (task 2.1) |
 | X7 | Lanes against in-row kernels for batches of short rows, by length, target and row count | 2 | planned |
 | X8 | Whole-transform leaves for n ≤ 64–256 against two- and three-stage chains | 1 | planned |
 | X9 | Scrambled intermediate order for transform pairs | 5 | planned |
