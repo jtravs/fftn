@@ -580,7 +580,7 @@ numbers as re, im pairs):
 | `neg`, `conj`, `swap_ri` | sign and part manipulation | 1 | 1 | 1 |
 | `cmul(a, b)` | a·b for two complex registers (factor arrays) | as `mul` | twiddle form built in registers, then `mul` | twiddle form built in registers, then `mul` |
 | `load`, `store`, `bcast`, `load_tw`, `bcast_tw` | memory (`bcast_tw`: one stored twiddle in every lane) | | | |
-| `transpose` | in-register C × C transpose of complex values | zips | zips | unpack / permute: AVX-512 double a 4 × 4 block of 128-bit units (8 `vshuff64x2`), float an 8 × 8 block of 64-bit units (8 unpacks, then two of those) |
+| `transpose` | in-register C × C transpose of complex values | zips | zips | unpack / permute: AVX-512 double a 4 × 4 block of 128-bit units (8 `vshuff64x2`), float an 8 × 8 block of 64-bit units (8 unpacks, then two 4 × 4 transposes of 128-bit units: 16 `vshuff64x2`) |
 
 **Real-register operations** (split layout: an `rv` holds `W` reals; a complex vector
 is a pair of them): `add`, `sub`, `mul`, `fmadd`, `fmsub`, `fnmadd`, `neg`, `load`,
@@ -601,8 +601,16 @@ different things in the two families. The FMA names follow x86: `fmadd(a, b, c)`
 a·b + c, `fmsub` a·b − c, `fnmadd` c − a·b. `transpose` is a C × C block. An R × C form
 for radices below C (avx512: R = 2 for `double`, R = 2 and 4 for `float`) is not built: the
 grouped pass stores such radices, and every R that C does not divide, through its tile
-(section 8.2), and the rules prefer a leading radix of at least C; whether an R × C
-transpose pays is a measurement for the radix-order study (X2). The scalar target is never
+(section 8.2). Planner v0's rules (section 11.2) do not take C into account, and on
+`avx512` most lengths start with a radix below 8: 32 is 4 · 8, 64 is 4 · 16, 1024 is
+4 · 4 · 8 · 8, 360 is 4 · 2 · 5 · 9; of the lengths 17 to 4096 that take more than one
+pass, 644 of 3522 start with a radix of 8 or more (512 and 4096 among them). On `avx512`
+`float` (C = 8) the grouped pass therefore usually stores through the tile, and the next
+pass, with s = 4 < 8 copies, runs entirely as tail units, element by element. That is
+correct (the tests cover it) but is a performance risk for `avx512` `float`, and for
+`double` where the leading radix is 2 or 3. Whether to prefer a leading radix of at least C,
+or to build an R × C transpose, is for an experiment comparing `avx512` with `avx2` (X16,
+planned); the rules are not changed without one. The scalar target is never
 fused, so it gives the same bits on every processor. The full contract is
 `src/isa/vocabulary.inl`.
 
@@ -610,7 +618,10 @@ Each SIMD target rounds every operation exactly as another of its architecture d
 the same passes give the same bits on both targets of a pair: plain `neon` takes FCMLA's
 order in its products (the product with wr rounded, the wi term fused onto it), `avx512`
 takes `avx2`'s FMA order, and `addj` and `subj` round one addition everywhere
-(`tests/core/passes_test.cpp` holds whole transforms to it). `neon` and `neon_fcma` share
+(`tests/core/passes_test.cpp` holds whole transforms to it). Forming a ± i·b on AVX-512 as
+`fmaddsub` or `fmsubadd` by a vector of ones, which rounds once because the product is
+exact, is an idiom FFTW's AVX-512 SIMD header uses too (the idea only; FFTN's code is its
+own, AGENTS.md section 10). `neon` and `neon_fcma` share
 a planner profile, so their plans agree bit for bit; `avx2` and `avx512` do not (16 and
 32 registers), so for some lengths they choose different radices and so different bits.
 The operations the two NEON targets share are written once
@@ -680,9 +691,12 @@ kernel, and the linker cannot substitute a copy compiled for one target for a ca
 another. The library is compiled with `-Werror=psabi` under GCC (experiment B1, section
 14.1), always, not only in the gate.
 
-Target strings: `avx2` is `"avx2,fma"`, exactly the features its run-time check requires
-and no AVX-512 feature; `avx512` is `"avx2,fma,avx512f,avx512dq,avx512vl"`, again exactly
-what its check requires (BW and CD, which every such processor also has, are left out);
+Target strings: `avx2` is `"avx2,fma"`, the features its run-time check requires, and no
+AVX-512 feature; `avx512` is `"avx2,fma,avx512f,avx512dq,avx512vl"`, again the features
+its check requires (BW and CD, which every such processor also has, are left out).
+Compilers imply a few more from these names (Clang: POPCNT and CRC32 from the AVX2 chain,
+F16C from `avx512f`); the checks do not test them, and every processor that passes a
+check has them;
 plain `neon` has no attribute, since Advanced SIMD is the AArch64 baseline, so its code
 has what the build's baseline has and nothing more (on an Armv8.0 baseline no FCMA and no
 pointer authentication, which the disassembly test checks); `neon_fcma` is
@@ -840,8 +854,9 @@ Variants are separate instantiations chosen at plan time. A generic pass never t
 run-time flag in its loop (the prototype measured 0–40 % for doing so).
 
 Which kind a pass is follows from its copy count s against the register's complex
-count C. In a DIF chain s is the product of the radices already applied, so the planner
-prefers a leading radix of at least C (then only the first pass is grouped); with C = 1
+count C. In a DIF chain s is the product of the radices already applied, so a leading
+radix of at least C leaves only the first pass grouped; planner v0 does not yet take C into
+account (section 6.2 gives the consequence on `avx512`); with C = 1
 (NEON double) the distinction disappears. The copy counts that are not multiples of C
 (tails) never go through a mask or select inside the main loop. As built (task 1.2) they
 run the same instantiation on a padded tile: the last unit of a pass gathers its valid
@@ -858,8 +873,9 @@ parameter, everything else accessors; gen/README.md has the codelet calling conv
 - The **grouped** pass is a chain's first pass (s = 1): lanes over C consecutive
   butterflies p, per-lane twiddles, the R × C output block transposed in C × C blocks
   before contiguous stores when C divides R, and through a tile otherwise. On C = 1 it is
-  the lane pass with s = 1. Passes with 1 < s < C (a leading radix below C, which the
-  rules avoid where they can) are lane passes that run entirely as tails.
+  the lane pass with s = 1. Passes with 1 < s < C (after a leading radix below C, which
+  planner v0 chooses for most lengths on `avx512`) are lane passes that run entirely as
+  tails.
 - The **lane** passes are the rest: lanes over copies q, one twiddle per leg shared by
   every lane (`bcast_tw`), the DIF codelet in the middle and the plain codelet in the last
   pass (m = 1).
@@ -2030,8 +2046,8 @@ below because section 5.3 left the shapes open; each is easy to change before a 
 | 2026-11-14 | On targets with C > 1, a line whose stride is not 1 is copied to or from scratch around the chain; leaves and copies take any stride | Passes then load and store whole vectors only; strided axes get the lanes strategy in phase 4, which removes the copies |
 | 2026-11-14 | `options::scale` is fused into the pass that writes the output, so the result is bitwise the unscaled result times the scale; `options::force_isa` with `isa::best` as in section 5.3 (pending the maintainer's agreement, 18.2) | A fused scale costs no pass (task 1.2's acceptance, tested); forcing is how the suites run every target |
 | 2026-11-14 | `avx512` (task 1.3): 512-bit registers for both precisions (C = 4 `double`, 8 `float`), target string `"avx2,fma,avx512f,avx512dq,avx512vl"`, twiddles pre-arranged as on `avx2`, `addj` and `subj` by `fmaddsub` and `fmsubadd` by ones, `transpose` by `vshuff64x2` (4 × 4 blocks of 128-bit units, and for `float` after an unpack into such blocks), every operation rounding as on `avx2` | The targets table (6.1); 4 complex numbers per register and 32 registers are the target's point. Recorded, not decided: Skylake-SP and Cascade Lake lower their clock while 512-bit floating-point instructions run (the AVX-512 licence levels), which a 256-bit form of this vocabulary (EVEX at ymm width, 16 or 32 registers) would avoid at half the width; Zen 4 executes 512-bit operations as two 256-bit halves without a licence penalty. Which form wins on which machine is an fbench measurement on the Xeon and a Zen 4, not made here |
-| 2026-11-14 | Plain `neon` (task 1.3): no attribute (Advanced SIMD is the AArch64 baseline); twiddles pre-arranged as on x86 (`tw_reals` 4); products in FCMLA's rounding order, so `neon` and `neon_fcma` give the same bits; the operations both NEON targets share live once, in `vocab_neon_common.inl`; chosen wherever FCMA or pointer authentication is missing (Neoverse N1, Cortex-A72, A64FX, Windows on Arm without the registry fields) | Three instructions per product (shuffle, multiply, FMA) with no sign fix-up, where plain (wr, wi) storage needs a sign flip of a shuffled value per product (four) or two shuffles more for `float`; twice the twiddle bytes, as on x86, for the planner and X5 to weigh. The same bits make `neon` a pure fallback of `neon_fcma`: nothing a test or user observes changes between the two |
-| 2026-11-14 | No R × C `transpose` for radices below C (avx512); the grouped pass stores them through its tile | Correct as it stands, and the rules prefer a leading radix of at least C, so only lengths with a small leading factor take the tile; whether an R × C form pays is X2's to measure |
+| 2026-11-14 | Plain `neon` (task 1.3): no attribute (Advanced SIMD is the AArch64 baseline); twiddles pre-arranged as on x86 (`tw_reals` 4); products in FCMLA's rounding order, so `neon` and `neon_fcma` give the same bits; the operations both NEON targets share live once, in `vocab_neon_common.inl`; chosen wherever FCMA or pointer authentication is missing (Neoverse N1, Cortex-A72, A64FX, Windows on Arm without the registry fields) | Three instructions per product (shuffle, multiply, FMA) with no sign fix-up, where plain (wr, wi) storage needs a sign flip of a shuffled value per product (four) or two shuffles more for `float`; twice the twiddle bytes, as on x86, for the planner and X5 to weigh. The same bits make `neon` a pure fallback of `neon_fcma`: with the same passes (and the two share a planner profile, so they choose the same ones) every output bit is equal; only what reports the target, such as `instruction_set()`, tells them apart |
+| 2026-11-14 | No R × C `transpose` for radices below C (avx512); the grouped pass stores them through its tile | Correct as it stands. Performance risk recorded: planner v0 ignores C, so on `avx512` most lengths start with radix 4 (or 2 or 3), and in `float` (C = 8) their grouped pass stores through the tile and the second pass (s = 4) runs only tail units. Preferring a leading radix of at least C, or an R × C transpose, is a planner change and needs its experiment (X16, `avx512` against `avx2`), not a rule edited here |
 
 ---
 
