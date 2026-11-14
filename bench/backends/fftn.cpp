@@ -514,8 +514,10 @@ std::int32_t fbench_create(const fbench_case* c, void* /*in*/, void* /*out*/, vo
     record->core =
         c->precision == fbench_f32 ? make_core<float>(*c, opts) : make_core<double>(*c, opts);
     const std::string described = detail::describe(*record->core);
-    if (forced &&
-        described.find("radices " + radix_list(s.settings.radices) + "\n") == std::string::npos) {
+    // The axis line ends after the radices, or after a split run's ", split from pass k".
+    const std::string used = "radices " + radix_list(s.settings.radices);
+    if (forced && described.find(used + "\n") == std::string::npos &&
+        described.find(used + ", split from pass ") == std::string::npos) {
       throw std::logic_error("the plan does not use RADICES=" + s.radices_text + ":\n" + described);
     }
     record->ws = fftn::workspace(detail::workspace_bytes(*record->core, s.threads));
