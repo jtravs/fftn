@@ -48,7 +48,9 @@ Baseline runs (fbench run IDs): EPYC 7763-class node (GCC 16): tracking
 20261113-230721-7c95 failed (PATIENT timeout), re-run without PATIENT; pocketfft re-run with
 `-march=native` after a first run built it without; PATIENT vs MEASURE on the quick tier done.
 Xeon Gold 6240 (GCC 14): tracking 20261114-004852-f498. Mac (NEON FFTW): client catalogue
-20261114-030832-198b.
+20261114-030832-198b; FFTL.jl (libfftl at 53171e8, apple-m1) tracking 20261114-095234-2dcf:
+1.11 against FFTW (FFTN 2.20 on the same run: ahead on smooth rows ≤ 4096, far behind on
+primes, long rows and real transforms, which phases 1.7 and 2 build).
 
 Handoff notes: remote gates go to DMOG first (`gate-dmog.sbatch`; LSan off there, ptrace is
 forbidden on its nodes); the Xeon is shared with heavy users outside Slurm, so time there
@@ -134,9 +136,10 @@ against FFTW and FFTL.jl on M-series, Zen 3 and Xeon; within 1.10 of MKL on the 
 the `x86_v2`, `avx` and plain `neon` targets, forced on the same machines, at or below
 FFTW restricted to the same instruction sets. The MKL figure is interim; the end target
 is 1.00. Per-length choices at this stage come from the offline searches of X2 encoded as
-rules; the cost model arrives in phase 2. One cloud check on a Zen 4 or 5 and one on an
-AArch64 Linux machine (Neoverse) confirm that nothing is badly off there; tuning them is
-phase 2 and 6 work.
+rules; the cost model arrives in phase 2. Cloud checks (Google Cloud or AWS) on a Zen 4 or
+5, on a recent Intel Xeon (Sapphire Rapids or newer, with MKL as a competitor: its AVX-512
+behaves differently from the Cascade Lake Xeon's) and on an AArch64 Linux machine
+(Neoverse) confirm that nothing is badly off there; tuning them is phase 2 and 6 work.
 
 ---
 
@@ -232,7 +235,7 @@ running, done (with verdict).
 | [B2](experiments/B2-isa-regions-windows-clang.md) | The same on Windows with clang on the MSVC ABI (x64 and Arm64); how to detect FCMA and pointer authentication on Windows on Arm | 0 | done: regions hold; FCMA and PAuth read from the registry (task 0.8) |
 | B3 | Library build time and size as codelets and targets grow; which codelets are worth instantiating per target? | 1 | planned |
 | X1 | Complex-register against split arithmetic, per target (FCMA included) and pass position (first, middle, last; short and long rows) | 1 | planned |
-| [X2](experiments/X2-radix-sets.md) | Best radix sets and orders per target by exhaustive search over the standard lengths; how far are simple rules from the optimum? | 1 | running: EPYC done (v0 1.25× slower than best in double, 1.44× in single; planner v1 adopted); Mac, long lengths pending |
+| [X2](experiments/X2-radix-sets.md) | Best radix sets and orders per target by exhaustive search over the standard lengths; how far are simple rules from the optimum? | 1 | running: EPYC done (planner v1 adopted); Mac done (own NEON tables, 3.6 % faster); lengths above 1024 and the Xeon pending |
 | X3 | Few big passes (radix 16–64, in the output buffer) against chains for rows of 8–64 thousand points; spill counts per codelet and target. The prototype's radix 20–32 attempts lost everywhere: find out whether generated, ordered codelets change that | 1 | planned |
 | X4 | Padding: incremental addressing cost; pad always, never, or only where the stream rule binds. Also: do edge passes gain from a variant chosen by the caller's base address (cache-line splits on wide registers)? | 1 | planned |
 | X5 | Twiddle modes (full, shared, derived) by length and target | 1 | planned |

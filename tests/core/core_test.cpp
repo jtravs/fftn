@@ -108,8 +108,8 @@ TEST(Rules, RadicesMultiplyToTheLength) {
   }
 }
 
-// Every target has a profile: the lanes it is given, the C = 2 table up to two lanes and the
-// C = 4 table from four.
+// Every target has a profile: the lanes it is given; NEON's own tables at its C (1 and 2),
+// otherwise AVX2's C = 2 table up to two lanes and its C = 4 table from four.
 TEST(Rules, ProfilesOfEveryTarget) {
   using fftn::detail::target;
   for (const target t : {target::scalar, target::x86_v2, target::avx, target::avx2, target::avx512,
@@ -118,7 +118,13 @@ TEST(Rules, ProfilesOfEveryTarget) {
       const auto p = fftn::detail::profile_of(t, lanes);
       EXPECT_EQ(p.lanes, lanes);
       ASSERT_NE(p.costs, nullptr);
-      EXPECT_EQ(p.costs, fftn::detail::profile_of(target::avx2, lanes <= 2 ? 2 : 4).costs);
+      const bool neon_own = (t == target::neon || t == target::neon_fcma) && lanes <= 2;
+      if (neon_own) {
+        EXPECT_NE(p.costs, fftn::detail::profile_of(target::avx2, 2).costs);
+        EXPECT_EQ(p.costs, fftn::detail::profile_of(target::neon_fcma, lanes).costs);
+      } else {
+        EXPECT_EQ(p.costs, fftn::detail::profile_of(target::avx2, lanes <= 2 ? 2 : 4).costs);
+      }
     }
   }
   EXPECT_NE(fftn::detail::profile_of(target::avx2, 2).costs,
