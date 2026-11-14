@@ -130,11 +130,11 @@ def harness_check(
 
 
 def v0_choices(
-    build: Path, ns: list[int], isa: str | None = None
+    build: Path, ns: list[int], isa: str | None = None, precision: str = "f64"
 ) -> dict[int, radices.Sequence]:
-    """The baseline's sequence per length on this machine's target (or `isa`), from the
-    backend's notes."""
-    cases = [catalogue.Case("c2c", (n,), 1, "out", -1) for n in ns]
+    """The baseline's sequence per length on this machine's target (or `isa`) in one
+    precision, from the backend's notes."""
+    cases = [catalogue.Case("c2c", (n,), 1, "out", -1, precision=precision) for n in ns]
     results, error = harness_check(fbench_fftn(build), cases, isa_options(isa))
     if error:
         raise SystemExit(f"fbench-fftn: {error}")
@@ -143,6 +143,15 @@ def v0_choices(
         n, seq = radices.from_note(res.get("note", ""))
         out[n] = seq
     return out
+
+
+def base_of(entry: dict, case: str) -> radices.Sequence:
+    """The baseline's sequence for a case: "v0" holds double's; campaigns from X3 on also
+    record single precision's as "v0_f32" (where the two differ, earlier campaigns name
+    double's sequence for both)."""
+    if case.endswith("-f32") and "v0_f32" in entry:
+        return tuple(entry["v0_f32"])
+    return tuple(entry["v0"])
 
 
 # ---- Time estimate -------------------------------------------------------------------------
@@ -306,7 +315,12 @@ def stage_screen(ctx: argparse.Namespace, state: dict, n: int, cases: list[str])
     v0 = tuple(entry["v0"]) if "v0" in entry else None
     ops = radices.codelet_ops()
     lanes = radices.LANES[ctx.isa] if ctx.isa else ()
-    cands = [s for s in radices.candidates(n, v0, ops, lanes) if s != v0]
+    v0s = {v0, tuple(entry.get("v0_f32", v0 or ()))}
+    cands = [
+        s
+        for s in radices.candidates(n, v0, ops, lanes, ctx.codelets, ctx.require)
+        if s not in v0s
+    ]
     per_process = process_seconds(n, batches_of(n, ctx.cases), ctx.gflops, screen=True)
     fits = int(ctx.screen_budget / (SCREEN_ROUNDS * per_process)) - 2
     dropped = 0
@@ -379,6 +393,11 @@ def cmd_stages(ctx: argparse.Namespace, names: list[str]) -> int:
     state = load_state(ctx.out_dir, ctx.name)
     check_isa(state, ctx.isa)
     state["isa"] = ctx.isa
+    radix_set = {"codelets": list(ctx.codelets), "require": list(ctx.require)}
+    if state["lengths"] and state.get("radix_set", radix_set) != radix_set:
+        raise SystemExit(f"campaign {state['name']} ran with {state['radix_set']}: use another --name")
+    if ctx.require or ctx.codelets != radices.CODELET_RADICES:
+        state["radix_set"] = radix_set
     if "host" not in state:
         state["host"] = machine.fingerprint()
         state["created"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
@@ -387,6 +406,8 @@ def cmd_stages(ctx: argparse.Namespace, names: list[str]) -> int:
     if missing:
         for n, seq in v0_choices(ctx.build, missing, ctx.isa).items():
             state["lengths"].setdefault(str(n), {})["v0"] = list(seq)
+        for n, seq in v0_choices(ctx.build, missing, ctx.isa, "f32").items():
+            state["lengths"][str(n)]["v0_f32"] = list(seq)
         if not ctx.dry_run:
             save_state(ctx.out_dir, state)
     # Stage by stage over all lengths, so that a stage's timings share one stretch of the
@@ -418,7 +439,9 @@ def cmd_plan(ctx: argparse.Namespace) -> int:
     print(f"{'n':>9} {'cand.':>6} {'kept':>6} {'screen s':>9}  v0")
     for n in ns:
         seq = v0.get(n)
-        cands = [s for s in radices.candidates(n, seq, ops, lanes) if s != seq]
+        cands = [
+            s for s in radices.candidates(n, seq, ops, lanes, ctx.codelets, ctx.require) if s != seq
+        ]
         per = process_seconds(n, batches_of(n, cases), ctx.gflops, screen=True)
         fits = max(int(ctx.screen_budget / (SCREEN_ROUNDS * per)) - 2, 1)
         kept = min(len(cands), fits)
@@ -469,8 +492,8 @@ def cmd_report(ctx: argparse.Namespace) -> int:
                     "campaign": name,
                     "n": int(n_text),
                     "case": case,
-                    "v0": radices.label(tuple(entry["v0"])),
-                    "best": radices.label(tuple(entry["v0"])) if winner == V0 else winner,
+                    "v0": radices.label(base_of(entry, case)),
+                    "best": radices.label(base_of(entry, case)) if winner == V0 else winner,
                     "screen_run": entry.get("screen", {}).get("run"),
                     "refine_run": entry.get("refine", {}).get("run"),
                     "confirm_run": run,
@@ -627,6 +650,19 @@ def main(argv: list[str] | None = None) -> int:
     def lengths(sp: argparse.ArgumentParser) -> None:
         isa(sp)
         sp.add_argument("--lengths", help="e.g. 2-1024 or 1025- or 60,64")
+        sp.add_argument(
+            "--radices",
+            dest="codelets",
+            type=radices.parse_radix_set,
+            default=radices.CODELET_RADICES,
+            help="codelet radices of the candidates (default 2-16; X3: 2-16,32,64)",
+        )
+        sp.add_argument(
+            "--require",
+            type=radices.parse_radix_set,
+            default=(),
+            help="only candidates with one of these radices (X3: 32,64)",
+        )
         sp.add_argument("--gflops", type=float, default=8.0, help="assumed double-precision speed")
         sp.add_argument(
             "--screen-budget",
