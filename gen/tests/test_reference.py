@@ -36,13 +36,13 @@ class ReferenceCounts(unittest.TestCase):
 
     def test_split_radix_formula(self) -> None:
         # 4n log2 n - 6n + 8 real operations in all (Johnson and Frigo 2007).
-        for n in (2, 4, 8, 16):
+        for n in (2, 4, 8, 16, 32, 64):
             adds, muls = PLAIN[n].counts
             self.assertEqual(adds + muls, 4 * n * int(log2(n)) - 6 * n + 8, n)
 
     def test_split_radix_counts_exactly(self) -> None:
         for c in codelets():
-            if c.variant == "plain" and c.radix in (2, 4, 8, 16):
+            if c.variant == "plain" and c.radix in (2, 4, 8, 16, 32, 64):
                 self.assertEqual((c.counts.flops_adds, c.counts.flops_muls), PLAIN[c.radix].counts)
 
     def test_recorded_gaps_are_real_gaps(self) -> None:

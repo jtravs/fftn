@@ -30,6 +30,9 @@ struct build_settings {
   // instead of the rules' choice (strategies/chain.hpp). Any radix above 16 goes through
   // the generic pass.
   std::vector<std::size_t> radices;
+  // The planner's leaf limit (planner/rules.hpp, target_profile::leaf_limit) instead of the
+  // profile's; 0 keeps the profile's. Experiment X8 compares leaves with chains through it.
+  std::size_t leaf_limit = 0;
   // The factor edge operation (DESIGN.md 12.1), which the public API does not offer yet:
   // n complex values of the plan's precision multiplying the input (before the transform)
   // or the output (after it) of every row of a c2c plan of one axis. The arrays must

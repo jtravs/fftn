@@ -57,10 +57,10 @@ chain_builder<T>::chain_builder(const kernels_of<T>& kernels, const target_profi
                                 std::vector<std::size_t> forced)
     : kernels_(kernels), profile_(profile), tables_(tables),
       chunk_points_(std::max<std::size_t>(chunk_points, 1)), forced_(std::move(forced)) {
-  // The test knob takes only radices some pass has: a codelet's (radix 2 to 16 where the
-  // generated table has it) or the generic pass's (any radix above 16).
+  // The test knob takes only radices some pass has: a codelet's (gen::radices) or the
+  // generic pass's (any other radix, in practice the primes above 16).
   for (const std::size_t r : forced_) {
-    if (r < 2 || (r <= max_codelet_radix && kernels_.passes.codelet[r].lane[0] == nullptr)) {
+    if (r < 2 || (has_codelet(r) && kernels_.passes.codelet[codelet_slot(r)].lane[0] == nullptr)) {
       throw std::invalid_argument("fftn::plan: build_settings.radices holds radix " +
                                   std::to_string(r) + ", which no pass takes");
     }
@@ -197,7 +197,8 @@ void chain_builder<T>::add_pass(std::size_t n, const std::vector<std::size_t>& r
   const pass_kernels<T>& k = kernels_.passes;
   stage st;
   std::string kind;
-  if (radix > max_codelet_radix) {
+  const bool generic = !has_codelet(radix);
+  if (generic) {
     st.run = k.generic[d][edge_index(in)][edge_index(out)];
     st.args.roots = radix_roots(radix);
     st.args.twiddles = m > 1 ? shared_twiddles(n, radix, s) : nullptr;
@@ -205,18 +206,18 @@ void chain_builder<T>::add_pass(std::size_t n, const std::vector<std::size_t>& r
     st.chunks = chunks_of(st.units, radix * radix * c);
     kind = "generic";
   } else if (first) {
-    st.run = k.codelet[radix].grouped[d][edge_index(in)];
+    st.run = k.codelet[codelet_slot(radix)].grouped[d][edge_index(in)];
     st.args.twiddles = grouped_twiddles(n, radix);
     st.units = blocks(m);
     st.chunks = chunks_of(st.units, radix * c);
     kind = "grouped";
   } else if (last) {
-    st.run = k.codelet[radix].last[d][edge_index(out)];
+    st.run = k.codelet[codelet_slot(radix)].last[d][edge_index(out)];
     st.units = blocks(s);
     st.chunks = chunks_of(st.units, radix * c);
     kind = "lane";
   } else {
-    st.run = k.codelet[radix].lane[d];
+    st.run = k.codelet[codelet_slot(radix)].lane[d];
     st.args.twiddles = shared_twiddles(n, radix, s);
     st.units = m * blocks(s);
     st.chunks = chunks_of(st.units, radix * c);
@@ -235,7 +236,7 @@ void chain_builder<T>::add_pass(std::size_t n, const std::vector<std::size_t>& r
   st.dst = dst.where;
   st.name = kind + " radix-" + std::to_string(radix) + " " + direction_name(sign) + " (m " +
             std::to_string(m) + ", s " + std::to_string(s) +
-            (radix > max_codelet_radix ? "; O(radix^2) per butterfly" : "") + edges_note(in, out) +
+            (generic ? "; O(radix^2) per butterfly" : "") + edges_note(in, out) +
             ")";
   stages.push_back(std::move(st));
 }
@@ -244,7 +245,7 @@ template <class T>
 void chain_builder<T>::add_leaf(std::size_t n, int sign, endpoint src, endpoint dst,
                                 const line_edges& edges, std::vector<stage>& stages) {
   stage st;
-  st.run = kernels_.passes.codelet[n]
+  st.run = kernels_.passes.codelet[codelet_slot(n)]
                .leaf[direction_index(sign)][edge_index(edges.in)][edge_index(edges.out)];
   st.args.radix = n;
   st.args.n = n;
@@ -315,7 +316,7 @@ slot chain_builder<T>::scratch_chain(std::size_t n, int sign, slot from,
     return from;
   }
   const line_edges none;
-  if (rad.size() == 1 && n <= max_codelet_radix) {
+  if (rad.size() == 1 && has_codelet(n)) {
     const slot to = other_scratch(from);
     add_leaf(n, sign, {from, 1}, {to, 1}, none, stages);
     return to;
@@ -340,7 +341,7 @@ std::size_t chain_builder<T>::c2c_line(std::size_t n, int sign, endpoint src, en
     add_copy(n, src, dst, edges, stages);
     return 0;
   }
-  if (rad.size() == 1 && n <= max_codelet_radix) {
+  if (rad.size() == 1 && has_codelet(n)) {
     add_leaf(n, sign, src, dst, edges, stages);
     return 0;
   }

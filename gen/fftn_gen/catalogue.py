@@ -11,7 +11,9 @@ from __future__ import annotations
 from .codelet import SIGNS, VARIANTS, Codelet, build
 from .emit_cpp import codelet_inl, metadata_hpp
 
-RADICES = tuple(range(2, 17))
+# Every size 2 to 16, then the powers of two that whole-transform leaves (experiment X8)
+# and few-big-pass chains (task 1.6, experiment X3) use.
+RADICES = (*range(2, 17), 32, 64)
 
 
 def all_codelets() -> list[Codelet]:

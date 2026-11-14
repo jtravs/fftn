@@ -7,9 +7,10 @@
 // transforms.
 //
 // - Radices: the rules planner's (planner/rules.hpp), or a sequence a test forces.
-// - Pass kinds (DESIGN.md 8.2): n <= 16 is one leaf; otherwise the first pass is grouped,
-//   the middle ones are lane passes with twiddles and the last a lane pass without; a radix
-//   above 16 (a prime factor) is a generic pass in any position.
+// - Pass kinds (DESIGN.md 8.2): a chain of one codelet radix (n itself) is one leaf;
+//   otherwise the first pass is grouped, the middle ones are lane passes with twiddles and
+//   the last a lane pass without; a radix with no codelet (a prime factor above 16) is a
+//   generic pass in any position.
 // - Placement: the first pass reads the line where it lies and the last writes it where it
 //   goes; passes in between ping-pong between two scratch lines a and b of the line's
 //   length. On targets with several complex numbers per register (C > 1), the passes

@@ -341,8 +341,12 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
            const build_settings& settings) {
   c.isa_target = plan_target(opts);
   const kernels_of<T>& kernels = of<T>(*find_kernels(c.isa_target));
-  chain_builder<T> chain(kernels, profile_of(c.isa_target, kernels.complex_lanes), tables_of<T>(c),
-                         settings.chunk_points, settings.radices);
+  target_profile profile = profile_of(c.isa_target, kernels.complex_lanes);
+  if (settings.leaf_limit != 0) {
+    profile.leaf_limit = settings.leaf_limit;
+  }
+  chain_builder<T> chain(kernels, profile, tables_of<T>(c), settings.chunk_points,
+                         settings.radices);
   program& p = c.prog;
   const std::size_t r = s.axes.size();
   const auto complex_bytes = static_cast<std::ptrdiff_t>(2 * sizeof(T));

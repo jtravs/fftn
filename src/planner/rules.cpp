@@ -4,6 +4,7 @@
 #include "planner/rules.hpp"
 
 #include "isa/target.hpp"
+#include "passes/pass_args.hpp"
 
 #include <algorithm>
 #include <array>
@@ -14,8 +15,9 @@
 namespace fftn::inline v0::detail {
 namespace {
 
-// The largest radix that is a single codelet (src/gen/codelets.hpp); above it a line is
-// split into passes, and a prime factor above it is a generic pass.
+// Every radix up to this one has a codelet (src/gen/codelets.hpp): lengths up to it are
+// leaves, it is the largest radix the pass costs price, and a prime factor above it is a
+// generic pass.
 constexpr std::size_t largest_leaf = 16;
 
 // Experiment X2 (dev/experiments/X2-radix-sets.md), EPYC 7763, AVX2, GCC 16, one thread: the
@@ -94,7 +96,7 @@ std::vector<std::size_t> rule_radices(std::size_t n, const target_profile& p) {
   if (n <= 1) {
     return {};
   }
-  if (n <= largest_leaf) {
+  if (n <= largest_leaf || (n <= p.leaf_limit && has_codelet(n))) {
     return {n};
   }
   for (const radix_override& o : p.costs->overrides) {

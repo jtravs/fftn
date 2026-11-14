@@ -167,9 +167,9 @@ void lane_pass(const pass_args* a, std::size_t first, std::size_t last) {
   }
 }
 
-// A whole transform of n = R <= 16 points in registers (DESIGN.md 8.2), one unit (the
-// line): y[k] = sum_j x[j] exp(Sign 2 pi i j k / R), with both edges' operations. Values
-// are broadcast on loading and lane 0 is stored, so every lane computes the same transform
+// A whole transform of n = R points in registers (DESIGN.md 8.2), one unit (the line):
+// y[k] = sum_j x[j] exp(Sign 2 pi i j k / R), with both edges' operations. Values are
+// broadcast on loading and lane 0 is stored, so every lane computes the same transform
 // and any strides work; every load precedes every store, so src may be dst (in place).
 // Reads src, dst, src_stride, dst_stride, scale, in_factor, out_factor.
 template <class T, std::size_t R, int Sign, edge_op InOp, edge_op OutOp>

@@ -108,6 +108,31 @@ TEST(Rules, RadicesMultiplyToTheLength) {
   }
 }
 
+// The leaf limit (experiment X8): 16 by default; above it, a length with a codelet is one
+// leaf up to the limit, and any other length is a chain as before.
+TEST(Rules, LeafLimit) {
+  using fftn::detail::rule_radices;
+  for (const std::size_t lanes : {1U, 2U, 4U, 8U}) {
+    auto profile = fftn::detail::profile_of(fftn::detail::target::avx2, lanes);
+    EXPECT_EQ(profile.leaf_limit, 16U);
+    EXPECT_GT(rule_radices(32, profile).size(), 1U) << lanes;
+    EXPECT_GT(rule_radices(64, profile).size(), 1U) << lanes;
+    const auto chain48 = rule_radices(48, profile);
+    const auto chain128 = rule_radices(128, profile);
+    profile.leaf_limit = 64;
+    EXPECT_EQ(rule_radices(32, profile), (std::vector<std::size_t>{32}));
+    EXPECT_EQ(rule_radices(64, profile), (std::vector<std::size_t>{64}));
+    EXPECT_EQ(rule_radices(48, profile), chain48);
+    EXPECT_EQ(rule_radices(128, profile), chain128);
+    EXPECT_EQ(rule_radices(12, profile), (std::vector<std::size_t>{12}));
+    profile.leaf_limit = 32;
+    EXPECT_EQ(rule_radices(32, profile), (std::vector<std::size_t>{32}));
+    EXPECT_GT(rule_radices(64, profile).size(), 1U);
+    profile.leaf_limit = 1; // lengths up to 16 stay leaves
+    EXPECT_EQ(rule_radices(16, profile), (std::vector<std::size_t>{16}));
+  }
+}
+
 // Every target has a profile: the lanes it is given, the C = 2 table up to two lanes and the
 // C = 4 table from four.
 TEST(Rules, ProfilesOfEveryTarget) {

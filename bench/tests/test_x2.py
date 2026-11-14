@@ -74,7 +74,7 @@ class Cost(unittest.TestCase):
         cls.ops = radices.codelet_ops()
 
     def test_codelet_table(self):
-        self.assertEqual(set(r for r, _ in self.ops), set(range(2, 17)))
+        self.assertEqual(set(r for r, _ in self.ops), set(range(2, 17)) | {32, 64})
         # The radix-16 forward codelets of src/gen/codelets.hpp: plain and DIF.
         self.assertEqual(self.ops[(16, False)], 84)
         self.assertEqual(self.ops[(16, True)], 99)

@@ -850,7 +850,8 @@ For each radix the generator can emit:
   the last or first pass (section 9.1).
 
 Generated so far: the complex-register form of plain, DIT and DIF, forward and backward,
-for the radices listed in `gen/fftn_gen/catalogue.py` (2–16 at task 1.1). The split form,
+for the radices listed in `gen/fftn_gen/catalogue.py` (2–16 at task 1.1; 32 and 64 since
+task 1.6, for leaves and big passes). The split form,
 pruned and fused-edge variants follow with tasks 1.5 and 2.1.
 
 Reference values for regression: the generator's operation counts are compared with the
@@ -922,9 +923,11 @@ parameter, everything else accessors; gen/README.md has the codelet calling conv
 - The **lane** passes are the rest: lanes over copies q, one twiddle per leg shared by
   every lane (`bcast_tw`), the DIF codelet in the middle and the plain codelet in the last
   pass (m = 1).
-- The **leaf** is n ≤ 16 as one codelet call on one line: values are broadcast on loading
-  and lane 0 is stored, so it takes any stride and runs in place; leaves vectorised
-  across rows are the lanes strategy's (phase 4) and experiment X8's.
+- The **leaf** is one codelet call on one line, for n ≤ 16 and for a codelet radix up to
+  the profile's leaf limit (16 by default; 32 and 64 have codelets; experiment X8 sets the
+  limit): values are broadcast on loading and lane 0 is stored, so it takes any stride and
+  runs in place, at the cost of C − 1 idle lanes; leaves vectorised across rows are the
+  lanes strategy's (phase 4).
 - The **generic** pass (any radix, the primes above 16) and the copy are lane-form passes
   on every target; the real-transform edges run one element at a time on every target.
 - **Edge variants**: scale and a per-element complex factor, on loading (first passes,
@@ -1014,7 +1017,7 @@ resolves per target.
 
 As built (task 1.2, `src/strategies/chain.cpp`): radices from planner v1 (section 11.2);
 the first pass grouped, then lane passes, a radix above 16 a generic pass in any
-position, n ≤ 16 a leaf, n = 1 a copy. The input edge's operation is applied by the first
+position, a single codelet radix (n ≤ 16, or up to the leaf limit) a leaf, n = 1 a copy. The input edge's operation is applied by the first
 pass that is not a copy and the output edge's by the last, so neither costs a pass. On
 C > 1 a line whose stride is not 1 (a strided axis, a strided row) is copied into scratch
 before the chain or out of it after: an extra pass that the lanes strategy for strided
@@ -1202,7 +1205,8 @@ sequence in double and 1.44 times in single precision on AVX2 (geometric means o
 cost table: for each pass kind and codelet radix R (2 to 16) a cost per unit and a cost per
 tail, and a cost per pass. For a line of n points:
 
-1. n = 1: no pass. n ≤ 16: one leaf of radix n.
+1. n = 1: no pass. n ≤ 16, or n a codelet radix (32, 64) no larger than the profile's
+   leaf limit (16 by default until experiment X8 decides): one leaf of radix n.
 2. A length the table overrides takes the table's radices (the lengths where rule 4 was
    measured more than 2 % slower than planner v0; six on AVX2).
 3. Otherwise write n = n_s q₁ q₂ … with n_s free of primes above 16 and q₁ ≤ q₂ ≤ … the
@@ -2251,6 +2255,7 @@ to change before a release.
 | 2026-11-14 | The OpenMP tests are built wherever the compiler has OpenMP, except under ThreadSanitizer; the thread pool and custom executors carry the executor path's TSan coverage | The OpenMP runtimes at hand are not instrumented, and TSan reports the join of every region as a race (shown with Homebrew LLVM 23's libomp) |
 | 2026-11-14 | fbench measures on loaded machines: load is recorded per round, not a reason to invalidate it; a round waits at most 60 s, and only while other processes use more than half the CPUs; `--strict-quiet` keeps the old rule; a process timeout loses that process's unfinished cases for the round, not the run | Maintainer's direction: the shared machines will never be much quieter, and interleaving, repeated rounds and the A/A control already measure the noise the load adds |
 | 2026-11-14 | Planner v1 (experiment X2): the cheapest radix sequence under a per-profile table of measured pass costs (per unit and per padded tail, for first, middle and last passes, plus a cost per pass), found by a shortest path over the divisors of the length, with a short table of measured overrides; profiles carry the precision's lanes C; AVX2's tables (C = 2 and 4) serve every target by nearest C until measured there (section 11.2) | On the EPYC 7763 it reproduces 95.7 % of the measured best sequences and no case is more than 2 % slower than v0, against v0's geometric-mean deficit of 1.25 (double) and 1.44 (float) up to 1024; structural rules (fewest passes, a first radix that is a multiple of C) reached at most 72 %, a cost by operation counts 79 % |
+| 2026-11-14 | Codelets of radix 32 and 64 (task 1.6) in every variant, with all their passes instantiated; the pass table has one row per generated radix (`codelet_slot`), not one per radix value; a planner profile has a leaf limit, 16 by default, above which a codelet radix is a leaf only when the limit allows (`build_settings::leaf_limit`, fbench `LEAF_LIMIT`) | Leaves above 16 and big passes (experiments X8 and X3) need the codelets; their operation counts equal FFTW's n1_32, n1_64, t1_32 and t1_64. They roughly double the kernel code (B3: 33 % of the pass instructions are radix 64's, 14 % radix 32's; numbers in X8), which X8 and X3 must justify or the passes nothing selects are dropped |
 
 ---
 

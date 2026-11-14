@@ -160,15 +160,22 @@ template <class T> void every_codelet_in_every_position(fftn::isa target) {
     };
     // Grouped first passes with m from 2 to 16 (tails where C does not divide m), middle
     // lane passes with s = 3 and 4 (tails where C does not divide s), last lane passes with
-    // s from 2 to 16; and R as a leaf.
-    const std::vector<sequence> sequences{
+    // s from 2 to 16; and R as a leaf. Above 16, R x R would cost seconds of reference
+    // evaluation per row (O(n^2) in quadruple precision), so R x 8 and 8 x R stand in for
+    // it: whole blocks of C on every target, in the first and in the last pass.
+    std::vector<sequence> sequences{
         {.radices = {r, 2}, .names = {"grouped " + rs, "lane radix-2"}},
         {.radices = {2, r}, .names = {"grouped radix-2", "lane " + rs + " forward (m 1"}},
         {.radices = {3, r, 2}, .names = {"lane " + rs + " forward (m 2, s 3)"}},
         {.radices = {4, r, 4}, .names = {"lane " + rs + " forward (m 4, s 4)"}},
-        {.radices = {r, r}, .names = {"grouped " + rs, "lane " + rs}},
         {.radices = {r}, .names = {"leaf " + rs}},
     };
+    if (r <= 16) {
+      sequences.push_back({.radices = {r, r}, .names = {"grouped " + rs, "lane " + rs}});
+    } else {
+      sequences.push_back({.radices = {r, 8}, .names = {"grouped " + rs, "lane radix-8"}});
+      sequences.push_back({.radices = {8, r}, .names = {"grouped radix-8", "lane " + rs}});
+    }
     for (const sequence& seq : sequences) {
       std::size_t n = 1;
       for (const std::size_t f : seq.radices) {
@@ -218,6 +225,45 @@ TEST(Passes, GenericInEveryPosition) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
     generic_in_every_position<double>(t);
     generic_in_every_position<float>(t);
+  }
+}
+
+// Leaves above 16 (experiment X8): with the leaf limit raised, every codelet radix above 16
+// is one leaf, with its edges, and an even real line of twice that length runs its
+// half-length chain as one leaf; with the default limit they are chains.
+template <class T> void leaves_above_sixteen(fftn::isa target) {
+  for (const std::uint8_t radix : fftn::detail::gen::radices) {
+    const std::size_t n = radix;
+    if (n <= 16) {
+      continue;
+    }
+    const std::string leaf = "leaf radix-" + std::to_string(n);
+    build_settings settings;
+    settings.leaf_limit = 64;
+    for (const auto dir : {fftn::direction::forward, fftn::direction::backward}) {
+      check_row<T>(target, n, dir, settings, 1.0, false, false, false, {leaf});
+      check_row<T>(target, n, dir, settings, 0.375, true, false, false,
+                   {leaf, "in: factor", "out: scale"});
+      check_row<T>(target, n, dir, settings, 0.375, false, true, true,
+                   {leaf, "in: scale", "out: factor"});
+      check_row<T>(target, n, dir, settings, 1.0, false, false, false, {leaf}, 3, 2);
+    }
+    const auto plain = make_plan_core(
+        fftn::detail::view_of(fftn::rows_c2c<T>(n, 1, fftn::direction::forward)),
+        {.force_isa = target}, {});
+    EXPECT_EQ(joined(stage_names(*plain)).find("leaf"), std::string::npos)
+        << joined(stage_names(*plain));
+    const auto real = make_plan_core(fftn::detail::view_of(fftn::rows_r2c<T>(2 * n, 1)),
+                                     {.force_isa = target}, settings);
+    EXPECT_NE(joined(stage_names(*real)).find(leaf), std::string::npos)
+        << joined(stage_names(*real));
+  }
+}
+
+TEST(Passes, LeavesAboveSixteen) {
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    leaves_above_sixteen<double>(t);
+    leaves_above_sixteen<float>(t);
   }
 }
 

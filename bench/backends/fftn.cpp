@@ -36,7 +36,11 @@
 //   RADICES=r1.r2... the chain's radices in pass order (build_settings::radices, an internal
 //                    test knob), for c2c rows whose length they multiply to; any other case
 //                    is an error, and so is a radix no pass of the target takes. Experiment
-//                    X2 times radix sequences with it (dev/experiments/X2-radix-sets.md).
+//                    X2 times radix sequences with it (dev/experiments/X2-radix-sets.md);
+//                    one codelet radix equal to the length (RADICES=32 for n = 32) is a
+//                    whole-transform leaf (experiment X8, dev/experiments/X8-leaves.md).
+//   LEAF_LIMIT=N     the planner's leaf limit (build_settings::leaf_limit): every length
+//                    up to N that has a codelet is one leaf instead of a chain (default 16)
 // ISA is a public option; the others reach the library only through the private build
 // settings, as a test's do: the library has no switch for them, so dev/KNOBS.toml does not
 // list them.
@@ -367,6 +371,13 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
         return fbench_error;
       }
       s.radices_text = value;
+    } else if (key == "LEAF_LIMIT") {
+      const std::optional<std::size_t> v = fbench::fftn_tuning::parse_size(value, 1, false);
+      if (!v || *v > 4096) {
+        say(message, message_size, "LEAF_LIMIT is a whole number from 1 to 4096");
+        return fbench_error;
+      }
+      s.settings.leaf_limit = *v;
     } else if (fbench::fftn_tuning::apply_tuning(s.settings, key, value, error)) {
       if (!error.empty()) {
         say(message, message_size, error);
@@ -407,6 +418,9 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
         .str("strategy", "chain");
     if (!s.settings.radices.empty()) {
       d.str("radices", s.radices_text);
+    }
+    if (s.settings.leaf_limit != 0) {
+      d.integer("leaf_limit", static_cast<std::int64_t>(s.settings.leaf_limit));
     }
 #ifdef FBENCH_FFTN_OMP
     // Always, so that this binary's identity differs from fbench-fftn's even without options
