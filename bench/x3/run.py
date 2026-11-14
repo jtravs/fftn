@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Experiment X3's first measurement: radix 32 and 64 passes against the planner's choice.
 
-    run.py [--out-dir D] [--build B] [--isa T] [--lengths 512,1024] [--dry-run] [--fbench '...']
+    run.py [--out-dir D] [--build B] [--isa T[,T...]] [--lengths 512,1024] [--dry-run] [--fbench '...']
     run.py plan [--isa T]
 
 One fbench run per length of bench/catalogues/x3.toml (c2c rows 2^9 to 2^16, batches 1 and
@@ -127,18 +127,24 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("command", nargs="?", default="run", choices=("run", "plan"))
     p.add_argument("--out-dir", type=Path, default=store.DEFAULT_OUT)
     p.add_argument("--build", type=Path, default=REPO / "build" / "check-release")
-    p.add_argument("--isa", choices=sorted(radices.LANES))
+    p.add_argument("--isa", help="targets, comma-separated: one run per target and length")
     p.add_argument("--lengths", help="comma-separated, from x3.toml")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--fbench", default="", help="more fbench run options")
     ctx = p.parse_args(argv)
     ns = [int(x) for x in ctx.lengths.split(",")] if ctx.lengths else list(LENGTHS)
+    isas: list[str | None] = list(ctx.isa.split(",")) if ctx.isa else [None]
+    for isa in isas:
+        if isa is not None and isa not in radices.LANES:
+            raise SystemExit(f"--isa {isa}: not one of {', '.join(sorted(radices.LANES))}")
     if ctx.command == "plan":
-        for n in ns:
-            print(n, " ".join(a.split("=", 1)[0] for a in arms_of(n, ctx.isa)))
+        for isa in isas:
+            for n in ns:
+                print(isa, n, " ".join(a.split("=", 1)[0] for a in arms_of(n, isa)))
         return 0
     failed = 0
-    for n in ns:
+    for isa, n in ((i, n) for i in isas for n in ns):
+        ctx.isa = isa
         cmd = [
             sys.executable,
             str(BENCH / "fbench.py"),
