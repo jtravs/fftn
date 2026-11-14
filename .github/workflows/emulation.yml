@@ -104,6 +104,14 @@ jobs:
           bash .github/scripts/emulate.sh build/check-release
           "avx2 1;avx512f 1;avx512dq 1;avx512bw 1;avx512vl 1;best_target avx512"
           "$SDE" -skx -chip_check_exe_only --
+      # AVX-512 F (and CD, ER, PF) without DQ, BW or VL: avx512 needs DQ and VL, so the
+      # AVX-512 detection gates must leave this processor on avx2.
+      - name: Knights Landing (AVX-512 F without DQ or VL; target avx2)
+        if: success() || failure()
+        run: >
+          bash .github/scripts/emulate.sh build/check-release
+          "avx2 1;fma 1;avx512f 1;avx512dq 0;avx512bw 0;avx512vl 0;best_target avx2"
+          "$SDE" -knl -chip_check_exe_only --
       - &fetchcontent-collect
         name: FetchContent archives (collect)
         if: always()
