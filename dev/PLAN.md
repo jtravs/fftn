@@ -6,8 +6,10 @@ session; update a phase when its tasks or findings change.
 
 ## Status
 
-**As of 2026-11-13, night.** Phase 0 tasks are done except its last exit item (baselines,
-running); phase 1 (1.1) and phase 3 (3.1–3.2) are in progress in parallel.
+**As of 2026-11-14, early morning.** Phase 0 done except the Mac and Xeon client-catalogue
+baselines. Phase 1: 1.1 merged; 1.2 (passes, planner v0) in review fixes; 1.3 split into 1.3a
+(`avx512`, plain `neon`, in progress) and 1.3b (`x86_v2`, `avx`, non-FMA order, X14, later).
+Phase 3: 3.1–3.2 merged; 3.3 (OpenMP, pool, executors) in progress.
 
 Done in phase 0 (details in the merge commits and the decision log):
 
@@ -26,20 +28,28 @@ Done in phase 0 (details in the merge commits and the decision log):
 - X15 done: no `omp simd` on scalar loops; old-ISA targets need hand vocabularies.
 
 Phase 0 exit: gate and CI green on all platforms (done); fbench self-tests trusted on the
-three machines (0.6); baselines for the backends: running (EPYC tracking and client
-catalogue, Xeon tracking, Mac tracking and client catalogue); the Xeon client catalogue is
-still to do in a quiet window (the Xeon is shared).
+three machines (0.6); competitor baselines (FFTW at MEASURE as reference; PATIENT measured
+separately on the quick tier, since PATIENT planning in every process round exceeds fbench's
+one-hour process limit on the tracking tier): EPYC tracking and client catalogue, Xeon
+tracking (shared machine: noise band 4 %), stores under each machine's fbench work directory
+(run IDs in the overnight handoff below). Still to do: the Mac (its quiet check kept failing
+while agents built) and the Xeon client catalogue, both in quiet windows.
 
-Next actions (in order): 1.1 generator core → 1.2 pass templates, twiddles, chain strategy
-and rules planner on the generated kernels → 1.3 vocabularies and their experiments. In
-parallel: 3.1–3.2 threading engine and scheduler, then 3.3 adapters. A cloud check for the
-phase 1 exit is authorised up to USD 20 (ledger in the experiment file).
+Next actions (in order): 1.2 review fixes and merge (needs a rewrite of the radix rules
+from a specification: the first version followed FFTL.jl's code too closely for AGENTS 10)
+→ 1.3a → 1.3b and experiment X14 → 1.4 experiments (X2, X4, X8). In parallel: 3.3, then 3.4
+(experiments T1, T2, T5, T4) and 3.5 (Kokkos executor). A cloud check for the phase 1 exit is
+authorised up to USD 20 (ledger in the experiment file).
 
 Open questions: see DESIGN.md section 18.2.
 
-Claims (2026-11-13 night, lead session): 1.1 agent-gen (`task/1.1-generator`); 3.1–3.2
-agent-threads (`task/3.1-threading-engine`); baselines: the lead. Agents work in separate
-worktrees; the lead reviews, merges and pushes.
+Claims (2026-11-14, lead session): 1.2 agent-passes (`task/1.2-passes`); 1.3a agent-isa
+(`task/1.3a-avx512-neon`); 3.3 agent-adapters (`task/3.3-adapters`); baselines: the lead.
+
+Baseline runs (fbench run IDs): EPYC 7763-class node (GCC 16): tracking
+20261113-230721-7c95 failed (PATIENT timeout), re-run without PATIENT; pocketfft re-run with
+`-march=native` after a first run built it without; PATIENT vs MEASURE on the quick tier done.
+Xeon Gold 6240 (GCC 14): tracking 20261114-004852-f498.
 
 Handoff notes: remote gates go to DMOG first (`gate-dmog.sbatch`; LSan off there, ptrace is
 forbidden on its nodes); the Xeon is shared with heavy users outside Slurm, so time there
