@@ -207,7 +207,20 @@ template <class T> std::vector<std::complex<T>> unit_roots(int sign, std::size_t
   return w;
 }
 
+template <class T> std::complex<T> unit_root(int sign, std::size_t m, std::size_t n) {
+  // The table stores its second half as the conjugate of the first; so does this.
+  const bool mirrored = 2 * m > n;
+  dd c;
+  dd s;
+  root(static_cast<std::uint64_t>(mirrored ? n - m : m), static_cast<std::uint64_t>(n), c, s);
+  const T re = round_once<T>(c);
+  const T im = round_once<T>(sign < 0 ? -s : s);
+  return {re, mirrored ? -im : im};
+}
+
 template std::vector<std::complex<double>> unit_roots<double>(int sign, std::size_t n);
 template std::vector<std::complex<float>> unit_roots<float>(int sign, std::size_t n);
+template std::complex<double> unit_root<double>(int sign, std::size_t m, std::size_t n);
+template std::complex<float> unit_root<float>(int sign, std::size_t m, std::size_t n);
 
 } // namespace fftn::inline v0::detail

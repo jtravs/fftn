@@ -48,6 +48,9 @@ using fftn::detail::plan_core;
 
 template <class T> using cvec = std::vector<std::complex<T>>;
 
+// The Bluestein threshold that keeps every prime factor in generic passes.
+constexpr std::size_t no_bluestein = static_cast<std::size_t>(-1);
+
 std::vector<std::string> stage_names(const plan_core& core) {
   std::vector<std::string> names;
   for (const auto& rec : core.prog.records) {
@@ -143,7 +146,9 @@ void check_row(fftn::isa target, std::size_t n, fftn::direction dir, const build
     const std::complex<double> f = out_factor ? std::complex<double>(fout[k]) : 1.0;
     want[k] = fftn::test::exact_from(e * f * scale);
   }
-  const auto tol = fftn::test::derived_tolerance<T>(n, fftn::test::stable_fft_bound) +
+  const bool bluestein = listing.find("bluestein") != std::string::npos;
+  const auto tol = fftn::test::derived_tolerance<T>(n, bluestein ? fftn::test::bluestein_bound(n)
+                                                                 : fftn::test::stable_fft_bound) +
                    fftn::test::input_rounding<T>() * 2;
   fftn::test::outcome o;
   o.within(fftn::test::compare<T>(std::span<const std::complex<T>>(y), want), tol, what);
@@ -208,6 +213,7 @@ template <class T> void generic_in_every_position(fftn::isa target) {
     }
     build_settings settings;
     settings.radices = radices;
+    settings.bluestein_above = no_bluestein;
     for (const auto dir : {fftn::direction::forward, fftn::direction::backward}) {
       check_row<T>(target, n, dir, settings, 1.0, false, false, false, {"generic radix-1"});
     }
@@ -221,6 +227,59 @@ TEST(Passes, GenericInEveryPosition) {
   }
 }
 
+// The Bluestein stage (strategies/chain.hpp) as the only pass, after codelet passes with copy
+// counts that leave tails on every SIMD target (2, 3, 30) and that do not (4, 16), after a
+// generic pass, and for a product of large primes; its convolution's first pass is grouped
+// with one copy and a lane pass with several. Then every n up to 160 with a prime factor
+// above 16, by the rules.
+template <class T> void bluestein_in_every_position(fftn::isa target) {
+  struct line {
+    std::vector<std::size_t> radices;
+    std::size_t above; // the Bluestein threshold
+    std::vector<std::string> names;
+  };
+  const std::vector<std::string> both{"bluestein in", "bluestein out"};
+  const std::vector<line> lines{
+      {.radices = {17}, .above = 16, .names = {"copies 1", "convolution: grouped"}},
+      {.radices = {2, 17}, .above = 16, .names = {"grouped radix-2", "copies 2", "convolution: lane"}},
+      {.radices = {3, 19}, .above = 16, .names = {"grouped radix-3", "copies 3"}},
+      {.radices = {4, 17}, .above = 16, .names = {"copies 4"}},
+      {.radices = {5, 6, 23}, .above = 16, .names = {"lane radix-6", "copies 30"}},
+      {.radices = {16, 29}, .above = 16, .names = {"copies 16"}},
+      {.radices = {17, 19}, .above = 16, .names = {"Q 323, ", "copies 1"}},
+      {.radices = {17, 19}, .above = 17, .names = {"generic radix-17", "Q 19, ", "copies 17"}},
+      {.radices = {2, 3, 61}, .above = 16, .names = {"Q 61, ", "copies 6"}},
+  };
+  for (const line& l : lines) {
+    std::size_t n = 1;
+    for (const std::size_t f : l.radices) {
+      n *= f;
+    }
+    build_settings settings;
+    settings.radices = l.radices;
+    settings.bluestein_above = l.above;
+    std::vector<std::string> names = both;
+    names.insert(names.end(), l.names.begin(), l.names.end());
+    for (const auto dir : {fftn::direction::forward, fftn::direction::backward}) {
+      check_row<T>(target, n, dir, settings, 1.0, false, false, false, names);
+    }
+  }
+  for (std::size_t n = 17; n <= 160; ++n) {
+    if (fftn::test::has_large_prime_factor(n)) {
+      for (const auto dir : {fftn::direction::forward, fftn::direction::backward}) {
+        check_row<T>(target, n, dir, {}, 1.0, false, false, false, both);
+      }
+    }
+  }
+}
+
+TEST(Passes, BluesteinInEveryPosition) {
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    bluestein_in_every_position<double>(t);
+    bluestein_in_every_position<float>(t);
+  }
+}
+
 // Every edge operation on each edge of every pass kind that has one: the copy (n = 1), the
 // leaf, the grouped first pass (input) and the last lane pass (output), the generic pass
 // as the only pass (both edges), first (input) and last (output).
@@ -230,14 +289,33 @@ template <class T> void every_edge_variant(fftn::isa target) {
     std::vector<std::size_t> radices;
     std::string first;
     std::string last;
+    std::size_t above = 0; // the Bluestein threshold, 0 for the profile's
   };
   const std::vector<line> lines{
       {.n = 1, .radices = {}, .first = "copy", .last = "copy"},
       {.n = 12, .radices = {}, .first = "leaf radix-12", .last = "leaf radix-12"},
       {.n = 40, .radices = {5, 8}, .first = "grouped radix-5", .last = "lane radix-8"},
-      {.n = 17, .radices = {}, .first = "generic radix-17", .last = "generic radix-17"},
-      {.n = 34, .radices = {2, 17}, .first = "grouped radix-2", .last = "generic radix-17"},
-      {.n = 34, .radices = {17, 2}, .first = "generic radix-17", .last = "lane radix-2"},
+      {.n = 17,
+       .radices = {},
+       .first = "generic radix-17",
+       .last = "generic radix-17",
+       .above = no_bluestein},
+      {.n = 34,
+       .radices = {2, 17},
+       .first = "grouped radix-2",
+       .last = "generic radix-17",
+       .above = no_bluestein},
+      {.n = 34,
+       .radices = {17, 2},
+       .first = "generic radix-17",
+       .last = "lane radix-2",
+       .above = no_bluestein},
+      {.n = 17, .radices = {}, .first = "bluestein in,", .last = "bluestein out", .above = 16},
+      {.n = 34,
+       .radices = {2, 17},
+       .first = "grouped radix-2",
+       .last = "bluestein out",
+       .above = 16},
   };
   struct variant {
     bool in_factor;
@@ -262,6 +340,7 @@ template <class T> void every_edge_variant(fftn::isa target) {
     for (const variant& v : variants) {
       build_settings settings;
       settings.radices = l.radices;
+      settings.bluestein_above = l.above;
       std::vector<std::string> names;
       if (v.in != nullptr) {
         names.push_back(l.first + " ");
@@ -315,17 +394,30 @@ template <class T> std::size_t lanes_of(fftn::isa t) {
 // are not copies (with C = 1 there is no copy).
 template <class T> void strided_rows_with_edges(fftn::isa target) {
   const bool wide = lanes_of<T>(target) > 1;
-  for (const std::size_t n : {std::size_t{40}, std::size_t{17}}) {
-    const std::string first = n == 40 ? "grouped" : "generic";
-    const std::string last = n == 40 ? "lane" : "generic";
-    std::vector<std::string> names{first, "in: factor", last, "out: scale"};
+  struct line {
+    std::size_t n;
+    std::size_t above; // the Bluestein threshold
+    std::string first;
+    std::string last;
+  };
+  for (const line& l : {
+           line{.n = 40, .above = 0, .first = "grouped", .last = "lane"},
+           line{.n = 17, .above = no_bluestein, .first = "generic", .last = "generic"},
+           line{.n = 17, .above = 16, .first = "bluestein in", .last = "bluestein out"},
+           line{.n = 51, .above = 16, .first = "grouped", .last = "bluestein out"},
+       }) {
+    build_settings settings;
+    settings.bluestein_above = l.above;
+    std::vector<std::string> names{l.first, "in: factor", l.last, "out: scale"};
     if (wide) {
       names.emplace_back("copy");
     }
-    check_row<T>(target, n, fftn::direction::forward, {}, 0.375, true, false, false, names, 2, 3);
+    check_row<T>(target, l.n, fftn::direction::forward, settings, 0.375, true, false, false, names,
+                 2, 3);
     names[1] = "in: scale";
     names[3] = "out: factor";
-    check_row<T>(target, n, fftn::direction::backward, {}, 0.375, false, true, false, names, 3, 2);
+    check_row<T>(target, l.n, fftn::direction::backward, settings, 0.375, false, true, false, names,
+                 3, 2);
   }
 }
 
@@ -337,18 +429,29 @@ TEST(Passes, StridedRowsCopyAroundTheEdges) {
 }
 
 // A single generic pass between the caller's arrays uses no scratch; in place it writes
-// scratch and is copied back.
+// scratch and is copied back. A Bluestein stage needs two scratch lines of its convolution
+// length M and runs in place without a copy.
 TEST(Passes, ScratchOnlyWhenUsed) {
+  build_settings generic;
+  generic.bluestein_above = no_bluestein;
   for (const fftn::isa t : fftn::test::runnable_isas()) {
     // The view borrows the shape's axes, so the shape must outlive it.
     const auto shape = fftn::rows_c2c<double>(17, 1, fftn::direction::forward);
     const auto rows = fftn::detail::view_of(shape);
-    EXPECT_EQ(fftn::detail::workspace_bytes(*make_plan_core(rows, {.force_isa = t}, {}), 1), 0U)
-        << fftn::isa_name(t);
-    EXPECT_GT(fftn::detail::workspace_bytes(
-                  *make_plan_core(rows, {.in_place = true, .force_isa = t}, {}), 1),
+    EXPECT_EQ(fftn::detail::workspace_bytes(*make_plan_core(rows, {.force_isa = t}, generic), 1),
               0U)
         << fftn::isa_name(t);
+    EXPECT_GT(fftn::detail::workspace_bytes(
+                  *make_plan_core(rows, {.in_place = true, .force_isa = t}, generic), 1),
+              0U)
+        << fftn::isa_name(t);
+    const auto bluestein = make_plan_core(rows, {.in_place = true, .force_isa = t}, {});
+    const std::string listing = joined(stage_names(*bluestein));
+    EXPECT_NE(listing.find("bluestein out"), std::string::npos) << listing;
+    EXPECT_EQ(listing.find("copy"), std::string::npos) << listing;
+    const std::size_t m = fftn::detail::bluestein_length(
+        17, fftn::detail::profile_of(static_cast<fftn::detail::target>(t), lanes_of<double>(t)));
+    EXPECT_EQ(bluestein->scratch_line, m) << fftn::isa_name(t);
   }
 }
 
@@ -434,7 +537,7 @@ template <class T> void fused_scale(fftn::isa target) {
                         "planes 40 x 12");
   check_scaled<c, c, T>(target, fftn::planes_c2c<T>(17, 12, 2, fftn::direction::backward), 408, 408,
                         "planes 17 x 12");
-  // In place, a prime row is one generic pass into scratch, then a copy back.
+  // In place, a prime row is one Bluestein stage, which runs in place.
   for (const std::size_t n : {std::size_t{17}, std::size_t{1009}}) {
     check_scaled<c, c, T>(target, fftn::rows_c2c<T>(n, 2, fftn::direction::forward), 2 * n, 2 * n,
                           "c2c n = " + std::to_string(n), true);
@@ -478,6 +581,12 @@ template <class T> void same_bits(fftn::isa a, fftn::isa b) {
   using c = std::complex<T>;
   const auto profile =
       fftn::detail::profile_of(static_cast<fftn::detail::target>(a), lanes_of<T>(a));
+  // A Bluestein stage's convolution length and radices come from the profile, so where the
+  // two profiles differ (avx2 and avx512: C differs) the large primes are generic passes.
+  const auto profile_b =
+      fftn::detail::profile_of(static_cast<fftn::detail::target>(b), lanes_of<T>(b));
+  const std::size_t above =
+      profile.lanes == profile_b.lanes && profile.costs == profile_b.costs ? 0 : no_bluestein;
   std::vector<std::size_t> lengths;
   for (std::size_t n = 1; n <= 64; ++n) {
     lengths.push_back(n);
@@ -497,6 +606,7 @@ template <class T> void same_bits(fftn::isa a, fftn::isa b) {
       const bool forward = dir == fftn::direction::forward;
       build_settings settings;
       settings.radices = fftn::detail::rule_radices(n, profile);
+      settings.bluestein_above = above;
       settings.in_factor = fin.data();
       settings.out_factor = forward ? fout.data() : nullptr;
       const double scale = forward ? 1.0 : 0.25;
@@ -513,6 +623,7 @@ template <class T> void same_bits(fftn::isa a, fftn::isa b) {
     {
       build_settings settings;
       settings.radices = fftn::detail::rule_radices(n, profile);
+      settings.bluestein_above = above;
       auto strided = fftn::rows_c2c<T>(n, rows, fftn::direction::forward);
       strided.axes[0].in_stride = 2;
       strided.axes[0].out_stride = 3;
@@ -536,6 +647,7 @@ template <class T> void same_bits(fftn::isa a, fftn::isa b) {
     // Real rows: the complex line is n / 2 long for even n, n for odd n.
     build_settings real;
     real.radices = fftn::detail::rule_radices(n % 2 == 0 ? n / 2 : n, profile);
+    real.bluestein_above = above;
     const std::size_t h = n / 2 + 1;
     const std::vector<T> xr = src.reals<T>(rows * n);
     const auto r2c_shape = fftn::rows_r2c<T>(n, rows);

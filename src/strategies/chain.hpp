@@ -9,7 +9,9 @@
 // - Radices: the rules planner's (planner/rules.hpp), or a sequence a test forces.
 // - Pass kinds (DESIGN.md 8.2): n <= 16 is one leaf; otherwise the first pass is grouped,
 //   the middle ones are lane passes with twiddles and the last a lane pass without; a radix
-//   above 16 (a prime factor) is a generic pass in any position.
+//   above 16 (a prime factor) is a generic pass in any position, except that the prime
+//   factors above the profile's Bluestein threshold, which the rules put last, form one
+//   Bluestein stage at the end of the chain (below).
 // - Placement: the first pass reads the line where it lies and the last writes it where it
 //   goes; passes in between ping-pong between two scratch lines a and b of the line's
 //   length. On targets with several complex numbers per register (C > 1), the passes
@@ -24,6 +26,15 @@
 //   starts with a pre-pass and ends unpacking (c2r); odd n runs the full-length complex
 //   chain on (x, 0) or on the expanded Hermitian spectrum. The scale applies in the edge
 //   pass that writes the output. Fusing the edges into the first or last pass is phase 2.
+// - Bluestein (DESIGN.md 8.5, strategies/bluestein.hpp): the last pass of a chain whose
+//   remaining radix Q (the product of the large primes) has s = n / Q copies is the
+//   convolution of s interleaved sequences of length M (copy innermost): a chirp pass
+//   into scratch, zero-padded to s M; the chain of M, forward, with every pass's copy
+//   count multiplied by s and the kernel spectrum as the last pass's output factor (one
+//   value per element of the s M, each repeated s times); the chain of M backward; and a
+//   chirp pass out, elementwise because m = 1 makes the stage's input and output indices
+//   the same. The convolution ping-pongs between a and b, an even number of passes, so
+//   it ends where it began; scratch lines are then s M long. It runs in place.
 // - Chunks: a stage of u units is cut into ranges of about chunk_points points each.
 #pragma once
 
@@ -36,6 +47,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <string>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -63,12 +75,18 @@ public:
   // Tables are appended to `tables`, whose elements must outlive the stages (moving the
   // outer vector keeps every inner buffer where it is). forced: when its product is a
   // line's length, that line's radices in pass order, instead of the rules' (tests).
+  // bluestein_above: the Bluestein threshold instead of the profile's, when not 0 (tests).
   chain_builder(const kernels_of<T>& kernels, const target_profile& profile,
                 std::vector<std::vector<T>>& tables, std::size_t chunk_points,
-                std::vector<std::size_t> forced);
+                std::vector<std::size_t> forced, std::size_t bluestein_above = 0);
 
-  // The radices of a chain for n, in pass order (empty for n = 1).
+  // The radices of a chain for n, in pass order (empty for n = 1); the last is a Bluestein
+  // stage's when bluestein_last(n).
   [[nodiscard]] std::vector<std::size_t> radices(std::size_t n) const;
+  [[nodiscard]] bool bluestein_last(std::size_t n) const;
+  // The radices for describe(): "4 x 4 x 16", with a Bluestein stage as
+  // "bluestein 257 (M 520 = 8 x 5 x 13)".
+  [[nodiscard]] std::string radix_text(std::size_t n) const;
 
   // Each appends the stages of one line to `stages` and returns the complex elements of
   // scratch the line needs in each of a and b (0 when it needs none).
@@ -95,13 +113,19 @@ private:
   // holding the result.
   slot scratch_chain(std::size_t n, int sign, slot from, std::vector<stage>& stages);
   // Pass i of `rad` (n = the product), s copies, with its edges' operations.
+  // batch: the line is that many interleaved lines of n / batch (a Bluestein convolution),
+  // whose twiddles are those of the chain of n / batch with s / batch copies.
   void add_pass(std::size_t n, const std::vector<std::size_t>& rad, std::size_t i, std::size_t s,
                 int sign, endpoint src, endpoint dst, const line_edges& edges,
-                std::vector<stage>& stages);
+                std::vector<stage>& stages, std::size_t batch = 1);
   void add_leaf(std::size_t n, int sign, endpoint src, endpoint dst, const line_edges& edges,
                 std::vector<stage>& stages);
   void add_copy(std::size_t n, endpoint src, endpoint dst, const line_edges& edges,
                 std::vector<stage>& stages);
+  // The Bluestein stage of radix q as the last pass of a line of n (s = n / q copies), its
+  // edges' operations applied when `first` (input) and always (output).
+  void add_bluestein(std::size_t n, std::size_t q, int sign, endpoint src, endpoint dst,
+                     const line_edges& edges, bool first, std::vector<stage>& stages);
   void add_edge(pass_fn run, const char* name, std::size_t n, std::size_t units, endpoint src,
                 endpoint dst, const T* twiddles, double scale, std::vector<stage>& stages);
 
@@ -110,6 +134,8 @@ private:
   std::vector<std::vector<T>>& tables_;
   std::size_t chunk_points_;
   std::vector<std::size_t> forced_;
+  std::size_t bluestein_above_;
+  std::size_t line_scratch_ = 0; // scratch a Bluestein stage of the current line needs
   std::map<std::size_t, std::vector<std::complex<T>>> roots_;
   std::map<std::pair<std::size_t, std::size_t>, const T*> grouped_tables_;              // (n, R)
   std::map<std::tuple<std::size_t, std::size_t, std::size_t>, const T*> shared_tables_; // n, R, s

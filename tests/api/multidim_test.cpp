@@ -80,7 +80,7 @@ std::vector<cd> dft(int sign, const dims_t& dims, std::vector<cd> x) {
 template <class T>
 fftn::test::tolerance tolerance_for(const dims_t& dims, bool input_rounded_to_t) {
   fftn::test::tolerance t =
-      fftn::test::derived_tolerance<T>(product(dims), fftn::test::stable_fft_bound) +
+      fftn::test::derived_tolerance<T>(product(dims), fftn::test::fftn_bound(product(dims))) +
       fftn::test::input_rounding<double>() * static_cast<double>(dims.size());
   if (input_rounded_to_t) {
     t = t + fftn::test::input_rounding<T>();

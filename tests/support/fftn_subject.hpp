@@ -9,6 +9,7 @@
 
 #pragma once
 
+#include "support/tolerance.hpp"
 #include "support/transform_under_test.hpp"
 
 #include <fftn/fftn.hpp>
@@ -71,6 +72,9 @@ template <class T> subject<T> fftn_subject(fftn::isa target = fftn::isa::best) {
   using cplx = std::complex<T>;
   subject<T> s;
   s.name = target == fftn::isa::best ? "fftn" : std::string("fftn_") + fftn::isa_name(target);
+  // Lengths with a prime factor above 16 go through Bluestein (tolerance.hpp). For a plane,
+  // n is the number of points, which has such a factor exactly when an axis does.
+  s.bound = &fftn_bound;
   s.c2c = [target](direction d, const rows& r) -> c2c_call<T> {
     return detail::call_of(detail::shape_of<cplx, cplx>(d, r), r.place, target);
   };
