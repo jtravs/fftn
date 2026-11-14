@@ -976,7 +976,7 @@ ends (they touch unpadded caller memory in R streams) and larger ones in the mid
 These pull in different directions on wide registers, which is what experiment X2
 resolves per target.
 
-As built (task 1.2, `src/strategies/chain.cpp`): radices from planner v0 (section 11.2);
+As built (task 1.2, `src/strategies/chain.cpp`): radices from planner v1 (section 11.2);
 the first pass grouped, then lane passes, a radix above 16 a generic pass in any
 position, n ≤ 16 a leaf, n = 1 a copy. The input edge's operation is applied by the first
 pass that is not a copy and the output edge's by the last, so neither costs a pass. On
@@ -1156,50 +1156,63 @@ function of whether the working set fits L1, L2 or L3 and of the stream count. T
 candidate becomes the plan. Keys include the batch count, because the best program for
 one row and for 256 rows differ (measured on the Xeon).
 
-**Planner v0 (as built, task 1.2, `src/planner/rules.cpp`)** has no cost model yet: the
-radices of a chain and their order follow fixed rules taken from FFTL.jl (T. Knopp; MIT
-licence), which derived them from brute-force searches over radix sequences and
-interleaved measurements on Apple M1, Zen 2 and 3, Tiger Lake and EPYC. The rules are
-specified here and the code implements this specification; it is not a translation of
-FFTL's function (18.2). A target contributes a profile: its number of vector registers
-(16 on x86 below AVX-512, 32 on AArch64 and AVX-512; the scalar target takes its build
-architecture's) and whether it merges radices (AArch64 targets do). For a line of n
-points:
+**Planner v1 (as built, experiment X2, `src/planner/rules.cpp`)** chooses the radices of a
+chain and their order with the simplest cost model that reproduces X2's measurements: a
+table of measured pass costs per profile and an exact search over the sequences. It
+replaced planner v0 (task 1.2: FFTL.jl's single-line rules, T. Knopp, MIT licence, keyed on
+the register count and on merged radices), which X2 found 1.25 times slower than the best
+sequence in double and 1.44 times in single precision on AVX2 (geometric means over the
+7-smooth lengths up to 1024). A profile is the precision's number of complex lanes C and a
+cost table: for each pass kind and codelet radix R (2 to 16) a cost per unit and a cost per
+tail, and a cost per pass. For a line of n points:
 
-1. n = 1: no pass.
-2. n a power of two from 32 to 64: radix 4, then n/4.
-3. n a power of two from 128 to 16384 on 32 registers: radix 8 throughout, preceded by
-   one radix 4 when log₂ n leaves 2 on division by 3, and by two radix 4 when it leaves 1
-   (radix 8 gained 2–7 % over radix 4 on the M1; on 16 registers it lost 3–25 %).
-4. n ≤ 16, or n prime: one pass of radix n (a leaf, or a generic pass).
-5. Otherwise write n = 2^a 3^b 5^c m with m free of 2, 3 and 5.
-   - The power of two gives a/2 radix 4 when a is even. When a is odd it gives one radix
-     8 and (a − 3)/2 radix 4 if a ≥ 3, b = c = 0 and the target merges or 7 does not
-     divide n; otherwise one radix 2 and (a − 1)/2 radix 4.
-   - A merging target then pairs, as long as both remain, a 3 with a radix 4 into a
-     radix 12; then a 3 with the radix 2 into a radix 6; then a 5 with the radix 2 into a
-     radix 10.
-   - The 3s left go in pairs as radix 9, and one left over as radix 3; the 5s left as
-     radix 5; every prime factor of m, with its multiplicity, as its own radix.
-   - Order: the radices left from the power of two (the 8, the 4s, the 2), then all the
-     others ascending, the largest last (39 as 3 × 13 took 0.65–0.75 of the time of 13 × 3
-     in FFTL's measurements; ascending order had a median ratio of 1.00 to the best order
-     over 306 lengths on the M1).
+1. n = 1: no pass. n ≤ 16: one leaf of radix n.
+2. A length the table overrides takes the table's radices (the lengths where rule 4 was
+   measured more than 2 % slower than planner v0; six on AVX2).
+3. Otherwise write n = n_s q₁ q₂ … with n_s free of primes above 16 and q₁ ≤ q₂ ≤ … the
+   prime factors above 16. Each qᵢ is one generic pass, in ascending order, after the
+   codelet passes; if n_s = 1 they are the whole chain.
+4. The codelet passes are the sequence of radices from 2 to 16 multiplying to n_s with the
+   lowest cost, the sum of its passes' costs. The pass of radix R after passes whose
+   radices multiply to s has m = n/(R s) and:
+   - kind *first* if s = 1, *last* if R s = n_s and no generic pass follows, *middle*
+     otherwise (the chain's grouped pass, its lane pass with twiddles and its last lane
+     pass, section 8);
+   - units ⌈m/C⌉ for the first pass (it runs over m in blocks of C) and m⌈s/C⌉ for the
+     others (over s in blocks of C, once per p < m);
+   - tails, the units that are padded tiles: 1 for the first pass when C does not divide
+     m, m for the others when C does not divide s, otherwise 0;
+   - cost unit[kind][R] × units + tail[kind][R] × tails + pass.
 
-The scalar target follows the profile of its build architecture. FFTL has one more rule
-that v0 leaves out: on AVX-512, single lines of a power of two use radix 16 while the 16
-input streams are less than one L1 set stride apart (n/16 elements of 16 bytes under 4
-KiB; measured on an EPYC 9354, 4096 points in 0.86 of the time). Planner v0 gives
-`avx512` 32 registers and no merging, so it would use radix 8 there; task 1.3 decides.
-The rules are a pure function of (n, profile), so plans are deterministic and cheap, and
-`tests/core/data/rule_radices.txt` records their output for every 73-smooth n ≤ 20000 and
-each profile. `describe()` lists the radices and every stage. Experiment X2
-([dev/experiments/X2-radix-sets.md](experiments/X2-radix-sets.md)) replaces the rules by
-measured choices per target. Hooks for phase 2: the rules become one generator of
-candidate radix sequences that the cost model ranks, and the chain builder already
-accepts any sequence (the tests force sequences through `build_settings::radices`); the
-memory rules of section 10 (set conflicts) are not applied yet, since FFTL applies them
-only to batches of more than 256 lines.
+   Among sequences of equal cost the lexicographically first wins (the smallest radix at
+   the first pass where they differ). The costs are integers, so the choice is exact.
+
+The tables come from X2's campaign on an EPYC 7763 (AVX2): one for C = 2 (double) and one
+for C = 4 (float), fitted to the timings of every candidate sequence of every 7-smooth
+length up to 1024 at batches 1 and 64 (the fit, the overrides and the reproduction rate are
+in the experiment file). No 7-smooth length has 11 or 13, so their columns are radix 10's
+and 12's scaled by the codelets' operation counts. What the tables learnt is in their
+shape: tails cost several units, so the first radix wants to be a multiple of C and so
+does every prefix product; and on 16 registers the radices 10 to 16 are cheap enough per
+point that the best sequences have one pass fewer than v0's (2.7 against 3.6 on average up
+to 1024). Every other target takes the table of the nearest C (the C = 2 table for C = 1,
+the C = 4 table for C = 8) with its own C in rule 4, so the structure carries over but the
+costs are unmeasured there: NEON, AVX-512, x86-64-v2, AVX and scalar until X2 runs on them
+(task 1.3 decides AVX-512's table and FFTL's radix-16 gate for it). Lengths above 1024 are
+unmeasured too.
+
+The search is a shortest path over the divisors of n_s, from 1 to n_s, each step a radix:
+at most a few thousand operations for lengths up to 2²⁴, so plans stay cheap and
+deterministic. A
+pure function of (n, profile); `tests/core/data/rule_radices.txt` records its output for
+every 73-smooth n ≤ 20000 and C = 1, 2, 4 and 8, generated from this specification by an
+implementation independent of the library's. `describe()` lists the radices and every
+stage. Hooks for phase 2: the table is the first machine profile of the cost model above
+(`unit_cost(codelet, target, pass kind)` with tails as a pass variant); calibration
+replaces the fitted tables per machine, and the memory factor is still missing (every
+measured length fits in L1). The chain builder accepts any sequence (the tests force
+sequences through `build_settings::radices`); the memory rules of section 10 (set
+conflicts) are not applied yet.
 
 **`planning::measure`** (opt-in). Take the top k candidates by the model (k about 4–8),
 build each, time whole programs on scratch data for a bounded budget (default 10 ms per
@@ -1983,7 +1996,8 @@ from the specification in section 11.2, which reproduces the first implementatio
 output exactly for every 73-smooth length up to 20000 on every profile (recorded test
 data). To confirm: that rules from an MIT-licensed library, rewritten from a
 specification and cited, need nothing further (an MIT notice is needed only if code were
-copied).
+copied). Planner v1 (experiment X2) has since replaced those rules by measured pass costs;
+nothing of FFTL's remains in the planner.
 
 **Threading API and contract (tasks 3.1 and 3.2), for the maintainer's review.** Built as
 below because section 5.3 left the shapes open; each is easy to change before a release.
@@ -2178,6 +2192,7 @@ to change before a release.
 | 2026-11-14 | Threading adapters (task 3.3): the `executor` concept (`concurrency`, `bulk`, optional `group_size`) behind a non-owning `executor_ref` that is the C contract's struct (`fftn/executor.h`); the executor overload dispatches one task per lane dealt work, as a team; `fftn/omp.hpp` (`this_team`, an executor of constant width); the opt-in `thread_pool`; `cache_group_size` | One allocation-free path from any runtime to the claiming engine, with no template in the library; dispatching only lanes with work is rule 4, and every dispatched task runs, so no member skips an execution; open points for review in 18.2 |
 | 2026-11-14 | The OpenMP tests are built wherever the compiler has OpenMP, except under ThreadSanitizer; the thread pool and custom executors carry the executor path's TSan coverage | The OpenMP runtimes at hand are not instrumented, and TSan reports the join of every region as a race (shown with Homebrew LLVM 23's libomp) |
 | 2026-11-14 | fbench measures on loaded machines: load is recorded per round, not a reason to invalidate it; a round waits at most 60 s, and only while other processes use more than half the CPUs; `--strict-quiet` keeps the old rule; a process timeout loses that process's unfinished cases for the round, not the run | Maintainer's direction: the shared machines will never be much quieter, and interleaving, repeated rounds and the A/A control already measure the noise the load adds |
+| 2026-11-14 | Planner v1 (experiment X2): the cheapest radix sequence under a per-profile table of measured pass costs (per unit and per padded tail, for first, middle and last passes, plus a cost per pass), found by a shortest path over the divisors of the length, with a short table of measured overrides; profiles carry the precision's lanes C; AVX2's tables (C = 2 and 4) serve every target by nearest C until measured there (section 11.2) | On the EPYC 7763 it reproduces 95.7 % of the measured best sequences and no case is more than 2 % slower than v0, against v0's geometric-mean deficit of 1.25 (double) and 1.44 (float) up to 1024; structural rules (fewest passes, a first radix that is a multiple of C) reached at most 72 %, a cost by operation counts 79 % |
 
 ---
 
