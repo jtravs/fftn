@@ -1,6 +1,6 @@
 # X19: multiplications by i in the generated codelets
 
-- **Status:** running
+- **Status:** done
 - **Owner:** gen-rotations session, 2026-11-14
 - **Phase / task:** 1 (exit criteria); follows X10 and X18
 
@@ -76,8 +76,52 @@ where noted in `--table`.
 
 ## Results
 
-To be filled in.
+Arms A = main 00a5455, B = 70f4a74 (this branch's generator change). 24 valid rounds each:
+
+| Machine, target | Run | Band | B ÷ A geomean [95 %] | faster / slower | FFTN ÷ FFTW A → B |
+|---|---|---|---|---|---|
+| Xeon 6240, `avx512` (GCC 14) | 20261114-152415-8058 | ±1.11 % | 0.980 [0.977, 0.984] | 10 / 3 | 1.19 → 1.17 |
+| Xeon 6240, `avx2` (GCC 14) | 20261114-154151-9eeb | ±1.67 % | 0.976 [0.970, 0.982] | 9 / 0 | — |
+| EPYC 7763, `avx2` (GCC 16) | 20261114-152530-765f | ±1.06 % | 0.971 [0.969, 0.975] | 15 / 3 | 1.36 → 1.32 |
+| Mac M5 Max, `neon_fcma` (Clang 23) | 20261114-152124-de44 | ±1.00 % | 0.991 [0.989, 0.994] | 4 / 0 | 1.06 → 1.05 |
+
+FFTN ÷ FFTW is the reciprocal of fbench's W ÷ A geomean (FFTW 3.3.11 at MEASURE, same run)
+times B ÷ A. x86 geometric mean of the three: 0.976, each interval clear of its band.
+
+Largest gains are where radix-16 and radix-8 passes dominate: 1024 (Xeon avx2 0.887, EPYC
+0.888, Xeon avx512 0.966), 1024 backward and in place (0.87–0.90 on avx2), 128 × 4096
+(0.81 Xeon avx512, 0.93–0.94 avx2), 2187 (radix 9: 0.89–0.92 everywhere), 256 (0.92
+Xeon avx512, 0.95 EPYC). Slower beyond the band: Xeon avx512 60 (1.027), 1009 (1.058) and
+4093 (1.063, Bluestein lengths; on the EPYC 1009 is 0.936 and 4093 0.976, on Xeon avx2 4093
+is 0.975); EPYC 60 (1.038), 120 (1.029), 257 (1.027). 60 and 120 are mostly radices 3–5,
+whose codelets are unchanged; the Bluestein lengths run power-of-two convolutions, whose
+own rows improved on the same machines, and the losses change sign between machines and
+targets. Unexplained (code placement is the likely cause); none moves a target's geomean
+past the rule, but 1009 and 4093 on the Xeon are worth a recheck in the next x86 run.
+
+Port counters per transform on the Xeon (`perf stat`, `uops_dispatched_port.port_5`,
+GCC 14, single case, approximate; script `ports.sh` in the campaign directory):
+
+| n | target | cycles A → B | port 5 A → B | FFTW cycles, port 5 |
+|---|---|---|---|---|
+| 256 | avx512 | 1067 → 998 | 798 → 723 (75 % → 72 % busy) | 850, 468 (55 %) |
+| 256 | avx2 | 1882 → 1841 | 815 → 697 | |
+| 1024 | avx512 | 5842 → 5630 | 3507 → 3251 | 4912, 2194 |
+| 1024 | avx2 | 8909 → 8080 | 3474 → 2923 | |
+| 4096 | avx512 | 41764 → 40360 | 22055 → 21184 | 31864, 18269 |
+
+Port-5 uops fall 4–16 %; FFTN still issues about 1.5 times FFTW's port-5 uops at 256 and
+1024: the twiddle multiplies' swaps (R − 1 per twiddle codelet) and the grouped pass's
+transposes are untouched by this change and are what remains (split lowering, X1).
+
+Gates: Mac gate (spdx gen build sanitize bench) passed; GCC 16 `-Werror` build on the Mac
+and its ISA tests passed; DMOG (EPYC, GCC 16) gen and build stages passed (1087 tests).
 
 ## Verdict
 
-To be filled in.
+Adopted: the x86 geometric mean is 0.976 (rule ≤ 0.98) with every interval clear of the
+band, and no target is slower (Mac 0.991). The real-coefficient form is the generator's only
+form (`gen/fftn_gen/realify.py`, DESIGN.md 7.2 step 3, gen/README.md step 4); the direct
+lowering stays reachable (`build_ops(..., real=False)`) only for the test that compares the
+two. The remaining port-5 gap to FFTW is the twiddle swaps and transposes: next is split
+lowering for x86 (X1).
