@@ -88,6 +88,10 @@ constexpr std::array size_fields{
         .member = &fftn::detail::machine_profile::grid_three_bytes,
     },
     size_field{
+        .key = "GRID_FUSE_BYTES",
+        .member = &fftn::detail::machine_profile::grid_fuse_bytes,
+    },
+    size_field{
         .key = "GRID_BLOCK_BYTES",
         .member = &fftn::detail::machine_profile::grid_block_bytes,
     },

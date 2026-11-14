@@ -28,6 +28,7 @@ machine_profile default_machine_profile() noexcept {
   }
   if (!t.classes.empty() && t.classes.front().l2.size != 0) {
     p.grid_three_bytes = t.classes.front().l2.size / 8;
+    p.grid_fuse_bytes = t.classes.front().l2.size / 4;
   }
   return p;
 }

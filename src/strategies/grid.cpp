@@ -169,6 +169,11 @@ std::vector<std::size_t> phase_radices(std::size_t n) {
   return rad;
 }
 
+// Whether a phase with these radices reads and writes its rows directly (grid_fuse_radix).
+bool fusible(const std::vector<std::size_t>& rad) {
+  return std::all_of(rad.begin(), rad.end(), [](std::size_t r) { return r <= grid_fuse_radix; });
+}
+
 std::vector<std::size_t> divisors(std::size_t n) {
   std::vector<std::size_t> low;
   std::vector<std::size_t> high;
@@ -243,8 +248,8 @@ grid_split choose_grid(std::size_t n, std::size_t lanes, std::size_t budget, boo
 
 template <class T>
 grid_builder<T>::grid_builder(const kernels_of<T>& kernels, chain_builder<T>& chain,
-                              std::vector<std::vector<T>>& tables)
-    : kernels_(kernels), chain_(chain), tables_(tables) {}
+                              std::vector<std::vector<T>>& tables, bool fused)
+    : kernels_(kernels), chain_(chain), tables_(tables), fused_(fused) {}
 
 template <class T>
 void grid_builder<T>::add_copy(const char* what, pass_fn run, std::size_t rows, std::size_t cols,
@@ -266,42 +271,90 @@ void grid_builder<T>::add_copy(const char* what, pass_fn run, std::size_t rows, 
   st.chunks = 1;
   st.name = std::string("grid ") + what + " (" + std::to_string(cols) + " columns x " +
             std::to_string(rows) + " rows, row strides " + std::to_string(src_stride) + " -> " +
-            std::to_string(dst_stride) + (scale == 1.0                         ? ""
+            std::to_string(dst_stride) +
+            (scale == 1.0                    ? ""
              : std::string(what) == "gather" ? "; in: scale"
                                              : "; out: scale") +
             ")";
   p.records.emplace_back(std::move(st));
 }
 
+// A phase's radices: forced ones, or the phase rule's.
+template <class T> std::vector<std::size_t> grid_builder<T>::phase_radix_list(std::size_t n) const {
+  return chain_.forces(n) ? chain_.radices(n) : phase_radices(n);
+}
+
 template <class T>
-slot grid_builder<T>::block_chain(std::size_t n, std::size_t cols, int sign, slot from,
-                                  program& p) {
-  const std::vector<std::size_t> rad = chain_.forces(n) ? chain_.radices(n) : phase_radices(n);
+slot grid_builder<T>::phase_chain(std::size_t n, const std::vector<std::size_t>& rad,
+                                  std::size_t cols, int sign, const side_of& from,
+                                  const side_of& to, double in_scale, double out_scale,
+                                  const T* row_tw, program& p) {
   const std::size_t c = kernels_.complex_lanes;
   const std::size_t d = sign < 0 ? 0 : 1;
   std::size_t s = cols;
-  slot at = from;
-  for (const std::size_t radix : rad) {
+  slot at = from.where;
+  for (std::size_t i = 0; i < rad.size(); ++i) {
+    const std::size_t radix = rad[i];
     const std::size_t m = n * cols / (radix * s);
-    const slot next = other_scratch(at);
+    const bool first = i == 0;
+    const bool last = i + 1 == rad.size();
+    const bool big_in = first && from.big;
+    const bool big_out = last && to.big;
+    const slot next =
+        big_out ? to.where : other_scratch(at == slot::a || at == slot::b ? at : slot::b);
     stage st;
-    if (m == 1) {
-      st.run = kernels_.passes.codelet[radix].last[d][0];
-      st.units = s / c;
-    } else {
-      st.run = kernels_.passes.codelet[radix].lane[d];
-      st.args.twiddles = chain_.lane_twiddles(n * cols, radix, s);
-      st.units = m * (s / c);
-    }
     st.args.radix = radix;
     st.args.m = m;
     st.args.s = s;
     st.args.n = n * cols;
-    st.src = at;
-    st.dst = next;
+    st.units = m * (s / c);
     st.chunks = 1;
+    if (m > 1) {
+      st.args.twiddles = chain_.lane_twiddles(n * cols, radix, s);
+    }
+    std::string ends;
+    if (big_in || big_out) {
+      phase_variant v = phase_plain;
+      if (m > 1) {
+        v = big_in && in_scale != 1.0 ? phase_twiddled_in_scale : phase_twiddled;
+      } else if (big_in && in_scale != 1.0) {
+        v = phase_plain_in_scale;
+      } else if (big_out && row_tw != nullptr) {
+        v = phase_plain_row_twiddles;
+        st.args.twiddles = row_tw;
+        st.moving_twiddles = true;
+      } else if (big_out && out_scale != 1.0) {
+        v = phase_plain_out_scale;
+      }
+      st.run = kernels_.passes.codelet[radix].phase[d][v];
+      // The scale of the variant chosen: a single pass is both a phase's read and its write.
+      st.args.scale = v == phase_twiddled_in_scale || v == phase_plain_in_scale ? in_scale
+                      : v == phase_plain_out_scale                              ? out_scale
+                                                                                : 1.0;
+      st.args.src_stride = big_in ? from.row : static_cast<std::ptrdiff_t>(s);
+      st.args.src_cols = big_in ? cols : 0;
+      st.args.dst_stride =
+          big_out ? to.row * static_cast<std::ptrdiff_t>(s / cols) : static_cast<std::ptrdiff_t>(s);
+      st.args.dst_cols = big_out ? cols : 0;
+      st.args.dst_qstride = big_out ? to.row : 0;
+      if (big_in) {
+        ends += std::string("; reads rows ") + std::to_string(from.row) + " apart" +
+                (in_scale != 1.0 ? ", in: scale" : "");
+      }
+      if (big_out) {
+        ends += std::string("; writes rows ") + std::to_string(to.row) + " apart" +
+                (row_tw != nullptr  ? ", twiddled"
+                 : out_scale != 1.0 ? ", out: scale"
+                                    : "");
+      }
+    } else {
+      st.run = m > 1 ? kernels_.passes.codelet[radix].lane[d]
+                     : kernels_.passes.codelet[radix].last[d][0];
+    }
+    st.src = big_in ? from.where : at;
+    st.dst = next;
     st.name = "lane radix-" + std::to_string(radix) + " " + direction_name(sign) + " (m " +
-              std::to_string(m) + ", s " + std::to_string(s) + ")";
+              std::to_string(m) + ", s " + std::to_string(s) + ends + ")";
     p.records.emplace_back(std::move(st));
     at = next;
     s *= radix;
@@ -396,9 +449,24 @@ std::size_t grid_builder<T>::c2c_row(const grid_split& g, int sign, bool in_plac
   l1.step[index(buf[1])] = blk * static_cast<std::ptrdiff_t>(n1) * cb;
   l1.step[3] = static_cast<std::ptrdiff_t>(n1) * cb;
   p.records.emplace_back(l1);
-  add_copy("gather", kernels_.passes.block_copy[in_scale != 1.0 ? 1 : 0], n1, b, buf[0],
-           static_cast<std::ptrdiff_t>(m1), slot::a, blk, in_scale, nullptr, p);
-  const slot z1 = block_chain(n1, b, sign, slot::a, p);
+  // A phase reads its rows in its first pass and (after phase 1) writes them in its last,
+  // instead of through a gather and a scatter, when every radix of its chain is at most
+  // grid_fuse_radix. A pass touches R rows at once, which lie a power of two apart for most
+  // lengths and so share cache sets: with more rows than the sets' ways each row's lines are
+  // evicted before the next unit, at the next columns, reuses them (X12: radix 16 at the
+  // ends doubled the time), and fusing only one end of a phase gained nothing (X12, run
+  // 20261114-131752-7e99), so a phase fuses both ends or neither.
+  const std::vector<std::size_t> rad1 = phase_radix_list(n1);
+  const bool fuse1 = fused_ && fusible(rad1);
+  if (!fuse1) {
+    add_copy("gather", kernels_.passes.block_copy[in_scale != 1.0 ? 1 : 0], n1, b, buf[0],
+             static_cast<std::ptrdiff_t>(m1), slot::a, blk, in_scale, nullptr, p);
+  }
+  const slot z1 = phase_chain(
+      n1, rad1, b, sign,
+      fuse1 ? side_of{.where = buf[0], .big = true, .row = static_cast<std::ptrdiff_t>(m1)}
+            : side_of{.where = slot::a},
+      side_of{.where = slot::a}, fuse1 ? in_scale : 1.0, 1.0, nullptr, p);
   stage tt;
   tt.run = kernels_.passes.twiddle_transpose[d];
   const auto [local, rows] = first_twiddles(g);
@@ -439,13 +507,24 @@ std::size_t grid_builder<T>::c2c_row(const grid_split& g, int sign, bool in_plac
     ll.step.at(index(src)) = blk * cb;
     ll.step.at(index(dst)) = blk * cb;
     p.records.emplace_back(ll);
-    add_copy("gather", kernels_.passes.block_copy[0], ni, b, src,
-             big_l * static_cast<std::ptrdiff_t>(m), slot::a, blk, 1.0, nullptr, p);
-    const slot z = block_chain(ni, b, sign, slot::a, p);
-    if (m > 1) {
+    const std::vector<std::size_t> rad = phase_radix_list(ni);
+    const bool fuse_in = fused_ && fusible(rad);
+    const bool fuse_out = fuse_in;
+    const T* row_tw = m > 1 ? row_twiddles(ni, m) : nullptr;
+    if (!fuse_in) {
+      add_copy("gather", kernels_.passes.block_copy[0], ni, b, src,
+               big_l * static_cast<std::ptrdiff_t>(m), slot::a, blk, 1.0, nullptr, p);
+    }
+    const slot z = phase_chain(
+        ni, rad, b, sign,
+        fuse_in ? side_of{.where = src, .big = true, .row = big_l * static_cast<std::ptrdiff_t>(m)}
+                : side_of{.where = slot::a},
+        fuse_out ? side_of{.where = dst, .big = true, .row = big_l} : side_of{.where = slot::a},
+        1.0, fuse_out ? out_scale : 1.0, fuse_out ? row_tw : nullptr, p);
+    if (!fuse_out && m > 1) {
       add_copy("twiddled scatter", kernels_.passes.twiddle_scatter[d], ni, b, z, blk, dst, big_l,
-               1.0, row_twiddles(ni, m), p);
-    } else {
+               1.0, row_tw, p);
+    } else if (!fuse_out) {
       add_copy("scatter", kernels_.passes.block_copy[out_scale != 1.0 ? 1 : 0], ni, b, z, blk, dst,
                big_l, out_scale, nullptr, p);
     }
@@ -466,7 +545,7 @@ template <class T> std::string grid_builder<T>::note(const grid_split& g) const 
     sizes += (i == 0 ? "" : " x ") + std::to_string(g.factors.at(i));
     const std::size_t f = g.factors.at(i);
     phases += (i == 0 ? "" : ", then ") + std::to_string(f) + " (radices " +
-              radix_text(chain_.forces(f) ? chain_.radices(f) : phase_radices(f)) + ")";
+              radix_text(phase_radix_list(f)) + ")";
   }
   return "grid " + sizes + " (decimation in frequency: phases of " + phases +
          ", each in blocks of " + std::to_string(g.block) + " columns)";

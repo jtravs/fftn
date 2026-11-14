@@ -61,6 +61,9 @@ namespace fftn::inline v0::detail {
 inline constexpr std::size_t max_grid_phases = 3;
 // The widest block the rules choose (experiment X12).
 inline constexpr std::size_t max_grid_block = 32;
+// The largest radix of a phase whose first and last passes read and write the arrays' rows
+// directly (grid_builder, fused; experiment X12).
+inline constexpr std::size_t grid_fuse_radix = 8;
 
 // How a row of n is split: n = factors[0] x ... x factors[phases - 1], each phase run on
 // blocks of `block` columns. phases == 0: no grid.
@@ -90,8 +93,10 @@ public:
   // The chain builder supplies the radices of the phases and their lane passes' twiddles;
   // the grid's own tables are appended to `tables` (as the chain's, they must outlive the
   // stages).
+  // fused: phases read and write the arrays in their first and last passes rather than
+  // through a gather and a scatter (experiment X12).
   grid_builder(const kernels_of<T>& kernels, chain_builder<T>& chain,
-               std::vector<std::vector<T>>& tables);
+               std::vector<std::vector<T>>& tables, bool fused);
 
   // Appends the records of one c2c row from the in slot to the out slot, both stride 1,
   // and returns the complex elements of scratch it needs in each of a and b. in_place: in
@@ -108,9 +113,19 @@ public:
   [[nodiscard]] std::string note(const grid_split& g) const;
 
 private:
-  // The lane passes of a chain of n on a tight block of `cols` columns, from scratch slot
-  // `from`; returns the slot holding the result.
-  slot block_chain(std::size_t n, std::size_t cols, int sign, slot from, program& p);
+  // One end of a phase's chain: tight scratch, or rows of an array `row` apart (a gather's
+  // or scatter's array, read or written directly by the first or last pass).
+  struct side_of {
+    slot where = slot::a;
+    bool big = false;
+    std::ptrdiff_t row = 0;
+  };
+  // The chain of a phase of n on a block of `cols` columns from `from` to `to`; returns the
+  // slot holding the result. row_tw: the row twiddles of a later phase's last pass.
+  slot phase_chain(std::size_t n, const std::vector<std::size_t>& rad, std::size_t cols, int sign,
+                   const side_of& from, const side_of& to, double in_scale, double out_scale,
+                   const T* row_tw, program& p);
+  [[nodiscard]] std::vector<std::size_t> phase_radix_list(std::size_t n) const;
   void add_copy(const char* what, pass_fn run, std::size_t rows, std::size_t cols, slot src,
                 std::ptrdiff_t src_stride, slot dst, std::ptrdiff_t dst_stride, double scale,
                 const T* twiddles, program& p);
@@ -120,6 +135,7 @@ private:
   const kernels_of<T>& kernels_;
   chain_builder<T>& chain_;
   std::vector<std::vector<T>>& tables_;
+  bool fused_;
 };
 
 extern template class grid_builder<double>;

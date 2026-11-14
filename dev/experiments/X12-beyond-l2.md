@@ -129,11 +129,72 @@ fbench takes medians over batches with fresh page offsets per round, and its wid
 intervals there show the load. 2^18, which the development timings put at 1.3–1.5, came
 out at 1.08.
 
+### Task 1.7b: fusing the copies into the phases' end passes
+
+The change: a phase's first pass reads its block's rows from the array directly and a
+later phase's last pass writes them (with the row twiddles or the scale), instead of a
+gather and a scatter around the chain on scratch (`phase_pass` in `src/passes/grid.inl`;
+`build_settings::grid_fused`). Development timings (scratch timer, Mac at load 9–12, so
+only large effects count): fusing both ends of every phase doubled the time wherever a
+phase's end radix was 16 (65536 with 16 x 16 phases: 400 µs against 203), as the set
+argument predicts (16 rows a power of two apart, 8 ways); with end radices of at most 8
+(forced 4 x 16 x 4, 8 x 4 x 8, 4 x 4 x 4 x 4 for 256) fused matched the unfused 16 x 16
+(218–220 µs against 202).
+
+fbench, the same filter as above, A=fftw, B=fftn built from main a3903ed (copies), C=fftn
+of this branch:
+
+| case | run 20261114-131752-7e99: B | C (fuse each end of radix ≤ 8) | run 20261114-132841-80e0: B | C (fuse only phases of radices ≤ 8) |
+|---|---|---|---|---|
+| c2c-16384-b1-op | 1.330 | 1.455 | 1.309 | 1.282 (same program as B) |
+| c2c-65536-b1-op | 1.100 | 1.089 | 1.052 | 1.039 (same program) |
+| c2c-262144-b1-op | 1.318 | 1.141 | 1.029 | 0.922 [0.904, 0.944] |
+| c2c-1048576-b1-op | 1.134 | 1.152 | 1.352 | 1.462 [1.435, 1.493] |
+| c2c-4194304-b1-op | 1.027 | 1.126 | 1.374 | 1.360 (same program) |
+| c2c-65536-b1-ip | 1.071 | 1.077 | 1.094 | 1.084 (same program) |
+| band (A/A) | ±1.64 % | | ±1.00 % | |
+
+Both runs were loaded (80 of 80 and 35 of 40 rounds; load average median 10.6 and about
+10); B's own ratios moved by up to 0.3 between them at 2^18–2^22, so only differences
+within a run count. Reading: a fused end with radix ≤ 8 next to an unfused one gained
+nothing (2^14 and 2^22 lost 9–10 % in the first run); phases fused at both ends gained at
+2^18 (three phases of 64 = 8 x 8: −13 % and −10 %) but lost at 2^20 (+8 %: there only
+phase 1, 64 = 8 x 8, fuses, and it reads a 16 MiB input beyond L2 without the gather's
+prefetching). Adopted: a phase fuses both ends or neither, only when all its radices are
+at most 8 and only for rows up to `grid_fuse_bytes` (a quarter of L2, so on the Mac up to
+2^18 points in double); everywhere else the program is main's. Net on the Mac: 2^18 from
+1.03 to 0.92 times FFTW, every other case unchanged. The copies are not where the time
+goes at 2^20 and 2^22: their marginal cost is the memory traffic and page walks of rows a
+page or more apart, which a fused pass pays as well; the target there needs fewer passes
+over memory or cheaper ones (larger codelets, task 1.6; padding the work array so phases
+read it without set conflicts), not fusion.
+
+### x86 thresholds, by reasoning (not measured)
+
+The defaults come from the cache sizes. On an EPYC 7763 (L1d 32 KiB, L2 512 KiB) they give:
+a grid from 4096 points (double; 8192 float), the chain at 2048; blocks within 1024 points
+of scratch, so two-phase blocks of 16 at 4096, 8 at 2^14 and 4 at 2^16; three phases from
+`grid_three_bytes` = 64 KiB, that is from 8192 points; fusion up to 128 KiB (8192 points).
+On a Xeon Gold 6240 (32 KiB, 1 MiB) the same except three phases from 2^14 and fusion to
+2^14. The suspect one is the three-phase switch: on the Mac three phases began to pay only
+when two-phase blocks fell to 8 columns with the row near a quarter of L2, while on these
+machines the eighth-of-L2 rule switches at 8192–16384 points, where two-phase blocks are
+still 8 to 16 wide and the row fits L2 twice over; a third pass over memory there probably
+costs more than it saves. Expect `GRID_THREE_BYTES` near 1–2 MiB (switch at 2^16–2^17)
+to win on x86; L3 (32 MiB per CCX) makes beyond-L2 rows cheaper than on the Mac. To check:
+
+```bash
+uv run --frozen python bench/fbench.py run A=fftn B=fftn+GRID_THREE_BYTES=1048576 \
+  C=fftn+GRID_THREE_BYTES=never D=fftn+GRID_FUSE_BYTES=1 --tier tracking \
+  --filter 'c2c-(4096|8192|16384|65536|262144|1048576|4194304)-b1'
+```
+
 ## Verdict
 
 Adopted on the Mac by the rule above: the grid is faster than the chain in every case,
 by 29–53 %, far outside the band. Task 1.7's target (≤ 1.25 times FFTW from 2^16 to 2^22)
 is met at 2^16 (out of place and in place) and 2^18, not at 2^20 (1.38) or 2^22 (1.43);
-16384 is at 1.37. Open: fusing the gathers and scatters into the phases' first and last
-passes (the copies cost about as much as the phases' passes at 2^20 and beyond), the
-three-phase rule's thresholds on x86 (the commands above), and a fbench run without load.
+16384 is at 1.37. Task 1.7b fused the copies where that pays (phases of radices ≤ 8, rows
+within a quarter of L2): 2^18 to 0.92, the rest unchanged (section above). Open: 2^14
+(1.28–1.33), 2^20 and 2^22 (1.35–1.37 in the second run), the three-phase rule's thresholds
+on x86 (the commands above), and a fbench run without load.

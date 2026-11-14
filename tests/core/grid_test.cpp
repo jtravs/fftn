@@ -6,9 +6,9 @@
 // power-of-two and smooth composite factors, every instruction set the machine runs, double
 // and float, both directions, out of place and in place, batches with padded distances, and
 // the scale fused into the last phase (or the first, on the input); forced blocks, narrow
-// and not powers of two; the grid against the chain at the lengths the rules give it. And the planner's choice: a grid beyond the profile's
-// threshold, three phases beyond the second, the chain elsewhere and where the row cannot
-// be a grid; the split rules of choose_grid.
+// and not powers of two; the grid against the chain at the lengths the rules give it. And the
+// planner's choice: a grid beyond the profile's threshold, three phases beyond the second, the
+// chain elsewhere and where the row cannot be a grid; the split rules of choose_grid.
 
 #include "core/plan_core.hpp"
 #include "core/program.hpp"
@@ -28,6 +28,7 @@
 #include <cmath>
 #include <complex>
 #include <cstddef>
+#include <cstring>
 #include <span>
 #include <string>
 #include <utility>
@@ -60,7 +61,8 @@ struct grid_case {
 // grid plan; every row against the reference, and every element outside the rows untouched.
 template <class T>
 void check_grid(fftn::isa target, const grid_case& gc, fftn::direction dir, bool in_place,
-                double scale, std::size_t count, std::size_t dist, bool scale_on_input = false) {
+                double scale, std::size_t count, std::size_t dist, bool scale_on_input = false,
+                bool fused = true) {
   const std::size_t n = gc.n;
   const std::string what =
       std::string(fftn::isa_name(target)) + (sizeof(T) == 8 ? " double" : " float") +
@@ -73,6 +75,7 @@ void check_grid(fftn::isa target, const grid_case& gc, fftn::direction dir, bool
   settings.grid_factors = gc.factors;
   settings.profile.grid_block = gc.block;
   settings.scale_on_input = scale_on_input;
+  settings.grid_fused = fused;
   fftn::shape<std::complex<T>, std::complex<T>> shape{
       .dir = dir,
       .axes = {{.n = n}},
@@ -92,8 +95,7 @@ void check_grid(fftn::isa target, const grid_case& gc, fftn::direction dir, bool
   }
   ASSERT_TRUE(is_grid(*core)) << text;
   if (gc.block != 0) {
-    EXPECT_NE(text.find("in blocks of " + std::to_string(gc.block) + " columns"),
-              std::string::npos)
+    EXPECT_NE(text.find("in blocks of " + std::to_string(gc.block) + " columns"), std::string::npos)
         << text;
   }
   EXPECT_NE(text.find("in " + std::to_string(gc.phases) + " phases"), std::string::npos) << text;
@@ -158,10 +160,21 @@ const std::vector<grid_case>& forced_cases() {
   return cases;
 }
 
+// Splits whose last factor is a single pass of radix at most 8 (fused at both ends).
+const std::vector<grid_case>& last_small_cases() {
+  static const std::vector<grid_case> cases{
+      {.n = 1024, .factors = {16, 8, 8}, .phases = 3},
+      {.n = 512, .factors = {64, 8}, .phases = 2},
+      {.n = 1024, .factors = {8, 16, 8}, .phases = 3},
+  };
+  return cases;
+}
+
 template <class T> void every_case(fftn::isa target) {
   for (const grid_case& gc : forced_cases()) {
     for (const auto dir : {fftn::direction::forward, fftn::direction::backward}) {
       check_grid<T>(target, gc, dir, false, 1.0, 1, gc.n);
+      // Unfused phases (build_settings::grid_fused off): FusedEqualsUnfused, bit for bit.
     }
   }
   // In place, a scale (on the output, and on the input), and a batch with gaps, on two and
@@ -171,6 +184,12 @@ template <class T> void every_case(fftn::isa target) {
     check_grid<T>(target, gc, fftn::direction::backward, true, 0.25, 2, gc.n + 3);
     check_grid<T>(target, gc, fftn::direction::forward, false, 1.0 / 3, 3, gc.n + 5);
     check_grid<T>(target, gc, fftn::direction::forward, false, 1.0 / 3, 1, gc.n, true);
+  }
+  // A last phase that is one pass of radix <= 8, which reads and writes the rows and so
+  // carries the output scale itself (a regression: it once took the input edge's scale).
+  for (const grid_case& gc : last_small_cases()) {
+    check_grid<T>(target, gc, fftn::direction::forward, true, 0.5, 2, gc.n + 3);
+    check_grid<T>(target, gc, fftn::direction::backward, false, 0.5, 1, gc.n);
   }
 }
 
@@ -247,27 +266,49 @@ TEST(Grid, PlannerChoosesByTheProfile) {
   build_settings factors = s;
   factors.out_factor = factor.data();
   EXPECT_FALSE(is_grid(*plan(4096, factors)));
+  // Phases of radices up to 8 read and write rows in their end passes up to
+  // grid_fuse_bytes, and copy them through gathers and scatters beyond.
+  build_settings fuse = s;
+  fuse.grid_factors = {64, 64};
+  fuse.profile.grid_fuse_bytes = 4096 * 16;
+  const std::string fused = described(*plan(4096, fuse));
+  EXPECT_NE(fused.find("reads rows"), std::string::npos) << fused;
+  EXPECT_EQ(fused.find("gather"), std::string::npos) << fused;
+  fuse.profile.grid_fuse_bytes = 4096 * 16 - 1;
+  const std::string copied = described(*plan(4096, fuse));
+  EXPECT_EQ(copied.find("reads rows"), std::string::npos) << copied;
+  EXPECT_NE(copied.find("gather"), std::string::npos) << copied;
 }
 
-// build_settings::scale_on_input puts the scale on phase 1's gather, the input edge.
-TEST(Grid, ScaleOnInputIsTheGathers) {
-  build_settings settings;
-  settings.strategy = strategy_choice::grid;
-  settings.scale_on_input = true;
-  const auto core = make_plan_core(
-      fftn::detail::view_of(fftn::rows_c2c<double>(1024, 1, fftn::direction::forward)),
-      {.scale = 0.5}, settings);
-  std::size_t in = 0;
-  std::size_t out = 0;
-  for (const auto& rec : core->prog.records) {
-    if (const auto* st = std::get_if<fftn::detail::stage>(&rec); st != nullptr) {
-      const bool gather = st->name.find("gather") != std::string::npos;
-      in += gather && st->name.find("in: scale") != std::string::npos ? 1U : 0U;
-      out += st->name.find("out: scale") != std::string::npos ? 1U : 0U;
+// build_settings::scale_on_input puts the scale on phase 1's input: its first pass, or its
+// gather when the phases copy their blocks.
+TEST(Grid, ScaleOnInputIsPhaseOnesInput) {
+  for (const bool fused : {true, false}) {
+    build_settings settings;
+    settings.strategy = strategy_choice::grid;
+    settings.scale_on_input = true;
+    settings.grid_fused = fused;
+    settings.grid_factors = {8, 128}; // phase 1 a single radix-8 pass, which reads the rows
+    const auto core = make_plan_core(
+        fftn::detail::view_of(fftn::rows_c2c<double>(1024, 1, fftn::direction::forward)),
+        {.scale = 0.5}, settings);
+    std::size_t in = 0;
+    std::size_t out = 0;
+    std::string first;
+    for (const auto& rec : core->prog.records) {
+      if (const auto* st = std::get_if<fftn::detail::stage>(&rec); st != nullptr) {
+        if (first.empty()) {
+          first = st->name;
+        }
+        in += st->name.find("in: scale") != std::string::npos ? 1U : 0U;
+        out += st->name.find("out: scale") != std::string::npos ? 1U : 0U;
+      }
     }
+    EXPECT_EQ(in, 1U);
+    EXPECT_EQ(out, 0U);
+    EXPECT_NE(first.find("in: scale"), std::string::npos) << first;
+    EXPECT_EQ(first.find("gather") != std::string::npos, !fused) << first;
   }
-  EXPECT_EQ(in, 1U);
-  EXPECT_EQ(out, 0U);
 }
 
 // At the lengths the rules make grids (2^15 to 2^18, two and three phases), the grid
@@ -311,6 +352,83 @@ TEST(Grid, AgreesWithTheChainAtLengthsTheRulesTake) {
     grid_agrees_with_chain<double>(n, three);
     grid_agrees_with_chain<float>(n, three);
   }
+}
+
+// Fusing a phase's copies into its end passes moves data, not arithmetic: fused and
+// unfused plans give the same bits for every forced case, both directions, the scale on
+// the output and on the input, in and out of place, batches with gaps.
+template <class T> void fused_equals_unfused(fftn::isa target) {
+  std::vector<grid_case> cases = forced_cases();
+  cases.insert(cases.end(), last_small_cases().begin(), last_small_cases().end());
+  for (const grid_case& gc : cases) {
+    for (const auto dir : {fftn::direction::forward, fftn::direction::backward}) {
+      for (const int scaled : {0, 1, 2}) { // none, on the output, on the input
+        for (const bool in_place : {false, true}) {
+          const std::size_t n = gc.n;
+          const std::size_t dist = n + 3;
+          const std::string what =
+              std::string(fftn::isa_name(target)) + (sizeof(T) == 8 ? " double" : " float") +
+              ", n = " + std::to_string(n) + ", block " + std::to_string(gc.block) +
+              (dir == fftn::direction::forward ? " forward" : " backward") + ", scale " +
+              std::to_string(scaled) + (in_place ? ", in place" : "");
+          SCOPED_TRACE(what);
+          fftn::shape<std::complex<T>, std::complex<T>> shape{
+              .dir = dir,
+              .axes = {{.n = n}},
+              .batches = {{.count = 2,
+                           .in_dist = static_cast<std::ptrdiff_t>(dist),
+                           .out_dist = static_cast<std::ptrdiff_t>(dist)}},
+          };
+          fftn::test::input_source src(0xF05EULL + n);
+          const cvec<T> x = src.complexes<T>(dist + n);
+          std::vector<cvec<T>> out;
+          for (const bool fused : {true, false}) {
+            build_settings s;
+            s.strategy = strategy_choice::grid;
+            s.grid_factors = gc.factors;
+            s.profile.grid_block = gc.block;
+            s.grid_fused = fused;
+            s.scale_on_input = scaled == 2;
+            const auto core = make_plan_core(
+                fftn::detail::view_of(shape),
+                {.in_place = in_place, .scale = scaled != 0 ? 0.5 : 1.0, .force_isa = target}, s);
+            if (!is_grid(*core)) {
+              break; // a block this target's registers do not divide (check_grid covers it)
+            }
+            cvec<T> y = in_place ? x : cvec<T>(dist + n, std::complex<T>(T(-1), T(2)));
+            const fftn::workspace ws(fftn::detail::workspace_bytes(*core, 1));
+            fftn::detail::execute_core(*core, 0, 2, in_place ? y.data() : x.data(), y.data(), ws);
+            out.push_back(std::move(y));
+          }
+          if (out.size() == 2) {
+            EXPECT_EQ(std::memcmp(out[0].data(), out[1].data(), out[0].size() * sizeof(out[0][0])),
+                      0);
+          }
+        }
+      }
+    }
+  }
+}
+
+TEST(Grid, FusedEqualsUnfused) {
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    fused_equals_unfused<double>(t);
+    fused_equals_unfused<float>(t);
+  }
+}
+
+// A grid's scratch line b is staggered from a by seven 64-byte lines (DESIGN.md 10, rule 4;
+// X4); a chain's is not.
+TEST(Grid, ScratchLinesAreStaggered) {
+  build_settings grid;
+  grid.strategy = strategy_choice::grid;
+  build_settings chain;
+  chain.strategy = strategy_choice::chain;
+  const auto shape = fftn::rows_c2c<double>(4096, 1, fftn::direction::forward);
+  const auto g = make_plan_core(fftn::detail::view_of(shape), {}, grid);
+  const auto c = make_plan_core(fftn::detail::view_of(shape), {}, chain);
+  EXPECT_EQ(g->offset_b, g->scratch_line * 2 * sizeof(double) + 7 * 64);
+  EXPECT_EQ(c->offset_b, c->scratch_line * 2 * sizeof(double));
 }
 
 TEST(Grid, SplitRules) {

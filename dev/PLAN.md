@@ -59,9 +59,11 @@ while an fbench run that needs it is going.
 
 Task 1.7 (branch `task/1.7-grid`): the grid strategy (DESIGN.md 8.5 as built, X12) is the
 default for c2c rows beyond L1; X12's x86 runs (EPYC, Xeon) and the tuning of its profile
-fields there are open, as are fusing the gathers and scatters into the phases' first and
-last passes, and 2^14, 2^20 and 2^22 points on the Mac (1.37–1.43 times FFTW in run
-20261114-110844-8b03; 2^16 and 2^18 within 1.25).
+fields there are open, as are 2^14, 2^20 and 2^22 points on the Mac (1.28–1.37 times FFTW in
+run 20261114-132841-80e0; 2^16 and 2^18 within 1.25). Task 1.7b (branch
+`task/1.7b-grid-fusion`) fused the copies into the end passes of small-radix phases within
+L2/4 (2^18 to 0.92); the remaining cases need fewer or cheaper passes over memory (larger
+codelets, padded work arrays), not fusion (X12).
 
 ## How this plan works
 
@@ -243,7 +245,7 @@ running, done (with verdict).
 | X1 | Complex-register against split arithmetic, per target (FCMA included) and pass position (first, middle, last; short and long rows) | 1 | planned |
 | [X2](experiments/X2-radix-sets.md) | Best radix sets and orders per target by exhaustive search over the standard lengths; how far are simple rules from the optimum? | 1 | running: EPYC done (planner v1 adopted); Mac done (own NEON tables, 3.6 % faster); lengths above 1024 and the Xeon pending |
 | X3 | Few big passes (radix 16–64, in the output buffer) against chains for rows of 8–64 thousand points; spill counts per codelet and target. The prototype's radix 20–32 attempts lost everywhere: find out whether generated, ordered codelets change that | 1 | planned |
-| X4 | Padding: incremental addressing cost; pad always, never, or only where the stream rule binds. Also: do edge passes gain from a variant chosen by the caller's base address (cache-line splits on wide registers)? | 1 | planned |
+| [X4](experiments/X4-padding.md) | Padding: incremental addressing cost; pad always, never, or only where the stream rule binds. Also: do edge passes gain from a variant chosen by the caller's base address (cache-line splits on wide registers)? | 1 | running: for the grid on the Mac, staggered scratch lines adopted (2^22 −8 %), padding the intermediate rejected; the chain's lines, x86 and edge-pass variants open |
 | X5 | Twiddle modes (full, shared, derived) by length and target | 1 | planned |
 | X6 | Real-input codelets against half-length complex with fused post/pre, even and odd n | 2 | planned |
 | X7 | Lanes against in-row kernels for batches of short rows, by length, target and row count | 2 | planned |
@@ -251,7 +253,7 @@ running, done (with verdict).
 | X9 | Scrambled intermediate order for transform pairs | 5 | planned |
 | X10 | Generated whole passes against templated pass loops | 1 | planned |
 | X11 | SVE at 128 and 256 bits on Graviton 3/4 against NEON | 7 | planned |
-| [X12](experiments/X12-beyond-l2.md) | Beyond-L2 forms: DIF grid, DIT grid, in-place sandwich; block sizes by cache level; the in-place route (scratch of N, permutation pass, or palindromic swap) | 1 | running: DIF grid in two or three phases adopted for rows beyond L1 on the Mac (0.47–0.71 of the chain's time, run 20261114-110844-8b03); x86 runs pending |
+| [X12](experiments/X12-beyond-l2.md) | Beyond-L2 forms: DIF grid, DIT grid, in-place sandwich; block sizes by cache level; the in-place route (scratch of N, permutation pass, or palindromic swap) | 1 | running: DIF grid in two or three phases adopted for rows beyond L1 on the Mac (0.47–0.71 of the chain's time, run 20261114-110844-8b03); copies fused into end passes for small-radix phases within L2/4 (2^18: 1.03 → 0.92, run 20261114-132841-80e0); x86 runs pending |
 | X14 | Is a separate `avx` target (256 bit, no FMA, no AVX2) worth keeping over `x86_v2` on Sandy Bridge-class machines? | 1 | planned |
 | X13 | Next-row prefetch and non-temporal stores per machine for out-of-cache batches | 2 | planned |
 | [X15](experiments/X15-compiler-vectorised-scalar.md) | What does a current compiler get from the scalar pass loops (`omp simd`, the scalar text in the `avx2` region, `-march=native` as a ceiling), against a hand vocabulary? | 0 | done: omp simd rejected (compiler-dependent); old targets need hand vocabularies |

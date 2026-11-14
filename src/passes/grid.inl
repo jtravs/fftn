@@ -135,4 +135,114 @@ void twiddle_scatter(const pass_args* a, std::size_t first, std::size_t last) {
   }
 }
 
+// Output leg k times one twiddle per row (the conjugate for Sign = +1): a later phase's
+// twiddles, applied where its last pass stores.
+template <class T, int Sign> struct row_twiddled_out {
+  T* p;
+  std::ptrdiff_t leg;
+  const T* w;
+  std::ptrdiff_t wleg;
+  FFTN_FORCE_INLINE void put(std::size_t k, cv<T> v) const {
+    cv<T> f = bcast(w + at(k, wleg));
+    if constexpr (Sign > 0) {
+      f = conj(f);
+    }
+    store(p + at(k, leg), cmul(v, f));
+  }
+};
+
+// A grid phase's first or last pass, reading or writing the caller's (or the work array's)
+// rows directly instead of through a gather or scatter: the lane pass of stockham.inl
+// (lanes over copies; the DIF codelet with shared twiddles when Twiddled, the plain one
+// when m = 1) with copy q of s at (q % cols) + qstride (q / cols) + stride idx on each side,
+// idx = p + m j on loading and R p + k on storing (src_cols, src_qstride, src_stride and
+// their dst counterparts; cols = 0 means s, the tight scratch). A block's columns are the
+// q % cols, adjacent; q / cols counts the copies a phase's chain has made so far. s and
+// cols are multiples of C, so every access is a whole register. InOp scales what is loaded
+// (the input edge of phase 1). Out: 0 a plain store, 1 scaled (the output edge), 2 times
+// row twiddles (twiddles, one plain value per destination row qq + (stride / qstride) k,
+// advanced per column by the stage, stage::moving_twiddles). Reads src, dst, m, s, the
+// strides and columns, twiddles, scale.
+template <class T, std::size_t R, int Sign, bool Twiddled, edge_op InOp, int Out>
+void phase_pass(const pass_args* a, std::size_t first, std::size_t last) {
+  const T* x = static_cast<const T*>(a->src);
+  T* y = static_cast<T*>(a->dst);
+  const std::size_t m = a->m;
+  const std::size_t s = a->s;
+  const std::size_t blocks = s / C<T>;
+  const std::size_t xcols = a->src_cols == 0 ? s : a->src_cols;
+  const std::size_t ycols = a->dst_cols == 0 ? s : a->dst_cols;
+  const std::ptrdiff_t xq = a->src_qstride;
+  const std::ptrdiff_t yq = a->dst_qstride;
+  const std::ptrdiff_t xg = a->src_stride;
+  const std::ptrdiff_t yg = a->dst_stride;
+  const T* table = static_cast<const T*>(a->twiddles);
+  const std::ptrdiff_t in_leg = 2 * xg * static_cast<std::ptrdiff_t>(m);
+  const std::ptrdiff_t out_leg = 2 * yg;
+  std::size_t p = first / blocks;
+  std::size_t qc = first % blocks * C<T>;
+  std::size_t xlo = qc % xcols;
+  std::size_t xhi = qc / xcols;
+  std::size_t ylo = qc % ycols;
+  std::size_t yhi = qc / ycols;
+  for (std::size_t u = first; u < last; ++u) {
+    const T* xp =
+        x + 2 * (static_cast<std::ptrdiff_t>(xlo) + xq * static_cast<std::ptrdiff_t>(xhi) +
+                 xg * static_cast<std::ptrdiff_t>(p));
+    T* yp = y + 2 * (static_cast<std::ptrdiff_t>(ylo) + yq * static_cast<std::ptrdiff_t>(yhi) +
+                     yg * static_cast<std::ptrdiff_t>(R * p));
+    const run_in<T, InOp, true> in{
+        .p = xp,
+        .leg = in_leg,
+        .step = 2,
+        .valid = C<T>,
+        .op = make_edge<T, InOp>(a, nullptr, 0, 0),
+    };
+    if constexpr (Out == 2) {
+      const row_twiddled_out<T, Sign> out{
+          .p = yp,
+          .leg = out_leg,
+          .w = table + 2 * yhi,
+          .wleg = 2 * (yg / yq),
+      };
+      cdft<R>::template plain<T, Sign>(in, out);
+    } else {
+      constexpr edge_op out_op = Out == 1 ? edge_op::scale : edge_op::none;
+      const run_out<T, out_op, true> out{
+          .p = yp,
+          .leg = out_leg,
+          .step = 2,
+          .valid = C<T>,
+          .op = make_edge<T, out_op>(a, nullptr, 0, 0),
+      };
+      if constexpr (Twiddled) {
+        const shared_twiddles<T> twid{table + tw_reals<T> * (R - 1) * p};
+        cdft<R>::template dif<T, Sign>(in, out, twid);
+      } else {
+        cdft<R>::template plain<T, Sign>(in, out);
+      }
+    }
+    qc += C<T>;
+    if (qc == s) {
+      qc = 0;
+      ++p;
+      xlo = 0;
+      xhi = 0;
+      ylo = 0;
+      yhi = 0;
+    } else {
+      xlo += C<T>;
+      if (xlo == xcols) {
+        xlo = 0;
+        ++xhi;
+      }
+      ylo += C<T>;
+      if (ylo == ycols) {
+        ylo = 0;
+        ++yhi;
+      }
+    }
+  }
+}
+
 } // namespace

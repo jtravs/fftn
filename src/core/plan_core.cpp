@@ -404,7 +404,9 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
           ? plan_grid<T>(c, in, out, settings, chain, kernels.complex_lanes)
           : grid_split{};
   if (grid_plan.phases != 0) {
-    grid_builder<T> grid(kernels, chain, tables_of<T>(c));
+    grid_builder<T> grid(kernels, chain, tables_of<T>(c),
+                         settings.grid_fused &&
+                             c.lengths[0] * 2 * sizeof(T) <= settings.profile.grid_fuse_bytes);
     if (grid_builder<T>::uses_block(grid_plan, c.in_place)) {
       c.block_elements = c.lengths[0];
     }
@@ -504,8 +506,14 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   };
   c.scratch_line = scratch;
   const std::size_t line_bytes = round_up(scratch * 2 * sizeof(T));
-  c.offset_b = line_bytes;
-  c.offset_block = 2 * line_bytes;
+  // A grid's scratch line b starts an odd number of 64-byte lines (seven) after a whole
+  // multiple of a's size, so that the passes ping-ponging between them do not read and
+  // write the same cache sets (DESIGN.md 10, rule 4): a grid's scratch lines are a block of
+  // a power-of-two size for most lengths. Experiment X4 measured 8-9 % at 2^22 on the Mac
+  // and no case slower; the chain's lines were not part of it.
+  const std::size_t stagger = grid_plan.phases != 0 ? 7 * 64 : 0;
+  c.offset_b = line_bytes + stagger;
+  c.offset_block = 2 * line_bytes + stagger;
   const std::size_t used = c.offset_block + c.block_elements * 2 * sizeof(T);
   c.bytes = used == 0 ? 0 : used + line_alignment;
   c.slot_bytes = (used + sync_line - 1) / sync_line * sync_line;
