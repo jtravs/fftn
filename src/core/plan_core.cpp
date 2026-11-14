@@ -608,6 +608,7 @@ std::shared_ptr<const plan_core> make_plan_core(const shape_view& s, const optio
   }
   c->graph = build_work_graph(c->prog, points, settings.chunk_points);
   c->profile = settings.profile;
+  c->radices_forced = !settings.radices.empty();
   return c;
 }
 
@@ -661,7 +662,10 @@ std::string describe(const plan_core& core) {
     << (core.in_place ? ", in place" : ", out of place") << "\n";
   o << "instruction set: " << isa_name(instruction_set(core)) << "\n";
   o << "strategy: chain (Stockham autosort, breadth-first), one line at a time; each "
-       "transform finished before the next; radices from planner v0's rules\n";
+       "transform finished before the next; radices from "
+    << (core.radices_forced ? "build_settings.radices (a test knob) where they multiply to a "
+                              "line's length, otherwise from planner v0's rules\n"
+                            : "planner v0's rules\n");
   for (const std::string& note : core.axis_notes) {
     o << note << "\n";
   }

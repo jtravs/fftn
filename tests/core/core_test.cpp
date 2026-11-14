@@ -212,6 +212,20 @@ TEST(Rules, FftlExamples) {
 }
 
 // Runs a plan core on a fresh copy of `input` and returns the output bytes.
+// describe() says where the radices came from: a plan with build_settings.radices names
+// the knob (fbench's RADICES option reaches it, experiment X2), a plan without does not.
+TEST(Rules, DescribeSaysWhenRadicesAreForced) {
+  const auto shape = fftn::rows_c2c<double>(256, 1, fftn::direction::forward);
+  build_settings forced;
+  forced.radices = {2, 8, 16};
+  const std::string with = describe(*make_plan_core(fftn::detail::view_of(shape), {}, forced));
+  const std::string without = describe(*make_plan_core(fftn::detail::view_of(shape), {}, {}));
+  EXPECT_NE(with.find("radices from build_settings.radices"), std::string::npos) << with;
+  EXPECT_NE(with.find("radices 2 x 8 x 16\n"), std::string::npos) << with;
+  EXPECT_EQ(without.find("build_settings"), std::string::npos) << without;
+  EXPECT_NE(without.find("radices from planner v0's rules\n"), std::string::npos) << without;
+}
+
 std::vector<std::byte> run(const fftn::detail::plan_core& core, std::vector<std::byte> input,
                            std::size_t out_bytes) {
   std::vector<std::byte> output(out_bytes);
