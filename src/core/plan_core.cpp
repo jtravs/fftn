@@ -505,8 +505,12 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   };
   c.scratch_line = scratch;
   const std::size_t line_bytes = round_up(scratch * 2 * sizeof(T));
-  c.offset_b = line_bytes;
-  c.offset_block = 2 * line_bytes;
+  // X4's staggered arm: scratch line b starts an odd number of 64-byte lines after a
+  // whole multiple of a's size, so that a pass ping-ponging between them does not read and
+  // write the same cache sets (DESIGN.md 10, rule 4).
+  const std::size_t stagger = grid_plan.phases != 0 && settings.grid_stagger ? 7 * 64 : 0;
+  c.offset_b = line_bytes + stagger;
+  c.offset_block = 2 * line_bytes + stagger;
   const std::size_t used = c.offset_block + c.block_elements * 2 * sizeof(T);
   c.bytes = used == 0 ? 0 : used + line_alignment;
   c.slot_bytes = (used + sync_line - 1) / sync_line * sync_line;

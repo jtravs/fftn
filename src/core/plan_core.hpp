@@ -52,6 +52,8 @@ struct build_settings {
   // radix.
   std::size_t grid_pad = 0;
   bool grid_fuse_padded = false;
+  // Experiment X4: the grid's scratch line b staggered from a by an odd number of lines.
+  bool grid_stagger = false;
   // The Bluestein threshold instead of the profile's when not 0 (strategies/chain.hpp):
   // 16 sends every prime factor above 16 through Bluestein, SIZE_MAX none.
   std::size_t bluestein_above = 0;

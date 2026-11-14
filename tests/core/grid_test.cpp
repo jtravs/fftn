@@ -448,6 +448,7 @@ TEST(Grid, PaddingKeepsBits) {
     padding_keeps_bits<double>(8192, {16, 32, 16}, in_place);
     padding_keeps_bits<float>(8192, {16, 32, 16}, in_place);
     padding_keeps_bits<double>(4096, {16, 16, 16}, in_place);
+    padding_keeps_bits<double>(16384, {}, in_place); // the rules' split
   }
 }
 
