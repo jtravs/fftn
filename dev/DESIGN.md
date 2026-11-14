@@ -1076,7 +1076,8 @@ ways, radix 16 at the ends doubled the time, fusing one end only gained nothing,
 beyond L2 the copies' prefetching won (X12). Placement: the last phase writes the positions it read (in place in
 the output); phase 1 writes the output out of place with two phases, otherwise the
 workspace block (n complex values), which is also the in-place route (the scratch of N of
-the list above). The loops step a twiddle cursor (program.hpp) so a block's stage reads its
+the list above). Scratch line b is staggered from a by seven 64-byte lines (rule 4 of
+section 10; X4). The loops step a twiddle cursor (program.hpp) so a block's stage reads its
 own table. Planner: a c2c row of one axis, contiguous on both sides, without edge factors,
 is a grid when its bytes exceed `grid_min_bytes` (default the L1 data cache), in three
 phases beyond `grid_three_bytes` (default an eighth of L2), if it has a split whose factors
@@ -2355,6 +2356,7 @@ to change before a release.
 | 2026-11-14 | Planner v1's cost tables are keyed by target and C; a target and C without one take AVX2's table of the nearest C, as before. The X2 fit is a tracked tool (`bench/x2/fit.py`) | An `avx512` table (X16) and NEON tables (X2 on the Mac) drop in as rows; the search and every current choice (`rule_radices.txt`) are unchanged |
 | 2026-11-14 | The grid strategy (task 1.7, section 8.5): decimation in frequency in two or three blocked phases, gathers and scatters around a chain of lane passes on tight scratch, the transpose folded into phase 1's store; chosen for c2c rows beyond the L1 data cache, three phases beyond an eighth of L2; loops carry a twiddle cursor | X12: on the Mac the chain ran 1.85–2.84 times FFTW's time from 2^14 to 2^22 points; the grid ran 0.47–0.71 of the chain's time there, 1.08–1.43 times FFTW's (fbench run 20261114-110844-8b03). Two phases lose beyond L2 because their blocks must narrow to keep a phase in L1; three lose while the row fits L2 |
 | 2026-11-14 | Grid phases whose radices are all at most 8 read and write their rows in their end passes rather than through a gather and a scatter, for rows up to `grid_fuse_bytes` (a quarter of L2); elsewhere the copies stay (task 1.7b) | X12 (Mac, runs 20261114-131752-7e99 and -132841-80e0): 2^18 from 1.03 to 0.92 times FFTW; radix 16 at the ends doubled the time (set conflicts), one fused end gained nothing, and beyond L2 the copies' prefetch won (2^20 1.46 fused against 1.35) |
+| 2026-11-14 | The grid's scratch line b is staggered from a by seven 64-byte lines (rule 4 of section 10); the grid's intermediate array is not padded | X4 (Mac): the stagger gained 7–9 % at 2^22 and lost nowhere; padding the intermediate (one line per row) added nothing separable, and reading padded rows directly with radix 16 lost 5 % at 2^22 |
 
 ---
 

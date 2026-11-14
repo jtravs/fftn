@@ -142,25 +142,6 @@ inline bool apply_tuning(fftn::detail::build_settings& s, std::string_view key,
       return true;
     }
   }
-  // Experiment X4's arms (build_settings): padding of the grid's intermediate rows, phase 2
-  // reading them in its first pass, and staggered scratch lines.
-  if (key == "GRID_PAD") {
-    const std::optional<std::size_t> v = parse_size(value, 0, false);
-    if (!v) {
-      error = bad + " (a whole number)";
-    } else {
-      s.grid_pad = *v;
-    }
-    return true;
-  }
-  if (key == "GRID_FUSE_PADDED" || key == "GRID_STAGGER") {
-    if (value != "0" && value != "1") {
-      error = bad + " (0 or 1)";
-    } else {
-      (key == "GRID_STAGGER" ? s.grid_stagger : s.grid_fuse_padded) = value == "1";
-    }
-    return true;
-  }
   if (key == "CHUNK_POINTS") {
     const std::optional<std::size_t> v = parse_size(value, 1, false);
     if (!v) {

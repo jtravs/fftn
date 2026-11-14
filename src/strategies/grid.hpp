@@ -95,12 +95,8 @@ public:
   // stages).
   // fused: phases read and write the arrays in their first and last passes rather than
   // through a gather and a scatter (experiment X12).
-  // pad (X4): complex values of padding per row of phase 2's view of the intermediate
-  // array where it is the workspace block (three phases, or in place; 0: none);
-  // fuse_padded: phase 2 reads padded rows in its first pass whatever its radix.
   grid_builder(const kernels_of<T>& kernels, chain_builder<T>& chain,
-               std::vector<std::vector<T>>& tables, bool fused, std::size_t pad = 0,
-               bool fuse_padded = false);
+               std::vector<std::vector<T>>& tables, bool fused);
 
   // Appends the records of one c2c row from the in slot to the out slot, both stride 1,
   // and returns the complex elements of scratch it needs in each of a and b. in_place: in
@@ -110,10 +106,8 @@ public:
   std::size_t c2c_row(const grid_split& g, int sign, bool in_place, double scale,
                       bool scale_on_input, program& p);
 
-  // Whether c2c_row of g uses the block slot, n complex elements, without padding.
+  // Whether c2c_row of g uses the block slot, n complex elements.
   [[nodiscard]] static bool uses_block(const grid_split& g, bool in_place) noexcept;
-  // The complex elements of the block slot c2c_row of g uses (0: none).
-  [[nodiscard]] std::size_t block_elements(const grid_split& g, bool in_place) const;
 
   // "grid 64 x 128 x 128 (...)" for describe().
   [[nodiscard]] std::string note(const grid_split& g) const;
@@ -132,7 +126,6 @@ private:
                    const side_of& from, const side_of& to, double in_scale, double out_scale,
                    const T* row_tw, program& p);
   [[nodiscard]] std::vector<std::size_t> phase_radix_list(std::size_t n) const;
-  [[nodiscard]] std::size_t intermediate_pad(const grid_split& g, bool in_place) const;
   void add_copy(const char* what, pass_fn run, std::size_t rows, std::size_t cols, slot src,
                 std::ptrdiff_t src_stride, slot dst, std::ptrdiff_t dst_stride, double scale,
                 const T* twiddles, program& p);
@@ -143,8 +136,6 @@ private:
   chain_builder<T>& chain_;
   std::vector<std::vector<T>>& tables_;
   bool fused_;
-  std::size_t pad_;
-  bool fuse_padded_;
 };
 
 extern template class grid_builder<double>;

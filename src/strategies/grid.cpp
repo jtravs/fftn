@@ -248,10 +248,8 @@ grid_split choose_grid(std::size_t n, std::size_t lanes, std::size_t budget, boo
 
 template <class T>
 grid_builder<T>::grid_builder(const kernels_of<T>& kernels, chain_builder<T>& chain,
-                              std::vector<std::vector<T>>& tables, bool fused, std::size_t pad,
-                              bool fuse_padded)
-    : kernels_(kernels), chain_(chain), tables_(tables), fused_(fused), pad_(pad),
-      fuse_padded_(fuse_padded) {}
+                              std::vector<std::vector<T>>& tables, bool fused)
+    : kernels_(kernels), chain_(chain), tables_(tables), fused_(fused) {}
 
 template <class T>
 void grid_builder<T>::add_copy(const char* what, pass_fn run, std::size_t rows, std::size_t cols,
@@ -420,24 +418,6 @@ template <class T> bool grid_builder<T>::uses_block(const grid_split& g, bool in
   return g.phases == 3 || in_place;
 }
 
-// The padding per row of phase 2's view of the intermediate (X4): `pad_` complex values,
-// where phase 1's blocks then stay within one such row (block divides M2, or M2 = 1).
-template <class T>
-std::size_t grid_builder<T>::intermediate_pad(const grid_split& g, bool in_place) const {
-  const std::size_t m2 = g.phases == 3 ? g.factors[2] : 1;
-  return pad_ != 0 && uses_block(g, in_place) && (m2 == 1 || m2 % g.block == 0) ? pad_ : 0;
-}
-
-template <class T>
-std::size_t grid_builder<T>::block_elements(const grid_split& g, bool in_place) const {
-  const std::size_t pad = intermediate_pad(g, in_place);
-  if (!uses_block(g, in_place)) {
-    return 0;
-  }
-  const std::size_t m2 = g.phases == 3 ? g.factors[2] : 1;
-  return (g.factors[0] * m2 + pad) * (first_columns(g) / m2);
-}
-
 template <class T>
 std::size_t grid_builder<T>::c2c_row(const grid_split& g, int sign, bool in_place, double scale,
                                      bool scale_on_input, program& p) {
@@ -455,34 +435,19 @@ std::size_t grid_builder<T>::c2c_row(const grid_split& g, int sign, bool in_plac
   // writes the output, the positions it read; every other phase writes an array other
   // than the one it reads, and phase 1 never the input's memory.
   std::array<slot, max_grid_phases + 1> buf{slot::in, slot::out, slot::out, slot::out};
-  const std::size_t pad = intermediate_pad(g, in_place);
   if (uses_block(g, in_place)) {
     buf[1] = slot::block;
   }
   const std::size_t n1 = g.factors[0];
   const std::size_t m1 = first_columns(g);
   const std::size_t n = n1 * m1;
-  // Phase 2's view of the intermediate: rows r2 < N2 of N1 x M2 elements, `pitch` apart
-  // (padded by `pad` when it is padded, X4).
-  const std::size_t m2 = g.phases == 3 ? g.factors[2] : 1;
-  const auto pitch = static_cast<std::ptrdiff_t>(n1 * m2 + pad);
 
-  // Phase 1: blocks of the input's columns, written transposed; with a padded intermediate
-  // and M2 > 1, a loop over phase 2's rows around the loop over blocks.
-  const auto big_n1 = static_cast<std::ptrdiff_t>(n1);
+  // Phase 1: blocks of the input's columns, written transposed.
   const std::size_t first_loop = p.records.size();
-  if (pad != 0 && m2 > 1) {
-    loop lr{.kind = loop_kind::lines, .count = m1 / m2};
-    lr.step[index(buf[0])] = static_cast<std::ptrdiff_t>(m2) * cb;
-    lr.step[index(buf[1])] = pitch * cb;
-    lr.step[3] = static_cast<std::ptrdiff_t>(m2 / b) * big_n1 * cb;
-    p.records.emplace_back(lr);
-  }
-  const std::size_t block_loop = p.records.size();
-  loop l1{.kind = loop_kind::lines, .count = (pad != 0 && m2 > 1 ? m2 : m1) / b};
+  loop l1{.kind = loop_kind::lines, .count = m1 / b};
   l1.step[index(buf[0])] = blk * cb;
-  l1.step[index(buf[1])] = blk * (m2 == 1 ? pitch : big_n1) * cb;
-  l1.step[3] = big_n1 * cb;
+  l1.step[index(buf[1])] = blk * static_cast<std::ptrdiff_t>(n1) * cb;
+  l1.step[3] = static_cast<std::ptrdiff_t>(n1) * cb;
   p.records.emplace_back(l1);
   // A phase reads its rows in its first pass and (after phase 1) writes them in its last,
   // instead of through a gather and a scatter, when every radix of its chain is at most
@@ -509,7 +474,6 @@ std::size_t grid_builder<T>::c2c_row(const grid_split& g, int sign, bool in_plac
   tt.args.twiddles = rows;
   tt.args.m = n1;
   tt.args.s = b;
-  tt.args.dst_stride = m2 == 1 ? pitch : big_n1;
   tt.args.n = n1 * b;
   tt.moving_twiddles = true;
   tt.src = z1;
@@ -521,7 +485,6 @@ std::size_t grid_builder<T>::c2c_row(const grid_split& g, int sign, bool in_plac
             std::to_string(n1) + ")";
   p.records.emplace_back(std::move(tt));
   std::get<loop>(p.records[first_loop]).body_end = static_cast<std::uint32_t>(p.records.size());
-  std::get<loop>(p.records[block_loop]).body_end = static_cast<std::uint32_t>(p.records.size());
 
   // Later phases: blocks of b adjacent l < L at each column c < M.
   std::size_t l_count = n1;
@@ -545,20 +508,17 @@ std::size_t grid_builder<T>::c2c_row(const grid_split& g, int sign, bool in_plac
     ll.step.at(index(dst)) = blk * cb;
     p.records.emplace_back(ll);
     const std::vector<std::size_t> rad = phase_radix_list(ni);
-    // Rows of the padded intermediate do not share cache sets, so phase 2 may read them in
-    // its first pass whatever its radix (X4's fused-padded arm).
-    const bool padded_src = i == 1 && pad != 0;
-    const std::ptrdiff_t src_row = padded_src ? pitch : big_l * static_cast<std::ptrdiff_t>(m);
-    const bool fuse_out = fused_ && fusible(rad);
-    const bool fuse_in = fuse_out || (padded_src && fuse_padded_);
+    const bool fuse_in = fused_ && fusible(rad);
+    const bool fuse_out = fuse_in;
     const T* row_tw = m > 1 ? row_twiddles(ni, m) : nullptr;
     if (!fuse_in) {
-      add_copy("gather", kernels_.passes.block_copy[0], ni, b, src, src_row, slot::a, blk, 1.0,
-               nullptr, p);
+      add_copy("gather", kernels_.passes.block_copy[0], ni, b, src,
+               big_l * static_cast<std::ptrdiff_t>(m), slot::a, blk, 1.0, nullptr, p);
     }
     const slot z = phase_chain(
         ni, rad, b, sign,
-        fuse_in ? side_of{.where = src, .big = true, .row = src_row} : side_of{.where = slot::a},
+        fuse_in ? side_of{.where = src, .big = true, .row = big_l * static_cast<std::ptrdiff_t>(m)}
+                : side_of{.where = slot::a},
         fuse_out ? side_of{.where = dst, .big = true, .row = big_l} : side_of{.where = slot::a},
         1.0, fuse_out ? out_scale : 1.0, fuse_out ? row_tw : nullptr, p);
     if (!fuse_out && m > 1) {

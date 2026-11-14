@@ -406,9 +406,10 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   if (grid_plan.phases != 0) {
     grid_builder<T> grid(kernels, chain, tables_of<T>(c),
                          settings.grid_fused &&
-                             c.lengths[0] * 2 * sizeof(T) <= settings.profile.grid_fuse_bytes,
-                         settings.grid_pad, settings.grid_fuse_padded);
-    c.block_elements = grid.block_elements(grid_plan, c.in_place);
+                             c.lengths[0] * 2 * sizeof(T) <= settings.profile.grid_fuse_bytes);
+    if (grid_builder<T>::uses_block(grid_plan, c.in_place)) {
+      c.block_elements = c.lengths[0];
+    }
     scratch = grid.c2c_row(grid_plan, sign, c.in_place, opts.scale, settings.scale_on_input, p);
     c.axis_notes.push_back("axis 0 (n = " + std::to_string(c.lengths[0]) +
                            "): " + grid.note(grid_plan));
@@ -505,10 +506,12 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   };
   c.scratch_line = scratch;
   const std::size_t line_bytes = round_up(scratch * 2 * sizeof(T));
-  // X4's staggered arm: scratch line b starts an odd number of 64-byte lines after a
-  // whole multiple of a's size, so that a pass ping-ponging between them does not read and
-  // write the same cache sets (DESIGN.md 10, rule 4).
-  const std::size_t stagger = grid_plan.phases != 0 && settings.grid_stagger ? 7 * 64 : 0;
+  // A grid's scratch line b starts an odd number of 64-byte lines (seven) after a whole
+  // multiple of a's size, so that the passes ping-ponging between them do not read and
+  // write the same cache sets (DESIGN.md 10, rule 4): a grid's scratch lines are a block of
+  // a power-of-two size for most lengths. Experiment X4 measured 8-9 % at 2^22 on the Mac
+  // and no case slower; the chain's lines were not part of it.
+  const std::size_t stagger = grid_plan.phases != 0 ? 7 * 64 : 0;
   c.offset_b = line_bytes + stagger;
   c.offset_block = 2 * line_bytes + stagger;
   const std::size_t used = c.offset_block + c.block_elements * 2 * sizeof(T);

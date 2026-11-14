@@ -47,13 +47,6 @@ struct build_settings {
   // where the rules say, rows up to profile.grid_fuse_bytes and phases of small radices),
   // or always go through a gather and a scatter around a chain on scratch (X12).
   bool grid_fused = true;
-  // Experiment X4: complex values of padding per row of the grid's intermediate array (0:
-  // none), and whether phase 2 then reads its padded rows in its first pass whatever its
-  // radix.
-  std::size_t grid_pad = 0;
-  bool grid_fuse_padded = false;
-  // Experiment X4: the grid's scratch line b staggered from a by an odd number of lines.
-  bool grid_stagger = false;
   // The Bluestein threshold instead of the profile's when not 0 (strategies/chain.hpp):
   // 16 sends every prime factor above 16 through Bluestein, SIZE_MAX none.
   std::size_t bluestein_above = 0;
