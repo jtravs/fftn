@@ -10,7 +10,10 @@
 // a team of lanes_dealt members, the leading groups the scheduler deals tasks to. A team of
 // that size gets exactly the division the wider team's dealt lanes would have had (the same
 // groups, shares and splits: schedule.cpp computes all of them from the dealt lanes), so
-// nothing is lost by not dispatching the rest. An OpenMP executor still opens its region at
+// nothing is lost by not dispatching the rest. The one thing the dealt lanes do not show is
+// how many threads compete for the CPUs: all of the executor's (a pool's idle threads linger,
+// an OpenMP region keeps its width), so the members judge oversubscription by its width. An
+// OpenMP executor still opens its region at
 // its constant width, its surplus threads returning at once (fftn/omp.hpp).
 //
 // Since every dispatched member runs exactly once, no member skips an execution (the
@@ -23,6 +26,7 @@
 #include "fftn/team.hpp"
 #include "fftn/workspace.hpp"
 #include "threading/schedule.hpp"
+#include "threading/team_execute.hpp"
 #include "threading/team_state.hpp"
 
 #include <cassert>
@@ -37,13 +41,14 @@ struct dispatched_team {
   const workspace* ws = nullptr;
   int size = 0;
   int group_size = 0;
+  int threads = 0; // the executor's width
 };
 
 // NOLINTNEXTLINE(misc-const-correctness): the signature is fftn_task's
 void run_member(void* arg, int rank) {
   const auto& t = *static_cast<const dispatched_team*>(arg);
-  execute_team(*t.core, t.in, t.out, {.rank = rank, .size = t.size, .group_size = t.group_size},
-               *t.ws, completion::all);
+  execute_member(*t.core, t.in, t.out, {.rank = rank, .size = t.size, .group_size = t.group_size},
+                 *t.ws, completion::all, t.threads);
 }
 
 } // namespace
@@ -65,6 +70,7 @@ void execute_on(const plan_core& core, const void* in, void* out, const executor
           .ws = &ws,
           .size = plan.lanes_dealt,
           .group_size = lanes.group_size,
+          .threads = width,
       };
       try {
         ex.bulk(team.size, &run_member, &team);

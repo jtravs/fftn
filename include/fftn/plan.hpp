@@ -150,8 +150,10 @@ public:
   /// may run in any order and any number at a time: none waits for one that has not
   /// started.
   ///
-  /// Preconditions: as for `execute`, and `ws.size()` is at least
-  /// `workspace_bytes(ex.concurrency())`; `ws` serves no other execution meanwhile.
+  /// Preconditions: as for `execute`; `ex` meets the requirements of `fftn::executor`
+  /// (among them the ordering of `bulk` and its tasks, and that a throwing `bulk` throws
+  /// only once every task it started has returned); `ws.size()` is at least
+  /// `workspace_bytes(ex.concurrency())`, and `ws` serves no other execution meanwhile.
   ///
   /// Guarantees: as for `execute`, and the output is bitwise identical to serial execution,
   /// whatever the executor, its concurrency and the order its tasks run in. FFTN itself

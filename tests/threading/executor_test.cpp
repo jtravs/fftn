@@ -12,6 +12,7 @@
 #include "threading/executors.hpp"
 #include "threading/team_cases.hpp"
 
+#include "core/plan_core.hpp"
 #include "fftn/detail/core.hpp"
 #include "support/inputs.hpp"
 #include "threading/schedule.hpp"
@@ -200,6 +201,21 @@ TEST(ExecutorExecute, DispatchesOnlyLanesWithWork) {
   tiny.execute(in.data(), out.data(), wide, tiny_ws);
   EXPECT_EQ(wide.calls, 0);
   EXPECT_EQ(out, serial);
+}
+
+// On an executor of more threads than the profile's CPUs, the dispatched members (fewer than
+// the CPUs) judge oversubscription by the executor's width; the result is the same.
+TEST(ExecutorExecute, OversubscribedExecutorEqualsSerial) {
+  fftn::detail::build_settings settings = fftn::test::eager_settings();
+  settings.profile.cpus = 4;
+  std::vector<team_case> cases;
+  fftn::test::add_cases<double>(cases, settings, "");
+  for (const std::size_t i : {std::size_t{0}, std::size_t{2}, std::size_t{8}}) {
+    const team_case& c = cases[i];
+    const fftn::workspace ws(fftn::detail::workspace_bytes(*c.core, 16));
+    const fftn::test::pool_view pool{.pool = &pool8(), .width = 16, .group = 4};
+    EXPECT_EQ(run_on(c, pool, ws), fftn::test::serial_result(c)) << c.name;
+  }
 }
 
 // An executor that throws part way: the exception reaches the caller, and the workspace's

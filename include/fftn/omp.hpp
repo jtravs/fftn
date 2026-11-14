@@ -57,7 +57,10 @@ namespace fftn::inline v0::omp {
 /// serially on the calling thread instead of nesting a region.
 ///
 /// Guarantees: never changes the runtime's settings: the width goes into each region's
-/// `num_threads` clause. Copyable; holds only the width.
+/// `num_threads` clause. Copyable; holds its width and grouping, both fixed at
+/// construction. Constructing the process's first executor (or first calling `this_team()`
+/// or `fftn::cache_group_size`) detects the machine's topology, which may allocate; nothing
+/// after that does.
 class executor {
 public:
   /// An executor of `omp_get_max_threads()` lanes, the width an unadorned
@@ -65,13 +68,14 @@ public:
   executor() noexcept : executor(omp_get_max_threads()) {}
 
   /// An executor of `threads` lanes (at least 1).
-  explicit executor(int threads) noexcept : width_(threads < 1 ? 1 : threads) {}
+  explicit executor(int threads) noexcept
+      : width_(threads < 1 ? 1 : threads), group_size_(cache_group_size(width_)) {}
 
   /// The width of the regions it opens, or 1 inside an active parallel region.
   [[nodiscard]] int concurrency() const noexcept { return omp_in_parallel() != 0 ? 1 : width_; }
 
   /// Lanes per cache group: `fftn::cache_group_size` of the width.
-  [[nodiscard]] int group_size() const noexcept { return cache_group_size(width_); }
+  [[nodiscard]] int group_size() const noexcept { return group_size_; }
 
   /// Runs `task(arg, i)` once for every `i` in `[0, n)` in a parallel region of the
   /// executor's width, thread t running tasks t, t + w, ... (w the region's actual number
@@ -102,6 +106,7 @@ public:
 
 private:
   int width_;
+  int group_size_;
 };
 
 } // namespace fftn::inline v0::omp

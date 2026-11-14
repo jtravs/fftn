@@ -190,6 +190,22 @@ TEST(Schedule, OversubscribedSplitsNothing) {
   EXPECT_FALSE(make_schedule(rows(65536, 1)->graph, lanes, p).oversubscribed);
 }
 
+// A team dispatched on an executor of more threads than CPUs is oversubscribed though it has
+// fewer members than CPUs: the executor's other threads compete for them too.
+TEST(Schedule, OversubscribedByTheRuntimesThreads) {
+  machine_profile p = profile();
+  p.cpus = 4;
+  const lane_map alone{.lanes = 4};
+  EXPECT_FALSE(make_schedule(rows(65536, 1)->graph, alone, p).oversubscribed);
+  EXPECT_GT(share_of(make_schedule(rows(65536, 1)->graph, alone, p), alone, 0).split, 0U);
+  const lane_map dispatched{.lanes = 4, .threads = 16};
+  const schedule s = make_schedule(rows(65536, 1)->graph, dispatched, p);
+  EXPECT_TRUE(s.oversubscribed);
+  EXPECT_EQ(share_of(s, dispatched, 0).split, 0U);
+  const lane_map fewer{.lanes = 4, .threads = 2}; // never fewer threads than members
+  EXPECT_FALSE(make_schedule(rows(65536, 1)->graph, fewer, p).oversubscribed);
+}
+
 // A pure function: equal inputs, equal schedules; the default profile knows the machine.
 TEST(Schedule, PureAndDefaults) {
   const auto r = rows(65536, 3);

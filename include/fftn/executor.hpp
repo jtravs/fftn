@@ -28,7 +28,10 @@ using task_function = fftn_task;
 /// - `e.bulk(n, task, arg)`: runs `task(arg, i)` once for every `i` in `[0, n)` and returns
 ///   when all have returned. Tasks may run in any order, on any threads, any number at a
 ///   time, the calling thread among them, even one after another on the caller: FFTN's
-///   tasks never wait for a task that has not started.
+///   tasks never wait for a task that has not started. The call of `bulk` happens before
+///   each task starts, and each task's return happens before `bulk` returns (as a mutex,
+///   a thread join or a release and acquire pair order them). If `bulk` throws, it does so
+///   only once every task it started has returned.
 ///
 /// and, optionally, `e.group_size()`, convertible to `int`: how many consecutive task
 /// indices share a cache (as `fftn::team::group_size`; 0, the default, puts all in one

@@ -41,7 +41,11 @@ typedef struct fftn_executor {
   /**
    * Runs task(arg, i) once for every i in [0, n), and returns when all of them have
    * returned. The tasks may run in any order, on any threads, any number at a time, the
-   * calling thread among them, even one after another on the caller. Required.
+   * calling thread among them, even one after another on the caller. The call of bulk
+   * happens before each task starts, and each task's return happens before bulk returns
+   * (as a mutex, a join or a release and acquire pair order them): FFTN relies on it to
+   * order one execution's memory accesses before the next one's. If bulk fails, it may
+   * stop early, but only once every task it started has returned. Required.
    */
   void (*bulk)(void* self, int n, fftn_task task, void* arg);
 
