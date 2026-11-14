@@ -13,6 +13,8 @@
 #include "fftn/detail/core.hpp"
 #include "fftn/fftn.hpp"
 #include "gen/codelets.hpp"
+#include "isa/kernel_table.hpp"
+#include "isa/target.hpp"
 #include "reference/reference_dft.hpp"
 #include "support/exact.hpp"
 #include "support/fftn_subject.hpp"
@@ -66,12 +68,21 @@ std::vector<Out> run(const plan_core& core, const std::vector<In>& x, std::size_
   return y;
 }
 
+// The same in place (c2c, where both sides have the same layout).
+template <class C> std::vector<C> run_in_place(const plan_core& core, const std::vector<C>& x) {
+  std::vector<C> y = x;
+  const fftn::workspace ws(fftn::detail::workspace_bytes(core, 1));
+  fftn::detail::execute_core(core, 0, fftn::detail::transform_count(core), y.data(), y.data(), ws);
+  return y;
+}
+
 // One row of n points through a plan built with these settings, against the reference:
 // y = scale * out_factor . DFT(in_factor . x), the factors element by element.
 template <class T>
 void check_row(fftn::isa target, std::size_t n, fftn::direction dir, const build_settings& base,
                double scale, bool in_factor, bool out_factor, bool scale_on_input,
-               const std::vector<std::string>& expect_in_names) {
+               const std::vector<std::string>& expect_in_names, std::size_t in_stride = 1,
+               std::size_t out_stride = 1) {
   const std::string what = std::string(fftn::isa_name(target)) +
                            (sizeof(T) == 8 ? " double" : " float") + ", n = " + std::to_string(n) +
                            (dir == fftn::direction::forward ? " forward" : " backward");
@@ -84,14 +95,29 @@ void check_row(fftn::isa target, std::size_t n, fftn::direction dir, const build
   settings.in_factor = in_factor ? fin.data() : nullptr;
   settings.out_factor = out_factor ? fout.data() : nullptr;
   settings.scale_on_input = scale_on_input;
-  const auto core = make_plan_core(fftn::detail::view_of(fftn::rows_c2c<T>(n, 1, dir)),
-                                   {.scale = scale, .force_isa = target}, settings);
+  fftn::shape<std::complex<T>, std::complex<T>> shape{
+      .dir = dir,
+      .axes = {{.n = n,
+                .in_stride = static_cast<std::ptrdiff_t>(in_stride),
+                .out_stride = static_cast<std::ptrdiff_t>(out_stride)}},
+      .batches = {},
+  };
+  const auto core =
+      make_plan_core(fftn::detail::view_of(shape), {.scale = scale, .force_isa = target}, settings);
   const auto names = stage_names(*core);
   const std::string listing = joined(names);
   for (const std::string& part : expect_in_names) {
     EXPECT_NE(listing.find(part), std::string::npos) << "no stage '" << part << "' in" << listing;
   }
-  const cvec<T> y = run<std::complex<T>, std::complex<T>>(*core, x, n);
+  cvec<T> xs(n * in_stride);
+  for (std::size_t j = 0; j < n; ++j) {
+    xs[j * in_stride] = x[j];
+  }
+  const cvec<T> ys = run<std::complex<T>, std::complex<T>>(*core, xs, n * out_stride);
+  cvec<T> y(n);
+  for (std::size_t k = 0; k < n; ++k) {
+    y[k] = ys[k * out_stride];
+  }
 
   // The expected values, in double: the products with factors of T round at most once each
   // (exactly, for float), which input_rounding() allows for, twice.
@@ -266,6 +292,68 @@ TEST(Passes, ImpossibleEdgesAreRefused) {
                std::invalid_argument);
 }
 
+// The complex numbers per register of target t in precision T.
+template <class T> std::size_t lanes_of(fftn::isa t) {
+  return fftn::detail::of<T>(*fftn::detail::find_kernels(
+                                 static_cast<fftn::detail::target>(static_cast<unsigned char>(t))))
+      .complex_lanes;
+}
+
+// Rows read and written with strides: on targets with C > 1 the chain copies the row into
+// scratch and out of it, and the edge operations stay on the first and last passes that
+// are not copies (with C = 1 there is no copy).
+template <class T> void strided_rows_with_edges(fftn::isa target) {
+  const bool wide = lanes_of<T>(target) > 1;
+  for (const std::size_t n : {std::size_t{40}, std::size_t{17}}) {
+    const std::string first = n == 40 ? "grouped" : "generic";
+    const std::string last = n == 40 ? "lane" : "generic";
+    std::vector<std::string> names{first, "in: factor", last, "out: scale"};
+    if (wide) {
+      names.emplace_back("copy");
+    }
+    check_row<T>(target, n, fftn::direction::forward, {}, 0.375, true, false, false, names, 2, 3);
+    names[1] = "in: scale";
+    names[3] = "out: factor";
+    check_row<T>(target, n, fftn::direction::backward, {}, 0.375, false, true, false, names, 3, 2);
+  }
+}
+
+TEST(Passes, StridedRowsCopyAroundTheEdges) {
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    strided_rows_with_edges<double>(t);
+    strided_rows_with_edges<float>(t);
+  }
+}
+
+// A single generic pass between the caller's arrays uses no scratch; in place it writes
+// scratch and is copied back.
+TEST(Passes, ScratchOnlyWhenUsed) {
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    // The view borrows the shape's axes, so the shape must outlive it.
+    const auto shape = fftn::rows_c2c<double>(17, 1, fftn::direction::forward);
+    const auto rows = fftn::detail::view_of(shape);
+    EXPECT_EQ(fftn::detail::workspace_bytes(*make_plan_core(rows, {.force_isa = t}, {}), 1), 0U)
+        << fftn::isa_name(t);
+    EXPECT_GT(fftn::detail::workspace_bytes(
+                  *make_plan_core(rows, {.in_place = true, .force_isa = t}, {}), 1),
+              0U)
+        << fftn::isa_name(t);
+  }
+}
+
+// The radix test knob refuses radices no pass has: radix 1 once selected a null entry.
+TEST(Passes, ForcedRadicesAreChecked) {
+  // The view borrows the shape's axes, so the shape must outlive it.
+  const auto shape = fftn::rows_c2c<double>(8, 1, fftn::direction::forward);
+  const auto rows = fftn::detail::view_of(shape);
+  build_settings one;
+  one.radices = {1, 8};
+  EXPECT_THROW(static_cast<void>(make_plan_core(rows, {}, one)), std::invalid_argument);
+  build_settings zero;
+  zero.radices = {0};
+  EXPECT_THROW(static_cast<void>(make_plan_core(rows, {}, zero)), std::invalid_argument);
+}
+
 // ---- A fused scale costs no extra pass (task 1.2's acceptance).
 
 std::size_t stage_count(const plan_core& core) { return stage_names(core).size(); }
@@ -275,12 +363,13 @@ std::size_t stage_count(const plan_core& core) { return stage_names(core).size()
 // values the last pass stores, which is what a separate scaling pass would do.
 template <class In, class Out, class T>
 void check_scaled(fftn::isa target, const fftn::shape<In, Out>& s, std::size_t in_count,
-                  std::size_t out_count, const std::string& what) {
-  SCOPED_TRACE(what + " on " + fftn::isa_name(target));
+                  std::size_t out_count, const std::string& what, bool in_place = false) {
+  SCOPED_TRACE(what + " on " + fftn::isa_name(target) + (in_place ? ", in place" : ""));
   const double scale = 1.0 / 3.0;
   const auto view = fftn::detail::view_of(s);
-  const auto plain = make_plan_core(view, {.force_isa = target}, {});
-  const auto scaled = make_plan_core(view, {.scale = scale, .force_isa = target}, {});
+  const auto plain = make_plan_core(view, {.in_place = in_place, .force_isa = target}, {});
+  const auto scaled =
+      make_plan_core(view, {.in_place = in_place, .scale = scale, .force_isa = target}, {});
   EXPECT_EQ(stage_count(*plain), stage_count(*scaled))
       << "unscaled:" << joined(stage_names(*plain)) << "\nscaled:" << joined(stage_names(*scaled));
   EXPECT_EQ(plain->bytes, scaled->bytes);
@@ -291,8 +380,15 @@ void check_scaled(fftn::isa target, const fftn::shape<In, Out>& s, std::size_t i
   } else {
     x = src.complexes<T>(in_count);
   }
-  const auto y0 = run<In, Out>(*plain, x, out_count);
-  const auto y1 = run<In, Out>(*scaled, x, out_count);
+  std::vector<Out> y0;
+  std::vector<Out> y1;
+  if constexpr (std::is_same_v<In, Out>) {
+    y0 = in_place ? run_in_place(*plain, x) : run<In, Out>(*plain, x, out_count);
+    y1 = in_place ? run_in_place(*scaled, x) : run<In, Out>(*scaled, x, out_count);
+  } else {
+    y0 = run<In, Out>(*plain, x, out_count);
+    y1 = run<In, Out>(*scaled, x, out_count);
+  }
   const auto k = static_cast<T>(scale);
   std::size_t differ = 0;
   for (std::size_t i = 0; i < out_count; ++i) {
@@ -321,6 +417,17 @@ template <class T> void fused_scale(fftn::isa target) {
   }
   check_scaled<c, c, T>(target, fftn::planes_c2c<T>(12, 40, 2, fftn::direction::forward), 960, 960,
                         "planes 12 x 40");
+  // The last axis is strided: on C > 1 its chain ends in a copy out of scratch, after the
+  // pass that scales.
+  check_scaled<c, c, T>(target, fftn::planes_c2c<T>(40, 12, 2, fftn::direction::forward), 960, 960,
+                        "planes 40 x 12");
+  check_scaled<c, c, T>(target, fftn::planes_c2c<T>(17, 12, 2, fftn::direction::backward), 408, 408,
+                        "planes 17 x 12");
+  // In place, a prime row is one generic pass into scratch, then a copy back.
+  for (const std::size_t n : {std::size_t{17}, std::size_t{1009}}) {
+    check_scaled<c, c, T>(target, fftn::rows_c2c<T>(n, 2, fftn::direction::forward), 2 * n, 2 * n,
+                          "c2c n = " + std::to_string(n), true);
+  }
   fftn::shape<T, c> real_plane;
   real_plane.axes = {{.n = 6}, {.n = 10}};
   check_scaled<T, c, T>(target, real_plane, 60, 36, "r2c plane 6 x 10");
