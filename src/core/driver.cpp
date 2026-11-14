@@ -107,11 +107,16 @@ union stage_args {
   stage_args() noexcept {} // NOLINT(modernize-use-equals-default): must not initialise args
 };
 
+// Runs leaf stage s, its one line, on the slots at.
+void run_leaf(const stage& s, const slot_addresses& at) noexcept {
+  s.leaf(&s.args, source_of(s.src, at), destination_of(s.dst, at), 0, 0, 1);
+}
+
 // Runs stage s on the slots at: run_stage_chunks over every chunk, without its chunk ends.
 // a is a copy of s.args, used only by a pass_fn.
 void run_whole(const stage& s, pass_args& a, const slot_addresses& at) noexcept {
   if (s.leaf != nullptr) {
-    s.leaf(&s.args, source_of(s.src, at), destination_of(s.dst, at), 0, 0, 1);
+    run_leaf(s, at);
     return;
   }
   a.src = source_of(s.src, at);
@@ -150,7 +155,7 @@ void run_flat(const program& p, std::size_t first, std::size_t count,
     for (std::size_t i = p.batch_loops; i < p.records.size(); ++i) {
       const stage& s = *std::get_if<stage>(&p.records[i]);
       if (s.leaf != nullptr) {
-        s.leaf(&s.args, source_of(s.src, at), destination_of(s.dst, at), 0, 0, 1);
+        run_leaf(s, at);
         continue;
       }
       pass_args a = s.args;
@@ -193,7 +198,7 @@ void run_stage_chunks(const stage& st, const slot_addresses& at, std::size_t fir
   if (st.leaf != nullptr) {
     // One unit, the line: run when the chunks include it.
     if (first == 0 && last != 0) {
-      st.leaf(&st.args, source_of(st.src, at), destination_of(st.dst, at), 0, 0, 1);
+      run_leaf(st, at);
     }
     return;
   }

@@ -81,8 +81,9 @@ struct program {
   std::size_t batch_loops = 0; // the leading records that are the batch loops
   std::size_t transforms = 1;  // product of the batch loops' counts
   // The body (the records after the batch loops) is at most flat_stages_max stages, none
-  // with moving twiddles, and no loop: the driver then prepares each stage's arguments once per call and only moves the
-  // slots per transform (driver.cpp, run_flat). Set by mark_flat (driver.hpp).
+  // with moving twiddles, and no loop: the driver then prepares each stage's arguments once
+  // per call and only moves the slots per transform (driver.cpp, run_flat). Set by
+  // mark_flat (driver.hpp).
   bool flat = false;
 };
 
