@@ -40,6 +40,7 @@ The other competitors are configured the same way; see
 | `backends/<library>.cpp` | one backend per library, built as `<build>/bench/fbench-<library>` (see "Competitor backends") |
 | `catalogues/*.toml` | case catalogues |
 | `tests/` | the driver's self-tests (CTest `bench.selftest`) |
+| `x2/` | experiment X2's radix-sequence search, a campaign of fbench runs (`x2/search.py --help`) |
 | [`../scripts/remote/`](../scripts/remote/fbench_remote.py) | the Slurm runner (see "Remote runs") |
 
 ## Arms
@@ -72,8 +73,10 @@ API, so not in `dev/KNOBS.toml`). Every case of the run must be a c2c row whose 
 radices multiply to; any other case is an error, and so is a radix that no pass of the
 target takes. Without options the FFTN backend's plans are exactly the public API's.
 `describe` (and the run record) shows the forced sequence; every case's `note` in the store
-names the radices its plan used. Experiment X2 drives it
-([dev/experiments/X2-radix-sets.md](../dev/experiments/X2-radix-sets.md)).
+names the radices its plan used. Experiment X2 drives it with
+[`x2/search.py`](x2/search.py) ([dev/experiments/X2-radix-sets.md](../dev/experiments/X2-radix-sets.md));
+its CTest `bench.x2_selftest` forces every candidate of a few lengths and checks the
+refusals.
 
 ## `run`: how an A/B works
 

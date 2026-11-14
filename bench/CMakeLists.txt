@@ -246,6 +246,11 @@ if(FFTN_BUILD_TESTS)
                      --out-dir ${CMAKE_BINARY_DIR}/bench-out smoke --build ${CMAKE_BINARY_DIR}
                      --strict
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    # The FFTN backend's RADICES option end to end (experiment X2, bench/x2/search.py).
+    add_test(NAME bench.x2_selftest
+             COMMAND ${FFTN_UV} run --frozen --quiet python bench/x2/search.py
+                     --build ${CMAKE_BINARY_DIR} selftest
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
   else()
     message(STATUS "fbench: uv not found; the driver's tests are not registered")
   endif()
