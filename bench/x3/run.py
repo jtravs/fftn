@@ -5,6 +5,7 @@
 
     run.py [--out-dir D] [--build B] [--isa T[,T...]] [--lengths 512,1024] [--dry-run] [--fbench '...']
     run.py plan [--isa T]
+    run.py [--out-dir D] report RUN...
 
 One fbench run per length of bench/catalogues/x3.toml (c2c rows 2^9 to 2^16, batches 1 and
 64, both precisions). Arm A is the FFTN backend as the public plan builds it (the planner's
@@ -34,7 +35,7 @@ from pathlib import Path
 BENCH = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BENCH))
 
-from fbenchlib import store  # noqa: E402
+from fbenchlib import analysis, store  # noqa: E402
 
 from x2 import radices  # noqa: E402
 
@@ -122,9 +123,47 @@ def arms_of(n: int, isa: str | None) -> list[str]:
     return arms
 
 
+def report(out_dir: Path, run_ids: list[str]) -> int:
+    """Per case: A's plan, the best big-radix chain and the best radix-64 grid against A
+    (fbench's median paired ratio, 95 % interval, verdict) and the radix-16 chain and grid."""
+    print(f"{'case':<22} {'band':>5}  {'A plan':<28} {'best big chain':<26} {'best g64 grid':<30} "
+          f"{'chain':>6} {'grid':>6}")
+    for run_id in run_ids:
+        records = store.load(store.find_run(out_dir, run_id))
+        res = analysis.analyse(records)
+        notes = {}
+        for r in records:
+            if r["type"] == "timing" and r.get("arm") == "A" and r.get("note"):
+                notes[r["case"]] = r["note"].split("): ", 1)[-1]
+        band = math.expm1(res.band) * 100
+
+        def cell(arm: str, case: str) -> tuple[float, str]:
+            c = res.results.get(arm, {}).get(case)
+            if c is None or c.interval is None:
+                return (math.inf, f"{arm} -")
+            x = math.exp(c.interval.median)
+            lo, hi = math.exp(c.interval.lo), math.exp(c.interval.hi)
+            mark = "+" if c.verdict == "faster" else ("-" if c.verdict == "slower" else " ")
+            return (x, f"{arm} {x:.3f}{mark} [{lo:.2f},{hi:.2f}]")
+
+        for case in sorted({k for per in res.results.values() for k in per}):
+            chains = [cell(a, case) for a in res.results if a.startswith("c")]
+            grids = [cell(a, case) for a in res.results if a.startswith("g")]
+            best_c = min(chains, default=(math.inf, "-"))[1]
+            best_g = min(grids, default=(math.inf, "-"))[1]
+            plain = [cell(a, case)[0] for a in ("chain", "grid")]
+            plan = notes.get(case, "?").replace("radices ", "")
+            plan = plan[:27] if not plan.startswith("grid") else plan.split(" (")[0]
+            print(f"{case:<22} {band:4.1f}%  {plan:<28} {best_c:<26} {best_g:<30} "
+                  + " ".join(f"{x:6.3f}" if x != math.inf else "     -" for x in plain))
+    print("ratio = arm time / A time; + faster, - slower than A clear of the A/A band (fbench)")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="run.py", description=__doc__.split("\n")[0])
-    p.add_argument("command", nargs="?", default="run", choices=("run", "plan"))
+    p.add_argument("command", nargs="?", default="run", choices=("run", "plan", "report"))
+    p.add_argument("runs", nargs="*", help="report: fbench run IDs")
     p.add_argument("--out-dir", type=Path, default=store.DEFAULT_OUT)
     p.add_argument("--build", type=Path, default=REPO / "build" / "check-release")
     p.add_argument("--isa", help="targets, comma-separated: one run per target and length")
@@ -132,7 +171,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--fbench", default="", help="more fbench run options")
     ctx = p.parse_args(argv)
-    ns = [int(x) for x in ctx.lengths.split(",")] if ctx.lengths else list(LENGTHS)
+    if ctx.command == "report":
+        return report(ctx.out_dir, ctx.runs)
+    ns =[int(x) for x in ctx.lengths.split(",")] if ctx.lengths else list(LENGTHS)
     isas: list[str | None] = list(ctx.isa.split(",")) if ctx.isa else [None]
     for isa in isas:
         if isa is not None and isa not in radices.LANES:
