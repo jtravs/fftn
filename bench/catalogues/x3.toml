@@ -1,0 +1,17 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Experiment X3's cases (dev/experiments/X3-big-radices.md): c2c rows of 2^9 to 2^16 points,
+# forward, out of place, double and single precision, batches 1 and 64 (64 x 2^16 = 2^22
+# points, X2's largest batch). bench/x3/run.py runs one fbench run per length on them.
+
+[catalogue]
+name = "x3"
+
+[[group]]
+name = "x3-pow2"
+note = "powers of two from 512 to 65536: the lengths radix 32 and 64 passes could shorten"
+kind = "c2c"
+dims = [512, 1024, 2048, 4096, 8192, 16384, 32768, 65536]
+batch = [1, 64]
+precision = ["f64", "f32"]

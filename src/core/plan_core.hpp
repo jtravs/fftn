@@ -50,6 +50,9 @@ struct build_settings {
   // where the rules say, rows up to profile.grid_fuse_bytes and phases of small radices),
   // or always go through a gather and a scatter around a chain on scratch (X12).
   bool grid_fused = true;
+  // The largest radix the grid's phase rule uses (strategies/grid.hpp), instead of
+  // default_grid_phase_radix when not 0. Experiment X3 prices radix 32 and 64 phases.
+  std::size_t grid_phase_radix = 0;
   // The Bluestein threshold instead of the profile's when not 0 (strategies/chain.hpp):
   // 16 sends every prime factor above 16 through Bluestein, SIZE_MAX none.
   std::size_t bluestein_above = 0;

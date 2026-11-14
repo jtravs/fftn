@@ -115,8 +115,9 @@ bool better(const grid_split& a, const grid_split& b) {
 // The radices of a phase's chain (all lane passes, s >= block >= C, so no pass is grouped
 // and none has tails; planner v1's tables price the chain's grouped first pass and its
 // tails, which a phase has not): the fewest passes, then the radices closest to equal,
-// ascending (X12 measured 16 x 16 against v1's 2 x 8 x 16 for 256).
-std::vector<std::size_t> phase_radices(std::size_t n) {
+// ascending (X12 measured 16 x 16 against v1's 2 x 8 x 16 for 256). Radices up to
+// `largest` that have a codelet (grid_builder's phase_radix).
+std::vector<std::size_t> phase_radices(std::size_t n, std::size_t largest) {
   // best[d]: the fewest passes to d, and the largest spread (largest / smallest radix) on
   // the way, over the divisors of n; a shortest path as in planner v1.
   struct path {
@@ -142,8 +143,8 @@ std::vector<std::size_t> phase_radices(std::size_t n) {
     if (!reached[i]) {
       continue;
     }
-    for (std::size_t r = dense_codelet_radix; r >= 2; --r) {
-      if ((n / ds[i]) % r != 0) {
+    for (std::size_t r = largest; r >= 2; --r) {
+      if ((n / ds[i]) % r != 0 || !has_codelet(r)) {
         continue;
       }
       const std::size_t j = at(ds[i] * r);
@@ -248,8 +249,10 @@ grid_split choose_grid(std::size_t n, std::size_t lanes, std::size_t budget, boo
 
 template <class T>
 grid_builder<T>::grid_builder(const kernels_of<T>& kernels, chain_builder<T>& chain,
-                              std::vector<std::vector<T>>& tables, bool fused)
-    : kernels_(kernels), chain_(chain), tables_(tables), fused_(fused) {}
+                              std::vector<std::vector<T>>& tables, bool fused,
+                              std::size_t phase_radix)
+    : kernels_(kernels), chain_(chain), tables_(tables), fused_(fused),
+      phase_radix_(phase_radix != 0 ? phase_radix : default_grid_phase_radix) {}
 
 template <class T>
 void grid_builder<T>::add_copy(const char* what, pass_fn run, std::size_t rows, std::size_t cols,
@@ -281,7 +284,7 @@ void grid_builder<T>::add_copy(const char* what, pass_fn run, std::size_t rows, 
 
 // A phase's radices: forced ones, or the phase rule's.
 template <class T> std::vector<std::size_t> grid_builder<T>::phase_radix_list(std::size_t n) const {
-  return chain_.forces(n) ? chain_.radices(n) : phase_radices(n);
+  return chain_.forces(n) ? chain_.radices(n) : phase_radices(n, phase_radix_);
 }
 
 template <class T>
