@@ -572,8 +572,21 @@ std::shared_ptr<const plan_core> make_plan_core(const shape_view& s, const optio
     check_in_place(s, in, out);
   }
 
+  // The scale is applied in the plan's precision: it must be finite there, and a non-zero
+  // scale must not vanish. (Converting a double beyond float's range to float is undefined,
+  // so the range is compared, not converted.)
   if (!std::isfinite(opts.scale)) {
     reject("options.scale", "must be finite");
+  }
+  if (s.prec == precision::f32) {
+    const double magnitude_of_scale = std::abs(opts.scale);
+    if (magnitude_of_scale > static_cast<double>(std::numeric_limits<float>::max())) {
+      reject("options.scale", "is beyond the range of float, the plan's precision");
+    }
+    if (opts.scale != 0.0 &&
+        magnitude_of_scale < static_cast<double>(std::numeric_limits<float>::denorm_min())) {
+      reject("options.scale", "is below the smallest float, the plan's precision");
+    }
   }
   const bool factors = settings.in_factor != nullptr || settings.out_factor != nullptr;
   if ((factors || settings.scale_on_input) && (s.kind != transform_kind::c2c || r != 1)) {
