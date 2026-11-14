@@ -14,7 +14,7 @@
 //   Bluestein stage at the end of the chain (below).
 // - Placement: the first pass reads the line where it lies and the last writes it where it
 //   goes; passes in between ping-pong between two scratch lines a and b of the line's
-//   length. On targets with several complex numbers per register (C > 1), the passes
+//   length, or between a and the destination when it is contiguous and not the source. On targets with several complex numbers per register (C > 1), the passes
 //   load and store whole runs of adjacent elements, so a line with a stride other than 1
 //   is first copied to scratch (input) or written to scratch and then copied (output);
 //   leaves and copies work at any stride. A single generic pass cannot run in place, so

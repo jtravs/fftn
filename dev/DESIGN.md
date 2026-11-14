@@ -1026,7 +1026,10 @@ pass that is not a copy and the output edge's by the last, so neither costs a pa
 C > 1 a line whose stride is not 1 (a strided axis, a strided row) is copied into scratch
 before the chain or out of it after: an extra pass that the lanes strategy for strided
 axes (phase 4) removes. A single generic pass cannot run in place, so it writes scratch
-and is copied when its source is its destination. Scratch is two lines a and b.
+and is copied when its source is its destination. Scratch is two lines a and b; an
+out-of-place line with a contiguous destination (not aliased, no copy, no Bluestein
+stage) uses the destination in place of b, so a chain touches three lines, not four
+(experiment X18: up to 15 % faster at 512–16384 on a 32 KiB L1).
 
 **Grid** (two-phase Cooley–Tukey; the family that contains FFTW's recursion, Bailey's
 four-step and KFR's sandwich). N = N1·N2, the data viewed as N1 rows of N2. One phase is
@@ -2391,6 +2394,7 @@ to change before a release.
 | 2026-11-14 | Planner v1's cost tables are keyed by target and C; a target and C without one take AVX2's table of the nearest C, as before. The X2 fit is a tracked tool (`bench/x2/fit.py`) | An `avx512` table (X16) and NEON tables (X2 on the Mac) drop in as rows; the search and every current choice (`rule_radices.txt`) are unchanged |
 | 2026-11-14 | Real transforms (task 2.1, section 9.1): even lines read their reals in place as complex values; the pairing of bins k and h − k is fused into the r2c chain's last pass or the c2r chain's first pass (mirror copies or groups together, each pair formed once) when that pass's radix is at most 8 (4 on avx2) and for r2c the half spectrum fits L1, a leaf for h ≤ 16, and otherwise a separate pass in place on the complex side; long rows run the half-length transform as a grid with a separate pairing; the c2r pairing fuses into the DIF chain's first pass, so no DIT chain is built | Fused and separate pairing measured against each other on the Mac (X6): fusion wins by 10–15 points of overhead with radix 8 in L1 and loses with radix 16 or beyond L1 (register spills, conflict misses across 4R streams a power of two apart); the old route's pack, scalar post and unpack passes cost 50–165 % over the half-length complex time |
 | 2026-11-14 | The grid strategy (task 1.7, section 8.5): decimation in frequency in two or three blocked phases, gathers and scatters around a chain of lane passes on tight scratch, the transpose folded into phase 1's store; chosen for c2c rows beyond the L1 data cache, three phases beyond an eighth of L2; loops carry a twiddle cursor | X12: on the Mac the chain ran 1.85–2.84 times FFTW's time from 2^14 to 2^22 points; the grid ran 0.47–0.71 of the chain's time there, 1.08–1.43 times FFTW's (fbench run 20261114-110844-8b03). Two phases lose beyond L2 because their blocks must narrow to keep a phase in L1; three lose while the row fits L2 |
+| 2026-11-14 | The serial driver runs a stage's chunks as one call and divides only when a range starts mid-stage; a chain uses a contiguous, unaliased destination as its second scratch line (experiment X18) | 64-bit division costs 40–90 cycles on Cascade Lake (37 % of a 64-point transform there); three lines instead of four keep 512–1024-point rows in a 32 KiB L1 longer. Xeon 1.50 → 1.25 of FFTW, EPYC 1.37 → 1.29; the driver and scratch changes keep every bit, the AVX2 overrides for 4096 and 16384 (also reached by C ≤ 2 targets without a table of their own) change those lengths' radices and so their bits |
 
 ---
 
