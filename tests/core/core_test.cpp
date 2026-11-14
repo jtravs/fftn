@@ -194,6 +194,8 @@ TEST(Rules, MeasuredExamples) {
   EXPECT_EQ(r(42, f64), (v{2, 3, 7}));
   EXPECT_EQ(r(490, f64), (v{2, 7, 5, 7}));
   EXPECT_EQ(r(700, f32), (v{4, 7, 5, 5}));
+  EXPECT_EQ(r(4096, f64), (v{8, 8, 8, 8}));      // experiment X18
+  EXPECT_EQ(r(16384, f64), (v{8, 8, 16, 16}));
   // Primes above the codelets go last (the chain makes them a Bluestein stage).
   EXPECT_EQ(r(34, f64), (v{2, 17}));
 }
