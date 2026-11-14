@@ -16,12 +16,9 @@
 
 namespace fftn::inline v0::detail {
 
-// The entry points of one target for one precision T. Kernel semantics are in kernels.inl.
+// The entry points of one target for one precision T: twiddle packing (kernels.inl) and the
+// passes (src/passes/).
 template <class T> struct kernels_of {
-  // Radix-4 decimation-in-frequency pass, n = 4m (kernels.inl). m % complex_lanes == 0.
-  void (*radix4_pass)(const T* x, T* y, const T* tw, std::size_t m, int sign);
-  // Radix-2 decimation-in-time pass in split arithmetic, n = 2m. m % real_lanes == 0.
-  void (*radix2_split_pass)(const T* x, T* y, const T* twr, const T* twi, std::size_t m, int sign);
   // Converts count interleaved twiddles into this target's twiddle storage, which holds
   // tw_reals reals per twiddle, C twiddles per register (load_tw). count % complex_lanes
   // == 0.
