@@ -67,8 +67,43 @@ A; the tests' cross-target comparisons and fbench's check confirm it.
 
 ## Results
 
-To be filled in.
+Arms on branch `exp/x10-pass-loops` (from 8affea0), each bit-identical to main by
+construction (addressing, loop shape and store order only): L fixed-step pointers with tails
+after the loop; T = L plus a leg-offset table from radix 8 on x86; B = T plus each
+grouped-pass block stored right after its last leg; T2 tables for every radix; U main's
+per-unit loops plus tables from radix 8 plus block stores; V = U without tables. Paired arm ÷
+main, geometric mean over the X18 cases (GCC 14 / Clang 23):
+
+| Arm | Xeon avx512 | EPYC avx2 | Xeon avx2 | Mac neon_fcma |
+|---|---|---|---|---|
+| T | 1.013 / 1.013 | 0.988 / 1.029 | 0.969 / ≈ 1.00 | — |
+| B | 1.000 / 1.018 | 0.992 / 1.031 | 0.969 / ≈ 1.00 | 1.035 |
+| U | 0.985 / 1.015 (one compiler each in the last two runs) | 1.002 / 1.033 | — | 1.001 |
+| V | — | 0.988 / 1.007 | — | — |
+
+Runs: Xeon 20261114-145403-ff20 (band 1.19 %), 20261114-145726-c67a (avx2, 6 rounds, band
+3.5 %), 20261114-150747-e7dc and 20261114-150419-9843 (12 and 24 rounds); EPYC
+20261114-145419-0d55, 20261114-150419-126f (band 2.07 %); Mac 20261114-145423-acda,
+20261114-150105-8f44. Per case the arms trade gains (256 at 0.89–0.95, 128 × 4096 at
+0.91–0.94, EPYC 1000 at 0.92–0.95) against losses (120 at 1.13–1.26 and 360 at 1.12 with
+the fixed-step loops, which pay a per-group setup when a group has 1–3 blocks; tables cost
+Clang 3–5 % on the EPYC; Mac 64 and 128 at 1.07–1.11 under B, 2187 at 1.12 under U). The
+tables cut instructions per transform by 5–15 % (perf, Xeon avx512 at 256: 2825 → 2293) but
+time barely moves.
+
+What the measurements showed instead: on AVX-512 FFTN's pass loops already execute about as
+many instructions per butterfly as FFTW's (496 against 557 per four radix-16 butterflies),
+and the time goes to port 5 (shuffles), 73 % busy against FFTW's 55 %. The generated
+radix-16 codelet needs 19 distinct multiplications by ±i (each a shuffle in interleaved
+form) against FFTW's ~7; radix 8 needs 6. A tie-break in the lowering changes nothing (the
+stores' rotations decide every choice); an algebraic rewrite in the IR does (for the w8
+pair, combining before scaling drops 4 swaps to 1 at the same operation count, bit-exact).
+FFTN's AVX2 grouped pass is also 1.7 times slower than its AVX-512 one on the Xeon, so
+mixed-width plans (FFTW runs untwiddled passes on ymm, twiddled ones on zmm) wait for
+better AVX2 code.
 
 ## Verdict
 
-To be filled in.
+Rejected: no arm reaches the rule (≤ 0.98 geometric mean on one x86 machine with no case
+worse than band + 2 % and the Mac ≤ 1.01); the arms stay on the branch, unmerged. The x86
+work continues with the generator's ±i rotations (X19) and then split lowering (X1).
