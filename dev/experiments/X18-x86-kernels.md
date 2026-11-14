@@ -91,9 +91,15 @@ MKL ÷ FFTW on the Xeon is 0.95 (geomean; 0.80 at 64, 0.87 at 4096), so the MKL 
    After the fix (paired, same run): Xeon GCC 14 0.855 geomean (64: 0.589, 120: 0.722,
    256: 0.826, 128 × 4096: 0.902), Clang 0.903; EPYC GCC 0.955, Clang 0.982 (Zen 3 divides
    fast). Bits unchanged: chunks are adjacent ranges of independent units.
-2. **The AVX2 kernels execute too many instructions.** FFTW's MEASURE on the Xeon chooses
-   256-bit codelets (`n2fv_16`, `t2fv_16`, `t3fv_32`, `n2fv_64`, `t2fv_64` run on `ymm`),
-   so `ISA=avx2` against FFTW is a same-width comparison: at 256 FFTN executes 5386
+2. **The AVX2 kernels execute too many instructions.** *Correction (X10): FFTW's plans on
+   the Xeon mix widths: its untwiddled, transposing passes (`n2fv_16`, `n2fv_32`, `n2fv_64`)
+   run the AVX2 codelets on `ymm`, its twiddled passes (`t2fv_16`, `t3fv_32`, `t2fv_64`) the
+   AVX-512 ones on `zmm`. The first version of this item read FFTW's other copies of the
+   same symbol names and called the comparison same-width; FFTW's 2340 below includes a
+   `zmm` pass. The per-iteration rows for FFTW are its AVX2 (non-FMA for `n2fv_16`) copies:
+   valid as a static comparison of AVX2 loops, not as what FFTW ran. What FFTW ran at 256:
+   `n2fv_16` on `ymm`, 175 instructions per two butterflies, and `t2fv_16` on `zmm`, 207 per
+   four (X10 has the per-transform counts).* At 256 FFTN with `ISA=avx2` executes 5386
    instructions per transform (default plan 2.8.16) against FFTW's 2340, and takes 1789
    cycles against 849 at about 3.0 instructions per cycle, near the 4-wide rename limit;
    no port is saturated (p0 942, p1 987, p5 701 uops). With the same plan, 16 × 16, per loop
