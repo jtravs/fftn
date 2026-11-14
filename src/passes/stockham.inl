@@ -174,9 +174,6 @@ void lane_pass(const pass_args* a, std::size_t first, std::size_t last) {
 // Reads src, dst, src_stride, dst_stride, scale, in_factor, out_factor.
 template <class T, std::size_t R, int Sign, edge_op InOp, edge_op OutOp>
 void leaf_pass(const pass_args* a, std::size_t first, std::size_t last) {
-  if (first >= last) {
-    return;
-  }
   const one_in<T, InOp> in{
       .p = static_cast<const T*>(a->src),
       .leg = 2 * a->src_stride,
@@ -187,7 +184,9 @@ void leaf_pass(const pass_args* a, std::size_t first, std::size_t last) {
       .leg = 2 * a->dst_stride,
       .op = make_edge<T, OutOp>(a, a->out_factor, 0, 1),
   };
-  cdft<R>::template plain<T, Sign>(in, out);
+  for (std::size_t u = first; u < last; ++u) { // the one unit, when the range holds it
+    cdft<R>::template plain<T, Sign>(in, out);
+  }
 }
 
 } // namespace

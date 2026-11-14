@@ -109,6 +109,21 @@ TEST(Rules, RadicesMultiplyToTheLength) {
   }
 }
 
+// Every target has a profile: 32 registers on AArch64 and AVX-512, merging on AArch64.
+TEST(Rules, ProfilesOfEveryTarget) {
+  using fftn::detail::target;
+  for (const target t : {target::neon, target::neon_fcma}) {
+    EXPECT_EQ(fftn::detail::profile_of(t).registers, 32U);
+    EXPECT_TRUE(fftn::detail::profile_of(t).merge);
+  }
+  EXPECT_EQ(fftn::detail::profile_of(target::avx512).registers, 32U);
+  EXPECT_FALSE(fftn::detail::profile_of(target::avx512).merge);
+  for (const target t : {target::x86_v2, target::avx, target::avx2}) {
+    EXPECT_EQ(fftn::detail::profile_of(t).registers, 16U);
+    EXPECT_FALSE(fftn::detail::profile_of(t).merge);
+  }
+}
+
 TEST(Rules, PublishedExamples) {
   using v = std::vector<std::size_t>;
   const fftn::detail::target_profile wide{.registers = 32, .merge = true};

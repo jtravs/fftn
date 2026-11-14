@@ -27,10 +27,8 @@ std::size_t log2_of(std::size_t n) {
   return k;
 }
 
+// For n >= 2.
 bool prime(std::size_t n) {
-  if (n < 2) {
-    return false;
-  }
   for (std::size_t d = 2; d <= n / d; ++d) {
     if (n % d == 0) {
       return false;

@@ -3,93 +3,96 @@
 //
 // The target's pass entry points (pass_kernels in passes/pass_args.hpp), instantiated
 // inside the region for every codelet radix of src/gen/codelets.hpp, both directions and
-// every edge variant. The radices come from the generated table, so a radix added to the
-// generator gets its passes here without any change. No include guard.
+// every edge variant. Which rows exist comes from the generated table, so a radix added to
+// the generator gets its passes here without any change. The table is constant data, built
+// by the compiler (no function computes it at run time). No include guard.
 
 namespace {
 
-// NOLINTNEXTLINE(modernize-avoid-c-arrays): no standard-library templates in a region
-inline constexpr edge_op edge_ops[edge_op_count] = {edge_op::none, edge_op::scale, edge_op::factor};
+inline constexpr edge_op nop = edge_op::none;
+inline constexpr edge_op scl = edge_op::scale;
+inline constexpr edge_op fac = edge_op::factor;
 
-template <int Sign> inline constexpr std::size_t direction_index = Sign < 0 ? 0 : 1;
+// Whether gen::radices lists R (I runs through the list).
+template <std::size_t R, std::size_t I = 0>
+inline constexpr bool codelet_radix = gen::radices[I] == R || codelet_radix<R, I + 1>;
+template <std::size_t R> inline constexpr bool codelet_radix<R, gen::radix_count> = false;
 
-// A plan has one scale, on one edge (core/plan_core.cpp), so no pass scales both: that
-// entry stays null rather than instantiating a variant nothing selects.
-template <std::size_t In, std::size_t Out>
-inline constexpr bool possible_edges =
-    edge_ops[In] != edge_op::scale || edge_ops[Out] != edge_op::scale;
+// The passes of radix R, or nulls where R has no codelet. A plan has one scale, on one
+// edge (core/plan_core.cpp), so no pass scales both: that entry stays null rather than
+// instantiating a variant nothing selects.
+template <class T, std::size_t R, bool = codelet_radix<R>> struct radix_entries {
+  static constexpr radix_passes value{};
+};
+template <class T, std::size_t R> struct radix_entries<T, R, true> {
+  static constexpr radix_passes value{
+      .grouped = {{&grouped_pass<T, R, -1, nop>, &grouped_pass<T, R, -1, scl>,
+                   &grouped_pass<T, R, -1, fac>},
+                  {&grouped_pass<T, R, +1, nop>, &grouped_pass<T, R, +1, scl>,
+                   &grouped_pass<T, R, +1, fac>}},
+      .lane = {&lane_pass<T, R, -1, true, nop>, &lane_pass<T, R, +1, true, nop>},
+      .last = {{&lane_pass<T, R, -1, false, nop>, &lane_pass<T, R, -1, false, scl>,
+                &lane_pass<T, R, -1, false, fac>},
+               {&lane_pass<T, R, +1, false, nop>, &lane_pass<T, R, +1, false, scl>,
+                &lane_pass<T, R, +1, false, fac>}},
+      .leaf = {{{&leaf_pass<T, R, -1, nop, nop>, &leaf_pass<T, R, -1, nop, scl>,
+                 &leaf_pass<T, R, -1, nop, fac>},
+                {&leaf_pass<T, R, -1, scl, nop>, nullptr, &leaf_pass<T, R, -1, scl, fac>},
+                {&leaf_pass<T, R, -1, fac, nop>, &leaf_pass<T, R, -1, fac, scl>,
+                 &leaf_pass<T, R, -1, fac, fac>}},
+               {{&leaf_pass<T, R, +1, nop, nop>, &leaf_pass<T, R, +1, nop, scl>,
+                 &leaf_pass<T, R, +1, nop, fac>},
+                {&leaf_pass<T, R, +1, scl, nop>, nullptr, &leaf_pass<T, R, +1, scl, fac>},
+                {&leaf_pass<T, R, +1, fac, nop>, &leaf_pass<T, R, +1, fac, scl>,
+                 &leaf_pass<T, R, +1, fac, fac>}}},
+  };
+};
 
-template <class T, std::size_t R, int Sign, std::size_t In, std::size_t Out>
-constexpr void fill_leaves(pass_kernels<T>& k) noexcept {
-  if constexpr (possible_edges<In, Out>) {
-    k.leaf[R][direction_index<Sign>][In][Out] = &leaf_pass<T, R, Sign, edge_ops[In], edge_ops[Out]>;
-  }
-  if constexpr (Out + 1 < edge_op_count) {
-    fill_leaves<T, R, Sign, In, Out + 1>(k);
-  } else if constexpr (In + 1 < edge_op_count) {
-    fill_leaves<T, R, Sign, In + 1, 0>(k);
-  }
-}
+static_assert(max_codelet_radix == 16, "pass_table lists the rows 0 .. 16");
 
-template <class T, std::size_t R, int Sign, std::size_t E>
-constexpr void fill_edges(pass_kernels<T>& k) noexcept {
-  constexpr std::size_t d = direction_index<Sign>;
-  k.grouped[R][d][E] = &grouped_pass<T, R, Sign, edge_ops[E]>;
-  k.last[R][d][E] = &lane_pass<T, R, Sign, false, edge_ops[E]>;
-  if constexpr (E + 1 < edge_op_count) {
-    fill_edges<T, R, Sign, E + 1>(k);
-  }
-}
-
-template <class T, std::size_t R, int Sign> constexpr void fill_radix(pass_kernels<T>& k) noexcept {
-  k.lane[R][direction_index<Sign>] = &lane_pass<T, R, Sign, true, edge_op::none>;
-  fill_edges<T, R, Sign, 0>(k);
-  fill_leaves<T, R, Sign, 0, 0>(k);
-}
-
-template <class T, std::size_t I> constexpr void fill_radices(pass_kernels<T>& k) noexcept {
-  constexpr std::size_t r = gen::radices[I];
-  static_assert(r <= max_codelet_radix);
-  fill_radix<T, r, -1>(k);
-  fill_radix<T, r, +1>(k);
-  if constexpr (I + 1 < gen::radix_count) {
-    fill_radices<T, I + 1>(k);
-  }
-}
-
-template <class T, int Sign, std::size_t In, std::size_t Out>
-constexpr void fill_generic(pass_kernels<T>& k) noexcept {
-  if constexpr (possible_edges<In, Out>) {
-    k.generic[direction_index<Sign>][In][Out] = &generic_pass<T, Sign, edge_ops[In], edge_ops[Out]>;
-    if constexpr (Sign < 0) {
-      k.copy[In][Out] = &copy_pass<T, edge_ops[In], edge_ops[Out]>;
-    }
-  }
-  if constexpr (Out + 1 < edge_op_count) {
-    fill_generic<T, Sign, In, Out + 1>(k);
-  } else if constexpr (In + 1 < edge_op_count) {
-    fill_generic<T, Sign, In + 1, 0>(k);
-  }
-}
-
-template <class T> constexpr pass_kernels<T> make_pass_kernels() noexcept {
-  pass_kernels<T> k{};
-  fill_radices<T, 0>(k);
-  fill_generic<T, -1, 0, 0>(k);
-  fill_generic<T, +1, 0, 0>(k);
-  k.r2c_pack_pairs = &r2c_pack_pairs<T>;
-  k.r2c_post[0] = &r2c_post<T, false>;
-  k.r2c_post[1] = &r2c_post<T, true>;
-  k.r2c_pack = &r2c_pack<T>;
-  k.r2c_store[0] = &r2c_store<T, false>;
-  k.r2c_store[1] = &r2c_store<T, true>;
-  k.c2r_pre = &c2r_pre<T>;
-  k.c2r_unpack_pairs[0] = &c2r_unpack_pairs<T, false>;
-  k.c2r_unpack_pairs[1] = &c2r_unpack_pairs<T, true>;
-  k.c2r_expand = &c2r_expand<T>;
-  k.c2r_store[0] = &c2r_store<T, false>;
-  k.c2r_store[1] = &c2r_store<T, true>;
-  return k;
-}
+template <class T>
+inline constexpr pass_kernels<T> pass_table{
+    .codelet =
+        {
+            radix_entries<T, 0>::value,
+            radix_entries<T, 1>::value,
+            radix_entries<T, 2>::value,
+            radix_entries<T, 3>::value,
+            radix_entries<T, 4>::value,
+            radix_entries<T, 5>::value,
+            radix_entries<T, 6>::value,
+            radix_entries<T, 7>::value,
+            radix_entries<T, 8>::value,
+            radix_entries<T, 9>::value,
+            radix_entries<T, 10>::value,
+            radix_entries<T, 11>::value,
+            radix_entries<T, 12>::value,
+            radix_entries<T, 13>::value,
+            radix_entries<T, 14>::value,
+            radix_entries<T, 15>::value,
+            radix_entries<T, 16>::value,
+        },
+    .generic = {{{&generic_pass<T, -1, nop, nop>, &generic_pass<T, -1, nop, scl>,
+                  &generic_pass<T, -1, nop, fac>},
+                 {&generic_pass<T, -1, scl, nop>, nullptr, &generic_pass<T, -1, scl, fac>},
+                 {&generic_pass<T, -1, fac, nop>, &generic_pass<T, -1, fac, scl>,
+                  &generic_pass<T, -1, fac, fac>}},
+                {{&generic_pass<T, +1, nop, nop>, &generic_pass<T, +1, nop, scl>,
+                  &generic_pass<T, +1, nop, fac>},
+                 {&generic_pass<T, +1, scl, nop>, nullptr, &generic_pass<T, +1, scl, fac>},
+                 {&generic_pass<T, +1, fac, nop>, &generic_pass<T, +1, fac, scl>,
+                  &generic_pass<T, +1, fac, fac>}}},
+    .copy = {{&copy_pass<T, nop, nop>, &copy_pass<T, nop, scl>, &copy_pass<T, nop, fac>},
+             {&copy_pass<T, scl, nop>, nullptr, &copy_pass<T, scl, fac>},
+             {&copy_pass<T, fac, nop>, &copy_pass<T, fac, scl>, &copy_pass<T, fac, fac>}},
+    .r2c_pack_pairs = &r2c_pack_pairs<T>,
+    .r2c_post = {&r2c_post<T, false>, &r2c_post<T, true>},
+    .r2c_pack = &r2c_pack<T>,
+    .r2c_store = {&r2c_store<T, false>, &r2c_store<T, true>},
+    .c2r_pre = &c2r_pre<T>,
+    .c2r_unpack_pairs = {&c2r_unpack_pairs<T, false>, &c2r_unpack_pairs<T, true>},
+    .c2r_expand = &c2r_expand<T>,
+    .c2r_store = {&c2r_store<T, false>, &c2r_store<T, true>},
+};
 
 } // namespace

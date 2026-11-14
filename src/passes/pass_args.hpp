@@ -64,15 +64,20 @@ inline constexpr std::size_t max_codelet_radix = 16;
 // would scale (a plan has one scale).
 //
 // NOLINTBEGIN(modernize-avoid-c-arrays): filled inside ISA regions, which use no std templates
-template <class T> struct pass_kernels {
+struct radix_passes {
   // The chain's first pass (s = 1): lanes over butterflies; input edge.
-  pass_fn grouped[max_codelet_radix + 1][2][edge_op_count];
+  pass_fn grouped[2][edge_op_count];
   // Its middle passes (m > 1): lanes over copies, twiddled.
-  pass_fn lane[max_codelet_radix + 1][2];
+  pass_fn lane[2];
   // Its last pass (m = 1): lanes over copies, no twiddles; output edge.
-  pass_fn last[max_codelet_radix + 1][2][edge_op_count];
-  // A whole transform of n <= 16 in registers; input edge, output edge.
-  pass_fn leaf[max_codelet_radix + 1][2][edge_op_count][edge_op_count];
+  pass_fn last[2][edge_op_count];
+  // A whole transform of n = radix <= 16 in registers; input edge, output edge.
+  pass_fn leaf[2][edge_op_count][edge_op_count];
+};
+
+template <class T> struct pass_kernels {
+  // Indexed by the codelet's radix.
+  radix_passes codelet[max_codelet_radix + 1];
   // Any radix by direct evaluation (the primes above 16); input edge, output edge.
   pass_fn generic[2][edge_op_count][edge_op_count];
   // y[i] = x[i] with the edges' operations; input edge, output edge.

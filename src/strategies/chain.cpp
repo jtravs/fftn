@@ -10,6 +10,7 @@
 #include "planner/rules.hpp"
 
 #include <algorithm>
+#include <array>
 #include <complex>
 #include <cstddef>
 #include <cstdint>
@@ -29,15 +30,8 @@ std::size_t direction_index(int sign) { return sign < 0 ? 0 : 1; }
 std::size_t edge_index(edge_op op) { return static_cast<std::size_t>(op); }
 
 const char* edge_name(edge_op op) {
-  switch (op) {
-  case edge_op::none:
-    break;
-  case edge_op::scale:
-    return "scale";
-  case edge_op::factor:
-    return "factor";
-  }
-  return "none";
+  constexpr std::array<const char*, edge_op_count> names{"none", "scale", "factor"};
+  return names.at(edge_index(op));
 }
 
 // " (in: scale, out: factor)" for the operations present, or nothing.
@@ -161,17 +155,13 @@ template <class T> const T* chain_builder<T>::radix_roots(std::size_t radix) {
   return stored;
 }
 
-// w_n^k for k = 0 .. n/4: the twiddles of the real post- and pre-passes (n even).
+// w_n^k for k = 0 .. n/4: the twiddles of the real post- and pre-passes (n even). A plan
+// has one real axis and builds its line once, so nothing is shared.
 template <class T> const T* chain_builder<T>::edge_twiddles(std::size_t n) {
-  if (const auto it = edge_tables_.find(n); it != edge_tables_.end()) {
-    return it->second;
-  }
   const auto& w = roots(n);
   const std::vector<std::complex<T>> t(w.begin(),
                                        w.begin() + static_cast<std::ptrdiff_t>(n / 4 + 1));
-  const T* stored = pack(t, true);
-  edge_tables_.emplace(n, stored);
-  return stored;
+  return pack(t, true);
 }
 
 template <class T>
@@ -205,18 +195,18 @@ void chain_builder<T>::add_pass(std::size_t n, const std::vector<std::size_t>& r
     st.chunks = chunks_of(st.units, radix * radix * c);
     kind = "generic";
   } else if (first) {
-    st.run = k.grouped[radix][d][edge_index(in)];
+    st.run = k.codelet[radix].grouped[d][edge_index(in)];
     st.args.twiddles = grouped_twiddles(n, radix);
     st.units = blocks(m);
     st.chunks = chunks_of(st.units, radix * c);
     kind = "grouped";
   } else if (last) {
-    st.run = k.last[radix][d][edge_index(out)];
+    st.run = k.codelet[radix].last[d][edge_index(out)];
     st.units = blocks(s);
     st.chunks = chunks_of(st.units, radix * c);
     kind = "lane";
   } else {
-    st.run = k.lane[radix][d];
+    st.run = k.codelet[radix].lane[d];
     st.args.twiddles = shared_twiddles(n, radix, s);
     st.units = m * blocks(s);
     st.chunks = chunks_of(st.units, radix * c);
@@ -244,8 +234,8 @@ template <class T>
 void chain_builder<T>::add_leaf(std::size_t n, int sign, endpoint src, endpoint dst,
                                 const line_edges& edges, std::vector<stage>& stages) {
   stage st;
-  st.run =
-      kernels_.passes.leaf[n][direction_index(sign)][edge_index(edges.in)][edge_index(edges.out)];
+  st.run = kernels_.passes.codelet[n]
+               .leaf[direction_index(sign)][edge_index(edges.in)][edge_index(edges.out)];
   st.args.radix = n;
   st.args.n = n;
   st.args.scale = edges.scale;

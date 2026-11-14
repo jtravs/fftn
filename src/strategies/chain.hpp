@@ -114,7 +114,6 @@ private:
   std::map<std::pair<std::size_t, std::size_t>, const T*> grouped_tables_;              // (n, R)
   std::map<std::tuple<std::size_t, std::size_t, std::size_t>, const T*> shared_tables_; // n, R, s
   std::map<std::size_t, const T*> radix_roots_;                                         // R
-  std::map<std::size_t, const T*> edge_tables_;                                         // n
 };
 
 extern template class chain_builder<double>;
