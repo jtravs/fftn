@@ -89,9 +89,14 @@ if(CMAKE_INTERPROCEDURAL_OPTIMIZATION)
 else()
   set(fftn_asm_inputs $<TARGET_FILE:fftn> "$<TARGET_OBJECTS:fftn_isa_probes>")
 endif()
-add_test(NAME isa.asm_check
-         COMMAND ${fftn_asm_check} ${fftn_baseline_has} ${fftn_asm_inputs}
-         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+# The disassembly check reads the code users get: the Release, tidy and coverage builds.
+# Sanitizer instrumentation changes inlining and folding (wrappers, fake-stack frames), which
+# the check cannot tell from a missed inline, so it does not run there.
+if(NOT FFTN_SANITIZE)
+  add_test(NAME isa.asm_check
+           COMMAND ${fftn_asm_check} ${fftn_baseline_has} ${fftn_asm_inputs}
+           WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+endif()
 
 # On Apple arm64 the allowance above would hide FCMA or pointer authentication leaking from
 # a region into baseline code, and the Mac is the gate's only machine with FCMA. So the

@@ -33,7 +33,7 @@ schedule make_schedule(const work_graph& g, const lane_map& lanes,
   s.widest = g.widest;
   s.points = g.points;
   s.splittable = g.chunks > 1 && g.chunks < max_counted;
-  s.oversubscribed = profile.cpus > 0 && lanes.lanes > profile.cpus;
+  s.oversubscribed = profile.cpus > 0 && std::max(lanes.lanes, lanes.threads) > profile.cpus;
   s.grain = g.tasks < max_counted ? 1 : (g.tasks + max_counted - 1) / max_counted;
   // Rule 1, and teams too large for the counters.
   const double job_ns = static_cast<double>(g.tasks) * s.task_ns;
