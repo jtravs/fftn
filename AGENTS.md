@@ -174,8 +174,10 @@ Further rules:
 - Competitors are built the way their best users would build them (FFTW with its SIMD and
   FMA options at MEASURE and PATIENT, fresh wisdom per campaign; the NEON build on Apple).
   A comparison against a handicapped competitor is a bug in the benchmark.
-- The Mac is a shared desktop. Benchmark only when fbench's quiet-machine check passes, or
-  use an exclusive Slurm node, and say which.
+- The Mac and the other machines are shared. fbench runs interleaved, with repeated rounds
+  and an A/A control, on any machine, and records the load of every round; a claim is
+  judged against the noise band of the same run. Prefer an exclusive Slurm node when one is
+  available, and say where a run was made.
 - A default that changes needs an experiment file. So does a planner rule.
 
 ## 7. Working in this repository

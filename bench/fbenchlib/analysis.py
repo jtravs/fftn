@@ -15,6 +15,11 @@ WRONG = "wrong output"
 BASE_WRONG = "baseline wrong"
 UNSUPPORTED = "unsupported"
 ERROR = "error"
+TIMEOUT = "timed out"
+# Timing statuses the driver writes for a process that hit --process-timeout: the case it
+# was on, and the cases it never reached. Both are left out of the statistics.
+TIMED_OUT = "timeout"
+NOT_REACHED = "skipped"
 
 
 @dataclass
@@ -80,10 +85,19 @@ def analyse(
     wrong: dict[str, set[str]] = {a: set() for a in arms}
     status: dict[str, dict[str, str]] = {a: {} for a in arms}
     errs: dict[str, dict[str, float]] = {a: {} for a in arms}
+    # Rounds in which a process timeout cost a case its timing, per arm and case: the
+    # rounds it timed out in, and the rounds it was not reached in.
+    timed_out: dict[str, dict[str, set[int]]] = {a: {} for a in arms}
+    not_reached: dict[str, dict[str, set[int]]] = {a: {} for a in arms}
     for r in records:
         if r["type"] != "timing" or r["arm"] not in values or r["case"] not in values[r["arm"]]:
             continue
         arm, case = r["arm"], r["case"]
+        if r.get("status") in (TIMED_OUT, NOT_REACHED):
+            if r["round"] in valid_set:
+                lost = timed_out if r["status"] == TIMED_OUT else not_reached
+                lost[arm].setdefault(case, set()).add(r["round"])
+            continue
         if r.get("status") != "ok":
             status[arm][case] = r.get("status", ERROR)
             continue
@@ -129,11 +143,24 @@ def analyse(
                     r: math.log(arm_vals[r] / base_vals[r])
                     for r in sorted(base_vals.keys() & arm_vals.keys())
                 }
+                lost_in = {
+                    who: timed_out[a].get(c, set()) | not_reached[a].get(c, set())
+                    for who, a in (("arm", arm), ("baseline", baseline))
+                }
                 if paired:
                     rng = random.Random(_seed(arm + c, seed))
                     res.interval = stats.interval(list(paired.values()), rng, resamples)
                     res.verdict = stats.verdict(res.interval, result.band)
                     per_round[c] = paired
+                    lost = lost_in["arm"] | lost_in["baseline"]
+                    if lost:
+                        res.note = f"{len(lost)} rounds lost to timeouts"
+                elif lost_in["arm"] or lost_in["baseline"]:
+                    # Timed out (or never reached) in every round that has the other side.
+                    res.verdict = TIMEOUT
+                    who = "arm" if lost_in["arm"] else "baseline"
+                    a = arm if who == "arm" else baseline
+                    res.note = who if timed_out[a].get(c) else f"{who}, never reached"
             per_case[c] = res
         result.results[arm] = per_case
         result.geomean[arm] = stats.weighted_geomean_interval(
