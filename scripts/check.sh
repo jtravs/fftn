@@ -2,9 +2,10 @@
 # SPDX-FileCopyrightText: 2026 John C. Travers and contributors
 # SPDX-License-Identifier: Apache-2.0
 #
-# FFTN's quality gate. A change is finished when this is green (AGENTS.md, "The gate").
+# FFTN's quality gate (AGENTS.md, "The gate").
 #
-#   scripts/check.sh                              # every stage that applies
+#   scripts/check.sh                              # the merge gate: runs and is correct
+#   FFTN_CHECK_STAGES=all scripts/check.sh        # every stage (CI on main, periodic)
 #   FFTN_CHECK_STAGES="format build" scripts/check.sh
 #
 # Stages, in order:
@@ -42,7 +43,16 @@ set -euo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$root"
 all="spdx docs knobs format python shell gen apidoc build tidy sanitize tsan coverage bench"
-stages=" ${FFTN_CHECK_STAGES:-$all} "
+# The merge gate while FFTN is an unreleased experiment: the code builds, the tests pass
+# (Release and under ASan + UBSan), the codelets match the generator, the benchmark smoke
+# agrees with the reference. Style, lint, coverage and the remaining sanitizers run with
+# `all` in CI on main and are fixed in batches (AGENTS.md, section 3).
+merge="spdx gen build sanitize bench"
+case "${FFTN_CHECK_STAGES:-merge}" in
+  merge) stages=" $merge " ;;
+  all) stages=" $all " ;;
+  *) stages=" $FFTN_CHECK_STAGES " ;;
+esac
 stage() { [[ $stages == *" $1 "* ]]; }
 say() { printf '\n== %s\n' "$*"; }
 skip() { printf '   nothing to check yet (%s)\n' "$*"; }
