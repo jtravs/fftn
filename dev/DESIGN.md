@@ -1116,11 +1116,14 @@ So the stage is a program fragment built from the chain's own passes, nothing re
    exp(±iπ j²/Q), each entry correctly rounded from the root table of 2Q), with the line's
    input edge when the stage is the first pass;
 2. the chain of M forward over the s copies (its first pass grouped when s = 1, a lane pass
-   otherwise);
-3. the chain of M backward, its first pass multiplying its input by the kernel spectrum
-   dft(b)/M (b = conj(w) on both sides of zero): input element t + s f takes entry f, so
-   for s = 1 it is the grouped pass's input factor (section 12.1) and for s > 1 a lane
-   pass whose lanes, the copies, share one broadcast entry per leg;
+   otherwise), times the kernel spectrum dft(b)/M (b = conj(w) on both sides of zero):
+   output element t + s f takes entry f. When C divides s (s = 1 included) its last pass
+   applies it as an output factor (section 12.1), its lanes sharing one broadcast entry
+   per leg for s > 1; otherwise those lanes straddle entries and the first pass of the
+   backward chain, a lane pass whose lanes are the copies, multiplies its input instead
+   (the input form cost 5 % at 4096 × 17 on the Mac, its multiplications landing in a
+   compute-bound pass);
+3. the chain of M backward;
 4. *bluestein out*: y[t + s k] = z[t + s k] · w_k for k < Q, with the line's output edge.
 
 Both chirp passes are elementwise over i = t + s j because m = 1, so they vectorise in
@@ -1132,9 +1135,8 @@ computed at construction in double by a small mixed-radix transform over the roo
 M) and the chirp once (Q entries, broadcast to a unit's C elements, which share j, when C
 divides s; otherwise one entry per element, sQ = n, because a unit's lanes then straddle two
 values of j). Both are kept per (Q, direction), so the axes of a plane with the same Q
-share them. Before task 2.3b both were stored per element (the kernel as the forward
-chain's last output factor, sM entries): 889 MB of tables for n = 17 · 2²⁰ in double, now
-under a kilobyte. No allocation at execution, every chunk of every stage a fixed range as
+share them. Before task 2.3b both were stored per element (sQ and sM entries): 889 MB of
+tables for n = 17 · 2²⁰ in double, now under a kilobyte. No allocation at execution, every chunk of every stage a fixed range as
 for any pass. Not done: running the s copies in blocks of B, which would shrink the scratch
 lines from sM to BM (1.2 GB per team member at n = 17 · 2²⁰) and keep each block's
 convolution in cache, needs a loop over blocks whose source is a scratch line, which the

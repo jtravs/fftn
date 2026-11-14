@@ -26,7 +26,8 @@ template <class T> FFTN_FORCE_INLINE cv<T> zeros() {
 // table holds Q entries in broadcast storage (pack_bcast_twiddles) and the units run row
 // by row (the s / C units of one j), the entry loaded once per row. Otherwise the table
 // holds one entry per element (s Q, per-lane storage, padded with ones to a multiple of C).
-// A loop that tracked j per unit, or divided, cost 5 % at 4096 x 17 on the Mac (C = 1).
+// Tracking j unit by unit instead was slower than the per-element table at 4096 x 17 on the
+// Mac (C = 1, task 2.3b); row by row it is faster.
 
 // z[i] = in(x[i]) w[i] for i < n = s Q, z[i] = 0 for n <= i < s M: the input of the
 // convolution, s copies of length M interleaved (copy innermost). Unit u is the elements

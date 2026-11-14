@@ -30,10 +30,10 @@
 //   remaining radix Q (the product of the large primes) has s = n / Q copies is the
 //   convolution of s interleaved sequences of length M (copy innermost): a chirp pass
 //   into scratch, zero-padded to s M; the chain of M, forward, with every pass's copy
-//   count multiplied by s; the chain of M backward, its first pass multiplying its input
-//   by the kernel spectrum (input element t + s f by entry f, so the copies share one
-//   table of M entries: a grouped pass's input factor when s = 1, else a lane pass that
-//   broadcasts the entry to its lanes, the copies); and a chirp pass out, elementwise
+//   count multiplied by s and its output element t + s f times entry f of the kernel
+//   spectrum (M entries for all the copies: the last pass's output factor when C divides
+//   s, broadcast to lanes that share it, else the backward chain's first pass's input,
+//   whose lanes are the copies); the chain of M backward; and a chirp pass out, elementwise
 //   because m = 1 makes the stage's input and output indices the same. The chirp passes
 //   read Q chirp entries, broadcast, when C divides s, otherwise one per element (s Q).
 //   Both tables are kept per (Q, sign), so every axis with that Q shares them. The

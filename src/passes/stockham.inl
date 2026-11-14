@@ -183,8 +183,9 @@ void lane_pass(const pass_args* a, std::size_t first, std::size_t last) {
   std::size_t p = first / blocks;
   std::size_t b = first % blocks;
   // factor_sharing::output (m = 1, so unit u is copies u C ..): the entry g = u C /
-  // factor_copies, advanced every per_entry units rather than divided per unit (2-5 %
-  // at 4096 x 17 on the Mac), and the entries between legs.
+  // factor_copies, advanced every per_entry units rather than divided per unit (a
+  // division per unit of a radix-12 last pass is a few per cent of it), and the entries
+  // between legs.
   std::size_t g = 0;
   std::size_t g_left = 0;
   std::size_t per_entry = 1;
