@@ -60,7 +60,8 @@ struct grid_case {
 // grid plan; every row against the reference, and every element outside the rows untouched.
 template <class T>
 void check_grid(fftn::isa target, const grid_case& gc, fftn::direction dir, bool in_place,
-                double scale, std::size_t count, std::size_t dist, bool scale_on_input = false) {
+                double scale, std::size_t count, std::size_t dist, bool scale_on_input = false,
+                bool fused = true) {
   const std::size_t n = gc.n;
   const std::string what =
       std::string(fftn::isa_name(target)) + (sizeof(T) == 8 ? " double" : " float") +
@@ -73,6 +74,7 @@ void check_grid(fftn::isa target, const grid_case& gc, fftn::direction dir, bool
   settings.grid_factors = gc.factors;
   settings.profile.grid_block = gc.block;
   settings.scale_on_input = scale_on_input;
+  settings.grid_fused = fused;
   fftn::shape<std::complex<T>, std::complex<T>> shape{
       .dir = dir,
       .axes = {{.n = n}},
@@ -162,6 +164,8 @@ template <class T> void every_case(fftn::isa target) {
   for (const grid_case& gc : forced_cases()) {
     for (const auto dir : {fftn::direction::forward, fftn::direction::backward}) {
       check_grid<T>(target, gc, dir, false, 1.0, 1, gc.n);
+      // Every phase through a gather and a scatter (build_settings::grid_fused off).
+      check_grid<T>(target, gc, dir, false, 1.0, 1, gc.n, false, false);
     }
   }
   // In place, a scale (on the output, and on the input), and a batch with gaps, on two and
@@ -249,25 +253,35 @@ TEST(Grid, PlannerChoosesByTheProfile) {
   EXPECT_FALSE(is_grid(*plan(4096, factors)));
 }
 
-// build_settings::scale_on_input puts the scale on phase 1's gather, the input edge.
-TEST(Grid, ScaleOnInputIsTheGathers) {
-  build_settings settings;
-  settings.strategy = strategy_choice::grid;
-  settings.scale_on_input = true;
-  const auto core = make_plan_core(
-      fftn::detail::view_of(fftn::rows_c2c<double>(1024, 1, fftn::direction::forward)),
-      {.scale = 0.5}, settings);
-  std::size_t in = 0;
-  std::size_t out = 0;
-  for (const auto& rec : core->prog.records) {
-    if (const auto* st = std::get_if<fftn::detail::stage>(&rec); st != nullptr) {
-      const bool gather = st->name.find("gather") != std::string::npos;
-      in += gather && st->name.find("in: scale") != std::string::npos ? 1U : 0U;
-      out += st->name.find("out: scale") != std::string::npos ? 1U : 0U;
+// build_settings::scale_on_input puts the scale on phase 1's input: its first pass, or its
+// gather when the phases copy their blocks.
+TEST(Grid, ScaleOnInputIsPhaseOnesInput) {
+  for (const bool fused : {true, false}) {
+    build_settings settings;
+    settings.strategy = strategy_choice::grid;
+    settings.scale_on_input = true;
+    settings.grid_fused = fused;
+    settings.grid_factors = {8, 128}; // phase 1 a single radix-8 pass, which reads the rows
+    const auto core = make_plan_core(
+        fftn::detail::view_of(fftn::rows_c2c<double>(1024, 1, fftn::direction::forward)),
+        {.scale = 0.5}, settings);
+    std::size_t in = 0;
+    std::size_t out = 0;
+    std::string first;
+    for (const auto& rec : core->prog.records) {
+      if (const auto* st = std::get_if<fftn::detail::stage>(&rec); st != nullptr) {
+        if (first.empty()) {
+          first = st->name;
+        }
+        in += st->name.find("in: scale") != std::string::npos ? 1U : 0U;
+        out += st->name.find("out: scale") != std::string::npos ? 1U : 0U;
+      }
     }
+    EXPECT_EQ(in, 1U);
+    EXPECT_EQ(out, 0U);
+    EXPECT_NE(first.find("in: scale"), std::string::npos) << first;
+    EXPECT_EQ(first.find("gather") != std::string::npos, !fused) << first;
   }
-  EXPECT_EQ(in, 1U);
-  EXPECT_EQ(out, 0U);
 }
 
 // At the lengths the rules make grids (2^15 to 2^18, two and three phases), the grid

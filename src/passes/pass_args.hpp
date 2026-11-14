@@ -38,6 +38,12 @@ struct pass_args {
   double scale = 1.0;
   const void* in_factor = nullptr;
   const void* out_factor = nullptr;
+  // A grid phase's pass (src/passes/grid.inl, phase_pass): copy q of s is (q % cols, q / cols)
+  // on each side, at (q % cols) + qstride (q / cols) + stride idx; 0 for cols means s.
+  std::size_t src_cols = 0;
+  std::size_t dst_cols = 0;
+  std::ptrdiff_t src_qstride = 0;
+  std::ptrdiff_t dst_qstride = 0;
 };
 
 // Runs units [first, last) of a pass. A unit is the kernel's own (a block of butterflies,
@@ -64,6 +70,18 @@ inline constexpr std::size_t max_codelet_radix = 16;
 // would scale (a plan has one scale).
 //
 // NOLINTBEGIN(modernize-avoid-c-arrays): filled inside ISA regions, which use no std templates
+// The variants of a grid phase's pass: twiddled (m > 1) or plain (m = 1), with the input's
+// scale, or on output the scale or one twiddle per row.
+enum phase_variant : std::uint8_t {
+  phase_twiddled,
+  phase_twiddled_in_scale,
+  phase_plain,
+  phase_plain_in_scale,
+  phase_plain_out_scale,
+  phase_plain_row_twiddles,
+  phase_variants,
+};
+
 struct radix_passes {
   // The chain's first pass (s = 1): lanes over butterflies; input edge.
   pass_fn grouped[2][edge_op_count];
@@ -73,6 +91,9 @@ struct radix_passes {
   pass_fn last[2][edge_op_count];
   // A whole transform of n = radix <= 16 in registers; input edge, output edge.
   pass_fn leaf[2][edge_op_count][edge_op_count];
+  // A grid phase's first or last pass reading or writing the caller's rows in place of a
+  // gather or scatter (src/passes/grid.inl), by phase_variant.
+  pass_fn phase[2][phase_variants];
 };
 
 template <class T> struct pass_kernels {

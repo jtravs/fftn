@@ -94,6 +94,25 @@ template <class T, std::size_t R> struct radix_entries<T, R, true> {
                   },
               },
           },
+      .phase =
+          {
+              {
+                  &phase_pass<T, R, -1, true, nop, 0>,
+                  &phase_pass<T, R, -1, true, scl, 0>,
+                  &phase_pass<T, R, -1, false, nop, 0>,
+                  &phase_pass<T, R, -1, false, scl, 0>,
+                  &phase_pass<T, R, -1, false, nop, 1>,
+                  &phase_pass<T, R, -1, false, nop, 2>,
+              },
+              {
+                  &phase_pass<T, R, +1, true, nop, 0>,
+                  &phase_pass<T, R, +1, true, scl, 0>,
+                  &phase_pass<T, R, +1, false, nop, 0>,
+                  &phase_pass<T, R, +1, false, scl, 0>,
+                  &phase_pass<T, R, +1, false, nop, 1>,
+                  &phase_pass<T, R, +1, false, nop, 2>,
+              },
+          },
   };
 };
 
