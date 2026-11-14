@@ -5,7 +5,8 @@
 // rows so that the quadruple-precision reference stays cheap: two and three phases,
 // power-of-two and smooth composite factors, every instruction set the machine runs, double
 // and float, both directions, out of place and in place, batches with padded distances, and
-// the scale fused into the last phase. And the planner's choice: a grid beyond the profile's
+// the scale fused into the last phase (or the first, on the input); forced blocks, narrow
+// and not powers of two; the grid against the chain at the lengths the rules give it. And the planner's choice: a grid beyond the profile's
 // threshold, three phases beyond the second, the chain elsewhere and where the row cannot
 // be a grid; the split rules of choose_grid.
 
@@ -13,6 +14,7 @@
 #include "core/program.hpp"
 #include "fftn/detail/core.hpp"
 #include "fftn/fftn.hpp"
+#include "isa/kernel_table.hpp"
 #include "reference/reference_dft.hpp"
 #include "strategies/grid.hpp"
 #include "support/exact.hpp"
@@ -23,6 +25,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <complex>
 #include <cstddef>
 #include <span>
@@ -50,13 +53,14 @@ struct grid_case {
   std::size_t n;
   std::vector<std::size_t> factors; // empty: the rules' split
   std::size_t phases;               // expected
+  std::size_t block = 0;            // forced (0: the rules')
 };
 
 // A batch of `count` rows of n, `dist` apart (dist >= n; the gaps are canaries), through a
 // grid plan; every row against the reference, and every element outside the rows untouched.
 template <class T>
 void check_grid(fftn::isa target, const grid_case& gc, fftn::direction dir, bool in_place,
-                double scale, std::size_t count, std::size_t dist) {
+                double scale, std::size_t count, std::size_t dist, bool scale_on_input = false) {
   const std::size_t n = gc.n;
   const std::string what =
       std::string(fftn::isa_name(target)) + (sizeof(T) == 8 ? " double" : " float") +
@@ -67,6 +71,8 @@ void check_grid(fftn::isa target, const grid_case& gc, fftn::direction dir, bool
   build_settings settings;
   settings.strategy = strategy_choice::grid;
   settings.grid_factors = gc.factors;
+  settings.profile.grid_block = gc.block;
+  settings.scale_on_input = scale_on_input;
   fftn::shape<std::complex<T>, std::complex<T>> shape{
       .dir = dir,
       .axes = {{.n = n}},
@@ -78,7 +84,18 @@ void check_grid(fftn::isa target, const grid_case& gc, fftn::direction dir, bool
       make_plan_core(fftn::detail::view_of(shape),
                      {.in_place = in_place, .scale = scale, .force_isa = target}, settings);
   const std::string text = described(*core);
+  const std::size_t lanes =
+      fftn::detail::of<T>(*fftn::detail::find_kernels(core->isa_target)).complex_lanes;
+  if (gc.block % lanes != 0) {
+    EXPECT_FALSE(is_grid(*core)) << text; // a block must be whole registers
+    return;
+  }
   ASSERT_TRUE(is_grid(*core)) << text;
+  if (gc.block != 0) {
+    EXPECT_NE(text.find("in blocks of " + std::to_string(gc.block) + " columns"),
+              std::string::npos)
+        << text;
+  }
   EXPECT_NE(text.find("in " + std::to_string(gc.phases) + " phases"), std::string::npos) << text;
 
   fftn::test::input_source src(0x6121DULL + n + count);
@@ -128,6 +145,15 @@ const std::vector<grid_case>& forced_cases() {
       {.n = 1024, .factors = {8, 8, 16}, .phases = 3},
       {.n = 576, .factors = {8, 6, 12}, .phases = 3}, // later factors need not be multiples
       {.n = 768, .factors = {}, .phases = 2},         // the rules' split
+      // Phase 2 of three with two blocks of l (L / block = 2) at each of 8 columns c.
+      {.n = 1024, .factors = {16, 8, 8}, .phases = 3, .block = 8},
+      // Narrow blocks (several per phase), and blocks that are no power of two, which only
+      // targets whose complex count divides them can run.
+      {.n = 1024, .factors = {16, 4, 16}, .phases = 3, .block = 4},
+      {.n = 512, .factors = {16, 32}, .phases = 2, .block = 2},
+      {.n = 216, .factors = {6, 36}, .phases = 2, .block = 6},
+      {.n = 720, .factors = {12, 6, 10}, .phases = 3, .block = 3},
+      {.n = 720, .factors = {12, 6, 10}, .phases = 3, .block = 6},
   };
   return cases;
 }
@@ -138,11 +164,13 @@ template <class T> void every_case(fftn::isa target) {
       check_grid<T>(target, gc, dir, false, 1.0, 1, gc.n);
     }
   }
-  // In place, a scale, and a batch with gaps, on two and three phases.
+  // In place, a scale (on the output, and on the input), and a batch with gaps, on two and
+  // three phases.
   for (const grid_case& gc : {forced_cases()[1], forced_cases()[4]}) {
     check_grid<T>(target, gc, fftn::direction::forward, true, 1.0, 1, gc.n);
     check_grid<T>(target, gc, fftn::direction::backward, true, 0.25, 2, gc.n + 3);
     check_grid<T>(target, gc, fftn::direction::forward, false, 1.0 / 3, 3, gc.n + 5);
+    check_grid<T>(target, gc, fftn::direction::forward, false, 1.0 / 3, 1, gc.n, true);
   }
 }
 
@@ -221,6 +249,70 @@ TEST(Grid, PlannerChoosesByTheProfile) {
   EXPECT_FALSE(is_grid(*plan(4096, factors)));
 }
 
+// build_settings::scale_on_input puts the scale on phase 1's gather, the input edge.
+TEST(Grid, ScaleOnInputIsTheGathers) {
+  build_settings settings;
+  settings.strategy = strategy_choice::grid;
+  settings.scale_on_input = true;
+  const auto core = make_plan_core(
+      fftn::detail::view_of(fftn::rows_c2c<double>(1024, 1, fftn::direction::forward)),
+      {.scale = 0.5}, settings);
+  std::size_t in = 0;
+  std::size_t out = 0;
+  for (const auto& rec : core->prog.records) {
+    if (const auto* st = std::get_if<fftn::detail::stage>(&rec); st != nullptr) {
+      const bool gather = st->name.find("gather") != std::string::npos;
+      in += gather && st->name.find("in: scale") != std::string::npos ? 1 : 0;
+      out += st->name.find("out: scale") != std::string::npos ? 1 : 0;
+    }
+  }
+  EXPECT_EQ(in, 1U);
+  EXPECT_EQ(out, 0U);
+}
+
+// At the lengths the rules make grids (2^15 to 2^18, two and three phases), the grid
+// agrees with the chain to within both their error bounds: too long for the
+// quadruple-precision reference, which checks the chain in passes_test.
+template <class T> void grid_agrees_with_chain(std::size_t n, bool three) {
+  SCOPED_TRACE((sizeof(T) == 8 ? "double, n = " : "float, n = ") + std::to_string(n));
+  build_settings grid;
+  grid.strategy = strategy_choice::grid;
+  grid.profile.grid_three_bytes = three ? 1 : std::size_t{1} << 40;
+  build_settings chain;
+  chain.strategy = strategy_choice::chain;
+  const auto shape = fftn::rows_c2c<T>(n, 1, fftn::direction::forward);
+  const auto g = make_plan_core(fftn::detail::view_of(shape), {}, grid);
+  const auto c = make_plan_core(fftn::detail::view_of(shape), {}, chain);
+  const std::string text = described(*g);
+  ASSERT_TRUE(is_grid(*g)) << text;
+  EXPECT_NE(text.find(three ? "in 3 phases" : "in 2 phases"), std::string::npos) << text;
+  fftn::test::input_source src(0xC4A1ULL + n);
+  const cvec<T> x = src.complexes<T>(n);
+  cvec<T> yg(n);
+  cvec<T> yc(n);
+  const fftn::workspace wg(fftn::detail::workspace_bytes(*g, 1));
+  const fftn::workspace wc(fftn::detail::workspace_bytes(*c, 1));
+  fftn::detail::execute_core(*g, 0, 1, x.data(), yg.data(), wg);
+  fftn::detail::execute_core(*c, 0, 1, x.data(), yc.data(), wc);
+  double diff = 0;
+  double norm = 0;
+  for (std::size_t k = 0; k < n; ++k) {
+    diff += std::norm(std::complex<double>(yg[k]) - std::complex<double>(yc[k]));
+    norm += std::norm(std::complex<double>(yc[k]));
+  }
+  const auto tol = fftn::test::derived_tolerance<T>(n, fftn::test::stable_fft_bound) * 2.0;
+  EXPECT_LE(std::sqrt(diff / norm), tol.rms);
+}
+
+TEST(Grid, AgreesWithTheChainAtLengthsTheRulesTake) {
+  for (const auto& [n, three] :
+       {std::pair{std::size_t{32768}, false}, std::pair{std::size_t{131072}, false},
+        std::pair{std::size_t{262144}, true}}) {
+    grid_agrees_with_chain<double>(n, three);
+    grid_agrees_with_chain<float>(n, three);
+  }
+}
+
 TEST(Grid, SplitRules) {
   using fftn::detail::choose_grid;
   // Two phases near sqrt(n), the shorter first, block widened within the budget.
@@ -252,6 +344,10 @@ TEST(Grid, SplitRules) {
   EXPECT_EQ(choose_grid(1024, 2, 4096, false, 3, {32, 32}).phases, 0U);
   EXPECT_EQ(choose_grid(1024, 2, 4096, false, 0, {32, 16}).phases, 0U);
   EXPECT_EQ(choose_grid(1024, 2, 4096, false, 0, {1024}).phases, 0U);
+  // A forced block is kept for a rules' split into three as well.
+  g = choose_grid(1 << 22, 1, 4096, true, 8, {});
+  EXPECT_EQ(g.phases, 3U);
+  EXPECT_EQ(g.block, 8U);
 }
 
 } // namespace

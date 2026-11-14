@@ -4,6 +4,7 @@
 #include "strategies/grid.hpp"
 
 #include "core/program.hpp"
+#include "core/twiddles.hpp"
 #include "isa/kernel_table.hpp"
 #include "passes/pass_args.hpp"
 #include "strategies/chain.hpp"
@@ -232,7 +233,7 @@ grid_split choose_grid(std::size_t n, std::size_t lanes, std::size_t budget, boo
   if (two.phases != 0 && (!three_phases || three.phases == 0)) {
     return two;
   }
-  if (three.phases != 0) {
+  if (three.phases != 0 && forced_block == 0) {
     // Three phases are for rows far beyond L2, where X12 measured wide rows in the gathers
     // and scatters worth more than keeping a block's chain within L1.
     three.block = widest_block(three, least, 2 * budget);
@@ -265,7 +266,10 @@ void grid_builder<T>::add_copy(const char* what, pass_fn run, std::size_t rows, 
   st.chunks = 1;
   st.name = std::string("grid ") + what + " (" + std::to_string(cols) + " columns x " +
             std::to_string(rows) + " rows, row strides " + std::to_string(src_stride) + " -> " +
-            std::to_string(dst_stride) + (scale != 1.0 ? "; out: scale" : "") + ")";
+            std::to_string(dst_stride) + (scale == 1.0                         ? ""
+             : std::string(what) == "gather" ? "; in: scale"
+                                             : "; out: scale") +
+            ")";
   p.records.emplace_back(std::move(st));
 }
 
@@ -305,7 +309,8 @@ slot grid_builder<T>::block_chain(std::size_t n, std::size_t cols, int sign, slo
   return at;
 }
 
-// Phase 1's twiddles w_n^(c k1), c = c0 + q, as two factors (twiddle_transpose): w_n^(q k1)
+// Phase 1's twiddles w_n^(c k1), c = c0 + q, as two factors, each root computed alone
+// (no table of the n roots) (twiddle_transpose): w_n^(q k1)
 // for q < block, in the order of a block's tiles (per tile of C columns, per tile of C rows,
 // C rows of C columns), and w_n^(c0 k1) per block, its N1 rows; plain interleaved.
 template <class T>
@@ -314,14 +319,13 @@ std::pair<const T*, const T*> grid_builder<T>::first_twiddles(const grid_split& 
   const std::size_t m = first_columns(g);
   const std::size_t n = n1 * m;
   const std::size_t lanes = kernels_.complex_lanes;
-  const auto& w = chain_.root_table(n);
   std::vector<T>& local = tables_.emplace_back(2 * g.block * n1);
   std::size_t e = 0;
   for (std::size_t q0 = 0; q0 < g.block; q0 += lanes) {
     for (std::size_t k0 = 0; k0 < n1; k0 += lanes) {
       for (std::size_t i = 0; i < lanes; ++i) {
         for (std::size_t l = 0; l < lanes; ++l) {
-          const std::complex<T> v = w[(q0 + l) * (k0 + i) % n];
+          const std::complex<T> v = unit_root<T>(-1, (q0 + l) * (k0 + i) % n, n);
           local[e++] = v.real();
           local[e++] = v.imag();
         }
@@ -335,7 +339,7 @@ std::pair<const T*, const T*> grid_builder<T>::first_twiddles(const grid_split& 
   e = 0;
   for (std::size_t c0 = 0; c0 < m; c0 += g.block) {
     for (std::size_t k = 0; k < n1; ++k) {
-      const std::complex<T> v = w[c0 * k % n];
+      const std::complex<T> v = unit_root<T>(-1, c0 * k % n, n);
       rows[e++] = v.real();
       rows[e++] = v.imag();
     }
@@ -345,12 +349,11 @@ std::pair<const T*, const T*> grid_builder<T>::first_twiddles(const grid_split& 
 
 // A later phase's w_(Ni M)^(c k): per column c < M, the Ni rows k (plain interleaved).
 template <class T> const T* grid_builder<T>::row_twiddles(std::size_t ni, std::size_t m) {
-  const auto& w = chain_.root_table(ni * m);
   std::vector<T>& t = tables_.emplace_back(2 * ni * m);
   std::size_t e = 0;
   for (std::size_t c = 0; c < m; ++c) {
     for (std::size_t k = 0; k < ni; ++k) {
-      const std::complex<T> v = w[c * k];
+      const std::complex<T> v = unit_root<T>(-1, c * k, ni * m);
       t[e++] = v.real();
       t[e++] = v.imag();
     }
@@ -364,7 +367,9 @@ template <class T> bool grid_builder<T>::uses_block(const grid_split& g, bool in
 
 template <class T>
 std::size_t grid_builder<T>::c2c_row(const grid_split& g, int sign, bool in_place, double scale,
-                                     program& p) {
+                                     bool scale_on_input, program& p) {
+  const double in_scale = scale_on_input ? scale : 1.0;
+  const double out_scale = scale_on_input ? 1.0 : scale;
   const std::size_t b = g.block;
   const std::size_t c = kernels_.complex_lanes;
   const std::size_t d = sign < 0 ? 0 : 1;
@@ -391,8 +396,8 @@ std::size_t grid_builder<T>::c2c_row(const grid_split& g, int sign, bool in_plac
   l1.step[index(buf[1])] = blk * static_cast<std::ptrdiff_t>(n1) * cb;
   l1.step[3] = static_cast<std::ptrdiff_t>(n1) * cb;
   p.records.emplace_back(l1);
-  add_copy("gather", kernels_.passes.block_copy[0], n1, b, buf[0], static_cast<std::ptrdiff_t>(m1),
-           slot::a, blk, 1.0, nullptr, p);
+  add_copy("gather", kernels_.passes.block_copy[in_scale != 1.0 ? 1 : 0], n1, b, buf[0],
+           static_cast<std::ptrdiff_t>(m1), slot::a, blk, in_scale, nullptr, p);
   const slot z1 = block_chain(n1, b, sign, slot::a, p);
   stage tt;
   tt.run = kernels_.passes.twiddle_transpose[d];
@@ -441,8 +446,8 @@ std::size_t grid_builder<T>::c2c_row(const grid_split& g, int sign, bool in_plac
       add_copy("twiddled scatter", kernels_.passes.twiddle_scatter[d], ni, b, z, blk, dst, big_l,
                1.0, row_twiddles(ni, m), p);
     } else {
-      add_copy("scatter", kernels_.passes.block_copy[scale != 1.0 ? 1 : 0], ni, b, z, blk, dst,
-               big_l, scale, nullptr, p);
+      add_copy("scatter", kernels_.passes.block_copy[out_scale != 1.0 ? 1 : 0], ni, b, z, blk, dst,
+               big_l, out_scale, nullptr, p);
     }
     const auto end = static_cast<std::uint32_t>(p.records.size());
     std::get<loop>(p.records[inner]).body_end = end;

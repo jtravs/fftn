@@ -44,6 +44,10 @@ std::shared_ptr<const fftn::detail::plan_core> rows(std::size_t n, std::size_t c
   if (n == 3072) {
     settings.radices = {4, 4, 4, 4, 12};
   }
+  // The work of a generic pass (below): its prime factor is not a Bluestein stage.
+  if (n == 34) {
+    settings.bluestein_above = static_cast<std::size_t>(-1);
+  }
   return fftn::detail::make_plan_core(
       fftn::detail::view_of(fftn::rows_c2c<double>(n, count, fftn::direction::forward)), opts,
       settings);

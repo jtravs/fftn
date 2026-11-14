@@ -23,7 +23,8 @@
 //   (src/passes/grid.inl);
 // - later phases: a block is block adjacent l at one c (block divides N1), so it is written
 //   row by row like the gather, rows L apart, each row times its twiddle w_(Ni M)^(c k), one
-//   value per row; the last phase's rows carry the output edge's scale instead.
+//   value per row; the last phase's rows carry the output edge's scale instead (phase 1's
+//   gather the input edge's, with build_settings::scale_on_input).
 // A phase reads one array and writes another, except the last, which writes the positions
 // it read and so runs in place: phase 1 writes the output out of place when there are two
 // phases, otherwise the workspace block, and phase 2 of three writes the output. Scratch
@@ -95,8 +96,10 @@ public:
   // Appends the records of one c2c row from the in slot to the out slot, both stride 1,
   // and returns the complex elements of scratch it needs in each of a and b. in_place: in
   // and out are the same memory. Whether it uses the workspace block: block_elements().
-  // scale: on the output (1: none).
-  std::size_t c2c_row(const grid_split& g, int sign, bool in_place, double scale, program& p);
+  // scale: on the output (1: none), or on the input with scale_on_input (the input edge:
+  // phase 1's gather applies it).
+  std::size_t c2c_row(const grid_split& g, int sign, bool in_place, double scale,
+                      bool scale_on_input, program& p);
 
   // Whether c2c_row of g uses the block slot, n complex elements.
   [[nodiscard]] static bool uses_block(const grid_split& g, bool in_place) noexcept;

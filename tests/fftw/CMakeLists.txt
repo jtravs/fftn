@@ -6,5 +6,5 @@
 # (FFTN_TEST_WITH_FFTW=OFF).
 
 fftn_add_test(fftn_fftw_tests
-  SOURCES fftw_suite_test.cpp
+  SOURCES fftw_suite_test.cpp bluestein_test.cpp
   LIBRARIES fftn_test_support)

@@ -82,6 +82,10 @@ template <class T> struct pass_kernels {
   pass_fn generic[2][edge_op_count][edge_op_count];
   // y[i] = x[i] with the edges' operations; input edge, output edge.
   pass_fn copy[edge_op_count][edge_op_count];
+  // The chirp multiplications around a Bluestein stage's convolution (passes/bluestein.inl):
+  // into the zero-padded buffer, with the input edge; out of it, with the output edge.
+  pass_fn bluestein_in[edge_op_count];
+  pass_fn bluestein_out[edge_op_count];
   // Real-to-complex edges (DESIGN.md 9.1): even n = 2h through a complex transform of h,
   // odd n through n. The output edges take [scaled].
   pass_fn r2c_pack_pairs;

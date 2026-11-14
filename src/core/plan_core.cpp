@@ -289,26 +289,15 @@ void add_phase(program& p, std::size_t axis, const std::vector<std::size_t>& ext
   }
 }
 
-std::string radix_list(const std::vector<std::size_t>& radices) {
-  if (radices.empty()) {
-    return "none (a copy)";
-  }
-  std::string text;
-  for (const std::size_t r : radices) {
-    text += (text.empty() ? "" : " x ") + std::to_string(r);
-  }
-  return text;
-}
-
 template <class T>
 std::string real_note(const chain_builder<T>& chain, std::size_t n, const char* kind) {
   if (n % 2 == 0) {
     return std::string(kind) + " through a half-length complex chain of " + std::to_string(n / 2) +
-           ", radices " + radix_list(chain.radices(n / 2)) +
+           ", radices " + chain.radix_text(n / 2) +
            (kind[0] == 'r' ? ", then a post-pass" : ", after a pre-pass");
   }
   return std::string(kind) + " through a full-length complex chain (n odd), radices " +
-         radix_list(chain.radices(n));
+         chain.radix_text(n);
 }
 
 // The edge operations of the c2c phases: the input edge belongs to the first phase, the
@@ -339,7 +328,8 @@ line_edges c2c_edges(const options& opts, const build_settings& settings, bool f
 
 // Whether a c2c row of one axis is a grid (DESIGN.md 8.5, experiment X12), and its split:
 // beyond the profile's grid_min_bytes or when forced, if the row is contiguous on both
-// sides, carries no edge factor (the grid applies only the scale, on its output), has no
+// sides, carries no edge factor (the grid applies only the scale, on its output or, with
+// build_settings::scale_on_input, its input), has no
 // forced radices for its whole length and has a split whose phases are codelet chains.
 template <class T>
 grid_split plan_grid(const plan_core& c, const side& in, const side& out,
@@ -380,7 +370,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   c.isa_target = plan_target(opts);
   const kernels_of<T>& kernels = of<T>(*find_kernels(c.isa_target));
   chain_builder<T> chain(kernels, profile_of(c.isa_target, kernels.complex_lanes), tables_of<T>(c),
-                         settings.chunk_points, settings.radices);
+                         settings.chunk_points, settings.radices, settings.bluestein_above);
   program& p = c.prog;
   const std::size_t r = s.axes.size();
   const auto complex_bytes = static_cast<std::ptrdiff_t>(2 * sizeof(T));
@@ -418,7 +408,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     if (grid_builder<T>::uses_block(grid_plan, c.in_place)) {
       c.block_elements = c.lengths[0];
     }
-    scratch = grid.c2c_row(grid_plan, sign, c.in_place, opts.scale, p);
+    scratch = grid.c2c_row(grid_plan, sign, c.in_place, opts.scale, settings.scale_on_input, p);
     c.axis_notes.push_back("axis 0 (n = " + std::to_string(c.lengths[0]) +
                            "): " + grid.note(grid_plan));
     c.strategy_note =
@@ -437,7 +427,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
                          c2c_edges(opts, settings, d + 1 == r, d == 0), st);
       lines(d, in.extent, src, out_view, need, std::move(st));
       c.axis_notes.push_back("axis " + std::to_string(d) + " (n = " + std::to_string(c.lengths[d]) +
-                             "): radices " + radix_list(chain.radices(c.lengths[d])));
+                             "): radices " + chain.radix_text(c.lengths[d]));
     }
   } else if (s.kind == transform_kind::r2c) {
     std::vector<stage> st;
@@ -455,7 +445,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
                                                c2c_edges(opts, settings, false, d == 0), cs);
       lines(d, out.extent, out_view, out_view, cneed, std::move(cs));
       c.axis_notes.push_back("axis " + std::to_string(d) + " (n = " + std::to_string(n) +
-                             "): c2c forward, radices " + radix_list(chain.radices(n)));
+                             "): c2c forward, radices " + chain.radix_text(n));
     }
   } else {
     // c2r: the complex axes first, then the real one, which must come last because the
@@ -492,7 +482,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
           chain.c2c_line(n, +1, at(src, d), at(work, d), src.where == work.where, line_edges(), cs);
       lines(d, in.extent, src, work, cneed, std::move(cs));
       c.axis_notes.push_back("axis " + std::to_string(d) + " (n = " + std::to_string(n) +
-                             "): c2c backward, radices " + radix_list(chain.radices(n)));
+                             "): c2c backward, radices " + chain.radix_text(n));
     }
     const view& src = r > 1 && !c.in_place ? block_view : in_view;
     std::vector<stage> st;

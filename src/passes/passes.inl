@@ -12,6 +12,8 @@
 
 #include "passes/generic.inl"
 
+#include "passes/bluestein.inl"
+
 #include "passes/real.inl"
 
 #include "passes/grid.inl"

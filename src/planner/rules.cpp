@@ -249,13 +249,88 @@ constexpr target fallback_target = target::avx2;
 
 std::size_t lanes_distance(std::size_t a, std::size_t b) { return a > b ? a - b : b - a; }
 
+// Prime factors above this go through Bluestein (DESIGN.md 11.2). Measured on the Mac
+// (Apple M5 Max, neon_fcma, dev/experiments/X17-bluestein-threshold.md): Bluestein beat the
+// generic pass at every prime from 17 to 257, by 2.5 to 43 times in double and 7 to 135
+// times in float, and at composites with many copies (17 x 64, 11 x 13 x 17) by 2 to 3
+// times. So every prime factor above the codelets goes through Bluestein; the generic pass
+// remains for radices a test forces. Unmeasured on the other targets, which take the same
+// value until a measurement there replaces it.
+constexpr std::size_t default_bluestein_above = 16;
+
+struct sequence {
+  std::uint64_t cost = 0;
+  std::vector<std::size_t> radices;
+};
+
+// The cheapest sequence of codelet radices for the smooth part `smooth` of a line of n
+// points, followed by generic passes when `more` (rule 4 of DESIGN.md 11.2).
+sequence cheapest(std::size_t n, std::size_t smooth, bool more, const target_profile& p) {
+  // The divisors of `smooth`, ascending: every prefix product of a sequence is one.
+  std::vector<std::size_t> divisors{1};
+  {
+    std::size_t left = smooth;
+    for (const std::size_t q : {2U, 3U, 5U, 7U, 11U, 13U}) {
+      const std::size_t count = divisors.size();
+      std::size_t power = 1;
+      while (left % q == 0) {
+        left /= q;
+        power *= q;
+        for (std::size_t i = 0; i < count; ++i) {
+          divisors.push_back(divisors[i] * power);
+        }
+      }
+    }
+  }
+  std::ranges::sort(divisors);
+  const auto index = [&](std::size_t d) {
+    return static_cast<std::size_t>(std::ranges::lower_bound(divisors, d) - divisors.begin());
+  };
+  const auto kind = [&](std::size_t s, std::size_t next) -> std::size_t {
+    if (s == 1) {
+      return 0;
+    }
+    return next == smooth && !more ? 2 : 1;
+  };
+  // best[i]: the lowest cost of the passes from prefix product divisors[i] to the end.
+  std::vector<std::uint64_t> best(divisors.size(), 0);
+  for (std::size_t i = divisors.size() - 1; i-- > 0;) {
+    const std::size_t s = divisors[i];
+    bool found = false;
+    for (std::size_t r = 2; r <= largest_leaf; ++r) {
+      if ((smooth / s) % r != 0) {
+        continue;
+      }
+      const std::uint64_t c = pass_cost(p, n, s, r, kind(s, s * r)) + best[index(s * r)];
+      if (!found || c < best[i]) {
+        best[i] = c;
+        found = true;
+      }
+    }
+  }
+  // Ties go to the smallest radix at each step, so the sequence is the lexicographically
+  // first of the cheapest.
+  sequence out{.cost = best[0], .radices = {}};
+  for (std::size_t s = 1; s != smooth;) {
+    for (std::size_t r = 2; r <= largest_leaf; ++r) {
+      if ((smooth / s) % r == 0 &&
+          pass_cost(p, n, s, r, kind(s, s * r)) + best[index(s * r)] == best[index(s)]) {
+        out.radices.push_back(r);
+        s *= r;
+        break;
+      }
+    }
+  }
+  return out;
+}
+
 } // namespace
 
 target_profile profile_of(target t, std::size_t lanes) noexcept {
   const measured_table* nearest = nullptr;
   for (const measured_table& m : measured_tables) {
     if (m.t == t && m.lanes == lanes) {
-      return {.lanes = lanes, .costs = m.costs};
+      return {.lanes = lanes, .costs = m.costs, .bluestein_above = default_bluestein_above};
     }
     if (m.t == fallback_target &&
         (nearest == nullptr ||
@@ -263,7 +338,7 @@ target_profile profile_of(target t, std::size_t lanes) noexcept {
       nearest = &m;
     }
   }
-  return {.lanes = lanes, .costs = nearest->costs};
+  return {.lanes = lanes, .costs = nearest->costs, .bluestein_above = default_bluestein_above};
 }
 
 // The specification is DESIGN.md 11.2, rule by rule.
@@ -310,63 +385,45 @@ std::vector<std::size_t> rule_radices(std::size_t n, const target_profile& p) {
   if (smooth == 1) {
     return big;
   }
-  // The divisors of `smooth`, ascending: every prefix product of a sequence is one.
-  std::vector<std::size_t> divisors{1};
-  {
-    std::size_t left = smooth;
-    for (const std::size_t q : {2U, 3U, 5U, 7U, 11U, 13U}) {
-      const std::size_t count = divisors.size();
-      std::size_t power = 1;
-      while (left % q == 0) {
-        left /= q;
-        power *= q;
-        for (std::size_t i = 0; i < count; ++i) {
-          divisors.push_back(divisors[i] * power);
+  std::vector<std::size_t> out = cheapest(n, smooth, !big.empty(), p).radices;
+  out.insert(out.end(), big.begin(), big.end());
+  return out;
+}
+
+std::size_t bluestein_length(std::size_t q, const target_profile& p) {
+  const std::size_t least = 2 * q - 1;
+  std::size_t power = 1;
+  while (power < least) {
+    power *= 2;
+  }
+  // The two chirp passes touch M points each, priced like a last radix-2 pass per point.
+  const std::uint64_t per_point = p.costs->unit[2][0] / (2 * p.lanes) + 1;
+  // The 7-smooth lengths in [least, power], ascending.
+  std::vector<std::size_t> candidates;
+  for (std::size_t a = 1; a <= power; a *= 2) {
+    for (std::size_t b = a; b <= power; b *= 3) {
+      for (std::size_t c = b; c <= power; c *= 5) {
+        for (std::size_t d = c; d <= power; d *= 7) {
+          if (d >= least) {
+            candidates.push_back(d);
+          }
         }
       }
     }
   }
-  std::ranges::sort(divisors);
-  const auto index = [&](std::size_t d) {
-    return static_cast<std::size_t>(std::ranges::lower_bound(divisors, d) - divisors.begin());
-  };
-  const auto kind = [&](std::size_t s, std::size_t next) -> std::size_t {
-    if (s == 1) {
-      return 0;
-    }
-    return next == smooth && big.empty() ? 2 : 1;
-  };
-  // best[i]: the lowest cost of the passes from prefix product divisors[i] to the end.
-  std::vector<std::uint64_t> best(divisors.size(), 0);
-  for (std::size_t i = divisors.size() - 1; i-- > 0;) {
-    const std::size_t s = divisors[i];
-    bool found = false;
-    for (std::size_t r = 2; r <= largest_leaf; ++r) {
-      if ((smooth / s) % r != 0) {
-        continue;
-      }
-      const std::uint64_t c = pass_cost(p, n, s, r, kind(s, s * r)) + best[index(s * r)];
-      if (!found || c < best[i]) {
-        best[i] = c;
-        found = true;
-      }
+  std::ranges::sort(candidates);
+  std::size_t best = power;
+  std::uint64_t best_cost = 0;
+  bool found = false;
+  for (const std::size_t m : candidates) {
+    const std::uint64_t c = 2 * cheapest(m, m, false, p).cost + 2 * per_point * m;
+    if (!found || c < best_cost) {
+      best = m;
+      best_cost = c;
+      found = true;
     }
   }
-  // Ties go to the smallest radix at each step, so the sequence is the lexicographically
-  // first of the cheapest.
-  std::vector<std::size_t> out;
-  for (std::size_t s = 1; s != smooth;) {
-    for (std::size_t r = 2; r <= largest_leaf; ++r) {
-      if ((smooth / s) % r == 0 &&
-          pass_cost(p, n, s, r, kind(s, s * r)) + best[index(s * r)] == best[index(s)]) {
-        out.push_back(r);
-        s *= r;
-        break;
-      }
-    }
-  }
-  out.insert(out.end(), big.begin(), big.end());
-  return out;
+  return best;
 }
 
 } // namespace fftn::inline v0::detail

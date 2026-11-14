@@ -19,8 +19,9 @@ namespace {
 // The cost model's unit: a point through a pass. A codelet pass (grouped, lane, leaf) moves
 // the line's n points whatever its unit (a block of C butterflies or copies, or the line:
 // src/strategies/chain.hpp), so its work is n; a generic pass of radix r sums r terms per
-// point, n r; an edge pass (radix 1 in its arguments: copies, the real edges) touches about
-// two points per unit.
+// point, n r; an edge pass (radix 1 in its arguments: copies, the real edges, a Bluestein
+// stage's chirp passes) touches about two points per unit (an element or a pair; a block
+// of C elements for the chirp passes, so their work is C times larger than counted).
 double stage_work(const stage& st) {
   const std::size_t r = st.args.radix;
   if (r <= 1) {

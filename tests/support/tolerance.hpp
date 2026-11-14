@@ -77,6 +77,51 @@ inline double log2_length(std::size_t n) {
   return std::max(1.0, std::log2(static_cast<double>(std::max<std::size_t>(n, 1))));
 }
 
+// Bluestein (DESIGN.md 15.2): a transform of n = s Q points whose factor Q goes through a
+// cyclic convolution of length M (2Q - 1 <= M < 4Q). Its error is that of three transforms
+// of s M points in sequence: the forward transform and the inverse at execution, and the
+// kernel spectrum computed at plan time (in double, so for double plans it counts in
+// full); the two chirp multiplications add a rounding each, which is below one transform's.
+// Independent errors add in quadrature, so with L' = log2(s M) <= log2 n + 2 the model
+// gives
+//
+//   rms tolerance = c_rms * eps * sqrt(3 L')
+//   max tolerance = c_max * eps * sqrt(3) L'
+//
+// with the constants of stable_fft_bound. Expressed as constants on L = log2 n, as
+// derived_tolerance takes them, they are c sqrt(3 L' / L) and c sqrt(3) L' / L, using the
+// upper end L' = L + 2. Measured (Apple M5 Max, neon_fcma, random inputs against the
+// quadruple-precision reference, primes and products with large primes from 17 to 10403):
+// rms / (eps sqrt L) 0.42-0.83 and max / (eps L) 0.13-0.37, so the Bluestein lengths sit
+// within stable_fft_bound already (3.6 and 8 times below it); the derived bound is 1.8 to
+// 2.1 times looser in RMS and 1.8 to 2.6 times in the largest error, tending to sqrt(3)
+// for long lines.
+inline error_bound bluestein_bound(std::size_t n) {
+  const double l = log2_length(n);
+  const double wider = (l + 2.0) / l;
+  return {.rms = stable_fft_bound.rms * std::sqrt(3.0 * wider),
+          .max = stable_fft_bound.max * std::sqrt(3.0) * wider};
+}
+
+// Whether n has a prime factor above the codelets' 16, which FFTN's planner sends through
+// Bluestein on every profile (src/planner/rules.cpp).
+inline bool has_large_prime_factor(std::size_t n) {
+  for (std::size_t p = 2; p <= n / p; ++p) {
+    while (n % p == 0) {
+      if (p > 16) {
+        return true;
+      }
+      n /= p;
+    }
+  }
+  return n > 16;
+}
+
+// FFTN's bound for a transform of n points: Bluestein's where the planner uses it.
+inline error_bound fftn_bound(std::size_t n) {
+  return has_large_prime_factor(n) ? bluestein_bound(n) : stable_fft_bound;
+}
+
 template <class T> tolerance derived_tolerance(std::size_t n, const error_bound& bound) {
   const double eps = std::numeric_limits<T>::epsilon();
   const double l = log2_length(n);
