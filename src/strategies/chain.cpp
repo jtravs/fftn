@@ -56,9 +56,11 @@ slot other_scratch(slot s) { return s == slot::a ? slot::b : slot::a; }
 template <class T>
 chain_builder<T>::chain_builder(const kernels_of<T>& kernels, const target_profile& profile,
                                 std::vector<std::vector<T>>& tables, std::size_t chunk_points,
-                                std::vector<std::size_t> forced, std::size_t bluestein_above)
+                                std::vector<std::size_t> forced, std::size_t bluestein_above,
+                                real_fusion fusion)
     : kernels_(kernels), profile_(profile), tables_(tables),
       chunk_points_(std::max<std::size_t>(chunk_points, 1)), forced_(std::move(forced)),
+      fusion_(fusion),
       bluestein_above_(std::max(bluestein_above != 0 ? bluestein_above : profile.bluestein_above,
                                 dense_codelet_radix)) {
   // The test knob takes only radices some pass has: a codelet's (gen::radices) or the
@@ -103,7 +105,11 @@ template <class T> bool chain_builder<T>::bluestein_last(std::size_t n) const {
 }
 
 template <class T> std::string chain_builder<T>::radix_text(std::size_t n) const {
-  const std::vector<std::size_t> rad = radices(n);
+  return radix_text(n, radices(n));
+}
+
+template <class T>
+std::string chain_builder<T>::radix_text(std::size_t n, const std::vector<std::size_t>& rad) const {
   if (rad.empty()) {
     return "none (a copy)";
   }
@@ -275,8 +281,8 @@ template <class T> const T* chain_builder<T>::radix_roots(std::size_t radix) {
   return stored;
 }
 
-// w_n^k for k = 0 .. n/4: the twiddles of the real post- and pre-passes (n even). A plan
-// has one real axis and builds its line once, so nothing is shared.
+// w_n^k for k = 0 .. n/4: the twiddles of an r2c leaf and of the strided pairing passes
+// (n even). A plan has one real axis and builds its line once, so nothing is shared.
 template <class T> const T* chain_builder<T>::edge_twiddles(std::size_t n) {
   const auto& w = roots(n);
   const std::vector<std::complex<T>> t(w.begin(),
@@ -687,24 +693,248 @@ std::size_t chain_builder<T>::c2c_line(std::size_t n, int sign, endpoint src, en
 }
 
 template <class T>
-std::size_t chain_builder<T>::r2c_line(std::size_t n, endpoint src, endpoint dst, double scale,
-                                       std::vector<stage>& stages) {
+void chain_builder<T>::chain_tail(std::size_t n, const std::vector<std::size_t>& rad,
+                                  std::size_t i0, std::size_t s, int sign, endpoint at,
+                                  endpoint dst, const line_edges& edges,
+                                  std::vector<stage>& stages) {
+  const bool bluestein = bluestein_last(n);
+  for (std::size_t i = i0; i < rad.size(); ++i) {
+    const bool last = i + 1 == rad.size();
+    const endpoint next = last ? dst : endpoint{.where = other_scratch(at.where), .stride = 1};
+    if (bluestein && last) {
+      add_bluestein(n, rad[i], sign, at, next, edges, i == 0, stages);
+    } else {
+      add_pass(n, rad, i, s, sign, at, next, edges, stages);
+    }
+    at = next;
+    s *= rad[i];
+  }
+}
+
+template <class T>
+real_route chain_builder<T>::route(std::size_t n, bool r2c, bool strided) const {
+  if (n % 2 == 1) {
+    return real_route::full;
+  }
+  if (strided) {
+    return real_route::strided;
+  }
+  const std::size_t h = n / 2;
+  if (h == 1) {
+    return real_route::pairing_only;
+  }
+  if (fusion_.radix <= 1) {
+    return real_route::separate;
+  }
+  const std::vector<std::size_t> rad = real_radices(h, r2c);
+  if (rad.size() == 1 && h <= dense_codelet_radix) {
+    return real_route::leaf;
+  }
+  // r2c: the last pass must be a codelet's (not a Bluestein stage or a generic pass); c2r:
+  // the first.
+  if (rad.size() < 2) {
+    return real_route::separate;
+  }
+  const std::size_t edge_radix = r2c ? rad.back() : rad.front();
+  const std::size_t half_copies = (h / edge_radix - 1) / 2; // copies (groups) 1 .. s/2
+  const bool fits = edge_radix <= std::min(fusion_.radix, dense_codelet_radix) &&
+                    half_copies >= fusion_.min_lanes * kernels_.complex_lanes &&
+                    (!r2c || h * 2 * sizeof(T) <= fusion_.r2c_bytes);
+  return fits ? real_route::fused : real_route::separate;
+}
+
+// The chain's radices for h with, where the pairing would fuse, the smallest radix within
+// the limit moved to the pass it fuses into (last for r2c, first for c2r) when that pass's
+// radix exceeds the limit; a Bluestein stage stays last, and forced radices stay as given.
+template <class T>
+std::vector<std::size_t> chain_builder<T>::real_radices(std::size_t h, bool r2c) const {
+  std::vector<std::size_t> rad = radices(h);
+  const bool bluestein = bluestein_last(h);
+  if (forces(h) || rad.size() < 2 || fusion_.radix <= 1 || (r2c && bluestein)) {
+    return rad;
+  }
+  const std::size_t limit = std::min(fusion_.radix, dense_codelet_radix);
+  if ((r2c ? rad.back() : rad.front()) <= limit) {
+    return rad;
+  }
+  const std::size_t end = bluestein ? rad.size() - 1 : rad.size();
+  std::size_t pick = end;
+  for (std::size_t i = 0; i < end; ++i) {
+    if (rad[i] <= limit && (pick == end || rad[i] < rad[pick])) {
+      pick = i;
+    }
+  }
+  if (pick == end) {
+    return rad;
+  }
+  const std::size_t r = rad[pick];
+  rad.erase(rad.begin() + static_cast<std::ptrdiff_t>(pick));
+  rad.insert(r2c ? rad.end() : rad.begin(), r);
+  return rad;
+}
+
+template <class T>
+std::string chain_builder<T>::real_text(std::size_t n, bool r2c, bool strided) const {
+  const std::string kind = r2c ? "r2c" : "c2r";
+  const real_route how = route(n, r2c, strided);
+  const std::string half =
+      " through a half-length complex chain of " + std::to_string(n / 2) + ", radices " +
+      (how == real_route::fused ? radix_text(n / 2, real_radices(n / 2, r2c)) : radix_text(n / 2));
+  switch (how) {
+  case real_route::full:
+    return kind + " through a full-length complex chain (n odd), radices " + radix_text(n);
+  case real_route::strided:
+    return kind + half + " in scratch, the pairing a separate pass (strided line)";
+  case real_route::pairing_only:
+    return kind + " of 2 points: the pairing pass alone";
+  case real_route::leaf:
+    return kind + " in registers: a leaf of " + std::to_string(n / 2) + " with the pairing fused";
+  case real_route::fused:
+    return kind + half + ", the pairing fused into its " + (r2c ? "last" : "first") + " pass";
+  case real_route::separate:
+    break;
+  }
+  return kind + half + (r2c ? ", then a pairing pass" : ", after a pairing pass");
+}
+
+// -i w_n^k = w_n^(k + n/4), the pairing's twiddle (passes/real.inl): an exact rearrangement
+// of a root-table entry, which also holds when 4 does not divide n.
+template <class T> std::complex<T> chain_builder<T>::pairing_root(std::size_t n, std::size_t k) {
+  const std::complex<T> w = roots(n)[k];
+  return {w.imag(), -w.real()};
+}
+
+// The pairing twiddles of bins k = 1 .. (n/2 - 1) / 2, padded with ones to whole registers,
+// per-lane storage: the separate pairing passes' table.
+template <class T> const T* chain_builder<T>::pairing_twiddles(std::size_t n) {
+  const std::size_t pairs = (n / 2 - 1) / 2;
+  if (pairs == 0) {
+    return nullptr;
+  }
+  std::vector<std::complex<T>> t(blocks(pairs) * kernels_.complex_lanes, std::complex<T>(1, 0));
+  for (std::size_t k = 1; k <= pairs; ++k) {
+    t[k - 1] = pairing_root(n, k);
+  }
+  return pack(t, false);
+}
+
+// The pairing twiddles of bins k = 0 .. n/4, broadcast storage: the leaves' table.
+template <class T> const T* chain_builder<T>::leaf_pairing_twiddles(std::size_t n) {
+  std::vector<std::complex<T>> t(n / 4 + 1);
+  for (std::size_t k = 0; k < t.size(); ++k) {
+    t[k] = pairing_root(n, k);
+  }
+  return pack(t, true);
+}
+
+template <class T>
+void chain_builder<T>::add_pairing(bool r2c, std::size_t n, endpoint src, endpoint dst,
+                                   double scale, std::vector<stage>& stages) {
+  const pass_kernels<T>& k = kernels_.passes;
+  const std::size_t scaled = scale != 1.0 ? 1 : 0;
+  const std::size_t units = 1 + blocks((n / 2 - 1) / 2);
+  add_edge(r2c ? k.r2c_post[scaled] : k.c2r_pre[scaled], r2c ? "r2c pairing" : "c2r pairing", n,
+           units, src, dst, pairing_twiddles(n), scale, stages);
+  stages.back().chunks = chunks_of(units, 4 * kernels_.complex_lanes);
+}
+
+template <class T>
+std::size_t chain_builder<T>::r2c_line(std::size_t n, endpoint src, endpoint dst, bool aliased,
+                                       double scale, std::vector<stage>& stages) {
   line_scratch_ = 0;
   const pass_kernels<T>& k = kernels_.passes;
   const std::size_t scaled = scale != 1.0 ? 1 : 0;
-  if (n % 2 == 0) {
-    const std::size_t h = n / 2;
+  const std::size_t c = kernels_.complex_lanes;
+  const std::size_t h = n / 2;
+  // The reals of an even line of stride 1 are read in place as h complex values.
+  switch (route(n, true, src.stride != 1 || dst.stride != 1)) {
+  case real_route::strided: {
     add_edge(k.r2c_pack_pairs, "r2c pack pairs", n, h, src, {slot::a, 1}, nullptr, 1.0, stages);
     const slot z = scratch_chain(h, -1, slot::a, stages);
-    add_edge(k.r2c_post[scaled], "r2c post", n, h / 2 + 1, {z, 1}, dst, edge_twiddles(n), scale,
-             stages);
+    add_edge(k.r2c_post_strided[scaled], "r2c pairing", n, h / 2 + 1, {z, 1}, dst,
+             edge_twiddles(n), scale, stages);
     return std::max(h, line_scratch_);
   }
-  add_edge(k.r2c_pack, "r2c pack", n, n, src, {slot::a, 1}, nullptr, 1.0, stages);
-  const slot z = scratch_chain(n, -1, slot::a, stages);
-  add_edge(k.r2c_store[scaled], "r2c store half", n, n / 2 + 1, {z, 1}, dst, nullptr, scale,
-           stages);
-  return std::max(n, line_scratch_);
+  case real_route::full: {
+    add_edge(k.r2c_pack, "r2c pack", n, n, src, {slot::a, 1}, nullptr, 1.0, stages);
+    const slot z = scratch_chain(n, -1, slot::a, stages);
+    add_edge(k.r2c_store[scaled], "r2c store half", n, n / 2 + 1, {z, 1}, dst, nullptr, scale,
+             stages);
+    return std::max(n, line_scratch_);
+  }
+  case real_route::pairing_only:
+    add_pairing(true, n, src, dst, scale, stages);
+    return 0;
+  case real_route::leaf: {
+    stage st;
+    st.run = k.codelet[codelet_slot(h)].r2c_leaf[scaled];
+    st.args.radix = h;
+    st.args.n = h;
+    st.args.twiddles = leaf_pairing_twiddles(n);
+    st.args.scale = scale;
+    st.src = src.where;
+    st.dst = dst.where;
+    st.units = 1;
+    st.chunks = 1;
+    st.name = "r2c leaf radix-" + std::to_string(h) + " with the pairing" +
+              (scale != 1.0 ? " (out: scale)" : "");
+    stages.push_back(std::move(st));
+    return 0;
+  }
+  case real_route::fused: {
+    const std::vector<std::size_t> rad = real_radices(h, true);
+    const std::size_t radix = rad.back();
+    const std::size_t s = h / radix;
+    endpoint at = src;
+    std::size_t copies = 1;
+    for (std::size_t i = 0; i + 1 < rad.size(); ++i) {
+      const endpoint next{.where = other_scratch(at.where), .stride = 1};
+      add_pass(h, rad, i, copies, -1, at, next, line_edges(), stages);
+      at = next;
+      copies *= rad[i];
+    }
+    // The pairing twiddles of the bins q + s r: per-lane rows r for the copies q = 1 ..
+    // (s - 1) / 2; broadcast, copy 0's, then copy s/2's (s even).
+    const std::size_t qm = (s - 1) / 2;
+    const std::size_t qpad = blocks(qm) * c;
+    std::vector<std::complex<T>> lanes(radix * qpad, std::complex<T>(1, 0));
+    std::vector<std::complex<T>> ends(2 * radix, std::complex<T>(1, 0));
+    for (std::size_t r = 0; r < radix; ++r) {
+      for (std::size_t q = 1; q <= qm; ++q) {
+        lanes[r * qpad + q - 1] = pairing_root(n, q + s * r);
+      }
+      ends[r] = pairing_root(n, s * r);
+      if (s % 2 == 0) {
+        ends[radix + r] = pairing_root(n, s / 2 + s * r);
+      }
+    }
+    stage st;
+    st.run = k.codelet[codelet_slot(radix)].r2c_last[scaled];
+    st.args.radix = radix;
+    st.args.m = 1;
+    st.args.s = s;
+    st.args.n = h;
+    st.args.twiddles = qpad != 0 ? pack(lanes, false) : nullptr;
+    st.args.roots = pack(ends, true);
+    st.args.scale = scale;
+    st.src = at.where;
+    st.dst = dst.where;
+    st.units = 1 + blocks(qm);
+    st.chunks = chunks_of(st.units, 2 * radix * c);
+    st.name = "lane radix-" + std::to_string(radix) + " forward (m 1, s " + std::to_string(s) +
+              "; copies q and s - q together, with the r2c pairing" +
+              (scale != 1.0 ? "; out: scale)" : ")");
+    stages.push_back(std::move(st));
+    return std::max(h, line_scratch_);
+  }
+  case real_route::separate:
+    break;
+  }
+  // The complex transform of h writes the output's first h bins; the pairing then runs in
+  // place there.
+  const std::size_t need = c2c_line(h, -1, src, dst, aliased, line_edges(), stages);
+  add_pairing(true, n, dst, dst, scale, stages);
+  return need;
 }
 
 template <class T>
@@ -713,18 +943,102 @@ std::size_t chain_builder<T>::c2r_line(std::size_t n, endpoint src, endpoint dst
   line_scratch_ = 0;
   const pass_kernels<T>& k = kernels_.passes;
   const std::size_t scaled = scale != 1.0 ? 1 : 0;
-  if (n % 2 == 0) {
-    const std::size_t h = n / 2;
-    add_edge(k.c2r_pre, "c2r pre", n, h / 2 + 1, src, {slot::a, 1}, edge_twiddles(n), 1.0, stages);
+  const std::size_t c = kernels_.complex_lanes;
+  const std::size_t h = n / 2;
+  line_edges edges;
+  if (scale != 1.0) {
+    edges.out = edge_op::scale;
+    edges.scale = scale;
+  }
+  switch (route(n, false, src.stride != 1 || dst.stride != 1)) {
+  case real_route::strided: {
+    add_edge(k.c2r_pre_strided, "c2r pairing", n, h / 2 + 1, src, {slot::a, 1},
+             edge_twiddles(n), 1.0, stages);
     const slot z = scratch_chain(h, +1, slot::a, stages);
-    add_edge(k.c2r_unpack_pairs[scaled], "c2r unpack pairs", n, h, {z, 1}, dst, nullptr, scale,
-             stages);
+    add_edge(k.c2r_unpack_pairs[scaled], "c2r unpack pairs", n, h, {z, 1}, dst, nullptr,
+             scale, stages);
     return std::max(h, line_scratch_);
   }
-  add_edge(k.c2r_expand, "c2r expand", n, n / 2 + 1, src, {slot::a, 1}, nullptr, 1.0, stages);
-  const slot z = scratch_chain(n, +1, slot::a, stages);
-  add_edge(k.c2r_store[scaled], "c2r store real", n, n, {z, 1}, dst, nullptr, scale, stages);
-  return std::max(n, line_scratch_);
+  case real_route::full: {
+    add_edge(k.c2r_expand, "c2r expand", n, n / 2 + 1, src, {slot::a, 1}, nullptr, 1.0, stages);
+    const slot z = scratch_chain(n, +1, slot::a, stages);
+    add_edge(k.c2r_store[scaled], "c2r store real", n, n, {z, 1}, dst, nullptr, scale, stages);
+    return std::max(n, line_scratch_);
+  }
+  case real_route::pairing_only:
+    add_pairing(false, n, src, dst, scale, stages);
+    return 0;
+  case real_route::leaf: {
+    stage st;
+    st.run = k.codelet[codelet_slot(h)].c2r_leaf[scaled];
+    st.args.radix = h;
+    st.args.n = h;
+    st.args.twiddles = leaf_pairing_twiddles(n);
+    st.args.scale = scale;
+    st.src = src.where;
+    st.dst = dst.where;
+    st.units = 1;
+    st.chunks = 1;
+    st.name = "c2r leaf radix-" + std::to_string(h) + " with the pairing" +
+              (scale != 1.0 ? " (out: scale)" : "");
+    stages.push_back(std::move(st));
+    return 0;
+  }
+  case real_route::fused: {
+    const std::vector<std::size_t> rad = real_radices(h, false);
+    const std::size_t radix = rad.front();
+    const std::size_t m = h / radix;
+    // Per-lane rows of the groups p = 1 .. (m - 1) / 2: their twiddles w_h^(p k), those of
+    // the groups m - p, and the pairing twiddles of the bins p + m j. Broadcast: the pairing
+    // twiddles of groups 0 and m/2 (m even), then group m/2's w_h^((m/2) k).
+    const auto& wh = roots(h);
+    const std::size_t pm = (m - 1) / 2;
+    const std::size_t ppad = blocks(pm) * c;
+    std::vector<std::complex<T>> lanes((3 * radix - 2) * ppad, std::complex<T>(1, 0));
+    std::vector<std::complex<T>> ends(3 * radix - 1, std::complex<T>(1, 0));
+    for (std::size_t i = 0; i < pm; ++i) {
+      for (std::size_t r = 1; r < radix; ++r) {
+        lanes[(r - 1) * ppad + i] = wh[(1 + i) * r];
+        lanes[(radix - 1 + r - 1) * ppad + i] = wh[(m - 1 - i) * r];
+      }
+      for (std::size_t j = 0; j < radix; ++j) {
+        lanes[(2 * radix - 2 + j) * ppad + i] = pairing_root(n, 1 + i + m * j);
+      }
+    }
+    for (std::size_t j = 0; j < radix; ++j) {
+      ends[j] = pairing_root(n, m * j);
+      if (m % 2 == 0) {
+        ends[radix + j] = pairing_root(n, m / 2 + m * j);
+      }
+    }
+    for (std::size_t r = 1; r < radix && m % 2 == 0; ++r) {
+      ends[2 * radix + r - 1] = wh[m / 2 * r];
+    }
+    stage st;
+    st.run = k.codelet[codelet_slot(radix)].c2r_first;
+    st.args.radix = radix;
+    st.args.m = m;
+    st.args.s = 1;
+    st.args.n = h;
+    st.args.twiddles = ppad != 0 ? pack(lanes, false) : nullptr;
+    st.args.roots = pack(ends, true);
+    st.src = src.where;
+    st.dst = slot::a;
+    st.units = 1 + blocks(pm);
+    st.chunks = chunks_of(st.units, 2 * radix * c);
+    st.name = "grouped radix-" + std::to_string(radix) + " backward (m " + std::to_string(m) +
+              ", s 1; groups p and m - p together, with the c2r pairing)";
+    stages.push_back(std::move(st));
+    chain_tail(h, rad, 1, radix, +1, {slot::a, 1}, dst, edges, stages);
+    return std::max(h, line_scratch_);
+  }
+  case real_route::separate:
+    break;
+  }
+  // The pairing writes Z to the output's memory (h complex values: the n reals), where the
+  // complex transform then runs in place; the input is preserved.
+  add_pairing(false, n, src, dst, 1.0, stages);
+  return c2c_line(h, +1, dst, dst, true, edges, stages);
 }
 
 template class chain_builder<double>;

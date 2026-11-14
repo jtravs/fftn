@@ -638,7 +638,7 @@ TEST(Describe, NamesTheProgram) {
            "float",
            "block of 48 complex",
            "c2c backward",
-           "half-length complex chain of 3",
+           "a leaf of 3 with the pairing fused",
            "loop lines x3",
            "out of place",
        }) {

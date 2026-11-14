@@ -216,6 +216,7 @@ void add_cases(std::vector<team_case>& out, const fftn::detail::build_settings& 
   split.radices = {16, 8, 8};
   out.push_back(make_case("c2c_split_inplace_1024x3" + suffix, fftn::rows_c2c<T>(1024, 3, bwd),
                           3072, 3072, true, split, target));
+  split.fuse_real_radix = 1; // the pairing a pass of its own: the half-length chain is c2c
   out.push_back(make_case("r2c_split_2048x2" + suffix, fftn::rows_r2c<T>(2048, 2), 4096, 2 * 1025,
                           false, split, target));
   out.push_back(make_case("c2r_split_2048x2" + suffix, fftn::rows_c2r<T>(2048, 2), 2 * 1025, 4096,
@@ -223,6 +224,29 @@ void add_cases(std::vector<team_case>& out, const fftn::detail::build_settings& 
   out.push_back(make_case("c2c_planes_split_6x1024x2" + suffix,
                           fftn::planes_c2c<T>(6, 1024, 2, fwd), 12288, 12288, false, split,
                           target));
+  // Real rows (DESIGN.md 9.1): the pairing fused into the chain's edge pass, whose units are
+  // mirror pairs of copies or groups; the half-length transform as a grid, with the pairing
+  // as a pass of its own.
+  fftn::detail::build_settings fused = settings;
+  fused.fuse_real_radix = 16;
+  out.push_back(make_case("r2c_fused_4096x2" + suffix, fftn::rows_r2c<T>(4096, 2), 2 * 4096,
+                          2 * 2049, false, fused, target));
+  out.push_back(make_case("c2r_fused_inplace_4096x2" + suffix, fftn::rows_c2r<T>(4096, 2),
+                          2 * 2049, 2 * 4098, true, fused, target));
+  out.push_back(make_case("c2r_fused_4096x2" + suffix, fftn::rows_c2r<T>(4096, 2), 2 * 2049,
+                          2 * 4096, false, fused, target));
+  grid.grid_factors = {16, 64};
+  out.push_back(make_case("r2c_grid_2048x2" + suffix, fftn::rows_r2c<T>(2048, 2), 2 * 2048,
+                          2 * 1025, false, grid, target));
+  grid.grid_factors = {8, 8, 16};
+  out.push_back(make_case("c2r_grid3_inplace_2048x2" + suffix, fftn::rows_c2r<T>(2048, 2),
+                          2 * 1025, 2 * 2050, true, grid, target));
+  // Out of place the pairing writes the output and the grid rereads it there.
+  out.push_back(make_case("c2r_grid3_2048x2" + suffix, fftn::rows_c2r<T>(2048, 2), 2 * 1025,
+                          2 * 2048, false, grid, target));
+  grid.grid_factors = {16, 64};
+  out.push_back(make_case("c2r_grid_2048x2" + suffix, fftn::rows_c2r<T>(2048, 2), 2 * 1025,
+                          2 * 2048, false, grid, target));
 }
 
 inline std::vector<team_case> standard_cases(const fftn::detail::build_settings& settings) {

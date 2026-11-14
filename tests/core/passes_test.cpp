@@ -499,10 +499,13 @@ template <class T> void split_only_where_it_fits(fftn::isa target) {
   EXPECT_FALSE(has_split({f, 2, 2, 17}, 16)) << "a Bluestein stage";
   EXPECT_FALSE(has_split({f, 32, 2}, 0)) << "radix 32 has no split codelet";
 
-  // r2c and c2r of 2 f x 4 x 2 points: complex lines of f x 4 x 2 on scratch; a strided
-  // c2c row (copies in and out of scratch on wide targets); in place.
+  // r2c and c2r of 2 f x 4 x 2 points with the pairing a pass of its own (a pairing fused
+  // into the chain's edge pass, task 2.1, takes the place of the split run's end): complex
+  // lines of f x 4 x 2; a strided c2c row (copies in and out of scratch on wide targets);
+  // in place.
   build_settings settings;
   settings.layout = fftn::detail::layout_choice::split;
+  settings.fuse_real_radix = 1;
   settings.radices = {f, 4, 2};
   const std::size_t h = 8 * f;
   const std::size_t n = 2 * h;
