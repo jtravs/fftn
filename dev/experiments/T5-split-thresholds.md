@@ -45,7 +45,11 @@ run per machine and width, with the identical-arm control:
   (`SPLIT_MIN_POINTS=1 SPLIT_MIN_POINTS_MESH=1 SYNC_NS=0`, so that the cost model does not
   veto it); arm D the defaults. Arm Y is a measuring arm, not a candidate default.
 - **S2, points per member.** With splitting forced as in Y, `MIN_POINTS_PER_MEMBER` 256,
-  512 (A), 1024, 2048 and 4096: the member cap of each length.
+  512 (A), 1024, 2048 and 4096: the member cap of each length. The cap is also bounded by
+  the widest phase's chunks, which `chunk_points` (2048) sets: a 4096-point row has two
+  chunks per stage and so never more than two members (`bench/t1/t1.py schedule` shows
+  it). S2 therefore runs with `CHUNK_POINTS=256` in every arm, and S4 decides the chunk
+  size separately.
 - **S3, leftover transforms.** Arm N `REMAINDER_SPLIT_MIN_POINTS=never`, arm Y
   `REMAINDER_SPLIT_MIN_POINTS=1 SYNC_NS=0`, arm D the defaults.
 - **S4, chunk size.** `CHUNK_POINTS` 512, 1024, 2048 (A), 4096 and 8192, at one thread
