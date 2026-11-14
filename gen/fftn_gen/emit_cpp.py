@@ -161,6 +161,9 @@ def codelet_inl(codelets: list[Codelet]) -> str:
             out.append(f"  // Backward: {_summary(bwd)}.\n")
             out.append(f"  {tmpl}\n")
             out.append(f"  static FFTN_FORCE_INLINE void {sig} {{\n")
+            out.append(
+                '    static_assert(Sign == -1 || Sign == 1, "Sign is -1 (forward) or +1");\n'
+            )
             out.append("    if constexpr (Sign < 0) {\n")
             out.extend(line + "\n" for line in _body(fwd.ops, "      "))
             out.append("    } else {\n")

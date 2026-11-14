@@ -38,6 +38,7 @@ template <> struct cdft<2> {
   // Backward: 2 add, 0 scale, 0 fmadd_r, 0 cmul; 4 + 0 real flops unfused; peak 3 live.
   template <class T, int Sign, class In, class Out>
   static FFTN_FORCE_INLINE void plain(const In& in, const Out& out) {
+    static_assert(Sign == -1 || Sign == 1, "Sign is -1 (forward) or +1");
     if constexpr (Sign < 0) {
       const cv<T> x0 = in.get(0);
       const cv<T> x1 = in.get(1);
@@ -59,6 +60,7 @@ template <> struct cdft<2> {
   // Backward: 2 add, 0 scale, 0 fmadd_r, 1 cmul; 6 + 4 real flops unfused; peak 3 live.
   template <class T, int Sign, class In, class Out, class Tw>
   static FFTN_FORCE_INLINE void dit(const In& in, const Out& out, const Tw& twid) {
+    static_assert(Sign == -1 || Sign == 1, "Sign is -1 (forward) or +1");
     if constexpr (Sign < 0) {
       const cv<T> x1 = in.get(1);
       const tw<T> w1 = twid.get(1);
@@ -84,6 +86,7 @@ template <> struct cdft<2> {
   // Backward: 2 add, 0 scale, 0 fmadd_r, 1 cmul; 6 + 4 real flops unfused; peak 3 live.
   template <class T, int Sign, class In, class Out, class Tw>
   static FFTN_FORCE_INLINE void dif(const In& in, const Out& out, const Tw& twid) {
+    static_assert(Sign == -1 || Sign == 1, "Sign is -1 (forward) or +1");
     if constexpr (Sign < 0) {
       const cv<T> x0 = in.get(0);
       const cv<T> x1 = in.get(1);
@@ -113,6 +116,7 @@ template <> struct cdft<3> {
   // Backward: 5 add, 1 scale, 1 fmadd_r, 0 cmul; 12 + 4 real flops unfused; peak 4 live.
   template <class T, int Sign, class In, class Out>
   static FFTN_FORCE_INLINE void plain(const In& in, const Out& out) {
+    static_assert(Sign == -1 || Sign == 1, "Sign is -1 (forward) or +1");
     if constexpr (Sign < 0) {
       constexpr T k0 = gen_k<T>(0.8660254037844386, 0.866025388F);
       constexpr T k1 = gen_k<T>(0.5, 0.5F);
@@ -152,6 +156,7 @@ template <> struct cdft<3> {
   // Backward: 5 add, 1 scale, 1 fmadd_r, 2 cmul; 16 + 12 real flops unfused; peak 4 live.
   template <class T, int Sign, class In, class Out, class Tw>
   static FFTN_FORCE_INLINE void dit(const In& in, const Out& out, const Tw& twid) {
+    static_assert(Sign == -1 || Sign == 1, "Sign is -1 (forward) or +1");
     if constexpr (Sign < 0) {
       constexpr T k0 = gen_k<T>(0.8660254037844386, 0.866025388F);
       constexpr T k1 = gen_k<T>(0.5, 0.5F);
@@ -199,6 +204,7 @@ template <> struct cdft<3> {
   // Backward: 5 add, 1 scale, 1 fmadd_r, 2 cmul; 16 + 12 real flops unfused; peak 4 live.
   template <class T, int Sign, class In, class Out, class Tw>
   static FFTN_FORCE_INLINE void dif(const In& in, const Out& out, const Tw& twid) {
+    static_assert(Sign == -1 || Sign == 1, "Sign is -1 (forward) or +1");
     if constexpr (Sign < 0) {
       constexpr T k0 = gen_k<T>(0.8660254037844386, 0.866025388F);
       constexpr T k1 = gen_k<T>(0.5, 0.5F);
@@ -250,6 +256,7 @@ template <> struct cdft<4> {
   // Backward: 8 add, 0 scale, 0 fmadd_r, 0 cmul; 16 + 0 real flops unfused; peak 6 live.
   template <class T, int Sign, class In, class Out>
   static FFTN_FORCE_INLINE void plain(const In& in, const Out& out) {
+    static_assert(Sign == -1 || Sign == 1, "Sign is -1 (forward) or +1");
     if constexpr (Sign < 0) {
       const cv<T> x0 = in.get(0);
       const cv<T> x2 = in.get(2);
@@ -291,6 +298,7 @@ template <> struct cdft<4> {
   // Backward: 8 add, 0 scale, 0 fmadd_r, 3 cmul; 22 + 12 real flops unfused; peak 6 live.
   template <class T, int Sign, class In, class Out, class Tw>
   static FFTN_FORCE_INLINE void dit(const In& in, const Out& out, const Tw& twid) {
+    static_assert(Sign == -1 || Sign == 1, "Sign is -1 (forward) or +1");
     if constexpr (Sign < 0) {
       const cv<T> x1 = in.get(1);
       const tw<T> w1 = twid.get(1);
@@ -344,6 +352,7 @@ template <> struct cdft<4> {
   // Backward: 8 add, 0 scale, 0 fmadd_r, 3 cmul; 22 + 12 real flops unfused; peak 6 live.
   template <class T, int Sign, class In, class Out, class Tw>
   static FFTN_FORCE_INLINE void dif(const In& in, const Out& out, const Tw& twid) {
+    static_assert(Sign == -1 || Sign == 1, "Sign is -1 (forward) or +1");
     if constexpr (Sign < 0) {
       const cv<T> x0 = in.get(0);
       const cv<T> x2 = in.get(2);
@@ -401,6 +410,7 @@ template <> struct cdft<5> {
   // Backward: 13 add, 3 scale, 3 fmadd_r, 0 cmul; 32 + 12 real flops unfused; peak 7 live.
   template <class T, int Sign, class In, class Out>
   static FFTN_FORCE_INLINE void plain(const In& in, const Out& out) {
+    static_assert(Sign == -1 || Sign == 1, "Sign is -1 (forward) or +1");
     if constexpr (Sign < 0) {
       constexpr T k0 = gen_k<T>(0.9510565162951535, 0.95105654F);
       constexpr T k1 = gen_k<T>(0.5877852522924731, 0.587785244F);
@@ -476,6 +486,7 @@ template <> struct cdft<5> {
   // Backward: 13 add, 3 scale, 3 fmadd_r, 4 cmul; 40 + 28 real flops unfused; peak 6 live.
   template <class T, int Sign, class In, class Out, class Tw>
   static FFTN_FORCE_INLINE void dit(const In& in, const Out& out, const Tw& twid) {
+    static_assert(Sign == -1 || Sign == 1, "Sign is -1 (forward) or +1");
     if constexpr (Sign < 0) {
       constexpr T k0 = gen_k<T>(0.9510565162951535, 0.95105654F);
       constexpr T k1 = gen_k<T>(0.5877852522924731, 0.587785244F);
@@ -567,6 +578,7 @@ template <> struct cdft<5> {
   // Backward: 13 add, 3 scale, 3 fmadd_r, 4 cmul; 40 + 28 real flops unfused; peak 7 live.
   template <class T, int Sign, class In, class Out, class Tw>
   static FFTN_FORCE_INLINE void dif(const In& in, const Out& out, const Tw& twid) {
+    static_assert(Sign == -1 || Sign == 1, "Sign is -1 (forward) or +1");
     if constexpr (Sign < 0) {
       constexpr T k0 = gen_k<T>(0.9510565162951535, 0.95105654F);
       constexpr T k1 = gen_k<T>(0.5877852522924731, 0.587785244F);
@@ -662,6 +674,7 @@ template <> struct cdft<6> {
   // Backward: 16 add, 2 scale, 2 fmadd_r, 0 cmul; 36 + 8 real flops unfused; peak 8 live.
   template <class T, int Sign, class In, class Out>
   static FFTN_FORCE_INLINE void plain(const In& in, const Out& out) {
+    static_assert(Sign == -1 || Sign == 1, "Sign is -1 (forward) or +1");
     if constexpr (Sign < 0) {
       constexpr T k0 = gen_k<T>(0.8660254037844386, 0.866025388F);
       constexpr T k1 = gen_k<T>(0.5, 0.5F);
@@ -739,6 +752,7 @@ template <> struct cdft<6> {
   // Backward: 16 add, 2 scale, 2 fmadd_r, 5 cmul; 46 + 28 real flops unfused; peak 8 live.
   template <class T, int Sign, class In, class Out, class Tw>
   static FFTN_FORCE_INLINE void dit(const In& in, const Out& out, const Tw& twid) {
+    static_assert(Sign == -1 || Sign == 1, "Sign is -1 (forward) or +1");
     if constexpr (Sign < 0) {
       constexpr T k0 = gen_k<T>(0.8660254037844386, 0.866025388F);
       constexpr T k1 = gen_k<T>(0.5, 0.5F);
@@ -836,6 +850,7 @@ template <> struct cdft<6> {
   // Backward: 16 add, 2 scale, 2 fmadd_r, 5 cmul; 46 + 28 real flops unfused; peak 8 live.
   template <class T, int Sign, class In, class Out, class Tw>
   static FFTN_FORCE_INLINE void dif(const In& in, const Out& out, const Tw& twid) {
+    static_assert(Sign == -1 || Sign == 1, "Sign is -1 (forward) or +1");
     if constexpr (Sign < 0) {
       constexpr T k0 = gen_k<T>(0.8660254037844386, 0.866025388F);
       constexpr T k1 = gen_k<T>(0.5, 0.5F);
@@ -937,6 +952,7 @@ template <> struct cdft<7> {
   // Backward: 17 add, 3 scale, 13 fmadd_r, 0 cmul; 60 + 32 real flops unfused; peak 10 live.
   template <class T, int Sign, class In, class Out>
   static FFTN_FORCE_INLINE void plain(const In& in, const Out& out) {
+    static_assert(Sign == -1 || Sign == 1, "Sign is -1 (forward) or +1");
     if constexpr (Sign < 0) {
       constexpr T k0 = gen_k<T>(0.7818314824680298, 0.781831503F);
       constexpr T k1 = gen_k<T>(0.9749279121818236, 0.974927902F);
@@ -1054,6 +1070,7 @@ template <> struct cdft<7> {
   // Backward: 17 add, 3 scale, 13 fmadd_r, 6 cmul; 72 + 56 real flops unfused; peak 9 live.
   template <class T, int Sign, class In, class Out, class Tw>
   static FFTN_FORCE_INLINE void dit(const In& in, const Out& out, const Tw& twid) {
+    static_assert(Sign == -1 || Sign == 1, "Sign is -1 (forward) or +1");
     if constexpr (Sign < 0) {
       constexpr T k0 = gen_k<T>(0.7818314824680298, 0.781831503F);
       constexpr T k1 = gen_k<T>(0.9749279121818236, 0.974927902F);
@@ -1195,6 +1212,7 @@ template <> struct cdft<7> {
   // Backward: 17 add, 3 scale, 13 fmadd_r, 6 cmul; 72 + 56 real flops unfused; peak 10 live.
   template <class T, int Sign, class In, class Out, class Tw>
   static FFTN_FORCE_INLINE void dif(const In& in, const Out& out, const Tw& twid) {
+    static_assert(Sign == -1 || Sign == 1, "Sign is -1 (forward) or +1");
     if constexpr (Sign < 0) {
       constexpr T k0 = gen_k<T>(0.7818314824680298, 0.781831503F);
       constexpr T k1 = gen_k<T>(0.9749279121818236, 0.974927902F);
@@ -1340,6 +1358,7 @@ template <> struct cdft<8> {
   // Backward: 26 add, 2 scale, 0 fmadd_r, 0 cmul; 52 + 4 real flops unfused; peak 10 live.
   template <class T, int Sign, class In, class Out>
   static FFTN_FORCE_INLINE void plain(const In& in, const Out& out) {
+    static_assert(Sign == -1 || Sign == 1, "Sign is -1 (forward) or +1");
     if constexpr (Sign < 0) {
       constexpr T k0 = gen_k<T>(0.7071067811865476, 0.707106769F);
       const cv<T> x0 = in.get(0);
@@ -1439,6 +1458,7 @@ template <> struct cdft<8> {
   // Backward: 26 add, 2 scale, 0 fmadd_r, 7 cmul; 66 + 32 real flops unfused; peak 10 live.
   template <class T, int Sign, class In, class Out, class Tw>
   static FFTN_FORCE_INLINE void dit(const In& in, const Out& out, const Tw& twid) {
+    static_assert(Sign == -1 || Sign == 1, "Sign is -1 (forward) or +1");
     if constexpr (Sign < 0) {
       constexpr T k0 = gen_k<T>(0.7071067811865476, 0.707106769F);
       const cv<T> x1 = in.get(1);
@@ -1566,6 +1586,7 @@ template <> struct cdft<8> {
   // Backward: 26 add, 2 scale, 0 fmadd_r, 7 cmul; 66 + 32 real flops unfused; peak 10 live.
   template <class T, int Sign, class In, class Out, class Tw>
   static FFTN_FORCE_INLINE void dif(const In& in, const Out& out, const Tw& twid) {
+    static_assert(Sign == -1 || Sign == 1, "Sign is -1 (forward) or +1");
     if constexpr (Sign < 0) {
       constexpr T k0 = gen_k<T>(0.7071067811865476, 0.707106769F);
       const cv<T> x0 = in.get(0);
@@ -1697,6 +1718,7 @@ template <> struct cdft<9> {
   // Backward: 34 add, 14 scale, 6 fmadd_r, 0 cmul; 80 + 40 real flops unfused; peak 11 live.
   template <class T, int Sign, class In, class Out>
   static FFTN_FORCE_INLINE void plain(const In& in, const Out& out) {
+    static_assert(Sign == -1 || Sign == 1, "Sign is -1 (forward) or +1");
     if constexpr (Sign < 0) {
       constexpr T k0 = gen_k<T>(0.8660254037844386, 0.866025388F);
       constexpr T k1 = gen_k<T>(0.5, 0.5F);
@@ -1866,6 +1888,7 @@ template <> struct cdft<9> {
   // Backward: 34 add, 14 scale, 6 fmadd_r, 8 cmul; 96 + 72 real flops unfused; peak 11 live.
   template <class T, int Sign, class In, class Out, class Tw>
   static FFTN_FORCE_INLINE void dit(const In& in, const Out& out, const Tw& twid) {
+    static_assert(Sign == -1 || Sign == 1, "Sign is -1 (forward) or +1");
     if constexpr (Sign < 0) {
       constexpr T k0 = gen_k<T>(0.8660254037844386, 0.866025388F);
       constexpr T k1 = gen_k<T>(0.5, 0.5F);
@@ -2067,6 +2090,7 @@ template <> struct cdft<9> {
   // Backward: 34 add, 14 scale, 6 fmadd_r, 8 cmul; 96 + 72 real flops unfused; peak 11 live.
   template <class T, int Sign, class In, class Out, class Tw>
   static FFTN_FORCE_INLINE void dif(const In& in, const Out& out, const Tw& twid) {
+    static_assert(Sign == -1 || Sign == 1, "Sign is -1 (forward) or +1");
     if constexpr (Sign < 0) {
       constexpr T k0 = gen_k<T>(0.8660254037844386, 0.866025388F);
       constexpr T k1 = gen_k<T>(0.5, 0.5F);
@@ -2272,6 +2296,7 @@ template <> struct cdft<10> {
   // Backward: 36 add, 6 scale, 6 fmadd_r, 0 cmul; 84 + 24 real flops unfused; peak 12 live.
   template <class T, int Sign, class In, class Out>
   static FFTN_FORCE_INLINE void plain(const In& in, const Out& out) {
+    static_assert(Sign == -1 || Sign == 1, "Sign is -1 (forward) or +1");
     if constexpr (Sign < 0) {
       constexpr T k0 = gen_k<T>(0.9510565162951535, 0.95105654F);
       constexpr T k1 = gen_k<T>(0.5877852522924731, 0.587785244F);
@@ -2425,6 +2450,7 @@ template <> struct cdft<10> {
   // Backward: 36 add, 6 scale, 6 fmadd_r, 9 cmul; 102 + 60 real flops unfused; peak 12 live.
   template <class T, int Sign, class In, class Out, class Tw>
   static FFTN_FORCE_INLINE void dit(const In& in, const Out& out, const Tw& twid) {
+    static_assert(Sign == -1 || Sign == 1, "Sign is -1 (forward) or +1");
     if constexpr (Sign < 0) {
       constexpr T k0 = gen_k<T>(0.9510565162951535, 0.95105654F);
       constexpr T k1 = gen_k<T>(0.5877852522924731, 0.587785244F);
@@ -2614,6 +2640,7 @@ template <> struct cdft<10> {
   // Backward: 36 add, 6 scale, 6 fmadd_r, 9 cmul; 102 + 60 real flops unfused; peak 12 live.
   template <class T, int Sign, class In, class Out, class Tw>
   static FFTN_FORCE_INLINE void dif(const In& in, const Out& out, const Tw& twid) {
+    static_assert(Sign == -1 || Sign == 1, "Sign is -1 (forward) or +1");
     if constexpr (Sign < 0) {
       constexpr T k0 = gen_k<T>(0.9510565162951535, 0.95105654F);
       constexpr T k1 = gen_k<T>(0.5877852522924731, 0.587785244F);
@@ -2807,6 +2834,7 @@ template <> struct cdft<11> {
   // Backward: 29 add, 5 scale, 41 fmadd_r, 0 cmul; 140 + 92 real flops unfused; peak 14 live.
   template <class T, int Sign, class In, class Out>
   static FFTN_FORCE_INLINE void plain(const In& in, const Out& out) {
+    static_assert(Sign == -1 || Sign == 1, "Sign is -1 (forward) or +1");
     if constexpr (Sign < 0) {
       constexpr T k0 = gen_k<T>(0.5406408174555976, 0.540640831F);
       constexpr T k1 = gen_k<T>(0.9096319953545183, 0.909631968F);
@@ -3032,6 +3060,7 @@ template <> struct cdft<11> {
   // Backward: 29 add, 5 scale, 41 fmadd_r, 10 cmul; 160 + 132 real flops unfused; peak 15 live.
   template <class T, int Sign, class In, class Out, class Tw>
   static FFTN_FORCE_INLINE void dit(const In& in, const Out& out, const Tw& twid) {
+    static_assert(Sign == -1 || Sign == 1, "Sign is -1 (forward) or +1");
     if constexpr (Sign < 0) {
       constexpr T k0 = gen_k<T>(0.5406408174555976, 0.540640831F);
       constexpr T k1 = gen_k<T>(0.9096319953545183, 0.909631968F);
@@ -3297,6 +3326,7 @@ template <> struct cdft<11> {
   // Backward: 29 add, 5 scale, 41 fmadd_r, 10 cmul; 160 + 132 real flops unfused; peak 14 live.
   template <class T, int Sign, class In, class Out, class Tw>
   static FFTN_FORCE_INLINE void dif(const In& in, const Out& out, const Tw& twid) {
+    static_assert(Sign == -1 || Sign == 1, "Sign is -1 (forward) or +1");
     if constexpr (Sign < 0) {
       constexpr T k0 = gen_k<T>(0.5406408174555976, 0.540640831F);
       constexpr T k1 = gen_k<T>(0.9096319953545183, 0.909631968F);
@@ -3566,6 +3596,7 @@ template <> struct cdft<12> {
   // Backward: 44 add, 4 scale, 4 fmadd_r, 0 cmul; 96 + 16 real flops unfused; peak 14 live.
   template <class T, int Sign, class In, class Out>
   static FFTN_FORCE_INLINE void plain(const In& in, const Out& out) {
+    static_assert(Sign == -1 || Sign == 1, "Sign is -1 (forward) or +1");
     if constexpr (Sign < 0) {
       constexpr T k0 = gen_k<T>(0.8660254037844386, 0.866025388F);
       constexpr T k1 = gen_k<T>(0.5, 0.5F);
@@ -3731,6 +3762,7 @@ template <> struct cdft<12> {
   // Backward: 44 add, 4 scale, 4 fmadd_r, 11 cmul; 118 + 60 real flops unfused; peak 14 live.
   template <class T, int Sign, class In, class Out, class Tw>
   static FFTN_FORCE_INLINE void dit(const In& in, const Out& out, const Tw& twid) {
+    static_assert(Sign == -1 || Sign == 1, "Sign is -1 (forward) or +1");
     if constexpr (Sign < 0) {
       constexpr T k0 = gen_k<T>(0.8660254037844386, 0.866025388F);
       constexpr T k1 = gen_k<T>(0.5, 0.5F);
@@ -3940,6 +3972,7 @@ template <> struct cdft<12> {
   // Backward: 44 add, 4 scale, 4 fmadd_r, 11 cmul; 118 + 60 real flops unfused; peak 14 live.
   template <class T, int Sign, class In, class Out, class Tw>
   static FFTN_FORCE_INLINE void dif(const In& in, const Out& out, const Tw& twid) {
+    static_assert(Sign == -1 || Sign == 1, "Sign is -1 (forward) or +1");
     if constexpr (Sign < 0) {
       constexpr T k0 = gen_k<T>(0.8660254037844386, 0.866025388F);
       constexpr T k1 = gen_k<T>(0.5, 0.5F);
@@ -4153,6 +4186,7 @@ template <> struct cdft<13> {
   // Backward: 35 add, 6 scale, 61 fmadd_r, 0 cmul; 192 + 134 real flops unfused; peak 16 live.
   template <class T, int Sign, class In, class Out>
   static FFTN_FORCE_INLINE void plain(const In& in, const Out& out) {
+    static_assert(Sign == -1 || Sign == 1, "Sign is -1 (forward) or +1");
     if constexpr (Sign < 0) {
       constexpr T k0 = gen_k<T>(0.46472317204376856, 0.46472317F);
       constexpr T k1 = gen_k<T>(0.8229838658936564, 0.822983861F);
@@ -4444,6 +4478,7 @@ template <> struct cdft<13> {
   // Backward: 35 add, 6 scale, 61 fmadd_r, 12 cmul; 216 + 182 real flops unfused; peak 18 live.
   template <class T, int Sign, class In, class Out, class Tw>
   static FFTN_FORCE_INLINE void dit(const In& in, const Out& out, const Tw& twid) {
+    static_assert(Sign == -1 || Sign == 1, "Sign is -1 (forward) or +1");
     if constexpr (Sign < 0) {
       constexpr T k0 = gen_k<T>(0.46472317204376856, 0.46472317F);
       constexpr T k1 = gen_k<T>(0.8229838658936564, 0.822983861F);
@@ -4783,6 +4818,7 @@ template <> struct cdft<13> {
   // Backward: 35 add, 6 scale, 61 fmadd_r, 12 cmul; 216 + 182 real flops unfused; peak 16 live.
   template <class T, int Sign, class In, class Out, class Tw>
   static FFTN_FORCE_INLINE void dif(const In& in, const Out& out, const Tw& twid) {
+    static_assert(Sign == -1 || Sign == 1, "Sign is -1 (forward) or +1");
     if constexpr (Sign < 0) {
       constexpr T k0 = gen_k<T>(0.46472317204376856, 0.46472317F);
       constexpr T k1 = gen_k<T>(0.8229838658936564, 0.822983861F);
@@ -5126,6 +5162,7 @@ template <> struct cdft<14> {
   // Backward: 48 add, 6 scale, 26 fmadd_r, 0 cmul; 148 + 64 real flops unfused; peak 17 live.
   template <class T, int Sign, class In, class Out>
   static FFTN_FORCE_INLINE void plain(const In& in, const Out& out) {
+    static_assert(Sign == -1 || Sign == 1, "Sign is -1 (forward) or +1");
     if constexpr (Sign < 0) {
       constexpr T k0 = gen_k<T>(0.7818314824680298, 0.781831503F);
       constexpr T k1 = gen_k<T>(0.9749279121818236, 0.974927902F);
@@ -5365,6 +5402,7 @@ template <> struct cdft<14> {
   // Backward: 48 add, 6 scale, 26 fmadd_r, 13 cmul; 174 + 116 real flops unfused; peak 17 live.
   template <class T, int Sign, class In, class Out, class Tw>
   static FFTN_FORCE_INLINE void dit(const In& in, const Out& out, const Tw& twid) {
+    static_assert(Sign == -1 || Sign == 1, "Sign is -1 (forward) or +1");
     if constexpr (Sign < 0) {
       constexpr T k0 = gen_k<T>(0.7818314824680298, 0.781831503F);
       constexpr T k1 = gen_k<T>(0.9749279121818236, 0.974927902F);
@@ -5656,6 +5694,7 @@ template <> struct cdft<14> {
   // Backward: 48 add, 6 scale, 26 fmadd_r, 13 cmul; 174 + 116 real flops unfused; peak 17 live.
   template <class T, int Sign, class In, class Out, class Tw>
   static FFTN_FORCE_INLINE void dif(const In& in, const Out& out, const Tw& twid) {
+    static_assert(Sign == -1 || Sign == 1, "Sign is -1 (forward) or +1");
     if constexpr (Sign < 0) {
       constexpr T k0 = gen_k<T>(0.7818314824680298, 0.781831503F);
       constexpr T k1 = gen_k<T>(0.9749279121818236, 0.974927902F);
@@ -5951,6 +5990,7 @@ template <> struct cdft<15> {
   // Backward: 64 add, 14 scale, 14 fmadd_r, 0 cmul; 156 + 56 real flops unfused; peak 17 live.
   template <class T, int Sign, class In, class Out>
   static FFTN_FORCE_INLINE void plain(const In& in, const Out& out) {
+    static_assert(Sign == -1 || Sign == 1, "Sign is -1 (forward) or +1");
     if constexpr (Sign < 0) {
       constexpr T k0 = gen_k<T>(0.9510565162951535, 0.95105654F);
       constexpr T k1 = gen_k<T>(0.5877852522924731, 0.587785244F);
@@ -6216,6 +6256,7 @@ template <> struct cdft<15> {
   // Backward: 64 add, 14 scale, 14 fmadd_r, 14 cmul; 184 + 112 real flops unfused; peak 17 live.
   template <class T, int Sign, class In, class Out, class Tw>
   static FFTN_FORCE_INLINE void dit(const In& in, const Out& out, const Tw& twid) {
+    static_assert(Sign == -1 || Sign == 1, "Sign is -1 (forward) or +1");
     if constexpr (Sign < 0) {
       constexpr T k0 = gen_k<T>(0.9510565162951535, 0.95105654F);
       constexpr T k1 = gen_k<T>(0.5877852522924731, 0.587785244F);
@@ -6537,6 +6578,7 @@ template <> struct cdft<15> {
   // Backward: 64 add, 14 scale, 14 fmadd_r, 14 cmul; 184 + 112 real flops unfused; peak 17 live.
   template <class T, int Sign, class In, class Out, class Tw>
   static FFTN_FORCE_INLINE void dif(const In& in, const Out& out, const Tw& twid) {
+    static_assert(Sign == -1 || Sign == 1, "Sign is -1 (forward) or +1");
     if constexpr (Sign < 0) {
       constexpr T k0 = gen_k<T>(0.9510565162951535, 0.95105654F);
       constexpr T k1 = gen_k<T>(0.5877852522924731, 0.587785244F);
@@ -6862,6 +6904,7 @@ template <> struct cdft<16> {
   // Backward: 72 add, 12 scale, 0 fmadd_r, 0 cmul; 144 + 24 real flops unfused; peak 18 live.
   template <class T, int Sign, class In, class Out>
   static FFTN_FORCE_INLINE void plain(const In& in, const Out& out) {
+    static_assert(Sign == -1 || Sign == 1, "Sign is -1 (forward) or +1");
     if constexpr (Sign < 0) {
       constexpr T k0 = gen_k<T>(0.7071067811865476, 0.707106769F);
       constexpr T k1 = gen_k<T>(0.9238795325112867, 0.923879504F);
@@ -7109,6 +7152,7 @@ template <> struct cdft<16> {
   // Backward: 72 add, 12 scale, 0 fmadd_r, 15 cmul; 174 + 84 real flops unfused; peak 18 live.
   template <class T, int Sign, class In, class Out, class Tw>
   static FFTN_FORCE_INLINE void dit(const In& in, const Out& out, const Tw& twid) {
+    static_assert(Sign == -1 || Sign == 1, "Sign is -1 (forward) or +1");
     if constexpr (Sign < 0) {
       constexpr T k0 = gen_k<T>(0.7071067811865476, 0.707106769F);
       constexpr T k1 = gen_k<T>(0.9238795325112867, 0.923879504F);
@@ -7416,6 +7460,7 @@ template <> struct cdft<16> {
   // Backward: 72 add, 12 scale, 0 fmadd_r, 15 cmul; 174 + 84 real flops unfused; peak 18 live.
   template <class T, int Sign, class In, class Out, class Tw>
   static FFTN_FORCE_INLINE void dif(const In& in, const Out& out, const Tw& twid) {
+    static_assert(Sign == -1 || Sign == 1, "Sign is -1 (forward) or +1");
     if constexpr (Sign < 0) {
       constexpr T k0 = gen_k<T>(0.7071067811865476, 0.707106769F);
       constexpr T k1 = gen_k<T>(0.9238795325112867, 0.923879504F);
