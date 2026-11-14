@@ -10,9 +10,12 @@ sub-transform before starting the next (the depth-first order of Frigo, "A fast 
 transform compiler", PLDI 1999). Loads go just before their first use and stores just
 after their producer.
 
-Measured over radices 2-16 and all variants, this keeps fewer values live than both the
-recursive red/blue partition of that paper and the builders' own (already recursive)
-creation order: in total 502 against 598 and 549 (gen/README.md, "Subtleties").
+With the same load and store placement, this keeps no more values live than the builders'
+own, already recursive, creation order (creation_order()) on any codelet, and fewer in
+total; a test holds both over every codelet. The recursive red/blue partition of that
+paper, implemented first, lost to both: it is in commit aa966ef with the same test, which
+measured over radices 2-16 in both directions a total peak of 1004 live values for this
+order, 1196 for the partition and 1098 for creation order.
 """
 
 from __future__ import annotations
@@ -22,12 +25,45 @@ from .lower import Op
 _LOADS = ("load", "load_tw")
 
 
-def schedule(ops: list[Op]) -> list[Op]:
-    n = len(ops)
+def _graph(ops: list[Op]) -> tuple[list[list[int]], list[int], list[bool]]:
+    """Operand positions of each operation, the arithmetic operations, which are loads."""
     producer = {op.dst: i for i, op in enumerate(ops) if op.dst >= 0}
     preds = [sorted({producer[a] for a in op.args}) for op in ops]
     compute = [i for i, op in enumerate(ops) if op.kind not in (*_LOADS, "store")]
     is_load = [op.kind in _LOADS for op in ops]
+    return preds, compute, is_load
+
+
+def place(ops: list[Op], seq: list[int]) -> list[Op]:
+    """The arithmetic operations in the order seq (positions in ops), each load just before
+    its first use and each store just after its producer."""
+    preds, compute, is_load = _graph(ops)
+    assert sorted(seq) == compute, "seq orders the arithmetic operations"
+    after: dict[int, list[int]] = {}
+    for i, op in enumerate(ops):
+        if op.kind == "store":
+            after.setdefault(preds[i][0], []).append(i)
+    out: list[int] = []
+    placed: set[int] = set()
+    for i in seq:
+        for p in preds[i]:
+            if is_load[p] and p not in placed:
+                placed.add(p)
+                out.append(p)
+        out.append(i)
+        out.extend(after.get(i, []))
+    assert sorted(out) == list(range(len(ops))), "every load has a user, every store a producer"
+    return [ops[i] for i in out]
+
+
+def creation_order(ops: list[Op]) -> list[Op]:
+    """The builders' own order (already recursive), with the same placement: a baseline."""
+    return place(ops, _graph(ops)[1])
+
+
+def schedule(ops: list[Op]) -> list[Op]:
+    n = len(ops)
+    preds, compute, is_load = _graph(ops)
     # Remaining arithmetic readers of each operation's value (stores are placed afterwards).
     readers = [0] * n
     waiting = [0] * n  # arithmetic operands not yet computed
@@ -65,22 +101,7 @@ def schedule(ops: list[Op]) -> list[Op]:
             if waiting[u] == 0:
                 ready.add(u)
     assert len(seq) == len(compute), "the operations form a DAG"
-
-    after: dict[int, list[int]] = {}
-    for i, op in enumerate(ops):
-        if op.kind == "store":
-            after.setdefault(preds[i][0], []).append(i)
-    out: list[int] = []
-    placed: set[int] = set()
-    for i in seq:
-        for p in preds[i]:
-            if is_load[p] and p not in placed:
-                placed.add(p)
-                out.append(p)
-        out.append(i)
-        out.extend(after.get(i, []))
-    assert sorted(out) == list(range(n)), "every load has a user and every store a producer"
-    return [ops[i] for i in out]
+    return place(ops, seq)
 
 
 def peak_live(ops: list[Op] | tuple[Op, ...]) -> int:

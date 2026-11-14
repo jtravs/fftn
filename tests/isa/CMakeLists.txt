@@ -117,8 +117,13 @@ if(APPLE AND FFTN_TARGET_IS_AARCH64)
            WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 endif()
 
-# The check's own tests: a unit that breaks the region rules on purpose (asm_faults.cpp)
-# must be reported, one kind of fault per test.
+# The check's own tests. Its rule for calls, on hand-built functions: which jumps are the
+# aliases identical-code folding leaves and which are calls (tools/tests).
+add_test(NAME isa.asm_check_rules
+         COMMAND ${fftn_python} -m unittest discover -s tools/tests -t tools
+         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+# A unit that breaks the region rules on purpose (asm_faults.cpp) must be reported, one
+# kind of fault per test.
 add_library(fftn_isa_asm_faults OBJECT asm_faults.cpp)
 fftn_configure_target(fftn_isa_asm_faults)
 # Machine code even in LTO builds: the check reads this object itself. One section per

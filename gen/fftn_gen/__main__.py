@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 from .catalogue import all_codelets, generate
-from .reference import compare, table
+from .reference import MissingReference, compare, table
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -30,7 +30,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.table:
         codelets = all_codelets()
-        print(table(codelets))
+        try:
+            print(table(codelets))
+        except MissingReference as e:
+            print(f"fftn_gen: {e.args[0]}", file=sys.stderr)
+            return 1
         problems = [p for c in codelets if (p := compare(c))]
         for p in problems:
             print(p, file=sys.stderr)

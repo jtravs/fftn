@@ -23,7 +23,6 @@ class VerificationError(Exception):
 
 
 _TOLERANCE = mpmath.mpf(2) ** -200
-_MI = mpmath.mpc(0, -1)
 
 
 def evaluate(ops: list[Op] | tuple[Op, ...], x: list, w: list) -> list:
@@ -53,12 +52,6 @@ def evaluate(ops: list[Op] | tuple[Op, ...], x: list, w: list) -> list:
                 env[op.dst] = a[0] * a[1]
             case "mulc":
                 env[op.dst] = a[0] * mpmath.conj(a[1])
-            case "neg":
-                env[op.dst] = -a[0]
-            case "rot_m":
-                env[op.dst] = _MI * a[0]
-            case "rot_p":
-                env[op.dst] = -_MI * a[0]
             case "store":
                 if op.index in out:
                     raise VerificationError(f"output {op.index} stored twice")
@@ -70,12 +63,10 @@ def evaluate(ops: list[Op] | tuple[Op, ...], x: list, w: list) -> list:
 
 def reference(radix: int, variant: str, sign: int, x: list, w: list) -> list:
     def t(k: int) -> mpmath.mpc:
-        if k == 0:
-            return mpmath.mpc(1)
         return mpmath.conj(w[k]) if sign > 0 else w[k]
 
     if variant == "dit":
-        x = [x[j] * t(j) for j in range(radix)]
+        x = [x[0]] + [x[j] * t(j) for j in range(1, radix)]
     y = [
         mpmath.fsum(
             x[j] * mpmath.expjpi(mpmath.mpf(2 * sign * ((j * k) % radix)) / radix)
@@ -84,8 +75,28 @@ def reference(radix: int, variant: str, sign: int, x: list, w: list) -> list:
         for k in range(radix)
     ]
     if variant == "dif":
-        y = [y[k] * t(k) for k in range(radix)]
+        y = [y[0]] + [y[k] * t(k) for k in range(1, radix)]
     return y
+
+
+def check_shape(ops: list[Op] | tuple[Op, ...], radix: int, variant: str) -> None:
+    """The accessor contract (gen/README.md, "Calling convention"): every input leg loaded
+    once, every twiddle leg 1 .. R-1 once (none for plain), every output stored once.
+
+    Checked apart from the values because a stray access can be numerically harmless: a
+    load of twiddle 0, which the tables do not hold, multiplies by whatever lies before
+    the table, and the evaluation below would have to guess a value for it.
+    """
+    where = f"radix {radix} {variant}"
+    expected = {
+        "load": list(range(radix)),
+        "load_tw": [] if variant == "plain" else list(range(1, radix)),
+        "store": list(range(radix)),
+    }
+    for kind, want in expected.items():
+        got = sorted(op.index for op in ops if op.kind == kind)
+        if got != want:
+            raise VerificationError(f"{where}: {kind} indices {got}, expected {want} once each")
 
 
 def verify(
@@ -96,13 +107,11 @@ def verify(
     def rand() -> mpmath.mpc:
         return mpmath.mpc(rng.uniform(-1, 1), rng.uniform(-1, 1))
 
-    stores = sorted(op.index for op in ops if op.kind == "store")
-    if stores != list(range(radix)):
-        raise VerificationError(f"radix {radix}: stores {stores}, expected each output once")
+    check_shape(ops, radix, variant)
     cases = [[mpmath.mpc(int(j == i)) for j in range(radix)] for i in range(radix)]
     cases += [[rand() for _ in range(radix)] for _ in range(3)]
     for x in cases:
-        w = [mpmath.mpc(1)] + [rand() for _ in range(radix - 1)]
+        w = [None] + [rand() for _ in range(radix - 1)]  # leg 0 has no twiddle
         got = evaluate(ops, x, w)
         want = reference(radix, variant, sign, x, w)
         scale = max(mpmath.mpf(1), *(abs(v) for v in want))

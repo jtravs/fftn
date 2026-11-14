@@ -30,8 +30,7 @@ class Counts:
     """Operation counts of one codelet (gen/README.md, "Metadata").
 
     Vocabulary operations: add-type (add, sub, addj, subj), scale, fmadd_r, cmul (mul or
-    mulc by a twiddle) and forced rotations (neg or a multiply by -+i at a store; zero for
-    every codelet so far). Real arithmetic on a fused target, cmuls apart: adds, muls,
+    mulc by a twiddle). Real arithmetic on a fused target, cmuls apart: adds, muls,
     fmas. Real arithmetic without fused operations and with each cmul as 4 multiplies and
     2 additions (the convention of the published counts): flops_adds, flops_muls.
     """
@@ -40,7 +39,6 @@ class Counts:
     scale_ops: int
     fma_ops: int
     cmuls: int
-    forced: int
 
     @property
     def adds(self) -> int:
@@ -56,11 +54,11 @@ class Counts:
 
     @property
     def vector_ops(self) -> int:
-        return self.add_ops + self.scale_ops + self.fma_ops + self.cmuls + self.forced
+        return self.add_ops + self.scale_ops + self.fma_ops + self.cmuls
 
     @property
     def flops_adds(self) -> int:
-        return self.adds + self.fmas + 2 * self.cmuls + 2 * self.forced
+        return self.adds + self.fmas + 2 * self.cmuls
 
     @property
     def flops_muls(self) -> int:
@@ -88,7 +86,6 @@ def count(ops: list[Op] | tuple[Op, ...]) -> Counts:
         scale_ops=kinds.count("scale"),
         fma_ops=kinds.count("fmadd_r"),
         cmuls=kinds.count("mul") + kinds.count("mulc"),
-        forced=sum(k in ("neg", "rot_m", "rot_p") for k in kinds),
     )
 
 

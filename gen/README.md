@@ -23,7 +23,7 @@ uv run python -m unittest discover -s gen/tests -t gen   # the generator's tests
 
 Generation builds and verifies every codelet before writing anything; a codelet that fails
 verification raises and no file changes. `--check` is what the gate runs (about 1 s), then
-the tests (about 2.5 s). `--table` prints the operation counts of every forward codelet next
+the tests (about 5 s). `--table` prints the operation counts of every forward codelet next
 to the reference, and exits 1 if a codelet misses the reference other than by a recorded
 gap.
 
@@ -80,8 +80,8 @@ For each radix R, variant and direction (`codelet.build`):
    first, which gives two choices. Wanted rotations are propagated backwards from the
    stores, which need m equal to the output's pending rotation, and each `Add` takes the
    choice that satisfies the nearest store. A store that still disagrees would need a
-   `neg` or a multiply by ∓i: the metadata counts these "forced" rotations; no codelet has
-   one. `acc ± c·x` becomes `fmadd_r(acc, x, ±c)` when the scaled node has no other user.
+   `neg` or a multiply by ∓i; no codelet needs one, and `lower` raises `ForcedRotation`
+   rather than emit an operation that no codelet has compiled. `acc ± c·x` becomes `fmadd_r(acc, x, ±c)` when the scaled node has no other user.
 5. **Order** (`schedule.py`) by greedy list scheduling: the ready operation that adds the
    fewest live values goes next, ties to the one using the most recently computed value
    (depth first). Loads go just before their first use, stores just after their producer.
@@ -90,7 +90,9 @@ For each radix R, variant and direction (`codelet.build`):
    in 256-bit arithmetic on every basis input (every column of the codelet's matrix) and
    three random inputs, each with random twiddles, against the definition of the variant
    with exactly reduced roots of unity. Any output off by more than 2^−200 relative is a
-   `VerificationError`.
+   `VerificationError`. So is any breach of the accessor contract, checked apart from the
+   values (`check_shape`): every input leg loaded once, twiddle legs 1 to R − 1 once each
+   (none for plain), every output stored once.
 7. **Emit** (`emit_cpp.py`) one statement per operation, with constants printed in both
    precisions.
 
@@ -175,7 +177,6 @@ call of the codelet, which processes C transforms at once:
 | `muls` | real multiplications: 2 per `scale` |
 | `fmas` | real fused multiply-adds: 2 per `fmadd_r` |
 | `cmuls` | complex multiplications by twiddles (`mul`, `mulc`); their cost is the target's |
-| `forced` | rotations materialised at a store (always 0 so far; a test holds it) |
 | `vops` | vocabulary operations, loads and stores apart |
 | `live` | peak live values, complex and twiddle registers together |
 
@@ -186,18 +187,28 @@ muls + fmas + 4·cmuls multiplications (`Counts.flops_adds`, `flops_muls`).
 
 ## Operation counts
 
-`reference.py` holds the best published counts per size (split radix for 2^k; for the other
-sizes the counts of FFTW's generated codelets, Frigo 1999). Every codelet must reach them
-(a twiddle variant adds R − 1 complex multiplies), and the tests and `--table` check it.
-The generator does better than the reference at 7, 11 and 14 (fewer multiplies, from the
-mean removal in the prime form) and equals it elsewhere, with one recorded gap:
+`reference.PLAIN` has one entry per radix, and each says where its numbers come from
+(`reference.py` cites them exactly):
+
+- **published**: the counts in the headers of FFTW 3.3's generated codelets (`n1_N`, and
+  `t1_N` for the twiddle variants), and for powers of two the split-radix count
+  4n log₂ n − 6n + 8;
+- **derived**: no count is cited for the size, so the reference is the sum of its parts
+  under the generator's algorithm, from the entries above (`good_thomas(n1, n2)`; at task
+  1.1 this is how 6, 10 and 14 are referenced);
+- **none**, with a reason: the radix is generated without a count check, and `--table`
+  shows "none".
+
+Every codelet must reach its reference (a twiddle variant adds R − 1 complex multiplies),
+and the tests and `--table` check it. `--table` shows where the generator does better
+(at task 1.1: 7, 11 and 14, fewer multiplies from the mean removal in the prime form).
+Where it does worse, the gap is recorded in `reference.GAPS` with the generator's exact
+counts and the reason, so any change, better or worse, fails a test and is looked at. At
+task 1.1 the one gap is:
 
 - **13**: 192 additions and 134 multiplies against 176 and 68. The symmetric-pair form
   costs about m² multiplies per part for m = 6 pairs; the reference uses Rader's algorithm
   (a length-12 cyclic convolution), outside task 1.1.
-
-A gap is recorded in `reference.GAPS` with the generator's exact counts, so any change,
-better or worse, fails a test and is looked at.
 
 ## Adding a radix
 
@@ -207,15 +218,27 @@ better or worse, fails a test and is looked at.
    algorithm first (next section).
 2. Add R to `RADICES` in `catalogue.py`. The metadata fields are `std::uint8_t` and
    `std::uint16_t`: R ≤ 255.
-3. Add R's best published count to `reference.PLAIN`, with its source in a comment if it
-   is not one of those already cited. Run `uv run python -m gen.fftn_gen --table`. If the
-   generator does not reach it, improve the generator or record the gap in
-   `reference.GAPS` with its counts and the reason, and say so in "Operation counts" above.
+3. Give R an entry in `reference.PLAIN` ("Operation counts" above): its best published
+   count with `published(adds, muls, source)`, naming the source exactly; if there is none,
+   a derived one (for 18 = 2 × 9, `good_thomas(2, 9)`); if neither makes sense,
+   `Reference(None, "none: <reason>")`. Without an entry `--table` and the tests stop with
+   a message saying so. Run `uv run python -m gen.fftn_gen --table`. If the generator does
+   not reach the reference, improve the generator or record the gap in `reference.GAPS`
+   with its counts and the reason, and say so in "Operation counts" above.
 4. Regenerate (`uv run python -m gen.fftn_gen`) and run the generator's tests.
 5. Build and run `fftn_isa_tests` (`tests/isa/codelet_test.cpp`): it runs every codelet in
    the metadata table on every target the machine has, so the new radix is tested without
-   any change to the test. Look at `live` for the new codelets: above 16 the 16-register
-   targets (AVX2) spill, above 32 every target does.
+   any change to the test. With the gate's Release preset:
+
+   ```bash
+   cmake --preset check-release
+   cmake --build --preset check-release --target fftn_isa_tests
+   build/check-release/tests/isa/fftn_isa_tests --gtest_filter='*codelet*'
+   ctest --preset check-release -R 'isa\.'   # also the disassembly checks
+   ```
+
+   Look at `live` for the new codelets: above 16 the 16-register targets (AVX2) spill,
+   above 32 every target does.
 6. Commit the generator change and `src/gen/` together. Nothing else lists radices.
 
 ## Adding an algorithm
@@ -246,13 +269,15 @@ before the first store if it may run in place.
 
 - **Rotations are cheap only if the stores agree.** A store needs the register to hold the
   output itself, not a rotation of it. The backward propagation of wanted rotations finds
-  an orientation for every `Add` with no forced rotation in every codelet so far; if a new
-  algorithm makes `forced` non-zero, the metadata test fails and the lowering needs a
-  better choice before a cost is accepted.
-- **Value numbering can merge, never split, wrongly.** Keys keep 2^−150 of 256-bit values,
-  so a missed merge needs a rounding boundary within 2^−100. A wrong merge would need two
-  different linear functions to agree at three random points to that precision; the exact
-  verification would catch it anyway.
+  an orientation for every `Add` with no forced rotation in every codelet so far. If a new
+  algorithm needs one, `lower` raises `ForcedRotation`: improve the choice, or add the
+  rotating operation to the lowering, the verifier and the emitter together, with a
+  codelet that exercises it in the C++ test.
+- **Value numbering may, very rarely, miss a merge; it does not merge wrongly.** Keys keep
+  2^−150 of 256-bit values, so a missed merge (two equal values falling either side of a
+  rounding boundary) needs a boundary within 2^−100 of a value, and costs only an
+  operation. A wrong merge would need two different linear functions to agree at three
+  random points to that precision, and the exact verification would catch it anyway.
 - **Mean removal in the prime form.** Each cosine row sums to −1/2, so with t = Σ s_j the
   cosine sums are (x_0 − t/(2m)) + Σ_{j<m} D_kj (s_j − s_m). That needs m(m − 1) + 1
   multiplies instead of m², with the same number of additions and the same number of
@@ -267,16 +292,19 @@ before the first store if it may run in place.
   `subj`); `FCMLA` could do it in two. The vocabulary has no multiply by a constant complex
   number (DESIGN.md 18.2). Radix 16 has four such multiplies, 9 has four, 12 and the other
   Good–Thomas sizes none.
-- **Order.** The recursive red/blue partition of Frigo (PLDI 1999) was implemented first
-  and kept more values live than the builders' own creation order on most codelets; the
-  greedy scheduler beats both in total and is never worse than creation order or
-  stage-by-stage order on any codelet (`schedule.py` has the totals; a test holds it). The
-  compiler reschedules anyway; the order is a hint that keeps its register allocator out
-  of trouble. Radices 13 to 16 peak at 16 to 18 live values, so they spill a little on
-  AVX2's 16 registers, and none spills on 32.
-- **Constants** are printed twice, rounded once from the exact value to double and to float
-  (rounding the double to float would round twice), and `gen_k<T>` picks one. Literals are
-  the shortest strings that round back.
+- **Order.** The greedy scheduler keeps no more values live than the builders' own
+  creation order on any codelet, and fewer in total; a test compares the two, with the same
+  load and store placement, over every codelet. The recursive red/blue partition of Frigo
+  (PLDI 1999) was implemented first and lost to both; `schedule.py` names the commit that
+  holds it and its numbers. The compiler reschedules anyway; the order is a hint that
+  keeps its register allocator out of trouble. A codelet whose `live` exceeds 16 spills a
+  little on AVX2's 16 registers, and above 32 on every target; `--table` shows `live` (at
+  task 1.1, radices 14 to 16 were at 17 and 18).
+- **Constants** are printed twice, each the exact value rounded once to its precision (to
+  double, and to float directly: rounding the double to float would round twice), and
+  `gen_k<T>` picks one. The double literal is the shortest decimal that reads back as that
+  double; the float literal has nine significant digits, which always read back as that
+  float. A test checks both roundings.
 - **Determinism.** Random samples come from fixed seeds and every iteration that reaches the
   output is over ordered containers, so the output is identical on every run and machine.
   The gate depends on it.
