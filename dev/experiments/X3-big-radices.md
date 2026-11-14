@@ -79,7 +79,37 @@ them, and/or the phase rule's largest radix, measured A/B against M.
 
 ## Results
 
-Pending.
+Interim (2026-11-14, commit a0a09bf/7e4c438; `bench/x3/run.py report RUN...` gives the
+tables). Ratios are arm ÷ A, bands ±1.0–1.4 %.
+
+- **Xeon 6240, `avx512`** (GCC 14; runs 20261114-175401-8e3c, -175657-851c, -180137-b6e4,
+  -180554-c5b7, -181331-5e3c): float chains with radix 32 win: 512 32.16 0.82 / 0.85
+  (b1 / b64), 1024 32.32 0.92 / 0.94, 2048 8.8.32 0.98, 4096 8.16.32 0.97–0.98. Double
+  ties at 512–2048 (0.95–1.00). At 4096 and 8192, where A is a grid, the radix-16 chain
+  is 0.68–0.81 of the grid and chains with radix 32 0.56–0.79 (8192 f32 16.16.32 0.56):
+  the grid starts too early on this 32 KiB L1. Grids with radix 32/64 phases lose
+  (1.07–1.8) except 8192 b64 double (64 × 128, 0.95). 16384–65536 and `avx2` pending
+  (job 15568).
+- **EPYC 7763, `avx2`** (GCC 16; runs -175446-3f09, -175550-be92, -175649-0c4a,
+  -180042-48bd, -180740-effd): big chains lose or tie at 512–2048 (1.00–1.07); 4096 f32
+  b64 8.32.16 0.79 against the planner's 16.16.16 (radix 16 is slow on 16 registers,
+  X18). At 4096 double the radix-16 chain is 0.75–0.78 of the default grid, at 8192
+  0.87–0.93 of the three-phase grid. Grid 64 × 128 with a radix-64 phase 0.95–0.97 at
+  8192 double, against a three-phase grid. 16384–65536 pending (job 509113).
+- **M5 Max, `neon_fcma`** (runs 20261114-174600-8f9b, -174623-cfd1, -174822-ee44,
+  -175029-6d2e, -175434-9b3c, -180103-8956, -180803-ddb8, -181715-180b): chains with 32
+  win only at 512 f32 (16.32, 0.94) and 2048 b64 double (0.95); elsewhere tie or lose;
+  radix-64 grid phases lose 1.5–2.0 at 4096–8192 and never change the plan above it.
+  **Artifact:** at 32768 and 65536 double, A and A~ ran 1.2–1.4 times slower than the
+  arms `grid` and `g64`, whose plans are identical to A's; re-run alone
+  (20261114-182537-c7af) A, `STRATEGY=rules`, `STRATEGY=grid` and no ISA option agree
+  within 1 %. So comparisons against A at those lengths are invalid; the same-plan
+  `chain`/`grid` arms are the reference there.
+
+Screen (rule 1): passes for `avx512` float (512, 1024, 4096 by more than 3 %); fails for
+`avx512` double at chain lengths, for the EPYC's `avx2` and for the Mac. Step 2 for
+`avx512` float: campaign xeon-avx512-big (search.py `--radices 2-16,32,64 --require
+32,64`, 26 multiples of 32 from 64 to 2048), Slurm job 15573 after 15568.
 
 ## Verdict
 
