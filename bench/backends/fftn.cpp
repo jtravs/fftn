@@ -36,7 +36,12 @@
 //   RADICES=r1.r2... the chain's radices in pass order (build_settings::radices, an internal
 //                    test knob), for c2c rows whose length they multiply to; any other case
 //                    is an error, and so is a radix no pass of the target takes. Experiment
-//                    X2 times radix sequences with it (dev/experiments/X2-radix-sets.md).
+//                    X2 times radix sequences with it (dev/experiments/X2-radix-sets.md);
+//                    one codelet radix equal to the length (RADICES=32 for n = 32) is a
+//                    whole-transform leaf (experiment X8, dev/experiments/X8-leaves.md).
+//   LEAF_LIMIT=N     the planner's leaf limit (build_settings::leaf_limit): every length
+//                    up to N that has a codelet is one leaf instead of a chain (default: the
+//                    profile's, 32 on NEON in double, else 16)
 //   STRATEGY=rules|chain|grid   the strategy of c2c rows (build_settings::strategy): the
 //                    planner's choice (default), or the chain or the grid forced where the row
 //                    can be one; each case's note says which was built (experiment X12)
@@ -377,6 +382,13 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
         return fbench_error;
       }
       s.radices_text = value;
+    } else if (key == "LEAF_LIMIT") {
+      const std::optional<std::size_t> v = fbench::fftn_tuning::parse_size(value, 1, false);
+      if (!v || *v > 4096) {
+        say(message, message_size, "LEAF_LIMIT is a whole number from 1 to 4096");
+        return fbench_error;
+      }
+      s.settings.leaf_limit = *v;
     } else if (key == "STRATEGY") {
       if (value != "rules" && value != "chain" && value != "grid") {
         say(message, message_size, "STRATEGY is rules, chain or grid");
@@ -437,6 +449,9 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
     }
     if (!s.settings.radices.empty()) {
       d.str("radices", s.radices_text);
+    }
+    if (s.settings.leaf_limit != 0) {
+      d.integer("leaf_limit", static_cast<std::int64_t>(s.settings.leaf_limit));
     }
 #ifdef FBENCH_FFTN_OMP
     // Always, so that this binary's identity differs from fbench-fftn's even without options

@@ -7,6 +7,8 @@
 // (region.hpp). Included before any region opens.
 #pragma once
 
+#include "gen/codelets.hpp"
+
 #include <cstddef>
 #include <cstdint>
 
@@ -69,8 +71,24 @@ inline constexpr std::size_t edge_op_count = 3;
 // on its input or on its output. A separate instantiation each.
 enum class factor_sharing : std::uint8_t { none, input, output };
 
-// The codelets' radices index the tables below directly; gen::radices lists which exist.
-inline constexpr std::size_t max_codelet_radix = 16;
+// The codelets' radices are gen::radices (every radix 2 to 16, then a few larger ones);
+// pass_kernels::codelet has one row per entry, in that order. codelet_slot(r) is r's row,
+// or gen::radix_count when no codelet has radix r (a radix above 16 that is not listed is
+// a generic pass).
+[[nodiscard]] constexpr std::size_t codelet_slot(std::size_t r) noexcept {
+  for (std::size_t i = 0; i < gen::radix_count; ++i) {
+    if (gen::radices[i] == r) {
+      return i;
+    }
+  }
+  return gen::radix_count;
+}
+[[nodiscard]] constexpr bool has_codelet(std::size_t r) noexcept {
+  return codelet_slot(r) < gen::radix_count;
+}
+// Every radix from 2 to this one has a codelet; the planner and the grid choose pass radices
+// up to it, and prime factors above it are the generic pass's or Bluestein's.
+inline constexpr std::size_t dense_codelet_radix = 16;
 
 // The passes of precision T as a target exports them (src/passes/entries.inl). The
 // direction index is 0 forward (exponent -i), 1 backward (+i); edge indices are edge_op
@@ -105,7 +123,7 @@ struct radix_passes {
   pass_fn last_shared_out;
   // Its last pass (m = 1): lanes over copies, no twiddles; output edge.
   pass_fn last[2][edge_op_count];
-  // A whole transform of n = radix <= 16 in registers; input edge, output edge.
+  // A whole transform of n = radix in registers; input edge, output edge.
   pass_fn leaf[2][edge_op_count][edge_op_count];
   // A grid phase's first or last pass reading or writing the caller's rows in place of a
   // gather or scatter (src/passes/grid.inl), by phase_variant.
@@ -113,9 +131,10 @@ struct radix_passes {
 };
 
 template <class T> struct pass_kernels {
-  // Indexed by the codelet's radix.
-  radix_passes codelet[max_codelet_radix + 1];
-  // Any radix by direct evaluation (the primes above 16); input edge, output edge.
+  // Indexed by codelet_slot(radix).
+  radix_passes codelet[gen::radix_count];
+  // Any radix by direct evaluation (radices with no codelet: the primes above 16); input
+  // edge, output edge.
   pass_fn generic[2][edge_op_count][edge_op_count];
   // y[i] = x[i] with the edges' operations; input edge, output edge.
   pass_fn copy[edge_op_count][edge_op_count];

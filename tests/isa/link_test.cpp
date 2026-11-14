@@ -45,11 +45,11 @@ TEST(link, every_compiled_target_has_its_own_table) {
     const std::vector<std::uintptr_t> entries = {
         reinterpret_cast<std::uintptr_t>(k->f64.pack_twiddles),
         reinterpret_cast<std::uintptr_t>(k->f64.pack_bcast_twiddles),
-        reinterpret_cast<std::uintptr_t>(k->f64.passes.codelet[4].lane[0]),
+        reinterpret_cast<std::uintptr_t>(k->f64.passes.codelet[fftn::detail::codelet_slot(4)].lane[0]),
         reinterpret_cast<std::uintptr_t>(k->f64.passes.copy[0][0]),
         reinterpret_cast<std::uintptr_t>(k->f32.pack_twiddles),
         reinterpret_cast<std::uintptr_t>(k->f32.pack_bcast_twiddles),
-        reinterpret_cast<std::uintptr_t>(k->f32.passes.codelet[4].lane[0]),
+        reinterpret_cast<std::uintptr_t>(k->f32.passes.codelet[fftn::detail::codelet_slot(4)].lane[0]),
         reinterpret_cast<std::uintptr_t>(k->f32.passes.copy[0][0]),
         reinterpret_cast<std::uintptr_t>(find_probes(t)->f64),
         reinterpret_cast<std::uintptr_t>(find_probes(t)->f32),

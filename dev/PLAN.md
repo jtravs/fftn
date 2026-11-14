@@ -42,7 +42,10 @@ phase 1 exit is authorised up to USD 20 (ledger in the experiment file).
 
 Open questions: see DESIGN.md section 18.2.
 
-Claims (2026-11-14): the lead session holds X2, T1, T5 and the baselines.
+Claims (2026-11-14): the lead session holds X2, T1, T5 and the baselines. Task 1.6's
+radix 32 and 64 codelets are generated and wired (every pass kind; the planner prices
+radices up to 16 only); X8 set the leaf limit to 32 on NEON in double; the codelets double
+the kernel code (B3 numbers in X8) and stay, for the grid and X3.
 
 Baseline runs (fbench run IDs): EPYC 7763-class node (GCC 16): tracking
 20261113-230721-7c95 failed (PATIENT timeout), re-run without PATIENT; pocketfft re-run with
@@ -249,7 +252,7 @@ running, done (with verdict).
 | X5 | Twiddle modes (full, shared, derived) by length and target | 1 | planned |
 | X6 | Real-input codelets against half-length complex with fused post/pre, even and odd n | 2 | planned |
 | X7 | Lanes against in-row kernels for batches of short rows, by length, target and row count | 2 | planned |
-| X8 | Whole-transform leaves for n ≤ 64–256 against two- and three-stage chains | 1 | planned |
+| [X8](experiments/X8-leaves.md) | Whole-transform leaves for n ≤ 64–256 against two- and three-stage chains | 1 | done: leaf limit 32 on NEON in double (16–22 % faster), 16 elsewhere; no leaf of 64 |
 | X9 | Scrambled intermediate order for transform pairs | 5 | planned |
 | [X10](experiments/X10-pass-loops.md) | Generated whole passes against templated pass loops; on x86 first: addressing, register budget and shuffles of the pass loops (after X18) | 1 | done: rejected (loop addressing cuts instructions, not time; the cost is port-5 shuffles, X19 next) |
 | X11 | SVE at 128 and 256 bits on Graviton 3/4 against NEON | 7 | planned |

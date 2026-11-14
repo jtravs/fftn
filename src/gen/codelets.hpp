@@ -33,7 +33,7 @@ struct codelet_info {
   std::uint16_t live;    // peak live values (complex and twiddle registers)
 };
 
-inline constexpr std::size_t codelet_count = 90;
+inline constexpr std::size_t codelet_count = 102;
 // A C array: ISA regions read it, and they use no standard-library templates.
 inline constexpr codelet_info codelets[codelet_count] = {
     {2, variant::plain, -1, lowering::complex_register, 0, 4, 0, 0, 0, 2, 3},
@@ -126,9 +126,21 @@ inline constexpr codelet_info codelets[codelet_count] = {
     {16, variant::dit, 1, lowering::complex_register, 15, 144, 24, 0, 15, 99, 18},
     {16, variant::dif, -1, lowering::complex_register, 15, 144, 24, 0, 15, 99, 18},
     {16, variant::dif, 1, lowering::complex_register, 15, 144, 24, 0, 15, 99, 18},
+    {32, variant::plain, -1, lowering::complex_register, 0, 372, 84, 0, 0, 228, 34},
+    {32, variant::plain, 1, lowering::complex_register, 0, 372, 84, 0, 0, 228, 34},
+    {32, variant::dit, -1, lowering::complex_register, 31, 372, 84, 0, 31, 259, 34},
+    {32, variant::dit, 1, lowering::complex_register, 31, 372, 84, 0, 31, 259, 34},
+    {32, variant::dif, -1, lowering::complex_register, 31, 372, 84, 0, 31, 259, 34},
+    {32, variant::dif, 1, lowering::complex_register, 31, 372, 84, 0, 31, 259, 34},
+    {64, variant::plain, -1, lowering::complex_register, 0, 912, 248, 0, 0, 580, 66},
+    {64, variant::plain, 1, lowering::complex_register, 0, 912, 248, 0, 0, 580, 66},
+    {64, variant::dit, -1, lowering::complex_register, 63, 912, 248, 0, 63, 643, 66},
+    {64, variant::dit, 1, lowering::complex_register, 63, 912, 248, 0, 63, 643, 66},
+    {64, variant::dif, -1, lowering::complex_register, 63, 912, 248, 0, 63, 643, 66},
+    {64, variant::dif, 1, lowering::complex_register, 63, 912, 248, 0, 63, 643, 66},
 };
 
-inline constexpr std::size_t radix_count = 15;
-inline constexpr std::uint8_t radices[radix_count] = {2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
+inline constexpr std::size_t radix_count = 17;
+inline constexpr std::uint8_t radices[radix_count] = {2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 32, 64};
 
 } // namespace fftn::inline v0::detail::gen

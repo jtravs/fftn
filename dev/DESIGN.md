@@ -850,7 +850,8 @@ For each radix the generator can emit:
   the last or first pass (section 9.1).
 
 Generated so far: the complex-register form of plain, DIT and DIF, forward and backward,
-for the radices listed in `gen/fftn_gen/catalogue.py` (2–16 at task 1.1). The split form,
+for the radices listed in `gen/fftn_gen/catalogue.py` (2–16 at task 1.1; 32 and 64 since
+task 1.6, for leaves and big passes). The split form,
 pruned and fused-edge variants follow with tasks 1.5 and 2.1.
 
 Reference values for regression: the generator's operation counts are compared with the
@@ -922,9 +923,11 @@ parameter, everything else accessors; gen/README.md has the codelet calling conv
 - The **lane** passes are the rest: lanes over copies q, one twiddle per leg shared by
   every lane (`bcast_tw`), the DIF codelet in the middle and the plain codelet in the last
   pass (m = 1).
-- The **leaf** is n ≤ 16 as one codelet call on one line: values are broadcast on loading
-  and lane 0 is stored, so it takes any stride and runs in place; leaves vectorised
-  across rows are the lanes strategy's (phase 4) and experiment X8's.
+- The **leaf** is one codelet call on one line, for n ≤ 16 and for a codelet radix up to
+  the profile's leaf limit (32 on NEON in double, 16 elsewhere; experiment X8): values are
+  broadcast on loading and lane 0 is stored, so it takes any stride and runs in place, at
+  the cost of C − 1 idle lanes; leaves vectorised across rows are the lanes strategy's
+  (phase 4).
 - The **generic** pass (any radix by direct evaluation) and the copy are lane-form passes
   on every target (the generic pass's lanes run over copies, so a single prime row has one
   valid lane; with the Bluestein threshold at 16 the rules no longer choose it, X17);
@@ -1019,7 +1022,8 @@ resolves per target.
 As built (task 1.2, `src/strategies/chain.cpp`): radices from planner v1 (section 11.2);
 the first pass grouped, then lane passes, a radix above 16 a generic pass in any
 position except the trailing ones above the profile's Bluestein threshold, which form one
-Bluestein stage at the end (below), n ≤ 16 a leaf, n = 1 a copy. The input edge's operation is applied by the first
+Bluestein stage at the end (below), a single codelet radix (n ≤ 16, or up to the leaf limit)
+a leaf, n = 1 a copy. The input edge's operation is applied by the first
 pass that is not a copy and the output edge's by the last, so neither costs a pass. On
 C > 1 a line whose stride is not 1 (a strided axis, a strided row) is copied into scratch
 before the chain or out of it after: an extra pass that the lanes strategy for strided
@@ -1303,7 +1307,8 @@ sequence in double and 1.44 times in single precision on AVX2 (geometric means o
 cost table: for each pass kind and codelet radix R (2 to 16) a cost per unit and a cost per
 tail, and a cost per pass. For a line of n points:
 
-1. n = 1: no pass. n ≤ 16: one leaf of radix n.
+1. n = 1: no pass. n ≤ 16, or n a codelet radix (32, 64) no larger than the profile's
+   leaf limit (experiment X8: 32 on NEON in double, 16 elsewhere): one leaf of radix n.
 2. A length the table overrides takes the table's radices (the lengths where rule 4 was
    measured more than 2 % slower than planner v0; six on AVX2).
 3. Otherwise write n = n_s q₁ q₂ … with n_s free of primes above 16 and q₁ ≤ q₂ ≤ … the
@@ -2375,6 +2380,8 @@ to change before a release.
 | 2026-11-14 | The serial driver runs a stage's chunks as one call and divides only when a range starts mid-stage; a chain uses a contiguous, unaliased destination as its second scratch line (experiment X18) | 64-bit division costs 40–90 cycles on Cascade Lake (37 % of a 64-point transform there); three lines instead of four keep 512–1024-point rows in a 32 KiB L1 longer. Xeon 1.50 → 1.25 of FFTW, EPYC 1.37 → 1.29; the driver and scratch changes keep every bit, the AVX2 overrides for 4096 and 16384 (also reached by C ≤ 2 targets without a table of their own) change those lengths' radices and so their bits |
 | 2026-11-14 | Grid phases whose radices are all at most 8 read and write their rows in their end passes rather than through a gather and a scatter, for rows up to `grid_fuse_bytes` (a quarter of L2); elsewhere the copies stay (task 1.7b) | X12 (Mac, runs 20261114-131752-7e99 and -132841-80e0): 2^18 from 1.03 to 0.92 times FFTW; radix 16 at the ends doubled the time (set conflicts), one fused end gained nothing, and beyond L2 the copies' prefetch won (2^20 1.46 fused against 1.35) |
 | 2026-11-14 | The grid's scratch line b is staggered from a by seven 64-byte lines (rule 4 of section 10); the grid's intermediate array is not padded | X4 (Mac): the stagger gained 7–9 % at 2^22 and lost nowhere; padding the intermediate (one line per row) added nothing separable, and reading padded rows directly with radix 16 lost 5 % at 2^22 |
+| 2026-11-14 | Codelets of radix 32 and 64 (task 1.6) in every variant, with all their passes instantiated; the pass table has one row per generated radix (`codelet_slot`), not one per radix value; a planner profile has a leaf limit, 16 by default, above which a codelet radix is a leaf only when the limit allows (`build_settings::leaf_limit`, fbench `LEAF_LIMIT`) | Leaves above 16 and big passes (experiments X8 and X3) need the codelets; their operation counts equal FFTW's n1_32, n1_64, t1_32 and t1_64. They roughly double the kernel code (B3: 33 % of the pass instructions are radix 64's, 14 % radix 32's; numbers in X8), kept for speed over build size: the grid and X3 may use them as passes |
+| 2026-11-14 | Leaf limit 32 on NEON in double (C = 1), 16 on every other target and precision; no leaf of 64 (experiment X8) | The leaf of 32 was 16–22 % faster than planner v1's chain on the M5 Max in double; with C > 1 it idles lanes and lost on the Mac and the EPYC; 64 spills and lost everywhere. The Xeon's `avx512` float chain at 32 lost to the leaf only through its own tail problem (X16) |
 
 ---
 

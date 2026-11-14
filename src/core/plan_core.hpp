@@ -35,6 +35,9 @@ struct build_settings {
   // the generic pass, except trailing radices above the Bluestein threshold, which form
   // one Bluestein stage.
   std::vector<std::size_t> radices;
+  // The planner's leaf limit (planner/rules.hpp, target_profile::leaf_limit) instead of the
+  // profile's; 0 keeps the profile's. Experiment X8 compares leaves with chains through it.
+  std::size_t leaf_limit = 0;
   // The strategy of a c2c plan of one axis (rows): the rules' choice (a grid beyond
   // profile.grid_min_bytes), or the chain or the grid forced. A grid is built only where
   // the row has a split (strategies/grid.hpp) and no edge factor; elsewhere, forced or not,

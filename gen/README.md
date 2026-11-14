@@ -22,8 +22,8 @@ uv run python -m unittest discover -s gen/tests -t gen   # the generator's tests
 ```
 
 Generation builds and verifies every codelet before writing anything; a codelet that fails
-verification raises and no file changes. `--check` is what the gate runs (about 1 s), then
-the tests (about 5 s). `--table` prints the operation counts of every forward codelet next
+verification raises and no file changes. `--check` is what the gate runs (about 12 s since radix
+64), then the tests (about 40 s). `--table` prints the operation counts of every forward codelet next
 to the reference, and exits 1 if a codelet misses the reference other than by a recorded
 gap.
 

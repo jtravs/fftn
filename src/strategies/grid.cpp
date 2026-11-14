@@ -142,7 +142,7 @@ std::vector<std::size_t> phase_radices(std::size_t n) {
     if (!reached[i]) {
       continue;
     }
-    for (std::size_t r = max_codelet_radix; r >= 2; --r) {
+    for (std::size_t r = dense_codelet_radix; r >= 2; --r) {
       if ((n / ds[i]) % r != 0) {
         continue;
       }
@@ -326,7 +326,7 @@ slot grid_builder<T>::phase_chain(std::size_t n, const std::vector<std::size_t>&
       } else if (big_out && out_scale != 1.0) {
         v = phase_plain_out_scale;
       }
-      st.run = kernels_.passes.codelet[radix].phase[d][v];
+      st.run = kernels_.passes.codelet[codelet_slot(radix)].phase[d][v];
       // The scale of the variant chosen: a single pass is both a phase's read and its write.
       st.args.scale = v == phase_twiddled_in_scale || v == phase_plain_in_scale ? in_scale
                       : v == phase_plain_out_scale                              ? out_scale
@@ -348,8 +348,8 @@ slot grid_builder<T>::phase_chain(std::size_t n, const std::vector<std::size_t>&
                                     : "");
       }
     } else {
-      st.run = m > 1 ? kernels_.passes.codelet[radix].lane[d]
-                     : kernels_.passes.codelet[radix].last[d][0];
+      st.run = m > 1 ? kernels_.passes.codelet[codelet_slot(radix)].lane[d]
+                     : kernels_.passes.codelet[codelet_slot(radix)].last[d][0];
     }
     st.src = big_in ? from.where : at;
     st.dst = next;

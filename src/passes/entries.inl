@@ -13,18 +13,11 @@ inline constexpr edge_op nop = edge_op::none;
 inline constexpr edge_op scl = edge_op::scale;
 inline constexpr edge_op fac = edge_op::factor;
 
-// Whether gen::radices lists R (I runs through the list).
-template <std::size_t R, std::size_t I = 0>
-inline constexpr bool codelet_radix = gen::radices[I] == R || codelet_radix<R, I + 1>;
-template <std::size_t R> inline constexpr bool codelet_radix<R, gen::radix_count> = false;
-
-// The passes of radix R, or nulls where R has no codelet. A plan has one scale, on one
-// edge (core/plan_core.cpp), so no pass scales both: that entry stays null rather than
+// The passes of the codelet in row I of gen::radices. A plan has one scale, on one edge
+// (core/plan_core.cpp), so no pass scales both: that entry stays null rather than
 // instantiating a variant nothing selects.
-template <class T, std::size_t R, bool = codelet_radix<R>> struct radix_entries {
-  static constexpr radix_passes value{};
-};
-template <class T, std::size_t R> struct radix_entries<T, R, true> {
+template <class T, std::size_t I> struct radix_entries {
+  static constexpr std::size_t R = gen::radices[I];
   static constexpr radix_passes value{
       .grouped =
           {
@@ -118,7 +111,7 @@ template <class T, std::size_t R> struct radix_entries<T, R, true> {
   };
 };
 
-static_assert(max_codelet_radix == 16, "pass_table lists the rows 0 .. 16");
+static_assert(gen::radix_count == 17, "pass_table lists the rows of gen::radices");
 
 template <class T>
 inline constexpr pass_kernels<T> pass_table{

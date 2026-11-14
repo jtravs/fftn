@@ -4,6 +4,7 @@
 #include "planner/rules.hpp"
 
 #include "isa/target.hpp"
+#include "passes/pass_args.hpp"
 
 #include <algorithm>
 #include <array>
@@ -14,8 +15,9 @@
 namespace fftn::inline v0::detail {
 namespace {
 
-// The largest radix that is a single codelet (src/gen/codelets.hpp); above it a line is
-// split into passes, and a prime factor above it is a generic pass.
+// Every radix up to this one has a codelet (src/gen/codelets.hpp): lengths up to it are
+// leaves, it is the largest radix the pass costs price, and a prime factor above it is a
+// generic pass.
 constexpr std::size_t largest_leaf = 16;
 
 // Experiment X2 (dev/experiments/X2-radix-sets.md), EPYC 7763, AVX2, GCC 16, one thread: the
@@ -263,6 +265,14 @@ std::size_t lanes_distance(std::size_t a, std::size_t b) { return a > b ? a - b 
 // value until a measurement there replaces it.
 constexpr std::size_t default_bluestein_above = 16;
 
+// Experiment X8 (dev/experiments/X8-leaves.md): a whole-transform leaf of 32 beat planner
+// v1's chain by 16 to 22 % on NEON in double (C = 1, neon and neon_fcma, M5 Max) and lost
+// on every target with C > 1 and at 64 everywhere (radix 64 spills; a leaf idles C - 1
+// lanes). So the leaf limit is 32 on NEON in double and 16 elsewhere.
+std::size_t leaf_limit_of(target t, std::size_t lanes) {
+  return (t == target::neon || t == target::neon_fcma) && lanes == 1 ? 32 : default_leaf_limit;
+}
+
 struct sequence {
   std::uint64_t cost = 0;
   std::vector<std::size_t> radices;
@@ -335,7 +345,10 @@ target_profile profile_of(target t, std::size_t lanes) noexcept {
   const measured_table* nearest = nullptr;
   for (const measured_table& m : measured_tables) {
     if (m.t == t && m.lanes == lanes) {
-      return {.lanes = lanes, .costs = m.costs, .bluestein_above = default_bluestein_above};
+      return {.lanes = lanes,
+              .costs = m.costs,
+              .leaf_limit = leaf_limit_of(t, lanes),
+              .bluestein_above = default_bluestein_above};
     }
     if (m.t == fallback_target &&
         (nearest == nullptr ||
@@ -343,7 +356,10 @@ target_profile profile_of(target t, std::size_t lanes) noexcept {
       nearest = &m;
     }
   }
-  return {.lanes = lanes, .costs = nearest->costs, .bluestein_above = default_bluestein_above};
+  return {.lanes = lanes,
+          .costs = nearest->costs,
+          .leaf_limit = leaf_limit_of(t, lanes),
+          .bluestein_above = default_bluestein_above};
 }
 
 // The specification is DESIGN.md 11.2, rule by rule.
@@ -351,7 +367,7 @@ std::vector<std::size_t> rule_radices(std::size_t n, const target_profile& p) {
   if (n <= 1) {
     return {};
   }
-  if (n <= largest_leaf) {
+  if (n <= largest_leaf || (n <= p.leaf_limit && has_codelet(n))) {
     return {n};
   }
   for (const radix_override& o : p.costs->overrides) {
