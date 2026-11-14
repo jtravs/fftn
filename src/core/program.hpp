@@ -61,6 +61,14 @@ struct loop {
 
 using record = std::variant<stage, loop>;
 
+// The first unit of chunk c of a range of `units` units cut into `chunks` chunks:
+// units c / chunks in exact integers. Serial execution and a split across threads both
+// cut a stage or a loop nest with it, so a chunk covers the same units whoever runs it.
+[[nodiscard]] constexpr std::size_t chunk_start(std::size_t units, std::size_t chunks,
+                                                std::size_t c) noexcept {
+  return units / chunks * c + units % chunks * c / chunks;
+}
+
 struct program {
   std::vector<record> records;
   std::size_t batch_loops = 0; // the leading records that are the batch loops

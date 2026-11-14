@@ -10,6 +10,7 @@
 #include "fftn/options.hpp"   // IWYU pragma: export
 #include "fftn/plan.hpp"      // IWYU pragma: export
 #include "fftn/shape.hpp"     // IWYU pragma: export
+#include "fftn/team.hpp"      // IWYU pragma: export
 #include "fftn/workspace.hpp" // IWYU pragma: export
 
 /// @namespace fftn

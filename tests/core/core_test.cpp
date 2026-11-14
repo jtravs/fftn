@@ -92,7 +92,7 @@ TEST(Chain, RadicesMultiplyToTheLength) {
 std::vector<std::byte> run(const fftn::detail::plan_core& core, std::vector<std::byte> input,
                            std::size_t out_bytes) {
   std::vector<std::byte> output(out_bytes);
-  const fftn::workspace ws(fftn::detail::workspace_bytes(core));
+  const fftn::workspace ws(fftn::detail::workspace_bytes(core, 1));
   fftn::detail::execute_core(core, 0, fftn::detail::transform_count(core), input.data(),
                              output.data(), ws);
   return output;

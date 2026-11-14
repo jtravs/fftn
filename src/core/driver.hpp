@@ -26,4 +26,20 @@ struct slot_addresses {
 void run_transforms(const program& p, std::size_t first, std::size_t count,
                     const slot_addresses& base) noexcept;
 
+// The pieces a team shares out (src/threading/work_graph.hpp), each run exactly as
+// run_transforms runs it.
+
+// Where transform t's slots are: base, with in and out moved by the batch loops.
+[[nodiscard]] slot_addresses transform_addresses(const program& p, std::size_t t,
+                                                 const slot_addresses& base) noexcept;
+
+// Runs chunks [first, last) of stage st.
+void run_stage_chunks(const stage& st, const slot_addresses& at, std::size_t first,
+                      std::size_t last) noexcept;
+
+// Runs lines [first, last) of the perfectly nested loops [begin, begin + nest) of p, whose
+// innermost body ends at body_end; the innermost loop varies fastest, as in serial order.
+void run_lines(const program& p, std::size_t begin, std::size_t nest, std::size_t body_end,
+               std::size_t first, std::size_t last, const slot_addresses& at) noexcept;
+
 } // namespace fftn::inline v0::detail

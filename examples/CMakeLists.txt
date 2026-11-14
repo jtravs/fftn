@@ -4,10 +4,12 @@
 # Compiled, tested examples quoted by docs/ (AGENTS.md section 4). Each is a program that
 # exits with 0 when its results are right, run as a test.
 
-foreach(example IN ITEMS rows_c2c)
+# team_threads starts std::threads, which need the platform's thread library on some systems.
+find_package(Threads REQUIRED)
+foreach(example IN ITEMS rows_c2c team_threads)
   add_executable(fftn_example_${example} ${example}.cpp)
   fftn_configure_target(fftn_example_${example})
-  target_link_libraries(fftn_example_${example} PRIVATE fftn::fftn)
+  target_link_libraries(fftn_example_${example} PRIVATE fftn::fftn Threads::Threads)
   add_test(NAME example.${example} COMMAND fftn_example_${example})
 endforeach()
 
