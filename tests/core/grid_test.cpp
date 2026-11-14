@@ -251,6 +251,18 @@ TEST(Grid, PlannerChoosesByTheProfile) {
   build_settings factors = s;
   factors.out_factor = factor.data();
   EXPECT_FALSE(is_grid(*plan(4096, factors)));
+  // Phases of radices up to 8 read and write rows in their end passes up to
+  // grid_fuse_bytes, and copy them through gathers and scatters beyond.
+  build_settings fuse = s;
+  fuse.grid_factors = {64, 64};
+  fuse.profile.grid_fuse_bytes = 4096 * 16;
+  const std::string fused = described(*plan(4096, fuse));
+  EXPECT_NE(fused.find("reads rows"), std::string::npos) << fused;
+  EXPECT_EQ(fused.find("gather"), std::string::npos) << fused;
+  fuse.profile.grid_fuse_bytes = 4096 * 16 - 1;
+  const std::string copied = described(*plan(4096, fuse));
+  EXPECT_EQ(copied.find("reads rows"), std::string::npos) << copied;
+  EXPECT_NE(copied.find("gather"), std::string::npos) << copied;
 }
 
 // build_settings::scale_on_input puts the scale on phase 1's input: its first pass, or its

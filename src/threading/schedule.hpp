@@ -66,6 +66,12 @@ struct machine_profile {
   // and third, an eighth of L2 for the second.
   std::size_t grid_min_bytes = 64 * 1024;
   std::size_t grid_three_bytes = 2 * 1024 * 1024;
+  // Up to grid_fuse_bytes per row, a grid phase whose radices are all small reads and
+  // writes the arrays' rows in its end passes instead of through a gather and a scatter;
+  // beyond it the arrays leave L2 and the copies, which prefetch rows ahead, won (X12, run
+  // 20261114-132841-80e0: 2^20 1.46 against 1.35 times FFTW). default_machine_profile sets
+  // it to a quarter of L2.
+  std::size_t grid_fuse_bytes = 4 * 1024 * 1024;
   std::size_t grid_block_bytes = 64 * 1024;
   std::size_t grid_block = 0;
 };

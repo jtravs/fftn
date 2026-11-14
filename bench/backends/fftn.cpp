@@ -42,7 +42,7 @@
 //                    can be one; each case's note says which was built (experiment X12)
 //   GRID_FACTORS=n1.n2[.n3]     the grid's factors in phase order (build_settings::
 //                    grid_factors), for rows they multiply to
-//   GRID_MIN_BYTES, GRID_THREE_BYTES, GRID_BLOCK_BYTES, GRID_BLOCK
+//   GRID_MIN_BYTES, GRID_THREE_BYTES, GRID_BLOCK_BYTES, GRID_BLOCK, GRID_FUSE_BYTES
 //                    the planner's grid fields of the machine profile (schedule.hpp)
 // ISA is a public option; the others reach the library only through the private build
 // settings, as a test's do: the library has no switch for them, so dev/KNOBS.toml does not

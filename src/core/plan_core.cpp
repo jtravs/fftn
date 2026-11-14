@@ -404,7 +404,9 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
           ? plan_grid<T>(c, in, out, settings, chain, kernels.complex_lanes)
           : grid_split{};
   if (grid_plan.phases != 0) {
-    grid_builder<T> grid(kernels, chain, tables_of<T>(c), settings.grid_fused);
+    grid_builder<T> grid(kernels, chain, tables_of<T>(c),
+                         settings.grid_fused &&
+                             c.lengths[0] * 2 * sizeof(T) <= settings.profile.grid_fuse_bytes);
     if (grid_builder<T>::uses_block(grid_plan, c.in_place)) {
       c.block_elements = c.lengths[0];
     }

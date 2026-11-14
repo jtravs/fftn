@@ -43,8 +43,9 @@ struct build_settings {
   // The grid's factors in phase order (two or three, multiplying to the row's length),
   // where they can be a grid; empty: the rules' (strategies/grid.hpp).
   std::vector<std::size_t> grid_factors;
-  // The grid's phases read and write the arrays in their first and last passes (true), or
-  // through a gather and a scatter around a chain on scratch (X12 compares them).
+  // The grid's phases may read and write the arrays in their first and last passes (true:
+  // where the rules say, rows up to profile.grid_fuse_bytes and phases of small radices),
+  // or always go through a gather and a scatter around a chain on scratch (X12).
   bool grid_fused = true;
   // The Bluestein threshold instead of the profile's when not 0 (strategies/chain.hpp):
   // 16 sends every prime factor above 16 through Bluestein, SIZE_MAX none.
