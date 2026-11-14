@@ -57,8 +57,8 @@ For one transform of logical lengths n₀ × … × n_{r−1} (r = 1, 2 or 3 axe
   writes the output: each output is then the unscaled one times the scale (rounded once
   to `T`), bit for bit, at no cost in passes.
 - Lengths are any integer of at least 1. The product of the prime factors above 16 goes
-  through one Bluestein stage (a convolution of a smooth length M, at least twice that
-  product), which `plan::describe()` reports with its M; its scratch is two lines of 2 to
+  through one Bluestein stage (a convolution of a smooth length M of at least twice that
+  product less one), which `plan::describe()` reports with its M; its scratch is two lines of 2 to
   4 times the length, and its error bound is that of `dev/DESIGN.md` section 15.2.
 
 ## Shapes and layouts
