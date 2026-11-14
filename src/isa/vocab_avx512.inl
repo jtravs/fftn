@@ -53,17 +53,13 @@ FFTN_FORCE_INLINE __m512d load(const double* p) { return _mm512_loadu_pd(p); }
 FFTN_FORCE_INLINE __m512 load(const float* p) { return _mm512_loadu_ps(p); }
 FFTN_FORCE_INLINE void store(double* p, __m512d a) { _mm512_storeu_pd(p, a); }
 FFTN_FORCE_INLINE void store(float* p, __m512 a) { _mm512_storeu_ps(p, a); }
-// The 16 bytes at p in every 128-bit lane.
-FFTN_FORCE_INLINE __m512d bcast2(const double* p) {
-  return _mm512_broadcast_f64x2(_mm_loadu_pd(p));
-}
-// The 8 bytes at p in every 64-bit lane, built from scalars rather than loaded through a
+// The complex number at p in every lane: its 16 bytes in every 128-bit lane (double).
+FFTN_FORCE_INLINE __m512d bcast(const double* p) { return _mm512_broadcast_f64x2(_mm_loadu_pd(p)); }
+// Its 8 bytes in every 64-bit lane (float), built from scalars rather than loaded through a
 // cast pointer: std::complex<float> is only 4-byte aligned (as avx2's bcast).
-FFTN_FORCE_INLINE __m512 bcast2(const float* p) {
+FFTN_FORCE_INLINE __m512 bcast(const float* p) {
   return _mm512_broadcast_f32x4(_mm_setr_ps(p[0], p[1], p[0], p[1]));
 }
-FFTN_FORCE_INLINE __m512d bcast(const double* p) { return bcast2(p); }
-FFTN_FORCE_INLINE __m512 bcast(const float* p) { return bcast2(p); }
 FFTN_FORCE_INLINE tw_f64 load_tw(const double* p) {
   return {.r = _mm512_loadu_pd(p), .i = _mm512_loadu_pd(p + 8)};
 }
@@ -80,9 +76,9 @@ template <class T> FFTN_FORCE_INLINE void pack_tw(T* out, const T* p) {
   }
 }
 // Broadcast storage of one twiddle: (wr, wr, -wi, wi), one lane of the pre-arranged form,
-// repeated into every lane by two broadcasts.
-FFTN_FORCE_INLINE tw_f64 bcast_tw(const double* p) { return {.r = bcast2(p), .i = bcast2(p + 2)}; }
-FFTN_FORCE_INLINE tw_f32 bcast_tw(const float* p) { return {.r = bcast2(p), .i = bcast2(p + 2)}; }
+// repeated into every lane by two broadcasts of a pair of reals (bcast).
+FFTN_FORCE_INLINE tw_f64 bcast_tw(const double* p) { return {.r = bcast(p), .i = bcast(p + 2)}; }
+FFTN_FORCE_INLINE tw_f32 bcast_tw(const float* p) { return {.r = bcast(p), .i = bcast(p + 2)}; }
 template <class T> FFTN_FORCE_INLINE void pack_tw1(T* out, const T* p) {
   out[0] = p[0];
   out[1] = p[0];

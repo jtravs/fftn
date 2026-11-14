@@ -72,16 +72,19 @@
 // kernel_table.hpp.
 //
 // - scalar: no attribute; the baseline of whatever the library is built for.
-// - avx2: AVX2 and FMA, exactly the features runs_on() checks (target.cpp). The string
-//   implies AVX and SSE4.2 and below, and enables no AVX-512 feature, so no EVEX encoding
+// - avx2: AVX2 and FMA, the features runs_on() checks (target.cpp). The string implies
+//   AVX and SSE4.2 and below, and in Clang also POPCNT and CRC32, which runs_on() does not
+//   check but every AVX2 processor has; it enables no AVX-512 feature, so no EVEX encoding
 //   and no zmm register can appear (the disassembly test checks this).
-// - avx512: AVX-512 F, DQ and VL with AVX2 and FMA, exactly the features runs_on() checks
-//   (every processor with them also has BW and CD, which the string leaves out so that
-//   no instruction outside the checked set can appear). AVX2 and FMA are named although
-//   Clang implies them from avx512f, so that the string does not depend on a compiler's
-//   implications. GCC 14 and newer and Clang 18 and newer imply EVEX512 (the 512-bit
-//   forms) from avx512f when no AVX10 option is given; "evex512" is not named because
-//   Clang 16 and 17 do not know it.
+// - avx512: AVX-512 F, DQ and VL with AVX2 and FMA, the features runs_on() checks. Clang's
+//   avx512f also implies F16C (and the avx2 part POPCNT and CRC32), which runs_on() does
+//   not check but every AVX-512 processor has. BW and CD, which every processor with F,
+//   DQ and VL also has, are left out so that no instruction of theirs can appear. AVX2
+//   and FMA are named although Clang implies them from avx512f, so that the string does
+//   not depend on a compiler's implications. GCC 14 and newer and Clang 18 and newer imply
+//   EVEX512 (the 512-bit forms) from avx512f when no AVX10 option is given (GCC 14
+//   compiles these units on the Xeon); "evex512" is not named because Clang 16 and 17 do
+//   not know it.
 // - neon: no attribute. Advanced SIMD is part of the AArch64 base architecture, so the
 //   region is a namespace only and its code has exactly what the build's baseline has:
 //   no FCMA and no pointer authentication on an Armv8.0 baseline (the disassembly test
