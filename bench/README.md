@@ -56,6 +56,7 @@ other arm is compared with it. The label may be omitted (it defaults to the libr
 |---|---|---|
 | `PLANNER=ESTIMATE\|MEASURE\|PATIENT\|EXHAUSTIVE` | fftw | planning effort (default MEASURE) |
 | `WISDOM=run\|none\|<file>` | fftw | wisdom: fresh per run and shared by that run's processes with the same binary and planner (default), none at all, or imported read-only from a file |
+| `ISA=<name>` | fftn | force every plan to one instruction set (`options::force_isa`; `scalar`, `avx2`, `avx512`, `neon`, `neon_fcma`, … as `fftn::isa_name` writes them; default `best`), so that one build compares targets: `A=fftn+ISA=avx2 B=fftn+ISA=avx512`. A target the build or processor lacks is refused; `describe` reports the plans' instruction set (`isa`) and `isa_forced` |
 | `API=dft\|interleaved` | accelerate | vDSP's split-complex DFT with conversions (default) or its interleaved DFT (see below) |
 | `DELAY=<fraction>` | any (test only) | spin for that fraction of every measured batch: a seeded slowdown that proves the statistics |
 | `PERTURB=<eps>` | any (test only) | multiply every output value by 1 ± eps before the check: proves the correctness guard |

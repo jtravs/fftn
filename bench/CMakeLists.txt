@@ -228,6 +228,20 @@ endif()
 # every backend of this build, under every gate preset (so the sanitizers see the harness).
 if(FFTN_BUILD_TESTS)
   add_test(NAME bench.harness_selftest COMMAND fbench-fftn selftest)
+  # The FFTN backend's ISA option: scalar, which every build has, is forced and reported,
+  # and the cases still pass their check; an unknown name is refused.
+  file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/isa_option_cases.txt
+       "id=1 kind=c2c dims=64 batch=3 place=out sign=-1\nid=2 kind=r2c dims=30 batch=2 place=in sign=-1\n")
+  add_test(NAME bench.fftn_isa_option
+           COMMAND fbench-fftn run --cases ${CMAKE_CURRENT_BINARY_DIR}/isa_option_cases.txt
+                   --options ISA=scalar --check-only)
+  set_tests_properties(bench.fftn_isa_option PROPERTIES PASS_REGULAR_EXPRESSION
+    "\"isa\":\"scalar\",\"isa_forced\":true.*\"id\":\"1\",\"status\":\"ok\",[^\n]*\"pass\":true.*\"id\":\"2\",\"status\":\"ok\",[^\n]*\"pass\":true")
+  add_test(NAME bench.fftn_isa_option_refused
+           COMMAND fbench-fftn run --cases ${CMAKE_CURRENT_BINARY_DIR}/isa_option_cases.txt
+                   --options ISA=sse9 --check-only)
+  set_tests_properties(bench.fftn_isa_option_refused PROPERTIES PASS_REGULAR_EXPRESSION
+    "\"type\":\"error\",\"message\":\"FFTN options: ISA=")
   if(TARGET fbench-fftw)
     # Includes the check that describe names the real FFTW library, not this executable.
     add_test(NAME bench.harness_selftest_fftw COMMAND fbench-fftw selftest)
