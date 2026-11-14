@@ -49,6 +49,15 @@ if(TARGET Kokkos::kokkos)
   add_test(NAME api.kokkos_header_alone COMMAND fftn_kokkos_header_alone)
 endif()
 
+# The C contract of executors (fftn/executor.h) is C: it must compile as C99, with every
+# warning, by the C front end of the compiler that builds FFTN (a GNU-style driver; clang-cl
+# would need its own spelling of the options).
+if(NOT CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+  add_test(NAME api.executor_h_is_c
+           COMMAND ${CMAKE_CXX_COMPILER} -x c -std=c99 -pedantic-errors -Wall -Wextra -Werror
+                   -fsyntax-only ${PROJECT_SOURCE_DIR}/include/fftn/executor.h)
+endif()
+
 # A translation unit compiled with fast-math must be refused with FFTN's own message.
 if(NOT CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
   add_library(fftn_fast_math_refused OBJECT EXCLUDE_FROM_ALL fast_math_refused.cpp)

@@ -7,6 +7,7 @@
 #pragma once
 
 #include "fftn/config.hpp"
+#include "fftn/executor.hpp"
 #include "fftn/isa.hpp"
 #include "fftn/options.hpp"
 #include "fftn/shape.hpp"
@@ -79,6 +80,10 @@ void execute_core(const plan_core& core, std::size_t first, std::size_t count, c
 // The team overload of plan<In, Out>::execute (src/threading/team_execute.cpp).
 void execute_team(const plan_core& core, const void* in, void* out, const team& t,
                   const workspace& ws, completion done) noexcept;
+
+// The executor overload of plan<In, Out>::execute (src/threading/executor_execute.cpp).
+void execute_on(const plan_core& core, const void* in, void* out, const executor_ref& ex,
+                const workspace& ws);
 
 [[nodiscard]] transform_range transforms_of(const plan_core& core, const team& t) noexcept;
 [[nodiscard]] std::size_t transform_count(const plan_core& core) noexcept;

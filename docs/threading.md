@@ -1,10 +1,21 @@
 # Threading
 
-FFTN runs on the caller's threads. It never creates a thread, never changes a threading
-runtime's settings, and executes serially unless the caller hands it a team. The
-declarations, preconditions and guarantees are in the public headers (`include/fftn/team.hpp`
-and the team overload of `plan::execute` in `include/fftn/plan.hpp`); this page says how the
-pieces fit together.
+FFTN runs on the caller's threads. It creates no thread unless the program constructs an
+`fftn::thread_pool`, never changes a threading runtime's settings, and executes serially
+unless the caller hands it a team or an executor. The declarations, preconditions and
+guarantees are in the public headers (`include/fftn/team.hpp`, `include/fftn/executor.hpp`,
+`include/fftn/thread_pool.hpp`, and the overloads of
+`plan::execute` in `include/fftn/plan.hpp`); this page says how the pieces fit together.
+
+There are two ways to share an execution among threads:
+
+- **A team**: the caller's threads are already running (an OpenMP parallel region, a pool's
+  workers, `std::thread`s), and each of them calls `execute` with its own `fftn::team`.
+  Nothing is dispatched; the program's own work before and after the transform runs in the
+  same region.
+- **An executor**: one thread calls `execute` with an executor, anything that can run n
+  tasks and return when they are done, and FFTN dispatches the team itself: FFTN's pool
+  (`fftn::thread_pool`), or an adapter of a few lines over the program's own pool.
 
 ## A team of the caller's threads
 
@@ -43,8 +54,10 @@ for (std::thread& t : team) {
 }
 ```
 
-The threads of an OpenMP parallel region form a team the same way, with
-`omp_get_thread_num()` and `omp_get_num_threads()`; so do the members of a Kokkos team.
+`fftn::cache_group_size(members)` gives a `group_size` for a team whose consecutive ranks
+run on consecutive cores, from the machine's topology. The threads of an OpenMP parallel
+region form a team the same way, with `omp_get_thread_num()` and `omp_get_num_threads()`;
+so do the members of a Kokkos team.
 
 ## How the work is shared
 
@@ -100,3 +113,98 @@ is still inside FFTN when the workspace changes hands (for example, when the par
 region has ended). An execution with `completion::own` by a smaller team than the one
 whose state the workspace holds overwrites that state, so the next team execution sets it
 up afresh.
+
+## Executors
+
+An executor is anything with `concurrency()`, the most tasks it can usefully run at once,
+and `bulk(n, task, arg)`, which runs `task(arg, i)` for every `i` from 0 to n - 1 and returns
+when all have returned (`fftn::executor` in `include/fftn/executor.hpp`). An optional
+`group_size()` says how many consecutive tasks share a cache. The tasks may run in any order,
+on any threads, any number at a time, even one after another on the calling thread: FFTN's
+tasks never wait for one that has not started, so a task system without a concurrency
+guarantee (TBB, Kokkos `RangePolicy`, a busy pool) is as correct as a dedicated one.
+
+`plan.execute(in, out, ex, ws)` asks the scheduler how many of the executor's lanes the plan
+can use. A job too small to share, and every job when `concurrency()` is 1, runs on the
+calling thread and the executor is not called. Otherwise FFTN calls `bulk` once, with one
+task per lane that has work, which run as a team ([How the work is shared](#how-the-work-is-shared)).
+The workspace is sized for the executor's concurrency, and the result is the same bits as
+serial execution, whatever the executor does with the order of its tasks.
+
+### FFTN's thread pool
+
+For a program with no threading runtime of its own, `fftn::thread_pool` is a fixed set of
+`std::thread`s. FFTN never creates one by itself:
+
+```cpp file=examples/executor_rows.cpp region=pool
+// The program starts the pool; FFTN never starts threads by itself.
+const fftn::thread_pool pool(4);
+
+// A workspace for as many lanes as the executor has.
+fftn::workspace ws(plan, pool.concurrency());
+
+std::vector<std::complex<double>> y(n * count);
+plan.execute(x.data(), y.data(), pool, ws); // returns when y is written
+```
+
+The thread that calls `bulk` is one of the pool's lanes, so a pool of four lanes starts three
+threads. Idle threads spin for some tens of microseconds after a job, then yield, then block
+until the next one. They are not bound to CPUs; lanes are grouped as
+`fftn::cache_group_size` says. The program may run its own work on the pool with `bulk`.
+
+### The program's own pool
+
+An adapter of a few lines makes any pool an executor:
+
+```cpp file=examples/executor_rows.cpp region=adapter
+// The program's own pool: anything that can run n jobs and wait for them.
+struct my_pool {
+  int threads = 4;
+
+  [[nodiscard]] int size() const { return threads; }
+  void parallel_for(int n, const std::function<void(int)>& job) const {
+    std::vector<std::thread> team;
+    team.reserve(static_cast<std::size_t>(threads));
+    for (int t = 0; t < threads; ++t) {
+      team.emplace_back([&, t] {
+        for (int i = t; i < n; i += threads) {
+          job(i);
+        }
+      });
+    }
+    for (std::thread& member : team) {
+      member.join();
+    }
+  }
+};
+
+// The adapter FFTN needs: concurrency() and bulk(n, task, arg).
+struct my_pool_executor {
+  const my_pool& pool;
+  [[nodiscard]] int concurrency() const { return pool.size(); }
+  void bulk(int n, fftn::task_function task, void* arg) const {
+    pool.parallel_for(n, [=](int i) { task(arg, i); });
+  }
+};
+```
+
+```cpp file=examples/executor_rows.cpp region=custom
+const my_pool mine;
+std::vector<std::complex<double>> z(n * count);
+plan.execute(x.data(), z.data(), my_pool_executor{mine}, ws);
+```
+
+FFTN's own calls never allocate or lock, but an adapter like this one may: what the executor
+does is the executor's business. If its `bulk` throws, the exception reaches the caller of
+`execute`, the output is unspecified, and the workspace is ready for its next execution.
+
+A pool written in C, or in any language that can call C, describes itself with the C
+contract of `include/fftn/executor.h`: a struct of the pool's pointer and three functions,
+`concurrency`, `bulk` and an optional `group_size`, passed to `execute` as
+`fftn::executor_ref(contract)`.
+
+### Nesting
+
+An executor called from inside one of its own tasks reports a concurrency of 1, so the
+execution runs serially on the calling thread instead of waiting for threads that are busy.
+`fftn::thread_pool` does this for calls from inside any `fftn::thread_pool` task.

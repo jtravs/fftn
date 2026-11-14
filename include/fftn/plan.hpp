@@ -7,6 +7,7 @@
 
 #include "fftn/config.hpp"
 #include "fftn/detail/core.hpp"
+#include "fftn/executor.hpp"
 #include "fftn/isa.hpp"
 #include "fftn/options.hpp"
 #include "fftn/shape.hpp"
@@ -26,14 +27,15 @@ namespace fftn::inline v0 {
 /// factorisation, the passes and the twiddle tables. A plan holds no pointers to the
 /// caller's arrays and no scratch, so it can be executed any number of times, on any data
 /// of the planned layout, at any alignment, and by several threads at once (each with its
-/// own workspace), or by a team of the caller's threads sharing one workspace
-/// (`fftn::team`).
+/// own workspace), by a team of the caller's threads sharing one workspace (`fftn::team`),
+/// or on an executor (`fftn::executor`).
 ///
 /// Guarantees:
 /// - Construction validates the shape and options, and throws `std::invalid_argument`
 ///   naming the offending argument (for example `shape.axes[1].n`) when they are not
 ///   valid. It does not touch the caller's arrays.
-/// - Execution never allocates, locks, throws or does I/O.
+/// - Execution never allocates, locks, throws or does I/O (on an executor, only the
+///   executor's own calls may).
 /// - Results are bitwise reproducible for a given plan: every transform of the batch gets
 ///   the same arithmetic, whatever its position, repeated executions agree bit for bit,
 ///   and so do serial and team executions, whatever the team's size and timing. Plans built with
@@ -133,6 +135,31 @@ public:
   void execute(const In* in, Out* out, const team& t, workspace& ws,
                completion done = completion::all) const noexcept {
     detail::execute_team(*core_, in, out, t, ws, done);
+  }
+
+  /// Transforms every transform of the batch on executor `ex`: anything that can run n
+  /// tasks and return when they are done (`fftn::executor`), such as `fftn::thread_pool`,
+  /// `fftn::omp::executor` or an adapter over another pool. The call returns when the whole
+  /// output is written.
+  ///
+  /// FFTN decides how many of the executor's `concurrency()` lanes the plan can use, and
+  /// asks the executor to run one task per lane that has work, as a team (the team overload
+  /// below, with `ex.group_size()` members per cache group). A job too small to share runs
+  /// on the calling thread without calling the executor, and so does every job when
+  /// `ex.concurrency()` is 1 (as executors report from inside their own tasks). The tasks
+  /// may run in any order and any number at a time: none waits for one that has not
+  /// started.
+  ///
+  /// Preconditions: as for `execute`, and `ws.size()` is at least
+  /// `workspace_bytes(ex.concurrency())`; `ws` serves no other execution meanwhile.
+  ///
+  /// Guarantees: as for `execute`, and the output is bitwise identical to serial execution,
+  /// whatever the executor, its concurrency and the order its tasks run in. FFTN itself
+  /// never allocates, locks, throws or does I/O here; the executor may. If `ex.concurrency()`
+  /// or `ex.bulk` throws, the exception propagates, the output is unspecified and the
+  /// workspace is left ready for its next execution.
+  void execute(const In* in, Out* out, executor_ref ex, workspace& ws) const {
+    detail::execute_on(*core_, in, out, ex, ws);
   }
 
   /// The transforms a member of team `t` owns: those it transforms with `completion::own`.
