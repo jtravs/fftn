@@ -4,6 +4,7 @@
 #include "threading/schedule.hpp"
 
 #include "core/program.hpp"
+#include "fftn/team.hpp"
 #include "threading/work_graph.hpp"
 
 #include <algorithm>
@@ -11,6 +12,7 @@
 #include <cstdint>
 #include <limits>
 #include <thread>
+#include <utility>
 
 namespace fftn::inline v0::detail {
 
@@ -32,9 +34,10 @@ schedule make_schedule(const work_graph& g, const lane_map& lanes,
   s.points = g.points;
   s.splittable = g.chunks > 1 && g.chunks < max_counted;
   s.oversubscribed = profile.cpus > 0 && lanes.lanes > profile.cpus;
-  // Rule 1, and batches too large for the counters.
+  s.grain = g.tasks < max_counted ? 1 : (g.tasks + max_counted - 1) / max_counted;
+  // Rule 1, and teams too large for the counters.
   const double job_ns = static_cast<double>(g.tasks) * s.task_ns;
-  if (lanes.lanes <= 1 || g.tasks >= max_counted ||
+  if (lanes.lanes <= 1 || std::cmp_greater_equal(lanes.lanes, max_counted) ||
       job_ns < profile.inline_multiple * profile.dispatch_ns) {
     s.inline_all = true;
     s.lanes_dealt = lanes.size_of(0);
@@ -54,15 +57,13 @@ group_share share_of(const schedule& s, const lane_map& lanes, int group) noexce
   if (group >= s.groups) {
     return share;
   }
-  // Contiguous ranges in proportion to the groups' members. tasks < 2^31 and lanes < 2^31,
-  // so the products fit.
-  const auto tasks = static_cast<std::uint64_t>(s.tasks);
-  const auto dealt = static_cast<std::uint64_t>(s.lanes_dealt);
-  const auto from = static_cast<std::uint64_t>(lanes.base(group));
+  // Contiguous ranges in proportion to the groups' members, in exact integers.
+  const auto dealt = static_cast<std::size_t>(s.lanes_dealt);
+  const auto from = static_cast<std::size_t>(lanes.base(group));
   const auto to =
-      static_cast<std::uint64_t>(std::min(lanes.base(group) + lanes.size_of(group), s.lanes_dealt));
-  share.first = static_cast<std::size_t>(tasks * from / dealt);
-  share.count = static_cast<std::size_t>(tasks * to / dealt) - share.first;
+      static_cast<std::size_t>(std::min(lanes.base(group) + lanes.size_of(group), s.lanes_dealt));
+  share.first = chunk_start(s.tasks, dealt, from);
+  share.count = chunk_start(s.tasks, dealt, to) - share.first;
   share.whole = share.count;
   if (s.inline_all || s.oversubscribed || !s.splittable || share.count == 0) {
     return share;
@@ -99,9 +100,29 @@ group_share share_of(const schedule& s, const lane_map& lanes, int group) noexce
   return share;
 }
 
-task_range owned_tasks(std::size_t tasks, int lanes, int lane) noexcept {
+std::size_t whole_units(const schedule& s, const group_share& share) noexcept {
+  return (share.whole + s.grain - 1) / s.grain;
+}
+
+std::uint32_t done_target(const schedule& s, const lane_map& lanes) noexcept {
+  if (s.inline_all) {
+    return 1;
+  }
+  std::size_t units = 0;
+  for (int g = 0; g < s.groups; ++g) {
+    const group_share share = share_of(s, lanes, g);
+    units += whole_units(s, share) + share.split;
+  }
+  return static_cast<std::uint32_t>(units);
+}
+
+transform_range owned_tasks(std::size_t tasks, int lanes, int lane) noexcept {
   const auto l = static_cast<std::size_t>(lanes);
   const auto r = static_cast<std::size_t>(lane);
+  if (tasks < l) {
+    return r < tasks ? transform_range{.first = r, .count = 1}
+                     : transform_range{.first = tasks, .count = 0};
+  }
   const std::size_t first = chunk_start(tasks, l, r);
   return {.first = first, .count = chunk_start(tasks, l, r + 1) - first};
 }

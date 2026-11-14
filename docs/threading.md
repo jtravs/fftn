@@ -55,9 +55,10 @@ Who runs which piece is decided during the execution, by the members that turn u
 - With `completion::all` (the default) members claim work: whole transforms first, then
   chunks of the transforms the plan splits, and only among members of one cache group.
   A member that finds nothing left waits for the rest by spinning briefly, then yielding,
-  then blocking; it never waits for a member that has not arrived. One member alone
-  completes the execution, and members that arrive late, even after the others have moved
-  on to later executions, find nothing left.
+  then blocking; it never waits for a member that has not arrived. The members present
+  complete the execution between them, even one alone, and members that arrive late, even
+  after the others have moved on to later executions, find nothing left. Arriving late is
+  allowed; staying away is not (see below).
 - With `completion::own` each member transforms exactly the transforms that
   `transforms_of` gives it, whole, and returns once they are written. Nothing is claimed or
   shared, so every member must take part, and the caller synchronises its threads before
@@ -69,6 +70,24 @@ synchronisation. The output does not depend on any of this: a team execution giv
 same bits as serial execution, whatever the team's size, grouping or timing
 ([conventions](conventions.md#determinism)).
 
+## Every member makes every call
+
+A member knows which execution it is in by counting its own calls on the workspace, so the
+members of a team must all make the same sequence of team calls on it, each call in turn,
+however late. **A member must not skip a call.** One that did would count wrong and could
+return from its next call before that call's output is written. If a member may miss an
+execution (a runtime that does not run every member, an early exit), reset the workspace
+before its next team call: any serial execution resets it, and
+`plan.execute_transforms(0, 0, in, out, ws)` does nothing else. There is no other reset.
+
+Two further rules follow from the count:
+
+- All members pass the same `fftn::workspace` object. Two workspaces over the same borrowed
+  memory are two workspaces, each with its own record of the team's state.
+- One rank's successive calls are made by one thread, or ordered by happens-before: a
+  mutex, a barrier, a thread join. The threads of an OpenMP region and a `std::thread` per
+  rank satisfy this as they are.
+
 ## Workspaces for teams
 
 `plan.workspace_bytes(lanes)` is the workspace a team of up to `lanes` members needs:
@@ -76,6 +95,8 @@ scratch for each member and the team's synchronisation state. The state lives in
 workspace from one team execution to the next, which is how a member that arrives late
 knows that its execution is already over. The workspace sets the state up itself, on the
 first team execution, after a serial execution and after a change of team size, so its
-memory never needs initialising; the condition is only that no member of an earlier
-execution is still inside FFTN when the workspace changes hands (for example, when the
-parallel region has ended).
+memory never needs initialising. The condition is that no member of an earlier execution
+is still inside FFTN when the workspace changes hands (for example, when the parallel
+region has ended). An execution with `completion::own` by a smaller team than the one
+whose state the workspace holds overwrites that state, so the next team execution sets it
+up afresh.

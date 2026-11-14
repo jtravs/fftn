@@ -10,6 +10,7 @@
 // dozen arithmetic operations, allocates nothing, and every member gets the same one.
 #pragma once
 
+#include "fftn/team.hpp"
 #include "threading/work_graph.hpp"
 
 #include <cstddef>
@@ -88,6 +89,10 @@ struct schedule {
   // a group stays in one (full-width teams lost at 64 lanes: 1.19 against 0.83 at 8).
   int groups = 1;
   int lanes_dealt = 1; // members in those groups
+  // Whole tasks are counted, claimed and finished in units of `grain` consecutive tasks, so
+  // that a batch of any size fits the 24-bit counters (team_state.hpp); 1 unless the batch
+  // has millions of transforms.
+  std::size_t grain = 1;
   // What share_of needs to decide splits per group.
   bool splittable = false;
   double task_ns = 0;
@@ -107,20 +112,25 @@ struct group_share {
   int cap = 0;
 };
 
-// The counters of a team execution have 32 bits (team_state.hpp): batches and phases too
-// large for them run inline.
-inline constexpr std::uint64_t max_counted = std::uint64_t{1} << 31U;
+// The counters of a team execution have 24 bits (team_state.hpp). A split task's chunks and
+// a group's whole units stay below this; teams of more lanes run inline.
+inline constexpr std::uint64_t max_counted = std::uint64_t{1} << 22U;
 
 [[nodiscard]] schedule make_schedule(const work_graph& g, const lane_map& lanes,
                                      const machine_profile& profile) noexcept;
 
 [[nodiscard]] group_share share_of(const schedule& s, const lane_map& lanes, int group) noexcept;
 
+// The units a group's whole tasks count as.
+[[nodiscard]] std::size_t whole_units(const schedule& s, const group_share& share) noexcept;
+
+// What the execution's done counter reaches when every task is done: 1 inline, else every
+// group's whole units and split tasks.
+[[nodiscard]] std::uint32_t done_target(const schedule& s, const lane_map& lanes) noexcept;
+
 // completion::own: the static deal of `tasks` over `lanes` (fftn::plan::transforms_of).
-struct task_range {
-  std::size_t first = 0;
-  std::size_t count = 0;
-};
-[[nodiscard]] task_range owned_tasks(std::size_t tasks, int lanes, int lane) noexcept;
+// With at least as many tasks as lanes, contiguous ranges differing by at most one; with
+// fewer, the first `tasks` lanes one each, so that a small batch stays on few members.
+[[nodiscard]] transform_range owned_tasks(std::size_t tasks, int lanes, int lane) noexcept;
 
 } // namespace fftn::inline v0::detail

@@ -30,7 +30,6 @@ namespace fftn::inline v0::detail {
 struct graph_phase {
   std::uint32_t record = 0;   // the stage, or the outermost loop of the nest
   std::uint32_t nest = 0;     // loops in the nest; 0 for a stage
-  std::uint32_t body = 0;     // lines: the first record inside the innermost loop
   std::uint32_t body_end = 0; // lines: one past the nest's last record
   std::size_t units = 0;      // the stage's units, or the nest's lines
   std::uint32_t chunks = 1;

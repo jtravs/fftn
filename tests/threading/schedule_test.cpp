@@ -205,10 +205,22 @@ TEST(Schedule, PureAndDefaults) {
     EXPECT_EQ(x.cap, y.cap);
   }
   EXPECT_GT(fftn::detail::default_machine_profile().cpus, 0);
-  // Batches beyond the 32-bit counters run inline.
+  // Batches beyond the 24-bit counters are claimed in units of several transforms, which
+  // still cover the batch once; teams beyond them run inline.
   work_graph huge = r->graph;
-  huge.tasks = std::size_t{1} << 31U;
-  EXPECT_TRUE(make_schedule(huge, lanes, profile()).inline_all);
+  huge.tasks = (std::size_t{1} << 40U) + 12345;
+  const schedule h = make_schedule(huge, lanes, profile());
+  EXPECT_FALSE(h.inline_all);
+  EXPECT_GT(h.grain, 1U);
+  expect_partition(h, lanes);
+  std::size_t units = 0;
+  for (int g = 0; g < lanes.groups(); ++g) {
+    const group_share sh = share_of(h, lanes, g);
+    EXPECT_LE(fftn::detail::whole_units(h, sh), fftn::detail::max_counted);
+    units += fftn::detail::whole_units(h, sh) + sh.split;
+  }
+  EXPECT_EQ(fftn::detail::done_target(h, lanes), units);
+  EXPECT_TRUE(make_schedule(r->graph, {.lanes = 4 * 1024 * 1024}, profile()).inline_all);
 }
 
 TEST(Schedule, LaneMaps) {
@@ -225,6 +237,12 @@ TEST(Schedule, LaneMaps) {
 }
 
 TEST(Schedule, OwnedTasksPartition) {
+  // Fewer transforms than members: the first members own one each, the rest none.
+  for (int l = 0; l < 4; ++l) {
+    const auto r = fftn::detail::owned_tasks(2, 4, l);
+    EXPECT_EQ(r.count, l < 2 ? 1U : 0U) << l;
+    EXPECT_EQ(r.first, l < 2 ? static_cast<std::size_t>(l) : 2U) << l;
+  }
   for (const std::size_t tasks :
        {std::size_t{0}, std::size_t{1}, std::size_t{7}, std::size_t{64}, std::size_t{1000003}}) {
     for (const int lanes : {1, 2, 3, 8, 13, 64}) {

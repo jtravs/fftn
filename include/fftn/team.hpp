@@ -40,8 +40,9 @@ struct team {
 /// When a member's call of the team overload of `plan::execute` returns.
 enum class completion : unsigned char {
   /// When the whole output is written, on every member. Work is shared dynamically: a
-  /// member takes whatever is left, so the execution completes with any subset of the
-  /// members, and members that arrive late find nothing left to do.
+  /// member takes whatever is left, so no member waits for one that has not arrived, and
+  /// members that arrive late find nothing left to do. Every member still makes every
+  /// call, late or not (the team overload of `plan::execute` says why).
   all,
 
   /// When this member's own transforms (`plan::transforms_of`) are written. Transforms are

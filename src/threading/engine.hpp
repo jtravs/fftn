@@ -31,7 +31,6 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <limits>
 #include <new>
 
 namespace fftn::inline v0::detail {
@@ -50,19 +49,18 @@ template <class Env> class team_engine {
 public:
   team_engine(const team_job& job, Env& env) noexcept
       : job_(job), env_(env), layout_{static_cast<std::size_t>(job.lanes.lanes)},
-        group_(job.lanes.group_of(job.rank)),
-        target_(job.plan.inline_all ? 1 : static_cast<std::uint32_t>(job.plan.tasks)) {}
+        group_(job.lanes.group_of(job.rank)), target_(done_target(job.plan, job.lanes)) {}
 
   // Returns when every task of the execution is done.
   void run() noexcept {
     prepare();
     begin();
-    // Each step returns false when it finds a later execution: this one is over.
+    // Each step returns false when it finds this execution over.
     if (arrive() && whole_tasks(group_) && split_tasks() && steal()) {
       const sync_word blocked = word(team_layout::done_blocked());
-      env_.wait(word(team_layout::done()), &blocked, [this](std::uint64_t v) {
-        return is_later(v, epoch_) || count_in(v, epoch_) == target_;
-      });
+      env_.wait(word(team_layout::done()), &blocked,
+                [this](std::uint64_t v) { return count_in(v, tag_) == target_ || over(); });
+      publish();
     }
   }
 
@@ -104,15 +102,32 @@ private:
     }
   }
 
-  // This member's epoch: its count of executions on the workspace. Epoch 0 is skipped
-  // when the count wraps: it is the zeroed state's.
+  // This member's epoch: its count of executions on the workspace (64 bits: it never wraps).
+  // Epochs whose tag is 0 are skipped: that is the zeroed state's tag.
   void begin() noexcept {
     const sync_word calls = word(team_layout::calls(static_cast<std::size_t>(job_.rank)));
-    epoch_ = static_cast<std::uint32_t>(calls.load(std::memory_order_relaxed) + 1);
-    if (epoch_ == 0) {
-      epoch_ = 1;
+    epoch_ = calls.load(std::memory_order_relaxed) + 1;
+    if (tag_of_epoch(epoch_) == 0) {
+      ++epoch_;
     }
+    tag_ = tag_of_epoch(epoch_);
     calls.store(epoch_, std::memory_order_relaxed);
+  }
+
+  // Whether this execution is over: some member has returned from it or a later one. Read
+  // after a word that carries another epoch's tag: a later execution writes that word only
+  // after one of its members published, before starting it, the end of this one.
+  [[nodiscard]] bool over() const noexcept {
+    return word(team_layout::finished()).load() >= epoch_;
+  }
+
+  // Before returning: raises `finished` to this epoch.
+  void publish() noexcept {
+    const sync_word w = word(team_layout::finished());
+    env_.point();
+    std::uint64_t seen = w.load();
+    while (seen < epoch_ && !w.compare_exchange(seen, epoch_)) {
+    }
   }
 
   // Claims want(left) more of tagged counter w, which counts up to limit.
@@ -120,15 +135,15 @@ private:
     for (;;) {
       env_.point();
       std::uint64_t seen = w.load();
-      if (is_later(seen, epoch_)) {
+      if (tag_of(seen) != tag_ && over()) {
         return {.stale = true};
       }
-      const std::uint32_t at = count_in(seen, epoch_);
+      const std::uint32_t at = count_in(seen, tag_);
       if (at >= limit) {
         return {.at = at};
       }
       const std::uint32_t take = want(limit - at);
-      if (w.compare_exchange(seen, tagged(epoch_, at + take))) {
+      if (w.compare_exchange(seen, tagged(tag_, at + take))) {
         return {.at = at, .count = take};
       }
     }
@@ -138,30 +153,28 @@ private:
     return claim(w, limit, [](std::uint32_t) { return std::uint32_t{1}; });
   }
 
-  // Adds to a tagged counter that cannot be from a later epoch: one that this execution
-  // cannot finish without. Returns the new count.
+  // Adds to a tagged counter of this execution that it cannot finish without. Returns the
+  // new count.
   std::uint32_t add(sync_word w, std::uint32_t amount) noexcept {
     for (;;) {
       env_.point();
       std::uint64_t seen = w.load();
-      const std::uint32_t next = count_in(seen, epoch_) + amount;
-      if (w.compare_exchange(seen, tagged(epoch_, next))) {
+      const std::uint32_t next = count_in(seen, tag_) + amount;
+      if (w.compare_exchange(seen, tagged(tag_, next))) {
         return next;
       }
     }
   }
 
-  void finish(std::uint32_t tasks) noexcept {
-    if (add(word(team_layout::done()), tasks) == target_) {
+  void finish(std::uint32_t units) noexcept {
+    if (add(word(team_layout::done()), units) == target_) {
       const sync_word blocked = word(team_layout::done_blocked());
       env_.wake(word(team_layout::done()), &blocked);
     }
   }
 
   bool arrive() noexcept {
-    return !claim_one(word(layout_.arrived(static_cast<std::size_t>(group_))),
-                      std::numeric_limits<std::uint32_t>::max())
-                .stale;
+    return !claim_one(word(layout_.arrived(static_cast<std::size_t>(group_))), count_mask).stale;
   }
 
   bool whole_tasks(int group) noexcept {
@@ -171,7 +184,6 @@ private:
     }
     const sync_word w = word(layout_.whole(static_cast<std::size_t>(group)));
     if (job_.plan.inline_all) {
-      // One claim for the whole batch, which may be too large for the counters.
       const claimed c = claim_one(w, 1);
       if (c.count != 0) {
         env_.run_whole(0, job_.plan.tasks, job_.rank);
@@ -179,7 +191,9 @@ private:
       }
       return !c.stale;
     }
-    const auto limit = static_cast<std::uint32_t>(share.whole);
+    // Units of `grain` consecutive tasks, claimed in runs.
+    const std::size_t grain = job_.plan.grain;
+    const auto limit = static_cast<std::uint32_t>(whole_units(job_.plan, share));
     const auto runs = static_cast<std::uint32_t>(std::max(job_.plan.profile.claim_divisor, 1) *
                                                  job_.lanes.size_of(group));
     for (;;) {
@@ -188,7 +202,9 @@ private:
       if (c.count == 0) {
         return !c.stale;
       }
-      env_.run_whole(share.first + c.at, c.count, job_.rank);
+      const std::size_t from = std::size_t{c.at} * grain;
+      const std::size_t to = std::min(std::size_t{c.at + c.count} * grain, share.whole);
+      env_.run_whole(share.first + from, to - from, job_.rank);
       finish(c.count);
     }
   }
@@ -219,10 +235,12 @@ private:
     const sync_word done = word(layout_.chunks_done(slot));
     const sync_word blocked = word(layout_.task_blocked(slot));
     const sync_word owner_word = word(layout_.owner(slot));
-    const std::uint32_t epoch = epoch_;
+    const std::uint64_t tag = tag_;
     int owner = -1;
     std::size_t p = 0;
     for (;;) {
+      // While this member holds a claim the execution cannot end, so no word of this task
+      // can carry a later tag before the loop leaves.
       const claimed c = claim_one(word(layout_.claim(slot)), total);
       if (c.count == 0) {
         if (c.stale) {
@@ -233,12 +251,12 @@ private:
       if (c.at == 0) {
         owner = job_.rank;
         env_.point();
-        owner_word.store(tagged(epoch, static_cast<std::uint32_t>(owner)));
+        owner_word.store(tagged(tag, static_cast<std::uint32_t>(owner)));
         env_.wake(owner_word, &blocked);
       } else if (owner < 0) {
         // The owner claimed chunk 0 before this claim and is about to say so.
-        env_.wait(owner_word, &blocked, [epoch](std::uint64_t v) { return epoch_of(v) == epoch; });
-        owner = static_cast<int>(count_in(owner_word.load(), epoch));
+        env_.wait(owner_word, &blocked, [tag](std::uint64_t v) { return tag_of(v) == tag; });
+        owner = static_cast<int>(count_in(owner_word.load(), tag));
       }
       while (c.at >= phases[p].first + phases[p].chunks) {
         ++p;
@@ -246,7 +264,7 @@ private:
       const std::uint64_t from = phases[p].first;
       if (from != 0) {
         env_.wait(done, &blocked,
-                  [epoch, from](std::uint64_t v) { return count_in(v, epoch) >= from; });
+                  [tag, from](std::uint64_t v) { return count_in(v, tag) >= from; });
       }
       env_.run_chunk(task, p, static_cast<std::uint32_t>(c.at - from), owner, job_.rank);
       const std::uint32_t now = add(done, 1);
@@ -259,8 +277,8 @@ private:
     }
     if (owner == job_.rank) {
       // The task's shared scratch is this member's: keep it until the last chunk is done.
-      env_.wait(done, &blocked, [epoch, total](std::uint64_t v) {
-        return is_later(v, epoch) || count_in(v, epoch) == total;
+      env_.wait(done, &blocked, [this, tag, total](std::uint64_t v) {
+        return count_in(v, tag) == total || over();
       });
     }
     return true;
@@ -283,10 +301,10 @@ private:
       // Split tasks are left to their group while any of its members is here.
       env_.point();
       const std::uint64_t arrived = word(layout_.arrived(static_cast<std::size_t>(h))).load();
-      if (is_later(arrived, epoch_)) {
+      if (tag_of(arrived) != tag_ && over()) {
         return false;
       }
-      if (count_in(arrived, epoch_) != 0) {
+      if (count_in(arrived, tag_) != 0) {
         continue;
       }
       for (std::size_t j = 0; j < share.split; ++j) {
@@ -306,13 +324,13 @@ private:
     for (;;) {
       env_.point();
       std::uint64_t seen = w.load();
-      if (is_later(seen, epoch_)) {
+      if (tag_of(seen) != tag_ && over()) {
         return false;
       }
-      if (count_in(seen, epoch_) != 0) {
+      if (count_in(seen, tag_) != 0) {
         return true;
       }
-      if (w.compare_exchange(seen, tagged(epoch_, total))) {
+      if (w.compare_exchange(seen, tagged(tag_, total))) {
         break;
       }
     }
@@ -326,7 +344,8 @@ private:
   team_layout layout_;
   int group_ = 0;
   std::uint32_t target_ = 0;
-  std::uint32_t epoch_ = 0;
+  std::uint64_t epoch_ = 0;
+  std::uint64_t tag_ = 0;
 };
 
 } // namespace fftn::inline v0::detail

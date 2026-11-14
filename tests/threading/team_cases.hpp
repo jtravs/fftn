@@ -160,6 +160,19 @@ void add_cases(std::vector<team_case>& out, const fftn::detail::build_settings& 
       .batches = {{.count = 4, .in_dist = 1}},
   };
   out.push_back(make_case("c2c_strided_300x4" + suffix, strided, 1200, 1200, false, settings));
+  // In place: real kinds in FFTW's padded rows; a prime row, whose one pass goes through
+  // scratch and a copy when source and destination are the same memory.
+  out.push_back(make_case("r2c_inplace_1000x3" + suffix, fftn::rows_r2c<T>(1000, 3), 3 * 1002,
+                          3 * 501, true, settings));
+  out.push_back(make_case("c2r_inplace_999x3" + suffix, fftn::rows_c2r<T>(999, 3), 3 * 500,
+                          3 * 1000, true, settings));
+  out.push_back(make_case("c2c_inplace_prime_97x5" + suffix, fftn::rows_c2c<T>(97, 5, bwd), 485,
+                          485, true, settings));
+  // A unit axis: one transform's phases mix stages and loop nests.
+  out.push_back(make_case("c2c_planes_1x200x3" + suffix, fftn::planes_c2c<T>(1, 200, 3, fwd), 600,
+                          600, false, settings));
+  out.push_back(make_case("c2c_planes_150x1x2" + suffix, fftn::planes_c2c<T>(150, 1, 2, fwd), 300,
+                          300, false, settings));
 }
 
 inline std::vector<team_case> standard_cases(const fftn::detail::build_settings& settings) {

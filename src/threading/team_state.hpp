@@ -6,13 +6,21 @@
 // each hot word on a cache line of its own.
 //
 // Executions are numbered. Every member counts the team executions it has made on the
-// workspace (its `calls` word, written by that member alone); since every member makes
+// workspace (its 64-bit `calls` word, written by that member alone); since every member makes
 // every execution in the same order, the count names the execution, its epoch, the same for
-// every member of it. Each counter carries the epoch that last wrote it in its high 32
-// bits: a counter from an earlier epoch reads as zero, so counters reset themselves on
-// first use and nothing clears them between executions, and a member that finds a later
-// epoch knows that its own execution is over (a later one starts only after an earlier one
-// completed). This is what lets a member arrive late, after the others have moved on.
+// every member of it. Each counter carries the low 40 bits of the epoch that last wrote it
+// above a 24-bit count: a counter whose tag is not the current epoch's reads as zero, so
+// counters reset themselves on first use and nothing clears them between executions. Tags
+// are only ever compared for equality. Whether an execution is over is a separate,
+// untagged word, `finished` (the highest epoch a member has returned from, never wrapping):
+// a member that finds a word with another epoch's tag reads `finished` after it, and if its
+// own epoch is there, its execution is over. This is what lets a member arrive late, after
+// the others have moved on.
+//
+// The limit: a tag repeats every 2^40 executions, so a counter left unwritten for exactly a
+// multiple of 2^40 executions would read as current. That is 12.7 days of back-to-back
+// executions of one microsecond each, and the word must then be reused at exactly that
+// execution (DESIGN.md 18.2).
 //
 // The workspace object holds one word besides its memory (workspace::team_) saying whether
 // its memory holds valid state and for how many lanes; the first member to find it unset
@@ -65,20 +73,25 @@ static_assert(sizeof(team_word_t) == 8 && alignof(team_word_t) <= 8,
 static_assert(team_word_t::is_always_lock_free,
               "team state needs lock-free 64-bit atomics: execute takes no locks");
 
-// Tagged counters: epoch in the high half, count in the low half.
-[[nodiscard]] constexpr std::uint64_t tagged(std::uint32_t epoch, std::uint32_t count) noexcept {
-  return (std::uint64_t{epoch} << 32U) | count;
+// Tagged counters: the epoch's low 40 bits above a 24-bit count.
+inline constexpr unsigned count_bits = 24;
+inline constexpr std::uint64_t tag_mask = (std::uint64_t{1} << 40U) - 1;
+inline constexpr std::uint32_t count_mask = (1U << count_bits) - 1;
+
+// The tag of epoch e. Epochs whose tag would be 0 are skipped (engine.hpp, begin), so a
+// zeroed word never carries a live tag.
+[[nodiscard]] constexpr std::uint64_t tag_of_epoch(std::uint64_t e) noexcept {
+  return e & tag_mask;
 }
-[[nodiscard]] constexpr std::uint32_t epoch_of(std::uint64_t word) noexcept {
-  return static_cast<std::uint32_t>(word >> 32U);
+[[nodiscard]] constexpr std::uint64_t tagged(std::uint64_t tag, std::uint32_t count) noexcept {
+  return (tag << count_bits) | count;
 }
-// Epochs compare modulo 2^32, so the numbering may wrap.
-[[nodiscard]] constexpr bool is_later(std::uint64_t word, std::uint32_t epoch) noexcept {
-  return static_cast<std::int32_t>(epoch_of(word) - epoch) > 0;
+[[nodiscard]] constexpr std::uint64_t tag_of(std::uint64_t word) noexcept {
+  return word >> count_bits;
 }
-// The count in epoch `epoch`: zero for a word from an earlier one.
-[[nodiscard]] constexpr std::uint32_t count_in(std::uint64_t word, std::uint32_t epoch) noexcept {
-  return epoch_of(word) == epoch ? static_cast<std::uint32_t>(word) : 0;
+// The count under tag `tag`: zero for a word with another tag.
+[[nodiscard]] constexpr std::uint32_t count_in(std::uint64_t word, std::uint64_t tag) noexcept {
+  return tag_of(word) == tag ? static_cast<std::uint32_t>(word & count_mask) : 0;
 }
 
 // Where each word lives, in bytes from the (128-byte aligned) start of the state. The
@@ -86,6 +99,7 @@ static_assert(team_word_t::is_always_lock_free,
 //
 //   line 0         tasks done (tagged)
 //   line 1         members blocked waiting for it
+//   line 2         finished: the highest epoch a member has returned from (untagged)
 //   calls          one word per lane, 16 to a line: written once per execution by its owner
 //   groups         per group (at most one per lane), two lines: whole tasks claimed
 //                  (tagged); members arrived (tagged)
@@ -99,17 +113,18 @@ struct team_layout {
   }
   [[nodiscard]] static std::size_t done() noexcept { return 0; }
   [[nodiscard]] static std::size_t done_blocked() noexcept { return sync_line; }
+  [[nodiscard]] static std::size_t finished() noexcept { return 2 * sync_line; }
   [[nodiscard]] static std::size_t calls(std::size_t lane) noexcept {
-    return 2 * sync_line + lane * sizeof(std::uint64_t);
+    return 3 * sync_line + lane * sizeof(std::uint64_t);
   }
   [[nodiscard]] std::size_t whole(std::size_t group) const noexcept {
-    return (2 + calls_lines() + 2 * group) * sync_line;
+    return (3 + calls_lines() + 2 * group) * sync_line;
   }
   [[nodiscard]] std::size_t arrived(std::size_t group) const noexcept {
     return whole(group) + sync_line;
   }
   [[nodiscard]] std::size_t claim(std::size_t task) const noexcept {
-    return (2 + calls_lines() + 2 * lanes + 2 * task) * sync_line;
+    return (3 + calls_lines() + 2 * lanes + 2 * task) * sync_line;
   }
   [[nodiscard]] std::size_t members(std::size_t task) const noexcept {
     return claim(task) + sizeof(std::uint64_t);
@@ -124,7 +139,7 @@ struct team_layout {
     return chunks_done(task) + sizeof(std::uint64_t);
   }
   [[nodiscard]] std::size_t bytes() const noexcept {
-    return (2 + calls_lines() + 4 * lanes) * sync_line;
+    return (3 + calls_lines() + 4 * lanes) * sync_line;
   }
 };
 

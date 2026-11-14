@@ -10,9 +10,12 @@
 // the whole output is written, nothing may deadlock, and the output must equal serial
 // execution bit for bit.
 //
-// Pathologies: the prototype's measured failures, reproduced in virtual time with a model
-// of its team execution (static per-member schedules, a barrier after every pass of a
-// shared row), and the same plans run by FFTN's scheduler and engine in the same model.
+// Pathologies: measured failures of static team execution (the prototype's, and FFTW's
+// waking of its threads for a short job), reproduced in virtual time with a model of it
+// (static per-member schedules, a barrier after every pass of a shared row), and the same
+// plans run by FFTN's scheduler and engine in the same model. The model's cost per point is
+// the scheduler's own profile value, so these check the scheduler's and the engine's logic
+// against the shape of the measurements, not the constants: experiments T1 and T5 do that.
 
 #include "threading/sim_env.hpp"
 #include "threading/simulator.hpp"
@@ -142,11 +145,12 @@ TEST_P(Interleavings, EveryOrderCompletesWithSerialBits) {
   }
 }
 
+std::string case_name(const ::testing::TestParamInfo<std::size_t>& param) {
+  return interleaving_cases()[param.param].name;
+}
+
 INSTANTIATE_TEST_SUITE_P(Cases, Interleavings,
-                         ::testing::Range(std::size_t{0}, interleaving_cases().size()),
-                         [](const ::testing::TestParamInfo<std::size_t>& info) {
-                           return interleaving_cases()[info.param].name;
-                         });
+                         ::testing::Range(std::size_t{0}, interleaving_cases().size()), case_name);
 
 // The simulator really interleaves: different seeds give different orders, and the split
 // path shares chunks among members.
@@ -185,10 +189,10 @@ team_case default_rows(std::size_t n, std::size_t count) {
                                n * count, n * count, false, fftn::detail::build_settings{});
 }
 
-// The virtual times, for the log: the prototype's, FFTN's and serial execution's.
+// The virtual times, for the log: the static model's, FFTN's and serial execution's.
 void report(const char* what, double proto, double ours, double serial) {
-  std::printf("[ sim      ] %s: prototype %.1f us, FFTN %.1f us, serial %.1f us\n", what,
-              proto / 1000, ours / 1000, serial / 1000);
+  std::printf("[ sim      ] %s: static %.1f us, FFTN %.1f us, serial %.1f us\n", what, proto / 1000,
+              ours / 1000, serial / 1000);
 }
 
 double serial_ns(const team_case& c, const sim::cost_model& costs) {
@@ -222,7 +226,8 @@ sim::sim_result fftn_timed(const team_case& c, int lanes, int group,
   return r;
 }
 
-// The prototype shares every transform of the batch across the whole team, in turn.
+// Static team execution, as the prototype ran it: every transform of the batch shared across
+// the whole team, in turn, with a barrier after every pass.
 sim::sim_result prototype_shared(const team_case& c, int lanes,
                                  const std::vector<sim::member_spec>& members,
                                  const sim::cost_model& costs) {

@@ -18,10 +18,12 @@
 #include "threading/wait.hpp"
 #include "threading/work_graph.hpp"
 
+#include <atomic>
 #include <cassert>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <variant>
 
 namespace fftn::inline v0::detail {
@@ -87,13 +89,19 @@ std::size_t workspace_bytes(const plan_core& core, int lanes) noexcept {
     return core.bytes;
   }
   const auto l = static_cast<std::size_t>(lanes);
-  // The slack aligns the state to its 128-byte lines at any workspace address.
-  return sync_line + team_layout{l}.bytes() + l * core.slot_bytes;
+  // The slack aligns the state to its 128-byte lines at any workspace address. A size that
+  // does not fit saturates, so that allocating it fails rather than wrapping to a small one.
+  std::size_t slots = 0;
+  std::size_t total = 0;
+  if (__builtin_mul_overflow(l, core.slot_bytes, &slots) ||
+      __builtin_add_overflow(slots, sync_line + team_layout{l}.bytes(), &total)) {
+    return std::numeric_limits<std::size_t>::max();
+  }
+  return total;
 }
 
 transform_range transforms_of(const plan_core& core, const team& t) noexcept {
-  const task_range r = owned_tasks(core.prog.transforms, t.size, t.rank);
-  return {.first = r.first, .count = r.count};
+  return owned_tasks(core.prog.transforms, t.size, t.rank);
 }
 
 void execute_team(const plan_core& core, const void* in, void* out, const team& t,
@@ -111,8 +119,15 @@ void execute_team(const plan_core& core, const void* in, void* out, const team& 
   std::byte* state = align_up(ws.memory().data(), sync_line);
   std::byte* slots = state + layout.bytes();
   if (done == completion::own) {
-    // A static deal: nothing is shared, so the team state is not touched.
-    const task_range mine = owned_tasks(core.prog.transforms, t.size, t.rank);
+    // A static deal: nothing is shared. The members' slots lie beyond the state of a team of
+    // this size, but inside that of a larger one, which this execution may overwrite: the
+    // workspace then no longer holds valid state for any other size.
+    const sync_word flag = workspace_access::team_word(ws);
+    const std::uint64_t seen = flag.load(std::memory_order_relaxed);
+    if (seen != 0 && seen != layout.lanes * 4 + team_ready) {
+      flag.store(0, std::memory_order_relaxed);
+    }
+    const transform_range mine = owned_tasks(core.prog.transforms, t.size, t.rank);
     if (mine.count != 0) {
       team_env(core, in, out, slots, {}).run_whole(mine.first, mine.count, t.rank);
     }

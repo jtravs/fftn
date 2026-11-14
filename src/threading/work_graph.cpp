@@ -6,6 +6,7 @@
 #include "core/program.hpp"
 
 #include <algorithm>
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -70,14 +71,14 @@ work_graph build_work_graph(const program& p, std::size_t points, std::size_t ch
       std::size_t j = i;
       while (j < nest_end) {
         const loop* l = std::get_if<loop>(&p.records[j]);
-        if (l == nullptr || l->body_end != nest_end) {
+        if (l == nullptr) {
           break;
         }
+        assert(l->body_end == nest_end && "fftn: the loops over lines are perfectly nested");
         lines *= l->count;
         ++j;
       }
       ph.nest = static_cast<std::uint32_t>(j - i);
-      ph.body = static_cast<std::uint32_t>(j);
       ph.body_end = nest_end;
       ph.units = lines;
       const std::size_t per_chunk =

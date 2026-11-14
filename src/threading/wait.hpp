@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // How a member with nothing to claim waits on a counter (DESIGN.md 13.3): spin for a time
-// budget, then yield for another, then block in std::atomic_ref::wait (a futex on Linux,
+// budget, then yield for another, then block in std::atomic::wait (a futex on Linux,
 // __ulock_wait on macOS, WaitOnAddress on Windows).
 //
 // The budgets are times, not iteration counts: a pause instruction costs about 140 cycles
@@ -50,9 +50,10 @@ void wait_for(sync_word w, const sync_word* blocked, Ready ready,
   using clock = std::chrono::steady_clock;
   const clock::time_point start = clock::now();
   clock::duration waited{0};
-  // Spin, reading the clock only every 64 rounds: it costs tens of nanoseconds.
+  // Spin, reading the clock only every 64 rounds: it costs tens of nanoseconds. A zero
+  // budget (an oversubscribed team) does not spin at all.
   constexpr unsigned rounds_per_check = 64;
-  for (unsigned round = 1;; ++round) {
+  for (unsigned round = 1; budget.spin.count() > 0; ++round) {
     cpu_relax();
     if (ready(w.load(std::memory_order_acquire))) {
       return;

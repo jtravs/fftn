@@ -11,20 +11,26 @@
 #include "threading/team_cases.hpp"
 #include "threading/thread_team.hpp"
 
+#include "core/plan_core.hpp"
 #include "fftn/detail/core.hpp"
 #include "support/inputs.hpp"
+#include "threading/team_state.hpp"
 
 #include <fftn/fftn.hpp>
 
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <complex>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
+#include <new>
+#include <random>
 #include <span>
 #include <string>
 #include <thread>
@@ -71,6 +77,30 @@ std::vector<std::byte> run_team(const team_case& c, int size, int group, fftn::w
   return b.result();
 }
 
+// Resets a workspace's team state: any serial execution does, even of no transforms.
+void reset(const team_case& c, const fftn::workspace& ws) {
+  case_buffers b(c);
+  fftn::detail::execute_core(*c.core, 0, 0, b.src(), b.dst(), ws);
+}
+
+// Runs c with completion `done` on a team of `size`; returns the output, and in `early` the
+// number of members that returned before it was complete.
+std::vector<std::byte> run_checked(const team_case& c, int size, int group, fftn::workspace& ws,
+                                   fftn::completion done, int& early) {
+  case_buffers b(c);
+  const std::vector<std::byte> serial = fftn::test::serial_result(c);
+  std::atomic<int> before{0};
+  threads().run(size, [&](int rank) {
+    fftn::detail::execute_team(*c.core, b.src(), b.dst(),
+                               {.rank = rank, .size = size, .group_size = group}, ws, done);
+    if (done == fftn::completion::all && b.result() != serial) {
+      before.fetch_add(1);
+    }
+  });
+  early = before.load();
+  return b.result();
+}
+
 class TeamBits : public ::testing::TestWithParam<std::size_t> {
 public:
   static const std::vector<team_case>& cases() {
@@ -93,11 +123,12 @@ TEST_P(TeamBits, EqualToSerialForEveryTeamSize) {
   }
 }
 
+std::string case_name(const ::testing::TestParamInfo<std::size_t>& param) {
+  return TeamBits::cases()[param.param].name;
+}
+
 INSTANTIATE_TEST_SUITE_P(Cases, TeamBits,
-                         ::testing::Range(std::size_t{0}, TeamBits::cases().size()),
-                         [](const ::testing::TestParamInfo<std::size_t>& info) {
-                           return TeamBits::cases()[info.param].name;
-                         });
+                         ::testing::Range(std::size_t{0}, TeamBits::cases().size()), case_name);
 
 // The same through the public API, with the default machine profile and chunking: long
 // rows, leftover rows, planes, many short rows.
@@ -152,6 +183,12 @@ TEST(TeamExecute, LateMissingAndOneByOneMembers) {
       for (const arrival how : {arrival::staggered, arrival::missing_last, arrival::one_by_one}) {
         EXPECT_EQ(run_team(c, size, 4, ws, how), serial)
             << c.name << ": team of " << size << ", arrival " << static_cast<int>(how);
+        if (how == arrival::missing_last) {
+          // The missing member skipped an execution, which members may not do on a
+          // workspace they go on using: a serial execution, here of no transforms, resets
+          // the team state before the next team execution.
+          reset(c, ws);
+        }
       }
     }
   }
@@ -230,7 +267,7 @@ TEST(TeamExecute, WorkspaceReuse) {
   const std::size_t bytes = std::max(fftn::detail::workspace_bytes(*a.core, max_team),
                                      fftn::detail::workspace_bytes(*b.core, max_team));
   std::vector<std::byte> memory(bytes + 64, std::byte{0xff}); // not zero
-  fftn::workspace ws(std::span(memory).subspan(7, bytes));
+  fftn::workspace ws{std::span<std::byte>(memory).subspan(7, bytes)};
   constexpr int calls = 12;
   for (const int size : {3, 8, 5}) {
     std::vector<case_buffers> buffers;
@@ -333,6 +370,165 @@ TEST(TeamExecute, WorkspaceBytesPerLanes) {
   const fftn::c2c_plan<double> leaf(fftn::rows_c2c<double>(4, 2, fftn::direction::forward));
   EXPECT_EQ(leaf.workspace_bytes(), 0U);
   EXPECT_GT(leaf.workspace_bytes(2), 0U);
+}
+
+// completion::own with a smaller team writes its slots inside a larger team's state; the
+// next execution by the larger team must set its state up afresh (the reviewer's sequence:
+// all with 8, own with 2, all with 8 returned before the output was written).
+TEST(TeamExecute, OwnWithASmallerTeamThenAll) {
+  const team_case c = fftn::test::make_case(
+      "c2c_4096x8", fftn::rows_c2c<double>(4096, 8, fftn::direction::forward),
+      std::size_t{4096} * 8, std::size_t{4096} * 8, false, fftn::test::eager_settings());
+  const std::vector<std::byte> serial = fftn::test::serial_result(c);
+  fftn::workspace ws(fftn::detail::workspace_bytes(*c.core, 8));
+  int early = 0;
+  EXPECT_EQ(run_checked(c, 8, 1, ws, fftn::completion::all, early), serial);
+  EXPECT_EQ(run_checked(c, 2, 0, ws, fftn::completion::own, early), serial);
+  // Its scratch overwrote words of the 8-member state, which is no longer valid. (With
+  // 40-bit tags compared for equality, scratch read as counters almost always reads as zero,
+  // so the output check below alone would not show it.)
+  EXPECT_EQ(fftn::detail::workspace_access::team_word(ws).load(), 0U);
+  EXPECT_EQ(run_checked(c, 8, 1, ws, fftn::completion::all, early), serial);
+  EXPECT_EQ(early, 0);
+  // An own execution by a team of the state's size keeps it.
+  EXPECT_EQ(run_checked(c, 8, 1, ws, fftn::completion::own, early), serial);
+  EXPECT_NE(fftn::detail::workspace_access::team_word(ws).load(), 0U);
+}
+
+// Every mix of completions, team sizes, groupings, plans and serial executions on one
+// workspace, each execution complete and right.
+TEST(TeamExecute, MixedSequencesOnOneWorkspace) {
+  const auto& cases = TeamBits::cases();
+  const std::array<const team_case*, 4> plans{cases.data(), &cases[8], &cases[13], &cases[10]};
+  std::size_t bytes = 0;
+  for (const team_case* c : plans) {
+    bytes = std::max(bytes, fftn::detail::workspace_bytes(*c->core, 8));
+  }
+  fftn::workspace ws(bytes);
+  std::mt19937_64 rng(11); // NOLINT(bugprone-random-generator-seed): reproducible on purpose
+  for (int step = 0; step < 60; ++step) {
+    const team_case& c = *plans[rng() % 4];
+    const int size = static_cast<int>(1 + rng() % 8);
+    const int group = static_cast<int>(rng() % 4);
+    const auto kind = rng() % 3;
+    int early = 0;
+    if (kind == 2) {
+      case_buffers b(c);
+      fftn::detail::execute_core(*c.core, 0, fftn::detail::transform_count(*c.core), b.src(),
+                                 b.dst(), ws);
+      EXPECT_EQ(b.result(), fftn::test::serial_result(c)) << "step " << step;
+      continue;
+    }
+    const fftn::completion done = kind == 0 ? fftn::completion::all : fftn::completion::own;
+    EXPECT_EQ(run_checked(c, size, group, ws, done, early), fftn::test::serial_result(c))
+        << "step " << step << ": " << c.name << ", team of " << size << ", completion " << kind;
+    EXPECT_EQ(early, 0) << "step " << step;
+  }
+}
+
+// The team state ages: as if each member had made about 2^31, 2^32, 2^40 and 2^41
+// executions, a split plan whose words were never written still completes before any
+// member returns (with 32-bit epochs compared modulo 2^32 it did not).
+TEST(TeamExecute, StateAgesWithoutLimit) {
+  const auto& cases = TeamBits::cases();
+  const team_case& a = cases[13]; // many rows, whole
+  const team_case& b = cases[0];  // one row, split
+  constexpr int size = 4;
+  fftn::workspace ws(std::max(fftn::detail::workspace_bytes(*a.core, size),
+                              fftn::detail::workspace_bytes(*b.core, size)));
+  const auto address = reinterpret_cast<std::uintptr_t>(ws.memory().data());
+  std::byte* state =
+      ws.memory().data() +
+      (fftn::detail::sync_line - address % fftn::detail::sync_line) % fftn::detail::sync_line;
+  // Each member's count of executions jumps to `calls`. Three executions first (epochs 1 to
+  // 3) leave every word plan a uses tagged 3; plan b's are never written. A jump that made
+  // the next tag 3 again would be the documented limit (a word reused exactly a multiple of
+  // 2^40 executions after its last write); 2^40 - 1 makes the next epoch's tag 0, which is
+  // skipped, so that epoch is tagged 1.
+  for (const std::uint64_t calls : {
+           (std::uint64_t{1} << 31U) + 5,
+           (std::uint64_t{1} << 32U) + 5,
+           (std::uint64_t{1} << 40U) - 1,
+           (std::uint64_t{1} << 41U) + 1000,
+       }) {
+    reset(a, ws);
+    int early = 0;
+    for (int k = 0; k < 3; ++k) {
+      EXPECT_EQ(run_checked(a, size, 2, ws, fftn::completion::all, early),
+                fftn::test::serial_result(a));
+    }
+    for (int r = 0; r < size; ++r) {
+      auto* word = std::launder(reinterpret_cast<std::atomic<std::uint64_t>*>(
+          state + fftn::detail::team_layout::calls(static_cast<std::size_t>(r))));
+      word->store(calls);
+    }
+    EXPECT_EQ(run_checked(a, size, 2, ws, fftn::completion::all, early),
+              fftn::test::serial_result(a))
+        << calls;
+    EXPECT_EQ(run_checked(b, size, 2, ws, fftn::completion::all, early),
+              fftn::test::serial_result(b))
+        << calls;
+    EXPECT_EQ(early, 0) << calls;
+  }
+}
+
+// A member that skips an execution may not go on to the next on the same workspace without
+// a reset; after a serial execution of no transforms, every member returns from the next
+// execution only once its output is written.
+TEST(TeamExecute, ResetAfterASkippedExecution) {
+  const team_case& c = TeamBits::cases()[13];
+  const std::vector<std::byte> serial = fftn::test::serial_result(c);
+  constexpr int size = 4;
+  fftn::workspace ws(fftn::detail::workspace_bytes(*c.core, size));
+  EXPECT_EQ(run_team(c, size, 0, ws, arrival::missing_last), serial);
+  reset(c, ws);
+  for (int round = 0; round < 5; ++round) {
+    case_buffers b(c);
+    std::atomic<int> early{0};
+    threads().run(size, [&](int rank) {
+      if (rank != size - 1) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+      }
+      fftn::detail::execute_team(*c.core, b.src(), b.dst(), {.rank = rank, .size = size}, ws,
+                                 fftn::completion::all);
+      if (b.result() != serial) {
+        early.fetch_add(1);
+      }
+    });
+    EXPECT_EQ(early.load(), 0) << "round " << round;
+  }
+}
+
+// An oversubscribed team (more members than the profile's CPUs) splits nothing and does not
+// spin, and still gives serial execution's bits.
+TEST(TeamExecute, OversubscribedTeam) {
+  fftn::detail::build_settings settings = fftn::test::eager_settings();
+  settings.profile.cpus = 2;
+  std::vector<team_case> cases;
+  fftn::test::add_cases<double>(cases, settings, "");
+  for (const std::size_t i : {std::size_t{0}, std::size_t{8}, std::size_t{11}}) {
+    const team_case& c = cases[i];
+    const std::vector<std::byte> serial = fftn::test::serial_result(c);
+    fftn::workspace ws(fftn::detail::workspace_bytes(*c.core, 8));
+    for (const int size : {3, 8}) {
+      EXPECT_EQ(run_team(c, size, 0, ws), serial) << c.name << ", team of " << size;
+    }
+  }
+}
+
+// A workspace size that does not fit saturates, so that allocating it fails.
+TEST(TeamExecute, WorkspaceBytesSaturate) {
+  const auto core = fftn::detail::make_plan_core(
+      fftn::detail::view_of(fftn::rows_c2c<double>(1000, 3, fftn::direction::forward)),
+      fftn::options(), fftn::detail::build_settings());
+  // The core is not const: the test enlarges its slot as a huge plan's would be.
+  auto& mutable_core = const_cast<fftn::detail::plan_core&>(*core);
+  mutable_core.slot_bytes = std::numeric_limits<std::size_t>::max() / 3;
+  EXPECT_EQ(fftn::detail::workspace_bytes(*core, 4), std::numeric_limits<std::size_t>::max());
+  mutable_core.slot_bytes = std::numeric_limits<std::size_t>::max() / 4 - 64;
+  EXPECT_EQ(fftn::detail::workspace_bytes(*core, 4), std::numeric_limits<std::size_t>::max());
+  mutable_core.slot_bytes = 1024;
+  EXPECT_LT(fftn::detail::workspace_bytes(*core, 4), 8192U);
 }
 
 } // namespace

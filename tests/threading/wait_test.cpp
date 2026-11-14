@@ -65,19 +65,21 @@ TEST(Wait, SpinsThenYieldsThenBlocks) {
 
 TEST(Wait, TaggedWords) {
   using fftn::detail::count_in;
-  using fftn::detail::epoch_of;
-  using fftn::detail::is_later;
+  using fftn::detail::tag_of;
+  using fftn::detail::tag_of_epoch;
   using fftn::detail::tagged;
   const std::uint64_t w = tagged(7, 41);
-  EXPECT_EQ(epoch_of(w), 7U);
+  EXPECT_EQ(tag_of(w), 7U);
   EXPECT_EQ(count_in(w, 7), 41U);
-  EXPECT_EQ(count_in(w, 8), 0U); // from an earlier execution: reads as zero
-  EXPECT_TRUE(is_later(w, 6));
-  EXPECT_FALSE(is_later(w, 7));
-  EXPECT_FALSE(is_later(w, 8));
-  // Epochs compare modulo 2^32.
-  EXPECT_TRUE(is_later(tagged(2, 0), 0xffffffffU));
-  EXPECT_FALSE(is_later(tagged(0xffffffffU, 0), 2));
+  EXPECT_EQ(count_in(w, 8), 0U); // another execution's: reads as zero
+  EXPECT_EQ(count_in(w, 6), 0U);
+  // Tags are the low 40 bits of the epoch, with the full 24-bit count beside them.
+  const std::uint64_t big = (std::uint64_t{1} << 40U) + 3;
+  EXPECT_EQ(tag_of_epoch(big), 3U);
+  const std::uint64_t full =
+      tagged(tag_of_epoch((std::uint64_t{1} << 40U) - 1), fftn::detail::count_mask);
+  EXPECT_EQ(tag_of(full), (std::uint64_t{1} << 40U) - 1);
+  EXPECT_EQ(count_in(full, (std::uint64_t{1} << 40U) - 1), fftn::detail::count_mask);
 }
 
 } // namespace

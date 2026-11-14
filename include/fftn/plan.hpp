@@ -105,19 +105,25 @@ public:
   /// With `completion::all` the members claim work dynamically: whole transforms first,
   /// then the pieces of transforms that the plan splits among the members of one cache
   /// group (docs/threading.md). The call returns on each member once the whole output is
-  /// written. It completes with any subset of the members: one member alone does
+  /// written. It does not wait for members that have not arrived: the members present do
   /// everything, and members that arrive late find nothing left. With `completion::own`
   /// each member transforms exactly `transforms_of(t)`, whole, and returns when they are
   /// written.
   ///
   /// Preconditions: as for `execute`, plus those of `fftn::team`; every member passes the
-  /// same `in`, `out`, `ws` and `done`; `ws.size()` is at least `workspace_bytes(t.size)`.
-  /// The executions a workspace serves form one sequence, which every member follows in
-  /// the same order: a member may arrive late, even after the others have moved on to
-  /// later executions, but must not skip one. A team execution lasts until its last member
-  /// has returned (or, for `completion::own`, until the caller has synchronised the
-  /// members); only then may the workspace serve a serial execution or a team of another
-  /// size.
+  /// same `in`, `out` and `done`, and the same workspace object (not another workspace over
+  /// the same memory); `ws.size()` is at least `workspace_bytes(t.size)`. The team
+  /// executions a workspace serves form one sequence, which every member follows in the
+  /// same order: a member may arrive late, even after the others have moved on to later
+  /// executions, but must not skip one, because a member counts its own calls to know which
+  /// execution it is in (a member that skipped one would return from the next before its
+  /// output is written). A member that is absent from an execution must therefore make no
+  /// more team calls on the workspace until it has been reset: any serial execution on it
+  /// resets it, `execute_transforms(0, 0, in, out, ws)` among them. One rank's successive
+  /// calls are made by one thread, or ordered by happens-before (a mutex, a barrier, a
+  /// thread join). A team execution lasts until its last member has returned (or, for
+  /// `completion::own`, until the caller has synchronised the members); only then may the
+  /// workspace serve a serial execution or a team of another size.
   ///
   /// Guarantees: as for `execute`, and the output is bitwise identical to serial
   /// execution, whatever the team's size, grouping or timing. Never allocates, locks,
