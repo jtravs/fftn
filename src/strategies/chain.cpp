@@ -218,6 +218,57 @@ template <class T> const T* chain_builder<T>::edge_twiddles(std::size_t n) {
   return pack(t, true);
 }
 
+// A Bluestein stage's tables (strategies/bluestein.hpp), kept per (q, sign) so that every
+// axis and line of the plan with the same Q uses one copy. The kernel spectrum: M tight
+// complex values (an input factor, passes/bluestein.inl). The chirp: Q entries in broadcast
+// storage when copies == 0 (passes that share it across the copies), otherwise one entry
+// per element of a line of `copies` interleaved sequences, copies Q, in per-lane storage
+// padded with ones to whole registers.
+template <class T>
+typename chain_builder<T>::bluestein_tables
+chain_builder<T>::bluestein_tables_of(std::size_t q, int sign, std::size_t copies) {
+  const std::size_t m = bluestein_length(q, profile_);
+  const auto kernel_key = std::make_pair(q, sign);
+  auto kit = kernel_tables_.find(kernel_key);
+  if (kit == kernel_tables_.end()) {
+    // For double plans the kernel's root table of M is the plan's own.
+    std::vector<std::complex<double>> roots_m;
+    if constexpr (std::is_same_v<T, double>) {
+      roots_m = roots(m);
+    } else {
+      roots_m = unit_roots<double>(-1, m);
+    }
+    const std::vector<std::complex<double>> spectrum =
+        bluestein_kernel(bluestein_chirp<double>(sign, q), roots_m);
+    std::vector<T>& kernel = tables_.emplace_back(2 * m);
+    for (std::size_t f = 0; f < m; ++f) {
+      kernel[2 * f] = static_cast<T>(spectrum[f].real());
+      kernel[2 * f + 1] = static_cast<T>(spectrum[f].imag());
+    }
+    kit = kernel_tables_.emplace(kernel_key, kernel.data()).first;
+  }
+  const auto chirp_key = std::make_tuple(q, sign, copies);
+  auto cit = chirp_tables_.find(chirp_key);
+  if (cit == chirp_tables_.end()) {
+    const std::vector<std::complex<T>> w = bluestein_chirp<T>(sign, q);
+    const T* stored = nullptr;
+    if (copies == 0) {
+      stored = pack(w, true);
+    } else {
+      const std::size_t c = kernels_.complex_lanes;
+      std::vector<std::complex<T>> chirp(blocks(copies * q) * c, std::complex<T>(1, 0));
+      for (std::size_t j = 0; j < q; ++j) {
+        for (std::size_t t = 0; t < copies; ++t) {
+          chirp[t + copies * j] = w[j];
+        }
+      }
+      stored = pack(chirp, false);
+    }
+    cit = chirp_tables_.emplace(chirp_key, stored).first;
+  }
+  return {.chirp = cit->second, .kernel = kit->second};
+}
+
 template <class T>
 std::uint32_t chain_builder<T>::chunks_of(std::size_t units, std::size_t points_per_unit) const {
   const std::size_t per_chunk = std::max<std::size_t>(1, chunk_points_ / points_per_unit);
@@ -258,12 +309,18 @@ void chain_builder<T>::add_pass(std::size_t n, const std::vector<std::size_t>& r
     st.chunks = chunks_of(st.units, radix * c);
     kind = "grouped";
   } else if (last) {
-    st.run = k.codelet[radix].last[d][edge_index(out)];
+    st.run = out == edge_op::factor && edges.out_factor_copies > 1
+                 ? k.codelet[radix].last_shared_out
+                 : k.codelet[radix].last[d][edge_index(out)];
+    st.args.factor_copies = edges.out_factor_copies;
     st.units = blocks(s);
     st.chunks = chunks_of(st.units, radix * c);
     kind = "lane";
   } else {
-    st.run = k.codelet[radix].lane[d];
+    // A first pass with copies is a Bluestein convolution's (batch copies, all of them
+    // here); its input factor, the backward chain's kernel spectrum, holds one entry per
+    // element of a copy, which every lane shares.
+    st.run = in == edge_op::factor ? k.codelet[radix].lane_shared_in : k.codelet[radix].lane[d];
     st.args.twiddles = shared_twiddles(n / batch, radix, s / batch);
     st.units = m * blocks(s);
     st.chunks = chunks_of(st.units, radix * c);
@@ -342,35 +399,22 @@ void chain_builder<T>::add_bluestein(std::size_t n, std::size_t q, int sign, end
   const std::size_t c = kernels_.complex_lanes;
   const edge_op in = first ? edges.in : edge_op::none;
   const pass_kernels<T>& k = kernels_.passes;
-
-  // The chirp, element i = t + s j of the s Q holding w_j, padded with ones to whole
-  // registers; the kernel spectrum, element t + s f of the s M holding dft(b)_f / M.
-  // For double plans the kernel's double chirp and root table of M are the plan's own.
-  const std::vector<std::complex<double>> wd = bluestein_chirp<double>(sign, q);
-  std::vector<std::complex<T>> w;
-  std::vector<std::complex<double>> roots_m;
-  if constexpr (std::is_same_v<T, double>) {
-    w = wd;
-    roots_m = roots(m);
-  } else {
-    w = bluestein_chirp<T>(sign, q);
-    roots_m = unit_roots<double>(-1, m);
+  // The convolution's passes must be codelet lane passes with at least two of them: the
+  // kernel spectrum is shared through the last lane pass's output or the first backward
+  // lane pass's input (factor_sharing), which the generic pass, a grouped pass with copies
+  // and a single pass that is both first and last would not honour.
+  if (rad.size() < 2) {
+    throw std::logic_error("fftn: a Bluestein convolution of " + std::to_string(m) +
+                           " points has fewer than two passes");
   }
-  std::vector<std::complex<T>> chirp(blocks(s * q) * c, std::complex<T>(1, 0));
-  for (std::size_t j = 0; j < q; ++j) {
-    for (std::size_t t = 0; t < s; ++t) {
-      chirp[t + s * j] = w[j];
+  for (const std::size_t r : rad) {
+    if (r > max_codelet_radix || k.codelet[r].lane[0] == nullptr) {
+      throw std::logic_error("fftn: a Bluestein convolution of " + std::to_string(m) +
+                             " points has radix " + std::to_string(r) + ", which no codelet takes");
     }
   }
-  const T* chirp_table = pack(chirp, false);
-  const std::vector<std::complex<double>> spectrum = bluestein_kernel(wd, roots_m);
-  std::vector<T>& kernel = tables_.emplace_back(2 * s * m);
-  for (std::size_t f = 0; f < m; ++f) {
-    for (std::size_t t = 0; t < s; ++t) {
-      kernel[2 * (t + s * f)] = static_cast<T>(spectrum[f].real());
-      kernel[2 * (t + s * f) + 1] = static_cast<T>(spectrum[f].imag());
-    }
-  }
+  const bool shared = s > 1 && s % c == 0;
+  const bluestein_tables tab = bluestein_tables_of(q, sign, shared ? 0 : s);
 
   // The convolution starts in the scratch line the source is not in, and ends there.
   const slot conv =
@@ -378,11 +422,11 @@ void chain_builder<T>::add_bluestein(std::size_t n, std::size_t q, int sign, end
   const std::string geometry = "Q " + std::to_string(q) + ", M " + std::to_string(m) +
                                ", copies " + std::to_string(s);
   stage st;
-  st.run = k.bluestein_in[edge_index(in)];
+  st.run = k.bluestein_in[shared ? 1 : 0][edge_index(in)];
   st.args.m = m;
   st.args.s = s;
   st.args.n = n;
-  st.args.twiddles = chirp_table;
+  st.args.twiddles = tab.chirp;
   st.args.scale = edges.scale;
   st.args.in_factor = in == edge_op::factor ? edges.in_factor : nullptr;
   st.args.src_stride = src.stride;
@@ -395,16 +439,31 @@ void chain_builder<T>::add_bluestein(std::size_t n, std::size_t q, int sign, end
             edges_note(in, edge_op::none) + ")";
   stages.push_back(std::move(st));
 
-  line_edges spectral;
-  spectral.out = edge_op::factor;
-  spectral.out_factor = kernel.data();
+  // The kernel spectrum, M entries for all the copies: output element t + s f of the
+  // forward chain (copy t) takes entry f. Its last pass applies it when C divides s, its
+  // lanes then sharing one entry (factor_sharing::output; s = 1 is the plain per-element
+  // factor). Otherwise the lanes of that pass straddle entries, and the first backward
+  // pass, a lane pass whose lanes are the copies, multiplies its input element t + s f by
+  // entry f instead (factor_sharing::input). Measured on the Mac (C = 1, task 2.3b): the
+  // input form cost 5 % at 4096 x 17 against the output form, whose multiplications hide
+  // under the last pass's memory traffic.
+  line_edges forward;
+  line_edges backward;
+  if (s % c == 0 || s == 1) {
+    forward.out = edge_op::factor;
+    forward.out_factor = tab.kernel;
+    forward.out_factor_copies = s;
+  } else {
+    backward.in = edge_op::factor;
+    backward.in_factor = tab.kernel;
+  }
   const std::size_t first_conv = stages.size();
   slot at = conv;
   for (const int dir : {-1, +1}) {
     std::size_t copies = s;
     for (std::size_t i = 0; i < rad.size(); ++i) {
       const slot next = other_scratch(at);
-      add_pass(s * m, rad, i, copies, dir, {at, 1}, {next, 1}, dir < 0 ? spectral : line_edges(),
+      add_pass(s * m, rad, i, copies, dir, {at, 1}, {next, 1}, dir < 0 ? forward : backward,
                stages, s);
       at = next;
       copies *= rad[i];
@@ -415,11 +474,11 @@ void chain_builder<T>::add_bluestein(std::size_t n, std::size_t q, int sign, end
   }
 
   stage out;
-  out.run = k.bluestein_out[edge_index(edges.out)];
+  out.run = k.bluestein_out[shared ? 1 : 0][edge_index(edges.out)];
   out.args.m = m;
   out.args.s = s;
   out.args.n = n;
-  out.args.twiddles = chirp_table;
+  out.args.twiddles = tab.chirp;
   out.args.scale = edges.scale;
   out.args.out_factor = edges.out == edge_op::factor ? edges.out_factor : nullptr;
   out.args.src_stride = 1;

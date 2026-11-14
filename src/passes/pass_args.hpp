@@ -44,6 +44,9 @@ struct pass_args {
   std::size_t dst_cols = 0;
   std::ptrdiff_t src_qstride = 0;
   std::ptrdiff_t dst_qstride = 0;
+  // A lane pass whose output factor is shared (factor_sharing::output): the consecutive
+  // elements that share each entry, a multiple of the target's complex count.
+  std::size_t factor_copies = 1;
 };
 
 // Runs units [first, last) of a pass. A unit is the kernel's own (a block of butterflies,
@@ -60,6 +63,11 @@ enum class edge_op : std::uint8_t {
   factor, // times the line's factor array, element by element
 };
 inline constexpr std::size_t edge_op_count = 3;
+
+// How a lane pass reads a factor table that holds one entry per element of a sequence
+// whose copies are interleaved in its line (passes/stockham.inl, lane_pass): not at all,
+// on its input or on its output. A separate instantiation each.
+enum class factor_sharing : std::uint8_t { none, input, output };
 
 // The codelets' radices index the tables below directly; gen::radices lists which exist.
 inline constexpr std::size_t max_codelet_radix = 16;
@@ -87,6 +95,14 @@ struct radix_passes {
   pass_fn grouped[2][edge_op_count];
   // Its middle passes (m > 1): lanes over copies, twiddled.
   pass_fn lane[2];
+  // The backward middle pass with every input leg times a factor shared by the copies
+  // (factor_sharing::input): the first backward pass of a Bluestein convolution with more
+  // than one copy, taking the kernel spectrum (passes/bluestein.inl).
+  pass_fn lane_shared_in;
+  // The forward last pass with every output times a factor shared by factor_copies
+  // consecutive copies (factor_sharing::output): the last forward pass of a Bluestein
+  // convolution whose copy count C divides.
+  pass_fn last_shared_out;
   // Its last pass (m = 1): lanes over copies, no twiddles; output edge.
   pass_fn last[2][edge_op_count];
   // A whole transform of n = radix <= 16 in registers; input edge, output edge.
@@ -105,8 +121,10 @@ template <class T> struct pass_kernels {
   pass_fn copy[edge_op_count][edge_op_count];
   // The chirp multiplications around a Bluestein stage's convolution (passes/bluestein.inl):
   // into the zero-padded buffer, with the input edge; out of it, with the output edge.
-  pass_fn bluestein_in[edge_op_count];
-  pass_fn bluestein_out[edge_op_count];
+  // Indexed [shared][edge]: shared reads the chirp once for all the copies (s a multiple
+  // of C), otherwise one entry per element of the line.
+  pass_fn bluestein_in[2][edge_op_count];
+  pass_fn bluestein_out[2][edge_op_count];
   // Real-to-complex edges (DESIGN.md 9.1): even n = 2h through a complex transform of h,
   // odd n through n. The output edges take [scaled].
   pass_fn r2c_pack_pairs;

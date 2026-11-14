@@ -75,3 +75,30 @@ Measured on the Mac only; the other targets take the same value until measured. 
 pass stays for radices a test forces (and for a profile that raises the threshold); in the
 direct form it has, it lost at every length measured, so its symmetric form (DESIGN.md
 9.2), or its deletion, is the maintainer's call.
+
+## Follow-up: plan memory of the Bluestein tables (task 2.3b)
+
+Not a threshold change, recorded here because it changes the stage measured above
+(DESIGN.md 8.5). The chirp and the kernel spectrum were stored once per element of the
+line (s Q and s M entries for s copies); they are now stored once (Q broadcast entries
+when C divides s, otherwise s Q; M kernel entries always) and shared by the axes of a plan.
+
+- Plan memory (internal plan core, double, Mac): n = 17 · 2²⁰ (s = 2²⁰, M = 36): tables
+  1174 MB before, 285 MB after, of which the Bluestein stage's were 889 MB and are now
+  under 1 KB; the rest is the head chain's grouped-pass twiddles (about n entries, as any
+  chain of that length has). Workspace unchanged: 1208 MB per team member (two scratch
+  lines of s M); running the copies in blocks would cut it but needs moving scratch slots
+  in the program (DESIGN.md 8.5, "Not done").
+- Where the shared kernel applies: as the forward chain's last output factor when C divides
+  s (lanes share one entry), else as the backward chain's first input factor. The input
+  form everywhere cost about 5 % at 4096 × 17 and 3 × 11 × 13 × 17 against main (fbench
+  20261114-132546-1598, A/A band ±1.0 %).
+- Speed, final code against main, Apple M5 Max, Homebrew Clang 23, Release, `neon_fcma`,
+  one thread, double, shared machine: fbench 20261114-135103-5f6e (A = NEON FFTW at
+  MEASURE, B = main a3903ed, C = f4c9065, which is c541c20 rebased, A/A ±1.0 %) over the tracking tier's prime and
+  awkward rows, rows with copies and planes with prime axes (14 cases): C ÷ B from 0.84
+  (4352 = 256 × 17) to 1.05, geometric mean 0.99; the cases above 1.02 (4093, 69632) were
+  not slower in the repeat 20261114-140239-9661 (69632: 0.97, no evidence) or swing both
+  ways between runs, as s = 1 primes whose code did not change do (4093: 0.96 in
+  20261114-131632-4a44, 1.04 in 20261114-135103-5f6e). Verdict: adopted; no regression
+  beyond the run-to-run spread, faster with many copies.

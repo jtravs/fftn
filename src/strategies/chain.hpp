@@ -30,11 +30,15 @@
 //   remaining radix Q (the product of the large primes) has s = n / Q copies is the
 //   convolution of s interleaved sequences of length M (copy innermost): a chirp pass
 //   into scratch, zero-padded to s M; the chain of M, forward, with every pass's copy
-//   count multiplied by s and the kernel spectrum as the last pass's output factor (one
-//   value per element of the s M, each repeated s times); the chain of M backward; and a
-//   chirp pass out, elementwise because m = 1 makes the stage's input and output indices
-//   the same. The convolution ping-pongs between a and b, an even number of passes, so
-//   it ends where it began; scratch lines are then s M long. It runs in place.
+//   count multiplied by s and its output element t + s f times entry f of the kernel
+//   spectrum (M entries for all the copies: the last pass's output factor when C divides
+//   s, broadcast to lanes that share it, else the backward chain's first pass's input,
+//   whose lanes are the copies); the chain of M backward; and a chirp pass out, elementwise
+//   because m = 1 makes the stage's input and output indices the same. The chirp passes
+//   read Q chirp entries, broadcast, when C divides s, otherwise one per element (s Q).
+//   Both tables are kept per (Q, sign), so every axis with that Q shares them. The
+//   convolution ping-pongs between a and b, an even number of passes, so it ends where
+//   it began; scratch lines are then s M long. It runs in place.
 // - Chunks: a stage of u units is cut into ranges of about chunk_points points each.
 #pragma once
 
@@ -68,6 +72,9 @@ struct line_edges {
   double scale = 1.0;              // for edge_op::scale on either edge
   const void* in_factor = nullptr; // n complex values, for edge_op::factor
   const void* out_factor = nullptr;
+  // When above 1, out_factor holds one entry per run of this many consecutive elements, a
+  // multiple of C (a Bluestein convolution's kernel spectrum over its interleaved copies).
+  std::size_t out_factor_copies = 1;
 };
 
 template <class T> class chain_builder {
@@ -115,6 +122,11 @@ private:
   const T* shared_twiddles(std::size_t n, std::size_t radix, std::size_t s);
   const T* radix_roots(std::size_t radix);
   const T* edge_twiddles(std::size_t n);
+  struct bluestein_tables {
+    const T* chirp;
+    const T* kernel;
+  };
+  bluestein_tables bluestein_tables_of(std::size_t q, int sign, std::size_t copies);
   [[nodiscard]] std::uint32_t chunks_of(std::size_t units, std::size_t points_per_unit) const;
   [[nodiscard]] std::size_t blocks(std::size_t count) const;
   // The passes of a chain of n from scratch slot `from` into scratch; returns the slot
@@ -148,6 +160,8 @@ private:
   std::map<std::pair<std::size_t, std::size_t>, const T*> grouped_tables_;              // (n, R)
   std::map<std::tuple<std::size_t, std::size_t, std::size_t>, const T*> shared_tables_; // n, R, s
   std::map<std::size_t, const T*> radix_roots_;                                         // R
+  std::map<std::pair<std::size_t, int>, const T*> kernel_tables_;                       // Q, sign
+  std::map<std::tuple<std::size_t, int, std::size_t>, const T*> chirp_tables_; // Q, sign, copies
 };
 
 extern template class chain_builder<double>;

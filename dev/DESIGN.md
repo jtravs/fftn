@@ -929,7 +929,8 @@ parameter, everything else accessors; gen/README.md has the codelet calling conv
   on every target (the generic pass's lanes run over copies, so a single prime row has one
   valid lane; with the Bluestein threshold at 16 the rules no longer choose it, X17);
   the two chirp passes of a Bluestein stage (section 8.5) are elementwise, in blocks of C
-  consecutive elements; the real-transform edges run one element at a time on every target.
+  consecutive elements, with the chirp per lane or, when C divides the copy count,
+  broadcast; the real-transform edges run one element at a time on every target.
 - **Edge variants**: scale and a per-element complex factor, on loading (first passes,
   leaves, generic passes, copies) and on storing (last passes, the same three), as the
   first two edge operations of section 12.1; real edges take the scale on storing. Each
@@ -1119,23 +1120,35 @@ of length M: a chain of M whose every pass has its copy count multiplied by s co
 interleaved transforms (the passes treat copies as independent and share their twiddles).
 So the stage is a program fragment built from the chain's own passes, nothing recursive:
 
-1. *bluestein in*: z[i] = x[i] · w[i] for i < sQ, zero up to sM (w the chirp
-   exp(±iπ j²/Q), each entry correctly rounded from the root table of 2Q, repeated over the
-   s copies), with the line's input edge when the stage is the first pass;
+1. *bluestein in*: z[t + s j] = x[t + s j] · w_j for j < Q, zero up to sM (w the chirp
+   exp(±iπ j²/Q), each entry correctly rounded from the root table of 2Q), with the line's
+   input edge when the stage is the first pass;
 2. the chain of M forward over the s copies (its first pass grouped when s = 1, a lane pass
-   otherwise), its last pass multiplying by the kernel spectrum dft(b)/M as an output factor
-   (section 12.1), b = conj(w) on both sides of zero;
+   otherwise), times the kernel spectrum dft(b)/M (b = conj(w) on both sides of zero):
+   output element t + s f takes entry f. When C divides s (s = 1 included) its last pass
+   applies it as an output factor (section 12.1), its lanes sharing one broadcast entry
+   per leg for s > 1; otherwise those lanes straddle entries and the first pass of the
+   backward chain, a lane pass whose lanes are the copies, multiplies its input instead
+   (the input form cost 5 % at 4096 × 17 on the Mac, its multiplications landing in a
+   compute-bound pass);
 3. the chain of M backward;
-4. *bluestein out*: y[i] = z[i] · w[i] for i < sQ, with the line's output edge.
+4. *bluestein out*: y[t + s k] = z[t + s k] · w_k for k < Q, with the line's output edge.
 
-Both chirp passes are elementwise over i because m = 1, so they vectorise in blocks of C
-whatever s is, and the out pass may write in place, which makes the stage run in place
-(no copy back, unlike a single generic pass). The convolution ping-pongs between the
-scratch lines a and b, an even number of passes, so it ends where it began; the scratch
-lines grow to sM (at most 4n). The plan holds the chirp (sQ entries) and the kernel
-spectrum (sM entries, computed at construction in double by a small mixed-radix transform
-over the root table of M); no allocation at execution, every chunk of every stage a fixed
-range as for any pass. M is the 7-smooth length in [2Q − 1, next power of two] whose chain
+Both chirp passes are elementwise over i = t + s j because m = 1, so they vectorise in
+blocks of C whatever s is, and the out pass may write in place, which makes the stage run
+in place (no copy back, unlike a single generic pass). The convolution ping-pongs between
+the scratch lines a and b, an even number of passes, so it ends where it began; the scratch
+lines grow to sM (at most 4n). The plan holds the kernel spectrum once (M entries,
+computed at construction in double by a small mixed-radix transform over the root table of
+M) and the chirp once (Q entries, broadcast to a unit's C elements, which share j, when C
+divides s; otherwise one entry per element, sQ = n, because a unit's lanes then straddle two
+values of j). Both are kept per (Q, direction), so the axes of a plane with the same Q
+share them. Before task 2.3b both were stored per element (sQ and sM entries): 889 MB of
+tables for n = 17 · 2²⁰ in double, now under a kilobyte. No allocation at execution, every chunk of every stage a fixed range as
+for any pass. Not done: running the s copies in blocks of B, which would shrink the scratch
+lines from sM to BM (1.2 GB per team member at n = 17 · 2²⁰) and keep each block's
+convolution in cache, needs a loop over blocks whose source is a scratch line, which the
+program's loops (scratch slots do not move, section 8.3) cannot express yet. M is the 7-smooth length in [2Q − 1, next power of two] whose chain
 plus chirp passes cost least under the profile (`bluestein_length`, section 11.2).
 Why a pass and not a strategy that wraps the chain: the program and stage design already
 expresses it, the passes before it (codelet and generic) keep their positions and edges,
@@ -2355,6 +2368,7 @@ to change before a release.
 | 2026-11-14 | fbench measures on loaded machines: load is recorded per round, not a reason to invalidate it; a round waits at most 60 s, and only while other processes use more than half the CPUs; `--strict-quiet` keeps the old rule; a process timeout loses that process's unfinished cases for the round, not the run | Maintainer's direction: the shared machines will never be much quieter, and interleaving, repeated rounds and the A/A control already measure the noise the load adds |
 | 2026-11-14 | Planner v1 (experiment X2): the cheapest radix sequence under a per-profile table of measured pass costs (per unit and per padded tail, for first, middle and last passes, plus a cost per pass), found by a shortest path over the divisors of the length, with a short table of measured overrides; profiles carry the precision's lanes C; AVX2's tables (C = 2 and 4) serve every target by nearest C until measured there (section 11.2) | On the EPYC 7763 it reproduces 95.7 % of the measured best sequences and no case is more than 2 % slower than v0, against v0's geometric-mean deficit of 1.25 (double) and 1.44 (float) up to 1024; structural rules (fewest passes, a first radix that is a multiple of C) reached at most 72 %, a cost by operation counts 79 % |
 | 2026-11-14 | Bluestein (task 2.3): the product of the prime factors above the profile's threshold is one stage at the end of the chain (m = 1): a chirp pass, the chain of M over the s copies forward with the kernel spectrum as its last pass's output factor, the chain backward, a chirp pass; M the cheapest 7-smooth length in [2Q − 1, next power of two]; the threshold is 16 on every profile (X17) | With m = 1 the chirp passes are elementwise and the s copies are a chain of M with s times the copies, so the stage reuses the chain's passes and slots with no recursion and runs in place; on the Mac it took the primes from 4.3–5184 times FFTW's time to below 1.3 times (section 8.5), and beat the generic pass at every prime from 17 |
+| 2026-11-14 | A Bluestein stage stores its chirp (Q entries, or sQ when C does not divide s) and kernel spectrum (M entries) once, shared by the copies and by the axes of a plan; the kernel is the forward chain's last output factor when C divides s, else the backward chain's first input factor (task 2.3b, X17 follow-up) | Per-element tables took 889 MB at n = 17 · 2²⁰; shared, under 1 KB, at the same speed or faster (to 0.84 times with many copies); the input form alone was about 5 % slower where the last pass could take it |
 | 2026-11-14 | NEON cost tables (C = 1, 2) from X2's Mac campaign; plain `neon` uses them | Against the AVX2 tables NEON had used, 3.6 % faster on the Mac over 496 cases from 17 to 1024 (124 faster, 9 slower, band 1.7 %, run 20261114-101523-3d56); the three lengths that were 1.25–1.40 times slower keep the old choice as overrides |
 | 2026-11-14 | Planner v1's cost tables are keyed by target and C; a target and C without one take AVX2's table of the nearest C, as before. The X2 fit is a tracked tool (`bench/x2/fit.py`) | An `avx512` table (X16) and NEON tables (X2 on the Mac) drop in as rows; the search and every current choice (`rule_radices.txt`) are unchanged |
 | 2026-11-14 | The grid strategy (task 1.7, section 8.5): decimation in frequency in two or three blocked phases, gathers and scatters around a chain of lane passes on tight scratch, the transpose folded into phase 1's store; chosen for c2c rows beyond the L1 data cache, three phases beyond an eighth of L2; loops carry a twiddle cursor | X12: on the Mac the chain ran 1.85–2.84 times FFTW's time from 2^14 to 2^22 points; the grid ran 0.47–0.71 of the chain's time there, 1.08–1.43 times FFTW's (fbench run 20261114-110844-8b03). Two phases lose beyond L2 because their blocks must narrow to keep a phase in L1; three lose while the row fits L2 |
