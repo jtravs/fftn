@@ -107,40 +107,54 @@ union stage_args {
   stage_args() noexcept {} // NOLINT(modernize-use-equals-default): must not initialise args
 };
 
+// Runs stage s on the slots at: run_stage_chunks over every chunk, without its chunk ends.
+// a is a copy of s.args, used only by a pass_fn.
+void run_whole(const stage& s, pass_args& a, const slot_addresses& at) noexcept {
+  if (s.leaf != nullptr) {
+    s.leaf(&s.args, source_of(s.src, at), destination_of(s.dst, at), 0, 0, 1);
+    return;
+  }
+  a.src = source_of(s.src, at);
+  a.dst = destination_of(s.dst, at);
+  if (s.units != 0) {
+    s.run(&a, 0, s.units);
+  }
+}
+
 // Transforms [first, first + count) of a flat program (program.hpp). run_records walks the
-// records, copies each stage's pass_args and finds its chunk ends for every transform: about
-// 3.5 ns per transform on the M5 Max, more than an 8-point leaf's own time (X20). Here the
-// copies are made once per call and each transform only sets the slots, which the batch
-// loop moves by its step. Each kernel is called with the same arguments over the same units
-// as by run_records (the whole stage: chunk ends 0 and units), so the bits are the same.
+// records, copies each stage's pass_args (144 bytes) and finds its chunk ends for every
+// transform: about 3.5 ns per transform on the M5 Max, more than an 8-point leaf's own time
+// (dev/experiments/X20-call-overhead.md). Here a batch of leaves is one call on the plan's
+// own arguments; one transform copies each stage's arguments once; a batch copies them once
+// for all its transforms and moves the slots by the batch loop's step. Every kernel gets the
+// arguments and units run_records gives it (the whole stage: chunk ends 0 and units), so the
+// bits are the same. The three forms are each the fastest of the ones X20 measured for their
+// case: an array of copies costs about 6 ns more than plain copies at one transform.
 void run_flat(const program& p, std::size_t first, std::size_t count,
               const slot_addresses& base) noexcept {
   const std::size_t stages = p.records.size() - p.batch_loops;
-  if (stages == 1 && p.batch_loops == 1) {
-    // Rows of one stage, the commonest tiny plan: no arrays, no inner loop.
+  const loop* only = p.batch_loops == 1 ? std::get_if<loop>(&p.records[0]) : nullptr;
+  if (stages == 1 && only != nullptr) {
     const stage& s = *std::get_if<stage>(&p.records[1]);
-    const loop& l = *std::get_if<loop>(&p.records[0]);
-    pass_args a = s.args;
-    slot_addresses at = moved(base, l.step, first);
-    a.src = source_of(s.src, at);
-    a.dst = destination_of(s.dst, at);
-    if (s.batch_units && s.units == 1 && count > 1) {
-      // A batch of leaves in one call: unit t is transform first + t. Only the in and out
-      // slots move with the batch (a leaf reads and writes nothing else).
-      a.src_dist = s.src == slot::in ? l.step[0] : s.src == slot::out ? l.step[1] : 0;
-      a.dst_dist = s.dst == slot::in || s.dst == slot::out ? l.step[1] : 0;
-      s.run(&a, 0, count);
+    const auto moves = [](slot x) { return x == slot::in || x == slot::out; };
+    if (s.leaf != nullptr && moves(s.src) && moves(s.dst)) {
+      const slot_addresses at = moved(base, only->step, first);
+      const std::ptrdiff_t src_dist = s.src == slot::in ? only->step[0] : only->step[1];
+      s.leaf(&s.args, source_of(s.src, at), destination_of(s.dst, at), src_dist, only->step[1],
+             count);
       return;
     }
-    for (std::size_t t = 0; t < count; ++t) {
-      if (t != 0) {
-        at = moved(at, l.step, 1);
-        a.src = source_of(s.src, at);
-        a.dst = destination_of(s.dst, at);
+  }
+  if (count == 1) {
+    const slot_addresses at = transform_addresses(p, first, base);
+    for (std::size_t i = p.batch_loops; i < p.records.size(); ++i) {
+      const stage& s = *std::get_if<stage>(&p.records[i]);
+      if (s.leaf != nullptr) {
+        s.leaf(&s.args, source_of(s.src, at), destination_of(s.dst, at), 0, 0, 1);
+        continue;
       }
-      if (s.units != 0) {
-        s.run(&a, 0, s.units);
-      }
+      pass_args a = s.args;
+      run_whole(s, a, at);
     }
     return;
   }
@@ -151,19 +165,13 @@ void run_flat(const program& p, std::size_t first, std::size_t count,
     std::construct_at(&args[k].args, st[k]->args);
   }
   // One batch loop (rows): move by its step; several: from the transform's index.
-  const loop* only = p.batch_loops == 1 ? std::get_if<loop>(&p.records[0]) : nullptr;
   slot_addresses at = transform_addresses(p, first, base);
   for (std::size_t t = first; t < first + count; ++t) {
     if (t != first) {
       at = only != nullptr ? moved(at, only->step, 1) : transform_addresses(p, t, base);
     }
     for (std::size_t k = 0; k < stages; ++k) {
-      pass_args& a = args[k].args;
-      a.src = source_of(st[k]->src, at);
-      a.dst = destination_of(st[k]->dst, at);
-      if (st[k]->units != 0) {
-        st[k]->run(&a, 0, st[k]->units);
-      }
+      run_whole(*st[k], args[k].args, at);
     }
   }
 }
@@ -182,6 +190,13 @@ void mark_flat(program& p) noexcept {
 
 void run_stage_chunks(const stage& st, const slot_addresses& at, std::size_t first,
                       std::size_t last) noexcept {
+  if (st.leaf != nullptr) {
+    // One unit, the line: run when the chunks include it.
+    if (first == 0 && last != 0) {
+      st.leaf(&st.args, source_of(st.src, at), destination_of(st.dst, at), 0, 0, 1);
+    }
+    return;
+  }
   pass_args args = st.args;
   args.src = source_of(st.src, at);
   args.dst = destination_of(st.dst, at);

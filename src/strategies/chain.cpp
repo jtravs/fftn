@@ -355,8 +355,8 @@ template <class T>
 void chain_builder<T>::add_leaf(std::size_t n, int sign, endpoint src, endpoint dst,
                                 const line_edges& edges, std::vector<stage>& stages) {
   stage st;
-  st.run = kernels_.passes.codelet[codelet_slot(n)]
-               .leaf[direction_index(sign)][edge_index(edges.in)][edge_index(edges.out)];
+  st.leaf = kernels_.passes.codelet[codelet_slot(n)]
+                .leaf[direction_index(sign)][edge_index(edges.in)][edge_index(edges.out)];
   st.args.radix = n;
   st.args.n = n;
   st.args.scale = edges.scale;
@@ -368,7 +368,6 @@ void chain_builder<T>::add_leaf(std::size_t n, int sign, endpoint src, endpoint 
   st.dst = dst.where;
   st.units = 1;
   st.chunks = 1;
-  st.batch_units = true;
   st.name = "leaf radix-" + std::to_string(n) + " " + direction_name(sign) +
             (edges.in != edge_op::none || edges.out != edge_op::none
                  ? " (" + edges_note(edges.in, edges.out).substr(2) + ")"

@@ -56,36 +56,36 @@ template <class T, std::size_t I> struct radix_entries {
           {
               {
                   {
-                      &leaf_pass<T, R, -1, nop, nop>,
-                      &leaf_pass<T, R, -1, nop, scl>,
-                      &leaf_pass<T, R, -1, nop, fac>,
+                      &leaf_lines<T, R, -1, nop, nop>,
+                      &leaf_lines<T, R, -1, nop, scl>,
+                      &leaf_lines<T, R, -1, nop, fac>,
                   },
                   {
-                      &leaf_pass<T, R, -1, scl, nop>,
+                      &leaf_lines<T, R, -1, scl, nop>,
                       nullptr,
-                      &leaf_pass<T, R, -1, scl, fac>,
+                      &leaf_lines<T, R, -1, scl, fac>,
                   },
                   {
-                      &leaf_pass<T, R, -1, fac, nop>,
-                      &leaf_pass<T, R, -1, fac, scl>,
-                      &leaf_pass<T, R, -1, fac, fac>,
+                      &leaf_lines<T, R, -1, fac, nop>,
+                      &leaf_lines<T, R, -1, fac, scl>,
+                      &leaf_lines<T, R, -1, fac, fac>,
                   },
               },
               {
                   {
-                      &leaf_pass<T, R, +1, nop, nop>,
-                      &leaf_pass<T, R, +1, nop, scl>,
-                      &leaf_pass<T, R, +1, nop, fac>,
+                      &leaf_lines<T, R, +1, nop, nop>,
+                      &leaf_lines<T, R, +1, nop, scl>,
+                      &leaf_lines<T, R, +1, nop, fac>,
                   },
                   {
-                      &leaf_pass<T, R, +1, scl, nop>,
+                      &leaf_lines<T, R, +1, scl, nop>,
                       nullptr,
-                      &leaf_pass<T, R, +1, scl, fac>,
+                      &leaf_lines<T, R, +1, scl, fac>,
                   },
                   {
-                      &leaf_pass<T, R, +1, fac, nop>,
-                      &leaf_pass<T, R, +1, fac, scl>,
-                      &leaf_pass<T, R, +1, fac, fac>,
+                      &leaf_lines<T, R, +1, fac, nop>,
+                      &leaf_lines<T, R, +1, fac, scl>,
+                      &leaf_lines<T, R, +1, fac, fac>,
                   },
               },
           },

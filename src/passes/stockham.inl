@@ -232,12 +232,12 @@ void lane_pass(const pass_args* a, std::size_t first, std::size_t last) {
 // y[k] = sum_j x[j] exp(Sign 2 pi i j k / R), with both edges' operations. Values are
 // broadcast on loading and lane 0 is stored, so every lane computes the same transform
 // and any strides work; every load precedes every store, so src may be dst (in place).
-// Unit u is the line at src + u src_dist, dst + u dst_dist bytes (one line in a chain; a
-// batch of rows when the driver runs them in one call, X20); every line gets the same
-// arithmetic. Reads src, dst, src_stride, dst_stride, src_dist, dst_dist, scale, in_factor,
-// out_factor.
+// Leaves are called with their lines' addresses (leaf_fn, passes/pass_args.hpp): line u at
+// src + u src_dist, dst + u dst_dist bytes, each with the same arithmetic. Reads
+// src_stride, dst_stride, scale, in_factor, out_factor; not src or dst.
 template <class T, std::size_t R, int Sign, edge_op InOp, edge_op OutOp>
-void leaf_pass(const pass_args* a, std::size_t first, std::size_t last) {
+void leaf_lines(const pass_args* a, const void* src, void* dst, std::ptrdiff_t src_dist,
+                std::ptrdiff_t dst_dist, std::size_t count) {
   one_in<T, InOp> in{
       .p = nullptr,
       .leg = 2 * a->src_stride,
@@ -250,12 +250,13 @@ void leaf_pass(const pass_args* a, std::size_t first, std::size_t last) {
   };
   // Batch distances are whole elements, so whole reals.
   constexpr auto real_bytes = static_cast<std::ptrdiff_t>(sizeof(T));
-  const std::ptrdiff_t src_dist = a->src_dist / real_bytes;
-  const std::ptrdiff_t dst_dist = a->dst_dist / real_bytes;
-  for (std::size_t u = first; u < last; ++u) {
+  const std::ptrdiff_t src_step = src_dist / real_bytes;
+  const std::ptrdiff_t dst_step = dst_dist / real_bytes;
+  for (std::size_t u = 0; u < count; ++u) {
+    // From the first line, so that no pointer is formed beyond the last.
     const auto k = static_cast<std::ptrdiff_t>(u);
-    in.p = static_cast<const T*>(a->src) + k * src_dist;
-    out.p = static_cast<T*>(a->dst) + k * dst_dist;
+    in.p = static_cast<const T*>(src) + k * src_step;
+    out.p = static_cast<T*>(dst) + k * dst_step;
     cdft<R>::template plain<T, Sign>(in, out);
   }
 }

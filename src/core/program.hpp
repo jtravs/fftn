@@ -40,7 +40,7 @@ enum class slot : std::uint8_t { in, out, a, b, block };
 inline constexpr std::size_t moving_slots = 4; // in, out, block, twiddles
 
 struct stage {
-  pass_fn run = nullptr;
+  pass_fn run = nullptr; // the kernel, or for a leaf null and `leaf` set
   pass_args args; // src and dst are filled in by the driver from the slots
   slot src = slot::in;
   slot dst = slot::out;
@@ -48,10 +48,9 @@ struct stage {
                             // elements (src/strategies/chain.hpp); only their count matters here
   std::uint32_t chunks = 1; // independent ranges [units c / chunks, units (c+1) / chunks)
   bool moving_twiddles = false; // args.twiddles is offset by the loops' twiddle cursor
-  // The kernel's unit u is the line at src + u args.src_dist, dst + u args.dst_dist (a leaf,
-  // units 1): the driver may run a batch loop around this stage alone as one call over the
-  // batch's transforms (driver.cpp, run_flat), with the same arithmetic per line.
-  bool batch_units = false;
+  // A leaf's kernel (pass_args.hpp), with units 1, the line. When the stage is a program's
+  // whole body the driver runs a batch of rows in one call (driver.cpp, run_flat).
+  leaf_fn leaf = nullptr;
   std::string name;             // for describe()
 };
 

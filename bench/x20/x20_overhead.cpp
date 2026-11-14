@@ -12,9 +12,8 @@
 //   kernel  each stage's kernel called directly per transform through its function
 //           pointer, with pass_args prepared once and only src and dst set per call (the
 //           floor of any program that calls kernels one transform at a time);
-//   once    the kernel of a one-stage body called once per transform with nothing else:
-//           only the loop around the indirect call (the batched-leaf ceiling of a per-
-//           transform design).
+//   once    a leaf body's kernel called once per transform with nothing else: only the
+//           loop around the indirect call.
 //
 //   x20_overhead [--n 2,4,8,16,32,64] [--batch 1,64] [--prec f64,f32] [--reps 15]
 //                [--ms 20]
@@ -163,47 +162,40 @@ template <class T> void run_case(std::size_t n, std::size_t batch, int reps, dou
     args.push_back(st->args);
   }
   const std::ptrdiff_t dist = static_cast<std::ptrdiff_t>(n * sizeof(C));
+  // A stage's kernel on the slots `here`: a leaf with the addresses, a pass through args.
+  const auto call = [&](std::size_t k, const d::slot_addresses& here) {
+    const d::stage& st = *body[k];
+    if (st.leaf != nullptr) {
+      st.leaf(&st.args, slot_src(st.src, here), slot_dst(st.dst, here), 0, 0, 1);
+      return;
+    }
+    args[k].src = slot_src(st.src, here);
+    args[k].dst = slot_dst(st.dst, here);
+    st.run(&args[k], 0, st.units);
+  };
   report("kernel", time_ns(
                        [&] {
                          d::slot_addresses here = at;
                          for (std::size_t t = 0; t < batch; ++t) {
                            for (std::size_t k = 0; k < body.size(); ++k) {
-                             args[k].src = slot_src(body[k]->src, here);
-                             args[k].dst = slot_dst(body[k]->dst, here);
-                             body[k]->run(&args[k], 0, body[k]->units);
+                             call(k, here);
                            }
                            here.in += dist;
                            here.out += dist;
                          }
                        },
                        batch, reps, ms));
-  report("copy", time_ns(
-                     [&] {
-                       d::slot_addresses here = at;
-                       for (std::size_t t = 0; t < batch; ++t) {
-                         for (std::size_t k = 0; k < body.size(); ++k) {
-                           d::pass_args a = body[k]->args;
-                           a.src = slot_src(body[k]->src, here);
-                           a.dst = slot_dst(body[k]->dst, here);
-                           body[k]->run(&a, 0, body[k]->units);
-                         }
-                         here.in += dist;
-                         here.out += dist;
-                       }
-                     },
-                     batch, reps, ms));
-  if (body.size() == 1) {
-    const d::pass_fn fn = body[0]->run;
-    const std::size_t units = body[0]->units;
-    d::pass_args& a = args[0];
+  if (body.size() == 1 && body[0]->leaf != nullptr) {
+    const d::leaf_fn fn = body[0]->leaf;
+    const d::pass_args* a = &body[0]->args;
     report("once", time_ns(
                        [&] {
-                         a.src = in.data();
-                         a.dst = out.data();
+                         const C* src = in.data();
+                         C* dst = out.data();
                          for (std::size_t t = 0; t < batch; ++t) {
-                           fn(&a, 0, units);
-                           a.src = static_cast<const C*>(a.src) + n;
-                           a.dst = static_cast<C*>(a.dst) + n;
+                           fn(a, src, dst, 0, 0, 1);
+                           src += n;
+                           dst += n;
                          }
                        },
                        batch, reps, ms));
