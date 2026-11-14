@@ -716,8 +716,11 @@ complex-register: writing BL from it costs an 8 × 8 transpose of reals where IL
 one of complex pairs, the same one shuffle per register as the deinterleave, so the
 conversion is paid at the run's ends either way and only middle passes gain. Split codelets
 are forward only; a backward pass exchanges real and imaginary parts on loading and storing.
-A plan takes split runs where its profile says so (`target_profile::split`) or where a test or
-fbench forces it (`build_settings::layout`, fbench `LAYOUT`).
+A plan takes split runs where its profile says so (`target_profile::split`: `avx2` and
+`avx512`, both precisions, from X1) or where a test or fbench forces it
+(`build_settings::layout`, fbench `LAYOUT`). Not yet done: the planner's costs are those of
+interleaved passes, so it does not prefer a first radix that lets a run start (AVX2 picks 4 ×
+16 × 16 for 1024, which has none); and the grid's phases stay interleaved.
 
 ### 6.4 ISA regions and safety
 
@@ -2396,6 +2399,7 @@ to change before a release.
 | 2026-11-14 | Grid phases whose radices are all at most 8 read and write their rows in their end passes rather than through a gather and a scatter, for rows up to `grid_fuse_bytes` (a quarter of L2); elsewhere the copies stay (task 1.7b) | X12 (Mac, runs 20261114-131752-7e99 and -132841-80e0): 2^18 from 1.03 to 0.92 times FFTW; radix 16 at the ends doubled the time (set conflicts), one fused end gained nothing, and beyond L2 the copies' prefetch won (2^20 1.46 fused against 1.35) |
 | 2026-11-14 | The grid's scratch line b is staggered from a by seven 64-byte lines (rule 4 of section 10); the grid's intermediate array is not padded | X4 (Mac): the stagger gained 7–9 % at 2^22 and lost nowhere; padding the intermediate (one line per row) added nothing separable, and reading padded rows directly with radix 16 lost 5 % at 2^22 |
 | 2026-11-14 | Codelets of radix 32 and 64 (task 1.6) in every variant, with all their passes instantiated; the pass table has one row per generated radix (`codelet_slot`), not one per radix value; a planner profile has a leaf limit, 16 by default, above which a codelet radix is a leaf only when the limit allows (`build_settings::leaf_limit`, fbench `LEAF_LIMIT`) | Leaves above 16 and big passes (experiments X8 and X3) need the codelets; their operation counts equal FFTW's n1_32, n1_64, t1_32 and t1_64. They roughly double the kernel code (B3: 33 % of the pass instructions are radix 64's, 14 % radix 32's; numbers in X8), kept for speed over build size: the grid and X3 may use them as passes |
+| 2026-11-14 | Chains on `avx2` and `avx512` (both precisions) end in a split run: their last passes on split codelets in the BL layout, converting at the run's ends; NEON and scalar stay interleaved. A run starts where the copy count reaches `split_block`, `avx512`'s W on both x86 targets (task 1.5, experiment X1) | X1: split runs 0.89 (geomean of their cases) of the interleaved time on the Xeon's `avx512`, 0.87 on its `avx2`, 0.93 on the EPYC, nothing slower than band + 2 %; port-5 uops −12 % at 1024; on the Mac 10–25 % slower. The shared `split_block` keeps the bitwise pair agreeing with the same radices, at the cost of no run on AVX2 where the first radix is 4 (1024 = 4 × 16 × 16) |
 | 2026-11-14 | Leaf limit 32 on NEON in double (C = 1), 16 on every other target and precision; no leaf of 64 (experiment X8) | The leaf of 32 was 16–22 % faster than planner v1's chain on the M5 Max in double; with C > 1 it idles lanes and lost on the Mac and the EPYC; 64 spills and lost everywhere. The Xeon's `avx512` float chain at 32 lost to the leaf only through its own tail problem (X16) |
 
 ---

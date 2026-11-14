@@ -68,6 +68,15 @@ run 20261114-132841-80e0; 2^16 and 2^18 within 1.25). Task 1.7b (branch
 L2/4 (2^18 to 0.92); the remaining cases need fewer or cheaper passes over memory (larger
 codelets, padded work arrays), not fusion (X12).
 
+Task 1.5 (branch `task/1.5-split`, split-lowering session): the generator's split lowering
+(radices 2–16, plain and DIF, FMA-shaped, tangent rotations), split lane passes on the BL
+layout converting at a split run's ends, `target_profile::split` and `build_settings::layout`
+(fbench `LAYOUT`). X1's verdict: split runs on `avx2` and `avx512` (0.87–0.93 of the
+interleaved time where a run exists), interleaved on NEON. Next: a split-aware planner (costs
+of split passes; a first radix that lets a run start: AVX2's 1024 = 4 × 16 × 16 has none),
+split runs in Bluestein convolutions and grid phases, a split grouped first pass with an 8 × 8
+real transpose (port 5 is still 58 % busy on `avx512`, FFTW 41–44 %).
+
 ## How this plan works
 
 - **Phases** group work with a shared exit criterion. Phases 1–2 (kernels), 3 (threading)
@@ -245,7 +254,7 @@ running, done (with verdict).
 | [B1](experiments/B1-isa-regions-gcc-linux.md) | Do ISA attribute regions hold on Linux x86-64 with GCC 14 and 15 (inlining, by-value vector ABI at -O0, two-TU link, disassembly)? | 0 | done: regions hold; GCC needs `-Werror=psabi` |
 | [B2](experiments/B2-isa-regions-windows-clang.md) | The same on Windows with clang on the MSVC ABI (x64 and Arm64); how to detect FCMA and pointer authentication on Windows on Arm | 0 | done: regions hold; FCMA and PAuth read from the registry (task 0.8) |
 | B3 | Library build time and size as codelets and targets grow; which codelets are worth instantiating per target? | 1 | planned |
-| [X1](experiments/X1-split-lowering.md) | Complex-register against split arithmetic, per target (FCMA included) and pass position (first, middle, last; short and long rows) | 1 | running |
+| [X1](experiments/X1-split-lowering.md) | Complex-register against split arithmetic, per target (FCMA included) and pass position (first, middle, last; short and long rows) | 1 | done: split runs on avx2 and avx512 (0.87–0.93 where a run exists), interleaved on NEON |
 | [X2](experiments/X2-radix-sets.md) | Best radix sets and orders per target by exhaustive search over the standard lengths; how far are simple rules from the optimum? | 1 | running: EPYC done (planner v1 adopted); Mac done (own NEON tables, 3.6 % faster); lengths above 1024 and the Xeon pending |
 | X3 | Few big passes (radix 16–64, in the output buffer) against chains for rows of 8–64 thousand points; spill counts per codelet and target. The prototype's radix 20–32 attempts lost everywhere: find out whether generated, ordered codelets change that | 1 | planned |
 | [X4](experiments/X4-padding.md) | Padding: incremental addressing cost; pad always, never, or only where the stream rule binds. Also: do edge passes gain from a variant chosen by the caller's base address (cache-line splits on wide registers)? | 1 | running: for the grid on the Mac, staggered scratch lines adopted (2^22 −8 %), padding the intermediate rejected; the chain's lines, x86 and edge-pass variants open |

@@ -1,6 +1,6 @@
 # X1: split re/im lanes against interleaved complex registers
 
-- **Status:** running
+- **Status:** done
 - **Owner:** split-lowering session (task 1.5), 2026-11-14
 - **Phase / task:** 1.5; follows X18, X10 and X19
 
@@ -65,11 +65,119 @@ agrees: 8 in double, 16 in float; NEON's W) to the last pass, if that is two pas
   1 + band + 2 %. Otherwise that target stays interleaved. If no target adopts split, the
   split path (generator lowering, passes, setting) is deleted (AGENTS.md 6) and the
   generator change kept only if another task needs it.
+- Amendment, after the early signal and before the decision runs: most tracking c2c rows
+  have no split run on any x86 target (two passes at ≤ 256, the grid beyond L1, primes,
+  leading radix 4 on AVX2), so they time the same code in both arms and dilute any effect
+  towards 1. The geometric mean is therefore taken over the cases whose B plan has a split
+  run (the tracking c2c rows and the supplementary set below, "split from pass" in the
+  case's note), ≤ 0.97 with its interval clear of the band; the no-slowdown condition
+  stays on every case of both sets. The geometric mean over all tracking c2c rows is
+  reported too.
+- Supplementary set (`x1.toml` in the campaign directories, not in the tree): c2c rows of
+  512, 768, 1024, 1536, 2048 (double), 512 × 64 and 1024 × 64, 1024 backward, r2c and c2r
+  of 2048, and c2c rows of 1024, 2048, 4096 in float.
 
 ## Results
 
-(pending)
+### Early signal (commit c8c709c, before the tangent-form generator change)
+
+Xeon 6240, GCC 14.4, run 20261114-180920-df53 (16 rounds, band ±1.49 %, load median 9.8):
+split ÷ interleaved per case, avx512 arms B ÷ A, avx2 arms B2 ÷ A2 (from the ratios to A):
+
+| case | radices (avx512) | avx512 | avx2 |
+|---|---|---|---|
+| 512, 768, 512 × 64 | 4 × 8 × 16, 4 × 12 × 16 | no split run: 0.99–1.00 | no run |
+| 1024, 1024 bwd, 1024 × 64 | 8 × 8 × 16 | 0.90, 0.89, 0.91 | no run (4 × 16 × 16) |
+| 1536 | 8 × 12 × 16 | 0.92 | 0.97 |
+| 2048 | 16 × 8 × 16 | 0.93 | 0.89 (8 × 16 × 16) |
+| r2c, c2r 2048 | half-length 8 × 8 × 16 | 0.92, 0.95 | no run |
+| float 2048, 4096 | 16 × 8 × 16, 16 × 16 × 16 | 0.79, 0.81 | 0.84, 0.77 |
+
+EPYC 7763, GCC 16, run 20261114-181003-1c8e (16 rounds, band ±1.37 %): split runs only at
+2048 (0.89) and float 2048 and 4096 (0.93, 0.82); every other case has a leading radix 4
+and no run (0.99–1.01). So split wins even in a run of two passes, which pays both
+conversions and has no BL-to-BL pass; the decision runs below use the final generator.
+
+### Decision runs (commit f38ad96)
+
+Paired per-round ratios split ÷ interleaved (B ÷ A, and B2 ÷ A2 for the Xeon's `avx2`
+arms), median over rounds, geometric means over the cases with a split run (computed from
+the stored timings with the 95 % bootstrap interval per case):
+
+| Machine, target | Run (set) | Band | Split-run cases: geomean (n) | All cases | Slowest case |
+|---|---|---|---|---|---|
+| Xeon 6240, `avx512` | 20261114-182235-7015 (X1 set, 24 rounds) | ±2.03 % | 0.892 (9) | 0.924 | 1.006 (512, no run) |
+| Xeon 6240, `avx2` | same run | ±2.03 % | 0.873 (4) | 0.962 | 1.019 (512 × 64, no run) |
+| EPYC 7763, `avx2` | 20261114-182403-9c72 (X1 set, 24 rounds) | ±1.00 % | 0.929 (4) | 0.977 | 1.025 (1536, split) |
+| EPYC 7763, `avx2` | 20261114-182358-c6ff (tracking, 20 rounds) | ±1.00 % | — (no case has a run) | 0.998 (35) | 1.009 (4093) |
+| Xeon 6240, `avx512` | 20261114-183454-f63e (tracking, 20 rounds, 17 loaded) | ±2.18 % | 0.906 (4: 1024 rows, backward, in place, × 256) | 0.989 (35) | 1.031 (2^20, grid, no run) |
+| Xeon 6240, `avx2` | same run | ±2.18 % | — (no case has a run) | 1.001 (35) | 1.036 (4096, grid, no run) |
+
+FFTN ÷ FFTW over the 35 tracking c2c rows (same runs): Xeon `avx512` 1.175 → 1.162, EPYC
+1.357 → 1.354 (no run there); the tracking set has split runs only at 1024 on `avx512`
+(1024 0.889, backward 0.889, × 256 0.896, in place 0.951).
+
+Per case on the Xeon, `avx512`: 1024 0.889, 1024 backward 0.899, 1024 × 64 0.920, 1536
+0.915, 2048 0.928, r2c and c2r 2048 0.930 and 0.945, float 2048 and 4096 0.792 and 0.824.
+`avx2` (Xeon): 1536 0.983, 2048 0.904, float 0.845 and 0.774. EPYC: 1536 1.025 (radix 12,
+whose split codelet keeps 26–44 reals live on 16 registers), 2048 0.920, float 0.932 and
+0.848. Float on `avx512` has no run at 1024 (8 × 8 × 16: split_block is 16 there).
+
+FFTN ÷ FFTW on the X1 set (FFTW 3.3.11, MEASURE, same runs; double cases): Xeon `avx512`
+1.19 → 1.10 over its seven double split-run cases (1024 1.23 → 1.09, 2048 1.13 → 1.05);
+EPYC unchanged except 2048 (1.30 → 1.20).
+
+Would a split-aware planner give AVX2's 1024 a run? EPYC run 20261114-184451-3196 (16
+rounds, band ±1.00 %), against the default interleaved 4 × 16 × 16: interleaved 8 × 8 × 16
+1.023, split 8 × 8 × 16 1.012 (0.987 of its interleaved self), split 16 × 8 × 8 1.137. On
+Zen 3 the run gains little at 1024, so a first radix chosen for the run would not pay there;
+the Xeon's AVX2 was not probed.
+
+Port counters per transform (Xeon, `perf stat`, one case per process minus a check-only
+process, approximate; job 15577, script `ports.sh` in the campaign directory):
+
+| n | target | cycles IL → split | port-5 uops IL → split (busy) | instructions IL → split | FFTW cycles, port 5 |
+|---|---|---|---|---|---|
+| 1024 | avx512 | 5888 → 5297 | 3488 → 3056 (59 % → 58 %) | 12894 → 10691 | 5128, 2081 (41 %) |
+| 2048 | avx512 | 13333 → 12084 | 8175 → 7128 (61 % → 59 %) | 26174 → 21753 | 11795, 5141 (44 %) |
+| 2048 float | avx512 | 7570 → 5905 | 5458 → 3842 (72 % → 65 %) | 15608 → 12015 | |
+| 1024 | avx2 | 8916 → 8856 | 3478 → 3463 | 23532 → 23435 | (no run: 4 × 16 × 16) |
+| 2048 | avx2 | 20830 → 18949 | 7602 → 7597 | 48933 → 45840 | |
+| 2048 float | avx2 | 11215 → 9493 | 6791 → 4783 | 29131 → 23506 | |
+
+Port 5 stays about 58 % busy in the split plans on `avx512` (FFTW 41–44 %): what remains
+is the grouped first pass (its twiddle swaps and 4 × 4 transposes) and the run's two
+conversions. On `avx2` the double gain comes from fewer instructions, not from port 5.
+
+Mac (M5 Max, `neon_fcma`, AppleClang 21), run 20261114-181508-efc3 (X1 set, 16 rounds,
+heavily loaded: band ±4.00 %): split 1.10–1.25 slower on every case with a run (geomean
+about 1.16). NEON stays interleaved, as expected: FCMA multiplies complex values in two
+instructions and rotates for free.
 
 ## Verdict
 
-(pending)
+Adopted on x86: `avx2` and `avx512`, double and float, take split runs by default
+(`split_of` in planner/rules.cpp); `neon`, `neon_fcma` and `scalar` stay interleaved. Over
+the cases with a split run the geometric means are 0.892 and 0.906 (Xeon `avx512`, two
+sets), 0.873 (Xeon `avx2`) and 0.929 (EPYC), each clear of its band, and no case of either
+set is slower than 1 + band + 2 % (the worst, EPYC 1536 at 1.025 against a limit of 1.03,
+has a run; the others are cases without one). Float rests on two cases per machine (0.77–0.93).
+Under the unamended rule (all tracking c2c rows) no target would pass: 0.989 on the Xeon
+`avx512`, 1.00 elsewhere, because the tracking set has runs only at 1024 on `avx512`.
+
+What it does not do, and the follow-ups it opens:
+
+- Port 5 is still about 58 % busy on `avx512` (FFTW 41–44 %): the grouped first pass and the
+  conversions remain. A split first pass that writes BL with an 8 × 8 real transpose costs
+  the same shuffles as the deinterleave, so the next gain there is fewer transposes, not a
+  different layout.
+- AVX2 gets no run where its planner starts with radix 4 (1024 = 4 × 16 × 16), because a run
+  starts at `avx512`'s W on both targets of the pair; on the EPYC a run at 1024 (8 × 8 × 16)
+  would gain only 1.3 %, so no planner change is made. A split-aware cost table (X2's method
+  with split passes) is the general answer.
+- Bluestein convolutions and grid phases stay interleaved (the 1009 and 4093 rows'
+  convolutions of 2048 and 8192 points would have runs).
+- The split codelets reach FFTW's FMA counts except for scales shared by sums that each
+  absorbed another product (radix 16 plain 152 against 144).
+
+Lesson added to `dev/LESSONS.md` (2.1a).
