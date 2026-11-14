@@ -136,9 +136,10 @@ against FFTW and FFTL.jl on M-series, Zen 3 and Xeon; within 1.10 of MKL on the 
 the `x86_v2`, `avx` and plain `neon` targets, forced on the same machines, at or below
 FFTW restricted to the same instruction sets. The MKL figure is interim; the end target
 is 1.00. Per-length choices at this stage come from the offline searches of X2 encoded as
-rules; the cost model arrives in phase 2. One cloud check on a Zen 4 or 5 and one on an
-AArch64 Linux machine (Neoverse) confirm that nothing is badly off there; tuning them is
-phase 2 and 6 work.
+rules; the cost model arrives in phase 2. Cloud checks (Google Cloud or AWS) on a Zen 4 or
+5, on a recent Intel Xeon (Sapphire Rapids or newer, with MKL as a competitor: its AVX-512
+behaves differently from the Cascade Lake Xeon's) and on an AArch64 Linux machine
+(Neoverse) confirm that nothing is badly off there; tuning them is phase 2 and 6 work.
 
 ---
 

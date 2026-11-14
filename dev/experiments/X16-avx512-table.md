@@ -103,6 +103,16 @@ No switch: arm (c) is a commit; `dev/KNOBS.toml` is untouched.
      chosen first radix C does not divide, or where C does not divide n) still lose to (a)
      by more than 10 % in geometric mean.
 
+- Caveat, recorded before running: the Xeon Gold 6240 is Cascade Lake, where 512-bit
+  instructions lower the core clock (AVX-512 licence levels), and FFTW built with both
+  `--enable-avx2` and `--enable-avx512` was often fastest on it with AVX2 codelets (the
+  maintainer's earlier measurements; FFTW's MEASURE planner chooses per transform). So a
+  verdict here holds for Cascade Lake only: the same three arms run on a recent Intel Xeon
+  (Sapphire Rapids or newer) in the cloud, with MKL alongside, before `best_target`'s
+  preference changes for every AVX-512 machine. If the winner differs by length rather than
+  by machine, the choice of instruction set per plan belongs to phase 2's cost model
+  (`avx2` and `avx512` priced side by side), not to a fixed preference.
+
 ## Results
 
 Not run.
