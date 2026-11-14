@@ -399,6 +399,20 @@ void chain_builder<T>::add_bluestein(std::size_t n, std::size_t q, int sign, end
   const std::size_t c = kernels_.complex_lanes;
   const edge_op in = first ? edges.in : edge_op::none;
   const pass_kernels<T>& k = kernels_.passes;
+  // The convolution's passes must be codelet lane passes with at least two of them: the
+  // kernel spectrum is shared through the last lane pass's output or the first backward
+  // lane pass's input (factor_sharing), which the generic pass, a grouped pass with copies
+  // and a single pass that is both first and last would not honour.
+  if (rad.size() < 2) {
+    throw std::logic_error("fftn: a Bluestein convolution of " + std::to_string(m) +
+                           " points has fewer than two passes");
+  }
+  for (const std::size_t r : rad) {
+    if (r > max_codelet_radix || k.codelet[r].lane[0] == nullptr) {
+      throw std::logic_error("fftn: a Bluestein convolution of " + std::to_string(m) +
+                             " points has radix " + std::to_string(r) + ", which no codelet takes");
+    }
+  }
   const bool shared = s > 1 && s % c == 0;
   const bluestein_tables tab = bluestein_tables_of(q, sign, shared ? 0 : s);
 

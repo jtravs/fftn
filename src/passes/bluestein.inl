@@ -48,7 +48,7 @@ void bluestein_in(const pass_args* a, std::size_t first, std::size_t last) {
     // Every unit is whole: C divides s, so it divides n and s M.
     const std::size_t per_row = a->s / C<T>;
     std::size_t u = first;
-    for (std::size_t j = first / per_row; u < last; ++j) {
+    for (std::size_t j = first < per_row ? 0 : first / per_row; u < last; ++j) {
       const std::size_t row_end = (j + 1) * per_row;
       const std::size_t end = row_end < last ? row_end : last;
       if (j * a->s < data) {
@@ -104,7 +104,7 @@ void bluestein_out(const pass_args* a, std::size_t first, std::size_t last) {
   if constexpr (Shared) {
     const std::size_t per_row = a->s / C<T>;
     std::size_t u = first;
-    for (std::size_t j = first / per_row; u < last; ++j) {
+    for (std::size_t j = first < per_row ? 0 : first / per_row; u < last; ++j) {
       const std::size_t row_end = (j + 1) * per_row;
       const std::size_t end = row_end < last ? row_end : last;
       const tw<T> w = bcast_tw(chirp + tw_reals<T> * j);
