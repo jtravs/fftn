@@ -1231,10 +1231,13 @@ and 12's scaled by the codelets' operation counts. What the tables learnt is in 
 shape: tails cost several units, so the first radix wants to be a multiple of C and so
 does every prefix product; and on 16 registers the radices 10 to 16 are cheap enough per
 point that the best sequences have one pass fewer than v0's (2.7 against 3.6 on average up
-to 1024). Every other target takes the table of the nearest C (the C = 2 table for C = 1,
-the C = 4 table for C = 8) with its own C in rule 4, so the structure carries over but the
-costs are unmeasured there: NEON, AVX-512, x86-64-v2, AVX and scalar until X2 runs on them
-(task 1.3 decides AVX-512's table and FFTL's radix-16 gate for it). Lengths above 1024 are
+to 1024). Tables are keyed by target and C (`measured_tables` in `rules.cpp`;
+`bench/x2/fit.py` writes a target's rows from its X2 campaign), so a measured target is
+added without touching the search. A target and C without a table of their own take
+AVX2's table of the nearest C (the C = 2 table for C = 1, the C = 4 table for C = 8) with
+their own C in rule 4, so the structure carries over but the costs are unmeasured there:
+NEON, AVX-512, x86-64-v2, AVX and scalar until X2 runs on them (X16 decides AVX-512's
+table and FFTL's radix-16 gate for it). Lengths above 1024 are
 unmeasured too.
 
 The search is a shortest path over the divisors of n_s, from 1 to n_s, each step a radix:
@@ -2251,6 +2254,7 @@ to change before a release.
 | 2026-11-14 | The OpenMP tests are built wherever the compiler has OpenMP, except under ThreadSanitizer; the thread pool and custom executors carry the executor path's TSan coverage | The OpenMP runtimes at hand are not instrumented, and TSan reports the join of every region as a race (shown with Homebrew LLVM 23's libomp) |
 | 2026-11-14 | fbench measures on loaded machines: load is recorded per round, not a reason to invalidate it; a round waits at most 60 s, and only while other processes use more than half the CPUs; `--strict-quiet` keeps the old rule; a process timeout loses that process's unfinished cases for the round, not the run | Maintainer's direction: the shared machines will never be much quieter, and interleaving, repeated rounds and the A/A control already measure the noise the load adds |
 | 2026-11-14 | Planner v1 (experiment X2): the cheapest radix sequence under a per-profile table of measured pass costs (per unit and per padded tail, for first, middle and last passes, plus a cost per pass), found by a shortest path over the divisors of the length, with a short table of measured overrides; profiles carry the precision's lanes C; AVX2's tables (C = 2 and 4) serve every target by nearest C until measured there (section 11.2) | On the EPYC 7763 it reproduces 95.7 % of the measured best sequences and no case is more than 2 % slower than v0, against v0's geometric-mean deficit of 1.25 (double) and 1.44 (float) up to 1024; structural rules (fewest passes, a first radix that is a multiple of C) reached at most 72 %, a cost by operation counts 79 % |
+| 2026-11-14 | Planner v1's cost tables are keyed by target and C; a target and C without one take AVX2's table of the nearest C, as before. The X2 fit is a tracked tool (`bench/x2/fit.py`) | An `avx512` table (X16) and NEON tables (X2 on the Mac) drop in as rows; the search and every current choice (`rule_radices.txt`) are unchanged |
 
 ---
 

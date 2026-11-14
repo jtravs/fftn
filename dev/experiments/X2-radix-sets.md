@@ -165,9 +165,11 @@ counts and a time estimate.
   per unit bounded below by 0.4 × (codelet vocabulary operations + 2R), the middle
   radix-4 unit fixed at (operations + 2R) to set the scale, then multiplied by 10 and
   rounded to integers; residual 3.5 % (double) and 3.9 % (float) RMS, 2.8 % and 2.9 % on
-  the refined candidates. The fitting script needs NumPy and SciPy, which the
-  repository's tools do not use, so it is not tracked; the method above and the tables in
-  `src/planner/rules.cpp` are the record. Two-fold cross-validation over the lengths (fit
+  the refined candidates. The fit was made with SciPy; it is now
+  [`bench/x2/fit.py`](../../bench/x2/fit.py) (standard library), which on this campaign
+  reaches the same objective, gives the float table and the six overrides exactly and a
+  double table with the same choice at every length (some double tail costs are not
+  determined by the data). Two-fold cross-validation over the lengths (fit
   on half, count on the other half, before overrides): 92 %.
 - **Counting reproduction:** a case is reproduced when v1's sequence is the refinement's
   winner, or when its median paired log ratio in the same refinement run is within the

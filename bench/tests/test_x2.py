@@ -2,13 +2,15 @@
 # SPDX-License-Identifier: Apache-2.0
 """Experiment X2's candidates, cost estimate, cases and stage bookkeeping (bench/x2/)."""
 
+import contextlib
+import io
 import math
 import re
 import unittest
 from collections import Counter
 
 from fbenchlib import catalogue
-from x2 import radices, search
+from x2 import fit, radices, search
 
 
 def multinomial(seq: tuple[int, ...]) -> int:
@@ -193,6 +195,100 @@ class Stages(unittest.TestCase):
         self.assertEqual(cmd[cmd.index("--filter") + 1], "^c2c-64-b")
         self.assertEqual(cmd[cmd.index("--tier") + 1], "full")
         self.assertEqual(cmd[cmd.index("--max-rounds") + 1], str(search.SCREEN_ROUNDS))
+
+
+class Isa(unittest.TestCase):
+    def test_every_arm_is_forced(self):
+        cmd = search.fbench_command(
+            search.REPO / "bench-out", search.DEFAULT_BUILD, 64, ["4.16"], search.SCREEN, [], "avx512"
+        )
+        self.assertIn("v0=fftn+ISA=avx512", cmd)
+        self.assertIn("4.16=fftn+ISA=avx512+RADICES=4.16", cmd)
+        self.assertEqual(search.isa_options("avx512"), "ISA=avx512")
+        self.assertEqual(search.isa_options(None), "")
+
+    def test_estimate_padded_to_c(self):
+        ops = radices.codelet_ops()
+        self.assertEqual(radices.cost((2, 16), ops, 1), radices.cost((2, 16), ops))
+        # n = 32, C = 8: the first pass's 16 butterflies are 2 units; the last pass has
+        # s = 2, m = 1, so its 2 butterflies fill one unit of 8.
+        self.assertEqual(
+            radices.cost((2, 16), ops, 8), (2, 16 * ops[(2, True)] + 8 * ops[(16, False)])
+        )
+        one = radices.shortlist(46080, None, ops, lanes=(4,))
+        both = radices.shortlist(46080, None, ops, lanes=(4, 8))
+        self.assertEqual(both[: len(one)], one)
+        self.assertTrue(radices.LONG_TOP <= len(both) <= 2 * radices.LONG_TOP)
+
+    def test_campaign_keeps_its_isa(self):
+        state = {"name": "x", "lengths": {"64": {}}, "isa": "avx2"}
+        search.check_isa(state, "avx2")
+        for other in ("avx512", None):
+            with self.assertRaises(SystemExit):
+                search.check_isa(state, other)
+        search.check_isa({"name": "x", "lengths": {"64": {}}}, None)  # before --isa existed
+        search.check_isa({"name": "x", "lengths": {}}, "avx512")  # a new campaign
+
+    def test_remote_lines(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            search.main(["remote", "xeon", "--isa", "avx512"])
+        lines = [x for x in out.getvalue().splitlines() if not x.startswith("#")]
+        self.assertEqual(len(lines), 2)
+        self.assertIn("--name xeon-avx512-smooth --lengths 2-1024 --isa avx512", lines[0])
+        self.assertIn("--name xeon-avx512-long", lines[1])
+
+
+class Fit(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.tables = fit.parse_rules(fit.RULES.read_text())
+
+    def test_search_is_the_planners(self):
+        """fit.py's port of rule_radices on rules.cpp's AVX2 tables gives the recorded
+        radices (tests/core/data/rule_radices.txt) for C = 2 and C = 4."""
+        self.assertEqual(len(self.tables["avx2_double"].overrides), 4)
+        path = search.REPO / "tests" / "core" / "data" / "rule_radices.txt"
+        checked = 0
+        for line in path.read_text().splitlines():
+            if line.startswith("#") or not line.strip():
+                continue
+            n, *cols = (x.split() for x in line.split("|"))
+            n = int(n[0])
+            for c, name, col in ((2, "avx2_double", cols[1]), (4, "avx2_float", cols[2])):
+                got = fit.rule_radices(n, self.tables[name], c)
+                self.assertEqual(got, tuple(int(r) for r in col), f"n = {n}, C = {c}")
+            checked += 1
+        self.assertEqual(checked, 5208)
+
+    def test_fit_recovers_a_synthetic_table(self):
+        """Timings made from a known table (rules.cpp's float one at C = 4, plus a constant
+        per transform): the fit picks every length's best sequence again."""
+        truth = self.tables["avx2_float"]
+        truth = fit.Table(truth.unit, truth.tail, truth.passes)
+        ops = radices.codelet_ops()
+
+        def cost(seq):
+            f = fit.features(seq, 4)
+            x = [0.0] * fit.NF
+            for k in range(fit.KINDS):
+                for r in fit.RADICES:
+                    x[k * fit.NR + r - 2] = truth.unit[k][r - 2]
+                    x[fit.TAIL0 + k * fit.NR + r - 2] = truth.tail[k][r - 2]
+            x[fit.PASS], x[fit.CONST] = truth.passes, 5000.0
+            return sum(v * x[j] for j, v in f.items())
+
+        cases = []
+        for n in (32, 48, 60, 64, 72, 96, 100, 120, 128, 144, 160, 192, 240, 256):
+            seqs = [s for s in radices.sequences(n) if len(s) > 1]
+            base = seqs[0]
+            ratio = {s: math.log(cost(s) / cost(base)) for s in seqs}
+            best = min(seqs, key=lambda s: (ratio[s], s))
+            cases.append(fit.Case(n, f"c2c-{n}-b1-op-f32", "f32", base, best, refine=ratio))
+        x = fit.fit(fit.rows_of(cases, 4), ops)
+        table = fit.table_of(x, cases, ops)
+        per, misses = fit.reproduction(cases, table, 4, 0.0)
+        self.assertEqual(per["b1-op-f32"][:2], [len(cases), len(cases)], misses)
 
 
 if __name__ == "__main__":

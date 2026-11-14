@@ -82,11 +82,39 @@ std::uint64_t pass_cost(const target_profile& p, std::size_t n, std::size_t s, s
          std::uint64_t{p.costs->tail[kind][r - 2]} * tails + p.costs->pass;
 }
 
+// The measured tables, by target and C. A target measured on its own adds its rows here
+// (bench/x2/fit.py writes them); the search does not change.
+struct measured_table {
+  target t;
+  std::size_t lanes;
+  const pass_costs* costs;
+};
+constexpr std::array<measured_table, 2> measured_tables{{
+    {.t = target::avx2, .lanes = 2, .costs = &avx2_double},
+    {.t = target::avx2, .lanes = 4, .costs = &avx2_float},
+}};
+
+// Where a target and C have no table of their own: AVX2's table of the nearest C, the
+// smaller on a tie (so C = 1 takes C = 2's and C = 8 takes C = 4's).
+constexpr target fallback_target = target::avx2;
+
+std::size_t lanes_distance(std::size_t a, std::size_t b) { return a > b ? a - b : b - a; }
+
 } // namespace
 
 target_profile profile_of(target t, std::size_t lanes) noexcept {
-  (void)t; // one table per C for now; a target measured on its own gets its own tables
-  return {.lanes = lanes, .costs = lanes <= 2 ? &avx2_double : &avx2_float};
+  const measured_table* nearest = nullptr;
+  for (const measured_table& m : measured_tables) {
+    if (m.t == t && m.lanes == lanes) {
+      return {.lanes = lanes, .costs = m.costs};
+    }
+    if (m.t == fallback_target &&
+        (nearest == nullptr ||
+         lanes_distance(m.lanes, lanes) < lanes_distance(nearest->lanes, lanes))) {
+      nearest = &m;
+    }
+  }
+  return {.lanes = lanes, .costs = nearest->costs};
 }
 
 // The specification is DESIGN.md 11.2, rule by rule.

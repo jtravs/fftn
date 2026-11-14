@@ -45,10 +45,10 @@ struct target_profile {
   const pass_costs* costs = nullptr; // never null in a profile from profile_of
 };
 
-// The profile of target t for a precision with `lanes` complex lanes. Only AVX2's tables
-// are measured (X2 on an EPYC 7763): C = 2 (double) and C = 4 (float); every other target
-// takes the table of the nearest C, the C = 2 table for C = 1 and the C = 4 table for
-// C = 8 (unmeasured there).
+// The profile of target t for a precision with `lanes` complex lanes: the table measured
+// for (t, lanes) if there is one, else AVX2's table of the nearest C. Only AVX2's tables
+// are measured (X2 on an EPYC 7763): C = 2 (double) and C = 4 (float); so every other
+// target takes the C = 2 table for C = 1 and the C = 4 table for C = 8 (unmeasured there).
 [[nodiscard]] target_profile profile_of(target t, std::size_t lanes) noexcept;
 
 // The radices of a chain for n, in pass order: empty for n = 1, {n} for n <= 16 (a leaf).
