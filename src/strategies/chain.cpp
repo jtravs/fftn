@@ -115,7 +115,9 @@ template <class T> std::string chain_builder<T>::radix_text(std::size_t n) const
     return text;
   };
   if (!bluestein_last(n)) {
-    return list(rad);
+    // Contiguous output assumed: a strided one on NEON double has no split run (split_from).
+    const std::size_t from = split_from(rad, false, 1);
+    return list(rad) + (from < rad.size() ? ", split from pass " + std::to_string(from + 1) : "");
   }
   const std::size_t q = rad.back();
   const std::size_t m = bluestein_length(q, profile_);
@@ -197,6 +199,70 @@ const T* chain_builder<T>::shared_twiddles(std::size_t n, std::size_t radix, std
   const T* stored = pack(t, true);
   shared_tables_.emplace(key, stored);
   return stored;
+}
+
+// The table of a split lane pass with s copies (split.inl): the entries of shared_twiddles,
+// w_n^(p k s) for p < m and k = 1 .. R-1, grouped by p, as tight interleaved values.
+template <class T>
+const T* chain_builder<T>::split_twiddles(std::size_t n, std::size_t radix, std::size_t s) {
+  const auto key = std::make_tuple(n, radix, s);
+  if (const auto it = split_tables_.find(key); it != split_tables_.end()) {
+    return it->second;
+  }
+  const auto& w = roots(n);
+  const std::size_t m = n / (radix * s);
+  std::vector<T>& t = tables_.emplace_back();
+  t.reserve(2 * (radix - 1) * m);
+  for (std::size_t p = 0; p < m; ++p) {
+    for (std::size_t k = 1; k < radix; ++k) {
+      t.push_back(w[p * k * s].real());
+      t.push_back(w[p * k * s].imag());
+    }
+  }
+  split_tables_.emplace(key, t.data());
+  return t.data();
+}
+
+template <class T>
+std::size_t chain_builder<T>::split_from(const std::vector<std::size_t>& rad, bool bluestein,
+                                         std::ptrdiff_t dst_stride) const {
+  const std::size_t passes = rad.size();
+  // The last split pass stores runs of W elements: stride 1 unless W = 1 (with C = 1 and
+  // W > 1, NEON double, the chain copies nothing for strides).
+  const bool strided = dst_stride != 1 && kernels_.real_lanes > 1;
+  if (!profile_.split || bluestein || strided || passes < 3) {
+    return passes;
+  }
+  std::size_t from = passes;
+  std::size_t s = rad[0];
+  for (std::size_t i = 1; i < passes; ++i) {
+    if (s % kernels_.split_block == 0) {
+      from = i;
+      break;
+    }
+    s *= rad[i];
+  }
+  if (passes - from < 2) {
+    return passes;
+  }
+  for (std::size_t i = from; i < passes; ++i) {
+    if (!has_split_codelet(rad[i])) {
+      return passes;
+    }
+  }
+  return from;
+}
+
+template <class T>
+typename chain_builder<T>::pass_layout
+chain_builder<T>::layout_of(std::size_t i, std::size_t from, std::size_t passes) {
+  if (i < from) {
+    return pass_layout::interleaved;
+  }
+  if (i + 1 == passes) {
+    return pass_layout::split_last;
+  }
+  return i == from ? pass_layout::split_first : pass_layout::split_mid;
 }
 
 // The radix-th roots exp(-2 pi i t / radix), t < radix, for the generic pass.
@@ -281,7 +347,7 @@ template <class T>
 void chain_builder<T>::add_pass(std::size_t n, const std::vector<std::size_t>& rad, std::size_t i,
                                 std::size_t s, int sign, endpoint src, endpoint dst,
                                 const line_edges& edges, std::vector<stage>& stages,
-                                std::size_t batch) {
+                                std::size_t batch, pass_layout layout) {
   const std::size_t radix = rad[i];
   const std::size_t m = n / (radix * s);
   const std::size_t c = kernels_.complex_lanes;
@@ -295,8 +361,25 @@ void chain_builder<T>::add_pass(std::size_t n, const std::vector<std::size_t>& r
   const pass_kernels<T>& k = kernels_.passes;
   stage st;
   std::string kind;
+  std::string note;
   const bool generic = !has_codelet(radix);
-  if (generic) {
+  if (layout != pass_layout::interleaved) {
+    // chain_builder::split_from chose this run: codelet radices, s a multiple of W, no
+    // input edge, no shared factor.
+    const std::size_t w = kernels_.real_lanes;
+    const radix_passes& rp = k.codelet[codelet_slot(radix)];
+    if (layout == pass_layout::split_last) {
+      st.run = rp.split_last[d][edge_index(out)];
+      note = "; BL to interleaved";
+    } else {
+      st.run = rp.split_mid[d][layout == pass_layout::split_first ? 1 : 0];
+      st.args.twiddles = split_twiddles(n, radix, s);
+      note = layout == pass_layout::split_first ? "; interleaved to BL" : "; BL";
+    }
+    st.units = m * (s / w);
+    st.chunks = chunks_of(st.units, radix * w);
+    kind = "split lane";
+  } else if (generic) {
     st.run = k.generic[d][edge_index(in)][edge_index(out)];
     st.args.roots = radix_roots(radix);
     st.args.twiddles = m > 1 ? shared_twiddles(n / batch, radix, s / batch) : nullptr;
@@ -340,8 +423,7 @@ void chain_builder<T>::add_pass(std::size_t n, const std::vector<std::size_t>& r
   st.dst = dst.where;
   st.name = kind + " radix-" + std::to_string(radix) + " " + direction_name(sign) + " (m " +
             std::to_string(m) + ", s " + std::to_string(s) +
-            (generic ? "; O(radix^2) per butterfly" : "") + edges_note(in, out) +
-            ")";
+            (generic ? "; O(radix^2) per butterfly" : "") + note + edges_note(in, out) + ")";
   stages.push_back(std::move(st));
 }
 
@@ -530,6 +612,7 @@ slot chain_builder<T>::scratch_chain(std::size_t n, int sign, slot from,
     return to;
   }
   const bool bluestein = bluestein_last(n);
+  const std::size_t split = split_from(rad, bluestein, 1);
   std::size_t s = 1;
   slot at = from;
   for (std::size_t i = 0; i < rad.size(); ++i) {
@@ -537,7 +620,8 @@ slot chain_builder<T>::scratch_chain(std::size_t n, int sign, slot from,
     if (bluestein && i + 1 == rad.size()) {
       add_bluestein(n, rad[i], sign, {at, 1}, {next, 1}, none, i == 0, stages);
     } else {
-      add_pass(n, rad, i, s, sign, {at, 1}, {next, 1}, none, stages);
+      add_pass(n, rad, i, s, sign, {at, 1}, {next, 1}, none, stages, 1,
+               layout_of(i, split, rad.size()));
     }
     at = next;
     s *= rad[i];
@@ -577,6 +661,7 @@ std::size_t chain_builder<T>::c2c_line(std::size_t n, int sign, endpoint src, en
   // a 32 KiB L1 longer (dev/experiments/X18-x86-kernels.md).
   const bool via_dst = !aliased && !copy_in && !copy_out && !bluestein && dst.stride == 1 &&
                        dst.where != slot::a && dst.where != slot::b;
+  const std::size_t split = split_from(rad, bluestein, copy_out ? 1 : dst.stride);
   std::size_t s = 1;
   for (std::size_t i = 0; i < rad.size(); ++i) {
     const bool last = i + 1 == rad.size();
@@ -589,7 +674,7 @@ std::size_t chain_builder<T>::c2c_line(std::size_t n, int sign, endpoint src, en
     if (bluestein && last) {
       add_bluestein(n, rad[i], sign, at, next, edges, i == 0, stages);
     } else {
-      add_pass(n, rad, i, s, sign, at, next, edges, stages);
+      add_pass(n, rad, i, s, sign, at, next, edges, stages, 1, layout_of(i, split, rad.size()));
     }
     at = next;
     s *= rad[i];

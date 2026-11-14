@@ -16,6 +16,7 @@ constinit const kernel_table table{
             .complex_lanes = C<double>,
             .real_lanes = W<double>,
             .tw_reals = tw_reals<double>,
+            .split_block = split_block<double>,
             .passes = pass_table<double>,
         },
     .f32 =
@@ -25,6 +26,7 @@ constinit const kernel_table table{
             .complex_lanes = C<float>,
             .real_lanes = W<float>,
             .tw_reals = tw_reals<float>,
+            .split_block = split_block<float>,
             .passes = pass_table<float>,
         },
 };

@@ -21,6 +21,8 @@ FFTN_ISA_BEGIN(neon)
 
 #include "gen/complex_codelets.inl"
 
+#include "gen/split_codelets.inl"
+
 #include "passes/passes.inl"
 
 #include "isa/table.inl"

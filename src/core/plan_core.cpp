@@ -373,6 +373,9 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   if (settings.leaf_limit != 0) {
     profile.leaf_limit = settings.leaf_limit;
   }
+  if (settings.layout != layout_choice::rules) {
+    profile.split = settings.layout == layout_choice::split;
+  }
   chain_builder<T> chain(kernels, profile, tables_of<T>(c), settings.chunk_points,
                          settings.radices, settings.bluestein_above);
   program& p = c.prog;

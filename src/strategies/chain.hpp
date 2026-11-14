@@ -40,6 +40,15 @@
 //   Both tables are kept per (Q, sign), so every axis with that Q shares them. The
 //   convolution ping-pongs between a and b, an even number of passes, so it ends where
 //   it began; scratch lines are then s M long. It runs in place.
+// - Split passes (DESIGN.md 6.3, src/passes/split.inl; experiment X1): where the profile
+//   says so, a chain's last passes run in split arithmetic: from the first pass after the
+//   first whose copy count s is a multiple of the target's split_block (vocabulary.inl;
+//   the same on both targets of a pair, so they choose the same passes) to the end, if
+//   that run has two passes or more, all of codelet radices with a split codelet, and the
+//   line ends in no Bluestein stage. The run's first pass reads the interleaved line and
+//   writes BL, the middle ones BL to BL, the last writes the interleaved line with the
+//   output edge; so the first pass (grouped), the placement and the scratch are those of
+//   an interleaved chain. A Bluestein convolution's chains stay interleaved.
 // - Chunks: a stage of u units is cut into ranges of about chunk_points points each.
 #pragma once
 
@@ -133,12 +142,23 @@ private:
   // The passes of a chain of n from scratch slot `from` into scratch; returns the slot
   // holding the result.
   slot scratch_chain(std::size_t n, int sign, slot from, std::vector<stage>& stages);
+  // How a pass's arithmetic and layouts go (DESIGN.md 6.3): interleaved, or a split pass
+  // reading the interleaved line or BL and writing BL (split_first, split_mid), or the last
+  // split pass, from BL to the interleaved line.
+  enum class pass_layout : std::uint8_t { interleaved, split_first, split_mid, split_last };
+  // The first pass of the split run of a chain with these radices whose last pass writes
+  // with stride dst_stride, or rad.size() for none.
+  [[nodiscard]] std::size_t split_from(const std::vector<std::size_t>& rad, bool bluestein,
+                                       std::ptrdiff_t dst_stride) const;
+  [[nodiscard]] static pass_layout layout_of(std::size_t i, std::size_t from, std::size_t passes);
+  const T* split_twiddles(std::size_t n, std::size_t radix, std::size_t s);
   // Pass i of `rad` (n = the product), s copies, with its edges' operations.
   // batch: the line is that many interleaved lines of n / batch (a Bluestein convolution),
   // whose twiddles are those of the chain of n / batch with s / batch copies.
   void add_pass(std::size_t n, const std::vector<std::size_t>& rad, std::size_t i, std::size_t s,
                 int sign, endpoint src, endpoint dst, const line_edges& edges,
-                std::vector<stage>& stages, std::size_t batch = 1);
+                std::vector<stage>& stages, std::size_t batch = 1,
+                pass_layout layout = pass_layout::interleaved);
   void add_leaf(std::size_t n, int sign, endpoint src, endpoint dst, const line_edges& edges,
                 std::vector<stage>& stages);
   void add_copy(std::size_t n, endpoint src, endpoint dst, const line_edges& edges,
@@ -160,6 +180,7 @@ private:
   std::map<std::size_t, std::vector<std::complex<T>>> roots_;
   std::map<std::pair<std::size_t, std::size_t>, const T*> grouped_tables_;              // (n, R)
   std::map<std::tuple<std::size_t, std::size_t, std::size_t>, const T*> shared_tables_; // n, R, s
+  std::map<std::tuple<std::size_t, std::size_t, std::size_t>, const T*> split_tables_;  // n, R, s
   std::map<std::size_t, const T*> radix_roots_;                                         // R
   std::map<std::pair<std::size_t, int>, const T*> kernel_tables_;                       // Q, sign
   std::map<std::tuple<std::size_t, int, std::size_t>, const T*> chirp_tables_; // Q, sign, copies

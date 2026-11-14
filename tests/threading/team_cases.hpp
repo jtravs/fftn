@@ -204,6 +204,25 @@ void add_cases(std::vector<team_case>& out, const fftn::detail::build_settings& 
   grid.grid_factors = {8, 16, 16};
   out.push_back(make_case("c2c_grid3_inplace_2048x2" + suffix, fftn::rows_c2c<T>(2048, 2, bwd),
                           4096, 4096, true, grid, target));
+  // Split lane passes (DESIGN.md 6.3, strategies/chain.hpp), forced with a first radix of
+  // 16, which every target's split_block divides: a run of three passes (BL in the
+  // middle), of two in place, in the complex chains of real rows, and on the long axis of
+  // planes. Each split pass's units are runs of W copies, cut into many chunks.
+  fftn::detail::build_settings split = settings;
+  split.layout = fftn::detail::layout_choice::split;
+  split.radices = {16, 5, 5, 5};
+  out.push_back(make_case("c2c_split_2000x1" + suffix, fftn::rows_c2c<T>(2000, 1, fwd), 2000, 2000,
+                          false, split, target));
+  split.radices = {16, 8, 8};
+  out.push_back(make_case("c2c_split_inplace_1024x3" + suffix, fftn::rows_c2c<T>(1024, 3, bwd),
+                          3072, 3072, true, split, target));
+  out.push_back(make_case("r2c_split_2048x2" + suffix, fftn::rows_r2c<T>(2048, 2), 4096, 2 * 1025,
+                          false, split, target));
+  out.push_back(make_case("c2r_split_2048x2" + suffix, fftn::rows_c2r<T>(2048, 2), 2 * 1025, 4096,
+                          false, split, target));
+  out.push_back(make_case("c2c_planes_split_6x1024x2" + suffix,
+                          fftn::planes_c2c<T>(6, 1024, 2, fwd), 12288, 12288, false, split,
+                          target));
 }
 
 inline std::vector<team_case> standard_cases(const fftn::detail::build_settings& settings) {

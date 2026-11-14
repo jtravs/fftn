@@ -273,6 +273,11 @@ std::size_t leaf_limit_of(target t, std::size_t lanes) {
   return (t == target::neon || t == target::neon_fcma) && lanes == 1 ? 32 : default_leaf_limit;
 }
 
+// Whether chains on target t with `lanes` complex lanes end in split passes (DESIGN.md 6.3,
+// strategies/chain.hpp). Experiment X1 (dev/experiments/X1-split-lowering.md) decides it
+// per target and precision; until its verdict every target stays interleaved.
+bool split_of(target /*t*/, std::size_t /*lanes*/) { return false; }
+
 struct sequence {
   std::uint64_t cost = 0;
   std::vector<std::size_t> radices;
@@ -348,7 +353,8 @@ target_profile profile_of(target t, std::size_t lanes) noexcept {
       return {.lanes = lanes,
               .costs = m.costs,
               .leaf_limit = leaf_limit_of(t, lanes),
-              .bluestein_above = default_bluestein_above};
+              .bluestein_above = default_bluestein_above,
+              .split = split_of(t, lanes)};
     }
     if (m.t == fallback_target &&
         (nearest == nullptr ||
@@ -359,7 +365,8 @@ target_profile profile_of(target t, std::size_t lanes) noexcept {
   return {.lanes = lanes,
           .costs = nearest->costs,
           .leaf_limit = leaf_limit_of(t, lanes),
-          .bluestein_above = default_bluestein_above};
+          .bluestein_above = default_bluestein_above,
+          .split = split_of(t, lanes)};
 }
 
 // The specification is DESIGN.md 11.2, rule by rule.

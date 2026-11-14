@@ -414,6 +414,149 @@ TEST(Passes, EveryEdgeVariant) {
   }
 }
 
+// The copy count from which target t's lane passes may be split, in precision T.
+template <class T> std::size_t split_block_of(fftn::isa t) {
+  return fftn::detail::of<T>(*fftn::detail::find_kernels(
+                                 static_cast<fftn::detail::target>(static_cast<unsigned char>(t))))
+      .split_block;
+}
+
+// Split passes (DESIGN.md 6.3, src/passes/split.inl), forced: every split codelet radix as
+// the first pass of a split run (interleaved to BL), a middle one (BL to BL) and the last
+// (BL to interleaved), in both directions, against the reference; forward with both factor
+// edges (the input's on the interleaved first pass, the output's on the last split pass),
+// backward with the output scale. The first radix is the target's split_block (at least
+// 2), so the run starts at the second pass.
+template <class T> void split_in_every_position(fftn::isa target) {
+  const std::size_t f = std::max<std::size_t>(2, split_block_of<T>(target));
+  for (const std::uint8_t radix : fftn::detail::gen::split_radices) {
+    const std::size_t r = radix;
+    const std::string rs = "split lane radix-" + std::to_string(r);
+    struct sequence {
+      std::vector<std::size_t> radices;
+      std::string name;
+    };
+    const std::vector<sequence> sequences{
+        {.radices = {f, r, 2}, .name = rs + " forward (m 2, s " + std::to_string(f) +
+                                       "; interleaved to BL"},
+        {.radices = {f, 2, r}, .name = rs + " forward (m 1, s " + std::to_string(2 * f) +
+                                       "; BL to interleaved"},
+        {.radices = {f, 2, r, 2}, .name = rs + " forward (m 2, s " + std::to_string(2 * f) +
+                                          "; BL)"},
+    };
+    for (const sequence& seq : sequences) {
+      std::size_t n = 1;
+      for (const std::size_t x : seq.radices) {
+        n *= x;
+      }
+      build_settings settings;
+      settings.radices = seq.radices;
+      settings.layout = fftn::detail::layout_choice::split;
+      check_row<T>(target, n, fftn::direction::forward, settings, 1.0, true, true, false,
+                   {seq.name, "grouped radix-" + std::to_string(f), "out: factor"});
+      std::string backward = seq.name;
+      backward.replace(backward.find("forward"), 7, "backward");
+      check_row<T>(target, n, fftn::direction::backward, settings, 0.375, false, false, false,
+                   {backward, "out: scale"});
+    }
+  }
+}
+
+TEST(Passes, SplitInEveryPosition) {
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    split_in_every_position<double>(t);
+    split_in_every_position<float>(t);
+  }
+}
+
+// Where a chain has no split run, a forced split layout leaves it interleaved: two passes;
+// a run of one pass (the copy count reaches split_block only before the last pass); a radix
+// with no split codelet in the run; a Bluestein stage at the end. And real rows and strided
+// rows, whose complex chains run on scratch, split where they fit, against the reference.
+template <class T> void split_only_where_it_fits(fftn::isa target) {
+  const std::size_t f = std::max<std::size_t>(2, split_block_of<T>(target));
+  const auto has_split = [&](std::vector<std::size_t> radices, std::size_t above) {
+    std::size_t n = 1;
+    for (const std::size_t x : radices) {
+      n *= x;
+    }
+    build_settings settings;
+    settings.radices = std::move(radices);
+    settings.bluestein_above = above;
+    settings.layout = fftn::detail::layout_choice::split;
+    const auto core = make_plan_core(
+        fftn::detail::view_of(fftn::rows_c2c<T>(n, 1, fftn::direction::forward)),
+        {.force_isa = target}, settings);
+    return joined(stage_names(*core)).find("split") != std::string::npos;
+  };
+  SCOPED_TRACE(std::string(fftn::isa_name(target)) + (sizeof(T) == 8 ? " double" : " float"));
+  EXPECT_TRUE(has_split({f, 2, 2}, 0));
+  EXPECT_FALSE(has_split({f, 2}, 0)) << "two passes";
+  if (f > 2) {
+    EXPECT_FALSE(has_split({2, f / 2, 2}, 0)) << "a run of one pass";
+  }
+  EXPECT_FALSE(has_split({f, 2, 17}, no_bluestein)) << "a generic pass in the run";
+  EXPECT_FALSE(has_split({f, 2, 2, 17}, 16)) << "a Bluestein stage";
+  EXPECT_FALSE(has_split({f, 32, 2}, 0)) << "radix 32 has no split codelet";
+
+  // r2c and c2r of 2 f x 4 x 2 points: complex lines of f x 4 x 2 on scratch; a strided
+  // c2c row (copies in and out of scratch on wide targets); in place.
+  build_settings settings;
+  settings.layout = fftn::detail::layout_choice::split;
+  settings.radices = {f, 4, 2};
+  const std::size_t h = 8 * f;
+  const std::size_t n = 2 * h;
+  // Wide targets copy a strided row out of scratch, so the split run writes scratch; with
+  // C = 1 nothing is copied, and the last split pass's runs of W elements need stride 1
+  // where W > 1 (NEON double), so that row stays interleaved.
+  const auto& kernels = fftn::detail::of<T>(*fftn::detail::find_kernels(
+      static_cast<fftn::detail::target>(static_cast<unsigned char>(target))));
+  std::vector<std::string> strided_names{"out: scale"};
+  if (kernels.complex_lanes > 1 || kernels.real_lanes == 1) {
+    strided_names.emplace_back("split lane");
+  }
+  check_row<T>(target, h, fftn::direction::forward, settings, 0.375, false, false, false,
+               strided_names, 2, 3);
+  using c = std::complex<T>;
+  fftn::test::input_source src(0x51A7ULL + n);
+  const std::vector<T> xr = src.reals<T>(n);
+  const auto r2c = make_plan_core(fftn::detail::view_of(fftn::rows_r2c<T>(n, 1)),
+                                  {.force_isa = target}, settings);
+  EXPECT_NE(joined(stage_names(*r2c)).find("split lane"), std::string::npos);
+  const cvec<T> spectrum = run<T, c>(*r2c, xr, n / 2 + 1);
+  const auto c2r = make_plan_core(fftn::detail::view_of(fftn::rows_c2r<T>(n, 1)),
+                                  {.scale = 1.0 / static_cast<double>(n), .force_isa = target},
+                                  settings);
+  EXPECT_NE(joined(stage_names(*c2r)).find("split lane"), std::string::npos);
+  const std::vector<T> back = run<c, T>(*c2r, spectrum, n);
+  const auto tol = fftn::test::derived_tolerance<T>(n, fftn::test::stable_fft_bound);
+  double err = 0;
+  double ref = 0;
+  for (std::size_t j = 0; j < n; ++j) {
+    err = std::max(err, std::abs(static_cast<double>(back[j]) - static_cast<double>(xr[j])));
+    ref = std::max(ref, std::abs(static_cast<double>(xr[j])));
+  }
+  EXPECT_LE(err / ref, 4 * tol.max) << "r2c then c2r is not the identity";
+  // In place: the same passes as out of place, placed differently.
+  const cvec<T> x = src.complexes<T>(h);
+  const auto shape = fftn::rows_c2c<T>(h, 1, fftn::direction::backward);
+  const auto view = fftn::detail::view_of(shape);
+  const auto in_place = make_plan_core(view, {.in_place = true, .force_isa = target}, settings);
+  EXPECT_NE(joined(stage_names(*in_place)).find("split lane"), std::string::npos);
+  const cvec<T> y_in = run_in_place(*in_place, x);
+  const cvec<T> y_out = run<c, c>(*make_plan_core(view, {.force_isa = target}, settings), x, h);
+  for (std::size_t k = 0; k < h; ++k) {
+    EXPECT_EQ(y_in[k], y_out[k]) << "in place and out of place differ at " << k;
+  }
+}
+
+TEST(Passes, SplitOnlyWhereItFits) {
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    split_only_where_it_fits<double>(t);
+    split_only_where_it_fits<float>(t);
+  }
+}
+
 // Internal settings that ask for impossible edges are refused.
 TEST(Passes, ImpossibleEdgesAreRefused) {
   const cvec<double> f(8);
@@ -625,8 +768,9 @@ bool bitwise_equal(const std::vector<std::complex<T>>& x, const std::vector<std:
 // copy passes) and in place, and for r2c and c2r rows, several rows each so that tails
 // occur. The radices are the first target's
 // rules' choice, forced on both: avx2 and avx512 key their rules on different register
-// counts and lanes.
-template <class T> void same_bits(fftn::isa a, fftn::isa b) {
+// counts and lanes. With interleaved and with split lane passes forced (a pair shares
+// split_block, so it chooses the same split runs).
+template <class T> void same_bits(fftn::isa a, fftn::isa b, fftn::detail::layout_choice layout) {
   using c = std::complex<T>;
   const auto profile =
       fftn::detail::profile_of(static_cast<fftn::detail::target>(a), lanes_of<T>(a));
@@ -654,6 +798,7 @@ template <class T> void same_bits(fftn::isa a, fftn::isa b) {
     for (const auto dir : {fftn::direction::forward, fftn::direction::backward}) {
       const bool forward = dir == fftn::direction::forward;
       build_settings settings;
+      settings.layout = layout;
       settings.radices = fftn::detail::rule_radices(n, profile);
       settings.bluestein_above = above;
       settings.in_factor = fin.data();
@@ -671,6 +816,7 @@ template <class T> void same_bits(fftn::isa a, fftn::isa b) {
     // scratch on targets with C > 1), and in place.
     {
       build_settings settings;
+      settings.layout = layout;
       settings.radices = fftn::detail::rule_radices(n, profile);
       settings.bluestein_above = above;
       auto strided = fftn::rows_c2c<T>(n, rows, fftn::direction::forward);
@@ -695,6 +841,7 @@ template <class T> void same_bits(fftn::isa a, fftn::isa b) {
     }
     // Real rows: the complex line is n / 2 long for even n, n for odd n.
     build_settings real;
+    real.layout = layout;
     real.radices = fftn::detail::rule_radices(n % 2 == 0 ? n / 2 : n, profile);
     real.bluestein_above = above;
     const std::size_t h = n / 2 + 1;
@@ -725,8 +872,11 @@ TEST(Passes, TargetsThatRoundAlikeGiveTheSameBits) {
   };
   for (const auto& [a, b] : alike) {
     if (runs(a) && runs(b)) {
-      same_bits<double>(a, b);
-      same_bits<float>(a, b);
+      for (const auto layout :
+           {fftn::detail::layout_choice::interleaved, fftn::detail::layout_choice::split}) {
+        same_bits<double>(a, b, layout);
+        same_bits<float>(a, b, layout);
+      }
       ++pairs;
     }
   }
