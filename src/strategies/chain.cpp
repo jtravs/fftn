@@ -698,13 +698,21 @@ void chain_builder<T>::chain_tail(std::size_t n, const std::vector<std::size_t>&
                                   endpoint dst, const line_edges& edges,
                                   std::vector<stage>& stages) {
   const bool bluestein = bluestein_last(n);
+  // The same split run as the whole chain's (c2c_line): a c2r line whose pairing is fused
+  // into the first pass then runs the passes the separate route runs, so the two routes, and
+  // the targets of a pair that choose them differently, give the same bits.
+  std::size_t split = std::max(i0, split_from(rad, bluestein, dst.stride));
+  if (rad.size() - split < 2) {
+    split = rad.size();
+  }
   for (std::size_t i = i0; i < rad.size(); ++i) {
     const bool last = i + 1 == rad.size();
     const endpoint next = last ? dst : endpoint{.where = other_scratch(at.where), .stride = 1};
     if (bluestein && last) {
       add_bluestein(n, rad[i], sign, at, next, edges, i == 0, stages);
     } else {
-      add_pass(n, rad, i, s, sign, at, next, edges, stages);
+      add_pass(n, rad, i, s, sign, at, next, edges, stages, 1,
+               layout_of(i, split, rad.size()));
     }
     at = next;
     s *= rad[i];

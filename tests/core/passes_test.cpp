@@ -540,6 +540,19 @@ template <class T> void split_only_where_it_fits(fftn::isa target) {
     ref = std::max(ref, std::abs(static_cast<double>(xr[j])));
   }
   EXPECT_LE(err / ref, 4 * tol.max) << "r2c then c2r is not the identity";
+  // c2r with the pairing fused into its first pass: the rest of the chain takes the same
+  // split run as the separate route's complex chain, and the same bits (avx2 and avx512
+  // choose the two routes differently for some lengths).
+  build_settings fused = settings;
+  fused.fuse_real_radix = 16;
+  const auto c2r_fused = make_plan_core(fftn::detail::view_of(fftn::rows_c2r<T>(n, 1)),
+                                        {.scale = 1.0 / static_cast<double>(n), .force_isa = target},
+                                        fused);
+  const std::string fused_names = joined(stage_names(*c2r_fused));
+  EXPECT_NE(fused_names.find("with the c2r pairing"), std::string::npos) << fused_names;
+  EXPECT_NE(fused_names.find("split lane"), std::string::npos) << fused_names;
+  const std::vector<T> back_fused = run<c, T>(*c2r_fused, spectrum, n);
+  EXPECT_EQ(back_fused, back) << "the fused and separate c2r routes differ";
   // In place: the same passes as out of place, placed differently.
   const cvec<T> x = src.complexes<T>(h);
   const auto shape = fftn::rows_c2c<T>(h, 1, fftn::direction::backward);
