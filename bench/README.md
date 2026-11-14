@@ -95,16 +95,29 @@ refusals.
    against the reference, calibrated to batches of `--batch-time` seconds, warmed up for
    `--warmup` seconds, and timed over `--batches` batches. The process reports every batch,
    their median and their minimum.
-5. **Quiet machine.** Before and after each round fbench reads the load average and the CPU
-   used by other processes (Linux `/proc/stat` over a quarter second; macOS `ps`). A round on
-   a busy machine is invalid and is repeated after `--busy-wait` seconds. Defaults: load
-   average at most half the logical CPUs, other processes at most a tenth of them (at least
-   one core); `--max-load` and `--max-busy` change them. On macOS the harness asks for the
-   user-interactive QoS class, which keeps it on the performance cores.
-6. **Stopping.** After `--min-rounds` valid rounds, fbench analyses after every round and
+5. **Load.** Before and after each round fbench reads the load average and the CPU used by
+   other processes (Linux `/proc/stat` over a quarter second; macOS `ps`) and stores them
+   with the round. Load does not invalidate a round: the Williams order, the repeated
+   process rounds and the A/A control absorb it, so on a busy machine the noise band widens
+   and the verdicts follow it. A round above the quiet thresholds (load average above half
+   the logical CPUs, other processes above a tenth of them and at least one core;
+   `--max-load` and `--max-busy` change them) is marked "loaded", and the report counts
+   such rounds. The one guard is against overload: while other processes use more than
+   half the logical CPUs, a round waits, for at most `--overload-wait` seconds (default
+   60), then runs anyway and is marked overloaded. With `--strict-quiet`, for runs that
+   want it, a round above the thresholds is invalid instead and is repeated after
+   `--busy-wait` seconds. On macOS the harness asks for the user-interactive QoS class,
+   which keeps it on the performance cores.
+6. **Timeouts.** A process that runs longer than `--process-timeout` seconds (default an
+   hour) is stopped. The cases it finished are kept; the case it was on is stored as timed
+   out and the ones it did not reach as skipped, and both are left out of that round. The
+   run goes on; a case lost in every round gets the verdict `timed out`. A crash or a
+   refused option still stops the run. An FFTW process stopped this way exports no wisdom,
+   so the next round plans its cases again.
+7. **Stopping.** After `--min-rounds` valid rounds, fbench analyses after every round and
    stops when every target case (`--target`, default all) is resolved, or at
    `--max-rounds` valid rounds or `--budget` seconds.
-7. The report is printed and the run is stored. The exit status is 1 if any output was
+8. The report is printed and the run is stored. The exit status is 1 if any output was
    wrong.
 
 Cold mode (`--mode cold`) rotates through enough buffer sets to exceed the pool
@@ -122,14 +135,19 @@ For each case and arm B the report shows:
 - **verdict**: `slower` if the whole interval lies above 1 + band, `faster` if it lies
   below 1 − band, otherwise `no evidence`. `WRONG OUTPUT` means B's output failed the check
   in some round (`BASELINE WRONG` for A); `unsupported` means the library cannot do the case;
+  `timed out` means its process hit `--process-timeout` on it (or before reaching it) in
+  every round, and a note such as "2 rounds lost to timeouts" means some rounds were;
 - A's and B's time per point (ns), B's mflops (5 n log₂ n / t for complex, 2.5 n log₂ n / t
   for real, the benchFFT convention) and B's worst relative RMS error.
 
 The **noise band** at the top is the 95th percentile over cases of |log(A~ ÷ A)|, the
 identical-arm control, and at least `--min-band` (1 %). It is the effect size an identical
 arm reaches in 95 % of cases of this run: a claim must clear it as well as its own interval.
-State it next to every effect you report. The **weighted geomean** line is the catalogue-
-weighted geometric mean of the ratios, with a bootstrap over whole rounds.
+State it next to every effect you report, with the load line above it (median and maximum
+load average and other processes' CPU use, and how many rounds ran under load): a claim is
+judged against the band of the same run, whatever the load was. The **weighted geomean**
+line is the catalogue-weighted geometric mean of the ratios, with a bootstrap over whole
+rounds.
 
 "No evidence" is not "equal": a case whose interval lies inside ±band is resolved as no
 difference worth claiming; one whose interval is wider than the band is unresolved, and
@@ -200,7 +218,8 @@ anywhere.
 Every run writes `bench-out/runs/<run-id>.jsonl` (`bench-out/` is git-ignored): a `run`
 record (arms with their `describe`, binary and commit; host fingerprint: CPU model, core
 counts, OS and caches, never the hostname; catalogue path and hash; settings), one `round`
-record per attempt (order, offsets, load before and after, valid or why not), one `timing`
+record per attempt (order, offsets, load before and after, loaded or overloaded, the
+seconds it waited, arms whose process timed out, valid or why not), one `timing`
 record per round, arm and case (every batch, median, minimum, plan time, accuracy, ns per
 point, mflops, and the backend's note on what it planned, if any) and a final `summary`.
 `show <run-id>` (or a unique prefix, or `latest`) recomputes the report from the records. Documents cite run IDs, never copied numbers.

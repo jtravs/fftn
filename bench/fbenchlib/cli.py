@@ -11,6 +11,7 @@ import math
 import platform
 import random
 import re
+import statistics
 import subprocess
 import sys
 import time
@@ -36,10 +37,24 @@ def log(message: str) -> None:
 # ---- Running one process ------------------------------------------------------------------
 
 
+def _output_lines(stdout: str | bytes | None) -> list[dict]:
+    if isinstance(stdout, bytes):
+        stdout = stdout.decode(errors="replace")
+    lines = []
+    for text in (stdout or "").splitlines():
+        try:
+            lines.append(json.loads(text))
+        except json.JSONDecodeError:
+            continue  # including a line cut off by a timeout
+    return lines
+
+
 def run_process(
     exe: Path, harness_args: list[str], timeout: float
-) -> tuple[dict | None, list[dict], str]:
-    """Runs one harness process; returns its describe, its case lines and an error, if any."""
+) -> tuple[dict | None, list[dict], str, bool]:
+    """Runs one harness process; returns its describe, its case lines, an error, if any, and
+    whether it timed out. A process that times out keeps the cases it finished (the harness
+    flushes every case line)."""
     try:
         done = subprocess.run(
             [str(exe), "run", *harness_args],
@@ -48,14 +63,12 @@ def run_process(
             timeout=timeout,
             check=False,
         )
-    except subprocess.TimeoutExpired:
-        return None, [], f"timed out after {timeout:.0f} s"
-    lines = []
-    for text in done.stdout.splitlines():
-        try:
-            lines.append(json.loads(text))
-        except json.JSONDecodeError:
-            continue
+    except subprocess.TimeoutExpired as e:
+        lines = _output_lines(e.stdout)
+        desc = next((x for x in lines if x.get("type") == "describe"), None)
+        cases = [x for x in lines if x.get("type") == "case"]
+        return desc, cases, f"timed out after {timeout:.0f} s", True
+    lines = _output_lines(done.stdout)
     desc = next((x for x in lines if x.get("type") == "describe"), None)
     cases = [x for x in lines if x.get("type") == "case"]
     error = ""
@@ -64,7 +77,7 @@ def run_process(
         error = (first or {}).get("message") or done.stderr.strip() or f"exit {done.returncode}"
     elif not any(x.get("type") == "end" for x in lines):
         error = "the process ended early (crash?)"
-    return desc, cases, error
+    return desc, cases, error, False
 
 
 def options_text(options: dict[str, str]) -> str:
@@ -156,6 +169,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         args.max_load if args.max_load is not None else machine.QuietLimits.defaults().max_load,
         args.max_busy if args.max_busy is not None else machine.QuietLimits.defaults().max_busy,
     )
+    overload = machine.overload_limit()
     seed = args.seed if args.seed is not None else random.SystemRandom().randrange(1 << 31)
     cases_file = st.work / "cases.txt"
     st.append(
@@ -185,6 +199,10 @@ def cmd_run(args: argparse.Namespace) -> int:
                 "seed": seed,
                 "max_load": limits.max_load,
                 "max_busy": limits.max_busy,
+                "strict_quiet": args.strict_quiet,
+                "overload_busy": overload,
+                "overload_wait": args.overload_wait,
+                "process_timeout": args.process_timeout,
             },
             "arms": [
                 {
@@ -222,14 +240,26 @@ def cmd_run(args: argparse.Namespace) -> int:
     valid_rounds = 0
     result = None
     while valid_rounds < args.max_rounds and time.monotonic() - started < args.budget:
-        before = machine.load_state()
-        quiet, why = machine.is_quiet(before, limits)
-        if not quiet:
-            st.append({"type": "round", "round": attempt, "valid": False, "reason": why})
-            log(f"round {attempt}: machine busy ({why}); waiting {args.busy_wait:.0f} s")
-            attempt += 1
-            time.sleep(args.busy_wait)
-            continue
+        paused, overloaded = 0.0, False
+        if args.strict_quiet:
+            before = machine.load_state()
+            quiet, why = machine.is_quiet(before, limits)
+            if not quiet:
+                st.append({"type": "round", "round": attempt, "valid": False, "reason": why})
+                log(f"round {attempt}: machine busy ({why}); waiting {args.busy_wait:.0f} s")
+                attempt += 1
+                time.sleep(args.busy_wait)
+                continue
+        else:
+            # Load does not invalidate a round: interleaving, repeated rounds and the A/A
+            # control absorb it. Only an overload (other processes on more than half the
+            # CPUs) holds a round back, and only for --overload-wait seconds.
+            before, paused, overloaded = machine.wait_for_capacity(overload, args.overload_wait)
+            if paused >= 1:
+                log(
+                    f"round {attempt}: waited {paused:.0f} s for other processes to drop below "
+                    f"{overload:.1f} cores" + ("; running anyway" if overloaded else "")
+                )
         rng = random.Random(seed * 7919 + attempt)
         order = [arm_list[i] for i in orders[valid_rounds % len(orders)]]
         offsets = (rng.randrange(64) * 64, rng.randrange(64) * 64)
@@ -237,6 +267,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         rng.shuffle(shuffled)
         cases_file.write_text("".join(c.line() + "\n" for c in shuffled))
         failures = []
+        timeouts = []
         for arm in order:
             binary = binaries[arm.label]
             backend = {**arm.backend_options(), **wisdom_options(arm, binary, st.work)}
@@ -265,8 +296,12 @@ def cmd_run(args: argparse.Namespace) -> int:
                 str(seed),
                 *arm.harness_args(),
             ]
-            _, results, error = run_process(binary.path, harness_args, args.process_timeout)
-            if error:
+            _, results, error, timed_out = run_process(
+                binary.path, harness_args, args.process_timeout
+            )
+            if timed_out:
+                timeouts.append(arm.label)
+            elif error:
                 failures.append(f"{arm.label}: {error}")
             for res in results:
                 case = by_id.get(res.get("id", ""))
@@ -276,9 +311,37 @@ def cmd_run(args: argparse.Namespace) -> int:
                     rec["ns_per_point"] = res["median_ns"] / (case.points * case.batch)
                     rec["mflops"] = case.flops / res["median_ns"] * 1e3
                 st.append(rec)
+            if timed_out:
+                # The case the process was on timed out; the ones after it were not reached.
+                # Both are left out of this round's statistics, and the run goes on.
+                done = {res.get("id") for res in results}
+                missing = [c.id for c in shuffled if c.id not in done]
+                for i, cid in enumerate(missing):
+                    status = analysis.TIMED_OUT if i == 0 else analysis.NOT_REACHED
+                    st.append(
+                        {
+                            "type": "timing",
+                            "round": attempt,
+                            "arm": arm.label,
+                            "case": cid,
+                            "status": status,
+                            "message": error,
+                        }
+                    )
+                log(
+                    f"round {attempt}: {arm.label} {error}"
+                    + (f" in {missing[0]}; {len(missing) - 1} cases not reached" if missing else "")
+                )
         after = machine.load_state()
+        quiet_before, _ = machine.is_quiet(before, limits)
         quiet_after, why_after = machine.is_quiet(after, limits)
-        valid = quiet_after and not failures
+        loaded = overloaded or not (quiet_before and quiet_after)
+        if args.strict_quiet:
+            valid = quiet_after and not failures
+            reason = "; ".join(failures) or why_after
+        else:
+            valid = not failures
+            reason = "; ".join(failures)
         st.append(
             {
                 "type": "round",
@@ -288,10 +351,15 @@ def cmd_run(args: argparse.Namespace) -> int:
                 "offsets": list(offsets),
                 "load_before": before,
                 "load_after": after,
-                "reason": "; ".join(failures) or why_after,
+                "loaded": loaded,
+                "overloaded": overloaded,
+                "paused_s": round(paused, 1),
+                "timeouts": timeouts,
+                "reason": reason,
             }
         )
         attempt += 1
+        load_text = _load_text(before, after) + (" (loaded)" if loaded else "")
         if failures:
             # A crash or a refused option is a bug to fix, not noise to average over.
             log(f"round {attempt - 1}: harness failure ({'; '.join(failures)}); stopping")
@@ -306,13 +374,13 @@ def cmd_run(args: argparse.Namespace) -> int:
             )
             left = result.unresolved(targets)
             log(
-                f"round {attempt - 1}: valid ({valid_rounds}); band "
+                f"round {attempt - 1}: valid ({valid_rounds}); {load_text}; band "
                 f"{math.expm1(result.band) * 100:.2f} %; {len(left)} unresolved"
             )
             if not left:
                 break
         else:
-            log(f"round {attempt - 1}: valid ({valid_rounds})")
+            log(f"round {attempt - 1}: valid ({valid_rounds}); {load_text}")
 
     records = store.load(st.path)
     result = analysis.analyse(records, args.stat, args.min_band, seed)
@@ -341,6 +409,24 @@ def cmd_run(args: argparse.Namespace) -> int:
 # ---- Reports ------------------------------------------------------------------------------
 
 
+def _load_text(*states: dict) -> str:
+    load = max((x["load1"] for x in states if x.get("load1") is not None), default=None)
+    busy = max((x["busy"] for x in states if x.get("busy") is not None), default=None)
+    return f"load {_fmt(load, '.1f')}, other processes {_fmt(busy, '.1f')} cores"
+
+
+def _round_loaded(r: dict, settings: dict) -> bool:
+    """Whether a round ran above the quiet thresholds (stored since load stopped
+    invalidating rounds; recomputed for older runs)."""
+    if "loaded" in r:
+        return bool(r["loaded"])
+    limits = machine.QuietLimits(
+        settings.get("max_load", math.inf), settings.get("max_busy", math.inf)
+    )
+    states = (r.get("load_before", {}), r.get("load_after", {}))
+    return not all(machine.is_quiet(x, limits)[0] for x in states)
+
+
 def _fmt(value: float | None, spec: str) -> str:
     return "-" if value is None else format(value, spec)
 
@@ -353,6 +439,7 @@ def report(records: list[dict], stat: str | None = None, min_band: float | None 
     res = analysis.analyse(records, stat, min_band, seed)
     cases = {c["id"]: c for c in run["cases"]}
     host = run["host"]
+    settings = run["settings"]
     rounds = [r for r in records if r["type"] == "round" and r.get("valid")]
     loads = [
         x["load1"]
@@ -366,6 +453,12 @@ def report(records: list[dict], stat: str | None = None, min_band: float | None 
         for x in (r.get("load_before", {}), r.get("load_after", {}))
         if x.get("busy") is not None
     ]
+    loaded = sum(1 for r in rounds if _round_loaded(r, settings))
+    overloaded = sum(1 for r in rounds if r.get("overloaded"))
+    timeouts: dict[str, int] = {}
+    for r in rounds:
+        for label in r.get("timeouts", []):
+            timeouts[label] = timeouts.get(label, 0) + 1
     out = [
         f"run {run['run']}  catalogue {run['catalogue']['name']}, tier {run.get('tier')}"
         + (f", filter {run['filter']!r}" if run.get("filter") else "")
@@ -373,10 +466,28 @@ def report(records: list[dict], stat: str | None = None, min_band: float | None 
         f"host {host['cpu']}, {host['logical_cpus']} CPUs, {host['os']} (id {host['host_id']})",
     ]
     if loads:
-        line = f"load average {min(loads):.2f}-{max(loads):.2f}"
+        line = f"load average median {statistics.median(loads):.2f}, max {max(loads):.2f}"
         if busy:
-            line += f"; other processes {min(busy):.2f}-{max(busy):.2f} cores"
+            line += (
+                f"; other processes median {statistics.median(busy):.2f}, max {max(busy):.2f} cores"
+            )
         out.append(line)
+    if rounds and "max_load" in settings:
+        line = (
+            f"rounds under load: {loaded} of {len(rounds)} (load average above "
+            f"{settings['max_load']:.1f} or other processes above {settings['max_busy']:.1f} "
+            f"cores)"
+        )
+        if overloaded:
+            line += f", {overloaded} started overloaded after the wait"
+        line += "; strict quiet mode" if settings.get("strict_quiet") else ""
+        out.append(line)
+    if timeouts:
+        out.append(
+            "process timeouts: "
+            + ", ".join(f"{label} in {n} rounds" for label, n in sorted(timeouts.items()))
+            + " (the cases lost are left out of those rounds)"
+        )
     src = run.get("source", {})
     out.append(
         f"source {str(src.get('commit'))[:12]}{' (dirty)' if src.get('dirty') else ''}; "
@@ -480,7 +591,7 @@ def smoke_one(
     precision_of = {c.id: c.precision for c in cases}
     options = options_text(opts)
     base = ["--cases", str(work / "cases.txt"), "--options", options, "--check-only"]
-    _, results, error = run_process(exe, base, timeout)
+    _, results, error, _ = run_process(exe, base, timeout)
     if error:
         failures.append(f"{name}: {error}")
     counts = {"pass": 0, "fail": 0, "unsupported": 0, "error": 0}
@@ -525,7 +636,7 @@ def smoke_one(
         one = work / f"guard-{library}.txt"
         one.write_text(next(c.line() for c in cases if c.id == first_ok) + "\n")
         guard = ["--cases", str(one), "--options", options, "--check-only"]
-        _, res, error = run_process(exe, [*guard, "--perturb", SMOKE_PERTURB], 60)
+        _, res, error, _ = run_process(exe, [*guard, "--perturb", SMOKE_PERTURB], 60)
         flagged = bool(res) and res[0].get("status") == "ok" and not res[0]["check"]["pass"]
         print(f"smoke {name}: guard {'flags' if flagged else 'MISSES'} a perturbed output")
         if not flagged:
@@ -620,9 +731,20 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--check-budget", type=int, default=1 << 20)
     r.add_argument("--seed", type=int)
     r.add_argument("--no-control", action="store_true", help="skip the A/A control arm")
-    r.add_argument("--max-load", type=float)
-    r.add_argument("--max-busy", type=float)
-    r.add_argument("--busy-wait", type=float, default=10.0)
+    r.add_argument(
+        "--strict-quiet",
+        action="store_true",
+        help="rounds above --max-load or --max-busy are invalid and repeated",
+    )
+    r.add_argument("--max-load", type=float, help="quiet threshold (default: half the CPUs)")
+    r.add_argument("--max-busy", type=float, help="quiet threshold, cores (default: a tenth)")
+    r.add_argument("--busy-wait", type=float, default=10.0, help="strict mode: seconds")
+    r.add_argument(
+        "--overload-wait",
+        type=float,
+        default=60.0,
+        help="most seconds a round waits while other processes use over half the CPUs",
+    )
     r.add_argument("--process-timeout", type=float, default=3600.0)
     r.add_argument("--allow-identical", action="store_true")
     r.add_argument("--allow-debug-build", action="store_true")

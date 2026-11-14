@@ -351,6 +351,26 @@ public:
 struct team { int rank = 0; int size = 1; int group_size = 0; };   // one member of a team
 enum class completion : unsigned char { all, own };
 struct transform_range { std::size_t first = 0; std::size_t count = 0; };
+int cache_group_size(int members) noexcept;   // a team's group_size, from the topology
+
+using task_function = void (*)(void* arg, int index);   // = fftn_task of fftn/executor.h
+template <class E> concept executor = requires(E& e, int n, task_function f, void* a) {
+  { e.concurrency() } -> std::convertible_to<int>;    // optional: e.group_size()
+  e.bulk(n, f, a);
+};
+class executor_ref {                   // non-owning; three function pointers (fftn_executor)
+public:
+  template <executor E> executor_ref(E&&) noexcept;         // implicit
+  explicit executor_ref(const fftn_executor&) noexcept;     // a C pool
+  int concurrency() const; int group_size() const;
+  void bulk(int n, task_function, void* arg) const;
+};
+class thread_pool {                    // opt-in; std::threads; an executor
+public:
+  explicit thread_pool(int threads = 0);
+  int concurrency() const noexcept; int group_size() const noexcept;
+  void bulk(int n, task_function, void* arg) const noexcept;
+};
 
 template <class In, class Out>
 class plan {
@@ -367,10 +387,11 @@ public:
   // (3) Inside the caller's parallel region: every member of the team calls it (13.3).
   void execute(const In* in, Out* out, const team&, workspace&,
                completion = completion::all) const noexcept;
-  transform_range transforms_of(const team&) const noexcept;   // a member's own (12.4)
+    transform_range transforms_of(const team&) const noexcept;   // a member's own (12.4)
 
-  // later: (4) on an executor, anything that can run n callables (section 13):
-  //   void execute(const In*, Out*, executor_ref, workspace&) const;
+  // (4) On an executor, anything that can run n tasks and return when done (13.6).
+  void execute(const In* in, Out* out, executor_ref, workspace&) const;
+
   // later: a trailing exec_args (arrays for the edge operations, section 12) on every
   // overload, and twins taking In* for plans that may destroy their input.
 
@@ -416,12 +437,24 @@ Points that matter:
   transforms, is the reset); all pass the same workspace object; one rank's successive
   calls are ordered by happens-before; serial use and a change of team size wait until
   every member of the earlier executions has returned. A team is plain numbers (rank, size, members per cache
-  group), so any threading system can form one; the OpenMP and pool adapters of task 3.3
-  fill it in.
+  group), so any threading system can form one; `cache_group_size(members)` estimates the
+  grouping from the topology (13.6), and `fftn::omp::this_team()` fills a team in.
+- **Executors.** Overload (4) takes an `executor_ref`, a non-owning reference to anything
+  with `concurrency()` and `bulk(n, task, arg)`, which reaches the compiled library as three
+  function pointers (the C contract's struct, 5.5), so it allocates nothing and needs no
+  template in the library. FFTN chooses the team (13.6) and dispatches one task per lane
+  that has work; every dispatched task runs exactly once, so the team-sequence
+    precondition holds by construction, whatever order or concurrency the executor gives the
+  tasks. The contract requires that the call of `bulk` happens before each task and each
+  task's return before `bulk` returns, which orders one rank's successive calls, and that a
+  throwing `bulk` throws only after every task it started has returned. It is not `noexcept`: FFTN's own code throws nothing, allocates nothing and takes
+  no lock, but the executor's calls may, and an exception from them propagates after the
+  workspace's team state is dropped (some members may not have run). The workspace is sized
+  for `concurrency()` lanes.
 - **Execution preconditions** (a large enough workspace, `execute_transforms` within the
   batch, one address for in-place calls) are documented and checked only by assertions in
-  debug builds of the library; `execute` stays `noexcept` and checks nothing in release
-  builds.
+  debug builds of the library; the serial and team overloads stay `noexcept` and check
+  nothing in release builds.
 - **Plan construction is cheap and safe**: microseconds to a few milliseconds with rules,
   bounded and optional with measurement; it never touches user buffers and uses no
   process-global mutable state. A plan owns its twiddle tables. Plans that should share
@@ -506,12 +539,23 @@ has two levels:
   functions (`KokkosFFT::fft` and the rest, which would make a plan per call and belong
   with the convenience layer of 5.4); `DynPlan`.
 
+**`fftn/omp.hpp`** (optional, header-only, compiled in the user's translation units against
+the user's OpenMP runtime, so the process has one OpenMP runtime; the library links none):
+`fftn::omp::this_team()` for callers inside a parallel region and `fftn::omp::executor` for
+FFTN to open one (13.6). It needs the compiler's OpenMP option and refuses to compile
+without it. Neither changes a runtime setting.
+
+**The executor contract in C** (`fftn/executor.h`, valid C99 and C++, types only): a struct
+`fftn_executor` of the pool's pointer and three functions, `concurrency(self)`,
+`bulk(self, n, task, arg)` and `group_size(self)` (which may be null), with
+`fftn_task = void (*)(void* arg, int index)`. The C++ `executor_ref` holds exactly this
+struct, filled with thunks for a C++ executor or copied from a C pool's, so the C API of
+phase 6 will include the header and take the struct unchanged.
+
 The other interfaces are later work:
 
-- **`fftn/omp.hpp`** (optional, header-only): the OpenMP adapters, compiled in the user's
-  translation unit so the process has one OpenMP runtime.
-- **C API** (`fftn/c_api.h`): opaque plans, the same shapes, a
-  three-function executor contract for foreign thread pools.
+- **C API** (`fftn/c_api.h`): opaque plans, the same shapes, and the three-function
+  executor contract for foreign thread pools, which exists already (above).
 - **FFTW3-compatible shim** (separate opt-in library and header, never installed as
   `fftw3.h`): the `fftw_plan_many_dft`, guru and execute subset, so C and Fortran users
   and existing benchmark tools can link FFTN. It is opt-in because a header that
@@ -1383,9 +1427,11 @@ group's tasks when it has fewer than members; at most members / split, points / 
 widest phase's chunks; only from the split threshold of the group's kind; only when the
 cost model says t/k plus a phase synchronisation per phase beats t). An oversubscribed team
 splits nothing. The machine profile's values are provisional, taken from the prototype's
-measurements, until experiments T1 and T5 calibrate them (task 3.4). Rule 4's surplus
-members return at once only under an executor (task 3.3); in the caller's team they help
-or wait for completion. Rule 5's fastest-class restriction needs a core class per member,
+measurements, until experiments T1 and T5 calibrate them (task 3.4). Rule 4 under an executor (task 3.3): only the lanes dealt
+work are dispatched, a team of `lanes_dealt` members, which the scheduler gives the same
+division as the dealt lanes of the wider team; an OpenMP executor still opens a region of
+its constant width, whose surplus threads return at once. In the caller's team surplus
+members help or wait for completion. Rule 5's fastest-class restriction needs a core class per member,
 which `team` does not carry yet (18.2).
 
 ### 13.5 Topology
@@ -1414,16 +1460,56 @@ first) and the topology says the numbers are not the OS's.
 | Caller | How | Notes |
 |---|---|---|
 | Serial code | `plan.execute(in, out)` | no threads anywhere |
-| Inside `#pragma omp parallel` | every thread calls `execute(in, out, fftn::omp::this_team(), ws)` (until task 3.3: a `team` from `omp_get_thread_num()` and `omp_get_num_threads()`) | no fork/join; pointwise work and the transform share one region |
-| OpenMP, FFTN opens the region | `fftn::omp::executor` | header-only: compiled against the caller's runtime; inline when one lane has all the work |
+| Inside `#pragma omp parallel` | every thread calls `execute(in, out, fftn::omp::this_team(), ws)` | no fork/join; pointwise work and the transform share one region |
+| OpenMP, FFTN opens the region | `execute(in, out, fftn::omp::executor{}, ws)` | header-only: compiled against the caller's runtime; inline when one lane has all the work |
 | Kokkos | `fftn::kokkos::executor(exec_space_instance)` and View-based plans | one `parallel_for` per transform on the caller's instance; correct on Serial, OpenMP and Threads back ends; serial when called inside a kernel |
-| Custom pool | any type with `concurrency()` and `bulk(n, fn, arg)` | the only requirement is "run n callables and return when done" |
+| Custom pool | any type with `concurrency()` and `bulk(n, fn, arg)` (optionally `group_size()`), or a C pool's `fftn_executor` | the only requirement is "run n callables and return when done" |
 | No runtime at hand | `fftn::thread_pool` | explicit, opt-in, `std::thread` based, grouped by cache topology; never created implicitly |
 
 Rules that hold everywhere: FFTN creates no threads unless the caller constructs a
 `thread_pool`; it never changes a runtime's settings (thread counts, wait policy,
 binding); a call from inside a parallel region or kernel runs serially rather than
 nesting; width 1 opens no region.
+
+As built (task 3.3):
+
+- **The executor overload** (`src/threading/executor_execute.cpp`) asks the scheduler once
+  with the executor's `concurrency()` and `group_size()`. Width 1, a job under rule 1's
+  threshold, or one lane dealt everything: `execute_core` on the caller, no `bulk`.
+  Otherwise one `bulk(lanes_dealt, …)`, task i running the team overload as rank i of a team
+  of `lanes_dealt` members with `completion::all`. The members judge oversubscription by
+  the executor's width, not their own number (`lane_map::threads`): its other threads
+  compete for the CPUs too. Nesting is the executor's business:
+  executors report `concurrency()` 1 from inside their own tasks or region, so a nested call
+  takes the serial path.
+- **`fftn::omp::this_team()`** is `{omp_get_thread_num(), omp_get_num_threads(),
+  cache_group_size(size)}`; outside any region a team of one. Callers must make the call
+  from the region's body, where every thread runs (not `single`, `masked`, a task or a
+  worksharing loop); OpenMP offers no query to check it. In a nested region it is the inner
+  team.
+- **`fftn::omp::executor`** has a width and a grouping fixed at construction
+  (`omp_get_max_threads()` by default). `bulk` opens `#pragma omp parallel num_threads(width)` every time; thread t runs
+  tasks t, t + w, … (w the threads the region actually got), so surplus threads return at
+  once and a runtime that gives fewer threads still runs every task. `concurrency()` is 1
+  when `omp_in_parallel()`, and `bulk` then runs its tasks on the caller.
+- **`fftn::thread_pool`** (`src/threading/thread_pool.cpp`) starts `threads - 1`
+  `std::thread`s; the caller of `bulk` is the last lane. A job is published by storing its
+  task, argument and size, then the unclaimed count (release), then bumping an epoch that
+  idle threads wait on; a thread claims by decrementing the count while positive and reads
+  the job only after a successful claim, which proves the job is not over. A late thread
+  therefore finds nothing, or claims a task of a later job as that job's member: no
+  per-job handshake waits for idle threads. Waiting is the engine's (spin 20 µs, yield
+  50 µs, then `std::atomic::wait`, notifying only registered sleepers). A thread-local flag
+  marks pool tasks: from inside one, any pool's `concurrency()` is 1 and its `bulk` runs
+  serially; a second thread's `bulk` while a job holds the pool also runs serially on its
+  own thread. Threads are not bound. Default size: the process's allowed CPUs (and CPU
+  quota). `bulk` neither allocates nor locks.
+- **Grouping** (`cache_group_size`, `src/threading/cache_groups.cpp`): logical CPUs per
+  group are the smallest group of the last level shared by more than one core (L3, else L2,
+  as Apple's clusters); a team is assumed packed onto consecutive cores, one thread per
+  core while it has no more members than the machine has cores, then every logical CPU;
+  0 (one group) when the team fits in one group or nothing is known. The pool and both
+  OpenMP adapters use it.
 
 What "natural in Kokkos" means concretely: plans accept host `View`s of any layout
 through their extents and strides; the executor takes the caller's execution-space
@@ -1452,6 +1538,22 @@ prototype's, and FFTW's waking of its threads for a short job) shows the shape o
 measured pathologies beside FFTN's handling of the same plans. The model's cost per point
 is the scheduler's own profile value, so agreement there checks the logic, not the
 constants: experiments T1 and T5 are the real check.
+
+The executors (task 3.3): over the same cases, bitwise against serial on an executor that
+runs tasks in order, one in reverse, one in seeded random order on three threads, the
+thread pool seen at widths 1 to 16 and several groupings, and a pool through the C
+contract; under ThreadSanitizer in the tsan stage. What FFTN asks of an executor (no call at
+width 1 or for an inline job; exactly `lanes_dealt` tasks), an executor that throws part
+way, nested calls, no allocation; the pool alone (every task once, calls back to back and
+after its threads have blocked, concurrent callers, nesting, shutdown); the grouping on
+synthetic and recorded topologies. The OpenMP adapters (`tests/omp`, built when the
+compiler has OpenMP): the executor at several widths and this_team() in regions of 1 to 8
+threads with both completions, bitwise against serial; regions of constant width; serial
+inside an active region and at width 1; runtime settings untouched. They are not run under
+ThreadSanitizer: the OpenMP runtimes here are not instrumented, and TSan then reports the
+join of every region as a race (checked with Homebrew LLVM 23's libomp); an Archer-enabled
+libomp would lift that. The runtime matrix is libomp (Clang) on macOS and Linux and libgomp
+(GCC) on Linux.
 
 ---
 
@@ -1736,9 +1838,14 @@ reported separately for every library.
   first touched by the threads that will use them. Buffer offsets within a page are
   randomised between rounds, in multiples of 64 bytes so that alignment is kept, and are
   shared by all arms of a round so an aliasing accident cannot decide a result.
-- **Validity.** fbench records load, frequency and thermal state where the OS exposes
-  them and marks rounds on a busy machine invalid (load average, and other processes'
-  current CPU use). On macOS it requests the performance-core class.
+- **Load.** fbench records load, frequency and thermal state where the OS exposes them,
+  per round the load average and other processes' current CPU use. Load does not
+  invalidate a round: interleaving, repeated process rounds and the A/A control absorb it,
+  so a busy machine gives a wider band, and claims are judged against the band of the same
+  run. A round waits (boundedly) only while other processes use more than half the CPUs;
+  a strict mode refuses rounds above the quiet thresholds. A process timeout loses the
+  cases that process had not finished in that round, not the run. On macOS fbench
+  requests the performance-core class.
 - **Accuracy** (relative RMS and maximum error against a double-double direct DFT in the
   harness, at sampled outputs, plus Parseval over whole rows) is stored with every timing;
   a wrong output in any round is reported as such, never averaged away.
@@ -1884,8 +1991,8 @@ below because section 5.3 left the shapes open; each is easy to change before a 
 1. *`team` is `{rank, size, group_size}`*: cache groups are runs of `group_size`
    consecutive ranks. There is no per-member CPU lookup (a dynamic lane map for unpinned
    threads, 13.3), no core class (rule 5's fastest-class restriction) and no caller
-   barrier hook. The OpenMP and pool adapters (3.3) will fill `group_size` from the
-   topology; unequal groups (a hybrid chip's) cannot be described yet.
+   barrier hook. The OpenMP and pool adapters fill `group_size` from the topology (item 18);
+   unequal groups (a hybrid chip's) cannot be described yet.
 2. *Completion.* `all`: claiming; no member waits for one that has not arrived, and each
    member returns once the whole output is written; surplus members help or wait, they do
    not return at once. `own`: a static deal of whole transforms, never split; with fewer
@@ -1944,7 +2051,61 @@ below because section 5.3 left the shapes open; each is easy to change before a 
     Windows 8), a member that blocks takes a lock, though only after its spin and yield
     budgets and never on the path where work is done. Whether that is acceptable under the
     execute contract ("no locks") is the maintainer's call; the alternative is FFTN's own
-    per-platform futex wrapper.
+        per-platform futex wrapper.
+
+**Threading adapters (task 3.3), for the maintainer's review.** Built as below; each is easy
+to change before a release.
+
+13. *The executor concept*: `concurrency()` and `bulk(n, task, arg)`, optionally
+    `group_size()`; tasks are a function pointer `void (*)(void*, int)` and an argument, so
+    nothing allocates and the library needs no template. `executor_ref` is the C struct
+    (item 20) with thunks, implicitly constructible from any executor (the one implicit
+    constructor in the API, so that `execute(in, out, pool, ws)` reads naturally). Not
+    provided: a `run_team` refinement for executors that guarantee concurrency (it would
+    serve the static fast path, if experiment T2 keeps it), lane maps or a CPU per lane, and
+    an `in_parallel()` query: nesting is signalled by `concurrency()` returning 1 (item 16).
+14. *The executor overload is not `noexcept`*: FFTN's own code throws nothing, allocates
+    nothing and locks nothing, but a user's executor may throw (a task system that fails to
+    spawn); the exception propagates, the output is unspecified, and the workspace's team
+    state is dropped so that members that did not run cannot count the next execution
+    wrong. The alternative is `noexcept`, terminating on a throwing executor.
+15. *Team size under an executor*: the scheduler is asked with `concurrency()` lanes and
+    `lanes_dealt` tasks are dispatched, as a team of that size (the same division of work).
+    The workspace must hold `workspace_bytes(concurrency())` (a precondition, asserted in
+    debug builds); clamping the width to what the workspace holds was the alternative.
+16. *Nesting through `concurrency()`*: an executor reports 1 from inside its own tasks, so a
+    nested execution takes the serial path. `thread_pool` does so inside a task of any FFTN
+    pool (a thread-local flag); `omp::executor` when `omp_in_parallel()`, that is inside an
+    active region only (an enclosing region of one thread lets it open its own). A custom
+    executor that does not is still correct, but a pool that blocks a busy thread while its
+    nested tasks wait for a free one deadlocks, as any nested `parallel_for` on it would.
+17. *`omp::this_team()`*: every thread of the region must make the call; inside `single`,
+    `masked`, a task or a worksharing loop only some do, and OpenMP has no query that tells,
+    so this is a documented precondition. In a nested region it describes the inner team.
+18. *Grouping (`fftn::cache_group_size`, public, in `team.hpp`)*: the smallest group of the
+    last level shared by several cores (L3, else L2), with the team assumed packed onto
+    consecutive cores (one thread per core while it has no more members than the machine has
+    cores). It is public because the header-only OpenMP adapter and callers' own teams need
+    it. It is an assumption: unbound threads that Linux spreads over the groups can put a
+    split transform across groups (correct, slower), while an estimate assuming spread
+    threads would have stopped small teams on Apple's clusters (where macOS packs threads)
+    from splitting at all. The research proposal of conservative thresholds for assumed
+    groupings is not built (`team` cannot say a grouping is assumed); a lane map measured per
+    call (13.3, 13.5) and experiments T1 and T5 should replace this.
+19. *`thread_pool`*: lanes include the caller of `bulk`; threads are not bound (no placement
+    modes, no QoS classes); no process-wide `shared()` instance; no fork handling; idle
+    threads linger for fixed budgets (spin 20 µs, yield 50 µs), not configurable; a second
+    thread's `bulk` while a job runs is run serially on that thread rather than queued or
+    locked; `bulk` takes a function pointer only (no template convenience for lambdas); the
+    default size is every allowed CPU, of every core class (rule 5 would take the fastest
+    class only).
+20. *The C contract* lives in `fftn/executor.h` now (types only, so no linkage
+    specification), not in the phase 6 `fftn/c_api.h`, which will include it: `fftn_executor`
+    {`self`, `concurrency`, `bulk`, `group_size` (may be null)} and `fftn_task`. Counts and
+    indices are `int`.
+21. *`omp::executor`'s width* is fixed at construction (`omp_get_max_threads()` by
+    default), not read at each call: a later `omp_set_num_threads` does not change it, which
+    keeps every region's width constant.
 
 ---
 
@@ -2014,6 +2175,9 @@ below because section 5.3 left the shapes open; each is easy to change before a 
 | 2026-11-14 | On targets with C > 1, a line whose stride is not 1 is copied to or from scratch around the chain; leaves and copies take any stride | Passes then load and store whole vectors only; strided axes get the lanes strategy in phase 4, which removes the copies |
 | 2026-11-14 | `options::scale` is fused into the pass that writes the output, so the result is bitwise the unscaled result times the scale; `options::force_isa` with `isa::best` as in section 5.3 (pending the maintainer's agreement, 18.2) | A fused scale costs no pass (task 1.2's acceptance, tested); forcing is how the suites run every target |
 | 2026-11-14 | fbench times single precision: input rounded to float, reference and check in double with float's epsilon; backends opt in with `precisions` in describe | Experiment X2 and the float targets need float timings; rounding first keeps the reference exact for the values the library sees, and opting in keeps competitors without float from failing smoke |
+| 2026-11-14 | Threading adapters (task 3.3): the `executor` concept (`concurrency`, `bulk`, optional `group_size`) behind a non-owning `executor_ref` that is the C contract's struct (`fftn/executor.h`); the executor overload dispatches one task per lane dealt work, as a team; `fftn/omp.hpp` (`this_team`, an executor of constant width); the opt-in `thread_pool`; `cache_group_size` | One allocation-free path from any runtime to the claiming engine, with no template in the library; dispatching only lanes with work is rule 4, and every dispatched task runs, so no member skips an execution; open points for review in 18.2 |
+| 2026-11-14 | The OpenMP tests are built wherever the compiler has OpenMP, except under ThreadSanitizer; the thread pool and custom executors carry the executor path's TSan coverage | The OpenMP runtimes at hand are not instrumented, and TSan reports the join of every region as a race (shown with Homebrew LLVM 23's libomp) |
+| 2026-11-14 | fbench measures on loaded machines: load is recorded per round, not a reason to invalidate it; a round waits at most 60 s, and only while other processes use more than half the CPUs; `--strict-quiet` keeps the old rule; a process timeout loses that process's unfinished cases for the round, not the run | Maintainer's direction: the shared machines will never be much quieter, and interleaving, repeated rounds and the A/A control already measure the noise the load adds |
 
 ---
 

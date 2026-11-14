@@ -5,6 +5,7 @@
 // (team_env.hpp), the static deal of completion::own, and the claiming engine for
 // completion::all.
 
+#include "threading/team_execute.hpp"
 #include "core/driver.hpp"
 #include "core/plan_core.hpp"
 #include "core/program.hpp"
@@ -106,6 +107,11 @@ transform_range transforms_of(const plan_core& core, const team& t) noexcept {
 
 void execute_team(const plan_core& core, const void* in, void* out, const team& t,
                   const workspace& ws, completion done) noexcept {
+  execute_member(core, in, out, t, ws, done, 0);
+}
+
+void execute_member(const plan_core& core, const void* in, void* out, const team& t,
+                    const workspace& ws, completion done, int threads) noexcept {
   assert(t.size >= 1 && t.rank >= 0 && t.rank < t.size && t.group_size >= 0 &&
          "fftn: invalid team");
   if (t.size == 1) {
@@ -133,7 +139,7 @@ void execute_team(const plan_core& core, const void* in, void* out, const team& 
     }
     return;
   }
-  const lane_map lanes{.lanes = t.size, .group_size = t.group_size};
+  const lane_map lanes{.lanes = t.size, .group_size = t.group_size, .threads = threads};
   const team_job job{
       .graph = &core.graph,
       .plan = make_schedule(core.graph, lanes, core.profile),

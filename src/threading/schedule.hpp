@@ -66,6 +66,11 @@ struct machine_profile {
 struct lane_map {
   int lanes = 1;
   int group_size = 0; // 0, or lanes or more: one group
+  // The threads of the runtime the team runs on, when it has more than the team (0: as
+  // many as lanes). An executor dispatches only the lanes dealt work, but all of its
+  // threads compete for the CPUs (a pool's idle threads linger, an OpenMP region keeps its
+  // width): oversubscription is judged by them.
+  int threads = 0;
 
   [[nodiscard]] int per_group() const noexcept {
     return group_size <= 0 || group_size > lanes ? lanes : group_size;
