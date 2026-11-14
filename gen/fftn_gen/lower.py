@@ -8,8 +8,10 @@ Each node becomes at most one operation. What is decided here:
   ("materialised rotation"). An Add can take either operand first, which gives two
   choices of m; a Scale or a twiddle multiply keeps its operand's m; loads have m = 0.
   The choice is driven backwards from the stores, which need m equal to the output's
-  pending rotation, so that no output needs an extra operation. Where that fails a store
-  gets a forced rotation (neg, or swap and conjugate), counted in the metadata.
+  pending rotation, so that no output needs an extra operation. Where that fails,
+  lower() raises ForcedRotation: no codelet so far needs one, and an operation that
+  rotates a register (neg, or swap and conjugate) would be added only when a lowering
+  does, with a test that compiles it.
 - Fused real multiply-adds. acc +- c * x becomes fmadd_r(acc, x, +-c) when the scaled
   node has no other use. A scale used twice stays one multiply (the unfused count of the
   algorithm does not grow); fusing it into both users would trade one multiply for an
@@ -18,7 +20,7 @@ Each node becomes at most one operation. What is decided here:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import mpmath
 
@@ -32,13 +34,15 @@ ADD_OPS = ("add", "subj", "sub", "addj")
 class Op:
     """One vocabulary operation. dst and args are value numbers (-1 for a store)."""
 
-    kind: str  # load, load_tw, add, sub, addj, subj, scale, fmadd_r, mul, mulc, neg,
-    # rot_m (times -i), rot_p (times i), store
+    kind: str  # load, load_tw, add, sub, addj, subj, scale, fmadd_r, mul, mulc, store
     dst: int
     args: tuple[int, ...] = ()
     const: mpmath.mpf | None = None
     index: int = -1  # load / store / load_tw position
-    extra: dict = field(default_factory=dict)
+
+
+class ForcedRotation(Exception):
+    pass
 
 
 def lower(g: Graph, outputs: list[Term]) -> list[Op]:
@@ -127,14 +131,12 @@ def lower(g: Graph, outputs: list[Term]) -> list[Op]:
                 else:
                     ops.append(Op(ADD_OPS[r_op], n, (first, second)))
 
-    value = max(live, default=0) + 1
     for k, t in enumerate(outputs):
         if t.node == 0:
             raise ValueError(f"output {k} is identically zero")
-        src = t.node
-        fix = (t.rot - mat[src]) % 4
-        if fix:
-            ops.append(Op(("", "rot_m", "neg", "rot_p")[fix], value, (src,)))
-            src, value = value, value + 1
-        ops.append(Op("store", -1, (src,), index=k))
+        if (t.rot - mat[t.node]) % 4:
+            raise ForcedRotation(
+                f"output {k} needs its register rotated by (-i)^{(t.rot - mat[t.node]) % 4}"
+            )
+        ops.append(Op("store", -1, (t.node,), index=k))
     return ops

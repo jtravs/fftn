@@ -12,8 +12,8 @@ import mpmath
 from fftn_gen.algorithms import choose, dft
 from fftn_gen.catalogue import RADICES, all_codelets
 from fftn_gen.codelet import build_ops
-from fftn_gen.ir import Graph
-from fftn_gen.lower import lower
+from fftn_gen.ir import Graph, rotate
+from fftn_gen.lower import ForcedRotation, lower
 from fftn_gen.schedule import peak_live, schedule
 from fftn_gen.verify import VerificationError, verify
 
@@ -43,9 +43,13 @@ class Codelets(unittest.TestCase):
         self.assertEqual(len(keys), len(codelets()))
         self.assertEqual(len(keys), len(RADICES) * 3 * 2)
 
-    def test_no_output_needs_a_forced_rotation(self) -> None:
-        for c in codelets():
-            self.assertEqual(c.counts.forced, 0, (c.radix, c.variant, c.sign))
+    def test_an_output_that_needs_a_forced_rotation_is_refused(self) -> None:
+        # A rotated load cannot be fixed by the choice of operand order: its register
+        # holds the input itself. Every generated codelet built, so none needed one.
+        g = Graph(2)
+        x0, x1 = g.input(0), g.input(1)
+        with self.assertRaises(ForcedRotation):
+            lower(g, [g.add(x0, x1), rotate(x0, 1)])
 
     def test_directions_cost_the_same(self) -> None:
         by_key = {(c.radix, c.variant, c.sign): c for c in codelets()}

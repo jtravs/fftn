@@ -223,7 +223,6 @@ TEST(codelet_metadata, complete_and_consistent) {
     EXPECT_TRUE(seen.insert({c.radix, static_cast<int>(c.kind), c.sign}).second) << "listed twice";
     EXPECT_EQ(c.twiddles, c.kind == gen::variant::plain ? 0 : c.radix - 1);
     EXPECT_EQ(c.cmuls, c.twiddles);
-    EXPECT_EQ(c.forced, 0) << "an output needed an extra rotation";
     EXPECT_EQ(c.adds % 2, 0);
     EXPECT_GE(c.live, c.radix) << "fewer live values than legs";
     EXPECT_GT(c.vops, 0);

@@ -80,8 +80,8 @@ For each radix R, variant and direction (`codelet.build`):
    first, which gives two choices. Wanted rotations are propagated backwards from the
    stores, which need m equal to the output's pending rotation, and each `Add` takes the
    choice that satisfies the nearest store. A store that still disagrees would need a
-   `neg` or a multiply by ∓i: the metadata counts these "forced" rotations; no codelet has
-   one. `acc ± c·x` becomes `fmadd_r(acc, x, ±c)` when the scaled node has no other user.
+   `neg` or a multiply by ∓i; no codelet needs one, and `lower` raises `ForcedRotation`
+   rather than emit an operation that no codelet has compiled. `acc ± c·x` becomes `fmadd_r(acc, x, ±c)` when the scaled node has no other user.
 5. **Order** (`schedule.py`) by greedy list scheduling: the ready operation that adds the
    fewest live values goes next, ties to the one using the most recently computed value
    (depth first). Loads go just before their first use, stores just after their producer.
@@ -175,7 +175,6 @@ call of the codelet, which processes C transforms at once:
 | `muls` | real multiplications: 2 per `scale` |
 | `fmas` | real fused multiply-adds: 2 per `fmadd_r` |
 | `cmuls` | complex multiplications by twiddles (`mul`, `mulc`); their cost is the target's |
-| `forced` | rotations materialised at a store (always 0 so far; a test holds it) |
 | `vops` | vocabulary operations, loads and stores apart |
 | `live` | peak live values, complex and twiddle registers together |
 
@@ -246,9 +245,10 @@ before the first store if it may run in place.
 
 - **Rotations are cheap only if the stores agree.** A store needs the register to hold the
   output itself, not a rotation of it. The backward propagation of wanted rotations finds
-  an orientation for every `Add` with no forced rotation in every codelet so far; if a new
-  algorithm makes `forced` non-zero, the metadata test fails and the lowering needs a
-  better choice before a cost is accepted.
+  an orientation for every `Add` with no forced rotation in every codelet so far. If a new
+  algorithm needs one, `lower` raises `ForcedRotation`: improve the choice, or add the
+  rotating operation to the lowering, the verifier and the emitter together, with a
+  codelet that exercises it in the C++ test.
 - **Value numbering can merge, never split, wrongly.** Keys keep 2^−150 of 256-bit values,
   so a missed merge needs a rounding boundary within 2^−100. A wrong merge would need two
   different linear functions to agree at three random points to that precision; the exact

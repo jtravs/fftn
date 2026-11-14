@@ -79,12 +79,6 @@ def _body(ops: tuple[Op, ...], indent: str) -> list[str]:
                 expr = f"fmadd_r({a[0]}, {a[1]}, {const(op.const)})"
             case "mul" | "mulc":
                 expr = f"{op.kind}({a[0]}, {a[1]})"
-            case "neg":
-                expr = f"neg({a[0]})"
-            case "rot_m":
-                expr = f"conj(swap_ri({a[0]}))"
-            case "rot_p":
-                expr = f"swap_ri(conj({a[0]}))"
             case other:
                 raise ValueError(f"cannot emit {other}")
         name = f"t{temps}"
@@ -185,7 +179,7 @@ def metadata_hpp(codelets: list[Codelet]) -> str:
         k = c.counts
         rows.append(
             f"    {{{c.radix}, variant::{c.variant}, {c.sign}, lowering::complex_register, "
-            f"{c.twiddles}, {k.adds}, {k.muls}, {k.fmas}, {k.cmuls}, {k.forced}, "
+            f"{c.twiddles}, {k.adds}, {k.muls}, {k.fmas}, {k.cmuls}, "
             f"{k.vector_ops}, {c.live}}},\n"
         )
     return "".join(
@@ -219,7 +213,6 @@ def metadata_hpp(codelets: list[Codelet]) -> str:
             "  std::uint16_t muls;\n",
             "  std::uint16_t fmas;\n",
             "  std::uint16_t cmuls;   // complex multiplies by twiddles (mul, mulc)\n",
-            "  std::uint16_t forced;  // rotations materialised at a store (neg or times -+i)\n",
             "  std::uint16_t vops;    // vocabulary operations, loads and stores apart\n",
             "  std::uint16_t live;    // peak live values (complex and twiddle registers)\n",
             "};\n",

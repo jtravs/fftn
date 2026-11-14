@@ -604,7 +604,7 @@ high-precision verification. It is documented in `gen/README.md` (section 17).
    `gen/README.md`).
    Alongside it, emit a metadata table (`src/gen/codelets.hpp`): radix, variant,
    direction, lowering, operation counts (adds, multiplies, FMAs, complex multiplies,
-   vocabulary operations, forced rotations), peak live values, twiddle count. The planner's
+   vocabulary operations), peak live values, twiddle count. The planner's
    cost model, the kernel registry and the tests are driven from this table, so there are
    no hand-maintained lists of radices anywhere.
 

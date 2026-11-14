@@ -23,7 +23,6 @@ class VerificationError(Exception):
 
 
 _TOLERANCE = mpmath.mpf(2) ** -200
-_MI = mpmath.mpc(0, -1)
 
 
 def evaluate(ops: list[Op] | tuple[Op, ...], x: list, w: list) -> list:
@@ -53,12 +52,6 @@ def evaluate(ops: list[Op] | tuple[Op, ...], x: list, w: list) -> list:
                 env[op.dst] = a[0] * a[1]
             case "mulc":
                 env[op.dst] = a[0] * mpmath.conj(a[1])
-            case "neg":
-                env[op.dst] = -a[0]
-            case "rot_m":
-                env[op.dst] = _MI * a[0]
-            case "rot_p":
-                env[op.dst] = -_MI * a[0]
             case "store":
                 if op.index in out:
                     raise VerificationError(f"output {op.index} stored twice")
