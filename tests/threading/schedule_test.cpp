@@ -77,8 +77,8 @@ TEST(WorkGraph, PhasesOfRowsAndPlanes) {
   EXPECT_EQ(g.work, 16384.0 * static_cast<double>(g.phases.size()));
   // The same in float, where a neon_fcma or avx2 pass's unit is a block of 2 or 4 copies.
   const auto f = fftn::detail::make_plan_core(
-      fftn::detail::view_of(fftn::rows_c2c<float>(16384, 1, fftn::direction::forward)), {},
-      fftn::detail::build_settings());
+      fftn::detail::view_of(fftn::rows_c2c<float>(16384, 1, fftn::direction::forward)),
+      fftn::options(), fftn::detail::build_settings());
   EXPECT_EQ(f->graph.work, 16384.0 * static_cast<double>(f->graph.phases.size()));
   // A generic pass of radix r sums r terms per point: 2 x 17 is a grouped radix-2 pass (34
   // points) and a generic radix-17 pass (34 x 17).

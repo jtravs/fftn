@@ -95,11 +95,16 @@ void check_row(fftn::isa target, std::size_t n, fftn::direction dir, const build
   settings.in_factor = in_factor ? fin.data() : nullptr;
   settings.out_factor = out_factor ? fout.data() : nullptr;
   settings.scale_on_input = scale_on_input;
-  fftn::shape<std::complex<T>, std::complex<T>> shape{
+  const fftn::shape<std::complex<T>, std::complex<T>> shape{
       .dir = dir,
-      .axes = {{.n = n,
-                .in_stride = static_cast<std::ptrdiff_t>(in_stride),
-                .out_stride = static_cast<std::ptrdiff_t>(out_stride)}},
+      .axes =
+          {
+              {
+                  .n = n,
+                  .in_stride = static_cast<std::ptrdiff_t>(in_stride),
+                  .out_stride = static_cast<std::ptrdiff_t>(out_stride),
+              },
+          },
       .batches = {},
   };
   const auto core =

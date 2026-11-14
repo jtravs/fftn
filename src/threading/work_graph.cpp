@@ -4,6 +4,7 @@
 #include "threading/work_graph.hpp"
 
 #include "core/program.hpp"
+#include "passes/pass_args.hpp"
 
 #include <algorithm>
 #include <cassert>

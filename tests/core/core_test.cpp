@@ -17,6 +17,7 @@
 
 #include <gtest/gtest.h>
 
+#include <array>
 #include <complex>
 #include <cstddef>
 #include <cstring>
@@ -131,10 +132,12 @@ TEST(Rules, ProfilesOfEveryTarget) {
 TEST(Rules, RecordedTable) {
   std::ifstream in(FFTN_CORE_DATA "/rule_radices.txt");
   ASSERT_TRUE(in.good()) << "cannot read " << FFTN_CORE_DATA "/rule_radices.txt";
-  const fftn::detail::target_profile profiles[] = {
-      {.registers = 16, .merge = false},
-      {.registers = 32, .merge = true},
-      {.registers = 32, .merge = false},
+  const std::array<fftn::detail::target_profile, 3> profiles{
+      {
+          {.registers = 16, .merge = false},
+          {.registers = 32, .merge = true},
+          {.registers = 32, .merge = false},
+      },
   };
   std::size_t lines = 0;
   std::size_t failures = 0;
@@ -153,7 +156,7 @@ TEST(Rules, RecordedTable) {
       std::vector<std::size_t> want;
       while (fields.peek() == ' ') {
         fields.get();
-        if (fields.peek() == '|' || fields.peek() == EOF) {
+        if (fields.peek() == '|' || fields.peek() == std::istringstream::traits_type::eof()) {
           break;
         }
         std::size_t r = 0;
