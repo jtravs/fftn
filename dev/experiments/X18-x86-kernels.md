@@ -122,7 +122,10 @@ MKL ÷ FFTW on the Xeon is 0.95 (geomean; 0.80 at 64, 0.87 at 4096), so the MKL 
    0.753 (default 4.8.8.16), 16384 8.8.16.16 0.843 (default 4.16.16.16), 1024 8.8.16 0.903
    (default 4.16.16, X2's measured winner with GCC 16 and batches 1 and 64), 256 16.16 0.941
    (default 2.8.16); runs 20261114-125134-ac87, -125200-05ea, -125215-cc40, -125232-d808.
-   The pattern is the register pressure of radix 16 on 16 registers. On AVX-512 the planner
+   The pattern is the register pressure of radix 16 on 16 registers. With the two overrides
+   (94ef09f; run 20261114-125833-44b1, 6 rounds, band ±1.00 %), paired against 9d9d455:
+   4096 0.751 (GCC 14) and 0.723 (Clang), 16384 0.895 and 0.840; FFTN ÷ FFTW at 4096 is
+   then 1.14 (GCC) and 1.07 (Clang), at 16384 1.39 and 1.41. On AVX-512 the planner
    is not the problem: no forced sequence beat the default by more than 4 % at 64, 128, 256,
    512, 1024, 16384, 60 or 120 (runs 20261114-124216-c5cc to -124341-0867).
 4. **Fewer, larger passes in FFTW.** FFTW's plans (Xeon, `perf report`): 64 = 32 × 2,
@@ -164,8 +167,11 @@ per-stage dispatch.
 
 Diagnosis done. Committed: the division fix (adopted: 0.855–0.903 on the Xeon, 0.955–0.982
 on the EPYC, no case slower), the three-line chain (adopted: up to 0.85 at 512–16384,
-nothing slower than the band), and two AVX2 overrides (pending its A/B, below). With both
-kernel-independent fixes FFTN ÷ FFTW is 1.23–1.25 on the Xeon and 1.28–1.29 on the EPYC.
+nothing slower than the band), and two AVX2 overrides (adopted: 0.72–0.75 at 4096,
+0.84–0.90 at 16384 on the EPYC; they change only those two lengths on targets that use the
+AVX2 double table). With the two kernel-independent fixes FFTN ÷ FFTW is 1.23–1.25 on the
+Xeon and 1.28–1.29 on the EPYC (geomean of the 14 cases; about 1.25 on the EPYC with the
+overrides).
 
 Recommendation, in order (expected gains from the measurements above):
 
