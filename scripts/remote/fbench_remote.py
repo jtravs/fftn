@@ -349,11 +349,9 @@ def cmd_fetch(args: argparse.Namespace) -> int:
     if manifest.get("campaign"):
         campaigns = REPO / "bench-out" / "campaigns"
         campaigns.mkdir(parents=True, exist_ok=True)
-        remote_campaigns = f"{manifest['jobdir']}/bench-out/campaigns/*"
+        source = f"{profile.ssh}:{manifest['jobdir']}/bench-out/campaigns/*"
         subprocess.run(
-            ["scp", "-q", "-r", "-o", "BatchMode=yes", f"{profile.ssh}:{remote_campaigns}"]
-            + [str(campaigns)],
-            check=False,
+            ["scp", "-q", "-r", "-o", "BatchMode=yes", source, str(campaigns)], check=False
         )
         print(f"campaign state copied into {campaigns}")
     listing = ssh(profile, f"ls {shlex.quote(manifest['jobdir'])}/bench-out/runs/", check=False)
