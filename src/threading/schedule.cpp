@@ -35,12 +35,13 @@ machine_profile profile_for(const topology& t) noexcept {
   // (the Xeon's 18 cores). On neither did T1's measured costs pass the adoption test, so
   // both keep the provisional synchronisation cost and claim runs.
   const bool apple = !t.os_cpu_ids;
-  const int cpus_per_core =
-      t.cores.empty() ? 1
-                      : static_cast<int>(std::ranges::min(t.cores, {}, [](const cpu_group& c) {
-                          return c.cpus.size();
-                        }).cpus.size());
-  const bool mesh = cpus_per_cache_group(t) > p.mesh_group_lanes * std::max(cpus_per_core, 1);
+  std::size_t cpus_per_core = t.cores.empty() ? 1 : t.cores.front().cpus.size();
+  for (const cpu_group& core : t.cores) {
+    cpus_per_core = std::min(cpus_per_core, core.cpus.size());
+  }
+  const auto group_cpus = static_cast<std::size_t>(cpus_per_cache_group(t));
+  const bool mesh = group_cpus > static_cast<std::size_t>(p.mesh_group_lanes) *
+                                     std::max<std::size_t>(cpus_per_core, 1);
   if (apple) {
     p.split_min_points = 8192;
   }
