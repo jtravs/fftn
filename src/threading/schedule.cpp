@@ -41,6 +41,7 @@ schedule make_schedule(const work_graph& g, const lane_map& lanes,
       job_ns < profile.inline_multiple * profile.dispatch_ns) {
     s.inline_all = true;
     s.lanes_dealt = lanes.size_of(0);
+    s.dispatch = 1;
     return s;
   }
   // Rules 4 and 5: as many groups as have a group's worth of tasks, at least one; a batch
@@ -49,6 +50,16 @@ schedule make_schedule(const work_graph& g, const lane_map& lanes,
   const auto groups = static_cast<std::size_t>(lanes.groups());
   s.groups = static_cast<int>(std::min(groups, (g.tasks + per_group - 1) / per_group));
   s.lanes_dealt = std::min(lanes.lanes, s.groups * lanes.per_group());
+  s.dispatch = s.lanes_dealt;
+  if (std::cmp_less(g.tasks, s.lanes_dealt)) {
+    bool splits = false;
+    for (int h = 0; h < s.groups && !splits; ++h) {
+      splits = share_of(s, lanes, h).split != 0;
+    }
+    if (!splits) {
+      s.dispatch = static_cast<int>(g.tasks);
+    }
+  }
   return s;
 }
 

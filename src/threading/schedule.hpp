@@ -94,6 +94,11 @@ struct schedule {
   // a group stays in one (full-width teams lost at 64 lanes: 1.19 against 0.83 at 8).
   int groups = 1;
   int lanes_dealt = 1; // members in those groups
+  // The members an executor dispatches (rule 4): lanes_dealt, or, when no group splits a
+  // task, only as many as there are tasks (whole tasks give a member each at most). A team
+  // of that many members gets the same split decisions, none: each group's share then
+  // equals its members.
+  int dispatch = 1;
   // Whole tasks are counted, claimed and finished in units of `grain` consecutive tasks, so
   // that a batch of any size fits the 24-bit counters (team_state.hpp); 1 unless the batch
   // has millions of transforms.

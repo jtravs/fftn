@@ -7,12 +7,13 @@
 // The scheduler is asked once with the executor's whole concurrency. If the job is too small
 // to share (rule 1) or one lane would have everything, it runs serially on the caller and the
 // executor is never called. Otherwise only the lanes that have work are dispatched (rule 4):
-// a team of lanes_dealt members, the leading groups the scheduler deals tasks to. A team of
-// that size gets exactly the division the wider team's dealt lanes would have had (the same
-// groups, shares and splits: schedule.cpp computes all of them from the dealt lanes), so
-// nothing is lost by not dispatching the rest. The one thing the dealt lanes do not show is
-// how many threads compete for the CPUs: all of the executor's (a pool's idle threads linger,
-// an OpenMP region keeps its width), so the members judge oversubscription by its width. An
+// a team of schedule::dispatch members, the leading groups the scheduler deals tasks to, and
+// no more members than tasks when nothing is split. A team of that size gets exactly the
+// division the wider team's dealt lanes would have had (the same groups, shares and splits:
+// schedule.cpp computes all of them from the dealt lanes, and with one member per task no
+// group splits), so nothing is lost by not dispatching the rest. The one thing the dealt lanes do
+// not show is how many threads compete for the CPUs: all of the executor's (a pool's idle threads
+// linger, an OpenMP region keeps its width), so the members judge oversubscription by its width. An
 // OpenMP executor still opens its region at
 // its constant width, its surplus threads returning at once (fftn/omp.hpp).
 //
@@ -60,7 +61,7 @@ void execute_on(const plan_core& core, const void* in, void* out, const executor
     const int group_size = ex.group_size();
     const lane_map lanes{.lanes = width, .group_size = group_size < 0 ? 0 : group_size};
     const schedule plan = make_schedule(core.graph, lanes, core.profile);
-    if (!plan.inline_all && plan.lanes_dealt > 1) {
+    if (!plan.inline_all && plan.dispatch > 1) {
       assert(ws.size() >= workspace_bytes(core, width) &&
              "fftn: workspace smaller than plan::workspace_bytes(executor concurrency)");
       dispatched_team team{
@@ -68,7 +69,7 @@ void execute_on(const plan_core& core, const void* in, void* out, const executor
           .in = in,
           .out = out,
           .ws = &ws,
-          .size = plan.lanes_dealt,
+          .size = plan.dispatch,
           .group_size = lanes.group_size,
           .threads = width,
       };

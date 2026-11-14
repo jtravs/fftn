@@ -17,6 +17,7 @@
 #include <complex>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <vector>
 
@@ -187,6 +188,52 @@ TEST(Schedule, DealsToGroups) {
   const schedule twelve = make_schedule(rows(65536, 12)->graph, lanes, profile());
   EXPECT_EQ(twelve.groups, 2);
   expect_partition(twelve, lanes);
+}
+
+// Rule 4 under an executor: with nothing split, no more members are dispatched than there
+// are tasks, and a team of that many members gets the same (unsplit) division.
+TEST(Schedule, DispatchesNoMoreMembersThanTasksWhenNothingSplits) {
+  machine_profile never = profile();
+  never.split_min_points = std::numeric_limits<std::size_t>::max();
+  never.split_min_points_mesh = std::numeric_limits<std::size_t>::max();
+  const lane_map group8{.lanes = 8};
+  for (const std::size_t k : {std::size_t{1}, std::size_t{3}, std::size_t{7}}) {
+    const auto r = rows(65536, k);
+    const schedule s = make_schedule(r->graph, group8, never);
+    EXPECT_FALSE(s.inline_all);
+    EXPECT_EQ(s.lanes_dealt, 8);
+    EXPECT_EQ(s.dispatch, static_cast<int>(k)) << k;
+    const lane_map team{.lanes = s.dispatch, .threads = 8};
+    const schedule t = make_schedule(r->graph, team, never);
+    EXPECT_EQ(t.lanes_dealt, s.dispatch);
+    EXPECT_EQ(t.dispatch, s.dispatch);
+    EXPECT_EQ(share_of(t, team, 0).split, 0U);
+    EXPECT_EQ(share_of(t, team, 0).count, k);
+    // Splitting allowed (at least two members per task): the whole group shares them.
+    if (k <= 4) {
+      const schedule split = make_schedule(r->graph, group8, profile());
+      EXPECT_GT(share_of(split, group8, 0).split, 0U);
+      EXPECT_EQ(split.dispatch, 8);
+    }
+  }
+  // Several groups, nothing split: nine short rows on 64 lanes in groups of 8 take 9
+  // members, a whole group and one member of the next.
+  const lane_map wide{.lanes = 64, .group_size = 8};
+  const auto nine = rows(1024, 9);
+  machine_profile eager_dispatch = never;
+  eager_dispatch.dispatch_ns = 0;
+  const schedule s = make_schedule(nine->graph, wide, eager_dispatch);
+  EXPECT_EQ(s.groups, 2);
+  EXPECT_EQ(s.lanes_dealt, 16);
+  EXPECT_EQ(s.dispatch, 9);
+  const lane_map team{.lanes = 9, .group_size = 8, .threads = 64};
+  const schedule t = make_schedule(nine->graph, team, eager_dispatch);
+  expect_partition(t, team);
+  EXPECT_EQ(share_of(t, team, 0).count, 8U);
+  EXPECT_EQ(share_of(t, team, 1).count, 1U);
+  EXPECT_EQ(share_of(t, team, 0).split + share_of(t, team, 1).split, 0U);
+  // At least as many tasks as dealt lanes: everyone is dispatched.
+  EXPECT_EQ(make_schedule(rows(1024, 64)->graph, wide, eager_dispatch).dispatch, 64);
 }
 
 // An oversubscribed team (more members than CPUs) splits nothing.
