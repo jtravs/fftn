@@ -1,6 +1,6 @@
 # X2: radix sets and orders per target
 
-- **Status:** planned
+- **Status:** running (EPYC lengths up to 1024 done, planner v1 adopted; the rest pending)
 - **Owner:** unassigned (written with task 1.2, 2026-11-14)
 - **Phase / task:** 1.4
 
@@ -118,8 +118,108 @@ counts and a time estimate.
 
 ## Results
 
-None yet.
+### EPYC 7763, AVX2, lengths up to 1024
+
+- **Where and how:** campaign `epyc-smooth`, 2026-11-14 06:21–08:15 UTC, on an exclusive
+  Slurm node: AMD EPYC 7763 64-Core Processor (128 logical CPUs, 32 MiB L3 per the
+  harness), Linux 5.14 (el9); GCC 16.2.0, Release (`-O3 -DNDEBUG`), so not the GCC 15 of
+  "Machines"; instruction set `avx2` (fbench's FFTN backend, the best target); one thread.
+  Load: 1-minute load average at the start of each round 0.23 to 1.33 (median 0.74) on 128
+  CPUs. Source: commit f8d9c7f (the harness's build of each arm). All 133 lengths ran
+  every stage: no candidate dropped, none untimed.
+- **Runs:** screening 20261114-062126-1dae to 20261114-072134-6c50 (133 runs), refinement
+  20261114-072235-f4d0 to 20261114-075047-e2da (133), confirmation 20261114-075105-41a2 to
+  20261114-081505-3863 (120: in 13 lengths v0 won every case's refinement);
+  `bench-out/campaigns/x2-epyc-smooth.json` maps each length to its three runs.
+  `search.py report --name epyc-smooth` gives the per-case table.
+- **v0 against the best:** geometric mean of time(v0) ÷ time(winner) over the 133 lengths
+  1.257 (batch 1, double), 1.442 (batch 1, float), 1.246 (batch 64, double), 1.434
+  (batch 64, float). The decision rule's first test (winner faster by more than 3 % with
+  fbench's verdict "faster", interval clear of the A/A band) holds for 101, 102, 103 and
+  105 of the 133 cases of each group; v0 won the refinement in 24 to 27 of them (9 in each
+  group are the lengths up to 16, where v0's leaf won every case). The confirmation's A/A band was 1.2 %
+  at the median, 3.0 % at the 90th percentile.
+- **Ties:** in 83 of the 248 double cases and 71 of the 248 float cases above 16 the
+  refinement's best two candidates are within the confirmation's band of each other.
+  Batches agree: the batch-1 and batch-64 winners are the same sequence in 98 (double) and
+  103 (float) of the 124 lengths above 16, and one is within the other's band in 118 and
+  121.
+- **Patterns:** the winners have fewer passes than v0 (2.7 on average against 3.6) and use
+  the radices 10, 12, 14, 15 and 16 that v0 never chooses (1024: 4.16.16 or 8.8.16; 945:
+  15.7.9; 1000: 10.10.10 in double). Tails decide the rest: wherever C divides n the
+  winner's first radix is a multiple of C in 194 of 196 double cases and 139 of 146 float
+  cases, and float prefers a first radix of exactly 4 even at the cost of a pass (100:
+  4.5.5 in 0.57 of the time of 10.10; 2.10.5 takes 3.6 times as long as 4.5.5).
+- **Rules tried** (reproduction as counted below, in sample): v0 20.5 %; fewest passes
+  with a first radix that is a multiple of C, ties by a padded operation count, 72 %; the
+  sequence of lowest padded operation count with fitted per-pass and per-tail costs, 78 %
+  (79 % with costs per unit proportional to the codelets' operation counts); a table of
+  costs per pass kind and radix with tails proportional to the unit cost, 83 %; with a
+  free cost per tail and radix, the model adopted, 93.8 % before overrides. One table for
+  both precisions reached 90.8 %, so each C has its own.
+- **The fit:** the model of DESIGN.md 11.2 rule 4 plus a constant per transform, per
+  precision, batches 1 and 64 together. Data: every candidate's median paired log ratio to
+  v0 from the refinement (weight 1) and, for candidates not refined, from the screening
+  (weight 0.3); 7-smooth lengths 18 to 1024. Least squares on log(cost(candidate)) −
+  log(cost(v0)) − observed, soft-L1 loss with scale 0.05 (SciPy's `least_squares`), costs
+  per unit bounded below by 0.4 × (codelet vocabulary operations + 2R), the middle
+  radix-4 unit fixed at (operations + 2R) to set the scale, then multiplied by 10 and
+  rounded to integers; residual 3.5 % (double) and 3.9 % (float) RMS, 2.8 % and 2.9 % on
+  the refined candidates. The fitting script needs NumPy and SciPy, which the
+  repository's tools do not use, so it is not tracked; the method above and the tables in
+  `src/planner/rules.cpp` are the record. Two-fold cross-validation over the lengths (fit
+  on half, count on the other half, before overrides): 92 %.
+- **Counting reproduction:** a case is reproduced when v1's sequence is the refinement's
+  winner, or when its median paired log ratio in the same refinement run is within the
+  confirmation run's A/A band (fbench's band, at least 1 %) of the winner's; where v0 won
+  and there was no confirmation, the band is 1 %. A leaf (n ≤ 16) is the only sequence
+  measured besides its splits and counts as reproduced when it won. Where v1's sequence was
+  not refined the screening run would have been used; it never was needed: every v1
+  sequence was among the refined candidates.
+- **Planner v1 against the measurements:** 509 of 532 cases reproduced (95.7 %; 473 of the
+  496 cases above 16, 95.4 %): 419 exact, 54 within the band, 36 leaves. Per group: 124,
+  129, 128 and 128 of 133 (batch 1 double, batch 1 float, batch 64 double, batch 64 float).
+  The 23 misses are 1.3 % to 4.2 % behind the winner, all in the refinement (worst: 28,
+  batch 64 float, 4.7 against 7.4). Without overrides the costs' choice was more than 2 %
+  slower than v0 in six cases (42 batch 1 double, 9.5 %; 70 batch 1 double; 140 batch 64
+  float; 350 batch 64 double; 490 batch 1 double; 700 batch 1 float), all from the order
+  of a radix 7; the six overrides are those lengths' winners, which no batch of the same
+  precision measured slower than v0. With them no case is slower than v0 by more than
+  2 %: the worst are 882 batch 64 double (14.7.9, 1.1 % slower), 686 and 63 batch 64 double
+  (0.8 %). Estimated from the refinement, the geometric mean of time(v0) ÷ time(v1) is
+  1.255, 1.444, 1.245 and 1.431 for the four groups, against the winners' 1.257, 1.442,
+  1.246 and 1.434 in the confirmation.
+
+### Pending
+
+Nothing below has run; each is measured against the planner of the commit it runs from.
+From a checkout of the commit before planner v1 (merge 1a5e677 on this branch) the arm
+called v0 is planner v0, as the protocol states; from planner v1's commit it is v1, which
+is what the next decisions need (does v1 reproduce the winners there, or does that target
+need its own table?).
+
+- EPYC, lengths above 1024 (39 lengths, the cost estimate's top 20 per length): `uv run
+  --frozen python scripts/remote/fbench_remote.py submit epyc fftn --campaign
+  bench/x2/search.py --time 12:00:00 -- all --name epyc-long --lengths 1025-`
+- Xeon Gold 6240, AVX2 now and AVX-512 after task 1.3: `uv run --frozen python
+  scripts/remote/fbench_remote.py submit xeon fftn --campaign bench/x2/search.py --time
+  12:00:00 -- all --name xeon-smooth --lengths 2-1024`, and the same with `--name
+  xeon-long --lengths 1025-`.
+- Apple M5 Max, `neon_fcma` (C = 1 double, C = 2 float), when fbench's quiet-machine check
+  passes: `uv run --frozen python bench/x2/search.py --build build/check-release all --name
+  mac-smooth --lengths 2-1024` from a Release build of the commit, then `--name mac-long
+  --lengths 1025-`.
+- Reporting and re-fitting: `uv run --frozen python bench/x2/search.py report --name NAME`;
+  the count above needs the screening and refinement medians per candidate
+  (`search.py`'s `paired_medians`).
 
 ## Verdict
 
-Pending.
+For AVX2 (EPYC 7763, lengths up to 1024): planner v0 is replaced. v0 was more than 3 %
+slower than the best sequence, clear of the band, in about 77 % of the cases (1.25 times
+slower in double and 1.44 in float, geometric means). Planner v1 (DESIGN.md 11.2) meets
+the acceptance rule there: 95.7 % of the measured winners reproduced and no case slower
+than v0 by more than 2 %. Adopted as the default for every target; on NEON, AVX-512,
+x86-64-v2, AVX and scalar, and for lengths above 1024, it applies by analogy (the table
+of the nearest C) and is unmeasured until the campaigns under "Pending" run. Task 1.3
+decides AVX-512's table, including FFTL's radix-16 rule for it.
