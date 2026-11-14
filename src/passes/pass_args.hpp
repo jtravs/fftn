@@ -50,6 +50,11 @@ struct pass_args {
   // A lane pass whose output factor is shared (factor_sharing::output): the consecutive
   // elements that share each entry, a multiple of the target's complex count.
   std::size_t factor_copies = 1;
+  // A leaf's unit u transforms the line at src + u src_dist and dst + u dst_dist bytes: 0
+  // for a stage of one line; a batch's distances when the driver runs a batch of leaves as
+  // one call over its units (driver.cpp, stage::batch_units).
+  std::ptrdiff_t src_dist = 0;
+  std::ptrdiff_t dst_dist = 0;
 };
 
 // Runs units [first, last) of a pass. A unit is the kernel's own (a block of butterflies,

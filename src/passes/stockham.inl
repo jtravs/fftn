@@ -232,20 +232,30 @@ void lane_pass(const pass_args* a, std::size_t first, std::size_t last) {
 // y[k] = sum_j x[j] exp(Sign 2 pi i j k / R), with both edges' operations. Values are
 // broadcast on loading and lane 0 is stored, so every lane computes the same transform
 // and any strides work; every load precedes every store, so src may be dst (in place).
-// Reads src, dst, src_stride, dst_stride, scale, in_factor, out_factor.
+// Unit u is the line at src + u src_dist, dst + u dst_dist bytes (one line in a chain; a
+// batch of rows when the driver runs them in one call, X20); every line gets the same
+// arithmetic. Reads src, dst, src_stride, dst_stride, src_dist, dst_dist, scale, in_factor,
+// out_factor.
 template <class T, std::size_t R, int Sign, edge_op InOp, edge_op OutOp>
 void leaf_pass(const pass_args* a, std::size_t first, std::size_t last) {
-  const one_in<T, InOp> in{
-      .p = static_cast<const T*>(a->src),
+  one_in<T, InOp> in{
+      .p = nullptr,
       .leg = 2 * a->src_stride,
       .op = make_edge<T, InOp>(a, a->in_factor, 0, 1),
   };
-  const one_out<T, OutOp> out{
-      .p = static_cast<T*>(a->dst),
+  one_out<T, OutOp> out{
+      .p = nullptr,
       .leg = 2 * a->dst_stride,
       .op = make_edge<T, OutOp>(a, a->out_factor, 0, 1),
   };
-  for (std::size_t u = first; u < last; ++u) { // the one unit, when the range holds it
+  // Batch distances are whole elements, so whole reals.
+  constexpr auto real_bytes = static_cast<std::ptrdiff_t>(sizeof(T));
+  const std::ptrdiff_t src_dist = a->src_dist / real_bytes;
+  const std::ptrdiff_t dst_dist = a->dst_dist / real_bytes;
+  for (std::size_t u = first; u < last; ++u) {
+    const auto k = static_cast<std::ptrdiff_t>(u);
+    in.p = static_cast<const T*>(a->src) + k * src_dist;
+    out.p = static_cast<T*>(a->dst) + k * dst_dist;
     cdft<R>::template plain<T, Sign>(in, out);
   }
 }

@@ -177,6 +177,21 @@ template <class T> void run_case(std::size_t n, std::size_t batch, int reps, dou
                          }
                        },
                        batch, reps, ms));
+  report("copy", time_ns(
+                     [&] {
+                       d::slot_addresses here = at;
+                       for (std::size_t t = 0; t < batch; ++t) {
+                         for (std::size_t k = 0; k < body.size(); ++k) {
+                           d::pass_args a = body[k]->args;
+                           a.src = slot_src(body[k]->src, here);
+                           a.dst = slot_dst(body[k]->dst, here);
+                           body[k]->run(&a, 0, body[k]->units);
+                         }
+                         here.in += dist;
+                         here.out += dist;
+                       }
+                     },
+                     batch, reps, ms));
   if (body.size() == 1) {
     const d::pass_fn fn = body[0]->run;
     const std::size_t units = body[0]->units;

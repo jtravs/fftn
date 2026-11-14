@@ -368,6 +368,7 @@ void chain_builder<T>::add_leaf(std::size_t n, int sign, endpoint src, endpoint 
   st.dst = dst.where;
   st.units = 1;
   st.chunks = 1;
+  st.batch_units = true;
   st.name = "leaf radix-" + std::to_string(n) + " " + direction_name(sign) +
             (edges.in != edge_op::none || edges.out != edge_op::none
                  ? " (" + edges_note(edges.in, edges.out).substr(2) + ")"

@@ -730,6 +730,7 @@ std::shared_ptr<const plan_core> make_plan_core(const shape_view& s, const optio
   for (const std::size_t n : c->lengths) {
     points *= n; // the layouts' reach checks have bounded the product
   }
+  mark_flat(c->prog);
   c->graph = build_work_graph(c->prog, points, settings.chunk_points);
   c->profile = settings.profile;
   c->runs_inline = runs_inline(c->graph, c->profile);
