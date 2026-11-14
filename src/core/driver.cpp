@@ -85,8 +85,13 @@ slot_addresses moved_in_nest(const program& p, std::size_t begin, std::size_t de
                              std::size_t index, const slot_addresses& at) noexcept {
   slot_addresses here = at;
   std::size_t rest = index;
-  for (std::size_t i = begin + depth; i > begin; --i) {
+  for (std::size_t i = begin + depth; i > begin && rest != 0; --i) {
     const loop& l = *std::get_if<loop>(&p.records[i - 1]);
+    // No division while the index fits the loop (always, for one batch loop): it runs once
+    // per transform, and divisions are slow on some x86 cores (run_stage_chunks).
+    if (rest < l.count) {
+      return moved(here, l.step, rest);
+    }
     here = moved(here, l.step, rest % l.count);
     rest /= l.count;
   }
@@ -100,9 +105,15 @@ void run_stage_chunks(const stage& st, const slot_addresses& at, std::size_t fir
   pass_args args = st.args;
   args.src = source_of(st.src, at);
   args.dst = destination_of(st.dst, at);
-  for (std::size_t c = first; c < last; ++c) {
-    // Fixed by the plan, so a split across threads runs exactly these ranges.
-    st.run(&args, chunk_start(st.units, st.chunks, c), chunk_start(st.units, st.chunks, c + 1));
+  // Chunks [first, last) are adjacent ranges of units, and a unit's result does not depend
+  // on the range it is run in, so one call over their union gives the same bits as one call
+  // per chunk. The ends are found without dividing in the common case of the whole stage:
+  // a 64-bit division costs 40 to 90 cycles on Cascade Lake, and four per chunk were a third
+  // of a 64-point transform there (dev/experiments/X18-x86-kernels.md).
+  const std::size_t begin = first == 0 ? 0 : chunk_start(st.units, st.chunks, first);
+  const std::size_t end = last == st.chunks ? st.units : chunk_start(st.units, st.chunks, last);
+  if (begin < end) {
+    st.run(&args, begin, end);
   }
 }
 

@@ -108,8 +108,10 @@ void lane_pass(const pass_args* a, std::size_t first, std::size_t last) {
   const T* table = static_cast<const T*>(a->twiddles);
   const std::ptrdiff_t in_leg = at(s * m, 2);
   const std::ptrdiff_t out_leg = at(s, ys);
-  std::size_t p = first / blocks;
-  std::size_t b = first % blocks;
+  // No division when the range starts in the first group (a whole stage): it is slow on
+  // some x86 cores (dev/experiments/X18-x86-kernels.md).
+  std::size_t p = first < blocks ? 0 : first / blocks;
+  std::size_t b = first < blocks ? first : first % blocks;
   for (std::size_t u = first; u < last; ++u) {
     const std::size_t q0 = b * C<T>;
     const std::size_t valid = s - q0 < C<T> ? s - q0 : C<T>;
