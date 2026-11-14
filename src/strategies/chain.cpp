@@ -505,12 +505,21 @@ std::size_t chain_builder<T>::c2c_line(std::size_t n, int sign, endpoint src, en
     add_copy(n, src, {slot::a, 1}, none, stages);
     at = endpoint{.where = slot::a, .stride = 1};
   }
+  // A contiguous destination that is not the source serves as the second scratch line:
+  // passes alternate between it and a, ending in it, so a chain touches three lines (source,
+  // destination, a) rather than four, which keeps rows of 512 to 1024 complex doubles in
+  // a 32 KiB L1 longer (dev/experiments/X18-x86-kernels.md).
+  const bool via_dst = !aliased && !copy_in && !copy_out && !bluestein && dst.stride == 1 &&
+                       dst.where != slot::a && dst.where != slot::b;
   std::size_t s = 1;
   for (std::size_t i = 0; i < rad.size(); ++i) {
     const bool last = i + 1 == rad.size();
-    const endpoint next =
-        last && !copy_out ? dst
-                          : endpoint{.where = at.where == slot::a ? slot::b : slot::a, .stride = 1};
+    endpoint next{.where = at.where == slot::a ? slot::b : slot::a, .stride = 1};
+    if (last && !copy_out) {
+      next = dst;
+    } else if (via_dst) {
+      next = (rad.size() - 1 - i) % 2 == 0 ? dst : endpoint{.where = slot::a, .stride = 1};
+    }
     if (bluestein && last) {
       add_bluestein(n, rad[i], sign, at, next, edges, i == 0, stages);
     } else {
