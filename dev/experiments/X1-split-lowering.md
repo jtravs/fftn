@@ -154,6 +154,13 @@ heavily loaded: band ±4.00 %): split 1.10–1.25 slower on every case with a ru
 about 1.16). NEON stays interleaved, as expected: FCMA multiplies complex values in two
 instructions and rotates for free.
 
+Fix after review: an r2c row whose pairing fused into the last pass (`avx512` fuses at
+radix 8, `avx2` at 4) never took a split run, while the separate route did, so the pair
+gave different bits (r2c 1024 forced 8 × 8 × 8: 314 of 513 bins differ, forced on NEON).
+`route()` now sends an r2c row to the separate route whenever its half-length chain has a
+split run; fusion stays where none exists. Tests `Passes.R2cRoutesAgreeUnderSplit` and
+forced radix-8 real rows in `Passes.TargetsThatRoundAlikeGiveTheSameBits`. Not re-timed.
+
 ## Verdict
 
 Adopted on x86: `avx2` and `avx512`, double and float, take split runs by default

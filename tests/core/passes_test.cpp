@@ -573,6 +573,55 @@ TEST(Passes, SplitOnlyWhereItFits) {
   }
 }
 
+// An r2c row whose pairing would fuse into the last pass (fuse_real_radix 8) and one whose
+// pairing is a pass of its own (1), split forced: a fused pairing cannot end a split run, so
+// where the half-length chain has one the row takes the separate route, and the two give the
+// same bits (avx512 fuses at radix 8 where avx2 does not). With interleaved passes forced
+// the pairing still fuses.
+template <class T> void r2c_routes_agree_under_split(fftn::isa target) {
+  using c = std::complex<T>;
+  const std::size_t f = std::max<std::size_t>(8, split_block_of<T>(target));
+  constexpr std::size_t rows = 3;
+  for (const std::vector<std::size_t>& radices :
+       {std::vector<std::size_t>{f, 8, 8}, std::vector<std::size_t>{f, 8, 8, 8}}) {
+    std::size_t n = 2;
+    for (const std::size_t x : radices) {
+      n *= x;
+    }
+    SCOPED_TRACE(std::string(fftn::isa_name(target)) + (sizeof(T) == 8 ? " double" : " float") +
+                 ", n = " + std::to_string(n));
+    fftn::test::input_source src(0xF05EULL + n);
+    const std::vector<T> xr = src.reals<T>(rows * n);
+    const auto shape = fftn::rows_r2c<T>(n, rows);
+    const auto view = fftn::detail::view_of(shape);
+    const auto plan = [&](fftn::detail::layout_choice layout, std::size_t fuse) {
+      build_settings settings;
+      settings.layout = layout;
+      settings.radices = radices;
+      settings.fuse_real_radix = fuse;
+      return make_plan_core(view, {.force_isa = target}, settings);
+    };
+    const auto fused = plan(fftn::detail::layout_choice::split, 8);
+    const auto separate = plan(fftn::detail::layout_choice::split, 1);
+    const std::string names = joined(stage_names(*fused));
+    EXPECT_NE(names.find("split lane"), std::string::npos) << names;
+    EXPECT_EQ(names, joined(stage_names(*separate)));
+    const cvec<T> y_fused = run<T, c>(*fused, xr, rows * (n / 2 + 1));
+    const cvec<T> y_separate = run<T, c>(*separate, xr, rows * (n / 2 + 1));
+    EXPECT_EQ(y_fused, y_separate) << "the fused and separate r2c routes differ";
+    const std::string interleaved =
+        joined(stage_names(*plan(fftn::detail::layout_choice::interleaved, 8)));
+    EXPECT_NE(interleaved.find("with the r2c pairing"), std::string::npos) << interleaved;
+  }
+}
+
+TEST(Passes, R2cRoutesAgreeUnderSplit) {
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    r2c_routes_agree_under_split<double>(t);
+    r2c_routes_agree_under_split<float>(t);
+  }
+}
+
 // Internal settings that ask for impossible edges are refused.
 TEST(Passes, ImpossibleEdgesAreRefused) {
   const cvec<double> f(8);
@@ -859,6 +908,36 @@ template <class T> void same_bits(fftn::isa a, fftn::isa b, fftn::detail::layout
     build_settings real;
     real.layout = layout;
     real.radices = fftn::detail::rule_radices(n % 2 == 0 ? n / 2 : n, profile);
+    real.bluestein_above = above;
+    const std::size_t h = n / 2 + 1;
+    const std::vector<T> xr = src.reals<T>(rows * n);
+    const auto r2c_shape = fftn::rows_r2c<T>(n, rows);
+    const auto r2c = fftn::detail::view_of(r2c_shape);
+    EXPECT_TRUE(
+        bitwise_equal(run<T, c>(*make_plan_core(r2c, {.force_isa = a}, real), xr, rows * h),
+                      run<T, c>(*make_plan_core(r2c, {.force_isa = b}, real), xr, rows * h)))
+        << "r2c";
+    const cvec<T> xh = src.complexes<T>(rows * h);
+    const auto c2r_shape = fftn::rows_c2r<T>(n, rows);
+    const auto c2r = fftn::detail::view_of(c2r_shape);
+    EXPECT_TRUE(
+        bitwise_equal(run<c, T>(*make_plan_core(c2r, {.force_isa = a}, real), xh, rows * n),
+                      run<c, T>(*make_plan_core(c2r, {.force_isa = b}, real), xh, rows * n)))
+        << "c2r";
+  }
+  // Real rows with radix 8 last (first for c2r), where avx512 fuses the pairing and avx2,
+  // fusing to radix 4, runs it as a pass of its own: with split passes forced both take the
+  // separate route's split run.
+  const std::vector<std::pair<std::size_t, std::vector<std::size_t>>> forced = {
+      {1024, {8, 8, 8}}, {4096, {8, 8, 4, 8}}, {8192, {8, 8, 8, 8}}};
+  for (const auto& [n, radices] : forced) {
+    SCOPED_TRACE(std::string(fftn::isa_name(a)) + " and " + fftn::isa_name(b) +
+                 (sizeof(T) == 8 ? " double" : " float") + ", n = " + std::to_string(n) +
+                 ", forced radix 8");
+    fftn::test::input_source src(0x8A3EULL + n);
+    build_settings real;
+    real.layout = layout;
+    real.radices = radices;
     real.bluestein_above = above;
     const std::size_t h = n / 2 + 1;
     const std::vector<T> xr = src.reals<T>(rows * n);

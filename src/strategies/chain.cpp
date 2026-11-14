@@ -743,6 +743,15 @@ real_route chain_builder<T>::route(std::size_t n, bool r2c, bool strided) const 
   if (rad.size() < 2) {
     return real_route::separate;
   }
+  // r2c: a fused pairing would be the split run's last pass, so a half-length chain with a
+  // split run takes the separate route, as a target that does not fuse does: the pair then
+  // runs the same passes and gives the same bits, and the row keeps the split gain.
+  if (r2c) {
+    const std::vector<std::size_t> whole = radices(h);
+    if (split_from(whole, bluestein_last(h), 1) < whole.size()) {
+      return real_route::separate;
+    }
+  }
   const std::size_t edge_radix = r2c ? rad.back() : rad.front();
   const std::size_t half_copies = (h / edge_radix - 1) / 2; // copies (groups) 1 .. s/2
   const bool fits = edge_radix <= std::min(fusion_.radix, dense_codelet_radix) &&
