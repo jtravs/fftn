@@ -262,6 +262,10 @@ def resolve(funcs: list[Function], arch: str) -> None:
 # Instructions a compiler may put before a function's first real instruction.
 LANDING_PADS = {"endbr64", "endbr32", "bti", "nop"}
 JUMPS = {"jmp", "jmpq", "b"}
+# Alignment padding a compiler may put after a function's last instruction (GCC on x86-64
+# pads a folded alias with `data16 nopw %cs:...`); it is never executed after an
+# unconditional jump.
+PADDING = {"nop", "nopw", "nopl", "data16", "int3", "xchg"}
 
 
 def template_name(sym: str) -> list[str] | None:
@@ -278,6 +282,8 @@ def identical_code_alias(f: Function, call: Call, target: str) -> bool:
     Such a jump transfers to code that is checked itself and moves no vector across a
     boundary that the folded copy would not have moved; any other call still counts."""
     body = [mn for mn, _ in f.insns if mn.split(".")[0] not in LANDING_PADS]
+    while len(body) > 1 and body[-1] in PADDING and body[0] in JUMPS:
+        body.pop()
     if len(body) != 1 or body[0] not in JUMPS or f.calls != [call]:
         return False
     mine, theirs = template_name(f.name), template_name(call.symbol)
