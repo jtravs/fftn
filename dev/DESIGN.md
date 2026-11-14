@@ -1167,8 +1167,9 @@ half-length route.
 
 As built (task 2.1, `src/passes/real.inl`, `chain_builder::r2c_line` and `c2r_line`,
 experiment X6): an even line of stride 1 reads its reals in place as the h = n/2 complex
-values z_j = x_2j + i x_2j+1, so no pass packs them. With v = −i w^k (w = e^(−2πi/n); an exact
-rearrangement of a root-table entry, valid when 4 does not divide n), A = Z_k + conj Z_(h−k)
+values z_j = x_2j + i x_2j+1, so no pass packs them. With v = −i w^k (w = e^(−2πi/n); stored as
+(Im w^k, −Re w^k), an exact rearrangement of a root-table entry for every even n, where
+w^(k + n/4) would need 4 to divide n), A = Z_k + conj Z_(h−k)
 and B = Z_k − conj Z_(h−k), the r2c pairing is X_k = (A + vB)/2, X_(h−k) = conj(A − vB)/2,
 and the c2r pairing Z_k = A + conj(v) B, Z_(h−k) = conj(A − conj(v) B) with A and B formed from
 X: an addition, a subtraction and a product per pair; the halving carries the plan's scale.

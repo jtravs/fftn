@@ -6,8 +6,9 @@
 //
 // Even n = 2h runs through a complex transform of h: the reals x[2j], x[2j+1] of a line
 // of stride 1 are read in place as the complex z_j, and bins k and h - k are paired
-// around the transform. With w = exp(-2 pi i / n) and v = w^(k + n/4) = -i w^k (an entry
-// of the root table of n, so the pairing needs no factor i of its own):
+// around the transform. With w = exp(-2 pi i / n) and v = -i w^k (w^(k + n/4) when 4
+// divides n; the tables hold (Im w^k, -Re w^k), an exact rearrangement of a root-table
+// entry, for every even n, so the pairing needs no factor i of its own):
 //
 // - r2c: Z = DFT_h(z); with A = Z_k + conj Z_h-k and B = Z_k - conj Z_h-k,
 //   X_k = (A + v B) / 2 and X_h-k = conj(A - v B) / 2; X_0, X_h = Re Z_0 +- Im Z_0.
