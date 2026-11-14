@@ -73,10 +73,13 @@ split re/im instead. Split form doubles register use (radix R needs 2R vectors).
 [X18](experiments/X18-x86-kernels.md), [X10](experiments/X10-pass-loops.md).
 
 2.2 **Count the shuffles your generator emits.** FFTN's generated radix-16 codelet
-needed 19 distinct ±i swaps where FFTW's has about 7 (radix 8: 6). A tie-break in the
-lowering changed nothing (the stores' rotations decide every choice); an algebraic
-rewrite in the IR can (combining before scaling turns 4 swaps into 1 for one pair at the
-same operation count, bit-exact). [X10](experiments/X10-pass-loops.md); X19 pending.
+needed 19 distinct ±i swaps where FFTW's has 7 (radix 8: 6 against 3). A tie-break in the
+lowering changed nothing (the stores' rotations decide every choice). What worked is
+moving the rotations to the outputs: rebuild every node as R + i·I with real-coefficient
+parts, so each output pair X_k, X_{n−k} costs one swap, ⌊(R − 1)/2⌋ per codelet (16: 7,
+32: 15, 64: 31, FFTW's counts), with no extra operations (fewer on fused targets) and the
+same unfused arithmetic. x86 0.976 of the old codelets, NEON 0.991; port-5 uops −4 to
+−16 %. [X10](experiments/X10-pass-loops.md), [X19](experiments/X19-generator-rotations.md).
 
 2.3 **Wider is not automatically faster.** On the Xeon (Cascade Lake) AVX-512 against AVX2
 for the same plans: double 0.87 (batch 1) and 0.92 (batch 64), but float 1.11 and 1.13,

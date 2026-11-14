@@ -11,10 +11,10 @@ import unittest
 import mpmath
 from fftn_gen.algorithms import choose, dft
 from fftn_gen.catalogue import RADICES, all_codelets
-from fftn_gen.codelet import build_ops
+from fftn_gen.codelet import build_ops, count
 from fftn_gen.ir import Graph, rotate
 from fftn_gen.lower import ForcedRotation, lower
-from fftn_gen.schedule import creation_order, peak_live, schedule
+from fftn_gen.schedule import creation_order, greedy_order, peak_live, schedule
 from fftn_gen.verify import VerificationError, verify
 
 
@@ -57,6 +57,26 @@ class Codelets(unittest.TestCase):
             if s < 0:
                 self.assertEqual(c.counts, by_key[(r, v, 1)].counts, (r, v))
 
+    def test_real_coefficient_form_has_one_rotation_per_output_pair(self) -> None:
+        # realify.py: the multiplications by i (operands of addj and subj, a register swap
+        # each on x86) are one per output pair, floor((R - 1) / 2), at no more vector
+        # operations and the same unfused arithmetic as the DAG lowered as built.
+        def rotated(ops: list) -> int:
+            return len({op.args[1] for op in ops if op.kind in ("addj", "subj")})
+
+        for radix in RADICES:
+            for variant in ("plain", "dit", "dif"):
+                for sign in (-1, 1):
+                    key = (radix, variant, sign)
+                    real = build_ops(radix, variant, sign)
+                    direct = build_ops(radix, variant, sign, real=False)
+                    self.assertEqual(rotated(real), (radix - 1) // 2, key)
+                    self.assertLessEqual(rotated(real), rotated(direct), key)
+                    c, d = count(real), count(direct)
+                    self.assertLessEqual(c.vector_ops, d.vector_ops, key)
+                    self.assertEqual((c.flops_adds, c.cmuls), (d.flops_adds, d.cmuls), key)
+                    self.assertLessEqual(c.flops_muls, d.flops_muls, key)
+
     def test_twiddle_variants_add_one_complex_multiply_per_leg(self) -> None:
         by_key = {(c.radix, c.variant, c.sign): c for c in codelets()}
         for (r, v, s), c in by_key.items():
@@ -83,14 +103,15 @@ class Codelets(unittest.TestCase):
     def test_order_keeps_no_more_values_live_than_the_alternatives(self) -> None:
         # Every codelet, both directions, all variants; every order gets the same load and
         # store placement, so only the order of the arithmetic differs (schedule.py).
-        orders = {"greedy": schedule, "creation": creation_order}
+        orders = {"greedy": greedy_order, "creation": creation_order, "chosen": schedule}
         totals = dict.fromkeys(orders, 0)
         for radix in RADICES:
             for variant in ("plain", "dit", "dif"):
                 for sign in (-1, 1):
                     ops = build_ops(radix, variant, sign)
                     live = {name: peak_live(f(list(ops))) for name, f in orders.items()}
-                    self.assertLessEqual(live["greedy"], live["creation"], (radix, variant, sign))
+                    best = min(live["greedy"], live["creation"])
+                    self.assertEqual(live["chosen"], best, (radix, variant, sign))
                     for name, value in live.items():
                         totals[name] += value
         self.assertLess(totals["greedy"], totals["creation"], totals)
