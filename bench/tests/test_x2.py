@@ -10,7 +10,7 @@ import unittest
 from collections import Counter
 
 from fbenchlib import catalogue
-from x2 import radices, search
+from x2 import fit, radices, search
 
 
 def multinomial(seq: tuple[int, ...]) -> int:
@@ -237,6 +237,58 @@ class Isa(unittest.TestCase):
         self.assertEqual(len(lines), 2)
         self.assertIn("--name xeon-avx512-smooth --lengths 2-1024 --isa avx512", lines[0])
         self.assertIn("--name xeon-avx512-long", lines[1])
+
+
+class Fit(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.tables = fit.parse_rules(fit.RULES.read_text())
+
+    def test_search_is_the_planners(self):
+        """fit.py's port of rule_radices on rules.cpp's AVX2 tables gives the recorded
+        radices (tests/core/data/rule_radices.txt) for C = 2 and C = 4."""
+        self.assertEqual(len(self.tables["avx2_double"].overrides), 4)
+        path = search.REPO / "tests" / "core" / "data" / "rule_radices.txt"
+        checked = 0
+        for line in path.read_text().splitlines():
+            if line.startswith("#") or not line.strip():
+                continue
+            n, *cols = (x.split() for x in line.split("|"))
+            n = int(n[0])
+            for c, name, col in ((2, "avx2_double", cols[1]), (4, "avx2_float", cols[2])):
+                got = fit.rule_radices(n, self.tables[name], c)
+                self.assertEqual(got, tuple(int(r) for r in col), f"n = {n}, C = {c}")
+            checked += 1
+        self.assertEqual(checked, 5208)
+
+    def test_fit_recovers_a_synthetic_table(self):
+        """Timings made from a known table (rules.cpp's float one at C = 4, plus a constant
+        per transform): the fit picks every length's best sequence again."""
+        truth = self.tables["avx2_float"]
+        truth = fit.Table(truth.unit, truth.tail, truth.passes)
+        ops = radices.codelet_ops()
+
+        def cost(seq):
+            f = fit.features(seq, 4)
+            x = [0.0] * fit.NF
+            for k in range(fit.KINDS):
+                for r in fit.RADICES:
+                    x[k * fit.NR + r - 2] = truth.unit[k][r - 2]
+                    x[fit.TAIL0 + k * fit.NR + r - 2] = truth.tail[k][r - 2]
+            x[fit.PASS], x[fit.CONST] = truth.passes, 5000.0
+            return sum(v * x[j] for j, v in f.items())
+
+        cases = []
+        for n in (32, 48, 60, 64, 72, 96, 100, 120, 128, 144, 160, 192, 240, 256):
+            seqs = [s for s in radices.sequences(n) if len(s) > 1]
+            base = seqs[0]
+            ratio = {s: math.log(cost(s) / cost(base)) for s in seqs}
+            best = min(seqs, key=lambda s: (ratio[s], s))
+            cases.append(fit.Case(n, f"c2c-{n}-b1-op-f32", "f32", base, best, refine=ratio))
+        x = fit.fit(fit.rows_of(cases, 4), ops)
+        table = fit.table_of(x, cases, ops)
+        per, misses = fit.reproduction(cases, table, 4, 0.0)
+        self.assertEqual(per["b1-op-f32"][:2], [len(cases), len(cases)], misses)
 
 
 if __name__ == "__main__":
