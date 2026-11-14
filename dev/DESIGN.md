@@ -1617,8 +1617,9 @@ schedule, tested by simulation. Starting rules, each with its measurement:
 2. Whole rows before split rows. With at least as many rows as lanes, rows go whole to
    lanes; leftover rows (9 long rows on 8 lanes) are shared by sub-teams when they are
    long enough to split, so the last row does not cost a whole extra round.
-3. Split a row only inside one cache group, with at least about 512 points per member, and
-   on large mesh-connected groups only from about 8000 points.
+3. Split a row only inside one cache group, with at least about 1024 points per member,
+   and only from about 6000 points in a small group, 8000 on an Apple performance
+   cluster or a large mesh-connected one (experiment T5).
 4. Deal rows to cache groups; only lanes that have work do any. Under OpenMP that means
    surplus team members return at once from a region of constant width, not a narrower
    region: libgomp ends and restarts threads when the width changes.
@@ -1634,11 +1635,15 @@ member to arrive takes everything (rule 1), how many groups are dealt tasks (as 
 the batch has a group's worth of tasks for, so rule 5's small batch stays in one group),
 each group's contiguous range in proportion to its members, and per group which tasks are
 split and among how many members (rules 2 and 3: leftovers after whole rounds, or all of a
-group's tasks when it has fewer than members; at most members / split, points / 512 and the
-widest phase's chunks; only from the split threshold of the group's kind; only when the
+group's tasks when it has fewer than members; at most members / split, points / 1024 and
+the widest phase's chunks; only from the split threshold of the group's kind; only when the
 cost model says t/k plus a phase synchronisation per phase beats t). An oversubscribed team
-splits nothing. The machine profile's values are provisional, taken from the prototype's
-measurements, until experiments T1 and T5 calibrate them (task 3.4). Rule 4 under an executor (task 3.3): only the lanes dealt
+splits nothing. The machine profile (`profile_for`, from the topology) carries the values
+experiments T1 and T5 measured (task 3.4; each field cites its runs): the split thresholds
+by group kind, a Zen 3 CCX's, an Apple cluster's (macOS's topology) and a mesh's (groups
+of more than 8 members), and on a CCX the phase hand-off cost and the claim runs T1 measured.
+Its dispatch and work costs stay provisional until the dispatch cost has a per-lane term
+(18.2). Rule 4 under an executor (task 3.3): only the lanes dealt
 work are dispatched, a team of `dispatch` members (the dealt lanes, or one per task when
 the batch is smaller and nothing splits), which get the same groups and no splits (the
 per-group shares can differ, one member per task); an OpenMP executor still opens a region of
@@ -2342,6 +2347,17 @@ to change before a release.
 21. *`omp::executor`'s width* is fixed at construction (`omp_get_max_threads()` by
     default), not read at each call: a later `omp_set_num_threads` does not change it, which
     keeps every region's width constant.
+22. *Dispatch cost and the team's width* (T1, T5): the machine profile prices a team call as
+    one constant, `dispatch_ns`, but it grows about linearly with the executor's width (on
+    the EPYC 5.6 µs for 8 pool lanes and 26 µs for 64; 3.3 and 35 µs for the OpenMP
+    executor, whose regions keep their full width). Rule 1, decided at plan construction,
+    cannot see the width, and rule 3's cost model ignores that splitting a lone transform
+    adds a dispatch that running it whole on the caller does not. T5's split thresholds
+    absorb this at the widths measured (a CCX's crossover moved from 3072 points at 8 lanes
+    to 6144 at 64). Proposed: a cost a + b × lanes, used by rule 1 at execution (or bounded
+    by the CPU count at construction) and by rule 3 for a batch that would not otherwise be
+    dispatched; then T1's measured `ns_per_work` (1.0 on the EPYC, not adopted because it
+    exposed this) is tried again.
 
 ---
 
@@ -2429,6 +2445,7 @@ to change before a release.
 | 2026-11-14 | The grid's scratch line b is staggered from a by seven 64-byte lines (rule 4 of section 10); the grid's intermediate array is not padded | X4 (Mac): the stagger gained 7–9 % at 2^22 and lost nowhere; padding the intermediate (one line per row) added nothing separable, and reading padded rows directly with radix 16 lost 5 % at 2^22 |
 | 2026-11-14 | Codelets of radix 32 and 64 (task 1.6) in every variant, with all their passes instantiated; the pass table has one row per generated radix (`codelet_slot`), not one per radix value; a planner profile has a leaf limit, 16 by default, above which a codelet radix is a leaf only when the limit allows (`build_settings::leaf_limit`, fbench `LEAF_LIMIT`) | Leaves above 16 and big passes (experiments X8 and X3) need the codelets; their operation counts equal FFTW's n1_32, n1_64, t1_32 and t1_64. They roughly double the kernel code (B3: 33 % of the pass instructions are radix 64's, 14 % radix 32's; numbers in X8), kept for speed over build size: the grid and X3 may use them as passes |
 | 2026-11-14 | Leaf limit 32 on NEON in double (C = 1), 16 on every other target and precision; no leaf of 64 (experiment X8) | The leaf of 32 was 16–22 % faster than planner v1's chain on the M5 Max in double; with C > 1 it idles lanes and lost on the Mac and the EPYC; 64 spills and lost everywhere. The Xeon's `avx512` float chain at 32 lost to the leaf only through its own tail problem (X16) |
+| 2026-11-14 | Machine profile from T1 and T5 (task 3.4): split a lone transform from 6144 points on a Zen 3 CCX (the defaults), 8192 on an Apple cluster (`profile_for`, from macOS's topology); mesh groups keep 8192; leftovers keep 8192; at least 1024 points per member; on a CCX, phase hand-off 1100 ns and claim runs of left / members; dispatch, work cost and spin budgets stay provisional | T1/T5 per-field and combined adoption runs on the EPYC, the M5 and the Xeon (numbers in the experiment files); the measured dispatch and work costs made cases slower until the dispatch cost has a per-lane term (18.2, item 22) |
 
 ---
 

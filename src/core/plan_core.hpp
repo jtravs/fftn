@@ -27,8 +27,10 @@ enum class strategy_choice : std::uint8_t { rules, chain, grid };
 // force the paths the rules would not take for the lengths at hand (AGENTS.md section 5).
 struct build_settings {
   // About this many points of work per chunk of a stage (program.hpp) or of a run of
-  // lines (work_graph.hpp). Experiment T5 sets the value; here it only has to give long
-  // rows several chunks.
+  // lines (work_graph.hpp). Experiment T5 (S4, runs 20261114-184234-4a75 and
+  // 20261114-190017-fd3d) kept 2048: free at one thread, and best at 8 lanes, where smaller
+  // chunks cut planes' lines too fine (512: 256^2 planes 2.7 times slower) and larger ones
+  // gave rows of 8192-16384 points too few members (8192: 1.5-2.6).
   std::size_t chunk_points = 2048;
   // The radices, in pass order, of every complex line whose length they multiply to,
   // instead of the rules' choice (strategies/chain.hpp). Any radix above 16 goes through
