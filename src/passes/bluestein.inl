@@ -6,7 +6,9 @@
 // multiplication out of it. A Bluestein stage is always the last pass of a chain (m = 1),
 // so element i of its input and of its output is the same index of the line: both passes
 // are elementwise over i, in blocks of C consecutive elements, whatever the copy count.
-// Kernel text in the manner of kernels.inl, included after access.inl. No include guard.
+// The kernel spectrum between them is applied by the convolution's lane passes (lane_pass's
+// factor_sharing in stockham.inl). Kernel text in the manner of kernels.inl, included
+// after access.inl. No include guard.
 
 namespace {
 
@@ -19,52 +21,19 @@ template <class T> FFTN_FORCE_INLINE cv<T> zeros() {
   return load(tile);
 }
 
-// The chirp of a Bluestein stage, as a pass reads it: element i = t + s j of the line (copy
-// t < s, sequence index j < Q) takes w_j. Shared: s is a multiple of C, so the C elements
-// of a unit share one j and the table holds Q entries in broadcast storage
-// (pack_bcast_twiddles); the unit's j is tracked as units advance, no division per unit.
-// Otherwise the table holds one entry per element (s Q, per-lane storage, padded with ones
-// to a multiple of C). Units are counted from `first`.
-template <class T, bool Shared> struct chirp_reader {
-  const T* table;
-  std::size_t s;
-  std::size_t j;    // Shared: the sequence index of the current unit
-  std::size_t left; // Shared: the units left before j advances
-  [[nodiscard]] FFTN_FORCE_INLINE tw<T> get(std::size_t i0) const {
-    if constexpr (Shared) {
-      return bcast_tw(table + tw_reals<T> * j);
-    } else {
-      return load_tw(table + tw_reals<T> * i0);
-    }
-  }
-  FFTN_FORCE_INLINE void next() {
-    if constexpr (Shared) {
-      if (--left == 0) {
-        ++j;
-        left = s / C<T>;
-      }
-    }
-  }
-};
-
-template <class T, bool Shared>
-FFTN_FORCE_INLINE chirp_reader<T, Shared> make_chirp(const pass_args* a, std::size_t first) {
-  const std::size_t per_row = a->s / C<T>; // Shared only: units per sequence index
-  chirp_reader<T, Shared> r{.table = static_cast<const T*>(a->twiddles), .s = a->s, .j = 0,
-                            .left = 0};
-  if constexpr (Shared) {
-    r.j = first / per_row;
-    r.left = per_row - first % per_row;
-  }
-  return r;
-}
+// The chirp, as both passes read it: element i = t + s j of the line (copy t < s, sequence
+// index j < Q) takes w_j. Shared: C divides s, so the C elements of a unit share one j; the
+// table holds Q entries in broadcast storage (pack_bcast_twiddles) and the units run row
+// by row (the s / C units of one j), the entry loaded once per row. Otherwise the table
+// holds one entry per element (s Q, per-lane storage, padded with ones to a multiple of C).
+// A loop that tracked j per unit, or divided, cost 5 % at 4096 x 17 on the Mac (C = 1).
 
 // z[i] = in(x[i]) w[i] for i < n = s Q, z[i] = 0 for n <= i < s M: the input of the
 // convolution, s copies of length M interleaved (copy innermost). Unit u is the elements
-// u C .. u C + C - 1 of z. twiddles: the chirp (chirp_reader). An edge pass's arguments
-// (radix 1, which the work graph reads as such): n, m = M and s. The input edge's
-// operation applies to what is loaded. src: any stride when C == 1, else 1; dst: scratch,
-// stride 1, not src. Reads src, dst, src_stride, n, m, s, twiddles, scale, in_factor.
+// u C .. u C + C - 1 of z. twiddles: the chirp (above). An edge pass's arguments (radix 1,
+// which the work graph reads as such): n, m = M and s. The input edge's operation applies
+// to what is loaded. src: any stride when C == 1, else 1; dst: scratch, stride 1, not src.
+// Reads src, dst, src_stride, n, m, s, twiddles, scale, in_factor.
 template <class T, edge_op InOp, bool Shared>
 void bluestein_in(const pass_args* a, std::size_t first, std::size_t last) {
   const T* x = static_cast<const T*>(a->src);
@@ -72,25 +41,48 @@ void bluestein_in(const pass_args* a, std::size_t first, std::size_t last) {
   const std::ptrdiff_t xs = 2 * a->src_stride;
   const std::size_t data = a->n;
   const std::size_t total = a->m * a->s;
-  chirp_reader<T, Shared> chirp = make_chirp<T, Shared>(a, first);
+  const T* chirp = static_cast<const T*>(a->twiddles);
   const edge<T, InOp> op = make_edge<T, InOp>(a, a->in_factor, 0, 1);
-  for (std::size_t u = first; u < last; ++u) {
-    const std::size_t i0 = u * C<T>;
-    T* zp = z + at(i0, 2);
-    if (i0 + C<T> <= data) {
-      const cv<T> v = on_run<T, InOp, true>(op, load_run<T, true>(x + at(i0, xs), xs, C<T>), i0, C<T>);
-      store(zp, mul(v, chirp.get(i0)));
-    } else if (i0 >= data) {
-      store_run<T, false>(zp, 2, total - i0 < C<T> ? total - i0 : C<T>, zeros<T>());
-    } else {
-      // The block that holds the last data element: the lanes beyond it load zero. (Not
-      // Shared, where C divides n.)
-      const std::size_t valid = data - i0;
-      const cv<T> v =
-          on_run<T, InOp, false>(op, load_run<T, false>(x + at(i0, xs), xs, valid), i0, valid);
-      store_run<T, false>(zp, 2, total - i0 < C<T> ? total - i0 : C<T>, mul(v, chirp.get(i0)));
+  if constexpr (Shared) {
+    // Every unit is whole: C divides s, so it divides n and s M.
+    const std::size_t per_row = a->s / C<T>;
+    std::size_t u = first;
+    for (std::size_t j = first / per_row; u < last; ++j) {
+      const std::size_t row_end = (j + 1) * per_row;
+      const std::size_t end = row_end < last ? row_end : last;
+      if (j * a->s < data) {
+        const tw<T> w = bcast_tw(chirp + tw_reals<T> * j);
+        for (; u < end; ++u) {
+          const std::size_t i0 = u * C<T>;
+          const cv<T> v =
+              on_run<T, InOp, true>(op, load_run<T, true>(x + at(i0, xs), xs, C<T>), i0, C<T>);
+          store(z + at(i0, 2), mul(v, w));
+        }
+      } else {
+        for (; u < end; ++u) {
+          store(z + at(u * C<T>, 2), zeros<T>());
+        }
+      }
     }
-    chirp.next();
+  } else {
+    for (std::size_t u = first; u < last; ++u) {
+      const std::size_t i0 = u * C<T>;
+      T* zp = z + at(i0, 2);
+      if (i0 + C<T> <= data) {
+        const cv<T> v =
+            on_run<T, InOp, true>(op, load_run<T, true>(x + at(i0, xs), xs, C<T>), i0, C<T>);
+        store(zp, mul(v, load_tw(chirp + tw_reals<T> * i0)));
+      } else if (i0 >= data) {
+        store_run<T, false>(zp, 2, total - i0 < C<T> ? total - i0 : C<T>, zeros<T>());
+      } else {
+        // The block that holds the last data element: the lanes beyond it load zero.
+        const std::size_t valid = data - i0;
+        const cv<T> v =
+            on_run<T, InOp, false>(op, load_run<T, false>(x + at(i0, xs), xs, valid), i0, valid);
+        store_run<T, false>(zp, 2, total - i0 < C<T> ? total - i0 : C<T>,
+                            mul(v, load_tw(chirp + tw_reals<T> * i0)));
+      }
+    }
   }
 }
 
@@ -106,19 +98,34 @@ void bluestein_out(const pass_args* a, std::size_t first, std::size_t last) {
   T* y = static_cast<T*>(a->dst);
   const std::ptrdiff_t ys = 2 * a->dst_stride;
   const std::size_t data = a->n;
-  chirp_reader<T, Shared> chirp = make_chirp<T, Shared>(a, first);
+  const T* chirp = static_cast<const T*>(a->twiddles);
   const edge<T, OutOp> op = make_edge<T, OutOp>(a, a->out_factor, 0, 1);
-  for (std::size_t u = first; u < last; ++u) {
-    const std::size_t i0 = u * C<T>;
-    if (i0 + C<T> <= data) {
-      const cv<T> v = mul(load(z + at(i0, 2)), chirp.get(i0));
-      store_run<T, true>(y + at(i0, ys), ys, C<T>, on_run<T, OutOp, true>(op, v, i0, C<T>));
-    } else {
-      const std::size_t valid = data - i0;
-      const cv<T> v = mul(load_run<T, false>(z + at(i0, 2), 2, valid), chirp.get(i0));
-      store_run<T, false>(y + at(i0, ys), ys, valid, on_run<T, OutOp, false>(op, v, i0, valid));
+  if constexpr (Shared) {
+    const std::size_t per_row = a->s / C<T>;
+    std::size_t u = first;
+    for (std::size_t j = first / per_row; u < last; ++j) {
+      const std::size_t row_end = (j + 1) * per_row;
+      const std::size_t end = row_end < last ? row_end : last;
+      const tw<T> w = bcast_tw(chirp + tw_reals<T> * j);
+      for (; u < end; ++u) {
+        const std::size_t i0 = u * C<T>;
+        const cv<T> v = mul(load(z + at(i0, 2)), w);
+        store_run<T, true>(y + at(i0, ys), ys, C<T>, on_run<T, OutOp, true>(op, v, i0, C<T>));
+      }
     }
-    chirp.next();
+  } else {
+    for (std::size_t u = first; u < last; ++u) {
+      const std::size_t i0 = u * C<T>;
+      if (i0 + C<T> <= data) {
+        const cv<T> v = mul(load(z + at(i0, 2)), load_tw(chirp + tw_reals<T> * i0));
+        store_run<T, true>(y + at(i0, ys), ys, C<T>, on_run<T, OutOp, true>(op, v, i0, C<T>));
+      } else {
+        const std::size_t valid = data - i0;
+        const cv<T> v =
+            mul(load_run<T, false>(z + at(i0, 2), 2, valid), load_tw(chirp + tw_reals<T> * i0));
+        store_run<T, false>(y + at(i0, ys), ys, valid, on_run<T, OutOp, false>(op, v, i0, valid));
+      }
+    }
   }
 }
 

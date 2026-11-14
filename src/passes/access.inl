@@ -170,6 +170,20 @@ template <class T, edge_op Op, bool Full> struct run_out {
   }
 };
 
+// Leg k of a run, stored times a factor that every lane shares (the value at f + leg k,
+// broadcast), the output counterpart of run_in_shared.
+template <class T, bool Full> struct run_out_shared {
+  T* p;
+  std::ptrdiff_t leg;
+  std::ptrdiff_t step;
+  std::size_t valid;
+  const T* f;
+  std::ptrdiff_t f_leg;
+  FFTN_FORCE_INLINE void put(std::size_t k, cv<T> v) const {
+    store_run<T, Full>(p + at(k, leg), step, valid, cmul(v, bcast(f + at(k, f_leg))));
+  }
+};
+
 // Element j of a line at p, leg reals apart, in every lane.
 template <class T, edge_op Op> struct one_in {
   const T* p;

@@ -929,7 +929,8 @@ parameter, everything else accessors; gen/README.md has the codelet calling conv
   on every target (the generic pass's lanes run over copies, so a single prime row has one
   valid lane; with the Bluestein threshold at 16 the rules no longer choose it, X17);
   the two chirp passes of a Bluestein stage (section 8.5) are elementwise, in blocks of C
-  consecutive elements; the real-transform edges run one element at a time on every target.
+  consecutive elements, with the chirp per lane or, when C divides the copy count,
+  broadcast; the real-transform edges run one element at a time on every target.
 - **Edge variants**: scale and a per-element complex factor, on loading (first passes,
   leaves, generic passes, copies) and on storing (last passes, the same three), as the
   first two edge operations of section 12.1; real edges take the scale on storing. Each
@@ -1111,23 +1112,33 @@ of length M: a chain of M whose every pass has its copy count multiplied by s co
 interleaved transforms (the passes treat copies as independent and share their twiddles).
 So the stage is a program fragment built from the chain's own passes, nothing recursive:
 
-1. *bluestein in*: z[i] = x[i] · w[i] for i < sQ, zero up to sM (w the chirp
-   exp(±iπ j²/Q), each entry correctly rounded from the root table of 2Q, repeated over the
-   s copies), with the line's input edge when the stage is the first pass;
+1. *bluestein in*: z[t + s j] = x[t + s j] · w_j for j < Q, zero up to sM (w the chirp
+   exp(±iπ j²/Q), each entry correctly rounded from the root table of 2Q), with the line's
+   input edge when the stage is the first pass;
 2. the chain of M forward over the s copies (its first pass grouped when s = 1, a lane pass
-   otherwise), its last pass multiplying by the kernel spectrum dft(b)/M as an output factor
-   (section 12.1), b = conj(w) on both sides of zero;
-3. the chain of M backward;
-4. *bluestein out*: y[i] = z[i] · w[i] for i < sQ, with the line's output edge.
+   otherwise);
+3. the chain of M backward, its first pass multiplying its input by the kernel spectrum
+   dft(b)/M (b = conj(w) on both sides of zero): input element t + s f takes entry f, so
+   for s = 1 it is the grouped pass's input factor (section 12.1) and for s > 1 a lane
+   pass whose lanes, the copies, share one broadcast entry per leg;
+4. *bluestein out*: y[t + s k] = z[t + s k] · w_k for k < Q, with the line's output edge.
 
-Both chirp passes are elementwise over i because m = 1, so they vectorise in blocks of C
-whatever s is, and the out pass may write in place, which makes the stage run in place
-(no copy back, unlike a single generic pass). The convolution ping-pongs between the
-scratch lines a and b, an even number of passes, so it ends where it began; the scratch
-lines grow to sM (at most 4n). The plan holds the chirp (sQ entries) and the kernel
-spectrum (sM entries, computed at construction in double by a small mixed-radix transform
-over the root table of M); no allocation at execution, every chunk of every stage a fixed
-range as for any pass. M is the 7-smooth length in [2Q − 1, next power of two] whose chain
+Both chirp passes are elementwise over i = t + s j because m = 1, so they vectorise in
+blocks of C whatever s is, and the out pass may write in place, which makes the stage run
+in place (no copy back, unlike a single generic pass). The convolution ping-pongs between
+the scratch lines a and b, an even number of passes, so it ends where it began; the scratch
+lines grow to sM (at most 4n). The plan holds the kernel spectrum once (M entries,
+computed at construction in double by a small mixed-radix transform over the root table of
+M) and the chirp once (Q entries, broadcast to a unit's C elements, which share j, when C
+divides s; otherwise one entry per element, sQ = n, because a unit's lanes then straddle two
+values of j). Both are kept per (Q, direction), so the axes of a plane with the same Q
+share them. Before task 2.3b both were stored per element (the kernel as the forward
+chain's last output factor, sM entries): 889 MB of tables for n = 17 · 2²⁰ in double, now
+under a kilobyte. No allocation at execution, every chunk of every stage a fixed range as
+for any pass. Not done: running the s copies in blocks of B, which would shrink the scratch
+lines from sM to BM (1.2 GB per team member at n = 17 · 2²⁰) and keep each block's
+convolution in cache, needs a loop over blocks whose source is a scratch line, which the
+program's loops (scratch slots do not move, section 8.3) cannot express yet. M is the 7-smooth length in [2Q − 1, next power of two] whose chain
 plus chirp passes cost least under the profile (`bluestein_length`, section 11.2).
 Why a pass and not a strategy that wraps the chain: the program and stage design already
 expresses it, the passes before it (codelet and generic) keep their positions and edges,

@@ -309,7 +309,10 @@ void chain_builder<T>::add_pass(std::size_t n, const std::vector<std::size_t>& r
     st.chunks = chunks_of(st.units, radix * c);
     kind = "grouped";
   } else if (last) {
-    st.run = k.codelet[radix].last[d][edge_index(out)];
+    st.run = out == edge_op::factor && edges.out_factor_copies > 1
+                 ? k.codelet[radix].last_shared_out
+                 : k.codelet[radix].last[d][edge_index(out)];
+    st.args.factor_copies = edges.out_factor_copies;
     st.units = blocks(s);
     st.chunks = chunks_of(st.units, radix * c);
     kind = "lane";
@@ -422,19 +425,31 @@ void chain_builder<T>::add_bluestein(std::size_t n, std::size_t q, int sign, end
             edges_note(in, edge_op::none) + ")";
   stages.push_back(std::move(st));
 
-  // The kernel spectrum multiplies the input of the backward chain's first pass, where
-  // input element t + s f (copy t) takes entry f: a grouped pass's input factor when s = 1,
-  // otherwise a lane pass whose lanes are the copies, which share the entry (SharedIn).
-  line_edges spectral;
-  spectral.in = edge_op::factor;
-  spectral.in_factor = tab.kernel;
+  // The kernel spectrum, M entries for all the copies: output element t + s f of the
+  // forward chain (copy t) takes entry f. Its last pass applies it when C divides s, its
+  // lanes then sharing one entry (factor_sharing::output; s = 1 is the plain per-element
+  // factor). Otherwise the lanes of that pass straddle entries, and the first backward
+  // pass, a lane pass whose lanes are the copies, multiplies its input element t + s f by
+  // entry f instead (factor_sharing::input). Measured on the Mac (C = 1, task 2.3b): the
+  // input form cost 5 % at 4096 x 17 against the output form, whose multiplications hide
+  // under the last pass's memory traffic.
+  line_edges forward;
+  line_edges backward;
+  if (s % c == 0 || s == 1) {
+    forward.out = edge_op::factor;
+    forward.out_factor = tab.kernel;
+    forward.out_factor_copies = s;
+  } else {
+    backward.in = edge_op::factor;
+    backward.in_factor = tab.kernel;
+  }
   const std::size_t first_conv = stages.size();
   slot at = conv;
   for (const int dir : {-1, +1}) {
     std::size_t copies = s;
     for (std::size_t i = 0; i < rad.size(); ++i) {
       const slot next = other_scratch(at);
-      add_pass(s * m, rad, i, copies, dir, {at, 1}, {next, 1}, dir > 0 ? spectral : line_edges(),
+      add_pass(s * m, rad, i, copies, dir, {at, 1}, {next, 1}, dir < 0 ? forward : backward,
                stages, s);
       at = next;
       copies *= rad[i];

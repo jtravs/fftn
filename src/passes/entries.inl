@@ -44,7 +44,8 @@ template <class T, std::size_t R> struct radix_entries<T, R, true> {
               &lane_pass<T, R, -1, true, nop>,
               &lane_pass<T, R, +1, true, nop>,
           },
-      .lane_shared_in = &lane_pass<T, R, +1, true, nop, true>,
+      .lane_shared_in = &lane_pass<T, R, +1, true, nop, factor_sharing::input>,
+      .last_shared_out = &lane_pass<T, R, -1, false, nop, factor_sharing::output>,
       .last =
           {
               {

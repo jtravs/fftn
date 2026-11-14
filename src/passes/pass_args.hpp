@@ -38,6 +38,9 @@ struct pass_args {
   double scale = 1.0;
   const void* in_factor = nullptr;
   const void* out_factor = nullptr;
+  // A lane pass whose output factor is shared (factor_sharing::output): the consecutive
+  // elements that share each entry, a multiple of the target's complex count.
+  std::size_t factor_copies = 1;
 };
 
 // Runs units [first, last) of a pass. A unit is the kernel's own (a block of butterflies,
@@ -55,6 +58,11 @@ enum class edge_op : std::uint8_t {
 };
 inline constexpr std::size_t edge_op_count = 3;
 
+// How a lane pass reads a factor table that holds one entry per element of a sequence
+// whose copies are interleaved in its line (passes/stockham.inl, lane_pass): not at all,
+// on its input or on its output. A separate instantiation each.
+enum class factor_sharing : std::uint8_t { none, input, output };
+
 // The codelets' radices index the tables below directly; gen::radices lists which exist.
 inline constexpr std::size_t max_codelet_radix = 16;
 
@@ -70,9 +78,13 @@ struct radix_passes {
   // Its middle passes (m > 1): lanes over copies, twiddled.
   pass_fn lane[2];
   // The backward middle pass with every input leg times a factor shared by the copies
-  // (lane_pass's SharedIn): the first backward pass of a Bluestein convolution with more
+  // (factor_sharing::input): the first backward pass of a Bluestein convolution with more
   // than one copy, taking the kernel spectrum (passes/bluestein.inl).
   pass_fn lane_shared_in;
+  // The forward last pass with every output times a factor shared by factor_copies
+  // consecutive copies (factor_sharing::output): the last forward pass of a Bluestein
+  // convolution whose copy count C divides.
+  pass_fn last_shared_out;
   // Its last pass (m = 1): lanes over copies, no twiddles; output edge.
   pass_fn last[2][edge_op_count];
   // A whole transform of n = radix <= 16 in registers; input edge, output edge.

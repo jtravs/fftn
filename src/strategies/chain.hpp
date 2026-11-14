@@ -30,11 +30,15 @@
 //   remaining radix Q (the product of the large primes) has s = n / Q copies is the
 //   convolution of s interleaved sequences of length M (copy innermost): a chirp pass
 //   into scratch, zero-padded to s M; the chain of M, forward, with every pass's copy
-//   count multiplied by s and the kernel spectrum as the last pass's output factor (one
-//   value per element of the s M, each repeated s times); the chain of M backward; and a
-//   chirp pass out, elementwise because m = 1 makes the stage's input and output indices
-//   the same. The convolution ping-pongs between a and b, an even number of passes, so
-//   it ends where it began; scratch lines are then s M long. It runs in place.
+//   count multiplied by s; the chain of M backward, its first pass multiplying its input
+//   by the kernel spectrum (input element t + s f by entry f, so the copies share one
+//   table of M entries: a grouped pass's input factor when s = 1, else a lane pass that
+//   broadcasts the entry to its lanes, the copies); and a chirp pass out, elementwise
+//   because m = 1 makes the stage's input and output indices the same. The chirp passes
+//   read Q chirp entries, broadcast, when C divides s, otherwise one per element (s Q).
+//   Both tables are kept per (Q, sign), so every axis with that Q shares them. The
+//   convolution ping-pongs between a and b, an even number of passes, so it ends where
+//   it began; scratch lines are then s M long. It runs in place.
 // - Chunks: a stage of u units is cut into ranges of about chunk_points points each.
 #pragma once
 
@@ -68,6 +72,9 @@ struct line_edges {
   double scale = 1.0;              // for edge_op::scale on either edge
   const void* in_factor = nullptr; // n complex values, for edge_op::factor
   const void* out_factor = nullptr;
+  // When above 1, out_factor holds one entry per run of this many consecutive elements, a
+  // multiple of C (a Bluestein convolution's kernel spectrum over its interleaved copies).
+  std::size_t out_factor_copies = 1;
 };
 
 template <class T> class chain_builder {
