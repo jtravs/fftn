@@ -78,8 +78,8 @@ main, geometric mean over the X18 cases (GCC 14 / Clang 23):
 |---|---|---|---|---|
 | T | 1.013 / 1.013 | 0.988 / 1.029 | 0.969 / ≈ 1.00 | — |
 | B | 1.000 / 1.018 | 0.992 / 1.031 | 0.969 / ≈ 1.00 | 1.035 |
-| U | 0.985 / 1.015 (one compiler each in the last two runs) | 1.002 / 1.033 | — | 1.001 |
-| V | — | 0.988 / 1.007 | — | — |
+| U | 0.971 / 1.027 | 1.002 / 1.033 | 0.974 / 1.006 | 1.001 |
+| V | 1.004 / 1.015 | 0.988 / 1.007 | 0.985 / 0.985 | — |
 
 Runs: Xeon 20261114-145403-ff20 (band 1.19 %), 20261114-145726-c67a (avx2, 6 rounds, band
 3.5 %), 20261114-150747-e7dc and 20261114-150419-9843 (12 and 24 rounds); EPYC
@@ -89,7 +89,9 @@ Runs: Xeon 20261114-145403-ff20 (band 1.19 %), 20261114-145726-c67a (avx2, 6 rou
 the fixed-step loops, which pay a per-group setup when a group has 1–3 blocks; tables cost
 Clang 3–5 % on the EPYC; Mac 64 and 128 at 1.07–1.11 under B, 2187 at 1.12 under U). The
 tables cut instructions per transform by 5–15 % (perf, Xeon avx512 at 256: 2825 → 2293) but
-time barely moves.
+time barely moves. Leg tables help GCC by about 3 % and cost Clang about 3 %; block stores
+alone are neutral. FFTN ÷ FFTW is unchanged by every arm: Xeon AVX-512 1.29–1.30, Xeon AVX2
+1.75, EPYC 1.28–1.33.
 
 What the measurements showed instead: on AVX-512 FFTN's pass loops already execute about as
 many instructions per butterfly as FFTW's (496 against 557 per four radix-16 butterflies),
