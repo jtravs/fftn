@@ -469,8 +469,9 @@ bool bitwise_equal(const std::vector<std::complex<T>>& x, const std::vector<std:
 }
 
 // The same passes on two targets whose operations round alike (DESIGN.md 6.2): every
-// output bit equal, for c2c rows with a scale and the factor edges (cmul) and for r2c and
-// c2r rows, several rows each so that tails occur. The radices are the first target's
+// output bit equal, for c2c rows with a scale and the factor edges (cmul), strided (the
+// copy passes) and in place, and for r2c and c2r rows, several rows each so that tails
+// occur. The radices are the first target's
 // rules' choice, forced on both: avx2 and avx512 key their rules on different register
 // counts.
 template <class T> void same_bits(fftn::isa a, fftn::isa b) {
@@ -505,6 +506,31 @@ template <class T> void same_bits(fftn::isa a, fftn::isa b) {
       EXPECT_EQ(stage_names(*on_a).size(), stage_names(*on_b).size());
       EXPECT_TRUE(bitwise_equal(run<c, c>(*on_a, x, rows * n), run<c, c>(*on_b, x, rows * n)))
           << (forward ? "c2c forward" : "c2c backward");
+    }
+    // Strided rows (input stride 2, output stride 3: the copy passes into and out of
+    // scratch on targets with C > 1), and in place.
+    {
+      build_settings settings;
+      settings.radices = fftn::detail::rule_radices(n, profile);
+      auto strided = fftn::rows_c2c<T>(n, rows, fftn::direction::forward);
+      strided.axes[0].in_stride = 2;
+      strided.axes[0].out_stride = 3;
+      strided.batches[0].in_dist = static_cast<std::ptrdiff_t>(2 * n);
+      strided.batches[0].out_dist = static_cast<std::ptrdiff_t>(3 * n);
+      const auto view = fftn::detail::view_of(strided);
+      const cvec<T> xs = src.complexes<T>(2 * rows * n);
+      EXPECT_TRUE(bitwise_equal(
+          run<c, c>(*make_plan_core(view, {.force_isa = a}, settings), xs, 3 * rows * n),
+          run<c, c>(*make_plan_core(view, {.force_isa = b}, settings), xs, 3 * rows * n)))
+          << "c2c strided";
+      const auto tight = fftn::rows_c2c<T>(n, rows, fftn::direction::backward);
+      const auto tight_view = fftn::detail::view_of(tight);
+      EXPECT_TRUE(bitwise_equal(
+          run_in_place(*make_plan_core(tight_view, {.in_place = true, .force_isa = a}, settings),
+                       x),
+          run_in_place(*make_plan_core(tight_view, {.in_place = true, .force_isa = b}, settings),
+                       x)))
+          << "c2c in place";
     }
     // Real rows: the complex line is n / 2 long for even n, n for odd n.
     build_settings real;
