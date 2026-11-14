@@ -717,15 +717,20 @@ std::string describe(const plan_core& core) {
   o << ", " << core.prog.transforms << (core.prog.transforms == 1 ? " transform" : " transforms")
     << (core.in_place ? ", in place" : ", out of place") << "\n";
   o << "instruction set: " << isa_name(instruction_set(core)) << "\n";
+  const char* rule = core.strategy_note.empty() ? "planner v1" : "the grid's phase rule";
   if (!core.strategy_note.empty()) {
     o << "strategy: " << core.strategy_note << "; radices from ";
   } else {
     o << "strategy: chain (Stockham autosort, breadth-first), one line at a time; each "
          "transform finished before the next; radices from ";
   }
-  o << (core.radices_forced ? "build_settings.radices (a test knob) where they multiply to a "
-                              "line's length, otherwise from planner v1\n"
-                            : "planner v1\n");
+  if (core.radices_forced) {
+    o << "build_settings.radices (a test knob) where they multiply to a line's length, "
+         "otherwise from "
+      << rule << "\n";
+  } else {
+    o << rule << "\n";
+  }
   for (const std::string& note : core.axis_notes) {
     o << note << "\n";
   }

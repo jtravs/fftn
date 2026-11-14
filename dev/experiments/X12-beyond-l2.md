@@ -1,6 +1,6 @@
 # X12: Rows beyond the cache: the grid against the chain
 
-- **Status:** running
+- **Status:** running (Mac done: grid adopted; x86 pending)
 - **Owner:** task 1.7 agent, 2026-11-14
 - **Phase / task:** 1.7 (with the grid part of 1.6)
 
@@ -108,8 +108,32 @@ MEASURE in one process on the loaded Mac; load average 5–9, run-to-run spread 
   2097152 1.10–1.21, 4194304 1.03–1.30 times FFTW (chain: 2.49, —, 2.23, —, 2.93, —,
   1.94, —, 2.04).
 
-fbench A/B: see the run recorded below (task 1.7's one Mac run).
+fbench A/B, run 20261114-110844-8b03 (Mac, source 02e9e54, 18 valid rounds, 9 of them
+under load: load average median 5.7, max 7.3; A/A band ±1.00 %). Median ratio to FFTW
+(A), 95 % interval:
+
+| case | B grid ÷ A | C chain ÷ A | B ÷ C |
+|---|---|---|---|
+| c2c-16384-b1-op | 1.372 [1.354, 1.383] | 2.361 [2.329, 2.394] | 0.58 |
+| c2c-65536-b1-op | 1.216 [1.201, 1.240] | 2.144 [2.038, 2.211] | 0.57 |
+| c2c-262144-b1-op | 1.084 [1.034, 1.119] | 2.312 [2.203, 2.334] | 0.47 |
+| c2c-1048576-b1-op | 1.377 [1.273, 1.456] | 1.934 [1.864, 1.961] | 0.71 |
+| c2c-4194304-b1-op | 1.428 [1.222, 1.464] | 2.280 [2.039, 2.397] | 0.63 |
+| c2c-65536-b1-ip | 1.077 [1.009, 1.085] | 1.913 [1.787, 1.939] | 0.56 |
+| weighted geomean | 1.251 [1.184, 1.269] | 2.150 [2.060, 2.186] | 0.58 |
+
+(B ÷ C is the quotient of the two medians, not a paired ratio; every case's intervals are
+far apart.) The fbench ratios at 2^20 and 2^22 are worse than the development timings
+(1.05–1.20 and 1.03–1.30), which took the minimum over repetitions on fixed buffers;
+fbench takes medians over batches with fresh page offsets per round, and its wide
+intervals there show the load. 2^18, which the development timings put at 1.3–1.5, came
+out at 1.08.
 
 ## Verdict
 
-Pending the fbench run.
+Adopted on the Mac by the rule above: the grid is faster than the chain in every case,
+by 29–53 %, far outside the band. Task 1.7's target (≤ 1.25 times FFTW from 2^16 to 2^22)
+is met at 2^16 (out of place and in place) and 2^18, not at 2^20 (1.38) or 2^22 (1.43);
+16384 is at 1.37. Open: fusing the gathers and scatters into the phases' first and last
+passes (the copies cost about as much as the phases' passes at 2^20 and beyond), the
+three-phase rule's thresholds on x86 (the commands above), and a fbench run without load.
