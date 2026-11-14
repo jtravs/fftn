@@ -49,6 +49,11 @@ template <class T> FFTN_FORCE_INLINE void pack_tw(T* out, const T* p) {
   out[0] = p[0];
   out[1] = p[1];
 }
+template <class T> FFTN_FORCE_INLINE cplx<T> bcast_tw(const T* p) { return {p[0], p[1]}; }
+template <class T> FFTN_FORCE_INLINE void pack_tw1(T* out, const T* p) {
+  out[0] = p[0];
+  out[1] = p[1];
+}
 
 template <class T> FFTN_FORCE_INLINE cplx<T> add(cplx<T> a, cplx<T> b) {
   return {a.re + b.re, a.im + b.im};
@@ -68,6 +73,7 @@ template <class T> FFTN_FORCE_INLINE cplx<T> mul(cplx<T> a, cplx<T> w) {
 template <class T> FFTN_FORCE_INLINE cplx<T> mulc(cplx<T> a, cplx<T> w) {
   return {a.re * w.re + a.im * w.im, a.im * w.re - a.re * w.im};
 }
+template <class T> FFTN_FORCE_INLINE cplx<T> cmul(cplx<T> a, cplx<T> b) { return mul(a, b); }
 template <class T> FFTN_FORCE_INLINE cplx<T> madd(cplx<T> acc, cplx<T> a, cplx<T> w) {
   return add(acc, mul(a, w));
 }

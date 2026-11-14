@@ -17,6 +17,8 @@
 #include "fftn/workspace.hpp"
 #include "isa/kernel_table.hpp"
 #include "isa/target.hpp"
+#include "passes/pass_args.hpp"
+#include "planner/rules.hpp"
 #include "platform/cpu_features.hpp"
 #include "strategies/chain.hpp"
 #include "threading/schedule.hpp"
@@ -27,10 +29,12 @@
 #include <array>
 #include <atomic>
 #include <cassert>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -225,14 +229,18 @@ template <class T> std::vector<std::vector<T>>& tables_of(plan_core& c) {
   }
 }
 
-// The fastest target whose table has the chain passes for T: scalar in phase 0.
-template <class T> target choose_chain_target() {
-  const target best = best_target(detect_cpu_features());
-  const kernel_table* table = find_kernels(best);
-  if (table != nullptr && of<T>(*table).chain.copy != nullptr) {
-    return best;
+// The target of the plan: the fastest the processor and the build support, or the one
+// options::force_isa names. Every target has the passes.
+target plan_target(const options& opts) {
+  std::optional<target> forced;
+  if (opts.force_isa != isa::best) {
+    forced = static_cast<target>(static_cast<unsigned char>(opts.force_isa));
   }
-  return target::scalar;
+  try {
+    return choose_target(detect_cpu_features(), forced);
+  } catch (const std::invalid_argument& e) {
+    reject("options.force_isa", std::string("cannot be used: ") + e.what());
+  }
 }
 
 // A phase's view of one slot: where it is and its strides per axis, in elements.
@@ -280,8 +288,7 @@ void add_phase(program& p, std::size_t axis, const std::vector<std::size_t>& ext
   }
 }
 
-std::string radix_list(std::size_t n) {
-  const std::vector<std::size_t> radices = chain_radices(n);
+std::string radix_list(const std::vector<std::size_t>& radices) {
   if (radices.empty()) {
     return "none (a copy)";
   }
@@ -292,22 +299,50 @@ std::string radix_list(std::size_t n) {
   return text;
 }
 
-std::string real_note(std::size_t n, const char* kind) {
+template <class T>
+std::string real_note(const chain_builder<T>& chain, std::size_t n, const char* kind) {
   if (n % 2 == 0) {
     return std::string(kind) + " through a half-length complex chain of " + std::to_string(n / 2) +
-           ", radices " + radix_list(n / 2) +
+           ", radices " + radix_list(chain.radices(n / 2)) +
            (kind[0] == 'r' ? ", then a post-pass" : ", after a pre-pass");
   }
   return std::string(kind) + " through a full-length complex chain (n odd), radices " +
-         radix_list(n);
+         radix_list(chain.radices(n));
+}
+
+// The edge operations of the c2c phases: the input edge belongs to the first phase, the
+// output edge to the last (DESIGN.md 12.1). The scale goes on the output edge, where it is
+// exactly a scaling of the result, unless that edge has a factor (or a test asks).
+line_edges c2c_edges(const options& opts, const build_settings& settings, bool first_phase,
+                     bool last_phase) {
+  line_edges e;
+  e.scale = opts.scale;
+  if (first_phase && settings.in_factor != nullptr) {
+    e.in = edge_op::factor;
+    e.in_factor = settings.in_factor;
+  }
+  if (last_phase && settings.out_factor != nullptr) {
+    e.out = edge_op::factor;
+    e.out_factor = settings.out_factor;
+  }
+  if (opts.scale != 1.0) {
+    const bool on_input = settings.scale_on_input || settings.out_factor != nullptr;
+    if (on_input && first_phase) {
+      e.in = edge_op::scale;
+    } else if (!on_input && last_phase) {
+      e.out = edge_op::scale;
+    }
+  }
+  return e;
 }
 
 template <class T>
-void build(plan_core& c, const shape_view& s, const side& in, const side& out,
+void build(plan_core& c, const shape_view& s, const side& in, const side& out, const options& opts,
            const build_settings& settings) {
-  c.isa_target = choose_chain_target<T>();
+  c.isa_target = plan_target(opts);
   const kernels_of<T>& kernels = of<T>(*find_kernels(c.isa_target));
-  chain_builder<T> chain(kernels, tables_of<T>(c), settings.chunk_points);
+  chain_builder<T> chain(kernels, profile_of(c.isa_target), tables_of<T>(c), settings.chunk_points,
+                         settings.radices);
   program& p = c.prog;
   const std::size_t r = s.axes.size();
   const auto complex_bytes = static_cast<std::ptrdiff_t>(2 * sizeof(T));
@@ -343,27 +378,29 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out,
       const bool aliased = src.where == slot::out || c.in_place;
       std::vector<stage> st;
       const std::size_t need =
-          chain.c2c_line(c.lengths[d], sign, at(src, d), at(out_view, d), aliased, st);
+          chain.c2c_line(c.lengths[d], sign, at(src, d), at(out_view, d), aliased,
+                         c2c_edges(opts, settings, d + 1 == r, d == 0), st);
       lines(d, in.extent, src, out_view, need, std::move(st));
       c.axis_notes.push_back("axis " + std::to_string(d) + " (n = " + std::to_string(c.lengths[d]) +
-                             "): radices " + radix_list(c.lengths[d]));
+                             "): radices " + radix_list(chain.radices(c.lengths[d])));
     }
   } else if (s.kind == transform_kind::r2c) {
     std::vector<stage> st;
-    const std::size_t need =
-        chain.r2c_line(c.lengths[r - 1], at(in_view, r - 1), at(out_view, r - 1), st);
+    const std::size_t need = chain.r2c_line(c.lengths[r - 1], at(in_view, r - 1),
+                                            at(out_view, r - 1), r == 1 ? opts.scale : 1.0, st);
     lines(r - 1, in.extent, in_view, out_view, need, std::move(st));
     c.axis_notes.push_back("axis " + std::to_string(r - 1) +
                            " (n = " + std::to_string(c.lengths[r - 1]) +
-                           "): " + real_note(c.lengths[r - 1], "r2c"));
+                           "): " + real_note(chain, c.lengths[r - 1], "r2c"));
     for (std::size_t i = r - 1; i > 0; --i) {
       const std::size_t d = i - 1;
       std::vector<stage> cs;
       const std::size_t n = c.lengths[d];
-      const std::size_t cneed = chain.c2c_line(n, -1, at(out_view, d), at(out_view, d), true, cs);
+      const std::size_t cneed = chain.c2c_line(n, -1, at(out_view, d), at(out_view, d), true,
+                                               c2c_edges(opts, settings, false, d == 0), cs);
       lines(d, out.extent, out_view, out_view, cneed, std::move(cs));
       c.axis_notes.push_back("axis " + std::to_string(d) + " (n = " + std::to_string(n) +
-                             "): c2c forward, radices " + radix_list(n));
+                             "): c2c forward, radices " + radix_list(chain.radices(n)));
     }
   } else {
     // c2r: the complex axes first, then the real one, which must come last because the
@@ -397,19 +434,19 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out,
       std::vector<stage> cs;
       const std::size_t n = c.lengths[d];
       const std::size_t cneed =
-          chain.c2c_line(n, +1, at(src, d), at(work, d), src.where == work.where, cs);
+          chain.c2c_line(n, +1, at(src, d), at(work, d), src.where == work.where, line_edges(), cs);
       lines(d, in.extent, src, work, cneed, std::move(cs));
       c.axis_notes.push_back("axis " + std::to_string(d) + " (n = " + std::to_string(n) +
-                             "): c2c backward, radices " + radix_list(n));
+                             "): c2c backward, radices " + radix_list(chain.radices(n)));
     }
     const view& src = r > 1 && !c.in_place ? block_view : in_view;
     std::vector<stage> st;
     const std::size_t need =
-        chain.c2r_line(c.lengths[r - 1], at(src, r - 1), at(out_view, r - 1), st);
+        chain.c2r_line(c.lengths[r - 1], at(src, r - 1), at(out_view, r - 1), opts.scale, st);
     lines(r - 1, out.extent, src, out_view, need, std::move(st));
     c.axis_notes.push_back("axis " + std::to_string(r - 1) +
                            " (n = " + std::to_string(c.lengths[r - 1]) +
-                           "): " + real_note(c.lengths[r - 1], "c2r"));
+                           "): " + real_note(chain, c.lengths[r - 1], "c2r"));
   }
   for (std::size_t b = 0; b < p.batch_loops; ++b) {
     std::get<loop>(p.records[b]).body_end = static_cast<std::uint32_t>(p.records.size());
@@ -535,10 +572,35 @@ std::shared_ptr<const plan_core> make_plan_core(const shape_view& s, const optio
     check_in_place(s, in, out);
   }
 
+  // The scale is applied in the plan's precision: it must be finite there, and a non-zero
+  // scale must not vanish. (Converting a double beyond float's range to float is undefined,
+  // so the range is compared, not converted.)
+  if (!std::isfinite(opts.scale)) {
+    reject("options.scale", "must be finite");
+  }
+  if (s.prec == precision::f32) {
+    const double magnitude_of_scale = std::abs(opts.scale);
+    if (magnitude_of_scale > static_cast<double>(std::numeric_limits<float>::max())) {
+      reject("options.scale", "is beyond the range of float, the plan's precision");
+    }
+    if (opts.scale != 0.0 &&
+        magnitude_of_scale < static_cast<double>(std::numeric_limits<float>::denorm_min())) {
+      reject("options.scale", "is below the smallest float, the plan's precision");
+    }
+  }
+  const bool factors = settings.in_factor != nullptr || settings.out_factor != nullptr;
+  if ((factors || settings.scale_on_input) && (s.kind != transform_kind::c2c || r != 1)) {
+    reject("build_settings", "edge factors and an input scale are for c2c rows only");
+  }
+  if (settings.in_factor != nullptr && opts.scale != 1.0 &&
+      (settings.scale_on_input || settings.out_factor != nullptr)) {
+    reject("build_settings", "puts a scale and a factor on the input edge");
+  }
+
   if (s.prec == precision::f64) {
-    build<double>(*c, s, in, out, settings);
+    build<double>(*c, s, in, out, opts, settings);
   } else {
-    build<float>(*c, s, in, out, settings);
+    build<float>(*c, s, in, out, opts, settings);
   }
   std::size_t points = 1;
   for (const std::size_t n : c->lengths) {
@@ -599,7 +661,7 @@ std::string describe(const plan_core& core) {
     << (core.in_place ? ", in place" : ", out of place") << "\n";
   o << "instruction set: " << isa_name(instruction_set(core)) << "\n";
   o << "strategy: chain (Stockham autosort, breadth-first), one line at a time; each "
-       "transform finished before the next\n";
+       "transform finished before the next; radices from planner v0's rules\n";
   for (const std::string& note : core.axis_notes) {
     o << note << "\n";
   }

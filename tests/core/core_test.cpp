@@ -9,17 +9,22 @@
 #include "core/twiddles.hpp"
 #include "fftn/detail/core.hpp"
 #include "fftn/fftn.hpp"
+#include "isa/target.hpp"
+#include "planner/rules.hpp"
 #include "reference/reference_checks.hpp"
-#include "strategies/chain.hpp"
 #include "support/inputs.hpp"
 #include "support/lengths.hpp"
 
 #include <gtest/gtest.h>
 
+#include <array>
 #include <complex>
 #include <cstddef>
 #include <cstring>
+#include <fstream>
 #include <set>
+#include <sstream>
+#include <string>
 #include <variant>
 #include <vector>
 
@@ -73,19 +78,137 @@ TEST(Twiddles, ExactAtOctantBoundaries) {
   EXPECT_EQ(w[7], std::complex<double>(h, h));
 }
 
-TEST(Chain, RadicesMultiplyToTheLength) {
-  for (std::size_t n = 1; n <= 2048; ++n) {
-    std::size_t product = 1;
-    for (const std::size_t r : fftn::detail::chain_radices(n)) {
-      product *= r;
+bool is_prime(std::size_t n) {
+  for (std::size_t d = 2; d <= n / d; ++d) {
+    if (n % d == 0) {
+      return false;
     }
-    EXPECT_EQ(product, n) << n;
   }
-  EXPECT_TRUE(fftn::detail::chain_radices(1).empty());
-  EXPECT_EQ(fftn::detail::chain_radices(360), (std::vector<std::size_t>{4, 2, 3, 3, 5}));
-  EXPECT_EQ(fftn::detail::chain_radices(std::size_t{1078}),
-            (std::vector<std::size_t>{2, 7, 7, 11}));
-  EXPECT_EQ(fftn::detail::chain_radices(10007), (std::vector<std::size_t>{10007}));
+  return n >= 2;
+}
+
+// Planner v0's radices multiply to the length on every profile, and every radix is a
+// codelet's or a prime for the generic pass.
+TEST(Rules, RadicesMultiplyToTheLength) {
+  for (const auto t : {
+           fftn::detail::target::scalar,
+           fftn::detail::target::avx2,
+           fftn::detail::target::neon_fcma,
+       }) {
+    const auto profile = fftn::detail::profile_of(t);
+    for (std::size_t n = 1; n <= 4096; ++n) {
+      std::size_t product = 1;
+      for (const std::size_t r : fftn::detail::rule_radices(n, profile)) {
+        product *= r;
+        EXPECT_TRUE(r <= 16 || is_prime(r)) << n << ": radix " << r;
+      }
+      EXPECT_EQ(product, n) << n;
+    }
+    EXPECT_TRUE(fftn::detail::rule_radices(1, profile).empty());
+    EXPECT_EQ(fftn::detail::rule_radices(10007, profile), (std::vector<std::size_t>{10007}));
+    EXPECT_EQ(fftn::detail::rule_radices(16, profile), (std::vector<std::size_t>{16}));
+    EXPECT_EQ(fftn::detail::rule_radices(32, profile), (std::vector<std::size_t>{4, 8}));
+    EXPECT_EQ(fftn::detail::rule_radices(64, profile), (std::vector<std::size_t>{4, 16}));
+  }
+}
+
+// Every target has a profile: 32 registers on AArch64 and AVX-512, merging on AArch64.
+TEST(Rules, ProfilesOfEveryTarget) {
+  using fftn::detail::target;
+  for (const target t : {target::neon, target::neon_fcma}) {
+    EXPECT_EQ(fftn::detail::profile_of(t).registers, 32U);
+    EXPECT_TRUE(fftn::detail::profile_of(t).merge);
+  }
+  EXPECT_EQ(fftn::detail::profile_of(target::avx512).registers, 32U);
+  EXPECT_FALSE(fftn::detail::profile_of(target::avx512).merge);
+  for (const target t : {target::x86_v2, target::avx, target::avx2}) {
+    EXPECT_EQ(fftn::detail::profile_of(t).registers, 16U);
+    EXPECT_FALSE(fftn::detail::profile_of(t).merge);
+  }
+}
+
+// The recorded radices of every 73-smooth length up to 20000 for each profile
+// (data/rule_radices.txt): the rules' specification (DESIGN.md 11.2) made exact.
+TEST(Rules, RecordedTable) {
+  std::ifstream in(FFTN_CORE_DATA "/rule_radices.txt");
+  ASSERT_TRUE(in.good()) << "cannot read " << FFTN_CORE_DATA "/rule_radices.txt";
+  const std::array<fftn::detail::target_profile, 3> profiles{
+      {
+          {.registers = 16, .merge = false},
+          {.registers = 32, .merge = true},
+          {.registers = 32, .merge = false},
+      },
+  };
+  std::size_t lines = 0;
+  std::size_t failures = 0;
+  std::string line;
+  while (std::getline(in, line)) {
+    if (line.empty() || line[0] == '#') {
+      continue;
+    }
+    std::istringstream fields(line);
+    std::size_t n = 0;
+    fields >> n;
+    for (const auto& profile : profiles) {
+      std::string bar;
+      fields >> bar;
+      ASSERT_EQ(bar, "|") << line;
+      std::vector<std::size_t> want;
+      while (fields.peek() == ' ') {
+        fields.get();
+        if (fields.peek() == '|' || fields.peek() == std::istringstream::traits_type::eof()) {
+          break;
+        }
+        std::size_t r = 0;
+        fields >> r;
+        want.push_back(r);
+      }
+      if (fftn::detail::rule_radices(n, profile) != want && ++failures <= 8) {
+        ADD_FAILURE() << "n = " << n << ", " << profile.registers << " registers"
+                      << (profile.merge ? ", merging" : "") << ": not as recorded";
+      }
+    }
+    ++lines;
+  }
+  EXPECT_EQ(lines, 5208U);
+  EXPECT_EQ(failures, 0U);
+}
+
+// Values from the rules' definition (FFTL.jl's single-line rules) for lengths its own
+// tables list, on 32 registers with merged radices (AArch64) and on 16 without (AVX2).
+TEST(Rules, FftlExamples) {
+  using v = std::vector<std::size_t>;
+  const fftn::detail::target_profile wide{.registers = 32, .merge = true};
+  const fftn::detail::target_profile narrow{.registers = 16, .merge = false};
+  const auto r = [](std::size_t n, const fftn::detail::target_profile& p) {
+    return fftn::detail::rule_radices(n, p);
+  };
+  EXPECT_EQ(r(128, wide), (v{4, 4, 8}));
+  EXPECT_EQ(r(128, narrow), (v{8, 4, 4}));
+  EXPECT_EQ(r(256, wide), (v{4, 8, 8}));
+  EXPECT_EQ(r(256, narrow), (v{4, 4, 4, 4}));
+  EXPECT_EQ(r(1024, wide), (v{4, 4, 8, 8}));
+  EXPECT_EQ(r(1024, narrow), (v{4, 4, 4, 4, 4}));
+  EXPECT_EQ(r(4096, wide), (v{8, 8, 8, 8}));
+  EXPECT_EQ(r(4096, narrow), (v(6, 4)));
+  EXPECT_EQ(r(16384, wide), (v{4, 8, 8, 8, 8}));
+  EXPECT_EQ(r(16384, narrow), (v(7, 4)));
+  EXPECT_EQ(r(32768, wide), (v{8, 4, 4, 4, 4, 4, 4}));
+  EXPECT_EQ(r(32768, narrow), (v{8, 4, 4, 4, 4, 4, 4}));
+  EXPECT_EQ(r(48, wide), (v{4, 12}));
+  EXPECT_EQ(r(48, narrow), (v{4, 4, 3}));
+  EXPECT_EQ(r(120, wide), (v{10, 12}));
+  EXPECT_EQ(r(120, narrow), (v{4, 2, 3, 5}));
+  EXPECT_EQ(r(360, wide), (v{5, 6, 12}));
+  EXPECT_EQ(r(360, narrow), (v{4, 2, 5, 9}));
+  EXPECT_EQ(r(1000, wide), (v{4, 5, 5, 10}));
+  EXPECT_EQ(r(1000, narrow), (v{4, 2, 5, 5, 5}));
+  EXPECT_EQ(r(100000, wide), (v{4, 4, 5, 5, 5, 5, 10}));
+  EXPECT_EQ(r(100000, narrow), (v{4, 4, 2, 5, 5, 5, 5, 5}));
+  // Primes above the codelets go last, as the largest radices; 7 n keeps a 2 on x86.
+  EXPECT_EQ(r(34, narrow), (v{2, 17}));
+  EXPECT_EQ(r(56, narrow), (v{4, 2, 7}));
+  EXPECT_EQ(r(56, wide), (v{8, 7}));
 }
 
 // Runs a plan core on a fresh copy of `input` and returns the output bytes.
@@ -134,7 +257,7 @@ TEST(Chunks, DivisionDoesNotChangeBits) {
   check_chunking(fftn::rows_r2c<float>(45, 1), 45, 23);
   check_chunking(fftn::rows_c2r<double>(720, 1), 361, 720);
   check_chunking(fftn::rows_c2r<float>(45, 2), 46, 90);
-  check_chunking(fftn::planes_c2c<double>(12, 10, 2, fftn::direction::forward), 240, 240);
+  check_chunking(fftn::planes_c2c<double>(36, 20, 2, fftn::direction::forward), 1440, 1440);
 }
 
 // Long rows are divided by default, so the phase 3 engine has chunks to share.

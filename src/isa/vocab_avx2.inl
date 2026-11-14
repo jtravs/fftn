@@ -75,6 +75,25 @@ template <class T> FFTN_FORCE_INLINE void pack_tw(T* out, const T* p) {
     out[W<T> + 2 * k + 1] = p[2 * k + 1];
   }
 }
+// Broadcast storage of one twiddle: (wr, wr, -wi, wi), one lane of the pre-arranged form,
+// repeated into every lane by two 128-bit broadcasts (double) or 64-bit ones (float, built
+// from scalars as bcast is, for the same alignment reason).
+FFTN_FORCE_INLINE tw_f64 bcast_tw(const double* p) {
+  const __m128d r = _mm_loadu_pd(p);
+  const __m128d i = _mm_loadu_pd(p + 2);
+  return {.r = _mm256_set_m128d(r, r), .i = _mm256_set_m128d(i, i)};
+}
+FFTN_FORCE_INLINE tw_f32 bcast_tw(const float* p) {
+  const __m128 r = _mm_setr_ps(p[0], p[1], p[0], p[1]);
+  const __m128 i = _mm_setr_ps(p[2], p[3], p[2], p[3]);
+  return {.r = _mm256_set_m128(r, r), .i = _mm256_set_m128(i, i)};
+}
+template <class T> FFTN_FORCE_INLINE void pack_tw1(T* out, const T* p) {
+  out[0] = p[0];
+  out[1] = p[0];
+  out[2] = -p[1];
+  out[3] = p[1];
+}
 
 FFTN_FORCE_INLINE __m256d add(__m256d a, __m256d b) { return _mm256_add_pd(a, b); }
 FFTN_FORCE_INLINE __m256 add(__m256 a, __m256 b) { return _mm256_add_ps(a, b); }
@@ -107,6 +126,17 @@ FFTN_FORCE_INLINE __m256d mulc(__m256d a, tw_f64 w) {
 }
 FFTN_FORCE_INLINE __m256 mulc(__m256 a, tw_f32 w) {
   return _mm256_fmsub_ps(a, w.r, _mm256_mul_ps(swap_ri(a), w.i));
+}
+// a*b for two complex registers: b rearranged into mul's twiddle form, (br, br) and
+// (-bi, bi), in registers (the negation flips a sign bit, as pack_tw's does).
+FFTN_FORCE_INLINE __m256d cmul(__m256d a, __m256d b) {
+  const __m256d i = _mm256_xor_pd(_mm256_permute_pd(b, 0xF), _mm256_setr_pd(-0.0, 0.0, -0.0, 0.0));
+  return mul(a, tw_f64{.r = _mm256_movedup_pd(b), .i = i});
+}
+FFTN_FORCE_INLINE __m256 cmul(__m256 a, __m256 b) {
+  const __m256 i = _mm256_xor_ps(
+      _mm256_movehdup_ps(b), _mm256_setr_ps(-0.0F, 0.0F, -0.0F, 0.0F, -0.0F, 0.0F, -0.0F, 0.0F));
+  return mul(a, tw_f32{.r = _mm256_moveldup_ps(b), .i = i});
 }
 FFTN_FORCE_INLINE __m256d madd(__m256d acc, __m256d a, tw_f64 w) {
   return _mm256_fmadd_pd(a, w.r, _mm256_fmadd_pd(swap_ri(a), w.i, acc));

@@ -578,7 +578,8 @@ numbers as re, im pairs):
 | `madd(acc, a, w)` | acc + a·w | 2 × `FCMLA` onto acc | as `mul` then add, or fused |
 | `scale(a, r)`, `fmadd_r(acc, a, r)` | real constant times a (plus acc) | 1 | 1 |
 | `neg`, `conj`, `swap_ri` | sign and part manipulation | 1 | 1 |
-| `load`, `store`, `bcast`, `load_tw` | memory | | |
+| `cmul(a, b)` | a·b for two complex registers (factor arrays) | as `mul` | twiddle form built in registers, then `mul` |
+| `load`, `store`, `bcast`, `load_tw`, `bcast_tw` | memory (`bcast_tw`: one stored twiddle in every lane) | | |
 | `transpose(R, C)` | in-register R × C transpose of complex values | zips | unpack / permute |
 
 **Real-register operations** (split layout: an `rv` holds `W` reals; a complex vector
@@ -606,7 +607,9 @@ x86 twiddle storage is chosen so `mul` needs no run-time rearrangement: each twi
 stored as the two vectors (wr, wr) and (−wi, wi) the FMA form consumes. That is the
 "pre-arranged" form in the table, and one reason twiddle layout is a per-target, per-pass
 decision (section 8.4). It doubles the bytes per stored twiddle, which the planner weighs
-against the derived mode for long rows.
+against the derived mode for long rows. Twiddles that every lane shares (lane passes) are
+stored once each in a broadcast form, (wr, wi) on NEON and scalar and one lane of the
+pre-arranged form on x86, and read by `bcast_tw` (written by `pack_tw1`).
 
 ### 6.3 Data layouts
 
@@ -819,11 +822,40 @@ Which kind a pass is follows from its copy count s against the register's comple
 count C. In a DIF chain s is the product of the radices already applied, so the planner
 prefers a leading radix of at least C (then only the first pass is grouped); with C = 1
 (NEON double) the distinction disappears. The copy counts that are not multiples of C
-(tails) run on a narrower instantiation of the same codelet, outside the main loop,
-never through a mask or select inside it. Vector operations act on each lane
-independently, so a narrower instantiation performs exactly the same arithmetic per
-element; this is what keeps a row's result independent of its position in a batch
-(section 15.5).
+(tails) never go through a mask or select inside the main loop. As built (task 1.2) they
+run the same instantiation on a padded tile: the last unit of a pass gathers its valid
+elements into a small stack tile, element by element, computes all C lanes and stores
+only the valid ones. Vector operations act on each lane independently, so a tile performs
+exactly the same arithmetic per element as a full register; this is what keeps a row's
+result independent of its position in a batch (section 15.5). A narrower vocabulary
+instantiation (FFTL's ladder of vector widths) is the alternative should tiles prove
+slow; it needs a second width per target.
+
+As built (task 1.2), in `src/passes/` (one text for every target, the codelet a template
+parameter, everything else accessors; gen/README.md has the codelet calling convention):
+
+- The **grouped** pass is a chain's first pass (s = 1): lanes over C consecutive
+  butterflies p, per-lane twiddles, the R × C output block transposed in C × C blocks
+  before contiguous stores when C divides R, and through a tile otherwise. On C = 1 it is
+  the lane pass with s = 1. Passes with 1 < s < C (a leading radix below C, which the
+  rules avoid where they can) are lane passes that run entirely as tails.
+- The **lane** passes are the rest: lanes over copies q, one twiddle per leg shared by
+  every lane (`bcast_tw`), the DIF codelet in the middle and the plain codelet in the last
+  pass (m = 1).
+- The **leaf** is n ≤ 16 as one codelet call on one line: values are broadcast on loading
+  and lane 0 is stored, so it takes any stride and runs in place; leaves vectorised
+  across rows are the lanes strategy's (phase 4) and experiment X8's.
+- The **generic** pass (any radix, the primes above 16) and the copy are lane-form passes
+  on every target; the real-transform edges run one element at a time on every target.
+- **Edge variants**: scale and a per-element complex factor, on loading (first passes,
+  leaves, generic passes, copies) and on storing (last passes, the same three), as the
+  first two edge operations of section 12.1; real edges take the scale on storing. Each
+  is an instantiation: a pass kernel table per target and precision indexed by radix,
+  direction and edge operations (`pass_kernels`, `src/passes/pass_args.hpp`), filled from
+  the generated codelet table, so a new radix gets its passes without any change.
+- Full runs are single vector loads and stores, so on C > 1 a pass touching the caller's
+  memory needs stride 1; the chain copies other strides to or from scratch (section
+  8.5).
 
 ### 8.3 Programs
 
@@ -836,7 +868,7 @@ struct stage {            // one pass over one buffer range
   const void* twiddles;
   std::uint32_t radix, m, s;        // geometry
   std::uint8_t  src, dst;           // buffer slots: caller in, caller out, scratch a/b, block
-  std::uint32_t chunks;             // independent butterfly ranges this pass divides into
+  std::uint32_t chunks;             // independent ranges of units this pass divides into
   …
 };
 struct loop {             // repeat the enclosed records
@@ -854,7 +886,8 @@ planes of a volume. The driver costs a few nanoseconds per record. Two consequen
 - **Blocking and batching are data**, not separate engines.
 - **The threading work graph is read off the program** (section 13.2). Independent loops
   give whole-row, whole-plane and block tasks. Within one row, each stage is a phase and
-  its `chunks` butterfly ranges are the units shared between threads, with the stage
+  its `chunks` ranges of units (blocks of butterflies or copies, as the pass kind defines
+  them) are shared between threads, with the stage
   boundary as the ordering constraint; this is how the prototype split chain passes, and
   the blocked grid adds coarser chunks (column blocks, rows). The division of work is
   fixed by the plan, which is what makes results independent of the schedule.
@@ -869,6 +902,18 @@ planes of a volume. The driver costs a few nanoseconds per record. Two consequen
   with data traffic) are added only if experiment X5 shows they pay.
 - Values are computed with exact integer octant reduction and double-double evaluation,
   rounded once; no recurrences. Tables are shared between plans through the twiddle cache.
+- As built (task 1.2), full mode, per plan (deduplicated within a plan, not yet shared
+  through `table_cache`): the grouped pass reads R − 1 rows of w^(pk), each padded with
+  ones to a multiple of C, in the per-lane storage of `load_tw`; lane and generic passes
+  read (R − 1) twiddles per group p in broadcast storage (`bcast_tw`), one stored twiddle
+  per entry rather than C copies (as FFTL.jl's lane passes read theirs, broadcast from
+  memory per vector); the generic pass's roots and the real edges' twiddles are broadcast
+  storage too. Every entry is an entry of the length's root table (the roots of n, or of
+  the radix for the generic pass) or a padding 1: the root tables are what the tests check
+  entry by entry against the reference. The packing into storage forms is exact (copies
+  and sign flips, `pack_tw` and `pack_tw1`), which the vocabulary tests check bit for bit
+  through `load_tw` and `bcast_tw`; the packed tables of a plan are not compared with the
+  reference directly.
 
 ### 8.5 Strategies
 
@@ -886,6 +931,15 @@ register count; a leading radix of at least C where C > 1; otherwise small radic
 ends (they touch unpadded caller memory in R streams) and larger ones in the middle.
 These pull in different directions on wide registers, which is what experiment X2
 resolves per target.
+
+As built (task 1.2, `src/strategies/chain.cpp`): radices from planner v0 (section 11.2);
+the first pass grouped, then lane passes, a radix above 16 a generic pass in any
+position, n ≤ 16 a leaf, n = 1 a copy. The input edge's operation is applied by the first
+pass that is not a copy and the output edge's by the last, so neither costs a pass. On
+C > 1 a line whose stride is not 1 (a strided axis, a strided row) is copied into scratch
+before the chain or out of it after: an extra pass that the lanes strategy for strided
+axes (phase 4) removes. A single generic pass cannot run in place, so it writes scratch
+and is copied when its source is its destination. Scratch is two lines a and b.
 
 **Grid** (two-phase Cooley–Tukey; the family that contains FFTW's recursion, Bailey's
 four-step and KFR's sandwich). N = N1·N2, the data viewed as N1 rows of N2. One phase is
@@ -957,7 +1011,7 @@ being padding on the real side.
 | Factor | Route |
 |---|---|
 | 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 16, (20, 25, 32, 64) | generated codelets |
-| other primes up to about 100 | one generic looped pass in symmetric form, O(p²) per butterfly, vectorised across lanes |
+| other primes up to about 100 | one generic looped pass in symmetric form, O(p²) per butterfly, vectorised across lanes (for now every prime above 16, in direct form with pairwise sums) |
 | larger primes | Bluestein: the smooth part of N is split off first; each large prime factor becomes one pass that performs a chirp-z transform through a smooth-length convolution with a precomputed kernel spectrum |
 
 Rader's algorithm is not planned; it shares a convolution object with Bluestein and can be
@@ -1058,6 +1112,51 @@ function of whether the working set fits L1, L2 or L3 and of the stream count. T
 candidate becomes the plan. Keys include the batch count, because the best program for
 one row and for 256 rows differ (measured on the Xeon).
 
+**Planner v0 (as built, task 1.2, `src/planner/rules.cpp`)** has no cost model yet: the
+radices of a chain and their order follow fixed rules taken from FFTL.jl (T. Knopp; MIT
+licence), which derived them from brute-force searches over radix sequences and
+interleaved measurements on Apple M1, Zen 2 and 3, Tiger Lake and EPYC. The rules are
+specified here and the code implements this specification; it is not a translation of
+FFTL's function (18.2). A target contributes a profile: its number of vector registers
+(16 on x86 below AVX-512, 32 on AArch64 and AVX-512; the scalar target takes its build
+architecture's) and whether it merges radices (AArch64 targets do). For a line of n
+points:
+
+1. n = 1: no pass.
+2. n a power of two from 32 to 64: radix 4, then n/4.
+3. n a power of two from 128 to 16384 on 32 registers: radix 8 throughout, preceded by
+   one radix 4 when log₂ n leaves 2 on division by 3, and by two radix 4 when it leaves 1
+   (radix 8 gained 2–7 % over radix 4 on the M1; on 16 registers it lost 3–25 %).
+4. n ≤ 16, or n prime: one pass of radix n (a leaf, or a generic pass).
+5. Otherwise write n = 2^a 3^b 5^c m with m free of 2, 3 and 5.
+   - The power of two gives a/2 radix 4 when a is even. When a is odd it gives one radix
+     8 and (a − 3)/2 radix 4 if a ≥ 3, b = c = 0 and the target merges or 7 does not
+     divide n; otherwise one radix 2 and (a − 1)/2 radix 4.
+   - A merging target then pairs, as long as both remain, a 3 with a radix 4 into a
+     radix 12; then a 3 with the radix 2 into a radix 6; then a 5 with the radix 2 into a
+     radix 10.
+   - The 3s left go in pairs as radix 9, and one left over as radix 3; the 5s left as
+     radix 5; every prime factor of m, with its multiplicity, as its own radix.
+   - Order: the radices left from the power of two (the 8, the 4s, the 2), then all the
+     others ascending, the largest last (39 as 3 × 13 took 0.65–0.75 of the time of 13 × 3
+     in FFTL's measurements; ascending order had a median ratio of 1.00 to the best order
+     over 306 lengths on the M1).
+
+The scalar target follows the profile of its build architecture. FFTL has one more rule
+that v0 leaves out: on AVX-512, single lines of a power of two use radix 16 while the 16
+input streams are less than one L1 set stride apart (n/16 elements of 16 bytes under 4
+KiB; measured on an EPYC 9354, 4096 points in 0.86 of the time). Planner v0 gives
+`avx512` 32 registers and no merging, so it would use radix 8 there; task 1.3 decides.
+The rules are a pure function of (n, profile), so plans are deterministic and cheap, and
+`tests/core/data/rule_radices.txt` records their output for every 73-smooth n ≤ 20000 and
+each profile. `describe()` lists the radices and every stage. Experiment X2
+([dev/experiments/X2-radix-sets.md](experiments/X2-radix-sets.md)) replaces the rules by
+measured choices per target. Hooks for phase 2: the rules become one generator of
+candidate radix sequences that the cost model ranks, and the chain builder already
+accepts any sequence (the tests force sequences through `build_settings::radices`); the
+memory rules of section 10 (set conflicts) are not applied yet, since FFTL applies them
+only to batches of more than 256 lines.
+
 **`planning::measure`** (opt-in). Take the top k candidates by the model (k about 4–8),
 build each, time whole programs on scratch data for a bounded budget (default 10 ms per
 shape in total) with warmed caches and several repetitions, and keep the fastest. Whole
@@ -1105,7 +1204,9 @@ variants of the first and last passes (section 8.2):
 | `accumulate` | out += result instead of out = result |
 
 The plan records which operations are present (that selects kernel variants); the arrays
-themselves are passed at execute time, so they may change every call. Pruned edges use the
+themselves are passed at execute time, so they may change every call. Task 1.2 built
+`scale` (public: `options::scale`) and `factor` (internal, test-only, its arrays fixed at
+construction until `exec_args` arrives) as edge variants of every pass kind. Pruned edges use the
 generator's pruned codelets, confined to the edge passes.
 
 ### 12.2 Tier B: transform pairs
@@ -1746,9 +1847,31 @@ number: two `FCMLA` on NEON+FCMA, where the complex-register codelets now spend 
 9). It touches every target's vocabulary, so it is weighed with the split lowering's FMA
 shaping (task 1.5). (b) Rader's algorithm for 13 (and the primes above 16): the
 symmetric-pair form costs 192 additions and 134 multiplies against Rader's 176 and 68.
-(c) The twiddle of a lane pass is the same in every lane; the vocabulary has no broadcast
-of a `tw` (`bcast` is for `cv`), so task 1.2 either stores each twiddle replicated C times
-or adds `bcast_tw` to the vocabulary.
+(c) Settled in task 1.2: the vocabulary gained `bcast_tw` (decision log).
+
+**Task 1.2 (for the maintainer).** Public API added in the shape of section 5.3, each a
+choice to confirm: (a) `options::scale` (a `double`, default 1): multiplies every output,
+fused into the pass that writes the output; each output equals the unscaled output times
+the scale rounded once to `T`, bit for bit; plan construction refuses NaN, infinities and,
+for `float` plans, magnitudes beyond `float`'s range or non-zero ones below its smallest
+value (naming `options.scale`). Alternative: accept them. (b) `options::force_isa` with a new
+enumerator `isa::best` (the default), appended after `neon_fcma` so the other values keep
+theirs; `instruction_set()` never returns it and `isa_name` names it "best". A target the
+build lacks or the processor cannot run is refused, naming `options.force_isa`.
+Alternative: `std::optional<isa>`, which needs no sentinel enumerator. (c) The suites'
+FFTN subjects are named per instruction set (`fftn_scalar_double_…`, `fftn_neon_fcma_…`,
+`fftn_avx2_…`) instead of `fftn_…`, and run on every target the machine has. Internal
+questions: (d) code size: each target's unit holds about 1,000 pass instantiations (1 MB
+on AArch64, 2.5 MB of object on x86-64), most of them leaves (15 radices × 2 directions ×
+2 precisions × 8 edge combinations); edge combinations could be pruned once the public
+edge operations are known. (e) Planner v0's rules come from FFTL.jl (MIT licence). The first implementation
+followed FFTL's function too closely (its structure and identifiers), which AGENTS
+section 10 rules out without the maintainer's agreement; it was replaced by code written
+from the specification in section 11.2, which reproduces the first implementation's
+output exactly for every 73-smooth length up to 20000 on every profile (recorded test
+data). To confirm: that rules from an MIT-licensed library, rewritten from a
+specification and cited, need nothing further (an MIT notice is needed only if code were
+copied).
 
 **Threading API and contract (tasks 3.1 and 3.2), for the maintainer's review.** Built as
 below because section 5.3 left the shapes open; each is easy to change before a release.
@@ -1880,6 +2003,11 @@ below because section 5.3 left the shapes open; each is easy to change before a 
 | 2026-11-14 | Team state words are `std::atomic<std::uint64_t>` objects constructed in the workspace when the state is set up, not `std::atomic_ref` over bytes | `atomic_ref` is missing from libc++ before 19 (Clang 16 with libc++, older Apple Clang); constructed objects also have a lifetime the standard recognises |
 | 2026-11-14 | Team state tags carry 40 bits of a 64-bit epoch, compared only for equality, with 24-bit counts; whether an execution is over is a separate untagged word holding the highest epoch a member has returned from | 32-bit epochs compared modulo 2^32 failed after 2^31 executions (hours at microsecond executions): never-written words read as later (second reader of tasks 3.1 and 3.2) |
 | 2026-11-14 | The scheduler is computed by every member at the start of every execution, from the work graph, a lane map and a machine profile of provisional constants | It is a few dozen operations and needs no shared storage or cache; calibration replaces the constants (task 3.4) |
+| 2026-11-14 | A lane pass reads its shared twiddles with a new vocabulary operation `bcast_tw` from tables holding one twiddle per entry (broadcast storage written by `pack_tw1`), not from tables replicating each twiddle C times (18.2 generator (c)) | C times less twiddle memory and traffic (up to 64 bytes per twiddle on AVX2 float otherwise); FFTL.jl measured broadcasting twiddles from memory per vector as its best lane-pass form. Reversible: replicate the entries with `pack_twiddles` and read them with `load_tw` |
+| 2026-11-14 | Pass kernels keep the entry `run(args, first, last)`; a target exports them in a table indexed by codelet radix, direction and edge operation, filled from the generated codelet table; edge operations (scale, factor) are instantiations applied by accessors; a unit is a block of C butterflies (grouped), a group and block of C copies (lane, generic), a line (leaf) or an element (copy); tails run the same instantiation on a padded tile | One codelet text serves every kind and variant; no run-time flag in a loop; units aligned to C keep chunks whole vectors; the tile keeps each element's arithmetic identical wherever its row sits (15.5) |
+| 2026-11-14 | Planner v0: radices and order from FFTL.jl's single-line rules, keyed on the target's register count and whether it merges radices (AArch64) | The plan's starting point (PLAN task 1.2); the rules were measured on M-series and x86 machines; X2 revisits them per target |
+| 2026-11-14 | On targets with C > 1, a line whose stride is not 1 is copied to or from scratch around the chain; leaves and copies take any stride | Passes then load and store whole vectors only; strided axes get the lanes strategy in phase 4, which removes the copies |
+| 2026-11-14 | `options::scale` is fused into the pass that writes the output, so the result is bitwise the unscaled result times the scale; `options::force_isa` with `isa::best` as in section 5.3 (pending the maintainer's agreement, 18.2) | A fused scale costs no pass (task 1.2's acceptance, tested); forcing is how the suites run every target |
 
 ---
 

@@ -93,6 +93,16 @@ void probe(vop op, const T* a, const T* b, const T* c, T* out, std::size_t n, co
       }
     }
     break;
+  case vop::c_cmul:
+    for (std::size_t k = 0; k < n; k += step) {
+      store(out + k, cmul(load(a + k), load(b + k)));
+    }
+    break;
+  case vop::c_mul_bcast:
+    for (std::size_t g = 0; g * step < n; ++g) {
+      store(out + g * step, mul(load(a + g * step), bcast_tw(b + tw_reals<T> * g)));
+    }
+    break;
   case vop::r_copy:
     for (std::size_t k = 0; k < n; k += W<T>) {
       real::store(out + k, real::load(a + k));

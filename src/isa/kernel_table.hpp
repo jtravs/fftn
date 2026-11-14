@@ -16,20 +16,21 @@
 
 namespace fftn::inline v0::detail {
 
-// The entry points of one target for one precision T. Kernel semantics are in kernels.inl.
+// The entry points of one target for one precision T: twiddle packing (kernels.inl) and the
+// passes (src/passes/).
 template <class T> struct kernels_of {
-  // Radix-4 decimation-in-frequency pass, n = 4m (kernels.inl). m % complex_lanes == 0.
-  void (*radix4_pass)(const T* x, T* y, const T* tw, std::size_t m, int sign);
-  // Radix-2 decimation-in-time pass in split arithmetic, n = 2m. m % real_lanes == 0.
-  void (*radix2_split_pass)(const T* x, T* y, const T* twr, const T* twi, std::size_t m, int sign);
   // Converts count interleaved twiddles into this target's twiddle storage, which holds
-  // tw_reals reals per twiddle. count % complex_lanes == 0.
+  // tw_reals reals per twiddle, C twiddles per register (load_tw). count % complex_lanes
+  // == 0.
   void (*pack_twiddles)(const T* w, std::size_t count, T* out);
+  // The same into broadcast storage, tw_reals reals per twiddle, each read into every lane
+  // (bcast_tw). Any count.
+  void (*pack_bcast_twiddles)(const T* w, std::size_t count, T* out);
   std::size_t complex_lanes; // C: complex numbers per complex register
   std::size_t real_lanes;    // W: reals per real register
   std::size_t tw_reals;      // reals stored per twiddle: 2, or 4 where pre-arranged (x86)
-  // The chain strategy's passes (passes/pass_args.hpp); null where the target has none.
-  chain_kernels<T> chain;
+  // The passes (passes/pass_args.hpp).
+  pass_kernels<T> passes;
 };
 
 struct kernel_table {

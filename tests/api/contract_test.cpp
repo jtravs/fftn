@@ -320,8 +320,8 @@ TEST(ExecutionDeathTest, PreconditionsAreAssertedInDebugBuilds) {
 #else
   GTEST_FLAG_SET(death_test_style, "threadsafe");
   using c = std::complex<double>;
-  cvec<double> x(16);
-  cvec<double> y(16);
+  cvec<double> x(80);
+  cvec<double> y(80);
   // An in-place plan given two addresses: a rank-2 in-place c2r would silently compute
   // garbage, so every in-place kind is checked.
   fftn::shape<c, double> planes;
@@ -330,7 +330,9 @@ TEST(ExecutionDeathTest, PreconditionsAreAssertedInDebugBuilds) {
   fftn::workspace ws(in_place);
   EXPECT_DEATH(in_place.execute(x.data(), reinterpret_cast<double*>(y.data()), ws),
                "in-place plan executed with in != out");
-  const fftn::c2c_plan<double> rows(fftn::rows_c2c<double>(8, 2, fftn::direction::forward));
+  // Rows of 40 need scratch (rows of 16 or fewer are leaves, which need none).
+  const fftn::c2c_plan<double> rows(fftn::rows_c2c<double>(40, 2, fftn::direction::forward));
+  ASSERT_GT(rows.workspace_bytes(), 0U);
   fftn::workspace small(rows.workspace_bytes() - 1);
   EXPECT_DEATH(rows.execute(x.data(), y.data(), small), "workspace smaller");
   fftn::workspace enough(rows);
@@ -421,6 +423,23 @@ TEST(Validation, InvalidShapesThrowNamingTheArgument) {
   expect_refused(real, "shape.batches[2]", {.in_place = true});
   moved.batches = {{.count = 2}, {.count = 2}, {.count = 2}, {.count = 2, .in_dist = 16}};
   expect_refused(moved, "shape.batches[3]", {.in_place = true});
+
+  // Options: a scale that is not finite, an instruction set the build or the processor lacks.
+  const auto rows = fftn::rows_c2c<double>(8, 1, fftn::direction::forward);
+  expect_refused(rows, "options.scale", {.scale = std::numeric_limits<double>::infinity()});
+  expect_refused(rows, "options.scale", {.scale = std::numeric_limits<double>::quiet_NaN()});
+  // In float, a scale must stay within float's range (it was converted silently to inf or 0).
+  const auto float_rows = fftn::rows_c2c<float>(8, 1, fftn::direction::forward);
+  expect_refused(float_rows, "options.scale", {.scale = 1e300});
+  expect_refused(float_rows, "options.scale", {.scale = -1e-300});
+  EXPECT_NO_THROW(fftn::c2c_plan<float>(float_rows, {.scale = 0.0}));
+  EXPECT_NO_THROW(fftn::c2c_plan<float>(float_rows, {.scale = 1e30}));
+  EXPECT_NO_THROW(fftn::c2c_plan<double>(rows, {.scale = 1e300}));
+  // No build contains avx512 yet (task 1.3); every build has scalar.
+  expect_refused(rows, "options.force_isa", {.force_isa = fftn::isa::avx512});
+  // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange): invalid on purpose
+  expect_refused(rows, "options.force_isa", {.force_isa = static_cast<fftn::isa>(99)});
+  EXPECT_NO_THROW(fftn::c2c_plan<double>(rows, {.force_isa = fftn::isa::scalar}));
 }
 
 // Strides and distances whose magnitudes or derived byte steps do not fit std::ptrdiff_t.
@@ -578,22 +597,32 @@ TEST(Shape, BracedListsBuildShapes) {
 // ---- Describe, instruction set.
 
 TEST(Describe, NamesTheProgram) {
-  const fftn::c2c_plan<double> p(fftn::rows_c2c<double>(28, 3, fftn::direction::forward));
+  const fftn::c2c_plan<double> p(fftn::rows_c2c<double>(68, 3, fftn::direction::forward));
   const std::string d = p.describe();
+  const std::string isa = std::string("instruction set: ") + fftn::isa_name(p.instruction_set());
   for (const char* part : {
            "c2c forward",
            "double",
-           "instruction set: scalar",
+           isa.c_str(),
            "chain",
-           "radices 4 x 7",
-           "radix-4 forward",
-           "generic radix-7 forward",
+           "radices 4 x 17",
+           "grouped radix-4 forward",
+           "generic radix-17 forward",
            "loop batch x3",
            "workspace",
        }) {
     EXPECT_NE(d.find(part), std::string::npos) << "missing '" << part << "' in\n" << d;
   }
-  EXPECT_EQ(p.instruction_set(), fftn::isa::scalar);
+  EXPECT_NE(p.instruction_set(), fftn::isa::best);
+
+  // Forced to the scalar target, with a fused scale and a leaf.
+  const fftn::c2c_plan<float> q(fftn::rows_c2c<float>(12, 1, fftn::direction::backward),
+                                {.scale = 0.5, .force_isa = fftn::isa::scalar});
+  EXPECT_EQ(q.instruction_set(), fftn::isa::scalar);
+  const std::string e = q.describe();
+  for (const char* part : {"instruction set: scalar", "leaf radix-12 backward (out: scale)"}) {
+    EXPECT_NE(e.find(part), std::string::npos) << "missing '" << part << "' in\n" << e;
+  }
 
   fftn::shape<std::complex<float>, float> volume;
   volume.axes = {{.n = 3}, {.n = 4}, {.n = 6}};
@@ -624,6 +653,7 @@ TEST(Isa, Names) {
   EXPECT_STREQ(fftn::isa_name(fftn::isa::avx512), "avx512");
   EXPECT_STREQ(fftn::isa_name(fftn::isa::neon), "neon");
   EXPECT_STREQ(fftn::isa_name(fftn::isa::neon_fcma), "neon_fcma");
+  EXPECT_STREQ(fftn::isa_name(fftn::isa::best), "best");
   // Out of range: this read past the table of names before it was bounds-checked.
   // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange): invalid on purpose
   EXPECT_STREQ(fftn::isa_name(static_cast<fftn::isa>(200)), "unknown");

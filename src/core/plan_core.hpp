@@ -19,12 +19,25 @@
 
 namespace fftn::inline v0::detail {
 
-// Construction knobs for tests; plans built through the public API use the defaults.
+// Construction knobs for tests; plans built through the public API use the defaults. They
+// force the paths the rules would not take for the lengths at hand (AGENTS.md section 5).
 struct build_settings {
   // About this many points of work per chunk of a stage (program.hpp) or of a run of
   // lines (work_graph.hpp). Experiment T5 sets the value; here it only has to give long
   // rows several chunks.
   std::size_t chunk_points = 2048;
+  // The radices, in pass order, of every complex line whose length they multiply to,
+  // instead of the rules' choice (strategies/chain.hpp). Any radix above 16 goes through
+  // the generic pass.
+  std::vector<std::size_t> radices;
+  // The factor edge operation (DESIGN.md 12.1), which the public API does not offer yet:
+  // n complex values of the plan's precision multiplying the input (before the transform)
+  // or the output (after it) of every row of a c2c plan of one axis. The arrays must
+  // outlive the plan.
+  const void* in_factor = nullptr;
+  const void* out_factor = nullptr;
+  // Puts options::scale on the input edge instead of the output edge (c2c only).
+  bool scale_on_input = false;
   // The machine the plan's team executions are scheduled for (schedule.hpp).
   machine_profile profile = default_machine_profile();
 };

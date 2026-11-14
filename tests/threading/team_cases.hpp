@@ -9,6 +9,7 @@
 #pragma once
 
 #include "core/plan_core.hpp"
+#include "support/fftn_subject.hpp"
 #include "support/inputs.hpp"
 #include "threading/schedule.hpp"
 
@@ -85,10 +86,12 @@ inline fftn::detail::build_settings eager_settings() {
 template <class In, class Out>
 team_case make_case(std::string name, const fftn::shape<In, Out>& s, std::size_t in_elements,
                     std::size_t out_elements, bool in_place,
-                    const fftn::detail::build_settings& settings) {
+                    const fftn::detail::build_settings& settings,
+                    fftn::isa target = fftn::isa::best) {
   team_case c;
   c.name = std::move(name);
-  c.core = fftn::detail::make_plan_core(fftn::detail::view_of(s), {.in_place = in_place}, settings);
+  c.core = fftn::detail::make_plan_core(fftn::detail::view_of(s),
+                                        {.in_place = in_place, .force_isa = target}, settings);
   c.in_place = in_place;
   c.in_bytes = in_elements * sizeof(In);
   c.out_bytes = out_elements * sizeof(Out);
@@ -108,77 +111,91 @@ team_case make_case(std::string name, const fftn::shape<In, Out>& s, std::size_t
 
 template <class T>
 void add_cases(std::vector<team_case>& out, const fftn::detail::build_settings& settings,
-               const std::string& suffix) {
+               const std::string& suffix, fftn::isa target = fftn::isa::best) {
   using c = std::complex<T>;
   constexpr auto fwd = fftn::direction::forward;
   constexpr auto bwd = fftn::direction::backward;
   out.push_back(make_case("c2c_2000x1" + suffix, fftn::rows_c2c<T>(2000, 1, fwd), 2000, 2000, false,
-                          settings));
-  out.push_back(
-      make_case("c2c_360x7" + suffix, fftn::rows_c2c<T>(360, 7, bwd), 2520, 2520, false, settings));
+                          settings, target));
+  out.push_back(make_case("c2c_360x7" + suffix, fftn::rows_c2c<T>(360, 7, bwd), 2520, 2520, false,
+                          settings, target));
   out.push_back(make_case("c2c_inplace_1024x3" + suffix, fftn::rows_c2c<T>(1024, 3, fwd), 3072,
-                          3072, true, settings));
+                          3072, true, settings, target));
   out.push_back(make_case("c2c_prime_97x5" + suffix, fftn::rows_c2c<T>(97, 5, fwd), 485, 485, false,
-                          settings));
-  out.push_back(
-      make_case("r2c_1000x5" + suffix, fftn::rows_r2c<T>(1000, 5), 5000, 5 * 501, false, settings));
-  out.push_back(
-      make_case("r2c_999x2" + suffix, fftn::rows_r2c<T>(999, 2), 1998, 2 * 500, false, settings));
-  out.push_back(
-      make_case("c2r_1000x3" + suffix, fftn::rows_c2r<T>(1000, 3), 3 * 501, 3000, false, settings));
-  out.push_back(
-      make_case("c2r_45x9" + suffix, fftn::rows_c2r<T>(45, 9), 9 * 23, 9 * 45, false, settings));
+                          settings, target));
+  out.push_back(make_case("r2c_1000x5" + suffix, fftn::rows_r2c<T>(1000, 5), 5000, 5 * 501, false,
+                          settings, target));
+  out.push_back(make_case("r2c_999x2" + suffix, fftn::rows_r2c<T>(999, 2), 1998, 2 * 500, false,
+                          settings, target));
+  out.push_back(make_case("c2r_1000x3" + suffix, fftn::rows_c2r<T>(1000, 3), 3 * 501, 3000, false,
+                          settings, target));
+  out.push_back(make_case("c2r_45x9" + suffix, fftn::rows_c2r<T>(45, 9), 9 * 23, 9 * 45, false,
+                          settings, target));
   out.push_back(make_case("c2c_planes_24x20x3" + suffix, fftn::planes_c2c<T>(24, 20, 3, fwd), 1440,
-                          1440, false, settings));
+                          1440, false, settings, target));
   out.push_back(make_case("c2c_planes_inplace_16x12x2" + suffix,
-                          fftn::planes_c2c<T>(16, 12, 2, bwd), 384, 384, true, settings));
+                          fftn::planes_c2c<T>(16, 12, 2, bwd), 384, 384, true, settings, target));
   fftn::shape<c, T> c2r_planes;
   c2r_planes.axes = {{.n = 12}, {.n = 16}};
   c2r_planes.batches = {{.count = 2}};
   out.push_back(make_case("c2r_planes_12x16x2" + suffix, c2r_planes, 2 * 12 * 9, 2 * 12 * 16, false,
-                          settings));
+                          settings, target));
   fftn::shape<T, c> r2c_planes;
   r2c_planes.axes = {{.n = 10}, {.n = 12}};
   r2c_planes.batches = {{.count = 2}};
-  out.push_back(
-      make_case("r2c_planes_10x12x2" + suffix, r2c_planes, 2 * 120, 2 * 10 * 7, false, settings));
+  out.push_back(make_case("r2c_planes_10x12x2" + suffix, r2c_planes, 2 * 120, 2 * 10 * 7, false,
+                          settings, target));
   fftn::shape<c, c> volume;
   volume.axes = {{.n = 8}, {.n = 6}, {.n = 10}};
   volume.batches = {{.count = 2}};
-  out.push_back(make_case("c2c_volume_8x6x10x2" + suffix, volume, 960, 960, false, settings));
+  out.push_back(
+      make_case("c2c_volume_8x6x10x2" + suffix, volume, 960, 960, false, settings, target));
   out.push_back(make_case("c2c_many_64x100" + suffix, fftn::rows_c2c<T>(64, 100, fwd), 6400, 6400,
-                          false, settings));
+                          false, settings, target));
   const fftn::shape<T, c> batches{
       .axes = {{.n = 10}},
       .batches = {{.count = 2}, {.count = 3}, {.count = 1}, {.count = 2}},
   };
-  out.push_back(make_case("r2c_batches_10" + suffix, batches, 120, 12 * 6, false, settings));
+  out.push_back(
+      make_case("r2c_batches_10" + suffix, batches, 120, 12 * 6, false, settings, target));
   // Interleaved rows: element j of row t at 4 j + t, read with a stride.
   const fftn::shape<c, c> strided{
       .dir = fwd,
       .axes = {{.n = 300, .in_stride = 4}},
       .batches = {{.count = 4, .in_dist = 1}},
   };
-  out.push_back(make_case("c2c_strided_300x4" + suffix, strided, 1200, 1200, false, settings));
+  out.push_back(
+      make_case("c2c_strided_300x4" + suffix, strided, 1200, 1200, false, settings, target));
   // In place: real kinds in FFTW's padded rows; a prime row, whose one pass goes through
   // scratch and a copy when source and destination are the same memory.
   out.push_back(make_case("r2c_inplace_1000x3" + suffix, fftn::rows_r2c<T>(1000, 3), 3 * 1002,
-                          3 * 501, true, settings));
+                          3 * 501, true, settings, target));
   out.push_back(make_case("c2r_inplace_999x3" + suffix, fftn::rows_c2r<T>(999, 3), 3 * 500,
-                          3 * 1000, true, settings));
+                          3 * 1000, true, settings, target));
   out.push_back(make_case("c2c_inplace_prime_97x5" + suffix, fftn::rows_c2c<T>(97, 5, bwd), 485,
-                          485, true, settings));
+                          485, true, settings, target));
   // A unit axis: one transform's phases mix stages and loop nests.
   out.push_back(make_case("c2c_planes_1x200x3" + suffix, fftn::planes_c2c<T>(1, 200, 3, fwd), 600,
-                          600, false, settings));
+                          600, false, settings, target));
   out.push_back(make_case("c2c_planes_150x1x2" + suffix, fftn::planes_c2c<T>(150, 1, 2, fwd), 300,
-                          300, false, settings));
+                          300, false, settings, target));
 }
 
 inline std::vector<team_case> standard_cases(const fftn::detail::build_settings& settings) {
   std::vector<team_case> cases;
   add_cases<double>(cases, settings, "");
   add_cases<float>(cases, settings, "_f32");
+  // Float on every other instruction set the machine runs: the targets' complex counts
+  // differ (C = 1 on scalar, 2 on neon_fcma, 4 on avx2), and with them the passes' units,
+  // tails and copies that the team shares out.
+  const fftn::isa best =
+      fftn::c2c_plan<float>(fftn::rows_c2c<float>(2, 1, fftn::direction::forward))
+          .instruction_set();
+  for (const fftn::isa t : runnable_isas()) {
+    if (t != best) {
+      add_cases<float>(cases, settings, std::string("_f32_") + fftn::isa_name(t), t);
+    }
+  }
   return cases;
 }
 
