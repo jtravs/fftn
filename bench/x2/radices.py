@@ -158,7 +158,8 @@ def parse(text: str) -> Sequence:
     return tuple(int(x) for x in text.split("."))
 
 
-NOTE = re.compile(r"\(n = (\d+)\): (?:c2c \w+, )?radices ([\d x]+)$")
+# The radices may be followed by the chain's split run (strategies/chain.hpp, experiment X1).
+NOTE = re.compile(r"\(n = (\d+)\): (?:c2c \w+, )?radices ([\d x]+?)(?:, split from pass \d+)?$")
 
 
 def from_note(note: str) -> tuple[int, Sequence]:

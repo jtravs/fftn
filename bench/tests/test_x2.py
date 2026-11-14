@@ -142,6 +142,10 @@ class Cases(unittest.TestCase):
         self.assertEqual(radices.parse("4.8.8"), (4, 8, 8))
         self.assertEqual(radices.from_note("axis 0 (n = 256): radices 4 x 8 x 8"), (256, (4, 8, 8)))
         self.assertEqual(radices.from_note("axis 0 (n = 16): radices 16"), (16, (16,)))
+        self.assertEqual(
+            radices.from_note("axis 0 (n = 1024): radices 8 x 8 x 16, split from pass 2"),
+            (1024, (8, 8, 16)),
+        )
         with self.assertRaises(ValueError):
             radices.from_note("axis 0 (n = 100): r2c through a half-length complex chain")
 
