@@ -127,7 +127,9 @@ MKL ÷ FFTW on the Xeon is 0.95 (geomean; 0.80 at 64, 0.87 at 4096), so the MKL 
    4096 0.751 (GCC 14) and 0.723 (Clang), 16384 0.895 and 0.840; FFTN ÷ FFTW at 4096 is
    then 1.14 (GCC) and 1.07 (Clang), at 16384 1.39 and 1.41. On AVX-512 the planner
    is not the problem: no forced sequence beat the default by more than 4 % at 64, 128, 256,
-   512, 1024, 16384, 60 or 120 (runs 20261114-124216-c5cc to -124341-0867).
+   512, 1024, 16384, 60 or 120 (runs 20261114-124216-c5cc to -124341-0867), and X16's search
+   (campaign xeon-avx512-smooth) puts planner v1 within 0.6–2.1 % of the best sequence for
+   7-smooth n ≤ 1024. On AVX2 the misses are above X2's range (1024 apart).
 4. **Fewer, larger passes in FFTW.** FFTW's plans (Xeon, `perf report`): 64 = 32 × 2,
    256 = 16 × 16, 1024 = 32 × 32 (`n2fv_32` + `t3fv_32`), 4096 = 64 × 64, 1000 = 20 × 10 × 5.
    FFTN's radix ≤ 16 needs 3 passes at 512–4096 and 4 at 16384. At 4096 on the Xeon the per
