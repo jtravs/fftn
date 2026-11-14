@@ -429,8 +429,9 @@ measures.
 
 ## Remote runs
 
-`scripts/remote/fbench_remote.py` runs fbench on a Slurm machine in one job on an exclusive
-node. Describe each machine in an untracked file, `~/.config/fftn/remote.toml` (or
+`scripts/remote/fbench_remote.py` runs fbench on a Slurm machine in one job, on an exclusive
+node unless the profile says `exclusive = false` (a shared machine whose other jobs must keep
+running; ask for a few cores with `-c`). Describe each machine in an untracked file, `~/.config/fftn/remote.toml` (or
 `$FFTN_REMOTE_CONFIG`):
 
 ```toml
@@ -442,6 +443,7 @@ fftw_root = "/path/to/fftw-3.3.11"      # built with its best SIMD and FMA optio
 setup = ["source /path/to/toolchain.sh"]  # compiler, CMake and uv on the compute node
 sbatch = ["--time=02:00:00"]             # further #SBATCH options
 cxx = "g++-14"                           # optional
+exclusive = false                        # optional: share the node (default: whole node)
 ```
 
 `FFTN_REMOTE_SSH`, `FFTN_REMOTE_WORKDIR`, `FFTN_REMOTE_PARTITION`, `FFTN_REMOTE_FFTW_ROOT` and
