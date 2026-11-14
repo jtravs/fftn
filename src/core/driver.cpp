@@ -45,20 +45,6 @@ void* destination_of(slot s, const slot_addresses& at) noexcept {
   return at.block;
 }
 
-void run_stage(const stage& st, const slot_addresses& at) noexcept {
-  pass_args args = st.args;
-  args.src = source_of(st.src, at);
-  args.dst = destination_of(st.dst, at);
-  for (std::size_t c = 0; c < st.chunks; ++c) {
-    // Chunk c is [units c / chunks, units (c + 1) / chunks): fixed by the plan, so a split
-    // across threads (phase 3) runs exactly these ranges.
-    const std::size_t first = st.units / st.chunks * c + st.units % st.chunks * c / st.chunks;
-    const std::size_t next = c + 1;
-    const std::size_t last = st.units / st.chunks * next + st.units % st.chunks * next / st.chunks;
-    st.run(&args, first, last);
-  }
-}
-
 slot_addresses moved(const slot_addresses& at, const std::array<std::ptrdiff_t, moving_slots>& step,
                      std::size_t times) noexcept {
   const auto k = static_cast<std::ptrdiff_t>(times);
@@ -82,7 +68,7 @@ void run_records(const program& p, std::size_t begin, std::size_t end,
   for (std::size_t i = begin; i < end; ++i) {
     const record& r = p.records[i];
     if (const stage* st = std::get_if<stage>(&r)) {
-      run_stage(*st, at);
+      run_stage_chunks(*st, at, 0, st->chunks);
       continue;
     }
     const loop& l = *std::get_if<loop>(&r);
@@ -93,21 +79,49 @@ void run_records(const program& p, std::size_t begin, std::size_t end,
   }
 }
 
+// Moves `at` to iteration `index` of the loops [begin, begin + depth), the last varying
+// fastest.
+slot_addresses moved_in_nest(const program& p, std::size_t begin, std::size_t depth,
+                             std::size_t index, const slot_addresses& at) noexcept {
+  slot_addresses here = at;
+  std::size_t rest = index;
+  for (std::size_t i = begin + depth; i > begin; --i) {
+    const loop& l = *std::get_if<loop>(&p.records[i - 1]);
+    here = moved(here, l.step, rest % l.count);
+    rest /= l.count;
+  }
+  return here;
+}
+
 } // namespace
+
+void run_stage_chunks(const stage& st, const slot_addresses& at, std::size_t first,
+                      std::size_t last) noexcept {
+  pass_args args = st.args;
+  args.src = source_of(st.src, at);
+  args.dst = destination_of(st.dst, at);
+  for (std::size_t c = first; c < last; ++c) {
+    // Fixed by the plan, so a split across threads runs exactly these ranges.
+    st.run(&args, chunk_start(st.units, st.chunks, c), chunk_start(st.units, st.chunks, c + 1));
+  }
+}
+
+slot_addresses transform_addresses(const program& p, std::size_t t,
+                                   const slot_addresses& base) noexcept {
+  return moved_in_nest(p, 0, p.batch_loops, t, base);
+}
 
 void run_transforms(const program& p, std::size_t first, std::size_t count,
                     const slot_addresses& base) noexcept {
-  const std::size_t body = p.batch_loops;
   for (std::size_t t = first; t < first + count; ++t) {
-    // Transform t's position in the batch loops, the innermost varying fastest.
-    slot_addresses at = base;
-    std::size_t rest = t;
-    for (std::size_t i = body; i > 0; --i) {
-      const loop& l = *std::get_if<loop>(&p.records[i - 1]);
-      at = moved(at, l.step, rest % l.count);
-      rest /= l.count;
-    }
-    run_records(p, body, p.records.size(), at);
+    run_records(p, p.batch_loops, p.records.size(), transform_addresses(p, t, base));
+  }
+}
+
+void run_lines(const program& p, std::size_t begin, std::size_t nest, std::size_t body_end,
+               std::size_t first, std::size_t last, const slot_addresses& at) noexcept {
+  for (std::size_t line = first; line < last; ++line) {
+    run_records(p, begin + nest, body_end, moved_in_nest(p, begin, nest, line, at));
   }
 }
 
