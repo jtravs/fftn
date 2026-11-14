@@ -1,11 +1,13 @@
 # SPDX-FileCopyrightText: 2026 John C. Travers and contributors
 # SPDX-License-Identifier: Apache-2.0
 #
-# fftn_add_test(<name> SOURCES <files...> [LIBRARIES <targets...>] [OWN_MAIN])
+# fftn_add_test(<name> SOURCES <files...> [LIBRARIES <targets...>] [ENVIRONMENT <VAR=value...>]
+#               [OWN_MAIN])
 #   A GoogleTest executable with FFTN's flags, access to the private sources (src/) and
 #   the shared test support (tests/), registered with CTest test by test and recorded for
 #   the coverage gate. OWN_MAIN: the sources define main() (for a runtime that must be
-#   initialised around the tests, such as Kokkos) instead of GoogleTest's.
+#   initialised around the tests, such as Kokkos) instead of GoogleTest's. ENVIRONMENT: set for
+#   every test of the executable.
 #
 # fftn_write_coverage_manifest()
 #   Writes <build>/fftn-coverage.json: the coverage tool and the instrumented executables,
@@ -14,7 +16,7 @@
 include(GoogleTest)
 
 function(fftn_add_test name)
-  cmake_parse_arguments(ARG "OWN_MAIN" "" "SOURCES;LIBRARIES" ${ARGN})
+  cmake_parse_arguments(ARG "OWN_MAIN" "" "SOURCES;LIBRARIES;ENVIRONMENT" ${ARGN})
   add_executable(${name} ${ARG_SOURCES})
   fftn_configure_target(${name})
   target_include_directories(${name} PRIVATE ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/tests)
@@ -24,7 +26,11 @@ function(fftn_add_test name)
     set(gtest GTest::gtest_main)
   endif()
   target_link_libraries(${name} PRIVATE fftn::fftn ${gtest} ${ARG_LIBRARIES})
-  gtest_discover_tests(${name} DISCOVERY_MODE PRE_TEST)
+  if(ARG_ENVIRONMENT)
+    gtest_discover_tests(${name} DISCOVERY_MODE PRE_TEST PROPERTIES ENVIRONMENT "${ARG_ENVIRONMENT}")
+  else()
+    gtest_discover_tests(${name} DISCOVERY_MODE PRE_TEST)
+  endif()
   set_property(GLOBAL APPEND PROPERTY FFTN_TEST_EXECUTABLES "$<TARGET_FILE:${name}>")
 endfunction()
 
