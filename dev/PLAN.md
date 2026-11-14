@@ -251,7 +251,7 @@ running, done (with verdict).
 | X7 | Lanes against in-row kernels for batches of short rows, by length, target and row count | 2 | planned |
 | X8 | Whole-transform leaves for n ≤ 64–256 against two- and three-stage chains | 1 | planned |
 | X9 | Scrambled intermediate order for transform pairs | 5 | planned |
-| X10 | Generated whole passes against templated pass loops | 1 | planned |
+| [X10](experiments/X10-pass-loops.md) | Generated whole passes against templated pass loops; on x86 first: addressing, register budget and shuffles of the pass loops (after X18) | 1 | running |
 | X11 | SVE at 128 and 256 bits on Graviton 3/4 against NEON | 7 | planned |
 | [X12](experiments/X12-beyond-l2.md) | Beyond-L2 forms: DIF grid, DIT grid, in-place sandwich; block sizes by cache level; the in-place route (scratch of N, permutation pass, or palindromic swap) | 1 | running: DIF grid in two or three phases adopted for rows beyond L1 on the Mac (0.47–0.71 of the chain's time, run 20261114-110844-8b03); copies fused into end passes for small-radix phases within L2/4 (2^18: 1.03 → 0.92, run 20261114-132841-80e0); x86 runs pending |
 | X14 | Is a separate `avx` target (256 bit, no FMA, no AVX2) worth keeping over `x86_v2` on Sandy Bridge-class machines? | 1 | planned |
