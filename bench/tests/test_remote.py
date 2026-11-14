@@ -103,6 +103,9 @@ class JobScript(unittest.TestCase):
             text,
         )
         self.assertNotIn(" run fftn", text)
+        longer = remote.sbatch_script(PROFILE, plan, time_limit="12:00:00")
+        self.assertIn("#SBATCH --time=12:00:00", longer)
+        self.assertNotIn("--time=01:00:00", longer)
 
     def test_bad_arm_build(self):
         with self.assertRaises(SystemExit):

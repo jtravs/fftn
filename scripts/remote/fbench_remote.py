@@ -4,7 +4,7 @@
 """Run fbench on a Slurm machine with an exclusive node (bench/README.md, "Remote runs").
 
     fbench_remote.py submit PROFILE ARM... [--after JOBID] [--dry-run] -- [fbench run options]
-    fbench_remote.py submit PROFILE ARM... --campaign SCRIPT -- [SCRIPT options]
+    fbench_remote.py submit PROFILE ARM... --campaign SCRIPT [--time T] -- [SCRIPT options]
     fbench_remote.py status JOB
     fbench_remote.py log JOB [--lines N]
     fbench_remote.py fetch JOB
@@ -148,7 +148,9 @@ def make_plan(
     return Plan(job, jobdir, head, commits, rewritten, arm_commits, fbench_args, campaign)
 
 
-def sbatch_script(profile: Profile, plan: Plan, after: str | None = None) -> str:
+def sbatch_script(
+    profile: Profile, plan: Plan, after: str | None = None, time_limit: str | None = None
+) -> str:
     q = shlex.quote
     lines = [
         "#!/bin/bash",
@@ -162,7 +164,12 @@ def sbatch_script(profile: Profile, plan: Plan, after: str | None = None) -> str
         lines.append(f"#SBATCH --partition={profile.partition}")
     if after:
         lines.append(f"#SBATCH --dependency=afterok:{after}")
-    lines += [f"#SBATCH {opt}" for opt in profile.sbatch]
+    extra = profile.sbatch
+    if time_limit:
+        # Replaces the profile's limit: a campaign runs for hours, a single A/B for minutes.
+        extra = [o for o in extra if not o.startswith(("--time", "-t"))]
+        extra.append(f"--time={time_limit}")
+    lines += [f"#SBATCH {opt}" for opt in extra]
     lines += [
         "set -euo pipefail",
         f"cd {q(plan.jobdir)}",
@@ -268,7 +275,7 @@ def cmd_submit(args: argparse.Namespace) -> int:
         subprocess.run(
             ["git", "archive", "--format=tar.gz", "-o", str(out), sha], cwd=REPO, check=True
         )
-    (local / "job.sbatch").write_text(sbatch_script(profile, plan, args.after))
+    (local / "job.sbatch").write_text(sbatch_script(profile, plan, args.after, args.time))
     manifest = {
         "job": job,
         "profile": profile.name,
@@ -279,6 +286,7 @@ def cmd_submit(args: argparse.Namespace) -> int:
         "arm_commits": plan.arm_commits,
         "fbench_args": plan.fbench_args,
         "campaign": plan.campaign,
+        "time": args.time,
         "after": args.after,
         "submitted": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     }
@@ -385,6 +393,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--name", help="job name (default fbench-<time>-<commit>)")
     s.add_argument("--after", help="Slurm job ID this job waits for (afterok)")
     s.add_argument("--dry-run", action="store_true", help="write the job files only")
+    s.add_argument("--time", help="Slurm time limit of this job (replaces the profile's)")
     s.add_argument(
         "--campaign",
         help="run this campaign driver of the checkout (e.g. bench/x2/x2.py) instead of fbench",
