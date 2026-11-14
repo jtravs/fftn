@@ -72,6 +72,21 @@ multiplication by ±i in interleaved form is a shuffle; the prototype's main x86
 split re/im instead. Split form doubles register use (radix R needs 2R vectors).
 [X18](experiments/X18-x86-kernels.md), [X10](experiments/X10-pass-loops.md).
 
+2.1a **On x86, split re/im lane passes pay even with both conversions.** A chain whose
+last two passes run on separate real and imaginary registers (deinterleave on the first
+one's loads, interleave on the last one's stores, no shuffle in the arithmetic, twiddle
+parts broadcast) beat the same passes on interleaved registers by 7–11 % at 1024–2048
+points in double and 18–23 % in float on the Xeon (AVX-512 and AVX2), and by 7–15 % at 2048
+on the EPYC (Zen 3; 1.3 % at 1024, and 2.5 % slower with a radix-12 pass); on the Mac (NEON
+with FCMA) it was 10–25 % slower. On the Xeon's AVX-512 it cut port-5 uops by 12 % and
+instructions by 17 % at 1024, yet port 5 stayed 58 % busy: the conversions and the first
+pass's transposes remain. A radix-16 split codelet holds 34–40 live reals, so AVX2's 16
+registers spill, and it still won there. A rule that the planner's two targets must round
+alike constrains where a split run may start (the wider target's lane count on both), which
+costs the narrower one some lengths. Judge such a change on the cases it touches: over a
+tracking set where few cases had a run the geometric mean moved by 1 %.
+[X1](experiments/X1-split-lowering.md).
+
 2.2 **Count the shuffles your generator emits.** FFTN's generated radix-16 codelet
 needed 19 distinct ±i swaps where FFTW's has 7 (radix 8: 6 against 3). A tie-break in the
 lowering changed nothing (the stores' rotations decide every choice). What worked is

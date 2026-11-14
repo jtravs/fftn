@@ -121,3 +121,93 @@ def verify(
                     f"radix {radix} {variant} sign {sign}: output {k} is {mpmath.nstr(a, 12)}, "
                     f"expected {mpmath.nstr(b, 12)}"
                 )
+
+
+def evaluate_split(ops: list[Op] | tuple[Op, ...], x: list, w: list) -> list:
+    """Runs split operations (split.py) on complex inputs x and twiddles w."""
+    env: dict[int, mpmath.mpf] = {}
+    out: dict[int, mpmath.mpc] = {}
+    for op in ops:
+        a = [env[v] for v in op.args]
+        match op.kind:
+            case "load_re":
+                env[op.dst] = mpmath.re(x[op.index])
+            case "load_im":
+                env[op.dst] = mpmath.im(x[op.index])
+            case "load_twr":
+                env[op.dst] = mpmath.re(w[op.index])
+            case "load_twi":
+                env[op.dst] = mpmath.im(w[op.index])
+            case "add":
+                env[op.dst] = a[0] + a[1]
+            case "sub":
+                env[op.dst] = a[0] - a[1]
+            case "mul":
+                env[op.dst] = a[0] * a[1]
+            case "mulk":
+                env[op.dst] = op.const * a[0]
+            case "fmaddk":
+                env[op.dst] = op.const * a[0] + a[1]
+            case "fnmaddk":
+                env[op.dst] = a[1] - op.const * a[0]
+            case "fmsubk":
+                env[op.dst] = op.const * a[0] - a[1]
+            case "fmadd":
+                env[op.dst] = a[0] * a[1] + a[2]
+            case "fnmadd":
+                env[op.dst] = a[2] - a[0] * a[1]
+            case "fmsub":
+                env[op.dst] = a[0] * a[1] - a[2]
+            case "neg":
+                env[op.dst] = -a[0]
+            case "store":
+                if op.index in out:
+                    raise VerificationError(f"output {op.index} stored twice")
+                out[op.index] = mpmath.mpc(a[0], a[1])
+            case _:
+                raise VerificationError(f"unknown split operation {op.kind}")
+    return [out[k] for k in range(len(out))]
+
+
+def check_shape_split(ops: list[Op] | tuple[Op, ...], radix: int, variant: str) -> None:
+    """The split accessor contract: both parts of every input leg loaded once, both parts of
+    every twiddle leg 1 .. R-1 once (none for plain), every output stored once."""
+    where = f"split radix {radix} {variant}"
+    legs = list(range(radix))
+    twiddle_legs = [] if variant == "plain" else list(range(1, radix))
+    expected = {
+        "load_re": legs,
+        "load_im": legs,
+        "load_twr": twiddle_legs,
+        "load_twi": twiddle_legs,
+        "store": legs,
+    }
+    for kind, want in expected.items():
+        got = sorted(op.index for op in ops if op.kind == kind)
+        if got != want:
+            raise VerificationError(f"{where}: {kind} indices {got}, expected {want} once each")
+
+
+def verify_split(ops: list[Op] | tuple[Op, ...], radix: int, variant: str, seed: int = 7) -> None:
+    """A forward split codelet against the definition, as verify() does for the complex
+    form; the basis inputs include the imaginary units, which the real parts do not reach."""
+    rng = random.Random(seed)
+
+    def rand() -> mpmath.mpc:
+        return mpmath.mpc(rng.uniform(-1, 1), rng.uniform(-1, 1))
+
+    check_shape_split(ops, radix, variant)
+    cases = [[mpmath.mpc(int(j == i)) for j in range(radix)] for i in range(radix)]
+    cases += [[mpmath.mpc(0, int(j == i)) for j in range(radix)] for i in range(radix)]
+    cases += [[rand() for _ in range(radix)] for _ in range(3)]
+    for x in cases:
+        w = [None] + [rand() for _ in range(radix - 1)]
+        got = evaluate_split(ops, x, w)
+        want = reference(radix, variant, -1, x, w)
+        scale = max(mpmath.mpf(1), *(abs(v) for v in want))
+        for k, (a, b) in enumerate(zip(got, want, strict=True)):
+            if abs(a - b) > _TOLERANCE * scale:
+                raise VerificationError(
+                    f"split radix {radix} {variant}: output {k} is {mpmath.nstr(a, 12)}, "
+                    f"expected {mpmath.nstr(b, 12)}"
+                )

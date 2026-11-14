@@ -22,7 +22,8 @@ from __future__ import annotations
 
 from .lower import Op
 
-_LOADS = ("load", "load_tw")
+# Loads of the complex-register lowering (lower.py) and of the split one (split.py).
+_LOADS = ("load", "load_tw", "load_re", "load_im", "load_twr", "load_twi")
 
 
 def _graph(ops: list[Op]) -> tuple[list[list[int]], list[int], list[bool]]:
@@ -36,13 +37,15 @@ def _graph(ops: list[Op]) -> tuple[list[list[int]], list[int], list[bool]]:
 
 def place(ops: list[Op], seq: list[int]) -> list[Op]:
     """The arithmetic operations in the order seq (positions in ops), each load just before
-    its first use and each store just after its producer."""
+    its first use and each store just after its producer (the later of its two, for a split
+    store of a real and an imaginary part)."""
     preds, compute, is_load = _graph(ops)
     assert sorted(seq) == compute, "seq orders the arithmetic operations"
+    rank = {i: r for r, i in enumerate(seq)}
     after: dict[int, list[int]] = {}
     for i, op in enumerate(ops):
         if op.kind == "store":
-            after.setdefault(preds[i][0], []).append(i)
+            after.setdefault(max(preds[i], key=lambda p: rank[p]), []).append(i)
     out: list[int] = []
     placed: set[int] = set()
     for i in seq:

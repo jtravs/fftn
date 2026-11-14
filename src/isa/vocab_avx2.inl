@@ -32,6 +32,7 @@ template <> struct vec<double> {
   using tw = tw_f64;
   static constexpr std::size_t C = 2;
   static constexpr std::size_t W = 4;
+  static constexpr std::size_t split_block = 2 * W; // avx512's W: the pair rounds alike
   static constexpr std::size_t tw_reals = 4;
 };
 
@@ -41,6 +42,7 @@ template <> struct vec<float> {
   using tw = tw_f32;
   static constexpr std::size_t C = 4;
   static constexpr std::size_t W = 8;
+  static constexpr std::size_t split_block = 2 * W; // avx512's W: the pair rounds alike
   static constexpr std::size_t tw_reals = 4;
 };
 

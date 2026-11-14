@@ -29,6 +29,7 @@ template <class T> struct kernels_of {
   std::size_t complex_lanes; // C: complex numbers per complex register
   std::size_t real_lanes;    // W: reals per real register
   std::size_t tw_reals;      // reals stored per twiddle: 2, or 4 where pre-arranged (x86, neon)
+  std::size_t split_block;   // copies from which lane passes may be split (vocabulary.inl)
   // The passes (passes/pass_args.hpp).
   pass_kernels<T> passes;
 };

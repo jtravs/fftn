@@ -318,6 +318,15 @@ std::size_t leaf_limit_of(target t, std::size_t lanes) {
   return (t == target::neon || t == target::neon_fcma) && lanes == 1 ? 32 : default_leaf_limit;
 }
 
+// Whether chains on target t end in split passes (DESIGN.md 6.3, strategies/chain.hpp),
+// from experiment X1 (dev/experiments/X1-split-lowering.md): on x86 (avx2, avx512; double
+// and float) split runs were 7-23 % faster than the same passes on interleaved registers
+// on the Xeon 6240 and the EPYC 7763; on the Mac (neon_fcma) 10-25 % slower, so NEON and
+// the scalar target stay interleaved.
+bool split_of(target t, std::size_t /*lanes*/) {
+  return t == target::avx2 || t == target::avx512;
+}
+
 struct sequence {
   std::uint64_t cost = 0;
   std::vector<std::size_t> radices;
@@ -399,7 +408,8 @@ target_profile profile_of(target t, std::size_t lanes) noexcept {
       return {.lanes = lanes,
               .costs = m.costs,
               .leaf_limit = leaf_limit_of(t, lanes),
-              .bluestein_above = default_bluestein_above};
+              .bluestein_above = default_bluestein_above,
+              .split = split_of(t, lanes)};
     }
     if (m.t == fallback_target &&
         (nearest == nullptr ||
@@ -410,7 +420,8 @@ target_profile profile_of(target t, std::size_t lanes) noexcept {
   return {.lanes = lanes,
           .costs = nearest->costs,
           .leaf_limit = leaf_limit_of(t, lanes),
-          .bluestein_above = default_bluestein_above};
+          .bluestein_above = default_bluestein_above,
+          .split = split_of(t, lanes)};
 }
 
 // The specification is DESIGN.md 11.2, rule by rule.

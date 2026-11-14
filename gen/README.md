@@ -36,6 +36,7 @@ gap.
 | `codelet.py` | variants (plain, DIT, DIF) and directions; `build()` runs the pipeline for one codelet |
 | `realify.py` | the real-coefficient form: multiplications by i only at the outputs |
 | `lower.py` | complex-register lowering: one vocabulary operation per node |
+| `split.py` | split lowering: real and imaginary parts on real registers, FMA-shaped |
 | `schedule.py` | emission order and the peak number of live values |
 | `verify.py` | the exact check of an operation list against the DFT |
 | `emit_cpp.py` | the C++ text and the metadata header |
@@ -43,8 +44,9 @@ gap.
 | `reference.py` | the reference table of operation counts and the recorded gaps |
 | `__main__.py` | the command line |
 
-Output: `src/gen/complex_codelets.inl` (the codelets, included inside each target's
-region) and `src/gen/codelets.hpp` (the metadata table, an ordinary header).
+Output: `src/gen/complex_codelets.inl` and `src/gen/split_codelets.inl` (the codelets of
+the two lowerings, included inside each target's region) and `src/gen/codelets.hpp` (the
+metadata tables, an ordinary header).
 
 ## Pipeline
 
@@ -272,16 +274,48 @@ make sure the reference table has it.
 ## Adding a lowering
 
 A lowering is a second path from the DAG to a list of operations and a second `.inl`. The
-split lowering (task 1.5, DESIGN.md 7.2 step 4) expands each complex node into real and
-imaginary nodes and needs: its own `Op` kinds (the real-register vocabulary, `real::`
-namespace), a lowering module next to `lower.py`, an `evaluate` branch for the new kinds in
-`verify.py` (verification is otherwise unchanged), an emitter for its text (another class
-template beside `cdft`), its value in `gen::lowering` and its entries in the metadata
-table, and its own entry points in `tests/isa/codelet_runner.inl`. Pruned and fused-edge
+split lowering (task 1.5, below) is the example: its own `Op` kinds, a lowering module next
+to `lower.py`, an `evaluate` branch in `verify.py`, an emitter for its text (another class
+template beside `cdft`), its value in `gen::lowering` and its own metadata table. Pruned and fused-edge
 variants (tasks 1.5 and 2.1) are new variants: a builder that leaves inputs as `ZERO` or
 drops outputs before `lower()`, and their own reference in `verify.py`. A pruned codelet
 no longer has every output depending on every input, so its schedule must keep all loads
 before the first store if it may run in place.
+
+## The split lowering
+
+`split.py` (task 1.5, DESIGN.md 7.2 step 4, experiment X1) lowers the same DAG to the
+real-register vocabulary (`real::` in `src/isa/vocabulary.inl`), for radices 2 to 16
+(`catalogue.SPLIT_RADICES`), plain and DIF, forward only:
+
+1. **Expand** every complex node into a real and an imaginary node of a `RealGraph`, which
+   interns and value-numbers like `Graph` but modulo sign: a rotation by a power of −i
+   exchanges and negates parts, so it costs nothing, and parts equal up to sign share a
+   node. A twiddle multiply is four real products and two sums.
+2. **FMA-shape**: a product (a constant times a value, or two values) whose users are all
+   sums is fused into each of them (`fmadd`, `fnmadd`, `fmsub`); one used by anything else
+   stays a multiply. Fusing a product shared by u sums costs u operations against 1 + u, on
+   fused targets; the text is FMA-shaped, so a target without FMA would need its own. A
+   rotation by a constant, c_a·x + c_b·(−i)^r·x whose scales nothing else uses, is built in
+   the tangent form c·(u + t·v), t ≤ 1: one fused operation per part, and c fuses into the
+   sums that use the parts (radix 16 plain: 156 → 152 operations, DIF 216 → 212; FFTW's FMA
+   counts are 144 and 204). The remaining multiplies are scales shared by sums that each
+   absorbed another product (k·p ± k'·q pairs after value numbering); factoring those at the
+   real level is not done.
+3. **Signs**: each register holds its node's value or its negation, chosen backwards from
+   the stores as the complex lowering chooses rotations (a − b or b − a; a fused constant's
+   sign is free). A store that still disagrees gets a `neg`; none does (a test holds it).
+4. Order, verify (`verify_split`: basis inputs in both parts), emit `sdft<R>` into
+   `src/gen/split_codelets.inl` and `gen::split_codelets[]` into `codelets.hpp`.
+
+Calling convention: `sdft<R>::plain<T>(in, out)` and `sdft<R>::dif<T>(in, out, twid)`, with
+`in.re(j)`, `in.im(j)`, `twid.re(k)`, `twid.im(k)` returning `rv<T>` and `out.put(k, re,
+im)`; one line per lane, W lines per call. The backward transform is the forward codelet
+with real and imaginary parts exchanged on loading and storing, and the same forward
+twiddles (swap(z) = i·conj(z)); the passes do the exchange (`src/passes/split.inl`).
+Split metadata counts real-register operations (`adds`, `muls`, `fmas`, `negs`, `vops`)
+and live real values: radix 16 needs 34 to 40 registers, which spills on AVX2's 16 and
+slightly on AVX-512's 32.
 
 ## Subtleties
 

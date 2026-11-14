@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import mpmath
 
-from .codelet import Codelet
+from .codelet import Codelet, SplitCodelet
 from .lower import Op
 
 SPDX = (
@@ -175,8 +175,149 @@ def codelet_inl(codelets: list[Codelet]) -> str:
     return "".join(out)
 
 
-def metadata_hpp(codelets: list[Codelet]) -> str:
+_SPLIT_BINARY = {"add", "sub", "mul"}
+_SPLIT_FUSED_K = {"fmaddk": "fmadd", "fnmaddk": "fnmadd", "fmsubk": "fmsub"}
+_SPLIT_FUSED = {"fmadd", "fnmadd", "fmsub"}
+
+
+def _split_body(ops: tuple[Op, ...], indent: str) -> list[str]:
+    names: dict[int, str] = {}
+    temps = 0
+    consts: dict[str, str] = {}
+    decls: list[str] = []
+    lines: list[str] = []
+
+    def const(c: mpmath.mpf) -> str:
+        # Signed: a register constant has no negation for free.
+        d = literal_double(c)
+        if d not in consts:
+            consts[d] = f"k{len(consts)}"
+            decls.append(
+                f"{indent}const rv<T> {consts[d]} = real::bcast(split_k<T>({d}, "
+                f"{literal_float(c)}));"
+            )
+        return consts[d]
+
+    loads = {
+        "load_re": ("x", "r", "in.re"),
+        "load_im": ("x", "i", "in.im"),
+        "load_twr": ("w", "r", "twid.re"),
+        "load_twi": ("w", "i", "twid.im"),
+    }
+    for op in ops:
+        a = [names[v] for v in op.args]
+        match op.kind:
+            case k if k in loads:
+                prefix, part, call = loads[k]
+                names[op.dst] = f"{prefix}{op.index}{part}"
+                lines.append(f"{indent}const rv<T> {names[op.dst]} = {call}({op.index});")
+                continue
+            case "store":
+                lines.append(f"{indent}out.put({op.index}, {a[0]}, {a[1]});")
+                continue
+            case k if k in _SPLIT_BINARY:
+                expr = f"real::{k}({a[0]}, {a[1]})"
+            case "mulk":
+                expr = f"real::mul({a[0]}, {const(op.const)})"
+            case k if k in _SPLIT_FUSED_K:
+                expr = f"real::{_SPLIT_FUSED_K[k]}({a[0]}, {const(op.const)}, {a[1]})"
+            case k if k in _SPLIT_FUSED:
+                expr = f"real::{k}({a[0]}, {a[1]}, {a[2]})"
+            case "neg":
+                expr = f"real::neg({a[0]})"
+            case other:
+                raise ValueError(f"cannot emit split {other}")
+        name = f"t{temps}"
+        temps += 1
+        names[op.dst] = name
+        lines.append(f"{indent}const rv<T> {name} = {expr};")
+    return decls + lines
+
+
+_SPLIT_SIGNATURE = {
+    "plain": ("template <class T, class In, class Out>", "plain(const In& in, const Out& out)"),
+    "dif": (
+        "template <class T, class In, class Out, class Tw>",
+        "dif(const In& in, const Out& out, const Tw& twid)",
+    ),
+}
+
+
+def _split_summary(c: SplitCodelet) -> str:
+    k = c.counts
+    return (
+        f"{k.adds} add, {k.muls} mul, {k.fmas} fused, {k.negs} neg; "
+        f"{k.flops_adds} + {k.flops_muls} real flops unfused; peak {c.live} live"
+    )
+
+
+def split_codelet_inl(codelets: list[SplitCodelet]) -> str:
+    by_radix: dict[int, dict[str, SplitCodelet]] = {}
+    for c in codelets:
+        by_radix.setdefault(c.radix, {})[c.variant] = c
+    out = [
+        SPDX,
+        "//\n",
+        BANNER,
+        "//\n",
+        "// Split codelets (DESIGN.md 7.2, step 4): sdft<R> holds the forward R-point DFT on\n",
+        "// separate real and imaginary registers of the real vocabulary (rv<T>, W reals each,\n",
+        "// one line per lane), in two variants:\n",
+        "//\n",
+        "//   plain(in, out)        out_k = sum_j in_j exp(-2 pi i jk / R)\n",
+        "//   dif(in, out, twid)    the same with out_k multiplied by w_k after (k >= 1)\n",
+        "//\n",
+        "// in.re(j) and in.im(j) return the parts of leg j, out.put(k, re, im) stores leg k,\n",
+        "// twid.re(k) and twid.im(k) return the parts of the forward twiddle w_k; all are\n",
+        "// force-inlined members of the caller's accessor types, each called once per leg.\n",
+        "// The backward transform is the forward one with the parts exchanged on loading and\n",
+        "// on storing, with the same forward twiddles (gen/fftn_gen/split.py). Every output\n",
+        "// depends on every input, so in and out may address the same memory. Included\n",
+        "// inside a region after its vocabulary; no include guard. Calling convention and\n",
+        "// operation counts: gen/README.md.\n",
+        "\n",
+        "namespace {\n",
+        "\n",
+        "// A constant rounded once to T: the generator prints both roundings of its value.\n",
+        "template <class T> FFTN_FORCE_INLINE constexpr T split_k(double d, float f) {\n",
+        "  if constexpr (sizeof(T) == sizeof(float)) {\n",
+        "    return f;\n",
+        "  } else {\n",
+        "    return d;\n",
+        "  }\n",
+        "}\n",
+        "\n",
+        "template <std::size_t R> struct sdft;\n",
+    ]
+    for radix in sorted(by_radix):
+        variants = by_radix[radix]
+        out.append("\n")
+        out.append(f"template <> struct sdft<{radix}> {{\n")
+        out.append(f"  static constexpr std::size_t radix = {radix};\n")
+        for variant in ("plain", "dif"):
+            c = variants[variant]
+            tmpl, sig = _SPLIT_SIGNATURE[variant]
+            out.append("\n")
+            out.append(f"  // {_split_summary(c)}.\n")
+            out.append(f"  {tmpl}\n")
+            out.append(f"  static FFTN_FORCE_INLINE void {sig} {{\n")
+            out.extend(line + "\n" for line in _split_body(c.ops, "    "))
+            out.append("  }\n")
+        out.append("};\n")
+    out.append("\n} // namespace\n")
+    return "".join(out)
+
+
+def metadata_hpp(codelets: list[Codelet], split: list[SplitCodelet]) -> str:
     radices = sorted({c.radix for c in codelets})
+    split_radices = sorted({c.radix for c in split})
+    split_rows = []
+    for c in split:
+        k = c.counts
+        split_rows.append(
+            f"    {{{c.radix}, variant::{c.variant}, {c.twiddles}, {k.adds}, {k.muls}, "
+            f"{k.fmas}, {k.negs}, {k.vector_ops}, {c.live}}},\n"
+        )
     rows = []
     for c in codelets:
         k = c.counts
@@ -203,7 +344,7 @@ def metadata_hpp(codelets: list[Codelet]) -> str:
             "namespace fftn::inline v0::detail::gen {\n",
             "\n",
             "enum class variant : std::uint8_t { plain, dit, dif };\n",
-            "enum class lowering : std::uint8_t { complex_register };\n",
+            "enum class lowering : std::uint8_t { complex_register, split };\n",
             "\n",
             "struct codelet_info {\n",
             "  std::uint8_t radix;\n",
@@ -229,6 +370,32 @@ def metadata_hpp(codelets: list[Codelet]) -> str:
             f"inline constexpr std::size_t radix_count = {len(radices)};\n",
             "inline constexpr std::uint8_t radices[radix_count] = {",
             ", ".join(map(str, radices)),
+            "};\n",
+            "\n",
+            "// The split codelets (lowering::split, src/gen/split_codelets.inl): one entry per\n",
+            "// radix and variant, forward only (the backward transform exchanges the real and\n",
+            "// imaginary parts). Counts are real-register operations, each on W reals: add and\n",
+            "// sub; mul (by a constant or a twiddle part); fused multiply-adds; neg.\n",
+            "struct split_codelet_info {\n",
+            "  std::uint8_t radix;\n",
+            "  variant kind;\n",
+            "  std::uint8_t twiddles; // twiddles read: R - 1, or 0 for plain\n",
+            "  std::uint16_t adds;\n",
+            "  std::uint16_t muls;\n",
+            "  std::uint16_t fmas;\n",
+            "  std::uint16_t negs;\n",
+            "  std::uint16_t vops; // all of the above\n",
+            "  std::uint16_t live; // peak live real values\n",
+            "};\n",
+            "\n",
+            f"inline constexpr std::size_t split_codelet_count = {len(split)};\n",
+            "inline constexpr split_codelet_info split_codelets[split_codelet_count] = {\n",
+            *split_rows,
+            "};\n",
+            "\n",
+            f"inline constexpr std::size_t split_radix_count = {len(split_radices)};\n",
+            "inline constexpr std::uint8_t split_radices[split_radix_count] = {",
+            ", ".join(map(str, split_radices)),
             "};\n",
             "\n",
             "} // namespace fftn::inline v0::detail::gen\n",

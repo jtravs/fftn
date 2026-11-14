@@ -39,6 +39,7 @@ template <> struct vec<double> {
   using tw = tw_f64;
   static constexpr std::size_t C = 1;
   static constexpr std::size_t W = 2;
+  static constexpr std::size_t split_block = W;
   static constexpr std::size_t tw_reals = 4;
 };
 
@@ -48,6 +49,7 @@ template <> struct vec<float> {
   using tw = tw_f32;
   static constexpr std::size_t C = 2;
   static constexpr std::size_t W = 4;
+  static constexpr std::size_t split_block = W;
   static constexpr std::size_t tw_reals = 4;
 };
 
