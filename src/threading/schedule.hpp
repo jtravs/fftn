@@ -126,6 +126,11 @@ struct group_share {
 // a group's whole units stay below this; teams of more lanes run inline.
 inline constexpr std::uint64_t max_counted = std::uint64_t{1} << 22U;
 
+// Rule 1 for a whole job, whatever the team: it takes less than inline_multiple dispatch
+// costs. Plans decide it once at construction (plan_core::runs_inline), so that the executor
+// overload of a small job touches neither the executor nor the scheduler.
+[[nodiscard]] bool runs_inline(const work_graph& g, const machine_profile& profile) noexcept;
+
 [[nodiscard]] schedule make_schedule(const work_graph& g, const lane_map& lanes,
                                      const machine_profile& profile) noexcept;
 

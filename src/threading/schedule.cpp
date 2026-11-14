@@ -23,6 +23,11 @@ machine_profile default_machine_profile() noexcept {
   return p;
 }
 
+bool runs_inline(const work_graph& g, const machine_profile& profile) noexcept {
+  return static_cast<double>(g.tasks) * (g.work * profile.ns_per_work) <
+         profile.inline_multiple * profile.dispatch_ns;
+}
+
 schedule make_schedule(const work_graph& g, const lane_map& lanes,
                        const machine_profile& profile) noexcept {
   schedule s;
@@ -36,9 +41,8 @@ schedule make_schedule(const work_graph& g, const lane_map& lanes,
   s.oversubscribed = profile.cpus > 0 && std::max(lanes.lanes, lanes.threads) > profile.cpus;
   s.grain = g.tasks < max_counted ? 1 : (g.tasks + max_counted - 1) / max_counted;
   // Rule 1, and teams too large for the counters.
-  const double job_ns = static_cast<double>(g.tasks) * s.task_ns;
   if (lanes.lanes <= 1 || std::cmp_greater_equal(lanes.lanes, max_counted) ||
-      job_ns < profile.inline_multiple * profile.dispatch_ns) {
+      runs_inline(g, profile)) {
     s.inline_all = true;
     s.lanes_dealt = lanes.size_of(0);
     s.dispatch = 1;

@@ -61,8 +61,9 @@ public:
   target isa_target = target::scalar;
 
   program prog;
-  work_graph graph;        // the program's shareable work (DESIGN.md 13.2)
-  machine_profile profile; // what the scheduler assumes of the machine
+  work_graph graph;         // the program's shareable work (DESIGN.md 13.2)
+  machine_profile profile;  // what the scheduler assumes of the machine
+  bool runs_inline = false; // rule 1 for the whole job (schedule.hpp): serial on any team
   std::vector<std::vector<double>> tables_f64;
   std::vector<std::vector<float>> tables_f32;
   std::vector<std::string> axis_notes; // one line per axis for describe()

@@ -608,6 +608,7 @@ std::shared_ptr<const plan_core> make_plan_core(const shape_view& s, const optio
   }
   c->graph = build_work_graph(c->prog, points, settings.chunk_points);
   c->profile = settings.profile;
+  c->runs_inline = runs_inline(c->graph, c->profile);
   return c;
 }
 

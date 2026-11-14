@@ -56,7 +56,8 @@ void run_member(void* arg, int rank) {
 
 void execute_on(const plan_core& core, const void* in, void* out, const executor_ref& ex,
                 const workspace& ws) {
-  const int width = ex.concurrency();
+  // Rule 1, decided at plan construction: a small job never asks the executor anything.
+  const int width = core.runs_inline ? 1 : ex.concurrency();
   if (width > 1) {
     const int group_size = ex.group_size();
     const lane_map lanes{.lanes = width, .group_size = group_size < 0 ? 0 : group_size};

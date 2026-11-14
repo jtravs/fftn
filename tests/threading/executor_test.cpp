@@ -203,7 +203,8 @@ TEST(ExecutorExecute, DispatchesOnlyLanesWithWork) {
   EXPECT_EQ(wide.calls, 0);
   EXPECT_EQ(out, serial);
 
-  // Counts what FFTN asks of it.
+  // Decided at plan construction: the executor is not even asked its width or grouping, so
+  // no schedule is computed (it needs the width).
   struct asking_executor {
     mutable int asked = 0;
     int calls = 0;
@@ -222,6 +223,12 @@ TEST(ExecutorExecute, DispatchesOnlyLanesWithWork) {
       }
     }
   };
+  asking_executor counting;
+  std::ranges::fill(out, std::complex<double>{});
+  tiny.execute(in.data(), out.data(), counting, tiny_ws);
+  EXPECT_EQ(counting.asked, 0);
+  EXPECT_EQ(counting.calls, 0);
+  EXPECT_EQ(out, serial);
 
   // A single long transform that may not be split runs on one lane: the caller, serially.
   fftn::detail::build_settings unsplit;
@@ -230,6 +237,7 @@ TEST(ExecutorExecute, DispatchesOnlyLanesWithWork) {
   const auto one_row = fftn::detail::make_plan_core(
       fftn::detail::view_of(fftn::rows_c2c<double>(65536, 1, fftn::direction::forward)),
       fftn::options(), unsplit);
+  ASSERT_FALSE(one_row->runs_inline);
   const auto x = src.complexes<double>(65536);
   std::vector<std::complex<double>> y(65536);
   std::vector<std::complex<double>> y_serial(65536);

@@ -1428,8 +1428,9 @@ widest phase's chunks; only from the split threshold of the group's kind; only w
 cost model says t/k plus a phase synchronisation per phase beats t). An oversubscribed team
 splits nothing. The machine profile's values are provisional, taken from the prototype's
 measurements, until experiments T1 and T5 calibrate them (task 3.4). Rule 4 under an executor (task 3.3): only the lanes dealt
-work are dispatched, a team of `lanes_dealt` members, which the scheduler gives the same
-division as the dealt lanes of the wider team; an OpenMP executor still opens a region of
+work are dispatched, a team of `dispatch` members (the dealt lanes, or one per task when
+the batch is smaller and nothing splits), which the scheduler gives the same division as
+the dealt lanes of the wider team; an OpenMP executor still opens a region of
 its constant width, whose surplus threads return at once. In the caller's team surplus
 members help or wait for completion. Rule 5's fastest-class restriction needs a core class per member,
 which `team` does not carry yet (18.2).
@@ -1474,10 +1475,11 @@ nesting; width 1 opens no region.
 As built (task 3.3):
 
 - **The executor overload** (`src/threading/executor_execute.cpp`) asks the scheduler once
-  with the executor's `concurrency()` and `group_size()`. Width 1, a job under rule 1's
-  threshold, or one lane dealt everything: `execute_core` on the caller, no `bulk`.
-  Otherwise one `bulk(lanes_dealt, …)`, task i running the team overload as rank i of a team
-  of `lanes_dealt` members with `completion::all`. The members judge oversubscription by
+  with the executor's `concurrency()` and `group_size()`. A job under rule 1's threshold
+  (decided once at plan construction, `plan_core::runs_inline`, so the executor is not
+  asked anything), width 1, or one lane dispatched: `execute_core` on the caller, no
+  `bulk`. Otherwise one `bulk(dispatch, …)`, task i running the team overload as rank i of
+  a team of `dispatch` members with `completion::all`. The members judge oversubscription by
   the executor's width, not their own number (`lane_map::threads`): its other threads
   compete for the CPUs too. Nesting is the executor's business:
   executors report `concurrency()` 1 from inside their own tasks or region, so a nested call
@@ -1546,7 +1548,8 @@ The executors (task 3.3): over the same cases, bitwise against serial on an exec
 runs tasks in order, one in reverse, one in seeded random order on three threads, the
 thread pool seen at widths 1 to 16 and several groupings, and a pool through the C
 contract; under ThreadSanitizer in the tsan stage. What FFTN asks of an executor (no call at
-width 1 or for an inline job; exactly `lanes_dealt` tasks), an executor that throws part
+width 1 or for an inline job, not even a query for an inline job; exactly `dispatch`
+tasks), an executor that throws part
 way, nested calls, no allocation; the pool alone (every task once, calls back to back and
 after its threads have blocked, concurrent callers, nesting, shutdown); the grouping on
 synthetic and recorded topologies. The OpenMP adapters (`tests/omp`, built when the
@@ -2075,7 +2078,8 @@ to change before a release.
     state is dropped so that members that did not run cannot count the next execution
     wrong. The alternative is `noexcept`, terminating on a throwing executor.
 15. *Team size under an executor*: the scheduler is asked with `concurrency()` lanes and
-    `lanes_dealt` tasks are dispatched, as a team of that size (the same division of work).
+    `dispatch` tasks are dispatched (the dealt lanes, at most one per task when nothing
+    splits), as a team of that size (the same division of work).
     The workspace must hold `workspace_bytes(concurrency())` (a precondition, asserted in
     debug builds); clamping the width to what the workspace holds was the alternative.
 16. *Nesting through `concurrency()`*: an executor reports 1 from inside its own tasks, so a

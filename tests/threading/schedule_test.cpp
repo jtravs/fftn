@@ -236,6 +236,16 @@ TEST(Schedule, DispatchesNoMoreMembersThanTasksWhenNothingSplits) {
   EXPECT_EQ(make_schedule(rows(1024, 64)->graph, wide, eager_dispatch).dispatch, 64);
 }
 
+// Rule 1 is decided once per plan, from the profile alone.
+TEST(Schedule, RunsInlineAtConstruction) {
+  EXPECT_TRUE(rows(64, 1)->runs_inline);
+  EXPECT_TRUE(fftn::detail::runs_inline(rows(1728, 1)->graph, profile()));
+  EXPECT_FALSE(rows(65536, 8)->runs_inline);
+  const auto r = rows(1728, 64);
+  EXPECT_EQ(fftn::detail::runs_inline(r->graph, profile()),
+            make_schedule(r->graph, {.lanes = 8}, profile()).inline_all);
+}
+
 // An oversubscribed team (more members than CPUs) splits nothing.
 TEST(Schedule, OversubscribedSplitsNothing) {
   machine_profile p = profile();
