@@ -1023,7 +1023,10 @@ pass that is not a copy and the output edge's by the last, so neither costs a pa
 C > 1 a line whose stride is not 1 (a strided axis, a strided row) is copied into scratch
 before the chain or out of it after: an extra pass that the lanes strategy for strided
 axes (phase 4) removes. A single generic pass cannot run in place, so it writes scratch
-and is copied when its source is its destination. Scratch is two lines a and b.
+and is copied when its source is its destination. Scratch is two lines a and b; an
+out-of-place line with a contiguous destination (not aliased, no copy, no Bluestein
+stage) uses the destination in place of b, so a chain touches three lines, not four
+(experiment X18: up to 15 % faster at 512–16384 on a 32 KiB L1).
 
 **Grid** (two-phase Cooley–Tukey; the family that contains FFTW's recursion, Bailey's
 four-step and KFR's sandwich). N = N1·N2, the data viewed as N1 rows of N2. One phase is
@@ -2309,6 +2312,7 @@ to change before a release.
 | 2026-11-14 | Bluestein (task 2.3): the product of the prime factors above the profile's threshold is one stage at the end of the chain (m = 1): a chirp pass, the chain of M over the s copies forward with the kernel spectrum as its last pass's output factor, the chain backward, a chirp pass; M the cheapest 7-smooth length in [2Q − 1, next power of two]; the threshold is 16 on every profile (X17) | With m = 1 the chirp passes are elementwise and the s copies are a chain of M with s times the copies, so the stage reuses the chain's passes and slots with no recursion and runs in place; on the Mac it took the primes from 4.3–5184 times FFTW's time to below 1.3 times (section 8.5), and beat the generic pass at every prime from 17 |
 | 2026-11-14 | NEON cost tables (C = 1, 2) from X2's Mac campaign; plain `neon` uses them | Against the AVX2 tables NEON had used, 3.6 % faster on the Mac over 496 cases from 17 to 1024 (124 faster, 9 slower, band 1.7 %, run 20261114-101523-3d56); the three lengths that were 1.25–1.40 times slower keep the old choice as overrides |
 | 2026-11-14 | Planner v1's cost tables are keyed by target and C; a target and C without one take AVX2's table of the nearest C, as before. The X2 fit is a tracked tool (`bench/x2/fit.py`) | An `avx512` table (X16) and NEON tables (X2 on the Mac) drop in as rows; the search and every current choice (`rule_radices.txt`) are unchanged |
+| 2026-11-14 | The serial driver runs a stage's chunks as one call and divides only when a range starts mid-stage; a chain uses a contiguous, unaliased destination as its second scratch line (experiment X18) | 64-bit division costs 40–90 cycles on Cascade Lake (37 % of a 64-point transform there); three lines instead of four keep 512–1024-point rows in a 32 KiB L1 longer. Xeon 1.50 → 1.25 of FFTW, EPYC 1.37 → 1.29; bits unchanged |
 
 ---
 
