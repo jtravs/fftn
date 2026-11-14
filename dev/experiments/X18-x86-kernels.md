@@ -154,14 +154,36 @@ MKL ÷ FFTW on the Xeon is 0.95 (geomean; 0.80 at 64, 0.87 at 4096), so the MKL 
    (EPYC). On the Mac (lead's run) GCC 16 is 1.07 behind Clang, with outliers at 4096 and
    1009; neither shows on x86 (4096: Clang ÷ GCC 1.016 Xeon, 0.956 EPYC).
 
-### 3. Short rows
+### 3. Short rows: fixed cost per call, per transform, and in the kernel
 
-At 64–128 and 60–120, after the fix, FFTN is still 1.2–1.6 against FFTW. Per transform at
-64 (Xeon, `perf stat`): FFTW 226 cycles and 698 instructions, FFTN 291 cycles and 858
-instructions; `perf record` puts 20 % of the time in the driver (`run_stage_chunks` 7.8 %,
-`run_transforms` 6.4 %, `execute_core` 3.1 %, `moved_in_nest` 3.1 %) and 74 % in the two
-passes (radix-4 grouped, radix-16 last). Whole-transform leaves (X8) remove the second pass and the
-per-stage dispatch.
+Runs 20261114-130648-8888 (Xeon, band ±1.26 %) and 20261114-130701-40c6 (EPYC, band
+±1.15 %), commit 9d9d455 (EPYC: 94ef09f), GCC 14; ns per transform, batch 1 / batch 64:
+
+| n | Xeon FFTN | Xeon FFTW | EPYC FFTN | EPYC FFTW |
+|---|---|---|---|---|
+| 8 (leaf) | 26.5 / 22.2 | 10.1 / 4.6 | 21.8 / 17.6 | 9.6 / 4.0 |
+| 16 (leaf) | 43.2 / 38.7 | 21.6 / 12.0 | 32.7 / 28.9 | 16.2 / 9.7 |
+| 32 (2 passes) | 56.4 / 54.3 | 45.3 / 29.5 | 58.6 / 53.1 | 39.0 / 25.2 |
+| 64 (2 passes) | 83.5 / 83.9 | 64.9 / 75.8 | 93.1 / 91.8 | 70.0 / 60.2 |
+
+- **Fixed cost per call** (plan entry to the first stage: batch 1 minus batch 64 per
+  transform) is about 4 ns on both machines: small.
+- **Driver cost per transform** (`run_transforms`, `moved_in_nest`, `run_records`,
+  `run_stage_chunks` with its copy of `pass_args` and one indirect call per stage) is paid
+  for every transform of a batch: 16 % of a 64-point transform at batch 64 on the Xeon
+  (`run_stage_chunks` 7.7 %, `run_transforms` 4.4 %, `moved_in_nest` 3.9 %; about 13 ns),
+  23 % of a 16-point leaf at batch 1 (about 9 ns).
+- **The leaf kernel** broadcasts each input into every lane, computes the same transform C
+  times and stores lane 0 through a stack tile: 65 % of the 16-point time. FFTW's `n1fv`
+  vectorises across the transforms of a batch (4.0–4.6 ns per 8-point transform at batch
+  64, a quarter of FFTN's) and is 2.2–2.4 times faster at batch 1 too.
+- At 32 and 64 the two passes are 78–82 % of the time; their per-point cost is item 2 above
+  (the AVX2 loops) and the radix-4 grouped pass at 64.
+
+So at n ≤ 64 the work is, in order: leaves that use the lanes (C transforms per register in a
+batch, task 2.2; a SIMD layout inside one transform at batch 1, X8), a per-transform driver
+that does not re-walk the program (a precompiled stage list per line, `pass_args` by
+pointer), then the pass loops of item 2.
 
 ## Verdict
 
