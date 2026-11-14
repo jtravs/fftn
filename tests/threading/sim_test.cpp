@@ -182,11 +182,18 @@ TEST(Interleavings, SeedsChangeTheOrder) {
 
 // ---- Pathologies, in virtual time.
 
-// Plans with the library's default chunking and machine profile, as users get them.
+// Plans with the library's default chunking and machine profile, as users get them, except
+// that 3072 points keep planner v0's five passes on 32 registers (4 x 4 x 4 x 4 x 12), the
+// plan these reproductions were set on: planner v1's three passes are a third less work,
+// too little for the prototype's split to lose by the measured margin.
 team_case default_rows(std::size_t n, std::size_t count) {
+  fftn::detail::build_settings settings;
+  if (n == 3072) {
+    settings.radices = {4, 4, 4, 4, 12};
+  }
   return fftn::test::make_case("c2c_" + std::to_string(n) + "x" + std::to_string(count),
                                fftn::rows_c2c<double>(n, count, fftn::direction::forward),
-                               n * count, n * count, false, fftn::detail::build_settings{});
+                               n * count, n * count, false, settings);
 }
 
 // The virtual times, for the log: the static model's, FFTN's and serial execution's.
