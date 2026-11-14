@@ -77,6 +77,40 @@ constexpr pass_costs avx2_float{
     .overrides = avx2_float_overrides,
 };
 
+// Experiment X3 (dev/experiments/X3-big-radices.md), Xeon Gold 6240, AVX-512, GCC 14, one
+// thread, float (C = 8): avx2_float with radix 32 and 64 columns fitted to an X2-style search
+// over every multiple of 32 from 64 to 2048 whose candidates were the sequences containing
+// 32 or 64 (bench/x2/fit.py --base f32=avx2_float); the costs up to radix 16 are
+// avx2_float's, so wherever the choice has neither 32 nor 64 it is avx2_float's at C = 8. The
+// overrides are avx2_float's plus the lengths where the choice was more than 2 % behind
+// the baseline in some case or behind the measured winner in every case (256, 512: 32.8 and
+// 32.16 beat the table's 8.32 and 16.32 by 9 to 15 %). Beyond 2048 the radix 32 and 64
+// columns are extrapolated. AVX-512 in double took no table: its big chains tied (X3).
+constexpr std::array<radix_override, 7> avx512_float_overrides{{
+    {.n = 140, .radices = {4, 5, 7, 0}},
+    {.n = 256, .radices = {32, 8, 0, 0}},
+    {.n = 512, .radices = {32, 16, 0, 0}},
+    {.n = 700, .radices = {4, 7, 5, 5}},
+    {.n = 768, .radices = {8, 3, 32, 0}},
+    {.n = 1536, .radices = {8, 12, 16, 0}},
+    {.n = 2048, .radices = {8, 4, 64, 0}},
+}};
+
+constexpr pass_costs avx512_float{
+    .unit = {{
+        {28, 197, 76, 132, 205, 452, 298, 534, 538, 803, 525, 950, 856, 1070, 924, 2134, 8695},
+        {101, 146, 190, 293, 343, 462, 525, 781, 700, 1044, 827, 1496, 1159, 1311, 1459, 3244, 8235},
+        {42, 59, 91, 116, 138, 223, 213, 389, 293, 458, 367, 720, 622, 570, 674, 1605, 5336},
+    }},
+    .tail = {{
+        {644, 628, 1125, 1110, 1612, 1655, 2285, 2601, 3009, 4487, 3539, 6405, 4310, 4163, 4957, 9397, 18667},
+        {540, 855, 1057, 1304, 1659, 1840, 2129, 2511, 2738, 4082, 3295, 5963, 3767, 4056, 4186, 8168, 16780},
+        {282, 304, 951, 925, 1575, 1680, 2291, 2497, 3013, 4708, 3797, 7448, 4305, 4096, 4695, 13892, 23943},
+    }},
+    .pass = 406,
+    .overrides = avx512_float_overrides,
+};
+
 std::size_t ceil_div(std::size_t a, std::size_t b) { return (a + b - 1) / b; }
 
 // The cost of the pass of radix r after the passes whose radices multiply to s, in a line
@@ -246,9 +280,10 @@ struct measured_table {
 };
 // Plain `neon` (no FCMA) takes `neon_fcma`'s tables: the same registers and C, the nearest
 // measured costs (unmeasured on a plain NEON core).
-constexpr std::array<measured_table, 6> measured_tables{{
+constexpr std::array<measured_table, 7> measured_tables{{
     {.t = target::avx2, .lanes = 2, .costs = &avx2_double},
     {.t = target::avx2, .lanes = 4, .costs = &avx2_float},
+    {.t = target::avx512, .lanes = 8, .costs = &avx512_float},
     {.t = target::neon_fcma, .lanes = 1, .costs = &neon_fcma_double},
     {.t = target::neon_fcma, .lanes = 2, .costs = &neon_fcma_float},
     {.t = target::neon, .lanes = 1, .costs = &neon_fcma_double},

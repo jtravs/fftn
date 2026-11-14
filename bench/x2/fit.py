@@ -416,10 +416,15 @@ def vs_base(c: Case, seq: radices.Sequence) -> float | None:
     return None
 
 
-def overrides_for(cases: list[Case], t: Table, lanes: int) -> tuple[list, list[str]]:
+def overrides_for(
+    cases: list[Case], t: Table, lanes: int, behind_winner: bool = False
+) -> tuple[list, list[str]]:
     """X2's overrides: where the table's choice is more than 2 % behind the baseline in some
     case, the sequence refined in every case of that length (this precision) and measured
-    no slower than the baseline in any (within 1 %), that is least behind the winner at worst."""
+    no slower than the baseline in any (within 1 %), that is least behind the winner at worst.
+    With behind_winner (X3's extensions, whose baseline is the radix-16 table's choice, so
+    a choice can beat it and still miss the radix 32 or 64 winner widely): also where the
+    choice is more than 2 % behind the winner in every case of that length."""
     out, notes = [], []
     by_n: dict[int, list[Case]] = {}
     for c in cases:
@@ -429,7 +434,9 @@ def overrides_for(cases: list[Case], t: Table, lanes: int) -> tuple[list, list[s
             continue
         choice = rule_radices(n, t, lanes, overrides=False)
         behind = [vs_base(c, choice) for c in group]
-        if not any(v is not None and v > SLOWER for v in behind):
+        gaps = [judge(c, choice) for c in group]
+        missed = behind_winner and all(g is not None and g > SLOWER for g in gaps)
+        if not missed and not any(v is not None and v > SLOWER for v in behind):
             continue
         common = set.intersection(*(set(c.refine) for c in group))
         options = []
@@ -442,9 +449,10 @@ def overrides_for(cases: list[Case], t: Table, lanes: int) -> tuple[list, list[s
             continue
         out.append((n, fits[0][1]))
         worst = max(v for v in behind if v is not None)
+        gap = f", {math.expm1(min(gaps)) * 100:+.1f} % or more behind the winner" if missed else ""
         notes.append(
             f"n = {n}: {radices.label(choice)} {math.expm1(worst) * 100:+.1f} % against the "
-            f"baseline; override {radices.label(fits[0][1])}"
+            f"baseline{gap}; override {radices.label(fits[0][1])}"
         )
     return out, notes
 
@@ -575,7 +583,7 @@ def main(argv: list[str] | None = None) -> int:
         log(f"fit {precision} (C = {lanes}): {len(rows)} timings of {len(mine)} cases")
         x = fit(rows, ops, base=base)
         t = table_of(x, mine, ops, base)
-        t.overrides, notes = overrides_for(mine, t, lanes)
+        t.overrides, notes = overrides_for(mine, t, lanes, behind_winner=base is not None)
         if base is not None:
             # The base table's overrides stay; new ones only where the extension's choice
             # is slow.
