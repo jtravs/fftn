@@ -307,6 +307,12 @@ if(FFTN_BUILD_TESTS)
                      --out-dir ${CMAKE_BINARY_DIR}/bench-out schedule --build ${CMAKE_BINARY_DIR}
                      --tier smoke -- --threads 4,16 --group 8 --cpus 64
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    # The OpenMP binaries these run can meet libomp's start-up leak under LeakSanitizer,
+    # suppressed as for the OpenMP tests (tests/omp/CMakeLists.txt says why).
+    if(_fbench_fftn_omp)
+      set_tests_properties(bench.smoke bench.t1_smoke PROPERTIES ENVIRONMENT
+        "LSAN_OPTIONS=suppressions=${PROJECT_SOURCE_DIR}/tests/omp/lsan.supp")
+    endif()
   else()
     message(STATUS "fbench: uv not found; the driver's tests are not registered")
   endif()
