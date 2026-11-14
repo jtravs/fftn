@@ -1,0 +1,33 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Experiment X12b's cases (dev/experiments/X12b-grid-thresholds.md): c2c rows across the
+# grid's two switches (chain or grid, two or three phases) on machines with 32 KiB to
+# 128 KiB of L1 and 512 KiB to 16 MiB of L2; batched rows; real rows, whose pairing fusion
+# shares the first switch.
+
+[catalogue]
+name = "x12b"
+
+[[group]]
+name = "x12b-rows"
+kind = "c2c"
+dims = [
+  2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576, 2097152, 4194304,
+]
+precision = ["f64", "f32"]
+tiers = ["tracking"]
+
+[[group]]
+name = "x12b-batches"
+kind = "c2c"
+dims = [4096, 16384]
+batch = 64
+precision = ["f64", "f32"]
+tiers = ["tracking"]
+
+[[group]]
+name = "x12b-real"
+kind = "r2c"
+dims = [8192, 32768, 131072]
+tiers = ["tracking"]
