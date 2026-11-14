@@ -192,6 +192,20 @@ counts and a time estimate.
   1.255, 1.444, 1.245 and 1.431 for the four groups, against the winners' 1.257, 1.442,
   1.246 and 1.434 in the confirmation.
 
+### Apple M5 Max, `neon_fcma`, lengths up to 1024
+
+Campaign mac-smooth (Release, Clang 23, the planner then being v0; the Mac loaded by other
+work throughout, so fbench's interleaving and A/A band carried the noise). Planner v0
+against the best sequence, geometric means over 133 lengths: 1.066 (b1, double), 1.113
+(b1, float), 1.073 (b64, double), 1.119 (b64, float); far closer than on the EPYC, but up
+to 1.6 at single lengths. `bench/x2/fit.py --isa neon_fcma` fitted tables for C = 1 and 2:
+within 2 % of the measured winner in 81.5 % (double) and 83.1 % (float) of cases, against
+48.4 % and 64.5 % for the AVX2 tables NEON used under planner v1. A/B of the two tables
+(run 20261114-101523-3d56, 496 cases n = 17–1024, band ±1.67 %, load median 6.4): NEON
+tables 0.964 times the time (geometric mean), 124 faster, 363 no evidence, 9 slower; the
+three worst (490, 686, 882 in double, 1.25–1.40) keep the AVX2 tables' choices as overrides.
+Adopted.
+
 ### Pending
 
 Nothing below has run; each is measured against the planner of the commit it runs from.
@@ -207,10 +221,8 @@ need its own table?).
   scripts/remote/fbench_remote.py submit xeon fftn --campaign bench/x2/search.py --time
   12:00:00 -- all --name xeon-smooth --lengths 2-1024`, and the same with `--name
   xeon-long --lengths 1025-`.
-- Apple M5 Max, `neon_fcma` (C = 1 double, C = 2 float), when fbench's quiet-machine check
-  passes: `uv run --frozen python bench/x2/search.py --build build/check-release all --name
-  mac-smooth --lengths 2-1024` from a Release build of the commit, then `--name mac-long
-  --lengths 1025-`.
+- Apple M5 Max, lengths above 1024: `uv run --frozen python bench/x2/search.py --build
+  build/check-release all --name mac-long --lengths 1025-`.
 - Reporting and re-fitting: `uv run --frozen python bench/x2/search.py report --name NAME`;
   the count above needs the screening and refinement medians per candidate
   (`search.py`'s `paired_medians`).
@@ -221,7 +233,8 @@ For AVX2 (EPYC 7763, lengths up to 1024): planner v0 is replaced. v0 was more th
 slower than the best sequence, clear of the band, in about 77 % of the cases (1.25 times
 slower in double and 1.44 in float, geometric means). Planner v1 (DESIGN.md 11.2) meets
 the acceptance rule there: 95.7 % of the measured winners reproduced and no case slower
-than v0 by more than 2 %. Adopted as the default for every target; on NEON, AVX-512,
+than v0 by more than 2 %. Adopted as the default for every target. On NEON (Apple M5 Max) its own fitted tables
+replaced the AVX2 ones (3.6 % faster, see Results). On AVX-512,
 x86-64-v2, AVX and scalar, and for lengths above 1024, it applies by analogy (the table
 of the nearest C) and is unmeasured until the campaigns under "Pending" run. Task 1.3
 decides AVX-512's table, including FFTL's radix-16 rule for it.
