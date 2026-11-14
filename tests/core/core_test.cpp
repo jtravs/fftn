@@ -87,15 +87,11 @@ bool is_prime(std::size_t n) {
   return n >= 2;
 }
 
-// Planner v0's radices multiply to the length on every profile, and every radix is a
+// Planner v1's radices multiply to the length on every profile, and every radix is a
 // codelet's or a prime for the generic pass.
 TEST(Rules, RadicesMultiplyToTheLength) {
-  for (const auto t : {
-           fftn::detail::target::scalar,
-           fftn::detail::target::avx2,
-           fftn::detail::target::neon_fcma,
-       }) {
-    const auto profile = fftn::detail::profile_of(t);
+  for (const std::size_t lanes : {1U, 2U, 4U, 8U}) {
+    const auto profile = fftn::detail::profile_of(fftn::detail::target::avx2, lanes);
     for (std::size_t n = 1; n <= 4096; ++n) {
       std::size_t product = 1;
       for (const std::size_t r : fftn::detail::rule_radices(n, profile)) {
@@ -107,38 +103,35 @@ TEST(Rules, RadicesMultiplyToTheLength) {
     EXPECT_TRUE(fftn::detail::rule_radices(1, profile).empty());
     EXPECT_EQ(fftn::detail::rule_radices(10007, profile), (std::vector<std::size_t>{10007}));
     EXPECT_EQ(fftn::detail::rule_radices(16, profile), (std::vector<std::size_t>{16}));
-    EXPECT_EQ(fftn::detail::rule_radices(32, profile), (std::vector<std::size_t>{4, 8}));
-    EXPECT_EQ(fftn::detail::rule_radices(64, profile), (std::vector<std::size_t>{4, 16}));
+    EXPECT_EQ(fftn::detail::rule_radices(4097, profile), (std::vector<std::size_t>{17, 241}));
+    EXPECT_EQ(fftn::detail::rule_radices(1U << 24U, profile).size(), 7U) << lanes;
   }
 }
 
-// Every target has a profile: 32 registers on AArch64 and AVX-512, merging on AArch64.
+// Every target has a profile: the lanes it is given, the C = 2 table up to two lanes and the
+// C = 4 table from four.
 TEST(Rules, ProfilesOfEveryTarget) {
   using fftn::detail::target;
-  for (const target t : {target::neon, target::neon_fcma}) {
-    EXPECT_EQ(fftn::detail::profile_of(t).registers, 32U);
-    EXPECT_TRUE(fftn::detail::profile_of(t).merge);
+  for (const target t : {target::scalar, target::x86_v2, target::avx, target::avx2,
+                         target::avx512, target::neon, target::neon_fcma}) {
+    for (const std::size_t lanes : {1U, 2U, 4U, 8U}) {
+      const auto p = fftn::detail::profile_of(t, lanes);
+      EXPECT_EQ(p.lanes, lanes);
+      ASSERT_NE(p.costs, nullptr);
+      EXPECT_EQ(p.costs, fftn::detail::profile_of(target::avx2, lanes <= 2 ? 2 : 4).costs);
+    }
   }
-  EXPECT_EQ(fftn::detail::profile_of(target::avx512).registers, 32U);
-  EXPECT_FALSE(fftn::detail::profile_of(target::avx512).merge);
-  for (const target t : {target::x86_v2, target::avx, target::avx2}) {
-    EXPECT_EQ(fftn::detail::profile_of(t).registers, 16U);
-    EXPECT_FALSE(fftn::detail::profile_of(t).merge);
-  }
+  EXPECT_NE(fftn::detail::profile_of(target::avx2, 2).costs,
+            fftn::detail::profile_of(target::avx2, 4).costs);
 }
 
-// The recorded radices of every 73-smooth length up to 20000 for each profile
-// (data/rule_radices.txt): the rules' specification (DESIGN.md 11.2) made exact.
+// The recorded radices of every 73-smooth length up to 20000 for 1, 2, 4 and 8 lanes
+// (data/rule_radices.txt, generated from the specification, DESIGN.md 11.2, by an
+// independent implementation).
 TEST(Rules, RecordedTable) {
   std::ifstream in(FFTN_CORE_DATA "/rule_radices.txt");
   ASSERT_TRUE(in.good()) << "cannot read " << FFTN_CORE_DATA "/rule_radices.txt";
-  const std::array<fftn::detail::target_profile, 3> profiles{
-      {
-          {.registers = 16, .merge = false},
-          {.registers = 32, .merge = true},
-          {.registers = 32, .merge = false},
-      },
-  };
+  const std::array<std::size_t, 4> lanes{1, 2, 4, 8};
   std::size_t lines = 0;
   std::size_t failures = 0;
   std::string line;
@@ -149,7 +142,7 @@ TEST(Rules, RecordedTable) {
     std::istringstream fields(line);
     std::size_t n = 0;
     fields >> n;
-    for (const auto& profile : profiles) {
+    for (const std::size_t c : lanes) {
       std::string bar;
       fields >> bar;
       ASSERT_EQ(bar, "|") << line;
@@ -163,9 +156,9 @@ TEST(Rules, RecordedTable) {
         fields >> r;
         want.push_back(r);
       }
+      const auto profile = fftn::detail::profile_of(fftn::detail::target::avx2, c);
       if (fftn::detail::rule_radices(n, profile) != want && ++failures <= 8) {
-        ADD_FAILURE() << "n = " << n << ", " << profile.registers << " registers"
-                      << (profile.merge ? ", merging" : "") << ": not as recorded";
+        ADD_FAILURE() << "n = " << n << ", " << c << " lanes: not as recorded";
       }
     }
     ++lines;
@@ -174,41 +167,29 @@ TEST(Rules, RecordedTable) {
   EXPECT_EQ(failures, 0U);
 }
 
-// Values from the rules' definition (FFTL.jl's single-line rules) for lengths its own
-// tables list, on 32 registers with merged radices (AArch64) and on 16 without (AVX2).
-TEST(Rules, FftlExamples) {
+// Winners of experiment X2 on AVX2 (EPYC 7763) that the costs reproduce, and the measured
+// overrides: double has two lanes, float four.
+TEST(Rules, MeasuredExamples) {
   using v = std::vector<std::size_t>;
-  const fftn::detail::target_profile wide{.registers = 32, .merge = true};
-  const fftn::detail::target_profile narrow{.registers = 16, .merge = false};
+  const auto f64 = fftn::detail::profile_of(fftn::detail::target::avx2, 2);
+  const auto f32 = fftn::detail::profile_of(fftn::detail::target::avx2, 4);
   const auto r = [](std::size_t n, const fftn::detail::target_profile& p) {
     return fftn::detail::rule_radices(n, p);
   };
-  EXPECT_EQ(r(128, wide), (v{4, 4, 8}));
-  EXPECT_EQ(r(128, narrow), (v{8, 4, 4}));
-  EXPECT_EQ(r(256, wide), (v{4, 8, 8}));
-  EXPECT_EQ(r(256, narrow), (v{4, 4, 4, 4}));
-  EXPECT_EQ(r(1024, wide), (v{4, 4, 8, 8}));
-  EXPECT_EQ(r(1024, narrow), (v{4, 4, 4, 4, 4}));
-  EXPECT_EQ(r(4096, wide), (v{8, 8, 8, 8}));
-  EXPECT_EQ(r(4096, narrow), (v(6, 4)));
-  EXPECT_EQ(r(16384, wide), (v{4, 8, 8, 8, 8}));
-  EXPECT_EQ(r(16384, narrow), (v(7, 4)));
-  EXPECT_EQ(r(32768, wide), (v{8, 4, 4, 4, 4, 4, 4}));
-  EXPECT_EQ(r(32768, narrow), (v{8, 4, 4, 4, 4, 4, 4}));
-  EXPECT_EQ(r(48, wide), (v{4, 12}));
-  EXPECT_EQ(r(48, narrow), (v{4, 4, 3}));
-  EXPECT_EQ(r(120, wide), (v{10, 12}));
-  EXPECT_EQ(r(120, narrow), (v{4, 2, 3, 5}));
-  EXPECT_EQ(r(360, wide), (v{5, 6, 12}));
-  EXPECT_EQ(r(360, narrow), (v{4, 2, 5, 9}));
-  EXPECT_EQ(r(1000, wide), (v{4, 5, 5, 10}));
-  EXPECT_EQ(r(1000, narrow), (v{4, 2, 5, 5, 5}));
-  EXPECT_EQ(r(100000, wide), (v{4, 4, 5, 5, 5, 5, 10}));
-  EXPECT_EQ(r(100000, narrow), (v{4, 4, 2, 5, 5, 5, 5, 5}));
-  // Primes above the codelets go last, as the largest radices; 7 n keeps a 2 on x86.
-  EXPECT_EQ(r(34, narrow), (v{2, 17}));
-  EXPECT_EQ(r(56, narrow), (v{4, 2, 7}));
-  EXPECT_EQ(r(56, wide), (v{8, 7}));
+  EXPECT_EQ(r(100, f64), (v{10, 10}));
+  EXPECT_EQ(r(100, f32), (v{4, 5, 5}));
+  EXPECT_EQ(r(945, f64), (v{15, 7, 9}));
+  EXPECT_EQ(r(960, f64), (v{8, 10, 12}));
+  EXPECT_EQ(r(1000, f64), (v{10, 10, 10}));
+  EXPECT_EQ(r(1000, f32), (v{4, 5, 5, 10}));
+  EXPECT_EQ(r(1024, f64), (v{4, 16, 16}));
+  EXPECT_EQ(r(1024, f32), (v{8, 8, 16}));
+  // Overrides.
+  EXPECT_EQ(r(42, f64), (v{2, 3, 7}));
+  EXPECT_EQ(r(490, f64), (v{2, 7, 5, 7}));
+  EXPECT_EQ(r(700, f32), (v{4, 7, 5, 5}));
+  // Primes above the codelets go last, as generic passes.
+  EXPECT_EQ(r(34, f64), (v{2, 17}));
 }
 
 // Runs a plan core on a fresh copy of `input` and returns the output bytes.
@@ -227,7 +208,7 @@ TEST(Rules, DescribeSaysWhenRadicesAreForced) {
   EXPECT_NE(with.find("radices from build_settings.radices"), std::string::npos) << with;
   EXPECT_NE(with.find("radices 2 x 8 x 16\n"), std::string::npos) << with;
   EXPECT_EQ(without.find("build_settings"), std::string::npos) << without;
-  EXPECT_NE(without.find("radices from planner v0's rules\n"), std::string::npos) << without;
+  EXPECT_NE(without.find("radices from planner v1\n"), std::string::npos) << without;
 }
 
 std::vector<std::byte> run(const fftn::detail::plan_core& core, std::vector<std::byte> input,

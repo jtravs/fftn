@@ -341,8 +341,8 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
            const build_settings& settings) {
   c.isa_target = plan_target(opts);
   const kernels_of<T>& kernels = of<T>(*find_kernels(c.isa_target));
-  chain_builder<T> chain(kernels, profile_of(c.isa_target), tables_of<T>(c), settings.chunk_points,
-                         settings.radices);
+  chain_builder<T> chain(kernels, profile_of(c.isa_target, kernels.complex_lanes), tables_of<T>(c),
+                         settings.chunk_points, settings.radices);
   program& p = c.prog;
   const std::size_t r = s.axes.size();
   const auto complex_bytes = static_cast<std::ptrdiff_t>(2 * sizeof(T));
@@ -664,8 +664,8 @@ std::string describe(const plan_core& core) {
   o << "strategy: chain (Stockham autosort, breadth-first), one line at a time; each "
        "transform finished before the next; radices from "
     << (core.radices_forced ? "build_settings.radices (a test knob) where they multiply to a "
-                              "line's length, otherwise from planner v0's rules\n"
-                            : "planner v0's rules\n");
+                              "line's length, otherwise from planner v1\n"
+                            : "planner v1\n");
   for (const std::string& note : core.axis_notes) {
     o << note << "\n";
   }
