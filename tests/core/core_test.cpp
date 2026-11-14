@@ -87,8 +87,11 @@ bool is_prime(std::size_t n) {
 // rules they come from (FFTL.jl, single lines): on 32 registers with merged radices
 // (AArch64) and on 16 without (AVX2).
 TEST(Rules, RadicesMultiplyToTheLength) {
-  for (const auto t : {fftn::detail::target::scalar, fftn::detail::target::avx2,
-                       fftn::detail::target::neon_fcma}) {
+  for (const auto t : {
+           fftn::detail::target::scalar,
+           fftn::detail::target::avx2,
+           fftn::detail::target::neon_fcma,
+       }) {
     const auto profile = fftn::detail::profile_of(t);
     for (std::size_t n = 1; n <= 4096; ++n) {
       std::size_t product = 1;
@@ -136,7 +139,7 @@ TEST(Rules, PublishedExamples) {
   EXPECT_EQ(r(100000, wide), (v{4, 4, 5, 5, 5, 5, 10}));
   EXPECT_EQ(r(100000, narrow), (v{4, 4, 2, 5, 5, 5, 5, 5}));
   // Primes above the codelets go last, as the largest radices; 7 n keeps a 2 on x86.
-  EXPECT_EQ(r(2 * 17, narrow), (v{2, 17}));
+  EXPECT_EQ(r(34, narrow), (v{2, 17}));
   EXPECT_EQ(r(56, narrow), (v{4, 2, 7}));
   EXPECT_EQ(r(56, wide), (v{8, 7}));
 }

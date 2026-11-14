@@ -119,9 +119,19 @@ void lane_pass(const pass_args* a, std::size_t first, std::size_t last) {
     const edge<T, OutOp> op = make_edge<T, OutOp>(a, a->out_factor, e0, s);
     if (valid == C<T>) {
       const run_in<T, edge_op::none, true> in{
-          .p = xp, .leg = in_leg, .step = 2, .valid = valid, .op = {}};
+          .p = xp,
+          .leg = in_leg,
+          .step = 2,
+          .valid = valid,
+          .op = {},
+      };
       const run_out<T, OutOp, true> out{
-          .p = yp, .leg = out_leg, .step = ys, .valid = valid, .op = op};
+          .p = yp,
+          .leg = out_leg,
+          .step = ys,
+          .valid = valid,
+          .op = op,
+      };
       if constexpr (Twiddled) {
         const shared_twiddles<T> twid{table + tw_reals<T> * (R - 1) * p};
         cdft<R>::template dif<T, Sign>(in, out, twid);
@@ -130,9 +140,19 @@ void lane_pass(const pass_args* a, std::size_t first, std::size_t last) {
       }
     } else {
       const run_in<T, edge_op::none, false> in{
-          .p = xp, .leg = in_leg, .step = 2, .valid = valid, .op = {}};
+          .p = xp,
+          .leg = in_leg,
+          .step = 2,
+          .valid = valid,
+          .op = {},
+      };
       const run_out<T, OutOp, false> out{
-          .p = yp, .leg = out_leg, .step = ys, .valid = valid, .op = op};
+          .p = yp,
+          .leg = out_leg,
+          .step = ys,
+          .valid = valid,
+          .op = op,
+      };
       if constexpr (Twiddled) {
         const shared_twiddles<T> twid{table + tw_reals<T> * (R - 1) * p};
         cdft<R>::template dif<T, Sign>(in, out, twid);

@@ -352,7 +352,7 @@ std::size_t chain_builder<T>::c2c_line(std::size_t n, int sign, endpoint src, en
   endpoint at = src;
   if (copy_in) {
     add_copy(n, src, {slot::a, 1}, none, stages);
-    at = {slot::a, 1};
+    at = endpoint{.where = slot::a, .stride = 1};
   }
   std::size_t s = 1;
   for (std::size_t i = 0; i < rad.size(); ++i) {

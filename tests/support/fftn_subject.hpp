@@ -48,8 +48,15 @@ auto call_of(const fftn::shape<In, Out>& s, placement place, fftn::isa target) {
 // The instruction sets FFTN's plans can be forced to in this build on this machine.
 inline std::vector<fftn::isa> runnable_isas() {
   std::vector<fftn::isa> out;
-  for (const fftn::isa t : {fftn::isa::scalar, fftn::isa::x86_v2, fftn::isa::avx, fftn::isa::avx2,
-                            fftn::isa::avx512, fftn::isa::neon, fftn::isa::neon_fcma}) {
+  for (const fftn::isa t : {
+           fftn::isa::scalar,
+           fftn::isa::x86_v2,
+           fftn::isa::avx,
+           fftn::isa::avx2,
+           fftn::isa::avx512,
+           fftn::isa::neon,
+           fftn::isa::neon_fcma,
+       }) {
     try {
       const fftn::c2c_plan<double> probe(fftn::rows_c2c<double>(2, 1, fftn::direction::forward),
                                          {.force_isa = t});

@@ -85,15 +85,35 @@ void generic_pass(const pass_args* a, std::size_t first, std::size_t last) {
     const T* wp = table != nullptr ? table + tw_reals<T> * (r - 1) * p : nullptr;
     if (valid == C<T>) {
       const run_in<T, InOp, true> in{
-          .p = x + at(ei, xs), .leg = in_leg, .step = xs, .valid = valid, .op = iop};
+          .p = x + at(ei, xs),
+          .leg = in_leg,
+          .step = xs,
+          .valid = valid,
+          .op = iop,
+      };
       const run_out<T, OutOp, true> out{
-          .p = y + at(eo, ys), .leg = out_leg, .step = ys, .valid = valid, .op = oop};
+          .p = y + at(eo, ys),
+          .leg = out_leg,
+          .step = ys,
+          .valid = valid,
+          .op = oop,
+      };
       generic_run<T, Sign>(in, out, r, roots, wp);
     } else {
       const run_in<T, InOp, false> in{
-          .p = x + at(ei, xs), .leg = in_leg, .step = xs, .valid = valid, .op = iop};
+          .p = x + at(ei, xs),
+          .leg = in_leg,
+          .step = xs,
+          .valid = valid,
+          .op = iop,
+      };
       const run_out<T, OutOp, false> out{
-          .p = y + at(eo, ys), .leg = out_leg, .step = ys, .valid = valid, .op = oop};
+          .p = y + at(eo, ys),
+          .leg = out_leg,
+          .step = ys,
+          .valid = valid,
+          .op = oop,
+      };
       generic_run<T, Sign>(in, out, r, roots, wp);
     }
     if (++b == blocks) {

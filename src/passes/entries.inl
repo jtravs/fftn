@@ -8,6 +8,7 @@
 
 namespace {
 
+// NOLINTNEXTLINE(modernize-avoid-c-arrays): no standard-library templates in a region
 inline constexpr edge_op edge_ops[edge_op_count] = {edge_op::none, edge_op::scale, edge_op::factor};
 
 template <int Sign> inline constexpr std::size_t direction_index = Sign < 0 ? 0 : 1;
@@ -19,7 +20,7 @@ inline constexpr bool possible_edges =
     edge_ops[In] != edge_op::scale || edge_ops[Out] != edge_op::scale;
 
 template <class T, std::size_t R, int Sign, std::size_t In, std::size_t Out>
-constexpr void fill_leaves(pass_kernels<T>& k) {
+constexpr void fill_leaves(pass_kernels<T>& k) noexcept {
   if constexpr (possible_edges<In, Out>) {
     k.leaf[R][direction_index<Sign>][In][Out] = &leaf_pass<T, R, Sign, edge_ops[In], edge_ops[Out]>;
   }
@@ -31,7 +32,7 @@ constexpr void fill_leaves(pass_kernels<T>& k) {
 }
 
 template <class T, std::size_t R, int Sign, std::size_t E>
-constexpr void fill_edges(pass_kernels<T>& k) {
+constexpr void fill_edges(pass_kernels<T>& k) noexcept {
   constexpr std::size_t d = direction_index<Sign>;
   k.grouped[R][d][E] = &grouped_pass<T, R, Sign, edge_ops[E]>;
   k.last[R][d][E] = &lane_pass<T, R, Sign, false, edge_ops[E]>;
@@ -40,13 +41,13 @@ constexpr void fill_edges(pass_kernels<T>& k) {
   }
 }
 
-template <class T, std::size_t R, int Sign> constexpr void fill_radix(pass_kernels<T>& k) {
+template <class T, std::size_t R, int Sign> constexpr void fill_radix(pass_kernels<T>& k) noexcept {
   k.lane[R][direction_index<Sign>] = &lane_pass<T, R, Sign, true, edge_op::none>;
   fill_edges<T, R, Sign, 0>(k);
   fill_leaves<T, R, Sign, 0, 0>(k);
 }
 
-template <class T, std::size_t I> constexpr void fill_radices(pass_kernels<T>& k) {
+template <class T, std::size_t I> constexpr void fill_radices(pass_kernels<T>& k) noexcept {
   constexpr std::size_t r = gen::radices[I];
   static_assert(r <= max_codelet_radix);
   fill_radix<T, r, -1>(k);
@@ -57,7 +58,7 @@ template <class T, std::size_t I> constexpr void fill_radices(pass_kernels<T>& k
 }
 
 template <class T, int Sign, std::size_t In, std::size_t Out>
-constexpr void fill_generic(pass_kernels<T>& k) {
+constexpr void fill_generic(pass_kernels<T>& k) noexcept {
   if constexpr (possible_edges<In, Out>) {
     k.generic[direction_index<Sign>][In][Out] = &generic_pass<T, Sign, edge_ops[In], edge_ops[Out]>;
     if constexpr (Sign < 0) {
@@ -71,7 +72,7 @@ constexpr void fill_generic(pass_kernels<T>& k) {
   }
 }
 
-template <class T> constexpr pass_kernels<T> make_pass_kernels() {
+template <class T> constexpr pass_kernels<T> make_pass_kernels() noexcept {
   pass_kernels<T> k{};
   fill_radices<T, 0>(k);
   fill_generic<T, -1, 0, 0>(k);

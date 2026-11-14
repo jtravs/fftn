@@ -161,8 +161,9 @@ TEST(Passes, EveryCodeletInEveryPosition) {
 }
 
 template <class T> void generic_in_every_position(fftn::isa target) {
-  const std::vector<std::vector<std::size_t>> sequences{{17},       {17, 2}, {2, 17}, {2, 17, 3},
-                                                        {3, 19, 2}, {18},    {2, 18}};
+  const std::vector<std::vector<std::size_t>> sequences{
+      {17}, {17, 2}, {2, 17}, {2, 17, 3}, {3, 19, 2}, {18}, {2, 18},
+  };
   for (const auto& radices : sequences) {
     std::size_t n = 1;
     for (const std::size_t f : radices) {

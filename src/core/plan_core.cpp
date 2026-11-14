@@ -427,7 +427,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       std::vector<stage> cs;
       const std::size_t n = c.lengths[d];
       const std::size_t cneed =
-          chain.c2c_line(n, +1, at(src, d), at(work, d), src.where == work.where, line_edges{}, cs);
+          chain.c2c_line(n, +1, at(src, d), at(work, d), src.where == work.where, line_edges(), cs);
       lines(d, in.extent, src, work, cneed, std::move(cs));
       c.axis_notes.push_back("axis " + std::to_string(d) + " (n = " + std::to_string(n) +
                              "): c2c backward, radices " + radix_list(chain.radices(n)));
