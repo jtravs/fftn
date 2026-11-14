@@ -262,7 +262,7 @@ TEST(Rules, Avx512FloatExtendsAvx2) {
   EXPECT_EQ(fftn::detail::rule_radices(256, big), (v{32, 8}));
   EXPECT_EQ(fftn::detail::rule_radices(512, big), (v{32, 16}));
   EXPECT_EQ(fftn::detail::rule_radices(1024, big), (v{32, 32}));
-  EXPECT_EQ(fftn::detail::rule_radices(2048, big), (v{8, 4, 64}));
+  EXPECT_EQ(fftn::detail::rule_radices(2048, big), (v{16, 8, 16}));
   EXPECT_EQ(fftn::detail::rule_radices(4096, big), (v{8, 16, 32}));
   // Double (C = 4) keeps AVX2's table.
   EXPECT_EQ(fftn::detail::profile_of(target::avx512, 4).costs, base.costs);

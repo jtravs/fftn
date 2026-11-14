@@ -1,6 +1,6 @@
 # X3: few big passes (radix 32 and 64) against radix-16 chains and grids
 
-- **Status:** running
+- **Status:** done
 - **Owner:** task 1.6 session (r3264), 2026-11-14
 - **Phase / task:** 1.6
 
@@ -122,8 +122,8 @@ Long rows and the Xeon's `avx2` (runs 20261114-182424-264a, -183721-1230, -18551
   (`g64`, or the splits 32 × 32 × 32 and 32 × 32 × 64 with single-pass phases) beats the
   radix-16 grid on the Xeon at 32768 and 65536 in both precisions and on both instruction
   sets (`avx512` 0.89–0.98, `avx2` 0.87–0.95), and on the EPYC at 32768 (0.94–0.98) but not
-  at 65536 in float (1.04). At 4096–16384 the same rule loses (1.0–1.8): there it puts a
-  64-point phase where two radix-8 passes were cheaper. A phase radix that depends on the
+  at 65536 in float (1.04). At 4096–16384 the same rule loses (1.0–1.8): there it makes
+  64-point phases single radix-64 passes, which spill. A phase radix that depends on the
   length (32 from 32768) would pass rule 1 on the Xeon; it is left as a follow-up for after
   X12b moves the grid threshold, since both decide which plans those lengths get.
 - **Xeon `avx2` float** also gains from radix 32 chains at 512 (16.32 0.86) and 1024 (32.32
@@ -136,6 +136,53 @@ Screen (rule 1): passes for `avx512` float (512, 1024, 4096 by more than 3 %); f
 `avx512` float: campaign xeon-avx512-big (search.py `--radices 2-16,32,64 --require
 32,64`, 26 multiples of 32 from 64 to 2048), Slurm job 15573 after 15568.
 
+**Step 2, `avx512` float** (commit T against M, Xeon 6240, GCC 14.4, `ISA=avx512`, Slurm
+`-c 8` on the shared node).
+
+- The fit: `fit.py --name xeon-avx512-big --isa avx512 --base f32=avx2_float` keeps
+  avx2_float's costs up to radix 16 and fits the radix 32 and 64 columns (1192 timings of
+  52 cases). X2's override rule (more than 2 % behind the baseline) gave 1536 and 2048; the
+  baseline here is the radix-16 table's own choice, so the rule was extended in `--base`
+  mode: an override is also due where the choice is more than 2 % behind the measured
+  winner in every case of that length (256 = 32.8, 512 = 32.16, 768 = 8.3.32, against the
+  table's 8.32, 16.32 and 8.12.8, 2–15 % behind). Reproduction 50 of 52 cases (96 %)
+  against avx2_float's 41 (79 %). Beyond 2048 the columns are extrapolated: at 4096 they
+  chose 32.4.32, which run 20261114-211008-0e0e measured 2–11 % slower than 8.16.32 (and
+  8 % slower than M's 16.16.16 at batch 64), so 4096 is overridden with 8.16.32.
+- A/B before X19 (run 20261114-210922-2d12; T = f658f13 without the 4096 override, M =
+  803c636; arms T, `T+STRATEGY=rules` and M with the A/A control, band ±1.0 %; 112 cases:
+  the X2 catalogue's multiples of 32 up to 4096, both batches and precisions; load average
+  median 10.8): float geometric mean 0.982 (0.980 without 4096), double 1.000; 256 0.77 /
+  0.83 (b1 / b64), 512 0.82 / 0.84, 768 0.96 / 0.97, 1024 0.91 / 0.94, 2048 0.98 / 1.00,
+  4096 1.01 / 1.08 (the extrapolated 32.4.32). The same-plan arm agrees with T within 0.5 %
+  everywhere: no default-arm artifact on the Xeon.
+- A/B after merging main with X19 (run 20261114-215159-370f; T = 7e037a6, M = a9479c1,
+  i.e. 803c636 with the same main merged; same cases and arms; band ±1.0 %, load average
+  median 3.7): float geometric mean **0.977** over the 56 float cases (`STRATEGY=rules`
+  arm 0.978), double 0.999. Faster: 256 0.76 / 0.83, 512 0.79 / 0.79, 768 0.91 / 0.93,
+  1024 0.93 / 0.94, 4096 0.98 / 0.99. Slower: only 2048 at batch 64, 1.026 [1.012, 1.031]
+  with the fit's 8.4.64 (batch 1 0.997); X19 sped up the radix-16 codelets more than this
+  sequence's. 2048 therefore keeps avx2_float's 16.8.16 (M's plan, so that case becomes
+  1.00 by construction; float geometric mean about 0.977).
+- Collateral (tracking tier, c2c rows, run 20261114-215206-52d9, same builds with FFTW
+  3.3.11 AVX-512 MEASURE): FFTN ÷ FFTW 1.205 before and 1.204 after (double rows, whose
+  plans the table does not touch; every case within ±1 % of M except 8 and 16 points,
+  0.97–0.98).
+
 ## Verdict
 
-Pending.
+**Adopted for AVX-512 in float; rejected elsewhere.** By rule 2 the `avx512_float` table
+(commit f658f13 plus the 4096 and 2048 overrides) improves the float geometric mean over
+the affected lengths by 2.3 % on the Xeon after X19 (0.977; 1.8 % before X19, 0.982, when
+4096 still took the extrapolated sequence), with no case slower than the band plus 2 %
+(worst 1.026 at 2048 b64, since given M's plan). It is the row `{target::avx512, 8,
+&avx512_float}` of `measured_tables` (`src/planner/rules.cpp`); `bench/x2/fit.py --base`
+writes it; a test checks that wherever it chooses neither 32 nor 64 it chooses what AVX2's
+C = 4 table does at C = 8, so `tests/core/data/rule_radices.txt` (AVX2 profiles) does not
+change. AVX-512 double, AVX2 (EPYC) and NEON keep tables without radix 32 and 64: their
+screens failed rule 1. The grid's phase rule stays at radix 16 (radix 32/64 phases lose
+at 4096–16384); a length-dependent phase radix for 32768 and up passes the screen on the
+Xeon and is a follow-up after X12b. DESIGN.md 8.5 and 11.2 say so; lesson 4.6 in
+`dev/LESSONS.md`. Follow-ups: refit the radix 32/64 columns on X19's codelets and over
+lengths above 2048 (the columns are extrapolated there), and the Xeon `avx2` float gain
+(512, 1024) if AVX2 ever gets per-CPU tables.

@@ -178,10 +178,11 @@ N/4 and N/8.** The prototype gained 2 % hoisting by hand what the compiler did n
 4.6 **Big-radix passes pay only where registers are wide and many.** With generated,
 depth-ordered codelets, a radix-32 pass beat the best radix ≤ 16 chain only on
 AVX-512 in float (32 registers of 8 complex): 512 as 32·16 at 0.82–0.85 of the planner's
-time, 1024 as 32·32 at 0.92–0.94 (Xeon 6240). In double on the same machine, on AVX2 (16
+time, 1024 as 32·32 at 0.92–0.94 (Xeon 6240); planner tables with radix 32 columns took
+float chains on that machine to 0.977 of their time over the multiples of 32 up to 4096. In double on the same machine, on AVX2 (16
 registers, EPYC 7763) and on NEON (M5 Max) they tied or lost; radix 64 spills (67–681
-values per pass) and won only in one AVX-512 float chain (2048 as 8·4·64) and as a grid
-phase at 32–64 thousand points. Fewer passes is not enough: the pass must fit the
+values per pass) and won only as a grid phase at 32–64 thousand points (a 2 % win as a
+chain pass at 2048 vanished once the radix-16 codelets lost 12 of their 19 swaps, X19). Fewer passes is not enough: the pass must fit the
 register file. And a cost table fitted on lengths up to 2048 extrapolates its big-radix
 columns badly: at 4096 it chose 32·4·32, 2–11 % slower than the measured 8·16·32. [X3](experiments/X3-big-radices.md).
 

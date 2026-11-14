@@ -86,8 +86,10 @@ constexpr pass_costs avx2_float{
 // the baseline in some case or behind the measured winner in every case (256, 512: 32.8 and
 // 32.16 beat the table's 8.32 and 16.32 by 9 to 15 %). Beyond 2048 the radix 32 and 64
 // columns are extrapolated: at 4096 their 32.4.32 was 2 to 11 % slower than 8.16.32,
-// measured by X3 at 0.96 to 0.98 of the radix-16 16.16.16, so 4096 is overridden. AVX-512
-// in double took no table: its big chains tied (X3).
+// measured by X3 at 0.96 to 0.98 of the radix-16 16.16.16, so 4096 is overridden. At 2048
+// the fit's override 8.4.64 (0.98 of 16.8.16 before experiment X19's codelets) tied or lost
+// after them (1.00 at batch 1, 1.03 at 64, run 20261114-215159-370f), so 2048 keeps
+// avx2_float's 16.8.16. AVX-512 in double took no table: its big chains tied (X3).
 constexpr std::array<radix_override, 8> avx512_float_overrides{{
     {.n = 140, .radices = {4, 5, 7, 0}},
     {.n = 256, .radices = {32, 8, 0, 0}},
@@ -95,7 +97,7 @@ constexpr std::array<radix_override, 8> avx512_float_overrides{{
     {.n = 700, .radices = {4, 7, 5, 5}},
     {.n = 768, .radices = {8, 3, 32, 0}},
     {.n = 1536, .radices = {8, 12, 16, 0}},
-    {.n = 2048, .radices = {8, 4, 64, 0}},
+    {.n = 2048, .radices = {16, 8, 16, 0}},
     {.n = 4096, .radices = {8, 16, 32, 0}},
 }};
 

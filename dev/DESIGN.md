@@ -1078,8 +1078,8 @@ block is gathered row by row into tight scratch a, transformed there by a chain 
 passes (s ≥ block ≥ C, so none is grouped and none has tails; the radices are the fewest
 passes, most even, of radix up to 16, not planner v1's, whose tables price a grouped first
 pass), and written back row by row. Experiment X3 allowed phase radices up to 64
-(`build_settings::grid_phase_radix`): they lost at 4096–16384 (up to 1.8 times, a 64-point
-phase where two radix-8 passes were cheaper) and won at 32768–65536 on the Xeon (0.87–0.98
+(`build_settings::grid_phase_radix`): they lost at 4096–16384 (up to 1.8 times: single radix-64
+passes for 64-point phases spill) and won at 32768–65536 on the Xeon (0.87–0.98
 on both instruction sets) and the EPYC at 32768 (0.94–0.98); a phase radix that depends on
 the length waits for X12b's grid thresholds, so the default stays 16. Phase 1's columns become rows, so it writes through a twiddled transpose
 (C × C tiles transposed in registers) with each element's twiddle w_n^(c k) formed as
@@ -1403,8 +1403,9 @@ AVX-512 in double, x86-64-v2, AVX and scalar until X2 runs on them. AVX-512 in f
 8) has its own table (experiment X3): AVX2's C = 4 costs up to radix 16 with radix 32 and 64
 columns fitted to a search on the Xeon over the multiples of 32 up to 2048 whose candidates
 contained 32 or 64 (`fit.py --base`), plus overrides where the choice missed the measured
-winner in every case (256 = 32·8, 512 = 32·16, 768 = 8·3·32) and at 4096 (8·16·32: the
-extrapolated columns chose 32·4·32, 2–11 % slower); wherever its choice has
+winner in every case (256 = 32·8, 512 = 32·16, 768 = 8·3·32), at 4096 (8·16·32: the
+extrapolated columns chose 32·4·32, 2–11 % slower) and at 2048 (AVX2's 16·8·16: the fit's
+8·4·64 tied or lost once X19's codelets landed); wherever its choice has
 neither 32 nor 64 it is AVX2's at C = 8. Every other table leaves those columns 0, so
 radix 32 and 64 passes stay out of their chains: they tied or lost there (X3). NEON has its own tables (C = 1 and 2), fitted to X2's
 campaign on an Apple M5 Max with `neon_fcma`; plain `neon` takes them too, unmeasured on a
