@@ -1683,7 +1683,12 @@ over time. It inherits the prototype rig's concepts and replaces its statistics.
   are meant to differ, refuses a binary that resolved the wrong shared library, and refuses
   to time sanitizer or Debug builds.
 - **Arms** are written `label=library[:build][+OPTION=value…]`. An FFTN arm can be any
-  commit (fbench builds it from `git archive`) or any plan option.
+  commit (fbench builds it from `git archive`) or any plan option, and, for experiments,
+  an internal construction knob the public API lacks (`RADICES`, experiment X2).
+- **Precision**: a case is double or single precision; a backend takes single-precision
+  cases only if it says so. The harness generates and checks in double, rounds a
+  single-precision input to float before the library and the reference see it, and
+  scales the tolerance by the precision's epsilon.
 - **Catalogues** are data files of weighted cases:
   - *standard*: powers of two 2¹–2²⁴; 2-3-5-7-smooth lengths; primes and awkward
     composites; batches from 1 to thousands of rows; r2c and c2r; planes and volumes;
@@ -2008,6 +2013,7 @@ below because section 5.3 left the shapes open; each is easy to change before a 
 | 2026-11-14 | Planner v0: radices and order from FFTL.jl's single-line rules, keyed on the target's register count and whether it merges radices (AArch64) | The plan's starting point (PLAN task 1.2); the rules were measured on M-series and x86 machines; X2 revisits them per target |
 | 2026-11-14 | On targets with C > 1, a line whose stride is not 1 is copied to or from scratch around the chain; leaves and copies take any stride | Passes then load and store whole vectors only; strided axes get the lanes strategy in phase 4, which removes the copies |
 | 2026-11-14 | `options::scale` is fused into the pass that writes the output, so the result is bitwise the unscaled result times the scale; `options::force_isa` with `isa::best` as in section 5.3 (pending the maintainer's agreement, 18.2) | A fused scale costs no pass (task 1.2's acceptance, tested); forcing is how the suites run every target |
+| 2026-11-14 | fbench times single precision: input rounded to float, reference and check in double with float's epsilon; backends opt in with `precisions` in describe | Experiment X2 and the float targets need float timings; rounding first keeps the reference exact for the values the library sees, and opting in keeps competitors without float from failing smoke |
 
 ---
 
