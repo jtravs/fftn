@@ -26,6 +26,7 @@
 #include <algorithm>
 #include <complex>
 #include <cstddef>
+#include <limits>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -181,10 +182,10 @@ TEST(ExecutorExecute, DispatchesOnlyLanesWithWork) {
     const fftn::detail::schedule s = fftn::detail::make_schedule(
         c.core->graph, {.lanes = width, .group_size = group}, c.core->profile);
     EXPECT_EQ(ex.calls, 1) << c.name << ", width " << width << ", groups of " << group;
-    EXPECT_EQ(ex.last_n, s.lanes_dealt) << c.name;
+    EXPECT_EQ(ex.last_n, s.dispatch) << c.name;
     EXPECT_EQ(ex.last_n, lanes) << c.name << ", width " << width << ", groups of " << group;
   };
-  expect_lanes(three, 16, 4, 4);  // three transforms: one group of 4 shares them
+  expect_lanes(three, 16, 4, 3);  // three transforms in a group of 4: too few to split
   expect_lanes(three, 16, 0, 16); // one group of 16: the transforms are split among all
   expect_lanes(many, 16, 4, 16);  // every group has work
   expect_lanes(many, 6, 4, 6);    // groups of 4 and 2
@@ -201,6 +202,52 @@ TEST(ExecutorExecute, DispatchesOnlyLanesWithWork) {
   tiny.execute(in.data(), out.data(), wide, tiny_ws);
   EXPECT_EQ(wide.calls, 0);
   EXPECT_EQ(out, serial);
+
+  // Decided at plan construction: the executor is not even asked its width or grouping, so
+  // no schedule is computed (it needs the width).
+  struct asking_executor {
+    mutable int asked = 0;
+    int calls = 0;
+    [[nodiscard]] int concurrency() const {
+      ++asked;
+      return 16;
+    }
+    [[nodiscard]] int group_size() const {
+      ++asked;
+      return 4;
+    }
+    void bulk(int n, fftn::task_function task, void* arg) {
+      ++calls;
+      for (int k = 0; k < n; ++k) {
+        task(arg, k);
+      }
+    }
+  };
+  asking_executor counting;
+  std::ranges::fill(out, std::complex<double>{});
+  tiny.execute(in.data(), out.data(), counting, tiny_ws);
+  EXPECT_EQ(counting.asked, 0);
+  EXPECT_EQ(counting.calls, 0);
+  EXPECT_EQ(out, serial);
+
+  // A single long transform that may not be split runs on one lane: the caller, serially.
+  fftn::detail::build_settings unsplit;
+  unsplit.profile.split_min_points = std::numeric_limits<std::size_t>::max();
+  unsplit.profile.split_min_points_mesh = std::numeric_limits<std::size_t>::max();
+  const auto one_row = fftn::detail::make_plan_core(
+      fftn::detail::view_of(fftn::rows_c2c<double>(65536, 1, fftn::direction::forward)),
+      fftn::options(), unsplit);
+  ASSERT_FALSE(one_row->runs_inline);
+  const auto x = src.complexes<double>(65536);
+  std::vector<std::complex<double>> y(65536);
+  std::vector<std::complex<double>> y_serial(65536);
+  const fftn::workspace row_ws(fftn::detail::workspace_bytes(*one_row, 16));
+  fftn::detail::execute_core(*one_row, 0, 1, x.data(), y_serial.data(), row_ws);
+  asking_executor single;
+  fftn::detail::execute_on(*one_row, x.data(), y.data(), single, row_ws);
+  EXPECT_GT(single.asked, 0);
+  EXPECT_EQ(single.calls, 0);
+  EXPECT_EQ(y, y_serial);
 }
 
 // On an executor of more threads than the profile's CPUs, the dispatched members (fewer than

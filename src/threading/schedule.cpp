@@ -23,6 +23,11 @@ machine_profile default_machine_profile() noexcept {
   return p;
 }
 
+bool runs_inline(const work_graph& g, const machine_profile& profile) noexcept {
+  return static_cast<double>(g.tasks) * (g.work * profile.ns_per_work) <
+         profile.inline_multiple * profile.dispatch_ns;
+}
+
 schedule make_schedule(const work_graph& g, const lane_map& lanes,
                        const machine_profile& profile) noexcept {
   schedule s;
@@ -36,11 +41,11 @@ schedule make_schedule(const work_graph& g, const lane_map& lanes,
   s.oversubscribed = profile.cpus > 0 && std::max(lanes.lanes, lanes.threads) > profile.cpus;
   s.grain = g.tasks < max_counted ? 1 : (g.tasks + max_counted - 1) / max_counted;
   // Rule 1, and teams too large for the counters.
-  const double job_ns = static_cast<double>(g.tasks) * s.task_ns;
   if (lanes.lanes <= 1 || std::cmp_greater_equal(lanes.lanes, max_counted) ||
-      job_ns < profile.inline_multiple * profile.dispatch_ns) {
+      runs_inline(g, profile)) {
     s.inline_all = true;
     s.lanes_dealt = lanes.size_of(0);
+    s.dispatch = 1;
     return s;
   }
   // Rules 4 and 5: as many groups as have a group's worth of tasks, at least one; a batch
@@ -49,6 +54,16 @@ schedule make_schedule(const work_graph& g, const lane_map& lanes,
   const auto groups = static_cast<std::size_t>(lanes.groups());
   s.groups = static_cast<int>(std::min(groups, (g.tasks + per_group - 1) / per_group));
   s.lanes_dealt = std::min(lanes.lanes, s.groups * lanes.per_group());
+  s.dispatch = s.lanes_dealt;
+  if (std::cmp_less(g.tasks, s.lanes_dealt)) {
+    bool splits = false;
+    for (int h = 0; h < s.groups && !splits; ++h) {
+      splits = share_of(s, lanes, h).split != 0;
+    }
+    if (!splits) {
+      s.dispatch = static_cast<int>(g.tasks);
+    }
+  }
   return s;
 }
 

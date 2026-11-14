@@ -38,7 +38,8 @@ The other competitors are configured the same way; see
 | `harness/` | the C++ harness shared by every backend: cases, buffers, timing, the check |
 | `harness/backend.hpp` | the C interface a backend implements |
 | `backends/<library>.cpp` | one backend per library, built as `<build>/bench/fbench-<library>` (see "Competitor backends") |
-| `catalogues/*.toml` | case catalogues |
+| `catalogues/*.toml` | case catalogues (`standard`, `threads`) |
+| `t1/` | the harness of experiment T1 and its driver (see "The T1 harness") |
 | `tests/` | the driver's self-tests (CTest `bench.selftest`) |
 | [`../scripts/remote/`](../scripts/remote/fbench_remote.py) | the Slurm runner (see "Remote runs") |
 
@@ -56,14 +57,13 @@ other arm is compared with it. The label may be omitted (it defaults to the libr
 |---|---|---|
 | `PLANNER=ESTIMATE\|MEASURE\|PATIENT\|EXHAUSTIVE` | fftw | planning effort (default MEASURE) |
 | `WISDOM=run\|none\|<file>` | fftw | wisdom: fresh per run and shared by that run's processes with the same binary and planner (default), none at all, or imported read-only from a file |
-| `ISA=<name>` | fftn | force every plan to one instruction set (`options::force_isa`; `scalar`, `avx2`, `avx512`, `neon`, `neon_fcma`, … as `fftn::isa_name` writes them; default `best`), so that one build compares targets: `A=fftn+ISA=avx2 B=fftn+ISA=avx512`. A target the build or processor lacks is refused; `describe` reports the plans' instruction set (`isa`) and `isa_forced` |
 | `API=dft\|interleaved` | accelerate | vDSP's split-complex DFT with conversions (default) or its interleaved DFT (see below) |
 | `DELAY=<fraction>` | any (test only) | spin for that fraction of every measured batch: a seeded slowdown that proves the statistics |
 | `PERTURB=<eps>` | any (test only) | multiply every output value by 1 ± eps before the check: proves the correctness guard |
 
 `DELAY` and `PERTURB` are benchmark switches, not library switches: they never reach a
 library, so [`dev/KNOBS.toml`](../dev/KNOBS.toml) does not list them. A backend refuses
-options it does not know.
+options it does not know. FFTN's own options are listed under [FFTN options](#fftn-options).
 
 ## `run`: how an A/B works
 
@@ -112,6 +112,46 @@ Cold mode (`--mode cold`) rotates through enough buffer sets to exceed the pool
 Apple's system-level cache is not reported). In-place and c2r cases have their input
 restored outside the timer before unnormalised growth could overflow.
 
+## FFTN options
+
+The FFTN backend executes serially unless an arm asks for threads. Its options combine
+freely, for example `fftn+ISA=avx2+THREADS=8` or `fftn_omp+THREADS=8+CALL=team`.
+`fbench-fftn_omp`, built when the compiler has OpenMP (and not under ThreadSanitizer), is
+the same backend linked with the compiler's OpenMP runtime and nothing else that brings
+one; its arms are written `fftn_omp`.
+
+| Option | Backends | Meaning |
+|---|---|---|
+| `ISA=<name>` | fftn, fftn_omp | force every plan to one instruction set (`options::force_isa`; `scalar`, `avx2`, `avx512`, `neon`, `neon_fcma`, … as `fftn::isa_name` writes them; default `best`), so that one build compares targets: `A=fftn+ISA=avx2 B=fftn+ISA=avx512`. A target the build or processor lacks is refused; `describe` reports the plans' instruction set (`isa`) and `isa_forced` |
+| `THREADS=N` | fftn, fftn_omp | execute through an executor of N lanes: `fftn::thread_pool` (fftn) or `fftn::omp::executor` (fftn_omp), created once per process |
+| `GROUP_SIZE=G` | fftn, fftn_omp (with `THREADS`) | lanes per cache group the executor reports; default its own, `fftn::cache_group_size(N)`; 0 for one group |
+| `CALL=executor\|team` | fftn_omp (with `THREADS`) | the executor overload (default), or a parallel region of N threads each calling the team overload with `fftn::omp::this_team()` |
+| `CHUNK_POINTS=P` | fftn, fftn_omp | points per chunk of a stage (the plan's chunking) |
+| `NS_PER_WORK`, `DISPATCH_NS`, `INLINE_MULTIPLE`, `SYNC_NS`, `MIN_POINTS_PER_MEMBER`, `SPLIT_MIN_POINTS`, `SPLIT_MIN_POINTS_MESH`, `MESH_GROUP_LANES`, `REMAINDER_SPLIT_MIN_POINTS`, `SPIN_NS`, `YIELD_NS`, `CLAIM_DIVISOR` | fftn, fftn_omp | the machine profile's field of that name (`src/threading/schedule.hpp`); a size threshold may be `never` |
+
+The backend builds and executes plans through the functions the public `plan` forwards
+every call to, so an arm with none of these options times exactly the public plan. `ISA`
+is the public `options::force_isa`. The profile and chunking options reach the library
+only through the private plan core's build settings, as the tests' do: the library has no
+switch for them, so `dev/KNOBS.toml` lists none. They exist for the threading experiments
+([T1](../dev/experiments/T1-dispatch-wait-costs.md),
+[T5](../dev/experiments/T5-split-thresholds.md)); describe reports the executor, its width
+and grouping, the OpenMP runtime and its placement and waiting variables, and every tuning
+option given.
+
+```bash
+F="uv run --frozen python bench/fbench.py"
+# Serial against 8 lanes of the pool and of OpenMP, on the threads catalogue.
+$F run S=fftn P8=fftn+THREADS=8 O8=fftn_omp+THREADS=8 --catalogue threads
+# A split-threshold sweep at 16 pinned OpenMP threads.
+OMP_PLACES=cores OMP_PROC_BIND=close $F run A=fftn_omp+THREADS=16 \
+  N=fftn_omp+THREADS=16+SPLIT_MIN_POINTS=never Y=fftn_omp+THREADS=16+SPLIT_MIN_POINTS=1+SYNC_NS=0 \
+  --catalogue threads --filter 'rows-long|^c2c-[0-9]+-b1-'
+```
+
+On macOS new threads do not inherit the harness's user-interactive QoS class, so the
+backend raises every lane of its executor to it at the start of each process.
+
 ## Reading a verdict
 
 For each case and arm B the report shows:
@@ -157,12 +197,14 @@ Accuracy is stored with every timing.
 backend executable) and through the smoke tier, correctness only, then checks that the
 guard flags a perturbed output. It is the gate's `bench` stage and the CTest test
 `bench.smoke`. An unsupported case fails when its kind is in the backend's `supports` list
-and is only counted otherwise (the FFTN backend supports nothing until it has a plan). A
+and is only counted otherwise. A
 kind in the backend's `partial` list (supported for some lengths or ranks only, as with
 Accelerate) may be unsupported case by case, but must pass at least one case of the
 standard smoke tier (other selections need not contain lengths it can do). A library with
 several code paths behind an option is smoke-tested once per path (`SMOKE_OPTIONS` in
-`fbenchlib/cli.py`).
+`fbenchlib/cli.py`): FFTN serially, on three lanes at the default profile, and on three
+lanes with a profile that splits everything it can into small chunks (with OpenMP also
+through the team overload), so that the threaded paths meet the reference check.
 
 ## Catalogues
 
@@ -190,6 +232,9 @@ last dimension, in-place real arrays padded to 2(n/2+1).
 
 The standard catalogue has tiers `smoke` (seconds, correctness, every kind, placement and
 rank), `quick` (an A/B in a few minutes), `tracking` (a fixed set for history) and `full`.
+The `threads` catalogue holds the shapes that exercise threading's rules (single long rows,
+few rows, leftover rows after whole rounds, many rows, small jobs, planes and volumes), for
+threaded arms; its groups are named after the rule they exercise.
 `--catalogue` takes a name under `catalogues/` or any path, so client catalogues can live
 anywhere.
 
@@ -326,6 +371,41 @@ garbage collector, which the sanitizers' own handlers break.
 One library per executable: libraries with the FFTW API share symbol names, and two OpenMP
 runtimes in one process crash or crawl.
 
+## The T1 harness
+
+`bench/t1/` holds the harness of experiment
+[T1](../dev/experiments/T1-dispatch-wait-costs.md): the fixed costs of team executions,
+which fbench cannot isolate. It is built as `<build>/bench/t1_costs` and, where the
+compiler has OpenMP (not under ThreadSanitizer), `t1_costs_omp`, which adds
+`fftn::omp::executor` and the threads of a parallel region. Probes: `work` (serial time per
+unit of the cost model's work), `bulk` (an executor's dispatch: time until every lane runs,
+and from the last task's end to the return), `team` (a minimal team execution through the
+executor overload, and through the team overload with every member already running),
+`phase` (the claiming engine on a synthetic task of 64 phases: time per phase hand-off),
+`claim` (one compare-exchange claim under contention) and `wake` (notify-to-running latency
+of a spinning, yielding, blocked waiter and of the engine's policy after each waiting
+time). Each prints one JSON line per probe, team size and variant, with the median and
+spread over repetitions; `--pin` pins the harness's own threads one per allowed CPU
+(Linux), the pool's threads are never pinned, OpenMP's follow `OMP_PLACES`.
+
+```bash
+T="uv run --frozen python bench/t1/t1.py"
+$T run --build build/check-release --rounds 10 -- --threads 2,4,8,16,32,64 --pin
+$T show latest
+# What the scheduler decides for each catalogue case at 8, 16 and 64 lanes in groups of 8,
+# on a machine of 128 CPUs, under any tuning option of fbench's FFTN backend:
+$T schedule --catalogue threads --tier quick -- --threads 8,16,64 --group 8 --cpus 128 \
+  SPLIT_MIN_POINTS=4096
+```
+
+`run` launches each binary once per round in rotating order, checks before each round that
+the machine is quiet (as fbench does; `--no-quiet-check` skips it), stores every process's
+output with the host fingerprint and the placement variables in
+`bench-out/t1/runs/<run-id>.jsonl`, and prints the median over rounds of each in-process
+median with the range over rounds. The CTest tests `bench.t1_smoke` and `bench.t1_schedule`
+run both commands in their short form; they check that every probe reports, not what it
+measures.
+
 ## Remote runs
 
 `scripts/remote/fbench_remote.py` runs fbench on a Slurm machine in one job on an exclusive
@@ -366,11 +446,10 @@ job's log before waiting on a chain.
 
 ## Limits of v0
 
-- One thread, double precision, contiguous rows, planes and volumes. Strided axes, thread
-  catalogues and `float` come with the phases that need them.
+- Double precision, contiguous rows, planes and volumes. Strided axes and `float` come
+  with the phases that need them. Threaded arms exist for FFTN only (competitors' own
+  threading and a team of serial plans, DESIGN.md 16.1, come with phase 3's exit).
 - Cold mode rotates data buffers, not the libraries' plan tables (FFTW shares twiddle
   tables between plans, so they cannot be rotated from outside).
 - Two FFTN plan options in one process (same-process A/B, DESIGN.md 16.3) waits for FFTN's
   plan options.
-- The FFTN backend reports every case unsupported until task 0.5's plan exists; what is left
-  to wire is listed at the top of `backends/fftn.cpp`.

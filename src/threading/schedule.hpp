@@ -94,6 +94,11 @@ struct schedule {
   // a group stays in one (full-width teams lost at 64 lanes: 1.19 against 0.83 at 8).
   int groups = 1;
   int lanes_dealt = 1; // members in those groups
+  // The members an executor dispatches (rule 4): lanes_dealt, or, when no group splits a
+  // task, only as many as there are tasks (whole tasks give a member each at most). A team
+  // of that many members gets the same split decisions, none: each group's share then
+  // equals its members.
+  int dispatch = 1;
   // Whole tasks are counted, claimed and finished in units of `grain` consecutive tasks, so
   // that a batch of any size fits the 24-bit counters (team_state.hpp); 1 unless the batch
   // has millions of transforms.
@@ -120,6 +125,11 @@ struct group_share {
 // The counters of a team execution have 24 bits (team_state.hpp). A split task's chunks and
 // a group's whole units stay below this; teams of more lanes run inline.
 inline constexpr std::uint64_t max_counted = std::uint64_t{1} << 22U;
+
+// Rule 1 for a whole job, whatever the team: it takes less than inline_multiple dispatch
+// costs. Plans decide it once at construction (plan_core::runs_inline), so that the executor
+// overload of a small job touches neither the executor nor the scheduler.
+[[nodiscard]] bool runs_inline(const work_graph& g, const machine_profile& profile) noexcept;
 
 [[nodiscard]] schedule make_schedule(const work_graph& g, const lane_map& lanes,
                                      const machine_profile& profile) noexcept;

@@ -42,6 +42,58 @@ function(fbench_add_backend library)
 endfunction()
 
 fbench_add_backend(fftn fftn::fftn)
+# The FFTN backends build plans through the private plan core, so that an arm can set its
+# build settings (the machine profile, chunking) for the threading experiments.
+target_include_directories(fbench-fftn PRIVATE ${PROJECT_SOURCE_DIR}/src)
+
+# fbench-fftn_omp: the same backend with THREADS through fftn::omp::executor (fftn/omp.hpp),
+# linked with the compiler's OpenMP runtime and nothing else that brings one (one runtime per
+# binary, DESIGN.md 16.1). Not built under ThreadSanitizer, whose reports on uninstrumented
+# runtimes are false (cmake/FftnTestDeps.cmake).
+option(FFTN_BENCH_OPENMP "Build the OpenMP fbench backend and threading harness" ON)
+if(FFTN_BENCH_OPENMP AND NOT FFTN_SANITIZE MATCHES "thread")
+  find_package(OpenMP COMPONENTS CXX)
+endif()
+# Links OpenMP into a benchmark target, with the tests' clang-tidy include fix when present.
+function(fbench_link_openmp target)
+  if(COMMAND fftn_link_openmp)
+    fftn_link_openmp(${target})
+  else()
+    target_link_libraries(${target} PRIVATE OpenMP::OpenMP_CXX)
+  endif()
+endfunction()
+if(TARGET OpenMP::OpenMP_CXX AND NOT FFTN_SANITIZE MATCHES "thread")
+  add_executable(fbench-fftn_omp backends/fftn.cpp)
+  fftn_configure_target(fbench-fftn_omp)
+  target_include_directories(fbench-fftn_omp PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                                                     ${PROJECT_SOURCE_DIR}/src)
+  target_compile_definitions(fbench-fftn_omp PRIVATE FBENCH_FFTN_OMP)
+  target_link_libraries(fbench-fftn_omp PRIVATE fbench_harness fftn::fftn ${CMAKE_DL_LIBS})
+  fbench_link_openmp(fbench-fftn_omp)
+  set(_fbench_fftn_omp ON)
+  message(STATUS "fbench: fftn_omp backend (OpenMP ${OpenMP_CXX_VERSION})")
+else()
+  set(_fbench_fftn_omp OFF)
+  message(STATUS "fbench: fftn_omp backend not built (no OpenMP, or a ThreadSanitizer build)")
+endif()
+
+# The harness of experiment T1 (bench/t1/): the fixed costs of team executions. It is
+# not an fbench backend (smoke runs every fbench-* of the build), hence its name; the OpenMP
+# variant links the compiler's runtime and nothing else that brings one.
+find_package(Threads REQUIRED)
+function(fbench_add_t1 name)
+  add_executable(${name} t1/t1_costs.cpp)
+  fftn_configure_target(${name})
+  target_include_directories(${name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                             ${CMAKE_CURRENT_BINARY_DIR} ${PROJECT_SOURCE_DIR}/src)
+  target_link_libraries(${name} PRIVATE fftn::fftn Threads::Threads)
+endfunction()
+fbench_add_t1(t1_costs)
+if(_fbench_fftn_omp)
+  fbench_add_t1(t1_costs_omp)
+  target_compile_definitions(t1_costs_omp PRIVATE T1_WITH_OPENMP)
+  fbench_link_openmp(t1_costs_omp)
+endif()
 
 # FFTW only from an explicit installation: never a default search path, so that a
 # handicapped build (Homebrew's FFTW has no SIMD on arm64) cannot be picked up by accident
@@ -257,6 +309,24 @@ if(FFTN_BUILD_TESTS)
                      --out-dir ${CMAKE_BINARY_DIR}/bench-out smoke --build ${CMAKE_BINARY_DIR}
                      --strict
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    # The T1 harness end to end in its short mode (every probe reports; no timing claims),
+    # and the scheduler's view of the threads catalogue's smoke cases.
+    add_test(NAME bench.t1_smoke
+             COMMAND ${FFTN_UV} run --frozen --quiet python bench/t1/t1.py
+                     --out-dir ${CMAKE_BINARY_DIR}/bench-out run --build ${CMAKE_BINARY_DIR}
+                     --rounds 1 --quick --no-quiet-check --strict
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    add_test(NAME bench.t1_schedule
+             COMMAND ${FFTN_UV} run --frozen --quiet python bench/t1/t1.py
+                     --out-dir ${CMAKE_BINARY_DIR}/bench-out schedule --build ${CMAKE_BINARY_DIR}
+                     --tier smoke -- --threads 4,16 --group 8 --cpus 64
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    # The OpenMP binaries these run can meet libomp's start-up leak under LeakSanitizer,
+    # suppressed as for the OpenMP tests (tests/omp/CMakeLists.txt says why).
+    if(_fbench_fftn_omp)
+      set_tests_properties(bench.smoke bench.t1_smoke PROPERTIES ENVIRONMENT
+        "LSAN_OPTIONS=suppressions=${PROJECT_SOURCE_DIR}/tests/omp/lsan.supp")
+    endif()
   else()
     message(STATUS "fbench: uv not found; the driver's tests are not registered")
   endif()
