@@ -13,15 +13,6 @@ add_library(fftn_isa_probes OBJECT probe_scalar.cpp probe_avx2.cpp probe_avx512.
                                    probe_neon.cpp probe_neon_fcma.cpp probe_tables.cpp
                                    ${fftn_codelet_units} codelet_tables.cpp)
 fftn_always_optimise(${fftn_codelet_units})
-# GCC's AddressSanitizer moves stack frames into a "fake stack" for use-after-return
-# detection, aligned to 32 bytes; AVX-512 code spills zmm registers there with aligned 64-byte
-# stores and faults (Xeon Gold 6240, GCC 14, check-sanitize; Clang's runtime aligns them).
-# Use-after-return instrumentation is off for the avx512 test units (src/isa/CMakeLists.txt) in GCC sanitizer builds only;
-# every other check stays on.
-if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND FFTN_SANITIZE MATCHES "address")
-  set_property(SOURCE probe_avx512.cpp codelets_avx512.cpp APPEND PROPERTY COMPILE_OPTIONS
-               --param=asan-use-after-return=0)
-endif()
 fftn_configure_target(fftn_isa_probes)
 # Only fftn's headers: the test executable links the library itself.
 target_include_directories(fftn_isa_probes PRIVATE ${PROJECT_SOURCE_DIR}/include
