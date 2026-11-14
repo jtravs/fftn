@@ -156,6 +156,8 @@ def main(argv: list[str] | None = None) -> int:
             str(ctx.build),
             "--catalogue",
             str(CATALOGUE),
+            "--tier",
+            "full",
             "--filter",
             f"^c2c-{n}-b",
             "--budget",
