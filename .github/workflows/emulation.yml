@@ -98,11 +98,11 @@ jobs:
           bash .github/scripts/emulate.sh build/check-release
           "avx 1;avx2 1;fma 1;avx512f 0;best_target avx2"
           "$SDE" -hsw -chip_check_exe_only --
-      - name: Skylake-SP (AVX-512 F, DQ, BW, VL; phase 1 target avx512)
+      - name: Skylake-SP (AVX-512 F, DQ, BW, VL; target avx512)
         if: success() || failure()
         run: >
           bash .github/scripts/emulate.sh build/check-release
-          "avx2 1;avx512f 1;avx512dq 1;avx512bw 1;avx512vl 1;best_target avx2"
+          "avx2 1;avx512f 1;avx512dq 1;avx512bw 1;avx512vl 1;best_target avx512"
           "$SDE" -skx -chip_check_exe_only --
       - &fetchcontent-collect
         name: FetchContent archives (collect)

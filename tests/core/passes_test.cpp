@@ -7,8 +7,8 @@
 // on every pass kind that has it; on every instruction set the machine runs, in double
 // and float, against the quadruple-precision reference. And the acceptance test of task
 // 1.2: a fused scale costs no extra pass and gives exactly the scaled result. And the
-// targets whose vocabularies round alike (neon and neon_fcma) give the same bits with the
-// same passes.
+// targets whose vocabularies round alike (neon and neon_fcma, avx2 and avx512) give the
+// same bits with the same passes.
 
 #include "core/plan_core.hpp"
 #include "core/program.hpp"
@@ -358,7 +358,8 @@ bool bitwise_equal(const std::vector<std::complex<T>>& x, const std::vector<std:
 // The same passes on two targets whose operations round alike (DESIGN.md 6.2): every
 // output bit equal, for c2c rows with a scale and the factor edges (cmul) and for r2c and
 // c2r rows, several rows each so that tails occur. The radices are the first target's
-// rules' choice, forced on both, as targets of one pair may key their rules differently.
+// rules' choice, forced on both: avx2 and avx512 key their rules on different register
+// counts.
 template <class T> void same_bits(fftn::isa a, fftn::isa b) {
   using c = std::complex<T>;
   const auto profile = fftn::detail::profile_of(static_cast<fftn::detail::target>(a));
@@ -419,6 +420,7 @@ TEST(Passes, TargetsThatRoundAlikeGiveTheSameBits) {
   int pairs = 0;
   const std::vector<std::pair<fftn::isa, fftn::isa>> alike = {
       {fftn::isa::neon, fftn::isa::neon_fcma},
+      {fftn::isa::avx2, fftn::isa::avx512},
   };
   for (const auto& [a, b] : alike) {
     if (runs(a) && runs(b)) {

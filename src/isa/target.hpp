@@ -24,8 +24,8 @@ enum class target : unsigned char {
   neon_fcma,
 };
 
-// Whether this build contains code for t: scalar everywhere, avx2 on x86-64, neon and
-// neon_fcma on AArch64. x86_v2, avx and avx512 arrive with the rest of phase 1.3.
+// Whether this build contains code for t: scalar everywhere, avx2 and avx512 on x86-64,
+// neon and neon_fcma on AArch64. x86_v2 and avx arrive with the rest of phase 1.3.
 [[nodiscard]] bool compiled_in(target t) noexcept;
 
 // Whether a processor with these features can run t's code: every feature t's attribute

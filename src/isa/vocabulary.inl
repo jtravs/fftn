@@ -44,8 +44,8 @@
 //                           twiddle storage); rounds exactly as mul(a, w) with w = b
 //   transpose(v)            v points to C<T> registers holding a C x C block of complex
 //                           numbers; transposes it in place (lane j of v[i] <-> lane i of
-//                           v[j]). The general R x C form arrives with avx512 (phase 1.3),
-//                           where C = 8 for float exceeds small radices.
+//                           v[j]). No R x C form: passes store radices C does not divide
+//                           through a tile (DESIGN.md 6.2).
 //
 // Exact operations (add, sub, addj, subj, scale, neg, conj, swap_ri, the memory operations
 // and transpose) give the same bits on every target. mul, mulc, madd and cmul differ

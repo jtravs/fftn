@@ -65,6 +65,9 @@ extern const kernel_table table;
 namespace avx2 {
 extern const kernel_table table;
 }
+namespace avx512 {
+extern const kernel_table table;
+}
 #endif
 #if FFTN_ARCH_AARCH64
 namespace neon {

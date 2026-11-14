@@ -66,9 +66,10 @@ cpu_features a64fx() {
 TEST(target, builds_scalar_and_the_simd_targets_of_its_architecture) {
   EXPECT_TRUE(compiled_in(target::scalar));
   EXPECT_EQ(compiled_in(target::avx2), FFTN_ARCH_X86_64 != 0);
+  EXPECT_EQ(compiled_in(target::avx512), FFTN_ARCH_X86_64 != 0);
   EXPECT_EQ(compiled_in(target::neon), FFTN_ARCH_AARCH64 != 0);
   EXPECT_EQ(compiled_in(target::neon_fcma), FFTN_ARCH_AARCH64 != 0);
-  for (const target t : {target::x86_v2, target::avx, target::avx512}) { // phase 1.3
+  for (const target t : {target::x86_v2, target::avx}) { // the rest of phase 1.3
     EXPECT_FALSE(compiled_in(t)) << target_name(t);
   }
 }
@@ -129,7 +130,7 @@ TEST(target, best_is_the_fastest_compiled_target_the_processor_runs) {
   EXPECT_EQ(best_target(cpu_features{}), target::scalar);
   EXPECT_EQ(best_target(x86_v2()), target::scalar); // x86_v2 is not compiled yet
   EXPECT_EQ(best_target(haswell()), x86 ? target::avx2 : target::scalar);
-  EXPECT_EQ(best_target(skylake_sp()), x86 ? target::avx2 : target::scalar); // avx512 later
+  EXPECT_EQ(best_target(skylake_sp()), x86 ? target::avx512 : target::scalar);
   EXPECT_EQ(best_target(neoverse_n1()), arm ? target::neon : target::scalar);
   EXPECT_EQ(best_target(apple_m()), arm ? target::neon_fcma : target::scalar);
   EXPECT_EQ(best_target(a64fx()), arm ? target::neon : target::scalar);
@@ -167,7 +168,7 @@ TEST(target, recorded_machines_get_their_target) {
   // ZMM and PKRU state.
   const cpu_features xeon = decode_x86_cpuid(
       recorded_x86(bit(5) | bit(16) | bit(17) | bit(28) | bit(30) | bit(31), 0x2E7));
-  EXPECT_EQ(best_target(xeon), x86 ? target::avx2 : target::scalar); // avx512 later
+  EXPECT_EQ(best_target(xeon), x86 ? target::avx512 : target::scalar);
   // The same processor under an operating system that does not save the ZMM state.
   const cpu_features xeon_without_zmm =
       decode_x86_cpuid(recorded_x86(bit(5) | bit(16) | bit(17) | bit(28) | bit(30) | bit(31), 0x7));
@@ -213,6 +214,7 @@ TEST(target, forcing_a_lower_target_is_honoured) {
   EXPECT_EQ(choose_target(apple_m(), target::scalar), target::scalar);
   if (FFTN_ARCH_X86_64 != 0) {
     EXPECT_EQ(choose_target(skylake_sp(), target::avx2), target::avx2);
+    EXPECT_EQ(choose_target(skylake_sp(), target::avx512), target::avx512);
   }
   if (FFTN_ARCH_AARCH64 != 0) {
     EXPECT_EQ(choose_target(apple_m(), target::neon), target::neon);
@@ -231,18 +233,16 @@ std::string message_of_forcing(const cpu_features& f, target t) {
 
 TEST(target, forcing_an_absent_target_is_refused_by_name) {
   // The other architecture's SIMD target is never compiled in.
-  const target foreign = target::avx512; // not compiled yet anywhere
+  const target foreign = FFTN_ARCH_X86_64 != 0 ? target::neon : target::avx512;
   const std::string absent = message_of_forcing(skylake_sp(), foreign);
   EXPECT_NE(absent.find("forced target"), std::string::npos) << absent;
   EXPECT_NE(absent.find("'" + std::string(target_name(foreign)) + "' is not compiled"),
             std::string::npos)
       << absent;
 
-  // A compiled target the processor cannot run: avx2 without FMA, neon_fcma on A64FX.
-  const target simd = FFTN_ARCH_X86_64 != 0 ? target::avx2 : target::neon_fcma;
-  cpu_features without_fma = haswell();
-  without_fma.fma = false;
-  const cpu_features lacking = FFTN_ARCH_X86_64 != 0 ? without_fma : a64fx();
+  // A compiled target the processor cannot run: avx512 on Haswell, neon_fcma on A64FX.
+  const target simd = FFTN_ARCH_X86_64 != 0 ? target::avx512 : target::neon_fcma;
+  const cpu_features lacking = FFTN_ARCH_X86_64 != 0 ? haswell() : a64fx();
   if (compiled_in(simd)) {
     const std::string unable = message_of_forcing(lacking, simd);
     EXPECT_NE(unable.find("forced target"), std::string::npos) << unable;

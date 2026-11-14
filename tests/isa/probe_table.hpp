@@ -83,6 +83,9 @@ extern const probe_table probes;
 namespace avx2 {
 extern const probe_table probes;
 }
+namespace avx512 {
+extern const probe_table probes;
+}
 #endif
 #if FFTN_ARCH_AARCH64
 namespace neon {

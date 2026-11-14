@@ -21,8 +21,8 @@ namespace {
 // for p < m and j < 4. x and y are interleaved complex arrays of n numbers. twiddles holds the
 // forward twiddles exp(-2 pi i jp / n) as three rows j = 1, 2, 3 of m twiddles each, in
 // this target's storage (pack_twiddles). Vectorised along p: the four outputs of C
-// consecutive p are transposed in registers into contiguous stores. Needs m % C == 0 and
-// 4 % C == 0.
+// consecutive p are transposed in registers into contiguous stores where C divides 4, and
+// stored through a tile otherwise. Needs m % C == 0.
 template <class T, int Sign>
 FFTN_FORCE_INLINE void radix4_pass_impl(const T* x, T* y, const T* twiddles, std::size_t m) {
   for (std::size_t p = 0; p < m; p += C<T>) {
@@ -52,12 +52,26 @@ FFTN_FORCE_INLINE void radix4_pass_impl(const T* x, T* y, const T* twiddles, std
         v[j] = mulc(v[j], w);
       }
     }
-    // Block b holds outputs j = bC .. bC + C - 1 for the C values of p; after the transpose
-    // its register r holds them for p + r, which are contiguous in y.
-    for (std::size_t blk = 0; blk < 4 / C<T>; ++blk) {
-      transpose(v + blk * C<T>);
+    if constexpr (4 % C<T> == 0) {
+      // Block b holds outputs j = bC .. bC + C - 1 for the C values of p; after the
+      // transpose its register r holds them for p + r, which are contiguous in y.
+      for (std::size_t blk = 0; blk < 4 / C<T>; ++blk) {
+        transpose(v + blk * C<T>);
+        for (std::size_t r = 0; r < C<T>; ++r) {
+          store(y + 2 * (4 * (p + r) + blk * C<T>), v[blk * C<T> + r]);
+        }
+      }
+    } else { // C = 8 (avx512 float): through a tile, element by element
+      // NOLINTNEXTLINE(modernize-avoid-c-arrays): std::array is not allowed in a region
+      T tile[4][2 * C<T>];
+      for (std::size_t j = 0; j < 4; ++j) {
+        store(tile[j], v[j]);
+      }
       for (std::size_t r = 0; r < C<T>; ++r) {
-        store(y + 2 * (4 * (p + r) + blk * C<T>), v[blk * C<T> + r]);
+        for (std::size_t j = 0; j < 4; ++j) {
+          y[2 * (4 * (p + r) + j)] = tile[j][2 * r];
+          y[2 * (4 * (p + r) + j) + 1] = tile[j][2 * r + 1];
+        }
       }
     }
   }

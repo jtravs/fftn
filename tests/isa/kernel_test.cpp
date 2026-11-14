@@ -292,6 +292,10 @@ template <class T> void radix2_bitwise(const kernel_table& table, int sign, std:
   compare_exactly(y, ref);
 }
 
+// m for each kernel: multiples of C (radix 4) and of W (radix 2) on every target.
+constexpr std::array<std::size_t, 4> radix4_lengths = {8, 16, 24, 200};
+constexpr std::array<std::size_t, 4> radix2_lengths = {16, 32, 48, 400};
+
 class kernels : public ::testing::TestWithParam<param> {
 protected:
   template <class T> void check() {
@@ -301,22 +305,19 @@ protected:
     const kernels_of<T>& k = of<T>(*table);
     for (const data_kind kind : {data_kind::exact, data_kind::random}) {
       SCOPED_TRACE(kind == data_kind::exact ? "exact data" : "random data");
-      // Multiples of every target's lane counts (C <= 4, W <= 8), small and large.
-      for (const std::size_t m :
-           {std::size_t{4}, std::size_t{8}, std::size_t{12}, std::size_t{100}}) {
+      // Multiples of every target's lane counts (C <= 8, W <= 16: avx512 float), small and
+      // large.
+      for (const std::size_t m : radix4_lengths) {
         radix4<T>(k, sign, m, kind);
       }
-      for (const std::size_t m :
-           {std::size_t{8}, std::size_t{16}, std::size_t{24}, std::size_t{200}}) {
+      for (const std::size_t m : radix2_lengths) {
         radix2_split<T>(k, sign, m, kind);
       }
     }
-    for (const std::size_t m :
-         {std::size_t{4}, std::size_t{8}, std::size_t{12}, std::size_t{100}}) {
+    for (const std::size_t m : radix4_lengths) {
       radix4_bitwise<T>(*table, sign, m);
     }
-    for (const std::size_t m :
-         {std::size_t{8}, std::size_t{16}, std::size_t{24}, std::size_t{200}}) {
+    for (const std::size_t m : radix2_lengths) {
       radix2_bitwise<T>(*table, sign, m);
     }
   }

@@ -40,6 +40,7 @@ template <class T> cnum<T> product(fftn::detail::target t, cnum<T> a, cnum<T> w,
     }
     return {std::fma(-wi, ai, wr * ar), std::fma(wi, ar, wr * ai)};
   case target::avx2: // FMA of a by (wr, wr) onto swap_ri(a) times (-wi, wi)
+  case target::avx512:
     if (conj_w) {
       return {std::fma(ar, wr, ai * wi), std::fma(ai, wr, -(ar * wi))};
     }
@@ -64,6 +65,7 @@ template <class T> cnum<T> multiply_add(fftn::detail::target t, cnum<T> acc, cnu
         std::fma(w.im, a.re, std::fma(w.re, a.im, acc.im)),
     };
   case target::avx2:
+  case target::avx512:
     return {
         std::fma(a.re, w.re, std::fma(a.im, -w.im, acc.re)),
         std::fma(a.im, w.re, std::fma(a.re, w.im, acc.im)),

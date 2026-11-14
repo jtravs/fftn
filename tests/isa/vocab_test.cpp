@@ -40,7 +40,8 @@ using fftn::detail::vop_names;
 enum class precision : unsigned char { f64, f32 };
 using param = std::tuple<target, precision, vop>;
 
-// Reals per array: a multiple of 2 C^2 (32 for avx2 float) and of 2 W (16).
+// Reals per array: a multiple of 2 C^2 (128 for avx512 float, whose 8 x 8 transpose takes
+// the whole array) and of 2 W (32).
 constexpr std::size_t n = 128;
 constexpr std::size_t half = n / 2;
 

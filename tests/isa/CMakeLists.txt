@@ -7,10 +7,10 @@
 # the library's kernel units, compiled into an object library so the disassembly check can
 # read them. The codelet units are optimised in every build type, like the library's
 # kernel units: they instantiate every codelet twice per target.
-set(fftn_codelet_units codelets_scalar.cpp codelets_avx2.cpp codelets_neon.cpp
-                       codelets_neon_fcma.cpp)
-add_library(fftn_isa_probes OBJECT probe_scalar.cpp probe_avx2.cpp probe_neon.cpp
-                                   probe_neon_fcma.cpp probe_tables.cpp
+set(fftn_codelet_units codelets_scalar.cpp codelets_avx2.cpp codelets_avx512.cpp
+                       codelets_neon.cpp codelets_neon_fcma.cpp)
+add_library(fftn_isa_probes OBJECT probe_scalar.cpp probe_avx2.cpp probe_avx512.cpp
+                                   probe_neon.cpp probe_neon_fcma.cpp probe_tables.cpp
                                    ${fftn_codelet_units} codelet_tables.cpp)
 fftn_always_optimise(${fftn_codelet_units})
 fftn_configure_target(fftn_isa_probes)

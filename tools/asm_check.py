@@ -9,9 +9,10 @@ A group is an object file, a static library, or several of them joined by ';' (a
 $<TARGET_OBJECTS> writes them). Functions are assigned to a target by their mangled
 namespace, fftn::<version>::detail::<target>::; everything else is baseline code. Checks:
 
-- each group contains the scalar target and the SIMD targets of its architecture (avx2 on
-  x86-64, neon and neon_fcma on AArch64), and each target's code uses its defining
-  instructions (an FMA and a ymm register; a vector FMLA; FCMLA and FCADD);
+- each group contains the scalar target and the SIMD targets of its architecture (avx2 and
+  avx512 on x86-64, neon and neon_fcma on AArch64), and each target's code uses its
+  defining instructions (an FMA and a ymm register; an FMA and a zmm register; a vector
+  FMLA; FCMLA and FCADD);
 - no function of a target calls or tail-calls an FFTN or standard-library function: the
   vocabulary is always inlined, and nothing standard runs inside a region. One shape is
   not a call: identical-code folding (GCC's IPA-ICF, seen in sanitizer builds) turns one
@@ -48,7 +49,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 TARGETS = ("scalar", "avx2", "avx512", "neon", "neon_fcma")
-SIMD_TARGETS = {"x86": ("avx2",), "arm": ("neon", "neon_fcma")}
+SIMD_TARGETS = {"x86": ("avx2", "avx512"), "arm": ("neon", "neon_fcma")}
 
 FILE_FORMAT = re.compile(r"^(?P<name>.*?):\s+file format\s+(?P<fmt>.+)$")
 LABEL = re.compile(r"^(?P<addr>[0-9a-f]+) <(?P<name>.+)>:$")
