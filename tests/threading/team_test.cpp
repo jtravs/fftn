@@ -28,7 +28,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
-#include <memory>
 #include <new>
 #include <random>
 #include <span>
