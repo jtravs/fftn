@@ -14,7 +14,9 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 CODELETS = REPO / "src" / "gen" / "codelets.hpp"
-CODELET_RADICES = tuple(range(2, 17))  # the radices planner v1 prices (codelets.hpp adds 32, 64)
+DENSE_LIMIT = 16  # every radix up to it has a codelet; prime factors above it are generic
+CODELET_RADICES = tuple(range(2, DENSE_LIMIT + 1))  # X2's candidates (codelets.hpp adds 32, 64)
+BIG_RADICES = (32, 64)  # the codelet radices above DENSE_LIMIT (experiment X3)
 MAX_PASSES = 8
 SMOOTH_LIMIT = 1024  # every 7-smooth length up to here is searched exhaustively
 LONG_TOP = 20  # above it, this many best by the cost estimate, plus v0's choice
@@ -45,12 +47,14 @@ def smooth(n: int, limit: int = 7) -> bool:
     return all(p <= limit for p in factor(n))
 
 
-def sequences(n: int, max_passes: int = MAX_PASSES) -> list[Sequence]:
-    """Every radix sequence of n in pass order: codelet radices 2 to 16 and, for prime factors
-    above 16, those primes as single generic passes; at most max_passes passes. Each
-    multiset of radices appears in every distinct order exactly once."""
-    big = tuple(sorted(p for p in factor(n) if p > CODELET_RADICES[-1]))
-    allowed = CODELET_RADICES + big
+def sequences(
+    n: int, max_passes: int = MAX_PASSES, codelets: tuple[int, ...] = CODELET_RADICES
+) -> list[Sequence]:
+    """Every radix sequence of n in pass order: codelet radices (2 to 16, or `codelets`) and,
+    for prime factors above 16, those primes as single generic passes; at most max_passes
+    passes. Each multiset of radices appears in every distinct order exactly once."""
+    big = tuple(sorted(p for p in factor(n) if p > DENSE_LIMIT))
+    allowed = tuple(codelets) + big
 
     @cache
     def tails(rest: int, budget: int) -> tuple[Sequence, ...]:
@@ -122,11 +126,14 @@ def shortlist(
     ops: dict[tuple[int, bool], int],
     top: int = LONG_TOP,
     lanes: tuple[int, ...] = (),
+    codelets: tuple[int, ...] = CODELET_RADICES,
+    require: tuple[int, ...] = (),
 ) -> list[Sequence]:
     """The candidates above SMOOTH_LIMIT: the `top` best by the cost estimate, then v0's
     choice if it is not among them (it may have more than MAX_PASSES passes). With `lanes`
-    (C per precision of a forced target), the union of the `top` best padded to each C."""
-    seqs = sequences(n)
+    (C per precision of a forced target), the union of the `top` best padded to each C.
+    `codelets` and `require` as for candidates()."""
+    seqs = [s for s in sequences(n, codelets=codelets) if wanted(s, require)]
     out: list[Sequence] = []
     for c in lanes or (None,):
         for s in sorted(seqs, key=lambda s: (cost(s, ops, c), s))[:top]:
@@ -137,16 +144,37 @@ def shortlist(
     return out
 
 
+def wanted(seq: Sequence, require: tuple[int, ...]) -> bool:
+    # With `require`, chains only: a single radix is a leaf, which X8 decided.
+    return not require or (len(seq) > 1 and any(r in require for r in seq))
+
+
 def candidates(
-    n: int, v0: Sequence | None, ops: dict[tuple[int, bool], int], lanes: tuple[int, ...] = ()
+    n: int,
+    v0: Sequence | None,
+    ops: dict[tuple[int, bool], int],
+    lanes: tuple[int, ...] = (),
+    codelets: tuple[int, ...] = CODELET_RADICES,
+    require: tuple[int, ...] = (),
 ) -> list[Sequence]:
-    """The protocol's candidates of length n, v0's choice included."""
+    """The protocol's candidates of length n, v0's choice included. `codelets`: the codelet
+    radices of the sequences (X3 adds 32 and 64); `require`: if given, only sequences with
+    one of these radices (X3 times the sequences with 32 or 64 that X2 did not)."""
     if n <= SMOOTH_LIMIT:
-        out = sequences(n)
+        out = [s for s in sequences(n, codelets=codelets) if wanted(s, require)]
         if v0 is not None and v0 not in out:
             out.append(v0)
         return out
-    return shortlist(n, v0, ops, lanes=lanes)
+    return shortlist(n, v0, ops, lanes=lanes, codelets=codelets, require=require)
+
+
+def parse_radix_set(text: str) -> tuple[int, ...]:
+    """'2-16,32,64' -> (2, ..., 16, 32, 64)."""
+    out: list[int] = []
+    for part in text.split(","):
+        lo, _, hi = part.partition("-")
+        out += range(int(lo), int(hi or lo) + 1)
+    return tuple(sorted(set(out)))
 
 
 def label(seq: Sequence) -> str:

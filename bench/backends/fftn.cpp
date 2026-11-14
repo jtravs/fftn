@@ -47,6 +47,8 @@
 //                    can be one; each case's note says which was built (experiment X12)
 //   GRID_FACTORS=n1.n2[.n3]     the grid's factors in phase order (build_settings::
 //                    grid_factors), for rows they multiply to
+//   GRID_PHASE_RADIX=R          the largest radix of the grid's phase rule (build_settings::
+//                    grid_phase_radix; default 16): codelet radices up to R (experiment X3)
 //   GRID_MIN_BYTES, GRID_THREE_BYTES, GRID_BLOCK_BYTES, GRID_BLOCK, GRID_FUSE_BYTES
 //                    the planner's grid fields of the machine profile (schedule.hpp)
 // ISA is a public option; the others reach the library only through the private build
@@ -406,6 +408,13 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
         return fbench_error;
       }
       s.factors_text = value;
+    } else if (key == "GRID_PHASE_RADIX") {
+      const std::optional<std::size_t> v = fbench::fftn_tuning::parse_size(value, 2, false);
+      if (!v || *v > 64) {
+        say(message, message_size, "GRID_PHASE_RADIX is a whole number from 2 to 64");
+        return fbench_error;
+      }
+      s.settings.grid_phase_radix = *v;
     } else if (fbench::fftn_tuning::apply_tuning(s.settings, key, value, error)) {
       if (!error.empty()) {
         say(message, message_size, error);
@@ -449,6 +458,9 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
     }
     if (!s.settings.radices.empty()) {
       d.str("radices", s.radices_text);
+    }
+    if (s.settings.grid_phase_radix != 0) {
+      d.integer("grid_phase_radix", static_cast<std::int64_t>(s.settings.grid_phase_radix));
     }
     if (s.settings.leaf_limit != 0) {
       d.integer("leaf_limit", static_cast<std::int64_t>(s.settings.leaf_limit));

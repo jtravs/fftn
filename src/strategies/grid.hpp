@@ -64,6 +64,8 @@ inline constexpr std::size_t max_grid_block = 32;
 // The largest radix of a phase whose first and last passes read and write the arrays' rows
 // directly (grid_builder, fused; experiment X12).
 inline constexpr std::size_t grid_fuse_radix = 8;
+// The largest radix of the phase rule (grid_builder): every codelet radix up to it.
+inline constexpr std::size_t default_grid_phase_radix = 16;
 
 // How a row of n is split: n = factors[0] x ... x factors[phases - 1], each phase run on
 // blocks of `block` columns. phases == 0: no grid.
@@ -94,9 +96,10 @@ public:
   // the grid's own tables are appended to `tables` (as the chain's, they must outlive the
   // stages).
   // fused: phases read and write the arrays in their first and last passes rather than
-  // through a gather and a scatter (experiment X12).
+  // through a gather and a scatter (experiment X12). phase_radix: the largest radix the
+  // phase rule uses (codelet radices up to it; 0: default_grid_phase_radix).
   grid_builder(const kernels_of<T>& kernels, chain_builder<T>& chain,
-               std::vector<std::vector<T>>& tables, bool fused);
+               std::vector<std::vector<T>>& tables, bool fused, std::size_t phase_radix);
 
   // Appends the records of one c2c row from the in slot to the out slot, both stride 1,
   // and returns the complex elements of scratch it needs in each of a and b. in_place: in
@@ -136,6 +139,7 @@ private:
   chain_builder<T>& chain_;
   std::vector<std::vector<T>>& tables_;
   bool fused_;
+  std::size_t phase_radix_;
 };
 
 extern template class grid_builder<double>;

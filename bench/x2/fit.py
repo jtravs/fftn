@@ -42,15 +42,17 @@ from fbenchlib import store  # noqa: E402
 from x2 import radices, search  # noqa: E402
 
 RULES = search.REPO / "src" / "planner" / "rules.cpp"
-LEAF = 16  # the largest codelet radix (rules.cpp, largest_leaf)
-RADICES = range(2, LEAF + 1)
+LEAF = 16  # every radix up to it has a codelet (rules.cpp, largest_leaf)
+BIG = radices.BIG_RADICES  # priced only by tables measured with them (experiment X3)
+RADICES = (*range(2, LEAF + 1), *BIG)  # the columns of a table (rules.hpp, cost_column)
 KINDS = 3  # first, middle, last (rules.hpp)
 NR = len(RADICES)
+COLUMN = {r: i for i, r in enumerate(RADICES)}
 TAIL0 = KINDS * NR  # features: units, then tails, then passes, then the constant
 PASS = 2 * KINDS * NR
 CONST = PASS + 1
 NF = CONST + 1
-FIXED = 1 * NR + (4 - 2)  # the middle radix-4 unit sets the scale
+FIXED = 1 * NR + COLUMN[4]  # the middle radix-4 unit sets the scale
 FLOOR = 0.4
 LOSS_SCALE = 0.05
 SCREEN_WEIGHT = 0.3
@@ -102,12 +104,12 @@ def load_cases(out_dir: Path, names: list[str], isa: str | None) -> tuple[str, l
         for n_text, entry in sorted(state["lengths"].items(), key=lambda kv: int(kv[0])):
             if "refine" not in entry:
                 continue
-            base = tuple(entry["v0"])
             screen_run = entry["screen"]["run"]
             refine_run = entry["refine"]["run"]
             screen = search.paired_medians(search.records_of(out_dir, screen_run))
             refine = search.paired_medians(search.records_of(out_dir, refine_run)) if refine_run else {}
             for case, win in sorted(entry["refine"]["winners"].items()):
+                base = search.base_of(entry, case)
                 cases.append(
                     Case(
                         n=int(n_text),
@@ -119,6 +121,7 @@ def load_cases(out_dir: Path, names: list[str], isa: str | None) -> tuple[str, l
                         screen=arm_values(screen, case, base),
                     )
                 )
+    cases = merge(cases)
     if len(isas) != 1 or None in isas:
         raise SystemExit(
             f"campaigns' ISA: {sorted(map(str, isas))}; give --isa for campaigns that predate "
@@ -127,11 +130,30 @@ def load_cases(out_dir: Path, names: list[str], isa: str | None) -> tuple[str, l
     return isas.pop(), cases
 
 
+def merge(cases: list[Case]) -> list[Case]:
+    """One case per id: campaigns that time different candidates of the same case against the
+    same baseline (X3's big-radix campaign beside X2's) pool their timings; the winner is the
+    best refined candidate of either."""
+    by_id: dict[str, Case] = {}
+    for c in cases:
+        old = by_id.get(c.case)
+        if old is None:
+            by_id[c.case] = c
+            continue
+        if old.base != c.base:
+            raise SystemExit(f"{c.case}: campaigns with different baselines ({old.base}, {c.base})")
+        best = min((old, c), key=lambda k: k.refine.get(k.winner, 0.0))
+        old.winner = best.winner
+        old.refine = {**old.refine, **c.refine}
+        old.screen = {**old.screen, **c.screen}
+    return list(by_id.values())
+
+
 # ---- The model (DESIGN.md 11.2 rule 4) -----------------------------------------------------
 
 
 def codelet_only(seq: radices.Sequence) -> bool:
-    return all(r <= LEAF for r in seq)
+    return all(r in COLUMN for r in seq)
 
 
 def features(seq: radices.Sequence, lanes: int) -> dict[int, float]:
@@ -147,7 +169,7 @@ def features(seq: radices.Sequence, lanes: int) -> dict[int, float]:
             units, tails = -(-m // lanes), (1 if m % lanes else 0)
         else:
             units, tails = m * -(-s // lanes), (m if s % lanes else 0)
-        j = kind * NR + r - 2
+        j = kind * NR + COLUMN[r]
         f[j] = f.get(j, 0.0) + units
         if tails:
             f[TAIL0 + j] = f.get(TAIL0 + j, 0.0) + tails
@@ -167,7 +189,7 @@ def pass_cost(t: Table, lanes: int, n: int, s: int, r: int, kind: int) -> int:
     m = n // (r * s)
     units = -(-m // lanes) if kind == 0 else m * -(-s // lanes)
     tails = (1 if m % lanes else 0) if kind == 0 else (m if s % lanes else 0)
-    return t.unit[kind][r - 2] * units + t.tail[kind][r - 2] * tails + t.passes
+    return t.unit[kind][COLUMN[r]] * units + t.tail[kind][COLUMN[r]] * tails + t.passes
 
 
 def rule_radices(n: int, t: Table, lanes: int, overrides: bool = True) -> radices.Sequence:
@@ -197,13 +219,17 @@ def rule_radices(n: int, t: Table, lanes: int, overrides: bool = True) -> radice
     def step(s: int, r: int) -> int:
         return pass_cost(t, lanes, n, s, r, kind(s, s * r)) + best[s * r]
 
+    def allowed(s: int, r: int) -> bool:
+        # A radix above 16 whose unit cost is 0 is not priced (rules.cpp, cheapest).
+        return (smooth // s) % r == 0 and (r <= LEAF or t.unit[kind(s, s * r)][COLUMN[r]] != 0)
+
     best = {smooth: 0}
     for s in reversed(divisors[:-1]):
-        best[s] = min(step(s, r) for r in RADICES if (smooth // s) % r == 0)
+        best[s] = min(step(s, r) for r in RADICES if allowed(s, r))
     out: list[int] = []
     s = 1
     while s != smooth:
-        r = next(r for r in RADICES if (smooth // s) % r == 0 and step(s, r) == best[s])
+        r = next(r for r in RADICES if allowed(s, r) and step(s, r) == best[s])
         out.append(r)
         s *= r
     return (*out, *big)
@@ -216,7 +242,7 @@ def priors(ops: dict[tuple[int, bool], int]) -> list[float]:
     p = [0.0] * NF
     for k in range(KINDS):
         for r in RADICES:
-            p[k * NR + r - 2] = ops[(r, k < 2)] + 2.0 * r
+            p[k * NR + COLUMN[r]] = ops[(r, k < 2)] + 2.0 * r
     return p
 
 
@@ -258,13 +284,33 @@ def solve(a: list[list[float]], b: list[float]) -> list[float]:
     return x
 
 
-def fit(rows: list[tuple[dict, dict, float, float]], ops: dict, iterations: int = 300) -> list[float]:
+def fit(
+    rows: list[tuple[dict, dict, float, float]],
+    ops: dict,
+    iterations: int = 300,
+    base: Table | None = None,
+) -> list[float]:
+    """The fitted features. With `base` (X3's extension of a committed table), its costs of
+    radices up to 16 and per pass stay as they are and only the big radices' costs and the
+    constant per transform are fitted."""
     prior = priors(ops)
     lb = [FLOOR * v for v in prior]
     x = [max(1.5 * v, 1.0) for v in prior]
+    fixed = {FIXED}
     x[FIXED] = lb[FIXED] = prior[FIXED]
+    if base is not None:
+        for k in range(KINDS):
+            for r in range(2, LEAF + 1):
+                j = k * NR + COLUMN[r]
+                x[j] = lb[j] = base.unit[k][COLUMN[r]] / SCALE
+                x[TAIL0 + j] = lb[TAIL0 + j] = base.tail[k][COLUMN[r]] / SCALE
+                fixed |= {j, TAIL0 + j}
+        x[PASS] = lb[PASS] = base.passes / SCALE
+        fixed.add(PASS)
+        for j in range(TAIL0, PASS):
+            lb[j] = 0.0  # tails are not floored by the codelets' work
     seen = {j for fa, fb, _, _ in rows for j in (*fa, *fb)}
-    movable = [j for j in range(NF) if j != FIXED and j in seen]
+    movable = [j for j in range(NF) if j not in fixed and j in seen]
 
     def dot(f: dict, x: list[float]) -> float:
         return sum(v * x[j] for j, v in f.items())
@@ -319,22 +365,34 @@ def fit(rows: list[tuple[dict, dict, float, float]], ops: dict, iterations: int 
     return x
 
 
-def table_of(x: list[float], cases: list[Case], ops: dict) -> Table:
-    unit = [[x[k * NR + r - 2] * SCALE for r in RADICES] for k in range(KINDS)]
-    tail = [[x[TAIL0 + k * NR + r - 2] * SCALE for r in RADICES] for k in range(KINDS)]
+def table_of(x: list[float], cases: list[Case], ops: dict, base: Table | None = None) -> Table:
+    unit = [[x[k * NR + COLUMN[r]] * SCALE for r in RADICES] for k in range(KINDS)]
+    tail = [[x[TAIL0 + k * NR + COLUMN[r]] * SCALE for r in RADICES] for k in range(KINDS)]
     measured = {r for c in cases for seq in (*c.refine, *c.screen) for r in seq}
+    if base is not None:
+        for k in range(KINDS):
+            for r in range(2, LEAF + 1):
+                unit[k][COLUMN[r]] = base.unit[k][COLUMN[r]]
+                tail[k][COLUMN[r]] = base.tail[k][COLUMN[r]]
+    # A big radix no candidate had is not priced (unit cost 0: never chosen).
+    seen = {(k, j) for c in cases for seq in (*c.refine, *c.screen) if codelet_only(seq)
+            for j in features(seq, 1) if j < TAIL0 for k in (j // NR,)}
+    for k in range(KINDS):
+        for r in BIG:
+            if (k, k * NR + COLUMN[r]) not in seen:
+                unit[k][COLUMN[r]] = tail[k][COLUMN[r]] = 0
     # A radix no measured length has (11 and 13 below 1024) takes a neighbour's costs scaled
     # by the codelets' operation counts.
     for r, ref in ((11, 10), (13, 12)):
-        if r not in measured:
+        if r not in measured and base is None:
             for k in range(KINDS):
                 f = ops[(r, k < 2)] / ops[(ref, k < 2)]
-                unit[k][r - 2] = unit[k][ref - 2] * f
-                tail[k][r - 2] = tail[k][ref - 2] * f
+                unit[k][COLUMN[r]] = unit[k][COLUMN[ref]] * f
+                tail[k][COLUMN[r]] = tail[k][COLUMN[ref]] * f
     return Table(
         unit=[[round(v) for v in row] for row in unit],
         tail=[[round(v) for v in row] for row in tail],
-        passes=round(x[PASS] * SCALE),
+        passes=base.passes if base is not None else round(x[PASS] * SCALE),
     )
 
 
@@ -358,10 +416,15 @@ def vs_base(c: Case, seq: radices.Sequence) -> float | None:
     return None
 
 
-def overrides_for(cases: list[Case], t: Table, lanes: int) -> tuple[list, list[str]]:
+def overrides_for(
+    cases: list[Case], t: Table, lanes: int, behind_winner: bool = False
+) -> tuple[list, list[str]]:
     """X2's overrides: where the table's choice is more than 2 % behind the baseline in some
     case, the sequence refined in every case of that length (this precision) and measured
-    no slower than the baseline in any (within 1 %), that is least behind the winner at worst."""
+    no slower than the baseline in any (within 1 %), that is least behind the winner at worst.
+    With behind_winner (X3's extensions, whose baseline is the radix-16 table's choice, so
+    a choice can beat it and still miss the radix 32 or 64 winner widely): also where the
+    choice is more than 2 % behind the winner in every case of that length."""
     out, notes = [], []
     by_n: dict[int, list[Case]] = {}
     for c in cases:
@@ -371,7 +434,9 @@ def overrides_for(cases: list[Case], t: Table, lanes: int) -> tuple[list, list[s
             continue
         choice = rule_radices(n, t, lanes, overrides=False)
         behind = [vs_base(c, choice) for c in group]
-        if not any(v is not None and v > SLOWER for v in behind):
+        gaps = [judge(c, choice) for c in group]
+        missed = behind_winner and all(g is not None and g > SLOWER for g in gaps)
+        if not missed and not any(v is not None and v > SLOWER for v in behind):
             continue
         common = set.intersection(*(set(c.refine) for c in group))
         options = []
@@ -384,9 +449,10 @@ def overrides_for(cases: list[Case], t: Table, lanes: int) -> tuple[list, list[s
             continue
         out.append((n, fits[0][1]))
         worst = max(v for v in behind if v is not None)
+        gap = f", {math.expm1(min(gaps)) * 100:+.1f} % or more behind the winner" if missed else ""
         notes.append(
             f"n = {n}: {radices.label(choice)} {math.expm1(worst) * 100:+.1f} % against the "
-            f"baseline; override {radices.label(fits[0][1])}"
+            f"baseline{gap}; override {radices.label(fits[0][1])}"
         )
     return out, notes
 
@@ -444,7 +510,8 @@ def parse_rules(text: str) -> dict[str, Table]:
         ]
 
     def rows(block: str) -> list[list[int]]:
-        return [[int(v) for v in r.split(",")] for r in re.findall(r"\{([\d, ]+)\}", block)]
+        out = [[int(v) for v in r.split(",")] for r in re.findall(r"\{([\d, ]+)\}", block)]
+        return [r + [0] * (NR - len(r)) for r in out]
 
     out = {}
     for m in re.finditer(
@@ -489,24 +556,39 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--within", type=float, default=0.02, help="reproduced within this of the winner")
     p.add_argument("--compare", default="", help="rules.cpp tables per precision, f64=NAME,f32=NAME")
     p.add_argument("--verbose", action="store_true", help="every miss")
+    p.add_argument(
+        "--base",
+        default="",
+        help="X3: extend rules.cpp tables per precision (f32=NAME): their costs up to radix 16 "
+        "stay, the radix 32 and 64 columns are fitted; only these precisions are fitted",
+    )
     ctx = p.parse_args(argv)
 
     isa, cases = load_cases(ctx.out_dir, ctx.name.split(","), ctx.isa)
     ops = radices.codelet_ops()
     prefix = ctx.table or isa
     compare = dict(x.split("=", 1) for x in ctx.compare.split(",") if x)
-    committed = parse_rules(RULES.read_text()) if compare else {}
+    bases = dict(x.split("=", 1) for x in ctx.base.split(",") if x)
+    committed = parse_rules(RULES.read_text()) if compare or bases else {}
     text = []
     out = sys.stdout if ctx.out is None else ctx.out.open("w")
     print(f"// fit.py --name {ctx.name}: ISA {isa}, {len(cases)} cases", file=out)
     for i, precision in enumerate(radices.PRECISIONS):
+        if bases and precision not in bases:
+            continue
+        base = committed[bases[precision]] if precision in bases else None
         lanes = radices.LANES[isa][i]
         mine = [c for c in cases if c.precision == precision]
         rows = rows_of(mine, lanes)
         log(f"fit {precision} (C = {lanes}): {len(rows)} timings of {len(mine)} cases")
-        x = fit(rows, ops)
-        t = table_of(x, mine, ops)
-        t.overrides, notes = overrides_for(mine, t, lanes)
+        x = fit(rows, ops, base=base)
+        t = table_of(x, mine, ops, base)
+        t.overrides, notes = overrides_for(mine, t, lanes, behind_winner=base is not None)
+        if base is not None:
+            # The base table's overrides stay; new ones only where the extension's choice
+            # is slow.
+            new = {n for n, _ in t.overrides}
+            t.overrides = sorted([o for o in base.overrides if o[0] not in new] + t.overrides)
         name = f"{prefix}_{'double' if precision == 'f64' else 'float'}"
         with contextlib.redirect_stdout(out):
             print(f"// {name}: C = {lanes}, constant per transform {x[CONST] * SCALE:.0f}")

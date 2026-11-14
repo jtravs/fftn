@@ -21,7 +21,23 @@ namespace fftn::inline v0::detail {
 // Pass kinds the costs distinguish: the first pass (grouped, twiddled), a middle pass
 // (lanes, twiddled) and the last pass (lanes, no twiddles).
 inline constexpr std::size_t cost_kinds = 3;
-inline constexpr std::size_t cost_radices = 15; // codelet radices 2 to 16
+// Codelet radices the costs can price: 2 to 16, then 32 and 64 (experiment X3), in that
+// order (cost_column).
+inline constexpr std::size_t cost_radices = 17;
+inline constexpr std::array<std::size_t, 2> big_cost_radices{32, 64};
+
+// The column of radix r in a cost table, or cost_radices if none.
+[[nodiscard]] constexpr std::size_t cost_column(std::size_t r) noexcept {
+  if (r >= 2 && r <= 16) {
+    return r - 2;
+  }
+  for (std::size_t i = 0; i < big_cost_radices.size(); ++i) {
+    if (big_cost_radices[i] == r) {
+      return 15 + i;
+    }
+  }
+  return cost_radices;
+}
 
 // A length whose radices are fixed because the costs miss its measured best.
 struct radix_override {
@@ -29,9 +45,10 @@ struct radix_override {
   std::array<std::size_t, 4> radices; // in pass order, 0 after the last
 };
 
-// One profile's pass costs, in arbitrary units: unit[kind][R - 2] per unit of C butterflies
-// of radix R, tail[kind][R - 2] more per unit that is padded (a tail on a tile), and `pass`
-// per pass.
+// One profile's pass costs, in arbitrary units: unit[kind][cost_column(R)] per unit of C
+// butterflies of radix R, tail[kind][cost_column(R)] more per unit that is padded (a tail on
+// a tile), and `pass` per pass. A radix above 16 whose unit costs are 0 is not priced: the
+// search never chooses it (only tables measured with it price 32 and 64).
 struct pass_costs {
   std::array<std::array<std::uint32_t, cost_radices>, cost_kinds> unit;
   std::array<std::array<std::uint32_t, cost_radices>, cost_kinds> tail;
