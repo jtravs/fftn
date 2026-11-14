@@ -13,7 +13,7 @@ const std::size_t count = 3;
 // Plans are built once and reused: three rows of 12 points, one after another.
 const fftn::c2c_plan<double> forward(fftn::rows_c2c<double>(n, count, fftn::direction::forward));
 const fftn::c2c_plan<double> backward(fftn::rows_c2c<double>(n, count, fftn::direction::backward),
-                                      {.in_place = true});
+                                      {.in_place = true, .scale = 1.0 / static_cast<double>(n)});
 
 // Scratch for one execution at a time, allocated here and never during execute.
 fftn::workspace ws(std::max(forward.workspace_bytes(), backward.workspace_bytes()));
@@ -31,7 +31,7 @@ for (std::size_t r = 0; r < count; ++r) {
 std::vector<std::complex<double>> y(n * count);
 forward.execute(x.data(), y.data(), ws);
 
-// Backward, in place (the plan says so): FFTN does not normalise, so this gives n * x.
+// Backward, in place and scaled by 1/n (the plan says so): this gives x back.
 backward.execute(y.data(), y.data(), ws);
 ```
 
@@ -51,8 +51,12 @@ For one transform of logical lengths n₀ × … × n_{r−1} (r = 1, 2 or 3 axe
   bin 0 and, for even n, of bin n/2 are ignored. For more axes, the backward c2c
   transforms of the other axes are applied first and the rows of the last axis are then
   read as above.
-- Nothing is normalised: backward after forward multiplies by n₀ · … · n_{r−1}.
-- Lengths are any integer of at least 1. Prime factors above 5 currently go through a
+- Nothing is normalised unless asked: backward after forward multiplies by
+  n₀ · … · n_{r−1}. `options::scale` multiplies every output by a real factor (1/N for
+  a normalised transform, N the number of points in one transform), inside the pass that
+  writes the output: each output is then the unscaled one times the scale (rounded once
+  to `T`), bit for bit, at no cost in passes.
+- Lengths are any integer of at least 1. Prime factors above 16 currently go through a
   direct O(p²) pass, which `plan::describe()` reports; it is slow for large primes.
 
 ## Shapes and layouts
@@ -153,4 +157,6 @@ For a given plan, results are bitwise identical:
 - at any alignment of the arrays and the workspace.
 
 Results may differ in the last bits between instruction sets, between plans built with
-different options (in place or not), and between library versions.
+different options (in place or not), and between library versions. A plan's instruction
+set is the fastest the processor and the build support (`plan::instruction_set()`);
+`options::force_isa` picks another, for tests and benchmarks.

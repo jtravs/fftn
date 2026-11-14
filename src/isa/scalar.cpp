@@ -5,6 +5,7 @@
 // the generator tests (DESIGN.md 6.1). No ISA flag is ever set for this file, and its
 // region carries no attribute: it is compiled for the baseline of the build.
 
+#include "gen/codelets.hpp"     // IWYU pragma: keep (the passes read the codelet table)
 #include "isa/kernel_table.hpp" // IWYU pragma: keep (table.inl defines a kernel_table)
 #include "isa/region.hpp"
 
@@ -14,7 +15,9 @@ FFTN_ISA_BEGIN(scalar)
 
 #include "isa/kernels.inl"
 
-#include "passes/chain.inl"
+#include "gen/complex_codelets.inl"
+
+#include "passes/passes.inl"
 
 #include "isa/table.inl"
 

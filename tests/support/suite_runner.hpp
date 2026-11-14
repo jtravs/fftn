@@ -108,7 +108,7 @@ std::vector<suite_case>
 make_cases(const std::function<std::vector<std::size_t>(std::string_view)>& row_lengths) {
   std::vector<suite_case> cases;
   const auto add = [&]<class T>(T /*tag*/) {
-    for (const std::string_view subject_name : subject_names) {
+    for (const std::string& subject_name : subject_names()) {
       const std::string prefix =
           std::string(subject_name) + "_" + std::string(precision_name<T>()) + "_";
       for (const auto& check : Checks<T>::rows()) {

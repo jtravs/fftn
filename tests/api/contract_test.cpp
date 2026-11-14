@@ -377,6 +377,16 @@ TEST(Validation, InvalidShapesThrowNamingTheArgument) {
   real.axes = {{.n = 8}};
   real.batches = {{.count = 2, .in_dist = 10, .out_dist = 6}};
   expect_refused(real, "options.in_place", {.in_place = true});
+
+  // Options: a scale that is not finite, an instruction set the build or the processor lacks.
+  const auto rows = fftn::rows_c2c<double>(8, 1, fftn::direction::forward);
+  expect_refused(rows, "options.scale", {.scale = std::numeric_limits<double>::infinity()});
+  expect_refused(rows, "options.scale", {.scale = std::numeric_limits<double>::quiet_NaN()});
+  // No build contains avx512 yet (task 1.3); every build has scalar.
+  expect_refused(rows, "options.force_isa", {.force_isa = fftn::isa::avx512});
+  // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange): invalid on purpose
+  expect_refused(rows, "options.force_isa", {.force_isa = static_cast<fftn::isa>(99)});
+  EXPECT_NO_THROW(fftn::c2c_plan<double>(rows, {.force_isa = fftn::isa::scalar}));
 }
 
 // Strides and distances whose magnitudes or derived byte steps do not fit std::ptrdiff_t.
@@ -482,22 +492,32 @@ TEST(Validation, ValidEdgeCasesAreAccepted) {
 // ---- Describe, instruction set, small_vector.
 
 TEST(Describe, NamesTheProgram) {
-  const fftn::c2c_plan<double> p(fftn::rows_c2c<double>(28, 3, fftn::direction::forward));
+  const fftn::c2c_plan<double> p(fftn::rows_c2c<double>(68, 3, fftn::direction::forward));
   const std::string d = p.describe();
+  const std::string isa = std::string("instruction set: ") + fftn::isa_name(p.instruction_set());
   for (const char* part : {
            "c2c forward",
            "double",
-           "instruction set: scalar",
+           isa.c_str(),
            "chain",
-           "radices 4 x 7",
-           "radix-4 forward",
-           "generic radix-7 forward",
+           "radices 4 x 17",
+           "grouped radix-4 forward",
+           "generic radix-17 forward",
            "loop batch x3",
            "workspace",
        }) {
     EXPECT_NE(d.find(part), std::string::npos) << "missing '" << part << "' in\n" << d;
   }
-  EXPECT_EQ(p.instruction_set(), fftn::isa::scalar);
+  EXPECT_NE(p.instruction_set(), fftn::isa::best);
+
+  // Forced to the scalar target, with a fused scale and a leaf.
+  const fftn::c2c_plan<float> q(fftn::rows_c2c<float>(12, 1, fftn::direction::backward),
+                                {.scale = 0.5, .force_isa = fftn::isa::scalar});
+  EXPECT_EQ(q.instruction_set(), fftn::isa::scalar);
+  const std::string e = q.describe();
+  for (const char* part : {"instruction set: scalar", "leaf radix-12 backward (out: scale)"}) {
+    EXPECT_NE(e.find(part), std::string::npos) << "missing '" << part << "' in\n" << e;
+  }
 
   fftn::shape<std::complex<float>, float> volume;
   volume.axes = {{.n = 3}, {.n = 4}, {.n = 6}};
@@ -528,6 +548,7 @@ TEST(Isa, Names) {
   EXPECT_STREQ(fftn::isa_name(fftn::isa::avx512), "avx512");
   EXPECT_STREQ(fftn::isa_name(fftn::isa::neon), "neon");
   EXPECT_STREQ(fftn::isa_name(fftn::isa::neon_fcma), "neon_fcma");
+  EXPECT_STREQ(fftn::isa_name(fftn::isa::best), "best");
   // Out of range: this read past the table of names before it was bounds-checked.
   // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange): invalid on purpose
   EXPECT_STREQ(fftn::isa_name(static_cast<fftn::isa>(200)), "unknown");
