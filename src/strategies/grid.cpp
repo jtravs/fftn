@@ -422,15 +422,16 @@ template <class T> bool grid_builder<T>::uses_block(const grid_split& g, bool in
 
 // The padding per row of phase 2's view of the intermediate (X4): `pad_` complex values,
 // where phase 1's blocks then stay within one such row (block divides M2, or M2 = 1).
-template <class T> std::size_t grid_builder<T>::intermediate_pad(const grid_split& g) const {
+template <class T>
+std::size_t grid_builder<T>::intermediate_pad(const grid_split& g, bool in_place) const {
   const std::size_t m2 = g.phases == 3 ? g.factors[2] : 1;
-  return pad_ != 0 && (m2 == 1 || m2 % g.block == 0) ? pad_ : 0;
+  return pad_ != 0 && uses_block(g, in_place) && (m2 == 1 || m2 % g.block == 0) ? pad_ : 0;
 }
 
 template <class T>
 std::size_t grid_builder<T>::block_elements(const grid_split& g, bool in_place) const {
-  const std::size_t pad = intermediate_pad(g);
-  if (!uses_block(g, in_place) && pad == 0) {
+  const std::size_t pad = intermediate_pad(g, in_place);
+  if (!uses_block(g, in_place)) {
     return 0;
   }
   const std::size_t m2 = g.phases == 3 ? g.factors[2] : 1;
@@ -454,8 +455,8 @@ std::size_t grid_builder<T>::c2c_row(const grid_split& g, int sign, bool in_plac
   // writes the output, the positions it read; every other phase writes an array other
   // than the one it reads, and phase 1 never the input's memory.
   std::array<slot, max_grid_phases + 1> buf{slot::in, slot::out, slot::out, slot::out};
-  const std::size_t pad = intermediate_pad(g);
-  if (uses_block(g, in_place) || pad != 0) {
+  const std::size_t pad = intermediate_pad(g, in_place);
+  if (uses_block(g, in_place)) {
     buf[1] = slot::block;
   }
   const std::size_t n1 = g.factors[0];

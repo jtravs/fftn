@@ -96,7 +96,7 @@ public:
   // fused: phases read and write the arrays in their first and last passes rather than
   // through a gather and a scatter (experiment X12).
   // pad (X4): complex values of padding per row of phase 2's view of the intermediate
-  // array, which is then the workspace block even with two phases out of place (0: none);
+  // array where it is the workspace block (three phases, or in place; 0: none);
   // fuse_padded: phase 2 reads padded rows in its first pass whatever its radix.
   grid_builder(const kernels_of<T>& kernels, chain_builder<T>& chain,
                std::vector<std::vector<T>>& tables, bool fused, std::size_t pad = 0,
@@ -132,7 +132,7 @@ private:
                    const side_of& from, const side_of& to, double in_scale, double out_scale,
                    const T* row_tw, program& p);
   [[nodiscard]] std::vector<std::size_t> phase_radix_list(std::size_t n) const;
-  [[nodiscard]] std::size_t intermediate_pad(const grid_split& g) const;
+  [[nodiscard]] std::size_t intermediate_pad(const grid_split& g, bool in_place) const;
   void add_copy(const char* what, pass_fn run, std::size_t rows, std::size_t cols, slot src,
                 std::ptrdiff_t src_stride, slot dst, std::ptrdiff_t dst_stride, double scale,
                 const T* twiddles, program& p);
