@@ -61,7 +61,7 @@ namespace fftn::inline v0::detail {
 inline constexpr std::size_t max_grid_phases = 3;
 // The widest block the rules choose (experiment X12).
 inline constexpr std::size_t max_grid_block = 32;
-// The largest radix of a phase's first or last pass that reads or writes the arrays' rows
+// The largest radix of a phase whose first and last passes read and write the arrays' rows
 // directly (grid_builder, fused; experiment X12).
 inline constexpr std::size_t grid_fuse_radix = 8;
 
@@ -125,7 +125,7 @@ private:
   slot phase_chain(std::size_t n, const std::vector<std::size_t>& rad, std::size_t cols, int sign,
                    const side_of& from, const side_of& to, double in_scale, double out_scale,
                    const T* row_tw, program& p);
-  [[nodiscard]] std::vector<std::size_t> phase_radix_list(std::size_t n, bool later) const;
+  [[nodiscard]] std::vector<std::size_t> phase_radix_list(std::size_t n) const;
   void add_copy(const char* what, pass_fn run, std::size_t rows, std::size_t cols, slot src,
                 std::ptrdiff_t src_stride, slot dst, std::ptrdiff_t dst_stride, double scale,
                 const T* twiddles, program& p);

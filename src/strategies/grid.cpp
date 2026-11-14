@@ -169,6 +169,11 @@ std::vector<std::size_t> phase_radices(std::size_t n) {
   return rad;
 }
 
+// Whether a phase with these radices reads and writes its rows directly (grid_fuse_radix).
+bool fusible(const std::vector<std::size_t>& rad) {
+  return std::all_of(rad.begin(), rad.end(), [](std::size_t r) { return r <= grid_fuse_radix; });
+}
+
 std::vector<std::size_t> divisors(std::size_t n) {
   std::vector<std::size_t> low;
   std::vector<std::size_t> high;
@@ -274,19 +279,9 @@ void grid_builder<T>::add_copy(const char* what, pass_fn run, std::size_t rows, 
   p.records.emplace_back(std::move(st));
 }
 
-// A phase's radices: forced ones, or the phase rule's, ascending for phase 1 (whose first
-// pass may read the rows) and descending for later phases (whose last pass may write them,
-// and a scatter costs more than a gather).
-template <class T>
-std::vector<std::size_t> grid_builder<T>::phase_radix_list(std::size_t n, bool later) const {
-  if (chain_.forces(n)) {
-    return chain_.radices(n);
-  }
-  std::vector<std::size_t> rad = phase_radices(n);
-  if (later) {
-    std::reverse(rad.begin(), rad.end());
-  }
-  return rad;
+// A phase's radices: forced ones, or the phase rule's.
+template <class T> std::vector<std::size_t> grid_builder<T>::phase_radix_list(std::size_t n) const {
+  return chain_.forces(n) ? chain_.radices(n) : phase_radices(n);
 }
 
 template <class T>
@@ -451,14 +446,15 @@ std::size_t grid_builder<T>::c2c_row(const grid_split& g, int sign, bool in_plac
   l1.step[index(buf[1])] = blk * static_cast<std::ptrdiff_t>(n1) * cb;
   l1.step[3] = static_cast<std::ptrdiff_t>(n1) * cb;
   p.records.emplace_back(l1);
-  // A phase's first pass reads the rows directly, and a later phase's last pass writes them,
-  // when its radix is at most grid_fuse_radix: a pass touches R rows at once, which lie a
-  // power of two apart for most lengths and so share cache sets; more than the sets' ways
-  // and each row's lines are evicted before the next unit, at the next columns, reuses them
-  // (X12: radix 16 at the ends doubled the time). Otherwise a gather or scatter copies the
-  // block row by row.
-  const std::vector<std::size_t> rad1 = phase_radix_list(n1, false);
-  const bool fuse1 = fused_ && rad1.front() <= grid_fuse_radix;
+  // A phase reads its rows in its first pass and (after phase 1) writes them in its last,
+  // instead of through a gather and a scatter, when every radix of its chain is at most
+  // grid_fuse_radix. A pass touches R rows at once, which lie a power of two apart for most
+  // lengths and so share cache sets: with more rows than the sets' ways each row's lines are
+  // evicted before the next unit, at the next columns, reuses them (X12: radix 16 at the
+  // ends doubled the time), and fusing only one end of a phase gained nothing (X12, run
+  // 20261114-131752-7e99), so a phase fuses both ends or neither.
+  const std::vector<std::size_t> rad1 = phase_radix_list(n1);
+  const bool fuse1 = fused_ && fusible(rad1);
   if (!fuse1) {
     add_copy("gather", kernels_.passes.block_copy[in_scale != 1.0 ? 1 : 0], n1, b, buf[0],
              static_cast<std::ptrdiff_t>(m1), slot::a, blk, in_scale, nullptr, p);
@@ -508,9 +504,9 @@ std::size_t grid_builder<T>::c2c_row(const grid_split& g, int sign, bool in_plac
     ll.step.at(index(src)) = blk * cb;
     ll.step.at(index(dst)) = blk * cb;
     p.records.emplace_back(ll);
-    const std::vector<std::size_t> rad = phase_radix_list(ni, true);
-    const bool fuse_in = fused_ && rad.front() <= grid_fuse_radix;
-    const bool fuse_out = fused_ && rad.back() <= grid_fuse_radix;
+    const std::vector<std::size_t> rad = phase_radix_list(ni);
+    const bool fuse_in = fused_ && fusible(rad);
+    const bool fuse_out = fuse_in;
     const T* row_tw = m > 1 ? row_twiddles(ni, m) : nullptr;
     if (!fuse_in) {
       add_copy("gather", kernels_.passes.block_copy[0], ni, b, src,
@@ -546,7 +542,7 @@ template <class T> std::string grid_builder<T>::note(const grid_split& g) const 
     sizes += (i == 0 ? "" : " x ") + std::to_string(g.factors.at(i));
     const std::size_t f = g.factors.at(i);
     phases += (i == 0 ? "" : ", then ") + std::to_string(f) + " (radices " +
-              radix_text(phase_radix_list(f, i > 0)) + ")";
+              radix_text(phase_radix_list(f)) + ")";
   }
   return "grid " + sizes + " (decimation in frequency: phases of " + phases +
          ", each in blocks of " + std::to_string(g.block) + " columns)";
