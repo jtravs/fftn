@@ -175,8 +175,8 @@ inline constexpr split_codelet_info split_codelets[split_codelet_count] = {
     {7, variant::dif, 6, 34, 18, 38, 0, 90, 17},
     {8, variant::plain, 0, 48, 2, 4, 0, 54, 18},
     {8, variant::dif, 7, 48, 16, 18, 0, 82, 24},
-    {9, variant::plain, 0, 36, 8, 44, 0, 88, 22},
-    {9, variant::dif, 8, 36, 24, 60, 0, 120, 22},
+    {9, variant::plain, 0, 28, 4, 52, 0, 84, 20},
+    {9, variant::dif, 8, 28, 20, 68, 0, 116, 20},
     {10, variant::plain, 0, 64, 8, 20, 0, 92, 22},
     {10, variant::dif, 9, 64, 26, 38, 0, 128, 22},
     {11, variant::plain, 0, 58, 10, 82, 0, 150, 26},
@@ -189,8 +189,8 @@ inline constexpr split_codelet_info split_codelets[split_codelet_count] = {
     {14, variant::dif, 13, 96, 38, 78, 0, 212, 31},
     {15, variant::plain, 0, 96, 12, 60, 0, 168, 32},
     {15, variant::dif, 14, 96, 40, 88, 0, 224, 32},
-    {16, variant::plain, 0, 128, 12, 16, 0, 156, 36},
-    {16, variant::dif, 15, 128, 42, 46, 0, 216, 42},
+    {16, variant::plain, 0, 120, 8, 24, 0, 152, 34},
+    {16, variant::dif, 15, 120, 38, 54, 0, 212, 40},
 };
 
 inline constexpr std::size_t split_radix_count = 15;

@@ -282,9 +282,13 @@ real-register vocabulary (`real::` in `src/isa/vocabulary.inl`), for radices 2 t
 2. **FMA-shape**: a product (a constant times a value, or two values) whose users are all
    sums is fused into each of them (`fmadd`, `fnmadd`, `fmsub`); one used by anything else
    stays a multiply. Fusing a product shared by u sums costs u operations against 1 + u, on
-   fused targets; the text is FMA-shaped, so a target without FMA would need its own. Not
-   done yet: FFTW's tangent form of constant rotations, c·(x ± t·y), which would save one
-   operation per rotated part (radix 16 plain: 156 operations against FFTW's 144).
+   fused targets; the text is FMA-shaped, so a target without FMA would need its own. A
+   rotation by a constant, c_a·x + c_b·(−i)^r·x whose scales nothing else uses, is built in
+   the tangent form c·(u + t·v), t ≤ 1: one fused operation per part, and c fuses into the
+   sums that use the parts (radix 16 plain: 156 → 152 operations, DIF 216 → 212; FFTW's FMA
+   counts are 144 and 204). The remaining multiplies are scales shared by sums that each
+   absorbed another product (k·p ± k'·q pairs after value numbering); factoring those at the
+   real level is not done.
 3. **Signs**: each register holds its node's value or its negation, chosen backwards from
    the stores as the complex lowering chooses rotations (a − b or b − a; a fused constant's
    sign is free). A store that still disagrees gets a `neg`; none does (a test holds it).
@@ -297,7 +301,7 @@ im)`; one line per lane, W lines per call. The backward transform is the forward
 with real and imaginary parts exchanged on loading and storing, and the same forward
 twiddles (swap(z) = i·conj(z)); the passes do the exchange (`src/passes/split.inl`).
 Split metadata counts real-register operations (`adds`, `muls`, `fmas`, `negs`, `vops`)
-and live real values: radix 16 needs 36 to 42 registers, which spills on AVX2's 16 and
+and live real values: radix 16 needs 34 to 40 registers, which spills on AVX2's 16 and
 slightly on AVX-512's 32.
 
 ## Subtleties

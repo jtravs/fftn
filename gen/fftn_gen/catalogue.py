@@ -25,7 +25,7 @@ RADICES = (*range(2, 17), 32, 64)
 
 # The split lowering's radices (task 1.5, experiment X1): the lane passes of a chain, which
 # the planner prices up to 16. A split codelet holds about twice the live registers of a
-# complex one (radix 16: 36 to 42 reals against 18 complex), so 32 and 64 would spill
+# complex one (radix 16: 34 to 40 reals against 18 complex), so 32 and 64 would spill
 # heavily.
 SPLIT_RADICES = tuple(range(2, 17))
 

@@ -243,7 +243,51 @@ def expand(g: Graph, outputs: list[Term]) -> tuple[RealGraph, list[tuple[RTerm, 
     """The real DAG of the complex one, and the (re, im) parts of each output."""
     h = RealGraph(g)
     parts: dict[int, tuple[RTerm, RTerm]] = {}
-    for n in g.live(outputs):
+    live = g.live(outputs)
+    users: dict[int, list[int]] = {n: [] for n in live}
+    for n in live:
+        for c in g.children(n):
+            users[c].append(n)
+    stored = {t.node for t in outputs}
+
+    def pattern(n: int) -> bool:
+        """n = c_a x + c_b (-i)^r x: a sum of two scales of the same node."""
+        match g.nodes[n]:
+            case Add(a, b, _):
+                na, nb = g.nodes[a], g.nodes[b]
+                return isinstance(na, Scale) and isinstance(nb, Scale) and na.a == nb.a
+        return False
+
+    def rotation(a: int, b: int) -> tuple[int, mpmath.mpf, mpmath.mpf] | None:
+        """(x, c_a, c_b) when a = c_a x and b = c_b x are used only by such sums (a
+        rotation by a constant; conjugate pairs share the scales): the sum is built as
+        c (u + t v) (the tangent form), and the scales themselves are never needed."""
+        na, nb = g.nodes[a], g.nodes[b]
+        if not (isinstance(na, Scale) and isinstance(nb, Scale) and na.a == nb.a):
+            return None
+        if all(m not in stored and all(pattern(u) for u in users[m]) for m in (a, b)):
+            return na.a, g.consts[na.key], g.consts[nb.key]
+        return None
+
+    for n in live:
+        match g.nodes[n]:
+            case Add(a, b, r) if (rot := rotation(a, b)) is not None:
+                # c_a x + c_b (-i)^r x = c (u + t v), c the larger constant (t <= 1): the
+                # inner sum is one fused operation per part, and c fuses into the sums
+                # that use the parts (FMA shaping, lower_split), where c_a x + c_b ... cost
+                # a multiply and a fused operation per part.
+                x, ca, cb = rot
+                px = parts[x]
+                pv = _rotate(px, r)
+                if ca >= cb:
+                    big, t, u, v = ca, cb / ca, px, pv
+                else:
+                    big, t, u, v = cb, ca / cb, pv, px
+                parts[n] = (
+                    h.scale(h.add(u[0], h.scale(v[0], t)), big),
+                    h.scale(h.add(u[1], h.scale(v[1], t)), big),
+                )
+                continue
         match g.nodes[n]:
             case Input(j):
                 parts[n] = (h.input(j, 0), h.input(j, 1))
