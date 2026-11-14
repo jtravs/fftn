@@ -37,19 +37,24 @@ constexpr std::array preference = {
 // The table of each target this build contains; null for the others.
 #if FFTN_ARCH_X86_64
 constexpr const kernel_table* avx2_kernels = &avx2::table;
+constexpr const kernel_table* avx512_kernels = &avx512::table;
 #else
 constexpr const kernel_table* avx2_kernels = nullptr;
+constexpr const kernel_table* avx512_kernels = nullptr;
 #endif
 #if FFTN_ARCH_AARCH64
+constexpr const kernel_table* neon_kernels = &neon::table;
 constexpr const kernel_table* neon_fcma_kernels = &neon_fcma::table;
 #else
+constexpr const kernel_table* neon_kernels = nullptr;
 constexpr const kernel_table* neon_fcma_kernels = nullptr;
 #endif
 
 bool has_x86_v2(const cpu_features& f) noexcept {
   return f.sse2 && f.sse3 && f.ssse3 && f.sse41 && f.sse42 && f.popcnt;
 }
-// What "avx2,fma" enables: AVX2 and FMA, with AVX and SSE4.2 and below implied.
+// What "avx2,fma" enables: AVX2 and FMA, with AVX and SSE4.2 and below implied. avx512's
+// string adds AVX-512 F, DQ and VL (region.hpp).
 bool has_avx2(const cpu_features& f) noexcept {
   return f.sse2 && f.sse3 && f.ssse3 && f.sse41 && f.sse42 && f.avx && f.avx2 && f.fma;
 }
@@ -61,13 +66,13 @@ bool compiled_in(target t) noexcept {
   case target::scalar:
     return true;
   case target::avx2:
+  case target::avx512:
     return FFTN_ARCH_X86_64 != 0;
+  case target::neon:
   case target::neon_fcma:
     return FFTN_ARCH_AARCH64 != 0;
   case target::x86_v2: // phase 1.3
   case target::avx:
-  case target::avx512:
-  case target::neon:
     break;
   }
   return false;
@@ -139,12 +144,14 @@ const kernel_table* find_kernels(target t) noexcept {
     return &scalar::table;
   case target::avx2:
     return avx2_kernels;
+  case target::avx512:
+    return avx512_kernels;
+  case target::neon:
+    return neon_kernels;
   case target::neon_fcma:
     return neon_fcma_kernels;
   case target::x86_v2: // phase 1.3
   case target::avx:
-  case target::avx512:
-  case target::neon:
     break;
   }
   return nullptr;

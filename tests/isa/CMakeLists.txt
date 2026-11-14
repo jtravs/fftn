@@ -7,9 +7,11 @@
 # the library's kernel units, compiled into an object library so the disassembly check can
 # read them. The codelet units are optimised in every build type, like the library's
 # kernel units: they instantiate every codelet twice per target.
-set(fftn_codelet_units codelets_scalar.cpp codelets_avx2.cpp codelets_neon_fcma.cpp)
-add_library(fftn_isa_probes OBJECT probe_scalar.cpp probe_avx2.cpp probe_neon_fcma.cpp
-                                   probe_tables.cpp ${fftn_codelet_units} codelet_tables.cpp)
+set(fftn_codelet_units codelets_scalar.cpp codelets_avx2.cpp codelets_avx512.cpp
+                       codelets_neon.cpp codelets_neon_fcma.cpp)
+add_library(fftn_isa_probes OBJECT probe_scalar.cpp probe_avx2.cpp probe_avx512.cpp
+                                   probe_neon.cpp probe_neon_fcma.cpp probe_tables.cpp
+                                   ${fftn_codelet_units} codelet_tables.cpp)
 fftn_always_optimise(${fftn_codelet_units})
 fftn_configure_target(fftn_isa_probes)
 # Only fftn's headers: the test executable links the library itself.
@@ -103,9 +105,10 @@ if(APPLE AND FFTN_TARGET_IS_AARCH64)
     message(FATAL_ERROR "isa tests: the compiler does not accept -mcpu=generic")
   endif()
   add_library(fftn_isa_generic_baseline OBJECT
-    ${PROJECT_SOURCE_DIR}/src/isa/scalar.cpp ${PROJECT_SOURCE_DIR}/src/isa/neon_fcma.cpp
-    ${PROJECT_SOURCE_DIR}/src/isa/target.cpp probe_scalar.cpp probe_neon_fcma.cpp
-    codelets_scalar.cpp codelets_neon_fcma.cpp)
+    ${PROJECT_SOURCE_DIR}/src/isa/scalar.cpp ${PROJECT_SOURCE_DIR}/src/isa/neon.cpp
+    ${PROJECT_SOURCE_DIR}/src/isa/neon_fcma.cpp ${PROJECT_SOURCE_DIR}/src/isa/target.cpp
+    probe_scalar.cpp probe_neon.cpp probe_neon_fcma.cpp codelets_scalar.cpp codelets_neon.cpp
+    codelets_neon_fcma.cpp)
   fftn_configure_target(fftn_isa_generic_baseline)
   set_target_properties(fftn_isa_generic_baseline PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
   target_include_directories(fftn_isa_generic_baseline PRIVATE ${PROJECT_SOURCE_DIR}/include
@@ -148,4 +151,5 @@ fftn_asm_fault_test(baseline_isa "baseline: (VEX or EVEX code|FCMA instruction) 
 fftn_asm_fault_test(target_isa "EVEX feature in|Armv8.3 instruction outside FCMA in")
 if(FFTN_TARGET_IS_AARCH64)
   fftn_asm_fault_test(pauth "pointer authentication outside neon_fcma in")
+  fftn_asm_fault_test(fcma_in_neon "neon: FCMA instruction in")
 endif()

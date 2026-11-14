@@ -435,8 +435,13 @@ TEST(Validation, InvalidShapesThrowNamingTheArgument) {
   EXPECT_NO_THROW(fftn::c2c_plan<float>(float_rows, {.scale = 0.0}));
   EXPECT_NO_THROW(fftn::c2c_plan<float>(float_rows, {.scale = 1e30}));
   EXPECT_NO_THROW(fftn::c2c_plan<double>(rows, {.scale = 1e300}));
-  // No build contains avx512 yet (task 1.3); every build has scalar.
-  expect_refused(rows, "options.force_isa", {.force_isa = fftn::isa::avx512});
+  // No build contains the other architecture's targets; every build has scalar.
+#if defined(__x86_64__) || defined(_M_X64)
+  constexpr fftn::isa foreign = fftn::isa::neon_fcma;
+#else
+  constexpr fftn::isa foreign = fftn::isa::avx2;
+#endif
+  expect_refused(rows, "options.force_isa", {.force_isa = foreign});
   // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange): invalid on purpose
   expect_refused(rows, "options.force_isa", {.force_isa = static_cast<fftn::isa>(99)});
   EXPECT_NO_THROW(fftn::c2c_plan<double>(rows, {.force_isa = fftn::isa::scalar}));

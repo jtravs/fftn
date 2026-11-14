@@ -122,6 +122,15 @@ class ArmGrammar(unittest.TestCase):
         other = arms.Binary(b.path, describe={**desc, "harness": {"commit": "def"}})
         self.assertNotEqual(arms.configuration(a, arm), arms.configuration(other, arm))
 
+    def test_fftn_isa_arms(self):
+        # One build, two instruction sets (the FFTN backend's ISA option): the option reaches
+        # the backend, and the two arms are different configurations.
+        a = arms.parse("A=fftn+ISA=avx2")
+        b = arms.parse("B=fftn+ISA=avx512")
+        self.assertEqual(b.backend_options(), {"ISA": "avx512"})
+        binary = arms.Binary(Path("/x/bench/fbench-fftn"), describe={"library": "fftn"})
+        self.assertNotEqual(arms.configuration(binary, a), arms.configuration(binary, b))
+
     def test_refusals(self):
         ok = {"loaded_from": "/opt/fftw/lib/libfftw3.so", "expected_root": "/opt/fftw"}
         self.assertIsNone(arms.library_problem(ok))

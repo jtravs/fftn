@@ -4,10 +4,14 @@
 // fbench backend for FFTN, through its public API: one plan and one workspace per case.
 //
 // Every case of rank 1 to 3 and every kind is supported, in double precision, with FFTW's
-// embedding (in_last, out_last) and distances. FFTN has no plan options yet, so any option
-// is refused. describe reports the instruction set FFTN's plans choose on this machine
-// (every plan of the walking skeleton chooses the same one).
+// embedding (in_last, out_last) and distances. One option: ISA=<name> forces every plan to
+// that instruction set (options::force_isa; names as fftn::isa_name writes them, "best" the
+// default), so that arms of one build can compare targets (A=fftn+ISA=avx2
+// B=fftn+ISA=avx512). A target this build or processor lacks is refused when the session
+// begins. describe reports the instruction set the plans run ("isa") and whether it was
+// forced ("isa_forced").
 
+#include "backends/common.hpp"
 #include "harness/backend.hpp"
 #include "harness/json.hpp"
 
@@ -30,6 +34,24 @@ using cplx = std::complex<double>;
 std::string& description() {
   static std::string text;
   return text;
+}
+
+// The instruction set of the session's plans (ISA=), set once by fbench_begin.
+fftn::isa& forced_isa() {
+  static fftn::isa target = fftn::isa::best;
+  return target;
+}
+
+// The enumerator named `name` (fftn::isa_name), or nullopt.
+std::optional<fftn::isa> isa_from_name(std::string_view name) {
+  for (auto i = static_cast<unsigned>(fftn::isa::scalar);
+       i <= static_cast<unsigned>(fftn::isa::best); ++i) {
+    const auto t = static_cast<fftn::isa>(i);
+    if (name == fftn::isa_name(t)) {
+      return t;
+    }
+  }
+  return std::nullopt;
 }
 
 struct plan_record {
@@ -71,15 +93,30 @@ template <class In, class Out> fftn::shape<In, Out> shape_of(const fbench_case& 
 extern "C" {
 
 std::int32_t fbench_begin(const char* options, char* message, std::size_t message_size) {
-  if (!std::string_view(options).empty()) {
-    std::snprintf(message, message_size, "unknown FFTN option: FFTN has none yet (%s)", options);
+  forced_isa() = fftn::isa::best;
+  for (const auto& [key, val] : fbench::backends::parse_options(options)) {
+    const std::optional<fftn::isa> target = isa_from_name(val);
+    if (key != "ISA" || !target) {
+      std::string text = "FFTN options: ISA=scalar|avx2|avx512|neon|neon_fcma|...|best (got ";
+      text.append(key).append("=").append(val).append(")");
+      fbench::backends::say(message, message_size, text);
+      return fbench_error;
+    }
+    forced_isa() = *target;
+  }
+  std::optional<fftn::c2c_plan<double>> probe;
+  try {
+    probe.emplace(fftn::rows_c2c<double>(8, 1, fftn::direction::forward),
+                  fftn::options{.force_isa = forced_isa()});
+  } catch (const std::exception& e) { // a target this build or processor lacks
+    fbench::backends::say(message, message_size, e.what());
     return fbench_error;
   }
-  const fftn::c2c_plan<double> probe(fftn::rows_c2c<double>(8, 1, fftn::direction::forward));
   description() = fbench::json()
                       .str("library", "fftn")
                       .str("version", fftn::version())
-                      .str("isa", fftn::isa_name(probe.instruction_set()))
+                      .str("isa", fftn::isa_name(probe->instruction_set()))
+                      .boolean("isa_forced", forced_isa() != fftn::isa::best)
                       .str("precision", "double")
                       .raw("supports", R"(["c2c","r2c","c2r"])")
                       .str("strategy", "chain")
@@ -96,7 +133,7 @@ std::int32_t fbench_create(const fbench_case* c, void* /*in*/, void* /*out*/, vo
   *plan = nullptr;
   try {
     auto record = std::make_unique<plan_record>();
-    const fftn::options opts{.in_place = c->in_place != 0};
+    const fftn::options opts{.in_place = c->in_place != 0, .force_isa = forced_isa()};
     std::size_t bytes = 0;
     if (c->kind == fbench_c2c) {
       bytes = record->c2c.emplace(shape_of<cplx, cplx>(*c), opts).workspace_bytes();

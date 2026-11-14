@@ -44,8 +44,14 @@ extern const codelet_table codelet_entries;
 namespace avx2 {
 extern const codelet_table codelet_entries;
 }
+namespace avx512 {
+extern const codelet_table codelet_entries;
+}
 #endif
 #if FFTN_ARCH_AARCH64
+namespace neon {
+extern const codelet_table codelet_entries;
+}
 namespace neon_fcma {
 extern const codelet_table codelet_entries;
 }

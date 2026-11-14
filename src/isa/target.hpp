@@ -24,13 +24,16 @@ enum class target : unsigned char {
   neon_fcma,
 };
 
-// Whether this build contains code for t. Phase 0 builds scalar everywhere, avx2 on x86-64
-// and neon_fcma on AArch64; the other targets arrive in phase 1.3.
+// Whether this build contains code for t: scalar everywhere, avx2 and avx512 on x86-64,
+// neon and neon_fcma on AArch64. x86_v2 and avx arrive with the rest of phase 1.3.
 [[nodiscard]] bool compiled_in(target t) noexcept;
 
 // Whether a processor with these features can run t's code: every feature t's attribute
-// string enables that its code may use is present (region.hpp); for neon_fcma that is
-// FCMA and pointer authentication.
+// string enables that its code may use is present (region.hpp); for avx512 that is
+// AVX-512 F, DQ and VL with AVX2 and FMA (the operating system saving the ZMM state is part
+// of each AVX-512 flag, cpu_features.hpp), for neon_fcma FCMA and pointer authentication.
+// neon needs Advanced SIMD alone, so an AArch64 processor without either of those runs
+// neon.
 [[nodiscard]] bool runs_on(target t, const cpu_features& features) noexcept;
 
 // The fastest target this build contains that the features allow.

@@ -14,8 +14,12 @@ const probe_table* find_probes(target t) noexcept {
 #if FFTN_ARCH_X86_64
   case target::avx2:
     return &avx2::probes;
+  case target::avx512:
+    return &avx512::probes;
 #endif
 #if FFTN_ARCH_AARCH64
+  case target::neon:
+    return &neon::probes;
   case target::neon_fcma:
     return &neon_fcma::probes;
 #endif

@@ -6,7 +6,9 @@
 // leave tails on every SIMD target; the generic pass in every position; every edge variant
 // on every pass kind that has it; on every instruction set the machine runs, in double
 // and float, against the quadruple-precision reference. And the acceptance test of task
-// 1.2: a fused scale costs no extra pass and gives exactly the scaled result.
+// 1.2: a fused scale costs no extra pass and gives exactly the scaled result. And the
+// targets whose vocabularies round alike (neon and neon_fcma, avx2 and avx512) give the
+// same bits with the same passes.
 
 #include "core/plan_core.hpp"
 #include "core/program.hpp"
@@ -15,6 +17,7 @@
 #include "gen/codelets.hpp"
 #include "isa/kernel_table.hpp"
 #include "isa/target.hpp"
+#include "planner/rules.hpp"
 #include "reference/reference_dft.hpp"
 #include "support/exact.hpp"
 #include "support/fftn_subject.hpp"
@@ -24,6 +27,8 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <bit>
 #include <complex>
 #include <cstddef>
 #include <cstdint>
@@ -31,6 +36,7 @@
 #include <stdexcept>
 #include <string>
 #include <type_traits>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -445,6 +451,125 @@ TEST(Passes, FusedScaleCostsNoExtraPass) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
     fused_scale<double>(t);
     fused_scale<float>(t);
+  }
+}
+
+// Every bit of every value equal (so -0 differs from +0).
+template <class T> auto bits_of(T x) {
+  return std::bit_cast<std::conditional_t<sizeof(T) == 8, std::uint64_t, std::uint32_t>>(x);
+}
+template <class T> bool bitwise_equal(const std::vector<T>& x, const std::vector<T>& y) {
+  return std::ranges::equal(x, y, [](T a, T b) { return bits_of(a) == bits_of(b); });
+}
+template <class T>
+bool bitwise_equal(const std::vector<std::complex<T>>& x, const std::vector<std::complex<T>>& y) {
+  return std::ranges::equal(x, y, [](std::complex<T> a, std::complex<T> b) {
+    return bits_of(a.real()) == bits_of(b.real()) && bits_of(a.imag()) == bits_of(b.imag());
+  });
+}
+
+// The same passes on two targets whose operations round alike (DESIGN.md 6.2): every
+// output bit equal, for c2c rows with a scale and the factor edges (cmul), strided (the
+// copy passes) and in place, and for r2c and c2r rows, several rows each so that tails
+// occur. The radices are the first target's
+// rules' choice, forced on both: avx2 and avx512 key their rules on different register
+// counts.
+template <class T> void same_bits(fftn::isa a, fftn::isa b) {
+  using c = std::complex<T>;
+  const auto profile = fftn::detail::profile_of(static_cast<fftn::detail::target>(a));
+  std::vector<std::size_t> lengths;
+  for (std::size_t n = 1; n <= 64; ++n) {
+    lengths.push_back(n);
+  }
+  lengths.insert(lengths.end(), {97, 100, 128, 360, 1000, 1024, 4096});
+  constexpr std::size_t rows = 3;
+  for (const std::size_t n : lengths) {
+    SCOPED_TRACE(std::string(fftn::isa_name(a)) + " and " + fftn::isa_name(b) +
+                 (sizeof(T) == 8 ? " double" : " float") + ", n = " + std::to_string(n));
+    fftn::test::input_source src(0x5A3EULL + n);
+    const cvec<T> x = src.complexes<T>(rows * n);
+    const cvec<T> fin = src.complexes<T>(n);
+    const cvec<T> fout = src.complexes<T>(n);
+    // Forward with both factor edges; backward with the input factor and a scale (a plan
+    // takes one scale, and not beside a factor on the same edge).
+    for (const auto dir : {fftn::direction::forward, fftn::direction::backward}) {
+      const bool forward = dir == fftn::direction::forward;
+      build_settings settings;
+      settings.radices = fftn::detail::rule_radices(n, profile);
+      settings.in_factor = fin.data();
+      settings.out_factor = forward ? fout.data() : nullptr;
+      const double scale = forward ? 1.0 : 0.25;
+      const auto shape = fftn::rows_c2c<T>(n, rows, dir); // the view refers to it
+      const auto view = fftn::detail::view_of(shape);
+      const auto on_a = make_plan_core(view, {.scale = scale, .force_isa = a}, settings);
+      const auto on_b = make_plan_core(view, {.scale = scale, .force_isa = b}, settings);
+      EXPECT_EQ(stage_names(*on_a).size(), stage_names(*on_b).size());
+      EXPECT_TRUE(bitwise_equal(run<c, c>(*on_a, x, rows * n), run<c, c>(*on_b, x, rows * n)))
+          << (forward ? "c2c forward" : "c2c backward");
+    }
+    // Strided rows (input stride 2, output stride 3: the copy passes into and out of
+    // scratch on targets with C > 1), and in place.
+    {
+      build_settings settings;
+      settings.radices = fftn::detail::rule_radices(n, profile);
+      auto strided = fftn::rows_c2c<T>(n, rows, fftn::direction::forward);
+      strided.axes[0].in_stride = 2;
+      strided.axes[0].out_stride = 3;
+      strided.batches[0].in_dist = static_cast<std::ptrdiff_t>(2 * n);
+      strided.batches[0].out_dist = static_cast<std::ptrdiff_t>(3 * n);
+      const auto view = fftn::detail::view_of(strided);
+      const cvec<T> xs = src.complexes<T>(2 * rows * n);
+      EXPECT_TRUE(bitwise_equal(
+          run<c, c>(*make_plan_core(view, {.force_isa = a}, settings), xs, 3 * rows * n),
+          run<c, c>(*make_plan_core(view, {.force_isa = b}, settings), xs, 3 * rows * n)))
+          << "c2c strided";
+      const auto tight = fftn::rows_c2c<T>(n, rows, fftn::direction::backward);
+      const auto tight_view = fftn::detail::view_of(tight);
+      EXPECT_TRUE(bitwise_equal(
+          run_in_place(*make_plan_core(tight_view, {.in_place = true, .force_isa = a}, settings),
+                       x),
+          run_in_place(*make_plan_core(tight_view, {.in_place = true, .force_isa = b}, settings),
+                       x)))
+          << "c2c in place";
+    }
+    // Real rows: the complex line is n / 2 long for even n, n for odd n.
+    build_settings real;
+    real.radices = fftn::detail::rule_radices(n % 2 == 0 ? n / 2 : n, profile);
+    const std::size_t h = n / 2 + 1;
+    const std::vector<T> xr = src.reals<T>(rows * n);
+    const auto r2c_shape = fftn::rows_r2c<T>(n, rows);
+    const auto r2c = fftn::detail::view_of(r2c_shape);
+    EXPECT_TRUE(
+        bitwise_equal(run<T, c>(*make_plan_core(r2c, {.force_isa = a}, real), xr, rows * h),
+                      run<T, c>(*make_plan_core(r2c, {.force_isa = b}, real), xr, rows * h)))
+        << "r2c";
+    const cvec<T> xh = src.complexes<T>(rows * h);
+    const auto c2r_shape = fftn::rows_c2r<T>(n, rows);
+    const auto c2r = fftn::detail::view_of(c2r_shape);
+    EXPECT_TRUE(
+        bitwise_equal(run<c, T>(*make_plan_core(c2r, {.force_isa = a}, real), xh, rows * n),
+                      run<c, T>(*make_plan_core(c2r, {.force_isa = b}, real), xh, rows * n)))
+        << "c2r";
+  }
+}
+
+TEST(Passes, TargetsThatRoundAlikeGiveTheSameBits) {
+  const std::vector<fftn::isa> runnable = fftn::test::runnable_isas();
+  const auto runs = [&](fftn::isa t) { return std::ranges::find(runnable, t) != runnable.end(); };
+  int pairs = 0;
+  const std::vector<std::pair<fftn::isa, fftn::isa>> alike = {
+      {fftn::isa::neon, fftn::isa::neon_fcma},
+      {fftn::isa::avx2, fftn::isa::avx512},
+  };
+  for (const auto& [a, b] : alike) {
+    if (runs(a) && runs(b)) {
+      same_bits<double>(a, b);
+      same_bits<float>(a, b);
+      ++pairs;
+    }
+  }
+  if (pairs == 0) {
+    GTEST_SKIP() << "no pair of such targets runs here";
   }
 }
 

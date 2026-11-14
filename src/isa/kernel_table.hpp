@@ -28,7 +28,7 @@ template <class T> struct kernels_of {
   void (*pack_bcast_twiddles)(const T* w, std::size_t count, T* out);
   std::size_t complex_lanes; // C: complex numbers per complex register
   std::size_t real_lanes;    // W: reals per real register
-  std::size_t tw_reals;      // reals stored per twiddle: 2, or 4 where pre-arranged (x86)
+  std::size_t tw_reals;      // reals stored per twiddle: 2, or 4 where pre-arranged (x86, neon)
   // The passes (passes/pass_args.hpp).
   pass_kernels<T> passes;
 };
@@ -62,8 +62,14 @@ extern const kernel_table table;
 namespace avx2 {
 extern const kernel_table table;
 }
+namespace avx512 {
+extern const kernel_table table;
+}
 #endif
 #if FFTN_ARCH_AARCH64
+namespace neon {
+extern const kernel_table table;
+}
 namespace neon_fcma {
 extern const kernel_table table;
 }
