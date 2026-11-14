@@ -23,7 +23,8 @@ struct pass_args {
   std::ptrdiff_t dst_stride = 1;
   // The stage's twiddles in the storage form its kind reads (src/passes/stockham.inl).
   const void* twiddles = nullptr;
-  // The generic prime pass: the radix-th roots of unity, in broadcast storage.
+  // A second table: the generic prime pass's radix-th roots of unity, in broadcast
+  // storage; the fused real passes' pairing twiddles (src/passes/real.inl).
   const void* roots = nullptr;
   // Stockham geometry: radix, butterfly groups m and copies s (n = radix * m * s).
   std::size_t radix = 1;
@@ -73,6 +74,13 @@ struct radix_passes {
   pass_fn last[2][edge_op_count];
   // A whole transform of n = radix <= 16 in registers; input edge, output edge.
   pass_fn leaf[2][edge_op_count][edge_op_count];
+  // Real transforms of n = 2h with the pairing of bins k and h - k fused (DESIGN.md 9.1,
+  // passes/real.inl): the last pass of an r2c chain of h, [scaled]; the first pass of a
+  // c2r chain of h; the leaves of h = radix, [scaled].
+  pass_fn r2c_last[2];
+  pass_fn c2r_first;
+  pass_fn r2c_leaf[2];
+  pass_fn c2r_leaf[2];
 };
 
 template <class T> struct pass_kernels {
@@ -87,16 +95,20 @@ template <class T> struct pass_kernels {
   pass_fn bluestein_in[edge_op_count];
   pass_fn bluestein_out[edge_op_count];
   // Real-to-complex edges (DESIGN.md 9.1): even n = 2h through a complex transform of h,
-  // odd n through n. The output edges take [scaled].
-  pass_fn r2c_pack_pairs;
+  // whose pairing runs as a separate pass where no pass of the transform takes it; odd n
+  // through n. [scaled].
   pass_fn r2c_post[2];
   pass_fn r2c_pack;
   pass_fn r2c_store[2];
-  // Complex-to-real edges, the mirror images.
-  pass_fn c2r_pre;
-  pass_fn c2r_unpack_pairs[2];
+  // Complex-to-real edges, the mirror images (the pre-pass scales only when h = 1).
+  pass_fn c2r_pre[2];
   pass_fn c2r_expand;
   pass_fn c2r_store[2];
+  // Even real lines with a stride other than 1: packing, pairing at any stride, unpacking.
+  pass_fn r2c_pack_pairs;
+  pass_fn r2c_post_strided[2];
+  pass_fn c2r_pre_strided;
+  pass_fn c2r_unpack_pairs[2];
   // The grid's passes (src/passes/grid.inl): a block of columns copied row by row,
   // [scaled]; by direction, the twiddled transpose of the first phase and the twiddled
   // row copy of the later ones.

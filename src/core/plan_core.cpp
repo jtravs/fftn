@@ -289,17 +289,6 @@ void add_phase(program& p, std::size_t axis, const std::vector<std::size_t>& ext
   }
 }
 
-template <class T>
-std::string real_note(const chain_builder<T>& chain, std::size_t n, const char* kind) {
-  if (n % 2 == 0) {
-    return std::string(kind) + " through a half-length complex chain of " + std::to_string(n / 2) +
-           ", radices " + chain.radix_text(n / 2) +
-           (kind[0] == 'r' ? ", then a post-pass" : ", after a pre-pass");
-  }
-  return std::string(kind) + " through a full-length complex chain (n odd), radices " +
-         chain.radix_text(n);
-}
-
 // The edge operations of the c2c phases: the input edge belongs to the first phase, the
 // output edge to the last (DESIGN.md 12.1). The scale goes on the output edge, where it is
 // exactly a scaling of the result, unless that edge has a factor (or a test asks).
@@ -326,17 +315,16 @@ line_edges c2c_edges(const options& opts, const build_settings& settings, bool f
   return e;
 }
 
-// Whether a c2c row of one axis is a grid (DESIGN.md 8.5, experiment X12), and its split:
-// beyond the profile's grid_min_bytes or when forced, if the row is contiguous on both
-// sides, carries no edge factor (the grid applies only the scale, on its output or, with
-// build_settings::scale_on_input, its input), has no
-// forced radices for its whole length and has a split whose phases are codelet chains.
+// Whether a complex row of n of one axis is a grid (DESIGN.md 8.5, experiment X12), and
+// its split: beyond the profile's grid_min_bytes or when forced, if the row is contiguous on
+// both sides, carries no edge factor (the grid applies only the scale, on its output or,
+// with build_settings::scale_on_input, its input), has no forced radices for its whole
+// length and has a split whose phases are codelet chains. The row is a c2c row or the
+// half-length complex transform of a real row of 2n (DESIGN.md 9.1).
 template <class T>
-grid_split plan_grid(const plan_core& c, const side& in, const side& out,
-                     const build_settings& settings, const chain_builder<T>& chain,
-                     std::size_t lanes) {
-  const std::size_t n = c.lengths[0];
-  if (settings.strategy == strategy_choice::chain || settings.in_factor != nullptr ||
+grid_split plan_grid(std::size_t n, const side& in, const side& out, const build_settings& settings,
+                     const chain_builder<T>& chain, std::size_t lanes) {
+  if (n < 2 || settings.strategy == strategy_choice::chain || settings.in_factor != nullptr ||
       settings.out_factor != nullptr || in.stride[0] != 1 || out.stride[0] != 1) {
     return {};
   }
@@ -364,13 +352,48 @@ grid_split plan_grid(const plan_core& c, const side& in, const side& out,
   return g;
 }
 
+// When the pairing of an even real line fuses (strategies/chain.hpp, DESIGN.md 9.1). The
+// rule: radix 8 (4 on avx2, whose 16 registers two radix-8 butterflies overfill), r2c only
+// within L1 (the grid's threshold). A forced radix limit applies alone (tests).
+real_fusion fusion_of(const build_settings& settings, target t) {
+  if (settings.fuse_real_radix != 0) {
+    return {.radix = settings.fuse_real_radix, .min_lanes = 0, .r2c_bytes = SIZE_MAX};
+  }
+  return {
+      .radix = t == target::avx2 ? std::size_t{4} : std::size_t{8},
+      .min_lanes = 4,
+      .r2c_bytes = settings.profile.grid_min_bytes,
+  };
+}
+
+// Makes the records from `first` on read the output slot where they read the input: the
+// grid of a c2r row runs in place on the output, which the pairing pass has written (the
+// grid builder reads its input from the input slot, and with in_place set touches it only
+// through phase 1's gather and that phase's loop).
+void read_output_for_input(program& p, std::size_t first) {
+  for (std::size_t i = first; i < p.records.size(); ++i) {
+    if (stage* st = std::get_if<stage>(&p.records[i])) {
+      if (st->src == slot::in) {
+        st->src = slot::out;
+      }
+      continue;
+    }
+    loop& l = std::get<loop>(p.records[i]);
+    if (l.step[0] != 0) {
+      l.step[1] = l.step[0];
+      l.step[0] = 0;
+    }
+  }
+}
+
 template <class T>
 void build(plan_core& c, const shape_view& s, const side& in, const side& out, const options& opts,
            const build_settings& settings) {
   c.isa_target = plan_target(opts);
   const kernels_of<T>& kernels = of<T>(*find_kernels(c.isa_target));
   chain_builder<T> chain(kernels, profile_of(c.isa_target, kernels.complex_lanes), tables_of<T>(c),
-                         settings.chunk_points, settings.radices, settings.bluestein_above);
+                         settings.chunk_points, settings.radices, settings.bluestein_above,
+                         fusion_of(settings, c.isa_target));
   program& p = c.prog;
   const std::size_t r = s.axes.size();
   const auto complex_bytes = static_cast<std::ptrdiff_t>(2 * sizeof(T));
@@ -401,9 +424,44 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
 
   const grid_split grid_plan =
       s.kind == transform_kind::c2c && r == 1
-          ? plan_grid<T>(c, in, out, settings, chain, kernels.complex_lanes)
+          ? plan_grid<T>(c.lengths[0], in, out, settings, chain, kernels.complex_lanes)
           : grid_split{};
-  if (grid_plan.phases != 0) {
+  // A real row of one axis whose half-length complex transform is a grid (DESIGN.md 9.1):
+  // the grid writes the output and the pairing runs after it in place (r2c), or the pairing
+  // writes the output and the grid runs in place there (c2r).
+  const grid_split real_grid =
+      s.kind != transform_kind::c2c && r == 1 && c.lengths[0] % 2 == 0
+          ? plan_grid<T>(c.lengths[0] / 2, in, out, settings, chain, kernels.complex_lanes)
+          : grid_split{};
+  if (real_grid.phases != 0) {
+    const std::size_t n = c.lengths[0];
+    const bool r2c = s.kind == transform_kind::r2c;
+    grid_builder<T> grid(kernels, chain, tables_of<T>(c));
+    const bool in_place = c.in_place || !r2c;
+    if (grid_builder<T>::uses_block(real_grid, in_place)) {
+      c.block_elements = n / 2;
+    }
+    std::vector<stage> pairing;
+    if (r2c) {
+      scratch = grid.c2c_row(real_grid, -1, in_place, 1.0, false, p);
+      chain.add_pairing(true, n, {slot::out, 1}, {slot::out, 1}, opts.scale, pairing);
+      p.records.emplace_back(std::move(pairing.front()));
+    } else {
+      chain.add_pairing(false, n, {slot::in, 1}, {slot::out, 1}, 1.0, pairing);
+      p.records.emplace_back(std::move(pairing.front()));
+      const std::size_t first = p.records.size();
+      scratch = grid.c2c_row(real_grid, +1, true, opts.scale, false, p);
+      read_output_for_input(p, first);
+    }
+    c.axis_notes.push_back("axis 0 (n = " + std::to_string(n) + "): " + (r2c ? "r2c" : "c2r") +
+                           " through a half-length complex " + grid.note(real_grid) +
+                           (r2c ? ", then a pairing pass" : ", after a pairing pass"));
+    c.strategy_note = std::string("grid for the half-length complex transform (") +
+                      std::to_string(real_grid.phases) +
+                      " phases, each depth-first over blocks of columns" +
+                      (c.block_elements != 0 ? "; an intermediate array in the workspace block" : "") +
+                      "), each transform finished before the next";
+  } else if (grid_plan.phases != 0) {
     grid_builder<T> grid(kernels, chain, tables_of<T>(c));
     if (grid_builder<T>::uses_block(grid_plan, c.in_place)) {
       c.block_elements = c.lengths[0];
@@ -431,12 +489,15 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     }
   } else if (s.kind == transform_kind::r2c) {
     std::vector<stage> st;
-    const std::size_t need = chain.r2c_line(c.lengths[r - 1], at(in_view, r - 1),
-                                            at(out_view, r - 1), r == 1 ? opts.scale : 1.0, st);
+    const std::size_t need =
+        chain.r2c_line(c.lengths[r - 1], at(in_view, r - 1), at(out_view, r - 1), c.in_place,
+                       r == 1 ? opts.scale : 1.0, st);
     lines(r - 1, in.extent, in_view, out_view, need, std::move(st));
     c.axis_notes.push_back("axis " + std::to_string(r - 1) +
                            " (n = " + std::to_string(c.lengths[r - 1]) +
-                           "): " + real_note(chain, c.lengths[r - 1], "r2c"));
+                           "): " +
+                           chain.real_text(c.lengths[r - 1], true,
+                                           in.stride[r - 1] != 1 || out.stride[r - 1] != 1));
     for (std::size_t i = r - 1; i > 0; --i) {
       const std::size_t d = i - 1;
       std::vector<stage> cs;
@@ -491,7 +552,9 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     lines(r - 1, out.extent, src, out_view, need, std::move(st));
     c.axis_notes.push_back("axis " + std::to_string(r - 1) +
                            " (n = " + std::to_string(c.lengths[r - 1]) +
-                           "): " + real_note(chain, c.lengths[r - 1], "c2r"));
+                           "): " +
+                           chain.real_text(c.lengths[r - 1], false,
+                                           src.stride[r - 1] != 1 || out.stride[r - 1] != 1));
   }
   for (std::size_t b = 0; b < p.batch_loops; ++b) {
     std::get<loop>(p.records[b]).body_end = static_cast<std::uint32_t>(p.records.size());
