@@ -362,7 +362,7 @@ real_fusion fusion_of(const build_settings& settings, target t) {
   return {
       .radix = t == target::avx2 ? std::size_t{4} : std::size_t{8},
       .min_lanes = 4,
-      .r2c_bytes = settings.profile.grid_min_bytes,
+      .r2c_bytes = settings.profile.grid_block_bytes, // the L1 data cache (task 2.1, X6)
   };
 }
 

@@ -18,7 +18,8 @@
 
 namespace fftn::inline v0::detail {
 
-struct topology; // platform/topology.hpp
+struct topology;   // platform/topology.hpp
+struct core_class; // platform/topology.hpp
 
 // The constants the rules use, per machine. Experiments T1 (fixed costs) and T5 (split
 // thresholds) calibrated them on a Zen 3 CCX (EPYC 7763), an Apple performance cluster (M5
@@ -87,8 +88,11 @@ struct machine_profile {
   // rather than two beyond grid_three_bytes; the grid widens its column blocks while one
   // block's scratch (lines a and b) stays within grid_block_bytes. grid_block forces the
   // block width (0: by that rule). default_machine_profile sets the sizes from the caches
-  // of the fastest cores (platform/topology.hpp): the L1 data cache's size for the first
-  // and third, an eighth of L2 for the second.
+  // of the fastest cores (set_grid_sizes, experiment X12b): grid_block_bytes is the L1 data
+  // cache; with an L2 of each core's own (x86) the grid starts beyond half of L2 and three
+  // phases beyond L2, with an L2 shared by a cluster (Apple) beyond L1 and an eighth of L2.
+  // grid_block_bytes (the L1 data cache) also bounds the r2c pairing's fusion
+  // (core/plan_core.cpp, fusion_of; task 2.1 measured fusion losing beyond L1).
   std::size_t grid_min_bytes = 64 * 1024;
   std::size_t grid_three_bytes = 2 * 1024 * 1024;
   // Up to grid_fuse_bytes per row, a grid phase whose radices are all small reads and
@@ -109,6 +113,10 @@ struct machine_profile {
 
 // The profile of the running machine: profile_for its topology, with its CPU count.
 [[nodiscard]] machine_profile default_machine_profile() noexcept;
+
+// Sets the grid's size fields from the caches of one core class, the fastest (sizes of 0:
+// unknown, which keeps the fields' defaults).
+void set_grid_sizes(machine_profile& p, const core_class& c) noexcept;
 
 // Which lanes (team members) share a cache: contiguous runs of group_size ranks (fftn::team).
 struct lane_map {
