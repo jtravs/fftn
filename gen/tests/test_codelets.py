@@ -9,9 +9,11 @@ import functools
 import unittest
 
 import mpmath
-from fftn_gen.algorithms import choose
+from fftn_gen.algorithms import choose, dft
 from fftn_gen.catalogue import RADICES, all_codelets
 from fftn_gen.codelet import build_ops
+from fftn_gen.ir import Graph
+from fftn_gen.lower import lower
 from fftn_gen.schedule import peak_live, schedule
 from fftn_gen.verify import VerificationError, verify
 
@@ -103,6 +105,19 @@ def _breadth_first(ops: list) -> list:
     ]
 
 
+def _with(ops: list, i: int, **changes: object) -> list:
+    return [*ops[:i], dataclasses.replace(ops[i], **changes), *ops[i + 1 :]]
+
+
+def _insert(ops: list, i: int, op: object) -> list:
+    return [*ops[:i], op, *ops[i:]]
+
+
+def _copy(op: object, dst: int) -> object:
+    """The same access into a new value, which nothing reads."""
+    return dataclasses.replace(op, dst=dst)
+
+
 def _stores_between(ops: list, start: int, end: int) -> int:
     return sum(1 for o in ops[start + 1 : end] if o.kind == "store")
 
@@ -134,6 +149,40 @@ class Verification(unittest.TestCase):
             verify(c.ops, 7, "dif", 1)
         with self.assertRaises(VerificationError):
             verify(c.ops, 7, "dit", -1)
+
+    def test_a_load_of_twiddle_zero_is_caught(self) -> None:
+        # A DIT builder that also multiplies leg 0 computes a correct DFT of its inputs
+        # times twiddles, but the tables hold no twiddle for leg 0.
+        g = Graph(4, twiddles=3)
+        x = [g.tw_mul(g.input(j), g.twiddle(j), False) for j in range(4)]
+        ops = schedule(lower(g, dft(g, x, -1)))
+        self.assertIn(0, [op.index for op in ops if op.kind == "load_tw"])
+        with self.assertRaisesRegex(VerificationError, "load_tw indices"):
+            verify(ops, 4, "dit", -1)
+
+    def test_out_of_range_or_repeated_accesses_are_caught(self) -> None:
+        c = next(c for c in codelets() if (c.radix, c.variant, c.sign) == (5, "dit", -1))
+        ops = list(c.ops)
+        fresh = max(op.dst for op in ops) + 1
+        first_load = next(i for i, op in enumerate(ops) if op.kind == "load")
+        first_tw = next(i for i, op in enumerate(ops) if op.kind == "load_tw")
+        first_store = next(i for i, op in enumerate(ops) if op.kind == "store")
+        seeded = {
+            "input out of range": _with(ops, first_load, index=5),
+            "input loaded twice": _insert(ops, first_load, _copy(ops[first_load], fresh)),
+            "twiddle out of range": _with(ops, first_tw, index=5),
+            "twiddle loaded twice": _insert(ops, first_tw, _copy(ops[first_tw], fresh)),
+            "output out of range": _with(ops, first_store, index=5),
+            "output stored twice": [*ops, ops[first_store]],
+        }
+        for name, bad in seeded.items():
+            with self.subTest(name), self.assertRaisesRegex(VerificationError, "indices"):
+                verify(bad, 5, "dit", -1)
+
+    def test_a_twiddle_load_in_a_plain_codelet_is_caught(self) -> None:
+        dit = next(c for c in codelets() if (c.radix, c.variant, c.sign) == (3, "dit", -1))
+        with self.assertRaisesRegex(VerificationError, "load_tw indices"):
+            verify(dit.ops, 3, "plain", -1)
 
     def test_a_missing_store_is_caught(self) -> None:
         c = next(c for c in codelets() if (c.radix, c.variant, c.sign) == (3, "plain", -1))
