@@ -180,8 +180,10 @@ void lane_pass(const pass_args* a, std::size_t first, std::size_t last) {
   const T* table = static_cast<const T*>(a->twiddles);
   const std::ptrdiff_t in_leg = at(s * m, 2);
   const std::ptrdiff_t out_leg = at(s, ys);
-  std::size_t p = first / blocks;
-  std::size_t b = first % blocks;
+  // No division when the range starts in the first group (a whole stage): it is slow on
+  // some x86 cores (dev/experiments/X18-x86-kernels.md).
+  std::size_t p = first < blocks ? 0 : first / blocks;
+  std::size_t b = first < blocks ? first : first % blocks;
   // factor_sharing::output (m = 1, so unit u is copies u C ..): the entry g = u C /
   // factor_copies, advanced every per_entry units rather than divided per unit (a
   // division per unit of a radix-12 last pass is a few per cent of it), and the entries
@@ -192,8 +194,8 @@ void lane_pass(const pass_args* a, std::size_t first, std::size_t last) {
   std::ptrdiff_t f_leg = 0;
   if constexpr (Share == factor_sharing::output) {
     per_entry = a->factor_copies / C<T>;
-    g = first / per_entry;
-    g_left = per_entry - first % per_entry;
+    g = first < per_entry ? 0 : first / per_entry;
+    g_left = per_entry - (first < per_entry ? first : first % per_entry);
     f_leg = at(s / a->factor_copies, 2);
   }
   for (std::size_t u = first; u < last; ++u) {

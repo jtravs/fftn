@@ -24,12 +24,17 @@ constexpr std::size_t largest_leaf = 16;
 // so their columns are radix 10's and 12's scaled by the codelets' operation counts.
 // The overrides are the lengths where the costs' choice was more than 2 % slower than
 // planner v0 in the refinement; each is the measured winner, which no batch of that
-// precision measured slower than v0.
-constexpr std::array<radix_override, 4> avx2_double_overrides{{
+// precision measured slower than v0. 4096 and 16384 lie beyond the fit, where its radix-16
+// passes (18 live values in 16 registers) lose: experiment X18 measured 8.8.8.8 at 0.75 of
+// the fitted 4.8.8.16 and 8.8.16.16 at 0.84 of 4.16.16.16 (EPYC 7763, one row), until X2's
+// campaign over the longer lengths replaces them.
+constexpr std::array<radix_override, 6> avx2_double_overrides{{
     {.n = 42, .radices = {2, 3, 7, 0}},
     {.n = 70, .radices = {2, 5, 7, 0}},
     {.n = 350, .radices = {2, 5, 5, 7}},
     {.n = 490, .radices = {2, 7, 5, 7}},
+    {.n = 4096, .radices = {8, 8, 8, 8}},
+    {.n = 16384, .radices = {8, 8, 16, 16}},
 }};
 constexpr std::array<radix_override, 2> avx2_float_overrides{{
     {.n = 140, .radices = {4, 5, 7, 0}},
