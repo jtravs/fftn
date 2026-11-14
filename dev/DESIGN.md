@@ -1072,8 +1072,12 @@ w_(Ni M)^(c k); after the last phase the output is in natural order. Each phase 
 blocks of `block` adjacent columns (program loops, one independent iteration per block): a
 block is gathered row by row into tight scratch a, transformed there by a chain of lane
 passes (s ≥ block ≥ C, so none is grouped and none has tails; the radices are the fewest
-passes, most even, not planner v1's, whose tables price a grouped first pass), and written
-back row by row. Phase 1's columns become rows, so it writes through a twiddled transpose
+passes, most even, of radix up to 16, not planner v1's, whose tables price a grouped first
+pass), and written back row by row. Experiment X3 allowed phase radices up to 64
+(`build_settings::grid_phase_radix`): they lost at 4096–16384 (up to 1.8 times, a 64-point
+phase where two radix-8 passes were cheaper) and won at 32768–65536 on the Xeon (0.87–0.98
+on both instruction sets) and the EPYC at 32768 (0.94–0.98); a phase radix that depends on
+the length waits for X12b's grid thresholds, so the default stays 16. Phase 1's columns become rows, so it writes through a twiddled transpose
 (C × C tiles transposed in registers) with each element's twiddle w_n^(c k) formed as
 w_n^(q k) w_n^(c0 k) from two small tables (one rounding more than a stored twiddle; a
 table of n values cost memory traffic and plan memory for no measured gain); later phases'
@@ -1346,8 +1350,8 @@ replaced planner v0 (task 1.2: FFTL.jl's single-line rules, T. Knopp, MIT licenc
 the register count and on merged radices), which X2 found 1.25 times slower than the best
 sequence in double and 1.44 times in single precision on AVX2 (geometric means over the
 7-smooth lengths up to 1024). A profile is the precision's number of complex lanes C and a
-cost table: for each pass kind and codelet radix R (2 to 16) a cost per unit and a cost per
-tail, and a cost per pass. For a line of n points:
+cost table: for each pass kind and codelet radix R (2 to 16, and 32 and 64 where the table
+prices them) a cost per unit and a cost per tail, and a cost per pass. For a line of n points:
 
 1. n = 1: no pass. n ≤ 16, or n a codelet radix (32, 64) no larger than the profile's
    leaf limit (experiment X8: 32 on NEON in double, 16 elsewhere): one leaf of radix n.
@@ -1362,7 +1366,8 @@ tail, and a cost per pass. For a line of n points:
    7-smooth length from 2Q − 1 to the next power of two that minimises twice the cost of
    rule 4's sequence for M plus two elementwise passes of M points (priced as a last
    radix-2 pass per point), the smallest on a tie (`bluestein_length`).
-4. The codelet passes are the sequence of radices from 2 to 16 multiplying to n_s with the
+4. The codelet passes are the sequence of radices from 2 to 16 (and 32 and 64 where the
+   table's unit cost for them is not 0) multiplying to n_s with the
    lowest cost, the sum of its passes' costs. The pass of radix R after passes whose
    radices multiply to s has m = n/(R s) and:
    - kind *first* if s = 1, *last* if R s = n_s and no generic pass follows, *middle*
@@ -1390,8 +1395,14 @@ to 1024). Tables are keyed by target and C (`measured_tables` in `rules.cpp`;
 added without touching the search. A target and C without a table of their own take
 AVX2's table of the nearest C (the C = 2 table for C = 1, the C = 4 table for C = 8) with
 their own C in rule 4, so the structure carries over but the costs are unmeasured there:
-AVX-512, x86-64-v2, AVX and scalar until X2 runs on them (X16 decides AVX-512's table and
-FFTL's radix-16 gate for it). NEON has its own tables (C = 1 and 2), fitted to X2's
+AVX-512 in double, x86-64-v2, AVX and scalar until X2 runs on them. AVX-512 in float (C =
+8) has its own table (experiment X3): AVX2's C = 4 costs up to radix 16 with radix 32 and 64
+columns fitted to a search on the Xeon over the multiples of 32 up to 2048 whose candidates
+contained 32 or 64 (`fit.py --base`), plus overrides where the choice missed the measured
+winner in every case (256 = 32·8, 512 = 32·16, 768 = 8·3·32) and at 4096 (8·16·32: the
+extrapolated columns chose 32·4·32, 2–11 % slower); wherever its choice has
+neither 32 nor 64 it is AVX2's at C = 8. Every other table leaves those columns 0, so
+radix 32 and 64 passes stay out of their chains: they tied or lost there (X3). NEON has its own tables (C = 1 and 2), fitted to X2's
 campaign on an Apple M5 Max with `neon_fcma`; plain `neon` takes them too, unmeasured on a
 core without FCMA. Lengths above 1024 are unmeasured.
 

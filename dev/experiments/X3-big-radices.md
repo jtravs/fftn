@@ -106,6 +106,31 @@ tables). Ratios are arm ÷ A, bands ±1.0–1.4 %.
   within 1 %. So comparisons against A at those lengths are invalid; the same-plan
   `chain`/`grid` arms are the reference there.
 
+Long rows and the Xeon's `avx2` (runs 20261114-182424-264a, -183721-1230, -185515-f896 for
+`avx512` 16384–65536; -191534-f69f to -201742-9125 for `avx2`; EPYC 20261114-181711-ff80,
+-182751-37e4, -184128-5d86; bands ±1.0–1.5 %):
+
+- **Chains beyond the grid threshold.** On the Xeon a chain with radix 32 beats the default
+  grid at every length up to 16384 in float (0.57–0.65 at 16384 on `avx512`, against 0.69–0.71
+  for the radix-16 chain) and in double (0.84–0.92 at 16384), on both instruction sets; at
+  32768–65536 they mostly win at batch 1 (0.76–0.98) and lose at batch 64 in double and at
+  65536 (1.04–1.41). On the EPYC big chains lose at
+  16384–65536 (1.09–3.7) while the radix-16 chain beats the grid at 16384 double (0.88–0.90).
+  Where the grid starts is X12b's question; X3 only records that radix 32 widens the chain's
+  lead where the chain is the better strategy on the Xeon.
+- **Grid phases with radix 32 and 64 at 32768–65536.** The phase rule allowed radix 64
+  (`g64`, or the splits 32 × 32 × 32 and 32 × 32 × 64 with single-pass phases) beats the
+  radix-16 grid on the Xeon at 32768 and 65536 in both precisions and on both instruction
+  sets (`avx512` 0.89–0.98, `avx2` 0.87–0.95), and on the EPYC at 32768 (0.94–0.98) but not
+  at 65536 in float (1.04). At 4096–16384 the same rule loses (1.0–1.8): there it puts a
+  64-point phase where two radix-8 passes were cheaper. A phase radix that depends on the
+  length (32 from 32768) would pass rule 1 on the Xeon; it is left as a follow-up for after
+  X12b moves the grid threshold, since both decide which plans those lengths get.
+- **Xeon `avx2` float** also gains from radix 32 chains at 512 (16.32 0.86) and 1024 (32.32
+  0.94), unlike the EPYC on the same instruction set (1.00–1.07): a table per target cannot
+  serve both, and AVX-512 is the Xeon's default target (in float it is 1.6 times faster
+  than `avx2` there: 0.83 against 1.35 ns per point at 512).
+
 Screen (rule 1): passes for `avx512` float (512, 1024, 4096 by more than 3 %); fails for
 `avx512` double at chain lengths, for the EPYC's `avx2` and for the Mac. Step 2 for
 `avx512` float: campaign xeon-avx512-big (search.py `--radices 2-16,32,64 --require
