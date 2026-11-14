@@ -176,6 +176,18 @@ inline constexpr pass_kernels<T> pass_table{
                 &copy_pass<T, fac, fac>,
             },
         },
+    .bluestein_in =
+        {
+            &bluestein_in<T, nop>,
+            &bluestein_in<T, scl>,
+            &bluestein_in<T, fac>,
+        },
+    .bluestein_out =
+        {
+            &bluestein_out<T, nop>,
+            &bluestein_out<T, scl>,
+            &bluestein_out<T, fac>,
+        },
     .r2c_pack_pairs = &r2c_pack_pairs<T>,
     .r2c_post =
         {

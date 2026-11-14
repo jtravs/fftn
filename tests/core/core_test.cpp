@@ -188,7 +188,7 @@ TEST(Rules, MeasuredExamples) {
   EXPECT_EQ(r(42, f64), (v{2, 3, 7}));
   EXPECT_EQ(r(490, f64), (v{2, 7, 5, 7}));
   EXPECT_EQ(r(700, f32), (v{4, 7, 5, 5}));
-  // Primes above the codelets go last, as generic passes.
+  // Primes above the codelets go last (the chain makes them a Bluestein stage).
   EXPECT_EQ(r(34, f64), (v{2, 17}));
 }
 
@@ -209,6 +209,19 @@ TEST(Rules, DescribeSaysWhenRadicesAreForced) {
   EXPECT_NE(with.find("radices 2 x 8 x 16\n"), std::string::npos) << with;
   EXPECT_EQ(without.find("build_settings"), std::string::npos) << without;
   EXPECT_NE(without.find("radices from planner v1\n"), std::string::npos) << without;
+}
+
+// describe() names a Bluestein stage, its convolution length M and M's radices, in the
+// axis line and in the stages (strategies/chain.hpp).
+TEST(Rules, DescribeNamesTheBluesteinStage) {
+  const auto shape = fftn::rows_c2c<double>(4 * 257, 1, fftn::direction::forward);
+  const auto core = make_plan_core(fftn::detail::view_of(shape), {}, build_settings{});
+  const std::string text = describe(*core);
+  EXPECT_NE(text.find("radices 4 x bluestein 257 (M "), std::string::npos) << text;
+  EXPECT_NE(text.find("bluestein in, chirp forward (Q 257, M "), std::string::npos) << text;
+  EXPECT_NE(text.find("bluestein convolution: "), std::string::npos) << text;
+  EXPECT_NE(text.find("bluestein out, chirp forward (Q 257, M "), std::string::npos) << text;
+  EXPECT_NE(text.find("copies 4"), std::string::npos) << text;
 }
 
 std::vector<std::byte> run(const fftn::detail::plan_core& core, std::vector<std::byte> input,

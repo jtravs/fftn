@@ -610,9 +610,10 @@ TEST(Describe, NamesTheProgram) {
            "double",
            isa.c_str(),
            "chain",
-           "radices 4 x 17",
+           "radices 4 x bluestein 17 (M ",
            "grouped radix-4 forward",
-           "generic radix-17 forward",
+           "bluestein in, chirp forward (Q 17, M ",
+           "bluestein out",
            "loop batch x3",
            "workspace",
        }) {

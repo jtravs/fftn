@@ -28,8 +28,12 @@ struct build_settings {
   std::size_t chunk_points = 2048;
   // The radices, in pass order, of every complex line whose length they multiply to,
   // instead of the rules' choice (strategies/chain.hpp). Any radix above 16 goes through
-  // the generic pass.
+  // the generic pass, except trailing radices above the Bluestein threshold, which form
+  // one Bluestein stage.
   std::vector<std::size_t> radices;
+  // The Bluestein threshold instead of the profile's when not 0 (strategies/chain.hpp):
+  // 16 sends every prime factor above 16 through Bluestein, SIZE_MAX none.
+  std::size_t bluestein_above = 0;
   // The factor edge operation (DESIGN.md 12.1), which the public API does not offer yet:
   // n complex values of the plan's precision multiplying the input (before the transform)
   // or the output (after it) of every row of a c2c plan of one axis. The arrays must

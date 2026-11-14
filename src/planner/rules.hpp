@@ -43,6 +43,9 @@ struct pass_costs {
 struct target_profile {
   std::size_t lanes = 1;             // C: complex numbers per vector register
   const pass_costs* costs = nullptr; // never null in a profile from profile_of
+  // Prime factors above this go through one Bluestein stage at the end of the chain;
+  // those from 17 up to it are generic passes (DESIGN.md 11.2).
+  std::size_t bluestein_above = 0;
 };
 
 // The profile of target t for a precision with `lanes` complex lanes: the table measured
@@ -55,5 +58,10 @@ struct target_profile {
 // Prime factors above 16 are generic passes, ascending, after the codelet passes; radices
 // above 16 are such primes.
 [[nodiscard]] std::vector<std::size_t> rule_radices(std::size_t n, const target_profile& p);
+
+// The convolution length of a Bluestein stage for a transform of q points: the 7-smooth
+// M >= 2q - 1, at most the next power of two, whose chain (rule_radices) plus the two
+// chirp passes cost least; the smallest on a tie. Precondition: q >= 2.
+[[nodiscard]] std::size_t bluestein_length(std::size_t q, const target_profile& p);
 
 } // namespace fftn::inline v0::detail
