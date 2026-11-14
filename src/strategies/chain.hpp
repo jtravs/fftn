@@ -115,6 +115,11 @@ private:
   const T* shared_twiddles(std::size_t n, std::size_t radix, std::size_t s);
   const T* radix_roots(std::size_t radix);
   const T* edge_twiddles(std::size_t n);
+  struct bluestein_tables {
+    const T* chirp;
+    const T* kernel;
+  };
+  bluestein_tables bluestein_tables_of(std::size_t q, int sign, std::size_t copies);
   [[nodiscard]] std::uint32_t chunks_of(std::size_t units, std::size_t points_per_unit) const;
   [[nodiscard]] std::size_t blocks(std::size_t count) const;
   // The passes of a chain of n from scratch slot `from` into scratch; returns the slot
@@ -148,6 +153,8 @@ private:
   std::map<std::pair<std::size_t, std::size_t>, const T*> grouped_tables_;              // (n, R)
   std::map<std::tuple<std::size_t, std::size_t, std::size_t>, const T*> shared_tables_; // n, R, s
   std::map<std::size_t, const T*> radix_roots_;                                         // R
+  std::map<std::pair<std::size_t, int>, const T*> kernel_tables_;                       // Q, sign
+  std::map<std::tuple<std::size_t, int, std::size_t>, const T*> chirp_tables_; // Q, sign, copies
 };
 
 extern template class chain_builder<double>;

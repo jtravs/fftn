@@ -89,15 +89,55 @@ void grouped_pass(const pass_args* a, std::size_t first, std::size_t last) {
   }
 }
 
+// The butterflies of one unit of a lane pass, from accessors in and out.
+template <class T, std::size_t R, int Sign, bool Twiddled, class In, class Out>
+FFTN_FORCE_INLINE void lane_unit(const In& in, const Out& out, const T* table, std::size_t p) {
+  if constexpr (Twiddled) {
+    const shared_twiddles<T> twid{table + tw_reals<T> * (R - 1) * p};
+    cdft<R>::template dif<T, Sign>(in, out, twid);
+  } else {
+    cdft<R>::template plain<T, Sign>(in, out);
+  }
+}
+
+// The input accessor of a lane pass's unit: plain, or (SharedIn) each leg j times entry
+// p + m j of in_factor, the same for every copy (run_in_shared).
+template <class T, bool Full, bool SharedIn>
+FFTN_FORCE_INLINE auto lane_input(const pass_args* a, const T* xp, std::ptrdiff_t leg,
+                                  std::size_t valid, std::size_t p) {
+  if constexpr (SharedIn) {
+    return run_in_shared<T, Full>{
+        .p = xp,
+        .leg = leg,
+        .step = 2,
+        .valid = valid,
+        .f = static_cast<const T*>(a->in_factor) + at(p, 2),
+        .f_leg = at(a->m, 2),
+    };
+  } else {
+    return run_in<T, edge_op::none, Full>{
+        .p = xp,
+        .leg = leg,
+        .step = 2,
+        .valid = valid,
+        .op = {},
+    };
+  }
+}
+
 // A later pass of a chain, with lanes over copies q (DESIGN.md 8.2): a middle pass
 // (Twiddled, m > 1, the DIF codelet) or the last (m = 1, the plain codelet). Unit u is
 // group p = u / blocks and copies q = (u % blocks) C .. + C - 1, blocks = ceil(s / C);
 // the last block of a group has fewer when C does not divide s. twiddles: broadcast
 // storage (pack_bcast_twiddles), R - 1 per group p, w^(p k) for k = 1 .. R - 1, the same
-// for every lane. The output edge's operation applies to what is stored. src: scratch,
-// stride 1; dst: any stride when C == 1, else 1. Reads src, dst_stride, m, s, twiddles,
-// scale, out_factor.
-template <class T, std::size_t R, int Sign, bool Twiddled, edge_op OutOp>
+// for every lane. The output edge's operation applies to what is stored. SharedIn: input
+// leg j of group p is multiplied by in_factor's entry p + m j (m R tight complex values),
+// shared by the copies: the first backward pass of a Bluestein convolution, whose copies
+// are the stage's s sequences and whose input element p + m j takes the kernel spectrum's
+// entry of that index (bluestein.inl). src: scratch, stride 1; dst: any stride when
+// C == 1, else 1. Reads src, dst_stride, m, s, twiddles, scale, out_factor, and in_factor
+// when SharedIn.
+template <class T, std::size_t R, int Sign, bool Twiddled, edge_op OutOp, bool SharedIn = false>
 void lane_pass(const pass_args* a, std::size_t first, std::size_t last) {
   const T* x = static_cast<const T*>(a->src);
   T* y = static_cast<T*>(a->dst);
@@ -118,13 +158,6 @@ void lane_pass(const pass_args* a, std::size_t first, std::size_t last) {
     T* yp = y + at(e0, ys);
     const edge<T, OutOp> op = make_edge<T, OutOp>(a, a->out_factor, e0, s);
     if (valid == C<T>) {
-      const run_in<T, edge_op::none, true> in{
-          .p = xp,
-          .leg = in_leg,
-          .step = 2,
-          .valid = valid,
-          .op = {},
-      };
       const run_out<T, OutOp, true> out{
           .p = yp,
           .leg = out_leg,
@@ -132,20 +165,9 @@ void lane_pass(const pass_args* a, std::size_t first, std::size_t last) {
           .valid = valid,
           .op = op,
       };
-      if constexpr (Twiddled) {
-        const shared_twiddles<T> twid{table + tw_reals<T> * (R - 1) * p};
-        cdft<R>::template dif<T, Sign>(in, out, twid);
-      } else {
-        cdft<R>::template plain<T, Sign>(in, out);
-      }
+      lane_unit<T, R, Sign, Twiddled>(lane_input<T, true, SharedIn>(a, xp, in_leg, valid, p), out,
+                                      table, p);
     } else {
-      const run_in<T, edge_op::none, false> in{
-          .p = xp,
-          .leg = in_leg,
-          .step = 2,
-          .valid = valid,
-          .op = {},
-      };
       const run_out<T, OutOp, false> out{
           .p = yp,
           .leg = out_leg,
@@ -153,12 +175,8 @@ void lane_pass(const pass_args* a, std::size_t first, std::size_t last) {
           .valid = valid,
           .op = op,
       };
-      if constexpr (Twiddled) {
-        const shared_twiddles<T> twid{table + tw_reals<T> * (R - 1) * p};
-        cdft<R>::template dif<T, Sign>(in, out, twid);
-      } else {
-        cdft<R>::template plain<T, Sign>(in, out);
-      }
+      lane_unit<T, R, Sign, Twiddled>(lane_input<T, false, SharedIn>(a, xp, in_leg, valid, p), out,
+                                      table, p);
     }
     if (++b == blocks) {
       b = 0;

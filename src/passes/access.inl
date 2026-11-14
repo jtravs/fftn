@@ -143,6 +143,22 @@ template <class T, edge_op Op, bool Full> struct run_in {
   }
 };
 
+// Leg j of a run times a factor that every lane shares: the value at f + leg j (tight
+// complex values f_leg reals apart), broadcast. A lane pass whose lanes are copies of one
+// sequence multiplies by a factor of the sequence's element this way, one table entry per
+// element for all the copies (a Bluestein convolution's kernel spectrum, bluestein.inl).
+template <class T, bool Full> struct run_in_shared {
+  const T* p;
+  std::ptrdiff_t leg;
+  std::ptrdiff_t step;
+  std::size_t valid;
+  const T* f;
+  std::ptrdiff_t f_leg;
+  [[nodiscard]] FFTN_FORCE_INLINE cv<T> get(std::size_t j) const {
+    return cmul(load_run<T, Full>(p + at(j, leg), step, valid), bcast(f + at(j, f_leg)));
+  }
+};
+
 template <class T, edge_op Op, bool Full> struct run_out {
   T* p;
   std::ptrdiff_t leg;

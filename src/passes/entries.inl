@@ -44,6 +44,7 @@ template <class T, std::size_t R> struct radix_entries<T, R, true> {
               &lane_pass<T, R, -1, true, nop>,
               &lane_pass<T, R, +1, true, nop>,
           },
+      .lane_shared_in = &lane_pass<T, R, +1, true, nop, true>,
       .last =
           {
               {
@@ -178,15 +179,29 @@ inline constexpr pass_kernels<T> pass_table{
         },
     .bluestein_in =
         {
-            &bluestein_in<T, nop>,
-            &bluestein_in<T, scl>,
-            &bluestein_in<T, fac>,
+            {
+                &bluestein_in<T, nop, false>,
+                &bluestein_in<T, scl, false>,
+                &bluestein_in<T, fac, false>,
+            },
+            {
+                &bluestein_in<T, nop, true>,
+                &bluestein_in<T, scl, true>,
+                &bluestein_in<T, fac, true>,
+            },
         },
     .bluestein_out =
         {
-            &bluestein_out<T, nop>,
-            &bluestein_out<T, scl>,
-            &bluestein_out<T, fac>,
+            {
+                &bluestein_out<T, nop, false>,
+                &bluestein_out<T, scl, false>,
+                &bluestein_out<T, fac, false>,
+            },
+            {
+                &bluestein_out<T, nop, true>,
+                &bluestein_out<T, scl, true>,
+                &bluestein_out<T, fac, true>,
+            },
         },
     .r2c_pack_pairs = &r2c_pack_pairs<T>,
     .r2c_post =
