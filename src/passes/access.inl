@@ -84,18 +84,20 @@ template <class T> FFTN_FORCE_INLINE void store_first(T* p, cv<T> v) {
 
 // An edge operation's data for one access: the scale, or the factor values of leg 0's
 // first element and the reals between legs (the factor array is tight, so lanes are
-// adjacent in it).
+// adjacent in it). No default member initializers: they would give the struct a
+// constructor of its own, a region function that instrumented builds (coverage) call out
+// of line, which the disassembly check refuses.
 template <class T, edge_op Op> struct edge {
-  T s = T(1);
-  const T* f = nullptr;
-  std::ptrdiff_t f_leg = 0;
+  T s;
+  const T* f;
+  std::ptrdiff_t f_leg;
 };
 
 // The edge for an access whose leg j starts at element e0 + leg j of the line.
 template <class T, edge_op Op>
 FFTN_FORCE_INLINE edge<T, Op> make_edge(const pass_args* a, const void* factor, std::size_t e0,
                                         std::size_t leg) {
-  edge<T, Op> e;
+  edge<T, Op> e{.s = T(1), .f = nullptr, .f_leg = 0};
   if constexpr (Op == edge_op::scale) {
     e.s = static_cast<T>(a->scale);
   } else if constexpr (Op == edge_op::factor) {
