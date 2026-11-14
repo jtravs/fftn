@@ -1,6 +1,6 @@
 # X12b: The grid's thresholds per machine
 
-- **Status:** running
+- **Status:** done (adopted)
 - **Owner:** grid-thresholds agent, 2026-11-14
 - **Phase / task:** 1.7 (follow-up of X12 and X3)
 
@@ -73,8 +73,76 @@ case set.
 
 ## Results
 
-(pending)
+All runs serial, hot, on shared nodes (fbench rounds interleaved, A/A control): the Xeon
+through Slurm with 8 CPUs (GCC 14.4), the EPYC on DMOG with 8 cores (GCC 16.2), the Mac
+under load (Homebrew Clang 23). Ratios are medians of paired ratios to arm A (the old
+default); "rows L1–L2" is the geomean over the rows of more than L1 and at most L2 bytes,
+the batched and the real cases (the cases `GRID_MIN_BYTES` can change); "rows > L2/8" over
+the c2c b1 rows above the old three-phase switch.
+
+Screens (one field moved at a time):
+
+| arm | Xeon avx512 L1–L2 | > L2/8 | Xeon avx2 L1–L2 | > L2/8 | EPYC L1–L2 | > L2/8 |
+|---|---|---|---|---|---|---|
+| min 2·L1 | 0.929 | 1.001 | 0.936 | 0.996 | 0.936 | 1.002 |
+| min L2/4 | 0.865 | 0.983 | 0.855 | 0.975 | 0.935 | 0.999 |
+| min L2/2 | **0.863** | 0.979 | 0.843 | 0.959 | 0.907 | 0.990 |
+| min L2 | 0.874 | 0.998 | **0.831** | 0.952 | **0.895** | 0.980 |
+| three L2/2 | 1.013 | 1.000 | 0.991 | 0.994 | 0.969 | 0.987 |
+| three L2 | 0.999 | **0.984** | 0.987 | 0.996 | 0.961 | **0.982** |
+| three 2·L2 | 1.004 | 0.999 | 0.988 | 1.014 | 0.961 | 0.999 |
+| band | ±1.81 % | | ±1.59 % | | ±1.00 % | |
+
+Runs 20261114-184254-3ad8 (Xeon avx512, 42 rounds, 32 loaded),
+20261114-184157-25c5 (Xeon avx2, 42 rounds), 20261114-184230-4a9c (EPYC, 58 rounds). The
+chain's gain is largest at 4096 points in double (0.74–0.78 of the grid's time on every
+x86 arm, as X3 found) and 8192 on the Xeon (0.72–0.84). Two phases up to L2 won at exactly
+L2 in double (65536 points on the Xeon: 0.875–0.88) but lost in single (131072 points,
+avx2: 1.18); two phases at 256 KiB rows, which moving only the three-phase switch makes,
+lost on the Xeon (16384 × 64 rows: 1.16–1.29), so that switch pays only where the grid
+starts late as well.
+
+The rule (below) against the old default and against `GRID_MIN_BYTES` = L2, then FFTW:
+runs 20261114-192954-0959 (Xeon avx512, 43 rounds), -192954-bf31 (Xeon avx2, 42),
+20261114-192856-cdd2 (EPYC, 62). Weighted geomean over all 31 cases, rule ÷ old: 0.921,
+0.909, 0.957; min = L2 with three = L2: 0.927, 0.906, 0.956 (bands ±2.44, ±1.62,
+±1.00 %). Slower with the rule: r2c 32768 on avx512 (1.08; faster on avx2 0.88 and the
+EPYC 0.91), c2c 131072 single on avx2 (1.19), c2c 16384 single on the EPYC (1.03).
+
+FFTN ÷ FFTW (double, one row; FFTW 3.3.11 MEASURE, the avx512 build on the Xeon for both
+arms), before → after:
+
+| points | Xeon avx512 | Xeon avx2 | EPYC |
+|---|---|---|---|
+| 4096 | 1.42 → 1.05 | 2.31 → 1.76 | 1.49 → 1.16 |
+| 8192 | 1.47 → 1.05 | 2.29 → 1.89 | 1.72 → 1.60 |
+| 16384 | 1.49 → 1.38 | 2.50 → 2.07 | 1.56 → 1.40 |
+| 65536 | 1.33 → 1.18 | 1.77 → 1.54 | 1.42 → 1.43 |
+| 262144 | 1.33 → 1.33 | 1.68 → 1.69 | 1.34 → 1.34 |
+| 1048576 | 0.82 → 0.81 | 0.87 → 0.86 | 1.08 → 1.08 |
+| 4194304 | 0.87 → 0.87 | 0.97 → 0.96 | 1.12 → 1.11 |
+
+Rows of 2^18 points and more are unchanged (their plans are the same three-phase grids).
+
+Mac check (run 20261114-190906-3fb4, c2c b1 rows, 16 rounds all loaded, band ±2.23 %):
+grid from 2·L1 1.67 at 16384 (double) and 1.63 at 32768 (single), the rows it turns into
+chains; the x86 rule applied to the Mac (min 8 MiB, three 16 MiB) 1.2–2.1 from 16384 to
+524288 points; three phases from L2/16 no different (1.010); from L2/2 0.89–0.90 at 4 MiB
+rows but 1.04 at 524288 double (not adopted by rule 1; X12's development timings had three
+phases ahead at 2^18).
 
 ## Verdict
 
-(pending)
+Adopted (commit 345755a, `set_grid_sizes` in `src/threading/schedule.cpp`, tested on the
+recorded topologies). No rule in the cache sizes alone fits: the Mac has the larger L1 and
+L2 yet needs the grid earlier (beyond L1), the x86 machines later (beyond L2/2). What
+separates them is the L2's sharing: x86's is each core's own (shared by as many CPUs as the
+L1), the M5's is shared by a cluster of six. With a private L2 the grid starts beyond L2/2
+and three phases beyond L2; with a shared L2 the defaults stay L1 and L2/8. By rule 2 the
+rule's combined geomean is within the band of the best form tried on every x86 run (min L2
+was 0.4 % better on avx2 and the EPYC, 0.7 % worse on avx512). The fusion limit
+(`grid_fuse_bytes`, L2/4) and `grid_block_bytes` (L1) are unchanged; with the grid starting
+at L2/2 on x86, fused phases no longer occur there. Open: the r2c pairing's fusion limit
+follows `grid_min_bytes` (r2c 32768 on avx512 lost 8 %); three phases from L2/4 on the Mac;
+the remaining gap to FFTW at 8192–65536 points on avx2 and the EPYC is the chain's own
+(X3's radix-32 chains). Lesson 3.8 in `dev/LESSONS.md`.

@@ -169,7 +169,7 @@ page or more apart, which a fused pass pays as well; the target there needs fewe
 over memory or cheaper ones (larger codelets, task 1.6; padding the work array so phases
 read it without set conflicts), not fusion.
 
-### x86 thresholds, by reasoning (not measured)
+### x86 thresholds, by reasoning (measured since in X12b)
 
 The defaults come from the cache sizes. On an EPYC 7763 (L1d 32 KiB, L2 512 KiB) they give:
 a grid from 4096 points (double; 8192 float), the chain at 2048; blocks within 1024 points
@@ -196,5 +196,6 @@ by 29–53 %, far outside the band. Task 1.7's target (≤ 1.25 times FFTW from 
 is met at 2^16 (out of place and in place) and 2^18, not at 2^20 (1.38) or 2^22 (1.43);
 16384 is at 1.37. Task 1.7b fused the copies where that pays (phases of radices ≤ 8, rows
 within a quarter of L2): 2^18 to 0.92, the rest unchanged (section above). Open: 2^14
-(1.28–1.33), 2^20 and 2^22 (1.35–1.37 in the second run), the three-phase rule's thresholds
-on x86 (the commands above), and a fbench run without load.
+(1.28–1.33), 2^20 and 2^22 (1.35–1.37 in the second run), and a fbench run without load.
+The thresholds on x86 were measured in [X12b](X12b-grid-thresholds.md): with a private L2
+the grid now starts beyond L2/2 and three phases beyond L2.

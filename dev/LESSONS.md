@@ -133,7 +133,7 @@ longer: 6–15 % faster on the Xeon. [X18](experiments/X18-x86-kernels.md).
 passes ran 1.9–2.8 times FFTW's time from 2¹⁴ to 2²² points on the Mac; a two- or
 three-phase grid ran at 0.47–0.71 of the chain's time. Where to switch to three phases is
 machine-specific: on the EPYC a switch at 1 MiB was 3 % faster than the default and never
-switching was 23 % slower. Inside L2 the pass count (L2 bandwidth) decides, which is why
+switching was 23 % slower; on the x86 machines it belongs at L2, on the Mac at L2/8 (3.8). Inside L2 the pass count (L2 bandwidth) decides, which is why
 FFTW's radix-32/64 three-pass plans win there. [X12](experiments/X12-beyond-l2.md).
 
 3.6 **Misaligned wide accesses split cache lines.** With four complex doubles per AVX-512
@@ -141,6 +141,17 @@ vector, a stride ≡ 2 mod 4 makes every other access split a 64-byte line (prot
 
 3.7 **Prefetchers differ by vendor.** Software next-row prefetch helped the Xeon by 25 % on
 45 MB batches and cost Zen 3 and Apple a few percent (prototype).
+
+3.8 **Whether L2 is the core's own matters more than its size.** On the Xeon (32 KiB L1,
+1 MiB L2 per core) and the EPYC (32 KiB, 512 KiB per core), whole-row chains beat a blocked
+grid for rows up to half of L2: 0.74–0.78 of the grid's time at 4096 points (double), and
+0.83–0.90 over the rows between L1 and L2 with the rule that followed (chain to L2/2, three
+phases beyond L2), which took FFTN from 1.42 to 1.05 times FFTW at 4096 points on the Xeon. On the Mac (128 KiB L1,
+16 MiB L2 shared by six cores) the chain at twice L1 took 1.67 times the grid's time, and
+applying the x86 rule there cost up to 2.1 times. The Mac's caches are the larger, yet it
+needs the blocked form earlier, so no rule in the sizes alone fits both: key cache
+thresholds on the L2's sharing (Linux `shared_cpu_list`, macOS `cpusperl2`) as well.
+[X12b](experiments/X12b-grid-thresholds.md).
 
 ## 4. Kernels and algorithms
 
