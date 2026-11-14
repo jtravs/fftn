@@ -54,6 +54,21 @@ class IdenticalCodeAlias(unittest.TestCase):
         )
         self.assertEqual(len(call_errors("avx2", f)), 1)
 
+    def test_a_jump_to_a_same_signature_function_of_the_scope_is_an_alias(self) -> None:
+        # GCC 14 and 15 under the sanitizers fold scalar's pack_bcast_twiddles<double>
+        # into pack_twiddles<double>, identical there.
+        scope = "_ZN4fftn2v06detail6scalar12_GLOBAL__N_1L"
+        tail = "IdEEvPKT_mPS5_"
+        call = jump_to(f"{scope}13pack_twiddles{tail}", "jmpq")
+        f = function(f"{scope}19pack_bcast_twiddles{tail}", [("jmpq", "0x0")], [call])
+        self.assertEqual(call_errors("scalar", f), [])
+
+    def test_a_jump_to_a_different_signature_is_a_call(self) -> None:
+        scope = "_ZN4fftn2v06detail6scalar12_GLOBAL__N_1L"
+        call = jump_to(f"{scope}13pack_twiddlesIfEEvPKT_mPS5_", "jmpq")
+        f = function(f"{scope}19pack_bcast_twiddlesIdEEvPKT_mPS5_", [("jmpq", "0x0")], [call])
+        self.assertEqual(len(call_errors("scalar", f)), 1)
+
 
 class StillCalls(unittest.TestCase):
     def assert_reported(self, target: str, f: Function) -> None:
