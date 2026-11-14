@@ -15,9 +15,9 @@ fftn_add_test(fftn_contract_tests
 # One translation unit per public header, including only that header, all linked into one
 # executable (which also proves the headers define nothing twice across units).
 file(GLOB public_headers CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/include/fftn/*.hpp)
-# kokkos.hpp is the optional adapter: it includes Kokkos_Core.hpp, so it gets an executable of
-# its own below, built only when the test build has Kokkos.
-list(FILTER public_headers EXCLUDE REGEX "/kokkos\\.hpp$")
+# kokkos.hpp and omp.hpp are the optional adapters: they need Kokkos and OpenMP, so each gets
+# an executable of its own below, built only when the test build has its runtime.
+list(FILTER public_headers EXCLUDE REGEX "/(kokkos|omp)\\.hpp$")
 set(alone_units "")
 foreach(header IN LISTS public_headers)
   get_filename_component(stem "${header}" NAME_WE)
@@ -47,6 +47,22 @@ if(TARGET Kokkos::kokkos)
   target_link_libraries(fftn_kokkos_header_alone PRIVATE fftn::fftn)
   fftn_link_kokkos(fftn_kokkos_header_alone)
   add_test(NAME api.kokkos_header_alone COMMAND fftn_kokkos_header_alone)
+endif()
+
+# omp.hpp alone, in two units linked together, with OpenMP.
+if(FFTN_TEST_WITH_OPENMP AND TARGET OpenMP::OpenMP_CXX)
+  set(omp_units "")
+  foreach(n IN ITEMS 1 2)
+    set(unit "${CMAKE_CURRENT_BINARY_DIR}/alone_omp_${n}.cpp")
+    file(CONFIGURE OUTPUT "${unit}" CONTENT
+      "#include \"fftn/omp.hpp\" // NOLINT(misc-include-cleaner): this unit only includes it\n")
+    list(APPEND omp_units "${unit}")
+  endforeach()
+  add_executable(fftn_omp_header_alone headers_alone_main.cpp ${omp_units})
+  fftn_configure_target(fftn_omp_header_alone)
+  target_link_libraries(fftn_omp_header_alone PRIVATE fftn::fftn)
+  fftn_link_openmp(fftn_omp_header_alone)
+  add_test(NAME api.omp_header_alone COMMAND fftn_omp_header_alone)
 endif()
 
 # The C contract of executors (fftn/executor.h) is C: it must compile as C99, with every

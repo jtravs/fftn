@@ -23,3 +23,17 @@ if(TARGET Kokkos::kokkos)
   fftn_link_kokkos(fftn_example_kokkos_rows_planes)
   add_test(NAME example.kokkos_rows_planes COMMAND fftn_example_kokkos_rows_planes)
 endif()
+
+# The OpenMP adapter's example needs the compiler's OpenMP runtime, which the test build finds
+# unless FFTN_TEST_WITH_OPENMP is off (cmake/FftnTestDeps.cmake). Its imported target is
+# local to the tests' directory, so it is looked up again here (the result is cached).
+if(FFTN_TEST_WITH_OPENMP)
+  find_package(OpenMP COMPONENTS CXX QUIET)
+endif()
+if(FFTN_TEST_WITH_OPENMP AND TARGET OpenMP::OpenMP_CXX)
+  add_executable(fftn_example_omp_rows omp_rows.cpp)
+  fftn_configure_target(fftn_example_omp_rows)
+  target_link_libraries(fftn_example_omp_rows PRIVATE fftn::fftn)
+  fftn_link_openmp(fftn_example_omp_rows)
+  add_test(NAME example.omp_rows COMMAND fftn_example_omp_rows)
+endif()

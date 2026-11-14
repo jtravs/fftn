@@ -4,7 +4,7 @@ FFTN runs on the caller's threads. It creates no thread unless the program const
 `fftn::thread_pool`, never changes a threading runtime's settings, and executes serially
 unless the caller hands it a team or an executor. The declarations, preconditions and
 guarantees are in the public headers (`include/fftn/team.hpp`, `include/fftn/executor.hpp`,
-`include/fftn/thread_pool.hpp`, and the overloads of
+`include/fftn/thread_pool.hpp`, `include/fftn/omp.hpp`, and the overloads of
 `plan::execute` in `include/fftn/plan.hpp`); this page says how the pieces fit together.
 
 There are two ways to share an execution among threads:
@@ -14,8 +14,9 @@ There are two ways to share an execution among threads:
   Nothing is dispatched; the program's own work before and after the transform runs in the
   same region.
 - **An executor**: one thread calls `execute` with an executor, anything that can run n
-  tasks and return when they are done, and FFTN dispatches the team itself: FFTN's pool
-  (`fftn::thread_pool`), or an adapter of a few lines over the program's own pool.
+  tasks and return when they are done, and FFTN dispatches the team itself: an OpenMP
+  region (`fftn::omp::executor`), FFTN's pool (`fftn::thread_pool`), or an adapter of a few
+  lines over the program's own pool.
 
 ## A team of the caller's threads
 
@@ -56,8 +57,8 @@ for (std::thread& t : team) {
 
 `fftn::cache_group_size(members)` gives a `group_size` for a team whose consecutive ranks
 run on consecutive cores, from the machine's topology. The threads of an OpenMP parallel
-region form a team the same way, with `omp_get_thread_num()` and `omp_get_num_threads()`;
-so do the members of a Kokkos team.
+region form a team the same way (`fftn::omp::this_team()`, below); so do the members of a
+Kokkos team.
 
 ## How the work is shared
 
@@ -113,6 +114,61 @@ is still inside FFTN when the workspace changes hands (for example, when the par
 region has ended). An execution with `completion::own` by a smaller team than the one
 whose state the workspace holds overwrites that state, so the next team execution sets it
 up afresh.
+
+## OpenMP
+
+`fftn/omp.hpp` is optional and header-only: `fftn.hpp` does not include it, and it compiles
+only with the compiler's OpenMP option. It is compiled in the caller's translation units,
+against the caller's OpenMP runtime, so the process has one OpenMP runtime: the library
+links none. Two runtimes in one process (libgomp and libomp, say) crash or crawl.
+
+Inside a parallel region, `fftn::omp::this_team()` is the calling thread as a member of the
+region's team (rank `omp_get_thread_num()`, size `omp_get_num_threads()`, cache groups from
+`fftn::cache_group_size`):
+
+```cpp file=examples/omp_rows.cpp region=region
+// Transforms the rows of x into y and divides each by n, in one parallel region.
+void transform_and_scale(const fftn::c2c_plan<double>& plan, std::size_t n,
+                         const std::complex<double>* x, std::complex<double>* y) {
+  // One workspace for the region's team, sized before the region.
+  fftn::workspace ws(plan, omp_get_max_threads());
+
+#pragma omp parallel
+  {
+    const fftn::team me = fftn::omp::this_team();
+
+    // Every thread of the region calls execute; with completion::own each returns once
+    // its own rows are written and goes on to work on them, with no barrier in between.
+    plan.execute(x, y, me, ws, fftn::completion::own);
+    const fftn::transform_range mine = plan.transforms_of(me);
+    for (std::size_t i = mine.first * n; i < (mine.first + mine.count) * n; ++i) {
+      y[i] /= static_cast<double>(n);
+    }
+  }
+}
+```
+
+Every thread of the region must make the call, so call it from the region's body, not from
+inside `single`, `masked`, `critical`, a task or a worksharing loop, where only some threads
+run; there, use the serial overloads.
+
+Outside a region, `fftn::omp::executor` lets FFTN open one:
+
+```cpp file=examples/omp_rows.cpp region=executor
+// FFTN opens the region: one region of the executor's constant width per execution, or
+// none when the job is too small to share.
+const fftn::omp::executor omp_lanes;
+fftn::workspace ws(plan, omp_lanes.concurrency());
+std::vector<std::complex<double>> z(n * count);
+plan.execute(x.data(), z.data(), omp_lanes, ws);
+```
+
+Its width is `omp_get_max_threads()` at construction, or the number it is given. Every
+region it opens has that width, through the region's `num_threads` clause: when only some
+lanes have work, the others return at once rather than the region being narrower, because
+libgomp ends and restarts its threads whenever the width of successive regions changes.
+Called from inside an active parallel region, it runs the execution serially on the calling
+thread instead of nesting a region. Neither adapter changes the runtime's settings.
 
 ## Executors
 
@@ -205,6 +261,7 @@ contract of `include/fftn/executor.h`: a struct of the pool's pointer and three 
 
 ### Nesting
 
-An executor called from inside one of its own tasks reports a concurrency of 1, so the
-execution runs serially on the calling thread instead of waiting for threads that are busy.
-`fftn::thread_pool` does this for calls from inside any `fftn::thread_pool` task.
+An executor called from inside one of its own tasks (or, for OpenMP, inside an active
+parallel region) reports a concurrency of 1, so the execution runs serially on the calling
+thread instead of waiting for threads that are busy. `fftn::thread_pool` does this for calls
+from inside any `fftn::thread_pool` task, and `fftn::omp::executor` inside any active region.
