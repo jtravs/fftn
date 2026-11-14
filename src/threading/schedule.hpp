@@ -57,6 +57,17 @@ struct machine_profile {
   // one: long runs while much is left (contiguous rows, few atomic operations), single
   // transforms at the end (balance).
   int claim_divisor = 2;
+  // The planner's (not the scheduler's), experiment X12: a c2c row whose bytes exceed
+  // grid_min_bytes is a grid rather than a chain (strategies/grid.hpp), in three phases
+  // rather than two beyond grid_three_bytes; the grid widens its column blocks while one
+  // block's scratch (lines a and b) stays within grid_block_bytes. grid_block forces the
+  // block width (0: by that rule). default_machine_profile sets the sizes from the caches
+  // of the fastest cores (platform/topology.hpp): the L1 data cache's size for the first
+  // and third, an eighth of L2 for the second.
+  std::size_t grid_min_bytes = 64 * 1024;
+  std::size_t grid_three_bytes = 2 * 1024 * 1024;
+  std::size_t grid_block_bytes = 64 * 1024;
+  std::size_t grid_block = 0;
 };
 
 // The profile of the running machine: the defaults above with its CPU count.

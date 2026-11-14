@@ -69,6 +69,8 @@ public:
 
   // The radices of a chain for n, in pass order (empty for n = 1).
   [[nodiscard]] std::vector<std::size_t> radices(std::size_t n) const;
+  // Whether a test forces the radices of n (build_settings::radices multiply to n).
+  [[nodiscard]] bool forces(std::size_t n) const;
 
   // Each appends the stages of one line to `stages` and returns the complex elements of
   // scratch the line needs in each of a and b (0 when it needs none).
@@ -81,6 +83,14 @@ public:
                        std::vector<stage>& stages);
   std::size_t c2r_line(std::size_t n, endpoint src, endpoint dst, double scale,
                        std::vector<stage>& stages);
+
+  // For the grid (strategies/grid.hpp), whose phases are lane passes of this builder's
+  // kind: the table of a lane pass of `radix` with s copies in a line of n, and the roots
+  // w_n^k, k < n.
+  const T* lane_twiddles(std::size_t n, std::size_t radix, std::size_t s) {
+    return shared_twiddles(n, radix, s);
+  }
+  const std::vector<std::complex<T>>& root_table(std::size_t n) { return roots(n); }
 
 private:
   const std::vector<std::complex<T>>& roots(std::size_t n);

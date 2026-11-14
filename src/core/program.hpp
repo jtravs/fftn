@@ -34,8 +34,10 @@ namespace fftn::inline v0::detail {
 
 enum class slot : std::uint8_t { in, out, a, b, block };
 
-// The slots a loop moves, as indices into loop::step.
-inline constexpr std::size_t moving_slots = 3; // in, out, block
+// What a loop moves, as indices into loop::step: the in, out and block slots, and the
+// twiddle cursor, a byte offset added to the twiddles of every stage that asks for it
+// (stage::moving_twiddles): the grid's per-block tables (src/strategies/grid.hpp).
+inline constexpr std::size_t moving_slots = 4; // in, out, block, twiddles
 
 struct stage {
   pass_fn run = nullptr;
@@ -45,7 +47,8 @@ struct stage {
   std::size_t units = 0;    // the kernel's own units: blocks of butterflies or copies, a line,
                             // elements (src/strategies/chain.hpp); only their count matters here
   std::uint32_t chunks = 1; // independent ranges [units c / chunks, units (c+1) / chunks)
-  std::string name;         // for describe()
+  bool moving_twiddles = false; // args.twiddles is offset by the loops' twiddle cursor
+  std::string name;             // for describe()
 };
 
 enum class loop_kind : std::uint8_t {
@@ -56,7 +59,7 @@ enum class loop_kind : std::uint8_t {
 struct loop {
   loop_kind kind = loop_kind::batch;
   std::size_t count = 1;
-  std::array<std::ptrdiff_t, moving_slots> step{}; // bytes per iteration: in, out, block
+  std::array<std::ptrdiff_t, moving_slots> step{}; // bytes per iteration: in, out, block, tw
   std::uint32_t body_end = 0;                      // records [this + 1, body_end) are the body
 };
 

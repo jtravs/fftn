@@ -259,14 +259,28 @@ TEST(Chunks, DivisionDoesNotChangeBits) {
   check_chunking(fftn::planes_c2c<double>(36, 20, 2, fftn::direction::forward), 1440, 1440);
 }
 
-// Long rows are divided by default, so the phase 3 engine has chunks to share.
+// Long rows are divided by default, so the phase 3 engine has chunks to share: a chain's
+// stages into ranges of units, a grid's phases into blocks of columns (its stages run one
+// block each). Which strategy a long row gets depends on the machine's caches, so both are
+// forced here.
 TEST(Chunks, LongRowsHaveSeveralByDefault) {
+  fftn::detail::build_settings chain;
+  chain.strategy = fftn::detail::strategy_choice::chain;
   const auto core = make_plan_core(
-      fftn::detail::view_of(fftn::rows_c2c<double>(16384, 1, fftn::direction::forward)), {});
+      fftn::detail::view_of(fftn::rows_c2c<double>(16384, 1, fftn::direction::forward)), {}, chain);
   for (const auto& rec : core->prog.records) {
     if (const auto* st = std::get_if<fftn::detail::stage>(&rec); st != nullptr) {
       EXPECT_GT(st->chunks, 1U) << st->name;
     }
+  }
+  fftn::detail::build_settings grid;
+  grid.strategy = fftn::detail::strategy_choice::grid;
+  const auto g = make_plan_core(
+      fftn::detail::view_of(fftn::rows_c2c<double>(16384, 1, fftn::direction::forward)), {}, grid);
+  ASSERT_FALSE(g->graph.phases.empty());
+  for (const auto& ph : g->graph.phases) {
+    EXPECT_GT(ph.nest, 0U);
+    EXPECT_GT(ph.chunks, 1U);
   }
 }
 

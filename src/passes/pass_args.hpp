@@ -93,6 +93,12 @@ template <class T> struct pass_kernels {
   pass_fn c2r_unpack_pairs[2];
   pass_fn c2r_expand;
   pass_fn c2r_store[2];
+  // The grid's passes (src/passes/grid.inl): a block of columns copied row by row,
+  // [scaled]; by direction, the twiddled transpose of the first phase and the twiddled
+  // row copy of the later ones.
+  pass_fn block_copy[2];
+  pass_fn twiddle_transpose[2];
+  pass_fn twiddle_scatter[2];
 };
 // NOLINTEND(modernize-avoid-c-arrays)
 

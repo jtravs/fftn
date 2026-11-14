@@ -67,17 +67,19 @@ chain_builder<T>::chain_builder(const kernels_of<T>& kernels, const target_profi
   }
 }
 
-template <class T> std::vector<std::size_t> chain_builder<T>::radices(std::size_t n) const {
-  if (!forced_.empty()) {
-    std::size_t product = 1;
-    for (const std::size_t r : forced_) {
-      product *= r;
-    }
-    if (product == n) {
-      return forced_;
-    }
+template <class T> bool chain_builder<T>::forces(std::size_t n) const {
+  if (forced_.empty()) {
+    return false;
   }
-  return rule_radices(n, profile_);
+  std::size_t product = 1;
+  for (const std::size_t r : forced_) {
+    product *= r;
+  }
+  return product == n;
+}
+
+template <class T> std::vector<std::size_t> chain_builder<T>::radices(std::size_t n) const {
+  return forces(n) ? forced_ : rule_radices(n, profile_);
 }
 
 template <class T> const std::vector<std::complex<T>>& chain_builder<T>::roots(std::size_t n) {

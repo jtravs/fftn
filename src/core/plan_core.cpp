@@ -21,6 +21,7 @@
 #include "planner/rules.hpp"
 #include "platform/cpu_features.hpp"
 #include "strategies/chain.hpp"
+#include "strategies/grid.hpp"
 #include "threading/schedule.hpp"
 #include "threading/team_state.hpp"
 #include "threading/work_graph.hpp"
@@ -336,6 +337,43 @@ line_edges c2c_edges(const options& opts, const build_settings& settings, bool f
   return e;
 }
 
+// Whether a c2c row of one axis is a grid (DESIGN.md 8.5, experiment X12), and its split:
+// beyond the profile's grid_min_bytes or when forced, if the row is contiguous on both
+// sides, carries no edge factor (the grid applies only the scale, on its output), has no
+// forced radices for its whole length and has a split whose phases are codelet chains.
+template <class T>
+grid_split plan_grid(const plan_core& c, const side& in, const side& out,
+                     const build_settings& settings, const chain_builder<T>& chain,
+                     std::size_t lanes) {
+  const std::size_t n = c.lengths[0];
+  if (settings.strategy == strategy_choice::chain || settings.in_factor != nullptr ||
+      settings.out_factor != nullptr || in.stride[0] != 1 || out.stride[0] != 1) {
+    return {};
+  }
+  if (settings.strategy == strategy_choice::rules &&
+      n * 2 * sizeof(T) <= settings.profile.grid_min_bytes) {
+    return {};
+  }
+  std::size_t forced = 1;
+  for (const std::size_t f : settings.radices) {
+    forced *= f;
+  }
+  if (!settings.radices.empty() && forced == n) {
+    return {};
+  }
+  const grid_split g = choose_grid(n, lanes, settings.profile.grid_block_bytes / (4 * sizeof(T)),
+                                   n * 2 * sizeof(T) > settings.profile.grid_three_bytes,
+                                   settings.profile.grid_block, settings.grid_factors);
+  for (std::size_t i = 0; i < g.phases; ++i) {
+    for (const std::size_t radix : chain.radices(g.factors.at(i))) {
+      if (radix > max_codelet_radix) {
+        return {}; // forced radices for a phase's length that need the generic pass
+      }
+    }
+  }
+  return g;
+}
+
 template <class T>
 void build(plan_core& c, const shape_view& s, const side& in, const side& out, const options& opts,
            const build_settings& settings) {
@@ -371,7 +409,24 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   };
   const int sign = static_cast<int>(s.dir);
 
-  if (s.kind == transform_kind::c2c) {
+  const grid_split grid_plan =
+      s.kind == transform_kind::c2c && r == 1
+          ? plan_grid<T>(c, in, out, settings, chain, kernels.complex_lanes)
+          : grid_split{};
+  if (grid_plan.phases != 0) {
+    grid_builder<T> grid(kernels, chain, tables_of<T>(c));
+    if (grid_builder<T>::uses_block(grid_plan, c.in_place)) {
+      c.block_elements = c.lengths[0];
+    }
+    scratch = grid.c2c_row(grid_plan, sign, c.in_place, opts.scale, p);
+    c.axis_notes.push_back("axis 0 (n = " + std::to_string(c.lengths[0]) +
+                           "): " + grid.note(grid_plan));
+    c.strategy_note =
+        "grid (Cooley-Tukey in " + std::to_string(grid_plan.phases) +
+        " phases, each depth-first over blocks of columns" +
+        (c.block_elements != 0 ? "; an intermediate array in the workspace block" : "") +
+        "), each transform finished before the next";
+  } else if (s.kind == transform_kind::c2c) {
     for (std::size_t i = r; i > 0; --i) {
       const std::size_t d = i - 1;
       const view& src = d + 1 == r ? in_view : out_view;
@@ -662,9 +717,13 @@ std::string describe(const plan_core& core) {
   o << ", " << core.prog.transforms << (core.prog.transforms == 1 ? " transform" : " transforms")
     << (core.in_place ? ", in place" : ", out of place") << "\n";
   o << "instruction set: " << isa_name(instruction_set(core)) << "\n";
-  o << "strategy: chain (Stockham autosort, breadth-first), one line at a time; each "
-       "transform finished before the next; radices from "
-    << (core.radices_forced ? "build_settings.radices (a test knob) where they multiply to a "
+  if (!core.strategy_note.empty()) {
+    o << "strategy: " << core.strategy_note << "; radices from ";
+  } else {
+    o << "strategy: chain (Stockham autosort, breadth-first), one line at a time; each "
+         "transform finished before the next; radices from ";
+  }
+  o << (core.radices_forced ? "build_settings.radices (a test knob) where they multiply to a "
                               "line's length, otherwise from planner v1\n"
                             : "planner v1\n");
   for (const std::string& note : core.axis_notes) {
@@ -683,7 +742,8 @@ std::string describe(const plan_core& core) {
     if (const loop* l = std::get_if<loop>(&rec)) {
       o << indent << "loop " << (l->kind == loop_kind::batch ? "batch" : "lines") << " x"
         << l->count << " (steps in bytes: in " << l->step[0] << ", out " << l->step[1] << ", block "
-        << l->step[2] << ")\n";
+        << l->step[2] << (l->step[3] != 0 ? ", twiddles " + std::to_string(l->step[3]) : "")
+        << ")\n";
       ends.push_back(l->body_end);
       continue;
     }

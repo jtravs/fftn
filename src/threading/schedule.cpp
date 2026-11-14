@@ -5,6 +5,7 @@
 
 #include "core/program.hpp"
 #include "fftn/team.hpp"
+#include "platform/topology.hpp"
 #include "threading/work_graph.hpp"
 
 #include <algorithm>
@@ -20,6 +21,14 @@ machine_profile default_machine_profile() noexcept {
   machine_profile p;
   const unsigned cpus = std::thread::hardware_concurrency();
   p.cpus = static_cast<int>(std::min<unsigned>(cpus, std::numeric_limits<int>::max()));
+  const topology& t = system_topology();
+  if (!t.classes.empty() && t.classes.front().l1d.size != 0) {
+    p.grid_min_bytes = t.classes.front().l1d.size;
+    p.grid_block_bytes = t.classes.front().l1d.size;
+  }
+  if (!t.classes.empty() && t.classes.front().l2.size != 0) {
+    p.grid_three_bytes = t.classes.front().l2.size / 8;
+  }
   return p;
 }
 

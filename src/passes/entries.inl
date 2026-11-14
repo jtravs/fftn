@@ -200,6 +200,21 @@ inline constexpr pass_kernels<T> pass_table{
             &c2r_store<T, false>,
             &c2r_store<T, true>,
         },
+    .block_copy =
+        {
+            &block_copy<T, nop>,
+            &block_copy<T, scl>,
+        },
+    .twiddle_transpose =
+        {
+            &twiddle_transpose<T, -1>,
+            &twiddle_transpose<T, +1>,
+        },
+    .twiddle_scatter =
+        {
+            &twiddle_scatter<T, -1>,
+            &twiddle_scatter<T, +1>,
+        },
 };
 
 } // namespace

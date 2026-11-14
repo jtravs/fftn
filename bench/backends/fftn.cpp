@@ -37,6 +37,13 @@
 //                    test knob), for c2c rows whose length they multiply to; any other case
 //                    is an error, and so is a radix no pass of the target takes. Experiment
 //                    X2 times radix sequences with it (dev/experiments/X2-radix-sets.md).
+//   STRATEGY=rules|chain|grid   the strategy of c2c rows (build_settings::strategy): the
+//                    planner's choice (default), or the chain or the grid forced where the row
+//                    can be one; each case's note says which was built (experiment X12)
+//   GRID_FACTORS=n1.n2[.n3]     the grid's factors in phase order (build_settings::
+//                    grid_factors), for rows they multiply to
+//   GRID_MIN_BYTES, GRID_THREE_BYTES, GRID_BLOCK_BYTES, GRID_BLOCK
+//                    the planner's grid fields of the machine profile (schedule.hpp)
 // ISA is a public option; the others reach the library only through the private build
 // settings, as a test's do: the library has no switch for them, so dev/KNOBS.toml does not
 // list them.
@@ -121,8 +128,10 @@ struct session {
   int group_size = -1;             // -1: the executor's own
   fftn::isa isa = fftn::isa::best; // ISA=: the instruction set of every plan
   std::unique_ptr<executor_type> exec;
-  std::string overrides;    // the profile and chunking options given, as JSON members
-  std::string radices_text; // RADICES as given, r1.r2... (settings.radices holds them)
+  std::string overrides;          // the profile and chunking options given, as JSON members
+  std::string radices_text;       // RADICES as given, r1.r2... (settings.radices holds them)
+  std::string strategy = "rules"; // STRATEGY as given
+  std::string factors_text;       // GRID_FACTORS as given
   std::string description;
 };
 
@@ -196,7 +205,7 @@ std::shared_ptr<const detail::plan_core> make_core(const fbench_case& c, const f
 // ---- RADICES ---------------------------------------------------------------------------
 
 // Parses r1.r2... (each an integer of at least 2); throws std::invalid_argument.
-std::vector<std::size_t> parse_radices(std::string_view text) {
+std::vector<std::size_t> parse_radices(std::string_view text, const char* what = "RADICES") {
   std::vector<std::size_t> out;
   std::size_t at = 0;
   while (at <= text.size()) {
@@ -205,7 +214,8 @@ std::vector<std::size_t> parse_radices(std::string_view text) {
     std::size_t r = 0;
     const auto res = std::from_chars(token.data(), token.data() + token.size(), r);
     if (token.empty() || res.ec != std::errc{} || res.ptr != token.data() + token.size() || r < 2) {
-      throw std::invalid_argument("RADICES is r1.r2... with every radix at least 2, not '" +
+      throw std::invalid_argument(std::string(what) +
+                                  " is r1.r2... with every factor at least 2, not '" +
                                   std::string(text) + "'");
     }
     out.push_back(r);
@@ -367,6 +377,23 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
         return fbench_error;
       }
       s.radices_text = value;
+    } else if (key == "STRATEGY") {
+      if (value != "rules" && value != "chain" && value != "grid") {
+        say(message, message_size, "STRATEGY is rules, chain or grid");
+        return fbench_error;
+      }
+      s.settings.strategy = value == "chain"  ? detail::strategy_choice::chain
+                            : value == "grid" ? detail::strategy_choice::grid
+                                              : detail::strategy_choice::rules;
+      s.strategy = value;
+    } else if (key == "GRID_FACTORS") {
+      try {
+        s.settings.grid_factors = parse_radices(value, "GRID_FACTORS");
+      } catch (const std::exception& e) {
+        say(message, message_size, e.what());
+        return fbench_error;
+      }
+      s.factors_text = value;
     } else if (fbench::fftn_tuning::apply_tuning(s.settings, key, value, error)) {
       if (!error.empty()) {
         say(message, message_size, error);
@@ -404,7 +431,10 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
         .boolean("isa_forced", s.isa != fftn::isa::best)
         .raw("supports", R"(["c2c","r2c","c2r"])")
         .raw("precisions", R"(["f64","f32"])")
-        .str("strategy", "chain");
+        .str("strategy", s.strategy);
+    if (!s.factors_text.empty()) {
+      d.str("grid_factors", s.factors_text);
+    }
     if (!s.settings.radices.empty()) {
       d.str("radices", s.radices_text);
     }
