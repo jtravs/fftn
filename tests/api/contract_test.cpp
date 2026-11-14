@@ -320,8 +320,8 @@ TEST(ExecutionDeathTest, PreconditionsAreAssertedInDebugBuilds) {
 #else
   GTEST_FLAG_SET(death_test_style, "threadsafe");
   using c = std::complex<double>;
-  cvec<double> x(16);
-  cvec<double> y(16);
+  cvec<double> x(80);
+  cvec<double> y(80);
   // An in-place plan given two addresses: a rank-2 in-place c2r would silently compute
   // garbage, so every in-place kind is checked.
   fftn::shape<c, double> planes;
@@ -330,7 +330,9 @@ TEST(ExecutionDeathTest, PreconditionsAreAssertedInDebugBuilds) {
   fftn::workspace ws(in_place);
   EXPECT_DEATH(in_place.execute(x.data(), reinterpret_cast<double*>(y.data()), ws),
                "in-place plan executed with in != out");
-  const fftn::c2c_plan<double> rows(fftn::rows_c2c<double>(8, 2, fftn::direction::forward));
+  // Rows of 40 need scratch (rows of 16 or fewer are leaves, which need none).
+  const fftn::c2c_plan<double> rows(fftn::rows_c2c<double>(40, 2, fftn::direction::forward));
+  ASSERT_GT(rows.workspace_bytes(), 0U);
   fftn::workspace small(rows.workspace_bytes() - 1);
   EXPECT_DEATH(rows.execute(x.data(), y.data(), small), "workspace smaller");
   fftn::workspace enough(rows);
