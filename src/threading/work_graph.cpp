@@ -15,11 +15,18 @@
 namespace fftn::inline v0::detail {
 namespace {
 
-// The cost model's unit: a point through a pass. A radix-R pass of u butterflies moves u R
-// points; an edge pass (radix 1 in its arguments) touches about two points per unit.
+// The cost model's unit: a point through a pass. A codelet pass (grouped, lane, leaf) moves
+// the line's n points whatever its unit (a block of C butterflies or copies, or the line:
+// src/strategies/chain.hpp), so its work is n; a generic pass of radix r sums r terms per
+// point, n r; an edge pass (radix 1 in its arguments: copies, the real edges) touches about
+// two points per unit.
 double stage_work(const stage& st) {
-  return static_cast<double>(st.units) *
-         static_cast<double>(std::max<std::size_t>(st.args.radix, 2));
+  const std::size_t r = st.args.radix;
+  if (r <= 1) {
+    return 2.0 * static_cast<double>(st.units);
+  }
+  const auto n = static_cast<double>(st.args.n);
+  return r > max_codelet_radix ? n * static_cast<double>(r) : n;
 }
 
 double records_work(const program& p, std::size_t begin, std::size_t end) {

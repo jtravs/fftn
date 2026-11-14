@@ -73,7 +73,13 @@ TEST(WorkGraph, PhasesOfRowsAndPlanes) {
   }
   EXPECT_EQ(g.chunks, first);
   EXPECT_GT(g.widest, 1U);
-  EXPECT_EQ(g.work, 16384.0 * 7); // seven passes of 16384 points
+  // Every codelet pass moves the 16384 points once, whatever its unit (C > 1 blocks).
+  EXPECT_EQ(g.work, 16384.0 * static_cast<double>(g.phases.size()));
+  // A generic pass of radix r sums r terms per point: 2 x 17 is a grouped radix-2 pass (34
+  // points) and a generic radix-17 pass (34 x 17).
+  EXPECT_EQ(rows(34, 1)->graph.work, 34.0 + 34.0 * 17);
+  // A copy or real edge pass touches two points per unit: n = 1 is one copy of one element.
+  EXPECT_EQ(rows(1, 1)->graph.work, 2.0);
   // Planes: one phase of lines per axis.
   const fftn::options opts;
   fftn::detail::build_settings fine;
