@@ -419,7 +419,8 @@ def cmd_report(ctx: argparse.Namespace) -> int:
         if not state["lengths"]:
             raise SystemExit(f"no campaign {state_path(ctx.out_dir, name)}")
         host = state.get("host", {})
-        print(f"campaign {name}: host {host.get('cpu')} (id {host.get('host_id')})")
+        if not ctx.json:
+            print(f"campaign {name}: host {host.get('cpu')} (id {host.get('host_id')})")
         for n_text, entry in sorted(state["lengths"].items(), key=lambda kv: int(kv[0])):
             winners = entry.get("refine", {}).get("winners", {})
             run = entry.get("confirm", {}).get("run")
@@ -456,7 +457,7 @@ def cmd_report(ctx: argparse.Namespace) -> int:
         print(json.dumps(rows, indent=1))
         return 0
     print(
-        f"{'case':<24} {'v0':<16} {'best':<16} {'v0/best':>7} {'95 % interval':>15} "
+        f"{'case':<24} {'v0':<16} {'winner':<16} {'v0/win':>7} {'95 % interval':>15} "
         f"{'band':>6} {'rule':<5} verdict"
     )
     for r in rows:
@@ -472,8 +473,11 @@ def cmd_report(ctx: argparse.Namespace) -> int:
         groups.setdefault(key, []).append(r["ratio"])
     for key, ratios in sorted(groups.items()):
         geo = math.exp(statistics.fmean(math.log(x) for x in ratios))
-        print(f"geomean time(v0)/time(best), {key}: {geo:.3f} over {len(ratios)} lengths")
-    print("rule: best beats v0 by more than 3 % with fbench's verdict 'faster' (clear of the band)")
+        print(f"geomean time(v0)/time(winner), {key}: {geo:.3f} over {len(ratios)} lengths")
+    print(
+        "rule: the winner beats v0 by more than 3 % with fbench's verdict 'faster' (clear of "
+        "the band); a winner the confirmation finds slower shows a ratio below 1"
+    )
     return 0
 
 
