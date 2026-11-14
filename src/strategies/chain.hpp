@@ -22,11 +22,15 @@
 //   when its source and destination are the same memory it writes scratch and is copied.
 // - Edge operations (DESIGN.md 12.1): the input edge's operation applies in the first
 //   pass that is not a copy, the output edge's in the last, so neither costs a pass.
-// - Real lines (DESIGN.md 9.1): even n packs the reals as n/2 complex values into scratch,
-//   runs the half-length chain there and finishes with a separate post-pass (r2c), or
-//   starts with a pre-pass and ends unpacking (c2r); odd n runs the full-length complex
-//   chain on (x, 0) or on the expanded Hermitian spectrum. The scale applies in the edge
-//   pass that writes the output. Fusing the edges into the first or last pass is phase 2.
+// - Real lines (DESIGN.md 9.1, passes/real.inl): even n = 2h reads the reals in place as
+//   h complex values (a real line has stride 1) and runs a complex transform of h, with the
+//   pairing of bins k and h - k fused into the chain's last pass (r2c) or first pass (c2r),
+//   or into a leaf for h <= 16. Where that pass is not a codelet's (a Bluestein stage or a
+//   generic pass) the pairing is a separate pass in place on the output (r2c, after a c2c
+//   line written there) or from the input to the output (c2r, before a c2c line in place
+//   there); the grid uses the same separate pass (core/plan_core.cpp). Odd n runs the
+//   full-length complex chain on (x, 0) or on the expanded Hermitian spectrum. The scale
+//   applies in the pass that writes the output.
 // - Bluestein (DESIGN.md 8.5, strategies/bluestein.hpp): the last pass of a chain whose
 //   remaining radix Q (the product of the large primes) has s = n / Q copies is the
 //   convolution of s interleaved sequences of length M (copy innermost): a chirp pass
@@ -78,15 +82,37 @@ struct line_edges {
   std::size_t out_factor_copies = 1;
 };
 
+// When the pairing of an even real line fuses into a pass of its half-length chain
+// (passes/real.inl, DESIGN.md 9.1): the pass's radix at most `radix` (the fused pass runs
+// two butterflies at once; beyond the register file they spill), at least `min_lanes`
+// register-loads of copies or groups per mirror half (so that the one-lane units for copy 0
+// and s/2 and the partial unit do not dominate), and for r2c at most `r2c_bytes` of half
+// spectrum (the fused last pass writes 4 R streams a power of two apart; beyond L1 they
+// conflict). radix 1: never.
+struct real_fusion {
+  std::size_t radix = 8;
+  std::size_t min_lanes = 4;
+  std::size_t r2c_bytes = SIZE_MAX;
+};
+
+// How a real line runs (DESIGN.md 9.1): n odd through a full-length complex chain; a line
+// with a stride other than 1 through scratch with the pairing at any stride; n = 2
+// as the pairing alone; h = n/2 <= 16 as a leaf with the pairing; through a chain of h
+// with the pairing fused into its last (r2c) or first (c2r) pass; or with the pairing as a
+// separate pass.
+enum class real_route : std::uint8_t { full, strided, pairing_only, leaf, fused, separate };
+
 template <class T> class chain_builder {
 public:
   // Tables are appended to `tables`, whose elements must outlive the stages (moving the
   // outer vector keeps every inner buffer where it is). forced: when its product is a
   // line's length, that line's radices in pass order, instead of the rules' (tests).
   // bluestein_above: the Bluestein threshold instead of the profile's, when not 0 (tests).
+  // fusion: when the pairing of an even real line fuses into a pass (real_fusion).
   chain_builder(const kernels_of<T>& kernels, const target_profile& profile,
                 std::vector<std::vector<T>>& tables, std::size_t chunk_points,
-                std::vector<std::size_t> forced, std::size_t bluestein_above = 0);
+                std::vector<std::size_t> forced, std::size_t bluestein_above = 0,
+                real_fusion fusion = {});
 
   // The radices of a chain for n, in pass order (empty for n = 1); the last is a Bluestein
   // stage's when bluestein_last(n).
@@ -95,8 +121,11 @@ public:
   [[nodiscard]] bool forces(std::size_t n) const;
   [[nodiscard]] bool bluestein_last(std::size_t n) const;
   // The radices for describe(): "4 x 4 x 16", with a Bluestein stage as
-  // "bluestein 257 (M 520 = 8 x 5 x 13)".
+  // "bluestein 257 (M 520 = 8 x 5 x 13)"; of n, or the given ones of n.
   [[nodiscard]] std::string radix_text(std::size_t n) const;
+  [[nodiscard]] std::string radix_text(std::size_t n, const std::vector<std::size_t>& rad) const;
+  // The radices of the complex transform of h of an even real line (r2c or c2r).
+  [[nodiscard]] std::vector<std::size_t> real_radices(std::size_t h, bool r2c) const;
 
   // Each appends the stages of one line to `stages` and returns the complex elements of
   // scratch the line needs in each of a and b (0 when it needs none).
@@ -104,11 +133,20 @@ public:
   // aliased: src and dst are the same memory for this line.
   std::size_t c2c_line(std::size_t n, int sign, endpoint src, endpoint dst, bool aliased,
                        const line_edges& edges, std::vector<stage>& stages);
-  // scale: applied to the output (1 means none).
-  std::size_t r2c_line(std::size_t n, endpoint src, endpoint dst, double scale,
+  // Real lines: scale is applied to the output (1 means none). c2r never writes its source.
+  std::size_t r2c_line(std::size_t n, endpoint src, endpoint dst, bool aliased, double scale,
                        std::vector<stage>& stages);
   std::size_t c2r_line(std::size_t n, endpoint src, endpoint dst, double scale,
                        std::vector<stage>& stages);
+  // strided: the line has a stride other than 1 on either side.
+  [[nodiscard]] real_route route(std::size_t n, bool r2c, bool strided) const;
+  // The route of a real line for describe().
+  [[nodiscard]] std::string real_text(std::size_t n, bool r2c, bool strided) const;
+  // The separate pairing pass of an even real line of n (passes/real.inl, r2c_post or
+  // c2r_pre), stride 1 on both sides; src may be dst. scale: on the output (for c2r, only
+  // when n = 2, where no transform follows).
+  void add_pairing(bool r2c, std::size_t n, endpoint src, endpoint dst, double scale,
+                   std::vector<stage>& stages);
 
   // For the grid (strategies/grid.hpp), whose phases are lane passes of this builder's
   // kind: the table of a lane pass of `radix` with s copies in a line of n.
@@ -128,6 +166,9 @@ private:
     const T* kernel;
   };
   bluestein_tables bluestein_tables_of(std::size_t q, int sign, std::size_t copies);
+  std::complex<T> pairing_root(std::size_t n, std::size_t k);
+  const T* pairing_twiddles(std::size_t n);
+  const T* leaf_pairing_twiddles(std::size_t n);
   [[nodiscard]] std::uint32_t chunks_of(std::size_t units, std::size_t points_per_unit) const;
   [[nodiscard]] std::size_t blocks(std::size_t count) const;
   // The passes of a chain of n from scratch slot `from` into scratch; returns the slot
@@ -141,6 +182,11 @@ private:
                 std::vector<stage>& stages, std::size_t batch = 1);
   void add_leaf(std::size_t n, int sign, endpoint src, endpoint dst, const line_edges& edges,
                 std::vector<stage>& stages);
+  // Passes i0 .. of rad (the radices of n) from `at`, s copies at i0, the last writing dst
+  // with edges.out (a Bluestein stage when bluestein_last(n)); scratch in between.
+  void chain_tail(std::size_t n, const std::vector<std::size_t>& rad, std::size_t i0,
+                  std::size_t s, int sign, endpoint at, endpoint dst, const line_edges& edges,
+                  std::vector<stage>& stages);
   void add_copy(std::size_t n, endpoint src, endpoint dst, const line_edges& edges,
                 std::vector<stage>& stages);
   // The Bluestein stage of radix q as the last pass of a line of n (s = n / q copies), its
@@ -155,6 +201,7 @@ private:
   std::vector<std::vector<T>>& tables_;
   std::size_t chunk_points_;
   std::vector<std::size_t> forced_;
+  real_fusion fusion_;
   std::size_t bluestein_above_;
   std::size_t line_scratch_ = 0; // scratch a Bluestein stage of the current line needs
   std::map<std::size_t, std::vector<std::complex<T>>> roots_;
