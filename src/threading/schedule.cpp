@@ -6,6 +6,7 @@
 #include "core/program.hpp"
 #include "fftn/team.hpp"
 #include "platform/topology.hpp"
+#include "threading/cache_groups.hpp"
 #include "threading/work_graph.hpp"
 
 #include <algorithm>
@@ -17,11 +18,8 @@
 
 namespace fftn::inline v0::detail {
 
-machine_profile default_machine_profile() noexcept {
+machine_profile profile_for(const topology& t) noexcept {
   machine_profile p;
-  const unsigned cpus = std::thread::hardware_concurrency();
-  p.cpus = static_cast<int>(std::min<unsigned>(cpus, std::numeric_limits<int>::max()));
-  const topology& t = system_topology();
   if (!t.classes.empty() && t.classes.front().l1d.size != 0) {
     p.grid_min_bytes = t.classes.front().l1d.size;
     p.grid_block_bytes = t.classes.front().l1d.size;
@@ -30,6 +28,33 @@ machine_profile default_machine_profile() noexcept {
     p.grid_three_bytes = t.classes.front().l2.size / 8;
     p.grid_fuse_bytes = t.classes.front().l2.size / 4;
   }
+  // The defaults are a Zen 3 CCX's. Two other kinds of cache group were measured (T1, T5):
+  // only macOS's reader numbers CPUs itself (topology.hpp), so that marks an Apple
+  // processor, whose performance cluster runs a short row so fast that splitting pays only
+  // from longer rows; a last-level group of more than mesh_group_lanes cores is a mesh
+  // (the Xeon's 18 cores). On neither did T1's measured costs pass the adoption test, so
+  // both keep the provisional synchronisation cost and claim runs.
+  const bool apple = !t.os_cpu_ids;
+  const int cpus_per_core =
+      t.cores.empty() ? 1
+                      : static_cast<int>(std::ranges::min(t.cores, {}, [](const cpu_group& c) {
+                          return c.cpus.size();
+                        }).cpus.size());
+  const bool mesh = cpus_per_cache_group(t) > p.mesh_group_lanes * std::max(cpus_per_core, 1);
+  if (apple) {
+    p.split_min_points = 8192;
+  }
+  if (apple || mesh) {
+    p.sync_ns = 700;
+    p.claim_divisor = 2;
+  }
+  return p;
+}
+
+machine_profile default_machine_profile() noexcept {
+  machine_profile p = profile_for(system_topology());
+  const unsigned cpus = std::thread::hardware_concurrency();
+  p.cpus = static_cast<int>(std::min<unsigned>(cpus, std::numeric_limits<int>::max()));
   return p;
 }
 

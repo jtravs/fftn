@@ -18,45 +18,70 @@
 
 namespace fftn::inline v0::detail {
 
-// The constants the rules use, per machine. The values here are provisional: they come from
-// the prototype's measurements (cited per field) and will be replaced by calibration
-// (experiments T1 and T5, task 3.4). Nothing in the rules is a literal.
+struct topology; // platform/topology.hpp
+
+// The constants the rules use, per machine. Experiments T1 (fixed costs) and T5 (split
+// thresholds) calibrated them on a Zen 3 CCX (EPYC 7763), an Apple performance cluster (M5
+// Max) and an 18-core Xeon mesh (task 3.4); each field cites its evidence. The defaults are
+// the CCX's; profile_for sets the other kinds' values. Nothing in the rules is a literal.
 struct machine_profile {
-  // The cost model: nanoseconds per point through a pass (work_graph.hpp). Provisional:
-  // the walking skeleton's scalar passes; the phase 1 kernels will be several times faster.
+  // The cost model: nanoseconds per point through a pass (work_graph.hpp). T1 measured 1.0
+  // on the CCX (AVX2), 1.23 on the Xeon and 0.57 on the M5, but with that figure and a
+  // dispatch cost that ignores the team's width the scheduler shared small batches over a
+  // 64-thread OpenMP region (c2c 256 x 8: 3.1 times slower) and split r2c rows of 4096
+  // points (2.4): T1's adoption run 20261114-181442-11ed kept 0.5 until rule 1 and the
+  // split rule know the executor's width.
   double ns_per_work = 0.5;
   // Rule 1: run inline when the whole job takes less than inline_multiple x dispatch_ns.
-  // A team call's fixed cost is 0.5-10 us of runtime dispatch and completion waits
-  // (fork/join measured at 0.5-9.8 us on the prototype's machines).
+  // T1 measured a team call at 2-6 us within a cache group but 26 us (pool) to 35 us
+  // (OpenMP executor) at 64 lanes of the EPYC; the full-width value inlined rows up to
+  // 10240 points that 8 members run 1.2-2.1 times faster (run 20261114-181442-11ed, 1.15 over
+  // the catalogue), so the cost stays at a group's until it has a per-lane term.
   double dispatch_ns = 2000;
   double inline_multiple = 3;
-  // Rules 2 and 3: the cost of one phase boundary inside a cache group (a done counter and
-  // a wake-up): 0.4 us on an Apple cluster, 0.7 us on a Zen 3 CCX, 1.1 us on an 18-core
-  // Xeon mesh, measured for the prototype's barrier.
-  double sync_ns = 700;
-  // Rule 3: at least this many points per member of a split transform (3072 points on 18
-  // lanes ran in 13 us against 5.7 us serial).
-  std::size_t min_points_per_member = 512;
-  // Rule 3: split a transform only from this size: about 2048 points inside a Zen 3 CCX,
-  // about 8000 on a large mesh-connected group (more than mesh_group_lanes members).
-  std::size_t split_min_points = 2048;
+  // Rules 2 and 3: the cost of one phase boundary inside a cache group (a claim, a done
+  // counter and a wait on it). T1, 1 us chunks among a group's members: 1141 ns on the
+  // CCX (8 members), 461 on the M5 (6), 2846 on the Xeon (18); adopted on the CCX (run
+  // 20261114-181442-11ed: 0.989, nothing slower beyond the band); profile_for keeps the
+  // provisional 700 on the other kinds, where T1's adoption runs failed for other fields.
+  double sync_ns = 1100;
+  // Rule 3: at least this many points per member of a split transform (T5, S2, run
+  // 20261114-182645-10c9: 512 and 1024 within the band over the rows worth splitting,
+  // 2048 1.03, 4096 1.14; the largest within the band).
+  std::size_t min_points_per_member = 1024;
+  // Rule 3: split a transform only from this size, by cache-group type (T5, S1): 6144 on a
+  // CCX (runs 20261114-175237-ee55 at 8 lanes and 20261114-180642-f917 at 64: a lone
+  // 4096-point row split lost 1.33 against whole behind a 64-thread OpenMP executor, an r2c
+  // of 4096 points 1.5 at 8 lanes), 8192 on an Apple performance cluster (profile_for; run
+  // 20261114-174818-ee78: 4096 lost 1.17, 8192 gained 0.84). On a mesh-connected group of
+  // more than mesh_group_lanes members, S1 on the Xeon (run 20261114-180925-7c39) put the
+  // crossover at 20480 (r2c and c2r of 16384 points lost 1.11-1.17), but that threshold
+  // lost 1.05 over the catalogue (run 20261114-182732-001f: planes and few rows of 16384
+  // points 1.5-2.4 times slower unsplit), so the mesh keeps 8192.
+  std::size_t split_min_points = 6144;
   std::size_t split_min_points_mesh = 8192;
   int mesh_group_lanes = 8;
-  // Rule 2: leftover transforms after the whole ones are split only from this size
-  // (remainder sub-teams gained 0.71-0.90 for 8192 points and more, lost 1.04-1.21 at 3072).
+  // Rule 2: leftover transforms after the whole ones are split only from this size (T5,
+  // S3, run 20261114-182042-1f0c: at 8 lanes leftovers of 4096 points gained 0.85-0.98 and
+  // of 2048 nothing; at 64, run 20261114-182347-49bf, nothing either way; the crossover is
+  // within one catalogue step of the prototype's 8192, which T5's rule keeps).
   std::size_t remainder_split_min_points = 8192;
   // The logical CPUs the process may use (0: unknown). A team with more members is
   // oversubscribed: no transform is split, since a preempted member would stall its
   // partners for a whole time slice, and waiting members do not spin.
   int cpus = 0;
-  // Waiting (wait.hpp): spin this long, then yield this long, then block. Provisional:
-  // the study's 5-100 us spin range, near its middle.
+  // Waiting (wait.hpp): spin this long, then yield this long, then block. T1's rule (spin
+  // about as long as a blocked waiter takes to wake: 6-9 us on the CCX, 7 on the M5, 10-13
+  // on the Xeon) gave 9 and 22.5 us on the CCX, which made batches of 8192-16384-point rows
+  // 1.05-1.11 times slower (run 20261114-181442-11ed): the study's 20 and 50 us stay.
   double spin_ns = 20000;
   double yield_ns = 50000;
   // Whole transforms are claimed in runs of (left / (claim_divisor x members)), at least
   // one: long runs while much is left (contiguous rows, few atomic operations), single
-  // transforms at the end (balance).
-  int claim_divisor = 2;
+  // transforms at the end (balance). 1 on the CCX (T1, run 20261114-181442-11ed: 0.972,
+  // batches of 1024 short rows 0.70-0.83, nothing slower beyond the band; 4 lost 1.20-1.39
+  // there); profile_for keeps 2 on the other kinds.
+  int claim_divisor = 1;
   // The planner's (not the scheduler's), experiment X12: a c2c row whose bytes exceed
   // grid_min_bytes is a grid rather than a chain (strategies/grid.hpp), in three phases
   // rather than two beyond grid_three_bytes; the grid widens its column blocks while one
@@ -76,7 +101,13 @@ struct machine_profile {
   std::size_t grid_block = 0;
 };
 
-// The profile of the running machine: the defaults above with its CPU count.
+// The profile of a machine of topology t (its CPU count aside): the defaults above, which
+// are a Zen 3 CCX's, with the grid's sizes from t's caches, and an Apple cluster's or a
+// mesh's values where T1 and T5 measured them. A pure function of the topology, so that
+// the fixtures test it on any machine.
+[[nodiscard]] machine_profile profile_for(const topology& t) noexcept;
+
+// The profile of the running machine: profile_for its topology, with its CPU count.
 [[nodiscard]] machine_profile default_machine_profile() noexcept;
 
 // Which lanes (team members) share a cache: contiguous runs of group_size ranks (fftn::team).

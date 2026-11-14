@@ -7,6 +7,7 @@
 
 #include "core/plan_core.hpp"
 #include "fftn/detail/core.hpp"
+#include "platform/topology.hpp"
 #include "threading/schedule.hpp"
 #include "threading/work_graph.hpp"
 
@@ -17,6 +18,7 @@
 #include <complex>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <limits>
 #include <memory>
 #include <vector>
@@ -173,16 +175,25 @@ TEST(Schedule, WholeRowsThenLongLeftoversSplit) {
 }
 
 // Rule 3: split only inside a group, with enough points per member, and on a large
-// mesh-connected group only from about 8000 points.
+// mesh-connected group only from longer rows (T5).
 TEST(Schedule, SplitThresholds) {
-  // 3072 points: worth splitting in a small group, not on an 18-lane mesh.
-  const schedule ccx = make_schedule(rows(3072, 1)->graph, {.lanes = 8}, profile());
+  // 6144 points: worth splitting in a small group, not on an 18-lane mesh.
+  const schedule ccx = make_schedule(rows(6144, 1)->graph, {.lanes = 8}, profile());
   EXPECT_EQ(share_of(ccx, {.lanes = 8}, 0).split, 1U);
-  EXPECT_LE(share_of(ccx, {.lanes = 8}, 0).cap, 6); // 3072 / 512 points per member
-  const schedule mesh = make_schedule(rows(3072, 1)->graph, {.lanes = 18}, profile());
+  const schedule mesh = make_schedule(rows(6144, 1)->graph, {.lanes = 18}, profile());
   EXPECT_EQ(share_of(mesh, {.lanes = 18}, 0).split, 0U);
-  const schedule long_mesh = make_schedule(rows(16384, 1)->graph, {.lanes = 18}, profile());
+  const schedule long_mesh = make_schedule(rows(32768, 1)->graph, {.lanes = 18}, profile());
   EXPECT_EQ(share_of(long_mesh, {.lanes = 18}, 0).split, 1U);
+  // Below the threshold of a small group the row stays whole.
+  const schedule short_row = make_schedule(rows(4096, 1)->graph, {.lanes = 8}, profile());
+  EXPECT_EQ(share_of(short_row, {.lanes = 8}, 0).split, 0U);
+  // At most points / 512 members.
+  machine_profile any_length = profile();
+  any_length.split_min_points = 1;
+  any_length.sync_ns = 0;
+  const schedule capped = make_schedule(rows(3072, 1)->graph, {.lanes = 8}, any_length);
+  EXPECT_EQ(share_of(capped, {.lanes = 8}, 0).split, 1U);
+  EXPECT_LE(share_of(capped, {.lanes = 8}, 0).cap, 6); // 3072 / 512 points per member
   // Never more members than the row has chunks in its widest phase, nor than the group has.
   const lane_map grouped{.lanes = 32, .group_size = 4};
   const schedule g = make_schedule(rows(65536, 1)->graph, grouped, profile());
@@ -304,6 +315,33 @@ TEST(Schedule, OversubscribedByTheRuntimesThreads) {
   EXPECT_EQ(share_of(s, dispatched, 0).split, 0U);
   const lane_map fewer{.lanes = 4, .threads = 2}; // never fewer threads than members
   EXPECT_FALSE(make_schedule(rows(65536, 1)->graph, fewer, p).oversubscribed);
+}
+
+// The profile follows the machine's kind (T1, T5): an Apple performance cluster splits from
+// longer rows than a Zen 3 CCX; a mesh's threshold is the rules' (groups of more than
+// mesh_group_lanes members), whatever the machine.
+TEST(Schedule, ProfileForRecordedMachines) {
+  const std::filesystem::path data(FFTN_PLATFORM_DATA);
+  const machine_profile m5 =
+      fftn::detail::profile_for(fftn::detail::load_topology(data / "macos-apple-m5-max.sysctl"));
+  const machine_profile epyc =
+      fftn::detail::profile_for(fftn::detail::load_topology(data / "linux-amd-epyc-7763.sysfs"));
+  const machine_profile xeon = fftn::detail::profile_for(
+      fftn::detail::load_topology(data / "linux-intel-xeon-gold-6240.sysfs"));
+  const machine_profile ccx{};
+  EXPECT_EQ(m5.split_min_points, 8192U);
+  EXPECT_EQ(epyc.split_min_points, ccx.split_min_points);
+  EXPECT_EQ(xeon.split_min_points, ccx.split_min_points);
+  EXPECT_EQ(xeon.split_min_points_mesh, ccx.split_min_points_mesh);
+  // T1's measured costs were adopted on the CCX only.
+  EXPECT_EQ(epyc.sync_ns, ccx.sync_ns);
+  EXPECT_EQ(epyc.claim_divisor, ccx.claim_divisor);
+  for (const machine_profile& other : {m5, xeon}) {
+    EXPECT_EQ(other.sync_ns, 700);
+    EXPECT_EQ(other.claim_divisor, 2);
+  }
+  // The grid's sizes come from the caches.
+  EXPECT_EQ(epyc.grid_min_bytes, std::size_t{32} * 1024);
 }
 
 // A pure function: equal inputs, equal schedules; the default profile knows the machine.
