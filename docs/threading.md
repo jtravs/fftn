@@ -79,9 +79,11 @@ Who runs which piece is decided during the execution, by the members that turn u
   reading other members' transforms or reusing the workspace.
 
 Small jobs run on the first member to arrive; batches smaller than a cache group stay in
-one group; a transform is split only when it is long enough to pay for the
-synchronisation. The output does not depend on any of this: a team execution gives the
-same bits as serial execution, whatever the team's size, grouping or timing
+one group; a transform is split only when it is long enough to pay for the synchronisation
+(from about 6000 points in a cache group of up to 8 cores, 8000 on an Apple performance
+cluster or in a larger group, as experiment [T5](../dev/experiments/T5-split-thresholds.md)
+measured). The output does not depend on any of this: a team execution gives the same bits
+as serial execution, whatever the team's size, grouping or timing
 ([conventions](conventions.md#determinism)).
 
 ## Every member makes every call
@@ -169,6 +171,23 @@ lanes have work, the others return at once rather than the region being narrower
 libgomp ends and restarts its threads whenever the width of successive regions changes.
 Called from inside an active parallel region, it runs the execution serially on the calling
 thread instead of nesting a region. Neither adapter changes the runtime's settings.
+
+The runtime's settings matter more than anything FFTN does (measured in experiment
+[T1](../dev/experiments/T1-dispatch-wait-costs.md)):
+
+- A region costs more the wider it is. Opening one and waiting for its end took about
+  2–3 µs at 8 threads and 35 µs at 64 with libgomp on a 64-core Zen 3 socket, so the
+  executor's width is paid by every execution that is shared at all, even one that keeps
+  only a few lanes busy. If most transforms are small, an executor no wider than the work
+  (or the team overload inside a region the program opens anyway) is cheaper.
+- LLVM's libomp on macOS does not keep idle threads spinning between regions by default:
+  each region then cost 20–26 µs at 6 threads instead of 1.6–2.4 µs with
+  `KMP_BLOCKTIME=200`. Set a block time on Apple processors when executions follow each
+  other closely.
+- `OMP_PROC_BIND` makes libgomp bind the initial thread to one CPU, and threads it creates
+  afterwards inherit that binding. A `fftn::thread_pool` (or any other pool) started in
+  such a process runs all its threads on that one CPU: 32 ms per call at 8 lanes instead of
+  5 µs. Do not mix a bound OpenMP runtime with a pool; use `fftn::omp::executor` there.
 
 ## Executors
 
