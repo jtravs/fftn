@@ -442,7 +442,8 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     const bool r2c = s.kind == transform_kind::r2c;
     grid_builder<T> grid(kernels, chain, tables_of<T>(c),
                          settings.grid_fused &&
-                             (n / 2) * 2 * sizeof(T) <= settings.profile.grid_fuse_bytes);
+                             (n / 2) * 2 * sizeof(T) <= settings.profile.grid_fuse_bytes,
+                         settings.grid_phase_radix);
     const bool in_place = c.in_place || !r2c;
     if (grid_builder<T>::uses_block(real_grid, in_place)) {
       c.block_elements = n / 2;
