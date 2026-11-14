@@ -35,14 +35,20 @@
 //   load_tw(p)              C<T> twiddles from storage written by pack_tw
 //   pack_tw(out, p)         writes the C<T> interleaved twiddles at p as storage at out
 //                           (C * tw_reals reals); scalar code, run when a table is built
+//   bcast_tw(p)             one twiddle, from storage written by pack_tw1, in every lane:
+//                           the twiddle of a lane pass, whose lanes share it (DESIGN.md 8.4)
+//   pack_tw1(out, p)        writes the one interleaved twiddle at p as broadcast storage at
+//                           out (tw_reals reals); scalar code, run when a table is built
+//   cmul(a, b)              a * b for two complex registers (a factor array's values, not
+//                           twiddle storage); rounds exactly as mul(a, w) with w = b
 //   transpose(v)            v points to C<T> registers holding a C x C block of complex
 //                           numbers; transposes it in place (lane j of v[i] <-> lane i of
 //                           v[j]). The general R x C form arrives with avx512 (phase 1.3),
 //                           where C = 8 for float exceeds small radices.
 //
 // Exact operations (add, sub, addj, subj, scale, neg, conj, swap_ri, the memory operations
-// and transpose) give the same bits on every target. mul, mulc and madd differ between
-// targets in their last bit, by the order of their roundings.
+// and transpose) give the same bits on every target. mul, mulc, madd and cmul differ
+// between targets in their last bit, by the order of their roundings.
 //
 // Real-register operations, in namespace real (a, b, c of type rv<T>, x of type T):
 //

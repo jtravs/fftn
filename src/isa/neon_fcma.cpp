@@ -9,6 +9,7 @@
 
 #if FFTN_ARCH_AARCH64
 
+#include "gen/codelets.hpp"     // IWYU pragma: keep (the passes read the codelet table)
 #include "isa/kernel_table.hpp" // IWYU pragma: keep (table.inl defines a kernel_table)
 #include "isa/region.hpp"
 
@@ -18,7 +19,9 @@ FFTN_ISA_BEGIN(neon_fcma)
 
 #include "isa/kernels.inl"
 
-#include "passes/chain_absent.inl"
+#include "gen/complex_codelets.inl"
+
+#include "passes/passes.inl"
 
 #include "isa/table.inl"
 

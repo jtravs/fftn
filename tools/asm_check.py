@@ -121,6 +121,25 @@ def components(mangled: str) -> list[str]:
     return out
 
 
+def name_and_tail(mangled: str) -> tuple[list[str], str] | None:
+    """The leading source names of an Itanium nested name and what follows them (template
+    arguments and parameter types), or None where the mangling is not understood."""
+    m = re.match(r"^_*ZZ?N[rVKRO]*", mangled)
+    if not m:
+        return None
+    names, i = [], m.end()
+    while i < len(mangled) and mangled[i].isdigit():
+        j = i
+        while j < len(mangled) and mangled[j].isdigit():
+            j += 1
+        n = int(mangled[i:j])
+        names.append(mangled[j : j + n])
+        i = j + n
+        while i < len(mangled) and mangled[i] == "L":
+            i += 1
+    return (names, mangled[i:]) if names else None
+
+
 def is_fftn(sym: str) -> bool:
     if sym.startswith("?"):
         return "@fftn@@" in sym
@@ -286,13 +305,17 @@ def identical_code_alias(f: Function, call: Call, target: str) -> bool:
         body.pop()
     if len(body) != 1 or body[0] not in JUMPS or f.calls != [call]:
         return False
+    if call.symbol == f.name or target_of(call.symbol) != target:
+        return False
     mine, theirs = template_name(f.name), template_name(call.symbol)
-    return (
-        mine is not None
-        and mine == theirs
-        and target_of(call.symbol) == target
-        and call.symbol != f.name
-    )
+    if mine is not None and mine == theirs:
+        return True
+    # Two different functions of one scope with the same template arguments and parameter
+    # types and identical bodies (GCC folds scalar's pack_bcast_twiddles<T> into
+    # pack_twiddles<T>, whose storage is the same there): the jump reaches a function of
+    # the same signature in the same target, checked in its own right.
+    a, b = name_and_tail(f.name), name_and_tail(call.symbol)
+    return a is not None and b is not None and a[0][:-1] == b[0][:-1] and a[1] == b[1]
 
 
 def call_errors(target: str, f: Function) -> list[str]:

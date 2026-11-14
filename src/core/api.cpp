@@ -31,6 +31,9 @@ static_assert(static_cast<unsigned char>(isa::neon_fcma) ==
               static_cast<unsigned char>(detail::target::neon_fcma));
 
 const char* isa_name(isa target) noexcept {
+  if (target == isa::best) {
+    return "best";
+  }
   // target_name returns views of string literals, so data() is null-terminated.
   return detail::target_name(static_cast<detail::target>(target)).data();
 }

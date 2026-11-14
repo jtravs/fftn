@@ -11,22 +11,20 @@ constinit const kernel_table table{
     .fused = fused,
     .f64 =
         {
-            .radix4_pass = &radix4_pass<double>,
-            .radix2_split_pass = &radix2_split_pass<double>,
             .pack_twiddles = &pack_twiddles<double>,
+            .pack_bcast_twiddles = &pack_bcast_twiddles<double>,
             .complex_lanes = C<double>,
             .real_lanes = W<double>,
             .tw_reals = tw_reals<double>,
-            .chain = chain_entries<double>,
+            .passes = pass_table<double>,
         },
     .f32 =
         {
-            .radix4_pass = &radix4_pass<float>,
-            .radix2_split_pass = &radix2_split_pass<float>,
             .pack_twiddles = &pack_twiddles<float>,
+            .pack_bcast_twiddles = &pack_bcast_twiddles<float>,
             .complex_lanes = C<float>,
             .real_lanes = W<float>,
             .tw_reals = tw_reals<float>,
-            .chain = chain_entries<float>,
+            .passes = pass_table<float>,
         },
 };

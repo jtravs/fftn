@@ -80,7 +80,8 @@ template <class T> struct expected_and_got {
 template <class T>
 expected_and_got<T> run(const kernel_table& kernels, const probe_table& probes, vop op) {
   std::mt19937 gen(12345); // NOLINT(bugprone-random-generator-seed): reproducible data
-  const bool products = op == vop::c_mul || op == vop::c_mulc || op == vop::c_madd;
+  const bool products = op == vop::c_mul || op == vop::c_mulc || op == vop::c_madd ||
+                        op == vop::c_cmul || op == vop::c_mul_bcast;
   operand<T> a = random_reals<T>(gen, n);
   operand<T> b = random_reals<T>(gen, n);
   operand<T> c = random_reals<T>(gen, n);
@@ -130,9 +131,13 @@ expected_and_got<T> run(const kernel_table& kernels, const probe_table& probes, 
       break;
     case vop::c_mul:
     case vop::c_mulc:
-    case vop::c_madd: {
+    case vop::c_madd:
+    case vop::c_cmul:
+    case vop::c_mul_bcast: {
       const isa_test::cnum<T> x{ar, ai};
-      const isa_test::cnum<T> w{br, bi};
+      // c_mul_bcast: every lane of register g takes twiddle g, complex number g of b.
+      const std::size_t g = op == vop::c_mul_bcast ? 2 * (i / (2 * lanes)) : re;
+      const isa_test::cnum<T> w{b[g], b[g + 1]};
       const isa_test::cnum<T> acc{c[re], c[re + 1]};
       const bool conj_w = op == vop::c_mulc;
       const auto [pr, pi] = op == vop::c_madd ? isa_test::multiply_add(kernels.id, acc, x, w)
@@ -197,11 +202,16 @@ expected_and_got<T> run(const kernel_table& kernels, const probe_table& probes, 
   }
 
   // The twiddle operand of the complex products is passed through the target's own
-  // twiddle storage, which tests pack_twiddles and load_tw too.
+  // twiddle storage, which tests pack_twiddles and load_tw (or pack_bcast_twiddles and
+  // bcast_tw) too. cmul takes b as it is.
   const std::size_t tw_size = of<T>(kernels).tw_reals * half;
   operand<T> tw(tw_size);
-  of<T>(kernels).pack_twiddles(b.data(), half, tw.data());
-  const T* second = products ? tw.data() : b.data();
+  if (op == vop::c_mul_bcast) {
+    of<T>(kernels).pack_bcast_twiddles(b.data(), half, tw.data());
+  } else {
+    of<T>(kernels).pack_twiddles(b.data(), half, tw.data());
+  }
+  const T* second = products && op != vop::c_cmul ? tw.data() : b.data();
   if (products && kernels.fused) {
     EXPECT_GT(differ_from_unfused, 0U)
         << "the data cannot tell a fused product from an unfused one";
@@ -213,8 +223,8 @@ expected_and_got<T> run(const kernel_table& kernels, const probe_table& probes, 
   } else {
     probes.f32(op, a.data(), second, c.data(), got.data(), n, &r);
   }
-  EXPECT_EQ(tw.buffer.front(), T(-77)) << "pack_twiddles wrote before its output";
-  EXPECT_EQ(tw.buffer.back(), T(-77)) << "pack_twiddles wrote past its output";
+  EXPECT_EQ(tw.buffer.front(), T(-77)) << "packing twiddles wrote before its output";
+  EXPECT_EQ(tw.buffer.back(), T(-77)) << "packing twiddles wrote past its output";
   return {e, got};
 }
 

@@ -42,7 +42,8 @@ struct stage {
   pass_args args; // src and dst are filled in by the driver from the slots
   slot src = slot::in;
   slot dst = slot::out;
-  std::size_t units = 0;    // butterflies, or the edge pass's own units
+  std::size_t units = 0;    // the kernel's own units: blocks of butterflies or copies, a line,
+                            // elements (src/strategies/chain.hpp); only their count matters here
   std::uint32_t chunks = 1; // independent ranges [units c / chunks, units (c+1) / chunks)
   std::string name;         // for describe()
 };
