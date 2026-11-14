@@ -931,7 +931,9 @@ parameter, everything else accessors; gen/README.md has the codelet calling conv
   the profile's leaf limit (32 on NEON in double, 16 elsewhere; experiment X8): values are
   broadcast on loading and lane 0 is stored, so it takes any stride and runs in place, at
   the cost of C − 1 idle lanes; leaves vectorised across rows are the lanes strategy's
-  (phase 4).
+  (phase 4). A leaf kernel takes its first line's addresses and the distances to the next
+  line as arguments (`leaf_fn`), so the driver runs a batch of leaf rows as one call on the
+  plan's own arguments (section 8.3, X20).
 - The **generic** pass (any radix by direct evaluation) and the copy are lane-form passes
   on every target (the generic pass's lanes run over copies, so a single prime row has one
   valid lane; with the Bluestein threshold at 16 the rules no longer choose it, X17);
@@ -975,7 +977,14 @@ struct loop {             // repeat the enclosed records
 
 Loops express everything that is not a single pass: a batch of rows, depth-first blocking
 (run all passes on one cache-sized block before the next), the row phase of a grid, the
-planes of a volume. The driver costs a few nanoseconds per record. Two consequences:
+planes of a volume. Walking records costs a few nanoseconds per record and transform, which
+is more than a tiny transform's arithmetic, so the commonest programs are not walked: a
+program whose body is a few stages and no loop (rows) is marked *flat* at construction, and
+the driver then runs a batch of leaves as one kernel call, one transform with one copy of
+each stage's arguments, and a batch with those copies made once and the slots moved by the
+batch step (experiment X20: at 8 points 7.7 → 4.9 ns per call, 7.1 → 1.7 ns per transform
+in a batch on the M5 Max). Every kernel still gets the arguments and units the walk would
+give it, so the bits do not change. Two consequences:
 
 - **Blocking and batching are data**, not separate engines.
 - **The threading work graph is read off the program** (section 13.2). Independent loops
@@ -2462,6 +2471,7 @@ to change before a release.
 | 2026-11-14 | Codelets of radix 32 and 64 (task 1.6) in every variant, with all their passes instantiated; the pass table has one row per generated radix (`codelet_slot`), not one per radix value; a planner profile has a leaf limit, 16 by default, above which a codelet radix is a leaf only when the limit allows (`build_settings::leaf_limit`, fbench `LEAF_LIMIT`) | Leaves above 16 and big passes (experiments X8 and X3) need the codelets; their operation counts equal FFTW's n1_32, n1_64, t1_32 and t1_64. They roughly double the kernel code (B3: 33 % of the pass instructions are radix 64's, 14 % radix 32's; numbers in X8), kept for speed over build size: the grid and X3 may use them as passes |
 | 2026-11-14 | Leaf limit 32 on NEON in double (C = 1), 16 on every other target and precision; no leaf of 64 (experiment X8) | The leaf of 32 was 16–22 % faster than planner v1's chain on the M5 Max in double; with C > 1 it idles lanes and lost on the Mac and the EPYC; 64 spills and lost everywhere. The Xeon's `avx512` float chain at 32 lost to the leaf only through its own tail problem (X16) |
 | 2026-11-14 | Machine profile from T1 and T5 (task 3.4): split a lone transform from 6144 points on a Zen 3 CCX (the defaults), 8192 on an Apple cluster (`profile_for`, from macOS's topology); mesh groups keep 8192; leftovers keep 8192; at least 1024 points per member; on a CCX, phase hand-off 1100 ns and claim runs of left / members; dispatch, work cost and spin budgets stay provisional | T1/T5 per-field and combined adoption runs on the EPYC, the M5 and the Xeon (numbers in the experiment files); the measured dispatch and work costs made cases slower until the dispatch cost has a per-lane term (18.2, item 22) |
+| 2026-11-14 | Flat programs and leaves called with addresses (experiment X20): rows of a few stages skip the record walk; a leaf is a `leaf_fn` taking its lines' addresses and distances, so a batch of leaf rows is one call and no leaf needs a copy of `pass_args` | On the M5 Max the walk and the 144-byte argument copy cost about 3.5 ns per transform and the entry about 1 ns per call, against a 2.5 ns 8-point leaf; the record walk stays for programs with loops (grids, planes), which the threading work graph reads unchanged |
 
 ---
 
