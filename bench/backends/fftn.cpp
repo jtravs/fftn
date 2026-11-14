@@ -45,6 +45,10 @@
 //   STRATEGY=rules|chain|grid   the strategy of c2c rows (build_settings::strategy): the
 //                    planner's choice (default), or the chain or the grid forced where the row
 //                    can be one; each case's note says which was built (experiment X12)
+//   LAYOUT=rules|interleaved|split   the arithmetic of the chains' lane passes
+//                    (build_settings::layout): the profile's choice (default), or interleaved
+//                    or split forced where a chain has a split run; each case's note shows
+//                    the split passes (experiment X1)
 //   GRID_FACTORS=n1.n2[.n3]     the grid's factors in phase order (build_settings::
 //                    grid_factors), for rows they multiply to
 //   GRID_MIN_BYTES, GRID_THREE_BYTES, GRID_BLOCK_BYTES, GRID_BLOCK, GRID_FUSE_BYTES
@@ -136,6 +140,7 @@ struct session {
   std::string overrides;          // the profile and chunking options given, as JSON members
   std::string radices_text;       // RADICES as given, r1.r2... (settings.radices holds them)
   std::string strategy = "rules"; // STRATEGY as given
+  std::string layout = "rules";   // LAYOUT as given
   std::string factors_text;       // GRID_FACTORS as given
   std::string description;
 };
@@ -398,6 +403,15 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
                             : value == "grid" ? detail::strategy_choice::grid
                                               : detail::strategy_choice::rules;
       s.strategy = value;
+    } else if (key == "LAYOUT") {
+      if (value != "rules" && value != "interleaved" && value != "split") {
+        say(message, message_size, "LAYOUT is rules, interleaved or split");
+        return fbench_error;
+      }
+      s.settings.layout = value == "interleaved" ? detail::layout_choice::interleaved
+                          : value == "split"     ? detail::layout_choice::split
+                                                 : detail::layout_choice::rules;
+      s.layout = value;
     } else if (key == "GRID_FACTORS") {
       try {
         s.settings.grid_factors = parse_radices(value, "GRID_FACTORS");
@@ -443,7 +457,8 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
         .boolean("isa_forced", s.isa != fftn::isa::best)
         .raw("supports", R"(["c2c","r2c","c2r"])")
         .raw("precisions", R"(["f64","f32"])")
-        .str("strategy", s.strategy);
+        .str("strategy", s.strategy)
+        .str("layout", s.layout);
     if (!s.factors_text.empty()) {
       d.str("grid_factors", s.factors_text);
     }
