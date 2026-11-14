@@ -15,7 +15,19 @@ from pathlib import Path
 CATALOGUE_DIR = Path(__file__).resolve().parent.parent / "catalogues"
 TIERS = ("smoke", "quick", "tracking", "full")
 KINDS = ("c2c", "r2c", "c2r")
-GROUP_KEYS = {"name", "kind", "dims", "batch", "place", "direction", "weight", "tiers", "note"}
+PRECISIONS = ("f64", "f32")
+GROUP_KEYS = {
+    "name",
+    "kind",
+    "dims",
+    "batch",
+    "place",
+    "direction",
+    "precision",
+    "weight",
+    "tiers",
+    "note",
+}
 
 
 @dataclass(frozen=True)
@@ -28,11 +40,13 @@ class Case:
     weight: float = 1.0
     tiers: frozenset[str] = field(default_factory=frozenset)
     group: str = ""
+    precision: str = "f64"
 
     @property
     def id(self) -> str:
         shape = "x".join(str(d) for d in self.dims)
         tail = "-bwd" if self.kind == "c2c" and self.sign > 0 else ""
+        tail += "-f32" if self.precision == "f32" else ""
         return f"{self.kind}-{shape}-b{self.batch}-{'ip' if self.place == 'in' else 'op'}{tail}"
 
     @property
@@ -47,11 +61,13 @@ class Case:
         return per * self.batch
 
     def line(self) -> str:
-        """The harness's case line."""
+        """The harness's case line. The precision is written only when it is f32, so that
+        double-precision cases still run on harnesses older than the key."""
         dims = "x".join(str(d) for d in self.dims)
+        prec = " prec=f32" if self.precision == "f32" else ""
         return (
             f"id={self.id} kind={self.kind} dims={dims} batch={self.batch} "
-            f"place={self.place} sign={self.sign}"
+            f"place={self.place} sign={self.sign}{prec}"
         )
 
 
@@ -119,20 +135,32 @@ def load(name_or_path: str) -> Catalogue:
             _as_list(group.get("batch", 1)),
             _as_list(group.get("place", "out")),
             _as_list(group.get("direction", "fwd")),
+            _as_list(group.get("precision", "f64")),
         )
-        for kind, dims, batch, place, direction in product:
+        for kind, dims, batch, place, direction, precision in product:
             if kind not in KINDS or place not in ("in", "out") or direction not in ("fwd", "bwd"):
                 raise ValueError(f"{where}: bad kind, place or direction")
+            if precision not in PRECISIONS:
+                raise ValueError(f"{where}: precision is one of {PRECISIONS}")
             if kind != "c2c" and direction != "fwd":
                 raise ValueError(f"{where}: direction applies to c2c only")
             sign = {"r2c": -1, "c2r": 1}.get(kind, -1 if direction == "fwd" else 1)
-            case = Case(kind, dims, int(batch), place, sign, weight, tiers, str(group.get("name")))
+            name = str(group.get("name"))
+            case = Case(kind, dims, int(batch), place, sign, weight, tiers, name, precision)
             old = cases.get(case.id)
             if old is not None:
                 if old.weight != case.weight:
                     raise ValueError(f"{where}: {case.id} appears with two weights")
                 case = Case(
-                    kind, dims, int(batch), place, sign, weight, old.tiers | tiers, old.group
+                    kind,
+                    dims,
+                    int(batch),
+                    place,
+                    sign,
+                    weight,
+                    old.tiers | tiers,
+                    old.group,
+                    precision,
                 )
             cases[case.id] = case
     return Catalogue(

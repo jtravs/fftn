@@ -24,6 +24,10 @@ inline constexpr std::int32_t fbench_c2c = 0;
 inline constexpr std::int32_t fbench_r2c = 1;
 inline constexpr std::int32_t fbench_c2r = 2;
 
+/// Precisions (fbench_case::precision).
+inline constexpr std::int32_t fbench_f64 = 0;
+inline constexpr std::int32_t fbench_f32 = 1;
+
 /// Results of fbench_begin and fbench_create.
 inline constexpr std::int32_t fbench_ok = 0;
 /// The library cannot do this case; not an error (the report lists it).
@@ -33,8 +37,9 @@ inline constexpr std::int32_t fbench_error = 2;
 extern "C" {
 
 /// One case: `batch` transforms of a row-major array of `rank` dimensions, FFTW's layout
-/// conventions. Complex data is interleaved double. Lengths are in elements: complex
-/// elements for complex arrays, doubles for real arrays.
+/// conventions. Complex data is interleaved real values of the case's precision. Lengths
+/// are in elements: complex elements for complex arrays, real values for real arrays. The
+/// harness gives a backend f32 cases only when its describe lists "f32" in "precisions".
 struct fbench_case {
   std::int32_t kind;        ///< fbench_c2c, fbench_r2c or fbench_c2r
   std::int32_t rank;        ///< 1, 2 or 3
@@ -46,6 +51,7 @@ struct fbench_case {
   std::int64_t out_last;    ///< physical length of the output's last dimension
   std::int64_t in_dist;     ///< elements between consecutive input transforms
   std::int64_t out_dist;    ///< elements between consecutive output transforms
+  std::int32_t precision;   ///< fbench_f64 or fbench_f32
 };
 
 /// Starts the session. `options` is the arm's backend options as space-separated
@@ -60,12 +66,15 @@ void fbench_end();
 /// "library", "version" and "isa" (the instruction set actually selected), and
 /// "loaded_from" with "expected_root" when the library is a shared library, so that the
 /// driver can refuse a binary that resolved the wrong one; and "supports", the list of kinds
-/// ("c2c", "r2c", "c2r") the backend claims, for which smoke fails on an unsupported case.
-/// Valid until fbench_end.
+/// ("c2c", "r2c", "c2r") the backend claims, for which smoke fails on an unsupported case;
+/// optionally "precisions", the list of precisions ("f64", "f32") it takes (default f64
+/// only). Valid until fbench_end.
 const char* fbench_describe();
 
 /// Plans one case. `in` and `out` are buffers of the case's size and of the alignment
-/// every later execute will use; they may be overwritten. On success stores the plan.
+/// every later execute will use; they may be overwritten. On success stores the plan and
+/// may write a note on what it chose into `message` (NUL-terminated; the harness reports
+/// it with the case as "note"); on failure writes why.
 std::int32_t fbench_create(const fbench_case* c, void* in, void* out, void** plan, char* message,
                            std::size_t message_size);
 

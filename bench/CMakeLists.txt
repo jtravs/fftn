@@ -43,7 +43,8 @@ endfunction()
 
 fbench_add_backend(fftn fftn::fftn)
 # The FFTN backends build plans through the private plan core, so that an arm can set its
-# build settings (the machine profile, chunking) for the threading experiments.
+# build settings (the machine profile, chunking, for the threading experiments; forced
+# radices, for experiment X2).
 target_include_directories(fbench-fftn PRIVATE ${PROJECT_SOURCE_DIR}/src)
 
 # fbench-fftn_omp: the same backend with THREADS through fftn::omp::executor (fftn/omp.hpp),
@@ -327,6 +328,11 @@ if(FFTN_BUILD_TESTS)
       set_tests_properties(bench.smoke bench.t1_smoke PROPERTIES ENVIRONMENT
         "LSAN_OPTIONS=suppressions=${PROJECT_SOURCE_DIR}/tests/omp/lsan.supp")
     endif()
+    # The FFTN backend's RADICES option end to end (experiment X2, bench/x2/search.py).
+    add_test(NAME bench.x2_selftest
+             COMMAND ${FFTN_UV} run --frozen --quiet python bench/x2/search.py
+                     --build ${CMAKE_BINARY_DIR} selftest
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
   else()
     message(STATUS "fbench: uv not found; the driver's tests are not registered")
   endif()

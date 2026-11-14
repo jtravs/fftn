@@ -473,10 +473,11 @@ bool bitwise_equal(const std::vector<std::complex<T>>& x, const std::vector<std:
 // copy passes) and in place, and for r2c and c2r rows, several rows each so that tails
 // occur. The radices are the first target's
 // rules' choice, forced on both: avx2 and avx512 key their rules on different register
-// counts.
+// counts and lanes.
 template <class T> void same_bits(fftn::isa a, fftn::isa b) {
   using c = std::complex<T>;
-  const auto profile = fftn::detail::profile_of(static_cast<fftn::detail::target>(a));
+  const auto profile =
+      fftn::detail::profile_of(static_cast<fftn::detail::target>(a), lanes_of<T>(a));
   std::vector<std::size_t> lengths;
   for (std::size_t n = 1; n <= 64; ++n) {
     lengths.push_back(n);

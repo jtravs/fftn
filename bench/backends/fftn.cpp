@@ -3,15 +3,18 @@
 
 // fbench backend for FFTN: one plan and one workspace per case, serial or threaded.
 //
-// Every case of rank 1 to 3 and every kind is supported, in double precision, with FFTW's
-// embedding (in_last, out_last) and distances. describe reports the instruction set the
-// plans run ("isa"), whether it was forced ("isa_forced") and how the arm executes.
+// Every case of rank 1 to 3 and every kind is supported, in double and single precision,
+// with FFTW's embedding (in_last, out_last) and distances. describe reports the instruction
+// set the plans run ("isa"), whether it was forced ("isa_forced"), how the arm executes and
+// the options that change the plan; every case's note is its plan's per-axis lines (the
+// radices it uses).
 //
 // Plans are built and executed through the functions that the public plan<In, Out>
 // forwards every call to (include/fftn/plan.hpp: make_plan_core, execute_core, execute_on,
 // execute_team), so that an arm can also set the private build settings
-// (src/core/plan_core.hpp) for the threading experiments T1 and T5. With no options the
-// plan is exactly the public one.
+// (src/core/plan_core.hpp): the threading experiments T1 and T5 set the machine profile
+// and chunking, experiment X2 the chain's radices. With no options the plan is exactly the
+// public one.
 //
 // Options (bench/README.md, "FFTN options"), combinable:
 //   ISA=<name>       force every plan to that instruction set (options::force_isa; names as
@@ -30,6 +33,10 @@
 //   SPIN_NS, YIELD_NS, CLAIM_DIVISOR
 //                    the machine profile's fields (src/threading/schedule.hpp); a size
 //                    threshold may be `never`
+//   RADICES=r1.r2... the chain's radices in pass order (build_settings::radices, an internal
+//                    test knob), for c2c rows whose length they multiply to; any other case
+//                    is an error, and so is a radix no pass of the target takes. Experiment
+//                    X2 times radix sequences with it (dev/experiments/X2-radix-sets.md).
 // ISA is a public option; the others reach the library only through the private build
 // settings, as a test's do: the library has no switch for them, so dev/KNOBS.toml does not
 // list them.
@@ -61,7 +68,9 @@
 #include <sys/qos.h>
 #endif
 
+#include <algorithm>
 #include <atomic>
+#include <charconv>
 #include <chrono>
 #include <complex>
 #include <cstddef>
@@ -70,14 +79,17 @@
 #include <exception>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
+#include <system_error>
+#include <utility>
+#include <vector>
 
 namespace {
 
 namespace detail = fftn::detail;
 using fbench::backends::say;
-using cplx = std::complex<double>;
 
 #ifdef FBENCH_FFTN_OMP
 using executor_type = fftn::omp::executor;
@@ -106,10 +118,11 @@ struct session {
   detail::build_settings settings;
   call mode = call::serial;
   int threads = 1;
-  int group_size = -1; // -1: the executor's own
+  int group_size = -1;             // -1: the executor's own
   fftn::isa isa = fftn::isa::best; // ISA=: the instruction set of every plan
   std::unique_ptr<executor_type> exec;
-  std::string overrides; // the profile and chunking options given, as JSON members
+  std::string overrides;    // the profile and chunking options given, as JSON members
+  std::string radices_text; // RADICES as given, r1.r2... (settings.radices holds them)
   std::string description;
 };
 
@@ -166,6 +179,80 @@ template <class In, class Out>
 std::shared_ptr<const detail::plan_core> make_core(const fbench_case& c, const fftn::options& o) {
   const fftn::shape<In, Out> s = shape_of<In, Out>(c);
   return detail::make_plan_core(detail::view_of(s), o, state().settings);
+}
+
+template <class T>
+std::shared_ptr<const detail::plan_core> make_core(const fbench_case& c, const fftn::options& o) {
+  using cplx = std::complex<T>;
+  if (c.kind == fbench_c2c) {
+    return make_core<cplx, cplx>(c, o);
+  }
+  if (c.kind == fbench_r2c) {
+    return make_core<T, cplx>(c, o);
+  }
+  return make_core<cplx, T>(c, o);
+}
+
+// ---- RADICES ---------------------------------------------------------------------------
+
+// Parses r1.r2... (each an integer of at least 2); throws std::invalid_argument.
+std::vector<std::size_t> parse_radices(std::string_view text) {
+  std::vector<std::size_t> out;
+  std::size_t at = 0;
+  while (at <= text.size()) {
+    const std::size_t end = std::min(text.find('.', at), text.size());
+    const std::string_view token = text.substr(at, end - at);
+    std::size_t r = 0;
+    const auto res = std::from_chars(token.data(), token.data() + token.size(), r);
+    if (token.empty() || res.ec != std::errc{} || res.ptr != token.data() + token.size() || r < 2) {
+      throw std::invalid_argument("RADICES is r1.r2... with every radix at least 2, not '" +
+                                  std::string(text) + "'");
+    }
+    out.push_back(r);
+    at = end + 1;
+  }
+  return out;
+}
+
+// Refuses a case the forced radices cannot plan: anything but a c2c row of their product.
+void check_radices_fit(const fbench_case& c) {
+  const session& s = state();
+  std::size_t product = 1;
+  for (const std::size_t r : s.settings.radices) {
+    product *= r;
+  }
+  if (c.kind != fbench_c2c || c.rank != 1) {
+    throw std::invalid_argument("RADICES=" + s.radices_text + " is for c2c rows only");
+  }
+  if (std::cmp_not_equal(product, c.dims[0])) {
+    throw std::invalid_argument("RADICES=" + s.radices_text + " multiplies to " +
+                                std::to_string(product) + ", not the length " +
+                                std::to_string(c.dims[0]));
+  }
+}
+
+// "4 x 8 x 8", as the plan's describe lists radices.
+std::string radix_list(const std::vector<std::size_t>& radices) {
+  std::string text;
+  for (const std::size_t r : radices) {
+    text += (text.empty() ? "" : " x ") + std::to_string(r);
+  }
+  return text;
+}
+
+// The plan's per-axis lines of its describe, joined by "; ".
+std::string axis_lines(const std::string& describe) {
+  std::string out;
+  std::size_t at = 0;
+  while (at < describe.size()) {
+    const std::size_t end = std::min(describe.find('\n', at), describe.size());
+    const std::string_view line = std::string_view(describe).substr(at, end - at);
+    if (line.starts_with("axis ")) {
+      out += (out.empty() ? "" : "; ") + std::string(line);
+    }
+    at = end + 1;
+  }
+  return out;
 }
 
 // ---- Executors -------------------------------------------------------------------------
@@ -245,8 +332,7 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
       const std::optional<fftn::isa> target = isa_from_name(value);
       if (!target) {
         say(message, message_size,
-            "FFTN options: ISA=scalar|avx2|avx512|neon|neon_fcma|...|best (got ISA=" + value +
-                ")");
+            "FFTN options: ISA=scalar|avx2|avx512|neon|neon_fcma|...|best (got ISA=" + value + ")");
         return fbench_error;
       }
       s.isa = *target;
@@ -273,6 +359,14 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
       }
       s.mode = value == "team" ? call::team : call::executor;
 #endif
+    } else if (key == "RADICES") {
+      try {
+        s.settings.radices = parse_radices(value);
+      } catch (const std::exception& e) {
+        say(message, message_size, e.what());
+        return fbench_error;
+      }
+      s.radices_text = value;
     } else if (fbench::fftn_tuning::apply_tuning(s.settings, key, value, error)) {
       if (!error.empty()) {
         say(message, message_size, error);
@@ -308,9 +402,12 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
         .str("version", fftn::version())
         .str("isa", fftn::isa_name(probe.instruction_set()))
         .boolean("isa_forced", s.isa != fftn::isa::best)
-        .str("precision", "double")
         .raw("supports", R"(["c2c","r2c","c2r"])")
+        .raw("precisions", R"(["f64","f32"])")
         .str("strategy", "chain");
+    if (!s.settings.radices.empty()) {
+      d.str("radices", s.radices_text);
+    }
 #ifdef FBENCH_FFTN_OMP
     // Always, so that this binary's identity differs from fbench-fftn's even without options
     // (fbench refuses arms that are meant to differ but describe themselves identically).
@@ -347,16 +444,22 @@ std::int32_t fbench_create(const fbench_case* c, void* /*in*/, void* /*out*/, vo
                            char* message, std::size_t message_size) {
   *plan = nullptr;
   try {
-    auto record = std::make_unique<plan_record>();
-    const fftn::options opts{.in_place = c->in_place != 0, .force_isa = state().isa};
-    if (c->kind == fbench_c2c) {
-      record->core = make_core<cplx, cplx>(*c, opts);
-    } else if (c->kind == fbench_r2c) {
-      record->core = make_core<double, cplx>(*c, opts);
-    } else {
-      record->core = make_core<cplx, double>(*c, opts);
+    const session& s = state();
+    const bool forced = !s.settings.radices.empty();
+    if (forced) {
+      check_radices_fit(*c);
     }
-    record->ws = fftn::workspace(detail::workspace_bytes(*record->core, state().threads));
+    auto record = std::make_unique<plan_record>();
+    const fftn::options opts{.in_place = c->in_place != 0, .force_isa = s.isa};
+    record->core =
+        c->precision == fbench_f32 ? make_core<float>(*c, opts) : make_core<double>(*c, opts);
+    const std::string described = detail::describe(*record->core);
+    if (forced &&
+        described.find("radices " + radix_list(s.settings.radices) + "\n") == std::string::npos) {
+      throw std::logic_error("the plan does not use RADICES=" + s.radices_text + ":\n" + described);
+    }
+    record->ws = fftn::workspace(detail::workspace_bytes(*record->core, s.threads));
+    say(message, message_size, axis_lines(described));
     *plan = record.release();
     return fbench_ok;
   } catch (const std::exception& e) {

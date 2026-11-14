@@ -21,7 +21,7 @@ struct side {
   std::int64_t last_phys = 0;          // physical length of the last dimension
   std::int64_t dist = 0;               // elements between transforms
   std::int64_t count = 0;              // logical elements per transform
-  std::size_t bytes = 0;               // whole buffer, all transforms
+  std::size_t bytes = 0;               // whole buffer, all transforms, in the case's precision
 
   // Element offset of logical flat index `flat` (row-major) in transform `b`.
   [[nodiscard]] std::int64_t offset(std::int64_t b, std::int64_t flat) const {
@@ -37,11 +37,19 @@ struct layout {
   std::int64_t batch = 1;
   int sign = -1;
   bool in_place = false;
-  std::int64_t n_total = 1; // product of dims
+  std::int32_t precision = fbench_f64;
+  std::size_t real_bytes = sizeof(double); // of one real value in the case's precision
+  std::int64_t n_total = 1;                // product of dims
   side in;
   side out;
   std::size_t buffer_bytes_in = 0;  // allocation for the input (the only one if in place)
   std::size_t buffer_bytes_out = 0; // allocation for the output (0 if in place)
+
+  // Real values in the input allocation and in the buffer holding the output.
+  [[nodiscard]] std::size_t reals_in() const { return buffer_bytes_in / real_bytes; }
+  [[nodiscard]] std::size_t reals_out() const {
+    return (in_place ? buffer_bytes_in : buffer_bytes_out) / real_bytes;
+  }
 
   // The C description for the backend; points into this object.
   [[nodiscard]] fbench_case to_case() const;
@@ -49,9 +57,13 @@ struct layout {
 
 // Builds a layout with FFTW's conventions: rows contiguous, transforms contiguous, r2c
 // output of n/2+1 complex values in the last dimension, in-place real arrays padded to
-// 2(n/2+1) doubles. Throws std::invalid_argument for an impossible case.
+// 2(n/2+1) reals. Throws std::invalid_argument for an impossible case.
 layout make_layout(std::int32_t kind, int rank, const std::array<std::int64_t, 3>& dims,
-                   std::int64_t batch, int sign, bool in_place);
+                   std::int64_t batch, int sign, bool in_place, std::int32_t precision);
+
+// The functions below read and write arrays of double whatever the case's precision:
+// reals_in() or reals_out() values at the case's element offsets. The harness converts
+// single-precision buffers to and from them outside the timer.
 
 // Fills the input with deterministic values in [-1, 1) from `seed`; padding is zero. A
 // c2r input is made Hermitian-consistent (self-conjugate entries real, conjugate pairs in
@@ -74,7 +86,8 @@ struct check_result {
 
 // Compares the output with a double-double direct DFT of the pristine input at sampled
 // outputs (all outputs when n * outputs fits `budget`), and checks Parseval's identity
-// over the whole of each checked row.
+// over the whole of each checked row. The tolerance takes the epsilon of the case's
+// precision.
 check_result check_output(const layout& l, const void* in, const void* out, std::int64_t budget,
                           std::uint64_t seed);
 

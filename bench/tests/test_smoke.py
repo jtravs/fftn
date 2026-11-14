@@ -10,8 +10,9 @@ from pathlib import Path
 
 from fbenchlib import catalogue, cli
 
-# A stand-in backend: passes the case kinds listed in $FAKE_PASS and calls every other case
-# unsupported, with the harness's output lines.
+# A stand-in backend: passes the case kinds listed in $FAKE_PASS (in double precision, and
+# in single precision when f32 is listed too) and calls every other case unsupported, with
+# the harness's output lines.
 FAKE = """#!{python}
 import json, os, sys
 args = sys.argv[1:]
@@ -20,7 +21,7 @@ ok = set(os.environ.get("FAKE_PASS", "").split(","))
 print(json.dumps({{"type": "describe"}}))
 for line in filter(None, cases):
     f = dict(t.split("=", 1) for t in line.split())
-    if f["kind"] in ok:
+    if f["kind"] in ok and f.get("prec", "f64") in ok | {{"f64"}}:
         check = {{"pass": "--perturb" not in args, "err_rms": 0, "err_max": 0, "tol": 1}}
         print(json.dumps({{"type": "case", "id": f["id"], "status": "ok", "check": check}}))
     else:
@@ -47,6 +48,7 @@ class SmokeKinds(unittest.TestCase):
             catalogue.Case("c2c", (16,), 1, "out", -1),
             catalogue.Case("c2c", (17,), 1, "out", -1),
             catalogue.Case("r2c", (16,), 1, "out", -1),
+            catalogue.Case("c2c", (16,), 1, "out", -1, precision="f32"),
         ]
         (self.work / "cases.txt").write_text("".join(c.line() + "\n" for c in self.cases))
 
@@ -82,6 +84,13 @@ class SmokeKinds(unittest.TestCase):
     def test_partial_kinds_need_no_pass_outside_the_standard_smoke_tier(self):
         info = {"supports": [], "partial": ["c2c", "r2c"]}
         self.assertEqual(self.smoke(info, "c2c", require_partial=False), [])
+
+    def test_single_precision_counts_only_when_declared(self):
+        self.assertEqual(self.smoke({"supports": ["c2c", "r2c"]}, "c2c,r2c"), [])
+        info = {"supports": ["c2c", "r2c"], "precisions": ["f64", "f32"]}
+        failures = self.smoke(info, "c2c,r2c")
+        self.assertTrue(any("c2c-16-b1-op-f32: unsupported" in f for f in failures), failures)
+        self.assertEqual(self.smoke(info, "c2c,r2c,f32"), [])
 
     def test_undeclared_kinds_may_be_unsupported(self):
         self.assertEqual(self.smoke({"supports": []}, ""), [])

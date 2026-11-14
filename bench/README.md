@@ -41,6 +41,7 @@ The other competitors are configured the same way; see
 | `catalogues/*.toml` | case catalogues (`standard`, `threads`) |
 | `t1/` | the harness of experiment T1 and its driver (see "The T1 harness") |
 | `tests/` | the driver's self-tests (CTest `bench.selftest`) |
+| `x2/` | experiment X2's radix-sequence search, a campaign of fbench runs (`x2/search.py --help`) |
 | [`../scripts/remote/`](../scripts/remote/fbench_remote.py) | the Slurm runner (see "Remote runs") |
 
 ## Arms
@@ -128,6 +129,7 @@ one; its arms are written `fftn_omp`.
 | `CALL=executor\|team` | fftn_omp (with `THREADS`) | the executor overload (default), or a parallel region of N threads each calling the team overload with `fftn::omp::this_team()` |
 | `CHUNK_POINTS=P` | fftn, fftn_omp | points per chunk of a stage (the plan's chunking) |
 | `NS_PER_WORK`, `DISPATCH_NS`, `INLINE_MULTIPLE`, `SYNC_NS`, `MIN_POINTS_PER_MEMBER`, `SPLIT_MIN_POINTS`, `SPLIT_MIN_POINTS_MESH`, `MESH_GROUP_LANES`, `REMAINDER_SPLIT_MIN_POINTS`, `SPIN_NS`, `YIELD_NS`, `CLAIM_DIVISOR` | fftn, fftn_omp | the machine profile's field of that name (`src/threading/schedule.hpp`); a size threshold may be `never` |
+| `RADICES=r1.r2...` | fftn, fftn_omp | the chain's radices in pass order (`build_settings::radices`), for c2c rows whose length they multiply to (see below) |
 
 The backend builds and executes plans through the functions the public `plan` forwards
 every call to, so an arm with none of these options times exactly the public plan. `ISA`
@@ -138,6 +140,18 @@ switch for them, so `dev/KNOBS.toml` lists none. They exist for the threading ex
 [T5](../dev/experiments/T5-split-thresholds.md)); describe reports the executor, its width
 and grouping, the OpenMP runtime and its placement and waiting variables, and every tuning
 option given.
+
+`RADICES` forces FFTN's chain to a radix sequence, for example `B=fftn+RADICES=4.8.8` for
+length 256, or `B=fftn+ISA=avx2+RADICES=4.8.8` for that sequence on one target: it sets
+`build_settings::radices` (an internal test knob in `src/core/plan_core.hpp`, not public
+API, so not in `dev/KNOBS.toml`). Every case of the run must be a c2c row (either
+precision) whose length the radices multiply to; any other case is an error, and so is a
+radix that no pass of the target takes. `describe` (and the run record) shows the forced
+sequence; every FFTN case's `note` in the store (with or without `RADICES`)
+names the radices its plan used. Experiment X2 drives it with
+[`x2/search.py`](x2/search.py) ([dev/experiments/X2-radix-sets.md](../dev/experiments/X2-radix-sets.md));
+its CTest `bench.x2_selftest` forces every candidate of a few lengths and checks the
+refusals.
 
 ```bash
 F="uv run --frozen python bench/fbench.py"
@@ -187,8 +201,9 @@ direct DFT evaluated in double-double arithmetic (about 32 digits) at sampled ou
 the first and last transform of a batch, every output when `--check-budget` allows, and
 checks Parseval's identity over whole rows. The reference shares no code with any library.
 It reports relative RMS and maximum errors; the case passes when both are within
-10 ε (1 + log₂ n) (8 times that for the maximum), with ε the double-precision epsilon.
-Accuracy is stored with every timing.
+10 ε (1 + log₂ n) (8 times that for the maximum), with ε the epsilon of the case's
+precision. A single-precision input is the double-precision one rounded to float, and the
+reference transforms the rounded values. Accuracy is stored with every timing.
 
 ## `smoke`
 
@@ -197,7 +212,8 @@ Accuracy is stored with every timing.
 backend executable) and through the smoke tier, correctness only, then checks that the
 guard flags a perturbed output. It is the gate's `bench` stage and the CTest test
 `bench.smoke`. An unsupported case fails when its kind is in the backend's `supports` list
-and is only counted otherwise. A
+(and, for a single-precision case, `f32` is in its `precisions`) and is only counted
+otherwise. A
 kind in the backend's `partial` list (supported for some lengths or ranks only, as with
 Accelerate) may be unsupported case by case, but must pass at least one case of the
 standard smoke tier (other selections need not contain lengths it can do). A library with
@@ -221,12 +237,17 @@ dims = [64, 1000, "64x48"]       # lengths, or "n0xn1[xn2]" for planes and volum
 batch = [1, 256]                 # default 1
 place = ["out", "in"]            # default out
 direction = "fwd"                # c2c only: fwd or bwd
+precision = ["f64", "f32"]       # default f64
 weight = 1.0                     # share in the weighted geomean (default 1)
 tiers = ["quick", "tracking"]    # every case is also in "full"
 ```
 
-Case IDs are `kind-dims-bBATCH-op|ip[-bwd]`, for example `r2c-64x48-b256-ip`. A case listed
-by several groups is one case with the union of their tiers (its weight must agree).
+Case IDs are `kind-dims-bBATCH-op|ip[-bwd][-f32]`, for example `r2c-64x48-b256-ip` or
+`c2c-1024-b1-op-f32`. A case listed by several groups is one case with the union of their
+tiers (its weight must agree).
+A backend takes single-precision cases only when its `describe` lists `"f32"` under
+`precisions` (FFTN does; the competitors do not yet); for the others the harness reports
+them unsupported, and `smoke` does not count that as a failure.
 Layouts follow FFTW: rows and batches contiguous, r2c output n/2+1 complex values in the
 last dimension, in-place real arrays padded to 2(n/2+1).
 
@@ -246,8 +267,8 @@ counts, OS and caches, never the hostname; catalogue path and hash; settings), o
 record per attempt (order, offsets, load before and after, loaded or overloaded, the
 seconds it waited, arms whose process timed out, valid or why not), one `timing`
 record per round, arm and case (every batch, median, minimum, plan time, accuracy, ns per
-point, mflops) and a final `summary`. `show <run-id>` (or a unique prefix, or `latest`)
-recomputes the report from the records. Documents cite run IDs, never copied numbers.
+point, mflops, and the backend's note on what it planned, if any) and a final `summary`.
+`show <run-id>` (or a unique prefix, or `latest`) recomputes the report from the records. Documents cite run IDs, never copied numbers.
 
 The store may be copied between machines, so it holds no absolute paths: the checkout is
 written `<repo>`, the directory holding `bench-out` `<base>`, a library installation
@@ -439,16 +460,22 @@ $R fetch <job>    # copies the run into bench-out/runs/; then fbench show <run-i
 (by content: `rsync -a` keeps mtimes and has left stale builds), unpacks each into its own
 directory in the job's directory, builds each into its own build directory, and records
 the commit of every arm in `bench-out/remote/<job>/manifest.json` and in the run itself.
-`--dry-run` writes the job files without contacting the machine. `--after <jobid>` queues a
+`--dry-run` writes the job files without contacting the machine. `--campaign SCRIPT` runs a
+campaign driver of the checkout in the job instead of one `fbench run` (a driver that runs
+many, such as experiment X2's): the arms then only name the builds it needs, the driver is
+called as `SCRIPT --out-dir <job>/bench-out --build <job>/build-<head> <arguments after -->`,
+and `fetch` also copies its state from `bench-out/campaigns/`. `--time` replaces the
+profile's Slurm time limit for one job. `--after <jobid>` queues a
 job behind another with `afterok`: if the first job fails, the second never starts and
 Slurm reports it only in `squeue` (DependencyNeverSatisfied), so always read the first
 job's log before waiting on a chain.
 
 ## Limits of v0
 
-- Double precision, contiguous rows, planes and volumes. Strided axes and `float` come
-  with the phases that need them. Threaded arms exist for FFTN only (competitors' own
-  threading and a team of serial plans, DESIGN.md 16.1, come with phase 3's exit).
+- Contiguous rows, planes and volumes. Strided axes come with the phases that need them.
+  Single precision is timed for FFTN only, and threaded arms exist for FFTN only
+  (competitors' own threading and a team of serial plans, DESIGN.md 16.1, come with
+  phase 3's exit).
 - Cold mode rotates data buffers, not the libraries' plan tables (FFTW shares twiddle
   tables between plans, so they cannot be rotated from outside).
 - Two FFTN plan options in one process (same-process A/B, DESIGN.md 16.3) waits for FFTN's

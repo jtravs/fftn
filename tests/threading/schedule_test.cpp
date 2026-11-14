@@ -31,9 +31,16 @@ using fftn::detail::schedule;
 using fftn::detail::share_of;
 using fftn::detail::work_graph;
 
+// The thresholds below were set on planner v0's plans. Its 3072-point plan had five passes
+// (4 x 4 x 4 x 4 x 12 on 32 registers); planner v1 needs three, a third less work, which
+// moves that row across rule 3's thresholds. The rules are tested on the plan they were
+// written for, forced as the tests force any sequence.
 std::shared_ptr<const fftn::detail::plan_core> rows(std::size_t n, std::size_t count) {
   const fftn::options opts;
-  const fftn::detail::build_settings settings;
+  fftn::detail::build_settings settings;
+  if (n == 3072) {
+    settings.radices = {4, 4, 4, 4, 12};
+  }
   return fftn::detail::make_plan_core(
       fftn::detail::view_of(fftn::rows_c2c<double>(n, count, fftn::direction::forward)), opts,
       settings);

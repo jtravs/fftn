@@ -67,6 +67,7 @@ public:
   std::vector<std::vector<double>> tables_f64;
   std::vector<std::vector<float>> tables_f32;
   std::vector<std::string> axis_notes; // one line per axis for describe()
+  bool radices_forced = false;         // build_settings.radices was given (describe says so)
 
   // Workspace: scratch lines a and b of scratch_line complex values each, then the block,
   // each starting on a 64-byte boundary of the aligned workspace; bytes includes the slack

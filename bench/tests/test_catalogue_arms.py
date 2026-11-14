@@ -55,6 +55,15 @@ class Standard(unittest.TestCase):
         self.assertEqual(d.id, "c2c-8-b1-op-bwd")
         self.assertAlmostEqual(d.flops, 5 * 8 * 3)
 
+    def test_single_precision_case(self):
+        c = catalogue.Case("c2c", (8,), 1, "out", 1, precision="f32")
+        self.assertEqual(c.id, "c2c-8-b1-op-bwd-f32")
+        self.assertEqual(
+            c.line(), "id=c2c-8-b1-op-bwd-f32 kind=c2c dims=8 batch=1 place=out sign=1 prec=f32"
+        )
+        smoke = self.cat.select("smoke")
+        self.assertEqual({c.kind for c in smoke if c.precision == "f32"}, {"c2c", "r2c", "c2r"})
+
 
 class Threads(unittest.TestCase):
     """The threads catalogue: a group per scheduling rule (DESIGN.md 13.4)."""
@@ -118,6 +127,10 @@ class Format(unittest.TestCase):
             self.load("[[group]]\ndims = [8]\n[[group]]\ndims = [8]\nweight = 2\n")
         with self.assertRaises(ValueError):
             self.load('[[group]]\ndims = [8]\ntiers = ["nightly"]\n')
+        with self.assertRaises(ValueError):
+            self.load('[[group]]\ndims = [8]\nprecision = "f16"\n')
+        both = self.load('[[group]]\ndims = [8]\nprecision = ["f64", "f32"]\n')
+        self.assertEqual([c.id for c in both.cases], ["c2c-8-b1-op", "c2c-8-b1-op-f32"])
 
 
 class ArmGrammar(unittest.TestCase):
