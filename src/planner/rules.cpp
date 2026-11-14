@@ -83,7 +83,9 @@ std::uint64_t pass_cost(const target_profile& p, std::size_t n, std::size_t s, s
 }
 
 // NEON with FCMA, fitted by bench/x2/fit.py to X2's campaign on an Apple M5 Max
-// (campaign mac-smooth, 7-smooth lengths up to 1024, batches 1 and 64).
+// (campaign mac-smooth, 7-smooth lengths up to 1024, batches 1 and 64). Three double
+// overrides (490, 686, 882) come from the A/B of these tables against the AVX2 ones (run
+// 20261114-101523-3d56): there the fitted choice was 1.25-1.40 times slower.
 // fit.py --name mac-smooth: ISA neon_fcma, 532 cases
 // neon_fcma_double: C = 1, constant per transform 0
 //   n = 56: 4.14 +4.1 % against the baseline; override 8.7
@@ -160,7 +162,7 @@ std::uint64_t pass_cost(const target_profile& p, std::size_t n, std::size_t s, s
 //   ... 78 more (--verbose)
 //   same choice as avx2_float for 68 of 124 lengths
 
-constexpr std::array<radix_override, 15> neon_fcma_double_overrides{{
+constexpr std::array<radix_override, 18> neon_fcma_double_overrides{{
     {.n = 56, .radices = {8, 7, 0, 0}},
     {.n = 63, .radices = {7, 9, 0, 0}},
     {.n = 200, .radices = {4, 5, 10, 0}},
@@ -169,13 +171,16 @@ constexpr std::array<radix_override, 15> neon_fcma_double_overrides{{
     {.n = 336, .radices = {8, 6, 7, 0}},
     {.n = 420, .radices = {5, 6, 14, 0}},
     {.n = 480, .radices = {4, 12, 10, 0}},
+    {.n = 490, .radices = {2, 7, 5, 7}},
     {.n = 504, .radices = {12, 6, 7, 0}},
     {.n = 560, .radices = {4, 10, 14, 0}},
     {.n = 567, .radices = {7, 9, 9, 0}},
     {.n = 576, .radices = {4, 12, 12, 0}},
     {.n = 588, .radices = {3, 14, 14, 0}},
+    {.n = 686, .radices = {14, 7, 7, 0}},
     {.n = 720, .radices = {5, 12, 12, 0}},
     {.n = 756, .radices = {14, 6, 9, 0}},
+    {.n = 882, .radices = {14, 7, 9, 0}},
 }};
 
 constexpr pass_costs neon_fcma_double{
