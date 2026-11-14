@@ -1429,8 +1429,8 @@ cost model says t/k plus a phase synchronisation per phase beats t). An oversubs
 splits nothing. The machine profile's values are provisional, taken from the prototype's
 measurements, until experiments T1 and T5 calibrate them (task 3.4). Rule 4 under an executor (task 3.3): only the lanes dealt
 work are dispatched, a team of `dispatch` members (the dealt lanes, or one per task when
-the batch is smaller and nothing splits), which the scheduler gives the same division as
-the dealt lanes of the wider team; an OpenMP executor still opens a region of
+the batch is smaller and nothing splits), which get the same groups and no splits (the
+per-group shares can differ, one member per task); an OpenMP executor still opens a region of
 its constant width, whose surplus threads return at once. In the caller's team surplus
 members help or wait for completion. Rule 5's fastest-class restriction needs a core class per member,
 which `team` does not carry yet (18.2).
@@ -2079,7 +2079,7 @@ to change before a release.
     wrong. The alternative is `noexcept`, terminating on a throwing executor.
 15. *Team size under an executor*: the scheduler is asked with `concurrency()` lanes and
     `dispatch` tasks are dispatched (the dealt lanes, at most one per task when nothing
-    splits), as a team of that size (the same division of work).
+    splits), as a team of that size (the same groups and no splits; shares may differ).
     The workspace must hold `workspace_bytes(concurrency())` (a precondition, asserted in
     debug builds); clamping the width to what the workspace holds was the alternative.
 16. *Nesting through `concurrency()`*: an executor reports 1 from inside its own tasks, so a
