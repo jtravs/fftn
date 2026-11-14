@@ -23,6 +23,7 @@
 #include "harness/json.hpp"
 
 #include "core/plan_core.hpp"
+#include "fftn/detail/core.hpp"
 
 #include <fftn/fftn.hpp>
 
@@ -38,6 +39,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -214,7 +216,7 @@ std::int32_t fbench_create(const fbench_case* c, void* /*in*/, void* /*out*/, vo
       if (c->kind != fbench_c2c || c->rank != 1) {
         throw std::invalid_argument("RADICES=" + s.radices_text + " is for c2c rows only");
       }
-      if (product != static_cast<std::size_t>(c->dims[0])) {
+      if (std::cmp_not_equal(product, c->dims[0])) {
         throw std::invalid_argument("RADICES=" + s.radices_text + " multiplies to " +
                                     std::to_string(product) + ", not the length " +
                                     std::to_string(c->dims[0]));
@@ -242,8 +244,7 @@ std::int32_t fbench_create(const fbench_case* c, void* /*in*/, void* /*out*/, vo
 
 // NOLINTNEXTLINE(misc-const-correctness): the harness fixes this C signature
 void fbench_execute(const void* plan, void* in, void* out) {
-  // The workspace is scratch, so a const plan record may lend it out.
-  auto* r = const_cast<plan_record*>(static_cast<const plan_record*>(plan));
+  const auto* r = static_cast<const plan_record*>(plan);
   // What plan<In, Out>::execute does (include/fftn/plan.hpp).
   fftn::detail::execute_core(*r->core, 0, fftn::detail::transform_count(*r->core), in, out, r->ws);
 }

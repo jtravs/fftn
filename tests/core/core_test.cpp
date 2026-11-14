@@ -216,10 +216,14 @@ TEST(Rules, FftlExamples) {
 // the knob (fbench's RADICES option reaches it, experiment X2), a plan without does not.
 TEST(Rules, DescribeSaysWhenRadicesAreForced) {
   const auto shape = fftn::rows_c2c<double>(256, 1, fftn::direction::forward);
+  const fftn::options defaults;
   build_settings forced;
   forced.radices = {2, 8, 16};
-  const std::string with = describe(*make_plan_core(fftn::detail::view_of(shape), {}, forced));
-  const std::string without = describe(*make_plan_core(fftn::detail::view_of(shape), {}, {}));
+  const build_settings rules;
+  const std::string with =
+      describe(*make_plan_core(fftn::detail::view_of(shape), defaults, forced));
+  const std::string without =
+      describe(*make_plan_core(fftn::detail::view_of(shape), defaults, rules));
   EXPECT_NE(with.find("radices from build_settings.radices"), std::string::npos) << with;
   EXPECT_NE(with.find("radices 2 x 8 x 16\n"), std::string::npos) << with;
   EXPECT_EQ(without.find("build_settings"), std::string::npos) << without;
