@@ -3,11 +3,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """Experiment X2's search driver: the best radix sequence per length, then v0 against it.
 
-    search.py [--out-dir D] [--build B] plan      [--lengths L] [--v0]
-    search.py [--out-dir D] [--build B] all       --name NAME [--lengths L] [--dry-run]
-    search.py [--out-dir D] [--build B] screen|refine|confirm --name NAME [--lengths L]
+    search.py [--out-dir D] [--build B] plan      [--lengths L] [--isa T] [--v0]
+    search.py [--out-dir D] [--build B] all       --name NAME [--lengths L] [--isa T] [--dry-run]
+    search.py [--out-dir D] [--build B] screen|refine|confirm --name NAME [--lengths L] [--isa T]
     search.py [--out-dir D]             report    --name NAME[,NAME...]
-    search.py                           remote    PROFILE...
+    search.py                           remote    PROFILE... [--isa T]
     search.py                           catalogue [--check]
     search.py              [--build B]  selftest
 
@@ -16,6 +16,11 @@ the candidates and the cost estimate are radices.py. Every timing is an fbench r
 cases of bench/catalogues/x2.toml, one run per length and stage, stored as usual under
 bench-out/runs/; the campaign's state (which run is which stage of which length, the
 winners) is bench-out/campaigns/x2-NAME.json, written after every run.
+
+--isa T forces every arm, the baseline included, to the fbench FFTN backend's ISA=T, and
+prices the cost estimate (the shortlist above 1024) with T's C per precision; the campaign
+records T and refuses to resume under another. Without it each arm runs the machine's best
+target and the estimate is unpadded, as in X2's first campaigns.
 """
 
 from __future__ import annotations
@@ -100,6 +105,10 @@ def fbench_fftn(build: Path) -> Path:
     return exe
 
 
+def isa_options(isa: str | None) -> str:
+    return f"ISA={isa}" if isa else ""
+
+
 def harness_check(
     exe: Path, cases: list[catalogue.Case], options: str = ""
 ) -> tuple[list[dict], str]:
@@ -120,10 +129,13 @@ def harness_check(
     return [x for x in lines if x.get("type") == "case"], error
 
 
-def v0_choices(build: Path, ns: list[int]) -> dict[int, radices.Sequence]:
-    """Planner v0's sequence per length on this machine's target, from the backend's notes."""
+def v0_choices(
+    build: Path, ns: list[int], isa: str | None = None
+) -> dict[int, radices.Sequence]:
+    """The baseline's sequence per length on this machine's target (or `isa`), from the
+    backend's notes."""
     cases = [catalogue.Case("c2c", (n,), 1, "out", -1) for n in ns]
-    results, error = harness_check(fbench_fftn(build), cases)
+    results, error = harness_check(fbench_fftn(build), cases, isa_options(isa))
     if error:
         raise SystemExit(f"fbench-fftn: {error}")
     out = {}
@@ -168,6 +180,15 @@ def load_state(out_dir: Path, name: str) -> dict:
     return {"name": name, "experiment": "X2", "lengths": {}}
 
 
+def check_isa(state: dict, isa: str | None) -> None:
+    """A campaign's timings are of one target: refuse to resume it under another."""
+    if state["lengths"] and state.get("isa") != isa:
+        raise SystemExit(
+            f"campaign {state['name']} ran with --isa {state.get('isa') or '(none)'}, "
+            f"not {isa or '(none)'}: use another --name"
+        )
+
+
 def save_state(out_dir: Path, state: dict) -> None:
     path = state_path(out_dir, state["name"])
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -180,9 +201,16 @@ def save_state(out_dir: Path, state: dict) -> None:
 
 
 def fbench_command(
-    out_dir: Path, build: Path, n: int, labels: list[str], settings: list[str], extra: list[str]
+    out_dir: Path,
+    build: Path,
+    n: int,
+    labels: list[str],
+    settings: list[str],
+    extra: list[str],
+    isa: str | None = None,
 ) -> list[str]:
-    arm_specs = [f"{V0}=fftn"] + [f"{lab}=fftn+RADICES={lab}" for lab in labels]
+    lib = f"fftn+ISA={isa}" if isa else "fftn"
+    arm_specs = [f"{V0}={lib}"] + [f"{lab}={lib}+RADICES={lab}" for lab in labels]
     return [
         sys.executable,
         str(BENCH / "fbench.py"),
@@ -277,19 +305,22 @@ def stage_screen(ctx: argparse.Namespace, state: dict, n: int, cases: list[str])
         return
     v0 = tuple(entry["v0"]) if "v0" in entry else None
     ops = radices.codelet_ops()
-    cands = [s for s in radices.candidates(n, v0, ops) if s != v0]
+    lanes = radices.LANES[ctx.isa] if ctx.isa else ()
+    cands = [s for s in radices.candidates(n, v0, ops, lanes) if s != v0]
     per_process = process_seconds(n, batches_of(n, ctx.cases), ctx.gflops, screen=True)
     fits = int(ctx.screen_budget / (SCREEN_ROUNDS * per_process)) - 2
     dropped = 0
     if len(cands) > fits:
         # Over the budget: keep the best by the cost estimate (v0 is the baseline anyway).
-        keep = sorted(cands, key=lambda s: (radices.cost(s, ops), s))[: max(fits, 1)]
+        # Priced at the double-precision C of a forced target (the narrower one).
+        c = lanes[0] if lanes else None
+        keep = sorted(cands, key=lambda s: (radices.cost(s, ops, c), s))[: max(fits, 1)]
         dropped = len(cands) - len(keep)
         kept = set(keep)
         cands = [s for s in cands if s in kept]
     labels = [radices.label(s) for s in cands]
     log(f"x2 screen n = {n}: {len(labels)} candidates besides v0, {dropped} dropped")
-    cmd = fbench_command(ctx.out_dir, ctx.build, n, labels, SCREEN, ctx.fbench_extra)
+    cmd = fbench_command(ctx.out_dir, ctx.build, n, labels, SCREEN, ctx.fbench_extra, ctx.isa)
     run_id = run_fbench(cmd, ctx.dry_run)
     if run_id is None:
         return
@@ -314,7 +345,7 @@ def stage_refine(ctx: argparse.Namespace, state: dict, n: int, cases: list[str])
         entry["refine"] = {"run": None, "winners": dict.fromkeys(cases, V0)}
         return
     log(f"x2 refine n = {n}: {len(labels)} candidates besides v0")
-    cmd = fbench_command(ctx.out_dir, ctx.build, n, labels, REFINE, ctx.fbench_extra)
+    cmd = fbench_command(ctx.out_dir, ctx.build, n, labels, REFINE, ctx.fbench_extra, ctx.isa)
     run_id = run_fbench(cmd, ctx.dry_run)
     if run_id is None:
         return
@@ -335,7 +366,7 @@ def stage_confirm(ctx: argparse.Namespace, state: dict, n: int, cases: list[str]
         entry["confirm"] = {"run": None}
         return
     log(f"x2 confirm n = {n}: v0 against {', '.join(labels)}")
-    cmd = fbench_command(ctx.out_dir, ctx.build, n, labels, CONFIRM, ctx.fbench_extra)
+    cmd = fbench_command(ctx.out_dir, ctx.build, n, labels, CONFIRM, ctx.fbench_extra, ctx.isa)
     entry["confirm"] = {"run": run_fbench(cmd, ctx.dry_run)}
 
 
@@ -346,13 +377,15 @@ def cmd_stages(ctx: argparse.Namespace, names: list[str]) -> int:
     ctx.cases = x2_cases()
     ns = select_lengths(lengths_of(ctx.cases), ctx.lengths)
     state = load_state(ctx.out_dir, ctx.name)
+    check_isa(state, ctx.isa)
+    state["isa"] = ctx.isa
     if "host" not in state:
         state["host"] = machine.fingerprint()
         state["created"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
         state["source"] = arms.source_identity()
     missing = [n for n in ns if "v0" not in state["lengths"].get(str(n), {})]
     if missing:
-        for n, seq in v0_choices(ctx.build, missing).items():
+        for n, seq in v0_choices(ctx.build, missing, ctx.isa).items():
             state["lengths"].setdefault(str(n), {})["v0"] = list(seq)
         if not ctx.dry_run:
             save_state(ctx.out_dir, state)
@@ -375,8 +408,9 @@ def cmd_stages(ctx: argparse.Namespace, names: list[str]) -> int:
 def cmd_plan(ctx: argparse.Namespace) -> int:
     cases = x2_cases()
     ns = select_lengths(lengths_of(cases), ctx.lengths)
-    v0 = v0_choices(ctx.build, ns) if ctx.v0 else {}
+    v0 = v0_choices(ctx.build, ns, ctx.isa) if ctx.v0 else {}
     ops = radices.codelet_ops()
+    lanes = radices.LANES[ctx.isa] if ctx.isa else ()
     total_cands = 0
     screen_s = 0.0
     later_s = 0.0
@@ -384,7 +418,7 @@ def cmd_plan(ctx: argparse.Namespace) -> int:
     print(f"{'n':>9} {'cand.':>6} {'kept':>6} {'screen s':>9}  v0")
     for n in ns:
         seq = v0.get(n)
-        cands = [s for s in radices.candidates(n, seq, ops) if s != seq]
+        cands = [s for s in radices.candidates(n, seq, ops, lanes) if s != seq]
         per = process_seconds(n, batches_of(n, cases), ctx.gflops, screen=True)
         fits = max(int(ctx.screen_budget / (SCREEN_ROUNDS * per)) - 2, 1)
         kept = min(len(cands), fits)
@@ -420,7 +454,10 @@ def cmd_report(ctx: argparse.Namespace) -> int:
             raise SystemExit(f"no campaign {state_path(ctx.out_dir, name)}")
         host = state.get("host", {})
         if not ctx.json:
-            print(f"campaign {name}: host {host.get('cpu')} (id {host.get('host_id')})")
+            print(
+                f"campaign {name}: host {host.get('cpu')} (id {host.get('host_id')}), "
+                f"ISA {state.get('isa') or 'best'}"
+            )
         for n_text, entry in sorted(state["lengths"].items(), key=lambda kv: int(kv[0])):
             winners = entry.get("refine", {}).get("winners", {})
             run = entry.get("confirm", {}).get("run")
@@ -488,10 +525,12 @@ def cmd_remote(ctx: argparse.Namespace) -> int:
     cases = x2_cases()
     ns = lengths_of(cases)
     split = [("smooth", f"2-{radices.SMOOTH_LIMIT}"), ("long", f"{radices.SMOOTH_LIMIT + 1}-")]
+    isa = ["--isa", ctx.isa] if ctx.isa else []
     for profile in ctx.profiles:
         for part, spec in split:
             count = len(select_lengths(ns, spec))
-            args = ["all", "--name", f"{profile}-{part}", "--lengths", spec, *ctx.args]
+            name = f"{profile}-{ctx.isa}-{part}" if ctx.isa else f"{profile}-{part}"
+            args = ["all", "--name", name, "--lengths", spec, *isa, *ctx.args]
             cmd = [
                 "uv",
                 "run",
@@ -580,7 +619,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--build", type=Path, default=DEFAULT_BUILD, help="build with fbench-fftn")
     sub = p.add_subparsers(dest="command", required=True)
 
+    def isa(sp: argparse.ArgumentParser) -> None:
+        sp.add_argument(
+            "--isa", choices=sorted(radices.LANES), help="force every arm to ISA=T (FFTN backend)"
+        )
+
     def lengths(sp: argparse.ArgumentParser) -> None:
+        isa(sp)
         sp.add_argument("--lengths", help="e.g. 2-1024 or 1025- or 60,64")
         sp.add_argument("--gflops", type=float, default=8.0, help="assumed double-precision speed")
         sp.add_argument(
@@ -610,6 +655,7 @@ def main(argv: list[str] | None = None) -> int:
     sp = sub.add_parser("remote", help="the fbench_remote submit lines for Slurm machines")
     sp.add_argument("profiles", nargs="+", help="profiles of ~/.config/fftn/remote.toml")
     sp.add_argument("--time", default="12:00:00", help="Slurm --time per job")
+    isa(sp)
     sp.add_argument("--args", nargs=argparse.REMAINDER, default=[], help="more for `all`")
     sp = sub.add_parser("catalogue", help="write bench/catalogues/x2.toml")
     sp.add_argument("--check", action="store_true", help="only compare")

@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Experiment X2's candidates, cost estimate, cases and stage bookkeeping (bench/x2/)."""
 
+import contextlib
+import io
 import math
 import re
 import unittest
@@ -193,6 +195,48 @@ class Stages(unittest.TestCase):
         self.assertEqual(cmd[cmd.index("--filter") + 1], "^c2c-64-b")
         self.assertEqual(cmd[cmd.index("--tier") + 1], "full")
         self.assertEqual(cmd[cmd.index("--max-rounds") + 1], str(search.SCREEN_ROUNDS))
+
+
+class Isa(unittest.TestCase):
+    def test_every_arm_is_forced(self):
+        cmd = search.fbench_command(
+            search.REPO / "bench-out", search.DEFAULT_BUILD, 64, ["4.16"], search.SCREEN, [], "avx512"
+        )
+        self.assertIn("v0=fftn+ISA=avx512", cmd)
+        self.assertIn("4.16=fftn+ISA=avx512+RADICES=4.16", cmd)
+        self.assertEqual(search.isa_options("avx512"), "ISA=avx512")
+        self.assertEqual(search.isa_options(None), "")
+
+    def test_estimate_padded_to_c(self):
+        ops = radices.codelet_ops()
+        self.assertEqual(radices.cost((2, 16), ops, 1), radices.cost((2, 16), ops))
+        # n = 32, C = 8: the first pass's 16 butterflies are 2 units; the last pass has
+        # s = 2, m = 1, so its 2 butterflies fill one unit of 8.
+        self.assertEqual(
+            radices.cost((2, 16), ops, 8), (2, 16 * ops[(2, True)] + 8 * ops[(16, False)])
+        )
+        one = radices.shortlist(46080, None, ops, lanes=(4,))
+        both = radices.shortlist(46080, None, ops, lanes=(4, 8))
+        self.assertEqual(both[: len(one)], one)
+        self.assertTrue(radices.LONG_TOP <= len(both) <= 2 * radices.LONG_TOP)
+
+    def test_campaign_keeps_its_isa(self):
+        state = {"name": "x", "lengths": {"64": {}}, "isa": "avx2"}
+        search.check_isa(state, "avx2")
+        for other in ("avx512", None):
+            with self.assertRaises(SystemExit):
+                search.check_isa(state, other)
+        search.check_isa({"name": "x", "lengths": {"64": {}}}, None)  # before --isa existed
+        search.check_isa({"name": "x", "lengths": {}}, "avx512")  # a new campaign
+
+    def test_remote_lines(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            search.main(["remote", "xeon", "--isa", "avx512"])
+        lines = [x for x in out.getvalue().splitlines() if not x.startswith("#")]
+        self.assertEqual(len(lines), 2)
+        self.assertIn("--name xeon-avx512-smooth --lengths 2-1024 --isa avx512", lines[0])
+        self.assertIn("--name xeon-avx512-long", lines[1])
 
 
 if __name__ == "__main__":
