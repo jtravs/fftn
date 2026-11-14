@@ -10,6 +10,7 @@
 #include "fftn/isa.hpp"
 #include "fftn/options.hpp"
 #include "fftn/shape.hpp"
+#include "fftn/team.hpp"
 #include "fftn/workspace.hpp"
 
 #include <complex>
@@ -75,8 +76,13 @@ class plan_core;
 void execute_core(const plan_core& core, std::size_t first, std::size_t count, const void* in,
                   void* out, const workspace& ws) noexcept;
 
+// The team overload of plan<In, Out>::execute (src/threading/team_execute.cpp).
+void execute_team(const plan_core& core, const void* in, void* out, const team& t,
+                  const workspace& ws, completion done) noexcept;
+
+[[nodiscard]] transform_range transforms_of(const plan_core& core, const team& t) noexcept;
 [[nodiscard]] std::size_t transform_count(const plan_core& core) noexcept;
-[[nodiscard]] std::size_t workspace_bytes(const plan_core& core) noexcept;
+[[nodiscard]] std::size_t workspace_bytes(const plan_core& core, int lanes) noexcept;
 [[nodiscard]] std::string describe(const plan_core& core);
 [[nodiscard]] isa instruction_set(const plan_core& core) noexcept;
 

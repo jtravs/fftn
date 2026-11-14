@@ -9,6 +9,8 @@
 #include "fftn/detail/core.hpp"
 #include "fftn/options.hpp"
 #include "isa/target.hpp"
+#include "threading/schedule.hpp"
+#include "threading/work_graph.hpp"
 
 #include <cstddef>
 #include <memory>
@@ -20,8 +22,9 @@ namespace fftn::inline v0::detail {
 // Construction knobs for tests; plans built through the public API use the defaults. They
 // force the paths the rules would not take for the lengths at hand (AGENTS.md section 5).
 struct build_settings {
-  // About this many points of work per chunk of a stage (program.hpp). Phase 3 sets the
-  // value by experiment (T5); here it only has to give long rows several chunks.
+  // About this many points of work per chunk of a stage (program.hpp) or of a run of
+  // lines (work_graph.hpp). Experiment T5 sets the value; here it only has to give long
+  // rows several chunks.
   std::size_t chunk_points = 2048;
   // The radices, in pass order, of every complex line whose length they multiply to,
   // instead of the rules' choice (strategies/chain.hpp). Any radix above 16 goes through
@@ -35,6 +38,8 @@ struct build_settings {
   const void* out_factor = nullptr;
   // Puts options::scale on the input edge instead of the output edge (c2c only).
   bool scale_on_input = false;
+  // The machine the plan's team executions are scheduled for (schedule.hpp).
+  machine_profile profile = default_machine_profile();
 };
 
 class plan_core {
@@ -56,6 +61,8 @@ public:
   target isa_target = target::scalar;
 
   program prog;
+  work_graph graph;        // the program's shareable work (DESIGN.md 13.2)
+  machine_profile profile; // what the scheduler assumes of the machine
   std::vector<std::vector<double>> tables_f64;
   std::vector<std::vector<float>> tables_f32;
   std::vector<std::string> axis_notes; // one line per axis for describe()
@@ -68,6 +75,8 @@ public:
   std::size_t offset_b = 0;
   std::size_t offset_block = 0;
   std::size_t bytes = 0;
+  // One lane's scratch in a team's workspace: the layout above, in whole 128-byte lines.
+  std::size_t slot_bytes = 0;
 };
 
 [[nodiscard]] std::shared_ptr<const plan_core>

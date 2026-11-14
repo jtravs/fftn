@@ -61,7 +61,7 @@ std::string joined(const std::vector<std::string>& names) {
 template <class In, class Out>
 std::vector<Out> run(const plan_core& core, const std::vector<In>& x, std::size_t out_count) {
   std::vector<Out> y(out_count);
-  const fftn::workspace ws(fftn::detail::workspace_bytes(core));
+  const fftn::workspace ws(fftn::detail::workspace_bytes(core, 1));
   fftn::detail::execute_core(core, 0, fftn::detail::transform_count(core), x.data(), y.data(), ws);
   return y;
 }
@@ -296,7 +296,9 @@ void check_scaled(fftn::isa target, const fftn::shape<In, Out>& s, std::size_t i
   const auto k = static_cast<T>(scale);
   std::size_t differ = 0;
   for (std::size_t i = 0; i < out_count; ++i) {
-    differ += y1[i] == y0[i] * k ? 0 : 1;
+    if (y1[i] != y0[i] * k) {
+      ++differ;
+    }
   }
   EXPECT_EQ(differ, 0U) << "of " << out_count << " outputs";
 }
