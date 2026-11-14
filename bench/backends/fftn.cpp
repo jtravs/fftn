@@ -97,9 +97,9 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
   for (const auto& [key, val] : fbench::backends::parse_options(options)) {
     const std::optional<fftn::isa> target = isa_from_name(val);
     if (key != "ISA" || !target) {
-      fbench::backends::say(message, message_size,
-                            "FFTN options: ISA=scalar|avx2|avx512|neon|neon_fcma|...|best (got " +
-                                key + "=" + val + ")");
+      std::string text = "FFTN options: ISA=scalar|avx2|avx512|neon|neon_fcma|...|best (got ";
+      text.append(key).append("=").append(val).append(")");
+      fbench::backends::say(message, message_size, text);
       return fbench_error;
     }
     forced_isa() = *target;
