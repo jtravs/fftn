@@ -205,9 +205,9 @@ std::vector<int> allowed_cpus() {
   cpu_set_t set;
   CPU_ZERO(&set);
   if (sched_getaffinity(0, sizeof(set), &set) == 0) {
-    for (int c = 0; c < CPU_SETSIZE; ++c) {
+    for (std::size_t c = 0; c < static_cast<std::size_t>(CPU_SETSIZE); ++c) {
       if (CPU_ISSET(c, &set)) {
-        out.push_back(c);
+        out.push_back(static_cast<int>(c));
       }
     }
   }
@@ -220,7 +220,7 @@ void pin_self(int cpu) {
   if (cpu >= 0) {
     cpu_set_t set;
     CPU_ZERO(&set);
-    CPU_SET(cpu, &set);
+    CPU_SET(static_cast<std::size_t>(cpu), &set);
     pthread_setaffinity_np(pthread_self(), sizeof(set), &set);
   }
 #else
@@ -371,7 +371,7 @@ struct lane_job {
   int lanes = 0;
 };
 
-void raise_lane(void* arg, int /*index*/) {
+[[maybe_unused]] void raise_lane(void* arg, int /*index*/) {
   auto& job = *static_cast<lane_job*>(arg);
   raise_qos();
   job.started.fetch_add(1);
