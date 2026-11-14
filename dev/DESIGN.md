@@ -1537,7 +1537,10 @@ in virtual time under a cost model, where a model of static schedules with barri
 prototype's, and FFTW's waking of its threads for a short job) shows the shape of their
 measured pathologies beside FFTN's handling of the same plans. The model's cost per point
 is the scheduler's own profile value, so agreement there checks the logic, not the
-constants: experiments T1 and T5 are the real check.
+constants: experiments T1 and T5 are the real check. T1's harness (`bench/t1/`) runs the
+claiming engine itself on synthetic work graphs with empty or fixed-length chunks, so that
+a phase hand-off is timed without any transform; T5 times real plans through fbench's
+threaded arms (16.1).
 
 The executors (task 3.3): over the same cases, bitwise against serial on an executor that
 runs tasks in order, one in reverse, one in seeded random order on three threads, the
@@ -1805,7 +1808,10 @@ a region), `GROUP_SIZE`, and every machine-profile field and the chunk size as o
 backend reaches the plan core through the functions the public plan forwards to, and the
 tuning options through its private build settings, as tests do: no library switch exists
 for them. The `threads` catalogue groups shapes by the scheduling rule they exercise; the
-library and team modes against competitors are still to come.
+library and team modes against competitors are still to come. Fixed costs that fbench
+cannot isolate (dispatch, wake-ups, phase hand-offs, claims) are measured by a separate
+harness for experiment T1 (`bench/t1/`), which also prints the scheduler's decisions for
+catalogue cases.
 
 ### 16.2 Competitors
 

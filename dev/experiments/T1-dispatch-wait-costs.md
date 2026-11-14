@@ -45,9 +45,9 @@ none.
 
 ## Method
 
-**Harness.** `bench/threading/t1_costs.cpp`, built as `<build>/bench/t1_costs` and, where
+**Harness.** `bench/t1/t1_costs.cpp`, built as `<build>/bench/t1_costs` and, where
 the compiler has OpenMP, `t1_costs_omp` (one OpenMP runtime per binary, the compiler's);
-run by `bench/threading/t1.py`, which launches every binary once per round in rotating
+run by `bench/t1/t1.py`, which launches every binary once per round in rotating
 order (process rounds, at least 10), checks the machine is quiet before each round, and
 stores the run as JSON lines under `bench-out/t1/`. Probes (each reports, per team size,
 the median and the 10th/90th percentiles over repetitions inside a process; the driver
@@ -57,7 +57,7 @@ reports the median over rounds and the spread between rounds):
 |---|---|---|
 | `work` | serial execution of c2c rows 2⁸–2¹⁸ (1 Mi points per batch), divided by the plan's work units | `ns_per_work` |
 | `bulk` | an executor's `bulk` of one task per lane: time until every lane runs (`start_last`), from the last task's end to `bulk`'s return (`return`), the round trip; executors `thread_pool` and `omp::executor`; after no gap (hot), 40 µs (the pool's yield stage) and 2 ms (parked) | `dispatch_ns`; the pool's linger |
-| `team_execute` | a real plan of one 64-point row per lane through the executor overload (and, in `t1_costs_omp`, the team overload inside a running region), minus a serial row; scheduled with `dispatch_ns` 0 so that it is dispatched | `dispatch_ns`, `inline_multiple` |
+| `team` | a real plan of one 64-point row per lane through the executor overload (and, in `t1_costs_omp`, the team overload inside a running region), minus a serial row; scheduled with `dispatch_ns` 0 so that it is dispatched | `dispatch_ns`, `inline_multiple` |
 | `phase` | the claiming engine itself on a synthetic split task of 64 phases of k chunks among k members (harness threads, or the threads of a region), chunks empty or 1 µs long: time per phase beyond the chunks' own | `sync_ns` |
 | `claim` | k threads claiming from one counter with the engine's compare-exchange loop | `claim_divisor` |
 | `wake` | notify-to-running latency between two threads for a pure spin, a yield loop, `std::atomic::wait`, and the engine's policy (`wait_for`) after the waiter has waited 1–1000 µs; and the cost of `notify_all` | `spin_ns`, `yield_ns` |
@@ -67,6 +67,11 @@ reports the median over rounds and the spread between rounds):
   (`--pin`, Linux); OpenMP threads by `OMP_PLACES=cores OMP_PROC_BIND=close`; the pool
   unpinned, as users get it. `wake` and `claim` pairs inside one cache group and across
   groups when pinned.
+- Runtimes wait differently by default, and that is part of what is measured: libgomp
+  spins `GOMP_SPINCOUNT` iterations unless `OMP_WAIT_POLICY` says otherwise; libomp spins
+  for `KMP_BLOCKTIME` (200 ms) on Linux but not at all on a hybrid Mac. Each OpenMP run is
+  made with the defaults, and once more on the Mac with `KMP_BLOCKTIME=200`; the harness
+  records these variables.
 - Machines, compilers, runtimes: EPYC 7763 (Zen 3, CCX of 8 cores), an exclusive Slurm
   node, one socket's 64 cores, GCC 15 (libgomp), and libomp if a Clang build is available;
   Xeon Gold 6240 (18-core mesh per socket), one socket and both, GCC 15 (libgomp) and
@@ -83,7 +88,7 @@ reports the median over rounds and the spread between rounds):
 cluster; the profile is chosen by the class, as rule 3 already chooses by group kind):
 
 1. `ns_per_work` := the median over the `work` shapes; reported per instruction set.
-2. `dispatch_ns` := the median `team_execute` overhead of the pool, hot, at the full width
+2. `dispatch_ns` := the median `team` overhead of the pool, hot, at the full width
    measured (64, 18, the performance cores): the cost a back-to-back call pays at the
    width rule 1 judges. If that overhead at full width exceeds the one at a cache group's
    width by more than 2×, the verdict opens a follow-up for a per-lane term (a design

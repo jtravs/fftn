@@ -77,6 +77,24 @@ else()
   message(STATUS "fbench: fftn_omp backend not built (no OpenMP, or a ThreadSanitizer build)")
 endif()
 
+# The harness of experiment T1 (bench/t1/): the fixed costs of team executions. It is
+# not an fbench backend (smoke runs every fbench-* of the build), hence its name; the OpenMP
+# variant links the compiler's runtime and nothing else that brings one.
+find_package(Threads REQUIRED)
+function(fbench_add_t1 name)
+  add_executable(${name} t1/t1_costs.cpp)
+  fftn_configure_target(${name})
+  target_include_directories(${name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                             ${CMAKE_CURRENT_BINARY_DIR} ${PROJECT_SOURCE_DIR}/src)
+  target_link_libraries(${name} PRIVATE fftn::fftn Threads::Threads)
+endfunction()
+fbench_add_t1(t1_costs)
+if(_fbench_fftn_omp)
+  fbench_add_t1(t1_costs_omp)
+  target_compile_definitions(t1_costs_omp PRIVATE T1_WITH_OPENMP)
+  fbench_link_openmp(t1_costs_omp)
+endif()
+
 # FFTW only from an explicit installation: never a default search path, so that a
 # handicapped build (Homebrew's FFTW has no SIMD on arm64) cannot be picked up by accident
 # (AGENTS.md section 6). Set FFTN_BENCH_FFTW_ROOT as a CMake or environment variable.
@@ -276,6 +294,18 @@ if(FFTN_BUILD_TESTS)
              COMMAND ${FFTN_UV} run --frozen --quiet python bench/fbench.py
                      --out-dir ${CMAKE_BINARY_DIR}/bench-out smoke --build ${CMAKE_BINARY_DIR}
                      --strict
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    # The T1 harness end to end in its short mode (every probe reports; no timing claims),
+    # and the scheduler's view of the threads catalogue's smoke cases.
+    add_test(NAME bench.t1_smoke
+             COMMAND ${FFTN_UV} run --frozen --quiet python bench/t1/t1.py
+                     --out-dir ${CMAKE_BINARY_DIR}/bench-out run --build ${CMAKE_BINARY_DIR}
+                     --rounds 1 --quick --no-quiet-check --strict
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    add_test(NAME bench.t1_schedule
+             COMMAND ${FFTN_UV} run --frozen --quiet python bench/t1/t1.py
+                     --out-dir ${CMAKE_BINARY_DIR}/bench-out schedule --build ${CMAKE_BINARY_DIR}
+                     --tier smoke -- --threads 4,16 --group 8 --cpus 64
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
   else()
     message(STATUS "fbench: uv not found; the driver's tests are not registered")

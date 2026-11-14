@@ -38,7 +38,8 @@ The other competitors are configured the same way; see
 | `harness/` | the C++ harness shared by every backend: cases, buffers, timing, the check |
 | `harness/backend.hpp` | the C interface a backend implements |
 | `backends/<library>.cpp` | one backend per library, built as `<build>/bench/fbench-<library>` (see "Competitor backends") |
-| `catalogues/*.toml` | case catalogues |
+| `catalogues/*.toml` | case catalogues (`standard`, `threads`) |
+| `t1/` | the harness of experiment T1 and its driver (see "The T1 harness") |
 | `tests/` | the driver's self-tests (CTest `bench.selftest`) |
 | [`../scripts/remote/`](../scripts/remote/fbench_remote.py) | the Slurm runner (see "Remote runs") |
 
@@ -348,6 +349,41 @@ garbage collector, which the sanitizers' own handlers break.
 
 One library per executable: libraries with the FFTW API share symbol names, and two OpenMP
 runtimes in one process crash or crawl.
+
+## The T1 harness
+
+`bench/t1/` holds the harness of experiment
+[T1](../dev/experiments/T1-dispatch-wait-costs.md): the fixed costs of team executions,
+which fbench cannot isolate. It is built as `<build>/bench/t1_costs` and, where the
+compiler has OpenMP (not under ThreadSanitizer), `t1_costs_omp`, which adds
+`fftn::omp::executor` and the threads of a parallel region. Probes: `work` (serial time per
+unit of the cost model's work), `bulk` (an executor's dispatch: time until every lane runs,
+and from the last task's end to the return), `team` (a minimal team execution through the
+executor overload, and through the team overload with every member already running),
+`phase` (the claiming engine on a synthetic task of 64 phases: time per phase hand-off),
+`claim` (one compare-exchange claim under contention) and `wake` (notify-to-running latency
+of a spinning, yielding, blocked waiter and of the engine's policy after each waiting
+time). Each prints one JSON line per probe, team size and variant, with the median and
+spread over repetitions; `--pin` pins the harness's own threads one per allowed CPU
+(Linux), the pool's threads are never pinned, OpenMP's follow `OMP_PLACES`.
+
+```bash
+T="uv run --frozen python bench/t1/t1.py"
+$T run --build build/check-release --rounds 10 -- --threads 2,4,8,16,32,64 --pin
+$T show latest
+# What the scheduler decides for each catalogue case at 8, 16 and 64 lanes in groups of 8,
+# on a machine of 128 CPUs, under any tuning option of fbench's FFTN backend:
+$T schedule --catalogue threads --tier quick -- --threads 8,16,64 --group 8 --cpus 128 \
+  SPLIT_MIN_POINTS=4096
+```
+
+`run` launches each binary once per round in rotating order, checks before each round that
+the machine is quiet (as fbench does; `--no-quiet-check` skips it), stores every process's
+output with the host fingerprint and the placement variables in
+`bench-out/t1/runs/<run-id>.jsonl`, and prints the median over rounds of each in-process
+median with the range over rounds. The CTest tests `bench.t1_smoke` and `bench.t1_schedule`
+run both commands in their short form; they check that every probe reports, not what it
+measures.
 
 ## Remote runs
 
