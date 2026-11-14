@@ -15,7 +15,8 @@
 #   format    clang-format (pinned), C++ sources and headers
 #   python    ruff (pinned): lint and format of tools/, gen/, bench/
 #   shell     bash -n on scripts (shellcheck too when it is installed)
-#   gen       generated codelets are reproducible: regenerate and compare with the tree
+#   gen       generated codelets are reproducible: regenerate and compare with the tree;
+#             the generator's own tests (gen/tests)
 #   apidoc    every public declaration is documented (Doxygen as a linter; no output kept)
 #             and the code snippets in docs/ match the compiled files in examples/
 #   build     Release, warnings as errors, tests under every kernel variant the CPU has
@@ -120,9 +121,12 @@ if stage shell; then
 fi
 
 if stage gen; then
-  say "generated codelets are reproducible"
+  say "generated codelets are reproducible; generator tests"
   if [[ -f gen/fftn_gen/__main__.py ]]; then
+    # Builds and verifies every codelet in memory and compares the text with src/gen/ byte
+    # for byte; it writes nothing.
     py -m gen.fftn_gen --check src/gen
+    py -m unittest discover -s gen/tests -t gen
   else skip "no generator"; fi
 fi
 
