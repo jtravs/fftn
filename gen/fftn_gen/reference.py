@@ -12,7 +12,8 @@ Each entry says where its numbers come from:
   1999), and for powers of two also the split-radix count, 4n log2 n - 6n + 8 real
   operations in all (n = 16: 144 additions and 24 multiplications, 168; Johnson and
   Frigo, "A modified split-radix FFT with fewer arithmetic operations", 2007). Twiddle
-  variants match the t1_N headers (for example t1_16: 174 and 84);
+  variants match the t1_N headers (for example t1_16: 174 and 84; t1_32: 434 and 208;
+  t1_64: 1038 and 500);
 - derived: no count is cited for the size, so the reference is the sum of its parts
   under the algorithm the generator uses, from the entries above (good_thomas());
 - none: no reference, with the reason; such a radix is generated without a check.
@@ -55,6 +56,8 @@ PLAIN: dict[int, Reference] = {
     13: published(176, 68, "n1_13 (Rader's algorithm)"),
     15: published(156, 56, "n1_15"),
     16: published(144, 24, "n1_16"),
+    32: published(372, 84, "n1_32"),
+    64: published(912, 248, "n1_64"),
 }
 PLAIN[6] = good_thomas(2, 3)
 PLAIN[10] = good_thomas(2, 5)

@@ -26,10 +26,13 @@ function(fftn_add_test name)
     set(gtest GTest::gtest_main)
   endif()
   target_link_libraries(${name} PRIVATE fftn::fftn ${gtest} ${ARG_LIBRARIES})
+  # Listing the tests takes well under a second, but on a shared node running many sanitized
+  # test processes at once it has exceeded CMake's default 5 s (DMOG, 2026-11-14).
   if(ARG_ENVIRONMENT)
-    gtest_discover_tests(${name} DISCOVERY_MODE PRE_TEST PROPERTIES ENVIRONMENT "${ARG_ENVIRONMENT}")
+    gtest_discover_tests(${name} DISCOVERY_MODE PRE_TEST DISCOVERY_TIMEOUT 120
+                         PROPERTIES ENVIRONMENT "${ARG_ENVIRONMENT}")
   else()
-    gtest_discover_tests(${name} DISCOVERY_MODE PRE_TEST)
+    gtest_discover_tests(${name} DISCOVERY_MODE PRE_TEST DISCOVERY_TIMEOUT 120)
   endif()
   set_property(GLOBAL APPEND PROPERTY FFTN_TEST_EXECUTABLES "$<TARGET_FILE:${name}>")
 endfunction()

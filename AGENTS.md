@@ -166,6 +166,10 @@ Performance changes are experiments until measured. The protocol:
 6. **Then act:** a win becomes the default and the old path is deleted; a loss is deleted.
    A switch kept for further study is registered in `dev/KNOBS.toml` with an owner and an
    expiry date at most 30 days ahead. The gate fails on expired or unregistered switches.
+7. **Add the lesson to `dev/LESSONS.md`** when the result teaches something beyond FFTN's
+   own constants (a cost, a pitfall, a method that would help another project): the claim,
+   the numbers and machine, and a link to the experiment file. Correct a lesson that a later
+   result contradicts, keeping both results.
 
 Further rules:
 
@@ -176,8 +180,9 @@ Further rules:
   A comparison against a handicapped competitor is a bug in the benchmark.
 - The Mac and the other machines are shared. fbench runs interleaved, with repeated rounds
   and an A/A control, on any machine, and records the load of every round; a claim is
-  judged against the noise band of the same run. Prefer an exclusive Slurm node when one is
-  available, and say where a run was made.
+  judged against the noise band of the same run. Use small shared allocations and add
+  rounds rather than waiting for a quiet or exclusive machine (exclusive nodes only for
+  threading experiments that need every core), and say where a run was made.
 - A default that changes needs an experiment file. So does a planner rule.
 
 ## 7. Working in this repository

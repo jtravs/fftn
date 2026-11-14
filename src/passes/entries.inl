@@ -13,18 +13,11 @@ inline constexpr edge_op nop = edge_op::none;
 inline constexpr edge_op scl = edge_op::scale;
 inline constexpr edge_op fac = edge_op::factor;
 
-// Whether gen::radices lists R (I runs through the list).
-template <std::size_t R, std::size_t I = 0>
-inline constexpr bool codelet_radix = gen::radices[I] == R || codelet_radix<R, I + 1>;
-template <std::size_t R> inline constexpr bool codelet_radix<R, gen::radix_count> = false;
-
-// The passes of radix R, or nulls where R has no codelet. A plan has one scale, on one
-// edge (core/plan_core.cpp), so no pass scales both: that entry stays null rather than
+// The passes of the codelet in row I of gen::radices. A plan has one scale, on one edge
+// (core/plan_core.cpp), so no pass scales both: that entry stays null rather than
 // instantiating a variant nothing selects.
-template <class T, std::size_t R, bool = codelet_radix<R>> struct radix_entries {
-  static constexpr radix_passes value{};
-};
-template <class T, std::size_t R> struct radix_entries<T, R, true> {
+template <class T, std::size_t I> struct radix_entries {
+  static constexpr std::size_t R = gen::radices[I];
   static constexpr radix_passes value{
       .grouped =
           {
@@ -44,6 +37,8 @@ template <class T, std::size_t R> struct radix_entries<T, R, true> {
               &lane_pass<T, R, -1, true, nop>,
               &lane_pass<T, R, +1, true, nop>,
           },
+      .lane_shared_in = &lane_pass<T, R, +1, true, nop, factor_sharing::input>,
+      .last_shared_out = &lane_pass<T, R, -1, false, nop, factor_sharing::output>,
       .last =
           {
               {
@@ -113,10 +108,26 @@ template <class T, std::size_t R> struct radix_entries<T, R, true> {
                   &phase_pass<T, R, +1, false, nop, 2>,
               },
           },
+      .r2c_last =
+          {
+              &r2c_last<T, R, false>,
+              &r2c_last<T, R, true>,
+          },
+      .c2r_first = &c2r_first<T, R>,
+      .r2c_leaf =
+          {
+              &r2c_leaf<T, R, false>,
+              &r2c_leaf<T, R, true>,
+          },
+      .c2r_leaf =
+          {
+              &c2r_leaf<T, R, nop>,
+              &c2r_leaf<T, R, scl>,
+          },
   };
 };
 
-static_assert(max_codelet_radix == 16, "pass_table lists the rows 0 .. 16");
+static_assert(gen::radix_count == 17, "pass_table lists the rows of gen::radices");
 
 template <class T>
 inline constexpr pass_kernels<T> pass_table{
@@ -197,17 +208,30 @@ inline constexpr pass_kernels<T> pass_table{
         },
     .bluestein_in =
         {
-            &bluestein_in<T, nop>,
-            &bluestein_in<T, scl>,
-            &bluestein_in<T, fac>,
+            {
+                &bluestein_in<T, nop, false>,
+                &bluestein_in<T, scl, false>,
+                &bluestein_in<T, fac, false>,
+            },
+            {
+                &bluestein_in<T, nop, true>,
+                &bluestein_in<T, scl, true>,
+                &bluestein_in<T, fac, true>,
+            },
         },
     .bluestein_out =
         {
-            &bluestein_out<T, nop>,
-            &bluestein_out<T, scl>,
-            &bluestein_out<T, fac>,
+            {
+                &bluestein_out<T, nop, false>,
+                &bluestein_out<T, scl, false>,
+                &bluestein_out<T, fac, false>,
+            },
+            {
+                &bluestein_out<T, nop, true>,
+                &bluestein_out<T, scl, true>,
+                &bluestein_out<T, fac, true>,
+            },
         },
-    .r2c_pack_pairs = &r2c_pack_pairs<T>,
     .r2c_post =
         {
             &r2c_post<T, false>,
@@ -219,17 +243,28 @@ inline constexpr pass_kernels<T> pass_table{
             &r2c_store<T, false>,
             &r2c_store<T, true>,
         },
-    .c2r_pre = &c2r_pre<T>,
-    .c2r_unpack_pairs =
+    .c2r_pre =
         {
-            &c2r_unpack_pairs<T, false>,
-            &c2r_unpack_pairs<T, true>,
+            &c2r_pre<T, false>,
+            &c2r_pre<T, true>,
         },
     .c2r_expand = &c2r_expand<T>,
     .c2r_store =
         {
             &c2r_store<T, false>,
             &c2r_store<T, true>,
+        },
+    .r2c_pack_pairs = &r2c_pack_pairs<T>,
+    .r2c_post_strided =
+        {
+            &r2c_post_strided<T, false>,
+            &r2c_post_strided<T, true>,
+        },
+    .c2r_pre_strided = &c2r_pre_strided<T>,
+    .c2r_unpack_pairs =
+        {
+            &c2r_unpack_pairs<T, false>,
+            &c2r_unpack_pairs<T, true>,
         },
     .block_copy =
         {

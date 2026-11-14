@@ -56,15 +56,17 @@ slot other_scratch(slot s) { return s == slot::a ? slot::b : slot::a; }
 template <class T>
 chain_builder<T>::chain_builder(const kernels_of<T>& kernels, const target_profile& profile,
                                 std::vector<std::vector<T>>& tables, std::size_t chunk_points,
-                                std::vector<std::size_t> forced, std::size_t bluestein_above)
+                                std::vector<std::size_t> forced, std::size_t bluestein_above,
+                                real_fusion fusion)
     : kernels_(kernels), profile_(profile), tables_(tables),
       chunk_points_(std::max<std::size_t>(chunk_points, 1)), forced_(std::move(forced)),
+      fusion_(fusion),
       bluestein_above_(std::max(bluestein_above != 0 ? bluestein_above : profile.bluestein_above,
-                                max_codelet_radix)) {
-  // The test knob takes only radices some pass has: a codelet's (radix 2 to 16 where the
-  // generated table has it) or the generic pass's (any radix above 16).
+                                dense_codelet_radix)) {
+  // The test knob takes only radices some pass has: a codelet's (gen::radices) or the
+  // generic pass's (any other radix, in practice the primes above 16).
   for (const std::size_t r : forced_) {
-    if (r < 2 || (r <= max_codelet_radix && kernels_.passes.codelet[r].lane[0] == nullptr)) {
+    if (r < 2 || (has_codelet(r) && kernels_.passes.codelet[codelet_slot(r)].lane[0] == nullptr)) {
       throw std::invalid_argument("fftn::plan: build_settings.radices holds radix " +
                                   std::to_string(r) + ", which no pass takes");
     }
@@ -87,7 +89,7 @@ template <class T> std::vector<std::size_t> chain_builder<T>::radices(std::size_
   // The trailing radices above the Bluestein threshold (the rules' largest primes) become one
   // Bluestein stage.
   std::size_t q = 1;
-  while (!rad.empty() && rad.back() > bluestein_above_) {
+  while (!rad.empty() && rad.back() > bluestein_above_ && !has_codelet(rad.back())) {
     q *= rad.back();
     rad.pop_back();
   }
@@ -99,11 +101,15 @@ template <class T> std::vector<std::size_t> chain_builder<T>::radices(std::size_
 
 template <class T> bool chain_builder<T>::bluestein_last(std::size_t n) const {
   const std::vector<std::size_t> rad = radices(n);
-  return !rad.empty() && rad.back() > bluestein_above_;
+  return !rad.empty() && rad.back() > bluestein_above_ && !has_codelet(rad.back());
 }
 
 template <class T> std::string chain_builder<T>::radix_text(std::size_t n) const {
-  const std::vector<std::size_t> rad = radices(n);
+  return radix_text(n, radices(n));
+}
+
+template <class T>
+std::string chain_builder<T>::radix_text(std::size_t n, const std::vector<std::size_t>& rad) const {
   if (rad.empty()) {
     return "none (a copy)";
   }
@@ -209,13 +215,64 @@ template <class T> const T* chain_builder<T>::radix_roots(std::size_t radix) {
   return stored;
 }
 
-// w_n^k for k = 0 .. n/4: the twiddles of the real post- and pre-passes (n even). A plan
-// has one real axis and builds its line once, so nothing is shared.
+// w_n^k for k = 0 .. n/4: the twiddles of an r2c leaf and of the strided pairing passes
+// (n even). A plan has one real axis and builds its line once, so nothing is shared.
 template <class T> const T* chain_builder<T>::edge_twiddles(std::size_t n) {
   const auto& w = roots(n);
   const std::vector<std::complex<T>> t(w.begin(),
                                        w.begin() + static_cast<std::ptrdiff_t>(n / 4 + 1));
   return pack(t, true);
+}
+
+// A Bluestein stage's tables (strategies/bluestein.hpp), kept per (q, sign) so that every
+// axis and line of the plan with the same Q uses one copy. The kernel spectrum: M tight
+// complex values (an input factor, passes/bluestein.inl). The chirp: Q entries in broadcast
+// storage when copies == 0 (passes that share it across the copies), otherwise one entry
+// per element of a line of `copies` interleaved sequences, copies Q, in per-lane storage
+// padded with ones to whole registers.
+template <class T>
+typename chain_builder<T>::bluestein_tables
+chain_builder<T>::bluestein_tables_of(std::size_t q, int sign, std::size_t copies) {
+  const std::size_t m = bluestein_length(q, profile_);
+  const auto kernel_key = std::make_pair(q, sign);
+  auto kit = kernel_tables_.find(kernel_key);
+  if (kit == kernel_tables_.end()) {
+    // For double plans the kernel's root table of M is the plan's own.
+    std::vector<std::complex<double>> roots_m;
+    if constexpr (std::is_same_v<T, double>) {
+      roots_m = roots(m);
+    } else {
+      roots_m = unit_roots<double>(-1, m);
+    }
+    const std::vector<std::complex<double>> spectrum =
+        bluestein_kernel(bluestein_chirp<double>(sign, q), roots_m);
+    std::vector<T>& kernel = tables_.emplace_back(2 * m);
+    for (std::size_t f = 0; f < m; ++f) {
+      kernel[2 * f] = static_cast<T>(spectrum[f].real());
+      kernel[2 * f + 1] = static_cast<T>(spectrum[f].imag());
+    }
+    kit = kernel_tables_.emplace(kernel_key, kernel.data()).first;
+  }
+  const auto chirp_key = std::make_tuple(q, sign, copies);
+  auto cit = chirp_tables_.find(chirp_key);
+  if (cit == chirp_tables_.end()) {
+    const std::vector<std::complex<T>> w = bluestein_chirp<T>(sign, q);
+    const T* stored = nullptr;
+    if (copies == 0) {
+      stored = pack(w, true);
+    } else {
+      const std::size_t c = kernels_.complex_lanes;
+      std::vector<std::complex<T>> chirp(blocks(copies * q) * c, std::complex<T>(1, 0));
+      for (std::size_t j = 0; j < q; ++j) {
+        for (std::size_t t = 0; t < copies; ++t) {
+          chirp[t + copies * j] = w[j];
+        }
+      }
+      stored = pack(chirp, false);
+    }
+    cit = chirp_tables_.emplace(chirp_key, stored).first;
+  }
+  return {.chirp = cit->second, .kernel = kit->second};
 }
 
 template <class T>
@@ -244,7 +301,8 @@ void chain_builder<T>::add_pass(std::size_t n, const std::vector<std::size_t>& r
   const pass_kernels<T>& k = kernels_.passes;
   stage st;
   std::string kind;
-  if (radix > max_codelet_radix) {
+  const bool generic = !has_codelet(radix);
+  if (generic) {
     st.run = k.generic[d][edge_index(in)][edge_index(out)];
     st.args.roots = radix_roots(radix);
     st.args.twiddles = m > 1 ? shared_twiddles(n / batch, radix, s / batch) : nullptr;
@@ -252,18 +310,24 @@ void chain_builder<T>::add_pass(std::size_t n, const std::vector<std::size_t>& r
     st.chunks = chunks_of(st.units, radix * radix * c);
     kind = "generic";
   } else if (grouped) {
-    st.run = k.codelet[radix].grouped[d][edge_index(in)];
+    st.run = k.codelet[codelet_slot(radix)].grouped[d][edge_index(in)];
     st.args.twiddles = grouped_twiddles(n, radix);
     st.units = blocks(m);
     st.chunks = chunks_of(st.units, radix * c);
     kind = "grouped";
   } else if (last) {
-    st.run = k.codelet[radix].last[d][edge_index(out)];
+    st.run = out == edge_op::factor && edges.out_factor_copies > 1
+                 ? k.codelet[codelet_slot(radix)].last_shared_out
+                 : k.codelet[codelet_slot(radix)].last[d][edge_index(out)];
+    st.args.factor_copies = edges.out_factor_copies;
     st.units = blocks(s);
     st.chunks = chunks_of(st.units, radix * c);
     kind = "lane";
   } else {
-    st.run = k.codelet[radix].lane[d];
+    // A first pass with copies is a Bluestein convolution's (batch copies, all of them
+    // here); its input factor, the backward chain's kernel spectrum, holds one entry per
+    // element of a copy, which every lane shares.
+    st.run = in == edge_op::factor ? k.codelet[codelet_slot(radix)].lane_shared_in : k.codelet[codelet_slot(radix)].lane[d];
     st.args.twiddles = shared_twiddles(n / batch, radix, s / batch);
     st.units = m * blocks(s);
     st.chunks = chunks_of(st.units, radix * c);
@@ -282,7 +346,7 @@ void chain_builder<T>::add_pass(std::size_t n, const std::vector<std::size_t>& r
   st.dst = dst.where;
   st.name = kind + " radix-" + std::to_string(radix) + " " + direction_name(sign) + " (m " +
             std::to_string(m) + ", s " + std::to_string(s) +
-            (radix > max_codelet_radix ? "; O(radix^2) per butterfly" : "") + edges_note(in, out) +
+            (generic ? "; O(radix^2) per butterfly" : "") + edges_note(in, out) +
             ")";
   stages.push_back(std::move(st));
 }
@@ -291,7 +355,7 @@ template <class T>
 void chain_builder<T>::add_leaf(std::size_t n, int sign, endpoint src, endpoint dst,
                                 const line_edges& edges, std::vector<stage>& stages) {
   stage st;
-  st.run = kernels_.passes.codelet[n]
+  st.run = kernels_.passes.codelet[codelet_slot(n)]
                .leaf[direction_index(sign)][edge_index(edges.in)][edge_index(edges.out)];
   st.args.radix = n;
   st.args.n = n;
@@ -342,35 +406,22 @@ void chain_builder<T>::add_bluestein(std::size_t n, std::size_t q, int sign, end
   const std::size_t c = kernels_.complex_lanes;
   const edge_op in = first ? edges.in : edge_op::none;
   const pass_kernels<T>& k = kernels_.passes;
-
-  // The chirp, element i = t + s j of the s Q holding w_j, padded with ones to whole
-  // registers; the kernel spectrum, element t + s f of the s M holding dft(b)_f / M.
-  // For double plans the kernel's double chirp and root table of M are the plan's own.
-  const std::vector<std::complex<double>> wd = bluestein_chirp<double>(sign, q);
-  std::vector<std::complex<T>> w;
-  std::vector<std::complex<double>> roots_m;
-  if constexpr (std::is_same_v<T, double>) {
-    w = wd;
-    roots_m = roots(m);
-  } else {
-    w = bluestein_chirp<T>(sign, q);
-    roots_m = unit_roots<double>(-1, m);
+  // The convolution's passes must be codelet lane passes with at least two of them: the
+  // kernel spectrum is shared through the last lane pass's output or the first backward
+  // lane pass's input (factor_sharing), which the generic pass, a grouped pass with copies
+  // and a single pass that is both first and last would not honour.
+  if (rad.size() < 2) {
+    throw std::logic_error("fftn: a Bluestein convolution of " + std::to_string(m) +
+                           " points has fewer than two passes");
   }
-  std::vector<std::complex<T>> chirp(blocks(s * q) * c, std::complex<T>(1, 0));
-  for (std::size_t j = 0; j < q; ++j) {
-    for (std::size_t t = 0; t < s; ++t) {
-      chirp[t + s * j] = w[j];
+  for (const std::size_t r : rad) {
+    if (!has_codelet(r) || k.codelet[codelet_slot(r)].lane[0] == nullptr) {
+      throw std::logic_error("fftn: a Bluestein convolution of " + std::to_string(m) +
+                             " points has radix " + std::to_string(r) + ", which no codelet takes");
     }
   }
-  const T* chirp_table = pack(chirp, false);
-  const std::vector<std::complex<double>> spectrum = bluestein_kernel(wd, roots_m);
-  std::vector<T>& kernel = tables_.emplace_back(2 * s * m);
-  for (std::size_t f = 0; f < m; ++f) {
-    for (std::size_t t = 0; t < s; ++t) {
-      kernel[2 * (t + s * f)] = static_cast<T>(spectrum[f].real());
-      kernel[2 * (t + s * f) + 1] = static_cast<T>(spectrum[f].imag());
-    }
-  }
+  const bool shared = s > 1 && s % c == 0;
+  const bluestein_tables tab = bluestein_tables_of(q, sign, shared ? 0 : s);
 
   // The convolution starts in the scratch line the source is not in, and ends there.
   const slot conv =
@@ -378,11 +429,11 @@ void chain_builder<T>::add_bluestein(std::size_t n, std::size_t q, int sign, end
   const std::string geometry = "Q " + std::to_string(q) + ", M " + std::to_string(m) +
                                ", copies " + std::to_string(s);
   stage st;
-  st.run = k.bluestein_in[edge_index(in)];
+  st.run = k.bluestein_in[shared ? 1 : 0][edge_index(in)];
   st.args.m = m;
   st.args.s = s;
   st.args.n = n;
-  st.args.twiddles = chirp_table;
+  st.args.twiddles = tab.chirp;
   st.args.scale = edges.scale;
   st.args.in_factor = in == edge_op::factor ? edges.in_factor : nullptr;
   st.args.src_stride = src.stride;
@@ -395,16 +446,31 @@ void chain_builder<T>::add_bluestein(std::size_t n, std::size_t q, int sign, end
             edges_note(in, edge_op::none) + ")";
   stages.push_back(std::move(st));
 
-  line_edges spectral;
-  spectral.out = edge_op::factor;
-  spectral.out_factor = kernel.data();
+  // The kernel spectrum, M entries for all the copies: output element t + s f of the
+  // forward chain (copy t) takes entry f. Its last pass applies it when C divides s, its
+  // lanes then sharing one entry (factor_sharing::output; s = 1 is the plain per-element
+  // factor). Otherwise the lanes of that pass straddle entries, and the first backward
+  // pass, a lane pass whose lanes are the copies, multiplies its input element t + s f by
+  // entry f instead (factor_sharing::input). Measured on the Mac (C = 1, task 2.3b): the
+  // input form cost 5 % at 4096 x 17 against the output form, whose multiplications hide
+  // under the last pass's memory traffic.
+  line_edges forward;
+  line_edges backward;
+  if (s % c == 0 || s == 1) {
+    forward.out = edge_op::factor;
+    forward.out_factor = tab.kernel;
+    forward.out_factor_copies = s;
+  } else {
+    backward.in = edge_op::factor;
+    backward.in_factor = tab.kernel;
+  }
   const std::size_t first_conv = stages.size();
   slot at = conv;
   for (const int dir : {-1, +1}) {
     std::size_t copies = s;
     for (std::size_t i = 0; i < rad.size(); ++i) {
       const slot next = other_scratch(at);
-      add_pass(s * m, rad, i, copies, dir, {at, 1}, {next, 1}, dir < 0 ? spectral : line_edges(),
+      add_pass(s * m, rad, i, copies, dir, {at, 1}, {next, 1}, dir < 0 ? forward : backward,
                stages, s);
       at = next;
       copies *= rad[i];
@@ -415,11 +481,11 @@ void chain_builder<T>::add_bluestein(std::size_t n, std::size_t q, int sign, end
   }
 
   stage out;
-  out.run = k.bluestein_out[edge_index(edges.out)];
+  out.run = k.bluestein_out[shared ? 1 : 0][edge_index(edges.out)];
   out.args.m = m;
   out.args.s = s;
   out.args.n = n;
-  out.args.twiddles = chirp_table;
+  out.args.twiddles = tab.chirp;
   out.args.scale = edges.scale;
   out.args.out_factor = edges.out == edge_op::factor ? edges.out_factor : nullptr;
   out.args.src_stride = 1;
@@ -464,7 +530,7 @@ slot chain_builder<T>::scratch_chain(std::size_t n, int sign, slot from,
     return from;
   }
   const line_edges none;
-  if (rad.size() == 1 && n <= max_codelet_radix) {
+  if (rad.size() == 1 && has_codelet(n)) {
     const slot to = other_scratch(from);
     add_leaf(n, sign, {from, 1}, {to, 1}, none, stages);
     return to;
@@ -495,7 +561,7 @@ std::size_t chain_builder<T>::c2c_line(std::size_t n, int sign, endpoint src, en
     add_copy(n, src, dst, edges, stages);
     return 0;
   }
-  if (rad.size() == 1 && n <= max_codelet_radix) {
+  if (rad.size() == 1 && has_codelet(n)) {
     add_leaf(n, sign, src, dst, edges, stages);
     return 0;
   }
@@ -542,24 +608,248 @@ std::size_t chain_builder<T>::c2c_line(std::size_t n, int sign, endpoint src, en
 }
 
 template <class T>
-std::size_t chain_builder<T>::r2c_line(std::size_t n, endpoint src, endpoint dst, double scale,
-                                       std::vector<stage>& stages) {
+void chain_builder<T>::chain_tail(std::size_t n, const std::vector<std::size_t>& rad,
+                                  std::size_t i0, std::size_t s, int sign, endpoint at,
+                                  endpoint dst, const line_edges& edges,
+                                  std::vector<stage>& stages) {
+  const bool bluestein = bluestein_last(n);
+  for (std::size_t i = i0; i < rad.size(); ++i) {
+    const bool last = i + 1 == rad.size();
+    const endpoint next = last ? dst : endpoint{.where = other_scratch(at.where), .stride = 1};
+    if (bluestein && last) {
+      add_bluestein(n, rad[i], sign, at, next, edges, i == 0, stages);
+    } else {
+      add_pass(n, rad, i, s, sign, at, next, edges, stages);
+    }
+    at = next;
+    s *= rad[i];
+  }
+}
+
+template <class T>
+real_route chain_builder<T>::route(std::size_t n, bool r2c, bool strided) const {
+  if (n % 2 == 1) {
+    return real_route::full;
+  }
+  if (strided) {
+    return real_route::strided;
+  }
+  const std::size_t h = n / 2;
+  if (h == 1) {
+    return real_route::pairing_only;
+  }
+  if (fusion_.radix <= 1) {
+    return real_route::separate;
+  }
+  const std::vector<std::size_t> rad = real_radices(h, r2c);
+  if (rad.size() == 1 && h <= dense_codelet_radix) {
+    return real_route::leaf;
+  }
+  // r2c: the last pass must be a codelet's (not a Bluestein stage or a generic pass); c2r:
+  // the first.
+  if (rad.size() < 2) {
+    return real_route::separate;
+  }
+  const std::size_t edge_radix = r2c ? rad.back() : rad.front();
+  const std::size_t half_copies = (h / edge_radix - 1) / 2; // copies (groups) 1 .. s/2
+  const bool fits = edge_radix <= std::min(fusion_.radix, dense_codelet_radix) &&
+                    half_copies >= fusion_.min_lanes * kernels_.complex_lanes &&
+                    (!r2c || h * 2 * sizeof(T) <= fusion_.r2c_bytes);
+  return fits ? real_route::fused : real_route::separate;
+}
+
+// The chain's radices for h with, where the pairing would fuse, the smallest radix within
+// the limit moved to the pass it fuses into (last for r2c, first for c2r) when that pass's
+// radix exceeds the limit; a Bluestein stage stays last, and forced radices stay as given.
+template <class T>
+std::vector<std::size_t> chain_builder<T>::real_radices(std::size_t h, bool r2c) const {
+  std::vector<std::size_t> rad = radices(h);
+  const bool bluestein = bluestein_last(h);
+  if (forces(h) || rad.size() < 2 || fusion_.radix <= 1 || (r2c && bluestein)) {
+    return rad;
+  }
+  const std::size_t limit = std::min(fusion_.radix, dense_codelet_radix);
+  if ((r2c ? rad.back() : rad.front()) <= limit) {
+    return rad;
+  }
+  const std::size_t end = bluestein ? rad.size() - 1 : rad.size();
+  std::size_t pick = end;
+  for (std::size_t i = 0; i < end; ++i) {
+    if (rad[i] <= limit && (pick == end || rad[i] < rad[pick])) {
+      pick = i;
+    }
+  }
+  if (pick == end) {
+    return rad;
+  }
+  const std::size_t r = rad[pick];
+  rad.erase(rad.begin() + static_cast<std::ptrdiff_t>(pick));
+  rad.insert(r2c ? rad.end() : rad.begin(), r);
+  return rad;
+}
+
+template <class T>
+std::string chain_builder<T>::real_text(std::size_t n, bool r2c, bool strided) const {
+  const std::string kind = r2c ? "r2c" : "c2r";
+  const real_route how = route(n, r2c, strided);
+  const std::string half =
+      " through a half-length complex chain of " + std::to_string(n / 2) + ", radices " +
+      (how == real_route::fused ? radix_text(n / 2, real_radices(n / 2, r2c)) : radix_text(n / 2));
+  switch (how) {
+  case real_route::full:
+    return kind + " through a full-length complex chain (n odd), radices " + radix_text(n);
+  case real_route::strided:
+    return kind + half + " in scratch, the pairing a separate pass (strided line)";
+  case real_route::pairing_only:
+    return kind + " of 2 points: the pairing pass alone";
+  case real_route::leaf:
+    return kind + " in registers: a leaf of " + std::to_string(n / 2) + " with the pairing fused";
+  case real_route::fused:
+    return kind + half + ", the pairing fused into its " + (r2c ? "last" : "first") + " pass";
+  case real_route::separate:
+    break;
+  }
+  return kind + half + (r2c ? ", then a pairing pass" : ", after a pairing pass");
+}
+
+// -i w_n^k = w_n^(k + n/4), the pairing's twiddle (passes/real.inl): an exact rearrangement
+// of a root-table entry, which also holds when 4 does not divide n.
+template <class T> std::complex<T> chain_builder<T>::pairing_root(std::size_t n, std::size_t k) {
+  const std::complex<T> w = roots(n)[k];
+  return {w.imag(), -w.real()};
+}
+
+// The pairing twiddles of bins k = 1 .. (n/2 - 1) / 2, padded with ones to whole registers,
+// per-lane storage: the separate pairing passes' table.
+template <class T> const T* chain_builder<T>::pairing_twiddles(std::size_t n) {
+  const std::size_t pairs = (n / 2 - 1) / 2;
+  if (pairs == 0) {
+    return nullptr;
+  }
+  std::vector<std::complex<T>> t(blocks(pairs) * kernels_.complex_lanes, std::complex<T>(1, 0));
+  for (std::size_t k = 1; k <= pairs; ++k) {
+    t[k - 1] = pairing_root(n, k);
+  }
+  return pack(t, false);
+}
+
+// The pairing twiddles of bins k = 0 .. n/4, broadcast storage: the leaves' table.
+template <class T> const T* chain_builder<T>::leaf_pairing_twiddles(std::size_t n) {
+  std::vector<std::complex<T>> t(n / 4 + 1);
+  for (std::size_t k = 0; k < t.size(); ++k) {
+    t[k] = pairing_root(n, k);
+  }
+  return pack(t, true);
+}
+
+template <class T>
+void chain_builder<T>::add_pairing(bool r2c, std::size_t n, endpoint src, endpoint dst,
+                                   double scale, std::vector<stage>& stages) {
+  const pass_kernels<T>& k = kernels_.passes;
+  const std::size_t scaled = scale != 1.0 ? 1 : 0;
+  const std::size_t units = 1 + blocks((n / 2 - 1) / 2);
+  add_edge(r2c ? k.r2c_post[scaled] : k.c2r_pre[scaled], r2c ? "r2c pairing" : "c2r pairing", n,
+           units, src, dst, pairing_twiddles(n), scale, stages);
+  stages.back().chunks = chunks_of(units, 4 * kernels_.complex_lanes);
+}
+
+template <class T>
+std::size_t chain_builder<T>::r2c_line(std::size_t n, endpoint src, endpoint dst, bool aliased,
+                                       double scale, std::vector<stage>& stages) {
   line_scratch_ = 0;
   const pass_kernels<T>& k = kernels_.passes;
   const std::size_t scaled = scale != 1.0 ? 1 : 0;
-  if (n % 2 == 0) {
-    const std::size_t h = n / 2;
+  const std::size_t c = kernels_.complex_lanes;
+  const std::size_t h = n / 2;
+  // The reals of an even line of stride 1 are read in place as h complex values.
+  switch (route(n, true, src.stride != 1 || dst.stride != 1)) {
+  case real_route::strided: {
     add_edge(k.r2c_pack_pairs, "r2c pack pairs", n, h, src, {slot::a, 1}, nullptr, 1.0, stages);
     const slot z = scratch_chain(h, -1, slot::a, stages);
-    add_edge(k.r2c_post[scaled], "r2c post", n, h / 2 + 1, {z, 1}, dst, edge_twiddles(n), scale,
-             stages);
+    add_edge(k.r2c_post_strided[scaled], "r2c pairing", n, h / 2 + 1, {z, 1}, dst,
+             edge_twiddles(n), scale, stages);
     return std::max(h, line_scratch_);
   }
-  add_edge(k.r2c_pack, "r2c pack", n, n, src, {slot::a, 1}, nullptr, 1.0, stages);
-  const slot z = scratch_chain(n, -1, slot::a, stages);
-  add_edge(k.r2c_store[scaled], "r2c store half", n, n / 2 + 1, {z, 1}, dst, nullptr, scale,
-           stages);
-  return std::max(n, line_scratch_);
+  case real_route::full: {
+    add_edge(k.r2c_pack, "r2c pack", n, n, src, {slot::a, 1}, nullptr, 1.0, stages);
+    const slot z = scratch_chain(n, -1, slot::a, stages);
+    add_edge(k.r2c_store[scaled], "r2c store half", n, n / 2 + 1, {z, 1}, dst, nullptr, scale,
+             stages);
+    return std::max(n, line_scratch_);
+  }
+  case real_route::pairing_only:
+    add_pairing(true, n, src, dst, scale, stages);
+    return 0;
+  case real_route::leaf: {
+    stage st;
+    st.run = k.codelet[codelet_slot(h)].r2c_leaf[scaled];
+    st.args.radix = h;
+    st.args.n = h;
+    st.args.twiddles = leaf_pairing_twiddles(n);
+    st.args.scale = scale;
+    st.src = src.where;
+    st.dst = dst.where;
+    st.units = 1;
+    st.chunks = 1;
+    st.name = "r2c leaf radix-" + std::to_string(h) + " with the pairing" +
+              (scale != 1.0 ? " (out: scale)" : "");
+    stages.push_back(std::move(st));
+    return 0;
+  }
+  case real_route::fused: {
+    const std::vector<std::size_t> rad = real_radices(h, true);
+    const std::size_t radix = rad.back();
+    const std::size_t s = h / radix;
+    endpoint at = src;
+    std::size_t copies = 1;
+    for (std::size_t i = 0; i + 1 < rad.size(); ++i) {
+      const endpoint next{.where = other_scratch(at.where), .stride = 1};
+      add_pass(h, rad, i, copies, -1, at, next, line_edges(), stages);
+      at = next;
+      copies *= rad[i];
+    }
+    // The pairing twiddles of the bins q + s r: per-lane rows r for the copies q = 1 ..
+    // (s - 1) / 2; broadcast, copy 0's, then copy s/2's (s even).
+    const std::size_t qm = (s - 1) / 2;
+    const std::size_t qpad = blocks(qm) * c;
+    std::vector<std::complex<T>> lanes(radix * qpad, std::complex<T>(1, 0));
+    std::vector<std::complex<T>> ends(2 * radix, std::complex<T>(1, 0));
+    for (std::size_t r = 0; r < radix; ++r) {
+      for (std::size_t q = 1; q <= qm; ++q) {
+        lanes[r * qpad + q - 1] = pairing_root(n, q + s * r);
+      }
+      ends[r] = pairing_root(n, s * r);
+      if (s % 2 == 0) {
+        ends[radix + r] = pairing_root(n, s / 2 + s * r);
+      }
+    }
+    stage st;
+    st.run = k.codelet[codelet_slot(radix)].r2c_last[scaled];
+    st.args.radix = radix;
+    st.args.m = 1;
+    st.args.s = s;
+    st.args.n = h;
+    st.args.twiddles = qpad != 0 ? pack(lanes, false) : nullptr;
+    st.args.roots = pack(ends, true);
+    st.args.scale = scale;
+    st.src = at.where;
+    st.dst = dst.where;
+    st.units = 1 + blocks(qm);
+    st.chunks = chunks_of(st.units, 2 * radix * c);
+    st.name = "lane radix-" + std::to_string(radix) + " forward (m 1, s " + std::to_string(s) +
+              "; copies q and s - q together, with the r2c pairing" +
+              (scale != 1.0 ? "; out: scale)" : ")");
+    stages.push_back(std::move(st));
+    return std::max(h, line_scratch_);
+  }
+  case real_route::separate:
+    break;
+  }
+  // The complex transform of h writes the output's first h bins; the pairing then runs in
+  // place there.
+  const std::size_t need = c2c_line(h, -1, src, dst, aliased, line_edges(), stages);
+  add_pairing(true, n, dst, dst, scale, stages);
+  return need;
 }
 
 template <class T>
@@ -568,18 +858,102 @@ std::size_t chain_builder<T>::c2r_line(std::size_t n, endpoint src, endpoint dst
   line_scratch_ = 0;
   const pass_kernels<T>& k = kernels_.passes;
   const std::size_t scaled = scale != 1.0 ? 1 : 0;
-  if (n % 2 == 0) {
-    const std::size_t h = n / 2;
-    add_edge(k.c2r_pre, "c2r pre", n, h / 2 + 1, src, {slot::a, 1}, edge_twiddles(n), 1.0, stages);
+  const std::size_t c = kernels_.complex_lanes;
+  const std::size_t h = n / 2;
+  line_edges edges;
+  if (scale != 1.0) {
+    edges.out = edge_op::scale;
+    edges.scale = scale;
+  }
+  switch (route(n, false, src.stride != 1 || dst.stride != 1)) {
+  case real_route::strided: {
+    add_edge(k.c2r_pre_strided, "c2r pairing", n, h / 2 + 1, src, {slot::a, 1},
+             edge_twiddles(n), 1.0, stages);
     const slot z = scratch_chain(h, +1, slot::a, stages);
-    add_edge(k.c2r_unpack_pairs[scaled], "c2r unpack pairs", n, h, {z, 1}, dst, nullptr, scale,
-             stages);
+    add_edge(k.c2r_unpack_pairs[scaled], "c2r unpack pairs", n, h, {z, 1}, dst, nullptr,
+             scale, stages);
     return std::max(h, line_scratch_);
   }
-  add_edge(k.c2r_expand, "c2r expand", n, n / 2 + 1, src, {slot::a, 1}, nullptr, 1.0, stages);
-  const slot z = scratch_chain(n, +1, slot::a, stages);
-  add_edge(k.c2r_store[scaled], "c2r store real", n, n, {z, 1}, dst, nullptr, scale, stages);
-  return std::max(n, line_scratch_);
+  case real_route::full: {
+    add_edge(k.c2r_expand, "c2r expand", n, n / 2 + 1, src, {slot::a, 1}, nullptr, 1.0, stages);
+    const slot z = scratch_chain(n, +1, slot::a, stages);
+    add_edge(k.c2r_store[scaled], "c2r store real", n, n, {z, 1}, dst, nullptr, scale, stages);
+    return std::max(n, line_scratch_);
+  }
+  case real_route::pairing_only:
+    add_pairing(false, n, src, dst, scale, stages);
+    return 0;
+  case real_route::leaf: {
+    stage st;
+    st.run = k.codelet[codelet_slot(h)].c2r_leaf[scaled];
+    st.args.radix = h;
+    st.args.n = h;
+    st.args.twiddles = leaf_pairing_twiddles(n);
+    st.args.scale = scale;
+    st.src = src.where;
+    st.dst = dst.where;
+    st.units = 1;
+    st.chunks = 1;
+    st.name = "c2r leaf radix-" + std::to_string(h) + " with the pairing" +
+              (scale != 1.0 ? " (out: scale)" : "");
+    stages.push_back(std::move(st));
+    return 0;
+  }
+  case real_route::fused: {
+    const std::vector<std::size_t> rad = real_radices(h, false);
+    const std::size_t radix = rad.front();
+    const std::size_t m = h / radix;
+    // Per-lane rows of the groups p = 1 .. (m - 1) / 2: their twiddles w_h^(p k), those of
+    // the groups m - p, and the pairing twiddles of the bins p + m j. Broadcast: the pairing
+    // twiddles of groups 0 and m/2 (m even), then group m/2's w_h^((m/2) k).
+    const auto& wh = roots(h);
+    const std::size_t pm = (m - 1) / 2;
+    const std::size_t ppad = blocks(pm) * c;
+    std::vector<std::complex<T>> lanes((3 * radix - 2) * ppad, std::complex<T>(1, 0));
+    std::vector<std::complex<T>> ends(3 * radix - 1, std::complex<T>(1, 0));
+    for (std::size_t i = 0; i < pm; ++i) {
+      for (std::size_t r = 1; r < radix; ++r) {
+        lanes[(r - 1) * ppad + i] = wh[(1 + i) * r];
+        lanes[(radix - 1 + r - 1) * ppad + i] = wh[(m - 1 - i) * r];
+      }
+      for (std::size_t j = 0; j < radix; ++j) {
+        lanes[(2 * radix - 2 + j) * ppad + i] = pairing_root(n, 1 + i + m * j);
+      }
+    }
+    for (std::size_t j = 0; j < radix; ++j) {
+      ends[j] = pairing_root(n, m * j);
+      if (m % 2 == 0) {
+        ends[radix + j] = pairing_root(n, m / 2 + m * j);
+      }
+    }
+    for (std::size_t r = 1; r < radix && m % 2 == 0; ++r) {
+      ends[2 * radix + r - 1] = wh[m / 2 * r];
+    }
+    stage st;
+    st.run = k.codelet[codelet_slot(radix)].c2r_first;
+    st.args.radix = radix;
+    st.args.m = m;
+    st.args.s = 1;
+    st.args.n = h;
+    st.args.twiddles = ppad != 0 ? pack(lanes, false) : nullptr;
+    st.args.roots = pack(ends, true);
+    st.src = src.where;
+    st.dst = slot::a;
+    st.units = 1 + blocks(pm);
+    st.chunks = chunks_of(st.units, 2 * radix * c);
+    st.name = "grouped radix-" + std::to_string(radix) + " backward (m " + std::to_string(m) +
+              ", s 1; groups p and m - p together, with the c2r pairing)";
+    stages.push_back(std::move(st));
+    chain_tail(h, rad, 1, radix, +1, {slot::a, 1}, dst, edges, stages);
+    return std::max(h, line_scratch_);
+  }
+  case real_route::separate:
+    break;
+  }
+  // The pairing writes Z to the output's memory (h complex values: the n reals), where the
+  // complex transform then runs in place; the input is preserved.
+  add_pairing(false, n, src, dst, 1.0, stages);
+  return c2c_line(h, +1, dst, dst, true, edges, stages);
 }
 
 template class chain_builder<double>;

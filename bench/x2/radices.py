@@ -14,7 +14,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 CODELETS = REPO / "src" / "gen" / "codelets.hpp"
-CODELET_RADICES = tuple(range(2, 17))  # every radix the generator emits (codelets.hpp)
+CODELET_RADICES = tuple(range(2, 17))  # the radices planner v1 prices (codelets.hpp adds 32, 64)
 MAX_PASSES = 8
 SMOOTH_LIMIT = 1024  # every 7-smooth length up to here is searched exhaustively
 LONG_TOP = 20  # above it, this many best by the cost estimate, plus v0's choice

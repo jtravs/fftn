@@ -42,7 +42,10 @@ phase 1 exit is authorised up to USD 20 (ledger in the experiment file).
 
 Open questions: see DESIGN.md section 18.2.
 
-Claims (2026-11-14): the lead session holds X2, T1, T5 and the baselines.
+Claims (2026-11-14): the lead session holds X2, T1, T5 and the baselines. Task 1.6's
+radix 32 and 64 codelets are generated and wired (every pass kind; the planner prices
+radices up to 16 only); X8 set the leaf limit to 32 on NEON in double; the codelets double
+the kernel code (B3 numbers in X8) and stay, for the grid and X3.
 
 Baseline runs (fbench run IDs): EPYC 7763-class node (GCC 16): tracking
 20261113-230721-7c95 failed (PATIENT timeout), re-run without PATIENT; pocketfft re-run with
@@ -64,6 +67,15 @@ run 20261114-132841-80e0; 2^16 and 2^18 within 1.25). Task 1.7b (branch
 `task/1.7b-grid-fusion`) fused the copies into the end passes of small-radix phases within
 L2/4 (2^18 to 0.92); the remaining cases need fewer or cheaper passes over memory (larger
 codelets, padded work arrays), not fusion (X12).
+
+Task 2.1 (branch `task/2.1-real`): real transforms as built in DESIGN.md 9.1 (pairing
+fused into the chain's edge pass by the rule of X6, a separate pass elsewhere, the grid for
+long rows). fbench run 20261114-135716-0600 on the Mac: FFTN ÷ FFTW r2c 0.90–0.96 and c2r
+0.82–0.88 up to 4096 (main: 1.04–1.31), 1.19–1.40 at 65536 and 2^20 (main: 1.52–2.18).
+Acceptance not met within L1: real overhead r2c 39–43 %, c2r 15–28 % (beyond L1 2–16 %);
+next is X6's real-input codelets (generator work). Open: x86 runs (`--catalogue x6`), the
+avx2 fusion limit (4, unmeasured), fusing the pairing into the grid's last or first phase,
+odd n (still the full-length complex chain), 2-D r2c of short rows (64 × 64: 1.51).
 
 ## How this plan works
 
@@ -247,9 +259,9 @@ running, done (with verdict).
 | X3 | Few big passes (radix 16–64, in the output buffer) against chains for rows of 8–64 thousand points; spill counts per codelet and target. The prototype's radix 20–32 attempts lost everywhere: find out whether generated, ordered codelets change that | 1 | planned |
 | [X4](experiments/X4-padding.md) | Padding: incremental addressing cost; pad always, never, or only where the stream rule binds. Also: do edge passes gain from a variant chosen by the caller's base address (cache-line splits on wide registers)? | 1 | running: for the grid on the Mac, staggered scratch lines adopted (2^22 −8 %), padding the intermediate rejected; the chain's lines, x86 and edge-pass variants open |
 | X5 | Twiddle modes (full, shared, derived) by length and target | 1 | planned |
-| X6 | Real-input codelets against half-length complex with fused post/pre, even and odd n | 2 | planned |
+| [X6](experiments/X6-real-codelets.md) | Real-input codelets against half-length complex with fused post/pre, even and odd n | 2 | planned (needs the generator's pruned variants); the half-length route's fusion rule measured on the Mac (task 2.1) |
 | X7 | Lanes against in-row kernels for batches of short rows, by length, target and row count | 2 | planned |
-| X8 | Whole-transform leaves for n ≤ 64–256 against two- and three-stage chains | 1 | planned |
+| [X8](experiments/X8-leaves.md) | Whole-transform leaves for n ≤ 64–256 against two- and three-stage chains | 1 | done: leaf limit 32 on NEON in double (16–22 % faster), 16 elsewhere; no leaf of 64 |
 | X9 | Scrambled intermediate order for transform pairs | 5 | planned |
 | [X10](experiments/X10-pass-loops.md) | Generated whole passes against templated pass loops; on x86 first: addressing, register budget and shuffles of the pass loops (after X18) | 1 | done: rejected (loop addressing cuts instructions, not time; the cost is port-5 shuffles, X19 next) |
 | X11 | SVE at 128 and 256 bits on Graviton 3/4 against NEON | 7 | planned |

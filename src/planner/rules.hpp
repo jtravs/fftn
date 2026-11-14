@@ -39,10 +39,19 @@ struct pass_costs {
   std::span<const radix_override> overrides;
 };
 
+// The default leaf limit: every length up to it is one leaf (gen::radices has every radix
+// 2 to 16).
+inline constexpr std::size_t default_leaf_limit = 16;
+
 // What the planner reads of a target and precision.
 struct target_profile {
   std::size_t lanes = 1;             // C: complex numbers per vector register
   const pass_costs* costs = nullptr; // never null in a profile from profile_of
+  // A length n <= leaf_limit with a codelet of radix n is one leaf, a whole transform in
+  // registers (DESIGN.md 8.2), instead of a chain. Lengths up to 16 are leaves whatever the
+  // value. From experiment X8 (dev/experiments/X8-leaves.md): 32 on NEON in double (C = 1),
+  // 16 elsewhere.
+  std::size_t leaf_limit = default_leaf_limit;
   // Prime factors above this go through one Bluestein stage at the end of the chain;
   // those from 17 up to it are generic passes (DESIGN.md 11.2).
   std::size_t bluestein_above = 0;
@@ -54,7 +63,8 @@ struct target_profile {
 // target takes the C = 2 table for C = 1 and the C = 4 table for C = 8 (unmeasured there).
 [[nodiscard]] target_profile profile_of(target t, std::size_t lanes) noexcept;
 
-// The radices of a chain for n, in pass order: empty for n = 1, {n} for n <= 16 (a leaf).
+// The radices of a chain for n, in pass order: empty for n = 1, {n} for n <= 16 and for a
+// codelet radix n <= p.leaf_limit (a leaf).
 // Prime factors above 16 are generic passes, ascending, after the codelet passes; radices
 // above 16 are such primes.
 [[nodiscard]] std::vector<std::size_t> rule_radices(std::size_t n, const target_profile& p);

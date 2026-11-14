@@ -28,7 +28,7 @@ double stage_work(const stage& st) {
     return 2.0 * static_cast<double>(st.units);
   }
   const auto n = static_cast<double>(st.args.n);
-  return r > max_codelet_radix ? n * static_cast<double>(r) : n;
+  return has_codelet(r) ? n : n * static_cast<double>(r);
 }
 
 double records_work(const program& p, std::size_t begin, std::size_t end) {

@@ -49,8 +49,8 @@ unchanged) and vector operations (plain, forward):
 | 14 | 6 | 6 | | 80 | 80 |
 | 15 | 11 | 7 | | 92 | 92 |
 | 16 | 19 | 7 | 7 | 84 | 80 |
-| 32 (not generated) | 54 | 15 | 15 | 228 | 212 |
-| 64 (not generated) | 139 | 31 | 31 | 580 | 528 |
+| 32 | 54 | 15 | 15 | 228 | 212 |
+| 64 | 139 | 31 | 31 | 580 | 528 |
 
 `addj`/`subj` operations at radix 16 fall from 26 to 14. Unfused real additions are equal
 for every codelet; unfused multiplies are equal or fewer (radix 9: 36 against 40, below
@@ -58,7 +58,11 @@ FFTW's published 40). The two forms compute the same values exactly (the generat
 every codelet in 256-bit arithmetic); they round differently, which DESIGN.md 15.5 allows
 between library versions. Every target runs the same text, so the bitwise pairs (`avx2`
 and `avx512`, `neon` and `neon_fcma`) still agree. Peak live values are unchanged except
-where noted in `--table`.
+radix 32 (34 → 35) and 64 (66 → 67), both beyond every target's registers already.
+
+Radices 32 and 64 (X8) reached main after the timing runs below, which compared radices
+2–16 only; the branch was then merged with main and 32 and 64 regenerated in the same form.
+Their time in this form is not measured separately.
 
 ## Method
 

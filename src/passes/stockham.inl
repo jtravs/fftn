@@ -89,15 +89,87 @@ void grouped_pass(const pass_args* a, std::size_t first, std::size_t last) {
   }
 }
 
+// The butterflies of one unit of a lane pass, from accessors in and out.
+template <class T, std::size_t R, int Sign, bool Twiddled, class In, class Out>
+FFTN_FORCE_INLINE void lane_unit(const In& in, const Out& out, const T* table, std::size_t p) {
+  if constexpr (Twiddled) {
+    const shared_twiddles<T> twid{table + tw_reals<T> * (R - 1) * p};
+    cdft<R>::template dif<T, Sign>(in, out, twid);
+  } else {
+    cdft<R>::template plain<T, Sign>(in, out);
+  }
+}
+
+// The input accessor of a lane pass's unit: plain, or (factor_sharing::input) each leg j
+// times entry p + m j of in_factor, the same for every copy (run_in_shared).
+template <class T, bool Full, factor_sharing Share>
+FFTN_FORCE_INLINE auto lane_input(const pass_args* a, const T* xp, std::ptrdiff_t leg,
+                                  std::size_t valid, std::size_t p) {
+  if constexpr (Share == factor_sharing::input) {
+    return run_in_shared<T, Full>{
+        .p = xp,
+        .leg = leg,
+        .step = 2,
+        .valid = valid,
+        .f = static_cast<const T*>(a->in_factor) + at(p, 2),
+        .f_leg = at(a->m, 2),
+    };
+  } else {
+    return run_in<T, edge_op::none, Full>{
+        .p = xp,
+        .leg = leg,
+        .step = 2,
+        .valid = valid,
+        .op = {},
+    };
+  }
+}
+
+// The output accessor of a lane pass's unit: with the output edge, or
+// (factor_sharing::output, the last pass, m = 1) each leg k times entry
+// g + k s / factor_copies of out_factor, broadcast, g = q0 / factor_copies: output
+// element q + s k divided by factor_copies, which C divides, so the unit's lanes share it
+// (run_out_shared).
+template <class T, bool Full, edge_op OutOp, factor_sharing Share>
+FFTN_FORCE_INLINE auto lane_output(const pass_args* a, T* yp, std::ptrdiff_t leg,
+                                   std::ptrdiff_t step, std::size_t valid, std::size_t e0,
+                                   std::ptrdiff_t f_leg,
+                                   std::size_t g) {
+  if constexpr (Share == factor_sharing::output) {
+    return run_out_shared<T, Full>{
+        .p = yp,
+        .leg = leg,
+        .step = step,
+        .valid = valid,
+        .f = static_cast<const T*>(a->out_factor) + at(g, 2),
+        .f_leg = f_leg,
+    };
+  } else {
+    return run_out<T, OutOp, Full>{
+        .p = yp,
+        .leg = leg,
+        .step = step,
+        .valid = valid,
+        .op = make_edge<T, OutOp>(a, a->out_factor, e0, a->s),
+    };
+  }
+}
+
 // A later pass of a chain, with lanes over copies q (DESIGN.md 8.2): a middle pass
 // (Twiddled, m > 1, the DIF codelet) or the last (m = 1, the plain codelet). Unit u is
 // group p = u / blocks and copies q = (u % blocks) C .. + C - 1, blocks = ceil(s / C);
 // the last block of a group has fewer when C does not divide s. twiddles: broadcast
 // storage (pack_bcast_twiddles), R - 1 per group p, w^(p k) for k = 1 .. R - 1, the same
-// for every lane. The output edge's operation applies to what is stored. src: scratch,
-// stride 1; dst: any stride when C == 1, else 1. Reads src, dst_stride, m, s, twiddles,
-// scale, out_factor.
-template <class T, std::size_t R, int Sign, bool Twiddled, edge_op OutOp>
+// for every lane. The output edge's operation applies to what is stored. Share: a factor
+// table of one entry per element of a sequence whose copies are interleaved in the line,
+// read once for all of them (a Bluestein convolution's kernel spectrum, bluestein.inl):
+// input leg j of group p times in_factor's entry p + m j (input, the first backward pass,
+// whose lanes are the copies), or output element e times out_factor's entry
+// e / factor_copies (output, the forward chain's last pass; C divides factor_copies).
+// src: scratch, stride 1; dst: any stride when C == 1, else 1. Reads src, dst_stride, m,
+// s, twiddles, scale, out_factor, and in_factor or factor_copies when sharing.
+template <class T, std::size_t R, int Sign, bool Twiddled, edge_op OutOp,
+          factor_sharing Share = factor_sharing::none>
 void lane_pass(const pass_args* a, std::size_t first, std::size_t last) {
   const T* x = static_cast<const T*>(a->src);
   T* y = static_cast<T*>(a->dst);
@@ -112,66 +184,53 @@ void lane_pass(const pass_args* a, std::size_t first, std::size_t last) {
   // some x86 cores (dev/experiments/X18-x86-kernels.md).
   std::size_t p = first < blocks ? 0 : first / blocks;
   std::size_t b = first < blocks ? first : first % blocks;
+  // factor_sharing::output (m = 1, so unit u is copies u C ..): the entry g = u C /
+  // factor_copies, advanced every per_entry units rather than divided per unit (a
+  // division per unit of a radix-12 last pass is a few per cent of it), and the entries
+  // between legs.
+  std::size_t g = 0;
+  std::size_t g_left = 0;
+  std::size_t per_entry = 1;
+  std::ptrdiff_t f_leg = 0;
+  if constexpr (Share == factor_sharing::output) {
+    per_entry = a->factor_copies / C<T>;
+    g = first < per_entry ? 0 : first / per_entry;
+    g_left = per_entry - (first < per_entry ? first : first % per_entry);
+    f_leg = at(s / a->factor_copies, 2);
+  }
   for (std::size_t u = first; u < last; ++u) {
     const std::size_t q0 = b * C<T>;
     const std::size_t valid = s - q0 < C<T> ? s - q0 : C<T>;
     const T* xp = x + at(q0 + s * p, 2);
     const std::size_t e0 = q0 + s * R * p;
     T* yp = y + at(e0, ys);
-    const edge<T, OutOp> op = make_edge<T, OutOp>(a, a->out_factor, e0, s);
     if (valid == C<T>) {
-      const run_in<T, edge_op::none, true> in{
-          .p = xp,
-          .leg = in_leg,
-          .step = 2,
-          .valid = valid,
-          .op = {},
-      };
-      const run_out<T, OutOp, true> out{
-          .p = yp,
-          .leg = out_leg,
-          .step = ys,
-          .valid = valid,
-          .op = op,
-      };
-      if constexpr (Twiddled) {
-        const shared_twiddles<T> twid{table + tw_reals<T> * (R - 1) * p};
-        cdft<R>::template dif<T, Sign>(in, out, twid);
-      } else {
-        cdft<R>::template plain<T, Sign>(in, out);
-      }
+      lane_unit<T, R, Sign, Twiddled>(lane_input<T, true, Share>(a, xp, in_leg, valid, p),
+                                      lane_output<T, true, OutOp, Share>(a, yp, out_leg, ys,
+                                                                         valid, e0, f_leg, g),
+                                      table, p);
     } else {
-      const run_in<T, edge_op::none, false> in{
-          .p = xp,
-          .leg = in_leg,
-          .step = 2,
-          .valid = valid,
-          .op = {},
-      };
-      const run_out<T, OutOp, false> out{
-          .p = yp,
-          .leg = out_leg,
-          .step = ys,
-          .valid = valid,
-          .op = op,
-      };
-      if constexpr (Twiddled) {
-        const shared_twiddles<T> twid{table + tw_reals<T> * (R - 1) * p};
-        cdft<R>::template dif<T, Sign>(in, out, twid);
-      } else {
-        cdft<R>::template plain<T, Sign>(in, out);
-      }
+      lane_unit<T, R, Sign, Twiddled>(lane_input<T, false, Share>(a, xp, in_leg, valid, p),
+                                      lane_output<T, false, OutOp, Share>(a, yp, out_leg, ys,
+                                                                          valid, e0, f_leg, g),
+                                      table, p);
     }
     if (++b == blocks) {
       b = 0;
       ++p;
     }
+    if constexpr (Share == factor_sharing::output) {
+      if (--g_left == 0) {
+        ++g;
+        g_left = per_entry;
+      }
+    }
   }
 }
 
-// A whole transform of n = R <= 16 points in registers (DESIGN.md 8.2), one unit (the
-// line): y[k] = sum_j x[j] exp(Sign 2 pi i j k / R), with both edges' operations. Values
-// are broadcast on loading and lane 0 is stored, so every lane computes the same transform
+// A whole transform of n = R points in registers (DESIGN.md 8.2), one unit (the line):
+// y[k] = sum_j x[j] exp(Sign 2 pi i j k / R), with both edges' operations. Values are
+// broadcast on loading and lane 0 is stored, so every lane computes the same transform
 // and any strides work; every load precedes every store, so src may be dst (in place).
 // Reads src, dst, src_stride, dst_stride, scale, in_factor, out_factor.
 template <class T, std::size_t R, int Sign, edge_op InOp, edge_op OutOp>

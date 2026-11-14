@@ -7,6 +7,8 @@
 // (region.hpp). Included before any region opens.
 #pragma once
 
+#include "gen/codelets.hpp"
+
 #include <cstddef>
 #include <cstdint>
 
@@ -23,7 +25,8 @@ struct pass_args {
   std::ptrdiff_t dst_stride = 1;
   // The stage's twiddles in the storage form its kind reads (src/passes/stockham.inl).
   const void* twiddles = nullptr;
-  // The generic prime pass: the radix-th roots of unity, in broadcast storage.
+  // A second table: the generic prime pass's radix-th roots of unity, in broadcast
+  // storage; the fused real passes' pairing twiddles (src/passes/real.inl).
   const void* roots = nullptr;
   // Stockham geometry: radix, butterfly groups m and copies s (n = radix * m * s).
   std::size_t radix = 1;
@@ -44,6 +47,9 @@ struct pass_args {
   std::size_t dst_cols = 0;
   std::ptrdiff_t src_qstride = 0;
   std::ptrdiff_t dst_qstride = 0;
+  // A lane pass whose output factor is shared (factor_sharing::output): the consecutive
+  // elements that share each entry, a multiple of the target's complex count.
+  std::size_t factor_copies = 1;
 };
 
 // Runs units [first, last) of a pass. A unit is the kernel's own (a block of butterflies,
@@ -61,8 +67,29 @@ enum class edge_op : std::uint8_t {
 };
 inline constexpr std::size_t edge_op_count = 3;
 
-// The codelets' radices index the tables below directly; gen::radices lists which exist.
-inline constexpr std::size_t max_codelet_radix = 16;
+// How a lane pass reads a factor table that holds one entry per element of a sequence
+// whose copies are interleaved in its line (passes/stockham.inl, lane_pass): not at all,
+// on its input or on its output. A separate instantiation each.
+enum class factor_sharing : std::uint8_t { none, input, output };
+
+// The codelets' radices are gen::radices (every radix 2 to 16, then a few larger ones);
+// pass_kernels::codelet has one row per entry, in that order. codelet_slot(r) is r's row,
+// or gen::radix_count when no codelet has radix r (a radix above 16 that is not listed is
+// a generic pass).
+[[nodiscard]] constexpr std::size_t codelet_slot(std::size_t r) noexcept {
+  for (std::size_t i = 0; i < gen::radix_count; ++i) {
+    if (gen::radices[i] == r) {
+      return i;
+    }
+  }
+  return gen::radix_count;
+}
+[[nodiscard]] constexpr bool has_codelet(std::size_t r) noexcept {
+  return codelet_slot(r) < gen::radix_count;
+}
+// Every radix from 2 to this one has a codelet; the planner and the grid choose pass radices
+// up to it, and prime factors above it are the generic pass's or Bluestein's.
+inline constexpr std::size_t dense_codelet_radix = 16;
 
 // The passes of precision T as a target exports them (src/passes/entries.inl). The
 // direction index is 0 forward (exponent -i), 1 backward (+i); edge indices are edge_op
@@ -87,37 +114,59 @@ struct radix_passes {
   pass_fn grouped[2][edge_op_count];
   // Its middle passes (m > 1): lanes over copies, twiddled.
   pass_fn lane[2];
+  // The backward middle pass with every input leg times a factor shared by the copies
+  // (factor_sharing::input): the first backward pass of a Bluestein convolution with more
+  // than one copy, taking the kernel spectrum (passes/bluestein.inl).
+  pass_fn lane_shared_in;
+  // The forward last pass with every output times a factor shared by factor_copies
+  // consecutive copies (factor_sharing::output): the last forward pass of a Bluestein
+  // convolution whose copy count C divides.
+  pass_fn last_shared_out;
   // Its last pass (m = 1): lanes over copies, no twiddles; output edge.
   pass_fn last[2][edge_op_count];
-  // A whole transform of n = radix <= 16 in registers; input edge, output edge.
+  // A whole transform of n = radix in registers; input edge, output edge.
   pass_fn leaf[2][edge_op_count][edge_op_count];
   // A grid phase's first or last pass reading or writing the caller's rows in place of a
   // gather or scatter (src/passes/grid.inl), by phase_variant.
   pass_fn phase[2][phase_variants];
+  // Real transforms of n = 2h with the pairing of bins k and h - k fused (DESIGN.md 9.1,
+  // passes/real.inl): the last pass of an r2c chain of h, [scaled]; the first pass of a
+  // c2r chain of h; the leaves of h = radix, [scaled].
+  pass_fn r2c_last[2];
+  pass_fn c2r_first;
+  pass_fn r2c_leaf[2];
+  pass_fn c2r_leaf[2];
 };
 
 template <class T> struct pass_kernels {
-  // Indexed by the codelet's radix.
-  radix_passes codelet[max_codelet_radix + 1];
-  // Any radix by direct evaluation (the primes above 16); input edge, output edge.
+  // Indexed by codelet_slot(radix).
+  radix_passes codelet[gen::radix_count];
+  // Any radix by direct evaluation (radices with no codelet: the primes above 16); input
+  // edge, output edge.
   pass_fn generic[2][edge_op_count][edge_op_count];
   // y[i] = x[i] with the edges' operations; input edge, output edge.
   pass_fn copy[edge_op_count][edge_op_count];
   // The chirp multiplications around a Bluestein stage's convolution (passes/bluestein.inl):
   // into the zero-padded buffer, with the input edge; out of it, with the output edge.
-  pass_fn bluestein_in[edge_op_count];
-  pass_fn bluestein_out[edge_op_count];
+  // Indexed [shared][edge]: shared reads the chirp once for all the copies (s a multiple
+  // of C), otherwise one entry per element of the line.
+  pass_fn bluestein_in[2][edge_op_count];
+  pass_fn bluestein_out[2][edge_op_count];
   // Real-to-complex edges (DESIGN.md 9.1): even n = 2h through a complex transform of h,
-  // odd n through n. The output edges take [scaled].
-  pass_fn r2c_pack_pairs;
+  // whose pairing runs as a separate pass where no pass of the transform takes it; odd n
+  // through n. [scaled].
   pass_fn r2c_post[2];
   pass_fn r2c_pack;
   pass_fn r2c_store[2];
-  // Complex-to-real edges, the mirror images.
-  pass_fn c2r_pre;
-  pass_fn c2r_unpack_pairs[2];
+  // Complex-to-real edges, the mirror images (the pre-pass scales only when h = 1).
+  pass_fn c2r_pre[2];
   pass_fn c2r_expand;
   pass_fn c2r_store[2];
+  // Even real lines with a stride other than 1: packing, pairing at any stride, unpacking.
+  pass_fn r2c_pack_pairs;
+  pass_fn r2c_post_strided[2];
+  pass_fn c2r_pre_strided;
+  pass_fn c2r_unpack_pairs[2];
   // The grid's passes (src/passes/grid.inl): a block of columns copied row by row,
   // [scaled]; by direction, the twiddled transpose of the first phase and the twiddled
   // row copy of the later ones.

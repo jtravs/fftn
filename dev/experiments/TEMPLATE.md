@@ -34,4 +34,5 @@ not paste raw output.
 ## Verdict
 
 Adopted / rejected / inconclusive, and what was done: default changed (commit), path
-deleted (commit), DESIGN.md section updated, follow-up experiment opened.
+deleted (commit), DESIGN.md section updated, follow-up experiment opened, lesson added to
+`dev/LESSONS.md` if the result generalises.
