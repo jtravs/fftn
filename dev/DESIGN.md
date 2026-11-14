@@ -1108,22 +1108,49 @@ candidate becomes the plan. Keys include the batch count, because the best progr
 one row and for 256 rows differ (measured on the Xeon).
 
 **Planner v0 (as built, task 1.2, `src/planner/rules.cpp`)** has no cost model yet: the
-radices of a chain and their order come from FFTL.jl's single-line rules (T. Knopp,
-FFTL.jl; derived there from brute-force searches over radix sequences and interleaved
-measurements on Apple M1, Zen 2 and 3, Tiger Lake and EPYC). n ≤ 16 or prime: one pass.
-Powers of two from 32 to 64: 4, then n/4. Powers of two up to 16384 on 32 registers:
-radix 8 with one or two leading 4s (radix 8 lost 3–25 % on 16 registers). Otherwise the
-twos as 4s, one 8 when the exponent is odd and nothing else divides n (on x86 also not
-7) or else one 2; on AArch64 (merging) 3s pair with 4s into 12 and with the spare 2 into
-6, and 5s with it into 10; remaining 3s as 9s and a 3; then 5s and other primes; powers
-of two first, the rest ascending (largest radix last). A target contributes its register
-count and whether it merges (`target_profile`); the scalar target takes its build
-architecture's. The rules are a pure function of (n, profile), so plans are
-deterministic and cheap. `describe()` lists the radices and every stage. Hooks for phase
-2: the rules become one generator of candidate radix sequences that the cost model
-ranks, and the chain builder already accepts any sequence (the tests force sequences
-through `build_settings::radices`); the memory rules of section 10 (set conflicts) are
-not applied yet, since FFTL applies them only to batches of more than 256 lines.
+radices of a chain and their order follow fixed rules taken from FFTL.jl (T. Knopp; MIT
+licence), which derived them from brute-force searches over radix sequences and
+interleaved measurements on Apple M1, Zen 2 and 3, Tiger Lake and EPYC. The rules are
+specified here and the code implements this specification; it is not a translation of
+FFTL's function (18.2). A target contributes a profile: its number of vector registers
+(16 on x86 below AVX-512, 32 on AArch64 and AVX-512; the scalar target takes its build
+architecture's) and whether it merges radices (AArch64 targets do). For a line of n
+points:
+
+1. n = 1: no pass.
+2. n a power of two from 32 to 64: radix 4, then n/4.
+3. n a power of two from 128 to 16384 on 32 registers: radix 8 throughout, preceded by
+   one radix 4 when log₂ n leaves 2 on division by 3, and by two radix 4 when it leaves 1
+   (radix 8 gained 2–7 % over radix 4 on the M1; on 16 registers it lost 3–25 %).
+4. n ≤ 16, or n prime: one pass of radix n (a leaf, or a generic pass).
+5. Otherwise write n = 2^a 3^b 5^c m with m free of 2, 3 and 5.
+   - The power of two gives a/2 radix 4 when a is even. When a is odd it gives one radix
+     8 and (a − 3)/2 radix 4 if a ≥ 3, b = c = 0 and the target merges or 7 does not
+     divide n; otherwise one radix 2 and (a − 1)/2 radix 4.
+   - A merging target then pairs, as long as both remain, a 3 with a radix 4 into a
+     radix 12; then a 3 with the radix 2 into a radix 6; then a 5 with the radix 2 into a
+     radix 10.
+   - The 3s left go in pairs as radix 9, and one left over as radix 3; the 5s left as
+     radix 5; every prime factor of m, with its multiplicity, as its own radix.
+   - Order: the radices left from the power of two (the 8, the 4s, the 2), then all the
+     others ascending, the largest last (39 as 3 × 13 took 0.65–0.75 of the time of 13 × 3
+     in FFTL's measurements; ascending order had a median ratio of 1.00 to the best order
+     over 306 lengths on the M1).
+
+The scalar target follows the profile of its build architecture. FFTL has one more rule
+that v0 leaves out: on AVX-512, single lines of a power of two use radix 16 while the 16
+input streams are less than one L1 set stride apart (n/16 elements of 16 bytes under 4
+KiB; measured on an EPYC 9354, 4096 points in 0.86 of the time). Planner v0 gives
+`avx512` 32 registers and no merging, so it would use radix 8 there; task 1.3 decides.
+The rules are a pure function of (n, profile), so plans are deterministic and cheap, and
+`tests/core/data/rule_radices.txt` records their output for every 73-smooth n ≤ 20000 and
+each profile. `describe()` lists the radices and every stage. Experiment X2
+([dev/experiments/X2-radix-sets.md](experiments/X2-radix-sets.md)) replaces the rules by
+measured choices per target. Hooks for phase 2: the rules become one generator of
+candidate radix sequences that the cost model ranks, and the chain builder already
+accepts any sequence (the tests force sequences through `build_settings::radices`); the
+memory rules of section 10 (set conflicts) are not applied yet, since FFTL applies them
+only to batches of more than 256 lines.
 
 **`planning::measure`** (opt-in). Take the top k candidates by the model (k about 4–8),
 build each, time whole programs on scratch data for a bounded budget (default 10 ms per
@@ -1831,9 +1858,14 @@ FFTN subjects are named per instruction set (`fftn_scalar_double_…`, `fftn_neo
 questions: (d) code size: each target's unit holds about 1,000 pass instantiations (1 MB
 on AArch64, 2.5 MB of object on x86-64), most of them leaves (15 radices × 2 directions ×
 2 precisions × 8 edge combinations); edge combinations could be pruned once the public
-edge operations are known. (e) The phase 0 kernels `radix4_pass` and `radix2_split_pass`
-in `src/isa/kernels.inl` are now used only by their own tests and the disassembly check;
-they can go once the pass kernels take over those tests' role.
+edge operations are known. (e) Planner v0's rules come from FFTL.jl (MIT licence). The first implementation
+followed FFTL's function too closely (its structure and identifiers), which AGENTS
+section 10 rules out without the maintainer's agreement; it was replaced by code written
+from the specification in section 11.2, which reproduces the first implementation's
+output exactly for every 73-smooth length up to 20000 on every profile (recorded test
+data). To confirm: that rules from an MIT-licensed library, rewritten from a
+specification and cited, need nothing further (an MIT notice is needed only if code were
+copied).
 
 **Threading API and contract (tasks 3.1 and 3.2), for the maintainer's review.** Built as
 below because section 5.3 left the shapes open; each is easy to change before a release.
