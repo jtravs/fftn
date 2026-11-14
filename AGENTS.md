@@ -41,12 +41,20 @@ sections themselves.
 ## 3. The gate
 
 ```bash
-scripts/check.sh                                   # every stage
+scripts/check.sh                                   # the merge gate
+FFTN_CHECK_STAGES=all scripts/check.sh             # every stage
 FFTN_CHECK_STAGES="format build" scripts/check.sh  # some of them
 ```
 
-Stages are listed at the top of `scripts/check.sh`. A change is finished when the gate is
-green on the machine where it was made. In addition:
+Stages are listed at the top of `scripts/check.sh`. While FFTN is an unreleased experiment
+the bar for merging is that the code runs and is correct: the merge gate (`spdx gen build
+sanitize bench`: Release tests and ASan + UBSan tests under every kernel variant the CPU
+has) green on the machine where the change was made, plus `build` with one GCC version on
+Linux x86-64. Style, lint, documentation completeness, coverage, ThreadSanitizer (except
+for threading changes, which run `tsan` too), the second GCC version and Windows run with
+`all` in CI on `main` and in a periodic full gate; their failures are fixed in batches and
+do not block merges. Second readers are for kernels, the generator and the threading
+engine. In addition:
 
 - A kernel, vocabulary or generator change for an instruction set the machine lacks also
   needs `build` and `sanitize` on a machine that has it (see section 9). Until emulated runs
