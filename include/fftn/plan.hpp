@@ -10,6 +10,7 @@
 #include "fftn/isa.hpp"
 #include "fftn/options.hpp"
 #include "fftn/shape.hpp"
+#include "fftn/team.hpp"
 #include "fftn/workspace.hpp"
 
 #include <complex>
@@ -25,7 +26,8 @@ namespace fftn::inline v0 {
 /// factorisation, the passes and the twiddle tables. A plan holds no pointers to the
 /// caller's arrays and no scratch, so it can be executed any number of times, on any data
 /// of the planned layout, at any alignment, and by several threads at once (each with its
-/// own workspace).
+/// own workspace), or by a team of the caller's threads sharing one workspace
+/// (`fftn::team`).
 ///
 /// Guarantees:
 /// - Construction validates the shape and options, and throws `std::invalid_argument`
@@ -33,9 +35,10 @@ namespace fftn::inline v0 {
 ///   valid. It does not touch the caller's arrays.
 /// - Execution never allocates, locks, throws or does I/O.
 /// - Results are bitwise reproducible for a given plan: every transform of the batch gets
-///   the same arithmetic, whatever its position, and repeated executions agree bit for
-///   bit. Plans built with different options, or on different instruction sets, may differ
-///   in the last bits (docs/conventions.md, "Determinism").
+///   the same arithmetic, whatever its position, repeated executions agree bit for bit,
+///   and so do serial and team executions, whatever the team's size and timing. Plans built with
+///   different options, or on different instruction sets, may differ in the last bits
+///   (docs/conventions.md, "Determinism").
 /// - Plans are cheap to copy; copies share their immutable tables. There is no empty plan:
 ///   moving a plan copies it, so the source of a move stays a valid plan too.
 template <class In, class Out> class plan {
@@ -96,9 +99,59 @@ public:
     detail::execute_core(*core_, first, count, in, out, ws);
   }
 
-  /// The bytes of workspace an execution of this plan needs; 0 when it needs none.
-  [[nodiscard]] std::size_t workspace_bytes() const noexcept {
-    return detail::workspace_bytes(*core_);
+  /// Transforms every transform of the batch, shared among the members of a team: every
+  /// member calls this with its own `t` and the same arguments otherwise.
+  ///
+  /// With `completion::all` the members claim work dynamically: whole transforms first,
+  /// then the pieces of transforms that the plan splits among the members of one cache
+  /// group (docs/threading.md). The call returns on each member once the whole output is
+  /// written. It does not wait for members that have not arrived: the members present do
+  /// everything, and members that arrive late find nothing left. With `completion::own`
+  /// each member transforms exactly `transforms_of(t)`, whole, and returns when they are
+  /// written.
+  ///
+  /// Preconditions: as for `execute`, plus those of `fftn::team`; every member passes the
+  /// same `in`, `out` and `done`, and the same workspace object (not another workspace over
+  /// the same memory); `ws.size()` is at least `workspace_bytes(t.size)`. The team
+  /// executions a workspace serves form one sequence, which every member follows in the
+  /// same order: a member may arrive late, even after the others have moved on to later
+  /// executions, but must not skip one, because a member counts its own calls to know which
+  /// execution it is in (a member that skipped one would return from the next before its
+  /// output is written). A member that is absent from an execution must therefore make no
+  /// more team calls on the workspace until it has been reset: any serial execution on it
+  /// resets it, `execute_transforms(0, 0, in, out, ws)` among them. One rank's successive
+  /// calls are made by one thread, or ordered by happens-before (a mutex, a barrier, a
+  /// thread join). A team execution lasts until its last member has returned (or, for
+  /// `completion::own`, until the caller has synchronised the members); only then may the
+  /// workspace serve a serial execution or a team of another size.
+  ///
+  /// Guarantees: as for `execute`, and the output is bitwise identical to serial
+  /// execution, whatever the team's size, grouping or timing. Never allocates, locks,
+  /// throws or does I/O. A member that finds nothing to do waits for the others by
+  /// spinning briefly, then yielding, then blocking in `std::atomic::wait`; it never
+  /// waits for a member that has not arrived.
+  void execute(const In* in, Out* out, const team& t, workspace& ws,
+               completion done = completion::all) const noexcept {
+    detail::execute_team(*core_, in, out, t, ws, done);
+  }
+
+  /// The transforms a member of team `t` owns: those it transforms with `completion::own`.
+  /// The members' ranges are contiguous, in rank order, and together cover the batch once;
+  /// they differ in length by at most one transform, and members beyond the batch's size
+  /// own none. Callers use them to run their own work on the same transforms as the same
+  /// thread (owner-computes).
+  ///
+  /// Preconditions: those of `fftn::team`.
+  [[nodiscard]] transform_range transforms_of(const team& t) const noexcept {
+    return detail::transforms_of(*core_, t);
+  }
+
+  /// The bytes of workspace an execution of this plan needs when run by teams of up to
+  /// `lanes` members; 0 when it needs none. With `lanes` 1 (or less) this is the workspace
+  /// of a serial execution; larger teams also need a scratch area per member and the
+  /// team's synchronisation state.
+  [[nodiscard]] std::size_t workspace_bytes(int lanes = 1) const noexcept {
+    return detail::workspace_bytes(*core_, lanes);
   }
 
   /// The plan in human-readable form: the transform, the instruction set, the strategy,
@@ -108,7 +161,8 @@ public:
   /// Throws `std::bad_alloc` when memory runs out.
   [[nodiscard]] std::string describe() const { return detail::describe(*core_); }
 
-  /// The instruction set the plan's kernels use.
+  /// The instruction set the plan's kernels use: the one `options::force_isa` named, or the
+  /// one the plan chose. Never `isa::best`.
   [[nodiscard]] isa instruction_set() const noexcept { return detail::instruction_set(*core_); }
 
 private:

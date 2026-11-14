@@ -21,9 +21,13 @@
 #include "planner/rules.hpp"
 #include "platform/cpu_features.hpp"
 #include "strategies/chain.hpp"
+#include "threading/schedule.hpp"
+#include "threading/team_state.hpp"
+#include "threading/work_graph.hpp"
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cassert>
 #include <cmath>
 #include <cstddef>
@@ -459,6 +463,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   c.offset_block = 2 * line_bytes;
   const std::size_t used = c.offset_block + c.block_elements * 2 * sizeof(T);
   c.bytes = used == 0 ? 0 : used + line_alignment;
+  c.slot_bytes = (used + sync_line - 1) / sync_line * sync_line;
 }
 
 const char* kind_name(transform_kind k) {
@@ -567,8 +572,21 @@ std::shared_ptr<const plan_core> make_plan_core(const shape_view& s, const optio
     check_in_place(s, in, out);
   }
 
+  // The scale is applied in the plan's precision: it must be finite there, and a non-zero
+  // scale must not vanish. (Converting a double beyond float's range to float is undefined,
+  // so the range is compared, not converted.)
   if (!std::isfinite(opts.scale)) {
     reject("options.scale", "must be finite");
+  }
+  if (s.prec == precision::f32) {
+    const double magnitude_of_scale = std::abs(opts.scale);
+    if (magnitude_of_scale > static_cast<double>(std::numeric_limits<float>::max())) {
+      reject("options.scale", "is beyond the range of float, the plan's precision");
+    }
+    if (opts.scale != 0.0 &&
+        magnitude_of_scale < static_cast<double>(std::numeric_limits<float>::denorm_min())) {
+      reject("options.scale", "is below the smallest float, the plan's precision");
+    }
   }
   const bool factors = settings.in_factor != nullptr || settings.out_factor != nullptr;
   if ((factors || settings.scale_on_input) && (s.kind != transform_kind::c2c || r != 1)) {
@@ -584,6 +602,12 @@ std::shared_ptr<const plan_core> make_plan_core(const shape_view& s, const optio
   } else {
     build<float>(*c, s, in, out, opts, settings);
   }
+  std::size_t points = 1;
+  for (const std::size_t n : c->lengths) {
+    points *= n; // the layouts' reach checks have bounded the product
+  }
+  c->graph = build_work_graph(c->prog, points, settings.chunk_points);
+  c->profile = settings.profile;
   return c;
 }
 
@@ -594,6 +618,12 @@ std::shared_ptr<const plan_core> make_plan_core(const shape_view& shape, const o
 void execute_core(const plan_core& core, std::size_t first, std::size_t count, const void* in,
                   void* out, const workspace& ws) noexcept {
   assert(ws.size() >= core.bytes && "fftn: workspace smaller than plan::workspace_bytes()");
+  // The scratch below overlaps any team state the workspace holds: the next team execution
+  // sets it up afresh (team_state.hpp).
+  const sync_word team = workspace_access::team_word(ws);
+  if (team.load(std::memory_order_relaxed) != 0) {
+    team.store(0, std::memory_order_relaxed);
+  }
   assert(first <= core.prog.transforms && count <= core.prog.transforms - first &&
          "fftn: execute_transforms beyond the batch");
   assert((!core.in_place || in == out) && "fftn: in-place plan executed with in != out");
@@ -612,8 +642,6 @@ void execute_core(const plan_core& core, std::size_t first, std::size_t count, c
 }
 
 std::size_t transform_count(const plan_core& core) noexcept { return core.prog.transforms; }
-
-std::size_t workspace_bytes(const plan_core& core) noexcept { return core.bytes; }
 
 isa instruction_set(const plan_core& core) noexcept {
   return static_cast<isa>(static_cast<unsigned char>(core.isa_target));

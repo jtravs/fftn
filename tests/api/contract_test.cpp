@@ -428,6 +428,13 @@ TEST(Validation, InvalidShapesThrowNamingTheArgument) {
   const auto rows = fftn::rows_c2c<double>(8, 1, fftn::direction::forward);
   expect_refused(rows, "options.scale", {.scale = std::numeric_limits<double>::infinity()});
   expect_refused(rows, "options.scale", {.scale = std::numeric_limits<double>::quiet_NaN()});
+  // In float, a scale must stay within float's range (it was converted silently to inf or 0).
+  const auto float_rows = fftn::rows_c2c<float>(8, 1, fftn::direction::forward);
+  expect_refused(float_rows, "options.scale", {.scale = 1e300});
+  expect_refused(float_rows, "options.scale", {.scale = -1e-300});
+  EXPECT_NO_THROW(fftn::c2c_plan<float>(float_rows, {.scale = 0.0}));
+  EXPECT_NO_THROW(fftn::c2c_plan<float>(float_rows, {.scale = 1e30}));
+  EXPECT_NO_THROW(fftn::c2c_plan<double>(rows, {.scale = 1e300}));
   // No build contains the other architecture's targets; every build has scalar.
 #if defined(__x86_64__) || defined(_M_X64)
   constexpr fftn::isa foreign = fftn::isa::neon_fcma;

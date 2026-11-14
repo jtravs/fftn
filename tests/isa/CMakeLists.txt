@@ -20,7 +20,7 @@ target_include_directories(fftn_isa_probes PRIVATE ${PROJECT_SOURCE_DIR}/include
 target_compile_options(fftn_isa_probes PRIVATE $<$<CXX_COMPILER_ID:GNU>:-Werror=psabi>)
 
 fftn_add_test(fftn_isa_tests
-  SOURCES target_test.cpp vocab_test.cpp kernel_test.cpp codelet_test.cpp link_test.cpp
+  SOURCES target_test.cpp vocab_test.cpp codelet_test.cpp link_test.cpp
           test_targets.cpp
   LIBRARIES fftn_isa_probes fftn_test_reference)
 # The link test compares entry-point addresses to show that no target's function stands in

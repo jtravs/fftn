@@ -148,20 +148,25 @@ inlining every address is a constant offset. Every output depends on every input
 first `put` happens after the last `get` and `in` and `out` may address the same memory
 (in place). The simplest accessors are in `tests/isa/codelet_runner.inl`.
 
-How the pass templates of task 1.2 use this (DESIGN.md 8.2):
+How the passes of task 1.2 use this (`src/passes/`, DESIGN.md 8.2); the chain is a
+decimation-in-frequency Stockham chain, so passes call `plain` and `dif` only:
 
-- **Lane pass** (lanes over copies q): `in.get(j)` loads stream j at the current q block,
-  `out.put(k, v)` stores stream k; `twid.get(k)` returns the twiddle of (p, k) in every lane.
-  The vocabulary has no broadcast of a twiddle yet (`bcast` is for `cv`); either the table
-  stores each twiddle replicated C times or the vocabulary gains `bcast_tw`.
-- **Grouped pass** (lanes over butterflies p): the accessors read and write a local
-  `cv<T> v[R]` and the pass transposes the R × C block around the codelet call (DIT after
-  the loads, DIF before the stores); `twid.get(k)` loads C per-lane twiddles contiguous in p.
-- **Leaf**: a plain codelet with accessors on the row.
+- **Lane pass** (lanes over copies q): `in.get(j)` loads stream j at the current block of
+  copies, `out.put(k, v)` stores stream k; `twid.get(k)` returns the twiddle of (p, k) in
+  every lane, read from a table holding one twiddle per entry with the vocabulary's
+  `bcast_tw`.
+- **Grouped pass** (lanes over butterflies p, the chain's first pass): `in.get(j)` loads C
+  adjacent butterflies' leg j; `out.put` keeps the R outputs in a local `cv<T> v[R]`, which
+  the pass transposes in C × C blocks after the codelet call (or writes through a tile when
+  C does not divide R); `twid.get(k)` loads C per-lane twiddles contiguous in p (`load_tw`).
+- **Leaf**: a plain codelet on one row; values are broadcast on loading and lane 0 is
+  stored.
 - **Edge variants** are accessors: scale or factor on load is `get` returning
-  `scale(load(...), s)` or `mul(load(...), f)`; on store, `put` does it before the store; a
-  layout conversion or a gather is another accessor. The codelet text never changes.
-- **Tails**: the same codelet instantiated with a narrower vocabulary; nothing in the text
+  `scale(load(...), s)` or `cmul(load(...), f)` (the factor is a plain complex array, not
+  twiddle storage); on store, `put` applies it before the store. The codelet text never
+  changes.
+- **Tails**: the same instantiation on a padded tile: the valid elements are gathered into
+  a small stack array, all C lanes computed, the valid ones stored; nothing in the codelet
   depends on C.
 
 ## Metadata

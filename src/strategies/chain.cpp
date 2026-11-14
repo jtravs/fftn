@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <stdexcept>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -55,7 +56,16 @@ chain_builder<T>::chain_builder(const kernels_of<T>& kernels, const target_profi
                                 std::vector<std::vector<T>>& tables, std::size_t chunk_points,
                                 std::vector<std::size_t> forced)
     : kernels_(kernels), profile_(profile), tables_(tables),
-      chunk_points_(std::max<std::size_t>(chunk_points, 1)), forced_(std::move(forced)) {}
+      chunk_points_(std::max<std::size_t>(chunk_points, 1)), forced_(std::move(forced)) {
+  // The test knob takes only radices some pass has: a codelet's (radix 2 to 16 where the
+  // generated table has it) or the generic pass's (any radix above 16).
+  for (const std::size_t r : forced_) {
+    if (r < 2 || (r <= max_codelet_radix && kernels_.passes.codelet[r].lane[0] == nullptr)) {
+      throw std::invalid_argument("fftn::plan: build_settings.radices holds radix " +
+                                  std::to_string(r) + ", which no pass takes");
+    }
+  }
+}
 
 template <class T> std::vector<std::size_t> chain_builder<T>::radices(std::size_t n) const {
   if (!forced_.empty()) {
@@ -357,7 +367,8 @@ std::size_t chain_builder<T>::c2c_line(std::size_t n, int sign, endpoint src, en
   if (copy_out) {
     add_copy(n, at, dst, none, stages);
   }
-  return n;
+  // A single pass from the caller's memory to the caller's memory touches no scratch.
+  return copy_in || copy_out || rad.size() > 1 ? n : 0;
 }
 
 template <class T>

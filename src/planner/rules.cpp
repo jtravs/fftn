@@ -65,94 +65,66 @@ target_profile profile_of(target t) noexcept {
   return {.registers = 16, .merge = false};
 }
 
-// FFTL.jl's single-line rules (S = 1), with its looped prime kernel's role taken by the
-// generic pass for every prime above 16. In order:
-// - n <= 16, or n prime: one pass.
-// - Powers of two from 32 to 64: 4, then n/4.
-// - Powers of two up to 16384 on 32 registers: radix 8, with one or two 4s first for the
-//   leftover factor (2-7 % over radix 4 on the M1; on 16 registers radix 8 lost 3-25 %).
-// - Otherwise: the twos as 4s, one 8 when the exponent is odd and nothing else divides n
-//   (on x86 also not 7), else one 2; with merging, 3s pair with 4s into 12 and with the
-//   spare 2 into 6, and 5s with it into 10; remaining 3s as 9s and a 3; 5s; other primes.
-//   The powers of two go first and the rest ascending, largest radix last (39 as 3 x 13 in
-//   0.65-0.75 of the time of 13 x 3; median 1.00 against the best order over 306 lengths
-//   on the M1, against 1.05-1.14 for the order before).
+// The specification is DESIGN.md 11.2, rule by rule; the numbers below are its rules.
 std::vector<std::size_t> rule_radices(std::size_t n, const target_profile& p) {
-  if (n <= 1) {
+  if (n <= 1) { // rule 1
     return {};
   }
-  if (power_of_two(n) && n > largest_leaf && n <= 64) {
-    return {4, n / 4};
-  }
-  if (p.registers >= 32 && power_of_two(n) && n > 64 && n <= 16384) {
-    const std::size_t k = log2_of(n);
-    std::vector<std::size_t> out;
-    std::size_t rest = k;
-    if (k % 3 == 2) {
-      out.push_back(4);
-      rest -= 2;
-    } else if (k % 3 == 1) {
-      out.insert(out.end(), {4, 4});
-      rest -= 4;
+  if (power_of_two(n)) {
+    const std::size_t bits = log2_of(n);
+    if (n > largest_leaf && n <= 64) { // rule 2
+      return {4, n / 4};
     }
-    out.insert(out.end(), rest / 3, 8);
-    return out;
+    if (p.registers >= 32 && n > 64 && n <= 16384) { // rule 3
+      const std::size_t leading_fours = bits % 3 == 0 ? 0 : 3 - bits % 3;
+      std::vector<std::size_t> out(leading_fours, 4);
+      out.insert(out.end(), (bits - 2 * leading_fours) / 3, 8);
+      return out;
+    }
   }
-  if (n <= largest_leaf || prime(n)) {
+  if (n <= largest_leaf || prime(n)) { // rule 4
     return {n};
   }
-  std::size_t m = n;
-  std::size_t a = take(m, 2);
-  std::size_t b = take(m, 3);
-  std::size_t c = take(m, 5);
-  std::size_t eight = 0;
-  std::size_t two = 0;
-  if (a % 2 == 1) {
-    if (a >= 3 && b + c == 0 && (p.merge || n % 7 != 0)) {
-      eight = 1;
-      a -= 3;
-    } else {
-      two = 1;
-      a -= 1;
-    }
+  // Rule 5.
+  std::size_t rest = n;
+  const std::size_t twos = take(rest, 2);
+  std::size_t threes = take(rest, 3);
+  std::size_t fives = take(rest, 5);
+  std::size_t radix8 = 0;
+  std::size_t radix2 = 0;
+  if (twos % 2 == 1) {
+    const bool eight = twos >= 3 && threes == 0 && fives == 0 && (p.merge || n % 7 != 0);
+    (eight ? radix8 : radix2) = 1;
   }
-  std::size_t fours = a / 2;
-  std::vector<std::size_t> rest;
-  while (p.merge && b > 0 && fours > 0) {
-    rest.push_back(12);
-    --b;
-    --fours;
+  std::size_t radix4 = (twos - 3 * radix8 - radix2) / 2;
+  std::vector<std::size_t> others;
+  // Pairs as many of `factor` with as many of `with` as both have, into `merged`.
+  const auto pair_up = [&](std::size_t& factor, std::size_t& with, std::size_t merged) {
+    const std::size_t pairs = std::min(factor, with);
+    factor -= pairs;
+    with -= pairs;
+    others.insert(others.end(), pairs, merged);
+  };
+  if (p.merge) {
+    pair_up(threes, radix4, 12);
+    pair_up(threes, radix2, 6);
+    pair_up(fives, radix2, 10);
   }
-  while (p.merge && b > 0 && two > 0) {
-    rest.push_back(6);
-    --b;
-    --two;
+  others.insert(others.end(), threes / 2, 9);
+  others.insert(others.end(), threes % 2, 3);
+  others.insert(others.end(), fives, 5);
+  for (std::size_t q = 7; q <= rest / q; q += 2) {
+    const std::size_t count = take(rest, q);
+    others.insert(others.end(), count, q);
   }
-  for (; b >= 2; b -= 2) {
-    rest.push_back(9);
+  if (rest > 1) {
+    others.push_back(rest);
   }
-  if (b == 1) {
-    rest.push_back(3);
-  }
-  for (; c > 0; --c) {
-    if (p.merge && two > 0) {
-      rest.push_back(10);
-      --two;
-    } else {
-      rest.push_back(5);
-    }
-  }
-  for (std::size_t q = 7; q <= m / q; q += 2) {
-    rest.insert(rest.end(), take(m, q), q);
-  }
-  if (m > 1) {
-    rest.push_back(m);
-  }
-  std::ranges::sort(rest);
-  std::vector<std::size_t> out(eight, 8);
-  out.insert(out.end(), fours, 4);
-  out.insert(out.end(), two, 2);
-  out.insert(out.end(), rest.begin(), rest.end());
+  std::ranges::sort(others);
+  std::vector<std::size_t> out(radix8, 8);
+  out.insert(out.end(), radix4, 4);
+  out.insert(out.end(), radix2, 2);
+  out.insert(out.end(), others.begin(), others.end());
   return out;
 }
 

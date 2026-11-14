@@ -23,7 +23,9 @@ struct options {
   /// transform, or 1/sqrt(N) for a unitary one. The multiplication is fused into the pass
   /// that writes the output, so it costs no extra pass over the data.
   ///
-  /// Precondition: finite; plan construction refuses NaN and infinities.
+  /// Precondition: finite, and for `float` plans 0 or of a magnitude from the smallest
+  /// positive `float` to the largest; plan construction refuses other values (NaN,
+  /// infinities, values that would overflow or vanish in `float`), naming `options.scale`.
   ///
   /// Guarantees: each output equals the unscaled plan's output multiplied by `scale`
   /// (converted once to the plan's precision), bit for bit; 1 (the default) changes

@@ -42,7 +42,8 @@ struct stage {
   pass_args args; // src and dst are filled in by the driver from the slots
   slot src = slot::in;
   slot dst = slot::out;
-  std::size_t units = 0;    // butterflies, or the edge pass's own units
+  std::size_t units = 0;    // the kernel's own units: blocks of butterflies or copies, a line,
+                            // elements (src/strategies/chain.hpp); only their count matters here
   std::uint32_t chunks = 1; // independent ranges [units c / chunks, units (c+1) / chunks)
   std::string name;         // for describe()
 };
@@ -60,6 +61,14 @@ struct loop {
 };
 
 using record = std::variant<stage, loop>;
+
+// The first unit of chunk c of a range of `units` units cut into `chunks` chunks:
+// units c / chunks in exact integers. Serial execution and a split across threads both
+// cut a stage or a loop nest with it, so a chunk covers the same units whoever runs it.
+[[nodiscard]] constexpr std::size_t chunk_start(std::size_t units, std::size_t chunks,
+                                                std::size_t c) noexcept {
+  return units / chunks * c + units % chunks * c / chunks;
+}
 
 struct program {
   std::vector<record> records;

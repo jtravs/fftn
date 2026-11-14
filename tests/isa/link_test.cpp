@@ -43,12 +43,14 @@ TEST(link, every_compiled_target_has_its_own_table) {
     EXPECT_EQ(find_probes(t)->id, t);
     // Addresses, only compared.
     const std::vector<std::uintptr_t> entries = {
-        reinterpret_cast<std::uintptr_t>(k->f64.radix4_pass),
-        reinterpret_cast<std::uintptr_t>(k->f64.radix2_split_pass),
         reinterpret_cast<std::uintptr_t>(k->f64.pack_twiddles),
-        reinterpret_cast<std::uintptr_t>(k->f32.radix4_pass),
-        reinterpret_cast<std::uintptr_t>(k->f32.radix2_split_pass),
+        reinterpret_cast<std::uintptr_t>(k->f64.pack_bcast_twiddles),
+        reinterpret_cast<std::uintptr_t>(k->f64.passes.codelet[4].lane[0]),
+        reinterpret_cast<std::uintptr_t>(k->f64.passes.copy[0][0]),
         reinterpret_cast<std::uintptr_t>(k->f32.pack_twiddles),
+        reinterpret_cast<std::uintptr_t>(k->f32.pack_bcast_twiddles),
+        reinterpret_cast<std::uintptr_t>(k->f32.passes.codelet[4].lane[0]),
+        reinterpret_cast<std::uintptr_t>(k->f32.passes.copy[0][0]),
         reinterpret_cast<std::uintptr_t>(find_probes(t)->f64),
         reinterpret_cast<std::uintptr_t>(find_probes(t)->f32),
     };

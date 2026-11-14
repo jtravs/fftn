@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // Rules planner v0 (DESIGN.md 11.2): the radices of a chain and their order, from fixed
-// rules taken from FFTL.jl (T. Knopp; its factor.jl, as studied for FFTN), which were
-// derived there from brute-force searches and interleaved measurements on Apple M1, Zen 2
-// and 3, Tiger Lake and EPYC machines. Deterministic and cheap: a pure function of the
-// length and of a few properties of the target. Phase 2's cost model replaces the choice
+// rules that DESIGN.md 11.2 specifies (taken from FFTL.jl, T. Knopp, MIT licence, which
+// derived them from brute-force searches and measurements; this code implements the
+// specification). Deterministic and cheap: a pure function of the length and of a few
+// properties of the target. Phase 2's cost model replaces the choice
 // (it enumerates candidate radix sequences and ranks them); these rules then remain one
 // source of candidates and the fallback for unknown machines.
 #pragma once
