@@ -147,8 +147,8 @@ def report(out_dir: Path, run_ids: list[str]) -> int:
             return (x, f"{arm} {x:.3f}{mark} [{lo:.2f},{hi:.2f}]")
 
         for case in sorted({k for per in res.results.values() for k in per}):
-            chains = [cell(a, case) for a in res.results if a.startswith("c")]
-            grids = [cell(a, case) for a in res.results if a.startswith("g")]
+            chains = [cell(a, case) for a in res.results if re.match(r"c\d", a)]
+            grids = [cell(a, case) for a in res.results if re.match(r"g\d", a)]
             best_c = min(chains, default=(math.inf, "-"))[1]
             best_g = min(grids, default=(math.inf, "-"))[1]
             plain = [cell(a, case)[0] for a in ("chain", "grid")]
