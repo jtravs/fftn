@@ -7,6 +7,7 @@
 
 #include "core/plan_core.hpp"
 #include "fftn/detail/core.hpp"
+#include "platform/topology.hpp"
 #include "threading/schedule.hpp"
 #include "threading/work_graph.hpp"
 
@@ -17,6 +18,7 @@
 #include <complex>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <limits>
 #include <memory>
 #include <vector>
@@ -371,6 +373,46 @@ TEST(Schedule, OwnedTasksPartition) {
       EXPECT_EQ(next, tasks);
     }
   }
+}
+
+// The grid's sizes from the recorded machines' caches (experiment X12b): a private L2
+// (Xeon, EPYC) keeps the chain to half of L2 and two phases to L2; an L2 shared by a cluster
+// (Apple) gets the grid beyond L1 and three phases beyond an eighth of L2.
+TEST(Schedule, GridSizesFromCaches) {
+  const std::filesystem::path data(FFTN_PLATFORM_DATA);
+  const auto sizes = [&](const char* file) {
+    machine_profile p;
+    fftn::detail::set_grid_sizes(p, fftn::detail::load_topology(data / file).classes.at(0));
+    return p;
+  };
+  constexpr std::size_t kib = 1024;
+  const machine_profile xeon = sizes("linux-intel-xeon-gold-6240.sysfs"); // 32 KiB, 1 MiB
+  EXPECT_EQ(xeon.grid_min_bytes, 512 * kib);
+  EXPECT_EQ(xeon.grid_three_bytes, 1024 * kib);
+  EXPECT_EQ(xeon.grid_block_bytes, 32 * kib);
+  EXPECT_EQ(xeon.grid_fuse_bytes, 256 * kib);
+  const machine_profile epyc = sizes("linux-amd-epyc-7763.sysfs"); // 32 KiB, 512 KiB
+  EXPECT_EQ(epyc.grid_min_bytes, 256 * kib);
+  EXPECT_EQ(epyc.grid_three_bytes, 512 * kib);
+  EXPECT_EQ(epyc.grid_block_bytes, 32 * kib);
+  const machine_profile m5 = sizes("macos-apple-m5-max.sysctl"); // 128 KiB, 16 MiB for 6
+  EXPECT_EQ(m5.grid_min_bytes, 128 * kib);
+  EXPECT_EQ(m5.grid_three_bytes, 2048 * kib);
+  EXPECT_EQ(m5.grid_block_bytes, 128 * kib);
+  EXPECT_EQ(m5.grid_fuse_bytes, 4096 * kib);
+  // Unknown sizes keep the defaults; an unknown sharing counts as a shared L2.
+  const machine_profile defaults;
+  machine_profile unknown;
+  fftn::detail::set_grid_sizes(unknown, fftn::detail::core_class{});
+  EXPECT_EQ(unknown.grid_min_bytes, defaults.grid_min_bytes);
+  EXPECT_EQ(unknown.grid_three_bytes, defaults.grid_three_bytes);
+  fftn::detail::core_class no_sharing;
+  no_sharing.l1d.size = 32 * kib;
+  no_sharing.l2.size = 1024 * kib;
+  machine_profile shared;
+  fftn::detail::set_grid_sizes(shared, no_sharing);
+  EXPECT_EQ(shared.grid_min_bytes, 32 * kib);
+  EXPECT_EQ(shared.grid_three_bytes, 128 * kib);
 }
 
 } // namespace

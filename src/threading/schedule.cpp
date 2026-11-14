@@ -22,15 +22,30 @@ machine_profile default_machine_profile() noexcept {
   const unsigned cpus = std::thread::hardware_concurrency();
   p.cpus = static_cast<int>(std::min<unsigned>(cpus, std::numeric_limits<int>::max()));
   const topology& t = system_topology();
-  if (!t.classes.empty() && t.classes.front().l1d.size != 0) {
-    p.grid_min_bytes = t.classes.front().l1d.size;
-    p.grid_block_bytes = t.classes.front().l1d.size;
-  }
-  if (!t.classes.empty() && t.classes.front().l2.size != 0) {
-    p.grid_three_bytes = t.classes.front().l2.size / 8;
-    p.grid_fuse_bytes = t.classes.front().l2.size / 4;
+  if (!t.classes.empty()) {
+    set_grid_sizes(p, t.classes.front());
   }
   return p;
+}
+
+// Experiment X12b. Where each core has its own L2 (x86: shared only by a core's SMT
+// threads, like its L1), a chain streams from it well: the grid paid only beyond half of
+// L2, and three phases only beyond L2 (Xeon Gold 6240, EPYC 7763). An L2 shared by a
+// cluster (Apple) is far: there the chain lost twofold once the row left L1, and three
+// phases paid from an eighth of L2 (X12).
+void set_grid_sizes(machine_profile& p, const core_class& c) noexcept {
+  const bool private_l2 = c.l2.shared_by != 0 && c.l2.shared_by <= std::max(c.l1d.shared_by, 1U);
+  if (c.l1d.size != 0) {
+    p.grid_min_bytes = c.l1d.size;
+    p.grid_block_bytes = c.l1d.size;
+  }
+  if (c.l2.size != 0) {
+    if (private_l2) {
+      p.grid_min_bytes = std::max(p.grid_min_bytes, c.l2.size / 2);
+    }
+    p.grid_three_bytes = private_l2 ? c.l2.size : c.l2.size / 8;
+    p.grid_fuse_bytes = c.l2.size / 4;
+  }
 }
 
 bool runs_inline(const work_graph& g, const machine_profile& profile) noexcept {
