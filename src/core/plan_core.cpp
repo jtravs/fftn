@@ -406,10 +406,9 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   if (grid_plan.phases != 0) {
     grid_builder<T> grid(kernels, chain, tables_of<T>(c),
                          settings.grid_fused &&
-                             c.lengths[0] * 2 * sizeof(T) <= settings.profile.grid_fuse_bytes);
-    if (grid_builder<T>::uses_block(grid_plan, c.in_place)) {
-      c.block_elements = c.lengths[0];
-    }
+                             c.lengths[0] * 2 * sizeof(T) <= settings.profile.grid_fuse_bytes,
+                         settings.grid_pad, settings.grid_fuse_padded);
+    c.block_elements = grid.block_elements(grid_plan, c.in_place);
     scratch = grid.c2c_row(grid_plan, sign, c.in_place, opts.scale, settings.scale_on_input, p);
     c.axis_notes.push_back("axis 0 (n = " + std::to_string(c.lengths[0]) +
                            "): " + grid.note(grid_plan));

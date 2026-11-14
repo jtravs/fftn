@@ -59,17 +59,18 @@ void block_copy(const pass_args* a, std::size_t first, std::size_t last) {
 }
 
 // Phase 1 of a grid: z, a tight block of s columns and m rows (z[q + s k]), to the block's
-// s rows of m in the next array, y[k + m q], element (q, k) times the twiddle w^((c0 + q) k)
-// of its column c0 + q (the conjugate for Sign = +1), formed as w^(q k) w^(c0 k): roots
-// holds the first factor for every (q, k) of a block, twiddles the second for the block's
-// rows (m values; the stage advances them per block, stage::moving_twiddles). Both are
+// s rows of m in the next array, dst_stride apart, y[k + dst_stride q], element (q, k) times the
+// twiddle w^((c0 + q) k) of its column c0 + q (the conjugate for Sign = +1), formed as w^(q k)
+// w^(c0 k): roots holds the first factor for every (q, k) of a block, twiddles the second for the
+// block's rows (m values; the stage advances them per block, stage::moving_twiddles). Both are
 // plain interleaved values (not twiddle storage: they multiply as factor arrays do, cmul);
 // roots holds C x C per unit in unit order, row i of a unit's its C columns at row k0 + i.
 // The product rounds once more than a stored twiddle would; storing w^((c0 + q) k) for every
 // element instead is a table of n values, which X12 measured costing more than the
 // multiplication once it no longer fits the cache. A unit is a C x C tile, tiles k fastest
 // within a column tile, transposed in registers so that every store is C adjacent elements
-// of one row of y. m and s are multiples of C. Reads src, dst, m, s, roots, twiddles.
+// of one row of y. m and s are multiples of C. Reads src, dst, dst_stride, m, s, roots,
+// twiddles.
 template <class T, int Sign>
 void twiddle_transpose(const pass_args* a, std::size_t first, std::size_t last) {
   const T* z = static_cast<const T*>(a->src);
@@ -79,6 +80,7 @@ void twiddle_transpose(const pass_args* a, std::size_t first, std::size_t last) 
   const std::size_t m = a->m;
   const std::size_t cols = a->s;
   const std::size_t ktiles = m / C<T>;
+  const std::ptrdiff_t rows_apart = a->dst_stride;
   std::size_t q0 = first / ktiles * C<T>;
   std::size_t k0 = first % ktiles * C<T>;
   for (std::size_t u = first; u < last; ++u) {
@@ -96,7 +98,9 @@ void twiddle_transpose(const pass_args* a, std::size_t first, std::size_t last) 
       transpose(v);
     }
     for (std::size_t l = 0; l < C<T>; ++l) {
-      store(y + 2 * (k0 + m * (q0 + l)), v[l]);
+      store(y + 2 * (static_cast<std::ptrdiff_t>(k0) +
+                     rows_apart * static_cast<std::ptrdiff_t>(q0 + l)),
+            v[l]);
     }
     k0 += C<T>;
     if (k0 == m) {

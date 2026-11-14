@@ -28,6 +28,7 @@
 #include <cmath>
 #include <complex>
 #include <cstddef>
+#include <cstring>
 #include <span>
 #include <string>
 #include <utility>
@@ -336,6 +337,47 @@ TEST(Grid, AgreesWithTheChainAtLengthsTheRulesTake) {
         std::pair{std::size_t{262144}, true}}) {
     grid_agrees_with_chain<double>(n, three);
     grid_agrees_with_chain<float>(n, three);
+  }
+}
+
+// Padding the intermediate array (X4) moves data, not arithmetic: the result is bitwise
+// the unpadded one, with phase 2 reading its padded rows through a gather or directly.
+template <class T>
+void padding_keeps_bits(std::size_t n, const std::vector<std::size_t>& factors, bool in_place) {
+  SCOPED_TRACE((sizeof(T) == 8 ? "double, n = " : "float, n = ") + std::to_string(n) +
+               (in_place ? ", in place" : ""));
+  const auto shape = fftn::rows_c2c<T>(n, 2, fftn::direction::forward);
+  fftn::test::input_source src(0x9ADULL + n);
+  const cvec<T> x = src.complexes<T>(2 * n);
+  const auto run = [&](std::size_t pad, bool fuse_padded) {
+    build_settings s;
+    s.strategy = strategy_choice::grid;
+    s.grid_factors = factors;
+    s.grid_pad = pad;
+    s.grid_fuse_padded = fuse_padded;
+    const auto core = make_plan_core(fftn::detail::view_of(shape), {.in_place = in_place}, s);
+    EXPECT_TRUE(is_grid(*core)) << described(*core);
+    cvec<T> y = in_place ? x : cvec<T>(2 * n);
+    const fftn::workspace ws(fftn::detail::workspace_bytes(*core, 1));
+    fftn::detail::execute_core(*core, 0, 2, in_place ? y.data() : x.data(), y.data(), ws);
+    return y;
+  };
+  const cvec<T> plain = run(0, false);
+  for (const std::size_t pad : {std::size_t{1}, std::size_t{8}, std::size_t{1027}}) {
+    for (const bool fuse_padded : {false, true}) {
+      const cvec<T> padded = run(pad, fuse_padded);
+      EXPECT_EQ(std::memcmp(padded.data(), plain.data(), plain.size() * sizeof(plain[0])), 0)
+          << "pad " << pad << (fuse_padded ? ", fused" : "");
+    }
+  }
+}
+
+TEST(Grid, PaddingKeepsBits) {
+  for (const bool in_place : {false, true}) {
+    padding_keeps_bits<double>(4096, {64, 64}, in_place);
+    padding_keeps_bits<double>(8192, {16, 32, 16}, in_place);
+    padding_keeps_bits<float>(8192, {16, 32, 16}, in_place);
+    padding_keeps_bits<double>(4096, {16, 16, 16}, in_place);
   }
 }
 
