@@ -16,6 +16,9 @@
 #                       libfftw3 and libfftw3f. Consumers always link this target; the
 #                       definition FFTN_TEST_HAVE_FFTW (0 or 1) tells them whether FFTW is
 #                       there, and tests that need it skip themselves when it is not.
+#   OpenMP::OpenMP_CXX  the compiler's OpenMP runtime, when found, for the tests and the
+#                       example of the optional header fftn/omp.hpp (FFTN_TEST_WITH_OPENMP,
+#                       default ON except under ThreadSanitizer). Never linked by the library.
 #   Kokkos::kokkos      Kokkos core 5.2.1 with the Serial back end only, for the tests and
 #                       the example of the optional header fftn/kokkos.hpp
 #                       (FFTN_TEST_WITH_KOKKOS, default ON; it builds in seconds). The
@@ -96,6 +99,59 @@ function(fftn_link_kokkos target)
   get_target_property(tidy ${target} CXX_CLANG_TIDY)
   if(tidy)
     list(APPEND tidy "--checks=-clang-analyzer-cplusplus.NewDeleteLeaks")
+    set_target_properties(${target} PROPERTIES CXX_CLANG_TIDY "${tidy}")
+  endif()
+endfunction()
+
+# OpenMP, for the tests and the example of the optional header fftn/omp.hpp: the compiler's own
+# runtime (libgomp with GCC, libomp with Clang), found by CMake's FindOpenMP. Only the
+# executables of those tests and that example link it, one runtime each; the library never
+# does (the header is compiled in its user's translation units). On by default wherever a
+# runtime is found, except under ThreadSanitizer: the runtimes are not instrumented (libomp
+# only with its Archer tool, which the toolchains here do not ship), so TSan reports races
+# between work in a region and the code after it, which the region's join orders (checked
+# with Homebrew LLVM 23's libomp). The pool and custom executors carry the TSan coverage of the
+# executor path. Consumers test `if(FFTN_TEST_WITH_OPENMP AND TARGET OpenMP::OpenMP_CXX)`.
+set(_fftn_openmp_default ON)
+if(FFTN_SANITIZE MATCHES "thread")
+  set(_fftn_openmp_default OFF)
+endif()
+option(FFTN_TEST_WITH_OPENMP "Test fftn/omp.hpp against the compiler's OpenMP runtime"
+       ${_fftn_openmp_default})
+if(FFTN_TEST_WITH_OPENMP)
+  find_package(OpenMP COMPONENTS CXX)
+  if(NOT OpenMP_CXX_FOUND)
+    message(STATUS "fftn: no OpenMP runtime found; the tests of fftn/omp.hpp are not built")
+  endif()
+endif()
+
+# fftn_link_openmp(<target>): links the OpenMP runtime into a test or example of fftn/omp.hpp.
+# The compiler finds omp.h in its own resource directory, which clang-tidy from PyPI does not
+# have: the header alone is copied into a directory of its own and handed to clang-tidy, so
+# that none of the compiler's other built-in headers shadow clang-tidy's.
+if(FFTN_TEST_WITH_OPENMP AND OpenMP_CXX_FOUND AND FFTN_CLANG_TIDY)
+  set(_fftn_omp_dirs ${OpenMP_CXX_INCLUDE_DIRS})
+  if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    execute_process(COMMAND ${CMAKE_CXX_COMPILER} -print-resource-dir
+                    OUTPUT_VARIABLE _fftn_resource_dir OUTPUT_STRIP_TRAILING_WHITESPACE)
+    list(APPEND _fftn_omp_dirs ${_fftn_resource_dir}/include)
+  elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    execute_process(COMMAND ${CMAKE_CXX_COMPILER} -print-file-name=include
+                    OUTPUT_VARIABLE _fftn_gcc_include OUTPUT_STRIP_TRAILING_WHITESPACE)
+    list(APPEND _fftn_omp_dirs ${_fftn_gcc_include})
+  endif()
+  find_file(_fftn_omp_h omp.h PATHS ${_fftn_omp_dirs} NO_DEFAULT_PATH)
+  if(_fftn_omp_h)
+    # Cached, so that the examples' directory sees it too.
+    set(FFTN_TIDY_OMP_INCLUDE ${CMAKE_BINARY_DIR}/fftn-tidy-omp CACHE INTERNAL "")
+    configure_file(${_fftn_omp_h} ${FFTN_TIDY_OMP_INCLUDE}/omp.h COPYONLY)
+  endif()
+endif()
+function(fftn_link_openmp target)
+  target_link_libraries(${target} PRIVATE OpenMP::OpenMP_CXX)
+  get_target_property(tidy ${target} CXX_CLANG_TIDY)
+  if(tidy AND FFTN_TIDY_OMP_INCLUDE)
+    list(APPEND tidy "--extra-arg=-isystem${FFTN_TIDY_OMP_INCLUDE}")
     set_target_properties(${target} PROPERTIES CXX_CLANG_TIDY "${tidy}")
   endif()
 endfunction()

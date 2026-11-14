@@ -1,0 +1,90 @@
+// SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+// SPDX-License-Identifier: Apache-2.0
+//
+// The executor overload of plan::execute (DESIGN.md 5.3, 13.6): FFTN dispatches the members
+// of a team itself, so it decides the team's size, and every member it dispatches runs.
+//
+// The scheduler is asked once with the executor's whole concurrency. If the job is too small
+// to share (rule 1) or one lane would have everything, it runs serially on the caller and the
+// executor is never called. Otherwise only the lanes that have work are dispatched (rule 4):
+// a team of lanes_dealt members, the leading groups the scheduler deals tasks to. A team of
+// that size gets exactly the division the wider team's dealt lanes would have had (the same
+// groups, shares and splits: schedule.cpp computes all of them from the dealt lanes), so
+// nothing is lost by not dispatching the rest. The one thing the dealt lanes do not show is
+// how many threads compete for the CPUs: all of the executor's (a pool's idle threads linger,
+// an OpenMP region keeps its width), so the members judge oversubscription by its width. An
+// OpenMP executor still opens its region at
+// its constant width, its surplus threads returning at once (fftn/omp.hpp).
+//
+// Since every dispatched member runs exactly once, no member skips an execution (the
+// sequence precondition of team execution) whatever the executor does with the order and
+// concurrency of its tasks, and bulk's return orders each rank's calls.
+
+#include "core/plan_core.hpp"
+#include "fftn/detail/core.hpp"
+#include "fftn/executor.hpp"
+#include "fftn/team.hpp"
+#include "fftn/workspace.hpp"
+#include "threading/schedule.hpp"
+#include "threading/team_execute.hpp"
+#include "threading/team_state.hpp"
+
+#include <cassert>
+
+namespace fftn::inline v0::detail {
+namespace {
+
+struct dispatched_team {
+  const plan_core* core = nullptr;
+  const void* in = nullptr;
+  void* out = nullptr;
+  const workspace* ws = nullptr;
+  int size = 0;
+  int group_size = 0;
+  int threads = 0; // the executor's width
+};
+
+// NOLINTNEXTLINE(misc-const-correctness): the signature is fftn_task's
+void run_member(void* arg, int rank) {
+  const auto& t = *static_cast<const dispatched_team*>(arg);
+  execute_member(*t.core, t.in, t.out, {.rank = rank, .size = t.size, .group_size = t.group_size},
+                 *t.ws, completion::all, t.threads);
+}
+
+} // namespace
+
+void execute_on(const plan_core& core, const void* in, void* out, const executor_ref& ex,
+                const workspace& ws) {
+  const int width = ex.concurrency();
+  if (width > 1) {
+    const int group_size = ex.group_size();
+    const lane_map lanes{.lanes = width, .group_size = group_size < 0 ? 0 : group_size};
+    const schedule plan = make_schedule(core.graph, lanes, core.profile);
+    if (!plan.inline_all && plan.lanes_dealt > 1) {
+      assert(ws.size() >= workspace_bytes(core, width) &&
+             "fftn: workspace smaller than plan::workspace_bytes(executor concurrency)");
+      dispatched_team team{
+          .core = &core,
+          .in = in,
+          .out = out,
+          .ws = &ws,
+          .size = plan.lanes_dealt,
+          .group_size = lanes.group_size,
+          .threads = width,
+      };
+      try {
+        ex.bulk(team.size, &run_member, &team);
+      } catch (...) {
+        // Some members may not have run: they would count their next execution wrong. The
+        // executor's bulk has returned, so no member is inside FFTN and the state can be
+        // dropped; the next team execution sets it up afresh.
+        workspace_access::team_word(ws).store(0);
+        throw;
+      }
+      return;
+    }
+  }
+  execute_core(core, 0, core.prog.transforms, in, out, ws);
+}
+
+} // namespace fftn::inline v0::detail

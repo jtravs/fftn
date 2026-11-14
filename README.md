@@ -13,9 +13,10 @@ libraries do not meet together:
 - **Speed on one thread.** As fast as or faster than any open-source FFT on Apple
   M-series, x86-64 (AVX2 and AVX-512) and AArch64 Linux, and close to the vendor libraries
   on their own hardware.
-- **Threading that cooperates.** FFTN creates no threads of its own. It runs on the
-  threads your application already has (OpenMP, Kokkos, your own pool), scales with cores,
-  and gives the same bits however the work is shared out.
+- **Threading that cooperates.** FFTN creates no threads behind your back. It runs on the
+  threads your application already has (OpenMP, Kokkos, your own pool), or on a pool you
+  start explicitly, scales with cores, and gives the same bits however the work is shared
+  out.
 - **Fusion.** Scaling, windows, spectral multipliers, zero padding and your own pointwise
   kernels run inside or beside the transform's passes, while the data are in cache.
 

@@ -37,6 +37,23 @@ struct team {
   int group_size = 0;
 };
 
+/// The members per cache group of a team of `members` threads on this machine: the
+/// `group_size` to put in `fftn::team` when nothing better is known.
+///
+/// It assumes that consecutive ranks run on consecutive cores of one cache group: one
+/// thread per core while the team has no more members than the machine has cores, every
+/// logical CPU (SMT siblings too) beyond. A cache group is the CPUs sharing the last-level
+/// cache that holds more than one core: the L3, or the L2 of a cluster where no L3 is
+/// shared (Apple's processors); where groups differ in size, the smallest counts. Threads
+/// placed otherwise (unbound threads that the operating system spreads over the groups)
+/// still give correct results, only slower ones when a transform is split.
+///
+/// Returns 0, which puts every member in one group, when the team fits in one group, when
+/// `members` is less than 2, or when the machine does not say which CPUs share a cache. The
+/// machine's topology is detected on the first call (which may allocate); later calls only
+/// compute. The grouping affects speed only, never results.
+[[nodiscard]] int cache_group_size(int members) noexcept;
+
 /// When a member's call of the team overload of `plan::execute` returns.
 enum class completion : unsigned char {
   /// When the whole output is written, on every member. Work is shared dynamically: a
