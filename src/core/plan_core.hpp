@@ -9,6 +9,8 @@
 #include "fftn/detail/core.hpp"
 #include "fftn/options.hpp"
 #include "isa/target.hpp"
+#include "threading/schedule.hpp"
+#include "threading/work_graph.hpp"
 
 #include <cstddef>
 #include <memory>
@@ -19,9 +21,12 @@ namespace fftn::inline v0::detail {
 
 // Construction knobs for tests; plans built through the public API use the defaults.
 struct build_settings {
-  // About this many points of work per chunk of a stage (program.hpp). Phase 3 sets the
-  // value by experiment (T5); here it only has to give long rows several chunks.
+  // About this many points of work per chunk of a stage (program.hpp) or of a run of
+  // lines (work_graph.hpp). Experiment T5 sets the value; here it only has to give long
+  // rows several chunks.
   std::size_t chunk_points = 2048;
+  // The machine the plan's team executions are scheduled for (schedule.hpp).
+  machine_profile profile = default_machine_profile();
 };
 
 class plan_core {
@@ -43,6 +48,8 @@ public:
   target isa_target = target::scalar;
 
   program prog;
+  work_graph graph;        // the program's shareable work (DESIGN.md 13.2)
+  machine_profile profile; // what the scheduler assumes of the machine
   std::vector<std::vector<double>> tables_f64;
   std::vector<std::vector<float>> tables_f32;
   std::vector<std::string> axis_notes; // one line per axis for describe()

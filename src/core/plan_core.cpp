@@ -19,6 +19,8 @@
 #include "isa/target.hpp"
 #include "platform/cpu_features.hpp"
 #include "strategies/chain.hpp"
+#include "threading/schedule.hpp"
+#include "threading/work_graph.hpp"
 
 #include <algorithm>
 #include <array>
@@ -535,6 +537,12 @@ std::shared_ptr<const plan_core> make_plan_core(const shape_view& s, const optio
   } else {
     build<float>(*c, s, in, out, settings);
   }
+  std::size_t points = 1;
+  for (const std::size_t n : c->lengths) {
+    points *= n; // the layouts' reach checks have bounded the product
+  }
+  c->graph = build_work_graph(c->prog, points, settings.chunk_points);
+  c->profile = settings.profile;
   return c;
 }
 
