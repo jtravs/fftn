@@ -78,13 +78,13 @@ class Cost(unittest.TestCase):
     def test_codelet_table(self):
         self.assertEqual(set(r for r, _ in self.ops), set(range(2, 17)) | {32, 64})
         # The radix-16 forward codelets of src/gen/codelets.hpp: plain and DIF.
-        self.assertEqual(self.ops[(16, False)], 84)
-        self.assertEqual(self.ops[(16, True)], 99)
+        self.assertEqual(self.ops[(16, False)], 80)
+        self.assertEqual(self.ops[(16, True)], 95)
 
     def test_estimate(self):
         # A leaf is one plain codelet; every pass but the last applies twiddles.
-        self.assertEqual(radices.cost((16,), self.ops), (1, 84))
-        self.assertEqual(radices.cost((4, 16), self.ops), (2, 16 * 11 + 4 * 84))
+        self.assertEqual(radices.cost((16,), self.ops), (1, 80))
+        self.assertEqual(radices.cost((4, 16), self.ops), (2, 16 * 11 + 4 * 80))
         self.assertEqual(radices.cost((2, 17), self.ops), (2, 17 * 3 + 2 * 2 * 17 * 17))
         self.assertEqual(
             radices.cost((17, 2), self.ops), (2, 2 * (2 * 17 * 17 + 16) + 17 * self.ops[(2, False)])

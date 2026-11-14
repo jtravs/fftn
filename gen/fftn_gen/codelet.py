@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from .algorithms import dft
 from .ir import Graph
 from .lower import Op, lower
+from .realify import realify
 from .schedule import peak_live, schedule
 from .verify import verify
 
@@ -89,8 +90,12 @@ def count(ops: list[Op] | tuple[Op, ...]) -> Counts:
     )
 
 
-def build_ops(radix: int, variant: str, sign: int) -> list[Op]:
-    """The codelet's operations in topological order, before ordering."""
+def build_ops(radix: int, variant: str, sign: int, real: bool = True) -> list[Op]:
+    """The codelet's operations in topological order, before ordering.
+
+    real: lower the real-coefficient form (realify.py), which every generated codelet
+    uses; False lowers the DAG as built (kept for the tests that compare the two).
+    """
     g = Graph(radix, twiddles=radix - 1)
     x = [g.input(j) for j in range(radix)]
     conj = sign > 0
@@ -99,6 +104,8 @@ def build_ops(radix: int, variant: str, sign: int) -> list[Op]:
     y = dft(g, x, sign)
     if variant == "dif":
         y = [y[0]] + [g.tw_mul(y[k], g.twiddle(k), conj) for k in range(1, radix)]
+    if real:
+        g, y = realify(g, y, radix)
     return lower(g, y)
 
 
