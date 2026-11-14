@@ -90,7 +90,9 @@ For each radix R, variant and direction (`codelet.build`):
    in 256-bit arithmetic on every basis input (every column of the codelet's matrix) and
    three random inputs, each with random twiddles, against the definition of the variant
    with exactly reduced roots of unity. Any output off by more than 2^−200 relative is a
-   `VerificationError`.
+   `VerificationError`. So is any breach of the accessor contract, checked apart from the
+   values (`check_shape`): every input leg loaded once, twiddle legs 1 to R − 1 once each
+   (none for plain), every output stored once.
 7. **Emit** (`emit_cpp.py`) one statement per operation, with constants printed in both
    precisions.
 
