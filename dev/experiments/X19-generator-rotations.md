@@ -115,7 +115,8 @@ Port-5 uops fall 4–16 %; FFTN still issues about 1.5 times FFTW's port-5 uops 
 transposes are untouched by this change and are what remains (split lowering, X1).
 
 Gates: Mac gate (spdx gen build sanitize bench) passed; GCC 16 `-Werror` build on the Mac
-and its ISA tests passed; DMOG (EPYC, GCC 16) gen and build stages passed (1087 tests).
+and its ISA tests passed; DMOG (EPYC, GCC 16) gen, build (1087 tests) and ASan + UBSan
+(1086 tests, LSan off there) passed.
 
 ## Verdict
 
