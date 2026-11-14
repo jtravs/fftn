@@ -279,14 +279,16 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
         .str("precision", "double")
         .raw("supports", R"(["c2c","r2c","c2r"])")
         .str("strategy", "chain");
+#ifdef FBENCH_FFTN_OMP
+    // Always, so that this binary's identity differs from fbench-fftn's even without options
+    // (fbench refuses arms that are meant to differ but describe themselves identically).
+    d.str("omp_runtime", omp_runtime()).raw("omp_env", omp_environment());
+#endif
     if (threaded) {
       const regrouped e(*s.exec, s.group_size);
       d.integer("threads", s.threads)
           .str("executor", s.mode == call::team ? "omp::this_team" : executor_name)
           .integer("group_size", e.group_size());
-#ifdef FBENCH_FFTN_OMP
-      d.str("omp_runtime", omp_runtime()).raw("omp_env", omp_environment());
-#endif
 #ifdef __APPLE__
       d.str("worker_qos", "user-interactive");
 #endif
