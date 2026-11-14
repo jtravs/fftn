@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 John C. Travers and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""The machine: host fingerprint, cache size and the quiet-machine check (DESIGN.md 16.3).
+"""The machine: host fingerprint, cache size and the load readings (DESIGN.md 16.3).
 
 The fingerprint names the hardware and OS, never the host: results are stored and may be
 shared, and hostnames are private.
@@ -13,6 +13,7 @@ import os
 import platform
 import subprocess
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -124,6 +125,9 @@ def busy_cores(exclude: set[int] | None = None) -> float | None:
 
 @dataclass(frozen=True)
 class QuietLimits:
+    """The quiet-machine thresholds. A round above them is recorded as run under load; in
+    strict mode (`--strict-quiet`) it is invalid instead."""
+
     max_load: float
     max_busy: float
 
@@ -148,6 +152,37 @@ def is_quiet(state: dict, limits: QuietLimits) -> tuple[bool, str]:
     if busy is not None and busy > limits.max_busy:
         return False, f"other processes use {busy:.2f} cores > {limits.max_busy:.2f}"
     return True, ""
+
+
+def overload_limit() -> float:
+    """Other processes' CPU use (cores) above which a round waits before it starts: half the
+    logical CPUs. Below it the round runs, and the A/A control absorbs the noise."""
+    return 0.5 * (os.cpu_count() or 1)
+
+
+def wait_for_capacity(
+    limit: float,
+    max_wait: float,
+    poll: float = 5.0,
+    read: Callable[[], dict] | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> tuple[dict, float, bool]:
+    """Waits at most `max_wait` seconds until other processes use at most `limit` cores.
+
+    Returns the last load state, the seconds waited and whether the machine was still
+    overloaded when the wait ran out (the round then runs anyway and is marked so).
+    """
+    read = read or load_state
+    start = clock()
+    state = read()
+    while (state.get("busy") or 0.0) > limit:
+        waited = clock() - start
+        if waited >= max_wait:
+            return state, waited, True
+        sleep(min(poll, max_wait - waited))
+        state = read()
+    return state, clock() - start, False
 
 
 def thermal_note() -> str:

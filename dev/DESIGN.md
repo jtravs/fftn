@@ -1870,9 +1870,14 @@ reported separately for every library.
   first touched by the threads that will use them. Buffer offsets within a page are
   randomised between rounds, in multiples of 64 bytes so that alignment is kept, and are
   shared by all arms of a round so an aliasing accident cannot decide a result.
-- **Validity.** fbench records load, frequency and thermal state where the OS exposes
-  them and marks rounds on a busy machine invalid (load average, and other processes'
-  current CPU use). On macOS it requests the performance-core class.
+- **Load.** fbench records load, frequency and thermal state where the OS exposes them,
+  per round the load average and other processes' current CPU use. Load does not
+  invalidate a round: interleaving, repeated process rounds and the A/A control absorb it,
+  so a busy machine gives a wider band, and claims are judged against the band of the same
+  run. A round waits (boundedly) only while other processes use more than half the CPUs;
+  a strict mode refuses rounds above the quiet thresholds. A process timeout loses the
+  cases that process had not finished in that round, not the run. On macOS fbench
+  requests the performance-core class.
 - **Accuracy** (relative RMS and maximum error against a double-double direct DFT in the
   harness, at sampled outputs, plus Parseval over whole rows) is stored with every timing;
   a wrong output in any round is reported as such, never averaged away.
@@ -2206,6 +2211,7 @@ to change before a release.
 | 2026-11-14 | No R × C `transpose` for radices below C (avx512); the grouped pass stores them through its tile | Correct as it stands. Performance risk recorded: planner v0 ignores C, so on `avx512` most lengths start with radix 4 (or 2 or 3), and in `float` (C = 8) their grouped pass stores through the tile and the second pass (s = 4) runs only tail units. Preferring a leading radix of at least C, or an R × C transpose, is a planner change and needs its experiment (X16, `avx512` against `avx2`), not a rule edited here |
 | 2026-11-14 | Threading adapters (task 3.3): the `executor` concept (`concurrency`, `bulk`, optional `group_size`) behind a non-owning `executor_ref` that is the C contract's struct (`fftn/executor.h`); the executor overload dispatches one task per lane dealt work, as a team; `fftn/omp.hpp` (`this_team`, an executor of constant width); the opt-in `thread_pool`; `cache_group_size` | One allocation-free path from any runtime to the claiming engine, with no template in the library; dispatching only lanes with work is rule 4, and every dispatched task runs, so no member skips an execution; open points for review in 18.2 |
 | 2026-11-14 | The OpenMP tests are built wherever the compiler has OpenMP, except under ThreadSanitizer; the thread pool and custom executors carry the executor path's TSan coverage | The OpenMP runtimes at hand are not instrumented, and TSan reports the join of every region as a race (shown with Homebrew LLVM 23's libomp) |
+| 2026-11-14 | fbench measures on loaded machines: load is recorded per round, not a reason to invalidate it; a round waits at most 60 s, and only while other processes use more than half the CPUs; `--strict-quiet` keeps the old rule; a process timeout loses that process's unfinished cases for the round, not the run | Maintainer's direction: the shared machines will never be much quieter, and interleaving, repeated rounds and the A/A control already measure the noise the load adds |
 
 ---
 
