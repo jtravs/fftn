@@ -152,6 +152,8 @@ the suites test.
 For a given plan, results are bitwise identical:
 
 - across repeated executions, copies of the plan and concurrent executions;
+- between serial execution and execution by a team of any size, grouping and timing
+  ([threading](threading.md));
 - for every transform of a batch, whatever its position, through `execute` or through
   `execute_transforms` with any `first`;
 - at any alignment of the arrays and the workspace.

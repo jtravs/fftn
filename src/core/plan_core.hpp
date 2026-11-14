@@ -62,6 +62,8 @@ public:
   std::size_t offset_b = 0;
   std::size_t offset_block = 0;
   std::size_t bytes = 0;
+  // One lane's scratch in a team's workspace: the layout above, in whole 128-byte lines.
+  std::size_t slot_bytes = 0;
 };
 
 [[nodiscard]] std::shared_ptr<const plan_core>
