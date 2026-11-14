@@ -409,10 +409,13 @@ Points that matter:
   for its alignment. The state persists between team executions; the workspace object
   holds one word besides its memory saying whether the memory holds valid state, so the
   first member of a first execution sets it up and the memory never needs initialising.
-  Serial executions clear that word. The members of a workspace's executions follow one
-  sequence of executions: a member may arrive late, after the others have moved on, but
-  may not skip one; serial use and a change of team size wait until every member of the
-  earlier executions has returned. A team is plain numbers (rank, size, members per cache
+  Serial executions clear that word, and so does an execution with `completion::own` by a
+  smaller team, whose scratch overlaps the larger team's state. The members of a
+  workspace's executions follow one sequence of executions: a member may arrive late,
+  after the others have moved on, but may not skip one (a serial execution, even of no
+  transforms, is the reset); all pass the same workspace object; one rank's successive
+  calls are ordered by happens-before; serial use and a change of team size wait until
+  every member of the earlier executions has returned. A team is plain numbers (rank, size, members per cache
   group), so any threading system can form one; the OpenMP and pool adapters of task 3.3
   fill it in.
 - **Execution preconditions** (a large enough workspace, `execute_transforms` within the
@@ -1154,9 +1157,9 @@ With `completion::own` and `plan::transforms_of(team)`, an application's own poi
 kernels can use the same transform-to-thread assignment as the transform, so rows stay in
 one core's cache across the application's work and FFTN's, inside one parallel region. In
 this mode transforms are dealt statically and whole (member r does exactly
-`transforms_of(r)`, contiguous ranges in rank order differing by at most one transform;
-nothing is claimed by others or split), which requires that every member of the team takes
-part.
+`transforms_of(r)`: contiguous ranges in rank order differing by at most one transform, or,
+with fewer transforms than members, one each for the first members; nothing is claimed by
+others or split), which requires that every member of the team takes part.
 
 ---
 
@@ -1231,11 +1234,15 @@ As built (`src/threading/engine.hpp`, task 3.1):
   and runs whole the split tasks of groups none of whose members has arrived (so a group
   that never turns up cannot strand them); then it waits for the execution's done count.
 - **State.** Counters live in the workspace (5.3), every hot word on its own 128-byte line.
-  Executions are numbered by each member's own count of its calls on the workspace; every
-  counter carries the number of the execution that last wrote it, so it reads as zero in a
-  later one (nothing is reset between executions) and a member that finds a later number
-  knows its own execution is over. That is how a member may arrive after the others have
-  moved on to later executions without a barrier anywhere.
+  Executions are numbered by each member's own 64-bit count of its calls on the workspace;
+  every counter carries the low 40 bits of the number of the execution that last wrote it
+  above a 24-bit count, so it reads as zero in another one (nothing is reset between
+  executions; tags are compared only for equality). A separate untagged word holds the
+  highest execution a member has returned from; a member that meets another execution's
+  tag reads it, and finds there whether its own execution is over. That is how a member
+  may arrive after the others have moved on to later executions without a barrier
+  anywhere. Batches too large for 24-bit counts are claimed in units of several
+  transforms.
 - **Waiting.** Spin for a time budget, then yield, then block in `std::atomic::wait`; a
   notifier calls `notify_all` only when a waiter has registered as blocked. An
   oversubscribed team (more members than CPUs) does not spin.
@@ -1339,8 +1346,11 @@ batches, with transforms split into many chunks, against serial execution bit fo
 workspace reuse; no allocation. A simulator runs the members' threads one at a time,
 switching at every access to shared state, in seeded random orders (adversarial
 interleavings, members that arrive late or never, several executions on one workspace) or
-in virtual time under a cost model, where a model of the prototype's static schedules with
-barriers reproduces its measured pathologies beside FFTN's handling of the same plans.
+in virtual time under a cost model, where a model of static schedules with barriers (the
+prototype's, and FFTW's waking of its threads for a short job) shows the shape of their
+measured pathologies beside FFTN's handling of the same plans. The model's cost per point
+is the scheduler's own profile value, so agreement there checks the logic, not the
+constants: experiments T1 and T5 are the real check.
 
 ---
 
@@ -1748,17 +1758,21 @@ below because section 5.3 left the shapes open; each is easy to change before a 
    threads, 13.3), no core class (rule 5's fastest-class restriction) and no caller
    barrier hook. The OpenMP and pool adapters (3.3) will fill `group_size` from the
    topology; unequal groups (a hybrid chip's) cannot be described yet.
-2. *Completion.* `all`: claiming, any subset of members completes, each member returns once
-   the whole output is written; surplus members help or wait, they do not return at once.
-   `own`: a static deal of whole transforms, never split, so with fewer transforms than
-   members some members own nothing; the caller synchronises before reading other
-   members' transforms or reusing the workspace.
+2. *Completion.* `all`: claiming; no member waits for one that has not arrived, and each
+   member returns once the whole output is written; surplus members help or wait, they do
+   not return at once. `own`: a static deal of whole transforms, never split; with fewer
+   transforms than members the first members own one each and the rest none; the caller
+   synchronises before reading other members' transforms or reusing the workspace. `own`
+   does not use the team state, but a smaller team's `own` execution overwrites a larger
+   team's state with scratch, so it clears the workspace's word and the next `all`
+   execution sets the state up afresh.
 3. *`rows_of` is `plan::transforms_of(const team&)`*, returning `transform_range{first,
    count}`: on the plan rather than the workspace, since the deal depends only on the
    transform count and the team, and named after `execute_transforms` (review item 5).
 4. *Workspace sizing.* `workspace_bytes(lanes)` is 128 bytes of slack, the team state
-   ((2 + ⌈lanes / 16⌉ + 4 lanes) lines of 128 bytes) and one serial scratch slot per
-   member, rounded to 128 bytes; `workspace_bytes(1)` is the serial size. A split
+   ((3 + ⌈lanes / 16⌉ + 4 lanes) lines of 128 bytes) and one serial scratch slot per
+   member, rounded to 128 bytes, saturating at `SIZE_MAX` if that does not fit;
+   `workspace_bytes(1)` is the serial size. A split
    transform's stage chunks use their owner's slot, so no slot is shared between tasks.
    This keeps three buffers' worth of scratch per member, against section 10's rule 5;
    sharing slots within a group is possible later.
@@ -1770,6 +1784,12 @@ below because section 5.3 left the shapes open; each is easy to change before a 
    every member of earlier executions has returned. It is the price of late arrival without
    a barrier; the alternative, a barrier at the end of every execution, waits for the
    slowest member and deadlocks a runtime that runs members one after another.
+   *Skipping*: a member knows its execution only by counting its own calls, so one that
+   skips an execution counts wrong and returns from its next call before that call's
+   output is written. Nothing can detect this; the only reset is a serial execution on the
+   workspace (`execute_transforms(0, 0, …)` costs nothing else). A runtime that may not run
+   every member (Kokkos `RangePolicy`, TBB) belongs with the executor overload of task 3.3,
+   where FFTN dispatches the members itself.
 7. *Oversubscription* is a team larger than `std::thread::hardware_concurrency()` taken at
    plan construction: no transform is split and waiters do not spin. The allowed-CPU mask
    and cgroup quota (13.5) are not consulted yet.
@@ -1777,6 +1797,26 @@ below because section 5.3 left the shapes open; each is easy to change before a 
    no member of its group has arrived (13.3 left open how the stealing group runs it).
 9. *Not built*: the prototype's static fast path (experiment T2 decides), hierarchical
    completion across groups, claim batches for chunks (one atomic operation per chunk now).
+10. *The epoch limit.* Epochs are 64-bit counts and never wrap; tags carry their low 40 bits
+    and are compared only for equality. A wrong result needs a state word left unwritten
+    for exactly a multiple of 2^40 executions and then reused at that execution: at least
+    12.7 days of back-to-back one-microsecond executions on one workspace, and then only at
+    one execution in 2^40. Counts have 24 bits: split tasks of 2^22 chunks or more run
+    whole, batches of 2^22 transforms or more are claimed in units, and teams of 2^22
+    members or more run inline.
+11. *Ordering of a rank's calls.* A member reads and writes its call count without
+    synchronisation, so one rank's successive calls must be made by one thread or ordered
+    by happens-before (OpenMP threads and a `std::thread` per rank are; a task system that
+    moves a rank between threads must order them). All members pass the same workspace
+    object: two workspaces over the same borrowed memory have separate words.
+12. *Lock-based waiting.* `std::atomic::wait` blocks through the platform (futex,
+    `__ulock_wait`, `WaitOnAddress`) in libstdc++ on Linux, libc++ on macOS 11 and later and
+    the MSVC STL from Windows 8. Where a standard library falls back to a mutex and
+    condition variable (libstdc++ on platforms without a futex, the MSVC STL before
+    Windows 8), a member that blocks takes a lock, though only after its spin and yield
+    budgets and never on the path where work is done. Whether that is acceptable under the
+    execute contract ("no locks") is the maintainer's call; the alternative is FFTN's own
+    per-platform futex wrapper.
 
 ---
 
@@ -1838,6 +1878,7 @@ below because section 5.3 left the shapes open; each is easy to change before a 
 | 2026-11-13 | Operation counts are compared with the best published counts in unfused real arithmetic; a size the generator misses is recorded with its exact counts and reason (`gen/fftn_gen/reference.py`); at task 1.1 only 13 is (Rader's algorithm, 176 + 68 against 192 + 134). A size with no published count gets a reference derived from its parts, or none with a reason | A gap is never widened silently and a closed gap is noticed; the mean removal in the prime form beats the reference at 7, 11 and 14 |
 | 2026-11-14 | Team execution (tasks 3.1, 3.2): `team{rank, size, group_size}`, `completion::all` by claiming and `completion::own` by a static deal of whole transforms, `plan::transforms_of`, `workspace_bytes(lanes)`; the team state lives in the workspace and persists between executions, numbered per member, with every counter tagged by the execution that last wrote it | Late members need no barrier and nothing is reset between executions; whole transforms keep owner-computes simple; open points for review in 18.2 |
 | 2026-11-14 | Team state words are `std::atomic<std::uint64_t>` objects constructed in the workspace when the state is set up, not `std::atomic_ref` over bytes | `atomic_ref` is missing from libc++ before 19 (Clang 16 with libc++, older Apple Clang); constructed objects also have a lifetime the standard recognises |
+| 2026-11-14 | Team state tags carry 40 bits of a 64-bit epoch, compared only for equality, with 24-bit counts; whether an execution is over is a separate untagged word holding the highest epoch a member has returned from | 32-bit epochs compared modulo 2^32 failed after 2^31 executions (hours at microsecond executions): never-written words read as later (second reader of tasks 3.1 and 3.2) |
 | 2026-11-14 | The scheduler is computed by every member at the start of every execution, from the work graph, a lane map and a machine profile of provisional constants | It is a few dozen operations and needs no shared storage or cache; calibration replaces the constants (task 3.4) |
 
 ---
