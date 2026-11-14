@@ -934,6 +934,9 @@ parameter, everything else accessors; gen/README.md has the codelet calling conv
   the two chirp passes of a Bluestein stage (section 8.5) are elementwise, in blocks of C
   consecutive elements, with the chirp per lane or, when C divides the copy count,
   broadcast; the real-transform edges run one element at a time on every target.
+  consecutive elements; the real transforms' pairing passes (section 9.1) run over C
+  consecutive bins and their C partners, read and written downwards through a tile, except
+  the strided-line edges, which run one element at a time.
 - **Edge variants**: scale and a per-element complex factor, on loading (first passes,
   leaves, generic passes, copies) and on storing (last passes, the same three), as the
   first two edge operations of section 12.1; real edges take the scale on storing. Each
@@ -996,7 +999,8 @@ planes of a volume. The driver costs a few nanoseconds per record. Two consequen
   per entry rather than C copies (as FFTL.jl's lane passes read theirs, broadcast from
   memory per vector); the generic pass's roots and the real edges' twiddles are broadcast
   storage too. Every entry is an entry of the length's root table (the roots of n, or of
-  the radix for the generic pass) or a padding 1: the root tables are what the tests check
+  the radix for the generic pass), the exact rearrangement −i w = (Im w, −Re w) of one (the
+  real pairing's twiddles, section 9.1), or a padding 1: the root tables are what the tests check
   entry by entry against the reference. The packing into storage forms is exact (copies
   and sign flips, `pack_tw` and `pack_tw1`), which the vocabulary tests check bit for bit
   through `load_tw` and `bcast_tw`; the packed tables of a plan are not compared with the
@@ -1183,6 +1187,44 @@ minus time(c2c of M), as a fraction of the complex time; the target is at most 2
 Odd n: full-length complex transform at first; real-input codelets (the generator's
 pruned variants) are experiment X6, which also tests them for even n against the
 half-length route.
+
+As built (task 2.1, `src/passes/real.inl`, `chain_builder::r2c_line` and `c2r_line`,
+experiment X6): an even line of stride 1 reads its reals in place as the h = n/2 complex
+values z_j = x_2j + i x_2j+1, so no pass packs them. With v = −i w^k (w = e^(−2πi/n); stored as
+(Im w^k, −Re w^k), an exact rearrangement of a root-table entry for every even n, where
+w^(k + n/4) would need 4 to divide n), A = Z_k + conj Z_(h−k)
+and B = Z_k − conj Z_(h−k), the r2c pairing is X_k = (A + vB)/2, X_(h−k) = conj(A − vB)/2,
+and the c2r pairing Z_k = A + conj(v) B, Z_(h−k) = conj(A − conj(v) B) with A and B formed from
+X: an addition, a subtraction and a product per pair; the halving carries the plan's scale.
+Routes, by `real_route`:
+
+- *Fused*: bin q + s k (copy q, leg k) of the r2c chain's last pass pairs with bin
+  (s − q) + s (R − 1 − k), so the fused last pass runs copies q and s − q together (lanes up
+  and down), and the c2r chain's first pass likewise groups p and m − p, forming each Z
+  pair once on loading; copies (groups) 0 and s/2 are one unit with one element per lane.
+  The transform needs no DIT chain: the decimation-in-frequency chain's first pass takes
+  the c2r pairing as it is. Fusion pays only where the pass stays in registers and in L1
+  (X6's table): the rule (`fusion_of`, core/plan_core.cpp) fuses into a codelet pass of
+  radix at most 8 (4 on avx2, unmeasured), with at least 4 registers of copies per mirror
+  half, and for r2c only while the half spectrum fits L1; the chain's radices are
+  reordered to bring such a radix to that end. This is the "eligibility by live-value
+  count" of the plan, in its simplest form: two butterflies of radix R hold 2R registers.
+- *Leaf*: h ≤ 16, one codelet call with the pairing in registers.
+- *Separate*: a pairing pass over the h + 1 values of the complex side, in place: after a
+  c2c line written into the output (r2c) or before a c2c line run in place there (c2r,
+  which keeps the input intact). Used where the edge pass is a Bluestein stage or a
+  generic pass, where the rule declines, and after (r2c) or before (c2r) a grid.
+- *Grid*: a real row of one axis whose half-length transform would be a grid as a c2c row
+  (section 8.5) runs the grid on the reals read as complex values, through the grid
+  builder unchanged (c2r rereads the output slot for the input: `read_output_for_input`).
+  Fusing the pairing into the grid's last (first) phase is not built.
+- *Strided*: a line with a stride other than 1 (allowed out of place) packs its reals into
+  scratch and pairs at any stride, one element at a time, as before task 2.1.
+- *Full*: odd n through the full-length complex chain, as before (X6).
+
+Measured on the Mac (X6, fbench run 20261114-135716-0600): real overhead 2–16 % for rows
+beyond L1 (grid plus separate pairing) and 15–43 % within it (r2c 39–43 %, c2r 15–28 %);
+the 20 % target within L1 needs X6's real-input codelets.
 
 c2r preserves its input by default; with permission to destroy it the planner may take a
 faster route. A multi-dimensional c2r that preserves its input needs scratch for the
@@ -2392,6 +2434,7 @@ to change before a release.
 | 2026-11-14 | A Bluestein stage stores its chirp (Q entries, or sQ when C does not divide s) and kernel spectrum (M entries) once, shared by the copies and by the axes of a plan; the kernel is the forward chain's last output factor when C divides s, else the backward chain's first input factor (task 2.3b, X17 follow-up) | Per-element tables took 889 MB at n = 17 · 2²⁰; shared, under 1 KB, at the same speed or faster (to 0.84 times with many copies); the input form alone was about 5 % slower where the last pass could take it |
 | 2026-11-14 | NEON cost tables (C = 1, 2) from X2's Mac campaign; plain `neon` uses them | Against the AVX2 tables NEON had used, 3.6 % faster on the Mac over 496 cases from 17 to 1024 (124 faster, 9 slower, band 1.7 %, run 20261114-101523-3d56); the three lengths that were 1.25–1.40 times slower keep the old choice as overrides |
 | 2026-11-14 | Planner v1's cost tables are keyed by target and C; a target and C without one take AVX2's table of the nearest C, as before. The X2 fit is a tracked tool (`bench/x2/fit.py`) | An `avx512` table (X16) and NEON tables (X2 on the Mac) drop in as rows; the search and every current choice (`rule_radices.txt`) are unchanged |
+| 2026-11-14 | Real transforms (task 2.1, section 9.1): even lines read their reals in place as complex values; the pairing of bins k and h − k is fused into the r2c chain's last pass or the c2r chain's first pass (mirror copies or groups together, each pair formed once) when that pass's radix is at most 8 (4 on avx2) and for r2c the half spectrum fits L1, a leaf for h ≤ 16, and otherwise a separate pass in place on the complex side; long rows run the half-length transform as a grid with a separate pairing; the c2r pairing fuses into the DIF chain's first pass, so no DIT chain is built | Fused and separate pairing measured against each other on the Mac (X6): fusion wins by 10–15 points of overhead with radix 8 in L1 and loses with radix 16 or beyond L1 (register spills, conflict misses across 4R streams a power of two apart); the old route's pack, scalar post and unpack passes cost 50–165 % over the half-length complex time |
 | 2026-11-14 | The grid strategy (task 1.7, section 8.5): decimation in frequency in two or three blocked phases, gathers and scatters around a chain of lane passes on tight scratch, the transpose folded into phase 1's store; chosen for c2c rows beyond the L1 data cache, three phases beyond an eighth of L2; loops carry a twiddle cursor | X12: on the Mac the chain ran 1.85–2.84 times FFTW's time from 2^14 to 2^22 points; the grid ran 0.47–0.71 of the chain's time there, 1.08–1.43 times FFTW's (fbench run 20261114-110844-8b03). Two phases lose beyond L2 because their blocks must narrow to keep a phase in L1; three lose while the row fits L2 |
 | 2026-11-14 | The serial driver runs a stage's chunks as one call and divides only when a range starts mid-stage; a chain uses a contiguous, unaliased destination as its second scratch line (experiment X18) | 64-bit division costs 40–90 cycles on Cascade Lake (37 % of a 64-point transform there); three lines instead of four keep 512–1024-point rows in a 32 KiB L1 longer. Xeon 1.50 → 1.25 of FFTW, EPYC 1.37 → 1.29; the driver and scratch changes keep every bit, the AVX2 overrides for 4096 and 16384 (also reached by C ≤ 2 targets without a table of their own) change those lengths' radices and so their bits |
 | 2026-11-14 | Grid phases whose radices are all at most 8 read and write their rows in their end passes rather than through a gather and a scatter, for rows up to `grid_fuse_bytes` (a quarter of L2); elsewhere the copies stay (task 1.7b) | X12 (Mac, runs 20261114-131752-7e99 and -132841-80e0): 2^18 from 1.03 to 0.92 times FFTW; radix 16 at the ends doubled the time (set conflicts), one fused end gained nothing, and beyond L2 the copies' prefetch won (2^20 1.46 fused against 1.35) |

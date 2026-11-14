@@ -1,0 +1,30 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Experiment X6's cases (dev/experiments/X6-real-codelets.md) and PLAN task 2.1's
+# acceptance: the standard catalogue's real rows of the tracking tier beside the c2c rows of
+# half their length, so that one run gives the real overhead time(r2c n) / time(c2c n/2) - 1;
+# double and single precision. Odd lengths for the real-input codelets' odd route.
+
+[catalogue]
+name = "x6"
+
+[[group]]
+name = "x6-real"
+kind = ["r2c", "c2r"]
+dims = [256, 1000, 4096, 65536, 1048576]
+precision = ["f64", "f32"]
+tiers = ["tracking"]
+
+[[group]]
+name = "x6-half"
+kind = "c2c"
+dims = [128, 500, 2048, 32768, 524288]
+precision = ["f64", "f32"]
+tiers = ["tracking"]
+
+[[group]]
+name = "x6-odd"
+kind = ["r2c", "c2c"]
+dims = [999, 4095, 6561]
+precision = ["f64", "f32"]

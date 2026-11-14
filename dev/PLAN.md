@@ -6,12 +6,21 @@ session; update a phase when its tasks or findings change.
 
 ## Status
 
-**As of 2026-11-14, morning.** Phase 0 done except the Xeon client-catalogue baseline.
-Phase 1: 1.1, 1.2 and 1.3a (`avx512`, plain `neon`) merged; planner v1 (measured pass
-costs per C, exact search; experiment X2 on the EPYC) replaced planner v0. 1.3b (`x86_v2`,
-`avx`, non-FMA order, X14) later. Phase 3: 3.1–3.3 merged (team engine, pool, executors,
-OpenMP adapter) with the scheduler fixes from T1. While FFTN is an experiment the merge
-gate is light (AGENTS 3): merge when it runs and is correct.
+**As of 2026-11-14, evening.** Phase 0 done except the Xeon client-catalogue baseline.
+Merged today: 1.3a, planner v1 with NEON tables (X2), X8 (radix 32/64 codelets; a 32-point
+leaf on NEON double), 1.7 and 1.7b with X4 (grid strategy, fused phase passes, staggered
+scratch), 2.1 (fused real transforms), 2.3 and 2.3b (Bluestein, shared tables), X18 (x86
+driver and scratch fixes), X16 rule 1, X10 (rejected). Where FFTN stands (FFTN ÷ FFTW):
+Mac smooth c2c rows 0.75–1.03, primes from 97 0.64–1.28, long rows 0.92–1.37, real
+256–4096 0.82–0.96; Xeon (AVX-512) about 1.17–1.29, EPYC about 1.32 (x86 kernels are the
+open problem, see X18/X10/X19). Lessons that generalise are collected in
+[LESSONS.md](LESSONS.md).
+
+In flight (claims): X19 (generator ±i rotations; reviewed, merging after regeneration on
+main), 1.5/X1 (split lowering on x86), 1.6/X3 (radix 32/64 passes; radix 32 wins on AVX-512
+float), X12b (grid thresholds per machine: the grid starts too early on x86); T1/T5 done
+on branch `exp/t1-t5-constants` (threading constants; awaiting review). Small follow-ups recorded: X16's
+precision split on Cascade Lake (avx512 for double, avx2 for float), X2's refit above 1024.
 
 Done in phase 0 (details in the merge commits and the decision log):
 
@@ -34,19 +43,14 @@ machines; competitor baselines against FFTW at MEASURE (PATIENT on the quick tie
 EPYC (tracking, client catalogue), the Xeon (tracking) and the Mac (tracking, client
 catalogue). Still to do: the Xeon client catalogue.
 
-Next actions: finish X2 (planner v1 against v0 over all 1-D rows on the EPYC; the Mac
-campaign and lengths above 1024; tables for NEON) → X16 (`avx512` against `avx2`, its own
-table or an R × C transpose) → 1.4 (X4, X8) → 1.3b and X14. In parallel: T1 and T5 are done
-(profile constants set; their follow-up is a dispatch cost that grows with the team's width,
-DESIGN 18.2 item 22), then the rest of 3.4 (T2, T4) and 3.5 (Kokkos executor). A cloud check for the
-phase 1 exit is authorised up to USD 20 (ledger in the experiment file).
+Next actions: merge X19; land X1 and X3 (x86 kernels and passes) and X12b; then
+tiny-size overhead (fixed cost per call), X6 (real-input codelets), the X2 refit, and the
+phase 1 exit cloud checks (≤ USD 20: a recent Intel Xeon with MKL, a Zen 4/5, a Neoverse).
+In parallel: T1 and T5 are done (profile constants set; their follow-up is a dispatch cost
+that grows with the team's width, DESIGN 18.2 item 22), then the rest of 3.4 (T2, T4) and
+3.5 (Kokkos executor).
 
 Open questions: see DESIGN.md section 18.2.
-
-Claims (2026-11-14): the lead session holds X2, T1, T5 and the baselines. Task 1.6's
-radix 32 and 64 codelets are generated and wired (every pass kind; the planner prices
-radices up to 16 only); X8 set the leaf limit to 32 on NEON in double; the codelets double
-the kernel code (B3 numbers in X8) and stay, for the grid and X3.
 
 Baseline runs (fbench run IDs): EPYC 7763-class node (GCC 16): tracking
 20261113-230721-7c95 failed (PATIENT timeout), re-run without PATIENT; pocketfft re-run with
@@ -56,18 +60,11 @@ Xeon Gold 6240 (GCC 14): tracking 20261114-004852-f498. Mac (NEON FFTW): client 
 1.11 against FFTW (FFTN 2.20 on the same run: ahead on smooth rows ≤ 4096, far behind on
 primes, long rows and real transforms, which phases 1.7 and 2 build).
 
-Handoff notes: remote gates go to DMOG first (`gate-dmog.sbatch`; LSan off there, ptrace is
-forbidden on its nodes); the Xeon is shared with heavy users outside Slurm, so time there
-with fbench's load-tolerant rounds (its A/A band shows the noise). Keep the Mac quiet
-while an fbench run that needs it is going.
-
-Task 1.7 (branch `task/1.7-grid`): the grid strategy (DESIGN.md 8.5 as built, X12) is the
-default for c2c rows beyond L1; X12's x86 runs (EPYC, Xeon) and the tuning of its profile
-fields there are open, as are 2^14, 2^20 and 2^22 points on the Mac (1.28–1.37 times FFTW in
-run 20261114-132841-80e0; 2^16 and 2^18 within 1.25). Task 1.7b (branch
-`task/1.7b-grid-fusion`) fused the copies into the end passes of small-radix phases within
-L2/4 (2^18 to 0.92); the remaining cases need fewer or cheaper passes over memory (larger
-codelets, padded work arrays), not fusion (X12).
+Handoff notes: remote gates go to DMOG first (`gate-dmog.sbatch`, `--mem=96G`, and 160G with
+4 hours for sanitizer builds of the radix-64 codelets; LSan off there, ptrace is forbidden on
+its nodes). The Xeon is shared: small allocations (`-c 8`), never exclusive. Timing uses
+fbench's load-tolerant rounds everywhere; add rounds rather than waiting for quiet. Build
+once with the Mac's GCC 16 before a remote round trip (GCC-only warnings).
 
 ## How this plan works
 
@@ -251,7 +248,7 @@ running, done (with verdict).
 | X3 | Few big passes (radix 16–64, in the output buffer) against chains for rows of 8–64 thousand points; spill counts per codelet and target. The prototype's radix 20–32 attempts lost everywhere: find out whether generated, ordered codelets change that | 1 | planned |
 | [X4](experiments/X4-padding.md) | Padding: incremental addressing cost; pad always, never, or only where the stream rule binds. Also: do edge passes gain from a variant chosen by the caller's base address (cache-line splits on wide registers)? | 1 | running: for the grid on the Mac, staggered scratch lines adopted (2^22 −8 %), padding the intermediate rejected; the chain's lines, x86 and edge-pass variants open |
 | X5 | Twiddle modes (full, shared, derived) by length and target | 1 | planned |
-| X6 | Real-input codelets against half-length complex with fused post/pre, even and odd n | 2 | planned |
+| [X6](experiments/X6-real-codelets.md) | Real-input codelets against half-length complex with fused post/pre, even and odd n | 2 | planned (needs the generator's pruned variants); the half-length route's fusion rule measured on the Mac (task 2.1) |
 | X7 | Lanes against in-row kernels for batches of short rows, by length, target and row count | 2 | planned |
 | [X8](experiments/X8-leaves.md) | Whole-transform leaves for n ≤ 64–256 against two- and three-stage chains | 1 | done: leaf limit 32 on NEON in double (16–22 % faster), 16 elsewhere; no leaf of 64 |
 | X9 | Scrambled intermediate order for transform pairs | 5 | planned |
