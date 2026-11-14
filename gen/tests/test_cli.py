@@ -6,7 +6,10 @@ from __future__ import annotations
 
 import contextlib
 import io
+import os
 import struct
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -85,6 +88,28 @@ class Literals(unittest.TestCase):
 
     def test_float_literal_of_an_integer_is_valid_cpp(self) -> None:
         self.assertEqual(literal_float(mpmath.mpf(2)), "2.0F")
+
+    def test_output_does_not_depend_on_string_hashing(self) -> None:
+        # Two processes with different hash seeds (set and dict order of str keys would
+        # differ) must write byte-identical files. Run side by side to save time.
+        root = Path(__file__).resolve().parents[2]
+        with tempfile.TemporaryDirectory() as d:
+            runs = []
+            for seed in ("0", "4242"):
+                out = Path(d) / seed
+                env = {**os.environ, "PYTHONHASHSEED": seed}
+                runs.append(
+                    subprocess.Popen(
+                        [sys.executable, "-m", "gen.fftn_gen", "--out", str(out)],
+                        cwd=root,
+                        env=env,
+                        stdout=subprocess.DEVNULL,
+                    )
+                )
+            self.assertEqual([r.wait() for r in runs], [0, 0])
+            for name in generate(list(codelets())):
+                a = (Path(d) / "0" / name).read_bytes()
+                self.assertEqual(a, (Path(d) / "4242" / name).read_bytes(), name)
 
     def test_codelets_are_deterministic(self) -> None:
         from fftn_gen.catalogue import all_codelets
