@@ -42,6 +42,9 @@ function(fbench_add_backend library)
 endfunction()
 
 fbench_add_backend(fftn fftn::fftn)
+# The FFTN backend reaches one internal construction knob (build_settings::radices, for
+# experiment X2) through the library's private headers; the library itself is unchanged.
+target_include_directories(fbench-fftn PRIVATE ${PROJECT_SOURCE_DIR}/src)
 
 # FFTW only from an explicit installation: never a default search path, so that a
 # handicapped build (Homebrew's FFTW has no SIMD on arm64) cannot be picked up by accident

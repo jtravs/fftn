@@ -57,12 +57,23 @@ other arm is compared with it. The label may be omitted (it defaults to the libr
 | `PLANNER=ESTIMATE\|MEASURE\|PATIENT\|EXHAUSTIVE` | fftw | planning effort (default MEASURE) |
 | `WISDOM=run\|none\|<file>` | fftw | wisdom: fresh per run and shared by that run's processes with the same binary and planner (default), none at all, or imported read-only from a file |
 | `API=dft\|interleaved` | accelerate | vDSP's split-complex DFT with conversions (default) or its interleaved DFT (see below) |
+| `RADICES=r1.r2...` | fftn | the chain's radices in pass order, for c2c rows whose length they multiply to (see below) |
 | `DELAY=<fraction>` | any (test only) | spin for that fraction of every measured batch: a seeded slowdown that proves the statistics |
 | `PERTURB=<eps>` | any (test only) | multiply every output value by 1 ± eps before the check: proves the correctness guard |
 
 `DELAY` and `PERTURB` are benchmark switches, not library switches: they never reach a
 library, so [`dev/KNOBS.toml`](../dev/KNOBS.toml) does not list them. A backend refuses
 options it does not know.
+
+`RADICES` forces FFTN's chain to a radix sequence, for example `B=fftn+RADICES=4.8.8` for
+length 256: the backend builds its plans through the plan core behind `fftn::plan` with
+`build_settings::radices` (an internal test knob in `src/core/plan_core.hpp`, not public
+API, so not in `dev/KNOBS.toml`). Every case of the run must be a c2c row whose length the
+radices multiply to; any other case is an error, and so is a radix that no pass of the
+target takes. Without options the FFTN backend's plans are exactly the public API's.
+`describe` (and the run record) shows the forced sequence; every case's `note` in the store
+names the radices its plan used. Experiment X2 drives it
+([dev/experiments/X2-radix-sets.md](../dev/experiments/X2-radix-sets.md)).
 
 ## `run`: how an A/B works
 
