@@ -182,7 +182,7 @@ struct case_spec {
 };
 
 // One line of `key=value` tokens: id, kind (c2c, r2c, c2r), dims (e.g. 64x48), batch,
-// place (in, out) and, for c2c, sign (-1, +1).
+// place (in, out), for c2c sign (-1, +1), and prec (f64, the default, or f32).
 case_spec parse_case(const std::string& line) {
   case_spec c;
   std::int32_t kind = fbench_c2c;
@@ -191,6 +191,7 @@ case_spec parse_case(const std::string& line) {
   std::int64_t batch = 1;
   int sign = -1;
   bool in_place = false;
+  std::int32_t precision = fbench_f64;
   std::size_t at = 0;
   while (at < line.size()) {
     const std::size_t end = std::min(line.find(' ', at), line.size());
@@ -237,6 +238,11 @@ case_spec parse_case(const std::string& line) {
       in_place = val == "in";
     } else if (key == "sign") {
       sign = parse_number<int>(val, key);
+    } else if (key == "prec") {
+      if (val != "f64" && val != "f32") {
+        throw std::invalid_argument("prec is f64 or f32");
+      }
+      precision = val == "f32" ? fbench_f32 : fbench_f64;
     } else {
       throw std::invalid_argument("unknown case key " + std::string(key));
     }
@@ -244,7 +250,7 @@ case_spec parse_case(const std::string& line) {
   if (c.id.empty() || rank == 0) {
     throw std::invalid_argument("a case needs id and dims");
   }
-  c.layout = fbench::make_layout(kind, rank, dims, batch, sign, in_place);
+  c.layout = fbench::make_layout(kind, rank, dims, batch, sign, in_place, precision);
   return c;
 }
 
@@ -293,8 +299,9 @@ struct buffer_sets {
 
 class timer {
 public:
+  // pristine: the input in the case's precision, l.buffer_bytes_in bytes.
   timer(const void* plan, const fbench::layout& l, const buffer_sets& sets,
-        const std::vector<double>& pristine)
+        const std::vector<std::byte>& pristine)
       : plan_(plan), sets_(sets), pristine_(pristine), bytes_(l.buffer_bytes_in) {
     // In-place transforms and c2r (whose input FFTW's default plans destroy) change their
     // own input. Unnormalised transforms grow by about sqrt(n) per call, so the input is
@@ -346,18 +353,35 @@ public:
 private:
   const void* plan_;
   const buffer_sets& sets_;
-  const std::vector<double>& pristine_;
+  const std::vector<std::byte>& pristine_;
   std::size_t bytes_;
   bool restore_ = false;
   std::int64_t chunk_ = 1;
   std::size_t cursor_ = 0;
 };
 
+// Whether the backend's describe lists "f32" among its "precisions".
+bool takes_f32() {
+  const std::string text = fbench_describe();
+  const std::string key = R"("precisions":[)";
+  const std::size_t at = text.find(key);
+  if (at == std::string::npos) {
+    return false;
+  }
+  const std::size_t end = text.find(']', at);
+  return text.substr(at, end - at).find(R"("f32")") != std::string::npos;
+}
+
 std::string run_case(const case_spec& c, const settings& s) {
   const fbench::layout& l = c.layout;
   const std::uint64_t seed = hash(c.id) ^ s.seed;
   fbench::json out;
   out.str("type", "case").str("id", c.id);
+  if (l.precision == fbench_f32 && !takes_f32()) {
+    return out.str("status", "unsupported")
+        .str("message", "the backend lists no f32 among its precisions")
+        .object();
+  }
 
   buffer_sets sets;
   sets.in_place = l.in_place;
@@ -389,17 +413,46 @@ std::string run_case(const case_spec& c, const settings& s) {
         .object();
   }
 
-  // Correctness: one execute on the deterministic input, against the reference.
-  std::vector<double> pristine(l.buffer_bytes_in / sizeof(double));
-  fbench::fill_input(l, pristine.data(), seed);
+  const std::string note = message.data();
+
+  // Correctness: one execute on the deterministic input, against the reference. The
+  // reference sees exactly the values the library sees: in single precision, the input
+  // rounded to float (rounding keeps the c2r input's Hermitian symmetry).
+  const bool single = l.precision == fbench_f32;
+  std::vector<double> reference_in(l.reals_in());
+  fbench::fill_input(l, reference_in.data(), seed);
+  std::vector<std::byte> pristine(l.buffer_bytes_in);
+  if (single) {
+    std::vector<float> rounded(reference_in.size());
+    for (std::size_t i = 0; i < rounded.size(); ++i) {
+      rounded[i] = static_cast<float>(reference_in[i]);
+      reference_in[i] = static_cast<double>(rounded[i]);
+    }
+    std::memcpy(pristine.data(), rounded.data(), l.buffer_bytes_in);
+  } else {
+    std::memcpy(pristine.data(), reference_in.data(), l.buffer_bytes_in);
+  }
   std::memcpy(sets.input(0), pristine.data(), l.buffer_bytes_in);
   fbench_execute(plan.get(), sets.input(0), sets.output(0));
+  std::vector<double> widened;
+  void* result = sets.output(0);
+  if (single) {
+    widened.resize(l.reals_out());
+    const auto* y = static_cast<const float*>(sets.output(0));
+    for (std::size_t i = 0; i < widened.size(); ++i) {
+      widened[i] = static_cast<double>(y[i]);
+    }
+    result = widened.data();
+  }
   if (s.perturb != 0.0) {
-    fbench::perturb_output(l, sets.output(0), s.perturb, seed);
+    fbench::perturb_output(l, result, s.perturb, seed);
   }
   const fbench::check_result chk =
-      fbench::check_output(l, pristine.data(), sets.output(0), s.check_budget, seed);
+      fbench::check_output(l, reference_in.data(), result, s.check_budget, seed);
   out.str("status", "ok").num("plan_s", plan_s);
+  if (!note.empty()) {
+    out.str("note", note);
+  }
   out.raw("check", fbench::json()
                        .boolean("pass", chk.pass)
                        .integer("rows", chk.rows)

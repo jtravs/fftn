@@ -42,7 +42,8 @@ std::size_t idx(std::int64_t i) { return static_cast<std::size_t>(i); }
 double half_weight(std::int64_t k, std::int64_t n) { return (k == 0 || 2 * k == n) ? 1.0 : 2.0; }
 
 side make_side(bool complex, int rank, const std::array<std::int64_t, 3>& dims,
-               std::int64_t last_logical, std::int64_t last_phys, std::int64_t batch) {
+               std::int64_t last_logical, std::int64_t last_phys, std::int64_t batch,
+               std::size_t real_bytes) {
   side s;
   s.complex = complex;
   s.rank = rank;
@@ -55,7 +56,7 @@ side make_side(bool complex, int rank, const std::array<std::int64_t, 3>& dims,
   }
   s.dist = outer * last_phys;
   s.count = outer * last_logical;
-  s.bytes = static_cast<std::size_t>(batch * s.dist) * (complex ? 16U : 8U);
+  s.bytes = static_cast<std::size_t>(batch * s.dist) * (complex ? 2 * real_bytes : real_bytes);
   return s;
 }
 
@@ -216,18 +217,24 @@ fbench_case layout::to_case() const {
       .out_last = out.last_phys,
       .in_dist = in.dist,
       .out_dist = out.dist,
+      .precision = precision,
   };
 }
 
 layout make_layout(std::int32_t kind, int rank, const std::array<std::int64_t, 3>& dims,
-                   std::int64_t batch, int sign, bool in_place) {
+                   std::int64_t batch, int sign, bool in_place, std::int32_t precision) {
   if (rank < 1 || rank > 3) {
     throw std::invalid_argument("rank must be 1, 2 or 3");
   }
   if (batch < 1) {
     throw std::invalid_argument("batch must be at least 1");
   }
+  if (precision != fbench_f64 && precision != fbench_f32) {
+    throw std::invalid_argument("unknown precision");
+  }
   layout l;
+  l.precision = precision;
+  l.real_bytes = precision == fbench_f32 ? sizeof(float) : sizeof(double);
   l.kind = kind;
   l.rank = rank;
   l.batch = batch;
@@ -249,16 +256,16 @@ layout make_layout(std::int32_t kind, int rank, const std::array<std::int64_t, 3
       throw std::invalid_argument("sign must be -1 or +1");
     }
     l.sign = sign;
-    l.in = make_side(true, rank, l.dims, n_last, n_last, batch);
+    l.in = make_side(true, rank, l.dims, n_last, n_last, batch, l.real_bytes);
     l.out = l.in;
   } else if (kind == fbench_r2c) {
     l.sign = -1;
-    l.in = make_side(false, rank, l.dims, n_last, padded, batch);
-    l.out = make_side(true, rank, l.dims, half, half, batch);
+    l.in = make_side(false, rank, l.dims, n_last, padded, batch, l.real_bytes);
+    l.out = make_side(true, rank, l.dims, half, half, batch, l.real_bytes);
   } else if (kind == fbench_c2r) {
     l.sign = 1;
-    l.in = make_side(true, rank, l.dims, half, half, batch);
-    l.out = make_side(false, rank, l.dims, n_last, padded, batch);
+    l.in = make_side(true, rank, l.dims, half, half, batch, l.real_bytes);
+    l.out = make_side(false, rank, l.dims, n_last, padded, batch, l.real_bytes);
   } else {
     throw std::invalid_argument("unknown kind");
   }
@@ -273,7 +280,7 @@ layout make_layout(std::int32_t kind, int rank, const std::array<std::int64_t, 3
 
 void fill_input(const layout& l, void* in, std::uint64_t seed) {
   auto* x = static_cast<double*>(in);
-  std::memset(in, 0, l.buffer_bytes_in);
+  std::fill_n(x, l.reals_in(), 0.0);
   std::uint64_t rng = seed;
   for (std::int64_t b = 0; b < l.batch; ++b) {
     for (std::int64_t i = 0; i < l.in.count; ++i) {
@@ -347,8 +354,9 @@ check_result check_output(const layout& l, const void* in, const void* out, std:
   const auto* x = static_cast<const double*>(in);
   const auto* y = static_cast<const double*>(out);
   check_result r;
-  r.tol = 10.0 * std::numeric_limits<double>::epsilon() *
-          (1.0 + std::log2(static_cast<double>(l.n_total)));
+  const double eps = l.precision == fbench_f32 ? std::numeric_limits<float>::epsilon()
+                                               : std::numeric_limits<double>::epsilon();
+  r.tol = 10.0 * eps * (1.0 + std::log2(static_cast<double>(l.n_total)));
   std::vector<root_table> roots;
   roots.reserve(static_cast<std::size_t>(l.rank));
   for (int d = 0; d < l.rank; ++d) {
@@ -462,8 +470,8 @@ std::string check_impulses() {
   };
   constexpr std::int64_t big_budget = std::int64_t{1024} * 1024;
   for (const shape& s : shapes) {
-    const layout l = make_layout(s.kind, s.rank, s.dims, 3, -1, false);
-    std::vector<double> x(l.buffer_bytes_in / sizeof(double));
+    const layout l = make_layout(s.kind, s.rank, s.dims, 3, -1, false, fbench_f64);
+    std::vector<double> x(l.reals_in());
     std::vector<double> y(std::max(l.out.bytes, l.buffer_bytes_in) / sizeof(double));
     impulse_case(l, s.at, x.data(), y.data());
     const check_result good = check_output(l, x.data(), y.data(), big_budget, 1);

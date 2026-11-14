@@ -469,13 +469,15 @@ def smoke_one(
 ) -> None:
     """One backend with one option set over the smoke cases, then the guard's self-check."""
     name = "+".join([library, *(f"{k}={v}" for k, v in opts.items())])
-    # Unsupported cases fail for the kinds a backend says it supports. A kind it supports
-    # only partly (some lengths or ranks) must still pass somewhere, so that a backend that
-    # turns everything down is not counted as correct; that needs cases chosen to contain
-    # such lengths (the standard smoke tier), so other selections skip it.
+    # Unsupported cases fail for the kinds and precisions a backend says it supports. A kind
+    # it supports only partly (some lengths or ranks) must still pass somewhere, so that a
+    # backend that turns everything down is not counted as correct; that needs cases chosen
+    # to contain such lengths (the standard smoke tier), so other selections skip it.
     supported = set(info.get("supports", []))
     partial = set(info.get("partial", []))
+    precisions = set(info.get("precisions", ["f64"]))
     kind_of = {c.id: c.kind for c in cases}
+    precision_of = {c.id: c.precision for c in cases}
     options = options_text(opts)
     base = ["--cases", str(work / "cases.txt"), "--options", options, "--check-only"]
     _, results, error = run_process(exe, base, timeout)
@@ -498,7 +500,8 @@ def smoke_one(
                 )
         elif res.get("status") == "unsupported":
             counts["unsupported"] += 1
-            if kind_of.get(res.get("id", "")) in supported:
+            cid = res.get("id", "")
+            if kind_of.get(cid) in supported and precision_of.get(cid) in precisions:
                 failures.append(
                     f"{name} {res['id']}: unsupported, but {library} declares "
                     f"{kind_of[res['id']]} supported"

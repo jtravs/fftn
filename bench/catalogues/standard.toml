@@ -44,6 +44,16 @@ place = ["out", "in"]
 tiers = ["smoke"]
 
 [[group]]
+name = "smoke-single"
+note = "single precision, for the backends that list f32 among their precisions"
+kind = ["c2c", "r2c", "c2r"]
+dims = [8, 60, 97, 1024, "16x12"]
+batch = 2
+place = ["out", "in"]
+precision = "f32"
+tiers = ["smoke"]
+
+[[group]]
 name = "smoke-volumes"
 kind = ["c2c", "r2c", "c2r"]
 dims = ["4x6x8", "3x5x4"]

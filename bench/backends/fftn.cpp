@@ -1,31 +1,31 @@
 // SPDX-FileCopyrightText: 2026 John C. Travers and contributors
 // SPDX-License-Identifier: Apache-2.0
 
-// fbench backend for FFTN, through its public API: one plan and one workspace per case.
+// fbench backend for FFTN: one plan and one workspace per case.
 //
-// Every case of rank 1 to 3 and every kind is supported, in double precision, with FFTW's
-// embedding (in_last, out_last) and distances. FFTN has no plan options yet, so any option
-// is refused. describe reports the instruction set FFTN's plans choose on this machine
-// (every plan of the walking skeleton chooses the same one).
+// Every case of rank 1 to 3 and every kind is supported, in double and single precision,
+// with FFTW's embedding (in_last, out_last) and distances. Plans are built and executed
+// through the plan core behind fftn::plan (include/fftn/detail/core.hpp), with the calls
+// plan's constructor and execute make. FFTN has no plan options yet, so any option is
+// refused. describe reports the instruction set FFTN's plans choose on this machine; every
+// case's note is its plan's per-axis line (the radices it uses).
 
 #include "harness/backend.hpp"
 #include "harness/json.hpp"
 
 #include <fftn/fftn.hpp>
 
+#include <algorithm>
 #include <complex>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <exception>
 #include <memory>
-#include <optional>
 #include <string>
 #include <string_view>
 
 namespace {
-
-using cplx = std::complex<double>;
 
 std::string& description() {
   static std::string text;
@@ -33,9 +33,7 @@ std::string& description() {
 }
 
 struct plan_record {
-  std::optional<fftn::c2c_plan<double>> c2c;
-  std::optional<fftn::r2c_plan<double>> r2c;
-  std::optional<fftn::c2r_plan<double>> c2r;
+  std::shared_ptr<const fftn::detail::plan_core> core;
   fftn::workspace ws;
 };
 
@@ -66,6 +64,41 @@ template <class In, class Out> fftn::shape<In, Out> shape_of(const fbench_case& 
   return s;
 }
 
+template <class In, class Out>
+std::shared_ptr<const fftn::detail::plan_core> core_of(const fbench_case& c,
+                                                       const fftn::options& opts) {
+  const fftn::shape<In, Out> s = shape_of<In, Out>(c);
+  return fftn::detail::make_plan_core(fftn::detail::view_of(s), opts);
+}
+
+template <class T>
+std::shared_ptr<const fftn::detail::plan_core> core_of(const fbench_case& c,
+                                                       const fftn::options& opts) {
+  using cplx = std::complex<T>;
+  if (c.kind == fbench_c2c) {
+    return core_of<cplx, cplx>(c, opts);
+  }
+  if (c.kind == fbench_r2c) {
+    return core_of<T, cplx>(c, opts);
+  }
+  return core_of<cplx, T>(c, opts);
+}
+
+// The plan's per-axis lines of its describe, joined by "; ".
+std::string axis_lines(const std::string& describe) {
+  std::string out;
+  std::size_t at = 0;
+  while (at < describe.size()) {
+    const std::size_t end = std::min(describe.find('\n', at), describe.size());
+    const std::string_view line = std::string_view(describe).substr(at, end - at);
+    if (line.starts_with("axis ")) {
+      out += (out.empty() ? "" : "; ") + std::string(line);
+    }
+    at = end + 1;
+  }
+  return out;
+}
+
 } // namespace
 
 extern "C" {
@@ -80,8 +113,8 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
                       .str("library", "fftn")
                       .str("version", fftn::version())
                       .str("isa", fftn::isa_name(probe.instruction_set()))
-                      .str("precision", "double")
                       .raw("supports", R"(["c2c","r2c","c2r"])")
+                      .raw("precisions", R"(["f64","f32"])")
                       .str("strategy", "chain")
                       .inner();
   return fbench_ok;
@@ -97,15 +130,11 @@ std::int32_t fbench_create(const fbench_case* c, void* /*in*/, void* /*out*/, vo
   try {
     auto record = std::make_unique<plan_record>();
     const fftn::options opts{.in_place = c->in_place != 0};
-    std::size_t bytes = 0;
-    if (c->kind == fbench_c2c) {
-      bytes = record->c2c.emplace(shape_of<cplx, cplx>(*c), opts).workspace_bytes();
-    } else if (c->kind == fbench_r2c) {
-      bytes = record->r2c.emplace(shape_of<double, cplx>(*c), opts).workspace_bytes();
-    } else {
-      bytes = record->c2r.emplace(shape_of<cplx, double>(*c), opts).workspace_bytes();
-    }
-    record->ws = fftn::workspace(bytes);
+    record->core =
+        c->precision == fbench_f32 ? core_of<float>(*c, opts) : core_of<double>(*c, opts);
+    const std::string described = fftn::detail::describe(*record->core);
+    record->ws = fftn::workspace(fftn::detail::workspace_bytes(*record->core, 1));
+    std::snprintf(message, message_size, "%s", axis_lines(described).c_str());
     *plan = record.release();
     return fbench_ok;
   } catch (const std::exception& e) {
@@ -118,13 +147,8 @@ std::int32_t fbench_create(const fbench_case* c, void* /*in*/, void* /*out*/, vo
 void fbench_execute(const void* plan, void* in, void* out) {
   // The workspace is scratch, so a const plan record may lend it out.
   auto* r = const_cast<plan_record*>(static_cast<const plan_record*>(plan));
-  if (r->c2c) {
-    r->c2c->execute(static_cast<const cplx*>(in), static_cast<cplx*>(out), r->ws);
-  } else if (r->r2c) {
-    r->r2c->execute(static_cast<const double*>(in), static_cast<cplx*>(out), r->ws);
-  } else if (r->c2r) {
-    r->c2r->execute(static_cast<const cplx*>(in), static_cast<double*>(out), r->ws);
-  }
+  // What plan<In, Out>::execute does (include/fftn/plan.hpp).
+  fftn::detail::execute_core(*r->core, 0, fftn::detail::transform_count(*r->core), in, out, r->ws);
 }
 
 void fbench_destroy(void* plan) {
