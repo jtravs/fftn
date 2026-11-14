@@ -329,7 +329,10 @@ slot grid_builder<T>::phase_chain(std::size_t n, const std::vector<std::size_t>&
         v = phase_plain_out_scale;
       }
       st.run = kernels_.passes.codelet[radix].phase[d][v];
-      st.args.scale = big_in ? in_scale : out_scale;
+      // The scale of the variant chosen: a single pass is both a phase's read and its write.
+      st.args.scale = v == phase_twiddled_in_scale || v == phase_plain_in_scale ? in_scale
+                      : v == phase_plain_out_scale                              ? out_scale
+                                                                                : 1.0;
       st.args.src_stride = big_in ? from.row : static_cast<std::ptrdiff_t>(s);
       st.args.src_cols = big_in ? cols : 0;
       st.args.dst_stride =
