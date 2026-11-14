@@ -6,10 +6,12 @@ session; update a phase when its tasks or findings change.
 
 ## Status
 
-**As of 2026-11-14, early morning.** Phase 0 done except the Mac and Xeon client-catalogue
-baselines. Phase 1: 1.1 merged; 1.2 (passes, planner v0) in review fixes; 1.3 split into 1.3a
-(`avx512`, plain `neon`, in progress) and 1.3b (`x86_v2`, `avx`, non-FMA order, X14, later).
-Phase 3: 3.1–3.2 merged; 3.3 (OpenMP, pool, executors) in progress.
+**As of 2026-11-14, morning.** Phase 0 done except the Xeon client-catalogue baseline.
+Phase 1: 1.1, 1.2 and 1.3a (`avx512`, plain `neon`) merged; planner v1 (measured pass
+costs per C, exact search; experiment X2 on the EPYC) replaced planner v0. 1.3b (`x86_v2`,
+`avx`, non-FMA order, X14) later. Phase 3: 3.1–3.3 merged (team engine, pool, executors,
+OpenMP adapter) with the scheduler fixes from T1. While FFTN is an experiment the merge
+gate is light (AGENTS 3): merge when it runs and is correct.
 
 Done in phase 0 (details in the merge commits and the decision log):
 
@@ -27,33 +29,31 @@ Done in phase 0 (details in the merge commits and the decision log):
   the API changes freely until the first tagged release.
 - X15 done: no `omp simd` on scalar loops; old-ISA targets need hand vocabularies.
 
-Phase 0 exit: gate and CI green on all platforms (done); fbench self-tests trusted on the
-three machines (0.6); competitor baselines (FFTW at MEASURE as reference; PATIENT measured
-separately on the quick tier, since PATIENT planning in every process round exceeds fbench's
-one-hour process limit on the tracking tier): EPYC tracking and client catalogue, Xeon
-tracking (shared machine: noise band 4 %), stores under each machine's fbench work directory
-(run IDs in the overnight handoff below). Still to do: the Mac (its quiet check kept failing
-while agents built) and the Xeon client catalogue, both in quiet windows.
+Phase 0 exit: gate and CI green on all platforms; fbench self-tests trusted on the three
+machines; competitor baselines against FFTW at MEASURE (PATIENT on the quick tier) for the
+EPYC (tracking, client catalogue), the Xeon (tracking) and the Mac (tracking, client
+catalogue). Still to do: the Xeon client catalogue.
 
-Next actions (in order): 1.2 review fixes and merge (needs a rewrite of the radix rules
-from a specification: the first version followed FFTL.jl's code too closely for AGENTS 10)
-→ 1.3a → 1.3b and experiment X14 → 1.4 experiments (X2, X4, X8). In parallel: 3.3, then 3.4
-(experiments T1, T2, T5, T4) and 3.5 (Kokkos executor). A cloud check for the phase 1 exit is
-authorised up to USD 20 (ledger in the experiment file).
+Next actions: finish X2 (planner v1 against v0 over all 1-D rows on the EPYC; the Mac
+campaign and lengths above 1024; tables for NEON) → X16 (`avx512` against `avx2`, its own
+table or an R × C transpose) → 1.4 (X4, X8) → 1.3b and X14. In parallel: T1 and T5 verdicts
+and the profile constants, then 3.4 and 3.5 (Kokkos executor). A cloud check for the
+phase 1 exit is authorised up to USD 20 (ledger in the experiment file).
 
 Open questions: see DESIGN.md section 18.2.
 
-Claims (2026-11-14, lead session): 1.2 agent-passes (`task/1.2-passes`); 1.3a agent-isa
-(`task/1.3a-avx512-neon`); 3.3 agent-adapters (`task/3.3-adapters`); baselines: the lead.
+Claims (2026-11-14): the lead session holds X2, T1, T5 and the baselines.
 
 Baseline runs (fbench run IDs): EPYC 7763-class node (GCC 16): tracking
 20261113-230721-7c95 failed (PATIENT timeout), re-run without PATIENT; pocketfft re-run with
 `-march=native` after a first run built it without; PATIENT vs MEASURE on the quick tier done.
-Xeon Gold 6240 (GCC 14): tracking 20261114-004852-f498.
+Xeon Gold 6240 (GCC 14): tracking 20261114-004852-f498. Mac (NEON FFTW): client catalogue
+20261114-030832-198b.
 
 Handoff notes: remote gates go to DMOG first (`gate-dmog.sbatch`; LSan off there, ptrace is
 forbidden on its nodes); the Xeon is shared with heavy users outside Slurm, so time there
-only when it is quiet. Keep the Mac quiet while an fbench run that needs it is going.
+with fbench's load-tolerant rounds (its A/A band shows the noise). Keep the Mac quiet
+while an fbench run that needs it is going.
 
 ## How this plan works
 
@@ -232,7 +232,7 @@ running, done (with verdict).
 | [B2](experiments/B2-isa-regions-windows-clang.md) | The same on Windows with clang on the MSVC ABI (x64 and Arm64); how to detect FCMA and pointer authentication on Windows on Arm | 0 | done: regions hold; FCMA and PAuth read from the registry (task 0.8) |
 | B3 | Library build time and size as codelets and targets grow; which codelets are worth instantiating per target? | 1 | planned |
 | X1 | Complex-register against split arithmetic, per target (FCMA included) and pass position (first, middle, last; short and long rows) | 1 | planned |
-| X2 | Best radix sets and orders per target by exhaustive search over the standard lengths; how far are simple rules from the optimum? | 1 | planned |
+| [X2](experiments/X2-radix-sets.md) | Best radix sets and orders per target by exhaustive search over the standard lengths; how far are simple rules from the optimum? | 1 | running: EPYC done (v0 1.25× slower than best in double, 1.44× in single; planner v1 adopted); Mac, long lengths pending |
 | X3 | Few big passes (radix 16–64, in the output buffer) against chains for rows of 8–64 thousand points; spill counts per codelet and target. The prototype's radix 20–32 attempts lost everywhere: find out whether generated, ordered codelets change that | 1 | planned |
 | X4 | Padding: incremental addressing cost; pad always, never, or only where the stream rule binds. Also: do edge passes gain from a variant chosen by the caller's base address (cache-line splits on wide registers)? | 1 | planned |
 | X5 | Twiddle modes (full, shared, derived) by length and target | 1 | planned |
@@ -246,13 +246,14 @@ running, done (with verdict).
 | X14 | Is a separate `avx` target (256 bit, no FMA, no AVX2) worth keeping over `x86_v2` on Sandy Bridge-class machines? | 1 | planned |
 | X13 | Next-row prefetch and non-temporal stores per machine for out-of-cache batches | 2 | planned |
 | [X15](experiments/X15-compiler-vectorised-scalar.md) | What does a current compiler get from the scalar pass loops (`omp simd`, the scalar text in the `avx2` region, `-march=native` as a ceiling), against a hand vocabulary? | 0 | done: omp simd rejected (compiler-dependent); old targets need hand vocabularies |
+| X16 | `avx512` against `avx2` on AVX-512 machines: does `avx512` need its own cost table, or an R × C transpose for leading radices below C? | 1 | planned |
 | P1 | Cost-model accuracy: rank agreement with measurement across the catalogue per machine | 2 | planned |
 | P2 | Measurement budget: how many candidates and how long before the choice stops improving | 2 | planned |
-| T1 | Dispatch, wake and wait costs per machine and runtime (libgomp, libomp, Kokkos, pool) | 3 | planned |
+| [T1](experiments/T1-dispatch-wait-costs.md) | Dispatch, wake and wait costs per machine and runtime (libgomp, libomp, Kokkos, pool) | 3 | running (scheduler fixes merged) |
 | T2 | Claiming engine against precomputed schedule with spin barriers; keep one or both? | 3 | planned |
 | T3 | Kokkos: cost of one `parallel_for` per transform; `team_barrier` behaviour | 3 | planned |
 | T4 | Run-to-run swings with several concurrent teams: first touch, NUMA balancing, false sharing of synchronisation words | 3 | planned |
-| T5 | Thresholds for splitting a row, by cache-group type | 3 | planned |
+| [T5](experiments/T5-split-thresholds.md) | Thresholds for splitting a row, by cache-group type | 3 | running |
 | T6 | Hybrid processors: performance cores only, or all | 3 | planned |
 
 ## Machines

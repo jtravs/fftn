@@ -645,16 +645,15 @@ different things in the two families. The FMA names follow x86: `fmadd(a, b, c)`
 a·b + c, `fmsub` a·b − c, `fnmadd` c − a·b. `transpose` is a C × C block. An R × C form
 for radices below C (avx512: R = 2 for `double`, R = 2 and 4 for `float`) is not built: the
 grouped pass stores such radices, and every R that C does not divide, through its tile
-(section 8.2). Planner v0's rules (section 11.2) do not take C into account, and on
-`avx512` most lengths start with a radix below 8: 32 is 4 · 8, 64 is 4 · 16, 1024 is
-4 · 4 · 8 · 8, 360 is 4 · 2 · 5 · 9; of the lengths 17 to 4096 that take more than one
-pass, 644 of 3522 start with a radix of 8 or more (512 and 4096 among them). On `avx512`
-`float` (C = 8) the grouped pass therefore usually stores through the tile, and the next
-pass, with s = 4 < 8 copies, runs entirely as tail units, element by element. That is
-correct (the tests cover it) but is a performance risk for `avx512` `float`, and for
-`double` where the leading radix is 2 or 3. Whether to prefer a leading radix of at least C,
-or to build an R × C transpose, is for an experiment comparing `avx512` with `avx2` (X16,
-planned); the rules are not changed without one. The scalar target is never
+(section 8.2). Planner v0's rules (FFTL.jl's) did not take C into account, and on
+`avx512` most lengths started with a radix below 8 (32 as 4 · 8, 1024 as 4 · 4 · 8 · 8; of
+the lengths 17 to 4096 that take more than one pass, 644 of 3522 started with 8 or more).
+The grouped pass then stores through the tile and the next pass, with s = 4 < 8 copies in
+`float`, runs entirely as tail units, element by element: correct (the tests cover it) but
+slow. Planner v1 (section 11.2) counts those tails with C = 8 and so prefers a leading
+radix that C divides, but its costs on `avx512` are the AVX2 table's, unmeasured there.
+Whether `avx512` needs its own table or an R × C transpose is for an experiment comparing
+`avx512` with `avx2` (X16, planned). The scalar target is never
 fused, so it gives the same bits on every processor. The full contract is
 `src/isa/vocabulary.inl`.
 
@@ -899,8 +898,8 @@ run-time flag in its loop (the prototype measured 0–40 % for doing so).
 
 Which kind a pass is follows from its copy count s against the register's complex
 count C. In a DIF chain s is the product of the radices already applied, so a leading
-radix of at least C leaves only the first pass grouped; planner v0 does not yet take C into
-account (section 6.2 gives the consequence on `avx512`); with C = 1
+radix of at least C leaves only the first pass grouped; planner v1 prices tails per C
+(section 11.2; section 6.2 gives the consequence on `avx512`); with C = 1
 (NEON double) the distinction disappears. The copy counts that are not multiples of C
 (tails) never go through a mask or select inside the main loop. As built (task 1.2) they
 run the same instantiation on a padded tile: the last unit of a pass gathers its valid
@@ -918,7 +917,7 @@ parameter, everything else accessors; gen/README.md has the codelet calling conv
   butterflies p, per-lane twiddles, the R × C output block transposed in C × C blocks
   before contiguous stores when C divides R, and through a tile otherwise. On C = 1 it is
   the lane pass with s = 1. Passes with 1 < s < C (after a leading radix below C, which
-  planner v0 chooses for most lengths on `avx512`) are lane passes that run entirely as
+  planner v0 chose for most lengths on `avx512`; planner v1 avoids it where tails cost more) are lane passes that run entirely as
   tails.
 - The **lane** passes are the rest: lanes over copies q, one twiddle per leg shared by
   every lane (`bcast_tw`), the DIF codelet in the middle and the plain codelet in the last
@@ -2246,7 +2245,7 @@ to change before a release.
 | 2026-11-14 | `options::scale` is fused into the pass that writes the output, so the result is bitwise the unscaled result times the scale; `options::force_isa` with `isa::best` as in section 5.3 (pending the maintainer's agreement, 18.2) | A fused scale costs no pass (task 1.2's acceptance, tested); forcing is how the suites run every target |
 | 2026-11-14 | `avx512` (task 1.3): 512-bit registers for both precisions (C = 4 `double`, 8 `float`), target string `"avx2,fma,avx512f,avx512dq,avx512vl"`, twiddles pre-arranged as on `avx2`, `addj` and `subj` by `fmaddsub` and `fmsubadd` by ones, `transpose` by `vshuff64x2` (4 × 4 blocks of 128-bit units, and for `float` after an unpack into such blocks), every operation rounding as on `avx2` | The targets table (6.1); 4 complex numbers per register and 32 registers are the target's point. Recorded, not decided: Skylake-SP and Cascade Lake lower their clock while 512-bit floating-point instructions run (the AVX-512 licence levels), which a 256-bit form of this vocabulary (EVEX at ymm width, 16 or 32 registers) would avoid at half the width; Zen 4 executes 512-bit operations as two 256-bit halves without a licence penalty. Which form wins on which machine is an fbench measurement on the Xeon and a Zen 4, not made here |
 | 2026-11-14 | Plain `neon` (task 1.3): no attribute (Advanced SIMD is the AArch64 baseline); twiddles pre-arranged as on x86 (`tw_reals` 4); products in FCMLA's rounding order, so `neon` and `neon_fcma` give the same bits; the operations both NEON targets share live once, in `vocab_neon_common.inl`; chosen wherever FCMA or pointer authentication is missing (Neoverse N1, Cortex-A72, A64FX, Windows on Arm without the registry fields) | Three instructions per product (shuffle, multiply, FMA) with no sign fix-up, where plain (wr, wi) storage needs a sign flip of a shuffled value per product (four) or two shuffles more for `float`; twice the twiddle bytes, as on x86, for the planner and X5 to weigh. The same bits make `neon` a pure fallback of `neon_fcma`: with the same passes (and the two share a planner profile, so they choose the same ones) every output bit is equal; only what reports the target, such as `instruction_set()`, tells them apart |
-| 2026-11-14 | No R × C `transpose` for radices below C (avx512); the grouped pass stores them through its tile | Correct as it stands. Performance risk recorded: planner v0 ignores C, so on `avx512` most lengths start with radix 4 (or 2 or 3), and in `float` (C = 8) their grouped pass stores through the tile and the second pass (s = 4) runs only tail units. Preferring a leading radix of at least C, or an R × C transpose, is a planner change and needs its experiment (X16, `avx512` against `avx2`), not a rule edited here |
+| 2026-11-14 | No R × C `transpose` for radices below C (avx512); the grouped pass stores them through its tile | Correct as it stands. Performance risk recorded: planner v0 ignored C (planner v1 now prices tails per C, with AVX2 costs), so on `avx512` most lengths started with radix 4 (or 2 or 3), and in `float` (C = 8) their grouped pass stores through the tile and the second pass (s = 4) runs only tail units. Preferring a leading radix of at least C, or an R × C transpose, is a planner change and needs its experiment (X16, `avx512` against `avx2`), not a rule edited here |
 | 2026-11-14 | fbench times single precision: input rounded to float, reference and check in double with float's epsilon; backends opt in with `precisions` in describe | Experiment X2 and the float targets need float timings; rounding first keeps the reference exact for the values the library sees, and opting in keeps competitors without float from failing smoke |
 | 2026-11-14 | Threading adapters (task 3.3): the `executor` concept (`concurrency`, `bulk`, optional `group_size`) behind a non-owning `executor_ref` that is the C contract's struct (`fftn/executor.h`); the executor overload dispatches one task per lane dealt work, as a team; `fftn/omp.hpp` (`this_team`, an executor of constant width); the opt-in `thread_pool`; `cache_group_size` | One allocation-free path from any runtime to the claiming engine, with no template in the library; dispatching only lanes with work is rule 4, and every dispatched task runs, so no member skips an execution; open points for review in 18.2 |
 | 2026-11-14 | The OpenMP tests are built wherever the compiler has OpenMP, except under ThreadSanitizer; the thread pool and custom executors carry the executor path's TSan coverage | The OpenMP runtimes at hand are not instrumented, and TSan reports the join of every region as a race (shown with Homebrew LLVM 23's libomp) |
