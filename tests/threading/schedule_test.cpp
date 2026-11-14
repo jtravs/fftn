@@ -342,6 +342,10 @@ TEST(Schedule, ProfileForRecordedMachines) {
   }
   // The grid's sizes come from the caches.
   EXPECT_EQ(epyc.grid_min_bytes, std::size_t{32} * 1024);
+  // An Intel Mac (per-core L2s) is not an Apple processor: macOS alone does not decide.
+  const machine_profile intel_mac =
+      fftn::detail::profile_for(fftn::detail::load_topology(data / "macos-synthetic-intel.sysctl"));
+  EXPECT_EQ(intel_mac.split_min_points, ccx.split_min_points);
 }
 
 // A pure function: equal inputs, equal schedules; the default profile knows the machine.

@@ -29,12 +29,16 @@ machine_profile profile_for(const topology& t) noexcept {
     p.grid_fuse_bytes = t.classes.front().l2.size / 4;
   }
   // The defaults are a Zen 3 CCX's. Two other kinds of cache group were measured (T1, T5):
-  // only macOS's reader numbers CPUs itself (topology.hpp), so that marks an Apple
-  // processor, whose performance cluster runs a short row so fast that splitting pays only
-  // from longer rows; a last-level group of more than mesh_group_lanes cores is a mesh
-  // (the Xeon's 18 cores). On neither did T1's measured costs pass the adoption test, so
-  // both keep the provisional synchronisation cost and claim runs.
-  const bool apple = !t.os_cpu_ids;
+  // an Apple processor (macOS's reader, which numbers CPUs itself, topology.hpp, and an L2
+  // shared by a cluster of cores rather than each core's own: an Intel Mac has per-core L2s
+  // and takes the defaults), whose performance cluster runs a short row so fast that
+  // splitting pays only from longer rows; a last-level group of more than mesh_group_lanes
+  // cores is a mesh (the Xeon's 18 cores). On neither did T1's measured costs pass the
+  // adoption test, so both keep the provisional synchronisation cost and claim runs.
+  const bool cluster_l2 = !t.classes.empty() &&
+                          t.classes.front().l2.shared_by >
+                              std::max(t.classes.front().l1d.shared_by, 1U);
+  const bool apple = !t.os_cpu_ids && cluster_l2;
   std::size_t cpus_per_core = t.cores.empty() ? 1 : t.cores.front().cpus.size();
   for (const cpu_group& core : t.cores) {
     cpus_per_core = std::min(cpus_per_core, core.cpus.size());
@@ -53,7 +57,13 @@ machine_profile profile_for(const topology& t) noexcept {
 }
 
 machine_profile default_machine_profile() noexcept {
-  machine_profile p = profile_for(system_topology());
+  machine_profile p;
+  try {
+    p = profile_for(system_topology());
+  } catch (...) {
+    // system_topology() throws on an unreadable FFTN_TOPOLOGY recording; this function
+    // is noexcept, so the defaults stand (as cache_group_size does).
+  }
   const unsigned cpus = std::thread::hardware_concurrency();
   p.cpus = static_cast<int>(std::min<unsigned>(cpus, std::numeric_limits<int>::max()));
   return p;
