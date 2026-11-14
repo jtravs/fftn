@@ -206,6 +206,20 @@ tables 0.964 times the time (geometric mean), 124 faster, 363 no evidence, 9 slo
 three worst (490, 686, 882 in double, 1.25–1.40) keep the AVX2 tables' choices as overrides.
 Adopted.
 
+### EPYC 7763, AVX2, lengths above 1024
+
+Campaign epyc-long (commit f8d9c7f, the planner then v0; 39 lengths at batch 1, 29 at 64,
+the cost estimate's top 20 candidates each; 8 cores of a shared node for the second half).
+Planner v0 against the best sequence: 1.20 (b1 double), 1.17 (b1 float), 1.22 (b64 double),
+1.22 (b64 float); worst 1.74 (2187 float: 3.9.9.9 against 9.9.3.9) and 1.6 for 1440–1920
+(v0's 4.4.2.5.9-style chains against three big passes such as 10.12.16). Planner v1's AVX2
+tables, scored on the same data with `fit.py --compare`, reproduce the measured best within
+2 % in 57 % of cases (both precisions), against 97 % up to 1024; a fit to these 68 cases
+alone does worse (37–52 %), too few to pin the costs. Lengths from 16384 (grid threshold on
+these machines, task 1.7) now leave the chain, so the chain range 1025–16383 is where this
+matters; a joint fit of the smooth and long campaigns is the next step, after X18 (x86
+kernel costs), since a change of kernel costs changes the tables.
+
 ### Pending
 
 Nothing below has run; each is measured against the planner of the commit it runs from.

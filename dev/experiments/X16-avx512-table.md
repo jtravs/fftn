@@ -115,7 +115,20 @@ No switch: arm (c) is a commit; `dev/KNOBS.toml` is untouched.
 
 ## Results
 
-Not run.
+### Search campaign, Xeon Gold 6240, `ISA=avx512` (rule 1)
+
+Campaign xeon-avx512-smooth (main 6abf186, GCC 14, 8 CPUs of a shared node, 7-smooth
+n ≤ 1024, batches 1 and 64; the campaign's baseline arm is planner v1 with the nearest-C
+AVX2 tables, i.e. arm (b)). Planner v1 against the best measured sequence, geometric means
+over 133 lengths: 1.006 (b1 double), 1.021 (b1 float), 1.007 (b64 double), 1.019 (b64
+float). `bench/x2/fit.py --isa avx512` fits tables that reproduce the measured best within
+2 % in 91.5 % (double, C = 4) and 89.5 % (float, C = 8) of cases, against 81.0 % and 77.8 %
+for the AVX2 tables; but the whole gap the fitted table could close is the 0.6–2.1 % above,
+below rule 1's 3 %. Rule 1: not adopted; `avx512` keeps the nearest-C AVX2 tables. Radix
+choice is therefore not a cause of FFTN's gap to FFTW on this Xeon (that is X18's question).
+
+Rules 2 and 3 (arm (a), `ISA=avx2`, against (b)) are pending: fbench job
+fbench-20261114-130910-a3903ed6-d4db65 (X2 lengths 17–1024).
 
 ## Verdict
 
