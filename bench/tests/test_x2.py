@@ -273,8 +273,8 @@ class Fit(unittest.TestCase):
             x = [0.0] * fit.NF
             for k in range(fit.KINDS):
                 for r in fit.RADICES:
-                    x[k * fit.NR + r - 2] = truth.unit[k][r - 2]
-                    x[fit.TAIL0 + k * fit.NR + r - 2] = truth.tail[k][r - 2]
+                    x[k * fit.NR + fit.COLUMN[r]] = truth.unit[k][fit.COLUMN[r]]
+                    x[fit.TAIL0 + k * fit.NR + fit.COLUMN[r]] = truth.tail[k][fit.COLUMN[r]]
             x[fit.PASS], x[fit.CONST] = truth.passes, 5000.0
             return sum(v * x[j] for j, v in f.items())
 
@@ -289,6 +289,57 @@ class Fit(unittest.TestCase):
         table = fit.table_of(x, cases, ops)
         per, misses = fit.reproduction(cases, table, 4, 0.0)
         self.assertEqual(per["b1-op-f32"][:2], [len(cases), len(cases)], misses)
+
+    def test_extension_keeps_the_base_and_prices_big_radices(self):
+        """X3's extension: timings from a table with radix 32 and 64 columns added to
+        rules.cpp's float one; fitting from the committed table (big columns unpriced) keeps
+        its columns up to 16 exactly and picks every length's best sequence again."""
+        base = self.tables["avx2_float"]
+        unit = [row[:] for row in base.unit]
+        tail = [row[:] for row in base.tail]
+        for k in range(fit.KINDS):
+            u16 = unit[k][fit.COLUMN[16]]
+            unit[k][fit.COLUMN[32]], unit[k][fit.COLUMN[64]] = 2 * u16, 5 * u16
+            tail[k][fit.COLUMN[32]], tail[k][fit.COLUMN[64]] = 3 * u16, 9 * u16
+        truth = fit.Table(unit, tail, base.passes)
+        plain = fit.Table(base.unit, base.tail, base.passes)
+        ops = radices.codelet_ops()
+        codelets = (*radices.CODELET_RADICES, *radices.BIG_RADICES)
+
+        def cost(seq):
+            n, s, total = math.prod(seq), 1, 5000.0
+            for i, r in enumerate(seq):
+                kind = 0 if i == 0 else (2 if i + 1 == len(seq) else 1)
+                total += fit.pass_cost(truth, 4, n, s, r, kind)
+                s *= r
+            return total
+
+        cases = []
+        for n in (64, 96, 128, 192, 256, 320, 384, 512, 640, 768, 1024):
+            seqs = [s for s in radices.sequences(n, 4, codelets) if len(s) > 1]
+            base_seq = fit.rule_radices(n, plain, 4)
+            ratio = {s: math.log(cost(s) / cost(base_seq)) for s in seqs}
+            best = min(seqs, key=lambda s: (ratio[s], s))
+            cases.append(fit.Case(n, f"c2c-{n}-b1-op-f32", "f32", base_seq, best, refine=ratio))
+        x = fit.fit(fit.rows_of(cases, 4), ops, base=plain)
+        table = fit.table_of(x, cases, ops, plain)
+        for k in range(fit.KINDS):
+            self.assertEqual(table.unit[k][: fit.COLUMN[32]], base.unit[k][: fit.COLUMN[32]])
+            self.assertEqual(table.tail[k][: fit.COLUMN[32]], base.tail[k][: fit.COLUMN[32]])
+        self.assertEqual(table.passes, base.passes)
+        per, misses = fit.reproduction(cases, table, 4, 0.0)
+        self.assertEqual(per["b1-op-f32"][:2], [len(cases), len(cases)], misses)
+        self.assertTrue(any(r in fit.BIG for c in cases for r in c.winner))
+
+    def test_merge_pools_campaigns(self):
+        a = fit.Case(64, "c", "f32", (8, 8), (4, 16), refine={(8, 8): 0.0, (4, 16): -0.1})
+        b = fit.Case(64, "c", "f32", (8, 8), (2, 32), refine={(8, 8): 0.0, (2, 32): -0.2})
+        (m,) = fit.merge([a, b])
+        self.assertEqual(m.winner, (2, 32))
+        self.assertEqual(set(m.refine), {(8, 8), (4, 16), (2, 32)})
+        c = fit.Case(64, "c", "f32", (4, 16), (4, 16))
+        with self.assertRaises(SystemExit):
+            fit.merge([a, c])
 
 
 if __name__ == "__main__":
