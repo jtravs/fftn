@@ -7,6 +7,13 @@
 //   fbench-<lib> selftest                     checks the reference DFT, the check and describe
 //   fbench-<lib> run --cases FILE [options]   plans, checks and times every case
 //
+// `run --pmu EVENTS` (Linux) also counts hardware events in user mode over the executes of
+// each case, after its timed batches, and reports them per call (experiment X25). EVENTS is
+// a comma-separated list of `cycles`, `instructions` or `NAME=0xCONFIG` (a raw event in the
+// kernel's encoding for the CPU's core PMU, e.g. Zen 3 FP pipe 0 `fp0=0x0100`). The events
+// form one group, so they must fit the PMU's counters at once; a group the kernel did not
+// keep scheduled the whole time reports its running fraction below 1.
+//
 // Every result is one JSON line on standard output. The driver (bench/fbench.py) owns the
 // statistics; this program measures one process and says what it measured.
 
@@ -17,6 +24,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <charconv>
 #include <chrono>
 #include <cmath>
@@ -37,6 +45,13 @@
 #include <string_view>
 #include <system_error>
 #include <vector>
+
+#ifdef __linux__
+#include <linux/perf_event.h>
+#include <sys/ioctl.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+#endif
 
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
@@ -106,6 +121,7 @@ struct settings {
   double delay = 0.0;
   double perturb = 0.0;
   std::uint64_t seed = 1;
+  std::string pmu;
 };
 
 template <class T> T parse_number(std::string_view text, std::string_view what) {
@@ -159,6 +175,8 @@ settings parse_settings(std::span<char* const> args) {
       s.perturb = parse_number<double>(next(), key);
     } else if (key == "--seed") {
       s.seed = parse_number<std::uint64_t>(next(), key);
+    } else if (key == "--pmu") {
+      s.pmu = next();
     } else {
       throw std::invalid_argument("unknown option " + std::string(key));
     }
@@ -262,6 +280,123 @@ std::uint64_t hash(std::string_view s) {
   return h;
 }
 
+// ---- Hardware counters -----------------------------------------------------------------
+
+// One group of user-mode counters on the calling thread (perf_event_open), enabled only
+// around the execute loops. Linux only; elsewhere opening fails with a message.
+class counters {
+public:
+  explicit counters(std::string_view spec) {
+#ifdef __linux__
+    std::size_t at = 0;
+    while (at <= spec.size()) {
+      const std::size_t end = std::min(spec.find(',', at), spec.size());
+      const std::string_view token = spec.substr(at, end - at);
+      at = end + 1;
+      if (token.empty()) {
+        continue;
+      }
+      perf_event_attr attr{};
+      attr.size = sizeof(attr);
+      const std::size_t eq = token.find('=');
+      const std::string_view name = token.substr(0, eq);
+      if (eq == std::string_view::npos && name == "cycles") {
+        attr.type = PERF_TYPE_HARDWARE;
+        attr.config = PERF_COUNT_HW_CPU_CYCLES;
+      } else if (eq == std::string_view::npos && name == "instructions") {
+        attr.type = PERF_TYPE_HARDWARE;
+        attr.config = PERF_COUNT_HW_INSTRUCTIONS;
+      } else if (eq != std::string_view::npos && token.substr(eq + 1).starts_with("0x")) {
+        attr.type = PERF_TYPE_RAW;
+        const std::string_view hex = token.substr(eq + 3);
+        const auto res = std::from_chars(hex.data(), hex.data() + hex.size(), attr.config, 16);
+        if (res.ec != std::errc{} || res.ptr != hex.data() + hex.size()) {
+          throw std::invalid_argument("bad --pmu event: " + std::string(token));
+        }
+      } else {
+        throw std::invalid_argument("--pmu takes cycles, instructions or NAME=0xCONFIG, not " +
+                                    std::string(token));
+      }
+      const bool leader = fds_.empty();
+      attr.disabled = leader ? 1 : 0;
+      attr.exclude_kernel = 1;
+      attr.exclude_hv = 1;
+      attr.read_format =
+          PERF_FORMAT_GROUP | PERF_FORMAT_TOTAL_TIME_ENABLED | PERF_FORMAT_TOTAL_TIME_RUNNING;
+      const long fd = syscall(SYS_perf_event_open, &attr, 0, -1, leader ? -1 : fds_.front(), 0);
+      if (fd < 0) {
+        close_all();
+        throw std::runtime_error("perf_event_open failed for " + std::string(token) + ": " +
+                                 std::strerror(errno));
+      }
+      fds_.push_back(static_cast<int>(fd));
+      names_.emplace_back(name);
+    }
+    if (fds_.empty()) {
+      throw std::invalid_argument("--pmu needs at least one event");
+    }
+#else
+    throw std::invalid_argument("--pmu needs Linux (perf_event_open); not counting " +
+                                std::string(spec));
+#endif
+  }
+  counters(const counters&) = delete;
+  counters& operator=(const counters&) = delete;
+  counters(counters&&) = delete;
+  counters& operator=(counters&&) = delete;
+  ~counters() { close_all(); }
+
+  void reset() const { control(reset_op); }
+  void enable() const { control(enable_op); }
+  void disable() const { control(disable_op); }
+
+  // The counts per call over `calls` executes, and the fraction of the enabled time the
+  // group was scheduled (1 when the counts are exact).
+  [[nodiscard]] std::string per_call(std::int64_t calls) const {
+    fbench::json out;
+#ifdef __linux__
+    std::vector<std::uint64_t> buf(3 + fds_.size());
+    const auto bytes = static_cast<std::ptrdiff_t>(buf.size() * sizeof(std::uint64_t));
+    if (read(fds_.front(), buf.data(), buf.size() * sizeof(std::uint64_t)) != bytes) {
+      return out.str("error", "short read of the counter group").object();
+    }
+    const double enabled = static_cast<double>(buf[1]);
+    out.integer("calls", calls)
+        .num("running", enabled > 0 ? static_cast<double>(buf[2]) / enabled : 0.0);
+    for (std::size_t i = 0; i < names_.size(); ++i) {
+      out.num(names_[i], static_cast<double>(buf[3 + i]) / static_cast<double>(calls));
+    }
+#else
+    static_cast<void>(calls);
+#endif
+    return out.object();
+  }
+
+private:
+  enum op : std::uint8_t { reset_op, enable_op, disable_op };
+  void control(op o) const {
+#ifdef __linux__
+    const unsigned long request = o == reset_op    ? PERF_EVENT_IOC_RESET
+                                  : o == enable_op ? PERF_EVENT_IOC_ENABLE
+                                                   : PERF_EVENT_IOC_DISABLE;
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg): ioctl is the kernel's interface
+    ioctl(fds_.front(), request, PERF_IOC_FLAG_GROUP);
+#else
+    static_cast<void>(o);
+#endif
+  }
+  void close_all() {
+#ifdef __linux__
+    for (auto it = fds_.rbegin(); it != fds_.rend(); ++it) {
+      close(*it);
+    }
+#endif
+    fds_.clear();
+  }
+  std::vector<int> fds_;
+  std::vector<std::string> names_;
+};
+
 // ---- One case --------------------------------------------------------------------------
 
 class plan_handle {
@@ -320,8 +455,9 @@ public:
   }
 
   // Runs `calls` executes and returns the time they took, plus `delay` times that time
-  // spent spinning (the seeded slowdown of the +DELAY option).
-  double run(std::int64_t calls, double delay) {
+  // spent spinning (the seeded slowdown of the +DELAY option). With `pmu`, its counters run
+  // during the executes only (not the restores).
+  double run(std::int64_t calls, double delay, const counters* pmu = nullptr) {
     double total = 0.0;
     std::int64_t done = 0;
     while (done < calls) {
@@ -329,12 +465,18 @@ public:
       if (restore_) {
         restore();
       }
+      if (pmu != nullptr) {
+        pmu->enable();
+      }
       const steady::time_point t0 = steady::now();
       for (std::int64_t i = 0; i < n; ++i) {
         fbench_execute(plan_, sets_.input(cursor_), sets_.output(cursor_));
         cursor_ = cursor_ + 1 == sets_.size() ? 0 : cursor_ + 1;
       }
       steady::time_point t1 = steady::now();
+      if (pmu != nullptr) {
+        pmu->disable();
+      }
       if (delay > 0.0) {
         const steady::time_point until =
             t1 + std::chrono::duration_cast<steady::duration>((t1 - t0) * delay);
@@ -372,7 +514,7 @@ bool takes_f32() {
   return text.substr(at, end - at).find(R"("f32")") != std::string::npos;
 }
 
-std::string run_case(const case_spec& c, const settings& s) {
+std::string run_case(const case_spec& c, const settings& s, const counters* pmu) {
   const fbench::layout& l = c.layout;
   const std::uint64_t seed = hash(c.id) ^ s.seed;
   fbench::json out;
@@ -402,7 +544,7 @@ std::string run_case(const case_spec& c, const settings& s) {
 
   const fbench_case desc = l.to_case();
   plan_handle plan;
-  std::array<char, 512> message{};
+  std::array<char, 8192> message{};
   const steady::time_point plan_start = steady::now();
   const std::int32_t status = fbench_create(&desc, sets.input(0), sets.output(0), plan.slot(),
                                             message.data(), message.size());
@@ -491,6 +633,13 @@ std::string run_case(const case_spec& c, const settings& s) {
   const std::size_t mid = sorted.size() / 2;
   const double median =
       sorted.size() % 2 == 1 ? sorted[mid] : 0.5 * (sorted[mid - 1] + sorted[mid]);
+  if (pmu != nullptr) {
+    // As many executes as the timed batches, counted after them (warm).
+    const std::int64_t counted = calls * s.batches;
+    pmu->reset();
+    t.run(counted, 0.0, pmu);
+    out.raw("pmu", pmu->per_call(counted));
+  }
   return out.integer("calls", calls)
       .integer("chunk", t.chunk())
       .integer("sets", static_cast<std::int64_t>(sets.size()))
@@ -594,10 +743,11 @@ int command_run(std::span<char* const> args) {
     return 1;
   }
   std::cout << describe_line() << '\n' << std::flush;
+  const std::unique_ptr<counters> pmu = s.pmu.empty() ? nullptr : std::make_unique<counters>(s.pmu);
   for (const std::string& line : lines) {
     std::string result;
     try {
-      result = run_case(parse_case(line), s);
+      result = run_case(parse_case(line), s, pmu.get());
     } catch (const std::exception& e) {
       result = fbench::json()
                    .str("type", "case")
