@@ -115,11 +115,18 @@ jobs:
             llvm: "23"
             cxx: /usr/lib/llvm-23/bin/clang++
             stages: build tidy coverage bench
-          - name: clang-23 sanitizers
+          # One sanitizer per job, two compiles at a time: ASan and TSan in one job at
+          # three ran the runner out of memory (it shut down mid-build).
+          - name: clang-23 asan
             llvm: "23"
             cxx: /usr/lib/llvm-23/bin/clang++
-            stages: sanitize tsan
-            jobs: 3
+            stages: sanitize
+            jobs: 2
+          - name: clang-23 tsan
+            llvm: "23"
+            cxx: /usr/lib/llvm-23/bin/clang++
+            stages: tsan
+            jobs: 2
           # The Clang floor: compiles cleanly and passes; preinstalled on the image.
           - name: clang-16
             cxx: /usr/lib/llvm-16/bin/clang++
@@ -257,16 +264,23 @@ jobs:
           - name: gcc-14
             cxx: g++-14
             stages: build bench
-          # The sanitizers in a job of their own, three compiles at a time (as on x86-64).
+          # The sanitizers in jobs of their own (as on x86-64).
           - name: clang-23
             llvm: "23"
             cxx: /usr/lib/llvm-23/bin/clang++
             stages: build tidy
-          - name: clang-23 sanitizers
+          # One sanitizer per job, two compiles at a time: ASan and TSan in one job at
+          # three ran the runner out of memory (it shut down mid-build).
+          - name: clang-23 asan
             llvm: "23"
             cxx: /usr/lib/llvm-23/bin/clang++
-            stages: sanitize tsan
-            jobs: 3
+            stages: sanitize
+            jobs: 2
+          - name: clang-23 tsan
+            llvm: "23"
+            cxx: /usr/lib/llvm-23/bin/clang++
+            stages: tsan
+            jobs: 2
     env:
       CXX: ${{ matrix.cxx }}
       FFTN_CHECK_STAGES: ${{ matrix.stages }}

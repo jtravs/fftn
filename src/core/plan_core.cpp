@@ -425,7 +425,7 @@ real_fusion fusion_of(const build_settings& settings, target t) {
 // through phase 1's gather and that phase's loop).
 void read_output_for_input(program& p, std::size_t first) {
   for (std::size_t i = first; i < p.records.size(); ++i) {
-    if (stage* st = std::get_if<stage>(&p.records[i])) {
+    if (auto* st = std::get_if<stage>(&p.records[i])) {
       if (st->src == slot::in) {
         st->src = slot::out;
       }

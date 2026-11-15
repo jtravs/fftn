@@ -1,0 +1,8 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# LeakSanitizer suppressions for the gate's sanitizer stage (scripts/check.sh).
+# LLVM's libomp keeps its thread descriptors for the life of the process; on the macOS CI
+# runners LSan reports them as direct leaks at exit (allocated in __kmp_allocate_thread
+# and __kmp_allocate_team, reached from the OpenMP executor's parallel region).
+leak:libomp
