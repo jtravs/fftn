@@ -943,7 +943,14 @@ run the same instantiation on a padded tile: the last unit of a pass gathers its
 elements into a small stack tile, element by element, computes all C lanes and stores
 only the valid ones. Vector operations act on each lane independently, so a tile performs
 exactly the same arithmetic per element as a full register; this is what keeps a row's
-result independent of its position in a batch (section 15.5). A narrower vocabulary
+result independent of its position in a batch (section 15.5). On the x86 targets in GCC
+builds (`FFTN_MASKED_TAILS`, section 14.3; experiment X23) a partial run of adjacent
+elements is instead one masked load or store (`load_n`, `store_n`), the partial units run
+after the loop over whole units (their masks and pointers kept out of it, with constant
+unit counts inside it), and the grouped pass stores radices C does not divide through
+C × C transposes padded with zero registers; the arithmetic, and so the bits, are the
+tile's. Clang builds keep the tile: with the masked code Clang 23 lost up to 1.42 of the
+tile's time on odd double lengths, for a reason not yet found. A narrower vocabulary
 instantiation (FFTL's ladder of vector widths) is the alternative should tiles prove
 slow; it needs a second width per target.
 
@@ -1983,6 +1990,11 @@ What the experiments still require of the build:
   `-Wtsan` fires on Kokkos' fences once inlined into our units, beyond the reach of SYSTEM,
   and the adapter is serial; Clang's TSan builds run them. Windows on Arm leaves them out
   too: Kokkos 5.2.1 passes the x86 option `-mcx16` to every Clang build on Windows.
+- Build options are the cache variables at the top of `CMakeLists.txt`, each described
+  there. One changes the generated code: `FFTN_MASKED_TAILS` (`AUTO`, the default, is on
+  with GCC and off with every other compiler; `ON`; `OFF`) selects masked partial runs on
+  x86 (section 8.2). The release toolchain for x86-64 Linux is GCC, so release builds have
+  them; results are bitwise the same either way.
 - A generated single-file amalgamation is a possible release artefact (phase 6); it is
   the same implementation concatenated, not a separate code path.
 
