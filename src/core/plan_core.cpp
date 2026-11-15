@@ -453,6 +453,9 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   }
   chain_builder<T> chain(kernels, profile, tables_of<T>(c), settings.chunk_points, settings.radices,
                          settings.bluestein_above, fusion_of(settings, c.isa_target));
+  if (const narrow_leaf_table* narrow = find_narrow_leaves(c.isa_target)) {
+    chain.use_narrow_leaves(&of<T>(*narrow));
+  }
   program& p = c.prog;
   const std::size_t r = s.axes.size();
   const auto complex_bytes = static_cast<std::ptrdiff_t>(2 * sizeof(T));

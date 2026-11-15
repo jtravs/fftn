@@ -41,6 +41,34 @@ struct kernel_table {
   kernels_of<float> f32;
 };
 
+// The 128-bit leaves of the x86 targets (experiment X28, isa/narrow_avx2.cpp): the leaves
+// of radices 2 to dense_codelet_radix compiled with avx2's operations on 128-bit registers
+// (vocab_avx2_narrow.inl), indexed by codelet_slot (every radix up to 16 has a codelet),
+// direction and edges as radix_passes::leaf, null where that is. They round as avx2's and
+// avx512's leaves do, so either target's plans may use them.
+template <class T> struct narrow_leaf_set {
+  // NOLINTNEXTLINE(modernize-avoid-c-arrays): filled inside an ISA region, which uses no std templates
+  leaf_fn leaf[dense_codelet_radix - 1][2][edge_op_count][edge_op_count];
+};
+struct narrow_leaf_table {
+  narrow_leaf_set<double> f64;
+  narrow_leaf_set<float> f32;
+};
+
+template <class T>
+[[nodiscard]] constexpr const narrow_leaf_set<T>& of(const narrow_leaf_table& table) {
+  static_assert(std::is_same_v<T, double> || std::is_same_v<T, float>);
+  if constexpr (std::is_same_v<T, double>) {
+    return table.f64;
+  } else {
+    return table.f32;
+  }
+}
+
+// The narrow leaves that plans of target t may use, or null (every target but avx2 and
+// avx512).
+[[nodiscard]] const narrow_leaf_table* find_narrow_leaves(target t) noexcept;
+
 // The entry points of a table for precision T.
 template <class T> [[nodiscard]] constexpr const kernels_of<T>& of(const kernel_table& table) {
   static_assert(std::is_same_v<T, double> || std::is_same_v<T, float>);
@@ -65,6 +93,9 @@ extern const kernel_table table;
 }
 namespace avx512 {
 extern const kernel_table table;
+}
+namespace avx2::narrow {
+extern const narrow_leaf_table leaves;
 }
 #endif
 #if FFTN_ARCH_AARCH64
