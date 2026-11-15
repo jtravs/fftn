@@ -22,6 +22,9 @@ One-dimensional double only (46 cases; the planes and volumes excluded): Mac 0.9
 1.15 / 1.20; mixed radix 0.95 / 1.29 (46080 and 100000: 1.18–1.23 / 1.67–1.98); primes
 0.92 / 1.20 (17: 1.57 / 1.95; 4093: 1.24 / 1.55; 65537 EPYC 1.65; 97–1009 win on both);
 batches 0.94 / 1.12; r2c and c2r 1.00 / 1.25 (65536 and 2²⁰: 1.30–1.39 / 1.41–1.62).
+Against FFTL.jl (libfftl 53171e8, Mac run 20261115-170717-c72c, 1-D double): FFTN 0.86
+of its time overall; FFTL ahead only on rows ≥ 16384 (1.35) and 2431 (2.57); FFTN far ahead
+on single rows ≤ 64 (FFTL's fixed cost per call: 0.07–0.51) and batches (0.70).
 Planes and volumes are far behind (phase 4 has not started): c2c 1024² 2.1 / 4.1, 64³
 3.1 / 10.9 (EPYC: likely cache aliasing of power-of-two strides).
 
@@ -58,9 +61,13 @@ runs; the numbers above are the baseline to beat. The rest (6–9) follow.
 1. Long rows (≥ 16384, both machines; mixed 46080 and 100000 worst on the EPYC at 1.67–1.98;
    r2c and c2r of 65536 and 2²⁰ at 1.3–1.6): X12 on x86 (the grid's phases and blocks
    there), the real pairing fused into grid phases, radix 32 phases from 32768 (X3
-   follow-up).
-2. Prime lengths: 17 takes Bluestein (1.57 / 1.95 of FFTW): a generated 17-point codelet,
-   or Rader where p − 1 is smooth (65537, 257, 97); 4093 and 65537 on the EPYC.
+   follow-up). FFTL.jl is the reference to study here: on the Mac it beats both FFTN (FFTN
+   1.35 of its time at ≥ 16384; 2²⁰ 1.60, 100000 1.53, 46080 1.45) and FFTW (0.86).
+2. Prime lengths and prime factors above 16: 17 takes Bluestein (1.57 / 1.95 of FFTW), and
+   inside composites each such factor is one generic pass (2431 = 11 · 13 · 17: FFTN 2.57
+   of FFTL's time on the Mac, 1.25 of FFTW's on the EPYC): a generated 17-point codelet
+   (and 19, 23 if cheap), or Rader where p − 1 is smooth (65537, 257, 97); 4093 and 65537
+   on the EPYC.
 3. The x86 kernels at 128–4096 (EPYC 1.05–1.35): a split-aware planner (costs of split
    passes; a first radix that lets a run start: AVX2's 1024 = 4 × 16 × 16 has none), split
    runs in Bluestein convolutions and grid phases, a split grouped first pass with an 8 × 8
