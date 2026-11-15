@@ -173,7 +173,7 @@ std::vector<std::byte> lanes_equal_chain(fftn::isa target, const batch_case& bc,
                            << lanes_text << chain_text;
   // Sub-ranges, out of place: the rows run equal the whole batch's and nothing else changes.
   if (!bc.in_place && bc.count > 2) {
-    for (const auto [first, count] : {
+    for (const auto& [first, count] : {
              std::pair<std::size_t, std::size_t>{1, bc.count - 1},
              {bc.count / 2, 1},
              {bc.count / 3, bc.count - bc.count / 3 - 1},
