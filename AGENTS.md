@@ -185,6 +185,13 @@ Further rules:
   rounds rather than waiting for a quiet or exclusive machine (exclusive nodes only for
   threading experiments that need every core), and say where a run was made.
 - A default that changes needs an experiment file. So does a planner rule.
+- **Decision rules judge the release toolchains**: GCC for x86-64 Linux and Clang on
+  macOS (Windows: clang-cl). Measure other compilers too and record what they show, but a
+  loss that appears only on a compiler outside that set is a reason to gate the change by
+  compiler (on for the toolchains where it wins, the old path elsewhere) and open a
+  follow-up, not to reject it. Likewise a change that wins on one target and loses on
+  another is adopted per target. A case a hair past a rule's limit on a loaded machine is
+  re-run before it decides a verdict.
 
 ## 7. Working in this repository
 
