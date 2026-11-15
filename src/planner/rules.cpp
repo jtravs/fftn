@@ -483,8 +483,11 @@ bool split_of(target t, std::size_t /*lanes*/) { return t == target::avx2 || t =
 // measured. Only float on x86 qualifies: AVX-512 100 (C = 8; the Xeon), AVX2 32 (C = 4; the
 // Xeon forced, the EPYC alone allowed 48). In double and on NEON the chain's batched leaf
 // already runs short rows as fast as the lanes (8 points: lanes 1.09 of the chain on the
-// M5, 1.3 on the Xeon, 1.6 on the EPYC), so the rule gives 0. The scalar target is not
-// measured.
+// M5, 1.3 on the Xeon, 1.6 on the EPYC), so the rule gives 0. X24
+// (dev/experiments/X24-lanes-x86.md) re-tested double on x86 with a cheaper lanes driver and
+// with edge passes that need no gather: even the best arm is slower than the chain at 8
+// points (batch 64: 1.04 on the Xeon's AVX-512, 1.08 on the EPYC; neither change was kept),
+// so double stays 0. The scalar target is not measured.
 std::size_t lanes_up_to_of(target t, std::size_t lanes) {
   switch (t) {
   case target::avx512:

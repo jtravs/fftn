@@ -79,10 +79,11 @@ double and on NEON the batched-leaf chain is now as fast or faster at 8 points, 
 leave the lanes off there (they still win in places beyond 8 points: Mac double 24–48 points
 0.62–0.97, Xeon AVX-512 double 24 points 0.46, c2r 16–64 points 0.57–0.85). 2.2's acceptance
 is not met for double c2c on AVX-512 (the chain 1.1–1.3 times FFTW and 0.8–1.9 of MKL at
-8–16 points). Next: the lanes driver with X20's per-call argument preparation and the
-leaves' batched form inside a block, then a threshold rule over length ranges (a new X7
-rule, not this one); a first pass building lanes from vector inserts on x86; the strided
-axes of planes (phase 4).
+8–16 points). X24 (2026-11-15) tried both planned x86 fixes, the per-call lanes driver
+and edge passes built from 128-bit row loads, and rejected both; double stays 0 on x86.
+Next: a threshold per transform kind (r2c and c2r of 16–64 points already win under
+AVX-512); the chain's c2c at 8–16 points on AVX-512 against FFTW and MKL; the strided axes
+of planes (phase 4).
 
 Task 1.5 (branch `task/1.5-split`, split-lowering session): the generator's split lowering
 (radices 2–16, plain and DIF, FMA-shaped, tangent rotations), split lane passes on the BL
@@ -293,7 +294,7 @@ running, done (with verdict).
 | [X20](experiments/X20-call-overhead.md) | Where does a tiny serial execute's time go (entry, driver, kernel), and what does a leaner driver close at n ≤ 64? | 1 | done: adopted (flat programs, leaves called with addresses, a batch of leaf rows in one call): Mac 0.45 of main over the x20 cases, 8 × 4096 3.08 → 0.97 of FFTW; Xeon 0.57 (one case slower at that commit, gone after two entry fixes per the harness; fbench confirmation pending) |
 | [X21](experiments/X21-phase1-cloud.md) | Phase 1 exit cloud checks: is anything badly off on a recent Intel Xeon (with MKL), Zen 5 and a Neoverse, and does `avx512` over `avx2` hold off Cascade Lake? | 1 | done: nothing badly off (FFTN ÷ FFTW over the tracking c2c rows: Emerald Rapids 1.17, Zen 5 1.12, Axion 0.81; FFTN ÷ MKL 1.19); avx512 wins in double everywhere, in float not on Zen 5, and loses 3× at 60 points in float; USD 1.36 |
 | [X22](experiments/X22-icpx.md) | Intel's icpx: does FFTN build and pass with it, which floating-point flags keep the numerical contract, and is it faster than GCC and Clang on the Xeon? | 1 | done: supported with `-fno-fast-math` (set by CMake); not recommended (Clang's equal in double, 3 % behind on tracking rows); float 0.80 of Clang on 7-smooth rows from masked partial runs, a portable vocabulary follow-up |
-| [X24](experiments/X24-lanes-x86.md) | Cheaper lanes on x86: with X20's per-call preparation in the lanes driver and first and last passes that build registers from 128-bit loads of each row (no gather or scatter), do the lanes beat the batched-leaf chain in double at 8–64 points and reach FFTW at 8–16? | 2 | running |
+| [X24](experiments/X24-lanes-x86.md) | Cheaper lanes on x86: with X20's per-call preparation in the lanes driver and first and last passes that build registers from 128-bit loads of each row (no gather or scatter), do the lanes beat the batched-leaf chain in double at 8–64 points and reach FFTW at 8–16? | 2 | done: both changes rejected (per-call driver: 1–7 % slower at 8–16 × 64; per-row edge passes: up to 1.17 on AVX-512 at 24–256 points). `lanes_up_to` in double stays 0 on x86; 2.2's double c2c acceptance on AVX-512 not met (lanes 1.31–1.53 of FFTW, chain 1.01–1.26) |
 | P1 | Cost-model accuracy: rank agreement with measurement across the catalogue per machine | 2 | planned |
 | P2 | Measurement budget: how many candidates and how long before the choice stops improving | 2 | planned |
 | [T1](experiments/T1-dispatch-wait-costs.md) | Dispatch, wake and wait costs per machine and runtime (libgomp, libomp, Kokkos, pool) | 3 | done: hand-off cost and claim runs adopted on Zen 3; dispatch and work costs wait for a per-lane dispatch term |
