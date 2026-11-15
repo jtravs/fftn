@@ -24,8 +24,8 @@ namespace {
 // are transposed in registers, so that each store writes C legs of one butterfly; a unit
 // with fewer butterflies stores fewer of them. The loops have constant bounds and test
 // `valid` inside, so every index into v is a constant after unrolling: a loop to `valid`
-// indexes v at run time, and the compiler then keeps v in memory (X23: with Clang 23, 1.16
-// of main's time at double 320, where only the last unit is partial, until this changed).
+// indexes v at run time, and GCC then keeps the caller's v in memory in every unit of the
+// pass, whole units included (X23: 1.03-1.09 of main's time at double 128, 512, 1024).
 template <class T, std::size_t R>
 FFTN_FORCE_INLINE void store_transposed(T* y, cv<T>* v, std::size_t valid) {
   for (std::size_t b = 0; b < R / C<T>; ++b) {
@@ -77,15 +77,15 @@ FFTN_FORCE_INLINE void store_padded(T* y, const cv<T>* v, std::size_t valid) {
   }
 }
 
-// The last unit of a grouped pass (below) when C does not divide m, on the targets with
+// The last unit u of a grouped pass (below) when C does not divide m, on the targets with
 // masked partial runs (X23): masked loads, and the same transposes as a whole unit's,
-// storing only its butterflies. Out of line, so that its code (masks, partial transposes,
-// their pointers) neither lengthens the pass's set-up nor competes for registers with the
-// loop over whole units: inlined there, it made whole units slower with GCC and Clang at
-// lengths with no partial unit at all (dev/experiments/X23-masked-tails.md, amendment).
-// Takes pointers and integers only (AGENTS.md section 4).
+// storing only its butterflies. The pass calls it after its loop over whole units, not
+// inside it: there its code (masks, partial transposes, their pointers) lengthened the
+// pass's set-up and took registers from the whole units' loop, which made whole units
+// slower with GCC and Clang at lengths with no partial unit at all
+// (dev/experiments/X23-masked-tails.md, amendment).
 template <class T, std::size_t R, int Sign, edge_op InOp>
-[[gnu::noinline]] void grouped_tail(const pass_args* a, std::size_t u) {
+FFTN_FORCE_INLINE void grouped_tail(const pass_args* a, std::size_t u) {
   const T* x = static_cast<const T*>(a->src);
   const std::ptrdiff_t xs = 2 * a->src_stride;
   const std::size_t m = a->m;
@@ -132,7 +132,10 @@ void grouped_pass(const pass_args* a, std::size_t first, std::size_t last) {
   const T* table = static_cast<const T*>(a->twiddles);
   const std::ptrdiff_t row = at(mpad, static_cast<std::ptrdiff_t>(tw_reals<T>));
   const std::ptrdiff_t leg = at(m, xs);
-  for (std::size_t u = first; u < last; ++u) {
+  // On the targets with masked partial runs the loop runs whole units only, and the last
+  // unit, partial when C does not divide m, follows it (grouped_tail).
+  const std::size_t whole = masked && last > m / C<T> ? m / C<T> : last;
+  for (std::size_t u = first; u < whole; ++u) {
     const std::size_t p0 = u * C<T>;
     const std::size_t valid = m - p0 < C<T> ? m - p0 : C<T>;
     const T* xp = x + at(p0, xs);
@@ -141,7 +144,7 @@ void grouped_pass(const pass_args* a, std::size_t first, std::size_t last) {
     cv<T> v[R]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
     const to_registers<T> out{v};
     T* yp = y + 2 * R * p0;
-    if (valid == C<T>) {
+    if (masked || valid == C<T>) {
       const run_in<T, InOp, true> in{.p = xp, .leg = leg, .step = xs, .valid = valid, .op = op};
       cdft<R>::template dif<T, Sign>(in, out, twid);
       if constexpr (R % C<T> == 0) {
@@ -151,12 +154,15 @@ void grouped_pass(const pass_args* a, std::size_t first, std::size_t last) {
       } else {
         store_tiled<T, R>(yp, v, valid);
       }
-    } else if constexpr (masked) {
-      grouped_tail<T, R, Sign, InOp>(a, u);
     } else {
       const run_in<T, InOp, false> in{.p = xp, .leg = leg, .step = xs, .valid = valid, .op = op};
       cdft<R>::template dif<T, Sign>(in, out, twid);
       store_tiled<T, R>(yp, v, valid);
+    }
+  }
+  if constexpr (masked) {
+    if (whole < last) {
+      grouped_tail<T, R, Sign, InOp>(a, whole);
     }
   }
 }
@@ -226,26 +232,41 @@ FFTN_FORCE_INLINE auto lane_output(const pass_args* a, T* yp, std::ptrdiff_t leg
   }
 }
 
-// The partial block of a lane pass's group p (below), copies q0 .. s - 1 when C does not
-// divide s, on the targets with masked partial runs: out of line for the reason given at
-// grouped_tail. g: the factor entry when Share is factor_sharing::output.
+// The partial blocks among a lane pass's units first .. last - 1 (below), on the targets
+// with masked partial runs: the last block of each group p, unit p blocks + blocks - 1,
+// copies q0 .. s - 1. The pass runs them after its loop over the other units, for the
+// reason given at grouped_tail; units are independent, so the order changes no bit.
 template <class T, std::size_t R, int Sign, bool Twiddled, edge_op OutOp, factor_sharing Share>
-[[gnu::noinline]] void lane_tail(const pass_args* a, std::size_t p, std::size_t q0,
-                                 std::size_t g) {
+FFTN_FORCE_INLINE void lane_tails(const pass_args* a, std::size_t first, std::size_t last,
+                                  std::size_t blocks) {
   const T* x = static_cast<const T*>(a->src);
   T* y = static_cast<T*>(a->dst);
   const std::ptrdiff_t ys = 2 * a->dst_stride;
   const std::size_t s = a->s;
+  const T* table = static_cast<const T*>(a->twiddles);
+  const std::ptrdiff_t in_leg = at(s * a->m, 2);
+  const std::ptrdiff_t out_leg = at(s, ys);
+  const std::size_t q0 = (blocks - 1) * C<T>;
   const std::size_t valid = s - q0;
-  const std::size_t e0 = q0 + s * R * p;
-  std::ptrdiff_t f_leg = 0; // NOLINT(misc-const-correctness): set under if constexpr
+  std::size_t per_entry = 1; // NOLINT(misc-const-correctness): set under if constexpr
+  std::ptrdiff_t f_leg = 0;  // NOLINT(misc-const-correctness): set under if constexpr
   if constexpr (Share == factor_sharing::output) {
+    per_entry = a->factor_copies / C<T>;
     f_leg = at(s / a->factor_copies, 2);
   }
-  lane_unit<T, R, Sign, Twiddled>(
-      lane_input<T, false, Share>(a, x + at(q0 + s * p, 2), at(s * a->m, 2), valid, p),
-      lane_output<T, false, OutOp, Share>(a, y + at(e0, ys), at(s, ys), ys, valid, e0, f_leg, g),
-      static_cast<const T*>(a->twiddles), p);
+  // From the group of unit `first`, whose last block is at or after it.
+  for (std::size_t p = first < blocks ? 0 : first / blocks; p * blocks + blocks - 1 < last;
+       ++p) {
+    std::size_t g = 0; // NOLINT(misc-const-correctness): set under if constexpr
+    if constexpr (Share == factor_sharing::output) {
+      g = (p * blocks + blocks - 1) / per_entry;
+    }
+    const std::size_t e0 = q0 + s * R * p;
+    lane_unit<T, R, Sign, Twiddled>(
+        lane_input<T, false, Share>(a, x + at(q0 + s * p, 2), in_leg, valid, p),
+        lane_output<T, false, OutOp, Share>(a, y + at(e0, ys), out_leg, ys, valid, e0, f_leg, g),
+        table, p);
+  }
 }
 
 // A later pass of a chain, with lanes over copies q (DESIGN.md 8.2): a middle pass
@@ -301,9 +322,7 @@ void lane_pass(const pass_args* a, std::size_t first, std::size_t last) {
       lane_unit<T, R, Sign, Twiddled>(
           lane_input<T, true, Share>(a, xp, in_leg, valid, p),
           lane_output<T, true, OutOp, Share>(a, yp, out_leg, ys, valid, e0, f_leg, g), table, p);
-    } else if constexpr (masked) {
-      lane_tail<T, R, Sign, Twiddled, OutOp, Share>(a, p, q0, g);
-    } else {
+    } else if constexpr (!masked) {
       lane_unit<T, R, Sign, Twiddled>(
           lane_input<T, false, Share>(a, xp, in_leg, valid, p),
           lane_output<T, false, OutOp, Share>(a, yp, out_leg, ys, valid, e0, f_leg, g), table, p);
@@ -317,6 +336,12 @@ void lane_pass(const pass_args* a, std::size_t first, std::size_t last) {
         ++g;
         g_left = per_entry;
       }
+    }
+  }
+  // The partial blocks, which the loop skipped on the targets with masked partial runs.
+  if constexpr (masked) {
+    if (s % C<T> != 0) {
+      lane_tails<T, R, Sign, Twiddled, OutOp, Share>(a, first, last, blocks);
     }
   }
 }
