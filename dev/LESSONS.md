@@ -197,6 +197,20 @@ chain pass at 2048 vanished once the radix-16 codelets lost 12 of their 19 swaps
 register file. And a cost table fitted on lengths up to 2048 extrapolates its big-radix
 columns badly: at 4096 it chose 32·4·32, 2–11 % slower than the measured 8·16·32. [X3](experiments/X3-big-radices.md).
 
+4.7 **For tiny transforms the bookkeeping is the transform: interpret once per call and put
+the batch loop inside the kernel.** On the M5 Max an 8-point leaf costs 2.5 ns, while
+walking FFTN's program records and copying the 144-byte argument struct for each
+transform cost about 3.5 ns more, and the call's entry another 1 ns; copying the struct
+alone is about 1.2 ns. Preparing the stages once per call, passing a leaf its addresses
+as arguments (no struct copy at all) and running a batch of rows in one kernel call took
+an 8-point transform from 7.7 to 4.9 ns at batch 1 and from 7.1 to 1.7 ns per transform
+in a batch of 64, a 2-point one from 4.9 to 0.32 ns: rows of 2–16 points in batches of 64
+went from 2.0–17 times NEON FFTW's time to 0.86–1.18 (fbench run 20261114-233002-c291). The loop inside the kernel matters beyond the call itself: a 32-point
+leaf took 20 ns per call one row at a time but 15 ns per row in one call over 64 rows (its
+constants and saved registers are set up once). Measure the levels separately (entry,
+interpretation, kernel through its pointer, kernel in a loop): the harness of
+[X20](experiments/X20-call-overhead.md) does this in a page of code.
+
 ## 5. Threading
 
 5.1 **Synchronisation costs set the smallest row worth splitting.** Spin barrier /
