@@ -291,7 +291,9 @@ template <class T> void bluestein_in_every_position(fftn::isa target) {
   const std::vector<std::string> both{"bluestein in", "bluestein out"};
   const std::vector<line> lines{
       {.radices = {17}, .above = 16, .names = {"copies 1", "convolution: grouped"}},
-      {.radices = {2, 17}, .above = 16, .names = {"grouped radix-2", "copies 2", "convolution: lane"}},
+      {.radices = {2, 17},
+       .above = 16,
+       .names = {"grouped radix-2", "copies 2", "convolution: lane"},},
       {.radices = {3, 19}, .above = 16, .names = {"grouped radix-3", "copies 3"}},
       {.radices = {4, 17}, .above = 16, .names = {"copies 4"}},
       {.radices = {5, 6, 23}, .above = 16, .names = {"lane radix-6", "copies 30"}},
