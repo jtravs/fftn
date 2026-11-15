@@ -74,6 +74,12 @@ No switch: arms are commits, `dev/KNOBS.toml` is untouched.
   (16.32, 8.64), 1024 (16.64, 32.32, 16.8.8), 2048 (32.64), 4096 (4.16.64, 8.8.64). A
   length gets an override when a sequence is at most 0.97 of the planner's at both batches
   with intervals clear of the band; the better of two such sequences is taken by batch 1.
+  *Amendment (before P was timed):* the selection runs were queued behind four other
+  experiments' serial timing jobs on the EPYC for hours, so they were cancelled unrun (Slurm
+  509812–509820). P's sequences come from the two counter screens instead, where they were
+  the fastest at both batches in both screens: 256 = 8 × 32, 512 = 16 × 32 (1024, 2048 and
+  4096 had no sequence ahead of the planner's in both screens and keep theirs). P and PT
+  (P on T) are timed as arms beside T.
 - **Cases**: `bench/catalogues/x30.toml` (c2c rows of 128–4096 in double and float, batches
   of 64, r2c and c2r of 512–4096, planes 256² and 512²); collateral: the standard
   catalogue's tracking tier.
