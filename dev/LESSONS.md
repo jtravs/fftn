@@ -101,6 +101,12 @@ for the same plans: double 0.87 (batch 1) and 0.92 (batch 64), but float 1.11 an
 1.43 at small sizes, where eight complex floats per register leave many partially filled
 vectors (tail tiles). The verdict is per machine generation (Cascade Lake lowers its clock
 for 512-bit code) and per precision. [X16](experiments/X16-avx512-table.md).
+Off Cascade Lake the double result holds and the float result depends on the core: over
+c2c rows of 16–65536 points, AVX-512 ÷ AVX2 was 0.83–0.86 in double and 0.95–0.99 in float
+on an Emerald Rapids Xeon (Google C4), and 0.87 in double but 1.03–1.07 in float on Zen 5
+(C4D). Per length it swung from 0.52 (1024 points, float) to 3.1 (60 points, float, on both
+machines): no machine-wide preference is right, so price both targets per plan.
+[X21](experiments/X21-phase1-cloud.md).
 
 2.4 **Integer division is expensive enough to matter in bookkeeping.** A 64-bit `div` costs
 40–90 cycles on Cascade Lake; four per chunk in the driver were about 37 % of a 64-point
@@ -324,3 +330,10 @@ let failures through twice in the prototype).
 reads of kernel changes found an unscaled single-pass phase (every element wrong for some
 shapes) and missing fused-vs-unfused bit comparisons that the author's tests had missed;
 an exact (`memcmp`) comparison of two paths that should agree is a cheap, strong test.
+
+6.12 **oneMKL's `mkl-devel` wheel (2026.2.1) ships only versioned libraries.** It
+installs `libmkl_core.so.3` and the like without the unversioned linker names, so a build
+that looks for `-lmkl_core` under the installation fails; add the three symlinks
+(`mkl_intel_lp64`, `mkl_sequential`, `mkl_core`) by hand. Likewise, copy an unpacked
+autotools tree with `cp -a`: a plain `cp -r` makes the `.texi` sources newer than the shipped
+manuals and `make` then wants `makeinfo` (FFTW 3.3.11). [X21](experiments/X21-phase1-cloud.md).
