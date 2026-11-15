@@ -178,10 +178,17 @@ void run_leaf_rows(const program& p, std::size_t first, std::size_t count,
                    const slot_addresses& base) noexcept {
   const loop& l = *std::get_if<loop>(&p.records[0]);
   const stage& s = *std::get_if<stage>(&p.records[1]);
-  const slot_addresses at = moved(base, l.step, first);
-  // Only the in and out slots move with the batch; the destination is never the input.
-  const std::ptrdiff_t src_dist = s.src == slot::in ? l.step[0] : l.step[1];
-  s.leaf(&s.args, source_of(s.src, at), destination_of(s.dst, at), src_dist, l.step[1], count);
+  // The two slots as scalars, not a moved copy of slot_addresses: on x86 a 16-byte load of
+  // fields just written by two 8-byte stores (execute_core's) cannot be forwarded and waits
+  // for them to retire, about a dozen cycles per call. As in moved(), no offset is applied
+  // to a null pointer. Only in and out move with the batch; the destination is never the
+  // input.
+  const auto k = static_cast<std::ptrdiff_t>(first);
+  const std::byte* in = l.step[0] != 0 ? base.in + l.step[0] * k : base.in;
+  std::byte* out = l.step[1] != 0 ? base.out + l.step[1] * k : base.out;
+  const bool from_in = s.src == slot::in;
+  s.leaf(&s.args, from_in ? static_cast<const void*>(in) : out, out,
+         from_in ? l.step[0] : l.step[1], l.step[1], count);
 }
 
 } // namespace
