@@ -479,8 +479,9 @@ Builds are shared by every job of a machine. `submit` refuses a dirty working tr
 the machine which of the arms' commits have no finished build in the cache,
 `<cache_dir>/<sha12>-<hash>/`, where the hash covers the compiler, the profile's `setup`
 lines, the FFTW root and the CMake options. Only those commits are packed with `git archive`
-(by content: `rsync -a` keeps mtimes and has left stale builds). They are built by a short
-build job with `build_cpus` cores, and the timing job, with the profile's allocation, waits
+(by content: `rsync -a` keeps mtimes and has left stale builds). They are built side by side
+by a short build job with `build_cpus` cores (each build's log is `build-<key>.log` in the
+job's directory), and the timing job, with the profile's allocation, waits
 for it (`afterok`) and only reads the cache. When everything is cached there is no build
 job. `--no-build-job` builds in the timing job instead. Each fbench target gets a marker
 file only after it built, and a per-entry `flock` makes a second job wait for a build in
