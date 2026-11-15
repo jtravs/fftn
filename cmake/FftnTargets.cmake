@@ -13,7 +13,11 @@ if(CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
 else()
   set(_fftn_warnings -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wshadow)
   set(_fftn_werror -Werror)
-  set(_fftn_fp -ffp-contract=off)
+  # -fno-fast-math is the default of GCC and Clang, but not of Intel's icpx, whose default
+  # floating-point model reassociates, drops signed zeros, uses approximate reciprocals and
+  # flushes denormals without defining __FAST_MATH__ (experiment X22). It comes first: icpx
+  # warns when -ffp-contract=off overrides its -fp-model=precise, but not this pair.
+  set(_fftn_fp -fno-fast-math -ffp-contract=off)
 endif()
 
 # clang-tidy from PyPI has no default SDK on macOS, so it would not find the standard
