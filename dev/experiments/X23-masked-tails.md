@@ -363,6 +363,16 @@ default.
   reported and nothing further is iterated here: the maintainer decides between `AUTO` on
   for GCC with a recorded exception, `AUTO` off for that target, or a follow-up.
 
+- **Re-runs** (added after the cases (1) runs, before any re-run): AGENTS.md section 6
+  re-runs a case a hair past a rule's limit on a loaded machine before it decides. Two
+  cases of (1) are past the limit and neither has a partial unit: Xeon `avx512` float 256
+  (1.047 against 1.039, interval [1.024, 1.098], load 31) and EPYC `avx2` double 72 = 6 ×
+  12 (1.033 against 1.030, [1.028, 1.039], load 3). Each is re-run once in a short run of
+  its own beside its neighbours (Xeon: float and double 128, 256, 512, arms `A512 G512`;
+  EPYC: 64, 72, 80, 144, arms A, G; same options as above), and the re-run's ratio
+  replaces the first one in condition (b). The EPYC's machine was not loaded, so its
+  re-run is extra evidence beyond the clause; if it confirms 72, (b) fails there.
+
 ### Amendment 4: results
 
 (Pending.)
