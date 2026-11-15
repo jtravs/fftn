@@ -16,9 +16,10 @@
 
 #include "passes/bluestein.inl"
 
-#include "passes/real.inl"
-
+// grid.inl first: the c2r pairing gather of real.inl uses its row prefetch.
 #include "passes/grid.inl"
+
+#include "passes/real.inl"
 
 #include "passes/lanes.inl"
 

@@ -698,4 +698,60 @@ void c2r_store(const pass_args* a, std::size_t first, std::size_t last) {
   }
 }
 
+// ---- The c2r pairing in a grid's first gather (n = 2h even; experiment X29).
+
+// Phase 1 of the grid of h (strategies/grid.hpp) gathers a block of s adjacent columns
+// c0 + q of N1 rows r: element j = c0 + q + M r of the half spectrum (M = src_stride). This
+// gather forms Z_j itself from X_j and X_h-j, as c2r_pre's lo: Z_j = A + f_j B with
+// A = X_j + conj X_h-j, B = X_j - conj X_h-j and f_j = conj(v_j) = i w^-j. The partner
+// Z_h-j is the lo of j' = h - j, which the block holding j' forms from the same two
+// inputs, so every block is independent and the input is only read (c2r keeps its input).
+// X_h-j is read a second time, but the pass that wrote the paired spectrum and the gather
+// that read it back are gone. Z_0 ignores the imaginary parts of X_0 and X_h.
+// f_j = (i w^-c) (w^-M r): in_factor holds the first factor for c < M, out_factor the second
+// for r < N1, plain interleaved (one rounding more than a stored f_j, as twiddle_transpose's
+// two factors). c0 comes from the loop's twiddle cursor: twiddles is phase 1's rows table
+// (twiddle_transpose's, N1 values per block) as the loop has moved it, roots its start, so
+// the block is (twiddles - roots) / 2 N1. Reads src, dst, src_stride, dst_stride, s, m (N1),
+// n, roots, twiddles, in_factor, out_factor. A unit is a row.
+template <class T> void c2r_pair_gather(const pass_args* a, std::size_t first, std::size_t last) {
+  const T* x = static_cast<const T*>(a->src);
+  T* y = static_cast<T*>(a->dst);
+  const std::ptrdiff_t xs = 2 * a->src_stride;
+  const std::ptrdiff_t ys = 2 * a->dst_stride;
+  const std::size_t cols = a->s;
+  const std::size_t h = a->n / 2;
+  const T* cursor = static_cast<const T*>(a->twiddles);
+  const T* start = static_cast<const T*>(a->roots);
+  const std::size_t c0 = static_cast<std::size_t>(cursor - start) / (2 * a->m) * cols;
+  const T* base = x - at(c0, 2); // X_0
+  const T* fc = static_cast<const T*>(a->in_factor) + at(c0, 2);
+  const T* fr = static_cast<const T*>(a->out_factor);
+  const std::size_t bytes = 2 * sizeof(T) * cols;
+  for (std::size_t r = first; r < last; ++r) {
+    const T* xr = x + at(r, xs);
+    // X_h-j at q = 0; lanes and q run downwards from it (j < h: within X_1 .. X_h).
+    const T* mr = base + at(h - c0, 2) - at(r, xs);
+    T* yr = y + at(r, ys);
+    if (r + rows_ahead < last) {
+      prefetch_bytes<0>(xr + at(rows_ahead, xs), bytes);
+      prefetch_bytes<0>(mr - at(rows_ahead, xs) - at(cols - 1, 2), bytes);
+      prefetch_bytes<1>(yr + at(rows_ahead, ys), bytes);
+    }
+    const cv<T> g = bcast(fr + at(r, 2));
+    for (std::size_t q = 0; q < cols; q += C<T>) {
+      const cv<T> xk = load(xr + 2 * q);
+      const cv<T> xc = conj(load_down<T, true>(mr - at(q, 2), C<T>));
+      const cv<T> f = cmul(load(fc + 2 * q), g);
+      store(yr + 2 * q, add(add(xk, xc), cmul(sub(xk, xc), f)));
+    }
+    if (c0 == 0 && r == 0) {
+      const T x0 = base[0];
+      const T xh = base[at(h, 2)];
+      yr[0] = x0 + xh;
+      yr[1] = x0 - xh;
+    }
+  }
+}
+
 } // namespace

@@ -419,26 +419,6 @@ real_fusion fusion_of(const build_settings& settings, target t) {
   };
 }
 
-// Makes the records from `first` on read the output slot where they read the input: the
-// grid of a c2r row runs in place on the output, which the pairing pass has written (the
-// grid builder reads its input from the input slot, and with in_place set touches it only
-// through phase 1's gather and that phase's loop).
-void read_output_for_input(program& p, std::size_t first) {
-  for (std::size_t i = first; i < p.records.size(); ++i) {
-    if (auto* st = std::get_if<stage>(&p.records[i])) {
-      if (st->src == slot::in) {
-        st->src = slot::out;
-      }
-      continue;
-    }
-    loop& l = std::get<loop>(p.records[i]);
-    if (l.step[0] != 0) {
-      l.step[1] = l.step[0];
-      l.step[0] = 0;
-    }
-  }
-}
-
 template <class T>
 void build(plan_core& c, const shape_view& s, const side& in, const side& out, const options& opts,
            const build_settings& settings) {
@@ -539,25 +519,21 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
                          settings.grid_fused &&
                              (n / 2) * 2 * sizeof(T) <= settings.profile.grid_fuse_bytes,
                          settings.grid_phase_radix);
-    const bool in_place = c.in_place || !r2c;
-    if (grid_builder<T>::uses_block(real_grid, in_place)) {
+    if (grid_builder<T>::uses_block(real_grid, c.in_place)) {
       c.block_elements = n / 2;
     }
-    std::vector<stage> pairing;
     if (r2c) {
-      scratch = grid.c2c_row(real_grid, -1, in_place, 1.0, false, p);
+      std::vector<stage> pairing;
+      scratch = grid.c2c_row(real_grid, -1, c.in_place, 1.0, false, p);
       chain.add_pairing(true, n, {slot::out, 1}, {slot::out, 1}, opts.scale, pairing);
       p.records.emplace_back(std::move(pairing.front()));
     } else {
-      chain.add_pairing(false, n, {slot::in, 1}, {slot::out, 1}, 1.0, pairing);
-      p.records.emplace_back(std::move(pairing.front()));
-      const std::size_t first = p.records.size();
-      scratch = grid.c2c_row(real_grid, +1, true, opts.scale, false, p);
-      read_output_for_input(p, first);
+      // Phase 1's gather pairs the bins from the input, which it only reads (X29).
+      scratch = grid.c2c_row(real_grid, +1, c.in_place, opts.scale, false, p, n);
     }
     c.axis_notes.push_back("axis 0 (n = " + std::to_string(n) + "): " + (r2c ? "r2c" : "c2r") +
                            " through a half-length complex " + grid.note(real_grid) +
-                           (r2c ? ", then a pairing pass" : ", after a pairing pass"));
+                           (r2c ? ", then a pairing pass" : ", the pairing in its first gather"));
     c.strategy_note =
         std::string("grid for the half-length complex transform (") +
         std::to_string(real_grid.phases) + " phases, each depth-first over blocks of columns" +

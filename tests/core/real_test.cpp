@@ -339,8 +339,8 @@ TEST(Real, EveryRoute) {
 }
 
 // Long real rows: the half-length transform through a grid, the pairing after it (r2c, in
-// place in the output) or before it (c2r, into the output, where the grid then runs in
-// place); two and three phases.
+// place in the output) or in phase 1's gather (c2r, from the input, which stays intact);
+// two and three phases.
 TEST(Real, HalfLengthGrid) {
   struct grid_real {
     std::size_t n;

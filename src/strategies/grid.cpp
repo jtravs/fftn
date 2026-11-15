@@ -423,13 +423,35 @@ template <class T> const T* grid_builder<T>::row_twiddles(std::size_t ni, std::s
   return t.data();
 }
 
+// The factors of c2r_pair_gather's f_j = i w^-j (w = e^(-2 pi i / n), j = c + m1 r < n / 2):
+// i w^-c for c < m1 and w^-(m1 r) for r < n1, plain interleaved.
+template <class T>
+std::pair<const T*, const T*> grid_builder<T>::c2r_pair_factors(std::size_t n1, std::size_t m1,
+                                                                std::size_t n) {
+  std::vector<T>& columns = tables_.emplace_back(2 * m1);
+  for (std::size_t q = 0; q < m1; ++q) {
+    const std::complex<T> v = unit_root<T>(+1, q, n);
+    columns[2 * q] = -v.imag();
+    columns[2 * q + 1] = v.real();
+  }
+  // Taken before the next table is appended (first_twiddles).
+  const T* columns_data = columns.data();
+  std::vector<T>& rows = tables_.emplace_back(2 * n1);
+  for (std::size_t r = 0; r < n1; ++r) {
+    const std::complex<T> v = unit_root<T>(+1, m1 * r, n);
+    rows[2 * r] = v.real();
+    rows[2 * r + 1] = v.imag();
+  }
+  return {columns_data, rows.data()};
+}
+
 template <class T> bool grid_builder<T>::uses_block(const grid_split& g, bool in_place) noexcept {
   return g.phases == 3 || in_place;
 }
 
 template <class T>
 std::size_t grid_builder<T>::c2c_row(const grid_split& g, int sign, bool in_place, double scale,
-                                     bool scale_on_input, program& p) {
+                                     bool scale_on_input, program& p, std::size_t c2r_n) {
   const double in_scale = scale_on_input ? scale : 1.0;
   const double out_scale = scale_on_input ? 1.0 : scale;
   const std::size_t b = g.block;
@@ -469,8 +491,21 @@ std::size_t grid_builder<T>::c2c_row(const grid_split& g, int sign, bool in_plac
   // ends doubled the time), and fusing only one end of a phase gained nothing (X12, run
   // 20261114-131752-7e99), so a phase fuses both ends or neither.
   const std::vector<std::size_t> rad1 = phase_radix_list(n1);
-  const bool fuse1 = fused_ && fusible(rad1);
-  if (!fuse1) {
+  // A c2r row's phase 1 always gathers: its gather forms the paired spectrum (X29).
+  const bool fuse1 = c2r_n == 0 && fused_ && fusible(rad1);
+  const auto [local, rows] = first_twiddles(g);
+  if (c2r_n != 0) {
+    add_copy("gather", kernels_.passes.c2r_pair_gather, n1, b, buf[0],
+             static_cast<std::ptrdiff_t>(m1), slot::a, blk, 1.0, rows, p);
+    stage& st = std::get<stage>(p.records.back());
+    const auto [columns, row_factors] = c2r_pair_factors(n1, m1, c2r_n);
+    st.args.roots = rows;
+    st.args.in_factor = columns;
+    st.args.out_factor = row_factors;
+    st.args.m = n1;
+    st.args.n = c2r_n;
+    st.name += "; c2r pairing";
+  } else if (!fuse1) {
     add_copy("gather", kernels_.passes.block_copy[in_scale != 1.0 ? 1 : 0], n1, b, buf[0],
              static_cast<std::ptrdiff_t>(m1), slot::a, blk, in_scale, nullptr, p);
   }
@@ -481,7 +516,6 @@ std::size_t grid_builder<T>::c2c_row(const grid_split& g, int sign, bool in_plac
       side_of{.where = slot::a}, fuse1 ? in_scale : 1.0, 1.0, nullptr, p);
   stage tt;
   tt.run = kernels_.passes.twiddle_transpose[d];
-  const auto [local, rows] = first_twiddles(g);
   tt.args.roots = local;
   tt.args.twiddles = rows;
   tt.args.m = n1;
