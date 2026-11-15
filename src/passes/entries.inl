@@ -13,6 +13,16 @@ inline constexpr edge_op nop = edge_op::none;
 inline constexpr edge_op scl = edge_op::scale;
 inline constexpr edge_op fac = edge_op::factor;
 
+// A split lane pass (split.inl), or null where radix R has no split codelet.
+template <class T, std::size_t R, int Sign, bool Twiddled, bool InIL, edge_op OutOp>
+constexpr pass_fn split_entry() {
+  if constexpr (has_split_codelet(R)) {
+    return &split_pass<T, R, Sign, Twiddled, InIL, OutOp>;
+  } else {
+    return nullptr;
+  }
+}
+
 // The passes of the codelet in row I of gen::radices. A plan has one scale, on one edge
 // (core/plan_core.cpp), so no pass scales both: that entry stays null rather than
 // instantiating a variant nothing selects.
@@ -87,6 +97,30 @@ template <class T, std::size_t I> struct radix_entries {
                       &leaf_lines<T, R, +1, fac, scl>,
                       &leaf_lines<T, R, +1, fac, fac>,
                   },
+              },
+          },
+      .split_mid =
+          {
+              {
+                  split_entry<T, R, -1, true, false, nop>(),
+                  split_entry<T, R, -1, true, true, nop>(),
+              },
+              {
+                  split_entry<T, R, +1, true, false, nop>(),
+                  split_entry<T, R, +1, true, true, nop>(),
+              },
+          },
+      .split_last =
+          {
+              {
+                  split_entry<T, R, -1, false, false, nop>(),
+                  split_entry<T, R, -1, false, false, scl>(),
+                  split_entry<T, R, -1, false, false, fac>(),
+              },
+              {
+                  split_entry<T, R, +1, false, false, nop>(),
+                  split_entry<T, R, +1, false, false, scl>(),
+                  split_entry<T, R, +1, false, false, fac>(),
               },
           },
       .phase =

@@ -23,6 +23,10 @@ namespace fftn::inline v0::detail {
 // Which strategy builds a c2c row (DESIGN.md 8.5): the planner's choice, or one forced.
 enum class strategy_choice : std::uint8_t { rules, chain, grid };
 
+// The arithmetic of a chain's lane passes (DESIGN.md 6.3): the profile's choice, or
+// interleaved or split forced.
+enum class layout_choice : std::uint8_t { rules, interleaved, split };
+
 // Construction knobs for tests; plans built through the public API use the defaults. They
 // force the paths the rules would not take for the lengths at hand (AGENTS.md section 5).
 struct build_settings {
@@ -55,6 +59,10 @@ struct build_settings {
   // The largest radix the grid's phase rule uses (strategies/grid.hpp), instead of
   // default_grid_phase_radix when not 0. Experiment X3 prices radix 32 and 64 phases.
   std::size_t grid_phase_radix = 0;
+  // Interleaved or split lane passes in every chain of the plan instead of the profile's
+  // choice (target_profile::split, planner/rules.hpp); where a chain has no split run
+  // (strategies/chain.hpp) it stays interleaved. Experiment X1 compares the two.
+  layout_choice layout = layout_choice::rules;
   // The Bluestein threshold instead of the profile's when not 0 (strategies/chain.hpp):
   // 16 sends every prime factor above 16 through Bluestein, SIZE_MAX none.
   std::size_t bluestein_above = 0;

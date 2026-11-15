@@ -19,6 +19,10 @@
 //                such targets (DESIGN.md 6.1). The scalar target is never fused, so it gives
 //                the same bits on every processor.
 //   id           the target (target.hpp)
+//   split_block  the copy count, a multiple of W, from which a chain's lane passes may run
+//                in split arithmetic (strategies/chain.hpp): the largest W among the targets
+//                that round alike (DESIGN.md 6.2), so that both targets of a pair choose the
+//                same passes and give the same bits (avx2 takes avx512's W)
 //
 // Complex-register operations, a, b, acc of type cv<T>, w of type tw<T>, r of type T,
 // p a pointer to T:
@@ -83,5 +87,6 @@ template <class T> using tw = vec<T>::tw;
 template <class T> inline constexpr std::size_t C = vec<T>::C;
 template <class T> inline constexpr std::size_t W = vec<T>::W;
 template <class T> inline constexpr std::size_t tw_reals = vec<T>::tw_reals;
+template <class T> inline constexpr std::size_t split_block = vec<T>::split_block;
 
 } // namespace

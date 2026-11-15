@@ -266,7 +266,9 @@ build_settings forced(std::size_t fuse_radix, std::vector<std::size_t> radices =
 
 // The pairing fused into a pass of every codelet radix R: the r2c chain's last (radices
 // ..., R) and the c2r chain's first (R, ...), with s (or m) = 6 (even: the copy s/2), 7
-// (odd) and 64 (several registers of copies, a partial one on wide targets).
+// (odd) and 64 (several registers of copies, a partial one on wide targets). The r2c rows
+// force interleaved passes: where the chain has a split run (x86 by default) an r2c row
+// takes the separate route instead.
 TEST(Real, FusedIntoEveryRadix) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
     for (std::size_t r = 2; r <= 16; ++r) {
@@ -281,8 +283,10 @@ TEST(Real, FusedIntoEveryRadix) {
         last.push_back(r);
         std::vector<std::size_t> first{r};
         first.insert(first.end(), rest.rbegin(), rest.rend());
-        check_all<double>(t, {2 * h, forced(16, last), "fused into its last pass"}, true);
-        check_all<float>(t, {2 * h, forced(16, last), "fused into its last pass"}, true);
+        build_settings r2c = forced(16, last);
+        r2c.layout = fftn::detail::layout_choice::interleaved;
+        check_all<double>(t, {2 * h, r2c, "fused into its last pass"}, true);
+        check_all<float>(t, {2 * h, r2c, "fused into its last pass"}, true);
         check_all<double>(t, {2 * h, forced(16, first), "fused into its first pass"}, false);
         check_all<float>(t, {2 * h, forced(16, first), "fused into its first pass"}, false);
       }

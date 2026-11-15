@@ -72,6 +72,10 @@ struct target_profile {
   // Prime factors above this go through one Bluestein stage at the end of the chain;
   // those from 17 up to it are generic passes (DESIGN.md 11.2).
   std::size_t bluestein_above = 0;
+  // A chain's last lane passes run in split arithmetic on the BL layout (DESIGN.md 6.3,
+  // strategies/chain.hpp) rather than on interleaved registers. Experiment X1 sets it per
+  // target and precision.
+  bool split = false;
 };
 
 // The profile of target t for a precision with `lanes` complex lanes: the table measured

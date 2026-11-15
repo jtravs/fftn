@@ -95,6 +95,15 @@ enum class factor_sharing : std::uint8_t { none, input, output };
 [[nodiscard]] constexpr bool has_codelet(std::size_t r) noexcept {
   return codelet_slot(r) < gen::radix_count;
 }
+// Whether a split codelet (src/gen/split_codelets.inl) of radix r exists.
+[[nodiscard]] constexpr bool has_split_codelet(std::size_t r) noexcept {
+  for (std::size_t i = 0; i < gen::split_radix_count; ++i) {
+    if (gen::split_radices[i] == r) {
+      return true;
+    }
+  }
+  return false;
+}
 // Every radix from 2 to this one has a codelet; the planner and the grid choose pass radices
 // up to it, and prime factors above it are the generic pass's or Bluestein's.
 inline constexpr std::size_t dense_codelet_radix = 16;
@@ -134,6 +143,12 @@ struct radix_passes {
   pass_fn last[2][edge_op_count];
   // A whole transform of n = radix in registers; input edge, output edge.
   leaf_fn leaf[2][edge_op_count][edge_op_count];
+  // Split-arithmetic lane passes (src/passes/split.inl), null where the radix has no split
+  // codelet: a middle pass (twiddled) writing the BL layout, from the interleaved line (the
+  // first pass of a split run, [1]) or from BL ([0]); and the last pass, from BL to the
+  // interleaved line, with the output edge.
+  pass_fn split_mid[2][2];
+  pass_fn split_last[2][edge_op_count];
   // A grid phase's first or last pass reading or writing the caller's rows in place of a
   // gather or scatter (src/passes/grid.inl), by phase_variant.
   pass_fn phase[2][phase_variants];

@@ -24,6 +24,7 @@ template <> struct vec<double> {
   using tw = cplx<double>;
   static constexpr std::size_t C = 1;
   static constexpr std::size_t W = 1;
+  static constexpr std::size_t split_block = W;
   static constexpr std::size_t tw_reals = 2;
 };
 
@@ -33,6 +34,7 @@ template <> struct vec<float> {
   using tw = cplx<float>;
   static constexpr std::size_t C = 1;
   static constexpr std::size_t W = 1;
+  static constexpr std::size_t split_block = W;
   static constexpr std::size_t tw_reals = 2;
 };
 
