@@ -317,9 +317,7 @@ def stage_screen(ctx: argparse.Namespace, state: dict, n: int, cases: list[str])
     lanes = radices.LANES[ctx.isa] if ctx.isa else ()
     v0s = {v0, tuple(entry.get("v0_f32", v0 or ()))}
     cands = [
-        s
-        for s in radices.candidates(n, v0, ops, lanes, ctx.codelets, ctx.require)
-        if s not in v0s
+        s for s in radices.candidates(n, v0, ops, lanes, ctx.codelets, ctx.require) if s not in v0s
     ]
     per_process = process_seconds(n, batches_of(n, ctx.cases), ctx.gflops, screen=True)
     fits = int(ctx.screen_budget / (SCREEN_ROUNDS * per_process)) - 2
@@ -395,7 +393,9 @@ def cmd_stages(ctx: argparse.Namespace, names: list[str]) -> int:
     state["isa"] = ctx.isa
     radix_set = {"codelets": list(ctx.codelets), "require": list(ctx.require)}
     if state["lengths"] and state.get("radix_set", radix_set) != radix_set:
-        raise SystemExit(f"campaign {state['name']} ran with {state['radix_set']}: use another --name")
+        raise SystemExit(
+            f"campaign {state['name']} ran with {state['radix_set']}: use another --name"
+        )
     if ctx.require or ctx.codelets != radices.CODELET_RADICES:
         state["radix_set"] = radix_set
     if "host" not in state:

@@ -176,6 +176,7 @@ if stage sanitize; then
     # (Xeon Gold 6240, GCC 14). Clang's runtime leaves it off by default; so does the gate.
     asan="detect_leaks=$leaks:detect_stack_use_after_return=0"
     ASAN_OPTIONS=${ASAN_OPTIONS:-$asan} \
+      LSAN_OPTIONS=${LSAN_OPTIONS:-suppressions=$root/tests/support/lsan.supp} \
       UBSAN_OPTIONS=${UBSAN_OPTIONS:-print_stacktrace=1:halt_on_error=1} \
       build_and_test check-sanitize
   else skip "no check-sanitize preset"; fi
