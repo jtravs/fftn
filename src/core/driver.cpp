@@ -164,7 +164,8 @@ void run_lane_leaf(const stage& st, pass_args& a, const void* src, void* dst, st
   bool tail_ready = false;
   if (prepared) {
     for (std::size_t k = 0; k < body; ++k) {
-      std::construct_at(&body_args[k].args, std::get_if<stage>(&p.records[p.batch_loops + k])->args);
+      std::construct_at(&body_args[k].args,
+                        std::get_if<stage>(&p.records[p.batch_loops + k])->args);
     }
   }
   const std::size_t end = first + count;

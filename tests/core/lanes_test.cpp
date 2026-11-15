@@ -584,15 +584,16 @@ template <class T> void lane_leaf_cases(fftn::isa target) {
     const side_layout adjacent{.stride = static_cast<std::ptrdiff_t>(count), .dist = 1};
     std::vector<batch_case> cases{{.n = n, .count = count, .in = adjacent, .out = adjacent}};
     if (c == 1) {
-      cases.push_back({.n = n, .count = count, .in = rows_with_gap(n, 3), .out = rows_with_gap(n, 1)});
+      cases.push_back(
+          {.n = n, .count = count, .in = rows_with_gap(n, 3), .out = rows_with_gap(n, 1)});
     }
     for (const batch_case& bc : cases) {
       const std::string what = label<T>(target, "c2c", bc);
       lanes_equal_chain<cx, cx>(target, bc, n, n, 2 * c, what);
       build_settings lanes;
       lanes.strategy = strategy_choice::lanes;
-      const auto core = make_plan_core(fftn::detail::view_of(shape_of<cx, cx>(bc)),
-                                       {.force_isa = target}, lanes);
+      const auto core =
+          make_plan_core(fftn::detail::view_of(shape_of<cx, cx>(bc)), {.force_isa = target}, lanes);
       EXPECT_NE(described(*core).find("lanes leaf between the caller's arrays"), std::string::npos)
           << what << "\n"
           << described(*core);
