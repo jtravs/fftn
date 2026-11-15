@@ -107,6 +107,11 @@ on an Emerald Rapids Xeon (Google C4), and 0.87 in double but 1.03–1.07 in flo
 (C4D). Per length it swung from 0.52 (1024 points, float) to 3.1 (60 points, float, on both
 machines): no machine-wide preference is right, so price both targets per plan.
 [X21](experiments/X21-phase1-cloud.md).
+On Cascade Lake, with split runs and refitted tables, the dividing line is the tail, not
+the size: float rows whose length 8 divides took 0.78–0.85 of AVX2's time, the others 1.20–
+1.23 (double: 0.71–0.78 against 1.00–1.05 where 4 does not divide n). A key for the
+per-plan choice is C | n before any size threshold.
+[X16](experiments/X16-avx512-table.md).
 
 2.4 **Integer division is expensive enough to matter in bookkeeping.** A 64-bit `div` costs
 40–90 cycles on Cascade Lake; four per chunk in the driver were about 37 % of a 64-point
@@ -139,6 +144,22 @@ Mac; AVX2 tables fitted on the EPYC picked a sequence within 2 % of the best for
 48–65 % of lengths on the Mac, against 82–83 % for tables fitted there (3.6 % faster
 overall). On the Xeon's AVX-512 the borrowed tables were already within 0.6–2.1 % of the
 best. [X2](experiments/X2-radix-sets.md), [X16](experiments/X16-avx512-table.md).
+They also go stale when the kernels change. After split re/im runs (X1) the same AVX-512
+float table was 3.5 % from the best up to 1024 points and 8–10 % above, and single lengths
+were off by 1.7–2.1 times (700 points: 4·7·5·5 against 14·10·5), because a run starts only
+after a prefix the split block divides, so the best first radix moved to 8 or 16; AVX2 and
+NEON tables, whose kernels changed less, stayed within 1–2 %. Re-run the search after every
+kernel or lowering change, not only on a new machine.
+[X2](experiments/X2-radix-sets.md) (refresh).
+
+2.8 **A fitted cost table must not decide where it never measured.** Fitted to every
+candidate up to 1024 points and to the cost estimate's best 20 above, the AVX-512 float
+costs chose, for 4096–32768 points, five- and six-pass chains of radix 4 that no campaign had
+timed (32768: 16·4·4·4·4·8, against the measured best 8·16·16·16); within the measured
+candidates it reproduced 97 % of winners. Check whether the model's choice at each measured
+length was itself timed, and pin the measured best where it was not; treat the
+unmeasured lengths in between as the model's real test.
+[X2](experiments/X2-radix-sets.md) (refresh).
 
 ## 3. Memory and caches
 

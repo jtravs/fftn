@@ -31,23 +31,63 @@ constexpr std::array<std::size_t, cost_radices> pass_radices{
 // so their columns are radix 10's and 12's scaled by the codelets' operation counts.
 // The overrides are the lengths where the costs' choice was more than 2 % slower than
 // planner v0 in the refinement; each is the measured winner, which no batch of that
-// precision measured slower than v0. 4096 and 16384 lie beyond the fit, where its radix-16
-// passes (18 live values in 16 registers) lose: experiment X18 measured 8.8.8.8 at 0.75 of
-// the fitted 4.8.8.16 and 8.8.16.16 at 0.84 of 4.16.16.16 (EPYC 7763, one row), until X2's
-// campaign over the longer lengths replaces them.
+// precision measured slower than v0. 4096 lies beyond the fit, where its radix-16 passes
+// (18 live values in 16 registers) lose: experiment X18 measured 8.8.8.8 at 0.75 of the
+// fitted 4.8.8.16 (EPYC 7763, one row).
+// The planner refresh (X2, "Refit after X1, X3, X18 and X19") kept these costs and added
+// overrides from the campaigns epyc-avx2-smooth and epyc-avx2-long (EPYC 7763, split runs
+// on): the lengths where the costs' choice was more than 2 % behind the measured winner in
+// every case (fit.py --base), less those whose override was more than 2 % slower than the
+// baseline in a case of the Xeon 6240's AVX2 campaigns (xeon-avx2-smooth2, -long), and less
+// 512 (2.16.16): 0.92-0.95 as a row, but the r2c of 1024 x 1024 runs it as 16.16.2 with the
+// pairing fused into the radix-2 pass, 1.05 times as long (EPYC tracking 20261115-041212-cdc2).
 // clang-format off
 // NOLINTBEGIN(readability-trailing-comma): bench/x2/fit.py writes and parses this layout
-constexpr std::array<radix_override, 6> avx2_double_overrides{{
+constexpr std::array<radix_override, 29> avx2_double_overrides{{
+    {.n = 27, .radices = {3, 9, 0, 0}},
     {.n = 42, .radices = {2, 3, 7, 0}},
+    {.n = 54, .radices = {2, 3, 9, 0}},
+    {.n = 63, .radices = {7, 9, 0, 0}},
     {.n = 70, .radices = {2, 5, 7, 0}},
+    {.n = 168, .radices = {12, 14, 0, 0}},
+    {.n = 216, .radices = {2, 12, 9, 0}},
+    {.n = 256, .radices = {2, 16, 8, 0}},
     {.n = 350, .radices = {2, 5, 5, 7}},
+    {.n = 384, .radices = {2, 16, 12, 0}},
+    {.n = 448, .radices = {2, 16, 14, 0}},
     {.n = 490, .radices = {2, 7, 5, 7}},
+    {.n = 567, .radices = {9, 9, 7, 0}},
+    {.n = 588, .radices = {6, 7, 14, 0}},
+    {.n = 675, .radices = {15, 5, 9, 0}},
+    {.n = 700, .radices = {10, 5, 14, 0}},
+    {.n = 768, .radices = {4, 16, 12, 0}},
+    {.n = 896, .radices = {4, 16, 14, 0}},
+    {.n = 1536, .radices = {6, 16, 16, 0}},
+    {.n = 1920, .radices = {10, 16, 12, 0}},
+    {.n = 2000, .radices = {8, 10, 5, 5}},
+    {.n = 2400, .radices = {10, 15, 16, 0}},
+    {.n = 3000, .radices = {8, 5, 5, 15}},
     {.n = 4096, .radices = {8, 8, 8, 8}},
-    {.n = 16384, .radices = {8, 8, 16, 16}},
+    {.n = 4800, .radices = {8, 12, 5, 10}},
+    {.n = 6000, .radices = {8, 10, 5, 15}},
+    {.n = 8192, .radices = {8, 8, 16, 8}},
+    {.n = 12000, .radices = {8, 10, 15, 10}},
+    {.n = 16384, .radices = {8, 16, 16, 8}},
 }};
-constexpr std::array<radix_override, 2> avx2_float_overrides{{
+constexpr std::array<radix_override, 13> avx2_float_overrides{{
+    {.n = 90, .radices = {9, 10, 0, 0}},
     {.n = 140, .radices = {4, 5, 7, 0}},
-    {.n = 700, .radices = {4, 7, 5, 5}},
+    {.n = 240, .radices = {4, 6, 10, 0}},
+    {.n = 336, .radices = {4, 12, 7, 0}},
+    {.n = 486, .radices = {9, 9, 6, 0}},
+    {.n = 560, .radices = {4, 10, 14, 0}},
+    {.n = 567, .radices = {9, 9, 7, 0}},
+    {.n = 700, .radices = {4, 5, 5, 7}},
+    {.n = 3600, .radices = {16, 15, 15, 0}},
+    {.n = 4800, .radices = {8, 10, 4, 15}},
+    {.n = 7200, .radices = {12, 4, 10, 15}},
+    {.n = 8192, .radices = {8, 8, 16, 8}},
+    {.n = 12000, .radices = {16, 5, 15, 10}},
 }};
 
 constexpr pass_costs avx2_double{
@@ -82,44 +122,108 @@ constexpr pass_costs avx2_float{
 // NOLINTEND(readability-trailing-comma)
 // clang-format on
 
-// Experiment X3 (dev/experiments/X3-big-radices.md), Xeon Gold 6240, AVX-512, GCC 14, one
-// thread, float (C = 8): avx2_float with radix 32 and 64 columns fitted to an X2-style search
-// over every multiple of 32 from 64 to 2048 whose candidates were the sequences containing
-// 32 or 64 (bench/x2/fit.py --base f32=avx2_float); the costs up to radix 16 are
-// avx2_float's, so wherever the choice has neither 32 nor 64 it is avx2_float's at C = 8. The
-// overrides are avx2_float's plus the lengths where the choice was more than 2 % behind
-// the baseline in some case or behind the measured winner in every case (256, 512: 32.8 and
-// 32.16 beat the table's 8.32 and 16.32 by 9 to 15 %). Beyond 2048 the radix 32 and 64
-// columns are extrapolated: at 4096 their 32.4.32 was 2 to 11 % slower than 8.16.32,
-// measured by X3 at 0.96 to 0.98 of the radix-16 16.16.16, so 4096 is overridden. At 2048
-// the fit's override 8.4.64 (0.98 of 16.8.16 before experiment X19's codelets) tied or lost
-// after them (1.00 at batch 1, 1.03 at 64, run 20261114-215159-370f), so 2048 keeps
-// avx2_float's 16.8.16. AVX-512 in double took no table: its big chains tied (X3).
+// The planner refresh (dev/experiments/X2-radix-sets.md, "Refit after X1, X3, X18 and X19"),
+// Xeon Gold 6240, AVX-512, GCC 14, one thread, split runs on (X1).
+// Double (C = 4): avx2_float's costs (the nearest C, as before) with the overrides where its
+// choice was more than 2 % behind the measured winner in every case of the length
+// (fit.py --base f64=avx2_float on campaign xeon-avx512-smooth2): mostly a first radix of 8,
+// after which a split run (block 8) starts. Not 576 (8.12.6, 0.92-0.94 as a row): as the
+// Bluestein convolution of 257 it ran 1.06 times as long (Xeon tracking 20261115-041226-994e).
+// Float (C = 8): fitted by bench/x2/fit.py to the campaigns xeon-avx512-smooth2 (every
+// candidate of the 7-smooth lengths up to 1024), xeon-avx512-big2 (the sequences with radix
+// 32 or 64, multiples of 32 up to 2048) and xeon-avx512-long (the cost estimate's best 20
+// per catalogue length 1200-32768, radices up to 64). The overrides (fit.py --cover) are the
+// measured lengths where the costs' choice was more than 2 % slower than the campaigns'
+// baseline (X3's table) in some case, more than 2 % behind the winner in every case, or
+// never timed (above 1024 the costs extrapolate from 20 candidates per length): each is the
+// sequence least behind the winner at worst and no slower than the baseline. 21504 keeps
+// X3's 8.7.12.32: it is the Bluestein convolution of 10403 = 101 x 103, where the costs'
+// unmeasured five-pass choice ran 1.08 times as long (run 20261115-040151-b716).
 // clang-format off
 // NOLINTBEGIN(readability-trailing-comma): bench/x2/fit.py writes and parses this layout
-constexpr std::array<radix_override, 8> avx512_float_overrides{{
+constexpr std::array<radix_override, 15> avx512_double_overrides{{
+    {.n = 24, .radices = {4, 6, 0, 0}},
+    {.n = 27, .radices = {3, 9, 0, 0}},
     {.n = 140, .radices = {4, 5, 7, 0}},
-    {.n = 256, .radices = {32, 8, 0, 0}},
-    {.n = 512, .radices = {32, 16, 0, 0}},
+    {.n = 168, .radices = {4, 6, 7, 0}},
+    {.n = 288, .radices = {8, 12, 3, 0}},
+    {.n = 320, .radices = {8, 10, 4, 0}},
+    {.n = 480, .radices = {8, 12, 5, 0}},
+    {.n = 640, .radices = {8, 10, 8, 0}},
+    {.n = 648, .radices = {4, 6, 9, 3}},
+    {.n = 672, .radices = {8, 12, 7, 0}},
     {.n = 700, .radices = {4, 7, 5, 5}},
-    {.n = 768, .radices = {8, 3, 32, 0}},
-    {.n = 1536, .radices = {8, 12, 16, 0}},
+    {.n = 768, .radices = {8, 12, 8, 0}},
+    {.n = 864, .radices = {8, 9, 12, 0}},
+    {.n = 896, .radices = {8, 14, 8, 0}},
+    {.n = 1000, .radices = {4, 10, 5, 5}},
+}};
+
+constexpr pass_costs avx512_double{
+    .unit = {{
+        {28, 197, 76, 132, 205, 452, 298, 534, 538, 803, 525, 950, 856, 1070, 924, 0, 0},
+        {101, 146, 190, 293, 343, 462, 525, 781, 700, 1044, 827, 1496, 1159, 1311, 1459, 0, 0},
+        {42, 59, 91, 116, 138, 223, 213, 389, 293, 458, 367, 720, 622, 570, 674, 0, 0},
+    }},
+    .tail = {{
+        {644, 628, 1125, 1110, 1612, 1655, 2285, 2601, 3009, 4487, 3539, 6405, 4310, 4163, 4957, 0, 0},
+        {540, 855, 1057, 1304, 1659, 1840, 2129, 2511, 2738, 4082, 3295, 5963, 3767, 4056, 4186, 0, 0},
+        {282, 304, 951, 925, 1575, 1680, 2291, 2497, 3013, 4708, 3797, 7448, 4305, 4096, 4695, 0, 0},
+    }},
+    .pass = 406,
+    .overrides = avx512_double_overrides,
+};
+
+constexpr std::array<radix_override, 35> avx512_float_overrides{{
+    {.n = 24, .radices = {3, 8, 0, 0}},
+    {.n = 36, .radices = {6, 6, 0, 0}},
+    {.n = 96, .radices = {8, 3, 4, 0}},
+    {.n = 128, .radices = {8, 16, 0, 0}},
+    {.n = 256, .radices = {32, 8, 0, 0}},
+    {.n = 300, .radices = {12, 5, 5, 0}},
+    {.n = 384, .radices = {16, 4, 6, 0}},
+    {.n = 432, .radices = {8, 6, 9, 0}},
+    {.n = 504, .radices = {8, 7, 9, 0}},
+    {.n = 512, .radices = {32, 16, 0, 0}},
+    {.n = 576, .radices = {8, 2, 12, 3}},
+    {.n = 600, .radices = {8, 5, 15, 0}},
+    {.n = 648, .radices = {8, 9, 9, 0}},
+    {.n = 672, .radices = {8, 7, 12, 0}},
+    {.n = 768, .radices = {16, 12, 4, 0}},
+    {.n = 784, .radices = {16, 7, 7, 0}},
+    {.n = 800, .radices = {16, 10, 5, 0}},
+    {.n = 864, .radices = {16, 9, 6, 0}},
+    {.n = 896, .radices = {16, 14, 4, 0}},
+    {.n = 960, .radices = {8, 2, 4, 15}},
+    {.n = 1008, .radices = {8, 2, 9, 7}},
+    {.n = 1024, .radices = {16, 16, 4, 0}},
+    {.n = 1200, .radices = {16, 15, 5, 0}},
+    {.n = 1440, .radices = {16, 9, 10, 0}},
+    {.n = 1920, .radices = {16, 12, 10, 0}},
     {.n = 2048, .radices = {16, 8, 16, 0}},
-    {.n = 4096, .radices = {8, 16, 32, 0}},
+    {.n = 2400, .radices = {16, 10, 15, 0}},
+    {.n = 3000, .radices = {8, 5, 5, 15}},
+    {.n = 4096, .radices = {32, 8, 16, 0}},
+    {.n = 4800, .radices = {8, 4, 15, 10}},
+    {.n = 7200, .radices = {32, 15, 15, 0}},
+    {.n = 8192, .radices = {16, 16, 32, 0}},
+    {.n = 16384, .radices = {16, 4, 16, 16}},
+    {.n = 21504, .radices = {8, 7, 12, 32}},
+    {.n = 32768, .radices = {8, 16, 16, 16}},
 }};
 
 constexpr pass_costs avx512_float{
     .unit = {{
-        {28, 197, 76, 132, 205, 452, 298, 534, 538, 803, 525, 950, 856, 1070, 924, 2134, 8695},
-        {101, 146, 190, 293, 343, 462, 525, 781, 700, 1044, 827, 1496, 1159, 1311, 1459, 3244, 8235},
-        {42, 59, 91, 116, 138, 223, 213, 389, 293, 458, 367, 720, 622, 570, 674, 1605, 5336},
+        {28, 590, 666, 1612, 1420, 1704, 282, 772, 1068, 1593, 1390, 2516, 2256, 2687, 508, 2521, 9838},
+        {55, 121, 190, 372, 460, 582, 587, 801, 918, 1369, 1063, 1924, 1733, 1567, 1563, 4790, 9876},
+        {24, 54, 79, 179, 157, 331, 253, 501, 477, 745, 542, 1063, 855, 1044, 900, 2535, 7670},
     }},
     .tail = {{
-        {644, 628, 1125, 1110, 1612, 1655, 2285, 2601, 3009, 4487, 3539, 6405, 4310, 4163, 4957, 9397, 18667},
-        {540, 855, 1057, 1304, 1659, 1840, 2129, 2511, 2738, 4082, 3295, 5963, 3767, 4056, 4186, 8168, 16780},
-        {282, 304, 951, 925, 1575, 1680, 2291, 2497, 3013, 4708, 3797, 7448, 4305, 4096, 4695, 13892, 23943},
+        {739, 122, 648, 359, 702, 1264, 2219, 2027, 2544, 3794, 2884, 5219, 3228, 3140, 4341, 6569, 15857},
+        {541, 789, 862, 1097, 1259, 1551, 1541, 1661, 2017, 3007, 2372, 4293, 2500, 3071, 2743, 4824, 12253},
+        {391, 508, 807, 916, 1224, 1858, 2086, 959, 1844, 2882, 2334, 4578, 3332, 4041, 2982, 5514, 15468},
     }},
-    .pass = 406,
+    .pass = 345,
     .overrides = avx512_float_overrides,
 };
 // NOLINTEND(readability-trailing-comma)
@@ -150,7 +254,12 @@ std::uint64_t pass_cost(const target_profile& p, std::size_t n, std::size_t s, s
 // NEON with FCMA, fitted by bench/x2/fit.py to X2's campaign on an Apple M5 Max
 // (campaign mac-smooth, 7-smooth lengths up to 1024, batches 1 and 64). Three double
 // overrides (490, 686, 882) come from the A/B of these tables against the AVX2 ones (run
-// 20261114-101523-3d56): there the fitted choice was 1.25-1.40 times slower.
+// 20261114-101523-3d56): there the fitted choice was 1.25-1.40 times slower. The planner
+// refresh (X2, "Refit after X1, X3, X18 and X19") kept the costs and added overrides from
+// campaign mac-neon-smooth2 where the current choice (490 included) was more than 2 % behind
+// the measured winner in every case (fit.py --base), less 768 (both precisions) and 448
+// (float), which the A/B (run 20261115-035010-f3d4) measured 2-5 % slower; the notes below
+// are the first fit's.
 // fit.py --name mac-smooth: ISA neon_fcma, 532 cases
 // neon_fcma_double: C = 1, constant per transform 0
 //   n = 56: 4.14 +4.1 % against the baseline; override 8.7
@@ -231,25 +340,38 @@ std::uint64_t pass_cost(const target_profile& p, std::size_t n, std::size_t s, s
 
 // clang-format off
 // NOLINTBEGIN(readability-trailing-comma): bench/x2/fit.py writes and parses this layout
-constexpr std::array<radix_override, 18> neon_fcma_double_overrides{{
+constexpr std::array<radix_override, 31> neon_fcma_double_overrides{{
+    {.n = 48, .radices = {6, 8, 0, 0}},
     {.n = 56, .radices = {8, 7, 0, 0}},
     {.n = 63, .radices = {7, 9, 0, 0}},
+    {.n = 98, .radices = {7, 14, 0, 0}},
     {.n = 200, .radices = {4, 5, 10, 0}},
     {.n = 252, .radices = {3, 6, 14, 0}},
     {.n = 288, .radices = {4, 6, 12, 0}},
+    {.n = 300, .radices = {5, 6, 10, 0}},
     {.n = 336, .radices = {8, 6, 7, 0}},
+    {.n = 384, .radices = {6, 8, 8, 0}},
     {.n = 420, .radices = {5, 6, 14, 0}},
+    {.n = 448, .radices = {8, 8, 7, 0}},
     {.n = 480, .radices = {4, 12, 10, 0}},
-    {.n = 490, .radices = {2, 7, 5, 7}},
+    {.n = 490, .radices = {7, 7, 10, 0}},
     {.n = 504, .radices = {12, 6, 7, 0}},
-    {.n = 560, .radices = {4, 10, 14, 0}},
+    {.n = 560, .radices = {7, 8, 10, 0}},
     {.n = 567, .radices = {7, 9, 9, 0}},
     {.n = 576, .radices = {4, 12, 12, 0}},
-    {.n = 588, .radices = {3, 14, 14, 0}},
+    {.n = 588, .radices = {12, 7, 7, 0}},
+    {.n = 675, .radices = {9, 5, 15, 0}},
     {.n = 686, .radices = {14, 7, 7, 0}},
-    {.n = 720, .radices = {5, 12, 12, 0}},
-    {.n = 756, .radices = {14, 6, 9, 0}},
+    {.n = 700, .radices = {10, 7, 10, 0}},
+    {.n = 720, .radices = {12, 10, 6, 0}},
+    {.n = 756, .radices = {9, 12, 7, 0}},
+    {.n = 784, .radices = {8, 7, 14, 0}},
+    {.n = 800, .radices = {10, 8, 10, 0}},
+    {.n = 840, .radices = {10, 7, 12, 0}},
     {.n = 882, .radices = {14, 7, 9, 0}},
+    {.n = 900, .radices = {5, 12, 15, 0}},
+    {.n = 980, .radices = {14, 10, 7, 0}},
+    {.n = 1008, .radices = {12, 6, 14, 0}},
 }};
 
 constexpr pass_costs neon_fcma_double{
@@ -267,14 +389,17 @@ constexpr pass_costs neon_fcma_double{
     .overrides = neon_fcma_double_overrides,
 };
 
-constexpr std::array<radix_override, 7> neon_fcma_float_overrides{{
+constexpr std::array<radix_override, 10> neon_fcma_float_overrides{{
     {.n = 20, .radices = {4, 5, 0, 0}},
-    {.n = 21, .radices = {3, 7, 0, 0}},
+    {.n = 21, .radices = {7, 3, 0, 0}},
     {.n = 28, .radices = {4, 7, 0, 0}},
     {.n = 45, .radices = {5, 9, 0, 0}},
-    {.n = 70, .radices = {7, 10, 0, 0}},
-    {.n = 280, .radices = {4, 7, 10, 0}},
+    {.n = 70, .radices = {10, 7, 0, 0}},
+    {.n = 224, .radices = {16, 14, 0, 0}},
+    {.n = 280, .radices = {4, 5, 14, 0}},
     {.n = 480, .radices = {4, 10, 12, 0}},
+    {.n = 720, .radices = {12, 12, 5, 0}},
+    {.n = 800, .radices = {10, 8, 10, 0}},
 }};
 
 constexpr pass_costs neon_fcma_float{
@@ -306,10 +431,11 @@ struct measured_table {
 };
 // Plain `neon` (no FCMA) takes `neon_fcma`'s tables: the same registers and C, the nearest
 // measured costs (unmeasured on a plain NEON core).
-constexpr std::array<measured_table, 7> measured_tables{
+constexpr std::array<measured_table, 8> measured_tables{
     {
         {.t = target::avx2, .lanes = 2, .costs = &avx2_double},
         {.t = target::avx2, .lanes = 4, .costs = &avx2_float},
+        {.t = target::avx512, .lanes = 4, .costs = &avx512_double},
         {.t = target::avx512, .lanes = 8, .costs = &avx512_float},
         {.t = target::neon_fcma, .lanes = 1, .costs = &neon_fcma_double},
         {.t = target::neon_fcma, .lanes = 2, .costs = &neon_fcma_float},

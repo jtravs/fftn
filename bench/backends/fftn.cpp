@@ -42,10 +42,6 @@
 //   LEAF_LIMIT=N     the planner's leaf limit (build_settings::leaf_limit): every length
 //                    up to N that has a codelet is one leaf instead of a chain (default: the
 //                    profile's, 32 on NEON in double, else 16)
-//   BLUESTEIN_ABOVE=N|never   the Bluestein threshold (build_settings::bluestein_above):
-//                    prime factors above N (at least 16) go through Bluestein, none with
-//                    never, which keeps them in generic passes (default: the profile's;
-//                    experiment X17)
 //   STRATEGY=rules|chain|grid|lanes   the strategy of rows (build_settings::strategy): the
 //                    planner's choice (default), or the chain, the grid or the lanes forced
 //                    where the row can be one; each case's note says which was built
@@ -92,7 +88,7 @@
 #include <pthread/qos.h>
 #include <sys/qos.h>
 
-#include <atomic>
+#include <atomic> // raise_lanes
 #include <chrono>
 #endif
 
@@ -103,7 +99,6 @@
 #include <cstdint>
 #include <cstdlib>
 #include <exception>
-#include <limits>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -405,13 +400,6 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
         return fbench_error;
       }
       s.settings.leaf_limit = *v;
-    } else if (key == "BLUESTEIN_ABOVE") {
-      const std::optional<std::size_t> v = fbench::fftn_tuning::parse_size(value, 16, true);
-      if (!v) {
-        say(message, message_size, "BLUESTEIN_ABOVE is a whole number from 16, or never");
-        return fbench_error;
-      }
-      s.settings.bluestein_above = *v;
     } else if (key == "STRATEGY") {
       if (value != "rules" && value != "chain" && value != "grid" && value != "lanes") {
         say(message, message_size, "STRATEGY is rules, chain, grid or lanes");
@@ -510,11 +498,6 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
     }
     if (s.settings.leaf_limit != 0) {
       d.integer("leaf_limit", static_cast<std::int64_t>(s.settings.leaf_limit));
-    }
-    if (s.settings.bluestein_above != 0) {
-      d.str("bluestein_above", s.settings.bluestein_above == std::numeric_limits<std::size_t>::max()
-                                   ? std::string("never")
-                                   : std::to_string(s.settings.bluestein_above));
     }
     if (s.settings.lane_block != 0) {
       d.integer("lane_block", static_cast<std::int64_t>(s.settings.lane_block));

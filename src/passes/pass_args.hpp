@@ -170,8 +170,9 @@ struct radix_passes {
 };
 
 template <class T> struct pass_kernels {
-  // Indexed by codelet_slot(radix).
-  radix_passes codelet[gen::radix_count];
+  // Indexed by codelet_slot(radix); never null. Pointers, because a target's rows are
+  // defined in several translation units (src/isa/rows.inl, DESIGN.md 6.4).
+  const radix_passes* codelet[gen::radix_count];
   // Any radix by direct evaluation (radices with no codelet: the primes above 16); input
   // edge, output edge.
   pass_fn generic[2][edge_op_count][edge_op_count];

@@ -66,7 +66,7 @@ chain_builder<T>::chain_builder(const kernels_of<T>& kernels, const target_profi
   // The test knob takes only radices some pass has: a codelet's (gen::radices) or the
   // generic pass's (any other radix, in practice the primes above 16).
   for (const std::size_t r : forced_) {
-    if (r < 2 || (has_codelet(r) && kernels_.passes.codelet[codelet_slot(r)].lane[0] == nullptr)) {
+    if (r < 2 || (has_codelet(r) && kernels_.passes.codelet[codelet_slot(r)]->lane[0] == nullptr)) {
       throw std::invalid_argument("fftn::plan: build_settings.radices holds radix " +
                                   std::to_string(r) + ", which no pass takes");
     }
@@ -375,7 +375,7 @@ void chain_builder<T>::add_pass(std::size_t n, const std::vector<std::size_t>& r
     // chain_builder::split_from chose this run: codelet radices, s a multiple of W, no
     // input edge, no shared factor.
     const std::size_t w = kernels_.real_lanes;
-    const radix_passes& rp = k.codelet[codelet_slot(radix)];
+    const radix_passes& rp = *k.codelet[codelet_slot(radix)];
     if (layout == pass_layout::split_last) {
       st.run = rp.split_last[d][edge_index(out)];
       note = "; BL to interleaved";
@@ -395,15 +395,15 @@ void chain_builder<T>::add_pass(std::size_t n, const std::vector<std::size_t>& r
     st.chunks = chunks_of(st.units, radix * radix * c);
     kind = "generic";
   } else if (grouped) {
-    st.run = k.codelet[codelet_slot(radix)].grouped[d][edge_index(in)];
+    st.run = k.codelet[codelet_slot(radix)]->grouped[d][edge_index(in)];
     st.args.twiddles = grouped_twiddles(n, radix);
     st.units = blocks(m);
     st.chunks = chunks_of(st.units, radix * c);
     kind = "grouped";
   } else if (last) {
     st.run = out == edge_op::factor && edges.out_factor_copies > 1
-                 ? k.codelet[codelet_slot(radix)].last_shared_out
-                 : k.codelet[codelet_slot(radix)].last[d][edge_index(out)];
+                 ? k.codelet[codelet_slot(radix)]->last_shared_out
+                 : k.codelet[codelet_slot(radix)]->last[d][edge_index(out)];
     st.args.factor_copies = edges.out_factor_copies;
     st.units = blocks(s);
     st.chunks = chunks_of(st.units, radix * c);
@@ -412,8 +412,8 @@ void chain_builder<T>::add_pass(std::size_t n, const std::vector<std::size_t>& r
     // A first pass with copies is a Bluestein convolution's (batch copies, all of them
     // here); its input factor, the backward chain's kernel spectrum, holds one entry per
     // element of a copy, which every lane shares.
-    st.run = in == edge_op::factor ? k.codelet[codelet_slot(radix)].lane_shared_in
-                                   : k.codelet[codelet_slot(radix)].lane[d];
+    st.run = in == edge_op::factor ? k.codelet[codelet_slot(radix)]->lane_shared_in
+                                   : k.codelet[codelet_slot(radix)]->lane[d];
     st.args.twiddles = shared_twiddles(n / batch, radix, s / batch);
     st.units = m * blocks(s);
     st.chunks = chunks_of(st.units, radix * c);
@@ -441,7 +441,7 @@ void chain_builder<T>::add_leaf(std::size_t n, int sign, endpoint src, endpoint 
                                 const line_edges& edges, std::vector<stage>& stages) {
   stage st;
   st.leaf = kernels_.passes.codelet[codelet_slot(n)]
-                .leaf[direction_index(sign)][edge_index(edges.in)][edge_index(edges.out)];
+                ->leaf[direction_index(sign)][edge_index(edges.in)][edge_index(edges.out)];
   st.args.radix = n;
   st.args.n = n;
   st.args.scale = edges.scale;
@@ -500,7 +500,7 @@ void chain_builder<T>::add_bluestein(std::size_t n, std::size_t q, int sign, end
                            " points has fewer than two passes");
   }
   for (const std::size_t r : rad) {
-    if (!has_codelet(r) || k.codelet[codelet_slot(r)].lane[0] == nullptr) {
+    if (!has_codelet(r) || k.codelet[codelet_slot(r)]->lane[0] == nullptr) {
       throw std::logic_error("fftn: a Bluestein convolution of " + std::to_string(m) +
                              " points has radix " + std::to_string(r) + ", which no codelet takes");
     }
@@ -885,7 +885,7 @@ std::size_t chain_builder<T>::r2c_line(std::size_t n, endpoint src, endpoint dst
     return 0;
   case real_route::leaf: {
     stage st;
-    st.run = k.codelet[codelet_slot(h)].r2c_leaf[scaled];
+    st.run = k.codelet[codelet_slot(h)]->r2c_leaf[scaled];
     st.args.radix = h;
     st.args.n = h;
     st.args.twiddles = leaf_pairing_twiddles(n);
@@ -927,7 +927,7 @@ std::size_t chain_builder<T>::r2c_line(std::size_t n, endpoint src, endpoint dst
       }
     }
     stage st;
-    st.run = k.codelet[codelet_slot(radix)].r2c_last[scaled];
+    st.run = k.codelet[codelet_slot(radix)]->r2c_last[scaled];
     st.args.radix = radix;
     st.args.m = 1;
     st.args.s = s;
@@ -988,7 +988,7 @@ std::size_t chain_builder<T>::c2r_line(std::size_t n, endpoint src, endpoint dst
     return 0;
   case real_route::leaf: {
     stage st;
-    st.run = k.codelet[codelet_slot(h)].c2r_leaf[scaled];
+    st.run = k.codelet[codelet_slot(h)]->c2r_leaf[scaled];
     st.args.radix = h;
     st.args.n = h;
     st.args.twiddles = leaf_pairing_twiddles(n);
@@ -1033,7 +1033,7 @@ std::size_t chain_builder<T>::c2r_line(std::size_t n, endpoint src, endpoint dst
       ends[2 * radix + r - 1] = wh[m / 2 * r];
     }
     stage st;
-    st.run = k.codelet[codelet_slot(radix)].c2r_first;
+    st.run = k.codelet[codelet_slot(radix)]->c2r_first;
     st.args.radix = radix;
     st.args.m = m;
     st.args.s = 1;
