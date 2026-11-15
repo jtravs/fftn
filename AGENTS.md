@@ -51,10 +51,11 @@ the bar for merging is that the code runs and is correct: the merge gate (`spdx 
 sanitize bench`: Release tests and ASan + UBSan tests under every kernel variant the CPU
 has) green on the machine where the change was made, plus `build` with one GCC version on
 Linux x86-64. Style, lint, documentation completeness, coverage, ThreadSanitizer (except
-for threading changes, which run `tsan` too), the second GCC version and Windows run with
-`all` in CI on `main` and in a periodic full gate; their failures are fixed in batches and
-do not block merges. Second readers are for kernels, the generator and the threading
-engine. In addition:
+for threading changes, which run `tsan` too), the second GCC version and the other
+platforms' sanitizers run in CI (`.github/workflows/`: every push runs one configuration per
+platform and one job per sanitizer, the weekly extended workflow the rest); their failures
+are fixed in batches and do not block merges. Second readers are for kernels, the
+generator and the threading engine. In addition:
 
 - A kernel, vocabulary or generator change for an instruction set the machine lacks also
   needs `build` and `sanitize` on a machine that has it (see section 9). Until emulated runs
