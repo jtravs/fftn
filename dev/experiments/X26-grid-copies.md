@@ -1,6 +1,6 @@
 # X26: long rows, the grid's copies
 
-- **Status:** running
+- **Status:** done (arm B rejected; arm C adopted on `avx2`)
 - **Owner:** x26 session, 2026-11-15
 - **Phase / task:** 1 (PLAN lead 1); follows X25, X12, X12b, X4
 
@@ -142,6 +142,71 @@ added eight more lines to the same sets: removing the prefetch from main's loop 
 made it faster. The x86 copies are bound by L1 set conflicts of power-of-two row strides,
 not by their instructions; X25's instruction share was real but not the limit.
 
+### The factorial: loop form against prefetch, per target
+
+After the diagnosis the screens of wider blocks and fused phases on x86 (queued on arm B's
+first form) were cancelled: the copies were not instruction-bound there, so they no longer
+tested the hypothesis. Arm C became the change the diagnosis pointed to: no prefetch in
+the copies. One fbench run per machine timed main (A), main without the copies' prefetch
+(A0, c30ca97, the same program as arm C on `avx2`), arm B (d232d7a) and arm B without
+prefetch (P0, 5916520) against FFTW; target-case geomeans against A (a filtered copy of
+each run's store through `fbench show`):
+
+| machine, target (run, rounds, A/A band) | A0 | B | P0 |
+|---|---|---|---|
+| EPYC `avx2`, GCC 16 (20261115-202504-2e8f, 27 rounds, node load 66 of 128 CPUs, ±1.00 %) | **0.920 [0.916, 0.924]** | 1.050 [1.045, 1.057] | 0.935 [0.932, 0.938] |
+| Xeon `avx512`, GCC 14 (20261115-202444-a93c, 20 rounds, 9 loaded, ±1.95 %) | 1.043 [1.013, 1.063] | 0.988 [0.965, 1.007] | 1.032 [1.011, 1.050] |
+| Mac `neon_fcma`, Clang 23 (20261115-201701-02d0, tracking tier, 80 rounds, 79 loaded, ±1.23 %) | 1.010 [1.004, 1.015] | 0.986 [0.982, 0.992] | 1.000 [0.995, 1.004] |
+
+Per case on the EPYC, A0 ÷ A: c2c 65536 0.918, 262144 0.886, 2²⁰ 0.966, 2²² 1.013, 46080
+0.932, 100000 0.875; r2c 65536 0.890, 2²⁰ 0.834; c2r 65536 0.920, 2²⁰ 0.880; 16384 (a chain,
+code unchanged) 1.024. B there: 2²⁰ 1.40, r2c and c2r 2²⁰ 1.50–1.56, 100000 0.78, 2²² 0.86.
+P0: 2²⁰ 1.10, c2r 2²⁰ 1.06, 100000 0.78. On the Xeon the prefetch pays (A0: 2²⁰ 1.16,
+2²² 1.22, c2r 2²⁰ 1.06) and B is within the band (100000 0.95, r2c 2²⁰ 0.95, nothing slower).
+On the Mac A0 and P0 lose at 2²⁰ and 2²² (1.05–1.19) and gain on the real 2²⁰ rows
+(0.90–0.94); B gains 1.4 % (100000 0.94, 65536 0.98, nothing slower in the tracking tier),
+as in run 20261115-192335-aecf with B's first form (0.986 [0.980, 0.995], band ±1.65 %).
+
+FFTN ÷ FFTW on the EPYC, main → arm C (same run): c2c 65536 1.41 → 1.30, 262144 1.48 →
+1.31, 2²⁰ 1.11 → 1.07, 2²² 1.13 → 1.14, 46080 1.62 → 1.51, 100000 1.94 → 1.70; r2c 65536
+1.29 → 1.15, 2²⁰ 1.77 → 1.48; c2r 65536 1.37 → 1.26, 2²⁰ 1.60 → 1.41.
+
+Mac screens on top of B (run 20261115-200931-6fcb; the filter ran on the quick tier, so
+only 16384, 65536 and r2c/c2r 65536): blocks within 2 · L1 (`GRID_BLOCK_BYTES=262144`)
+1.205, phases of radices ≤ 8 fused (`GRID_PHASE_RADIX=8`, `GRID_FUSE_BYTES=never`) 1.058,
+fusion beyond L2/4 alone 1.001, no prefetch 1.023. None beats the default.
+
+A check of arm C's program on the Xeon under `ISA=avx2` and a tracking-tier run of arm C
+(5772cc4) on the EPYC for collateral damage are listed under the verdict.
+
 ## Verdict
 
-(pending)
+- **Arm B (cheaper copy loops) rejected** by rule 1 on every target: within the band on
+  the Mac (0.986, twice, against limits 0.988 and 0.984) and the Xeon (0.988), and slower
+  on the EPYC (1.050; 2²⁰ and the real 2²⁰ rows 1.40–1.56). Reverted (e57e4d4, 67a2982).
+  It cut the instructions as X25 asked (Xeon −24 to −37 %, EPYC −20 to −27 % where the rows
+  are narrow), and the time did not follow: on x86 the copies are bound by L1 set
+  conflicts of rows a multiple of 4 KiB apart, which a faster loop worsens.
+- **Arm C (no prefetch in the copies) adopted on `avx2`** (5772cc4, `copies_prefetch` in
+  `src/passes/grid.inl`): EPYC target geomean 0.920 [0.916, 0.924], every target case
+  0.83–0.97 except 2²² (1.013, inside the collateral limit), and nothing else runs the
+  changed code (only grid plans, all of them targets, on the EPYC). The `avx512` and NEON
+  programs are unchanged: the prefetch pays there (Xeon 1.04, Mac 1.01 without it).
+  Results are bit-identical.
+- Wider blocks and fused phases were not measured on x86; on the Mac both lose.
+
+Unverified at the time of writing: the tracking tier of arm C on the EPYC (submitted:
+`fbench_remote.py submit epyc A=fftn:37582e5 C=fftn:5772cc4 W=fftw -- --tier tracking
+--budget 3600`) and `ISA=avx2` on the Xeon (`... submit xeon A=fftn:37582e5+ISA=avx2
+A0=fftn:c30ca97+ISA=avx2 W=fftw -- --tier tracking --filter <targets> --budget 1800`): if
+Intel's AVX2 rows want the prefetch, the switch belongs to the core, not the target.
+
+What it leaves for lead 1: the copies' real cost on x86 is L1 set conflicts, which no
+loop form removes. Next: rows that are not a multiple of 4 KiB apart (a padded work
+array for phases after the first, X4's open x86 half; the caller's input and output
+cannot be padded, so two-phase grids need a workspace for it), or a different long-row
+plan. FFTL.jl, which beats FFTN here, runs one thread's long row as a plain Stockham chain
+of radix-4 (8 to 16384) passes with no copies at all: on the Mac, FFTN's chain forced to
+4⁸ at 65536 took 237 µs against the grid's 252 and FFTW's 269 (one process each, loaded
+machine; FFTN's default chain 8 × 8 × 8 × 8 × 16 took 396 µs). A chain-or-grid rule that
+prices small-radix chains for long rows is the follow-up (X26b).

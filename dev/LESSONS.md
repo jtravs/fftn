@@ -243,7 +243,17 @@ cycles on the Xeon. The whole transform ran at a higher IPC than FFTW's (2.6–3
 Xeon, fewer L2 misses. Before blaming memory for a long transform, compare IPC and
 instructions per byte moved: a high IPC with too many instructions points at the copy
 loops' shape (rows per iteration, prefetch per line, block width).
-[X25](experiments/X25-x86-diagnosis.md).
+[X25](experiments/X25-x86-diagnosis.md). **Corrected by X26:** cutting those instructions
+by a quarter to a third left the Mac and the Xeon within the noise and made Zen 3's rows of
+2^20 points up to 1.56 times slower. A block's rows lie a multiple of 4 KiB apart, so all
+its source lines share one or two 8-way L1 sets; a faster loop keeps more of them in
+flight, they evict the scratch block the next pass reads (twice the fills from beyond L2),
+and the slow loop had been throttling that by accident. On the same machine removing the
+loop's software prefetch of eight rows ahead, which adds eight more lines to those sets,
+gave 0.92 of the time. A high IPC with many instructions says what the core executes, not
+what limits it: test the instruction cut on the target before building on it, and for
+copies over power-of-two strides count L1 fills and data-cache accesses as well.
+[X26](experiments/X26-grid-copies.md).
 
 ## 4. Kernels and algorithms
 
