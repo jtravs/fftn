@@ -758,6 +758,11 @@ void execute_core(const plan_core& core, std::size_t first, std::size_t count, c
          "fftn: execute_transforms beyond the batch");
   assert((!core.in_place || in == out) && "fftn: in-place plan executed with in != out");
   assert((core.in_place || in != out) && "fftn: out-of-place plan executed with in == out");
+  if (core.prog.leaf_rows) {
+    // Rows of leaves use no scratch and need no slot_addresses (driver.hpp).
+    run_leaf_rows(core.prog, first, count, in, out);
+    return;
+  }
   slot_addresses at{.in = static_cast<const std::byte*>(in), .out = static_cast<std::byte*>(out)};
   if (core.bytes != 0) {
     // The workspace may have any alignment; its size includes the slack for this.

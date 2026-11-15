@@ -133,9 +133,10 @@ void run_whole(const stage& s, pass_args& a, const slot_addresses& at) noexcept 
 // own arguments; one transform copies each stage's arguments once; a batch (this function)
 // copies them once for all its transforms and moves the slots by the batch loop's step.
 // Every kernel gets the arguments and units run_records gives it (the whole stage: chunk
-// ends 0 and units), so the bits are the same. One transform takes run_flat_one and rows of leaves run_leaf_rows,
-// both kept out of this function: its array of copies, frame and saved registers cost about
-// 6 ns at one transform on the M5 Max and 2-3 ns of a leaf row on the Xeon (X20).
+// ends 0 and units), so the bits are the same. One transform takes run_flat_one and rows of
+// leaves run_leaf_rows, both kept out of this function: its array of copies, frame and
+// saved registers cost about 6 ns at one transform on the M5 Max and 2-3 ns of a leaf row on
+// the Xeon (X20).
 [[gnu::noinline]] void run_flat(const program& p, std::size_t first, std::size_t count,
                                 const slot_addresses& base) noexcept {
   const std::size_t stages = p.records.size() - p.batch_loops;
@@ -173,25 +174,23 @@ void run_flat_one(const program& p, std::size_t t, const slot_addresses& base) n
   }
 }
 
-// Transforms [first, first + count) of rows of leaves (program::leaf_rows): one call.
-void run_leaf_rows(const program& p, std::size_t first, std::size_t count,
-                   const slot_addresses& base) noexcept {
+} // namespace
+
+void run_leaf_rows(const program& p, std::size_t first, std::size_t count, const void* in,
+                   void* out) noexcept {
   const loop& l = *std::get_if<loop>(&p.records[0]);
   const stage& s = *std::get_if<stage>(&p.records[1]);
-  // The two slots as scalars, not a moved copy of slot_addresses: on x86 a 16-byte load of
-  // fields just written by two 8-byte stores (execute_core's) cannot be forwarded and waits
-  // for them to retire, about a dozen cycles per call. As in moved(), no offset is applied
-  // to a null pointer. Only in and out move with the batch; the destination is never the
-  // input.
+  // As in moved(), no offset is applied to a null pointer. Only in and out move with the
+  // batch; the destination is never the input.
   const auto k = static_cast<std::ptrdiff_t>(first);
-  const std::byte* in = l.step[0] != 0 ? base.in + l.step[0] * k : base.in;
-  std::byte* out = l.step[1] != 0 ? base.out + l.step[1] * k : base.out;
+  const auto* src = static_cast<const std::byte*>(in);
+  auto* dst = static_cast<std::byte*>(out);
+  src = l.step[0] != 0 ? src + l.step[0] * k : src;
+  dst = l.step[1] != 0 ? dst + l.step[1] * k : dst;
   const bool from_in = s.src == slot::in;
-  s.leaf(&s.args, from_in ? static_cast<const void*>(in) : out, out,
+  s.leaf(&s.args, from_in ? static_cast<const void*>(src) : dst, dst,
          from_in ? l.step[0] : l.step[1], l.step[1], count);
 }
-
-} // namespace
 
 void mark_flat(program& p) noexcept {
   const std::size_t stages = p.records.size() - p.batch_loops;
@@ -243,7 +242,7 @@ slot_addresses transform_addresses(const program& p, std::size_t t,
 void run_transforms(const program& p, std::size_t first, std::size_t count,
                     const slot_addresses& base) noexcept {
   if (p.leaf_rows) {
-    run_leaf_rows(p, first, count, base);
+    run_leaf_rows(p, first, count, base.in, base.out);
     return;
   }
   if (p.flat) {
