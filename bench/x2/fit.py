@@ -549,7 +549,9 @@ def overrides_for(
     for n, group in sorted(by_n.items()):
         if n <= LEAF:
             continue
-        choice = rule_radices(n, t, lanes, overrides=False)
+        # In --base mode t carries the base table's overrides: a length's current choice
+        # is its override where it has one.
+        choice = rule_radices(n, t, lanes, overrides=behind_winner)
         behind = [vs_base(c, choice) for c in group]
         gaps = [judge(c, choice) for c in group]
         missed = (behind_winner or cover) and all(g is not None and g > SLOWER for g in gaps)
@@ -717,6 +719,8 @@ def main(argv: list[str] | None = None) -> int:
         log(f"fit {precision} (C = {lanes}): {len(rows)} timings of {len(mine)} cases")
         x = fit(rows, ops, base=base)
         t = table_of(x, mine, ops, base, block, lanes)
+        if base is not None:
+            t.overrides = list(base.overrides)
         t.overrides, notes = overrides_for(
             mine, t, lanes, behind_winner=base is not None, cover=ctx.cover
         )
