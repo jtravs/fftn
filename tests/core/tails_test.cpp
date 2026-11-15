@@ -86,7 +86,8 @@ std::vector<tail_case> cases() {
   out.push_back({.n = 57, .radices = {3, 19}, .rows = 1, .generic = true, .expect = "generic"});
   // The lanes strategy (two rows or more): a leaf, and two passes, over 2 to 9 adjacent rows.
   for (std::size_t rows = 2; rows <= 9; ++rows) {
-    out.push_back({.n = 8, .radices = {8}, .rows = rows, .interleaved = true, .expect = "lanes leaf"});
+    out.push_back(
+        {.n = 8, .radices = {8}, .rows = rows, .interleaved = true, .expect = "lanes leaf"});
     out.push_back(
         {.n = 12, .radices = {3, 4}, .rows = rows, .interleaved = true, .expect = "lanes first"});
     out.push_back(
@@ -177,8 +178,7 @@ template <class T> void check_case(const tail_case& tc, fftn::direction dir) {
                                (dir == fftn::direction::forward ? ", forward" : ", backward") +
                                (in_place ? ", in place" : ", out of place");
       SCOPED_TRACE(what);
-      const auto core =
-          make_plan_core(view, {.in_place = in_place, .force_isa = target}, settings);
+      const auto core = make_plan_core(view, {.in_place = in_place, .force_isa = target}, settings);
       const std::string listing = stage_listing(*core);
       if (!tc.expect.empty()) {
         EXPECT_NE(listing.find(tc.expect), std::string::npos)
@@ -188,8 +188,8 @@ template <class T> void check_case(const tail_case& tc, fftn::direction dir) {
       const auto call = [&](const c* in, c* out) {
         fftn::detail::execute_core(*core, 0, fftn::detail::transform_count(*core), in, out, ws);
       };
-      const auto got = fftn::test::execute<c, c>(call, offsets, offsets, place,
-                                                 std::span<const c>(x), guard);
+      const auto got =
+          fftn::test::execute<c, c>(call, offsets, offsets, place, std::span<const c>(x), guard);
       for (const std::string& v : got.violations) {
         ADD_FAILURE() << v << "; stages:" << listing;
       }
