@@ -49,7 +49,7 @@ void block_copy(const pass_args* a, std::size_t first, std::size_t last) {
       prefetch_bytes<1>(yr + at(rows_ahead, ys), bytes);
     }
     for (std::size_t q = 0; q < cols; q += C<T>) {
-      cv<T> v = load(xr + 2 * q);
+      cv<T> v = load(xr + 2 * q); // NOLINT(misc-const-correctness): set under if constexpr
       if constexpr (OutOp == edge_op::scale) {
         v = scale(v, factor);
       }
@@ -125,7 +125,7 @@ void twiddle_scatter(const pass_args* a, std::size_t first, std::size_t last) {
     if (r + rows_ahead < last) {
       prefetch_bytes<1>(yr + at(rows_ahead, ys), bytes);
     }
-    cv<T> f = bcast(w + 2 * r);
+    cv<T> f = bcast(w + 2 * r); // NOLINT(misc-const-correctness): set under if constexpr
     if constexpr (Sign > 0) {
       f = conj(f);
     }
@@ -143,7 +143,7 @@ template <class T, int Sign> struct row_twiddled_out {
   const T* w;
   std::ptrdiff_t wleg;
   FFTN_FORCE_INLINE void put(std::size_t k, cv<T> v) const {
-    cv<T> f = bcast(w + at(k, wleg));
+    cv<T> f = bcast(w + at(k, wleg)); // NOLINT(misc-const-correctness): set under if constexpr
     if constexpr (Sign > 0) {
       f = conj(f);
     }

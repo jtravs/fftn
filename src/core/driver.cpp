@@ -140,7 +140,7 @@ void run_whole(const stage& s, pass_args& a, const slot_addresses& at) noexcept 
 [[gnu::noinline]] void run_flat(const program& p, std::size_t first, std::size_t count,
                                 const slot_addresses& base) noexcept {
   const std::size_t stages = p.records.size() - p.batch_loops;
-  const loop* only = p.batch_loops == 1 ? std::get_if<loop>(&p.records[0]) : nullptr;
+  const loop* only = p.batch_loops == 1 ? std::get_if<loop>(p.records.data()) : nullptr;
   std::array<const stage*, flat_stages_max> st{};
   std::array<stage_args, flat_stages_max> args;
   for (std::size_t k = 0; k < stages; ++k) {
@@ -178,7 +178,7 @@ void run_flat_one(const program& p, std::size_t t, const slot_addresses& base) n
 
 void run_leaf_rows(const program& p, std::size_t first, std::size_t count, const void* in,
                    void* out) noexcept {
-  const loop& l = *std::get_if<loop>(&p.records[0]);
+  const loop& l = *std::get_if<loop>(p.records.data());
   const stage& s = *std::get_if<stage>(&p.records[1]);
   // As in moved(), no offset is applied to a null pointer. Only in and out move with the
   // batch; the destination is never the input.
