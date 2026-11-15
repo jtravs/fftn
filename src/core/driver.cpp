@@ -130,30 +130,16 @@ void run_whole(const stage& s, pass_args& a, const slot_addresses& at) noexcept 
 // records, copies each stage's pass_args (144 bytes) and finds its chunk ends for every
 // transform: about 3.5 ns per transform on the M5 Max, more than an 8-point leaf's own time
 // (dev/experiments/X20-call-overhead.md). Here a batch of leaves is one call on the plan's
-// own arguments; one transform copies each stage's arguments once; a batch copies them once
-// for all its transforms and moves the slots by the batch loop's step. Every kernel gets the
-// arguments and units run_records gives it (the whole stage: chunk ends 0 and units), so the
-// bits are the same. The three forms are each the fastest of the ones X20 measured for their
-// case: an array of copies costs about 6 ns more than plain copies at one transform. Rows of
-// leaves (program::leaf_rows) take run_leaf_rows instead, kept out of this function: its
-// frame and saved registers cost a leaf row 2-3 ns on the Xeon.
+// own arguments; one transform copies each stage's arguments once; a batch (this function)
+// copies them once for all its transforms and moves the slots by the batch loop's step.
+// Every kernel gets the arguments and units run_records gives it (the whole stage: chunk
+// ends 0 and units), so the bits are the same. One transform takes run_flat_one and rows of leaves run_leaf_rows,
+// both kept out of this function: its array of copies, frame and saved registers cost about
+// 6 ns at one transform on the M5 Max and 2-3 ns of a leaf row on the Xeon (X20).
 [[gnu::noinline]] void run_flat(const program& p, std::size_t first, std::size_t count,
                                 const slot_addresses& base) noexcept {
   const std::size_t stages = p.records.size() - p.batch_loops;
   const loop* only = p.batch_loops == 1 ? std::get_if<loop>(&p.records[0]) : nullptr;
-  if (count == 1) {
-    const slot_addresses at = transform_addresses(p, first, base);
-    for (std::size_t i = p.batch_loops; i < p.records.size(); ++i) {
-      const stage& s = *std::get_if<stage>(&p.records[i]);
-      if (s.leaf != nullptr) {
-        run_leaf(s, at);
-        continue;
-      }
-      pass_args a = s.args;
-      run_whole(s, a, at);
-    }
-    return;
-  }
   std::array<const stage*, flat_stages_max> st{};
   std::array<stage_args, flat_stages_max> args;
   for (std::size_t k = 0; k < stages; ++k) {
@@ -169,6 +155,21 @@ void run_whole(const stage& s, pass_args& a, const slot_addresses& at) noexcept 
     for (std::size_t k = 0; k < stages; ++k) {
       run_whole(*st[k], args[k].args, at);
     }
+  }
+}
+
+// Transform t of a flat program: each stage on one plain copy of its arguments (a leaf on
+// none).
+void run_flat_one(const program& p, std::size_t t, const slot_addresses& base) noexcept {
+  const slot_addresses at = transform_addresses(p, t, base);
+  for (std::size_t i = p.batch_loops; i < p.records.size(); ++i) {
+    const stage& s = *std::get_if<stage>(&p.records[i]);
+    if (s.leaf != nullptr) {
+      run_leaf(s, at);
+      continue;
+    }
+    pass_args a = s.args;
+    run_whole(s, a, at);
   }
 }
 
@@ -239,7 +240,11 @@ void run_transforms(const program& p, std::size_t first, std::size_t count,
     return;
   }
   if (p.flat) {
-    run_flat(p, first, count, base);
+    if (count == 1) {
+      run_flat_one(p, first, base);
+    } else {
+      run_flat(p, first, count, base);
+    }
     return;
   }
   for (std::size_t t = first; t < first + count; ++t) {
