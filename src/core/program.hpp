@@ -76,6 +76,18 @@ using record = std::variant<stage, loop>;
   return units / chunks * c + units % chunks * c / chunks;
 }
 
+// A stage of a flat program as the driver runs one transform of it (driver.cpp,
+// run_flat_one): the stage's kernel, units, slots and a copy of its arguments, contiguous,
+// so that one transform reads neither the records' variants nor their names (X28).
+struct flat_stage {
+  pass_fn run = nullptr;
+  leaf_fn leaf = nullptr;
+  std::size_t units = 0;
+  slot src = slot::in;
+  slot dst = slot::out;
+  pass_args args;
+};
+
 struct program {
   std::vector<record> records;
   std::size_t batch_loops = 0; // the leading records that are the batch loops
@@ -94,6 +106,7 @@ struct program {
   // per call and only moves the slots per transform (driver.cpp, run_flat). Set by
   // mark_flat (driver.hpp).
   bool flat = false;
+  std::vector<flat_stage> flat_body; // the body's stages when flat, in order (mark_flat)
   // Flat, one batch loop, and the body one leaf between the caller's arrays: the whole
   // batch is one call of the leaf (driver.hpp, run_leaf_rows), made from the copies below
   // of the stage's leaf and arguments and of the batch loop's steps, so that the entry

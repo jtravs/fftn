@@ -206,22 +206,36 @@ void run_whole(const stage& s, pass_args& a, const slot_addresses& at) noexcept 
   }
 }
 
-// Transform t of a flat program: each stage on one plain copy of its arguments (a leaf on
-// none).
-void run_flat_one(const program& p, std::size_t t, const slot_addresses& base) noexcept {
-  const slot_addresses at = transform_addresses(p, t, base);
-  for (std::size_t i = p.batch_loops; i < p.records.size(); ++i) {
-    const stage& s = *std::get_if<stage>(&p.records[i]);
+// One transform of a flat program on its slots: each stage on one plain copy of its
+// arguments (a leaf on none), from the program's flat_body. The slots come as scalars and
+// are chosen by index, not through a slot_addresses (X28).
+void run_flat_one(const program& p, const std::byte* in, std::byte* out, std::byte* a,
+                  std::byte* b, std::byte* block) noexcept {
+  // Indexed by slot (program.hpp); the input is never a destination.
+  const std::array<const void*, 5> sources = {in, out, a, b, block};
+  const std::array<void*, 5> destinations = {out, out, a, b, block};
+  for (const flat_stage& s : p.flat_body) {
+    const void* src = sources[static_cast<std::size_t>(s.src)];
+    void* dst = destinations[static_cast<std::size_t>(s.dst)];
     if (s.leaf != nullptr) {
-      run_leaf(s, at);
+      s.leaf(&s.args, src, dst, 0, 0, 1);
       continue;
     }
-    pass_args a = s.args;
-    run_whole(s, a, at);
+    pass_args args = s.args;
+    args.src = src;
+    args.dst = dst;
+    if (s.units != 0) {
+      s.run(&args, 0, s.units);
+    }
   }
 }
 
 } // namespace
+
+void run_flat_first(const program& p, const void* in, void* out, std::byte* a, std::byte* b,
+                    std::byte* block) noexcept {
+  run_flat_one(p, static_cast<const std::byte*>(in), static_cast<std::byte*>(out), a, b, block);
+}
 
 void mark_flat(program& p) noexcept {
   if (p.lanes != 0) {
@@ -236,6 +250,18 @@ void mark_flat(program& p) noexcept {
     // Only the lines loops of a grid move twiddles (program.hpp); run_flat does not.
     const stage* st = std::get_if<stage>(&p.records[i]);
     p.flat = p.flat && st != nullptr && !st->moving_twiddles;
+  }
+  p.flat_body.clear();
+  if (p.flat) {
+    for (std::size_t i = p.batch_loops; i < p.records.size(); ++i) {
+      const stage& st = *std::get_if<stage>(&p.records[i]);
+      p.flat_body.push_back({.run = st.run,
+                             .leaf = st.leaf,
+                             .units = st.units,
+                             .src = st.src,
+                             .dst = st.dst,
+                             .args = st.args});
+    }
   }
   const auto moves = [](slot x) { return x == slot::in || x == slot::out; };
   const stage* only =
@@ -299,7 +325,8 @@ void run_transforms(const program& p, std::size_t first, std::size_t count,
   }
   if (p.flat) {
     if (count == 1) {
-      run_flat_one(p, first, base);
+      const slot_addresses at = transform_addresses(p, first, base);
+      run_flat_one(p, at.in, at.out, at.a, at.b, at.block);
     } else {
       run_flat(p, first, count, base);
     }

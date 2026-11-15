@@ -864,17 +864,29 @@ void execute_core(const plan_core& core, std::size_t first, std::size_t count, c
   if (count == 0) {
     return;
   }
-  slot_addresses at{.in = static_cast<const std::byte*>(in), .out = static_cast<std::byte*>(out)};
+  std::byte* a = nullptr;
+  std::byte* b = nullptr;
+  std::byte* block = nullptr;
   if (core.bytes != 0) {
     // The workspace may have any alignment; its size includes the slack for this.
     std::byte* raw = ws.memory().data();
     const auto address = reinterpret_cast<std::uintptr_t>(raw);
     const std::size_t skip = (64 - address % 64) % 64;
     std::byte* base = raw + skip;
-    at.a = base;
-    at.b = base + core.offset_b;
-    at.block = core.block_elements != 0 ? base + core.offset_block : nullptr;
+    a = base;
+    b = base + core.offset_b;
+    block = core.block_elements != 0 ? base + core.offset_block : nullptr;
   }
+  if (core.prog.flat && first == 0 && count == 1) {
+    // One transform, the whole batch or its first (X28): no slot_addresses.
+    run_flat_first(core.prog, in, out, a, b, block);
+    return;
+  }
+  const slot_addresses at{.in = static_cast<const std::byte*>(in),
+                          .out = static_cast<std::byte*>(out),
+                          .block = block,
+                          .a = a,
+                          .b = b};
   run_transforms(core.prog, first, count, at);
 }
 
