@@ -33,7 +33,7 @@ struct codelet_info {
   std::uint16_t live;    // peak live values (complex and twiddle registers)
 };
 
-inline constexpr std::size_t codelet_count = 102;
+inline constexpr std::size_t codelet_count = 120;
 // A C array: ISA regions read it, and they use no standard-library templates.
 inline constexpr codelet_info codelets[codelet_count] = {
     {2, variant::plain, -1, lowering::complex_register, 0, 4, 0, 0, 0, 2, 3},
@@ -126,6 +126,24 @@ inline constexpr codelet_info codelets[codelet_count] = {
     {16, variant::dit, 1, lowering::complex_register, 15, 136, 16, 8, 15, 95, 18},
     {16, variant::dif, -1, lowering::complex_register, 15, 136, 16, 8, 15, 95, 18},
     {16, variant::dif, 1, lowering::complex_register, 15, 136, 16, 8, 15, 95, 18},
+    {17, variant::plain, -1, lowering::complex_register, 0, 94, 16, 226, 0, 168, 20},
+    {17, variant::plain, 1, lowering::complex_register, 0, 94, 16, 226, 0, 168, 20},
+    {17, variant::dit, -1, lowering::complex_register, 16, 94, 16, 226, 16, 184, 24},
+    {17, variant::dit, 1, lowering::complex_register, 16, 94, 16, 226, 16, 184, 24},
+    {17, variant::dif, -1, lowering::complex_register, 16, 94, 16, 226, 16, 184, 20},
+    {17, variant::dif, 1, lowering::complex_register, 16, 94, 16, 226, 16, 184, 20},
+    {19, variant::plain, -1, lowering::complex_register, 0, 106, 18, 290, 0, 207, 22},
+    {19, variant::plain, 1, lowering::complex_register, 0, 106, 18, 290, 0, 207, 22},
+    {19, variant::dit, -1, lowering::complex_register, 18, 106, 18, 290, 18, 225, 27},
+    {19, variant::dit, 1, lowering::complex_register, 18, 106, 18, 290, 18, 225, 27},
+    {19, variant::dif, -1, lowering::complex_register, 18, 106, 18, 290, 18, 225, 22},
+    {19, variant::dif, 1, lowering::complex_register, 18, 106, 18, 290, 18, 225, 22},
+    {23, variant::plain, -1, lowering::complex_register, 0, 130, 22, 442, 0, 297, 26},
+    {23, variant::plain, 1, lowering::complex_register, 0, 130, 22, 442, 0, 297, 26},
+    {23, variant::dit, -1, lowering::complex_register, 22, 130, 22, 442, 22, 319, 33},
+    {23, variant::dit, 1, lowering::complex_register, 22, 130, 22, 442, 22, 319, 33},
+    {23, variant::dif, -1, lowering::complex_register, 22, 130, 22, 442, 22, 319, 26},
+    {23, variant::dif, 1, lowering::complex_register, 22, 130, 22, 442, 22, 319, 26},
     {32, variant::plain, -1, lowering::complex_register, 0, 340, 52, 32, 0, 212, 35},
     {32, variant::plain, 1, lowering::complex_register, 0, 340, 52, 32, 0, 212, 35},
     {32, variant::dit, -1, lowering::complex_register, 31, 340, 52, 32, 31, 243, 35},
@@ -140,8 +158,8 @@ inline constexpr codelet_info codelets[codelet_count] = {
     {64, variant::dif, 1, lowering::complex_register, 63, 808, 144, 104, 63, 591, 67},
 };
 
-inline constexpr std::size_t radix_count = 17;
-inline constexpr std::uint8_t radices[radix_count] = {2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 32, 64};
+inline constexpr std::size_t radix_count = 20;
+inline constexpr std::uint8_t radices[radix_count] = {2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 19, 23, 32, 64};
 
 // The split codelets (lowering::split, src/gen/split_codelets.inl): one entry per
 // radix and variant, forward only (the backward transform exchanges the real and

@@ -26,10 +26,10 @@
 // - Real lines (DESIGN.md 9.1, passes/real.inl): even n = 2h reads the reals in place as
 //   h complex values (a real line has stride 1) and runs a complex transform of h, with the
 //   pairing of bins k and h - k fused into the chain's last pass (r2c) or first pass (c2r),
-//   or into a leaf for h <= 16. Where that pass is not a codelet's (a Bluestein stage or a
-//   generic pass) the pairing is a separate pass in place on the output (r2c, after a c2c
-//   line written there) or from the input to the output (c2r, before a c2c line in place
-//   there); the grid uses the same separate pass (core/plan_core.cpp). Odd n runs the
+//   or into a leaf for h <= 16 and h = 17, 19, 23. Where that pass is not a codelet's (a
+//   Bluestein stage or a generic pass) the pairing is a separate pass in place on the output (r2c,
+//   after a c2c line written there) or from the input to the output (c2r, before a c2c line in
+//   place there); the grid uses the same separate pass (core/plan_core.cpp). Odd n runs the
 //   full-length complex chain on (x, 0) or on the expanded Hermitian spectrum. The scale
 //   applies in the pass that writes the output.
 // - Bluestein (DESIGN.md 8.5, strategies/bluestein.hpp): the last pass of a chain whose

@@ -711,7 +711,7 @@ TEST(Shape, BracedListsBuildShapes) {
 // ---- Describe, instruction set.
 
 TEST(Describe, NamesTheProgram) {
-  const fftn::c2c_plan<double> p(fftn::rows_c2c<double>(68, 3, fftn::direction::forward));
+  const fftn::c2c_plan<double> p(fftn::rows_c2c<double>(116, 3, fftn::direction::forward));
   const std::string d = p.describe();
   const std::string isa = std::string("instruction set: ") + fftn::isa_name(p.instruction_set());
   for (const char* part : {
@@ -719,9 +719,9 @@ TEST(Describe, NamesTheProgram) {
            "double",
            isa.c_str(),
            "chain",
-           "radices 4 x bluestein 17 (M ",
+           "radices 4 x bluestein 29 (M ",
            "grouped radix-4 forward",
-           "bluestein in, chirp forward (Q 17, M ",
+           "bluestein in, chirp forward (Q 29, M ",
            "bluestein out",
            "loop batch x3",
            "workspace",

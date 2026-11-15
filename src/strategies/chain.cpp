@@ -736,7 +736,9 @@ template <class T> real_route chain_builder<T>::route(std::size_t n, bool r2c, b
     return real_route::separate;
   }
   const std::vector<std::size_t> rad = real_radices(h, r2c);
-  if (rad.size() == 1 && h <= dense_codelet_radix) {
+  // A leaf of h up to 16 or of the prime codelets (17, 19, 23: experiment X27); not of 32 or
+  // 64, whose leaves lose wherever C > 1 (experiment X8).
+  if (rad.size() == 1 && has_codelet(h) && (h <= dense_codelet_radix || h % 2 == 1)) {
     return real_route::leaf;
   }
   // r2c: the last pass must be a codelet's (not a Bluestein stage or a generic pass); c2r:

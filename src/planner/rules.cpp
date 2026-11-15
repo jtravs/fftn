@@ -16,8 +16,9 @@ namespace fftn::inline v0::detail {
 namespace {
 
 // Every radix up to this one has a codelet (src/gen/codelets.hpp): lengths up to it are
-// leaves, it is the largest radix the pass costs price, and a prime factor above it is a
-// generic pass.
+// leaves, and it is the largest radix the pass costs price. A prime factor above it is a
+// pass after the priced ones: a codelet pass for 17, 19 and 23 (experiment X27), else the
+// generic pass or, above the profile's threshold, a Bluestein stage.
 constexpr std::size_t largest_leaf = 16;
 
 // The radices a pass may have, ascending (rules.hpp, cost_column).
@@ -462,7 +463,8 @@ std::size_t lanes_distance(std::size_t a, std::size_t b) { return a > b ? a - b 
 // composites with 64 or more copies of 17 ran up to 13 % faster in the generic pass, too
 // narrow for a rule. So every prime factor above the codelets goes through Bluestein; the
 // generic pass remains for radices a test forces. AArch64 Linux takes the same value
-// unmeasured.
+// unmeasured. The primes with a codelet (17, 19, 23, experiment X27) are never Bluestein's:
+// the threshold applies to factors without one (chain_builder::radices).
 constexpr std::size_t default_bluestein_above = 16;
 
 // Experiment X8 (dev/experiments/X8-leaves.md): a whole-transform leaf of 32 beat planner
@@ -624,7 +626,8 @@ std::vector<std::size_t> rule_radices(std::size_t n, const target_profile& p) {
       return out;
     }
   }
-  // n = smooth x the prime factors above 16, which become generic passes at the end.
+  // n = smooth x the prime factors above 16, which become passes at the end: a codelet's
+  // (17, 19, 23), the generic pass's or one Bluestein stage (chain_builder::radices).
   std::size_t smooth = 1;
   std::size_t rest = n;
   std::vector<std::size_t> big;

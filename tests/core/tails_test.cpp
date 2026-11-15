@@ -78,13 +78,18 @@ std::vector<tail_case> cases() {
     out.push_back({.n = a * 15, .radices = {a, 5, 3}, .rows = 1, .expect = "lane radix-5"});
   }
   // Bluestein chirp passes whose last block of C holds 1 to C - 1 data elements.
-  for (const std::size_t n : {17U, 19U, 23U, 29U, 34U, 51U, 68U, 102U}) {
+  for (const std::size_t n : {41U, 58U, 43U, 116U, 29U, 62U, 31U, 87U}) {
     out.push_back({.n = n, .radices = {}, .rows = 2, .expect = "bluestein"});
   }
   // Generic passes, first and last, with partial runs.
-  out.push_back({.n = 34, .radices = {2, 17}, .rows = 2, .generic = true, .expect = "generic"});
-  out.push_back({.n = 51, .radices = {17, 3}, .rows = 2, .generic = true, .expect = "generic"});
-  out.push_back({.n = 57, .radices = {3, 19}, .rows = 1, .generic = true, .expect = "generic"});
+  out.push_back({.n = 58, .radices = {2, 29}, .rows = 2, .generic = true, .expect = "generic"});
+  out.push_back({.n = 87, .radices = {29, 3}, .rows = 2, .generic = true, .expect = "generic"});
+  out.push_back({.n = 93, .radices = {3, 31}, .rows = 1, .generic = true, .expect = "generic"});
+  // The prime codelets (experiment X27), first and last, with partial runs.
+  out.push_back({.n = 34, .radices = {2, 17}, .rows = 2, .expect = "lane radix-17"});
+  out.push_back({.n = 51, .radices = {17, 3}, .rows = 2, .expect = "grouped radix-17"});
+  out.push_back({.n = 57, .radices = {3, 19}, .rows = 1, .expect = "lane radix-19"});
+  out.push_back({.n = 69, .radices = {23, 3}, .rows = 1, .expect = "grouped radix-23"});
   // The lanes strategy (two rows or more): a leaf, and two passes, over 2 to 9 adjacent rows.
   for (std::size_t rows = 2; rows <= 9; ++rows) {
     out.push_back(

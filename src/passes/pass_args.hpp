@@ -88,7 +88,7 @@ inline constexpr std::size_t edge_op_count = 3;
 // on its input or on its output. A separate instantiation each.
 enum class factor_sharing : std::uint8_t { none, input, output };
 
-// The codelets' radices are gen::radices (every radix 2 to 16, then a few larger ones);
+// The codelets' radices are gen::radices (every radix 2 to 16, then 17, 19, 23, 32, 64);
 // pass_kernels::codelet has one row per entry, in that order. codelet_slot(r) is r's row,
 // or gen::radix_count when no codelet has radix r (a radix above 16 that is not listed is
 // a generic pass).

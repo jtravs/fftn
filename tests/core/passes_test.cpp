@@ -212,7 +212,7 @@ TEST(Passes, EveryCodeletInEveryPosition) {
 
 template <class T> void generic_in_every_position(fftn::isa target) {
   const std::vector<std::vector<std::size_t>> sequences{
-      {17}, {17, 2}, {2, 17}, {2, 17, 3}, {3, 19, 2}, {18}, {2, 18},
+      {29}, {29, 2}, {2, 29}, {2, 29, 3}, {3, 31, 2}, {18}, {2, 18},
   };
   for (const auto& radices : sequences) {
     std::size_t n = 1;
@@ -223,7 +223,7 @@ template <class T> void generic_in_every_position(fftn::isa target) {
     settings.radices = radices;
     settings.bluestein_above = no_bluestein;
     for (const auto dir : {fftn::direction::forward, fftn::direction::backward}) {
-      check_row<T>(target, n, dir, settings, 1.0, false, false, false, {"generic radix-1"});
+      check_row<T>(target, n, dir, settings, 1.0, false, false, false, {"generic radix-"});
     }
   }
 }
@@ -237,7 +237,8 @@ TEST(Passes, GenericInEveryPosition) {
 
 // Leaves above 16 (experiment X8): with the leaf limit raised, every codelet radix above 16
 // is one leaf, with its edges, and an even real line of twice that length runs its
-// half-length chain as one leaf; with the default limit they are chains.
+// half-length chain as one leaf; with the default limit 32 and 64 are chains, while the
+// primes 17, 19 and 23 are leaves whatever the limit (experiment X27).
 template <class T> void leaves_above_sixteen(fftn::isa target) {
   for (const std::uint8_t radix : fftn::detail::gen::radices) {
     const std::size_t n = radix;
@@ -255,9 +256,11 @@ template <class T> void leaves_above_sixteen(fftn::isa target) {
                    {leaf, "in: scale", "out: factor"});
       check_row<T>(target, n, dir, settings, 1.0, false, false, false, {leaf}, 3, 2);
     }
-    // By default (X8): a leaf of 32 on NEON in double, chains elsewhere.
-    const bool leaf_by_default = n == 32 && std::is_same_v<T, double> &&
-                                 (target == fftn::isa::neon || target == fftn::isa::neon_fcma);
+    // By default (X8): a leaf of 32 on NEON in double, chains elsewhere; the primes (X27) a
+    // leaf everywhere.
+    const bool leaf_by_default =
+        n % 2 == 1 || (n == 32 && std::is_same_v<T, double> &&
+                       (target == fftn::isa::neon || target == fftn::isa::neon_fcma));
     const auto plain =
         make_plan_core(fftn::detail::view_of(fftn::rows_c2c<T>(n, 1, fftn::direction::forward)),
                        {.force_isa = target}, {});
@@ -290,18 +293,20 @@ template <class T> void bluestein_in_every_position(fftn::isa target) {
   };
   const std::vector<std::string> both{"bluestein in", "bluestein out"};
   const std::vector<line> lines{
-      {.radices = {17}, .above = 16, .names = {"copies 1", "convolution: grouped"}},
+      {.radices = {29}, .above = 16, .names = {"copies 1", "convolution: grouped"}},
       {
-          .radices = {2, 17},
+          .radices = {2, 29},
           .above = 16,
           .names = {"grouped radix-2", "copies 2", "convolution: lane"},
       },
-      {.radices = {3, 19}, .above = 16, .names = {"grouped radix-3", "copies 3"}},
-      {.radices = {4, 17}, .above = 16, .names = {"copies 4"}},
-      {.radices = {5, 6, 23}, .above = 16, .names = {"lane radix-6", "copies 30"}},
+      {.radices = {3, 31}, .above = 16, .names = {"grouped radix-3", "copies 3"}},
+      {.radices = {4, 29}, .above = 16, .names = {"copies 4"}},
+      {.radices = {5, 6, 37}, .above = 16, .names = {"lane radix-6", "copies 30"}},
       {.radices = {16, 29}, .above = 16, .names = {"copies 16"}},
-      {.radices = {17, 19}, .above = 16, .names = {"Q 323, ", "copies 1"}},
-      {.radices = {17, 19}, .above = 17, .names = {"generic radix-17", "Q 19, ", "copies 17"}},
+      {.radices = {29, 31}, .above = 16, .names = {"Q 899, ", "copies 1"}},
+      {.radices = {29, 31}, .above = 29, .names = {"generic radix-29", "Q 31, ", "copies 29"}},
+      // A codelet's prime is never Bluestein's, whatever the threshold (experiment X27).
+      {.radices = {17, 31}, .above = 16, .names = {"grouped radix-17", "Q 31, ", "copies 17"}},
       {.radices = {2, 3, 61}, .above = 16, .names = {"Q 61, ", "copies 6"}},
   };
   for (const line& l : lines) {
@@ -350,30 +355,30 @@ template <class T> void every_edge_variant(fftn::isa target) {
       {.n = 12, .radices = {}, .first = "leaf radix-12", .last = "leaf radix-12"},
       {.n = 40, .radices = {5, 8}, .first = "grouped radix-5", .last = "lane radix-8"},
       {
-          .n = 17,
+          .n = 29,
           .radices = {},
-          .first = "generic radix-17",
-          .last = "generic radix-17",
+          .first = "generic radix-29",
+          .last = "generic radix-29",
           .above = no_bluestein,
       },
       {
-          .n = 34,
-          .radices = {2, 17},
+          .n = 58,
+          .radices = {2, 29},
           .first = "grouped radix-2",
-          .last = "generic radix-17",
+          .last = "generic radix-29",
           .above = no_bluestein,
       },
       {
-          .n = 34,
-          .radices = {17, 2},
-          .first = "generic radix-17",
+          .n = 58,
+          .radices = {29, 2},
+          .first = "generic radix-29",
           .last = "lane radix-2",
           .above = no_bluestein,
       },
-      {.n = 17, .radices = {}, .first = "bluestein in,", .last = "bluestein out", .above = 16},
+      {.n = 29, .radices = {}, .first = "bluestein in,", .last = "bluestein out", .above = 16},
       {
-          .n = 34,
-          .radices = {2, 17},
+          .n = 58,
+          .radices = {2, 29},
           .first = "grouped radix-2",
           .last = "bluestein out",
           .above = 16,
@@ -514,8 +519,9 @@ template <class T> void split_only_where_it_fits(fftn::isa target) {
   if (f > 2) {
     EXPECT_FALSE(has_split({2, f / 2, 2}, 0)) << "a run of one pass";
   }
-  EXPECT_FALSE(has_split({f, 2, 17}, no_bluestein)) << "a generic pass in the run";
-  EXPECT_FALSE(has_split({f, 2, 2, 17}, 16)) << "a Bluestein stage";
+  EXPECT_FALSE(has_split({f, 2, 29}, no_bluestein)) << "a generic pass in the run";
+  EXPECT_FALSE(has_split({f, 2, 2, 29}, 16)) << "a Bluestein stage";
+  EXPECT_FALSE(has_split({f, 2, 17}, 0)) << "radix 17 has no split codelet";
   EXPECT_FALSE(has_split({f, 32, 2}, 0)) << "radix 32 has no split codelet";
 
   // r2c and c2r of 2 f x 4 x 2 points with the pairing a pass of its own (a pairing fused
@@ -678,9 +684,10 @@ template <class T> void strided_rows_with_edges(fftn::isa target) {
   };
   for (const line& l : {
            line{.n = 40, .above = 0, .first = "grouped", .last = "lane"},
-           line{.n = 17, .above = no_bluestein, .first = "generic", .last = "generic"},
-           line{.n = 17, .above = 16, .first = "bluestein in", .last = "bluestein out"},
-           line{.n = 51, .above = 16, .first = "grouped", .last = "bluestein out"},
+           line{.n = 29, .above = no_bluestein, .first = "generic", .last = "generic"},
+           line{.n = 29, .above = 16, .first = "bluestein in", .last = "bluestein out"},
+           line{.n = 87, .above = 16, .first = "grouped", .last = "bluestein out"},
+           line{.n = 51, .above = 16, .first = "grouped", .last = "lane radix-17"},
        }) {
     build_settings settings;
     settings.bluestein_above = l.above;
@@ -712,7 +719,7 @@ TEST(Passes, ScratchOnlyWhenUsed) {
   generic.bluestein_above = no_bluestein;
   for (const fftn::isa t : fftn::test::runnable_isas()) {
     // The view borrows the shape's axes, so the shape must outlive it.
-    const auto shape = fftn::rows_c2c<double>(17, 1, fftn::direction::forward);
+    const auto shape = fftn::rows_c2c<double>(29, 1, fftn::direction::forward);
     const auto rows = fftn::detail::view_of(shape);
     EXPECT_EQ(fftn::detail::workspace_bytes(*make_plan_core(rows, {.force_isa = t}, generic), 1),
               0U)
@@ -726,7 +733,7 @@ TEST(Passes, ScratchOnlyWhenUsed) {
     EXPECT_NE(listing.find("bluestein out"), std::string::npos) << listing;
     EXPECT_EQ(listing.find("copy"), std::string::npos) << listing;
     const std::size_t m = fftn::detail::bluestein_length(
-        17, fftn::detail::profile_of(static_cast<fftn::detail::target>(t), lanes_of<double>(t)));
+        29, fftn::detail::profile_of(static_cast<fftn::detail::target>(t), lanes_of<double>(t)));
     EXPECT_EQ(bluestein->scratch_line, m) << fftn::isa_name(t);
   }
 }
@@ -813,8 +820,11 @@ template <class T> void fused_scale(fftn::isa target) {
                         "planes 40 x 12");
   check_scaled<c, c, T>(target, fftn::planes_c2c<T>(17, 12, 2, fftn::direction::backward), 408, 408,
                         "planes 17 x 12");
-  // In place, a prime row is one Bluestein stage, which runs in place.
-  for (const std::size_t n : {std::size_t{17}, std::size_t{1009}}) {
+  check_scaled<c, c, T>(target, fftn::planes_c2c<T>(29, 12, 2, fftn::direction::backward), 696, 696,
+                        "planes 29 x 12");
+  // In place, a prime row without a codelet is one Bluestein stage, which runs in place; a
+  // prime with one is a leaf.
+  for (const std::size_t n : {std::size_t{17}, std::size_t{29}, std::size_t{1009}}) {
     check_scaled<c, c, T>(target, fftn::rows_c2c<T>(n, 2, fftn::direction::forward), 2 * n, 2 * n,
                           "c2c n = " + std::to_string(n), true);
   }

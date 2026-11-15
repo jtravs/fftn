@@ -47,7 +47,7 @@ std::shared_ptr<const fftn::detail::plan_core> rows(std::size_t n, std::size_t c
     settings.radices = {4, 4, 4, 4, 12};
   }
   // The work of a generic pass (below): its prime factor is not a Bluestein stage.
-  if (n == 34) {
+  if (n == 58) {
     settings.bluestein_above = static_cast<std::size_t>(-1);
   }
   return fftn::detail::make_plan_core(
@@ -115,9 +115,9 @@ TEST(WorkGraph, PhasesOfRowsAndPlanes) {
   EXPECT_EQ(gr->graph.phases[1].units, 32U * (16 / 8)); // columns c x blocks of L = 16
   EXPECT_EQ(gr->graph.phases[2].nest, 1U);
   EXPECT_EQ(gr->graph.phases[2].units, 512U / 8); // blocks of L = 512, the last phase
-  // A generic pass of radix r sums r terms per point: 2 x 17 is a grouped radix-2 pass (34
-  // points) and a generic radix-17 pass (34 x 17).
-  EXPECT_EQ(rows(34, 1)->graph.work, 34.0 + 34.0 * 17);
+  // A generic pass of radix r sums r terms per point: 2 x 29 is a grouped radix-2 pass (58
+  // points) and a generic radix-29 pass (58 x 29).
+  EXPECT_EQ(rows(58, 1)->graph.work, 58.0 + 58.0 * 29);
   // A copy or real edge pass touches two points per unit: n = 1 is one copy of one element.
   EXPECT_EQ(rows(1, 1)->graph.work, 2.0);
   // Planes: one phase of lines per axis.

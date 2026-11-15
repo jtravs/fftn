@@ -106,18 +106,20 @@ inline error_bound bluestein_bound(std::size_t n) {
   };
 }
 
-// Whether n has a prime factor above the codelets' 16, which FFTN's planner sends through
-// Bluestein on every profile (src/planner/rules.cpp).
+// Whether n has a prime factor without a codelet (above 16, other than 17, 19 and 23:
+// experiment X27), which FFTN's planner sends through Bluestein on every profile
+// (src/planner/rules.cpp).
 inline bool has_large_prime_factor(std::size_t n) {
+  const auto large = [](std::size_t p) { return p > 16 && p != 17 && p != 19 && p != 23; };
   for (std::size_t p = 2; p <= n / p; ++p) {
     while (n % p == 0) {
-      if (p > 16) {
+      if (large(p)) {
         return true;
       }
       n /= p;
     }
   }
-  return n > 16;
+  return large(n);
 }
 
 // FFTN's bound for a transform of n points: Bluestein's where the planner uses it.

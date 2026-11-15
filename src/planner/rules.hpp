@@ -90,8 +90,9 @@ struct target_profile {
 
 // The radices of a chain for n, in pass order: empty for n = 1, {n} for n <= 16 and for a
 // codelet radix n <= p.leaf_limit (a leaf).
-// Prime factors above 16 are generic passes, ascending, after the codelet passes; radices
-// above 16 are such primes.
+// Prime factors above 16 follow the cost-priced passes, ascending: a codelet pass for 17, 19
+// and 23 (experiment X27), otherwise a generic pass or Bluestein (chain_builder::radices);
+// radices above 16 are such primes.
 [[nodiscard]] std::vector<std::size_t> rule_radices(std::size_t n, const target_profile& p);
 
 // The convolution length of a Bluestein stage for a transform of q points: the 7-smooth

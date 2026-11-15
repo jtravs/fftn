@@ -253,8 +253,10 @@ TEST(Rules, MeasuredExamples) {
   EXPECT_EQ(r(16384, f64), (v{8, 16, 16, 8})); // the planner refresh
   EXPECT_EQ(r(3000, f64), (v{8, 5, 5, 15}));
   EXPECT_EQ(r(3600, f32), (v{16, 15, 15}));
-  // Primes above the codelets go last (the chain makes them a Bluestein stage).
+  // Primes above 16 go last (the chain makes them a codelet pass for 17, 19 and 23,
+  // experiment X27, else a Bluestein stage).
   EXPECT_EQ(r(34, f64), (v{2, 17}));
+  EXPECT_EQ(r(58, f64), (v{2, 29}));
 }
 
 // The planner refresh (experiment X2, Xeon Gold 6240): AVX-512 in double (C = 4) has
