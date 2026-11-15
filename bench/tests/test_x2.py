@@ -146,6 +146,11 @@ class Cases(unittest.TestCase):
             radices.from_note("axis 0 (n = 1024): radices 8 x 8 x 16, split from pass 2"),
             (1024, (8, 8, 16)),
         )
+        # A Bluestein stage counts as its primes (rule_radices' sequence).
+        note = "axis 0 (n = 2431): radices 13 x 11 x bluestein 17 (M 36 = 6 x 6)"
+        self.assertEqual(radices.from_note(note), (2431, (13, 11, 17)))
+        note = "axis 0 (n = 4097): radices bluestein 4097 (M 8192 = 8 x 8 x 8 x 16)"
+        self.assertEqual(radices.from_note(note), (4097, (17, 241)))
         with self.assertRaises(ValueError):
             radices.from_note("axis 0 (n = 100): r2c through a half-length complex chain")
 
