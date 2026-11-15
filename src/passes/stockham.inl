@@ -137,14 +137,16 @@ void grouped_pass(const pass_args* a, std::size_t first, std::size_t last) {
   const std::size_t whole = masked && last > m / C<T> ? m / C<T> : last;
   for (std::size_t u = first; u < whole; ++u) {
     const std::size_t p0 = u * C<T>;
-    const std::size_t valid = m - p0 < C<T> ? m - p0 : C<T>;
+    // Every unit of the loop is whole on the masked targets, and the compiler must see it:
+    // store_tiled with a runtime count of butterflies loops instead of unrolling (X23).
+    const std::size_t valid = masked || m - p0 >= C<T> ? C<T> : m - p0;
     const T* xp = x + at(p0, xs);
     const edge<T, InOp> op = make_edge<T, InOp>(a, a->in_factor, p0, m);
     const lane_twiddles<T> twid{.p = table + tw_reals<T> * p0, .row = row};
     cv<T> v[R]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
     const to_registers<T> out{v};
     T* yp = y + 2 * R * p0;
-    if (masked || valid == C<T>) {
+    if (valid == C<T>) {
       const run_in<T, InOp, true> in{.p = xp, .leg = leg, .step = xs, .valid = valid, .op = op};
       cdft<R>::template dif<T, Sign>(in, out, twid);
       if constexpr (R % C<T> == 0) {
