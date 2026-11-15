@@ -175,7 +175,8 @@ expected_and_got<T> run(const kernel_table& kernels, const probe_table& probes, 
     {
       const std::size_t g = i / (2 * lanes);
       const bool live = (i / 2) % lanes < g % (lanes + 1);
-      e[i] = live ? a[i] : op == vop::c_load_n ? T(0) : T(-77);
+      const T dead = op == vop::c_load_n ? T(0) : T(-77);
+      e[i] = live ? a[i] : dead;
       break;
     }
     case vop::c_transpose: { // C x C blocks of complex numbers

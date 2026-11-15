@@ -154,8 +154,8 @@ TEST(Rules, LeafLimit) {
 }
 
 // Every target has a profile: the lanes it is given; NEON's own tables at its C (1 and 2),
-// AVX-512's own table at C = 8 (float), otherwise AVX2's C = 2 table up to two lanes and its
-// C = 4 table from four.
+// AVX-512's own tables at C = 4 (double) and 8 (float), otherwise AVX2's C = 2 table up to
+// two lanes and its C = 4 table from four.
 TEST(Rules, ProfilesOfEveryTarget) {
   using fftn::detail::target;
   for (const target t : {
@@ -175,7 +175,7 @@ TEST(Rules, ProfilesOfEveryTarget) {
       if (neon_own) {
         EXPECT_NE(p.costs, fftn::detail::profile_of(target::avx2, 2).costs);
         EXPECT_EQ(p.costs, fftn::detail::profile_of(target::neon_fcma, lanes).costs);
-      } else if (t == target::avx512 && lanes == 8) {
+      } else if (t == target::avx512 && lanes >= 4) {
         EXPECT_NE(p.costs, fftn::detail::profile_of(target::avx2, 4).costs);
       } else {
         EXPECT_EQ(p.costs, fftn::detail::profile_of(target::avx2, lanes <= 2 ? 2 : 4).costs);
@@ -248,38 +248,45 @@ TEST(Rules, MeasuredExamples) {
   // Overrides.
   EXPECT_EQ(r(42, f64), (v{2, 3, 7}));
   EXPECT_EQ(r(490, f64), (v{2, 7, 5, 7}));
-  EXPECT_EQ(r(700, f32), (v{4, 7, 5, 5}));
-  EXPECT_EQ(r(4096, f64), (v{8, 8, 8, 8})); // experiment X18
-  EXPECT_EQ(r(16384, f64), (v{8, 8, 16, 16}));
+  EXPECT_EQ(r(700, f32), (v{4, 5, 5, 7}));
+  EXPECT_EQ(r(4096, f64), (v{8, 8, 8, 8}));    // experiment X18
+  EXPECT_EQ(r(16384, f64), (v{8, 16, 16, 8})); // the planner refresh
+  EXPECT_EQ(r(3000, f64), (v{8, 5, 5, 15}));
+  EXPECT_EQ(r(3600, f32), (v{16, 15, 15}));
   // Primes above the codelets go last (the chain makes them a Bluestein stage).
   EXPECT_EQ(r(34, f64), (v{2, 17}));
 }
 
-// Experiment X3: AVX-512 in float (C = 8) has avx2_float's costs plus radix 32 and 64
-// columns, so wherever its choice has neither 32 nor 64 it is AVX2's at C = 8; and the
-// measured winners it was given.
-TEST(Rules, Avx512FloatExtendsAvx2) {
+// The planner refresh (experiment X2, Xeon Gold 6240): AVX-512 in double (C = 4) has
+// avx2_float's costs, so its choice is AVX2's at C = 4 except at either table's overrides;
+// in float (C = 8) its own fitted costs. And measured winners each was given.
+TEST(Rules, Avx512Tables) {
   using fftn::detail::target;
   using v = std::vector<std::size_t>;
-  const auto big = fftn::detail::profile_of(target::avx512, 8);
-  const auto base = fftn::detail::profile_of(target::avx2, 8);
-  std::size_t with_big = 0;
+  const auto f64 = fftn::detail::profile_of(target::avx512, 4);
+  const auto f32 = fftn::detail::profile_of(target::avx512, 8);
+  const auto avx2 = fftn::detail::profile_of(target::avx2, 4);
+  EXPECT_NE(f64.costs, avx2.costs);
+  EXPECT_NE(f32.costs, avx2.costs);
   for (std::size_t n = 1; n <= 20000; ++n) {
-    const auto r = fftn::detail::rule_radices(n, big);
-    if (std::ranges::any_of(r, [](std::size_t x) { return x == 32 || x == 64; })) {
-      ++with_big;
-    } else {
-      EXPECT_EQ(r, fftn::detail::rule_radices(n, base)) << n;
+    const auto at_n = [n](const auto& o) { return o.n == n; };
+    const bool own = std::ranges::any_of(f64.costs->overrides, at_n) ||
+                     std::ranges::any_of(avx2.costs->overrides, at_n);
+    if (!own) {
+      EXPECT_EQ(fftn::detail::rule_radices(n, f64), fftn::detail::rule_radices(n, avx2)) << n;
     }
   }
-  EXPECT_GT(with_big, 0U);
-  EXPECT_EQ(fftn::detail::rule_radices(256, big), (v{32, 8}));
-  EXPECT_EQ(fftn::detail::rule_radices(512, big), (v{32, 16}));
-  EXPECT_EQ(fftn::detail::rule_radices(1024, big), (v{32, 32}));
-  EXPECT_EQ(fftn::detail::rule_radices(2048, big), (v{16, 8, 16}));
-  EXPECT_EQ(fftn::detail::rule_radices(4096, big), (v{8, 16, 32}));
-  // Double (C = 4) keeps AVX2's table.
-  EXPECT_EQ(fftn::detail::profile_of(target::avx512, 4).costs, base.costs);
+  const auto r = [](std::size_t n, const fftn::detail::target_profile& p) {
+    return fftn::detail::rule_radices(n, p);
+  };
+  EXPECT_EQ(r(768, f64), (v{8, 12, 8}));
+  EXPECT_EQ(r(1000, f64), (v{4, 10, 5, 5}));
+  EXPECT_EQ(r(140, f32), (v{10, 14}));
+  EXPECT_EQ(r(256, f32), (v{32, 8}));
+  EXPECT_EQ(r(512, f32), (v{32, 16}));
+  EXPECT_EQ(r(1024, f32), (v{16, 16, 4}));
+  EXPECT_EQ(r(2048, f32), (v{16, 8, 16}));
+  EXPECT_EQ(r(4096, f32), (v{32, 8, 16}));
 }
 
 // Runs a plan core on a fresh copy of `input` and returns the output bytes.

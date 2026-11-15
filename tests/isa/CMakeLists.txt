@@ -112,9 +112,11 @@ if(APPLE AND FFTN_TARGET_IS_AARCH64 AND NOT FFTN_SANITIZE)
   if(NOT FFTN_HAS_MCPU_GENERIC)
     message(FATAL_ERROR "isa tests: the compiler does not accept -mcpu=generic")
   endif()
+  # The scalar and AArch64 kernel units, main and row units alike (src/isa/CMakeLists.txt).
+  get_property(fftn_arm_units GLOBAL PROPERTY FFTN_ISA_UNITS)
+  list(FILTER fftn_arm_units INCLUDE REGEX "(scalar|neon|neon_fcma)\\.cpp$")
   add_library(fftn_isa_generic_baseline OBJECT
-    ${PROJECT_SOURCE_DIR}/src/isa/scalar.cpp ${PROJECT_SOURCE_DIR}/src/isa/neon.cpp
-    ${PROJECT_SOURCE_DIR}/src/isa/neon_fcma.cpp ${PROJECT_SOURCE_DIR}/src/isa/target.cpp
+    ${fftn_arm_units} ${PROJECT_SOURCE_DIR}/src/isa/target.cpp
     probe_scalar.cpp probe_neon.cpp probe_neon_fcma.cpp codelets_scalar.cpp codelets_neon.cpp
     codelets_neon_fcma.cpp)
   fftn_configure_target(fftn_isa_generic_baseline)

@@ -426,9 +426,7 @@ def lower_split(h: RealGraph, outputs: list[tuple[RTerm, RTerm]]) -> list[Op]:
                         }[(alpha, beta)]
                         options.append((0, int(csign < 0), mu, (kind, p, acc, csign)))
                     elif (alpha, beta) != (-1, -1):
-                        kind = {(1, 1): "fmadd", (1, -1): "fnmadd", (-1, 1): "fmsub"}[
-                            (alpha, beta)
-                        ]
+                        kind = {(1, 1): "fmadd", (1, -1): "fnmadd", (-1, 1): "fmsub"}[(alpha, beta)]
                         options.append((0, 0, mu, (kind, p, acc, 1)))
             case RAdd(a, b, neg):
                 s = -1 if neg else 1
@@ -444,8 +442,7 @@ def lower_split(h: RealGraph, outputs: list[tuple[RTerm, RTerm]]) -> list[Op]:
         if not options:
             raise AssertionError(f"node {n} has no realisable sign")
         options = [
-            (want[n].get(mu, 1 << 30), prefer, -mu, mu, how)
-            for (_, prefer, mu, how) in options
+            (want[n].get(mu, 1 << 30), prefer, -mu, mu, how) for (_, prefer, mu, how) in options
         ]
         options.sort(key=lambda o: o[:3])
         _, _, _, mu, how = options[0]

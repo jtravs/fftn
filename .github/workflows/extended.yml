@@ -1,0 +1,76 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# The rest of the gate's matrix (DESIGN.md 15.4), weekly and on demand (Actions, "extended",
+# Run workflow, on any branch): the second GCC version, Apple Clang, clang++ on Windows,
+# every sanitizer that ci.yml does not run, clang-tidy and coverage. Their findings are
+# fixed in batches (AGENTS.md section 3); ci.yml keeps one configuration per platform and
+# one job per sanitizer on every push. The matrices are read by gate.yml.
+name: extended
+
+on:
+  schedule:
+    - cron: "41 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    uses: ./.github/workflows/gate.yml
+    with:
+      # Linux x86-64. GCC 14 is the GCC floor (AGENTS.md section 4) with both sanitizers:
+      # B1 found GCC-only failure modes, and GCC 14's TSan is the one that needs the
+      # address-space fix. Clang 23 runs clang-tidy and coverage here.
+      linux: >-
+        [
+          {"name": "gcc-14", "cxx": "g++-14", "stages": "build bench"},
+          {"name": "gcc-14 asan", "cxx": "g++-14", "stages": "sanitize"},
+          {"name": "gcc-14 tsan", "cxx": "g++-14", "stages": "tsan"},
+          {"name": "clang-23 tidy coverage", "llvm": "23", "cxx": "/usr/lib/llvm-23/bin/clang++",
+           "stages": "tidy coverage"}
+        ]
+      # The current GCC's sanitizers.
+      linux-gcc-current: >-
+        [
+          {"name": "gcc-16 asan", "stages": "sanitize"},
+          {"name": "gcc-16 tsan", "stages": "tsan"}
+        ]
+      # AArch64 with Clang: clang-tidy (its findings follow the platform's #if branches) and
+      # the sanitizers. GCC 14's ASan + UBSan took 53 minutes here (CI run 43487560137)
+      # against 2.5 on x86-64, so GCC's sanitizers run on x86-64 only.
+      linux-arm64: >-
+        [
+          {"name": "clang-23", "llvm": "23", "cxx": "/usr/lib/llvm-23/bin/clang++",
+           "stages": "build tidy"},
+          {"name": "clang-23 asan", "llvm": "23", "cxx": "/usr/lib/llvm-23/bin/clang++",
+           "stages": "sanitize"},
+          {"name": "clang-23 tsan", "llvm": "23", "cxx": "/usr/lib/llvm-23/bin/clang++",
+           "stages": "tsan"}
+        ]
+      # Apple's compiler (its ASan has no leak detection; the gate says so), and Homebrew
+      # LLVM's ASan + UBSan with leak detection (the only sanitizer run of NEON with FCMA:
+      # 61 minutes), clang-tidy, coverage and ThreadSanitizer, each in a job of its own (together
+      # they ran past 90 minutes on these three-core runners). Two instrumented compiles at a
+      # time in 7 GB.
+      macos: >-
+        [
+          {"name": "apple-clang", "cxx": "clang++", "stages": "build bench"},
+          {"name": "apple-clang asan", "cxx": "clang++", "stages": "sanitize", "jobs": 2},
+          {"name": "llvm asan", "brew-llvm": true, "stages": "sanitize", "jobs": 2},
+          {"name": "llvm tidy", "brew-llvm": true, "stages": "tidy"},
+          {"name": "llvm coverage", "brew-llvm": true, "stages": "coverage"},
+          {"name": "llvm tsan", "brew-llvm": true, "stages": "tsan", "jobs": 2}
+        ]
+      # The GNU-style driver on the MSVC ABI (experiment B2).
+      windows: >-
+        [
+          {"name": "x64 clang++", "runner": "windows-2025", "arch": "x64", "stages": "build",
+           "cc": "C:/Program Files/LLVM/bin/clang.exe",
+           "cxx": "C:/Program Files/LLVM/bin/clang++.exe"}
+        ]
