@@ -139,6 +139,22 @@ Mac; AVX2 tables fitted on the EPYC picked a sequence within 2 % of the best for
 48–65 % of lengths on the Mac, against 82–83 % for tables fitted there (3.6 % faster
 overall). On the Xeon's AVX-512 the borrowed tables were already within 0.6–2.1 % of the
 best. [X2](experiments/X2-radix-sets.md), [X16](experiments/X16-avx512-table.md).
+They also go stale when the kernels change. After split re/im runs (X1) the same AVX-512
+float table was 3.5 % from the best up to 1024 points and 8–10 % above, and single lengths
+were off by 1.7–2.1 times (700 points: 4·7·5·5 against 14·10·5), because a run starts only
+after a prefix the split block divides, so the best first radix moved to 8 or 16; AVX2 and
+NEON tables, whose kernels changed less, stayed within 1–2 %. Re-run the search after every
+kernel or lowering change, not only on a new machine.
+[X2](experiments/X2-radix-sets.md) (refresh).
+
+2.8 **A fitted cost table must not decide where it never measured.** Fitted to every
+candidate up to 1024 points and to the cost estimate's best 20 above, the AVX-512 float
+costs chose, for 4096–32768 points, five- and six-pass chains of radix 4 that no campaign had
+timed (32768: 16·4·4·4·4·8, against the measured best 8·16·16·16); within the measured
+candidates it reproduced 97 % of winners. Check whether the model's choice at each measured
+length was itself timed, and pin the measured best where it was not; treat the
+unmeasured lengths in between as the model's real test.
+[X2](experiments/X2-radix-sets.md) (refresh).
 
 ## 3. Memory and caches
 

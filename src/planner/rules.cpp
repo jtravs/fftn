@@ -134,7 +134,9 @@ constexpr pass_costs avx2_float{
 // measured lengths where the costs' choice was more than 2 % slower than the campaigns'
 // baseline (X3's table) in some case, more than 2 % behind the winner in every case, or
 // never timed (above 1024 the costs extrapolate from 20 candidates per length): each is the
-// sequence least behind the winner at worst and no slower than the baseline.
+// sequence least behind the winner at worst and no slower than the baseline. 21504 keeps
+// X3's 8.7.12.32: it is the Bluestein convolution of 10403 = 101 x 103, where the costs'
+// unmeasured five-pass choice ran 1.08 times as long (run 20261115-040151-b716).
 // clang-format off
 // NOLINTBEGIN(readability-trailing-comma): bench/x2/fit.py writes and parses this layout
 constexpr std::array<radix_override, 16> avx512_double_overrides{{
@@ -171,7 +173,7 @@ constexpr pass_costs avx512_double{
     .overrides = avx512_double_overrides,
 };
 
-constexpr std::array<radix_override, 34> avx512_float_overrides{{
+constexpr std::array<radix_override, 35> avx512_float_overrides{{
     {.n = 24, .radices = {3, 8, 0, 0}},
     {.n = 36, .radices = {6, 6, 0, 0}},
     {.n = 96, .radices = {8, 3, 4, 0}},
@@ -205,6 +207,7 @@ constexpr std::array<radix_override, 34> avx512_float_overrides{{
     {.n = 7200, .radices = {32, 15, 15, 0}},
     {.n = 8192, .radices = {16, 16, 32, 0}},
     {.n = 16384, .radices = {16, 4, 16, 16}},
+    {.n = 21504, .radices = {8, 7, 12, 32}},
     {.n = 32768, .radices = {8, 16, 16, 16}},
 }};
 
