@@ -50,11 +50,12 @@ struct pass_args {
   // A lane pass whose output factor is shared (factor_sharing::output): the consecutive
   // elements that share each entry, a multiple of the target's complex count.
   std::size_t factor_copies = 1;
-  // The lanes strategy's gather and scatter (src/passes/lanes.inl): the reals between
-  // consecutive rows on each side, and the rows of the block being run, which the driver
+  // The lanes strategy's passes (src/passes/lanes.inl): the reals between consecutive rows
+  // on each side, the rows of a tile, and the rows of the block being run, which the driver
   // sets for every block (core/driver.cpp, program::lanes).
   std::ptrdiff_t src_dist = 0;
   std::ptrdiff_t dst_dist = 0;
+  std::size_t block = 0; // B: the rows of a tile
   std::size_t rows = 0;
 };
 
@@ -157,6 +158,11 @@ struct radix_passes {
   pass_fn c2r_first;
   pass_fn r2c_leaf[2];
   pass_fn c2r_leaf[2];
+  // The lanes strategy's passes that read or write rows (src/passes/lanes.inl): a block's
+  // first pass, its last pass [output edge none or scale], its chain of one pass [the same].
+  pass_fn lanes_first[2];
+  pass_fn lanes_last[2][2];
+  pass_fn lanes_leaf[2][2];
 };
 
 template <class T> struct pass_kernels {

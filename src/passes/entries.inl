@@ -158,6 +158,21 @@ template <class T, std::size_t I> struct radix_entries {
               &c2r_leaf<T, R, nop>,
               &c2r_leaf<T, R, scl>,
           },
+      .lanes_first =
+          {
+              &lanes_first<T, R, -1>,
+              &lanes_first<T, R, +1>,
+          },
+      .lanes_last =
+          {
+              {&lanes_last<T, R, -1, nop>, &lanes_last<T, R, -1, scl>},
+              {&lanes_last<T, R, +1, nop>, &lanes_last<T, R, +1, scl>},
+          },
+      .lanes_leaf =
+          {
+              {&lanes_leaf<T, R, -1, nop>, &lanes_leaf<T, R, -1, scl>},
+              {&lanes_leaf<T, R, +1, nop>, &lanes_leaf<T, R, +1, scl>},
+          },
   };
 };
 

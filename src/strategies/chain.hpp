@@ -234,17 +234,22 @@ private:
                      const line_edges& edges, bool first, std::vector<stage>& stages);
   void add_edge(pass_fn run, const char* name, std::size_t n, std::size_t units, endpoint src,
                 endpoint dst, const T* twiddles, double scale, std::vector<stage>& stages);
-  // The lanes strategy's pieces (strategies/lanes.cpp): the gather of `elements` complex
-  // values per row (strides and distances in reals) into scratch a, the chain of n with its
-  // split run from pass `split` on the tile from `at`, and the scatter; each returns the
-  // slot it wrote.
-  void add_lanes_gather(std::size_t elements, endpoint src, std::ptrdiff_t stride_reals,
-                        std::ptrdiff_t dist_reals, std::size_t block, std::vector<stage>& stages);
-  slot lanes_chain(std::size_t n, const std::vector<std::size_t>& rad, std::size_t split,
-                   int sign, slot at, const line_edges& edges, std::size_t block,
-                   std::vector<stage>& stages);
-  void add_lanes_scatter(std::size_t elements, slot at, endpoint dst, std::ptrdiff_t stride_reals,
-                         std::ptrdiff_t dist_reals, std::size_t block, std::vector<stage>& stages);
+  // The lanes strategy's pieces (strategies/lanes.cpp). A block's rows on one side: where,
+  // and the reals between a row's elements and between rows; the tile is rows of stride 2B
+  // and distance 2 in scratch.
+  struct lane_rows {
+    slot where = slot::in;
+    std::ptrdiff_t stride = 2;
+    std::ptrdiff_t dist = 0;
+  };
+  // The stages of the chain of n (radices rad, split run from pass `split`) on a block of
+  // `block` rows from `src` to `dst`, either of which may be a tile; scratch tiles in a and
+  // b in between. edges.out applies to the last pass.
+  void lanes_body(std::size_t n, const std::vector<std::size_t>& rad, std::size_t split, int sign,
+                  lane_rows src, lane_rows dst, const line_edges& edges, std::size_t block,
+                  std::vector<stage>& stages);
+  void add_lanes_copy(bool gather, std::size_t elements, lane_rows rows, slot tile,
+                      std::size_t block, std::vector<stage>& stages);
 
   const kernels_of<T>& kernels_;
   target_profile profile_;
