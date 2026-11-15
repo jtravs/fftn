@@ -21,7 +21,7 @@ precision = ["f64", "f32"]
 name = "x30-batches"
 note = "batches of 64 rows"
 kind = "c2c"
-dims = [256, 512, 1024, 4096]
+dims = [256, 512, 1024, 2048, 4096]
 batch = 64
 precision = ["f64", "f32"]
 
