@@ -21,3 +21,17 @@ name = "x29-half"
 kind = "c2c"
 dims = [2048, 4096, 8192, 16384, 32768, 65536, 524288, 23040]
 tiers = ["tracking"]
+
+# The chain or the grid for c2c rows by the odd part of their length: rows of 2^k times an
+# odd number from 3 to 3125, from beyond L1 to beyond L2 on every machine (the grid's
+# thresholds were set on powers of two, X12b).
+[[group]]
+name = "x29-odd-part"
+kind = "c2c"
+dims = [
+  12288, 49152, 98304, 393216, 10240, 40960, 81920, 327680, 9216, 36864, 73728, 294912,
+  15360, 61440, 245760, 983040, 12800, 51200, 204800, 819200, 13824, 55296, 221184,
+  11520, 46080, 184320, 737280, 16000, 64000, 256000, 1024000, 100000, 57344, 86016, 71680,
+  59049, 78125,
+]
+tiers = ["full"]
