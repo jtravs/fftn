@@ -324,10 +324,13 @@ catches what otherwise fails a Linux gate an hour later.
 contracted `a*b+c` into FMAs differently in two inlined copies of one function, so threaded
 and serial results differed in the last bits (prototype).
 
-6.3 **Sanitizer builds of large generated kernels need memory and time.** GCC's ASan on
-radix-64 codelets was killed for memory with 16 parallel compiles and ran past 90 minutes
-with 8; give such jobs 96–160 GB and hours, or exclude the largest kernels from
-instrumentation.
+6.3 **Sanitizer builds of large generated kernels need memory and time, mostly for debug
+information.** GCC's ASan on radix-64 codelets was killed for memory with 16 parallel
+compiles and ran past 90 minutes with 8 (prototype). With line tables only (`-g1`,
+`-gline-tables-only`), which is all a sanitizer report needs, one FFTN kernel unit under
+ASan + UBSan fell from 23.4 to 5.6 GB with GCC 16 and from 9.1 to 4.7 GB with Clang 23
+(`-g` made GCC overflow variable tracking and redo it per radix-64 pass); -O1 instead of
+-O2 saved no memory. Size parallel compiles to the machine's memory, not its cores.
 
 6.4 **GCC's ASan fake stack breaks aligned AVX-512 spills.** With
 `detect_stack_use_after_return`, 32-byte-aligned fake frames met 64-byte `vmovapd` spills and
