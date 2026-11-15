@@ -93,6 +93,25 @@ TEST(CpuFeaturesX86, Zen3HasAvx2ButNotAvx512) {
   EXPECT_FALSE(f.avx512f);
 }
 
+// The vendor and the display family (the machine profile keys per-core rules on them).
+TEST(CpuFeaturesX86, VendorAndFamily) {
+  x86_cpuid_words w = skylake_sp();
+  w.vendor_ebx = 0x68747541; // "Auth"
+  w.vendor_edx = 0x69746E65; // "enti"
+  w.vendor_ecx = 0x444D4163; // "cAMD"
+  w.leaf1_eax = 0x00A00F11;  // EPYC 7763: base family 0xF, extended 0xA
+  cpu_features f = decode_x86_cpuid(w);
+  EXPECT_TRUE(f.amd);
+  EXPECT_EQ(f.family, 0x19U);
+  w.vendor_ebx = 0x756E6547; // "Genu"
+  w.vendor_edx = 0x49656E69; // "ineI"
+  w.vendor_ecx = 0x6C65746E; // "ntel"
+  w.leaf1_eax = 0x00050657;  // Xeon Gold 6240: family 6 (the extended family not added)
+  f = decode_x86_cpuid(w);
+  EXPECT_FALSE(f.amd);
+  EXPECT_EQ(f.family, 6U);
+}
+
 TEST(CpuFeaturesX86, SandyBridgeHasAvxOnly) {
   x86_cpuid_words w = skylake_sp();
   w.leaf1_ecx &= ~bit(12);

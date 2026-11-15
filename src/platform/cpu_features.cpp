@@ -55,9 +55,14 @@ bool sysctl_flag(const sysctl_values& values, std::string_view name) noexcept {
 
 cpu_features decode_x86_cpuid(const x86_cpuid_words& words) noexcept {
   cpu_features f;
+  // "AuthenticAMD", four characters per register, low byte first.
+  f.amd = words.vendor_ebx == 0x68747541U && words.vendor_edx == 0x69746E65U &&
+          words.vendor_ecx == 0x444D4163U;
   if (words.max_leaf < 1) {
     return f;
   }
+  const unsigned base_family = (words.leaf1_eax >> 8U) & 0xFU;
+  f.family = base_family == 0xFU ? base_family + ((words.leaf1_eax >> 20U) & 0xFFU) : base_family;
   f.sse2 = bit(words.leaf1_edx, 26);
   f.sse3 = bit(words.leaf1_ecx, 0);
   f.ssse3 = bit(words.leaf1_ecx, 9);
@@ -159,9 +164,14 @@ std::uint64_t xgetbv0() noexcept {
 
 cpu_features compute_features() noexcept {
   x86_cpuid_words words;
-  words.max_leaf = cpuid(0, 0)[0];
+  const auto leaf0 = cpuid(0, 0);
+  words.max_leaf = leaf0[0];
+  words.vendor_ebx = leaf0[1];
+  words.vendor_ecx = leaf0[2];
+  words.vendor_edx = leaf0[3];
   if (words.max_leaf >= 1) {
     const auto leaf1 = cpuid(1, 0);
+    words.leaf1_eax = leaf1[0];
     words.leaf1_ecx = leaf1[2];
     words.leaf1_edx = leaf1[3];
   }

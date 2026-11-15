@@ -11,6 +11,7 @@
 #pragma once
 
 #include "fftn/team.hpp"
+#include "platform/cpu_features.hpp"
 #include "threading/work_graph.hpp"
 
 #include <cstddef>
@@ -109,6 +110,14 @@ struct machine_profile {
   // the ways are known; macOS does not report them, and there it is SIZE_MAX (no padding:
   // X4 measured none paying on the Mac).
   std::size_t grid_pad_period = 4096;
+  // How many rows ahead the grid's gathers and scatters prefetch the rows they copy next
+  // (0: none). The rows of a long grid lie a page or more apart, a stride hardware
+  // prefetchers do not follow (X12), but on Zen 3 the prefetched lines evict the scratch
+  // block the next pass reads: without the prefetch the EPYC's long rows took 0.83-0.97 of
+  // the time, while the Xeon (avx512 and avx2 alike: 1.14-1.22 at 2^20 and 2^22) and the
+  // Mac (1.07-1.19) lost (X26). default_machine_profile sets it by the core
+  // (grid_rows_ahead_for, X26b); the default here is a Zen 3 CCX's.
+  std::size_t grid_rows_ahead = 0;
 };
 
 // The profile of a machine of topology t (its CPU count aside): the defaults above, which
@@ -123,6 +132,10 @@ struct machine_profile {
 // Sets the grid's size fields from the caches of one core class, the fastest (sizes of 0:
 // unknown, which keeps the fields' defaults).
 void set_grid_sizes(machine_profile& p, const core_class& c) noexcept;
+
+// machine_profile::grid_rows_ahead for a processor with these features: none on AMD's Zen
+// cores (family 0x17 and later; Zen 3 measured), 8 elsewhere (Intel and Arm measured).
+[[nodiscard]] std::size_t grid_rows_ahead_for(const cpu_features& f) noexcept;
 
 // Which lanes (team members) share a cache: contiguous runs of group_size ranks (fftn::team).
 struct lane_map {

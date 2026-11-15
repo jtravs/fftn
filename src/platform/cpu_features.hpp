@@ -36,6 +36,11 @@ struct cpu_features {
   bool fcma = false;
   bool pauth = false;
   unsigned sve_bits = 0;
+  // x86-64: whether the vendor is AMD, and the display family (CPUID.1:EAX, the extended
+  // family added for base family 0xF; Zen and Zen+ 0x17, Zen 3 and 4 0x19, Zen 5 0x1A).
+  // The machine profile keys per-core choices on them (threading/schedule.hpp).
+  bool amd = false;
+  unsigned family = 0;
 
   bool operator==(const cpu_features&) const = default;
 };
