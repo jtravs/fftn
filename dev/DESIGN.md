@@ -949,7 +949,7 @@ parameter, everything else accessors; gen/README.md has the codelet calling conv
   the profile's leaf limit (32 on NEON in double, 16 elsewhere; experiment X8): values are
   broadcast on loading and lane 0 is stored, so it takes any stride and runs in place, at
   the cost of C − 1 idle lanes; leaves vectorised across rows are the lanes strategy's
-  (phase 4). A leaf kernel takes its first line's addresses and the distances to the next
+  (section 8.5, task 2.2). A leaf kernel takes its first line's addresses and the distances to the next
   line as arguments (`leaf_fn`), so the driver runs a batch of leaf rows as one call on the
   plan's own arguments (section 8.3, X20).
 - The **generic** pass (any radix by direct evaluation) and the copy are lane-form passes
@@ -1061,8 +1061,8 @@ Bluestein stage at the end (below), a single codelet radix (n ≤ 16, or up to t
 a leaf, n = 1 a copy. The input edge's operation is applied by the first
 pass that is not a copy and the output edge's by the last, so neither costs a pass. On
 C > 1 a line whose stride is not 1 (a strided axis, a strided row) is copied into scratch
-before the chain or out of it after: an extra pass that the lanes strategy for strided
-axes (phase 4) removes. A single generic pass cannot run in place, so it writes scratch
+before the chain or out of it after: an extra pass that the lanes strategy removes for
+batches of short rows (task 2.2) and, for strided axes of planes, will remove in phase 4. A single generic pass cannot run in place, so it writes scratch
 and is copied when its source is its destination. Scratch is two lines a and b; an
 out-of-place line with a contiguous destination (not aliased, no copy, no Bluestein
 stage) uses the destination in place of b, so a chain touches three lines, not four
@@ -1152,6 +1152,43 @@ the first pass gathers a tile of rows into lanes and the last scatters it; for a
 axis the lanes are already adjacent and nothing is gathered. Lane blocks are sized so a
 block and its scratch stay in L1 or L2. Best for short rows whose own first passes
 vectorise badly (awkward lengths on wide registers) and for every strided axis.
+
+As built (task 2.2, `src/strategies/lanes.cpp`, `src/passes/lanes.inl`, experiment X7), for
+plans of one axis with a batch: a block of B rows of the innermost batch dimension is a
+*tile*, element i of row r at i B + r, which is B interleaved copies of a line of n (the
+layout of a Bluestein convolution's copies), so the row's own chain runs on it with every
+pass's copy count multiplied by B: the same radices in the same order, the same split run,
+the same twiddle values and edges. The row's grouped first pass and its leaf become lane
+passes whose lanes do the same operations on the same values, so each row gets the bits the
+chain gives it alone, whatever block it falls in (section 15.5; the tests compare every
+byte with the chain's). Where a run of C rows is one vector access (C = 1, or rows one
+complex value apart: interleaved rows) the block's first pass reads the rows and its last
+pass writes them, rows outermost (`lanes_first`, `lanes_last`, `lanes_leaf` for a chain of
+one pass); otherwise a gather builds the tile from C × C transposes in registers and a
+scatter takes it apart (a first pass reading C rows through a stack tile per element was
+slower than the gather on NEON float, X7). Real rows read their reals as pairs, run the
+half-length chain on the tile and pair their bins on it with the other routes' arithmetic
+(`lanes_r2c_pair`, `lanes_c2r_pair`, reading or writing the rows where they can); a real row
+whose complex side is strided gets the bits of the contiguous row, not of the chain's
+strided route. The program's body is one block's stages with `program::lanes` = B; the
+driver runs each run of the innermost batch loop in blocks of B, then blocks of C through a
+second body (`lane_tail`), the last padded with zero rows that are never written, and sets
+`pass_args::rows` per block; so `execute_transforms` over any range, and a team's claims,
+give the same bits. A lanes program's work graph is one unsplittable phase per transform.
+B is the largest power of two times C up to 64 rows and the batch whose two scratch tiles
+fit half the L1 data cache (`lanes_block`). The rules take the lanes for a batch of at
+least C rows up to `target_profile::lanes_up_to` (X7, measured against the chain with X20's
+batched leaves): 100 on AVX-512 and 32 on AVX2, in float only; in double and on NEON the
+chain's batched leaf (one kernel call for a batch of leaf rows, section 8.3) runs short rows
+as fast as the lanes, so the threshold is 0 and the lanes run there only when forced; never
+with an input edge operation, forced radices or a real row strided on its real side, and by
+the rules never for a real row strided on its complex side (the lanes give it the contiguous
+row's bits, the chain's strided route others, and avx2 and avx512, whose thresholds differ,
+must agree). The
+lanes driver runs each block's stages through `run_records`-style argument copies; X20's
+per-call preparation of a flat program is not applied to it. Not built: lanes for the strided axes of planes (phase 4), a
+first pass that gathers through vector inserts (FFTW's way on x86), lane blocks across
+an outer batch dimension.
 
 **Bluestein** and the **generic prime pass** cover lengths with large prime factors
 (section 9.2).
@@ -2496,6 +2533,7 @@ to change before a release.
 | 2026-11-14 | Machine profile from T1 and T5 (task 3.4): split a lone transform from 6144 points on a Zen 3 CCX (the defaults), 8192 on an Apple cluster (`profile_for`, from macOS's topology); mesh groups keep 8192; leftovers keep 8192; at least 1024 points per member; on a CCX, phase hand-off 1100 ns and claim runs of left / members; dispatch, work cost and spin budgets stay provisional | T1/T5 per-field and combined adoption runs on the EPYC, the M5 and the Xeon (numbers in the experiment files); the measured dispatch and work costs made cases slower until the dispatch cost has a per-lane term (18.2, item 22) |
 | 2026-11-14 | Flat programs and leaves called with addresses (experiment X20): rows of a few stages skip the record walk; a leaf is a `leaf_fn` taking its lines' addresses and distances, so a batch of leaf rows is one call and no leaf needs a copy of `pass_args` | On the M5 Max the walk and the 144-byte argument copy cost about 3.5 ns per transform and the entry about 1 ns per call, against a 2.5 ns 8-point leaf; the record walk stays for programs with loops (grids, planes), which the threading work graph reads unchanged |
 | 2026-11-15 | Intel's icpx is a supported compiler; FFTN's targets are built with `-fno-fast-math -ffp-contract=off` everywhere, and an icpx build adds `-fno-fast-math` to every target and to the FFTW oracle (experiment X22) | icpx's default model reassociates, drops signed zeros and flushes denormals without defining `__FAST_MATH__`; with only `-ffp-contract=off`, 55 of 1608 tests failed (twiddles 1 ulp off, Parseval, vocabulary references), all pass with the flag. `-fp-model=precise -ffp-contract=off` draws an override warning that `-Werror` makes fatal. Not recommended over GCC or Clang: equal to Clang in double on the Xeon, 3 % behind it on the tracking rows; its float lead (0.80 of Clang on 7-smooth rows) comes from masked partial runs, which the vocabulary can write explicitly |
+| 2026-11-15 | The lanes strategy for batches of short rows (task 2.2, section 8.5): blocks of B rows of the innermost batch dimension as a tile on which the row's own chain runs with B times its copies, its first and last passes reading and writing the rows where a run of C rows is one access, a gather and scatter of C × C transposes elsewhere; the rules choose it up to `lanes_up_to` per target and C (X7): float on x86 only (AVX-512 100, AVX2 32) | Every row keeps the chain's bits, so the choice changes no result. Against the chain before X20 the lanes won widely (0.13–0.59 of its time at 8–16 points on all three machines); against the chain with X20's batched leaves they still take 0.32–0.55 of its time at 8–16 points in float on x86, but lose at 8 points in double and on NEON (1.09–1.66), so the rule (no slower case up to the threshold) leaves them off there |
 
 ---
 

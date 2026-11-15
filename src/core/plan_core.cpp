@@ -324,7 +324,8 @@ line_edges c2c_edges(const options& opts, const build_settings& settings, bool f
 template <class T>
 grid_split plan_grid(std::size_t n, const side& in, const side& out, const build_settings& settings,
                      const chain_builder<T>& chain, std::size_t lanes) {
-  if (n < 2 || settings.strategy == strategy_choice::chain || settings.in_factor != nullptr ||
+  if (n < 2 || settings.strategy == strategy_choice::chain ||
+      settings.strategy == strategy_choice::lanes || settings.in_factor != nullptr ||
       settings.out_factor != nullptr || in.stride[0] != 1 || out.stride[0] != 1) {
     return {};
   }
@@ -350,6 +351,58 @@ grid_split plan_grid(std::size_t n, const side& in, const side& out, const build
     }
   }
   return g;
+}
+
+// The most rows in a block of the lanes strategy by default (lanes_block). Experiment X7.
+constexpr std::size_t max_lane_block = 64;
+
+// The block (rows per block) of the lanes strategy for a plan of one axis (DESIGN.md 8.5,
+// strategies/lanes.cpp, experiment X7), or 0 when the plan is not lanes: forced, or by the
+// rules for rows up to the profile's lanes_up_to in a batch of at least C rows. The block
+// is the largest power of two times C up to max_lane_block and the batch whose two
+// scratch tiles fit half the L1 data cache (profile.grid_block_bytes), or the forced block
+// rounded up to a multiple of C.
+template <class T>
+std::size_t lanes_block(const shape_view& s, const side& in, const side& out,
+                        const build_settings& settings, const target_profile& profile,
+                        const chain_builder<T>& chain, std::size_t c) {
+  if (s.axes.size() != 1 || s.batches.empty() || settings.strategy == strategy_choice::chain ||
+      settings.strategy == strategy_choice::grid || settings.in_factor != nullptr ||
+      settings.out_factor != nullptr || settings.scale_on_input) {
+    return 0;
+  }
+  const std::size_t rows = s.batches.back().count;
+  const std::size_t n = s.axes[0].n;
+  const bool real = s.kind != transform_kind::c2c;
+  if (rows < 2 || (real && (s.kind == transform_kind::r2c ? in.stride[0] : out.stride[0]) != 1)) {
+    return 0;
+  }
+  // Radices a test forces for the row (experiments X2 and X8 time chains with them) keep
+  // the rules' chain; forced lanes take them too.
+  // A real row whose complex side is strided gets the contiguous row's bits from the
+  // lanes but other bits from the chain's strided route, and the two targets of a pair
+  // (avx2, avx512) have different thresholds: the rules keep such rows on the chain, so
+  // the pair agree (DESIGN.md 6.2). Forced lanes take them.
+  const bool strided_complex =
+      real && (s.kind == transform_kind::r2c ? out.stride[0] : in.stride[0]) != 1;
+  if (settings.strategy == strategy_choice::rules &&
+      (n > profile.lanes_up_to || rows < c || chain.forces(real ? n / 2 : n) || strided_complex)) {
+    return 0;
+  }
+  if (!chain.lanes_fit(n, real)) {
+    return 0;
+  }
+  if (settings.lane_block != 0) {
+    return (settings.lane_block + c - 1) / c * c;
+  }
+  const std::size_t elements = real ? n / 2 + 1 : n;
+  const std::size_t most = std::max(c, rows / c * c);
+  std::size_t block = c;
+  while (2 * block <= max_lane_block && 2 * block <= most &&
+         2 * (2 * block) * elements * 2 * sizeof(T) <= settings.profile.grid_block_bytes / 2) {
+    block *= 2;
+  }
+  return block;
 }
 
 // When the pairing of an even real line fuses (strategies/chain.hpp, DESIGN.md 9.1). The
@@ -428,6 +481,8 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   };
   const int sign = static_cast<int>(s.dir);
 
+  const std::size_t lanes =
+      lanes_block<T>(s, in, out, settings, profile, chain, kernels.complex_lanes);
   const grid_split grid_plan =
       s.kind == transform_kind::c2c && r == 1
           ? plan_grid<T>(c.lengths[0], in, out, settings, chain, kernels.complex_lanes)
@@ -439,7 +494,45 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       s.kind != transform_kind::c2c && r == 1 && c.lengths[0] % 2 == 0
           ? plan_grid<T>(c.lengths[0] / 2, in, out, settings, chain, kernels.complex_lanes)
           : grid_split{};
-  if (real_grid.phases != 0) {
+  if (lanes != 0) {
+    // The lanes strategy (DESIGN.md 8.5): blocks of `lanes` rows of the innermost batch
+    // dimension through the body, the rest in blocks of C through the tail.
+    const std::size_t b = s.batches.size() - 1;
+    const std::size_t n = c.lengths[0];
+    const std::size_t unit = kernels.complex_lanes;
+    const auto block_stages = [&](std::size_t block, std::vector<stage>& st) {
+      switch (s.kind) {
+      case transform_kind::c2c:
+        return chain.c2c_lanes(n, sign, at(in_view, 0), in.dist[b], at(out_view, 0), out.dist[b],
+                               c2c_edges(opts, settings, true, true), block, st);
+      case transform_kind::r2c:
+        return chain.r2c_lanes(n, at(in_view, 0), in.dist[b], at(out_view, 0), out.dist[b],
+                               opts.scale, block, st);
+      case transform_kind::c2r:
+        break;
+      }
+      return chain.c2r_lanes(n, at(in_view, 0), in.dist[b], at(out_view, 0), out.dist[b],
+                             opts.scale, block, st);
+    };
+    std::vector<stage> body;
+    std::vector<stage> tail;
+    scratch = std::max(block_stages(lanes, body), block_stages(unit, tail));
+    for (stage& st : body) {
+      p.records.emplace_back(std::move(st));
+    }
+    p.lanes = lanes;
+    p.lane_unit = unit;
+    p.lane_tail = std::move(tail);
+    const bool real = s.kind != transform_kind::c2c;
+    c.axis_notes.push_back("axis 0 (n = " + std::to_string(n) + "): on the lanes' tile, " +
+                           (real ? chain.real_text(n, s.kind == transform_kind::r2c, false)
+                                 : "radices " + chain.radix_text(n)));
+    c.strategy_note = "lanes (blocks of " + std::to_string(lanes) +
+                      " rows of the innermost batch dimension, one row per vector lane, then "
+                      "blocks of " +
+                      std::to_string(unit) +
+                      "; each row's own chain on a tile of the block's rows)";
+  } else if (real_grid.phases != 0) {
     const std::size_t n = c.lengths[0];
     const bool r2c = s.kind == transform_kind::r2c;
     grid_builder<T> grid(kernels, chain, tables_of<T>(c),
@@ -794,7 +887,8 @@ std::string describe(const plan_core& core) {
   o << ", " << core.prog.transforms << (core.prog.transforms == 1 ? " transform" : " transforms")
     << (core.in_place ? ", in place" : ", out of place") << "\n";
   o << "instruction set: " << isa_name(instruction_set(core)) << "\n";
-  const char* rule = core.strategy_note.empty() ? "planner v1" : "the grid's phase rule";
+  const char* rule =
+      core.strategy_note.empty() || core.prog.lanes != 0 ? "planner v1" : "the grid's phase rule";
   if (!core.strategy_note.empty()) {
     o << "strategy: " << core.strategy_note << "; radices from ";
   } else {
@@ -832,6 +926,12 @@ std::string describe(const plan_core& core) {
     const auto& st = std::get<stage>(rec);
     o << indent << st.name << ": " << slot_name(st.src) << " -> " << slot_name(st.dst) << ", "
       << st.units << " units in " << st.chunks << (st.chunks == 1 ? " chunk" : " chunks") << "\n";
+  }
+  if (core.prog.lanes != 0) {
+    o << "lanes tail (blocks of " << core.prog.lane_unit << " rows, the last padded):\n";
+    for (const stage& st : core.prog.lane_tail) {
+      o << "  " << st.name << ": " << slot_name(st.src) << " -> " << slot_name(st.dst) << "\n";
+    }
   }
   return o.str();
 }

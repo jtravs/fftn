@@ -42,9 +42,12 @@
 //   LEAF_LIMIT=N     the planner's leaf limit (build_settings::leaf_limit): every length
 //                    up to N that has a codelet is one leaf instead of a chain (default: the
 //                    profile's, 32 on NEON in double, else 16)
-//   STRATEGY=rules|chain|grid   the strategy of c2c rows (build_settings::strategy): the
-//                    planner's choice (default), or the chain or the grid forced where the row
-//                    can be one; each case's note says which was built (experiment X12)
+//   STRATEGY=rules|chain|grid|lanes   the strategy of rows (build_settings::strategy): the
+//                    planner's choice (default), or the chain, the grid or the lanes forced
+//                    where the row can be one; each case's note says which was built
+//                    (experiments X12, X7)
+//   LANE_BLOCK=B     the lanes strategy's block in rows (build_settings::lane_block; default
+//                    the rule's), rounded up to a multiple of the complex count (X7)
 //   LAYOUT=rules|interleaved|split   the arithmetic of the chains' lane passes
 //                    (build_settings::layout): the profile's choice (default), or interleaved
 //                    or split forced where a chain has a split run; each case's note shows
@@ -397,8 +400,8 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
       }
       s.settings.leaf_limit = *v;
     } else if (key == "STRATEGY") {
-      if (value != "rules" && value != "chain" && value != "grid") {
-        say(message, message_size, "STRATEGY is rules, chain or grid");
+      if (value != "rules" && value != "chain" && value != "grid" && value != "lanes") {
+        say(message, message_size, "STRATEGY is rules, chain, grid or lanes");
         return fbench_error;
       }
       s.settings.strategy = detail::strategy_choice::rules;
@@ -406,8 +409,17 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
         s.settings.strategy = detail::strategy_choice::chain;
       } else if (value == "grid") {
         s.settings.strategy = detail::strategy_choice::grid;
+      } else if (value == "lanes") {
+        s.settings.strategy = detail::strategy_choice::lanes;
       }
       s.strategy = value;
+    } else if (key == "LANE_BLOCK") {
+      const std::optional<std::size_t> v = fbench::fftn_tuning::parse_size(value, 1, false);
+      if (!v || *v > 4096) {
+        say(message, message_size, "LANE_BLOCK is a whole number from 1 to 4096");
+        return fbench_error;
+      }
+      s.settings.lane_block = *v;
     } else if (key == "LAYOUT") {
       if (value != "rules" && value != "interleaved" && value != "split") {
         say(message, message_size, "LAYOUT is rules, interleaved or split");
@@ -485,6 +497,9 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
     }
     if (s.settings.leaf_limit != 0) {
       d.integer("leaf_limit", static_cast<std::int64_t>(s.settings.leaf_limit));
+    }
+    if (s.settings.lane_block != 0) {
+      d.integer("lane_block", static_cast<std::int64_t>(s.settings.lane_block));
     }
 #ifdef FBENCH_FFTN_OMP
     // Always, so that this binary's identity differs from fbench-fftn's even without options

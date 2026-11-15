@@ -250,6 +250,18 @@ the loop, 7–11 % slower for one row). Measure the levels separately (entry, in
 kernel through its pointer, kernel in a loop): the harness of
 [X20](experiments/X20-call-overhead.md) does this in a page of code.
 
+4.8 **Batches of short rows: vectorise across rows only where the per-row code idles
+lanes, and measure against the best row-by-row code.** Putting one row in each lane, with the
+row's own codelets so every bit is unchanged, took 8–16-point rows to 0.13–0.59 of the
+row-by-row time on AVX-512, AVX2 and the M5, but most of that was the row-by-row path's fixed
+cost per row: once a batch of leaf rows became one kernel call (X20), the lanes lost at 8
+points in double and on NEON (1.09–1.66) and kept their win only where many lanes would idle
+(float on x86, 0.32–0.55). The transpose into lanes costs two passes over the block; where a
+run of C rows is one vector access (C = 1, interleaved rows) no transpose is needed, and
+building each vector element by element through a stack tile was slower than the transpose.
+Read and write the rows in the order the row-by-row code does: walking them group by group
+cost 1.3 times beyond L1. [X7](experiments/X7-lanes.md).
+
 ## 5. Threading
 
 5.1 **Synchronisation costs set the smallest row worth splitting.** Spin barrier /

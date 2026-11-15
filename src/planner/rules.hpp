@@ -76,6 +76,10 @@ struct target_profile {
   // strategies/chain.hpp) rather than on interleaved registers. Experiment X1 sets it per
   // target and precision.
   bool split = false;
+  // The lanes strategy (DESIGN.md 8.5, strategies/lanes.cpp) runs a batch of rows of one
+  // axis whose length is at most this, one row per lane, instead of row by row (0: never).
+  // Experiment X7 sets it per target and precision.
+  std::size_t lanes_up_to = 0;
 };
 
 // The profile of target t for a precision with `lanes` complex lanes: the table measured

@@ -21,7 +21,7 @@
 namespace fftn::inline v0::detail {
 
 // Which strategy builds a c2c row (DESIGN.md 8.5): the planner's choice, or one forced.
-enum class strategy_choice : std::uint8_t { rules, chain, grid };
+enum class strategy_choice : std::uint8_t { rules, chain, grid, lanes };
 
 // The arithmetic of a chain's lane passes (DESIGN.md 6.3): the profile's choice, or
 // interleaved or split forced.
@@ -44,11 +44,18 @@ struct build_settings {
   // The planner's leaf limit (planner/rules.hpp, target_profile::leaf_limit) instead of the
   // profile's; 0 keeps the profile's. Experiment X8 compares leaves with chains through it.
   std::size_t leaf_limit = 0;
-  // The strategy of a c2c plan of one axis (rows): the rules' choice (a grid beyond
-  // profile.grid_min_bytes), or the chain or the grid forced. A grid is built only where
-  // the row has a split (strategies/grid.hpp) and no edge factor; elsewhere, forced or not,
-  // the row is a chain, and describe() says which was built. Experiment X12 compares them.
+  // The strategy of a plan of one axis (rows): the rules' choice (the lanes for a batch of
+  // rows up to the profile's lanes_up_to, a c2c grid beyond profile.grid_min_bytes, else
+  // the chain), or the chain, the grid or the lanes forced. A grid is built only for a c2c
+  // row with a split (strategies/grid.hpp) and no edge factor, the lanes only for a batch
+  // (the innermost batch dimension's count at least 2) of rows every pass of whose chain is
+  // a codelet's, without input edge operations, real rows contiguous on the real side
+  // (strategies/lanes.cpp); elsewhere, forced or not, the row is a chain, and describe()
+  // says which was built. Experiments X12 and X7 compare them.
   strategy_choice strategy = strategy_choice::rules;
+  // The lanes strategy's block, in rows (rounded up to a multiple of the target's complex
+  // count C), instead of the rule's when not 0 (plan_core.cpp, lane_block; experiment X7).
+  std::size_t lane_block = 0;
   // The grid's factors in phase order (two or three, multiplying to the row's length),
   // where they can be a grid; empty: the rules' (strategies/grid.hpp).
   std::vector<std::size_t> grid_factors;
