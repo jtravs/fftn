@@ -166,7 +166,7 @@ void check(fftn::isa target, const real_case& rc, bool r2c, bool in_place, doubl
   std::string text;
   if (r2c) {
     const fftn::shape<T, c> shape{.axes = {{.n = n}},
-                                  .batches = {{.count = count, .in_dist = rd, .out_dist = cd}}};
+                                  .batches = {{.count = count, .in_dist = rd, .out_dist = cd}},};
     const auto core = make_plan_core(fftn::detail::view_of(shape), opts, rc.settings);
     text = fftn::detail::describe(*core);
     const std::vector<T> x = src.reals<T>(rdist * count);
@@ -189,6 +189,7 @@ void check(fftn::isa target, const real_case& rc, bool r2c, bool in_place, doubl
       r2c_every_bin<T>(target, xr, got, scale, row, o);
       const std::vector<std::size_t> bins = sample(h1);
       std::vector<c> picked;
+      picked.reserve(bins.size());
       for (const std::size_t k : bins) {
         picked.push_back(got[k]);
       }
@@ -204,7 +205,7 @@ void check(fftn::isa target, const real_case& rc, bool r2c, bool in_place, doubl
     }
   } else {
     const fftn::shape<c, T> shape{.axes = {{.n = n}},
-                                  .batches = {{.count = count, .in_dist = cd, .out_dist = rd}}};
+                                  .batches = {{.count = count, .in_dist = cd, .out_dist = rd}},};
     const auto core = make_plan_core(fftn::detail::view_of(shape), opts, rc.settings);
     text = fftn::detail::describe(*core);
     // The imaginary parts of bins 0 and n/2 are not zero: c2r ignores them.
@@ -228,12 +229,17 @@ void check(fftn::isa target, const real_case& rc, bool r2c, bool in_place, doubl
       const std::vector<std::complex<double>> xd(xrow.begin(), xrow.end());
       for (std::size_t j = 0; j < n; ++j) {
         const std::size_t e = b * rdist + j;
-        got[j] = in_place ? (j % 2 == 0 ? buffer[e / 2].real() : buffer[e / 2].imag()) : y[e];
+        if (in_place) {
+          got[j] = j % 2 == 0 ? buffer[e / 2].real() : buffer[e / 2].imag();
+        } else {
+          got[j] = y[e];
+        }
       }
       const std::string row = what + ", row " + std::to_string(b);
       c2r_every_bin<T>(target, xrow, got, scale, row, o);
       const std::vector<std::size_t> idx = sample(n);
       std::vector<T> picked;
+      picked.reserve(idx.size());
       for (const std::size_t j : idx) {
         picked.push_back(got[j]);
       }
@@ -274,7 +280,7 @@ TEST(Real, FusedIntoEveryRadix) {
     for (std::size_t r = 2; r <= 16; ++r) {
       for (const std::vector<std::size_t>& rest : {std::vector<std::size_t>{6},
                                                    std::vector<std::size_t>{7},
-                                                   std::vector<std::size_t>{16, 4}}) {
+                                                   std::vector<std::size_t>{16, 4},}) {
         std::size_t h = r;
         for (const std::size_t f : rest) {
           h *= f;
@@ -285,10 +291,10 @@ TEST(Real, FusedIntoEveryRadix) {
         first.insert(first.end(), rest.rbegin(), rest.rend());
         build_settings r2c = forced(16, last);
         r2c.layout = fftn::detail::layout_choice::interleaved;
-        check_all<double>(t, {2 * h, r2c, "fused into its last pass"}, true);
-        check_all<float>(t, {2 * h, r2c, "fused into its last pass"}, true);
-        check_all<double>(t, {2 * h, forced(16, first), "fused into its first pass"}, false);
-        check_all<float>(t, {2 * h, forced(16, first), "fused into its first pass"}, false);
+        check_all<double>(t, {.n=2 * h, .settings=r2c, .route="fused into its last pass"}, true);
+        check_all<float>(t, {.n=2 * h, .settings=r2c, .route="fused into its last pass"}, true);
+        check_all<double>(t, {.n=2 * h, .settings=forced(16, first), .route="fused into its first pass"}, false);
+        check_all<float>(t, {.n=2 * h, .settings=forced(16, first), .route="fused into its first pass"}, false);
       }
     }
   }
@@ -300,19 +306,19 @@ TEST(Real, FusedIntoEveryRadix) {
 TEST(Real, EveryRoute) {
   const std::vector<std::size_t> lengths{2,  4,  6,  8,   10,  12,  14,  16,  18,  20,  22,
                                          24, 26, 28, 30,  32,  34,  36,  40,  48,  64,  96,
-                                         100, 128, 222, 256, 384, 500, 514, 1000, 4096};
+                                         100, 128, 222, 256, 384, 500, 514, 1000, 4096,};
   for (const fftn::isa t : fftn::test::runnable_isas()) {
     for (const std::size_t n : lengths) {
       for (const bool r2c : {true, false}) {
-        check_all<double>(t, {n, forced(0), r2c ? "r2c" : "c2r"}, r2c);
-        check_all<float>(t, {n, forced(0), r2c ? "r2c" : "c2r"}, r2c);
+        check_all<double>(t, {.n=n, .settings=forced(0), .route=r2c ? "r2c" : "c2r"}, r2c);
+        check_all<float>(t, {.n=n, .settings=forced(0), .route=r2c ? "r2c" : "c2r"}, r2c);
         const char* separate = n == 2 ? "the pairing pass alone" : "pairing pass";
-        check_all<double>(t, {n, forced(1), separate}, r2c);
-        check_all<float>(t, {n, forced(1), separate}, r2c);
+        check_all<double>(t, {.n=n, .settings=forced(1), .route=separate}, r2c);
+        check_all<float>(t, {.n=n, .settings=forced(1), .route=separate}, r2c);
         if (n > 2) {
           const char* fused = n <= 32 ? "a leaf of" : "r";
-          check_all<double>(t, {n, forced(16), fused}, r2c);
-          check_all<float>(t, {n, forced(16), fused}, r2c);
+          check_all<double>(t, {.n=n, .settings=forced(16), .route=fused}, r2c);
+          check_all<float>(t, {.n=n, .settings=forced(16), .route=fused}, r2c);
         }
       }
     }
@@ -328,14 +334,14 @@ TEST(Real, HalfLengthGrid) {
     std::vector<std::size_t> factors;
   };
   for (const fftn::isa t : fftn::test::runnable_isas()) {
-    for (const grid_real& g : {grid_real{512, {16, 16}}, grid_real{1024, {8, 64}},
-                               grid_real{2048, {8, 8, 16}}, grid_real{1920, {24, 40}}}) {
+    for (const grid_real& g : {grid_real{.n=512, .factors={16, 16}}, grid_real{.n=1024, .factors={8, 64}},
+                               grid_real{.n=2048, .factors={8, 8, 16}}, grid_real{.n=1920, .factors={24, 40}},}) {
       build_settings s;
       s.strategy = fftn::detail::strategy_choice::grid;
       s.grid_factors = g.factors;
       for (const bool r2c : {true, false}) {
-        check_all<double>(t, {g.n, s, "half-length complex grid"}, r2c);
-        check_all<float>(t, {g.n, s, "half-length complex grid"}, r2c);
+        check_all<double>(t, {.n=g.n, .settings=s, .route="half-length complex grid"}, r2c);
+        check_all<float>(t, {.n=g.n, .settings=s, .route="half-length complex grid"}, r2c);
       }
     }
   }
@@ -353,7 +359,7 @@ TEST(Real, EveryBinComparisonCatchesABrokenPairing) {
   fftn::test::input_source src(0xBAD5ULL);
   const std::vector<double> x = src.reals<double>(n);
   std::vector<c> good(h1);
-  fftn::workspace ws(1 << 20);
+  fftn::workspace ws(std::size_t{1} << 20U);
   fftn::r2c_plan<double>(fftn::rows_r2c<double>(n, 1), {.force_isa = target})
       .execute(x.data(), good.data(), ws);
   {
@@ -428,13 +434,13 @@ void check_volume(fftn::isa target, const std::vector<std::size_t>& dims, const 
   const fftn::shape<T, c> r2c_shape{.axes = axes, .batches = {{.count = batch}}};
   const auto r2c = make_plan_core(fftn::detail::view_of(r2c_shape), opts, st);
   std::vector<c> spectrum(half * batch);
-  const fftn::workspace ws(1 << 22);
+  const fftn::workspace ws(std::size_t{1} << 22U);
   fftn::detail::execute_core(*r2c, 0, batch, x.data(), spectrum.data(), ws);
 
   build_settings chain;
   chain.strategy = fftn::detail::strategy_choice::chain;
   const fftn::shape<c, c> c2c_shape{
-      .dir = fftn::direction::forward, .axes = axes, .batches = {{.count = batch}}};
+      .dir = fftn::direction::forward, .axes = axes, .batches = {{.count = batch}},};
   const auto c2c = make_plan_core(fftn::detail::view_of(c2c_shape), opts, chain);
   const std::vector<c> xc(x.begin(), x.end());
   std::vector<c> full(total * batch);
@@ -445,7 +451,7 @@ void check_volume(fftn::isa target, const std::vector<std::size_t>& dims, const 
   for (std::size_t b = 0; b < batch; ++b) {
     std::vector<c> got(half);
     std::vector<std::complex<double>> want(half);
-    std::vector<double> reals(total);
+    const std::vector<double> reals(total);
     for (std::size_t r = 0; r < outer; ++r) {
       for (std::size_t k = 0; k < h1; ++k) {
         got[r * h1 + k] = spectrum[b * half + r * h1 + k];
@@ -492,7 +498,7 @@ TEST(Real, PlanesAndVolumes) {
 // The rules: a long row's half-length transform is a grid where a c2c row of that length
 // would be one; a short row is a leaf.
 TEST(Real, RulesChooseTheRoute) {
-  const std::size_t big = std::size_t{1} << 20;
+  const std::size_t big = std::size_t{1} << 20U;
   EXPECT_NE(fftn::r2c_plan<double>(fftn::rows_r2c<double>(big, 1)).describe().find(
                 "half-length complex grid"),
             std::string::npos);

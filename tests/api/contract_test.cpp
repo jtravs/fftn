@@ -206,7 +206,7 @@ TYPED_TEST(Contracts, BatchedRowsMatchSingleRows) {
   using c = std::complex<T>;
   constexpr std::size_t count = 9;
   for (const std::size_t n : {std::size_t{2}, std::size_t{7}, std::size_t{8}, std::size_t{16},
-                              std::size_t{32}, std::size_t{64}}) {
+                              std::size_t{32}, std::size_t{64},}) {
     for (const double scale : {1.0, 0.25}) {
       for (const bool in_place : {false, true}) {
         for (const std::ptrdiff_t gap : {std::ptrdiff_t{0}, std::ptrdiff_t{3}}) {
@@ -271,7 +271,7 @@ TYPED_TEST(Contracts, BatchedRowsTwoDimensionsUnequalDistances) {
         .dir = fftn::direction::forward,
         .axes = {{.n = n}},
         .batches = {{.count = 3, .in_dist = in0, .out_dist = out0},
-                    {.count = 4, .in_dist = in1, .out_dist = out1}},
+                    {.count = 4, .in_dist = in1, .out_dist = out1},},
     };
     const fftn::c2c_plan<T> batched(s);
     const fftn::c2c_plan<T> single(fftn::rows_c2c<T>(n, 1, fftn::direction::forward));

@@ -12,6 +12,7 @@
 #include "isa/probe_table.hpp"
 #include "isa/target.hpp"
 #include "isa/test_targets.hpp"
+#include "passes/pass_args.hpp"
 
 #include <gtest/gtest.h>
 

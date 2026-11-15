@@ -188,10 +188,10 @@ void lane_pass(const pass_args* a, std::size_t first, std::size_t last) {
   // factor_copies, advanced every per_entry units rather than divided per unit (a
   // division per unit of a radix-12 last pass is a few per cent of it), and the entries
   // between legs.
-  std::size_t g = 0;
-  std::size_t g_left = 0;
-  std::size_t per_entry = 1;
-  std::ptrdiff_t f_leg = 0;
+  std::size_t g = 0; // NOLINT(misc-const-correctness): set under if constexpr
+  std::size_t g_left = 0; // NOLINT(misc-const-correctness): set under if constexpr
+  std::size_t per_entry = 1; // NOLINT(misc-const-correctness): set under if constexpr
+  std::ptrdiff_t f_leg = 0; // NOLINT(misc-const-correctness): set under if constexpr
   if constexpr (Share == factor_sharing::output) {
     per_entry = a->factor_copies / C<T>;
     g = first < per_entry ? 0 : first / per_entry;

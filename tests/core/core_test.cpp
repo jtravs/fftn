@@ -135,7 +135,7 @@ TEST(Rules, LeafLimit) {
   // X8's verdict: 32 on NEON in double (C = 1), 16 everywhere else.
   using fftn::detail::target;
   for (const target t : {target::scalar, target::x86_v2, target::avx, target::avx2, target::avx512,
-                         target::neon, target::neon_fcma}) {
+                         target::neon, target::neon_fcma,}) {
     for (const std::size_t lanes : {1U, 2U, 4U, 8U}) {
       const bool neon_double = (t == target::neon || t == target::neon_fcma) && lanes == 1;
       const auto p = fftn::detail::profile_of(t, lanes);
@@ -152,7 +152,7 @@ TEST(Rules, LeafLimit) {
 TEST(Rules, ProfilesOfEveryTarget) {
   using fftn::detail::target;
   for (const target t : {target::scalar, target::x86_v2, target::avx, target::avx2, target::avx512,
-                         target::neon, target::neon_fcma}) {
+                         target::neon, target::neon_fcma,}) {
     for (const std::size_t lanes : {1U, 2U, 4U, 8U}) {
       const auto p = fftn::detail::profile_of(t, lanes);
       EXPECT_EQ(p.lanes, lanes);
@@ -290,8 +290,8 @@ TEST(Rules, DescribeSaysWhenRadicesAreForced) {
 // describe() names a Bluestein stage, its convolution length M and M's radices, in the
 // axis line and in the stages (strategies/chain.hpp).
 TEST(Rules, DescribeNamesTheBluesteinStage) {
-  const auto shape = fftn::rows_c2c<double>(4 * 257, 1, fftn::direction::forward);
-  const auto core = make_plan_core(fftn::detail::view_of(shape), {}, build_settings{});
+  const auto shape = fftn::rows_c2c<double>(std::size_t{4} * 257, 1, fftn::direction::forward);
+  const auto core = make_plan_core(fftn::detail::view_of(shape), fftn::options(), build_settings{});
   const std::string text = describe(*core);
   EXPECT_NE(text.find("radices 4 x bluestein 257 (M "), std::string::npos) << text;
   EXPECT_NE(text.find("bluestein in, chirp forward (Q 257, M "), std::string::npos) << text;
@@ -356,7 +356,7 @@ TEST(Chunks, LongRowsHaveSeveralByDefault) {
   fftn::detail::build_settings chain;
   chain.strategy = fftn::detail::strategy_choice::chain;
   const auto core = make_plan_core(
-      fftn::detail::view_of(fftn::rows_c2c<double>(16384, 1, fftn::direction::forward)), {}, chain);
+      fftn::detail::view_of(fftn::rows_c2c<double>(16384, 1, fftn::direction::forward)), fftn::options(), chain);
   for (const auto& rec : core->prog.records) {
     if (const auto* st = std::get_if<fftn::detail::stage>(&rec); st != nullptr) {
       EXPECT_GT(st->chunks, 1U) << st->name;
@@ -365,7 +365,7 @@ TEST(Chunks, LongRowsHaveSeveralByDefault) {
   fftn::detail::build_settings grid;
   grid.strategy = fftn::detail::strategy_choice::grid;
   const auto g = make_plan_core(
-      fftn::detail::view_of(fftn::rows_c2c<double>(16384, 1, fftn::direction::forward)), {}, grid);
+      fftn::detail::view_of(fftn::rows_c2c<double>(16384, 1, fftn::direction::forward)), fftn::options(), grid);
   ASSERT_FALSE(g->graph.phases.empty());
   for (const auto& ph : g->graph.phases) {
     EXPECT_GT(ph.nest, 0U);

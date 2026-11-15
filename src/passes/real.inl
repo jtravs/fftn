@@ -253,7 +253,7 @@ FFTN_FORCE_INLINE void r2c_copies(const T* x, T* y, std::size_t h, std::size_t s
   cv<T> vb[R]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
   const std::ptrdiff_t leg = at(s, 2);
   const run_in<T, edge_op::none, Full> ina{
-      .p = x + at(q0, 2), .leg = leg, .step = 2, .valid = valid, .op = {}};
+      .p = x + at(q0, 2), .leg = leg, .step = 2, .valid = valid, .op = {},};
   cdft<R>::template plain<T, -1>(ina, to_registers<T>{va});
   const run_down<T, Full> inb{.p = x + at(s - q0, 2), .leg = leg, .valid = valid};
   cdft<R>::template plain<T, -1>(inb, to_registers<T>{vb});

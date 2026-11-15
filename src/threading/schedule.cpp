@@ -58,6 +58,7 @@ machine_profile default_machine_profile() noexcept {
   } catch (...) {
     // system_topology() throws on an unreadable FFTN_TOPOLOGY recording; this function
     // is noexcept, so the defaults stand (as cache_group_size does).
+    p = machine_profile{};
   }
   const unsigned cpus = std::thread::hardware_concurrency();
   p.cpus = static_cast<int>(std::min<unsigned>(cpus, std::numeric_limits<int>::max()));

@@ -22,7 +22,7 @@ constexpr std::size_t largest_leaf = 16;
 
 // The radices a pass may have, ascending (rules.hpp, cost_column).
 constexpr std::array<std::size_t, cost_radices> pass_radices{2,  3,  4,  5,  6,  7,  8,  9, 10,
-                                                             11, 12, 13, 14, 15, 16, 32, 64};
+                                                             11, 12, 13, 14, 15, 16, 32, 64,};
 
 // Experiment X2 (dev/experiments/X2-radix-sets.md), EPYC 7763, AVX2, GCC 16, one thread: the
 // pass costs fitted to the screening and refinement timings of every candidate sequence of
@@ -34,6 +34,8 @@ constexpr std::array<std::size_t, cost_radices> pass_radices{2,  3,  4,  5,  6, 
 // passes (18 live values in 16 registers) lose: experiment X18 measured 8.8.8.8 at 0.75 of
 // the fitted 4.8.8.16 and 8.8.16.16 at 0.84 of 4.16.16.16 (EPYC 7763, one row), until X2's
 // campaign over the longer lengths replaces them.
+// clang-format off
+// NOLINTBEGIN(readability-trailing-comma): bench/x2/fit.py writes and parses this layout
 constexpr std::array<radix_override, 6> avx2_double_overrides{{
     {.n = 42, .radices = {2, 3, 7, 0}},
     {.n = 70, .radices = {2, 5, 7, 0}},
@@ -76,6 +78,8 @@ constexpr pass_costs avx2_float{
     .pass = 406,
     .overrides = avx2_float_overrides,
 };
+// NOLINTEND(readability-trailing-comma)
+// clang-format on
 
 // Experiment X3 (dev/experiments/X3-big-radices.md), Xeon Gold 6240, AVX-512, GCC 14, one
 // thread, float (C = 8): avx2_float with radix 32 and 64 columns fitted to an X2-style search
@@ -90,6 +94,8 @@ constexpr pass_costs avx2_float{
 // the fit's override 8.4.64 (0.98 of 16.8.16 before experiment X19's codelets) tied or lost
 // after them (1.00 at batch 1, 1.03 at 64, run 20261114-215159-370f), so 2048 keeps
 // avx2_float's 16.8.16. AVX-512 in double took no table: its big chains tied (X3).
+// clang-format off
+// NOLINTBEGIN(readability-trailing-comma): bench/x2/fit.py writes and parses this layout
 constexpr std::array<radix_override, 8> avx512_float_overrides{{
     {.n = 140, .radices = {4, 5, 7, 0}},
     {.n = 256, .radices = {32, 8, 0, 0}},
@@ -115,6 +121,8 @@ constexpr pass_costs avx512_float{
     .pass = 406,
     .overrides = avx512_float_overrides,
 };
+// NOLINTEND(readability-trailing-comma)
+// clang-format on
 
 std::size_t ceil_div(std::size_t a, std::size_t b) { return (a + b - 1) / b; }
 
@@ -127,7 +135,12 @@ std::uint64_t pass_cost(const target_profile& p, std::size_t n, std::size_t s, s
   const std::size_t m = n / (r * s);
   // The first pass runs over m in blocks of C, the others over s, once per p < m.
   const std::size_t units = kind == 0 ? ceil_div(m, c) : m * ceil_div(s, c);
-  const std::size_t tails = kind == 0 ? (m % c != 0 ? 1 : 0) : (s % c != 0 ? m : 0);
+  std::size_t tails = 0;
+  if (kind == 0) {
+    tails = m % c != 0 ? 1 : 0;
+  } else {
+    tails = s % c != 0 ? m : 0;
+  }
   const std::size_t col = cost_column(r);
   return std::uint64_t{p.costs->unit[kind][col]} * units +
          std::uint64_t{p.costs->tail[kind][col]} * tails + p.costs->pass;
@@ -213,6 +226,8 @@ std::uint64_t pass_cost(const target_profile& p, std::size_t n, std::size_t s, s
 //   ... 78 more (--verbose)
 //   same choice as avx2_float for 68 of 124 lengths
 
+// clang-format off
+// NOLINTBEGIN(readability-trailing-comma): bench/x2/fit.py writes and parses this layout
 constexpr std::array<radix_override, 18> neon_fcma_double_overrides{{
     {.n = 56, .radices = {8, 7, 0, 0}},
     {.n = 63, .radices = {7, 9, 0, 0}},
@@ -273,6 +288,8 @@ constexpr pass_costs neon_fcma_float{
     .pass = 913,
     .overrides = neon_fcma_float_overrides,
 };
+// NOLINTEND(readability-trailing-comma)
+// clang-format on
 
 // measured_tables rows: {target::neon_fcma, 1, &neon_fcma_double}, {target::neon_fcma, 2, &neon_fcma_float}
 
@@ -293,11 +310,13 @@ constexpr std::array<measured_table, 7> measured_tables{{
     {.t = target::neon_fcma, .lanes = 2, .costs = &neon_fcma_float},
     {.t = target::neon, .lanes = 1, .costs = &neon_fcma_double},
     {.t = target::neon, .lanes = 2, .costs = &neon_fcma_float},
-}};
+},};
 
 // Where a target and C have no table of their own: AVX2's table of the nearest C, the
 // smaller on a tie (so C = 1 takes C = 2's and C = 8 takes C = 4's).
 constexpr target fallback_target = target::avx2;
+static_assert(measured_tables.front().t == fallback_target,
+              "profile_of starts its search for the nearest table at the first");
 
 std::size_t lanes_distance(std::size_t a, std::size_t b) { return a > b ? a - b : b - a; }
 
@@ -402,18 +421,17 @@ sequence cheapest(std::size_t n, std::size_t smooth, bool more, const target_pro
 } // namespace
 
 target_profile profile_of(target t, std::size_t lanes) noexcept {
-  const measured_table* nearest = nullptr;
+  const measured_table* nearest = &measured_tables.front();
   for (const measured_table& m : measured_tables) {
     if (m.t == t && m.lanes == lanes) {
       return {.lanes = lanes,
               .costs = m.costs,
               .leaf_limit = leaf_limit_of(t, lanes),
               .bluestein_above = default_bluestein_above,
-              .split = split_of(t, lanes)};
+              .split = split_of(t, lanes),};
     }
     if (m.t == fallback_target &&
-        (nearest == nullptr ||
-         lanes_distance(m.lanes, lanes) < lanes_distance(nearest->lanes, lanes))) {
+        lanes_distance(m.lanes, lanes) < lanes_distance(nearest->lanes, lanes)) {
       nearest = &m;
     }
   }
@@ -421,7 +439,7 @@ target_profile profile_of(target t, std::size_t lanes) noexcept {
           .costs = nearest->costs,
           .leaf_limit = leaf_limit_of(t, lanes),
           .bluestein_above = default_bluestein_above,
-          .split = split_of(t, lanes)};
+          .split = split_of(t, lanes),};
 }
 
 // The specification is DESIGN.md 11.2, rule by rule.

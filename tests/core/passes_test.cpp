@@ -29,6 +29,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <cmath>
 #include <complex>
 #include <cstddef>
 #include <cstdint>
@@ -348,23 +349,23 @@ template <class T> void every_edge_variant(fftn::isa target) {
        .radices = {},
        .first = "generic radix-17",
        .last = "generic radix-17",
-       .above = no_bluestein},
+       .above = no_bluestein,},
       {.n = 34,
        .radices = {2, 17},
        .first = "grouped radix-2",
        .last = "generic radix-17",
-       .above = no_bluestein},
+       .above = no_bluestein,},
       {.n = 34,
        .radices = {17, 2},
        .first = "generic radix-17",
        .last = "lane radix-2",
-       .above = no_bluestein},
+       .above = no_bluestein,},
       {.n = 17, .radices = {}, .first = "bluestein in,", .last = "bluestein out", .above = 16},
       {.n = 34,
        .radices = {2, 17},
        .first = "grouped radix-2",
        .last = "bluestein out",
-       .above = 16},
+       .above = 16,},
   };
   struct variant {
     bool in_factor;
@@ -438,11 +439,11 @@ template <class T> void split_in_every_position(fftn::isa target) {
     };
     const std::vector<sequence> sequences{
         {.radices = {f, r, 2}, .name = rs + " forward (m 2, s " + std::to_string(f) +
-                                       "; interleaved to BL"},
+                                       "; interleaved to BL",},
         {.radices = {f, 2, r}, .name = rs + " forward (m 1, s " + std::to_string(2 * f) +
-                                       "; BL to interleaved"},
+                                       "; BL to interleaved",},
         {.radices = {f, 2, r, 2}, .name = rs + " forward (m 2, s " + std::to_string(2 * f) +
-                                          "; BL)"},
+                                          "; BL)",},
     };
     for (const sequence& seq : sequences) {
       std::size_t n = 1;
@@ -929,7 +930,7 @@ template <class T> void same_bits(fftn::isa a, fftn::isa b, fftn::detail::layout
   // fusing to radix 4, runs it as a pass of its own: with split passes forced both take the
   // separate route's split run.
   const std::vector<std::pair<std::size_t, std::vector<std::size_t>>> forced = {
-      {1024, {8, 8, 8}}, {4096, {8, 8, 4, 8}}, {8192, {8, 8, 8, 8}}};
+      {1024, {8, 8, 8}}, {4096, {8, 8, 4, 8}}, {8192, {8, 8, 8, 8}},};
   for (const auto& [n, radices] : forced) {
     SCOPED_TRACE(std::string(fftn::isa_name(a)) + " and " + fftn::isa_name(b) +
                  (sizeof(T) == 8 ? " double" : " float") + ", n = " + std::to_string(n) +

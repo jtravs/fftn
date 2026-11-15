@@ -17,6 +17,7 @@
 // The tolerances are Bluestein's (support/tolerance.hpp), and every run checks the memory
 // contracts (harness.hpp).
 
+#include "fftn/isa.hpp"
 #include "fftw/fftw_checks.hpp"
 #include "reference/reference_checks.hpp"
 #include "support/fftn_subject.hpp"
@@ -89,7 +90,7 @@ template <class T> void large_lengths(fftn::isa target) {
   const char* precision = sizeof(T) == 8 ? " double" : " float";
   const outcome prime = reference_checks::c2c(s, 65537);
   EXPECT_TRUE(prime.passed()) << s.name << precision << ", n = 65537:\n" << prime.detail();
-  constexpr std::size_t composite = 2 * 3 * 65537;
+  constexpr std::size_t composite = std::size_t{2} * 3 * 65537;
   if (long_tests() || !fftw_subject<T>()) {
     const outcome o = reference_checks::c2c(s, composite);
     EXPECT_TRUE(o.passed()) << s.name << precision << ", n = " << composite << ":\n" << o.detail();

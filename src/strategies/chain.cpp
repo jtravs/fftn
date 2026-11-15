@@ -127,7 +127,7 @@ std::string chain_builder<T>::radix_text(std::size_t n, const std::vector<std::s
   }
   const std::size_t q = rad.back();
   const std::size_t m = bluestein_length(q, profile_);
-  std::vector<std::size_t> head(rad.begin(), rad.end() - 1);
+  const std::vector<std::size_t> head(rad.begin(), rad.end() - 1);
   return (head.empty() ? "" : list(head) + " x ") + "bluestein " + std::to_string(q) + " (M " +
          std::to_string(m) + " = " + list(rule_radices(m, profile_)) + ")";
 }
@@ -260,7 +260,7 @@ std::size_t chain_builder<T>::split_from(const std::vector<std::size_t>& rad, bo
 }
 
 template <class T>
-typename chain_builder<T>::pass_layout
+chain_builder<T>::pass_layout
 chain_builder<T>::layout_of(std::size_t i, std::size_t from, std::size_t passes) {
   if (i < from) {
     return pass_layout::interleaved;
@@ -297,7 +297,7 @@ template <class T> const T* chain_builder<T>::edge_twiddles(std::size_t n) {
 // per element of a line of `copies` interleaved sequences, copies Q, in per-lane storage
 // padded with ones to whole registers.
 template <class T>
-typename chain_builder<T>::bluestein_tables
+chain_builder<T>::bluestein_tables
 chain_builder<T>::bluestein_tables_of(std::size_t q, int sign, std::size_t copies) {
   const std::size_t m = bluestein_length(q, profile_);
   const auto kernel_key = std::make_pair(q, sign);

@@ -9,6 +9,7 @@
 
 #include "gen/codelets.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 
@@ -97,12 +98,7 @@ enum class factor_sharing : std::uint8_t { none, input, output };
 }
 // Whether a split codelet (src/gen/split_codelets.inl) of radix r exists.
 [[nodiscard]] constexpr bool has_split_codelet(std::size_t r) noexcept {
-  for (std::size_t i = 0; i < gen::split_radix_count; ++i) {
-    if (gen::split_radices[i] == r) {
-      return true;
-    }
-  }
-  return false;
+  return std::ranges::any_of(gen::split_radices, [r](std::size_t q) { return q == r; });
 }
 // Every radix from 2 to this one has a codelet; the planner and the grid choose pass radices
 // up to it, and prime factors above it are the generic pass's or Bluestein's.
