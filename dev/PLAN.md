@@ -53,9 +53,9 @@ Open, by phase:
 - 4–7: not started.
 
 In flight (lead session, 2026-11-15 evening): X23b (masked partial runs adopted for GCC
-builds, `FFTN_MASKED_TAILS`), X26 (lead 1, the grid's copies), X27 (lead 2, 17-point and
+builds, `FFTN_MASKED_TAILS`), X27 (lead 2, 17-point and
 other prime codelets), X28 (lead 4, single short rows), X29 (lead 5, the real footprint in
-the chain-or-grid rule). Lead 3 (x86 pass-loop instructions) starts after X23b lands. X25 (the x86 gap's causes, from counters and FFTW's
+the chain-or-grid rule). Lead 3 (x86 pass-loop instructions) starts after X23b lands. X26 (lead 1, the grid's copies) is done: no prefetch in the copies on `avx2`, the cheaper copy loops rejected. X25 (the x86 gap's causes, from counters and FFTW's
 printed plans) is done; its verdicts are folded into the leads below. X23 (masked partial
 runs on x86) is done and rejected by its rule: Clang 23 loses on odd double lengths, while
 GCC 14 gains much (float 0.60 of main on `avx512`); the masked code is in the branch's
@@ -71,10 +71,17 @@ runs; the numbers above are the baseline to beat. The rest (6–9) follow. X25's
 1. Long rows (≥ 16384, both machines; mixed 46080 and 100000 worst on the EPYC at 1.67–1.98;
    r2c and c2r of 65536 and 2²⁰ at 1.3–1.6): X12 on x86 (the grid's phases and blocks
    there), the real pairing fused into grid phases, radix 32 phases from 32768 (X3
-   follow-up). X25: on both x86 machines it is the grid's copy loops, not memory
-   (`block_copy` 40–52 % of FFTN's instructions on the Xeon, about 33 instructions per
-   64-byte row with blocks of 4 columns; FFTN has fewer L2 misses than FFTW): first a copy
-   specialised for one-vector rows, wider or tiled blocks, fewer separate copies.
+   follow-up). X25: on both x86 machines it is the grid's copy loops (`block_copy` 40–52 %
+   of FFTN's instructions on the Xeon). X26 (done): cutting those instructions did not cut
+   the time (rejected; EPYC up to 1.56 slower), because the x86 copies are bound by L1 set
+   conflicts: a block's rows lie a multiple of 4 KiB apart. Dropping the copies' prefetch
+   on `avx2` was adopted (EPYC target rows 0.920). The effect belongs to the core, not the
+   target: the Xeon forced to `avx2` loses without the prefetch (1.04, 2²² 1.20), so Intel
+   cores without AVX-512 lose too; a core field in the machine profile (CPUID vendor and
+   family) would let it follow the core. Next: rows not a 4 KiB multiple apart
+   (a padded work array, X4's x86 half), or long rows as chains of small radices, the way
+   FFTL.jl runs them (radix-4 Stockham passes, no copies; on the Mac FFTN's chain forced
+   to 4⁸ at 65536 already matched the grid).
    FFTL.jl is the reference to study here: on the Mac it beats both FFTN (FFTN
    1.35 of its time at ≥ 16384; 2²⁰ 1.60, 100000 1.53, 46080 1.45) and FFTW (0.86).
 2. Prime lengths and prime factors above 16: 17 takes Bluestein (1.57 / 1.95 of FFTW), and
@@ -340,6 +347,7 @@ running, done (with verdict).
 | [X23](experiments/X23-masked-tails.md) | Do masked partial runs in the `avx512` and `avx2` vocabularies close most of icpx's float lead with GCC and Clang (X22), and become the default on x86? | 1 | done: rejected. B as first written slowed whole units (up to 1.15); amended B5 (partial units after the loops, constant counts) wins with GCC 14 (float 0.60 of main on `avx512`) but loses with Clang 23 on odd double lengths (`avx2` 75: 1.42), so the masked accesses are deleted; the partial-run test stays. Follow-up: Clang's odd-length loss |
 | [X24](experiments/X24-lanes-x86.md) | Cheaper lanes on x86: with X20's per-call preparation in the lanes driver and first and last passes that build registers from 128-bit loads of each row (no gather or scatter), do the lanes beat the batched-leaf chain in double at 8–64 points and reach FFTW at 8–16? | 2 | done: both changes rejected (per-call driver: 1–7 % slower at 8–16 × 64; per-row edge passes: up to 1.17 on AVX-512 at 24–256 points). `lanes_up_to` in double stays 0 on x86; 2.2's double c2c acceptance on AVX-512 not met (lanes 1.31–1.53 of FFTW, chain 1.01–1.26) |
 | [X25](experiments/X25-x86-diagnosis.md) | Why does FFTN trail FFTW in 1-D double on x86 (EPYC 1.21, Xeon 1.06): kernel instruction stream, memory hierarchy or fixed cost per call, per case group? Counters and FFTW's plans, no library change | 1 | done: long rows (both machines) and EPYC 256–1024 are the instruction stream (the grid's `block_copy` 40–52 % of FFTN's instructions; AVX2 loops 1.4–1.6 times FFTW's instructions for the same FP work, at IPC up to 4.7); ≤ 16 points the fixed cost per call (FFTW uses 128-bit codelets); memory only for Xeon r2c 65536 (chain of 32768) and EPYC 4096; Xeon 128–4096 at par, port 5 the limit |
+| [X26](experiments/X26-grid-copies.md) | Long rows: do cheaper copy loops in the grid (rows of one vector without an inner loop), wider blocks or fused phases close the gap to FFTW at ≥ 16384, 46080, 100000 and r2c/c2r 65536 and 2²⁰? | 1 | done: cheaper copy loops rejected (Mac 0.986 and Xeon 0.988, within the band; EPYC 1.05, 2²⁰ rows 1.40–1.56: the x86 copies are bound by L1 set conflicts of rows 4 KiB-multiples apart, not instructions); no prefetch in the copies adopted on `avx2` (EPYC target rows 0.920: 65536 1.41 → 1.30 of FFTW, 100000 1.94 → 1.70, r2c 2²⁰ 1.77 → 1.48); wider blocks and fused phases lose on the Mac |
 | P1 | Cost-model accuracy: rank agreement with measurement across the catalogue per machine | 2 | planned |
 | P2 | Measurement budget: how many candidates and how long before the choice stops improving | 2 | planned |
 | [T1](experiments/T1-dispatch-wait-costs.md) | Dispatch, wake and wait costs per machine and runtime (libgomp, libomp, Kokkos, pool) | 3 | done: hand-off cost and claim runs adopted on Zen 3; dispatch and work costs wait for a per-lane dispatch term |
