@@ -107,6 +107,11 @@ on an Emerald Rapids Xeon (Google C4), and 0.87 in double but 1.03–1.07 in flo
 (C4D). Per length it swung from 0.52 (1024 points, float) to 3.1 (60 points, float, on both
 machines): no machine-wide preference is right, so price both targets per plan.
 [X21](experiments/X21-phase1-cloud.md).
+On Cascade Lake, with split runs and refitted tables, the dividing line is the tail, not
+the size: float rows whose length 8 divides took 0.78–0.85 of AVX2's time, the others 1.20–
+1.23 (double: 0.71–0.78 against 1.00–1.05 where 4 does not divide n). A key for the
+per-plan choice is C | n before any size threshold.
+[X16](experiments/X16-avx512-table.md).
 
 2.4 **Integer division is expensive enough to matter in bookkeeping.** A 64-bit `div` costs
 40–90 cycles on Cascade Lake; four per chunk in the driver were about 37 % of a 64-point

@@ -1,6 +1,6 @@
 # X2: radix sets and orders per target
 
-- **Status:** running (EPYC lengths up to 1024 done, planner v1 adopted; the rest pending)
+- **Status:** running (planner v1 adopted; refreshed on every machine after X1, X3, X18 and X19, 2026-11-15; Mac above 1024 pending)
 - **Owner:** unassigned (written with task 1.2, 2026-11-14)
 - **Phase / task:** 1.4
 
@@ -220,9 +220,133 @@ these machines, task 1.7) now leave the chain, so the chain range 1025–16383 i
 matters; a joint fit of the smooth and long campaigns is the next step, after X18 (x86
 kernel costs), since a change of kernel costs changes the tables.
 
+### Refit after X1, X3, X18 and X19 (the planner refresh)
+
+Split runs on x86 (X1), radix 32/64 passes on AVX-512 float (X3), the x86 driver fixes (X18)
+and the generator's rotations (X19) changed the pass costs the tables were fitted to, so the
+search ran again on every machine from main 6844ad0 (the merge of X1), each campaign's
+baseline arm being planner v1 as merged there. Method as built above, unchanged; the long
+campaigns took the cost estimate's best 20 candidates per catalogue length from 1025 to the
+grid threshold (on the Xeon all of them are chains: grid from half the 1 MiB L2).
+
+| Campaign | Machine, ISA, compiler | Lengths | v1 ÷ best (b1 f64, b1 f32, b64 f64, b64 f32) | cases > 3 % |
+|---|---|---|---|---|
+| xeon-avx512-smooth2 | Xeon Gold 6240, `avx512`, GCC 14.4 | 133 7-smooth ≤ 1024 | 1.010, 1.035, 1.013, 1.033 | 100 of 532 |
+| xeon-avx512-big2 | same, candidates with radix 32 or 64 | 26 multiples of 32 ≤ 2048 | 1.006, 1.004, 1.015, 1.003 | 10 of 104 |
+| xeon-avx512-long | same, radices up to 64 | 26, 1200–32768 | 1.028, 1.080, 1.027, 1.098 | |
+| xeon-avx2-smooth2 | Xeon Gold 6240, `avx2`, GCC 14.4 | 133 | 1.016, 1.018, 1.016, 1.017 | 99 of 532 |
+| xeon-avx2-long | same | 26, 1200–32768 | 1.043, 1.103, 1.035, 1.093 | |
+| epyc-avx2-smooth | EPYC 7763, `avx2`, GCC 16.2 | 133 | 1.009, 1.008, 1.010, 1.007 | 59 of 532 |
+| epyc-avx2-long | same | 23, 1200–16384 | 1.031, 1.031, 1.028, 1.030 | |
+| mac-neon-smooth2 | M5 Max, `neon_fcma`, Clang 23 | 133 | 1.000, 0.999, 1.004, 1.000 | 13 of 532 |
+
+All on shared machines (Slurm `-c 8` on the Xeon and the EPYC; the Mac loaded by other
+work), every stage interleaved with its A/A control; campaign states and per-stage run IDs in
+`bench-out/campaigns/x2-NAME.json` (screening 20261115-002435-b760 onwards on the Xeon,
+20261115-002252-1786 on the EPYC, 20261115-001453-a9b4 on the Mac).
+
+Where the gap is: AVX-512 float, whose table was AVX2's C = 4 costs with radix 32/64 columns
+(X3) and whose split runs (block 8) now reward a prefix of 8 or 16 before the run: 700 took
+4.7.5.5, measured at 2.0 times the time of 14.10.5; 140 1.7 times 10.14; and above 1024 the
+extrapolated radix-32 chains lost 1.1–2.1 (32768 b64: 32.32.32 2.1 times 8.16.16.16). AVX-512
+double wants a first radix of 8 (288, 320, 480–896: 8.12.3, 8.10.4, ... 5–8 % ahead of v1's
+4.x.y), for the same reason. AVX2 and NEON are near their ceilings up to 1024 (0.7–1.8 % and
+0–0.4 %); single lengths are off by 3–20 %.
+
+**Fits** (`fit.py`, reproduction within 2 % of the measured winner):
+
+- AVX-512 float: a fresh fit to the three Xeon campaigns together. Plain and split-priced
+  (`--split`, X1's runs as their own columns) fits estimated the same gain (0.965 and 0.964
+  of the time on the smooth campaign; two-fold cross-validation 0.975 and 0.976), so the
+  plain table, which rules.cpp already prices, is the one adopted. Above 1024 the fit
+  extrapolates from 20 candidates per length and chose sequences never timed (16384:
+  16.4.4.4.16), so `fit.py --cover` overrides every measured length whose choice was never
+  timed or more than 2 % behind the winner in every case: 34 overrides (35 with 21504, below). Reproduction 291 of
+  300 cases (97.0 %) against 194 (64.7 %) for X3's table.
+- AVX-512 double: a fresh fit gained 0.6 % in sample and nothing out of sample (two-fold
+  0.7–1.005), so the costs stay avx2_float's (the nearest C) and the table adds the
+  overrides where that choice was more than 2 % behind the winner in every case
+  (`fit.py --base f64=avx2_float`, smooth campaign): 16 overrides, 14 new lengths (13 after
+  the tracking check below dropped 576).
+  Reproduction 240 of 300 (80.0 %) against 214 (71.3 %).
+- AVX2: refits gained about 1 % (estimated 0.989 and 0.992 on the EPYC), below the rule's
+  3 %, so the costs stay and the overrides grow (`--base`, EPYC campaigns), less every
+  override that the Xeon's AVX2 campaigns measured more than 2 % slower than the baseline
+  (X2's acceptance: no length slower by more than 2 % on any target measured; 7 double and
+  10 float lengths dropped, among them 4096 and 16384 in float). 30 double and 13 float
+  overrides (29 double after the tracking check dropped 512). Reproduction on the EPYC 271 and 257 of 294 (92.2 %, 87.4 %) against 221 and 233
+  (75.2 %, 79.3 %); on the Xeon's AVX2 211 and 227 of 300 against 185 and 217.
+  `tests/core/data/rule_radices.txt` regenerated (31 of 5208 lines change).
+- NEON: the same `--base` rule on the Mac campaign, which now judges a length's current
+  override as well (490 double, AVX2's 2.7.5.7, was 15–21 % behind 7.7.10 and 5.14.7): 19
+  double and 8 float lengths change (18 and 6 after the A/B below). Reproduction 218 and 224 of 248 (87.9 %, 90.3 %)
+  against 184 and 210.
+
+`fit.py` also stopped counting radix 11 and 13 as measured when they appear only in a
+Bluestein length (2431 = 11 × 13 × 17 constrains no column), which had left their
+columns at the starting values.
+
+**A/B** (paired, interleaved, A/A control; the arms are commits; cases are the X2
+catalogue's rows whose choice changed unless stated):
+
+- **AVX-512, Xeon Gold 6240** (run 20261115-040151-b716; arms a = fc0c27c `ISA=avx2`, b =
+  fc0c27c `ISA=avx512` (the tables before), c = fef4e0c `ISA=avx512` (the refitted tables);
+  the X2 catalogue's 608 rows from 17 to 65536 points; Slurm `-c 8` on the shared node, load
+  average median 1.7; 71 rounds, band ±1.00 %, stopped after 4 h with 45 cases unresolved,
+  all ties). c ÷ b over all 152 lengths: float 0.957 (b1) and 0.953 (b64), double 0.993 and
+  0.994; over the lengths whose choice changed, float 0.905 and 0.896 (67 lengths), double
+  0.939 and 0.939 (14). Largest: 700 float 0.48–0.51, 32768 float b64 0.52, 140 float
+  0.57–0.62, 65536 float b64 0.62, 90 float 0.71–0.75, 1536 and 10000 float 0.76–0.83. The
+  one case slower than 1 + band + 2 %: 10403 float (101 × 103), 1.08–1.09, from the
+  Bluestein convolution of 21504 points, whose unmeasured costs' choice became 16.3.4.8.14;
+  21504 is now overridden with the previous 8.7.12.32 (not re-measured; the plan is the
+  previous one).
+- **AVX2, EPYC 7763** (run 20261115-040933-ddc2; a = fef4e0c, b = 686b99d, both
+  `ISA=avx2`; the 32 lengths whose choice changed in either precision, 128 rows; Slurm `-c 8`
+  on a shared node, load average median 10.0; 80 rounds, band ±1.00 %): changed cases
+  double 0.943 (b1) and 0.948 (b64), float 0.948 and 0.954; the other precision's rows of
+  the same lengths, unchanged, 1.00; no case above 1.007. Largest: 2400 double 0.87–0.89,
+  8192 double 0.87, 54 double 0.88–0.91, 3600 float 0.88–0.92. The Xeon's AVX2 was checked
+  from its campaigns only (above).
+- **NEON, M5 Max** (run 20261115-035010-f3d4; a = 686b99d, b = 772b45c; the 23 lengths
+  changed, 92 rows; the Mac loaded, load average 6–15; band ±1.00 %): weighted geometric
+  mean 0.993; 768 double b64 1.047 and 448 float b1 1.044 exceed 1 + band + 2 %, so 768 (both
+  precisions) and 448 float keep their previous choices; the overrides kept: 0.984 over
+  their 48 rows (490 double 0.86–0.88, 1008 b64 0.955, 48 0.96).
+- **Tracking tier** (main 59451f0 against the branch at 9a0b647, double rows, default
+  instruction set): Xeon run 20261115-041226-994e (band ±1.16 %) 0.997, EPYC run
+  20261115-041212-cdc2 (band ±1.00 %) 0.996. One case each was slower than 1 + band + 2 %,
+  both an override reused by another path: on the Xeon 257 (Bluestein, M = 576 by the new
+  AVX-512 double override 8.12.6) 1.064; on the EPYC r2c 1024 × 1024 (its half-length
+  chain of 512 runs AVX2's new override 2.16.16 as 16.16.2, the pairing fused into the
+  radix-2 pass) 1.046. Both overrides are dropped (576 AVX-512 double, 512 AVX2 double),
+  so those lengths take their previous plans. Faster: r2c 480 × 640 0.91 (Xeon), 4093 0.87
+  (EPYC).
+
+**Verdict of the refresh.**
+
+Adopted, per target, by X2's rule (per length: the measured best beats the current choice
+by more than 3 % clear of the band; nothing slower than 2 % outside the band on any target
+measured): AVX-512 float's refitted table (0.957/0.953 over the X2 lengths on the Xeon,
+0.90 over the changed ones), AVX-512 double's own table (avx2_float's costs plus 15
+overrides, 13 lengths new; 0.939 over the changed lengths, 576 included), AVX2 overrides at
+23 new double lengths (16384 changed) and 11 new float lengths (700 changed) (0.943–0.954 on
+the EPYC), NEON overrides at 18 double and 6 float lengths (0.984 on the Mac). Not
+adopted: refits of the AVX2, AVX-512 double and NEON costs (about 1 % estimated), split-
+priced tables (no gain over plain ones), and the overrides that a measurement found slower
+(NEON 768 and 448 float; AVX2 512 double; AVX-512 576 double). Lessons 2.7 and 2.8 in
+`dev/LESSONS.md`: a table goes stale with kernel changes, and a fitted table must not decide
+where it never measured; and an override measured on c2c rows is also used by Bluestein
+convolutions and real transforms, which the tracking tier caught. Remaining: lengths above
+1024 rest on 20 candidates per catalogue length (the AVX-512 float costs extrapolate
+between them); the Mac above 1024 is unmeasured.
+
 ### Pending
 
-Nothing below has run; each is measured against the planner of the commit it runs from.
+Done since, by the refresh above: the EPYC above 1024 and the Xeon (AVX2 and AVX-512, up
+to 32768). Still open: the Mac above 1024. The original notes follow.
+
+Nothing below had run; each is measured against the planner of the commit it runs from.
 From a checkout of the commit before planner v1 (merge 1a5e677 on this branch) the arm
 called v0 is planner v0, as the protocol states; from planner v1's commit it is v1, which
 is what the next decisions need (does v1 reproduce the winners there, or does that target
@@ -252,3 +376,8 @@ replaced the AVX2 ones (3.6 % faster, see Results). On AVX-512,
 x86-64-v2, AVX and scalar, and for lengths above 1024, it applies by analogy (the table
 of the nearest C) and is unmeasured until the campaigns under "Pending" run. Task 1.3
 decides AVX-512's table, including FFTL's radix-16 rule for it.
+
+Refresh (2026-11-15, after X1, X3, X18 and X19; Results, "Refit after ..."): AVX-512 has its
+own tables (float refitted, 0.957 of the time over the X2 lengths on the Xeon; double
+avx2_float's costs with its own overrides), and AVX2 and NEON keep their costs with more
+overrides (0.94–0.95 of the time on the changed EPYC lengths, 0.98 on the Mac's).
