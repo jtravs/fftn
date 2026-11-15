@@ -1,6 +1,6 @@
 # X27: generated codelets for primes above 16; Rader for primes with smooth p − 1
 
-- **Status:** running
+- **Status:** running (arms 1 and 2 built; x86 timing queued)
 - **Owner:** X27 agent, 2026-11-15
 - **Phase / task:** PLAN Status lead 2 (one-dimensional double gap); B3 (build size)
 
@@ -37,14 +37,20 @@ planner's route for prime factors above 16 (DESIGN.md 11.2).
 
 ## Change under test
 
-- **Arm 1** (one commit): radices 17, 19 and 23 added to the generator's catalogue
-  (complex lowering only; the split lowering stays at 2–16), a sixth row unit per target
-  for their passes, and the planner unchanged in form: those factors were already listed
-  last, after the cost-priced radices up to 16, and a factor with a codelet is a codelet
-  pass instead of a Bluestein stage (`chain_builder::radices`), and n = p is a leaf. A
-  = `main` at the branch point, B = arm 1.
-- **Arm 2** (if time allows): Rader for primes above 23 whose p − 1 is 7-smooth, against
-  Bluestein.
+- **Arm 1** (2e5e4a8): radices 17, 19 and 23 added to the generator's catalogue
+  (complex lowering only; the split lowering stays at 2–16), a row unit per prime per
+  target, and the planner unchanged in form: those factors were already listed last,
+  after the cost-priced radices up to 16, and a factor with a codelet is now a codelet pass
+  instead of a Bluestein stage (`chain_builder::radices`); n = p is a leaf, and an r2c or
+  c2r of 2p a real leaf. The grid's phase passes and the fused real pairing never take
+  these radices, so those entries stay null. A = `main` (3f90275), B = arm 1.
+- **Arm 2** (f3b4722, then dd4adf2, a8b0384, cddfe86): a Rader stage in place of the
+  Bluestein stage for a single prime q whose q − 1 is smooth, sharing the Bluestein
+  stage's convolution. As first written (f3b4722) it stepped g^m mod q with a subtraction
+  loop and ran a single row one broadcast register at a time: slower than Bluestein at
+  65537 and in float (Mac screen, not kept); dd4adf2 reads g^m from a table and runs one
+  copy in scalar arithmetic; a8b0384 adds the size limit q < 2^16; cddfe86 lets q − 1 have
+  the factors 11 and 13. A = arm 1, B = the arm-2 commit.
 
 Bits: arm 1 changes the result bits of every length with a factor 17, 19 or 23 (a
 different algorithm: within the derived tolerances, which the oracle and FFTW tests
