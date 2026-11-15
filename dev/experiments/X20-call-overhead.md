@@ -83,6 +83,16 @@ Single precision is the same within 1 ns up to 16. FFTN ÷ FFTW before (Mac run
    each stage's arguments plainly (an on-stack array of copies cost about 6 ns more at
    batch 1). Same kernels, same arguments, same units: bits unchanged.
 
+3. 4a74de2 and 0f1125b: rows of leaves (`program::leaf_rows`, marked at construction) and
+   one transform of a flat program (`run_flat_one`) take small paths of their own, and the
+   batch path `run_flat`, whose on-stack array of argument copies gives it a large frame and
+   six saved registers, stays out of line. On the Xeon `perf` put 11 % of an 8-point float
+   leaf harness in `run_flat`, spread over pushes, pops and moves. Mac, paired against
+   4719129 (= c5ed695 plus a refactor), run 20261115-001125-ae28 (8 rounds, band ±1.00 %):
+   leaf rows at batch 1 0.88 (2 points) to 0.95 (16), 64 × 64 0.92, 64 × 4096 0.91–0.95,
+   nothing slower (geomean 0.957). The intermediate 4a74de2, which left one transform in
+   `run_flat`, made 32 and 64 points in float 1.09–1.11 slower (run 20261115-000916-8423).
+
 Rejected on the way: a second, batch entry beside each leaf's pass entry (regions may not
 call each other, `tools/asm_check.py`, so the body would be duplicated: library text +18 %).
 
@@ -110,19 +120,20 @@ the flat path (about 1–1.5 ns) and, for passes, the copy of `pass_args` that a
 
 ### fbench, Mac
 
-Run 20261114-233002-c291 (M5 Max, Clang 23 for both FFTN arms, 7 rounds, load 3.2, band
-±1.98 %): new ÷ main 0.464 over x20, every case faster (2-point batches 0.07, 8 b1 0.66,
-8 × 4096 0.31, 64 b1 0.96). FFTN ÷ NEON FFTW, double (FFTW has no single precision here),
-before → after:
+Run 20261115-002244-eba3 (M5 Max, final commit 0f1125b against main, both Clang 23, 7
+rounds, all under load: load average 10, band ±3.02 %): new ÷ main 0.453 over x20, every
+case faster (2-point batches 0.07, 8 b1 0.64, 8 × 4096 0.31, 64 b1 0.92). The c5ed695 arm
+alone gave 0.464 (run 20261114-233002-c291, band ±1.98 %). FFTN ÷ NEON FFTW, double (FFTW
+has no single precision here), main → final:
 
 | n | b1 | b64 | b4096 |
 |---|---|---|---|
-| 2 | 3.43 → 2.00 | 17.4 → 1.18 | |
-| 4 | 3.29 → 1.96 | 9.52 → 1.02 | |
-| 8 | 2.66 → 1.77 | 3.51 → 0.86 | 3.25 → 1.00 |
-| 16 | 2.21 → 1.38 | 1.98 → 0.86 | 2.07 → 0.85 |
-| 32 | 1.99 → 1.60 | 1.93 → 1.06 | |
-| 64 | 1.18 → 1.14 | 1.43 → 1.23 | 1.40 → 1.28 |
+| 2 | 3.38 → 1.82 | 17.1 → 1.18 | |
+| 4 | 3.13 → 1.74 | 9.07 → 0.98 | |
+| 8 | 2.67 → 1.70 | 3.47 → 0.86 | 3.08 → 0.97 |
+| 16 | 2.20 → 1.32 | 1.91 → 0.85 | 2.03 → 0.85 |
+| 32 | 1.46 → 1.19 | 1.89 → 1.06 | |
+| 64 | 1.25 → 1.15 | 1.20 → 1.00 | 1.39 → 1.16 |
 
 Collateral (quick tier, run 20261114-233217-f89b, 8 rounds, band ±1.00 %): 0.963 geomean,
 8 cases faster (16 0.62, 64 × 256 0.91, r2c 64 × 64 0.92, r2c 256 0.94), 16 within the band,
