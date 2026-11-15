@@ -11,9 +11,12 @@
 //   cv<T>        complex register: C<T> complex numbers, interleaved (re, im, re, im, ...)
 //   rv<T>        real register: W<T> reals (W = 2C on SIMD targets; 1 on scalar)
 //   tw<T>        C<T> twiddles in the form mul, mulc and madd consume
-//   tw_reals<T>  reals stored per twiddle: 2 (re, im), or 4 on x86 and plain NEON, where each
+//   tw_reals<T>  reals stored per twiddle: 2 (re, im), or 4 on plain NEON, where each
 //                twiddle w is pre-arranged as (wr, wr) and (-wi, wi) so mul needs one
-//                shuffle and no sign fix-up
+//                shuffle and no sign fix-up (x86 builds those registers from (re, im) with
+//                duplicating loads instead; experiment X30)
+//   tw_tail<T>   reals that load_tw may read past the storage of its C twiddles (1 on
+//                x86, 0 elsewhere): a table of twiddle storage is that much longer
 //   fused        whether fmadd and its relatives round once (FMA). Where false they multiply,
 //                then add: two roundings, and the operation order the generator emits for
 //                such targets (DESIGN.md 6.1). The scalar target is never fused, so it gives
@@ -97,6 +100,7 @@ template <class T> using tw = vec<T>::tw;
 template <class T> inline constexpr std::size_t C = vec<T>::C;
 template <class T> inline constexpr std::size_t W = vec<T>::W;
 template <class T> inline constexpr std::size_t tw_reals = vec<T>::tw_reals;
+template <class T> inline constexpr std::size_t tw_tail = vec<T>::tw_tail;
 template <class T> inline constexpr std::size_t split_block = vec<T>::split_block;
 
 } // namespace

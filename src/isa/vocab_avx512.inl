@@ -25,8 +25,8 @@ inline constexpr bool fused = true;
 // off with Clang and icpx by default (FFTN_MASKED_TAILS in CMakeLists.txt; experiment X23).
 inline constexpr bool masked = FFTN_MASKED_TAILS != 0;
 
-// Twiddles pre-arranged for mul as on avx2 (DESIGN.md 6.2): r holds (wr, wr) and i holds
-// (-wi, wi) for each lane's twiddle. Defined inside the region; special members trivial.
+// Twiddles as mul consumes them, as on avx2 (DESIGN.md 6.2): r holds (wr, wr) and i holds
+// (wi, wi) for each lane's twiddle. Defined inside the region; special members trivial.
 struct tw_f64 {
   __m512d r;
   __m512d i;
@@ -43,7 +43,8 @@ template <> struct vec<double> {
   static constexpr std::size_t C = 4;
   static constexpr std::size_t W = 8;
   static constexpr std::size_t split_block = W;
-  static constexpr std::size_t tw_reals = 4;
+  static constexpr std::size_t tw_reals = 2;
+  static constexpr std::size_t tw_tail = 1;
 };
 
 template <> struct vec<float> {
@@ -53,7 +54,8 @@ template <> struct vec<float> {
   static constexpr std::size_t C = 8;
   static constexpr std::size_t W = 16;
   static constexpr std::size_t split_block = W;
-  static constexpr std::size_t tw_reals = 4;
+  static constexpr std::size_t tw_reals = 2;
+  static constexpr std::size_t tw_tail = 1;
 };
 
 // Complex-register operations.
@@ -83,40 +85,36 @@ FFTN_FORCE_INLINE __m512d bcast(const double* p) { return _mm512_broadcast_f64x2
 FFTN_FORCE_INLINE __m512 bcast(const float* p) {
   return _mm512_broadcast_f32x4(_mm_setr_ps(p[0], p[1], p[0], p[1]));
 }
+// Twiddle storage is interleaved, (wr, wi) per twiddle, read by duplicating loads (load
+// ports only), i from one real further on: load_tw reads tw_tail = 1 real past the C
+// twiddles, as on avx2 (experiment X30).
 FFTN_FORCE_INLINE tw_f64 load_tw(const double* p) {
-  return {.r = _mm512_loadu_pd(p), .i = _mm512_loadu_pd(p + 8)};
+  return {.r = _mm512_movedup_pd(_mm512_loadu_pd(p)),
+          .i = _mm512_movedup_pd(_mm512_loadu_pd(p + 1))};
 }
 FFTN_FORCE_INLINE tw_f32 load_tw(const float* p) {
-  return {.r = _mm512_loadu_ps(p), .i = _mm512_loadu_ps(p + 16)};
+  return {.r = _mm512_moveldup_ps(_mm512_loadu_ps(p)),
+          .i = _mm512_moveldup_ps(_mm512_loadu_ps(p + 1))};
 }
-// Storage of C twiddles: W reals (wr, wr) per lane, then W reals (-wi, wi) per lane.
 template <class T> FFTN_FORCE_INLINE void pack_tw(T* out, const T* p) {
-  for (std::size_t k = 0; k < C<T>; ++k) {
-    out[2 * k] = p[2 * k];
-    out[2 * k + 1] = p[2 * k];
-    out[W<T> + 2 * k] = -p[2 * k + 1];
-    out[W<T> + 2 * k + 1] = p[2 * k + 1];
+  for (std::size_t k = 0; k < 2 * C<T>; ++k) {
+    out[k] = p[k];
   }
 }
-// Broadcast storage of one twiddle: (wr, wr, -wi, wi), one lane of the pre-arranged form,
-// repeated into every lane by two broadcasts of a pair of reals (bcast).
-FFTN_FORCE_INLINE tw_f64 bcast_tw(const double* p) { return {.r = bcast(p), .i = bcast(p + 2)}; }
-FFTN_FORCE_INLINE tw_f32 bcast_tw(const float* p) { return {.r = bcast(p), .i = bcast(p + 2)}; }
+// Broadcast storage of one twiddle: (wr, wi), each part broadcast into every lane (a
+// broadcast the compiler may fold into the multiply that uses it).
+FFTN_FORCE_INLINE tw_f64 bcast_tw(const double* p) {
+  return {.r = _mm512_set1_pd(p[0]), .i = _mm512_set1_pd(p[1])};
+}
+FFTN_FORCE_INLINE tw_f32 bcast_tw(const float* p) {
+  return {.r = _mm512_set1_ps(p[0]), .i = _mm512_set1_ps(p[1])};
+}
 template <class T> FFTN_FORCE_INLINE void pack_tw1(T* out, const T* p) {
   out[0] = p[0];
-  out[1] = p[0];
-  out[2] = -p[1];
-  out[3] = p[1];
+  out[1] = p[1];
 }
 
-// Sign masks: -0 in the real parts (even lanes) or in the imaginary parts (odd lanes).
-FFTN_FORCE_INLINE __m512d even_sign_f64() {
-  return _mm512_setr_pd(-0.0, 0.0, -0.0, 0.0, -0.0, 0.0, -0.0, 0.0);
-}
-FFTN_FORCE_INLINE __m512 even_sign_f32() {
-  return _mm512_setr_ps(-0.0F, 0.0F, -0.0F, 0.0F, -0.0F, 0.0F, -0.0F, 0.0F, -0.0F, 0.0F, -0.0F,
-                        0.0F, -0.0F, 0.0F, -0.0F, 0.0F);
-}
+// Sign masks: -0 in the imaginary parts (odd lanes).
 FFTN_FORCE_INLINE __m512d odd_sign_f64() {
   return _mm512_setr_pd(0.0, -0.0, 0.0, -0.0, 0.0, -0.0, 0.0, -0.0);
 }
@@ -146,35 +144,34 @@ FFTN_FORCE_INLINE __m512d subj(__m512d a, __m512d b) {
 FFTN_FORCE_INLINE __m512 subj(__m512 a, __m512 b) {
   return _mm512_fmsubadd_ps(a, _mm512_set1_ps(1.0F), swap_ri(b));
 }
-// a*w = (ar*wr - ai*wi, ai*wr + ar*wi) = r*a + i*swap_ri(a).
+// a*w = (ar*wr - ai*wi, ai*wr + ar*wi): FMADDSUB, rounding as avx2's mul (X30).
 FFTN_FORCE_INLINE __m512d mul(__m512d a, tw_f64 w) {
-  return _mm512_fmadd_pd(a, w.r, _mm512_mul_pd(swap_ri(a), w.i));
+  return _mm512_fmaddsub_pd(a, w.r, _mm512_mul_pd(swap_ri(a), w.i));
 }
 FFTN_FORCE_INLINE __m512 mul(__m512 a, tw_f32 w) {
-  return _mm512_fmadd_ps(a, w.r, _mm512_mul_ps(swap_ri(a), w.i));
+  return _mm512_fmaddsub_ps(a, w.r, _mm512_mul_ps(swap_ri(a), w.i));
 }
-// a*conj(w) = (ar*wr + ai*wi, ai*wr - ar*wi) = r*a - i*swap_ri(a).
+// a*conj(w) = (ar*wr + ai*wi, ai*wr - ar*wi): FMSUBADD.
 FFTN_FORCE_INLINE __m512d mulc(__m512d a, tw_f64 w) {
-  return _mm512_fmsub_pd(a, w.r, _mm512_mul_pd(swap_ri(a), w.i));
+  return _mm512_fmsubadd_pd(a, w.r, _mm512_mul_pd(swap_ri(a), w.i));
 }
 FFTN_FORCE_INLINE __m512 mulc(__m512 a, tw_f32 w) {
-  return _mm512_fmsub_ps(a, w.r, _mm512_mul_ps(swap_ri(a), w.i));
+  return _mm512_fmsubadd_ps(a, w.r, _mm512_mul_ps(swap_ri(a), w.i));
 }
 // a*b for two complex registers: b rearranged into mul's twiddle form, (br, br) and
-// (-bi, bi), in registers (the negation flips a sign bit, as pack_tw's does).
+// (bi, bi), in registers.
 FFTN_FORCE_INLINE __m512d cmul(__m512d a, __m512d b) {
-  const __m512d i = _mm512_xor_pd(_mm512_permute_pd(b, 0xFF), even_sign_f64());
-  return mul(a, tw_f64{.r = _mm512_movedup_pd(b), .i = i});
+  return mul(a, tw_f64{.r = _mm512_movedup_pd(b), .i = _mm512_permute_pd(b, 0xFF)});
 }
 FFTN_FORCE_INLINE __m512 cmul(__m512 a, __m512 b) {
-  const __m512 i = _mm512_xor_ps(_mm512_movehdup_ps(b), even_sign_f32());
-  return mul(a, tw_f32{.r = _mm512_moveldup_ps(b), .i = i});
+  return mul(a, tw_f32{.r = _mm512_moveldup_ps(b), .i = _mm512_movehdup_ps(b)});
 }
+// acc + a*w, as avx2's madd.
 FFTN_FORCE_INLINE __m512d madd(__m512d acc, __m512d a, tw_f64 w) {
-  return _mm512_fmadd_pd(a, w.r, _mm512_fmadd_pd(swap_ri(a), w.i, acc));
+  return _mm512_fmaddsub_pd(a, w.r, _mm512_fmaddsub_pd(swap_ri(a), w.i, acc));
 }
 FFTN_FORCE_INLINE __m512 madd(__m512 acc, __m512 a, tw_f32 w) {
-  return _mm512_fmadd_ps(a, w.r, _mm512_fmadd_ps(swap_ri(a), w.i, acc));
+  return _mm512_fmaddsub_ps(a, w.r, _mm512_fmaddsub_ps(swap_ri(a), w.i, acc));
 }
 FFTN_FORCE_INLINE __m512d scale(__m512d a, double r) { return _mm512_mul_pd(a, _mm512_set1_pd(r)); }
 FFTN_FORCE_INLINE __m512 scale(__m512 a, float r) { return _mm512_mul_ps(a, _mm512_set1_ps(r)); }

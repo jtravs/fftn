@@ -149,7 +149,8 @@ const T* chain_builder<T>::pack(const std::vector<std::complex<T>>& w, bool broa
     plain[2 * i] = w[i].real();
     plain[2 * i + 1] = w[i].imag();
   }
-  std::vector<T>& stored = tables_.emplace_back(w.size() * kernels_.tw_reals);
+  // tw_tail: x86's load_tw reads a real past its twiddles (vocabulary.inl).
+  std::vector<T>& stored = tables_.emplace_back(w.size() * kernels_.tw_reals + kernels_.tw_tail);
   if (broadcast) {
     kernels_.pack_bcast_twiddles(plain.data(), w.size(), stored.data());
   } else {

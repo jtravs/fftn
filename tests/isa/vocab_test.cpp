@@ -214,7 +214,7 @@ expected_and_got<T> run(const kernel_table& kernels, const probe_table& probes, 
   // The twiddle operand of the complex products is passed through the target's own
   // twiddle storage, which tests pack_twiddles and load_tw (or pack_bcast_twiddles and
   // bcast_tw) too. cmul takes b as it is.
-  const std::size_t tw_size = of<T>(kernels).tw_reals * half;
+  const std::size_t tw_size = of<T>(kernels).tw_reals * half + of<T>(kernels).tw_tail;
   operand<T> tw(tw_size);
   if (op == vop::c_mul_bcast) {
     of<T>(kernels).pack_bcast_twiddles(b.data(), half, tw.data());
