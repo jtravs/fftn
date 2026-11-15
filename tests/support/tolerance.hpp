@@ -100,8 +100,10 @@ inline double log2_length(std::size_t n) {
 inline error_bound bluestein_bound(std::size_t n) {
   const double l = log2_length(n);
   const double wider = (l + 2.0) / l;
-  return {.rms = stable_fft_bound.rms * std::sqrt(3.0 * wider),
-          .max = stable_fft_bound.max * std::numbers::sqrt3 * wider,};
+  return {
+      .rms = stable_fft_bound.rms * std::sqrt(3.0 * wider),
+      .max = stable_fft_bound.max * std::numbers::sqrt3 * wider,
+  };
 }
 
 // Whether n has a prime factor above the codelets' 16, which FFTN's planner sends through

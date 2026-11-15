@@ -196,8 +196,8 @@ const fftn::detail::machine_profile& defaults() {
 // how many phases and whether fused (X12b), and with the host's choice the row of 65536 points
 // below reproduced its pathology by 1.41 on GitHub's Neoverse N2 runners (1 MB of L2 each:
 // a two-phase grid) and 1.45 with the EPYC 7763's caches (three phases), against the 1.5
-// asked; as a chain it does by 2.4 with every recorded topology. 3072 points keep planner v0's five passes
-// on 32 registers (4 x 4 x 4 x 4 x 12), the plan these reproductions were set on: planner
+// asked; as a chain it does by 2.4 with every recorded topology. 3072 points keep planner v0's five
+// passes on 32 registers (4 x 4 x 4 x 4 x 12), the plan these reproductions were set on: planner
 // v1's three passes are a third less work, too little for the prototype's split to lose by
 // the measured margin.
 team_case default_rows(std::size_t n, std::size_t count) {

@@ -173,7 +173,10 @@ void split_pass(const pass_args* a, std::size_t first, std::size_t last) {
     } else {
       static_assert(!InIL, "the last split pass reads BL: a split run has two passes or more");
       const il_out<T, swap, OutOp> out{
-          .p = yp, .leg = out_leg, .op = make_edge<T, OutOp>(a, a->out_factor, e0, s),};
+          .p = yp,
+          .leg = out_leg,
+          .op = make_edge<T, OutOp>(a, a->out_factor, e0, s),
+      };
       split_unit<T, R, false>(bl_in<T, swap>{.p = xp, .leg = in_leg}, out, table, p);
     }
     if (++b == blocks) {

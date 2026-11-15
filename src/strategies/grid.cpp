@@ -147,11 +147,13 @@ std::vector<std::size_t> phase_radices(std::size_t n, std::size_t largest) {
         continue;
       }
       const std::size_t j = at(ds[i] * r);
-      const path cand{.passes = best[i].passes + 1,
-                .low = best[i].low == 0 ? r : std::min(best[i].low, r),
-                .high = std::max(best[i].high, r),
-                .last = r,
-                .from = i,};
+      const path cand{
+          .passes = best[i].passes + 1,
+          .low = best[i].low == 0 ? r : std::min(best[i].low, r),
+          .high = std::max(best[i].high, r),
+          .last = r,
+          .from = i,
+      };
       const bool wins =
           !reached[j] || cand.passes < best[j].passes ||
           (cand.passes == best[j].passes && cand.high * best[j].low < best[j].high * cand.low);

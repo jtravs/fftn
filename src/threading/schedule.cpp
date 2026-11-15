@@ -30,9 +30,8 @@ machine_profile profile_for(const topology& t) noexcept {
   // splitting pays only from longer rows; a last-level group of more than mesh_group_lanes
   // cores is a mesh (the Xeon's 18 cores). On neither did T1's measured costs pass the
   // adoption test, so both keep the provisional synchronisation cost and claim runs.
-  const bool cluster_l2 = !t.classes.empty() &&
-                          t.classes.front().l2.shared_by >
-                              std::max(t.classes.front().l1d.shared_by, 1U);
+  const bool cluster_l2 = !t.classes.empty() && t.classes.front().l2.shared_by >
+                                                    std::max(t.classes.front().l1d.shared_by, 1U);
   const bool apple = !t.os_cpu_ids && cluster_l2;
   std::size_t cpus_per_core = t.cores.empty() ? 1 : t.cores.front().cpus.size();
   for (const cpu_group& core : t.cores) {

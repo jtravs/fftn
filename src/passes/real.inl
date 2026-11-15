@@ -57,8 +57,7 @@ template <class T, bool Scaled> FFTN_FORCE_INLINE cv<T> scaled(cv<T> v, T s) {
 
 // Lane l holds the complex number at p - 2 l (the first `valid` lanes; the others zero):
 // C consecutive elements read downwards.
-template <class T, bool Full>
-FFTN_FORCE_INLINE cv<T> load_down(const T* p, std::size_t valid) {
+template <class T, bool Full> FFTN_FORCE_INLINE cv<T> load_down(const T* p, std::size_t valid) {
   if constexpr (C<T> == 1) {
     return load(p);
   } else {
@@ -73,8 +72,7 @@ FFTN_FORCE_INLINE cv<T> load_down(const T* p, std::size_t valid) {
 }
 
 // Lane l of v to p - 2 l, for the first `valid` lanes.
-template <class T, bool Full>
-FFTN_FORCE_INLINE void store_down(T* p, std::size_t valid, cv<T> v) {
+template <class T, bool Full> FFTN_FORCE_INLINE void store_down(T* p, std::size_t valid, cv<T> v) {
   if constexpr (C<T> == 1) {
     store(p, v);
   } else {
@@ -124,8 +122,7 @@ template <class T> FFTN_FORCE_INLINE cv<T> pre_middle(cv<T> x) {
 }
 
 // X_0 and X_h from Z_0 = (re, im): Re Z_0 +- Im Z_0, real.
-template <class T, bool Scaled>
-FFTN_FORCE_INLINE void post_ends(T re, T im, T* y0, T* yh, T s) {
+template <class T, bool Scaled> FFTN_FORCE_INLINE void post_ends(T re, T im, T* y0, T* yh, T s) {
   y0[0] = scaled<T, Scaled>(re + im, s);
   y0[1] = scaled<T, Scaled>(T(0), s);
   yh[0] = scaled<T, Scaled>(re - im, s);
@@ -253,7 +250,12 @@ FFTN_FORCE_INLINE void r2c_copies(const T* x, T* y, std::size_t h, std::size_t s
   cv<T> vb[R]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
   const std::ptrdiff_t leg = at(s, 2);
   const run_in<T, edge_op::none, Full> ina{
-      .p = x + at(q0, 2), .leg = leg, .step = 2, .valid = valid, .op = {},};
+      .p = x + at(q0, 2),
+      .leg = leg,
+      .step = 2,
+      .valid = valid,
+      .op = {},
+  };
   cdft<R>::template plain<T, -1>(ina, to_registers<T>{va});
   const run_down<T, Full> inb{.p = x + at(s - q0, 2), .leg = leg, .valid = valid};
   cdft<R>::template plain<T, -1>(inb, to_registers<T>{vb});
@@ -372,8 +374,8 @@ FFTN_FORCE_INLINE void store_groups_down(T* y_top, cv<T>* v, std::size_t valid) 
 // bins e = p + m j and h - e.
 template <class T, std::size_t R, bool Full>
 FFTN_FORCE_INLINE void c2r_groups(const T* x, T* y, std::size_t h, std::size_t m, std::size_t p0,
-                                  std::size_t valid, const T* tw_up, const T* tw_down,
-                                  const T* pre, std::ptrdiff_t row) {
+                                  std::size_t valid, const T* tw_up, const T* tw_down, const T* pre,
+                                  std::ptrdiff_t row) {
   cv<T> va[R]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
   cv<T> vb[R]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
   for (std::size_t j = 0; j < R; ++j) {
@@ -438,7 +440,8 @@ void c2r_first(const pass_args* a, std::size_t first, std::size_t last) {
       }
       if (m % 2 == 0) {
         for (std::size_t j = 0; j < R - 1 - j; ++j) {
-          pre_pair<T>(bcast(x + at(m / 2 + m * j, 2)), conj(bcast(x + at(m / 2 + m * (R - 1 - j), 2))),
+          pre_pair<T>(bcast(x + at(m / 2 + m * j, 2)),
+                      conj(bcast(x + at(m / 2 + m * (R - 1 - j), 2))),
                       bcast_tw(ends + tw_reals<T> * (R + j)), v[j], v[R - 1 - j]);
         }
         if constexpr (R % 2 == 1) {
@@ -579,8 +582,6 @@ void r2c_post_strided(const pass_args* a, std::size_t first, std::size_t last) {
   }
 }
 
-
-
 // Z_k for k < h from X_0 .. X_h, unit u for the pair k = u, h - u (unit 0: Z_0 alone).
 // With E = X_k + conj X_h-k and O = (X_k - conj X_h-k) exp(+2 pi i k / n):
 //
@@ -629,7 +630,6 @@ void c2r_unpack_pairs(const pass_args* a, std::size_t first, std::size_t last) {
     x[at(2 * j + 1, xs)] = scaled<T, Scaled>(z[at(j, zs) + 1], s);
   }
 }
-
 
 // ---- Odd n: the full complex transform of (x_j, 0).
 

@@ -258,9 +258,9 @@ template <class T> void leaves_above_sixteen(fftn::isa target) {
     // By default (X8): a leaf of 32 on NEON in double, chains elsewhere.
     const bool leaf_by_default = n == 32 && std::is_same_v<T, double> &&
                                  (target == fftn::isa::neon || target == fftn::isa::neon_fcma);
-    const auto plain = make_plan_core(
-        fftn::detail::view_of(fftn::rows_c2c<T>(n, 1, fftn::direction::forward)),
-        {.force_isa = target}, {});
+    const auto plain =
+        make_plan_core(fftn::detail::view_of(fftn::rows_c2c<T>(n, 1, fftn::direction::forward)),
+                       {.force_isa = target}, {});
     EXPECT_EQ(joined(stage_names(*plain)).find("leaf") != std::string::npos, leaf_by_default)
         << joined(stage_names(*plain));
     const auto real = make_plan_core(fftn::detail::view_of(fftn::rows_r2c<T>(2 * n, 1)),
@@ -291,9 +291,11 @@ template <class T> void bluestein_in_every_position(fftn::isa target) {
   const std::vector<std::string> both{"bluestein in", "bluestein out"};
   const std::vector<line> lines{
       {.radices = {17}, .above = 16, .names = {"copies 1", "convolution: grouped"}},
-      {.radices = {2, 17},
-       .above = 16,
-       .names = {"grouped radix-2", "copies 2", "convolution: lane"},},
+      {
+          .radices = {2, 17},
+          .above = 16,
+          .names = {"grouped radix-2", "copies 2", "convolution: lane"},
+      },
       {.radices = {3, 19}, .above = 16, .names = {"grouped radix-3", "copies 3"}},
       {.radices = {4, 17}, .above = 16, .names = {"copies 4"}},
       {.radices = {5, 6, 23}, .above = 16, .names = {"lane radix-6", "copies 30"}},
@@ -347,27 +349,35 @@ template <class T> void every_edge_variant(fftn::isa target) {
       {.n = 1, .radices = {}, .first = "copy", .last = "copy"},
       {.n = 12, .radices = {}, .first = "leaf radix-12", .last = "leaf radix-12"},
       {.n = 40, .radices = {5, 8}, .first = "grouped radix-5", .last = "lane radix-8"},
-      {.n = 17,
-       .radices = {},
-       .first = "generic radix-17",
-       .last = "generic radix-17",
-       .above = no_bluestein,},
-      {.n = 34,
-       .radices = {2, 17},
-       .first = "grouped radix-2",
-       .last = "generic radix-17",
-       .above = no_bluestein,},
-      {.n = 34,
-       .radices = {17, 2},
-       .first = "generic radix-17",
-       .last = "lane radix-2",
-       .above = no_bluestein,},
+      {
+          .n = 17,
+          .radices = {},
+          .first = "generic radix-17",
+          .last = "generic radix-17",
+          .above = no_bluestein,
+      },
+      {
+          .n = 34,
+          .radices = {2, 17},
+          .first = "grouped radix-2",
+          .last = "generic radix-17",
+          .above = no_bluestein,
+      },
+      {
+          .n = 34,
+          .radices = {17, 2},
+          .first = "generic radix-17",
+          .last = "lane radix-2",
+          .above = no_bluestein,
+      },
       {.n = 17, .radices = {}, .first = "bluestein in,", .last = "bluestein out", .above = 16},
-      {.n = 34,
-       .radices = {2, 17},
-       .first = "grouped radix-2",
-       .last = "bluestein out",
-       .above = 16,},
+      {
+          .n = 34,
+          .radices = {2, 17},
+          .first = "grouped radix-2",
+          .last = "bluestein out",
+          .above = 16,
+      },
   };
   struct variant {
     bool in_factor;
@@ -440,12 +450,18 @@ template <class T> void split_in_every_position(fftn::isa target) {
       std::string name;
     };
     const std::vector<sequence> sequences{
-        {.radices = {f, r, 2}, .name = rs + " forward (m 2, s " + std::to_string(f) +
-                                       "; interleaved to BL",},
-        {.radices = {f, 2, r}, .name = rs + " forward (m 1, s " + std::to_string(2 * f) +
-                                       "; BL to interleaved",},
-        {.radices = {f, 2, r, 2}, .name = rs + " forward (m 2, s " + std::to_string(2 * f) +
-                                          "; BL)",},
+        {
+            .radices = {f, r, 2},
+            .name = rs + " forward (m 2, s " + std::to_string(f) + "; interleaved to BL",
+        },
+        {
+            .radices = {f, 2, r},
+            .name = rs + " forward (m 1, s " + std::to_string(2 * f) + "; BL to interleaved",
+        },
+        {
+            .radices = {f, 2, r, 2},
+            .name = rs + " forward (m 2, s " + std::to_string(2 * f) + "; BL)",
+        },
     };
     for (const sequence& seq : sequences) {
       std::size_t n = 1;
@@ -487,9 +503,9 @@ template <class T> void split_only_where_it_fits(fftn::isa target) {
     settings.radices = std::move(radices);
     settings.bluestein_above = above;
     settings.layout = fftn::detail::layout_choice::split;
-    const auto core = make_plan_core(
-        fftn::detail::view_of(fftn::rows_c2c<T>(n, 1, fftn::direction::forward)),
-        {.force_isa = target}, settings);
+    const auto core =
+        make_plan_core(fftn::detail::view_of(fftn::rows_c2c<T>(n, 1, fftn::direction::forward)),
+                       {.force_isa = target}, settings);
     return joined(stage_names(*core)).find("split") != std::string::npos;
   };
   SCOPED_TRACE(std::string(fftn::isa_name(target)) + (sizeof(T) == 8 ? " double" : " float"));
@@ -530,9 +546,9 @@ template <class T> void split_only_where_it_fits(fftn::isa target) {
                                   {.force_isa = target}, settings);
   EXPECT_NE(joined(stage_names(*r2c)).find("split lane"), std::string::npos);
   const cvec<T> spectrum = run<T, c>(*r2c, xr, n / 2 + 1);
-  const auto c2r = make_plan_core(fftn::detail::view_of(fftn::rows_c2r<T>(n, 1)),
-                                  {.scale = 1.0 / static_cast<double>(n), .force_isa = target},
-                                  settings);
+  const auto c2r =
+      make_plan_core(fftn::detail::view_of(fftn::rows_c2r<T>(n, 1)),
+                     {.scale = 1.0 / static_cast<double>(n), .force_isa = target}, settings);
   EXPECT_NE(joined(stage_names(*c2r)).find("split lane"), std::string::npos);
   const std::vector<T> back = run<c, T>(*c2r, spectrum, n);
   const auto tol = fftn::test::derived_tolerance<T>(n, fftn::test::stable_fft_bound);
@@ -548,9 +564,9 @@ template <class T> void split_only_where_it_fits(fftn::isa target) {
   // choose the two routes differently for some lengths).
   build_settings fused = settings;
   fused.fuse_real_radix = 16;
-  const auto c2r_fused = make_plan_core(fftn::detail::view_of(fftn::rows_c2r<T>(n, 1)),
-                                        {.scale = 1.0 / static_cast<double>(n), .force_isa = target},
-                                        fused);
+  const auto c2r_fused =
+      make_plan_core(fftn::detail::view_of(fftn::rows_c2r<T>(n, 1)),
+                     {.scale = 1.0 / static_cast<double>(n), .force_isa = target}, fused);
   const std::string fused_names = joined(stage_names(*c2r_fused));
   EXPECT_NE(fused_names.find("with the c2r pairing"), std::string::npos) << fused_names;
   EXPECT_NE(fused_names.find("split lane"), std::string::npos) << fused_names;
@@ -932,7 +948,10 @@ template <class T> void same_bits(fftn::isa a, fftn::isa b, fftn::detail::layout
   // fusing to radix 4, runs it as a pass of its own: with split passes forced both take the
   // separate route's split run.
   const std::vector<std::pair<std::size_t, std::vector<std::size_t>>> forced = {
-      {1024, {8, 8, 8}}, {4096, {8, 8, 4, 8}}, {8192, {8, 8, 8, 8}},};
+      {1024, {8, 8, 8}},
+      {4096, {8, 8, 4, 8}},
+      {8192, {8, 8, 8, 8}},
+  };
   for (const auto& [n, radices] : forced) {
     SCOPED_TRACE(std::string(fftn::isa_name(a)) + " and " + fftn::isa_name(b) +
                  (sizeof(T) == 8 ? " double" : " float") + ", n = " + std::to_string(n) +

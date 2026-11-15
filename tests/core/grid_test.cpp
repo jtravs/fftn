@@ -79,9 +79,14 @@ void check_grid(fftn::isa target, const grid_case& gc, fftn::direction dir, bool
   const fftn::shape<std::complex<T>, std::complex<T>> shape{
       .dir = dir,
       .axes = {{.n = n}},
-      .batches = {{.count = count,
-                   .in_dist = static_cast<std::ptrdiff_t>(dist),
-                   .out_dist = static_cast<std::ptrdiff_t>(dist),},},
+      .batches =
+          {
+              {
+                  .count = count,
+                  .in_dist = static_cast<std::ptrdiff_t>(dist),
+                  .out_dist = static_cast<std::ptrdiff_t>(dist),
+              },
+          },
   };
   const auto core =
       make_plan_core(fftn::detail::view_of(shape),
@@ -236,7 +241,8 @@ TEST(Grid, PlannerChoosesByTheProfile) {
   s.profile.grid_block_bytes = 16384;
   const auto plan = [&](std::size_t n, const build_settings& b) {
     return make_plan_core(
-        fftn::detail::view_of(fftn::rows_c2c<double>(n, 1, fftn::direction::forward)), fftn::options(), b);
+        fftn::detail::view_of(fftn::rows_c2c<double>(n, 1, fftn::direction::forward)),
+        fftn::options(), b);
   };
   EXPECT_FALSE(is_grid(*plan(512, s))); // 8192 bytes: not beyond
   EXPECT_TRUE(is_grid(*plan(1024, s))); // 16384
@@ -244,7 +250,7 @@ TEST(Grid, PlannerChoosesByTheProfile) {
   EXPECT_NE(two.find("in 2 phases"), std::string::npos) << two;
   const std::string three = described(*plan(4096, s));
   EXPECT_NE(three.find("in 3 phases"), std::string::npos) << three;
-  EXPECT_FALSE(is_grid(*plan(1031, s)));      // prime
+  EXPECT_FALSE(is_grid(*plan(1031, s)));                   // prime
   EXPECT_FALSE(is_grid(*plan(std::size_t{1024} * 17, s))); // a factor above 13
   build_settings chain = s;
   chain.strategy = strategy_choice::chain;
@@ -260,7 +266,10 @@ TEST(Grid, PlannerChoosesByTheProfile) {
   EXPECT_FALSE(is_grid(*plan(1024, bad)));
   // A strided row and an edge factor are chains.
   const fftn::shape<std::complex<double>, std::complex<double>> strided{
-      .dir = fftn::direction::forward, .axes = {{.n = 4096, .in_stride = 2}}, .batches = {},};
+      .dir = fftn::direction::forward,
+      .axes = {{.n = 4096, .in_stride = 2}},
+      .batches = {},
+  };
   EXPECT_FALSE(is_grid(*make_plan_core(fftn::detail::view_of(strided), {}, s)));
   const cvec<double> factor(4096, 1.0);
   build_settings factors = s;
@@ -346,9 +355,11 @@ template <class T> void grid_agrees_with_chain(std::size_t n, bool three) {
 }
 
 TEST(Grid, AgreesWithTheChainAtLengthsTheRulesTake) {
-  for (const auto& [n, three] :
-       {std::pair{std::size_t{32768}, false}, std::pair{std::size_t{131072}, false},
-        std::pair{std::size_t{262144}, true},}) {
+  for (const auto& [n, three] : {
+           std::pair{std::size_t{32768}, false},
+           std::pair{std::size_t{131072}, false},
+           std::pair{std::size_t{262144}, true},
+       }) {
     grid_agrees_with_chain<double>(n, three);
     grid_agrees_with_chain<float>(n, three);
   }
@@ -375,9 +386,14 @@ template <class T> void fused_equals_unfused(fftn::isa target) {
           const fftn::shape<std::complex<T>, std::complex<T>> shape{
               .dir = dir,
               .axes = {{.n = n}},
-              .batches = {{.count = 2,
-                           .in_dist = static_cast<std::ptrdiff_t>(dist),
-                           .out_dist = static_cast<std::ptrdiff_t>(dist),},},
+              .batches =
+                  {
+                      {
+                          .count = 2,
+                          .in_dist = static_cast<std::ptrdiff_t>(dist),
+                          .out_dist = static_cast<std::ptrdiff_t>(dist),
+                      },
+                  },
           };
           fftn::test::input_source src(0xF05EULL + n);
           const cvec<T> x = src.complexes<T>(dist + n);

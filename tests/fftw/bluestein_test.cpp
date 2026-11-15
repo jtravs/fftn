@@ -43,8 +43,8 @@ std::vector<fftn::isa> isas() {
   return long_tests() ? runnable_isas() : std::vector<fftn::isa>{fftn::isa::best};
 }
 
-template <class T> void every_length_against_fftw(fftn::isa target, std::size_t first,
-                                                  std::size_t last) {
+template <class T>
+void every_length_against_fftw(fftn::isa target, std::size_t first, std::size_t last) {
   const subject<T> s = fftn_subject<T>(target);
   std::size_t failures = 0;
   for (std::size_t n = first; n <= last; ++n) {

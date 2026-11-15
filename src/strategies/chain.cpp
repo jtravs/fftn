@@ -260,8 +260,8 @@ std::size_t chain_builder<T>::split_from(const std::vector<std::size_t>& rad, bo
 }
 
 template <class T>
-chain_builder<T>::pass_layout
-chain_builder<T>::layout_of(std::size_t i, std::size_t from, std::size_t passes) {
+chain_builder<T>::pass_layout chain_builder<T>::layout_of(std::size_t i, std::size_t from,
+                                                          std::size_t passes) {
   if (i < from) {
     return pass_layout::interleaved;
   }
@@ -297,8 +297,8 @@ template <class T> const T* chain_builder<T>::edge_twiddles(std::size_t n) {
 // per element of a line of `copies` interleaved sequences, copies Q, in per-lane storage
 // padded with ones to whole registers.
 template <class T>
-chain_builder<T>::bluestein_tables
-chain_builder<T>::bluestein_tables_of(std::size_t q, int sign, std::size_t copies) {
+chain_builder<T>::bluestein_tables chain_builder<T>::bluestein_tables_of(std::size_t q, int sign,
+                                                                         std::size_t copies) {
   const std::size_t m = bluestein_length(q, profile_);
   const auto kernel_key = std::make_pair(q, sign);
   auto kit = kernel_tables_.find(kernel_key);
@@ -410,7 +410,8 @@ void chain_builder<T>::add_pass(std::size_t n, const std::vector<std::size_t>& r
     // A first pass with copies is a Bluestein convolution's (batch copies, all of them
     // here); its input factor, the backward chain's kernel spectrum, holds one entry per
     // element of a copy, which every lane shares.
-    st.run = in == edge_op::factor ? k.codelet[codelet_slot(radix)].lane_shared_in : k.codelet[codelet_slot(radix)].lane[d];
+    st.run = in == edge_op::factor ? k.codelet[codelet_slot(radix)].lane_shared_in
+                                   : k.codelet[codelet_slot(radix)].lane[d];
     st.args.twiddles = shared_twiddles(n / batch, radix, s / batch);
     st.units = m * blocks(s);
     st.chunks = chunks_of(st.units, radix * c);
@@ -508,8 +509,8 @@ void chain_builder<T>::add_bluestein(std::size_t n, std::size_t q, int sign, end
   // The convolution starts in the scratch line the source is not in, and ends there.
   const slot conv =
       src.where == slot::a || src.where == slot::b ? other_scratch(src.where) : slot::a;
-  const std::string geometry = "Q " + std::to_string(q) + ", M " + std::to_string(m) +
-                               ", copies " + std::to_string(s);
+  const std::string geometry =
+      "Q " + std::to_string(q) + ", M " + std::to_string(m) + ", copies " + std::to_string(s);
   stage st;
   st.run = k.bluestein_in[shared ? 1 : 0][edge_index(in)];
   st.args.m = m;
@@ -552,8 +553,8 @@ void chain_builder<T>::add_bluestein(std::size_t n, std::size_t q, int sign, end
     std::size_t copies = s;
     for (std::size_t i = 0; i < rad.size(); ++i) {
       const slot next = other_scratch(at);
-      add_pass(s * m, rad, i, copies, dir, {at, 1}, {next, 1}, dir < 0 ? forward : backward,
-               stages, s);
+      add_pass(s * m, rad, i, copies, dir, {at, 1}, {next, 1}, dir < 0 ? forward : backward, stages,
+               s);
       at = next;
       copies *= rad[i];
     }
@@ -711,16 +712,14 @@ void chain_builder<T>::chain_tail(std::size_t n, const std::vector<std::size_t>&
     if (bluestein && last) {
       add_bluestein(n, rad[i], sign, at, next, edges, i == 0, stages);
     } else {
-      add_pass(n, rad, i, s, sign, at, next, edges, stages, 1,
-               layout_of(i, split, rad.size()));
+      add_pass(n, rad, i, s, sign, at, next, edges, stages, 1, layout_of(i, split, rad.size()));
     }
     at = next;
     s *= rad[i];
   }
 }
 
-template <class T>
-real_route chain_builder<T>::route(std::size_t n, bool r2c, bool strided) const {
+template <class T> real_route chain_builder<T>::route(std::size_t n, bool r2c, bool strided) const {
   if (n % 2 == 1) {
     return real_route::full;
   }
@@ -868,8 +867,8 @@ std::size_t chain_builder<T>::r2c_line(std::size_t n, endpoint src, endpoint dst
   case real_route::strided: {
     add_edge(k.r2c_pack_pairs, "r2c pack pairs", n, h, src, {slot::a, 1}, nullptr, 1.0, stages);
     const slot z = scratch_chain(h, -1, slot::a, stages);
-    add_edge(k.r2c_post_strided[scaled], "r2c pairing", n, h / 2 + 1, {z, 1}, dst,
-             edge_twiddles(n), scale, stages);
+    add_edge(k.r2c_post_strided[scaled], "r2c pairing", n, h / 2 + 1, {z, 1}, dst, edge_twiddles(n),
+             scale, stages);
     return std::max(h, line_scratch_);
   }
   case real_route::full: {
@@ -969,11 +968,11 @@ std::size_t chain_builder<T>::c2r_line(std::size_t n, endpoint src, endpoint dst
   }
   switch (route(n, false, src.stride != 1 || dst.stride != 1)) {
   case real_route::strided: {
-    add_edge(k.c2r_pre_strided, "c2r pairing", n, h / 2 + 1, src, {slot::a, 1},
-             edge_twiddles(n), 1.0, stages);
+    add_edge(k.c2r_pre_strided, "c2r pairing", n, h / 2 + 1, src, {slot::a, 1}, edge_twiddles(n),
+             1.0, stages);
     const slot z = scratch_chain(h, +1, slot::a, stages);
-    add_edge(k.c2r_unpack_pairs[scaled], "c2r unpack pairs", n, h, {z, 1}, dst, nullptr,
-             scale, stages);
+    add_edge(k.c2r_unpack_pairs[scaled], "c2r unpack pairs", n, h, {z, 1}, dst, nullptr, scale,
+             stages);
     return std::max(h, line_scratch_);
   }
   case real_route::full: {

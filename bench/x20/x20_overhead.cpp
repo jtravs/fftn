@@ -71,7 +71,8 @@ template <class F> double time_ns(F&& f, std::size_t transforms, int reps, doubl
     }
     const double el = std::chrono::duration<double, std::milli>(clock_type::now() - t0).count();
     if (el > ms * 0.5) {
-      calls = std::max<std::size_t>(1, static_cast<std::size_t>(static_cast<double>(calls) * ms / el));
+      calls =
+          std::max<std::size_t>(1, static_cast<std::size_t>(static_cast<double>(calls) * ms / el));
       break;
     }
     calls *= 2;
@@ -136,11 +137,13 @@ template <class T> void run_case(std::size_t n, std::size_t batch, int reps, dou
     std::printf("%zu %zu %s %s %.3f\n", n, batch, prec, level, ns);
   };
 
-  report("api", time_ns([&] { d::execute_core(*core, 0, batch, in.data(), out.data(), ws); },
-                        batch, reps, ms));
+  report("api", time_ns([&] { d::execute_core(*core, 0, batch, in.data(), out.data(), ws); }, batch,
+                        reps, ms));
 
-  d::slot_addresses at{.in = reinterpret_cast<const std::byte*>(in.data()),
-                       .out = reinterpret_cast<std::byte*>(out.data()),};
+  d::slot_addresses at{
+      .in = reinterpret_cast<const std::byte*>(in.data()),
+      .out = reinterpret_cast<std::byte*>(out.data()),
+  };
   if (core->bytes != 0) {
     std::byte* raw = ws.memory().data();
     const auto address = reinterpret_cast<std::uintptr_t>(raw);
@@ -148,8 +151,7 @@ template <class T> void run_case(std::size_t n, std::size_t batch, int reps, dou
     at.a = base;
     at.b = base + core->offset_b;
   }
-  report("driver",
-         time_ns([&] { d::run_transforms(core->prog, 0, batch, at); }, batch, reps, ms));
+  report("driver", time_ns([&] { d::run_transforms(core->prog, 0, batch, at); }, batch, reps, ms));
 
   // The body: the records after the batch loops, which for rows are stages only.
   const d::program& p = core->prog;
