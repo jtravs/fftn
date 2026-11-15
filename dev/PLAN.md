@@ -6,7 +6,8 @@ session; update a phase when its tasks or findings change.
 
 ## Status
 
-**As of 2026-11-15, evening. Work is paused here; this section is the handoff.** Lessons
+**As of 2026-11-15, evening.** Work continues on the one-dimensional double leads (claims
+below); this section is also the handoff. Lessons
 that generalise are in [LESSONS.md](LESSONS.md), decisions in DESIGN.md section 19, open
 questions in DESIGN.md section 18.2.
 
@@ -51,7 +52,10 @@ Open, by phase:
 - 3: T2, T3, T4, T6; 3.5 (Kokkos executor); 3.6 to be checked against its acceptance.
 - 4–7: not started.
 
-In flight at the pause: nothing. X25 (the x86 gap's causes, from counters and FFTW's
+In flight (lead session, 2026-11-15 evening): X23b (masked partial runs adopted for GCC
+builds, `FFTN_MASKED_TAILS`), X26 (lead 1, the grid's copies), X27 (lead 2, 17-point and
+other prime codelets), X28 (lead 4, single short rows), X29 (lead 5, the real footprint in
+the chain-or-grid rule). Lead 3 (x86 pass-loop instructions) starts after X23b lands. X25 (the x86 gap's causes, from counters and FFTW's
 printed plans) is done; its verdicts are folded into the leads below. X23 (masked partial
 runs on x86) is done and rejected by its rule: Clang 23 loses on odd double lengths, while
 GCC 14 gains much (float 0.60 of main on `avx512`); the masked code is in the branch's
