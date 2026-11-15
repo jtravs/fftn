@@ -66,6 +66,16 @@ its nodes). The Xeon is shared: small allocations (`-c 8`), never exclusive. Tim
 fbench's load-tolerant rounds everywhere; add rounds rather than waiting for quiet. Build
 once with the Mac's GCC 16 before a remote round trip (GCC-only warnings).
 
+Task 2.2 (branch `task/2.2-lanes`, lanes session, 2026-11-15): the lanes strategy for
+batches of short rows (DESIGN 8.5 as built; X7 done). Every row keeps the chain's bits.
+Measured (X7): the lanes take 0.13–0.59 of the chain's time at 8–16 points everywhere; on
+the M5 in double (no gather) they run at 0.75–1.01 of NEON FFTW's time (1.06–1.16 at 32
+and 64 points); on x86 double c2c they
+still trail FFTW (Xeon AVX-512 1.3–1.5 at 8–16 points, EPYC 1.7) and MKL (up to 2.2), so
+2.2's acceptance is not met there; real rows are at or below FFTW on most cases. Next: a
+first pass that builds the lanes through vector inserts on x86 (FFTW's way) instead of the
+transpose pass, the strided axes of planes (phase 4), and the x86 pass speed itself (X18).
+
 Task 1.5 (branch `task/1.5-split`, split-lowering session): the generator's split lowering
 (radices 2–16, plain and DIF, FMA-shaped, tangent rotations), split lane passes on the BL
 layout converting at a split run's ends, `target_profile::split` and `build_settings::layout`
@@ -166,7 +176,7 @@ behaves differently from the Cascade Lake Xeon's) and on an AArch64 Linux machin
 | ID | Task | Acceptance |
 |---|---|---|
 | 2.1 | r2c with the post fused into the last pass; c2r through the DIT chain with the pre fused; eligibility by live-value count; experiment X6 (real-input codelets) | real overhead ≤ 20 % of the half-length complex time on all three machines |
-| 2.2 | Lanes strategy for row batches (tile gather and scatter) and strided lines; lane blocks sized by cache; experiment X7 | awkward short rows on AVX-512 at or below FFTW and MKL |
+| 2.2 | Lanes strategy for row batches (tile gather and scatter) and strided lines; lane blocks sized by cache; experiment X7 | awkward short rows on AVX-512 at or below FFTW and MKL (built 2026-11-15, X7: lanes 0.13–0.59 of the chain at 8–16 points; AVX-512 double c2c still 1.3–1.5 of FFTW and up to 2.2 of MKL, real rows mostly at or below FFTW; strided axes of planes are phase 4's) |
 | 2.3 | Codelets 7, 11, 13 and composites; vectorised generic prime pass; Bluestein pass with smooth-part split | every n ≤ 4096 correct and priced; no FFTW fallback anywhere |
 | 2.4 | Cost model, machine profiles and `fbench calibrate`; `planning::measure`; wisdom export and import; experiments P1, P2 | the model's first choice is within 5 % of the measured best for ≥ 90 % of catalogue cases |
 | 2.5 | `next_fast_length` and published per-length cost | documented and tested |
@@ -258,7 +268,7 @@ running, done (with verdict).
 | [X4](experiments/X4-padding.md) | Padding: incremental addressing cost; pad always, never, or only where the stream rule binds. Also: do edge passes gain from a variant chosen by the caller's base address (cache-line splits on wide registers)? | 1 | running: for the grid on the Mac, staggered scratch lines adopted (2^22 −8 %), padding the intermediate rejected; the chain's lines, x86 and edge-pass variants open |
 | X5 | Twiddle modes (full, shared, derived) by length and target | 1 | planned |
 | [X6](experiments/X6-real-codelets.md) | Real-input codelets against half-length complex with fused post/pre, even and odd n | 2 | planned (needs the generator's pruned variants); the half-length route's fusion rule measured on the Mac (task 2.1) |
-| X7 | Lanes against in-row kernels for batches of short rows, by length, target and row count | 2 | planned |
+| [X7](experiments/X7-lanes.md) | Lanes against in-row kernels for batches of short rows, by length, target and row count | 2 | done: lanes adopted up to `lanes_up_to` (256 on NEON double, 32 NEON float, 24/48 AVX2, 32/128 AVX-512); 0.13–0.59 of the chain's time at 8–16 points |
 | [X8](experiments/X8-leaves.md) | Whole-transform leaves for n ≤ 64–256 against two- and three-stage chains | 1 | done: leaf limit 32 on NEON in double (16–22 % faster), 16 elsewhere; no leaf of 64 |
 | X9 | Scrambled intermediate order for transform pairs | 5 | planned |
 | [X10](experiments/X10-pass-loops.md) | Generated whole passes against templated pass loops; on x86 first: addressing, register budget and shuffles of the pass loops (after X18) | 1 | done: rejected (loop addressing cuts instructions, not time; the cost is port-5 shuffles, X19 next) |

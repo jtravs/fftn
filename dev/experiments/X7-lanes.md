@@ -1,6 +1,6 @@
 # X7: lanes against in-row kernels for batches of short rows
 
-- **Status:** running
+- **Status:** done (adopted)
 - **Owner:** lanes session, 2026-11-15
 - **Phase / task:** 2.2
 
@@ -78,8 +78,48 @@ rows in the first and last passes where a run of C rows is one access (C = 1), a
 those passes rows outermost, turned that into 0.26 (8 points) to 0.96 (256), and real rows
 0.49–0.97 (c2r of 256: 1.05).
 
-(Decision runs: pending.)
+A first pass reading the rows through a stack tile per element on C = 2 (NEON float),
+instead of the gather, was slower (0.56 against 0.39 ns per point at 8 points, 1.4–1.6 times
+the chain from 64 on) and was dropped.
+
+Decision runs (median of L ÷ C over rounds; FFTN ÷ competitor from the same runs' medians):
+
+- **Xeon Gold 6240**, run 20261115-004715-ca5d (commit 9a4b8ed; 8 rounds, band ±3.0 %,
+  load 7.5 on 72 CPUs). AVX-512, L ÷ C: double 0.29–0.45 at 8–16 points, 0.33 at 24,
+  0.63–0.75 at 32, slower from 48 (b1024 1.14); float 0.13–0.26 at 8–24, 0.53–0.98 up to
+  128 (none slower), 1.12–1.26 at 256; real rows 0.16–0.79 up to 128 in float, double
+  r2c 128 b1024 1.38. AVX2 forced (L2 ÷ C2, medians only): double 0.43–0.69 at 8–16,
+  0.99–1.00 at 24, 1.13–1.23 at 32; float 0.23–0.40 at 8–24, 0.72 at 32, 0.89 at 48, 1.04–1.13
+  at 64. Against the competitors, AVX-512 double: c2c lanes ÷ FFTW 0.88–1.53 at 8–16
+  points (1.3–1.5 at batch 64), 0.80 at 24, 1.2–1.3 at 32–256; lanes ÷ MKL 1.0–2.2 (MKL
+  0.49 ns per point at 16 points against 1.07); r2c 0.70–0.92 of FFTW up to 64, c2r
+  0.54–0.77 of FFTW and 0.54–1.12 of MKL up to 64.
+- **EPYC 7763**, run 20261115-004702-22c7 (commit 9a4b8ed; 8 rounds, band ±1.05 %, no round
+  loaded). AVX2 double 0.38–0.59 at 8–16, 0.78–0.93 at 24–32, 0.98–1.03 at 48–100 (none
+  slower at 48), slower from 64 (b1024 1.07); float 0.21–0.29 at 8–24, 0.55–0.84 at 32–100,
+  1.05 at 128 b4096; real rows 0.32–0.98 throughout. Lanes ÷ FFTW (double): c2c 1.7 at 8–16
+  points, 1.1–1.6 above; r2c and c2r 0.73–1.04 (r2c 16 0.91, 64 0.91).
+- **M5 Max**, run 20261115-010429-28d5 (branch commit ccf09d2; 8 rounds, all loaded: load
+  14 on 18 CPUs, band ±4.7 %). `neon_fcma` double (C = 1, no gather): 0.26–0.46 at 8–16,
+  0.55–0.76 at 24–48, 0.85–0.99 at 64–128, no case slower up to 256 (c2c 256 1.00–1.07,
+  real 256 0.99–1.04, inside the band); lanes ÷ NEON FFTW 0.86–1.01 at 8–16, 0.75–0.82 at
+  24 and 48, 0.78–0.98 at 100–256, 1.06–1.16 at 32 and 64; r2c 0.81–1.09, c2r 0.62–1.15.
+  Float (C = 2, gather): 0.84–0.97 at 24–32, slower from 48 (b1024 1.15).
+
+Thresholds by the rule (the length before the first slower case, the minimum over the
+machines sharing a target): AVX-512 32 (double) and 128 (float); AVX2 24 (the EPYC alone
+allowed 48) and 48 (the EPYC 100); NEON 256 where C = 1 and 32 in float. Every geometric
+mean up to its threshold is below 0.97 (0.33–0.70). The block rule was not varied: no
+forced-block arm was run (a follow-up if the x86 gather is replaced).
 
 ## Verdict
 
-(Pending.)
+Adopted: the lanes are the rules' choice for a batch of at least C rows up to
+`lanes_up_to` per target and C (`src/planner/rules.cpp`, commit after 5dba687 for NEON
+float's 32), DESIGN.md 8.5 as built, lesson 4.7. Task 2.2's acceptance (awkward short rows
+on AVX-512 at or below FFTW and MKL) is met for real rows but not for c2c in double: the
+lanes cut FFTN's time to a third at 8–16 points, but FFTW stays 1.3–1.5 times and MKL up to
+2.2 times faster there. What remains on x86 is the gather and scatter (two passes over the
+block, which FFTW avoids by building its vectors from 128-bit inserts in the codelet's
+loads) and the passes' own speed (X18); both are follow-ups, not part of this verdict.
+

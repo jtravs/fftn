@@ -212,6 +212,18 @@ chain pass at 2048 vanished once the radix-16 codelets lost 12 of their 19 swaps
 register file. And a cost table fitted on lengths up to 2048 extrapolates its big-radix
 columns badly: at 4096 it chose 32·4·32, 2–11 % slower than the measured 8·16·32. [X3](experiments/X3-big-radices.md).
 
+4.7 **Batches of short rows: vectorise across rows, and avoid the transpose where you can.**
+Run row by row, a short row pays a fixed cost (driver, pass set-up: about 6 ns a row on an
+M5, where FFTW's whole 8-point row takes 2.3 ns) and, on wide registers, idle lanes. Putting
+one row in each lane, with the row's own codelets so every bit is unchanged, took 8–16-point
+rows to 0.13–0.45 of the row-by-row time on AVX-512 and 0.26–0.45 on the M5 in double. The
+transpose into lanes costs two passes over the block: where it is needed (C > 1, rows not
+adjacent) the lanes lose from 32–256 points on, depending on how badly the row's own first
+passes fill the register; where it is not (C = 1, or interleaved rows) they won up to 256.
+Building each vector element by element through a stack tile was slower than the
+transpose. Read and write the rows in the order the row-by-row code does: walking the
+rows group by group cost 1.3 times beyond L1. [X7](experiments/X7-lanes.md).
+
 ## 5. Threading
 
 5.1 **Synchronisation costs set the smallest row worth splitting.** Spin barrier /

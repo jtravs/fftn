@@ -334,7 +334,7 @@ bool split_of(target t, std::size_t /*lanes*/) {
 // rows (no gather), so the lanes won up to 256 on the M5; where C > 1 a gather and a scatter
 // cost two passes, so they win only where the chain idles lanes (leaves, first passes with
 // fewer than C groups): AVX2 24 (double; the EPYC alone allowed 48) and 48 (float; 100), the
-// Xeon's AVX-512 32 and 128, NEON float 48. The scalar target is not measured.
+// Xeon's AVX-512 32 and 128, NEON float 32. The scalar target is not measured.
 std::size_t lanes_up_to_of(target t, std::size_t lanes) {
   switch (t) {
   case target::avx512:
@@ -343,7 +343,7 @@ std::size_t lanes_up_to_of(target t, std::size_t lanes) {
     return lanes == 2 ? 24 : lanes == 4 ? 48 : 0;
   case target::neon:
   case target::neon_fcma:
-    return lanes == 1 ? 256 : lanes == 2 ? 48 : 0;
+    return lanes == 1 ? 256 : lanes == 2 ? 32 : 0;
   default:
     return 0;
   }
