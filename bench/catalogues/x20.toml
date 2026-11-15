@@ -1,0 +1,25 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Experiment X20's cases (dev/experiments/X20-call-overhead.md): tiny c2c rows, forward, out
+# of place, double and single precision, where the fixed cost of a call and the driver's
+# cost per transform are a large part of the time.
+
+[catalogue]
+name = "x20"
+
+[[group]]
+name = "x20-tiny"
+note = "rows of 2 to 64 points, one transform and a batch of 64"
+kind = "c2c"
+dims = [2, 4, 8, 16, 32, 64]
+batch = [1, 64]
+precision = ["f64", "f32"]
+
+[[group]]
+name = "x20-batch"
+note = "large batches of short rows (8 x 4096 is the client application's worst ratio)"
+kind = "c2c"
+dims = [8, 16, 64]
+batch = [4096]
+precision = ["f64", "f32"]

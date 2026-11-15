@@ -172,7 +172,7 @@ is a portable vocabulary change to make.**
   close most of icpx's float lead with any compiler. Second: spill-aware ordering in the
   generator for radix 16–32 codelets on x86.
 - Lesson: [LESSONS.md](../LESSONS.md) 2.5 (corrected: the compiler matters for tails and
-  big codelets) and 6.12 (icpx's floating-point default).
+  big codelets) and 6.13 (icpx's floating-point default).
 
 Campaign directory on the Xeon: `~/awork/fftn-icpx` (scripts `gate.sbatch`,
 `build.sbatch`, `fb.sbatch`, `perf.sbatch`, `pair.py`, `hot.py`, `mix.sh`).
