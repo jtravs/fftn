@@ -340,9 +340,9 @@ TEST(Schedule, ProfileForRecordedMachines) {
     EXPECT_EQ(other.sync_ns, 700);
     EXPECT_EQ(other.claim_divisor, 2);
   }
-  // The grid's sizes come from the caches (X12b: a private L2 starts the grid at half of it,
-  // the EPYC's 512 KiB at 256 KiB; the grid's blocks stay within L1).
-  EXPECT_EQ(epyc.grid_min_bytes, std::size_t{256} * 1024);
+  // The grid's sizes come from the caches (X12b: a private L2 starts the grid at half of it;
+  // X29: the EPYC's 4 MiB of L3 per CPU at half of its 32 MiB L3; the blocks stay in L1).
+  EXPECT_EQ(epyc.grid_min_bytes, std::size_t{16} * 1024 * 1024);
   EXPECT_EQ(epyc.grid_block_bytes, std::size_t{32} * 1024);
   // An Intel Mac (per-core L2s) is not an Apple processor: macOS alone does not decide.
   const machine_profile intel_mac =
@@ -418,8 +418,9 @@ TEST(Schedule, OwnedTasksPartition) {
 }
 
 // The grid's sizes from the recorded machines' caches (experiment X12b): a private L2
-// (Xeon, EPYC) keeps the chain to half of L2 and two phases to L2; an L2 shared by a cluster
-// (Apple) gets the grid beyond L1 and three phases beyond an eighth of L2.
+// (Xeon, EPYC) keeps the chain to half of L2 and two phases to L2, and with 2 MiB or more of
+// L3 per CPU (EPYC) to half of L3 (X29); an L2 shared by a cluster (Apple) gets the grid
+// beyond L1 and three phases beyond an eighth of L2.
 TEST(Schedule, GridSizesFromCaches) {
   const std::filesystem::path data(FFTN_PLATFORM_DATA);
   const auto sizes = [&](const char* file) {
@@ -434,7 +435,7 @@ TEST(Schedule, GridSizesFromCaches) {
   EXPECT_EQ(xeon.grid_block_bytes, 32 * kib);
   EXPECT_EQ(xeon.grid_fuse_bytes, 256 * kib);
   const machine_profile epyc = sizes("linux-amd-epyc-7763.sysfs"); // 32 KiB, 512 KiB
-  EXPECT_EQ(epyc.grid_min_bytes, 256 * kib);
+  EXPECT_EQ(epyc.grid_min_bytes, 16 * 1024 * kib);                 // half of its L3 (X29)
   EXPECT_EQ(epyc.grid_three_bytes, 512 * kib);
   EXPECT_EQ(epyc.grid_block_bytes, 32 * kib);
   const machine_profile m5 = sizes("macos-apple-m5-max.sysctl"); // 128 KiB, 16 MiB for 6
