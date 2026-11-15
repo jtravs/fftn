@@ -47,10 +47,11 @@ Open, by phase:
 - 3: T2, T3, T4, T6; 3.5 (Kokkos executor); 3.6 to be checked against its acceptance.
 - 4–7: not started.
 
-In flight at the pause: X23 (masked partial runs in the `avx512` and `avx2` vocabularies,
-branch `exp/x23-masked-tails`, pull request 5). If it is still open when work resumes, read
-its pull request first. X25 (the x86 gap's causes, from counters and FFTW's printed plans)
-is done; its verdicts are folded into the leads below.
+In flight at the pause: nothing. X25 (the x86 gap's causes, from counters and FFTW's
+printed plans) is done; its verdicts are folded into the leads below. X23 (masked partial
+runs on x86) is done and rejected by its rule: Clang 23 loses on odd double lengths, while
+GCC 14 gains much (float 0.60 of main on `avx512`); the masked code is in the branch's
+history (arms 1132477, 0baf6a3, 489b268), and finding Clang's loss is a follow-up (lead 7).
 
 ### Leads, one-dimensional double first
 
@@ -96,7 +97,8 @@ runs; the numbers above are the baseline to beat. The rest (6–9) follow. X25's
    take 0.56–0.96 of the chain's time). X25: batched leaves saturate one unit (Xeon ports
    0 and 5 at 82–87 %, EPYC FP pipes 2 and 3 up to 95 %).
 7. Float: 60 points on `avx512` 2.6 times `avx2` (Xeon and cloud); `best_target` per
-   precision and length; X23's tails.
+   precision and length; X23's masked partial runs (GCC 14: float 0.60 of main on `avx512`,
+   0.80 on `avx2`) once Clang 23's loss on odd double lengths (`avx2` 75: 1.42) is found.
 8. Planes and volumes (phase 4): the EPYC's 64³ c2c (10.9 times FFTW).
 9. Threading: a dispatch cost that grows with the team's width (DESIGN 18.2 item 22).
 
@@ -327,6 +329,7 @@ running, done (with verdict).
 | [X20](experiments/X20-call-overhead.md) | Where does a tiny serial execute's time go (entry, driver, kernel), and what does a leaner driver close at n ≤ 64? | 1 | done: adopted (flat programs, leaves called with addresses, a batch of leaf rows in one call): Mac 0.45 of main over the x20 cases, 8 × 4096 3.08 → 0.97 of FFTW; Xeon 0.57 (one case slower at that commit, gone after two entry fixes per the harness; fbench confirmation pending) |
 | [X21](experiments/X21-phase1-cloud.md) | Phase 1 exit cloud checks: is anything badly off on a recent Intel Xeon (with MKL), Zen 5 and a Neoverse, and does `avx512` over `avx2` hold off Cascade Lake? | 1 | done: nothing badly off (FFTN ÷ FFTW over the tracking c2c rows: Emerald Rapids 1.17, Zen 5 1.12, Axion 0.81; FFTN ÷ MKL 1.19); avx512 wins in double everywhere, in float not on Zen 5, and loses 3× at 60 points in float; USD 1.36 |
 | [X22](experiments/X22-icpx.md) | Intel's icpx: does FFTN build and pass with it, which floating-point flags keep the numerical contract, and is it faster than GCC and Clang on the Xeon? | 1 | done: supported with `-fno-fast-math` (set by CMake); not recommended (Clang's equal in double, 3 % behind on tracking rows); float 0.80 of Clang on 7-smooth rows from masked partial runs, a portable vocabulary follow-up |
+| [X23](experiments/X23-masked-tails.md) | Do masked partial runs in the `avx512` and `avx2` vocabularies close most of icpx's float lead with GCC and Clang (X22), and become the default on x86? | 1 | done: rejected. B as first written slowed whole units (up to 1.15); amended B5 (partial units after the loops, constant counts) wins with GCC 14 (float 0.60 of main on `avx512`) but loses with Clang 23 on odd double lengths (`avx2` 75: 1.42), so the masked accesses are deleted; the partial-run test stays. Follow-up: Clang's odd-length loss |
 | [X24](experiments/X24-lanes-x86.md) | Cheaper lanes on x86: with X20's per-call preparation in the lanes driver and first and last passes that build registers from 128-bit loads of each row (no gather or scatter), do the lanes beat the batched-leaf chain in double at 8–64 points and reach FFTW at 8–16? | 2 | done: both changes rejected (per-call driver: 1–7 % slower at 8–16 × 64; per-row edge passes: up to 1.17 on AVX-512 at 24–256 points). `lanes_up_to` in double stays 0 on x86; 2.2's double c2c acceptance on AVX-512 not met (lanes 1.31–1.53 of FFTW, chain 1.01–1.26) |
 | [X25](experiments/X25-x86-diagnosis.md) | Why does FFTN trail FFTW in 1-D double on x86 (EPYC 1.21, Xeon 1.06): kernel instruction stream, memory hierarchy or fixed cost per call, per case group? Counters and FFTW's plans, no library change | 1 | done: long rows (both machines) and EPYC 256–1024 are the instruction stream (the grid's `block_copy` 40–52 % of FFTN's instructions; AVX2 loops 1.4–1.6 times FFTW's instructions for the same FP work, at IPC up to 4.7); ≤ 16 points the fixed cost per call (FFTW uses 128-bit codelets); memory only for Xeon r2c 65536 (chain of 32768) and EPYC 4096; Xeon 128–4096 at par, port 5 the limit |
 | P1 | Cost-model accuracy: rank agreement with measurement across the catalogue per machine | 2 | planned |

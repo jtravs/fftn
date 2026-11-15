@@ -333,6 +333,24 @@ over. Preparing the lanes' arguments once per call, as X20 did for rows, was 1�
 at the smallest batches (64 rows of 8–16 points) and up to 4 % faster elsewhere: a fixed-cost
 change needs its smallest case in the catalogue. [X24](experiments/X24-lanes-x86.md).
 
+4.9 **Keep a loop's rare path out of the loop, with constant indices.** Masked vector
+accesses for the partial units of FFT passes (the last unit when the lane count C does not
+divide the butterfly count) took GCC 14's float 7-smooth rows to 0.60 of the old time on
+AVX-512 and 0.80 on AVX2 (Xeon 6240), but written inside the loop over units they first made
+whole units slower, up to 1.15 of the old time at lengths with no partial unit at all.
+Three mechanisms, each found by perf or disassembly and fixed without changing a bit: the
+compilers hoisted the rare path's set-up (masks, a pointer per leg) into the function's
+prologue (Clang 23: 80 to 350 instructions for a radix-8 pass called on two units) and
+lost registers in the hot loop (GCC: 4 % more instructions per transform at 128 points);
+a store loop bounded by the runtime count indexed the register array at run time, so the
+compiler kept the array in memory for every unit (Clang: 1.16–1.46 of the old time); and a
+count the compiler could not see was constant stopped a store loop from unrolling (Clang,
+double 75 points: 1.6). Running whole units in the loop and the partial one after it, with
+the count a constant inside the loop, removed all three. It did not remove a Clang-only
+loss on odd double lengths (AVX2 75 points still 1.42), so the change was rejected: a
+code-generation change must be measured with every compiler a user may build with, since
+two compilers can disagree by 40 % on the same source. [X23](experiments/X23-masked-tails.md).
+
 ## 5. Threading
 
 5.1 **Synchronisation costs set the smallest row worth splitting.** Spin barrier /
@@ -464,3 +482,13 @@ tests failing (twiddles 1 ulp off). Pass `-fno-fast-math` before `-ffp-contract=
 (`-fp-model=precise -ffp-contract=off` draws an override warning that `-Werror` makes an
 error), to third-party targets too when their `main()` runs your tests.
 [X22](experiments/X22-icpx.md).
+
+6.14 **AVX2 code runs on Apple silicon under Rosetta 2 when asked.** An x86-64 build
+(Apple Clang, `-arch x86_64`) executes AVX, AVX2 and FMA under Rosetta (seen on Darwin 27),
+but CPUID reports none of them unless the process is started with
+`ROSETTA_ADVERTISE_AVX=1` (`arch -x86_64 -e ROSETTA_ADVERTISE_AVX=1 ./test`), so runtime
+dispatch picks the scalar path by default. With it, FFTN's whole x86-64 suite (1089 tests,
+`avx2` forced in turn) ran on an M5 Max, guard-page faults included. AVX-512 is not
+emulated; that still needs SDE or the hardware. Build the test oracles for x86-64 too (an
+ExternalProject that ignores `CMAKE_OSX_ARCHITECTURES` links arm64 objects).
+[X23](experiments/X23-masked-tails.md).
