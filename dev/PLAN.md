@@ -89,6 +89,9 @@ Decisions the maintainer has not yet taken are listed in DESIGN.md section 18.2.
 - On the Mac compare against the NEON build of FFTW, and build at most 6 jobs in parallel
   (the Mac is shared).
 - Every experiment's verdict goes into its file, the index below and LESSONS.md.
+- The arm branches that the X10, X15 and X24 files cite (`exp/x10-pass-loops`,
+  `exp/x15-arm-*`, `exp/x24-lb-only`) exist only in the maintainer's local clone; they
+  are not pushed.
 
 Baseline runs (fbench run IDs): EPYC tracking 20261113-230721-7c95 (PATIENT timeout,
 re-run with MEASURE); Xeon (GCC 14) tracking 20261114-004852-f498; Mac client catalogue
