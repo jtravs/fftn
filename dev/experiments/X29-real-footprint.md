@@ -92,7 +92,71 @@ c2c included (0.53–0.74, to 2¹⁹ points). The rule's thresholds were set on 
 
 ## Results
 
-(pending)
+Ratios are medians of paired per-round ratios; "C ÷ A" is the chain forced against the
+rules (A, main), "G ÷ A" the grid forced. FFTN ÷ FFTW is A's time over FFTW's.
+
+### Step 1, the screen
+
+**Mac** (run 20261115-191654-64aa; 80 rounds, 78 loaded; band ±1.56 %). The rules' choice
+is right for every power-of-two real row: the chain at 4096–16384 (the grid 1.07–1.77
+there), the grid from 32768 (the chain 1.34–1.70). The exception is 46080: the chain took
+0.61–0.67 of the grid's time (c2c 23040 likewise 0.58), see arm (c). Real overhead of the
+grid route at 32768–2²⁰ (time(real n) ÷ time(c2c n/2) − 1): r2c 0.07–0.13, c2r in place
+0.10–0.12 (2²⁰ −0.07), c2r out of place 0.22–0.26 in two phases and 0.06 at 2²⁰.
+
+**EPYC** (run 20261115-201639-d66e; 38 rounds, 29 under load, other jobs on 66 of the
+node's cores; band ±1.00 %). The chain beat the grid on **every** long row: c2c 32768
+0.72, 65536 0.72, 2¹⁹ 0.53, 23040 0.64; r2c and c2r 65536 0.73–0.74, 131072 0.65–0.70,
+2²⁰ 0.53–0.58, 46080 0.67. The grid's own times match the baseline run's (c2c 65536 6.7
+against 6.9 ns per point), so this is not the load. With the chain FFTN ÷ FFTW is
+0.58–1.10 on these rows instead of 1.07–1.68. The real rows at 32768 (half-length
+256 KiB, the EPYC's `grid_min_bytes`) are already chains, and the chain is as fast as the
+grid there (0.98–1.00). Real overhead with the rules' route at 65536–2²⁰: r2c 0.10–0.19,
+c2r out of place 0.16–0.24.
+
+**Xeon** (run 20261115-220233-2922; 53 rounds, 8 under load; band ±1.22 %; MKL arm as
+well). Unlike the EPYC, the Xeon's thresholds are about right: beyond L2/2 the chain lost
+(c2c 65536 1.23, 2¹⁹ 1.17; real 131072 1.09–1.22 except c2r out of place 0.98; 2²⁰
+1.12–1.57), and at 32768 (512 KiB, a chain) the grid was 0.96. Arm (a)'s k = 2 would make
+the real rows of 65536 (half-length 512 KiB) grids: r2c 0.941 out of place and 0.975 in
+place, c2r 1.153 out of place and 1.000 in place, geomean 1.015: no gain. X25's r2c 65536
+gap (FFTN ÷ FFTW 1.39 here) is not the threshold: the grid closes 6 % of it. Real overhead
+with the rules' route at 65536–2²⁰: r2c 0.14–0.26, c2r in place 0.10–0.27, out of place
+0.24–0.42 (131072: 0.42), the largest of the three machines.
+
+So the hypothesis of arm (a) is refuted on all three machines: real rows do not need the
+grid earlier than c2c rows of their half length (Xeon: no gain; EPYC: every row needs it
+far later; Mac: the rules are right for powers of two). Arm (a) was not built; the screen
+led to arms (c) and (d). Decision rule 3 holds for the c2r pairing (overhead out of place
+0.16–0.42 on all three machines) and not for r2c on the Mac (0.07–0.13).
+
+### Arm (b): the c2r pairing in phase 1's gather
+
+Commit 4817ed2 (every c2r grid), then 560eeba (out of place in two phases only). Mac,
+run 20261115-195518-1b08 (80 rounds, 77 loaded; band ±1.05 %), 4817ed2 ÷ main: c2r out of
+place 0.921–0.944 at 32768, 65536, 131072 and 46080 (all two-phase grids); in place
+1.045–1.056; 2²⁰ (three phases) 0.999 out of place, 1.022 in place; r2c and chains
+unchanged (0.98–1.01). Where the workspace block stays (in place, three phases) the
+gather's second read of the input costs more than the separate in-place pass, so 560eeba
+keeps the pass there. The r2c pairing is not fused (DESIGN 9.1: it needs both mirror
+blocks' final values in one iteration of the last phase).
+
+### Arm (c): lengths that are not powers of two on a shared L2
+
+Mac screens with A, C and FFTW: c2c rows 2^k × odd (run 20261115-202349-6ad1, 80 rounds,
+band ±1.00 %) and large rows (20261115-204941-894b, band ±1.00 %). By the power-of-two
+part p of the length: p ≤ 1024 points, the chain took 0.49–0.72 of the grid's time in all
+21 rows tried, from 144 KiB to 62.5 MiB (4 Mi points), and beat FFTW (0.55–0.91); p =
+2048–8192 was mixed (0.60–1.71); p ≥ 16384 the chain lost (1.06–1.78) except 327680
+(0.88). Every row up to 2 · L1 (256 KiB) whose length is not a power of two won
+as a chain (p up to 4096; 0.56–0.63), against 1.70 for the power of two 16384 there. Float (run
+20261115-215105-598b, band ±1.00 %): with the rule in bytes (p ≤ 2048 in float) every
+changed row won (0.53–0.84; geomean of the arm 0.80 of main).
+
+Arm commit 9752672 (with b2) against main, standard tracking tier (run
+20261115-210824-1a6a, 80 rounds, 55 loaded, band ±1.00 %): c2c 46080 0.630, 100000 0.600,
+c2r 65536 0.925; no other case outside ±2 %; geomean 0.983. FFTN ÷ FFTW at 46080 and
+100000 goes from 1.20–1.23 to 0.74–0.76.
 
 ## Verdict
 
