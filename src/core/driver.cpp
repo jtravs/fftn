@@ -123,19 +123,23 @@ void run_lane_blocks(const program& p, std::size_t first, std::size_t count,
     const std::size_t in_loop = inner.count - (t < inner.count ? t : t % inner.count);
     std::size_t run = end - t < in_loop ? end - t : in_loop;
     t += run;
-    for (; run >= p.lanes; run -= p.lanes) {
-      for (std::size_t i = p.batch_loops; i < p.records.size(); ++i) {
-        run_lane_stage(*std::get_if<stage>(&p.records[i]), at, p.lanes);
-      }
-      at = moved(at, inner.step, p.lanes);
-    }
+    // `at` moves only to a block that follows, so no address beyond the batch is formed.
     while (run != 0) {
-      const std::size_t rows = run < p.lane_unit ? run : p.lane_unit;
-      for (const stage& st : p.lane_tail) {
-        run_lane_stage(st, at, rows);
+      const bool whole = run >= p.lanes;
+      const std::size_t rows = whole ? p.lanes : (run < p.lane_unit ? run : p.lane_unit);
+      if (whole) {
+        for (std::size_t i = p.batch_loops; i < p.records.size(); ++i) {
+          run_lane_stage(*std::get_if<stage>(&p.records[i]), at, rows);
+        }
+      } else {
+        for (const stage& st : p.lane_tail) {
+          run_lane_stage(st, at, rows);
+        }
       }
-      at = moved(at, inner.step, rows);
       run -= rows;
+      if (run != 0) {
+        at = moved(at, inner.step, rows);
+      }
     }
   }
 }

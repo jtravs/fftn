@@ -1181,7 +1181,10 @@ least C rows up to `target_profile::lanes_up_to` (X7, measured against the chain
 batched leaves): 100 on AVX-512 and 32 on AVX2, in float only; in double and on NEON the
 chain's batched leaf (one kernel call for a batch of leaf rows, section 8.3) runs short rows
 as fast as the lanes, so the threshold is 0 and the lanes run there only when forced; never
-with an input edge operation, forced radices or a real row strided on its real side. The
+with an input edge operation, forced radices or a real row strided on its real side, and by
+the rules never for a real row strided on its complex side (the lanes give it the contiguous
+row's bits, the chain's strided route others, and avx2 and avx512, whose thresholds differ,
+must agree). The
 lanes driver runs each block's stages through `run_records`-style argument copies; X20's
 per-call preparation of a flat program is not applied to it. Not built: lanes for the strided axes of planes (phase 4), a
 first pass that gathers through vector inserts (FFTW's way on x86), lane blocks across

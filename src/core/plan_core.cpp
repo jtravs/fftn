@@ -379,8 +379,15 @@ std::size_t lanes_block(const shape_view& s, const side& in, const side& out,
   }
   // Radices a test forces for the row (experiments X2 and X8 time chains with them) keep
   // the rules' chain; forced lanes take them too.
+  // A real row whose complex side is strided gets the contiguous row's bits from the
+  // lanes but other bits from the chain's strided route, and the two targets of a pair
+  // (avx2, avx512) have different thresholds: the rules keep such rows on the chain, so
+  // the pair agree (DESIGN.md 6.2). Forced lanes take them.
+  const bool strided_complex =
+      real && (s.kind == transform_kind::r2c ? out.stride[0] : in.stride[0]) != 1;
   if (settings.strategy == strategy_choice::rules &&
-      (n > profile.lanes_up_to || rows < c || chain.forces(real ? n / 2 : n))) {
+      (n > profile.lanes_up_to || rows < c || chain.forces(real ? n / 2 : n) ||
+       strided_complex)) {
     return 0;
   }
   if (!chain.lanes_fit(n, real)) {

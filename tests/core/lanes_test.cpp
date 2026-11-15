@@ -35,6 +35,7 @@
 #include <sstream>
 #include <string>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -146,15 +147,16 @@ fftn::shape<In, Out> shape_of(const batch_case& bc) {
 template <class In, class Out>
 std::vector<std::byte> lanes_equal_chain(fftn::isa target, const batch_case& bc,
                                          std::size_t in_extent, std::size_t out_extent,
-                                         std::size_t block, const std::string& what) {
+                                         std::size_t block, const std::string& what,
+                                         const build_settings& base = {}) {
   SCOPED_TRACE(what);
   const auto sh = shape_of<In, Out>(bc);
   const std::size_t in_elems = bc.in.span(bc.count, in_extent);
   const std::size_t out_elems = bc.out.span(bc.count, out_extent);
-  build_settings lanes;
+  build_settings lanes = base;
   lanes.strategy = strategy_choice::lanes;
   lanes.lane_block = block;
-  build_settings chain;
+  build_settings chain = base;
   chain.strategy = strategy_choice::chain;
   std::string lanes_text;
   std::string chain_text;
@@ -162,6 +164,9 @@ std::vector<std::byte> lanes_equal_chain(fftn::isa target, const batch_case& bc,
   const auto want = run(sh, bc, chain, target, in_elems, out_elems, 0, bc.count, chain_text);
   EXPECT_NE(lanes_text.find("strategy: lanes"), std::string::npos) << lanes_text;
   EXPECT_EQ(chain_text.find("strategy: lanes"), std::string::npos) << chain_text;
+  // No stage copies a scratch tile onto itself (a scatter to a scratch destination once did).
+  EXPECT_EQ(lanes_text.find(": a -> a"), std::string::npos) << lanes_text;
+  EXPECT_EQ(lanes_text.find(": b -> b"), std::string::npos) << lanes_text;
   EXPECT_TRUE(got == want) << "lanes and chain differ" << first_difference<Out>(got, want) << "\n"
                            << lanes_text << chain_text;
   // Sub-ranges, out of place: the rows run equal the whole batch's and nothing else changes.
@@ -428,6 +433,178 @@ TEST(Lanes, PlannerChoice) {
     EXPECT_FALSE(is_lanes(*plan(fftn::rows_c2c<float>(16, 1, fftn::direction::forward))));
     EXPECT_FALSE(is_lanes(
         *plan(fftn::rows_c2c<float>(profile.lanes_up_to + 1, 64, fftn::direction::forward))));
+  }
+}
+
+// A split run (DESIGN.md 6.3) forced on targets that do not choose one, so that the lanes'
+// split passes (s multiplied by the block) run here: c2c and both real kinds, against the
+// chain with the same forced split.
+template <class In, class Out>
+void split_case(fftn::isa t, const batch_case& bc, std::size_t in_extent, std::size_t out_extent,
+                const char* kind, const build_settings& split) {
+  lanes_equal_chain<In, Out>(t, bc, in_extent, out_extent, 0,
+                             label<float>(t, kind, bc) + ", split forced", split);
+  build_settings forced = split;
+  forced.strategy = strategy_choice::lanes;
+  const auto core =
+      make_plan_core(fftn::detail::view_of(shape_of<In, Out>(bc)), {.force_isa = t}, forced);
+  EXPECT_NE(described(*core).find("split lane"), std::string::npos) << described(*core);
+}
+
+TEST(Lanes, ForcedSplitRunEqualsTheChain) {
+  using cx = std::complex<float>;
+  build_settings split;
+  split.layout = fftn::detail::layout_choice::split;
+  split.radices = {16, 4, 4};
+  split.fuse_real_radix = 1;
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    for (const std::size_t count : {std::size_t{19}, std::size_t{64}}) {
+      const batch_case c2c{
+          .n = 256, .count = count, .in = rows_with_gap(256, 3), .out = rows_with_gap(256, 1)};
+      split_case<cx, cx>(t, c2c, 256, 256, "c2c", split);
+      // Real rows of 512 points: the half-length chain of 256 takes the forced radices.
+      const batch_case r2c{
+          .n = 512, .count = count, .in = rows_with_gap(512, 2), .out = rows_with_gap(257, 1)};
+      split_case<float, cx>(t, r2c, 512, 257, "r2c", split);
+      const batch_case c2r{
+          .n = 512, .count = count, .in = rows_with_gap(257, 1), .out = rows_with_gap(512, 2)};
+      split_case<cx, float>(t, c2r, 257, 512, "c2r", split);
+    }
+  }
+}
+
+// Runs a plan of shape sh (forced strategy s, blocks of 8) over transforms [first, first +
+// count) on buffers of in_span and out_span elements whose element 0 is in_base and out_base
+// elements into them (a negative distance puts later rows before it); returns the output
+// buffer, which starts as a canary pattern.
+template <class In, class Out>
+std::vector<std::byte> run_at(const fftn::shape<In, Out>& sh, strategy_choice s, fftn::isa target,
+                              std::size_t in_span, std::size_t in_base, std::size_t out_span,
+                              std::size_t out_base, std::size_t first, std::size_t count,
+                              std::string& text) {
+  build_settings settings;
+  settings.strategy = s;
+  settings.lane_block = 8;
+  const auto core = make_plan_core(fftn::detail::view_of(sh), {.force_isa = target}, settings);
+  text = described(*core);
+  fftn::test::input_source src(0xBA7C4ULL + in_span);
+  std::vector<In> in;
+  if constexpr (std::is_floating_point_v<In>) {
+    in = src.reals<In>(in_span);
+  } else {
+    in = src.complexes<typename In::value_type>(in_span);
+  }
+  std::vector<Out> out(out_span);
+  std::memset(static_cast<void*>(out.data()), 0xa5, out_span * sizeof(Out));
+  const fftn::workspace ws(fftn::detail::workspace_bytes(*core, 1));
+  fftn::detail::execute_core(*core, first, count, in.data() + in_base, out.data() + out_base, ws);
+  std::vector<std::byte> bytes(out_span * sizeof(Out));
+  std::memcpy(bytes.data(), out.data(), bytes.size());
+  return bytes;
+}
+
+template <class In, class Out>
+void layouts_equal(fftn::isa target, const fftn::shape<In, Out>& sh, std::size_t in_span,
+                   std::size_t in_base, std::size_t out_span, std::size_t out_base,
+                   std::size_t transforms, const std::string& what) {
+  SCOPED_TRACE(what);
+  for (const auto& [first, count] : {std::pair<std::size_t, std::size_t>{0, transforms},
+                                     {1, transforms - 2},
+                                     {transforms / 2 - 1, 3}}) {
+    std::string lanes_text;
+    std::string chain_text;
+    const auto got = run_at(sh, strategy_choice::lanes, target, in_span, in_base, out_span,
+                            out_base, first, count, lanes_text);
+    const auto want = run_at(sh, strategy_choice::chain, target, in_span, in_base, out_span,
+                             out_base, first, count, chain_text);
+    EXPECT_NE(lanes_text.find("strategy: lanes"), std::string::npos) << lanes_text;
+    EXPECT_TRUE(got == want) << "transforms " << first << " + " << count
+                             << first_difference<Out>(got, want) << "\n"
+                             << lanes_text;
+  }
+}
+
+// Negative distances (rows at descending addresses) and two batch dimensions, whose blocks
+// of rows stay within the innermost one: the lanes against the chain, whole batches and
+// ranges that start and end mid-block and cross the outer dimension.
+TEST(Lanes, NegativeDistancesAndTwoBatchDimensions) {
+  using cx = std::complex<double>;
+  using fx = std::complex<float>;
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    const std::string isa = fftn::isa_name(t);
+    {
+      constexpr std::size_t n = 16;
+      constexpr std::size_t count = 21;
+      constexpr std::ptrdiff_t dist = -static_cast<std::ptrdiff_t>(n + 3);
+      fftn::shape<cx, cx> sh;
+      sh.axes = {{.n = n}};
+      sh.batches = {{.count = count, .in_dist = dist, .out_dist = dist}};
+      const std::size_t span = (count - 1) * (n + 3) + n;
+      layouts_equal(t, sh, span, span - n, span, span - n, count,
+                    isa + " c2c, negative distance");
+    }
+    {
+      constexpr std::size_t n = 32;
+      constexpr std::size_t count = 13;
+      constexpr std::size_t h1 = n / 2 + 1;
+      fftn::shape<float, fx> sh;
+      sh.axes = {{.n = n}};
+      sh.batches = {{.count = count,
+                     .in_dist = -static_cast<std::ptrdiff_t>(n),
+                     .out_dist = -static_cast<std::ptrdiff_t>(h1)}};
+      layouts_equal(t, sh, count * n, (count - 1) * n, count * h1, (count - 1) * h1, count,
+                    isa + " r2c float, negative distances");
+      fftn::shape<fx, float> back;
+      back.axes = {{.n = n}};
+      back.batches = {{.count = count,
+                       .in_dist = -static_cast<std::ptrdiff_t>(h1),
+                       .out_dist = -static_cast<std::ptrdiff_t>(n)}};
+      layouts_equal(t, back, count * h1, (count - 1) * h1, count * n, (count - 1) * n, count,
+                    isa + " c2r float, negative distances");
+    }
+    {
+      // 3 groups of 11 rows of 12 points, the groups 200 elements apart (with gaps), the rows
+      // of a group 13 apart.
+      constexpr std::size_t n = 12;
+      fftn::shape<cx, cx> sh;
+      sh.axes = {{.n = n}};
+      sh.batches = {{.count = 3, .in_dist = 200, .out_dist = 200},
+                    {.count = 11, .in_dist = 13, .out_dist = 13}};
+      const std::size_t span = 2 * 200 + 10 * 13 + n;
+      layouts_equal(t, sh, span, 0, span, 0, 33, isa + " c2c, two batch dimensions");
+    }
+  }
+}
+
+// The rules never take the lanes for real rows whose complex side is strided: the lanes
+// give them the contiguous row's bits, the chain's strided route others, and avx2 and
+// avx512, whose thresholds differ, must agree (DESIGN.md 6.2). With the contiguous control;
+// meaningful where a profile takes the lanes at all (float on x86).
+TEST(Lanes, RulesKeepStridedComplexRealRowsOnTheChain) {
+  using fx = std::complex<float>;
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    SCOPED_TRACE(fftn::isa_name(t));
+    const auto profile = fftn::detail::profile_of(
+        static_cast<fftn::detail::target>(static_cast<unsigned char>(t)), complex_lanes<float>(t));
+    const auto plan = [&](const auto& sh) {
+      return make_plan_core(fftn::detail::view_of(sh), {.force_isa = t}, build_settings{});
+    };
+    for (const std::size_t n : {std::size_t{16}, std::size_t{64}}) {
+      for (const std::size_t count : {std::size_t{5}, std::size_t{64}}) {
+        const auto ic = static_cast<std::ptrdiff_t>(count);
+        fftn::shape<float, fx> r2c;
+        r2c.axes = {{.n = n, .out_stride = ic}};
+        r2c.batches = {{.count = count, .out_dist = 1}};
+        fftn::shape<fx, float> c2r;
+        c2r.axes = {{.n = n, .in_stride = ic}};
+        c2r.batches = {{.count = count, .in_dist = 1}};
+        EXPECT_FALSE(is_lanes(*plan(r2c))) << n << " x " << count;
+        EXPECT_FALSE(is_lanes(*plan(c2r))) << n << " x " << count;
+        const bool expected = n <= profile.lanes_up_to && count >= complex_lanes<float>(t);
+        EXPECT_EQ(is_lanes(*plan(fftn::rows_r2c<float>(n, count))), expected)
+            << n << " x " << count;
+      }
+    }
   }
 }
 

@@ -126,12 +126,13 @@ void chain_builder<T>::lanes_body(std::size_t n, const std::vector<std::size_t>&
     at = other(at);
   }
   const std::size_t last = rad.size() - 1;
-  // The last pass writes the destination itself unless it is a split pass or a run of the
-  // destination's rows is no vector access.
-  const bool to_dst = split > last && direct(dst);
+  // A destination in scratch is the tile the last pass writes (other than its source).
   if (is_scratch(dst.where)) {
     dst = tile_of(rad.size() == 1 ? at : (rad.size() % 2 == 0 ? other(at) : at));
   }
+  // The last pass writes the destination itself unless it is a split pass or a run of the
+  // destination's rows is no vector access.
+  const bool to_dst = split > last && direct(dst);
   if (rad.size() == 1) {
     const lane_rows to = to_dst ? dst : tile_of(at);
     stage st;

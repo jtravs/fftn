@@ -62,7 +62,9 @@ template <class T> void lanes_gather(const pass_args* a, std::size_t first, std:
   for (std::size_t u = first; u < last; ++u) { // the one unit, when the range holds it
     for (std::size_t r0 = 0; r0 < b; r0 += C<T>) {
       const std::size_t valid = rows <= r0 ? 0 : (rows - r0 < C<T> ? rows - r0 : C<T>);
-      const T* xr = x + at(r0, xd);
+      // Idle rows (a padded block) read nothing: their run starts at row 0, so no address
+      // beyond the batch is formed.
+      const T* xr = valid != 0 ? x + at(r0, xd) : x;
       T* yr = y + at(r0, 2);
       if (valid == C<T> && xs == 2) {
         std::size_t i = 0;
@@ -218,7 +220,7 @@ template <class T> void lanes_c2r_pair(const pass_args* a, std::size_t first, st
   for (std::size_t u = first; u < last; ++u) { // the one unit, when the range holds it
     for (std::size_t r0 = 0; r0 < b; r0 += C<T>) {
       const std::size_t valid = rows <= r0 ? 0 : (rows - r0 < C<T> ? rows - r0 : C<T>);
-      const T* xr = x + at(r0, xd);
+      const T* xr = valid != 0 ? x + at(r0, xd) : x; // idle rows read nothing (lanes_gather)
       T* zr = z + at(r0, 2);
       T x0[2 * C<T>]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
       T xh[2 * C<T>]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
@@ -274,7 +276,7 @@ void lanes_first(const pass_args* a, std::size_t first, std::size_t last) {
   for (std::size_t u = first; u < last; ++u) {
     const std::size_t r0 = k * C<T>;
     const std::size_t valid = rows <= r0 ? 0 : (rows - r0 < C<T> ? rows - r0 : C<T>);
-    const T* xp = x + at(r0, xd) + at(p, xs);
+    const T* xp = (valid != 0 ? x + at(r0, xd) : x) + at(p, xs); // idle rows read nothing
     const run_out<T, edge_op::none, true> out{
         .p = y + at(r0 + b * R * p, 2), .leg = out_leg, .step = 2, .valid = C<T>, .op = {}};
     if (valid == C<T>) {
