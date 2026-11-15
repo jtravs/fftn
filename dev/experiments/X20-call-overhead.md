@@ -159,49 +159,58 @@ codelets, MEASURE; double, as FFTW has no single precision in that build), main 
 Collateral on the Xeon (quick tier, c5ed695 against main, run 20261115-000546-493c, band
 ±2.38 %): 0.989, 2 faster (16, 64 × 256), 22 within the band, none slower.
 
-Xeon harness (ns per transform, median of 4 interleaved process rounds, GCC 14.4, shared
-node; `api` main → 0f1125b, with `once`, the leaf alone through its pointer, of 0f1125b):
+Xeon harness (ns per call or transform at the API, median of 4 interleaved process rounds,
+GCC 14.4, shared node, load 10; main → 0f1125b → 530867b, and `once`, the leaf alone
+through its pointer, at 530867b):
 
 | n | b1 double | b1 float | b64 double | b64 float | once b1 double / float |
 |---|---|---|---|---|---|
-| 2 | 17.3 → 13.1 | 17.3 → 14.9 | 15.0 → 1.0 | 15.1 → 2.0 | 4.4 / 5.5 |
-| 8 | 28.6 → 21.9 | 28.8 → 30.6 | 26.0 → 5.7 | 27.8 → 12.2 | 10.7 / 16.4 |
-| 16 | 41.4 → 33.8 | 48.8 → 46.6 | 39.1 → 14.9 | 47.7 → 26.3 | 24.3 / 37.4 |
-| 64 | 82.3 → 81.9 | 94.2 → 90.6 | 85.0 → 72.4 | 94.3 → 85.7 | (2 stages) |
+| 2 | 17.4 → 13.1 → 6.6 | 17.3 → 14.9 → 8.6 | 14.9 → 1.0 → 0.9 | 15.1 → 2.0 → 1.8 | 4.5 / 5.3 |
+| 4 | 19.3 → 16.3 → 9.6 | 19.9 → 20.7 → 9.8 | 17.3 → 2.2 → 2.0 | 18.3 → 4.2 → 4.1 | 7.1 / 7.7 |
+| 8 | 28.7 → 21.9 → 13.0 | 28.9 → 30.6 → 19.5 | 26.0 → 5.7 → 5.6 | 27.8 → 12.2 → 12.0 | 10.9 / 16.1 |
+| 16 | 41.4 → 33.8 → 25.1 | 48.8 → 46.6 → 39.8 | 39.3 → 14.9 → 14.9 | 47.7 → 26.3 → 26.1 | 24.1 / 37.0 |
 
-At batch 1 the Xeon still spends 8–11 ns between the API and the leaf, against 1–1.5 ns on
-the Mac. One cause found: `run_leaf_rows` copied `slot_addresses` with a 16-byte load of
-two fields `execute_core` had just written with 8-byte stores, which x86 cannot forward;
-94486a3 reads them as scalars (timed by the harness only, below). (Unrelated, seen on the
-way: 32 points in float on AVX-512 take 143–155 ns, more than 64 points; X16's tail
-problem of that chain.)
+(0f1125b columns from the run before, same harness and node.) After 0f1125b the Xeon still
+spent 8–11 ns between the API and a leaf at batch 1, against 1–1.5 ns on the Mac. Two
+store-forwarding stalls explained most of it, both from passing `slot_addresses` (six
+words) by reference right after writing it: `execute_core` writes `in` and `out` with
+8-byte stores and the callee copied the struct with 16-byte loads, which x86 cannot forward
+from two narrower stores. 94486a3 reads the two slots as scalars in `run_leaf_rows`, and
+530867b has `execute_core` call `run_leaf_rows` with the two addresses directly. The float
+8-point row is now 0.67 of main where 0f1125b was 1.07. (Unrelated, seen on the way: 32
+points in float on AVX-512 take 145–160 ns, more than 64 points; X16's tail problem.)
 
 On x86 the leaves broadcast every input into C lanes (C = 4 complex doubles or 8 complex
 floats on AVX-512) and store lane 0, so the kernel, not the driver, dominates at batch 1
 (X18: 65 % of a 16-point leaf; harness, 8 points in double: kernel through its pointer
 12.5 ns of a 20.8 ns call). Batches gain because the call and the leaf's setup are paid
-once. The one slower case: with the row loop inside the leaf GCC 14 turns its 16 leg
-addresses into induction variables and parks some in `xmm` registers (`vmovq`): 171
-instructions per call of the 8-point float leaf against 153 before, which a single row
-pays in full (about 2 ns). Removing it needs either a second copy of every leaf (+18 %
-library text) or the lanes and unit-stride leaves that task 2.2 (X7) brings for x86.
+once. The slower case of 0f1125b: with the row loop inside the leaf GCC 14 turns its 16 leg
+addresses into induction variables and parks some in `xmm` registers (`vmovq`), 171
+instructions per call of the 8-point float leaf against 153 before (about 2 ns for one
+row); 530867b's entry savings more than cover it (harness above). The fbench A/B of
+530867b against the new main (6844ad0, with split lowering) is Slurm job 15629, job
+directory `fbench-20261115-012036-2b1d9ced-8fee1f`, not read before this was written.
 
 ## Verdict
 
-Adopted (0f1125b; merged with main at b3ae9c7). Rule (1) holds: every test passes, the new
+Adopted (0f1125b, merged with main at b3ae9c7; 94486a3 and 530867b remove two x86
+store-forwarding stalls at the entry). Rule (1) holds: every test passes, the new
 `Contracts.BatchedRowsMatchSingleRows` compares every row of batched leaves and one-stage
 rows bit for bit with a one-row plan, and serial, team and executor results are unchanged
 (the same kernels on the same arguments and units). Rule (2): 0.453 on the Mac, every case
-faster. Rule (3) holds on the Mac (x20 and the quick tier) and the Xeon quick tier, with one
-exception on the Xeon x20 cases, the 8-point float row alone (+7 to +11 %), explained
-above and left to X7; the maintainer may weigh it against 0.57 over the Xeon's x20 cases.
+faster. Rule (3) holds on the Mac (x20 and the quick tier) and the Xeon quick tier; on the
+Xeon x20 cases 0f1125b had one exception, the 8-point float row (+7 to +11 %), which the
+harness shows gone at 530867b (0.67 of main); its fbench confirmation is pending (above).
 
 Where FFTN stands now at n ≤ 64: in batches at or near FFTW on both machines (Mac
 0.85–1.18, Xeon 0.91–1.47 in double; 8 × 4096 0.97 and 0.99, from 3.08 and 3.72); one
-transform still 1.2–1.8 times FFTW's time on the Mac and 1.3–2.7 on the Xeon. What is left
-at batch 1: on the Mac about 1–1.5 ns of entry and dispatch and 1.2 ns per pass stage (the
-`pass_args` copy a `pass_fn` needs; removing it means giving every pass its addresses as
-arguments, a change to all kernel entries); on x86 the broadcast leaves themselves. Next:
+transform still 1.2–1.8 times FFTW's time on the Mac and, at 0f1125b, 1.3–2.7 on the Xeon
+(the harness puts 530867b's 2-point row at 6.6 ns, FFTW's at 6.7). What is left at batch 1:
+on the Mac about 1–1.5 ns of entry and dispatch and 1.2 ns per pass stage (the `pass_args`
+copy a `pass_fn` needs; removing it means giving every pass its addresses as arguments, a
+change to all kernel entries); on x86 the broadcast leaves themselves (`once` is 80–95 % of
+a leaf row's time at 530867b), and the same struct-passing stalls in `run_flat_one` for rows
+of several passes. Next:
 lanes and unit-stride leaves for x86 (task 2.2, X7), and passes taking their addresses as
 arguments if the 64-point single row matters (Mac 1.15, Xeon 1.25). DESIGN.md 8.2, 8.3 and
 the decision log updated; lesson 4.7 in LESSONS.md.

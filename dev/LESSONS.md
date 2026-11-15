@@ -223,7 +223,11 @@ in a batch of 64, a 2-point one from 4.9 to 0.32 ns: rows of 2–16 points in ba
 went from 1.9–17 times NEON FFTW's time to 0.85–1.18 (fbench run 20261115-002244-eba3).
 The loop inside the kernel matters beyond the call: a 32-point leaf took 20 ns per call
 one row at a time but 15 ns per row in one call over 64 rows (constants and saved
-registers set up once). Two pitfalls at this scale: a hot path that shares a function with
+registers set up once). Three pitfalls at this scale: on x86, passing a small struct of pointers by reference right
+after writing it field by field stalls when the callee copies it with wider loads (no
+store forwarding from two 8-byte stores to one 16-byte load): two such stalls were most of
+the 8–11 ns between FFTN's API and a leaf on the Xeon, and passing the two pointers as
+arguments took a 2-point row from 13.1 to 6.6 ns; a hot path that shares a function with
 a cold one pays the cold one's frame (an on-stack array of argument copies cost 6 ns per
 call on the Mac and 2–3 ns of a leaf row on the Xeon until the paths were split); and a
 loop over rows can make the compiler keep every leg address as its own induction variable
