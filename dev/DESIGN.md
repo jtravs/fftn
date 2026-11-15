@@ -188,7 +188,7 @@ Repository layout (target; created as phases need it):
 include/fftn/            public headers only: fftn.hpp, plan.hpp, execution.hpp,
                          pipeline.hpp, convenience.hpp, omp.hpp, kokkos.hpp, c_api.h
 src/                     the library: platform/, planner/, engine/, strategies/, c_api.cpp
-src/isa/                 regions, vocabularies, one translation unit per instruction set
+src/isa/                 regions, vocabularies, the kernel units of each instruction set
 src/passes/              pass kernels (.inl, included per instruction set)
 src/gen/                 generated codelets and their metadata tables (committed)
 gen/fftn_gen/            the codelet generator (Python), with gen/README.md
@@ -744,12 +744,26 @@ target's entry points in the program. Rules that keep this sound (also in AGENTS
 - no lambdas inside a region (they do not inherit its target);
 - a header is never included for the first time inside a region.
 
-Everything inside a region has internal linkage (the `.inl` texts sit in an unnamed
-namespace within the target's namespace); only the target's function table is exported.
-Each translation unit therefore keeps its own copy of every vocabulary function and
-kernel, and the linker cannot substitute a copy compiled for one target for a caller of
-another. The library is compiled with `-Werror=psabi` under GCC (experiment B1, section
-14.1), always, not only in the gate.
+Every function inside a region has internal linkage (the `.inl` texts sit in an unnamed
+namespace within the target's namespace); only data is exported: the target's function
+table and the rows of its codelet table. Each translation unit therefore keeps its own copy
+of every vocabulary function and kernel, and the linker cannot substitute a copy compiled
+for one target for a caller of another. The library is compiled with `-Werror=psabi` under
+GCC (experiment B1, section 14.1), always, not only in the gate.
+
+Each target is compiled as six translation units with the same region and the same kernel
+text (`src/isa/kernel_text.inl`: twiddle packing, codelets, passes), each instantiating a
+share of it. Five row units (`src/isa/rows<k>_<target>.cpp`) instantiate the passes of the
+codelet radices that `src/isa/rows.inl` gives them (radices 2–12, 13–16, 32, and 64 once per
+precision, about equal in compile time), each row as a constant
+`codelet_row<T, I>::passes` of external linkage in the target's namespace (an explicit
+instantiation). The main unit (`src/isa/<target>.cpp`) instantiates the other passes and the
+function table, which points at the rows (declared there as explicit instantiations made
+elsewhere: a row that no unit defines fails to link). Kernel units are optimised in every
+build type. One unit per target needed 9–16 GB and 5–12 minutes to compile with Clang 23
+under ASan and UBSan (Apple M5 Max; avx512 the most, GCC more still), which ran CI runners
+out of memory; split, each unit needs 3.1–4.8 GB and at most about 3 minutes (radix 64 in
+float, avx512), and the main units 0.3 GB.
 
 Target strings: `avx2` is `"avx2,fma"`, the features its run-time check requires, and no
 AVX-512 feature; `avx512` is `"avx2,fma,avx512f,avx512dq,avx512vl"`, again the features
@@ -1901,8 +1915,8 @@ Rosetta. Findings:
 
 ### 14.2 Decision: a compiled static library
 
-FFTN is built as a library: CMake target `fftn::fftn`, static by default, with one
-translation unit per instruction set so they compile in parallel. A header-only
+FFTN is built as a library: CMake target `fftn::fftn`, static by default, with several
+translation units per instruction set (section 6.4) so they compile in parallel. A header-only
 configuration was considered and dropped (decision log): it is technically possible, but
 it would force every non-kernel part to be written header-style for the life of the
 project, weaken the floating-point guarantees (the implementation would inherit the
@@ -2048,7 +2062,10 @@ may not fall, and an fbench smoke run.
 
 CI matrix (phase 0 onward, growing): Linux x86-64 with GCC 14 and current GCC and Clang;
 macOS arm64 with Apple Clang and Homebrew LLVM; Linux AArch64; Windows with clang on the
-MSVC ABI. AVX-512 paths run under Intel SDE and NEON-without-FCMA and SVE paths under
+MSVC ABI. Every push and pull request builds and tests one configuration per platform
+(both floors, GCC 14 and Clang 16, among them) and runs one ASan + UBSan job and one
+ThreadSanitizer job on Linux x86-64 with Clang; the other compilers, the other sanitizer runs, clang-tidy and coverage run weekly
+and on demand. AVX-512 paths run under Intel SDE and NEON-without-FCMA and SVE paths under
 QEMU where the runner's CPU lacks them, so every kernel is executed in CI, not only on
 developers' machines. Old processors are emulated as whole machines too (SDE's Nehalem
 and Sandy Bridge models, QEMU's Neoverse N1), which checks detection and dispatch on
