@@ -1,21 +1,16 @@
 # SPDX-FileCopyrightText: 2026 John C. Travers and contributors
 # SPDX-License-Identifier: Apache-2.0
 #
-# The gate (scripts/check.sh) on every platform of DESIGN.md 15.4. Hygiene and lint stages
-# run once, in the lint job; every other job runs the code stages chosen for its compiler
-# ("stages" in each matrix entry, with the reason beside it). Sanitizers run with GCC and
-# Clang on Linux x86-64, with Clang on Linux AArch64 and on macOS; clang-tidy on Linux
-# x86-64, Linux AArch64 and macOS, since its findings follow the platform's #if branches;
-# coverage with Clang on Linux x86-64 and macOS. Windows builds and tests only (no
-# sanitizer or coverage stage is set up for the MSVC ABI). Sanitizer stages run in jobs of
-# their own with fewer parallel compiles ("jobs"): instrumented kernel units need gigabytes
-# each. Emulated processors are in emulation.yml.
+# What every push and pull request runs: the gate (scripts/check.sh) on one configuration
+# per platform of DESIGN.md 15.4, one ASan + UBSan job and one ThreadSanitizer job. The
+# hygiene and lint stages run once, in the lint job; the code stages run in gate.yml with
+# the matrices below (the reason for each entry beside it). The other compilers, the other
+# platforms' sanitizers, clang-tidy and coverage run weekly and on demand (extended.yml), and
+# emulated processors on main, weekly and on demand (emulation.yml).
 #
-# Pins: actions by commit; the uv version below; tools by URL and SHA-256
-# (.github/scripts/fetch.sh); the current-GCC image by digest; LLVM 23 from apt.llvm.org
-# with its signing key pinned (.github/scripts/install-llvm.sh). Compilers that come with
-# the runner images (GCC 14, Clang 16, Apple Clang, Homebrew LLVM, LLVM on Windows) are
-# reported by the gate in every log.
+# Kernel units are compiled as several translation units per instruction set (DESIGN.md
+# 6.4), so instrumented builds fit the runners at full parallelism (16 GB and 4 cores on
+# Linux, 7 GB and 3 cores on macOS); "jobs" limits parallel compiles where they would not.
 name: ci
 
 on:
@@ -26,18 +21,21 @@ on:
 permissions:
   contents: read
 
+# A newer push to a branch or pull request cancels the run it supersedes; every commit on
+# main keeps its run.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
-  # uv for the gate's Python, and the uvx tools it pins (clang-format, clang-tidy, ruff).
+  # uv for the gate's Python, and the uvx tools it pins (ruff, clang-format).
   UV_VERSION: "0.13.6"
 
 jobs:
   # Every job runs for pushes, and for pull requests from forks only: a branch of this
-  # repository already ran on its push. The jobs run in parallel; lint does not gate the
-  # builds, since latency matters more here than runner minutes.
+  # repository already ran on its push, and the pull request shows that run's checks. The
+  # jobs run in parallel; lint does not gate the builds, since latency matters more here
+  # than runner minutes.
   lint:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     name: lint (hygiene, format, Python, shell, API docs)
@@ -83,395 +81,55 @@ jobs:
           FFTN_CHECK_STAGES: spdx docs knobs format python shell gen apidoc
         run: bash scripts/check.sh
 
-  linux:
+  gate:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
-    name: linux x86-64 ${{ matrix.name }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 90
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # The floor (AGENTS.md section 4), with both sanitizer stages: B1 found GCC-only
-          # failure modes, and GCC 14's TSan is the one that needs the address-space fix.
-          # Sanitizer builds compile the kernel units with instrumentation, at 5-6 GB each
-          # under GCC even with line tables only (CMakeLists.txt); four at a time on these
-          # 16 GB runners killed the runner (CI run 43656723703). So GCC's sanitizer stages
-          # run in jobs of their own, two compiles at a time ("jobs", FFTN_CHECK_JOBS).
-          - name: gcc-14
-            cxx: g++-14
-            stages: build bench
-          - name: gcc-14 asan
-            cxx: g++-14
-            stages: sanitize
-            jobs: 2
-          - name: gcc-14 tsan
-            cxx: g++-14
-            stages: tsan
-            jobs: 2
-          # The development compiler: every code stage, including tidy and coverage; Clang's
-          # instrumented kernel units take about 5 GB each, three at a time.
-          - name: clang-23
-            llvm: "23"
-            cxx: /usr/lib/llvm-23/bin/clang++
-            stages: build tidy coverage bench
-          # One sanitizer per job, two compiles at a time: ASan and TSan in one job at
-          # three ran the runner out of memory (it shut down mid-build).
-          - name: clang-23 asan
-            llvm: "23"
-            cxx: /usr/lib/llvm-23/bin/clang++
-            stages: sanitize
-            jobs: 2
-          - name: clang-23 tsan
-            llvm: "23"
-            cxx: /usr/lib/llvm-23/bin/clang++
-            stages: tsan
-            jobs: 2
-          # The Clang floor: compiles cleanly and passes; preinstalled on the image.
-          - name: clang-16
-            cxx: /usr/lib/llvm-16/bin/clang++
-            stages: build
-    env:
-      CXX: ${{ matrix.cxx }}
-      FFTN_CHECK_STAGES: ${{ matrix.stages }}
-      FFTN_CHECK_JOBS: ${{ matrix.jobs }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
-        with:
-          version: ${{ env.UV_VERSION }}
-          enable-cache: true
-          cache-dependency-glob: |
-            uv.lock
-            scripts/check.sh
-          prune-cache: false
-          cache-python: true
-      - name: LLVM ${{ matrix.llvm }}
-        if: matrix.llvm
-        run: bash .github/scripts/install-llvm.sh "${{ matrix.llvm }}"
-      - name: Address-space randomisation that every sanitizer runtime supports
-        # The image's kernel uses 32 bits of mmap randomisation, which older ASan and TSan
-        # runtimes cannot map around; 28 bits is the long-standing default.
-        run: sudo sysctl -w vm.mmap_rnd_bits=28
-      - &fetchcontent-restore
-        name: FetchContent archives (restore)
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/fftn-fetchcontent
-          key: fetchcontent-${{ hashFiles('cmake/*.cmake') }}
-      - &fetchcontent-place
-        name: FetchContent archives (place)
-        shell: bash
-        run: bash .github/scripts/fetchcontent-cache.sh restore ~/.cache/fftn-fetchcontent
-      - name: Gate, ${{ matrix.stages }}
-        run: bash scripts/check.sh
-      - &detected
-        name: What FFTN detects here
-        if: always()
-        shell: bash
-        run: |
-          for d in build/check-release build/check-sanitize; do
-            for exe in "$d/tests/platform/fftn_platform_dump" "$d/tests/platform/fftn_platform_dump.exe"; do
-              if [[ -x $exe ]]; then "$exe"; exit 0; fi
-            done
-          done
-          echo "no fftn_platform_dump was built"
-      - &fetchcontent-collect
-        name: FetchContent archives (collect)
-        if: always()
-        shell: bash
-        run: bash .github/scripts/fetchcontent-cache.sh save ~/.cache/fftn-fetchcontent
-      - &logs
-        name: Build logs
-        if: failure()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: logs-${{ github.job }}-${{ strategy.job-index }}
-          path: |
-            build/*.log
-            build/*/Testing/Temporary/LastTest*.log
-          if-no-files-found: ignore
-          retention-days: 14
-
-  linux-gcc-current:
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
-    name: linux x86-64 ${{ matrix.name }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 90
-    # The sanitizer stages in jobs of their own, two compiles at a time, as for GCC 14.
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: gcc-16
-            stages: build
-          - name: gcc-16 asan
-            stages: sanitize
-            jobs: 2
-          - name: gcc-16 tsan
-            stages: tsan
-            jobs: 2
-    # The current GCC from its official image, pinned by digest. seccomp is relaxed so that
-    # the gate can run TSan's tests with address randomisation off (setarch -R), which
-    # Docker's default profile forbids.
-    container:
-      image: gcc:16.2.0-trixie@sha256:b8a42d6804296fbe7a54e17e9d60c3100d9e8dbe7ef88c748cae2ddb00d63ba2
-      options: --security-opt seccomp=unconfined
-    env:
-      CXX: g++
-      FFTN_CHECK_STAGES: ${{ matrix.stages }}
-      FFTN_CHECK_JOBS: ${{ matrix.jobs }}
-    steps:
-      - name: Packages (CMake, Ninja)
-        run: |
-          apt-get update
-          apt-get install -y --no-install-recommends cmake ninja-build
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
-        with:
-          version: ${{ env.UV_VERSION }}
-          enable-cache: true
-          cache-dependency-glob: |
-            uv.lock
-            scripts/check.sh
-          prune-cache: false
-          cache-python: true
-      - *fetchcontent-restore
-      - *fetchcontent-place
-      - name: Gate, ${{ matrix.stages }}
-        run: bash scripts/check.sh
-      - *detected
-      - *fetchcontent-collect
-      - *logs
-
-  linux-arm64:
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
-    name: linux aarch64 ${{ matrix.name }}
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 90
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # The getauxval feature path runs here for the first time (Neoverse N2 runners:
-          # FCMA and pointer authentication, so neon and neon_fcma are forced beside scalar).
-          # GCC 14's ASan + UBSan took 53 minutes here (CI run 43487560137) against 2.5 on
-          # x86-64; GCC's sanitizers run on x86-64, and AArch64's with Clang.
-          - name: gcc-14
-            cxx: g++-14
-            stages: build bench
-          # The sanitizers in jobs of their own (as on x86-64).
-          - name: clang-23
-            llvm: "23"
-            cxx: /usr/lib/llvm-23/bin/clang++
-            stages: build tidy
-          # One sanitizer per job, two compiles at a time: ASan and TSan in one job at
-          # three ran the runner out of memory (it shut down mid-build).
-          - name: clang-23 asan
-            llvm: "23"
-            cxx: /usr/lib/llvm-23/bin/clang++
-            stages: sanitize
-            jobs: 2
-          - name: clang-23 tsan
-            llvm: "23"
-            cxx: /usr/lib/llvm-23/bin/clang++
-            stages: tsan
-            jobs: 2
-    env:
-      CXX: ${{ matrix.cxx }}
-      FFTN_CHECK_STAGES: ${{ matrix.stages }}
-      FFTN_CHECK_JOBS: ${{ matrix.jobs }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
-        with:
-          version: ${{ env.UV_VERSION }}
-          enable-cache: true
-          cache-dependency-glob: |
-            uv.lock
-            scripts/check.sh
-          prune-cache: false
-          cache-python: true
-      - name: Ninja
-        run: command -v ninja || { sudo apt-get update && sudo apt-get install -y --no-install-recommends ninja-build; }
-      - name: LLVM ${{ matrix.llvm }}
-        if: matrix.llvm
-        run: bash .github/scripts/install-llvm.sh "${{ matrix.llvm }}"
-      - name: Address-space randomisation that every sanitizer runtime supports
-        run: sudo sysctl -w vm.mmap_rnd_bits=28 || true
-      - *fetchcontent-restore
-      - *fetchcontent-place
-      - name: Gate, ${{ matrix.stages }}
-        run: bash scripts/check.sh
-      - *detected
-      - *fetchcontent-collect
-      - *logs
-
-  macos:
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
-    name: macos arm64 ${{ matrix.name }}
-    runs-on: macos-26
-    timeout-minutes: 90
-    # Each sanitizer stage has a job of its own, two compiles at a time: an instrumented
-    # kernel unit takes about 5 GB and these runners have three cores and 7 GB. Three at a time
-    # (with full debug information, 9 GB each) ran past 75 minutes (CI run 43656723703).
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # Apple's compiler: leak detection is not available in its ASan (the gate says so).
-          - name: apple-clang
-            cxx: clang++
-            stages: build bench
-          - name: apple-clang asan
-            cxx: clang++
-            stages: sanitize
-            jobs: 2
-          # Homebrew LLVM, the maintainer's configuration.
-          - name: llvm
-            brew-llvm: true
-            stages: build tidy coverage
-          - name: llvm asan
-            brew-llvm: true
-            stages: sanitize
-            jobs: 2
-          - name: llvm tsan
-            brew-llvm: true
-            stages: tsan
-            jobs: 2
-    env:
-      FFTN_CHECK_STAGES: ${{ matrix.stages }}
-      FFTN_CHECK_JOBS: ${{ matrix.jobs }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
-        with:
-          version: ${{ env.UV_VERSION }}
-          enable-cache: true
-          cache-dependency-glob: |
-            uv.lock
-            scripts/check.sh
-          prune-cache: false
-          cache-python: true
-      - name: Compiler and Ninja
-        env:
-          BREW_LLVM: ${{ matrix.brew-llvm }}
-          APPLE_CXX: ${{ matrix.cxx }}
-        run: |
-          export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1
-          command -v ninja || brew install ninja
-          if [[ $BREW_LLVM == true ]]; then
-            brew install llvm
-            echo "CXX=$(brew --prefix llvm)/bin/clang++" >> "$GITHUB_ENV"
-          else
-            echo "CXX=$APPLE_CXX" >> "$GITHUB_ENV"
-          fi
-      - *fetchcontent-restore
-      - *fetchcontent-place
-      - name: Gate, ${{ matrix.stages }}
-        run: bash scripts/check.sh
-      - *detected
-      - *fetchcontent-collect
-      - *logs
-
-  windows:
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
-    name: windows ${{ matrix.name }}
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # Clang on the MSVC ABI, both drivers (DESIGN.md 14.3), with LLVM as installed on
-          # the image. These jobs are experiment B2's runs. The C compiler (GoogleTest's
-          # project() enables C) is named too: left to itself, CMake finds the GNU-driver
-          # clang.exe beside clang-cl and hands it MSVC-style flags, which it rejects.
-          - name: x64 clang-cl
-            runner: windows-2025
-            arch: x64
-            cc: C:/Program Files/LLVM/bin/clang-cl.exe
-            cxx: C:/Program Files/LLVM/bin/clang-cl.exe
-          - name: x64 clang++
-            runner: windows-2025
-            arch: x64
-            cc: C:/Program Files/LLVM/bin/clang.exe
-            cxx: C:/Program Files/LLVM/bin/clang++.exe
-          - name: arm64 clang-cl
-            runner: windows-11-arm
-            arch: arm64
-            cc: C:/Program Files/LLVM/bin/clang-cl.exe
-            cxx: C:/Program Files/LLVM/bin/clang-cl.exe
-    defaults:
-      run:
-        shell: bash
-    env:
-      CC: ${{ matrix.cc }}
-      CXX: ${{ matrix.cxx }}
-      FFTN_CHECK_STAGES: build
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
-        with:
-          version: ${{ env.UV_VERSION }}
-          enable-cache: true
-          cache-dependency-glob: |
-            uv.lock
-            scripts/check.sh
-          prune-cache: false
-          cache-python: true
-      - name: Visual Studio environment (${{ matrix.arch }})
-        shell: pwsh
-        run: .github/scripts/msvc-env.ps1 ${{ matrix.arch }}
-      - name: Toolchain
-        env:
-          ARCH: ${{ matrix.arch }}
-        run: |
-          "$CXX" --version
-          cmake --version | head -1
-          ninja --version
-          echo "FFTN_CHECK_JOBS=$NUMBER_OF_PROCESSORS" >> "$GITHUB_ENV"
-          # The OpenMP tests' runtime DLL must be on PATH when they start (gtest discovery
-          # runs them). Where LLVM brings no libomp of its own (the Arm64 install), clang-cl
-          # links Visual Studio's libomp.lib, whose DLL (libomp140.<arch>.dll, the runtime of
-          # MSVC's /openmp:llvm) is only in the toolset's debug_nonredist directory: CI run
-          # 43656723703 failed with 0xc0000135 (DLL not found) there.
-          echo "OpenMP runtime DLLs:"
-          find "/c/Program Files/LLVM/bin" -maxdepth 1 -iname 'libomp*.dll' || true
-          if [[ -n ${VCToolsRedistDir:-} ]]; then
-            redist=$(cygpath -u "$VCToolsRedistDir")
-            for d in "${redist%/}"/debug_nonredist/"$ARCH"/Microsoft.VC*.OpenMP.LLVM; do
-              if [[ -d $d ]]; then
-                ls "$d"
-                cygpath -w "$d" >> "$GITHUB_PATH"
-              fi
-            done
-          fi
-      - *fetchcontent-restore
-      - *fetchcontent-place
-      - name: Gate, build
-        run: bash scripts/check.sh
-      - *detected
-      - name: Windows on Arm feature probe (B2)
-        if: always() && matrix.arch == 'arm64'
-        run: |
-          echo "PF_ARM_* flags that the SDK defines ($WindowsSDKVersion):"
-          winnt="$(cygpath "$WindowsSdkDir")/Include/${WindowsSDKVersion%\\}/um/winnt.h"
-          grep -E '#define PF_ARM_' "$winnt" || echo "none found in $winnt"
-          # Options with '-', not '/': Git Bash would rewrite '/x' as a path.
-          mkdir -p build
-          "$CXX" -nologo -std:c++20 -EHsc -O1 .github/b2/woa_features.cpp \
-            -Fe:build/woa_features.exe -link advapi32.lib
-          build/woa_features.exe
-      - *fetchcontent-collect
-      - *logs
+    uses: ./.github/workflows/gate.yml
+    with:
+      # Linux x86-64. Clang 23 is the development compiler; Clang 16 is the Clang floor
+      # (AGENTS.md section 4), preinstalled on the image. The one ASan + UBSan job and the
+      # one ThreadSanitizer job are here: Clang's TSan job is the quicker (14 minutes against
+      # GCC's 18-26 before the kernel units were split), and both find what the code does
+      # wrong on every platform. GCC's sanitizers (B1 found GCC-only failure modes) run in
+      # extended.yml.
+      linux: >-
+        [
+          {"name": "clang-23", "llvm": "23", "cxx": "/usr/lib/llvm-23/bin/clang++",
+           "stages": "build bench"},
+          {"name": "clang-23 asan", "llvm": "23", "cxx": "/usr/lib/llvm-23/bin/clang++",
+           "stages": "sanitize"},
+          {"name": "clang-23 tsan", "llvm": "23", "cxx": "/usr/lib/llvm-23/bin/clang++",
+           "stages": "tsan"},
+          {"name": "clang-16", "cxx": "/usr/lib/llvm-16/bin/clang++", "stages": "build"}
+        ]
+      # The current GCC, from its official image.
+      linux-gcc-current: >-
+        [
+          {"name": "gcc-16", "stages": "build"}
+        ]
+      # AArch64 with GCC 14, the GCC floor: the getauxval feature path (Neoverse N2 runners,
+      # FCMA and pointer authentication, so neon and neon_fcma are forced beside scalar).
+      linux-arm64: >-
+        [
+          {"name": "gcc-14", "cxx": "g++-14", "stages": "build bench"}
+        ]
+      # Homebrew LLVM, the maintainer's configuration. Its ASan + UBSan (the only sanitizer
+      # run of NEON with FCMA) took 61 minutes on these runners, the slowest job by far, and
+      # runs weekly in extended.yml; AArch64 sanitizers on every push come from Linux.
+      macos: >-
+        [
+          {"name": "llvm", "brew-llvm": true, "stages": "build bench"}
+        ]
+      # Clang on the MSVC ABI with clang-cl, x64 and Arm64 (experiment B2), with LLVM as
+      # installed on the image. The C compiler (GoogleTest's project() enables C) is named
+      # too: left to itself, CMake finds the GNU-driver clang.exe beside clang-cl and hands
+      # it MSVC-style flags, which it rejects.
+      windows: >-
+        [
+          {"name": "x64 clang-cl", "runner": "windows-2025", "arch": "x64", "stages": "build",
+           "cc": "C:/Program Files/LLVM/bin/clang-cl.exe",
+           "cxx": "C:/Program Files/LLVM/bin/clang-cl.exe"},
+          {"name": "arm64 clang-cl", "runner": "windows-11-arm", "arch": "arm64",
+           "stages": "build",
+           "cc": "C:/Program Files/LLVM/bin/clang-cl.exe",
+           "cxx": "C:/Program Files/LLVM/bin/clang-cl.exe"}
+        ]

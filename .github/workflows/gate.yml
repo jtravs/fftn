@@ -1,0 +1,354 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# The code stages of the gate (scripts/check.sh) on the platforms of DESIGN.md 15.4, called
+# by ci.yml (every push and pull request) and extended.yml (weekly and on demand) with the
+# matrix of each platform as a JSON list. A matrix entry names its job ("name"), the gate
+# stages it runs ("stages") and the compiler ("cxx", or "llvm" to install that LLVM release
+# from apt.llvm.org, or "brew-llvm" on macOS); "jobs" limits parallel compiles where memory
+# is short. The callers say why each entry runs where it does.
+#
+# Pins: actions by commit; the uv version below; tools by URL and SHA-256
+# (.github/scripts/fetch.sh); the current-GCC image by digest; LLVM from apt.llvm.org with
+# its signing key pinned (.github/scripts/install-llvm.sh). Compilers that come with the
+# runner images (GCC 14, Clang 16, Apple Clang, Homebrew LLVM, LLVM on Windows) are
+# reported by the gate in every log.
+#
+# Compiles go through ccache on Linux and macOS (CMake's compiler launcher, set from the
+# environment, so scripts/check.sh and the presets are unchanged), one cache per job. Runs
+# on main and the extended runs save it; every run restores the newest from its own branch
+# or main. Most changes leave the kernel units and the third-party dependencies alone, and
+# those are nearly all of a build. Only main saves, so that branch caches do not crowd the
+# repository's cache space and evict main's.
+name: gate
+
+on:
+  workflow_call:
+    inputs:
+      linux:
+        description: Linux x86-64 on the runner image (JSON list of matrix entries)
+        type: string
+        default: "[]"
+      linux-gcc-current:
+        description: Linux x86-64 in the current GCC's container image
+        type: string
+        default: "[]"
+      linux-arm64:
+        description: Linux AArch64
+        type: string
+        default: "[]"
+      macos:
+        description: macOS arm64
+        type: string
+        default: "[]"
+      windows:
+        description: Windows, clang on the MSVC ABI (entries also give runner, arch, cc)
+        type: string
+        default: "[]"
+
+permissions:
+  contents: read
+
+env:
+  # uv for the gate's Python, and the uvx tools it pins (clang-format, clang-tidy, ruff).
+  UV_VERSION: "0.13.6"
+
+jobs:
+  linux:
+    if: inputs.linux != '[]'
+    name: linux x86-64 ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(inputs.linux) }}
+    env:
+      CXX: ${{ matrix.cxx }}
+      FFTN_CHECK_STAGES: ${{ matrix.stages }}
+      FFTN_CHECK_JOBS: ${{ matrix.jobs }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - &uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: |
+            uv.lock
+            scripts/check.sh
+          prune-cache: false
+          cache-python: true
+      - name: LLVM ${{ matrix.llvm }}
+        if: matrix.llvm
+        run: bash .github/scripts/install-llvm.sh "${{ matrix.llvm }}"
+      - name: ccache
+        run: command -v ccache || { sudo apt-get update && sudo apt-get install -y --no-install-recommends ccache; }
+      - name: Address-space randomisation that every sanitizer runtime supports
+        # The image's kernel uses 32 bits of mmap randomisation, which older ASan and TSan
+        # runtimes cannot map around; 28 bits is the long-standing default.
+        run: sudo sysctl -w vm.mmap_rnd_bits=28
+      - &ccache-restore
+        name: ccache (restore)
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.fftn-ccache
+          key: ccache-${{ github.job }}-${{ matrix.name }}-${{ github.sha }}
+          restore-keys: ccache-${{ github.job }}-${{ matrix.name }}-
+      - &ccache-setup
+        name: ccache (set up)
+        shell: bash
+        run: |
+          {
+            echo "CCACHE_DIR=$HOME/.fftn-ccache"
+            echo "CCACHE_MAXSIZE=1G"
+            echo "CMAKE_CXX_COMPILER_LAUNCHER=ccache"
+            echo "CMAKE_C_COMPILER_LAUNCHER=ccache"
+          } >> "$GITHUB_ENV"
+          ccache --version | head -1
+          CCACHE_DIR=$HOME/.fftn-ccache ccache --zero-stats > /dev/null
+      - &fetchcontent-restore
+        name: FetchContent archives (restore)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/fftn-fetchcontent
+          key: fetchcontent-${{ hashFiles('cmake/*.cmake') }}
+      - &fetchcontent-place
+        name: FetchContent archives (place)
+        shell: bash
+        run: bash .github/scripts/fetchcontent-cache.sh restore ~/.cache/fftn-fetchcontent
+      - name: Gate, ${{ matrix.stages }}
+        run: bash scripts/check.sh
+      - &ccache-stats
+        name: ccache (statistics)
+        if: always()
+        shell: bash
+        run: ccache --show-stats || true
+      - &ccache-save
+        name: ccache (save)
+        if: success() && (github.ref == 'refs/heads/main' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.fftn-ccache
+          key: ccache-${{ github.job }}-${{ matrix.name }}-${{ github.sha }}
+      - &detected
+        name: What FFTN detects here
+        if: always()
+        shell: bash
+        run: |
+          for d in build/check-release build/check-sanitize; do
+            for exe in "$d/tests/platform/fftn_platform_dump" "$d/tests/platform/fftn_platform_dump.exe"; do
+              if [[ -x $exe ]]; then "$exe"; exit 0; fi
+            done
+          done
+          echo "no fftn_platform_dump was built"
+      - &fetchcontent-collect
+        name: FetchContent archives (collect)
+        if: always()
+        shell: bash
+        run: bash .github/scripts/fetchcontent-cache.sh save ~/.cache/fftn-fetchcontent
+      - &logs
+        name: Build logs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: logs-${{ github.job }}-${{ strategy.job-index }}
+          path: |
+            build/*.log
+            build/*/Testing/Temporary/LastTest*.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+  linux-gcc-current:
+    if: inputs.linux-gcc-current != '[]'
+    name: linux x86-64 ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(inputs.linux-gcc-current) }}
+    # The current GCC from its official image, pinned by digest. seccomp is relaxed so that
+    # the gate can run TSan's tests with address randomisation off (setarch -R), which
+    # Docker's default profile forbids.
+    container:
+      image: gcc:16.2.0-trixie@sha256:b8a42d6804296fbe7a54e17e9d60c3100d9e8dbe7ef88c748cae2ddb00d63ba2
+      options: --security-opt seccomp=unconfined
+    env:
+      CXX: g++
+      FFTN_CHECK_STAGES: ${{ matrix.stages }}
+      FFTN_CHECK_JOBS: ${{ matrix.jobs }}
+    steps:
+      - name: Packages (CMake, Ninja, ccache)
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends cmake ninja-build ccache
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - *uv
+      - *ccache-restore
+      - *ccache-setup
+      - *fetchcontent-restore
+      - *fetchcontent-place
+      - name: Gate, ${{ matrix.stages }}
+        run: bash scripts/check.sh
+      - *ccache-stats
+      - *ccache-save
+      - *detected
+      - *fetchcontent-collect
+      - *logs
+
+  linux-arm64:
+    if: inputs.linux-arm64 != '[]'
+    name: linux aarch64 ${{ matrix.name }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(inputs.linux-arm64) }}
+    env:
+      CXX: ${{ matrix.cxx }}
+      FFTN_CHECK_STAGES: ${{ matrix.stages }}
+      FFTN_CHECK_JOBS: ${{ matrix.jobs }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - *uv
+      - name: Ninja and ccache
+        run: |
+          if ! command -v ninja || ! command -v ccache; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends ninja-build ccache
+          fi
+      - name: LLVM ${{ matrix.llvm }}
+        if: matrix.llvm
+        run: bash .github/scripts/install-llvm.sh "${{ matrix.llvm }}"
+      - name: Address-space randomisation that every sanitizer runtime supports
+        run: sudo sysctl -w vm.mmap_rnd_bits=28 || true
+      - *ccache-restore
+      - *ccache-setup
+      - *fetchcontent-restore
+      - *fetchcontent-place
+      - name: Gate, ${{ matrix.stages }}
+        run: bash scripts/check.sh
+      - *ccache-stats
+      - *ccache-save
+      - *detected
+      - *fetchcontent-collect
+      - *logs
+
+  macos:
+    if: inputs.macos != '[]'
+    name: macos arm64 ${{ matrix.name }}
+    runs-on: macos-26
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(inputs.macos) }}
+    env:
+      FFTN_CHECK_STAGES: ${{ matrix.stages }}
+      FFTN_CHECK_JOBS: ${{ matrix.jobs }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - *uv
+      - name: Compiler, Ninja and ccache
+        env:
+          BREW_LLVM: ${{ matrix.brew-llvm }}
+          APPLE_CXX: ${{ matrix.cxx }}
+        run: |
+          export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1
+          command -v ninja || brew install ninja
+          command -v ccache || brew install ccache
+          if [[ $BREW_LLVM == true ]]; then
+            brew install llvm
+            echo "CXX=$(brew --prefix llvm)/bin/clang++" >> "$GITHUB_ENV"
+          else
+            echo "CXX=$APPLE_CXX" >> "$GITHUB_ENV"
+          fi
+      - *ccache-restore
+      - *ccache-setup
+      - *fetchcontent-restore
+      - *fetchcontent-place
+      - name: Gate, ${{ matrix.stages }}
+        run: bash scripts/check.sh
+      - *ccache-stats
+      - *ccache-save
+      - *detected
+      - *fetchcontent-collect
+      - *logs
+
+  windows:
+    if: inputs.windows != '[]'
+    name: windows ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(inputs.windows) }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      CC: ${{ matrix.cc }}
+      CXX: ${{ matrix.cxx }}
+      FFTN_CHECK_STAGES: ${{ matrix.stages }}
+    # No ccache here: clang-cl's debug information would need /Z7 for it.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - *uv
+      - name: Visual Studio environment (${{ matrix.arch }})
+        shell: pwsh
+        run: .github/scripts/msvc-env.ps1 ${{ matrix.arch }}
+      - name: Toolchain
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          "$CXX" --version
+          cmake --version | head -1
+          ninja --version
+          echo "FFTN_CHECK_JOBS=$NUMBER_OF_PROCESSORS" >> "$GITHUB_ENV"
+          # The OpenMP tests' runtime DLL must be on PATH when they start (gtest discovery
+          # runs them). Where LLVM brings no libomp of its own (the Arm64 install), clang-cl
+          # links Visual Studio's libomp.lib, whose DLL (libomp140.<arch>.dll, the runtime of
+          # MSVC's /openmp:llvm) is only in the toolset's debug_nonredist directory: CI run
+          # 43656723703 failed with 0xc0000135 (DLL not found) there.
+          echo "OpenMP runtime DLLs:"
+          find "/c/Program Files/LLVM/bin" -maxdepth 1 -iname 'libomp*.dll' || true
+          if [[ -n ${VCToolsRedistDir:-} ]]; then
+            redist=$(cygpath -u "$VCToolsRedistDir")
+            for d in "${redist%/}"/debug_nonredist/"$ARCH"/Microsoft.VC*.OpenMP.LLVM; do
+              if [[ -d $d ]]; then
+                ls "$d"
+                cygpath -w "$d" >> "$GITHUB_PATH"
+              fi
+            done
+          fi
+      - *fetchcontent-restore
+      - *fetchcontent-place
+      - name: Gate, ${{ matrix.stages }}
+        run: bash scripts/check.sh
+      - *detected
+      - name: Windows on Arm feature probe (B2)
+        if: always() && matrix.arch == 'arm64'
+        run: |
+          echo "PF_ARM_* flags that the SDK defines ($WindowsSDKVersion):"
+          winnt="$(cygpath "$WindowsSdkDir")/Include/${WindowsSDKVersion%\\}/um/winnt.h"
+          grep -E '#define PF_ARM_' "$winnt" || echo "none found in $winnt"
+          # Options with '-', not '/': Git Bash would rewrite '/x' as a path.
+          mkdir -p build
+          "$CXX" -nologo -std:c++20 -EHsc -O1 .github/b2/woa_features.cpp \
+            -Fe:build/woa_features.exe -link advapi32.lib
+          build/woa_features.exe
+      - *fetchcontent-collect
+      - *logs

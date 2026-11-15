@@ -1,6 +1,6 @@
 # X16: `avx512` against `avx2`, with AVX-512's own cost table
 
-- **Status:** planned
+- **Status:** done (2026-11-15): own table in float; `avx512` first in double; float's preference and tails go to phase 2
 - **Owner:** lead session, 2026-11-14 (tooling written with this file)
 - **Phase / task:** 1.3 / 1.4
 
@@ -127,9 +127,63 @@ for the AVX2 tables; but the whole gap the fitted table could close is the 0.6�
 below rule 1's 3 %. Rule 1: not adopted; `avx512` keeps the nearest-C AVX2 tables. Radix
 choice is therefore not a cause of FFTN's gap to FFTW on this Xeon (that is X18's question).
 
-Rules 2 and 3 (arm (a), `ISA=avx2`, against (b)) are pending: fbench job
-fbench-20261114-130910-a3903ed6-d4db65 (X2 lengths 17–1024).
+Rules 2 and 3 were first run on the X2 lengths 17–1024 (fbench job
+fbench-20261114-130910-a3903ed6-d4db65; lesson 2.3's figures). They are decided below on the
+planner refresh's builds.
+
+### The refresh: arms (a), (b), (c) after X1, X3, X18 and X19 (rules 1–3)
+
+Two runs on the Xeon Gold 6240 (GCC 14.4, Release, one thread, Slurm `-c 8` on the shared
+node), the X2 catalogue's c2c rows:
+
+- Run 20261115-002450-ca6f (Slurm 15612): (a) and (b) from main 6844ad0 (X1 merged), 600
+  rows 17–32768, 80 rounds, band ±1.00 %, load average median 9.0. (b) ÷ (a): double 0.814
+  (b1) and 0.878 (b64), float 1.026 and 1.073.
+- Run 20261115-040151-b716 (Slurm 15636): (a) and (b) from fc0c27c (6844ad0 plus fit.py),
+  (c) from fef4e0c (the refreshed AVX-512 tables, X2 "Refit after X1, X3, X18 and X19"),
+  608 rows 17–65536, 71 rounds, band ±1.00 %, load average median 1.7; stopped after 4 h
+  with 45 cases unresolved (ties).
+
+| ÷ (a) `avx2` | double b1 | double b64 | float b1 | float b64 |
+|---|---|---|---|---|
+| (b) `avx512`, tables before | 0.810 | 0.877 | 1.019 | 1.073 |
+| (c) `avx512`, refreshed tables | 0.804 | 0.872 | 0.975 | 1.022 |
+| (c), 17–64 points | 1.162 | 1.202 | 1.640 | 1.664 |
+| (c), 65–256 | 0.878 | 0.930 | 1.216 | 1.250 |
+| (c), 257–1024 | 0.731 | 0.790 | 0.876 | 0.908 |
+| (c), 1025–4096 | 0.644 | 0.757 | 0.641 | 0.727 |
+| (c), 4097–65536 | 0.708 | 0.817 | 0.615 | 0.696 |
+| (c), C does not divide n (double 56, float 78 lengths) | 1.001 | 1.046 | 1.199 | 1.225 |
+| (c), C divides n (96, 74) | 0.708 | 0.783 | 0.783 | 0.845 |
+
+What decides AVX-512 against AVX2 on this machine is whether C divides n (C = 4 in double,
+8 in float), more than the length: float rows whose length is not a multiple of 8 take 1.20–
+1.23 times AVX2's time, the others 0.78–0.85. At 60 points float takes 2.6 times AVX2's
+time (run 15612), as on the cloud's Emerald Rapids and Zen 5 (2.9–3.1, X21): a lead for a
+tail-tile or leaf problem in `avx512`, recorded here and not pursued.
 
 ## Verdict
 
-Pending.
+For the Cascade Lake class only (Xeon Gold 6240); a verdict here does not carry to recent
+Intel or AMD cores (X21: on Emerald Rapids `avx512` wins in double, 0.83–0.86, and slightly
+in float, 0.95–0.99; on Zen 5 it wins in double, 0.87, and loses in float, 1.03–1.07).
+
+1. **Rule 1, AVX-512's own table:** adopted in float ((c) ÷ (b) 0.957 at batch 1 and 0.953
+   at batch 64, band ±1.00 %; the one case slower by more than 2 %, 10403 at 1.08, is
+   overridden back to its previous plan). In double the table's geometric mean moves 0.6 %
+   ((c) ÷ (b) 0.993, 0.994), below the rule's 3 %: double keeps avx2_float's costs, and its
+   per-length overrides are adopted by X2's own rule (0.939 over the 14 lengths changed).
+2. **Rule 2, the preference:** double: `avx512` stays first (0.804 and 0.872 of AVX2's time,
+   clear of the band). Float: (c) beats (a) at batch 1 (0.975) but not at batch 64 (1.022),
+   so by the rule `avx2` goes ahead of `avx512` for single precision on Cascade Lake, and
+   the follow-up's answer is above: tails (lengths that 8 does not divide), not length as
+   such. Not implemented here: `best_target` chooses per machine, not per precision or CPU
+   generation, and a blanket `avx2` for float would give up 15–38 % on every float row that
+   8 divides from 257 points up. The better rule is per plan (`avx512` where C divides n,
+   else `avx2`), which is phase 2's cost model pricing both targets (X21 follow-up 1); until
+   then the preference is unchanged and this verdict is the input.
+3. **Rule 3, R × C transpose:** float lengths that C does not divide lose to (a) by 20–23 %
+   under (c), above the rule's 10 %: work on tail-bound float on `avx512` is justified
+   (an R × C transpose, or masked tails as icpx's code suggests, X22). Double: 0–5 %, no.
+
+Lesson 2.3 in [LESSONS.md](../LESSONS.md) updated.

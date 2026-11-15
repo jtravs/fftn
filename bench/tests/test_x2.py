@@ -146,6 +146,11 @@ class Cases(unittest.TestCase):
             radices.from_note("axis 0 (n = 1024): radices 8 x 8 x 16, split from pass 2"),
             (1024, (8, 8, 16)),
         )
+        # A Bluestein stage counts as its primes (rule_radices' sequence).
+        note = "axis 0 (n = 2431): radices 13 x 11 x bluestein 17 (M 36 = 6 x 6)"
+        self.assertEqual(radices.from_note(note), (2431, (13, 11, 17)))
+        note = "axis 0 (n = 4097): radices bluestein 4097 (M 8192 = 8 x 8 x 8 x 16)"
+        self.assertEqual(radices.from_note(note), (4097, (17, 241)))
         with self.assertRaises(ValueError):
             radices.from_note("axis 0 (n = 100): r2c through a half-length complex chain")
 
@@ -204,7 +209,13 @@ class Stages(unittest.TestCase):
 class Isa(unittest.TestCase):
     def test_every_arm_is_forced(self):
         cmd = search.fbench_command(
-            search.REPO / "bench-out", search.DEFAULT_BUILD, 64, ["4.16"], search.SCREEN, [], "avx512"
+            search.REPO / "bench-out",
+            search.DEFAULT_BUILD,
+            64,
+            ["4.16"],
+            search.SCREEN,
+            [],
+            "avx512",
         )
         self.assertIn("v0=fftn+ISA=avx512", cmd)
         self.assertIn("4.16=fftn+ISA=avx512+RADICES=4.16", cmd)
@@ -251,7 +262,7 @@ class Fit(unittest.TestCase):
     def test_search_is_the_planners(self):
         """fit.py's port of rule_radices on rules.cpp's AVX2 tables gives the recorded
         radices (tests/core/data/rule_radices.txt) for C = 2 and C = 4."""
-        self.assertEqual(len(self.tables["avx2_double"].overrides), 6)
+        self.assertEqual(len(self.tables["avx2_double"].overrides), 29)
         path = search.REPO / "tests" / "core" / "data" / "rule_radices.txt"
         checked = 0
         for line in path.read_text().splitlines():
@@ -264,6 +275,33 @@ class Fit(unittest.TestCase):
                 self.assertEqual(got, tuple(int(r) for r in col), f"n = {n}, C = {c}")
             checked += 1
         self.assertEqual(checked, 5208)
+
+    def test_split_runs_mirror_the_chain(self):
+        """--split's split_from is strategies/chain.cpp's: the run starts after the first
+        prefix product that the block divides, needs two passes of radix 16 or below."""
+        self.assertEqual(fit.split_from((8, 8, 16), 8), 1)
+        self.assertEqual(fit.split_from((4, 16, 16), 8), 3)  # 4 x 16 = 64 leaves one pass
+        self.assertEqual(fit.split_from((4, 2, 8, 16), 8), 2)
+        self.assertEqual(fit.split_from((8, 8, 16), 16), 3)
+        self.assertEqual(fit.split_from((16, 8, 8), 16), 1)
+        self.assertEqual(fit.split_from((8, 32, 4), 8), 3)  # radix 32 has no split codelet
+        self.assertEqual(fit.split_from((8, 8), 8), 2)
+        self.assertEqual(fit.split_from((8, 8, 16), 0), 3)
+        f = fit.features((8, 8, 16), 2, 8)
+        self.assertIn(fit.SPLIT0 + fit.COLUMN[8], f)  # middle radix 8, split
+        self.assertIn(fit.SPLIT0 + fit.NR + fit.COLUMN[16], f)  # last radix 16, split
+        self.assertEqual(f[fit.CONVERT], 1024 / 2)
+
+    def test_split_search_prices_runs(self):
+        """With split units far cheaper than interleaved ones, the search prefers a sequence
+        with a run; with them dearer, the plain search's choice."""
+        t = self.tables["avx2_double"]
+        plain = fit.rule_radices(1024, fit.Table(t.unit, t.tail, t.passes), 2)
+        self.assertEqual(fit.split_from(plain, 8), len(plain))  # 4.16.16: no run
+        cheap = fit.Table(t.unit, t.tail, t.passes, split=[[1] * fit.NR, [1] * fit.NR], block=8)
+        self.assertLess(fit.split_from(fit.rule_radices(1024, cheap, 2), 8), 3)
+        dear = fit.Table(t.unit, t.tail, t.passes, split=[[10**6] * fit.NR] * 2, block=8)
+        self.assertEqual(fit.rule_radices(1024, dear, 2), plain)
 
     def test_fit_recovers_a_synthetic_table(self):
         """Timings made from a known table (rules.cpp's float one at C = 4, plus a constant

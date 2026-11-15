@@ -6,6 +6,10 @@
 // every edge variant. Which rows exist comes from the generated table, so a radix added to
 // the generator gets its passes here without any change. The table is constant data, built
 // by the compiler (no function computes it at run time). No include guard.
+//
+// A target is compiled as several units (DESIGN.md 6.4): each row unit instantiates some
+// rows of the codelet table, codelet_row<T, I>::passes (isa/rows.inl), and the target's main
+// unit instantiates the rest of the table and points at those rows (isa/table.inl).
 
 namespace {
 
@@ -176,29 +180,42 @@ template <class T, std::size_t I> struct radix_entries {
   };
 };
 
+} // namespace
+
+// Row I of the codelet table for precision T: radix_entries<T, I>::value, defined by exactly
+// one of the target's row units (isa/rows.inl) and read through a pointer by the target's
+// table. The only names of the region besides the table with external linkage: data, so no
+// unit's copy of a function can stand in for another's. Each target's are distinct
+// symbols, in its own namespace.
+template <class T, std::size_t I> struct codelet_row {
+  static const radix_passes passes;
+};
+
+namespace {
+
 static_assert(gen::radix_count == 17, "pass_table lists the rows of gen::radices");
 
 template <class T>
 inline constexpr pass_kernels<T> pass_table{
     .codelet =
         {
-            radix_entries<T, 0>::value,
-            radix_entries<T, 1>::value,
-            radix_entries<T, 2>::value,
-            radix_entries<T, 3>::value,
-            radix_entries<T, 4>::value,
-            radix_entries<T, 5>::value,
-            radix_entries<T, 6>::value,
-            radix_entries<T, 7>::value,
-            radix_entries<T, 8>::value,
-            radix_entries<T, 9>::value,
-            radix_entries<T, 10>::value,
-            radix_entries<T, 11>::value,
-            radix_entries<T, 12>::value,
-            radix_entries<T, 13>::value,
-            radix_entries<T, 14>::value,
-            radix_entries<T, 15>::value,
-            radix_entries<T, 16>::value,
+            &codelet_row<T, 0>::passes,
+            &codelet_row<T, 1>::passes,
+            &codelet_row<T, 2>::passes,
+            &codelet_row<T, 3>::passes,
+            &codelet_row<T, 4>::passes,
+            &codelet_row<T, 5>::passes,
+            &codelet_row<T, 6>::passes,
+            &codelet_row<T, 7>::passes,
+            &codelet_row<T, 8>::passes,
+            &codelet_row<T, 9>::passes,
+            &codelet_row<T, 10>::passes,
+            &codelet_row<T, 11>::passes,
+            &codelet_row<T, 12>::passes,
+            &codelet_row<T, 13>::passes,
+            &codelet_row<T, 14>::passes,
+            &codelet_row<T, 15>::passes,
+            &codelet_row<T, 16>::passes,
         },
     .generic =
         {

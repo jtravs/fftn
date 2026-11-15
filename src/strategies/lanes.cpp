@@ -58,7 +58,7 @@ template <class T> bool chain_builder<T>::lanes_fit(std::size_t n, bool real) co
     return false;
   }
   return std::ranges::all_of(radices(len), [this](std::size_t r) {
-    return has_codelet(r) && kernels_.passes.codelet[codelet_slot(r)].lane[0] != nullptr;
+    return has_codelet(r) && kernels_.passes.codelet[codelet_slot(r)]->lane[0] != nullptr;
   });
 }
 
@@ -136,7 +136,7 @@ void chain_builder<T>::lanes_body(std::size_t n, const std::vector<std::size_t>&
   if (rad.size() == 1) {
     const lane_rows to = to_dst ? dst : tile_of(at);
     stage st;
-    st.run = kernels_.passes.codelet[codelet_slot(n)].lanes_leaf[d][scaled];
+    st.run = kernels_.passes.codelet[codelet_slot(n)]->lanes_leaf[d][scaled];
     common(st, n, src, to);
     st.units = block / c;
     st.name = "lanes leaf radix-" + std::to_string(n) + " " + direction_text(sign) + " (" +
@@ -151,7 +151,7 @@ void chain_builder<T>::lanes_body(std::size_t n, const std::vector<std::size_t>&
     // The first pass, reading the rows (or a tile).
     stage st;
     const std::size_t m = n / rad[0];
-    st.run = kernels_.passes.codelet[codelet_slot(rad[0])].lanes_first[d];
+    st.run = kernels_.passes.codelet[codelet_slot(rad[0])]->lanes_first[d];
     common(st, rad[0], src, tile_of(at));
     st.args.m = m;
     st.args.s = block;
@@ -172,7 +172,7 @@ void chain_builder<T>::lanes_body(std::size_t n, const std::vector<std::size_t>&
   }
   if (to_dst) {
     stage st;
-    st.run = kernels_.passes.codelet[codelet_slot(rad[last])].lanes_last[d][scaled];
+    st.run = kernels_.passes.codelet[codelet_slot(rad[last])]->lanes_last[d][scaled];
     common(st, rad[last], tile_of(at), dst);
     st.args.m = 1;
     st.args.s = s * block;
