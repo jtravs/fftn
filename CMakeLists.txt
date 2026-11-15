@@ -38,6 +38,18 @@ if(FFTN_SANITIZE)
   if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     add_compile_options(-fno-ipa-icf)
   endif()
+  # Sanitizer reports need line tables only (file and line of every frame), and full debug
+  # information of the kernel units' huge functions multiplied the cost of an instrumented
+  # build. src/isa/neon_fcma.cpp under ASan + UBSan at -O2 (Apple M5 Max): GCC 16 took
+  # 1483 s and 23.4 GB with -g (variable tracking overflowed and was redone for every
+  # radix-64 pass) against 809 s and 5.6 GB with -g1; Clang 23 671 s and 9.1 GB with -g
+  # against 331 s and 4.7 GB with -gline-tables-only. With -g, CI's sanitizer jobs ran out
+  # of memory (GCC on 16 GB runners) or time (macOS). These come after the build type's -g.
+  if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_compile_options(-gline-tables-only)
+  elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    add_compile_options(-g1)
+  endif()
   # Clang links its TSan runtime statically on Linux, and that runtime defines the global
   # operator new and delete as strong symbols (compiler-rt's tsan_new_delete.cpp; ASan's
   # are weak), so the tests' counting replacements (tests/support/alloc_hook.cpp) clash

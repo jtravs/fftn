@@ -7,8 +7,9 @@
 # Clang on Linux x86-64, with Clang on Linux AArch64 and on macOS; clang-tidy on Linux
 # x86-64, Linux AArch64 and macOS, since its findings follow the platform's #if branches;
 # coverage with Clang on Linux x86-64 and macOS. Windows builds and tests only (no
-# sanitizer or coverage stage is set up for the MSVC ABI). Emulated processors are in
-# emulation.yml.
+# sanitizer or coverage stage is set up for the MSVC ABI). Sanitizer stages run in jobs of
+# their own with fewer parallel compiles ("jobs"): instrumented kernel units need gigabytes
+# each. Emulated processors are in emulation.yml.
 #
 # Pins: actions by commit; the uv version below; tools by URL and SHA-256
 # (.github/scripts/fetch.sh); the current-GCC image by digest; LLVM 23 from apt.llvm.org
@@ -86,21 +87,39 @@ jobs:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     name: linux x86-64 ${{ matrix.name }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
         include:
           # The floor (AGENTS.md section 4), with both sanitizer stages: B1 found GCC-only
           # failure modes, and GCC 14's TSan is the one that needs the address-space fix.
+          # Sanitizer builds compile the kernel units with instrumentation, at 5-6 GB each
+          # under GCC even with line tables only (CMakeLists.txt); four at a time on these
+          # 16 GB runners killed the runner (CI run 43656723703). So GCC's sanitizer stages
+          # run in jobs of their own, two compiles at a time ("jobs", FFTN_CHECK_JOBS).
           - name: gcc-14
             cxx: g++-14
-            stages: build sanitize tsan bench
-          # The development compiler: every code stage, including tidy and coverage.
+            stages: build bench
+          - name: gcc-14 asan
+            cxx: g++-14
+            stages: sanitize
+            jobs: 2
+          - name: gcc-14 tsan
+            cxx: g++-14
+            stages: tsan
+            jobs: 2
+          # The development compiler: every code stage, including tidy and coverage; Clang's
+          # instrumented kernel units take about 5 GB each, three at a time.
           - name: clang-23
             llvm: "23"
             cxx: /usr/lib/llvm-23/bin/clang++
-            stages: build tidy sanitize tsan coverage bench
+            stages: build tidy coverage bench
+          - name: clang-23 sanitizers
+            llvm: "23"
+            cxx: /usr/lib/llvm-23/bin/clang++
+            stages: sanitize tsan
+            jobs: 3
           # The Clang floor: compiles cleanly and passes; preinstalled on the image.
           - name: clang-16
             cxx: /usr/lib/llvm-16/bin/clang++
@@ -108,6 +127,7 @@ jobs:
     env:
       CXX: ${{ matrix.cxx }}
       FFTN_CHECK_STAGES: ${{ matrix.stages }}
+      FFTN_CHECK_JOBS: ${{ matrix.jobs }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -170,9 +190,22 @@ jobs:
 
   linux-gcc-current:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
-    name: linux x86-64 gcc-16
+    name: linux x86-64 ${{ matrix.name }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 90
+    # The sanitizer stages in jobs of their own, two compiles at a time, as for GCC 14.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: gcc-16
+            stages: build
+          - name: gcc-16 asan
+            stages: sanitize
+            jobs: 2
+          - name: gcc-16 tsan
+            stages: tsan
+            jobs: 2
     # The current GCC from its official image, pinned by digest. seccomp is relaxed so that
     # the gate can run TSan's tests with address randomisation off (setarch -R), which
     # Docker's default profile forbids.
@@ -181,7 +214,8 @@ jobs:
       options: --security-opt seccomp=unconfined
     env:
       CXX: g++
-      FFTN_CHECK_STAGES: build sanitize tsan
+      FFTN_CHECK_STAGES: ${{ matrix.stages }}
+      FFTN_CHECK_JOBS: ${{ matrix.jobs }}
     steps:
       - name: Packages (CMake, Ninja)
         run: |
@@ -201,7 +235,7 @@ jobs:
           cache-python: true
       - *fetchcontent-restore
       - *fetchcontent-place
-      - name: Gate, build sanitize tsan
+      - name: Gate, ${{ matrix.stages }}
         run: bash scripts/check.sh
       - *detected
       - *fetchcontent-collect
@@ -211,7 +245,7 @@ jobs:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     name: linux aarch64 ${{ matrix.name }}
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 60
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -223,13 +257,20 @@ jobs:
           - name: gcc-14
             cxx: g++-14
             stages: build bench
+          # The sanitizers in a job of their own, three compiles at a time (as on x86-64).
           - name: clang-23
             llvm: "23"
             cxx: /usr/lib/llvm-23/bin/clang++
-            stages: build tidy sanitize tsan
+            stages: build tidy
+          - name: clang-23 sanitizers
+            llvm: "23"
+            cxx: /usr/lib/llvm-23/bin/clang++
+            stages: sanitize tsan
+            jobs: 3
     env:
       CXX: ${{ matrix.cxx }}
       FFTN_CHECK_STAGES: ${{ matrix.stages }}
+      FFTN_CHECK_JOBS: ${{ matrix.jobs }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -262,7 +303,10 @@ jobs:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     name: macos arm64 ${{ matrix.name }}
     runs-on: macos-26
-    timeout-minutes: 75
+    timeout-minutes: 90
+    # Each sanitizer stage has a job of its own, two compiles at a time: an instrumented
+    # kernel unit takes about 5 GB and these runners have three cores and 7 GB. Three at a time
+    # (with full debug information, 9 GB each) ran past 75 minutes (CI run 43656723703).
     strategy:
       fail-fast: false
       matrix:
@@ -270,17 +314,26 @@ jobs:
           # Apple's compiler: leak detection is not available in its ASan (the gate says so).
           - name: apple-clang
             cxx: clang++
-            stages: build sanitize bench
-          # Homebrew LLVM, the maintainer's configuration, split in two jobs to keep each
-          # under half an hour on the three-core runners.
+            stages: build bench
+          - name: apple-clang asan
+            cxx: clang++
+            stages: sanitize
+            jobs: 2
+          # Homebrew LLVM, the maintainer's configuration.
           - name: llvm
             brew-llvm: true
             stages: build tidy coverage
-          - name: llvm-sanitizers
+          - name: llvm asan
             brew-llvm: true
-            stages: sanitize tsan
+            stages: sanitize
+            jobs: 2
+          - name: llvm tsan
+            brew-llvm: true
+            stages: tsan
+            jobs: 2
     env:
       FFTN_CHECK_STAGES: ${{ matrix.stages }}
+      FFTN_CHECK_JOBS: ${{ matrix.jobs }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
