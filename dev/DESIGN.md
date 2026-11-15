@@ -760,9 +760,10 @@ precision, about equal in compile time), each row as a constant
 instantiation). The main unit (`src/isa/<target>.cpp`) instantiates the other passes and the
 function table, which points at the rows (declared there as explicit instantiations made
 elsewhere: a row that no unit defines fails to link). Kernel units are optimised in every
-build type. One unit per target needed 9–12 GB and 5–7 minutes to compile with Clang 23
-under ASan and UBSan (Apple M5 Max; GCC needed more), which ran CI runners out of memory;
-split, the largest unit needs about a quarter of that.
+build type. One unit per target needed 9–16 GB and 5–12 minutes to compile with Clang 23
+under ASan and UBSan (Apple M5 Max; avx512 the most, GCC more still), which ran CI runners
+out of memory; split, each unit needs 3.1–4.8 GB and at most about 3 minutes (radix 64 in
+float, avx512), and the main units 0.3 GB.
 
 Target strings: `avx2` is `"avx2,fma"`, the features its run-time check requires, and no
 AVX-512 feature; `avx512` is `"avx2,fma,avx512f,avx512dq,avx512vl"`, again the features

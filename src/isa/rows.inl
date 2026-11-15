@@ -6,7 +6,7 @@
 // names itself with FFTN_ISA_ROWS before it includes anything. No include guard.
 //
 // Why a target is several units (DESIGN.md 6.4): one unit holding every pass of a target
-// needed 5-9 GB to compile under the sanitizers, and the CI runners ran out of memory. The
+// needed 9-16 GB to compile under the sanitizers, and the CI runners ran out of memory. The
 // passes of the codelet rows are nearly all of a target's code, and their cost grows fast
 // with the radix. Clang 23 with ASan + UBSan (neon_fcma, Apple M5 Max), one row alone, both
 // precisions: radices 2 to 12 together about 75 s, 13 to 16 55 s, 32 39 s and 1.2 GB, 64
