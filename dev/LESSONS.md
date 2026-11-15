@@ -347,9 +347,16 @@ compiler kept the array in memory for every unit (Clang: 1.16–1.46 of the old 
 count the compiler could not see was constant stopped a store loop from unrolling (Clang,
 double 75 points: 1.6). Running whole units in the loop and the partial one after it, with
 the count a constant inside the loop, removed all three. It did not remove a Clang-only
-loss on odd double lengths (AVX2 75 points still 1.42), so the change was rejected: a
-code-generation change must be measured with every compiler a user may build with, since
-two compilers can disagree by 40 % on the same source. [X23](experiments/X23-masked-tails.md).
+loss on odd double lengths (AVX2 75 points still 1.42): a code-generation change must be
+measured with every compiler a user may build with, since two compilers can disagree by
+40 % on the same source. Rejecting it for that would have thrown away GCC's gain, so it
+was kept behind a build option that is on for GCC, the release compiler, and off for Clang;
+with it off the objects are byte for byte the old ones, which settles that the switch
+costs nothing. On a later main the same source still gained (GCC float 0.53 of the old
+time on AVX-512, 0.72 on Zen 3) but two cases with no partial unit at all came out 3–5 %
+slower (float 256, Xeon; double 72, EPYC, which had been 0.93 with the same source on the older
+main): code around a hot loop moves its speed, so such losses need re-measuring after
+unrelated changes. [X23](experiments/X23-masked-tails.md).
 
 ## 5. Threading
 
