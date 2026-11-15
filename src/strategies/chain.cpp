@@ -346,7 +346,7 @@ chain_builder<T>::bluestein_tables chain_builder<T>::bluestein_tables_of(std::si
 }
 
 template <class T> const T* chain_builder<T>::rader_index_of(std::size_t q, std::size_t g) {
-  // g^m mod q for m < q - 1, as values of T: exact, since rader_root admits q < 2^24.
+  // g^m mod q for m < q - 1, as values of T: exact, since rader_root admits q < 2^16.
   auto it = rader_index_tables_.find(q);
   if (it == rader_index_tables_.end()) {
     std::vector<T>& index = tables_.emplace_back(q - 1);

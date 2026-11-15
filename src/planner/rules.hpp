@@ -96,9 +96,9 @@ struct target_profile {
 [[nodiscard]] std::vector<std::size_t> rule_radices(std::size_t n, const target_profile& p);
 
 // The primitive root (the smallest) of the Rader stage that a prime factor q above the
-// codelets takes instead of a Bluestein stage, or 0 for Bluestein: Rader when q - 1 is
-// 7-smooth (experiment X27), so that its convolution of q - 1 points is a chain of codelet
-// passes and its kernel spectrum a transform of small prime factors.
+// codelets takes instead of a Bluestein stage, or 0 for Bluestein: Rader when q < 2^16 and
+// q - 1 is 7-smooth (experiment X27), so that its convolution of q - 1 points is a chain of
+// codelet passes and its kernel spectrum a transform of small prime factors.
 [[nodiscard]] std::size_t rader_root(std::size_t q, const target_profile& p);
 
 // The convolution length of a Bluestein stage for a transform of q points: the 7-smooth

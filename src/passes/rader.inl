@@ -15,7 +15,7 @@
 // Kernel text in the manner of kernels.inl, included after bluestein.inl. No include guard.
 //
 // The index table (pass_args::roots) holds g^m mod q for m < L as values of T (exact: the
-// rule admits q < 2^24), read by both passes. Units. Shared (C divides s): a unit is C
+// rule admits q < 2^16), read by both passes. Units. Shared (C divides s): a unit is C
 // adjacent copies through all L + 1 sequence indices, one vector per index. Otherwise a
 // unit is one copy, in plain scalar arithmetic, which is what a single prime row (s = 1)
 // takes: its gather and scatter go one element at a time anyway. The scratch line holds

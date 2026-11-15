@@ -673,10 +673,15 @@ std::uint64_t pow_mod(std::uint64_t b, std::uint64_t e, std::uint64_t q) {
 
 } // namespace
 
+constexpr std::size_t rader_limit = std::size_t{1} << 16U;
+
 std::size_t rader_root(std::size_t q, const target_profile& p) {
-  // Below 2^24 the index table holds exact floats (passes/rader.inl), and the plan-time
-  // products fit in 64 bits.
-  if (q < 5 || q >= (std::size_t{1} << 24U) || has_codelet(q)) {
+  // Experiment X27 (Apple M5 Max, neon_fcma): Rader took 0.17-0.82 of the Bluestein stage's
+  // time from 29 to 40961 in double and float (run 20261115-200226-b1eb) and 1.2 at 65537,
+  // where its gather and scatter wander over a megabyte and its convolution is a chain of
+  // 2^16 points; so it stops below 2^16. (That also keeps the index table's floats exact,
+  // passes/rader.inl, and the plan-time products within 64 bits.)
+  if (q < 5 || q >= rader_limit || has_codelet(q)) {
     return 0;
   }
   for (std::size_t d = 2; d <= q / d; ++d) {

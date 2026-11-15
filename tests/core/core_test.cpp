@@ -349,11 +349,12 @@ TEST(Rules, RaderRoot) {
   EXPECT_EQ(rader_root(41, profile), 6U);
   EXPECT_EQ(rader_root(97, profile), 5U);
   EXPECT_EQ(rader_root(257, profile), 3U);
-  EXPECT_EQ(rader_root(65537, profile), 3U);
-  EXPECT_EQ(rader_root(17, profile), 0U);   // a codelet
-  EXPECT_EQ(rader_root(47, profile), 0U);   // 46 = 2 x 23
-  EXPECT_EQ(rader_root(4093, profile), 0U); // 4092 = 4 x 3 x 11 x 31
-  EXPECT_EQ(rader_root(91, profile), 0U);   // 7 x 13
+  EXPECT_EQ(rader_root(40961, profile), 3U);
+  EXPECT_EQ(rader_root(65537, profile), 0U); // above the size limit
+  EXPECT_EQ(rader_root(17, profile), 0U);    // a codelet
+  EXPECT_EQ(rader_root(47, profile), 0U);    // 46 = 2 x 23
+  EXPECT_EQ(rader_root(4093, profile), 0U);  // 4092 = 4 x 3 x 11 x 31
+  EXPECT_EQ(rader_root(91, profile), 0U);    // 7 x 13
 }
 
 std::vector<std::byte> run(const fftn::detail::plan_core& core, std::vector<std::byte> input,
