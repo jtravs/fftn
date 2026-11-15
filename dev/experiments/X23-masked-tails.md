@@ -288,12 +288,12 @@ Arms A, B5, T5 (`avx512`) and A, B5, T5, P5 (`avx2`).
 |---|---|---|---|---|---|---|---|
 | 20261115-153453-df07 | Xeon, GCC 14.4, (1) | 29.1 | ±1.97 % | 0.604 [0.600, 0.608], 0.802 [0.796, 0.807] (0 + 1: double 980 1.043) | 0.800 [0.796, 0.806], 0.904 [0.898, 0.910] (0 + 2: double 70 1.062, 162 1.042) | 0.849 (`avx512`, 6 over), 0.962 (`avx2`, 2 over) | 0.997 (5 over) |
 | 20261115-143514-e9df | Xeon, Clang 23, (1) | 31.1 | ±2.77 % | 0.753 [0.747, 0.760], 0.955 [0.948, 0.965] (0 + 4: double 81 1.092, 126 1.056, 135 1.054, 75 1.054) | 0.932 [0.923, 0.939], 1.021 [1.013, 1.029] (2 + 24: double 75 1.42, 105 1.30, 147 1.25, 81 1.24) | 0.872 (`avx512`), 0.998 (`avx2`) | 1.012 |
+| 20261115-154927-7d3f | Xeon, GCC 14.4, (2) | 27.7 | ±3.17 % | double 0.923 [0.911, 0.931] (0) | double 0.958 [0.948, 0.966] (0) | | P5/A 0.959, 0 over |
 | 20261115-150526-b521 | EPYC, GCC 16.2, (1) | 5.2 | ±1.00 % | | 0.800 [0.799, 0.801], 0.862 [0.860, 0.864] (0 + 0) | 1.044 (42 over: 75 1.26) | 0.861 [0.860, 0.862] |
 | 20261115-150557-5e82 | EPYC, GCC 16.2, (2) | 5.4 | ±1.00 % | | double 0.965 [0.963, 0.966] (3: 17 1.050, 257 1.046, 4093 1.038) | | P5/A 0.954, 0 over |
 
-The Xeon tracking runs of B5 (`x23b5-xeon-trk`, Slurm 15693, still running when this was
-written; `x23b5-xclang-trk` cancelled before timing) cannot change the verdict below, which
-cases (1) already decide.
+The Clang tracking run of B5 (`x23b5-xclang-trk`) was cancelled before timing: cases (1)
+already decide the verdict below.
 
 ## Verdict
 
