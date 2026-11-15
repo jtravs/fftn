@@ -22,10 +22,20 @@ struct slot_addresses {
   std::ptrdiff_t tw = 0; // the twiddle cursor (program.hpp), in bytes
 };
 
+// Sets p.flat from p's records (program.hpp); called once the program is complete.
+void mark_flat(program& p) noexcept;
+
 // Runs transforms [first, first + count) of p's batch, every chunk of every stage in order.
 // in and out address element 0 of transform 0.
 void run_transforms(const program& p, std::size_t first, std::size_t count,
                     const slot_addresses& base) noexcept;
+
+// Transforms [first, first + count) of a program marked leaf_rows (program.hpp): one call of
+// its leaf. in and out address element 0 of transform 0. Takes the two addresses rather
+// than slot_addresses: on x86 reading a slot_addresses just written by the caller costs a
+// store-forwarding stall of about a dozen cycles per call (X20).
+void run_leaf_rows(const program& p, std::size_t first, std::size_t count, const void* in,
+                   void* out) noexcept;
 
 // The pieces a team shares out (src/threading/work_graph.hpp), each run exactly as
 // run_transforms runs it.

@@ -949,7 +949,9 @@ parameter, everything else accessors; gen/README.md has the codelet calling conv
   the profile's leaf limit (32 on NEON in double, 16 elsewhere; experiment X8): values are
   broadcast on loading and lane 0 is stored, so it takes any stride and runs in place, at
   the cost of C − 1 idle lanes; leaves vectorised across rows are the lanes strategy's
-  (phase 4).
+  (phase 4). A leaf kernel takes its first line's addresses and the distances to the next
+  line as arguments (`leaf_fn`), so the driver runs a batch of leaf rows as one call on the
+  plan's own arguments (section 8.3, X20).
 - The **generic** pass (any radix by direct evaluation) and the copy are lane-form passes
   on every target (the generic pass's lanes run over copies, so a single prime row has one
   valid lane; with the Bluestein threshold at 16 the rules no longer choose it, X17);
@@ -993,7 +995,14 @@ struct loop {             // repeat the enclosed records
 
 Loops express everything that is not a single pass: a batch of rows, depth-first blocking
 (run all passes on one cache-sized block before the next), the row phase of a grid, the
-planes of a volume. The driver costs a few nanoseconds per record. Two consequences:
+planes of a volume. Walking records costs a few nanoseconds per record and transform, which
+is more than a tiny transform's arithmetic, so the commonest programs are not walked: a
+program whose body is a few stages and no loop (rows) is marked *flat* at construction, and
+the driver then runs a batch of leaves as one kernel call, one transform with one copy of
+each stage's arguments, and a batch with those copies made once and the slots moved by the
+batch step (experiment X20: at 8 points 7.7 → 4.3 ns per call, 7.1 → 1.7 ns per transform
+in a batch on the M5 Max). Every kernel still gets the arguments and units the walk would
+give it, so the bits do not change. Two consequences:
 
 - **Blocking and batching are data**, not separate engines.
 - **The threading work graph is read off the program** (section 13.2). Independent loops
@@ -1872,9 +1881,12 @@ What the experiments still require of the build:
   run time.
 - **ABI warnings are errors.** With GCC the library is built with `-Werror=psabi`
   (section 14.1).
-- **Its own floating-point flags.** The library sets `-ffp-contract=off`, refuses
-  fast-math, and never inherits the including project's flags. All FMAs in kernels are
-  explicit.
+- **Its own floating-point flags.** The library sets `-fno-fast-math -ffp-contract=off`,
+  refuses fast-math, and never inherits the including project's flags. All FMAs in kernels
+  are explicit. Intel's icpx defaults to a fast model that the headers cannot detect (no
+  `__FAST_MATH__`) and sets flush-to-zero in an optimised `main()`, so an icpx build of
+  FFTN passes `-fno-fast-math` to every target, third-party ones included (experiment
+  X22).
 - **Always optimised.** Unoptimised kernels are 30–60× slower, so the library's kernels
   are built optimised whatever the surrounding project's build type.
 - **Adapters are header-only** (`omp.hpp`, `kokkos.hpp`): they must be compiled against
@@ -1894,7 +1906,8 @@ What the experiments still require of the build:
 ### 14.3 Toolchains and packaging
 
 - C++20, extensions off. GCC 14 and newer; Clang 16 and newer; Apple Clang; clang on the
-  MSVC ABI (clang-cl and clang++ with the MSVC standard library). MSVC's compiler is not
+  MSVC ABI (clang-cl and clang++ with the MSVC standard library); Intel's icpx (2026.1
+  tested, X22: supported, not recommended over GCC or Clang). MSVC's compiler is not
   a target. C++23 library features may be used only behind feature-test macros.
 - CMake 3.25 or newer with presets; `FetchContent`-friendly with an offline override;
   installed package config (`find_package(fftn)`) and pkg-config; all symbols in
@@ -2481,6 +2494,8 @@ to change before a release.
 | 2026-11-14 | Chains on `avx2` and `avx512` (both precisions) end in a split run: their last passes on split codelets in the BL layout, converting at the run's ends; NEON and scalar stay interleaved. A run starts where the copy count reaches `split_block`, `avx512`'s W on both x86 targets (task 1.5, experiment X1) | X1: split runs 0.89 (geomean of their cases) of the interleaved time on the Xeon's `avx512`, 0.87 on its `avx2`, 0.93 on the EPYC, nothing slower than band + 2 %; port-5 uops −12 % at 1024; on the Mac 10–25 % slower. The shared `split_block` keeps the bitwise pair agreeing with the same radices, at the cost of no run on AVX2 where the first radix is 4 (1024 = 4 × 16 × 16) |
 | 2026-11-14 | Leaf limit 32 on NEON in double (C = 1), 16 on every other target and precision; no leaf of 64 (experiment X8) | The leaf of 32 was 16–22 % faster than planner v1's chain on the M5 Max in double; with C > 1 it idles lanes and lost on the Mac and the EPYC; 64 spills and lost everywhere. The Xeon's `avx512` float chain at 32 lost to the leaf only through its own tail problem (X16) |
 | 2026-11-14 | Machine profile from T1 and T5 (task 3.4): split a lone transform from 6144 points on a Zen 3 CCX (the defaults), 8192 on an Apple cluster (`profile_for`, from macOS's topology); mesh groups keep 8192; leftovers keep 8192; at least 1024 points per member; on a CCX, phase hand-off 1100 ns and claim runs of left / members; dispatch, work cost and spin budgets stay provisional | T1/T5 per-field and combined adoption runs on the EPYC, the M5 and the Xeon (numbers in the experiment files); the measured dispatch and work costs made cases slower until the dispatch cost has a per-lane term (18.2, item 22) |
+| 2026-11-14 | Flat programs and leaves called with addresses (experiment X20): rows of a few stages skip the record walk; a leaf is a `leaf_fn` taking its lines' addresses and distances, so a batch of leaf rows is one call and no leaf needs a copy of `pass_args` | On the M5 Max the walk and the 144-byte argument copy cost about 3.5 ns per transform and the entry about 1 ns per call, against a 2.5 ns 8-point leaf; the record walk stays for programs with loops (grids, planes), which the threading work graph reads unchanged |
+| 2026-11-15 | Intel's icpx is a supported compiler; FFTN's targets are built with `-fno-fast-math -ffp-contract=off` everywhere, and an icpx build adds `-fno-fast-math` to every target and to the FFTW oracle (experiment X22) | icpx's default model reassociates, drops signed zeros and flushes denormals without defining `__FAST_MATH__`; with only `-ffp-contract=off`, 55 of 1608 tests failed (twiddles 1 ulp off, Parseval, vocabulary references), all pass with the flag. `-fp-model=precise -ffp-contract=off` draws an override warning that `-Werror` makes fatal. Not recommended over GCC or Clang: equal to Clang in double on the Xeon, 3 % behind it on the tracking rows; its float lead (0.80 of Clang on 7-smooth rows) comes from masked partial runs, which the vocabulary can write explicitly |
 
 ---
 

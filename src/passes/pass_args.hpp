@@ -57,6 +57,14 @@ struct pass_args {
 // into ranges gives the same results bit for bit.
 using pass_fn = void (*)(const pass_args* args, std::size_t first, std::size_t last);
 
+// A leaf (a whole transform in registers, DESIGN.md 8.2) over `count` lines: line u read at
+// src + u src_dist and written at dst + u dst_dist bytes, with the edges of args, whose src
+// and dst it does not read. The addresses are arguments so that the driver can call it on a
+// plan's own arguments, without the copy a pass_fn needs, and a batch of rows in one call
+// (core/driver.cpp; dev/experiments/X20-call-overhead.md).
+using leaf_fn = void (*)(const pass_args* args, const void* src, void* dst, std::ptrdiff_t src_dist,
+                         std::ptrdiff_t dst_dist, std::size_t count);
+
 // What an edge pass does to the values it loads (input edge) or stores (output edge), as
 // the first two edge operations of DESIGN.md 12.1. Each is a separate instantiation of
 // the pass; nothing in a kernel tests it at run time.
@@ -134,7 +142,7 @@ struct radix_passes {
   // Its last pass (m = 1): lanes over copies, no twiddles; output edge.
   pass_fn last[2][edge_op_count];
   // A whole transform of n = radix in registers; input edge, output edge.
-  pass_fn leaf[2][edge_op_count][edge_op_count];
+  leaf_fn leaf[2][edge_op_count][edge_op_count];
   // Split-arithmetic lane passes (src/passes/split.inl), null where the radix has no split
   // codelet: a middle pass (twiddled) writing the BL layout, from the interleaved line (the
   // first pass of a split run, [1]) or from BL ([0]); and the last pass, from BL to the

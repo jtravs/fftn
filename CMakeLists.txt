@@ -14,6 +14,14 @@ set(FFTN_CLANG_TIDY "" CACHE STRING "clang-tidy command (a CMake list) run on FF
 # Read by scripts/check.sh to report the compiler with every gate run (AGENTS.md section 3).
 set(FFTN_CXX_COMPILER "${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}" CACHE INTERNAL "")
 
+# Intel's icpx compiles everything, third-party code included, with a fast floating-point
+# model by default, and an optimised main() it compiles sets flush-to-zero and
+# denormals-are-zero for the whole process. The tests' main() comes from GoogleTest, so the
+# IEEE model is set for every target here, not only FFTN's own (experiment X22).
+if(CMAKE_CXX_COMPILER_ID STREQUAL "IntelLLVM")
+  add_compile_options(-fno-fast-math)
+endif()
+
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
 include(FftnTargets)
 

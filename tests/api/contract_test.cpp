@@ -197,6 +197,106 @@ TYPED_TEST(Contracts, ResultDoesNotDependOnPosition) {
   check_positions(fftn::c2r_plan<T>(four_c2r), 12, 15, 24, 15, 24);
 }
 
+// A batch of leaves runs as one kernel call over its rows, other one-stage rows through the
+// driver's flat path (dev/experiments/X20-call-overhead.md): every row must still get exactly
+// what a plan of that one row gives it, at any distance and sign, in place, scaled, and over
+// any range of execute_transforms.
+TYPED_TEST(Contracts, BatchedRowsMatchSingleRows) {
+  using T = TypeParam;
+  using c = std::complex<T>;
+  constexpr std::size_t count = 9;
+  for (const std::size_t n : {std::size_t{2}, std::size_t{7}, std::size_t{8}, std::size_t{16},
+                              std::size_t{32}, std::size_t{64}}) {
+    for (const double scale : {1.0, 0.25}) {
+      for (const bool in_place : {false, true}) {
+        for (const std::ptrdiff_t gap : {std::ptrdiff_t{0}, std::ptrdiff_t{3}}) {
+          for (const bool reversed : {false, true}) {
+            const auto dist = static_cast<std::ptrdiff_t>(n) + gap;
+            const std::ptrdiff_t signed_dist = reversed ? -dist : dist;
+            const fftn::shape<c, c> s{
+                .dir = fftn::direction::backward,
+                .axes = {{.n = n}},
+                .batches = {{.count = count, .in_dist = signed_dist, .out_dist = signed_dist}},
+            };
+            const fftn::options opts{.in_place = in_place, .scale = scale};
+            const fftn::c2c_plan<T> batched(s, opts);
+            const fftn::c2c_plan<T> single(fftn::rows_c2c<T>(n, 1, fftn::direction::backward),
+                                           {.scale = scale});
+            fftn::workspace ws(std::max(batched.workspace_bytes(), single.workspace_bytes()));
+            input_source src(n * count);
+            const std::size_t span = static_cast<std::size_t>(dist) * count;
+            const cvec<T> data = src.complexes<T>(span);
+            // Row t starts at element t dist from row 0, which is at the end when reversed.
+            const std::size_t row0 = reversed ? span - static_cast<std::size_t>(dist) : 0;
+            const auto row = [&](std::size_t t) {
+              return static_cast<std::ptrdiff_t>(row0) +
+                     static_cast<std::ptrdiff_t>(t) * signed_dist;
+            };
+            for (const std::size_t first : {std::size_t{0}, std::size_t{4}}) {
+              cvec<T> in = data;
+              cvec<T> out(in_place ? 0 : span);
+              c* out_base = in_place ? in.data() : out.data();
+              batched.execute_transforms(first, count - first, in.data() + row0, out_base + row0,
+                                         ws);
+              for (std::size_t t = first; t < count; ++t) {
+                cvec<T> one(n);
+                single.execute(data.data() + row(t), one.data(), ws);
+                EXPECT_TRUE(same_bits<c>(std::span<const c>(out_base + row(t), n), one))
+                    << "n " << n << ", scale " << scale << ", in place " << in_place << ", gap "
+                    << gap << ", reversed " << reversed << ", first " << first << ", row " << t;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// Two batch dimensions with different input and output distances take the flat path through
+// transform_addresses (X20): each row lands where its own distances put it, and an empty
+// range writes nothing.
+TYPED_TEST(Contracts, BatchedRowsTwoDimensionsUnequalDistances) {
+  using T = TypeParam;
+  using c = std::complex<T>;
+  for (const std::size_t n : {std::size_t{7}, std::size_t{8}, std::size_t{64}}) {
+    const auto sn = static_cast<std::ptrdiff_t>(n);
+    // Inner rows touch in the input and are spaced apart in the output; the outer dimension
+    // has its own spacing on each side.
+    const std::ptrdiff_t in0 = 4 * sn + 1;
+    const std::ptrdiff_t in1 = sn;
+    const std::ptrdiff_t out0 = 4 * (sn + 2) + 5;
+    const std::ptrdiff_t out1 = sn + 2;
+    const fftn::shape<c, c> s{
+        .dir = fftn::direction::forward,
+        .axes = {{.n = n}},
+        .batches = {{.count = 3, .in_dist = in0, .out_dist = out0},
+                    {.count = 4, .in_dist = in1, .out_dist = out1}},
+    };
+    const fftn::c2c_plan<T> batched(s);
+    const fftn::c2c_plan<T> single(fftn::rows_c2c<T>(n, 1, fftn::direction::forward));
+    fftn::workspace ws(std::max(batched.workspace_bytes(), single.workspace_bytes()));
+    const auto in_span = static_cast<std::size_t>(2 * in0 + 3 * in1 + sn);
+    const auto out_span = static_cast<std::size_t>(2 * out0 + 3 * out1 + sn);
+    input_source src(n);
+    const cvec<T> in = src.complexes<T>(in_span);
+    cvec<T> out(out_span, c{T(-7), T(-7)});
+    batched.execute_transforms(12, 0, in.data(), out.data(), ws); // 3 × 4 transforms
+    for (const c& v : out) {
+      ASSERT_EQ(v, (c{T(-7), T(-7)})) << "an empty range wrote output, n " << n;
+    }
+    batched.execute(in.data(), out.data(), ws);
+    for (std::ptrdiff_t i = 0; i < 3; ++i) {
+      for (std::ptrdiff_t j = 0; j < 4; ++j) {
+        cvec<T> one(n);
+        single.execute(in.data() + i * in0 + j * in1, one.data(), ws);
+        EXPECT_TRUE(same_bits<c>(std::span<const c>(out.data() + i * out0 + j * out1, n), one))
+            << "n " << n << ", row (" << i << ", " << j << ")";
+      }
+    }
+  }
+}
+
 // ---- Plans are reusable: repeated runs, copies and concurrent threads agree bit for bit.
 
 TYPED_TEST(Contracts, PlansAreReusableAcrossCopiesAndThreads) {
