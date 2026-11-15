@@ -33,6 +33,9 @@ function(fftn_configure_target target)
   set_target_properties(${target} PROPERTIES CXX_EXTENSIONS OFF)
   target_compile_features(${target} PRIVATE cxx_std_20)
   target_compile_options(${target} PRIVATE ${_fftn_warnings} ${_fftn_fp})
+  # Read by the x86 vocabularies (CMakeLists.txt): the library's units and the tests' probes
+  # must agree.
+  target_compile_definitions(${target} PRIVATE FFTN_MASKED_TAILS=${FFTN_MASKED_TAILS_ON})
   if(FFTN_WARNINGS_AS_ERRORS)
     target_compile_options(${target} PRIVATE ${_fftn_werror})
   endif()

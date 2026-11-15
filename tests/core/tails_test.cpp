@@ -3,14 +3,14 @@
 
 // Partial runs (DESIGN.md 8.2's tails; experiment X23): the units of grouped, lane, generic,
 // Bluestein chirp and lanes-strategy passes that hold fewer than C butterflies, copies or
-// rows, which move through a tile (access.inl; X23's masked accesses were rejected, and
-// this test stays for the tile and any later attempt). Chains are forced so that a grouped
-// pass's butterfly count and a lane pass's copy count leave every remainder 0 .. C - 1 for
-// every complex count (C = 1, 2, 4, 8), with first radices C divides and radices it does
-// not; Bluestein and generic passes
-// whose last block is partial; and the lanes strategy over adjacent rows whose count leaves
-// every remainder. Double and float, both directions, out of place and in place, on every
-// instruction set the machine runs. Every array ends exactly at a guard page (an access past
+// rows. The x86 targets move them as masked vector accesses (load_n, store_n) where the
+// build enables them (FFTN_MASKED_TAILS: GCC by default), the others through a tile.
+// Chains are forced so that a grouped pass's butterfly count and a lane pass's copy count
+// leave every remainder 0 .. C - 1 for every complex count (C = 1, 2, 4, 8), with first
+// radices C divides and radices it does not; Bluestein and generic passes whose last block
+// is partial; and the lanes strategy over adjacent rows whose count leaves every remainder.
+// Double and float, both directions, out of place and in place, on every instruction set
+// the machine runs. Every array ends exactly at a guard page (an access past
 // its last element faults), every byte outside the described elements is a canary, and an
 // out-of-place input must not change. Each row is checked against the quadruple-precision
 // reference, and the targets that round alike (avx2 and avx512) must give the same bits

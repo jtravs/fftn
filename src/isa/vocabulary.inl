@@ -18,6 +18,10 @@
 //                then add: two roundings, and the operation order the generator emits for
 //                such targets (DESIGN.md 6.1). The scalar target is never fused, so it gives
 //                the same bits on every processor.
+//   masked       whether the passes use load_n and store_n (below): a partial run of
+//                contiguous complex numbers as one masked vector access (x86 where the
+//                build sets FFTN_MASKED_TAILS: GCC by default; experiment X23). Elsewhere
+//                passes move partial runs through a tile (access.inl).
 //   id           the target (target.hpp)
 //   split_block  the copy count, a multiple of W, from which a chain's lane passes may run
 //                in split arithmetic (strategies/chain.hpp): the largest W among the targets
@@ -37,6 +41,12 @@
 //   swap_ri(a)              (im, re) of each complex number
 //   load(p), store(p, a)    C<T> complex numbers at p (2C reals, any alignment)
 //   bcast(p)                the complex number at p in every lane
+//   load_n(p, n)            x86 only (used where `masked`), for n <= C<T>: the first n
+//                           complex numbers at p, the other lanes zero. Touches no memory
+//                           beyond them: the masked-off elements are not accessed and cannot
+//                           fault, so a run may end at the end of the caller's array
+//   store_n(p, n, a)        x86 only (used where `masked`), for n <= C<T>: the first n
+//                           lanes of a to p, nothing else written
 //   load_tw(p)              C<T> twiddles from storage written by pack_tw
 //   pack_tw(out, p)         writes the C<T> interleaved twiddles at p as storage at out
 //                           (C * tw_reals reals); scalar code, run when a table is built
