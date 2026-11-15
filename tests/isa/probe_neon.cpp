@@ -17,7 +17,11 @@ FFTN_ISA_BEGIN(neon)
 #include "isa/probe.inl"
 
 constinit const probe_table probes{
-    .id = id, .masked = masked, .f64 = &probe<double>, .f32 = &probe<float>};
+    .id = id,
+    .masked = masked,
+    .f64 = &probe<double>,
+    .f32 = &probe<float>,
+};
 
 FFTN_ISA_END
 

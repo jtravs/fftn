@@ -255,8 +255,7 @@ FFTN_FORCE_INLINE void lane_tails(const pass_args* a, std::size_t first, std::si
     f_leg = at(s / a->factor_copies, 2);
   }
   // From the group of unit `first`, whose last block is at or after it.
-  for (std::size_t p = first < blocks ? 0 : first / blocks; p * blocks + blocks - 1 < last;
-       ++p) {
+  for (std::size_t p = first < blocks ? 0 : first / blocks; p * blocks + blocks - 1 < last; ++p) {
     std::size_t g = 0; // NOLINT(misc-const-correctness): set under if constexpr
     if constexpr (Share == factor_sharing::output) {
       g = (p * blocks + blocks - 1) / per_entry;
