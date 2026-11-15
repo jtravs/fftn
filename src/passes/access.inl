@@ -27,6 +27,15 @@ FFTN_FORCE_INLINE std::ptrdiff_t at(std::size_t index, std::ptrdiff_t stride) {
   return static_cast<std::ptrdiff_t>(index) * stride;
 }
 
+// A register of zeros.
+template <class T> FFTN_FORCE_INLINE cv<T> zeros() {
+  T tile[2 * C<T>]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
+  for (std::size_t l = 0; l < 2 * C<T>; ++l) {
+    tile[l] = T(0);
+  }
+  return load(tile);
+}
+
 // The first `valid` of C elements at p, step reals apart, as a register whose other lanes
 // hold zero.
 template <class T>
