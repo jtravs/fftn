@@ -253,7 +253,9 @@ std::uint64_t pass_cost(const target_profile& p, std::size_t n, std::size_t s, s
 // 20261114-101523-3d56): there the fitted choice was 1.25-1.40 times slower. The planner
 // refresh (X2, "Refit after X1, X3, X18 and X19") kept the costs and added overrides from
 // campaign mac-neon-smooth2 where the current choice (490 included) was more than 2 % behind
-// the measured winner in every case (fit.py --base); the notes below are the first fit's.
+// the measured winner in every case (fit.py --base), less 768 (both precisions) and 448
+// (float), which the A/B (run 20261115-035010-f3d4) measured 2-5 % slower; the notes below
+// are the first fit's.
 // fit.py --name mac-smooth: ISA neon_fcma, 532 cases
 // neon_fcma_double: C = 1, constant per transform 0
 //   n = 56: 4.14 +4.1 % against the baseline; override 8.7
@@ -334,7 +336,7 @@ std::uint64_t pass_cost(const target_profile& p, std::size_t n, std::size_t s, s
 
 // clang-format off
 // NOLINTBEGIN(readability-trailing-comma): bench/x2/fit.py writes and parses this layout
-constexpr std::array<radix_override, 32> neon_fcma_double_overrides{{
+constexpr std::array<radix_override, 31> neon_fcma_double_overrides{{
     {.n = 48, .radices = {6, 8, 0, 0}},
     {.n = 56, .radices = {8, 7, 0, 0}},
     {.n = 63, .radices = {7, 9, 0, 0}},
@@ -359,7 +361,6 @@ constexpr std::array<radix_override, 32> neon_fcma_double_overrides{{
     {.n = 700, .radices = {10, 7, 10, 0}},
     {.n = 720, .radices = {12, 10, 6, 0}},
     {.n = 756, .radices = {9, 12, 7, 0}},
-    {.n = 768, .radices = {4, 16, 12, 0}},
     {.n = 784, .radices = {8, 7, 14, 0}},
     {.n = 800, .radices = {10, 8, 10, 0}},
     {.n = 840, .radices = {10, 7, 12, 0}},
@@ -384,7 +385,7 @@ constexpr pass_costs neon_fcma_double{
     .overrides = neon_fcma_double_overrides,
 };
 
-constexpr std::array<radix_override, 12> neon_fcma_float_overrides{{
+constexpr std::array<radix_override, 10> neon_fcma_float_overrides{{
     {.n = 20, .radices = {4, 5, 0, 0}},
     {.n = 21, .radices = {7, 3, 0, 0}},
     {.n = 28, .radices = {4, 7, 0, 0}},
@@ -392,10 +393,8 @@ constexpr std::array<radix_override, 12> neon_fcma_float_overrides{{
     {.n = 70, .radices = {10, 7, 0, 0}},
     {.n = 224, .radices = {16, 14, 0, 0}},
     {.n = 280, .radices = {4, 5, 14, 0}},
-    {.n = 448, .radices = {8, 8, 7, 0}},
     {.n = 480, .radices = {4, 10, 12, 0}},
     {.n = 720, .radices = {12, 12, 5, 0}},
-    {.n = 768, .radices = {4, 16, 12, 0}},
     {.n = 800, .radices = {10, 8, 10, 0}},
 }};
 
