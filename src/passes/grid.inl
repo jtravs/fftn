@@ -18,12 +18,61 @@ namespace {
 // (experiment X12).
 inline constexpr std::size_t rows_ahead = 8;
 
-// Asks for the `bytes` bytes at p, to read (Write = 0) or to write (1).
-template <int Write> FFTN_FORCE_INLINE void prefetch_bytes(const void* p, std::size_t bytes) {
-  const char* c = static_cast<const char*>(p);
-  for (std::size_t i = 0; i < bytes; i += 64) {
-    __builtin_prefetch(c + i, Write);
+// Reals per 64-byte cache line.
+template <class T> inline constexpr std::size_t line_reals = 64 / sizeof(T);
+
+// The copy loops below move rows of V registers (V = 0: `vectors`, known only at run time),
+// and with Ahead ask for the row rows_ahead further on, one prefetch per cache line of it.
+// Rows of a few registers are the common case: with blocks of 4 columns on AVX-512 every
+// row is one 64-byte line, and a loop that multiplied each row's address, ran two one-trip
+// prefetch loops and a one-trip inner loop spent about 33 instructions on it, 40-52 % of a
+// long row's instructions (experiments X25, X26). Here the pointers advance by the strides,
+// the rows that prefetch run as their own loop, and a V of 1, 2, 4 or 8 is a compile-time
+// count, so that a row costs its loads, stores and prefetches.
+
+// Asks for the `lines` cache lines from p, to read (Write = 0) or to write (1).
+template <class T, int Write> FFTN_FORCE_INLINE void prefetch_lines(const T* p, std::size_t lines) {
+  for (std::size_t i = 0; i < lines; ++i) {
+    __builtin_prefetch(p + i * line_reals<T>, Write);
   }
+}
+
+template <class T> FFTN_FORCE_INLINE std::size_t lines_of(std::size_t vectors) {
+  return (vectors * 2 * C<T> + line_reals<T> - 1) / line_reals<T>;
+}
+
+// y[q + ys r] = x[q + xs r] for `rows` rows of V registers (strides in reals), scaled on
+// storing for OutOp == scale; leaves x and y past the last row.
+template <class T, edge_op OutOp, std::size_t V, bool Ahead>
+FFTN_FORCE_INLINE void copy_rows(const T*& x, T*& y, std::ptrdiff_t xs, std::ptrdiff_t ys,
+                                 std::size_t rows, std::size_t vectors, T factor) {
+  const std::size_t nv = V != 0 ? V : vectors;
+  const std::size_t lines = lines_of<T>(nv);
+  const std::ptrdiff_t xa = at(rows_ahead, xs);
+  const std::ptrdiff_t ya = at(rows_ahead, ys);
+  for (std::size_t r = 0; r < rows; ++r) {
+    if constexpr (Ahead) {
+      prefetch_lines<T, 0>(x + xa, lines);
+      prefetch_lines<T, 1>(y + ya, lines);
+    }
+    for (std::size_t q = 0; q < nv; ++q) {
+      cv<T> v = load(x + 2 * C<T> * q); // NOLINT(misc-const-correctness): set under if constexpr
+      if constexpr (OutOp == edge_op::scale) {
+        v = scale(v, factor);
+      }
+      store(y + 2 * C<T> * q, v);
+    }
+    x += xs;
+    y += ys;
+  }
+}
+
+template <class T, edge_op OutOp, std::size_t V>
+FFTN_FORCE_INLINE void copy_block(const T* x, T* y, std::ptrdiff_t xs, std::ptrdiff_t ys,
+                                  std::size_t rows, std::size_t vectors, T factor) {
+  const std::size_t ahead = rows > rows_ahead ? rows - rows_ahead : 0;
+  copy_rows<T, OutOp, V, true>(x, y, xs, ys, ahead, vectors, factor);
+  copy_rows<T, OutOp, V, false>(x, y, xs, ys, rows - ahead, vectors, factor);
 }
 
 // Copies a block row by row: y[q + dst_stride r] = x[q + src_stride r], scaled on storing
@@ -34,27 +83,29 @@ template <int Write> FFTN_FORCE_INLINE void prefetch_bytes(const void* p, std::s
 // dst_stride, s, scale.
 template <class T, edge_op OutOp>
 void block_copy(const pass_args* a, std::size_t first, std::size_t last) {
-  const T* x = static_cast<const T*>(a->src);
-  T* y = static_cast<T*>(a->dst);
   const std::ptrdiff_t xs = 2 * a->src_stride;
   const std::ptrdiff_t ys = 2 * a->dst_stride;
-  const std::size_t cols = a->s;
+  const T* x = static_cast<const T*>(a->src) + at(first, xs);
+  T* y = static_cast<T*>(a->dst) + at(first, ys);
+  const std::size_t vectors = a->s / C<T>;
   const T factor = static_cast<T>(a->scale);
-  const std::size_t bytes = 2 * sizeof(T) * cols;
-  for (std::size_t r = first; r < last; ++r) {
-    const T* xr = x + at(r, xs);
-    T* yr = y + at(r, ys);
-    if (r + rows_ahead < last) {
-      prefetch_bytes<0>(xr + at(rows_ahead, xs), bytes);
-      prefetch_bytes<1>(yr + at(rows_ahead, ys), bytes);
-    }
-    for (std::size_t q = 0; q < cols; q += C<T>) {
-      cv<T> v = load(xr + 2 * q); // NOLINT(misc-const-correctness): set under if constexpr
-      if constexpr (OutOp == edge_op::scale) {
-        v = scale(v, factor);
-      }
-      store(yr + 2 * q, v);
-    }
+  const std::size_t rows = last - first;
+  switch (vectors) {
+  case 1:
+    copy_block<T, OutOp, 1>(x, y, xs, ys, rows, vectors, factor);
+    break;
+  case 2:
+    copy_block<T, OutOp, 2>(x, y, xs, ys, rows, vectors, factor);
+    break;
+  case 4:
+    copy_block<T, OutOp, 4>(x, y, xs, ys, rows, vectors, factor);
+    break;
+  case 8:
+    copy_block<T, OutOp, 8>(x, y, xs, ys, rows, vectors, factor);
+    break;
+  default:
+    copy_block<T, OutOp, 0>(x, y, xs, ys, rows, vectors, factor);
+    break;
   }
 }
 
@@ -106,32 +157,68 @@ void twiddle_transpose(const pass_args* a, std::size_t first, std::size_t last) 
   }
 }
 
+// As copy_rows, row r times f = w[r] (one plain interleaved value per row; its conjugate
+// for Sign = +1); only the destination prefetches.
+template <class T, int Sign, std::size_t V, bool Ahead>
+FFTN_FORCE_INLINE void twiddle_rows(const T*& x, T*& y, const T*& w, std::ptrdiff_t xs,
+                                    std::ptrdiff_t ys, std::size_t rows, std::size_t vectors) {
+  const std::size_t nv = V != 0 ? V : vectors;
+  const std::size_t lines = lines_of<T>(nv);
+  const std::ptrdiff_t ya = at(rows_ahead, ys);
+  for (std::size_t r = 0; r < rows; ++r) {
+    if constexpr (Ahead) {
+      prefetch_lines<T, 1>(y + ya, lines);
+    }
+    cv<T> f = bcast(w); // NOLINT(misc-const-correctness): set under if constexpr
+    if constexpr (Sign > 0) {
+      f = conj(f);
+    }
+    for (std::size_t q = 0; q < nv; ++q) {
+      store(y + 2 * C<T> * q, cmul(load(x + 2 * C<T> * q), f));
+    }
+    x += xs;
+    y += ys;
+    w += 2;
+  }
+}
+
+template <class T, int Sign, std::size_t V>
+FFTN_FORCE_INLINE void twiddle_block(const T* x, T* y, const T* w, std::ptrdiff_t xs,
+                                     std::ptrdiff_t ys, std::size_t rows, std::size_t vectors) {
+  const std::size_t ahead = rows > rows_ahead ? rows - rows_ahead : 0;
+  twiddle_rows<T, Sign, V, true>(x, y, w, xs, ys, ahead, vectors);
+  twiddle_rows<T, Sign, V, false>(x, y, w, xs, ys, rows - ahead, vectors);
+}
+
 // A later phase of a grid: the block's rows from tight scratch to the next array, as
 // block_copy, row r times twiddles[r] (one plain interleaved value per row, the conjugate
 // for Sign = +1); the stage advances the twiddles per column c (stage::moving_twiddles).
 // Reads src, dst, src_stride, dst_stride, s, twiddles.
 template <class T, int Sign>
 void twiddle_scatter(const pass_args* a, std::size_t first, std::size_t last) {
-  const T* x = static_cast<const T*>(a->src);
-  T* y = static_cast<T*>(a->dst);
-  const T* w = static_cast<const T*>(a->twiddles);
   const std::ptrdiff_t xs = 2 * a->src_stride;
   const std::ptrdiff_t ys = 2 * a->dst_stride;
-  const std::size_t cols = a->s;
-  const std::size_t bytes = 2 * sizeof(T) * cols;
-  for (std::size_t r = first; r < last; ++r) {
-    const T* xr = x + at(r, xs);
-    T* yr = y + at(r, ys);
-    if (r + rows_ahead < last) {
-      prefetch_bytes<1>(yr + at(rows_ahead, ys), bytes);
-    }
-    cv<T> f = bcast(w + 2 * r); // NOLINT(misc-const-correctness): set under if constexpr
-    if constexpr (Sign > 0) {
-      f = conj(f);
-    }
-    for (std::size_t q = 0; q < cols; q += C<T>) {
-      store(yr + 2 * q, cmul(load(xr + 2 * q), f));
-    }
+  const T* x = static_cast<const T*>(a->src) + at(first, xs);
+  T* y = static_cast<T*>(a->dst) + at(first, ys);
+  const T* w = static_cast<const T*>(a->twiddles) + 2 * first;
+  const std::size_t vectors = a->s / C<T>;
+  const std::size_t rows = last - first;
+  switch (vectors) {
+  case 1:
+    twiddle_block<T, Sign, 1>(x, y, w, xs, ys, rows, vectors);
+    break;
+  case 2:
+    twiddle_block<T, Sign, 2>(x, y, w, xs, ys, rows, vectors);
+    break;
+  case 4:
+    twiddle_block<T, Sign, 4>(x, y, w, xs, ys, rows, vectors);
+    break;
+  case 8:
+    twiddle_block<T, Sign, 8>(x, y, w, xs, ys, rows, vectors);
+    break;
+  default:
+    twiddle_block<T, Sign, 0>(x, y, w, xs, ys, rows, vectors);
+    break;
   }
 }
 
