@@ -230,7 +230,7 @@ std::int32_t fbench_create(const fbench_case* c, void* in, void* out, void** pla
         line.push_back(blank ? ' ' : ch);
       }
     }
-    std::free(text); // NOLINT(cppcoreguidelines-no-malloc): FFTW's API allocates with malloc
+    std::free(text); // FFTW's API allocates the string with malloc
     say(message, message_size, line);
   }
   auto record = std::make_unique<plan_record>();

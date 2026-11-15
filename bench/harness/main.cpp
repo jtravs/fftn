@@ -325,9 +325,10 @@ public:
           PERF_FORMAT_GROUP | PERF_FORMAT_TOTAL_TIME_ENABLED | PERF_FORMAT_TOTAL_TIME_RUNNING;
       const long fd = syscall(SYS_perf_event_open, &attr, 0, -1, leader ? -1 : fds_.front(), 0);
       if (fd < 0) {
+        const int error = errno;
         close_all();
         throw std::runtime_error("perf_event_open failed for " + std::string(token) + ": " +
-                                 std::strerror(errno));
+                                 std::system_category().message(error));
       }
       fds_.push_back(static_cast<int>(fd));
       names_.emplace_back(name);
@@ -376,10 +377,17 @@ private:
   enum op : std::uint8_t { reset_op, enable_op, disable_op };
   void control(op o) const {
 #ifdef __linux__
-    const unsigned long request = o == reset_op    ? PERF_EVENT_IOC_RESET
-                                  : o == enable_op ? PERF_EVENT_IOC_ENABLE
-                                                   : PERF_EVENT_IOC_DISABLE;
-    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg): ioctl is the kernel's interface
+    unsigned long request = PERF_EVENT_IOC_DISABLE;
+    switch (o) {
+    case reset_op:
+      request = PERF_EVENT_IOC_RESET;
+      break;
+    case enable_op:
+      request = PERF_EVENT_IOC_ENABLE;
+      break;
+    case disable_op:
+      break;
+    }
     ioctl(fds_.front(), request, PERF_IOC_FLAG_GROUP);
 #else
     static_cast<void>(o);
