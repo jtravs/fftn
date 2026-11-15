@@ -100,53 +100,6 @@ slot_addresses moved_in_nest(const program& p, std::size_t begin, std::size_t de
   return here;
 }
 
-// A stage of a lanes block (program.hpp): whole, with the block's rows.
-void run_lane_stage(const stage& st, const slot_addresses& at, std::size_t rows) noexcept {
-  pass_args args = st.args;
-  args.src = source_of(st.src, at);
-  args.dst = destination_of(st.dst, at);
-  args.rows = rows;
-  st.run(&args, 0, st.units);
-}
-
-// Transforms [first, first + count) of a lanes program: within each run of the innermost
-// batch loop, blocks of p.lanes rows through the body, then blocks of p.lane_unit through
-// the tail. Every lane computes its row alone (strategies/lanes.cpp), so how the rows fall
-// into blocks does not change any result.
-void run_lane_blocks(const program& p, std::size_t first, std::size_t count,
-                     const slot_addresses& base) noexcept {
-  const loop& inner = *std::get_if<loop>(&p.records[p.batch_loops - 1]);
-  const std::size_t end = first + count;
-  std::size_t t = first;
-  while (t < end) {
-    slot_addresses at = transform_addresses(p, t, base);
-    const std::size_t in_loop = inner.count - (t < inner.count ? t : t % inner.count);
-    std::size_t run = end - t < in_loop ? end - t : in_loop;
-    t += run;
-    // `at` moves only to a block that follows, so no address beyond the batch is formed.
-    while (run != 0) {
-      const bool whole = run >= p.lanes;
-      std::size_t rows = p.lanes;
-      if (!whole) {
-        rows = run < p.lane_unit ? run : p.lane_unit;
-      }
-      if (whole) {
-        for (std::size_t i = p.batch_loops; i < p.records.size(); ++i) {
-          run_lane_stage(*std::get_if<stage>(&p.records[i]), at, rows);
-        }
-      } else {
-        for (const stage& st : p.lane_tail) {
-          run_lane_stage(st, at, rows);
-        }
-      }
-      run -= rows;
-      if (run != 0) {
-        at = moved(at, inner.step, rows);
-      }
-    }
-  }
-}
-
 // One stage's arguments on run_flat's stack, left uninitialised until copied from the stage:
 // default-initialising flat_stages_max of them would cost more than a tiny transform.
 union stage_args {
@@ -170,6 +123,102 @@ void run_whole(const stage& s, pass_args& a, const slot_addresses& at) noexcept 
   a.dst = destination_of(s.dst, at);
   if (s.units != 0) {
     s.run(&a, 0, s.units);
+  }
+}
+
+// Runs a lanes stage whole on the slots at, with the block's rows: a is a copy of its
+// arguments, prepared once per call (X20), of which only the addresses and rows change.
+void run_lane_stage(const stage& st, pass_args& a, const slot_addresses& at,
+                    std::size_t rows) noexcept {
+  a.src = source_of(st.src, at);
+  a.dst = destination_of(st.dst, at);
+  a.rows = rows;
+  st.run(&a, 0, st.units);
+}
+
+// A lanes leaf (program::lane_leaf) on `rows` rows from src to dst in one call: C rows per
+// unit, the last unit padded (lanes_leaf never reads or writes a row from `rows` on).
+void run_lane_leaf(const stage& st, pass_args& a, const void* src, void* dst, std::size_t rows,
+                   std::size_t unit) noexcept {
+  a.src = src;
+  a.dst = dst;
+  a.rows = rows;
+  st.run(&a, 0, (rows + unit - 1) / unit);
+}
+
+// Transforms [first, first + count) of a lanes program: within each run of the innermost
+// batch loop, blocks of p.lanes rows through the body, then blocks of p.lane_unit through
+// the tail; a lane_leaf program takes each run in one call. Every lane computes its row
+// alone (strategies/lanes.cpp), so how the rows fall into blocks or calls does not change
+// any result. Each stage's arguments are copied once per call, not once per block (X20,
+// X24); a body or tail longer than flat_stages_max (forced lanes on long rows) copies per
+// block.
+[[gnu::noinline]] void run_lane_blocks(const program& p, std::size_t first, std::size_t count,
+                                       const slot_addresses& base) noexcept {
+  const loop& inner = *std::get_if<loop>(&p.records[p.batch_loops - 1]);
+  const std::size_t body = p.records.size() - p.batch_loops;
+  const std::size_t tail = p.lane_tail.size();
+  const bool prepared = body <= flat_stages_max && tail <= flat_stages_max;
+  std::array<stage_args, flat_stages_max> body_args;
+  std::array<stage_args, flat_stages_max> tail_args;
+  bool tail_ready = false;
+  if (prepared) {
+    for (std::size_t k = 0; k < body; ++k) {
+      std::construct_at(&body_args[k].args, std::get_if<stage>(&p.records[p.batch_loops + k])->args);
+    }
+  }
+  const std::size_t end = first + count;
+  std::size_t t = first;
+  while (t < end) {
+    slot_addresses at = transform_addresses(p, t, base);
+    const std::size_t in_loop = inner.count - (t < inner.count ? t : t % inner.count);
+    std::size_t run = end - t < in_loop ? end - t : in_loop;
+    t += run;
+    if (p.lane_leaf) {
+      const stage& st = *std::get_if<stage>(&p.records[p.batch_loops]);
+      run_lane_leaf(st, body_args[0].args, source_of(st.src, at), destination_of(st.dst, at), run,
+                    p.lane_unit);
+      continue;
+    }
+    // `at` moves only to a block that follows, so no address beyond the batch is formed.
+    while (run != 0) {
+      const bool whole = run >= p.lanes;
+      std::size_t rows = p.lanes;
+      if (!whole) {
+        rows = run < p.lane_unit ? run : p.lane_unit;
+      }
+      if (whole) {
+        for (std::size_t k = 0; k < body; ++k) {
+          const stage& st = *std::get_if<stage>(&p.records[p.batch_loops + k]);
+          if (prepared) {
+            run_lane_stage(st, body_args[k].args, at, rows);
+          } else {
+            pass_args a = st.args;
+            run_lane_stage(st, a, at, rows);
+          }
+        }
+      } else {
+        if (prepared && !tail_ready) {
+          for (std::size_t k = 0; k < tail; ++k) {
+            std::construct_at(&tail_args[k].args, p.lane_tail[k].args);
+          }
+          tail_ready = true;
+        }
+        for (std::size_t k = 0; k < tail; ++k) {
+          const stage& st = p.lane_tail[k];
+          if (prepared) {
+            run_lane_stage(st, tail_args[k].args, at, rows);
+          } else {
+            pass_args a = st.args;
+            run_lane_stage(st, a, at, rows);
+          }
+        }
+      }
+      run -= rows;
+      if (run != 0) {
+        at = moved(at, inner.step, rows);
+      }
+    }
   }
 }
 
@@ -239,21 +288,41 @@ void run_leaf_rows(const program& p, std::size_t first, std::size_t count, const
          from_in ? l.step[0] : l.step[1], l.step[1], count);
 }
 
+void run_lane_leaf_rows(const program& p, std::size_t first, std::size_t count, const void* in,
+                        void* out) noexcept {
+  const loop& l = *std::get_if<loop>(p.records.data());
+  const stage& s = *std::get_if<stage>(&p.records[1]);
+  // As run_leaf_rows: no offset applied to a null pointer, the destination never the input.
+  const auto k = static_cast<std::ptrdiff_t>(first);
+  const auto* src = static_cast<const std::byte*>(in);
+  auto* dst = static_cast<std::byte*>(out);
+  src = l.step[0] != 0 ? src + l.step[0] * k : src;
+  dst = l.step[1] != 0 ? dst + l.step[1] * k : dst;
+  pass_args a = s.args;
+  run_lane_leaf(s, a, s.src == slot::in ? static_cast<const void*>(src) : dst, dst, count,
+                p.lane_unit);
+}
+
 void mark_flat(program& p) noexcept {
+  const auto moves = [](slot x) { return x == slot::in || x == slot::out; };
+  const std::size_t stages = p.records.size() - p.batch_loops;
   if (p.lanes != 0) {
-    // Blocks of transforms (run_lane_blocks), never a transform at a time.
+    // Blocks of transforms (run_lane_blocks), never a transform at a time. A body of one
+    // stage between the caller's arrays is the lanes leaf (strategies/lanes.cpp: every
+    // other lanes stage reads or writes a tile), and so is its tail.
     p.flat = false;
     p.leaf_rows = false;
+    const stage* only = stages == 1 ? std::get_if<stage>(&p.records[p.batch_loops]) : nullptr;
+    p.lane_leaf = only != nullptr && moves(only->src) && moves(only->dst);
+    p.lane_leaf_rows = p.lane_leaf && p.batch_loops == 1;
     return;
   }
-  const std::size_t stages = p.records.size() - p.batch_loops;
   p.flat = stages <= flat_stages_max;
   for (std::size_t i = p.batch_loops; i < p.records.size(); ++i) {
     // Only the lines loops of a grid move twiddles (program.hpp); run_flat does not.
     const stage* st = std::get_if<stage>(&p.records[i]);
     p.flat = p.flat && st != nullptr && !st->moving_twiddles;
   }
-  const auto moves = [](slot x) { return x == slot::in || x == slot::out; };
   const stage* only =
       p.flat && stages == 1 && p.batch_loops == 1 ? std::get_if<stage>(&p.records[1]) : nullptr;
   p.leaf_rows = only != nullptr && only->leaf != nullptr && moves(only->src) && moves(only->dst);
@@ -295,6 +364,10 @@ void run_transforms(const program& p, std::size_t first, std::size_t count,
                     const slot_addresses& base) noexcept {
   if (count == 0) {
     return; // forms no address past the batch (the fast paths below would)
+  }
+  if (p.lane_leaf_rows) {
+    run_lane_leaf_rows(p, first, count, base.in, base.out);
+    return;
   }
   if (p.lanes != 0) {
     run_lane_blocks(p, first, count, base);

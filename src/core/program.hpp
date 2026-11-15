@@ -89,6 +89,13 @@ struct program {
   std::size_t lanes = 0;
   std::size_t lane_unit = 0;
   std::vector<stage> lane_tail;
+  // A lanes program whose body is one lanes leaf between the caller's arrays: no tile, so
+  // a run of the innermost batch loop is one call of it, whatever its length (driver.cpp,
+  // run_lane_blocks; experiment X24). Set by mark_flat.
+  bool lane_leaf = false;
+  // lane_leaf with one batch loop: the whole range is one call, entered with the caller's
+  // two addresses (driver.hpp, run_lane_leaf_rows).
+  bool lane_leaf_rows = false;
   // The body (the records after the batch loops) is at most flat_stages_max stages, none
   // with moving twiddles, and no loop: the driver then prepares each stage's arguments once
   // per call and only moves the slots per transform (driver.cpp, run_flat). Set by

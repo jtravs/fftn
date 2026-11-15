@@ -572,6 +572,53 @@ void layouts_equal(fftn::isa target, const fftn::shape<In, Out>& sh, std::size_t
   }
 }
 
+// A body that is one lanes leaf between the caller's arrays (rows one vector access per
+// element: C = 1, or adjacent rows) runs each run of rows in one call (program::lane_leaf,
+// experiment X24): every row, the padded last unit and sub-ranges as the chain gives them,
+// with one batch loop (the entry with the caller's addresses) and two.
+template <class T> void lane_leaf_cases(fftn::isa target) {
+  using cx = std::complex<T>;
+  const std::size_t c = complex_lanes<T>(target);
+  for (const std::size_t n : {4U, 8U, 16U}) {
+    const std::size_t count = 9 * c + 3;
+    const side_layout adjacent{.stride = static_cast<std::ptrdiff_t>(count), .dist = 1};
+    std::vector<batch_case> cases{{.n = n, .count = count, .in = adjacent, .out = adjacent}};
+    if (c == 1) {
+      cases.push_back({.n = n, .count = count, .in = rows_with_gap(n, 3), .out = rows_with_gap(n, 1)});
+    }
+    for (const batch_case& bc : cases) {
+      const std::string what = label<T>(target, "c2c", bc);
+      lanes_equal_chain<cx, cx>(target, bc, n, n, 2 * c, what);
+      build_settings lanes;
+      lanes.strategy = strategy_choice::lanes;
+      const auto core = make_plan_core(fftn::detail::view_of(shape_of<cx, cx>(bc)),
+                                       {.force_isa = target}, lanes);
+      EXPECT_NE(described(*core).find("lanes leaf between the caller's arrays"), std::string::npos)
+          << what << "\n"
+          << described(*core);
+    }
+  }
+}
+
+TEST(Lanes, LeafRowsInOneCall) {
+  using cx = std::complex<double>;
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    lane_leaf_cases<double>(t);
+    lane_leaf_cases<float>(t);
+    // Two batch dimensions: one call per run of the inner one.
+    constexpr std::size_t n = 8;
+    fftn::shape<cx, cx> sh;
+    sh.axes = {{.n = n, .in_stride = 7, .out_stride = 7}};
+    sh.batches = {
+        {.count = 3, .in_dist = 7 * n, .out_dist = 7 * n},
+        {.count = 7, .in_dist = 1, .out_dist = 1},
+    };
+    const std::size_t span = 3 * 7 * n;
+    layouts_equal(t, sh, span, 0, span, 0, 21,
+                  std::string(fftn::isa_name(t)) + " c2c leaf rows, two batch dimensions");
+  }
+}
+
 // Negative distances (rows at descending addresses) and two batch dimensions, whose blocks
 // of rows stay within the innermost one: the lanes against the chain, whole batches and
 // ranges that start and end mid-block and cross the outer dimension.
