@@ -183,12 +183,27 @@ TEST(Interleavings, SeedsChangeTheOrder) {
 
 // ---- Pathologies, in virtual time.
 
-// Plans with the library's default chunking and machine profile, as users get them, except
-// that 3072 points keep planner v0's five passes on 32 registers (4 x 4 x 4 x 4 x 12), the
-// plan these reproductions were set on: planner v1's three passes are a third less work,
-// too little for the prototype's split to lose by the measured margin.
+// The provisional defaults, on a machine with a CPU for every lane: the simulations must not
+// depend on the machine that runs them.
+const fftn::detail::machine_profile& defaults() {
+  static const fftn::detail::machine_profile p;
+  return p;
+}
+
+// Plans with the library's default chunking, as chains (the prototype's only strategy, on
+// which these pathologies were measured) built for the provisional defaults. The running
+// machine's caches must not choose the plan: they decide whether a long row is a grid, with
+// how many phases and whether fused (X12b), and with the host's choice the row of 65536 points
+// below reproduced its pathology by 1.41 on GitHub's Neoverse N2 runners (1 MB of L2 each:
+// a two-phase grid) and 1.45 with the EPYC 7763's caches (three phases), against the 1.5
+// asked; as a chain it does by 2.4 with every recorded topology. 3072 points keep planner v0's five passes
+// on 32 registers (4 x 4 x 4 x 4 x 12), the plan these reproductions were set on: planner
+// v1's three passes are a third less work, too little for the prototype's split to lose by
+// the measured margin.
 team_case default_rows(std::size_t n, std::size_t count) {
   fftn::detail::build_settings settings;
+  settings.profile = defaults();
+  settings.strategy = fftn::detail::strategy_choice::chain;
   if (n == 3072) {
     settings.radices = {4, 4, 4, 4, 12};
   }
@@ -205,13 +220,6 @@ void report(const char* what, double proto, double ours, double serial) {
 
 double serial_ns(const team_case& c, const sim::cost_model& costs) {
   return static_cast<double>(c.core->prog.transforms) * c.core->graph.work * costs.ns_per_work;
-}
-
-// The provisional defaults, on a machine with a CPU for every lane: the simulations must not
-// depend on the machine that runs them.
-const fftn::detail::machine_profile& defaults() {
-  static const fftn::detail::machine_profile p;
-  return p;
 }
 
 sim::sim_result fftn_timed(const team_case& c, int lanes, int group,
