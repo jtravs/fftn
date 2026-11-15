@@ -457,19 +457,19 @@ TEST(Schedule, GridSizesFromCaches) {
   EXPECT_EQ(xeon.grid_pad_period, 4 * kib);
   EXPECT_EQ(epyc.grid_pad_period, 4 * kib);
   EXPECT_EQ(m5.grid_pad_period, std::numeric_limits<std::size_t>::max());
-  // The copies' prefetch follows the core (X26b): none on Zen, 8 rows elsewhere.
+  // The copies' prefetch follows the core (X26b): not on Zen, elsewhere yes.
   fftn::detail::cpu_features zen3;
   zen3.amd = true;
   zen3.family = 0x19;
-  EXPECT_EQ(fftn::detail::grid_rows_ahead_for(zen3), 0U);
+  EXPECT_FALSE(fftn::detail::grid_copy_prefetch_for(zen3));
   fftn::detail::cpu_features cascade_lake;
   cascade_lake.family = 6;
-  EXPECT_EQ(fftn::detail::grid_rows_ahead_for(cascade_lake), 8U);
-  EXPECT_EQ(fftn::detail::grid_rows_ahead_for(fftn::detail::cpu_features{}), 8U); // Arm
+  EXPECT_TRUE(fftn::detail::grid_copy_prefetch_for(cascade_lake));
+  EXPECT_TRUE(fftn::detail::grid_copy_prefetch_for(fftn::detail::cpu_features{})); // Arm
   fftn::detail::cpu_features k10;
   k10.amd = true;
   k10.family = 0x10;
-  EXPECT_EQ(fftn::detail::grid_rows_ahead_for(k10), 8U);
+  EXPECT_TRUE(fftn::detail::grid_copy_prefetch_for(k10));
   // Unknown sizes keep the defaults; an unknown sharing counts as a shared L2.
   const machine_profile defaults;
   machine_profile unknown;

@@ -112,11 +112,11 @@ public:
   // stages).
   // fused: phases read and write the arrays in their first and last passes rather than
   // through a gather and a scatter (experiment X12). phase_radix: the largest radix the
-  // phase rule uses (codelet radices up to it; 0: default_grid_phase_radix). rows_ahead:
-  // how far ahead the gathers and scatters prefetch (machine_profile::grid_rows_ahead).
+  // phase rule uses (codelet radices up to it; 0: default_grid_phase_radix). prefetch:
+  // whether the gathers and scatters prefetch (machine_profile::grid_copy_prefetch).
   grid_builder(const kernels_of<T>& kernels, chain_builder<T>& chain,
                std::vector<std::vector<T>>& tables, bool fused, std::size_t phase_radix,
-               std::size_t rows_ahead);
+               bool prefetch);
 
   // Appends the records of one c2c row from the in slot to the out slot, both stride 1,
   // and returns the complex elements of scratch it needs in each of a and b. in_place: in
@@ -158,7 +158,7 @@ private:
   std::vector<std::vector<T>>& tables_;
   bool fused_;
   std::size_t phase_radix_;
-  std::size_t rows_ahead_;
+  bool prefetch_;
 };
 
 extern template class grid_builder<double>;

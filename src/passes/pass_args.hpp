@@ -58,7 +58,8 @@ struct pass_args {
   std::ptrdiff_t dst_dist = 0;
   std::size_t block = 0; // B: the rows of a tile
   std::size_t rows = 0;
-  // The grid's copies (src/passes/grid.inl): how many rows ahead they prefetch (0: none).
+  // The grid's copies (src/passes/grid.inl): whether they prefetch the rows they copy
+  // next (not 0) or not (0).
   std::size_t ahead = 0;
 };
 

@@ -547,7 +547,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     grid_builder<T> grid(kernels, chain, tables_of<T>(c),
                          settings.grid_fused &&
                              (n / 2) * 2 * sizeof(T) <= settings.profile.grid_fuse_bytes,
-                         settings.grid_phase_radix, settings.profile.grid_rows_ahead);
+                         settings.grid_phase_radix, settings.profile.grid_copy_prefetch);
     const bool in_place = c.in_place || !r2c;
     if (grid_builder<T>::uses_block(real_grid, in_place)) {
       c.block_elements = grid_builder<T>::block_elements(real_grid);
@@ -576,7 +576,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     grid_builder<T> grid(kernels, chain, tables_of<T>(c),
                          settings.grid_fused &&
                              c.lengths[0] * 2 * sizeof(T) <= settings.profile.grid_fuse_bytes,
-                         settings.grid_phase_radix, settings.profile.grid_rows_ahead);
+                         settings.grid_phase_radix, settings.profile.grid_copy_prefetch);
     if (grid_builder<T>::uses_block(grid_plan, c.in_place)) {
       c.block_elements = grid_builder<T>::block_elements(grid_plan);
     }

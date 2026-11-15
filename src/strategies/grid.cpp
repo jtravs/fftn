@@ -298,10 +298,10 @@ std::size_t grid_pad(const grid_split& g, std::size_t element_bytes, std::size_t
 template <class T>
 grid_builder<T>::grid_builder(const kernels_of<T>& kernels, chain_builder<T>& chain,
                               std::vector<std::vector<T>>& tables, bool fused,
-                              std::size_t phase_radix, std::size_t rows_ahead)
+                              std::size_t phase_radix, bool prefetch)
     : kernels_(kernels), chain_(chain), tables_(tables), fused_(fused),
-      phase_radix_(phase_radix != 0 ? phase_radix : default_grid_phase_radix),
-      rows_ahead_(rows_ahead) {}
+      phase_radix_(phase_radix != 0 ? phase_radix : default_grid_phase_radix), prefetch_(prefetch) {
+}
 
 template <class T>
 void grid_builder<T>::add_copy(const char* what, pass_fn run, std::size_t rows, std::size_t cols,
@@ -316,7 +316,7 @@ void grid_builder<T>::add_copy(const char* what, pass_fn run, std::size_t rows, 
   st.args.src_stride = src_stride;
   st.args.dst_stride = dst_stride;
   st.args.twiddles = twiddles;
-  st.args.ahead = rows_ahead_;
+  st.args.ahead = prefetch_ ? 1 : 0;
   st.moving_twiddles = twiddles != nullptr;
   st.src = src;
   st.dst = dst;

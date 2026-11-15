@@ -60,7 +60,7 @@ machine_profile default_machine_profile() noexcept {
     // is noexcept, so the defaults stand (as cache_group_size does).
     p = machine_profile{};
   }
-  p.grid_rows_ahead = grid_rows_ahead_for(detect_cpu_features());
+  p.grid_copy_prefetch = grid_copy_prefetch_for(detect_cpu_features());
   const unsigned cpus = std::thread::hardware_concurrency();
   p.cpus = static_cast<int>(std::min<unsigned>(cpus, std::numeric_limits<int>::max()));
   return p;
@@ -90,10 +90,9 @@ void set_grid_sizes(machine_profile& p, const core_class& c) noexcept {
 
 // Experiments X26 and X26b: the copies' prefetch follows the core. The Xeon under avx2
 // lost as it did under avx512 without it, so the target is not what decides.
-std::size_t grid_rows_ahead_for(const cpu_features& f) noexcept {
+bool grid_copy_prefetch_for(const cpu_features& f) noexcept {
   constexpr unsigned zen = 0x17;
-  constexpr std::size_t rows_ahead = 8;
-  return f.amd && f.family >= zen ? 0 : rows_ahead;
+  return !(f.amd && f.family >= zen);
 }
 
 bool runs_inline(const work_graph& g, const machine_profile& profile) noexcept {
