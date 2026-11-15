@@ -203,24 +203,6 @@ FFTN_FORCE_INLINE void transpose(__m512* v) {
   }
 }
 
-// Four complex doubles from four addresses, one 128-bit unit each (vocabulary.inl,
-// spread): two 256-bit halves by VINSERTF128 from memory, joined by one VINSERTF64X4 (the
-// only 512-bit shuffle); stored by 128-bit stores and VEXTRACTF64X2 to memory.
-template <> inline constexpr bool spread<double> = true;
-FFTN_FORCE_INLINE __m512d load_spread(const double* p, std::ptrdiff_t step) {
-  const __m256d lo =
-      _mm256_insertf128_pd(_mm256_castpd128_pd256(_mm_loadu_pd(p)), _mm_loadu_pd(p + step), 1);
-  const __m256d hi = _mm256_insertf128_pd(_mm256_castpd128_pd256(_mm_loadu_pd(p + 2 * step)),
-                                          _mm_loadu_pd(p + 3 * step), 1);
-  return _mm512_insertf64x4(_mm512_castpd256_pd512(lo), hi, 1);
-}
-FFTN_FORCE_INLINE void store_spread(double* p, std::ptrdiff_t step, __m512d a) {
-  _mm_storeu_pd(p, _mm512_castpd512_pd128(a));
-  _mm_storeu_pd(p + step, _mm512_extractf64x2_pd(a, 1));
-  _mm_storeu_pd(p + 2 * step, _mm512_extractf64x2_pd(a, 2));
-  _mm_storeu_pd(p + 3 * step, _mm512_extractf64x2_pd(a, 3));
-}
-
 // Real-register operations.
 namespace real {
 

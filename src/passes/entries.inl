@@ -23,48 +23,6 @@ constexpr pass_fn split_entry() {
   }
 }
 
-// The lanes passes that reach rows one load or store per row (lanes.inl, Spread), or null
-// where the vocabulary has no spread<T>.
-template <class T, std::size_t R, int Sign> constexpr pass_fn lanes_first_spread() {
-  if constexpr (spread<T>) {
-    return &lanes_first<T, R, Sign, true>;
-  } else {
-    return nullptr;
-  }
-}
-
-template <class T, std::size_t R, int Sign, edge_op OutOp> constexpr pass_fn lanes_last_spread() {
-  if constexpr (spread<T>) {
-    return &lanes_last<T, R, Sign, OutOp, true>;
-  } else {
-    return nullptr;
-  }
-}
-
-template <class T, std::size_t R, int Sign, edge_op OutOp> constexpr pass_fn lanes_leaf_spread() {
-  if constexpr (spread<T>) {
-    return &lanes_leaf<T, R, Sign, OutOp, true>;
-  } else {
-    return nullptr;
-  }
-}
-
-template <class T, bool Scaled> constexpr pass_fn lanes_r2c_pair_spread() {
-  if constexpr (spread<T>) {
-    return &lanes_r2c_pair<T, Scaled, true>;
-  } else {
-    return nullptr;
-  }
-}
-
-template <class T> constexpr pass_fn lanes_c2r_pair_spread() {
-  if constexpr (spread<T>) {
-    return &lanes_c2r_pair<T, true>;
-  } else {
-    return nullptr;
-  }
-}
-
 // The passes of the codelet in row I of gen::radices. A plan has one scale, on one edge
 // (core/plan_core.cpp), so no pass scales both: that entry stays null rather than
 // instantiating a variant nothing selects.
@@ -202,30 +160,18 @@ template <class T, std::size_t I> struct radix_entries {
           },
       .lanes_first =
           {
-              {&lanes_first<T, R, -1, false>, lanes_first_spread<T, R, -1>()},
-              {&lanes_first<T, R, +1, false>, lanes_first_spread<T, R, +1>()},
+              &lanes_first<T, R, -1>,
+              &lanes_first<T, R, +1>,
           },
       .lanes_last =
           {
-              {
-                  {&lanes_last<T, R, -1, nop, false>, lanes_last_spread<T, R, -1, nop>()},
-                  {&lanes_last<T, R, -1, scl, false>, lanes_last_spread<T, R, -1, scl>()},
-              },
-              {
-                  {&lanes_last<T, R, +1, nop, false>, lanes_last_spread<T, R, +1, nop>()},
-                  {&lanes_last<T, R, +1, scl, false>, lanes_last_spread<T, R, +1, scl>()},
-              },
+              {&lanes_last<T, R, -1, nop>, &lanes_last<T, R, -1, scl>},
+              {&lanes_last<T, R, +1, nop>, &lanes_last<T, R, +1, scl>},
           },
       .lanes_leaf =
           {
-              {
-                  {&lanes_leaf<T, R, -1, nop, false>, lanes_leaf_spread<T, R, -1, nop>()},
-                  {&lanes_leaf<T, R, -1, scl, false>, lanes_leaf_spread<T, R, -1, scl>()},
-              },
-              {
-                  {&lanes_leaf<T, R, +1, nop, false>, lanes_leaf_spread<T, R, +1, nop>()},
-                  {&lanes_leaf<T, R, +1, scl, false>, lanes_leaf_spread<T, R, +1, scl>()},
-              },
+              {&lanes_leaf<T, R, -1, nop>, &lanes_leaf<T, R, -1, scl>},
+              {&lanes_leaf<T, R, +1, nop>, &lanes_leaf<T, R, +1, scl>},
           },
   };
 };
@@ -388,10 +334,10 @@ inline constexpr pass_kernels<T> pass_table{
     .lanes_scatter = &lanes_scatter<T>,
     .lanes_r2c_pair =
         {
-            {&lanes_r2c_pair<T, false, false>, lanes_r2c_pair_spread<T, false>()},
-            {&lanes_r2c_pair<T, true, false>, lanes_r2c_pair_spread<T, true>()},
+            &lanes_r2c_pair<T, false>,
+            &lanes_r2c_pair<T, true>,
         },
-    .lanes_c2r_pair = {&lanes_c2r_pair<T, false>, lanes_c2r_pair_spread<T>()},
+    .lanes_c2r_pair = &lanes_c2r_pair<T>,
 };
 
 } // namespace

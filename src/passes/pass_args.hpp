@@ -163,12 +163,10 @@ struct radix_passes {
   pass_fn r2c_leaf[2];
   pass_fn c2r_leaf[2];
   // The lanes strategy's passes that read or write rows (src/passes/lanes.inl): a block's
-  // first pass, its last pass [output edge none or scale], its chain of one pass [the same];
-  // the last index [spread]: rows reached one load or store per row, null where the
-  // target's vocabulary has no spread<T> (experiment X24).
-  pass_fn lanes_first[2][2];
-  pass_fn lanes_last[2][2][2];
-  pass_fn lanes_leaf[2][2][2];
+  // first pass, its last pass [output edge none or scale], its chain of one pass [the same].
+  pass_fn lanes_first[2];
+  pass_fn lanes_last[2][2];
+  pass_fn lanes_leaf[2][2];
 };
 
 template <class T> struct pass_kernels {
@@ -207,12 +205,11 @@ template <class T> struct pass_kernels {
   pass_fn twiddle_transpose[2];
   pass_fn twiddle_scatter[2];
   // The lanes strategy (src/passes/lanes.inl): a block of rows into a tile whose lanes are
-  // the rows and back, and the pairing of real rows on the tile (r2c [scaled], c2r), the
-  // last index [spread] as for the codelets' lanes passes.
+  // the rows and back, and the pairing of real rows on the tile (r2c [scaled], c2r).
   pass_fn lanes_gather;
   pass_fn lanes_scatter;
-  pass_fn lanes_r2c_pair[2][2];
-  pass_fn lanes_c2r_pair[2];
+  pass_fn lanes_r2c_pair[2];
+  pass_fn lanes_c2r_pair;
 };
 // NOLINTEND(modernize-avoid-c-arrays)
 

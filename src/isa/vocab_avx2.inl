@@ -169,17 +169,6 @@ FFTN_FORCE_INLINE void transpose(__m256d* v) {
   v[0] = _mm256_permute2f128_pd(a, b, 0x20);
   v[1] = _mm256_permute2f128_pd(a, b, 0x31);
 }
-// Two complex doubles from two addresses, one 128-bit unit each (vocabulary.inl,
-// spread): a load and a VINSERTF128 from memory; stored by a 128-bit store and a
-// VEXTRACTF128 to memory.
-template <> inline constexpr bool spread<double> = true;
-FFTN_FORCE_INLINE __m256d load_spread(const double* p, std::ptrdiff_t step) {
-  return _mm256_insertf128_pd(_mm256_castpd128_pd256(_mm_loadu_pd(p)), _mm_loadu_pd(p + step), 1);
-}
-FFTN_FORCE_INLINE void store_spread(double* p, std::ptrdiff_t step, __m256d a) {
-  _mm_storeu_pd(p, _mm256_castpd256_pd128(a));
-  _mm_storeu_pd(p + step, _mm256_extractf128_pd(a, 1));
-}
 // Four complex floats per register: a 4 x 4 block, each complex number moved as one
 // 64-bit lane (unpack within halves, then exchange halves).
 FFTN_FORCE_INLINE void transpose(__m256* v) {

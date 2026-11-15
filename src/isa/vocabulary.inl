@@ -51,15 +51,6 @@
 //                           v[j]). No R x C form: passes store radices C does not divide
 //                           through a tile (DESIGN.md 6.2).
 //
-// Optional, where spread<T> is true (C > 1 and a register is built cheaply from C separate
-// complex values: avx2 and avx512 in double, one 128-bit unit each; NEON in float, 64 bits
-// each). The lanes strategy then reads and writes rows a row apart in its edge passes
-// instead of gathering and scattering them (src/passes/lanes.inl, experiment X24):
-//
-//   load_spread(p, step)     C<T> complex numbers, lane l from p + l step (step in reals,
-//                            any sign)
-//   store_spread(p, step, a) lane l of a to p + l step
-//
 // Exact operations (add, sub, addj, subj, scale, neg, conj, swap_ri, the memory operations
 // and transpose) give the same bits on every target. mul, mulc, madd and cmul differ
 // between targets in their last bit, by the order of their roundings.
@@ -97,7 +88,5 @@ template <class T> inline constexpr std::size_t C = vec<T>::C;
 template <class T> inline constexpr std::size_t W = vec<T>::W;
 template <class T> inline constexpr std::size_t tw_reals = vec<T>::tw_reals;
 template <class T> inline constexpr std::size_t split_block = vec<T>::split_block;
-// Specialised to true by the targets that define load_spread and store_spread for T.
-template <class T> inline constexpr bool spread = false;
 
 } // namespace

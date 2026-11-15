@@ -18,9 +18,7 @@
 // apart; complex values only (a real row is read and written as complex pairs). Where a run of
 // C rows is one vector access (C = 1, or rows one complex value apart), the chain's first and
 // last passes read and write the rows themselves instead (lanes_first, lanes_last, and
-// lanes_leaf for a chain of one pass), and the gather and the scatter disappear. So they do
-// where the target builds a register from C separate complex values (spread<T>, the
-// variants with Spread: one load or store per row and element, experiment X24).
+// lanes_leaf for a chain of one pass), and the gather and the scatter disappear.
 
 namespace {
 
@@ -150,82 +148,29 @@ template <class T> void lanes_scatter(const pass_args* a, std::size_t first, std
 }
 
 // C rows' element at p (rows dist reals apart): one vector access for a full run, which the
-// callers allow only where it is one (C = 1, or rows one complex value apart), or with
-// Spread one access per row (spread<T>).
-template <class T, bool Spread>
+// callers allow only where it is one (C = 1, or rows one complex value apart).
+template <class T>
 FFTN_FORCE_INLINE cv<T> get_rows(const T* p, std::ptrdiff_t dist, std::size_t valid) {
-  if (valid == C<T>) {
-    if constexpr (Spread) {
-      return load_spread(p, dist);
-    } else {
-      return load(p);
-    }
-  }
-  return load_part(p, dist, valid);
+  return valid == C<T> ? load(p) : load_part(p, dist, valid);
 }
 
-template <class T, bool Spread>
+template <class T>
 FFTN_FORCE_INLINE void put_rows(T* p, std::ptrdiff_t dist, std::size_t valid, cv<T> v) {
   if (valid == C<T>) {
-    if constexpr (Spread) {
-      store_spread(p, dist, v);
-    } else {
-      store(p, v);
-    }
+    store(p, v);
   } else {
     store_part(p, dist, valid, v);
   }
 }
 
-// Leg j of a full run of C rows' elements, the rows step reals apart, one load or store per
-// row (spread<T>; the accessors of access.inl need the run to be one vector access).
-template <class T> struct spread_in {
-  const T* p;
-  std::ptrdiff_t leg;
-  std::ptrdiff_t step;
-  [[nodiscard]] FFTN_FORCE_INLINE cv<T> get(std::size_t j) const {
-    return load_spread(p + at(j, leg), step);
-  }
-};
-
-template <class T, edge_op Op> struct spread_out {
-  T* p;
-  std::ptrdiff_t leg;
-  std::ptrdiff_t step;
-  edge<T, Op> op;
-  FFTN_FORCE_INLINE void put(std::size_t k, cv<T> v) const {
-    store_spread(p + at(k, leg), step, on_run<T, Op, true>(op, v, k, C<T>));
-  }
-};
-
-// The accessor of a full run of rows: one vector access, or with Spread one per row.
-template <class T, bool Spread>
-FFTN_FORCE_INLINE auto rows_in(const T* p, std::ptrdiff_t leg, std::ptrdiff_t step) {
-  if constexpr (Spread) {
-    return spread_in<T>{.p = p, .leg = leg, .step = step};
-  } else {
-    return run_in<T, edge_op::none, true>{
-        .p = p, .leg = leg, .step = step, .valid = C<T>, .op = {}};
-  }
-}
-
-template <class T, edge_op Op, bool Spread>
-FFTN_FORCE_INLINE auto rows_out(T* p, std::ptrdiff_t leg, std::ptrdiff_t step, edge<T, Op> op) {
-  if constexpr (Spread) {
-    return spread_out<T, Op>{.p = p, .leg = leg, .step = step, .op = op};
-  } else {
-    return run_out<T, Op, true>{.p = p, .leg = leg, .step = step, .valid = C<T>, .op = op};
-  }
-}
-
 // The r2c pairing of every row of a block (n = 2h even): X_0 .. X_h of each row from its
 // Z = DFT_h (the tile's rows of h), lanes over rows, written to the first `rows` rows of
-// dst: the rows themselves where a run of C of them is one vector store or with Spread,
-// else a tile. The arithmetic of every other route's pairing (post_pair, post_middle,
-// post_ends; real.inl), with the twiddle of bin k broadcast. twiddles: w^(k + n/4) for k = 0 ..
-// h/2, broadcast storage (the leaves' table). One unit. Reads src (the tile), dst, dst_stride,
-// dst_dist (reals), n, block, rows, twiddles, scale.
-template <class T, bool Scaled, bool Spread>
+// dst: the rows themselves where a run of C of them is one vector store, else a tile. The
+// arithmetic of every other route's pairing (post_pair, post_middle, post_ends; real.inl),
+// with the twiddle of bin k broadcast. twiddles: w^(k + n/4) for k = 0 .. h/2, broadcast
+// storage (the leaves' table). One unit. Reads src (the tile), dst, dst_stride, dst_dist
+// (reals), n, block, rows, twiddles, scale.
+template <class T, bool Scaled>
 void lanes_r2c_pair(const pass_args* a, std::size_t first, std::size_t last) {
   const T* z = static_cast<const T*>(a->src);
   T* y = static_cast<T*>(a->dst);
@@ -254,12 +199,12 @@ void lanes_r2c_pair(const pass_args* a, std::size_t first, std::size_t last) {
         cv<T> hi;
         post_pair<T>(load(zr + at(k, leg)), conj(load(zr + at(h - k, leg))),
                      bcast_tw(table + tw_reals<T> * k), half, lo, hi);
-        put_rows<T, Spread>(yr + at(k, ys), yd, valid, lo);
-        put_rows<T, Spread>(yr + at(h - k, ys), yd, valid, hi);
+        put_rows(yr + at(k, ys), yd, valid, lo);
+        put_rows(yr + at(h - k, ys), yd, valid, hi);
       }
       if (h % 2 == 0) {
-        put_rows<T, Spread>(yr + at(h / 2, ys), yd, valid,
-                            scaled<T, Scaled>(post_middle<T>(load(zr + at(h / 2, leg))), sc));
+        put_rows(yr + at(h / 2, ys), yd, valid,
+                 scaled<T, Scaled>(post_middle<T>(load(zr + at(h / 2, leg))), sc));
       }
     }
   }
@@ -267,11 +212,10 @@ void lanes_r2c_pair(const pass_args* a, std::size_t first, std::size_t last) {
 
 // The c2r pairing of every row of a block: Z_0 .. Z_h-1 of each row (the tile's rows of h)
 // from X_0 .. X_h, read from the rows themselves where a run of C of them is one vector
-// load or with Spread, else from a tile; rows from `rows` on are zeros. As pre_pair,
-// pre_middle and the leaves' Z_0. twiddles: as lanes_r2c_pair's. One unit. Reads src, src_stride,
-// src_dist (reals), dst (the tile), n, block, rows, twiddles.
-template <class T, bool Spread>
-void lanes_c2r_pair(const pass_args* a, std::size_t first, std::size_t last) {
+// load, else from a tile; rows from `rows` on are zeros. As pre_pair, pre_middle and the
+// leaves' Z_0. twiddles: as lanes_r2c_pair's. One unit. Reads src, src_stride, src_dist
+// (reals), dst (the tile), n, block, rows, twiddles.
+template <class T> void lanes_c2r_pair(const pass_args* a, std::size_t first, std::size_t last) {
   const T* x = static_cast<const T*>(a->src);
   T* z = static_cast<T*>(a->dst);
   const std::ptrdiff_t xs = a->src_stride;
@@ -288,8 +232,8 @@ void lanes_c2r_pair(const pass_args* a, std::size_t first, std::size_t last) {
       T* zr = z + at(r0, 2);
       T x0[2 * C<T>]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
       T xh[2 * C<T>]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
-      store(x0, get_rows<T, Spread>(xr, xd, valid));
-      store(xh, get_rows<T, Spread>(xr + at(h, xs), xd, valid));
+      store(x0, get_rows(xr, xd, valid));
+      store(xh, get_rows(xr + at(h, xs), xd, valid));
       for (std::size_t l = 0; l < C<T>; ++l) {
         const T re = x0[2 * l];
         const T im = xh[2 * l];
@@ -300,15 +244,14 @@ void lanes_c2r_pair(const pass_args* a, std::size_t first, std::size_t last) {
       for (std::size_t j = 1; j < h - j; ++j) {
         cv<T> lo;
         cv<T> hi;
-        pre_pair<T>(get_rows<T, Spread>(xr + at(j, xs), xd, valid),
-                    conj(get_rows<T, Spread>(xr + at(h - j, xs), xd, valid)),
+        pre_pair<T>(get_rows(xr + at(j, xs), xd, valid),
+                    conj(get_rows(xr + at(h - j, xs), xd, valid)),
                     bcast_tw(table + tw_reals<T> * j), lo, hi);
         store(zr + at(j, leg), lo);
         store(zr + at(h - j, leg), hi);
       }
       if (h % 2 == 0) {
-        store(zr + at(h / 2, leg),
-              pre_middle<T>(get_rows<T, Spread>(xr + at(h / 2, xs), xd, valid)));
+        store(zr + at(h / 2, leg), pre_middle<T>(get_rows(xr + at(h / 2, xs), xd, valid)));
       }
     }
   }
@@ -316,8 +259,8 @@ void lanes_c2r_pair(const pass_args* a, std::size_t first, std::size_t last) {
 
 // ---- Passes that read or write the rows themselves, without a gather or a scatter: where a
 // full run of C rows is one vector load or store, that is C = 1 or rows one complex value
-// apart (a strided axis, or the tile itself), or with Spread at any distance (spread<T>).
-// Rows from `rows` on are read as zeros and never written.
+// apart (a strided axis, or the tile itself). Rows from `rows` on are read as zeros and
+// never written.
 
 // The first pass of a block's chain (the row's s = 1, m > 1: the DIF codelet with the
 // row's twiddles w^(p k), broadcast) reading the rows: unit u is rows r0 = (u / m) C .. +
@@ -325,7 +268,7 @@ void lanes_c2r_pair(const pass_args* a, std::size_t first, std::size_t last) {
 // Rows outermost, so that the rows are read in order (the order the chain reads them: run
 // group-major, a block of 1024-point-rows beyond L1 was 1.3 times slower on the M5). Reads
 // src, src_stride, src_dist (reals), m, block, rows, twiddles; dst: the tile.
-template <class T, std::size_t R, int Sign, bool Spread>
+template <class T, std::size_t R, int Sign>
 void lanes_first(const pass_args* a, std::size_t first, std::size_t last) {
   const T* x = static_cast<const T*>(a->src);
   T* y = static_cast<T*>(a->dst);
@@ -351,7 +294,15 @@ void lanes_first(const pass_args* a, std::size_t first, std::size_t last) {
         .op = {},
     };
     if (valid == C<T>) {
-      lane_unit<T, R, Sign, true>(rows_in<T, Spread>(xp, in_leg, xd), out, table, p);
+      lane_unit<T, R, Sign, true>(
+          run_in<T, edge_op::none, true>{
+              .p = xp,
+              .leg = in_leg,
+              .step = xd,
+              .valid = C<T>,
+              .op = {},
+          },
+          out, table, p);
     } else {
       lane_unit<T, R, Sign, true>(
           run_in<T, edge_op::none, false>{
@@ -374,7 +325,7 @@ void lanes_first(const pass_args* a, std::size_t first, std::size_t last) {
 // the rows: the tile's copies q' = q B + r of s' = s B are copy q of row r; unit u is rows
 // r0 = (u / s) C .. + C - 1 and copy q = u % s, rows outermost (as lanes_first). Reads src
 // (the tile), s (s'), block, rows, dst, dst_stride, dst_dist (reals), scale.
-template <class T, std::size_t R, int Sign, edge_op OutOp, bool Spread>
+template <class T, std::size_t R, int Sign, edge_op OutOp>
 void lanes_last(const pass_args* a, std::size_t first, std::size_t last) {
   const T* x = static_cast<const T*>(a->src);
   T* y = static_cast<T*>(a->dst);
@@ -402,7 +353,9 @@ void lanes_last(const pass_args* a, std::size_t first, std::size_t last) {
       };
       T* yp = y + at(r0, yd) + at(q, ys);
       if (valid == C<T>) {
-        cdft<R>::template plain<T, Sign>(in, rows_out<T, OutOp, Spread>(yp, out_leg, yd, op));
+        cdft<R>::template plain<T, Sign>(
+            in,
+            run_out<T, OutOp, true>{.p = yp, .leg = out_leg, .step = yd, .valid = C<T>, .op = op});
       } else {
         cdft<R>::template plain<T, Sign>(in, run_out<T, OutOp, false>{
                                                  .p = yp,
@@ -421,11 +374,10 @@ void lanes_last(const pass_args* a, std::size_t first, std::size_t last) {
 }
 
 // A block's whole chain when it is one codelet (n = R, the row's leaf), from rows to rows
-// (either side may be the tile: a stride of B and a distance of one complex value; with
-// Spread both sides are read or written one row at a time, the tile too). Unit u
+// (either side may be the tile: a stride of B and a distance of one complex value). Unit u
 // is rows u C .. + C - 1. Every load of a unit precedes its stores, so src may be dst. Reads
 // src, src_stride, src_dist, dst, dst_stride, dst_dist (reals), block, rows, scale.
-template <class T, std::size_t R, int Sign, edge_op OutOp, bool Spread>
+template <class T, std::size_t R, int Sign, edge_op OutOp>
 void lanes_leaf(const pass_args* a, std::size_t first, std::size_t last) {
   const T* x = static_cast<const T*>(a->src);
   T* y = static_cast<T*>(a->dst);
@@ -444,8 +396,9 @@ void lanes_leaf(const pass_args* a, std::size_t first, std::size_t last) {
     const T* xp = x + at(r0, xd);
     T* yp = y + at(r0, yd);
     if (valid == C<T>) {
-      cdft<R>::template plain<T, Sign>(rows_in<T, Spread>(xp, xs, xd),
-                                       rows_out<T, OutOp, Spread>(yp, ys, yd, op));
+      cdft<R>::template plain<T, Sign>(
+          run_in<T, edge_op::none, true>{.p = xp, .leg = xs, .step = xd, .valid = C<T>, .op = {}},
+          run_out<T, OutOp, true>{.p = yp, .leg = ys, .step = yd, .valid = C<T>, .op = op});
     } else {
       cdft<R>::template plain<T, Sign>(
           run_in<T, edge_op::none, false>{.p = xp, .leg = xs, .step = xd, .valid = valid, .op = {}},
