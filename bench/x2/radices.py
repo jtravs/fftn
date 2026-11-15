@@ -186,16 +186,24 @@ def parse(text: str) -> Sequence:
     return tuple(int(x) for x in text.split("."))
 
 
-# The radices may be followed by the chain's split run (strategies/chain.hpp, experiment X1).
-NOTE = re.compile(r"\(n = (\d+)\): (?:c2c \w+, )?radices ([\d x]+?)(?:, split from pass \d+)?$")
+# The radices may be followed by the chain's split run (strategies/chain.hpp, experiment X1),
+# or end in a Bluestein stage of the product of the primes above 16 (DESIGN.md 11.2 rule 3).
+NOTE = re.compile(
+    r"\(n = (\d+)\): (?:c2c \w+, )?radices ((?:\d+ x )*\d+)?"
+    r"(?:(?: x )?bluestein (\d+) \(M [^)]*\))?"
+    r"(?:, split from pass \d+)?$"
+)
 
 
 def from_note(note: str) -> tuple[int, Sequence]:
-    """The length and radices of a c2c row from the FFTN backend's case note."""
+    """The length and radices of a c2c row from the FFTN backend's case note; a Bluestein
+    stage of Q counts as the passes of Q's prime factors, ascending (rule_radices' form)."""
     m = NOTE.search(note)
-    if not m:
+    if not m or not (m[2] or m[3]):
         raise ValueError(f"not a c2c row's note: {note!r}")
-    return int(m[1]), tuple(int(x) for x in m[2].split(" x "))
+    head = tuple(int(x) for x in m[2].split(" x ")) if m[2] else ()
+    tail = tuple(sorted(q for q, k in factor(int(m[3])).items() for _ in range(k))) if m[3] else ()
+    return int(m[1]), head + tail
 
 
 # ---- The cases -----------------------------------------------------------------------------
