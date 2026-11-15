@@ -54,13 +54,15 @@ jobs:
            "stages": "tsan"}
         ]
       # Apple's compiler (its ASan has no leak detection; the gate says so), and Homebrew
-      # LLVM's clang-tidy, coverage and ThreadSanitizer, each in a job of its own (together
+      # LLVM's ASan + UBSan with leak detection (the only sanitizer run of NEON with FCMA:
+      # 61 minutes), clang-tidy, coverage and ThreadSanitizer, each in a job of its own (together
       # they ran past 90 minutes on these three-core runners). Two instrumented compiles at a
       # time in 7 GB.
       macos: >-
         [
           {"name": "apple-clang", "cxx": "clang++", "stages": "build bench"},
           {"name": "apple-clang asan", "cxx": "clang++", "stages": "sanitize", "jobs": 2},
+          {"name": "llvm asan", "brew-llvm": true, "stages": "sanitize", "jobs": 2},
           {"name": "llvm tidy", "brew-llvm": true, "stages": "tidy"},
           {"name": "llvm coverage", "brew-llvm": true, "stages": "coverage"},
           {"name": "llvm tsan", "brew-llvm": true, "stages": "tsan", "jobs": 2}

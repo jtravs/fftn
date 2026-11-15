@@ -112,13 +112,12 @@ jobs:
         [
           {"name": "gcc-14", "cxx": "g++-14", "stages": "build bench"}
         ]
-      # Homebrew LLVM, the maintainer's configuration, and its ASan + UBSan with leak
-      # detection (which Apple Clang's lacks): the only sanitizer run of NEON with FCMA
-      # (Apple silicon) and of the macOS runtime. Two compiles at a time in 7 GB.
+      # Homebrew LLVM, the maintainer's configuration. Its ASan + UBSan (the only sanitizer
+      # run of NEON with FCMA) took 61 minutes on these runners, the slowest job by far, and
+      # runs weekly in extended.yml; AArch64 sanitizers on every push come from Linux.
       macos: >-
         [
-          {"name": "llvm", "brew-llvm": true, "stages": "build bench"},
-          {"name": "llvm asan", "brew-llvm": true, "stages": "sanitize", "jobs": 2}
+          {"name": "llvm", "brew-llvm": true, "stages": "build bench"}
         ]
       # Clang on the MSVC ABI with clang-cl, x64 and Arm64 (experiment B2), with LLVM as
       # installed on the image. The C compiler (GoogleTest's project() enables C) is named

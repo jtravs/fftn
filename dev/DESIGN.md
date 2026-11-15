@@ -2060,8 +2060,7 @@ CI matrix (phase 0 onward, growing): Linux x86-64 with GCC 14 and current GCC an
 macOS arm64 with Apple Clang and Homebrew LLVM; Linux AArch64; Windows with clang on the
 MSVC ABI. Every push and pull request builds and tests one configuration per platform
 (both floors, GCC 14 and Clang 16, among them) and runs one ASan + UBSan job and one
-ThreadSanitizer job on Linux x86-64 with Clang, and ASan + UBSan with Homebrew LLVM on
-macOS; the other compilers, the other sanitizer runs, clang-tidy and coverage run weekly
+ThreadSanitizer job on Linux x86-64 with Clang; the other compilers, the other sanitizer runs, clang-tidy and coverage run weekly
 and on demand. AVX-512 paths run under Intel SDE and NEON-without-FCMA and SVE paths under
 QEMU where the runner's CPU lacks them, so every kernel is executed in CI, not only on
 developers' machines. Old processors are emulated as whole machines too (SDE's Nehalem

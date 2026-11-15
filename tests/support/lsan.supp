@@ -5,4 +5,8 @@
 # LLVM's libomp keeps its thread descriptors for the life of the process; on the macOS CI
 # runners LSan reports them as direct leaks at exit (allocated in __kmp_allocate_thread
 # and __kmp_allocate_team, reached from the OpenMP executor's parallel region).
+# Matched by function as well as by module: on the macOS runners the module pattern alone
+# did not suppress them (CI run 43691583271).
 leak:libomp
+leak:__kmp_allocate_thread
+leak:__kmp_allocate_team
