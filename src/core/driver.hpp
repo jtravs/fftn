@@ -47,8 +47,8 @@ inline void run_leaf_rows(const program& p, std::size_t first, std::size_t count
 // Transform 0 of a flat program (program.hpp) on the slots given as scalars: the entry's
 // path for one transform (core/plan_core.cpp). Passing them as scalars, not as a
 // slot_addresses just written, avoids the store-forwarding stalls of X20 (X28).
-void run_flat_first(const program& p, const void* in, void* out, std::byte* a,
-                    std::byte* b, std::byte* block) noexcept;
+void run_flat_first(const program& p, const void* in, void* out, std::byte* a, std::byte* b,
+                    std::byte* block) noexcept;
 
 // The pieces a team shares out (src/threading/work_graph.hpp), each run exactly as
 // run_transforms runs it.

@@ -176,9 +176,7 @@ FFTN_FORCE_INLINE __m128d fmadd(__m128d a, __m128d b, __m128d c) { return _mm_fm
 FFTN_FORCE_INLINE __m128 fmadd(__m128 a, __m128 b, __m128 c) { return _mm_fmadd_ps(a, b, c); }
 FFTN_FORCE_INLINE __m128d fmsub(__m128d a, __m128d b, __m128d c) { return _mm_fmsub_pd(a, b, c); }
 FFTN_FORCE_INLINE __m128 fmsub(__m128 a, __m128 b, __m128 c) { return _mm_fmsub_ps(a, b, c); }
-FFTN_FORCE_INLINE __m128d fnmadd(__m128d a, __m128d b, __m128d c) {
-  return _mm_fnmadd_pd(a, b, c);
-}
+FFTN_FORCE_INLINE __m128d fnmadd(__m128d a, __m128d b, __m128d c) { return _mm_fnmadd_pd(a, b, c); }
 FFTN_FORCE_INLINE __m128 fnmadd(__m128 a, __m128 b, __m128 c) { return _mm_fnmadd_ps(a, b, c); }
 FFTN_FORCE_INLINE __m128d neg(__m128d a) { return _mm_xor_pd(a, _mm_set1_pd(-0.0)); }
 FFTN_FORCE_INLINE __m128 neg(__m128 a) { return _mm_xor_ps(a, _mm_set1_ps(-0.0F)); }

@@ -47,7 +47,8 @@ struct kernel_table {
 // direction and edges as radix_passes::leaf, null where that is. They round as avx2's and
 // avx512's leaves do, so either target's plans may use them.
 template <class T> struct narrow_leaf_set {
-  // NOLINTNEXTLINE(modernize-avoid-c-arrays): filled inside an ISA region, which uses no std templates
+  // NOLINTNEXTLINE(modernize-avoid-c-arrays): filled inside an ISA region, which uses no std
+  // templates
   leaf_fn leaf[dense_codelet_radix - 1][2][edge_op_count][edge_op_count];
 };
 struct narrow_leaf_table {

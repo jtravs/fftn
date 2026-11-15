@@ -112,7 +112,7 @@ struct program {
   // of the stage's leaf and arguments and of the batch loop's steps, so that the entry
   // reaches the leaf without walking the records (X28). Set by mark_flat.
   bool leaf_rows = false;
-  bool rows_from_in = true;         // the leaf reads the input (else the output, in place)
+  bool rows_from_in = true; // the leaf reads the input (else the output, in place)
   leaf_fn rows_leaf = nullptr;
   std::ptrdiff_t rows_src_step = 0; // bytes between the lines the leaf reads
   std::ptrdiff_t rows_dst_step = 0; // and writes

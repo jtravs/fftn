@@ -192,8 +192,8 @@ void run_whole(const stage& s, const slot_addresses& at) noexcept {
 // One transform of a flat program on its slots: each stage of the program's flat_body on
 // its own arguments. The slots come as scalars and are chosen by index, not through a
 // slot_addresses (X28).
-void run_flat_one(const program& p, const std::byte* in, std::byte* out, std::byte* a,
-                  std::byte* b, std::byte* block) noexcept {
+void run_flat_one(const program& p, const std::byte* in, std::byte* out, std::byte* a, std::byte* b,
+                  std::byte* block) noexcept {
   // Indexed by slot (program.hpp); the input is never a destination.
   const std::array<const void*, 5> sources = {in, out, a, b, block};
   const std::array<void*, 5> destinations = {out, out, a, b, block};

@@ -142,11 +142,8 @@ void run_case(std::size_t n, std::size_t batch, int reps, double ms, fftn::isa i
     std::printf("%zu %zu %s %s %.3f\n", n, batch, prec, level, ns);
   };
 
-  report("public", time_ns(
-                       [&] {
-                         d::execute_all(*core, in.data(), out.data(), ws);
-                       },
-                       batch, reps, ms));
+  report("public",
+         time_ns([&] { d::execute_all(*core, in.data(), out.data(), ws); }, batch, reps, ms));
   report("api", time_ns([&] { d::execute_core(*core, 0, batch, in.data(), out.data(), ws); }, batch,
                         reps, ms));
 

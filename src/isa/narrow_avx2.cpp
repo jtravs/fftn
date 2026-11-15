@@ -43,6 +43,7 @@ static_assert(gen::radices[0] == 2 && gen::radices[dense_codelet_radix - 2] == d
 
 // As entries.inl's leaf rows: [input edge][output edge], null where both would scale.
 // NOLINTBEGIN(bugprone-macro-parentheses): template argument lists, not expressions.
+// clang-format off: one row per input edge, one radix set per line
 #define FFTN_NARROW_EDGES(T, R, S)                                                                 \
   {{&leaf_lines<T, R, S, nop, nop>, &leaf_lines<T, R, S, nop, scl>,                                \
     &leaf_lines<T, R, S, nop, fac>},                                                               \
@@ -56,6 +57,7 @@ static_assert(gen::radices[0] == 2 && gen::radices[dense_codelet_radix - 2] == d
     FFTN_NARROW_RADIX(T, 8),  FFTN_NARROW_RADIX(T, 9),  FFTN_NARROW_RADIX(T, 10),                  \
     FFTN_NARROW_RADIX(T, 11), FFTN_NARROW_RADIX(T, 12), FFTN_NARROW_RADIX(T, 13),                  \
     FFTN_NARROW_RADIX(T, 14), FFTN_NARROW_RADIX(T, 15), FFTN_NARROW_RADIX(T, 16)}}
+// clang-format on
 // NOLINTEND(bugprone-macro-parentheses)
 
 constinit const narrow_leaf_table leaves{
