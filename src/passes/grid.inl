@@ -42,8 +42,9 @@ template <class T> FFTN_FORCE_INLINE std::size_t lines_of(std::size_t vectors) {
 }
 
 // y[q + ys r] = x[q + xs r] for `rows` rows of V registers (strides in reals), scaled on
-// storing for OutOp == scale; leaves x and y past the last row.
-template <class T, edge_op OutOp, std::size_t V, bool Ahead>
+// storing for OutOp == scale, prefetching the rows ahead of x (AheadX) and of y (AheadY);
+// leaves x and y past the last row.
+template <class T, edge_op OutOp, std::size_t V, bool AheadX, bool AheadY>
 FFTN_FORCE_INLINE void copy_rows(const T*& x, T*& y, std::ptrdiff_t xs, std::ptrdiff_t ys,
                                  std::size_t rows, std::size_t vectors, T factor) {
   const std::size_t nv = V != 0 ? V : vectors;
@@ -51,8 +52,10 @@ FFTN_FORCE_INLINE void copy_rows(const T*& x, T*& y, std::ptrdiff_t xs, std::ptr
   const std::ptrdiff_t xa = at(rows_ahead, xs);
   const std::ptrdiff_t ya = at(rows_ahead, ys);
   for (std::size_t r = 0; r < rows; ++r) {
-    if constexpr (Ahead) {
+    if constexpr (AheadX) {
       prefetch_lines<T, 0>(x + xa, lines);
+    }
+    if constexpr (AheadY) {
       prefetch_lines<T, 1>(y + ya, lines);
     }
     for (std::size_t q = 0; q < nv; ++q) {
@@ -67,12 +70,25 @@ FFTN_FORCE_INLINE void copy_rows(const T*& x, T*& y, std::ptrdiff_t xs, std::ptr
   }
 }
 
+// Only the side whose rows are apart is prefetched: the other is the tight scratch block,
+// already in L1, and a prefetch of it only takes a fill buffer from the rows that need one
+// (X26: prefetching both sides with the faster loop raised the Xeon's fill-buffer-full
+// cycles fourfold and slowed the EPYC's 2^18-2^20 rows by up to 1.8 times).
 template <class T, edge_op OutOp, std::size_t V>
 FFTN_FORCE_INLINE void copy_block(const T* x, T* y, std::ptrdiff_t xs, std::ptrdiff_t ys,
                                   std::size_t rows, std::size_t vectors, T factor) {
   const std::size_t ahead = rows > rows_ahead ? rows - rows_ahead : 0;
-  copy_rows<T, OutOp, V, true>(x, y, xs, ys, ahead, vectors, factor);
-  copy_rows<T, OutOp, V, false>(x, y, xs, ys, rows - ahead, vectors, factor);
+  const auto tight = static_cast<std::ptrdiff_t>(2 * C<T> * (V != 0 ? V : vectors));
+  if (xs != tight && ys != tight) {
+    copy_rows<T, OutOp, V, true, true>(x, y, xs, ys, ahead, vectors, factor);
+  } else if (xs != tight) {
+    copy_rows<T, OutOp, V, true, false>(x, y, xs, ys, ahead, vectors, factor);
+  } else if (ys != tight) {
+    copy_rows<T, OutOp, V, false, true>(x, y, xs, ys, ahead, vectors, factor);
+  } else {
+    copy_rows<T, OutOp, V, false, false>(x, y, xs, ys, ahead, vectors, factor);
+  }
+  copy_rows<T, OutOp, V, false, false>(x, y, xs, ys, rows - ahead, vectors, factor);
 }
 
 // Copies a block row by row: y[q + dst_stride r] = x[q + src_stride r], scaled on storing
