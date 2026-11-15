@@ -365,8 +365,9 @@ TEST(TeamExecute, WorkspaceBytesPerLanes) {
   }
   const fftn::workspace ws(p, 8);
   EXPECT_EQ(ws.size(), p.workspace_bytes(8));
-  // A plan without scratch still needs the team's state.
-  const fftn::c2c_plan<double> leaf(fftn::rows_c2c<double>(4, 2, fftn::direction::forward));
+  // A plan without scratch (one leaf; a batch would be the lanes', which gather into
+  // scratch) still needs the team's state.
+  const fftn::c2c_plan<double> leaf(fftn::rows_c2c<double>(4, 1, fftn::direction::forward));
   EXPECT_EQ(leaf.workspace_bytes(), 0U);
   EXPECT_GT(leaf.workspace_bytes(2), 0U);
 }
