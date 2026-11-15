@@ -53,8 +53,8 @@ template <class T> using cvec = std::vector<std::complex<T>>;
 constexpr std::size_t no_bluestein = static_cast<std::size_t>(-1);
 
 // Whether the rules give n a Rader stage (experiment X27): its one prime factor without a
-// codelet has a 7-smooth q - 1 (the rule's condition apart from its convolution's two
-// passes, which every such q above 23 has).
+// codelet has a 13-smooth q - 1 (the rule's condition apart from its size limit and its
+// convolution's two passes, which every such q from 29 to 160 meets).
 bool takes_rader(std::size_t n) {
   std::size_t big = 1;
   std::size_t count = 0;
@@ -71,7 +71,7 @@ bool takes_rader(std::size_t n) {
     return false;
   }
   std::size_t left = big - 1;
-  for (const std::size_t f : {2U, 3U, 5U, 7U}) {
+  for (const std::size_t f : {2U, 3U, 5U, 7U, 11U, 13U}) {
     while (left % f == 0) {
       left /= f;
     }
@@ -329,7 +329,7 @@ template <class T> void bluestein_in_every_position(fftn::isa target) {
       },
       {.radices = {3, 59}, .above = 16, .names = {"grouped radix-3", "copies 3"}},
       {.radices = {4, 47}, .above = 16, .names = {"copies 4"}},
-      {.radices = {5, 6, 67}, .above = 16, .names = {"lane radix-6", "copies 30"}},
+      {.radices = {5, 6, 107}, .above = 16, .names = {"lane radix-6", "copies 30"}},
       {.radices = {16, 47}, .above = 16, .names = {"copies 16"}},
       {.radices = {47, 59}, .above = 16, .names = {"Q 2773, ", "copies 1"}},
       {.radices = {47, 59}, .above = 47, .names = {"generic radix-47", "Q 59, ", "copies 47"}},

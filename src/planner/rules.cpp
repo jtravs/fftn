@@ -680,7 +680,9 @@ std::size_t rader_root(std::size_t q, const target_profile& p) {
   // time from 29 to 40961 in double and float (run 20261115-200226-b1eb) and 1.2 at 65537,
   // where its gather and scatter wander over a megabyte and its convolution is a chain of
   // 2^16 points; so it stops below 2^16. (That also keeps the index table's floats exact,
-  // passes/rader.inl, and the plan-time products within 64 bits.)
+  // passes/rader.inl, and the plan-time products within 64 bits.) q - 1 may have the
+  // factors 11 and 13 (codelet radices): 8191 and 16381 took 0.21-0.45 of Bluestein's time
+  // (run 20261115-203357-1ff2).
   if (q < 5 || q >= rader_limit || has_codelet(q)) {
     return 0;
   }
@@ -690,7 +692,7 @@ std::size_t rader_root(std::size_t q, const target_profile& p) {
     }
   }
   std::size_t left = q - 1;
-  for (const std::size_t f : {2U, 3U, 5U, 7U}) {
+  for (const std::size_t f : {2U, 3U, 5U, 7U, 11U, 13U}) {
     while (left % f == 0) {
       left /= f;
     }
@@ -701,7 +703,7 @@ std::size_t rader_root(std::size_t q, const target_profile& p) {
   }
   for (std::uint64_t g = 2; g < q; ++g) {
     bool primitive = true;
-    for (const std::uint64_t f : {2U, 3U, 5U, 7U}) {
+    for (const std::uint64_t f : {2U, 3U, 5U, 7U, 11U, 13U}) {
       if ((q - 1) % f == 0 && pow_mod(g, (q - 1) / f, q) == 1) {
         primitive = false;
         break;

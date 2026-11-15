@@ -323,7 +323,7 @@ TEST(Rules, DescribeNamesTheBluesteinStage) {
   EXPECT_NE(text.find("copies 4"), std::string::npos) << text;
 }
 
-// And a Rader stage (experiment X27): a prime whose q - 1 is 7-smooth, its convolution
+// And a Rader stage (experiment X27): a prime whose q - 1 is 13-smooth, its convolution
 // length L = q - 1 and L's radices, the primitive root.
 TEST(Rules, DescribeNamesTheRaderStage) {
   const auto shape = fftn::rows_c2c<double>(std::size_t{4} * 257, 1, fftn::direction::forward);
@@ -339,8 +339,8 @@ TEST(Rules, DescribeNamesTheRaderStage) {
       << text;
 }
 
-// The Rader rule: primes without a codelet whose q - 1 is 7-smooth, with their smallest
-// primitive root.
+// The Rader rule: primes without a codelet below 2^16 whose q - 1 is 13-smooth, with their
+// smallest primitive root.
 TEST(Rules, RaderRoot) {
   const auto profile = fftn::detail::profile_of(fftn::detail::target::avx2, 2);
   using fftn::detail::rader_root;
@@ -354,6 +354,7 @@ TEST(Rules, RaderRoot) {
   EXPECT_EQ(rader_root(17, profile), 0U);    // a codelet
   EXPECT_EQ(rader_root(47, profile), 0U);    // 46 = 2 x 23
   EXPECT_EQ(rader_root(4093, profile), 0U);  // 4092 = 4 x 3 x 11 x 31
+  EXPECT_EQ(rader_root(8191, profile), 17U); // 8190 = 2 x 3^2 x 5 x 7 x 13
   EXPECT_EQ(rader_root(91, profile), 0U);    // 7 x 13
 }
 
