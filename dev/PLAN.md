@@ -25,6 +25,10 @@ batches 0.94 / 1.12; r2c and c2r 1.00 / 1.25 (65536 and 2²⁰: 1.30–1.39 / 1.
 Against FFTL.jl (libfftl 53171e8, Mac run 20261115-170717-c72c, 1-D double): FFTN 0.86
 of its time overall; FFTL ahead only on rows ≥ 16384 (1.35) and 2431 (2.57); FFTN far ahead
 on single rows ≤ 64 (FFTL's fixed cost per call: 0.07–0.51) and batches (0.70).
+EPYC (libfftl x86-64-v3, run 20261115-171147-bc20, no round under load): FFTN 0.81 of
+FFTL's time overall (FFTL 1.49 of FFTW's); the same pattern: FFTL ahead on rows ≥ 16384
+(1.51; 262144 2.04, 100000 2.00, r2c and c2r 2²⁰ 2.0–2.2) and 2431 (2.93), FFTN far ahead
+on rows ≤ 64 (0.12), batches (0.40) and 128–4096 (0.75).
 Planes and volumes are far behind (phase 4 has not started): c2c 1024² 2.1 / 4.1, 64³
 3.1 / 10.9 (EPYC: likely cache aliasing of power-of-two strides).
 
