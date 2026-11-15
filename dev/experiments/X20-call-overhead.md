@@ -159,6 +159,23 @@ codelets, MEASURE; double, as FFTW has no single precision in that build), main 
 Collateral on the Xeon (quick tier, c5ed695 against main, run 20261115-000546-493c, band
 ±2.38 %): 0.989, 2 faster (16, 64 × 256), 22 within the band, none slower.
 
+Xeon harness (ns per transform, median of 4 interleaved process rounds, GCC 14.4, shared
+node; `api` main → 0f1125b, with `once`, the leaf alone through its pointer, of 0f1125b):
+
+| n | b1 double | b1 float | b64 double | b64 float | once b1 double / float |
+|---|---|---|---|---|---|
+| 2 | 17.3 → 13.1 | 17.3 → 14.9 | 15.0 → 1.0 | 15.1 → 2.0 | 4.4 / 5.5 |
+| 8 | 28.6 → 21.9 | 28.8 → 30.6 | 26.0 → 5.7 | 27.8 → 12.2 | 10.7 / 16.4 |
+| 16 | 41.4 → 33.8 | 48.8 → 46.6 | 39.1 → 14.9 | 47.7 → 26.3 | 24.3 / 37.4 |
+| 64 | 82.3 → 81.9 | 94.2 → 90.6 | 85.0 → 72.4 | 94.3 → 85.7 | (2 stages) |
+
+At batch 1 the Xeon still spends 8–11 ns between the API and the leaf, against 1–1.5 ns on
+the Mac. One cause found: `run_leaf_rows` copied `slot_addresses` with a 16-byte load of
+two fields `execute_core` had just written with 8-byte stores, which x86 cannot forward;
+94486a3 reads them as scalars (timed by the harness only, below). (Unrelated, seen on the
+way: 32 points in float on AVX-512 take 143–155 ns, more than 64 points; X16's tail
+problem of that chain.)
+
 On x86 the leaves broadcast every input into C lanes (C = 4 complex doubles or 8 complex
 floats on AVX-512) and store lane 0, so the kernel, not the driver, dominates at batch 1
 (X18: 65 % of a 16-point leaf; harness, 8 points in double: kernel through its pointer
