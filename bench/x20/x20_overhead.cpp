@@ -34,6 +34,7 @@
 #include <fftn/fftn.hpp>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <complex>
 #include <cstddef>
@@ -217,6 +218,31 @@ void run_case(std::size_t n, std::size_t batch, int reps, double ms, fftn::isa i
                            a.src = slot_src(st.src, here);
                            a.dst = slot_dst(st.dst, here);
                            st.run(&a, 0, st.units);
+                         }
+                         here.in += dist;
+                         here.out += dist;
+                       }
+                     },
+                     batch, reps, ms));
+  // As copy, with every stage's arguments copied before the first stage runs (X28: whether
+  // the cost is the copy or its store-to-load forwarding into the kernel).
+  std::array<d::pass_args, d::flat_stages_max> pre{};
+  report("prep", time_ns(
+                     [&] {
+                       d::slot_addresses here = at;
+                       for (std::size_t t = 0; t < batch; ++t) {
+                         for (std::size_t k = 0; k < body.size(); ++k) {
+                           pre[k] = body[k]->args;
+                           pre[k].src = slot_src(body[k]->src, here);
+                           pre[k].dst = slot_dst(body[k]->dst, here);
+                         }
+                         for (std::size_t k = 0; k < body.size(); ++k) {
+                           const d::stage& st = *body[k];
+                           if (st.leaf != nullptr) {
+                             call(k, here);
+                             continue;
+                           }
+                           st.run(&pre[k], 0, st.units);
                          }
                          here.in += dist;
                          here.out += dist;
