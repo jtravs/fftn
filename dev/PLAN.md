@@ -16,7 +16,8 @@ Mac smooth c2c rows 0.75–1.03, primes from 97 0.64–1.28, long rows 0.92–1.
 open problem, see X18/X10/X19). Lessons that generalise are collected in
 [LESSONS.md](LESSONS.md).
 
-In flight (claims): X19 (generator ±i rotations; reviewed, merging after regeneration on
+In flight (claims): X20 done on branch `task/overhead` (call overhead: flat programs, leaves
+called with addresses; driver change awaiting its second reader). X19 (generator ±i rotations; reviewed, merging after regeneration on
 main), 1.5/X1 (split lowering on x86), 1.6/X3 (radix 32/64 passes; radix 32 wins on AVX-512
 float), X12b (grid thresholds per machine: the grid starts too early on x86); T1/T5 done
 on branch `exp/t1-t5-constants` (threading constants; awaiting review). Small follow-ups recorded: X16's
@@ -272,7 +273,7 @@ running, done (with verdict).
 | [X17](experiments/X17-bluestein-threshold.md) | Above which prime does Bluestein beat the generic prime pass, per target? | 2 | done on the Mac: Bluestein from 17 up (threshold 16); x86 to confirm |
 | [X18](experiments/X18-x86-kernels.md) | Why does FFTN trail FFTW on x86 (Xeon, EPYC), and what closes the gap? | 1 | done: driver divisions and a four-line chain fixed (Xeon 1.50 → 1.25 of FFTW, EPYC 1.37 → 1.29); next X10 addressing, radix 32/64, then X1 |
 | [X19](experiments/X19-generator-rotations.md) | Do codelets with fewer multiplications by ±i (the real-coefficient form: one register swap per output pair, radix 16 7 against 19) make x86 faster without slowing NEON? | 1 | done: adopted (x86 0.976 of main: Xeon avx512 0.980, avx2 0.976, EPYC 0.971; Mac 0.991); port-5 uops −4 to −16 % |
-| [X20](experiments/X20-call-overhead.md) | Where does a tiny serial execute's time go (entry, driver, kernel), and what does a leaner driver close at n ≤ 64? | 1 | running |
+| [X20](experiments/X20-call-overhead.md) | Where does a tiny serial execute's time go (entry, driver, kernel), and what does a leaner driver close at n ≤ 64? | 1 | done: adopted (flat programs, leaves called with addresses, a batch of leaf rows in one call): Mac 0.45 of main over the x20 cases, 8 × 4096 3.08 → 0.97 of FFTW; Xeon 0.57, one case slower (8-point float row, +7–11 %, left to X7) |
 | P1 | Cost-model accuracy: rank agreement with measurement across the catalogue per machine | 2 | planned |
 | P2 | Measurement budget: how many candidates and how long before the choice stops improving | 2 | planned |
 | [T1](experiments/T1-dispatch-wait-costs.md) | Dispatch, wake and wait costs per machine and runtime (libgomp, libomp, Kokkos, pool) | 3 | done: hand-off cost and claim runs adopted on Zen 3; dispatch and work costs wait for a per-lane dispatch term |

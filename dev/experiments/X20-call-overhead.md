@@ -1,6 +1,6 @@
 # X20: the fixed cost of a call, and tiny transforms
 
-- **Status:** running
+- **Status:** done
 - **Owner:** overhead session, 2026-11-14
 - **Phase / task:** 1 (exit criteria), driver (DESIGN.md 8.3); lanes for batches stay task 2.2 / X7
 
@@ -141,30 +141,50 @@ none slower.
 
 ### fbench, Xeon
 
-Run 20261114-234421-6872 (Xeon Gold 6240, AVX-512, GCC 14.4, Slurm `-c 8` shared, load
-4.7, 12 rounds, band ±2.05 %): new ÷ main 0.587 over x20; 22 cases faster, 7 within the
-band, one slower: 8 points in float at batch 1, 1.069 [1.049, 1.088]. FFTN ÷ FFTW (AVX-512
-codelets, MEASURE; double, as FFTW has no single precision in that build), before → after:
+Run 20261115-003416-73e9 (Xeon Gold 6240, AVX-512, GCC 14.4, final commit 0f1125b against
+main 3433fc1, Slurm `-c 8` shared, load 13, 12 rounds, band ±3.46 %): new ÷ main 0.570
+over x20; 23 cases faster, 6 within the band, one slower: 8 points in float at batch 1,
+1.108 [1.069, 1.143] (1.069 with c5ed695, run 20261114-234421-6872). FFTN ÷ FFTW (AVX-512
+codelets, MEASURE; double, as FFTW has no single precision in that build), main → final:
 
 | n | b1 | b64 | b4096 |
 |---|---|---|---|
-| 2 | 2.82 → 2.53 | 14.4 → 1.09 | |
-| 4 | 3.07 → 2.92 | 7.75 → 0.95 | |
-| 8 | 3.00 → 2.32 | 5.15 → 1.26 | 3.66 → 1.03 |
-| 16 | 1.88 → 1.64 | 3.13 → 1.25 | 1.88 → 1.02 |
-| 32 | 1.44 → 1.45 | 1.88 → 1.48 | |
-| 64 | 1.23 → 1.30 | 1.06 → 0.94 | 0.98 → 0.92 |
+| 2 | 2.84 → 2.33 | 13.9 → 1.15 | |
+| 4 | 3.11 → 2.72 | 7.63 → 0.95 | |
+| 8 | 3.05 → 2.39 | 5.26 → 1.23 | 3.72 → 0.99 |
+| 16 | 2.17 → 1.60 | 3.10 → 1.22 | 2.00 → 1.00 |
+| 32 | 1.39 → 1.31 | 1.85 → 1.47 | |
+| 64 | 1.31 → 1.25 | 1.05 → 0.92 | 1.01 → 0.91 |
+
+Collateral on the Xeon (quick tier, c5ed695 against main, run 20261115-000546-493c, band
+±2.38 %): 0.989, 2 faster (16, 64 × 256), 22 within the band, none slower.
 
 On x86 the leaves broadcast every input into C lanes (C = 4 complex doubles or 8 complex
 floats on AVX-512) and store lane 0, so the kernel, not the driver, dominates at batch 1
-(X18: 65 % of a 16-point leaf); batches gain because the call and the leaf's setup are paid
-once. The one slower case: GCC 14 turns the row loop's 16 leg addresses into induction
-variables and parks some in `xmm` registers (`vmovq`), 171 instructions per call of the
-8-point float leaf against 153 before, which a single row pays in full (about 1.6 ns). The
-lanes strategy for batches (task 2.2, X7) and a SIMD layout inside one transform replace
-these leaves on x86; the 64 b1 change (1.23 → 1.30) is inside the band against main
-(1.041 [0.997, 1.068]).
+(X18: 65 % of a 16-point leaf; harness, 8 points in double: kernel through its pointer
+12.5 ns of a 20.8 ns call). Batches gain because the call and the leaf's setup are paid
+once. The one slower case: with the row loop inside the leaf GCC 14 turns its 16 leg
+addresses into induction variables and parks some in `xmm` registers (`vmovq`): 171
+instructions per call of the 8-point float leaf against 153 before, which a single row
+pays in full (about 2 ns). Removing it needs either a second copy of every leaf (+18 %
+library text) or the lanes and unit-stride leaves that task 2.2 (X7) brings for x86.
 
 ## Verdict
 
-Pending.
+Adopted (0f1125b; merged with main at b3ae9c7). Rule (1) holds: every test passes, the new
+`Contracts.BatchedRowsMatchSingleRows` compares every row of batched leaves and one-stage
+rows bit for bit with a one-row plan, and serial, team and executor results are unchanged
+(the same kernels on the same arguments and units). Rule (2): 0.453 on the Mac, every case
+faster. Rule (3) holds on the Mac (x20 and the quick tier) and the Xeon quick tier, with one
+exception on the Xeon x20 cases, the 8-point float row alone (+7 to +11 %), explained
+above and left to X7; the maintainer may weigh it against 0.57 over the Xeon's x20 cases.
+
+Where FFTN stands now at n ≤ 64: in batches at or near FFTW on both machines (Mac
+0.85–1.18, Xeon 0.91–1.47 in double; 8 × 4096 0.97 and 0.99, from 3.08 and 3.72); one
+transform still 1.2–1.8 times FFTW's time on the Mac and 1.3–2.7 on the Xeon. What is left
+at batch 1: on the Mac about 1–1.5 ns of entry and dispatch and 1.2 ns per pass stage (the
+`pass_args` copy a `pass_fn` needs; removing it means giving every pass its addresses as
+arguments, a change to all kernel entries); on x86 the broadcast leaves themselves. Next:
+lanes and unit-stride leaves for x86 (task 2.2, X7), and passes taking their addresses as
+arguments if the 64-point single row matters (Mac 1.15, Xeon 1.25). DESIGN.md 8.2, 8.3 and
+the decision log updated; lesson 4.7 in LESSONS.md.

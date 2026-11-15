@@ -1000,7 +1000,7 @@ is more than a tiny transform's arithmetic, so the commonest programs are not wa
 program whose body is a few stages and no loop (rows) is marked *flat* at construction, and
 the driver then runs a batch of leaves as one kernel call, one transform with one copy of
 each stage's arguments, and a batch with those copies made once and the slots moved by the
-batch step (experiment X20: at 8 points 7.7 → 4.9 ns per call, 7.1 → 1.7 ns per transform
+batch step (experiment X20: at 8 points 7.7 → 4.3 ns per call, 7.1 → 1.7 ns per transform
 in a batch on the M5 Max). Every kernel still gets the arguments and units the walk would
 give it, so the bits do not change. Two consequences:
 
