@@ -27,31 +27,45 @@ namespace {
 // sequentially in blocks of 16, and the block sums merged as a binary counter merges
 // carries, so a sum sees about 16 + log2(L / 16) roundings rather than L (a sequential sum
 // fails the tolerances at a few hundred points: the generic pass's decision, DESIGN.md
-// section 19). V is cv<T> (shared units) or T (one part of a scalar sum).
-template <class V> struct rader_sum {
+// section 19). Its values are cv<T> (Vec: shared units) or T (one part of a scalar sum),
+// named through rader_value so that no template takes a vector type as its argument (GCC
+// drops the type's attributes there and warns).
+template <class T, bool Vec> struct rader_value {
+  using type = T;
+};
+template <class T> struct rader_value<T, true> {
+  using type = cv<T>;
+};
+
+template <class T, bool Vec> struct rader_sum {
+  using V = typename rader_value<T, Vec>::type;
   V level[24]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
   V block;
   std::size_t in_block;
   std::size_t blocks;
 };
 
-template <class V> FFTN_FORCE_INLINE void rader_sum_start(rader_sum<V>& r, V zero) {
-  r.block = zero;
-  r.in_block = 0;
-  r.blocks = 0;
-}
-
 FFTN_FORCE_INLINE double rader_plus(double a, double b) { return a + b; }
 FFTN_FORCE_INLINE float rader_plus(float a, float b) { return a + b; }
 FFTN_FORCE_INLINE cv<double> rader_plus(cv<double> a, cv<double> b) { return add(a, b); }
 FFTN_FORCE_INLINE cv<float> rader_plus(cv<float> a, cv<float> b) { return add(a, b); }
 
-template <class V> FFTN_FORCE_INLINE void rader_sum_add(rader_sum<V>& r, V v, V zero) {
+template <class T, bool Vec>
+FFTN_FORCE_INLINE void rader_sum_start(rader_sum<T, Vec>& r,
+                                       typename rader_value<T, Vec>::type zero) {
+  r.block = zero;
+  r.in_block = 0;
+  r.blocks = 0;
+}
+
+template <class T, bool Vec>
+FFTN_FORCE_INLINE void rader_sum_add(rader_sum<T, Vec>& r, typename rader_value<T, Vec>::type v,
+                                     typename rader_value<T, Vec>::type zero) {
   r.block = rader_plus(r.block, v);
   if (++r.in_block < 16) {
     return;
   }
-  V carry = r.block;
+  typename rader_value<T, Vec>::type carry = r.block;
   std::size_t b = r.blocks;
   std::size_t lvl = 0;
   while ((b & 1U) != 0) {
@@ -65,8 +79,9 @@ template <class V> FFTN_FORCE_INLINE void rader_sum_add(rader_sum<V>& r, V v, V 
   r.in_block = 0;
 }
 
-template <class V> FFTN_FORCE_INLINE V rader_sum_total(const rader_sum<V>& r) {
-  V total = r.block;
+template <class T, bool Vec>
+FFTN_FORCE_INLINE typename rader_value<T, Vec>::type rader_sum_total(const rader_sum<T, Vec>& r) {
+  typename rader_value<T, Vec>::type total = r.block;
   std::size_t b = r.blocks;
   for (std::size_t lvl = 0; b != 0; ++lvl, b >>= 1U) {
     if ((b & 1U) != 0) {
@@ -108,7 +123,7 @@ void rader_in(const pass_args* a, std::size_t first, std::size_t last) {
   const T* index = static_cast<const T*>(a->roots);
   if constexpr (Shared) {
     const edge<T, InOp> op = make_edge<T, InOp>(a, a->in_factor, 0, 1);
-    rader_sum<cv<T>> sum;
+    rader_sum<T, true> sum;
     for (std::size_t u = first; u < last; ++u) {
       const std::size_t t = u * C<T>;
       rader_sum_start(sum, zeros<T>());
@@ -124,8 +139,8 @@ void rader_in(const pass_args* a, std::size_t first, std::size_t last) {
       store(z + at(t + s * (len + 1), 2), rader_sum_total(sum));
     }
   } else {
-    rader_sum<T> sre;
-    rader_sum<T> sim;
+    rader_sum<T, false> sre;
+    rader_sum<T, false> sim;
     for (std::size_t t = first; t < last; ++t) {
       rader_sum_start(sre, T(0));
       rader_sum_start(sim, T(0));
