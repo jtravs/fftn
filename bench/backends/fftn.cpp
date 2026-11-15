@@ -87,12 +87,13 @@
 #ifdef __APPLE__
 #include <pthread/qos.h>
 #include <sys/qos.h>
+
+#include <atomic> // raise_lanes
+#include <chrono>
 #endif
 
 #include <algorithm>
-#include <atomic>
 #include <charconv>
-#include <chrono>
 #include <complex>
 #include <cstddef>
 #include <cstdint>
