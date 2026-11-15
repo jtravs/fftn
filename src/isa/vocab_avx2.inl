@@ -7,11 +7,18 @@
 
 #include "isa/vocabulary.inl"
 
+#ifndef FFTN_MASKED_TAILS
+#error "FFTN_MASKED_TAILS (0 or 1) is defined by the build (CMakeLists.txt)"
+#endif
+
 // NOLINTBEGIN(portability-simd-intrinsics): this file is where FFTN's x86 intrinsics live.
 namespace {
 
 inline constexpr target id = target::avx2;
 inline constexpr bool fused = true;
+// Masked partial runs (load_n, store_n below) where the build enables them: on with GCC,
+// off with Clang and icpx by default (FFTN_MASKED_TAILS in CMakeLists.txt; experiment X23).
+inline constexpr bool masked = FFTN_MASKED_TAILS != 0;
 
 // Twiddles pre-arranged for mul: r holds (wr, wr) and i holds (-wi, wi) for each lane's
 // twiddle, so a*w = r*a + i*swap_ri(a) with one shuffle and no sign fix-up (DESIGN.md 6.2).
@@ -52,6 +59,48 @@ FFTN_FORCE_INLINE __m256d load(const double* p) { return _mm256_loadu_pd(p); }
 FFTN_FORCE_INLINE __m256 load(const float* p) { return _mm256_loadu_ps(p); }
 FFTN_FORCE_INLINE void store(double* p, __m256d a) { _mm256_storeu_pd(p, a); }
 FFTN_FORCE_INLINE void store(float* p, __m256 a) { _mm256_storeu_ps(p, a); }
+// Partial runs (experiment X23). Loads: VMASKMOV with the sign bits of the 2n reals of n
+// complex numbers set; masked-off elements are not accessed and raise no fault (Intel SDM,
+// VMASKMOV), so a run may end at the end of the caller's array. Stores: plain stores of 128
+// and 64 bits chosen by n, since a VMASKMOV store is microcoded on AMD Zen 1 to 3 (about 12
+// operations; llvm-mca znver3: 48 cycles for four against 8 for the stores here).
+FFTN_FORCE_INLINE __m256i mask_n_f64(std::size_t n) {
+  return _mm256_cmpgt_epi64(_mm256_set1_epi64x(static_cast<long long>(2 * n)),
+                            _mm256_setr_epi64x(0, 1, 2, 3));
+}
+FFTN_FORCE_INLINE __m256i mask_n_f32(std::size_t n) {
+  return _mm256_cmpgt_epi32(_mm256_set1_epi32(static_cast<int>(2 * n)),
+                            _mm256_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7));
+}
+FFTN_FORCE_INLINE __m256d load_n(const double* p, std::size_t n) {
+  return _mm256_maskload_pd(p, mask_n_f64(n));
+}
+FFTN_FORCE_INLINE __m256 load_n(const float* p, std::size_t n) {
+  return _mm256_maskload_ps(p, mask_n_f32(n));
+}
+FFTN_FORCE_INLINE void store_n(double* p, std::size_t n, __m256d a) {
+  if (n == 2) {
+    _mm256_storeu_pd(p, a);
+  } else if (n == 1) {
+    _mm_storeu_pd(p, _mm256_castpd256_pd128(a));
+  }
+}
+// The 64-bit stores go through __m128i pointers, which the intrinsics' headers declare as
+// may-alias and unaligned (a complex float is only 4-byte aligned).
+FFTN_FORCE_INLINE void store_n(float* p, std::size_t n, __m256 a) {
+  const __m128 lo = _mm256_castps256_ps128(a);
+  if (n >= 2) {
+    _mm_storeu_ps(p, lo);
+    const __m128 hi = _mm256_extractf128_ps(a, 1);
+    if (n == 4) {
+      _mm_storeu_ps(p + 4, hi);
+    } else if (n == 3) {
+      _mm_storel_epi64(reinterpret_cast<__m128i*>(p + 4), _mm_castps_si128(hi));
+    }
+  } else if (n == 1) {
+    _mm_storel_epi64(reinterpret_cast<__m128i*>(p), _mm_castps_si128(lo));
+  }
+}
 FFTN_FORCE_INLINE __m256d bcast(const double* p) {
   const __m128d x = _mm_loadu_pd(p);
   return _mm256_set_m128d(x, x);
