@@ -466,7 +466,10 @@ def table_of(
 ) -> Table:
     unit = [[x[k * NR + COLUMN[r]] * SCALE for r in RADICES] for k in range(KINDS)]
     tail = [[x[TAIL0 + k * NR + COLUMN[r]] * SCALE for r in RADICES] for k in range(KINDS)]
-    measured = {r for c in cases for seq in (*c.refine, *c.screen) for r in seq}
+    # Radices timed in the rows the fit used (cases whose baseline is all codelet passes, a
+    # Bluestein length such as 2431 = 11 x 13 x 17 constrains nothing).
+    measured = {r for c in cases if codelet_only(c.base) for seq in (*c.refine, *c.screen)
+                if codelet_only(seq) for r in seq}
     if base is not None:
         for k in range(KINDS):
             for r in range(2, LEAF + 1):
@@ -527,14 +530,18 @@ def vs_base(c: Case, seq: radices.Sequence) -> float | None:
 
 
 def overrides_for(
-    cases: list[Case], t: Table, lanes: int, behind_winner: bool = False
+    cases: list[Case], t: Table, lanes: int, behind_winner: bool = False, cover: bool = False
 ) -> tuple[list, list[str]]:
     """X2's overrides: where the table's choice is more than 2 % behind the baseline in some
     case, the sequence refined in every case of that length (this precision) and measured
     no slower than the baseline in any (within 1 %), that is least behind the winner at worst.
     With behind_winner (X3's extensions, whose baseline is the radix-16 table's choice, so
     a choice can beat it and still miss the radix 32 or 64 winner widely): also where the
-    choice is more than 2 % behind the winner in every case of that length."""
+    choice is more than 2 % behind the winner in every case of that length. With cover (the
+    planner refresh, whose long lengths had only the cost estimate's best 20 candidates):
+    also where the choice was timed in no case of that length, or was more than 2 % behind
+    the winner in every case, so that a measured length never takes an extrapolated
+    sequence."""
     out, notes = [], []
     by_n: dict[int, list[Case]] = {}
     for c in cases:
@@ -545,7 +552,9 @@ def overrides_for(
         choice = rule_radices(n, t, lanes, overrides=False)
         behind = [vs_base(c, choice) for c in group]
         gaps = [judge(c, choice) for c in group]
-        missed = behind_winner and all(g is not None and g > SLOWER for g in gaps)
+        missed = (behind_winner or cover) and all(g is not None and g > SLOWER for g in gaps)
+        untimed = cover and all(g is None for g in gaps)
+        missed = missed or untimed
         if not missed and not any(v is not None and v > SLOWER for v in behind):
             continue
         common = set.intersection(*(set(c.refine) for c in group))
@@ -558,12 +567,14 @@ def overrides_for(
             notes.append(f"n = {n}: choice {radices.label(choice)} is slow, no override fits")
             continue
         out.append((n, fits[0][1]))
-        worst = max(v for v in behind if v is not None)
-        gap = f", {math.expm1(min(gaps)) * 100:+.1f} % or more behind the winner" if missed else ""
-        notes.append(
-            f"n = {n}: {radices.label(choice)} {math.expm1(worst) * 100:+.1f} % against the "
-            f"baseline{gap}; override {radices.label(fits[0][1])}"
-        )
+        timed = [v for v in behind if v is not None]
+        if untimed or not timed:
+            what = "never timed"
+        else:
+            what = f"{math.expm1(max(timed)) * 100:+.1f} % against the baseline"
+            if missed:
+                what += f", {math.expm1(min(gaps)) * 100:+.1f} % or more behind the winner"
+        notes.append(f"n = {n}: {radices.label(choice)} {what}; override {radices.label(fits[0][1])}")
     return out, notes
 
 
@@ -678,6 +689,12 @@ def main(argv: list[str] | None = None) -> int:
         help="X1: price split runs (their own middle and last units and a conversion cost); "
         "the tables are a variant under test, not rules.cpp rows",
     )
+    p.add_argument(
+        "--cover",
+        action="store_true",
+        help="also override measured lengths whose choice was never timed or was more than 2 %% "
+        "behind the winner in every case (the refresh's long lengths)",
+    )
     ctx = p.parse_args(argv)
 
     isa, cases = load_cases(ctx.out_dir, ctx.name.split(","), ctx.isa)
@@ -700,7 +717,9 @@ def main(argv: list[str] | None = None) -> int:
         log(f"fit {precision} (C = {lanes}): {len(rows)} timings of {len(mine)} cases")
         x = fit(rows, ops, base=base)
         t = table_of(x, mine, ops, base, block, lanes)
-        t.overrides, notes = overrides_for(mine, t, lanes, behind_winner=base is not None)
+        t.overrides, notes = overrides_for(
+            mine, t, lanes, behind_winner=base is not None, cover=ctx.cover
+        )
         if base is not None:
             # The base table's overrides stay; new ones only where the extension's choice
             # is slow.
