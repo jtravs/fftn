@@ -41,7 +41,7 @@ inline constexpr std::size_t moving_slots = 4; // in, out, block, twiddles
 
 struct stage {
   pass_fn run = nullptr; // the kernel, or for a leaf null and `leaf` set
-  pass_args args; // src and dst are filled in by the driver from the slots
+  pass_args args;        // src and dst are filled in by the driver from the slots
   slot src = slot::in;
   slot dst = slot::out;
   std::size_t units = 0;    // the kernel's own units: blocks of butterflies or copies, a line,
@@ -51,7 +51,7 @@ struct stage {
   // A leaf's kernel (pass_args.hpp), with units 1, the line. When the stage is a program's
   // whole body the driver runs a batch of rows in one call (driver.cpp, run_flat).
   leaf_fn leaf = nullptr;
-  std::string name;             // for describe()
+  std::string name; // for describe()
 };
 
 enum class loop_kind : std::uint8_t {

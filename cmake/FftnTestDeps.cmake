@@ -206,6 +206,7 @@ else()
   string(REGEX REPLACE "clang\\+\\+" "clang" _fftn_cc_name "${_fftn_cxx_name}")
   string(REGEX REPLACE "g\\+\\+" "gcc" _fftn_cc_name "${_fftn_cc_name}")
   string(REGEX REPLACE "^c\\+\\+" "cc" _fftn_cc_name "${_fftn_cc_name}")
+  string(REGEX REPLACE "icpx" "icx" _fftn_cc_name "${_fftn_cc_name}")
   set(_fftn_cc "${_fftn_cxx_dir}/${_fftn_cc_name}")
   if(NOT EXISTS "${_fftn_cc}")
     message(FATAL_ERROR "No C compiler found next to ${CMAKE_CXX_COMPILER} for the FFTW "
@@ -220,12 +221,16 @@ endif()
 # pointers (dft/dftw-direct.c, dft/direct.c, rdft/ct-hc2c-direct.c), which UBSan reports
 # and which is not ours to fix.
 set(_fftn_fftw_cflags "")
+# icx's default floating-point model is a fast one (CMakeLists.txt, experiment X22).
+if(CMAKE_CXX_COMPILER_ID STREQUAL "IntelLLVM")
+  set(_fftn_fftw_cflags "-fno-fast-math")
+endif()
 set(_fftn_fftw_sanitizers ${FFTN_SANITIZE})
 string(REPLACE "," ";" _fftn_fftw_sanitizers "${_fftn_fftw_sanitizers}")
 list(REMOVE_ITEM _fftn_fftw_sanitizers undefined)
 if(_fftn_fftw_sanitizers)
   list(JOIN _fftn_fftw_sanitizers "," _fftn_fftw_sanitizers)
-  set(_fftn_fftw_cflags "-fsanitize=${_fftn_fftw_sanitizers} -fno-omit-frame-pointer")
+  string(APPEND _fftn_fftw_cflags " -fsanitize=${_fftn_fftw_sanitizers} -fno-omit-frame-pointer")
 endif()
 set(_fftn_fftw_args
   -DCMAKE_BUILD_TYPE=Release

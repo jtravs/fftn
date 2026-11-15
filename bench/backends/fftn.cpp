@@ -404,10 +404,14 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
         say(message, message_size, "STRATEGY is rules, chain, grid or lanes");
         return fbench_error;
       }
-      s.settings.strategy = value == "chain"   ? detail::strategy_choice::chain
-                            : value == "grid"  ? detail::strategy_choice::grid
-                            : value == "lanes" ? detail::strategy_choice::lanes
-                                               : detail::strategy_choice::rules;
+      s.settings.strategy = detail::strategy_choice::rules;
+      if (value == "chain") {
+        s.settings.strategy = detail::strategy_choice::chain;
+      } else if (value == "grid") {
+        s.settings.strategy = detail::strategy_choice::grid;
+      } else if (value == "lanes") {
+        s.settings.strategy = detail::strategy_choice::lanes;
+      }
       s.strategy = value;
     } else if (key == "LANE_BLOCK") {
       const std::optional<std::size_t> v = fbench::fftn_tuning::parse_size(value, 1, false);
@@ -421,9 +425,12 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
         say(message, message_size, "LAYOUT is rules, interleaved or split");
         return fbench_error;
       }
-      s.settings.layout = value == "interleaved" ? detail::layout_choice::interleaved
-                          : value == "split"     ? detail::layout_choice::split
-                                                 : detail::layout_choice::rules;
+      s.settings.layout = detail::layout_choice::rules;
+      if (value == "interleaved") {
+        s.settings.layout = detail::layout_choice::interleaved;
+      } else if (value == "split") {
+        s.settings.layout = detail::layout_choice::split;
+      }
       s.layout = value;
     } else if (key == "GRID_FACTORS") {
       try {

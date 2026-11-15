@@ -1918,9 +1918,12 @@ What the experiments still require of the build:
   run time.
 - **ABI warnings are errors.** With GCC the library is built with `-Werror=psabi`
   (section 14.1).
-- **Its own floating-point flags.** The library sets `-ffp-contract=off`, refuses
-  fast-math, and never inherits the including project's flags. All FMAs in kernels are
-  explicit.
+- **Its own floating-point flags.** The library sets `-fno-fast-math -ffp-contract=off`,
+  refuses fast-math, and never inherits the including project's flags. All FMAs in kernels
+  are explicit. Intel's icpx defaults to a fast model that the headers cannot detect (no
+  `__FAST_MATH__`) and sets flush-to-zero in an optimised `main()`, so an icpx build of
+  FFTN passes `-fno-fast-math` to every target, third-party ones included (experiment
+  X22).
 - **Always optimised.** Unoptimised kernels are 30–60× slower, so the library's kernels
   are built optimised whatever the surrounding project's build type.
 - **Adapters are header-only** (`omp.hpp`, `kokkos.hpp`): they must be compiled against
@@ -1940,7 +1943,8 @@ What the experiments still require of the build:
 ### 14.3 Toolchains and packaging
 
 - C++20, extensions off. GCC 14 and newer; Clang 16 and newer; Apple Clang; clang on the
-  MSVC ABI (clang-cl and clang++ with the MSVC standard library). MSVC's compiler is not
+  MSVC ABI (clang-cl and clang++ with the MSVC standard library); Intel's icpx (2026.1
+  tested, X22: supported, not recommended over GCC or Clang). MSVC's compiler is not
   a target. C++23 library features may be used only behind feature-test macros.
 - CMake 3.25 or newer with presets; `FetchContent`-friendly with an offline override;
   installed package config (`find_package(fftn)`) and pkg-config; all symbols in
@@ -2528,6 +2532,7 @@ to change before a release.
 | 2026-11-14 | Leaf limit 32 on NEON in double (C = 1), 16 on every other target and precision; no leaf of 64 (experiment X8) | The leaf of 32 was 16–22 % faster than planner v1's chain on the M5 Max in double; with C > 1 it idles lanes and lost on the Mac and the EPYC; 64 spills and lost everywhere. The Xeon's `avx512` float chain at 32 lost to the leaf only through its own tail problem (X16) |
 | 2026-11-14 | Machine profile from T1 and T5 (task 3.4): split a lone transform from 6144 points on a Zen 3 CCX (the defaults), 8192 on an Apple cluster (`profile_for`, from macOS's topology); mesh groups keep 8192; leftovers keep 8192; at least 1024 points per member; on a CCX, phase hand-off 1100 ns and claim runs of left / members; dispatch, work cost and spin budgets stay provisional | T1/T5 per-field and combined adoption runs on the EPYC, the M5 and the Xeon (numbers in the experiment files); the measured dispatch and work costs made cases slower until the dispatch cost has a per-lane term (18.2, item 22) |
 | 2026-11-14 | Flat programs and leaves called with addresses (experiment X20): rows of a few stages skip the record walk; a leaf is a `leaf_fn` taking its lines' addresses and distances, so a batch of leaf rows is one call and no leaf needs a copy of `pass_args` | On the M5 Max the walk and the 144-byte argument copy cost about 3.5 ns per transform and the entry about 1 ns per call, against a 2.5 ns 8-point leaf; the record walk stays for programs with loops (grids, planes), which the threading work graph reads unchanged |
+| 2026-11-15 | Intel's icpx is a supported compiler; FFTN's targets are built with `-fno-fast-math -ffp-contract=off` everywhere, and an icpx build adds `-fno-fast-math` to every target and to the FFTW oracle (experiment X22) | icpx's default model reassociates, drops signed zeros and flushes denormals without defining `__FAST_MATH__`; with only `-ffp-contract=off`, 55 of 1608 tests failed (twiddles 1 ulp off, Parseval, vocabulary references), all pass with the flag. `-fp-model=precise -ffp-contract=off` draws an override warning that `-Werror` makes fatal. Not recommended over GCC or Clang: equal to Clang in double on the Xeon, 3 % behind it on the tracking rows; its float lead (0.80 of Clang on 7-smooth rows) comes from masked partial runs, which the vocabulary can write explicitly |
 | 2026-11-15 | The lanes strategy for batches of short rows (task 2.2, section 8.5): blocks of B rows of the innermost batch dimension as a tile on which the row's own chain runs with B times its copies, its first and last passes reading and writing the rows where a run of C rows is one access, a gather and scatter of C × C transposes elsewhere; the rules choose it up to `lanes_up_to` per target and C (X7): float on x86 only (AVX-512 100, AVX2 32) | Every row keeps the chain's bits, so the choice changes no result. Against the chain before X20 the lanes won widely (0.13–0.59 of its time at 8–16 points on all three machines); against the chain with X20's batched leaves they still take 0.32–0.55 of its time at 8–16 points in float on x86, but lose at 8 points in double and on NEON (1.09–1.66), so the rule (no slower case up to the threshold) leaves them off there |
 
 ---

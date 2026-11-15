@@ -24,6 +24,7 @@
 #include "core/driver.hpp"
 #include "core/plan_core.hpp"
 #include "core/program.hpp"
+#include "passes/pass_args.hpp"
 
 #include <fftn/detail/core.hpp>
 #include <fftn/fftn.hpp>
@@ -32,9 +33,13 @@
 #include <chrono>
 #include <complex>
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <exception>
 #include <memory>
+#include <ratio>
+#include <span>
 #include <string>
 #include <string_view>
 #include <variant>
@@ -66,7 +71,8 @@ template <class F> double time_ns(F&& f, std::size_t transforms, int reps, doubl
     }
     const double el = std::chrono::duration<double, std::milli>(clock_type::now() - t0).count();
     if (el > ms * 0.5) {
-      calls = std::max<std::size_t>(1, static_cast<std::size_t>(static_cast<double>(calls) * ms / el));
+      calls =
+          std::max<std::size_t>(1, static_cast<std::size_t>(static_cast<double>(calls) * ms / el));
       break;
     }
     calls *= 2;
@@ -131,11 +137,13 @@ template <class T> void run_case(std::size_t n, std::size_t batch, int reps, dou
     std::printf("%zu %zu %s %s %.3f\n", n, batch, prec, level, ns);
   };
 
-  report("api", time_ns([&] { d::execute_core(*core, 0, batch, in.data(), out.data(), ws); },
-                        batch, reps, ms));
+  report("api", time_ns([&] { d::execute_core(*core, 0, batch, in.data(), out.data(), ws); }, batch,
+                        reps, ms));
 
-  d::slot_addresses at{.in = reinterpret_cast<const std::byte*>(in.data()),
-                       .out = reinterpret_cast<std::byte*>(out.data())};
+  d::slot_addresses at{
+      .in = reinterpret_cast<const std::byte*>(in.data()),
+      .out = reinterpret_cast<std::byte*>(out.data()),
+  };
   if (core->bytes != 0) {
     std::byte* raw = ws.memory().data();
     const auto address = reinterpret_cast<std::uintptr_t>(raw);
@@ -143,8 +151,7 @@ template <class T> void run_case(std::size_t n, std::size_t batch, int reps, dou
     at.a = base;
     at.b = base + core->offset_b;
   }
-  report("driver",
-         time_ns([&] { d::run_transforms(core->prog, 0, batch, at); }, batch, reps, ms));
+  report("driver", time_ns([&] { d::run_transforms(core->prog, 0, batch, at); }, batch, reps, ms));
 
   // The body: the records after the batch loops, which for rows are stages only.
   const d::program& p = core->prog;
@@ -158,10 +165,11 @@ template <class T> void run_case(std::size_t n, std::size_t batch, int reps, dou
     body.push_back(st);
   }
   std::vector<d::pass_args> args;
+  args.reserve(body.size());
   for (const d::stage* st : body) {
     args.push_back(st->args);
   }
-  const std::ptrdiff_t dist = static_cast<std::ptrdiff_t>(n * sizeof(C));
+  const auto dist = static_cast<std::ptrdiff_t>(n * sizeof(C));
   // A stage's kernel on the slots `here`: a leaf with the addresses, a pass through args.
   const auto call = [&](std::size_t k, const d::slot_addresses& here) {
     const d::stage& st = *body[k];
@@ -202,15 +210,13 @@ template <class T> void run_case(std::size_t n, std::size_t batch, int reps, dou
   }
 }
 
-} // namespace
-
-int main(int argc, char** argv) {
+int run(std::span<char* const> argv) {
   std::vector<std::size_t> ns{2, 4, 8, 16, 32, 64};
   std::vector<std::size_t> batches{1, 64};
   std::vector<std::string> precs{"f64", "f32"};
   int reps = 15;
   double ms = 20.0;
-  for (int i = 1; i + 1 < argc; i += 2) {
+  for (std::size_t i = 1; i + 1 < argv.size(); i += 2) {
     const std::string_view k = argv[i];
     const std::string_view v = argv[i + 1];
     if (k == "--n") {
@@ -226,9 +232,9 @@ int main(int argc, char** argv) {
         precs.emplace_back("f32");
       }
     } else if (k == "--reps") {
-      reps = std::atoi(argv[i + 1]);
+      reps = static_cast<int>(std::strtol(argv[i + 1], nullptr, 10));
     } else if (k == "--ms") {
-      ms = std::atof(argv[i + 1]);
+      ms = std::strtod(argv[i + 1], nullptr);
     }
   }
   for (const std::string& prec : precs) {
@@ -243,4 +249,15 @@ int main(int argc, char** argv) {
     }
   }
   return 0;
+}
+
+} // namespace
+
+int main(int argc, char** argv) {
+  try {
+    return run(std::span<char* const>(argv, static_cast<std::size_t>(argc)));
+  } catch (const std::exception& e) {
+    std::fprintf(stderr, "x20_overhead: %s\n", e.what());
+    return 2;
+  }
 }

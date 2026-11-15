@@ -17,6 +17,7 @@
 #include "fftn/detail/core.hpp"
 #include "fftn/fftn.hpp"
 #include "isa/kernel_table.hpp"
+#include "isa/target.hpp"
 #include "planner/rules.hpp"
 #include "reference/reference_dft.hpp"
 #include "support/exact.hpp"
@@ -28,8 +29,10 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <bit>
 #include <complex>
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <span>
 #include <sstream>
@@ -86,9 +89,9 @@ std::vector<std::byte> run(const fftn::shape<In, Out>& sh, const batch_case& bc,
                            const build_settings& settings, fftn::isa target, std::size_t in_elems,
                            std::size_t out_elems, std::size_t first, std::size_t count,
                            std::string& text) {
-  const auto core = make_plan_core(fftn::detail::view_of(sh),
-                                   {.in_place = bc.in_place, .scale = bc.scale, .force_isa = target},
-                                   settings);
+  const auto core =
+      make_plan_core(fftn::detail::view_of(sh),
+                     {.in_place = bc.in_place, .scale = bc.scale, .force_isa = target}, settings);
   text = described(*core);
   fftn::test::input_source src(0x1A4E5ULL + bc.n * 131 + bc.count);
   std::vector<std::byte> in(in_elems * sizeof(In));
@@ -131,8 +134,7 @@ std::string first_difference(const std::vector<std::byte>& a, const std::vector<
   return a.size() == b.size() ? "" : " in size";
 }
 
-template <class In, class Out>
-fftn::shape<In, Out> shape_of(const batch_case& bc) {
+template <class In, class Out> fftn::shape<In, Out> shape_of(const batch_case& bc) {
   fftn::shape<In, Out> sh;
   if constexpr (std::is_same_v<In, Out>) {
     sh.dir = bc.dir;
@@ -171,12 +173,15 @@ std::vector<std::byte> lanes_equal_chain(fftn::isa target, const batch_case& bc,
                            << lanes_text << chain_text;
   // Sub-ranges, out of place: the rows run equal the whole batch's and nothing else changes.
   if (!bc.in_place && bc.count > 2) {
-    for (const auto [first, count] :
-         {std::pair<std::size_t, std::size_t>{1, bc.count - 1}, {bc.count / 2, 1},
-          {bc.count / 3, bc.count - bc.count / 3 - 1}}) {
+    for (const auto [first, count] : {
+             std::pair<std::size_t, std::size_t>{1, bc.count - 1},
+             {bc.count / 2, 1},
+             {bc.count / 3, bc.count - bc.count / 3 - 1},
+         }) {
       std::string ignored;
       const auto part = run(sh, bc, lanes, target, in_elems, out_elems, first, count, ignored);
-      const auto part_chain = run(sh, bc, chain, target, in_elems, out_elems, first, count, ignored);
+      const auto part_chain =
+          run(sh, bc, chain, target, in_elems, out_elems, first, count, ignored);
       EXPECT_TRUE(part == part_chain) << "sub-range " << first << " + " << count << "\n"
                                       << lanes_text;
     }
@@ -189,14 +194,15 @@ template <class T> std::string label(fftn::isa target, const char* kind, const b
          " n = " + std::to_string(bc.n) + ", " + std::to_string(bc.count) + " rows (in stride " +
          std::to_string(bc.in.stride) + " dist " + std::to_string(bc.in.dist) + ", out stride " +
          std::to_string(bc.out.stride) + " dist " + std::to_string(bc.out.dist) + ")" +
-         (bc.in_place ? ", in place" : "") + (bc.dir == fftn::direction::backward ? ", backward" : "") +
-         ", scale " + std::to_string(bc.scale);
+         (bc.in_place ? ", in place" : "") +
+         (bc.dir == fftn::direction::backward ? ", backward" : "") + ", scale " +
+         std::to_string(bc.scale);
 }
 
 // Row `row` of a c2c lanes output against the reference.
 template <class T>
-void c2c_against_reference(const batch_case& bc, const std::vector<std::byte>& out,
-                           std::size_t row, const std::string& what) {
+void c2c_against_reference(const batch_case& bc, const std::vector<std::byte>& out, std::size_t row,
+                           const std::string& what) {
   using c = std::complex<T>;
   const std::size_t n = bc.n;
   fftn::test::input_source src(0x1A4E5ULL + bc.n * 131 + bc.count);
@@ -233,19 +239,22 @@ side_layout rows_with_gap(std::size_t extent, std::size_t gap) {
 template <class T> void c2c_cases(fftn::isa target) {
   const std::size_t c = complex_lanes<T>(target);
   using cx = std::complex<T>;
-  for (const std::size_t n :
-       {2U, 3U, 4U, 5U, 6U, 7U, 8U, 9U, 12U, 15U, 16U, 20U, 24U, 32U, 36U, 48U, 60U, 64U, 100U,
-        128U, 256U}) {
+  for (const std::size_t n : {
+           2U,  3U,  4U,  5U,  6U,  7U,  8U,  9U,   12U,  15U,  16U,
+           20U, 24U, 32U, 36U, 48U, 60U, 64U, 100U, 128U, 256U,
+       }) {
     for (const auto dir : {fftn::direction::forward, fftn::direction::backward}) {
       // Rows with gaps: a whole block, a block and a padded tail, fewer rows than a block.
       for (const std::size_t count : {std::size_t{8} * c, std::size_t{8} * c + 3, std::size_t{3}}) {
-        const batch_case bc{.n = n,
-                            .count = count,
-                            .in = rows_with_gap(n, 3),
-                            .out = rows_with_gap(n, 5),
-                            .dir = dir};
-        const auto out = lanes_equal_chain<cx, cx>(target, bc, n, n, 8 * c,
-                                                   label<T>(target, "c2c", bc));
+        const batch_case bc{
+            .n = n,
+            .count = count,
+            .in = rows_with_gap(n, 3),
+            .out = rows_with_gap(n, 5),
+            .dir = dir,
+        };
+        const auto out =
+            lanes_equal_chain<cx, cx>(target, bc, n, n, 8 * c, label<T>(target, "c2c", bc));
         if (n <= 64 && count == 3) {
           for (std::size_t row = 0; row < count; ++row) {
             c2c_against_reference<T>(bc, out, row, label<T>(target, "c2c", bc));
@@ -258,26 +267,40 @@ template <class T> void c2c_cases(fftn::isa target) {
   // are adjacent) in and out; a stride with gaps between rows; the rule's block.
   for (const std::size_t n : {8U, 12U, 64U, 100U}) {
     const std::size_t count = 5 * c + 1;
-    const batch_case inplace{.n = n,
-                             .count = count,
-                             .in = rows_with_gap(n, 2),
-                             .out = rows_with_gap(n, 2),
-                             .in_place = true,
-                             .scale = 0.25};
+    const batch_case inplace{
+        .n = n,
+        .count = count,
+        .in = rows_with_gap(n, 2),
+        .out = rows_with_gap(n, 2),
+        .in_place = true,
+        .scale = 0.25,
+    };
     lanes_equal_chain<cx, cx>(target, inplace, n, n, 2 * c, label<T>(target, "c2c", inplace));
     const side_layout interleaved{.stride = static_cast<std::ptrdiff_t>(count), .dist = 1};
-    const batch_case columns{.n = n, .count = count, .in = interleaved, .out = interleaved,
-                             .scale = 0.5, .dir = fftn::direction::backward};
+    const batch_case columns{
+        .n = n,
+        .count = count,
+        .in = interleaved,
+        .out = interleaved,
+        .scale = 0.5,
+        .dir = fftn::direction::backward,
+    };
     const auto out =
         lanes_equal_chain<cx, cx>(target, columns, n, n, 0, label<T>(target, "c2c", columns));
     c2c_against_reference<T>(columns, out, count - 1, label<T>(target, "c2c", columns));
-    const batch_case strided{.n = n,
-                             .count = count,
-                             .in = {.stride = 2, .dist = static_cast<std::ptrdiff_t>(2 * n + 1)},
-                             .out = interleaved};
+    const batch_case strided{
+        .n = n,
+        .count = count,
+        .in = {.stride = 2, .dist = static_cast<std::ptrdiff_t>(2 * n + 1)},
+        .out = interleaved,
+    };
     lanes_equal_chain<cx, cx>(target, strided, n, n, c, label<T>(target, "c2c", strided));
   }
 }
+
+// The unsigned integer of T's size, to compare values bit for bit.
+template <class T>
+using bits = std::conditional_t<sizeof(T) == sizeof(std::uint64_t), std::uint64_t, std::uint32_t>;
 
 // Real rows whose complex side is interleaved (bin k of row t at count k + t). The chain
 // runs such a row through its strided route (pairing at any stride, other arithmetic); the
@@ -319,7 +342,10 @@ template <class T> void strided_complex_side(fftn::isa target, std::size_t n, st
   execute(fftn::rows_r2c<T>(n, count), chain, reals.data(), want.data(), false);
   for (std::size_t t = 0; t < count; ++t) {
     for (std::size_t k = 0; k < h1; ++k) {
-      EXPECT_EQ(std::memcmp(&got[k * count + t], &want[t * h1 + k], sizeof(cx)), 0)
+      const cx g = got[k * count + t];
+      const cx w = want[t * h1 + k];
+      EXPECT_TRUE(std::bit_cast<bits<T>>(g.real()) == std::bit_cast<bits<T>>(w.real()) &&
+                  std::bit_cast<bits<T>>(g.imag()) == std::bit_cast<bits<T>>(w.imag()))
           << "r2c row " << t << " bin " << k;
     }
   }
@@ -336,40 +362,48 @@ template <class T> void strided_complex_side(fftn::isa target, std::size_t n, st
 template <class T> void real_cases(fftn::isa target) {
   const std::size_t c = complex_lanes<T>(target);
   using cx = std::complex<T>;
-  for (const std::size_t n : {4U, 6U, 8U, 10U, 16U, 20U, 24U, 32U, 48U, 64U, 100U, 128U,
-                              200U, 256U}) {
+  for (const std::size_t n :
+       {4U, 6U, 8U, 10U, 16U, 20U, 24U, 32U, 48U, 64U, 100U, 128U, 200U, 256U}) {
     const std::size_t h1 = n / 2 + 1;
     for (const std::size_t count : {std::size_t{4} * c + 3, std::size_t{2}}) {
       for (const double scale : {1.0, 0.5}) {
-        const batch_case r2c{.n = n,
-                             .count = count,
-                             .in = rows_with_gap(n, 4),
-                             .out = rows_with_gap(h1, 1),
-                             .scale = scale};
+        const batch_case r2c{
+            .n = n,
+            .count = count,
+            .in = rows_with_gap(n, 4),
+            .out = rows_with_gap(h1, 1),
+            .scale = scale,
+        };
         lanes_equal_chain<T, cx>(target, r2c, n, h1, 4 * c, label<T>(target, "r2c", r2c));
-        const batch_case c2r{.n = n,
-                             .count = count,
-                             .in = rows_with_gap(h1, 3),
-                             .out = rows_with_gap(n, 2),
-                             .scale = scale};
+        const batch_case c2r{
+            .n = n,
+            .count = count,
+            .in = rows_with_gap(h1, 3),
+            .out = rows_with_gap(n, 2),
+            .scale = scale,
+        };
         lanes_equal_chain<cx, T>(target, c2r, h1, n, 4 * c, label<T>(target, "c2r", c2r));
       }
     }
     // In place in FFTW's padded rows; the complex side interleaved.
     const std::size_t count = 3 * c + 2;
     const auto padded = static_cast<std::ptrdiff_t>(2 * h1);
-    const batch_case r2c_in{.n = n,
-                            .count = count,
-                            .in = {.stride = 1, .dist = padded},
-                            .out = {.stride = 1, .dist = padded / 2},
-                            .in_place = true};
+    const batch_case r2c_in{
+        .n = n,
+        .count = count,
+        .in = {.stride = 1, .dist = padded},
+        .out = {.stride = 1, .dist = padded / 2},
+        .in_place = true,
+    };
     lanes_equal_chain<T, cx>(target, r2c_in, n, h1, 0, label<T>(target, "r2c", r2c_in));
-    const batch_case c2r_in{.n = n,
-                            .count = count,
-                            .in = {.stride = 1, .dist = padded / 2},
-                            .out = {.stride = 1, .dist = padded},
-                            .in_place = true,
-                            .scale = 2.0};
+    const batch_case c2r_in{
+        .n = n,
+        .count = count,
+        .in = {.stride = 1, .dist = padded / 2},
+        .out = {.stride = 1, .dist = padded},
+        .in_place = true,
+        .scale = 2.0,
+    };
     lanes_equal_chain<cx, T>(target, c2r_in, h1, n, 0, label<T>(target, "c2r", c2r_in));
     strided_complex_side<T>(target, n, count);
   }
@@ -460,14 +494,26 @@ TEST(Lanes, ForcedSplitRunEqualsTheChain) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
     for (const std::size_t count : {std::size_t{19}, std::size_t{64}}) {
       const batch_case c2c{
-          .n = 256, .count = count, .in = rows_with_gap(256, 3), .out = rows_with_gap(256, 1)};
+          .n = 256,
+          .count = count,
+          .in = rows_with_gap(256, 3),
+          .out = rows_with_gap(256, 1),
+      };
       split_case<cx, cx>(t, c2c, 256, 256, "c2c", split);
       // Real rows of 512 points: the half-length chain of 256 takes the forced radices.
       const batch_case r2c{
-          .n = 512, .count = count, .in = rows_with_gap(512, 2), .out = rows_with_gap(257, 1)};
+          .n = 512,
+          .count = count,
+          .in = rows_with_gap(512, 2),
+          .out = rows_with_gap(257, 1),
+      };
       split_case<float, cx>(t, r2c, 512, 257, "r2c", split);
       const batch_case c2r{
-          .n = 512, .count = count, .in = rows_with_gap(257, 1), .out = rows_with_gap(512, 2)};
+          .n = 512,
+          .count = count,
+          .in = rows_with_gap(257, 1),
+          .out = rows_with_gap(512, 2),
+      };
       split_case<cx, float>(t, c2r, 257, 512, "c2r", split);
     }
   }
@@ -508,9 +554,11 @@ void layouts_equal(fftn::isa target, const fftn::shape<In, Out>& sh, std::size_t
                    std::size_t in_base, std::size_t out_span, std::size_t out_base,
                    std::size_t transforms, const std::string& what) {
   SCOPED_TRACE(what);
-  for (const auto& [first, count] : {std::pair<std::size_t, std::size_t>{0, transforms},
-                                     {1, transforms - 2},
-                                     {transforms / 2 - 1, 3}}) {
+  for (const auto& [first, count] : {
+           std::pair<std::size_t, std::size_t>{0, transforms},
+           {1, transforms - 2},
+           {transforms / 2 - 1, 3},
+       }) {
     std::string lanes_text;
     std::string chain_text;
     const auto got = run_at(sh, strategy_choice::lanes, target, in_span, in_base, out_span,
@@ -540,8 +588,7 @@ TEST(Lanes, NegativeDistancesAndTwoBatchDimensions) {
       sh.axes = {{.n = n}};
       sh.batches = {{.count = count, .in_dist = dist, .out_dist = dist}};
       const std::size_t span = (count - 1) * (n + 3) + n;
-      layouts_equal(t, sh, span, span - n, span, span - n, count,
-                    isa + " c2c, negative distance");
+      layouts_equal(t, sh, span, span - n, span, span - n, count, isa + " c2c, negative distance");
     }
     {
       constexpr std::size_t n = 32;
@@ -549,16 +596,24 @@ TEST(Lanes, NegativeDistancesAndTwoBatchDimensions) {
       constexpr std::size_t h1 = n / 2 + 1;
       fftn::shape<float, fx> sh;
       sh.axes = {{.n = n}};
-      sh.batches = {{.count = count,
-                     .in_dist = -static_cast<std::ptrdiff_t>(n),
-                     .out_dist = -static_cast<std::ptrdiff_t>(h1)}};
+      sh.batches = {
+          {
+              .count = count,
+              .in_dist = -static_cast<std::ptrdiff_t>(n),
+              .out_dist = -static_cast<std::ptrdiff_t>(h1),
+          },
+      };
       layouts_equal(t, sh, count * n, (count - 1) * n, count * h1, (count - 1) * h1, count,
                     isa + " r2c float, negative distances");
       fftn::shape<fx, float> back;
       back.axes = {{.n = n}};
-      back.batches = {{.count = count,
-                       .in_dist = -static_cast<std::ptrdiff_t>(h1),
-                       .out_dist = -static_cast<std::ptrdiff_t>(n)}};
+      back.batches = {
+          {
+              .count = count,
+              .in_dist = -static_cast<std::ptrdiff_t>(h1),
+              .out_dist = -static_cast<std::ptrdiff_t>(n),
+          },
+      };
       layouts_equal(t, back, count * h1, (count - 1) * h1, count * n, (count - 1) * n, count,
                     isa + " c2r float, negative distances");
     }
@@ -568,8 +623,10 @@ TEST(Lanes, NegativeDistancesAndTwoBatchDimensions) {
       constexpr std::size_t n = 12;
       fftn::shape<cx, cx> sh;
       sh.axes = {{.n = n}};
-      sh.batches = {{.count = 3, .in_dist = 200, .out_dist = 200},
-                    {.count = 11, .in_dist = 13, .out_dist = 13}};
+      sh.batches = {
+          {.count = 3, .in_dist = 200, .out_dist = 200},
+          {.count = 11, .in_dist = 13, .out_dist = 13},
+      };
       const std::size_t span = 2 * 200 + 10 * 13 + n;
       layouts_equal(t, sh, span, 0, span, 0, 33, isa + " c2c, two batch dimensions");
     }

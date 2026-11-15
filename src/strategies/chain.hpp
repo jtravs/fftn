@@ -15,11 +15,12 @@
 //   the chain (below). Codelet radices (32, 64) are never Bluestein's.
 // - Placement: the first pass reads the line where it lies and the last writes it where it
 //   goes; passes in between ping-pong between two scratch lines a and b of the line's
-//   length, or between a and the destination when it is contiguous and not the source. On targets with several complex numbers per register (C > 1), the passes
-//   load and store whole runs of adjacent elements, so a line with a stride other than 1
-//   is first copied to scratch (input) or written to scratch and then copied (output);
-//   leaves and copies work at any stride. A single generic pass cannot run in place, so
-//   when its source and destination are the same memory it writes scratch and is copied.
+//   length, or between a and the destination when it is contiguous and not the source. On targets
+//   with several complex numbers per register (C > 1), the passes load and store whole runs of
+//   adjacent elements, so a line with a stride other than 1 is first copied to scratch (input) or
+//   written to scratch and then copied (output); leaves and copies work at any stride. A single
+//   generic pass cannot run in place, so when its source and destination are the same memory it
+//   writes scratch and is copied.
 // - Edge operations (DESIGN.md 12.1): the input edge's operation applies in the first
 //   pass that is not a copy, the output edge's in the last, so neither costs a pass.
 // - Real lines (DESIGN.md 9.1, passes/real.inl): even n = 2h reads the reals in place as
@@ -223,8 +224,8 @@ private:
                 std::vector<stage>& stages);
   // Passes i0 .. of rad (the radices of n) from `at`, s copies at i0, the last writing dst
   // with edges.out (a Bluestein stage when bluestein_last(n)); scratch in between.
-  void chain_tail(std::size_t n, const std::vector<std::size_t>& rad, std::size_t i0,
-                  std::size_t s, int sign, endpoint at, endpoint dst, const line_edges& edges,
+  void chain_tail(std::size_t n, const std::vector<std::size_t>& rad, std::size_t i0, std::size_t s,
+                  int sign, endpoint at, endpoint dst, const line_edges& edges,
                   std::vector<stage>& stages);
   void add_copy(std::size_t n, endpoint src, endpoint dst, const line_edges& edges,
                 std::vector<stage>& stages);

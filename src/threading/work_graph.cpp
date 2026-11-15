@@ -72,7 +72,7 @@ work_graph build_work_graph(const program& p, std::size_t points, std::size_t ch
     ph.units = 1;
     double work = 0;
     for (std::size_t i = p.batch_loops; i < end; ++i) {
-      const stage& st = std::get<stage>(p.records[i]);
+      const auto& st = std::get<stage>(p.records[i]);
       work += st.args.radix > 1 ? stage_work(st) : static_cast<double>(st.args.n * st.args.s);
     }
     ph.work = work / static_cast<double>(p.lanes);

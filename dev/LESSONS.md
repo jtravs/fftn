@@ -115,10 +115,18 @@ Xeon 15 % faster in geometric mean (64 points: 0.59 of the time) with identical 
 for divisions and modulos in per-call and per-chunk paths, not only in kernels.
 [X18](experiments/X18-x86-kernels.md).
 
-2.5 **The compiler is rarely the explanation.** FFTN built with Clang 23 and GCC 14/16 was
-within 1 % on x86 after the X18 fixes and within 7 % on NEON (two cases at 1.4 with GCC).
-Test it early, because it is cheap, then look elsewhere.
-[X18](experiments/X18-x86-kernels.md).
+2.5 **The compiler is rarely the explanation for the main loops, but often for tails and
+spills.** FFTN built with Clang 23 and GCC 14/16 was within 1 % on x86 after the X18 fixes
+(tracking rows, mostly powers of two) and within 7 % on NEON (two cases at 1.4 with GCC).
+On the Xeon's 7-smooth rows of 64–1024 points, though, Clang took 0.90 of GCC's time in
+double and 0.84 in float, and Intel's icpx 0.67 in float: element-by-element tail loops
+(fewer copies left than lanes) became masked AVX-512 loads and stores with icpx, partly
+with Clang, and scalar stores into a stack tile followed by a vector load (a
+store-forwarding stall per leg) with GCC; in full 32-point codelets the stack references
+were 139 (icpx), 169 (GCC) and 215 (Clang). Test the compiler early on lengths with tails
+and big codelets too, and when one compiler wins, write what it found (masks, a smaller
+schedule) into the code rather than depending on it.
+[X18](experiments/X18-x86-kernels.md), [X22](experiments/X22-icpx.md).
 
 2.6 **Compiler auto-vectorisation does not replace a hand vocabulary.** `omp simd` on the
 scalar pass loops gave compiler-dependent results, and `-march=native` closed no per-pass
@@ -328,10 +336,13 @@ catches what otherwise fails a Linux gate an hour later.
 contracted `a*b+c` into FMAs differently in two inlined copies of one function, so threaded
 and serial results differed in the last bits (prototype).
 
-6.3 **Sanitizer builds of large generated kernels need memory and time.** GCC's ASan on
-radix-64 codelets was killed for memory with 16 parallel compiles and ran past 90 minutes
-with 8; give such jobs 96–160 GB and hours, or exclude the largest kernels from
-instrumentation.
+6.3 **Sanitizer builds of large generated kernels need memory and time, mostly for debug
+information.** GCC's ASan on radix-64 codelets was killed for memory with 16 parallel
+compiles and ran past 90 minutes with 8 (prototype). With line tables only (`-g1`,
+`-gline-tables-only`), which is all a sanitizer report needs, one FFTN kernel unit under
+ASan + UBSan fell from 23.4 to 5.6 GB with GCC 16 and from 9.1 to 4.7 GB with Clang 23
+(`-g` made GCC overflow variable tracking and redo it per radix-64 pass); -O1 instead of
+-O2 saved no memory. Size parallel compiles to the machine's memory, not its cores.
 
 6.4 **GCC's ASan fake stack breaks aligned AVX-512 spills.** With
 `detect_stack_use_after_return`, 32-byte-aligned fake frames met 64-byte `vmovapd` spills and
@@ -373,3 +384,12 @@ that looks for `-lmkl_core` under the installation fails; add the three symlinks
 (`mkl_intel_lp64`, `mkl_sequential`, `mkl_core`) by hand. Likewise, copy an unpacked
 autotools tree with `cp -a`: a plain `cp -r` makes the `.texi` sources newer than the shipped
 manuals and `make` then wants `makeinfo` (FFTW 3.3.11). [X21](experiments/X21-phase1-cloud.md).
+
+6.13 **Intel's icpx defaults to fast math without saying so.** Its default model
+reassociates, drops signed zeros, uses approximate reciprocals and flushes denormals, but
+defines no `__FAST_MATH__`, so header guards miss it; and an optimised `main()` it compiles
+turns on FTZ and DAZ for the whole process. `-ffp-contract=off` alone left 55 of 1608 FFTN
+tests failing (twiddles 1 ulp off). Pass `-fno-fast-math` before `-ffp-contract=off`
+(`-fp-model=precise -ffp-contract=off` draws an override warning that `-Werror` makes an
+error), to third-party targets too when their `main()` runs your tests.
+[X22](experiments/X22-icpx.md).

@@ -153,6 +153,15 @@ identity checks (whose bounds include the rounding of their closed-form inputs).
 Twiddle factors are correctly rounded, which is checked entry by entry for every length
 the suites test.
 
+These bounds assume IEEE arithmetic in the calling process as well as in the library.
+FFTN's build sets its own floating-point flags with every supported compiler, Intel's
+icpx included (whose default model is a fast one), and the public headers refuse
+translation units compiled with fast-math. They cannot see the floating-point
+environment, though: icpx's default model, when it compiles an optimised `main()`, turns
+on flush-to-zero and denormals-are-zero for the whole process, and FFTN's results then
+lose their denormal values like any other code's. Compile the file holding `main()` with
+`-fno-fast-math` (or `-fp-model=precise`) to keep IEEE behaviour.
+
 ## Determinism
 
 For a given plan, results are bitwise identical:

@@ -163,3 +163,11 @@ double on the Xeon): a rule over length ranges, or lanes blocks that use X20's p
 preparation, is a follow-up, not a change of this rule. Task 2.2's acceptance stays unmet
 for double c2c on AVX-512: the chain itself is now 1.1–1.3 times FFTW and 0.8–1.9 times MKL
 at 8–16 points.
+
+Second reader's fixes (commit after 39f61e3): a block chain ending in a scratch tile no
+longer scatters the tile onto itself (single-pass real chains on C > 1). Xeon spot check,
+run 20261115-042601-873c (AVX-512 float r2c, new lanes ÷ old lanes, band ±1.0 %): 0.90–0.91
+at 16 and 32 points, no evidence elsewhere (0.98–1.00). The lanes only got faster where they
+were already faster than the chain, so no threshold changes. The rules also stopped taking
+the lanes for real rows whose complex side is strided, which keeps avx2 and avx512 on the
+same route there.

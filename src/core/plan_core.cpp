@@ -386,8 +386,7 @@ std::size_t lanes_block(const shape_view& s, const side& in, const side& out,
   const bool strided_complex =
       real && (s.kind == transform_kind::r2c ? out.stride[0] : in.stride[0]) != 1;
   if (settings.strategy == strategy_choice::rules &&
-      (n > profile.lanes_up_to || rows < c || chain.forces(real ? n / 2 : n) ||
-       strided_complex)) {
+      (n > profile.lanes_up_to || rows < c || chain.forces(real ? n / 2 : n) || strided_complex)) {
     return 0;
   }
   if (!chain.lanes_fit(n, real)) {

@@ -23,6 +23,7 @@
 #include "passes/pass_args.hpp"
 #include "strategies/chain.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <string>
 #include <utility>
@@ -56,17 +57,14 @@ template <class T> bool chain_builder<T>::lanes_fit(std::size_t n, bool real) co
   if (len < 2 || bluestein_last(len)) {
     return false;
   }
-  for (const std::size_t r : radices(len)) {
-    if (!has_codelet(r) || kernels_.passes.codelet[codelet_slot(r)].lane[0] == nullptr) {
-      return false;
-    }
-  }
-  return true;
+  return std::ranges::all_of(radices(len), [this](std::size_t r) {
+    return has_codelet(r) && kernels_.passes.codelet[codelet_slot(r)].lane[0] != nullptr;
+  });
 }
 
 template <class T>
-void chain_builder<T>::add_lanes_copy(bool gather, std::size_t elements, lane_rows rows,
-                                      slot tile, std::size_t block, std::vector<stage>& stages) {
+void chain_builder<T>::add_lanes_copy(bool gather, std::size_t elements, lane_rows rows, slot tile,
+                                      std::size_t block, std::vector<stage>& stages) {
   stage st;
   st.run = gather ? kernels_.passes.lanes_gather : kernels_.passes.lanes_scatter;
   st.args.n = elements;
@@ -128,7 +126,9 @@ void chain_builder<T>::lanes_body(std::size_t n, const std::vector<std::size_t>&
   const std::size_t last = rad.size() - 1;
   // A destination in scratch is the tile the last pass writes (other than its source).
   if (is_scratch(dst.where)) {
-    dst = tile_of(rad.size() == 1 ? at : (rad.size() % 2 == 0 ? other(at) : at));
+    // One pass writes `at`; with more, the last pass writes the slot its source is not in,
+    // after the passes have alternated from `at`.
+    dst = tile_of(rad.size() % 2 == 0 ? other(at) : at);
   }
   // The last pass writes the destination itself unless it is a split pass or a run of the
   // destination's rows is no vector access.
@@ -157,8 +157,8 @@ void chain_builder<T>::lanes_body(std::size_t n, const std::vector<std::size_t>&
     st.args.s = block;
     st.args.twiddles = shared_twiddles(n, rad[0], 1);
     st.units = m * (block / c);
-    st.name = "lanes first radix-" + std::to_string(rad[0]) + " " + direction_text(sign) +
-              " (m " + std::to_string(m) + ", " + std::to_string(block) + " rows)";
+    st.name = "lanes first radix-" + std::to_string(rad[0]) + " " + direction_text(sign) + " (m " +
+              std::to_string(m) + ", " + std::to_string(block) + " rows)";
     stages.push_back(std::move(st));
   }
   std::size_t s = rad[0];
@@ -194,8 +194,7 @@ std::size_t chain_builder<T>::c2c_lanes(std::size_t n, int sign, endpoint src,
   const std::vector<std::size_t> rad = radices(n);
   // c2c_line's split run: a line with a stride other than 1 is copied on C > 1, so only C = 1
   // sees the destination's stride.
-  const std::size_t split =
-      split_from(rad, false, kernels_.complex_lanes > 1 ? 1 : dst.stride);
+  const std::size_t split = split_from(rad, false, kernels_.complex_lanes > 1 ? 1 : dst.stride);
   lanes_body(n, rad, split, sign, {src.where, 2 * src.stride, 2 * src_dist},
              {dst.where, 2 * dst.stride, 2 * dst_dist}, edges, block, stages);
   return n * block;
@@ -209,7 +208,8 @@ std::size_t chain_builder<T>::r2c_lanes(std::size_t n, endpoint src, std::ptrdif
   const real_route how = route(n, true, false);
   // r2c_line's radices and split run: the fused route reorders the radices and has no split
   // run; the separate route is c2c_line's; a leaf is one pass.
-  const std::vector<std::size_t> rad = how == real_route::fused ? real_radices(h, true) : radices(h);
+  const std::vector<std::size_t> rad =
+      how == real_route::fused ? real_radices(h, true) : radices(h);
   const std::size_t split = how == real_route::separate ? split_from(rad, false, 1) : rad.size();
   // The reals of a row read as h complex pairs; the transform ends in a tile.
   lanes_body(h, rad, split, -1, {src.where, 2, src_dist}, {slot::a, 0, 0}, line_edges(), block,
@@ -218,9 +218,12 @@ std::size_t chain_builder<T>::r2c_lanes(std::size_t n, endpoint src, std::ptrdif
   const lane_rows out{dst.where, 2 * dst.stride, 2 * dst_dist};
   // The pairing writes the rows where a run of C of them is one vector store, else a tile.
   const bool direct = kernels_.complex_lanes == 1 || out.dist == 2;
-  const lane_rows to =
-      direct ? out
-             : lane_rows{.where = other(z), .stride = static_cast<std::ptrdiff_t>(2 * block), .dist = 2};
+  const lane_rows to = direct ? out
+                              : lane_rows{
+                                    .where = other(z),
+                                    .stride = static_cast<std::ptrdiff_t>(2 * block),
+                                    .dist = 2,
+                                };
   stage st;
   st.run = kernels_.passes.lanes_r2c_pair[scale != 1.0 ? 1 : 0];
   st.args.n = n;
@@ -287,18 +290,17 @@ std::size_t chain_builder<T>::c2r_lanes(std::size_t n, endpoint src, std::ptrdif
 // only the members defined there: every member defined here is instantiated here.
 template bool chain_builder<double>::lanes_fit(std::size_t, bool) const;
 template bool chain_builder<float>::lanes_fit(std::size_t, bool) const;
-template void chain_builder<double>::add_lanes_copy(bool, std::size_t, lane_rows, slot,
-                                                    std::size_t, std::vector<stage>&);
-template void chain_builder<float>::add_lanes_copy(bool, std::size_t, lane_rows, slot,
-                                                   std::size_t, std::vector<stage>&);
+template void chain_builder<double>::add_lanes_copy(bool, std::size_t, lane_rows, slot, std::size_t,
+                                                    std::vector<stage>&);
+template void chain_builder<float>::add_lanes_copy(bool, std::size_t, lane_rows, slot, std::size_t,
+                                                   std::vector<stage>&);
 template void chain_builder<double>::lanes_body(std::size_t, const std::vector<std::size_t>&,
                                                 std::size_t, int, lane_rows, lane_rows,
                                                 const line_edges&, std::size_t,
                                                 std::vector<stage>&);
 template void chain_builder<float>::lanes_body(std::size_t, const std::vector<std::size_t>&,
                                                std::size_t, int, lane_rows, lane_rows,
-                                               const line_edges&, std::size_t,
-                                               std::vector<stage>&);
+                                               const line_edges&, std::size_t, std::vector<stage>&);
 template std::size_t chain_builder<double>::c2c_lanes(std::size_t, int, endpoint, std::ptrdiff_t,
                                                       endpoint, std::ptrdiff_t, const line_edges&,
                                                       std::size_t, std::vector<stage>&);
@@ -306,14 +308,14 @@ template std::size_t chain_builder<float>::c2c_lanes(std::size_t, int, endpoint,
                                                      endpoint, std::ptrdiff_t, const line_edges&,
                                                      std::size_t, std::vector<stage>&);
 template std::size_t chain_builder<double>::r2c_lanes(std::size_t, endpoint, std::ptrdiff_t,
-                                                      endpoint, std::ptrdiff_t, double,
-                                                      std::size_t, std::vector<stage>&);
+                                                      endpoint, std::ptrdiff_t, double, std::size_t,
+                                                      std::vector<stage>&);
 template std::size_t chain_builder<float>::r2c_lanes(std::size_t, endpoint, std::ptrdiff_t,
                                                      endpoint, std::ptrdiff_t, double, std::size_t,
                                                      std::vector<stage>&);
 template std::size_t chain_builder<double>::c2r_lanes(std::size_t, endpoint, std::ptrdiff_t,
-                                                      endpoint, std::ptrdiff_t, double,
-                                                      std::size_t, std::vector<stage>&);
+                                                      endpoint, std::ptrdiff_t, double, std::size_t,
+                                                      std::vector<stage>&);
 template std::size_t chain_builder<float>::c2r_lanes(std::size_t, endpoint, std::ptrdiff_t,
                                                      endpoint, std::ptrdiff_t, double, std::size_t,
                                                      std::vector<stage>&);

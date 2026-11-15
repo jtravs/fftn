@@ -14,6 +14,14 @@ set(FFTN_CLANG_TIDY "" CACHE STRING "clang-tidy command (a CMake list) run on FF
 # Read by scripts/check.sh to report the compiler with every gate run (AGENTS.md section 3).
 set(FFTN_CXX_COMPILER "${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}" CACHE INTERNAL "")
 
+# Intel's icpx compiles everything, third-party code included, with a fast floating-point
+# model by default, and an optimised main() it compiles sets flush-to-zero and
+# denormals-are-zero for the whole process. The tests' main() comes from GoogleTest, so the
+# IEEE model is set for every target here, not only FFTN's own (experiment X22).
+if(CMAKE_CXX_COMPILER_ID STREQUAL "IntelLLVM")
+  add_compile_options(-fno-fast-math)
+endif()
+
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
 include(FftnTargets)
 
@@ -29,6 +37,18 @@ if(FFTN_SANITIZE)
   # not fold them; turning the folding off here keeps the checked code comparable.
   if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     add_compile_options(-fno-ipa-icf)
+  endif()
+  # Sanitizer reports need line tables only (file and line of every frame), and full debug
+  # information of the kernel units' huge functions multiplied the cost of an instrumented
+  # build. src/isa/neon_fcma.cpp under ASan + UBSan at -O2 (Apple M5 Max): GCC 16 took
+  # 1483 s and 23.4 GB with -g (variable tracking overflowed and was redone for every
+  # radix-64 pass) against 809 s and 5.6 GB with -g1; Clang 23 671 s and 9.1 GB with -g
+  # against 331 s and 4.7 GB with -gline-tables-only. With -g, CI's sanitizer jobs ran out
+  # of memory (GCC on 16 GB runners) or time (macOS). These come after the build type's -g.
+  if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_compile_options(-gline-tables-only)
+  elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    add_compile_options(-g1)
   endif()
   # Clang links its TSan runtime statically on Linux, and that runtime defines the global
   # operator new and delete as strong symbols (compiler-rt's tsan_new_delete.cpp; ASan's

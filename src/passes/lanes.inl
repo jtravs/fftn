@@ -22,6 +22,14 @@
 
 namespace {
 
+// The rows of a block's run of C from row r0 that the block holds (0 for idle rows).
+template <class T> FFTN_FORCE_INLINE std::size_t block_rows(std::size_t rows, std::size_t r0) {
+  if (rows <= r0) {
+    return 0;
+  }
+  return rows - r0 < C<T> ? rows - r0 : C<T>;
+}
+
 // C rows' element at p, the rows dist reals apart: the first `valid` of them, the other
 // lanes zero.
 template <class T>
@@ -61,7 +69,7 @@ template <class T> void lanes_gather(const pass_args* a, std::size_t first, std:
   const std::ptrdiff_t tile_leg = at(b, 2);
   for (std::size_t u = first; u < last; ++u) { // the one unit, when the range holds it
     for (std::size_t r0 = 0; r0 < b; r0 += C<T>) {
-      const std::size_t valid = rows <= r0 ? 0 : (rows - r0 < C<T> ? rows - r0 : C<T>);
+      const std::size_t valid = block_rows<T>(rows, r0);
       // Idle rows (a padded block) read nothing: their run starts at row 0, so no address
       // beyond the batch is formed.
       const T* xr = valid != 0 ? x + at(r0, xd) : x;
@@ -219,7 +227,7 @@ template <class T> void lanes_c2r_pair(const pass_args* a, std::size_t first, st
   const std::ptrdiff_t leg = at(b, 2);
   for (std::size_t u = first; u < last; ++u) { // the one unit, when the range holds it
     for (std::size_t r0 = 0; r0 < b; r0 += C<T>) {
-      const std::size_t valid = rows <= r0 ? 0 : (rows - r0 < C<T> ? rows - r0 : C<T>);
+      const std::size_t valid = block_rows<T>(rows, r0);
       const T* xr = valid != 0 ? x + at(r0, xd) : x; // idle rows read nothing (lanes_gather)
       T* zr = z + at(r0, 2);
       T x0[2 * C<T>]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
@@ -236,7 +244,8 @@ template <class T> void lanes_c2r_pair(const pass_args* a, std::size_t first, st
       for (std::size_t j = 1; j < h - j; ++j) {
         cv<T> lo;
         cv<T> hi;
-        pre_pair<T>(get_rows(xr + at(j, xs), xd, valid), conj(get_rows(xr + at(h - j, xs), xd, valid)),
+        pre_pair<T>(get_rows(xr + at(j, xs), xd, valid),
+                    conj(get_rows(xr + at(h - j, xs), xd, valid)),
                     bcast_tw(table + tw_reals<T> * j), lo, hi);
         store(zr + at(j, leg), lo);
         store(zr + at(h - j, leg), hi);
@@ -275,17 +284,34 @@ void lanes_first(const pass_args* a, std::size_t first, std::size_t last) {
   std::size_t p = first < m ? first : first % m;
   for (std::size_t u = first; u < last; ++u) {
     const std::size_t r0 = k * C<T>;
-    const std::size_t valid = rows <= r0 ? 0 : (rows - r0 < C<T> ? rows - r0 : C<T>);
+    const std::size_t valid = block_rows<T>(rows, r0);
     const T* xp = (valid != 0 ? x + at(r0, xd) : x) + at(p, xs); // idle rows read nothing
     const run_out<T, edge_op::none, true> out{
-        .p = y + at(r0 + b * R * p, 2), .leg = out_leg, .step = 2, .valid = C<T>, .op = {}};
+        .p = y + at(r0 + b * R * p, 2),
+        .leg = out_leg,
+        .step = 2,
+        .valid = C<T>,
+        .op = {},
+    };
     if (valid == C<T>) {
       lane_unit<T, R, Sign, true>(
-          run_in<T, edge_op::none, true>{.p = xp, .leg = in_leg, .step = xd, .valid = C<T>, .op = {}},
+          run_in<T, edge_op::none, true>{
+              .p = xp,
+              .leg = in_leg,
+              .step = xd,
+              .valid = C<T>,
+              .op = {},
+          },
           out, table, p);
     } else {
       lane_unit<T, R, Sign, true>(
-          run_in<T, edge_op::none, false>{.p = xp, .leg = in_leg, .step = xd, .valid = valid, .op = {}},
+          run_in<T, edge_op::none, false>{
+              .p = xp,
+              .leg = in_leg,
+              .step = xd,
+              .valid = valid,
+              .op = {},
+          },
           out, table, p);
     }
     if (++p == m) {
@@ -319,14 +345,25 @@ void lanes_last(const pass_args* a, std::size_t first, std::size_t last) {
     if (r0 < rows) {
       const std::size_t valid = rows - r0 < C<T> ? rows - r0 : C<T>;
       const run_in<T, edge_op::none, true> in{
-          .p = x + at(q * b + r0, 2), .leg = in_leg, .step = 2, .valid = C<T>, .op = {}};
+          .p = x + at(q * b + r0, 2),
+          .leg = in_leg,
+          .step = 2,
+          .valid = C<T>,
+          .op = {},
+      };
       T* yp = y + at(r0, yd) + at(q, ys);
       if (valid == C<T>) {
         cdft<R>::template plain<T, Sign>(
-            in, run_out<T, OutOp, true>{.p = yp, .leg = out_leg, .step = yd, .valid = C<T>, .op = op});
+            in,
+            run_out<T, OutOp, true>{.p = yp, .leg = out_leg, .step = yd, .valid = C<T>, .op = op});
       } else {
-        cdft<R>::template plain<T, Sign>(
-            in, run_out<T, OutOp, false>{.p = yp, .leg = out_leg, .step = yd, .valid = valid, .op = op});
+        cdft<R>::template plain<T, Sign>(in, run_out<T, OutOp, false>{
+                                                 .p = yp,
+                                                 .leg = out_leg,
+                                                 .step = yd,
+                                                 .valid = valid,
+                                                 .op = op,
+                                             });
       }
     }
     if (++q == s) {

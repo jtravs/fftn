@@ -103,8 +103,11 @@ endif()
 # kernel units and probes are compiled a second time for a generic Armv8.0 baseline
 # (-mcpu=generic, test-only objects never linked) and checked with no allowance. That is
 # the baseline of an ordinary Linux AArch64 build: what leaks there is a fault in FFTN's
-# regions, not a property of the Apple baseline.
-if(APPLE AND FFTN_TARGET_IS_AARCH64)
+# regions, not a property of the Apple baseline. Like the check above, it reads the code users
+# get, so sanitizer builds skip it: compiling the kernel units a second time with
+# instrumentation doubled the slowest part of the macOS sanitizer jobs, which then ran past
+# their time limit (CI run 43656723703).
+if(APPLE AND FFTN_TARGET_IS_AARCH64 AND NOT FFTN_SANITIZE)
   check_cxx_compiler_flag(-mcpu=generic FFTN_HAS_MCPU_GENERIC)
   if(NOT FFTN_HAS_MCPU_GENERIC)
     message(FATAL_ERROR "isa tests: the compiler does not accept -mcpu=generic")
