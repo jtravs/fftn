@@ -22,8 +22,7 @@ struct slot_addresses {
   std::ptrdiff_t tw = 0; // the twiddle cursor (program.hpp), in bytes
 };
 
-// Sets p.flat and the fast paths' marks from p's records (program.hpp); called once the
-// program is complete.
+// Sets p.flat from p's records (program.hpp); called once the program is complete.
 void mark_flat(program& p) noexcept;
 
 // Runs transforms [first, first + count) of p's batch, every chunk of every stage in order.
@@ -37,12 +36,6 @@ void run_transforms(const program& p, std::size_t first, std::size_t count,
 // store-forwarding stall of about a dozen cycles per call (X20).
 void run_leaf_rows(const program& p, std::size_t first, std::size_t count, const void* in,
                    void* out) noexcept;
-
-// Transforms [first, first + count) of a program marked lane_leaf_rows (program.hpp): one
-// call of its lanes leaf, which reads and writes the rows themselves (no scratch). in and
-// out address element 0 of transform 0; taken as two addresses for run_leaf_rows' reason.
-void run_lane_leaf_rows(const program& p, std::size_t first, std::size_t count, const void* in,
-                        void* out) noexcept;
 
 // The pieces a team shares out (src/threading/work_graph.hpp), each run exactly as
 // run_transforms runs it.

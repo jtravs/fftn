@@ -854,11 +854,6 @@ void execute_core(const plan_core& core, std::size_t first, std::size_t count, c
     run_leaf_rows(core.prog, first, count, in, out);
     return;
   }
-  if (core.prog.lane_leaf_rows) {
-    // As leaf_rows: the lanes leaf reads and writes the rows, no scratch (driver.hpp).
-    run_lane_leaf_rows(core.prog, first, count, in, out);
-    return;
-  }
   slot_addresses at{.in = static_cast<const std::byte*>(in), .out = static_cast<std::byte*>(out)};
   if (core.bytes != 0) {
     // The workspace may have any alignment; its size includes the slack for this.
@@ -932,10 +927,7 @@ std::string describe(const plan_core& core) {
     o << indent << st.name << ": " << slot_name(st.src) << " -> " << slot_name(st.dst) << ", "
       << st.units << " units in " << st.chunks << (st.chunks == 1 ? " chunk" : " chunks") << "\n";
   }
-  if (core.prog.lane_leaf) {
-    o << "lanes leaf between the caller's arrays: each run of rows in one call (units of "
-      << core.prog.lane_unit << " rows, the last padded)\n";
-  } else if (core.prog.lanes != 0) {
+  if (core.prog.lanes != 0) {
     o << "lanes tail (blocks of " << core.prog.lane_unit << " rows, the last padded):\n";
     for (const stage& st : core.prog.lane_tail) {
       o << "  " << st.name << ": " << slot_name(st.src) << " -> " << slot_name(st.dst) << "\n";

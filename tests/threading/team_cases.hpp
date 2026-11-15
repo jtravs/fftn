@@ -254,10 +254,6 @@ void add_cases(std::vector<team_case>& out, const fftn::detail::build_settings& 
   lanes.lane_block = 8;
   out.push_back(make_case("c2c_lanes_24x37" + suffix, fftn::rows_c2c<T>(24, 37, fwd), 24 * 37,
                           24 * 37, false, lanes, target));
-  // A leaf's length: where the rows are one vector access per element, the body is one
-  // lanes leaf between the caller's arrays, and a claimed run is one call of it (X24).
-  out.push_back(make_case("c2c_lanes_16x37" + suffix, fftn::rows_c2c<T>(16, 37, fwd), 16 * 37,
-                          16 * 37, false, lanes, target));
   out.push_back(make_case("c2c_lanes_inplace_64x19" + suffix, fftn::rows_c2c<T>(64, 19, bwd),
                           64 * 19, 64 * 19, true, lanes, target));
   out.push_back(make_case("r2c_lanes_32x21" + suffix, fftn::rows_r2c<T>(32, 21), 32 * 21, 17 * 21,
