@@ -95,8 +95,15 @@ struct program {
   // mark_flat (driver.hpp).
   bool flat = false;
   // Flat, one batch loop, and the body one leaf between the caller's arrays: the whole
-  // batch is one call of the leaf (driver.cpp, run_leaf_rows).
+  // batch is one call of the leaf (driver.hpp, run_leaf_rows), made from the copies below
+  // of the stage's leaf and arguments and of the batch loop's steps, so that the entry
+  // reaches the leaf without walking the records (X28). Set by mark_flat.
   bool leaf_rows = false;
+  bool rows_from_in = true;         // the leaf reads the input (else the output, in place)
+  leaf_fn rows_leaf = nullptr;
+  std::ptrdiff_t rows_src_step = 0; // bytes between the lines the leaf reads
+  std::ptrdiff_t rows_dst_step = 0; // and writes
+  pass_args rows_args;
 };
 
 // The longest body run_flat handles; its arguments live on the stack.

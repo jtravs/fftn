@@ -5,7 +5,7 @@
 // tiny serial execute goes. For each case (c2c rows, forward, out of place) it times, in
 // ns per transform, the same work entered at four levels:
 //
-//   public  what plan::execute does: transform_count, then execute_core (X28);
+//   public  what plan::execute calls, execute_all (X28);
 //   api     execute_core alone (argument checks, the workspace's team word and alignment,
 //           then the driver);
 //   driver  run_transforms with the slot addresses prepared once (the program's
@@ -144,8 +144,7 @@ void run_case(std::size_t n, std::size_t batch, int reps, double ms, fftn::isa i
 
   report("public", time_ns(
                        [&] {
-                         d::execute_core(*core, 0, d::transform_count(*core), in.data(),
-                                         out.data(), ws);
+                         d::execute_all(*core, in.data(), out.data(), ws);
                        },
                        batch, reps, ms));
   report("api", time_ns([&] { d::execute_core(*core, 0, batch, in.data(), out.data(), ws); }, batch,

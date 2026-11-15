@@ -223,22 +223,6 @@ void run_flat_one(const program& p, std::size_t t, const slot_addresses& base) n
 
 } // namespace
 
-void run_leaf_rows(const program& p, std::size_t first, std::size_t count, const void* in,
-                   void* out) noexcept {
-  const loop& l = *std::get_if<loop>(p.records.data());
-  const stage& s = *std::get_if<stage>(&p.records[1]);
-  // As in moved(), no offset is applied to a null pointer. Only in and out move with the
-  // batch; the destination is never the input.
-  const auto k = static_cast<std::ptrdiff_t>(first);
-  const auto* src = static_cast<const std::byte*>(in);
-  auto* dst = static_cast<std::byte*>(out);
-  src = l.step[0] != 0 ? src + l.step[0] * k : src;
-  dst = l.step[1] != 0 ? dst + l.step[1] * k : dst;
-  const bool from_in = s.src == slot::in;
-  s.leaf(&s.args, from_in ? static_cast<const void*>(src) : dst, dst,
-         from_in ? l.step[0] : l.step[1], l.step[1], count);
-}
-
 void mark_flat(program& p) noexcept {
   if (p.lanes != 0) {
     // Blocks of transforms (run_lane_blocks), never a transform at a time.
@@ -257,6 +241,15 @@ void mark_flat(program& p) noexcept {
   const stage* only =
       p.flat && stages == 1 && p.batch_loops == 1 ? std::get_if<stage>(&p.records[1]) : nullptr;
   p.leaf_rows = only != nullptr && only->leaf != nullptr && moves(only->src) && moves(only->dst);
+  if (p.leaf_rows) {
+    // Only in and out move with the batch; the destination is never the input.
+    const loop& l = *std::get_if<loop>(p.records.data());
+    p.rows_from_in = only->src == slot::in;
+    p.rows_leaf = only->leaf;
+    p.rows_src_step = p.rows_from_in ? l.step[0] : l.step[1];
+    p.rows_dst_step = l.step[1];
+    p.rows_args = only->args;
+  }
 }
 
 void run_stage_chunks(const stage& st, const slot_addresses& at, std::size_t first,

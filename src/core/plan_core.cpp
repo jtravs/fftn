@@ -839,6 +839,18 @@ std::shared_ptr<const plan_core> make_plan_core(const shape_view& shape, const o
 void execute_core(const plan_core& core, std::size_t first, std::size_t count, const void* in,
                   void* out, const workspace& ws) noexcept {
   assert(ws.size() >= core.bytes && "fftn: workspace smaller than plan::workspace_bytes()");
+  if (core.prog.leaf_rows) {
+    // Rows of leaves use no scratch, so they leave any team state in the workspace as it
+    // is, and need no slot_addresses (driver.hpp).
+    assert(first <= core.prog.transforms && count <= core.prog.transforms - first &&
+           "fftn: execute_transforms beyond the batch");
+    assert((!core.in_place || in == out) && "fftn: in-place plan executed with in != out");
+    assert((core.in_place || in != out) && "fftn: out-of-place plan executed with in == out");
+    if (count != 0) {
+      run_leaf_rows(core.prog, first, count, in, out);
+    }
+    return;
+  }
   // The scratch below overlaps any team state the workspace holds: the next team execution
   // sets it up afresh (team_state.hpp).
   const sync_word team = workspace_access::team_word(ws);
@@ -850,11 +862,6 @@ void execute_core(const plan_core& core, std::size_t first, std::size_t count, c
   assert((!core.in_place || in == out) && "fftn: in-place plan executed with in != out");
   assert((core.in_place || in != out) && "fftn: out-of-place plan executed with in == out");
   if (count == 0) {
-    return;
-  }
-  if (core.prog.leaf_rows) {
-    // Rows of leaves use no scratch and need no slot_addresses (driver.hpp).
-    run_leaf_rows(core.prog, first, count, in, out);
     return;
   }
   slot_addresses at{.in = static_cast<const std::byte*>(in), .out = static_cast<std::byte*>(out)};
@@ -869,6 +876,10 @@ void execute_core(const plan_core& core, std::size_t first, std::size_t count, c
     at.block = core.block_elements != 0 ? base + core.offset_block : nullptr;
   }
   run_transforms(core.prog, first, count, at);
+}
+
+void execute_all(const plan_core& core, const void* in, void* out, const workspace& ws) noexcept {
+  execute_core(core, 0, core.prog.transforms, in, out, ws);
 }
 
 std::size_t transform_count(const plan_core& core) noexcept { return core.prog.transforms; }
