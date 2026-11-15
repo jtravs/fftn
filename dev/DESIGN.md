@@ -1428,7 +1428,7 @@ prices them) a cost per unit and a cost per tail, and a cost per pass. For a lin
    leaf limit (experiment X8: 32 on NEON in double, 16 elsewhere): one leaf of radix n.
 2. A length the table overrides takes the table's radices (the lengths where rule 4 was
    measured more than 2 % slower than planner v0 or, since the planner refresh, more than
-   2 % behind the measured winner in every case; 30 and 13 on AVX2).
+   2 % behind the measured winner in every case; 29 and 13 on AVX2).
 3. Otherwise write n = n_s q₁ q₂ … with n_s free of primes above 16 and q₁ ≤ q₂ ≤ … the
    prime factors above 16. Each qᵢ is one generic pass, in ascending order, after the
    codelet passes; if n_s = 1 they are the whole chain. (`rule_radices` returns this

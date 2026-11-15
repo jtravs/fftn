@@ -38,10 +38,12 @@ constexpr std::array<std::size_t, cost_radices> pass_radices{
 // overrides from the campaigns epyc-avx2-smooth and epyc-avx2-long (EPYC 7763, split runs
 // on): the lengths where the costs' choice was more than 2 % behind the measured winner in
 // every case (fit.py --base), less those whose override was more than 2 % slower than the
-// baseline in a case of the Xeon 6240's AVX2 campaigns (xeon-avx2-smooth2, -long).
+// baseline in a case of the Xeon 6240's AVX2 campaigns (xeon-avx2-smooth2, -long), and less
+// 512 (2.16.16): 0.92-0.95 as a row, but the r2c of 1024 x 1024 runs it as 16.16.2 with the
+// pairing fused into the radix-2 pass, 1.05 times as long (EPYC tracking 20261115-041212-cdc2).
 // clang-format off
 // NOLINTBEGIN(readability-trailing-comma): bench/x2/fit.py writes and parses this layout
-constexpr std::array<radix_override, 30> avx2_double_overrides{{
+constexpr std::array<radix_override, 29> avx2_double_overrides{{
     {.n = 27, .radices = {3, 9, 0, 0}},
     {.n = 42, .radices = {2, 3, 7, 0}},
     {.n = 54, .radices = {2, 3, 9, 0}},
@@ -54,7 +56,6 @@ constexpr std::array<radix_override, 30> avx2_double_overrides{{
     {.n = 384, .radices = {2, 16, 12, 0}},
     {.n = 448, .radices = {2, 16, 14, 0}},
     {.n = 490, .radices = {2, 7, 5, 7}},
-    {.n = 512, .radices = {2, 16, 16, 0}},
     {.n = 567, .radices = {9, 9, 7, 0}},
     {.n = 588, .radices = {6, 7, 14, 0}},
     {.n = 675, .radices = {15, 5, 9, 0}},
@@ -126,7 +127,8 @@ constexpr pass_costs avx2_float{
 // Double (C = 4): avx2_float's costs (the nearest C, as before) with the overrides where its
 // choice was more than 2 % behind the measured winner in every case of the length
 // (fit.py --base f64=avx2_float on campaign xeon-avx512-smooth2): mostly a first radix of 8,
-// after which a split run (block 8) starts.
+// after which a split run (block 8) starts. Not 576 (8.12.6, 0.92-0.94 as a row): as the
+// Bluestein convolution of 257 it ran 1.06 times as long (Xeon tracking 20261115-041226-994e).
 // Float (C = 8): fitted by bench/x2/fit.py to the campaigns xeon-avx512-smooth2 (every
 // candidate of the 7-smooth lengths up to 1024), xeon-avx512-big2 (the sequences with radix
 // 32 or 64, multiples of 32 up to 2048) and xeon-avx512-long (the cost estimate's best 20
@@ -139,7 +141,7 @@ constexpr pass_costs avx2_float{
 // unmeasured five-pass choice ran 1.08 times as long (run 20261115-040151-b716).
 // clang-format off
 // NOLINTBEGIN(readability-trailing-comma): bench/x2/fit.py writes and parses this layout
-constexpr std::array<radix_override, 16> avx512_double_overrides{{
+constexpr std::array<radix_override, 15> avx512_double_overrides{{
     {.n = 24, .radices = {4, 6, 0, 0}},
     {.n = 27, .radices = {3, 9, 0, 0}},
     {.n = 140, .radices = {4, 5, 7, 0}},
@@ -147,7 +149,6 @@ constexpr std::array<radix_override, 16> avx512_double_overrides{{
     {.n = 288, .radices = {8, 12, 3, 0}},
     {.n = 320, .radices = {8, 10, 4, 0}},
     {.n = 480, .radices = {8, 12, 5, 0}},
-    {.n = 576, .radices = {8, 12, 6, 0}},
     {.n = 640, .radices = {8, 10, 8, 0}},
     {.n = 648, .radices = {4, 6, 9, 3}},
     {.n = 672, .radices = {8, 12, 7, 0}},
