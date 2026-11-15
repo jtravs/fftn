@@ -1872,9 +1872,12 @@ What the experiments still require of the build:
   run time.
 - **ABI warnings are errors.** With GCC the library is built with `-Werror=psabi`
   (section 14.1).
-- **Its own floating-point flags.** The library sets `-ffp-contract=off`, refuses
-  fast-math, and never inherits the including project's flags. All FMAs in kernels are
-  explicit.
+- **Its own floating-point flags.** The library sets `-fno-fast-math -ffp-contract=off`,
+  refuses fast-math, and never inherits the including project's flags. All FMAs in kernels
+  are explicit. Intel's icpx defaults to a fast model that the headers cannot detect (no
+  `__FAST_MATH__`) and sets flush-to-zero in an optimised `main()`, so an icpx build of
+  FFTN passes `-fno-fast-math` to every target, third-party ones included (experiment
+  X22).
 - **Always optimised.** Unoptimised kernels are 30–60× slower, so the library's kernels
   are built optimised whatever the surrounding project's build type.
 - **Adapters are header-only** (`omp.hpp`, `kokkos.hpp`): they must be compiled against
@@ -1894,7 +1897,8 @@ What the experiments still require of the build:
 ### 14.3 Toolchains and packaging
 
 - C++20, extensions off. GCC 14 and newer; Clang 16 and newer; Apple Clang; clang on the
-  MSVC ABI (clang-cl and clang++ with the MSVC standard library). MSVC's compiler is not
+  MSVC ABI (clang-cl and clang++ with the MSVC standard library); Intel's icpx (2026.1
+  tested, X22: supported, not recommended over GCC or Clang). MSVC's compiler is not
   a target. C++23 library features may be used only behind feature-test macros.
 - CMake 3.25 or newer with presets; `FetchContent`-friendly with an offline override;
   installed package config (`find_package(fftn)`) and pkg-config; all symbols in
@@ -2481,6 +2485,7 @@ to change before a release.
 | 2026-11-14 | Chains on `avx2` and `avx512` (both precisions) end in a split run: their last passes on split codelets in the BL layout, converting at the run's ends; NEON and scalar stay interleaved. A run starts where the copy count reaches `split_block`, `avx512`'s W on both x86 targets (task 1.5, experiment X1) | X1: split runs 0.89 (geomean of their cases) of the interleaved time on the Xeon's `avx512`, 0.87 on its `avx2`, 0.93 on the EPYC, nothing slower than band + 2 %; port-5 uops −12 % at 1024; on the Mac 10–25 % slower. The shared `split_block` keeps the bitwise pair agreeing with the same radices, at the cost of no run on AVX2 where the first radix is 4 (1024 = 4 × 16 × 16) |
 | 2026-11-14 | Leaf limit 32 on NEON in double (C = 1), 16 on every other target and precision; no leaf of 64 (experiment X8) | The leaf of 32 was 16–22 % faster than planner v1's chain on the M5 Max in double; with C > 1 it idles lanes and lost on the Mac and the EPYC; 64 spills and lost everywhere. The Xeon's `avx512` float chain at 32 lost to the leaf only through its own tail problem (X16) |
 | 2026-11-14 | Machine profile from T1 and T5 (task 3.4): split a lone transform from 6144 points on a Zen 3 CCX (the defaults), 8192 on an Apple cluster (`profile_for`, from macOS's topology); mesh groups keep 8192; leftovers keep 8192; at least 1024 points per member; on a CCX, phase hand-off 1100 ns and claim runs of left / members; dispatch, work cost and spin budgets stay provisional | T1/T5 per-field and combined adoption runs on the EPYC, the M5 and the Xeon (numbers in the experiment files); the measured dispatch and work costs made cases slower until the dispatch cost has a per-lane term (18.2, item 22) |
+| 2026-11-15 | Intel's icpx is a supported compiler; FFTN's targets are built with `-fno-fast-math -ffp-contract=off` everywhere, and an icpx build adds `-fno-fast-math` to every target and to the FFTW oracle (experiment X22) | icpx's default model reassociates, drops signed zeros and flushes denormals without defining `__FAST_MATH__`; with only `-ffp-contract=off`, 55 of 1608 tests failed (twiddles 1 ulp off, Parseval, vocabulary references), all pass with the flag. `-fp-model=precise -ffp-contract=off` draws an override warning that `-Werror` makes fatal. Not recommended over GCC or Clang: equal to Clang in double on the Xeon, 3 % behind it on the tracking rows; its float lead (0.80 of Clang on 7-smooth rows) comes from masked partial runs, which the vocabulary can write explicitly |
 
 ---
 

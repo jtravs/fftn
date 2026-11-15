@@ -109,10 +109,18 @@ Xeon 15 % faster in geometric mean (64 points: 0.59 of the time) with identical 
 for divisions and modulos in per-call and per-chunk paths, not only in kernels.
 [X18](experiments/X18-x86-kernels.md).
 
-2.5 **The compiler is rarely the explanation.** FFTN built with Clang 23 and GCC 14/16 was
-within 1 % on x86 after the X18 fixes and within 7 % on NEON (two cases at 1.4 with GCC).
-Test it early, because it is cheap, then look elsewhere.
-[X18](experiments/X18-x86-kernels.md).
+2.5 **The compiler is rarely the explanation for the main loops, but often for tails and
+spills.** FFTN built with Clang 23 and GCC 14/16 was within 1 % on x86 after the X18 fixes
+(tracking rows, mostly powers of two) and within 7 % on NEON (two cases at 1.4 with GCC).
+On the Xeon's 7-smooth rows of 64–1024 points, though, Clang took 0.90 of GCC's time in
+double and 0.84 in float, and Intel's icpx 0.67 in float: element-by-element tail loops
+(fewer copies left than lanes) became masked AVX-512 loads and stores with icpx, partly
+with Clang, and scalar stores into a stack tile followed by a vector load (a
+store-forwarding stall per leg) with GCC; in full 32-point codelets the stack references
+were 139 (icpx), 169 (GCC) and 215 (Clang). Test the compiler early on lengths with tails
+and big codelets too, and when one compiler wins, write what it found (masks, a smaller
+schedule) into the code rather than depending on it.
+[X18](experiments/X18-x86-kernels.md), [X22](experiments/X22-icpx.md).
 
 2.6 **Compiler auto-vectorisation does not replace a hand vocabulary.** `omp simd` on the
 scalar pass loops gave compiler-dependent results, and `-march=native` closed no per-pass
@@ -324,3 +332,12 @@ let failures through twice in the prototype).
 reads of kernel changes found an unscaled single-pass phase (every element wrong for some
 shapes) and missing fused-vs-unfused bit comparisons that the author's tests had missed;
 an exact (`memcmp`) comparison of two paths that should agree is a cheap, strong test.
+
+6.12 **Intel's icpx defaults to fast math without saying so.** Its default model
+reassociates, drops signed zeros, uses approximate reciprocals and flushes denormals, but
+defines no `__FAST_MATH__`, so header guards miss it; and an optimised `main()` it compiles
+turns on FTZ and DAZ for the whole process. `-ffp-contract=off` alone left 55 of 1608 FFTN
+tests failing (twiddles 1 ulp off). Pass `-fno-fast-math` before `-ffp-contract=off`
+(`-fp-model=precise -ffp-contract=off` draws an override warning that `-Werror` makes an
+error), to third-party targets too when their `main()` runs your tests.
+[X22](experiments/X22-icpx.md).

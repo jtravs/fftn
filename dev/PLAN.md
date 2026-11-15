@@ -19,7 +19,9 @@ open problem, see X18/X10/X19). Lessons that generalise are collected in
 In flight (claims): X19 (generator ±i rotations; reviewed, merging after regeneration on
 main), 1.5/X1 (split lowering on x86), 1.6/X3 (radix 32/64 passes; radix 32 wins on AVX-512
 float), X12b (grid thresholds per machine: the grid starts too early on x86); T1/T5 done
-on branch `exp/t1-t5-constants` (threading constants; awaiting review). Small follow-ups recorded: X16's
+on branch `exp/t1-t5-constants` (threading constants; awaiting review). Small follow-ups recorded: masked partial runs in the
+`avx512`/`avx2` vocabularies (X22: icpx's masked tails make float 7-smooth rows 0.67 of GCC's
+time on the Xeon); X16's
 precision split on Cascade Lake (avx512 for double, avx2 for float), X2's refit above 1024.
 
 Done in phase 0 (details in the merge commits and the decision log):
@@ -272,6 +274,7 @@ running, done (with verdict).
 | [X17](experiments/X17-bluestein-threshold.md) | Above which prime does Bluestein beat the generic prime pass, per target? | 2 | done on the Mac: Bluestein from 17 up (threshold 16); x86 to confirm |
 | [X18](experiments/X18-x86-kernels.md) | Why does FFTN trail FFTW on x86 (Xeon, EPYC), and what closes the gap? | 1 | done: driver divisions and a four-line chain fixed (Xeon 1.50 → 1.25 of FFTW, EPYC 1.37 → 1.29); next X10 addressing, radix 32/64, then X1 |
 | [X19](experiments/X19-generator-rotations.md) | Do codelets with fewer multiplications by ±i (the real-coefficient form: one register swap per output pair, radix 16 7 against 19) make x86 faster without slowing NEON? | 1 | done: adopted (x86 0.976 of main: Xeon avx512 0.980, avx2 0.976, EPYC 0.971; Mac 0.991); port-5 uops −4 to −16 % |
+| [X22](experiments/X22-icpx.md) | Intel's icpx: does FFTN build and pass with it, which floating-point flags keep the numerical contract, and is it faster than GCC and Clang on the Xeon? | 1 | done: supported with `-fno-fast-math` (set by CMake); not recommended (Clang's equal in double, 3 % behind on tracking rows); float 0.80 of Clang on 7-smooth rows from masked partial runs, a portable vocabulary follow-up |
 | P1 | Cost-model accuracy: rank agreement with measurement across the catalogue per machine | 2 | planned |
 | P2 | Measurement budget: how many candidates and how long before the choice stops improving | 2 | planned |
 | [T1](experiments/T1-dispatch-wait-costs.md) | Dispatch, wake and wait costs per machine and runtime (libgomp, libomp, Kokkos, pool) | 3 | done: hand-off cost and claim runs adopted on Zen 3; dispatch and work costs wait for a per-lane dispatch term |
