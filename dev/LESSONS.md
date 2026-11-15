@@ -212,6 +212,30 @@ chain pass at 2048 vanished once the radix-16 codelets lost 12 of their 19 swaps
 register file. And a cost table fitted on lengths up to 2048 extrapolates its big-radix
 columns badly: at 4096 it chose 32·4·32, 2–11 % slower than the measured 8·16·32. [X3](experiments/X3-big-radices.md).
 
+4.7 **For tiny transforms the bookkeeping is the transform: interpret once per call and put
+the batch loop inside the kernel.** On the M5 Max an 8-point leaf costs 2.5 ns, while
+walking FFTN's program records and copying the 144-byte argument struct for each
+transform cost about 3.5 ns more, and the call's entry another 1 ns; copying the struct
+alone is about 1.2 ns. Preparing the stages once per call, passing a leaf its addresses
+as arguments (no struct copy at all) and running a batch of rows in one kernel call took
+an 8-point transform from 7.7 to 4.3 ns at batch 1 and from 7.1 to 1.7 ns per transform
+in a batch of 64, a 2-point one from 4.9 to 0.32 ns: rows of 2–16 points in batches of 64
+went from 1.9–17 times NEON FFTW's time to 0.85–1.18 (fbench run 20261115-002244-eba3).
+The loop inside the kernel matters beyond the call: a 32-point leaf took 20 ns per call
+one row at a time but 15 ns per row in one call over 64 rows (constants and saved
+registers set up once). Three pitfalls at this scale: on x86, passing a small struct of pointers by reference right
+after writing it field by field stalls when the callee copies it with wider loads (no
+store forwarding from two 8-byte stores to one 16-byte load): two such stalls were most of
+the 8–11 ns between FFTN's API and a leaf on the Xeon, and passing the two pointers as
+arguments took a 2-point row from 13.1 to 6.6 ns; a hot path that shares a function with
+a cold one pays the cold one's frame (an on-stack array of argument copies cost 6 ns per
+call on the Mac and 2–3 ns of a leaf row on the Xeon until the paths were split); and a
+loop over rows can make the compiler keep every leg address as its own induction variable
+(GCC 14 on AVX-512: 171 instructions per call of an 8-point float leaf against 153 without
+the loop, 7–11 % slower for one row). Measure the levels separately (entry, interpretation,
+kernel through its pointer, kernel in a loop): the harness of
+[X20](experiments/X20-call-overhead.md) does this in a page of code.
+
 ## 5. Threading
 
 5.1 **Synchronisation costs set the smallest row worth splitting.** Spin barrier /
