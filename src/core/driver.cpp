@@ -134,22 +134,13 @@ void run_whole(const stage& s, pass_args& a, const slot_addresses& at) noexcept 
 // for all its transforms and moves the slots by the batch loop's step. Every kernel gets the
 // arguments and units run_records gives it (the whole stage: chunk ends 0 and units), so the
 // bits are the same. The three forms are each the fastest of the ones X20 measured for their
-// case: an array of copies costs about 6 ns more than plain copies at one transform.
-void run_flat(const program& p, std::size_t first, std::size_t count,
-              const slot_addresses& base) noexcept {
+// case: an array of copies costs about 6 ns more than plain copies at one transform. Rows of
+// leaves (program::leaf_rows) take run_leaf_rows instead, kept out of this function: its
+// frame and saved registers cost a leaf row 2-3 ns on the Xeon.
+[[gnu::noinline]] void run_flat(const program& p, std::size_t first, std::size_t count,
+                                const slot_addresses& base) noexcept {
   const std::size_t stages = p.records.size() - p.batch_loops;
   const loop* only = p.batch_loops == 1 ? std::get_if<loop>(&p.records[0]) : nullptr;
-  if (stages == 1 && only != nullptr) {
-    const stage& s = *std::get_if<stage>(&p.records[1]);
-    const auto moves = [](slot x) { return x == slot::in || x == slot::out; };
-    if (s.leaf != nullptr && moves(s.src) && moves(s.dst)) {
-      const slot_addresses at = moved(base, only->step, first);
-      const std::ptrdiff_t src_dist = s.src == slot::in ? only->step[0] : only->step[1];
-      s.leaf(&s.args, source_of(s.src, at), destination_of(s.dst, at), src_dist, only->step[1],
-             count);
-      return;
-    }
-  }
   if (count == 1) {
     const slot_addresses at = transform_addresses(p, first, base);
     for (std::size_t i = p.batch_loops; i < p.records.size(); ++i) {
@@ -181,6 +172,17 @@ void run_flat(const program& p, std::size_t first, std::size_t count,
   }
 }
 
+// Transforms [first, first + count) of rows of leaves (program::leaf_rows): one call.
+void run_leaf_rows(const program& p, std::size_t first, std::size_t count,
+                   const slot_addresses& base) noexcept {
+  const loop& l = *std::get_if<loop>(&p.records[0]);
+  const stage& s = *std::get_if<stage>(&p.records[1]);
+  const slot_addresses at = moved(base, l.step, first);
+  // Only the in and out slots move with the batch; the destination is never the input.
+  const std::ptrdiff_t src_dist = s.src == slot::in ? l.step[0] : l.step[1];
+  s.leaf(&s.args, source_of(s.src, at), destination_of(s.dst, at), src_dist, l.step[1], count);
+}
+
 } // namespace
 
 void mark_flat(program& p) noexcept {
@@ -191,6 +193,11 @@ void mark_flat(program& p) noexcept {
     const stage* st = std::get_if<stage>(&p.records[i]);
     p.flat = p.flat && st != nullptr && !st->moving_twiddles;
   }
+  const auto moves = [](slot x) { return x == slot::in || x == slot::out; };
+  const stage* only = p.flat && stages == 1 && p.batch_loops == 1
+                          ? std::get_if<stage>(&p.records[1])
+                          : nullptr;
+  p.leaf_rows = only != nullptr && only->leaf != nullptr && moves(only->src) && moves(only->dst);
 }
 
 void run_stage_chunks(const stage& st, const slot_addresses& at, std::size_t first,
@@ -227,6 +234,10 @@ slot_addresses transform_addresses(const program& p, std::size_t t,
 
 void run_transforms(const program& p, std::size_t first, std::size_t count,
                     const slot_addresses& base) noexcept {
+  if (p.leaf_rows) {
+    run_leaf_rows(p, first, count, base);
+    return;
+  }
   if (p.flat) {
     run_flat(p, first, count, base);
     return;

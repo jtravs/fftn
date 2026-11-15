@@ -85,6 +85,9 @@ struct program {
   // per call and only moves the slots per transform (driver.cpp, run_flat). Set by
   // mark_flat (driver.hpp).
   bool flat = false;
+  // Flat, one batch loop, and the body one leaf between the caller's arrays: the whole
+  // batch is one call of the leaf (driver.cpp, run_leaf_rows).
+  bool leaf_rows = false;
 };
 
 // The longest body run_flat handles; its arguments live on the stack.
