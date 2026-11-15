@@ -35,3 +35,16 @@ dims = [
   59049, 78125,
 ]
 tiers = ["full"]
+
+# Long rows to beyond the last-level cache: where the chain stops beating the grid.
+[[group]]
+name = "x29-long"
+kind = "c2c"
+dims = [131072, 262144, 1048576, 2097152, 4194304, 1000000, 2000000]
+tiers = ["full"]
+
+[[group]]
+name = "x29-long-real"
+kind = ["r2c", "c2r"]
+dims = [262144, 2097152, 4194304, 2000000]
+tiers = ["full"]
