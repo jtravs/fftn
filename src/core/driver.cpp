@@ -201,9 +201,8 @@ void mark_flat(program& p) noexcept {
     p.flat = p.flat && st != nullptr && !st->moving_twiddles;
   }
   const auto moves = [](slot x) { return x == slot::in || x == slot::out; };
-  const stage* only = p.flat && stages == 1 && p.batch_loops == 1
-                          ? std::get_if<stage>(&p.records[1])
-                          : nullptr;
+  const stage* only =
+      p.flat && stages == 1 && p.batch_loops == 1 ? std::get_if<stage>(&p.records[1]) : nullptr;
   p.leaf_rows = only != nullptr && only->leaf != nullptr && moves(only->src) && moves(only->dst);
 }
 
@@ -241,6 +240,9 @@ slot_addresses transform_addresses(const program& p, std::size_t t,
 
 void run_transforms(const program& p, std::size_t first, std::size_t count,
                     const slot_addresses& base) noexcept {
+  if (count == 0) {
+    return; // forms no address past the batch (the fast paths below would)
+  }
   if (p.leaf_rows) {
     run_leaf_rows(p, first, count, base.in, base.out);
     return;

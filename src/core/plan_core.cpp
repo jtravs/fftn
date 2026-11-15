@@ -398,9 +398,8 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   if (settings.layout != layout_choice::rules) {
     profile.split = settings.layout == layout_choice::split;
   }
-  chain_builder<T> chain(kernels, profile, tables_of<T>(c), settings.chunk_points,
-                         settings.radices, settings.bluestein_above,
-                         fusion_of(settings, c.isa_target));
+  chain_builder<T> chain(kernels, profile, tables_of<T>(c), settings.chunk_points, settings.radices,
+                         settings.bluestein_above, fusion_of(settings, c.isa_target));
   program& p = c.prog;
   const std::size_t r = s.axes.size();
   const auto complex_bytes = static_cast<std::ptrdiff_t>(2 * sizeof(T));
@@ -466,11 +465,11 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     c.axis_notes.push_back("axis 0 (n = " + std::to_string(n) + "): " + (r2c ? "r2c" : "c2r") +
                            " through a half-length complex " + grid.note(real_grid) +
                            (r2c ? ", then a pairing pass" : ", after a pairing pass"));
-    c.strategy_note = std::string("grid for the half-length complex transform (") +
-                      std::to_string(real_grid.phases) +
-                      " phases, each depth-first over blocks of columns" +
-                      (c.block_elements != 0 ? "; an intermediate array in the workspace block" : "") +
-                      "), each transform finished before the next";
+    c.strategy_note =
+        std::string("grid for the half-length complex transform (") +
+        std::to_string(real_grid.phases) + " phases, each depth-first over blocks of columns" +
+        (c.block_elements != 0 ? "; an intermediate array in the workspace block" : "") +
+        "), each transform finished before the next";
   } else if (grid_plan.phases != 0) {
     grid_builder<T> grid(kernels, chain, tables_of<T>(c),
                          settings.grid_fused &&
@@ -506,11 +505,9 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
         chain.r2c_line(c.lengths[r - 1], at(in_view, r - 1), at(out_view, r - 1), c.in_place,
                        r == 1 ? opts.scale : 1.0, st);
     lines(r - 1, in.extent, in_view, out_view, need, std::move(st));
-    c.axis_notes.push_back("axis " + std::to_string(r - 1) +
-                           " (n = " + std::to_string(c.lengths[r - 1]) +
-                           "): " +
-                           chain.real_text(c.lengths[r - 1], true,
-                                           in.stride[r - 1] != 1 || out.stride[r - 1] != 1));
+    c.axis_notes.push_back(
+        "axis " + std::to_string(r - 1) + " (n = " + std::to_string(c.lengths[r - 1]) + "): " +
+        chain.real_text(c.lengths[r - 1], true, in.stride[r - 1] != 1 || out.stride[r - 1] != 1));
     for (std::size_t i = r - 1; i > 0; --i) {
       const std::size_t d = i - 1;
       std::vector<stage> cs;
@@ -563,11 +560,9 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     const std::size_t need =
         chain.c2r_line(c.lengths[r - 1], at(src, r - 1), at(out_view, r - 1), opts.scale, st);
     lines(r - 1, out.extent, src, out_view, need, std::move(st));
-    c.axis_notes.push_back("axis " + std::to_string(r - 1) +
-                           " (n = " + std::to_string(c.lengths[r - 1]) +
-                           "): " +
-                           chain.real_text(c.lengths[r - 1], false,
-                                           src.stride[r - 1] != 1 || out.stride[r - 1] != 1));
+    c.axis_notes.push_back(
+        "axis " + std::to_string(r - 1) + " (n = " + std::to_string(c.lengths[r - 1]) + "): " +
+        chain.real_text(c.lengths[r - 1], false, src.stride[r - 1] != 1 || out.stride[r - 1] != 1));
   }
   for (std::size_t b = 0; b < p.batch_loops; ++b) {
     std::get<loop>(p.records[b]).body_end = static_cast<std::uint32_t>(p.records.size());
@@ -758,6 +753,9 @@ void execute_core(const plan_core& core, std::size_t first, std::size_t count, c
          "fftn: execute_transforms beyond the batch");
   assert((!core.in_place || in == out) && "fftn: in-place plan executed with in != out");
   assert((core.in_place || in != out) && "fftn: out-of-place plan executed with in == out");
+  if (count == 0) {
+    return;
+  }
   if (core.prog.leaf_rows) {
     // Rows of leaves use no scratch and need no slot_addresses (driver.hpp).
     run_leaf_rows(core.prog, first, count, in, out);
