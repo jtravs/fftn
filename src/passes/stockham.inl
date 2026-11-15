@@ -55,9 +55,10 @@ FFTN_FORCE_INLINE void store_tiled(T* y, const cv<T>* v, std::size_t valid) {
 // what is loaded. src: any stride when C == 1, else 1; dst: scratch, stride 1. Reads src,
 // src_stride, m, twiddles, scale, in_factor.
 template <class T, std::size_t R, int Sign, edge_op InOp>
-void grouped_pass(const pass_args* a, std::size_t first, std::size_t last) {
-  const T* x = static_cast<const T*>(a->src);
-  T* y = static_cast<T*>(a->dst);
+void grouped_pass(const pass_args* a, const void* src, void* dst, std::size_t first,
+                  std::size_t last) {
+  const T* x = static_cast<const T*>(src);
+  T* y = static_cast<T*>(dst);
   const std::ptrdiff_t xs = 2 * a->src_stride;
   const std::size_t m = a->m;
   const std::size_t mpad = (m + C<T> - 1) / C<T> * C<T>;
@@ -169,9 +170,10 @@ FFTN_FORCE_INLINE auto lane_output(const pass_args* a, T* yp, std::ptrdiff_t leg
 // s, twiddles, scale, out_factor, and in_factor or factor_copies when sharing.
 template <class T, std::size_t R, int Sign, bool Twiddled, edge_op OutOp,
           factor_sharing Share = factor_sharing::none>
-void lane_pass(const pass_args* a, std::size_t first, std::size_t last) {
-  const T* x = static_cast<const T*>(a->src);
-  T* y = static_cast<T*>(a->dst);
+void lane_pass(const pass_args* a, const void* src, void* dst, std::size_t first,
+               std::size_t last) {
+  const T* x = static_cast<const T*>(src);
+  T* y = static_cast<T*>(dst);
   const std::ptrdiff_t ys = 2 * a->dst_stride;
   const std::size_t m = a->m;
   const std::size_t s = a->s;
@@ -231,7 +233,7 @@ void lane_pass(const pass_args* a, std::size_t first, std::size_t last) {
 // and any strides work; every load precedes every store, so src may be dst (in place).
 // Leaves are called with their lines' addresses (leaf_fn, passes/pass_args.hpp): line u at
 // src + u src_dist, dst + u dst_dist bytes, each with the same arithmetic. Reads
-// src_stride, dst_stride, scale, in_factor, out_factor; not src or dst.
+// src_stride, dst_stride, scale, in_factor, out_factor.
 template <class T, std::size_t R, int Sign, edge_op InOp, edge_op OutOp>
 void leaf_lines(const pass_args* a, const void* src, void* dst, std::ptrdiff_t src_dist,
                 std::ptrdiff_t dst_dist, std::size_t count) {

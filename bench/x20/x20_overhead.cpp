@@ -11,11 +11,11 @@
 //   driver  run_transforms with the slot addresses prepared once (the program's
 //           interpretation: batch loops, records, the stage's pass_args copy, chunk ends);
 //   kernel  each stage's kernel called directly per transform through its function
-//           pointer, with pass_args prepared once and only src and dst set per call (the
-//           floor of any program that calls kernels one transform at a time);
+//           pointer, on the stage's own arguments (the floor of any program that calls
+//           kernels one transform at a time);
 //   copy    the same with each pass stage's pass_args copied per transform, as the driver
-//           does (X28: kernel - copy is what passing a pass_fn its addresses as arguments
-//           would save; driver - copy the rest of the interpretation);
+//           did before X28 gave passes their addresses as arguments (copy - kernel is what
+//           that saved);
 //   once    a leaf body's kernel called once per transform with nothing else: only the
 //           loop around the indirect call.
 //
@@ -34,7 +34,6 @@
 #include <fftn/fftn.hpp>
 
 #include <algorithm>
-#include <array>
 #include <chrono>
 #include <complex>
 #include <cstddef>
@@ -175,22 +174,15 @@ void run_case(std::size_t n, std::size_t batch, int reps, double ms, fftn::isa i
     }
     body.push_back(st);
   }
-  std::vector<d::pass_args> args;
-  args.reserve(body.size());
-  for (const d::stage* st : body) {
-    args.push_back(st->args);
-  }
   const auto dist = static_cast<std::ptrdiff_t>(n * sizeof(C));
-  // A stage's kernel on the slots `here`: a leaf with the addresses, a pass through args.
+  // A stage's kernel on the slots `here`, on the stage's own arguments.
   const auto call = [&](std::size_t k, const d::slot_addresses& here) {
     const d::stage& st = *body[k];
     if (st.leaf != nullptr) {
       st.leaf(&st.args, slot_src(st.src, here), slot_dst(st.dst, here), 0, 0, 1);
       return;
     }
-    args[k].src = slot_src(st.src, here);
-    args[k].dst = slot_dst(st.dst, here);
-    st.run(&args[k], 0, st.units);
+    st.run(&st.args, slot_src(st.src, here), slot_dst(st.dst, here), 0, st.units);
   };
   report("kernel", time_ns(
                        [&] {
@@ -214,35 +206,8 @@ void run_case(std::size_t n, std::size_t batch, int reps, double ms, fftn::isa i
                              call(k, here);
                              continue;
                            }
-                           d::pass_args a = st.args;
-                           a.src = slot_src(st.src, here);
-                           a.dst = slot_dst(st.dst, here);
-                           st.run(&a, 0, st.units);
-                         }
-                         here.in += dist;
-                         here.out += dist;
-                       }
-                     },
-                     batch, reps, ms));
-  // As copy, with every stage's arguments copied before the first stage runs (X28: whether
-  // the cost is the copy or its store-to-load forwarding into the kernel).
-  std::array<d::pass_args, d::flat_stages_max> pre{};
-  report("prep", time_ns(
-                     [&] {
-                       d::slot_addresses here = at;
-                       for (std::size_t t = 0; t < batch; ++t) {
-                         for (std::size_t k = 0; k < body.size(); ++k) {
-                           pre[k] = body[k]->args;
-                           pre[k].src = slot_src(body[k]->src, here);
-                           pre[k].dst = slot_dst(body[k]->dst, here);
-                         }
-                         for (std::size_t k = 0; k < body.size(); ++k) {
-                           const d::stage& st = *body[k];
-                           if (st.leaf != nullptr) {
-                             call(k, here);
-                             continue;
-                           }
-                           st.run(&pre[k], 0, st.units);
+                           const d::pass_args a = st.args;
+                           st.run(&a, slot_src(st.src, here), slot_dst(st.dst, here), 0, st.units);
                          }
                          here.in += dist;
                          here.out += dist;

@@ -33,9 +33,10 @@ template <int Write> FFTN_FORCE_INLINE void prefetch_bytes(const void* p, std::s
 // each other while a pass works on them (experiment X12). Reads src, dst, src_stride,
 // dst_stride, s, scale.
 template <class T, edge_op OutOp>
-void block_copy(const pass_args* a, std::size_t first, std::size_t last) {
-  const T* x = static_cast<const T*>(a->src);
-  T* y = static_cast<T*>(a->dst);
+void block_copy(const pass_args* a, const void* src, void* dst, std::size_t first,
+                std::size_t last) {
+  const T* x = static_cast<const T*>(src);
+  T* y = static_cast<T*>(dst);
   const std::ptrdiff_t xs = 2 * a->src_stride;
   const std::ptrdiff_t ys = 2 * a->dst_stride;
   const std::size_t cols = a->s;
@@ -71,9 +72,10 @@ void block_copy(const pass_args* a, std::size_t first, std::size_t last) {
 // within a column tile, transposed in registers so that every store is C adjacent elements
 // of one row of y. m and s are multiples of C. Reads src, dst, m, s, roots, twiddles.
 template <class T, int Sign>
-void twiddle_transpose(const pass_args* a, std::size_t first, std::size_t last) {
-  const T* z = static_cast<const T*>(a->src);
-  T* y = static_cast<T*>(a->dst);
+void twiddle_transpose(const pass_args* a, const void* src, void* dst, std::size_t first,
+                       std::size_t last) {
+  const T* z = static_cast<const T*>(src);
+  T* y = static_cast<T*>(dst);
   const T* local = static_cast<const T*>(a->roots);
   const T* rows = static_cast<const T*>(a->twiddles);
   const std::size_t m = a->m;
@@ -111,9 +113,10 @@ void twiddle_transpose(const pass_args* a, std::size_t first, std::size_t last) 
 // for Sign = +1); the stage advances the twiddles per column c (stage::moving_twiddles).
 // Reads src, dst, src_stride, dst_stride, s, twiddles.
 template <class T, int Sign>
-void twiddle_scatter(const pass_args* a, std::size_t first, std::size_t last) {
-  const T* x = static_cast<const T*>(a->src);
-  T* y = static_cast<T*>(a->dst);
+void twiddle_scatter(const pass_args* a, const void* src, void* dst, std::size_t first,
+                     std::size_t last) {
+  const T* x = static_cast<const T*>(src);
+  T* y = static_cast<T*>(dst);
   const T* w = static_cast<const T*>(a->twiddles);
   const std::ptrdiff_t xs = 2 * a->src_stride;
   const std::ptrdiff_t ys = 2 * a->dst_stride;
@@ -164,9 +167,10 @@ template <class T, int Sign> struct row_twiddled_out {
 // advanced per column by the stage, stage::moving_twiddles). Reads src, dst, m, s, the
 // strides and columns, twiddles, scale.
 template <class T, std::size_t R, int Sign, bool Twiddled, edge_op InOp, int Out>
-void phase_pass(const pass_args* a, std::size_t first, std::size_t last) {
-  const T* x = static_cast<const T*>(a->src);
-  T* y = static_cast<T*>(a->dst);
+void phase_pass(const pass_args* a, const void* src, void* dst, std::size_t first,
+                std::size_t last) {
+  const T* x = static_cast<const T*>(src);
+  T* y = static_cast<T*>(dst);
   const std::size_t m = a->m;
   const std::size_t s = a->s;
   const std::size_t blocks = s / C<T>;

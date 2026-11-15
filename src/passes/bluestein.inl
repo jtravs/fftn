@@ -36,9 +36,10 @@ template <class T> FFTN_FORCE_INLINE cv<T> zeros() {
 // to what is loaded. src: any stride when C == 1, else 1; dst: scratch, stride 1, not src.
 // Reads src, dst, src_stride, n, m, s, twiddles, scale, in_factor.
 template <class T, edge_op InOp, bool Shared>
-void bluestein_in(const pass_args* a, std::size_t first, std::size_t last) {
-  const T* x = static_cast<const T*>(a->src);
-  T* z = static_cast<T*>(a->dst);
+void bluestein_in(const pass_args* a, const void* src, void* dst, std::size_t first,
+                  std::size_t last) {
+  const T* x = static_cast<const T*>(src);
+  T* z = static_cast<T*>(dst);
   const std::ptrdiff_t xs = 2 * a->src_stride;
   const std::size_t data = a->n;
   const std::size_t total = a->m * a->s;
@@ -94,9 +95,10 @@ void bluestein_in(const pass_args* a, std::size_t first, std::size_t last) {
 // before it is written, at the same index). Reads src, dst, dst_stride, n, s, twiddles,
 // scale, out_factor.
 template <class T, edge_op OutOp, bool Shared>
-void bluestein_out(const pass_args* a, std::size_t first, std::size_t last) {
-  const T* z = static_cast<const T*>(a->src);
-  T* y = static_cast<T*>(a->dst);
+void bluestein_out(const pass_args* a, const void* src, void* dst, std::size_t first,
+                   std::size_t last) {
+  const T* z = static_cast<const T*>(src);
+  T* y = static_cast<T*>(dst);
   const std::ptrdiff_t ys = 2 * a->dst_stride;
   const std::size_t data = a->n;
   const T* chirp = static_cast<const T*>(a->twiddles);

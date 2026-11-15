@@ -41,7 +41,7 @@ inline constexpr std::size_t moving_slots = 4; // in, out, block, twiddles
 
 struct stage {
   pass_fn run = nullptr; // the kernel, or for a leaf null and `leaf` set
-  pass_args args;        // src and dst are filled in by the driver from the slots
+  pass_args args;        // the kernel's src and dst come from the slots, at execution
   slot src = slot::in;
   slot dst = slot::out;
   std::size_t units = 0;    // the kernel's own units: blocks of butterflies or copies, a line,

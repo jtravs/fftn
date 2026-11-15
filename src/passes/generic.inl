@@ -60,9 +60,10 @@ FFTN_FORCE_INLINE void generic_run(const In& in, const Out& out, std::size_t r, 
 // any stride when C == 1, else 1; the source must not overlap the destination. Reads src,
 // dst, src_stride, dst_stride, radix, m, s, twiddles, roots, scale, in_factor, out_factor.
 template <class T, int Sign, edge_op InOp, edge_op OutOp>
-void generic_pass(const pass_args* a, std::size_t first, std::size_t last) {
-  const T* x = static_cast<const T*>(a->src);
-  T* y = static_cast<T*>(a->dst);
+void generic_pass(const pass_args* a, const void* src, void* dst, std::size_t first,
+                  std::size_t last) {
+  const T* x = static_cast<const T*>(src);
+  T* y = static_cast<T*>(dst);
   const std::ptrdiff_t xs = 2 * a->src_stride;
   const std::ptrdiff_t ys = 2 * a->dst_stride;
   const std::size_t r = a->radix;
@@ -130,9 +131,10 @@ void generic_pass(const pass_args* a, std::size_t first, std::size_t last) {
 // read or write the caller's stride (src/strategies/chain.cpp). Reads src, dst, src_stride,
 // dst_stride, scale, in_factor, out_factor.
 template <class T, edge_op InOp, edge_op OutOp>
-void copy_pass(const pass_args* a, std::size_t first, std::size_t last) {
-  const T* x = static_cast<const T*>(a->src);
-  T* y = static_cast<T*>(a->dst);
+void copy_pass(const pass_args* a, const void* src, void* dst, std::size_t first,
+               std::size_t last) {
+  const T* x = static_cast<const T*>(src);
+  T* y = static_cast<T*>(dst);
   const std::ptrdiff_t xs = 2 * a->src_stride;
   const std::ptrdiff_t ys = 2 * a->dst_stride;
   if constexpr (InOp == edge_op::none && OutOp == edge_op::none) {
