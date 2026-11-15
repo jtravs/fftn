@@ -76,6 +76,39 @@ untouched.
 
 No switch: the arms are commits, so `dev/KNOBS.toml` is unchanged.
 
+### Amendment (2026-11-15, written after B's first runs and before B3's runs)
+
+B as first written failed the rule on the Xeon `avx512` with GCC 14 (run
+20261115-081316-fb77, Results): 63 cases slower than A beyond the band, up to 1.09, most
+of them lengths with no partial unit at all (double 128 = 8 × 16, 512, 1024; float 320,
+640, 768, 960). Every one runs a grouped pass with R a multiple of C. Two causes, found
+before any run of the fixed arms (perf, disassembly and a 22-case probe, Results):
+
+1. B's last-unit route for R a multiple of C looped `store_transposed` to the runtime
+   `valid`, indexing the leg registers `v[R]` at run time; `v` is one array for both
+   branches of the unit loop, so the compiler kept it in memory. Clang 23 suffered most
+   (probe: B 1.16–1.46 of A at double 320, 448, 512 and float 128, 320); GCC's whole-unit
+   path kept `v` in registers. Fix: constant loop bounds with `valid` tested inside.
+2. With the partial units' masked code inlined in the loops over units, the compilers
+   hoisted its set-up (masks, a pointer per leg) into each pass's prologue and lost
+   registers in the loop over whole units. GCC 14: 4 % more instructions per transform at
+   double 128 (perf), the lane pass's loop moving pointers through vector registers; Clang
+   23: the grouped radix-8 float pass's set-up grew from 80 to 350 instructions, so with
+   fix 1 alone (B2, 2fddd8d) float 128 was still 1.31 of A. Fix: on the masked targets the
+   last unit of a grouped pass and the partial block of a lane pass are one `noinline`
+   call each, taking pointers and integers; NEON and scalar keep main's inline tile.
+
+- **B3** (7c3c531, on B2): B with both fixes.
+- **T3** (6c9a8e1, on B3) and **P3** (534b9e6, on T3): T and P replayed on B3, otherwise
+  unchanged (T's padded store of the last unit moves into the outlined function).
+
+The decision rule applies to B3, T3 and P3 in place of B, T and P, word for word, on new
+runs of A against them with the Method's cases, machines and compilers. B, T and P as first
+written are judged on the runs already made with them and cannot be adopted whatever B3's
+result. B2, T2 and P2 (2fddd8d, ae43de2, d8fa8d8) were submitted for timing and cancelled
+when the probe showed fix 1 insufficient; they are not judged. The branch merges B2–P2 and
+then B3–P3, so its head carries both fixes.
+
 ## Method
 
 - Cases: (1) X22's run 2 set, X2's catalogue at every 7-smooth length 64–1024, batch 1,
@@ -140,6 +173,11 @@ $R submit epyc A=fftn:$A+ISA=avx2 B=fftn:$B+ISA=avx2 T=fftn:$T+ISA=avx2 P=fftn:$
 $R submit epyc A=fftn:$A+ISA=avx2 B=fftn:$B+ISA=avx2 T=fftn:$T+ISA=avx2 P=fftn:$P+ISA=avx2 \
   -- --tier tracking --budget 10800
 ```
+
+The amendment's runs are the same eight Xeon jobs and two EPYC jobs with
+`B3=fftn:7c3c531`, `T3=fftn:6c9a8e1` and `P3=fftn:534b9e6` in place of B, T and P (job
+names `x23b3-{xeon,xclang}-{x2,trk}-{512,256}` and `x23b3-epyc-{x2,trk}`, all submitted at
+once, Slurm `-c 8`, shared).
 
 ### Checks made before timing (Mac, M5 Max)
 
