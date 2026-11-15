@@ -234,16 +234,18 @@ TEST(Rules, MeasuredExamples) {
   // Overrides.
   EXPECT_EQ(r(42, f64), (v{2, 3, 7}));
   EXPECT_EQ(r(490, f64), (v{2, 7, 5, 7}));
-  EXPECT_EQ(r(700, f32), (v{4, 7, 5, 5}));
+  EXPECT_EQ(r(700, f32), (v{4, 5, 5, 7}));
   EXPECT_EQ(r(4096, f64), (v{8, 8, 8, 8}));      // experiment X18
-  EXPECT_EQ(r(16384, f64), (v{8, 8, 16, 16}));
+  EXPECT_EQ(r(16384, f64), (v{8, 16, 16, 8}));   // the planner refresh
+  EXPECT_EQ(r(3000, f64), (v{8, 5, 5, 15}));
+  EXPECT_EQ(r(3600, f32), (v{16, 15, 15}));
   // Primes above the codelets go last (the chain makes them a Bluestein stage).
   EXPECT_EQ(r(34, f64), (v{2, 17}));
 }
 
 // The planner refresh (experiment X2, Xeon Gold 6240): AVX-512 in double (C = 4) has
-// avx2_float's costs, so its choice is AVX2's at C = 4 except at its own overrides; in float
-// (C = 8) its own fitted costs. And measured winners each was given.
+// avx2_float's costs, so its choice is AVX2's at C = 4 except at either table's overrides;
+// in float (C = 8) its own fitted costs. And measured winners each was given.
 TEST(Rules, Avx512Tables) {
   using fftn::detail::target;
   using v = std::vector<std::size_t>;
@@ -253,8 +255,9 @@ TEST(Rules, Avx512Tables) {
   EXPECT_NE(f64.costs, avx2.costs);
   EXPECT_NE(f32.costs, avx2.costs);
   for (std::size_t n = 1; n <= 20000; ++n) {
-    const bool own = std::ranges::any_of(f64.costs->overrides,
-                                         [n](const auto& o) { return o.n == n; });
+    const auto at_n = [n](const auto& o) { return o.n == n; };
+    const bool own = std::ranges::any_of(f64.costs->overrides, at_n) ||
+                     std::ranges::any_of(avx2.costs->overrides, at_n);
     if (!own) {
       EXPECT_EQ(fftn::detail::rule_radices(n, f64), fftn::detail::rule_radices(n, avx2)) << n;
     }

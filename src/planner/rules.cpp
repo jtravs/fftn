@@ -30,21 +30,60 @@ constexpr std::array<std::size_t, cost_radices> pass_radices{2,  3,  4,  5,  6, 
 // so their columns are radix 10's and 12's scaled by the codelets' operation counts.
 // The overrides are the lengths where the costs' choice was more than 2 % slower than
 // planner v0 in the refinement; each is the measured winner, which no batch of that
-// precision measured slower than v0. 4096 and 16384 lie beyond the fit, where its radix-16
-// passes (18 live values in 16 registers) lose: experiment X18 measured 8.8.8.8 at 0.75 of
-// the fitted 4.8.8.16 and 8.8.16.16 at 0.84 of 4.16.16.16 (EPYC 7763, one row), until X2's
-// campaign over the longer lengths replaces them.
-constexpr std::array<radix_override, 6> avx2_double_overrides{{
+// precision measured slower than v0. 4096 lies beyond the fit, where its radix-16 passes
+// (18 live values in 16 registers) lose: experiment X18 measured 8.8.8.8 at 0.75 of the
+// fitted 4.8.8.16 (EPYC 7763, one row).
+// The planner refresh (X2, "Refit after X1, X3, X18 and X19") kept these costs and added
+// overrides from the campaigns epyc-avx2-smooth and epyc-avx2-long (EPYC 7763, split runs
+// on): the lengths where the costs' choice was more than 2 % behind the measured winner in
+// every case (fit.py --base), less those whose override was more than 2 % slower than the
+// baseline in a case of the Xeon 6240's AVX2 campaigns (xeon-avx2-smooth2, -long).
+constexpr std::array<radix_override, 30> avx2_double_overrides{{
+    {.n = 27, .radices = {3, 9, 0, 0}},
     {.n = 42, .radices = {2, 3, 7, 0}},
+    {.n = 54, .radices = {2, 3, 9, 0}},
+    {.n = 63, .radices = {7, 9, 0, 0}},
     {.n = 70, .radices = {2, 5, 7, 0}},
+    {.n = 168, .radices = {12, 14, 0, 0}},
+    {.n = 216, .radices = {2, 12, 9, 0}},
+    {.n = 256, .radices = {2, 16, 8, 0}},
     {.n = 350, .radices = {2, 5, 5, 7}},
+    {.n = 384, .radices = {2, 16, 12, 0}},
+    {.n = 448, .radices = {2, 16, 14, 0}},
     {.n = 490, .radices = {2, 7, 5, 7}},
+    {.n = 512, .radices = {2, 16, 16, 0}},
+    {.n = 567, .radices = {9, 9, 7, 0}},
+    {.n = 588, .radices = {6, 7, 14, 0}},
+    {.n = 675, .radices = {15, 5, 9, 0}},
+    {.n = 700, .radices = {10, 5, 14, 0}},
+    {.n = 768, .radices = {4, 16, 12, 0}},
+    {.n = 896, .radices = {4, 16, 14, 0}},
+    {.n = 1536, .radices = {6, 16, 16, 0}},
+    {.n = 1920, .radices = {10, 16, 12, 0}},
+    {.n = 2000, .radices = {8, 10, 5, 5}},
+    {.n = 2400, .radices = {10, 15, 16, 0}},
+    {.n = 3000, .radices = {8, 5, 5, 15}},
     {.n = 4096, .radices = {8, 8, 8, 8}},
-    {.n = 16384, .radices = {8, 8, 16, 16}},
+    {.n = 4800, .radices = {8, 12, 5, 10}},
+    {.n = 6000, .radices = {8, 10, 5, 15}},
+    {.n = 8192, .radices = {8, 8, 16, 8}},
+    {.n = 12000, .radices = {8, 10, 15, 10}},
+    {.n = 16384, .radices = {8, 16, 16, 8}},
 }};
-constexpr std::array<radix_override, 2> avx2_float_overrides{{
+constexpr std::array<radix_override, 13> avx2_float_overrides{{
+    {.n = 90, .radices = {9, 10, 0, 0}},
     {.n = 140, .radices = {4, 5, 7, 0}},
-    {.n = 700, .radices = {4, 7, 5, 5}},
+    {.n = 240, .radices = {4, 6, 10, 0}},
+    {.n = 336, .radices = {4, 12, 7, 0}},
+    {.n = 486, .radices = {9, 9, 6, 0}},
+    {.n = 560, .radices = {4, 10, 14, 0}},
+    {.n = 567, .radices = {9, 9, 7, 0}},
+    {.n = 700, .radices = {4, 5, 5, 7}},
+    {.n = 3600, .radices = {16, 15, 15, 0}},
+    {.n = 4800, .radices = {8, 10, 4, 15}},
+    {.n = 7200, .radices = {12, 4, 10, 15}},
+    {.n = 8192, .radices = {8, 8, 16, 8}},
+    {.n = 12000, .radices = {16, 5, 15, 10}},
 }};
 
 constexpr pass_costs avx2_double{

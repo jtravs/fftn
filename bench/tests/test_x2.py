@@ -256,7 +256,7 @@ class Fit(unittest.TestCase):
     def test_search_is_the_planners(self):
         """fit.py's port of rule_radices on rules.cpp's AVX2 tables gives the recorded
         radices (tests/core/data/rule_radices.txt) for C = 2 and C = 4."""
-        self.assertEqual(len(self.tables["avx2_double"].overrides), 6)
+        self.assertEqual(len(self.tables["avx2_double"].overrides), 30)
         path = search.REPO / "tests" / "core" / "data" / "rule_radices.txt"
         checked = 0
         for line in path.read_text().splitlines():
