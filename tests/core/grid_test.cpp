@@ -306,9 +306,9 @@ TEST(Grid, ChainKeepsLengthsThatAreNotPowersOfTwo) {
         fftn::detail::view_of(fftn::rows_c2c<double>(n, 1, fftn::direction::forward)),
         fftn::options(), s);
   };
-  EXPECT_FALSE(is_grid(*plan(64 * 45)));  // part 64
-  EXPECT_TRUE(is_grid(*plan(128 * 45)));  // part 128
-  EXPECT_TRUE(is_grid(*plan(4096)));      // a power of two
+  EXPECT_FALSE(is_grid(*plan(64 * 45))); // part 64
+  EXPECT_TRUE(is_grid(*plan(128 * 45))); // part 128
+  EXPECT_TRUE(is_grid(*plan(4096)));     // a power of two
   s.profile.chain_mixed_bytes = 128 * 45 * 16;
   EXPECT_FALSE(is_grid(*plan(128 * 45))); // within chain_mixed_bytes
   EXPECT_TRUE(is_grid(*plan(256 * 45)));

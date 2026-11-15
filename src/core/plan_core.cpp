@@ -318,8 +318,8 @@ line_edges c2c_edges(const options& opts, const build_settings& settings, bool f
 // Whether a complex row of n of one axis is a grid (DESIGN.md 8.5, experiment X12), and
 // its split: beyond the profile's grid_min_bytes (and, for a length that is not a power of
 // two, outside its chain_part_bytes and chain_mixed_bytes, X29) or when forced, if the row
-// is contiguous on both sides, carries no edge factor (the grid applies only the scale, on its output or,
-// with build_settings::scale_on_input, its input), has no forced radices for its whole
+// is contiguous on both sides, carries no edge factor (the grid applies only the scale, on its
+// output or, with build_settings::scale_on_input, its input), has no forced radices for its whole
 // length and has a split whose phases are codelet chains. The row is a c2c row or the
 // half-length complex transform of a real row of 2n (DESIGN.md 9.1).
 template <class T>
