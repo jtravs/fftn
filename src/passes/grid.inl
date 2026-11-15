@@ -23,7 +23,9 @@ inline constexpr std::size_t rows_ahead = 8;
 // eight rows asked for ahead evict the scratch block the lane passes read next. Without the
 // prefetch the long rows took 0.83-0.97 of the time (rows of 2^16 to 2^20, mixed 46080 and
 // 100000, r2c and c2r). The Xeon's avx512 rows (1.16-1.22 slower at 2^20 and 2^22 without
-// it) and the Mac's (1.07-1.19) keep it.
+// it) and the Mac's (1.07-1.19) keep it. The effect belongs to the core, not the target:
+// the Xeon under avx2 also lost without it (1.14-1.20 at 2^20 and 2^22), so this follows the
+// measured release machine of each target until the profile can tell the cores apart.
 inline constexpr bool copies_prefetch = id != target::avx2;
 
 // Asks for the `bytes` bytes at p, to read (Write = 0) or to write (1).

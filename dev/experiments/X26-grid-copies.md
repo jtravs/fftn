@@ -195,11 +195,21 @@ A check of arm C's program on the Xeon under `ISA=avx2` and a tracking-tier run 
   Results are bit-identical.
 - Wider blocks and fused phases were not measured on x86; on the Mac both lose.
 
+**The effect belongs to the core, not the target.** The Xeon under `ISA=avx2` (run
+20261115-210745-6a56, 66 quiet rounds, band ±1.00 %) loses without the prefetch: target
+geomean 1.042 [1.040, 1.044], 2²⁰ 1.14, 2²² 1.20, 46080 and 100000 1.05, real 2²⁰
+1.05–1.07. The gate follows each target's measured release machine (`avx2`: the EPYC;
+an Intel processor runs `avx512` where it has it), so an Intel core without AVX-512 (client
+parts, some cloud shapes) would lose up to 20 % on rows of 2²⁰–2²² points. Keying the
+switch to the core needs a vendor or core signal in the machine profile, which FFTN does
+not read yet (`profile_for` sees only the cache topology, and a Zen CCX and an Intel ring
+look alike there): that is a decision for the maintainer (keep the target gate, or revert
+until the profile can tell them apart).
+
 Unverified at the time of writing: the tracking tier of arm C on the EPYC (submitted:
 `fbench_remote.py submit epyc A=fftn:37582e5 C=fftn:5772cc4 W=fftw -- --tier tracking
---budget 3600`) and `ISA=avx2` on the Xeon (`... submit xeon A=fftn:37582e5+ISA=avx2
-A0=fftn:c30ca97+ISA=avx2 W=fftw -- --tier tracking --filter <targets> --budget 1800`): if
-Intel's AVX2 rows want the prefetch, the switch belongs to the core, not the target.
+--budget 3600`); only grid plans run the changed code, and on the EPYC those are the
+target cases and the in-place 65536 rows.
 
 What it leaves for lead 1: the copies' real cost on x86 is L1 set conflicts, which no
 loop form removes. Next: rows that are not a multiple of 4 KiB apart (a padded work
