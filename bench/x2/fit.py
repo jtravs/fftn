@@ -4,7 +4,7 @@
 """Experiment X2's table fit: planner v1's pass costs per C from search campaigns.
 
     fit.py [--out-dir D] --name NAME[,NAME...] [--isa T] [--table PREFIX] [--out FILE]
-           [--compare f64=avx2_double,f32=avx2_float] [--within 0.02]
+           [--compare f64=avx2_double,f32=avx2_float] [--within 0.02] [--split]
 
 Reads the campaigns' screening and refinement runs (bench-out/campaigns/x2-NAME.json and
 bench-out/runs/), fits one cost table per precision to every candidate's median paired log
@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import functools
 import math
 import re
 import sys
@@ -51,7 +52,11 @@ COLUMN = {r: i for i, r in enumerate(RADICES)}
 TAIL0 = KINDS * NR  # features: units, then tails, then passes, then the constant
 PASS = 2 * KINDS * NR
 CONST = PASS + 1
-NF = CONST + 1
+# --split (experiment X1's split runs priced, a table variant under test): units of the
+# middle and last passes of a split run, and its conversions per point.
+SPLIT0 = CONST + 1
+CONVERT = SPLIT0 + 2 * NR
+NF = CONVERT + 1
 FIXED = 1 * NR + COLUMN[4]  # the middle radix-4 unit sets the scale
 FLOOR = 0.4
 LOSS_SCALE = 0.05
@@ -152,15 +157,41 @@ def merge(cases: list[Case]) -> list[Case]:
 # ---- The model (DESIGN.md 11.2 rule 4) -----------------------------------------------------
 
 
+# The copies from which a split run may start (src/isa/vocab_*.inl split_block: avx512's W on
+# both x86 targets), per precision; targets without split runs are absent.
+SPLIT_BLOCK = {"avx2": (8, 16), "avx512": (8, 16)}
+
+
+def split_from(seq: radices.Sequence, block: int) -> int:
+    """strategies/chain.cpp's split_from for a contiguous line: the first pass of the split run,
+    or len(seq) when there is none."""
+    passes = len(seq)
+    if not block or passes < 3 or not codelet_only(seq):
+        return passes
+    s, start = seq[0], passes
+    for i in range(1, passes):
+        if s % block == 0:
+            start = i
+            break
+        s *= seq[i]
+    if passes - start < 2 or any(r > LEAF for r in seq[start:]):
+        return passes
+    return start
+
+
 def codelet_only(seq: radices.Sequence) -> bool:
     return all(r in COLUMN for r in seq)
 
 
-def features(seq: radices.Sequence, lanes: int) -> dict[int, float]:
+def features(seq: radices.Sequence, lanes: int, block: int = 0) -> dict[int, float]:
     """Rule 4's counts of a sequence of codelet radices: units and tails per kind and radix,
-    passes, and the constant per transform."""
+    passes, and the constant per transform; with a split block, a split run's passes in
+    their own columns and its conversions (n / C per run)."""
     n = math.prod(seq)
     f: dict[int, float] = {PASS: float(len(seq)), CONST: 1.0}
+    start = split_from(seq, block)
+    if start < len(seq):
+        f[CONVERT] = n / lanes
     s = 1
     for i, r in enumerate(seq):
         m = n // (r * s)
@@ -170,6 +201,8 @@ def features(seq: radices.Sequence, lanes: int) -> dict[int, float]:
         else:
             units, tails = m * -(-s // lanes), (m if s % lanes else 0)
         j = kind * NR + COLUMN[r]
+        if i >= start:
+            j = SPLIT0 + (kind - 1) * NR + COLUMN[r]
         f[j] = f.get(j, 0.0) + units
         if tails:
             f[TAIL0 + j] = f.get(TAIL0 + j, 0.0) + tails
@@ -183,6 +216,9 @@ class Table:
     tail: list[list[int]]
     passes: int
     overrides: list[tuple[int, radices.Sequence]] = field(default_factory=list)
+    split: list[list[int]] | None = None  # --split: middle and last units of a split run
+    convert: int = 0  # --split: per C points of a split run
+    block: int = 0  # --split: the split block of this precision
 
 
 def pass_cost(t: Table, lanes: int, n: int, s: int, r: int, kind: int) -> int:
@@ -216,6 +252,9 @@ def rule_radices(n: int, t: Table, lanes: int, overrides: bool = True) -> radice
     def kind(s: int, nxt: int) -> int:
         return 0 if s == 1 else (2 if nxt == smooth and not big else 1)
 
+    if t.split is not None and not big:
+        return split_radices(n, t, lanes, divisors, kind)
+
     def step(s: int, r: int) -> int:
         return pass_cost(t, lanes, n, s, r, kind(s, s * r)) + best[s * r]
 
@@ -235,6 +274,58 @@ def rule_radices(n: int, t: Table, lanes: int, overrides: bool = True) -> radice
     return (*out, *big)
 
 
+def split_radices(n: int, t: Table, lanes: int, divisors: list[int], kind) -> radices.Sequence:
+    """rule_radices with split runs priced (--split): a pass after prefix product s > 1 with
+    s a multiple of the block is in the run; the run is split when it has two passes or more,
+    all of radix 16 or below, and its passes then cost t.split's units (no tails: s is a
+    multiple of C) plus the conversions; otherwise every pass is interleaved. The cheapest
+    over both cases, ties by the lexicographically first sequence."""
+    smooth = n
+    block = t.block
+
+    def allowed(s: int, r: int) -> bool:
+        return (smooth // s) % r == 0 and (r <= LEAF or t.unit[kind(s, s * r)][COLUMN[r]] != 0)
+
+    def cost(s: int, r: int, split: bool) -> int:
+        k = kind(s, s * r)
+        if split and s > 1 and s % block == 0:
+            return t.split[k - 1][COLUMN[r]] * (n // (r * s)) * (s // lanes) + t.passes
+        return pass_cost(t, lanes, n, s, r, k)
+
+    # State after prefix s: (in-run passes so far, capped at 2; a big radix in the run).
+    @functools.cache
+    def best(s: int, count: int, bad: bool, split: bool) -> float:
+        if s == smooth:
+            valid = count >= 2 and not bad
+            return 0 if valid == split else math.inf
+        out = math.inf
+        for r in RADICES:
+            if allowed(s, r):
+                out = min(out, cost(s, r, split) + best(s * r, *next_state(s, r, count, bad), split))
+        return out
+
+    def next_state(s: int, r: int, count: int, bad: bool) -> tuple[int, bool]:
+        if s > 1 and s % block == 0:
+            return min(count + 1, 2), bad or r > LEAF
+        return count, bad
+
+    convert = t.convert * (n // lanes)
+    totals = {False: best(1, 0, False, False), True: best(1, 0, False, True) + convert}
+    split = totals[True] < totals[False]
+    out: list[int] = []
+    s, count, bad = 1, 0, False
+    while s != smooth:
+        for r in RADICES:
+            if not allowed(s, r):
+                continue
+            c2, b2 = next_state(s, r, count, bad)
+            if cost(s, r, split) + best(s * r, c2, b2, split) == best(s, count, bad, split):
+                out.append(r)
+                s, count, bad = s * r, c2, b2
+                break
+    return tuple(out)
+
+
 # ---- The fit -------------------------------------------------------------------------------
 
 
@@ -243,24 +334,27 @@ def priors(ops: dict[tuple[int, bool], int]) -> list[float]:
     for k in range(KINDS):
         for r in RADICES:
             p[k * NR + COLUMN[r]] = ops[(r, k < 2)] + 2.0 * r
+            if k > 0:
+                p[SPLIT0 + (k - 1) * NR + COLUMN[r]] = ops[(r, k < 2)] + 2.0 * r
+    p[CONVERT] = 4.0
     return p
 
 
-def rows_of(cases: list[Case], lanes: int) -> list[tuple[dict, dict, float, float]]:
+def rows_of(cases: list[Case], lanes: int, block: int = 0) -> list[tuple[dict, dict, float, float]]:
     """(candidate's features, baseline's features, observed log ratio, weight) of every
     timed candidate of the cases whose sequences are all codelet passes."""
     rows = []
     for c in cases:
         if c.n <= LEAF or not codelet_only(c.base):
             continue
-        fb = features(c.base, lanes)
+        fb = features(c.base, lanes, block)
         for source, weight in ((c.refine, 1.0), (c.screen, SCREEN_WEIGHT)):
             for seq, y in source.items():
                 if seq == c.base or not codelet_only(seq):
                     continue
                 if source is c.screen and seq in c.refine:
                     continue
-                rows.append((features(seq, lanes), fb, y, weight))
+                rows.append((features(seq, lanes, block), fb, y, weight))
     return rows
 
 
@@ -298,6 +392,7 @@ def fit(
     x = [max(1.5 * v, 1.0) for v in prior]
     fixed = {FIXED}
     x[FIXED] = lb[FIXED] = prior[FIXED]
+    lb[CONVERT] = 0.0
     if base is not None:
         for k in range(KINDS):
             for r in range(2, LEAF + 1):
@@ -365,7 +460,10 @@ def fit(
     return x
 
 
-def table_of(x: list[float], cases: list[Case], ops: dict, base: Table | None = None) -> Table:
+def table_of(
+    x: list[float], cases: list[Case], ops: dict, base: Table | None = None, block: int = 0,
+    lanes: int = 1,
+) -> Table:
     unit = [[x[k * NR + COLUMN[r]] * SCALE for r in RADICES] for k in range(KINDS)]
     tail = [[x[TAIL0 + k * NR + COLUMN[r]] * SCALE for r in RADICES] for k in range(KINDS)]
     measured = {r for c in cases for seq in (*c.refine, *c.screen) for r in seq}
@@ -389,11 +487,23 @@ def table_of(x: list[float], cases: list[Case], ops: dict, base: Table | None = 
                 f = ops[(r, k < 2)] / ops[(ref, k < 2)]
                 unit[k][COLUMN[r]] = unit[k][COLUMN[ref]] * f
                 tail[k][COLUMN[r]] = tail[k][COLUMN[ref]] * f
-    return Table(
+    t = Table(
         unit=[[round(v) for v in row] for row in unit],
         tail=[[round(v) for v in row] for row in tail],
         passes=base.passes if base is not None else round(x[PASS] * SCALE),
     )
+    if block:
+        # A split column no candidate measured takes the interleaved unit of its kind.
+        split_seen = {j for c in cases for seq in (*c.refine, *c.screen) if codelet_only(seq)
+                      for j in features(seq, lanes, block) if SPLIT0 <= j < CONVERT}
+        t.split = [
+            [round(x[SPLIT0 + k * NR + COLUMN[r]] * SCALE) if SPLIT0 + k * NR + COLUMN[r] in split_seen
+             else t.unit[k + 1][COLUMN[r]] for r in RADICES]
+            for k in range(2)
+        ]
+        t.convert = round(x[CONVERT] * SCALE)
+        t.block = block
+    return t
 
 
 # ---- Judging -------------------------------------------------------------------------------
@@ -562,6 +672,12 @@ def main(argv: list[str] | None = None) -> int:
         help="X3: extend rules.cpp tables per precision (f32=NAME): their costs up to radix 16 "
         "stay, the radix 32 and 64 columns are fitted; only these precisions are fitted",
     )
+    p.add_argument(
+        "--split",
+        action="store_true",
+        help="X1: price split runs (their own middle and last units and a conversion cost); "
+        "the tables are a variant under test, not rules.cpp rows",
+    )
     ctx = p.parse_args(argv)
 
     isa, cases = load_cases(ctx.out_dir, ctx.name.split(","), ctx.isa)
@@ -579,10 +695,11 @@ def main(argv: list[str] | None = None) -> int:
         base = committed[bases[precision]] if precision in bases else None
         lanes = radices.LANES[isa][i]
         mine = [c for c in cases if c.precision == precision]
-        rows = rows_of(mine, lanes)
+        block = SPLIT_BLOCK.get(isa, (0, 0))[i] if ctx.split else 0
+        rows = rows_of(mine, lanes, block)
         log(f"fit {precision} (C = {lanes}): {len(rows)} timings of {len(mine)} cases")
         x = fit(rows, ops, base=base)
-        t = table_of(x, mine, ops, base)
+        t = table_of(x, mine, ops, base, block, lanes)
         t.overrides, notes = overrides_for(mine, t, lanes, behind_winner=base is not None)
         if base is not None:
             # The base table's overrides stay; new ones only where the extension's choice
@@ -592,6 +709,10 @@ def main(argv: list[str] | None = None) -> int:
         name = f"{prefix}_{'double' if precision == 'f64' else 'float'}"
         with contextlib.redirect_stdout(out):
             print(f"// {name}: C = {lanes}, constant per transform {x[CONST] * SCALE:.0f}")
+            if t.split is not None:
+                print(f"//   split block {block}, conversion {t.convert} per C points")
+                for k, row in zip(("middle", "last"), t.split):
+                    print(f"//   split {k}: {row}")
             for note in notes:
                 print(f"//   {note}")
             show_reproduction(name, *reproduction(mine, t, lanes, ctx.within), ctx.verbose)
