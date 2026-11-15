@@ -393,3 +393,13 @@ tests failing (twiddles 1 ulp off). Pass `-fno-fast-math` before `-ffp-contract=
 (`-fp-model=precise -ffp-contract=off` draws an override warning that `-Werror` makes an
 error), to third-party targets too when their `main()` runs your tests.
 [X22](experiments/X22-icpx.md).
+
+6.14 **AVX2 code runs on Apple silicon under Rosetta 2 when asked.** An x86-64 build
+(Apple Clang, `-arch x86_64`) executes AVX, AVX2 and FMA under Rosetta (seen on Darwin 27),
+but CPUID reports none of them unless the process is started with
+`ROSETTA_ADVERTISE_AVX=1` (`arch -x86_64 -e ROSETTA_ADVERTISE_AVX=1 ./test`), so runtime
+dispatch picks the scalar path by default. With it, FFTN's whole x86-64 suite (1089 tests,
+`avx2` forced in turn) ran on an M5 Max, guard-page faults included. AVX-512 is not
+emulated; that still needs SDE or the hardware. Build the test oracles for x86-64 too (an
+ExternalProject that ignores `CMAKE_OSX_ARCHITECTURES` links arm64 objects).
+[X23](experiments/X23-masked-tails.md).

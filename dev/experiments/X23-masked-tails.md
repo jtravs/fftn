@@ -54,7 +54,7 @@ main's bits (data movement only), so the targets' bit agreement and the accuracy
 untouched.
 
 - **A** (main 2784f5d): partial runs through a tile, element by element.
-- **B** (commit after 2784f5d, "isa, passes: masked partial runs"): the vocabularies of the
+- **B** (9093a3e): the vocabularies of the
   two x86 targets get `load_n(p, n)` and `store_n(p, n, a)` (`vocabulary.inl`; flag
   `masked`): `avx512` with `__mmask8`/`__mmask16` masks of 2n reals
   (`vmovupd/vmovups {k}{z}`), `avx2` with `vmaskmovpd/vmaskmovps` and a mask from one
@@ -63,13 +63,13 @@ untouched.
   the lanes strategy over adjacent rows); strided runs keep the tile. The grouped pass's
   last unit, for R a multiple of C, goes through the same transposes as a whole unit and
   stores only its butterflies. NEON and scalar unchanged (`masked = false`).
-- **T** (B + "passes: padded transposes for radices C does not divide"): the grouped pass's
+- **T** (5491584, on B): the grouped pass's
   `store_tiled` for R mod C ≠ 0 on the masked targets pads the R legs with zero registers
   to whole C × C blocks, transposes them, and stores each butterfly's R outputs as whole
   runs plus one `store_n` of R mod C. Every unit of such a pass is affected, not only the
   last; it costs C × C transposes of partly empty blocks, which may lose at small R (3, 5)
   with C = 8.
-- **P** (T + "isa: avx2 partial stores in 128- and 64-bit pieces"): `avx2`'s `store_n`
+- **P** (34717f1, on T): `avx2`'s `store_n`
   without VMASKMOV (microcoded and slow as a store on AMD Zen 1-3), as one or two plain
   stores of 128 and 64 bits chosen by n. Loads stay VMASKMOV (cheap everywhere). `avx512`
   is the same as T.
@@ -102,7 +102,11 @@ No switch: the arms are commits, so `dev/KNOBS.toml` is unchanged.
     `avx2`); otherwise its commit is reverted for that target (or wholly).
   - **P** replaces the VMASKMOV stores of `avx2` if its geomean over the float cases of (1)
     on the EPYC is at most 0.99 of T's with the interval clear of the band, and on the
-    Xeon `avx2` it is no slower than T beyond the band.
+    Xeon `avx2` it is no slower than T beyond the band. If it wins on the EPYC but loses on
+    the Xeon (llvm-mca predicts that: 8.0 against 4.5 cycles per partial unit on Cascade
+    Lake), the store whose float geomeans multiplied over the two machines are lower is
+    kept (`avx2` is the EPYC's best target and, after X16, possibly the Xeon's in float),
+    and a choice per vendor becomes a follow-up: one `avx2` vocabulary serves both.
   - If B fails, the masked accesses are deleted and the tile stays.
   - Descriptive, not part of the decision: the fraction of icpx's float lead closed. X22
     measured icpx ÷ GCC 0.668 and icpx ÷ Clang 0.795 on cases (1); "most" means the
@@ -112,14 +116,14 @@ No switch: the arms are commits, so `dev/KNOBS.toml` is unchanged.
 
 ### Commands (for the lead)
 
-The arms' commits are filled in below once committed. `xeon` is the GCC 14.4 profile;
+`xeon` is the GCC 14.4 profile;
 `xeon-clang` is the same machine with `cxx` set to Clang 23 (X22's toolchain); `epyc` is
 the DMOG profile (GCC 16). Each `submit` is one job; check the first job's log.
 
 ```bash
 R="uv run --frozen python scripts/remote/fbench_remote.py"
 X2='^c2c-(6[4-9]|[7-9][0-9]|[1-9][0-9][0-9]|10[0-2][0-9])-b1-op'
-A=2784f5d; B=<B>; T=<T>; P=<P>
+A=2784f5d; B=9093a3e; T=5491584; P=34717f1
 Q="--max-load 80 --max-busy 60 --budget 10800"
 for prof in xeon xeon-clang; do
   $R submit $prof A=fftn:$A+ISA=avx512 B=fftn:$B+ISA=avx512 T=fftn:$T+ISA=avx512 \
@@ -139,17 +143,41 @@ $R submit epyc A=fftn:$A+ISA=avx2 B=fftn:$B+ISA=avx2 T=fftn:$T+ISA=avx2 P=fftn:$
 
 ### Checks made before timing (Mac, M5 Max)
 
-- Correctness: `tests/core/tails_test.cpp` forces every partial-run shape (grouped pass m
-  and lane pass s leaving each remainder modulo 8, radices C does and does not divide,
-  Bluestein, generic passes, the lanes strategy over 2–9 adjacent rows), double and float,
-  both directions, in and out of place, every array ending exactly at a guard page, against
-  the quadruple-precision reference, with avx2 and avx512 bit for bit where both run. The
-  `avx2` target ran natively-translated on the Mac: an x86-64 build (Apple Clang 21,
-  `-arch x86_64`) under Rosetta 2 with `ROSETTA_ADVERTISE_AVX=1`, which executes AVX2 and
-  FMA. Replacing `store_n` or `load_n` by a whole-register access makes that test fault at
+- Correctness: `tests/core/tails_test.cpp` forces every partial-run shape (grouped pass
+  m and lane pass s leaving each remainder modulo 8, radices C does and does not divide,
+  Bluestein, generic passes, the lanes strategy over 2–9 adjacent rows), double and
+  float, both directions, in and out of place, every array ending exactly at a guard
+  page, against the quadruple-precision reference, with avx2 and avx512 bit for bit
+  where both run; the vocabulary test (`tests/isa/vocab_test.cpp`) checks `load_n` and
+  `store_n` for every n from 0 to C against a canary. Every test program runs under SDE
+  (Haswell, Skylake-SP) in the emulation workflow. The `avx2` target ran on the Mac
+  through an x86-64 build (Apple Clang 21, `-arch x86_64`) under Rosetta 2 with
+  `ROSETTA_ADVERTISE_AVX=1`, which executes AVX2 and FMA and reports them in CPUID.
+  Replacing `store_n` or `load_n` by a whole-register access makes that test fault at
   the guard page, so it does catch an access past the array. `avx512` was compiled and
   disassembled only; it runs under SDE in CI and natively on the Xeon.
-- Disassembly and uiCA: see Results.
+- Bits: on `avx2` under Rosetta, the outputs of every length 2 to 1100 (batches of 3, of 64
+  and of 5 interleaved rows up to 64 points; both precisions and directions) hash equal for
+  main and for T and P.
+- Disassembly (Apple Clang 21, the library's `avx512` and `avx2` objects, main against T
+  and P; instructions and stack references per function). `avx512` float: the radix-15
+  lane pass 2464 → 1499 instructions (393 → 309 stack references), radix 7 1180 → 761,
+  radix 5 876 → 552; the grouped radix-7 pass 1369 → 969, radix 9 1743 → 1240, but radix 15
+  1814 → 1958 (two padded 8 × 8 transposes; 270 → 319 stack references) and radix 8 1239 →
+  1242 with 200 → 286 stack references (its last unit's transposes). Clang already turned
+  part of main's tiles into masked AVX-512 accesses (29 masked instructions in main's
+  radix-15 lane pass, 72 in its grouped radix 8), as X22 found; GCC did not, so the gain
+  there should be larger with GCC, which was not available for x86 on the Mac. `avx2`
+  float: within 10 % of main's instruction counts. Every lane, generic and chirp pass keeps
+  the tile for strided runs behind the runtime `step == 2` test although its contract
+  makes runs contiguous when C > 1: a clean-up if an arm is adopted.
+- Throughput models of one partial unit (four legs of a partial run loaded, added and
+  stored; a scratch file, not committed), uiCA for Cascade Lake and llvm-mca: `avx512`
+  float, 7 of 8 valid: tile 14.0 cycles, masked 5.5 (uiCA CLX; mca 12.0 and 4.0); `avx2`
+  float, 3 of 4 valid: tile 9.1, VMASKMOV 8.3, pieces 9.0 (uiCA CLX; mca 8.0, 4.5, 8.0);
+  on Zen 3 (mca znver3) tile 8.0, VMASKMOV 48.0 (its masked stores), pieces 8.0. Neither
+  model charges the tile's store-forwarding stalls (X22's GCC code), so both understate
+  the tile's cost; the Zen 3 figure is why arm P exists.
 
 ## Results
 
