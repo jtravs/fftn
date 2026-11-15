@@ -76,7 +76,7 @@ untouched.
 
 No switch: the arms are commits, so `dev/KNOBS.toml` is unchanged.
 
-### Amendment (2026-11-15, written after B's first runs and before B3's runs)
+### Amendment (2026-11-15, written after B's first runs and before B4's runs)
 
 B as first written failed the rule on the Xeon `avx512` with GCC 14 (run
 20261115-081316-fb77, Results): 63 cases slower than A beyond the band, up to 1.09, most
@@ -94,20 +94,25 @@ before any run of the fixed arms (perf, disassembly and a 22-case probe, Results
    registers in the loop over whole units. GCC 14: 4 % more instructions per transform at
    double 128 (perf), the lane pass's loop moving pointers through vector registers; Clang
    23: the grouped radix-8 float pass's set-up grew from 80 to 350 instructions, so with
-   fix 1 alone (B2, 2fddd8d) float 128 was still 1.31 of A. Fix: on the masked targets the
-   last unit of a grouped pass and the partial block of a lane pass are one `noinline`
-   call each, taking pointers and integers; NEON and scalar keep main's inline tile.
+   fix 1 alone (B2, 2fddd8d) float 128 was still 1.31 of A (GCC: double 448 1.09). Fix: on
+   the masked targets the grouped pass's loop runs whole units only and the last unit
+   follows it; the lane pass's loop skips its partial blocks and a second loop runs them
+   (units are independent, so the order changes no bit). Nothing is called: the code
+   stays inline, only out of the hot loops. NEON and scalar keep main's code.
 
-- **B3** (7c3c531, on B2): B with both fixes.
-- **T3** (6c9a8e1, on B3) and **P3** (534b9e6, on T3): T and P replayed on B3, otherwise
-  unchanged (T's padded store of the last unit moves into the outlined function).
+- **B4** (3bbd3fd, on B2): B with both fixes.
+- **T4** (1720df4, on B4) and **P4** (60fe377, on T4): T and P replayed on B4, otherwise
+  unchanged (T's padded store of the last unit moves into the grouped pass's tail).
 
-The decision rule applies to B3, T3 and P3 in place of B, T and P, word for word, on new
+The decision rule applies to B4, T4 and P4 in place of B, T and P, word for word, on new
 runs of A against them with the Method's cases, machines and compilers. B, T and P as first
-written are judged on the runs already made with them and cannot be adopted whatever B3's
-result. B2, T2 and P2 (2fddd8d, ae43de2, d8fa8d8) were submitted for timing and cancelled
-when the probe showed fix 1 insufficient; they are not judged. The branch merges B2–P2 and
-then B3–P3, so its head carries both fixes.
+written are judged on the runs already made with them and cannot be adopted whatever B4's
+result. Two intermediate stacks were submitted for timing and cancelled before any result:
+B2–P2 (2fddd8d, ae43de2, d8fa8d8), when the probe showed fix 1 insufficient, and B3–P3
+(7c3c531, 6c9a8e1, 534b9e6), which made the partial units `noinline` calls and so broke
+the regions' rule that nothing in a region calls a function (`isa.asm_check` failed in
+CI); they are not judged. The branch merges B2–P2, B3–P3 and then B4–P4, so its head
+carries B4–P4.
 
 ## Method
 
@@ -174,10 +179,12 @@ $R submit epyc A=fftn:$A+ISA=avx2 B=fftn:$B+ISA=avx2 T=fftn:$T+ISA=avx2 P=fftn:$
   -- --tier tracking --budget 10800
 ```
 
-The amendment's runs are the same eight Xeon jobs and two EPYC jobs with
-`B3=fftn:7c3c531`, `T3=fftn:6c9a8e1` and `P3=fftn:534b9e6` in place of B, T and P (job
-names `x23b3-{xeon,xclang}-{x2,trk}-{512,256}` and `x23b3-epyc-{x2,trk}`, all submitted at
-once, Slurm `-c 8`, shared).
+The amendment's runs put both Xeon instruction sets in one job per compiler and case set
+(the build is the same; ISA is a run option): arms `A512 B512 T512 A256 B256 T256 P256` =
+A, B4, T4 with `ISA=avx512` and A, B4, T4, P4 with `ISA=avx2`, so the A/A band is A512's
+(jobs `x23b4-xeon-x2`, `x23b4-xclang-x2`, `x23b4-xeon-trk`, then `x23b4-xclang-trk`
+after the last; at most three at once on the Xeon). The EPYC runs A, B4, T4, P4 with
+`ISA=avx2` (`x23b4-epyc-x2`, `x23b4-epyc-trk`).
 
 ### Checks made before timing (Mac, M5 Max)
 
