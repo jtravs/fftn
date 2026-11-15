@@ -91,7 +91,56 @@ No switch is added: the screens use fbench's existing profile options (`GRID_BLO
 
 ## Results
 
-(pending)
+### Arm B: the copy loops' instructions go, the time does not follow on x86
+
+Arm B's first form (8ac713f) and its second (d232d7a, which prefetches only the side of a
+copy whose rows lie apart: the other is the tight scratch block) cut the instructions as
+intended. Counters per transform (`--pmu cycles,instructions`, user mode, median of three
+process rounds, A then B interleaved in one job; raw output in the campaign directories
+`fftn-x26/pmu1` on each machine):
+
+| case (default plan) | Xeon `avx512` instructions B ÷ A | EPYC `avx2` instructions B ÷ A | EPYC cycles B ÷ A |
+|---|---|---|---|
+| c2c 65536 (Xeon blocks of 4; EPYC 32) | 0.63 | 1.02 | 1.00 |
+| c2c 262144 (32; 32) | 0.76 | 1.03 | 0.99 |
+| c2c 2²⁰ (16; 16) | 0.73 | 0.79 | **1.39** |
+| c2c 2²² (8; 8) | 0.67 | 0.74 | 0.87 |
+| c2c 46080 (4; 32) | 0.63 | 1.02 | 1.01 |
+| c2c 100000 (4; 4) | 0.66 | 0.73 | 0.79 |
+| r2c / c2r 2²⁰ (16; 16) | 0.75 | 0.80 | **1.51–1.55** |
+
+The Xeon's cycles were not usable (node load average 39–50 from other users; the unchanged
+r2c 65536 chain moved by 35 %). On the EPYC (quiet node) the rows of 2²⁰ took up to 1.55
+times the cycles with a fifth fewer instructions. Forcing the block width
+(`GRID_BLOCK`) at 65536, 262144 and 2²⁰ on the EPYC isolated it: every faster loop
+(compile-time row widths or not, prefetching both sides, one side, none, 16 or 32 rows
+ahead, with locality hints 2 or 0) took 1.1–2.2 times main's cycles at blocks of 4–16
+columns from 2¹⁸ points, and the same as main at blocks of 32 (16 registers a row, where
+every loop is long). Variants, all diagnostic commits on unpushed `exp/x26-dev-*`
+branches (EPYC, `avx2`, cycles ÷ main's at 262144 with blocks of 8 / 16; 2²⁰ with 8 / 16):
+
+| variant | 262144 | 2²⁰ |
+|---|---|---|
+| main without the copies' prefetch (c30ca97) | **0.67–0.76 / 0.85–0.86** | **0.90–0.96 / 0.95–1.01** |
+| main, prefetch with locality 2 (e63eadf) | 1.00 / 1.04 | 1.02 / 1.02 |
+| main, read prefetch only, non-temporal (e235581) | 1.05 / 0.92 | 0.99 / 0.93 |
+| B, second form (d232d7a) | 1.76–2.17 / 1.81–1.92 | 1.56–1.60 / 1.36–1.43 |
+| B without prefetch (5916520) | 1.44–1.63 / 1.06–1.14 | 1.26–1.45 / 1.07–1.12 |
+| B without compile-time widths (e69749c) | 2.43 / 1.85 | 1.61 / 1.40 |
+| B with main's `twiddle_scatter` (7d8fa83; without prefetch 54b6eb4) | 1.79 / 1.91 (1.41 / 1.15) | 1.55 / 1.38 (1.41 / 1.06) |
+
+Counters for main without prefetch against B without prefetch at 262144, blocks of 8
+(Zen 3 raw events): L1 data-cache accesses 6.8 M against 10.9 M, demand fills from beyond
+L2 0.53 M against 1.03 M, L2 prefetch hits 0.63 M against 1.11 M, for 22.3 M against 18.3 M
+instructions. A copy-only microbenchmark of the same gathers and scatters (no lane passes
+between them) timed the two loops the same. Reading: every gathered row lies a multiple of
+4 KiB from the last, so all of a block's source lines fall into one or two L1 sets (8
+ways); a loop that issues rows faster keeps more of them in flight, they evict the
+scratch block that the lane passes then read again, and the misses come back (twice the
+fills). Main's slow loop throttled this by accident, and its prefetch eight rows ahead
+added eight more lines to the same sets: removing the prefetch from main's loop is what
+made it faster. The x86 copies are bound by L1 set conflicts of power-of-two row strides,
+not by their instructions; X25's instruction share was real but not the limit.
 
 ## Verdict
 
