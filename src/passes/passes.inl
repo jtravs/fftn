@@ -16,6 +16,8 @@
 
 #include "passes/bluestein.inl"
 
+#include "passes/rader.inl"
+
 #include "passes/real.inl"
 
 #include "passes/grid.inl"

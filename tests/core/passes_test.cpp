@@ -52,6 +52,33 @@ template <class T> using cvec = std::vector<std::complex<T>>;
 // The Bluestein threshold that keeps every prime factor in generic passes.
 constexpr std::size_t no_bluestein = static_cast<std::size_t>(-1);
 
+// Whether the rules give n a Rader stage (experiment X27): its one prime factor without a
+// codelet has a 7-smooth q - 1 (the rule's condition apart from its convolution's two
+// passes, which every such q above 23 has).
+bool takes_rader(std::size_t n) {
+  std::size_t big = 1;
+  std::size_t count = 0;
+  for (std::size_t p = 2; p <= n; ++p) {
+    while (n % p == 0) {
+      if (p > 16 && p != 17 && p != 19 && p != 23) {
+        big = p;
+        ++count;
+      }
+      n /= p;
+    }
+  }
+  if (count != 1) {
+    return false;
+  }
+  std::size_t left = big - 1;
+  for (const std::size_t f : {2U, 3U, 5U, 7U}) {
+    while (left % f == 0) {
+      left /= f;
+    }
+  }
+  return left == 1;
+}
+
 std::vector<std::string> stage_names(const plan_core& core) {
   std::vector<std::string> names;
   for (const auto& rec : core.prog.records) {
@@ -147,7 +174,8 @@ void check_row(fftn::isa target, std::size_t n, fftn::direction dir, const build
     const std::complex<double> f = out_factor ? std::complex<double>(fout[k]) : 1.0;
     want[k] = fftn::test::exact_from(e * f * scale);
   }
-  const bool bluestein = listing.find("bluestein") != std::string::npos;
+  const bool bluestein =
+      listing.find("bluestein") != std::string::npos || listing.find("rader") != std::string::npos;
   const auto tol = fftn::test::derived_tolerance<T>(n, bluestein ? fftn::test::bluestein_bound(n)
                                                                  : fftn::test::stable_fft_bound) +
                    fftn::test::input_rounding<T>() * 2;
@@ -293,21 +321,23 @@ template <class T> void bluestein_in_every_position(fftn::isa target) {
   };
   const std::vector<std::string> both{"bluestein in", "bluestein out"};
   const std::vector<line> lines{
-      {.radices = {29}, .above = 16, .names = {"copies 1", "convolution: grouped"}},
+      {.radices = {47}, .above = 16, .names = {"copies 1", "convolution: grouped"}},
       {
-          .radices = {2, 29},
+          .radices = {2, 47},
           .above = 16,
           .names = {"grouped radix-2", "copies 2", "convolution: lane"},
       },
-      {.radices = {3, 31}, .above = 16, .names = {"grouped radix-3", "copies 3"}},
-      {.radices = {4, 29}, .above = 16, .names = {"copies 4"}},
-      {.radices = {5, 6, 37}, .above = 16, .names = {"lane radix-6", "copies 30"}},
-      {.radices = {16, 29}, .above = 16, .names = {"copies 16"}},
-      {.radices = {29, 31}, .above = 16, .names = {"Q 899, ", "copies 1"}},
-      {.radices = {29, 31}, .above = 29, .names = {"generic radix-29", "Q 31, ", "copies 29"}},
+      {.radices = {3, 59}, .above = 16, .names = {"grouped radix-3", "copies 3"}},
+      {.radices = {4, 47}, .above = 16, .names = {"copies 4"}},
+      {.radices = {5, 6, 67}, .above = 16, .names = {"lane radix-6", "copies 30"}},
+      {.radices = {16, 47}, .above = 16, .names = {"copies 16"}},
+      {.radices = {47, 59}, .above = 16, .names = {"Q 2773, ", "copies 1"}},
+      {.radices = {47, 59}, .above = 47, .names = {"generic radix-47", "Q 59, ", "copies 47"}},
       // A codelet's prime is never Bluestein's, whatever the threshold (experiment X27).
-      {.radices = {17, 31}, .above = 16, .names = {"grouped radix-17", "Q 31, ", "copies 17"}},
-      {.radices = {2, 3, 61}, .above = 16, .names = {"Q 61, ", "copies 6"}},
+      {.radices = {17, 59}, .above = 16, .names = {"grouped radix-17", "Q 59, ", "copies 17"}},
+      {.radices = {2, 3, 83}, .above = 16, .names = {"Q 83, ", "copies 6"}},
+      // A product of primes is one Bluestein stage even where each would take Rader.
+      {.radices = {29, 31}, .above = 16, .names = {"Q 899, ", "copies 1"}},
   };
   for (const line& l : lines) {
     std::size_t n = 1;
@@ -325,10 +355,58 @@ template <class T> void bluestein_in_every_position(fftn::isa target) {
   }
   for (std::size_t n = 17; n <= 160; ++n) {
     if (fftn::test::has_large_prime_factor(n)) {
+      const std::vector<std::string> stage =
+          takes_rader(n) ? std::vector<std::string>{"rader in", "rader out"} : both;
       for (const auto dir : {fftn::direction::forward, fftn::direction::backward}) {
-        check_row<T>(target, n, dir, {}, 1.0, false, false, false, both);
+        check_row<T>(target, n, dir, {}, 1.0, false, false, false, stage);
       }
     }
+  }
+}
+
+// The Rader stage (experiment X27; strategies/chain.hpp) as the only pass and after codelet
+// passes whose copy counts C divides (2, 4, 16: the vector form) and does not (1, 3, 30:
+// one copy at a time), its convolution's first pass grouped with one copy and a lane pass
+// with several, and as a Bluestein-threshold stage after a generic pass.
+template <class T> void rader_in_every_position(fftn::isa target) {
+  struct line {
+    std::vector<std::size_t> radices;
+    std::size_t above;
+    std::vector<std::string> names;
+  };
+  const std::vector<std::string> both{"rader in", "rader out"};
+  const std::vector<line> lines{
+      {.radices = {29}, .above = 16, .names = {"copies 1", "convolution: grouped"}},
+      {.radices = {2, 29},
+       .above = 16,
+       .names = {"grouped radix-2", "copies 2", "convolution: lane"}},
+      {.radices = {3, 31}, .above = 16, .names = {"grouped radix-3", "root 3, copies 3"}},
+      {.radices = {4, 29}, .above = 16, .names = {"copies 4"}},
+      {.radices = {5, 6, 37}, .above = 16, .names = {"lane radix-6", "copies 30"}},
+      {.radices = {16, 29}, .above = 16, .names = {"copies 16"}},
+      {.radices = {8, 97}, .above = 16, .names = {"Q 97, L 96, root 5, copies 8"}},
+      {.radices = {29, 31}, .above = 29, .names = {"generic radix-29", "Q 31, L 30", "copies 29"}},
+  };
+  for (const line& l : lines) {
+    std::size_t n = 1;
+    for (const std::size_t f : l.radices) {
+      n *= f;
+    }
+    build_settings settings;
+    settings.radices = l.radices;
+    settings.bluestein_above = l.above;
+    std::vector<std::string> names = both;
+    names.insert(names.end(), l.names.begin(), l.names.end());
+    for (const auto dir : {fftn::direction::forward, fftn::direction::backward}) {
+      check_row<T>(target, n, dir, settings, 1.0, false, false, false, names);
+    }
+  }
+}
+
+TEST(Passes, RaderInEveryPosition) {
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    rader_in_every_position<double>(t);
+    rader_in_every_position<float>(t);
   }
 }
 
@@ -375,10 +453,13 @@ template <class T> void every_edge_variant(fftn::isa target) {
           .last = "lane radix-2",
           .above = no_bluestein,
       },
-      {.n = 29, .radices = {}, .first = "bluestein in,", .last = "bluestein out", .above = 16},
+      {.n = 47, .radices = {}, .first = "bluestein in,", .last = "bluestein out", .above = 16},
+      {.n = 29, .radices = {}, .first = "rader in,", .last = "rader out", .above = 16},
+      {.n = 58, .radices = {2, 29}, .first = "grouped radix-2", .last = "rader out", .above = 16},
+      {.n = 232, .radices = {8, 29}, .first = "grouped radix-8", .last = "rader out", .above = 16},
       {
-          .n = 58,
-          .radices = {2, 29},
+          .n = 94,
+          .radices = {2, 47},
           .first = "grouped radix-2",
           .last = "bluestein out",
           .above = 16,
@@ -520,7 +601,8 @@ template <class T> void split_only_where_it_fits(fftn::isa target) {
     EXPECT_FALSE(has_split({2, f / 2, 2}, 0)) << "a run of one pass";
   }
   EXPECT_FALSE(has_split({f, 2, 29}, no_bluestein)) << "a generic pass in the run";
-  EXPECT_FALSE(has_split({f, 2, 2, 29}, 16)) << "a Bluestein stage";
+  EXPECT_FALSE(has_split({f, 2, 2, 47}, 16)) << "a Bluestein stage";
+  EXPECT_FALSE(has_split({f, 2, 2, 29}, 16)) << "a Rader stage";
   EXPECT_FALSE(has_split({f, 2, 17}, 0)) << "radix 17 has no split codelet";
   EXPECT_FALSE(has_split({f, 32, 2}, 0)) << "radix 32 has no split codelet";
 
@@ -685,8 +767,10 @@ template <class T> void strided_rows_with_edges(fftn::isa target) {
   for (const line& l : {
            line{.n = 40, .above = 0, .first = "grouped", .last = "lane"},
            line{.n = 29, .above = no_bluestein, .first = "generic", .last = "generic"},
-           line{.n = 29, .above = 16, .first = "bluestein in", .last = "bluestein out"},
-           line{.n = 87, .above = 16, .first = "grouped", .last = "bluestein out"},
+           line{.n = 47, .above = 16, .first = "bluestein in", .last = "bluestein out"},
+           line{.n = 141, .above = 16, .first = "grouped", .last = "bluestein out"},
+           line{.n = 29, .above = 16, .first = "rader in", .last = "rader out"},
+           line{.n = 116, .above = 16, .first = "grouped", .last = "rader out"},
            line{.n = 51, .above = 16, .first = "grouped", .last = "lane radix-17"},
        }) {
     build_settings settings;
@@ -719,7 +803,7 @@ TEST(Passes, ScratchOnlyWhenUsed) {
   generic.bluestein_above = no_bluestein;
   for (const fftn::isa t : fftn::test::runnable_isas()) {
     // The view borrows the shape's axes, so the shape must outlive it.
-    const auto shape = fftn::rows_c2c<double>(29, 1, fftn::direction::forward);
+    const auto shape = fftn::rows_c2c<double>(47, 1, fftn::direction::forward);
     const auto rows = fftn::detail::view_of(shape);
     EXPECT_EQ(fftn::detail::workspace_bytes(*make_plan_core(rows, {.force_isa = t}, generic), 1),
               0U)
@@ -733,8 +817,16 @@ TEST(Passes, ScratchOnlyWhenUsed) {
     EXPECT_NE(listing.find("bluestein out"), std::string::npos) << listing;
     EXPECT_EQ(listing.find("copy"), std::string::npos) << listing;
     const std::size_t m = fftn::detail::bluestein_length(
-        29, fftn::detail::profile_of(static_cast<fftn::detail::target>(t), lanes_of<double>(t)));
+        47, fftn::detail::profile_of(static_cast<fftn::detail::target>(t), lanes_of<double>(t)));
     EXPECT_EQ(bluestein->scratch_line, m) << fftn::isa_name(t);
+    // A Rader stage holds its convolution of L = 28 and two more rows (x_0, the sum).
+    const auto shape29 = fftn::rows_c2c<double>(29, 1, fftn::direction::forward);
+    const auto rader =
+        make_plan_core(fftn::detail::view_of(shape29), {.in_place = true, .force_isa = t}, {});
+    const std::string rader_listing = joined(stage_names(*rader));
+    EXPECT_NE(rader_listing.find("rader out"), std::string::npos) << rader_listing;
+    EXPECT_EQ(rader_listing.find("copy"), std::string::npos) << rader_listing;
+    EXPECT_EQ(rader->scratch_line, 30U) << fftn::isa_name(t);
   }
 }
 
@@ -822,9 +914,10 @@ template <class T> void fused_scale(fftn::isa target) {
                         "planes 17 x 12");
   check_scaled<c, c, T>(target, fftn::planes_c2c<T>(29, 12, 2, fftn::direction::backward), 696, 696,
                         "planes 29 x 12");
-  // In place, a prime row without a codelet is one Bluestein stage, which runs in place; a
-  // prime with one is a leaf.
-  for (const std::size_t n : {std::size_t{17}, std::size_t{29}, std::size_t{1009}}) {
+  // In place, a prime row without a codelet is one Bluestein or Rader stage, which runs in
+  // place; a prime with one is a leaf.
+  for (const std::size_t n :
+       {std::size_t{17}, std::size_t{29}, std::size_t{47}, std::size_t{1009}}) {
     check_scaled<c, c, T>(target, fftn::rows_c2c<T>(n, 2, fftn::direction::forward), 2 * n, 2 * n,
                           "c2c n = " + std::to_string(n), true);
   }

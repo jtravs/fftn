@@ -58,6 +58,8 @@ struct pass_args {
   std::ptrdiff_t dst_dist = 0;
   std::size_t block = 0; // B: the rows of a tile
   std::size_t rows = 0;
+  // A Rader stage's passes (src/passes/rader.inl): the primitive root of the prime.
+  std::size_t root = 0;
 };
 
 // Runs units [first, last) of a pass. A unit is the kernel's own (a block of butterflies,
@@ -184,6 +186,11 @@ template <class T> struct pass_kernels {
   // of C), otherwise one entry per element of the line.
   pass_fn bluestein_in[2][edge_op_count];
   pass_fn bluestein_out[2][edge_op_count];
+  // The gather and scatter around a Rader stage's convolution (passes/rader.inl), indexed
+  // [shared][edge] as the Bluestein passes: shared runs C copies per vector (s a multiple of
+  // C), otherwise one copy at a time.
+  pass_fn rader_in[2][edge_op_count];
+  pass_fn rader_out[2][edge_op_count];
   // Real-to-complex edges (DESIGN.md 9.1): even n = 2h through a complex transform of h,
   // whose pairing runs as a separate pass where no pass of the transform takes it; odd n
   // through n. [scaled].

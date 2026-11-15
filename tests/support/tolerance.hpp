@@ -97,6 +97,8 @@ inline double log2_length(std::size_t n) {
 // within stable_fft_bound already (3.6 and 8 times below it); the derived bound is 1.8 to
 // 2.1 times looser in RMS and 1.8 to 2.6 times in the largest error, tending to sqrt(3)
 // for long lines.
+// A Rader stage (experiment X27) is the same three transforms, of L = Q - 1 < M points,
+// plus the sum of the Q - 1 inputs for bin 0, taken pairwise; the bound covers it.
 inline error_bound bluestein_bound(std::size_t n) {
   const double l = log2_length(n);
   const double wider = (l + 2.0) / l;
@@ -107,7 +109,7 @@ inline error_bound bluestein_bound(std::size_t n) {
 }
 
 // Whether n has a prime factor without a codelet (above 16, other than 17, 19 and 23:
-// experiment X27), which FFTN's planner sends through Bluestein on every profile
+// experiment X27), which FFTN's planner sends through Bluestein or Rader on every profile
 // (src/planner/rules.cpp).
 inline bool has_large_prime_factor(std::size_t n) {
   const auto large = [](std::size_t p) { return p > 16 && p != 17 && p != 19 && p != 23; };

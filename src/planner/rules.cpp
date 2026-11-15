@@ -657,6 +657,57 @@ std::vector<std::size_t> rule_radices(std::size_t n, const target_profile& p) {
   return out;
 }
 
+namespace {
+
+std::uint64_t pow_mod(std::uint64_t b, std::uint64_t e, std::uint64_t q) {
+  std::uint64_t r = 1;
+  b %= q;
+  for (; e != 0; e >>= 1U) {
+    if ((e & 1U) != 0) {
+      r = r * b % q;
+    }
+    b = b * b % q;
+  }
+  return r;
+}
+
+} // namespace
+
+std::size_t rader_root(std::size_t q, const target_profile& p) {
+  // Below 2^32 the plan-time products fit in 64 bits; far above any length a plan can hold.
+  if (q < 5 || q >= (std::size_t{1} << 32U) || has_codelet(q)) {
+    return 0;
+  }
+  for (std::size_t d = 2; d <= q / d; ++d) {
+    if (q % d == 0) {
+      return 0;
+    }
+  }
+  std::size_t left = q - 1;
+  for (const std::size_t f : {2U, 3U, 5U, 7U}) {
+    while (left % f == 0) {
+      left /= f;
+    }
+  }
+  // The convolution needs two codelet passes or more (as a Bluestein stage's does).
+  if (left != 1 || rule_radices(q - 1, p).size() < 2) {
+    return 0;
+  }
+  for (std::uint64_t g = 2; g < q; ++g) {
+    bool primitive = true;
+    for (const std::uint64_t f : {2U, 3U, 5U, 7U}) {
+      if ((q - 1) % f == 0 && pow_mod(g, (q - 1) / f, q) == 1) {
+        primitive = false;
+        break;
+      }
+    }
+    if (primitive) {
+      return static_cast<std::size_t>(g);
+    }
+  }
+  return 0; // unreachable: every prime has a primitive root
+}
+
 std::size_t bluestein_length(std::size_t q, const target_profile& p) {
   const std::size_t least = 2 * q - 1;
   std::size_t power = 1;

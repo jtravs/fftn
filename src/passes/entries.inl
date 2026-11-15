@@ -322,6 +322,32 @@ inline constexpr pass_kernels<T> pass_table{
                 &bluestein_out<T, fac, true>,
             },
         },
+    .rader_in =
+        {
+            {
+                &rader_in<T, nop, false>,
+                &rader_in<T, scl, false>,
+                &rader_in<T, fac, false>,
+            },
+            {
+                &rader_in<T, nop, true>,
+                &rader_in<T, scl, true>,
+                &rader_in<T, fac, true>,
+            },
+        },
+    .rader_out =
+        {
+            {
+                &rader_out<T, nop, false>,
+                &rader_out<T, scl, false>,
+                &rader_out<T, fac, false>,
+            },
+            {
+                &rader_out<T, nop, true>,
+                &rader_out<T, scl, true>,
+                &rader_out<T, fac, true>,
+            },
+        },
     .r2c_post =
         {
             &r2c_post<T, false>,

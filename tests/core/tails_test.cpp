@@ -78,8 +78,12 @@ std::vector<tail_case> cases() {
     out.push_back({.n = a * 15, .radices = {a, 5, 3}, .rows = 1, .expect = "lane radix-5"});
   }
   // Bluestein chirp passes whose last block of C holds 1 to C - 1 data elements.
-  for (const std::size_t n : {41U, 58U, 43U, 116U, 29U, 62U, 31U, 87U}) {
+  for (const std::size_t n : {89U, 178U, 59U, 188U, 141U, 94U, 47U, 79U}) {
     out.push_back({.n = n, .radices = {}, .rows = 2, .expect = "bluestein"});
+  }
+  // Rader stages (experiment X27): one copy at a time (1, 3 copies) and C copies at a time.
+  for (const std::size_t n : {29U, 87U, 58U, 116U, 232U}) {
+    out.push_back({.n = n, .radices = {}, .rows = 2, .expect = "rader"});
   }
   // Generic passes, first and last, with partial runs.
   out.push_back({.n = 58, .radices = {2, 29}, .rows = 2, .generic = true, .expect = "generic"});
@@ -199,7 +203,8 @@ template <class T> void check_case(const tail_case& tc, fftn::direction dir) {
       for (const std::string& v : got.violations) {
         ADD_FAILURE() << v << "; stages:" << listing;
       }
-      const bool bluestein = listing.find("bluestein") != std::string::npos;
+      const bool bluestein = listing.find("bluestein") != std::string::npos ||
+                             listing.find("rader") != std::string::npos;
       const auto tol = fftn::test::derived_tolerance<T>(
           n, bluestein ? fftn::test::bluestein_bound(n) : fftn::test::stable_fft_bound);
       for (std::size_t r = 0; r < rows; ++r) {

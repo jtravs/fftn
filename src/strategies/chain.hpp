@@ -195,6 +195,7 @@ private:
     const T* kernel;
   };
   bluestein_tables bluestein_tables_of(std::size_t q, int sign, std::size_t copies);
+  const T* rader_kernel_of(std::size_t q, std::size_t g, int sign);
   std::complex<T> pairing_root(std::size_t n, std::size_t k);
   const T* pairing_twiddles(std::size_t n);
   const T* leaf_pairing_twiddles(std::size_t n);
@@ -233,6 +234,18 @@ private:
   // edges' operations applied when `first` (input) and always (output).
   void add_bluestein(std::size_t n, std::size_t q, int sign, endpoint src, endpoint dst,
                      const line_edges& edges, bool first, std::vector<stage>& stages);
+  // The destination of a line's last stage, a Bluestein or Rader stage of q, that would
+  // write `next` from `at`: a Rader stage permutes into its destination, so from one scratch
+  // slot to the other, where its convolution would end in its destination, it writes back
+  // over its source instead, which it has read by then (add_rader).
+  [[nodiscard]] endpoint last_stage_to(std::size_t q, endpoint at, endpoint next) const;
+  // In its place, for a prime q whose rader_root is g (planner/rules.hpp), a Rader stage.
+  void add_rader(std::size_t n, std::size_t q, std::size_t g, int sign, endpoint src, endpoint dst,
+                 const line_edges& edges, bool first, std::vector<stage>& stages);
+  // The convolution chain of a Bluestein or Rader stage: forward and backward over s copies
+  // of len points from scratch slot `conv` back to it, the kernel spectrum applied between.
+  slot add_convolution(std::size_t s, std::size_t len, const std::vector<std::size_t>& rad,
+                       const T* kernel, slot conv, std::vector<stage>& stages);
   void add_edge(pass_fn run, const char* name, std::size_t n, std::size_t units, endpoint src,
                 endpoint dst, const T* twiddles, double scale, std::vector<stage>& stages);
   // The lanes strategy's pieces (strategies/lanes.cpp). A block's rows on one side: where,
