@@ -88,29 +88,42 @@ build, MEASURE); oneMKL 2026.1 on the Xeon. Competitors time double only.
      time is at most FFTW's and MKL's at every c2c case of 8, 12 and 16 points.
 
 Commands (`F="uv run --frozen python bench/fbench.py"`, remote runs through
-`scripts/remote/fbench_remote.py submit <profile> <arms> -- <fbench options>`; `<m>` is main
-2784f5d, `<a>` and `<b>` the La and Lb commits; the Xeon profile is the one with MKL that
+`scripts/remote/fbench_remote.py submit <profile> <arms> -- <fbench options>`; L0 and C are main
+2784f5d, La is 4fe481d and Lb abb872b; the Xeon profile is the one with MKL that
 X7 used):
 
 ```bash
 # Xeon, AVX-512 and AVX2 forced in one run (GCC 14)
-submit xeonbase8 C=fftn:<m>+STRATEGY=chain L0=fftn:<m>+STRATEGY=lanes \
-  La=fftn:<a>+STRATEGY=lanes Lb=fftn:<b>+STRATEGY=lanes F=fftw:<m> M=mkl:<m> \
-  C2=fftn:<m>+ISA=avx2+STRATEGY=chain L02=fftn:<m>+ISA=avx2+STRATEGY=lanes \
-  La2=fftn:<a>+ISA=avx2+STRATEGY=lanes Lb2=fftn:<b>+ISA=avx2+STRATEGY=lanes -- \
+submit xeonbase8 C=fftn:2784f5d+STRATEGY=chain L0=fftn:2784f5d+STRATEGY=lanes \
+  La=fftn:4fe481d+STRATEGY=lanes Lb=fftn:abb872b+STRATEGY=lanes F=fftw:2784f5d M=mkl:2784f5d \
+  C2=fftn:2784f5d+ISA=avx2+STRATEGY=chain L02=fftn:2784f5d+ISA=avx2+STRATEGY=lanes \
+  La2=fftn:4fe481d+ISA=avx2+STRATEGY=lanes Lb2=fftn:abb872b+ISA=avx2+STRATEGY=lanes -- \
   --catalogue bench/catalogues/x7.toml --tier full --min-rounds 8
 # EPYC, AVX2 (GCC 16)
-submit epyc C=fftn:<m>+STRATEGY=chain L0=fftn:<m>+STRATEGY=lanes \
-  La=fftn:<a>+STRATEGY=lanes Lb=fftn:<b>+STRATEGY=lanes F=fftw:<m> -- \
+submit epyc C=fftn:2784f5d+STRATEGY=chain L0=fftn:2784f5d+STRATEGY=lanes \
+  La=fftn:4fe481d+STRATEGY=lanes Lb=fftn:abb872b+STRATEGY=lanes F=fftw:2784f5d -- \
   --catalogue bench/catalogues/x7.toml --tier full --min-rounds 8
 # Mac sanity (double, forced lanes; a quick run, not a decision run)
-$F run L0=fftn:<m>+STRATEGY=lanes Lb=fftn:<b>+STRATEGY=lanes \
+$F run L0=fftn:2784f5d+STRATEGY=lanes Lb=fftn:abb872b+STRATEGY=lanes \
   --catalogue bench/catalogues/x7.toml --tier full --filter 'op$' --min-rounds 3 --max-rounds 3
 ```
 
 ## Results
 
-Pending. Mac sanity runs and the remote run IDs go here.
+Correctness before timing: the Mac's merge gate passes on abb872b (Homebrew Clang 23;
+`neon_fcma`, `neon`, scalar), and so does a GCC 16 `-Werror` build. The x86 paths were
+also built on the Mac for x86-64 (Apple Clang, `-arch x86_64`, FFTW oracle off) and the
+whole suite run under Rosetta with `ROSETTA_ADVERTISE_AVX=1`, which runs `avx2` (not
+`avx512`): 1096 tests pass. Breaking `store_spread` on purpose on `avx2` and on NEON made
+the lanes tests fail, so both new paths run. `avx512` and GCC on x86 still need the Xeon.
+
+Mac sanity, run 20261115-072430-b7db (M5 Max, `neon_fcma`, forced lanes, c2c 8, 16 and
+64 points at batches 64 and 1024; 3 rounds, all under load, band ±3.55 %; not a decision
+run): La ÷ L0 0.95–1.05, geometric mean 0.985, no verdicts; Lb ÷ L0 in double 0.92–1.00
+(C = 1, which (b) leaves alone; one case faster, 16 × 1024 at 0.92) and in float
+0.56–0.73 (C = 2, where the gather and scatter go). Nothing got slower.
+
+The Xeon and EPYC runs are pending (commands above).
 
 ## Verdict
 
