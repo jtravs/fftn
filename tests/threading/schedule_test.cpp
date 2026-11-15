@@ -442,6 +442,11 @@ TEST(Schedule, GridSizesFromCaches) {
   EXPECT_EQ(m5.grid_three_bytes, 2048 * kib);
   EXPECT_EQ(m5.grid_block_bytes, 128 * kib);
   EXPECT_EQ(m5.grid_fuse_bytes, 4096 * kib);
+  // Lengths that are not powers of two stay chains longer where the L2 is shared (X29).
+  EXPECT_EQ(m5.chain_part_bytes, 16 * kib);
+  EXPECT_EQ(m5.chain_mixed_bytes, 256 * kib);
+  EXPECT_EQ(xeon.chain_part_bytes, 0U);
+  EXPECT_EQ(epyc.chain_mixed_bytes, 0U);
   // Unknown sizes keep the defaults; an unknown sharing counts as a shared L2.
   const machine_profile defaults;
   machine_profile unknown;

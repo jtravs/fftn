@@ -239,6 +239,8 @@ TEST(Grid, PlannerChoosesByTheProfile) {
   s.profile.grid_min_bytes = 8192;
   s.profile.grid_three_bytes = 32768;
   s.profile.grid_block_bytes = 16384;
+  s.profile.chain_part_bytes = 0;
+  s.profile.chain_mixed_bytes = 0;
   const auto plan = [&](std::size_t n, const build_settings& b) {
     return make_plan_core(
         fftn::detail::view_of(fftn::rows_c2c<double>(n, 1, fftn::direction::forward)),
@@ -287,6 +289,30 @@ TEST(Grid, PlannerChoosesByTheProfile) {
   const std::string copied = described(*plan(4096, fuse));
   EXPECT_EQ(copied.find("reads rows"), std::string::npos) << copied;
   EXPECT_NE(copied.find("gather"), std::string::npos) << copied;
+}
+
+// A length that is not a power of two stays a chain beyond grid_min_bytes when its
+// power-of-two part's bytes are within chain_part_bytes, or its own within
+// chain_mixed_bytes (X29); powers of two are unaffected.
+TEST(Grid, ChainKeepsLengthsThatAreNotPowersOfTwo) {
+  build_settings s;
+  s.profile.grid_min_bytes = 8192;
+  s.profile.grid_three_bytes = std::size_t{1} << 30U;
+  s.profile.grid_block_bytes = 16384;
+  s.profile.chain_part_bytes = 64 * 16; // power-of-two parts up to 64 points
+  s.profile.chain_mixed_bytes = 0;
+  const auto plan = [&](std::size_t n) {
+    return make_plan_core(
+        fftn::detail::view_of(fftn::rows_c2c<double>(n, 1, fftn::direction::forward)),
+        fftn::options(), s);
+  };
+  EXPECT_FALSE(is_grid(*plan(64 * 45)));  // part 64
+  EXPECT_TRUE(is_grid(*plan(128 * 45)));  // part 128
+  EXPECT_TRUE(is_grid(*plan(4096)));      // a power of two
+  s.profile.chain_mixed_bytes = 128 * 45 * 16;
+  EXPECT_FALSE(is_grid(*plan(128 * 45))); // within chain_mixed_bytes
+  EXPECT_TRUE(is_grid(*plan(256 * 45)));
+  EXPECT_TRUE(is_grid(*plan(8192)));
 }
 
 // build_settings::scale_on_input puts the scale on phase 1's input: its first pass, or its

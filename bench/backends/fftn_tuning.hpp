@@ -96,6 +96,14 @@ constexpr std::array size_fields{
         .member = &fftn::detail::machine_profile::grid_block_bytes,
     },
     size_field{.key = "GRID_BLOCK", .member = &fftn::detail::machine_profile::grid_block},
+    size_field{
+        .key = "CHAIN_PART_BYTES",
+        .member = &fftn::detail::machine_profile::chain_part_bytes,
+    },
+    size_field{
+        .key = "CHAIN_MIXED_BYTES",
+        .member = &fftn::detail::machine_profile::chain_mixed_bytes,
+    },
 };
 constexpr std::array int_fields{
     int_field{

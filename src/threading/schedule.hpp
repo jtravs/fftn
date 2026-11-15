@@ -103,6 +103,15 @@ struct machine_profile {
   std::size_t grid_fuse_bytes = std::size_t{4} * 1024 * 1024;
   std::size_t grid_block_bytes = std::size_t{64} * 1024;
   std::size_t grid_block = 0;
+  // Exceptions to grid_min_bytes for rows whose length n is not a power of two (experiment
+  // X29): such a row stays a chain at any size when the power-of-two part of n, in bytes of
+  // complex values, is at most chain_part_bytes, and up to chain_mixed_bytes whatever that
+  // part. The chain lost beyond L1 on Apple's cluster L2 because the legs of a power-of-two
+  // row's passes map to the same L1 sets; an odd factor in every leg distance spreads them.
+  // 0 turns either off. set_grid_sizes sets them where the L2 is shared: an eighth of L1
+  // (the way size of an 8-way L1) and twice L1.
+  std::size_t chain_part_bytes = 0;
+  std::size_t chain_mixed_bytes = 0;
 };
 
 // The profile of a machine of topology t (its CPU count aside): the defaults above, which

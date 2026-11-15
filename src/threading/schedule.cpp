@@ -82,6 +82,13 @@ void set_grid_sizes(machine_profile& p, const core_class& c) noexcept {
     p.grid_three_bytes = private_l2 ? c.l2.size : c.l2.size / 8;
     p.grid_fuse_bytes = c.l2.size / 4;
   }
+  // Experiment X29, M5 Max: with the grid from L1, rows whose length has a power-of-two part
+  // of at most 1024 points took 0.49-0.72 of the grid's time as chains (to 4 Mi points),
+  // and every other length that is not a power of two 0.56-0.64 up to twice L1.
+  if (c.l1d.size != 0 && c.l2.size != 0 && !private_l2) {
+    p.chain_part_bytes = c.l1d.size / 8;
+    p.chain_mixed_bytes = 2 * c.l1d.size;
+  }
 }
 
 bool runs_inline(const work_graph& g, const machine_profile& profile) noexcept {

@@ -316,8 +316,9 @@ line_edges c2c_edges(const options& opts, const build_settings& settings, bool f
 }
 
 // Whether a complex row of n of one axis is a grid (DESIGN.md 8.5, experiment X12), and
-// its split: beyond the profile's grid_min_bytes or when forced, if the row is contiguous on
-// both sides, carries no edge factor (the grid applies only the scale, on its output or,
+// its split: beyond the profile's grid_min_bytes (and, for a length that is not a power of
+// two, outside its chain_part_bytes and chain_mixed_bytes, X29) or when forced, if the row
+// is contiguous on both sides, carries no edge factor (the grid applies only the scale, on its output or,
 // with build_settings::scale_on_input, its input), has no forced radices for its whole
 // length and has a split whose phases are codelet chains. The row is a c2c row or the
 // half-length complex transform of a real row of 2n (DESIGN.md 9.1).
@@ -329,9 +330,19 @@ grid_split plan_grid(std::size_t n, const side& in, const side& out, const build
       settings.out_factor != nullptr || in.stride[0] != 1 || out.stride[0] != 1) {
     return {};
   }
-  if (settings.strategy == strategy_choice::rules &&
-      n * 2 * sizeof(T) <= settings.profile.grid_min_bytes) {
-    return {};
+  if (settings.strategy == strategy_choice::rules) {
+    // A length that is not a power of two stays a chain longer (machine_profile, X29).
+    const std::size_t bytes = n * 2 * sizeof(T);
+    std::size_t part = 1;
+    while ((n / part) % 2 == 0) {
+      part *= 2;
+    }
+    const bool mixed = part != n;
+    if (bytes <= settings.profile.grid_min_bytes ||
+        (mixed && (part * 2 * sizeof(T) <= settings.profile.chain_part_bytes ||
+                   bytes <= settings.profile.chain_mixed_bytes))) {
+      return {};
+    }
   }
   std::size_t forced = 1;
   for (const std::size_t f : settings.radices) {
