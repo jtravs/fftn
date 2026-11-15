@@ -330,9 +330,13 @@ std::size_t lanes_distance(std::size_t a, std::size_t b) { return a > b ? a - b 
 // (Apple M5 Max, neon_fcma, dev/experiments/X17-bluestein-threshold.md): Bluestein beat the
 // generic pass at every prime from 17 to 257, by 2.5 to 43 times in double and 7 to 135
 // times in float, and at composites with many copies (17 x 64, 11 x 13 x 17) by 2 to 3
-// times. So every prime factor above the codelets goes through Bluestein; the generic pass
-// remains for radices a test forces. Unmeasured on the other targets, which take the same
-// value until a measurement there replaces it.
+// times. Confirmed on x86 (X17's x86 section; fbench 20261115-075530-ddbd Xeon 6240 avx512,
+// 20261115-075549-ba92 Xeon avx2, 20261115-075537-5a01 EPYC 7763 avx2): Bluestein faster at
+// every prime from 17 to 257 in double and float, by 12 to 500 times. Only AVX-512 float
+// composites with 64 or more copies of 17 ran up to 13 % faster in the generic pass, too
+// narrow for a rule. So every prime factor above the codelets goes through Bluestein; the
+// generic pass remains for radices a test forces. AArch64 Linux takes the same value
+// unmeasured.
 constexpr std::size_t default_bluestein_above = 16;
 
 // Experiment X8 (dev/experiments/X8-leaves.md): a whole-transform leaf of 32 beat planner

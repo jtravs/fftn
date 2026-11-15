@@ -194,8 +194,10 @@ one lane). Radix-64 codelets spill on every target. [X8](experiments/X8-leaves.m
 
 4.2 **Bluestein beats a direct prime pass from small primes up.** Above 16, a chirp-z
 convolution through smooth-length FFTs beat the O(q²) generic pass at every prime measured
-(17: 2.5 times in double, 7 in float); primes from 97 up went from 12–5000 times FFTW's
-time to 0.64–1.28. Store the chirp and kernel spectrum once per (prime, sign), not once per
+(17: 2.5 times in double, 7 in float, on the M5 Max; 12–20 times on the Xeon 6240 and the
+EPYC 7763, where a lone row fills one lane of 2–8 in a pass vectorised across copies);
+primes from 97 up went from 12–5000 times FFTW's time to 0.64–1.28. Only where many copies
+fill wide vectors (AVX-512 float, 64+ copies of 17) did the direct pass win, by up to 13 %. Store the chirp and kernel spectrum once per (prime, sign), not once per
 copy: 889 MB of tables became under 1 KB at n = 17·2²⁰.
 [X17](experiments/X17-bluestein-threshold.md).
 
