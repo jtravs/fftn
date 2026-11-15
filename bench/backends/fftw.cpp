@@ -9,6 +9,7 @@
 //   PLANNER=ESTIMATE|MEASURE|PATIENT|EXHAUSTIVE   planning effort (default MEASURE)
 //   WISDOM_IN=<file>    import wisdom from the file when it exists
 //   WISDOM_OUT=<file>   export the session's wisdom to the file at the end
+//   PLAN_NOTE=1         write the plan FFTW chose (fftw_sprint_plan) into the case's note
 // Wisdom is otherwise fresh in every process: stale accumulated wisdom slowed FFTW by
 // 1.3x in the prototype (DESIGN.md finding E10). The driver keeps one wisdom file per run
 // and planner setting, so a campaign starts fresh and its rounds share their plans.
@@ -23,6 +24,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -39,6 +41,7 @@ struct session {
   std::string planner = "MEASURE";
   std::string wisdom_in;
   std::string wisdom_out;
+  bool plan_note = false;
   std::string description;
 };
 
@@ -124,6 +127,12 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
       s.wisdom_in = val;
     } else if (key == "WISDOM_OUT") {
       s.wisdom_out = val;
+    } else if (key == "PLAN_NOTE") {
+      if (val != "0" && val != "1") {
+        say(message, message_size, "PLAN_NOTE is 0 or 1");
+        return fbench_error;
+      }
+      s.plan_note = val == "1";
     } else {
       say(message, message_size, "unknown FFTW option " + std::string(key));
       return fbench_error;
@@ -208,6 +217,21 @@ std::int32_t fbench_create(const fbench_case* c, void* in, void* out, void** pla
   if (p == nullptr) {
     say(message, message_size, "FFTW returned no plan");
     return fbench_error;
+  }
+  if (state().plan_note) {
+    // The plan in FFTW's own notation, one line (experiment X25): which codelets, radices,
+    // buffering and vector loops it chose. fftw_sprint_plan's string is malloc'ed.
+    char* const text = fftw_sprint_plan(p);
+    const std::string_view plan_text = text != nullptr ? text : "";
+    std::string line;
+    for (const char ch : plan_text) {
+      const bool blank = ch == '\n' || ch == ' ';
+      if (!blank || (!line.empty() && line.back() != ' ')) {
+        line.push_back(blank ? ' ' : ch);
+      }
+    }
+    std::free(text); // FFTW's API allocates the string with malloc
+    say(message, message_size, line);
   }
   auto record = std::make_unique<plan_record>();
   record->plan = p;
