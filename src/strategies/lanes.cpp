@@ -6,7 +6,9 @@
 // row's chain runs on it as lane passes with every copy count multiplied by B, and the tile
 // goes back to the rows (src/passes/lanes.inl). Where a run of C rows is one vector access
 // (C = 1, or rows one complex value apart) the first pass reads the rows and the last writes
-// them; otherwise a gather (C x C transposes) builds the tile and a scatter takes it apart.
+// them, and so they do one access per row where the target builds a register from C separate
+// complex values (spread<T>: x86 in double, NEON in float; experiment X24); otherwise a
+// gather (C x C transposes) builds the tile and a scatter takes it apart.
 //
 // The chain is the one the row gets alone (chain.cpp): the same radices in the same order,
 // the same split run, the same twiddle values and edge operations; a pass that was the row's
@@ -102,7 +104,15 @@ void chain_builder<T>::lanes_body(std::size_t n, const std::vector<std::size_t>&
     return lane_rows{.where = where, .stride = static_cast<std::ptrdiff_t>(2 * block), .dist = 2};
   };
   // A run of C rows is one vector access.
-  const auto direct = [&](const lane_rows& r) { return c == 1 || r.dist == 2; };
+  const auto contiguous = [&](const lane_rows& r) { return c == 1 || r.dist == 2; };
+  // An edge pass reaches the rows themselves: one vector access per run, or where the target
+  // builds a register from C separate complex values one access per row (spread<T>,
+  // experiment X24), the pass variant [1] that by_row selects.
+  const auto direct = [&](const lane_rows& r) { return contiguous(r) || kernels_.spread_rows; };
+  const auto by_row = [&](const lane_rows& r) -> std::size_t { return contiguous(r) ? 0 : 1; };
+  const auto row_text = [](std::size_t spread) {
+    return spread != 0 ? std::string(", one access per row") : std::string();
+  };
   const auto common = [&](stage& st, std::size_t radix, const lane_rows& from,
                           const lane_rows& to) {
     st.args.radix = radix;
@@ -135,12 +145,14 @@ void chain_builder<T>::lanes_body(std::size_t n, const std::vector<std::size_t>&
   const bool to_dst = split > last && direct(dst);
   if (rad.size() == 1) {
     const lane_rows to = to_dst ? dst : tile_of(at);
+    const std::size_t spread = std::max(by_row(src), by_row(to));
     stage st;
-    st.run = kernels_.passes.codelet[codelet_slot(n)].lanes_leaf[d][scaled];
+    st.run = kernels_.passes.codelet[codelet_slot(n)].lanes_leaf[d][scaled][spread];
     common(st, n, src, to);
     st.units = block / c;
     st.name = "lanes leaf radix-" + std::to_string(n) + " " + direction_text(sign) + " (" +
-              std::to_string(block) + " rows" + (scaled != 0 ? "; out: scale)" : ")");
+              std::to_string(block) + " rows" + row_text(spread) +
+              (scaled != 0 ? "; out: scale)" : ")");
     stages.push_back(std::move(st));
     if (!to_dst) {
       add_lanes_copy(false, n, dst, at, block, stages);
@@ -151,14 +163,15 @@ void chain_builder<T>::lanes_body(std::size_t n, const std::vector<std::size_t>&
     // The first pass, reading the rows (or a tile).
     stage st;
     const std::size_t m = n / rad[0];
-    st.run = kernels_.passes.codelet[codelet_slot(rad[0])].lanes_first[d];
+    st.run = kernels_.passes.codelet[codelet_slot(rad[0])].lanes_first[d][by_row(src)];
     common(st, rad[0], src, tile_of(at));
     st.args.m = m;
     st.args.s = block;
     st.args.twiddles = shared_twiddles(n, rad[0], 1);
     st.units = m * (block / c);
     st.name = "lanes first radix-" + std::to_string(rad[0]) + " " + direction_text(sign) + " (m " +
-              std::to_string(m) + ", " + std::to_string(block) + " rows)";
+              std::to_string(m) + ", " + std::to_string(block) + " rows" + row_text(by_row(src)) +
+              ")";
     stages.push_back(std::move(st));
   }
   std::size_t s = rad[0];
@@ -172,14 +185,14 @@ void chain_builder<T>::lanes_body(std::size_t n, const std::vector<std::size_t>&
   }
   if (to_dst) {
     stage st;
-    st.run = kernels_.passes.codelet[codelet_slot(rad[last])].lanes_last[d][scaled];
+    st.run = kernels_.passes.codelet[codelet_slot(rad[last])].lanes_last[d][scaled][by_row(dst)];
     common(st, rad[last], tile_of(at), dst);
     st.args.m = 1;
     st.args.s = s * block;
     st.units = s * (block / c);
     st.name = "lanes last radix-" + std::to_string(rad[last]) + " " + direction_text(sign) +
               " (s " + std::to_string(s) + ", " + std::to_string(block) + " rows" +
-              (scaled != 0 ? "; out: scale)" : ")");
+              row_text(by_row(dst)) + (scaled != 0 ? "; out: scale)" : ")");
     stages.push_back(std::move(st));
   } else if (!is_scratch(dst.where)) {
     add_lanes_copy(false, n, dst, at, block, stages);
@@ -216,8 +229,11 @@ std::size_t chain_builder<T>::r2c_lanes(std::size_t n, endpoint src, std::ptrdif
              stages);
   const slot z = stages.back().dst;
   const lane_rows out{dst.where, 2 * dst.stride, 2 * dst_dist};
-  // The pairing writes the rows where a run of C of them is one vector store, else a tile.
-  const bool direct = kernels_.complex_lanes == 1 || out.dist == 2;
+  // The pairing writes the rows where a run of C of them is one vector store, or one store
+  // per row (spread<T>, as lanes_body's edge passes), else a tile.
+  const bool contiguous = kernels_.complex_lanes == 1 || out.dist == 2;
+  const bool direct = contiguous || kernels_.spread_rows;
+  const std::size_t spread = contiguous ? 0 : 1;
   const lane_rows to = direct ? out
                               : lane_rows{
                                     .where = other(z),
@@ -225,7 +241,7 @@ std::size_t chain_builder<T>::r2c_lanes(std::size_t n, endpoint src, std::ptrdif
                                     .dist = 2,
                                 };
   stage st;
-  st.run = kernels_.passes.lanes_r2c_pair[scale != 1.0 ? 1 : 0];
+  st.run = kernels_.passes.lanes_r2c_pair[scale != 1.0 ? 1 : 0][direct ? spread : 0];
   st.args.n = n;
   st.args.block = block;
   st.args.twiddles = leaf_pairing_twiddles(n);
@@ -236,6 +252,7 @@ std::size_t chain_builder<T>::r2c_lanes(std::size_t n, endpoint src, std::ptrdif
   st.dst = to.where;
   st.units = 1;
   st.name = std::string("lanes r2c pairing (") + std::to_string(block) + " rows" +
+            (direct && spread != 0 ? ", one access per row" : "") +
             (scale != 1.0 ? "; out: scale)" : ")");
   stages.push_back(std::move(st));
   if (!direct) {
@@ -259,16 +276,19 @@ std::size_t chain_builder<T>::c2r_lanes(std::size_t n, endpoint src, std::ptrdif
     edges.out = edge_op::scale;
     edges.scale = scale;
   }
-  // The pairing reads the rows where a run of C of them is one vector load, else a tile.
+  // The pairing reads the rows where a run of C of them is one vector load, or one load per
+  // row (spread<T>), else a tile.
   lane_rows from{src.where, 2 * src.stride, 2 * src_dist};
   slot z = slot::a;
-  if (kernels_.complex_lanes > 1 && from.dist != 2) {
+  const std::size_t spread = kernels_.complex_lanes > 1 && from.dist != 2 ? 1 : 0;
+  if (spread != 0 && !kernels_.spread_rows) {
     add_lanes_copy(true, h + 1, from, slot::a, block, stages);
     from = {.where = slot::a, .stride = static_cast<std::ptrdiff_t>(2 * block), .dist = 2};
     z = slot::b;
   }
+  const std::size_t by_row = kernels_.spread_rows ? spread : 0;
   stage st;
-  st.run = kernels_.passes.lanes_c2r_pair;
+  st.run = kernels_.passes.lanes_c2r_pair[by_row];
   st.args.n = n;
   st.args.block = block;
   st.args.twiddles = leaf_pairing_twiddles(n);
@@ -277,7 +297,8 @@ std::size_t chain_builder<T>::c2r_lanes(std::size_t n, endpoint src, std::ptrdif
   st.src = from.where;
   st.dst = z;
   st.units = 1;
-  st.name = "lanes c2r pairing (" + std::to_string(block) + " rows)";
+  st.name = "lanes c2r pairing (" + std::to_string(block) + " rows" +
+            (by_row != 0 ? ", one access per row)" : ")");
   stages.push_back(std::move(st));
   // The h complex values of a row written as its n reals.
   lanes_body(h, rad, split, +1,

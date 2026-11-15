@@ -19,6 +19,15 @@ FFTN_FORCE_INLINE float32x4_t bcast(const float* p) {
   const float32x2_t x = vld1_f32(p);
   return vcombine_f32(x, x);
 }
+// Two complex floats from two addresses, 64 bits each (vocabulary.inl, spread).
+template <> inline constexpr bool spread<float> = true;
+FFTN_FORCE_INLINE float32x4_t load_spread(const float* p, std::ptrdiff_t step) {
+  return vcombine_f32(vld1_f32(p), vld1_f32(p + step));
+}
+FFTN_FORCE_INLINE void store_spread(float* p, std::ptrdiff_t step, float32x4_t a) {
+  vst1_f32(p, vget_low_f32(a));
+  vst1_f32(p + step, vget_high_f32(a));
+}
 
 FFTN_FORCE_INLINE float64x2_t add(float64x2_t a, float64x2_t b) { return vaddq_f64(a, b); }
 FFTN_FORCE_INLINE float32x4_t add(float32x4_t a, float32x4_t b) { return vaddq_f32(a, b); }
