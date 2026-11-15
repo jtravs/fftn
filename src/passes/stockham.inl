@@ -133,8 +133,7 @@ FFTN_FORCE_INLINE auto lane_input(const pass_args* a, const T* xp, std::ptrdiff_
 template <class T, bool Full, edge_op OutOp, factor_sharing Share>
 FFTN_FORCE_INLINE auto lane_output(const pass_args* a, T* yp, std::ptrdiff_t leg,
                                    std::ptrdiff_t step, std::size_t valid, std::size_t e0,
-                                   std::ptrdiff_t f_leg,
-                                   std::size_t g) {
+                                   std::ptrdiff_t f_leg, std::size_t g) {
   if constexpr (Share == factor_sharing::output) {
     return run_out_shared<T, Full>{
         .p = yp,
@@ -188,10 +187,10 @@ void lane_pass(const pass_args* a, std::size_t first, std::size_t last) {
   // factor_copies, advanced every per_entry units rather than divided per unit (a
   // division per unit of a radix-12 last pass is a few per cent of it), and the entries
   // between legs.
-  std::size_t g = 0;
-  std::size_t g_left = 0;
-  std::size_t per_entry = 1;
-  std::ptrdiff_t f_leg = 0;
+  std::size_t g = 0;         // NOLINT(misc-const-correctness): set under if constexpr
+  std::size_t g_left = 0;    // NOLINT(misc-const-correctness): set under if constexpr
+  std::size_t per_entry = 1; // NOLINT(misc-const-correctness): set under if constexpr
+  std::ptrdiff_t f_leg = 0;  // NOLINT(misc-const-correctness): set under if constexpr
   if constexpr (Share == factor_sharing::output) {
     per_entry = a->factor_copies / C<T>;
     g = first < per_entry ? 0 : first / per_entry;
@@ -205,15 +204,13 @@ void lane_pass(const pass_args* a, std::size_t first, std::size_t last) {
     const std::size_t e0 = q0 + s * R * p;
     T* yp = y + at(e0, ys);
     if (valid == C<T>) {
-      lane_unit<T, R, Sign, Twiddled>(lane_input<T, true, Share>(a, xp, in_leg, valid, p),
-                                      lane_output<T, true, OutOp, Share>(a, yp, out_leg, ys,
-                                                                         valid, e0, f_leg, g),
-                                      table, p);
+      lane_unit<T, R, Sign, Twiddled>(
+          lane_input<T, true, Share>(a, xp, in_leg, valid, p),
+          lane_output<T, true, OutOp, Share>(a, yp, out_leg, ys, valid, e0, f_leg, g), table, p);
     } else {
-      lane_unit<T, R, Sign, Twiddled>(lane_input<T, false, Share>(a, xp, in_leg, valid, p),
-                                      lane_output<T, false, OutOp, Share>(a, yp, out_leg, ys,
-                                                                          valid, e0, f_leg, g),
-                                      table, p);
+      lane_unit<T, R, Sign, Twiddled>(
+          lane_input<T, false, Share>(a, xp, in_leg, valid, p),
+          lane_output<T, false, OutOp, Share>(a, yp, out_leg, ys, valid, e0, f_leg, g), table, p);
     }
     if (++b == blocks) {
       b = 0;

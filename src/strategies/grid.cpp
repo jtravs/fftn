@@ -16,7 +16,6 @@
 #include <cstdint>
 #include <string>
 #include <utility>
-#include <variant>
 #include <vector>
 
 namespace fftn::inline v0::detail {
@@ -135,7 +134,7 @@ std::vector<std::size_t> phase_radices(std::size_t n, std::size_t largest) {
   }
   std::vector<path> best(ds.size());
   const auto at = [&](std::size_t d) {
-    return static_cast<std::size_t>(std::lower_bound(ds.begin(), ds.end(), d) - ds.begin());
+    return static_cast<std::size_t>(std::ranges::lower_bound(ds, d) - ds.begin());
   };
   std::vector<bool> reached(ds.size(), false);
   reached[0] = true;
@@ -148,11 +147,13 @@ std::vector<std::size_t> phase_radices(std::size_t n, std::size_t largest) {
         continue;
       }
       const std::size_t j = at(ds[i] * r);
-      path cand{.passes = best[i].passes + 1,
-                .low = best[i].low == 0 ? r : std::min(best[i].low, r),
-                .high = std::max(best[i].high, r),
-                .last = r,
-                .from = i};
+      const path cand{
+          .passes = best[i].passes + 1,
+          .low = best[i].low == 0 ? r : std::min(best[i].low, r),
+          .high = std::max(best[i].high, r),
+          .last = r,
+          .from = i,
+      };
       const bool wins =
           !reached[j] || cand.passes < best[j].passes ||
           (cand.passes == best[j].passes && cand.high * best[j].low < best[j].high * cand.low);
@@ -166,13 +167,13 @@ std::vector<std::size_t> phase_radices(std::size_t n, std::size_t largest) {
   for (std::size_t j = ds.size() - 1; j != 0; j = best[j].from) {
     rad.push_back(best[j].last);
   }
-  std::sort(rad.begin(), rad.end());
+  std::ranges::sort(rad);
   return rad;
 }
 
 // Whether a phase with these radices reads and writes its rows directly (grid_fuse_radix).
 bool fusible(const std::vector<std::size_t>& rad) {
-  return std::all_of(rad.begin(), rad.end(), [](std::size_t r) { return r <= grid_fuse_radix; });
+  return std::ranges::all_of(rad, [](std::size_t r) { return r <= grid_fuse_radix; });
 }
 
 std::vector<std::size_t> divisors(std::size_t n) {
@@ -272,13 +273,13 @@ void grid_builder<T>::add_copy(const char* what, pass_fn run, std::size_t rows, 
   st.dst = dst;
   st.units = rows;
   st.chunks = 1;
+  std::string scaled;
+  if (scale != 1.0) {
+    scaled = std::string(what) == "gather" ? "; in: scale" : "; out: scale";
+  }
   st.name = std::string("grid ") + what + " (" + std::to_string(cols) + " columns x " +
             std::to_string(rows) + " rows, row strides " + std::to_string(src_stride) + " -> " +
-            std::to_string(dst_stride) +
-            (scale == 1.0                    ? ""
-             : std::string(what) == "gather" ? "; in: scale"
-                                             : "; out: scale") +
-            ")";
+            std::to_string(dst_stride) + scaled + ")";
   p.records.emplace_back(std::move(st));
 }
 
@@ -331,9 +332,12 @@ slot grid_builder<T>::phase_chain(std::size_t n, const std::vector<std::size_t>&
       }
       st.run = kernels_.passes.codelet[codelet_slot(radix)].phase[d][v];
       // The scale of the variant chosen: a single pass is both a phase's read and its write.
-      st.args.scale = v == phase_twiddled_in_scale || v == phase_plain_in_scale ? in_scale
-                      : v == phase_plain_out_scale                              ? out_scale
-                                                                                : 1.0;
+      st.args.scale = 1.0;
+      if (v == phase_twiddled_in_scale || v == phase_plain_in_scale) {
+        st.args.scale = in_scale;
+      } else if (v == phase_plain_out_scale) {
+        st.args.scale = out_scale;
+      }
       st.args.src_stride = big_in ? from.row : static_cast<std::ptrdiff_t>(s);
       st.args.src_cols = big_in ? cols : 0;
       st.args.dst_stride =
@@ -345,10 +349,12 @@ slot grid_builder<T>::phase_chain(std::size_t n, const std::vector<std::size_t>&
                 (in_scale != 1.0 ? ", in: scale" : "");
       }
       if (big_out) {
-        ends += std::string("; writes rows ") + std::to_string(to.row) + " apart" +
-                (row_tw != nullptr  ? ", twiddled"
-                 : out_scale != 1.0 ? ", out: scale"
-                                    : "");
+        ends += std::string("; writes rows ") + std::to_string(to.row) + " apart";
+        if (row_tw != nullptr) {
+          ends += ", twiddled";
+        } else if (out_scale != 1.0) {
+          ends += ", out: scale";
+        }
       }
     } else {
       st.run = m > 1 ? kernels_.passes.codelet[codelet_slot(radix)].lane[d]
@@ -432,7 +438,10 @@ std::size_t grid_builder<T>::c2c_row(const grid_split& g, int sign, bool in_plac
   const auto cb = static_cast<std::ptrdiff_t>(2 * sizeof(T));
   const auto blk = static_cast<std::ptrdiff_t>(b);
   const auto index = [](slot s) -> std::size_t {
-    return s == slot::in ? 0 : s == slot::out ? 1 : 2;
+    if (s == slot::in) {
+      return 0;
+    }
+    return s == slot::out ? 1 : 2;
   };
   // The array each phase writes (buf[i] for phase i, buf[0] the input): the last phase
   // writes the output, the positions it read; every other phase writes an array other
@@ -506,10 +515,10 @@ std::size_t grid_builder<T>::c2c_row(const grid_split& g, int sign, bool in_plac
       p.records.emplace_back(lc);
     }
     const std::size_t inner = p.records.size();
-    loop ll{.kind = loop_kind::lines, .count = l_count / b};
-    ll.step.at(index(src)) = blk * cb;
-    ll.step.at(index(dst)) = blk * cb;
-    p.records.emplace_back(ll);
+    loop lines{.kind = loop_kind::lines, .count = l_count / b};
+    lines.step.at(index(src)) = blk * cb;
+    lines.step.at(index(dst)) = blk * cb;
+    p.records.emplace_back(lines);
     const std::vector<std::size_t> rad = phase_radix_list(ni);
     const bool fuse_in = fused_ && fusible(rad);
     const bool fuse_out = fuse_in;
