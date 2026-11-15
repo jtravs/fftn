@@ -1199,10 +1199,14 @@ with an input edge operation, forced radices or a real row strided on its real s
 the rules never for a real row strided on its complex side (the lanes give it the contiguous
 row's bits, the chain's strided route others, and avx2 and avx512, whose thresholds differ,
 must agree). The
-lanes driver runs each block's stages through `run_records`-style argument copies; X20's
-per-call preparation of a flat program is not applied to it. Not built: lanes for the strided axes of planes (phase 4), a
-first pass that gathers through vector inserts (FFTW's way on x86), lane blocks across
-an outer batch dimension.
+lanes driver runs each block's stages through `run_records`-style argument copies. X24
+tried X20's per-call preparation, with a lanes leaf run in one call: 1–7 % slower at batch
+64 of 8–16 points, so it was not kept. X24 also tried edge passes that read and write rows
+one 128-bit unit per row instead of a gather and scatter (FFTW's inserts on x86). That won
+on AVX2 but cost up to 1.17 on AVX-512 at 24–256 points, so it was not kept either; even
+with both, double c2c lost to the chain at 8 points. Not built: lanes for the strided axes
+of planes (phase 4), lane blocks across an outer batch dimension, a threshold per
+transform kind (X24 follow-up).
 
 **Bluestein** and the **generic prime pass** cover lengths with large prime factors
 (section 9.2).

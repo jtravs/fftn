@@ -283,7 +283,16 @@ points in double and on NEON (1.09–1.66) and kept their win only where many la
 run of C rows is one vector access (C = 1, interleaved rows) no transpose is needed, and
 building each vector element by element through a stack tile was slower than the transpose.
 Read and write the rows in the order the row-by-row code does: walking them group by group
-cost 1.3 times beyond L1. [X7](experiments/X7-lanes.md).
+cost 1.3 times beyond L1. [X7](experiments/X7-lanes.md). Taking out the transposes does not change the answer for double on x86, where C is 2–4.
+X24 built each register from C 128-bit row loads (`vinsertf128`, then `vinsertf64x4` on
+AVX-512) and took it apart with 128-bit stores, so short rows needed no gather or scatter.
+That took the lanes to 0.80–0.88 of their own time on AVX2 (geometric means; EPYC, Xeon),
+but they were still 1.08–1.37 of the batched-leaf chain's time at 8 points. On AVX-512, rows with inner
+passes ran up to 1.17 times slower than with the transposes (24–256 points, Xeon), so four
+128-bit pieces per register only pay where there is no inner pass to share a transpose
+over. Preparing the lanes' arguments once per call, as X20 did for rows, was 1–7 % slower
+at the smallest batches (64 rows of 8–16 points) and up to 4 % faster elsewhere: a fixed-cost
+change needs its smallest case in the catalogue. [X24](experiments/X24-lanes-x86.md).
 
 ## 5. Threading
 
