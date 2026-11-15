@@ -51,6 +51,10 @@ request first.
 
 ### Leads, one-dimensional double first
 
+**Start here when work resumes (the maintainer's choice, 2026-11-15): leads 1–5, the
+one-dimensional double gap.** Each needs an experiment file (AGENTS.md section 6) before it
+runs; the numbers above are the baseline to beat. The rest (6–9) follow.
+
 1. Long rows (≥ 16384, both machines; mixed 46080 and 100000 worst on the EPYC at 1.67–1.98;
    r2c and c2r of 65536 and 2²⁰ at 1.3–1.6): X12 on x86 (the grid's phases and blocks
    there), the real pairing fused into grid phases, radix 32 phases from 32768 (X3
