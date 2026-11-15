@@ -34,6 +34,6 @@ tiers = ["tracking"]
 name = "x27-rader"
 note = "primes (and a composite) whose largest prime has a 7-smooth p - 1: Rader against Bluestein"
 kind = "c2c"
-dims = [29, 31, 61, 101, 1009, 2017, 8191, 16381, 4097]
+dims = [29, 31, 61, 101, 1009, 2017, 7681, 12289, 40961, 8191, 16381, 4097]
 precision = ["f64", "f32"]
 tiers = ["tracking"]
