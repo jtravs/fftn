@@ -471,7 +471,7 @@ template <class T> const T* grid_builder<T>::row_twiddles(std::size_t ni, std::s
 }
 
 template <class T> bool grid_builder<T>::uses_block(const grid_split& g, bool in_place) noexcept {
-  return g.phases == 3 || in_place || g.pad != 0;
+  return g.phases == 3 || in_place;
 }
 
 template <class T> std::size_t grid_builder<T>::block_elements(const grid_split& g) noexcept {

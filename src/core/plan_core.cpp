@@ -484,17 +484,25 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
 
   const std::size_t lanes =
       lanes_block<T>(s, in, out, settings, profile, chain, kernels.complex_lanes);
-  const grid_split grid_plan =
+  grid_split grid_plan =
       s.kind == transform_kind::c2c && r == 1
           ? plan_grid<T>(c.lengths[0], in, out, settings, chain, kernels.complex_lanes)
           : grid_split{};
   // A real row of one axis whose half-length complex transform is a grid (DESIGN.md 9.1):
   // the grid writes the output and the pairing runs after it in place (r2c), or the pairing
   // writes the output and the grid runs in place there (c2r).
-  const grid_split real_grid =
+  grid_split real_grid =
       s.kind != transform_kind::c2c && r == 1 && c.lengths[0] % 2 == 0
           ? plan_grid<T>(c.lengths[0] / 2, in, out, settings, chain, kernels.complex_lanes)
           : grid_split{};
+  // Only an intermediate the plan keeps in the workspace block anyway is padded: moving a
+  // two-phase plan's intermediate out of the output into the block cost 1-9 % (X26b).
+  if (!grid_builder<T>::uses_block(grid_plan, c.in_place)) {
+    grid_plan.pad = 0;
+  }
+  if (!grid_builder<T>::uses_block(real_grid, c.in_place || s.kind != transform_kind::r2c)) {
+    real_grid.pad = 0;
+  }
   if (lanes != 0) {
     // The lanes strategy (DESIGN.md 8.5): blocks of `lanes` rows of the innermost batch
     // dimension through the body, the rest in blocks of C through the tail.

@@ -452,8 +452,7 @@ TEST(Grid, FusedEqualsUnfused) {
 
 // Padding the intermediate (grid_pad, experiment X26b) moves data, not arithmetic: padded
 // grids (the x86 machines' 4 KiB period, and a shorter one that pads more of these short
-// rows) give the bits of unpadded ones, fused and not, two phases out of place (whose
-// intermediate then moves into the workspace block) and three.
+// rows) give the bits of unpadded ones, fused and not, two phases in place and three.
 template <class T> void padding_keeps_bits(fftn::isa target) {
   std::vector<grid_case> cases = forced_cases();
   cases.insert(cases.end(), last_small_cases().begin(), last_small_cases().end());
@@ -513,13 +512,19 @@ TEST(Grid, PlannerPadsByTheProfile) {
   s.profile.grid_block = 8;
   s.profile.grid_pad_period = 4096;
   const auto shape = fftn::rows_c2c<double>(4096, 1, fftn::direction::forward);
-  const auto padded = make_plan_core(fftn::detail::view_of(shape), fftn::options(), s);
+  const auto padded =
+      make_plan_core(fftn::detail::view_of(shape), {.in_place = true}, s); // in the block
   EXPECT_NE(described(*padded).find("rows padded by"), std::string::npos) << described(*padded);
   EXPECT_GT(padded->block_elements, std::size_t{4096});
   s.profile.grid_pad_period = std::numeric_limits<std::size_t>::max();
-  const auto plain = make_plan_core(fftn::detail::view_of(shape), fftn::options(), s);
+  const auto plain = make_plan_core(fftn::detail::view_of(shape), {.in_place = true}, s);
   EXPECT_EQ(described(*plain).find("rows padded by"), std::string::npos) << described(*plain);
-  EXPECT_EQ(plain->block_elements, 0U); // two phases out of place: the output holds it
+  EXPECT_EQ(plain->block_elements, std::size_t{4096});
+  // Two phases out of place keep the intermediate in the output, unpadded.
+  s.profile.grid_pad_period = 4096;
+  const auto out_of_place = make_plan_core(fftn::detail::view_of(shape), fftn::options(), s);
+  EXPECT_EQ(described(*out_of_place).find("rows padded by"), std::string::npos);
+  EXPECT_EQ(out_of_place->block_elements, 0U);
 }
 
 // A grid's scratch line b is staggered from a by seven 64-byte lines (DESIGN.md 10, rule 4;

@@ -27,9 +27,9 @@
 //   gather the input edge's, with build_settings::scale_on_input).
 // A phase reads one array and writes another, except the last, which writes the positions
 // it read and so runs in place: phase 1 writes the output out of place when there are two
-// phases, otherwise the workspace block, and phase 2 of three writes the output; a padded
-// intermediate (grid_pad) is always the workspace block, each of its rows as phase 2 reads
-// them (N2 rows of n / N2) followed by `pad` unused elements. Scratch
+// phases, otherwise the workspace block, and phase 2 of three writes the output; only an
+// intermediate in the workspace block is padded (grid_pad), each of its rows as phase 2
+// reads them (N2 rows of n / N2) followed by `pad` unused elements. Scratch
 // lines a and b hold one block (block x max Ni). The loops over blocks are the program's
 // (DESIGN.md 8.3), one iteration per block, independent; the twiddle tables move with them
 // through the twiddle cursor (program.hpp).
