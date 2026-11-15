@@ -328,3 +328,45 @@ already decide the verdict below.
   the tile's element stores into the masked loads, and Clang's code for the lane pass's
   second loop), fix it, and run B5 (with P5's stores on `avx2`) again under this rule on a
   quieter Xeon. With GCC the change is worth 0.60–0.80 of the time on float 7-smooth rows.
+
+## Amendment 4: adoption for GCC builds (2026-11-15, written before its runs)
+
+The maintainer's decision after the verdict above: FFTN's x86 release builds use GCC, and
+decision rules judge the release toolchains (AGENTS.md section 6, "Decision rules judge
+the release toolchains"), so a loss seen only with Clang gates the change by compiler
+instead of rejecting it. P5 (B5 + T5 + P5) is therefore restored behind a build option,
+`FFTN_MASKED_TAILS` = `AUTO` (default: on with GCC, off with every other compiler, icpx
+included, which is Clang-based) | `ON` | `OFF`. With it off the passes are main's tile
+path (checked by disassembly, Results below); the bits are the same either way. Clang's
+loss on odd double lengths stays a follow-up. B5's GCC run had three cases just past the
+rule's limit under load 29 (double 980 on `avx512` 1.043, 70 and 162 on `avx2` 1.062 and
+1.042, against 1.040), and the EPYC's VMASKMOV chirp stores, which P5 fixes, were seen
+only with B5; this amendment re-runs the GCC machines before the option becomes the
+default.
+
+- **Arms:** A = main (3f90275), G = 1d97bb1 (P5 on main; `FFTN_MASKED_TAILS` left at
+  `AUTO`, so on: both machines build with GCC).
+- **Runs** (fbench_remote's `--serial`, one timing job at a time; the arms are built once
+  per machine by the build cache):
+  - Xeon Gold 6240, GCC 14.4 (`xeon` profile, Slurm `-c 8`, shared): arms `A512 G512 A256
+    G256` (A and G with `ISA=avx512` and with `ISA=avx2`; the A/A band is A512's, as in
+    the amendment's runs), on cases (1) and on (2), with `--max-load 80 --max-busy 60
+    --budget 10800`.
+  - EPYC 7763-class node, GCC 16 (`epyc` profile): A and G with `ISA=avx2`, on cases (1)
+    and (2), `--budget 10800`.
+- **Rule** (machine-targets: Xeon `avx512`, Xeon `avx2`, EPYC `avx2`). `FFTN_MASKED_TAILS`
+  stays on for GCC under `AUTO` if, on each machine-target, (a) G/A's float and double
+  geomeans over cases (1) are each at most 1 + band, (b) no case of (1) or (2) is slower
+  than 1 + band + 2 %, and (c) in particular the three borderline cases above are within
+  that limit. (The rule as proposed named "(1), (2) and the tracking tier"; (2) is the
+  tracking tier, so it is these two sets.) If a machine-target fails, its numbers are
+  reported and nothing further is iterated here: the maintainer decides between `AUTO` on
+  for GCC with a recorded exception, `AUTO` off for that target, or a follow-up.
+
+### Amendment 4: results
+
+(Pending.)
+
+### Amendment 4: verdict
+
+(Pending.)
