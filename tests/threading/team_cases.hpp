@@ -247,6 +247,19 @@ void add_cases(std::vector<team_case>& out, const fftn::detail::build_settings& 
   grid.grid_factors = {16, 64};
   out.push_back(make_case("c2r_grid_2048x2" + suffix, fftn::rows_c2r<T>(2048, 2), 2 * 1025,
                           2 * 2048, false, grid, target));
+  // The lanes strategy (strategies/lanes.cpp): blocks of rows (here 8, and the tail's blocks
+  // of C) that a team claims in runs of transforms of any length and alignment.
+  fftn::detail::build_settings lanes = settings;
+  lanes.strategy = fftn::detail::strategy_choice::lanes;
+  lanes.lane_block = 8;
+  out.push_back(make_case("c2c_lanes_24x37" + suffix, fftn::rows_c2c<T>(24, 37, fwd), 24 * 37,
+                          24 * 37, false, lanes, target));
+  out.push_back(make_case("c2c_lanes_inplace_64x19" + suffix, fftn::rows_c2c<T>(64, 19, bwd),
+                          64 * 19, 64 * 19, true, lanes, target));
+  out.push_back(make_case("r2c_lanes_32x21" + suffix, fftn::rows_r2c<T>(32, 21), 32 * 21, 17 * 21,
+                          false, lanes, target));
+  out.push_back(make_case("c2r_lanes_inplace_100x11" + suffix, fftn::rows_c2r<T>(100, 11),
+                          51 * 11, 102 * 11, true, lanes, target));
 }
 
 inline std::vector<team_case> standard_cases(const fftn::detail::build_settings& settings) {

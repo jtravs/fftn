@@ -327,6 +327,15 @@ bool split_of(target t, std::size_t /*lanes*/) {
   return t == target::avx2 || t == target::avx512;
 }
 
+// The longest row the lanes strategy takes (target_profile::lanes_up_to), from experiment X7
+// (dev/experiments/X7-lanes.md).
+std::size_t lanes_up_to_of(target t, std::size_t lanes) {
+  if (t == target::scalar) {
+    return 0;
+  }
+  return lanes >= 1 ? 256 : 0;
+}
+
 struct sequence {
   std::uint64_t cost = 0;
   std::vector<std::size_t> radices;
@@ -409,7 +418,8 @@ target_profile profile_of(target t, std::size_t lanes) noexcept {
               .costs = m.costs,
               .leaf_limit = leaf_limit_of(t, lanes),
               .bluestein_above = default_bluestein_above,
-              .split = split_of(t, lanes)};
+              .split = split_of(t, lanes),
+              .lanes_up_to = lanes_up_to_of(t, lanes)};
     }
     if (m.t == fallback_target &&
         (nearest == nullptr ||
@@ -421,7 +431,8 @@ target_profile profile_of(target t, std::size_t lanes) noexcept {
           .costs = nearest->costs,
           .leaf_limit = leaf_limit_of(t, lanes),
           .bluestein_above = default_bluestein_above,
-          .split = split_of(t, lanes)};
+          .split = split_of(t, lanes),
+          .lanes_up_to = lanes_up_to_of(t, lanes)};
 }
 
 // The specification is DESIGN.md 11.2, rule by rule.

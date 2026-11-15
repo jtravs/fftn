@@ -50,6 +50,12 @@ struct pass_args {
   // A lane pass whose output factor is shared (factor_sharing::output): the consecutive
   // elements that share each entry, a multiple of the target's complex count.
   std::size_t factor_copies = 1;
+  // The lanes strategy's gather and scatter (src/passes/lanes.inl): the reals between
+  // consecutive rows on each side, and the rows of the block being run, which the driver
+  // sets for every block (core/driver.cpp, program::lanes).
+  std::ptrdiff_t src_dist = 0;
+  std::ptrdiff_t dst_dist = 0;
+  std::size_t rows = 0;
 };
 
 // Runs units [first, last) of a pass. A unit is the kernel's own (a block of butterflies,
@@ -188,6 +194,12 @@ template <class T> struct pass_kernels {
   pass_fn block_copy[2];
   pass_fn twiddle_transpose[2];
   pass_fn twiddle_scatter[2];
+  // The lanes strategy (src/passes/lanes.inl): a block of rows into a tile whose lanes are
+  // the rows and back, and the pairing of real rows on the tile (r2c [scaled], c2r).
+  pass_fn lanes_gather;
+  pass_fn lanes_scatter;
+  pass_fn lanes_r2c_pair[2];
+  pass_fn lanes_c2r_pair;
 };
 // NOLINTEND(modernize-avoid-c-arrays)
 

@@ -77,6 +77,15 @@ struct program {
   std::vector<record> records;
   std::size_t batch_loops = 0; // the leading records that are the batch loops
   std::size_t transforms = 1;  // product of the batch loops' counts
+  // The lanes strategy (DESIGN.md 8.5, strategies/lanes.cpp): when `lanes` is not 0 the
+  // body (the stages after the batch loops) runs `lanes` consecutive transforms of the
+  // innermost batch loop at once, one per vector lane, reading them through that loop's
+  // steps; the transforms left over (fewer than `lanes` in a run of the innermost loop) run
+  // through `lane_tail`, the same stages for blocks of `lane_unit` (C) transforms, the last
+  // one padded. The driver sets pass_args::rows to each block's transforms (driver.cpp).
+  std::size_t lanes = 0;
+  std::size_t lane_unit = 0;
+  std::vector<stage> lane_tail;
 };
 
 } // namespace fftn::inline v0::detail

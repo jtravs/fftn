@@ -63,6 +63,24 @@ work_graph build_work_graph(const program& p, std::size_t points, std::size_t ch
   g.tasks = p.transforms;
   g.points = points;
   const std::size_t end = p.records.size();
+  if (p.lanes != 0) {
+    // A lanes program's body runs blocks of transforms (program.hpp), so a transform has no
+    // stage of its own to share: one phase of one chunk, never split, holding the body's
+    // work per transform. The gather, scatter and pairing (radix 1) move a block's points.
+    graph_phase ph;
+    ph.record = static_cast<std::uint32_t>(p.batch_loops);
+    ph.units = 1;
+    double work = 0;
+    for (std::size_t i = p.batch_loops; i < end; ++i) {
+      const stage& st = std::get<stage>(p.records[i]);
+      work += st.args.radix > 1 ? stage_work(st) : static_cast<double>(st.args.n * st.args.s);
+    }
+    ph.work = work / static_cast<double>(p.lanes);
+    g.chunks = 1;
+    g.work = ph.work;
+    g.phases.push_back(ph);
+    return g;
+  }
   for (std::size_t i = p.batch_loops; i < end;) {
     graph_phase ph;
     ph.record = static_cast<std::uint32_t>(i);

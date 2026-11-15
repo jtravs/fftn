@@ -359,8 +359,10 @@ void chain_builder<T>::add_pass(std::size_t n, const std::vector<std::size_t>& r
   const std::size_t c = kernels_.complex_lanes;
   const bool first = i == 0;
   const bool last = i + 1 == rad.size();
-  // A Bluestein convolution's chain starts with s copies, so its first pass is a lane pass.
-  const bool grouped = first && s == 1;
+  // A Bluestein convolution's chain starts with s copies, so its first pass is a lane pass;
+  // so is a single pass, which only a lanes tile of one row has (a line's single codelet
+  // pass is a leaf), since it carries the output edge.
+  const bool grouped = first && s == 1 && !last;
   const edge_op in = first ? edges.in : edge_op::none;
   const edge_op out = last ? edges.out : edge_op::none;
   const std::size_t d = direction_index(sign);
@@ -379,7 +381,7 @@ void chain_builder<T>::add_pass(std::size_t n, const std::vector<std::size_t>& r
       note = "; BL to interleaved";
     } else {
       st.run = rp.split_mid[d][layout == pass_layout::split_first ? 1 : 0];
-      st.args.twiddles = split_twiddles(n, radix, s);
+      st.args.twiddles = split_twiddles(n / batch, radix, s / batch);
       note = layout == pass_layout::split_first ? "; interleaved to BL" : "; BL";
     }
     st.units = m * (s / w);

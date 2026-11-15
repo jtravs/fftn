@@ -20,4 +20,6 @@
 
 #include "passes/grid.inl"
 
+#include "passes/lanes.inl"
+
 #include "passes/entries.inl"

@@ -315,6 +315,14 @@ inline constexpr pass_kernels<T> pass_table{
             &twiddle_scatter<T, -1>,
             &twiddle_scatter<T, +1>,
         },
+    .lanes_gather = &lanes_gather<T>,
+    .lanes_scatter = &lanes_scatter<T>,
+    .lanes_r2c_pair =
+        {
+            &lanes_r2c_pair<T, false>,
+            &lanes_r2c_pair<T, true>,
+        },
+    .lanes_c2r_pair = &lanes_c2r_pair<T>,
 };
 
 } // namespace

@@ -1,0 +1,33 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Experiment X7's cases (dev/experiments/X7-lanes.md): batches of short rows, where the
+# lanes strategy (one row per vector lane) competes with the chain run row by row. Smooth
+# and awkward lengths, c2c and r2c, double and single precision (the competitors time
+# double only). The "tracking" tier is the decision set; "full" adds the long batches.
+
+[catalogue]
+name = "x7"
+
+[[group]]
+name = "x7-c2c"
+kind = "c2c"
+dims = [8, 12, 16, 24, 32, 48, 64, 100, 128, 256]
+batch = [64, 1024]
+precision = ["f64", "f32"]
+tiers = ["tracking"]
+
+[[group]]
+name = "x7-c2c-long"
+kind = "c2c"
+dims = [8, 16, 64, 128]
+batch = [4096]
+precision = ["f64", "f32"]
+
+[[group]]
+name = "x7-real"
+kind = ["r2c", "c2r"]
+dims = [16, 32, 64, 128, 256]
+batch = [64, 1024]
+precision = ["f64", "f32"]
+tiers = ["tracking"]

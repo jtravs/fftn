@@ -157,6 +157,25 @@ public:
   void add_pairing(bool r2c, std::size_t n, endpoint src, endpoint dst, double scale,
                    std::vector<stage>& stages);
 
+  // The lanes strategy (DESIGN.md 8.5, strategies/lanes.cpp, experiment X7): the stages of
+  // one block of `block` rows (a multiple of C), rows src_dist and dst_dist elements apart
+  // on each side: a gather into a tile in scratch whose lanes are the rows, the chain the row
+  // would get alone with every pass's copy count multiplied by block (each lane computes its
+  // row's arithmetic: the same codelets, twiddles and split run as c2c_line, r2c_line and
+  // c2r_line), and a scatter. Every stage is one chunk. Each returns the complex elements of
+  // scratch the block needs in each of a and b. Preconditions: lanes_fit; no input edge
+  // operation (c2c); real rows of stride 1 on the real side.
+  [[nodiscard]] bool lanes_fit(std::size_t n, bool real) const;
+  std::size_t c2c_lanes(std::size_t n, int sign, endpoint src, std::ptrdiff_t src_dist,
+                        endpoint dst, std::ptrdiff_t dst_dist, const line_edges& edges,
+                        std::size_t block, std::vector<stage>& stages);
+  std::size_t r2c_lanes(std::size_t n, endpoint src, std::ptrdiff_t src_dist, endpoint dst,
+                        std::ptrdiff_t dst_dist, double scale, std::size_t block,
+                        std::vector<stage>& stages);
+  std::size_t c2r_lanes(std::size_t n, endpoint src, std::ptrdiff_t src_dist, endpoint dst,
+                        std::ptrdiff_t dst_dist, double scale, std::size_t block,
+                        std::vector<stage>& stages);
+
   // For the grid (strategies/grid.hpp), whose phases are lane passes of this builder's
   // kind: the table of a lane pass of `radix` with s copies in a line of n.
   const T* lane_twiddles(std::size_t n, std::size_t radix, std::size_t s) {
@@ -194,8 +213,8 @@ private:
   [[nodiscard]] static pass_layout layout_of(std::size_t i, std::size_t from, std::size_t passes);
   const T* split_twiddles(std::size_t n, std::size_t radix, std::size_t s);
   // Pass i of `rad` (n = the product), s copies, with its edges' operations.
-  // batch: the line is that many interleaved lines of n / batch (a Bluestein convolution),
-  // whose twiddles are those of the chain of n / batch with s / batch copies.
+  // batch: the line is that many interleaved lines of n / batch (a Bluestein convolution, a
+  // lanes tile), whose twiddles are those of the chain of n / batch with s / batch copies.
   void add_pass(std::size_t n, const std::vector<std::size_t>& rad, std::size_t i, std::size_t s,
                 int sign, endpoint src, endpoint dst, const line_edges& edges,
                 std::vector<stage>& stages, std::size_t batch = 1,
@@ -215,6 +234,17 @@ private:
                      const line_edges& edges, bool first, std::vector<stage>& stages);
   void add_edge(pass_fn run, const char* name, std::size_t n, std::size_t units, endpoint src,
                 endpoint dst, const T* twiddles, double scale, std::vector<stage>& stages);
+  // The lanes strategy's pieces (strategies/lanes.cpp): the gather of `elements` complex
+  // values per row (strides and distances in reals) into scratch a, the chain of n with its
+  // split run from pass `split` on the tile from `at`, and the scatter; each returns the
+  // slot it wrote.
+  void add_lanes_gather(std::size_t elements, endpoint src, std::ptrdiff_t stride_reals,
+                        std::ptrdiff_t dist_reals, std::size_t block, std::vector<stage>& stages);
+  slot lanes_chain(std::size_t n, const std::vector<std::size_t>& rad, std::size_t split,
+                   int sign, slot at, const line_edges& edges, std::size_t block,
+                   std::vector<stage>& stages);
+  void add_lanes_scatter(std::size_t elements, slot at, endpoint dst, std::ptrdiff_t stride_reals,
+                         std::ptrdiff_t dist_reals, std::size_t block, std::vector<stage>& stages);
 
   const kernels_of<T>& kernels_;
   target_profile profile_;

@@ -99,6 +99,46 @@ slot_addresses moved_in_nest(const program& p, std::size_t begin, std::size_t de
   return here;
 }
 
+// A stage of a lanes block (program.hpp): whole, with the block's rows.
+void run_lane_stage(const stage& st, const slot_addresses& at, std::size_t rows) noexcept {
+  pass_args args = st.args;
+  args.src = source_of(st.src, at);
+  args.dst = destination_of(st.dst, at);
+  args.rows = rows;
+  st.run(&args, 0, st.units);
+}
+
+// Transforms [first, first + count) of a lanes program: within each run of the innermost
+// batch loop, blocks of p.lanes rows through the body, then blocks of p.lane_unit through
+// the tail. Every lane computes its row alone (strategies/lanes.cpp), so how the rows fall
+// into blocks does not change any result.
+void run_lane_blocks(const program& p, std::size_t first, std::size_t count,
+                     const slot_addresses& base) noexcept {
+  const loop& inner = *std::get_if<loop>(&p.records[p.batch_loops - 1]);
+  const std::size_t end = first + count;
+  std::size_t t = first;
+  while (t < end) {
+    slot_addresses at = transform_addresses(p, t, base);
+    const std::size_t in_loop = inner.count - (t < inner.count ? t : t % inner.count);
+    std::size_t run = end - t < in_loop ? end - t : in_loop;
+    t += run;
+    for (; run >= p.lanes; run -= p.lanes) {
+      for (std::size_t i = p.batch_loops; i < p.records.size(); ++i) {
+        run_lane_stage(*std::get_if<stage>(&p.records[i]), at, p.lanes);
+      }
+      at = moved(at, inner.step, p.lanes);
+    }
+    while (run != 0) {
+      const std::size_t rows = run < p.lane_unit ? run : p.lane_unit;
+      for (const stage& st : p.lane_tail) {
+        run_lane_stage(st, at, rows);
+      }
+      at = moved(at, inner.step, rows);
+      run -= rows;
+    }
+  }
+}
+
 } // namespace
 
 void run_stage_chunks(const stage& st, const slot_addresses& at, std::size_t first,
@@ -128,6 +168,10 @@ slot_addresses transform_addresses(const program& p, std::size_t t,
 
 void run_transforms(const program& p, std::size_t first, std::size_t count,
                     const slot_addresses& base) noexcept {
+  if (p.lanes != 0) {
+    run_lane_blocks(p, first, count, base);
+    return;
+  }
   for (std::size_t t = first; t < first + count; ++t) {
     run_records(p, p.batch_loops, p.records.size(), transform_addresses(p, t, base));
   }
