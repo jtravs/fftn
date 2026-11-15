@@ -27,7 +27,8 @@ struct pass_args {
   // The stage's twiddles in the storage form its kind reads (src/passes/stockham.inl).
   const void* twiddles = nullptr;
   // A second table: the generic prime pass's radix-th roots of unity, in broadcast
-  // storage; the fused real passes' pairing twiddles (src/passes/real.inl).
+  // storage; the fused real passes' pairing twiddles (src/passes/real.inl); a Rader stage's
+  // index table (src/passes/rader.inl).
   const void* roots = nullptr;
   // Stockham geometry: radix, butterfly groups m and copies s (n = radix * m * s).
   std::size_t radix = 1;
@@ -58,8 +59,6 @@ struct pass_args {
   std::ptrdiff_t dst_dist = 0;
   std::size_t block = 0; // B: the rows of a tile
   std::size_t rows = 0;
-  // A Rader stage's passes (src/passes/rader.inl): the primitive root of the prime.
-  std::size_t root = 0;
 };
 
 // Runs units [first, last) of a pass. A unit is the kernel's own (a block of butterflies,

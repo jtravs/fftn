@@ -196,6 +196,7 @@ private:
   };
   bluestein_tables bluestein_tables_of(std::size_t q, int sign, std::size_t copies);
   const T* rader_kernel_of(std::size_t q, std::size_t g, int sign);
+  const T* rader_index_of(std::size_t q, std::size_t g);
   std::complex<T> pairing_root(std::size_t n, std::size_t k);
   const T* pairing_twiddles(std::size_t n);
   const T* leaf_pairing_twiddles(std::size_t n);
@@ -280,6 +281,7 @@ private:
   std::map<std::size_t, const T*> radix_roots_;                                         // R
   std::map<std::pair<std::size_t, int>, const T*> kernel_tables_;                       // Q, sign
   std::map<std::tuple<std::size_t, int, std::size_t>, const T*> chirp_tables_; // Q, sign, copies
+  std::map<std::size_t, const T*> rader_index_tables_;                         // Q
 };
 
 extern template class chain_builder<double>;

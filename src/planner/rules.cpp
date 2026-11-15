@@ -674,8 +674,9 @@ std::uint64_t pow_mod(std::uint64_t b, std::uint64_t e, std::uint64_t q) {
 } // namespace
 
 std::size_t rader_root(std::size_t q, const target_profile& p) {
-  // Below 2^32 the plan-time products fit in 64 bits; far above any length a plan can hold.
-  if (q < 5 || q >= (std::size_t{1} << 32U) || has_codelet(q)) {
+  // Below 2^24 the index table holds exact floats (passes/rader.inl), and the plan-time
+  // products fit in 64 bits.
+  if (q < 5 || q >= (std::size_t{1} << 24U) || has_codelet(q)) {
     return 0;
   }
   for (std::size_t d = 2; d <= q / d; ++d) {

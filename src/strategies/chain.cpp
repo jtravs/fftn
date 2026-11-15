@@ -345,6 +345,21 @@ chain_builder<T>::bluestein_tables chain_builder<T>::bluestein_tables_of(std::si
   return {.chirp = cit->second, .kernel = kit->second};
 }
 
+template <class T> const T* chain_builder<T>::rader_index_of(std::size_t q, std::size_t g) {
+  // g^m mod q for m < q - 1, as values of T: exact, since rader_root admits q < 2^24.
+  auto it = rader_index_tables_.find(q);
+  if (it == rader_index_tables_.end()) {
+    std::vector<T>& index = tables_.emplace_back(q - 1);
+    std::uint64_t e = 1;
+    for (std::size_t m = 0; m + 1 < q; ++m) {
+      index[m] = static_cast<T>(e);
+      e = e * g % q;
+    }
+    it = rader_index_tables_.emplace(q, index.data()).first;
+  }
+  return it->second;
+}
+
 template <class T>
 const T* chain_builder<T>::rader_kernel_of(std::size_t q, std::size_t g, int sign) {
   // A prime takes either Rader or Bluestein (rader_root), so the key never collides.
@@ -582,6 +597,7 @@ void chain_builder<T>::add_rader(std::size_t n, std::size_t q, std::size_t g, in
   const pass_kernels<T>& k = kernels_.passes;
   const bool shared = s % c == 0;
   const T* kernel = rader_kernel_of(q, g, sign);
+  const T* index = rader_index_of(q, g);
   // The convolution runs in the two scratch slots and ends where it starts (an even number
   // of passes), in neither the stage's source (rader_in gathers from it) nor its destination
   // (rader_out scatters into it); its other slot may be either, which is read or not yet
@@ -601,7 +617,7 @@ void chain_builder<T>::add_rader(std::size_t n, std::size_t q, std::size_t g, in
   st.args.m = len;
   st.args.s = s;
   st.args.n = n;
-  st.args.root = g;
+  st.args.roots = index;
   st.args.scale = edges.scale;
   st.args.in_factor = in == edge_op::factor ? edges.in_factor : nullptr;
   st.args.src_stride = src.stride;
@@ -624,7 +640,7 @@ void chain_builder<T>::add_rader(std::size_t n, std::size_t q, std::size_t g, in
   out.args.m = len;
   out.args.s = s;
   out.args.n = n;
-  out.args.root = g;
+  out.args.roots = index;
   out.args.scale = edges.scale;
   out.args.out_factor = edges.out == edge_op::factor ? edges.out_factor : nullptr;
   out.args.src_stride = 1;
