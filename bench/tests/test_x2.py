@@ -209,7 +209,13 @@ class Stages(unittest.TestCase):
 class Isa(unittest.TestCase):
     def test_every_arm_is_forced(self):
         cmd = search.fbench_command(
-            search.REPO / "bench-out", search.DEFAULT_BUILD, 64, ["4.16"], search.SCREEN, [], "avx512"
+            search.REPO / "bench-out",
+            search.DEFAULT_BUILD,
+            64,
+            ["4.16"],
+            search.SCREEN,
+            [],
+            "avx512",
         )
         self.assertIn("v0=fftn+ISA=avx512", cmd)
         self.assertIn("4.16=fftn+ISA=avx512+RADICES=4.16", cmd)

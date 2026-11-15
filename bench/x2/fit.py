@@ -112,7 +112,9 @@ def load_cases(out_dir: Path, names: list[str], isa: str | None) -> tuple[str, l
             screen_run = entry["screen"]["run"]
             refine_run = entry["refine"]["run"]
             screen = search.paired_medians(search.records_of(out_dir, screen_run))
-            refine = search.paired_medians(search.records_of(out_dir, refine_run)) if refine_run else {}
+            refine = (
+                search.paired_medians(search.records_of(out_dir, refine_run)) if refine_run else {}
+            )
             for case, win in sorted(entry["refine"]["winners"].items()):
                 base = search.base_of(entry, case)
                 cases.append(
@@ -301,7 +303,9 @@ def split_radices(n: int, t: Table, lanes: int, divisors: list[int], kind) -> ra
         out = math.inf
         for r in RADICES:
             if allowed(s, r):
-                out = min(out, cost(s, r, split) + best(s * r, *next_state(s, r, count, bad), split))
+                out = min(
+                    out, cost(s, r, split) + best(s * r, *next_state(s, r, count, bad), split)
+                )
         return out
 
     def next_state(s: int, r: int, count: int, bad: bool) -> tuple[int, bool]:
@@ -361,7 +365,7 @@ def rows_of(cases: list[Case], lanes: int, block: int = 0) -> list[tuple[dict, d
 def solve(a: list[list[float]], b: list[float]) -> list[float]:
     """Gaussian elimination with partial pivoting (the systems are at most NF wide)."""
     n = len(b)
-    m = [row[:] + [b[i]] for i, row in enumerate(a)]
+    m = [[*row, b[i]] for i, row in enumerate(a)]
     for col in range(n):
         piv = max(range(col, n), key=lambda i: abs(m[i][col]))
         m[col], m[piv] = m[piv], m[col]
@@ -461,23 +465,40 @@ def fit(
 
 
 def table_of(
-    x: list[float], cases: list[Case], ops: dict, base: Table | None = None, block: int = 0,
+    x: list[float],
+    cases: list[Case],
+    ops: dict,
+    base: Table | None = None,
+    block: int = 0,
     lanes: int = 1,
 ) -> Table:
     unit = [[x[k * NR + COLUMN[r]] * SCALE for r in RADICES] for k in range(KINDS)]
     tail = [[x[TAIL0 + k * NR + COLUMN[r]] * SCALE for r in RADICES] for k in range(KINDS)]
     # Radices timed in the rows the fit used (cases whose baseline is all codelet passes, a
     # Bluestein length such as 2431 = 11 x 13 x 17 constrains nothing).
-    measured = {r for c in cases if codelet_only(c.base) for seq in (*c.refine, *c.screen)
-                if codelet_only(seq) for r in seq}
+    measured = {
+        r
+        for c in cases
+        if codelet_only(c.base)
+        for seq in (*c.refine, *c.screen)
+        if codelet_only(seq)
+        for r in seq
+    }
     if base is not None:
         for k in range(KINDS):
             for r in range(2, LEAF + 1):
                 unit[k][COLUMN[r]] = base.unit[k][COLUMN[r]]
                 tail[k][COLUMN[r]] = base.tail[k][COLUMN[r]]
     # A big radix no candidate had is not priced (unit cost 0: never chosen).
-    seen = {(k, j) for c in cases for seq in (*c.refine, *c.screen) if codelet_only(seq)
-            for j in features(seq, 1) if j < TAIL0 for k in (j // NR,)}
+    seen = {
+        (k, j)
+        for c in cases
+        for seq in (*c.refine, *c.screen)
+        if codelet_only(seq)
+        for j in features(seq, 1)
+        if j < TAIL0
+        for k in (j // NR,)
+    }
     for k in range(KINDS):
         for r in BIG:
             if (k, k * NR + COLUMN[r]) not in seen:
@@ -497,11 +518,21 @@ def table_of(
     )
     if block:
         # A split column no candidate measured takes the interleaved unit of its kind.
-        split_seen = {j for c in cases for seq in (*c.refine, *c.screen) if codelet_only(seq)
-                      for j in features(seq, lanes, block) if SPLIT0 <= j < CONVERT}
+        split_seen = {
+            j
+            for c in cases
+            for seq in (*c.refine, *c.screen)
+            if codelet_only(seq)
+            for j in features(seq, lanes, block)
+            if SPLIT0 <= j < CONVERT
+        }
         t.split = [
-            [round(x[SPLIT0 + k * NR + COLUMN[r]] * SCALE) if SPLIT0 + k * NR + COLUMN[r] in split_seen
-             else t.unit[k + 1][COLUMN[r]] for r in RADICES]
+            [
+                round(x[SPLIT0 + k * NR + COLUMN[r]] * SCALE)
+                if SPLIT0 + k * NR + COLUMN[r] in split_seen
+                else t.unit[k + 1][COLUMN[r]]
+                for r in RADICES
+            ]
             for k in range(2)
         ]
         t.convert = round(x[CONVERT] * SCALE)
@@ -576,7 +607,9 @@ def overrides_for(
             what = f"{math.expm1(max(timed)) * 100:+.1f} % against the baseline"
             if missed:
                 what += f", {math.expm1(min(gaps)) * 100:+.1f} % or more behind the winner"
-        notes.append(f"n = {n}: {radices.label(choice)} {what}; override {radices.label(fits[0][1])}")
+        notes.append(
+            f"n = {n}: {radices.label(choice)} {what}; override {radices.label(fits[0][1])}"
+        )
     return out, notes
 
 
@@ -611,7 +644,9 @@ def show_reproduction(title: str, per: dict[str, list[int]], misses: list[str], 
     tot = sum(v[1] for v in per.values())
     untimed = sum(v[2] for v in per.values())
     groups = ", ".join(f"{k} {v[0]}/{v[1]}" for k, v in sorted(per.items()))
-    print(f"// {title}: {rep} of {tot} cases reproduced ({100 * rep / max(tot, 1):.1f} %; {groups})")
+    print(
+        f"// {title}: {rep} of {tot} cases reproduced ({100 * rep / max(tot, 1):.1f} %; {groups})"
+    )
     if untimed:
         print(f"//   {untimed} choices never timed")
     for m in misses if verbose else misses[:10]:
@@ -653,10 +688,12 @@ def cpp(name: str, t: Table) -> str:
 
     if t.overrides:
         entries = "\n".join(
-            f"    {{.n = {n}, .radices = {{{', '.join(map(str, (*seq, 0, 0, 0)[:MAX_OVERRIDE]))}}}}},"
+            "    {.n = " + str(n) + ", .radices = {" + ", ".join(map(str, padded)) + "}},"
             for n, seq in t.overrides
+            for padded in ((*seq, 0, 0, 0)[:MAX_OVERRIDE],)
         )
-        ovr = f"constexpr std::array<radix_override, {len(t.overrides)}> {name}_overrides{{{{\n{entries}\n}}}};\n"
+        head = f"constexpr std::array<radix_override, {len(t.overrides)}> {name}_overrides"
+        ovr = head + "{{\n" + entries + "\n}};\n"
     else:
         ovr = f"constexpr std::array<radix_override, 0> {name}_overrides{{}};\n"
     return (
@@ -676,8 +713,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--isa", choices=sorted(radices.LANES), help="for campaigns without one")
     p.add_argument("--table", help="C++ name prefix (default: the ISA)")
     p.add_argument("--out", type=Path, help="write the C++ here instead of stdout")
-    p.add_argument("--within", type=float, default=0.02, help="reproduced within this of the winner")
-    p.add_argument("--compare", default="", help="rules.cpp tables per precision, f64=NAME,f32=NAME")
+    p.add_argument(
+        "--within", type=float, default=0.02, help="reproduced within this of the winner"
+    )
+    p.add_argument(
+        "--compare", default="", help="rules.cpp tables per precision, f64=NAME,f32=NAME"
+    )
     p.add_argument("--verbose", action="store_true", help="every miss")
     p.add_argument(
         "--base",
@@ -734,7 +775,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"// {name}: C = {lanes}, constant per transform {x[CONST] * SCALE:.0f}")
             if t.split is not None:
                 print(f"//   split block {block}, conversion {t.convert} per C points")
-                for k, row in zip(("middle", "last"), t.split):
+                for k, row in zip(("middle", "last"), t.split, strict=True):
                     print(f"//   split {k}: {row}")
             for note in notes:
                 print(f"//   {note}")

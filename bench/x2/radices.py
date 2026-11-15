@@ -189,7 +189,8 @@ def parse(text: str) -> Sequence:
 # The radices may be followed by the chain's split run (strategies/chain.hpp, experiment X1),
 # or end in a Bluestein stage of the product of the primes above 16 (DESIGN.md 11.2 rule 3).
 NOTE = re.compile(
-    r"\(n = (\d+)\): (?:c2c \w+, )?radices ((?:\d+ x )*\d+)?(?:(?: x )?bluestein (\d+) \(M [^)]*\))?"
+    r"\(n = (\d+)\): (?:c2c \w+, )?radices ((?:\d+ x )*\d+)?"
+    r"(?:(?: x )?bluestein (\d+) \(M [^)]*\))?"
     r"(?:, split from pass \d+)?$"
 )
 
