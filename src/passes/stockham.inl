@@ -22,13 +22,18 @@ namespace {
 // The R outputs of a grouped pass's first `valid` butterflies p0 .. p0 + valid - 1 (of
 // C), v[k] holding leg k of every lane, to y[R (p0 + l) + k] (tight). C x C blocks of legs
 // are transposed in registers, so that each store writes C legs of one butterfly; a unit
-// with fewer butterflies stores fewer of them.
+// with fewer butterflies stores fewer of them. The loops have constant bounds and test
+// `valid` inside, so every index into v is a constant after unrolling: a loop to `valid`
+// indexes v at run time, and GCC then keeps the caller's v in memory in every unit of the
+// pass, whole units included (X23: 1.03-1.09 of main's time at double 128, 512, 1024).
 template <class T, std::size_t R>
 FFTN_FORCE_INLINE void store_transposed(T* y, cv<T>* v, std::size_t valid) {
   for (std::size_t b = 0; b < R / C<T>; ++b) {
     transpose(v + b * C<T>);
-    for (std::size_t l = 0; l < valid; ++l) {
-      store(y + 2 * (R * l + b * C<T>), v[b * C<T> + l]);
+    for (std::size_t l = 0; l < C<T>; ++l) {
+      if (l < valid) {
+        store(y + 2 * (R * l + b * C<T>), v[b * C<T> + l]);
+      }
     }
   }
 }
