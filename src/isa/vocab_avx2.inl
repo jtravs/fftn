@@ -53,9 +53,11 @@ FFTN_FORCE_INLINE __m256d load(const double* p) { return _mm256_loadu_pd(p); }
 FFTN_FORCE_INLINE __m256 load(const float* p) { return _mm256_loadu_ps(p); }
 FFTN_FORCE_INLINE void store(double* p, __m256d a) { _mm256_storeu_pd(p, a); }
 FFTN_FORCE_INLINE void store(float* p, __m256 a) { _mm256_storeu_ps(p, a); }
-// Partial runs (experiment X23): VMASKMOV with the sign bits of the 2n reals of n complex
-// numbers set. Masked-off elements are not accessed and raise no fault (Intel SDM,
-// VMASKMOV), so a run may end at the end of the caller's array.
+// Partial runs (experiment X23). Loads: VMASKMOV with the sign bits of the 2n reals of n
+// complex numbers set; masked-off elements are not accessed and raise no fault (Intel SDM,
+// VMASKMOV), so a run may end at the end of the caller's array. Stores: plain stores of 128
+// and 64 bits chosen by n, since a VMASKMOV store is microcoded on AMD Zen 1 to 3 (about 12
+// operations; llvm-mca znver3: 48 cycles for four against 8 for the stores here).
 FFTN_FORCE_INLINE __m256i mask_n_f64(std::size_t n) {
   return _mm256_cmpgt_epi64(_mm256_set1_epi64x(static_cast<long long>(2 * n)),
                             _mm256_setr_epi64x(0, 1, 2, 3));
@@ -71,10 +73,27 @@ FFTN_FORCE_INLINE __m256 load_n(const float* p, std::size_t n) {
   return _mm256_maskload_ps(p, mask_n_f32(n));
 }
 FFTN_FORCE_INLINE void store_n(double* p, std::size_t n, __m256d a) {
-  _mm256_maskstore_pd(p, mask_n_f64(n), a);
+  if (n == 2) {
+    _mm256_storeu_pd(p, a);
+  } else if (n == 1) {
+    _mm_storeu_pd(p, _mm256_castpd256_pd128(a));
+  }
 }
+// The 64-bit stores go through __m128i pointers, which the intrinsics' headers declare as
+// may-alias and unaligned (a complex float is only 4-byte aligned).
 FFTN_FORCE_INLINE void store_n(float* p, std::size_t n, __m256 a) {
-  _mm256_maskstore_ps(p, mask_n_f32(n), a);
+  const __m128 lo = _mm256_castps256_ps128(a);
+  if (n >= 2) {
+    _mm_storeu_ps(p, lo);
+    const __m128 hi = _mm256_extractf128_ps(a, 1);
+    if (n == 4) {
+      _mm_storeu_ps(p + 4, hi);
+    } else if (n == 3) {
+      _mm_storel_epi64(reinterpret_cast<__m128i*>(p + 4), _mm_castps_si128(hi));
+    }
+  } else if (n == 1) {
+    _mm_storel_epi64(reinterpret_cast<__m128i*>(p), _mm_castps_si128(lo));
+  }
 }
 FFTN_FORCE_INLINE __m256d bcast(const double* p) {
   const __m128d x = _mm_loadu_pd(p);
