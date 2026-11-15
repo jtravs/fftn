@@ -1,0 +1,23 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Experiment X29's cases (dev/experiments/X29-real-footprint.md): real rows across the
+# chain-or-grid switch of their half-length complex transform, in and out of place, beside
+# the c2c rows of half their length, so that one run gives both the chain-or-grid choice for
+# real rows and the real overhead time(real n) / time(c2c n/2) - 1 of each strategy.
+
+[catalogue]
+name = "x29"
+
+[[group]]
+name = "x29-real"
+kind = ["r2c", "c2r"]
+dims = [4096, 8192, 16384, 32768, 65536, 131072, 1048576, 1000, 46080]
+place = ["out", "in"]
+tiers = ["tracking"]
+
+[[group]]
+name = "x29-half"
+kind = "c2c"
+dims = [2048, 4096, 8192, 16384, 32768, 65536, 524288, 23040]
+tiers = ["tracking"]
