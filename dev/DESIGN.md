@@ -1257,7 +1257,21 @@ r2c and c2r get it through their inner complex chain unchanged, and the threadin
 graph sees ordinary stages. Restricting the stage to m = 1 is what makes its edges
 elementwise; several large primes are therefore one stage of their product rather than
 one per prime (one convolution of about 2Q points instead of passes of about 2qᵢ · Q/qᵢ
-each, which is about the same work). Rader's algorithm is not built (section 9.2).
+each, which is about the same work).
+
+A **Rader stage** (experiment X27, `passes/rader.inl`) takes the Bluestein stage's place
+when the product is a single prime q < 2¹⁶ whose q − 1 is 13-smooth (`rader_root`): with g
+the smallest primitive root, bins g⁻ᵏ are x₀ plus a cyclic convolution of length L = q − 1
+of a_m = x(g^m) with b_l = w^(g⁻ˡ), and bin 0 is x₀ plus the sum of the inputs. *rader
+in* gathers a (from an index table of g^m, values of T) into the convolution's slot and
+keeps x₀ and the sum (taken pairwise) in two more rows; the convolution is the Bluestein
+stage's chain with dft(b)/L as its kernel spectrum; *rader out* scatters x₀ + c_k to bin
+g^m for m = −k. A unit is C copies when C divides s, else one copy in scalar arithmetic.
+The convolution is about half a Bluestein stage's (257: 256 points against M ≥ 513), so
+Rader took about half the time from 97 to 12289 on the Mac; at 65537 the gather and
+scatter over a megabyte and a 2¹⁶-point chain lost (1.2 times Bluestein's), hence the
+limit. Because the scatter permutes, the stage cannot write the slot its convolution ends
+in: from one scratch slot to the other it writes back over its source (`last_stage_to`).
 
 Strategies compose: a grid's row phase is a chain or a leaf; a plane transform is a lanes
 program for the strided axis around a chain for the contiguous one.
@@ -1331,11 +1345,13 @@ being padding on the real side.
 | Factor | Route |
 |---|---|
 | 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 16, (20, 25, 32, 64) | generated codelets |
-| primes above 16 up to the profile's threshold | one generic looped pass, O(p²) per butterfly, vectorised across copies, in direct form with pairwise sums; the threshold is 16 on every profile (X17: Bluestein was faster at every prime from 17 up on the Mac, the Xeon and the EPYC), so the rules do not choose it now |
-| larger primes | Bluestein: the smooth part of N is split off first; the product of the large prime factors becomes one stage at the end of the chain that performs a chirp-z transform through a smooth-length convolution with a precomputed kernel spectrum (section 8.5) |
+| 17, 19, 23 | generated codelets (symmetric-pair form), the leaf of n = p and a pass after the priced radices in composites (experiment X27: 0.15–0.42 of the Bluestein stage's time on the Mac) |
+| other primes above 16 up to the profile's threshold | one generic looped pass, O(p²) per butterfly, vectorised across copies, in direct form with pairwise sums; the threshold is 16 on every profile (X17: Bluestein was faster at every prime from 17 up on the Mac, the Xeon and the EPYC), so the rules do not choose it now |
+| a single prime q < 2¹⁶ with q − 1 13-smooth | Rader: a gather by powers of a primitive root, a cyclic convolution of q − 1 points with a precomputed kernel spectrum, a scatter (section 8.5; X27) |
+| other large primes | Bluestein: the smooth part of N is split off first; the product of the large prime factors becomes one stage at the end of the chain that performs a chirp-z transform through a smooth-length convolution with a precomputed kernel spectrum (section 8.5) |
 
-Rader's algorithm is not planned; it shares a convolution object with Bluestein and can be
-added if measurements on prime sizes justify it. The cost model prices these routes.
+Rader and Bluestein share the convolution (`add_convolution`). The cost model prices
+these routes.
 `next_fast_length` lets applications choose grid sizes that are fast on FFTN rather than
 on another library; it is a pure function of the library version (a fixed reference cost
 table), so a grid chosen on one machine is the same on another. A separate query returns
@@ -1448,11 +1464,13 @@ prices them) a cost per unit and a cost per tail, and a cost per pass. For a lin
    measured more than 2 % slower than planner v0 or, since the planner refresh, more than
    2 % behind the measured winner in every case; 29 and 13 on AVX2).
 3. Otherwise write n = n_s q₁ q₂ … with n_s free of primes above 16 and q₁ ≤ q₂ ≤ … the
-   prime factors above 16. Each qᵢ is one generic pass, in ascending order, after the
-   codelet passes; if n_s = 1 they are the whole chain. (`rule_radices` returns this
-   sequence.) Then the trailing qᵢ above the profile's Bluestein threshold (16 on every
-   profile, experiment X17, so all of them) are merged into one Bluestein stage of their
-   product Q at the end of the chain (section 8.5), whose convolution length M is the
+   prime factors above 16. Each qᵢ is one pass, in ascending order, after the codelet
+   passes: a codelet pass for 17, 19 and 23 (experiment X27), otherwise a generic pass; if
+   n_s = 1 they are the whole chain. (`rule_radices` returns this sequence.) Then the
+   trailing qᵢ without a codelet above the profile's Bluestein threshold (16 on every
+   profile, experiment X17, so all of them) are merged into one stage of their product Q
+   at the end of the chain (section 8.5): a Rader stage when Q is a prime below 2¹⁶ with
+   Q − 1 13-smooth (`rader_root`), otherwise a Bluestein stage, whose convolution length M is the
    7-smooth length from 2Q − 1 to the next power of two that minimises twice the cost of
    rule 4's sequence for M plus two elementwise passes of M points (priced as a last
    radix-2 pass per point), the smallest on a tie (`bluestein_length`).
@@ -2032,7 +2050,8 @@ Bluestein paths have their own, looser, derived bound: three transforms of s M p
 sequence (forward and inverse at execution, the kernel spectrum at construction, in
 double), adding in quadrature, so 3ε√(3L′) and 3√3·εL′ with L′ = log₂(sM) ≤ log₂ n + 2
 (`bluestein_bound` in `tests/support/tolerance.hpp`, applied to every length with a prime
-factor above 16). Measured on the Mac (task 2.3, primes and products up to 10403, double
+factor above 16 other than the codelets' 17, 19 and 23, and to Rader stages, whose
+convolution is shorter). Measured on the Mac (task 2.3, primes and products up to 10403, double
 and float): 0.42–0.83 ε√L RMS and 0.13–0.37 εL largest, inside even the stable bound.
 Accuracy is also reported by fbench next to speed for every library.
 
@@ -2304,8 +2323,9 @@ do not depend on the direction, and a workspace is plain bytes sized by
 number: two `FCMLA` on NEON+FCMA, where the complex-register codelets now spend two
 `scale` and one `addj` or `subj` on each generic constant root (four in radix 16, four in
 9). It touches every target's vocabulary, so it is weighed with the split lowering's FMA
-shaping (task 1.5). (b) Rader's algorithm for 13 (and the primes above 16): the
-symmetric-pair form costs 192 additions and 134 multiplies against Rader's 176 and 68.
+shaping (task 1.5). (b) Rader's algorithm inside the generator for 13 (and 17, 19, 23,
+whose codelets are in the symmetric-pair form since X27): the symmetric-pair form costs
+192 additions and 134 multiplies at 13 against Rader's 176 and 68.
 (c) Settled in task 1.2: the vocabulary gained `bcast_tw` (decision log).
 
 **Task 1.2 (for the maintainer).** Public API added in the shape of section 5.3, each a
