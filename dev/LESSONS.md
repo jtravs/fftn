@@ -72,6 +72,19 @@ band 15–24 % after 9 rounds, against 5 % for a job that started timing while i
 quieter). Build each arm once per machine into a shared cache, in a short, wide build job,
 and time afterwards.
 
+1.9 **Hardware counters need neither `perf` nor root, and the competitor's plan must be
+pinned before counting it.** With `perf_event_paranoid` at 2 (the default on many
+clusters) a process may count its own user-mode events through `perf_event_open`. About
+100 lines in the benchmark harness (a group of raw events enabled around the execute
+loop, read once, divided by the calls) gave cycles, instructions, FP-pipe uops, loads,
+stores, L1 and L2 misses and TLB misses on a Zen 3 cluster that has no `perf`, so no cloud
+machine was rented for it. Check that the group stayed scheduled (time running = time
+enabled): the NMI watchdog holds one counter, so five events fit in a group on Zen 3.
+FFTW's MEASURE plans changed from process to process on a loaded machine (60 points:
+15 × 4, then 10 × 6; 806 against 1211 instructions per call), so counters of separate
+processes describe different code unless the plan is shared through wisdom.
+[X25](experiments/X25-x86-diagnosis.md).
+
 ## 2. The instruction set and the machine
 
 2.1 **The data layout that wins depends on the ISA.** Interleaved complex numbers suit
@@ -121,6 +134,11 @@ the size: float rows whose length 8 divides took 0.78–0.85 of AVX2's time, the
 1.23 (double: 0.71–0.78 against 1.00–1.05 where 4 does not divide n). A key for the
 per-plan choice is C | n before any size threshold.
 [X16](experiments/X16-avx512-table.md).
+For the smallest transforms the frequency matters as well as the cycles. On Cascade Lake,
+FFTN's 8-point transform in 512-bit code spent its cycles at AVX licence 1, while FFTW's
+128-bit SSE2 codelet stayed at licence 0: 1.62 times the cycles became 1.84 times the
+time. FFTW chooses 128-bit codelets for single rows of 8 and 16 points on both the Xeon
+and Zen 3. [X25](experiments/X25-x86-diagnosis.md).
 
 2.4 **Integer division is expensive enough to matter in bookkeeping.** A 64-bit `div` costs
 40–90 cycles on Cascade Lake; four per chunk in the driver were about 37 % of a 64-point
@@ -214,6 +232,18 @@ applying the x86 rule there cost up to 2.1 times. The Mac's caches are the large
 needs the blocked form earlier, so no rule in the sizes alone fits both: key cache
 thresholds on the L2's sharing (Linux `shared_cpu_list`, macOS `cpusperl2`) as well.
 [X12b](experiments/X12b-grid-thresholds.md).
+
+3.9 **A blocked algorithm's copies can be instruction-bound, not memory-bound.** FFTN's
+grid for rows of 46080–100000 points gathers and scatters column blocks four complex
+doubles wide, so each copied row is one 64-byte vector. The copy loop spent about 33
+instructions per row (row loop, two prefetches, a one-trip inner loop around one load and
+one store), which made `block_copy` 40–52 % of all instructions and about 40 % of the
+cycles on the Xeon. The whole transform ran at a higher IPC than FFTW's (2.6–3.0 against
+1.6–1.8 on the Xeon, 4.0–4.8 against 2.7–3.0 on Zen 3) with no more TLB walks and, on the
+Xeon, fewer L2 misses. Before blaming memory for a long transform, compare IPC and
+instructions per byte moved: a high IPC with too many instructions points at the copy
+loops' shape (rows per iteration, prefetch per line, block width).
+[X25](experiments/X25-x86-diagnosis.md).
 
 ## 4. Kernels and algorithms
 

@@ -58,6 +58,7 @@ other arm is compared with it. The label may be omitted (it defaults to the libr
 |---|---|---|
 | `PLANNER=ESTIMATE\|MEASURE\|PATIENT\|EXHAUSTIVE` | fftw | planning effort (default MEASURE) |
 | `WISDOM=run\|none\|<file>` | fftw | wisdom: fresh per run and shared by that run's processes with the same binary and planner (default), none at all, or imported read-only from a file |
+| `PLAN_NOTE=0\|1` | fftw | write the plan FFTW chose (`fftw_sprint_plan`, one line) into each case's note (default 0) |
 | `API=dft\|interleaved` | accelerate | vDSP's split-complex DFT with conversions (default) or its interleaved DFT (see below) |
 | `DELAY=<fraction>` | any (test only) | spin for that fraction of every measured batch: a seeded slowdown that proves the statistics |
 | `PERTURB=<eps>` | any (test only) | multiply every output value by 1 ± eps before the check: proves the correctness guard |
@@ -404,6 +405,22 @@ garbage collector, which the sanitizers' own handlers break.
 
 One library per executable: libraries with the FFTW API share symbol names, and two OpenMP
 runtimes in one process crash or crawl.
+
+## Hardware counters
+
+On Linux a backend binary run directly counts hardware events for each case:
+`fbench-<lib> run --cases FILE --pmu EVENTS`. EVENTS is a comma-separated list of
+`cycles`, `instructions` and `NAME=0xCONFIG` raw events in the kernel's encoding for the
+core PMU (Zen 3 FP pipe 0: `fp0=0x0100`; Cascade Lake port 5: `p5=0x20a1`). The events
+form one group, counted in user mode through `perf_event_open` over as many executes as
+the timed batches, after them. Each case's JSON line then has `"pmu"`: the counts per
+call, the number of calls and `running`, the fraction of the time the group was scheduled
+(below 1 means the group needs more counters than are free, and the counts are not
+exact). No `perf` binary or root is needed: `perf_event_paranoid` up to 2 allows it. To
+count FFTW, plan once with `--options WISDOM_OUT=<file>` and pass `WISDOM_IN=<file>` to
+every later process, because MEASURE plans differ between processes. The case file has one case per line in
+the harness's `key=value` form (`id=c2c-64 kind=c2c dims=64 batch=1 place=out sign=-1`).
+Experiment [X25](../dev/experiments/X25-x86-diagnosis.md) used it.
 
 ## The T1 harness
 
