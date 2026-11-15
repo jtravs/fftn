@@ -74,6 +74,22 @@ routes are tested against the derived tolerances (the grid and chain suites forc
      otherwise the file records why not. If built, it is judged by rule 2 over the grid's
      real rows.
 
+### Arms added after the screen (written before their confirmation runs)
+
+The screen's chain arm beat the grid far outside the real rows' question: on the Mac for
+every 46080-point row (0.62–0.67 of the grid's time), and on the EPYC for every long row,
+c2c included (0.53–0.74, to 2¹⁹ points). The rule's thresholds were set on powers of two
+(X12, X12b) and never tried chains beyond L2 on x86. Two arms follow, each a rule:
+
+- Arm (c), shared L2 (Apple): a row whose length is not a power of two stays a chain when
+  the power-of-two part of its length, in bytes, is at most L1/8, or the row is at most
+  2 · L1 (`chain_part_bytes`, `chain_mixed_bytes`; fbench `CHAIN_PART_BYTES`,
+  `CHAIN_MIXED_BYTES`). From a Mac screen of c2c rows 2^k × odd (3 to 3125) and large rows.
+- Arm (d), private L2 (x86): `grid_min_bytes` raised from L2/2 to the value the long-row
+  screens (c2c and real rows to 4 Mi points, chain against grid, EPYC and Xeon) support.
+- Decision rule for (c) and (d): rule 2 above over the rows whose plan the arm changes, on
+  the x29 catalogue and the standard tracking tier, per machine-target.
+
 ## Results
 
 (pending)
