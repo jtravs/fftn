@@ -40,7 +40,7 @@ enum class slot : std::uint8_t { in, out, a, b, block };
 inline constexpr std::size_t moving_slots = 4; // in, out, block, twiddles
 
 struct stage {
-  pass_fn run = nullptr;
+  pass_fn run = nullptr; // the kernel, or for a leaf null and `leaf` set
   pass_args args; // src and dst are filled in by the driver from the slots
   slot src = slot::in;
   slot dst = slot::out;
@@ -48,6 +48,9 @@ struct stage {
                             // elements (src/strategies/chain.hpp); only their count matters here
   std::uint32_t chunks = 1; // independent ranges [units c / chunks, units (c+1) / chunks)
   bool moving_twiddles = false; // args.twiddles is offset by the loops' twiddle cursor
+  // A leaf's kernel (pass_args.hpp), with units 1, the line. When the stage is a program's
+  // whole body the driver runs a batch of rows in one call (driver.cpp, run_flat).
+  leaf_fn leaf = nullptr;
   std::string name;             // for describe()
 };
 
@@ -86,6 +89,17 @@ struct program {
   std::size_t lanes = 0;
   std::size_t lane_unit = 0;
   std::vector<stage> lane_tail;
+  // The body (the records after the batch loops) is at most flat_stages_max stages, none
+  // with moving twiddles, and no loop: the driver then prepares each stage's arguments once
+  // per call and only moves the slots per transform (driver.cpp, run_flat). Set by
+  // mark_flat (driver.hpp).
+  bool flat = false;
+  // Flat, one batch loop, and the body one leaf between the caller's arrays: the whole
+  // batch is one call of the leaf (driver.cpp, run_leaf_rows).
+  bool leaf_rows = false;
 };
+
+// The longest body run_flat handles; its arguments live on the stack.
+inline constexpr std::size_t flat_stages_max = 8;
 
 } // namespace fftn::inline v0::detail

@@ -101,6 +101,12 @@ for the same plans: double 0.87 (batch 1) and 0.92 (batch 64), but float 1.11 an
 1.43 at small sizes, where eight complex floats per register leave many partially filled
 vectors (tail tiles). The verdict is per machine generation (Cascade Lake lowers its clock
 for 512-bit code) and per precision. [X16](experiments/X16-avx512-table.md).
+Off Cascade Lake the double result holds and the float result depends on the core: over
+c2c rows of 16–65536 points, AVX-512 ÷ AVX2 was 0.83–0.86 in double and 0.95–0.99 in float
+on an Emerald Rapids Xeon (Google C4), and 0.87 in double but 1.03–1.07 in float on Zen 5
+(C4D). Per length it swung from 0.52 (1024 points, float) to 3.1 (60 points, float, on both
+machines): no machine-wide preference is right, so price both targets per plan.
+[X21](experiments/X21-phase1-cloud.md).
 
 2.4 **Integer division is expensive enough to matter in bookkeeping.** A 64-bit `div` costs
 40–90 cycles on Cascade Lake; four per chunk in the driver were about 37 % of a 64-point
@@ -212,7 +218,31 @@ chain pass at 2048 vanished once the radix-16 codelets lost 12 of their 19 swaps
 register file. And a cost table fitted on lengths up to 2048 extrapolates its big-radix
 columns badly: at 4096 it chose 32·4·32, 2–11 % slower than the measured 8·16·32. [X3](experiments/X3-big-radices.md).
 
-4.7 **Batches of short rows: vectorise across rows, and avoid the transpose where you can.**
+4.7 **For tiny transforms the bookkeeping is the transform: interpret once per call and put
+the batch loop inside the kernel.** On the M5 Max an 8-point leaf costs 2.5 ns, while
+walking FFTN's program records and copying the 144-byte argument struct for each
+transform cost about 3.5 ns more, and the call's entry another 1 ns; copying the struct
+alone is about 1.2 ns. Preparing the stages once per call, passing a leaf its addresses
+as arguments (no struct copy at all) and running a batch of rows in one kernel call took
+an 8-point transform from 7.7 to 4.3 ns at batch 1 and from 7.1 to 1.7 ns per transform
+in a batch of 64, a 2-point one from 4.9 to 0.32 ns: rows of 2–16 points in batches of 64
+went from 1.9–17 times NEON FFTW's time to 0.85–1.18 (fbench run 20261115-002244-eba3).
+The loop inside the kernel matters beyond the call: a 32-point leaf took 20 ns per call
+one row at a time but 15 ns per row in one call over 64 rows (constants and saved
+registers set up once). Three pitfalls at this scale: on x86, passing a small struct of pointers by reference right
+after writing it field by field stalls when the callee copies it with wider loads (no
+store forwarding from two 8-byte stores to one 16-byte load): two such stalls were most of
+the 8–11 ns between FFTN's API and a leaf on the Xeon, and passing the two pointers as
+arguments took a 2-point row from 13.1 to 6.6 ns; a hot path that shares a function with
+a cold one pays the cold one's frame (an on-stack array of argument copies cost 6 ns per
+call on the Mac and 2–3 ns of a leaf row on the Xeon until the paths were split); and a
+loop over rows can make the compiler keep every leg address as its own induction variable
+(GCC 14 on AVX-512: 171 instructions per call of an 8-point float leaf against 153 without
+the loop, 7–11 % slower for one row). Measure the levels separately (entry, interpretation,
+kernel through its pointer, kernel in a loop): the harness of
+[X20](experiments/X20-call-overhead.md) does this in a page of code.
+
+4.8 **Batches of short rows: vectorise across rows, and avoid the transpose where you can.**
 Run row by row, a short row pays a fixed cost (driver, pass set-up: about 6 ns a row on an
 M5, where FFTW's whole 8-point row takes 2.3 ns) and, on wide registers, idle lanes. Putting
 one row in each lane, with the row's own codelets so every bit is unchanged, took 8–16-point
@@ -336,3 +366,10 @@ let failures through twice in the prototype).
 reads of kernel changes found an unscaled single-pass phase (every element wrong for some
 shapes) and missing fused-vs-unfused bit comparisons that the author's tests had missed;
 an exact (`memcmp`) comparison of two paths that should agree is a cheap, strong test.
+
+6.12 **oneMKL's `mkl-devel` wheel (2026.2.1) ships only versioned libraries.** It
+installs `libmkl_core.so.3` and the like without the unversioned linker names, so a build
+that looks for `-lmkl_core` under the installation fails; add the three symlinks
+(`mkl_intel_lp64`, `mkl_sequential`, `mkl_core`) by hand. Likewise, copy an unpacked
+autotools tree with `cp -a`: a plain `cp -r` makes the `.texi` sources newer than the shipped
+manuals and `make` then wants `makeinfo` (FFTW 3.3.11). [X21](experiments/X21-phase1-cloud.md).

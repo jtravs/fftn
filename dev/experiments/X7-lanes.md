@@ -116,7 +116,7 @@ forced-block arm was run (a follow-up if the x86 gather is replaced).
 
 Adopted: the lanes are the rules' choice for a batch of at least C rows up to
 `lanes_up_to` per target and C (`src/planner/rules.cpp`, commit after 5dba687 for NEON
-float's 32), DESIGN.md 8.5 as built, lesson 4.7. Task 2.2's acceptance (awkward short rows
+float's 32), DESIGN.md 8.5 as built, lesson 4.8. Task 2.2's acceptance (awkward short rows
 on AVX-512 at or below FFTW and MKL) is met for real rows but not for c2c in double: the
 lanes cut FFTN's time to a third at 8–16 points, but FFTW stays 1.3–1.5 times and MKL up to
 2.2 times faster there. What remains on x86 is the gather and scatter (two passes over the
