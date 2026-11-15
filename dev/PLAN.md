@@ -44,10 +44,11 @@ Open, by phase:
 - 3: T2, T3, T4, T6; 3.5 (Kokkos executor); 3.6 to be checked against its acceptance.
 - 4–7: not started.
 
-In flight at the pause: X23 (masked partial runs in the `avx512` and `avx2` vocabularies,
-branch `exp/x23-masked-tails`, pull request 5) and the fbench remote build cache (branch
-`task/fbench-build-cache`). If either is still open when work resumes, read its pull
-request first.
+In flight at the pause: the fbench remote build cache (branch `task/fbench-build-cache`);
+if it is still open when work resumes, read its pull request first. X23 (masked partial
+runs on x86) is done and rejected by its rule (Clang 23 loses on odd double lengths; GCC 14
+gains much): its record, lesson 4.9 and the partial-run test are on branch
+`exp/x23-masked-tails`, pull request 5; finding Clang's loss is a phase 1 follow-up.
 
 ### Leads, one-dimensional double first
 
@@ -301,7 +302,7 @@ running, done (with verdict).
 | [X20](experiments/X20-call-overhead.md) | Where does a tiny serial execute's time go (entry, driver, kernel), and what does a leaner driver close at n ≤ 64? | 1 | done: adopted (flat programs, leaves called with addresses, a batch of leaf rows in one call): Mac 0.45 of main over the x20 cases, 8 × 4096 3.08 → 0.97 of FFTW; Xeon 0.57 (one case slower at that commit, gone after two entry fixes per the harness; fbench confirmation pending) |
 | [X21](experiments/X21-phase1-cloud.md) | Phase 1 exit cloud checks: is anything badly off on a recent Intel Xeon (with MKL), Zen 5 and a Neoverse, and does `avx512` over `avx2` hold off Cascade Lake? | 1 | done: nothing badly off (FFTN ÷ FFTW over the tracking c2c rows: Emerald Rapids 1.17, Zen 5 1.12, Axion 0.81; FFTN ÷ MKL 1.19); avx512 wins in double everywhere, in float not on Zen 5, and loses 3× at 60 points in float; USD 1.36 |
 | [X22](experiments/X22-icpx.md) | Intel's icpx: does FFTN build and pass with it, which floating-point flags keep the numerical contract, and is it faster than GCC and Clang on the Xeon? | 1 | done: supported with `-fno-fast-math` (set by CMake); not recommended (Clang's equal in double, 3 % behind on tracking rows); float 0.80 of Clang on 7-smooth rows from masked partial runs, a portable vocabulary follow-up |
-| [X23](experiments/X23-masked-tails.md) | Do masked partial runs in the `avx512` and `avx2` vocabularies close most of icpx's float lead with GCC and Clang (X22), and become the default on x86? | 1 | running: arms B (masked runs), T (padded transposes for radices C does not divide), P (avx2 stores without VMASKMOV) on branch `exp/x23-masked-tails`; timing on the Xeon and the EPYC pending |
+| [X23](experiments/X23-masked-tails.md) | Do masked partial runs in the `avx512` and `avx2` vocabularies close most of icpx's float lead with GCC and Clang (X22), and become the default on x86? | 1 | done: rejected. B as first written slowed whole units (up to 1.15); amended B5 (partial units after the loops, constant counts) wins with GCC 14 (float 0.60 of main on `avx512`) but loses with Clang 23 on odd double lengths (`avx2` 75: 1.42), so the masked accesses are deleted; the partial-run test stays. Follow-up: Clang's odd-length loss |
 | [X24](experiments/X24-lanes-x86.md) | Cheaper lanes on x86: with X20's per-call preparation in the lanes driver and first and last passes that build registers from 128-bit loads of each row (no gather or scatter), do the lanes beat the batched-leaf chain in double at 8–64 points and reach FFTW at 8–16? | 2 | done: both changes rejected (per-call driver: 1–7 % slower at 8–16 × 64; per-row edge passes: up to 1.17 on AVX-512 at 24–256 points). `lanes_up_to` in double stays 0 on x86; 2.2's double c2c acceptance on AVX-512 not met (lanes 1.31–1.53 of FFTW, chain 1.01–1.26) |
 | P1 | Cost-model accuracy: rank agreement with measurement across the catalogue per machine | 2 | planned |
 | P2 | Measurement budget: how many candidates and how long before the choice stops improving | 2 | planned |

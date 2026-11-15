@@ -12,7 +12,6 @@ namespace {
 
 inline constexpr target id = target::scalar;
 inline constexpr bool fused = false;
-inline constexpr bool masked = false;
 
 template <class T> struct cplx {
   T re;

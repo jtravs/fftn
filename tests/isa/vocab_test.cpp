@@ -170,15 +170,6 @@ expected_and_got<T> run(const kernel_table& kernels, const probe_table& probes, 
     case vop::c_bcast: // register g holds complex number g in each of its lanes
       e[i] = a[2 * (i / (2 * lanes)) + (odd ? 1 : 0)];
       break;
-    case vop::c_load_n:  // the first g mod (C + 1) complex numbers of register g, zeros after
-    case vop::c_store_n: // the same, the canary after
-    {
-      const std::size_t g = i / (2 * lanes);
-      const bool live = (i / 2) % lanes < g % (lanes + 1);
-      const T dead = op == vop::c_load_n ? T(0) : T(-77);
-      e[i] = live ? a[i] : dead;
-      break;
-    }
     case vop::c_transpose: { // C x C blocks of complex numbers
       const std::size_t z = i / 2;
       const std::size_t block = z / (lanes * lanes) * lanes * lanes;
@@ -246,9 +237,6 @@ protected:
     const probe_table* probes = find_probes(t);
     ASSERT_NE(kernels, nullptr);
     ASSERT_NE(probes, nullptr);
-    if ((op == vop::c_load_n || op == vop::c_store_n) && !probes->masked) {
-      GTEST_SKIP() << "no masked partial runs on this target";
-    }
     auto [expected, got] = run<T>(*kernels, *probes, op);
     EXPECT_EQ(got.buffer.front(), T(-77)) << "wrote before its output";
     EXPECT_EQ(got.buffer.back(), T(-77)) << "wrote past its output";

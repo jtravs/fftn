@@ -17,7 +17,6 @@ namespace {
 
 inline constexpr target id = target::avx512;
 inline constexpr bool fused = true;
-inline constexpr bool masked = true;
 
 // Twiddles pre-arranged for mul as on avx2 (DESIGN.md 6.2): r holds (wr, wr) and i holds
 // (-wi, wi) for each lane's twiddle. Defined inside the region; special members trivial.
@@ -56,20 +55,6 @@ FFTN_FORCE_INLINE __m512d load(const double* p) { return _mm512_loadu_pd(p); }
 FFTN_FORCE_INLINE __m512 load(const float* p) { return _mm512_loadu_ps(p); }
 FFTN_FORCE_INLINE void store(double* p, __m512d a) { _mm512_storeu_pd(p, a); }
 FFTN_FORCE_INLINE void store(float* p, __m512 a) { _mm512_storeu_ps(p, a); }
-// Partial runs (experiment X23): a mask of the 2n reals of n complex numbers. Masked-off
-// elements of a masked load or store are not accessed, and AVX-512 suppresses their faults.
-FFTN_FORCE_INLINE __m512d load_n(const double* p, std::size_t n) {
-  return _mm512_maskz_loadu_pd(static_cast<__mmask8>((1U << (2 * n)) - 1U), p);
-}
-FFTN_FORCE_INLINE __m512 load_n(const float* p, std::size_t n) {
-  return _mm512_maskz_loadu_ps(static_cast<__mmask16>((1U << (2 * n)) - 1U), p);
-}
-FFTN_FORCE_INLINE void store_n(double* p, std::size_t n, __m512d a) {
-  _mm512_mask_storeu_pd(p, static_cast<__mmask8>((1U << (2 * n)) - 1U), a);
-}
-FFTN_FORCE_INLINE void store_n(float* p, std::size_t n, __m512 a) {
-  _mm512_mask_storeu_ps(p, static_cast<__mmask16>((1U << (2 * n)) - 1U), a);
-}
 // The complex number at p in every lane: its 16 bytes in every 128-bit lane (double).
 FFTN_FORCE_INLINE __m512d bcast(const double* p) { return _mm512_broadcast_f64x2(_mm_loadu_pd(p)); }
 // Its 8 bytes in every 64-bit lane (float), built from scalars rather than loaded through a

@@ -12,11 +12,6 @@ FFTN_ISA_BEGIN(scalar)
 
 #include "isa/probe.inl"
 
-constinit const probe_table probes{
-    .id = id,
-    .masked = masked,
-    .f64 = &probe<double>,
-    .f32 = &probe<float>,
-};
+constinit const probe_table probes{.id = id, .f64 = &probe<double>, .f32 = &probe<float>};
 
 FFTN_ISA_END

@@ -12,12 +12,10 @@
 //
 // - A run: C consecutive elements of a line, one per lane (lane and grouped passes). Full
 //   runs are one vector load or store, so their elements must be adjacent in memory (stride
-//   1, or C == 1); partial runs (the tails, where fewer than C elements remain) are one
-//   masked access where the elements are adjacent and the target has them (`masked`, x86;
-//   experiment X23), else go through a small tile, element by element, at any stride. The
-//   lanes a partial run leaves empty hold zero and are never stored. Every lane performs
-//   the same operations either way, so an element's result does not depend on whether its
-//   run was full, nor on how a partial run was moved.
+//   1, or C == 1); partial runs (the tails, where fewer than C elements remain) go through
+//   a small tile, element by element, at any stride. The lanes a partial run leaves empty
+//   hold zero and are never stored. Every lane performs the same operations either way,
+//   so an element's result does not depend on whether its run was full.
 // - One element in every lane (leaves, copies, the edges of real transforms): loaded by
 //   bcast, stored from lane 0, at any stride.
 
@@ -27,24 +25,10 @@ FFTN_FORCE_INLINE std::ptrdiff_t at(std::size_t index, std::ptrdiff_t stride) {
   return static_cast<std::ptrdiff_t>(index) * stride;
 }
 
-// A register of zeros.
-template <class T> FFTN_FORCE_INLINE cv<T> zeros() {
-  T tile[2 * C<T>]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
-  for (std::size_t l = 0; l < 2 * C<T>; ++l) {
-    tile[l] = T(0);
-  }
-  return load(tile);
-}
-
 // The first `valid` of C elements at p, step reals apart, as a register whose other lanes
 // hold zero.
 template <class T>
 FFTN_FORCE_INLINE cv<T> load_part(const T* p, std::ptrdiff_t step, std::size_t valid) {
-  if constexpr (masked) {
-    if (step == 2) {
-      return load_n(p, valid);
-    }
-  }
   T tile[2 * C<T>]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
   for (std::size_t l = 0; l < C<T>; ++l) {
     tile[2 * l] = T(0);
@@ -60,12 +44,6 @@ FFTN_FORCE_INLINE cv<T> load_part(const T* p, std::ptrdiff_t step, std::size_t v
 // The first `valid` lanes of v to p, step reals apart.
 template <class T>
 FFTN_FORCE_INLINE void store_part(T* p, std::ptrdiff_t step, std::size_t valid, cv<T> v) {
-  if constexpr (masked) {
-    if (step == 2) {
-      store_n(p, valid, v);
-      return;
-    }
-  }
   T tile[2 * C<T>]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
   store(tile, v);
   for (std::size_t l = 0; l < valid; ++l) {

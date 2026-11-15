@@ -1,6 +1,6 @@
 # X23: masked partial runs in the x86 vocabularies
 
-- **Status:** running
+- **Status:** done (rejected)
 - **Owner:** masked-tails session, 2026-11-15
 - **Phase / task:** 1 (x86 kernels; follow-up of [X22](X22-icpx.md))
 
@@ -233,8 +233,98 @@ three of them at once on the Xeon, the others chained). The EPYC runs A, B5, T5,
 
 ## Results
 
-(pending: the lead's runs)
+One thread; fbench interleaved process rounds with an A/A control of the first arm. Ratios
+are arm ÷ A (or between the arms named), medians over rounds; geomeans are weighted over the
+cases with 95 % bootstrap intervals over rounds; "over" counts the cases slower than 1 + band
++ 2 %, the rule's limit. Ratios between arms other than A come from the same rounds, judged
+against the run's A/A band. Load is the median load average of the rounds. Concurrency: the
+Xeon (72 CPUs) is shared, and these runs overlapped other timing jobs on it (other
+experiments' and each other), up to seven of this experiment's jobs at once for B's
+`avx2` run (20261115-101652-702f: B2 and B3 runs, cancelled later, were building and
+timing beside it) and three for the B4 and B5 runs; the bands below include that.
+
+### B, T and P as first written
+
+| Run | Machine, `ISA`, compiler | Load | Band | B/A float | B/A double | Over (float + double) | T/B float | P/T float |
+|---|---|---|---|---|---|---|---|---|
+| 20261115-081316-fb77 | Xeon, `avx512`, GCC 14.4 | 1.5 | ±1.00 % | 0.692 [0.690, 0.695] | 0.899 [0.896, 0.903] | 11 + 41 (float 320 1.09, double 980 1.08) | 0.915 | |
+| 20261115-101652-702f | Xeon, `avx2`, GCC 14.4 | 13.6 | ±1.00 % | 0.899 [0.897, 0.902] | 0.994 [0.991, 0.996] | 42 + 64 (float 560 1.11, double 144 1.15) | 0.976 | 0.994 |
+| 20261115-082341-8336 | EPYC, `avx2`, GCC 16.2 | 5.9 | ±1.00 % | 0.846 [0.845, 0.847] | 0.922 [0.920, 0.924] | 8 + 8 (float 112 1.07, double 108 1.07) | 1.054 | 0.849 |
+
+No Clang run was made with them (the `xeon-clang` profile did not exist yet). B fails the
+rule on every run: cases with no partial unit at all (double 128 = 8 × 16, 512, 1024;
+float 320, 640, 768, 960) were up to 9 % slower.
+
+Diagnosis (the amendment's causes). perf on the Xeon (GCC 14, double 128): A 1617
+instructions and 564 cycles per transform, B 1678 and 590; cycles in the grouped pass +8 %,
+in the lane pass +17 %, whose loop moved pointers through vector registers. Clang 23
+disassembly (local cross-build): the grouped radix-8 float pass grew from 1222 instructions
+(143 stack references) in A to 1244 (284) in B and 1242 (265) in B2, its set-up from 80 to
+350 instructions; B4: 1048 (61), set-up 18. Probes on the Xeon `avx512`, 22 cases (double
+and float 105, 128, 320, 448, 512, 640, 700, 768, 960, 980, 1024), arms A, B, B2: GCC
+20261115-102825-f2ec (band ±1.00 %): B2 still 6 float and 7 double cases over (double 448
+1.09); Clang 20261115-095449-a8d0 (±1.38 %): B 1.16–1.46 at double 320–640 and float 128–448,
+B2 1.31 at float 128, 1.12 at float 320.
+
+### B4 (evidence; not judged)
+
+Arms A, B4, T4 (`avx512`) and A, B4, T4, P4 (`avx2`).
+
+| Run | Machine, compiler, cases | Load | Band | `avx512` B4/A float, double (over) | `avx2` B4/A float, double (over) | Notes |
+|---|---|---|---|---|---|---|
+| 20261115-120532-0d6a | Xeon, GCC 14.4, (1) | 27.4 | ±1.44 % | 0.560, 0.814 (1 + 1: float 256 1.045, double 980 1.036) | 0.796, 0.897 (0 + 1: double 108 1.037) | T4/B4 float 0.918 (`avx512`), 0.966 (`avx2`); P4/T4 float 0.997 |
+| 20261115-113232-b9a9 | Xeon, Clang 23, (1) | 14.0 | ±1.50 % | 0.710, 1.002 (0 + 39: double 81 1.24, 126 1.19, 75 1.16) | 0.943, 1.044 (4 + 26: double 75 1.60, 105 1.46) | T4/A double 0.944 (`avx512`, 1 over): the runtime unit count of the amendment's B5 |
+| 20261115-120508-96f4 | Xeon, GCC 14.4, (2) | 28.5 | ±2.21 % | double 0.931 (0) | double 0.959 (1: 8 1.055) | P4/A 0.959, 0 over |
+| 20261115-120626-625d | EPYC, GCC 16.2, (1) | 6.0 | ±1.00 % | | 0.808, 0.865 (0 + 0) | T4/B4 float 1.032 (35 over: 75 1.27; VMASKMOV stores in every unit); P4/T4 float 0.862; P4/A 0.719, 0.849 |
+| 20261115-120635-2a31 | EPYC, GCC 16.2, (2) | 6.0 | ±1.00 % | | double 0.966 (3: 17 1.048, 257 1.047, 4093 1.038, Bluestein) | P4/A 0.955, 0 over |
+
+The tracking tier is double only.
+
+### B5, T5 and P5 (judged)
+
+Arms A, B5, T5 (`avx512`) and A, B5, T5, P5 (`avx2`).
+
+| Run | Machine, compiler, cases | Load | Band | `avx512` B5/A float, double (over) | `avx2` B5/A float, double (over) | T5/B5 float | P5/T5 float |
+|---|---|---|---|---|---|---|---|
+| 20261115-153453-df07 | Xeon, GCC 14.4, (1) | 29.1 | ±1.97 % | 0.604 [0.600, 0.608], 0.802 [0.796, 0.807] (0 + 1: double 980 1.043) | 0.800 [0.796, 0.806], 0.904 [0.898, 0.910] (0 + 2: double 70 1.062, 162 1.042) | 0.849 (`avx512`, 6 over), 0.962 (`avx2`, 2 over) | 0.997 (5 over) |
+| 20261115-143514-e9df | Xeon, Clang 23, (1) | 31.1 | ±2.77 % | 0.753 [0.747, 0.760], 0.955 [0.948, 0.965] (0 + 4: double 81 1.092, 126 1.056, 135 1.054, 75 1.054) | 0.932 [0.923, 0.939], 1.021 [1.013, 1.029] (2 + 24: double 75 1.42, 105 1.30, 147 1.25, 81 1.24) | 0.872 (`avx512`), 0.998 (`avx2`) | 1.012 |
+| 20261115-150526-b521 | EPYC, GCC 16.2, (1) | 5.2 | ±1.00 % | | 0.800 [0.799, 0.801], 0.862 [0.860, 0.864] (0 + 0) | 1.044 (42 over: 75 1.26) | 0.861 [0.860, 0.862] |
+| 20261115-150557-5e82 | EPYC, GCC 16.2, (2) | 5.4 | ±1.00 % | | double 0.965 [0.963, 0.966] (3: 17 1.050, 257 1.046, 4093 1.038) | | P5/A 0.954, 0 over |
+
+The Xeon tracking runs of B5 (`x23b5-xeon-trk`, Slurm 15693, still running when this was
+written; `x23b5-xclang-trk` cancelled before timing) cannot change the verdict below, which
+cases (1) already decide.
 
 ## Verdict
 
-(pending)
+**Rejected; the masked accesses are deleted and the tile stays** (the rule's "If B fails").
+
+- B as first written failed on every run made with it: whole units slowed (up to 1.15 of A
+  at lengths with no partial unit). The amendment's B5 keeps every bit and removes those
+  losses, but still fails the rule:
+  - Clang 23 on the Xeon, both targets: `avx512` 4 double cases beyond 1 + band + 2 %
+    (81 1.09), `avx2` 26 (double 75 1.42, 105 1.30, 147 1.25). These are odd lengths whose
+    lane passes have a partial block in every group; the cause was not found (perf was not
+    run on them: the Xeon was full). The float and double geomeans would have passed
+    (`avx512` 0.753 and 0.955; `avx2` 0.932 and 1.021, within 1 + band).
+  - GCC 14 on the Xeon passes the geomeans by far (`avx512` float 0.604, double 0.802;
+    `avx2` 0.800, 0.904) but has 1 and 2 cases just beyond the limit (double 980 1.043
+    against 1.040; 70 1.062, 162 1.042) in a run whose band was ±1.97 % under load 29.
+  - The EPYC (GCC 16) passes on cases (1) (float 0.800, double 0.862, none slower) but
+    fails on the tracking tier (Bluestein lengths 17, 257, 4093: 1.04–1.05, the VMASKMOV
+    stores of the chirp passes). P5's stores fix those (P5/A 0.954, none slower).
+- T and P are therefore not adopted either. For the record: T helps where the stores are
+  cheap (T5/B5 float 0.849 GCC and 0.872 Clang on `avx512`) and loses on Zen 3 with
+  VMASKMOV stores in every unit (1.044) unless P's stores replace them (P5/T5 0.861 on the
+  EPYC; neutral on the Xeon, 0.997).
+- Descriptive: with GCC, B5's float geomean on `avx512` (0.604 of A) is beyond icpx's lead
+  (X22: icpx 0.668 of GCC on the same cases); with Clang it is 0.753 (target 0.898).
+- What stays: `tests/core/tails_test.cpp`, which forces every partial-run shape against
+  the reference at a guard page, and lesson 4.9 in `dev/LESSONS.md`. The vocabulary's
+  `load_n`/`store_n`, the `masked` flag, the restructured passes and their probes are
+  deleted (they are in the branch's history: arms 1132477, 0baf6a3, 489b268).
+- Follow-up worth an experiment: find Clang's loss on odd double lengths (perf on the Xeon
+  at double 75 with `avx2` and 81 with `avx512`; suspects are store-to-load forwarding from
+  the tile's element stores into the masked loads, and Clang's code for the lane pass's
+  second loop), fix it, and run B5 (with P5's stores on `avx2`) again under this rule on a
+  quieter Xeon. With GCC the change is worth 0.60–0.80 of the time on float 7-smooth rows.
