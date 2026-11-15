@@ -39,7 +39,8 @@ FFTN_FORCE_INLINE void store_transposed(T* y, cv<T>* v, std::size_t valid) {
 }
 
 // The same through a tile, element by element, for the first `valid` butterflies: for R not
-// a multiple of C, and for the last unit of a pass.
+// a multiple of C, and for the last unit of a pass, on the targets without masked partial
+// runs.
 template <class T, std::size_t R>
 FFTN_FORCE_INLINE void store_tiled(T* y, const cv<T>* v, std::size_t valid) {
   T tile[R][2 * C<T>]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
@@ -51,6 +52,28 @@ FFTN_FORCE_INLINE void store_tiled(T* y, const cv<T>* v, std::size_t valid) {
       y[2 * (R * l + k)] = tile[k][2 * l];
       y[2 * (R * l + k) + 1] = tile[k][2 * l + 1];
     }
+  }
+}
+
+// The same for R not a multiple of C on the targets with masked partial runs (X23): the
+// legs padded with registers of zeros to whole C x C blocks and transposed, then each
+// butterfly's R outputs stored as R / C whole runs and one masked run of R mod C.
+template <class T, std::size_t R>
+FFTN_FORCE_INLINE void store_padded(T* y, const cv<T>* v, std::size_t valid) {
+  constexpr std::size_t whole = R / C<T>;
+  constexpr std::size_t padded = (whole + 1) * C<T>;
+  cv<T> w[padded]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
+  for (std::size_t k = 0; k < padded; ++k) {
+    w[k] = k < R ? v[k] : zeros<T>();
+  }
+  for (std::size_t b = 0; b <= whole; ++b) {
+    transpose(w + b * C<T>);
+  }
+  for (std::size_t l = 0; l < valid; ++l) {
+    for (std::size_t b = 0; b < whole; ++b) {
+      store(y + 2 * (R * l + b * C<T>), w[b * C<T> + l]);
+    }
+    store_n(y + 2 * (R * l + whole * C<T>), R % C<T>, w[whole * C<T> + l]);
   }
 }
 
@@ -88,7 +111,7 @@ FFTN_FORCE_INLINE void grouped_tail(const pass_args* a, std::size_t u) {
   if constexpr (R % C<T> == 0) {
     store_transposed<T, R>(yp, v, valid);
   } else {
-    store_tiled<T, R>(yp, v, valid);
+    store_padded<T, R>(yp, v, valid);
   }
 }
 
@@ -126,6 +149,8 @@ void grouped_pass(const pass_args* a, std::size_t first, std::size_t last) {
       cdft<R>::template dif<T, Sign>(in, out, twid);
       if constexpr (R % C<T> == 0) {
         store_transposed<T, R>(yp, v, C<T>);
+      } else if constexpr (masked) {
+        store_padded<T, R>(yp, v, C<T>);
       } else {
         store_tiled<T, R>(yp, v, valid);
       }
