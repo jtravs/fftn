@@ -48,9 +48,9 @@ Open, by phase:
 - 4–7: not started.
 
 In flight at the pause: X23 (masked partial runs in the `avx512` and `avx2` vocabularies,
-branch `exp/x23-masked-tails`, pull request 5) and X25 (diagnosis of the x86 gap in
-one-dimensional double: counters and FFTW's printed plans, branch `exp/x25-x86-diagnosis`). If either is still open when work resumes, read its pull
-request first.
+branch `exp/x23-masked-tails`, pull request 5). If it is still open when work resumes, read
+its pull request first. X25 (the x86 gap's causes, from counters and FFTW's printed plans)
+is done; its verdicts are folded into the leads below.
 
 ### Leads, one-dimensional double first
 
@@ -62,7 +62,11 @@ runs; the numbers above are the baseline to beat. The rest (6–9) follow. X25's
 1. Long rows (≥ 16384, both machines; mixed 46080 and 100000 worst on the EPYC at 1.67–1.98;
    r2c and c2r of 65536 and 2²⁰ at 1.3–1.6): X12 on x86 (the grid's phases and blocks
    there), the real pairing fused into grid phases, radix 32 phases from 32768 (X3
-   follow-up). FFTL.jl is the reference to study here: on the Mac it beats both FFTN (FFTN
+   follow-up). X25: on both x86 machines it is the grid's copy loops, not memory
+   (`block_copy` 40–52 % of FFTN's instructions on the Xeon, about 33 instructions per
+   64-byte row with blocks of 4 columns; FFTN has fewer L2 misses than FFTW): first a copy
+   specialised for one-vector rows, wider or tiled blocks, fewer separate copies.
+   FFTL.jl is the reference to study here: on the Mac it beats both FFTN (FFTN
    1.35 of its time at ≥ 16384; 2²⁰ 1.60, 100000 1.53, 46080 1.45) and FFTW (0.86).
 2. Prime lengths and prime factors above 16: 17 takes Bluestein (1.57 / 1.95 of FFTW), and
    inside composites each such factor is one generic pass (2431 = 11 · 13 · 17: FFTN 2.57
@@ -72,13 +76,25 @@ runs; the numbers above are the baseline to beat. The rest (6–9) follow. X25's
 3. The x86 kernels at 128–4096 (EPYC 1.05–1.35): a split-aware planner (costs of split
    passes; a first radix that lets a run start: AVX2's 1024 = 4 × 16 × 16 has none), split
    runs in Bluestein convolutions and grid phases, a split grouped first pass with an 8 × 8
-   real transpose (port 5 is 58 % busy on `avx512`, FFTW 41–44 %).
+   real transpose (port 5 is 58 % busy on `avx512`, FFTW 41–44 %). X25: the Xeon is at
+   par here (port 5 57–73 % busy against FFTW's 34–55 %); the EPYC executes 1.38–1.60 times
+   FFTW's instructions at 256–1024 for the same floating-point work, so the AVX2 pass loops
+   need 30–40 % fewer instructions; at 4096 FFTN runs four passes to FFTW's three.
 4. Single short rows (≤ 64 points: Mac 1.14, EPYC 1.38; 60 points on the EPYC 1.42): the
-   remaining fixed cost per call after X20.
-5. Real transforms on x86 (EPYC 1.25): X6 real-input codelets.
+   remaining fixed cost per call after X20. X25: at 8 points 23 of the 25-cycle gap on the
+   Xeon (14 of 15 on the EPYC) is fixed cost; FFTW runs single 8- and 16-point rows with
+   128-bit codelets, and FFTN's 512-bit leaf also lowers the Xeon's clock. First: 128-bit
+   leaves for single rows of 8–16 points, a flat driver path for two-pass chains (60 points
+   on the EPYC: 37 of 79 cycles are the driver), and the partial-unit radix-4 pass at 60
+   on the Xeon (57 % of the time).
+5. Real transforms on x86 (EPYC 1.25): X6 real-input codelets. X25: r2c 65536 on the Xeon
+   is memory (its 32768-point chain at IPC 0.84 with 3.4 times FFTW's L2 misses): count
+   the whole real footprint in the chain-or-grid rule; on the EPYC it is the grid's
+   instructions (lead 1).
 6. Double c2c batches of 8–16 points on AVX-512 (task 2.2): the chain against FFTW and MKL;
    a lanes threshold per transform kind (r2c and c2r of 16–64 points under AVX-512 already
-   take 0.56–0.96 of the chain's time).
+   take 0.56–0.96 of the chain's time). X25: batched leaves saturate one unit (Xeon ports
+   0 and 5 at 82–87 %, EPYC FP pipes 2 and 3 up to 95 %).
 7. Float: 60 points on `avx512` 2.6 times `avx2` (Xeon and cloud); `best_target` per
    precision and length; X23's tails.
 8. Planes and volumes (phase 4): the EPYC's 64³ c2c (10.9 times FFTW).
