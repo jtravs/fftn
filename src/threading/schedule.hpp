@@ -103,6 +103,12 @@ struct machine_profile {
   std::size_t grid_fuse_bytes = std::size_t{4} * 1024 * 1024;
   std::size_t grid_block_bytes = std::size_t{64} * 1024;
   std::size_t grid_block = 0;
+  // The L1 data cache's set period (its size over its ways), the spacing at which addresses
+  // share a set: the grid pads the rows of its intermediate array so that the rows phase 2
+  // gathers spread over the sets (grid_pad, experiment X26b). set_grid_sizes sets it where
+  // the ways are known; macOS does not report them, and there it is SIZE_MAX (no padding:
+  // X4 measured none paying on the Mac).
+  std::size_t grid_pad_period = 4096;
 };
 
 // The profile of a machine of topology t (its CPU count aside): the defaults above, which

@@ -96,6 +96,10 @@ constexpr std::array size_fields{
         .member = &fftn::detail::machine_profile::grid_block_bytes,
     },
     size_field{.key = "GRID_BLOCK", .member = &fftn::detail::machine_profile::grid_block},
+    size_field{
+        .key = "GRID_PAD_PERIOD",
+        .member = &fftn::detail::machine_profile::grid_pad_period,
+    },
 };
 constexpr std::array int_fields{
     int_field{

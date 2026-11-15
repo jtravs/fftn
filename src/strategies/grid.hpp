@@ -27,7 +27,9 @@
 //   gather the input edge's, with build_settings::scale_on_input).
 // A phase reads one array and writes another, except the last, which writes the positions
 // it read and so runs in place: phase 1 writes the output out of place when there are two
-// phases, otherwise the workspace block, and phase 2 of three writes the output. Scratch
+// phases, otherwise the workspace block, and phase 2 of three writes the output; a padded
+// intermediate (grid_pad) is always the workspace block, each of its rows as phase 2 reads
+// them (N2 rows of n / N2) followed by `pad` unused elements. Scratch
 // lines a and b hold one block (block x max Ni). The loops over blocks are the program's
 // (DESIGN.md 8.3), one iteration per block, independent; the twiddle tables move with them
 // through the twiddle cursor (program.hpp).
@@ -68,11 +70,13 @@ inline constexpr std::size_t grid_fuse_radix = 8;
 inline constexpr std::size_t default_grid_phase_radix = 16;
 
 // How a row of n is split: n = factors[0] x ... x factors[phases - 1], each phase run on
-// blocks of `block` columns. phases == 0: no grid.
+// blocks of `block` columns. phases == 0: no grid. pad: complex elements after each of
+// the intermediate array's rows as phase 2 reads them (grid_pad); 0 or a multiple of block.
 struct grid_split {
   std::size_t phases = 0;
   std::array<std::size_t, max_grid_phases> factors{};
   std::size_t block = 0;
+  std::size_t pad = 0;
 };
 
 // The grid of n for a target with `lanes` complex numbers per register, or none. The
@@ -89,6 +93,17 @@ struct grid_split {
 [[nodiscard]] grid_split choose_grid(std::size_t n, std::size_t lanes, std::size_t budget,
                                      bool three_phases, std::size_t forced_block,
                                      const std::vector<std::size_t>& forced);
+
+// The padding of g's intermediate array (grid_split::pad) for complex elements of
+// `element_bytes` and an L1 set period of `period` bytes (machine_profile::grid_pad_period):
+// phase 2 gathers N2 rows of `block` columns n / N2 elements apart, a multiple of the period
+// for most long rows, so that all of them fall into the same few sets (experiments X26,
+// X26b). The pad is the multiple of the block, from 0 to 8 blocks, under which those rows'
+// 64-byte lines load the period's sets most evenly (the smallest on a tie); 0 when phase
+// 1's blocks would straddle two padded rows (three phases whose last factor the block
+// does not divide). A pure function.
+[[nodiscard]] std::size_t grid_pad(const grid_split& g, std::size_t element_bytes,
+                                   std::size_t period);
 
 template <class T> class grid_builder {
 public:
@@ -109,8 +124,9 @@ public:
   std::size_t c2c_row(const grid_split& g, int sign, bool in_place, double scale,
                       bool scale_on_input, program& p);
 
-  // Whether c2c_row of g uses the block slot, n complex elements.
+  // Whether c2c_row of g uses the block slot, and its complex elements (n, and the padding).
   [[nodiscard]] static bool uses_block(const grid_split& g, bool in_place) noexcept;
+  [[nodiscard]] static std::size_t block_elements(const grid_split& g) noexcept;
 
   // "grid 64 x 128 x 128 (...)" for describe().
   [[nodiscard]] std::string note(const grid_split& g) const;

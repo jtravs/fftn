@@ -69,7 +69,8 @@ void block_copy(const pass_args* a, std::size_t first, std::size_t last) {
 }
 
 // Phase 1 of a grid: z, a tight block of s columns and m rows (z[q + s k]), to the block's
-// s rows of m in the next array, y[k + m q], element (q, k) times the twiddle w^((c0 + q) k)
+// s rows of m in the next array, y[k + dst_stride q] (dst_stride is m, or more for a padded
+// intermediate, strategies/grid.hpp), element (q, k) times the twiddle w^((c0 + q) k)
 // of its column c0 + q (the conjugate for Sign = +1), formed as w^(q k) w^(c0 k): roots
 // holds the first factor for every (q, k) of a block, twiddles the second for the block's
 // rows (m values; the stage advances them per block, stage::moving_twiddles). Both are
@@ -79,7 +80,8 @@ void block_copy(const pass_args* a, std::size_t first, std::size_t last) {
 // element instead is a table of n values, which X12 measured costing more than the
 // multiplication once it no longer fits the cache. A unit is a C x C tile, tiles k fastest
 // within a column tile, transposed in registers so that every store is C adjacent elements
-// of one row of y. m and s are multiples of C. Reads src, dst, m, s, roots, twiddles.
+// of one row of y. m, s and dst_stride are multiples of C. Reads src, dst, m, s, dst_stride,
+// roots, twiddles.
 template <class T, int Sign>
 void twiddle_transpose(const pass_args* a, std::size_t first, std::size_t last) {
   const T* z = static_cast<const T*>(a->src);
@@ -88,6 +90,7 @@ void twiddle_transpose(const pass_args* a, std::size_t first, std::size_t last) 
   const T* rows = static_cast<const T*>(a->twiddles);
   const std::size_t m = a->m;
   const std::size_t cols = a->s;
+  const std::ptrdiff_t ys = 2 * a->dst_stride;
   const std::size_t ktiles = m / C<T>;
   std::size_t q0 = first / ktiles * C<T>;
   std::size_t k0 = first % ktiles * C<T>;
@@ -106,7 +109,7 @@ void twiddle_transpose(const pass_args* a, std::size_t first, std::size_t last) 
       transpose(v);
     }
     for (std::size_t l = 0; l < C<T>; ++l) {
-      store(y + 2 * (k0 + m * (q0 + l)), v[l]);
+      store(y + 2 * k0 + at(q0 + l, ys), v[l]);
     }
     k0 += C<T>;
     if (k0 == m) {

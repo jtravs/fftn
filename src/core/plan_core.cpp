@@ -340,9 +340,10 @@ grid_split plan_grid(std::size_t n, const side& in, const side& out, const build
   if (!settings.radices.empty() && forced == n) {
     return {};
   }
-  const grid_split g = choose_grid(n, lanes, settings.profile.grid_block_bytes / (4 * sizeof(T)),
-                                   n * 2 * sizeof(T) > settings.profile.grid_three_bytes,
-                                   settings.profile.grid_block, settings.grid_factors);
+  grid_split g = choose_grid(n, lanes, settings.profile.grid_block_bytes / (4 * sizeof(T)),
+                             n * 2 * sizeof(T) > settings.profile.grid_three_bytes,
+                             settings.profile.grid_block, settings.grid_factors);
+  g.pad = grid_pad(g, 2 * sizeof(T), settings.profile.grid_pad_period);
   for (std::size_t i = 0; i < g.phases; ++i) {
     for (const std::size_t radix : chain.radices(g.factors.at(i))) {
       if (!has_codelet(radix)) {
@@ -541,7 +542,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
                          settings.grid_phase_radix);
     const bool in_place = c.in_place || !r2c;
     if (grid_builder<T>::uses_block(real_grid, in_place)) {
-      c.block_elements = n / 2;
+      c.block_elements = grid_builder<T>::block_elements(real_grid);
     }
     std::vector<stage> pairing;
     if (r2c) {
@@ -569,7 +570,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
                              c.lengths[0] * 2 * sizeof(T) <= settings.profile.grid_fuse_bytes,
                          settings.grid_phase_radix);
     if (grid_builder<T>::uses_block(grid_plan, c.in_place)) {
-      c.block_elements = c.lengths[0];
+      c.block_elements = grid_builder<T>::block_elements(grid_plan);
     }
     scratch = grid.c2c_row(grid_plan, sign, c.in_place, opts.scale, settings.scale_on_input, p);
     c.axis_notes.push_back("axis 0 (n = " + std::to_string(c.lengths[0]) +

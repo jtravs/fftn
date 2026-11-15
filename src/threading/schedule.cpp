@@ -74,6 +74,8 @@ void set_grid_sizes(machine_profile& p, const core_class& c) noexcept {
   if (c.l1d.size != 0) {
     p.grid_min_bytes = c.l1d.size;
     p.grid_block_bytes = c.l1d.size;
+    p.grid_pad_period =
+        c.l1d.ways != 0 ? c.l1d.size / c.l1d.ways : std::numeric_limits<std::size_t>::max();
   }
   if (c.l2.size != 0) {
     if (private_l2) {

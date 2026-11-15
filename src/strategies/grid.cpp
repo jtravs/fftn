@@ -248,6 +248,53 @@ grid_split choose_grid(std::size_t n, std::size_t lanes, std::size_t budget, boo
   return three;
 }
 
+std::size_t grid_pad(const grid_split& g, std::size_t element_bytes, std::size_t period) {
+  constexpr std::size_t line = 64;
+  constexpr std::size_t most_blocks = 8;
+  if (g.phases < 2 || g.block == 0 || period < 2 * line) {
+    return 0;
+  }
+  const std::size_t n2 = g.factors[1];
+  const std::size_t stride = first_columns(g) / n2 * g.factors[0];
+  if (g.phases == 3 && g.factors[2] % g.block != 0) {
+    return 0;
+  }
+  const std::size_t sets = period / line;
+  const std::size_t row_bytes = g.block * element_bytes;
+  // The most of the rows' lines that share one set.
+  std::vector<std::size_t> set_of;
+  const auto load = [&](std::size_t pad) {
+    set_of.clear();
+    for (std::size_t r = 0; r < n2; ++r) {
+      const std::size_t start = r * (stride + pad) * element_bytes;
+      for (std::size_t l = start / line; l <= (start + row_bytes - 1) / line; ++l) {
+        set_of.push_back(l % sets);
+      }
+    }
+    std::ranges::sort(set_of);
+    std::size_t most = 0;
+    for (std::size_t i = 0; i < set_of.size();) {
+      std::size_t j = i;
+      while (j < set_of.size() && set_of[j] == set_of[i]) {
+        ++j;
+      }
+      most = std::max(most, j - i);
+      i = j;
+    }
+    return most;
+  };
+  std::size_t best = 0;
+  std::size_t best_load = load(0);
+  for (std::size_t k = 1; k <= most_blocks; ++k) {
+    const std::size_t l = load(k * g.block);
+    if (l < best_load) {
+      best = k * g.block;
+      best_load = l;
+    }
+  }
+  return best;
+}
+
 template <class T>
 grid_builder<T>::grid_builder(const kernels_of<T>& kernels, chain_builder<T>& chain,
                               std::vector<std::vector<T>>& tables, bool fused,
@@ -424,7 +471,11 @@ template <class T> const T* grid_builder<T>::row_twiddles(std::size_t ni, std::s
 }
 
 template <class T> bool grid_builder<T>::uses_block(const grid_split& g, bool in_place) noexcept {
-  return g.phases == 3 || in_place;
+  return g.phases == 3 || in_place || g.pad != 0;
+}
+
+template <class T> std::size_t grid_builder<T>::block_elements(const grid_split& g) noexcept {
+  return g.factors[0] * first_columns(g) + g.factors[1] * g.pad;
 }
 
 template <class T>
@@ -454,11 +505,26 @@ std::size_t grid_builder<T>::c2c_row(const grid_split& g, int sign, bool in_plac
   const std::size_t m1 = first_columns(g);
   const std::size_t n = n1 * m1;
 
-  // Phase 1: blocks of the input's columns, written transposed.
+  // Phase 1: blocks of the input's columns, written transposed. With a padded
+  // intermediate (grid_pad), each of phase 2's rows holds m2 of phase 1's columns and then
+  // the pad: three phases write each such row's blocks in a loop of their own; two (m2 = 1)
+  // write every column of a block as one padded row.
+  const std::size_t pad = g.pad;
+  const std::size_t m2 = m1 / g.factors[1];
+  const bool padded_rows = pad != 0 && m2 > 1;
+  const std::size_t row1 = m2 == 1 ? n1 + pad : n1;
   const std::size_t first_loop = p.records.size();
-  loop l1{.kind = loop_kind::lines, .count = m1 / b};
+  if (padded_rows) {
+    loop rows{.kind = loop_kind::lines, .count = g.factors[1]};
+    rows.step[index(buf[0])] = static_cast<std::ptrdiff_t>(m2) * cb;
+    rows.step[index(buf[1])] = static_cast<std::ptrdiff_t>(n1 * m2 + pad) * cb;
+    rows.step[3] = static_cast<std::ptrdiff_t>(m2 / b * n1) * cb;
+    p.records.emplace_back(rows);
+  }
+  const std::size_t block_loop = p.records.size();
+  loop l1{.kind = loop_kind::lines, .count = (padded_rows ? m2 : m1) / b};
   l1.step[index(buf[0])] = blk * cb;
-  l1.step[index(buf[1])] = blk * static_cast<std::ptrdiff_t>(n1) * cb;
+  l1.step[index(buf[1])] = blk * static_cast<std::ptrdiff_t>(row1) * cb;
   l1.step[3] = static_cast<std::ptrdiff_t>(n1) * cb;
   p.records.emplace_back(l1);
   // A phase reads its rows in its first pass and (after phase 1) writes them in its last,
@@ -485,6 +551,7 @@ std::size_t grid_builder<T>::c2c_row(const grid_split& g, int sign, bool in_plac
   tt.args.roots = local;
   tt.args.twiddles = rows;
   tt.args.m = n1;
+  tt.args.dst_stride = static_cast<std::ptrdiff_t>(row1);
   tt.args.s = b;
   tt.args.n = n1 * b;
   tt.moving_twiddles = true;
@@ -497,6 +564,7 @@ std::size_t grid_builder<T>::c2c_row(const grid_split& g, int sign, bool in_plac
             std::to_string(n1) + ")";
   p.records.emplace_back(std::move(tt));
   std::get<loop>(p.records[first_loop]).body_end = static_cast<std::uint32_t>(p.records.size());
+  std::get<loop>(p.records[block_loop]).body_end = static_cast<std::uint32_t>(p.records.size());
 
   // Later phases: blocks of b adjacent l < L at each column c < M.
   std::size_t l_count = n1;
@@ -504,6 +572,9 @@ std::size_t grid_builder<T>::c2c_row(const grid_split& g, int sign, bool in_plac
     const std::size_t ni = g.factors.at(i);
     const std::size_t m = n / (l_count * ni);
     const auto big_l = static_cast<std::ptrdiff_t>(l_count);
+    // The rows this phase reads: the padded intermediate's for phase 2.
+    const std::ptrdiff_t src_row =
+        big_l * static_cast<std::ptrdiff_t>(m) + static_cast<std::ptrdiff_t>(i == 1 ? pad : 0);
     const slot src = buf.at(i);
     const slot dst = buf.at(i + 1);
     const std::size_t outer = p.records.size();
@@ -524,13 +595,12 @@ std::size_t grid_builder<T>::c2c_row(const grid_split& g, int sign, bool in_plac
     const bool fuse_out = fuse_in;
     const T* row_tw = m > 1 ? row_twiddles(ni, m) : nullptr;
     if (!fuse_in) {
-      add_copy("gather", kernels_.passes.block_copy[0], ni, b, src,
-               big_l * static_cast<std::ptrdiff_t>(m), slot::a, blk, 1.0, nullptr, p);
+      add_copy("gather", kernels_.passes.block_copy[0], ni, b, src, src_row, slot::a, blk, 1.0,
+               nullptr, p);
     }
     const slot z = phase_chain(
         ni, rad, b, sign,
-        fuse_in ? side_of{.where = src, .big = true, .row = big_l * static_cast<std::ptrdiff_t>(m)}
-                : side_of{.where = slot::a},
+        fuse_in ? side_of{.where = src, .big = true, .row = src_row} : side_of{.where = slot::a},
         fuse_out ? side_of{.where = dst, .big = true, .row = big_l} : side_of{.where = slot::a},
         1.0, fuse_out ? out_scale : 1.0, fuse_out ? row_tw : nullptr, p);
     if (!fuse_out && m > 1) {
@@ -559,8 +629,10 @@ template <class T> std::string grid_builder<T>::note(const grid_split& g) const 
     phases += (i == 0 ? "" : ", then ") + std::to_string(f) + " (radices " +
               radix_text(phase_radix_list(f)) + ")";
   }
+  const std::string padded =
+      g.pad != 0 ? "; phase 2's rows padded by " + std::to_string(g.pad) + " elements" : "";
   return "grid " + sizes + " (decimation in frequency: phases of " + phases +
-         ", each in blocks of " + std::to_string(g.block) + " columns)";
+         ", each in blocks of " + std::to_string(g.block) + " columns" + padded + ")";
 }
 
 template class grid_builder<double>;

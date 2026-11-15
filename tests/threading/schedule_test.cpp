@@ -105,6 +105,7 @@ TEST(WorkGraph, PhasesOfRowsAndPlanes) {
   grid.strategy = fftn::detail::strategy_choice::grid;
   grid.grid_factors = {16, 32, 32};
   grid.profile.grid_block = 8;
+  grid.profile.grid_pad_period = std::numeric_limits<std::size_t>::max();
   const auto gr = fftn::detail::make_plan_core(
       fftn::detail::view_of(fftn::rows_c2c<double>(16384, 2, fftn::direction::forward)),
       fftn::options(), grid);
@@ -115,6 +116,15 @@ TEST(WorkGraph, PhasesOfRowsAndPlanes) {
   EXPECT_EQ(gr->graph.phases[1].units, 32U * (16 / 8)); // columns c x blocks of L = 16
   EXPECT_EQ(gr->graph.phases[2].nest, 1U);
   EXPECT_EQ(gr->graph.phases[2].units, 512U / 8); // blocks of L = 512, the last phase
+  // A padded intermediate (X26b): phase 1 loops over phase 2's 32 rows, then their blocks.
+  grid.profile.grid_pad_period = 4096;
+  const auto padded = fftn::detail::make_plan_core(
+      fftn::detail::view_of(fftn::rows_c2c<double>(16384, 2, fftn::direction::forward)),
+      fftn::options(), grid);
+  ASSERT_EQ(padded->graph.phases.size(), 3U);
+  EXPECT_EQ(padded->graph.phases[0].nest, 2U);
+  EXPECT_EQ(padded->graph.phases[0].units, 32U * (32 / 8));
+  EXPECT_EQ(padded->graph.phases[1].units, 32U * (16 / 8));
   // A generic pass of radix r sums r terms per point: 2 x 17 is a grouped radix-2 pass (34
   // points) and a generic radix-17 pass (34 x 17).
   EXPECT_EQ(rows(34, 1)->graph.work, 34.0 + 34.0 * 17);
@@ -442,6 +452,10 @@ TEST(Schedule, GridSizesFromCaches) {
   EXPECT_EQ(m5.grid_three_bytes, 2048 * kib);
   EXPECT_EQ(m5.grid_block_bytes, 128 * kib);
   EXPECT_EQ(m5.grid_fuse_bytes, 4096 * kib);
+  // The L1 set period (size over ways) the grid pads against (X26b); macOS reports no ways.
+  EXPECT_EQ(xeon.grid_pad_period, 4 * kib);
+  EXPECT_EQ(epyc.grid_pad_period, 4 * kib);
+  EXPECT_EQ(m5.grid_pad_period, std::numeric_limits<std::size_t>::max());
   // Unknown sizes keep the defaults; an unknown sharing counts as a shared L2.
   const machine_profile defaults;
   machine_profile unknown;
