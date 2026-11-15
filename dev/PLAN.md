@@ -48,8 +48,8 @@ Open, by phase:
 - 4–7: not started.
 
 In flight at the pause: X23 (masked partial runs in the `avx512` and `avx2` vocabularies,
-branch `exp/x23-masked-tails`, pull request 5) and the fbench remote build cache (branch
-`task/fbench-build-cache`). If either is still open when work resumes, read its pull
+branch `exp/x23-masked-tails`, pull request 5) and X25 (diagnosis of the x86 gap in
+one-dimensional double: counters and FFTW's printed plans, branch `exp/x25-x86-diagnosis`). If either is still open when work resumes, read its pull
 request first.
 
 ### Leads, one-dimensional double first
@@ -94,7 +94,9 @@ Decisions the maintainer has not yet taken are listed in DESIGN.md section 18.2.
 - Remote timing: `uv run --frozen python scripts/remote/fbench_remote.py submit
   <xeon|epyc|xeon-clang> ARMS -- fbench-args` (profiles in `~/.config/fftn/remote.toml`,
   outside the repository; the Xeon profile sets the MKL root). `fetch` runs from the main
-  checkout. Small shared allocations (`-c 8`), never exclusive; at most three of one
+  checkout. Each arm is built once per machine into a shared cache by a short,
+  wider build job before the timing job (`bench/README.md`, "Remote runs"); `--serial`
+  runs timing jobs one at a time, `prune` clears old cache entries. Small shared allocations (`-c 8`), never exclusive; at most three of one
   agent's jobs on the Xeon at once; fbench's load-tolerant rounds, adding rounds rather
   than waiting for quiet. Remote gates go to DMOG first (`--mem=96G`; 160G and 4 hours for
   sanitizer builds; LSan off there, ptrace is forbidden on its nodes).
