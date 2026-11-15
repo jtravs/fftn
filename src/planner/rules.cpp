@@ -328,22 +328,20 @@ bool split_of(target t, std::size_t /*lanes*/) {
 }
 
 // The longest row the lanes strategy takes (target_profile::lanes_up_to), from experiment X7
-// (dev/experiments/X7-lanes.md): per target and complex count, the longest catalogue length
-// up to which no case (c2c, r2c, c2r; batches of 64 to 4096) ran slower than row by row, on
-// every machine measured. Where C = 1 the block's first and last passes read and write the
-// rows (no gather), so the lanes won up to 256 on the M5; where C > 1 a gather and a scatter
-// cost two passes, so they win only where the chain idles lanes (leaves, first passes with
-// fewer than C groups): AVX2 24 (double; the EPYC alone allowed 48) and 48 (float; 100), the
-// Xeon's AVX-512 32 and 128, NEON float 32. The scalar target is not measured.
+// (dev/experiments/X7-lanes.md) against the chain with X20's batched leaves and flat
+// programs: per target and complex count, the longest catalogue length up to which no case
+// (c2c, r2c, c2r; batches of 64 to 4096) ran slower than the chain, on every machine
+// measured. Only float on x86 qualifies: AVX-512 100 (C = 8; the Xeon), AVX2 32 (C = 4; the
+// Xeon forced, the EPYC alone allowed 48). In double and on NEON the chain's batched leaf
+// already runs short rows as fast as the lanes (8 points: lanes 1.09 of the chain on the
+// M5, 1.3 on the Xeon, 1.6 on the EPYC), so the rule gives 0. The scalar target is not
+// measured.
 std::size_t lanes_up_to_of(target t, std::size_t lanes) {
   switch (t) {
   case target::avx512:
-    return lanes == 4 ? 32 : lanes == 8 ? 128 : 0;
+    return lanes == 8 ? 100 : 0;
   case target::avx2:
-    return lanes == 2 ? 24 : lanes == 4 ? 48 : 0;
-  case target::neon:
-  case target::neon_fcma:
-    return lanes == 1 ? 256 : lanes == 2 ? 32 : 0;
+    return lanes == 4 ? 32 : 0;
   default:
     return 0;
   }

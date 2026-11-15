@@ -1177,10 +1177,13 @@ second body (`lane_tail`), the last padded with zero rows that are never written
 give the same bits. A lanes program's work graph is one unsplittable phase per transform.
 B is the largest power of two times C up to 64 rows and the batch whose two scratch tiles
 fit half the L1 data cache (`lanes_block`). The rules take the lanes for a batch of at
-least C rows up to `target_profile::lanes_up_to` (X7): 256 where C = 1 (NEON double), and
-where the gather costs its two passes, 24 and 48 on AVX2 (double, float), 32 and 128 on
-AVX-512, 32 on NEON float; never with an input edge operation, forced radices or a real
-row strided on its real side. Not built: lanes for the strided axes of planes (phase 4), a
+least C rows up to `target_profile::lanes_up_to` (X7, measured against the chain with X20's
+batched leaves): 100 on AVX-512 and 32 on AVX2, in float only; in double and on NEON the
+chain's batched leaf (one kernel call for a batch of leaf rows, section 8.3) runs short rows
+as fast as the lanes, so the threshold is 0 and the lanes run there only when forced; never
+with an input edge operation, forced radices or a real row strided on its real side. The
+lanes driver runs each block's stages through `run_records`-style argument copies; X20's
+per-call preparation of a flat program is not applied to it. Not built: lanes for the strided axes of planes (phase 4), a
 first pass that gathers through vector inserts (FFTW's way on x86), lane blocks across
 an outer batch dimension.
 
@@ -2522,7 +2525,7 @@ to change before a release.
 | 2026-11-14 | Leaf limit 32 on NEON in double (C = 1), 16 on every other target and precision; no leaf of 64 (experiment X8) | The leaf of 32 was 16–22 % faster than planner v1's chain on the M5 Max in double; with C > 1 it idles lanes and lost on the Mac and the EPYC; 64 spills and lost everywhere. The Xeon's `avx512` float chain at 32 lost to the leaf only through its own tail problem (X16) |
 | 2026-11-14 | Machine profile from T1 and T5 (task 3.4): split a lone transform from 6144 points on a Zen 3 CCX (the defaults), 8192 on an Apple cluster (`profile_for`, from macOS's topology); mesh groups keep 8192; leftovers keep 8192; at least 1024 points per member; on a CCX, phase hand-off 1100 ns and claim runs of left / members; dispatch, work cost and spin budgets stay provisional | T1/T5 per-field and combined adoption runs on the EPYC, the M5 and the Xeon (numbers in the experiment files); the measured dispatch and work costs made cases slower until the dispatch cost has a per-lane term (18.2, item 22) |
 | 2026-11-14 | Flat programs and leaves called with addresses (experiment X20): rows of a few stages skip the record walk; a leaf is a `leaf_fn` taking its lines' addresses and distances, so a batch of leaf rows is one call and no leaf needs a copy of `pass_args` | On the M5 Max the walk and the 144-byte argument copy cost about 3.5 ns per transform and the entry about 1 ns per call, against a 2.5 ns 8-point leaf; the record walk stays for programs with loops (grids, planes), which the threading work graph reads unchanged |
-| 2026-11-15 | The lanes strategy for batches of short rows (task 2.2, section 8.5): blocks of B rows of the innermost batch dimension as a tile on which the row's own chain runs with B times its copies, its first and last passes reading and writing the rows where a run of C rows is one access, a gather and scatter of C × C transposes elsewhere; the rules choose it up to `lanes_up_to` per target and C (X7) | Every row keeps the chain's bits, so the choice changes no result; the chain's per-row cost (driver, leaf with C − 1 idle lanes, first passes run as tails) dominated short rows: X7 measured the lanes at 0.13–0.45 of the chain's time at 8–16 points on the Xeon's AVX-512, 0.21–0.59 on the EPYC, 0.26–0.46 on the M5 in double (where no gather is needed), and the length up to which no case was slower as the threshold |
+| 2026-11-15 | The lanes strategy for batches of short rows (task 2.2, section 8.5): blocks of B rows of the innermost batch dimension as a tile on which the row's own chain runs with B times its copies, its first and last passes reading and writing the rows where a run of C rows is one access, a gather and scatter of C × C transposes elsewhere; the rules choose it up to `lanes_up_to` per target and C (X7): float on x86 only (AVX-512 100, AVX2 32) | Every row keeps the chain's bits, so the choice changes no result. Against the chain before X20 the lanes won widely (0.13–0.59 of its time at 8–16 points on all three machines); against the chain with X20's batched leaves they still take 0.32–0.55 of its time at 8–16 points in float on x86, but lose at 8 points in double and on NEON (1.09–1.66), so the rule (no slower case up to the threshold) leaves them off there |
 
 ---
 

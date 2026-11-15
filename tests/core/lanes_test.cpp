@@ -411,23 +411,23 @@ TEST(Lanes, ForcedOnlyWhereTheRowsCanBeLanes) {
   EXPECT_FALSE(is_lanes(*plan(fftn::rows_c2c<double>(64, 64, fftn::direction::forward), chain)));
 }
 
-// The rules: a batch of at least C rows up to the profile's lanes_up_to, a single row and
-// longer rows not.
+// The rules: a batch of at least C rows up to the profile's lanes_up_to (float, where X7
+// found the lanes faster), a single row and longer rows not.
 TEST(Lanes, PlannerChoice) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
     const auto plan = [&](const auto& sh) {
       return make_plan_core(fftn::detail::view_of(sh), {.force_isa = t}, build_settings{});
     };
     const auto profile = fftn::detail::profile_of(
-        static_cast<fftn::detail::target>(static_cast<unsigned char>(t)), complex_lanes<double>(t));
+        static_cast<fftn::detail::target>(static_cast<unsigned char>(t)), complex_lanes<float>(t));
     SCOPED_TRACE(fftn::isa_name(t));
     if (profile.lanes_up_to >= 16) {
-      EXPECT_TRUE(is_lanes(*plan(fftn::rows_c2c<double>(16, 64, fftn::direction::forward))));
-      EXPECT_TRUE(is_lanes(*plan(fftn::rows_r2c<double>(16, 64))));
+      EXPECT_TRUE(is_lanes(*plan(fftn::rows_c2c<float>(16, 64, fftn::direction::forward))));
+      EXPECT_TRUE(is_lanes(*plan(fftn::rows_r2c<float>(16, 64))));
     }
-    EXPECT_FALSE(is_lanes(*plan(fftn::rows_c2c<double>(16, 1, fftn::direction::forward))));
+    EXPECT_FALSE(is_lanes(*plan(fftn::rows_c2c<float>(16, 1, fftn::direction::forward))));
     EXPECT_FALSE(is_lanes(
-        *plan(fftn::rows_c2c<double>(profile.lanes_up_to + 1, 64, fftn::direction::forward))));
+        *plan(fftn::rows_c2c<float>(profile.lanes_up_to + 1, 64, fftn::direction::forward))));
   }
 }
 

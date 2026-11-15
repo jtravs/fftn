@@ -1,6 +1,6 @@
 # X7: lanes against in-row kernels for batches of short rows
 
-- **Status:** done (adopted)
+- **Status:** done (adopted for float on x86; re-decided after X20)
 - **Owner:** lanes session, 2026-11-15
 - **Phase / task:** 2.2
 
@@ -123,3 +123,43 @@ lanes cut FFTN's time to a third at 8–16 points, but FFTW stays 1.3–1.5 time
 block, which FFTW avoids by building its vectors from 128-bit inserts in the codelet's
 loads) and the passes' own speed (X18); both are follow-ups, not part of this verdict.
 
+## Amendment: the decision against the chain with batched leaves (after X20)
+
+Main gained X20 (flat programs, leaves called with addresses, a batch of leaf rows as one
+kernel call) after the decision above, so "the chain" of arm C now means that faster chain:
+at 8–16 points every row was a leaf call through the record walk, and now the whole batch is
+one call. The rule is unchanged and was applied again to fresh runs of both arms on the
+merge (commit a52f59f): Xeon run 20261115-023830-3ae2 (8 rounds, band ±2.3 %, load 8 on 72
+CPUs), EPYC run 20261115-023822-43d9 (8 rounds, band ±1.2 %), Mac run 20261115-022448-a4bc
+(8 rounds, all loaded, band ±2.3 %).
+
+Before / after, FFTN ÷ FFTW (double; MKL on the Xeon), and lanes ÷ chain on the merge:
+
+| machine, case | chain before X20 ÷ FFTW | chain after ÷ FFTW | lanes after ÷ FFTW | lanes ÷ chain after (double / float) |
+|---|---|---|---|---|
+| Xeon AVX-512, c2c 8 × 64 | 5.31 | 1.21 (MKL 0.79) | 1.57 | 1.30 / 0.37 |
+| Xeon AVX-512, c2c 16 × 64 | 3.14 | 1.27 (MKL 1.92) | 1.57 | 1.24 / 0.32 |
+| Xeon AVX-512, c2c 24 × 64 | 2.45 | 1.95 | 0.89 | 0.46 / 0.15 |
+| Xeon AVX-512, c2c 64 × 64 | 1.06 | 0.93 | 1.08 | 1.16 / 0.65 |
+| Xeon AVX-512, r2c 16 × 64 | 1.67 | 1.18 | 1.07 | 0.90 / 0.36 |
+| Xeon AVX-512, c2r 16 × 64 | 1.92 | 1.38 | 0.78 | 0.57 / 0.23 |
+| EPYC AVX2, c2c 8 × 64 | 4.58 | 1.08 | 1.73 | 1.60 / 0.58 |
+| EPYC AVX2, c2c 16 × 64 | 3.08 | 1.40 | 1.75 | 1.25 / 0.43 |
+| EPYC AVX2, c2c 64 × 64 | 1.58 | 1.34 | 1.72 | 1.28 / 1.04 |
+| EPYC AVX2, r2c 16 × 64 | 1.45 | 0.93 | 1.12 | 1.21 / 0.53 |
+| M5 NEON, c2c 8 × 64 | 3.45 | 0.82 | 0.90 | 1.09 / 1.28 |
+| M5 NEON, c2c 16 × 64 | 1.88 | 0.82 | 0.84 | 1.03 / 1.11 |
+| M5 NEON, c2c 32 × 64 | 1.78 | 1.57 | 1.00 | 0.63 / 1.34 |
+| M5 NEON, c2c 64 × 64 | 1.29 | 1.11 | 1.15 | 1.03 / 1.48 |
+
+("Before" is the first decision runs' chain arm on 9a4b8ed and ccf09d2 against FFTW in the
+same runs.) By the rule: AVX-512 float 100 (the first slower float case is 128 at batch
+1024, 1.13), AVX2 float 32 (Xeon forced: 48 at 1.08–1.10, medians only; the EPYC alone
+allowed 48, its 64 being 1.04–1.14), and 0 in double on every x86 target (8 points slower:
+1.30 Xeon AVX-512, 1.78 Xeon AVX2, 1.60 EPYC) and in both precisions on NEON (8 points:
+1.09 double, 1.27 float). The lanes keep large wins that the prefix rule cannot reach (Mac
+double 24–48 points 0.63–0.97, Xeon double 24 points 0.46, c2r 16–64 points 0.57–0.86 in
+double on the Xeon): a rule over length ranges, or lanes blocks that use X20's per-call
+preparation, is a follow-up, not a change of this rule. Task 2.2's acceptance stays unmet
+for double c2c on AVX-512: the chain itself is now 1.1–1.3 times FFTW and 0.8–1.9 times MKL
+at 8–16 points.
