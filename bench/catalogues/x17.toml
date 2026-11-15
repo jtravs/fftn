@@ -1,0 +1,24 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Experiment X17's cases (dev/experiments/X17-bluestein-threshold.md): c2c rows with a prime
+# factor above the codelets, where the generic pass competes with a Bluestein stage
+# (BLUESTEIN_ABOVE=never against the profile's threshold). The primes decide the threshold;
+# the composites (many copies of the prime) show whether copies move the crossover.
+
+[catalogue]
+name = "x17"
+
+[[group]]
+name = "x17-primes"
+kind = "c2c"
+dims = [17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 61, 97, 127, 257]
+precision = ["f64", "f32"]
+tiers = ["tracking"]
+
+[[group]]
+name = "x17-composites"
+kind = "c2c"
+dims = [34, 68, 272, 1088, 2431, 4352, 5440, 4097]
+precision = ["f64", "f32"]
+tiers = ["tracking"]

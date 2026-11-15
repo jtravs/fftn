@@ -76,6 +76,33 @@ pass stays for radices a test forces (and for a profile that raises the threshol
 direct form it has, it lost at every length measured, so its symmetric form (DESIGN.md
 9.2), or its deletion, is the maintainer's call.
 
+## x86 (2026-11-15)
+
+- **Question.** Does Bluestein beat the generic pass from 17 up on x86 too, so that the
+  threshold of 16 holds for the `avx2` and `avx512` profiles, in double and float? The
+  generic pass vectorises across copies in C lanes, and C is 2 to 8 on x86 (1 to 2 on
+  NEON), so a single prime row (s = 1) idles more lanes there and composites with many
+  copies use more; if the generic pass wins anywhere, it is most likely at composites
+  with many copies of 17 or 19 on AVX-512.
+- **Arms.** The same knob as the Mac run, now an fbench option (`BLUESTEIN_ABOVE`, sets
+  `build_settings::bluestein_above`): A = `fftn+ISA=<t>+BLUESTEIN_ABOVE=never` (every prime
+  factor in generic passes; arm G above), B = `fftn+ISA=<t>` (the profile's threshold, 16;
+  arm B above). One commit, one build; the ratio is B ÷ A, as in the table above (below 1:
+  Bluestein faster). An A/A control gives the noise band.
+- **Cases.** `bench/catalogues/x17.toml`, tier `tracking`: c2c forward, one row, out of
+  place, primes 17 to 257 and composites 34, 68, 272, 1088, 2431, 4352, 5440, 4097, double
+  and float.
+- **Machines.** The Xeon (Intel Xeon Gold 6240, Cascade Lake, GCC 14, `-c 8` shared Slurm
+  allocation), `avx512` and `avx2` forced, one job each; the EPYC (AMD EPYC 7763, Zen 3,
+  DMOG, GCC 16, `-c 8` shared), `avx2`. One thread, hot, fbench's load-tolerant rounds.
+- **Decision rule, written before running.** Per target and precision, the threshold is
+  the largest prime p at which B is `slower` (generic pass faster beyond the noise band) at
+  the prime row p, provided every prime row below p is too; 16 if B is not slower at 17.
+  Since a profile is per target and complex count, a threshold may differ between double and
+  float of one target. Composites do not set the threshold (the rules apply one threshold
+  to every factor); if the generic pass wins at composites while losing at the primes, that
+  is recorded here, not acted on.
+
 ## Follow-up: plan memory of the Bluestein tables (task 2.3b)
 
 Not a threshold change, recorded here because it changes the stage measured above
