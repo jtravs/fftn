@@ -206,10 +206,11 @@ not read yet (`profile_for` sees only the cache topology, and a Zen CCX and an I
 look alike there): that is a decision for the maintainer (keep the target gate, or revert
 until the profile can tell them apart).
 
-Unverified at the time of writing: the tracking tier of arm C on the EPYC (submitted:
-`fbench_remote.py submit epyc A=fftn:37582e5 C=fftn:5772cc4 W=fftw -- --tier tracking
---budget 3600`); only grid plans run the changed code, and on the EPYC those are the
-target cases and the in-place 65536 rows.
+Collateral: the tracking tier of arm C (5772cc4) against main on the EPYC (run
+20261115-211714-d316, 51 rounds, all on an overloaded node, band ±1.00 %): weighted
+geomean 0.982 [0.980, 0.983], 12 cases faster (every grid row: c2c 65536 0.931, in place
+0.928, 262144 0.843, 2²⁰ 0.940, 2²² 0.954, 46080 0.934, 100000 0.845, r2c 65536 0.903 and
+in place 0.927, r2c 2²⁰ 0.882, c2r 65536 0.926, c2r 2²⁰ 0.872), 49 no evidence, none slower.
 
 What it leaves for lead 1: the copies' real cost on x86 is L1 set conflicts, which no
 loop form removes. Next: rows that are not a multiple of 4 KiB apart (a padded work
