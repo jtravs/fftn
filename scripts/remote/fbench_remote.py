@@ -275,9 +275,23 @@ def replace_option(options: list[str], prefixes: tuple[str, ...], new: str) -> l
 
 
 def build_lines(plan: Plan, shas: list[str]) -> list[str]:
-    return [BUILD_ENTRY] + [
-        f"build_entry {plan.keys[sha]} {sha} {' '.join(plan.commits[sha])}" for sha in shas
+    # The commits build at the same time, each with every core: a build's last minutes are a
+    # few large translation units, so one after the other left most cores idle (265 s per
+    # commit on 32 Xeon cores). Each build logs to a file of its own, shown if it fails.
+    lines = [BUILD_ENTRY, "pids=(); logs=()"]
+    for sha in shas:
+        key = plan.keys[sha]
+        lines += [
+            f"build_entry {key} {sha} {' '.join(plan.commits[sha])} > build-{key}.log 2>&1 &",
+            f"pids+=($!); logs+=(build-{key}.log)",
+        ]
+    lines += [
+        'for i in "${!pids[@]}"; do',
+        '  if ! wait "${pids[$i]}"; then tail -n 60 "${logs[$i]}"; exit 1; fi',
+        '  tail -n 1 "${logs[$i]}"',
+        "done",
     ]
+    return lines
 
 
 def build_script(profile: Profile, plan: Plan, shas: list[str]) -> str:

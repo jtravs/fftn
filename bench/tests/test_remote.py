@@ -219,11 +219,12 @@ class CacheShell(unittest.TestCase):
         cmake.chmod(0o755)
         (self.root / "tree").mkdir()
         (self.root / "tree" / "CMakeLists.txt").write_text("")
-        subprocess.run(
-            ["tar", "-czf", str(self.root / f"src-{HEAD[:12]}.tar.gz"), "-C", "tree", "."],
-            cwd=self.root,
-            check=True,
-        )
+        for sha in (HEAD, OTHER):
+            subprocess.run(
+                ["tar", "-czf", str(self.root / f"src-{sha[:12]}.tar.gz"), "-C", "tree", "."],
+                cwd=self.root,
+                check=True,
+            )
         self.calls = self.root / "calls"
 
     def run_shell(self, body, fail=False, slow=False):
@@ -280,6 +281,20 @@ wait $a; wait $b
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertEqual(self.builds(), 1)
         self.assertIn("cached: k1", done.stdout)
+
+    def test_build_job_builds_commits_side_by_side(self):
+        commits = {HEAD: ["fbench-fftn"], OTHER: ["fbench-fftn", "fbench-fftw"]}
+        keys = {HEAD: "k1", OTHER: "k2"}
+        plan = remote.Plan("j", "/j", HEAD, str(self.cache), commits, keys, [], {}, [])
+        body = "\n".join(remote.build_lines(plan, [HEAD, OTHER])[1:])
+        done = self.run_shell(body)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn("built k1", done.stdout)
+        self.assertIn("built k2", done.stdout)
+        self.assertTrue((self.cache / "k2" / "done-fbench-fftw").exists())
+        done = self.run_shell(body.replace("k2 ", "k3 "), fail=True)
+        self.assertNotEqual(done.returncode, 0)
+        self.assertFalse((self.cache / "k3").joinpath("done-fbench-fftn").exists())
 
     def test_failed_build_leaves_no_marker(self):
         done = self.run_shell(f"build_entry k1 {HEAD} fbench-fftn", fail=True)
