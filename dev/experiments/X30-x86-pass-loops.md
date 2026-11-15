@@ -64,6 +64,15 @@ has X23b's masked partial runs under `FFTN_MASKED_TAILS=AUTO` and X26):
 - **Third arm**, chosen from what P and T's counters show (candidates: the last pass of a
   two-pass chain in place in the destination, two lines instead of three; per-unit loop
   overhead in the lane passes), written here before it is measured.
+  *Chosen (before any arm was timed):* **Q = PT plus 1024 = 16 × 64** (d7036bb). A third
+  counter screen (main and T builds, forced sequences, three single processes each, EPYC
+  node17, GCC 16) showed that T's halved tables make the two-pass 1024 consistently
+  faster: 16 × 64 with T at 0.81 of main's cycles at batch 1 and 0.92 at batch 64 (0.90
+  and 0.88 of the time), against 0.84 and 0.94 without T, where the first two screens had
+  disagreed. The in-place last pass was dropped: the generated plain codelets interleave
+  their loads and stores, so a lane pass cannot run in place. Loop overhead stays a
+  follow-up (lane radix-32 and radix-64 loops are dominated by stack traffic, 142 and 407
+  stack references per unit, a generator matter).
 
 No switch: arms are commits, `dev/KNOBS.toml` is untouched.
 
