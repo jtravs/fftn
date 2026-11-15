@@ -20,7 +20,9 @@ In flight (claims): X20 done on branch `task/overhead` (call overhead: flat prog
 called with addresses; driver change awaiting its second reader). X19 (generator ±i rotations; reviewed, merging after regeneration on
 main), 1.5/X1 (split lowering on x86), 1.6/X3 (radix 32/64 passes; radix 32 wins on AVX-512
 float), X12b (grid thresholds per machine: the grid starts too early on x86); T1/T5 done
-on branch `exp/t1-t5-constants` (threading constants; awaiting review). Small follow-ups recorded: X16's
+on branch `exp/t1-t5-constants` (threading constants; awaiting review). Small follow-ups recorded: masked partial runs in the
+`avx512`/`avx2` vocabularies (X22: icpx's masked tails make float 7-smooth rows 0.67 of GCC's
+time on the Xeon); X16's
 precision split on Cascade Lake (avx512 for double, avx2 for float), X2's refit above 1024.
 
 Done in phase 0 (details in the merge commits and the decision log):
@@ -276,6 +278,7 @@ running, done (with verdict).
 | [X19](experiments/X19-generator-rotations.md) | Do codelets with fewer multiplications by ±i (the real-coefficient form: one register swap per output pair, radix 16 7 against 19) make x86 faster without slowing NEON? | 1 | done: adopted (x86 0.976 of main: Xeon avx512 0.980, avx2 0.976, EPYC 0.971; Mac 0.991); port-5 uops −4 to −16 % |
 | [X20](experiments/X20-call-overhead.md) | Where does a tiny serial execute's time go (entry, driver, kernel), and what does a leaner driver close at n ≤ 64? | 1 | done: adopted (flat programs, leaves called with addresses, a batch of leaf rows in one call): Mac 0.45 of main over the x20 cases, 8 × 4096 3.08 → 0.97 of FFTW; Xeon 0.57 (one case slower at that commit, gone after two entry fixes per the harness; fbench confirmation pending) |
 | [X21](experiments/X21-phase1-cloud.md) | Phase 1 exit cloud checks: is anything badly off on a recent Intel Xeon (with MKL), Zen 5 and a Neoverse, and does `avx512` over `avx2` hold off Cascade Lake? | 1 | done: nothing badly off (FFTN ÷ FFTW over the tracking c2c rows: Emerald Rapids 1.17, Zen 5 1.12, Axion 0.81; FFTN ÷ MKL 1.19); avx512 wins in double everywhere, in float not on Zen 5, and loses 3× at 60 points in float; USD 1.36 |
+| [X22](experiments/X22-icpx.md) | Intel's icpx: does FFTN build and pass with it, which floating-point flags keep the numerical contract, and is it faster than GCC and Clang on the Xeon? | 1 | done: supported with `-fno-fast-math` (set by CMake); not recommended (Clang's equal in double, 3 % behind on tracking rows); float 0.80 of Clang on 7-smooth rows from masked partial runs, a portable vocabulary follow-up |
 | P1 | Cost-model accuracy: rank agreement with measurement across the catalogue per machine | 2 | planned |
 | P2 | Measurement budget: how many candidates and how long before the choice stops improving | 2 | planned |
 | [T1](experiments/T1-dispatch-wait-costs.md) | Dispatch, wake and wait costs per machine and runtime (libgomp, libomp, Kokkos, pool) | 3 | done: hand-off cost and claim runs adopted on Zen 3; dispatch and work costs wait for a per-lane dispatch term |
