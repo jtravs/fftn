@@ -1143,8 +1143,14 @@ own table. Planner: a c2c row of one axis, contiguous on both sides, without edg
 is a grid when its bytes exceed `grid_min_bytes`, in three phases beyond
 `grid_three_bytes`, by default half of L2 and L2 where each core has its own L2 (shared by
 no more CPUs than the L1: x86), and the L1 data cache and an eighth of L2 where a cluster
-shares it (Apple; X12b: a private L2 serves a chain's passes well, a cluster's does not),
-if it has a split whose factors
+shares it (Apple; X12b: a private L2 serves a chain's passes well, a cluster's does not).
+Where a cluster shares L2, a row whose length is not a power of two stays a chain when the
+power-of-two part of its length is at most L1/8 in bytes (1024 points in double on the
+M5), at any size, or when the row is at most 2 · L1 (`chain_part_bytes`,
+`chain_mixed_bytes`; X29: such chains took 0.49–0.72 of the grid's time to 4 Mi points,
+because the cluster L2's conflict problem is a power-of-two problem: an odd factor in
+every leg distance spreads a pass's legs over the L1 sets). A row past these thresholds is
+a grid only if it has a split whose factors
 have no prime above 13 and whose first factor and n / N1 are multiples of the block (at
 least max(2, C)). A long row with a prime factor above 13 therefore stays a chain, with
 its Bluestein or generic last pass (9.2): the grid takes only lengths whose every factor a
@@ -1306,11 +1312,19 @@ Routes, by `real_route`:
 - *Separate*: a pairing pass over the h + 1 values of the complex side, in place: after a
   c2c line written into the output (r2c) or before a c2c line run in place there (c2r,
   which keeps the input intact). Used where the edge pass is a Bluestein stage or a
-  generic pass, where the rule declines, and after (r2c) or before (c2r) a grid.
+  generic pass, where the rule declines, after an r2c grid, and before a c2r grid in place
+  or in three phases.
 - *Grid*: a real row of one axis whose half-length transform would be a grid as a c2c row
   (section 8.5) runs the grid on the reals read as complex values, through the grid
-  builder unchanged (c2r rereads the output slot for the input: `read_output_for_input`).
-  Fusing the pairing into the grid's last (first) phase is not built.
+  builder. A c2r row out of place in two phases pairs its bins in phase 1's gather
+  (`c2r_pair_gather`): each Z_j is formed from X_j and X_(h−j) of the input, which is only
+  read, so the grid runs from the input to the output as a c2c row does, without the
+  separate pass and the workspace block (X29: 0.92–0.94 of the separate route's time on
+  the Mac). In place or in three phases the block stays, and the gather's second read of
+  the input lost to the separate pass (1.02–1.06), so those rows keep it (c2r rereads the
+  output slot for the input: `read_output_for_input`). The r2c pairing is not fused: it
+  needs the final values of both mirror blocks of the last phase in one iteration, columns
+  l and L − l a column out of alignment.
 - *Strided*: a line with a stride other than 1 (allowed out of place) packs its reals into
   scratch and pairs at any stride, one element at a time, as before task 2.1.
 - *Full*: odd n through the full-length complex chain, as before (X6).
