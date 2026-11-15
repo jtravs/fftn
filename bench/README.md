@@ -442,10 +442,10 @@ measures.
 
 ## Remote runs
 
-`scripts/remote/fbench_remote.py` runs fbench on a Slurm machine in one job, on an exclusive
-node unless the profile says `exclusive = false` (a shared machine whose other jobs must keep
-running; ask for a few cores with `-c`). Describe each machine in an untracked file, `~/.config/fftn/remote.toml` (or
-`$FFTN_REMOTE_CONFIG`):
+`scripts/remote/fbench_remote.py` runs fbench on a Slurm machine, on an exclusive node unless
+the profile says `exclusive = false` (a shared machine whose other jobs must keep running;
+ask for a few cores with `-c`). Describe each machine in an untracked file,
+`~/.config/fftn/remote.toml` (or `$FFTN_REMOTE_CONFIG`):
 
 ```toml
 [profile.cluster]
@@ -457,6 +457,9 @@ setup = ["source /path/to/toolchain.sh"]  # compiler, CMake and uv on the comput
 sbatch = ["--time=02:00:00"]             # further #SBATCH options
 cxx = "g++-14"                           # optional
 exclusive = false                        # optional: share the node (default: whole node)
+cache_dir = "/scratch/user/fftn-cache"   # optional: shared builds (default: <workdir>/cache)
+build_cpus = 32                          # optional: the build job's -c (default 32)
+build_time = "02:00:00"                  # optional: the build job's time limit
 ```
 
 `FFTN_REMOTE_SSH`, `FFTN_REMOTE_WORKDIR`, `FFTN_REMOTE_PARTITION`, `FFTN_REMOTE_FFTW_ROOT` and
@@ -466,24 +469,40 @@ node (install it once on shared storage if the nodes have no network).
 ```bash
 R="uv run --frozen python scripts/remote/fbench_remote.py"
 $R submit cluster A=fftw B=fftn:main -- --tier quick   # arms' builds must be commits
-$R log <job>      # check the first job's log as soon as it starts
+$R log <job>      # check the first job's log as soon as it starts (--build: the build job's)
 $R status <job>
 $R fetch <job>    # copies the run into bench-out/runs/; then fbench show <run-id>
+$R prune cluster --days 14   # deletes cached builds unused for 14 days
 ```
 
-`submit` refuses a dirty working tree, packs every commit an arm needs with `git archive`
-(by content: `rsync -a` keeps mtimes and has left stale builds), unpacks each into its own
-directory in the job's directory, builds each into its own build directory, and records
-the commit of every arm in `bench-out/remote/<job>/manifest.json` and in the run itself.
+Builds are shared by every job of a machine. `submit` refuses a dirty working tree, then asks
+the machine which of the arms' commits have no finished build in the cache,
+`<cache_dir>/<sha12>-<hash>/`, where the hash covers the compiler, the profile's `setup`
+lines, the FFTW root and the CMake options. Only those commits are packed with `git archive`
+(by content: `rsync -a` keeps mtimes and has left stale builds). They are built side by side
+by a short build job with `build_cpus` cores (each build's log is `build-<key>.log` in the
+job's directory), and the timing job, with the profile's allocation, waits
+for it (`afterok`) and only reads the cache. When everything is cached there is no build
+job. `--no-build-job` builds in the timing job instead. Each fbench target gets a marker
+file only after it built, and a per-entry `flock` makes a second job wait for a build in
+progress and then reuse it, so a failed build is never used and no build happens twice.
+The lock files live in `<cache_dir>/locks/`; the cache needs a filesystem where `flock`
+works across the jobs' nodes. A timing job holds a shared lock on each entry it reads until
+it ends, and `prune` deletes only entries whose locks are free (`--dry-run` lists them).
+The commit of every arm and the Slurm job IDs are recorded in
+`bench-out/remote/<job>/manifest.json`, and the commits in the run itself.
+
 `--dry-run` writes the job files without contacting the machine. `--campaign SCRIPT` runs a
 campaign driver of the checkout in the job instead of one `fbench run` (a driver that runs
 many, such as experiment X2's): the arms then only name the builds it needs, the driver is
-called as `SCRIPT --out-dir <job>/bench-out --build <job>/build-<head> <arguments after -->`,
+called as `SCRIPT --out-dir <job>/bench-out --build <head's build> <arguments after -->`,
 and `fetch` also copies its state from `bench-out/campaigns/`. `--time` replaces the
-profile's Slurm time limit for one job. `--after <jobid>` queues a
-job behind another with `afterok`: if the first job fails, the second never starts and
-Slurm reports it only in `squeue` (DependencyNeverSatisfied), so always read the first
-job's log before waiting on a chain.
+profile's Slurm time limit for one timing job. `--after <jobid>` queues a job behind
+another with `afterok`; `--serial` queues it behind every other `--serial` timing job of
+yours on that Slurm cluster (Slurm's `singleton` dependency on the shared job name
+`fbench-serial`; the real name is in the job's comment). If a job it waits for fails,
+Slurm cancels it, so read the first job's log (`log --build` for a build job) when a chain
+stops.
 
 ## Limits of v0
 
