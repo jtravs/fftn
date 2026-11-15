@@ -63,6 +63,15 @@ the default with up to 30 kept the cost down; but a two-round screen can call ti
 paired A/B later separates by 25–40 % (X2's lengths 490, 686, 882 on NEON). Confirm
 adopted choices with a paired run. [X2](experiments/X2-radix-sets.md).
 
+1.8 **Don't let your own builds become the load your timings tolerate.** On the shared
+Xeon, X23's concurrent fbench jobs each built every arm in their own directory: two jobs
+with the same compiler built the same five commits, GCC took about 13 minutes per arm on
+8 cores, so a job spent its first hour compiling, and those compiles were most of the
+"other processes" (about 34 cores) the other jobs' timing rounds had to tolerate (noise
+band 15–24 % after 9 rounds, against 5 % for a job that started timing while it was
+quieter). Build each arm once per machine into a shared cache, in a short, wide build job,
+and time afterwards.
+
 ## 2. The instruction set and the machine
 
 2.1 **The data layout that wins depends on the ISA.** Interleaved complex numbers suit
@@ -215,8 +224,10 @@ one lane). Radix-64 codelets spill on every target. [X8](experiments/X8-leaves.m
 
 4.2 **Bluestein beats a direct prime pass from small primes up.** Above 16, a chirp-z
 convolution through smooth-length FFTs beat the O(q²) generic pass at every prime measured
-(17: 2.5 times in double, 7 in float); primes from 97 up went from 12–5000 times FFTW's
-time to 0.64–1.28. Store the chirp and kernel spectrum once per (prime, sign), not once per
+(17: 2.5 times in double, 7 in float, on the M5 Max; 12–20 times on the Xeon 6240 and the
+EPYC 7763, where a lone row fills one lane of 2–8 in a pass vectorised across copies);
+primes from 97 up went from 12–5000 times FFTW's time to 0.64–1.28. Only where many copies
+fill wide vectors (AVX-512 float, 64+ copies of 17) did the direct pass win, by up to 13 %. Store the chirp and kernel spectrum once per (prime, sign), not once per
 copy: 889 MB of tables became under 1 KB at n = 17·2²⁰.
 [X17](experiments/X17-bluestein-threshold.md).
 
@@ -281,7 +292,16 @@ points in double and on NEON (1.09–1.66) and kept their win only where many la
 run of C rows is one vector access (C = 1, interleaved rows) no transpose is needed, and
 building each vector element by element through a stack tile was slower than the transpose.
 Read and write the rows in the order the row-by-row code does: walking them group by group
-cost 1.3 times beyond L1. [X7](experiments/X7-lanes.md).
+cost 1.3 times beyond L1. [X7](experiments/X7-lanes.md). Taking out the transposes does not change the answer for double on x86, where C is 2–4.
+X24 built each register from C 128-bit row loads (`vinsertf128`, then `vinsertf64x4` on
+AVX-512) and took it apart with 128-bit stores, so short rows needed no gather or scatter.
+That took the lanes to 0.80–0.88 of their own time on AVX2 (geometric means; EPYC, Xeon),
+but they were still 1.08–1.37 of the batched-leaf chain's time at 8 points. On AVX-512, rows with inner
+passes ran up to 1.17 times slower than with the transposes (24–256 points, Xeon), so four
+128-bit pieces per register only pay where there is no inner pass to share a transpose
+over. Preparing the lanes' arguments once per call, as X20 did for rows, was 1–7 % slower
+at the smallest batches (64 rows of 8–16 points) and up to 4 % faster elsewhere: a fixed-cost
+change needs its smallest case in the catalogue. [X24](experiments/X24-lanes-x86.md).
 
 ## 5. Threading
 

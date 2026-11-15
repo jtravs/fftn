@@ -76,6 +76,86 @@ pass stays for radices a test forces (and for a profile that raises the threshol
 direct form it has, it lost at every length measured, so its symmetric form (DESIGN.md
 9.2), or its deletion, is the maintainer's call.
 
+## x86 (2026-11-15)
+
+- **Question.** Does Bluestein beat the generic pass from 17 up on x86 too, so that the
+  threshold of 16 holds for the `avx2` and `avx512` profiles, in double and float? The
+  generic pass vectorises across copies in C lanes, and C is 2 to 8 on x86 (1 to 2 on
+  NEON), so a single prime row (s = 1) idles more lanes there and composites with many
+  copies use more; if the generic pass wins anywhere, it is most likely at composites
+  with many copies of 17 or 19 on AVX-512.
+- **Arms.** The same knob as the Mac run, now an fbench option (`BLUESTEIN_ABOVE`, sets
+  `build_settings::bluestein_above`): A = `fftn+ISA=<t>+BLUESTEIN_ABOVE=never` (every prime
+  factor in generic passes; arm G above), B = `fftn+ISA=<t>` (the profile's threshold, 16;
+  arm B above). One commit, one build; the ratio is B ÷ A, as in the table above (below 1:
+  Bluestein faster). An A/A control gives the noise band.
+- **Cases.** `bench/catalogues/x17.toml`, tier `tracking`: c2c forward, one row, out of
+  place, primes 17 to 257 and composites 34, 68, 272, 1088, 2431, 4352, 5440, 4097, double
+  and float.
+- **Machines.** The Xeon (Intel Xeon Gold 6240, Cascade Lake, GCC 14, `-c 8` shared Slurm
+  allocation), `avx512` and `avx2` forced, one job each; the EPYC (AMD EPYC 7763, Zen 3,
+  DMOG, GCC 16, `-c 8` shared), `avx2`. One thread, hot, fbench's load-tolerant rounds.
+- **Decision rule, written before running.** Per target and precision, the threshold is
+  the largest prime p at which B is `slower` (generic pass faster beyond the noise band) at
+  the prime row p, provided every prime row below p is too; 16 if B is not slower at 17.
+  Since a profile is per target and complex count, a threshold may differ between double and
+  float of one target. Composites do not set the threshold (the rules apply one threshold
+  to every factor); if the generic pass wins at composites while losing at the primes, that
+  is recorded here, not acted on.
+
+### Results (x86)
+
+Runs, all at commit ea34b9f, one thread, hot, A/A control in each:
+
+- Xeon Gold 6240, GCC 14.4, `avx512`: fbench 20261115-075530-ddbd (Slurm job 15642), 15
+  rounds, noise band ±1.0 %, load average 5.3 on 72 CPUs (no round under load).
+- Xeon Gold 6240, GCC 14.4, `avx2`: 20261115-075549-ba92 (job 15643, beside the first), 6
+  rounds, band ±1.25 %, same load.
+- EPYC 7763, GCC 16.2, `avx2`: 20261115-075537-5a01 (DMOG job 509332), 30 rounds, band
+  ±1.0 %, load average 9.3 on 128 CPUs (2 rounds under load).
+
+The run headers say `isa avx512` and `isa_forced false` for the Xeon `avx2` arms: fbench
+stores one `describe` per arm without the arm's options, so the header shows the default
+target, not the forced one. The `ISA=avx2` arms did run AVX2 plans: their notes have
+radices (4 × 16 × 17 for 1088) that the `avx512` profile never chose, and their composite
+ratios follow the EPYC's, not the `avx512` run's.
+
+Time of B ÷ time of A (Bluestein ÷ generic; below 1: Bluestein faster); every verdict is
+`faster` (interval below 1 − band) unless marked:
+
+| n | Xeon avx512 f64 | f32 | Xeon avx2 f64 | f32 | EPYC avx2 f64 | f32 |
+|---|---|---|---|---|---|---|
+| 17 | 0.065 | 0.073 | 0.083 | 0.066 | 0.061 | 0.048 |
+| 19 | 0.053 | 0.059 | 0.073 | 0.053 | 0.052 | 0.040 |
+| 31 | 0.023 | 0.022 | 0.038 | 0.024 | 0.027 | 0.018 |
+| 61 | 0.011 | 0.008 | 0.019 | 0.011 | 0.013 | 0.008 |
+| 257 | 0.003 | 0.002 | 0.006 | 0.003 | 0.004 | 0.002 |
+| 34 = 2 × 17 | 0.40 | 0.53 | 0.64 | 0.42 | 0.59 | 0.39 |
+| 272 = 16 × 17 | 0.62 | 0.98 | 0.40 | 0.60 | 0.37 | 0.58 |
+| 1088 = 64 × 17 | 0.89 | 1.03 slower | 0.40 | 0.60 | 0.40 | 0.67 |
+| 2431 = 11 × 13 × 17 | 0.78 | 1.13 slower | 0.50 | 0.64 | 0.49 | 0.65 |
+| 4352 = 256 × 17 | 0.93 | 1.03 slower | 0.48 | 0.71 | 0.51 | 0.99 no evidence |
+| 5440 = 320 × 17 | 0.90 | 1.02 no evidence | 0.43 | 0.60 | 0.43 | 0.68 |
+| 4097 = 17 × 241 | 0.027 | 0.016 | 0.034 | 0.025 | 0.026 | 0.016 |
+
+The other primes (23 to 127) lie between their neighbours. A single prime row is far worse
+in the generic pass on x86 than on the Mac (17 in double: 150–180 ns per point against 16),
+because its lanes run over copies and one row fills one lane of C = 2 to 8; Bluestein
+therefore wins by 12 to 20 times at 17 on x86 against 2.5 on the Mac.
+
+### Verdict (x86)
+
+By the rule above, the threshold is 16 on every x86 profile, both precisions: Bluestein is
+faster at every prime row from 17 to 257 on all three targets, so `default_bluestein_above`
+stays 16 and nothing in the planner changes (its comment now cites these runs). One
+exception, recorded and not acted on, as the rule says: on AVX-512 in float (C = 8) the
+generic pass is up to 13 % faster at composites with many copies of 17 (1088, 2431, 4352;
+5440 no evidence), where its copies fill all eight lanes; in double on AVX-512 Bluestein
+still wins there by 7–22 %, and on AVX2 by 29–60 % (EPYC float 4352: no evidence). A per-factor rule that keeps 17 in a
+generic pass on AVX-512 float when the copies number at least 64 would gain at most that,
+on a narrow set of lengths; not worth a rule now. Cascade Lake only: a recent Intel core
+was not measured.
+
 ## Follow-up: plan memory of the Bluestein tables (task 2.3b)
 
 Not a threshold change, recorded here because it changes the stage measured above

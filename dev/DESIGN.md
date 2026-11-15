@@ -1199,10 +1199,14 @@ with an input edge operation, forced radices or a real row strided on its real s
 the rules never for a real row strided on its complex side (the lanes give it the contiguous
 row's bits, the chain's strided route others, and avx2 and avx512, whose thresholds differ,
 must agree). The
-lanes driver runs each block's stages through `run_records`-style argument copies; X20's
-per-call preparation of a flat program is not applied to it. Not built: lanes for the strided axes of planes (phase 4), a
-first pass that gathers through vector inserts (FFTW's way on x86), lane blocks across
-an outer batch dimension.
+lanes driver runs each block's stages through `run_records`-style argument copies. X24
+tried X20's per-call preparation, with a lanes leaf run in one call: 1–7 % slower at batch
+64 of 8–16 points, so it was not kept. X24 also tried edge passes that read and write rows
+one 128-bit unit per row instead of a gather and scatter (FFTW's inserts on x86). That won
+on AVX2 but cost up to 1.17 on AVX-512 at 24–256 points, so it was not kept either; even
+with both, double c2c lost to the chain at 8 points. Not built: lanes for the strided axes
+of planes (phase 4), lane blocks across an outer batch dimension, a threshold per
+transform kind (X24 follow-up).
 
 **Bluestein** and the **generic prime pass** cover lengths with large prime factors
 (section 9.2).
@@ -1327,7 +1331,7 @@ being padding on the real side.
 | Factor | Route |
 |---|---|
 | 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 16, (20, 25, 32, 64) | generated codelets |
-| primes above 16 up to the profile's threshold | one generic looped pass, O(p²) per butterfly, vectorised across copies, in direct form with pairwise sums; the threshold is 16 on every profile (X17: Bluestein was faster at every prime from 17 up on the Mac), so the rules do not choose it now |
+| primes above 16 up to the profile's threshold | one generic looped pass, O(p²) per butterfly, vectorised across copies, in direct form with pairwise sums; the threshold is 16 on every profile (X17: Bluestein was faster at every prime from 17 up on the Mac, the Xeon and the EPYC), so the rules do not choose it now |
 | larger primes | Bluestein: the smooth part of N is split off first; the product of the large prime factors becomes one stage at the end of the chain that performs a chirp-z transform through a smooth-length convolution with a precomputed kernel spectrum (section 8.5) |
 
 Rader's algorithm is not planned; it shares a convolution object with Bluestein and can be
@@ -2555,6 +2559,8 @@ to change before a release.
 | 2026-11-14 | Flat programs and leaves called with addresses (experiment X20): rows of a few stages skip the record walk; a leaf is a `leaf_fn` taking its lines' addresses and distances, so a batch of leaf rows is one call and no leaf needs a copy of `pass_args` | On the M5 Max the walk and the 144-byte argument copy cost about 3.5 ns per transform and the entry about 1 ns per call, against a 2.5 ns 8-point leaf; the record walk stays for programs with loops (grids, planes), which the threading work graph reads unchanged |
 | 2026-11-15 | Intel's icpx is a supported compiler; FFTN's targets are built with `-fno-fast-math -ffp-contract=off` everywhere, and an icpx build adds `-fno-fast-math` to every target and to the FFTW oracle (experiment X22) | icpx's default model reassociates, drops signed zeros and flushes denormals without defining `__FAST_MATH__`; with only `-ffp-contract=off`, 55 of 1608 tests failed (twiddles 1 ulp off, Parseval, vocabulary references), all pass with the flag. `-fp-model=precise -ffp-contract=off` draws an override warning that `-Werror` makes fatal. Not recommended over GCC or Clang: equal to Clang in double on the Xeon, 3 % behind it on the tracking rows; its float lead (0.80 of Clang on 7-smooth rows) comes from masked partial runs, which the vocabulary can write explicitly |
 | 2026-11-15 | The lanes strategy for batches of short rows (task 2.2, section 8.5): blocks of B rows of the innermost batch dimension as a tile on which the row's own chain runs with B times its copies, its first and last passes reading and writing the rows where a run of C rows is one access, a gather and scatter of C × C transposes elsewhere; the rules choose it up to `lanes_up_to` per target and C (X7): float on x86 only (AVX-512 100, AVX2 32) | Every row keeps the chain's bits, so the choice changes no result. Against the chain before X20 the lanes won widely (0.13–0.59 of its time at 8–16 points on all three machines); against the chain with X20's batched leaves they still take 0.32–0.55 of its time at 8–16 points in float on x86, but lose at 8 points in double and on NEON (1.09–1.66), so the rule (no slower case up to the threshold) leaves them off there |
+| 2026-11-15 | Each ISA region's kernel unit is split into a main unit and five row units (`rows.inl`, `table.inl`; pass kernels hold codelet pointers); per-push CI runs one configuration per platform plus Clang ASan + UBSan and TSan on Linux x86-64, and every other job (second GCC, Apple Clang, clang++ on Windows, the other sanitizer jobs, clang-tidy, coverage) runs weekly and on demand (`extended.yml`); CI on a pull request is the merge gate | One unit per region needed more memory than the 16 GB runners have once the radix 32 and 64 codelets landed (sanitizer builds were OOM-killed); macOS LLVM ASan alone took 61 minutes per push. Local gates are kept for the remote machines' toolchains when a change needs them |
+| 2026-11-15 | Planner refresh: the measured radix tables are refitted after X1, X3, X18 and X19 on every machine; AVX-512 has its own tables in both precisions (float a fresh fit with 35 overrides, double AVX2 float's costs with 15 overrides); `avx512` stays the first target in double, and float's per-plan target choice is deferred (X16, Cascade Lake only) | A/B over the changed lengths: Xeon AVX-512 0.90 of before (float) and 0.94 (double), EPYC AVX2 0.94–0.95, Mac 0.98; the tracking tier unchanged within noise (0.994–1.001). Overrides measured slower inside another path (Bluestein lengths, r2c planes) are dropped |
 
 ---
 
