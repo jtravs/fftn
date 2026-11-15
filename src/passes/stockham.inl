@@ -19,13 +19,15 @@
 
 namespace {
 
-// The R outputs of a grouped pass's C butterflies p0 .. p0 + C - 1, v[k] holding leg k of
-// every lane, to y[R (p0 + l) + k] (tight). C x C blocks of legs are transposed in
-// registers, so that each store writes C legs of one butterfly.
-template <class T, std::size_t R> FFTN_FORCE_INLINE void store_transposed(T* y, cv<T>* v) {
+// The R outputs of a grouped pass's first `valid` butterflies p0 .. p0 + valid - 1 (of
+// C), v[k] holding leg k of every lane, to y[R (p0 + l) + k] (tight). C x C blocks of legs
+// are transposed in registers, so that each store writes C legs of one butterfly; a unit
+// with fewer butterflies stores fewer of them.
+template <class T, std::size_t R>
+FFTN_FORCE_INLINE void store_transposed(T* y, cv<T>* v, std::size_t valid) {
   for (std::size_t b = 0; b < R / C<T>; ++b) {
     transpose(v + b * C<T>);
-    for (std::size_t l = 0; l < C<T>; ++l) {
+    for (std::size_t l = 0; l < valid; ++l) {
       store(y + 2 * (R * l + b * C<T>), v[b * C<T> + l]);
     }
   }
@@ -77,14 +79,20 @@ void grouped_pass(const pass_args* a, std::size_t first, std::size_t last) {
       const run_in<T, InOp, true> in{.p = xp, .leg = leg, .step = xs, .valid = valid, .op = op};
       cdft<R>::template dif<T, Sign>(in, out, twid);
       if constexpr (R % C<T> == 0) {
-        store_transposed<T, R>(yp, v);
+        store_transposed<T, R>(yp, v, C<T>);
       } else {
         store_tiled<T, R>(yp, v, valid);
       }
     } else {
       const run_in<T, InOp, false> in{.p = xp, .leg = leg, .step = xs, .valid = valid, .op = op};
       cdft<R>::template dif<T, Sign>(in, out, twid);
-      store_tiled<T, R>(yp, v, valid);
+      // The last unit's butterflies as a whole unit's, through the same transposes, on the
+      // targets with masked partial runs (X23); the tile elsewhere.
+      if constexpr (masked && R % C<T> == 0) {
+        store_transposed<T, R>(yp, v, valid);
+      } else {
+        store_tiled<T, R>(yp, v, valid);
+      }
     }
   }
 }

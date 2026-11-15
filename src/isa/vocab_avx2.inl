@@ -12,6 +12,7 @@ namespace {
 
 inline constexpr target id = target::avx2;
 inline constexpr bool fused = true;
+inline constexpr bool masked = true;
 
 // Twiddles pre-arranged for mul: r holds (wr, wr) and i holds (-wi, wi) for each lane's
 // twiddle, so a*w = r*a + i*swap_ri(a) with one shuffle and no sign fix-up (DESIGN.md 6.2).
@@ -52,6 +53,29 @@ FFTN_FORCE_INLINE __m256d load(const double* p) { return _mm256_loadu_pd(p); }
 FFTN_FORCE_INLINE __m256 load(const float* p) { return _mm256_loadu_ps(p); }
 FFTN_FORCE_INLINE void store(double* p, __m256d a) { _mm256_storeu_pd(p, a); }
 FFTN_FORCE_INLINE void store(float* p, __m256 a) { _mm256_storeu_ps(p, a); }
+// Partial runs (experiment X23): VMASKMOV with the sign bits of the 2n reals of n complex
+// numbers set. Masked-off elements are not accessed and raise no fault (Intel SDM,
+// VMASKMOV), so a run may end at the end of the caller's array.
+FFTN_FORCE_INLINE __m256i mask_n_f64(std::size_t n) {
+  return _mm256_cmpgt_epi64(_mm256_set1_epi64x(static_cast<long long>(2 * n)),
+                            _mm256_setr_epi64x(0, 1, 2, 3));
+}
+FFTN_FORCE_INLINE __m256i mask_n_f32(std::size_t n) {
+  return _mm256_cmpgt_epi32(_mm256_set1_epi32(static_cast<int>(2 * n)),
+                            _mm256_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7));
+}
+FFTN_FORCE_INLINE __m256d load_n(const double* p, std::size_t n) {
+  return _mm256_maskload_pd(p, mask_n_f64(n));
+}
+FFTN_FORCE_INLINE __m256 load_n(const float* p, std::size_t n) {
+  return _mm256_maskload_ps(p, mask_n_f32(n));
+}
+FFTN_FORCE_INLINE void store_n(double* p, std::size_t n, __m256d a) {
+  _mm256_maskstore_pd(p, mask_n_f64(n), a);
+}
+FFTN_FORCE_INLINE void store_n(float* p, std::size_t n, __m256 a) {
+  _mm256_maskstore_ps(p, mask_n_f32(n), a);
+}
 FFTN_FORCE_INLINE __m256d bcast(const double* p) {
   const __m128d x = _mm_loadu_pd(p);
   return _mm256_set_m128d(x, x);
