@@ -1,0 +1,38 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Experiment X30's cases (dev/experiments/X30-x86-pass-loops.md): the chain's lengths of 128
+# to 4096 points on x86, where FFTN's AVX2 chains ran three passes to FFTW's two and read
+# per-lane twiddle tables twice the size of FFTW's. Rows one at a time and in batches of 64,
+# the real transforms whose half-length chains have these lengths, and planes whose axes
+# do. Double is the target; float is collateral.
+
+[catalogue]
+name = "x30"
+
+[[group]]
+name = "x30-rows"
+note = "single rows, powers of two and 3 times powers of two"
+kind = "c2c"
+dims = [128, 192, 256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096]
+precision = ["f64", "f32"]
+
+[[group]]
+name = "x30-batches"
+note = "batches of 64 rows"
+kind = "c2c"
+dims = [256, 512, 1024, 4096]
+batch = 64
+precision = ["f64", "f32"]
+
+[[group]]
+name = "x30-real"
+note = "real transforms whose half-length chains are 256 to 2048 points"
+kind = ["r2c", "c2r"]
+dims = [512, 1024, 2048, 4096]
+
+[[group]]
+name = "x30-planes"
+note = "planes whose axes are chains of 256 and 512 points"
+kind = "c2c"
+dims = ["256x256", "512x512"]
