@@ -63,6 +63,15 @@ the default with up to 30 kept the cost down; but a two-round screen can call ti
 paired A/B later separates by 25–40 % (X2's lengths 490, 686, 882 on NEON). Confirm
 adopted choices with a paired run. [X2](experiments/X2-radix-sets.md).
 
+1.8 **Don't let your own builds become the load your timings tolerate.** On the shared
+Xeon, X23's concurrent fbench jobs each built every arm in their own directory: two jobs
+with the same compiler built the same five commits, GCC took about 13 minutes per arm on
+8 cores, so a job spent its first hour compiling, and those compiles were most of the
+"other processes" (about 34 cores) the other jobs' timing rounds had to tolerate (noise
+band 15–24 % after 9 rounds, against 5 % for a job that started timing while it was
+quieter). Build each arm once per machine into a shared cache, in a short, wide build job,
+and time afterwards.
+
 ## 2. The instruction set and the machine
 
 2.1 **The data layout that wins depends on the ISA.** Interleaved complex numbers suit

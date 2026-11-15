@@ -6,93 +6,100 @@ session; update a phase when its tasks or findings change.
 
 ## Status
 
-**As of 2026-11-14, evening.** Phase 0 done except the Xeon client-catalogue baseline.
-Merged today: 1.3a, planner v1 with NEON tables (X2), X8 (radix 32/64 codelets; a 32-point
-leaf on NEON double), 1.7 and 1.7b with X4 (grid strategy, fused phase passes, staggered
-scratch), 2.1 (fused real transforms), 2.3 and 2.3b (Bluestein, shared tables), X18 (x86
-driver and scratch fixes), X16 rule 1, X10 (rejected). Where FFTN stands (FFTN ÷ FFTW):
-Mac smooth c2c rows 0.75–1.03, primes from 97 0.64–1.28, long rows 0.92–1.37, real
-256–4096 0.82–0.96; Xeon (AVX-512) about 1.17–1.29, EPYC about 1.32 (x86 kernels are the
-open problem, see X18/X10/X19). Lessons that generalise are collected in
-[LESSONS.md](LESSONS.md).
+**As of 2026-11-15, evening. Work is paused here; this section is the handoff.** Lessons
+that generalise are in [LESSONS.md](LESSONS.md), decisions in DESIGN.md section 19, open
+questions in DESIGN.md section 18.2.
 
-In flight (claims): X20 done on branch `task/overhead` (call overhead: flat programs, leaves
-called with addresses; driver change awaiting its second reader). X19 (generator ±i rotations; reviewed, merging after regeneration on
-main), 1.5/X1 (split lowering on x86), 1.6/X3 (radix 32/64 passes; radix 32 wins on AVX-512
-float), X12b (grid thresholds per machine: the grid starts too early on x86); T1/T5 done
-on branch `exp/t1-t5-constants` (threading constants; awaiting review). Small follow-ups recorded: masked partial runs in the
-`avx512`/`avx2` vocabularies (X22: icpx's masked tails make float 7-smooth rows 0.67 of GCC's
-time on the Xeon). The planner refresh (X2 refit on every machine, X16 verdict) is on
-branch `exp/planner-refresh`; X16's float follow-ups (`avx512` only where 8 divides n, tails
-on `avx512`, the 60-point float lead) go to phase 2.
+### Where FFTN stands
 
-Done in phase 0 (details in the merge commits and the decision log):
+Tracking tier, one thread, FFTN's time ÷ FFTW's (geometric mean; below 1 is faster), all
+of `main` as of 2026-11-15 morning: Mac M5 Max 1.06 (FFTN 0.56 of Accelerate's time on the
+cases Accelerate supports), Xeon 6240 1.15 (MKL: FFTN 1.27 of its time), EPYC 7763 1.33. Runs
+20261115-094953-38c5 (Mac), 20261115-114105-ea43 (Xeon, MKL), 20261115-101319-f98f (EPYC).
 
-- 0.1 skeleton, 0.2 platform layer, 0.3 ISA regions and vocabularies, 0.4 test
-  infrastructure, 0.6 fbench v0, B1.
-- 0.5 walking skeleton: the public API, programs and stage driver, the chain strategy on
-  the scalar target, every kind at ranks 1–3, any length; checked against all three oracles
-  at every n ≤ 512. 0.5b: `fftn/kokkos.hpp` (View-based plans, Kokkos-FFT-shaped
-  `view_plan`, `compat` spellings). Both had second readers.
-- 0.7 fbench backends (FFTW, MKL, pocketfft, KFR, FFTL, Accelerate) pass their guards.
-- 0.8 CI: 13 jobs on Linux x86-64/AArch64, macOS, Windows x64/Arm; emulated runs (SDE,
-  QEMU) of the instruction-set tests on `main`, weekly and on demand. B2 done.
-- 0.9 API review: every recommendation taken; 0.10 made the changes (vectors, any number of
-  batch dimensions, `execute_transforms`, `view_plan`, `compat` enums). FFTN is unreleased:
-  the API changes freely until the first tagged release.
-- X15 done: no `omp simd` on scalar loops; old-ISA targets need hand vocabularies.
+One-dimensional double only (46 cases; the planes and volumes excluded): Mac 0.97, EPYC
+1.21. By group, Mac / EPYC: powers of two ≤ 64 1.14 / 1.38; 128–4096 0.91 / 1.22; ≥ 16384
+1.15 / 1.20; mixed radix 0.95 / 1.29 (46080 and 100000: 1.18–1.23 / 1.67–1.98); primes
+0.92 / 1.20 (17: 1.57 / 1.95; 4093: 1.24 / 1.55; 65537 EPYC 1.65; 97–1009 win on both);
+batches 0.94 / 1.12; r2c and c2r 1.00 / 1.25 (65536 and 2²⁰: 1.30–1.39 / 1.41–1.62).
+Planes and volumes are far behind (phase 4 has not started): c2c 1024² 2.1 / 4.1, 64³
+3.1 / 10.9 (EPYC: likely cache aliasing of power-of-two strides).
 
-Phase 0 exit: gate and CI green on all platforms; fbench self-tests trusted on the three
-machines; competitor baselines against FFTW at MEASURE (PATIENT on the quick tier) for the
-EPYC (tracking, client catalogue), the Xeon (tracking) and the Mac (tracking, client
-catalogue). Still to do: the Xeon client catalogue.
+### Tasks
 
-Next actions: merge X19; land X1 and X3 (x86 kernels and passes) and X12b; then
-tiny-size overhead (fixed cost per call), X6 (real-input codelets), the X2 refit, and the
-phase 1 exit cloud checks, done (X21: nothing badly off; follow-ups are `best_target` per
-precision and length, c2c planes on Zen 5, single rows of 65536 and 100000 points on x86).
-In parallel: T1 and T5 are done (profile constants set; their follow-up is a dispatch cost
-that grows with the team's width, DESIGN 18.2 item 22), then the rest of 3.4 (T2, T4) and
-3.5 (Kokkos executor).
+Done: phase 0 (0.1–0.10, 0.5b, B1, B2, X15); phase 1 tasks 1.1, 1.2, 1.5 (X1), 1.6 (X3),
+1.7 and 1.7b (X12 on the Mac, X12b), with X8, X10 (rejected), X18, X19, X20, X21 (cloud,
+USD 1.36), X22 (icpx); phase 2 tasks 2.1, 2.3 and 2.3b (X17), the planner refresh (X2 refit
+on every machine, X16); phase 3 tasks 3.1–3.3 with T1 and T5. X24 rejected. CI restructured
+(per-push slim, weekly extended; CI on a pull request is the merge gate).
 
-Open questions: see DESIGN.md section 18.2.
+Open, by phase:
 
-Baseline runs (fbench run IDs): EPYC 7763-class node (GCC 16): tracking
-20261113-230721-7c95 failed (PATIENT timeout), re-run without PATIENT; pocketfft re-run with
-`-march=native` after a first run built it without; PATIENT vs MEASURE on the quick tier done.
-Xeon Gold 6240 (GCC 14): tracking 20261114-004852-f498. Mac (NEON FFTW): client catalogue
-20261114-030832-198b; FFTL.jl (libfftl at 53171e8, apple-m1) tracking 20261114-095234-2dcf:
-1.11 against FFTW (FFTN 2.20 on the same run: ahead on smooth rows ≤ 4096, far behind on
-primes, long rows and real transforms, which phases 1.7 and 2 build).
+- 0: the Xeon client-catalogue baseline.
+- 1: 1.3's `x86_v2` and `avx` vocabularies and X14; X2 on the Mac above 1024; X4 on x86
+  and for edge passes; X12 on x86; X5. The phase 1 exit is not met: x86 trails FFTW.
+- 2: 2.2's acceptance in double c2c on AVX-512 (the chain 1.01–1.26 of FFTW at 8–16
+  points; X24 rejected both planned fixes); 2.4 (cost model, `planning::measure`, wisdom;
+  not started); 2.5 (`next_fast_length` exists internally, not public); X6, X13, P1, P2.
+- 3: T2, T3, T4, T6; 3.5 (Kokkos executor); 3.6 to be checked against its acceptance.
+- 4–7: not started.
 
-Handoff notes: remote gates go to DMOG first (`gate-dmog.sbatch`, `--mem=96G`, and 160G with
-4 hours for sanitizer builds of the radix-64 codelets; LSan off there, ptrace is forbidden on
-its nodes). The Xeon is shared: small allocations (`-c 8`), never exclusive. Timing uses
-fbench's load-tolerant rounds everywhere; add rounds rather than waiting for quiet. Build
-once with the Mac's GCC 16 before a remote round trip (GCC-only warnings).
+In flight at the pause: X23 (masked partial runs in the `avx512` and `avx2` vocabularies,
+branch `exp/x23-masked-tails`, pull request 5) and the fbench remote build cache (branch
+`task/fbench-build-cache`). If either is still open when work resumes, read its pull
+request first.
 
-Task 2.2 (branch `task/2.2-lanes`, lanes session, 2026-11-15): the lanes strategy for
-batches of short rows (DESIGN 8.5 as built; X7 done, re-decided after X20). Every row keeps
-the chain's bits. Against the chain with X20's batched leaves the lanes win only in float on
-x86 (0.32–0.55 of the chain's time at 8–16 points; thresholds AVX-512 100, AVX2 32); in
-double and on NEON the batched-leaf chain is now as fast or faster at 8 points, so the rules
-leave the lanes off there (they still win in places beyond 8 points: Mac double 24–48 points
-0.62–0.97, Xeon AVX-512 double 24 points 0.46, c2r 16–64 points 0.57–0.85). 2.2's acceptance
-is not met for double c2c on AVX-512 (the chain 1.1–1.3 times FFTW and 0.8–1.9 of MKL at
-8–16 points). X24 (2026-11-15) tried both planned x86 fixes, the per-call lanes driver
-and edge passes built from 128-bit row loads, and rejected both; double stays 0 on x86.
-Next: a threshold per transform kind (r2c and c2r of 16–64 points already win under
-AVX-512); the chain's c2c at 8–16 points on AVX-512 against FFTW and MKL; the strided axes
-of planes (phase 4).
+### Leads, one-dimensional double first
 
-Task 1.5 (branch `task/1.5-split`, split-lowering session): the generator's split lowering
-(radices 2–16, plain and DIF, FMA-shaped, tangent rotations), split lane passes on the BL
-layout converting at a split run's ends, `target_profile::split` and `build_settings::layout`
-(fbench `LAYOUT`). X1's verdict: split runs on `avx2` and `avx512` (0.87–0.93 of the
-interleaved time where a run exists), interleaved on NEON. Next: a split-aware planner (costs
-of split passes; a first radix that lets a run start: AVX2's 1024 = 4 × 16 × 16 has none),
-split runs in Bluestein convolutions and grid phases, a split grouped first pass with an 8 × 8
-real transpose (port 5 is still 58 % busy on `avx512`, FFTW 41–44 %).
+**Start here when work resumes (the maintainer's choice, 2026-11-15): leads 1–5, the
+one-dimensional double gap.** Each needs an experiment file (AGENTS.md section 6) before it
+runs; the numbers above are the baseline to beat. The rest (6–9) follow.
+
+1. Long rows (≥ 16384, both machines; mixed 46080 and 100000 worst on the EPYC at 1.67–1.98;
+   r2c and c2r of 65536 and 2²⁰ at 1.3–1.6): X12 on x86 (the grid's phases and blocks
+   there), the real pairing fused into grid phases, radix 32 phases from 32768 (X3
+   follow-up).
+2. Prime lengths: 17 takes Bluestein (1.57 / 1.95 of FFTW): a generated 17-point codelet,
+   or Rader where p − 1 is smooth (65537, 257, 97); 4093 and 65537 on the EPYC.
+3. The x86 kernels at 128–4096 (EPYC 1.05–1.35): a split-aware planner (costs of split
+   passes; a first radix that lets a run start: AVX2's 1024 = 4 × 16 × 16 has none), split
+   runs in Bluestein convolutions and grid phases, a split grouped first pass with an 8 × 8
+   real transpose (port 5 is 58 % busy on `avx512`, FFTW 41–44 %).
+4. Single short rows (≤ 64 points: Mac 1.14, EPYC 1.38; 60 points on the EPYC 1.42): the
+   remaining fixed cost per call after X20.
+5. Real transforms on x86 (EPYC 1.25): X6 real-input codelets.
+6. Double c2c batches of 8–16 points on AVX-512 (task 2.2): the chain against FFTW and MKL;
+   a lanes threshold per transform kind (r2c and c2r of 16–64 points under AVX-512 already
+   take 0.56–0.96 of the chain's time).
+7. Float: 60 points on `avx512` 2.6 times `avx2` (Xeon and cloud); `best_target` per
+   precision and length; X23's tails.
+8. Planes and volumes (phase 4): the EPYC's 64³ c2c (10.9 times FFTW).
+9. Threading: a dispatch cost that grows with the team's width (DESIGN 18.2 item 22).
+
+Decisions the maintainer has not yet taken are listed in DESIGN.md section 18.2.
+
+### Working notes for whoever resumes
+
+- CI on a pull request is the gate (`ci.yml` per push, `extended.yml` weekly and on demand,
+  `emulation.yml` for SDE and QEMU). Build and test what you touch locally; do not spend
+  local time on full gates.
+- Remote timing: `uv run --frozen python scripts/remote/fbench_remote.py submit
+  <xeon|epyc|xeon-clang> ARMS -- fbench-args` (profiles in `~/.config/fftn/remote.toml`,
+  outside the repository; the Xeon profile sets the MKL root). `fetch` runs from the main
+  checkout. Small shared allocations (`-c 8`), never exclusive; at most three of one
+  agent's jobs on the Xeon at once; fbench's load-tolerant rounds, adding rounds rather
+  than waiting for quiet. Remote gates go to DMOG first (`--mem=96G`; 160G and 4 hours for
+  sanitizer builds; LSan off there, ptrace is forbidden on its nodes).
+- On the Mac compare against the NEON build of FFTW, and build at most 6 jobs in parallel
+  (the Mac is shared).
+- Every experiment's verdict goes into its file, the index below and LESSONS.md.
+- The arm branches that the X10, X15 and X24 files cite (`exp/x10-pass-loops`,
+  `exp/x15-arm-*`, `exp/x24-lb-only`) exist only in the maintainer's local clone; they
+  are not pushed.
+
+Baseline runs (fbench run IDs): EPYC tracking 20261113-230721-7c95 (PATIENT timeout,
+re-run with MEASURE); Xeon (GCC 14) tracking 20261114-004852-f498; Mac client catalogue
+20261114-030832-198b; FFTL.jl (libfftl 53171e8) tracking 20261114-095234-2dcf.
 
 ## How this plan works
 
@@ -309,7 +316,7 @@ running, done (with verdict).
 | Machine | Use | Access |
 |---|---|---|
 | Apple M5 Max | NEON+FCMA development and timing when quiet | local |
-| Xeon Gold 6240 (AVX-512, 2 × 18 cores) | AVX-512 and Intel timing; MKL | Slurm, exclusive |
-| EPYC 7763 cluster (Zen 3, AVX2, 2 × 64 cores) | AVX2 timing; threading at 64 | Slurm, exclusive |
+| Xeon Gold 6240 (AVX-512, 2 × 18 cores) | AVX-512 and Intel timing; MKL; native AVX-512 tests | Slurm, shared: small jobs (`-c 8`), never exclusive |
+| EPYC 7763 cluster (Zen 3, AVX2, 2 × 64 cores) | AVX2 timing; threading at 64; remote gates (GCC 14–16, Clang 23) | Slurm (DMOG), shared: `-c 8`–16, whole nodes only for threading runs |
 | Cloud: Zen 4/5, recent Intel, Neoverse N1/V1/V2 | checks per phase exit; phase 6 tuning | rented per experiment, with a ledger |
 | Old x86-64 (v2 level, or AVX without AVX2) | best effort | no hardware: the `x86_v2` and `avx` targets are timed forced on the Xeon and Zen 3, and verified by emulating Nehalem and Sandy Bridge |
