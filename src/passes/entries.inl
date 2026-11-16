@@ -421,6 +421,7 @@ inline constexpr pass_kernels<T> pass_table{
             &twiddle_scatter<T, -1>,
             &twiddle_scatter<T, +1>,
         },
+    .c2r_pair_gather = &c2r_pair_gather<T>,
     .lanes_gather = &lanes_gather<T>,
     .lanes_scatter = &lanes_scatter<T>,
     .lanes_r2c_pair =

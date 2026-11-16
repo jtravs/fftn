@@ -223,7 +223,8 @@ passes ran 1.9–2.8 times FFTW's time from 2¹⁴ to 2²² points on the Mac; a
 three-phase grid ran at 0.47–0.71 of the chain's time. Where to switch to three phases is
 machine-specific: on the EPYC a switch at 1 MiB was 3 % faster than the default and never
 switching was 23 % slower; on the x86 machines it belongs at L2, on the Mac at L2/8 (3.8). Inside L2 the pass count (L2 bandwidth) decides, which is why
-FFTW's radix-32/64 three-pass plans win there. [X12](experiments/X12-beyond-l2.md).
+FFTW's radix-32/64 three-pass plans win there. [X12](experiments/X12-beyond-l2.md). Correction (X29): this holds for powers of two on the Mac
+and beyond L2/2 on the Xeon, not in general; see 3.11 and 3.12.
 
 3.6 **Misaligned wide accesses split cache lines.** With four complex doubles per AVX-512
 vector, a stride ≡ 2 mod 4 makes every other access split a 64-byte line (prototype).
@@ -288,6 +289,35 @@ Xeon 16–17 points 1.06–1.10): a duplicating load cannot be folded into the m
 plain load can, and the load at p + 1 crosses a cache line in half the units (in all of
 them on 64-byte registers). Measure footprint changes on short transforms too; a per-table
 choice of storage would keep both sides. [X30](experiments/X30-x86-pass-loops.md).
+
+3.11 **A chain's cache trouble beyond L1 can be a power-of-two problem, not a size
+problem.** On the Mac a whole-row chain lost to the blocked grid beyond L1 for powers of
+two (1.6–1.8 times its time), but for a length whose power-of-two part is at most 1024
+points it took 0.49–0.72 of the grid's time at every size tried, 144 KiB to 62.5 MiB, and
+beat FFTW (46080 and 100000 points: 1.20–1.23 times FFTW with the grid, 0.74–0.76 with the
+chain). The legs of a power-of-two pass lie a power of two apart and share L1 sets; an odd
+factor in every leg distance spreads them. Rules tuned on powers of two (X12, X12b) carry
+that bias: test mixed lengths before extending a threshold to them.
+[X29](experiments/X29-real-footprint.md).
+
+3.12 **Do not extrapolate a chain-or-blocked threshold past the sizes tried, and look at
+every process's time, not only the median.** X12b kept the x86 chain to L2/2 because it
+tried thresholds up to L2 only. On the EPYC 7763 (512 KiB L2, 32 MiB L3 per 8 cores) whole-
+row chains beat the grid far beyond: lengths with a small power-of-two part took 0.64–0.85
+of its time steadily up to 2 Mi points. Powers of two looked as good in two screens
+(0.53–0.73) and then, in a third, ran 0.7 to 1.8 times the grid's time from process to
+process at 1–2 MiB (leg distances a multiple of the L2's way size, which collide when the
+pages lie contiguous): a median over few processes hid a bimodal cost. The Xeon 6240
+(1 MiB L2, 0.7 MiB of L3 per CPU) behaved as X12b said for every length: the chain lost
+1.1–1.6 beyond L2/2. Same instruction-set family, opposite answers: key the rule on the L3
+per CPU. [X29](experiments/X29-real-footprint.md).
+
+3.13 **Fuse a pass when it removes an array, not merely a pass.** Folding the c2r
+pairing into the grid's first gather (each element reads its mirror from the input) made
+out-of-place rows 6–8 % faster on the Mac, where it also removed the workspace array, and
+in-place and three-phase rows 2–6 % slower, where the array stayed and the input was read
+twice instead of once by a streaming in-place pass; on the EPYC even the out-of-place
+rows lost (1.11). [X29](experiments/X29-real-footprint.md).
 
 ## 4. Kernels and algorithms
 

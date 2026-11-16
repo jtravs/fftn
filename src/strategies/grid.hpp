@@ -120,9 +120,11 @@ public:
   // and returns the complex elements of scratch it needs in each of a and b. in_place: in
   // and out are the same memory. Whether it uses the workspace block: block_elements().
   // scale: on the output (1: none), or on the input with scale_on_input (the input edge:
-  // phase 1's gather applies it).
+  // phase 1's gather applies it). c2r_n: 0, or the row is the half-length complex transform
+  // of a c2r row of c2r_n reals and the in slot holds its n/2 + 1 bins, which phase 1's
+  // gather pairs (c2r_pair_gather, experiment X29): no pairing pass precedes the grid.
   std::size_t c2c_row(const grid_split& g, int sign, bool in_place, double scale,
-                      bool scale_on_input, program& p);
+                      bool scale_on_input, program& p, std::size_t c2r_n = 0);
 
   // Whether c2c_row of g uses the block slot, and its complex elements (n, and the padding).
   [[nodiscard]] static bool uses_block(const grid_split& g, bool in_place) noexcept;
@@ -149,6 +151,7 @@ private:
                 std::ptrdiff_t src_stride, slot dst, std::ptrdiff_t dst_stride, double scale,
                 const T* twiddles, program& p);
   std::pair<const T*, const T*> first_twiddles(const grid_split& g);
+  std::pair<const T*, const T*> c2r_pair_factors(std::size_t n1, std::size_t m1, std::size_t n);
   const T* row_twiddles(std::size_t ni, std::size_t m);
 
   const kernels_of<T>& kernels_;

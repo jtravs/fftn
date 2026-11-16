@@ -52,10 +52,15 @@ Open, by phase:
 - 3: T2, T3, T4, T6; 3.5 (Kokkos executor); 3.6 to be checked against its acceptance.
 - 4–7: not started.
 
-In flight (lead session, 2026-11-16 night): X29 (lead 5, the real footprint in the
-chain-or-grid rule, and long rows as chains on x86), X28b (lead 4 continued: whole-transform
+In flight (lead session, 2026-11-16 night): X28b (lead 4 continued: whole-transform
 leaves for short composite rows, 24–120 points). Done overnight, each merged with its
 pull request:
+- X29 (lead 5): Apple keeps lengths that are not powers of two as chains (Mac 46080 and
+  100000 0.62–0.65 of main, 0.74–0.76 of FFTW); Zen-like L3s keep rows whose power-of-two
+  part is ≤ 1024 points as chains (EPYC 46080 0.75, 100000 0.66: 1.52 → 1.14 and 1.00 of
+  FFTW); the c2r pairing in the grid's first gather on Apple (0.92–0.94); the real
+  footprint in the rule and all-chains up to half of L3 rejected (power-of-two chains of
+  1–2 MiB bimodal on the EPYC).
 - X30 (lead 3): two-pass `avx2` double plans at 256 and 512 (radix 32): EPYC 0.975 of main
   on its cases, 256 0.905; twiddle storage (wr, wi) and 1024 = 16 × 64 rejected.
 - X28 (lead 4): 128-bit leaves on x86, a one-call entry, a flat path, kernels taking their
@@ -137,10 +142,14 @@ runs; the numbers above are the baseline to beat. The rest (6–9) follow. X25's
    0.80 → 0.76. Left: 30 points on `avx512` (1.24; C does not divide it), EPYC 60 and 120
    (1.05–1.09; too big for AVX2's registers as pair leaves), batches of 16 (1.08–1.26), the
    Mac's 20 points (1.72; a NEON leaf of 20).
-5. Real transforms on x86 (EPYC 1.25): X6 real-input codelets. X25: r2c 65536 on the Xeon
-   is memory (its 32768-point chain at IPC 0.84 with 3.4 times FFTW's L2 misses): count
-   the whole real footprint in the chain-or-grid rule; on the EPYC it is the grid's
-   instructions (lead 1).
+5. Real transforms on x86 (EPYC 1.25): X6 real-input codelets. X29: the real footprint
+   does not move the chain-or-grid switch (Xeon r2c 65536 as a grid: 6 % of its 1.39);
+   the c2r grid now pairs in phase 1's gather out of place on Apple (Mac 0.92–0.94; EPYC 1.11); the real
+   overhead of the grid route stays 0.14–0.42 on the Xeon (r2c pairing not fused: it needs
+   both mirror blocks of the last phase). X29's chain-or-grid findings belong to lead 1:
+   lengths with a small power-of-two part as chains (Mac 46080 and 100000 0.62–0.65 of
+   main, EPYC 0.64–0.79), and power-of-two chains on the EPYC beyond L2/2, fast but bimodal
+   at 1–2 MiB (follow-up: why, and whether 4–16 MiB rows can take them: 0.64–0.88).
 6. Double c2c batches of 8–16 points on AVX-512 (task 2.2): the chain against FFTW and MKL;
    a lanes threshold per transform kind (r2c and c2r of 16–64 points under AVX-512 already
    take 0.56–0.96 of the chain's time). X25: batched leaves saturate one unit (Xeon ports
@@ -389,6 +398,7 @@ running, done (with verdict).
 | [X28](experiments/X28-short-rows.md) | Single short rows (≤ 120 points, batch 1): what is left after X20, and do a lighter entry, 128-bit leaves on x86 or a flat path for two-pass chains close it? (PLAN lead 4) | 1 | done: all adopted (128-bit x86 leaves; one-call entry; passes take their addresses as arguments, no per-stage argument copy): single rows 0.79 (Xeon), 0.82 (EPYC), 0.82–0.88 (Mac) of `main`; tracking Mac 0.953, EPYC 0.964 |
 | [X28b](experiments/X28b-short-leaves.md) | Single short rows after X28: do two-pass leaves held in registers (24, 48, 60 points and other short composites), leaves with constant offsets for rows of stride 1, and 128-bit leaves for 17, 19, 23 on x86 close what is left? (PLAN lead 4) | 1 | done: all adopted (pair leaves on x86: 20–120 points 0.42–0.69 of the chain on the Xeon's `avx512`, 0.51–0.76 on the EPYC; unit-stride leaves everywhere: 8–23 points 0.75–0.92; 128-bit 17–23 leaves 0.85–0.99); FFTN ÷ FFTW over single c2c rows Xeon 0.98 → 0.65, EPYC 0.94 → 0.73, Mac 0.80 → 0.76 |
 | [X30](experiments/X30-x86-pass-loops.md) | x86 chains at 128–4096 (lead 3): two-pass `avx2` double sequences with radix 32/64 (P), twiddles stored (wr, wi) with duplicating loads (T), 1024 = 16 × 64 (Q) | 1 | done: P adopted (EPYC x30 double 0.975: 256 0.905, 512 0.946, batches of 64 0.87–0.92, r2c/c2r 512–1024 0.90–0.95; nothing slower; Xeon `avx2` tracking 0.999, r2c 1024² 1.034 [0.997, 1.061] re-run pending); T rejected by single cases (geomeans 0.97–0.99, float 0.94, but short rows and small grouped passes up to 1.08–1.11); Q rejected (1024 batches 1.09) |
+| [X29](experiments/X29-real-footprint.md) | Real rows in the chain-or-grid rule: should r2c and c2r switch to the grid at another size than the c2c row of half their length, and is the grid's separate pairing pass worth fusing into its end phases? | 1–2 | done: real footprint rejected (no gain on any machine); c2r pairing in the grid's first gather adopted on Apple out of place in two phases (Mac 0.92–0.94; EPYC 1.11, not adopted); lengths with a power-of-two part ≤ 1024 points stay chains on Apple at any size (46080 0.65, 100000 0.62) and on Zen to half of L3 (0.64–0.85); power-of-two chains on the EPYC bimodal at 1–2 MiB, not adopted |
 | P1 | Cost-model accuracy: rank agreement with measurement across the catalogue per machine | 2 | planned |
 | P2 | Measurement budget: how many candidates and how long before the choice stops improving | 2 | planned |
 | [T1](experiments/T1-dispatch-wait-costs.md) | Dispatch, wake and wait costs per machine and runtime (libgomp, libomp, Kokkos, pool) | 3 | done: hand-off cost and claim runs adopted on Zen 3; dispatch and work costs wait for a per-lane dispatch term |

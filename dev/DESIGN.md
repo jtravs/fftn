@@ -1171,8 +1171,20 @@ own table. Planner: a c2c row of one axis, contiguous on both sides, without edg
 is a grid when its bytes exceed `grid_min_bytes`, in three phases beyond
 `grid_three_bytes`, by default half of L2 and L2 where each core has its own L2 (shared by
 no more CPUs than the L1: x86), and the L1 data cache and an eighth of L2 where a cluster
-shares it (Apple; X12b: a private L2 serves a chain's passes well, a cluster's does not),
-if it has a split whose factors
+shares it (Apple; X12b: a private L2 serves a chain's passes well, a cluster's does not).
+With a private L2 and at least 2 MiB of L3 per CPU sharing it (Zen's CCX), a row whose
+length is not a power of two and has a power-of-two part of at most 1024 points (16 KiB)
+stays a chain up to half of L3 (`chain_part_limit_bytes`; X29: 0.64–0.85 of the grid's
+time on the EPYC 7763 at 46080 to 2 Mi points, steadily; power-of-two chains of 1–2 MiB
+were bimodal there, 0.7 to 1.8 of the grid's time from process to process, so powers of
+two keep L2/2; the Xeon 6240, with 0.7 MiB of L3 per CPU, keeps L2/2 for every length).
+Where a cluster shares L2, a row whose length is not a power of two stays a chain when the
+power-of-two part of its length is at most L1/8 in bytes (1024 points in double on the
+M5), at any size, or when the row is at most 2 · L1 (`chain_part_bytes`,
+`chain_mixed_bytes`; X29: such chains took 0.49–0.72 of the grid's time to 4 Mi points,
+because the cluster L2's conflict problem is a power-of-two problem: an odd factor in
+every leg distance spreads a pass's legs over the L1 sets). A row past these thresholds is
+a grid only if it has a split whose factors
 have no prime above 13 and whose first factor and n / N1 are multiples of the block (at
 least max(2, C)). A long row with a prime factor above 13 therefore stays a chain, with
 its Bluestein or generic last pass (9.2): the grid takes only lengths whose every factor a
@@ -1353,11 +1365,21 @@ Routes, by `real_route`:
 - *Separate*: a pairing pass over the h + 1 values of the complex side, in place: after a
   c2c line written into the output (r2c) or before a c2c line run in place there (c2r,
   which keeps the input intact). Used where the edge pass is a Bluestein stage or a
-  generic pass, where the rule declines, and after (r2c) or before (c2r) a grid.
+  generic pass, where the rule declines, after an r2c grid, and before a c2r grid in place
+  or in three phases.
 - *Grid*: a real row of one axis whose half-length transform would be a grid as a c2c row
   (section 8.5) runs the grid on the reals read as complex values, through the grid
-  builder unchanged (c2r rereads the output slot for the input: `read_output_for_input`).
-  Fusing the pairing into the grid's last (first) phase is not built.
+  builder. Where the L2 is shared (Apple; `c2r_paired_gather`), a c2r row out of place in
+  two phases pairs its bins in phase 1's gather
+  (`c2r_pair_gather`): each Z_j is formed from X_j and X_(h−j) of the input, which is only
+  read, so the grid runs from the input to the output as a c2c row does, without the
+  separate pass and the workspace block (X29: 0.92–0.94 of the separate route's time on
+  the Mac; on the EPYC it took 1.11, so x86 keeps the pass). In place or in three phases
+  the block stays, and the gather's second read of the input lost to the separate pass
+  (1.02–1.06), so those rows keep it (c2r rereads the
+  output slot for the input: `read_output_for_input`). The r2c pairing is not fused: it
+  needs the final values of both mirror blocks of the last phase in one iteration, columns
+  l and L − l a column out of alignment.
 - *Strided*: a line with a stride other than 1 (allowed out of place) packs its reals into
   scratch and pairs at any stride, one element at a time, as before task 2.1.
 - *Full*: odd n through the full-length complex chain, as before (X6).
@@ -2627,6 +2649,9 @@ to change before a release.
 | 2026-11-15 | Masked partial runs on x86 (X23's arm P5: `load_n`/`store_n`, partial units after the loops, padded transposes, `avx2` stores in pieces) are built behind `FFTN_MASKED_TAILS`, `AUTO` by default: on with GCC, the x86 release toolchain, and off with Clang and icpx, which keep the tile (sections 8.2, 14.3) | The maintainer adopted X23 for GCC after it was rejected for a Clang-only loss (Clang 23: `avx2` double 75 points 1.42), under the rule that decisions judge the release toolchains. Amendment 4 with GCC: float 0.53 of main's time on the Xeon's `avx512`, 0.77 on `avx2`, 0.72 on the EPYC, double 0.78–0.89, bits unchanged; off, the kernel objects are byte for byte main's. Its rule was missed by one whole-unit case on two machine-targets (float 256 1.047 on `avx512`, double 72 1.033 on the EPYC), kept as recorded exceptions (the lead's decision under the maintainer's direction to keep X23 for GCC; neither case has a partial unit) |
 | 2026-11-15 | The x86 targets' leaves (n ≤ 16) are 128-bit: compiled in the `avx2` region with `avx2`'s operations at half width (`vocab_avx2_narrow.inl`), used by `avx2` and `avx512` plans alike (experiment X28) | A leaf broadcasts its one line into every lane, so width only repeats work; on Cascade Lake the 512-bit leaf ran at licence 1–2 (Xeon 8 points 65 → 47 cycles, 16 points 110 → 85); same operations per lane, so bits unchanged |
 | 2026-11-15 | A pass kernel takes its source and destination as arguments (`pass_fn(args, src, dst, first, last)`), like a leaf; `pass_args` holds only the fixed geometry, and the driver calls kernels on the plan's own arguments; one transform of a flat program runs from a contiguous `flat_body`, entered from `execute_core` with its slots as scalars; `plan::execute` is one library call (X28) | The per-stage, per-transform copy of `pass_args` cost 3.7–6 ns per stage on Zen 3 (much of it store-to-load forwarding into the kernel), 1.5–2.7 on the M5 Max: single rows of 24–120 points 0.69–0.88 of their time on the Mac; only grid stages with moving twiddles and lanes blocks still copy |
+| 2026-11-15 | Where the L2 is shared (Apple), a c2r row out of place whose half-length transform is a two-phase grid pairs its bins in phase 1's gather (`c2r_pair_gather`, `c2r_paired_gather`), reading the input only; x86 keeps the separate pass (EPYC: 1.11); in place and three-phase grids keep the separate pairing pass; the r2c pairing stays separate (section 9.1) | X29 (Mac): 0.92–0.94 of the separate route's time at 32768–131072 and 46080 out of place, where the workspace block goes; 1.02–1.06 where the block stays (the gather reads the input twice) |
+| 2026-11-15 | Where a cluster shares L2 (Apple), a row whose length is not a power of two stays a chain when its power-of-two part is at most L1/8 in bytes, or the row at most 2 L1 (`chain_part_bytes`, `chain_mixed_bytes`; section 8.5) | X29 (M5 Max): chains took 0.49–0.72 of the grid's time for every such length tried (144 KiB to 62.5 MiB), the grid's L1-conflict problem being one of powers of two; tracking tier 0.983 (46080 0.63, 100000 0.60), nothing slower |
+| 2026-11-16 | With a private L2 and at least 2 MiB of L3 per CPU (Zen), a row whose length is not a power of two and has a power-of-two part of at most 1024 points stays a chain up to half of L3 (section 8.5) | X29 (EPYC 7763): 0.64–0.85 of the grid's time, steadily, at 46080 to 2 Mi points; power-of-two chains of 1–2 MiB were bimodal (0.7–1.8 by process) and keep the grid; the Xeon 6240 (0.7 MiB of L3 per CPU) keeps L2/2, where every chain lost 1.1–1.6 |
 | 2026-11-16 | Where the L2 is shared by a cluster (Apple), an intermediate the grid already keeps in the workspace block is padded after each of phase 2's rows (`grid_pad`, profile `grid_pad_period`); off on x86. The copies' prefetch keeps X26's target gate: keying it to the core was rejected (experiment X26b) | Mac: double long rows 0.976 of main (2^18 0.94); Xeon 1.006 and EPYC 0.993, where counters showed no fewer L1 refills. The prefetch on an Intel core under `avx2` took 2^22 to 0.84 but float 100000 to 1.27; X26's cheaper copy loops were rejected again on the padded grid |
 | 2026-11-16 | Pair leaves on x86 (experiment X28b): a contiguous c2c row of n = r1 m with C dividing m and about n / C registers runs the chain r1 × m as one leaf, the grouped pass's C × C transposes held in registers as the last pass's input; a table of lengths per target and precision (`src/isa/pairs_<target>.cpp`); the lanes strategy runs the same chain on its tile | Single rows of 20–120 points 0.42–0.69 of the chain's time on the Xeon 6240 (`avx512`), 20–48 at 0.51–0.76 on the EPYC 7763, float 0.39–0.78; batches of 24 and 48 points 0.43–0.70; Xeon FFTN ÷ FFTW over single rows 0.98 → 0.65 with the other two X28b arms; +0.75 % library; the bits are the forced chain's |
 | 2026-11-16 | Leaves with constant leg offsets for lines of stride 1 (`leaf_unit`, `src/passes/unit_leaf.inl`), on every target, and the x86 narrow leaves extended to 17, 19 and 23 (X28b) | 8–23-point single rows 0.75–0.92 of their time (EPYC, Xeon, M5 Max), bit for bit the same; 17–23 a further 0.85–0.99 on x86 from the 128-bit leaf; the x86 targets keep only the narrow unit-stride leaves (their own were 3.5 % of the library unused) |
