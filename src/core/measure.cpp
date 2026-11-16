@@ -417,7 +417,9 @@ measure(const shape_view& s, const options& base, const build_settings& settings
   }
   std::size_t timed = 0;
   for (const candidate& c : cands) {
-    timed += c.samples.empty() ? 0 : 1;
+    if (!c.samples.empty()) {
+      ++timed;
+    }
   }
   const candidate& w = cands[win];
   std::shared_ptr<plan_core> final_core = w.core;

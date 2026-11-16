@@ -285,8 +285,12 @@ TEST(Candidates, PlanesGetEachAxisRadices) {
     for (const std::size_t r : c.radices) {
       product *= r;
     }
-    for64 += product == 64 ? 1 : 0;
-    for48 += product == 48 ? 1 : 0;
+    if (product == 64) {
+      ++for64;
+    }
+    if (product == 48) {
+      ++for48;
+    }
   }
   EXPECT_GE(for64, 2U);
   EXPECT_GE(for48, 2U);

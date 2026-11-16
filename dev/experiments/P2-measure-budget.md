@@ -76,6 +76,20 @@ Every machine was loaded.
   first candidate per round (ffb9046, the Mac's second run) did not raise stability under
   that load (26 of 61).
 
+## Second pass (method)
+
+Commit 73eb719 changes the sampling, as rule 4 required, and nothing else of the budgets:
+- each round places the input and output at other 64-byte offsets within a page
+  (`placement_of`, as fbench does);
+- each candidate's statistic is its median sample, not its fastest;
+- only live candidates compete for the choice;
+- every allocation counts against the scratch limit;
+- nothing is timed when only the rules' choice is admitted.
+
+The second reader's fixes are in the same commit. Arms, cases and decision rules are as in
+the first pass: `N`, `Q`, `M` at 73eb719, tracking tier, the Mac (local), the Xeon (Slurm
+16140/16141) and the EPYC (511174/511175). The same runs are P1's re-run of the Xeon misses.
+
 ## Verdict
 
 First pass; the budgets are not changed yet.
