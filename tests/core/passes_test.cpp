@@ -1187,7 +1187,7 @@ template <class T> void unit_leaves_match(fftn::isa t) {
                        std::to_string(oe));
           const fftn::detail::leaf_fn unit = own.codelet[slot]->leaf_unit[d][ie][oe];
           const fftn::detail::leaf_fn any = own.codelet[slot]->leaf[d][ie][oe];
-          ASSERT_EQ(unit == nullptr, any == nullptr || r > 32);
+          ASSERT_EQ(unit == nullptr, any == nullptr || r > 32 || narrow != nullptr);
           if (unit != nullptr) {
             cvec<T> y_unit(lines * r);
             cvec<T> y_any(lines * r);

@@ -62,10 +62,12 @@ template <class T, std::size_t R> constexpr pass_fn c2r_first_entry() {
 }
 
 // A leaf for lines of stride 1 (unit_leaf.inl), or null for radices above 32, whose leaves
-// no plan takes by default (rules.cpp, leaf_limit_of: 32 at most).
+// no plan takes by default (rules.cpp, leaf_limit_of: 32 at most), and on the x86 targets,
+// whose plans take the narrow leaves (isa/narrow_avx2.cpp) up to 23 and no leaf of 32 by
+// default: 3.5 % of the x86 library for nothing (X28b).
 template <class T, std::size_t R, int Sign, edge_op InOp, edge_op OutOp>
 constexpr leaf_fn unit_leaf_entry() {
-  if constexpr (R <= 32) {
+  if constexpr (R <= 32 && id != target::avx2 && id != target::avx512) {
     return &unit_leaf<T, R, Sign, InOp, OutOp>;
   } else {
     return nullptr;

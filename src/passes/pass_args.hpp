@@ -149,8 +149,9 @@ struct radix_passes {
   // A whole transform of n = radix in registers; input edge, output edge.
   leaf_fn leaf[2][edge_op_count][edge_op_count];
   // The same for lines of stride 1 on both sides (experiment X28b, passes/unit_leaf.inl);
-  // edges none or scale ([input][output]). Null where both would scale and for radices
-  // above 32, which are never a leaf by default.
+  // edges none or scale ([input][output]). Null where both would scale, for radices above
+  // 32, which are never a leaf by default, and on the x86 targets, whose plans take the
+  // narrow leaves (kernel_table.hpp).
   leaf_fn leaf_unit[2][2][2];
   // Split-arithmetic lane passes (src/passes/split.inl), null where the radix has no split
   // codelet: a middle pass (twiddled) writing the BL layout, from the interleaved line (the
