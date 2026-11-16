@@ -69,7 +69,9 @@ Open, by phase:
 - 4–7: not started.
 
 In flight (lead session, 2026-11-16): X30b (lead 3 continued: aligned twiddle tables,
-compact twiddles for large tables, three passes at 4096). Done, each merged with its pull
+compact twiddles for large tables, three passes at 4096); round 2 of the push: X32 (lead
+(a), long powers of two), X33 (lead (b), long real rows), X34 (lead (c), the Xeon's long
+mixed rows), X31 (cloud: Zen 5, recent Intel with MKL, Axion; cap USD 20). Done, each merged with its pull
 request:
 - The GCC 14/15 ASan crash in `avx512` code on the Xeon: a GCC code-generation bug on
   ASan's fake stack (16.2 and Clang correct); sanitizer builds with GCC before 16 leave out
