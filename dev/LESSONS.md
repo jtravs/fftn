@@ -352,8 +352,10 @@ alignment.** A Stockham chain reads one buffer and writes the other; with the ou
 stores just issued (4K aliasing) and a radix-4 chain of 65536 points on Zen 3 ran 1.15–1.9
 times as long as with the two half a page apart; an output merely not 64-byte aligned cost
 5–8 %. Two large malloc'd buffers lie exactly so (each 16 bytes into a page). A library
-that owns one of the two buffers can place it half a page from the other at execution.
-[X32](experiments/X32-long-pow2.md).
+that owns one of the two buffers can place it half a page from the other at execution; FFTN
+tried that and fbench saw nothing (0.99–1.01), because fbench's buffers sit at random
+multiples of 64 bytes, where the near-alias cases are rare: a benchmark that never places
+buffers as malloc does cannot judge such a fix. [X32](experiments/X32-long-pow2.md).
 
 ## 4. Kernels and algorithms
 

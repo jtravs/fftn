@@ -143,6 +143,62 @@ the grid: radix 8 up to 131072 points (2 MiB, an eighth of L2), radix 4 beyond. 
 chain is then within 0.9–1.1 of FFTL.jl's time except at 2²⁰ (1.14) and faster at 2²² (0.88),
 so arm (c) (a new pass loop) is not called for on the Mac.
 
+EPYC and Xeon: one run per machine with the profile options (arm (a)'s commit 63dfedb with
+`POW2_CHAIN_BYTES=never`, `GRID_MIN_BYTES=131072` so that 16384 and 32768 count as long, and
+`POW2_RADIX8_BYTES=1` (A4, radix 4) or `never` (A8, radix 8)) against `main` 29f9772 (N),
+ratio to N:
+
+| length | EPYC A4 | EPYC A8 | EPYC FFTL.jl | EPYC FFTW | Xeon A4 | Xeon A8 | Xeon FFTW |
+|---|---|---|---|---|---|---|---|
+| 16384 (a chain in N) | 1.01 | 1.00 | 0.89 | 1.04 | 1.22 | 1.07 | 0.82 |
+| 32768 | **0.75** | 0.80 | 0.74 | 0.88 | 1.26 | 1.06 | 0.77 |
+| 65536 | 0.70 | **0.65** | 0.64 | 0.79 | 1.94 | 1.50 | 1.12 |
+| 131072 | **0.66** | 0.66 | 0.63 | 0.79 | 1.70 | 1.32 | 0.99 |
+| 262144 | 0.62 | **0.58** | 0.57 | 0.82 | 1.79 | 1.26 | 0.90 |
+| 524288 | 0.59 | **0.57** | 0.55 | 1.15 | 1.66 | 1.33 | 1.56 |
+| 2²⁰ | 0.66 | **0.60** | 0.58 | 0.99 | 1.78 | 1.25 | 1.71 |
+| 2²¹ | 1.01 | **0.79** | 0.96 | 1.08 | 1.67 | 1.21 | 1.24 |
+| 2²² | 1.08 | **0.85** | 1.03 | 0.95 | 1.71 | 1.28 | 1.23 |
+| 65536 in place | **0.71** | 0.73 | 0.67 | 0.84 | 1.84 | 1.43 | 1.04 |
+
+Runs 20261116-120725-c151 (EPYC, GCC 16, 24 rounds all under load, band ±1.00 %; Slurm
+510594, 510595) and 20261116-122055-3e32 (Xeon, GCC 14, `avx512`, 24 rounds, 9 under load,
+band ±2.22 %; Slurm 16022, 16023). On the EPYC every power of two from 32768 to 2²² is
+faster as a chain, radix 8 the better pattern from 65536 up, and FFTN's radix-8 chain is
+within 1.00–1.08 of FFTL.jl's time to 2²⁰ and faster beyond (0.82): arm (c) is not called
+for there either. Per round the radix-8 chains never exceeded 1.10 of N except in 2 of 24
+rounds at 65536 in place (1.26): X29's slow mode is gone. On the Xeon every chain loses
+(radix 8 1.06–1.50, radix 4 1.22–1.94): it keeps the grid, as X29 found with the rules'
+radices.
+
+### Arm (b): the scratch line half a page from the output
+
+Commit edc1118 (the plan reserves 4 KiB more and execute places line a 2048 bytes past the
+output modulo 4 KiB), against arm (a) at 63dfedb, both with the radix-4 chain options, on
+the EPYC (run 20261116-123424-12d4, 30 rounds all under load, band ±1.00 %; Slurm 510614,
+510615): 0.992–1.005 on every case, none resolved, and both arms' per-round spread alike
+(the slowest round 1.03–1.27 of the median). fbench places its buffers at random multiples
+of 64 bytes into a page, so the near-alias placements of step 0 (within ±128 bytes) come up
+in about one round in sixteen, and never the malloc layout (16 bytes into a page) that cost
+15–30 % in the diagnostic program.
+
+### Confirmation, the Mac
+
+Branch fa5a617 (arms a and b; b changes no bit and was neutral) against `main` 29f9772,
+tracking tier with FFTW and FFTL.jl (run 20261116-123033-4008, 24 rounds, 20 under load, band
+±3.47 %): c2c 16384 0.715, 65536 0.928, 262144 0.905, 2²⁰ 0.625, 2²² 0.565, 65536 in place
+0.941; also 65537 0.936 and 10403 0.934; geomean over the six changed rows 0.76; nothing
+slower (51 cases no evidence, slowest 1.011); weighted geomean of the tier 0.968. Per round,
+every changed row stayed within 1.10 of `main` in 23 of 24 rounds. The other four lengths
+(branch bac9e02, run 20261116-124859-39da, 16 rounds, band ±2.18 %): 32768 0.769, 131072
+0.914, 524288 0.678, 2²¹ 0.660.
+
+FFTN ÷ FFTW, `main` → branch (same runs): 16384 1.38 → 0.97, 32768 1.11 → 0.88, 65536
+1.21 → 1.10, 131072 1.11 → 1.03, 262144 1.11 → 0.98, 524288 1.08 → 0.75, 2²⁰ 1.08 → 0.68,
+2²¹ 1.25 → 0.84, 2²² 1.11 → 0.67 (geomean 1.16 → 0.87). FFTN ÷ FFTL.jl: 1.30 → 0.91,
+1.19 → 0.94, 1.13 → 1.03, 1.18 → 1.10, 1.11 → 0.98, 1.46 → 1.01, 1.66 → 1.05, 1.56 → 1.05,
+1.58 → 0.96 (geomean 1.34 → 1.00).
+
 ## Verdict
 
 (pending)
