@@ -31,3 +31,14 @@ kind = "c2c"
 dims = [97, 1009, 8191, 16381, 2431, 65536]
 precision = ["f64"]
 tiers = ["tracking"]
+
+[[group]]
+name = "x36-lengths"
+note = "convolution lengths: powers of two against 7-smooth lengths just above 2q - 1 (tier full only)"
+kind = "c2c"
+dims = [
+  1024, 1050, 1080, 2048, 2100, 2160, 4096, 4200, 4320, 8192, 8232, 8400, 8640, 16384, 16464,
+  16800, 65536, 65610, 66150, 131072, 132300, 138240, 262144, 262440, 264600, 524288, 524880,
+  529200, 1048576, 1049760, 1058400, 2000000, 2073600, 2097152,
+]
+precision = ["f64", "f32"]
