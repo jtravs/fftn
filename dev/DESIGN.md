@@ -1309,14 +1309,19 @@ program's loops (scratch slots do not move, section 8.3) cannot express yet. M i
 plus chirp passes cost least under the profile (`bluestein_length`, section 11.2), with a
 power-of-two part of at most `machine_profile::bluestein_pow2_part_bytes` (experiment X36:
 a quarter of L1 where the L2 is shared, as on Apple, whose chains of a power of two from
-the L1's size up ran 1.4–1.7 times as long per point as 7-smooth lengths just above;
-unlimited on private L2s); when that excludes the power of two, the candidates run up to
-2 (2Q − 1). A convolution's chain takes the rules' radices, except that one of a power of
-two beyond `grid_min_bytes` takes the long-row radices (X32's FFTL.jl sequences) on every
-machine, since a convolution is never a grid: the rules' radix-16 passes over 2¹⁸ points
-ran 2.5 times as long on the M5 Max (X36). A Bluestein stage that would have 1 < s < C
-copies covers the whole line instead (Bluestein needs no prime), so its passes run whole
-units (X36: 1018 = 2 · 509 on AVX-512).
+the L1's size up ran 1.4–1.7 times as long per point as 7-smooth lengths just above; the
+L1's size on Zen-like caches, where the convolution's two scratch lines a power of two
+apart made 4093–32749 take 1.4–5 times as long; unlimited on the Xeon 6240, where a limit
+gained nothing); when that excludes the power of two, the candidates run up to 2 (2Q − 1).
+A convolution's chain takes the rules' radices, except that one of a power of two takes
+X32's long-row radices beyond `grid_min_bytes` where X32's chains apply (Apple, Zen) and
+beyond four times the L2 elsewhere, since a convolution is never a grid: the rules'
+radix-16 passes over 2¹⁸ points ran 2.5 times as long on the M5 Max, while on the Xeon the
+long-row radices lost at 1 MiB (X36). A single copy's convolution (s = 1) takes the split
+run its length would as a line (`split_from`; x86). A Bluestein stage that would have
+1 < s < C copies covers the whole line instead (Bluestein needs no prime) where that
+convolution is no longer than the copies' together, so its passes run whole units (X36:
+1018 = 2 · 509 on AVX-512 0.68, in float 0.40).
 Why a pass and not a strategy that wraps the chain: the program and stage design already
 expresses it, the passes before it (codelet and generic) keep their positions and edges,
 r2c and c2r get it through their inner complex chain unchanged, and the threading work
@@ -1565,7 +1570,7 @@ prices them) a cost per unit and a cost per tail, and a cost per pass. For a lin
    radix-2 pass per point), the smallest on a tie (`bluestein_length`), among those whose
    power-of-two part the machine profile admits (up to 2 (2Q − 1) when that excludes the
    power of two; experiment X36, section 8.5). A Bluestein stage with 1 < n / Q < C copies
-   becomes one stage of n (X36).
+   becomes one stage of n where M(n) ≤ (n / Q) M(Q) (X36).
 4. The codelet passes are the sequence of radices from 2 to 16 (and 32 and 64 where the
    table's unit cost for them is not 0) multiplying to n_s with the
    lowest cost, the sum of its passes' costs. The pass of radix R after passes whose
