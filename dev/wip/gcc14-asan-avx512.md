@@ -17,7 +17,7 @@ Found so far (Xeon, GCC 14.4, RelWithDebInfo, -fsanitize=address,undefined, main
   frame layout. Not yet minimised for 14.4.
 - Verdict so far: a GCC sanitizer code-generation bug (class 2), not an FFTN bug.
 
-Queued on the Xeon: 15983 (GCC 15 then 16, ASan, failing tests, both UAR settings),
-15984 (GCC 14 on main 5b7a6ae, then Clang 23). Logs in ~/awork/fftn-asan512/.
+Queued on the Xeon: 15986 (GCC 15 then 16, ASan, failing tests, both UAR settings),
+15987 (GCC 14 on main 5b7a6ae, then Clang 23), 15985 (reproducer with frame sizes not a multiple of 64). Logs in ~/awork/fftn-asan512/.
 CI: no extended run ever ran (GCC ASan on x86 never ran in CI); ci.yml's clang-23 asan
 job lands on AVX-512 runners some of the time (best_target avx512 in 2 of 3 runs checked).
