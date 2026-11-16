@@ -146,7 +146,8 @@ struct machine_profile {
   // convolution length (experiment X36, planner/rules.hpp bluestein_length). Where the L2
   // is shared (Apple), chains of a power of two of 8192 points and more ran 1.4-1.7 times
   // as long per point as chains of 7-smooth lengths just above, so set_grid_sizes sets a
-  // quarter of L1 there; on the Xeon 6240 powers of two won up to 16384 points.
+  // quarter of L1 there, and the L1's size on Zen-like caches (the EPYC 7763's 4093-32749:
+  // 0.36-0.69 of the time); on the Xeon 6240 a limit gained nothing.
   std::size_t bluestein_pow2_part_bytes = std::numeric_limits<std::size_t>::max();
   // Whether a c2r row out of place in a two-phase grid pairs its bins in phase 1's gather
   // rather than in a separate pass (X29): set where the L2 is shared (Apple: 0.92-0.94 of

@@ -104,6 +104,11 @@ void set_grid_sizes(machine_profile& p, const core_class& c) noexcept {
     // huge pages. Radix 8 beat radix 4 from 65536 points up.
     p.pow2_chain_bytes = 2 * c.l3.size;
     p.pow2_radix8_bytes = std::numeric_limits<std::size_t>::max();
+    // Experiment X36, EPYC 7763 (run 20261116-193025-47d4): Bluestein lengths with a
+    // power-of-two part of at most 4096 double points took 0.36-0.69 of the time of powers
+    // of two at 4093-32749 (two scratch lines a power of two apart); 552960 (2^12 x 135) lost
+    // to 2^19 (1.17), so the limit is the L1's size.
+    p.bluestein_pow2_part_bytes = c.l1d.size;
   }
   // Experiment X34: where those chains do not apply (Xeon 6240, 0.7 MiB of L3 per CPU), a
   // row whose length has an odd part of at least 15 stays in two grid phases beyond L2

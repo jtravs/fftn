@@ -461,7 +461,7 @@ TEST(Schedule, GridSizesFromCaches) {
   // Bluestein lengths avoid large powers of two there too (X36).
   EXPECT_EQ(m5.bluestein_pow2_part_bytes, 32 * kib);
   EXPECT_EQ(xeon.bluestein_pow2_part_bytes, std::numeric_limits<std::size_t>::max());
-  EXPECT_EQ(epyc.bluestein_pow2_part_bytes, std::numeric_limits<std::size_t>::max());
+  EXPECT_EQ(epyc.bluestein_pow2_part_bytes, 32 * kib);
   // Lengths that are not powers of two stay chains longer where the L2 is shared (X29).
   EXPECT_EQ(m5.chain_part_bytes, 16 * kib);
   EXPECT_EQ(m5.chain_mixed_bytes, 256 * kib);
