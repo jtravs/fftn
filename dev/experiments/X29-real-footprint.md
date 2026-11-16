@@ -1,6 +1,6 @@
 # X29: real rows in the chain-or-grid rule, and the grid's pairing
 
-- **Status:** done (the Xeon run of job 15959 informational only: no plan changes there)
+- **Status:** done
 - **Owner:** x29 session, 2026-11-15
 - **Phase / task:** 1–2 (PLAN lead 5; follows task 2.1, X6, X12b, X25)
 
@@ -200,7 +200,7 @@ which restores main's plan there; nothing else outside ±3 % (largest 1.010, c2c
 evidence).
 
 Xeon: arms c and d2 change no plan there (0.7 MiB of L3 per CPU), and after 8ba17c8 b2
-none either; the confirmation run of 5ef9932 (b2 on everywhere) is job 15959.
+none either, so no Xeon confirmation run was needed (job 15959, cancelled).
 
 ## Verdict
 
