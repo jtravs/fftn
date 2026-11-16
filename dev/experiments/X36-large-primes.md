@@ -214,8 +214,9 @@ case slower than A or than I; changed cases N ÷ A double 0.836 (1018 0.666, 262
 524287 0.912), float 0.611 (1018 0.352, 12279 0.696, 524287 0.792, 999983 0.718). Arm 4
 (N ÷ I) 0.81–1.0, none slower beyond the band (509 f32 0.80, 8179 0.92, 131071 0.94), so it
 stays on `avx512`. FFTN ÷ FFTW: 1018 0.65 (÷ MKL 1.37 → 0.90), 4093 0.68, 131071 1.28,
-999983 1.10, 32749 1.28, 262139 1.07; ÷ MKL 131071 1.31, 999983 1.37. The Xeon's tracking
-tier run (x36-trk-xeon, Slurm 16145) was still queued at the time of writing.
+999983 1.10, 32749 1.28, 262139 1.07; ÷ MKL 131071 1.31, 999983 1.37. Tracking tier on the
+Xeon, A = main, N = 5098f3c, run 20261116-224753-1405 (Slurm 16145, band ±4.49 %, every
+round loaded): 61 cases no evidence, none slower.
 
 ## Verdict
 
