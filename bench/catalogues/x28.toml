@@ -1,0 +1,30 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Experiment X28's cases (dev/experiments/X28-short-rows.md): single short rows, where the
+# fixed cost of a call, the leaf's own call and the driver of two-pass chains are a large
+# part of the time; the same lengths in batches, which must not get slower.
+
+[catalogue]
+name = "x28"
+
+[[group]]
+name = "x28-single"
+note = "one row of 8 to 120 points: leaves (8, 12, 16) and two- or three-pass chains"
+kind = "c2c"
+dims = [8, 12, 16, 24, 32, 48, 60, 64, 120]
+batch = 1
+precision = ["f64", "f32"]
+
+[[group]]
+name = "x28-batches"
+note = "the same lengths in batches (collateral)"
+kind = "c2c"
+dims = [8, 12, 16, 24, 32, 48, 60, 64, 120]
+batch = [64, 4096]
+
+[[group]]
+name = "x28-real"
+note = "one real row"
+kind = ["r2c", "c2r"]
+dims = [16, 32, 64]

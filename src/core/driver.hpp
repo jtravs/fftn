@@ -33,9 +33,22 @@ void run_transforms(const program& p, std::size_t first, std::size_t count,
 // Transforms [first, first + count) of a program marked leaf_rows (program.hpp): one call of
 // its leaf. in and out address element 0 of transform 0. Takes the two addresses rather
 // than slot_addresses: on x86 reading a slot_addresses just written by the caller costs a
-// store-forwarding stall of about a dozen cycles per call (X20).
-void run_leaf_rows(const program& p, std::size_t first, std::size_t count, const void* in,
-                   void* out) noexcept;
+// store-forwarding stall of about a dozen cycles per call (X20). Inline, so that the entry
+// calls the leaf itself (X28).
+inline void run_leaf_rows(const program& p, std::size_t first, std::size_t count, const void* in,
+                          void* out) noexcept {
+  const auto k = static_cast<std::ptrdiff_t>(first);
+  auto* dst = static_cast<std::byte*>(out);
+  const auto* src = p.rows_from_in ? static_cast<const std::byte*>(in) : dst;
+  p.rows_leaf(&p.rows_args, src + p.rows_src_step * k, dst + p.rows_dst_step * k, p.rows_src_step,
+              p.rows_dst_step, count);
+}
+
+// Transform 0 of a flat program (program.hpp) on the slots given as scalars: the entry's
+// path for one transform (core/plan_core.cpp). Passing them as scalars, not as a
+// slot_addresses just written, avoids the store-forwarding stalls of X20 (X28).
+void run_flat_first(const program& p, const void* in, void* out, std::byte* a, std::byte* b,
+                    std::byte* block) noexcept;
 
 // The pieces a team shares out (src/threading/work_graph.hpp), each run exactly as
 // run_transforms runs it.

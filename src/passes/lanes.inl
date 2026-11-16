@@ -58,9 +58,11 @@ FFTN_FORCE_INLINE void store_rows(T* p, std::ptrdiff_t dist, std::size_t valid, 
 // other layout goes element by element. One unit. Reads src, src_stride (reals between a
 // row's elements), src_dist (reals between rows), n (elements per row), block (B), rows; dst:
 // scratch.
-template <class T> void lanes_gather(const pass_args* a, std::size_t first, std::size_t last) {
-  const T* x = static_cast<const T*>(a->src);
-  T* y = static_cast<T*>(a->dst);
+template <class T>
+void lanes_gather(const pass_args* a, const void* src, void* dst, std::size_t first,
+                  std::size_t last) {
+  const T* x = static_cast<const T*>(src);
+  T* y = static_cast<T*>(dst);
   const std::ptrdiff_t xs = a->src_stride;
   const std::ptrdiff_t xd = a->src_dist;
   const std::size_t n = a->n;
@@ -105,9 +107,11 @@ template <class T> void lanes_gather(const pass_args* a, std::size_t first, std:
 // The inverse of lanes_gather for the first `rows` rows of the tile: element i B + r to
 // element i of row r, dst_stride reals between a row's elements and dst_dist between rows.
 // One unit. Reads src (scratch), dst, dst_stride, dst_dist, n, block (B), rows.
-template <class T> void lanes_scatter(const pass_args* a, std::size_t first, std::size_t last) {
-  const T* x = static_cast<const T*>(a->src);
-  T* y = static_cast<T*>(a->dst);
+template <class T>
+void lanes_scatter(const pass_args* a, const void* src, void* dst, std::size_t first,
+                   std::size_t last) {
+  const T* x = static_cast<const T*>(src);
+  T* y = static_cast<T*>(dst);
   const std::ptrdiff_t ys = a->dst_stride;
   const std::ptrdiff_t yd = a->dst_dist;
   const std::size_t n = a->n;
@@ -171,9 +175,10 @@ FFTN_FORCE_INLINE void put_rows(T* p, std::ptrdiff_t dist, std::size_t valid, cv
 // storage (the leaves' table). One unit. Reads src (the tile), dst, dst_stride, dst_dist
 // (reals), n, block, rows, twiddles, scale.
 template <class T, bool Scaled>
-void lanes_r2c_pair(const pass_args* a, std::size_t first, std::size_t last) {
-  const T* z = static_cast<const T*>(a->src);
-  T* y = static_cast<T*>(a->dst);
+void lanes_r2c_pair(const pass_args* a, const void* src, void* dst, std::size_t first,
+                    std::size_t last) {
+  const T* z = static_cast<const T*>(src);
+  T* y = static_cast<T*>(dst);
   const std::ptrdiff_t ys = a->dst_stride;
   const std::ptrdiff_t yd = a->dst_dist;
   const std::size_t h = a->n / 2;
@@ -215,9 +220,11 @@ void lanes_r2c_pair(const pass_args* a, std::size_t first, std::size_t last) {
 // load, else from a tile; rows from `rows` on are zeros. As pre_pair, pre_middle and the
 // leaves' Z_0. twiddles: as lanes_r2c_pair's. One unit. Reads src, src_stride, src_dist
 // (reals), dst (the tile), n, block, rows, twiddles.
-template <class T> void lanes_c2r_pair(const pass_args* a, std::size_t first, std::size_t last) {
-  const T* x = static_cast<const T*>(a->src);
-  T* z = static_cast<T*>(a->dst);
+template <class T>
+void lanes_c2r_pair(const pass_args* a, const void* src, void* dst, std::size_t first,
+                    std::size_t last) {
+  const T* x = static_cast<const T*>(src);
+  T* z = static_cast<T*>(dst);
   const std::ptrdiff_t xs = a->src_stride;
   const std::ptrdiff_t xd = a->src_dist;
   const std::size_t h = a->n / 2;
@@ -269,9 +276,10 @@ template <class T> void lanes_c2r_pair(const pass_args* a, std::size_t first, st
 // group-major, a block of 1024-point-rows beyond L1 was 1.3 times slower on the M5). Reads
 // src, src_stride, src_dist (reals), m, block, rows, twiddles; dst: the tile.
 template <class T, std::size_t R, int Sign>
-void lanes_first(const pass_args* a, std::size_t first, std::size_t last) {
-  const T* x = static_cast<const T*>(a->src);
-  T* y = static_cast<T*>(a->dst);
+void lanes_first(const pass_args* a, const void* src, void* dst, std::size_t first,
+                 std::size_t last) {
+  const T* x = static_cast<const T*>(src);
+  T* y = static_cast<T*>(dst);
   const std::ptrdiff_t xs = a->src_stride;
   const std::ptrdiff_t xd = a->src_dist;
   const std::size_t m = a->m;
@@ -326,9 +334,10 @@ void lanes_first(const pass_args* a, std::size_t first, std::size_t last) {
 // r0 = (u / s) C .. + C - 1 and copy q = u % s, rows outermost (as lanes_first). Reads src
 // (the tile), s (s'), block, rows, dst, dst_stride, dst_dist (reals), scale.
 template <class T, std::size_t R, int Sign, edge_op OutOp>
-void lanes_last(const pass_args* a, std::size_t first, std::size_t last) {
-  const T* x = static_cast<const T*>(a->src);
-  T* y = static_cast<T*>(a->dst);
+void lanes_last(const pass_args* a, const void* src, void* dst, std::size_t first,
+                std::size_t last) {
+  const T* x = static_cast<const T*>(src);
+  T* y = static_cast<T*>(dst);
   const std::ptrdiff_t ys = a->dst_stride;
   const std::ptrdiff_t yd = a->dst_dist;
   const std::size_t b = a->block;
@@ -378,9 +387,10 @@ void lanes_last(const pass_args* a, std::size_t first, std::size_t last) {
 // is rows u C .. + C - 1. Every load of a unit precedes its stores, so src may be dst. Reads
 // src, src_stride, src_dist, dst, dst_stride, dst_dist (reals), block, rows, scale.
 template <class T, std::size_t R, int Sign, edge_op OutOp>
-void lanes_leaf(const pass_args* a, std::size_t first, std::size_t last) {
-  const T* x = static_cast<const T*>(a->src);
-  T* y = static_cast<T*>(a->dst);
+void lanes_leaf(const pass_args* a, const void* src, void* dst, std::size_t first,
+                std::size_t last) {
+  const T* x = static_cast<const T*>(src);
+  T* y = static_cast<T*>(dst);
   const std::ptrdiff_t xs = a->src_stride;
   const std::ptrdiff_t xd = a->src_dist;
   const std::ptrdiff_t ys = a->dst_stride;
