@@ -10,6 +10,7 @@
 // text and file forms round-trip and malformed text is refused.
 
 #include "core/candidates.hpp"
+#include "core/measure.hpp"
 #include "core/plan_core.hpp"
 #include "core/wisdom_entry.hpp"
 #include "fftn/detail/core.hpp"
@@ -29,8 +30,10 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <set>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -317,15 +320,21 @@ TEST(Candidates, EveryCandidateComputesTheTransform) {
 // ---- The measure loop, with a stand-in clock ------------------------------------------
 
 struct fake_clock {
-  std::map<std::string, double> seconds; // by choice text; 1 for the rest
+  std::map<std::string, double> seconds;               // by choice text; 1 for the rest
+  std::map<std::string, std::vector<double>> sequence; // a sample sequence, then its last value
   std::vector<std::string> asked;
+  double others = 1.0; // every other choice
 };
 
 double fake_time(const std::string& choice, void* context) {
   auto& f = *static_cast<fake_clock*>(context);
+  const auto seen = static_cast<std::size_t>(std::ranges::count(f.asked, choice));
   f.asked.push_back(choice);
+  if (const auto q = f.sequence.find(choice); q != f.sequence.end()) {
+    return q->second.at(std::min(seen, q->second.size() - 1));
+  }
   const auto it = f.seconds.find(choice);
-  return it == f.seconds.end() ? 1.0 : it->second;
+  return it == f.seconds.end() ? f.others : it->second;
 }
 
 std::shared_ptr<const plan_core> measured(const d::shape_view& s, fake_clock& clock,
@@ -372,14 +381,31 @@ TEST(Measure, TakesTheEarlierOnATie) {
   EXPECT_EQ(core->program_text, "strategy=chain radices=4.4.8.8.8.8");
 }
 
+// A dropped candidate's median stays where it was while a live one's may rise; it must not
+// win, since its plan has been freed (a regression: the reviewer's ASan build and parallel
+// ctest crashed on it once the statistic became the median).
+TEST(Measure, ADroppedCandidateNeverWins) {
+  const auto shape = fftn::rows_c2c<double>(65536, 1, fftn::direction::forward);
+  fake_clock clock;
+  clock.sequence["rules"] = {1, 1, 1, 9, 9, 9, 9, 9, 9};
+  clock.seconds["strategy=chain"] = 2; // dropped after three rounds, then the lowest median
+  clock.others = 20;
+  const auto core = measured(d::view_of(shape), clock);
+  const auto rules = d::build_plan_core(d::view_of(shape), {}, fixed_settings());
+  EXPECT_EQ(d::program_fingerprint(*core), d::program_fingerprint(*rules));
+  EXPECT_EQ(std::ranges::count(clock.asked, "strategy=chain"), 3);
+}
+
 TEST(Measure, QuickTimesFewerCandidates) {
   const auto shape = fftn::rows_c2c<double>(65536, 1, fftn::direction::forward);
   fake_clock quick;
   fake_clock full;
   static_cast<void>(measured(d::view_of(shape), quick, fftn::planning::quick));
   static_cast<void>(measured(d::view_of(shape), full, fftn::planning::measure));
-  EXPECT_LE(quick.asked.size(), 4U);
-  EXPECT_GT(full.asked.size(), quick.asked.size());
+  const std::set<std::string> quick_asked(quick.asked.begin(), quick.asked.end());
+  const std::set<std::string> full_asked(full.asked.begin(), full.asked.end());
+  EXPECT_LE(quick_asked.size(), 4U);
+  EXPECT_GT(full_asked.size(), quick_asked.size());
 }
 
 // ---- Real measurements, through the public API --------------------------------------
@@ -411,24 +437,74 @@ TEST(Measure, MeasuredPlansComputeTheTransform) {
 }
 
 // Candidates are admitted while half the budget is left: with almost none, only the rules'
-// choice is built and timed, and the plan is the rules' plan.
-TEST(Measure, ATinyBudgetTimesOnlyTheRules) {
+// choice is built, nothing is timed, and the plan is the rules' plan.
+TEST(Measure, ATinyBudgetTimesNothing) {
   const auto shape = fftn::rows_c2c<double>(65536, 1, fftn::direction::forward);
   const fftn::options opts{.effort = fftn::planning::measure, .measure_seconds = 1e-9};
   const auto core = d::make_plan_core(d::view_of(shape), opts);
-  EXPECT_EQ(core->candidates_timed, 1U);
+  EXPECT_EQ(core->candidates_timed, 0U);
+  EXPECT_NE(d::describe(*core).find("0 of 1 distinct candidates timed"), std::string::npos);
   EXPECT_EQ(d::program_fingerprint(*core),
             d::program_fingerprint(*d::build_plan_core(d::view_of(shape), {}, build_settings{})));
 }
 
+// A scratch limit below one transform's data times one transform, and only the rules'
+// choice is admitted (every allocation counts against the limit); a limit of some
+// transforms times that many.
 TEST(Measure, ScratchLimitTimesFewerTransforms) {
   const auto shape = fftn::rows_c2c<double>(1024, 64, fftn::direction::forward);
   const fftn::c2c_plan<double> p(
       shape,
       {.effort = fftn::planning::quick, .measure_seconds = 0.05, .measure_scratch_bytes = 1});
   const std::string text = p.describe();
-  EXPECT_NE(text.find("on 1 transforms"), std::string::npos) << text;
+  EXPECT_NE(text.find("0 of 1 distinct candidates timed on 1 transform,"), std::string::npos)
+      << text;
   EXPECT_NE(text.find("64 transforms"), std::string::npos) << text;
+  const fftn::c2c_plan<double> q(shape, {.effort = fftn::planning::quick,
+                                         .measure_seconds = 0.05,
+                                         .measure_scratch_bytes = std::size_t{1} << 20U});
+  const std::string more = q.describe();
+  const std::size_t at = more.find(" timed on ");
+  ASSERT_NE(at, std::string::npos) << more;
+  const std::size_t transforms = std::stoul(more.substr(at + 10));
+  EXPECT_GT(transforms, 1U) << more;
+  EXPECT_LT(transforms, 64U) << more;
+}
+
+TEST(Measure, ReducedCountsShrinkTheOuterDimensionsFirst) {
+  const std::vector<std::size_t> counts{4, 8};
+  EXPECT_EQ(d::reduced_counts(counts, 3200, 0, 3200), counts); // fits
+  EXPECT_EQ(d::reduced_counts(counts, 3200, 0, 800), (std::vector<std::size_t>{1, 8}));
+  EXPECT_EQ(d::reduced_counts(counts, 3200, 0, 400), (std::vector<std::size_t>{1, 4}));
+  EXPECT_EQ(d::reduced_counts(counts, 3200, 0, 1600), (std::vector<std::size_t>{2, 8}));
+  EXPECT_EQ(d::reduced_counts(counts, 3200, 5000, 1000), (std::vector<std::size_t>{1, 1}));
+  EXPECT_EQ(d::reduced_counts(std::vector<std::size_t>{}, 100, 0, 1), std::vector<std::size_t>{});
+}
+
+TEST(Measure, PlacementsChangeFromRoundToRound) {
+  for (std::size_t r = 0; r < 64; ++r) {
+    const d::placement p = d::placement_of(r);
+    EXPECT_EQ(p.in % 64, 0U);
+    EXPECT_EQ(p.out % 64, 0U);
+    EXPECT_LT(p.in, 4096U);
+    EXPECT_LT(p.out, 4096U);
+    EXPECT_NE(p.in, p.out);
+    if (r > 0) {
+      EXPECT_NE(p.in, d::placement_of(r - 1).in);
+    }
+  }
+}
+
+// The budget's default is 0 whatever the effort, and a bad value is refused whatever the
+// effort too.
+TEST(Measure, BudgetDefaultsAndValidationDoNotDependOnTheEffort) {
+  const auto shape = fftn::rows_c2c<double>(4096, 4, fftn::direction::forward);
+  EXPECT_EQ(fftn::options{}.measure_seconds, 0.0);
+  EXPECT_EQ(fftn::options{}.measure_scratch_bytes, 0U);
+  const auto core = d::make_plan_core(d::view_of(shape), {.effort = fftn::planning::quick});
+  EXPECT_GE(core->candidates_timed, 2U); // the default budget is room for more than one
+  EXPECT_THROW(static_cast<void>(fftn::c2c_plan<double>(shape, {.measure_seconds = -1})),
+               std::invalid_argument);
 }
 
 TEST(Measure, BudgetMustBeFiniteAndNotNegative) {
@@ -531,6 +607,140 @@ TEST(Wisdom, MalformedTextIsRefusedNamingTheLine) {
     } catch (const std::invalid_argument& e) {
       EXPECT_NE(std::string(e.what()).find("line 2"), std::string::npos) << e.what();
     }
+  }
+}
+
+// ---- Wisdom: the reviewer's cases -------------------------------------------------------
+
+TEST(Wisdom, CheckedProductRefusesOverflow) {
+  EXPECT_EQ(d::checked_product(std::vector<std::size_t>{4, 8, 8}), 256U);
+  EXPECT_EQ(d::checked_product(std::vector<std::size_t>{4611686018427387905ULL, 16, 256}), 0U);
+  EXPECT_EQ(d::checked_product(std::vector<std::size_t>{}), 1U);
+}
+
+// An entry that parses but names a program this build cannot make, or one that does not
+// apply to the shape, is stale: ignored, and describe() says so.
+TEST(Wisdom, AnUnbuildableOrInapplicableProgramIsIgnored) {
+  const auto shape = fftn::rows_c2c<double>(4096, 1, fftn::direction::forward);
+  const auto core = d::build_plan_core(d::view_of(shape), {}, build_settings{});
+  for (const char* program : {"radices=4611686018427387905.16.256", "grid=3.5",
+                              "strategy=grid grid=64.64", "radices=7.7"}) {
+    SCOPED_TRACE(program);
+    d::wisdom_record r = d::record_of(*core);
+    r.program = program;
+    const fftn::wisdom w(d::record_text(r));
+    const fftn::c2c_plan<double> p(shape, {.use = &w});
+    EXPECT_NE(p.describe().find("(ignored)"), std::string::npos) << p.describe();
+  }
+}
+
+TEST(Wisdom, TheScaleIsPartOfTheKey) {
+  const auto shape = fftn::rows_c2c<double>(512, 2, fftn::direction::forward);
+  const fftn::c2c_plan<double> plain(shape);
+  const fftn::c2c_plan<double> scaled(shape, {.scale = 1.0 / 512});
+  fftn::wisdom w;
+  w.add(plain);
+  w.add(scaled);
+  EXPECT_EQ(w.size(), 2U);
+  const fftn::c2c_plan<double> other(shape, {.scale = 0.25, .use = &w});
+  EXPECT_EQ(other.describe().find("planning:"), std::string::npos) << other.describe();
+  const fftn::c2c_plan<double> again(shape, {.scale = 1.0 / 512, .use = &w});
+  EXPECT_NE(again.describe().find("from wisdom"), std::string::npos) << again.describe();
+}
+
+// Lines of another build or format are kept verbatim (a future field included), exported
+// again, and never used; a changed build identifier is another build.
+TEST(Wisdom, OtherBuildsAndFormatsAreKeptVerbatim) {
+  const auto shape = fftn::rows_c2c<double>(4096, 1, fftn::direction::forward);
+  const auto core = d::build_plan_core(d::view_of(shape), {}, build_settings{});
+  d::wisdom_record r = d::record_of(*core);
+  const std::string build = r.build;
+  ASSERT_NE(build.find('+'), std::string::npos);
+  r.build = build.substr(0, build.find('+') + 1) + "0000000000000000"; // another identifier
+  const std::string other_build = d::record_text(r);
+  const std::string future =
+      "fftn-wisdom-1\t9.9.9+ffffffffffffffff\tcpu\tisa\tkey\tnew-field=1 x\t??\textra";
+  const std::string newer_format = "fftn-wisdom-2\tanything at all";
+  const fftn::wisdom w(other_build + "\n" + future + "\n" + newer_format + "\n");
+  EXPECT_EQ(w.size(), 3U);
+  const std::string text = w.text();
+  for (const std::string& line : {other_build, future, newer_format}) {
+    EXPECT_NE(text.find(line + "\n"), std::string::npos) << line;
+  }
+  const fftn::c2c_plan<double> p(shape, {.use = &w});
+  EXPECT_EQ(p.describe().find("planning:"), std::string::npos) << p.describe();
+  // A malformed entry of this build is still refused.
+  d::wisdom_record mine = d::record_of(*core);
+  mine.program = "radices=04.4";
+  EXPECT_THROW(static_cast<void>(fftn::wisdom(d::record_text(mine))), std::invalid_argument);
+  EXPECT_THROW(static_cast<void>(fftn::wisdom("not-wisdom\tx")), std::invalid_argument);
+}
+
+TEST(Wisdom, AddingWisdomReplacesEntriesOfTheSamePlace) {
+  const auto a = fftn::rows_c2c<double>(256, 1, fftn::direction::forward);
+  const auto b = fftn::rows_c2c<double>(512, 1, fftn::direction::forward);
+  fftn::wisdom first;
+  first.add(fftn::c2c_plan<double>(a));
+  fftn::wisdom second;
+  second.add(fftn::c2c_plan<double>(b));
+  second.add(fftn::c2c_plan<double>(a));
+  first.add(second);
+  EXPECT_EQ(first.size(), 2U);
+  EXPECT_EQ(fftn::wisdom(first.text()).text(), first.text());
+}
+
+TEST(Wisdom, SavingToAnUnwritablePathThrows) {
+  const fftn::wisdom w;
+  const std::filesystem::path bad =
+      std::filesystem::temp_directory_path() / "fftn-no-such-directory" / "x" / "plans.wisdom";
+  EXPECT_THROW(w.save(bad), std::runtime_error);
+}
+
+// A stale entry under measured planning falls back to timing.
+TEST(Wisdom, AStaleEntryUnderMeasureFallsBackToTiming) {
+  const auto shape = fftn::rows_c2c<double>(65536, 1, fftn::direction::forward);
+  build_settings settings = fixed_settings();
+  const auto core = d::build_plan_core(d::view_of(shape), {}, settings);
+  d::wisdom_record r = d::record_of(*core);
+  r.check ^= 1U;
+  const fftn::wisdom w(d::record_text(r));
+  fake_clock clock;
+  settings.measure_time = &fake_time;
+  settings.measure_context = &clock;
+  const auto measured_core = d::make_plan_core(
+      d::view_of(shape), {.effort = fftn::planning::measure, .use = &w}, settings);
+  EXPECT_FALSE(clock.asked.empty());
+  const std::string text = d::describe(*measured_core);
+  EXPECT_NE(text.find("(ignored); measured"), std::string::npos) << text;
+}
+
+// Measured planning on several threads at once, with one wisdom shared read-only: every
+// plan is valid, the entries are used, and nothing races (the tests also run under TSan).
+TEST(Wisdom, SharedReadOnlyByConcurrentMeasuredPlanning) {
+  const std::vector<std::size_t> lengths{256, 1000, 4096, 6000};
+  fftn::wisdom w;
+  for (const std::size_t n : {std::size_t{256}, std::size_t{4096}}) {
+    w.add(fftn::c2c_plan<double>(fftn::rows_c2c<double>(n, 2, fftn::direction::forward)));
+  }
+  std::vector<std::string> notes(8);
+  std::vector<std::thread> threads;
+  for (std::size_t t = 0; t < notes.size(); ++t) {
+    threads.emplace_back([&, t] {
+      const std::size_t n = lengths[t % lengths.size()];
+      const fftn::c2c_plan<double> p(
+          fftn::rows_c2c<double>(n, 2, fftn::direction::forward),
+          {.effort = fftn::planning::quick, .measure_seconds = 0.02, .use = &w});
+      notes[t] = p.describe();
+    });
+  }
+  for (std::thread& t : threads) {
+    t.join();
+  }
+  for (std::size_t t = 0; t < notes.size(); ++t) {
+    const std::size_t n = lengths[t % lengths.size()];
+    const bool recorded = n == 256 || n == 4096;
+    EXPECT_EQ(notes[t].find("planning: from wisdom") != std::string::npos, recorded) << notes[t];
+    EXPECT_EQ(notes[t].find("planning: measured") != std::string::npos, !recorded) << notes[t];
   }
 }
 

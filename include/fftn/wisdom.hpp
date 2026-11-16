@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace fftn::inline v0 {
@@ -27,8 +28,10 @@ struct wisdom_access;
 /// own and no global state. Plans read it through `options::use`.
 ///
 /// The text form is one line per entry, tab-separated, readable but not meant to be edited;
-/// lines starting with `#` and blank lines are ignored. Entries recorded by another library
-/// version or on another processor model are kept, exported again and never used here.
+/// lines starting with `#` and blank lines are ignored. An entry names the build that
+/// recorded it (the library version and an identifier of its sources), the processor model
+/// and the instruction set; entries of other builds or processors are kept as they are,
+/// exported again and never used here.
 ///
 /// ```cpp
 /// fftn::wisdom w;
@@ -50,8 +53,10 @@ public:
 
   /// The entries in `text`, as `text()` writes them.
   ///
-  /// Throws `std::invalid_argument` naming the first line that is neither an entry, a
-  /// comment nor blank.
+  /// Throws `std::invalid_argument` naming the first line that is not blank, not a comment
+  /// and not an entry: a line must start with a wisdom format tag (`fftn-wisdom-`), and an
+  /// entry of this format recorded by this build must be complete and well formed. Lines of
+  /// other formats or builds are kept unchanged.
   explicit wisdom(std::string_view text);
 
   /// The entries of the file at `path` (its whole content read as by the text constructor).
@@ -85,7 +90,8 @@ private:
   static std::string entry_of(const detail::plan_core& core);
   void add_entry(std::string entry);
 
-  std::vector<std::string> entries_;
+  std::vector<std::string> entries_;                   // in the order added
+  std::unordered_map<std::string, std::size_t> index_; // where an entry applies -> position
   friend struct detail::wisdom_access;
 };
 

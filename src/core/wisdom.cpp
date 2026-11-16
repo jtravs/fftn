@@ -3,6 +3,7 @@
 
 #include "fftn/wisdom.hpp"
 
+#include "core/build_id.hpp"
 #include "core/candidates.hpp"
 #include "core/plan_core.hpp"
 #include "core/wisdom_entry.hpp"
@@ -12,9 +13,9 @@
 #include "platform/cpu_model.hpp"
 
 #include <algorithm>
-#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <optional>
@@ -28,16 +29,13 @@ namespace fftn::inline v0 {
 namespace detail {
 
 struct wisdom_access {
-  static const std::vector<std::string>& entries(const wisdom& w) { return w.entries_; }
+  static const std::string* find(const wisdom& w, const std::string& place) {
+    const auto it = w.index_.find(place);
+    return it == w.index_.end() ? nullptr : &w.entries_[it->second];
+  }
 };
 
 namespace {
-
-// The processor model, read once: it does not change while the process runs.
-const std::string& this_cpu() {
-  static const std::string model = cpu_model();
-  return model;
-}
 
 std::vector<std::string_view> split_tabs(std::string_view line) {
   std::vector<std::string_view> f;
@@ -80,35 +78,65 @@ std::optional<std::uint64_t> parse_hex16(std::string_view s) {
   return v;
 }
 
-bool same_place(const wisdom_record& a, const wisdom_record& b) {
-  return a.version == b.version && a.cpu == b.cpu && a.isa == b.isa && a.key == b.key;
-}
-
 bool blank_or_comment(std::string_view line) {
   const std::size_t first = line.find_first_not_of(" \t\r");
   return first == std::string_view::npos || line[first] == '#';
 }
 
+std::string_view without_cr(std::string_view line) {
+  return !line.empty() && line.back() == '\r' ? line.substr(0, line.size() - 1) : line;
+}
+
+// Where a line applies: its first five fields (format to shape key), or the whole line when
+// it has fewer (another format's), so that adding the same foreign line twice keeps one.
+std::string place_of_line(std::string_view line) {
+  std::size_t at = 0;
+  for (int field = 0; field < 5; ++field) {
+    at = line.find('\t', at);
+    if (at == std::string_view::npos) {
+      return std::string(line);
+    }
+    ++at;
+  }
+  return std::string(line.substr(0, at - 1));
+}
+
 constexpr std::string_view header =
-    "# fftn wisdom: one entry per line, tab-separated: format, library version, processor, "
-    "instruction set, shape, program, check";
+    "# fftn wisdom: one entry per line, tab-separated: format, build (version+identifier), "
+    "processor, instruction set, shape, program, check";
 
 } // namespace
 
+std::string wisdom_build() { return std::string(fftn::version()) + "+" + build_id(); }
+
+const std::string& wisdom_cpu() {
+  // Read once: the processor model does not change while the process runs.
+  static const std::string model = cpu_model();
+  return model;
+}
+
+std::string wisdom_place(std::string_view isa, std::string_view key) {
+  return std::string(wisdom_format) + '\t' + wisdom_build() + '\t' + wisdom_cpu() + '\t' +
+         std::string(isa) + '\t' + std::string(key);
+}
+
 std::optional<wisdom_record> parse_record(std::string_view line) {
-  if (!line.empty() && line.back() == '\r') {
-    line.remove_suffix(1);
-  }
-  const std::vector<std::string_view> f = split_tabs(line);
+  const std::vector<std::string_view> f = split_tabs(without_cr(line));
   if (f.size() != 7 || f[0] != wisdom_format || f[1].empty() || f[2].empty() || f[3].empty() ||
-      f[4].empty() || !parse_choice(f[5])) {
+      f[4].empty()) {
+    return std::nullopt;
+  }
+  // Only the canonical text of a choice: "grid=3.5" or "radices=04.4" would name a program
+  // other than the one written.
+  const std::optional<plan_choice> choice = parse_choice(f[5]);
+  if (!choice || choice_text(*choice) != f[5]) {
     return std::nullopt;
   }
   const std::optional<std::uint64_t> check = parse_hex16(f[6]);
   if (!check) {
     return std::nullopt;
   }
-  return wisdom_record{.version = std::string(f[1]),
+  return wisdom_record{.build = std::string(f[1]),
                        .cpu = std::string(f[2]),
                        .isa = std::string(f[3]),
                        .key = std::string(f[4]),
@@ -117,28 +145,22 @@ std::optional<wisdom_record> parse_record(std::string_view line) {
 }
 
 std::string record_text(const wisdom_record& r) {
-  return std::string(wisdom_format) + '\t' + r.version + '\t' + r.cpu + '\t' + r.isa + '\t' +
-         r.key + '\t' + r.program + '\t' + hex16(r.check);
+  return std::string(wisdom_format) + '\t' + r.build + '\t' + r.cpu + '\t' + r.isa + '\t' + r.key +
+         '\t' + r.program + '\t' + hex16(r.check);
 }
 
 wisdom_record record_of(const plan_core& c) {
-  return {.version = fftn::version(),
-          .cpu = this_cpu(),
+  return {.build = wisdom_build(),
+          .cpu = wisdom_cpu(),
           .isa = isa_name(instruction_set(c)),
           .key = c.shape_key,
           .program = c.program_text,
           .check = program_fingerprint(c)};
 }
 
-std::optional<wisdom_record> find_entry(const wisdom& w, const plan_core& c) {
-  const wisdom_record here = record_of(c);
-  for (const std::string& line : wisdom_access::entries(w)) {
-    std::optional<wisdom_record> r = parse_record(line);
-    if (r && same_place(*r, here)) {
-      return r;
-    }
-  }
-  return std::nullopt;
+std::optional<wisdom_record> find_entry(const wisdom& w, const std::string& place) {
+  const std::string* line = wisdom_access::find(w, place);
+  return line == nullptr ? std::nullopt : parse_record(*line);
 }
 
 std::string shape_key(const shape_view& s, const options& opts) {
@@ -150,7 +172,11 @@ std::string shape_key(const shape_view& s, const options& opts) {
   if (s.kind == transform_kind::c2c) {
     o << (s.dir == direction::forward ? " forward" : " backward");
   }
-  o << (opts.in_place ? " in-place" : " out-of-place") << " axes";
+  // The scale changes the results (and an edge operation of the program), so it is part of
+  // the key, written exactly.
+  char scale[64];
+  std::snprintf(scale, sizeof scale, "%a", opts.scale);
+  o << (opts.in_place ? " in-place" : " out-of-place") << " scale " << scale << " axes";
   for (const axis& a : s.axes) {
     o << ' ' << a.n << '/' << a.in_stride << '/' << a.out_stride;
   }
@@ -164,22 +190,24 @@ std::string shape_key(const shape_view& s, const options& opts) {
 } // namespace detail
 
 wisdom::wisdom(std::string_view text) {
+  const std::string build = detail::wisdom_build();
   std::size_t at = 0;
   std::size_t number = 0;
   while (at < text.size()) {
     const std::size_t end = std::min(text.find('\n', at), text.size());
-    const std::string_view line = text.substr(at, end - at);
+    const std::string_view line = detail::without_cr(text.substr(at, end - at));
     at = end + 1;
     ++number;
     if (detail::blank_or_comment(line)) {
       continue;
     }
-    const std::optional<detail::wisdom_record> r = detail::parse_record(line);
-    if (!r) {
+    const std::vector<std::string_view> f = detail::split_tabs(line);
+    const bool ours = f.size() >= 2 && f[0] == detail::wisdom_format && f[1] == build;
+    if (!line.starts_with("fftn-wisdom-") || (ours && !detail::parse_record(line))) {
       throw std::invalid_argument("fftn::wisdom: line " + std::to_string(number) +
                                   " is not a wisdom entry");
     }
-    add_entry(detail::record_text(*r));
+    add_entry(std::string(line));
   }
 }
 
@@ -230,14 +258,12 @@ std::string wisdom::entry_of(const detail::plan_core& core) {
 }
 
 void wisdom::add_entry(std::string entry) {
-  const std::optional<detail::wisdom_record> r = detail::parse_record(entry);
-  for (std::string& e : entries_) {
-    const std::optional<detail::wisdom_record> old = detail::parse_record(e);
-    if (r && old && detail::same_place(*old, *r)) {
-      e = std::move(entry);
-      return;
-    }
+  std::string place = detail::place_of_line(entry);
+  if (const auto it = index_.find(place); it != index_.end()) {
+    entries_[it->second] = std::move(entry);
+    return;
   }
+  index_.emplace(std::move(place), entries_.size());
   entries_.push_back(std::move(entry));
 }
 

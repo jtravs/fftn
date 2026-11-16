@@ -38,8 +38,10 @@ struct plan_choice {
 // Sets the fields the choice decides (all of them: a test's forced radices do not survive).
 void apply_choice(const plan_choice& c, build_settings& s);
 
-// The choice to record for a plan built from c: a grid's factors written out, so that the
-// record does not depend on the grid's phase rule.
+// The choice to record for a plan built from c, in a canonical form that names only what
+// took effect: a grid's factors written out (so that the record does not depend on the
+// grid's phase rule), and grid fields without a grid, lanes not built, radices whose product
+// is no line's length and a Rader setting without a prime factor to take it dropped.
 [[nodiscard]] plan_choice pinned_choice(const plan_choice& c, const plan_core& built);
 
 // The candidates for the shape of `rules_plan` (the plan built by the rules from `settings`),

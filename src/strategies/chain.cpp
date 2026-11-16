@@ -79,11 +79,7 @@ template <class T> bool chain_builder<T>::forces(std::size_t n) const {
   if (forced_.empty()) {
     return false;
   }
-  std::size_t product = 1;
-  for (const std::size_t r : forced_) {
-    product *= r;
-  }
-  return product == n;
+  return checked_product(forced_) == n;
 }
 
 template <class T> std::vector<std::size_t> chain_builder<T>::radices(std::size_t n) const {

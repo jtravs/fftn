@@ -178,6 +178,11 @@ public:
 [[nodiscard]] std::shared_ptr<const plan_core>
 make_plan_core(const shape_view& shape, const options& opts, const build_settings& settings);
 
+// The instruction set a plan with these options uses (options::force_isa, else the best
+// the processor and the build support). Throws std::invalid_argument naming
+// options.force_isa for a target that cannot be used.
+[[nodiscard]] target plan_target_of(const options& opts);
+
 // The plan the settings describe, ignoring options::effort and options::use.
 [[nodiscard]] std::shared_ptr<plan_core>
 build_plan_core(const shape_view& shape, const options& opts, const build_settings& settings);

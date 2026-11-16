@@ -251,9 +251,11 @@ template <class T> plan_tables<T>& tables_of(plan_core& c) {
   }
 }
 
+} // namespace
+
 // The target of the plan: the fastest the processor and the build support, or the one
 // options::force_isa names. Every target has the passes.
-target plan_target(const options& opts) {
+target plan_target_of(const options& opts) {
   std::optional<target> forced;
   if (opts.force_isa != isa::best) {
     forced = static_cast<target>(static_cast<unsigned char>(opts.force_isa));
@@ -264,6 +266,8 @@ target plan_target(const options& opts) {
     reject("options.force_isa", std::string("cannot be used: ") + e.what());
   }
 }
+
+namespace {
 
 // A phase's view of one slot: where it is and its strides per axis, in elements.
 struct view {
@@ -369,11 +373,7 @@ grid_split plan_grid(std::size_t n, const side& in, const side& out, const build
       return {};
     }
   }
-  std::size_t forced = 1;
-  for (const std::size_t f : settings.radices) {
-    forced *= f;
-  }
-  if (!settings.radices.empty() && forced == n) {
+  if (!settings.radices.empty() && checked_product(settings.radices) == n) {
     return {};
   }
   // Three phases beyond grid_three_bytes, unless the odd part of n keeps two (X34).
@@ -498,7 +498,7 @@ void read_output_for_input(program& p, std::size_t first) {
 template <class T>
 void build(plan_core& c, const shape_view& s, const side& in, const side& out, const options& opts,
            const build_settings& settings) {
-  c.isa_target = plan_target(opts);
+  c.isa_target = plan_target_of(opts);
   const kernels_of<T>& kernels = of<T>(*find_kernels(c.isa_target));
   target_profile profile = profile_of(c.isa_target, kernels.complex_lanes);
   if (settings.leaf_limit != 0) {
@@ -952,6 +952,11 @@ std::shared_ptr<plan_core> build_plan_core(const shape_view& s, const options& o
 
 std::shared_ptr<const plan_core> make_plan_core(const shape_view& shape, const options& opts,
                                                 const build_settings& settings) {
+  // Refused whatever the effort, so that an option that takes effect only with measured
+  // planning is not valid or invalid depending on another option.
+  if (!std::isfinite(opts.measure_seconds) || opts.measure_seconds < 0) {
+    reject("options.measure_seconds", "must be finite and not negative");
+  }
   if (opts.use == nullptr && opts.effort == planning::rules) {
     return build_plan_core(shape, opts, settings);
   }

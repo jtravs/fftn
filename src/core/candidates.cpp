@@ -186,6 +186,32 @@ plan_choice pinned_choice(const plan_choice& c, const plan_core& built) {
     p.strategy = strategy_choice::grid;
     p.grid_factors = built.grid_factors;
     p.grid_phases = 0;
+  } else {
+    // No grid was built: the grid's fields did nothing, and neither did lanes not built.
+    p.grid_factors.clear();
+    p.grid_phases = 0;
+    if (p.strategy == strategy_choice::grid ||
+        (p.strategy == strategy_choice::lanes && built.built != strategy_choice::lanes)) {
+      p.strategy = strategy_choice::rules;
+    }
+  }
+  // Radices apply only to a complex line of their product (chain_builder::forces).
+  if (!p.radices.empty()) {
+    const std::size_t product = checked_product(p.radices);
+    bool applies = false;
+    const std::size_t r = built.lengths.size();
+    for (std::size_t d = 0; d < r; ++d) {
+      const std::size_t n = built.lengths[d];
+      const bool halved = built.kind != transform_kind::c2c && d + 1 == r && n % 2 == 0;
+      applies = applies || product == (halved ? n / 2 : n) ||
+                (built.kind != transform_kind::c2c && d + 1 == r && product == n);
+    }
+    if (!applies) {
+      p.radices.clear();
+    }
+  }
+  if (p.rader >= 0 && !std::ranges::any_of(built.lengths, has_big_prime)) {
+    p.rader = -1;
   }
   return p;
 }

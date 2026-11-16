@@ -106,6 +106,20 @@ struct target_profile {
 [[nodiscard]] std::vector<std::vector<std::size_t>>
 ranked_radices(std::size_t n, const target_profile& p, std::size_t k);
 
+// The product of radices (or grid factors), or 0 if it overflows std::size_t: a forced
+// sequence matches a length only when its product equals it, and a forged one (a wisdom
+// entry, a test knob) must not wrap around to a small length.
+[[nodiscard]] constexpr std::size_t checked_product(std::span<const std::size_t> factors) noexcept {
+  std::size_t product = 1;
+  for (const std::size_t f : factors) {
+    if (f != 0 && product > SIZE_MAX / f) {
+      return 0;
+    }
+    product *= f;
+  }
+  return product;
+}
+
 // FFTL.jl's radices for a long line of 2^k points (its src/factor.jl; MIT, the maintainer's
 // own; experiment X32): radix 8 with one or two 4s first, or radix 4 with an 8 first for an
 // odd k. k >= 2.
