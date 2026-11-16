@@ -633,30 +633,14 @@ target_profile profile_of(target t, std::size_t lanes) noexcept {
   };
 }
 
-// The specification is DESIGN.md 11.2, rule by rule.
-std::vector<std::size_t> rule_radices(std::size_t n, const target_profile& p) {
-  if (n <= 1) {
-    return {};
-  }
-  if (n <= largest_leaf || (n <= p.leaf_limit && has_codelet(n))) {
-    return {n};
-  }
-  for (const radix_override& o : p.costs->overrides) {
-    if (o.n == n) {
-      std::vector<std::size_t> out;
-      for (const std::size_t r : o.radices) {
-        if (r != 0) {
-          out.push_back(r);
-        }
-      }
-      return out;
-    }
-  }
-  // n = smooth x the prime factors above 16, which become passes at the end: a codelet's
-  // (17, 19, 23), the generic pass's or one Bluestein stage (chain_builder::radices).
+namespace {
+
+// n = smooth x the prime factors above 16 (ascending), which become passes after the
+// priced ones: a codelet's (17, 19, 23), the generic pass's or one Bluestein stage
+// (chain_builder::radices).
+std::size_t split_smooth(std::size_t n, std::vector<std::size_t>& big) {
   std::size_t smooth = 1;
   std::size_t rest = n;
-  std::vector<std::size_t> big;
   for (std::size_t q = 2; q <= rest / q; ++q) {
     while (rest % q == 0) {
       if (q <= largest_leaf) {
@@ -675,12 +659,148 @@ std::vector<std::size_t> rule_radices(std::size_t n, const target_profile& p) {
     }
   }
   std::ranges::sort(big);
+  return smooth;
+}
+
+std::vector<std::size_t> override_of(std::size_t n, const target_profile& p) {
+  for (const radix_override& o : p.costs->overrides) {
+    if (o.n == n) {
+      std::vector<std::size_t> out;
+      for (const std::size_t r : o.radices) {
+        if (r != 0) {
+          out.push_back(r);
+        }
+      }
+      return out;
+    }
+  }
+  return {};
+}
+
+// The k cheapest sequences of codelet radices for the smooth part of a line of n points
+// (cheapest's search keeping the k best continuations of every prefix product instead of
+// one), by cost and then lexicographically, so that the first is cheapest's choice.
+std::vector<sequence> ranked_sequences(std::size_t n, std::size_t smooth, bool more,
+                                       const target_profile& p, std::size_t k) {
+  std::vector<std::size_t> divisors{1};
+  {
+    std::size_t left = smooth;
+    for (const std::size_t q : {2U, 3U, 5U, 7U, 11U, 13U}) {
+      const std::size_t count = divisors.size();
+      std::size_t power = 1;
+      while (left % q == 0) {
+        left /= q;
+        power *= q;
+        for (std::size_t i = 0; i < count; ++i) {
+          divisors.push_back(divisors[i] * power);
+        }
+      }
+    }
+  }
+  std::ranges::sort(divisors);
+  const auto index = [&](std::size_t d) {
+    return static_cast<std::size_t>(std::ranges::lower_bound(divisors, d) - divisors.begin());
+  };
+  const auto kind = [&](std::size_t s, std::size_t next) -> std::size_t {
+    if (s == 1) {
+      return 0;
+    }
+    return next == smooth && !more ? 2 : 1;
+  };
+  const auto allowed = [&](std::size_t s, std::size_t r) {
+    return (smooth / s) % r == 0 &&
+           (r <= largest_leaf || p.costs->unit[kind(s, s * r)][cost_column(r)] != 0);
+  };
+  const auto before = [](const sequence& a, const sequence& b) {
+    return a.cost != b.cost ? a.cost < b.cost : a.radices < b.radices;
+  };
+  // top[i]: the k cheapest continuations from prefix product divisors[i] to the end.
+  std::vector<std::vector<sequence>> top(divisors.size());
+  top.back().push_back({});
+  for (std::size_t i = divisors.size() - 1; i-- > 0;) {
+    const std::size_t s = divisors[i];
+    std::vector<sequence> options;
+    for (const std::size_t r : pass_radices) {
+      if (!allowed(s, r)) {
+        continue;
+      }
+      const std::uint64_t c = pass_cost(p, n, s, r, kind(s, s * r));
+      for (const sequence& rest : top[index(s * r)]) {
+        sequence q{.cost = c + rest.cost, .radices = {r}};
+        q.radices.insert(q.radices.end(), rest.radices.begin(), rest.radices.end());
+        options.push_back(std::move(q));
+      }
+    }
+    std::ranges::sort(options, before);
+    if (options.size() > k) {
+      options.resize(k);
+    }
+    top[i] = std::move(options);
+  }
+  return std::move(top.front());
+}
+
+} // namespace
+
+// The specification is DESIGN.md 11.2, rule by rule.
+std::vector<std::size_t> rule_radices(std::size_t n, const target_profile& p) {
+  if (n <= 1) {
+    return {};
+  }
+  if (n <= largest_leaf || (n <= p.leaf_limit && has_codelet(n))) {
+    return {n};
+  }
+  if (std::vector<std::size_t> o = override_of(n, p); !o.empty()) {
+    return o;
+  }
+  std::vector<std::size_t> big;
+  const std::size_t smooth = split_smooth(n, big);
   if (smooth == 1) {
     return big;
   }
   std::vector<std::size_t> out = cheapest(n, smooth, !big.empty(), p).radices;
   out.insert(out.end(), big.begin(), big.end());
   return out;
+}
+
+std::vector<std::vector<std::size_t>> ranked_radices(std::size_t n, const target_profile& p,
+                                                     std::size_t k) {
+  std::vector<std::vector<std::size_t>> out;
+  if (k == 0 || n <= 1) {
+    return out;
+  }
+  const std::vector<std::size_t> first = rule_radices(n, p);
+  out.push_back(first);
+  if (first.size() <= 1 && n <= largest_leaf) {
+    return out; // a leaf: nothing to rank
+  }
+  std::vector<std::size_t> big;
+  const std::size_t smooth = split_smooth(n, big);
+  if (smooth == 1) {
+    return out;
+  }
+  for (sequence& q : ranked_sequences(n, smooth, !big.empty(), p, k)) {
+    q.radices.insert(q.radices.end(), big.begin(), big.end());
+    if (out.size() < k && std::ranges::find(out, q.radices) == out.end()) {
+      out.push_back(std::move(q.radices));
+    }
+  }
+  return out;
+}
+
+std::vector<std::size_t> long_pow2_radices(std::size_t k, bool radix8) {
+  std::vector<std::size_t> rad;
+  if (radix8) {
+    const std::size_t fours = k % 3 == 2 ? 1 : k % 3 == 1 ? 2 : 0;
+    rad.assign(fours, 4);
+    rad.insert(rad.end(), (k - 2 * fours) / 3, 8);
+  } else {
+    if (k % 2 == 1) {
+      rad.push_back(8);
+    }
+    rad.insert(rad.end(), (k - 3 * (k % 2)) / 2, 4);
+  }
+  return rad;
 }
 
 namespace {

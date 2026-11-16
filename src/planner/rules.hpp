@@ -100,6 +100,17 @@ struct target_profile {
 // radices above 16 are such primes.
 [[nodiscard]] std::vector<std::size_t> rule_radices(std::size_t n, const target_profile& p);
 
+// Up to k radix sequences for n, in pass order: rule_radices' first, then the cheapest
+// others by the profile's pass costs (cost, then lexicographic order), without repeats.
+// Measured planning (core/candidates.cpp) times them; a pure function like rule_radices.
+[[nodiscard]] std::vector<std::vector<std::size_t>>
+ranked_radices(std::size_t n, const target_profile& p, std::size_t k);
+
+// FFTL.jl's radices for a long line of 2^k points (its src/factor.jl; MIT, the maintainer's
+// own; experiment X32): radix 8 with one or two 4s first, or radix 4 with an 8 first for an
+// odd k. k >= 2.
+[[nodiscard]] std::vector<std::size_t> long_pow2_radices(std::size_t k, bool radix8);
+
 // The primitive root (the smallest) of the Rader stage that a prime factor q above the
 // codelets takes instead of a Bluestein stage, or 0 for Bluestein: Rader when q lies in the
 // profile's range and q - 1 is 13-smooth (experiment X27), so that its convolution of q - 1
