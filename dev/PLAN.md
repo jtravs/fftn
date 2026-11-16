@@ -86,16 +86,22 @@ Open, by phase:
 - 1: 1.3's `x86_v2` and `avx` vocabularies and X14; X2 on the Mac above 1024; X4 on x86
   and for edge passes; X12 on x86; X5. The phase 1 exit is not met: x86 trails FFTW.
 - 2: 2.2's acceptance in double c2c on AVX-512 (the chain 1.01–1.26 of FFTW at 8–16
-  points; X24 rejected both planned fixes); 2.4 (cost model, `planning::measure`, wisdom;
-  not started); 2.5 (`next_fast_length` exists internally, not public); X6, X13, P1, P2.
+  points; X24 rejected both planned fixes); 2.4 (`planning::measure` and wisdom built, P1 and P2 in a first pass; the cost model and calibration remain;
+  task/2.4-measure); 2.5 (`next_fast_length` exists internally, not public); X6, X13.
 - 3: T2, T3, T4, T6; 3.5 (Kokkos executor); 3.6 to be checked against its acceptance.
 - 4–7: not started.
 
 In flight (lead session, 2026-11-16): round 2 of the push is merged; the phase 1 exit check is done (above); the tail round:
 X36 (primes outside Rader's range), X37 (short rows and batches of 16), X38 (the EPYC's
-240–2048); task 2.4 (`planning::measure`, wisdom); the extended-CI fix; X35 (Granite Rapids: a cache-geometry key so the
+240–2048); task 2.4's next steps (P1/P2 second passes on the Xeon and EPYC, then the cost model and
+`fbench calibrate`); X35 (Granite Rapids: a cache-geometry key so the
 Zen-like chain rules of X29, X32 and X33 stop applying to it). Done, each merged with its
 pull request:
+- Task 2.4, first milestone (pull request 26): `planning::rules`/`quick`/`measure`, the
+  budgets, `fftn::wisdom` (keyed by a build identifier), candidates from the rules'
+  thresholds; the API agreed by the maintainer; P1 first pass: rules within 5 % of measure
+  on 96.7 % (EPYC), 93.4 % (Mac, second pass), about 85 % (Xeon, re-runs queued); measure
+  never lost. Also the extended-CI fix (pull requests 23, 29).
 - X31b (cloud, USD 1.12; campaign USD 1.87 of 20): X32 holds on Zen 5 (long powers of two
   0.73 of the grid; 65536 1.50 → 0.92 of FFTW). Granite Rapids reports a large shared L3,
   gets the Zen profile and loses: X32's chains 1.06–1.69 of the grid (262144 1.31 → 1.75
@@ -385,7 +391,7 @@ behaves differently from the Cascade Lake Xeon's) and on an AArch64 Linux machin
 | 2.1 | r2c with the post fused into the last pass; c2r through the DIT chain with the pre fused; eligibility by live-value count; experiment X6 (real-input codelets) | real overhead ≤ 20 % of the half-length complex time on all three machines |
 | 2.2 | Lanes strategy for row batches (tile gather and scatter) and strided lines; lane blocks sized by cache; experiment X7 | awkward short rows on AVX-512 at or below FFTW and MKL (built 2026-11-15; X7 after X20: lanes only in float on x86, 0.32–0.55 of the chain at 8–16 points; double c2c on AVX-512 still 1.1–1.3 of FFTW with the chain, not met; strided axes of planes are phase 4's) |
 | 2.3 | Codelets 7, 11, 13 and composites; vectorised generic prime pass; Bluestein pass with smooth-part split | every n ≤ 4096 correct and priced; no FFTW fallback anywhere |
-| 2.4 | Cost model, machine profiles and `fbench calibrate`; `planning::measure` with a generous budget (DESIGN 11.2: real-size timing, seconds per shape if needed, a quick level; never PATIENT-like search); wisdom export and import; experiments P1, P2; brought forward on 2026-11-16 ahead of more threshold rules | the model's first choice is within 5 % of the measured best for ≥ 90 % of catalogue cases |
+| 2.4 | Cost model, machine profiles and `fbench calibrate`; `planning::measure` with a generous budget (DESIGN 11.2: real-size timing, seconds per shape if needed, a quick level; never PATIENT-like search); wisdom export and import; experiments P1, P2; brought forward on 2026-11-16 ahead of more threshold rules (claimed: task/2.4-measure, 2026-11-16: `planning::measure`, wisdom, P1, P2 first pass) | the model's first choice is within 5 % of the measured best for ≥ 90 % of catalogue cases |
 | 2.5 | `next_fast_length` and published per-length cost | documented and tested |
 
 Exit: all 1-D row shapes (c2c, r2c, c2r; 1 to thousands of rows; smooth, prime and
@@ -509,8 +515,8 @@ running, done (with verdict).
 | [X32](experiments/X32-long-pow2.md) | Long powers of two (c2c ≥ 16384, lead (a)): copy-free chains of small radices (FFTL.jl's plan) against the grid, per machine; why power-of-two chains of 1–2 MiB are bimodal on the EPYC | 1 | done: chains of FFTL.jl's radices adopted on Apple (0.57–0.94 of main; ÷ FFTW 1.16 → 0.87) and Zen-like caches (EPYC 0.53–0.85); Xeon keeps the grid (chains 1.06–1.50); bimodality = radix-16 passes on transparent huge pages; scratch placement against 4K aliasing neutral in fbench, rejected |
 | [X34](experiments/X34-xeon-mixed.md) | The Xeon's long rows of mixed length (100000 1.99, 46080 1.29 of FFTW): why, and does a chain rule keyed on L2, wider grid blocks for lengths with a large odd part, or other grid factors close it without a vendor switch? (lead (c)) | 1 | done: chains lose on the Xeon (1.05–1.45); wider blocks superseded; two phases for rows with an odd part ≥ 15 where L3 per CPU is small adopted (Xeon 0.86 over the 14 changed rows, 100000 0.71: 2.03 → 1.44 of FFTW, 0.95 of MKL); the EPYC (two phases 1.13–1.67) and the Mac unchanged |
 | [X37](experiments/X37-short-batches.md) | The exit check's short rows and small batches (causes 2 and 3): fixed cost or kernel, and do pair leaves for 18–30 points (x86 where C does not divide, NEON) and for batches of 8–16 points on x86 close them? | 1 | running |
-| P1 | Cost-model accuracy: rank agreement with measurement across the catalogue per machine | 2 | planned |
-| P2 | Measurement budget: how many candidates and how long before the choice stops improving | 2 | planned |
+| [P1](experiments/P1-rules-vs-measure.md) | How often is the rules' choice within 5 % of `planning::measure`'s per machine (task 2.4's acceptance: 90 % of catalogue cases), which rules miss, and does measurement recover a misfiring profile (Granite Rapids' fields forced on the Xeon)? | 2 | first pass done: rules within 5 % of measure on 96.7 % of the tracking tier on the EPYC, 77 % on the Xeon (about 85 % without noise), Mac inconclusive under load; measure never slower by fbench; Granite Rapids' fields forced on the Xeon recovered in 10 of 11 cases (the miss a budget defect, fixed); planes' radices the repeat miss |
+| [P2](experiments/P2-measure-budget.md) | Measurement budget: how many candidates and how long before the choice stops improving; the quick and full efforts' budgets | 2 | first pass done: Q within 0.999–1.014 of M; no winner above rank 7; plan construction dominates large transforms (2²² 12.5 s for M); choices unstable under load (43–66 % of cases one program over 12 rounds), so budgets wait for a sampling revisit; indicated quick 6, measure 8 |
 | [T1](experiments/T1-dispatch-wait-costs.md) | Dispatch, wake and wait costs per machine and runtime (libgomp, libomp, Kokkos, pool) | 3 | done: hand-off cost and claim runs adopted on Zen 3; dispatch and work costs wait for a per-lane dispatch term |
 | T2 | Claiming engine against precomputed schedule with spin barriers; keep one or both? | 3 | planned |
 | T3 | Kokkos: cost of one `parallel_for` per transform; `team_barrier` behaviour | 3 | planned |

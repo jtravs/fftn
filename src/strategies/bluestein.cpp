@@ -5,6 +5,7 @@
 
 #include "core/twiddles.hpp"
 
+#include <algorithm>
 #include <complex>
 #include <cstddef>
 #include <cstdint>
@@ -19,8 +20,8 @@ namespace {
 void plan_time_dft(const std::complex<double>* x, std::size_t stride, std::size_t n,
                    std::complex<double>* out, const std::vector<std::complex<double>>& w,
                    std::size_t total) {
-  if (n == 1) {
-    out[0] = x[0];
+  if (n < 2) {
+    std::copy_n(x, n, out); // n is 1 here (it divides total); 0 would copy nothing
     return;
   }
   std::size_t p = 2;

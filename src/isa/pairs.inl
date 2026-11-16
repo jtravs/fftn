@@ -19,7 +19,7 @@ inline constexpr edge_op pair_scl = edge_op::scale;
   {{&pair_leaf<T, R1, M, S, pair_nop, pair_nop>, &pair_leaf<T, R1, M, S, pair_nop, pair_scl>},     \
    {&pair_leaf<T, R1, M, S, pair_scl, pair_nop>, nullptr}}
 #define FFTN_PAIR(T, R1, M)                                                                        \
-  {.n = (R1) * (M),                                                                                \
+  {.n = std::size_t{R1} * (M),                                                                     \
    .r1 = R1,                                                                                       \
    .m = M,                                                                                         \
    .leaf = {FFTN_PAIR_EDGES(T, R1, M, -1), FFTN_PAIR_EDGES(T, R1, M, +1)}}

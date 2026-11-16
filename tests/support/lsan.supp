@@ -1,12 +1,22 @@
 # SPDX-FileCopyrightText: 2026 John C. Travers and contributors
 # SPDX-License-Identifier: Apache-2.0
 #
-# LeakSanitizer suppressions for the gate's sanitizer stage (scripts/check.sh).
+# LeakSanitizer suppressions: the OpenMP runtime's own allocations, nothing of FFTN's. The
+# gate's sanitizer stage (scripts/check.sh) sets LSAN_OPTIONS to this file, and so do the
+# tests and benchmark smoke runs that link OpenMP (tests/omp, bench), whose own ENVIRONMENT
+# replaces the gate's LSAN_OPTIONS: they must name this same file.
+#
 # LLVM's libomp keeps its thread descriptors for the life of the process; on the macOS CI
-# runners LSan reports them as direct leaks at exit (allocated in __kmp_allocate_thread
-# and __kmp_allocate_team, reached from the OpenMP executor's parallel region).
-# Matched by function as well as by module: on the macOS runners the module pattern alone
-# did not suppress them (CI run 43691583271).
+# runners LSan reports them as direct leaks at exit (allocated in __kmp_initialize_info,
+# under __kmp_allocate_thread and __kmp_allocate_team, reached from the OpenMP executor's
+# parallel region). Until CI run 43862913465 the OpenMP tests named a file of their own that
+# lacked these lines, so the earlier report that the module pattern alone did not suppress
+# them (CI run 43691583271) proves nothing either way; the function names stay as well.
 leak:libomp
 leak:__kmp_allocate_thread
 leak:__kmp_allocate_team
+# libomp's start-up (__kmp_register_library_startup) at times leaks the string it registers
+# the runtime under, before any FFTN code runs in the process: LeakSanitizer reported 512
+# bytes from it once in about ninety processes under the gate's parallel load (Homebrew
+# LLVM 23), never alone.
+leak:__kmp_register_library_startup

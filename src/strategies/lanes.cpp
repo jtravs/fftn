@@ -218,9 +218,12 @@ std::size_t chain_builder<T>::r2c_lanes(std::size_t n, endpoint src, std::ptrdif
   const pair_leaf_entry* pair =
       how == real_route::separate ? pair_for(h, {src.where, 1}, {dst.where, 1}, line_edges()).entry
                                   : nullptr;
-  const std::vector<std::size_t> rad = pair != nullptr ? std::vector<std::size_t>{pair->r1, pair->m}
-                                       : how == real_route::fused ? real_radices(h, true)
-                                                                  : radices(h);
+  const std::vector<std::size_t> rad = [&]() -> std::vector<std::size_t> {
+    if (pair != nullptr) {
+      return {pair->r1, pair->m};
+    }
+    return how == real_route::fused ? real_radices(h, true) : radices(h);
+  }();
   const std::size_t split =
       how == real_route::separate && pair == nullptr ? split_from(rad, false, 1) : rad.size();
   // The reals of a row read as h complex pairs; the transform ends in a tile.
@@ -272,9 +275,12 @@ std::size_t chain_builder<T>::c2r_lanes(std::size_t n, endpoint src, std::ptrdif
   const pair_leaf_entry* pair = how == real_route::separate
                                     ? pair_for(h, {dst.where, 1}, {dst.where, 1}, edges).entry
                                     : nullptr;
-  const std::vector<std::size_t> rad = pair != nullptr ? std::vector<std::size_t>{pair->r1, pair->m}
-                                       : how == real_route::fused ? real_radices(h, false)
-                                                                  : radices(h);
+  const std::vector<std::size_t> rad = [&]() -> std::vector<std::size_t> {
+    if (pair != nullptr) {
+      return {pair->r1, pair->m};
+    }
+    return how == real_route::fused ? real_radices(h, false) : radices(h);
+  }();
   const std::size_t split =
       rad.size() > 1 && pair == nullptr ? split_from(rad, false, 1) : rad.size();
   // The pairing reads the rows where a run of C of them is one vector load, else a tile.
