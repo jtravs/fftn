@@ -1,6 +1,6 @@
 # X36: large primes and prime factors outside Rader's range
 
-- **Status:** done (Xeon confirmation pending): arms 1, 3, 4 adopted per machine; arm 2 rejected
+- **Status:** done: arms 1, 3, 4 adopted per machine; arm 2 rejected
 - **Owner:** X36 agent, 2026-11-16
 - **Phase / task:** PLAN Status, phase 1 exit check, cause (1)
 
@@ -209,11 +209,13 @@ the x36 run above N ÷ A = 1.003 at 10403, so a one-run effect on a loaded node,
 Mac: the final rules plan as arm 1 there (arms 3 and 4 do not apply to NEON), so run
 20261116-181720-c68e is the confirmation (above).
 
-Xeon: runs x36-final-xeon (Slurm 16143: A, N, I, F, MKL on x36) and x36-trk-xeon (16145:
-the tracking tier) were queued behind seven other timing jobs at the time of writing and
-are not in this file; the final Xeon rules differ from the measured arms in the long-row
-threshold (beyond 4 MiB, measured), the few-copy condition (measured cases) and arm 4
-(not measured on the Xeon).
+Xeon, run 20261116-221709-0a82 (Slurm 16143, band ±3.82 %, 19 of 20 rounds loaded): no
+case slower than A or than I; changed cases N ÷ A double 0.836 (1018 0.666, 262139 0.963,
+524287 0.912), float 0.611 (1018 0.352, 12279 0.696, 524287 0.792, 999983 0.718). Arm 4
+(N ÷ I) 0.81–1.0, none slower beyond the band (509 f32 0.80, 8179 0.92, 131071 0.94), so it
+stays on `avx512`. FFTN ÷ FFTW: 1018 0.65 (÷ MKL 1.37 → 0.90), 4093 0.68, 131071 1.28,
+999983 1.10, 32749 1.28, 262139 1.07; ÷ MKL 131071 1.31, 999983 1.37. The Xeon's tracking
+tier run (x36-trk-xeon, Slurm 16145) was still queued at the time of writing.
 
 ## Verdict
 
@@ -231,16 +233,15 @@ threshold (beyond 4 MiB, measured), the few-copy condition (measured cases) and 
 - **Arm 3 adopted** on the targets where it applies (C > 2: AVX2 float, AVX-512), with
   the condition that the whole line's convolution is no longer than the copies' (12279
   in AVX-512 double lost 1.17 without it): 1018 0.68 (Xeon double), 0.40–0.61 (float).
-- **Arm 4 adopted** on x86 (EPYC: single-copy convolutions 0.56–0.92, none slower beyond
-  the band); the Xeon's run is pending (above).
+- **Arm 4 adopted** on x86 (EPYC: single-copy convolutions 0.56–0.92, Xeon 0.81–1.0, none
+  slower beyond the band).
 - The planned Rader-range arm was not run: the bad EPYC 65537 was the convolution's radices
   (arm 1 fixes it), and 65537 beats FFTW on the Mac with Bluestein (0.91).
 - Exit check, cause (1), FFTN ÷ FFTW after: Mac 131071 0.88, 999983 0.75, 4093 0.90, 1018
   0.86 (all were failing or near; 1018 already passed); EPYC 131071 0.87, 999983 0.86, 4093
   0.94, 65537 0.80, 1018 still 1.51 (two interleaved copies of Bluestein 509 cost 1.6 times
-  two single stages there: FFTW loops the stage per copy); Xeon pending (from the A/B run:
-  1018 ÷ MKL 1.37 → 0.93 with arm 3; 131071 and 999983 in double change only by arm 4,
-  unmeasured there, from 1.33 and 1.21 of FFTW, so they probably stay failing).
+  two single stages there: FFTW loops the stage per copy); Xeon 1018 ÷ MKL 0.90 (was 1.37),
+  4093 0.68, but 131071 1.28 and 999983 1.10 of FFTW still fail there.
 - Follow-ups: the Xeon's long Bluestein convolutions (a chain where the Xeon wants a grid:
   131071, 999983 1.2–1.3 of FFTW); a Bluestein stage with copies looping one copy at a
   time (EPYC 1018); the scratch lines' power-of-two distance itself (pad line b) instead
