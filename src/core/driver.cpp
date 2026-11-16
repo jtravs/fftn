@@ -8,7 +8,6 @@
 
 #include <array>
 #include <cstddef>
-#include <memory>
 #include <variant>
 
 namespace fftn::inline v0::detail {
@@ -103,10 +102,8 @@ slot_addresses moved_in_nest(const program& p, std::size_t begin, std::size_t de
 // A stage of a lanes block (program.hpp): whole, with the block's rows.
 void run_lane_stage(const stage& st, const slot_addresses& at, std::size_t rows) noexcept {
   pass_args args = st.args;
-  args.src = source_of(st.src, at);
-  args.dst = destination_of(st.dst, at);
   args.rows = rows;
-  st.run(&args, 0, st.units);
+  st.run(&args, source_of(st.src, at), destination_of(st.dst, at), 0, st.units);
 }
 
 // Transforms [first, first + count) of a lanes program: within each run of the innermost
@@ -147,52 +144,38 @@ void run_lane_blocks(const program& p, std::size_t first, std::size_t count,
   }
 }
 
-// One stage's arguments on run_flat's stack, left uninitialised until copied from the stage:
-// default-initialising flat_stages_max of them would cost more than a tiny transform.
-union stage_args {
-  pass_args args;
-  stage_args() noexcept {} // NOLINT(modernize-use-equals-default): must not initialise args
-};
-
 // Runs leaf stage s, its one line, on the slots at.
 void run_leaf(const stage& s, const slot_addresses& at) noexcept {
   s.leaf(&s.args, source_of(s.src, at), destination_of(s.dst, at), 0, 0, 1);
 }
 
 // Runs stage s on the slots at: run_stage_chunks over every chunk, without its chunk ends.
-// a is a copy of s.args, used only by a pass_fn.
-void run_whole(const stage& s, pass_args& a, const slot_addresses& at) noexcept {
+void run_whole(const stage& s, const slot_addresses& at) noexcept {
   if (s.leaf != nullptr) {
     run_leaf(s, at);
     return;
   }
-  a.src = source_of(s.src, at);
-  a.dst = destination_of(s.dst, at);
   if (s.units != 0) {
-    s.run(&a, 0, s.units);
+    s.run(&s.args, source_of(s.src, at), destination_of(s.dst, at), 0, s.units);
   }
 }
 
 // Transforms [first, first + count) of a flat program (program.hpp). run_records walks the
-// records, copies each stage's pass_args (144 bytes) and finds its chunk ends for every
-// transform: about 3.5 ns per transform on the M5 Max, more than an 8-point leaf's own time
-// (dev/experiments/X20-call-overhead.md). Here a batch of leaves is one call on the plan's
-// own arguments; one transform copies each stage's arguments once; a batch (this function)
-// copies them once for all its transforms and moves the slots by the batch loop's step.
-// Every kernel gets the arguments and units run_records gives it (the whole stage: chunk
-// ends 0 and units), so the bits are the same. One transform takes run_flat_one and rows of
-// leaves run_leaf_rows, both kept out of this function: its array of copies, frame and
-// saved registers cost about 6 ns at one transform on the M5 Max and 2-3 ns of a leaf row on
-// the Xeon (X20).
+// records and finds each stage's chunk ends for every transform: about 3.5 ns per transform
+// on the M5 Max, more than an 8-point leaf's own time (dev/experiments/X20-call-overhead.md).
+// Here a batch of leaves is one call; a batch (this function) moves the slots by the batch
+// loop's step and calls every kernel on the plan's own arguments. Every kernel gets the
+// arguments and units run_records gives it (the whole stage: chunk ends 0 and units), so
+// the bits are the same. One transform takes run_flat_one and rows of leaves
+// run_leaf_rows, both kept out of this function: its frame and saved registers cost about
+// 6 ns at one transform on the M5 Max and 2-3 ns of a leaf row on the Xeon (X20).
 [[gnu::noinline]] void run_flat(const program& p, std::size_t first, std::size_t count,
                                 const slot_addresses& base) noexcept {
   const std::size_t stages = p.records.size() - p.batch_loops;
   const loop* only = p.batch_loops == 1 ? std::get_if<loop>(p.records.data()) : nullptr;
   std::array<const stage*, flat_stages_max> st{};
-  std::array<stage_args, flat_stages_max> args;
   for (std::size_t k = 0; k < stages; ++k) {
     st[k] = std::get_if<stage>(&p.records[p.batch_loops + k]);
-    std::construct_at(&args[k].args, st[k]->args);
   }
   // One batch loop (rows): move by its step; several: from the transform's index.
   slot_addresses at = transform_addresses(p, first, base);
@@ -201,42 +184,37 @@ void run_whole(const stage& s, pass_args& a, const slot_addresses& at) noexcept 
       at = only != nullptr ? moved(at, only->step, 1) : transform_addresses(p, t, base);
     }
     for (std::size_t k = 0; k < stages; ++k) {
-      run_whole(*st[k], args[k].args, at);
+      run_whole(*st[k], at);
     }
   }
 }
 
-// Transform t of a flat program: each stage on one plain copy of its arguments (a leaf on
-// none).
-void run_flat_one(const program& p, std::size_t t, const slot_addresses& base) noexcept {
-  const slot_addresses at = transform_addresses(p, t, base);
-  for (std::size_t i = p.batch_loops; i < p.records.size(); ++i) {
-    const stage& s = *std::get_if<stage>(&p.records[i]);
+// One transform of a flat program on its slots: each stage of the program's flat_body on
+// its own arguments. The slots come as scalars and are chosen by index, not through a
+// slot_addresses (X28).
+void run_flat_one(const program& p, const std::byte* in, std::byte* out, std::byte* a, std::byte* b,
+                  std::byte* block) noexcept {
+  // Indexed by slot (program.hpp); the input is never a destination.
+  const std::array<const void*, 5> sources = {in, out, a, b, block};
+  const std::array<void*, 5> destinations = {out, out, a, b, block};
+  for (const flat_stage& s : p.flat_body) {
+    const void* src = sources[static_cast<std::size_t>(s.src)];
+    void* dst = destinations[static_cast<std::size_t>(s.dst)];
     if (s.leaf != nullptr) {
-      run_leaf(s, at);
+      s.leaf(&s.args, src, dst, 0, 0, 1);
       continue;
     }
-    pass_args a = s.args;
-    run_whole(s, a, at);
+    if (s.units != 0) {
+      s.run(&s.args, src, dst, 0, s.units);
+    }
   }
 }
 
 } // namespace
 
-void run_leaf_rows(const program& p, std::size_t first, std::size_t count, const void* in,
-                   void* out) noexcept {
-  const loop& l = *std::get_if<loop>(p.records.data());
-  const stage& s = *std::get_if<stage>(&p.records[1]);
-  // As in moved(), no offset is applied to a null pointer. Only in and out move with the
-  // batch; the destination is never the input.
-  const auto k = static_cast<std::ptrdiff_t>(first);
-  const auto* src = static_cast<const std::byte*>(in);
-  auto* dst = static_cast<std::byte*>(out);
-  src = l.step[0] != 0 ? src + l.step[0] * k : src;
-  dst = l.step[1] != 0 ? dst + l.step[1] * k : dst;
-  const bool from_in = s.src == slot::in;
-  s.leaf(&s.args, from_in ? static_cast<const void*>(src) : dst, dst,
-         from_in ? l.step[0] : l.step[1], l.step[1], count);
+void run_flat_first(const program& p, const void* in, void* out, std::byte* a, std::byte* b,
+                    std::byte* block) noexcept {
+  run_flat_one(p, static_cast<const std::byte*>(in), static_cast<std::byte*>(out), a, b, block);
 }
 
 void mark_flat(program& p) noexcept {
@@ -253,10 +231,31 @@ void mark_flat(program& p) noexcept {
     const stage* st = std::get_if<stage>(&p.records[i]);
     p.flat = p.flat && st != nullptr && !st->moving_twiddles;
   }
+  p.flat_body.clear();
+  if (p.flat) {
+    for (std::size_t i = p.batch_loops; i < p.records.size(); ++i) {
+      const stage& st = *std::get_if<stage>(&p.records[i]);
+      p.flat_body.push_back({.run = st.run,
+                             .leaf = st.leaf,
+                             .units = st.units,
+                             .src = st.src,
+                             .dst = st.dst,
+                             .args = st.args});
+    }
+  }
   const auto moves = [](slot x) { return x == slot::in || x == slot::out; };
   const stage* only =
       p.flat && stages == 1 && p.batch_loops == 1 ? std::get_if<stage>(&p.records[1]) : nullptr;
   p.leaf_rows = only != nullptr && only->leaf != nullptr && moves(only->src) && moves(only->dst);
+  if (p.leaf_rows) {
+    // Only in and out move with the batch; the destination is never the input.
+    const loop& l = *std::get_if<loop>(p.records.data());
+    p.rows_from_in = only->src == slot::in;
+    p.rows_leaf = only->leaf;
+    p.rows_src_step = p.rows_from_in ? l.step[0] : l.step[1];
+    p.rows_dst_step = l.step[1];
+    p.rows_args = only->args;
+  }
 }
 
 void run_stage_chunks(const stage& st, const slot_addresses& at, std::size_t first,
@@ -268,12 +267,6 @@ void run_stage_chunks(const stage& st, const slot_addresses& at, std::size_t fir
     }
     return;
   }
-  pass_args args = st.args;
-  args.src = source_of(st.src, at);
-  args.dst = destination_of(st.dst, at);
-  if (st.moving_twiddles) {
-    args.twiddles = static_cast<const std::byte*>(args.twiddles) + at.tw;
-  }
   // Chunks [first, last) are adjacent ranges of units, and a unit's result does not depend
   // on the range it is run in, so one call over their union gives the same bits as one call
   // per chunk. The ends are found without dividing in the common case of the whole stage:
@@ -281,9 +274,18 @@ void run_stage_chunks(const stage& st, const slot_addresses& at, std::size_t fir
   // of a 64-point transform there (dev/experiments/X18-x86-kernels.md).
   const std::size_t begin = first == 0 ? 0 : chunk_start(st.units, st.chunks, first);
   const std::size_t end = last == st.chunks ? st.units : chunk_start(st.units, st.chunks, last);
-  if (begin < end) {
-    st.run(&args, begin, end);
+  if (begin >= end) {
+    return;
   }
+  const void* src = source_of(st.src, at);
+  void* dst = destination_of(st.dst, at);
+  if (st.moving_twiddles) {
+    pass_args args = st.args;
+    args.twiddles = static_cast<const std::byte*>(args.twiddles) + at.tw;
+    st.run(&args, src, dst, begin, end);
+    return;
+  }
+  st.run(&st.args, src, dst, begin, end);
 }
 
 slot_addresses transform_addresses(const program& p, std::size_t t,
@@ -306,7 +308,8 @@ void run_transforms(const program& p, std::size_t first, std::size_t count,
   }
   if (p.flat) {
     if (count == 1) {
-      run_flat_one(p, first, base);
+      const slot_addresses at = transform_addresses(p, first, base);
+      run_flat_one(p, at.in, at.out, at.a, at.b, at.block);
     } else {
       run_flat(p, first, count, base);
     }

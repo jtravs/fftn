@@ -30,9 +30,10 @@ inline constexpr std::size_t rows_ahead = 8;
 // prefetch distance is a compile-time constant: a run-time one cost the Mac's float rows of
 // 100000 points 10 % (X26b, run 20261115-234843-b9c4).
 template <class T, edge_op OutOp, bool Ahead>
-FFTN_FORCE_INLINE void copy_rows(const pass_args* a, std::size_t first, std::size_t last) {
-  const T* x = static_cast<const T*>(a->src);
-  T* y = static_cast<T*>(a->dst);
+FFTN_FORCE_INLINE void copy_rows(const pass_args* a, const void* src, void* dst, std::size_t first,
+                                 std::size_t last) {
+  const T* x = static_cast<const T*>(src);
+  T* y = static_cast<T*>(dst);
   const std::ptrdiff_t xs = 2 * a->src_stride;
   const std::ptrdiff_t ys = 2 * a->dst_stride;
   const std::size_t cols = a->s;
@@ -64,11 +65,12 @@ FFTN_FORCE_INLINE void copy_rows(const pass_args* a, std::size_t first, std::siz
 // grid_copy_prefetch: not on Zen, experiments X26 and X26b). Reads src, dst, src_stride,
 // dst_stride, s, scale, ahead.
 template <class T, edge_op OutOp>
-void block_copy(const pass_args* a, std::size_t first, std::size_t last) {
+void block_copy(const pass_args* a, const void* src, void* dst, std::size_t first,
+                std::size_t last) {
   if (a->ahead != 0) {
-    copy_rows<T, OutOp, true>(a, first, last);
+    copy_rows<T, OutOp, true>(a, src, dst, first, last);
   } else {
-    copy_rows<T, OutOp, false>(a, first, last);
+    copy_rows<T, OutOp, false>(a, src, dst, first, last);
   }
 }
 
@@ -87,9 +89,10 @@ void block_copy(const pass_args* a, std::size_t first, std::size_t last) {
 // of one row of y. m, s and dst_stride are multiples of C. Reads src, dst, m, s, dst_stride,
 // roots, twiddles.
 template <class T, int Sign>
-void twiddle_transpose(const pass_args* a, std::size_t first, std::size_t last) {
-  const T* z = static_cast<const T*>(a->src);
-  T* y = static_cast<T*>(a->dst);
+void twiddle_transpose(const pass_args* a, const void* src, void* dst, std::size_t first,
+                       std::size_t last) {
+  const T* z = static_cast<const T*>(src);
+  T* y = static_cast<T*>(dst);
   const T* local = static_cast<const T*>(a->roots);
   const T* rows = static_cast<const T*>(a->twiddles);
   const std::size_t m = a->m;
@@ -126,9 +129,10 @@ void twiddle_transpose(const pass_args* a, std::size_t first, std::size_t last) 
 // The rows [first, last) of twiddle_scatter, prefetching the destination rows_ahead rows
 // on (Ahead) or not.
 template <class T, int Sign, bool Ahead>
-FFTN_FORCE_INLINE void twiddle_rows(const pass_args* a, std::size_t first, std::size_t last) {
-  const T* x = static_cast<const T*>(a->src);
-  T* y = static_cast<T*>(a->dst);
+FFTN_FORCE_INLINE void twiddle_rows(const pass_args* a, const void* src, void* dst,
+                                    std::size_t first, std::size_t last) {
+  const T* x = static_cast<const T*>(src);
+  T* y = static_cast<T*>(dst);
   const T* w = static_cast<const T*>(a->twiddles);
   const std::ptrdiff_t xs = 2 * a->src_stride;
   const std::ptrdiff_t ys = 2 * a->dst_stride;
@@ -156,11 +160,12 @@ FFTN_FORCE_INLINE void twiddle_rows(const pass_args* a, std::size_t first, std::
 // With `ahead` not 0 it prefetches the destination rows_ahead rows on. Reads src, dst,
 // src_stride, dst_stride, s, twiddles, ahead.
 template <class T, int Sign>
-void twiddle_scatter(const pass_args* a, std::size_t first, std::size_t last) {
+void twiddle_scatter(const pass_args* a, const void* src, void* dst, std::size_t first,
+                     std::size_t last) {
   if (a->ahead != 0) {
-    twiddle_rows<T, Sign, true>(a, first, last);
+    twiddle_rows<T, Sign, true>(a, src, dst, first, last);
   } else {
-    twiddle_rows<T, Sign, false>(a, first, last);
+    twiddle_rows<T, Sign, false>(a, src, dst, first, last);
   }
 }
 
@@ -193,9 +198,10 @@ template <class T, int Sign> struct row_twiddled_out {
 // advanced per column by the stage, stage::moving_twiddles). Reads src, dst, m, s, the
 // strides and columns, twiddles, scale.
 template <class T, std::size_t R, int Sign, bool Twiddled, edge_op InOp, int Out>
-void phase_pass(const pass_args* a, std::size_t first, std::size_t last) {
-  const T* x = static_cast<const T*>(a->src);
-  T* y = static_cast<T*>(a->dst);
+void phase_pass(const pass_args* a, const void* src, void* dst, std::size_t first,
+                std::size_t last) {
+  const T* x = static_cast<const T*>(src);
+  T* y = static_cast<T*>(dst);
   const std::size_t m = a->m;
   const std::size_t s = a->s;
   const std::size_t blocks = s / C<T>;

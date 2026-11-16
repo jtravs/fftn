@@ -169,9 +169,9 @@ FFTN_FORCE_INLINE void pairing_unit(const T* x, T* y, std::size_t h, std::size_t
 // a multiple of C, per-lane storage. src may be dst (a unit reads and writes the same
 // bins). Units 1 + ceil(K / C). Reads src, dst, n, twiddles, scale.
 template <class T, bool Scaled>
-void r2c_post(const pass_args* a, std::size_t first, std::size_t last) {
-  const T* z = static_cast<const T*>(a->src);
-  T* y = static_cast<T*>(a->dst);
+void r2c_post(const pass_args* a, const void* src, void* dst, std::size_t first, std::size_t last) {
+  const T* z = static_cast<const T*>(src);
+  T* y = static_cast<T*>(dst);
   const std::size_t h = a->n / 2;
   const std::size_t pairs = (h - 1) / 2;
   const T* table = static_cast<const T*>(a->twiddles);
@@ -201,9 +201,9 @@ void r2c_post(const pass_args* a, std::size_t first, std::size_t last) {
 // twiddles: as r2c_post's. src may be dst. The scale (Scaled) is for h = 1, where no
 // transform follows. Reads src, dst, n, twiddles, scale.
 template <class T, bool Scaled>
-void c2r_pre(const pass_args* a, std::size_t first, std::size_t last) {
-  const T* x = static_cast<const T*>(a->src);
-  T* z = static_cast<T*>(a->dst);
+void c2r_pre(const pass_args* a, const void* src, void* dst, std::size_t first, std::size_t last) {
+  const T* x = static_cast<const T*>(src);
+  T* z = static_cast<T*>(dst);
   const std::size_t h = a->n / 2;
   const std::size_t pairs = (h - 1) / 2;
   const T* table = static_cast<const T*>(a->twiddles);
@@ -281,9 +281,9 @@ FFTN_FORCE_INLINE void r2c_copies(const T* x, T* y, std::size_t h, std::size_t s
 // R. src: scratch, stride 1; dst: the h + 1 bins, stride 1. Units 1 + ceil(qm / C). Reads
 // src, dst, s, twiddles, roots, scale.
 template <class T, std::size_t R, bool Scaled>
-void r2c_last(const pass_args* a, std::size_t first, std::size_t last) {
-  const T* x = static_cast<const T*>(a->src);
-  T* y = static_cast<T*>(a->dst);
+void r2c_last(const pass_args* a, const void* src, void* dst, std::size_t first, std::size_t last) {
+  const T* x = static_cast<const T*>(src);
+  T* y = static_cast<T*>(dst);
   const std::size_t s = a->s;
   const std::size_t h = R * s;
   const std::size_t qm = (s - 1) / 2;
@@ -389,7 +389,7 @@ FFTN_FORCE_INLINE void c2r_groups(const T* x, T* y, std::size_t h, std::size_t m
   cdft<R>::template dif<T, +1>(from_registers<T>{vb}, to_registers<T>{vb},
                                lane_twiddles<T>{.p = tw_down, .row = row});
   if constexpr (Full && R % C<T> == 0) {
-    store_transposed<T, R>(y + at(R * p0, 2), va);
+    store_transposed<T, R>(y + at(R * p0, 2), va, C<T>);
   } else {
     store_tiled<T, R>(y + at(R * p0, 2), va, valid);
   }
@@ -409,9 +409,10 @@ FFTN_FORCE_INLINE void c2r_groups(const T* x, T* y, std::size_t h, std::size_t m
 // w_h^((m/2) k) for k = 1 .. R - 1. src: the h + 1 bins, stride 1; dst: scratch. Units
 // 1 + ceil(pm / C). Reads src, dst, m, twiddles, roots.
 template <class T, std::size_t R>
-void c2r_first(const pass_args* a, std::size_t first, std::size_t last) {
-  const T* x = static_cast<const T*>(a->src);
-  T* y = static_cast<T*>(a->dst);
+void c2r_first(const pass_args* a, const void* src, void* dst, std::size_t first,
+               std::size_t last) {
+  const T* x = static_cast<const T*>(src);
+  T* y = static_cast<T*>(dst);
   const std::size_t m = a->m;
   const std::size_t h = R * m;
   const std::size_t pm = (m - 1) / 2;
@@ -473,9 +474,9 @@ void c2r_first(const pass_args* a, std::size_t first, std::size_t last) {
 // One unit. twiddles: w^(k + n/4) for k = 0 .. R/2, broadcast storage. Every load
 // precedes every store, so src may be dst. Reads src, dst, twiddles, scale.
 template <class T, std::size_t R, bool Scaled>
-void r2c_leaf(const pass_args* a, std::size_t first, std::size_t last) {
-  const T* x = static_cast<const T*>(a->src);
-  T* y = static_cast<T*>(a->dst);
+void r2c_leaf(const pass_args* a, const void* src, void* dst, std::size_t first, std::size_t last) {
+  const T* x = static_cast<const T*>(src);
+  T* y = static_cast<T*>(dst);
   const T* table = static_cast<const T*>(a->twiddles);
   const auto sc = static_cast<T>(a->scale);
   const T half = half_of<T, Scaled>(a);
@@ -503,11 +504,11 @@ void r2c_leaf(const pass_args* a, std::size_t first, std::size_t last) {
 // the reals in pairs with the output edge's operation. One unit. twiddles: w^(j + n/4) for
 // j = 0 .. R/2, broadcast storage. src may be dst. Reads src, dst, twiddles, scale.
 template <class T, std::size_t R, edge_op OutOp>
-void c2r_leaf(const pass_args* a, std::size_t first, std::size_t last) {
-  const T* x = static_cast<const T*>(a->src);
+void c2r_leaf(const pass_args* a, const void* src, void* dst, std::size_t first, std::size_t last) {
+  const T* x = static_cast<const T*>(src);
   const T* table = static_cast<const T*>(a->twiddles);
   const one_out<T, OutOp> out{
-      .p = static_cast<T*>(a->dst),
+      .p = static_cast<T*>(dst),
       .leg = 2,
       .op = make_edge<T, OutOp>(a, nullptr, 0, 1),
   };
@@ -530,9 +531,11 @@ void c2r_leaf(const pass_args* a, std::size_t first, std::size_t last) {
 // element at a time (bcast on loading, lane 0 stored), at any stride.
 
 // z_j = (x[2j], x[2j+1]) for unit j < h. src is the real line, dst complex scratch.
-template <class T> void r2c_pack_pairs(const pass_args* a, std::size_t first, std::size_t last) {
-  const T* x = static_cast<const T*>(a->src);
-  T* z = static_cast<T*>(a->dst);
+template <class T>
+void r2c_pack_pairs(const pass_args* a, const void* src, void* dst, std::size_t first,
+                    std::size_t last) {
+  const T* x = static_cast<const T*>(src);
+  T* z = static_cast<T*>(dst);
   const std::ptrdiff_t xs = a->src_stride;
   const std::ptrdiff_t zs = 2 * a->dst_stride;
   for (std::size_t j = first; j < last; ++j) {
@@ -550,9 +553,10 @@ template <class T> void r2c_pack_pairs(const pass_args* a, std::size_t first, st
 // twiddles: w^k for k = 0 .. h/2, broadcast storage. Reads src, n, twiddles, scale. Units
 // h/2 + 1.
 template <class T, bool Scaled>
-void r2c_post_strided(const pass_args* a, std::size_t first, std::size_t last) {
-  const T* z = static_cast<const T*>(a->src);
-  T* y = static_cast<T*>(a->dst);
+void r2c_post_strided(const pass_args* a, const void* src, void* dst, std::size_t first,
+                      std::size_t last) {
+  const T* z = static_cast<const T*>(src);
+  T* y = static_cast<T*>(dst);
   const std::ptrdiff_t zs = 2 * a->src_stride;
   const std::ptrdiff_t ys = 2 * a->dst_stride;
   const std::size_t h = a->n / 2;
@@ -590,9 +594,11 @@ void r2c_post_strided(const pass_args* a, std::size_t first, std::size_t last) {
 // The imaginary parts of X_0 and X_h are ignored. twiddles: the forward w^k = exp(-2 pi i
 // k / n) for k = 0 .. h/2, broadcast storage, used conjugated. Reads src, n, twiddles.
 // Units h/2 + 1.
-template <class T> void c2r_pre_strided(const pass_args* a, std::size_t first, std::size_t last) {
-  const T* x = static_cast<const T*>(a->src);
-  T* z = static_cast<T*>(a->dst);
+template <class T>
+void c2r_pre_strided(const pass_args* a, const void* src, void* dst, std::size_t first,
+                     std::size_t last) {
+  const T* x = static_cast<const T*>(src);
+  T* z = static_cast<T*>(dst);
   const std::ptrdiff_t xs = 2 * a->src_stride;
   const std::ptrdiff_t zs = 2 * a->dst_stride;
   const std::size_t h = a->n / 2;
@@ -619,9 +625,10 @@ template <class T> void c2r_pre_strided(const pass_args* a, std::size_t first, s
 // x[2j] = Re z_j, x[2j+1] = Im z_j, unit j < h. src complex scratch, dst the real line.
 // Reads src, scale.
 template <class T, bool Scaled>
-void c2r_unpack_pairs(const pass_args* a, std::size_t first, std::size_t last) {
-  const T* z = static_cast<const T*>(a->src);
-  T* x = static_cast<T*>(a->dst);
+void c2r_unpack_pairs(const pass_args* a, const void* src, void* dst, std::size_t first,
+                      std::size_t last) {
+  const T* z = static_cast<const T*>(src);
+  T* x = static_cast<T*>(dst);
   const std::ptrdiff_t zs = 2 * a->src_stride;
   const std::ptrdiff_t xs = a->dst_stride;
   const auto s = static_cast<T>(a->scale);
@@ -634,9 +641,10 @@ void c2r_unpack_pairs(const pass_args* a, std::size_t first, std::size_t last) {
 // ---- Odd n: the full complex transform of (x_j, 0).
 
 // z_j = (x[j], 0), unit j < n.
-template <class T> void r2c_pack(const pass_args* a, std::size_t first, std::size_t last) {
-  const T* x = static_cast<const T*>(a->src);
-  T* z = static_cast<T*>(a->dst);
+template <class T>
+void r2c_pack(const pass_args* a, const void* src, void* dst, std::size_t first, std::size_t last) {
+  const T* x = static_cast<const T*>(src);
+  T* z = static_cast<T*>(dst);
   const std::ptrdiff_t xs = a->src_stride;
   const std::ptrdiff_t zs = 2 * a->dst_stride;
   for (std::size_t j = first; j < last; ++j) {
@@ -648,9 +656,10 @@ template <class T> void r2c_pack(const pass_args* a, std::size_t first, std::siz
 // X_k = Z_k for unit k <= n/2; the imaginary part of X_0 is exactly 0 (a sum of reals).
 // Reads src, scale.
 template <class T, bool Scaled>
-void r2c_store(const pass_args* a, std::size_t first, std::size_t last) {
-  const T* z = static_cast<const T*>(a->src);
-  T* y = static_cast<T*>(a->dst);
+void r2c_store(const pass_args* a, const void* src, void* dst, std::size_t first,
+               std::size_t last) {
+  const T* z = static_cast<const T*>(src);
+  T* y = static_cast<T*>(dst);
   const std::ptrdiff_t zs = 2 * a->src_stride;
   const std::ptrdiff_t ys = 2 * a->dst_stride;
   const auto s = static_cast<T>(a->scale);
@@ -664,9 +673,11 @@ void r2c_store(const pass_args* a, std::size_t first, std::size_t last) {
 
 // Unit 0: Z_0 = Re X_0 (its imaginary part is ignored). Unit k in 1 .. (n-1)/2: Z_k = X_k
 // and Z_n-k = conj X_k. Reads src, n. Units n/2 + 1.
-template <class T> void c2r_expand(const pass_args* a, std::size_t first, std::size_t last) {
-  const T* x = static_cast<const T*>(a->src);
-  T* z = static_cast<T*>(a->dst);
+template <class T>
+void c2r_expand(const pass_args* a, const void* src, void* dst, std::size_t first,
+                std::size_t last) {
+  const T* x = static_cast<const T*>(src);
+  T* z = static_cast<T*>(dst);
   const std::ptrdiff_t xs = 2 * a->src_stride;
   const std::ptrdiff_t zs = 2 * a->dst_stride;
   const std::size_t n = a->n;
@@ -687,9 +698,10 @@ template <class T> void c2r_expand(const pass_args* a, std::size_t first, std::s
 
 // x[j] = Re z_j, unit j < n. Reads src, scale.
 template <class T, bool Scaled>
-void c2r_store(const pass_args* a, std::size_t first, std::size_t last) {
-  const T* z = static_cast<const T*>(a->src);
-  T* x = static_cast<T*>(a->dst);
+void c2r_store(const pass_args* a, const void* src, void* dst, std::size_t first,
+               std::size_t last) {
+  const T* z = static_cast<const T*>(src);
+  T* x = static_cast<T*>(dst);
   const std::ptrdiff_t zs = 2 * a->src_stride;
   const std::ptrdiff_t xs = a->dst_stride;
   const auto s = static_cast<T>(a->scale);

@@ -139,6 +139,11 @@ FFTN's 8-point transform in 512-bit code spent its cycles at AVX licence 1, whil
 128-bit SSE2 codelet stayed at licence 0: 1.62 times the cycles became 1.84 times the
 time. FFTW chooses 128-bit codelets for single rows of 8 and 16 points on both the Xeon
 and Zen 3. [X25](experiments/X25-x86-diagnosis.md).
+A transform that broadcasts one line into every lane gains nothing from width: FFTN's
+leaves compiled at 128 bits with the same operations (bit-identical) ran at licence 0 and
+took the Xeon's 8- and 16-point rows from 65 to 47 and 110 to 85 cycles per call, and
+were also faster on Zen 3, where width costs no clock (44 → 35 cycles at 8 points, with
+the lighter entry). [X28](experiments/X28-short-rows.md).
 
 2.4 **Integer division is expensive enough to matter in bookkeeping.** A 64-bit `div` costs
 40–90 cycles on Cascade Lake; four per chunk in the driver were about 37 % of a 64-point
@@ -321,6 +326,14 @@ loop over rows can make the compiler keep every leg address as its own induction
 the loop, 7–11 % slower for one row). Measure the levels separately (entry, interpretation,
 kernel through its pointer, kernel in a loop): the harness of
 [X20](experiments/X20-call-overhead.md) does this in a page of code.
+A fresh copy of an argument struct made just before each call costs more than the copying
+on x86: copying FFTN's 176-byte pass arguments per stage cost 3.7–6 ns per stage on Zen 3
+(GCC 16) and about 3.5 on Cascade Lake, against 1.5–2.7 on the M5 Max; made before the
+first kernel instead, half of it went, so much of it is the kernel's loads waiting on the
+copy's stores. Passing the per-call pointers as arguments and the fixed fields by pointer
+to the plan's own memory removed it: a 24-point row 47 → 31 ns on the EPYC, 60 points
+97 → 80, and on the Mac 0.69–0.88 of the time for 24–120-point rows.
+[X28](experiments/X28-short-rows.md).
 
 4.8 **Batches of short rows: vectorise across rows only where the per-row code idles
 lanes, and measure against the best row-by-row code.** Putting one row in each lane, with the
@@ -357,9 +370,16 @@ compiler kept the array in memory for every unit (Clang: 1.16–1.46 of the old 
 count the compiler could not see was constant stopped a store loop from unrolling (Clang,
 double 75 points: 1.6). Running whole units in the loop and the partial one after it, with
 the count a constant inside the loop, removed all three. It did not remove a Clang-only
-loss on odd double lengths (AVX2 75 points still 1.42), so the change was rejected: a
-code-generation change must be measured with every compiler a user may build with, since
-two compilers can disagree by 40 % on the same source. [X23](experiments/X23-masked-tails.md).
+loss on odd double lengths (AVX2 75 points still 1.42): a code-generation change must be
+measured with every compiler a user may build with, since two compilers can disagree by
+40 % on the same source. Rejecting it for that would have thrown away GCC's gain, so it
+was kept behind a build option that is on for GCC, the release compiler, and off for Clang;
+with it off the objects are byte for byte the old ones, which settles that the switch
+costs nothing. On a later main the same source still gained (GCC float 0.53 of the old
+time on AVX-512, 0.72 on Zen 3) but two cases with no partial unit at all came out 3–5 %
+slower (float 256, Xeon; double 72, EPYC, which had been 0.93 with the same source on the older
+main): code around a hot loop moves its speed, so such losses need re-measuring after
+unrelated changes. [X23](experiments/X23-masked-tails.md).
 
 ## 5. Threading
 

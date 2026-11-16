@@ -15,12 +15,10 @@
 
 namespace fftn::inline v0::detail {
 
-// One pass over one line, as the driver resolves it at execution: the stage's fixed
-// geometry plus the addresses of its source and destination. Each kernel documents which
-// fields it reads (src/passes/*.inl).
+// One pass over one line: the stage's fixed geometry, set when the plan is built. The
+// addresses of its source and destination are the kernel's arguments (pass_fn). Each kernel
+// documents which fields it reads (src/passes/*.inl).
 struct pass_args {
-  const void* src = nullptr;
-  void* dst = nullptr;
   // In elements of each side's type (real or complex); any sign. Scratch has stride 1.
   std::ptrdiff_t src_stride = 1;
   std::ptrdiff_t dst_stride = 1;
@@ -63,16 +61,19 @@ struct pass_args {
   std::size_t ahead = 0;
 };
 
-// Runs units [first, last) of a pass. A unit is the kernel's own (a block of butterflies,
-// a line, an element); units are independent within a pass, so any split of [0, units)
-// into ranges gives the same results bit for bit.
-using pass_fn = void (*)(const pass_args* args, std::size_t first, std::size_t last);
+// Runs units [first, last) of a pass from src to dst (the line's first elements). A unit is
+// the kernel's own (a block of butterflies, a line, an element); units are independent
+// within a pass, so any split of [0, units) into ranges gives the same results bit for bit.
+// The addresses are arguments, as a leaf's are, so that the driver calls the kernel on the
+// plan's own arguments: a fresh copy of them per call cost 3-5 ns per stage on the Xeon and
+// the EPYC, about 1.5 on the M5 Max (core/driver.cpp; experiment X28).
+using pass_fn = void (*)(const pass_args* args, const void* src, void* dst, std::size_t first,
+                         std::size_t last);
 
 // A leaf (a whole transform in registers, DESIGN.md 8.2) over `count` lines: line u read at
-// src + u src_dist and written at dst + u dst_dist bytes, with the edges of args, whose src
-// and dst it does not read. The addresses are arguments so that the driver can call it on a
-// plan's own arguments, without the copy a pass_fn needs, and a batch of rows in one call
-// (core/driver.cpp; dev/experiments/X20-call-overhead.md).
+// src + u src_dist and written at dst + u dst_dist bytes, with the edges of args. The addresses are
+// arguments so that the driver can call it on a plan's own arguments, without the copy a pass_fn
+// needs, and a batch of rows in one call (core/driver.cpp; dev/experiments/X20-call-overhead.md).
 using leaf_fn = void (*)(const pass_args* args, const void* src, void* dst, std::ptrdiff_t src_dist,
                          std::ptrdiff_t dst_dist, std::size_t count);
 
