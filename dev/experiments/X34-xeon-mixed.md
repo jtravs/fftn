@@ -169,7 +169,7 @@ was needed.
   of L3 per CPU: adopted on the Xeon** by the decision rule (0.861 over the 14 changed rows,
   none slower; tracking tier 0.995, only 100000 changed, 0.706). The EPYC (two phases 1.13–1.67 of the cycles below 16 MiB) and the
   Mac keep `main`'s plans (the field is 0 there). DESIGN 8.5 and the decision log, LESSONS
-  3.14.
+  3.16.
 - **Unverified and open.** Granite Rapids (X31: 100000 2.16, 46080 1.60) in an 8-vCPU VM
   reports 504 MiB of L3 for 8 CPUs, so X29's chains apply there, not this rule: whether it
   wants the Xeon's plan needs a run with `CHAIN_PART_BYTES=0 GRID_TWO_ODD_PART=15` against

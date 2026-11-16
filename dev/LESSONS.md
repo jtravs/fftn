@@ -331,7 +331,10 @@ process at 1–2 MiB (leg distances a multiple of the L2's way size, which colli
 pages lie contiguous): a median over few processes hid a bimodal cost. The Xeon 6240
 (1 MiB L2, 0.7 MiB of L3 per CPU) behaved as X12b said for every length: the chain lost
 1.1–1.6 beyond L2/2. Same instruction-set family, opposite answers: key the rule on the L3
-per CPU. [X29](experiments/X29-real-footprint.md).
+per CPU. [X29](experiments/X29-real-footprint.md). **Explained by X32:** the slow mode was
+the rules' radix-16 passes on transparent huge pages (3.14), not the chain or its size;
+chains of radices ≤ 8 were steady and took 0.57–0.85 of the grid's time on the same EPYC
+from 32768 to 2²² points. [X32](experiments/X32-long-pow2.md).
 
 3.13 **Fuse a pass when it removes an array, not merely a pass.** Folding the c2r
 pairing into the grid's first gather (each element reads its mirror from the input) made
@@ -340,7 +343,30 @@ in-place and three-phase rows 2–6 % slower, where the array stayed and the inp
 twice instead of once by a streaming in-place pass; on the EPYC even the out-of-place
 rows lost (1.11). [X29](experiments/X29-real-footprint.md).
 
-3.14 **Where L3 is small and far, count the passes over memory before the cache fit of
+3.14 **When a cost changes from process to process, look at the page size before the
+algorithm.** Linux's transparent huge pages ("always" on the EPYC nodes) back a buffer of
+1–2 MiB with 2 MiB pages or not depending on where its mapping falls. On huge pages the
+physical address bits that index L2 equal the virtual ones, so the 16 streams of a radix-16
+pass, a power of two apart, share one 8-way L2 set: FFTN's chain of 131072 points ran 14.3
+ns per point in 14 processes of 16 and 8.7 in the other 2, and 21–25 when every buffer was
+forced onto huge pages, against 4.4–4.8 for radix-8 and radix-4 chains in every placement
+(the grid 6.3). Record each buffer's backing (`/proc/self/smaps`, AnonHugePages) next to
+its time, and test with `MADV_HUGEPAGE` and `MADV_NOHUGEPAGE` to separate the two modes.
+Large radices at power-of-two strides were already known to conflict in L1 (3.1); huge
+pages carry the conflict to L2. [X32](experiments/X32-long-pow2.md).
+
+3.15 **Two streaming buffers a few cache lines apart modulo 4 KiB cost more than their
+alignment.** A Stockham chain reads one buffer and writes the other; with the output 16 to
+128 bytes past the scratch line or 48 to 128 before it modulo 4 KiB, its loads alias the
+stores just issued (4K aliasing) and a radix-4 chain of 65536 points on Zen 3 ran 1.15–1.9
+times as long as with the two half a page apart; an output merely not 64-byte aligned cost
+5–8 %. Two large malloc'd buffers lie exactly so (each 16 bytes into a page). A library
+that owns one of the two buffers can place it half a page from the other at execution; FFTN
+tried that and fbench saw nothing (0.99–1.01), because fbench's buffers sit at random
+multiples of 64 bytes, where the near-alias cases are rare: a benchmark that never places
+buffers as malloc does cannot judge such a fix. [X32](experiments/X32-long-pow2.md).
+
+3.16 **Where L3 is small and far, count the passes over memory before the cache fit of
 each pass.** X12b's rule (three grid phases beyond L2, so that each phase's block stays
 within L1) was set on powers of two. On the Xeon 6240 (1 MiB L2, 0.7 MiB of L3 per CPU)
 rows with an odd part of 15 or more ran in 0.70–1.01 of the cycles as two phases, whose

@@ -475,6 +475,13 @@ TEST(Schedule, GridSizesFromCaches) {
   EXPECT_TRUE(m5.c2r_paired_gather);
   EXPECT_FALSE(epyc.c2r_paired_gather);
   EXPECT_FALSE(xeon.c2r_paired_gather);
+  // Power-of-two rows stay chains to four times a shared L2, radix 8 up to an eighth of it;
+  // to twice L3 with radix 8 on the EPYC; never on the Xeon (X32).
+  EXPECT_EQ(m5.pow2_chain_bytes, 64 * 1024 * kib);
+  EXPECT_EQ(m5.pow2_radix8_bytes, 2048 * kib);
+  EXPECT_EQ(epyc.pow2_chain_bytes, 64 * 1024 * kib);
+  EXPECT_EQ(epyc.pow2_radix8_bytes, std::numeric_limits<std::size_t>::max());
+  EXPECT_EQ(xeon.pow2_chain_bytes, 0U);
   // Unknown sizes keep the defaults; an unknown sharing counts as a shared L2.
   const machine_profile defaults;
   machine_profile unknown;

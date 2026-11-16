@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <complex>
 #include <cstddef>
 #include <cstdint>
@@ -84,7 +85,32 @@ template <class T> bool chain_builder<T>::forces(std::size_t n) const {
   return product == n;
 }
 
+namespace {
+
+// FFTL.jl's radices for a long line of 2^k points (its src/factor.jl; MIT, the maintainer's
+// own): radix 8 with one or two 4s first, or radix 4 with an 8 first for an odd k. k >= 2.
+std::vector<std::size_t> long_pow2_radices(std::size_t k, bool radix8) {
+  std::vector<std::size_t> rad;
+  if (radix8) {
+    const std::size_t fours = k % 3 == 2 ? 1 : k % 3 == 1 ? 2 : 0;
+    rad.assign(fours, 4);
+    rad.insert(rad.end(), (k - 2 * fours) / 3, 8);
+  } else {
+    if (k % 2 == 1) {
+      rad.push_back(8);
+    }
+    rad.insert(rad.end(), (k - 3 * (k % 2)) / 2, 4);
+  }
+  return rad;
+}
+
+} // namespace
+
 template <class T> std::vector<std::size_t> chain_builder<T>::radices(std::size_t n) const {
+  if (!forces(n) && n >= 4 && (n & (n - 1)) == 0 && n * 2 * sizeof(T) > long_from_bytes_) {
+    return long_pow2_radices(static_cast<std::size_t>(std::countr_zero(n)),
+                             n * 2 * sizeof(T) <= long_radix8_bytes_);
+  }
   std::vector<std::size_t> rad = forces(n) ? forced_ : rule_radices(n, profile_);
   // The trailing radices above the Bluestein threshold (the rules' largest primes) become one
   // Bluestein stage.

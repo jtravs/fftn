@@ -1175,14 +1175,24 @@ shares it (Apple; X12b: a private L2 serves a chain's passes well, a cluster's d
 With a private L2 and at least 2 MiB of L3 per CPU sharing it (Zen's CCX), a row whose
 length is not a power of two and has a power-of-two part of at most 1024 points (16 KiB)
 stays a chain up to half of L3 (`chain_part_limit_bytes`; X29: 0.64–0.85 of the grid's
-time on the EPYC 7763 at 46080 to 2 Mi points, steadily; power-of-two chains of 1–2 MiB
-were bimodal there, 0.7 to 1.8 of the grid's time from process to process, so powers of
-two keep L2/2; the Xeon 6240, with 0.7 MiB of L3 per CPU, keeps L2/2 for every length).
+time on the EPYC 7763 at 46080 to 2 Mi points, steadily; the Xeon 6240, with 0.7 MiB of L3
+per CPU, keeps L2/2 for every length). Power-of-two c2c rows stay chains beyond
+`grid_min_bytes` up to `pow2_chain_bytes`: twice L3 on those Zen-like caches, four times L2
+where a cluster shares it (Apple), never elsewhere (the Xeon); real rows keep the grid. A
+power-of-two chain longer than `grid_min_bytes` takes FFTL.jl's radix sequence instead of
+the rules': radix 8 with one or two leading 4s up to `pow2_radix8_bytes` (any size on Zen,
+L2/8 on Apple), radix 4 with a leading 8 for an odd exponent beyond (X32: 0.57–0.85 of the
+grid's time on the EPYC from 32768 to 2²² points, 0.57–0.94 on the M5 Max from 16384; the
+Xeon lost 1.06–1.50 with chains). The rules price radices in cache (X2) and choose radix-16
+passes, whose 16 streams a power of two apart fall into one L2 set where the buffers lie on
+transparent huge pages: X29's chains of 1–2 MiB on the EPYC were bimodal (0.7 to 1.8 of the
+grid's time by process) for that reason, and chains of radices ≤ 8 are steady (X32).
 Where a private L2 has less L3 per CPU behind it (the Xeon 6240), a row whose length has
 an odd part (n over its largest power-of-two factor) of at least 15 stays in two phases at
 any size (`grid_two_odd_part`; X34: two phases took 0.70–1.01 of three phases' cycles on
-the 15 such rows tried, 71680 to 4 × 10^6 points, 100000 0.73; rows nearer a power of two, odd part 3–9, lost up to
-1.13 as two phases, and on the EPYC two phases lost 1.13–1.67 below 16 MiB).
+the 15 such rows tried, 71680 to 4 × 10^6 points, 100000 0.73; rows nearer a power of
+two, odd part 3–9, lost up to 1.13 as two phases, and on the EPYC two phases lost
+1.13–1.67 below 16 MiB).
 Where a cluster shares L2, a row whose length is not a power of two stays a chain when the
 power-of-two part of its length is at most L1/8 in bytes (1024 points in double on the
 M5), at any size, or when the row is at most 2 · L1 (`chain_part_bytes`,
@@ -2663,6 +2673,7 @@ to change before a release.
 | 2026-11-16 | Leaves with constant leg offsets for lines of stride 1 (`leaf_unit`, `src/passes/unit_leaf.inl`), on every target, and the x86 narrow leaves extended to 17, 19 and 23 (X28b) | 8–23-point single rows 0.75–0.92 of their time (EPYC, Xeon, M5 Max), bit for bit the same; 17–23 a further 0.85–0.99 on x86 from the 128-bit leaf; the x86 targets keep only the narrow unit-stride leaves (their own were 3.5 % of the library unused) |
 | 2026-11-16 | AVX2 double plans 256 as 8 · 32 and 512 as 16 · 32 (overrides of `avx2_double`) | X30: two passes against the three the costs chose (2 · 16 · 8, 4 · 8 · 16): EPYC 0.90 of the time at 256 and 0.87–0.95 at 512 (rows, batches of 64, the real transforms whose half-length chains they are); X30's other arms, x86 twiddles stored (wr, wi) and 1024 as 16 · 64, were rejected by their rule |
 | 2026-11-16 | Plan tables (twiddles, kernels, indices) start on a 64-byte boundary (`aligned_vector`, `platform/aligned_allocator.hpp`) | X30b: `std::vector` put them 16 bytes into a line, so half the per-lane twiddle loads crossed one (up to 4135 per transform at 3072 on the EPYC); aligned, x30 double 0.986 (EPYC), 0.989 (Xeon `avx512`), 0.996 (`avx2`), float 0.97–0.98, the Mac neutral; bits unchanged. The half-size (wr, wi) storage per table kind was rejected on single cases (X30b) |
+| 2026-11-16 | Long power-of-two c2c rows stay chains on Apple (to 4 L2) and on Zen-like caches (private L2, ≥ 2 MiB of L3 per CPU; to 2 L3), with FFTL.jl's radix sequences for power-of-two chains beyond `grid_min_bytes` (radix 8, radix 4 beyond L2/8 on Apple); the Xeon keeps the grid; real rows unchanged (section 8.5; idea from FFTL.jl's `src/factor.jl`) | X32: Mac tracking 0.968, the long powers of two 0.57–0.94 (FFTN ÷ FFTW 1.16 → 0.87, ÷ FFTL.jl 1.34 → 1.00); EPYC 0.57–0.85 of the grid; Xeon chains 1.06–1.50 (rejected there); X29's bimodality explained (radix-16 passes on huge pages) |
 
 ---
 

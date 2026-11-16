@@ -131,6 +131,16 @@ struct machine_profile {
   // The largest row (bytes) chain_part_bytes keeps a chain: half of L3 where a private L2
   // has a large L3 behind it (x86 Zen), any size where the L2 is shared (X29).
   std::size_t chain_part_limit_bytes = std::numeric_limits<std::size_t>::max();
+  // Long power-of-two rows (experiment X32): a c2c row of a power-of-two length stays a
+  // chain beyond grid_min_bytes up to pow2_chain_bytes (0: never, and the rules' radices
+  // everywhere), and a power-of-two chain of more than grid_min_bytes takes FFTL.jl's
+  // radices instead of the rules' (priced in cache, X2): 8s (4s for the spare factors of
+  // two) up to pow2_radix8_bytes, 4s (one 8 for an odd exponent) beyond. The rules'
+  // radix-16 passes read 16 streams a power of two apart; where the row's pages are huge
+  // pages they share one L2 set, and such a chain ran at up to 5 times a radix-8 chain's
+  // time (X29's bimodal chains on the EPYC). set_grid_sizes sets them from X32's screens.
+  std::size_t pow2_chain_bytes = 0;
+  std::size_t pow2_radix8_bytes = 0;
   // Whether a c2r row out of place in a two-phase grid pairs its bins in phase 1's gather
   // rather than in a separate pass (X29): set where the L2 is shared (Apple: 0.92-0.94 of
   // the separate route); on the EPYC it took 1.11.
