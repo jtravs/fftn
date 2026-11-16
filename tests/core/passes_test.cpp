@@ -1112,8 +1112,9 @@ TEST(Passes, TargetsThatRoundAlikeGiveTheSameBits) {
 }
 
 // The 128-bit leaves of the x86 targets (experiment X28, kernel_table.hpp) against each
-// target's own leaves, which plans no longer use: every radix up to 16, both directions,
-// every edge variant, strided lines, several of them; every output bit equal.
+// target's own leaves, which plans no longer use: every radix up to 16 and 17, 19, 23
+// (X28b), both directions, every edge variant, strided lines, several of them; every
+// output bit equal.
 template <class T> void narrow_leaves_match(fftn::isa t) {
   const auto target = static_cast<fftn::detail::target>(static_cast<unsigned char>(t));
   const auto& own = fftn::detail::of<T>(*fftn::detail::find_kernels(target)).passes;
@@ -1123,7 +1124,8 @@ template <class T> void narrow_leaves_match(fftn::isa t) {
   constexpr std::size_t lines = 3;
   constexpr std::ptrdiff_t in_stride = 2;
   constexpr std::ptrdiff_t out_stride = 3;
-  for (std::size_t r = 2; r <= fftn::detail::dense_codelet_radix; ++r) {
+  for (std::size_t slot = 0; slot < fftn::detail::narrow_leaf_slots; ++slot) {
+    const std::size_t r = fftn::detail::gen::radices[slot];
     fftn::test::input_source src(0x4E41ULL + r);
     const cvec<T> x = src.complexes<T>(lines * r * in_stride);
     const cvec<T> in_factor = src.complexes<T>(r);
@@ -1134,7 +1136,6 @@ template <class T> void narrow_leaves_match(fftn::isa t) {
     args.scale = 0.37;
     args.in_factor = in_factor.data();
     args.out_factor = out_factor.data();
-    const std::size_t slot = fftn::detail::codelet_slot(r);
     for (std::size_t d = 0; d < 2; ++d) {
       for (std::size_t ie = 0; ie < fftn::detail::edge_op_count; ++ie) {
         for (std::size_t oe = 0; oe < fftn::detail::edge_op_count; ++oe) {
@@ -1194,7 +1195,7 @@ template <class T> void unit_leaves_match(fftn::isa t) {
             any(&args, x.data(), y_any.data(), dist, dist, lines);
             EXPECT_TRUE(bitwise_equal(y_unit, y_any));
           }
-          if (narrow != nullptr && r <= fftn::detail::dense_codelet_radix) {
+          if (narrow != nullptr && slot < fftn::detail::narrow_leaf_slots) {
             const auto& half = fftn::detail::of<T>(*narrow);
             const fftn::detail::leaf_fn half_unit = half.unit[slot][d][ie][oe];
             const fftn::detail::leaf_fn half_any = half.leaf[slot][d][ie][oe];

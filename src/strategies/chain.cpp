@@ -493,7 +493,7 @@ void chain_builder<T>::add_leaf(std::size_t n, int sign, endpoint src, endpoint 
   const std::size_t d = direction_index(sign);
   const std::size_t in = edge_index(edges.in);
   const std::size_t out = edge_index(edges.out);
-  const bool narrow = narrow_ != nullptr && n <= dense_codelet_radix;
+  const bool narrow = narrow_ != nullptr && codelet_slot(n) < narrow_leaf_slots;
   const radix_passes& own = *kernels_.passes.codelet[codelet_slot(n)];
   // Lines of stride 1 without a factor edge: the leaf with constant offsets (X28b).
   if (src.stride == 1 && dst.stride == 1 && edges.in != edge_op::factor &&
