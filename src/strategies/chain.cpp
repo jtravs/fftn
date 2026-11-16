@@ -8,6 +8,7 @@
 #include "isa/kernel_table.hpp"
 #include "passes/pass_args.hpp"
 #include "planner/rules.hpp"
+#include "platform/aligned_allocator.hpp"
 #include "strategies/bluestein.hpp"
 
 #include <algorithm>
@@ -669,9 +670,12 @@ void chain_builder<T>::add_rader(std::size_t n, std::size_t q, std::size_t g, in
   // (rader_out scatters into it); its other slot may be either, which is read or not yet
   // written by then. last_stage_to keeps the two apart.
   const auto scratch = [](slot w) { return w == slot::a || w == slot::b; };
-  const slot conv = scratch(dst.where)   ? other_scratch(dst.where)
-                    : scratch(src.where) ? other_scratch(src.where)
-                                         : slot::a;
+  const slot conv = [&] {
+    if (scratch(dst.where)) {
+      return other_scratch(dst.where);
+    }
+    return scratch(src.where) ? other_scratch(src.where) : slot::a;
+  }();
   if (conv == src.where) {
     throw std::logic_error("fftn: a Rader stage from scratch slot to the other scratch slot");
   }

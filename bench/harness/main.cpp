@@ -353,8 +353,9 @@ public:
 
   // The counts per call over `calls` executes, and the fraction of the enabled time the
   // group was scheduled (1 when the counts are exact).
+  // NOLINTNEXTLINE(readability-convert-member-functions-to-static): reads fds_ on Linux
   [[nodiscard]] std::string per_call(std::int64_t calls) const {
-    fbench::json out;
+    fbench::json out; // NOLINT(misc-const-correctness): filled on Linux
 #ifdef __linux__
     std::vector<std::uint64_t> buf(3 + fds_.size());
     const auto bytes = static_cast<std::ptrdiff_t>(buf.size() * sizeof(std::uint64_t));
@@ -375,6 +376,7 @@ public:
 
 private:
   enum op : std::uint8_t { reset_op, enable_op, disable_op };
+  // NOLINTNEXTLINE(readability-convert-member-functions-to-static): uses fds_ on Linux
   void control(op o) const {
 #ifdef __linux__
     unsigned long request = PERF_EVENT_IOC_DISABLE;

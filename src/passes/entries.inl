@@ -245,6 +245,7 @@ template <class T, std::size_t I> struct radix_entries {
 // table. The only names of the region besides the table with external linkage: data, so no
 // unit's copy of a function can stand in for another's. Each target's are distinct
 // symbols, in its own namespace.
+// NOLINTNEXTLINE(misc-use-internal-linkage): defined in the row units (isa/rows.inl)
 template <class T, std::size_t I> struct codelet_row {
   static const radix_passes passes;
 };

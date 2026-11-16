@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "platform/aligned_allocator.hpp"
+#include "platform/aligned_buffer.hpp"
 
 #include <gtest/gtest.h>
 

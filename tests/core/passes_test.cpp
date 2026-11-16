@@ -17,6 +17,7 @@
 #include "gen/codelets.hpp"
 #include "isa/kernel_table.hpp"
 #include "isa/target.hpp"
+#include "passes/pass_args.hpp"
 #include "planner/rules.hpp"
 #include "reference/reference_dft.hpp"
 #include "support/exact.hpp"
@@ -377,17 +378,21 @@ template <class T> void rader_in_every_position(fftn::isa target) {
   const std::vector<std::string> both{"rader in", "rader out"};
   const std::vector<line> lines{
       {.radices = {151}, .above = 16, .names = {"copies 1", "convolution: grouped"}},
-      {.radices = {2, 151},
-       .above = 16,
-       .names = {"grouped radix-2", "copies 2", "convolution: lane"}},
+      {
+          .radices = {2, 151},
+          .above = 16,
+          .names = {"grouped radix-2", "copies 2", "convolution: lane"},
+      },
       {.radices = {3, 211}, .above = 16, .names = {"grouped radix-3", "root 2, copies 3"}},
       {.radices = {4, 151}, .above = 16, .names = {"copies 4"}},
       {.radices = {5, 6, 151}, .above = 16, .names = {"lane radix-6", "copies 30"}},
       {.radices = {16, 151}, .above = 16, .names = {"copies 16"}},
       {.radices = {8, 193}, .above = 16, .names = {"Q 193, L 192, root 5, copies 8"}},
-      {.radices = {29, 151},
-       .above = 29,
-       .names = {"generic radix-29", "Q 151, L 150", "copies 29"}},
+      {
+          .radices = {29, 151},
+          .above = 29,
+          .names = {"generic radix-29", "Q 151, L 150", "copies 29"},
+      },
   };
   for (const line& l : lines) {
     std::size_t n = 1;
@@ -458,11 +463,13 @@ template <class T> void every_edge_variant(fftn::isa target) {
       {.n = 47, .radices = {}, .first = "bluestein in,", .last = "bluestein out", .above = 16},
       {.n = 151, .radices = {}, .first = "rader in,", .last = "rader out", .above = 16},
       {.n = 302, .radices = {2, 151}, .first = "grouped radix-2", .last = "rader out", .above = 16},
-      {.n = 1208,
-       .radices = {8, 151},
-       .first = "grouped radix-8",
-       .last = "rader out",
-       .above = 16},
+      {
+          .n = 1208,
+          .radices = {8, 151},
+          .first = "grouped radix-8",
+          .last = "rader out",
+          .above = 16,
+      },
       {
           .n = 94,
           .radices = {2, 47},

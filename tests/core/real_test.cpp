@@ -540,9 +540,10 @@ TEST(Real, RulesChooseTheRoute) {
   build_settings s;
   s.profile.grid_min_bytes = std::size_t{512} * 1024;
   for (const bool r2c : {true, false}) {
-    const auto core =
-        r2c ? make_plan_core(fftn::detail::view_of(fftn::rows_r2c<double>(big, 1)), {}, s)
-            : make_plan_core(fftn::detail::view_of(fftn::rows_c2r<double>(big, 1)), {}, s);
+    const auto core = r2c ? make_plan_core(fftn::detail::view_of(fftn::rows_r2c<double>(big, 1)),
+                                           fftn::options(), s)
+                          : make_plan_core(fftn::detail::view_of(fftn::rows_c2r<double>(big, 1)),
+                                           fftn::options(), s);
     EXPECT_NE(fftn::detail::describe(*core).find("half-length complex grid"), std::string::npos);
   }
   EXPECT_NE(fftn::c2r_plan<double>(fftn::rows_c2r<double>(16, 1)).describe().find("a leaf of 8"),

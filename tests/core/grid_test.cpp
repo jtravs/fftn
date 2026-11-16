@@ -302,23 +302,23 @@ TEST(Grid, ChainKeepsLengthsThatAreNotPowersOfTwo) {
   s.profile.grid_min_bytes = 8192;
   s.profile.grid_three_bytes = std::size_t{1} << 30U;
   s.profile.grid_block_bytes = 16384;
-  s.profile.chain_part_bytes = 64 * 16; // power-of-two parts up to 64 points
+  s.profile.chain_part_bytes = std::size_t{64} * 16; // power-of-two parts up to 64 points
   s.profile.chain_mixed_bytes = 0;
   const auto plan = [&](std::size_t n) {
     return make_plan_core(
         fftn::detail::view_of(fftn::rows_c2c<double>(n, 1, fftn::direction::forward)),
         fftn::options(), s);
   };
-  EXPECT_FALSE(is_grid(*plan(64 * 45))); // part 64
-  EXPECT_TRUE(is_grid(*plan(128 * 45))); // part 128
-  EXPECT_TRUE(is_grid(*plan(4096)));     // a power of two
-  s.profile.chain_mixed_bytes = 128 * 45 * 16;
-  EXPECT_FALSE(is_grid(*plan(128 * 45))); // within chain_mixed_bytes
-  EXPECT_TRUE(is_grid(*plan(256 * 45)));
+  EXPECT_FALSE(is_grid(*plan(std::size_t{64} * 45))); // part 64
+  EXPECT_TRUE(is_grid(*plan(std::size_t{128} * 45))); // part 128
+  EXPECT_TRUE(is_grid(*plan(4096)));                  // a power of two
+  s.profile.chain_mixed_bytes = std::size_t{128} * 45 * 16;
+  EXPECT_FALSE(is_grid(*plan(std::size_t{128} * 45))); // within chain_mixed_bytes
+  EXPECT_TRUE(is_grid(*plan(std::size_t{256} * 45)));
   EXPECT_TRUE(is_grid(*plan(8192)));
   s.profile.chain_mixed_bytes = 0;
-  s.profile.chain_part_limit_bytes = 64 * 45 * 16 - 1; // part 64, but beyond the limit
-  EXPECT_TRUE(is_grid(*plan(64 * 45)));
+  s.profile.chain_part_limit_bytes = std::size_t{64} * 45 * 16 - 1; // part 64, but beyond the limit
+  EXPECT_TRUE(is_grid(*plan(std::size_t{64} * 45)));
 }
 
 // build_settings::scale_on_input puts the scale on phase 1's input: its first pass, or its
@@ -469,8 +469,10 @@ template <class T> void fused_equals_unfused(fftn::isa target) {
   std::vector<grid_case> cases = forced_cases();
   cases.insert(cases.end(), last_small_cases().begin(), last_small_cases().end());
   equal_bits<T>(target, cases,
-                {[](build_settings& s) { s.grid_fused = true; },
-                 [](build_settings& s) { s.grid_fused = false; }});
+                {
+                    [](build_settings& s) { s.grid_fused = true; },
+                    [](build_settings& s) { s.grid_fused = false; },
+                });
 }
 
 TEST(Grid, FusedEqualsUnfused) {
@@ -491,18 +493,20 @@ template <class T> void padding_keeps_bits(fftn::isa target) {
   constexpr std::size_t never = std::numeric_limits<std::size_t>::max();
   for (const bool fused : {true, false}) {
     equal_bits<T>(target, cases,
-                  {[&](build_settings& s) {
-                     s.grid_fused = fused;
-                     s.profile.grid_pad_period = never;
-                   },
-                   [&](build_settings& s) {
-                     s.grid_fused = fused;
-                     s.profile.grid_pad_period = 4096;
-                   },
-                   [&](build_settings& s) {
-                     s.grid_fused = fused;
-                     s.profile.grid_pad_period = 512;
-                   }},
+                  {
+                      [&](build_settings& s) {
+                        s.grid_fused = fused;
+                        s.profile.grid_pad_period = never;
+                      },
+                      [&](build_settings& s) {
+                        s.grid_fused = fused;
+                        s.profile.grid_pad_period = 4096;
+                      },
+                      [&](build_settings& s) {
+                        s.grid_fused = fused;
+                        s.profile.grid_pad_period = 512;
+                      },
+                  },
                   "rows padded by");
   }
 }
