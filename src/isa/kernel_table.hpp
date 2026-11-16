@@ -43,10 +43,10 @@ struct kernel_table {
 
 // The 128-bit leaves of the x86 targets (experiment X28, isa/narrow_avx2.cpp): the leaves
 // of radices 2 to dense_codelet_radix and of the primes 17, 19 and 23 (X28b), the first
-// narrow_leaf_slots rows of gen::radices, compiled with avx2's operations on 128-bit
-// registers (vocab_avx2_narrow.inl), indexed by codelet_slot, direction and edges as
-// radix_passes::leaf, null where that is. They round as avx2's and avx512's leaves do, so
-// either target's plans may use them.
+// narrow_leaf_slots rows of gen::radices (20's row empty: radix 20 is no leaf, X38), compiled with
+// avx2's operations on 128-bit registers (vocab_avx2_narrow.inl), indexed by codelet_slot,
+// direction and edges as radix_passes::leaf, null where that is. They round as avx2's and avx512's
+// leaves do, so either target's plans may use them.
 inline constexpr std::size_t narrow_leaf_slots = codelet_slot(23) + 1;
 template <class T> struct narrow_leaf_set {
   // NOLINTNEXTLINE(modernize-avoid-c-arrays): filled in an ISA region, no std templates

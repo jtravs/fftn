@@ -14,7 +14,8 @@
 // precisions: radices 2 to 12 together about 75 s, 13 to 16 55 s, 32 39 s and 1.2 GB, 64
 // 135 s and 2.9 GB; the main unit (isa/table.inl) 2 s. So radix 64 has a unit per precision,
 // and the units below take about the same time each. The primes 17, 19 and 23 (experiment
-// X27; 168, 207 and 297 vocabulary operations per codelet, radix 32 212) have a unit each.
+// X27; 168, 207 and 297 vocabulary operations per codelet, radix 32 212) have a unit each,
+// radix 20 (X38, 116 operations) shares 19's.
 //
 // Every row is defined by exactly one unit: the main unit's table refers to all of them, so
 // a row left out fails to link.
@@ -27,9 +28,9 @@ constinit const radix_passes codelet_row<T, I>::passes = radix_entries<T, I>::va
 #define FFTN_ISA_ROWS_OF(I) FFTN_ISA_ROW(double, I) FFTN_ISA_ROW(float, I)
 // NOLINTEND(bugprone-macro-parentheses)
 
-static_assert(gen::radix_count == 20 && gen::radices[10] == 12 && gen::radices[14] == 16 &&
-                  gen::radices[15] == 17 && gen::radices[16] == 19 && gen::radices[17] == 23 &&
-                  gen::radices[18] == 32 && gen::radices[19] == 64,
+static_assert(gen::radix_count == 21 && gen::radices[10] == 12 && gen::radices[14] == 16 &&
+                  gen::radices[15] == 17 && gen::radices[16] == 19 && gen::radices[17] == 20 &&
+                  gen::radices[18] == 23 && gen::radices[19] == 32 && gen::radices[20] == 64,
               "the row units below split gen::radices by radix");
 
 #if FFTN_ISA_ROWS == 1 // radices 2 to 12
@@ -50,17 +51,18 @@ FFTN_ISA_ROWS_OF(12)
 FFTN_ISA_ROWS_OF(13)
 FFTN_ISA_ROWS_OF(14)
 #elif FFTN_ISA_ROWS == 3 // radix 32
-FFTN_ISA_ROWS_OF(18)
+FFTN_ISA_ROWS_OF(19)
 #elif FFTN_ISA_ROWS == 4 // radix 64, double
-FFTN_ISA_ROW(double, 19)
+FFTN_ISA_ROW(double, 20)
 #elif FFTN_ISA_ROWS == 5 // radix 64, float
-FFTN_ISA_ROW(float, 19)
+FFTN_ISA_ROW(float, 20)
 #elif FFTN_ISA_ROWS == 6 // radix 17
 FFTN_ISA_ROWS_OF(15)
-#elif FFTN_ISA_ROWS == 7 // radix 19
+#elif FFTN_ISA_ROWS == 7 // radices 19 and 20
 FFTN_ISA_ROWS_OF(16)
-#elif FFTN_ISA_ROWS == 8 // radix 23
 FFTN_ISA_ROWS_OF(17)
+#elif FFTN_ISA_ROWS == 8 // radix 23
+FFTN_ISA_ROWS_OF(18)
 #else
 #error "rows.inl: FFTN_ISA_ROWS names no row unit"
 #endif
