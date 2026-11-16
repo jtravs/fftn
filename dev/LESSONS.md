@@ -431,15 +431,17 @@ stored, the two passes become one call of about n / C registers with no partial 
 memory (the last block of copies is computed whole and stored with a partial run). On the
 EPYC 7763 (AVX2, GCC 16) single rows of 20–48 points took 0.51–0.76 of the two-pass
 chain's time in double and 0.39–0.78 in float, batches of 24 and 48 points 0.51–0.70: 24
-points went from 0.99 to 0.53 of FFTW's time. The code is small (+0.75 % of the x86
-library for 37 lengths and precisions) because only the length table grows, not the pass
-kinds. XEON-PAIR [X28b](experiments/X28b-short-leaves.md).
+points went from 0.99 to 0.53 of FFTW's time. On the Xeon 6240 (AVX-512, 32 registers) the
+same reached 120 points: 20–120 at 0.42–0.69 of the chain's time, 60 from 1.04 to 0.63 of
+FFTW's and 120 from 1.23 to 0.73. The code is small (+0.75 % of the x86 library for 37
+lengths and precisions) because only the length table grows, not the pass kinds.
+[X28b](experiments/X28b-short-leaves.md).
 
 4.13 **At 8–23 points, a leaf's set-up for any stride is a fifth of its time.** A leaf that
 computes its 2R leg offsets from run-time strides keeps them in general registers (and
 spills them on x86); the same leaf with constant offsets, chosen for rows of stride 1, took
-single rows of 8–23 points to 0.75–0.92 of their time on the EPYC 7763 and 0.80–0.87 on the
-M5 Max, bit for bit the same. The one rare path a kernel supports can cost more than the
+single rows of 8–23 points to 0.75–0.92 of their time on the EPYC 7763, 0.79–0.91 on the
+Xeon 6240 and 0.80–0.87 on the M5 Max, bit for bit the same. The one rare path a kernel supports can cost more than the
 arithmetic at this size: specialise the common case at plan time.
 [X28b](experiments/X28b-short-leaves.md).
 

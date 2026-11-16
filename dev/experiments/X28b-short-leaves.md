@@ -1,6 +1,6 @@
 # X28b: what is left at single short rows: leaves in registers
 
-- **Status:** running
+- **Status:** done (adopted: all three arms on x86, arm 2 everywhere)
 - **Owner:** X28b agent, 2026-11-16
 - **Phase / task:** 1 (exit criteria); PLAN lead 4; follows X28 and X27
 
@@ -155,6 +155,28 @@ Tracking tier, final branch against `main`: run 20261116-064703-7065 (Slurm 5101
 rounds, all overloaded, band ±2.31 %): 0.979, 6 faster (8 points 0.75, 17 0.79, 16 0.79,
 r2c 64² 0.93, 2048 × 36 0.94, r2c 64³ 0.96), none slower.
 
+### Xeon Gold 6240 (`avx512`, forced `avx2`)
+
+Run 20261116-071952-7bad (Slurm 15957, builds 15954; arms A, P, U, N on `avx512`, A, P, N
+forced to `avx2`, FFTW with `PLAN_NOTE=1`; 10 rounds, 2 loaded; band ±4.30 %).
+
+| arm | targets f64 | targets f32 | batches 64, 4096 | real rows | slower beyond the band |
+|---|---|---|---|---|---|
+| P ÷ A, `avx512` | 0.573 (20–120; worst 96 0.689, best 20 0.423) | 0.559 (24–128; worst 128 0.673) | 0.815 (24 0.43, 48 0.53–0.56) | 0.900 (r2c/c2r 48, 64: 0.72–0.83) | none |
+| U ÷ P, `avx512` | 0.820 (8–23; worst 17 0.911) | 0.800 | 0.995 | 0.997 | none |
+| N ÷ U, `avx512` | 0.916 (19 0.850, 17 0.91, 23 0.987) | 0.965 (17 1.033) | 17 batches 0.90–0.92 | | none |
+| N ÷ A, `avx512` | 0.741 over all 32 single f64 cases | 0.692 | 0.797 | | none (worst c2r 34 1.032, whose leaf is unchanged) |
+| P ÷ A, `avx2` | 0.640 (20–48; worst 36 0.718) | 0.550 (20–64) | 0.877 | 0.959 | none |
+| N ÷ P, `avx2` (arms 2 and 3 together) | 0.766 (8–23) | 0.785 | 0.972 | | none |
+| N ÷ A, `avx2` | 0.842 | 0.728 | 0.853 | | none (worst r2c 34 1.051, unchanged leaf, inside the band's noise) |
+
+FFTN ÷ FFTW, single c2c rows in double: `avx512` 0.977 → 0.648 (24 points 1.24 → 0.58, 60
+1.04 → 0.63, 120 1.23 → 0.73, 20 1.61 → 0.69, 8 1.32 → 1.03, 16 1.08 → 0.88); forced `avx2`
+1.094 → 0.861; real rows (`avx512`) 0.768 → 0.682; batches 0.866 → 0.690. Left above 1 on
+`avx512`: 30 points (1.24: C = 4 does not divide it, no pair leaf, chain 2 × 15 or so) and
+8 points (1.03). FFTW's plans for these (`PLAN_NOTE`): 60 = 15 × 4 and 120 = 10 × 12, as
+X25 found; the pair leaves are 15 × 4 and 15 × 8.
+
 ### Apple M5 Max (`neon_fcma`)
 
 Run 20261116-051638-105c (A, U, FFTW; 10 rounds, 8 loaded; band ±2.13 %). Only arm 2
@@ -170,4 +192,30 @@ runs).
 
 ## Verdict
 
-(to come)
+All three arms adopted on the x86 targets; arm 2 also on NEON (and the scalar target, which
+shares its leaves' code). Rule 1 holds: the whole suite passes natively on the Xeon (job
+15964) and in CI; arms 2 and 3 are bit-identical (`Passes.UnitLeavesMatchTheStridedLeaves`,
+`Passes.NarrowLeavesMatchTheTargetsLeaves`), arm 1 gives the bits of the chain r1 × m
+(`Passes.PairLeavesMatchTheForcedChain`).
+
+| arm | Xeon `avx512` | Xeon forced `avx2` | EPYC `avx2` | Mac `neon_fcma` |
+|---|---|---|---|---|
+| 1, pair leaves | adopted: 0.573 / 0.559 (f64 / f32), batches 0.815 | adopted: 0.640 / 0.550 | adopted: 0.631 / 0.541, batches 0.862 | does not apply |
+| 2, unit-stride leaves | adopted: 0.820 / 0.800 | adopted with arm 3: 0.766 / 0.785 | adopted: 0.804 / 0.721 | adopted: 0.836 / 0.867 (32 points 0.892) |
+| 3, narrow prime leaves | adopted: 0.916 / 0.965 | (with arm 2) | adopted: 0.906 / 0.964 | does not apply |
+| all, against `main` | FFTN ÷ FFTW 0.98 → 0.65 | 1.09 → 0.86 | 0.94 → 0.73 | 0.80 → 0.76 |
+
+No pair-leaf length was slower on any machine-target, so every table entry stays (rule 3).
+Exceptions recorded under rule 3: on the EPYC, cases whose plans and kernel bytes are
+unchanged moved by 6–15 % between builds (r2c 120 and float 128 in arm 3's build, 60 × 64
+and 60 × 4096 in the final one: 1.06–1.09), each fine in the other build; a code-placement
+effect of the driver's offsets (above), not of the arms. Tracking tier, final against
+`main`: Mac 0.990, EPYC 0.979, nothing slower on either; Xeon below.
+
+What is left at single short rows (FFTN ÷ FFTW after X28b): Xeon `avx512` 30 points 1.24
+(no pair leaf: C does not divide 30) and 8 points 1.03; EPYC 60 (1.09) and 120 (1.05), which
+do not fit AVX2's 16 registers as pair leaves; batches of 16 points on both (1.08–1.26);
+the Mac's 20 points (1.72: no leaf of 20 on NEON, where a pair leaf with C = 1 or a
+generated leaf of 20 would fit 32 registers). Library size: +0.75 % (arm 1), +1.1 % (arm
+3), and arm 2 +3.5 % as first written, then the x86 targets' unused copies removed.
+DESIGN.md 6.1, 8.2 and the decision log, LESSONS 4.12 and 4.13 updated.
