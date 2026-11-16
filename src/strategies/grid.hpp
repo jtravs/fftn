@@ -123,8 +123,17 @@ public:
   // phase 1's gather applies it). c2r_n: 0, or the row is the half-length complex transform
   // of a c2r row of c2r_n reals and the in slot holds its n/2 + 1 bins, which phase 1's
   // gather pairs (c2r_pair_gather, experiment X29): no pairing pass precedes the grid.
+  // r2c_n: 0, or the row is the half-length complex transform of an r2c row of r2c_n reals
+  // (sign -1, scale on the output) and its last phase pairs the bins (pairs_last must hold;
+  // r2c_pair_gather, experiment X33): the out slot then holds the n/2 + 1 bins and no
+  // pairing pass follows the grid.
   std::size_t c2c_row(const grid_split& g, int sign, bool in_place, double scale,
-                      bool scale_on_input, program& p, std::size_t c2r_n = 0);
+                      bool scale_on_input, program& p, std::size_t c2r_n = 0,
+                      std::size_t r2c_n = 0);
+
+  // Whether the last phase of g can pair an r2c row's bins: the columns L of the last phase
+  // split into pairs of sets of pair_half(g) columns.
+  [[nodiscard]] bool pairs_last(const grid_split& g) const noexcept;
 
   // Whether c2c_row of g uses the block slot, and its complex elements (n, and the padding).
   [[nodiscard]] static bool uses_block(const grid_split& g, bool in_place) noexcept;
@@ -153,6 +162,12 @@ private:
   std::pair<const T*, const T*> first_twiddles(const grid_split& g);
   std::pair<const T*, const T*> c2r_pair_factors(std::size_t n1, std::size_t m1, std::size_t n);
   const T* row_twiddles(std::size_t ni, std::size_t m);
+  [[nodiscard]] std::size_t pair_half(const grid_split& g) const noexcept;
+  std::pair<const T*, const T*> r2c_pair_tables(std::size_t l, std::size_t nk, std::size_t hb,
+                                                std::size_t n);
+  std::size_t paired_last_phase(std::size_t ni, std::size_t l, slot src, std::ptrdiff_t src_row,
+                                slot dst, double scale, std::size_t r2c_n, const grid_split& g,
+                                program& p);
 
   const kernels_of<T>& kernels_;
   chain_builder<T>& chain_;

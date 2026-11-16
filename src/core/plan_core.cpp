@@ -580,7 +580,12 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       c.block_elements = grid_builder<T>::block_elements(real_grid);
     }
     std::vector<stage> pairing;
-    if (r2c) {
+    // r2c: the pairing in the grid's last phase, over pairs of mirror column sets, where the
+    // last phase's columns allow (X33); else a separate pass after the grid.
+    const bool paired_last = r2c && grid.pairs_last(real_grid);
+    if (paired_last) {
+      scratch = grid.c2c_row(real_grid, -1, in_place, opts.scale, false, p, 0, n);
+    } else if (r2c) {
       scratch = grid.c2c_row(real_grid, -1, in_place, 1.0, false, p);
       chain.add_pairing(true, n, {slot::out, 1}, {slot::out, 1}, opts.scale, pairing);
       p.records.emplace_back(std::move(pairing.front()));
@@ -595,7 +600,8 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     }
     c.axis_notes.push_back("axis 0 (n = " + std::to_string(n) + "): " + (r2c ? "r2c" : "c2r") +
                            " through a half-length complex " + grid.note(real_grid) +
-                           (r2c             ? ", then a pairing pass"
+                           (paired_last     ? ", the pairing in its last phase"
+                            : r2c           ? ", then a pairing pass"
                             : paired_gather ? ", the pairing in its first gather"
                                             : ", after a pairing pass"));
     c.strategy_note =

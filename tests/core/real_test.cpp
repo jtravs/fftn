@@ -380,6 +380,36 @@ TEST(Real, HalfLengthGrid) {
   }
 }
 
+// The r2c pairing in the grid's last phase (X33): pairs of mirror column sets of
+// hb = max(C, block / 2) columns, column 0 on its own; the last factor even and odd (the
+// middle bin in column 0, or in column L/2 paired with itself), two and three phases, in
+// and out of place, scaled and not (check_all); L of 24 splits into pairs of sets of 4 (or,
+// where C = 8, stays a pass after the grid).
+TEST(Real, PairingInTheGridsLastPhase) {
+  struct grid_real {
+    std::size_t n;
+    std::vector<std::size_t> factors;
+    const char* route;
+  };
+  const char* fused = "the pairing in its last phase";
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    for (const grid_real& g : {
+             grid_real{.n = 1024, .factors = {32, 16}, .route = fused},
+             grid_real{.n = 4096, .factors = {16, 8, 16}, .route = fused},
+             grid_real{.n = 7680, .factors = {16, 16, 15}, .route = fused},
+             grid_real{.n = 8192, .factors = {32, 128}, .route = fused},
+             grid_real{.n = 1920, .factors = {24, 40}, .route = "half-length complex grid"},
+         }) {
+      build_settings s;
+      s.strategy = fftn::detail::strategy_choice::grid;
+      s.grid_factors = g.factors;
+      s.profile.grid_block = 8;
+      check_all<double>(t, {.n = g.n, .settings = s, .route = g.route}, true);
+      check_all<float>(t, {.n = g.n, .settings = s, .route = g.route}, true);
+    }
+  }
+}
+
 // The negative control of the every-bin comparison: a correct result with a pairing fault
 // planted where the reference sample does not look (bins k and h - k swapped, as a lane
 // reversal gone wrong would leave them; one bin off by a few hundred times the tolerance)
