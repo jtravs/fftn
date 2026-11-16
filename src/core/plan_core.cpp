@@ -496,7 +496,11 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   }
   if (const pair_leaf_table* pairs = find_pair_leaves(c.isa_target);
       pairs != nullptr && settings.pair_leaves) {
-    chain.use_pair_leaves(&of<T>(*pairs));
+    // Another target's leaves in double only (X37): in float they would also change the
+    // lanes' chains (strategies/lanes.cpp), which nothing has measured.
+    const pair_leaf_table* more =
+        std::is_same_v<T, double> ? find_more_pair_leaves(c.isa_target) : nullptr;
+    chain.use_pair_leaves(&of<T>(*pairs), more != nullptr ? &of<T>(*more) : nullptr);
   }
   program& p = c.prog;
   const std::size_t r = s.axes.size();

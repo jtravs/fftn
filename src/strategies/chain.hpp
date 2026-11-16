@@ -130,8 +130,13 @@ public:
   // Pair leaves from this set (kernel_table.hpp, passes/pair_leaf.inl, experiment X28b):
   // a c2c line of stride 1 on both sides whose length has an entry, with no factor edge and
   // radices the rules choose (not a test's), is that entry's two passes in registers, one
-  // leaf. Null: none.
-  void use_pair_leaves(const pair_leaf_set<T>* leaves) noexcept { pairs_ = leaves; }
+  // leaf. Null: none. `more`: a second set, for lengths the first lacks (another target's
+  // leaves whose tables have their own storage: avx2's in an avx512 plan, X37), or null.
+  void use_pair_leaves(const pair_leaf_set<T>* leaves,
+                       const pair_leaf_set<T>* more = nullptr) noexcept {
+    pairs_ = leaves;
+    more_pairs_ = more;
+  }
 
   // Long power-of-two lines (experiment X32): a line of a power-of-two length of more than
   // from_bytes takes FFTL.jl's radices instead of the rules': 8s, with one or two 4s first
@@ -243,11 +248,20 @@ private:
                 pass_layout layout = pass_layout::interleaved);
   void add_leaf(std::size_t n, int sign, endpoint src, endpoint dst, const line_edges& edges,
                 std::vector<stage>& stages);
-  // The pair leaf for a c2c line of n from src to dst with these edges, or null.
-  [[nodiscard]] const pair_leaf_entry* pair_for(std::size_t n, endpoint src, endpoint dst,
-                                                const line_edges& edges) const;
-  void add_pair_leaf(const pair_leaf_entry& e, int sign, endpoint src, endpoint dst,
+  // A pair leaf and the set it is from.
+  struct pair_choice {
+    const pair_leaf_entry* entry = nullptr;
+    const pair_leaf_set<T>* set = nullptr;
+  };
+  // The pair leaf for a c2c line of n from src to dst with these edges, or none.
+  [[nodiscard]] pair_choice pair_for(std::size_t n, endpoint src, endpoint dst,
+                                     const line_edges& edges) const;
+  // The entry for n in either set, or none.
+  [[nodiscard]] pair_choice pair_of(std::size_t n) const;
+  void add_pair_leaf(const pair_choice& p, int sign, endpoint src, endpoint dst,
                      const line_edges& edges, std::vector<stage>& stages);
+  // The first pass's table of the pair leaf r1 x m in the storage of `set`.
+  const T* pair_twiddles(std::size_t n, std::size_t r1, const pair_leaf_set<T>& set);
   // Passes i0 .. of rad (the radices of n) from `at`, s copies at i0, the last writing dst
   // with edges.out (a Bluestein stage when bluestein_last(n)); scratch in between.
   void chain_tail(std::size_t n, const std::vector<std::size_t>& rad, std::size_t i0, std::size_t s,
@@ -293,6 +307,7 @@ private:
   const kernels_of<T>& kernels_;
   const narrow_leaf_set<T>* narrow_ = nullptr;
   const pair_leaf_set<T>* pairs_ = nullptr;
+  const pair_leaf_set<T>* more_pairs_ = nullptr;
   std::vector<std::size_t> pair_lines_; // the lengths of the lines built as pair leaves
   target_profile profile_;
   plan_tables<T>& tables_;

@@ -193,7 +193,7 @@ std::size_t chain_builder<T>::c2c_lanes(std::size_t n, int sign, endpoint src,
                                         std::size_t block, std::vector<stage>& stages) {
   // Where c2c_line takes a pair leaf (X28b), its chain r1 x m with interleaved passes, so
   // that each lane computes what the row alone would.
-  const pair_leaf_entry* pair = pair_for(n, src, dst, edges);
+  const pair_leaf_entry* pair = pair_for(n, src, dst, edges).entry;
   const std::vector<std::size_t> rad =
       pair != nullptr ? std::vector<std::size_t>{pair->r1, pair->m} : radices(n);
   // c2c_line's split run: a line with a stride other than 1 is copied on C > 1, so only C = 1
@@ -216,7 +216,7 @@ std::size_t chain_builder<T>::r2c_lanes(std::size_t n, endpoint src, std::ptrdif
   // run; the separate route is c2c_line's; a leaf is one pass.
   // Where the separate route's c2c_line takes a pair leaf (X28b), its chain, interleaved.
   const pair_leaf_entry* pair = how == real_route::separate
-                                    ? pair_for(h, {src.where, 1}, {dst.where, 1}, line_edges())
+                                    ? pair_for(h, {src.where, 1}, {dst.where, 1}, line_edges()).entry
                                     : nullptr;
   const std::vector<std::size_t> rad = pair != nullptr ? std::vector<std::size_t>{pair->r1, pair->m}
                                        : how == real_route::fused ? real_radices(h, true)
@@ -270,7 +270,7 @@ std::size_t chain_builder<T>::c2r_lanes(std::size_t n, endpoint src, std::ptrdif
   }
   // Where the separate route's c2c_line takes a pair leaf (X28b), its chain, interleaved.
   const pair_leaf_entry* pair =
-      how == real_route::separate ? pair_for(h, {dst.where, 1}, {dst.where, 1}, edges) : nullptr;
+      how == real_route::separate ? pair_for(h, {dst.where, 1}, {dst.where, 1}, edges).entry : nullptr;
   const std::vector<std::size_t> rad = pair != nullptr ? std::vector<std::size_t>{pair->r1, pair->m}
                                        : how == real_route::fused ? real_radices(h, false)
                                                                   : radices(h);

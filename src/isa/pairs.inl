@@ -27,8 +27,8 @@ inline constexpr edge_op pair_scl = edge_op::scale;
 // NOLINTEND(bugprone-macro-parentheses)
 
 constinit const pair_leaf_table leaves{
-    .f64 = {{FFTN_PAIRS_F64}},
-    .f32 = {{FFTN_PAIRS_F32}},
+    .f64 = {.entry = {FFTN_PAIRS_F64}, .lanes = C<double>, .pack_twiddles = &pack_twiddles<double>},
+    .f32 = {.entry = {FFTN_PAIRS_F32}, .lanes = C<float>, .pack_twiddles = &pack_twiddles<float>},
 };
 
 #undef FFTN_PAIR
