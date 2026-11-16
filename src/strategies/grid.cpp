@@ -498,14 +498,14 @@ template <class T> std::size_t grid_builder<T>::pair_half(const grid_split& g) c
   return g.block / 2;
 }
 
-template <class T> bool grid_builder<T>::pairs_last(const grid_split& g) const noexcept {
+template <class T> bool grid_builder<T>::pairs_last(const grid_split& g) const {
   if (g.phases < 2) {
     return false;
   }
-  const std::size_t nk = g.factors.at(g.phases - 1);
+  const std::size_t nk = g.factors[g.phases - 1]; // phases <= max_grid_phases
   std::size_t l = 1;
   for (std::size_t i = 0; i + 1 < g.phases; ++i) {
-    l *= g.factors.at(i);
+    l *= g.factors[i];
   }
   // A last phase that reads and writes the arrays in its passes (fused, no gather or
   // scatter) keeps the separate pairing pass: the paired phase gathers and scatters, and

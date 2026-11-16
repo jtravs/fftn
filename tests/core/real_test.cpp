@@ -400,7 +400,11 @@ TEST(Real, PairingInTheGridsLastPhase) {
              grid_real{.n = 7680, .factors = {16, 16, 15}, .block = 16, .route = fused},
              grid_real{.n = 8192, .factors = {32, 128}, .block = 16, .route = fused},
              grid_real{
-                 .n = 1920, .factors = {24, 40}, .block = 8, .route = "half-length complex grid"},
+                 .n = 1920,
+                 .factors = {24, 40},
+                 .block = 8,
+                 .route = "half-length complex grid",
+             },
          }) {
       build_settings s;
       s.strategy = fftn::detail::strategy_choice::grid;
