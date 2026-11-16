@@ -504,8 +504,8 @@ TEST(Schedule, GridSizesFromCaches) {
 // the EPYC 7763, the Zen 5 VM (Google Cloud C4D, 8 cores) and the Xeon Gold 6240 keep the
 // values they had before X35; on x86-64 a private L2 of 2 MiB or more (the Granite Rapids
 // VM, Google Cloud C4) takes grids for long powers of two, two phases where the power-of-two
-// part is at most 1024 complex doubles, three phases from half of L2 and the grid from a
-// quarter of it, whatever its L3 per CPU (63 MiB in that VM). The Axion VM (C4A, AArch64,
+// part is at most 2048 complex doubles, the grid and three phases beyond
+// half of L2, whatever its L3 per CPU (63 MiB in that VM). The Axion VM (C4A, AArch64,
 // also 2 MiB of private L2) keeps the profile it had: it lost with X35's.
 struct planner_fields {
   std::size_t grid_min_bytes;
@@ -568,8 +568,8 @@ TEST(Schedule, ProfilesOfRecordedMachines) {
                              16 * kib, 0,       40 * mib, 160 * mib, never, false};
   EXPECT_EQ(fields("linux-gcp-c4a-axion.sysfs", false), axion);
   // A private L2 of 2 MiB on x86-64.
-  const planner_fields large_l2{512 * kib, 1 * mib, 48 * kib, 512 * kib, never, 0,    16 * kib,
-                                0,         0,       never,    0,         0,     false};
+  const planner_fields large_l2{1 * mib, 1 * mib, 48 * kib, 512 * kib, never, 0,    32 * kib,
+                                0,       0,       never,    0,         0,     false};
   EXPECT_EQ(fields("linux-gcp-c4-granite-rapids.sysfs", true), large_l2);
   // The same on bare metal with SMT, where Granite Rapids' L3 per CPU is under 2 MiB
   // (504 MiB for 128 cores, 256 CPUs): the key is the L2, not the L3 per CPU.

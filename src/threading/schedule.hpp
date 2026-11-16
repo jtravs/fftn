@@ -113,10 +113,11 @@ struct machine_profile {
   std::size_t grid_two_odd_part = 0;
   // A row whose length n is not a power of two and whose power-of-two part, in bytes of
   // complex values, is at most grid_two_part_bytes stays in two grid phases at any size (0:
-  // off; experiment X35). On a Granite Rapids VM two phases took 0.59-0.69 of the time of
-  // X29's chains at 100000, 10^6 and 2 x 10^6 points, three phases 0.89-1.04, while rows
-  // with a larger power-of-two part kept three phases (two lost up to 1.46). set_grid_sizes
-  // sets it to 16 KiB on x86-64 where the private L2 has 2 MiB or more.
+  // off; experiment X35). On a Granite Rapids VM two phases took 0.58-0.83 of the time of
+  // X29's chains at 100000, 10^6 and 2 x 10^6 points, and 71680 (power-of-two part 2048)
+  // lost 1.10 in three, while rows with a larger power-of-two part gained in three phases
+  // (two lost up to 1.46). set_grid_sizes sets it to 32 KiB on x86-64 where the private L2
+  // has 2 MiB or more.
   std::size_t grid_two_part_bytes = 0;
   std::size_t grid_block_bytes = std::size_t{64} * 1024;
   std::size_t grid_block = 0;

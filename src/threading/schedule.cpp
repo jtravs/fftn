@@ -95,21 +95,19 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
   // lost with chains beyond L2/2 at every length.
   const bool large_l3 = c.l3.size != 0 && c.l3.shared_by != 0 &&
                         c.l3.size / c.l3.shared_by >= std::size_t{2} * 1024 * 1024;
-  // Experiment X35: a private L2 of 2 MiB or more (Granite Rapids; Intel's server cores since
-  // Sapphire Rapids, against Zen 2-5's 0.5-1 MiB) is its own case, whatever the L3 per CPU,
-  // which depends on the VM's size: a Granite Rapids VM of 8 cores reports 63 MiB per CPU
-  // and lost with X29's and X32's chains (X31b: the grid took 0.59-0.94 of a long power of
-  // two's chain time, two phases 0.59-0.69 of X29's chains), and lost with X34's two phases
-  // where the power-of-two part is large (1.03-1.46). Grids from a quarter of L2, three
-  // phases from half of it (36864-131072 points 0.72-0.96), except where the power-of-two
-  // part is at most 1024 complex doubles: those rows stay in two phases. x86-64 only: an Axion
-  // VM (Neoverse V2, 2 MiB of private L2, 5 MiB of L3 per CPU) lost with this profile where
-  // it took X29's and X32's chains (46080 1.46, 100000 1.77, 262144 1.22 of their time).
+  // Experiment X35: on x86-64 a private L2 of 2 MiB or more (Granite Rapids; Intel's server
+  // cores since Sapphire Rapids, against Zen 2-5's 0.5-1 MiB) is its own case, whatever the
+  // L3 per CPU, which depends on the VM's size (a Granite Rapids VM of 8 cores reports 63 MiB
+  // per CPU). On that VM, against X29's, X32's and X33's chains: grids beyond L2/2 (long
+  // powers of two 0.61-0.97 of the chains' time, long real rows 0.59-0.88), three phases
+  // beyond L2/2 (131072 0.74 against 0.90 in two), but two phases where the power-of-two
+  // part is at most 2048 complex doubles (100000 0.67, 10^6 0.58; 71680 lost 1.10 in three;
+  // X34's odd-part rule lost 1.03-1.46). Not on AArch64: an Axion VM (Neoverse V2, 2 MiB of
+  // private L2) lost 1.28 over the rows this profile changed, and keeps X29's and X32's chains.
   const bool large_l2 = x86_64 && private_l2 && c.l2.size >= std::size_t{2} * 1024 * 1024;
   if (large_l2) {
-    p.grid_min_bytes = std::max(c.l1d.size, c.l2.size / 4);
     p.grid_three_bytes = c.l2.size / 2;
-    p.grid_two_part_bytes = std::size_t{16} * 1024;
+    p.grid_two_part_bytes = std::size_t{32} * 1024;
   } else if (private_l2 && large_l3) {
     p.chain_part_bytes = std::size_t{16} * 1024;
     p.chain_part_limit_bytes = c.l3.size / 2;
