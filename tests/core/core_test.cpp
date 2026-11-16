@@ -314,7 +314,10 @@ TEST(Rules, DescribeSaysWhenRadicesAreForced) {
 // axis line and in the stages (strategies/chain.hpp); 262 = 2 x 131 is not 7-smooth.
 TEST(Rules, DescribeNamesTheBluesteinStage) {
   const auto shape = fftn::rows_c2c<double>(std::size_t{4} * 263, 1, fftn::direction::forward);
-  const auto core = make_plan_core(fftn::detail::view_of(shape), fftn::options(), build_settings{});
+  // Forced, since on targets with C >= 4 the rules make 1052 one stage (X36, X36b).
+  build_settings forced;
+  forced.radices = {4, 263};
+  const auto core = make_plan_core(fftn::detail::view_of(shape), fftn::options(), forced);
   const std::string text = describe(*core);
   EXPECT_NE(text.find("radices 4 x bluestein 263 (M "), std::string::npos) << text;
   EXPECT_NE(text.find("bluestein in, chirp forward (Q 263, M "), std::string::npos) << text;

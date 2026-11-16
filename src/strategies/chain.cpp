@@ -100,8 +100,9 @@ template <class T> std::vector<std::size_t> chain_builder<T>::radices(std::size_
   // (Bluestein needs no prime) runs them whole, where its convolution is no longer than the
   // copies' together. 1018 = 2 x 509 took 0.68 of its time on AVX-512 in double (0.40 in
   // float); 12279 = 3 x 4093 in double, whose whole convolution (25920) is longer than
-  // 3 x 8192, took 1.17.
-  if (q > 1 && !forces(n) && n / q > 1 && n / q < kernels_.complex_lanes &&
+  // 3 x 8192, took 1.17. X36b: with s = C the units are whole but the copies' chains are
+  // lane passes of s = C (no grouped first pass), so s = C takes the whole line too.
+  if (q > 1 && !forces(n) && n / q > 1 && n / q <= kernels_.complex_lanes &&
       rader_root(q, profile_) == 0 && bluestein_m(n) <= n / q * bluestein_m(q)) {
     return {n};
   }
