@@ -91,7 +91,57 @@ are tested against the derived tolerances (the chain and grid suites force each)
 
 ## Results
 
-(pending)
+### Step 0: why power-of-two chains are bimodal on the EPYC
+
+EPYC 7763 node (DMOG, kernel 5.14, `transparent_hugepage/enabled` = always, `defrag` =
+madvise), the stand-alone program (GCC 16, `avx2`), Slurm jobs 510547, 510584, 510589,
+510596; ns per point, one process per line, median of five 20 ms batches.
+
+- **The slow mode is the rules' radices on huge pages.** The rules' chain of 131072 points
+  (radix-16 passes) took 14.3–15.6 ns in 14 of 16 processes and 8.7–9.5 in 2 (the grid
+  6.3–6.5). The split followed the buffers' huge-page backing exactly (`/proc/self/smaps`:
+  the slow processes had the output and the workspace in separate mappings, each partly
+  on 2 MiB pages), with twice the L2 read misses (0.19 M against 0.10 M per transform).
+  Forced onto huge pages (`MADV_HUGEPAGE`) it took 21–25 ns at every buffer offset tried.
+  On huge pages the L2's set index comes from the virtual address, so a radix-16 pass's 16
+  streams, a power of two apart, fall into one 8-way L2 set; on 4 KiB pages the frames
+  scatter them. FFTL.jl's radices (8 × 4⁷) took 4.4–4.8 ns in every placement, huge
+  pages or not (65536 as 4⁸: 4.07–4.24 in 16 processes; 2²⁰: 6.5–6.6 on huge pages, 7.4–7.8
+  without, the grid 9.6–11.2).
+- **A second, smaller effect: 4K aliasing between the chain's two buffers.** With the
+  scratch line a and the output 2048 bytes apart modulo 4 KiB, the radix-4 chain of 65536
+  took 4.0–4.1 ns; with the output 64 bytes past a, 6.3 (huge pages) or 4.3–5.3 (4 KiB
+  pages); ±64–128 bytes 1.1–1.3 times. Outputs that are not 64-byte aligned cost 5–8 %
+  wherever they lie (2064, 2096, 1040, 3088 bytes from a: 4.3–4.5), and 15–90 % more near a
+  (16 bytes past: 5.8–7.8; 48 before: 4.8–5.9). Buffers as `std::vector` and
+  `fftn::workspace` allocate them (malloc'd mappings, 16 bytes into a page, so the output
+  48 bytes before a) took 4.8–5.1 ns at 65536 and 5.3–5.5 at 131072, against 4.1 and 4.2–4.3
+  half a page apart. The input's offset from a made no difference (−128 to 256 bytes).
+  The 2²⁰ row was hardly affected (1.09 at +64 bytes).
+
+So X29's bimodal chains came from the rules' radix-16 passes meeting transparent huge
+pages, not from the chain as such: chains of radices ≤ 8 are steady. The aliasing is
+FFTN's to avoid (arm b).
+
+### Step 1: the screen
+
+Mac (M5 Max, `neon_fcma`, Clang 23; this branch at b51dc31, one run per length, 6–10
+rounds, the machine shared), ratio to the rules (the grid at every length here):
+
+| length | rules' chain | FFTL's 4s (C4) | FFTL's 8s (C8) | FFTL.jl | FFTW | run, band |
+|---|---|---|---|---|---|---|
+| 16384 | 1.69 | 0.83 | **0.74** | 0.74 | 0.78 | 20261116-114247-3e44, ±1.00 % |
+| 32768 | 1.74 | 0.88 | **0.76** | 0.81 | 0.83 | -114252-0279, ±1.64 % |
+| 65536 | 1.62 | 0.87 | **0.87** | 0.82 | 0.84 | -114255-32e9, ±2.46 % |
+| 131072 | 1.75 | 0.94 | **0.84** | 0.82 | 0.88 | -114300-4397, ±4.44 % |
+| 262144 | 2.64 | **0.93** | 1.02 | 0.89 | 1.17 | -114318-0043, ±1.17 % |
+| 2²⁰ | 1.50 | **0.66** | 0.91 | 0.58 | 0.79 | -114338-d2fe, ±3.19 % |
+| 2²² | 1.05 | **0.57** | 0.75 | 0.65 | 0.91 | -114400-e822, ±1.58 % |
+
+On the Mac every power of two from 16384 is faster as a chain of FFTL.jl's radices than as
+the grid: radix 8 up to 131072 points (2 MiB, an eighth of L2), radix 4 beyond. FFTN's
+chain is then within 0.9–1.1 of FFTL.jl's time except at 2²⁰ (1.14) and faster at 2²² (0.88),
+so arm (c) (a new pass loop) is not called for on the Mac.
 
 ## Verdict
 
