@@ -573,6 +573,7 @@ TEST(Real, RulesChooseTheRoute) {
   const std::size_t big = std::size_t{1} << 20U;
   build_settings s;
   s.profile.grid_min_bytes = std::size_t{512} * 1024;
+  s.profile.pow2_chain_bytes = 0; // the profile's power-of-two chains would keep it a chain
   for (const bool r2c : {true, false}) {
     const auto core =
         r2c ? make_plan_core(fftn::detail::view_of(fftn::rows_r2c<double>(big, 1)), {}, s)

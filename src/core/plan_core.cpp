@@ -326,8 +326,7 @@ line_edges c2c_edges(const options& opts, const build_settings& settings, bool f
 // transform of a real row (X33).
 template <class T>
 grid_split plan_grid(std::size_t n, const side& in, const side& out, const build_settings& settings,
-                     const chain_builder<T>& chain, std::size_t lanes,
-                     [[maybe_unused]] bool real) {
+                     const chain_builder<T>& chain, std::size_t lanes, [[maybe_unused]] bool real) {
   if (n < 2 || settings.strategy == strategy_choice::chain ||
       settings.strategy == strategy_choice::lanes || settings.in_factor != nullptr ||
       settings.out_factor != nullptr || in.stride[0] != 1 || out.stride[0] != 1) {
