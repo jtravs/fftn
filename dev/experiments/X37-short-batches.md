@@ -63,7 +63,13 @@ Arm A: `origin/main` e8c2639. One commit per arm, each on top of the one before:
    and 8 = 4 × 2, 12 = 6 × 2, 16 = 8 × 2 on `avx2` (double), taken before the single-codelet
    leaf for rows of stride 1 in a batch (and for single rows where the run shows they win).
 
-Bits: arm 0 changes no library code; arms 1 and 2 give the bits of the chain r1 × m of
+3. **A lighter path for leaf rows** (added after the counters below, before its runs):
+   the leaves take their batch distances in bytes as given (no signed division into
+   reals: six instructions per call), and `execute_core`'s path for leaf rows no longer
+   shares a frame with the general path (that moves out of line). Target cases: the
+   single rows and batches that are one leaf (2–16 points, every batch); bit-identical.
+
+Bits: arm 0 changes no library code; arm 3 is bit-identical; arms 1 and 2 give the bits of the chain r1 × m of
 the leaf's own target (the test `Passes.PairLeavesMatchTheForcedChain`), so a plan's
 results change only where its chain had other factors or the leaf comes from `avx2` in an
 `avx512` plan, within the derived tolerances. No switch in `dev/KNOBS.toml`
