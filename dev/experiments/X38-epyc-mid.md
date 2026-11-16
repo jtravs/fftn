@@ -193,6 +193,29 @@ The two-pass plans of FFTW's shape lost to the planner's three passes in the scr
 replaces; as the first (grouped) pass it costs 1.2–1.3. FFTN's radix-32 and radix-64
 codelets peak at 35 and 67 live values in 16 registers. So by S's rule: 384, 3600, 20000.
 
+### Selection for R (campaign x38-r20)
+
+The same driver on the radix-20 build (88f8c00 = S plus the codelet, no new overrides;
+Slurm 511091, not queued behind the serial jobs: a screen), candidates containing a 20,
+against the planner's sequence (S's at 3600 and 20000); confirmations 20261116-185510-eb00
+and before. Planner ÷ winner, double:
+
+| n | winner | batch 1 | batch 64 |
+|---|---|---|---|
+| 80 | 4 × 20 | 1.058 | 1.075 |
+| 100 | (planner best: 10 × 10) | – | – |
+| 160 | 8 × 20 | 1.061 | 1.035 |
+| 240 | 12 × 20 | 1.198 | 1.197 |
+| 640 | 20 × 32 | 1.130 | 1.114 |
+| 2000 | 10 × 10 × 20 | 1.224 | 1.157 |
+| 3000 | 10 × 15 × 20 | 1.195 | 1.121 |
+| 3600 | 12 × 15 × 20 | 1.112 | 1.097 (against S's 15 × 16 × 15) |
+| 20000 | 20 × 5 × 10 × 20 / 10 × 5 × 20 × 20 | 1.081 | 0.866 / 1.017: neither passes at both batches |
+
+R (cd22279) takes the seven passing lengths; 20000 keeps S's sequence. These are FFTW's
+radix-20 plans in all but 640 (FFTW 64 → 10) and 3600 (FFTW 12 → 20 → 15, the same
+radices).
+
 (Timing runs to come.)
 
 ## Verdict
