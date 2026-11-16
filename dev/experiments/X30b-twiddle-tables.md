@@ -71,14 +71,27 @@ Arms are commits of branch `exp/x30b-twiddle-tables`:
 No library switch: arms are commits, the threshold is a machine-profile field (private
 build settings, like the grid's sizes), `dev/KNOBS.toml` is untouched.
 
+*Amendment 1 (after the counter screen below, before any fbench run finished).* The
+first runs (Slurm 510261 EPYC, 15971 and 15973 Xeon; 510264) were cancelled unfinished when
+the counters showed what the size threshold misses: a compact per-lane table (grouped
+pass) cost 1.06–1.13 of the cycles at 2048 and 4096 in double whatever its size, while
+compact broadcast tables (lane passes), which cost no extra operation, gave the best
+cycles at 1024 (0.92 of A against 0.97 for the size rule). Arm C becomes **C2** (commit on
+C): one limit per table kind, `machine_profile::compact_grouped_bytes` (per-lane, default
+never) and `compact_shared_bytes` (broadcast, default 0: every lane pass), fbench's
+`COMPACT_GROUPED_BYTES` and `COMPACT_SHARED_BYTES`. Arms: A, L, CN (C2, both never: the
+FMADDSUB arithmetic alone), **CS** (C2's default: broadcast tables compact), CSG (CS with
+per-lane tables above 16 KiB compact, the size rule for the grouped pass), C1 (every
+table compact). The decision rule for C applies to CS, CSG and C1 in place of C, C8, C1.
+
 ## Method
 
 - **Cases**: `bench/catalogues/x30.toml` (c2c rows of 128–4096 in double and float, batches
   of 64, r2c and c2r of 512–4096, planes 256² and 512²); collateral: the standard
   catalogue's tracking tier.
 - **Runs per machine** (one thread, fbench interleaved process rounds, A/A control,
-  `--serial`): x30 catalogue and tracking tier, arms A, L, C, C8 (`C+TWIDDLE_COMPACT_BYTES=8192`),
-  C1 (`=1`), CN (`=never`). C, C8 and C1 are judged against L: the runs are re-read with L
+  `--serial`): x30 catalogue and tracking tier, arms A, L and C's variants (amendment 1:
+  CN, CS, CSG, C1). The variants are judged against L: the runs are re-read with L
   as the baseline (its labels swapped with A's in a copy of the run record, then
   `fbench show`), so their intervals are paired by round as fbench's are; the A/A band is
   still A's.
@@ -115,7 +128,28 @@ build settings, like the grid's sizes), `dev/KNOBS.toml` is untouched.
 
 ## Results
 
-(pending)
+### Counter screen (EPYC, before any timing run)
+
+EPYC 7763 node17, GCC 16.2, `avx2`, single processes, medians of three, batch 1 (Slurm
+510271, `fftn-x30b/pmu.sh` on DMOG; builds A e1879cb, L b5d3d6d, C 88cd9c3 with C's size
+rule at 16 KiB, CN = never, C1 = every table). Cycles per transform as a ratio to A;
+misaligned loads (PMCx047) and L1 fills (PMCx044) per transform:
+
+| n (double) | L | CN | C (16 KiB) | C1 | misaligned A → L | L1 fills A / L / C1 |
+|---|---|---|---|---|---|---|
+| 256 | 1.015 | 0.966 | 0.955 | 1.027 | 122 → 0 | 0 |
+| 512 | 0.994 | 0.985 | 0.988 | 0.997 | 0 | 523 / 522 / 200 |
+| 1024 | 0.979 | 0.962 | 0.966 | 0.920 | 859 → 0 | 1861 / 1853 / 1512 |
+| 2048 | 1.010 | 1.014 | 1.130 | 1.111 | 0 | 5157 / 5136 / 5463 |
+| 3072 | 0.900 | 0.902 | 0.958 | 0.947 | 4135 → 1 | 7768 / 7386 / 7669 |
+| 4096 | 1.000 | 0.995 | 1.060 | 1.052 | 1 → 1 | 12708 / 12694 / 13406 |
+
+Float: L 0.88–1.03 (128 0.880, 2048 0.941); C1 1024 0.889, 512 0.954, but 4096 1.040.
+Aligned tables remove every misaligned twiddle load where main's tables happened to start
+off a line (256, 1024, 3072 here; where `std::vector` puts a table varies by run). The
+compact per-lane tables (C at 1024–4096, C1) add instructions (+4 % at 2048–4096) and do
+not cut L1 fills at 2048–4096 (they rise); the compact broadcast tables (C1 against C at
+1024, where only the lane passes differ) cut fills and cycles. Hence amendment 1.
 
 ## Verdict
 

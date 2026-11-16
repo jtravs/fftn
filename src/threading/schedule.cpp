@@ -74,7 +74,6 @@ void set_grid_sizes(machine_profile& p, const core_class& c) noexcept {
   if (c.l1d.size != 0) {
     p.grid_min_bytes = c.l1d.size;
     p.grid_block_bytes = c.l1d.size;
-    p.twiddle_compact_bytes = c.l1d.size / 2; // X30b
   }
   if (c.l2.size != 0) {
     if (private_l2) {

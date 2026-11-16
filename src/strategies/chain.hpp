@@ -128,11 +128,15 @@ public:
   // x86 targets (kernel_table.hpp, experiment X28), which round alike. Null: the target's.
   void use_narrow_leaves(const narrow_leaf_set<T>* leaves) noexcept { narrow_ = leaves; }
 
-  // A grouped first pass or twiddled lane pass (no edge operation) whose table would hold
-  // more than `bytes` in the pre-arranged storage reads it in the compact storage, where
-  // the target has one (machine_profile::twiddle_compact_bytes; experiment X30b). The bits
-  // are the same either way. SIZE_MAX (the default): never.
-  void compact_twiddles_above(std::size_t bytes) noexcept { compact_above_ = bytes; }
+  // A grouped first pass (no input edge) whose per-lane table, or a twiddled lane pass whose
+  // broadcast table, would hold more than `grouped` or `shared` bytes in the pre-arranged
+  // storage reads it in the compact storage, where the target has one (machine_profile::
+  // compact_grouped_bytes and compact_shared_bytes; experiment X30b). The bits are the same
+  // either way. SIZE_MAX (the default): never.
+  void compact_twiddles_above(std::size_t grouped, std::size_t shared) noexcept {
+    compact_grouped_above_ = grouped;
+    compact_shared_above_ = shared;
+  }
 
   // The radices of a chain for n, in pass order (empty for n = 1); the last is a Bluestein
   // stage's when bluestein_last(n).
@@ -198,8 +202,9 @@ private:
   const T* pack(const std::vector<std::complex<T>>& w, bool broadcast, bool compact = false);
   const T* grouped_twiddles(std::size_t n, std::size_t radix, bool compact = false);
   const T* shared_twiddles(std::size_t n, std::size_t radix, std::size_t s, bool compact = false);
-  // Whether a pass whose table holds `count` twiddles reads it in the compact storage.
-  [[nodiscard]] bool compact_table(std::size_t count) const;
+  // Whether a pass whose table holds `count` twiddles reads it in the compact storage, given
+  // the limit of its kind (compact_twiddles_above).
+  [[nodiscard]] bool compact_table(std::size_t count, std::size_t above) const;
   const T* radix_roots(std::size_t radix);
   const T* edge_twiddles(std::size_t n);
   struct bluestein_tables {
@@ -286,7 +291,8 @@ private:
   std::vector<std::size_t> forced_;
   real_fusion fusion_;
   std::size_t bluestein_above_;
-  std::size_t compact_above_ = SIZE_MAX;
+  std::size_t compact_grouped_above_ = SIZE_MAX;
+  std::size_t compact_shared_above_ = SIZE_MAX;
   std::size_t line_scratch_ = 0; // scratch a Bluestein stage of the current line needs
   std::map<std::size_t, std::vector<std::complex<T>>> roots_;
   std::map<std::tuple<std::size_t, std::size_t, bool>, const T*> grouped_tables_; // n, R, compact

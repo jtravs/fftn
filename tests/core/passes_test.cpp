@@ -157,9 +157,9 @@ void check_row(fftn::isa target, std::size_t n, fftn::direction dir, const build
   EXPECT_TRUE(o.passed()) << o.detail() << "stages:" << listing;
 }
 
-// compact_bytes: the machine profile's twiddle_compact_bytes; 1 runs every grouped and
-// twiddled lane pass on the compact twiddle storage (experiment X30b), and then the leaf is
-// left out (it has no twiddles).
+// compact_bytes: the machine profile's compact_grouped_bytes and compact_shared_bytes; 0
+// runs every grouped and twiddled lane pass on the compact twiddle storage (experiment
+// X30b), and then the leaf is left out (it has no twiddles).
 template <class T>
 void every_codelet_in_every_position(fftn::isa target, std::size_t compact_bytes = SIZE_MAX) {
   const bool compact = compact_bytes != SIZE_MAX;
@@ -201,7 +201,8 @@ void every_codelet_in_every_position(fftn::isa target, std::size_t compact_bytes
       }
       build_settings settings;
       settings.radices = seq.radices;
-      settings.profile.twiddle_compact_bytes = compact_bytes;
+      settings.profile.compact_grouped_bytes = compact_bytes;
+      settings.profile.compact_shared_bytes = compact_bytes;
       check_row<T>(target, n, fftn::direction::forward, settings, 1.0, false, false, false,
                    seq.names);
       std::vector<std::string> backward = seq.names;
@@ -233,8 +234,8 @@ TEST(Passes, EveryCodeletInEveryPositionWithCompactTwiddles) {
   int targets = 0;
   for (const fftn::isa t : fftn::test::runnable_isas()) {
     if (has_compact_twiddles(t)) {
-      every_codelet_in_every_position<double>(t, 1);
-      every_codelet_in_every_position<float>(t, 1);
+      every_codelet_in_every_position<double>(t, 0);
+      every_codelet_in_every_position<float>(t, 0);
       ++targets;
     }
   }
@@ -1156,9 +1157,11 @@ template <class T> void compact_twiddles_same_bits(fftn::isa t) {
     const cvec<T> x = src.complexes<T>(rows * n);
     build_settings pre;
     pre.strategy = fftn::detail::strategy_choice::chain; // not the lanes' own passes
-    pre.profile.twiddle_compact_bytes = SIZE_MAX;
+    pre.profile.compact_grouped_bytes = SIZE_MAX;
+    pre.profile.compact_shared_bytes = SIZE_MAX;
     build_settings compact = pre;
-    compact.profile.twiddle_compact_bytes = 1;
+    compact.profile.compact_grouped_bytes = 0;
+    compact.profile.compact_shared_bytes = 0;
     build_settings pre_in = pre;
     pre_in.scale_on_input = true;
     build_settings scaled_in = compact;

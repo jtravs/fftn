@@ -168,14 +168,14 @@ const T* chain_builder<T>::pack(const std::vector<std::complex<T>>& w, bool broa
   return stored.data();
 }
 
-// Experiment X30b: storing x86 twiddles (wr, wi) halves a table but costs a pass more
-// operations per twiddle (the duplicating loads and shuffles do not fold into the
-// multiplies, X30's arm T), which lost on short rows (EPYC 128 points 1.04) and won where
-// the tables are large against L1 (1024-4096 points 0.95-0.97). So only large tables are
-// compact.
-template <class T> bool chain_builder<T>::compact_table(std::size_t count) const {
-  return kernels_.pack_compact_twiddles != nullptr && compact_above_ != SIZE_MAX &&
-         count * kernels_.tw_reals * sizeof(T) > compact_above_;
+// Experiment X30b: storing x86 twiddles (wr, wi) halves a table. A broadcast table costs
+// no more operations that way (two scalar broadcasts for two pair broadcasts); a per-lane
+// table costs shuffles and loads that no longer fold into the multiplies (X30's arm T lost
+// short rows by up to 1.04-1.10), so each kind has its own limit.
+template <class T>
+bool chain_builder<T>::compact_table(std::size_t count, std::size_t above) const {
+  return kernels_.pack_compact_twiddles != nullptr && above != SIZE_MAX &&
+         count * kernels_.tw_reals * sizeof(T) > above;
 }
 
 template <class T> std::size_t chain_builder<T>::blocks(std::size_t count) const {
@@ -457,7 +457,8 @@ void chain_builder<T>::add_pass(std::size_t n, const std::vector<std::size_t>& r
     kind = "generic";
   } else if (grouped) {
     // The table: R - 1 rows of m rounded up to whole registers (grouped_twiddles).
-    const bool compact = in == edge_op::none && compact_table((radix - 1) * blocks(m) * c);
+    const bool compact =
+        in == edge_op::none && compact_table((radix - 1) * blocks(m) * c, compact_grouped_above_);
     st.run = compact ? k.codelet[codelet_slot(radix)]->grouped_compact[d]
                      : k.codelet[codelet_slot(radix)]->grouped[d][edge_index(in)];
     st.args.twiddles = grouped_twiddles(n, radix, compact);
@@ -477,7 +478,8 @@ void chain_builder<T>::add_pass(std::size_t n, const std::vector<std::size_t>& r
     // A first pass with copies is a Bluestein convolution's (batch copies, all of them
     // here); its input factor, the backward chain's kernel spectrum, holds one entry per
     // element of a copy, which every lane shares.
-    const bool compact = in != edge_op::factor && compact_table((radix - 1) * m);
+    const bool compact =
+        in != edge_op::factor && compact_table((radix - 1) * m, compact_shared_above_);
     st.run = in == edge_op::factor ? k.codelet[codelet_slot(radix)]->lane_shared_in
              : compact             ? k.codelet[codelet_slot(radix)]->lane_compact[d]
                                    : k.codelet[codelet_slot(radix)]->lane[d];
