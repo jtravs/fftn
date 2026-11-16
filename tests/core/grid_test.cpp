@@ -295,7 +295,8 @@ TEST(Grid, PlannerChoosesByTheProfile) {
 
 // A length that is not a power of two stays a chain beyond grid_min_bytes when its
 // power-of-two part's bytes are within chain_part_bytes, or its own within
-// chain_mixed_bytes (X29); powers of two are unaffected.
+// chain_mixed_bytes (X29), the former up to chain_part_limit_bytes; powers of two are
+// unaffected.
 TEST(Grid, ChainKeepsLengthsThatAreNotPowersOfTwo) {
   build_settings s;
   s.profile.grid_min_bytes = 8192;
@@ -315,6 +316,9 @@ TEST(Grid, ChainKeepsLengthsThatAreNotPowersOfTwo) {
   EXPECT_FALSE(is_grid(*plan(128 * 45))); // within chain_mixed_bytes
   EXPECT_TRUE(is_grid(*plan(256 * 45)));
   EXPECT_TRUE(is_grid(*plan(8192)));
+  s.profile.chain_mixed_bytes = 0;
+  s.profile.chain_part_limit_bytes = 64 * 45 * 16 - 1; // part 64, but beyond the limit
+  EXPECT_TRUE(is_grid(*plan(64 * 45)));
 }
 
 // build_settings::scale_on_input puts the scale on phase 1's input: its first pass, or its

@@ -86,13 +86,17 @@ void set_grid_sizes(machine_profile& p, const core_class& c) noexcept {
     p.grid_fuse_bytes = c.l2.size / 4;
   }
   // Experiment X29: with a private L2 and an L3 of at least 2 MiB per CPU sharing it (the
-  // EPYC 7763's CCX: 32 MiB for 8 cores), the chain took 0.51-0.81 of the grid's time on
-  // every row from L2/2 to 16 MiB, powers of two included: the L3 feeds the chain's passes
-  // faster than the grid's copies run. The Xeon 6240 (0.7 MiB of L3 per CPU) kept L2/2:
-  // there the chain lost 1.1-1.6 beyond it.
+  // EPYC 7763's CCX: 32 MiB for 8 cores), a row whose length has a power-of-two part of at
+  // most 1024 points took 0.64-0.85 of the grid's time as a chain, steadily, to 2 Mi points
+  // (46080, 100000, 10^6 and the real rows of 46080 and 2 x 10^6), so it stays a chain to
+  // half of L3. Powers of two do not: their chains of 1-2 MiB ran 1.1-1.8 times the grid's
+  // time in some processes and 0.7 in others (leg distances a multiple of the L2's way,
+  // conflicting when the pages lie contiguous), and the Xeon 6240 (0.7 MiB of L3 per CPU)
+  // lost with chains beyond L2/2 at every length.
   if (private_l2 && c.l3.size != 0 && c.l3.shared_by != 0 &&
       c.l3.size / c.l3.shared_by >= std::size_t{2} * 1024 * 1024) {
-    p.grid_min_bytes = std::max(p.grid_min_bytes, c.l3.size / 2);
+    p.chain_part_bytes = std::size_t{16} * 1024;
+    p.chain_part_limit_bytes = c.l3.size / 2;
   }
   // Experiment X29, M5 Max: with the grid from L1, rows whose length has a power-of-two part
   // of at most 1024 points took 0.49-0.72 of the grid's time as chains (to 4 Mi points),

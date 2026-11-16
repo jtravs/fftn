@@ -339,7 +339,8 @@ grid_split plan_grid(std::size_t n, const side& in, const side& out, const build
     }
     const bool mixed = part != n;
     if (bytes <= settings.profile.grid_min_bytes ||
-        (mixed && (part * 2 * sizeof(T) <= settings.profile.chain_part_bytes ||
+        (mixed && ((part * 2 * sizeof(T) <= settings.profile.chain_part_bytes &&
+                    bytes <= settings.profile.chain_part_limit_bytes) ||
                    bytes <= settings.profile.chain_mixed_bytes))) {
       return {};
     }

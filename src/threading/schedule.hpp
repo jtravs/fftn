@@ -115,10 +115,14 @@ struct machine_profile {
   // complex values, is at most chain_part_bytes, and up to chain_mixed_bytes whatever that
   // part. The chain lost beyond L1 on Apple's cluster L2 because the legs of a power-of-two
   // row's passes map to the same L1 sets; an odd factor in every leg distance spreads them.
-  // 0 turns either off. set_grid_sizes sets them where the L2 is shared: an eighth of L1
-  // (the way size of an 8-way L1) and twice L1.
+  // 0 turns either off. set_grid_sizes sets them where the L2 is shared (an eighth of L1,
+  // the way size of an 8-way L1, and twice L1) and chain_part_bytes where a private L2 has
+  // 2 MiB of L3 per CPU behind it (16 KiB).
   std::size_t chain_part_bytes = 0;
   std::size_t chain_mixed_bytes = 0;
+  // The largest row (bytes) chain_part_bytes keeps a chain: half of L3 where a private L2
+  // has a large L3 behind it (x86 Zen), any size where the L2 is shared (X29).
+  std::size_t chain_part_limit_bytes = std::numeric_limits<std::size_t>::max();
 };
 
 // The profile of a machine of topology t (its CPU count aside): the defaults above, which
