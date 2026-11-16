@@ -178,8 +178,8 @@ void every_codelet_in_every_position(fftn::isa target, std::size_t compact_bytes
     std::vector<sequence> sequences{
         {.radices = {r, 2}, .names = {"grouped " + rs, "lane radix-2"}},
         {.radices = {2, r}, .names = {"grouped radix-2", "lane " + rs + " forward (m 1"}},
-        {.radices = {3, r, 2}, .names = {"lane " + rs + " forward (m 2, s 3)"}},
-        {.radices = {4, r, 4}, .names = {"lane " + rs + " forward (m 4, s 4)"}},
+        {.radices = {3, r, 2}, .names = {"lane " + rs + " forward (m 2, s 3"}},
+        {.radices = {4, r, 4}, .names = {"lane " + rs + " forward (m 4, s 4"}},
         {.radices = {r}, .names = {"leaf " + rs}},
     };
     if (r <= 16) {
