@@ -395,11 +395,10 @@ grid_split plan_grid(std::size_t n, const side& in, const side& out, const build
   const std::size_t block_bytes = !three && settings.profile.grid_two_block_bytes != 0
                                       ? settings.profile.grid_two_block_bytes
                                       : settings.profile.grid_block_bytes;
-  grid_split g = choose_grid(n, lanes, block_bytes / (4 * sizeof(T)), three,
-                             settings.profile.grid_block, settings.grid_factors,
-                             settings.profile.grid_three_block != 0
-                                 ? settings.profile.grid_three_block
-                                 : max_grid_block);
+  grid_split g = choose_grid(
+      n, lanes, block_bytes / (4 * sizeof(T)), three, settings.profile.grid_block,
+      settings.grid_factors,
+      settings.profile.grid_three_block != 0 ? settings.profile.grid_three_block : max_grid_block);
   g.pad = grid_pad(g, 2 * sizeof(T), settings.profile.grid_pad_period);
   for (std::size_t i = 0; i < g.phases; ++i) {
     for (const std::size_t radix : chain.radices(g.factors.at(i))) {
