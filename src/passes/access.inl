@@ -27,6 +27,18 @@ FFTN_FORCE_INLINE std::ptrdiff_t at(std::size_t index, std::ptrdiff_t stride) {
   return static_cast<std::ptrdiff_t>(index) * stride;
 }
 
+// Line u of a batch at base, lines `bytes` apart: the leaves' batch distances are in bytes
+// and stay so (X37: dividing them into reals cost a signed division's six instructions per
+// call, most of what separates a 2-point row from FFTW's).
+template <class T>
+FFTN_FORCE_INLINE const T* line_at(const void* base, std::size_t u, std::ptrdiff_t bytes) {
+  return static_cast<const T*>(
+      static_cast<const void*>(static_cast<const unsigned char*>(base) + at(u, bytes)));
+}
+template <class T> FFTN_FORCE_INLINE T* line_at(void* base, std::size_t u, std::ptrdiff_t bytes) {
+  return static_cast<T*>(static_cast<void*>(static_cast<unsigned char*>(base) + at(u, bytes)));
+}
+
 // A register of zeros.
 template <class T> FFTN_FORCE_INLINE cv<T> zeros() {
   T tile[2 * C<T>]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region

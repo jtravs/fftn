@@ -369,15 +369,10 @@ void leaf_lines(const pass_args* a, const void* src, void* dst, std::ptrdiff_t s
       .leg = 2 * a->dst_stride,
       .op = make_edge<T, OutOp>(a, a->out_factor, 0, 1),
   };
-  // Batch distances are whole elements, so whole reals.
-  constexpr auto real_bytes = static_cast<std::ptrdiff_t>(sizeof(T));
-  const std::ptrdiff_t src_step = src_dist / real_bytes;
-  const std::ptrdiff_t dst_step = dst_dist / real_bytes;
   for (std::size_t u = 0; u < count; ++u) {
     // From the first line, so that no pointer is formed beyond the last.
-    const auto k = static_cast<std::ptrdiff_t>(u);
-    in.p = static_cast<const T*>(src) + k * src_step;
-    out.p = static_cast<T*>(dst) + k * dst_step;
+    in.p = line_at<T>(src, u, src_dist);
+    out.p = line_at<T>(dst, u, dst_dist);
     cdft<R>::template plain<T, Sign>(in, out);
   }
 }
