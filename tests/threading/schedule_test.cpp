@@ -562,13 +562,13 @@ TEST(Schedule, ProfilesOfRecordedMachines) {
             (planner_fields{512 * kib, 1 * mib, 48 * kib, 256 * kib, never, 0, 0, 16 * kib, 0,
                             16 * mib, 64 * mib, never, false}));
   EXPECT_EQ(fields("linux-intel-xeon-gold-6240.sysfs", true),
-            (planner_fields{512 * kib, 1 * mib, 32 * kib, 256 * kib, never, 15, 0, 0, 0, never,
-                            0, 0, false}));
-  const planner_fields axion{1 * mib, 2 * mib, 64 * kib, 512 * kib, never,     0,    0,
-                             16 * kib, 0,      40 * mib, 160 * mib, never,     false};
+            (planner_fields{512 * kib, 1 * mib, 32 * kib, 256 * kib, never, 15, 0, 0, 0, never, 0,
+                            0, false}));
+  const planner_fields axion{1 * mib,  2 * mib, 64 * kib, 512 * kib, never, 0,    0,
+                             16 * kib, 0,       40 * mib, 160 * mib, never, false};
   EXPECT_EQ(fields("linux-gcp-c4a-axion.sysfs", false), axion);
   // A private L2 of 2 MiB on x86-64.
-  const planner_fields large_l2{512 * kib, 1 * mib, 48 * kib, 512 * kib, never, 0, 16 * kib,
+  const planner_fields large_l2{512 * kib, 1 * mib, 48 * kib, 512 * kib, never, 0,    16 * kib,
                                 0,         0,       never,    0,         0,     false};
   EXPECT_EQ(fields("linux-gcp-c4-granite-rapids.sysfs", true), large_l2);
   // The same on bare metal with SMT, where Granite Rapids' L3 per CPU is under 2 MiB
