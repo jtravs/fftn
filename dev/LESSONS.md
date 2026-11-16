@@ -304,7 +304,8 @@ per CPU. [X29](experiments/X29-real-footprint.md).
 pairing into the grid's first gather (each element reads its mirror from the input) made
 out-of-place rows 6–8 % faster on the Mac, where it also removed the workspace array, and
 in-place and three-phase rows 2–6 % slower, where the array stayed and the input was read
-twice instead of once by a streaming in-place pass. [X29](experiments/X29-real-footprint.md).
+twice instead of once by a streaming in-place pass; on the EPYC even the out-of-place
+rows lost (1.11). [X29](experiments/X29-real-footprint.md).
 
 ## 4. Kernels and algorithms
 

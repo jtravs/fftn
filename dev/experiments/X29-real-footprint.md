@@ -1,6 +1,6 @@
 # X29: real rows in the chain-or-grid rule, and the grid's pairing
 
-- **Status:** done (pending the x86 collateral runs named under Results)
+- **Status:** done (the Xeon run of job 15959 informational only: no plan changes there)
 - **Owner:** x29 session, 2026-11-15
 - **Phase / task:** 1–2 (PLAN lead 5; follows task 2.1, X6, X12b, X25)
 
@@ -191,10 +191,16 @@ Arm (d2), commit a3e6186: `grid_min_bytes` stays L2/2 on x86; with 2 MiB of L3 p
 lengths whose power-of-two part is at most 16 KiB (1024 points in double) stay chains up to
 half of L3 (`chain_part_bytes`, `chain_part_limit_bytes`). In the confirmation run its
 plans are arm B's for exactly the steady rows above and arm A's for the rest. Tracking
-tier on the EPYC against main 07c9e8c: (pending, job 510166).
+tier on the EPYC, branch 5ef9932 against main 63943cc (run 20261116-055358-7335; 63
+rounds, all with 64–97 other cores busy; band ±1.00 %): c2c 46080 0.750, 100000 0.656;
+FFTN ÷ FFTW there 1.52 → 1.14 and 1.52 → 1.00; geomean 0.989; and **c2r 65536 out of
+place 1.111**: arm b2's paired gather (65536 is a two-phase grid on the EPYC). Commit
+8ba17c8 therefore keeps the paired gather to shared-L2 machines (`c2r_paired_gather`),
+which restores main's plan there; nothing else outside ±3 % (largest 1.010, c2c 256, no
+evidence).
 
-Xeon confirmation (arms b2, c, d2 change only c2r out of place in two phases there):
-(pending, job 15893).
+Xeon: arms c and d2 change no plan there (0.7 MiB of L3 per CPU), and after 8ba17c8 b2
+none either; the confirmation run of 5ef9932 (b2 on everywhere) is job 15959.
 
 ## Verdict
 
@@ -202,10 +208,11 @@ Xeon confirmation (arms b2, c, d2 change only c2r out of place in two phases the
   real rows to the grid earlier than c2c rows of their half length (Xeon: k = 2 geomean
   1.015; EPYC and Mac: the grid comes too early already, or the rule is right). X25's
   r2c 65536 gap on the Xeon is not the threshold. Not built.
-- **Arm (b2), the c2r pairing in phase 1's gather: adopted** for c2r rows out of place
-  in two-phase grids (commit 560eeba; Mac 0.92–0.94, the separate route kept in place and
-  in three phases, where the fused gather lost 2–6 %). The r2c pairing stays a separate
-  pass (DESIGN 9.1 says why).
+- **Arm (b2), the c2r pairing in phase 1's gather: adopted on Apple** for c2r rows out of
+  place in two-phase grids (commits 560eeba, 8ba17c8; Mac 0.92–0.94; the separate route
+  kept in place and in three phases, where the fused gather lost 2–6 %). On the EPYC it
+  lost (c2r 65536 1.11), so private-L2 machines keep the separate pass. The r2c pairing
+  stays a separate pass (DESIGN 9.1 says why).
 - **Arm (c), Apple: lengths that are not powers of two stay chains: adopted** (9752672;
   Mac tracking 0.984 of main at 07c9e8c, 46080 0.65, 100000 0.62, nothing slower).
 - **Arm (d), x86 with 2 MiB of L3 per CPU, every row a chain to half of L3: rejected**
