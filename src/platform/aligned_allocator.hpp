@@ -19,7 +19,7 @@ template <class T> struct line_aligned_allocator {
 
   line_aligned_allocator() noexcept = default;
   template <class U>
-  // NOLINTNEXTLINE(google-explicit-constructor): rebinding, as the allocator requirements ask
+  // NOLINTNEXTLINE(misc-explicit-constructor): rebinding, as the allocator requirements ask
   line_aligned_allocator(const line_aligned_allocator<U>& /*other*/) noexcept {}
 
   [[nodiscard]] T* allocate(std::size_t count) {

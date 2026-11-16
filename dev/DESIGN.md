@@ -1617,13 +1617,22 @@ measured length fits in L1). The chain builder accepts any sequence (the tests f
 sequences through `build_settings::radices`); the memory rules of section 10 (set
 conflicts) are not applied yet.
 
-**`planning::measure`** (opt-in). Take the top k candidates by the model (k about 4–8),
-build each, time whole programs on scratch data for a bounded budget (default 10 ms per
-shape in total) with warmed caches and several repetitions, and keep the fastest. Whole
-plans are timed; no optimal-substructure assumption. Large batches and volumes are
-measured on a reduced batch (a few rows, planes or pencil blocks) with scratch bounded by
-a stated limit, so measuring never allocates memory on the scale of the user's data. The
-result is recorded as wisdom.
+**`planning::measure`** (opt-in). Take the top candidates by the model, build each, time
+whole programs on scratch data with warmed caches and several repetitions, and keep the
+fastest. Whole plans are timed; no optimal-substructure assumption. The result is recorded
+as wisdom.
+
+The budget is generous by design (the maintainer, 2026-11-16): a transform that is cheap to
+compute is either planned with `planning::rules` or with a quick measure, while a hard one
+runs for minutes, hours or days, so longer planning with a bigger payoff is worth it. A
+useful check is not ruled out to save planning time or memory, within reason: candidates
+are timed at the real size where scratch of the user's data size is acceptable (a reduced
+batch only for large batches and volumes, bounded by a stated scratch limit), and the time
+spent per shape may run to seconds, of the order of FFTW's MEASURE (which, with PATIENT,
+is what the maintainer's single-thread codes have used). What it must not become is
+FFTW's PATIENT or EXHAUSTIVE: no combinatorial search over every factorisation, above all
+not under threads. Effort levels (a quick measure, the default measure) and their budgets
+are set by experiment P2; faster planning that finds the same plan is always better.
 
 ### 11.3 Wisdom and reproducibility
 
@@ -2691,6 +2700,9 @@ to change before a release.
 | 2026-11-16 | Long power-of-two c2c rows stay chains on Apple (to 4 L2) and on Zen-like caches (private L2, ≥ 2 MiB of L3 per CPU; to 2 L3), with FFTL.jl's radix sequences for power-of-two chains beyond `grid_min_bytes` (radix 8, radix 4 beyond L2/8 on Apple); the Xeon keeps the grid; real rows unchanged by X32 and included by X33 (section 8.5; idea from FFTL.jl's `src/factor.jl`) | X32: Mac tracking 0.968, the long powers of two 0.57–0.94 (FFTN ÷ FFTW 1.16 → 0.87, ÷ FFTL.jl 1.34 → 1.00); EPYC 0.57–0.85 of the grid; Xeon chains 1.06–1.50 (rejected there); X29's bimodality explained (radix-16 passes on huge pages) |
 | 2026-11-16 | An r2c row's grid pairs its bins in its last phase, over pairs of mirror column sets (half a block each, at least a line), except on `avx2` and where the last phase is fused | X33: the separate pairing pass over the half spectrum was 0.03–0.06 of the row's time on the Mac and the Xeon (r2c 0.94–0.98 there), nothing on the EPYC (0.98–1.02); narrower or wider sets lost (EPYC 1.05–1.07, Xeon 1.08–1.09) |
 | 2026-11-16 | A real row's half-length power of two stays a chain up to `pow2_chain_bytes`, as a c2c row of that length does (X32's rule, Apple and Zen-like caches) | X33: Mac r2c and c2r 32768–2²⁰ 0.69–0.97 of main, EPYC 65536–2²⁰ 0.58–0.76 (FFTN ÷ FFTW r2c 2²⁰ 1.41 → 0.82, c2r 1.35 → 0.84); the Xeon has no such chains |
+| 2026-11-16 | `planning::measure` gets a generous budget: real-size timing where scratch of the data's size is acceptable, seconds per shape if needed (of the order of FFTW's MEASURE), with a quick level for cheap transforms; never PATIENT- or EXHAUSTIVE-like combinatorial search, above all under threads (section 11.2); task 2.4 comes forward, ahead of more threshold rules | The maintainer: cheap transforms are planned by rules or a quick measure, hard ones run for minutes to days and repay longer planning; their single-thread codes used FFTW PATIENT. Granite Rapids (X31b) showed hand thresholds on cache geometry misfiring on an unmeasured chip |
+| 2026-11-16 | C++20 stays (C++23 library features behind feature-test macros as before); no older standard is supported and no code is rewritten for one; compatibility with older toolchains and other languages comes from the C API (`fftn/c_api.h`) and possibly an FFTW-compatible interface, to be decided later | The maintainer prefers C++20 and newer; the public headers' C++20 use (nested inline namespaces, the executor concept, `std::span`, designated initialisers) is convenience, but a C interface serves old compilers, C, Fortran and FFTW users better than a C++17 subset |
+| 2026-11-16 | The planning API (task 2.4, pull request 26) as proposed: efforts `planning::rules` (default), `quick` and `measure`; budgets as two plain options (`measure_seconds`, `measure_scratch_bytes`, 0 = the effort's default); `class wisdom` as a value filled with `add` and passed by `options::use`, never global state; a stale or unbuildable entry is ignored and `describe()` says so; measure keeps the rules' choice unless another is at least 1 % faster; serial timing only for now | The maintainer agreed the public surface beyond section 5.3's sketch (AGENTS.md section 7) after the second reader's review; the reviewer's defects are fixed before merge |
 
 ---
 

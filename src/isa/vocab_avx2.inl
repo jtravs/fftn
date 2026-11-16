@@ -65,7 +65,7 @@ FFTN_FORCE_INLINE void store(float* p, __m256 a) { _mm256_storeu_ps(p, a); }
 // and 64 bits chosen by n, since a VMASKMOV store is microcoded on AMD Zen 1 to 3 (about 12
 // operations; llvm-mca znver3: 48 cycles for four against 8 for the stores here).
 FFTN_FORCE_INLINE __m256i mask_n_f64(std::size_t n) {
-  return _mm256_cmpgt_epi64(_mm256_set1_epi64x(static_cast<long long>(2 * n)),
+  return _mm256_cmpgt_epi64(_mm256_set1_epi64x(2 * static_cast<long long>(n)),
                             _mm256_setr_epi64x(0, 1, 2, 3));
 }
 FFTN_FORCE_INLINE __m256i mask_n_f32(std::size_t n) {

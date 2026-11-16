@@ -133,7 +133,7 @@ public:
 
   // Whether the last phase of g can pair an r2c row's bins: the columns L of the last phase
   // split into pairs of sets of pair_half(g) columns.
-  [[nodiscard]] bool pairs_last(const grid_split& g) const noexcept;
+  [[nodiscard]] bool pairs_last(const grid_split& g) const;
 
   // Whether c2c_row of g uses the block slot, and its complex elements (n, and the padding).
   [[nodiscard]] static bool uses_block(const grid_split& g, bool in_place) noexcept;

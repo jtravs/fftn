@@ -466,7 +466,7 @@ TEST(Schedule, GridSizesFromCaches) {
   EXPECT_EQ(epyc.chain_mixed_bytes, 0U);
   // With 4 MiB of L3 per CPU the EPYC keeps them chains to half of its L3 (X29).
   EXPECT_EQ(epyc.chain_part_bytes, 16 * kib);
-  EXPECT_EQ(epyc.chain_part_limit_bytes, 16 * 1024 * kib);
+  EXPECT_EQ(epyc.chain_part_limit_bytes, std::size_t{16} * 1024 * kib);
   // Without that L3 the Xeon keeps rows with an odd part of 15 or more in two phases (X34).
   EXPECT_EQ(xeon.grid_two_odd_part, 15U);
   EXPECT_EQ(epyc.grid_two_odd_part, 0U);
@@ -477,9 +477,9 @@ TEST(Schedule, GridSizesFromCaches) {
   EXPECT_FALSE(xeon.c2r_paired_gather);
   // Power-of-two rows stay chains to four times a shared L2, radix 8 up to an eighth of it;
   // to twice L3 with radix 8 on the EPYC; never on the Xeon (X32).
-  EXPECT_EQ(m5.pow2_chain_bytes, 64 * 1024 * kib);
+  EXPECT_EQ(m5.pow2_chain_bytes, std::size_t{64} * 1024 * kib);
   EXPECT_EQ(m5.pow2_radix8_bytes, 2048 * kib);
-  EXPECT_EQ(epyc.pow2_chain_bytes, 64 * 1024 * kib);
+  EXPECT_EQ(epyc.pow2_chain_bytes, std::size_t{64} * 1024 * kib);
   EXPECT_EQ(epyc.pow2_radix8_bytes, std::numeric_limits<std::size_t>::max());
   EXPECT_EQ(xeon.pow2_chain_bytes, 0U);
   EXPECT_EQ(xeon.grid_two_part_bytes, 0U);
