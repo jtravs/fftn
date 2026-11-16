@@ -156,8 +156,22 @@ gathered and scattered in random order, and a 2^16-point chain). FFTN ÷ FFTW wi
 
 ### Confirmation against the new main (d8ca0f1, after X26, X23b, X28)
 
-(pending: A = main d8ca0f1, B = a312699, x27 catalogue; Mac, EPYC job 510124, Xeon job
-15889.)
+A = main d8ca0f1, B = a312699 (this branch with main merged: the final rule), the whole
+x27 catalogue (32 cases per precision), budget 40–45 minutes:
+
+- Mac, run 20261116-012224-8ea6 (band ±1.0 %): 58 faster, 6 no evidence, none slower.
+  Changed cases geomean 0.357 (double), 0.423 (float); 65537 (Bluestein on NEON) 0.99;
+  controls 10403 and 4093 0.99–1.01. FFTN ÷ FFTW, double: 17 0.28, 2431 0.36, 97 0.33,
+  257 0.32, 1009 0.36 (all 32 cases: geomean 0.39).
+- EPYC, run 20261116-032119-f421 (all 80 rounds under load, band ±1.0 %): 56 faster, 7 no
+  evidence, 1 slower: 61 in float, 1.042 [1.039, 1.047], whose plan does not change (61 is
+  below AVX2 float's Rader range, so Bluestein in both arms): a code-layout effect on a
+  loaded node, recorded, not re-run. Changed cases geomean 0.407 (double), 0.504 (float);
+  65537 now Rader: FFTN ÷ FFTW 1.09 (was 1.78). FFTN ÷ FFTW, double: 17 0.41, 2431 0.35,
+  97 0.48, 257 0.48, 1009 0.37, 8191 0.54 (all 32: 0.48).
+- Xeon: job 15889 queued behind other experiments' timing jobs at the time of writing; the
+  arms' choices there are the measured winners of runs 20261115-225300-75d0 and
+  20261116-002300-c123.
 
 ## Verdict
 
@@ -171,8 +185,7 @@ section 6 allows; the rule's form changed from "q − 1 7-smooth" to the profile
 with q − 1 13-smooth, both measured): `target_profile::rader_from` = 16 C for C ≥ 4, else 0
 (AVX2 float and AVX-512 double from 64, AVX-512 float from 128), `rader_below` = 2^16 on
 NEON and scalar, 2^24 on x86. One measured exception kept by the rule: 8191 on AVX-512
-float (1.08); 16381 there is 0.91. The final rule (02fd25c) was not timed as a whole on x86
-before the confirmation run; each of its choices is a measured winner above.
+float (1.08); 16381 there is 0.91. The final rule was confirmed as a whole against the new main on the Mac and the EPYC (above).
 
 Done: generator catalogue, row units, planner, DESIGN (8.5, 9.2, 11.2, 15.2, 18.2,
 decision log), LESSONS 4.10 and 4.11. Follow-ups: 128-bit (X28-style) leaves for 17–23 on
