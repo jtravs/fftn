@@ -357,11 +357,10 @@ grid_split plan_grid(std::size_t n, const side& in, const side& out, const build
   while (odd % 2 == 0) {
     odd /= 2;
   }
-  const bool three = n * 2 * sizeof(T) > settings.profile.grid_three_bytes &&
-                     (settings.profile.grid_two_odd_part == 0 ||
-                      odd < settings.profile.grid_two_odd_part);
-  grid_split g = choose_grid(n, lanes, settings.profile.grid_block_bytes / (4 * sizeof(T)),
-                             three,
+  const bool three =
+      n * 2 * sizeof(T) > settings.profile.grid_three_bytes &&
+      (settings.profile.grid_two_odd_part == 0 || odd < settings.profile.grid_two_odd_part);
+  grid_split g = choose_grid(n, lanes, settings.profile.grid_block_bytes / (4 * sizeof(T)), three,
                              settings.profile.grid_block, settings.grid_factors);
   g.pad = grid_pad(g, 2 * sizeof(T), settings.profile.grid_pad_period);
   for (std::size_t i = 0; i < g.phases; ++i) {
