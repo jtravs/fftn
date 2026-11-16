@@ -144,22 +144,38 @@ template <class T> const std::vector<std::complex<T>>& chain_builder<T>::roots(s
   return it->second;
 }
 
-// Converts interleaved twiddles to the target's storage, per lane or broadcast, and keeps
-// them.
+// Converts interleaved twiddles to the target's storage, per lane or broadcast, pre-arranged
+// or compact (the target must have it: compact_table), and keeps them.
 template <class T>
-const T* chain_builder<T>::pack(const std::vector<std::complex<T>>& w, bool broadcast) {
+const T* chain_builder<T>::pack(const std::vector<std::complex<T>>& w, bool broadcast,
+                                bool compact) {
   std::vector<T> plain(2 * w.size());
   for (std::size_t i = 0; i < w.size(); ++i) {
     plain[2 * i] = w[i].real();
     plain[2 * i + 1] = w[i].imag();
   }
-  auto& stored = tables_.emplace_back(w.size() * kernels_.tw_reals);
-  if (broadcast) {
+  // A compact table is two reals longer: load_twc may read one past its last twiddle
+  // (vocabulary.inl).
+  auto& stored = tables_.emplace_back(compact ? 2 * w.size() + 2 : w.size() * kernels_.tw_reals);
+  if (compact) {
+    (broadcast ? kernels_.pack_compact_bcast_twiddles
+               : kernels_.pack_compact_twiddles)(plain.data(), w.size(), stored.data());
+  } else if (broadcast) {
     kernels_.pack_bcast_twiddles(plain.data(), w.size(), stored.data());
   } else {
     kernels_.pack_twiddles(plain.data(), w.size(), stored.data());
   }
   return stored.data();
+}
+
+// Experiment X30b: storing x86 twiddles (wr, wi) halves a table but costs a pass more
+// operations per twiddle (the duplicating loads and shuffles do not fold into the
+// multiplies, X30's arm T), which lost on short rows (EPYC 128 points 1.04) and won where
+// the tables are large against L1 (1024-4096 points 0.95-0.97). So only large tables are
+// compact.
+template <class T> bool chain_builder<T>::compact_table(std::size_t count) const {
+  return kernels_.pack_compact_twiddles != nullptr && compact_above_ != SIZE_MAX &&
+         count * kernels_.tw_reals * sizeof(T) > compact_above_;
 }
 
 template <class T> std::size_t chain_builder<T>::blocks(std::size_t count) const {
@@ -168,8 +184,9 @@ template <class T> std::size_t chain_builder<T>::blocks(std::size_t count) const
 
 // The grouped first pass's table (stockham.inl): rows k = 1 .. R-1 of w_n^(p k) for p < m,
 // each padded with ones to a multiple of C entries, in per-lane storage.
-template <class T> const T* chain_builder<T>::grouped_twiddles(std::size_t n, std::size_t radix) {
-  const auto key = std::make_pair(n, radix);
+template <class T>
+const T* chain_builder<T>::grouped_twiddles(std::size_t n, std::size_t radix, bool compact) {
+  const auto key = std::make_tuple(n, radix, compact);
   if (const auto it = grouped_tables_.find(key); it != grouped_tables_.end()) {
     return it->second;
   }
@@ -183,7 +200,7 @@ template <class T> const T* chain_builder<T>::grouped_twiddles(std::size_t n, st
       t.push_back(p < m ? w[p * k] : std::complex<T>(1, 0));
     }
   }
-  const T* stored = pack(t, false);
+  const T* stored = pack(t, false, compact);
   grouped_tables_.emplace(key, stored);
   return stored;
 }
@@ -192,8 +209,9 @@ template <class T> const T* chain_builder<T>::grouped_twiddles(std::size_t n, st
 // k = 1 .. R-1, grouped by p, in broadcast storage. p k s < n, so every entry is an entry
 // of the root table.
 template <class T>
-const T* chain_builder<T>::shared_twiddles(std::size_t n, std::size_t radix, std::size_t s) {
-  const auto key = std::make_tuple(n, radix, s);
+const T* chain_builder<T>::shared_twiddles(std::size_t n, std::size_t radix, std::size_t s,
+                                           bool compact) {
+  const auto key = std::make_tuple(n, radix, s, compact);
   if (const auto it = shared_tables_.find(key); it != shared_tables_.end()) {
     return it->second;
   }
@@ -206,7 +224,7 @@ const T* chain_builder<T>::shared_twiddles(std::size_t n, std::size_t radix, std
       t.push_back(w[p * k * s]);
     }
   }
-  const T* stored = pack(t, true);
+  const T* stored = pack(t, true, compact);
   shared_tables_.emplace(key, stored);
   return stored;
 }
@@ -438,11 +456,15 @@ void chain_builder<T>::add_pass(std::size_t n, const std::vector<std::size_t>& r
     st.chunks = chunks_of(st.units, radix * radix * c);
     kind = "generic";
   } else if (grouped) {
-    st.run = k.codelet[codelet_slot(radix)]->grouped[d][edge_index(in)];
-    st.args.twiddles = grouped_twiddles(n, radix);
+    // The table: R - 1 rows of m rounded up to whole registers (grouped_twiddles).
+    const bool compact = in == edge_op::none && compact_table((radix - 1) * blocks(m) * c);
+    st.run = compact ? k.codelet[codelet_slot(radix)]->grouped_compact[d]
+                     : k.codelet[codelet_slot(radix)]->grouped[d][edge_index(in)];
+    st.args.twiddles = grouped_twiddles(n, radix, compact);
     st.units = blocks(m);
     st.chunks = chunks_of(st.units, radix * c);
     kind = "grouped";
+    note = compact ? "; compact twiddles" : "";
   } else if (last) {
     st.run = out == edge_op::factor && edges.out_factor_copies > 1
                  ? k.codelet[codelet_slot(radix)]->last_shared_out
@@ -455,12 +477,15 @@ void chain_builder<T>::add_pass(std::size_t n, const std::vector<std::size_t>& r
     // A first pass with copies is a Bluestein convolution's (batch copies, all of them
     // here); its input factor, the backward chain's kernel spectrum, holds one entry per
     // element of a copy, which every lane shares.
+    const bool compact = in != edge_op::factor && compact_table((radix - 1) * m);
     st.run = in == edge_op::factor ? k.codelet[codelet_slot(radix)]->lane_shared_in
+             : compact             ? k.codelet[codelet_slot(radix)]->lane_compact[d]
                                    : k.codelet[codelet_slot(radix)]->lane[d];
-    st.args.twiddles = shared_twiddles(n / batch, radix, s / batch);
+    st.args.twiddles = shared_twiddles(n / batch, radix, s / batch, compact);
     st.units = m * blocks(s);
     st.chunks = chunks_of(st.units, radix * c);
     kind = "lane";
+    note = compact ? "; compact twiddles" : "";
   }
   st.args.radix = radix;
   st.args.m = m;

@@ -297,8 +297,7 @@ std::size_t grid_pad(const grid_split& g, std::size_t element_bytes, std::size_t
 
 template <class T>
 grid_builder<T>::grid_builder(const kernels_of<T>& kernels, chain_builder<T>& chain,
-                              plan_tables<T>& tables, bool fused,
-                              std::size_t phase_radix)
+                              plan_tables<T>& tables, bool fused, std::size_t phase_radix)
     : kernels_(kernels), chain_(chain), tables_(tables), fused_(fused),
       phase_radix_(phase_radix != 0 ? phase_radix : default_grid_phase_radix) {}
 

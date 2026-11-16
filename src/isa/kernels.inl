@@ -26,4 +26,24 @@ template <class T> void pack_bcast_twiddles(const T* w, std::size_t count, T* ou
   }
 }
 
+// The same into the compact storage (2 reals per twiddle, load_twc and bcast_twc) where the
+// target has it (compact_tw), else null: a plan then keeps the pre-arranged storage.
+template <class T> void pack_compact_twiddles(const T* w, std::size_t count, T* out) {
+  for (std::size_t k = 0; k < count; k += C<T>) {
+    pack_twc(out + 2 * k, w + 2 * k);
+  }
+}
+template <class T> void pack_compact_bcast_twiddles(const T* w, std::size_t count, T* out) {
+  for (std::size_t k = 0; k < count; ++k) {
+    pack_twc1(out + 2 * k, w + 2 * k);
+  }
+}
+template <class T> constexpr void (*compact_packer(bool broadcast))(const T*, std::size_t, T*) {
+  if constexpr (compact_tw) {
+    return broadcast ? &pack_compact_bcast_twiddles<T> : &pack_compact_twiddles<T>;
+  } else {
+    return nullptr;
+  }
+}
+
 } // namespace

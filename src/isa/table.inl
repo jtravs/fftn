@@ -43,6 +43,8 @@ constinit const kernel_table table{
         {
             .pack_twiddles = &pack_twiddles<double>,
             .pack_bcast_twiddles = &pack_bcast_twiddles<double>,
+            .pack_compact_twiddles = compact_packer<double>(false),
+            .pack_compact_bcast_twiddles = compact_packer<double>(true),
             .complex_lanes = C<double>,
             .real_lanes = W<double>,
             .tw_reals = tw_reals<double>,
@@ -53,6 +55,8 @@ constinit const kernel_table table{
         {
             .pack_twiddles = &pack_twiddles<float>,
             .pack_bcast_twiddles = &pack_bcast_twiddles<float>,
+            .pack_compact_twiddles = compact_packer<float>(false),
+            .pack_compact_bcast_twiddles = compact_packer<float>(true),
             .complex_lanes = C<float>,
             .real_lanes = W<float>,
             .tw_reals = tw_reals<float>,

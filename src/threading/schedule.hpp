@@ -110,6 +110,11 @@ struct machine_profile {
   // 0.976 of the unpadded time) and none where each core has its own (x86: the padding cut
   // no L1 refills there and gained nothing on the Xeon and the EPYC).
   std::size_t grid_pad_period = std::numeric_limits<std::size_t>::max();
+  // The planner's (experiment X30b): a chain pass whose twiddle table would hold more than
+  // this many bytes in the pre-arranged storage reads the compact storage instead, where
+  // the target has one (x86; strategies/chain.hpp, compact_twiddles_above). set_grid_sizes
+  // sets half of the L1 data cache. 1: every table compact; SIZE_MAX: none.
+  std::size_t twiddle_compact_bytes = std::size_t{16} * 1024;
 };
 
 // The profile of a machine of topology t (its CPU count aside): the defaults above, which

@@ -13,6 +13,8 @@ namespace {
 inline constexpr target id = target::scalar;
 inline constexpr bool fused = false;
 inline constexpr bool masked = false;
+// No compact twiddle storage (vocabulary.inl): one storage only.
+inline constexpr bool compact_tw = false;
 
 template <class T> struct cplx {
   T re;

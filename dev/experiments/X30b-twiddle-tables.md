@@ -56,11 +56,14 @@ Arms are commits of branch `exp/x30b-twiddle-tables`:
   instantiation, and the chain builder takes it for a pass whose pre-arranged table would
   exceed `machine_profile::twiddle_compact_bytes`, by default half of the L1 data cache
   (16 KiB on both x86 machines). Compact per-lane loads: double r by `vmovddup`, i by
-  `vpermilpd` of the same aligned load; float r and i by `vmovsldup` and `vmovshdup` (load
-  ports only). Compact broadcasts: two scalar broadcasts. Targets other than `avx2` and
+  `vpermilpd` of the same aligned load (compilers emit one load and two shuffles; the
+  diagnostic `diag/x30-tb` measured this form); float r and i by `vmovsldup` from p and
+  p + 1 (load ports only, X30's T form; the one-load form became a load and two shuffles,
+  so it was not used). Compact broadcasts: two scalar broadcasts. Amended before any
+  timing: written as above when the arms were built. Targets other than `avx2` and
   `avx512` have no compact form and are unchanged. The threshold is a machine-profile field,
   so fbench's `TWIDDLE_COMPACT_BYTES` sets it per arm (`never`: every table pre-arranged;
-  `0`: every table compact, X30's T with aligned tables and the shuffle).
+  `1`: every table compact, X30's T with aligned tables and, in double, the shuffle).
 - **R** (arm 3, screened before any commit): `avx2` double 4096 forced (`RADICES`) to
   16 × 16 × 16, 4 × 16 × 64, 8 × 8 × 64, 16 × 4 × 64 and 64 × 64 against the planner's
   8 × 8 × 8 × 8; a winner becomes the override in `src/planner/rules.cpp`.
@@ -75,7 +78,7 @@ build settings, like the grid's sizes), `dev/KNOBS.toml` is untouched.
   catalogue's tracking tier.
 - **Runs per machine** (one thread, fbench interleaved process rounds, A/A control,
   `--serial`): x30 catalogue and tracking tier, arms A, L, C, C8 (`C+TWIDDLE_COMPACT_BYTES=8192`),
-  C0 (`=0`), CN (`=never`). C, C8 and C0 are judged against L: the runs are re-read with L
+  C1 (`=1`), CN (`=never`). C, C8 and C1 are judged against L: the runs are re-read with L
   as the baseline (its labels swapped with A's in a copy of the run record, then
   `fbench show`), so their intervals are paired by round as fbench's are; the A/A band is
   still A's.
@@ -83,7 +86,7 @@ build settings, like the grid's sizes), `dev/KNOBS.toml` is untouched.
   (GCC 14.4, `avx512`, and `ISA=avx2` in the same job); Mac M5 Max (Homebrew Clang,
   `neon_fcma`) for L only, x30 and tracking with A and L. Clang on x86 not measured
   (not a release toolchain).
-- **Counters**: `run --pmu` on the EPYC for A, L, C and C0 at 1024, 2048, 4096 and 3072
+- **Counters**: `run --pmu` on the EPYC for A, L, C and C1 at 1024, 2048, 4096 and 3072
   (double, batch 1): cycles, instructions, L1 data-cache fills (as X25 counted them) and
   misaligned loads (PMCx047, as X30), to confirm that fills and line crossings fall where
   the time does.
@@ -96,7 +99,7 @@ build settings, like the grid's sizes), `dev/KNOBS.toml` is untouched.
     tracking tier is slower than 1 + band + 2 % on any machine-target, and (c) x30's float
     geomean is at most 1 + band everywhere. L is deleted otherwise.
   - **C**, judged against L, per target (`avx2`: EPYC and the Xeon's `avx2`; `avx512`: the
-    Xeon), for each threshold measured (C, C8, C0): (a) x30's double geomean at most 0.99
+    Xeon), for each threshold measured (C, C8, C1): (a) x30's double geomean at most 0.99
     with its interval clear of the band on the deciding machine (EPYC for `avx2`, the
     Xeon for `avx512`), and at most 1 + band on the Xeon's `avx2`; (b) no case of x30 or of
     the tracking tier slower than 1 + band + 2 %; (c) x30's float geomean at most 1 + band.

@@ -157,7 +157,12 @@ void check_row(fftn::isa target, std::size_t n, fftn::direction dir, const build
   EXPECT_TRUE(o.passed()) << o.detail() << "stages:" << listing;
 }
 
-template <class T> void every_codelet_in_every_position(fftn::isa target) {
+// compact_bytes: the machine profile's twiddle_compact_bytes; 1 runs every grouped and
+// twiddled lane pass on the compact twiddle storage (experiment X30b), and then the leaf is
+// left out (it has no twiddles).
+template <class T>
+void every_codelet_in_every_position(fftn::isa target, std::size_t compact_bytes = SIZE_MAX) {
+  const bool compact = compact_bytes != SIZE_MAX;
   for (const std::uint8_t radix : fftn::detail::gen::radices) {
     const std::size_t r = radix;
     const std::string rs = "radix-" + std::to_string(r);
@@ -183,13 +188,20 @@ template <class T> void every_codelet_in_every_position(fftn::isa target) {
       sequences.push_back({.radices = {r, 8}, .names = {"grouped " + rs, "lane radix-8"}});
       sequences.push_back({.radices = {8, r}, .names = {"grouped radix-8", "lane " + rs}});
     }
-    for (const sequence& seq : sequences) {
+    for (sequence seq : sequences) {
       std::size_t n = 1;
       for (const std::size_t f : seq.radices) {
         n *= f;
       }
+      if (compact) {
+        if (seq.radices.size() == 1) {
+          continue;
+        }
+        seq.names.emplace_back("compact twiddles");
+      }
       build_settings settings;
       settings.radices = seq.radices;
+      settings.profile.twiddle_compact_bytes = compact_bytes;
       check_row<T>(target, n, fftn::direction::forward, settings, 1.0, false, false, false,
                    seq.names);
       std::vector<std::string> backward = seq.names;
@@ -208,6 +220,26 @@ TEST(Passes, EveryCodeletInEveryPosition) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
     every_codelet_in_every_position<double>(t);
     every_codelet_in_every_position<float>(t);
+  }
+}
+
+// Whether target t has the compact twiddle storage (x86; experiment X30b).
+bool has_compact_twiddles(fftn::isa t) {
+  const auto* k = fftn::detail::find_kernels(static_cast<fftn::detail::target>(t));
+  return k != nullptr && k->f64.pack_compact_twiddles != nullptr;
+}
+
+TEST(Passes, EveryCodeletInEveryPositionWithCompactTwiddles) {
+  int targets = 0;
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    if (has_compact_twiddles(t)) {
+      every_codelet_in_every_position<double>(t, 1);
+      every_codelet_in_every_position<float>(t, 1);
+      ++targets;
+    }
+  }
+  if (targets == 0) {
+    GTEST_SKIP() << "no target here has the compact twiddle storage";
   }
 }
 
@@ -1107,6 +1139,61 @@ TEST(Passes, TargetsThatRoundAlikeGiveTheSameBits) {
   }
   if (pairs == 0) {
     GTEST_SKIP() << "no pair of such targets runs here";
+  }
+}
+
+// The compact twiddle storage gives the bits of the pre-arranged one (experiment X30b): the
+// rules' plans with every table compact against none, both directions, several rows so that
+// partial units occur, with the input scale (which keeps a grouped pass pre-arranged) and
+// in place.
+template <class T> void compact_twiddles_same_bits(fftn::isa t) {
+  using c = std::complex<T>;
+  constexpr std::size_t rows = 3;
+  for (const std::size_t n : {60U, 64U, 100U, 128U, 360U, 384U, 1000U, 1024U, 3072U, 4096U}) {
+    SCOPED_TRACE(std::string(fftn::isa_name(t)) + (sizeof(T) == 8 ? " double" : " float") +
+                 ", n = " + std::to_string(n));
+    fftn::test::input_source src(0xC0DEULL + n);
+    const cvec<T> x = src.complexes<T>(rows * n);
+    build_settings pre;
+    pre.strategy = fftn::detail::strategy_choice::chain; // not the lanes' own passes
+    pre.profile.twiddle_compact_bytes = SIZE_MAX;
+    build_settings compact = pre;
+    compact.profile.twiddle_compact_bytes = 1;
+    build_settings pre_in = pre;
+    pre_in.scale_on_input = true;
+    build_settings scaled_in = compact;
+    scaled_in.scale_on_input = true;
+    for (const auto dir : {fftn::direction::forward, fftn::direction::backward}) {
+      const auto shape = fftn::rows_c2c<T>(n, rows, dir);
+      const auto view = fftn::detail::view_of(shape);
+      const auto a = make_plan_core(view, {.force_isa = t}, pre);
+      const auto b = make_plan_core(view, {.force_isa = t}, compact);
+      EXPECT_EQ(joined(stage_names(*a)).find("compact"), std::string::npos);
+      EXPECT_NE(joined(stage_names(*b)).find("compact twiddles"), std::string::npos)
+          << joined(stage_names(*b));
+      EXPECT_TRUE(bitwise_equal(run<c, c>(*a, x, rows * n), run<c, c>(*b, x, rows * n)));
+      const auto as = make_plan_core(view, {.scale = 0.5, .force_isa = t}, pre_in);
+      const auto bs = make_plan_core(view, {.scale = 0.5, .force_isa = t}, scaled_in);
+      EXPECT_TRUE(bitwise_equal(run<c, c>(*as, x, rows * n), run<c, c>(*bs, x, rows * n)))
+          << "input scale";
+      const auto ai = make_plan_core(view, {.in_place = true, .force_isa = t}, pre);
+      const auto bi = make_plan_core(view, {.in_place = true, .force_isa = t}, compact);
+      EXPECT_TRUE(bitwise_equal(run_in_place(*ai, x), run_in_place(*bi, x))) << "in place";
+    }
+  }
+}
+
+TEST(Passes, CompactTwiddlesGiveTheSameBits) {
+  int targets = 0;
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    if (has_compact_twiddles(t)) {
+      compact_twiddles_same_bits<double>(t);
+      compact_twiddles_same_bits<float>(t);
+      ++targets;
+    }
+  }
+  if (targets == 0) {
+    GTEST_SKIP() << "no target here has the compact twiddle storage";
   }
 }
 

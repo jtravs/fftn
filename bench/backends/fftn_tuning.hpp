@@ -100,6 +100,10 @@ constexpr std::array size_fields{
         .key = "GRID_PAD_PERIOD",
         .member = &fftn::detail::machine_profile::grid_pad_period,
     },
+    size_field{
+        .key = "TWIDDLE_COMPACT_BYTES",
+        .member = &fftn::detail::machine_profile::twiddle_compact_bytes,
+    },
 };
 constexpr std::array int_fields{
     int_field{

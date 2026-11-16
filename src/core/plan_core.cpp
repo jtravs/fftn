@@ -457,6 +457,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   if (const narrow_leaf_table* narrow = find_narrow_leaves(c.isa_target)) {
     chain.use_narrow_leaves(&of<T>(*narrow));
   }
+  chain.compact_twiddles_above(settings.profile.twiddle_compact_bytes);
   program& p = c.prog;
   const std::size_t r = s.axes.size();
   const auto complex_bytes = static_cast<std::ptrdiff_t>(2 * sizeof(T));

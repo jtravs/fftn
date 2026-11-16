@@ -231,20 +231,35 @@ template <class T> struct to_registers {
   FFTN_FORCE_INLINE void put(std::size_t k, cv<T> x) const { v[k] = x; }
 };
 
-// Twiddles of a grouped pass: C per-lane twiddles per leg, rows of one table (load_tw).
-template <class T> struct lane_twiddles {
+// Reals per twiddle of a table in the pre-arranged storage (tw_reals) or, where Compact, the
+// compact one (2; vocabulary.inl, compact_tw).
+template <class T, bool Compact>
+inline constexpr std::size_t stored_reals = Compact ? std::size_t{2} : tw_reals<T>;
+
+// Twiddles of a grouped pass: C per-lane twiddles per leg, rows of one table (load_tw, or
+// load_twc where Compact).
+template <class T, bool Compact = false> struct lane_twiddles {
   const T* p;
   std::ptrdiff_t row;
   [[nodiscard]] FFTN_FORCE_INLINE tw<T> get(std::size_t k) const {
-    return load_tw(p + at(k - 1, row));
+    if constexpr (Compact) {
+      return load_twc(p + at(k - 1, row));
+    } else {
+      return load_tw(p + at(k - 1, row));
+    }
   }
 };
 
-// Twiddles of a lane pass: one per leg, shared by every lane (bcast_tw, DESIGN.md 8.4).
-template <class T> struct shared_twiddles {
+// Twiddles of a lane pass: one per leg, shared by every lane (bcast_tw, or bcast_twc where
+// Compact; DESIGN.md 8.4).
+template <class T, bool Compact = false> struct shared_twiddles {
   const T* p;
   [[nodiscard]] FFTN_FORCE_INLINE tw<T> get(std::size_t k) const {
-    return bcast_tw(p + tw_reals<T> * (k - 1));
+    if constexpr (Compact) {
+      return bcast_twc(p + 2 * (k - 1));
+    } else {
+      return bcast_tw(p + tw_reals<T> * (k - 1));
+    }
   }
 };
 
