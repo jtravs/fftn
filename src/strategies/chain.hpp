@@ -61,6 +61,7 @@
 #include "isa/kernel_table.hpp"
 #include "passes/pass_args.hpp"
 #include "planner/rules.hpp"
+#include "platform/aligned_allocator.hpp"
 
 #include <complex>
 #include <cstddef>
@@ -119,10 +120,9 @@ public:
   // line's length, that line's radices in pass order, instead of the rules' (tests).
   // bluestein_above: the Bluestein threshold instead of the profile's, when not 0 (tests).
   // fusion: when the pairing of an even real line fuses into a pass (real_fusion).
-  chain_builder(const kernels_of<T>& kernels, const target_profile& profile,
-                std::vector<std::vector<T>>& tables, std::size_t chunk_points,
-                std::vector<std::size_t> forced, std::size_t bluestein_above = 0,
-                real_fusion fusion = {});
+  chain_builder(const kernels_of<T>& kernels, const target_profile& profile, plan_tables<T>& tables,
+                std::size_t chunk_points, std::vector<std::size_t> forced,
+                std::size_t bluestein_above = 0, real_fusion fusion = {});
 
   // Leaves (n <= 16) from this set instead of the target's own: the 128-bit leaves of the
   // x86 targets (kernel_table.hpp, experiment X28), which round alike. Null: the target's.
@@ -285,7 +285,7 @@ private:
   const pair_leaf_set<T>* pairs_ = nullptr;
   std::vector<std::size_t> pair_lines_; // the lengths of the lines built as pair leaves
   target_profile profile_;
-  std::vector<std::vector<T>>& tables_;
+  plan_tables<T>& tables_;
   std::size_t chunk_points_;
   std::vector<std::size_t> forced_;
   real_fusion fusion_;
