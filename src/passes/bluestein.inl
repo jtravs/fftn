@@ -192,8 +192,7 @@ void bluestein_half_in(const pass_args* a, const void* src, void* dst, std::size
         } else {
           // The block that holds the last data element: the lanes beyond it load zero.
           const std::size_t valid = q - p0;
-          v = on_run<T, InOp, false>(op, load_run<T, false>(x + at(p0, xs), xs, valid), p0,
-                                     valid);
+          v = on_run<T, InOp, false>(op, load_run<T, false>(x + at(p0, xs), xs, valid), p0, valid);
         }
         e = mul(v, load_tw(chirp + tw_reals<T> * p0));
         o = mul(v, load_tw(turned + tw_reals<T> * p0));

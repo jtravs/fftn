@@ -134,7 +134,8 @@ template <class T> std::vector<std::size_t> chain_builder<T>::radices(std::size_
 }
 
 template <class T> std::size_t chain_builder<T>::bluestein_m(std::size_t q) const {
-  return bluestein_length(q, profile_, std::max<std::size_t>(conv_pow2_part_bytes_ / (2 * sizeof(T)), 1));
+  return bluestein_length(q, profile_,
+                          std::max<std::size_t>(conv_pow2_part_bytes_ / (2 * sizeof(T)), 1));
 }
 
 template <class T>
@@ -825,8 +826,8 @@ void chain_builder<T>::add_bluestein(std::size_t n, std::size_t q, int sign, end
   // Experiment X36: the edge passes take the convolution's passes of radix 2 next to them
   // where M is even, its half has a chain of two passes or more, and a unit of the input
   // pass is C copies or the line is one copy.
-  std::vector<std::size_t> half_rad = m % 2 == 0 ? convolution_radices(m / 2)
-                                                 : std::vector<std::size_t>{};
+  std::vector<std::size_t> half_rad =
+      m % 2 == 0 ? convolution_radices(m / 2) : std::vector<std::size_t>{};
   const bool halves = halves_ && (shared || s == 1) && half_rad.size() >= 2;
   std::vector<std::size_t> fwd_rad = rad;
   std::vector<std::size_t> back_rad = rad;
@@ -868,7 +869,8 @@ void chain_builder<T>::add_bluestein(std::size_t n, std::size_t q, int sign, end
   }
 
   stage out;
-  out.run = (halves ? k.bluestein_half_out : k.bluestein_out)[shared ? 1 : 0][edge_index(edges.out)];
+  out.run =
+      (halves ? k.bluestein_half_out : k.bluestein_out)[shared ? 1 : 0][edge_index(edges.out)];
   out.args.m = m;
   out.args.s = s;
   out.args.n = n;
