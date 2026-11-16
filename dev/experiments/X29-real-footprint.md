@@ -221,7 +221,7 @@ none either, so no Xeon confirmation run was needed (job 15959, cancelled).
   the EPYC by its confirmation-run evidence** (a3e6186; 0.64–0.85 on the rows it changes);
   the Xeon (0.7 MiB of L3 per CPU) unchanged.
 
-DESIGN 8.5, 9.1 and the decision log record the rules; LESSONS 3.10–3.12 the lessons.
+DESIGN 8.5, 9.1 and the decision log record the rules; LESSONS 3.11–3.13 the lessons.
 Follow-ups for lead 1: why power-of-two chains are bimodal on Zen 3 at 1–2 MiB (huge pages?)
 and whether rows of 4–16 MiB, which were steady (0.64–0.88), can take chains; whether
 mixed lengths with a power-of-two part of 2048–8192 points can (mixed on the Mac, good on

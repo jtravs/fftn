@@ -52,20 +52,31 @@ Open, by phase:
 - 3: T2, T3, T4, T6; 3.5 (Kokkos executor); 3.6 to be checked against its acceptance.
 - 4–7: not started.
 
-In flight (lead session, 2026-11-15 evening): X27 (lead 2,
-17-point and other prime codelets), X29 (lead 5, the real
-footprint in the chain-or-grid rule), X30 (lead 3, x86 pass-loop instructions). X28 (lead 4, single short rows) is done: 128-bit leaves on x86, a lighter entry and
-flat path, kernels taking their addresses as arguments (single rows 0.79–0.88 of main,
-nothing slower). X26 (lead 1,
-the grid's copies) is done: no prefetch in the copies on `avx2`, the cheaper copy loops
-rejected. X26b (lead 1 continued) is done: a padded grid intermediate where the L2 is
-shared by a cluster (Mac long rows 0.976), nothing on x86; the prefetch by core rejected. X25 (the x86 gap's causes, from counters and FFTW's printed plans) is done; its
-verdicts are folded into the leads below. X23 (masked partial runs on x86) was rejected by
-its rule for a Clang-only loss; its amendment 4 restores the code for GCC builds behind
-`FFTN_MASKED_TAILS` (`AUTO`: on with GCC, off with Clang and icpx), adopted: float 0.53 of
-main on the Xeon's `avx512`, 0.72 on the EPYC, double 0.78–0.89, with two whole-unit cases
-just past the limit kept as recorded exceptions (Xeon `avx512` float 256 1.047, EPYC
-double 72 1.033).
+In flight (lead session, 2026-11-16 night): X29 (lead 5, the real footprint in the
+chain-or-grid rule, and long rows as chains on x86), X28b (lead 4 continued: whole-transform
+leaves for short composite rows, 24–120 points). Done overnight, each merged with its
+pull request:
+- X30 (lead 3): two-pass `avx2` double plans at 256 and 512 (radix 32): EPYC 0.975 of main
+  on its cases, 256 0.905; twiddle storage (wr, wi) and 1024 = 16 × 64 rejected.
+- X28 (lead 4): 128-bit leaves on x86, a one-call entry, a flat path, kernels taking their
+  addresses as arguments: single rows 0.79–0.88 of main; tracking tier 0.95–0.96 on all
+  three machines, nothing slower.
+- X27 (lead 2): codelets of 17, 19, 23 and a Rader stage: those cases 0.24–0.31 of main;
+  library text +25 % (B3, for the maintainer).
+- X26 and X26b (lead 1): no copy prefetch on `avx2` (EPYC long rows 0.920); a padded grid
+  intermediate where the L2 is shared by a cluster (Mac long rows 0.976), nothing on x86;
+  cheaper copy loops and the prefetch by core rejected.
+- X23 amendment 4: masked partial runs for GCC builds (`FFTN_MASKED_TAILS`, `AUTO`: on
+  with GCC): float 0.53 of main on the Xeon's `avx512`, 0.72 on the EPYC, double
+  0.78–0.89; two whole-unit cases just past the limit kept as recorded exceptions (Xeon
+  `avx512` float 256 1.047, EPYC double 72 1.033).
+- X25 (the x86 gap's causes) is done; its verdicts are folded into the leads below.
+
+For the maintainer (decisions taken by the lead overnight, easy to revert): X23b's two
+exceptions; X27's 25 % larger library; X26's prefetch gate by target (Intel cores without
+AVX-512 lose up to 1.20 at 2²² until a rule by core and row width exists); X28's 128-bit
+leaves kept on `avx2` though they gain only at 8–16 points there; X30's 512 override,
+pending the Xeon `avx2` re-run of r2c 1024² (1.034, interval containing 1).
 
 ### Leads, one-dimensional double first
 
@@ -107,6 +118,14 @@ runs; the numbers above are the baseline to beat. The rest (6–9) follow. X25's
    par here (port 5 57–73 % busy against FFTW's 34–55 %); the EPYC executes 1.38–1.60 times
    FFTW's instructions at 256–1024 for the same floating-point work, so the AVX2 pass loops
    need 30–40 % fewer instructions; at 4096 FFTN runs four passes to FFTW's three.
+   X30 (done): most of that excess was a third pass; `avx2` double now plans 256 = 8 × 32
+   and 512 = 16 × 32 (EPYC 0.905 and 0.946 of their time, batches 0.87–0.92). Two-pass
+   1024 (16 × 64) loses in batches. At 1024–4096 the EPYC is not at its dispatch limit
+   (IPC 2–2.5 by X30's counters) and refills L1 1.4–3.8 times as often as FFTW: twiddles
+   stored (wr, wi) (half the bytes, same bits) won 0.95–0.97 there and 0.94 in float but
+   lost up to 1.08 on short rows, so next is that storage per table (large tables only, an
+   aligned load for the imaginary parts) and 64-byte aligned twiddle tables (0.97–0.98 of
+   the cycles alone).
 4. Single short rows: X28 done (128-bit x86 leaves, a lighter entry, passes given their
    addresses: single c2c rows 8–120 at 0.79–0.88 of their time on every machine; FFTN ÷
    FFTW Xeon 1.62 → 1.27, EPYC 1.37 → 1.12, Mac 1.14 → 1.00). Left: 60 and 120 points
@@ -367,6 +386,7 @@ running, done (with verdict).
 | [X26b](experiments/X26b-padded-grid.md) | Long rows on x86: does a padded intermediate (phase 2's rows not a 4 KiB multiple apart) remove the grid's L1 set conflicts, and do X26's cheaper copy loops then pay? Can the copies' prefetch follow the core? | 1 | done: padding adopted where the L2 is shared by a cluster (Mac long rows 0.976 of main); on x86 it cuts no L1 refills and gains nothing (Xeon 1.006, EPYC 0.993), off; X26's copy loops rejected again; the prefetch by core rejected (Xeon `avx2` 2²² 0.84 but float 100000 1.27: needs a row-width condition) |
 | [X27](experiments/X27-prime-codelets.md) | Generated codelets of radix 17, 19 and 23 (leaf and pass) against Bluestein for prime factors above 16, and their build size (B3); Rader against Bluestein where p − 1 is smooth | 1 | done: codelets adopted everywhere (targets 0.24–0.31 of the Bluestein route; 17 now 0.28–0.47 of FFTW; library +25 %); Rader adopted per target (0.4–0.8 of Bluestein from 97 up; from 16C for C ≥ 4, below 2¹⁶ on NEON) |
 | [X28](experiments/X28-short-rows.md) | Single short rows (≤ 120 points, batch 1): what is left after X20, and do a lighter entry, 128-bit leaves on x86 or a flat path for two-pass chains close it? (PLAN lead 4) | 1 | done: all adopted (128-bit x86 leaves; one-call entry; passes take their addresses as arguments, no per-stage argument copy): single rows 0.79 (Xeon), 0.82 (EPYC), 0.82–0.88 (Mac) of `main`; tracking Mac 0.953, EPYC 0.964 |
+| [X30](experiments/X30-x86-pass-loops.md) | x86 chains at 128–4096 (lead 3): two-pass `avx2` double sequences with radix 32/64 (P), twiddles stored (wr, wi) with duplicating loads (T), 1024 = 16 × 64 (Q) | 1 | done: P adopted (EPYC x30 double 0.975: 256 0.905, 512 0.946, batches of 64 0.87–0.92, r2c/c2r 512–1024 0.90–0.95; nothing slower; Xeon `avx2` tracking 0.999, r2c 1024² 1.034 [0.997, 1.061] re-run pending); T rejected by single cases (geomeans 0.97–0.99, float 0.94, but short rows and small grouped passes up to 1.08–1.11); Q rejected (1024 batches 1.09) |
 | [X29](experiments/X29-real-footprint.md) | Real rows in the chain-or-grid rule: should r2c and c2r switch to the grid at another size than the c2c row of half their length, and is the grid's separate pairing pass worth fusing into its end phases? | 1–2 | done: real footprint rejected (no gain on any machine); c2r pairing in the grid's first gather adopted on Apple out of place in two phases (Mac 0.92–0.94; EPYC 1.11, not adopted); lengths with a power-of-two part ≤ 1024 points stay chains on Apple at any size (46080 0.65, 100000 0.62) and on Zen to half of L3 (0.64–0.85); power-of-two chains on the EPYC bimodal at 1–2 MiB, not adopted |
 | P1 | Cost-model accuracy: rank agreement with measurement across the catalogue per machine | 2 | planned |
 | P2 | Measurement budget: how many candidates and how long before the choice stops improving | 2 | planned |

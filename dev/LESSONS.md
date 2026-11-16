@@ -224,7 +224,7 @@ three-phase grid ran at 0.47–0.71 of the chain's time. Where to switch to thre
 machine-specific: on the EPYC a switch at 1 MiB was 3 % faster than the default and never
 switching was 23 % slower; on the x86 machines it belongs at L2, on the Mac at L2/8 (3.8). Inside L2 the pass count (L2 bandwidth) decides, which is why
 FFTW's radix-32/64 three-pass plans win there. [X12](experiments/X12-beyond-l2.md). Correction (X29): this holds for powers of two on the Mac
-and beyond L2/2 on the Xeon, not in general; see 3.10 and 3.11.
+and beyond L2/2 on the Xeon, not in general; see 3.11 and 3.12.
 
 3.6 **Misaligned wide accesses split cache lines.** With four complex doubles per AVX-512
 vector, a stride ≡ 2 mod 4 makes every other access split a 64-byte line (prototype).
@@ -278,7 +278,19 @@ through, rows spread evenly turn over every set, the scratch block included. Set
 of a streaming copy are not by themselves a cost; what they evict is.
 [X26b](experiments/X26b-padded-grid.md).
 
-3.10 **A chain's cache trouble beyond L1 can be a power-of-two problem, not a size
+3.10 **Halving the twiddle bytes trades loads for footprint, and the trade goes both
+ways.** Storing x86 twiddles as (wr, wi) instead of the pre-arranged (wr, wr), (−wi, wi),
+and building the registers with duplicating loads (`vmovddup`/`vmovsldup` from p and
+p + 1, load ports only) and `vfmaddsub`, keeps every bit and halves the tables. It won where
+tables overflow L1 (EPYC double 384–4096 points 0.95–0.97, float 0.80–0.94, rows of 16384
+0.91, Bluestein's chirps at 10403 0.88; Xeon `avx512` similar) and lost on short rows and
+small grouped passes (EPYC 64–192 points 1.03–1.04, 97 1.08, batches of 100 points 1.08;
+Xeon 16–17 points 1.06–1.10): a duplicating load cannot be folded into the multiply as a
+plain load can, and the load at p + 1 crosses a cache line in half the units (in all of
+them on 64-byte registers). Measure footprint changes on short transforms too; a per-table
+choice of storage would keep both sides. [X30](experiments/X30-x86-pass-loops.md).
+
+3.11 **A chain's cache trouble beyond L1 can be a power-of-two problem, not a size
 problem.** On the Mac a whole-row chain lost to the blocked grid beyond L1 for powers of
 two (1.6–1.8 times its time), but for a length whose power-of-two part is at most 1024
 points it took 0.49–0.72 of the grid's time at every size tried, 144 KiB to 62.5 MiB, and
@@ -288,7 +300,7 @@ factor in every leg distance spreads them. Rules tuned on powers of two (X12, X1
 that bias: test mixed lengths before extending a threshold to them.
 [X29](experiments/X29-real-footprint.md).
 
-3.11 **Do not extrapolate a chain-or-blocked threshold past the sizes tried, and look at
+3.12 **Do not extrapolate a chain-or-blocked threshold past the sizes tried, and look at
 every process's time, not only the median.** X12b kept the x86 chain to L2/2 because it
 tried thresholds up to L2 only. On the EPYC 7763 (512 KiB L2, 32 MiB L3 per 8 cores) whole-
 row chains beat the grid far beyond: lengths with a small power-of-two part took 0.64–0.85
@@ -300,7 +312,7 @@ pages lie contiguous): a median over few processes hid a bimodal cost. The Xeon 
 1.1–1.6 beyond L2/2. Same instruction-set family, opposite answers: key the rule on the L3
 per CPU. [X29](experiments/X29-real-footprint.md).
 
-3.12 **Fuse a pass when it removes an array, not merely a pass.** Folding the c2r
+3.13 **Fuse a pass when it removes an array, not merely a pass.** Folding the c2r
 pairing into the grid's first gather (each element reads its mirror from the input) made
 out-of-place rows 6–8 % faster on the Mac, where it also removed the workspace array, and
 in-place and three-phase rows 2–6 % slower, where the array stayed and the input was read
@@ -350,6 +362,13 @@ values per pass) and won only as a grid phase at 32–64 thousand points (a 2 % 
 chain pass at 2048 vanished once the radix-16 codelets lost 12 of their 19 swaps, X19). Fewer passes is not enough: the pass must fit the
 register file. And a cost table fitted on lengths up to 2048 extrapolates its big-radix
 columns badly: at 4096 it chose 32·4·32, 2–11 % slower than the measured 8·16·32. [X3](experiments/X3-big-radices.md).
+**Partly overturned by X30:** after X19's rotations, X1's split runs and X23's masked
+tails, AVX2 double (16 registers, EPYC 7763) gains from a radix-32 pass where it replaces a
+third pass: 256 as 8·32 took 0.90 of 2·16·8's time and 512 as 16·32 0.87–0.95 of 4·8·16's
+(rows, batches of 64, real transforms of twice the length), although the radix-32 lane loop
+makes 142 stack references per unit. One pass fewer outweighed the spills; 1024 as 16·64
+did not (1.03 alone, 1.09 in batches of 256). Re-test a "loses" verdict on big radices
+after the codelets change. [X30](experiments/X30-x86-pass-loops.md).
 
 4.7 **For tiny transforms the bookkeeping is the transform: interpret once per call and put
 the batch loop inside the kernel.** On the M5 Max an 8-point leaf costs 2.5 ns, while

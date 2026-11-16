@@ -1561,7 +1561,8 @@ columns (X3) and overrides at every measured length whose choice was slow or nev
 in double (C = 4) AVX2's C = 4 costs with overrides where their choice was more than 2 %
 behind the measured winner in every case (mostly a first radix of 8, after which a split
 run starts). Every other table leaves the radix 32 and 64 columns 0, so those passes stay
-out of their chains: they tied or lost there (X3). The refresh kept the AVX2 and NEON
+out of their chains: they tied or lost there (X3), except AVX2 double's overrides 256 =
+8 · 32 and 512 = 16 · 32 (X30: two passes where the costs' choice ran three). The refresh kept the AVX2 and NEON
 costs (refits gained about 1 %) and added overrides from new searches on the EPYC (up to
 16384) and the Mac (up to 1024). NEON has its own tables (C = 1 and 2), fitted to X2's
 campaign on an Apple M5 Max with `neon_fcma`; plain `neon` takes them too, unmeasured on a
@@ -2646,6 +2647,7 @@ to change before a release.
 | 2026-11-15 | Where a cluster shares L2 (Apple), a row whose length is not a power of two stays a chain when its power-of-two part is at most L1/8 in bytes, or the row at most 2 L1 (`chain_part_bytes`, `chain_mixed_bytes`; section 8.5) | X29 (M5 Max): chains took 0.49–0.72 of the grid's time for every such length tried (144 KiB to 62.5 MiB), the grid's L1-conflict problem being one of powers of two; tracking tier 0.983 (46080 0.63, 100000 0.60), nothing slower |
 | 2026-11-16 | With a private L2 and at least 2 MiB of L3 per CPU (Zen), a row whose length is not a power of two and has a power-of-two part of at most 1024 points stays a chain up to half of L3 (section 8.5) | X29 (EPYC 7763): 0.64–0.85 of the grid's time, steadily, at 46080 to 2 Mi points; power-of-two chains of 1–2 MiB were bimodal (0.7–1.8 by process) and keep the grid; the Xeon 6240 (0.7 MiB of L3 per CPU) keeps L2/2, where every chain lost 1.1–1.6 |
 | 2026-11-16 | Where the L2 is shared by a cluster (Apple), an intermediate the grid already keeps in the workspace block is padded after each of phase 2's rows (`grid_pad`, profile `grid_pad_period`); off on x86. The copies' prefetch keeps X26's target gate: keying it to the core was rejected (experiment X26b) | Mac: double long rows 0.976 of main (2^18 0.94); Xeon 1.006 and EPYC 0.993, where counters showed no fewer L1 refills. The prefetch on an Intel core under `avx2` took 2^22 to 0.84 but float 100000 to 1.27; X26's cheaper copy loops were rejected again on the padded grid |
+| 2026-11-16 | AVX2 double plans 256 as 8 · 32 and 512 as 16 · 32 (overrides of `avx2_double`) | X30: two passes against the three the costs chose (2 · 16 · 8, 4 · 8 · 16): EPYC 0.90 of the time at 256 and 0.87–0.95 at 512 (rows, batches of 64, the real transforms whose half-length chains they are); X30's other arms, x86 twiddles stored (wr, wi) and 1024 as 16 · 64, were rejected by their rule |
 
 ---
 
