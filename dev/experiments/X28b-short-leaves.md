@@ -221,3 +221,9 @@ the Mac's 20 points (1.72: no leaf of 20 on NEON, where a pair leaf with C = 1 o
 generated leaf of 20 would fit 32 registers). Library size: +0.75 % (arm 1), +1.1 % (arm
 3), and arm 2 +3.5 % as first written, then the x86 targets' unused copies removed.
 DESIGN.md 6.1, 8.2 and the decision log, LESSONS 4.12 and 4.13 updated.
+
+## State (2026-11-16, before the lead's network pause)
+
+Done: all arms measured on the Xeon, EPYC and Mac; tracking tiers done on all three; verdict
+written; PR #16 open with `main` (5b7a6ae, X29) merged in. No Slurm job of X28b is queued or
+running. Next: wait for CI on the merge commit to be green, then report to the lead.
