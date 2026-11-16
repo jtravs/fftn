@@ -114,7 +114,41 @@ No switch: arms are commits, `dev/KNOBS.toml` is untouched.
 
 ## Results
 
-(pending)
+### Checks before timing
+
+- **Bits.** T against main (0e64ecd), GCC 16, `avx2` and `scalar`: the check's RMS and
+  maximum errors are equal to the last digit on 18 cases (c2c 17–100000 points, both
+  directions, in place, batches, a plane, r2c and c2r up to 65536), as T's roundings say
+  they must be. P and Q change plans, so bits, within the tests' tolerances.
+- **Tests.** DMOG node, GCC 16, Release, `-Werror`, both `FFTN_MASKED_TAILS` states: T,
+  P and Q pass (1366 tests each; P after `Rules.RadicesMultiplyToTheLength` learned that
+  a radix may be 32 or 64). Xeon, GCC 14 (`avx512` and `avx2`, masked on): T passes all
+  1688, including `Passes.TargetsThatRoundAlikeGiveTheSameBits`. CI on pull request 13.
+
+### Counter diagnostics of T (not judged; single processes, medians of three, EPYC node)
+
+Cycles per transform, double, batch 1, the planner's sequences of main (so before P):
+
+| n | main | T | T, tables 64-byte aligned | T aligned, i by an in-lane shuffle | main, tables aligned |
+|---|---|---|---|---|---|
+| 512 | 2618 | 2622 | 2567 | 2475 | 2531 |
+| 1024 | 5995 | 5739 | 5623 | 5540 | 5789 |
+| 2048 | 14383 | 16401 | 16390 | 15554 | 14024 |
+| 4096 | 33879 | 37789 | 38813 | 36373 | 33158 |
+
+T loses at 2048 (8 × 16 × 16) and 4096 (8 × 8 × 8 × 8), whose grouped radix-8 first pass
+has 256 and 512 butterflies. Two causes: the imaginary parts' load at p + 1 crosses a
+cache line in half the units (the EPYC's misaligned-load counter, PMCx047, goes from 20
+to 1250 per transform at 2048), and the duplicating loads cannot be folded into the
+multiplies as the pre-arranged form's loads were (the grouped radix-8 loop goes from 87 to
+100 instructions per unit, radix 16 from 228 to 258). Aligning the tables does not remove
+the crossings (the i load starts 8 bytes in); building i by `vpermilpd` from the aligned
+load does, and halves the loss. Main's tables start where `std::vector` puts them:
+aligning them to 64 bytes alone took 0.97–0.98 of main's cycles at 1024–4096 (main
+crosses lines on 863–3046 loads per transform there). These diagnostic builds are not
+arms (branches `diag/x30-*`, not pushed).
+
+(fbench runs pending)
 
 ## Verdict
 
