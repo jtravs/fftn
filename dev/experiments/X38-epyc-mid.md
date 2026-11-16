@@ -127,7 +127,73 @@ registers), a generator matter beyond this experiment.
 
 ## Results
 
-(to come)
+### Diagnostic: plans and counters (main e8c2639, before any arm)
+
+EPYC 7763 (DMOG node17), GCC 16.2, `avx2`, one thread. FFTW 3.3.11 (AVX2) at MEASURE,
+one plan shared through wisdom by every counting process (Slurm 511064). FFTN ÷ FFTW
+time from fbench run 20261116-180425-c571 (8 rounds, all loaded, band ±1.76 %); counters
+per transform, user mode, medians of three single processes (`run --pmu`; L1 fills
+PMCx044, FP-pipe uops PMCx000 pipes 0–3). FFTW's plans as `fftw_sprint_plan` prints them,
+written here in FFTN's convention, executed sub-transform first (FFTW's DIT: the `n2fv`/
+`n1fv` codelet runs first, the outer `t1fv`/`t2fv` radix last):
+
+| n | FFTN ÷ FFTW | FFTN plan | FFTW plan (first → last) | instructions N / F | IPC N / F | L1 fills N / F | FP uops N / F |
+|---|---|---|---|---|---|---|---|
+| 80 | 1.10 | 8 × 10 | 10 → 8 | 1271 / 1026 | 4.34 / 3.88 | 0 / 0 | 509 / 521 |
+| 100 | 1.10 | 10 × 10 | 10 → 10 | 1605 / 1340 | 4.19 / 3.76 | 0 / 0 | 709 / 725 |
+| 160 | 1.04 | 10 × 16 | 8 → 20 | 2247 / 2108 | 3.92 / 3.74 | 0 / 0 | 1147 / 1148 |
+| 240 | 1.20 | 2 × 10 × 12 | 12 → 20 | 4834 / 3194 | 4.71 / 3.65 | 0 / 0 | 1941 / 1842 |
+| 256 | 1.06 | 8 × 32 | 64 → 4 | 3609 / 3371 | 3.91 / 3.46 | 0 / 0 | 1868 / 1875 |
+| 384 | 1.24 | 2 × 16 × 12 | 12 → 32 | 7205 / 5167 | 4.13 / 3.68 | 180 / 23 | 3175 / 3103 |
+| 512 | 1.11 | 16 × 32 | 64 → 8 | 7808 / 7040 | 3.61 / 3.63 | 517 / 200 | 4185 / 4369 |
+| 640 | 1.21 | 4 × 10 × 16 | 64 → 10 | 12817 / 9357 | 3.89 / 3.21 | 825 / 543 | 6028 / 5779 |
+| 768 | 1.19 | 4 × 16 × 12 | 12 → 64 | 14465 / 11920 | 3.58 / 3.59 | 1096 / 473 | 7104 / 7239 |
+| 1024 | 1.20 | 4 × 16 × 16 | 64 → 16 | 19444 / 15276 | 3.44 / 3.30 | 1767 / 1263 | 9830 / 9561 |
+| 2000 | 1.09 | 8 × 10 × 5 × 5 (split) | 10 → 20 → 10 | 47526 / 44268 | 3.24 / 3.34 | 5067 / 3170 | 28959 / 25046 |
+| 2048 | 1.10 | 8 × 16 × 16 (split) | 64 → 32 | 40413 / 34650 | 2.98 / 2.83 | 4737 / 3066 | 25522 / 21568 |
+| 3000 | 1.07 | 8 × 5 × 5 × 15 (split) | 20 → 10 → 15 | 74849 / 72957 | 3.30 / 3.42 | 7876 / 4175 | 44494 / 41043 |
+| 3600 | 1.11 | 2 × 10 × 15 × 12 | 12 → 20 → 15 | 105346 / 85637 | 3.78 / 3.45 | 9481 / 5679 | 46647 / 49199 |
+| 20000 | 1.16 | 2 × 10⁴ (split) | 10 → 20 → 5 → 20 | 705050 / 605458 | 3.05 / 2.98 | 62453 / 54158 | 369057 / 346490 |
+
+FFTW runs two passes from 160 to 2048 (radix 20, 32 or 64 in one of them) and three or
+four with radix-20 passes above; FFTN runs three at 240–1024. The FP work is the same
+(FP-pipe uops within ±5 %, 2000–2048 +16–18 %); FFTN executes 1.1–1.5 times FFTW's
+instructions at IPC at or above FFTW's (3.0–4.7: these counters agree with X25's, not X30's
+2–2.5), and refills L1 1.4–2.3 times as often from 384 up. In the hot loop of the radix-16
+twiddled lane pass (GCC 16, `objdump`), a unit of C = 2 copies is 258 instructions: 132
+FP, 32 loads and stores of data, 30 twiddle broadcasts, 18 spills and 46 integer (address
+arithmetic, the loop): per point and pass FFTN's passes are cheaper than FFTW's (1024: 6.3
+against 7.5 instructions), so the excess is the third pass.
+
+### Selection for S (campaign x38-epyc-avx2)
+
+X2's driver on the EPYC (GCC 16.2, `ISA=avx2`, Slurm 511061, commit f99d31b = main's
+library), every candidate with radices 2–16, 32 and 64 up to 1024 points (3573 sequences
+in all), the cost estimate's best 20 above; screening 20261116-180527-1341 onwards,
+confirmations against the planner 20261116-182906-6cba (240) to 20261116-183523-cbce
+(20000). Double, planner ÷ winner (above 1: the winner is faster), with the winner:
+
+| n | batch 1 | batch 64 |
+|---|---|---|
+| 80, 100, 160, 256, 512, 1024, 2048 | planner best | planner best |
+| 240 | 15 × 16 1.044 | 15 × 16 1.028 |
+| 384 | 12 × 32 1.161 | 12 × 32 1.098 |
+| 640 | 10 × 8 × 8 0.998 | planner best |
+| 768 | 12 × 8 × 8 0.993 | 6 × 8 × 16 1.006 |
+| 2000 | 10 × 5 × 4 × 10 1.020 | 8 × 5 × 5 × 10 1.009 |
+| 3000 | 10 × 5 × 4 × 15 1.010 | 6 × 5 × 10 × 10 1.004 |
+| 3600 | 15 × 16 × 15 1.078 | 15 × 16 × 15 1.049 |
+| 20000 | 8 × 5 × 10 × 5 × 10 1.076 (its batch-64 ratio 1.078) | 8 × 10 × 5 × 5 × 10 1.073 |
+
+The two-pass plans of FFTW's shape lost to the planner's three passes in the screening
+(2 rounds; time ÷ the planner's, batch 1 / 64): 1024 16 × 64 1.014 / 1.033, 32 × 32
+1.050 / 1.099, 64 × 16 1.245 / 1.210; 2048 32 × 64 1.138 / 1.290, 64 × 32 1.194 / 1.262;
+640 10 × 64 1.032 / 1.007, 64 × 10 1.312 / 1.189; 768 12 × 64 0.991 / 1.067, 64 × 12
+1.208 / 1.198. A radix-64 (or 32) last pass about breaks even with the two passes it
+replaces; as the first (grouped) pass it costs 1.2–1.3. FFTN's radix-32 and radix-64
+codelets peak at 35 and 67 live values in 16 registers. So by S's rule: 384, 3600, 20000.
+
+(Timing runs to come.)
 
 ## Verdict
 
