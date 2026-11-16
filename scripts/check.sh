@@ -171,8 +171,8 @@ if stage sanitize; then
       leaks=0
       echo "   leak detection: not available with Apple Clang (use Homebrew LLVM for it)"
     fi
-    # Use-after-return detection stays at the runtime's default (on, on Linux): GCC builds
-    # leave out its instrumentation, which GCC miscompiles in AVX-512 code (CMakeLists.txt).
+    # Use-after-return detection stays at the runtime's default (on, on Linux): GCC before 16
+    # builds leave out its instrumentation, which they miscompile in AVX-512 code (CMakeLists.txt).
     asan="detect_leaks=$leaks"
     ASAN_OPTIONS=${ASAN_OPTIONS:-$asan} \
       LSAN_OPTIONS=${LSAN_OPTIONS:-suppressions=$root/tests/support/lsan.supp} \

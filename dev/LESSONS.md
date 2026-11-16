@@ -583,19 +583,18 @@ for a base 32 bytes off a 64-byte boundary, as it is on the real stack, but the
 use-after-return fake frame (`__asan_stack_malloc_N`, on by default in GCC's runtime) is
 64-byte aligned: the tile lands 32 bytes off, and the store faults (a general-protection
 fault that ASan reports as a SEGV on an unknown address, "READ"). Xeon Gold 6240: with GCC
-14.4 and 15.2 (16.2 not tried on FFTN) every test that runs `avx512` leaves or Bluestein
-lane passes failed when run outside the gate, which turned the check off at run time;
-`detect_stack_use_after_return=0`, or compiling with `--param=asan-use-after-return=0`,
-passes. Clang 23 passes with the check on (its runtime, like GCC's, enables it by default on
-Linux), so the gate now leaves it on for Clang. A lone tile in a small frame faults only with
+14.4 and 15.2 every test that runs `avx512` leaves or Bluestein lane passes failed when run
+outside the gate, which turned the check off at run time; `detect_stack_use_after_return=0`,
+or compiling with `--param=asan-use-after-return=0`, passes. GCC 16.2 and Clang 23 pass with
+the check on (their runtimes, like GCC 14's, enable it by default on Linux), so the gate now
+leaves it on. A lone tile in a small frame faults only with
 GCC 13.3 (GCC PR 110027, fixed in 14); 14.4 and 15.2 still fault once the frame also holds a
 24-byte escaping object and a zmm spill (fake frame of 288 bytes, no bias; GCC 16.2 asks for
 320 and passes), so a passing toy is no evidence that a real kernel is safe (reproducer in
-pull request 18's description). An earlier attempt
-set the compile-time parameter on one unit through a source-file property and was recorded
-as changing no code (the reason was not found); as a global compile option in GCC sanitizer
-builds (CMakeLists.txt) it removes the fake-stack path, so a plain `ctest` behaves as the
-gate does.
+pull request 18's description). An earlier attempt set the compile-time parameter on one
+unit through a source-file property and was recorded as changing no code (the reason was not
+found); as a global compile option in sanitizer builds with GCC before 16 (CMakeLists.txt)
+it removes the fake-stack path, and all tests pass under the runtime's defaults.
 
 6.5 **Identical-code folding fools disassembly checks.** GCC's IPA-ICF and the Microsoft
 linker's `/OPT:ICF` fold identical functions into jumps or shared addresses; a check for

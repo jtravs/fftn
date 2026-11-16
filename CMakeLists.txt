@@ -62,10 +62,11 @@ if(FFTN_SANITIZE)
   # local (an accessor's tile, aligned by GCC to a cache line) is stored with an aligned
   # vmovapd at an offset that assumes the frame base is 32 bytes off a 64-byte boundary, as
   # it is on the real stack, but the fake frame comes 64-byte aligned, so the store faults
-  # (Xeon Gold 6240, GCC 14.4; dev/LESSONS.md 6.4). GCC's runtime turns the fake stack on
-  # by default; the instrumentation is left out here so that tests pass however they are
-  # started, not only under the gate's ASAN_OPTIONS.
-  if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND FFTN_SANITIZE MATCHES "address")
+  # (Xeon Gold 6240, GCC 14.4 and 15.2; 16.2 is correct; dev/LESSONS.md 6.4). The runtime
+  # turns the fake stack on by default; the instrumentation is left out with those versions so
+  # that tests pass however they are started.
+  if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 16
+     AND FFTN_SANITIZE MATCHES "address")
     add_compile_options(--param=asan-use-after-return=0)
   endif()
   # Sanitizer reports need line tables only (file and line of every frame), and full debug
