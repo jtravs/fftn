@@ -121,7 +121,13 @@ Arms (fbench, Release builds of git revisions):
 
 ## Results
 
-(pending)
+State note (2026-11-16 17:57 UTC, work in progress): code arm 1407184 and unit tests done
+(PR 25). Cloud: Axion VM `fftn-x35-c4a` (909358881553418641) running, run 1 done, run 2
+running; the first Granite Rapids VM `fftn-x35-c4` (4451270156883495296) was preempted by
+Google at 17:25:47 before any timing; its replacement `fftn-x35-c4b` (3593494037444099488)
+was created at 17:54 and runs the whole job. Both have `--max-run-duration=3h` (DELETE) and a
+Mac-side watchdog. Network `fftn-x35-net`, subnet `fftn-x35-sub`, firewall `fftn-x35-ssh`
+alive. Next: collect, delete, analyse, write up.
 
 ## Verdict
 
