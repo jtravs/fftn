@@ -25,7 +25,8 @@ struct pass_args {
   // The stage's twiddles in the storage form its kind reads (src/passes/stockham.inl).
   const void* twiddles = nullptr;
   // A second table: the generic prime pass's radix-th roots of unity, in broadcast
-  // storage; the fused real passes' pairing twiddles (src/passes/real.inl).
+  // storage; the fused real passes' pairing twiddles (src/passes/real.inl); a Rader stage's
+  // index table (src/passes/rader.inl).
   const void* roots = nullptr;
   // Stockham geometry: radix, butterfly groups m and copies s (n = radix * m * s).
   std::size_t radix = 1;
@@ -89,7 +90,7 @@ inline constexpr std::size_t edge_op_count = 3;
 // on its input or on its output. A separate instantiation each.
 enum class factor_sharing : std::uint8_t { none, input, output };
 
-// The codelets' radices are gen::radices (every radix 2 to 16, then a few larger ones);
+// The codelets' radices are gen::radices (every radix 2 to 16, then 17, 19, 23, 32, 64);
 // pass_kernels::codelet has one row per entry, in that order. codelet_slot(r) is r's row,
 // or gen::radix_count when no codelet has radix r (a radix above 16 that is not listed is
 // a generic pass).
@@ -185,6 +186,11 @@ template <class T> struct pass_kernels {
   // of C), otherwise one entry per element of the line.
   pass_fn bluestein_in[2][edge_op_count];
   pass_fn bluestein_out[2][edge_op_count];
+  // The gather and scatter around a Rader stage's convolution (passes/rader.inl), indexed
+  // [shared][edge] as the Bluestein passes: shared runs C copies per vector (s a multiple of
+  // C), otherwise one copy at a time.
+  pass_fn rader_in[2][edge_op_count];
+  pass_fn rader_out[2][edge_op_count];
   // Real-to-complex edges (DESIGN.md 9.1): even n = 2h through a complex transform of h,
   // whose pairing runs as a separate pass where no pass of the transform takes it; odd n
   // through n. [scaled].

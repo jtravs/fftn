@@ -314,12 +314,13 @@ TEST(Real, FusedIntoEveryRadix) {
 }
 
 // Every route the rules or the knob give, over short even lengths (leaves from h = 2), smooth
-// composites, and lengths whose half has a prime factor above 16 (a Bluestein stage last:
-// the r2c pairing then runs separately, the c2r one still in the first pass).
+// composites, and lengths whose half has a prime factor above 16: a codelet (17), a
+// Rader stage (37, 257) or a Bluestein stage (47, 89) last, where the r2c pairing then runs
+// separately and the c2r one still in the first pass.
 TEST(Real, EveryRoute) {
   const std::vector<std::size_t> lengths{
-      2,  4,  6,  8,  10, 12, 14,  16,  18,  20,  22,  24,  26,  28,   30,   32,
-      34, 36, 40, 48, 64, 96, 100, 128, 222, 256, 384, 500, 514, 1000, 4096,
+      2,  4,  6,  8,  10, 12, 14,  16,  18,  20,  22,  24,  26,  28,  30,   32,   34,
+      36, 40, 48, 64, 94, 96, 100, 128, 178, 222, 256, 384, 500, 514, 1000, 4096,
   };
   for (const fftn::isa t : fftn::test::runnable_isas()) {
     for (const std::size_t n : lengths) {

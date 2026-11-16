@@ -470,8 +470,8 @@ void c2r_first(const pass_args* a, const void* src, void* dst, std::size_t first
   }
 }
 
-// An r2c of n = 2R, R <= 16, in registers: the codelet on the R pairs, then the pairing.
-// One unit. twiddles: w^(k + n/4) for k = 0 .. R/2, broadcast storage. Every load
+// An r2c of n = 2R, R <= 16 or a prime codelet radix, in registers: the codelet on the R pairs,
+// then the pairing. One unit. twiddles: w^(k + n/4) for k = 0 .. R/2, broadcast storage. Every load
 // precedes every store, so src may be dst. Reads src, dst, twiddles, scale.
 template <class T, std::size_t R, bool Scaled>
 void r2c_leaf(const pass_args* a, const void* src, void* dst, std::size_t first, std::size_t last) {
@@ -500,9 +500,9 @@ void r2c_leaf(const pass_args* a, const void* src, void* dst, std::size_t first,
   }
 }
 
-// A c2r of n = 2R, R <= 16, in registers: the pairing, then the backward codelet, storing
-// the reals in pairs with the output edge's operation. One unit. twiddles: w^(j + n/4) for
-// j = 0 .. R/2, broadcast storage. src may be dst. Reads src, dst, twiddles, scale.
+// A c2r of n = 2R, R <= 16 or a prime codelet radix, in registers: the pairing, then the backward
+// codelet, storing the reals in pairs with the output edge's operation. One unit. twiddles: w^(j +
+// n/4) for j = 0 .. R/2, broadcast storage. src may be dst. Reads src, dst, twiddles, scale.
 template <class T, std::size_t R, edge_op OutOp>
 void c2r_leaf(const pass_args* a, const void* src, void* dst, std::size_t first, std::size_t last) {
   const T* x = static_cast<const T*>(src);

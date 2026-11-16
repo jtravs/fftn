@@ -27,6 +27,40 @@ constexpr pass_fn split_entry() {
   }
 }
 
+// Whether the grid's phases and the real pairing fused into a chain's edge pass take radix
+// R: every radix up to 16 and the powers of two above. The primes 17, 19 and 23 (experiment
+// X27) are neither: the grid runs only lengths without a prime factor above 13
+// (strategies/grid.cpp) and the pairing fuses only into passes of radix 16 or less
+// (chain_builder::route), so their entries stay null. Leaving them out keeps the library
+// smaller (B3) and avoided a Clang 23 crash in its SLP vectorizer on c2r_first<float, 17>
+// for the x86-64 scalar target.
+template <std::size_t R> inline constexpr bool phase_radix = R <= dense_codelet_radix || R % 2 == 0;
+
+template <class T, std::size_t R, int Sign, bool Twiddled, edge_op InOp, int Out>
+constexpr pass_fn phase_entry() {
+  if constexpr (phase_radix<R>) {
+    return &phase_pass<T, R, Sign, Twiddled, InOp, Out>;
+  } else {
+    return nullptr;
+  }
+}
+
+template <class T, std::size_t R, bool Scaled> constexpr pass_fn r2c_last_entry() {
+  if constexpr (phase_radix<R>) {
+    return &r2c_last<T, R, Scaled>;
+  } else {
+    return nullptr;
+  }
+}
+
+template <class T, std::size_t R> constexpr pass_fn c2r_first_entry() {
+  if constexpr (phase_radix<R>) {
+    return &c2r_first<T, R>;
+  } else {
+    return nullptr;
+  }
+}
+
 // The passes of the codelet in row I of gen::radices. A plan has one scale, on one edge
 // (core/plan_core.cpp), so no pass scales both: that entry stays null rather than
 // instantiating a variant nothing selects.
@@ -130,28 +164,28 @@ template <class T, std::size_t I> struct radix_entries {
       .phase =
           {
               {
-                  &phase_pass<T, R, -1, true, nop, 0>,
-                  &phase_pass<T, R, -1, true, scl, 0>,
-                  &phase_pass<T, R, -1, false, nop, 0>,
-                  &phase_pass<T, R, -1, false, scl, 0>,
-                  &phase_pass<T, R, -1, false, nop, 1>,
-                  &phase_pass<T, R, -1, false, nop, 2>,
+                  phase_entry<T, R, -1, true, nop, 0>(),
+                  phase_entry<T, R, -1, true, scl, 0>(),
+                  phase_entry<T, R, -1, false, nop, 0>(),
+                  phase_entry<T, R, -1, false, scl, 0>(),
+                  phase_entry<T, R, -1, false, nop, 1>(),
+                  phase_entry<T, R, -1, false, nop, 2>(),
               },
               {
-                  &phase_pass<T, R, +1, true, nop, 0>,
-                  &phase_pass<T, R, +1, true, scl, 0>,
-                  &phase_pass<T, R, +1, false, nop, 0>,
-                  &phase_pass<T, R, +1, false, scl, 0>,
-                  &phase_pass<T, R, +1, false, nop, 1>,
-                  &phase_pass<T, R, +1, false, nop, 2>,
+                  phase_entry<T, R, +1, true, nop, 0>(),
+                  phase_entry<T, R, +1, true, scl, 0>(),
+                  phase_entry<T, R, +1, false, nop, 0>(),
+                  phase_entry<T, R, +1, false, scl, 0>(),
+                  phase_entry<T, R, +1, false, nop, 1>(),
+                  phase_entry<T, R, +1, false, nop, 2>(),
               },
           },
       .r2c_last =
           {
-              &r2c_last<T, R, false>,
-              &r2c_last<T, R, true>,
+              r2c_last_entry<T, R, false>(),
+              r2c_last_entry<T, R, true>(),
           },
-      .c2r_first = &c2r_first<T, R>,
+      .c2r_first = c2r_first_entry<T, R>(),
       .r2c_leaf =
           {
               &r2c_leaf<T, R, false>,
@@ -193,29 +227,19 @@ template <class T, std::size_t I> struct codelet_row {
 
 namespace {
 
-static_assert(gen::radix_count == 17, "pass_table lists the rows of gen::radices");
+static_assert(gen::radix_count == 20, "pass_table lists the rows of gen::radices");
 
 template <class T>
 inline constexpr pass_kernels<T> pass_table{
     .codelet =
         {
-            &codelet_row<T, 0>::passes,
-            &codelet_row<T, 1>::passes,
-            &codelet_row<T, 2>::passes,
-            &codelet_row<T, 3>::passes,
-            &codelet_row<T, 4>::passes,
-            &codelet_row<T, 5>::passes,
-            &codelet_row<T, 6>::passes,
-            &codelet_row<T, 7>::passes,
-            &codelet_row<T, 8>::passes,
-            &codelet_row<T, 9>::passes,
-            &codelet_row<T, 10>::passes,
-            &codelet_row<T, 11>::passes,
-            &codelet_row<T, 12>::passes,
-            &codelet_row<T, 13>::passes,
-            &codelet_row<T, 14>::passes,
-            &codelet_row<T, 15>::passes,
-            &codelet_row<T, 16>::passes,
+            &codelet_row<T, 0>::passes,  &codelet_row<T, 1>::passes,  &codelet_row<T, 2>::passes,
+            &codelet_row<T, 3>::passes,  &codelet_row<T, 4>::passes,  &codelet_row<T, 5>::passes,
+            &codelet_row<T, 6>::passes,  &codelet_row<T, 7>::passes,  &codelet_row<T, 8>::passes,
+            &codelet_row<T, 9>::passes,  &codelet_row<T, 10>::passes, &codelet_row<T, 11>::passes,
+            &codelet_row<T, 12>::passes, &codelet_row<T, 13>::passes, &codelet_row<T, 14>::passes,
+            &codelet_row<T, 15>::passes, &codelet_row<T, 16>::passes, &codelet_row<T, 17>::passes,
+            &codelet_row<T, 18>::passes, &codelet_row<T, 19>::passes,
         },
     .generic =
         {
@@ -296,6 +320,32 @@ inline constexpr pass_kernels<T> pass_table{
                 &bluestein_out<T, nop, true>,
                 &bluestein_out<T, scl, true>,
                 &bluestein_out<T, fac, true>,
+            },
+        },
+    .rader_in =
+        {
+            {
+                &rader_in<T, nop, false>,
+                &rader_in<T, scl, false>,
+                &rader_in<T, fac, false>,
+            },
+            {
+                &rader_in<T, nop, true>,
+                &rader_in<T, scl, true>,
+                &rader_in<T, fac, true>,
+            },
+        },
+    .rader_out =
+        {
+            {
+                &rader_out<T, nop, false>,
+                &rader_out<T, scl, false>,
+                &rader_out<T, fac, false>,
+            },
+            {
+                &rader_out<T, nop, true>,
+                &rader_out<T, scl, true>,
+                &rader_out<T, fac, true>,
             },
         },
     .r2c_post =

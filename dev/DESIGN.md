@@ -1291,7 +1291,26 @@ r2c and c2r get it through their inner complex chain unchanged, and the threadin
 graph sees ordinary stages. Restricting the stage to m = 1 is what makes its edges
 elementwise; several large primes are therefore one stage of their product rather than
 one per prime (one convolution of about 2Q points instead of passes of about 2qᵢ · Q/qᵢ
-each, which is about the same work). Rader's algorithm is not built (section 9.2).
+each, which is about the same work).
+
+A **Rader stage** (experiment X27, `passes/rader.inl`) takes the Bluestein stage's place
+when the product is a single prime q in the profile's Rader range whose q − 1 is 13-smooth
+(`rader_root`, below): with g
+the smallest primitive root, bins g⁻ᵏ are x₀ plus a cyclic convolution of length L = q − 1
+of a_m = x(g^m) with b_l = w^(g⁻ˡ), and bin 0 is x₀ plus the sum of the inputs. *rader
+in* gathers a (from an index table of g^m, values of T) into the convolution's slot and
+keeps x₀ and the sum (taken pairwise) in two more rows; the convolution is the Bluestein
+stage's chain with dft(b)/L as its kernel spectrum; *rader out* scatters x₀ + c_k to bin
+g^m for m = −k. A unit is C copies when C divides s, else one copy in scalar arithmetic.
+The convolution is about half a Bluestein stage's (257: 256 points against M ≥ 513), so
+Rader took 0.4–0.8 of the time from 97 to 40961 on all three machines. The range
+(`target_profile::rader_from`, `rader_below`): with C ≥ 4 a single small prime loses,
+because Rader's gather and scatter of one row run in scalar code while the chirp passes
+fill C lanes, so Rader starts at 16C there (64 for AVX2 float and AVX-512 double, 128 for
+AVX-512 float); at 65537 it lost on the Mac (1.2: a megabyte gathered and scattered in
+random order) and won on x86 (0.56–0.83), so NEON stops below 2¹⁶ and x86 below 2²⁴, where
+the index table's floats stop being exact. Because the scatter permutes, the stage cannot write the slot its convolution ends
+in: from one scratch slot to the other it writes back over its source (`last_stage_to`).
 
 Strategies compose: a grid's row phase is a chain or a leaf; a plane transform is a lanes
 program for the strided axis around a chain for the contiguous one.
@@ -1373,11 +1392,13 @@ being padding on the real side.
 | Factor | Route |
 |---|---|
 | 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 16, (20, 25, 32, 64) | generated codelets |
-| primes above 16 up to the profile's threshold | one generic looped pass, O(p²) per butterfly, vectorised across copies, in direct form with pairwise sums; the threshold is 16 on every profile (X17: Bluestein was faster at every prime from 17 up on the Mac, the Xeon and the EPYC), so the rules do not choose it now |
-| larger primes | Bluestein: the smooth part of N is split off first; the product of the large prime factors becomes one stage at the end of the chain that performs a chirp-z transform through a smooth-length convolution with a precomputed kernel spectrum (section 8.5) |
+| 17, 19, 23 | generated codelets (symmetric-pair form), the leaf of n = p and a pass after the priced radices in composites (experiment X27: 0.15–0.42 of the Bluestein stage's time on the Mac) |
+| other primes above 16 up to the profile's threshold | one generic looped pass, O(p²) per butterfly, vectorised across copies, in direct form with pairwise sums; the threshold is 16 on every profile (X17: Bluestein was faster at every prime from 17 up on the Mac, the Xeon and the EPYC), so the rules do not choose it now |
+| a single prime with q − 1 13-smooth, in the profile's range (16C ≤ q for C ≥ 4; q < 2¹⁶ on NEON, 2²⁴ on x86) | Rader: a gather by powers of a primitive root, a cyclic convolution of q − 1 points with a precomputed kernel spectrum, a scatter (section 8.5; X27) |
+| other large primes | Bluestein: the smooth part of N is split off first; the product of the large prime factors becomes one stage at the end of the chain that performs a chirp-z transform through a smooth-length convolution with a precomputed kernel spectrum (section 8.5) |
 
-Rader's algorithm is not planned; it shares a convolution object with Bluestein and can be
-added if measurements on prime sizes justify it. The cost model prices these routes.
+Rader and Bluestein share the convolution (`add_convolution`). The cost model prices
+these routes.
 `next_fast_length` lets applications choose grid sizes that are fast on FFTN rather than
 on another library; it is a pure function of the library version (a fixed reference cost
 table), so a grid chosen on one machine is the same on another. A separate query returns
@@ -1490,11 +1511,14 @@ prices them) a cost per unit and a cost per tail, and a cost per pass. For a lin
    measured more than 2 % slower than planner v0 or, since the planner refresh, more than
    2 % behind the measured winner in every case; 29 and 13 on AVX2).
 3. Otherwise write n = n_s q₁ q₂ … with n_s free of primes above 16 and q₁ ≤ q₂ ≤ … the
-   prime factors above 16. Each qᵢ is one generic pass, in ascending order, after the
-   codelet passes; if n_s = 1 they are the whole chain. (`rule_radices` returns this
-   sequence.) Then the trailing qᵢ above the profile's Bluestein threshold (16 on every
-   profile, experiment X17, so all of them) are merged into one Bluestein stage of their
-   product Q at the end of the chain (section 8.5), whose convolution length M is the
+   prime factors above 16. Each qᵢ is one pass, in ascending order, after the codelet
+   passes: a codelet pass for 17, 19 and 23 (experiment X27), otherwise a generic pass; if
+   n_s = 1 they are the whole chain. (`rule_radices` returns this sequence.) Then the
+   trailing qᵢ without a codelet above the profile's Bluestein threshold (16 on every
+   profile, experiment X17, so all of them) are merged into one stage of their product Q
+   at the end of the chain (section 8.5): a Rader stage when Q is a prime in the profile's
+   Rader range with Q − 1 13-smooth (`rader_root`), otherwise a Bluestein stage, whose
+   convolution length M is the
    7-smooth length from 2Q − 1 to the next power of two that minimises twice the cost of
    rule 4's sequence for M plus two elementwise passes of M points (priced as a last
    radix-2 pass per point), the smallest on a tie (`bluestein_length`).
@@ -2079,7 +2103,8 @@ Bluestein paths have their own, looser, derived bound: three transforms of s M p
 sequence (forward and inverse at execution, the kernel spectrum at construction, in
 double), adding in quadrature, so 3ε√(3L′) and 3√3·εL′ with L′ = log₂(sM) ≤ log₂ n + 2
 (`bluestein_bound` in `tests/support/tolerance.hpp`, applied to every length with a prime
-factor above 16). Measured on the Mac (task 2.3, primes and products up to 10403, double
+factor above 16 other than the codelets' 17, 19 and 23, and to Rader stages, whose
+convolution is shorter). Measured on the Mac (task 2.3, primes and products up to 10403, double
 and float): 0.42–0.83 ε√L RMS and 0.13–0.37 εL largest, inside even the stable bound.
 Accuracy is also reported by fbench next to speed for every library.
 
@@ -2351,8 +2376,9 @@ do not depend on the direction, and a workspace is plain bytes sized by
 number: two `FCMLA` on NEON+FCMA, where the complex-register codelets now spend two
 `scale` and one `addj` or `subj` on each generic constant root (four in radix 16, four in
 9). It touches every target's vocabulary, so it is weighed with the split lowering's FMA
-shaping (task 1.5). (b) Rader's algorithm for 13 (and the primes above 16): the
-symmetric-pair form costs 192 additions and 134 multiplies against Rader's 176 and 68.
+shaping (task 1.5). (b) Rader's algorithm inside the generator for 13 (and 17, 19, 23,
+whose codelets are in the symmetric-pair form since X27): the symmetric-pair form costs
+192 additions and 134 multiplies at 13 against Rader's 176 and 68.
 (c) Settled in task 1.2: the vocabulary gained `bcast_tw` (decision log).
 
 **Task 1.2 (for the maintainer).** Public API added in the shape of section 5.3, each a
@@ -2608,6 +2634,8 @@ to change before a release.
 | 2026-11-15 | The lanes strategy for batches of short rows (task 2.2, section 8.5): blocks of B rows of the innermost batch dimension as a tile on which the row's own chain runs with B times its copies, its first and last passes reading and writing the rows where a run of C rows is one access, a gather and scatter of C × C transposes elsewhere; the rules choose it up to `lanes_up_to` per target and C (X7): float on x86 only (AVX-512 100, AVX2 32) | Every row keeps the chain's bits, so the choice changes no result. Against the chain before X20 the lanes won widely (0.13–0.59 of its time at 8–16 points on all three machines); against the chain with X20's batched leaves they still take 0.32–0.55 of its time at 8–16 points in float on x86, but lose at 8 points in double and on NEON (1.09–1.66), so the rule (no slower case up to the threshold) leaves them off there |
 | 2026-11-15 | Each ISA region's kernel unit is split into a main unit and five row units (`rows.inl`, `table.inl`; pass kernels hold codelet pointers); per-push CI runs one configuration per platform plus Clang ASan + UBSan and TSan on Linux x86-64, and every other job (second GCC, Apple Clang, clang++ on Windows, the other sanitizer jobs, clang-tidy, coverage) runs weekly and on demand (`extended.yml`); CI on a pull request is the merge gate | One unit per region needed more memory than the 16 GB runners have once the radix 32 and 64 codelets landed (sanitizer builds were OOM-killed); macOS LLVM ASan alone took 61 minutes per push. Local gates are kept for the remote machines' toolchains when a change needs them |
 | 2026-11-15 | Planner refresh: the measured radix tables are refitted after X1, X3, X18 and X19 on every machine; AVX-512 has its own tables in both precisions (float a fresh fit with 35 overrides, double AVX2 float's costs with 15 overrides); `avx512` stays the first target in double, and float's per-plan target choice is deferred (X16, Cascade Lake only) | A/B over the changed lengths: Xeon AVX-512 0.90 of before (float) and 0.94 (double), EPYC AVX2 0.94–0.95, Mac 0.98; the tracking tier unchanged within noise (0.994–1.001). Overrides measured slower inside another path (Bluestein lengths, r2c planes) are dropped |
+| 2026-11-16 | Codelets of radix 17, 19 and 23 (generator catalogue, a row unit each per target); n = p is a leaf and those factors are codelet passes after the priced radices, no longer Bluestein stages (experiment X27) | 0.24–0.31 of the Bluestein route over rows, composites, batches and real rows on the Mac, the EPYC and the Xeon, both precisions; c2c 17 from 1.6–2.0 to 0.28–0.47 of FFTW; 25 % more library code (B3) |
+| 2026-11-16 | A Rader stage replaces the Bluestein stage for a single prime q with q − 1 13-smooth inside the profile's range (from 16C when C ≥ 4; below 2¹⁶ on NEON and scalar, 2²⁴ on x86), sharing the Bluestein stage's convolution (X27) | Half the convolution length: 0.4–0.8 of Bluestein's time from 97 up on all three machines; small primes lose with C ≥ 4 (scalar gather of a single row) and 65537 loses on the Mac (random access over a megabyte) |
 | 2026-11-15 | The grid's copies (`block_copy`, `twiddle_scatter`) do not prefetch rows ahead on `avx2`; `avx512` and NEON keep the prefetch of eight rows ahead (experiment X26) | EPYC 7763: target rows 0.920 of main's time without it (a block's rows lie a multiple of 4 KiB apart and share one or two 8-way L1 sets, so rows asked for ahead evict the scratch block); Xeon `avx512` 1.04 and Mac 1.01 slower without it. Cheaper copy loops (24-37 % fewer instructions) were rejected: within the band on the Mac and the Xeon, up to 1.56 slower on the EPYC |
 | 2026-11-15 | Masked partial runs on x86 (X23's arm P5: `load_n`/`store_n`, partial units after the loops, padded transposes, `avx2` stores in pieces) are built behind `FFTN_MASKED_TAILS`, `AUTO` by default: on with GCC, the x86 release toolchain, and off with Clang and icpx, which keep the tile (sections 8.2, 14.3) | The maintainer adopted X23 for GCC after it was rejected for a Clang-only loss (Clang 23: `avx2` double 75 points 1.42), under the rule that decisions judge the release toolchains. Amendment 4 with GCC: float 0.53 of main's time on the Xeon's `avx512`, 0.77 on `avx2`, 0.72 on the EPYC, double 0.78–0.89, bits unchanged; off, the kernel objects are byte for byte main's. Its rule was missed by one whole-unit case on two machine-targets (float 256 1.047 on `avx512`, double 72 1.033 on the EPYC), kept as recorded exceptions (the lead's decision under the maintainer's direction to keep X23 for GCC; neither case has a partial unit) |
 | 2026-11-15 | The x86 targets' leaves (n ≤ 16) are 128-bit: compiled in the `avx2` region with `avx2`'s operations at half width (`vocab_avx2_narrow.inl`), used by `avx2` and `avx512` plans alike (experiment X28) | A leaf broadcasts its one line into every lane, so width only repeats work; on Cascade Lake the 512-bit leaf ran at licence 1–2 (Xeon 8 points 65 → 47 cycles, 16 points 110 → 85); same operations per lane, so bits unchanged |

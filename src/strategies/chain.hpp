@@ -26,10 +26,10 @@
 // - Real lines (DESIGN.md 9.1, passes/real.inl): even n = 2h reads the reals in place as
 //   h complex values (a real line has stride 1) and runs a complex transform of h, with the
 //   pairing of bins k and h - k fused into the chain's last pass (r2c) or first pass (c2r),
-//   or into a leaf for h <= 16. Where that pass is not a codelet's (a Bluestein stage or a
-//   generic pass) the pairing is a separate pass in place on the output (r2c, after a c2c
-//   line written there) or from the input to the output (c2r, before a c2c line in place
-//   there); the grid uses the same separate pass (core/plan_core.cpp). Odd n runs the
+//   or into a leaf for h <= 16 and h = 17, 19, 23. Where that pass is not a codelet's (a
+//   Bluestein stage or a generic pass) the pairing is a separate pass in place on the output (r2c,
+//   after a c2c line written there) or from the input to the output (c2r, before a c2c line in
+//   place there); the grid uses the same separate pass (core/plan_core.cpp). Odd n runs the
 //   full-length complex chain on (x, 0) or on the expanded Hermitian spectrum. The scale
 //   applies in the pass that writes the output.
 // - Bluestein (DESIGN.md 8.5, strategies/bluestein.hpp): the last pass of a chain whose
@@ -199,6 +199,8 @@ private:
     const T* kernel;
   };
   bluestein_tables bluestein_tables_of(std::size_t q, int sign, std::size_t copies);
+  const T* rader_kernel_of(std::size_t q, std::size_t g, int sign);
+  const T* rader_index_of(std::size_t q, std::size_t g);
   std::complex<T> pairing_root(std::size_t n, std::size_t k);
   const T* pairing_twiddles(std::size_t n);
   const T* leaf_pairing_twiddles(std::size_t n);
@@ -237,6 +239,18 @@ private:
   // edges' operations applied when `first` (input) and always (output).
   void add_bluestein(std::size_t n, std::size_t q, int sign, endpoint src, endpoint dst,
                      const line_edges& edges, bool first, std::vector<stage>& stages);
+  // The destination of a line's last stage, a Bluestein or Rader stage of q, that would
+  // write `next` from `at`: a Rader stage permutes into its destination, so from one scratch
+  // slot to the other, where its convolution would end in its destination, it writes back
+  // over its source instead, which it has read by then (add_rader).
+  [[nodiscard]] endpoint last_stage_to(std::size_t q, endpoint at, endpoint next) const;
+  // In its place, for a prime q whose rader_root is g (planner/rules.hpp), a Rader stage.
+  void add_rader(std::size_t n, std::size_t q, std::size_t g, int sign, endpoint src, endpoint dst,
+                 const line_edges& edges, bool first, std::vector<stage>& stages);
+  // The convolution chain of a Bluestein or Rader stage: forward and backward over s copies
+  // of len points from scratch slot `conv` back to it, the kernel spectrum applied between.
+  slot add_convolution(std::size_t s, std::size_t len, const std::vector<std::size_t>& rad,
+                       const T* kernel, slot conv, std::vector<stage>& stages);
   void add_edge(pass_fn run, const char* name, std::size_t n, std::size_t units, endpoint src,
                 endpoint dst, const T* twiddles, double scale, std::vector<stage>& stages);
   // The lanes strategy's pieces (strategies/lanes.cpp). A block's rows on one side: where,
@@ -272,6 +286,7 @@ private:
   std::map<std::size_t, const T*> radix_roots_;                                         // R
   std::map<std::pair<std::size_t, int>, const T*> kernel_tables_;                       // Q, sign
   std::map<std::tuple<std::size_t, int, std::size_t>, const T*> chirp_tables_; // Q, sign, copies
+  std::map<std::size_t, const T*> rader_index_tables_;                         // Q
 };
 
 extern template class chain_builder<double>;
