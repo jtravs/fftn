@@ -243,6 +243,7 @@ TEST(Grid, PlannerChoosesByTheProfile) {
   s.profile.grid_block_bytes = 16384;
   s.profile.chain_part_bytes = 0;
   s.profile.chain_mixed_bytes = 0;
+  s.profile.pow2_chain_bytes = 0;
   const auto plan = [&](std::size_t n, const build_settings& b) {
     return make_plan_core(
         fftn::detail::view_of(fftn::rows_c2c<double>(n, 1, fftn::direction::forward)),
@@ -304,6 +305,7 @@ TEST(Grid, ChainKeepsLengthsThatAreNotPowersOfTwo) {
   s.profile.grid_block_bytes = 16384;
   s.profile.chain_part_bytes = 64 * 16; // power-of-two parts up to 64 points
   s.profile.chain_mixed_bytes = 0;
+  s.profile.pow2_chain_bytes = 0;
   const auto plan = [&](std::size_t n) {
     return make_plan_core(
         fftn::detail::view_of(fftn::rows_c2c<double>(n, 1, fftn::direction::forward)),
@@ -319,6 +321,53 @@ TEST(Grid, ChainKeepsLengthsThatAreNotPowersOfTwo) {
   s.profile.chain_mixed_bytes = 0;
   s.profile.chain_part_limit_bytes = 64 * 45 * 16 - 1; // part 64, but beyond the limit
   EXPECT_TRUE(is_grid(*plan(64 * 45)));
+}
+
+// A c2c row of a power of two stays a chain beyond grid_min_bytes up to pow2_chain_bytes,
+// with FFTL.jl's radices beyond grid_min_bytes: 8s up to pow2_radix8_bytes, 4s beyond
+// (X32); the half-length transform of a real row is unaffected, and lengths that are not
+// powers of two keep their rules.
+TEST(Grid, PowersOfTwoStayChainsUpToTheProfilesLimit) {
+  build_settings s;
+  s.profile.grid_min_bytes = 8192;
+  s.profile.grid_three_bytes = std::size_t{1} << 30U;
+  s.profile.grid_block_bytes = 16384;
+  s.profile.chain_part_bytes = 0;
+  s.profile.chain_mixed_bytes = 0;
+  s.profile.pow2_chain_bytes = 4096 * 16;
+  s.profile.pow2_radix8_bytes = 2048 * 16;
+  const auto plan = [&](std::size_t n) {
+    return make_plan_core(
+        fftn::detail::view_of(fftn::rows_c2c<double>(n, 1, fftn::direction::forward)),
+        fftn::options(), s);
+  };
+  const auto axis = [](const plan_core& core) {
+    const std::string text = described(core);
+    const std::size_t at = text.find("axis 0");
+    return at == std::string::npos ? text : text.substr(at, text.find('\n', at) - at);
+  };
+  const std::string eights = axis(*plan(2048));
+  EXPECT_FALSE(is_grid(*plan(2048)));
+  EXPECT_NE(eights.find("4 x 8 x 8 x 8"), std::string::npos) << eights; // 2^11: one 4, three 8s
+  const std::string fours = axis(*plan(4096));
+  EXPECT_FALSE(is_grid(*plan(4096)));
+  EXPECT_NE(fours.find("4 x 4 x 4 x 4 x 4 x 4"), std::string::npos) << fours; // 2^12: six 4s
+  EXPECT_TRUE(is_grid(*plan(8192)));
+  EXPECT_TRUE(is_grid(*plan(45 * 128))); // not a power of two
+  s.profile.pow2_radix8_bytes = 0;
+  const std::string odd = axis(*plan(2048));
+  EXPECT_NE(odd.find("8 x 4 x 4 x 4 x 4"), std::string::npos) << odd; // 2^11: an 8, four 4s
+  // Forced radices win.
+  build_settings forced = s;
+  forced.radices = {16, 16, 16};
+  const std::string three = axis(*make_plan_core(
+      fftn::detail::view_of(fftn::rows_c2c<double>(4096, 1, fftn::direction::forward)),
+      fftn::options(), forced));
+  EXPECT_NE(three.find("16 x 16 x 16"), std::string::npos) << three;
+  // A real row of 8192 (half length 4096) stays a grid.
+  const auto real =
+      make_plan_core(fftn::detail::view_of(fftn::rows_r2c<double>(8192, 1)), fftn::options(), s);
+  EXPECT_TRUE(is_grid(*real)) << described(*real);
 }
 
 // build_settings::scale_on_input puts the scale on phase 1's input: its first pass, or its
