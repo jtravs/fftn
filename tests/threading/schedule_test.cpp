@@ -453,10 +453,10 @@ TEST(Schedule, GridSizesFromCaches) {
   EXPECT_EQ(m5.grid_three_bytes, 2048 * kib);
   EXPECT_EQ(m5.grid_block_bytes, 128 * kib);
   EXPECT_EQ(m5.grid_fuse_bytes, 4096 * kib);
-  // The L1 set period (size over ways) the grid pads against (X26b); macOS reports no ways.
-  EXPECT_EQ(xeon.grid_pad_period, 4 * kib);
-  EXPECT_EQ(epyc.grid_pad_period, 4 * kib);
-  EXPECT_EQ(m5.grid_pad_period, std::numeric_limits<std::size_t>::max());
+  // The grid pads its intermediate where the L2 is shared by a cluster (X26b).
+  EXPECT_EQ(xeon.grid_pad_period, std::numeric_limits<std::size_t>::max());
+  EXPECT_EQ(epyc.grid_pad_period, std::numeric_limits<std::size_t>::max());
+  EXPECT_EQ(m5.grid_pad_period, 4 * kib);
   // The copies' prefetch follows the core (X26b): not on Zen, elsewhere yes.
   fftn::detail::cpu_features zen3;
   zen3.amd = true;

@@ -16,6 +16,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 
 namespace fftn::inline v0::detail {
 
@@ -104,12 +105,12 @@ struct machine_profile {
   std::size_t grid_fuse_bytes = std::size_t{4} * 1024 * 1024;
   std::size_t grid_block_bytes = std::size_t{64} * 1024;
   std::size_t grid_block = 0;
-  // The L1 data cache's set period (its size over its ways), the spacing at which addresses
-  // share a set: the grid pads the rows of its intermediate array so that the rows phase 2
-  // gathers spread over the sets (grid_pad, experiment X26b). set_grid_sizes sets it where
-  // the ways are known; macOS does not report them, and there it is SIZE_MAX (no padding:
-  // X4 measured none paying on the Mac).
-  std::size_t grid_pad_period = 4096;
+  // The set period (bytes) the grid pads the rows of its intermediate array against, so that
+  // the rows phase 2 gathers spread over the sets (grid_pad, experiment X26b); SIZE_MAX: no
+  // padding. set_grid_sizes sets 4 KiB where the L2 is shared by a cluster (Apple: long rows
+  // 0.976 of the unpadded time) and none where each core has its own (x86: the padding cut
+  // no L1 refills there and gained nothing on the Xeon and the EPYC).
+  std::size_t grid_pad_period = std::numeric_limits<std::size_t>::max();
   // Whether the grid's gathers and scatters prefetch the rows they copy next (src/passes/
   // grid.inl: rows_ahead rows on). The rows of a long grid lie a page or more apart, a stride
   // hardware prefetchers do not follow (X12), but on Zen 3 the prefetched lines evict the scratch
