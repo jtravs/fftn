@@ -103,16 +103,59 @@ own intervals and verdicts in `fbench show`). Every machine was loaded.
 | Machine | Run | Load, A/A band | Rules within 5 % of M | `N ÷ M` geomean |
 |---|---|---|---|---|
 | Mac M5 Max, Clang 23 | 20261116-200843-f54c | 11 of 12 rounds loaded, ±1.93 % | 57 of 61 (93.4 %) | 1.008 |
-| Xeon, EPYC | Slurm 16140/16141, 511174/511175 | pending | | |
+| Xeon 6240, GCC 14.4 | 20261116-215950-1f7c (Slurm 16140/16141) | 3 of 12 loaded, ±4.10 % | 53 of 61 (86.9 %) | 1.013 |
+| EPYC 7763, GCC 16.2 | 20261116-231702-f43c (Slurm 511174/511175) | 11 of 12 loaded, ±1.82 % | 58 of 61 (95.1 %) | 1.009 |
 
 On the Mac every miss is a plane or volume, with a consistent choice: c2c 480 × 640 1.20,
 c2r 2048 × 36 1.09, c2c 64³ 1.08, c2r 480 × 640 1.06. No case reads below 0.97 any more; the
 first pass's lowest was 0.92.
 
+On the Xeon the misses repeat the first pass, each with a mostly consistent choice:
+- r2c 1024² 1.15;
+- c2c 2²², 1.14 (a two-phase grid 2048 · 2048);
+- r2c 1000, 1.13 (10 · 5 · 10);
+- r2c 65536 out of and in place, 1.10 and 1.06 (a two-phase grid 128 · 256);
+- r2c 2²⁰, 1.08 (three phases);
+- c2c 2431, 1.07 (11 · 13 · 17);
+- c2c 16384, 1.05.
+
+Measure had no "slower" verdict there. c2r 2²⁰ read 0.83, with its choice split between two
+grids, but fbench gave no evidence either way.
+
+On the EPYC, c2c 65537 ran at 1.75 of measure's time with the rules' plan: measure chose
+Bluestein over the rules' Rader stage (`rader=0`) in 10 of 12 rounds. That is PLAN lead (e)'s
+"EPYC 65537 1.63 against X27's 1.09", now located. r2c 65536 is fbench "slower" for measure
+(`N ÷ M` 0.85, [0.82, 0.92] as M ÷ N 1.18), against rule 2. M chose the rules' plan in 7
+rounds, and in the other 5 a power-of-two chain that planning timed faster and fbench far
+slower. This row's power-of-two chains are the ones X29 and X32 found bimodal by process
+(radix-16 passes on transparent huge pages, LESSONS 3.14). Planning's fresh scratch and
+fbench's buffers can sit on different page sizes, which offsets cannot fix.
+
+**Misfire confirmation** (20261116-215243-7fc4, Slurm 16129/16131, commit 4333fff, Xeon,
+0 of 8 rounds loaded, ±1.34 %): `G` was 1.25–1.54 of `N` on all 9 long rows. `GM` came back
+within 5 % of `N` on all 9, choosing the Xeon's grids in every round. c2c 2²² came back too,
+at 0.87 of `N` (a two-phase grid 2048 · 2048, where `N` runs three phases).
+
 ## Verdict
 
-First pass, measurement only; no default changed. The second pass on the Mac meets the
-acceptance (93.4 %); the Xeon and EPYC runs are queued.
+Second pass, measurement only; no default changed.
+
+1. **Acceptance:** met on the Mac (93.4 %) and the EPYC (95.1 %); not met on the Xeon
+   (86.9 %), where the misses are long real rows, planes, 2²² and 2431. Re-running made them
+   repeat, not vanish.
+2. **Measurement must not lose: failed once.** EPYC r2c 65536 is 1.18 of the rules' time. The
+   cause is the page backing of power-of-two chains, which planning's scratch does not share
+   with the caller's buffers. A fix needs either candidates timed on more than one
+   allocation, or chains of that kind kept out of the candidates where X32 found them
+   bimodal. A follow-up.
+3. **Misfire recovery: met,** 10 of 11 in the first pass and 9 of 9 after the budget fix.
+4. **Follow-ups:**
+   - planes' radices (Mac, Xeon);
+   - long real rows on the Xeon (grids where the rules make chains);
+   - EPYC 65537 (Bluestein over Rader, 1.75);
+   - the page-backing hazard above.
+
+The first pass's verdict follows.
 
 1. **Acceptance:**
    - met on the EPYC (96.7 %);
