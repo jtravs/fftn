@@ -30,6 +30,8 @@ namespace narrow {
 
 #include "passes/stockham.inl"
 
+#include "passes/unit_leaf.inl"
+
 namespace {
 
 inline constexpr edge_op nop = edge_op::none;
@@ -52,19 +54,34 @@ static_assert(gen::radices[0] == 2 && gen::radices[dense_codelet_radix - 2] == d
     &leaf_lines<T, R, S, fac, fac>}}
 #define FFTN_NARROW_RADIX(T, R) {FFTN_NARROW_EDGES(T, R, -1), FFTN_NARROW_EDGES(T, R, +1)}
 #define FFTN_NARROW_SET(T)                                                                         \
-  {{FFTN_NARROW_RADIX(T, 2),  FFTN_NARROW_RADIX(T, 3),  FFTN_NARROW_RADIX(T, 4),                   \
-    FFTN_NARROW_RADIX(T, 5),  FFTN_NARROW_RADIX(T, 6),  FFTN_NARROW_RADIX(T, 7),                   \
-    FFTN_NARROW_RADIX(T, 8),  FFTN_NARROW_RADIX(T, 9),  FFTN_NARROW_RADIX(T, 10),                  \
-    FFTN_NARROW_RADIX(T, 11), FFTN_NARROW_RADIX(T, 12), FFTN_NARROW_RADIX(T, 13),                  \
-    FFTN_NARROW_RADIX(T, 14), FFTN_NARROW_RADIX(T, 15), FFTN_NARROW_RADIX(T, 16)}}
+  {FFTN_NARROW_RADIX(T, 2),  FFTN_NARROW_RADIX(T, 3),  FFTN_NARROW_RADIX(T, 4),                    \
+   FFTN_NARROW_RADIX(T, 5),  FFTN_NARROW_RADIX(T, 6),  FFTN_NARROW_RADIX(T, 7),                    \
+   FFTN_NARROW_RADIX(T, 8),  FFTN_NARROW_RADIX(T, 9),  FFTN_NARROW_RADIX(T, 10),                   \
+   FFTN_NARROW_RADIX(T, 11), FFTN_NARROW_RADIX(T, 12), FFTN_NARROW_RADIX(T, 13),                   \
+   FFTN_NARROW_RADIX(T, 14), FFTN_NARROW_RADIX(T, 15), FFTN_NARROW_RADIX(T, 16)}
+// The unit-stride leaves (unit_leaf.inl): [input edge][output edge], none or scale.
+#define FFTN_NARROW_UNIT_EDGES(T, R, S)                                                            \
+  {{&unit_leaf<T, R, S, nop, nop>, &unit_leaf<T, R, S, nop, scl>},                                 \
+   {&unit_leaf<T, R, S, scl, nop>, nullptr}}
+#define FFTN_NARROW_UNIT_RADIX(T, R)                                                               \
+  {FFTN_NARROW_UNIT_EDGES(T, R, -1), FFTN_NARROW_UNIT_EDGES(T, R, +1)}
+#define FFTN_NARROW_UNIT_SET(T)                                                                    \
+  {FFTN_NARROW_UNIT_RADIX(T, 2),  FFTN_NARROW_UNIT_RADIX(T, 3),  FFTN_NARROW_UNIT_RADIX(T, 4),     \
+   FFTN_NARROW_UNIT_RADIX(T, 5),  FFTN_NARROW_UNIT_RADIX(T, 6),  FFTN_NARROW_UNIT_RADIX(T, 7),     \
+   FFTN_NARROW_UNIT_RADIX(T, 8),  FFTN_NARROW_UNIT_RADIX(T, 9),  FFTN_NARROW_UNIT_RADIX(T, 10),    \
+   FFTN_NARROW_UNIT_RADIX(T, 11), FFTN_NARROW_UNIT_RADIX(T, 12), FFTN_NARROW_UNIT_RADIX(T, 13),    \
+   FFTN_NARROW_UNIT_RADIX(T, 14), FFTN_NARROW_UNIT_RADIX(T, 15), FFTN_NARROW_UNIT_RADIX(T, 16)}
 // clang-format on
 // NOLINTEND(bugprone-macro-parentheses)
 
 constinit const narrow_leaf_table leaves{
-    .f64 = FFTN_NARROW_SET(double),
-    .f32 = FFTN_NARROW_SET(float),
+    .f64 = {.leaf = FFTN_NARROW_SET(double), .unit = FFTN_NARROW_UNIT_SET(double)},
+    .f32 = {.leaf = FFTN_NARROW_SET(float), .unit = FFTN_NARROW_UNIT_SET(float)},
 };
 
+#undef FFTN_NARROW_UNIT_SET
+#undef FFTN_NARROW_UNIT_RADIX
+#undef FFTN_NARROW_UNIT_EDGES
 #undef FFTN_NARROW_SET
 #undef FFTN_NARROW_RADIX
 #undef FFTN_NARROW_EDGES

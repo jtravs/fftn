@@ -1161,6 +1161,73 @@ template <class T> void narrow_leaves_match(fftn::isa t) {
   }
 }
 
+// The leaves for lines of stride 1 (experiment X28b, passes/unit_leaf.inl) against the
+// leaves for any stride on the same lines, the target's own and the narrow ones: every
+// radix that has one, both directions, the edges none and scale, several lines in one call;
+// every output bit equal. A contiguous row takes them.
+template <class T> void unit_leaves_match(fftn::isa t) {
+  const auto target = static_cast<fftn::detail::target>(static_cast<unsigned char>(t));
+  const auto& own = fftn::detail::of<T>(*fftn::detail::find_kernels(target)).passes;
+  const fftn::detail::narrow_leaf_table* narrow = fftn::detail::find_narrow_leaves(target);
+  constexpr std::size_t lines = 3;
+  for (const std::uint8_t radix : fftn::detail::gen::radices) {
+    const std::size_t r = radix;
+    const std::size_t slot = fftn::detail::codelet_slot(r);
+    fftn::test::input_source src(0x7E1FULL + r);
+    const cvec<T> x = src.complexes<T>(lines * r);
+    fftn::detail::pass_args args;
+    args.scale = 0.37;
+    const auto dist = static_cast<std::ptrdiff_t>(r * sizeof(std::complex<T>));
+    for (std::size_t d = 0; d < 2; ++d) {
+      for (std::size_t ie = 0; ie < 2; ++ie) {
+        for (std::size_t oe = 0; oe < 2; ++oe) {
+          SCOPED_TRACE(std::string(fftn::isa_name(t)) + ", radix " + std::to_string(r) +
+                       ", direction " + std::to_string(d) + ", edges " + std::to_string(ie) +
+                       std::to_string(oe));
+          const fftn::detail::leaf_fn unit = own.codelet[slot]->leaf_unit[d][ie][oe];
+          const fftn::detail::leaf_fn any = own.codelet[slot]->leaf[d][ie][oe];
+          ASSERT_EQ(unit == nullptr, any == nullptr || r > 32);
+          if (unit != nullptr) {
+            cvec<T> y_unit(lines * r);
+            cvec<T> y_any(lines * r);
+            unit(&args, x.data(), y_unit.data(), dist, dist, lines);
+            any(&args, x.data(), y_any.data(), dist, dist, lines);
+            EXPECT_TRUE(bitwise_equal(y_unit, y_any));
+          }
+          if (narrow != nullptr && r <= fftn::detail::dense_codelet_radix) {
+            const auto& half = fftn::detail::of<T>(*narrow);
+            const fftn::detail::leaf_fn half_unit = half.unit[slot][d][ie][oe];
+            const fftn::detail::leaf_fn half_any = half.leaf[slot][d][ie][oe];
+            ASSERT_EQ(half_unit == nullptr, half_any == nullptr);
+            if (half_unit != nullptr) {
+              cvec<T> y_unit(lines * r);
+              cvec<T> y_any(lines * r);
+              half_unit(&args, x.data(), y_unit.data(), dist, dist, lines);
+              half_any(&args, x.data(), y_any.data(), dist, dist, lines);
+              EXPECT_TRUE(bitwise_equal(y_unit, y_any));
+            }
+          }
+        }
+      }
+    }
+  }
+  const auto row = make_plan_core(
+      fftn::detail::view_of(fftn::rows_c2c<T>(8, 1, fftn::direction::forward)),
+      {.force_isa = t}, {});
+  const auto* st = std::get_if<fftn::detail::stage>(&row->prog.records.back());
+  ASSERT_NE(st, nullptr);
+  const auto* half = narrow != nullptr ? &fftn::detail::of<T>(*narrow) : nullptr;
+  EXPECT_EQ(st->leaf, half != nullptr ? half->unit[fftn::detail::codelet_slot(8)][0][0][0]
+                                      : own.codelet[fftn::detail::codelet_slot(8)]->leaf_unit[0][0][0]);
+}
+
+TEST(Passes, UnitLeavesMatchTheStridedLeaves) {
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    unit_leaves_match<double>(t);
+    unit_leaves_match<float>(t);
+  }
+}
+
 // The pair leaves (experiment X28b, passes/pair_leaf.inl): each entry of a target's table
 // is chosen for contiguous rows of its length, gives the bits of the chain r1 x m with
 // interleaved passes forced through build_settings::radices, out of place and in place,

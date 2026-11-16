@@ -493,9 +493,18 @@ void chain_builder<T>::add_leaf(std::size_t n, int sign, endpoint src, endpoint 
   const std::size_t d = direction_index(sign);
   const std::size_t in = edge_index(edges.in);
   const std::size_t out = edge_index(edges.out);
-  st.leaf = narrow_ != nullptr && n <= dense_codelet_radix
-                ? narrow_->leaf[codelet_slot(n)][d][in][out]
-                : kernels_.passes.codelet[codelet_slot(n)]->leaf[d][in][out];
+  const bool narrow = narrow_ != nullptr && n <= dense_codelet_radix;
+  const radix_passes& own = *kernels_.passes.codelet[codelet_slot(n)];
+  // Lines of stride 1 without a factor edge: the leaf with constant offsets (X28b).
+  if (src.stride == 1 && dst.stride == 1 && edges.in != edge_op::factor &&
+      edges.out != edge_op::factor) {
+    const std::size_t i = edges.in == edge_op::scale ? 1 : 0;
+    const std::size_t o = edges.out == edge_op::scale ? 1 : 0;
+    st.leaf = narrow ? narrow_->unit[codelet_slot(n)][d][i][o] : own.leaf_unit[d][i][o];
+  }
+  if (st.leaf == nullptr) {
+    st.leaf = narrow ? narrow_->leaf[codelet_slot(n)][d][in][out] : own.leaf[d][in][out];
+  }
   st.args.radix = n;
   st.args.n = n;
   st.args.scale = edges.scale;

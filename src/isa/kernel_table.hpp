@@ -50,6 +50,9 @@ template <class T> struct narrow_leaf_set {
   // NOLINTNEXTLINE(modernize-avoid-c-arrays): filled inside an ISA region, which uses no std
   // templates
   leaf_fn leaf[dense_codelet_radix - 1][2][edge_op_count][edge_op_count];
+  // The same for lines of stride 1 (radix_passes::leaf_unit, experiment X28b).
+  // NOLINTNEXTLINE(modernize-avoid-c-arrays): as above
+  leaf_fn unit[dense_codelet_radix - 1][2][2][2];
 };
 struct narrow_leaf_table {
   narrow_leaf_set<double> f64;

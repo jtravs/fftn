@@ -61,6 +61,17 @@ template <class T, std::size_t R> constexpr pass_fn c2r_first_entry() {
   }
 }
 
+// A leaf for lines of stride 1 (unit_leaf.inl), or null for radices above 32, whose leaves
+// no plan takes by default (rules.cpp, leaf_limit_of: 32 at most).
+template <class T, std::size_t R, int Sign, edge_op InOp, edge_op OutOp>
+constexpr leaf_fn unit_leaf_entry() {
+  if constexpr (R <= 32) {
+    return &unit_leaf<T, R, Sign, InOp, OutOp>;
+  } else {
+    return nullptr;
+  }
+}
+
 // The passes of the codelet in row I of gen::radices. A plan has one scale, on one edge
 // (core/plan_core.cpp), so no pass scales both: that entry stays null rather than
 // instantiating a variant nothing selects.
@@ -135,6 +146,17 @@ template <class T, std::size_t I> struct radix_entries {
                       &leaf_lines<T, R, +1, fac, scl>,
                       &leaf_lines<T, R, +1, fac, fac>,
                   },
+              },
+          },
+      .leaf_unit =
+          {
+              {
+                  {unit_leaf_entry<T, R, -1, nop, nop>(), unit_leaf_entry<T, R, -1, nop, scl>()},
+                  {unit_leaf_entry<T, R, -1, scl, nop>(), nullptr},
+              },
+              {
+                  {unit_leaf_entry<T, R, +1, nop, nop>(), unit_leaf_entry<T, R, +1, nop, scl>()},
+                  {unit_leaf_entry<T, R, +1, scl, nop>(), nullptr},
               },
           },
       .split_mid =
