@@ -56,6 +56,17 @@ long rows (16384–262144 1.22–1.48; 20000, 25000, 46080, 100000 1.31–1.50);
 20261116-161226-416e (EPYC, every round under load, band ±1.85 %), 20261116-161123-f848
 (Xeon, band ±2.03 %). Also open for the exit: the `x86_v2` and `avx` targets (task 1.3) and
 plain `neon` against FFTW restricted to the same instructions.
+FFTL.jl updated to libfftl 1ae621e (upstream main of 2026-11-16, 111 commits after 53171e8;
+same build: apple-m1, x86-64-v3), same case set, `main` e8c2639, the old libfftl as a third
+arm: FFTN ÷ FFTL 0.55 on the Mac (old libfftl 0.50 in the same run), 9 cases over 1.05
+(5 %); EPYC 0.49 (0.35), 12 (6 %). FFTL itself takes 0.90 (Mac) and 0.72 (EPYC) of its
+old time, mostly fixed cost per call: the 3-row smoke rows 0.84 / 0.52, short-row batches
+0.65 / 0.31. By group, Mac / EPYC: powers of two 0.59 / 0.51; smooth 0.60 / 0.52; primes
+0.46 / 0.45; batches of long rows 1.02 / 0.91; short-row batches 0.76 / 0.62. FFTL ahead:
+Mac 999983 2.79, 131071 2.58, 2²³ and 2²⁴ 1.89, 1024 × 1024 1.20, 4093 1.10, 512 × 1024
+1.09; EPYC 131071 1.96, 65537 1.85, 4093 1.31, 15625 1.19, 1018 1.18, in-place 65536
+1.14–1.15, 3125 1.11, 16807 1.10. Runs 20261116-191543-f558 (Mac, 45 of 50 rounds under
+load), 20261116-221443-d672 (EPYC, 20 of 30).
 The numbers before the push, kept for reference:
 One-dimensional double only (46 cases; the planes and volumes excluded): Mac 0.97, EPYC
 1.21. By group, Mac / EPYC: powers of two ≤ 64 1.14 / 1.38; 128–4096 0.91 / 1.22; ≥ 16384
@@ -93,7 +104,7 @@ Open, by phase:
 
 In flight (lead session, 2026-11-16 night): the tail round's X37 (short rows and batches
 of 16), X38 (the EPYC's 240–2048), X39 (the Xeon's long rows, in-place 65536); task 1.3
-(`x86_v2` and `avx` targets, X14); the coverage fix; the FFTL.jl update; task 2.4's next
+(`x86_v2` and `avx` targets, X14); the coverage fix; task 2.4's next
 steps (P1/P2 second passes on the Xeon and EPYC, then the cost model and `fbench
 calibrate`). Then the exit check again. Done, each merged with its
 pull request:
