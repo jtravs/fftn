@@ -135,8 +135,25 @@ FFTN ÷ FFTW (double, FFTW's own plans): single c2c rows 0.926 → 0.724; real r
 0.99 → 0.69, 8 1.24 → 0.90, 16 1.22 → 0.97, 17 0.42 → 0.32. Left above 1: 60 (1.09, plan
 6 × 10 against FFTW's 10 × 6), 120 (1.05), 80 (1.02), batches of 16 (1.16–1.24), r2c 120
 (1.19). The two cases slower than A, r2c 120 and float 128, keep their plans and kernels
-(the plan notes are identical in all arms); they are re-run against the final branch
-below.
+(the plan notes are identical in all arms); they were re-run against the final branch.
+
+Final branch against `main`: run 20261116-064428-c22d (Slurm 510189; A = `main` 622bd95,
+F = 1b64c9e, FFTW; 12 rounds, all overloaded, band ±1.78 %): F ÷ A 0.836 over the single
+rows in double, 0.698 in float, batches 0.865, real rows 0.932; 39 faster, 25 no evidence,
+2 slower: 60 × 64 1.078 and 60 × 4096 1.067, and r2c 120 and float 128 now 1.006 and 0.990.
+FFTN ÷ FFTW, double: single c2c rows 0.937 → 0.734, real rows 0.817 → 0.761, batches
+0.862 → 0.746. Re-run of the suspect cases, run 20261116-065253-3c4a (Slurm 510232; A, N,
+F; 16 rounds, band ±1.10 %): N slower at r2c 120 (1.139) and float 128 (1.147), F slower at
+60 × 64 (1.086) and 60 × 4096 (1.058), each fine in the other build. These cases' plans are
+unchanged (6 × 10, 8 × 16, the half-length 6 × 10), and the 60-point kernels are the same
+bytes at the same address modulo 64 in A and F (`objdump` of the cached builds); what moved
+is the driver (`execute_core`, `run_flat*` at other offsets modulo 64 in N and F). So these
+are code-placement effects of GCC 16 builds on Zen 3, which flip with unrelated changes
+(LESSONS 4.9), not costs of the arms; recorded as exceptions to rule 3, not re-tuned.
+
+Tracking tier, final branch against `main`: run 20261116-064703-7065 (Slurm 510191; 10
+rounds, all overloaded, band ±2.31 %): 0.979, 6 faster (8 points 0.75, 17 0.79, 16 0.79,
+r2c 64² 0.93, 2048 × 36 0.94, r2c 64³ 0.96), none slower.
 
 ### Apple M5 Max (`neon_fcma`)
 
