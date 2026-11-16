@@ -13,6 +13,7 @@
 #include "fftn/shape.hpp"       // IWYU pragma: export
 #include "fftn/team.hpp"        // IWYU pragma: export
 #include "fftn/thread_pool.hpp" // IWYU pragma: export
+#include "fftn/wisdom.hpp"      // IWYU pragma: export
 #include "fftn/workspace.hpp"   // IWYU pragma: export
 
 /// @namespace fftn
