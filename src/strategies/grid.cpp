@@ -507,6 +507,12 @@ template <class T> bool grid_builder<T>::pairs_last(const grid_split& g) const n
   for (std::size_t i = 0; i + 1 < g.phases; ++i) {
     l *= g.factors.at(i);
   }
+  // A last phase that reads and writes the arrays in its passes (fused, no gather or
+  // scatter) keeps the separate pairing pass: the paired phase gathers and scatters, and
+  // lost 3.5 % to it on the Mac at 262144 (X33).
+  if (fused_ && fusible(phase_radix_list(nk))) {
+    return false;
+  }
   const std::size_t hb = pair_half(g);
   return nk >= 2 && l % (2 * hb) == 0;
 }

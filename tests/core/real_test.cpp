@@ -404,6 +404,7 @@ TEST(Real, PairingInTheGridsLastPhase) {
       s.strategy = fftn::detail::strategy_choice::grid;
       s.grid_factors = g.factors;
       s.profile.grid_block = 8;
+      s.grid_fused = false; // a fused last phase (radices <= 8) keeps the separate pass
       check_all<double>(t, {.n = g.n, .settings = s, .route = g.route}, true);
       check_all<float>(t, {.n = g.n, .settings = s, .route = g.route}, true);
     }
