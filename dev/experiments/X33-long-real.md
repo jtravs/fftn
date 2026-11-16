@@ -1,6 +1,6 @@
 # X33: long real rows (r2c and c2r of 65536 and 2²⁰)
 
-- **Status:** running
+- **Status:** done
 - **Owner:** x33 session, 2026-11-16
 - **Phase / task:** 1–2 (PLAN lead (b); follows X6, X25, X29)
 
@@ -33,12 +33,16 @@ Step 1 (screen, no library change) decides which arms are built; at most three:
   last phase runs over pairs of column sets, one iteration per pair, a low set and the
   set of its mirror columns L − l, both transformed into scratch, paired there (bins K and
   h − K), then scattered; column 0 (bins L k, which pair among themselves, and X_0, X_h)
-  in a small stage of its own. No separate pairing pass. The program gets a loop that
-  moves a second cursor into the output in the opposite direction (driver change).
+  in a small stage of its own. No separate pairing pass. (As built, the kernels find the
+  iteration from the loop's twiddle cursor, as X29's paired gather does; no driver change.)
 - Arm (b2), the Xeon's chain: the r2c pairing fused into the half-length chain's last
-  pass beyond L1 (today only within L1, and never after a split run).
+  pass beyond L1 (today only within L1, and never after a split run). After the screen:
+  the Xeon's r2c 65536 as a grid instead (screened only, below).
 - Arm (b3), c2r: the pairing in the grid's first gather where it still is a separate pass
-  (in place, three phases, the x86 machines).
+  (in place, three phases, the x86 machines). Not built (see the verdict).
+- Arm (b4), added after X32 merged (its rule kept long power-of-two c2c rows chains on
+  Apple and Zen-like caches but left real rows grids): a real row's half-length power of
+  two follows the same rule (`plan_grid`, the `!real` exclusion removed). Judged by rule 2.
 
 Results change bits for the rows whose plan changes (the pairing's arithmetic is the same
 per pair but some bins are formed from the mirror's side); the tests' derived tolerances
@@ -151,6 +155,17 @@ register: the final form). Each step came from a measured loss:
   [1.015, 1.074], whose plan is identical in both arms (as in the first form's tracking run,
   20261116-122100-c121: 1.044); nothing else above 1.02.
 
+- Final form, x86. Xeon `avx512` (20261116-141720-7d1b, A = 29f9772, B = b82b77d, 30
+  rounds, 12 under load, band ±1.55 %): the rows it changes, r2c 262144 0.949–0.951 and 2²⁰
+  0.956–0.964 (geomean 0.955, every interval below 1); 131072 back to main's plan
+  (0.995–0.999); c2r and the rest unchanged (0.99–1.01). Xeon tracking tier
+  (20261116-143354-3215, 20 rounds, 9 under load, band ±3.42 %): geomean 1.003, no case
+  with evidence either way; the largest ratios are cases whose plans are identical (r2c 480 ×
+  640 1.070 [1.003, 1.252], c2c 60 1.040). EPYC (20261116-131635-9d6b, B = 56252ed, the
+  same plans as b82b77d there, no round under load, band ±1.00 %): the changed rows r2c
+  131072–2²⁰ 0.977–1.023, geomean 0.990, not below 1 − band: no gain on `avx2`, so commit
+  6f5973b leaves `avx2` out (`build_settings::r2c_pair_last` forces the route in tests).
+
 ### Arm b2: the Xeon's r2c 65536 as a grid (screen only)
 
 Runs 20261116-125342-8af5 (Xeon, band ±1.00 %) and 20261116-124535-cd41 (EPYC), arm G =
@@ -160,6 +175,49 @@ rule sending r2c rows to the grid earlier on the Xeon alone would gain one case 
 needs a profile property that separates it from the EPYC (whose r2c 32768 must stay a
 chain); X29's arm (a) found c2r losing there (1.153). Not built.
 
+### Arm b4: real rows' half-length powers of two as chains (X32's rule)
+
+Commit fa777bf (tests ebbc8f6) against the branch before it (9057850 = main a616d9c with
+arm b1), which on the EPYC and the Mac has main's real-row plans except b1's.
+
+- EPYC (20261116-143725-c5c7, 30 rounds, 23 under load, band ±1.00 %, FFTW and FFTL as
+  well): every changed row faster, r2c 65536 0.753–0.756, 131072 0.653–0.684, 262144
+  0.596–0.646, 2²⁰ 0.583–0.671; c2r 65536 0.722–0.729, 131072 0.629–0.666, 262144
+  0.591–0.612, 2²⁰ 0.607–0.653; 32768 unchanged (a chain already); weighted geomean of the
+  x33 catalogue 0.761 [0.747, 0.772]. FFTN ÷ FFTW: r2c 65536 1.14 → 0.86, 2²⁰ 1.41 → 0.82;
+  c2r 65536 1.29 → 0.93, 2²⁰ 1.38 → 0.84; in place 2²⁰ r2c 1.25 → 0.84, c2r 0.88 → 0.57.
+  Against FFTL.jl: r2c 2²⁰ 1.03 of its time (was 1.76), c2r 2²⁰ 1.01 (was 1.66).
+- Mac (20261116-143253-4a47, 30 rounds, load 7.5 median, band ±2.31 %; arms M = main
+  a616d9c, A = 9057850, B = fa777bf): B ÷ M r2c 32768 0.739–0.753, 65536 0.804–0.837,
+  131072 0.897–0.956, 262144 0.913–0.991, 2²⁰ 0.734–0.852; c2r 32768 0.692–0.722, 65536
+  0.821–0.838, 131072 0.908–0.953, 262144 0.965–0.972, 2²⁰ 0.959 out of place, 1.022
+  [0.936, 1.099] in place; geomean 0.887 [0.872, 0.903]. (A ÷ M, arm b1 alone: r2c
+  0.962–0.989 at 32768–131072 and 2²⁰, the rest 0.98–1.02.)
+- Xeon: no change (its profile has no power-of-two chains).
+- Tracking tiers: EPYC run (pending), Mac run (pending).
+
 ## Verdict
 
-(pending)
+- **Arm b4 (real rows' half-length powers of two as chains): adopted** on Apple and on
+  Zen-like caches, by rule 2 (EPYC 0.58–0.76 on every changed row, Mac 0.69–0.97 with the
+  one in-place c2r 2²⁰ at 1.022 inside the band). It is X32's rule applied to the real
+  rows' half-length transform; it closes lead (b) on the EPYC (FFTN ÷ FFTW 0.82–0.93 on the
+  long real rows, from 1.14–1.41) and on the Mac at 32768–131072 and 2²⁰.
+- **Arm b1 (the r2c pairing in the grid's last phase): adopted on `avx512`** (Xeon r2c
+  262144 and 2²⁰ 0.95–0.96, geomean 0.955), on NEON where a real row is still a grid (Mac
+  0.94–0.98 on the rows it changed before b4; after b4 only rows beyond 4 · L2, none in the
+  catalogues), and **not on `avx2`** (EPYC 0.98–1.02). Its two refinements came from
+  measured losses: sets of exactly half a block (Xeon 131072 lost 8–9 % with sets twice
+  that) and at least a cache line (EPYC 65536 lost 5–7 % with sets of 2 complex doubles).
+- **Arm b2 (the Xeon's r2c 65536 as a grid): not built** (8 % on one row, in place nothing,
+  and a rule that needs a property separating the Xeon from the EPYC).
+- **Arm b3 (c2r pairing in the grid's first phase on x86): not built.** b1 showed that
+  removing the r2c pass gains 0–5 %, and X29 found the paired gather losing on the EPYC
+  (1.11); after b4 the EPYC's and Mac's long real rows are chains, so only the Xeon's
+  c2r 2²⁰ grid is left for it.
+
+What is left of lead (b): the Xeon's 65536 (its half-length chain of 32768 at 1.52 of
+FFTW's c2c, X25's memory-bound case; r2c and c2r 1.35–1.45 of FFTW) and its 2²⁰ (r2c 1.13–1.46,
+c2r out of place 1.18): the Xeon is X34's machine and keeps grids; FFTW's real plans at
+2²⁰ cost less than its own c2c 2¹⁹ (rdft2 steps over quarter- and eighth-length
+sub-transforms), a structure FFTN does not have.
