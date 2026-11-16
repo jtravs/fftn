@@ -215,9 +215,9 @@ std::size_t chain_builder<T>::r2c_lanes(std::size_t n, endpoint src, std::ptrdif
   // r2c_line's radices and split run: the fused route reorders the radices and has no split
   // run; the separate route is c2c_line's; a leaf is one pass.
   // Where the separate route's c2c_line takes a pair leaf (X28b), its chain, interleaved.
-  const pair_leaf_entry* pair = how == real_route::separate
-                                    ? pair_for(h, {src.where, 1}, {dst.where, 1}, line_edges()).entry
-                                    : nullptr;
+  const pair_leaf_entry* pair =
+      how == real_route::separate ? pair_for(h, {src.where, 1}, {dst.where, 1}, line_edges()).entry
+                                  : nullptr;
   const std::vector<std::size_t> rad = pair != nullptr ? std::vector<std::size_t>{pair->r1, pair->m}
                                        : how == real_route::fused ? real_radices(h, true)
                                                                   : radices(h);
@@ -269,8 +269,9 @@ std::size_t chain_builder<T>::c2r_lanes(std::size_t n, endpoint src, std::ptrdif
     edges.scale = scale;
   }
   // Where the separate route's c2c_line takes a pair leaf (X28b), its chain, interleaved.
-  const pair_leaf_entry* pair =
-      how == real_route::separate ? pair_for(h, {dst.where, 1}, {dst.where, 1}, edges).entry : nullptr;
+  const pair_leaf_entry* pair = how == real_route::separate
+                                    ? pair_for(h, {dst.where, 1}, {dst.where, 1}, edges).entry
+                                    : nullptr;
   const std::vector<std::size_t> rad = pair != nullptr ? std::vector<std::size_t>{pair->r1, pair->m}
                                        : how == real_route::fused ? real_radices(h, false)
                                                                   : radices(h);

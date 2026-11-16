@@ -549,9 +549,9 @@ void chain_builder<T>::add_leaf(std::size_t n, int sign, endpoint src, endpoint 
 }
 
 template <class T>
-typename chain_builder<T>::pair_choice
-chain_builder<T>::pair_for(std::size_t n, endpoint src, endpoint dst,
-                           const line_edges& edges) const {
+typename chain_builder<T>::pair_choice chain_builder<T>::pair_for(std::size_t n, endpoint src,
+                                                                  endpoint dst,
+                                                                  const line_edges& edges) const {
   if (pairs_ == nullptr || forces(n) || src.stride != 1 || dst.stride != 1 ||
       edges.in == edge_op::factor || edges.out == edge_op::factor) {
     return {};

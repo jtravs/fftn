@@ -913,9 +913,8 @@ namespace {
 
 // execute_core for every program but leaf rows. Out of line, so that the path of leaf rows
 // needs no frame and ends in a jump to the leaf (X37).
-[[gnu::noinline]] void execute_program(const plan_core& core, std::size_t first,
-                                       std::size_t count, const void* in, void* out,
-                                       const workspace& ws) noexcept {
+[[gnu::noinline]] void execute_program(const plan_core& core, std::size_t first, std::size_t count,
+                                       const void* in, void* out, const workspace& ws) noexcept {
   assert(first <= core.prog.transforms && count <= core.prog.transforms - first &&
          "fftn: execute_transforms beyond the batch");
   assert((!core.in_place || in == out) && "fftn: in-place plan executed with in != out");
