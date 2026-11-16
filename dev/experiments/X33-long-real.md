@@ -194,7 +194,11 @@ arm b1), which on the EPYC and the Mac has main's real-row plans except b1's.
   [0.936, 1.099] in place; geomean 0.887 [0.872, 0.903]. (A ÷ M, arm b1 alone: r2c
   0.962–0.989 at 32768–131072 and 2²⁰, the rest 0.98–1.02.)
 - Xeon: no change (its profile has no power-of-two chains).
-- Tracking tiers: EPYC run (pending), Mac run (pending).
+- Tracking tiers, B ÷ A: EPYC (20261116-150125-fb37, 20 rounds all under load, band
+  ±2.02 %) geomean 0.972 [0.963, 0.979]: r2c and c2r 65536 0.78–0.81, 2²⁰ 0.58–0.60, no case
+  slower with evidence; the largest ratio, c2c 16384 1.038 [1.004, 1.069], has the same plan
+  in both arms. Mac (20261116-145739-3712, band ±3.64 %) geomean 0.970 [0.949, 0.988]: r2c
+  65536 0.78–0.80, 2²⁰ 0.72, c2r 65536 0.79; nothing above 1.02.
 
 ## Verdict
 
