@@ -56,9 +56,6 @@ struct pass_args {
   std::ptrdiff_t dst_dist = 0;
   std::size_t block = 0; // B: the rows of a tile
   std::size_t rows = 0;
-  // The grid's copies (src/passes/grid.inl): whether they prefetch the rows they copy
-  // next (not 0) or not (0).
-  std::size_t ahead = 0;
 };
 
 // Runs units [first, last) of a pass from src to dst (the line's first elements). A unit is

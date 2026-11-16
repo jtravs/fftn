@@ -5,7 +5,6 @@
 
 #include "core/program.hpp"
 #include "fftn/team.hpp"
-#include "platform/cpu_features.hpp"
 #include "platform/topology.hpp"
 #include "threading/cache_groups.hpp"
 #include "threading/work_graph.hpp"
@@ -60,7 +59,6 @@ machine_profile default_machine_profile() noexcept {
     // is noexcept, so the defaults stand (as cache_group_size does).
     p = machine_profile{};
   }
-  p.grid_copy_prefetch = grid_copy_prefetch_for(detect_cpu_features());
   const unsigned cpus = std::thread::hardware_concurrency();
   p.cpus = static_cast<int>(std::min<unsigned>(cpus, std::numeric_limits<int>::max()));
   return p;
@@ -87,13 +85,6 @@ void set_grid_sizes(machine_profile& p, const core_class& c) noexcept {
     p.grid_pad_period = private_l2 ? std::numeric_limits<std::size_t>::max() : 4096;
     p.grid_fuse_bytes = c.l2.size / 4;
   }
-}
-
-// Experiments X26 and X26b: the copies' prefetch follows the core. The Xeon under avx2
-// lost as it did under avx512 without it, so the target is not what decides.
-bool grid_copy_prefetch_for(const cpu_features& f) noexcept {
-  constexpr unsigned zen = 0x17;
-  return !(f.amd && f.family >= zen);
 }
 
 bool runs_inline(const work_graph& g, const machine_profile& profile) noexcept {

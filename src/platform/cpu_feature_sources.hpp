@@ -17,13 +17,7 @@ namespace fftn::inline v0::detail {
 
 // The CPUID and XGETBV words the x86 decoder reads. A leaf above max_leaf reads as zero.
 struct x86_cpuid_words {
-  std::uint32_t max_leaf = 0; // CPUID.0:EAX
-  // CPUID.0:EBX, EDX, ECX: the vendor string, four characters each, low byte first
-  // ("Auth" "enti" "cAMD").
-  std::uint32_t vendor_ebx = 0;
-  std::uint32_t vendor_edx = 0;
-  std::uint32_t vendor_ecx = 0;
-  std::uint32_t leaf1_eax = 0; // CPUID.1:EAX
+  std::uint32_t max_leaf = 0;  // CPUID.0:EAX
   std::uint32_t leaf1_ecx = 0; // CPUID.1:ECX
   std::uint32_t leaf1_edx = 0; // CPUID.1:EDX
   std::uint32_t leaf7_ebx = 0; // CPUID.(7,0):EBX

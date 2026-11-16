@@ -11,7 +11,6 @@
 #pragma once
 
 #include "fftn/team.hpp"
-#include "platform/cpu_features.hpp"
 #include "threading/work_graph.hpp"
 
 #include <cstddef>
@@ -111,14 +110,6 @@ struct machine_profile {
   // 0.976 of the unpadded time) and none where each core has its own (x86: the padding cut
   // no L1 refills there and gained nothing on the Xeon and the EPYC).
   std::size_t grid_pad_period = std::numeric_limits<std::size_t>::max();
-  // Whether the grid's gathers and scatters prefetch the rows they copy next (src/passes/
-  // grid.inl: rows_ahead rows on). The rows of a long grid lie a page or more apart, a stride
-  // hardware prefetchers do not follow (X12), but on Zen 3 the prefetched lines evict the scratch
-  // block the next pass reads: without the prefetch the EPYC's long rows took 0.83-0.97 of
-  // the time, while the Xeon (avx512 and avx2 alike: 1.14-1.22 at 2^20 and 2^22) and the
-  // Mac (1.07-1.19) lost (X26). default_machine_profile sets it by the core
-  // (grid_copy_prefetch_for, X26b); the default here is a Zen 3 CCX's.
-  bool grid_copy_prefetch = false;
 };
 
 // The profile of a machine of topology t (its CPU count aside): the defaults above, which
@@ -133,10 +124,6 @@ struct machine_profile {
 // Sets the grid's size fields from the caches of one core class, the fastest (sizes of 0:
 // unknown, which keeps the fields' defaults).
 void set_grid_sizes(machine_profile& p, const core_class& c) noexcept;
-
-// machine_profile::grid_copy_prefetch for a processor with these features: not on AMD's
-// Zen cores (family 0x17 and later; Zen 3 measured), elsewhere yes (Intel and Arm measured).
-[[nodiscard]] bool grid_copy_prefetch_for(const cpu_features& f) noexcept;
 
 // Which lanes (team members) share a cache: contiguous runs of group_size ranks (fftn::team).
 struct lane_map {

@@ -527,51 +527,6 @@ TEST(Grid, PlannerPadsByTheProfile) {
   EXPECT_EQ(out_of_place->block_elements, 0U);
 }
 
-// Whether the copies prefetch (machine_profile::grid_copy_prefetch, X26b) changes no bit:
-// unfused (every phase copies), in and out of place.
-template <class T> void prefetch_keeps_bits(fftn::isa target) {
-  for (const grid_case& gc : forced_cases()) {
-    for (const bool in_place : {false, true}) {
-      const fftn::shape<std::complex<T>, std::complex<T>> shape{
-          .dir = fftn::direction::forward,
-          .axes = {{.n = gc.n}},
-          .batches = {{.count = 1}},
-      };
-      fftn::test::input_source src(0xA4EADULL + gc.n);
-      const cvec<T> x = src.complexes<T>(gc.n);
-      std::vector<cvec<T>> out;
-      for (const bool prefetch : {false, true}) {
-        build_settings s;
-        s.strategy = strategy_choice::grid;
-        s.grid_factors = gc.factors;
-        s.grid_fused = false;
-        s.profile.grid_block = gc.block;
-        s.profile.grid_copy_prefetch = prefetch;
-        const auto core = make_plan_core(fftn::detail::view_of(shape),
-                                         {.in_place = in_place, .force_isa = target}, s);
-        if (!is_grid(*core)) {
-          break;
-        }
-        cvec<T> y = in_place ? x : cvec<T>(gc.n);
-        const fftn::workspace ws(fftn::detail::workspace_bytes(*core, 1));
-        fftn::detail::execute_core(*core, 0, 1, in_place ? y.data() : x.data(), y.data(), ws);
-        out.push_back(std::move(y));
-      }
-      for (std::size_t i = 1; i < out.size(); ++i) {
-        EXPECT_EQ(std::memcmp(out[0].data(), out[i].data(), out[0].size() * sizeof(out[0][0])), 0)
-            << fftn::isa_name(target) << " n = " << gc.n << (in_place ? " in place" : "");
-      }
-    }
-  }
-}
-
-TEST(Grid, PrefetchKeepsBits) {
-  for (const fftn::isa t : fftn::test::runnable_isas()) {
-    prefetch_keeps_bits<double>(t);
-    prefetch_keeps_bits<float>(t);
-  }
-}
-
 // A grid's scratch line b is staggered from a by seven 64-byte lines (DESIGN.md 10, rule 4;
 // X4); a chain's is not.
 TEST(Grid, ScratchLinesAreStaggered) {

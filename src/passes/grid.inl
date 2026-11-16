@@ -13,6 +13,23 @@
 
 namespace {
 
+// How many rows ahead a block copy asks for the rows it will read or write next: the rows
+// of a long grid lie a page or more apart, a stride hardware prefetchers do not follow
+// (experiment X12).
+inline constexpr std::size_t rows_ahead = 8;
+
+// Whether the copies prefetch at all. Not on avx2 (experiment X26, EPYC 7763): a block's rows
+// lie a multiple of 4 KiB apart, so all its lines share one or two of L1's 8-way sets, and
+// eight rows asked for ahead evict the scratch block the lane passes read next. Without the
+// prefetch the long rows took 0.83-0.97 of the time (rows of 2^16 to 2^20, mixed 46080 and
+// 100000, r2c and c2r). The Xeon's avx512 rows (1.16-1.22 slower at 2^20 and 2^22 without
+// it) and the Mac's (1.07-1.19) keep it. The effect belongs to the core, not the target:
+// the Xeon under avx2 also lost without it (1.14-1.20 at 2^20 and 2^22), so this follows the
+// measured release machine of each target. Keying it to the core instead (X26b, arm 2) was
+// rejected: on the Xeon under avx2 the prefetch took 2^22 to 0.84 but float rows of 100000
+// points (blocks of one 32-byte row) to 1.27; a rule by core and row width is open.
+inline constexpr bool copies_prefetch = id != target::avx2;
+
 // Asks for the `bytes` bytes at p, to read (Write = 0) or to write (1).
 template <int Write> FFTN_FORCE_INLINE void prefetch_bytes(const void* p, std::size_t bytes) {
   const char* c = static_cast<const char*>(p);
@@ -21,17 +38,15 @@ template <int Write> FFTN_FORCE_INLINE void prefetch_bytes(const void* p, std::s
   }
 }
 
-// How many rows ahead a block copy asks for the rows it will read or write next, when it
-// prefetches at all: the rows of a long grid lie a page or more apart, a stride hardware
-// prefetchers do not follow (experiment X12).
-inline constexpr std::size_t rows_ahead = 8;
-
-// The rows [first, last) of block_copy, prefetching rows_ahead rows on (Ahead) or not. The
-// prefetch distance is a compile-time constant: a run-time one cost the Mac's float rows of
-// 100000 points 10 % (X26b, run 20261115-234843-b9c4).
-template <class T, edge_op OutOp, bool Ahead>
-FFTN_FORCE_INLINE void copy_rows(const pass_args* a, const void* src, void* dst, std::size_t first,
-                                 std::size_t last) {
+// Copies a block row by row: y[q + dst_stride r] = x[q + src_stride r], scaled on storing
+// for OutOp == scale (the output edge, DESIGN.md 12.1). A unit is a row. The gather into
+// scratch and the scatter out of it: reading or writing whole rows at once is what keeps a
+// column block's rows, which lie a power of two apart for most long lengths, from evicting
+// each other while a pass works on them (experiment X12). Reads src, dst, src_stride,
+// dst_stride, s, scale.
+template <class T, edge_op OutOp>
+void block_copy(const pass_args* a, const void* src, void* dst, std::size_t first,
+                std::size_t last) {
   const T* x = static_cast<const T*>(src);
   T* y = static_cast<T*>(dst);
   const std::ptrdiff_t xs = 2 * a->src_stride;
@@ -42,7 +57,7 @@ FFTN_FORCE_INLINE void copy_rows(const pass_args* a, const void* src, void* dst,
   for (std::size_t r = first; r < last; ++r) {
     const T* xr = x + at(r, xs);
     T* yr = y + at(r, ys);
-    if (Ahead && r + rows_ahead < last) {
+    if (copies_prefetch && r + rows_ahead < last) {
       prefetch_bytes<0>(xr + at(rows_ahead, xs), bytes);
       prefetch_bytes<1>(yr + at(rows_ahead, ys), bytes);
     }
@@ -53,24 +68,6 @@ FFTN_FORCE_INLINE void copy_rows(const pass_args* a, const void* src, void* dst,
       }
       store(yr + 2 * q, v);
     }
-  }
-}
-
-// Copies a block row by row: y[q + dst_stride r] = x[q + src_stride r], scaled on storing
-// for OutOp == scale (the output edge, DESIGN.md 12.1). A unit is a row. The gather into
-// scratch and the scatter out of it: reading or writing whole rows at once is what keeps a
-// column block's rows, which lie a power of two apart for most long lengths, from evicting
-// each other while a pass works on them (experiment X12). With `ahead` not 0 each row
-// prefetches the row rows_ahead further on, on both sides (machine_profile::
-// grid_copy_prefetch: not on Zen, experiments X26 and X26b). Reads src, dst, src_stride,
-// dst_stride, s, scale, ahead.
-template <class T, edge_op OutOp>
-void block_copy(const pass_args* a, const void* src, void* dst, std::size_t first,
-                std::size_t last) {
-  if (a->ahead != 0) {
-    copy_rows<T, OutOp, true>(a, src, dst, first, last);
-  } else {
-    copy_rows<T, OutOp, false>(a, src, dst, first, last);
   }
 }
 
@@ -126,11 +123,13 @@ void twiddle_transpose(const pass_args* a, const void* src, void* dst, std::size
   }
 }
 
-// The rows [first, last) of twiddle_scatter, prefetching the destination rows_ahead rows
-// on (Ahead) or not.
-template <class T, int Sign, bool Ahead>
-FFTN_FORCE_INLINE void twiddle_rows(const pass_args* a, const void* src, void* dst,
-                                    std::size_t first, std::size_t last) {
+// A later phase of a grid: the block's rows from tight scratch to the next array, as
+// block_copy, row r times twiddles[r] (one plain interleaved value per row, the conjugate
+// for Sign = +1); the stage advances the twiddles per column c (stage::moving_twiddles).
+// Reads src, dst, src_stride, dst_stride, s, twiddles.
+template <class T, int Sign>
+void twiddle_scatter(const pass_args* a, const void* src, void* dst, std::size_t first,
+                     std::size_t last) {
   const T* x = static_cast<const T*>(src);
   T* y = static_cast<T*>(dst);
   const T* w = static_cast<const T*>(a->twiddles);
@@ -141,7 +140,7 @@ FFTN_FORCE_INLINE void twiddle_rows(const pass_args* a, const void* src, void* d
   for (std::size_t r = first; r < last; ++r) {
     const T* xr = x + at(r, xs);
     T* yr = y + at(r, ys);
-    if (Ahead && r + rows_ahead < last) {
+    if (copies_prefetch && r + rows_ahead < last) {
       prefetch_bytes<1>(yr + at(rows_ahead, ys), bytes);
     }
     cv<T> f = bcast(w + 2 * r); // NOLINT(misc-const-correctness): set under if constexpr
@@ -151,21 +150,6 @@ FFTN_FORCE_INLINE void twiddle_rows(const pass_args* a, const void* src, void* d
     for (std::size_t q = 0; q < cols; q += C<T>) {
       store(yr + 2 * q, cmul(load(xr + 2 * q), f));
     }
-  }
-}
-
-// A later phase of a grid: the block's rows from tight scratch to the next array, as
-// block_copy, row r times twiddles[r] (one plain interleaved value per row, the conjugate
-// for Sign = +1); the stage advances the twiddles per column c (stage::moving_twiddles).
-// With `ahead` not 0 it prefetches the destination rows_ahead rows on. Reads src, dst,
-// src_stride, dst_stride, s, twiddles, ahead.
-template <class T, int Sign>
-void twiddle_scatter(const pass_args* a, const void* src, void* dst, std::size_t first,
-                     std::size_t last) {
-  if (a->ahead != 0) {
-    twiddle_rows<T, Sign, true>(a, src, dst, first, last);
-  } else {
-    twiddle_rows<T, Sign, false>(a, src, dst, first, last);
   }
 }
 
