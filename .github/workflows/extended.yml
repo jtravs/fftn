@@ -24,6 +24,8 @@ jobs:
   gate:
     uses: ./.github/workflows/gate.yml
     with:
+      # GCC ASan and the coverage builds ran past 90 minutes (runs 43872954642, 43916357065).
+      timeout: 240
       # Linux x86-64. GCC 14 is the GCC floor (AGENTS.md section 4) with both sanitizers:
       # B1 found GCC-only failure modes, and GCC 14's TSan is the one that needs the
       # address-space fix. Clang 23 runs clang-tidy and coverage here.

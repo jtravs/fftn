@@ -38,7 +38,7 @@ template <class T> struct rader_value<T, true> {
 };
 
 template <class T, bool Vec> struct rader_sum {
-  using V = typename rader_value<T, Vec>::type;
+  using V = rader_value<T, Vec>::type;
   V level[24]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
   V block;
   std::size_t in_block;
@@ -80,7 +80,7 @@ FFTN_FORCE_INLINE void rader_sum_add(rader_sum<T, Vec>& r, typename rader_value<
 }
 
 template <class T, bool Vec>
-FFTN_FORCE_INLINE typename rader_value<T, Vec>::type rader_sum_total(const rader_sum<T, Vec>& r) {
+FFTN_FORCE_INLINE rader_value<T, Vec>::type rader_sum_total(const rader_sum<T, Vec>& r) {
   typename rader_value<T, Vec>::type total = r.block;
   std::size_t b = r.blocks;
   for (std::size_t lvl = 0; b != 0; ++lvl, b >>= 1U) {

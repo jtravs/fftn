@@ -17,6 +17,7 @@
 #include "gen/codelets.hpp"     // IWYU pragma: keep (the passes read the codelet table)
 #include "isa/kernel_table.hpp" // IWYU pragma: keep (defines a narrow_leaf_table)
 #include "isa/region.hpp"
+#include "passes/pass_args.hpp"
 
 FFTN_ISA_BEGIN(avx2)
 namespace narrow {

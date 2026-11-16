@@ -21,6 +21,7 @@
 #include "isa/target.hpp"
 #include "passes/pass_args.hpp"
 #include "planner/rules.hpp"
+#include "platform/aligned_allocator.hpp"
 #include "platform/cpu_features.hpp"
 #include "strategies/chain.hpp"
 #include "strategies/grid.hpp"
@@ -657,12 +658,14 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       scratch = grid.c2c_row(real_grid, +1, true, opts.scale, false, p);
       read_output_for_input(p, first);
     }
+    const char* pairing_note = ", then a pairing pass";
+    if (paired_last) {
+      pairing_note = ", the pairing in its last phase";
+    } else if (!r2c) {
+      pairing_note = paired_gather ? ", the pairing in its first gather" : ", after a pairing pass";
+    }
     c.axis_notes.push_back("axis 0 (n = " + std::to_string(n) + "): " + (r2c ? "r2c" : "c2r") +
-                           " through a half-length complex " + grid.note(real_grid) +
-                           (paired_last     ? ", the pairing in its last phase"
-                            : r2c           ? ", then a pairing pass"
-                            : paired_gather ? ", the pairing in its first gather"
-                                            : ", after a pairing pass"));
+                           " through a half-length complex " + grid.note(real_grid) + pairing_note);
     c.strategy_note =
         std::string("grid for the half-length complex transform (") +
         std::to_string(real_grid.phases) + " phases, each depth-first over blocks of columns" +
@@ -1006,11 +1009,13 @@ void execute_core(const plan_core& core, std::size_t first, std::size_t count, c
     run_flat_first(core.prog, in, out, a, b, block);
     return;
   }
-  const slot_addresses at{.in = static_cast<const std::byte*>(in),
-                          .out = static_cast<std::byte*>(out),
-                          .block = block,
-                          .a = a,
-                          .b = b};
+  const slot_addresses at{
+      .in = static_cast<const std::byte*>(in),
+      .out = static_cast<std::byte*>(out),
+      .block = block,
+      .a = a,
+      .b = b,
+  };
   run_transforms(core.prog, first, count, at);
 }
 

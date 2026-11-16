@@ -791,7 +791,10 @@ std::vector<std::vector<std::size_t>> ranked_radices(std::size_t n, const target
 std::vector<std::size_t> long_pow2_radices(std::size_t k, bool radix8) {
   std::vector<std::size_t> rad;
   if (radix8) {
-    const std::size_t fours = k % 3 == 2 ? 1 : k % 3 == 1 ? 2 : 0;
+    std::size_t fours = 0; // k = 3 j + 2 takes one 4, k = 3 j + 1 two
+    if (k % 3 != 0) {
+      fours = k % 3 == 2 ? 1 : 2;
+    }
     rad.assign(fours, 4);
     rad.insert(rad.end(), (k - 2 * fours) / 3, 8);
   } else {
