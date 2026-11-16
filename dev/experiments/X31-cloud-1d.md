@@ -61,7 +61,7 @@ Machines (Google Cloud Spot, us-central1-a, Ubuntu 24.04, kernel 7.0.0-1017-gcp,
 | C4A `c4a-standard-16` | Google Axion (Neoverse V2) | 16 | 2 MiB per core / 80 MiB | `neon_fcma` | `fftw-3.3.11-neon` |
 
 `N` is `main` 4ebcee5. It differs from the 2025d51 timed in PLAN "Status" only in the
-sanitizer build flags and documents, so the local runs below are its numbers too. fbench's
+sanitizer build flags and documents, so the local runs below are its numbers too. X30b (aligned plan tables, x86 1024–4096) merged after these runs and is not in them. fbench's
 smoke (every backend's self-test and the smoke tier with the guard) passed on all three
 machines. Each run reached the 40-round cap with no round under load:
 
