@@ -494,7 +494,6 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   // X36: a convolution is always a chain, so a long one takes the long-row radices on
   // every machine (radix 8 throughout where the profile sets no limit), and a Bluestein
   // length's power-of-two part follows the profile.
-  chain.use_half_edges(settings.bluestein_halves);
   chain.use_long_convolutions(settings.profile.grid_min_bytes,
                               settings.profile.pow2_chain_bytes != 0
                                   ? settings.profile.pow2_radix8_bytes

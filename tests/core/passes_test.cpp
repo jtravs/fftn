@@ -595,7 +595,6 @@ template <class T> void split_only_where_it_fits(fftn::isa target) {
     settings.radices = std::move(radices);
     settings.bluestein_above = above;
     settings.layout = fftn::detail::layout_choice::split;
-    settings.bluestein_halves = false;
     const auto core =
         make_plan_core(fftn::detail::view_of(fftn::rows_c2c<T>(n, 1, fftn::direction::forward)),
                        {.force_isa = target}, settings);
@@ -622,7 +621,6 @@ template <class T> void split_only_where_it_fits(fftn::isa target) {
     build_settings one;
     one.radices = {q};
     one.layout = fftn::detail::layout_choice::split;
-    one.bluestein_halves = false;
     const auto core =
         make_plan_core(fftn::detail::view_of(fftn::rows_c2c<T>(q, 1, fftn::direction::forward)),
                        {.force_isa = target}, one);

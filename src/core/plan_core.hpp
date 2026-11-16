@@ -48,10 +48,6 @@ struct build_settings {
   // Pair leaves (strategies/chain.hpp, use_pair_leaves; experiment X28b) where the target
   // has them; false: the chain of the rules' radices instead (tests).
   bool pair_leaves = true;
-  // Bluestein stages whose chirp passes do the convolution's passes of radix 2 next to them
-  // where they can (strategies/chain.hpp, use_half_edges; experiment X36); false: the plain
-  // chirp passes around the whole convolution (tests).
-  bool bluestein_halves = true;
   // The strategy of a plan of one axis (rows): the rules' choice (the lanes for a batch of
   // rows up to the profile's lanes_up_to, a c2c grid beyond profile.grid_min_bytes, else
   // the chain), or the chain, the grid or the lanes forced. A grid is built only for a c2c
