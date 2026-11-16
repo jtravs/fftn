@@ -14,6 +14,7 @@ inline constexpr edge_op pair_scl = edge_op::scale;
 } // namespace
 
 // NOLINTBEGIN(bugprone-macro-parentheses): template argument lists, not expressions.
+// clang-format off: one row per input edge
 #define FFTN_PAIR_EDGES(T, R1, M, S)                                                               \
   {{&pair_leaf<T, R1, M, S, pair_nop, pair_nop>, &pair_leaf<T, R1, M, S, pair_nop, pair_scl>},     \
    {&pair_leaf<T, R1, M, S, pair_scl, pair_nop>, nullptr}}
@@ -22,6 +23,7 @@ inline constexpr edge_op pair_scl = edge_op::scale;
    .r1 = R1,                                                                                       \
    .m = M,                                                                                         \
    .leaf = {FFTN_PAIR_EDGES(T, R1, M, -1), FFTN_PAIR_EDGES(T, R1, M, +1)}}
+// clang-format on
 // NOLINTEND(bugprone-macro-parentheses)
 
 constinit const pair_leaf_table leaves{

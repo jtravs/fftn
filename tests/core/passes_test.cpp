@@ -1212,14 +1212,15 @@ template <class T> void unit_leaves_match(fftn::isa t) {
       }
     }
   }
-  const auto row = make_plan_core(
-      fftn::detail::view_of(fftn::rows_c2c<T>(8, 1, fftn::direction::forward)),
-      {.force_isa = t}, {});
+  const auto row =
+      make_plan_core(fftn::detail::view_of(fftn::rows_c2c<T>(8, 1, fftn::direction::forward)),
+                     {.force_isa = t}, {});
   const auto* st = std::get_if<fftn::detail::stage>(&row->prog.records.back());
   ASSERT_NE(st, nullptr);
   const auto* half = narrow != nullptr ? &fftn::detail::of<T>(*narrow) : nullptr;
-  EXPECT_EQ(st->leaf, half != nullptr ? half->unit[fftn::detail::codelet_slot(8)][0][0][0]
-                                      : own.codelet[fftn::detail::codelet_slot(8)]->leaf_unit[0][0][0]);
+  EXPECT_EQ(st->leaf, half != nullptr
+                          ? half->unit[fftn::detail::codelet_slot(8)][0][0][0]
+                          : own.codelet[fftn::detail::codelet_slot(8)]->leaf_unit[0][0][0]);
 }
 
 TEST(Passes, UnitLeavesMatchTheStridedLeaves) {
@@ -1294,10 +1295,10 @@ template <class T> void pair_leaves_match(fftn::isa t) {
         .axes = {{.n = n, .in_stride = 2, .out_stride = 1}},
         .batches = {},
     };
-    EXPECT_EQ(joined(stage_names(*make_plan_core(fftn::detail::view_of(strided), {.force_isa = t},
-                                                 {})))
-                  .find("pair leaf"),
-              std::string::npos);
+    EXPECT_EQ(
+        joined(stage_names(*make_plan_core(fftn::detail::view_of(strided), {.force_isa = t}, {})))
+            .find("pair leaf"),
+        std::string::npos);
   }
 }
 

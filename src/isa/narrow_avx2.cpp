@@ -41,7 +41,8 @@ inline constexpr edge_op fac = edge_op::factor;
 
 } // namespace
 
-static_assert(gen::radices[0] == 2 && gen::radices[dense_codelet_radix - 2] == dense_codelet_radix &&
+static_assert(gen::radices[0] == 2 &&
+                  gen::radices[dense_codelet_radix - 2] == dense_codelet_radix &&
                   gen::radices[15] == 17 && gen::radices[16] == 19 && gen::radices[17] == 23 &&
                   narrow_leaf_slots == 18,
               "the table below lists radices 2 to 16, 17, 19 and 23 in codelet_slot order");

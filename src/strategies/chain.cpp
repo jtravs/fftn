@@ -542,9 +542,8 @@ const pair_leaf_entry* chain_builder<T>::pair_for(std::size_t n, endpoint src, e
 }
 
 template <class T>
-void chain_builder<T>::add_pair_leaf(const pair_leaf_entry& e, int sign, endpoint src,
-                                     endpoint dst, const line_edges& edges,
-                                     std::vector<stage>& stages) {
+void chain_builder<T>::add_pair_leaf(const pair_leaf_entry& e, int sign, endpoint src, endpoint dst,
+                                     const line_edges& edges, std::vector<stage>& stages) {
   stage st;
   st.leaf = e.leaf[direction_index(sign)][edges.in == edge_op::scale ? 1 : 0]
                   [edges.out == edge_op::scale ? 1 : 0];

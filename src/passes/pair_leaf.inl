@@ -98,8 +98,7 @@ void pair_leaf(const pass_args* a, const void* src, void* dst, std::ptrdiff_t sr
   for (std::size_t u = 0; u < count; ++u) {
     const auto k = static_cast<std::ptrdiff_t>(u);
     cv<T> v[M / C<T> * RP]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
-    pair_first<T, R1, M, Sign, InOp, RP, 0>(a, static_cast<const T*>(src) + k * src_step, table,
-                                            v);
+    pair_first<T, R1, M, Sign, InOp, RP, 0>(a, static_cast<const T*>(src) + k * src_step, table, v);
     pair_second<T, R1, M, Sign, OutOp, RP, 0>(a, static_cast<T*>(dst) + k * dst_step, v);
   }
 }
