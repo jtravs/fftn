@@ -40,6 +40,22 @@ Worst: Zen 5 65536 1.50; Granite Rapids 100000 2.16, 46080 1.60, in place 1.26 (
 is worse there); Axion 8 points 1.24. Axion's long rows (0.75 of FFTW) show that most of the
 Mac's long-row gap is FFTW being fast on Apple silicon (LESSONS 2.9). Zen 5 does not share
 Zen 3's 65537 loss (0.61). Planes and volumes: Zen 5 1.63, Granite Rapids 1.48, Axion 0.78.
+**Phase 1 exit check (2026-11-16, `main` 304a8c5, standard catalogue, the 201 c2c rows,
+193 with every reference; DESIGN 1.3 asks for the geometric mean and at most 5 % of cases
+slower than 1.05):** Mac ÷ FFTW 0.78 (target 0.85), 20 cases over 1.05 (10 %); ÷ FFTL 0.50
+(0.95), 18 (9 %). EPYC ÷ FFTW 0.84 (0.90), 40 (21 %); ÷ FFTL 0.35, 8 (4 %). Xeon ÷ FFTW
+0.76 (0.85), 30 (16 %); ÷ MKL 0.78 (interim 1.10, end 1.00), 33 (17 %). Every mean target
+is met; the tail rule is not, on any machine against FFTW or MKL. The failing cases, by
+cause: (1) primes outside Rader's range or with a large factor in p − 1 (131071 1.33–2.61,
+999983 1.19–1.99, 4093 1.33–1.42, 1018 = 2 · 509 1.36–1.46, EPYC 65537 2.51); (2) single
+short rows and tiny batches (Xeon 2–30 points 1.12–1.33, Mac 20 points 1.78, 2 × 3 in place
+1.18–1.44, EPYC 15 × 2 and 64 × 2 backward 1.27–1.31); (3) batches of 16 points on x86
+(EPYC 1.12–1.26, Xeon ÷ MKL 1.28–1.72); (4) the EPYC's 240–2048 (1.10–1.23); (5) the Xeon's
+long rows (16384–262144 1.22–1.48; 20000, 25000, 46080, 100000 1.31–1.50); (6) in-place
+65536 (Xeon 1.14–1.16). Runs 20261116-160815-6deb (Mac, 10 of 12 rounds under load),
+20261116-161226-416e (EPYC, every round under load, band ±1.85 %), 20261116-161123-f848
+(Xeon, band ±2.03 %). Also open for the exit: the `x86_v2` and `avx` targets (task 1.3) and
+plain `neon` against FFTW restricted to the same instructions.
 The numbers before the push, kept for reference:
 One-dimensional double only (46 cases; the planes and volumes excluded): Mac 0.97, EPYC
 1.21. By group, Mac / EPYC: powers of two ≤ 64 1.14 / 1.38; 128–4096 0.91 / 1.22; ≥ 16384
