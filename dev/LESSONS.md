@@ -277,6 +277,18 @@ through, rows spread evenly turn over every set, the scratch block included. Set
 of a streaming copy are not by themselves a cost; what they evict is.
 [X26b](experiments/X26b-padded-grid.md).
 
+3.10 **Halving the twiddle bytes trades loads for footprint, and the trade goes both
+ways.** Storing x86 twiddles as (wr, wi) instead of the pre-arranged (wr, wr), (−wi, wi),
+and building the registers with duplicating loads (`vmovddup`/`vmovsldup` from p and
+p + 1, load ports only) and `vfmaddsub`, keeps every bit and halves the tables. It won where
+tables overflow L1 (EPYC double 384–4096 points 0.95–0.97, float 0.80–0.94, rows of 16384
+0.91, Bluestein's chirps at 10403 0.88; Xeon `avx512` similar) and lost on short rows and
+small grouped passes (EPYC 64–192 points 1.03–1.04, 97 1.08, batches of 100 points 1.08;
+Xeon 16–17 points 1.07–1.11): a duplicating load cannot be folded into the multiply as a
+plain load can, and the load at p + 1 crosses a cache line in half the units (in all of
+them on 64-byte registers). Measure footprint changes on short transforms too; a per-table
+choice of storage would keep both sides. [X30](experiments/X30-x86-pass-loops.md).
+
 ## 4. Kernels and algorithms
 
 4.1 **A whole-transform codelet wins only where it fills the register.** One 32-point
@@ -320,6 +332,13 @@ values per pass) and won only as a grid phase at 32–64 thousand points (a 2 % 
 chain pass at 2048 vanished once the radix-16 codelets lost 12 of their 19 swaps, X19). Fewer passes is not enough: the pass must fit the
 register file. And a cost table fitted on lengths up to 2048 extrapolates its big-radix
 columns badly: at 4096 it chose 32·4·32, 2–11 % slower than the measured 8·16·32. [X3](experiments/X3-big-radices.md).
+**Partly overturned by X30:** after X19's rotations, X1's split runs and X23's masked
+tails, AVX2 double (16 registers, EPYC 7763) gains from a radix-32 pass where it replaces a
+third pass: 256 as 8·32 took 0.90 of 2·16·8's time and 512 as 16·32 0.87–0.95 of 4·8·16's
+(rows, batches of 64, real transforms of twice the length), although the radix-32 lane loop
+makes 142 stack references per unit. One pass fewer outweighed the spills; 1024 as 16·64
+did not (1.03 alone, 1.09 in batches of 256). Re-test a "loses" verdict on big radices
+after the codelets change. [X30](experiments/X30-x86-pass-loops.md).
 
 4.7 **For tiny transforms the bookkeeping is the transform: interpret once per call and put
 the batch loop inside the kernel.** On the M5 Max an 8-point leaf costs 2.5 ns, while

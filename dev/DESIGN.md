@@ -1539,7 +1539,8 @@ columns (X3) and overrides at every measured length whose choice was slow or nev
 in double (C = 4) AVX2's C = 4 costs with overrides where their choice was more than 2 %
 behind the measured winner in every case (mostly a first radix of 8, after which a split
 run starts). Every other table leaves the radix 32 and 64 columns 0, so those passes stay
-out of their chains: they tied or lost there (X3). The refresh kept the AVX2 and NEON
+out of their chains: they tied or lost there (X3), except AVX2 double's overrides 256 =
+8 · 32 and 512 = 16 · 32 (X30: two passes where the costs' choice ran three). The refresh kept the AVX2 and NEON
 costs (refits gained about 1 %) and added overrides from new searches on the EPYC (up to
 16384) and the Mac (up to 1024). NEON has its own tables (C = 1 and 2), fitted to X2's
 campaign on an Apple M5 Max with `neon_fcma`; plain `neon` takes them too, unmeasured on a
@@ -2621,6 +2622,7 @@ to change before a release.
 | 2026-11-15 | The x86 targets' leaves (n ≤ 16) are 128-bit: compiled in the `avx2` region with `avx2`'s operations at half width (`vocab_avx2_narrow.inl`), used by `avx2` and `avx512` plans alike (experiment X28) | A leaf broadcasts its one line into every lane, so width only repeats work; on Cascade Lake the 512-bit leaf ran at licence 1–2 (Xeon 8 points 65 → 47 cycles, 16 points 110 → 85); same operations per lane, so bits unchanged |
 | 2026-11-15 | A pass kernel takes its source and destination as arguments (`pass_fn(args, src, dst, first, last)`), like a leaf; `pass_args` holds only the fixed geometry, and the driver calls kernels on the plan's own arguments; one transform of a flat program runs from a contiguous `flat_body`, entered from `execute_core` with its slots as scalars; `plan::execute` is one library call (X28) | The per-stage, per-transform copy of `pass_args` cost 3.7–6 ns per stage on Zen 3 (much of it store-to-load forwarding into the kernel), 1.5–2.7 on the M5 Max: single rows of 24–120 points 0.69–0.88 of their time on the Mac; only grid stages with moving twiddles and lanes blocks still copy |
 | 2026-11-16 | Where the L2 is shared by a cluster (Apple), an intermediate the grid already keeps in the workspace block is padded after each of phase 2's rows (`grid_pad`, profile `grid_pad_period`); off on x86. The copies' prefetch keeps X26's target gate: keying it to the core was rejected (experiment X26b) | Mac: double long rows 0.976 of main (2^18 0.94); Xeon 1.006 and EPYC 0.993, where counters showed no fewer L1 refills. The prefetch on an Intel core under `avx2` took 2^22 to 0.84 but float 100000 to 1.27; X26's cheaper copy loops were rejected again on the padded grid |
+| 2026-11-16 | AVX2 double plans 256 as 8 · 32 and 512 as 16 · 32 (overrides of `avx2_double`) | X30: two passes against the three the costs chose (2 · 16 · 8, 4 · 8 · 16): EPYC 0.90 of the time at 256 and 0.87–0.95 at 512 (rows, batches of 64, the real transforms whose half-length chains they are); X30's other arms, x86 twiddles stored (wr, wi) and 1024 as 16 · 64, were rejected by their rule |
 
 ---
 
