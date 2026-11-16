@@ -58,6 +58,17 @@ if(FFTN_SANITIZE)
   if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     add_compile_options(-fno-ipa-icf)
   endif()
+  # GCC's ASan miscompiles AVX-512 code that uses the use-after-return fake stack: a 64-byte
+  # local (an accessor's tile, aligned by GCC to a cache line) is stored with an aligned
+  # vmovapd at an offset that assumes the frame base is 32 bytes off a 64-byte boundary, as
+  # it is on the real stack, but the fake frame comes 64-byte aligned, so the store faults
+  # (Xeon Gold 6240, GCC 14.4 and 15.2; 16.2 is correct; dev/LESSONS.md 6.4). The runtime
+  # turns the fake stack on by default; the instrumentation is left out with those versions so
+  # that tests pass however they are started.
+  if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 16
+     AND FFTN_SANITIZE MATCHES "address")
+    add_compile_options(--param=asan-use-after-return=0)
+  endif()
   # Sanitizer reports need line tables only (file and line of every frame), and full debug
   # information of the kernel units' huge functions multiplied the cost of an instrumented
   # build. src/isa/neon_fcma.cpp under ASan + UBSan at -O2 (Apple M5 Max): GCC 16 took
