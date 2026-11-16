@@ -10,7 +10,7 @@
 // radices it uses).
 //
 // Plans are built and executed through the functions that the public plan<In, Out>
-// forwards every call to (include/fftn/plan.hpp: make_plan_core, execute_core, execute_on,
+// forwards every call to (include/fftn/plan.hpp: make_plan_core, execute_all, execute_on,
 // execute_team), so that an arm can also set the private build settings
 // (src/core/plan_core.hpp): the threading experiments T1 and T5 set the machine profile
 // and chunking, experiment X2 the chain's radices. With no options the plan is exactly the
@@ -571,7 +571,9 @@ void fbench_execute(const void* plan, void* in, void* out) {
   const session& s = state();
   switch (s.mode) {
   case call::serial:
-    detail::execute_core(*r.core, 0, detail::transform_count(*r.core), in, out, r.ws);
+    // What plan::execute calls: one call into the library (X28), not transform_count and
+    // execute_core, whose extra call fbench timed until X37.
+    detail::execute_all(*r.core, in, out, r.ws);
     return;
   case call::executor:
     detail::execute_on(*r.core, in, out, regrouped(*s.exec, s.group_size), r.ws);
