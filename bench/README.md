@@ -141,6 +141,7 @@ one; its arms are written `fftn_omp`.
 | `GRID_FACTORS=n1.n2[.n3]` | fftn, fftn_omp | the grid's factors in phase order (`build_settings::grid_factors`), for rows they multiply to; other rows plan as without it |
 | `GRID_PHASE_RADIX=R` | fftn, fftn_omp | the largest radix of the grid's phase rule (`build_settings::grid_phase_radix`; default 16): every codelet radix up to R, so 32 and 64 with `R=64` (experiment [X3](../dev/experiments/X3-big-radices.md)) |
 | `GRID_MIN_BYTES`, `GRID_THREE_BYTES`, `GRID_BLOCK_BYTES`, `GRID_BLOCK`, `GRID_FUSE_BYTES` | fftn, fftn_omp | the planner's grid fields of the machine profile (`src/threading/schedule.hpp`): a row of more bytes than the first is a grid, of more than the second a grid of three phases; blocks widen while one fits the third; the fourth forces the block width; up to the fifth, phases with small radices read and write rows in their end passes (`never` disables the first two and makes the fifth unlimited) |
+| `GRID_TWO_ODD_PART` | fftn, fftn_omp | rows whose length has an odd part of at least this stay in two grid phases at any size (0: off; experiment X34) |
 | `GRID_PAD_PERIOD` | fftn, fftn_omp | the L1 set period the grid pads its intermediate array's rows against (`machine_profile::grid_pad_period`; default 4 KiB where the L2 is shared by a cluster, as on Apple processors, none where each core has its own); `never` turns the padding off (experiment [X26b](../dev/experiments/X26b-padded-grid.md)) |
 
 The backend builds and executes plans through the functions the public `plan` forwards

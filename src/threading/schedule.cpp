@@ -93,10 +93,17 @@ void set_grid_sizes(machine_profile& p, const core_class& c) noexcept {
   // time in some processes and 0.7 in others (leg distances a multiple of the L2's way,
   // conflicting when the pages lie contiguous), and the Xeon 6240 (0.7 MiB of L3 per CPU)
   // lost with chains beyond L2/2 at every length.
-  if (private_l2 && c.l3.size != 0 && c.l3.shared_by != 0 &&
-      c.l3.size / c.l3.shared_by >= std::size_t{2} * 1024 * 1024) {
+  const bool large_l3 = c.l3.size != 0 && c.l3.shared_by != 0 &&
+                        c.l3.size / c.l3.shared_by >= std::size_t{2} * 1024 * 1024;
+  if (private_l2 && large_l3) {
     p.chain_part_bytes = std::size_t{16} * 1024;
     p.chain_part_limit_bytes = c.l3.size / 2;
+  }
+  // Experiment X34: where those chains do not apply (Xeon 6240, 0.7 MiB of L3 per CPU), a
+  // row whose length has an odd part of at least 15 stays in two grid phases beyond L2
+  // (71680 to 4 x 10^6 points: 0.70-0.92 of the three phases' cycles, 100000 0.73).
+  if (private_l2 && !large_l3) {
+    p.grid_two_odd_part = 15;
   }
   // Experiment X29, M5 Max: with the grid from L1, rows whose length has a power-of-two part
   // of at most 1024 points took 0.49-0.72 of the grid's time as chains (to 4 Mi points),

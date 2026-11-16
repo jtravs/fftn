@@ -102,6 +102,14 @@ struct machine_profile {
   // 20261114-132841-80e0: 2^20 1.46 against 1.35 times FFTW). default_machine_profile sets
   // it to a quarter of L2.
   std::size_t grid_fuse_bytes = std::size_t{4} * 1024 * 1024;
+  // A row whose length n has an odd part (n over its largest power-of-two factor) of at least
+  // grid_two_odd_part stays in two grid phases at any size (0: off; experiment X34). On the
+  // Xeon 6240 (private 1 MiB L2, 0.7 MiB of L3 per CPU) two phases took 0.70-0.92 of the
+  // three phases' cycles on every such row measured, 71680 to 4 x 10^6 points, while rows
+  // nearer a power of two (odd part 3-9: 294912, 327680, 393216) lost up to 1.13 as two
+  // phases. set_grid_sizes sets it where a private L2 has less than 2 MiB of L3 per CPU
+  // behind it, the machines where X29's chains for such rows do not apply.
+  std::size_t grid_two_odd_part = 0;
   std::size_t grid_block_bytes = std::size_t{64} * 1024;
   std::size_t grid_block = 0;
   // The set period (bytes) the grid pads the rows of its intermediate array against, so that
