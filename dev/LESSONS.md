@@ -569,7 +569,7 @@ Linux), so the gate now leaves it on for Clang. A lone tile in a small frame fau
 GCC 13.3 (GCC PR 110027, fixed in 14); 14.4 and 15.2 still fault once the frame also holds a
 24-byte escaping object and a zmm spill (fake frame of 288 bytes, no bias; GCC 16.2 asks for
 320 and passes), so a passing toy is no evidence that a real kernel is safe (reproducer in
-pull request PRNUM's description). An earlier attempt
+pull request 18's description). An earlier attempt
 set the compile-time parameter on one unit through a source-file property and was recorded
 as changing no code (the reason was not found); as a global compile option in GCC sanitizer
 builds (CMakeLists.txt) it removes the fake-stack path, so a plain `ctest` behaves as the
