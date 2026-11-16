@@ -99,7 +99,57 @@ No switch in `dev/KNOBS.toml`; the pair leaves have a forcing parameter for the 
 
 ## Results
 
-(to come)
+Toolchains: GCC 16.2 on the EPYC (DMOG, `-c 8`, shared), GCC 14.4 on the Xeon, Clang 23.1.4
+on the Mac; Release; one thread; out of place; forward. Arms: A 63943cc, P f687614 (arm 1),
+U 5443035 (arm 2), N 031160b (arm 3). Ratios are of each arm's median time against the arm
+before it in the same run (fbench's paired ratios against A for the verdicts); "targets"
+are the cases whose plan or kernel the arm changes.
+
+Correctness: the whole suite passes natively on the Xeon (GCC 14 `-Werror`, `avx512` and
+`avx2`, 1777 tests, Slurm job 15964, at 1b64c9e). The native run of arm 1 alone (job 15950)
+found two contracts the pair leaves had broken, fixed before any final measurement: the
+lanes strategy (float batches on x86) must run the row's own chain, now the pair's
+(16c2774, 1b64c9e); and a serial execution of a plan of leaf rows (X28's fast path) did
+not reset the workspace's team state, which `TeamExecute.ResetAfterASkippedExecution`
+caught once 64-point rows became one leaf under AVX-512 (1b64c9e; a latent X28 bug).
+
+Library size (text of `libfftn.a`, x86-64, GCC 16, the EPYC build cache): A 47.18 MB; arm 1
++0.35 MB (+0.75 %); arm 2 +1.65 MB (+3.5 %), of which the x86 targets' own unit-stride
+leaves, which no plan selects (they take the narrow ones), were removed afterwards
+(631a3a2), leaving the scalar target's and the narrow ones; arm 3 +0.50 MB (+1.1 %).
+
+### EPYC 7763 (`avx2`)
+
+Run 20261116-055020-465f (Slurm 510170; arms A, P, U, N and FFTW with `PLAN_NOTE=1`; 10
+rounds, every one overloaded: other processes on 64 of 128 CPUs; band ±1.14 %).
+
+| arm | targets f64 | targets f32 | batches 64, 4096 | real rows | slower beyond the band |
+|---|---|---|---|---|---|
+| P ÷ A (pair leaves) | 0.631 (20–48; worst 36 0.760) | 0.541 (20–64; worst 64 0.778) | 0.862 (24 0.51, 48 0.67–0.70, others 0.99–1.01) | 0.939 (r2c/c2r 48 0.76–0.87, 64 0.85–0.88) | none |
+| U ÷ P (unit stride) | 0.804 (8–23; worst 17 0.920) | 0.721 | 1.012 (17 × 64, 4096: 1.10–1.12, the 256-bit leaf of 17, which arm 3 replaces) | 1.011 (r2c 120 1.139, plan unchanged) | 17 batches, r2c 120 |
+| N ÷ U (prime leaves) | 0.906 (17 0.853, 19 0.930, 23 0.938) | 0.964 | 17 batches 0.865–0.867 | 1.0 | c2c 128 f32 1.139 (plan unchanged) |
+| N ÷ A | 0.841 over all 32 single f64 cases | 0.703 | 0.857 | | r2c 120 1.128, 128 f32 1.124 |
+
+FFTN ÷ FFTW (double, FFTW's own plans): single c2c rows 0.926 → 0.724; real rows 0.815 →
+0.773; batches 0.859 → 0.736. Per case after: 20 points 1.28 → 0.65, 24 0.99 → 0.53, 48
+0.99 → 0.69, 8 1.24 → 0.90, 16 1.22 → 0.97, 17 0.42 → 0.32. Left above 1: 60 (1.09, plan
+6 × 10 against FFTW's 10 × 6), 120 (1.05), 80 (1.02), batches of 16 (1.16–1.24), r2c 120
+(1.19). The two cases slower than A, r2c 120 and float 128, keep their plans and kernels
+(the plan notes are identical in all arms); they are re-run against the final branch
+below.
+
+### Apple M5 Max (`neon_fcma`)
+
+Run 20261116-051638-105c (A, U, FFTW; 10 rounds, 8 loaded; band ±2.13 %). Only arm 2
+changes NEON plans. U ÷ A: single rows 8–23 points 0.836 in double (worst 19 0.866, best 23
+0.800), 0.867 in float; the 32-point leaf (NEON double) 0.892; batches 1.007, real rows
+1.015, the other single rows 1.014, all "no evidence" by fbench's paired verdicts (14
+faster, 52 no evidence, none slower). FFTN ÷ FFTW, single c2c rows in double: 0.800 →
+0.764 (8–23 points 0.581 → 0.486). Tracking tier, final branch (1b64c9e) against `main`
+(622bd95, the same library), run 20261116-055731-b624 (10 rounds, none loaded, band
+±1.00 %): 0.990, 5 faster (17 points 0.81, 8 and 16 0.86, r2c 64² 0.94, r2c 64³ 0.96),
+none slower; FFTN ÷ FFTW 0.940 → 0.930 (geometric means over the cases FFTW
+runs).
 
 ## Verdict
 

@@ -423,6 +423,26 @@ subtraction loop (mispredicted branches) and running one row one broadcast regis
 time made it slower than Bluestein; an index table and plain scalar code for single rows
 made it twice as fast. [X27](experiments/X27-prime-codelets.md).
 
+4.12 **A short transform that fits the register file should never touch memory between
+its passes.** For n = R1 M with M a multiple of the register's complex count C, a DIF
+chain's grouped first pass leaves its outputs in registers, and the C × C transposes it
+does before storing are exactly the second pass's input; held in registers instead of
+stored, the two passes become one call of about n / C registers with no partial unit in
+memory (the last block of copies is computed whole and stored with a partial run). On the
+EPYC 7763 (AVX2, GCC 16) single rows of 20–48 points took 0.51–0.76 of the two-pass
+chain's time in double and 0.39–0.78 in float, batches of 24 and 48 points 0.51–0.70: 24
+points went from 0.99 to 0.53 of FFTW's time. The code is small (+0.75 % of the x86
+library for 37 lengths and precisions) because only the length table grows, not the pass
+kinds. XEON-PAIR [X28b](experiments/X28b-short-leaves.md).
+
+4.13 **At 8–23 points, a leaf's set-up for any stride is a fifth of its time.** A leaf that
+computes its 2R leg offsets from run-time strides keeps them in general registers (and
+spills them on x86); the same leaf with constant offsets, chosen for rows of stride 1, took
+single rows of 8–23 points to 0.75–0.92 of their time on the EPYC 7763 and 0.80–0.87 on the
+M5 Max, bit for bit the same. The one rare path a kernel supports can cost more than the
+arithmetic at this size: specialise the common case at plan time.
+[X28b](experiments/X28b-short-leaves.md).
+
 ## 5. Threading
 
 5.1 **Synchronisation costs set the smallest row worth splitting.** Spin barrier /

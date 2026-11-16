@@ -599,11 +599,16 @@ operation order rather than a de-fused FMA order. `x86_v2` has the same shape as
 `neon` (one complex per register, no complex-arithmetic instructions beyond SSE3's
 `addsub`), so the two share planner rules as a starting point.
 
-The x86 targets share one set of 128-bit leaves (n ≤ 16): the leaves compiled in the
-`avx2` region with `avx2`'s operations on 128-bit registers (`src/isa/vocab_avx2_narrow.inl`,
-experiment X28). A leaf broadcasts its one line into every lane, so wider registers only
-repeat the work, and on Cascade Lake a 512-bit leaf also lowers the clock; the half-width
-operations round as `avx2`'s and `avx512`'s do, so the bits are unchanged.
+The x86 targets share one set of 128-bit leaves (n ≤ 16 and the primes 17, 19, 23): the
+leaves compiled in the `avx2` region with `avx2`'s operations on 128-bit registers
+(`src/isa/vocab_avx2_narrow.inl`, experiments X28 and X28b). A leaf broadcasts its one line
+into every lane, so wider registers only repeat the work, and on Cascade Lake a 512-bit
+leaf also lowers the clock; the half-width operations round as `avx2`'s and `avx512`'s do,
+so the bits are unchanged. Every leaf has a second instantiation for lines of stride 1 on
+both sides, whose leg offsets are constants (`src/passes/unit_leaf.inl`, X28b); the x86
+targets keep only the narrow one. Short composite rows on x86 are pair leaves (section
+8.2): a table per target and precision (`src/isa/pairs_<target>.cpp`) lists the lengths
+and their factors r1 × m.
 
 The target is detected once per process (CPUID, `getauxval`/`sysctlbyname`, Windows
 `IsProcessorFeaturePresent`) and chosen once per plan. A plan may be forced to a lower
@@ -931,6 +936,7 @@ lanes run over is the pass's defining choice.
 | **Lane pass** | `q`: independent copies | R contiguous runs, a stream apart | one set per `p`, broadcast | every pass with at least C copies (s ≥ C): later passes of a chain; column phase of a grid; batches across rows; strided axes |
 | **Grouped pass** | `p`: consecutive butterflies | DIF: R contiguous runs, with the R × C block transposed in registers before the store; DIT: one contiguous block of R·C values transposed after the load | per-lane, from a table contiguous in `p` | every pass with fewer than C copies (s < C): the leading passes of a chain; leaf phase of a grid |
 | **Leaf** | — (whole transform in registers) | n values | constants | rows of n ≤ 16 … 64 |
+| **Pair leaf** | `p` then `q`: a grouped pass of whole units and a lane pass, both in registers | R1 contiguous runs per unit; the C × C transposes of the grouped pass's outputs are the lane pass's input | per-lane, as the grouped pass | contiguous c2c rows of n = R1 M (C dividing M) whose n / C registers fit the file: x86, 20–120 points (X28b) |
 
 Each kind exists in DIF and DIT form, in complex-register and split arithmetic, and with
 **edge variants** that change only how values are loaded or stored: layout conversion
