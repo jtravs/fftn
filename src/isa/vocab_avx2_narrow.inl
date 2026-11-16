@@ -23,9 +23,7 @@ inline constexpr bool fused = true;
 // and a leaf has no partial runs.
 inline constexpr bool masked = false;
 
-// Twiddles pre-arranged for mul: r holds (wr, wr), i holds (-wi, wi). The products round
-// as vocab_avx2.inl's FMADDSUB form does (X30); only leaves use this vocabulary, so no
-// table is ever packed in this storage.
+// Twiddles pre-arranged for mul as in vocab_avx2.inl: r holds (wr, wr), i holds (-wi, wi).
 struct tw_f64 {
   __m128d r;
   __m128d i;
@@ -43,7 +41,6 @@ template <> struct vec<double> {
   static constexpr std::size_t W = 2;
   static constexpr std::size_t split_block = 8; // avx2's: the same passes and bits
   static constexpr std::size_t tw_reals = 4;
-  static constexpr std::size_t tw_tail = 0;
 };
 
 template <> struct vec<float> {
@@ -54,7 +51,6 @@ template <> struct vec<float> {
   static constexpr std::size_t W = 4;
   static constexpr std::size_t split_block = 16; // avx2's: the same passes and bits
   static constexpr std::size_t tw_reals = 4;
-  static constexpr std::size_t tw_tail = 0;
 };
 
 // Complex-register operations.
