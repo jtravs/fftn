@@ -103,6 +103,20 @@ void probe(vop op, const T* a, const T* b, const T* c, T* out, std::size_t n, co
       store(out + g * step, mul(load(a + g * step), bcast_tw(b + tw_reals<T> * g)));
     }
     break;
+  case vop::c_load_n:
+    if constexpr (masked) {
+      for (std::size_t k = 0; k < n; k += step) {
+        store(out + k, load_n(a + k, (k / step) % (C<T> + 1)));
+      }
+    }
+    break;
+  case vop::c_store_n:
+    if constexpr (masked) {
+      for (std::size_t k = 0; k < n; k += step) {
+        store_n(out + k, (k / step) % (C<T> + 1), load(a + k));
+      }
+    }
+    break;
   case vop::r_copy:
     for (std::size_t k = 0; k < n; k += W<T>) {
       real::store(out + k, real::load(a + k));

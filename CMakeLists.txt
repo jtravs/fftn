@@ -10,6 +10,26 @@ option(FFTN_WARNINGS_AS_ERRORS "Treat compiler and clang-tidy warnings as errors
 option(FFTN_COVERAGE "Instrument FFTN's own targets for line coverage" OFF)
 set(FFTN_SANITIZE "" CACHE STRING "Sanitizers for every target, e.g. address,undefined or thread")
 set(FFTN_CLANG_TIDY "" CACHE STRING "clang-tidy command (a CMake list) run on FFTN's own targets")
+# Partial runs as masked vector accesses in the avx2 and avx512 kernels (experiment X23).
+# They take 0.60-0.90 of the tile's time with GCC on 7-smooth rows, but Clang 23 lost up to 1.42 on odd double
+# lengths for a reason not yet found, so AUTO turns them on for GCC only; icpx is Clang.
+# Either way the bits are the same.
+set(FFTN_MASKED_TAILS AUTO CACHE STRING "Masked partial runs on x86: AUTO (on with GCC), ON or OFF")
+set_property(CACHE FFTN_MASKED_TAILS PROPERTY STRINGS AUTO ON OFF)
+if(FFTN_MASKED_TAILS STREQUAL "AUTO")
+  if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    set(FFTN_MASKED_TAILS_ON 1)
+  else()
+    set(FFTN_MASKED_TAILS_ON 0)
+  endif()
+elseif(FFTN_MASKED_TAILS STREQUAL "ON")
+  set(FFTN_MASKED_TAILS_ON 1)
+elseif(FFTN_MASKED_TAILS STREQUAL "OFF")
+  set(FFTN_MASKED_TAILS_ON 0)
+else()
+  message(FATAL_ERROR "FFTN_MASKED_TAILS must be AUTO, ON or OFF, not '${FFTN_MASKED_TAILS}'")
+endif()
+message(STATUS "fftn: masked partial runs on x86 ${FFTN_MASKED_TAILS_ON} (FFTN_MASKED_TAILS=${FFTN_MASKED_TAILS})")
 
 # Read by scripts/check.sh to report the compiler with every gate run (AGENTS.md section 3).
 set(FFTN_CXX_COMPILER "${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}" CACHE INTERNAL "")

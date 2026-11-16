@@ -943,7 +943,14 @@ run the same instantiation on a padded tile: the last unit of a pass gathers its
 elements into a small stack tile, element by element, computes all C lanes and stores
 only the valid ones. Vector operations act on each lane independently, so a tile performs
 exactly the same arithmetic per element as a full register; this is what keeps a row's
-result independent of its position in a batch (section 15.5). A narrower vocabulary
+result independent of its position in a batch (section 15.5). On the x86 targets in GCC
+builds (`FFTN_MASKED_TAILS`, section 14.3; experiment X23) a partial run of adjacent
+elements is instead one masked load or store (`load_n`, `store_n`), the partial units run
+after the loop over whole units (their masks and pointers kept out of it, with constant
+unit counts inside it), and the grouped pass stores radices C does not divide through
+C × C transposes padded with zero registers; the arithmetic, and so the bits, are the
+tile's. Clang builds keep the tile: with the masked code Clang 23 lost up to 1.42 of the
+tile's time on odd double lengths, for a reason not yet found. A narrower vocabulary
 instantiation (FFTL's ladder of vector widths) is the alternative should tiles prove
 slow; it needs a second width per target.
 
@@ -1129,7 +1136,9 @@ table of n values cost memory traffic and plan memory for no measured gain); lat
 blocks lie within one column c, so their twiddle is one value per row, applied by the
 scatter, and the last phase's scatter applies the scale. Gathers and scatters by default,
 because a block's rows usually lie a power of two apart and share cache sets, and they
-prefetch eight rows ahead, since rows a page apart defeat the hardware prefetchers. A
+prefetch eight rows ahead, since rows a page apart defeat the hardware prefetchers, except
+on `avx2`, where the rows asked for share the scratch block's 8-way L1 sets and evicting it
+cost more than the prefetch saved (X26). A
 phase whose radices are all at most 8 instead reads its rows in its first pass and writes
 them (with the row twiddles or the scale) in its last (`phase_pass`, task 1.7b), while the
 row fits `grid_fuse_bytes` (default a quarter of L2): eight rows per pass fit the L1 sets'
@@ -2000,6 +2009,11 @@ What the experiments still require of the build:
   `-Wtsan` fires on Kokkos' fences once inlined into our units, beyond the reach of SYSTEM,
   and the adapter is serial; Clang's TSan builds run them. Windows on Arm leaves them out
   too: Kokkos 5.2.1 passes the x86 option `-mcx16` to every Clang build on Windows.
+- Build options are the cache variables at the top of `CMakeLists.txt`, each described
+  there. One changes the generated code: `FFTN_MASKED_TAILS` (`AUTO`, the default, is on
+  with GCC and off with every other compiler; `ON`; `OFF`) selects masked partial runs on
+  x86 (section 8.2). The release toolchain for x86-64 Linux is GCC, so release builds have
+  them; results are bitwise the same either way.
 - A generated single-file amalgamation is a possible release artefact (phase 6); it is
   the same implementation concatenated, not a separate code path.
 
@@ -2578,6 +2592,8 @@ to change before a release.
 | 2026-11-15 | The lanes strategy for batches of short rows (task 2.2, section 8.5): blocks of B rows of the innermost batch dimension as a tile on which the row's own chain runs with B times its copies, its first and last passes reading and writing the rows where a run of C rows is one access, a gather and scatter of C × C transposes elsewhere; the rules choose it up to `lanes_up_to` per target and C (X7): float on x86 only (AVX-512 100, AVX2 32) | Every row keeps the chain's bits, so the choice changes no result. Against the chain before X20 the lanes won widely (0.13–0.59 of its time at 8–16 points on all three machines); against the chain with X20's batched leaves they still take 0.32–0.55 of its time at 8–16 points in float on x86, but lose at 8 points in double and on NEON (1.09–1.66), so the rule (no slower case up to the threshold) leaves them off there |
 | 2026-11-15 | Each ISA region's kernel unit is split into a main unit and five row units (`rows.inl`, `table.inl`; pass kernels hold codelet pointers); per-push CI runs one configuration per platform plus Clang ASan + UBSan and TSan on Linux x86-64, and every other job (second GCC, Apple Clang, clang++ on Windows, the other sanitizer jobs, clang-tidy, coverage) runs weekly and on demand (`extended.yml`); CI on a pull request is the merge gate | One unit per region needed more memory than the 16 GB runners have once the radix 32 and 64 codelets landed (sanitizer builds were OOM-killed); macOS LLVM ASan alone took 61 minutes per push. Local gates are kept for the remote machines' toolchains when a change needs them |
 | 2026-11-15 | Planner refresh: the measured radix tables are refitted after X1, X3, X18 and X19 on every machine; AVX-512 has its own tables in both precisions (float a fresh fit with 35 overrides, double AVX2 float's costs with 15 overrides); `avx512` stays the first target in double, and float's per-plan target choice is deferred (X16, Cascade Lake only) | A/B over the changed lengths: Xeon AVX-512 0.90 of before (float) and 0.94 (double), EPYC AVX2 0.94–0.95, Mac 0.98; the tracking tier unchanged within noise (0.994–1.001). Overrides measured slower inside another path (Bluestein lengths, r2c planes) are dropped |
+| 2026-11-15 | The grid's copies (`block_copy`, `twiddle_scatter`) do not prefetch rows ahead on `avx2`; `avx512` and NEON keep the prefetch of eight rows ahead (experiment X26) | EPYC 7763: target rows 0.920 of main's time without it (a block's rows lie a multiple of 4 KiB apart and share one or two 8-way L1 sets, so rows asked for ahead evict the scratch block); Xeon `avx512` 1.04 and Mac 1.01 slower without it. Cheaper copy loops (24-37 % fewer instructions) were rejected: within the band on the Mac and the Xeon, up to 1.56 slower on the EPYC |
+| 2026-11-15 | Masked partial runs on x86 (X23's arm P5: `load_n`/`store_n`, partial units after the loops, padded transposes, `avx2` stores in pieces) are built behind `FFTN_MASKED_TAILS`, `AUTO` by default: on with GCC, the x86 release toolchain, and off with Clang and icpx, which keep the tile (sections 8.2, 14.3) | The maintainer adopted X23 for GCC after it was rejected for a Clang-only loss (Clang 23: `avx2` double 75 points 1.42), under the rule that decisions judge the release toolchains. Amendment 4 with GCC: float 0.53 of main's time on the Xeon's `avx512`, 0.77 on `avx2`, 0.72 on the EPYC, double 0.78–0.89, bits unchanged; off, the kernel objects are byte for byte main's. Its rule was missed by one whole-unit case on two machine-targets (float 256 1.047 on `avx512`, double 72 1.033 on the EPYC), kept as recorded exceptions (the lead's decision under the maintainer's direction to keep X23 for GCC; neither case has a partial unit) |
 | 2026-11-15 | A c2r row out of place whose half-length transform is a two-phase grid pairs its bins in phase 1's gather (`c2r_pair_gather`), reading the input only; in place and three-phase grids keep the separate pairing pass; the r2c pairing stays separate (section 9.1) | X29 (Mac): 0.92–0.94 of the separate route's time at 32768–131072 and 46080 out of place, where the workspace block goes; 1.02–1.06 where the block stays (the gather reads the input twice) |
 | 2026-11-15 | Where a cluster shares L2 (Apple), a row whose length is not a power of two stays a chain when its power-of-two part is at most L1/8 in bytes, or the row at most 2 L1 (`chain_part_bytes`, `chain_mixed_bytes`; section 8.5) | X29 (M5 Max): chains took 0.49–0.72 of the grid's time for every such length tried (144 KiB to 62.5 MiB), the grid's L1-conflict problem being one of powers of two; tracking tier 0.983 (46080 0.63, 100000 0.60), nothing slower |
 | 2026-11-15 | With a private L2 and at least 2 MiB of L3 per CPU (Zen), the grid starts at half of L3 instead of half of L2 (section 8.5) | X29 (EPYC 7763): the chain took 0.51–0.81 of the grid's time on every row from L2/2 to 16 MiB, powers of two included; the Xeon 6240 (0.7 MiB of L3 per CPU) keeps L2/2, where the chain lost 1.1–1.6 |
