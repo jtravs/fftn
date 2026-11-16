@@ -67,6 +67,7 @@ for _p in (17, 19, 23):
 PLAIN[6] = good_thomas(2, 3)
 PLAIN[10] = good_thomas(2, 5)
 PLAIN[14] = good_thomas(2, 7)
+PLAIN[20] = good_thomas(4, 5)
 
 # Sizes where the generator does worse than the reference, with its counts for the plain
 # variant and the reason. Any change to these (better or worse) fails the tests, so a

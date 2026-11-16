@@ -244,7 +244,8 @@ TEST(Passes, GenericInEveryPosition) {
 template <class T> void leaves_above_sixteen(fftn::isa target) {
   for (const std::uint8_t radix : fftn::detail::gen::radices) {
     const std::size_t n = radix;
-    if (n <= 16) {
+    // Radix 20 is a pass radix only (experiment X38): never a leaf.
+    if (n <= 16 || n == 20) {
       continue;
     }
     const std::string leaf = "leaf radix-" + std::to_string(n);
@@ -1186,6 +1187,9 @@ template <class T> void narrow_leaves_match(fftn::isa t) {
   constexpr std::ptrdiff_t out_stride = 3;
   for (std::size_t slot = 0; slot < fftn::detail::narrow_leaf_slots; ++slot) {
     const std::size_t r = fftn::detail::gen::radices[slot];
+    if (r == 20) {
+      continue; // a pass radix only, no narrow leaf (experiment X38)
+    }
     fftn::test::input_source src(0x4E41ULL + r);
     const cvec<T> x = src.complexes<T>(lines * r * in_stride);
     const cvec<T> in_factor = src.complexes<T>(r);
