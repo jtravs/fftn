@@ -158,6 +158,19 @@ Arm commit 9752672 (with b2) against main, standard tracking tier (run
 c2r 65536 0.925; no other case outside ±2 %; geomean 0.983. FFTN ÷ FFTW at 46080 and
 100000 goes from 1.20–1.23 to 0.74–0.76.
 
+### Arm (d): the chain to half of L3 where each CPU has 2 MiB of L3
+
+EPYC screens with A, C and FFTW: the screen above and c2c rows 2^k × odd (run
+20261115-221128-8d85; 23 rounds, every one with the node full of other jobs, 93 of its
+cores; band ±1.09 %): the chain took 0.51–0.81 of the grid's time on all 31 rows from
+360 KiB to 16 MiB that the grid took, powers of two included (32768 0.73, 65536 0.72, 2¹⁹
+0.57, 983040 0.72, 1024000 0.76; 100000 0.51). The rows that are no grid (odd lengths) are
+unchanged (0.99). Xeon: the screen above (the chain lost beyond L2/2), so the rule keys on
+the L3 per CPU (EPYC 4 MiB, 32 MiB for 8 CPUs; Xeon 0.69 MiB, 24.75 MiB for 36), with the
+switch at half of L3, the largest row measured faster as a chain (16 MiB).
+
+(confirmation runs pending)
+
 ## Verdict
 
 (pending)
