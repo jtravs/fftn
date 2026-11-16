@@ -33,6 +33,13 @@ powers of two ≤ 64 0.94 / 0.94 / 0.83; 128–4096 0.84 / 1.04 / 0.94; ≥ 1638
 20261116-103657-af06 (Mac, FFTL; 8 of 16 rounds under load), 20261116-105105-30b3 (EPYC,
 FFTL; a shared node, every round under load, band ±1.25 %), 20261116-110608-e327 (Xeon,
 MKL; band ±2.17 %).
+Cloud (X31, Spot VMs, GCC 14.2, 40 rounds, none under load; `main` 4ebcee5, library as
+2025d51): FFTN ÷ FFTW over the 46 cases, today (before the push): Zen 5 EPYC 9B45 0.80
+(1.05), Granite Rapids Xeon 6985P-C 0.88 (1.12; MKL 0.85, was 1.09), Axion 0.74 (0.86).
+Worst: Zen 5 65536 1.50; Granite Rapids 100000 2.16, 46080 1.60, in place 1.26 (lead (c)
+is worse there); Axion 8 points 1.24. Axion's long rows (0.75 of FFTW) show that most of the
+Mac's long-row gap is FFTW being fast on Apple silicon (LESSONS 2.9). Zen 5 does not share
+Zen 3's 65537 loss (0.61). Planes and volumes: Zen 5 1.63, Granite Rapids 1.48, Axion 0.78.
 The numbers before the push, kept for reference:
 One-dimensional double only (46 cases; the planes and volumes excluded): Mac 0.97, EPYC
 1.21. By group, Mac / EPYC: powers of two ≤ 64 1.14 / 1.38; 128–4096 0.91 / 1.22; ≥ 16384
@@ -69,9 +76,9 @@ Open, by phase:
 - 4–7: not started.
 
 In flight (lead session, 2026-11-16): round 2 of the push: X32 (lead (a), long powers of
-two), X33 (lead (b), long real rows), X34 (lead (c), the Xeon's long mixed rows), X31
-(cloud: Zen 5, recent Intel with MKL, Axion; cap USD 20). Done, each merged with its pull
+two), X33 (lead (b), long real rows), X34 (lead (c), the Xeon's long mixed rows). Done, each merged with its pull
 request:
+- X31 (cloud, USD 0.75): the push holds on Zen 5, Granite Rapids and Axion (above).
 - X30b (lead 3): plan tables on 64-byte boundaries (EPYC 0.986 double, 0.971 float on its
   cases; nothing slower anywhere); compact (wr, wi) twiddles rejected again (single cases
   up to 1.04–1.07, apparently the FMADDSUB arithmetic, not the storage); three passes at
@@ -449,6 +456,7 @@ running, done (with verdict).
 | [X30](experiments/X30-x86-pass-loops.md) | x86 chains at 128–4096 (lead 3): two-pass `avx2` double sequences with radix 32/64 (P), twiddles stored (wr, wi) with duplicating loads (T), 1024 = 16 × 64 (Q) | 1 | done: P adopted (EPYC x30 double 0.975: 256 0.905, 512 0.946, batches of 64 0.87–0.92, r2c/c2r 512–1024 0.90–0.95; nothing slower; Xeon `avx2` tracking 0.999, r2c 1024² 1.034 [0.997, 1.061] re-run pending); T rejected by single cases (geomeans 0.97–0.99, float 0.94, but short rows and small grouped passes up to 1.08–1.11); Q rejected (1024 batches 1.09) |
 | [X29](experiments/X29-real-footprint.md) | Real rows in the chain-or-grid rule: should r2c and c2r switch to the grid at another size than the c2c row of half their length, and is the grid's separate pairing pass worth fusing into its end phases? | 1–2 | done: real footprint rejected (no gain on any machine); c2r pairing in the grid's first gather adopted on Apple out of place in two phases (Mac 0.92–0.94; EPYC 1.11, not adopted); lengths with a power-of-two part ≤ 1024 points stay chains on Apple at any size (46080 0.65, 100000 0.62) and on Zen to half of L3 (0.64–0.85); power-of-two chains on the EPYC bimodal at 1–2 MiB, not adopted |
 | [X30b](experiments/X30b-twiddle-tables.md) | x86 chains at 1024–4096 (lead 3, after X30): 64-byte aligned plan tables (L), the half-size (wr, wi) twiddle storage only for passes with large tables (C), three-pass `avx2` double 4096 (R) | 1 | done: L adopted (aligned plan tables; EPYC x30 double 0.986, float 0.971; Xeon `avx512` 0.989, `avx2` 0.996; Mac 0.999); C rejected (EPYC x30 0.986 / 0.962 of L but float 256 × 64 1.04 in every variant, Xeon c2c 16 1.05, `avx512` double 1.001); R rejected (4096 three-pass 1.30–1.88) |
+| [X31](experiments/X31-cloud-1d.md) | One-dimensional double after the push on recent server chips (Zen 5, Granite Rapids with MKL, Axion): where does FFTN stand against FFTW, and does any core diverge from the EPYC, Xeon and Mac enough for per-core rules (lead (d))? | 1 | done: nothing badly off; FFTN ÷ FFTW over the 46 one-dimensional double cases Zen 5 0.80, Granite Rapids 0.88 (MKL 0.85), Axion 0.74 (before the push 1.05, 1.12, 0.86); Axion beats the Mac's ratios on long rows (0.75 against 1.19), in place, real rows and planes, mostly because FFTW is slower there; Axion 8 points 1.24; Granite Rapids repeats the Xeon's long mixed rows worse (100000 2.16, 46080 1.60) and in place 65536 1.50; Zen 5 diverges in no group; USD 0.75 |
 | P1 | Cost-model accuracy: rank agreement with measurement across the catalogue per machine | 2 | planned |
 | P2 | Measurement budget: how many candidates and how long before the choice stops improving | 2 | planned |
 | [T1](experiments/T1-dispatch-wait-costs.md) | Dispatch, wake and wait costs per machine and runtime (libgomp, libomp, Kokkos, pool) | 3 | done: hand-off cost and claim runs adopted on Zen 3; dispatch and work costs wait for a per-lane dispatch term |

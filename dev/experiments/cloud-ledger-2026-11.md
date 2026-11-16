@@ -26,3 +26,29 @@ Total USD 1.36 estimated gross (cap 20). A first C4D create with `--performance-
 was refused by the API (not supported for C4D) and created nothing. Teardown verified on
 2026-11-15 01:56 UTC: no instance, disk or address left; the campaign's firewall rule, subnet
 and network deleted after matching their IDs; the Mac-side watchdogs stopped.
+
+## X31, 2026-11-16
+
+Rentals for [X31](X31-cloud-1d.md) (one-dimensional double on recent server chips),
+approved by the maintainer on 2026-11-16 with a cap of USD 20 in total. Same project and
+region, Spot VMs with `--max-run-duration=3h` (termination action DELETE), boot-disk
+auto-delete, and a Mac-side watchdog per VM that deletes by name only after matching the
+recorded ID. Prices as for X21 (Spot list prices read 2026-11-15; the Granite Rapids C4 is
+priced as C4), plus 50 GB Hyperdisk Balanced about USD 0.012/h and the ephemeral IPv4
+USD 0.005/h. Creation times are those Compute Engine recorded; deletion times are when the
+delete call returned.
+
+Shared resources (free): VPC network `fftn-x31-net` (6723768401515729941), subnet
+`fftn-x31-sub` (8876375984154564069), firewall rule `fftn-x31-ssh` (4713923710729803259,
+SSH from the controller's address only).
+
+| Instance | Recorded ID | Type | Zone | Spot USD/h (VM) | Created (UTC) | Deleted (UTC) | Cost USD | Running total (X31) |
+|---|---|---|---|---:|---|---|---:|---:|
+| fftn-x31-c4a | 7030097396190631365 | c4a-standard-16 | us-central1-a | 0.354 | 2026-11-16 11:38:19 | 2026-11-16 12:11:37 | 0.21 | 0.21 |
+| fftn-x31-c4d | 8950345547308815812 | c4d-standard-16, 1 thread per core | us-central1-a | 0.335 | 2026-11-16 11:38:19 | 2026-11-16 12:12:33 | 0.21 | 0.42 |
+| fftn-x31-c4 | 5887323215677052356 | c4-standard-16, 1 thread per core, minimum platform Granite Rapids | us-central1-a | 0.473 | 2026-11-16 11:38:19 | 2026-11-16 12:18:15 | 0.33 | 0.75 |
+
+X31 total USD 0.75 estimated gross (cap 20); the month's total with X21 USD 2.11. Egress
+(results only, under 2 MB) is negligible. Teardown verified on 2026-11-16 12:20 UTC: no
+instance, disk or address of the campaign left; the firewall rule, subnet and network
+deleted after matching their IDs; the watchdogs stopped.
