@@ -18,10 +18,10 @@
 
 namespace fftn::inline v0::detail {
 
-machine_profile profile_for(const topology& t) noexcept {
+machine_profile profile_for(const topology& t, bool x86_64) noexcept {
   machine_profile p;
   if (!t.classes.empty()) {
-    set_grid_sizes(p, t.classes.front());
+    set_grid_sizes(p, t.classes.front(), x86_64);
   }
   // The defaults are a Zen 3 CCX's. Two other kinds of cache group were measured (T1, T5):
   // an Apple processor (macOS's reader, which numbers CPUs itself, topology.hpp, and an L2
@@ -69,7 +69,7 @@ machine_profile default_machine_profile() noexcept {
 // L2, and three phases only beyond L2 (Xeon Gold 6240, EPYC 7763). An L2 shared by a
 // cluster (Apple) is far: there the chain lost twofold once the row left L1, and three
 // phases paid from an eighth of L2 (X12).
-void set_grid_sizes(machine_profile& p, const core_class& c) noexcept {
+void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexcept {
   const bool private_l2 = c.l2.shared_by != 0 && c.l2.shared_by <= std::max(c.l1d.shared_by, 1U);
   if (c.l1d.size != 0) {
     p.grid_min_bytes = c.l1d.size;
@@ -102,8 +102,10 @@ void set_grid_sizes(machine_profile& p, const core_class& c) noexcept {
   // two's chain time, two phases 0.59-0.69 of X29's chains), and lost with X34's two phases
   // where the power-of-two part is large (1.03-1.46). Grids from a quarter of L2, three
   // phases from half of it (36864-131072 points 0.72-0.96), except where the power-of-two
-  // part is at most 1024 complex doubles: those rows stay in two phases.
-  const bool large_l2 = private_l2 && c.l2.size >= std::size_t{2} * 1024 * 1024;
+  // part is at most 1024 complex doubles: those rows stay in two phases. x86-64 only: an Axion
+  // VM (Neoverse V2, 2 MiB of private L2, 5 MiB of L3 per CPU) lost with this profile where
+  // it took X29's and X32's chains (46080 1.46, 100000 1.77, 262144 1.22 of their time).
+  const bool large_l2 = x86_64 && private_l2 && c.l2.size >= std::size_t{2} * 1024 * 1024;
   if (large_l2) {
     p.grid_min_bytes = std::max(c.l1d.size, c.l2.size / 4);
     p.grid_three_bytes = c.l2.size / 2;
