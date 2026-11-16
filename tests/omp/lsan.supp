@@ -1,6 +1,0 @@
-# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
-# SPDX-License-Identifier: Apache-2.0
-#
-# LeakSanitizer suppressions for the OpenMP tests (tests/omp/CMakeLists.txt says why): the
-# OpenMP runtime's own start-up allocation, nothing of FFTN's.
-leak:__kmp_register_library_startup

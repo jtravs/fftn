@@ -3,7 +3,9 @@
 //
 // The rows of a target's codelet table (passes/entries.inl) that one row unit defines,
 // included inside the unit's region after the kernel text (isa/kernel_text.inl). The unit
-// names itself with FFTN_ISA_ROWS before it includes anything. No include guard.
+// names itself with FFTN_ISA_ROWS before it includes anything but isa/arch.hpp, inside its
+// architecture's #if (clang-tidy's macro-to-enum reports a define that no #if reads). No
+// include guard.
 //
 // Why a target is several units (DESIGN.md 6.4): one unit holding every pass of a target
 // needed 9-16 GB to compile under the sanitizers, and the CI runners ran out of memory. The

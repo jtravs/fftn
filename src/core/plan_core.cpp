@@ -8,8 +8,10 @@
 
 #include "core/plan_core.hpp"
 
+#include "core/candidates.hpp"
 #include "core/driver.hpp"
 #include "core/program.hpp"
+#include "core/wisdom_entry.hpp"
 #include "fftn/detail/core.hpp"
 #include "fftn/isa.hpp"
 #include "fftn/options.hpp"
@@ -19,6 +21,7 @@
 #include "isa/target.hpp"
 #include "passes/pass_args.hpp"
 #include "planner/rules.hpp"
+#include "platform/aligned_allocator.hpp"
 #include "platform/cpu_features.hpp"
 #include "strategies/chain.hpp"
 #include "strategies/grid.hpp"
@@ -39,6 +42,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 #include <variant>
@@ -159,6 +163,23 @@ void check_reach(const shape_view& s, const side& v, bool input) {
   static_cast<void>(checked_mul(checked_add(reach, 1, what), v.element_bytes, what));
 }
 
+// The bytes a side's elements span relative to element 0, [lo, hi): strides may be negative.
+std::pair<std::ptrdiff_t, std::ptrdiff_t> span_of(const shape_view& s, const side& v) {
+  std::ptrdiff_t lo = 0;
+  std::ptrdiff_t hi = 0;
+  const auto step = [&](std::size_t count, std::ptrdiff_t stride) {
+    const std::ptrdiff_t reach = static_cast<std::ptrdiff_t>(count - 1) * stride;
+    (reach < 0 ? lo : hi) += reach;
+  };
+  for (std::size_t d = 0; d < v.extent.size(); ++d) {
+    step(v.extent[d], v.stride[d]);
+  }
+  for (std::size_t b = 0; b < v.dist.size(); ++b) {
+    step(s.batches[b].count, v.dist[b]);
+  }
+  return {lo * v.element_bytes, (hi + 1) * v.element_bytes};
+}
+
 // No two output elements may share an address. Ordered by size of stride, each dimension's
 // stride must exceed the reach of all smaller ones: a sufficient condition that admits
 // every nested layout (rows, columns, planes, padding, reversed strides).
@@ -230,9 +251,11 @@ template <class T> plan_tables<T>& tables_of(plan_core& c) {
   }
 }
 
+} // namespace
+
 // The target of the plan: the fastest the processor and the build support, or the one
 // options::force_isa names. Every target has the passes.
-target plan_target(const options& opts) {
+target plan_target_of(const options& opts) {
   std::optional<target> forced;
   if (opts.force_isa != isa::best) {
     forced = static_cast<target>(static_cast<unsigned char>(opts.force_isa));
@@ -243,6 +266,8 @@ target plan_target(const options& opts) {
     reject("options.force_isa", std::string("cannot be used: ") + e.what());
   }
 }
+
+namespace {
 
 // A phase's view of one slot: where it is and its strides per axis, in elements.
 struct view {
@@ -348,11 +373,7 @@ grid_split plan_grid(std::size_t n, const side& in, const side& out, const build
       return {};
     }
   }
-  std::size_t forced = 1;
-  for (const std::size_t f : settings.radices) {
-    forced *= f;
-  }
-  if (!settings.radices.empty() && forced == n) {
+  if (!settings.radices.empty() && checked_product(settings.radices) == n) {
     return {};
   }
   // Three phases beyond grid_three_bytes, unless the odd part of n keeps two (X34).
@@ -360,9 +381,11 @@ grid_split plan_grid(std::size_t n, const side& in, const side& out, const build
   while (odd % 2 == 0) {
     odd /= 2;
   }
-  const bool three =
-      n * 2 * sizeof(T) > settings.profile.grid_three_bytes &&
-      (settings.profile.grid_two_odd_part == 0 || odd < settings.profile.grid_two_odd_part);
+  const bool three = settings.grid_phases != 0
+                         ? settings.grid_phases == 3
+                         : n * 2 * sizeof(T) > settings.profile.grid_three_bytes &&
+                               (settings.profile.grid_two_odd_part == 0 ||
+                                odd < settings.profile.grid_two_odd_part);
   grid_split g = choose_grid(n, lanes, settings.profile.grid_block_bytes / (4 * sizeof(T)), three,
                              settings.profile.grid_block, settings.grid_factors);
   g.pad = grid_pad(g, 2 * sizeof(T), settings.profile.grid_pad_period);
@@ -475,7 +498,7 @@ void read_output_for_input(program& p, std::size_t first) {
 template <class T>
 void build(plan_core& c, const shape_view& s, const side& in, const side& out, const options& opts,
            const build_settings& settings) {
-  c.isa_target = plan_target(opts);
+  c.isa_target = plan_target_of(opts);
   const kernels_of<T>& kernels = of<T>(*find_kernels(c.isa_target));
   target_profile profile = profile_of(c.isa_target, kernels.complex_lanes);
   if (settings.leaf_limit != 0) {
@@ -483,6 +506,12 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   }
   if (settings.layout != layout_choice::rules) {
     profile.split = settings.layout == layout_choice::split;
+  }
+  if (settings.rader == 0) {
+    profile.rader_below = 0;
+  } else if (settings.rader > 0) {
+    profile.rader_from = 0;
+    profile.rader_below = std::numeric_limits<std::size_t>::max();
   }
   chain_builder<T> chain(kernels, profile, tables_of<T>(c), settings.chunk_points, settings.radices,
                          settings.bluestein_above, fusion_of(settings, c.isa_target));
@@ -584,6 +613,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     p.lanes = lanes;
     p.lane_unit = unit;
     p.lane_tail = std::move(tail);
+    c.built = strategy_choice::lanes;
     const bool real = s.kind != transform_kind::c2c;
     c.axis_notes.push_back("axis 0 (n = " + std::to_string(n) + "): on the lanes' tile, " +
                            (real ? chain.real_text(n, s.kind == transform_kind::r2c, false)
@@ -596,6 +626,10 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   } else if (real_grid.phases != 0) {
     const std::size_t n = c.lengths[0];
     const bool r2c = s.kind == transform_kind::r2c;
+    c.built = strategy_choice::grid;
+    for (std::size_t i = 0; i < real_grid.phases; ++i) {
+      c.grid_factors.push_back(real_grid.factors.at(i));
+    }
     grid_builder<T> grid(kernels, chain, tables_of<T>(c),
                          settings.grid_fused &&
                              (n / 2) * 2 * sizeof(T) <= settings.profile.grid_fuse_bytes,
@@ -624,18 +658,24 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       scratch = grid.c2c_row(real_grid, +1, true, opts.scale, false, p);
       read_output_for_input(p, first);
     }
+    const char* pairing_note = ", then a pairing pass";
+    if (paired_last) {
+      pairing_note = ", the pairing in its last phase";
+    } else if (!r2c) {
+      pairing_note = paired_gather ? ", the pairing in its first gather" : ", after a pairing pass";
+    }
     c.axis_notes.push_back("axis 0 (n = " + std::to_string(n) + "): " + (r2c ? "r2c" : "c2r") +
-                           " through a half-length complex " + grid.note(real_grid) +
-                           (paired_last     ? ", the pairing in its last phase"
-                            : r2c           ? ", then a pairing pass"
-                            : paired_gather ? ", the pairing in its first gather"
-                                            : ", after a pairing pass"));
+                           " through a half-length complex " + grid.note(real_grid) + pairing_note);
     c.strategy_note =
         std::string("grid for the half-length complex transform (") +
         std::to_string(real_grid.phases) + " phases, each depth-first over blocks of columns" +
         (c.block_elements != 0 ? "; an intermediate array in the workspace block" : "") +
         "), each transform finished before the next";
   } else if (grid_plan.phases != 0) {
+    c.built = strategy_choice::grid;
+    for (std::size_t i = 0; i < grid_plan.phases; ++i) {
+      c.grid_factors.push_back(grid_plan.factors.at(i));
+    }
     grid_builder<T> grid(kernels, chain, tables_of<T>(c),
                          settings.grid_fused &&
                              c.lengths[0] * 2 * sizeof(T) <= settings.profile.grid_fuse_bytes,
@@ -783,8 +823,8 @@ const char* slot_name(slot s) {
 
 } // namespace
 
-std::shared_ptr<const plan_core> make_plan_core(const shape_view& s, const options& opts,
-                                                const build_settings& settings) {
+std::shared_ptr<plan_core> build_plan_core(const shape_view& s, const options& opts,
+                                           const build_settings& settings) {
   const std::size_t r = s.axes.size();
   if (r == 0) {
     reject("shape.axes", "must hold at least one axis");
@@ -858,6 +898,8 @@ std::shared_ptr<const plan_core> make_plan_core(const shape_view& s, const optio
   if (opts.in_place) {
     check_in_place(s, in, out);
   }
+  std::tie(c->in_lo, c->in_hi) = span_of(s, in);
+  std::tie(c->out_lo, c->out_hi) = span_of(s, out);
 
   // The scale is applied in the plan's precision: it must be finite there, and a non-zero
   // scale must not vanish. (Converting a double beyond float's range to float is undefined,
@@ -898,7 +940,27 @@ std::shared_ptr<const plan_core> make_plan_core(const shape_view& s, const optio
   c->profile = settings.profile;
   c->runs_inline = runs_inline(c->graph, c->profile);
   c->radices_forced = !settings.radices.empty();
+  c->shape_key = shape_key(s, opts);
+  c->program_text = choice_text(pinned_choice({.strategy = settings.strategy,
+                                               .radices = settings.radices,
+                                               .grid_factors = settings.grid_factors,
+                                               .grid_phases = settings.grid_phases,
+                                               .rader = settings.rader},
+                                              *c));
   return c;
+}
+
+std::shared_ptr<const plan_core> make_plan_core(const shape_view& shape, const options& opts,
+                                                const build_settings& settings) {
+  // Refused whatever the effort, so that an option that takes effect only with measured
+  // planning is not valid or invalid depending on another option.
+  if (!std::isfinite(opts.measure_seconds) || opts.measure_seconds < 0) {
+    reject("options.measure_seconds", "must be finite and not negative");
+  }
+  if (opts.use == nullptr && opts.effort == planning::rules) {
+    return build_plan_core(shape, opts, settings);
+  }
+  return plan_with_effort(shape, opts, settings);
 }
 
 std::shared_ptr<const plan_core> make_plan_core(const shape_view& shape, const options& opts) {
@@ -952,11 +1014,13 @@ void execute_core(const plan_core& core, std::size_t first, std::size_t count, c
     run_flat_first(core.prog, in, out, a, b, block);
     return;
   }
-  const slot_addresses at{.in = static_cast<const std::byte*>(in),
-                          .out = static_cast<std::byte*>(out),
-                          .block = block,
-                          .a = a,
-                          .b = b};
+  const slot_addresses at{
+      .in = static_cast<const std::byte*>(in),
+      .out = static_cast<std::byte*>(out),
+      .block = block,
+      .a = a,
+      .b = b,
+  };
   run_transforms(core.prog, first, count, at);
 }
 
@@ -983,6 +1047,10 @@ std::string describe(const plan_core& core) {
   o << ", " << core.prog.transforms << (core.prog.transforms == 1 ? " transform" : " transforms")
     << (core.in_place ? ", in place" : ", out of place") << "\n";
   o << "instruction set: " << isa_name(instruction_set(core)) << "\n";
+  // How the program was chosen, when not by the rules alone (measured planning, wisdom).
+  if (!core.planning_note.empty()) {
+    o << "planning: " << core.planning_note << "\n";
+  }
   const char* rule =
       core.strategy_note.empty() || core.prog.lanes != 0 ? "planner v1" : "the grid's phase rule";
   if (!core.strategy_note.empty()) {
@@ -992,9 +1060,9 @@ std::string describe(const plan_core& core) {
          "transform finished before the next; radices from ";
   }
   if (core.radices_forced) {
-    o << "build_settings.radices (a test knob) where they multiply to a line's length, "
-         "otherwise from "
-      << rule << "\n";
+    o << (core.planning_note.empty() ? "build_settings.radices (a test knob)"
+                                     : "the chosen candidate")
+      << " where they multiply to a line's length, otherwise from " << rule << "\n";
   } else {
     o << rule << "\n";
   }

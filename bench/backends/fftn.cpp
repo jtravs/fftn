@@ -17,6 +17,13 @@
 // public one.
 //
 // Options (bench/README.md, "FFTN options"), combinable:
+//   PLANNING=rules|quick|measure   options::effort of every plan (default rules): measured
+//                    planning times candidates when the plan is built, which fbench records
+//                    as the case's plan_s; each case's note then starts with the chosen
+//                    program, the candidates timed and the rules' time over the chosen one's
+//                    (experiments P1, P2)
+//   MEASURE_SECONDS=S   options::measure_seconds (default 0: the effort's budget)
+//   MEASURE_SCRATCH=B   options::measure_scratch_bytes (default 0: 1 GiB)
 //   ISA=<name>       force every plan to that instruction set (options::force_isa; names as
 //                    fftn::isa_name writes them, "best" the default), so that arms of one
 //                    build can compare targets (A=fftn+ISA=avx2 B=fftn+ISA=avx512). A target
@@ -141,8 +148,12 @@ struct session {
   detail::build_settings settings;
   call mode = call::serial;
   int threads = 1;
-  int group_size = -1;             // -1: the executor's own
-  fftn::isa isa = fftn::isa::best; // ISA=: the instruction set of every plan
+  int group_size = -1;                           // -1: the executor's own
+  fftn::isa isa = fftn::isa::best;               // ISA=: the instruction set of every plan
+  fftn::planning effort = fftn::planning::rules; // PLANNING=
+  std::string planning = "rules";
+  double measure_seconds = 0;      // MEASURE_SECONDS=
+  std::size_t measure_scratch = 0; // MEASURE_SCRATCH=
   std::unique_ptr<executor_type> exec;
   std::string overrides;          // the profile and chunking options given, as JSON members
   std::string radices_text;       // RADICES as given, r1.r2... (settings.radices holds them)
@@ -355,7 +366,30 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
   fbench::json overrides;
   for (const auto& [key, value] : fbench::backends::parse_options(options)) {
     std::string error;
-    if (key == "ISA") {
+    if (key == "PLANNING") {
+      if (value != "rules" && value != "quick" && value != "measure") {
+        say(message, message_size, "PLANNING is rules, quick or measure");
+        return fbench_error;
+      }
+      s.effort = value == "quick"     ? fftn::planning::quick
+                 : value == "measure" ? fftn::planning::measure
+                                      : fftn::planning::rules;
+      s.planning = value;
+    } else if (key == "MEASURE_SECONDS") {
+      const std::optional<double> v = fbench::fftn_tuning::parse_real(value);
+      if (!v) {
+        say(message, message_size, "MEASURE_SECONDS is a non-negative number");
+        return fbench_error;
+      }
+      s.measure_seconds = *v;
+    } else if (key == "MEASURE_SCRATCH") {
+      const std::optional<std::size_t> v = fbench::fftn_tuning::parse_size(value, 1, false);
+      if (!v) {
+        say(message, message_size, "MEASURE_SCRATCH is a whole number of bytes from 1");
+        return fbench_error;
+      }
+      s.measure_scratch = *v;
+    } else if (key == "ISA") {
       const std::optional<fftn::isa> target = isa_from_name(value);
       if (!target) {
         say(message, message_size,
@@ -486,8 +520,15 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
         .boolean("isa_forced", s.isa != fftn::isa::best)
         .raw("supports", R"(["c2c","r2c","c2r"])")
         .raw("precisions", R"(["f64","f32"])")
+        .str("planning", s.planning)
         .str("strategy", s.strategy)
         .str("layout", s.layout);
+    if (s.measure_seconds != 0) {
+      d.str("measure_seconds", std::to_string(s.measure_seconds));
+    }
+    if (s.measure_scratch != 0) {
+      d.integer("measure_scratch", static_cast<std::int64_t>(s.measure_scratch));
+    }
     if (!s.factors_text.empty()) {
       d.str("grid_factors", s.factors_text);
     }
@@ -545,7 +586,11 @@ std::int32_t fbench_create(const fbench_case* c, void* /*in*/, void* /*out*/, vo
       check_radices_fit(*c);
     }
     auto record = std::make_unique<plan_record>();
-    const fftn::options opts{.in_place = c->in_place != 0, .force_isa = s.isa};
+    const fftn::options opts{.in_place = c->in_place != 0,
+                             .force_isa = s.isa,
+                             .effort = s.effort,
+                             .measure_seconds = s.measure_seconds,
+                             .measure_scratch_bytes = s.measure_scratch};
     record->core =
         c->precision == fbench_f32 ? make_core<float>(*c, opts) : make_core<double>(*c, opts);
     const std::string described = detail::describe(*record->core);
@@ -556,7 +601,15 @@ std::int32_t fbench_create(const fbench_case* c, void* /*in*/, void* /*out*/, vo
       throw std::logic_error("the plan does not use RADICES=" + s.radices_text + ":\n" + described);
     }
     record->ws = fftn::workspace(detail::workspace_bytes(*record->core, s.threads));
-    say(message, message_size, axis_lines(described));
+    std::string note = axis_lines(described);
+    if (s.effort != fftn::planning::rules) {
+      // The chosen program first, then the account: P1 reads rules/chosen, P2 the count.
+      const detail::plan_core& k = *record->core;
+      note = "chosen: " + k.program_text + "; timed " + std::to_string(k.candidates_timed) +
+             "; rank " + std::to_string(k.chosen_rank) + "; rules/chosen " +
+             std::to_string(k.rules_over_chosen) + "; " + note;
+    }
+    say(message, message_size, note);
     *plan = record.release();
     return fbench_ok;
   } catch (const std::exception& e) {

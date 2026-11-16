@@ -49,8 +49,7 @@ struct kernel_table {
 // leaves do, so either target's plans may use them.
 inline constexpr std::size_t narrow_leaf_slots = codelet_slot(23) + 1;
 template <class T> struct narrow_leaf_set {
-  // NOLINTNEXTLINE(modernize-avoid-c-arrays): filled inside an ISA region, which uses no std
-  // templates
+  // NOLINTNEXTLINE(modernize-avoid-c-arrays): filled in an ISA region, no std templates
   leaf_fn leaf[narrow_leaf_slots][2][edge_op_count][edge_op_count];
   // The same for lines of stride 1 (radix_passes::leaf_unit, experiment X28b).
   // NOLINTNEXTLINE(modernize-avoid-c-arrays): as above

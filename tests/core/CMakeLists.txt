@@ -9,8 +9,8 @@
 # build type.
 
 fftn_add_test(fftn_core_tests SOURCES core_test.cpp passes_test.cpp grid_test.cpp
-  real_test.cpp lanes_test.cpp tails_test.cpp LIBRARIES fftn_test_support)
+  real_test.cpp lanes_test.cpp tails_test.cpp planning_test.cpp LIBRARIES fftn_test_support)
 fftn_always_optimise(core_test.cpp passes_test.cpp grid_test.cpp real_test.cpp lanes_test.cpp
-  tails_test.cpp)
+  tails_test.cpp planning_test.cpp)
 # The planner's recorded radices (data/rule_radices.txt).
 target_compile_definitions(fftn_core_tests PRIVATE FFTN_CORE_DATA="${CMAKE_CURRENT_SOURCE_DIR}/data")

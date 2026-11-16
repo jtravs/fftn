@@ -177,3 +177,6 @@ Results may differ in the last bits between instruction sets, between plans buil
 different options (in place or not), and between library versions. A plan's instruction
 set is the fastest the processor and the build support (`plan::instruction_set()`);
 `options::force_isa` picks another, for tests and benchmarks.
+Measured planning (`options::effort`, [planning](planning.md)) may choose a different
+program from run to run, and so different last bits; a plan built from a wisdom entry runs
+the recorded program, bit for bit.
