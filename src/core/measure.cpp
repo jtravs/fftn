@@ -273,7 +273,11 @@ std::shared_ptr<const plan_core> measure(const shape_view& s, const options& bas
     }
     for (std::size_t round = 0; round < b.max_rounds; ++round) {
       bool any = false;
-      for (candidate& c : cands) {
+      // Each round starts one candidate later, so that no candidate always takes the first
+      // place after a round's checks (P2's first pass on the Mac: the rules' choice, always
+      // timed first, read 1.2-1.3 times its time in single rounds).
+      for (std::size_t k = 0; k < cands.size(); ++k) {
+        candidate& c = cands[(k + round) % cands.size()];
         if (!c.live || (c.samples > 0 && seconds_since(start) > seconds)) {
           continue;
         }
