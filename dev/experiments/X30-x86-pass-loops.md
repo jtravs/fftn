@@ -195,15 +195,21 @@ every other case within 0.99–1.01 (they keep their plans). In float P changes 
 ### Xeon (GCC 14.4), tracking tier (run 20261116-041211-2a5e)
 
 Xeon Gold 6240, Slurm `-c 8` on the shared node, arms A, T with `ISA=avx512` and A, T, P,
-Q with `ISA=avx2`; band ±1.43 % (A512's control) when read after 47 rounds, so the limit
-is 1.034. Arm ÷ its own target's A, geometric means over the 61 cases:
+Q with `ISA=avx2`; 80 rounds, 2 of them loaded, band ±1.00 % (A512's control), so the limit
+is 1.03. Arm ÷ its own target's A, geometric means over the 61 cases:
 
 | Arm | Geomean | Over the limit |
 |---|---|---|
-| T `avx512` | 0.973 | 17 1.107, 97 1.095, 16 1.074, 257 1.046, 4096 1.041 |
-| T `avx2` | 0.974 | 17 1.056, 16 1.055 |
-| P `avx2` | 0.997 | none (256 0.932) |
-| Q `avx2` | 0.975 | 16 1.069, 17 1.054, 1009 1.044 |
+| T `avx512` | 0.973 | 17 1.103, 97 1.100, 16 1.066, 4096 1.047, 257 1.040 |
+| T `avx2` | 0.977 | 17 1.058, 16 1.057 |
+| P `avx2` | 0.999 | r2c 1024² 1.034 [0.997, 1.061] (256 0.932) |
+| Q `avx2` | 0.977 | 16 1.067, 17 1.054, r2c 1024² 1.045, c2c 1024² 1.041, 1009 1.039 |
+
+P's one case past the limit is 0.4 points over by its median, with an interval that
+contains 1 (fbench: no evidence) and an A/A ratio of 1.02 for that case alone; on the EPYC
+the same case is 1.014. Its rows of 1024 real points run the half-length chain of 512, which
+P makes 16 × 32. A re-run of it beside its neighbours (A256, P256; Slurm 15965,
+`x30s-xeon-rerun`) was queued when this was written.
 
 The Xeon's x30 run (Slurm 15903, `x30s-xeon-x30`) was still queued behind other
 experiments' serial jobs when this was written; whoever fetches it adds it here. It cannot
@@ -217,12 +223,15 @@ Not measured: Clang (recorded only by the rule, no runs made); the Xeon's x30 ca
 - **P adopted** for `avx2` double (the table's overrides 256 = 8 × 32, 512 = 16 × 32).
   On the EPYC: (a) x30's double geomean 0.975 (≤ 0.98; every target case's interval clear
   of the band); (b) no case of x30 or of the tracking tier past 1.03 (worst r2c 1024² 1.014
-  in the tracking tier); (c) float 1.000. On the Xeon's `avx2`: tracking geomean 0.997, no
-  case past the limit (x30 there not yet run). Plans change, so bits change at 256 and 512
-  (within the tests' tolerances).
+  in the tracking tier); (c) float 1.000. On the Xeon's `avx2` (which shares the table):
+  tracking geomean 0.999, one case 0.4 points past the limit by its median, r2c 1024²
+  1.034 with an interval [0.997, 1.061] that contains 1; its re-run (Slurm 15965) and the
+  Xeon's x30 run (15903) were still queued. If the re-run confirms it, the choice is the
+  lead's: a recorded exception (as X23 amendment 4 did), or 512's override left out. Plans
+  change, so bits change at 256 and 512 (within the tests' tolerances).
 - **T rejected** on every machine-target by (b), although its geomeans are better: EPYC
   tracking 0.997 with nine cases past 1.03 (up to 1.084), x30 0.991 double / 0.941 float
-  with four; Xeon `avx512` tracking 0.973 with five (up to 1.107), `avx2` 0.974 with two.
+  with four; Xeon `avx512` tracking 0.973 with five (up to 1.103), `avx2` 0.977 with two.
   Reverted (2acd6b5). The pattern (wins where twiddle tables overflow L1, losses on short
   rows and small grouped passes; Results above) is lesson 3.10. A follow-up that keeps
   both sides: the (wr, wi) storage only for tables larger than about half of L1, or only

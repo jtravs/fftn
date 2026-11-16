@@ -284,7 +284,7 @@ p + 1, load ports only) and `vfmaddsub`, keeps every bit and halves the tables. 
 tables overflow L1 (EPYC double 384–4096 points 0.95–0.97, float 0.80–0.94, rows of 16384
 0.91, Bluestein's chirps at 10403 0.88; Xeon `avx512` similar) and lost on short rows and
 small grouped passes (EPYC 64–192 points 1.03–1.04, 97 1.08, batches of 100 points 1.08;
-Xeon 16–17 points 1.07–1.11): a duplicating load cannot be folded into the multiply as a
+Xeon 16–17 points 1.06–1.10): a duplicating load cannot be folded into the multiply as a
 plain load can, and the load at p + 1 crosses a cache line in half the units (in all of
 them on 64-byte registers). Measure footprint changes on short transforms too; a per-table
 choice of storage would keep both sides. [X30](experiments/X30-x86-pass-loops.md).
