@@ -1,6 +1,6 @@
 # X28: single short rows
 
-- **Status:** running
+- **Status:** done (adopted: all four arms)
 - **Owner:** x28 session, 2026-11-15
 - **Phase / task:** 1 (exit criteria); PLAN lead 4; follows X20 and X25
 
@@ -197,8 +197,69 @@ band ±2.75 %): d ÷ A 0.964, 12 cases faster (17 points 0.81, 64 0.83, 60 0.84,
 
 ### fbench, Xeon
 
-(pending: jobs 15769 and 15771)
+Run 20261116-000445-a095 (Slurm 15769; arms A, b, a, c, d on `avx512`, A and d forced to
+`avx2`, FFTW; GCC 14; 10 rounds, all loaded: load average 13; band ±2.92 %). Arm ÷ the
+arm before it, `avx512`:
+
+| arm | single f64 | single f32 | batches 64, 4096 | real rows | slower than the band |
+|---|---|---|---|---|---|
+| b ÷ A | 0.925 | 0.937 | 0.970 | 0.991 | none |
+| a ÷ b | 0.964 | 0.963 | 0.999 | 0.994 | none |
+| c ÷ a | 0.938 | 0.971 | 0.995 | 0.921 | none |
+| d ÷ c | 0.957 | 0.968 | 0.995 | 0.887 | none |
+| d ÷ A | 0.793 | 0.850 | 0.961 | 0.814 | none |
+| d ÷ A, forced `avx2` | 0.813 | 0.817 | 0.968 | 0.815 | (not an fbench pair; worst 120 × 4096 1.043, 48 × 4096 1.009) |
+
+- b on its own cases: 8 points 0.80, 12 0.78, 16 0.78 (f32 0.80–0.83); batches of 8–16
+  points 0.86–1.00 (batches of 64 0.86–0.90: the batched leaves run at licence 0 too).
+- d ÷ A per case (`avx512`, double): 8 0.667, 12 0.711, 16 0.727, 24 0.857, 32 0.753, 48
+  0.814, 60 0.908, 64 0.796, 120 0.949; float 0.71–0.98; batches 0.86–1.04 (worst 60 × 4096 1.035, inside
+  the band); r2c and c2r 0.73–0.86.
+- FFTN ÷ FFTW, single c2c rows in double: 1.617 → 1.269 (8 points 1.82 → 1.19, 16 1.51 →
+  1.10, 64 1.37 → 1.11, 60 1.65 → 1.50, 120 1.60 → 1.50, 24 2.40 → 2.01); forced `avx2`
+  1.610 → 1.305; real rows 1.092 → 0.882. What is left at 60 and 120 is the partial-unit
+  radix-4 pass and three passes against FFTW's two (X25), at 24 the plan (4 × 6).
+
+Tracking tier on the Xeon, run 20261116-000718-7709 (Slurm 15771; A, d; 8 rounds at load
+average 40–45, band ±23.7 %): d ÷ A 0.971, nothing slower beyond that band (16 points 0.65
+faster; 8 points 0.58, 60 0.87, 17 0.85 inside it); too noisy to rule on collateral at the
+Xeon's 3 % scale, and to be re-run on a quieter node. A re-run of the batch cases nearest
+the x28 band (48, 60, 120 at 64 and 4096 rows, both targets) is job 15861, queued.
 
 ## Verdict
 
-(pending)
+All four arms adopted (branch `exp/x28-short-rows`, PR #10). Rule 1 holds for every arm:
+the full test suite passes on the Mac (Clang, 1688 tests), natively on the Xeon (GCC 14
+`-Werror`, `avx512` and `avx2`, 1677 tests, job 15786) and in CI; the kernels compute
+exactly as before, and the new `Passes.NarrowLeavesMatchTheTargetsLeaves` holds the
+128-bit leaves bit for bit against both x86 targets' own leaves.
+
+| arm | Xeon `avx512` | EPYC `avx2` | Mac `neon_fcma` |
+|---|---|---|---|
+| b, 128-bit leaves | adopted: 0.925 / 0.937 (f64 / f32), nothing slower | misses rule 2 as written: 0.987 / 0.985 over all nine lengths, 0.94–0.98 on the three it changes (8, 12, 16), nothing slower | does not apply |
+| a, lighter entry | adopted: 0.964 / 0.963 | adopted: 0.964 / 0.971; 120 f32 1.066 (three passes, which a does not change; 0.898 of A with d) | within the band: 0.986 / 0.992, nothing slower |
+| c, flat body | adopted: 0.938 / 0.971 | 0.962 / 0.955, but r2c and c2r of 16–32 points 1.04–1.18 slower | 0.976 / 0.955 |
+| d, addresses as arguments | adopted: 0.957 / 0.968, real rows 0.887 | adopted: 0.896 / 0.896, real rows 0.746 | adopted: 0.921 / 0.877, real rows 0.830 |
+| all, d ÷ A | 0.793 / 0.850; FFTN ÷ FFTW 1.62 → 1.27 | 0.819 / 0.822; 1.37 → 1.12 | 0.878 / 0.822; 1.14 → 1.00 |
+
+Two calls the maintainer may want to revisit:
+
+- b on `avx2`: kept for both x86 targets. By the letter of rule 2 the EPYC does not adopt
+  it, because the rule averaged over nine lengths of which b changes three; on those it
+  is 0.94–0.98 on the EPYC and 0.78–0.80 on the Xeon (`avx512`), it slows nothing, it is
+  bit-identical, and under forced `avx2` on the Xeon it removes the 16-point leaf's
+  licence-1 cycles (counters). One leaf set for both targets also keeps one code path.
+- c and d are adopted as a pair: c alone slowed the EPYC's single real rows of 16–32
+  points, which d (built on c's flat body) takes to 0.71–0.81 of `main`; a alone is within
+  the band on the Mac and is adopted for the two x86 machines, where it wins (it is
+  target-independent entry code).
+
+Tracking tier, d ÷ A: Mac 0.953 and EPYC 0.964, nothing slower on either; Xeon 0.971 at a
+±23.7 % band (overloaded: inconclusive for collateral, to be re-run). Rule 3's one open case: forced `avx2` 120 × 4096 at 1.043 against a band of
+±2.92 % (not an fbench pair), re-run as job 15861.
+
+What remains at single short rows (Xeon / EPYC, FFTN ÷ FFTW): 60 points 1.50 / 1.18 and
+120 points 1.50 / 1.10 (the partial-unit radix-4 pass, X23b's, and three passes against
+two on the Xeon), 24 points on the Xeon 2.01 (the plan, 4 × 6), leaves 8–16 1.07–1.19 /
+1.17–1.19 (the leaf's set-up for any stride: a unit-stride leaf is the next step).
+DESIGN.md 6.1, 8.3 and the decision log, LESSONS 2.3 and 4.7 updated.
