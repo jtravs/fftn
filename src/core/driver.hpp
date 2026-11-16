@@ -23,7 +23,7 @@ struct slot_addresses {
 };
 
 // Sets p.flat from p's records (program.hpp); called once the program is complete.
-void mark_flat(program& p) noexcept;
+void mark_flat(program& p);
 
 // Runs transforms [first, first + count) of p's batch, every chunk of every stage in order.
 // in and out address element 0 of transform 0.

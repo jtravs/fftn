@@ -140,7 +140,8 @@ void grouped_pass(const pass_args* a, const void* src, void* dst, std::size_t fi
     const std::size_t p0 = u * C<T>;
     // Every unit of the loop is whole on the masked targets, and the compiler must see it:
     // store_tiled with a runtime count of butterflies loops instead of unrolling (X23).
-    const std::size_t valid = masked ? C<T> : (m - p0 < C<T> ? m - p0 : C<T>);
+    const std::size_t rest = m - p0 < C<T> ? m - p0 : C<T>;
+    const std::size_t valid = masked ? C<T> : rest;
     const T* xp = x + at(p0, xs);
     const edge<T, InOp> op = make_edge<T, InOp>(a, a->in_factor, p0, m);
     const lane_twiddles<T> twid{.p = table + tw_reals<T> * p0, .row = row};

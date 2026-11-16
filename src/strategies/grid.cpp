@@ -7,6 +7,7 @@
 #include "core/twiddles.hpp"
 #include "isa/kernel_table.hpp"
 #include "passes/pass_args.hpp"
+#include "platform/aligned_allocator.hpp"
 #include "strategies/chain.hpp"
 
 #include <algorithm>
@@ -55,7 +56,7 @@ std::size_t longest_factor(const grid_split& g) {
 std::size_t first_columns(const grid_split& g) {
   std::size_t rest = 1;
   for (std::size_t i = 1; i < g.phases; ++i) {
-    rest *= g.factors.at(i);
+    rest *= g.factors[i]; // i < phases <= max_grid_phases
   }
   return rest;
 }
@@ -497,14 +498,14 @@ template <class T> std::size_t grid_builder<T>::pair_half(const grid_split& g) c
   return g.block / 2;
 }
 
-template <class T> bool grid_builder<T>::pairs_last(const grid_split& g) const noexcept {
+template <class T> bool grid_builder<T>::pairs_last(const grid_split& g) const {
   if (g.phases < 2) {
     return false;
   }
-  const std::size_t nk = g.factors.at(g.phases - 1);
+  const std::size_t nk = g.factors[g.phases - 1]; // phases <= max_grid_phases
   std::size_t l = 1;
   for (std::size_t i = 0; i + 1 < g.phases; ++i) {
-    l *= g.factors.at(i);
+    l *= g.factors[i];
   }
   // A last phase that reads and writes the arrays in its passes (fused, no gather or
   // scatter) keeps the separate pairing pass: the paired phase gathers and scatters, and
@@ -625,7 +626,7 @@ std::size_t grid_builder<T>::c2c_row(const grid_split& g, int sign, bool in_plac
   if (c2r_n != 0) {
     add_copy("gather", kernels_.passes.c2r_pair_gather, n1, b, buf[0],
              static_cast<std::ptrdiff_t>(m1), slot::a, blk, 1.0, rows, p);
-    stage& st = std::get<stage>(p.records.back());
+    auto& st = std::get<stage>(p.records.back());
     const auto [columns, row_factors] = c2r_pair_factors(n1, m1, c2r_n);
     st.args.roots = rows;
     st.args.in_factor = columns;

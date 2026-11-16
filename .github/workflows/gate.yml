@@ -45,6 +45,10 @@ on:
         description: Windows, clang on the MSVC ABI (entries also give runner, arch, cc)
         type: string
         default: "[]"
+      timeout:
+        description: Minutes per job (the extended jobs' sanitizer and coverage builds need more)
+        type: number
+        default: 90
 
 permissions:
   contents: read
@@ -58,7 +62,7 @@ jobs:
     if: inputs.linux != '[]'
     name: linux x86-64 ${{ matrix.name }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: ${{ inputs.timeout }}
     strategy:
       fail-fast: false
       matrix:
@@ -165,7 +169,7 @@ jobs:
     if: inputs.linux-gcc-current != '[]'
     name: linux x86-64 ${{ matrix.name }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: ${{ inputs.timeout }}
     strategy:
       fail-fast: false
       matrix:
@@ -205,7 +209,7 @@ jobs:
     if: inputs.linux-arm64 != '[]'
     name: linux aarch64 ${{ matrix.name }}
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 90
+    timeout-minutes: ${{ inputs.timeout }}
     strategy:
       fail-fast: false
       matrix:
@@ -246,7 +250,7 @@ jobs:
     if: inputs.macos != '[]'
     name: macos arm64 ${{ matrix.name }}
     runs-on: macos-26
-    timeout-minutes: 90
+    timeout-minutes: ${{ inputs.timeout }}
     strategy:
       fail-fast: false
       matrix:
