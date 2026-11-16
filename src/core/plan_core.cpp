@@ -322,10 +322,12 @@ line_edges c2c_edges(const options& opts, const build_settings& settings, bool f
 // output or, with build_settings::scale_on_input, its input), has no forced radices for its whole
 // length and has a split whose phases are codelet chains. The row is a c2c row or (real) the
 // half-length complex transform of a real row of 2n (DESIGN.md 9.1). A c2c row of a power of
-// two stays a chain up to the profile's pow2_chain_bytes (X32; real rows were not measured).
+// two stays a chain up to the profile's pow2_chain_bytes (X32), and so does the half-length
+// transform of a real row (X33).
 template <class T>
 grid_split plan_grid(std::size_t n, const side& in, const side& out, const build_settings& settings,
-                     const chain_builder<T>& chain, std::size_t lanes, bool real) {
+                     const chain_builder<T>& chain, std::size_t lanes,
+                     [[maybe_unused]] bool real) {
   if (n < 2 || settings.strategy == strategy_choice::chain ||
       settings.strategy == strategy_choice::lanes || settings.in_factor != nullptr ||
       settings.out_factor != nullptr || in.stride[0] != 1 || out.stride[0] != 1) {
@@ -343,7 +345,7 @@ grid_split plan_grid(std::size_t n, const side& in, const side& out, const build
         (mixed && ((part * 2 * sizeof(T) <= settings.profile.chain_part_bytes &&
                     bytes <= settings.profile.chain_part_limit_bytes) ||
                    bytes <= settings.profile.chain_mixed_bytes)) ||
-        (!mixed && !real && bytes <= settings.profile.pow2_chain_bytes)) {
+        (!mixed && bytes <= settings.profile.pow2_chain_bytes)) {
       return {};
     }
   }
