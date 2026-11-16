@@ -193,6 +193,15 @@ length was itself timed, and pin the measured best where it was not; treat the
 unmeasured lengths in between as the model's real test.
 [X2](experiments/X2-radix-sets.md) (refresh).
 
+2.9 **A ratio to a competitor is a property of the pair on that machine, not of your code.**
+FFTN ÷ FFTW at ≥ 16384 points was 1.19 on the Mac but 0.75 on Google Axion (Neoverse V2),
+same instruction set and same library: per point FFTN was 1.4 times slower on Axion than on
+the Mac at 2²⁰, FFTW 2.6 times. A deficit seen on one machine per architecture can be the
+competitor's strength there; check the absolute times on a second core before spending on
+the gap, and judge per-core rules on several cores of one ISA (Zen 3 against Zen 5 and
+Cascade Lake against Granite Rapids differed by up to 0.3–0.6 in single cases, not in which
+cases lose). [X31](experiments/X31-cloud-1d.md).
+
 ## 3. Memory and caches
 
 3.1 **Buffers a power of two apart conflict in cache; offset them.** Staggering the
