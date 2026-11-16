@@ -321,8 +321,9 @@ public:
       attr.disabled = leader ? 1 : 0;
       attr.exclude_kernel = 1;
       attr.exclude_hv = 1;
-      attr.read_format =
-          PERF_FORMAT_GROUP | PERF_FORMAT_TOTAL_TIME_ENABLED | PERF_FORMAT_TOTAL_TIME_RUNNING;
+      attr.read_format = static_cast<std::uint64_t>(PERF_FORMAT_GROUP) |
+                         static_cast<std::uint64_t>(PERF_FORMAT_TOTAL_TIME_ENABLED) |
+                         static_cast<std::uint64_t>(PERF_FORMAT_TOTAL_TIME_RUNNING);
       const long fd = syscall(SYS_perf_event_open, &attr, 0, -1, leader ? -1 : fds_.front(), 0);
       if (fd < 0) {
         const int error = errno;
@@ -362,7 +363,7 @@ public:
     if (read(fds_.front(), buf.data(), buf.size() * sizeof(std::uint64_t)) != bytes) {
       return out.str("error", "short read of the counter group").object();
     }
-    const double enabled = static_cast<double>(buf[1]);
+    const auto enabled = static_cast<double>(buf[1]);
     out.integer("calls", calls)
         .num("running", enabled > 0 ? static_cast<double>(buf[2]) / enabled : 0.0);
     for (std::size_t i = 0; i < names_.size(); ++i) {
@@ -397,8 +398,8 @@ private:
   }
   void close_all() {
 #ifdef __linux__
-    for (auto it = fds_.rbegin(); it != fds_.rend(); ++it) {
-      close(*it);
+    for (std::size_t i = fds_.size(); i > 0; --i) { // the leader last
+      close(fds_[i - 1]);
     }
 #endif
     fds_.clear();
