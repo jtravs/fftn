@@ -121,6 +121,13 @@ struct machine_profile {
   std::size_t grid_two_part_bytes = 0;
   std::size_t grid_block_bytes = std::size_t{64} * 1024;
   std::size_t grid_block = 0;
+  // The widest block of a three-phase grid (0: max_grid_block, strategies/grid.hpp;
+  // experiment X39). Three phases may fill twice grid_block_bytes (X12), which gives blocks of
+  // 32 columns to phases of 64; on the Xeon 6240 blocks of 16 took 0.91-0.96 of their time
+  // at 73728-262144 points (counters, every three-phase row with a 64-long phase) and
+  // changed nothing where the budget already gives 16 or fewer (327680, 2^20).
+  // set_grid_sizes sets 16 where a private L2 has less than 2 MiB of L3 per CPU behind it.
+  std::size_t grid_three_block = 0;
   // The set period (bytes) the grid pads the rows of its intermediate array against, so that
   // the rows phase 2 gathers spread over the sets (grid_pad, experiment X26b); SIZE_MAX: no
   // padding. set_grid_sizes sets 4 KiB where the L2 is shared by a cluster (Apple: long rows

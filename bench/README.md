@@ -147,6 +147,7 @@ one; its arms are written `fftn_omp`.
 | `POW2_CHAIN_BYTES`, `POW2_RADIX8_BYTES` | fftn, fftn_omp | the machine profile's long power-of-two fields (`src/threading/schedule.hpp`, experiment [X32](../dev/experiments/X32-long-pow2.md)): a power-of-two c2c row stays a chain up to the first (`never`: at any size), and a power-of-two chain beyond `GRID_MIN_BYTES` takes radix 8 up to the second, radix 4 beyond |
 | `GRID_TWO_ODD_PART` | fftn, fftn_omp | rows whose length has an odd part of at least this stay in two grid phases at any size (0: off; experiment X34) |
 | `GRID_TWO_PART_BYTES` | fftn, fftn_omp | rows whose length is not a power of two and whose power-of-two part, in bytes of complex values, is at most this stay in two grid phases at any size (0: off; experiment X35) |
+| `GRID_THREE_BLOCK` | fftn, fftn_omp | the widest block, in columns, of a three-phase grid (`machine_profile::grid_three_block`; default the profile's: 16 where a private L2 has less than 2 MiB of L3 per CPU behind it, 32 elsewhere; experiment X39) |
 | `GRID_PAD_PERIOD` | fftn, fftn_omp | the L1 set period the grid pads its intermediate array's rows against (`machine_profile::grid_pad_period`; default 4 KiB where the L2 is shared by a cluster, as on Apple processors, none where each core has its own); `never` turns the padding off (experiment [X26b](../dev/experiments/X26b-padded-grid.md)) |
 
 The backend builds and executes plans through the functions the public `plan` forwards

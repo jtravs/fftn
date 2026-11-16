@@ -390,7 +390,10 @@ grid_split plan_grid(std::size_t n, const side& in, const side& out, const build
                                 odd < settings.profile.grid_two_odd_part) &&
                                (odd == 1 || part_bytes > settings.profile.grid_two_part_bytes);
   grid_split g = choose_grid(n, lanes, settings.profile.grid_block_bytes / (4 * sizeof(T)), three,
-                             settings.profile.grid_block, settings.grid_factors);
+                             settings.profile.grid_block, settings.grid_factors,
+                             settings.profile.grid_three_block != 0
+                                 ? settings.profile.grid_three_block
+                                 : max_grid_block);
   g.pad = grid_pad(g, 2 * sizeof(T), settings.profile.grid_pad_period);
   for (std::size_t i = 0; i < g.phases; ++i) {
     for (const std::size_t radix : chain.radices(g.factors.at(i))) {

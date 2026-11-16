@@ -682,6 +682,12 @@ TEST(Grid, SplitRules) {
   EXPECT_EQ(g.factors[1], 128U);
   EXPECT_EQ(g.factors[2], 256U);
   EXPECT_EQ(g.block, 32U);
+  // A profile may cap the three-phase block (X39): the Xeon's 16 columns at 2^18.
+  g = choose_grid(std::size_t{1} << 18U, 4, 1024, true, 0, {});
+  EXPECT_EQ(g.block, 32U);
+  g = choose_grid(std::size_t{1} << 18U, 4, 1024, true, 0, {}, 16);
+  EXPECT_EQ(g.phases, 3U);
+  EXPECT_EQ(g.block, 16U);
   // The block is a multiple of the complex count and at least two.
   g = choose_grid(64, 8, 4096, false, 0, {});
   EXPECT_EQ(g.factors[0], 8U);

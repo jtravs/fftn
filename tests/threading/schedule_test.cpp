@@ -521,6 +521,7 @@ struct planner_fields {
   std::size_t pow2_chain_bytes;
   std::size_t pow2_radix8_bytes;
   bool c2r_paired_gather;
+  std::size_t grid_three_block; // X39
 
   bool operator==(const planner_fields&) const = default;
 };
@@ -540,6 +541,7 @@ planner_fields fields_of(const machine_profile& p) {
       .pow2_chain_bytes = p.pow2_chain_bytes,
       .pow2_radix8_bytes = p.pow2_radix8_bytes,
       .c2r_paired_gather = p.c2r_paired_gather,
+      .grid_three_block = p.grid_three_block,
   };
 }
 
@@ -554,22 +556,22 @@ TEST(Schedule, ProfilesOfRecordedMachines) {
   // The values before X35 (main at 2eea943).
   EXPECT_EQ(fields("macos-apple-m5-max.sysctl", false),
             (planner_fields{128 * kib, 2 * mib, 128 * kib, 4 * mib, 4 * kib, 0, 0, 16 * kib,
-                            256 * kib, never, 64 * mib, 2 * mib, true}));
+                            256 * kib, never, 64 * mib, 2 * mib, true, 0}));
   EXPECT_EQ(fields("linux-amd-epyc-7763.sysfs", true),
             (planner_fields{256 * kib, 512 * kib, 32 * kib, 128 * kib, never, 0, 0, 16 * kib, 0,
-                            16 * mib, 64 * mib, never, false}));
+                            16 * mib, 64 * mib, never, false, 0}));
   EXPECT_EQ(fields("linux-gcp-c4d-zen5.sysfs", true),
             (planner_fields{512 * kib, 1 * mib, 48 * kib, 256 * kib, never, 0, 0, 16 * kib, 0,
-                            16 * mib, 64 * mib, never, false}));
+                            16 * mib, 64 * mib, never, false, 0}));
   EXPECT_EQ(fields("linux-intel-xeon-gold-6240.sysfs", true),
             (planner_fields{512 * kib, 1 * mib, 32 * kib, 256 * kib, never, 15, 0, 0, 0, never, 0,
-                            0, false}));
+                            0, false, 16}));
   const planner_fields axion{1 * mib,  2 * mib, 64 * kib, 512 * kib, never, 0,    0,
-                             16 * kib, 0,       40 * mib, 160 * mib, never, false};
+                             16 * kib, 0,       40 * mib, 160 * mib, never, false, 0};
   EXPECT_EQ(fields("linux-gcp-c4a-axion.sysfs", false), axion);
   // A private L2 of 2 MiB on x86-64.
   const planner_fields large_l2{1 * mib, 1 * mib, 48 * kib, 512 * kib, never, 0,    32 * kib,
-                                0,       0,       never,    0,         0,     false};
+                                0,       0,       never,    0,         0,     false, 0};
   EXPECT_EQ(fields("linux-gcp-c4-granite-rapids.sysfs", true), large_l2);
   // The same on bare metal with SMT, where Granite Rapids' L3 per CPU is under 2 MiB
   // (504 MiB for 128 cores, 256 CPUs): the key is the L2, not the L3 per CPU.
