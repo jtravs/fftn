@@ -1279,7 +1279,9 @@ template <class T> void pair_leaves_match(fftn::isa t) {
         using c = std::complex<T>;
         const cvec<T> y = run<c, c>(*with, x, rows * n);
         EXPECT_TRUE(bitwise_equal(y, run<c, c>(*without, x, rows * n)));
-        EXPECT_TRUE(bitwise_equal(y, run_in_place(*with, x)));
+        // In place through a plan built for it: an out-of-place plan asserts in != out.
+        const fftn::options in_place{.in_place = true, .scale = opts.scale, .force_isa = t};
+        EXPECT_TRUE(bitwise_equal(y, run_in_place(*make_plan_core(shape, in_place, pair), x)));
       }
       check_row<T>(t, n, dir, {}, 1.0, false, false, false, {name});
       check_row<T>(t, n, dir, {}, 0.375, false, false, true, {name, "in: scale"});
