@@ -1102,6 +1102,7 @@ TEST(Passes, TargetsThatRoundAlikeGiveTheSameBits) {
   const std::vector<std::pair<fftn::isa, fftn::isa>> alike = {
       {fftn::isa::neon, fftn::isa::neon_fcma},
       {fftn::isa::avx2, fftn::isa::avx512},
+      {fftn::isa::x86_v2, fftn::isa::avx},
   };
   for (const auto& [a, b] : alike) {
     if (runs(a) && runs(b)) {

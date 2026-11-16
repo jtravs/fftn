@@ -7,7 +7,7 @@
 # with no ISA flag; its body is guarded by the architecture it targets, so universal and
 # cross builds need no CMake logic. Kernel units are always optimised.
 
-set(fftn_isa_targets scalar avx2 avx512 neon neon_fcma)
+set(fftn_isa_targets scalar x86_v2 avx avx2 avx512 neon neon_fcma)
 set(fftn_isa_row_units 8) # FFTN_ISA_ROWS 1 to 8 in isa/rows.inl
 set(fftn_isa_units "")
 foreach(target IN LISTS fftn_isa_targets)

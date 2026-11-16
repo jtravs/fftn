@@ -9,10 +9,10 @@ A group is an object file, a static library, or several of them joined by ';' (a
 $<TARGET_OBJECTS> writes them). Functions are assigned to a target by their mangled
 namespace, fftn::<version>::detail::<target>::; everything else is baseline code. Checks:
 
-- each group contains the scalar target and the SIMD targets of its architecture (avx2 and
-  avx512 on x86-64, neon and neon_fcma on AArch64), and each target's code uses its
-  defining instructions (an FMA and a ymm register; an FMA and a zmm register; a vector
-  FMLA; FCMLA and FCADD);
+- each group contains the scalar target and the SIMD targets of its architecture (x86_v2,
+  avx, avx2 and avx512 on x86-64, neon and neon_fcma on AArch64), and each target's code
+  uses its defining instructions (SSE3's ADDSUB; a ymm register; an FMA and a ymm register;
+  an FMA and a zmm register; a vector FMLA; FCMLA and FCADD);
 - no function of a target calls or tail-calls an FFTN or standard-library function: the
   vocabulary is always inlined, and nothing standard runs inside a region. One shape is
   not a call: identical-code folding (GCC's IPA-ICF, seen in sanitizer builds) turns one
@@ -20,8 +20,10 @@ namespace, fftn::<version>::detail::<target>::; everything else is baseline code
   function whose whole body is one unconditional jump to another instantiation of the
   same function in the same target is an alias, and the jump's target is checked as a
   function in its own right (identical_code_alias);
-- x86-64: no VEX or EVEX instruction and no ymm or zmm register outside avx2 and avx512,
-  and no EVEX feature (zmm, mask registers, registers 16-31) in avx2;
+- x86-64: no VEX or EVEX instruction and no ymm or zmm register outside avx, avx2 and
+  avx512 (x86_v2 is held to that too), no EVEX feature (zmm, mask registers, registers
+  16-31) in avx and avx2, no FMA and no AVX2 instruction in avx, and no instruction of
+  SSE3 to SSE4.2 or POPCNT outside the x86 targets (x86_v2's region features);
 - AArch64: no FCMLA or FCADD outside neon_fcma (neon, whose region has no attribute, is
   held to the baseline's rules); in neon_fcma no LDAPR or FJCVTZS, which
   "arch=armv8.3-a" also allows; pointer authentication outside the hint space only in
@@ -48,8 +50,8 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-TARGETS = ("scalar", "avx2", "avx512", "neon", "neon_fcma")
-SIMD_TARGETS = {"x86": ("avx2", "avx512"), "arm": ("neon", "neon_fcma")}
+TARGETS = ("scalar", "x86_v2", "avx", "avx2", "avx512", "neon", "neon_fcma")
+SIMD_TARGETS = {"x86": ("x86_v2", "avx", "avx2", "avx512"), "arm": ("neon", "neon_fcma")}
 
 FILE_FORMAT = re.compile(r"^(?P<name>.*?):\s+file format\s+(?P<fmt>.+)$")
 LABEL = re.compile(r"^(?P<addr>[0-9a-f]+) <(?P<name>.+)>:$")
@@ -68,6 +70,24 @@ X86_CALLS = ("call", "callq", "jmp", "jmpq")
 ARM_CALLS = ("bl", "b")
 FMA = re.compile(r"^vfn?m(?:add|sub)(?:sub|add)?\d*[ps][sd]$")
 EVEX = re.compile(r"%zmm|%k[0-7]\b|%[xy]mm(?:1[6-9]|2\d|3[01])\b|\{")
+# AVX2 instructions, for the avx target (AVX alone): any VEX integer instruction on ymm
+# registers except AVX's own float permutes, the AVX2 permutes, broadcasts and inserts of any
+# width, gathers, masked integer moves and variable shifts. A broadcast from a register
+# (rather than memory) is AVX2 too; that is checked on the operands.
+AVX1_VP = {"vpermilps", "vpermilpd", "vperm2f128"}
+AVX2_ONLY = re.compile(
+    r"^(?:vpbroadcast|vbroadcasti128|vinserti128|vextracti128|vperm2i128|vpermq|vpermd|"
+    r"vpermpd|vpermps|vpgather|vgather|vpmaskmov|vpsllv|vpsrlv|vpsrav|vpblendd)"
+)
+# Instructions of SSE3, SSSE3, SSE4.1, SSE4.2 and POPCNT (legacy encodings), which x86_v2's
+# region enables and the x86-64 baseline lacks. PEXTRW and PINSRW are SSE2.
+SSE3_UP = re.compile(
+    r"^(?:addsubp|haddp|hsubp|movddup|movshdup|movsldup|lddqu|fisttp|pshufb|palignr|"
+    r"phadd|phsub|pabs[bwd]|pmaddubsw|pmulhrsw|psign[bwd]|blendv?p|pblendvb|pblendw|dpp[sd]|"
+    r"extractps|insertps|movntdqa|mpsadbw|packusdw|pcmpeqq|pextr[bdq]|pinsr[bdq]|pmaxs[bd]|"
+    r"pmaxu[dw]|pmins[bd]|pminu[dw]|pmovsx|pmovzx|pmuldq|pmulld|ptest|round[ps][sd]|"
+    r"phminposuw|pcmpestr|pcmpistr|pcmpgtq|crc32|popcnt)"
+)
 PAUTH_OTHER = {"retaa", "retab", "eretaa", "eretab", "ldraa", "ldrab"}
 PAUTH_HINTS = {
     "paciasp", "pacibsp", "autiasp", "autibsp", "paciaz", "pacibz", "autiaz", "autibz",
@@ -166,7 +186,9 @@ def target_of(sym: str) -> str | None:
 
 def object_target(obj: str) -> str | None:
     # Archive members may be named by a Windows path (llvm-lib keeps the path it was given).
-    m = re.search(r"(?:^|[_/\\(])(scalar|avx2|avx512|neon|neon_fcma)\.cpp\.(?:o|obj)\)?$", obj)
+    m = re.search(
+        r"(?:^|[_/\\(])(scalar|x86_v2|avx|avx2|avx512|neon|neon_fcma)\.cpp\.(?:o|obj)\)?$", obj
+    )
     return m.group(1) if m else None
 
 
@@ -378,16 +400,34 @@ def check_group(objdump: str, group: list[str], baseline_has: set[str]) -> list[
                 errors.append(f"{t}: no FMA instruction in the {t} code")
             if fs and not any(reg in ops for f in fs for _, ops in f.insns):
                 errors.append(f"{t}: no {reg[1:]} register in the {t} code")
-        for f in by_target["avx2"]:
+        v2 = by_target["x86_v2"]
+        if v2 and not any(mn.startswith("addsubp") for mn in mnemonics["x86_v2"]):
+            errors.append("x86_v2: no ADDSUB instruction in the x86_v2 code")
+        avx = by_target["avx"]
+        if avx and not any("%ymm" in ops for f in avx for _, ops in f.insns):
+            errors.append("avx: no ymm register in the avx code")
+        for t in ("avx", "avx2"):
+            for f in by_target[t]:
+                for mn, ops in f.insns:
+                    if EVEX.search(ops):
+                        errors.append(f"{t}: EVEX feature in {f.name}: {mn} {ops}")
+        for f in avx:
             for mn, ops in f.insns:
-                if EVEX.search(ops):
-                    errors.append(f"avx2: EVEX feature in {f.name}: {mn} {ops}")
+                reg_bcast = mn.startswith("vbroadcasts") and ops.startswith("%xmm")
+                vp_ymm = mn.startswith("vp") and mn not in AVX1_VP and "%ymm" in ops
+                if FMA.match(mn) or AVX2_ONLY.match(mn) or reg_bcast or vp_ymm:
+                    errors.append(f"avx: FMA or AVX2 instruction in {f.name}: {mn} {ops}")
+        for where, fs in (("baseline", by_target["scalar"] + baseline), ("x86_v2", v2)):
+            for f in fs:
+                for mn, ops in f.insns:
+                    vex = mn.startswith("v") and mn not in ("verr", "verw")
+                    vex = (vex or "%ymm" in ops) and "avx" not in baseline_has
+                    if vex or ("%zmm" in ops and "avx512" not in baseline_has):
+                        errors.append(f"{where}: VEX or EVEX code in {f.name}: {mn} {ops}")
         for f in by_target["scalar"] + baseline:
             for mn, ops in f.insns:
-                vex = mn.startswith("v") and mn not in ("verr", "verw")
-                vex = (vex or "%ymm" in ops) and "avx" not in baseline_has
-                if vex or ("%zmm" in ops and "avx512" not in baseline_has):
-                    errors.append(f"baseline: VEX or EVEX code in {f.name}: {mn} {ops}")
+                if SSE3_UP.match(mn) and "sse3" not in baseline_has:
+                    errors.append(f"baseline: SSE3 to SSE4.2 instruction in {f.name}: {mn} {ops}")
     else:
         fcma = mnemonics["neon_fcma"]
         for want in ("fcmla", "fcadd"):
@@ -431,7 +471,7 @@ def main() -> int:
         "--baseline-has",
         action="append",
         default=[],
-        choices=["avx", "avx512", "fcma", "pauth"],
+        choices=["sse3", "avx", "avx512", "fcma", "pauth"],
         help="the build's baseline already has this (as when the compiler targets Apple"
         " silicon, which has FCMA): baseline code may use it",
     )

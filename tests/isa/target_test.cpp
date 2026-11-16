@@ -35,9 +35,15 @@ cpu_features x86_v2() {
   f.sse2 = f.sse3 = f.ssse3 = f.sse41 = f.sse42 = f.popcnt = true;
   return f;
 }
-cpu_features haswell() {
+// AVX without AVX2 or FMA.
+cpu_features sandy_bridge() {
   cpu_features f = x86_v2();
-  f.avx = f.avx2 = f.fma = true;
+  f.avx = true;
+  return f;
+}
+cpu_features haswell() {
+  cpu_features f = sandy_bridge();
+  f.avx2 = f.fma = true;
   return f;
 }
 cpu_features skylake_sp() {
@@ -65,13 +71,11 @@ cpu_features a64fx() {
 
 TEST(target, builds_scalar_and_the_simd_targets_of_its_architecture) {
   EXPECT_TRUE(compiled_in(target::scalar));
-  EXPECT_EQ(compiled_in(target::avx2), FFTN_ARCH_X86_64 != 0);
-  EXPECT_EQ(compiled_in(target::avx512), FFTN_ARCH_X86_64 != 0);
+  for (const target t : {target::x86_v2, target::avx, target::avx2, target::avx512}) {
+    EXPECT_EQ(compiled_in(t), FFTN_ARCH_X86_64 != 0) << target_name(t);
+  }
   EXPECT_EQ(compiled_in(target::neon), FFTN_ARCH_AARCH64 != 0);
   EXPECT_EQ(compiled_in(target::neon_fcma), FFTN_ARCH_AARCH64 != 0);
-  for (const target t : {target::x86_v2, target::avx}) { // the rest of phase 1.3
-    EXPECT_FALSE(compiled_in(t)) << target_name(t);
-  }
 }
 
 TEST(target, runs_on_needs_every_feature_the_attribute_enables) {
@@ -85,6 +89,8 @@ TEST(target, runs_on_needs_every_feature_the_attribute_enables) {
   }
   EXPECT_TRUE(runs_on(target::x86_v2, x86_v2()));
   EXPECT_FALSE(runs_on(target::avx, x86_v2()));
+  EXPECT_TRUE(runs_on(target::avx, sandy_bridge()));
+  EXPECT_FALSE(runs_on(target::avx2, sandy_bridge()));
   EXPECT_TRUE(runs_on(target::avx, haswell()));
   EXPECT_TRUE(runs_on(target::avx2, haswell()));
   EXPECT_FALSE(runs_on(target::avx512, haswell()));
@@ -116,6 +122,23 @@ TEST(target, runs_on_needs_every_feature_the_attribute_enables) {
     f.*feature = false;
     EXPECT_FALSE(runs_on(target::avx512, f));
   }
+  // Likewise for x86_v2's string (SSE4.2 and POPCNT, with what SSE4.2 implies) and avx's,
+  // which adds AVX.
+  for (bool cpu_features::* const feature : {
+           &cpu_features::sse2,
+           &cpu_features::sse3,
+           &cpu_features::ssse3,
+           &cpu_features::sse41,
+           &cpu_features::sse42,
+           &cpu_features::popcnt,
+       }) {
+    cpu_features f = x86_v2();
+    f.*feature = false;
+    EXPECT_FALSE(runs_on(target::x86_v2, f));
+    cpu_features g = sandy_bridge();
+    g.*feature = false;
+    EXPECT_FALSE(runs_on(target::avx, g));
+  }
   cpu_features without_neon = apple_m();
   without_neon.neon = false;
   EXPECT_FALSE(runs_on(target::neon_fcma, without_neon));
@@ -128,7 +151,8 @@ TEST(target, best_is_the_fastest_compiled_target_the_processor_runs) {
   const bool x86 = FFTN_ARCH_X86_64 != 0;
   const bool arm = FFTN_ARCH_AARCH64 != 0;
   EXPECT_EQ(best_target(cpu_features{}), target::scalar);
-  EXPECT_EQ(best_target(x86_v2()), target::scalar); // x86_v2 is not compiled yet
+  EXPECT_EQ(best_target(x86_v2()), x86 ? target::x86_v2 : target::scalar);
+  EXPECT_EQ(best_target(sandy_bridge()), x86 ? target::avx : target::scalar);
   EXPECT_EQ(best_target(haswell()), x86 ? target::avx2 : target::scalar);
   EXPECT_EQ(best_target(skylake_sp()), x86 ? target::avx512 : target::scalar);
   EXPECT_EQ(best_target(neoverse_n1()), arm ? target::neon : target::scalar);

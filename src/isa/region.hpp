@@ -67,11 +67,17 @@
 #error "FFTN needs GCC or Clang (including clang-cl): ISA regions use their target pragmas."
 #endif
 
-// The targets and their attribute strings. Adding a target (phase 1.3: x86_v2, avx) is one
-// line here, one vocabulary header, one unit, and its entries in target.cpp and
-// kernel_table.hpp.
+// The targets and their attribute strings. Adding a target is one line here, one vocabulary
+// header, its main and row units, and its entries in target.cpp and kernel_table.hpp.
 //
 // - scalar: no attribute; the baseline of whatever the library is built for.
+// - x86_v2: SSE4.2 and POPCNT, the features runs_on() checks (target.cpp). The string implies
+//   SSE4.1, SSSE3, SSE3 and SSE2; it enables no AVX, so no VEX encoding and no ymm register
+//   can appear (the disassembly test checks this). The kernels need SSE3 (ADDSUB, MOVDDUP);
+//   the rest of the x86-64-v2 level is named so that the string matches the check.
+// - avx: AVX and POPCNT, again the features runs_on() checks; AVX implies SSE4.2 and below.
+//   No AVX2 and no FMA: the disassembly test checks that no FMA, no 256-bit integer
+//   operation and no AVX2 permute appears.
 // - avx2: AVX2 and FMA, the features runs_on() checks (target.cpp). The string implies
 //   AVX and SSE4.2 and below, and in Clang also POPCNT and CRC32, which runs_on() does not
 //   check but every AVX2 processor has; it enables no AVX-512 feature, so no EVEX encoding
@@ -96,6 +102,8 @@
 //   (branch protection can return with RETAA here), so neon_fcma is chosen only where the
 //   processor has it too (target.cpp).
 #define FFTN_ISA_PUSH_scalar FFTN_ISA_PUSH_NONE
+#define FFTN_ISA_PUSH_x86_v2 FFTN_ISA_PUSH("sse4.2,popcnt")
+#define FFTN_ISA_PUSH_avx FFTN_ISA_PUSH("avx,popcnt")
 #define FFTN_ISA_PUSH_avx2 FFTN_ISA_PUSH("avx2,fma")
 #define FFTN_ISA_PUSH_avx512 FFTN_ISA_PUSH("avx2,fma,avx512f,avx512dq,avx512vl")
 #define FFTN_ISA_PUSH_neon FFTN_ISA_PUSH_NONE
