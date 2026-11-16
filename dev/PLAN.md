@@ -83,7 +83,7 @@ on every machine, X16); phase 3 tasks 3.1–3.3 with T1 and T5. X24 rejected. CI
 Open, by phase:
 
 - 0: the Xeon client-catalogue baseline.
-- 1: 1.3's `x86_v2` and `avx` vocabularies and X14; X2 on the Mac above 1024; X4 on x86
+- 1: 1.3's `x86_v2` and `avx` vocabularies and X14 (task-1.3 session, 2026-11-16, `task/1.3-old-x86`); X2 on the Mac above 1024; X4 on x86
   and for edge passes; X12 on x86; X5. The phase 1 exit is not met: x86 trails FFTW.
 - 2: 2.2's acceptance in double c2c on AVX-512 (the chain 1.01–1.26 of FFTW at 8–16
   points; X24 rejected both planned fixes); 2.4 (`planning::measure` and wisdom built, P1 and P2 in a first pass; the cost model and calibration remain;
@@ -495,7 +495,7 @@ running, done (with verdict).
 | X11 | SVE at 128 and 256 bits on Graviton 3/4 against NEON | 7 | planned |
 | [X12](experiments/X12-beyond-l2.md) | Beyond-L2 forms: DIF grid, DIT grid, in-place sandwich; block sizes by cache level; the in-place route (scratch of N, permutation pass, or palindromic swap) | 1 | running: DIF grid in two or three phases adopted for rows beyond L1 on the Mac (0.47–0.71 of the chain's time, run 20261114-110844-8b03); copies fused into end passes for small-radix phases within L2/4 (2^18: 1.03 → 0.92, run 20261114-132841-80e0); x86 runs pending |
 | [X12b](experiments/X12b-grid-thresholds.md) | The grid's thresholds (chain or grid, two or three phases) as rules of L1 and L2 that suit the Xeon, the EPYC and the Mac | 1 | done: with a private L2 (x86) the grid starts beyond L2/2 and three phases beyond L2; the Mac (cluster-shared L2) unchanged; x86 0.91–0.96 of the old default over the X12b cases, 4096 points on the Xeon 1.42 → 1.05 times FFTW |
-| X14 | Is a separate `avx` target (256 bit, no FMA, no AVX2) worth keeping over `x86_v2` on Sandy Bridge-class machines? | 1 | planned |
+| [X14](experiments/X14-old-x86.md) | Is a separate `avx` target (256 bit, no FMA, no AVX2) worth keeping over `x86_v2` on Sandy Bridge-class machines? Do the old targets meet the exit against FFTW restricted to their instruction sets? Operation order without FMA | 1 | running (task-1.3 session, 2026-11-16) |
 | X13 | Next-row prefetch and non-temporal stores per machine for out-of-cache batches | 2 | planned |
 | [X15](experiments/X15-compiler-vectorised-scalar.md) | What does a current compiler get from the scalar pass loops (`omp simd`, the scalar text in the `avx2` region, `-march=native` as a ceiling), against a hand vocabulary? | 0 | done: omp simd rejected (compiler-dependent); old targets need hand vocabularies |
 | [X16](experiments/X16-avx512-table.md) | `avx512` against `avx2` on AVX-512 machines: does `avx512` need its own cost table, or an R × C transpose for leading radices below C? | 1 | done (Cascade Lake only): own table in float (0.955 of before); `avx512` first in double (0.80–0.87 of `avx2`); float loses at batch 64 (1.02) because of tails (lengths 8 does not divide 1.20–1.23, the rest 0.78–0.85): per-plan choice and tail work go to phase 2 |
