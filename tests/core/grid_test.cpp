@@ -334,8 +334,8 @@ TEST(Grid, PowersOfTwoStayChainsUpToTheProfilesLimit) {
   s.profile.grid_block_bytes = 16384;
   s.profile.chain_part_bytes = 0;
   s.profile.chain_mixed_bytes = 0;
-  s.profile.pow2_chain_bytes = 4096 * 16;
-  s.profile.pow2_radix8_bytes = 2048 * 16;
+  s.profile.pow2_chain_bytes = std::size_t{4096} * 16;
+  s.profile.pow2_radix8_bytes = std::size_t{2048} * 16;
   const auto plan = [&](std::size_t n) {
     return make_plan_core(
         fftn::detail::view_of(fftn::rows_c2c<double>(n, 1, fftn::direction::forward)),
@@ -353,7 +353,7 @@ TEST(Grid, PowersOfTwoStayChainsUpToTheProfilesLimit) {
   EXPECT_FALSE(is_grid(*plan(4096)));
   EXPECT_NE(fours.find("4 x 4 x 4 x 4 x 4 x 4"), std::string::npos) << fours; // 2^12: six 4s
   EXPECT_TRUE(is_grid(*plan(8192)));
-  EXPECT_TRUE(is_grid(*plan(45 * 128))); // not a power of two
+  EXPECT_TRUE(is_grid(*plan(std::size_t{45} * 128))); // not a power of two
   s.profile.pow2_radix8_bytes = 0;
   const std::string odd = axis(*plan(2048));
   EXPECT_NE(odd.find("8 x 4 x 4 x 4 x 4"), std::string::npos) << odd; // 2^11: an 8, four 4s
