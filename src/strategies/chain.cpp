@@ -391,6 +391,27 @@ chain_builder<T>::bluestein_tables chain_builder<T>::bluestein_tables_of(std::si
   return {.chirp = cit->second, .kernel = kit->second};
 }
 
+// The second table of bluestein_half_in (passes/bluestein.inl): d_j = w_j exp(-2 pi i j / M)
+// for the chirp w, computed in double and rounded once, in the chirp's storage (copies as
+// in bluestein_tables_of: 0 for broadcast entries, otherwise 1).
+template <class T>
+const T* chain_builder<T>::half_twiddles_of(std::size_t q, std::size_t m, int sign,
+                                            std::size_t copies) {
+  const auto key = std::make_tuple(q, sign, copies);
+  auto it = half_tables_.find(key);
+  if (it == half_tables_.end()) {
+    const std::vector<std::complex<double>> w = bluestein_chirp<double>(sign, q);
+    std::vector<std::complex<T>> d(copies == 0 ? q : blocks(q) * kernels_.complex_lanes,
+                                   std::complex<T>(1, 0));
+    for (std::size_t j = 0; j < q; ++j) {
+      const std::complex<double> v = w[j] * unit_root<double>(-1, j, m);
+      d[j] = std::complex<T>(static_cast<T>(v.real()), static_cast<T>(v.imag()));
+    }
+    it = half_tables_.emplace(key, pack(d, copies == 0)).first;
+  }
+  return it->second;
+}
+
 template <class T> const T* chain_builder<T>::rader_index_of(std::size_t q, std::size_t g) {
   // g^m mod q for m < q - 1, as values of T: exact, since rader_root admits q < 2^16.
   auto it = rader_index_tables_.find(q);
@@ -633,6 +654,14 @@ template <class T>
 slot chain_builder<T>::add_convolution(std::size_t s, std::size_t len,
                                        const std::vector<std::size_t>& rad, const T* kernel,
                                        slot conv, std::vector<stage>& stages) {
+  return add_convolution(s, len, rad, rad, false, kernel, conv, stages);
+}
+
+template <class T>
+slot chain_builder<T>::add_convolution(std::size_t s, std::size_t len,
+                                       const std::vector<std::size_t>& rad,
+                                       const std::vector<std::size_t>& back, bool halves,
+                                       const T* kernel, slot conv, std::vector<stage>& stages) {
   // The convolution's passes must be codelet lane passes with at least two of them: the
   // kernel spectrum is shared through the last lane pass's output or the first backward
   // lane pass's input (factor_sharing), which the generic pass, a grouped pass with copies
@@ -667,15 +696,23 @@ slot chain_builder<T>::add_convolution(std::size_t s, std::size_t len,
     backward.in = edge_op::factor;
     backward.in_factor = kernel;
   }
+  // halves: the forward chain's first pass and the backward chain's last, both of radix
+  // 2, are the edge passes' (bluestein_half_in, bluestein_half_out).
   slot at = conv;
   for (const int dir : {-1, +1}) {
+    const std::vector<std::size_t>& seq = dir < 0 ? rad : back;
     std::size_t copies = s;
-    for (std::size_t i = 0; i < rad.size(); ++i) {
+    const std::size_t from = halves && dir < 0 ? 1 : 0;
+    const std::size_t to = halves && dir > 0 ? seq.size() - 1 : seq.size();
+    for (std::size_t i = 0; i < from; ++i) {
+      copies *= seq[i];
+    }
+    for (std::size_t i = from; i < to; ++i) {
       const slot next = other_scratch(at);
-      add_pass(s * len, rad, i, copies, dir, {at, 1}, {next, 1}, dir < 0 ? forward : backward,
+      add_pass(s * len, seq, i, copies, dir, {at, 1}, {next, 1}, dir < 0 ? forward : backward,
                stages, s);
       at = next;
-      copies *= rad[i];
+      copies *= seq[i];
     }
   }
   return at;
@@ -777,6 +814,20 @@ void chain_builder<T>::add_bluestein(std::size_t n, std::size_t q, int sign, end
   const pass_kernels<T>& k = kernels_.passes;
   const bool shared = s > 1 && s % c == 0;
   const bluestein_tables tab = bluestein_tables_of(q, sign, shared ? 0 : s);
+  // Experiment X36: the edge passes take the convolution's passes of radix 2 next to them
+  // where M is even, its half has a chain of two passes or more, and a unit of the input
+  // pass is C copies or the line is one copy.
+  std::vector<std::size_t> half_rad = m % 2 == 0 ? convolution_radices(m / 2)
+                                                 : std::vector<std::size_t>{};
+  const bool halves = halves_ && (shared || s == 1) && half_rad.size() >= 2;
+  std::vector<std::size_t> fwd_rad = rad;
+  std::vector<std::size_t> back_rad = rad;
+  if (halves) {
+    fwd_rad.assign(1, 2);
+    fwd_rad.insert(fwd_rad.end(), half_rad.begin(), half_rad.end());
+    back_rad = half_rad;
+    back_rad.push_back(2);
+  }
 
   // The convolution starts in the scratch line the source is not in, and ends there.
   const slot conv =
@@ -784,30 +835,32 @@ void chain_builder<T>::add_bluestein(std::size_t n, std::size_t q, int sign, end
   const std::string geometry =
       "Q " + std::to_string(q) + ", M " + std::to_string(m) + ", copies " + std::to_string(s);
   stage st;
-  st.run = k.bluestein_in[shared ? 1 : 0][edge_index(in)];
+  st.run = (halves ? k.bluestein_half_in : k.bluestein_in)[shared ? 1 : 0][edge_index(in)];
   st.args.m = m;
   st.args.s = s;
   st.args.n = n;
   st.args.twiddles = tab.chirp;
+  st.args.roots = halves ? half_twiddles_of(q, m, sign, shared ? 0 : s) : nullptr;
   st.args.scale = edges.scale;
   st.args.in_factor = in == edge_op::factor ? edges.in_factor : nullptr;
   st.args.src_stride = src.stride;
   st.args.dst_stride = 1;
   st.src = src.where;
   st.dst = conv;
-  st.units = blocks(s * m);
-  st.chunks = chunks_of(st.units, c);
+  st.units = halves ? (shared ? s / c * (m / 2) : blocks(m / 2)) : blocks(s * m);
+  st.chunks = chunks_of(st.units, halves ? 2 * c : c);
   st.name = std::string("bluestein in, chirp ") + direction_name(sign) + " (" + geometry +
-            edges_note(in, edge_op::none) + ")";
+            (halves ? ", and the first radix-2 pass" : "") + edges_note(in, edge_op::none) + ")";
   stages.push_back(std::move(st));
 
-  const slot at = add_convolution(s, m, rad, tab.kernel, conv, stages);
-  for (std::size_t i = stages.size() - 2 * rad.size(); i < stages.size(); ++i) {
+  const slot at = add_convolution(s, m, fwd_rad, back_rad, halves, tab.kernel, conv, stages);
+  for (std::size_t i = stages.size() - 2 * (halves ? half_rad.size() : rad.size());
+       i < stages.size(); ++i) {
     stages[i].name = "bluestein convolution: " + stages[i].name;
   }
 
   stage out;
-  out.run = k.bluestein_out[shared ? 1 : 0][edge_index(edges.out)];
+  out.run = (halves ? k.bluestein_half_out : k.bluestein_out)[shared ? 1 : 0][edge_index(edges.out)];
   out.args.m = m;
   out.args.s = s;
   out.args.n = n;
@@ -821,7 +874,8 @@ void chain_builder<T>::add_bluestein(std::size_t n, std::size_t q, int sign, end
   out.units = blocks(s * q);
   out.chunks = chunks_of(out.units, c);
   out.name = std::string("bluestein out, chirp ") + direction_name(sign) + " (" + geometry +
-             edges_note(edge_op::none, edges.out) + ")";
+             (halves ? ", and the last radix-2 pass" : "") + edges_note(edge_op::none, edges.out) +
+             ")";
   stages.push_back(std::move(out));
   line_scratch_ = std::max(line_scratch_, s * m);
 }

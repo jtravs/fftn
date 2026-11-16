@@ -149,6 +149,10 @@ public:
   // radix8_bytes; and a Bluestein stage's length has a power-of-two part of at most
   // pow2_part_bytes (bluestein_length). The rules' radices for a power of two of 2^18
   // points took 2.5 times as long as the long-row radices on the M5 Max.
+  // Bluestein stages whose edge passes do the convolution's passes of radix 2 next to them
+  // (experiment X36, passes/bluestein.inl), where they can.
+  void use_half_edges(bool on) noexcept { halves_ = on; }
+
   void use_long_convolutions(std::size_t from_bytes, std::size_t radix8_bytes,
                              std::size_t pow2_part_bytes) noexcept {
     conv_from_bytes_ = from_bytes;
@@ -231,6 +235,7 @@ private:
   [[nodiscard]] std::size_t bluestein_m(std::size_t q) const;
   // The radices of a Bluestein or Rader stage's convolution of len points.
   [[nodiscard]] std::vector<std::size_t> convolution_radices(std::size_t len) const;
+  const T* half_twiddles_of(std::size_t q, std::size_t m, int sign, std::size_t copies);
   const T* rader_kernel_of(std::size_t q, std::size_t g, int sign);
   const T* rader_index_of(std::size_t q, std::size_t g);
   std::complex<T> pairing_root(std::size_t n, std::size_t k);
@@ -288,6 +293,12 @@ private:
   // of len points from scratch slot `conv` back to it, the kernel spectrum applied between.
   slot add_convolution(std::size_t s, std::size_t len, const std::vector<std::size_t>& rad,
                        const T* kernel, slot conv, std::vector<stage>& stages);
+  // The same with the backward chain's radices `back`; halves: without the forward chain's
+  // first pass and the backward chain's last, both of radix 2, which the Bluestein stage's
+  // edge passes do (bluestein_half_in, bluestein_half_out; experiment X36).
+  slot add_convolution(std::size_t s, std::size_t len, const std::vector<std::size_t>& rad,
+                       const std::vector<std::size_t>& back, bool halves, const T* kernel,
+                       slot conv, std::vector<stage>& stages);
   void add_edge(pass_fn run, const char* name, std::size_t n, std::size_t units, endpoint src,
                 endpoint dst, const T* twiddles, double scale, std::vector<stage>& stages);
   // The lanes strategy's pieces (strategies/lanes.cpp). A block's rows on one side: where,
@@ -320,6 +331,7 @@ private:
   std::size_t line_scratch_ = 0;           // scratch a Bluestein stage of the current line needs
   std::size_t long_from_bytes_ = SIZE_MAX; // use_long_rows
   std::size_t long_radix8_bytes_ = 0;
+  bool halves_ = false;                    // use_half_edges
   std::size_t conv_from_bytes_ = SIZE_MAX; // use_long_convolutions
   std::size_t conv_radix8_bytes_ = 0;
   std::size_t conv_pow2_part_bytes_ = SIZE_MAX;
@@ -331,6 +343,7 @@ private:
   std::map<std::pair<std::size_t, int>, const T*> kernel_tables_;                       // Q, sign
   std::map<std::tuple<std::size_t, int, std::size_t>, const T*> chirp_tables_; // Q, sign, copies
   std::map<std::size_t, const T*> rader_index_tables_;                         // Q
+  std::map<std::tuple<std::size_t, int, std::size_t>, const T*> half_tables_;  // Q, sign, copies
 };
 
 extern template class chain_builder<double>;

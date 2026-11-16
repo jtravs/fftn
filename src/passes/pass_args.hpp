@@ -191,6 +191,11 @@ template <class T> struct pass_kernels {
   // of C), otherwise one entry per element of the line.
   pass_fn bluestein_in[2][edge_op_count];
   pass_fn bluestein_out[2][edge_op_count];
+  // The same with the convolution's passes of radix 2 next to them (experiment X36): the
+  // forward chain's first and the backward chain's last, whose butterflies have a zero leg
+  // or a discarded output. Shared as above; otherwise for one copy (s = 1) only.
+  pass_fn bluestein_half_in[2][edge_op_count];
+  pass_fn bluestein_half_out[2][edge_op_count];
   // The gather and scatter around a Rader stage's convolution (passes/rader.inl), indexed
   // [shared][edge] as the Bluestein passes: shared runs C copies per vector (s a multiple of
   // C), otherwise one copy at a time.

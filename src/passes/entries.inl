@@ -346,6 +346,32 @@ inline constexpr pass_kernels<T> pass_table{
                 &bluestein_out<T, fac, true>,
             },
         },
+    .bluestein_half_in =
+        {
+            {
+                &bluestein_half_in<T, nop, false>,
+                &bluestein_half_in<T, scl, false>,
+                &bluestein_half_in<T, fac, false>,
+            },
+            {
+                &bluestein_half_in<T, nop, true>,
+                &bluestein_half_in<T, scl, true>,
+                &bluestein_half_in<T, fac, true>,
+            },
+        },
+    .bluestein_half_out =
+        {
+            {
+                &bluestein_half_out<T, nop, false>,
+                &bluestein_half_out<T, scl, false>,
+                &bluestein_half_out<T, fac, false>,
+            },
+            {
+                &bluestein_half_out<T, nop, true>,
+                &bluestein_half_out<T, scl, true>,
+                &bluestein_half_out<T, fac, true>,
+            },
+        },
     .rader_in =
         {
             {
