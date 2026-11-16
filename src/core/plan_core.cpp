@@ -977,7 +977,8 @@ namespace {
 // execute_core's path for every program but leaf rows (X37): out of line on AArch64, where
 // a frame shared with the path of leaf rows cost single rows of 2-6 points 6-9 % on the
 // M5 Max; inline elsewhere, since out of line it slowed single rows of 31-300 points by
-// 3-13 % on the EPYC 7763 (GCC 16).
+// 3-13 % on the EPYC 7763 (GCC 16) while its gain on leaf rows did not survive without the
+// leaves' byte distances (passes/access.inl).
 #if FFTN_ARCH_AARCH64
 [[gnu::noinline]]
 #else
