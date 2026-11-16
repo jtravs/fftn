@@ -384,19 +384,23 @@ unrelated changes. [X23](experiments/X23-masked-tails.md).
 
 4.10 **Generate codelets for the small primes before reaching for a convolution.** At 17,
 19 and 23, straight-line codelets in the symmetric-pair form (168–297 vector operations,
-20–26 live registers, so they spill a little on AVX2's 16) took 0.15–0.39 of a Bluestein
-stage's time on the M5 Max and 0.12–0.65 on the EPYC 7763 over rows, composites (2431 =
-11·13·17, 4913 = 17³), batches and real rows, and put FFTN at 0.28–0.50 of FFTW's time at
-17–23 where it had been 1.6–2.0. FFTW has no codelet for these sizes either. The cost is
+20–26 live registers, so they spill a little on AVX2's 16) took 0.15–0.42 of a Bluestein
+stage's time on the M5 Max, 0.12–0.65 on the EPYC 7763 and 0.06–0.50 on the Xeon 6240 over
+rows, composites (2431 = 11·13·17, 4913 = 17³), batches and real rows, and put FFTN at
+0.28–0.54 of FFTW's time at 17–23 where it had been 1.6–2.0. FFTW has no codelet for these sizes either. The cost is
 library size: each prime adds 6–11 % of a target's code (all of them +25 %), because every
 pass kind and edge variant is instantiated per radix. [X27](experiments/X27-prime-codelets.md).
 
 4.11 **Rader halves Bluestein's convolution, but its permutations are random accesses.**
 For a prime q whose q − 1 has only codelet factors, Rader's cyclic convolution of q − 1
 points replaces Bluestein's of M ≥ 2q − 1: 0.21–0.68 of the Bluestein stage's time from 29
-to 12289 on the M5 Max (8191 and 16381, whose q − 1 has a factor 13, 0.21–0.45). At 65537
-it lost (1.2): the gather by powers of a primitive root and the scatter back each touch a
-megabyte in random order, and the convolution is a 2¹⁶-point chain. Two implementation
+to 40961 on the M5 Max (8191 and 16381, whose q − 1 has a factor 13, 0.21–0.45), and
+0.4–0.8 from 97 up on the EPYC 7763 and the Xeon 6240. At 65537 it lost on the M5 Max
+(1.2: the gather by powers of a primitive root and the scatter back each touch a megabyte
+in random order) but won on both x86 machines (0.56–0.83). With wide vectors (C ≥ 4) a
+single small prime lost (29–97 on AVX-512 float: 1.3–1.9), because the gather and scatter
+of one row are scalar while Bluestein's chirp passes are not: the crossover moves with the
+lane count, so the rule is per target. Two implementation
 details decided whether it won at all: stepping g^m mod q with a data-dependent
 subtraction loop (mispredicted branches) and running one row one broadcast register at a
 time made it slower than Bluestein; an index table and plain scalar code for single rows

@@ -1,6 +1,6 @@
 # X27: generated codelets for primes above 16; Rader for primes with smooth p − 1
 
-- **Status:** running (arms 1 and 2 built; x86 timing queued)
+- **Status:** done: arm 1 adopted everywhere; arm 2 (Rader) adopted per target and precision
 - **Owner:** X27 agent, 2026-11-15
 - **Phase / task:** PLAN Status lead 2 (one-dimensional double gap); B3 (build size)
 
@@ -88,8 +88,95 @@ check); every other length runs the same plan and gives identical bits.
 
 ## Results
 
-(pending)
+All runs one thread, hot, with an A/A control; the Mac (Apple M5 Max, Homebrew Clang 23,
+`neon_fcma`) shared with other agents' runs, the EPYC 7763 (DMOG, GCC 16, `avx2`, `-c 8`
+shared, most rounds under load) and the Xeon Gold 6240 (GCC 14, `avx512`, `-c 8` shared)
+through `fbench_remote.py --serial`. Ratios are B ÷ A (below 1: B faster); "targets" are
+the cases with a factor 17, 19 or 23 (15–16 per precision), "controls" 10403, 97, 257,
+4093, 65537, whose plans arm 1 does not change.
+
+### Arm 1: codelets of 17, 19, 23 (A = main 3f90275, B = 2e5e4a8)
+
+| machine, run, band | targets f64: geomean (worst) | targets f32 | controls |
+|---|---|---|---|
+| Mac, 20261115-193346-8c5f, ±1.3 % | 0.258 (r2c 4862: 0.415) | 0.290 (23: 0.386) | 0.977–1.021 |
+| EPYC, 20261115-210826-412f, ±1.0 % | 0.306 (r2c 4862: 0.438) | 0.306 (289: 0.652) | 0.969–1.007 |
+| Xeon, 20261115-225300-75d0, ±1.15 % | 0.282 (23: 0.497) | 0.236 (289: 0.476) | 0.994–1.010 |
+
+Every target case is faster beyond the band on every machine in both precisions; no
+control moved. Per radix, double, Mac / EPYC / Xeon: 17 0.18 / 0.22 / 0.27, 19 0.22 /
+0.28 / 0.37, 23 0.28 / 0.35 / 0.50. FFTN ÷ FFTW after arm 1, double: c2c 17 0.28 (Mac,
+was 1.57), 0.42 (EPYC, was 1.95), 0.47 (Xeon); 2431 0.37 / 0.50 / 0.27; 17 × 256 0.19 /
+0.31 / 0.33. On the Mac 2431 takes 0.37 of its old time, which puts FFTN at about FFTL's
+(it was 2.57 times FFTL's, PLAN Status).
+
+Collateral, tracking tier: Mac A = main, B = a8b0384 (arm 1 + Rader below 2^16), run
+20261115-201024-7a7a (80 rounds, all under load, band ±1.0 %): 5 faster (17, 97, 257,
+1009, 2431), 55 no evidence, 1 slower: r2c 2048 × 36 at 1.045, whose plan is unchanged;
+re-run 20261115-203756-b0b0 (band ±2.2 %): 1.038, no evidence (code-layout noise). EPYC
+A = main, B = cddfe86, run 20261116-002503-0a91 (band ±1.0 %): 5 faster, 56 no evidence.
+Xeon A = main, B = arm 1, run 20261115-231022-8115 (band ±1.5 %): 2 faster, 59 no evidence.
+
+Build size (B3), text of the kernel units, Clang 23 Release (x86-64 cross-compiled):
+neon_fcma 4.18 → 5.16 MB (+23.5 %), avx2 9.90 → 12.49 MB (+26.2 %), avx512 14.65 → 17.74
+MB (+21.1 %), scalar +26–29 %; `libfftn.a` +25 % on both. Per prime, of a target: 17
++6 %, 19 +7 %, 23 +10 %. The grid's phase passes and the fused real pairing, which never
+take these radices, are not instantiated for them (otherwise +35 %; leaving them out also
+avoided a Clang 23 crash in the SLP vectorizer on `c2r_first<float, 17>` for x86-64
+scalar). Peak live values: 20, 22, 26 complex registers (spills on AVX2's 16).
+
+### Arm 2: Rader against Bluestein (A = arm 1)
+
+As first written (f3b4722: g^m mod q stepped with a subtraction loop, a single row one
+broadcast register at a time), Mac screen 20261115-195223-f669 (stopped after 10 rounds,
+band 13 %): 65537 1.5–2.0 and float slower almost everywhere; not kept. With the index table
+and scalar single rows (dd4adf2):
+
+| q | Mac f64 / f32 (20261115-200226-b1eb, ±1.2 %) | EPYC f64 / f32 (20261115-233441-5bdc, ±1.0 %) | Xeon f64 / f32 (20261116-002300-c123, ±2.4 %) |
+|---|---|---|---|
+| 29 | 0.69 / 0.85 | 0.72 / **1.27** | **1.11** / **1.78** |
+| 61 | 0.61 / 0.75 | 0.74 / **1.22** | 0.97 / **1.93** |
+| 97 | 0.52 / 0.64 | 0.62 / 0.77 | 0.65 / **1.33** |
+| 257 | 0.48 / 0.56 | 0.59 / 0.91 | 0.64 / 0.70 |
+| 1009 | 0.54 / 0.65 | 0.49 / 0.80 | 0.63 / 0.91 |
+| 2017 | 0.46 / 0.61 | 0.44 / 0.47 | 0.62 / 0.77 |
+| 4097 = 17 · 241 | 0.57 / 0.61 | 0.72 / 0.79 | 0.72 / 0.80 |
+| 7681 | 0.17 / 0.56 | 0.60 / 0.82 | 0.59 / 0.67 |
+| 12289 | 0.57 / 0.53 | 0.79 / 0.83 | 0.55 / 0.73 |
+| 40961 | 0.82 / 0.62 | 0.55 / 0.96 | 0.49 / 0.57 |
+| 65537 | **1.21** / **1.20** | 0.62 / 0.83 | 0.62 / 0.56 |
+| 8191, 16381 (13-smooth q − 1; cddfe86) | 0.21 / 0.45, 0.23 / 0.24 (20261115-203357-1ff2) | 0.37 / 0.53, 0.32 / 0.40 | 0.65 / **1.08**, 0.45 / 0.91 |
+| 4093 (control) | 1.01 / 1.00 | 1.01 / 1.00 | 1.00 / 1.00 |
+
+Bold: slower beyond the band. Rader loses where a single small prime meets wide vectors
+(C ≥ 4: AVX2 float, AVX-512): its gather and scatter of one row are scalar while the
+Bluestein stage's chirp passes fill C lanes; and at 65537 on the Mac only (a megabyte
+gathered and scattered in random order, and a 2^16-point chain). FFTN ÷ FFTW with Rader at
+65537: EPYC 1.09 (was 1.78), Xeon 0.47.
+
+### Confirmation against the new main (d8ca0f1, after X26, X23b, X28)
+
+(pending: A = main d8ca0f1, B = a312699, x27 catalogue; Mac, EPYC job 510124, Xeon job
+15889.)
 
 ## Verdict
 
-(pending)
+**Arm 1 adopted on every target, both precisions** (rule 1: target geomeans 0.24–0.31,
+nothing slower; rule 2: 19 and 23 each faster on every machine, so both stay; rule 3: no
+collateral). The library grows by 25 % (B3, recorded for the maintainer's build-size
+decision; 23 alone is 10 % of a target for 0.28–0.50 of its old time).
+
+**Arm 2 adopted per target and precision** (rule 5, applied per target as AGENTS.md
+section 6 allows; the rule's form changed from "q − 1 7-smooth" to the profile's range
+with q − 1 13-smooth, both measured): `target_profile::rader_from` = 16 C for C ≥ 4, else 0
+(AVX2 float and AVX-512 double from 64, AVX-512 float from 128), `rader_below` = 2^16 on
+NEON and scalar, 2^24 on x86. One measured exception kept by the rule: 8191 on AVX-512
+float (1.08); 16381 there is 0.91. The final rule (02fd25c) was not timed as a whole on x86
+before the confirmation run; each of its choices is a measured winner above.
+
+Done: generator catalogue, row units, planner, DESIGN (8.5, 9.2, 11.2, 15.2, 18.2,
+decision log), LESSONS 4.10 and 4.11. Follow-ups: 128-bit (X28-style) leaves for 17–23 on
+x86, where a single row now idles 1–7 lanes; a vectorised gather/scatter for single-row
+Rader (would extend it down to small primes on AVX-512 and up past 2^16 on NEON); Rader
+inside the generator for 13 (DESIGN 18.2); radices 17–23 inside the grid (lengths with a
+factor 17 still run as chains: 17408 is 0.37–0.58 of FFTW's time already).
