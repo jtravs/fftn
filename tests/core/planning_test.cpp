@@ -418,7 +418,10 @@ TEST(Measure, QuickTimesFewerCandidates) {
 
 template <class In, class Out>
 void check_measured(const fftn::shape<In, Out>& shape, fftn::options opts) {
-  opts.measure_seconds = 0.05;
+  // Candidates are admitted while half the budget is left, after the rules' plan is built:
+  // in the coverage build on a CI runner that build alone took more than 25 ms of a 0.05 s
+  // budget, so nothing was compared and nothing timed.
+  opts.measure_seconds = 0.5;
   const fftn::plan<In, Out> rules(shape, {.in_place = opts.in_place});
   for (const fftn::planning effort : {fftn::planning::quick, fftn::planning::measure}) {
     opts.effort = effort;
