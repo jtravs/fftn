@@ -1334,7 +1334,8 @@ apart made 4093–32749 take 1.4–5 times as long; unlimited on the Xeon 6240, 
 gained nothing); when that excludes the power of two, the candidates run up to 2 (2Q − 1).
 A convolution's chain takes the rules' radices, except that one of a power of two takes
 X32's long-row radices beyond `grid_min_bytes` where X32's chains apply (Apple, Zen) and
-beyond four times the L2 elsewhere, since a convolution is never a grid: the rules'
+beyond four times the L2 elsewhere (`machine_profile::long_convolution_bytes`; Granite
+Rapids takes the Xeon's rules, unmeasured), since a convolution is never a grid: the rules'
 radix-16 passes over 2¹⁸ points ran 2.5 times as long on the M5 Max, while on the Xeon the
 long-row radices lost at 1 MiB (X36). A single copy's convolution (s = 1) takes the split
 run its length would as a line (`split_from`; x86). A Bluestein stage that would have

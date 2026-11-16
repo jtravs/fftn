@@ -221,7 +221,9 @@ threshold (beyond 4 MiB, measured), the few-copy condition (measured cases) and 
   long-row radices for long power-of-two convolutions from `grid_min_bytes` on Apple and
   Zen, beyond 4 L2 on the Xeon (double lost at 1 MiB there); the Bluestein length's
   power-of-two part at most L1/4 on Apple, the L1 on Zen-like caches, unlimited on the
-  Xeon (`machine_profile::bluestein_pow2_part_bytes`). Mac changed cases 0.49 (double),
+  Xeon (`machine_profile::bluestein_pow2_part_bytes`, `long_convolution_bytes`; Granite
+  Rapids, X35's large-L2 profile, takes the Xeon's rules and the Axion VM the Zen ones,
+  neither measured). Mac changed cases 0.49 (double),
   0.60 (float; 12279 f32 1.033 recorded, a hair past the band under load); EPYC final
   0.56 / 0.55.
 - **Arm 2 rejected and deleted** (19c49df): float lost on all three machines (1.04–1.8),
