@@ -90,6 +90,19 @@ The second reader's fixes are in the same commit. Arms, cases and decision rules
 the first pass: `N`, `Q`, `M` at 73eb719, tracking tier, the Mac (local), the Xeon (Slurm
 16140/16141) and the EPYC (511174/511175). The same runs are P1's re-run of the Xeon misses.
 
+Mac result (run 20261116-200843-f54c, band ±1.93 %):
+- `Q ÷ M` 1.008;
+- the cases with one program over 12 rounds are still 32 of 61. The choices that change are
+  near-ties: no case reads `N ÷ M` below 0.97, against 0.92 in the first pass;
+- Q's planning summed over the tier fell from 4.5 to 2.4 s per round, and 2²² from 1.6 to
+  0.8 s, because nothing is timed when only one candidate is admitted;
+- M's median planning time is 0.042 s per case, and 2²² takes 6.4 s.
+
+Rule 4 still fails on the Mac. The instability that remains is between candidates within
+noise of each other; a rule judging stability should count a change of choice only when the
+programs differ by more than the band. That is a proposal for a third pass, not a change to
+this pass's rule.
+
 ## Verdict
 
 First pass; the budgets are not changed yet.

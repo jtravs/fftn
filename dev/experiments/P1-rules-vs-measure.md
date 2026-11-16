@@ -98,9 +98,21 @@ own intervals and verdicts in `fbench show`). Every machine was loaded.
   candidates (0.5–1.7 s each at that size) spent the 10 s budget first. Commit 4333fff
   builds and times candidates in turn; the confirmation run (Slurm 16131) is pending.
 
+### Second pass (commit 73eb719: placements per round, median statistic; see P2)
+
+| Machine | Run | Load, A/A band | Rules within 5 % of M | `N ÷ M` geomean |
+|---|---|---|---|---|
+| Mac M5 Max, Clang 23 | 20261116-200843-f54c | 11 of 12 rounds loaded, ±1.93 % | 57 of 61 (93.4 %) | 1.008 |
+| Xeon, EPYC | Slurm 16140/16141, 511174/511175 | pending | | |
+
+On the Mac every miss is a plane or volume, with a consistent choice: c2c 480 × 640 1.20,
+c2r 2048 × 36 1.09, c2c 64³ 1.08, c2r 480 × 640 1.06. No case reads below 0.97 any more; the
+first pass's lowest was 0.92.
+
 ## Verdict
 
-First pass, measurement only; no default changed.
+First pass, measurement only; no default changed. The second pass on the Mac meets the
+acceptance (93.4 %); the Xeon and EPYC runs are queued.
 
 1. **Acceptance:**
    - met on the EPYC (96.7 %);
