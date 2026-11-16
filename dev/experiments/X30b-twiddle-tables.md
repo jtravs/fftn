@@ -1,6 +1,6 @@
 # X30b: twiddle tables on x86 at 1024–4096 points: alignment, storage per pass, three passes
 
-- **Status:** running
+- **Status:** done
 - **Owner:** x30b session, 2026-11-16
 - **Phase / task:** 1 (exit criteria); PLAN lead 3; follows X30
 
@@ -192,24 +192,75 @@ and radix-64 passes at these strides cost more than the pass they save (X18's fi
 4096; X30's lane radix-64 loop spills, 407 stack references per unit). R is rejected; no
 override changes.
 
+### Timing runs
+
+All on the pre-X29 base (A e1879cb, L b5d3d6d, C2 ead29f2), GCC on x86, one thread, fbench
+interleaved process rounds with the A/A control, `--serial`. C2's variants are read against
+L by swapping L's labels with A's in a copy of the record (no control then; the band
+given is A's). Geometric means of the median paired ratios; "over" is past 1 + band + 2 %.
+
+| Run | Machine, target | Band | L ÷ A double / float | CN ÷ L | CS ÷ L | CSG ÷ L | C1 ÷ L |
+|---|---|---|---|---|---|---|---|
+| x30 20261116-073236-20e5 | EPYC `avx2`, 80 rounds all loaded | 1.00 % | 0.986 / 0.971, none over | 0.999 / 1.003 | 0.995 / 0.968 | **0.986 / 0.962** | 1.002 / 0.979 |
+| tracking 20261116-081805-ee1f | EPYC `avx2`, 80 rounds all loaded | 1.00 % | 0.994, none over (worst 2²⁰ 1.016) | 0.997 | 0.994 | 0.989 | 1.001 |
+| x30 20261116-073810-5ff4 | Xeon `avx512`, 80 rounds, none loaded | 1.00 % | 0.989 / 0.981, none over | – | 1.001 / 1.002 | – | 0.991 / 1.007 |
+| same run | Xeon `avx2` | 1.00 % | 0.996 / 0.999, none over | – | 0.996 / 0.919 | – | 1.002 / 0.917 |
+| tracking 20261116-082153-5575 | Xeon `avx512`, 77 rounds | 1.38 % | 0.994; c2r 2²⁰ 1.035 [0.992, 1.063] | – | 1.001 | – | 0.985 |
+| same run | Xeon `avx2` | 1.38 % | 0.990, none over | – | 0.999 | – | 1.001 |
+
+Cases past the limit, C2 against L:
+
+- EPYC x30: float c2c 256 × 64 for every C2 variant (CN 1.038, CS 1.037, CSG 1.035, C1
+  1.050); C1 also 128 1.068, 192 1.059, 256 × 64 1.061, r2c 512 1.039, float 192 1.069.
+  Re-run (20261116-101921-03d8, 80 rounds, loaded, band 1.00 %): float 256 × 64 CN 1.042,
+  CS 1.038, CSG 1.039; c2r 512 1.013–1.016 (not past). The re-run decides: past.
+- EPYC tracking: none for CN, CS, CSG; C1 ten (64–128 points 1.04–1.06, 2048 × 36 1.045).
+- Xeon x30: none for CS; C1 ten on `avx512` (192 1.076, 256 1.064, float 512 1.058) and
+  three on `avx2` (192 1.080, 3072 1.046).
+- Xeon tracking: c2c 16 for CS (`avx512` 1.054, `avx2` 1.050) and C1; C1 also 60–128.
+
+Per case, CSG against L on the EPYC (x30, double): 768 0.964, 1024 0.954, 1536 0.955, 2048
+0.971, 4096 0.977, 1024 × 64 0.962, 4096 × 64 0.967, c2r 4096 0.971; float 512–1024
+0.92–0.93, 4096 0.908; tracking 16384 0.903, 10403 0.914, 1024 0.957. The compact per-lane
+tables that lost cycles at 2048–4096 in the single-process counters won there in fbench.
+
+Float 256 × 64 runs a 16 × 16 chain (`avx2` float), whose tables are below every limit
+tried: its passes are those of L in every C2 variant, CN included, except for the FMADDSUB
+form of the twiddle product (and a larger library). The loss there is not the compact
+storage's.
+
+Not run: CSG on the Xeon (its run, Slurm 15991 `x30b3-xeon-x30`, was cancelled once the
+EPYC re-run had decided C); a re-run of Xeon c2c 16 and of `avx512` c2r 2²⁰ (Slurm 16005,
+`x30b2-xeon-rerun`), run 20261116-112332-7993 (80 rounds, 1 loaded, band 1.02 %): L ÷ A
+`avx512` c2r 2²⁰ 0.983 [0.963, 0.996], c2c 16 0.998; c2c 16 against L: CS 1.045 and CSG
+1.053 (`avx512`), CS 1.060 and CSG 1.066 (`avx2`), so the 16-point loss is real (CSG's
+other cases there: `avx512` c2r 1000 1.032, `avx2` 1009 0.971).
+
 ## Verdict
 
-(pending)
+- **L adopted** (all targets): plan tables start on a 64-byte boundary. (a) x30 double
+  L ÷ A EPYC 0.986, Xeon `avx512` 0.989, `avx2` 0.996, Mac 0.999; (b) no case past the limit
+  on the EPYC, the Xeon's `avx2` or the Mac; on the Xeon's `avx512` c2r 2²⁰ 1.035 with an
+  interval containing 1 in the tracking run, 0.983 on the re-run (20261116-112332-7993); (c) float 0.971, 0.981, 0.999, 1.000. Bits unchanged.
+- **C rejected** on both x86 targets by (b), and on `avx512` also by (a), and reverted
+  (b54a7f4): its best form, CSG (broadcast tables compact, per-lane tables above 16 KiB),
+  took the EPYC's x30 cases to 0.986 (double) and 0.962 (float) of L and the tracking tier
+  to 0.989, but float 256 × 64 stayed 1.035–1.042 on the re-run in every C2 variant,
+  including the one with no compact table (CN), so the loss belongs to the FMADDSUB
+  arithmetic or to code placement, not to the storage. On the Xeon the broadcast form gave
+  nothing in double on `avx512` (1.001) and 0.919 in float on `avx2`; c2c 16, a leaf C2 does
+  not touch, ran 1.05 in the tracking tier there (X30's T showed the same, 1.057–1.066).
+  A follow-up that keeps the pre-arranged (wr, wr), (−wi, wi) arithmetic and builds
+  (−wi, wi) from compact storage only where the table is large, with the 16-point and
+  256 × 64 cases checked first, would test whether the gains survive without that loss.
+- **R rejected**: every three-pass (and the two-pass) `avx2` double 4096 sequence is
+  1.30–1.88 times the planner's 8 × 8 × 8 × 8.
 
-## State (2026-11-16, while the deciding runs are queued)
+## Slurm jobs
 
-- Done: arms L (b5d3d6d), C (88cd9c3, superseded), C2 (ead29f2; test fix 2b38263), merge of
-  main with X29 (fd4a72d). Tests: DMOG GCC 16 `avx2` (masked on and off) and Xeon GCC 14
-  (`avx512`, `avx2`) all pass; Mac Clang all pass. Counter screens and arm R recorded above
-  (R rejected). Mac (Clang, `neon_fcma`), L ÷ A: x30 run 20261116-072312-a527 double 0.999,
-  float 1.000, worst 1.003; tracking run 20261116-073346-9b15 1.001, worst 46080 1.010;
-  band ±1.00 %: L passes on the Mac.
-- Queued or running (fbench_remote.py names; arms A e1879cb, L b5d3d6d, C2 ead29f2 variants
-  CN/CS/CSG/C1 as amendment 1; all on the pre-X29 base e1879cb):
-  EPYC `x30b2-epyc-x30` (Slurm 510284, running), `x30b2-epyc-trk` (510286);
-  Xeon `x30b2-xeon-x30` (15975, running), `x30b2-xeon-trk` (15977); arms there A, L, CS,
-  C1 for each of `avx512` and `avx2`.
-- Next: fetch each run from the main checkout, re-read with L as baseline
-  (scratchpad rebase.py, then `fbench show --min-band <band>`), apply the decision rule,
-  set the defaults (compact_shared_bytes, compact_grouped_bytes) per the verdict, write
-  Results/Verdict, PLAN, DESIGN decision log, LESSONS 3.10, mark PR 17 ready.
+EPYC (DMOG): builds 510237, 510260, 510263, 510283, 510285; timing 510238 (failed: no case
+selected), 510266 (R), 510261 and 510264 (cancelled by amendment 1), 510284 (x30), 510286
+(tracking), 510382 (re-run); counters and tests 510269, 510271, 510287, 510294, 510295,
+510301. Xeon: builds 15970, 15972, 15974, 15976, 15990; timing 15971 and 15973 (cancelled
+by amendment 1), 15975 (x30), 15977 (tracking), 15991 (cancelled), 16005 (re-run); tests
+15978 (cancelled, wrong path), 15979.
