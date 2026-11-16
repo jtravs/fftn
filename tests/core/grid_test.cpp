@@ -245,7 +245,6 @@ TEST(Grid, PlannerChoosesByTheProfile) {
   s.profile.chain_mixed_bytes = 0;
   s.profile.pow2_chain_bytes = 0;
   s.profile.grid_three_block = 0; // X39's fields, which the running machine may set
-  s.profile.grid_phase_radix = 0;
   s.profile.grid_two_block_bytes = 0;
   s.profile.pow2_grid_bytes = 0;
   const auto plan = [&](std::size_t n, const build_settings& b) {
@@ -482,7 +481,8 @@ TEST(Grid, ScaleOnInputIsPhaseOnesInput) {
 // At the lengths the rules make grids (2^15 to 2^18, two and three phases), the grid
 // agrees with the chain to within both their error bounds: too long for the
 // quadruple-precision reference, which checks the chain in passes_test.
-// phase_radix and three_block: the profile's phase radix and three-phase block (X39).
+// phase_radix: the grid's phase radix (build_settings); three_block: the profile's
+// three-phase block (X39).
 template <class T>
 void grid_agrees_with_chain(std::size_t n, bool three, std::size_t phase_radix = 0,
                             std::size_t three_block = 0) {
@@ -491,7 +491,7 @@ void grid_agrees_with_chain(std::size_t n, bool three, std::size_t phase_radix =
   build_settings grid;
   grid.strategy = strategy_choice::grid;
   grid.profile.grid_three_bytes = three ? 1 : std::size_t{1} << 40U;
-  grid.profile.grid_phase_radix = phase_radix;
+  grid.grid_phase_radix = phase_radix;
   grid.profile.grid_three_block = three_block;
   build_settings chain;
   chain.strategy = strategy_choice::chain;
@@ -528,7 +528,8 @@ TEST(Grid, AgreesWithTheChainAtLengthsTheRulesTake) {
     grid_agrees_with_chain<double>(n, three);
     grid_agrees_with_chain<float>(n, three);
   }
-  // The Xeon profile's grids (X39): radix-32 and radix-64 phases, three-phase blocks of 16.
+  // Radix-32 and radix-64 phases (X3, X39's arm B) and the Xeon profile's three-phase blocks
+  // of 16 (X39).
   for (const auto& [n, three] : {
            std::pair{std::size_t{131072}, true},
            std::pair{std::size_t{262144}, true},

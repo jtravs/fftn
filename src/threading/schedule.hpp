@@ -128,12 +128,6 @@ struct machine_profile {
   // changed nothing where the budget already gives 16 or fewer (327680, 2^20).
   // set_grid_sizes sets 16 where a private L2 has less than 2 MiB of L3 per CPU behind it.
   std::size_t grid_three_block = 0;
-  // The largest radix of the grid's phase rule (0: default_grid_phase_radix, 16;
-  // build_settings::grid_phase_radix overrides it; experiments X3, X39). Radix 32 and 64 phases
-  // won on the Xeon 6240 at 32768-65536 points (X3) and in three-phase grids (X39: 64-long
-  // phases as one radix-64 pass, 0.89-0.95 of the cycles at 73728-262144 with blocks of 16).
-  // set_grid_sizes sets 64 where a private L2 has less than 2 MiB of L3 per CPU behind it.
-  std::size_t grid_phase_radix = 0;
   // The block budget of a two-phase grid (0: grid_block_bytes; experiment X39). On the Xeon
   // 6240 blocks of 8 columns for 192-256-long phases (twice L1) took 0.86-0.98 of the cycles
   // of blocks of 4 at 32768-65536 points. set_grid_sizes sets twice L1 where a private L2 has

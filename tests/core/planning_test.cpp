@@ -125,7 +125,6 @@ build_settings fixed_settings() {
   s.profile.grid_three_bytes = std::size_t{1} << 30U;
   s.profile.grid_two_odd_part = 0;
   s.profile.grid_three_block = 0; // X39's fields
-  s.profile.grid_phase_radix = 0;
   s.profile.grid_two_block_bytes = 0;
   s.profile.pow2_grid_bytes = 0;
   s.profile.chain_part_bytes = 0;
