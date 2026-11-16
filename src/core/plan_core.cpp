@@ -626,7 +626,9 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     const std::size_t n = c.lengths[0];
     const bool r2c = s.kind == transform_kind::r2c;
     c.built = strategy_choice::grid;
-    c.grid_factors.assign(real_grid.factors.begin(), real_grid.factors.begin() + real_grid.phases);
+    for (std::size_t i = 0; i < real_grid.phases; ++i) {
+      c.grid_factors.push_back(real_grid.factors.at(i));
+    }
     grid_builder<T> grid(kernels, chain, tables_of<T>(c),
                          settings.grid_fused &&
                              (n / 2) * 2 * sizeof(T) <= settings.profile.grid_fuse_bytes,
@@ -668,7 +670,9 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
         "), each transform finished before the next";
   } else if (grid_plan.phases != 0) {
     c.built = strategy_choice::grid;
-    c.grid_factors.assign(grid_plan.factors.begin(), grid_plan.factors.begin() + grid_plan.phases);
+    for (std::size_t i = 0; i < grid_plan.phases; ++i) {
+      c.grid_factors.push_back(grid_plan.factors.at(i));
+    }
     grid_builder<T> grid(kernels, chain, tables_of<T>(c),
                          settings.grid_fused &&
                              c.lengths[0] * 2 * sizeof(T) <= settings.profile.grid_fuse_bytes,
