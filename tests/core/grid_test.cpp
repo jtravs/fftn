@@ -443,11 +443,17 @@ TEST(Grid, ScaleOnInputIsPhaseOnesInput) {
 // At the lengths the rules make grids (2^15 to 2^18, two and three phases), the grid
 // agrees with the chain to within both their error bounds: too long for the
 // quadruple-precision reference, which checks the chain in passes_test.
-template <class T> void grid_agrees_with_chain(std::size_t n, bool three) {
-  SCOPED_TRACE((sizeof(T) == 8 ? "double, n = " : "float, n = ") + std::to_string(n));
+// phase_radix and three_block: the profile's phase radix and three-phase block (X39).
+template <class T>
+void grid_agrees_with_chain(std::size_t n, bool three, std::size_t phase_radix = 0,
+                            std::size_t three_block = 0) {
+  SCOPED_TRACE((sizeof(T) == 8 ? "double, n = " : "float, n = ") + std::to_string(n) +
+               ", phase radix " + std::to_string(phase_radix));
   build_settings grid;
   grid.strategy = strategy_choice::grid;
   grid.profile.grid_three_bytes = three ? 1 : std::size_t{1} << 40U;
+  grid.profile.grid_phase_radix = phase_radix;
+  grid.profile.grid_three_block = three_block;
   build_settings chain;
   chain.strategy = strategy_choice::chain;
   const auto shape = fftn::rows_c2c<T>(n, 1, fftn::direction::forward);
@@ -482,6 +488,15 @@ TEST(Grid, AgreesWithTheChainAtLengthsTheRulesTake) {
        }) {
     grid_agrees_with_chain<double>(n, three);
     grid_agrees_with_chain<float>(n, three);
+  }
+  // The Xeon profile's grids (X39): radix-32 and radix-64 phases, three-phase blocks of 16.
+  for (const auto& [n, three] : {
+           std::pair{std::size_t{131072}, true},
+           std::pair{std::size_t{262144}, true},
+           std::pair{std::size_t{131072}, false},
+       }) {
+    grid_agrees_with_chain<double>(n, three, 64, 16);
+    grid_agrees_with_chain<float>(n, three, 64, 16);
   }
 }
 
