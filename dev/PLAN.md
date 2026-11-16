@@ -50,7 +50,9 @@ cause: (1) primes outside Rader's range or with a large factor in p − 1 (13107
 999983 1.19–1.99, 4093 1.33–1.42, 1018 = 2 · 509 1.36–1.46, EPYC 65537 2.51); (2) single
 short rows and tiny batches (Xeon 2–30 points 1.12–1.33, Mac 20 points 1.78, 2 × 3 in place
 1.18–1.44, EPYC 15 × 2 and 64 × 2 backward 1.27–1.31); (3) batches of 16 points on x86
-(EPYC 1.12–1.26, Xeon ÷ MKL 1.28–1.72); (4) the EPYC's 240–2048 (1.10–1.23); (5) the Xeon's
+(EPYC 1.12–1.26, Xeon ÷ MKL 1.28–1.72); (4) the EPYC's 240–2048 (1.10–1.23; X38, pull request
+27: a radix-20 codelet and re-fitted `avx2` double sequences take 80–20000 to 0.82–0.96 of
+main, 240, 2000, 3000, 3600 under FFTW; 512–2048 stay 1.13–1.22); (5) the Xeon's
 long rows (16384–262144 1.22–1.48; 20000, 25000, 46080, 100000 1.31–1.50); (6) in-place
 65536 (Xeon 1.14–1.16). Runs 20261116-160815-6deb (Mac, 10 of 12 rounds under load),
 20261116-161226-416e (EPYC, every round under load, band ±1.85 %), 20261116-161123-f848
@@ -102,6 +104,16 @@ pull request:
   thresholds; the API agreed by the maintainer; P1 first pass: rules within 5 % of measure
   on 96.7 % (EPYC), 93.4 % (Mac, second pass), about 85 % (Xeon, re-runs queued); measure
   never lost. Also the extended-CI fix (pull requests 23, 29).
+- X38 (cause (4), pull request 27, not merged: the verdict is the lead's): FFTW runs two
+  passes at 160–2048 with radix 20, 32 or 64 and radix-20 passes above; FFTN had no codelet
+  of 20. Arm R (a radix-20 codelet, a pass radix only, and `avx2` double overrides from X2's
+  search driver re-run on the EPYC with radix 20/32/64 candidates) takes the nine changed
+  lengths to 0.868 of main (240 0.82, 2000 0.82, 3600 0.81, 384 0.85), EPYC exit cases over
+  1.05 of FFTW 32 → 27 of 193; tracking 1.000; Xeon `avx2` 1.001; library +5.6 %. Rule (b)
+  fails by the letter on two cases whose plans do not change (60 × 3 1.036, 323 1.049 on the
+  re-run; code placement likely). 1024, 768, 2048, 512 unchanged: FFTN's best sequences are
+  the planner's; its radix-32/64 codelets spill (35 and 67 live values), so FFTW's two-pass
+  plans lose in FFTN (a generator follow-up).
 - X31b (cloud, USD 1.12; campaign USD 1.87 of 20): X32 holds on Zen 5 (long powers of two
   0.73 of the grid; 65536 1.50 → 0.92 of FFTW). Granite Rapids reports a large shared L3,
   gets the Zen profile and loses: X32's chains 1.06–1.69 of the grid (262144 1.31 → 1.75
@@ -514,7 +526,7 @@ running, done (with verdict).
 | [X31b](experiments/X31b-cloud-followup.md) | X32 and X34 on Zen 5 and Granite Rapids (cloud): does X32's power-of-two chain rule hold on Zen 5, and does Granite Rapids want the Xeon's plan, X29's chains or neither? Can the topology a VM reports separate the two? (leads (a), (c), (d)) | 1 | done, measurement only. Zen 5: X32 holds (long powers of two 0.58–0.86 of the grid; 65536 1.50 → 0.92 of FFTW); X34 changes no plan. Granite Rapids takes X32's chains (its VM reports 63 MiB of L3 per CPU), and they lose: the grid is 0.59–0.94 of their time. It wants two phases where X29 chains (100000 0.66, 10⁶ 0.59) but three phases where X34 would give two (X34's rule 1.03–1.46), and probably a grid from 512 KiB (0.81–0.96). That is a third profile; the VM's cache sizes separate it from Zen only on one sample per side, so the case is for a measured choice (planner 2.4) or a core field. USD 1.12 |
 | [X32](experiments/X32-long-pow2.md) | Long powers of two (c2c ≥ 16384, lead (a)): copy-free chains of small radices (FFTL.jl's plan) against the grid, per machine; why power-of-two chains of 1–2 MiB are bimodal on the EPYC | 1 | done: chains of FFTL.jl's radices adopted on Apple (0.57–0.94 of main; ÷ FFTW 1.16 → 0.87) and Zen-like caches (EPYC 0.53–0.85); Xeon keeps the grid (chains 1.06–1.50); bimodality = radix-16 passes on transparent huge pages; scratch placement against 4K aliasing neutral in fbench, rejected |
 | [X34](experiments/X34-xeon-mixed.md) | The Xeon's long rows of mixed length (100000 1.99, 46080 1.29 of FFTW): why, and does a chain rule keyed on L2, wider grid blocks for lengths with a large odd part, or other grid factors close it without a vendor switch? (lead (c)) | 1 | done: chains lose on the Xeon (1.05–1.45); wider blocks superseded; two phases for rows with an odd part ≥ 15 where L3 per CPU is small adopted (Xeon 0.86 over the 14 changed rows, 100000 0.71: 2.03 → 1.44 of FFTW, 0.95 of MKL); the EPYC (two phases 1.13–1.67) and the Mac unchanged |
-| [X38](experiments/X38-epyc-mid.md) | The EPYC's double rows of 80–20000 points (exit check cause 4; 240, 384, 640, 1024 1.19–1.23 of FFTW): do sequences re-fitted on Zen 3 with radix 32/64 (two passes where FFTW runs two), split-aware first passes or cheaper twiddle arithmetic close them? | 1 | running |
+| [X38](experiments/X38-epyc-mid.md) | The EPYC's double rows of 80–20000 points (exit check cause 4; 240, 384, 640, 1024 1.19–1.23 of FFTW): do sequences re-fitted on Zen 3 with radix 32/64 (two passes where FFTW runs two), split-aware first passes or cheaper twiddle arithmetic close them? | 1 | done (verdict proposed): R, a radix-20 codelet with re-fitted `avx2` double sequences, 0.868 of main on its nine lengths (240, 2000, 3000, 3600 now under FFTW; exit cases over 1.05 of FFTW 32 → 27 of 193), tracking 1.000; two unchanged-plan cases past rule (b) after the re-run (60 × 3, 323: placement likely), so adoption with exceptions is the lead's call; 512–2048 unchanged (FFTN's radix-32/64 codelets spill) |
 | [P1](experiments/P1-rules-vs-measure.md) | How often is the rules' choice within 5 % of `planning::measure`'s per machine (task 2.4's acceptance: 90 % of catalogue cases), which rules miss, and does measurement recover a misfiring profile (Granite Rapids' fields forced on the Xeon)? | 2 | first pass done: rules within 5 % of measure on 96.7 % of the tracking tier on the EPYC, 77 % on the Xeon (about 85 % without noise), Mac inconclusive under load; measure never slower by fbench; Granite Rapids' fields forced on the Xeon recovered in 10 of 11 cases (the miss a budget defect, fixed); planes' radices the repeat miss |
 | [P2](experiments/P2-measure-budget.md) | Measurement budget: how many candidates and how long before the choice stops improving; the quick and full efforts' budgets | 2 | first pass done: Q within 0.999–1.014 of M; no winner above rank 7; plan construction dominates large transforms (2²² 12.5 s for M); choices unstable under load (43–66 % of cases one program over 12 rounds), so budgets wait for a sampling revisit; indicated quick 6, measure 8 |
 | [T1](experiments/T1-dispatch-wait-costs.md) | Dispatch, wake and wait costs per machine and runtime (libgomp, libomp, Kokkos, pool) | 3 | done: hand-off cost and claim runs adopted on Zen 3; dispatch and work costs wait for a per-lane dispatch term |

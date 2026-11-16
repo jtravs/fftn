@@ -1,6 +1,6 @@
 # X38: the EPYC's rows of 80–20000 points in double (the exit check's cause 4)
 
-- **Status:** running
+- **Status:** done (verdict proposed; adoption with exceptions is the lead's call)
 - **Owner:** x38 session, 2026-11-16
 - **Phase / task:** 1 (exit criteria: DESIGN 1.3's tail rule); PLAN lead 3, the phase 1
   exit check's cause (4); follows X2, X25, X30, X30b
@@ -216,8 +216,99 @@ R (cd22279) takes the seven passing lengths; 20000 keeps S's sequence. These are
 radix-20 plans in all but 640 (FFTW 64 → 10) and 3600 (FFTW 12 → 20 → 15, the same
 radices).
 
-(Timing runs to come.)
+### EPYC, the exit check's cases (run 20261116-211342-3a17)
+
+EPYC 7763 (DMOG), GCC 16.2, `avx2`, one thread, Slurm 511132 (`--serial`), arms A
+(e8c2639), S (f745178), R (cd22279) and FFTW, standard catalogue, filter `^c2c-[0-9]+-b`,
+tier `full` (201 cases); 12 rounds, every one under load (other processes 51 cores), A/A
+band ±1.91 %, so rule (b)'s limit is 1.039. Arm ÷ A on the target cases whose plan the arm
+changes (every interval clear of the band):
+
+| case | S | R |
+|---|---|---|
+| 80 | – | 0.959 |
+| 160 | – | 0.955 |
+| 240 | – | 0.822 |
+| 384 | 0.846 | 0.845 |
+| 640 | – | 0.869 |
+| 2000 | – | 0.820 |
+| 3000 | – | 0.832 |
+| 3600 | 0.922 | 0.813 |
+| 20000 | 0.919 | 0.913 |
+| geometric mean | **0.895** | **0.868** |
+| all 201 cases (fbench's weighted geomean) | 0.999 [0.995, 1.002] | 0.993 [0.990, 0.998] |
+
+Cases past 1.039, none of whose plans the arm changes (the notes are identical): S 32768
+1.069, 61 1.045; R 60 × 3 1.041, 65537 1.146, 323 1.040. No changed length is slower
+than 1 + band anywhere (rule (c) drops nothing).
+
+FFTN ÷ FFTW in the same run (A's ratio times the arm's): 80 1.092 → 1.047, 160 1.052 →
+1.004, 240 1.134 → 0.932, 384 1.232 → 1.041, 640 1.227 → 1.066, 2000 1.095 → 0.898, 3000
+1.037 → 0.863, 3600 1.072 → 0.871, 20000 1.167 → 1.065; unchanged: 1024 1.156 (× 3 1.163, ×
+16 1.114, backward 1.221), 768 1.186, 2048 1.145, 512 1.131, 100 1.098. Over the 193 cases
+with every reference: geomean 0.845 (A), 0.844 (S), 0.839 (R); cases over 1.05: 32 (16.6 %),
+31 (16.1 %), 27 (14.0 %).
+
+**Re-run** of the cases past the limit (run 20261116-215718-d893, Slurm 511276, not queued
+serially: six cases; 40 rounds, none under load, band ±1.00 %, limit 1.030; the arms
+rebuilt from the same commits under main's new build identity): S 32768 0.998, 65537
+0.999, 323 0.990, 60 × 3 1.000, but 37 1.045 and 61 1.043; R 32768 0.997, 65537 0.999, 61
+1.008, 37 1.018, but 60 × 3 1.036 and 323 1.049. The re-run decides: S has two cases past
+the limit, R two. None is a change of plan or of the code that runs: S changes only the
+planner's table, which these plans do not read (37 and 61 are Rader stages over chains of
+36 = 6 × 6 and 60 = 6 × 10, the same in every arm), and R, which contains S, runs the
+same 37 and 61 at 1.018 and 1.008. R's 323 = 17 × 19 runs the radix-19 functions, which
+now share a row unit with radix 20: their code is the same size to 0.03 % (963999 against
+964279 bytes over 92 functions, GCC 16) and the 60-point passes come from an object file
+identical in size in both builds. Code placement is the likely cause; it was not proven
+(no counters of these cases).
+
+### Xeon Gold 6240, `ISA=avx2`, tracking tier (run 20261116-212801-b1ea)
+
+GCC 14.4, Slurm 16125 (`--serial`), 30 rounds, none under load, band ±1.44 % (limit
+1.034). S ÷ A 0.999 [0.996, 1.001], no case past the limit; R ÷ A 1.001 [0.998, 1.005],
+one case past it: r2c 64 × 64 1.047 [1.040, 1.052] (its rows of 64 real points are not
+among R's lengths). The tracking tier has none of the target lengths, so this is
+collateral only.
+
+### EPYC, tracking tier (run 20261116-215040-9de3)
+
+Slurm 511134 (`--serial`), arms A, S, R, 30 rounds, 2 under load, band ±1.00 % (limit
+1.030). S ÷ A 1.001 [0.998, 1.006], R ÷ A 1.000 [0.995, 1.006]; no case past the limit for
+either (worst S 2187 1.024, R c2r 65536 1.025 with an interval to 1.149); R's c2c plane
+480 × 640 0.980 (rows of 640).
+
+### Clang, recorded (run 20261116-215901-e1c7)
+
+Xeon Gold 6240, Clang 23.1.2, `ISA=avx2`, Slurm 16132, the nine changed lengths at batch 1,
+20 rounds, none under load, band ±1.38 %: R ÷ A 0.913 [0.892, 0.937]; 80 0.899, 160 0.985,
+240 0.809, 384 0.915, 640 0.987, 2000 0.852, 3000 0.932, 3600 0.896, 20000 0.962; none
+slower. Clang on the EPYC was not run.
+
+Bits: S and R change plans, so bits, at their lengths only (within the tests'
+tolerances; CI on pull request 27). Library text +5.6 % on x86-64 Linux (libfftn.a, GCC 16,
+all targets: 49.2 → 52.0 MB), +4.8 % on the Mac.
 
 ## Verdict
 
-(to come)
+- **R (a radix-20 codelet with `avx2` double overrides, on S): passes (a) and (c),
+  fails (b) by the letter; proposed for adoption with two recorded exceptions, the lead's
+  call.** (a) the nine changed target cases 0.868 of A on the EPYC (0.813–0.959, every
+  interval clear of the band); (c) no changed length slower anywhere; the tracking tier
+  1.000 with no case past the limit; the Xeon's `avx2` tracking 1.001 (r2c 64 × 64 1.047
+  recorded); Clang 0.913. (b): after the re-run, 60 × 3 (1.036) and 323 (1.049) remain past
+  1.030; neither plan changes (identical notes, the same code to 0.03 %), so code placement
+  is the likely cause, not shown. Against FFTW the EPYC's exit-check cases over 1.05 go
+  from 32 to 27 of 193 (16.6 % → 14.0 %): 240, 2000, 3000, 3600 and 160 leave the list,
+  384 (1.04), 80 (1.05) and 640 (1.07) nearly do, 20000 stays (1.07).
+- **S (re-fitted sequences): passes (a) (0.895) and (c), fails (b) the same way** (37 and
+  61 at 1.04–1.05 on the re-run; S changes no instruction those plans run, and R, which
+  contains S, runs them at 1.01–1.02). Superseded by R wherever both have a length; its 384
+  and 20000 remain in R.
+- **Not closed**: 1024 (1.15–1.22 of FFTW at every batch), 768 (1.19), 2048 (1.15), 512
+  (1.13), 100 (1.10). Their best FFTN sequences are the planner's; FFTW's two-pass plans
+  with a radix-64 or radix-32 pass lose in FFTN (as the first pass 1.2–1.3 times the
+  planner's time, as the last about even). The remainder is the passes: FFTN's radix-32 and
+  64 codelets peak at 35 and 67 live values in 16 registers (spills), a generator matter;
+  FFTN's radix-16 passes are already cheaper per point than FFTW's.
+- No third arm was run.
