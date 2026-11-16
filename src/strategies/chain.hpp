@@ -124,6 +124,10 @@ public:
                 std::vector<std::size_t> forced, std::size_t bluestein_above = 0,
                 real_fusion fusion = {});
 
+  // Leaves (n <= 16) from this set instead of the target's own: the 128-bit leaves of the
+  // x86 targets (kernel_table.hpp, experiment X28), which round alike. Null: the target's.
+  void use_narrow_leaves(const narrow_leaf_set<T>* leaves) noexcept { narrow_ = leaves; }
+
   // The radices of a chain for n, in pass order (empty for n = 1); the last is a Bluestein
   // stage's when bluestein_last(n).
   [[nodiscard]] std::vector<std::size_t> radices(std::size_t n) const;
@@ -253,6 +257,7 @@ private:
                       std::size_t block, std::vector<stage>& stages);
 
   const kernels_of<T>& kernels_;
+  const narrow_leaf_set<T>* narrow_ = nullptr;
   target_profile profile_;
   std::vector<std::vector<T>>& tables_;
   std::size_t chunk_points_;

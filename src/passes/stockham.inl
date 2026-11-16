@@ -85,8 +85,8 @@ FFTN_FORCE_INLINE void store_padded(T* y, const cv<T>* v, std::size_t valid) {
 // slower with GCC and Clang at lengths with no partial unit at all
 // (dev/experiments/X23-masked-tails.md, amendment).
 template <class T, std::size_t R, int Sign, edge_op InOp>
-FFTN_FORCE_INLINE void grouped_tail(const pass_args* a, std::size_t u) {
-  const T* x = static_cast<const T*>(a->src);
+FFTN_FORCE_INLINE void grouped_tail(const pass_args* a, const void* src, void* dst, std::size_t u) {
+  const T* x = static_cast<const T*>(src);
   const std::ptrdiff_t xs = 2 * a->src_stride;
   const std::size_t m = a->m;
   const std::size_t mpad = (m + C<T> - 1) / C<T> * C<T>;
@@ -107,7 +107,7 @@ FFTN_FORCE_INLINE void grouped_tail(const pass_args* a, std::size_t u) {
   cv<T> v[R]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
   const to_registers<T> out{v};
   cdft<R>::template dif<T, Sign>(in, out, twid);
-  T* yp = static_cast<T*>(a->dst) + 2 * R * p0;
+  T* yp = static_cast<T*>(dst) + 2 * R * p0;
   if constexpr (R % C<T> == 0) {
     store_transposed<T, R>(yp, v, valid);
   } else {
@@ -123,9 +123,10 @@ FFTN_FORCE_INLINE void grouped_tail(const pass_args* a, std::size_t u) {
 // what is loaded. src: any stride when C == 1, else 1; dst: scratch, stride 1. Reads src,
 // src_stride, m, twiddles, scale, in_factor.
 template <class T, std::size_t R, int Sign, edge_op InOp>
-void grouped_pass(const pass_args* a, std::size_t first, std::size_t last) {
-  const T* x = static_cast<const T*>(a->src);
-  T* y = static_cast<T*>(a->dst);
+void grouped_pass(const pass_args* a, const void* src, void* dst, std::size_t first,
+                  std::size_t last) {
+  const T* x = static_cast<const T*>(src);
+  T* y = static_cast<T*>(dst);
   const std::ptrdiff_t xs = 2 * a->src_stride;
   const std::size_t m = a->m;
   const std::size_t mpad = (m + C<T> - 1) / C<T> * C<T>;
@@ -164,7 +165,7 @@ void grouped_pass(const pass_args* a, std::size_t first, std::size_t last) {
   }
   if constexpr (masked) {
     if (whole < last) {
-      grouped_tail<T, R, Sign, InOp>(a, whole);
+      grouped_tail<T, R, Sign, InOp>(a, src, dst, whole);
     }
   }
 }
@@ -239,10 +240,10 @@ FFTN_FORCE_INLINE auto lane_output(const pass_args* a, T* yp, std::ptrdiff_t leg
 // copies q0 .. s - 1. The pass runs them after its loop over the other units, for the
 // reason given at grouped_tail; units are independent, so the order changes no bit.
 template <class T, std::size_t R, int Sign, bool Twiddled, edge_op OutOp, factor_sharing Share>
-FFTN_FORCE_INLINE void lane_tails(const pass_args* a, std::size_t first, std::size_t last,
-                                  std::size_t blocks) {
-  const T* x = static_cast<const T*>(a->src);
-  T* y = static_cast<T*>(a->dst);
+FFTN_FORCE_INLINE void lane_tails(const pass_args* a, const void* src, void* dst, std::size_t first,
+                                  std::size_t last, std::size_t blocks) {
+  const T* x = static_cast<const T*>(src);
+  T* y = static_cast<T*>(dst);
   const std::ptrdiff_t ys = 2 * a->dst_stride;
   const std::size_t s = a->s;
   const T* table = static_cast<const T*>(a->twiddles);
@@ -285,9 +286,10 @@ FFTN_FORCE_INLINE void lane_tails(const pass_args* a, std::size_t first, std::si
 // s, twiddles, scale, out_factor, and in_factor or factor_copies when sharing.
 template <class T, std::size_t R, int Sign, bool Twiddled, edge_op OutOp,
           factor_sharing Share = factor_sharing::none>
-void lane_pass(const pass_args* a, std::size_t first, std::size_t last) {
-  const T* x = static_cast<const T*>(a->src);
-  T* y = static_cast<T*>(a->dst);
+void lane_pass(const pass_args* a, const void* src, void* dst, std::size_t first,
+               std::size_t last) {
+  const T* x = static_cast<const T*>(src);
+  T* y = static_cast<T*>(dst);
   const std::ptrdiff_t ys = 2 * a->dst_stride;
   const std::size_t m = a->m;
   const std::size_t s = a->s;
@@ -342,7 +344,7 @@ void lane_pass(const pass_args* a, std::size_t first, std::size_t last) {
   // The partial blocks, which the loop skipped on the targets with masked partial runs.
   if constexpr (masked) {
     if (s % C<T> != 0) {
-      lane_tails<T, R, Sign, Twiddled, OutOp, Share>(a, first, last, blocks);
+      lane_tails<T, R, Sign, Twiddled, OutOp, Share>(a, src, dst, first, last, blocks);
     }
   }
 }
@@ -353,7 +355,7 @@ void lane_pass(const pass_args* a, std::size_t first, std::size_t last) {
 // and any strides work; every load precedes every store, so src may be dst (in place).
 // Leaves are called with their lines' addresses (leaf_fn, passes/pass_args.hpp): line u at
 // src + u src_dist, dst + u dst_dist bytes, each with the same arithmetic. Reads
-// src_stride, dst_stride, scale, in_factor, out_factor; not src or dst.
+// src_stride, dst_stride, scale, in_factor, out_factor.
 template <class T, std::size_t R, int Sign, edge_op InOp, edge_op OutOp>
 void leaf_lines(const pass_args* a, const void* src, void* dst, std::ptrdiff_t src_dist,
                 std::ptrdiff_t dst_dist, std::size_t count) {

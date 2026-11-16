@@ -157,4 +157,14 @@ const kernel_table* find_kernels(target t) noexcept {
   return nullptr;
 }
 
+const narrow_leaf_table* find_narrow_leaves(target t) noexcept {
+#if FFTN_ARCH_X86_64
+  if (t == target::avx2 || t == target::avx512) {
+    return &avx2::narrow::leaves;
+  }
+#endif
+  static_cast<void>(t);
+  return nullptr;
+}
+
 } // namespace fftn::inline v0::detail

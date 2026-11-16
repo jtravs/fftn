@@ -599,6 +599,12 @@ operation order rather than a de-fused FMA order. `x86_v2` has the same shape as
 `neon` (one complex per register, no complex-arithmetic instructions beyond SSE3's
 `addsub`), so the two share planner rules as a starting point.
 
+The x86 targets share one set of 128-bit leaves (n ≤ 16): the leaves compiled in the
+`avx2` region with `avx2`'s operations on 128-bit registers (`src/isa/vocab_avx2_narrow.inl`,
+experiment X28). A leaf broadcasts its one line into every lane, so wider registers only
+repeat the work, and on Cascade Lake a 512-bit leaf also lowers the clock; the half-width
+operations round as `avx2`'s and `avx512`'s do, so the bits are unchanged.
+
 The target is detected once per process (CPUID, `getauxval`/`sysctlbyname`, Windows
 `IsProcessorFeaturePresent`) and chosen once per plan. A plan may be forced to a lower
 target for tests and benchmarks; that never affects other plans or other libraries.
@@ -999,7 +1005,7 @@ construction and interpreted by a small driver.
 
 ```cpp
 struct stage {            // one pass over one buffer range
-  pass_fn   run;          // the instantiated pass kernel: run(args, first, last)
+  pass_fn   run;          // the instantiated pass kernel: run(args, src, dst, first, last)
   const void* twiddles;
   std::uint32_t radix, m, s;        // geometry
   std::uint8_t  src, dst;           // buffer slots: caller in, caller out, scratch a/b, block
@@ -1019,11 +1025,15 @@ Loops express everything that is not a single pass: a batch of rows, depth-first
 planes of a volume. Walking records costs a few nanoseconds per record and transform, which
 is more than a tiny transform's arithmetic, so the commonest programs are not walked: a
 program whose body is a few stages and no loop (rows) is marked *flat* at construction, and
-the driver then runs a batch of leaves as one kernel call, one transform with one copy of
-each stage's arguments, and a batch with those copies made once and the slots moved by the
-batch step (experiment X20: at 8 points 7.7 → 4.3 ns per call, 7.1 → 1.7 ns per transform
-in a batch on the M5 Max). Every kernel still gets the arguments and units the walk would
-give it, so the bits do not change. Two consequences:
+the driver then runs a batch of leaves as one kernel call, one transform from a contiguous
+copy of the stages (entered straight from `execute_core`, its slots passed as scalars), and
+a batch with the slots moved by the batch step (experiments X20 and X28: at 8 points 7.7 →
+4.3 ns per call, 7.1 → 1.7 ns per transform in a batch on the M5 Max). Every kernel, leaf
+or pass, takes its source and destination as arguments and reads the rest from the plan's
+own arguments: a fresh copy of the arguments per stage and transform cost 3–5 ns per stage
+on x86, most of it the copy's store-to-load forwarding into the kernel (X28). Every kernel
+still gets the arguments and units the walk would give it, so the bits do not change. Two
+consequences:
 
 - **Blocking and batching are data**, not separate engines.
 - **The threading work graph is read off the program** (section 13.2). Independent loops
@@ -2594,6 +2604,8 @@ to change before a release.
 | 2026-11-15 | Planner refresh: the measured radix tables are refitted after X1, X3, X18 and X19 on every machine; AVX-512 has its own tables in both precisions (float a fresh fit with 35 overrides, double AVX2 float's costs with 15 overrides); `avx512` stays the first target in double, and float's per-plan target choice is deferred (X16, Cascade Lake only) | A/B over the changed lengths: Xeon AVX-512 0.90 of before (float) and 0.94 (double), EPYC AVX2 0.94–0.95, Mac 0.98; the tracking tier unchanged within noise (0.994–1.001). Overrides measured slower inside another path (Bluestein lengths, r2c planes) are dropped |
 | 2026-11-15 | The grid's copies (`block_copy`, `twiddle_scatter`) do not prefetch rows ahead on `avx2`; `avx512` and NEON keep the prefetch of eight rows ahead (experiment X26) | EPYC 7763: target rows 0.920 of main's time without it (a block's rows lie a multiple of 4 KiB apart and share one or two 8-way L1 sets, so rows asked for ahead evict the scratch block); Xeon `avx512` 1.04 and Mac 1.01 slower without it. Cheaper copy loops (24-37 % fewer instructions) were rejected: within the band on the Mac and the Xeon, up to 1.56 slower on the EPYC |
 | 2026-11-15 | Masked partial runs on x86 (X23's arm P5: `load_n`/`store_n`, partial units after the loops, padded transposes, `avx2` stores in pieces) are built behind `FFTN_MASKED_TAILS`, `AUTO` by default: on with GCC, the x86 release toolchain, and off with Clang and icpx, which keep the tile (sections 8.2, 14.3) | The maintainer adopted X23 for GCC after it was rejected for a Clang-only loss (Clang 23: `avx2` double 75 points 1.42), under the rule that decisions judge the release toolchains. Amendment 4 with GCC: float 0.53 of main's time on the Xeon's `avx512`, 0.77 on `avx2`, 0.72 on the EPYC, double 0.78–0.89, bits unchanged; off, the kernel objects are byte for byte main's. Its rule was missed by one whole-unit case on two machine-targets (float 256 1.047 on `avx512`, double 72 1.033 on the EPYC), kept as recorded exceptions (the lead's decision under the maintainer's direction to keep X23 for GCC; neither case has a partial unit) |
+| 2026-11-15 | The x86 targets' leaves (n ≤ 16) are 128-bit: compiled in the `avx2` region with `avx2`'s operations at half width (`vocab_avx2_narrow.inl`), used by `avx2` and `avx512` plans alike (experiment X28) | A leaf broadcasts its one line into every lane, so width only repeats work; on Cascade Lake the 512-bit leaf ran at licence 1–2 (Xeon 8 points 65 → 47 cycles, 16 points 110 → 85); same operations per lane, so bits unchanged |
+| 2026-11-15 | A pass kernel takes its source and destination as arguments (`pass_fn(args, src, dst, first, last)`), like a leaf; `pass_args` holds only the fixed geometry, and the driver calls kernels on the plan's own arguments; one transform of a flat program runs from a contiguous `flat_body`, entered from `execute_core` with its slots as scalars; `plan::execute` is one library call (X28) | The per-stage, per-transform copy of `pass_args` cost 3.7–6 ns per stage on Zen 3 (much of it store-to-load forwarding into the kernel), 1.5–2.7 on the M5 Max: single rows of 24–120 points 0.69–0.88 of their time on the Mac; only grid stages with moving twiddles and lanes blocks still copy |
 | 2026-11-15 | A c2r row out of place whose half-length transform is a two-phase grid pairs its bins in phase 1's gather (`c2r_pair_gather`), reading the input only; in place and three-phase grids keep the separate pairing pass; the r2c pairing stays separate (section 9.1) | X29 (Mac): 0.92–0.94 of the separate route's time at 32768–131072 and 46080 out of place, where the workspace block goes; 1.02–1.06 where the block stays (the gather reads the input twice) |
 | 2026-11-15 | Where a cluster shares L2 (Apple), a row whose length is not a power of two stays a chain when its power-of-two part is at most L1/8 in bytes, or the row at most 2 L1 (`chain_part_bytes`, `chain_mixed_bytes`; section 8.5) | X29 (M5 Max): chains took 0.49–0.72 of the grid's time for every such length tried (144 KiB to 62.5 MiB), the grid's L1-conflict problem being one of powers of two; tracking tier 0.983 (46080 0.63, 100000 0.60), nothing slower |
 | 2026-11-15 | With a private L2 and at least 2 MiB of L3 per CPU (Zen), the grid starts at half of L3 instead of half of L2 (section 8.5) | X29 (EPYC 7763): the chain took 0.51–0.81 of the grid's time on every row from L2/2 to 16 MiB, powers of two included; the Xeon 6240 (0.7 MiB of L3 per CPU) keeps L2/2, where the chain lost 1.1–1.6 |
