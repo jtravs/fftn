@@ -1260,7 +1260,8 @@ template <class T> void pair_leaves_match(fftn::isa t) {
         build_settings chain = pair;
         chain.radices = {e.r1, e.m};
         chain.layout = fftn::detail::layout_choice::interleaved;
-        const auto shape = fftn::detail::view_of(fftn::rows_c2c<T>(n, rows, dir));
+        const auto rows_shape = fftn::rows_c2c<T>(n, rows, dir);
+        const auto shape = fftn::detail::view_of(rows_shape);
         const auto with = make_plan_core(shape, opts, pair);
         const auto without = make_plan_core(shape, opts, chain);
         EXPECT_NE(joined(stage_names(*with)).find(name), std::string::npos)
@@ -1276,7 +1277,8 @@ template <class T> void pair_leaves_match(fftn::isa t) {
       check_row<T>(t, n, dir, {}, 0.375, false, false, true, {name, "in: scale"});
     }
     // Where the pair leaf does not apply, the chain runs.
-    const auto plain = fftn::detail::view_of(fftn::rows_c2c<T>(n, 1, fftn::direction::forward));
+    const auto row = fftn::rows_c2c<T>(n, 1, fftn::direction::forward);
+    const auto plain = fftn::detail::view_of(row);
     build_settings off;
     off.pair_leaves = false;
     EXPECT_EQ(joined(stage_names(*make_plan_core(plain, {.force_isa = t}, off))).find("pair leaf"),

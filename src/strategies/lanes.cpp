@@ -191,10 +191,16 @@ std::size_t chain_builder<T>::c2c_lanes(std::size_t n, int sign, endpoint src,
                                         std::ptrdiff_t src_dist, endpoint dst,
                                         std::ptrdiff_t dst_dist, const line_edges& edges,
                                         std::size_t block, std::vector<stage>& stages) {
-  const std::vector<std::size_t> rad = radices(n);
+  // Where c2c_line takes a pair leaf (X28b), its chain r1 x m with interleaved passes, so
+  // that each lane computes what the row alone would.
+  const pair_leaf_entry* pair = pair_for(n, src, dst, edges);
+  const std::vector<std::size_t> rad =
+      pair != nullptr ? std::vector<std::size_t>{pair->r1, pair->m} : radices(n);
   // c2c_line's split run: a line with a stride other than 1 is copied on C > 1, so only C = 1
   // sees the destination's stride.
-  const std::size_t split = split_from(rad, false, kernels_.complex_lanes > 1 ? 1 : dst.stride);
+  const std::size_t split =
+      pair != nullptr ? rad.size()
+                      : split_from(rad, false, kernels_.complex_lanes > 1 ? 1 : dst.stride);
   lanes_body(n, rad, split, sign, {src.where, 2 * src.stride, 2 * src_dist},
              {dst.where, 2 * dst.stride, 2 * dst_dist}, edges, block, stages);
   return n * block;
