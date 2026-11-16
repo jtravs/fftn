@@ -441,8 +441,12 @@ template <class T>
 void chain_builder<T>::add_leaf(std::size_t n, int sign, endpoint src, endpoint dst,
                                 const line_edges& edges, std::vector<stage>& stages) {
   stage st;
-  st.leaf = kernels_.passes.codelet[codelet_slot(n)]
-                ->leaf[direction_index(sign)][edge_index(edges.in)][edge_index(edges.out)];
+  const std::size_t d = direction_index(sign);
+  const std::size_t in = edge_index(edges.in);
+  const std::size_t out = edge_index(edges.out);
+  st.leaf = narrow_ != nullptr && n <= dense_codelet_radix
+                ? narrow_->leaf[codelet_slot(n)][d][in][out]
+                : kernels_.passes.codelet[codelet_slot(n)]->leaf[d][in][out];
   st.args.radix = n;
   st.args.n = n;
   st.args.scale = edges.scale;

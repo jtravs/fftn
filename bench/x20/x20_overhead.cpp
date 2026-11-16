@@ -5,18 +5,22 @@
 // tiny serial execute goes. For each case (c2c rows, forward, out of place) it times, in
 // ns per transform, the same work entered at four levels:
 //
-//   api     execute_core, what plan::execute calls (argument checks, the workspace's team
-//           word and alignment, then the driver);
+//   public  what plan::execute calls, execute_all (X28);
+//   api     execute_core alone (argument checks, the workspace's team word and alignment,
+//           then the driver);
 //   driver  run_transforms with the slot addresses prepared once (the program's
 //           interpretation: batch loops, records, the stage's pass_args copy, chunk ends);
 //   kernel  each stage's kernel called directly per transform through its function
-//           pointer, with pass_args prepared once and only src and dst set per call (the
-//           floor of any program that calls kernels one transform at a time);
+//           pointer, on the stage's own arguments (the floor of any program that calls
+//           kernels one transform at a time);
+//   copy    the same with each pass stage's pass_args copied per transform, as the driver
+//           did before X28 gave passes their addresses as arguments (copy - kernel is what
+//           that saved);
 //   once    a leaf body's kernel called once per transform with nothing else: only the
 //           loop around the indirect call.
 //
 //   x20_overhead [--n 2,4,8,16,32,64] [--batch 1,64] [--prec f64,f32] [--reps 15]
-//                [--ms 20]
+//                [--ms 20] [--isa avx2]
 //
 // One line per case and level: n batch prec level median_ns min_ns. The cases run in
 // one process; fbench measures FFTN against FFTW, this harness only splits FFTN's time.
@@ -121,11 +125,12 @@ void* slot_dst(d::slot s, const d::slot_addresses& at) {
   return at.block;
 }
 
-template <class T> void run_case(std::size_t n, std::size_t batch, int reps, double ms) {
+template <class T>
+void run_case(std::size_t n, std::size_t batch, int reps, double ms, fftn::isa isa) {
   using C = std::complex<T>;
   const auto shape = fftn::rows_c2c<T>(n, batch, fftn::direction::forward);
   const std::shared_ptr<const d::plan_core> core =
-      d::make_plan_core(d::view_of(shape), fftn::options{});
+      d::make_plan_core(d::view_of(shape), fftn::options{.force_isa = isa});
   fftn::workspace ws(core->bytes);
   std::vector<C> in(n * batch);
   std::vector<C> out(n * batch);
@@ -137,6 +142,8 @@ template <class T> void run_case(std::size_t n, std::size_t batch, int reps, dou
     std::printf("%zu %zu %s %s %.3f\n", n, batch, prec, level, ns);
   };
 
+  report("public",
+         time_ns([&] { d::execute_all(*core, in.data(), out.data(), ws); }, batch, reps, ms));
   report("api", time_ns([&] { d::execute_core(*core, 0, batch, in.data(), out.data(), ws); }, batch,
                         reps, ms));
 
@@ -164,22 +171,15 @@ template <class T> void run_case(std::size_t n, std::size_t batch, int reps, dou
     }
     body.push_back(st);
   }
-  std::vector<d::pass_args> args;
-  args.reserve(body.size());
-  for (const d::stage* st : body) {
-    args.push_back(st->args);
-  }
   const auto dist = static_cast<std::ptrdiff_t>(n * sizeof(C));
-  // A stage's kernel on the slots `here`: a leaf with the addresses, a pass through args.
+  // A stage's kernel on the slots `here`, on the stage's own arguments.
   const auto call = [&](std::size_t k, const d::slot_addresses& here) {
     const d::stage& st = *body[k];
     if (st.leaf != nullptr) {
       st.leaf(&st.args, slot_src(st.src, here), slot_dst(st.dst, here), 0, 0, 1);
       return;
     }
-    args[k].src = slot_src(st.src, here);
-    args[k].dst = slot_dst(st.dst, here);
-    st.run(&args[k], 0, st.units);
+    st.run(&st.args, slot_src(st.src, here), slot_dst(st.dst, here), 0, st.units);
   };
   report("kernel", time_ns(
                        [&] {
@@ -193,6 +193,24 @@ template <class T> void run_case(std::size_t n, std::size_t batch, int reps, dou
                          }
                        },
                        batch, reps, ms));
+  report("copy", time_ns(
+                     [&] {
+                       d::slot_addresses here = at;
+                       for (std::size_t t = 0; t < batch; ++t) {
+                         for (std::size_t k = 0; k < body.size(); ++k) {
+                           const d::stage& st = *body[k];
+                           if (st.leaf != nullptr) {
+                             call(k, here);
+                             continue;
+                           }
+                           const d::pass_args a = st.args;
+                           st.run(&a, slot_src(st.src, here), slot_dst(st.dst, here), 0, st.units);
+                         }
+                         here.in += dist;
+                         here.out += dist;
+                       }
+                     },
+                     batch, reps, ms));
   if (body.size() == 1 && body[0]->leaf != nullptr) {
     const d::leaf_fn fn = body[0]->leaf;
     const d::pass_args* a = &body[0]->args;
@@ -216,6 +234,7 @@ int run(std::span<char* const> argv) {
   std::vector<std::string> precs{"f64", "f32"};
   int reps = 15;
   double ms = 20.0;
+  fftn::isa isa = fftn::isa::best;
   for (std::size_t i = 1; i + 1 < argv.size(); i += 2) {
     const std::string_view k = argv[i];
     const std::string_view v = argv[i + 1];
@@ -235,15 +254,22 @@ int run(std::span<char* const> argv) {
       reps = static_cast<int>(std::strtol(argv[i + 1], nullptr, 10));
     } else if (k == "--ms") {
       ms = std::strtod(argv[i + 1], nullptr);
+    } else if (k == "--isa") {
+      for (auto t = static_cast<unsigned>(fftn::isa::scalar);
+           t <= static_cast<unsigned>(fftn::isa::best); ++t) {
+        if (v == fftn::isa_name(static_cast<fftn::isa>(t))) {
+          isa = static_cast<fftn::isa>(t);
+        }
+      }
     }
   }
   for (const std::string& prec : precs) {
     for (const std::size_t b : batches) {
       for (const std::size_t n : ns) {
         if (prec == "f64") {
-          run_case<double>(n, b, reps, ms);
+          run_case<double>(n, b, reps, ms, isa);
         } else {
-          run_case<float>(n, b, reps, ms);
+          run_case<float>(n, b, reps, ms, isa);
         }
       }
     }

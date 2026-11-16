@@ -16,6 +16,8 @@ foreach(target IN LISTS fftn_isa_targets)
     list(APPEND fftn_isa_units rows${k}_${target}.cpp)
   endforeach()
 endforeach()
+# The 128-bit leaves of the x86 targets (experiment X28), in the avx2 region.
+list(APPEND fftn_isa_units narrow_avx2.cpp)
 target_sources(fftn PRIVATE ${fftn_isa_units} target.cpp)
 fftn_always_optimise(${fftn_isa_units})
 # For the disassembly test's second compilation (tests/isa).
