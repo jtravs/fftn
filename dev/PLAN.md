@@ -91,8 +91,9 @@ Open, by phase:
 - 3: T2, T3, T4, T6; 3.5 (Kokkos executor); 3.6 to be checked against its acceptance.
 - 4–7: not started.
 
-In flight (lead session, 2026-11-16): round 2 of the push is merged; next: a formal phase 1 exit check (standard catalogue, c2c
-rows, double and float, the 5 % tail rule of DESIGN 1.3) and X35 (Granite Rapids: a cache-geometry key so the
+In flight (lead session, 2026-11-16): round 2 of the push is merged; the phase 1 exit check is done (above); the tail round:
+X36 (primes outside Rader's range), X37 (short rows and batches of 16), X38 (the EPYC's
+240–2048); task 2.4 (`planning::measure`, wisdom); the extended-CI fix; X35 (Granite Rapids: a cache-geometry key so the
 Zen-like chain rules of X29, X32 and X33 stop applying to it). Done, each merged with its
 pull request:
 - X31b (cloud, USD 1.12; campaign USD 1.87 of 20): X32 holds on Zen 5 (long powers of two
