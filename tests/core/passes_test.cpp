@@ -1026,10 +1026,18 @@ template <class T> void same_bits(fftn::isa a, fftn::isa b, fftn::detail::layout
       strided.batches[0].out_dist = static_cast<std::ptrdiff_t>(3 * n);
       const auto view = fftn::detail::view_of(strided);
       const cvec<T> xs = src.complexes<T>(2 * rows * n);
-      EXPECT_TRUE(bitwise_equal(
-          run<c, c>(*make_plan_core(view, {.force_isa = a}, settings), xs, 3 * rows * n),
-          run<c, c>(*make_plan_core(view, {.force_isa = b}, settings), xs, 3 * rows * n)))
-          << "c2c strided";
+      // With split passes forced, a target with C = 1 (x86_v2 in double) reads and writes
+      // the strided lines in its first and last passes, between which a split run cannot
+      // start or end, while one with C > 1 (avx) copies them into scratch and runs the split
+      // passes there: not the same passes, so not compared.
+      const bool same_passes = layout == fftn::detail::layout_choice::interleaved ||
+                               (lanes_of<T>(a) == 1) == (lanes_of<T>(b) == 1);
+      if (same_passes) {
+        EXPECT_TRUE(bitwise_equal(
+            run<c, c>(*make_plan_core(view, {.force_isa = a}, settings), xs, 3 * rows * n),
+            run<c, c>(*make_plan_core(view, {.force_isa = b}, settings), xs, 3 * rows * n)))
+            << "c2c strided";
+      }
       const auto tight = fftn::rows_c2c<T>(n, rows, fftn::direction::backward);
       const auto tight_view = fftn::detail::view_of(tight);
       EXPECT_TRUE(bitwise_equal(

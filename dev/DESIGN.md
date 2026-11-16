@@ -612,16 +612,17 @@ operation order rather than a de-fused FMA order. `x86_v2` has the same shape as
 `neon` (one complex per register, no complex-arithmetic instructions beyond SSE3's
 `addsub`), so the two share planner rules as a starting point.
 
-The x86 targets share one set of 128-bit leaves (n ≤ 16 and the primes 17, 19, 23): the
-leaves compiled in the `avx2` region with `avx2`'s operations on 128-bit registers
+The FMA x86 targets (`avx2`, `avx512`) share one set of 128-bit leaves (n ≤ 16 and the
+primes 17, 19, 23): the leaves compiled in the `avx2` region with `avx2`'s operations on 128-bit registers
 (`src/isa/vocab_avx2_narrow.inl`, experiments X28 and X28b). A leaf broadcasts its one line
 into every lane, so wider registers only repeat the work, and on Cascade Lake a 512-bit
 leaf also lowers the clock; the half-width operations round as `avx2`'s and `avx512`'s do,
 so the bits are unchanged. Every leaf has a second instantiation for lines of stride 1 on
-both sides, whose leg offsets are constants (`src/passes/unit_leaf.inl`, X28b); the x86
-targets keep only the narrow one. Short composite rows on x86 are pair leaves (section
-8.2): a table per target and precision (`src/isa/pairs_<target>.cpp`) lists the lengths
-and their factors r1 × m.
+both sides, whose leg offsets are constants (`src/passes/unit_leaf.inl`, X28b); `avx2` and
+`avx512` keep only the narrow one. Short composite rows on those two are pair leaves
+(section 8.2): a table per target and precision (`src/isa/pairs_<target>.cpp`) lists the
+lengths and their factors r1 × m. `x86_v2` and `avx`, which have no FMA and so cannot run
+`avx2` code, use their own leaves, as NEON and the scalar target do, and no pair leaves.
 
 The target is detected once per process (CPUID, `getauxval`/`sysctlbyname`, Windows
 `IsProcessorFeaturePresent`) and chosen once per plan. A plan may be forced to a lower
@@ -684,13 +685,16 @@ fused, so it gives the same bits on every processor. The full contract is
 Each SIMD target rounds every operation exactly as another of its architecture does, so
 the same passes give the same bits on both targets of a pair: plain `neon` takes FCMLA's
 order in its products (the product with wr rounded, the wi term fused onto it), `avx512`
-takes `avx2`'s FMA order, and `addj` and `subj` round one addition everywhere
+takes `avx2`'s FMA order, `x86_v2` and `avx` round each product and then sum them, in the
+scalar target's pairing (so all three agree operation by operation), and `addj` and `subj`
+round one addition everywhere
 (`tests/core/passes_test.cpp` holds whole transforms to it). Forming a ± i·b on AVX-512 as
 `fmaddsub` or `fmsubadd` by a vector of ones, which rounds once because the product is
 exact, is an idiom FFTW's AVX-512 SIMD header uses too (the idea only; FFTN's code is its
 own, AGENTS.md section 10). `neon` and `neon_fcma` share
 a planner profile, so their plans agree bit for bit; `avx2` and `avx512` do not (16 and
-32 registers), so for some lengths they choose different radices and so different bits.
+32 registers), so for some lengths they choose different radices and so different bits;
+`x86_v2` takes `avx`'s W as its `split_block`, as `avx2` takes `avx512`'s.
 The operations the two NEON targets share are written once
 (`src/isa/vocab_neon_common.inl`).
 
@@ -775,11 +779,11 @@ of every vocabulary function and kernel, and the linker cannot substitute a copy
 for one target for a caller of another. The library is compiled with `-Werror=psabi` under
 GCC (experiment B1, section 14.1), always, not only in the gate.
 
-Each target is compiled as six translation units with the same region and the same kernel
+Each target is compiled as nine translation units with the same region and the same kernel
 text (`src/isa/kernel_text.inl`: twiddle packing, codelets, passes), each instantiating a
-share of it. Five row units (`src/isa/rows<k>_<target>.cpp`) instantiate the passes of the
-codelet radices that `src/isa/rows.inl` gives them (radices 2–12, 13–16, 32, and 64 once per
-precision, about equal in compile time), each row as a constant
+share of it. Eight row units (`src/isa/rows<k>_<target>.cpp`) instantiate the passes of the
+codelet radices that `src/isa/rows.inl` gives them (radices 2–12, 13–16, 32, 64 once per
+precision, and 17, 19 and 23 one each, about equal in compile time), each row as a constant
 `codelet_row<T, I>::passes` of external linkage in the target's namespace (an explicit
 instantiation). The main unit (`src/isa/<target>.cpp`) instantiates the other passes and the
 function table, which points at the rows (declared there as explicit instantiations made
@@ -789,8 +793,10 @@ under ASan and UBSan (Apple M5 Max; avx512 the most, GCC more still), which ran 
 out of memory; split, each unit needs 3.1–4.8 GB and at most about 3 minutes (radix 64 in
 float, avx512), and the main units 0.3 GB.
 
-Target strings: `avx2` is `"avx2,fma"`, the features its run-time check requires, and no
-AVX-512 feature; `avx512` is `"avx2,fma,avx512f,avx512dq,avx512vl"`, again the features
+Target strings: `x86_v2` is `"sse4.2,popcnt"` and `avx` `"avx,popcnt"`, the features their
+run-time checks require (SSE4.2 implies SSE4.1, SSSE3, SSE3; AVX implies SSE4.2), with no
+AVX in the first and no AVX2 or FMA in the second, which the disassembly test checks;
+`avx2` is `"avx2,fma"`, the features its run-time check requires, and no AVX-512 feature; `avx512` is `"avx2,fma,avx512f,avx512dq,avx512vl"`, again the features
 its check requires (BW and CD, which every such processor also has, are left out).
 Compilers imply a few more from these names (Clang: POPCNT and CRC32 from the AVX2 chain,
 F16C from `avx512f`); the checks do not test them, and every processor that passes a
