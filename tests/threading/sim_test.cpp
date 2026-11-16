@@ -62,7 +62,7 @@ const std::vector<team_case>& interleaving_cases() {
                "c2r_planes_12x16x2",
                "c2c_volume_8x6x10x2",
                "c2c_many_64x100",
-               "c2c_bluestein_68x3",
+               "c2c_bluestein_188x3",
            }) {
         if (c.name == name) {
           chosen.push_back(c);

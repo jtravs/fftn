@@ -95,11 +95,11 @@ runs; the numbers above are the baseline to beat. The rest (6–9) follow. X25's
    stay power-of-two strided whatever the intermediate's layout).
    FFTL.jl is the reference to study here: on the Mac it beats both FFTN (FFTN
    1.35 of its time at ≥ 16384; 2²⁰ 1.60, 100000 1.53, 46080 1.45) and FFTW (0.86).
-2. Prime lengths and prime factors above 16: 17 takes Bluestein (1.57 / 1.95 of FFTW), and
-   inside composites each such factor is one generic pass (2431 = 11 · 13 · 17: FFTN 2.57
-   of FFTL's time on the Mac, 1.25 of FFTW's on the EPYC): a generated 17-point codelet
-   (and 19, 23 if cheap), or Rader where p − 1 is smooth (65537, 257, 97); 4093 and 65537
-   on the EPYC.
+2. Prime lengths and prime factors above 16: done by X27 (codelets of 17, 19, 23; Rader
+   for primes with a 13-smooth p − 1 in each profile's range). Left: 4093 (p − 1 has 31;
+   EPYC 1.75, Mac 1.32 of FFTW) and other primes whose p − 1 is not smooth (Bluestein);
+   65537 on NEON (Bluestein: Rader's random gather and scatter lost there); 128-bit leaves
+   for 17–23 on x86; the build-size question of 25 % more code (B3).
 3. The x86 kernels at 128–4096 (EPYC 1.05–1.35): a split-aware planner (costs of split
    passes; a first radix that lets a run start: AVX2's 1024 = 4 × 16 × 16 has none), split
    runs in Bluestein convolutions and grid phases, a split grouped first pass with an 8 × 8
@@ -361,6 +361,7 @@ running, done (with verdict).
 | [X25](experiments/X25-x86-diagnosis.md) | Why does FFTN trail FFTW in 1-D double on x86 (EPYC 1.21, Xeon 1.06): kernel instruction stream, memory hierarchy or fixed cost per call, per case group? Counters and FFTW's plans, no library change | 1 | done: long rows (both machines) and EPYC 256–1024 are the instruction stream (the grid's `block_copy` 40–52 % of FFTN's instructions; AVX2 loops 1.4–1.6 times FFTW's instructions for the same FP work, at IPC up to 4.7); ≤ 16 points the fixed cost per call (FFTW uses 128-bit codelets); memory only for Xeon r2c 65536 (chain of 32768) and EPYC 4096; Xeon 128–4096 at par, port 5 the limit |
 | [X26](experiments/X26-grid-copies.md) | Long rows: do cheaper copy loops in the grid (rows of one vector without an inner loop), wider blocks or fused phases close the gap to FFTW at ≥ 16384, 46080, 100000 and r2c/c2r 65536 and 2²⁰? | 1 | done: cheaper copy loops rejected (Mac 0.986 and Xeon 0.988, within the band; EPYC 1.05, 2²⁰ rows 1.40–1.56: the x86 copies are bound by L1 set conflicts of rows 4 KiB-multiples apart, not instructions); no prefetch in the copies adopted on `avx2` (EPYC target rows 0.920: 65536 1.41 → 1.30 of FFTW, 100000 1.94 → 1.70, r2c 2²⁰ 1.77 → 1.48); wider blocks and fused phases lose on the Mac |
 | [X26b](experiments/X26b-padded-grid.md) | Long rows on x86: does a padded intermediate (phase 2's rows not a 4 KiB multiple apart) remove the grid's L1 set conflicts, and do X26's cheaper copy loops then pay? Can the copies' prefetch follow the core? | 1 | done: padding adopted where the L2 is shared by a cluster (Mac long rows 0.976 of main); on x86 it cuts no L1 refills and gains nothing (Xeon 1.006, EPYC 0.993), off; X26's copy loops rejected again; the prefetch by core rejected (Xeon `avx2` 2²² 0.84 but float 100000 1.27: needs a row-width condition) |
+| [X27](experiments/X27-prime-codelets.md) | Generated codelets of radix 17, 19 and 23 (leaf and pass) against Bluestein for prime factors above 16, and their build size (B3); Rader against Bluestein where p − 1 is smooth | 1 | done: codelets adopted everywhere (targets 0.24–0.31 of the Bluestein route; 17 now 0.28–0.47 of FFTW; library +25 %); Rader adopted per target (0.4–0.8 of Bluestein from 97 up; from 16C for C ≥ 4, below 2¹⁶ on NEON) |
 | [X28](experiments/X28-short-rows.md) | Single short rows (≤ 120 points, batch 1): what is left after X20, and do a lighter entry, 128-bit leaves on x86 or a flat path for two-pass chains close it? (PLAN lead 4) | 1 | done: all adopted (128-bit x86 leaves; one-call entry; passes take their addresses as arguments, no per-stage argument copy): single rows 0.79 (Xeon), 0.82 (EPYC), 0.82–0.88 (Mac) of `main`; tracking Mac 0.953, EPYC 0.964 |
 | P1 | Cost-model accuracy: rank agreement with measurement across the catalogue per machine | 2 | planned |
 | P2 | Measurement budget: how many candidates and how long before the choice stops improving | 2 | planned |

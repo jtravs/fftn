@@ -59,6 +59,11 @@ PLAIN: dict[int, Reference] = {
     32: published(372, 84, "n1_32"),
     64: published(912, 248, "n1_64"),
 }
+# FFTW 3.3 generates no codelet for these primes, and no other count is cited; the
+# symmetric-pair form costs m(m - 1) + 1 multiplies per part for m = (p - 1)/2 pairs, where
+# Rader's algorithm would cost fewer (13's gap below).
+for _p in (17, 19, 23):
+    PLAIN[_p] = Reference(None, "none: no published count for this prime")
 PLAIN[6] = good_thomas(2, 3)
 PLAIN[10] = good_thomas(2, 5)
 PLAIN[14] = good_thomas(2, 7)

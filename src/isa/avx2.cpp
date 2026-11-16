@@ -6,7 +6,7 @@
 // library can be built at any x86-64 baseline and still use AVX2 where the processor has it.
 //
 // The target's main unit: its function table and the passes outside the codelet rows.
-// The rows are compiled in rows1_avx2.cpp to rows5_avx2.cpp (isa/rows.inl), so that no
+// The rows are compiled in rows1_avx2.cpp to rows8_avx2.cpp (isa/rows.inl), so that no
 // unit needs more memory to compile than a CI runner has (DESIGN.md 6.4).
 
 #include "isa/arch.hpp"

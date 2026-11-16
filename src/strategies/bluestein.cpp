@@ -7,6 +7,7 @@
 
 #include <complex>
 #include <cstddef>
+#include <cstdint>
 #include <vector>
 
 namespace fftn::inline v0::detail {
@@ -81,6 +82,29 @@ std::vector<std::complex<double>> bluestein_kernel(const std::vector<std::comple
   const double inverse = 1.0 / static_cast<double>(m);
   for (std::complex<double>& v : spectrum) {
     v *= inverse;
+  }
+  return spectrum;
+}
+
+std::vector<std::complex<double>> rader_kernel(int sign, std::size_t q, std::size_t g,
+                                               const std::vector<std::complex<double>>& roots) {
+  const std::size_t len = roots.size();
+  // g^-1 = g^(L - 1) mod q; q < 2^32, so the products fit in 64 bits.
+  std::uint64_t inverse = 1;
+  for (std::size_t i = 0; i + 1 < len; ++i) {
+    inverse = inverse * g % q;
+  }
+  std::vector<std::complex<double>> b(len);
+  std::uint64_t e = 1; // g^-l mod q
+  for (std::size_t l = 0; l < len; ++l) {
+    b[l] = unit_root<double>(sign, static_cast<std::size_t>(e), q);
+    e = e * inverse % q;
+  }
+  std::vector<std::complex<double>> spectrum(len);
+  plan_time_dft(b.data(), 1, len, spectrum.data(), roots, len);
+  const double scale = 1.0 / static_cast<double>(len);
+  for (std::complex<double>& v : spectrum) {
+    v *= scale;
   }
   return spectrum;
 }

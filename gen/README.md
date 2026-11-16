@@ -230,6 +230,10 @@ task 1.1 the one gap is:
   costs about m² multiplies per part for m = 6 pairs; the reference uses Rader's algorithm
   (a length-12 cyclic convolution), outside task 1.1.
 
+The primes 17, 19 and 23 (experiment X27) have no published count and are marked "none":
+plain 320 / 242, 396 / 308 and 572 / 464 additions / multiplies in the symmetric-pair form,
+with peak live values 20, 22 and 26 (they spill on AVX2's 16 registers).
+
 ## Adding a radix
 
 1. Check which algorithm `algorithms.choose(R)` picks. Any R that factors into primes the
