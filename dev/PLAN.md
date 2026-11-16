@@ -52,14 +52,14 @@ Open, by phase:
 - 3: T2, T3, T4, T6; 3.5 (Kokkos executor); 3.6 to be checked against its acceptance.
 - 4–7: not started.
 
-In flight (lead session, 2026-11-15 evening): X26b (lead 1 continued: rows of the grid's
-work array not 4 KiB multiples apart, and the copies' prefetch per core), X27 (lead 2,
+In flight (lead session, 2026-11-15 evening): X27 (lead 2,
 17-point and other prime codelets), X29 (lead 5, the real
 footprint in the chain-or-grid rule), X30 (lead 3, x86 pass-loop instructions). X28 (lead 4, single short rows) is done: 128-bit leaves on x86, a lighter entry and
 flat path, kernels taking their addresses as arguments (single rows 0.79–0.88 of main,
 nothing slower). X26 (lead 1,
 the grid's copies) is done: no prefetch in the copies on `avx2`, the cheaper copy loops
-rejected. X25 (the x86 gap's causes, from counters and FFTW's printed plans) is done; its
+rejected. X26b (lead 1 continued) is done: a padded grid intermediate where the L2 is
+shared by a cluster (Mac long rows 0.976), nothing on x86; the prefetch by core rejected. X25 (the x86 gap's causes, from counters and FFTW's printed plans) is done; its
 verdicts are folded into the leads below. X23 (masked partial runs on x86) was rejected by
 its rule for a Clang-only loss; its amendment 4 restores the code for GCC builds behind
 `FFTN_MASKED_TAILS` (`AUTO`: on with GCC, off with Clang and icpx), adopted: float 0.53 of
@@ -84,10 +84,15 @@ runs; the numbers above are the baseline to beat. The rest (6–9) follow. X25's
    on `avx2` was adopted (EPYC target rows 0.920). The effect belongs to the core, not the
    target: the Xeon forced to `avx2` loses without the prefetch (1.04, 2²² 1.20), so Intel
    cores without AVX-512 lose too; a core field in the machine profile (CPUID vendor and
-   family) would let it follow the core. Next: rows not a 4 KiB multiple apart
-   (a padded work array, X4's x86 half), or long rows as chains of small radices, the way
-   FFTL.jl runs them (radix-4 Stockham passes, no copies; on the Mac FFTN's chain forced
-   to 4⁸ at 65536 already matched the grid).
+   family) would let it follow the core. X26b (done): padding the intermediate so phase
+   2's rows are not a 4 KiB multiple apart cuts no L1 refills on x86 and gains nothing
+   there (Xeon 1.006, EPYC 0.993); it gains on the Mac (0.976, adopted there). The
+   prefetch by core gains the Xeon under `avx2` at 2²⁰–2²² (0.83–0.88) but costs float
+   100000 1.27 (32-byte rows): a rule by core and row width is open. Next: long rows as
+   chains of small radices, the way FFTL.jl runs them (radix-4 Stockham passes, no
+   copies; on the Mac FFTN's chain forced to 4⁸ at 65536 already matched the grid), or
+   fewer strided copies of the caller's arrays (phase 1's gather and phase 3's copies
+   stay power-of-two strided whatever the intermediate's layout).
    FFTL.jl is the reference to study here: on the Mac it beats both FFTN (FFTN
    1.35 of its time at ≥ 16384; 2²⁰ 1.60, 100000 1.53, 46080 1.45) and FFTW (0.86).
 2. Prime lengths and prime factors above 16: 17 takes Bluestein (1.57 / 1.95 of FFTW), and
@@ -355,7 +360,7 @@ running, done (with verdict).
 | [X24](experiments/X24-lanes-x86.md) | Cheaper lanes on x86: with X20's per-call preparation in the lanes driver and first and last passes that build registers from 128-bit loads of each row (no gather or scatter), do the lanes beat the batched-leaf chain in double at 8–64 points and reach FFTW at 8–16? | 2 | done: both changes rejected (per-call driver: 1–7 % slower at 8–16 × 64; per-row edge passes: up to 1.17 on AVX-512 at 24–256 points). `lanes_up_to` in double stays 0 on x86; 2.2's double c2c acceptance on AVX-512 not met (lanes 1.31–1.53 of FFTW, chain 1.01–1.26) |
 | [X25](experiments/X25-x86-diagnosis.md) | Why does FFTN trail FFTW in 1-D double on x86 (EPYC 1.21, Xeon 1.06): kernel instruction stream, memory hierarchy or fixed cost per call, per case group? Counters and FFTW's plans, no library change | 1 | done: long rows (both machines) and EPYC 256–1024 are the instruction stream (the grid's `block_copy` 40–52 % of FFTN's instructions; AVX2 loops 1.4–1.6 times FFTW's instructions for the same FP work, at IPC up to 4.7); ≤ 16 points the fixed cost per call (FFTW uses 128-bit codelets); memory only for Xeon r2c 65536 (chain of 32768) and EPYC 4096; Xeon 128–4096 at par, port 5 the limit |
 | [X26](experiments/X26-grid-copies.md) | Long rows: do cheaper copy loops in the grid (rows of one vector without an inner loop), wider blocks or fused phases close the gap to FFTW at ≥ 16384, 46080, 100000 and r2c/c2r 65536 and 2²⁰? | 1 | done: cheaper copy loops rejected (Mac 0.986 and Xeon 0.988, within the band; EPYC 1.05, 2²⁰ rows 1.40–1.56: the x86 copies are bound by L1 set conflicts of rows 4 KiB-multiples apart, not instructions); no prefetch in the copies adopted on `avx2` (EPYC target rows 0.920: 65536 1.41 → 1.30 of FFTW, 100000 1.94 → 1.70, r2c 2²⁰ 1.77 → 1.48); wider blocks and fused phases lose on the Mac |
-| [X26b](experiments/X26b-padded-grid.md) | Long rows on x86: does a padded intermediate (phase 2's rows not a 4 KiB multiple apart) remove the grid's L1 set conflicts, and do X26's cheaper copy loops then pay? Can the copies' prefetch follow the core? | 1 | running |
+| [X26b](experiments/X26b-padded-grid.md) | Long rows on x86: does a padded intermediate (phase 2's rows not a 4 KiB multiple apart) remove the grid's L1 set conflicts, and do X26's cheaper copy loops then pay? Can the copies' prefetch follow the core? | 1 | done: padding adopted where the L2 is shared by a cluster (Mac long rows 0.976 of main); on x86 it cuts no L1 refills and gains nothing (Xeon 1.006, EPYC 0.993), off; X26's copy loops rejected again; the prefetch by core rejected (Xeon `avx2` 2²² 0.84 but float 100000 1.27: needs a row-width condition) |
 | [X28](experiments/X28-short-rows.md) | Single short rows (≤ 120 points, batch 1): what is left after X20, and do a lighter entry, 128-bit leaves on x86 or a flat path for two-pass chains close it? (PLAN lead 4) | 1 | done: all adopted (128-bit x86 leaves; one-call entry; passes take their addresses as arguments, no per-stage argument copy): single rows 0.79 (Xeon), 0.82 (EPYC), 0.82–0.88 (Mac) of `main`; tracking Mac 0.953, EPYC 0.964 |
 | P1 | Cost-model accuracy: rank agreement with measurement across the catalogue per machine | 2 | planned |
 | P2 | Measurement budget: how many candidates and how long before the choice stops improving | 2 | planned |

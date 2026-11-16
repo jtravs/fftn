@@ -1,6 +1,7 @@
 # X26b: long rows, a padded intermediate for the grid
 
-- **Status:** running
+- **Status:** done (padding adopted where the L2 is shared by a cluster: the Mac; off on
+  x86; arm B and arm 2 rejected)
 - **Owner:** X26b session, 2026-11-15
 - **Phase / task:** 1 (PLAN lead 1); follows X26, X4 (its x86 half), X12, X12b
 
@@ -108,7 +109,9 @@ caller's arrays, so B may still lose there: B is retried, not expected to win.
 Arms as commits: A 0dc9391 (main), P 93e0aed, PB 95f6109, PP 5e74297 (P with the copies'
 prefetch on `avx2`), P2 b75a393 (P padding only an intermediate already in the workspace
 block: three phases or in place), C2 0358493 (arm 2 on A). P2 builds the same program as
-P on three-phase and in-place plans and as A on two-phase plans out of place.
+P on three-phase and in-place plans and as A on two-phase plans out of place. C2 and C3
+(8984899, arm 2's second form) are on unpushed `exp/x26b-dev-*` branches; on the pull
+request they are c8d3624 and e181b2c, P2 is 31bd862.
 
 ### Counters: padding does not cut L1 refills on x86
 
@@ -169,4 +172,71 @@ Collateral on the Mac, the standard tracking tier, A against the combined branch
 ±1.50 %): 1.000 [0.995, 1.007], 2 faster (262144 0.950, r2c 2²⁰ 0.963), none slower than
 1.02.
 
+### x86 timing on main's base (0dc9391)
+
+EPYC 7763, GCC 16, run 20261116-010519-d13f (35 rounds, all on a node with 64 other busy
+CPUs, band ±1.00 %), double target cases against A: P 0.993 [0.989, 0.997], PB 1.010
+[1.005, 1.014] (against P 1.016), PP 1.065 [1.060, 1.069] (against P 1.072), C2 1.012
+[1.009, 1.016]; FFTW 0.789 of A's time. P per case: 262144 0.962, in-place 65536 0.966,
+r2c 2²⁰ 0.966, float 2²⁰ 0.963, but r2c 65536 1.035 and float 65536 1.035 (two-phase plans
+whose intermediate moved into the block: P2 leaves them unpadded); the rest 0.989–1.004.
+PB: 2²² 0.926, 100000 0.956, but 2²⁰ 1.085, r2c and c2r 2²⁰ 1.14, float 2²² 1.20. PP:
+100000 1.22, float 100000 1.29. C2 (the run-time prefetch distance, prefetch off as in A):
+2²² 1.05, 100000 1.05, float 100000 1.08 — the code-form cost seen on the Mac.
+
+Xeon Gold 6240 `avx512`, GCC 14, run 20261116-010954-b495 (35 rounds, 8 loaded, band
+±1.91 %): P 1.006 [0.994, 1.019] (46080 1.090, its intermediate moved into the block; the
+rest within ±3 %), PB 0.998 [0.979, 1.016] (against P 0.992 [0.981, 1.004]; 46080 1.10,
+100000 0.957, in-place 65536 0.951); FFTW 0.932 of A's time.
+
+Xeon under `ISA=avx2`, run 20261116-021041-45ed (33 rounds, 15 loaded, band ±1.64 %): P
+1.007 [0.997, 1.016], PB 0.999 [0.992, 1.005] (against P 0.991 [0.978, 0.999]), PP 0.951
+[0.946, 0.957], C2 0.961 [0.956, 0.968]. With the prefetch (PP and C2 alike) 2²⁰ 0.86–0.88,
+2²² 0.83–0.84, r2c and c2r 2²² 0.85–0.87, r2c and c2r 2²⁰ 0.93–0.96, float 2²² 0.91, but
+float 100000 1.27 (both forms: main's loop with the prefetch on, and C2's), 46080 1.03–1.04,
+100000 1.03, 65536 1.02. Float 100000 copies rows of four complex floats, 32 bytes, half a
+line: one prefetch per row then costs more than it brings.
+
+Final, the Mac: run 20261116-031759-7115 (40 rounds, 27 loaded, band ±1.12 %), main after
+X28 (be593d1) against the pull request's head (e3d6109, the Mac's default profile, which now
+pads): double target cases 0.974 [0.967, 0.978]; 262144 0.953, 2²⁰ 0.953, 2²² 0.944, r2c and
+c2r 2²⁰ and 2²² 0.945–0.971, float 2²² 0.942; nothing above 1.002.
+
+The final confirmation runs against main after X28 (be593d1) on the x86 machines were
+cancelled (Slurm 510126, 15891) once arm 2 was rejected: the adopted change builds main's
+plans and kernels on x86 (no padding there; the copies as in main).
+
 ## Verdict
+
+By the rule written before the runs (double target cases, the run's A/A band):
+
+- **P / P2, the padded intermediate: adopted on the Mac, rejected on x86.** Mac
+  (`neon_fcma`, Clang): P2 0.976 [0.971, 0.981] against a band of ±1.00 % (the final
+  branch against main after X28: 0.974 [0.967, 0.978], band ±1.12 %), nothing slower
+  than 1.012 in the target set or the tracking tier (1.000 overall, run
+  20261116-001526-a5f8). EPYC (`avx2`, GCC 16): P 0.993 [0.989, 0.997], not clear of 0.990.
+  Xeon (GCC 14): `avx512` 1.006 [0.994, 1.019], `avx2` 1.007 [0.997, 1.016]. P2 (31bd862)
+  pads only an intermediate already in the workspace block (moving one there cost 1–9 %).
+  The profile's `grid_pad_period` is 4 KiB where the L2 is shared by a cluster and none
+  where each core has its own (e4518ab), the distinction X12b keys the grid on. Counters
+  say why x86 gains nothing: padding does not cut its L1 refills (they rise 2–7 %).
+  Results are bit-identical.
+- **PB, X26's cheaper copy loops on the padded grid: rejected everywhere** (against P: Mac
+  1.000, EPYC 1.016, Xeon `avx512` 0.992 and `avx2` 0.991, none clear of its band). The
+  Mac's float rows gained 0.88–0.95 with them: a float-specific follow-up, not judged here.
+- **PP, the prefetch on `avx2` with the padding: rejected** (EPYC 1.072 against P): the
+  padding did not make X26's prefetch question moot.
+- **Arm 2, the prefetch following the core: rejected and reverted** (e3d6109). It wins
+  the Xeon under `avx2` on the geomean (C2 0.961) but float 100000 is 1.27, past the
+  collateral limit, and the same with main's own loop (PP), so the loss belongs to the
+  prefetch, not to the code form. X26's per-target gate stays. Its first form's run-time
+  prefetch distance also cost float 100000 8–10 % on the Mac and the EPYC; the second form
+  (compile-time distance, C3) fixed that on the Mac (1.002) but was not timed on x86.
+- Open: a prefetch rule by core and row width (no prefetch for rows narrower than a line,
+  on Zen not at all) would keep the Xeon-under-`avx2` gains at 2²⁰–2²² (0.83–0.88); the
+  float copy loops on the Mac (PB).
+
+Slurm jobs: EPYC builds 509797, 509805, 510125 and counters 509799, 509800; timing 509806
+(509798 replaced), 510126 and 509874 cancelled. Xeon builds 15835, 15837, 15844, 15859,
+15890; counters 15842, 15843; timing 15836, 15845 (15838 replaced), 15860 and 15891
+cancelled.
