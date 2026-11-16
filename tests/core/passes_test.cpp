@@ -243,7 +243,8 @@ TEST(Passes, GenericInEveryPosition) {
 template <class T> void leaves_above_sixteen(fftn::isa target) {
   for (const std::uint8_t radix : fftn::detail::gen::radices) {
     const std::size_t n = radix;
-    if (n <= 16) {
+    // Radix 20 is a pass radix only (experiment X38): never a leaf.
+    if (n <= 16 || n == 20) {
       continue;
     }
     const std::string leaf = "leaf radix-" + std::to_string(n);
