@@ -24,6 +24,7 @@ sys/devices/system/cpu/cpu0/cache/index3/shared_cpu_list	0-7
 sys/devices/system/cpu/cpu0/cache/index3/size	516096K
 sys/devices/system/cpu/cpu0/cache/index3/type	Unified
 sys/devices/system/cpu/cpu0/cache/index3/ways_of_associativity	16
+sys/devices/system/cpu/cpu0/cpu_capacity	1024
 sys/devices/system/cpu/cpu0/topology/core_cpus_list	0
 sys/devices/system/cpu/cpu0/topology/physical_package_id	0
 sys/devices/system/cpu/cpu0/topology/thread_siblings_list	0
@@ -51,6 +52,7 @@ sys/devices/system/cpu/cpu1/cache/index3/shared_cpu_list	0-7
 sys/devices/system/cpu/cpu1/cache/index3/size	516096K
 sys/devices/system/cpu/cpu1/cache/index3/type	Unified
 sys/devices/system/cpu/cpu1/cache/index3/ways_of_associativity	16
+sys/devices/system/cpu/cpu1/cpu_capacity	1024
 sys/devices/system/cpu/cpu1/topology/core_cpus_list	1
 sys/devices/system/cpu/cpu1/topology/physical_package_id	0
 sys/devices/system/cpu/cpu1/topology/thread_siblings_list	1
@@ -78,6 +80,7 @@ sys/devices/system/cpu/cpu2/cache/index3/shared_cpu_list	0-7
 sys/devices/system/cpu/cpu2/cache/index3/size	516096K
 sys/devices/system/cpu/cpu2/cache/index3/type	Unified
 sys/devices/system/cpu/cpu2/cache/index3/ways_of_associativity	16
+sys/devices/system/cpu/cpu2/cpu_capacity	1024
 sys/devices/system/cpu/cpu2/topology/core_cpus_list	2
 sys/devices/system/cpu/cpu2/topology/physical_package_id	0
 sys/devices/system/cpu/cpu2/topology/thread_siblings_list	2
@@ -105,6 +108,7 @@ sys/devices/system/cpu/cpu3/cache/index3/shared_cpu_list	0-7
 sys/devices/system/cpu/cpu3/cache/index3/size	516096K
 sys/devices/system/cpu/cpu3/cache/index3/type	Unified
 sys/devices/system/cpu/cpu3/cache/index3/ways_of_associativity	16
+sys/devices/system/cpu/cpu3/cpu_capacity	1024
 sys/devices/system/cpu/cpu3/topology/core_cpus_list	3
 sys/devices/system/cpu/cpu3/topology/physical_package_id	0
 sys/devices/system/cpu/cpu3/topology/thread_siblings_list	3
@@ -132,6 +136,7 @@ sys/devices/system/cpu/cpu4/cache/index3/shared_cpu_list	0-7
 sys/devices/system/cpu/cpu4/cache/index3/size	516096K
 sys/devices/system/cpu/cpu4/cache/index3/type	Unified
 sys/devices/system/cpu/cpu4/cache/index3/ways_of_associativity	16
+sys/devices/system/cpu/cpu4/cpu_capacity	1024
 sys/devices/system/cpu/cpu4/topology/core_cpus_list	4
 sys/devices/system/cpu/cpu4/topology/physical_package_id	0
 sys/devices/system/cpu/cpu4/topology/thread_siblings_list	4
@@ -159,6 +164,7 @@ sys/devices/system/cpu/cpu5/cache/index3/shared_cpu_list	0-7
 sys/devices/system/cpu/cpu5/cache/index3/size	516096K
 sys/devices/system/cpu/cpu5/cache/index3/type	Unified
 sys/devices/system/cpu/cpu5/cache/index3/ways_of_associativity	16
+sys/devices/system/cpu/cpu5/cpu_capacity	1024
 sys/devices/system/cpu/cpu5/topology/core_cpus_list	5
 sys/devices/system/cpu/cpu5/topology/physical_package_id	0
 sys/devices/system/cpu/cpu5/topology/thread_siblings_list	5
@@ -186,6 +192,7 @@ sys/devices/system/cpu/cpu6/cache/index3/shared_cpu_list	0-7
 sys/devices/system/cpu/cpu6/cache/index3/size	516096K
 sys/devices/system/cpu/cpu6/cache/index3/type	Unified
 sys/devices/system/cpu/cpu6/cache/index3/ways_of_associativity	16
+sys/devices/system/cpu/cpu6/cpu_capacity	1024
 sys/devices/system/cpu/cpu6/topology/core_cpus_list	6
 sys/devices/system/cpu/cpu6/topology/physical_package_id	0
 sys/devices/system/cpu/cpu6/topology/thread_siblings_list	6
@@ -213,6 +220,7 @@ sys/devices/system/cpu/cpu7/cache/index3/shared_cpu_list	0-7
 sys/devices/system/cpu/cpu7/cache/index3/size	516096K
 sys/devices/system/cpu/cpu7/cache/index3/type	Unified
 sys/devices/system/cpu/cpu7/cache/index3/ways_of_associativity	16
+sys/devices/system/cpu/cpu7/cpu_capacity	1024
 sys/devices/system/cpu/cpu7/topology/core_cpus_list	7
 sys/devices/system/cpu/cpu7/topology/physical_package_id	0
 sys/devices/system/cpu/cpu7/topology/thread_siblings_list	7
