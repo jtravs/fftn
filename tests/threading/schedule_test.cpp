@@ -471,6 +471,10 @@ TEST(Schedule, GridSizesFromCaches) {
   EXPECT_TRUE(m5.c2r_paired_gather);
   EXPECT_FALSE(epyc.c2r_paired_gather);
   EXPECT_FALSE(xeon.c2r_paired_gather);
+  // Power-of-two rows stay chains at any size where the L2 is shared, radix 8 up to an
+  // eighth of L2 (X32).
+  EXPECT_EQ(m5.pow2_chain_bytes, std::numeric_limits<std::size_t>::max());
+  EXPECT_EQ(m5.pow2_radix8_bytes, 2048 * kib);
   // Unknown sizes keep the defaults; an unknown sharing counts as a shared L2.
   const machine_profile defaults;
   machine_profile unknown;

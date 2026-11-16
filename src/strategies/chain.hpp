@@ -133,6 +133,16 @@ public:
   // leaf. Null: none.
   void use_pair_leaves(const pair_leaf_set<T>* leaves) noexcept { pairs_ = leaves; }
 
+  // Long power-of-two lines (experiment X32): a line of a power-of-two length of more than
+  // from_bytes takes FFTL.jl's radices instead of the rules': 8s, with one or two 4s first
+  // for the spare factors, up to radix8_bytes, and 4s, with an 8 first for an odd exponent,
+  // beyond. The rules price radices in cache (X2) and choose radix 16 there, whose 16 streams
+  // a power of two apart conflict in L1 and, on huge pages, in L2. Forced radices win.
+  void use_long_rows(std::size_t from_bytes, std::size_t radix8_bytes) noexcept {
+    long_from_bytes_ = from_bytes;
+    long_radix8_bytes_ = radix8_bytes;
+  }
+
   // The radices of a chain for n, in pass order (empty for n = 1); the last is a Bluestein
   // stage's when bluestein_last(n).
   [[nodiscard]] std::vector<std::size_t> radices(std::size_t n) const;
@@ -291,6 +301,8 @@ private:
   real_fusion fusion_;
   std::size_t bluestein_above_;
   std::size_t line_scratch_ = 0; // scratch a Bluestein stage of the current line needs
+  std::size_t long_from_bytes_ = SIZE_MAX; // use_long_rows
+  std::size_t long_radix8_bytes_ = 0;
   std::map<std::size_t, std::vector<std::complex<T>>> roots_;
   std::map<std::pair<std::size_t, std::size_t>, const T*> grouped_tables_;              // (n, R)
   std::map<std::tuple<std::size_t, std::size_t, std::size_t>, const T*> shared_tables_; // n, R, s

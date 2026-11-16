@@ -104,6 +104,11 @@ void set_grid_sizes(machine_profile& p, const core_class& c) noexcept {
   if (c.l1d.size != 0 && c.l2.size != 0 && !private_l2) {
     p.chain_part_bytes = c.l1d.size / 8;
     p.chain_mixed_bytes = 2 * c.l1d.size;
+    // Experiment X32, M5 Max: power-of-two rows as chains of FFTL.jl's radices took
+    // 0.57-0.93 of the grid's time at every length from 16384 to 2^22 points; radix 8 won
+    // up to 131072 points (2 MiB, L2/8), radix 4 from 262144.
+    p.pow2_chain_bytes = std::numeric_limits<std::size_t>::max();
+    p.pow2_radix8_bytes = c.l2.size / 8;
   }
   p.c2r_paired_gather = c.l2.size != 0 && !private_l2;
 }
