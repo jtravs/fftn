@@ -7,6 +7,7 @@
 #include "core/twiddles.hpp"
 #include "isa/kernel_table.hpp"
 #include "passes/pass_args.hpp"
+#include "planner/rules.hpp"
 #include "platform/aligned_allocator.hpp"
 #include "strategies/chain.hpp"
 
@@ -210,12 +211,10 @@ grid_split choose_grid(std::size_t n, std::size_t lanes, std::size_t budget, boo
   };
   if (!forced.empty()) {
     grid_split g{.phases = forced.size()};
-    std::size_t product = 1;
     for (std::size_t i = 0; i < forced.size(); ++i) {
       g.factors.at(i) = forced[i];
-      product *= forced[i];
     }
-    return product == n ? finish(g) : grid_split{};
+    return checked_product(forced) == n ? finish(g) : grid_split{};
   }
   const std::vector<std::size_t> ds = divisors(n);
   grid_split two;

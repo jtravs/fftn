@@ -63,6 +63,9 @@ struct build_settings {
   // The grid's factors in phase order (two or three, multiplying to the row's length),
   // where they can be a grid; empty: the rules' (strategies/grid.hpp).
   std::vector<std::size_t> grid_factors;
+  // Two or three grid phases instead of the rule's (grid_three_bytes, grid_two_odd_part) when
+  // not 0; grid_factors take precedence. Measured planning (core/candidates.cpp) times both.
+  std::size_t grid_phases = 0;
   // The grid's phases may read and write the arrays in their first and last passes (true:
   // where the rules say, rows up to profile.grid_fuse_bytes and phases of small radices),
   // or always go through a gather and a scatter around a chain on scratch (X12).
@@ -77,6 +80,10 @@ struct build_settings {
   // The Bluestein threshold instead of the profile's when not 0 (strategies/chain.hpp):
   // 16 sends every prime factor above 16 through Bluestein, SIZE_MAX none.
   std::size_t bluestein_above = 0;
+  // Rader stages (planner/rules.hpp, rader_root): -1 the profile's range, 0 never (Bluestein
+  // instead), 1 for every prime factor whose q - 1 is 13-smooth (experiment X27's rule
+  // without its range). Measured planning times both where they differ.
+  int rader = -1;
   // The factor edge operation (DESIGN.md 12.1), which the public API does not offer yet:
   // n complex values of the plan's precision multiplying the input (before the transform)
   // or the output (after it) of every row of a c2c plan of one axis. The arrays must
@@ -95,6 +102,10 @@ struct build_settings {
   int r2c_pair_last = -1;
   // The machine the plan's team executions are scheduled for (schedule.hpp).
   machine_profile profile = default_machine_profile();
+  // Measured planning (core/measure.cpp) asks this function for a candidate's seconds per
+  // execution, given its choice_text, instead of timing it, when it is set (tests).
+  double (*measure_time)(const std::string& choice, void* context) = nullptr;
+  void* measure_context = nullptr;
 };
 
 class plan_core {
@@ -124,6 +135,31 @@ public:
   std::vector<std::string> axis_notes; // one line per axis for describe()
   bool radices_forced = false;         // build_settings.radices was given (describe says so)
   std::string strategy_note;           // describe()'s strategy line
+  // What the rows were built as (one axis only; multi-axis plans are chains): measured
+  // planning enumerates the alternatives (core/candidates.cpp).
+  strategy_choice built = strategy_choice::chain;
+  std::vector<std::size_t> grid_factors; // a grid's factors as built, in phase order
+  // The candidate the plan was built from, as text (core/candidates.hpp, choice_text):
+  // "rules" for the rules' plan. Wisdom records it (core/wisdom.cpp).
+  std::string program_text = "rules";
+  // How the program was chosen, for describe() (empty: by the rules): measured planning or
+  // a wisdom entry.
+  std::string planning_note;
+  // The bytes each side's elements span, relative to element 0 (strides may be negative):
+  // [lo, hi). Measured planning allocates its scratch data from them.
+  std::ptrdiff_t in_lo = 0;
+  std::ptrdiff_t in_hi = 0;
+  std::ptrdiff_t out_lo = 0;
+  std::ptrdiff_t out_hi = 0;
+  // The shape and options as wisdom keys them (core/wisdom_entry.hpp, shape_key).
+  std::string shape_key;
+  // Measured planning's account (0 for other plans): its time, the distinct candidates it
+  // timed, the rules' choice's time over the chosen program's, and the chosen one's rank
+  // (fbench reports them).
+  double planning_seconds = 0;
+  std::size_t candidates_timed = 0;
+  double rules_over_chosen = 0;
+  std::size_t chosen_rank = 0; // among the distinct candidates; 0: the rules' choice
 
   // Workspace: scratch lines a and b of scratch_line complex values each, then the block,
   // each starting on a 64-byte boundary of the aligned workspace; bytes includes the slack
@@ -137,7 +173,22 @@ public:
   std::size_t slot_bytes = 0;
 };
 
+// A plan as the options ask: built by the rules (build_plan_core), or through measured
+// planning or a wisdom entry (plan_with_effort, core/measure.cpp).
 [[nodiscard]] std::shared_ptr<const plan_core>
 make_plan_core(const shape_view& shape, const options& opts, const build_settings& settings);
+
+// The instruction set a plan with these options uses (options::force_isa, else the best
+// the processor and the build support). Throws std::invalid_argument naming
+// options.force_isa for a target that cannot be used.
+[[nodiscard]] target plan_target_of(const options& opts);
+
+// The plan the settings describe, ignoring options::effort and options::use.
+[[nodiscard]] std::shared_ptr<plan_core>
+build_plan_core(const shape_view& shape, const options& opts, const build_settings& settings);
+
+// Measured planning and wisdom (core/measure.cpp): options::use, then options::effort.
+[[nodiscard]] std::shared_ptr<const plan_core>
+plan_with_effort(const shape_view& shape, const options& opts, const build_settings& settings);
 
 } // namespace fftn::inline v0::detail

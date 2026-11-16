@@ -50,8 +50,9 @@ public:
   /// Throws `std::invalid_argument` when the shape or the options are not valid (the
   /// message names the argument; the rules are in docs/conventions.md): an axis or batch
   /// count of zero, no axis or more than three axes, overlapping output elements, sizes
-  /// that overflow, or in-place layouts that do not agree. Throws `std::bad_alloc` when
-  /// memory runs out.
+  /// that overflow, in-place layouts that do not agree, or a negative or non-finite
+  /// `options::measure_seconds`. Throws `std::bad_alloc` when memory runs out, including
+  /// the scratch memory of measured planning (`options::effort`).
   explicit plan(const shape<In, Out>& s, const options& opts = {})
       : core_(detail::make_plan_core(detail::view_of(s), opts)) {}
 
@@ -196,6 +197,7 @@ public:
 
 private:
   std::shared_ptr<const detail::plan_core> core_;
+  friend class wisdom; // wisdom::add reads the program
 };
 
 /// A complex-to-complex plan in precision `T` (`double` or `float`).
