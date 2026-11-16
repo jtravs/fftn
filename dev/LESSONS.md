@@ -298,6 +298,18 @@ Xeon 16–17 points 1.06–1.10): a duplicating load cannot be folded into the m
 plain load can, and the load at p + 1 crosses a cache line in half the units (in all of
 them on 64-byte registers). Measure footprint changes on short transforms too; a per-table
 choice of storage would keep both sides. [X30](experiments/X30-x86-pass-loops.md).
+**Then X30b:** the per-table choice kept the geomeans (EPYC x30 double 0.986, float 0.962
+of aligned tables, compact broadcast tables everywhere and compact per-lane tables above
+16 KiB) but not the short cases: float 256 × 64, whose tables stay pre-arranged, ran 1.04
+in every variant, as did the variant with no compact table at all, and the Xeon's 16-point
+leaf 1.05. So part of what looked like the storage's cost in X30 was the FMADDSUB form of
+the product (or code placement), which every variant shared. Single-process counters also
+misled: compact per-lane tables cost 1.06–1.13 of the cycles at 2048–4096 there and won
+0.97–0.98 in fbench's rounds. Separate a representation change from the arithmetic it
+drags along, and judge footprint changes by interleaved rounds, not single processes.
+And an allocator is part of the kernel: tables at `std::vector`'s 16-byte offset made half
+the twiddle loads cross a line; 64-byte alignment alone gave 0.97–0.99 on x86.
+[X30b](experiments/X30b-twiddle-tables.md).
 
 3.11 **A chain's cache trouble beyond L1 can be a power-of-two problem, not a size
 problem.** On the Mac a whole-row chain lost to the blocked grid beyond L1 for powers of

@@ -8,6 +8,7 @@ set(platform_data "${CMAKE_CURRENT_SOURCE_DIR}/data")
 
 fftn_add_test(fftn_platform_tests
   SOURCES
+    aligned_allocator_test.cpp
     aligned_buffer_test.cpp
     cpu_features_test.cpp
     cpu_list_test.cpp
