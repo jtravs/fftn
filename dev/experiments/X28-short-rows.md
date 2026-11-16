@@ -263,3 +263,9 @@ What remains at single short rows (Xeon / EPYC, FFTN ÷ FFTW): 60 points 1.50 / 
 two on the Xeon), 24 points on the Xeon 2.01 (the plan, 4 × 6), leaves 8–16 1.07–1.19 /
 1.17–1.19 (the leaf's set-up for any stride: a unit-stride leaf is the next step).
 DESIGN.md 6.1, 8.3 and the decision log, LESSONS 2.3 and 4.7 updated.
+
+### Addendum (lead, 2026-11-16): the Xeon's collateral check
+
+The tracking tier on the Xeon, re-run quiet (run 20261116-031103-3607, band ±1.00 %, no
+round under load): final branch (6f55ab9) ÷ main before the experiment (3f90275) 0.958
+[0.957, 0.960], nothing slower. Single rows of 8 and 16 points 0.66 and 0.73.
