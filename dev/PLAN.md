@@ -72,6 +72,12 @@ In flight (lead session, 2026-11-16): round 2 of the push: X32 (lead (a), long p
 two), X33 (lead (b), long real rows), X34 (lead (c), the Xeon's long mixed rows), X31
 (cloud: Zen 5, recent Intel with MKL, Axion; cap USD 20). Done, each merged with its pull
 request:
+- X32 (lead (a), pull request 22, not merged yet): long power-of-two c2c rows stay chains
+  with FFTL.jl's radix sequences on Apple and on Zen-like caches (Mac long powers of two
+  0.57–0.94 of main, FFTN ÷ FFTW 1.16 → 0.87, ÷ FFTL.jl 1.34 → 1.00; EPYC 0.53–0.85, tracking
+  0.965); the Xeon keeps the grid (chains 1.06–1.50). X29's bimodal chains were the rules'
+  radix-16 passes on transparent huge pages. A scratch placement against 4K aliasing
+  (15–30 % for malloc'd buffers in a diagnostic) was neutral in fbench and not adopted.
 - X30b (lead 3): plan tables on 64-byte boundaries (EPYC 0.986 double, 0.971 float on its
   cases; nothing slower anywhere); compact (wr, wi) twiddles rejected again (single cases
   up to 1.04–1.07, apparently the FMADDSUB arithmetic, not the storage); three passes at
@@ -114,9 +120,11 @@ prefetch, a second case for rules by core on `avx2`.
 ### Leads, one-dimensional double first
 
 **Next, ranked from the 2026-11-16 runs (one-dimensional double still first):**
-(a) long powers of two ≥ 16384 on all three machines (1.03–1.19 of FFTW, 1.40–1.46 of
-FFTL): a new idea is needed, since cheaper copies (X26), padding (X26b) and Zen chains of
-1–2 MiB (X29 d) failed; FFTL.jl's copy-free radix-4 Stockham chains are the reference.
+(a) long powers of two ≥ 16384: X32 makes them chains of FFTL.jl's radices on the Mac and
+the EPYC (FFTN ÷ FFTL.jl about 1.0 there now). Left: the Xeon (1.03 of FFTW; chains lose
+there, so the grid's copies again, X26), real rows of these lengths as chains (lead (b),
+X29's screen favoured them on the EPYC), Zen 5 unmeasured (the rule applies there), and
+fbench placing buffers as malloc does (16 bytes into a page) to judge X32's arm (b).
 (b) Long real rows (r2c and c2r of 65536 and 2²⁰, 1.17–1.44): the r2c pairing fused into
 the grid's last phase (needs block pairs, X29), the Xeon's r2c 65536 is memory (X25).
 (c) The Xeon's long mixed rows (100000 1.99, 46080 1.29): X29's chain rules key on L3 per
@@ -449,7 +457,7 @@ running, done (with verdict).
 | [X30](experiments/X30-x86-pass-loops.md) | x86 chains at 128–4096 (lead 3): two-pass `avx2` double sequences with radix 32/64 (P), twiddles stored (wr, wi) with duplicating loads (T), 1024 = 16 × 64 (Q) | 1 | done: P adopted (EPYC x30 double 0.975: 256 0.905, 512 0.946, batches of 64 0.87–0.92, r2c/c2r 512–1024 0.90–0.95; nothing slower; Xeon `avx2` tracking 0.999, r2c 1024² 1.034 [0.997, 1.061] re-run pending); T rejected by single cases (geomeans 0.97–0.99, float 0.94, but short rows and small grouped passes up to 1.08–1.11); Q rejected (1024 batches 1.09) |
 | [X29](experiments/X29-real-footprint.md) | Real rows in the chain-or-grid rule: should r2c and c2r switch to the grid at another size than the c2c row of half their length, and is the grid's separate pairing pass worth fusing into its end phases? | 1–2 | done: real footprint rejected (no gain on any machine); c2r pairing in the grid's first gather adopted on Apple out of place in two phases (Mac 0.92–0.94; EPYC 1.11, not adopted); lengths with a power-of-two part ≤ 1024 points stay chains on Apple at any size (46080 0.65, 100000 0.62) and on Zen to half of L3 (0.64–0.85); power-of-two chains on the EPYC bimodal at 1–2 MiB, not adopted |
 | [X30b](experiments/X30b-twiddle-tables.md) | x86 chains at 1024–4096 (lead 3, after X30): 64-byte aligned plan tables (L), the half-size (wr, wi) twiddle storage only for passes with large tables (C), three-pass `avx2` double 4096 (R) | 1 | done: L adopted (aligned plan tables; EPYC x30 double 0.986, float 0.971; Xeon `avx512` 0.989, `avx2` 0.996; Mac 0.999); C rejected (EPYC x30 0.986 / 0.962 of L but float 256 × 64 1.04 in every variant, Xeon c2c 16 1.05, `avx512` double 1.001); R rejected (4096 three-pass 1.30–1.88) |
-| [X32](experiments/X32-long-pow2.md) | Long powers of two (c2c ≥ 16384, lead (a)): copy-free chains of small radices (FFTL.jl's plan) against the grid, per machine; why power-of-two chains of 1–2 MiB are bimodal on the EPYC | 1 | running |
+| [X32](experiments/X32-long-pow2.md) | Long powers of two (c2c ≥ 16384, lead (a)): copy-free chains of small radices (FFTL.jl's plan) against the grid, per machine; why power-of-two chains of 1–2 MiB are bimodal on the EPYC | 1 | done: chains of FFTL.jl's radices adopted on Apple (0.57–0.94 of main; ÷ FFTW 1.16 → 0.87) and Zen-like caches (EPYC 0.53–0.85); Xeon keeps the grid (chains 1.06–1.50); bimodality = radix-16 passes on transparent huge pages; scratch placement against 4K aliasing neutral in fbench, rejected |
 | P1 | Cost-model accuracy: rank agreement with measurement across the catalogue per machine | 2 | planned |
 | P2 | Measurement budget: how many candidates and how long before the choice stops improving | 2 | planned |
 | [T1](experiments/T1-dispatch-wait-costs.md) | Dispatch, wake and wait costs per machine and runtime (libgomp, libomp, Kokkos, pool) | 3 | done: hand-off cost and claim runs adopted on Zen 3; dispatch and work costs wait for a per-lane dispatch term |

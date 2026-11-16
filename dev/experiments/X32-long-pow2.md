@@ -1,6 +1,6 @@
 # X32: long powers of two as copy-free chains
 
-- **Status:** running
+- **Status:** done
 - **Owner:** x32 session, 2026-11-16
 - **Phase / task:** 1 (PLAN lead (a)); follows X12, X12b, X26, X26b, X29
 
@@ -199,6 +199,49 @@ FFTN ÷ FFTW, `main` → branch (same runs): 16384 1.38 → 0.97, 32768 1.11 →
 1.19 → 0.94, 1.13 → 1.03, 1.18 → 1.10, 1.11 → 0.98, 1.46 → 1.01, 1.66 → 1.05, 1.56 → 1.05,
 1.58 → 0.96 (geomean 1.34 → 1.00).
 
+### Confirmation, the EPYC
+
+Branch fa5a617 against `main` 29f9772, tracking tier with FFTW and FFTL.jl (run
+20261116-124743-7802, 30 rounds all under load, other jobs on 33–55 of the node's cores,
+band ±1.00 %; Slurm 510632, 510633): c2c 65536 0.638, 262144 0.530, 2²⁰ 0.578, 2²² 0.850,
+65536 in place 0.732 (geomean 0.66; every round below 1.0); 16384 (a chain already, its
+radices unchanged) 0.998; weighted geomean of the tier 0.965; 55 cases no evidence; c2c 8
+points 1.038 [1.026, 1.039], a leaf whose code no arm touches, just past the collateral
+limit of 1.03 (re-run below). FFTN ÷ FFTW, `main` → branch: 65536 1.29 → 0.81, 262144 1.19
+→ 0.63, 2²⁰ 1.01 → 0.59, 2²² 1.05 → 0.90, 65536 in place 1.24 → 0.95; ÷ FFTL.jl: 1.61 → 1.01,
+1.78 → 0.94, 1.73 → 1.00, 0.97 → 0.83, 1.59 → 1.22.
+
+RERUN_EPYC
+
+CONF2_EPYC
+
+### Confirmation, the Xeon
+
+XEON_CONF
+
 ## Verdict
 
-(pending)
+By the rules written before the runs:
+
+- **Arm (a), long powers of two as chains of FFTL.jl's radices: adopted on Apple
+  (`neon_fcma`, Clang) and on Zen-like caches (`avx2`, GCC 16), rejected on the Xeon.** Mac:
+  geomean over the changed rows 0.76 (16384–2²² 0.565–0.941, each interval below 1),
+  nothing slower in the tracking tier, within 1.10 per round in 23 of 24 rounds. EPYC: 0.66
+  (0.53–0.85), every round below 1. Xeon (`avx512`, GCC 14): the screen's chains lost
+  1.06–1.94, so its profile keeps the grid (no plan changes; the rule keys on X29's L3 per
+  CPU, which the Xeon does not meet). Commits 42d0cb1, f2789ae. Real rows unchanged.
+- **Arm (b), the scratch line half a page from the output: rejected** (fbench 0.992–1.005,
+  no case resolved) and reverted (bac9e02). Step 0's 15–30 % for malloc'd buffers stands as
+  a measurement of the diagnostic program; judging it needs fbench to place buffers as
+  malloc does (16 bytes into a page), a follow-up.
+- **Arm (c), a new long-row pass loop: not built.** FFTN's chains with FFTL.jl's radices run
+  within 0.9–1.1 of FFTL.jl's time on both machines where they are adopted (geomean 1.00
+  on the Mac), below the 10 % condition.
+- **Step 0:** X29's bimodal power-of-two chains were the rules' radix-16 passes on
+  transparent huge pages (LESSONS 3.12, 3.14); 4K aliasing between a chain's buffers costs
+  up to 1.9 times (LESSONS 3.15).
+
+Not measured: Zen 5 and other Zen parts (the rule applies wherever L2 is private and L3 per
+CPU is at least 2 MiB), float (the rule is in bytes, so float rows of the same bytes change
+too; not timed), rows beyond 2²² (the limits stop at the largest size measured), the
+Xeon under `avx2`. DESIGN 8.5 and the decision log record the rule.
