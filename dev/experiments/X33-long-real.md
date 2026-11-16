@@ -126,7 +126,39 @@ Decision rule 1: the grid route's r2c overhead is ≥ 0.10 with FFTW's ≥ 0.05 
 least one machine-target (EPYC 65536–2²⁰, Xeon 2²⁰, Mac 65536 in place and 2²⁰), so arm
 b1 was built. The c2r side (arm b3) also qualifies (EPYC 0.16–0.26 against −0.22–0.10).
 
-(continued below)
+### Arm b1: the r2c pairing in the grid's last phase
+
+Commits 25f724e (first form), bcf5bf7 (a fused last phase, radices ≤ 8, keeps the pass:
+the paired phase must gather and scatter, and lost 3.5 % at the Mac's 262144), 56252ed
+(sets at least a cache line wide) and b82b77d (sets of exactly half the block, at least a
+register: the final form). Each step came from a measured loss:
+
+- First form, sets of max(C, b/2) columns. Mac (run 20261116-115601-e28a, A = 3d8b129,
+  band ±1.37 %): r2c 65536–131072 0.96–0.97, 2²⁰ 0.96–0.97, 262144 1.035–1.037 (its
+  last phase 512 = 8 × 8 × 8 is fused in main). EPYC (20261116-122106-d5e7, A = main
+  29f9772, 30 rounds all under load, band ±1.00 %): r2c 65536 **1.051–1.073** (blocks of
+  4: sets of 2 complex doubles, so each output line is written by two or three iterations
+  far apart in time), 131072 0.96–0.99, 262144 0.97–0.99, 2²⁰ 1.003–1.012; c2r and c2c
+  unchanged (0.99–1.03, no evidence). Xeon (20261116-123753-9989, A = 29f9772, no round
+  under load, band ±1.01 %): r2c 262144 0.941–0.953, 2²⁰ 0.953–0.967, 131072
+  **1.080–1.090** (blocks of 4 with C = 4: sets of 4 columns, twice the block's scratch, the
+  whole of L1).
+- Final form (b82b77d; on the Mac and the EPYC its plans are 56252ed's). Mac, r2c rows
+  (20261116-123913-0fa6, 40 rounds, load 17.6 median, band ±1.52 %): 32768 0.977–0.995,
+  65536 0.966–0.976, 131072 0.941–0.989, 2²⁰ 0.971–0.972; 262144 unchanged (1.008–1.011);
+  geomean of the eight changed rows 0.973. Mac tracking tier (20261116-124942-42d5, band
+  ±1.00 %): geomean 0.999, r2c 65536 0.953–0.966, 2²⁰ 0.951; slowest r2c 2048 × 36 1.047
+  [1.015, 1.074], whose plan is identical in both arms (as in the first form's tracking run,
+  20261116-122100-c121: 1.044); nothing else above 1.02.
+
+### Arm b2: the Xeon's r2c 65536 as a grid (screen only)
+
+Runs 20261116-125342-8af5 (Xeon, band ±1.00 %) and 20261116-124535-cd41 (EPYC), arm G =
+bcf5bf7 forced to the grid: Xeon r2c 65536 0.917 out of place, 0.999 in place (with the
+first form's over-wide sets); r2c 32768 1.04–1.13. EPYC 32768 1.20, 65536 1.06–1.07. A
+rule sending r2c rows to the grid earlier on the Xeon alone would gain one case by 8 % and
+needs a profile property that separates it from the EPYC (whose r2c 32768 must stay a
+chain); X29's arm (a) found c2r losing there (1.153). Not built.
 
 ## Verdict
 

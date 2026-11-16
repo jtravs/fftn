@@ -432,6 +432,16 @@ real_fusion fusion_of(const build_settings& settings, target t) {
   };
 }
 
+// Whether an r2c grid pairs its bins in its last phase where the phase allows (X33): not on
+// avx2, where the EPYC 7763 gained nothing from it (0.98-1.02), the separate pass after the
+// grid elsewhere. A forced setting applies alone (tests).
+bool r2c_pairs_in_grid(const build_settings& settings, target t) {
+  if (settings.r2c_pair_last >= 0) {
+    return settings.r2c_pair_last != 0;
+  }
+  return t != target::avx2;
+}
+
 // Makes the records from `first` on read the output slot where they read the input: the
 // grid of a c2r row runs in place on the output, which the pairing pass has written (the
 // grid builder reads its input from the input slot, and with in_place set touches it only
@@ -582,7 +592,8 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     std::vector<stage> pairing;
     // r2c: the pairing in the grid's last phase, over pairs of mirror column sets, where the
     // last phase's columns allow (X33); else a separate pass after the grid.
-    const bool paired_last = r2c && grid.pairs_last(real_grid);
+    const bool paired_last =
+        r2c && r2c_pairs_in_grid(settings, c.isa_target) && grid.pairs_last(real_grid);
     if (paired_last) {
       scratch = grid.c2c_row(real_grid, -1, in_place, opts.scale, false, p, 0, n);
     } else if (r2c) {
