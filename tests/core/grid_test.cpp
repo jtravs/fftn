@@ -367,8 +367,8 @@ TEST(Grid, PowersOfTwoStayChainsUpToTheProfilesLimit) {
       fftn::options(), forced));
   EXPECT_NE(three.find("16 x 16 x 16"), std::string::npos) << three;
   // A real row of 8192 (half length 4096) stays a grid.
-  const auto real = make_plan_core(
-      fftn::detail::view_of(fftn::rows_r2c<double>(8192, 1)), fftn::options(), s);
+  const auto real =
+      make_plan_core(fftn::detail::view_of(fftn::rows_r2c<double>(8192, 1)), fftn::options(), s);
   EXPECT_TRUE(is_grid(*real)) << described(*real);
 }
 
@@ -631,8 +631,8 @@ TEST(Grid, LongChainsPlaceScratchFromTheOutput) {
   constexpr std::size_t n = 16384; // 256 KiB, beyond every L1
   for (const bool in_place : {false, true}) {
     auto shape = fftn::rows_c2c<double>(n, 1, fftn::direction::forward);
-    const auto core = make_plan_core(fftn::detail::view_of(shape),
-                                     fftn::options{.in_place = in_place}, chain);
+    const auto core =
+        make_plan_core(fftn::detail::view_of(shape), fftn::options{.in_place = in_place}, chain);
     ASSERT_TRUE(core->a_from_out);
     const cvec<double> x = fftn::test::input_source(7).complexes<double>(n);
     // Room for every output offset tried; offsets in bytes, 16-byte steps.
@@ -652,7 +652,8 @@ TEST(Grid, LongChainsPlaceScratchFromTheOutput) {
         std::byte* a = fftn::detail::scratch_a(*core, slot, out);
         EXPECT_EQ(reinterpret_cast<std::uintptr_t>(a) % 64, 0U);
         EXPECT_LT(static_cast<std::size_t>(a - slot), 4096U);
-        const auto gap = (reinterpret_cast<std::uintptr_t>(a) - reinterpret_cast<std::uintptr_t>(out)) % 4096;
+        const auto gap =
+            (reinterpret_cast<std::uintptr_t>(a) - reinterpret_cast<std::uintptr_t>(out)) % 4096;
         EXPECT_GE(gap, 2048U - 63U);
         EXPECT_LE(gap, 2048U);
         const cvec<double> y(out, out + n);

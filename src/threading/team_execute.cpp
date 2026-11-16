@@ -57,8 +57,8 @@ team_env::team_env(const plan_core& core, const void* in, void* out, std::byte* 
 slot_addresses team_env::scratch(int lane) const noexcept {
   slot_addresses at = io_;
   if (core_.bytes != 0) {
-    std::byte* slot = scratch_a(core_, slots_ + static_cast<std::size_t>(lane) * core_.slot_bytes,
-                                io_.out);
+    std::byte* slot =
+        scratch_a(core_, slots_ + static_cast<std::size_t>(lane) * core_.slot_bytes, io_.out);
     at.a = slot;
     at.b = slot + core_.offset_b;
     at.block = core_.block_elements != 0 ? slot + core_.offset_block : nullptr;
