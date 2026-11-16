@@ -2505,23 +2505,13 @@ specification and cited, need nothing further (an MIT notice is needed only if c
 copied). Planner v1 (experiment X2) has since replaced those rules by measured pass costs;
 nothing of FFTL's remains in the planner.
 
-**Task 2.4 (for the maintainer): the planning and wisdom API.** Built in the smallest form
-section 5.3's sketch allows; each is easy to change before a release. (a) Three efforts,
-`planning::rules | quick | measure`, rather than two with the quick level only as a smaller
-`measure_seconds`: the quick level's candidate count and sample length differ, not only its
-time. (b) The budgets are two plain options, `measure_seconds` (0: the effort's own, 0.1 s and
-10 s) and `measure_scratch_bytes` (0: 1 GiB), rather than a budget struct or no options.
-(c) Measured plans are reproduced through `fftn::wisdom`, a caller-owned value: `add(plan)`
-records any plan's program (the plan befriends the class), `text()` / `wisdom(text)` and
-`save` / `load` (`std::filesystem::path`; `std::runtime_error` on I/O failure,
-`std::invalid_argument` naming the line on malformed text); `options::use` is read-only, so a
-measured plan does not write wisdom by itself. Alternatives: `options` carrying a non-const
-`wisdom*` that measurement fills; a `plan::program()` string accepted back as a plan input.
-(d) An entry that does not rebuild its program is ignored silently except in `describe()`;
-the alternative is to throw. (e) The rules' choice is kept unless beaten by 1 %, so that
-measurement only changes a plan for a real gain. (f) The shape key uses strides and distances
-as given (0 for a default), so two spellings of one layout are two keys. (g) Measurement
-times serial execution; a plan for a team is chosen by its serial time.
+**Task 2.4: the planning and wisdom API.** Settled: the maintainer agreed the API as
+proposed (decision log, 2026-11-16, "The planning API (task 2.4, pull request 26) as
+proposed"): three efforts, the two budget options, `fftn::wisdom` filled with `add` and passed
+by `options::use`, stale or unbuildable entries ignored with a note in `describe()`, the 1 %
+margin, serial timing. Still open, details below the API: the shape key uses strides and
+distances as given (0 for a default), so two spellings of one layout are two keys; a plan for
+a team is chosen by its serial time.
 
 **Threading API and contract (tasks 3.1 and 3.2), for the maintainer's review.** Built as
 below because section 5.3 left the shapes open; each is easy to change before a release.
