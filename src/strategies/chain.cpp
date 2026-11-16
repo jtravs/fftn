@@ -105,6 +105,13 @@ template <class T> bool chain_builder<T>::bluestein_last(std::size_t n) const {
 }
 
 template <class T> std::string chain_builder<T>::radix_text(std::size_t n) const {
+  if (std::ranges::find(pair_lines_, n) != pair_lines_.end()) {
+    for (const pair_leaf_entry& e : pairs_->entry) {
+      if (e.n == n) {
+        return std::to_string(e.r1) + " x " + std::to_string(e.m) + " in registers (pair leaf)";
+      }
+    }
+  }
   return radix_text(n, radices(n));
 }
 
@@ -508,6 +515,53 @@ void chain_builder<T>::add_leaf(std::size_t n, int sign, endpoint src, endpoint 
 }
 
 template <class T>
+const pair_leaf_entry* chain_builder<T>::pair_for(std::size_t n, endpoint src, endpoint dst,
+                                                  const line_edges& edges) const {
+  if (pairs_ == nullptr || forces(n) || src.stride != 1 || dst.stride != 1 ||
+      edges.in == edge_op::factor || edges.out == edge_op::factor) {
+    return nullptr;
+  }
+  for (const pair_leaf_entry& e : pairs_->entry) {
+    if (e.n == 0 || e.n > n) {
+      break;
+    }
+    if (e.n == n) {
+      return &e;
+    }
+  }
+  return nullptr;
+}
+
+template <class T>
+void chain_builder<T>::add_pair_leaf(const pair_leaf_entry& e, int sign, endpoint src,
+                                     endpoint dst, const line_edges& edges,
+                                     std::vector<stage>& stages) {
+  stage st;
+  st.leaf = e.leaf[direction_index(sign)][edges.in == edge_op::scale ? 1 : 0]
+                  [edges.out == edge_op::scale ? 1 : 0];
+  st.args.twiddles = grouped_twiddles(e.n, e.r1);
+  st.args.radix = e.r1;
+  st.args.m = e.m;
+  st.args.n = e.n;
+  st.args.scale = edges.scale;
+  st.args.src_stride = src.stride;
+  st.args.dst_stride = dst.stride;
+  st.src = src.where;
+  st.dst = dst.where;
+  st.units = 1;
+  st.chunks = 1;
+  st.name = "pair leaf radix-" + std::to_string(e.r1) + " x " + std::to_string(e.m) +
+            " in registers " + direction_name(sign) +
+            (edges.in != edge_op::none || edges.out != edge_op::none
+                 ? " (" + edges_note(edges.in, edges.out).substr(2) + ")"
+                 : "");
+  stages.push_back(std::move(st));
+  if (std::ranges::find(pair_lines_, e.n) == pair_lines_.end()) {
+    pair_lines_.push_back(e.n);
+  }
+}
+
+template <class T>
 void chain_builder<T>::add_copy(std::size_t n, endpoint src, endpoint dst, const line_edges& edges,
                                 std::vector<stage>& stages) {
   stage st;
@@ -791,6 +845,10 @@ std::size_t chain_builder<T>::c2c_line(std::size_t n, int sign, endpoint src, en
   }
   if (rad.size() == 1 && has_codelet(n)) {
     add_leaf(n, sign, src, dst, edges, stages);
+    return 0;
+  }
+  if (const pair_leaf_entry* e = pair_for(n, src, dst, edges); e != nullptr) {
+    add_pair_leaf(*e, sign, src, dst, edges, stages);
     return 0;
   }
   const bool wide = kernels_.complex_lanes > 1;

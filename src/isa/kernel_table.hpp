@@ -70,6 +70,40 @@ template <class T>
 // avx512).
 [[nodiscard]] const narrow_leaf_table* find_narrow_leaves(target t) noexcept;
 
+// The pair leaves of a target (experiment X28b, passes/pair_leaf.inl): the chain r1 x m of
+// a row of n = r1 m points held in registers, as one leaf, for rows of stride 1 on both
+// sides; per direction and edges, which are none or scale ([input][output], null where both
+// would scale). Entries with n = 0 end the list; lengths ascend.
+struct pair_leaf_entry {
+  std::size_t n;
+  std::size_t r1;
+  std::size_t m;
+  // NOLINTNEXTLINE(modernize-avoid-c-arrays): filled inside an ISA region
+  leaf_fn leaf[2][2][2];
+};
+inline constexpr std::size_t pair_leaf_capacity = 16;
+template <class T> struct pair_leaf_set {
+  // NOLINTNEXTLINE(modernize-avoid-c-arrays): filled inside an ISA region
+  pair_leaf_entry entry[pair_leaf_capacity];
+};
+struct pair_leaf_table {
+  pair_leaf_set<double> f64;
+  pair_leaf_set<float> f32;
+};
+
+template <class T>
+[[nodiscard]] constexpr const pair_leaf_set<T>& of(const pair_leaf_table& table) {
+  static_assert(std::is_same_v<T, double> || std::is_same_v<T, float>);
+  if constexpr (std::is_same_v<T, double>) {
+    return table.f64;
+  } else {
+    return table.f32;
+  }
+}
+
+// The pair leaves of target t, or null (every target but avx2 and avx512).
+[[nodiscard]] const pair_leaf_table* find_pair_leaves(target t) noexcept;
+
 // The entry points of a table for precision T.
 template <class T> [[nodiscard]] constexpr const kernels_of<T>& of(const kernel_table& table) {
   static_assert(std::is_same_v<T, double> || std::is_same_v<T, float>);
@@ -97,6 +131,12 @@ extern const kernel_table table;
 }
 namespace avx2::narrow {
 extern const narrow_leaf_table leaves;
+}
+namespace avx2::pairs {
+extern const pair_leaf_table leaves;
+}
+namespace avx512::pairs {
+extern const pair_leaf_table leaves;
 }
 #endif
 #if FFTN_ARCH_AARCH64

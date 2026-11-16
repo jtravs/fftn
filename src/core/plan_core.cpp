@@ -457,6 +457,10 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   if (const narrow_leaf_table* narrow = find_narrow_leaves(c.isa_target)) {
     chain.use_narrow_leaves(&of<T>(*narrow));
   }
+  if (const pair_leaf_table* pairs = find_pair_leaves(c.isa_target);
+      pairs != nullptr && settings.pair_leaves) {
+    chain.use_pair_leaves(&of<T>(*pairs));
+  }
   program& p = c.prog;
   const std::size_t r = s.axes.size();
   const auto complex_bytes = static_cast<std::ptrdiff_t>(2 * sizeof(T));
