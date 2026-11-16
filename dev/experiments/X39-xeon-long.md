@@ -1,6 +1,6 @@
 # X39: the Xeon's long rows and in-place 65536 (exit-check causes 5 and 6)
 
-- **Status:** running
+- **Status:** done (arms A and C adopted on the Xeon profile, arm B rejected)
 - **Owner:** x39 session, 2026-11-16
 - **Phase / task:** 1 (phase 1 exit check, the tail rule; follows X25, X26, X26b, X32, X34)
 
@@ -154,4 +154,86 @@ with an odd part 5⁴–5⁵ and for 46080), a depth-first long chain (16384–3
 radix orders for 5000–25000 (the cost tables price no first pass of 8 above 1024 points;
 `measure` finds them).
 
+### Step 2, the arms against each other (Xeon)
+
+Run 20261116-220608-84fe (Slurm 16154 build, 16155 timing; not `--serial`, the serial
+queue held five other jobs; 16 rounds, 11 under load; A/A band ±3.31 %): the 44 standard
+rows of 5000 points and up, arms N = `main` f2f59ff, A, B, C, F = FFTW, M = MKL. Per arm,
+the cases whose plan differs from the arm before (the plans' notes), the median per-round
+ratio and a bootstrap 95 % interval:
+
+| arm (against) | changed cases | geomean | per case |
+|---|---|---|---|
+| A (N) | 4 | **0.935** | c2c 131072 0.927 [0.912, 0.969], 262144 0.959 [0.918, 1.040], r2c 262144 0.940 [0.905, 0.959], c2r 262144 0.914 [0.849, 0.954] |
+| B (A) | 11 | 0.985 | 131072 0.968, 262144 0.972, r2c / c2r 262144 0.946 / 0.976, 524288 0.941 [0.856, 1.082]; 2²⁰ c2c 0.990–0.999, r2c 0.993–1.012, c2r **1.018–1.027** |
+| C (B) | 7 | **0.958** | c2c 32768 0.895 [0.872, 0.903], 46080 0.942 [0.918, 0.965], 65536 in place 0.970, × 3 in place 0.964, × 3 0.969, backward 0.971, out of place 1.002 [0.967, 1.043] |
+
+B changes no two-phase row and C no three-phase row, so C's ratios against B are its ratios
+against A on the same plans. Tracking tier, `main` against A + B + C (run
+20261116-220608-265f, Slurm 16156; 24 rounds, 13 under load; band ±2.23 %): 7 changed
+cases, geomean 0.966 (262144 0.895 [0.847, 0.914], 46080 0.961, r2c 2²⁰ 0.936, c2c 2²⁰ 0.976,
+65536 in place 0.984, 65536 1.015 [0.994, 1.025], c2r 2²⁰ 1.000); 61 cases, 2 faster, 59 no
+evidence, none above 1.028 (c2r 1024², a plane whose plan does not change); weighted
+geomean 0.992 [0.982, 1.001].
+
+FFTN ÷ FFTW (÷ MKL) of the exit check's failing rows, `main` → the adopted plans (A for the
+three-phase rows, C for the two-phase rows), same run: 32768 1.51 → **1.29** (1.26 → 1.10),
+46080 1.33 → 1.26 (1.02 → 0.95), 131072 1.20 → **1.09** (0.98 → 0.90), 262144 1.26 → 1.23
+(0.88 → 0.88; 1.18 with B), 65536 in place 1.13 → 1.09 (1.13 → 1.12), × 3 in place 1.13 →
+1.10 (1.20 → 1.12); unchanged: 25000 1.45 (1.10), 100000 1.45 (0.93), 20000 1.35 (0.93),
+16384 1.23 (1.23), 5000 1.05 (1.17), 10000 0.95 (1.12). Also r2c 262144 1.14 → 1.07, c2r
+262144 1.34 → 1.22.
+
+### Confirmation, the adopted branch against `main` (Xeon)
+
+Run 20261116-225143-281a (Slurm 16165 build, 16166 timing; 20 rounds, all under load; band
+±3.01 %), arms N = `main` f2f59ff, X = f417f7b (arms A and C, B removed), F, M; the 32
+standard rows of 16384–2²⁰ points, 25000 and 100000. The 11 changed cases: geomean
+**0.958**, none above 1.009 (c2c 32768 0.913 [0.881, 0.927], 131072 0.914 [0.879, 0.940],
+262144 0.926 [0.903, 0.956], r2c / c2r 262144 0.922 / 0.920, 65536 × 3 in place 0.965,
+46080 0.979 [0.960, 1.007], × 3 out of place 0.990, 65536 in and out of place 1.002, backward
+1.009 [0.984, 1.041]); 21 unchanged cases no evidence. FFTN ÷ FFTW, N → X: 32768 1.37 →
+1.29, 131072 1.14 → 1.03, 262144 1.32 → 1.19, 46080 1.16 → 1.14, 65536 × 3 in place 1.12 →
+1.09, 65536 in place 1.12 → 1.13; ÷ MKL: 32768 1.21 → 1.10, 131072 0.99 → 0.88, 262144 0.95
+→ 0.86, 65536 × 3 in place 1.17 → 1.12. (FFTW's MEASURE plans vary by run, X25: 46080 was
+1.33 of FFTW in run -84fe and 1.16 here with the same FFTN plan.)
+
 ## Verdict
+
+- **Diagnosis.** The failing rows up to 32768 points are chains on the Xeon, not grids.
+  Two causes keep them 1.2–1.5 times FFTW's time.
+  - The breadth-first chain misses L2 at 256–512 KiB (0.7–1.7 misses per point, IPC near 1),
+    where FFTW's recursion finishes sub-transforms in L1 (LESSONS 3.20).
+  - Rows with an odd part 5⁴–5⁵ need five or six passes without radix-20 and radix-25
+    codelets. FFTW uses three or four (`t3fv_25`, `t3fv_20`).
+
+  The grids (46080–262144) pay for copies in narrow blocks and for blocks wider than their
+  phases want.
+- **Arm A, three-phase blocks of at most 16 columns: adopted** on the Xeon profile (x86-64,
+  a private L2 with less than 2 MiB of L3 per CPU). Over its 4 changed rows it took 0.935 of
+  `main`'s time, below 1 − 3.31 %, and none was slower.
+- **Arm B, radix-32 and radix-64 grid phases: rejected and removed** (f417f7b).
+  - Over its 11 changed rows it took 0.985 of arm A's time, not below the band.
+  - It gained 3–5 % at 131072–262144 and lost 1.8–2.7 % on c2r 2²⁰.
+  - X3's open follow-up is now measured; a size-limited form would be a fourth arm.
+- **Arm C, two-phase blocks within twice L1 and c2c powers of two as grids beyond L2/4:
+  adopted**, at 0.958 over its 7 changed rows (32768 0.895, 46080 0.942, at most 1.002).
+- **Collateral.** Tracking tier: none slower than 1.028, which was a plan that did not
+  change. Other machines are unchanged: the fields are set only on that profile, on x86-64
+  only (the Windows arm64 CI runner's caches matched the condition), and the
+  `Schedule.ProfilesOfRecordedMachines` test now checks every new field.
+- **Confirmation.** The adopted branch (A + C) against `main`: 0.958 over its 11 changed
+  cases, none above 1.009 (run 20261116-225143-281a).
+- **What stays open, with numbers.**
+  - 25000 (1.45 of FFTW), 20000 (1.35), 100000 (1.45) and 46080 (1.26) need radix-20 and
+    radix-25 codelets: a generator change, not tried.
+  - 100000 also gains 0.92–0.94 as 100 × 1000 (five passes against six), a factor-choice
+    rule that X39 did not take.
+  - 16384 (1.23 of FFTW and of MKL) needs a depth-first long chain: no grid or radix order
+    gained more than 3 %.
+  - 5000 and 10000 (1.17 and 1.12 of MKL): chains with a first radix of 8 take 0.90–0.92 of
+    the rules' cycles. `PLANNING=measure` already finds such orders (0.92–0.93), as it does
+    for 20000 and 25000 (0.94–0.97). The cost tables price no radix-8 first pass above 1024
+    points, so these rows are left to measure.
+  - In-place 65536: three phases with radix-32/64 phases took 0.93 of the cycles in place
+    but 0.99–1.04 out of place. No rule was tried; candidates for measure.

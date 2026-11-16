@@ -428,6 +428,17 @@ traded places by factorisation (71680 lost 1.10 in three phases while 86016 and 
 geometry and architecture together, and expect the fine crossovers to need a measured choice.
 [X35](experiments/X35-gnr-profile.md).
 
+3.20 **A breadth-first chain that half fills a private L2 already misses it.** On the Xeon
+6240 (1 MiB L2) FFTN's Stockham chains of 16384–32768 complex doubles (256–512 KiB) missed L2
+0.7–1.7 times per point at an IPC near 1, with fewer instructions than FFTW (12 against 16
+per point), and ran 1.23–1.51 times FFTW's time: input, output, a scratch line and four
+passes' twiddles overfill L2. FFTW plans the same rows as recursive decimation in time
+(16384 = 8 · 64 · 32), whose sub-transforms of 2048 points finish in L1, and misses L2
+0.0–0.3 times per point. A two-phase grid, the blocked answer FFTN has, pays only from 512
+KiB (32768: 0.89 of the chain); at 16384 its copies cost 30–50 instructions per point and it
+lost in every split (1.02–1.69). So the gap between L2/4 and L2/2 is a missing strategy, a
+depth-first chain, not a threshold. [X39](experiments/X39-xeon-long.md).
+
 ## 4. Kernels and algorithms
 
 4.1 **A whole-transform codelet wins only where it fills the register.** One 32-point
