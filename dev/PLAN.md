@@ -113,10 +113,14 @@ runs; the numbers above are the baseline to beat. The rest (6–9) follow. X25's
    (Xeon 1.50, EPYC 1.10–1.18): the partial-unit radix-4 pass (X23b) and, on the Xeon,
    three passes against FFTW's two; 24 points on the Xeon 2.0 (plan 4 × 6); leaves of
    8–16 points 1.07–1.19 (a unit-stride leaf without the set-up for any stride).
-5. Real transforms on x86 (EPYC 1.25): X6 real-input codelets. X25: r2c 65536 on the Xeon
-   is memory (its 32768-point chain at IPC 0.84 with 3.4 times FFTW's L2 misses): count
-   the whole real footprint in the chain-or-grid rule; on the EPYC it is the grid's
-   instructions (lead 1).
+5. Real transforms on x86 (EPYC 1.25): X6 real-input codelets. X29: the real footprint
+   does not move the chain-or-grid switch (Xeon r2c 65536 as a grid: 6 % of its 1.39);
+   the c2r grid now pairs in phase 1's gather out of place (Mac 0.92–0.94); the real
+   overhead of the grid route stays 0.14–0.42 on the Xeon (r2c pairing not fused: it needs
+   both mirror blocks of the last phase). X29's chain-or-grid findings belong to lead 1:
+   lengths with a small power-of-two part as chains (Mac 46080 and 100000 0.62–0.65 of
+   main, EPYC 0.64–0.79), and power-of-two chains on the EPYC beyond L2/2, fast but bimodal
+   at 1–2 MiB (follow-up: why, and whether 4–16 MiB rows can take them: 0.64–0.88).
 6. Double c2c batches of 8–16 points on AVX-512 (task 2.2): the chain against FFTW and MKL;
    a lanes threshold per transform kind (r2c and c2r of 16–64 points under AVX-512 already
    take 0.56–0.96 of the chain's time). X25: batched leaves saturate one unit (Xeon ports
@@ -362,7 +366,7 @@ running, done (with verdict).
 | [X26](experiments/X26-grid-copies.md) | Long rows: do cheaper copy loops in the grid (rows of one vector without an inner loop), wider blocks or fused phases close the gap to FFTW at ≥ 16384, 46080, 100000 and r2c/c2r 65536 and 2²⁰? | 1 | done: cheaper copy loops rejected (Mac 0.986 and Xeon 0.988, within the band; EPYC 1.05, 2²⁰ rows 1.40–1.56: the x86 copies are bound by L1 set conflicts of rows 4 KiB-multiples apart, not instructions); no prefetch in the copies adopted on `avx2` (EPYC target rows 0.920: 65536 1.41 → 1.30 of FFTW, 100000 1.94 → 1.70, r2c 2²⁰ 1.77 → 1.48); wider blocks and fused phases lose on the Mac |
 | [X26b](experiments/X26b-padded-grid.md) | Long rows on x86: does a padded intermediate (phase 2's rows not a 4 KiB multiple apart) remove the grid's L1 set conflicts, and do X26's cheaper copy loops then pay? Can the copies' prefetch follow the core? | 1 | done: padding adopted where the L2 is shared by a cluster (Mac long rows 0.976 of main); on x86 it cuts no L1 refills and gains nothing (Xeon 1.006, EPYC 0.993), off; X26's copy loops rejected again; the prefetch by core rejected (Xeon `avx2` 2²² 0.84 but float 100000 1.27: needs a row-width condition) |
 | [X28](experiments/X28-short-rows.md) | Single short rows (≤ 120 points, batch 1): what is left after X20, and do a lighter entry, 128-bit leaves on x86 or a flat path for two-pass chains close it? (PLAN lead 4) | 1 | done: all adopted (128-bit x86 leaves; one-call entry; passes take their addresses as arguments, no per-stage argument copy): single rows 0.79 (Xeon), 0.82 (EPYC), 0.82–0.88 (Mac) of `main`; tracking Mac 0.953, EPYC 0.964 |
-| [X29](experiments/X29-real-footprint.md) | Real rows in the chain-or-grid rule: should r2c and c2r switch to the grid at another size than the c2c row of half their length, and is the grid's separate pairing pass worth fusing into its end phases? | 1–2 | running |
+| [X29](experiments/X29-real-footprint.md) | Real rows in the chain-or-grid rule: should r2c and c2r switch to the grid at another size than the c2c row of half their length, and is the grid's separate pairing pass worth fusing into its end phases? | 1–2 | done: real footprint rejected (no gain on any machine); c2r pairing in the grid's first gather adopted out of place in two phases (Mac 0.92–0.94); lengths with a power-of-two part ≤ 1024 points stay chains on Apple at any size (46080 0.65, 100000 0.62) and on Zen to half of L3 (0.64–0.85); power-of-two chains on the EPYC bimodal at 1–2 MiB, not adopted |
 | P1 | Cost-model accuracy: rank agreement with measurement across the catalogue per machine | 2 | planned |
 | P2 | Measurement budget: how many candidates and how long before the choice stops improving | 2 | planned |
 | [T1](experiments/T1-dispatch-wait-costs.md) | Dispatch, wake and wait costs per machine and runtime (libgomp, libomp, Kokkos, pool) | 3 | done: hand-off cost and claim runs adopted on Zen 3; dispatch and work costs wait for a per-lane dispatch term |

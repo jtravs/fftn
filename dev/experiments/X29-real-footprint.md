@@ -1,6 +1,6 @@
 # X29: real rows in the chain-or-grid rule, and the grid's pairing
 
-- **Status:** running
+- **Status:** done (pending the x86 collateral runs named under Results)
 - **Owner:** x29 session, 2026-11-15
 - **Phase / task:** 1–2 (PLAN lead 5; follows task 2.1, X6, X12b, X25)
 
@@ -161,7 +161,7 @@ and X28; branch cbe9386, run 20261116-012450-ab38, 80 rounds, 71 loaded, band ±
 46080 0.643, 100000 0.617, c2r 65536 0.937, r2c 2048 × 36 0.970; slowest case 1.014
 (c2c 17, no evidence); geomean 0.984. Adopted on the Mac by rule 2.
 
-### Arm (d): the chain to half of L3 where each CPU has 2 MiB of L3
+### Arms (d) and (d2): chains on x86 where each CPU has 2 MiB of L3
 
 EPYC screens with A, C and FFTW: the screen above and c2c rows 2^k × odd (run
 20261115-221128-8d85; 23 rounds, every one with the node full of other jobs, 93 of its
@@ -170,10 +170,52 @@ cores; band ±1.09 %): the chain took 0.51–0.81 of the grid's time on all 31 r
 0.57, 983040 0.72, 1024000 0.76; 100000 0.51). The rows that are no grid (odd lengths) are
 unchanged (0.99). Xeon: the screen above (the chain lost beyond L2/2), so the rule keys on
 the L3 per CPU (EPYC 4 MiB, 32 MiB for 8 CPUs; Xeon 0.69 MiB, 24.75 MiB for 36), with the
-switch at half of L3, the largest row measured faster as a chain (16 MiB).
+switch at half of L3, the largest row measured faster as a chain (16 MiB). That arm is
+commit 6aba8b1.
 
-(confirmation runs pending)
+Confirmation against main be593d1 (branch cbe9386 = arm d with b2 and c; run
+20261116-040205-7105; 23 rounds, all with 64–96 of the node's cores busy; band ±1.07 %).
+Weighted geomean B ÷ A 0.952, but the rule fails: the chains of the power-of-two rows of
+1–2 MiB were **bimodal**, 0.7 of the grid's time in some processes and up to 2.5 times in
+others (c2c 65536: 4.6–18.4 ns per point against the grid's 5.9–8.1; median ratio 1.46;
+c2c 131072 1.10; r2c and c2r 131072 1.61–1.84; c2r 262144 1.69, while the same plan in arm
+C took 0.92). The screens had not shown the slow mode at all (65536: 0.72 twice). Likely
+cause: leg distances that are multiples of the L2's way size (64 KiB) collide in the
+physically indexed L2 when the pages lie contiguous, which depends on the process. Larger
+powers of two were steady (c2c 2¹⁹ 0.67, 2²⁰ 0.88; real 2²⁰ 0.64–0.69, 2²¹ 0.79–0.81), as
+were all lengths whose power-of-two part is at most 1024 points: c2c 23040 0.75, 46080
+0.74, 100000 0.64, 10⁶ 0.69; r2c and c2r 46080 0.75–0.79, 2·10⁶ 0.71–0.85 (largest
+process-to-process spread of B within ±8 %).
+
+Arm (d2), commit a3e6186: `grid_min_bytes` stays L2/2 on x86; with 2 MiB of L3 per CPU,
+lengths whose power-of-two part is at most 16 KiB (1024 points in double) stay chains up to
+half of L3 (`chain_part_bytes`, `chain_part_limit_bytes`). In the confirmation run its
+plans are arm B's for exactly the steady rows above and arm A's for the rest. Tracking
+tier on the EPYC against main 07c9e8c: (pending, job 510166).
+
+Xeon confirmation (arms b2, c, d2 change only c2r out of place in two phases there):
+(pending, job 15893).
 
 ## Verdict
 
-(pending)
+- **Arm (a), the real footprint in the rule: rejected.** No machine gains from switching
+  real rows to the grid earlier than c2c rows of their half length (Xeon: k = 2 geomean
+  1.015; EPYC and Mac: the grid comes too early already, or the rule is right). X25's
+  r2c 65536 gap on the Xeon is not the threshold. Not built.
+- **Arm (b2), the c2r pairing in phase 1's gather: adopted** for c2r rows out of place
+  in two-phase grids (commit 560eeba; Mac 0.92–0.94, the separate route kept in place and
+  in three phases, where the fused gather lost 2–6 %). The r2c pairing stays a separate
+  pass (DESIGN 9.1 says why).
+- **Arm (c), Apple: lengths that are not powers of two stay chains: adopted** (9752672;
+  Mac tracking 0.984 of main at 07c9e8c, 46080 0.65, 100000 0.62, nothing slower).
+- **Arm (d), x86 with 2 MiB of L3 per CPU, every row a chain to half of L3: rejected**
+  by rule 2 (power-of-two chains of 1–2 MiB bimodal, up to 1.84 of main).
+- **Arm (d2), the same for lengths with a power-of-two part ≤ 1024 points: adopted on
+  the EPYC by its confirmation-run evidence** (a3e6186; 0.64–0.85 on the rows it changes);
+  the Xeon (0.7 MiB of L3 per CPU) unchanged.
+
+DESIGN 8.5, 9.1 and the decision log record the rules; LESSONS 3.10–3.12 the lessons.
+Follow-ups for lead 1: why power-of-two chains are bimodal on Zen 3 at 1–2 MiB (huge pages?)
+and whether rows of 4–16 MiB, which were steady (0.64–0.88), can take chains; whether
+mixed lengths with a power-of-two part of 2048–8192 points can (mixed on the Mac, good on
+the EPYC in the screens); fusing the r2c pairing into the grid's last phase (block pairs).

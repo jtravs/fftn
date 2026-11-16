@@ -1166,9 +1166,12 @@ is a grid when its bytes exceed `grid_min_bytes`, in three phases beyond
 `grid_three_bytes`, by default half of L2 and L2 where each core has its own L2 (shared by
 no more CPUs than the L1: x86), and the L1 data cache and an eighth of L2 where a cluster
 shares it (Apple; X12b: a private L2 serves a chain's passes well, a cluster's does not).
-With a private L2 and at least 2 MiB of L3 per CPU sharing it (Zen's CCX), the grid starts
-at half of L3 instead (X29: on the EPYC 7763 the chain took 0.51–0.81 of the grid's time
-on every row from L2/2 to 16 MiB; the Xeon 6240, with 0.7 MiB of L3 per CPU, keeps L2/2).
+With a private L2 and at least 2 MiB of L3 per CPU sharing it (Zen's CCX), a row whose
+length is not a power of two and has a power-of-two part of at most 1024 points (16 KiB)
+stays a chain up to half of L3 (`chain_part_limit_bytes`; X29: 0.64–0.85 of the grid's
+time on the EPYC 7763 at 46080 to 2 Mi points, steadily; power-of-two chains of 1–2 MiB
+were bimodal there, 0.7 to 1.8 of the grid's time from process to process, so powers of
+two keep L2/2; the Xeon 6240, with 0.7 MiB of L3 per CPU, keeps L2/2 for every length).
 Where a cluster shares L2, a row whose length is not a power of two stays a chain when the
 power-of-two part of its length is at most L1/8 in bytes (1024 points in double on the
 M5), at any size, or when the row is at most 2 · L1 (`chain_part_bytes`,
@@ -2611,7 +2614,7 @@ to change before a release.
 | 2026-11-15 | A pass kernel takes its source and destination as arguments (`pass_fn(args, src, dst, first, last)`), like a leaf; `pass_args` holds only the fixed geometry, and the driver calls kernels on the plan's own arguments; one transform of a flat program runs from a contiguous `flat_body`, entered from `execute_core` with its slots as scalars; `plan::execute` is one library call (X28) | The per-stage, per-transform copy of `pass_args` cost 3.7–6 ns per stage on Zen 3 (much of it store-to-load forwarding into the kernel), 1.5–2.7 on the M5 Max: single rows of 24–120 points 0.69–0.88 of their time on the Mac; only grid stages with moving twiddles and lanes blocks still copy |
 | 2026-11-15 | A c2r row out of place whose half-length transform is a two-phase grid pairs its bins in phase 1's gather (`c2r_pair_gather`), reading the input only; in place and three-phase grids keep the separate pairing pass; the r2c pairing stays separate (section 9.1) | X29 (Mac): 0.92–0.94 of the separate route's time at 32768–131072 and 46080 out of place, where the workspace block goes; 1.02–1.06 where the block stays (the gather reads the input twice) |
 | 2026-11-15 | Where a cluster shares L2 (Apple), a row whose length is not a power of two stays a chain when its power-of-two part is at most L1/8 in bytes, or the row at most 2 L1 (`chain_part_bytes`, `chain_mixed_bytes`; section 8.5) | X29 (M5 Max): chains took 0.49–0.72 of the grid's time for every such length tried (144 KiB to 62.5 MiB), the grid's L1-conflict problem being one of powers of two; tracking tier 0.983 (46080 0.63, 100000 0.60), nothing slower |
-| 2026-11-15 | With a private L2 and at least 2 MiB of L3 per CPU (Zen), the grid starts at half of L3 instead of half of L2 (section 8.5) | X29 (EPYC 7763): the chain took 0.51–0.81 of the grid's time on every row from L2/2 to 16 MiB, powers of two included; the Xeon 6240 (0.7 MiB of L3 per CPU) keeps L2/2, where the chain lost 1.1–1.6 |
+| 2026-11-16 | With a private L2 and at least 2 MiB of L3 per CPU (Zen), a row whose length is not a power of two and has a power-of-two part of at most 1024 points stays a chain up to half of L3 (section 8.5) | X29 (EPYC 7763): 0.64–0.85 of the grid's time, steadily, at 46080 to 2 Mi points; power-of-two chains of 1–2 MiB were bimodal (0.7–1.8 by process) and keep the grid; the Xeon 6240 (0.7 MiB of L3 per CPU) keeps L2/2, where every chain lost 1.1–1.6 |
 | 2026-11-16 | Where the L2 is shared by a cluster (Apple), an intermediate the grid already keeps in the workspace block is padded after each of phase 2's rows (`grid_pad`, profile `grid_pad_period`); off on x86. The copies' prefetch keeps X26's target gate: keying it to the core was rejected (experiment X26b) | Mac: double long rows 0.976 of main (2^18 0.94); Xeon 1.006 and EPYC 0.993, where counters showed no fewer L1 refills. The prefetch on an Intel core under `avx2` took 2^22 to 0.84 but float 100000 to 1.27; X26's cheaper copy loops were rejected again on the padded grid |
 
 ---

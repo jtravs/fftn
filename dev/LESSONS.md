@@ -288,14 +288,17 @@ factor in every leg distance spreads them. Rules tuned on powers of two (X12, X1
 that bias: test mixed lengths before extending a threshold to them.
 [X29](experiments/X29-real-footprint.md).
 
-3.11 **Do not extrapolate a chain-or-blocked threshold past the sizes tried.** X12b kept
-the x86 chain to L2/2 because it tried thresholds up to L2 only. On the EPYC 7763 (512 KiB
-L2, 32 MiB L3 per 8 cores) the chain took 0.51–0.81 of the grid's time on every row from
-L2/2 to 16 MiB, powers of two included: Zen's large, fast L3 feeds the chain's passes
-faster than the grid's copy loops run (3.9). The Xeon 6240 (1 MiB L2, 0.7 MiB of L3 per
-CPU) behaved as X12b said: the chain lost 1.1–1.6 beyond L2/2. Same instruction-set
-family, opposite answers: key the rule on the L3 per CPU, and measure past the last
-threshold before trusting it. [X29](experiments/X29-real-footprint.md).
+3.11 **Do not extrapolate a chain-or-blocked threshold past the sizes tried, and look at
+every process's time, not only the median.** X12b kept the x86 chain to L2/2 because it
+tried thresholds up to L2 only. On the EPYC 7763 (512 KiB L2, 32 MiB L3 per 8 cores) whole-
+row chains beat the grid far beyond: lengths with a small power-of-two part took 0.64–0.85
+of its time steadily up to 2 Mi points. Powers of two looked as good in two screens
+(0.53–0.73) and then, in a third, ran 0.7 to 1.8 times the grid's time from process to
+process at 1–2 MiB (leg distances a multiple of the L2's way size, which collide when the
+pages lie contiguous): a median over few processes hid a bimodal cost. The Xeon 6240
+(1 MiB L2, 0.7 MiB of L3 per CPU) behaved as X12b said for every length: the chain lost
+1.1–1.6 beyond L2/2. Same instruction-set family, opposite answers: key the rule on the L3
+per CPU. [X29](experiments/X29-real-footprint.md).
 
 3.12 **Fuse a pass when it removes an array, not merely a pass.** Folding the c2r
 pairing into the grid's first gather (each element reads its mirror from the input) made
