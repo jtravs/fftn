@@ -19,6 +19,9 @@ namespace {
 
 inline constexpr target id = target::avx2;
 inline constexpr bool fused = true;
+// No masked partial runs (load_n, store_n): only leaves are compiled with this vocabulary,
+// and a leaf has no partial runs.
+inline constexpr bool masked = false;
 
 // Twiddles pre-arranged for mul as in vocab_avx2.inl: r holds (wr, wr), i holds (-wi, wi).
 struct tw_f64 {

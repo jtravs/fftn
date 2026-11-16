@@ -389,7 +389,7 @@ FFTN_FORCE_INLINE void c2r_groups(const T* x, T* y, std::size_t h, std::size_t m
   cdft<R>::template dif<T, +1>(from_registers<T>{vb}, to_registers<T>{vb},
                                lane_twiddles<T>{.p = tw_down, .row = row});
   if constexpr (Full && R % C<T> == 0) {
-    store_transposed<T, R>(y + at(R * p0, 2), va);
+    store_transposed<T, R>(y + at(R * p0, 2), va, C<T>);
   } else {
     store_tiled<T, R>(y + at(R * p0, 2), va, valid);
   }

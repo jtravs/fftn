@@ -12,15 +12,6 @@
 
 namespace {
 
-// A register of zeros.
-template <class T> FFTN_FORCE_INLINE cv<T> zeros() {
-  T tile[2 * C<T>]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
-  for (std::size_t l = 0; l < 2 * C<T>; ++l) {
-    tile[l] = T(0);
-  }
-  return load(tile);
-}
-
 // The chirp, as both passes read it: element i = t + s j of the line (copy t < s, sequence
 // index j < Q) takes w_j. Shared: C divides s, so the C elements of a unit share one j; the
 // table holds Q entries in broadcast storage (pack_bcast_twiddles) and the units run row
