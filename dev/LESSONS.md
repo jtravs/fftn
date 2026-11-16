@@ -193,6 +193,15 @@ length was itself timed, and pin the measured best where it was not; treat the
 unmeasured lengths in between as the model's real test.
 [X2](experiments/X2-radix-sets.md) (refresh).
 
+2.9 **A ratio to a competitor is a property of the pair on that machine, not of your code.**
+FFTN ÷ FFTW at ≥ 16384 points was 1.19 on the Mac but 0.75 on Google Axion (Neoverse V2),
+same instruction set and same library: per point FFTN was 1.4 times slower on Axion than on
+the Mac at 2²⁰, FFTW 2.6 times. A deficit seen on one machine per architecture can be the
+competitor's strength there; check the absolute times on a second core before spending on
+the gap, and judge per-core rules on several cores of one ISA (Zen 3 against Zen 5 and
+Cascade Lake against Granite Rapids differed by up to 0.3–0.6 in single cases, not in which
+cases lose). [X31](experiments/X31-cloud-1d.md).
+
 ## 3. Memory and caches
 
 3.1 **Buffers a power of two apart conflict in cache; offset them.** Staggering the
@@ -322,7 +331,10 @@ process at 1–2 MiB (leg distances a multiple of the L2's way size, which colli
 pages lie contiguous): a median over few processes hid a bimodal cost. The Xeon 6240
 (1 MiB L2, 0.7 MiB of L3 per CPU) behaved as X12b said for every length: the chain lost
 1.1–1.6 beyond L2/2. Same instruction-set family, opposite answers: key the rule on the L3
-per CPU. [X29](experiments/X29-real-footprint.md).
+per CPU. [X29](experiments/X29-real-footprint.md). **Explained by X32:** the slow mode was
+the rules' radix-16 passes on transparent huge pages (3.14), not the chain or its size;
+chains of radices ≤ 8 were steady and took 0.57–0.85 of the grid's time on the same EPYC
+from 32768 to 2²² points. [X32](experiments/X32-long-pow2.md).
 
 3.13 **Fuse a pass when it removes an array, not merely a pass.** Folding the c2r
 pairing into the grid's first gather (each element reads its mirror from the input) made
@@ -331,7 +343,30 @@ in-place and three-phase rows 2–6 % slower, where the array stayed and the inp
 twice instead of once by a streaming in-place pass; on the EPYC even the out-of-place
 rows lost (1.11). [X29](experiments/X29-real-footprint.md).
 
-3.14 **Before fusing away a streaming pass, check what the pass costs alone.** FFTN's
+3.14 **When a cost changes from process to process, look at the page size before the
+algorithm.** Linux's transparent huge pages ("always" on the EPYC nodes) back a buffer of
+1–2 MiB with 2 MiB pages or not depending on where its mapping falls. On huge pages the
+physical address bits that index L2 equal the virtual ones, so the 16 streams of a radix-16
+pass, a power of two apart, share one 8-way L2 set: FFTN's chain of 131072 points ran 14.3
+ns per point in 14 processes of 16 and 8.7 in the other 2, and 21–25 when every buffer was
+forced onto huge pages, against 4.4–4.8 for radix-8 and radix-4 chains in every placement
+(the grid 6.3). Record each buffer's backing (`/proc/self/smaps`, AnonHugePages) next to
+its time, and test with `MADV_HUGEPAGE` and `MADV_NOHUGEPAGE` to separate the two modes.
+Large radices at power-of-two strides were already known to conflict in L1 (3.1); huge
+pages carry the conflict to L2. [X32](experiments/X32-long-pow2.md).
+
+3.15 **Two streaming buffers a few cache lines apart modulo 4 KiB cost more than their
+alignment.** A Stockham chain reads one buffer and writes the other; with the output 16 to
+128 bytes past the scratch line or 48 to 128 before it modulo 4 KiB, its loads alias the
+stores just issued (4K aliasing) and a radix-4 chain of 65536 points on Zen 3 ran 1.15–1.9
+times as long as with the two half a page apart; an output merely not 64-byte aligned cost
+5–8 %. Two large malloc'd buffers lie exactly so (each 16 bytes into a page). A library
+that owns one of the two buffers can place it half a page from the other at execution; FFTN
+tried that and fbench saw nothing (0.99–1.01), because fbench's buffers sit at random
+multiples of 64 bytes, where the near-alias cases are rare: a benchmark that never places
+buffers as malloc does cannot judge such a fix. [X32](experiments/X32-long-pow2.md).
+
+3.16 **Before fusing away a streaming pass, check what the pass costs alone.** FFTN's
 separate r2c pairing pass over the half spectrum looked like 10–30 % of a long real row
 (time of the real row over the c2c row of half its length), but fusing it into the grid's
 last phase (no pass, no extra sweep) recovered only 2–6 % on the M5 Max and the Xeon 6240
@@ -341,6 +376,7 @@ also had to stay within the phase's scratch budget and be at least a cache line 
 it lost 5–9 %. Meanwhile FFTW's r2c rows of 2²⁰ cost 0.76–0.86 of its own c2c of half
 their length: its real plans are not a half-length c2c plus a pass.
 [X33](experiments/X33-long-real.md).
+
 
 ## 4. Kernels and algorithms
 
