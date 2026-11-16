@@ -101,7 +101,7 @@ void set_grid_sizes(machine_profile& p, const core_class& c) noexcept {
   }
   // Experiment X34: where those chains do not apply (Xeon 6240, 0.7 MiB of L3 per CPU), a
   // row whose length has an odd part of at least 15 stays in two grid phases beyond L2
-  // (71680 to 4 x 10^6 points: 0.70-0.92 of the three phases' cycles, 100000 0.73).
+  // (15 rows of 71680 to 4 x 10^6 points: 0.70-1.01 of the three phases' cycles, 100000 0.73).
   if (private_l2 && !large_l3) {
     p.grid_two_odd_part = 15;
   }
