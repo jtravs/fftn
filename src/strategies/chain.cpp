@@ -119,6 +119,14 @@ template <class T> std::vector<std::size_t> chain_builder<T>::radices(std::size_
     q *= rad.back();
     rad.pop_back();
   }
+  // Experiment X36: a Bluestein stage with fewer copies than a register holds (1 < s < C)
+  // runs every pass of its convolution on partial units; one stage over the whole line
+  // (Bluestein needs no prime) runs them whole. 1018 = 2 x 509 on AVX-512 in double was 1.4
+  // times MKL's time as two copies of 509.
+  if (q > 1 && !forces(n) && n / q > 1 && n / q < kernels_.complex_lanes &&
+      rader_root(q, profile_) == 0) {
+    return {n};
+  }
   if (q > 1) {
     rad.push_back(q);
   }

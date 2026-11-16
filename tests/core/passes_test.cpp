@@ -836,6 +836,28 @@ TEST(Passes, ScratchOnlyWhenUsed) {
   }
 }
 
+// A Bluestein stage with fewer copies than a register's lanes becomes one stage over the
+// whole line (experiment X36): 2 x 509 is "bluestein 1018" where C > 2, and the plain
+// "2 x bluestein 509" elsewhere; with C | 2 nothing changes. Both are within tolerance
+// (the oracle suites).
+template <class T> void few_copies_take_the_whole_line(fftn::isa t) {
+  const auto shape = fftn::rows_c2c<T>(std::size_t{2} * 509, 1, fftn::direction::forward);
+  const auto core = make_plan_core(fftn::detail::view_of(shape), {.force_isa = t}, {});
+  const std::string listing = joined(stage_names(*core));
+  if (lanes_of<T>(t) > 2) {
+    EXPECT_NE(listing.find("Q 1018, "), std::string::npos) << fftn::isa_name(t) << listing;
+  } else {
+    EXPECT_NE(listing.find("Q 509, "), std::string::npos) << fftn::isa_name(t) << listing;
+  }
+}
+
+TEST(Passes, FewBluesteinCopiesTakeTheWholeLine) {
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    few_copies_take_the_whole_line<double>(t);
+    few_copies_take_the_whole_line<float>(t);
+  }
+}
+
 // The radix test knob refuses radices no pass has: radix 1 once selected a null entry.
 TEST(Passes, ForcedRadicesAreChecked) {
   // The view borrows the shape's axes, so the shape must outlive it.
