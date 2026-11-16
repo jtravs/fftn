@@ -468,7 +468,11 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   }
   chain_builder<T> chain(kernels, profile, tables_of<T>(c), settings.chunk_points, settings.radices,
                          settings.bluestein_above, fusion_of(settings, c.isa_target));
-  chain.use_long_rows(settings.profile.grid_min_bytes, settings.profile.pow2_radix8_bytes);
+  // X32: only on the machines whose profile keeps long powers of two as chains, the ones
+  // the radix sequences were measured on (the Xeon lost with chains of either).
+  if (settings.profile.pow2_chain_bytes != 0) {
+    chain.use_long_rows(settings.profile.grid_min_bytes, settings.profile.pow2_radix8_bytes);
+  }
   if (const narrow_leaf_table* narrow = find_narrow_leaves(c.isa_target)) {
     chain.use_narrow_leaves(&of<T>(*narrow));
   }

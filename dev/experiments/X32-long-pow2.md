@@ -227,9 +227,17 @@ load, band ±1.00 %; Slurm 510637, 510638): 32768 0.728, 131072 0.724, 524288 0.
 to 0.73 and FFTN ÷ FFTL.jl from 1.35 to 0.93 (per length ÷ FFTW: 0.98 → 0.96, 1.10 → 0.80,
 1.29 → 0.81, 1.15 → 0.79, 1.19 → 0.63, 0.89 → 0.53, 1.01 → 0.59, 0.93 → 0.69, 1.05 → 0.90).
 
-### Confirmation, the Xeon
+Float on the EPYC (X26b's float rows, bac9e02, run 20261116-133414-15bd, 15 rounds, none
+under load, band ±1.00 %; Slurm 510743, 510744): c2c 65536 0.719, 2²⁰ 0.534, 2²² 0.636;
+100000 1.002; r2c 2²⁰ 1.038 [1.019, 1.064] with the identical plan in both arms, re-run at
+0.998 (double and float, run 20261116-134036-22d9, 20 quiet rounds; Slurm 510787).
 
-XEON_CONF
+### The Xeon
+
+No plan changes there: its caches do not meet the rule's condition (0.7 MiB of L3 per
+CPU), so `pow2_chain_bytes` stays 0 and no power-of-two chain exceeds `grid_min_bytes`
+(schedule test on the recorded topology). Its confirmation run (Slurm 16037, 16038) was
+cancelled once arm (b), the only change that reached its code, was reverted.
 
 ## Verdict
 
