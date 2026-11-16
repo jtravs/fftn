@@ -491,11 +491,10 @@ std::pair<const T*, const T*> grid_builder<T>::c2r_pair_factors(std::size_t n1, 
   return {columns_data, rows.data()};
 }
 
-// The columns hb of each set of a paired last phase (r2c_pair_gather): half the block, at
-// least the lanes.
+// The columns hb of each set of a paired last phase (r2c_pair_gather): half the block, so
+// that the two sets fill the phase's scratch as one block does.
 template <class T> std::size_t grid_builder<T>::pair_half(const grid_split& g) const noexcept {
-  const std::size_t c = kernels_.complex_lanes;
-  return std::max(c, g.block / 2 / c * c);
+  return g.block / 2;
 }
 
 template <class T> bool grid_builder<T>::pairs_last(const grid_split& g) const noexcept {
@@ -513,11 +512,13 @@ template <class T> bool grid_builder<T>::pairs_last(const grid_split& g) const n
   if (fused_ && fusible(phase_radix_list(nk))) {
     return false;
   }
-  // Sets narrower than a cache line write each output line from two or three iterations
-  // that lie apart in time: on the EPYC (blocks of 4, sets of 2 complex doubles) r2c 65536
-  // lost 5-7 % (X33).
+  // Each set at least a register and a cache line: sets narrower than a line write each
+  // output line from two or three iterations that lie apart in time (EPYC, blocks of 4,
+  // sets of 2 complex doubles: r2c 65536 lost 5-7 %), and sets of more than half the block
+  // overfill the phase's scratch (Xeon, blocks of 4 with C = 4: r2c 131072 lost 8-9 %; X33).
   const std::size_t hb = pair_half(g);
-  return nk >= 2 && l % (2 * hb) == 0 && hb * 2 * sizeof(T) >= 64;
+  return nk >= 2 && hb % kernels_.complex_lanes == 0 && hb * 2 * sizeof(T) >= 64 &&
+         l % (2 * hb) == 0;
 }
 
 // The tables of a paired last phase of L columns and Nk rows in an r2c row of n reals

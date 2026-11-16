@@ -78,7 +78,55 @@ apply (the grid suites force the route).
 
 ## Results
 
-(pending)
+Ratios are medians of paired per-round ratios. In the screen tables, times are medians in
+µs; r = time(real n) ÷ time(c2c n/2) − 1 per arm; "half" = N ÷ F on c2c n/2 and "real" =
+(1 + r_N) ÷ (1 + r_F), so that N ÷ F on the real row = half × real.
+
+### Step 1, the screen (main 3d8b129)
+
+Runs 20261116-114247-1dff (Mac, 24 rounds, load 9.7 median, band ±1.24 %),
+20261116-114605-838e (EPYC, 30 rounds, none under load, band ±1.00 %, FFTL as well),
+20261116-115726-0dd9 (Xeon, 30 rounds, 15 under load, band ±2.29 %).
+
+| row | Mac N÷F | r_N | r_F | half | real | EPYC N÷F | r_N | r_F | half | real | Xeon N÷F | r_N | r_F | half | real |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| r2c 65536 out | 1.17 | 0.10 | 0.08 | 1.15 | 1.01 | 1.16 | 0.13 | 0.08 | 1.11 | 1.04 | 1.35 | 0.17 | 0.32 | 1.52 | 0.89 |
+| r2c 65536 in | 1.23 | 0.10 | 0.03 | 1.15 | 1.07 | 1.19 | 0.17 | 0.09 | 1.11 | 1.07 | 1.39 | 0.24 | 0.35 | 1.52 | 0.91 |
+| r2c 2²⁰ out | 1.38 | 0.09 | −0.14 | 1.08 | 1.28 | 1.34 | 0.21 | −0.24 | 0.84 | 1.59 | 1.46 | 0.31 | −0.24 | 0.86 | 1.71 |
+| r2c 2²⁰ in | 1.26 | −0.01 | −0.15 | 1.08 | 1.16 | 1.24 | 0.18 | −0.20 | 0.84 | 1.47 | 1.13 | 0.03 | −0.22 | 0.86 | 1.32 |
+| c2r 65536 out | 1.25 | 0.17 | 0.07 | 1.15 | 1.09 | 1.30 | 0.23 | 0.05 | 1.11 | 1.17 | 1.45 | 0.16 | 0.22 | 1.52 | 0.96 |
+| c2r 65536 in | 1.21 | 0.12 | 0.06 | 1.15 | 1.05 | 1.23 | 0.17 | 0.06 | 1.11 | 1.10 | 1.23 | 0.12 | 0.38 | 1.52 | 0.81 |
+| c2r 2²⁰ out | 1.35 | 0.08 | −0.13 | 1.08 | 1.25 | 1.35 | 0.26 | −0.22 | 0.84 | 1.61 | 1.18 | 0.23 | −0.11 | 0.86 | 1.38 |
+| c2r 2²⁰ in | 1.07 | −0.02 | −0.01 | 1.08 | 0.98 | 0.89 | 0.16 | 0.10 | 0.84 | 1.05 | 0.86 | 0.02 | 0.01 | 0.86 | 1.01 |
+
+Where the time goes:
+
+- **65536**: mostly the half-length complex transform. Mac and EPYC run c2c 32768 at
+  1.11–1.15 of FFTW, the Xeon at 1.52 (its chain of 32768, 512 KiB, X25's memory-bound
+  case; as a grid it is no faster, 166 against 165 µs). FFTN's real overhead is 0.10–0.24,
+  FFTW's 0.03–0.38 (the Xeon's FFTW pays more for its real rows than FFTN). On the Xeon the
+  grid route is the better r2c 65536 (G ÷ N 0.90 out of place, 0.89 in place: r_G 0.05–0.10)
+  although the c2c half is not: the chain's real row is what is slow, not its half (X29 arm
+  a measured 0.94–0.98 for this; the arm b2 screen below repeats it with b1).
+- **2²⁰**: FFTW's real rows cost **less** than its c2c of half their length (r_F −0.11 to
+  −0.24 out of place on all three machines: its r2c plans are rdft2 radix-2–16 DIT/DIF steps
+  over sub-transforms of n/4–n/16 points, `PLAN_NOTE=1`), while FFTN's half-length grid of
+  2¹⁹ beats FFTW's c2c 2¹⁹ on x86 (0.84–0.86). The gap at 2²⁰ is the real side: FFTN's
+  separate pairing pass plus an r2c grid no better than its c2c, against an FFTW real plan
+  whose sub-transforms fit the cache better than its own c2c 2¹⁹.
+- **The chain on the EPYC** (arm C) took 0.64–0.69 of main's time on every real row at
+  2²⁰, 0.70–0.80 at 65536–262144 (except in place at 262144, 1.02–1.05) and c2c 2¹⁹ 0.66: X29's finding (steady beyond 2 MiB,
+  bimodal at 1–2 MiB) and FFTL's lead there (FFTL 0.56–0.62 of FFTN at 2²⁰) are the
+  half-length chain-or-grid rule, lead (a)'s (X32), not the real rows'.
+- In place against out of place at 2²⁰ on the Xeon: 5754 against 7295 µs (r2c), because
+  the out-of-place three-phase grid carries the input, the output and the workspace block
+  (24 MiB, the whole shared L3).
+
+Decision rule 1: the grid route's r2c overhead is ≥ 0.10 with FFTW's ≥ 0.05 smaller on at
+least one machine-target (EPYC 65536–2²⁰, Xeon 2²⁰, Mac 65536 in place and 2²⁰), so arm
+b1 was built. The c2r side (arm b3) also qualifies (EPYC 0.16–0.26 against −0.22–0.10).
+
+(continued below)
 
 ## Verdict
 

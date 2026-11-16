@@ -381,10 +381,10 @@ TEST(Real, HalfLengthGrid) {
 }
 
 // The r2c pairing in the grid's last phase (X33): pairs of mirror column sets of
-// hb = max(C, block / 2) columns (at least a cache line), column 0 on its own; the last factor even
-// and odd (the middle bin in column 0, or in column L/2 paired with itself), two and three phases,
-// in and out of place, scaled and not (check_all); L of 24 splits into pairs of sets of 4 (double;
-// float's sets of 4 are narrower than a line and keep a pass after the grid).
+// hb = block / 2 columns (at least a register and a cache line), column 0 on its own; the last
+// factor even and odd (the middle bin in column 0, or in column L/2 paired with itself), two and
+// three phases, in and out of place, scaled and not (check_all); L of 24 splits into pairs of sets
+// of 4 (double; float's sets of 4 are narrower than a line and keep a pass after the grid).
 TEST(Real, PairingInTheGridsLastPhase) {
   struct grid_real {
     std::size_t n;
