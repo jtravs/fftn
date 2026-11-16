@@ -195,3 +195,21 @@ override changes.
 ## Verdict
 
 (pending)
+
+## State (2026-11-16, while the deciding runs are queued)
+
+- Done: arms L (b5d3d6d), C (88cd9c3, superseded), C2 (ead29f2; test fix 2b38263), merge of
+  main with X29 (fd4a72d). Tests: DMOG GCC 16 `avx2` (masked on and off) and Xeon GCC 14
+  (`avx512`, `avx2`) all pass; Mac Clang all pass. Counter screens and arm R recorded above
+  (R rejected). Mac (Clang, `neon_fcma`), L ÷ A: x30 run 20261116-072312-a527 double 0.999,
+  float 1.000, worst 1.003; tracking run 20261116-073346-9b15 1.001, worst 46080 1.010;
+  band ±1.00 %: L passes on the Mac.
+- Queued or running (fbench_remote.py names; arms A e1879cb, L b5d3d6d, C2 ead29f2 variants
+  CN/CS/CSG/C1 as amendment 1; all on the pre-X29 base e1879cb):
+  EPYC `x30b2-epyc-x30` (Slurm 510284, running), `x30b2-epyc-trk` (510286);
+  Xeon `x30b2-xeon-x30` (15975, running), `x30b2-xeon-trk` (15977); arms there A, L, CS,
+  C1 for each of `avx512` and `avx2`.
+- Next: fetch each run from the main checkout, re-read with L as baseline
+  (scratchpad rebase.py, then `fbench show --min-band <band>`), apply the decision rule,
+  set the defaults (compact_shared_bytes, compact_grouped_bytes) per the verdict, write
+  Results/Verdict, PLAN, DESIGN decision log, LESSONS 3.10, mark PR 17 ready.
