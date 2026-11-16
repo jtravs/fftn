@@ -89,10 +89,13 @@ if(CMAKE_INTERPROCEDURAL_OPTIMIZATION)
 else()
   set(fftn_asm_inputs $<TARGET_FILE:fftn> "$<TARGET_OBJECTS:fftn_isa_probes>")
 endif()
-# The disassembly check reads the code users get: the Release, tidy and coverage builds.
-# Sanitizer instrumentation changes inlining and folding (wrappers, fake-stack frames), which
-# the check cannot tell from a missed inline, so it does not run there.
-if(NOT FFTN_SANITIZE)
+# The disassembly check reads the code users get: the Release and tidy builds. Sanitizer
+# instrumentation changes inlining and folding (wrappers, fake-stack frames), which the check
+# cannot tell from a missed inline, so it does not run there. Nor in the coverage build, whose
+# counters are in every function and which executes no C++ in this test: the disassembly of
+# its Debug library took asm_check past 32 GB on the Mac, and on the 16 GB Linux x86-64
+# runners the runner shut down mid-test (extended runs 43916357065, 43941831420, 43966547286).
+if(NOT FFTN_SANITIZE AND NOT FFTN_COVERAGE)
   add_test(NAME isa.asm_check
            COMMAND ${fftn_asm_check} ${fftn_baseline_has} ${fftn_asm_inputs}
            WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})

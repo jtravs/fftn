@@ -28,10 +28,9 @@ jobs:
       timeout: 240
       # Linux x86-64. GCC 14 is the GCC floor (AGENTS.md section 4) with both sanitizers:
       # B1 found GCC-only failure modes, and GCC 14's TSan is the one that needs the
-      # address-space fix. Clang 23 runs clang-tidy and coverage here, in jobs of their own:
-      # in one job, the tidy build, the Debug coverage build and a 3 MB profile per test
-      # process (CMakePresets.json now merges them) ran the runner out of disk, and it shut
-      # down mid-test (runs 43916357065, 43941831420).
+      # address-space fix. Clang 23 runs clang-tidy and coverage here, in jobs of their own,
+      # so that a tidy finding (the gate stops at the first failing stage) does not hide the
+      # coverage result, and the two builds run side by side.
       linux: >-
         [
           {"name": "gcc-14", "cxx": "g++-14", "stages": "build bench"},

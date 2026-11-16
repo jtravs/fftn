@@ -149,8 +149,9 @@ jobs:
           done
           echo "no fftn_platform_dump was built"
       - &disk
-        # A runner whose disk fills shuts down without a word ("received a shutdown
-        # signal"): the margin left is worth a line in every log.
+        # The Debug coverage build alone is about 8 GB, and a runner whose disk fills shuts
+        # down without a word ("received a shutdown signal"): the margin left is worth a
+        # line in every log.
         name: Disk use
         if: always()
         shell: bash
