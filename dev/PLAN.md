@@ -117,9 +117,9 @@ runs; the numbers above are the baseline to beat. The rest (6–9) follow. X25's
    take 0.56–0.96 of the chain's time). X25: batched leaves saturate one unit (Xeon ports
    0 and 5 at 82–87 %, EPYC FP pipes 2 and 3 up to 95 %).
 7. Float: 60 points on `avx512` 2.6 times `avx2` (Xeon and cloud); `best_target` per
-   precision and length; X23's masked partial runs, on for GCC builds in pull
-   request 8 (`FFTN_MASKED_TAILS`, amendment 4: float 0.53 of main on `avx512`, 0.77 on
-   `avx2`, 0.72 on the EPYC; adoption awaits the maintainer), off for Clang until Clang 23's loss on odd double lengths (`avx2` 75:
+   precision and length; X23's masked partial runs, on for GCC builds since
+   pull request 8 (`FFTN_MASKED_TAILS`, amendment 4: float 0.53 of main on `avx512`, 0.77
+   on `avx2`, 0.72 on the EPYC), off for Clang until Clang 23's loss on odd double lengths (`avx2` 75:
    1.42) is found.
 8. Planes and volumes (phase 4): the EPYC's 64³ c2c (10.9 times FFTW).
 9. Threading: a dispatch cost that grows with the team's width (DESIGN 18.2 item 22).
