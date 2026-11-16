@@ -76,9 +76,16 @@ Open, by phase:
 - 4–7: not started.
 
 In flight (lead session, 2026-11-16): round 2 of the push is merged; next: a formal phase 1 exit check (standard catalogue, c2c
-rows, double and float, the 5 % tail rule of DESIGN 1.3) and X35 (Granite Rapids: a cache-geometry key so the
-Zen-like chain rules of X29, X32 and X33 stop applying to it). Done, each merged with its
+rows, double and float, the 5 % tail rule of DESIGN 1.3). Done, each merged with its
 pull request:
+- X35 (cloud, USD 1.64; campaign USD 3.51 of 20; pull request 25): on x86-64 a private L2 of
+  ≥ 2 MiB (Granite Rapids) gets its own profile, whatever its L3 per CPU: no X29/X32/X33
+  chains, grids and three phases beyond L2/2, two phases for power-of-two parts ≤ 2048
+  (`grid_two_part_bytes`). Granite Rapids: 30 changed cases 0.59–1.007 of main (262144
+  1.71 → 1.26 of FFTW, 100000 2.03 → 1.36, 0.97 of MKL); 1-D double ÷ FFTW 0.87 → 0.83.
+  Axion (Neoverse V2, also 2 MiB of L2) lost with it and keeps main's plans; the Mac, EPYC,
+  Zen 5 and Xeon 6240 unchanged. The 512 KiB–1 MiB rows (46080 1.62 of FFTW) still want a
+  measured choice (task 2.4).
 - X31b (cloud, USD 1.12; campaign USD 1.87 of 20): X32 holds on Zen 5 (long powers of two
   0.73 of the grid; 65536 1.50 → 0.92 of FFTW). Granite Rapids reports a large shared L3,
   gets the Zen profile and loses: X32's chains 1.06–1.69 of the grid (262144 1.31 → 1.75
@@ -491,7 +498,7 @@ running, done (with verdict).
 | [X31b](experiments/X31b-cloud-followup.md) | X32 and X34 on Zen 5 and Granite Rapids (cloud): does X32's power-of-two chain rule hold on Zen 5, and does Granite Rapids want the Xeon's plan, X29's chains or neither? Can the topology a VM reports separate the two? (leads (a), (c), (d)) | 1 | done, measurement only. Zen 5: X32 holds (long powers of two 0.58–0.86 of the grid; 65536 1.50 → 0.92 of FFTW); X34 changes no plan. Granite Rapids takes X32's chains (its VM reports 63 MiB of L3 per CPU), and they lose: the grid is 0.59–0.94 of their time. It wants two phases where X29 chains (100000 0.66, 10⁶ 0.59) but three phases where X34 would give two (X34's rule 1.03–1.46), and probably a grid from 512 KiB (0.81–0.96). That is a third profile; the VM's cache sizes separate it from Zen only on one sample per side, so the case is for a measured choice (planner 2.4) or a core field. USD 1.12 |
 | [X32](experiments/X32-long-pow2.md) | Long powers of two (c2c ≥ 16384, lead (a)): copy-free chains of small radices (FFTL.jl's plan) against the grid, per machine; why power-of-two chains of 1–2 MiB are bimodal on the EPYC | 1 | done: chains of FFTL.jl's radices adopted on Apple (0.57–0.94 of main; ÷ FFTW 1.16 → 0.87) and Zen-like caches (EPYC 0.53–0.85); Xeon keeps the grid (chains 1.06–1.50); bimodality = radix-16 passes on transparent huge pages; scratch placement against 4K aliasing neutral in fbench, rejected |
 | [X34](experiments/X34-xeon-mixed.md) | The Xeon's long rows of mixed length (100000 1.99, 46080 1.29 of FFTW): why, and does a chain rule keyed on L2, wider grid blocks for lengths with a large odd part, or other grid factors close it without a vendor switch? (lead (c)) | 1 | done: chains lose on the Xeon (1.05–1.45); wider blocks superseded; two phases for rows with an odd part ≥ 15 where L3 per CPU is small adopted (Xeon 0.86 over the 14 changed rows, 100000 0.71: 2.03 → 1.44 of FFTW, 0.95 of MKL); the EPYC (two phases 1.13–1.67) and the Mac unchanged |
-| [X35](experiments/X35-gnr-profile.md) | A cache-geometry key that separates Granite Rapids from Zen 3/Zen 5 for X29's, X32's and X33's chain rules (its VM reports 63 MiB of L3 per CPU), with Granite Rapids' plans from X31b: grids for long powers of two, two phases where X29 chains, three phases elsewhere, the grid from L2/4 (leads (a), (c), (d)) | 1 | running |
+| [X35](experiments/X35-gnr-profile.md) | A cache-geometry key that separates Granite Rapids from Zen 3/Zen 5 for X29's, X32's and X33's chain rules (its VM reports 63 MiB of L3 per CPU), with Granite Rapids' plans from X31b (leads (a), (c), (d)) | 1 | done: key = a private L2 of ≥ 2 MiB on x86-64 (VM- and SMT-independent; L3 per core cannot separate them). Granite Rapids (arm B9): grids and three phases beyond L2/2, two phases for power-of-two parts ≤ 2048, no chains: 30 changed cases 0.59–1.007 of main (262144 1.71 → 1.26 of FFTW, 100000 2.03 → 1.36, long real rows 0.59–0.88); 1-D double ÷ FFTW 0.87 → 0.83, ÷ MKL 0.85 → 0.81. The first profile and a variant each lost on 1–2 rows (71680 1.10, c2r out of place 1.15–1.16). Axion (same 2 MiB L2) lost 1.15–1.28 and keeps main's plans (x86 gate). Mac, EPYC, Zen 5, Xeon unchanged (profile tests). USD 1.64 |
 | P1 | Cost-model accuracy: rank agreement with measurement across the catalogue per machine | 2 | planned |
 | P2 | Measurement budget: how many candidates and how long before the choice stops improving | 2 | planned |
 | [T1](experiments/T1-dispatch-wait-costs.md) | Dispatch, wake and wait costs per machine and runtime (libgomp, libomp, Kokkos, pool) | 3 | done: hand-off cost and claim runs adopted on Zen 3; dispatch and work costs wait for a per-lane dispatch term |
