@@ -198,6 +198,42 @@ standard rows of 16384–2²⁰ points, 25000 and 100000. The 11 changed cases: 
 → 0.86, 65536 × 3 in place 1.17 → 1.12. (FFTW's MEASURE plans vary by run, X25: 46080 was
 1.33 of FFTW in run -84fe and 1.16 here with the same FFTN plan.)
 
+### Arm D: radix-20 passes (after X38), screen
+
+X38 added a radix-20 pass codelet on every target (its tables price no radix 20; overrides
+choose it). Counters as in step 1, from X38's head 94b37e9 (Slurm 16180 build, 16183 and
+16184 screens), cycles and ns per point ÷ the rules' chain (min of 2–3 processes):
+
+| length (rules) | best sequence | ratio | other radix-20 orders |
+|---|---|---|---|
+| 300 (4 · 5 · 15) | 20 · 15 | 0.87–0.89 | 15 · 20 0.90–0.94 |
+| 500 (4 · 5 · 5 · 5) | 20 · 5 · 5 | 0.92 | 5 · 5 · 20 1.15–1.22 |
+| 1000 (4 · 10 · 5 · 5) | 20 · 10 · 5 | 0.89 | 20 · 5 · 10 0.94–0.95 |
+| 2000 (4 · 5 · 10 · 10) | 20 · 10 · 10 | 0.82 | 10 · 10 · 20 1.04 |
+| 3000 (4 · 5 · 10 · 15) | 20 · 10 · 15 | 0.86–0.87 | 10 · 15 · 20 1.09 |
+| 3600 (4 · 6 · 10 · 15) | 12 · 15 · 20 | 0.85–0.86 | 20 · 15 · 12 0.87 |
+| 4000 (4 · 10 · 10 · 10) | 20 · 20 · 10 | 0.84 | 10 · 20 · 20 1.04 |
+| 4800 (4 · 10 · 12 · 10) | 20 · 12 · 20 | 0.87–0.88 | 20 · 20 · 12 0.88–0.90 |
+| 5000 (4 · 5 · 5 · 5 · 10) | 20 · 10 · 5 · 5 | 0.83–0.84 | 8 · 5⁴ 0.92; 10 · 20 · 5 · 5 0.95–0.96 |
+| 6000 (4 · 10 · 10 · 15) | 20 · 15 · 20 | 0.875–0.88 | 20 · 20 · 15 0.89–0.905 |
+| 8000 (8 · 10 · 10 · 10) | 20 · 20 · 20 | 0.885–0.90 | |
+| 10000 (4 · 5 · 5 · 10 · 10) | 20 · 20 · 5 · 5 | 0.85 | 20 · 10 · 10 · 5 0.855 |
+| 20000 (4 · 5 · 10 · 10 · 10) | 20 · 20 · 5 · 10 | 0.915–0.92 | 20 · 10 · 10 · 10 0.86 cycles, 0.94 ns |
+| 25000 (4 · 5⁴ · 10) | 20 · 10 · 5 · 5 · 5 | 0.88 ns (0.99 cycles; 17.1 against 23.8 instructions per point) | 20 · 5 · 5 · 5 · 10 0.90 ns |
+| 100, 1200, 2400, 7200, 12000 | none below 0.95 | 1.00–1.07 | |
+| 40000 (grid 200 × 200) | phases 10 · 20 (`GRID_PHASE_RADIX=20`) | 0.82–0.83 | |
+| 100000 (grid 200 × 500) | phase 200 as 10 · 20 | 0.92 | chains with radix 20 1.27–1.35 |
+| 46080, 10⁶ (grids) | phase radix 20 changes no phase | 0.99–1.02 | |
+
+A radix-20 pass first and the larger radices next won wherever the length has 2² · 5 to
+spare; a radix 20 last lost (1.04–1.22). Arm D: these sequences as `avx512` double overrides
+(the 14 lengths above, 1000 replacing its X2 override) and grid phases of radix up to 20 on
+the Xeon profile (`grid_phase_radix` = 20, which adds only radix 20: phase lengths are
+13-smooth). Radix-25 proxy: 25000's best plan takes five passes at 0.79 ns per point per
+pass; FFTW's four (25 · 5 · 10 · 20) at 3.08 ns per point suggest a radix-25 pass
+(25 · 10 · 10 · 10) would take 25000 from 1.28 to about 1.05 of FFTW, and 100000's phase of
+500 from three passes to two (about 0.85 of arm D's time); not measured.
+
 ## Verdict
 
 - **Diagnosis.** The failing rows up to 32768 points are chains on the Xeon, not grids.
