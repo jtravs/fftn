@@ -6,8 +6,9 @@ session; update a phase when its tasks or findings change.
 
 ## Status
 
-**As of 2026-11-15, evening.** Work continues on the one-dimensional double leads (claims
-below); this section is also the handoff. Lessons
+**As of 2026-11-16, midday.** Leads 1–5 of the one-dimensional double push have each had
+their experiments (X23b, X26–X30, X26b, X28b, X29 merged; X30b in flight) and the new
+one-dimensional double numbers are below; this section is also the handoff. Lessons
 that generalise are in [LESSONS.md](LESSONS.md), decisions in DESIGN.md section 19, open
 questions in DESIGN.md section 18.2.
 
@@ -18,6 +19,21 @@ of `main` as of 2026-11-15 morning: Mac M5 Max 1.06 (FFTN 0.56 of Accelerate's t
 cases Accelerate supports), Xeon 6240 1.15 (MKL: FFTN 1.27 of its time), EPYC 7763 1.33. Runs
 20261115-094953-38c5 (Mac), 20261115-114105-ea43 (Xeon, MKL), 20261115-101319-f98f (EPYC).
 
+**After the 1-D double push (2026-11-16, `main` 2025d51; each run times yesterday's
+`main` ad6acbe in the same run):** FFTN's time ÷ FFTW's over the 46 one-dimensional double
+cases, today (yesterday): Mac 0.83 (0.98), EPYC 0.94 (1.21), Xeon 0.81 (1.05); Xeon
+against MKL 0.85 (1.11). Today's FFTN against yesterday's: 0.85, 0.78, 0.77. Against
+FFTL.jl: Mac 0.73 (0.87), EPYC 0.63 (0.81). By group, Mac / EPYC / Xeon (÷ FFTW):
+powers of two ≤ 64 0.94 / 0.94 / 0.83; 128–4096 0.84 / 1.04 / 0.94; ≥ 16384 1.19 / 1.10 /
+1.03 (FFTL ahead: FFTN 1.46 / 1.40 of its time); mixed radix 0.76 / 0.96 / 0.93 (Xeon
+100000 1.99, 46080 1.29: X29's chains do not apply there); primes 0.48 / 0.62 / 0.36
+(4093 1.41 / 1.32; EPYC 65537 1.63 in this run against X27's 1.09); prime products 0.47 /
+0.45 / 0.36; batches 0.91 / 1.03 / 0.85; in place 0.93 / 1.08 / 0.99; r2c and c2r 1.00 /
+1.13 / 1.04 (65536 and 2²⁰: Mac 1.21–1.27, EPYC 1.17–1.44, Xeon 1.19–1.42). Runs
+20261116-103657-af06 (Mac, FFTL; 8 of 16 rounds under load), 20261116-105105-30b3 (EPYC,
+FFTL; a shared node, every round under load, band ±1.25 %), 20261116-110608-e327 (Xeon,
+MKL; band ±2.17 %).
+The numbers before the push, kept for reference:
 One-dimensional double only (46 cases; the planes and volumes excluded): Mac 0.97, EPYC
 1.21. By group, Mac / EPYC: powers of two ≤ 64 1.14 / 1.38; 128–4096 0.91 / 1.22; ≥ 16384
 1.15 / 1.20; mixed radix 0.95 / 1.29 (46080 and 100000: 1.18–1.23 / 1.67–1.98); primes
@@ -53,8 +69,13 @@ Open, by phase:
 - 4–7: not started.
 
 In flight (lead session, 2026-11-16): X30b done, pull request 17 (aligned plan tables
-adopted; compact twiddles and three passes at 4096 rejected); the GCC 14 ASan crash in `avx512`
-code on the Xeon (main fails too). Done overnight, each merged with its pull request:
+adopted; compact twiddles and three passes at 4096 rejected); round 2 of the push: X32 (lead
+(a), long powers of two), X33 (lead (b), long real rows), X34 (lead (c), the Xeon's long
+mixed rows), X31 (cloud: Zen 5, recent Intel with MKL, Axion; cap USD 20). Done, each merged with its pull
+request:
+- The GCC 14/15 ASan crash in `avx512` code on the Xeon: a GCC code-generation bug on
+  ASan's fake stack (16.2 and Clang correct); sanitizer builds with GCC before 16 leave out
+  use-after-return instrumentation (pull request 18, LESSONS 6.4).
 - X28b (lead 4): pair leaves on x86 (two passes in registers), unit-stride leaves, 128-bit
   leaves of 17–23: single c2c rows FFTN ÷ FFTW Xeon `avx512` 0.98 → 0.65, EPYC 0.94 →
   0.73, Mac 0.80 → 0.76; tracking tier 0.95–0.99, nothing slower; library +2 %.
@@ -89,8 +110,23 @@ prefetch, a second case for rules by core on `avx2`.
 
 ### Leads, one-dimensional double first
 
-**Start here when work resumes (the maintainer's choice, 2026-11-15): leads 1–5, the
-one-dimensional double gap.** Each needs an experiment file (AGENTS.md section 6) before it
+**Next, ranked from the 2026-11-16 runs (one-dimensional double still first):**
+(a) long powers of two ≥ 16384 on all three machines (1.03–1.19 of FFTW, 1.40–1.46 of
+FFTL): a new idea is needed, since cheaper copies (X26), padding (X26b) and Zen chains of
+1–2 MiB (X29 d) failed; FFTL.jl's copy-free radix-4 Stockham chains are the reference.
+(b) Long real rows (r2c and c2r of 65536 and 2²⁰, 1.17–1.44): the r2c pairing fused into
+the grid's last phase (needs block pairs, X29), the Xeon's r2c 65536 is memory (X25).
+(c) The Xeon's long mixed rows (100000 1.99, 46080 1.29): X29's chain rules key on L3 per
+CPU and leave the Xeon alone. (d) Rules by core on `avx2` (X26's prefetch, X30's 512
+override: Intel cores without AVX-512 want other choices than Zen): deferred by the
+maintainer (2026-11-16) until a wider set of machines shows how far cores of one ISA
+diverge; server chips and the Mac come first, fastest everywhere is the end goal. (e) Primes outside
+Rader's range (4093 1.32–1.41) and EPYC 65537 (1.63 here against X27's 1.09: check).
+(f) Short-row leftovers (Xeon 30 points 1.24; EPYC 60 and 120 1.05–1.09; batches of 16
+1.08–1.26 on x86; Mac 20 points 1.72). X30b covers x86 1024–4096 (EPYC 1024 1.20–1.23).
+
+**Leads 1–5 below were the maintainer's choice of 2026-11-15; each now notes its
+experiments.** Each needs an experiment file (AGENTS.md section 6) before it
 runs; the numbers above are the baseline to beat. The rest (6–9) follow. X25's verdict
 (counters on both x86 machines) says which change each lead needs first.
 
