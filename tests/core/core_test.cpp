@@ -243,13 +243,13 @@ TEST(Rules, MeasuredExamples) {
   EXPECT_EQ(r(960, f64), (v{8, 10, 12}));
   EXPECT_EQ(r(1000, f64), (v{10, 10, 10}));
   EXPECT_EQ(r(1000, f32), (v{4, 5, 5, 10}));
+  EXPECT_EQ(r(1024, f64), (v{4, 16, 16}));
   EXPECT_EQ(r(1024, f32), (v{8, 8, 16}));
   // Overrides.
   EXPECT_EQ(r(42, f64), (v{2, 3, 7}));
   EXPECT_EQ(r(490, f64), (v{2, 7, 5, 7}));
   EXPECT_EQ(r(700, f32), (v{4, 5, 5, 7}));
   EXPECT_EQ(r(4096, f64), (v{8, 8, 8, 8}));    // experiment X18
-  EXPECT_EQ(r(1024, f64), (v{16, 64}));        // experiment X30
   EXPECT_EQ(r(16384, f64), (v{8, 16, 16, 8})); // the planner refresh
   EXPECT_EQ(r(3000, f64), (v{8, 5, 5, 15}));
   EXPECT_EQ(r(3600, f32), (v{16, 15, 15}));

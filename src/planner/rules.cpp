@@ -41,12 +41,12 @@ constexpr std::array<std::size_t, cost_radices> pass_radices{
 // baseline in a case of the Xeon 6240's AVX2 campaigns (xeon-avx2-smooth2, -long), and less
 // 512 (2.16.16): 0.92-0.95 as a row, but the r2c of 1024 x 1024 runs it as 16.16.2 with the
 // pairing fused into the radix-2 pass, 1.05 times as long (EPYC tracking 20261115-041212-cdc2).
-// 256, 512 and 1024 are experiment X30's: two passes with a radix-32 or radix-64 codelet,
-// which the costs (no radix 32 or 64 column, X3) cannot choose, where the chain ran three
+// 256 and 512 are experiment X30's: two passes with a radix-32 codelet, which the costs (no
+// radix 32 or 64 column, X3) cannot choose, where the chain ran three
 // (dev/experiments/X30-x86-pass-loops.md).
 // clang-format off
 // NOLINTBEGIN(readability-trailing-comma): bench/x2/fit.py writes and parses this layout
-constexpr std::array<radix_override, 31> avx2_double_overrides{{
+constexpr std::array<radix_override, 30> avx2_double_overrides{{
     {.n = 27, .radices = {3, 9, 0, 0}},
     {.n = 42, .radices = {2, 3, 7, 0}},
     {.n = 54, .radices = {2, 3, 9, 0}},
@@ -66,7 +66,6 @@ constexpr std::array<radix_override, 31> avx2_double_overrides{{
     {.n = 700, .radices = {10, 5, 14, 0}},
     {.n = 768, .radices = {4, 16, 12, 0}},
     {.n = 896, .radices = {4, 16, 14, 0}},
-    {.n = 1024, .radices = {16, 64, 0, 0}},
     {.n = 1536, .radices = {6, 16, 16, 0}},
     {.n = 1920, .radices = {10, 16, 12, 0}},
     {.n = 2000, .radices = {8, 10, 5, 5}},
