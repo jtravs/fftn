@@ -719,12 +719,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   const std::size_t stagger = grid_plan.phases != 0 ? 7 * 64 : 0;
   c.offset_b = line_bytes + stagger;
   c.offset_block = 2 * line_bytes + stagger;
-  // X32: a long chain's scratch line half a page from the output modulo 4 KiB (scratch_a);
-  // only rows beyond L1, where the 4 KiB more cost nothing.
-  c.a_from_out = r == 1 && grid_plan.phases == 0 && real_grid.phases == 0 &&
-                 line_bytes > settings.profile.grid_block_bytes;
-  const std::size_t page_slack = c.a_from_out ? 4096 : 0;
-  const std::size_t used = c.offset_block + c.block_elements * 2 * sizeof(T) + page_slack;
+  const std::size_t used = c.offset_block + c.block_elements * 2 * sizeof(T);
   c.bytes = used == 0 ? 0 : used + line_alignment;
   c.slot_bytes = (used + sync_line - 1) / sync_line * sync_line;
 }
@@ -918,9 +913,10 @@ void execute_core(const plan_core& core, std::size_t first, std::size_t count, c
     std::byte* raw = ws.memory().data();
     const auto address = reinterpret_cast<std::uintptr_t>(raw);
     const std::size_t skip = (64 - address % 64) % 64;
-    a = scratch_a(core, raw + skip, out);
-    b = a + core.offset_b;
-    block = core.block_elements != 0 ? a + core.offset_block : nullptr;
+    std::byte* base = raw + skip;
+    a = base;
+    b = base + core.offset_b;
+    block = core.block_elements != 0 ? base + core.offset_block : nullptr;
   }
   if (core.prog.flat && first == 0 && count == 1) {
     // One transform, the whole batch or its first (X28): no slot_addresses.
