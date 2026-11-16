@@ -1,0 +1,33 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Experiment X36's cases (dev/experiments/X36-large-primes.md): the phase 1 exit check's
+# failing primes and prime factors (cause 1), other primes whose p - 1 is not 13-smooth, at
+# several sizes, and controls whose plans the arms do not change.
+
+[catalogue]
+name = "x36"
+
+[[group]]
+name = "x36-targets"
+note = "the exit check's failing cases (standard catalogue ids)"
+kind = "c2c"
+dims = [4093, 65537, 131071, 999983, 1018]
+precision = ["f64", "f32"]
+tiers = ["quick", "tracking"]
+
+[[group]]
+name = "x36-primes"
+note = "more primes and prime factors whose p - 1 is not 13-smooth, and long Bluestein rows"
+kind = "c2c"
+dims = [509, 1019, 2039, 8179, 32749, 262139, 524287, 12279, 10403]
+precision = ["f64", "f32"]
+tiers = ["tracking"]
+
+[[group]]
+name = "x36-controls"
+note = "plans no arm should change: Rader primes in range, a codelet prime, a smooth length"
+kind = "c2c"
+dims = [97, 1009, 8191, 16381, 2431, 65536]
+precision = ["f64"]
+tiers = ["tracking"]
