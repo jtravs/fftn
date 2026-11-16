@@ -217,7 +217,7 @@ void run_flat_first(const program& p, const void* in, void* out, std::byte* a, s
   run_flat_one(p, static_cast<const std::byte*>(in), static_cast<std::byte*>(out), a, b, block);
 }
 
-void mark_flat(program& p) noexcept {
+void mark_flat(program& p) {
   if (p.lanes != 0) {
     // Blocks of transforms (run_lane_blocks), never a transform at a time.
     p.flat = false;
@@ -235,12 +235,14 @@ void mark_flat(program& p) noexcept {
   if (p.flat) {
     for (std::size_t i = p.batch_loops; i < p.records.size(); ++i) {
       const stage& st = *std::get_if<stage>(&p.records[i]);
-      p.flat_body.push_back({.run = st.run,
-                             .leaf = st.leaf,
-                             .units = st.units,
-                             .src = st.src,
-                             .dst = st.dst,
-                             .args = st.args});
+      p.flat_body.push_back({
+          .run = st.run,
+          .leaf = st.leaf,
+          .units = st.units,
+          .src = st.src,
+          .dst = st.dst,
+          .args = st.args,
+      });
     }
   }
   const auto moves = [](slot x) { return x == slot::in || x == slot::out; };

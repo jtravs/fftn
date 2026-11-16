@@ -17,15 +17,18 @@
 // with the same radices.
 
 #include "core/plan_core.hpp"
+#include "core/program.hpp"
 #include "fftn/detail/core.hpp"
 #include "fftn/fftn.hpp"
 #include "reference/reference_dft.hpp"
+#include "support/canary.hpp"
 #include "support/exact.hpp"
 #include "support/fftn_subject.hpp"
 #include "support/harness.hpp"
 #include "support/inputs.hpp"
 #include "support/outcome.hpp"
 #include "support/tolerance.hpp"
+#include "support/transform_under_test.hpp"
 
 #include <gtest/gtest.h>
 
@@ -39,7 +42,7 @@
 #include <span>
 #include <string>
 #include <type_traits>
-#include <utility>
+#include <variant>
 #include <vector>
 
 namespace {
@@ -59,7 +62,7 @@ struct tail_case {
   // Prime factors above 16 as generic passes rather than Bluestein.
   bool generic = false;
   // A stage whose name holds this text must be in the plan.
-  std::string expect = {};
+  std::string expect;
 };
 
 std::vector<tail_case> cases() {

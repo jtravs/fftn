@@ -8,6 +8,7 @@
 #include "isa/kernel_table.hpp"
 #include "passes/pass_args.hpp"
 #include "planner/rules.hpp"
+#include "platform/aligned_allocator.hpp"
 #include "strategies/bluestein.hpp"
 
 #include <algorithm>
@@ -92,7 +93,10 @@ namespace {
 std::vector<std::size_t> long_pow2_radices(std::size_t k, bool radix8) {
   std::vector<std::size_t> rad;
   if (radix8) {
-    const std::size_t fours = k % 3 == 2 ? 1 : k % 3 == 1 ? 2 : 0;
+    std::size_t fours = 0; // k = 3 j + 2 takes one 4, k = 3 j + 1 two
+    if (k % 3 != 0) {
+      fours = k % 3 == 2 ? 1 : 2;
+    }
     rad.assign(fours, 4);
     rad.insert(rad.end(), (k - 2 * fours) / 3, 8);
   } else {
@@ -695,9 +699,12 @@ void chain_builder<T>::add_rader(std::size_t n, std::size_t q, std::size_t g, in
   // (rader_out scatters into it); its other slot may be either, which is read or not yet
   // written by then. last_stage_to keeps the two apart.
   const auto scratch = [](slot w) { return w == slot::a || w == slot::b; };
-  const slot conv = scratch(dst.where)   ? other_scratch(dst.where)
-                    : scratch(src.where) ? other_scratch(src.where)
-                                         : slot::a;
+  const slot conv = [&] {
+    if (scratch(dst.where)) {
+      return other_scratch(dst.where);
+    }
+    return scratch(src.where) ? other_scratch(src.where) : slot::a;
+  }();
   if (conv == src.where) {
     throw std::logic_error("fftn: a Rader stage from scratch slot to the other scratch slot");
   }
