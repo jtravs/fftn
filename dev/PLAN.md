@@ -116,7 +116,9 @@ FFTL): a new idea is needed, since cheaper copies (X26), padding (X26b) and Zen 
 the grid's last phase (needs block pairs, X29), the Xeon's r2c 65536 is memory (X25).
 (c) The Xeon's long mixed rows (100000 1.99, 46080 1.29): X29's chain rules key on L3 per
 CPU and leave the Xeon alone. (d) Rules by core on `avx2` (X26's prefetch, X30's 512
-override: Intel cores without AVX-512 want other choices than Zen). (e) Primes outside
+override: Intel cores without AVX-512 want other choices than Zen): deferred by the
+maintainer (2026-11-16) until a wider set of machines shows how far cores of one ISA
+diverge; server chips and the Mac come first, fastest everywhere is the end goal. (e) Primes outside
 Rader's range (4093 1.32–1.41) and EPYC 65537 (1.63 here against X27's 1.09: check).
 (f) Short-row leftovers (Xeon 30 points 1.24; EPYC 60 and 120 1.05–1.09; batches of 16
 1.08–1.26 on x86; Mac 20 points 1.72). X30b covers x86 1024–4096 (EPYC 1024 1.20–1.23).
