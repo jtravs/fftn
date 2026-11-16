@@ -1127,6 +1127,9 @@ template <class T> void narrow_leaves_match(fftn::isa t) {
   constexpr std::ptrdiff_t out_stride = 3;
   for (std::size_t slot = 0; slot < fftn::detail::narrow_leaf_slots; ++slot) {
     const std::size_t r = fftn::detail::gen::radices[slot];
+    if (r == 20) {
+      continue; // a pass radix only, no narrow leaf (experiment X38)
+    }
     fftn::test::input_source src(0x4E41ULL + r);
     const cvec<T> x = src.complexes<T>(lines * r * in_stride);
     const cvec<T> in_factor = src.complexes<T>(r);
