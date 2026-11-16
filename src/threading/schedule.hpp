@@ -128,8 +128,8 @@ struct machine_profile {
   // of more than grid_min_bytes takes FFTL.jl's radices instead of the rules' (priced in
   // cache, X2): 8s (4s for the spare factors of two) up to pow2_radix8_bytes, 4s (one 8 for
   // an odd exponent) beyond. The rules' radix-16 passes read 16 streams a power of two
-  // apart; where the row's pages are huge pages they share one L2 set, and the chain ran at
-  // up to 5 times its time with 4 KiB pages (X29's bimodal chains on the EPYC).
+  // apart; where the row's pages are huge pages they share one L2 set, and such a chain ran
+  // at up to 5 times a radix-8 chain's time (X29's bimodal chains on the EPYC).
   // set_grid_sizes sets them from X32's screens.
   std::size_t pow2_chain_bytes = 0;
   std::size_t pow2_radix8_bytes = 0;

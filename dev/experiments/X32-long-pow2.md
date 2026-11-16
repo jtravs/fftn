@@ -199,6 +199,11 @@ FFTN ÷ FFTW, `main` → branch (same runs): 16384 1.38 → 0.97, 32768 1.11 →
 1.19 → 0.94, 1.13 → 1.03, 1.18 → 1.10, 1.11 → 0.98, 1.46 → 1.01, 1.66 → 1.05, 1.56 → 1.05,
 1.58 → 0.96 (geomean 1.34 → 1.00).
 
+Float (the rule is in bytes), X26b's float rows, branch bac9e02 against `main` (run
+20261116-131558-e5f1, 20 rounds, band ±2.23 %): c2c 65536 0.796, 2²⁰ 0.606, 2²² 0.644
+(every round below 1.08); 100000 and r2c 2²⁰, whose plans do not change, 1.024 and 1.064,
+no evidence.
+
 ### Confirmation, the EPYC
 
 Branch fa5a617 against `main` 29f9772, tracking tier with FFTW and FFTL.jl (run
@@ -213,7 +218,11 @@ limit of 1.03 (re-run below). FFTN ÷ FFTW, `main` → branch: 65536 1.29 → 0.
 
 RERUN_EPYC
 
-CONF2_EPYC
+The other four lengths (branch fa5a617, run 20261116-131325-9378, 20 rounds, 10 under
+load, band ±1.00 %; Slurm 510637, 510638): 32768 0.728, 131072 0.724, 524288 0.601, 2²¹
+0.749, every round below 0.90. Over the nine lengths 16384–2²², FFTN ÷ FFTW goes from 1.06
+to 0.73 and FFTN ÷ FFTL.jl from 1.35 to 0.93 (per length ÷ FFTW: 0.98 → 0.96, 1.10 → 0.80,
+1.29 → 0.81, 1.15 → 0.79, 1.19 → 0.63, 0.89 → 0.53, 1.01 → 0.59, 0.93 → 0.69, 1.05 → 0.90).
 
 ### Confirmation, the Xeon
 
