@@ -365,6 +365,35 @@ TEST(Rules, RaderRoot) {
   EXPECT_EQ(rader_root(257, avx512_float), 3U);
 }
 
+// The Bluestein length (experiment X36): at least 2q - 1, 7-smooth; with a limit on its
+// power-of-two part, no candidate exceeds it, and the candidates then run past the next
+// power of two (131071: 2q - 1 = 262141, whose only 7-smooth length up to 2^18 is 2^18).
+TEST(Rules, BluesteinLength) {
+  using fftn::detail::bluestein_length;
+  const auto neon = fftn::detail::profile_of(fftn::detail::target::neon_fcma, 1);
+  const auto power_part = [](std::size_t m) { return m & (~m + 1); };
+  const auto smooth = [](std::size_t m) {
+    for (const std::size_t f : {2U, 3U, 5U, 7U}) {
+      while (m % f == 0) {
+        m /= f;
+      }
+    }
+    return m == 1;
+  };
+  EXPECT_EQ(bluestein_length(131071, neon), std::size_t{1} << 18U);
+  for (const std::size_t q : {29U, 509U, 4093U, 65537U, 131071U, 999983U}) {
+    for (const std::size_t limit : {std::size_t{64}, std::size_t{2048}}) {
+      const std::size_t m = bluestein_length(q, neon, limit);
+      EXPECT_GE(m, 2 * q - 1) << q;
+      EXPECT_LT(m, 4 * q) << q;
+      EXPECT_TRUE(smooth(m)) << q << " " << m;
+      EXPECT_LE(power_part(m), limit) << q << " " << m;
+    }
+  }
+  // A limit above the next power of two changes nothing.
+  EXPECT_EQ(bluestein_length(509, neon, 1024), bluestein_length(509, neon));
+}
+
 std::vector<std::byte> run(const fftn::detail::plan_core& core, std::vector<std::byte> input,
                            std::size_t out_bytes) {
   std::vector<std::byte> output(out_bytes);

@@ -56,6 +56,17 @@ long rows (16384–262144 1.22–1.48; 20000, 25000, 46080, 100000 1.31–1.50);
 20261116-161226-416e (EPYC, every round under load, band ±1.85 %), 20261116-161123-f848
 (Xeon, band ±2.03 %). Also open for the exit: the `x86_v2` and `avx` targets (task 1.3) and
 plain `neon` against FFTW restricted to the same instructions.
+FFTL.jl updated to libfftl 1ae621e (upstream main of 2026-11-16, 111 commits after 53171e8;
+same build: apple-m1, x86-64-v3), same case set, `main` e8c2639, the old libfftl as a third
+arm: FFTN ÷ FFTL 0.55 on the Mac (old libfftl 0.50 in the same run), 9 cases over 1.05
+(5 %); EPYC 0.49 (0.35), 12 (6 %). FFTL itself takes 0.90 (Mac) and 0.72 (EPYC) of its
+old time, mostly fixed cost per call: the 3-row smoke rows 0.84 / 0.52, short-row batches
+0.65 / 0.31. By group, Mac / EPYC: powers of two 0.59 / 0.51; smooth 0.60 / 0.52; primes
+0.46 / 0.45; batches of long rows 1.02 / 0.91; short-row batches 0.76 / 0.62. FFTL ahead:
+Mac 999983 2.79, 131071 2.58, 2²³ and 2²⁴ 1.89, 1024 × 1024 1.20, 4093 1.10, 512 × 1024
+1.09; EPYC 131071 1.96, 65537 1.85, 4093 1.31, 15625 1.19, 1018 1.18, in-place 65536
+1.14–1.15, 3125 1.11, 16807 1.10. Runs 20261116-191543-f558 (Mac, 45 of 50 rounds under
+load), 20261116-221443-d672 (EPYC, 20 of 30).
 The numbers before the push, kept for reference:
 One-dimensional double only (46 cases; the planes and volumes excluded): Mac 0.97, EPYC
 1.21. By group, Mac / EPYC: powers of two ≤ 64 1.14 / 1.38; 128–4096 0.91 / 1.22; ≥ 16384
@@ -91,10 +102,11 @@ Open, by phase:
 - 3: T2, T3, T4, T6; 3.5 (Kokkos executor); 3.6 to be checked against its acceptance.
 - 4–7: not started.
 
-In flight (lead session, 2026-11-16): round 2 of the push is merged; the phase 1 exit check is done (above); the tail round:
-X36 (primes outside Rader's range), X37 (short rows and batches of 16), X38 (the EPYC's
-240–2048); task 2.4's next steps (P1/P2 second passes on the Xeon and EPYC, then the cost model and
-`fbench calibrate`). Done, each merged with its
+In flight (lead session, 2026-11-16 night): the tail round's X37 (short rows and batches
+of 16), X38 (the EPYC's 240–2048), X39 (the Xeon's long rows, in-place 65536); task 1.3
+(`x86_v2` and `avx` targets, X14); the coverage fix; task 2.4's next
+steps (P1/P2 second passes on the Xeon and EPYC, then the cost model and `fbench
+calibrate`). Then the exit check again. Done, each merged with its
 pull request:
 - X39 (causes (5) and (6), pull request 31): on the Xeon profile (x86-64, private L2, small L3
   per CPU) three-phase grids in blocks of at most 16, two-phase blocks within twice L1 and c2c
@@ -102,6 +114,12 @@ pull request:
   46080 1.33 → 1.26, 65536 in place 1.13 → 1.09 (run 20261116-220608-84fe); radix-64 grid
   phases rejected. Still open: 25000, 20000, 100000 (1.35–1.45; radix-20/25 codelets),
   16384 (1.23; a depth-first chain), 262144 (1.23).
+- X36 (pull request 30): Bluestein convolutions take the long-row radices beyond a profile
+  threshold and a capped power-of-two part; small copy counts become one stage; split layout
+  for single convolutions on x86; the EPYC's 65537 was a radix-16 Rader convolution: exit-
+  check primes now below FFTW on the Mac and the EPYC (131071 0.87–0.88, 999983 0.75–0.86,
+  4093 0.90–0.94, 65537 0.80); still over: EPYC 1018 (1.51), Xeon 131071 (1.28) and 999983
+  (1.10).
 - X35 (cloud, USD 1.64; campaign USD 3.51 of 20; pull request 25): on x86-64 a private L2 of
   ≥ 2 MiB (Granite Rapids) gets its own profile, whatever its L3 per CPU: no X29/X32/X33
   chains, grids and three phases beyond L2/2, two phases for power-of-two parts ≤ 2048
@@ -528,6 +546,7 @@ running, done (with verdict).
 | [X32](experiments/X32-long-pow2.md) | Long powers of two (c2c ≥ 16384, lead (a)): copy-free chains of small radices (FFTL.jl's plan) against the grid, per machine; why power-of-two chains of 1–2 MiB are bimodal on the EPYC | 1 | done: chains of FFTL.jl's radices adopted on Apple (0.57–0.94 of main; ÷ FFTW 1.16 → 0.87) and Zen-like caches (EPYC 0.53–0.85); Xeon keeps the grid (chains 1.06–1.50); bimodality = radix-16 passes on transparent huge pages; scratch placement against 4K aliasing neutral in fbench, rejected |
 | [X34](experiments/X34-xeon-mixed.md) | The Xeon's long rows of mixed length (100000 1.99, 46080 1.29 of FFTW): why, and does a chain rule keyed on L2, wider grid blocks for lengths with a large odd part, or other grid factors close it without a vendor switch? (lead (c)) | 1 | done: chains lose on the Xeon (1.05–1.45); wider blocks superseded; two phases for rows with an odd part ≥ 15 where L3 per CPU is small adopted (Xeon 0.86 over the 14 changed rows, 100000 0.71: 2.03 → 1.44 of FFTW, 0.95 of MKL); the EPYC (two phases 1.13–1.67) and the Mac unchanged |
 | [X35](experiments/X35-gnr-profile.md) | A cache-geometry key that separates Granite Rapids from Zen 3/Zen 5 for X29's, X32's and X33's chain rules (its VM reports 63 MiB of L3 per CPU), with Granite Rapids' plans from X31b (leads (a), (c), (d)) | 1 | done: key = a private L2 of ≥ 2 MiB on x86-64 (VM- and SMT-independent; L3 per core cannot separate them). Granite Rapids (arm B9): grids and three phases beyond L2/2, two phases for power-of-two parts ≤ 2048, no chains: 30 changed cases 0.59–1.007 of main (262144 1.71 → 1.26 of FFTW, 100000 2.03 → 1.36, long real rows 0.59–0.88); 1-D double ÷ FFTW 0.87 → 0.83, ÷ MKL 0.85 → 0.81. The first profile and a variant each lost on 1–2 rows (71680 1.10, c2r out of place 1.15–1.16). Axion (same 2 MiB L2) lost 1.15–1.28 and keeps main's plans (x86 gate). Mac, EPYC, Zen 5, Xeon unchanged (profile tests). USD 1.64 |
+| [X36](experiments/X36-large-primes.md) | Large primes and prime factors outside Rader's range (exit check cause 1: 131071, 999983, 4093, 1018, EPYC 65537): the convolution's radices and length, chirp passes that absorb the zero padding, few-copy stages, split convolutions | 1 | done: long-row radices for long convolutions and a power-of-two limit on Bluestein lengths per machine (Mac changed cases 0.49, EPYC 0.56; ÷ FFTW Mac 131071 2.61 → 0.88, 999983 1.99 → 0.75, 4093 1.42 → 0.90; EPYC 131071 1.64 → 0.87, 4093 1.33 → 0.94, 65537 0.80: its old Rader convolution took radix-16 passes); few copies as one stage on C > 2 (Xeon 1018 0.68); split single-copy convolutions on x86 (EPYC 0.56–0.92); half-form chirp passes rejected; Xeon 1018 ÷ MKL 1.37 → 0.90; left: EPYC 1018 1.51, Xeon 131071 1.28 and 999983 1.10 |
 | [X39](experiments/X39-xeon-long.md) | The Xeon's long rows (exit-check causes 5 and 6: 16384–262144, 20000, 25000, 46080, 100000 1.22–1.50 of FFTW; in place 65536 1.16): why, and which plan rule closes them on `avx512` without changing other machines? | 1 | done: on the Xeon profile (x86-64) three-phase blocks ≤ 16 adopted (0.935 over 4 rows; 131072 1.20 → 1.09 of FFTW), two-phase blocks within 2 · L1 and c2c powers of two as grids beyond L2/4 adopted (0.958 over 7; 32768 1.51 → 1.29, 46080 1.33 → 1.26); radix-64 grid phases rejected (0.985); 16384–25000, 100000 unchanged: they need radix-20/25 codelets or a depth-first chain; measure finds 5000–25000's better chain orders |
 | [P1](experiments/P1-rules-vs-measure.md) | How often is the rules' choice within 5 % of `planning::measure`'s per machine (task 2.4's acceptance: 90 % of catalogue cases), which rules miss, and does measurement recover a misfiring profile (Granite Rapids' fields forced on the Xeon)? | 2 | first pass done: rules within 5 % of measure on 96.7 % of the tracking tier on the EPYC, 77 % on the Xeon (about 85 % without noise), Mac inconclusive under load; measure never slower by fbench; Granite Rapids' fields forced on the Xeon recovered in 10 of 11 cases (the miss a budget defect, fixed); planes' radices the repeat miss |
 | [P2](experiments/P2-measure-budget.md) | Measurement budget: how many candidates and how long before the choice stops improving; the quick and full efforts' budgets | 2 | first pass done: Q within 0.999–1.014 of M; no winner above rank 7; plan construction dominates large transforms (2²² 12.5 s for M); choices unstable under load (43–66 % of cases one program over 12 rounds), so budgets wait for a sampling revisit; indicated quick 6, measure 8 |

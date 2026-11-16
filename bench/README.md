@@ -145,6 +145,8 @@ one; its arms are written `fftn_omp`.
 | `GRID_PHASE_RADIX=R` | fftn, fftn_omp | the largest radix of the grid's phase rule (`build_settings::grid_phase_radix`; default 16): every codelet radix up to R, so 32 and 64 with `R=64` (experiment [X3](../dev/experiments/X3-big-radices.md)) |
 | `GRID_MIN_BYTES`, `GRID_THREE_BYTES`, `GRID_BLOCK_BYTES`, `GRID_BLOCK`, `GRID_FUSE_BYTES` | fftn, fftn_omp | the planner's grid fields of the machine profile (`src/threading/schedule.hpp`): a row of more bytes than the first is a grid, of more than the second a grid of three phases; blocks widen while one fits the third; the fourth forces the block width; up to the fifth, phases with small radices read and write rows in their end passes (`never` disables the first two and makes the fifth unlimited) |
 | `POW2_CHAIN_BYTES`, `POW2_RADIX8_BYTES` | fftn, fftn_omp | the machine profile's long power-of-two fields (`src/threading/schedule.hpp`, experiment [X32](../dev/experiments/X32-long-pow2.md)): a power-of-two c2c row stays a chain up to the first (`never`: at any size), and a power-of-two chain beyond `GRID_MIN_BYTES` takes radix 8 up to the second, radix 4 beyond |
+| `LONG_CONVOLUTION_BYTES` | fftn, fftn_omp | a Bluestein or Rader convolution of a power of two beyond this many bytes takes the long-row radices (`machine_profile::long_convolution_bytes`; experiment X36) |
+| `BLUESTEIN_POW2_PART_BYTES` | fftn, fftn_omp | the largest power-of-two part (bytes) of a Bluestein convolution length (`machine_profile::bluestein_pow2_part_bytes`; a quarter of L1 where the L2 is shared, unlimited elsewhere; experiment X36) |
 | `GRID_TWO_ODD_PART` | fftn, fftn_omp | rows whose length has an odd part of at least this stay in two grid phases at any size (0: off; experiment X34) |
 | `GRID_TWO_PART_BYTES` | fftn, fftn_omp | rows whose length is not a power of two and whose power-of-two part, in bytes of complex values, is at most this stay in two grid phases at any size (0: off; experiment X35) |
 | `GRID_THREE_BLOCK` | fftn, fftn_omp | the widest block, in columns, of a three-phase grid (`machine_profile::grid_three_block`; default the profile's: 16 where a private L2 has less than 2 MiB of L3 per CPU behind it, 32 elsewhere; experiment X39) |
@@ -382,7 +384,7 @@ run time) that implements FFTW's C interface. Building it needs Julia 1.12 or ne
 juliaup, `juliaup add 1.13`) and takes about five minutes:
 
 ```bash
-git clone https://github.com/jtravs/FFTL.jl && cd FFTL.jl && git checkout 53171e8
+git clone https://github.com/JuliaMath/FFTL.jl && cd FFTL.jl && git checkout 1ae621e
 cd libfftl && ./build.sh        # JULIA_CPU_TARGET: apple-m1 on macOS, x86-64-v3 on x86-64
 export FFTN_BENCH_FFTL_ROOT=$PWD
 ```
