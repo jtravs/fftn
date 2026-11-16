@@ -25,7 +25,9 @@ inline constexpr std::size_t rows_ahead = 8;
 // 100000, r2c and c2r). The Xeon's avx512 rows (1.16-1.22 slower at 2^20 and 2^22 without
 // it) and the Mac's (1.07-1.19) keep it. The effect belongs to the core, not the target:
 // the Xeon under avx2 also lost without it (1.14-1.20 at 2^20 and 2^22), so this follows the
-// measured release machine of each target until the profile can tell the cores apart.
+// measured release machine of each target. Keying it to the core instead (X26b, arm 2) was
+// rejected: on the Xeon under avx2 the prefetch took 2^22 to 0.84 but float rows of 100000
+// points (blocks of one 32-byte row) to 1.27; a rule by core and row width is open.
 inline constexpr bool copies_prefetch = id != target::avx2;
 
 // Asks for the `bytes` bytes at p, to read (Write = 0) or to write (1).
@@ -70,7 +72,8 @@ void block_copy(const pass_args* a, const void* src, void* dst, std::size_t firs
 }
 
 // Phase 1 of a grid: z, a tight block of s columns and m rows (z[q + s k]), to the block's
-// s rows of m in the next array, y[k + m q], element (q, k) times the twiddle w^((c0 + q) k)
+// s rows of m in the next array, y[k + dst_stride q] (dst_stride is m, or more for a padded
+// intermediate, strategies/grid.hpp), element (q, k) times the twiddle w^((c0 + q) k)
 // of its column c0 + q (the conjugate for Sign = +1), formed as w^(q k) w^(c0 k): roots
 // holds the first factor for every (q, k) of a block, twiddles the second for the block's
 // rows (m values; the stage advances them per block, stage::moving_twiddles). Both are
@@ -80,7 +83,8 @@ void block_copy(const pass_args* a, const void* src, void* dst, std::size_t firs
 // element instead is a table of n values, which X12 measured costing more than the
 // multiplication once it no longer fits the cache. A unit is a C x C tile, tiles k fastest
 // within a column tile, transposed in registers so that every store is C adjacent elements
-// of one row of y. m and s are multiples of C. Reads src, dst, m, s, roots, twiddles.
+// of one row of y. m, s and dst_stride are multiples of C. Reads src, dst, m, s, dst_stride,
+// roots, twiddles.
 template <class T, int Sign>
 void twiddle_transpose(const pass_args* a, const void* src, void* dst, std::size_t first,
                        std::size_t last) {
@@ -90,6 +94,7 @@ void twiddle_transpose(const pass_args* a, const void* src, void* dst, std::size
   const T* rows = static_cast<const T*>(a->twiddles);
   const std::size_t m = a->m;
   const std::size_t cols = a->s;
+  const std::ptrdiff_t ys = 2 * a->dst_stride;
   const std::size_t ktiles = m / C<T>;
   std::size_t q0 = first / ktiles * C<T>;
   std::size_t k0 = first % ktiles * C<T>;
@@ -108,7 +113,7 @@ void twiddle_transpose(const pass_args* a, const void* src, void* dst, std::size
       transpose(v);
     }
     for (std::size_t l = 0; l < C<T>; ++l) {
-      store(y + 2 * (k0 + m * (q0 + l)), v[l]);
+      store(y + 2 * k0 + at(q0 + l, ys), v[l]);
     }
     k0 += C<T>;
     if (k0 == m) {

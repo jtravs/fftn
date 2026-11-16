@@ -1157,7 +1157,10 @@ beyond L2 the copies' prefetching won (X12). Placement: the last phase writes th
 the output); phase 1 writes the output out of place with two phases, otherwise the
 workspace block (n complex values), which is also the in-place route (the scratch of N of
 the list above). Scratch line b is staggered from a by seven 64-byte lines (rule 4 of
-section 10; X4). The loops step a twiddle cursor (program.hpp) so a block's stage reads its
+section 10; X4). Where the L2 is shared by a cluster (Apple) an intermediate already in
+the workspace block is padded after each of phase 2's rows, so that the rows phase 2
+gathers spread over the cache sets (`grid_pad`, profile `grid_pad_period`; X26b: 0.976
+over the long rows); on x86 it gained nothing and is off. The loops step a twiddle cursor (program.hpp) so a block's stage reads its
 own table. Planner: a c2c row of one axis, contiguous on both sides, without edge factors,
 is a grid when its bytes exceed `grid_min_bytes`, in three phases beyond
 `grid_three_bytes`, by default half of L2 and L2 where each core has its own L2 (shared by
@@ -2589,6 +2592,7 @@ to change before a release.
 | 2026-11-15 | Masked partial runs on x86 (X23's arm P5: `load_n`/`store_n`, partial units after the loops, padded transposes, `avx2` stores in pieces) are built behind `FFTN_MASKED_TAILS`, `AUTO` by default: on with GCC, the x86 release toolchain, and off with Clang and icpx, which keep the tile (sections 8.2, 14.3) | The maintainer adopted X23 for GCC after it was rejected for a Clang-only loss (Clang 23: `avx2` double 75 points 1.42), under the rule that decisions judge the release toolchains. Amendment 4 with GCC: float 0.53 of main's time on the Xeon's `avx512`, 0.77 on `avx2`, 0.72 on the EPYC, double 0.78–0.89, bits unchanged; off, the kernel objects are byte for byte main's. Its rule was missed by one whole-unit case on two machine-targets (float 256 1.047 on `avx512`, double 72 1.033 on the EPYC), kept as recorded exceptions (the lead's decision under the maintainer's direction to keep X23 for GCC; neither case has a partial unit) |
 | 2026-11-15 | The x86 targets' leaves (n ≤ 16) are 128-bit: compiled in the `avx2` region with `avx2`'s operations at half width (`vocab_avx2_narrow.inl`), used by `avx2` and `avx512` plans alike (experiment X28) | A leaf broadcasts its one line into every lane, so width only repeats work; on Cascade Lake the 512-bit leaf ran at licence 1–2 (Xeon 8 points 65 → 47 cycles, 16 points 110 → 85); same operations per lane, so bits unchanged |
 | 2026-11-15 | A pass kernel takes its source and destination as arguments (`pass_fn(args, src, dst, first, last)`), like a leaf; `pass_args` holds only the fixed geometry, and the driver calls kernels on the plan's own arguments; one transform of a flat program runs from a contiguous `flat_body`, entered from `execute_core` with its slots as scalars; `plan::execute` is one library call (X28) | The per-stage, per-transform copy of `pass_args` cost 3.7–6 ns per stage on Zen 3 (much of it store-to-load forwarding into the kernel), 1.5–2.7 on the M5 Max: single rows of 24–120 points 0.69–0.88 of their time on the Mac; only grid stages with moving twiddles and lanes blocks still copy |
+| 2026-11-16 | Where the L2 is shared by a cluster (Apple), an intermediate the grid already keeps in the workspace block is padded after each of phase 2's rows (`grid_pad`, profile `grid_pad_period`); off on x86. The copies' prefetch keeps X26's target gate: keying it to the core was rejected (experiment X26b) | Mac: double long rows 0.976 of main (2^18 0.94); Xeon 1.006 and EPYC 0.993, where counters showed no fewer L1 refills. The prefetch on an Intel core under `avx2` took 2^22 to 0.84 but float 100000 to 1.27; X26's cheaper copy loops were rejected again on the padded grid |
 
 ---
 
