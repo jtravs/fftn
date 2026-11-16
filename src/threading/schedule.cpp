@@ -95,7 +95,20 @@ void set_grid_sizes(machine_profile& p, const core_class& c) noexcept {
   // lost with chains beyond L2/2 at every length.
   const bool large_l3 = c.l3.size != 0 && c.l3.shared_by != 0 &&
                         c.l3.size / c.l3.shared_by >= std::size_t{2} * 1024 * 1024;
-  if (private_l2 && large_l3) {
+  // Experiment X35: a private L2 of 2 MiB or more (Granite Rapids; Intel's server cores since
+  // Sapphire Rapids, against Zen 2-5's 0.5-1 MiB) is its own case, whatever the L3 per CPU,
+  // which depends on the VM's size: a Granite Rapids VM of 8 cores reports 63 MiB per CPU
+  // and lost with X29's and X32's chains (X31b: the grid took 0.59-0.94 of a long power of
+  // two's chain time, two phases 0.59-0.69 of X29's chains), and lost with X34's two phases
+  // where the power-of-two part is large (1.03-1.46). Grids from a quarter of L2, three
+  // phases from half of it (36864-131072 points 0.72-0.96), except where the power-of-two
+  // part is at most 1024 complex doubles: those rows stay in two phases.
+  const bool large_l2 = private_l2 && c.l2.size >= std::size_t{2} * 1024 * 1024;
+  if (large_l2) {
+    p.grid_min_bytes = std::max(c.l1d.size, c.l2.size / 4);
+    p.grid_three_bytes = c.l2.size / 2;
+    p.grid_two_part_bytes = std::size_t{16} * 1024;
+  } else if (private_l2 && large_l3) {
     p.chain_part_bytes = std::size_t{16} * 1024;
     p.chain_part_limit_bytes = c.l3.size / 2;
     // Experiment X32, EPYC 7763: power-of-two rows as chains of FFTL.jl's radix-8 sequence
@@ -108,7 +121,7 @@ void set_grid_sizes(machine_profile& p, const core_class& c) noexcept {
   // Experiment X34: where those chains do not apply (Xeon 6240, 0.7 MiB of L3 per CPU), a
   // row whose length has an odd part of at least 15 stays in two grid phases beyond L2
   // (15 rows of 71680 to 4 x 10^6 points: 0.70-1.01 of the three phases' cycles, 100000 0.73).
-  if (private_l2 && !large_l3) {
+  if (private_l2 && !large_l2 && !large_l3) {
     p.grid_two_odd_part = 15;
   }
   // Experiment X29, M5 Max: with the grid from L1, rows whose length has a power-of-two part

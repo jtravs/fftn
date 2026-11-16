@@ -323,6 +323,34 @@ TEST(Grid, ChainKeepsLengthsThatAreNotPowersOfTwo) {
   EXPECT_TRUE(is_grid(*plan(64 * 45)));
 }
 
+// Beyond grid_three_bytes a row whose length is not a power of two and whose power-of-two
+// part's bytes are within grid_two_part_bytes stays in two phases (X35); powers of two and
+// rows with a larger power-of-two part take three.
+TEST(Grid, SmallPowerOfTwoPartKeepsTwoPhases) {
+  build_settings s;
+  s.profile.grid_min_bytes = 8192;
+  s.profile.grid_three_bytes = 32768;
+  s.profile.grid_block_bytes = 16384;
+  s.profile.chain_part_bytes = 0;
+  s.profile.chain_mixed_bytes = 0;
+  s.profile.pow2_chain_bytes = 0;
+  s.profile.grid_two_part_bytes = 16 * 16; // power-of-two parts up to 16 points
+  const auto phases = [&](std::size_t n) {
+    const std::string text = described(*make_plan_core(
+        fftn::detail::view_of(fftn::rows_c2c<double>(n, 1, fftn::direction::forward)),
+        fftn::options(), s));
+    if (text.find("in 2 phases") != std::string::npos) {
+      return 2;
+    }
+    return text.find("in 3 phases") != std::string::npos ? 3 : 0;
+  };
+  EXPECT_EQ(phases(16 * 375), 2); // part 16: 96000 bytes, beyond grid_three_bytes
+  EXPECT_EQ(phases(32 * 375), 3); // part 32
+  EXPECT_EQ(phases(8192), 3);     // a power of two
+  s.profile.grid_two_part_bytes = 0;
+  EXPECT_EQ(phases(16 * 375), 3);
+}
+
 // A c2c row of a power of two stays a chain beyond grid_min_bytes up to pow2_chain_bytes,
 // with FFTL.jl's radices beyond grid_min_bytes: 8s up to pow2_radix8_bytes, 4s beyond
 // (X32), as does the half-length transform of a real row (X33); lengths that are not

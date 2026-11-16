@@ -110,6 +110,13 @@ struct machine_profile {
   // phases. set_grid_sizes sets it where a private L2 has less than 2 MiB of L3 per CPU
   // behind it, the machines where X29's chains for such rows do not apply.
   std::size_t grid_two_odd_part = 0;
+  // A row whose length n is not a power of two and whose power-of-two part, in bytes of
+  // complex values, is at most grid_two_part_bytes stays in two grid phases at any size (0:
+  // off; experiment X35). On a Granite Rapids VM two phases took 0.59-0.69 of the time of
+  // X29's chains at 100000, 10^6 and 2 x 10^6 points, three phases 0.89-1.04, while rows
+  // with a larger power-of-two part kept three phases (two lost up to 1.46). set_grid_sizes
+  // sets it to 16 KiB where the private L2 has 2 MiB or more.
+  std::size_t grid_two_part_bytes = 0;
   std::size_t grid_block_bytes = std::size_t{64} * 1024;
   std::size_t grid_block = 0;
   // The set period (bytes) the grid pads the rows of its intermediate array against, so that
