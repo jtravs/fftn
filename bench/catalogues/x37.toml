@@ -44,3 +44,10 @@ note = "batches of the lengths that get pair leaves (collateral)"
 kind = "c2c"
 dims = [12, 18, 20, 22, 24, 26, 30]
 batch = [64, 1024]
+
+[[group]]
+name = "x37-entry"
+note = "single rows through the general execution path (collateral for arm 3)"
+kind = "c2c"
+dims = [31, 60, 61, 100, 144, 192, 256]
+batch = 1
