@@ -97,6 +97,12 @@ void set_grid_sizes(machine_profile& p, const core_class& c) noexcept {
       c.l3.size / c.l3.shared_by >= std::size_t{2} * 1024 * 1024) {
     p.chain_part_bytes = std::size_t{16} * 1024;
     p.chain_part_limit_bytes = c.l3.size / 2;
+    // Experiment X32, EPYC 7763: power-of-two rows as chains of FFTL.jl's radix-8 sequence
+    // took 0.57-0.85 of the grid's time from 32768 to 2^22 points (64 MiB, twice L3, the
+    // largest measured), steadily: X29's bimodal chains were the rules' radix-16 passes on
+    // huge pages. Radix 8 beat radix 4 from 65536 points up.
+    p.pow2_chain_bytes = 2 * c.l3.size;
+    p.pow2_radix8_bytes = std::numeric_limits<std::size_t>::max();
   }
   // Experiment X29, M5 Max: with the grid from L1, rows whose length has a power-of-two part
   // of at most 1024 points took 0.49-0.72 of the grid's time as chains (to 4 Mi points),
@@ -105,9 +111,10 @@ void set_grid_sizes(machine_profile& p, const core_class& c) noexcept {
     p.chain_part_bytes = c.l1d.size / 8;
     p.chain_mixed_bytes = 2 * c.l1d.size;
     // Experiment X32, M5 Max: power-of-two rows as chains of FFTL.jl's radices took
-    // 0.57-0.93 of the grid's time at every length from 16384 to 2^22 points; radix 8 won
-    // up to 131072 points (2 MiB, L2/8), radix 4 from 262144.
-    p.pow2_chain_bytes = std::numeric_limits<std::size_t>::max();
+    // 0.57-0.93 of the grid's time at every length from 16384 to 2^22 points (64 MiB, four
+    // times L2, the largest measured); radix 8 won up to 131072 points (2 MiB, L2/8),
+    // radix 4 from 262144.
+    p.pow2_chain_bytes = 4 * c.l2.size;
     p.pow2_radix8_bytes = c.l2.size / 8;
   }
   p.c2r_paired_gather = c.l2.size != 0 && !private_l2;
