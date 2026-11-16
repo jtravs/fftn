@@ -27,9 +27,11 @@ namespace pairs {
 
 #include "passes/pair_leaf.inl"
 
-// C = 4 in double: m = 4 (one unit) up to 64 points, then m = 8.
+// C = 4 in double: m = 4 (one unit) up to 64 points, then m = 8. 8, 12 and 16 points
+// (X37) replace the 128-bit leaves of those codelets for rows of stride 1.
 #define FFTN_PAIRS_F64                                                                             \
-  FFTN_PAIR(double, 5, 4), FFTN_PAIR(double, 6, 4), FFTN_PAIR(double, 8, 4),                       \
+  FFTN_PAIR(double, 2, 4), FFTN_PAIR(double, 3, 4), FFTN_PAIR(double, 4, 4),                       \
+      FFTN_PAIR(double, 5, 4), FFTN_PAIR(double, 6, 4), FFTN_PAIR(double, 8, 4),                   \
       FFTN_PAIR(double, 9, 4), FFTN_PAIR(double, 10, 4), FFTN_PAIR(double, 12, 4),                 \
       FFTN_PAIR(double, 15, 4), FFTN_PAIR(double, 16, 4), FFTN_PAIR(double, 9, 8),                 \
       FFTN_PAIR(double, 10, 8), FFTN_PAIR(double, 12, 8), FFTN_PAIR(double, 15, 8)

@@ -432,7 +432,8 @@ template <class T> void every_edge_variant(fftn::isa target) {
   };
   const std::vector<line> lines{
       {.n = 1, .radices = {}, .first = "copy", .last = "copy"},
-      {.n = 12, .radices = {}, .first = "leaf radix-12", .last = "leaf radix-12"},
+      // Forced, so that no pair leaf replaces the leaf (X37).
+      {.n = 12, .radices = {12}, .first = "leaf radix-12", .last = "leaf radix-12"},
       {.n = 40, .radices = {5, 8}, .first = "grouped radix-5", .last = "lane radix-8"},
       {
           .n = 29,

@@ -915,6 +915,13 @@ std::size_t chain_builder<T>::c2c_line(std::size_t n, int sign, endpoint src, en
     return 0;
   }
   if (rad.size() == 1 && has_codelet(n)) {
+    // A codelet of up to 16 points with a pair leaf (8, 12, 16 on x86, X37) takes it: two
+    // passes on whole registers rather than one on a quarter or half of each.
+    if (const pair_choice p = n <= 16 ? pair_for(n, src, dst, edges) : pair_choice{};
+        p.entry != nullptr) {
+      add_pair_leaf(p, sign, src, dst, edges, stages);
+      return 0;
+    }
     add_leaf(n, sign, src, dst, edges, stages);
     return 0;
   }
