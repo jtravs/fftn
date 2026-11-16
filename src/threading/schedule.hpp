@@ -102,6 +102,14 @@ struct machine_profile {
   // 20261114-132841-80e0: 2^20 1.46 against 1.35 times FFTW). default_machine_profile sets
   // it to a quarter of L2.
   std::size_t grid_fuse_bytes = std::size_t{4} * 1024 * 1024;
+  // A row whose length n has an odd part (n over its largest power-of-two factor) of at least
+  // grid_two_odd_part stays in two grid phases at any size (0: off; experiment X34). On the
+  // Xeon 6240 (private 1 MiB L2, 0.7 MiB of L3 per CPU) two phases took 0.70-1.01 of the
+  // three phases' cycles on the 15 such rows measured, 71680 to 4 x 10^6 points, while rows
+  // nearer a power of two (odd part 3-9: 294912, 327680, 393216) lost up to 1.13 as two
+  // phases. set_grid_sizes sets it where a private L2 has less than 2 MiB of L3 per CPU
+  // behind it, the machines where X29's chains for such rows do not apply.
+  std::size_t grid_two_odd_part = 0;
   std::size_t grid_block_bytes = std::size_t{64} * 1024;
   std::size_t grid_block = 0;
   // The set period (bytes) the grid pads the rows of its intermediate array against, so that
@@ -123,8 +131,9 @@ struct machine_profile {
   // The largest row (bytes) chain_part_bytes keeps a chain: half of L3 where a private L2
   // has a large L3 behind it (x86 Zen), any size where the L2 is shared (X29).
   std::size_t chain_part_limit_bytes = std::numeric_limits<std::size_t>::max();
-  // Long power-of-two rows (experiment X32): a c2c row of a power-of-two length stays a
-  // chain beyond grid_min_bytes up to pow2_chain_bytes (0: never, and the rules' radices
+  // Long power-of-two rows (experiment X32): a c2c row of a power-of-two length (and the
+  // half-length transform of a real row, X33) stays a chain beyond grid_min_bytes up to
+  // pow2_chain_bytes (0: never, and the rules' radices
   // everywhere), and a power-of-two chain of more than grid_min_bytes takes FFTL.jl's
   // radices instead of the rules' (priced in cache, X2): 8s (4s for the spare factors of
   // two) up to pow2_radix8_bytes, 4s (one 8 for an odd exponent) beyond. The rules'

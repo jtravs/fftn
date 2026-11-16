@@ -52,3 +52,27 @@ X31 total USD 0.75 estimated gross (cap 20); the month's total with X21 USD 2.11
 (results only, under 2 MB) is negligible. Teardown verified on 2026-11-16 12:20 UTC: no
 instance, disk or address of the campaign left; the firewall rule, subnet and network
 deleted after matching their IDs; the watchdogs stopped.
+
+## X31b, 2026-11-16
+
+Rentals for [X31b](X31b-cloud-followup.md) (X32 and X34 on Zen 5 and Granite Rapids), under
+the maintainer's 2026-11-16 approval (USD 20 cap for the campaign, at most USD 10 for X31b).
+Same project, region, settings and prices as X31: Spot VMs with `--max-run-duration=3h`
+(termination action DELETE), boot-disk auto-delete, and a Mac-side watchdog per VM that
+deletes by name only after matching the recorded ID. Creation times are those Compute
+Engine recorded; deletion times are when the delete call returned.
+
+Shared resources (free): VPC network `fftn-x31b-net` (4896803993719055712), subnet
+`fftn-x31b-sub` (4766368096092333426), firewall rule `fftn-x31b-ssh`
+(4781569269548098889, SSH from the controller's address only).
+
+| Instance | Recorded ID | Type | Zone | Spot USD/h (VM) | Created (UTC) | Deleted (UTC) | Cost USD | Running total (X31b) |
+|---|---|---|---|---:|---|---|---:|---:|
+| fftn-x31b-c4d | 1444292870677112145 | c4d-standard-16, 1 thread per core | us-central1-a | 0.335 | 2026-11-16 15:05:34 | 2026-11-16 16:00:00 | 0.32 | 0.32 |
+| fftn-x31b-c4 | 7219234991263622447 | c4-standard-16, 1 thread per core, minimum platform Granite Rapids | us-central1-a | 0.473 | 2026-11-16 15:05:38 | 2026-11-16 16:43:28 | 0.80 | 1.12 |
+
+X31b total USD 1.12 estimated gross. With X31 the campaign has spent USD 1.87 of its USD 20
+cap; the month's total, with X21, is USD 3.23. Egress (results only, about 15 MB) is
+negligible. Teardown was verified on 2026-11-16 16:44 UTC: no instance, disk or address of
+the campaign is left; the firewall rule, subnet and network were deleted after matching
+their IDs; the watchdogs were stopped.

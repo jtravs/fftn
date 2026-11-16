@@ -219,6 +219,11 @@ template <class T> struct pass_kernels {
   pass_fn twiddle_scatter[2];
   // The gather of a c2r grid's first phase with the pairing in it (src/passes/real.inl).
   pass_fn c2r_pair_gather;
+  // The r2c pairing in a grid's last phase (src/passes/real.inl): the gather of a pair of
+  // column sets, their pairing and writing [scaled], and column 0's [scaled].
+  pass_fn r2c_pair_gather;
+  pass_fn r2c_pair_scatter[2];
+  pass_fn r2c_pair_column[2];
   // The lanes strategy (src/passes/lanes.inl): a block of rows into a tile whose lanes are
   // the rows and back, and the pairing of real rows on the tile (r2c [scaled], c2r).
   pass_fn lanes_gather;

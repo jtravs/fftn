@@ -323,10 +323,11 @@ line_edges c2c_edges(const options& opts, const build_settings& settings, bool f
 // output or, with build_settings::scale_on_input, its input), has no forced radices for its whole
 // length and has a split whose phases are codelet chains. The row is a c2c row or (real) the
 // half-length complex transform of a real row of 2n (DESIGN.md 9.1). A c2c row of a power of
-// two stays a chain up to the profile's pow2_chain_bytes (X32; real rows were not measured).
+// two stays a chain up to the profile's pow2_chain_bytes (X32), and so does the half-length
+// transform of a real row (X33).
 template <class T>
 grid_split plan_grid(std::size_t n, const side& in, const side& out, const build_settings& settings,
-                     const chain_builder<T>& chain, std::size_t lanes, bool real) {
+                     const chain_builder<T>& chain, std::size_t lanes, [[maybe_unused]] bool real) {
   if (n < 2 || settings.strategy == strategy_choice::chain ||
       settings.strategy == strategy_choice::lanes || settings.in_factor != nullptr ||
       settings.out_factor != nullptr || in.stride[0] != 1 || out.stride[0] != 1) {
@@ -344,7 +345,7 @@ grid_split plan_grid(std::size_t n, const side& in, const side& out, const build
         (mixed && ((part * 2 * sizeof(T) <= settings.profile.chain_part_bytes &&
                     bytes <= settings.profile.chain_part_limit_bytes) ||
                    bytes <= settings.profile.chain_mixed_bytes)) ||
-        (!mixed && !real && bytes <= settings.profile.pow2_chain_bytes)) {
+        (!mixed && bytes <= settings.profile.pow2_chain_bytes)) {
       return {};
     }
   }
@@ -355,8 +356,15 @@ grid_split plan_grid(std::size_t n, const side& in, const side& out, const build
   if (!settings.radices.empty() && forced == n) {
     return {};
   }
-  grid_split g = choose_grid(n, lanes, settings.profile.grid_block_bytes / (4 * sizeof(T)),
-                             n * 2 * sizeof(T) > settings.profile.grid_three_bytes,
+  // Three phases beyond grid_three_bytes, unless the odd part of n keeps two (X34).
+  std::size_t odd = n;
+  while (odd % 2 == 0) {
+    odd /= 2;
+  }
+  const bool three =
+      n * 2 * sizeof(T) > settings.profile.grid_three_bytes &&
+      (settings.profile.grid_two_odd_part == 0 || odd < settings.profile.grid_two_odd_part);
+  grid_split g = choose_grid(n, lanes, settings.profile.grid_block_bytes / (4 * sizeof(T)), three,
                              settings.profile.grid_block, settings.grid_factors);
   g.pad = grid_pad(g, 2 * sizeof(T), settings.profile.grid_pad_period);
   for (std::size_t i = 0; i < g.phases; ++i) {
@@ -433,6 +441,16 @@ real_fusion fusion_of(const build_settings& settings, target t) {
       .min_lanes = 4,
       .r2c_bytes = settings.profile.grid_block_bytes, // the L1 data cache (task 2.1, X6)
   };
+}
+
+// Whether an r2c grid pairs its bins in its last phase where the phase allows (X33): not on
+// avx2, where the EPYC 7763 gained nothing from it (0.98-1.02), the separate pass after the
+// grid elsewhere. A forced setting applies alone (tests).
+bool r2c_pairs_in_grid(const build_settings& settings, target t) {
+  if (settings.r2c_pair_last >= 0) {
+    return settings.r2c_pair_last != 0;
+  }
+  return t != target::avx2;
 }
 
 // Makes the records from `first` on read the output slot where they read the input: the
@@ -588,7 +606,13 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       c.block_elements = grid_builder<T>::block_elements(real_grid);
     }
     std::vector<stage> pairing;
-    if (r2c) {
+    // r2c: the pairing in the grid's last phase, over pairs of mirror column sets, where the
+    // last phase's columns allow (X33); else a separate pass after the grid.
+    const bool paired_last =
+        r2c && r2c_pairs_in_grid(settings, c.isa_target) && grid.pairs_last(real_grid);
+    if (paired_last) {
+      scratch = grid.c2c_row(real_grid, -1, in_place, opts.scale, false, p, 0, n);
+    } else if (r2c) {
       scratch = grid.c2c_row(real_grid, -1, in_place, 1.0, false, p);
       chain.add_pairing(true, n, {slot::out, 1}, {slot::out, 1}, opts.scale, pairing);
       p.records.emplace_back(std::move(pairing.front()));
@@ -602,7 +626,9 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       read_output_for_input(p, first);
     }
     const char* pairing_note = ", then a pairing pass";
-    if (!r2c) {
+    if (paired_last) {
+      pairing_note = ", the pairing in its last phase";
+    } else if (!r2c) {
       pairing_note = paired_gather ? ", the pairing in its first gather" : ", after a pairing pass";
     }
     c.axis_notes.push_back("axis 0 (n = " + std::to_string(n) + "): " + (r2c ? "r2c" : "c2r") +

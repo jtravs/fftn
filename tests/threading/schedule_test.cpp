@@ -467,6 +467,10 @@ TEST(Schedule, GridSizesFromCaches) {
   // With 4 MiB of L3 per CPU the EPYC keeps them chains to half of its L3 (X29).
   EXPECT_EQ(epyc.chain_part_bytes, 16 * kib);
   EXPECT_EQ(epyc.chain_part_limit_bytes, std::size_t{16} * 1024 * kib);
+  // Without that L3 the Xeon keeps rows with an odd part of 15 or more in two phases (X34).
+  EXPECT_EQ(xeon.grid_two_odd_part, 15U);
+  EXPECT_EQ(epyc.grid_two_odd_part, 0U);
+  EXPECT_EQ(m5.grid_two_odd_part, 0U);
   // The c2r grid pairs in its first gather only where the L2 is shared (X29).
   EXPECT_TRUE(m5.c2r_paired_gather);
   EXPECT_FALSE(epyc.c2r_paired_gather);

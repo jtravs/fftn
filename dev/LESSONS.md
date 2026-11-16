@@ -366,6 +366,38 @@ tried that and fbench saw nothing (0.99–1.01), because fbench's buffers sit at
 multiples of 64 bytes, where the near-alias cases are rare: a benchmark that never places
 buffers as malloc does cannot judge such a fix. [X32](experiments/X32-long-pow2.md).
 
+3.16 **Where L3 is small and far, count the passes over memory before the cache fit of
+each pass.** X12b's rule (three grid phases beyond L2, so that each phase's block stays
+within L1) was set on powers of two. On the Xeon 6240 (1 MiB L2, 0.7 MiB of L3 per CPU)
+rows with an odd part of 15 or more ran in 0.70–1.01 of the cycles as two phases, whose
+blocks no longer fit L1, from 1.1 MiB to 64 MiB (100000 points 0.73, 10^6 0.70; L2
+misses per point 1.3 → 0.8), while on the EPYC 7763 (512 KiB L2, 4 MiB of L3 per CPU) the
+same two-phase plans took 1.13–1.67 of the cycles below 16 MiB. Rows near a power of two
+(odd part 3–9) lost as two phases on both: their gathers' rows still collide in L1. One
+blocking rule does not fit both kinds of uncore. [X34](experiments/X34-xeon-mixed.md).
+
+3.17 **Before fusing away a streaming pass, check what the pass costs alone.** FFTN's
+separate r2c pairing pass over the half spectrum looked like 10–30 % of a long real row
+(time of the real row over the c2c row of half its length), but fusing it into the grid's
+last phase (no pass, no extra sweep) recovered only 2–6 % on the M5 Max and the Xeon 6240
+and nothing on the EPYC 7763: a streaming in-place pass over an array in L2 or L3 is cheap,
+and the rest of the "real overhead" is the real row's own plan. The fused form's blocks
+also had to stay within the phase's scratch budget and be at least a cache line wide, or
+it lost 5–9 %. Meanwhile FFTW's r2c rows of 2²⁰ cost 0.76–0.86 of its own c2c of half
+their length: its real plans are not a half-length c2c plus a pass.
+[X33](experiments/X33-long-real.md).
+
+3.18 **In a VM, "L3 per CPU" is the socket's L3 divided by the VM's CPUs.** A Granite
+Rapids VM of 8 cores reports one 504 MiB L3 shared by its 8 CPUs, 63 MiB each, against about
+4 MiB per physical core; a Zen 5 VM of 8 cores reports its CCX's 32 MiB, which is true.
+Rules keyed on L3 per CPU (X29's mixed chains, X32's power-of-two chains, X34's two phases)
+therefore gave Granite Rapids Zen's plans, and they lost: long powers of two ran at 1.07–1.69
+times the grid's time, and rows with a small power-of-two part beyond L2 at 1.46–1.69 times
+a two-phase grid's. Yet X34's two phases, the Xeon's plan, also lost there, by 1.03–1.46, on
+the rows with a large power-of-two part. The machine fits neither neighbour. A cache key is
+only as good as the topology the guest is shown, and crossovers that move by core want a
+measured choice, not a guessed key. [X31b](experiments/X31b-cloud-followup.md).
+
 ## 4. Kernels and algorithms
 
 4.1 **A whole-transform codelet wins only where it fills the register.** One 32-point
