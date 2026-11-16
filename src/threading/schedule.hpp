@@ -123,6 +123,10 @@ struct machine_profile {
   // The largest row (bytes) chain_part_bytes keeps a chain: half of L3 where a private L2
   // has a large L3 behind it (x86 Zen), any size where the L2 is shared (X29).
   std::size_t chain_part_limit_bytes = std::numeric_limits<std::size_t>::max();
+  // Whether a c2r row out of place in a two-phase grid pairs its bins in phase 1's gather
+  // rather than in a separate pass (X29): set where the L2 is shared (Apple: 0.92-0.94 of
+  // the separate route); on the EPYC it took 1.11.
+  bool c2r_paired_gather = false;
 };
 
 // The profile of a machine of topology t (its CPU count aside): the defaults above, which

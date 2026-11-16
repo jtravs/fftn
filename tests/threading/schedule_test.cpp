@@ -467,6 +467,10 @@ TEST(Schedule, GridSizesFromCaches) {
   // With 4 MiB of L3 per CPU the EPYC keeps them chains to half of its L3 (X29).
   EXPECT_EQ(epyc.chain_part_bytes, 16 * kib);
   EXPECT_EQ(epyc.chain_part_limit_bytes, 16 * 1024 * kib);
+  // The c2r grid pairs in its first gather only where the L2 is shared (X29).
+  EXPECT_TRUE(m5.c2r_paired_gather);
+  EXPECT_FALSE(epyc.c2r_paired_gather);
+  EXPECT_FALSE(xeon.c2r_paired_gather);
   // Unknown sizes keep the defaults; an unknown sharing counts as a shared L2.
   const machine_profile defaults;
   machine_profile unknown;

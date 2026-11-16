@@ -365,9 +365,15 @@ TEST(Real, HalfLengthGrid) {
         s.strategy = fftn::detail::strategy_choice::grid;
         s.grid_factors = g.factors;
         s.profile.grid_pad_period = period;
-        for (const bool r2c : {true, false}) {
-          check_all<double>(t, {.n = g.n, .settings = s, .route = "half-length complex grid"}, r2c);
-          check_all<float>(t, {.n = g.n, .settings = s, .route = "half-length complex grid"}, r2c);
+        check_all<double>(t, {.n = g.n, .settings = s, .route = "half-length complex grid"}, true);
+        check_all<float>(t, {.n = g.n, .settings = s, .route = "half-length complex grid"}, true);
+        // c2r with the pairing in a pass and, out of place in two phases, in the gather.
+        for (const bool paired : {false, true}) {
+          s.profile.c2r_paired_gather = paired;
+          check_all<double>(t, {.n = g.n, .settings = s, .route = "half-length complex grid"},
+                            false);
+          check_all<float>(t, {.n = g.n, .settings = s, .route = "half-length complex grid"},
+                           false);
         }
       }
     }

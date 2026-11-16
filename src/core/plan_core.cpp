@@ -518,8 +518,10 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   // A c2r row out of place in two phases pairs the bins in phase 1's gather, from the
   // input, which it only reads: the grid then runs from the input to the output like a
   // c2c row, without the workspace block. In place, or in three phases, the block stays
-  // and the gather's second read of the input cost more than the separate pass (X29).
-  const bool paired_gather = s.kind == transform_kind::c2r && !c.in_place && real_grid.phases == 2;
+  // and the gather's second read of the input cost more than the separate pass; on the
+  // EPYC it lost even out of place (the profile's c2r_paired_gather; X29).
+  const bool paired_gather = settings.profile.c2r_paired_gather && s.kind == transform_kind::c2r &&
+                             !c.in_place && real_grid.phases == 2;
   const bool real_in_place = c.in_place || (s.kind == transform_kind::c2r && !paired_gather);
   if (!grid_builder<T>::uses_block(real_grid, real_in_place)) {
     real_grid.pad = 0;

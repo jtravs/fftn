@@ -105,6 +105,7 @@ void set_grid_sizes(machine_profile& p, const core_class& c) noexcept {
     p.chain_part_bytes = c.l1d.size / 8;
     p.chain_mixed_bytes = 2 * c.l1d.size;
   }
+  p.c2r_paired_gather = c.l2.size != 0 && !private_l2;
 }
 
 bool runs_inline(const work_graph& g, const machine_profile& profile) noexcept {
