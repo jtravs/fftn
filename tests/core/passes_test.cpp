@@ -611,24 +611,32 @@ template <class T> void split_only_where_it_fits(fftn::isa target) {
   EXPECT_FALSE(has_split({f, 2, 2, 47}, 16)) << "a Bluestein stage with copies";
   EXPECT_FALSE(has_split({f, 2, 2, 29}, 16)) << "a Rader stage with copies";
   // One copy: the convolution runs the split run its length would (experiment X36), its
-  // forward chain's last split pass applying the kernel spectrum; with the line's edges,
+  // forward chain's last split pass applying the kernel spectrum: a split run exactly where
+  // the line of the convolution's length with the same radices has one (4093: Bluestein,
+  // M from the plan's listing; 7681: Rader, L = 7680), and then with the line's edges,
   // both directions, against the reference.
-  // A Rader stage's convolution of 7680 has a split run where the line of 7680 with the
-  // same radices has one.
   const auto t = static_cast<fftn::detail::target>(static_cast<unsigned char>(target));
   const auto profile = fftn::detail::profile_of(
       t, fftn::detail::of<T>(*fftn::detail::find_kernels(t)).complex_lanes);
-  const bool rader_split = has_split(fftn::detail::rule_radices(7680, profile), 0);
   for (const std::size_t q : {std::size_t{4093}, std::size_t{7681}}) {
-    const bool split = q == 4093 || rader_split;
-    EXPECT_EQ(has_split({q}, 16), split) << q;
-    if (!split) {
-      continue;
-    }
     build_settings one;
     one.radices = {q};
     one.layout = fftn::detail::layout_choice::split;
     one.bluestein_halves = false;
+    const auto core =
+        make_plan_core(fftn::detail::view_of(fftn::rows_c2c<T>(q, 1, fftn::direction::forward)),
+                       {.force_isa = target}, one);
+    const std::string listing = joined(stage_names(*core));
+    std::size_t len = q - 1;
+    if (const std::size_t at = listing.find(", M "); at != std::string::npos) {
+      len = std::stoul(listing.substr(at + 4));
+    }
+    const bool split = has_split(fftn::detail::rule_radices(len, profile), 0);
+    EXPECT_EQ(listing.find("convolution: split lane") != std::string::npos, split)
+        << q << " " << len << listing;
+    if (!split) {
+      continue;
+    }
     check_row<T>(target, q, fftn::direction::forward, one, 1.0, true, true, false,
                  {"convolution: split lane", "out: factor"});
     check_row<T>(target, q, fftn::direction::backward, one, 0.375, false, false, false,
