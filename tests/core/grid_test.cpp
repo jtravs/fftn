@@ -25,9 +25,11 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cmath>
 #include <complex>
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <functional>
 #include <limits>
@@ -618,6 +620,51 @@ TEST(Grid, ScratchLinesAreStaggered) {
   const auto c = make_plan_core(fftn::detail::view_of(shape), fftn::options(), chain);
   EXPECT_EQ(g->offset_b, g->scratch_line * 2 * sizeof(double) + std::size_t{7} * 64);
   EXPECT_EQ(c->offset_b, c->scratch_line * 2 * sizeof(double));
+}
+
+// A chain beyond L1 starts its scratch line half a page from the output modulo 4 KiB
+// (scratch_a, X32), wherever the output lies; the placement changes no bit, in place or
+// out of place.
+TEST(Grid, LongChainsPlaceScratchFromTheOutput) {
+  build_settings chain;
+  chain.strategy = strategy_choice::chain;
+  constexpr std::size_t n = 16384; // 256 KiB, beyond every L1
+  for (const bool in_place : {false, true}) {
+    auto shape = fftn::rows_c2c<double>(n, 1, fftn::direction::forward);
+    const auto core = make_plan_core(fftn::detail::view_of(shape),
+                                     fftn::options{.in_place = in_place}, chain);
+    ASSERT_TRUE(core->a_from_out);
+    const cvec<double> x = fftn::test::input_source(7).complexes<double>(n);
+    // Room for every output offset tried; offsets in bytes, 16-byte steps.
+    std::vector<std::complex<double>> arena(n + 512);
+    std::vector<std::byte> memory(core->bytes + 4096);
+    cvec<double> first;
+    for (const std::size_t shift : {0U, 1U, 3U, 4U, 128U, 129U, 255U}) {
+      for (const std::size_t ws_shift : {0U, 16U, 64U, 2048U}) {
+        std::complex<double>* out = arena.data() + shift;
+        std::copy(x.begin(), x.end(), out);
+        const cvec<double> input = x;
+        const fftn::workspace ws(std::span<std::byte>(memory.data() + ws_shift, core->bytes));
+        fftn::detail::execute_all(*core, in_place ? out : input.data(), out, ws);
+        // The scratch line: 64-byte aligned, within 4 KiB of the slot, half a page away.
+        auto* slot = memory.data() + ws_shift;
+        slot += (64 - reinterpret_cast<std::uintptr_t>(slot) % 64) % 64;
+        std::byte* a = fftn::detail::scratch_a(*core, slot, out);
+        EXPECT_EQ(reinterpret_cast<std::uintptr_t>(a) % 64, 0U);
+        EXPECT_LT(static_cast<std::size_t>(a - slot), 4096U);
+        const auto gap = (reinterpret_cast<std::uintptr_t>(a) - reinterpret_cast<std::uintptr_t>(out)) % 4096;
+        EXPECT_GE(gap, 2048U - 63U);
+        EXPECT_LE(gap, 2048U);
+        const cvec<double> y(out, out + n);
+        if (first.empty()) {
+          first = y;
+        } else {
+          EXPECT_EQ(std::memcmp(first.data(), y.data(), n * sizeof(y[0])), 0)
+              << "shift " << shift << ", workspace shift " << ws_shift;
+        }
+      }
+    }
+  }
 }
 
 TEST(Grid, SplitRules) {

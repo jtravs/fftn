@@ -128,10 +128,30 @@ public:
   std::size_t block_elements = 0;
   std::size_t offset_b = 0;
   std::size_t offset_block = 0;
+  // Scratch line a starts up to 4 KiB into its slot, half a page from the output modulo 4
+  // KiB (scratch_a), and the slot holds the 4 KiB more (experiment X32).
+  bool a_from_out = false;
   std::size_t bytes = 0;
   // One lane's scratch in a team's workspace: the layout above, in whole 128-byte lines.
   std::size_t slot_bytes = 0;
 };
+
+// Where scratch line a starts in a slot (64-byte aligned) for an execution writing `out`:
+// at the slot, or, with a_from_out, 2048 bytes (rounded down to 64) past the output modulo
+// 4 KiB. A long chain ping-pongs between a and the output; where the two lie within a few
+// cache lines of each other modulo 4 KiB, loads alias the previous stores' addresses (4K
+// aliasing) and the chain ran 1.15-1.9 times as long on the EPYC 7763 (X32: 65536 points,
+// the output 16 bytes past a or 48 before, as two malloc'd buffers lie). b and the block
+// keep their offsets from a.
+[[nodiscard]] inline std::byte* scratch_a(const plan_core& core, std::byte* slot,
+                                          const void* out) noexcept {
+  if (!core.a_from_out) {
+    return slot;
+  }
+  const auto o = reinterpret_cast<std::uintptr_t>(out);
+  const auto s = reinterpret_cast<std::uintptr_t>(slot);
+  return slot + (((o - s + 2048) & std::uintptr_t{4095}) & ~std::uintptr_t{63});
+}
 
 [[nodiscard]] std::shared_ptr<const plan_core>
 make_plan_core(const shape_view& shape, const options& opts, const build_settings& settings);
