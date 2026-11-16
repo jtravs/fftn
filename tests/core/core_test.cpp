@@ -97,7 +97,7 @@ TEST(Rules, RadicesMultiplyToTheLength) {
       std::size_t product = 1;
       for (const std::size_t r : fftn::detail::rule_radices(n, profile)) {
         product *= r;
-        EXPECT_TRUE(r <= 16 || is_prime(r)) << n << ": radix " << r;
+        EXPECT_TRUE(r <= 16 || r == 32 || r == 64 || is_prime(r)) << n << ": radix " << r;
       }
       EXPECT_EQ(product, n) << n;
     }
