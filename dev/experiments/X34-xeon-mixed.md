@@ -145,7 +145,11 @@ under load; A/A band ±1.95 %), x29's 23 mixed rows from 46080 to 2 · 10⁶, ar
   1.10 → 1.01. 46080 (a two-phase grid within L2, unchanged) stays 1.30 of FFTW and 1.01 of
   MKL.
 
-Tracking tier (only 100000 changes plan there): TRACKING.
+Tracking tier (only 100000 changes plan there): run 20261116-131703-f74f (Slurm 16035
+build, 16036 timing; 59 rounds, 11 under load; band ±1.68 %): c2c 100000 0.706 [0.699,
+0.722], every other case "no evidence", the largest r2c 1024² 1.030 [0.999, 1.056] (an
+unchanged plan); geomean 0.995. FFTN ÷ FFTW over the tier 0.905 → 0.900, ÷ MKL 1.007 →
+1.002; 100000 2.04 → 1.44 of FFTW and 1.33 → 0.94 of MKL.
 
 The EPYC and the Mac: `grid_two_odd_part` is 0 there (X29's large-L3 rule and the shared
 L2 respectively; `Schedule.GridSizesFromCaches` checks it), so no plan changes and no run
@@ -163,7 +167,7 @@ was needed.
   (100000 0.80 in cycles, superseded by arm c's 0.70; no row left that needs it).
 - **Arm (c), two phases for rows with an odd part ≥ 15 where a private L2 has less than 2 MiB
   of L3 per CPU: adopted on the Xeon** by the decision rule (0.861 over the 14 changed rows,
-  none slower; TRACKING). The EPYC (two phases 1.13–1.67 of the cycles below 16 MiB) and the
+  none slower; tracking tier 0.995, only 100000 changed, 0.706). The EPYC (two phases 1.13–1.67 of the cycles below 16 MiB) and the
   Mac keep `main`'s plans (the field is 0 there). DESIGN 8.5 and the decision log, LESSONS
   3.14.
 - **Unverified and open.** Granite Rapids (X31: 100000 2.16, 46080 1.60) in an 8-vCPU VM
