@@ -75,8 +75,12 @@ Open, by phase:
 - 3: T2, T3, T4, T6; 3.5 (Kokkos executor); 3.6 to be checked against its acceptance.
 - 4–7: not started.
 
-In flight (lead session, 2026-11-16): round 2 of the push: X33 (lead (b), long real rows), X34 (lead (c), the Xeon's long mixed rows). Done, each merged with its pull
-request:
+In flight (lead session, 2026-11-16): round 2 of the push: X33 (lead (b), long real rows). Done, each merged
+with its pull request:
+- X34 (lead (c), pull request 21): rows with an odd part ≥ 15 stay two-phase grids where a
+  private L2 has < 2 MiB of L3 per CPU behind it (`grid_two_odd_part`): Xeon 100000 2.03 →
+  1.44 of FFTW (MKL 1.34 → 0.95), 10⁶ 1.01 → 0.73, mixed rows 0.861 of main; chains rejected
+  there (1.05–1.45); Granite Rapids not covered (its VM's L3 gives it X29's chains).
 - X32 (lead (a), pull request 22): long power-of-two c2c rows stay chains
   with FFTL.jl's radix sequences on Apple and on Zen-like caches (Mac long powers of two
   0.57–0.94 of main, FFTN ÷ FFTW 1.16 → 0.87, ÷ FFTL.jl 1.34 → 1.00; EPYC 0.53–0.85, tracking
@@ -133,8 +137,12 @@ X29's screen favoured them on the EPYC), Zen 5 unmeasured (the rule applies ther
 fbench placing buffers as malloc does (16 bytes into a page) to judge X32's arm (b).
 (b) Long real rows (r2c and c2r of 65536 and 2²⁰, 1.17–1.44): the r2c pairing fused into
 the grid's last phase (needs block pairs, X29), the Xeon's r2c 65536 is memory (X25).
-(c) The Xeon's long mixed rows (100000 1.99, 46080 1.29): X29's chain rules key on L3 per
-CPU and leave the Xeon alone. (d) Rules by core on `avx2` (X26's prefetch, X30's 512
+(c) The Xeon's long mixed rows (100000 1.99, 46080 1.29): X34 (pull request 21) keeps
+rows with an odd part ≥ 15 in two grid phases where L3 per CPU is small (Xeon 100000 2.03 →
+1.44 of FFTW, 0.95 of MKL; chains lose there). Left: 100000 still 1.44 (FFTW's
+recursive four-pass plan); 46080 (1.30, a two-phase grid within L2); Granite Rapids in an
+8-vCPU VM reports 63 MiB of L3 per CPU, so X29's chains apply there (100000 2.16 as a
+chain): a key that covers it needs a core field or a measured choice. (d) Rules by core on `avx2` (X26's prefetch, X30's 512
 override: Intel cores without AVX-512 want other choices than Zen): deferred by the
 maintainer (2026-11-16) until a wider set of machines shows how far cores of one ISA
 diverge; server chips and the Mac come first, fastest everywhere is the end goal. (e) Primes outside
@@ -465,6 +473,7 @@ running, done (with verdict).
 | [X30b](experiments/X30b-twiddle-tables.md) | x86 chains at 1024–4096 (lead 3, after X30): 64-byte aligned plan tables (L), the half-size (wr, wi) twiddle storage only for passes with large tables (C), three-pass `avx2` double 4096 (R) | 1 | done: L adopted (aligned plan tables; EPYC x30 double 0.986, float 0.971; Xeon `avx512` 0.989, `avx2` 0.996; Mac 0.999); C rejected (EPYC x30 0.986 / 0.962 of L but float 256 × 64 1.04 in every variant, Xeon c2c 16 1.05, `avx512` double 1.001); R rejected (4096 three-pass 1.30–1.88) |
 | [X31](experiments/X31-cloud-1d.md) | One-dimensional double after the push on recent server chips (Zen 5, Granite Rapids with MKL, Axion): where does FFTN stand against FFTW, and does any core diverge from the EPYC, Xeon and Mac enough for per-core rules (lead (d))? | 1 | done: nothing badly off; FFTN ÷ FFTW over the 46 one-dimensional double cases Zen 5 0.80, Granite Rapids 0.88 (MKL 0.85), Axion 0.74 (before the push 1.05, 1.12, 0.86); Axion beats the Mac's ratios on long rows (0.75 against 1.19), in place, real rows and planes, mostly because FFTW is slower there; Axion 8 points 1.24; Granite Rapids repeats the Xeon's long mixed rows worse (100000 2.16, 46080 1.60) and in place 65536 1.50; Zen 5 diverges in no group; USD 0.75 |
 | [X32](experiments/X32-long-pow2.md) | Long powers of two (c2c ≥ 16384, lead (a)): copy-free chains of small radices (FFTL.jl's plan) against the grid, per machine; why power-of-two chains of 1–2 MiB are bimodal on the EPYC | 1 | done: chains of FFTL.jl's radices adopted on Apple (0.57–0.94 of main; ÷ FFTW 1.16 → 0.87) and Zen-like caches (EPYC 0.53–0.85); Xeon keeps the grid (chains 1.06–1.50); bimodality = radix-16 passes on transparent huge pages; scratch placement against 4K aliasing neutral in fbench, rejected |
+| [X34](experiments/X34-xeon-mixed.md) | The Xeon's long rows of mixed length (100000 1.99, 46080 1.29 of FFTW): why, and does a chain rule keyed on L2, wider grid blocks for lengths with a large odd part, or other grid factors close it without a vendor switch? (lead (c)) | 1 | done: chains lose on the Xeon (1.05–1.45); wider blocks superseded; two phases for rows with an odd part ≥ 15 where L3 per CPU is small adopted (Xeon 0.86 over the 14 changed rows, 100000 0.71: 2.03 → 1.44 of FFTW, 0.95 of MKL); the EPYC (two phases 1.13–1.67) and the Mac unchanged |
 | P1 | Cost-model accuracy: rank agreement with measurement across the catalogue per machine | 2 | planned |
 | P2 | Measurement budget: how many candidates and how long before the choice stops improving | 2 | planned |
 | [T1](experiments/T1-dispatch-wait-costs.md) | Dispatch, wake and wait costs per machine and runtime (libgomp, libomp, Kokkos, pool) | 3 | done: hand-off cost and claim runs adopted on Zen 3; dispatch and work costs wait for a per-lane dispatch term |
