@@ -171,10 +171,9 @@ if stage sanitize; then
       leaks=0
       echo "   leak detection: not available with Apple Clang (use Homebrew LLVM for it)"
     fi
-    # GCC's runtime detects use after return by default, with a fake stack aligned to 32
-    # bytes; AVX-512 code spills zmm registers with aligned 64-byte stores and faults there
-    # (Xeon Gold 6240, GCC 14). Clang's runtime leaves it off by default; so does the gate.
-    asan="detect_leaks=$leaks:detect_stack_use_after_return=0"
+    # Use-after-return detection stays at the runtime's default (on, on Linux): GCC builds
+    # leave out its instrumentation, which GCC miscompiles in AVX-512 code (CMakeLists.txt).
+    asan="detect_leaks=$leaks"
     ASAN_OPTIONS=${ASAN_OPTIONS:-$asan} \
       LSAN_OPTIONS=${LSAN_OPTIONS:-suppressions=$root/tests/support/lsan.supp} \
       UBSAN_OPTIONS=${UBSAN_OPTIONS:-print_stacktrace=1:halt_on_error=1} \

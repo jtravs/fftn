@@ -554,10 +554,26 @@ ASan + UBSan fell from 23.4 to 5.6 GB with GCC 16 and from 9.1 to 4.7 GB with Cl
 (`-g` made GCC overflow variable tracking and redo it per radix-64 pass); -O1 instead of
 -O2 saved no memory. Size parallel compiles to the machine's memory, not its cores.
 
-6.4 **GCC's ASan fake stack breaks aligned AVX-512 spills.** With
-`detect_stack_use_after_return`, 32-byte-aligned fake frames met 64-byte `vmovapd` spills and
-segfaulted (169 tests); `ASAN_OPTIONS=detect_stack_use_after_return=0` fixed it (the
-compile-time parameter did not).
+6.4 **GCC's ASan fake stack misplaces 64-byte locals in AVX-512 code.** GCC aligns a 64-byte
+local array (an accessor's tile) to a cache line and so emits a 512-bit store to it as an
+aligned `vmovapd`. In a function that realigns its stack to 64, GCC lays out the ASan frame
+for a base 32 bytes off a 64-byte boundary, as it is on the real stack, but the
+use-after-return fake frame (`__asan_stack_malloc_N`, on by default in GCC's runtime) is
+64-byte aligned: the tile lands 32 bytes off, and the store faults (a general-protection
+fault that ASan reports as a SEGV on an unknown address, "READ"). Xeon Gold 6240: with GCC
+14.4 and 15.2 (16.2 not tried on FFTN) every test that runs `avx512` leaves or Bluestein
+lane passes failed when run outside the gate, which turned the check off at run time;
+`detect_stack_use_after_return=0`, or compiling with `--param=asan-use-after-return=0`,
+passes. Clang 23 passes with the check on (its runtime, like GCC's, enables it by default on
+Linux), so the gate now leaves it on for Clang. A lone tile in a small frame faults only with
+GCC 13.3 (GCC PR 110027, fixed in 14); 14.4 and 15.2 still fault once the frame also holds a
+24-byte escaping object and a zmm spill (fake frame of 288 bytes, no bias; GCC 16.2 asks for
+320 and passes), so a passing toy is no evidence that a real kernel is safe (reproducer in
+pull request PRNUM's description). An earlier attempt
+set the compile-time parameter on one unit through a source-file property and was recorded
+as changing no code (the reason was not found); as a global compile option in GCC sanitizer
+builds (CMakeLists.txt) it removes the fake-stack path, so a plain `ctest` behaves as the
+gate does.
 
 6.5 **Identical-code folding fools disassembly checks.** GCC's IPA-ICF and the Microsoft
 linker's `/OPT:ICF` fold identical functions into jumps or shared addresses; a check for
