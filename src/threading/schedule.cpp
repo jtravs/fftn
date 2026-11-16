@@ -123,6 +123,8 @@ void set_grid_sizes(machine_profile& p, const core_class& c) noexcept {
     // radix 4 from 262144.
     p.pow2_chain_bytes = 4 * c.l2.size;
     p.pow2_radix8_bytes = c.l2.size / 8;
+    // Experiment X36, M5 Max: the same conflicts in a Bluestein stage's convolution.
+    p.bluestein_pow2_part_bytes = c.l1d.size / 4;
   }
   p.c2r_paired_gather = c.l2.size != 0 && !private_l2;
 }

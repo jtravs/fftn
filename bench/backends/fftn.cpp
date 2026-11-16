@@ -57,8 +57,11 @@
 //   GRID_PHASE_RADIX=R          the largest radix of the grid's phase rule (build_settings::
 //                    grid_phase_radix; default 16): codelet radices up to R (experiment X3)
 //   GRID_MIN_BYTES, GRID_THREE_BYTES, GRID_BLOCK_BYTES, GRID_BLOCK, GRID_FUSE_BYTES,
-//   GRID_PAD_PERIOD, POW2_CHAIN_BYTES, POW2_RADIX8_BYTES, GRID_TWO_ODD_PART
+//   GRID_PAD_PERIOD, POW2_CHAIN_BYTES, POW2_RADIX8_BYTES, GRID_TWO_ODD_PART,
+//   BLUESTEIN_POW2_PART_BYTES
 //                    the planner's grid fields of the machine profile (schedule.hpp)
+//   BLUESTEIN_HALVES=0|1   Bluestein chirp passes that do the convolution's radix-2 end
+//                    passes (build_settings::bluestein_halves; default 1, experiment X36)
 // ISA is a public option; the others reach the library only through the private build
 // settings, as a test's do: the library has no switch for them, so dev/KNOBS.toml does not
 // list them.
@@ -394,6 +397,12 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
         return fbench_error;
       }
       s.radices_text = value;
+    } else if (key == "BLUESTEIN_HALVES") {
+      if (value != "0" && value != "1") {
+        say(message, message_size, "BLUESTEIN_HALVES is 0 or 1");
+        return fbench_error;
+      }
+      s.settings.bluestein_halves = value == "1";
     } else if (key == "LEAF_LIMIT") {
       const std::optional<std::size_t> v = fbench::fftn_tuning::parse_size(value, 1, false);
       if (!v || *v > 4096) {
@@ -499,6 +508,9 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
     }
     if (s.settings.leaf_limit != 0) {
       d.integer("leaf_limit", static_cast<std::int64_t>(s.settings.leaf_limit));
+    }
+    if (!s.settings.bluestein_halves) {
+      d.integer("bluestein_halves", 0);
     }
     if (s.settings.lane_block != 0) {
       d.integer("lane_block", static_cast<std::int64_t>(s.settings.lane_block));

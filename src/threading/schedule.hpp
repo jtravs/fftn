@@ -142,6 +142,12 @@ struct machine_profile {
   // time (X29's bimodal chains on the EPYC). set_grid_sizes sets them from X32's screens.
   std::size_t pow2_chain_bytes = 0;
   std::size_t pow2_radix8_bytes = 0;
+  // The largest power-of-two part (bytes of complex values) of a Bluestein stage's
+  // convolution length (experiment X36, planner/rules.hpp bluestein_length). Where the L2
+  // is shared (Apple), chains of a power of two of 8192 points and more ran 1.4-1.7 times
+  // as long per point as chains of 7-smooth lengths just above, so set_grid_sizes sets a
+  // quarter of L1 there; on the Xeon 6240 powers of two won up to 16384 points.
+  std::size_t bluestein_pow2_part_bytes = std::numeric_limits<std::size_t>::max();
   // Whether a c2r row out of place in a two-phase grid pairs its bins in phase 1's gather
   // rather than in a separate pass (X29): set where the L2 is shared (Apple: 0.92-0.94 of
   // the separate route); on the EPYC it took 1.11.
