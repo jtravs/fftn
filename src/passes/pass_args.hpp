@@ -136,11 +136,6 @@ struct radix_passes {
   pass_fn grouped[2][edge_op_count];
   // Its middle passes (m > 1): lanes over copies, twiddled.
   pass_fn lane[2];
-  // The same two passes reading their twiddles in the compact storage (kernels_of::
-  // pack_compact_twiddles; experiment X30b), the grouped pass without an input edge; null
-  // where the target has only the pre-arranged storage. The same bits as grouped and lane.
-  pass_fn grouped_compact[2];
-  pass_fn lane_compact[2];
   // The backward middle pass with every input leg times a factor shared by the copies
   // (factor_sharing::input): the first backward pass of a Bluestein convolution with more
   // than one copy, taking the kernel spectrum (passes/bluestein.inl).

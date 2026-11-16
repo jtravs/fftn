@@ -15,8 +15,6 @@ namespace {
 inline constexpr target id = target::neon_fcma;
 inline constexpr bool fused = true;
 inline constexpr bool masked = false;
-// No compact twiddle storage (vocabulary.inl): one storage only.
-inline constexpr bool compact_tw = false;
 
 template <> struct vec<double> {
   using cv = float64x2_t;

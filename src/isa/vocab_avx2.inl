@@ -19,15 +19,11 @@ inline constexpr bool fused = true;
 // Masked partial runs (load_n, store_n below) where the build enables them: on with GCC,
 // off with Clang and icpx by default (FFTN_MASKED_TAILS in CMakeLists.txt; experiment X23).
 inline constexpr bool masked = FFTN_MASKED_TAILS != 0;
-// Twiddle tables in either storage, pre-arranged or compact (vocabulary.inl; X30b).
-inline constexpr bool compact_tw = true;
 
-// Twiddles as mul consumes them: r holds (wr, wr) and i holds (wi, wi) for each lane's
-// twiddle, so a*w = fmaddsub(a, r, i*swap_ri(a)) with one shuffle and no sign fix-up
-// (DESIGN.md 6.2). Both storages give these registers: the pre-arranged one by plain loads,
-// which fold into the multiplies, the compact one (re, im) by duplicating loads and
-// shuffles, from half the bytes (experiments X30, X30b). Defined inside the region, like
-// every aggregate that holds vectors; its special members are trivial.
+// Twiddles pre-arranged for mul: r holds (wr, wr) and i holds (-wi, wi) for each lane's
+// twiddle, so a*w = r*a + i*swap_ri(a) with one shuffle and no sign fix-up (DESIGN.md 6.2).
+// Defined inside the region, like every aggregate that holds vectors; its special members
+// are trivial.
 struct tw_f64 {
   __m256d r;
   __m256d i;
@@ -121,16 +117,16 @@ FFTN_FORCE_INLINE tw_f64 load_tw(const double* p) {
 FFTN_FORCE_INLINE tw_f32 load_tw(const float* p) {
   return {.r = _mm256_loadu_ps(p), .i = _mm256_loadu_ps(p + 8)};
 }
-// Storage of C twiddles: W reals (wr, wr) per lane, then W reals (wi, wi) per lane.
+// Storage of C twiddles: W reals (wr, wr) per lane, then W reals (-wi, wi) per lane.
 template <class T> FFTN_FORCE_INLINE void pack_tw(T* out, const T* p) {
   for (std::size_t k = 0; k < C<T>; ++k) {
     out[2 * k] = p[2 * k];
     out[2 * k + 1] = p[2 * k];
-    out[W<T> + 2 * k] = p[2 * k + 1];
+    out[W<T> + 2 * k] = -p[2 * k + 1];
     out[W<T> + 2 * k + 1] = p[2 * k + 1];
   }
 }
-// Broadcast storage of one twiddle: (wr, wr, wi, wi), one lane of the pre-arranged form,
+// Broadcast storage of one twiddle: (wr, wr, -wi, wi), one lane of the pre-arranged form,
 // repeated into every lane by two 128-bit broadcasts (double) or 64-bit ones (float, built
 // from scalars as bcast is, for the same alignment reason).
 FFTN_FORCE_INLINE tw_f64 bcast_tw(const double* p) {
@@ -146,39 +142,8 @@ FFTN_FORCE_INLINE tw_f32 bcast_tw(const float* p) {
 template <class T> FFTN_FORCE_INLINE void pack_tw1(T* out, const T* p) {
   out[0] = p[0];
   out[1] = p[0];
-  out[2] = p[1];
+  out[2] = -p[1];
   out[3] = p[1];
-}
-// Compact storage: the C twiddles interleaved, (wr, wi) each. Double: r and i duplicated
-// from one load (VMOVDDUP, VPERMILPD), not i by a duplicating load from p + 1, which
-// crossed a cache line in half the units (X30's diagnostics on the EPYC: 0.95-0.97 of that
-// form's cycles). Float: r and i by duplicating loads from p and p + 1 (VMOVSLDUP, load
-// ports only), the form that won X30's float cases (0.94); compilers turn the one-load form
-// into a load and two shuffles. The float form reads one real past the C twiddles: compact
-// tables are padded for it (chain_builder::pack).
-FFTN_FORCE_INLINE tw_f64 load_twc(const double* p) {
-  const __m256d x = _mm256_loadu_pd(p);
-  return {.r = _mm256_movedup_pd(x), .i = _mm256_permute_pd(x, 0xF)};
-}
-FFTN_FORCE_INLINE tw_f32 load_twc(const float* p) {
-  return {.r = _mm256_moveldup_ps(_mm256_loadu_ps(p)),
-          .i = _mm256_moveldup_ps(_mm256_loadu_ps(p + 1))};
-}
-template <class T> FFTN_FORCE_INLINE void pack_twc(T* out, const T* p) {
-  for (std::size_t k = 0; k < 2 * C<T>; ++k) {
-    out[k] = p[k];
-  }
-}
-// Compact broadcast storage of one twiddle: (wr, wi), each part broadcast into every lane.
-FFTN_FORCE_INLINE tw_f64 bcast_twc(const double* p) {
-  return {.r = _mm256_broadcast_sd(p), .i = _mm256_broadcast_sd(p + 1)};
-}
-FFTN_FORCE_INLINE tw_f32 bcast_twc(const float* p) {
-  return {.r = _mm256_broadcast_ss(p), .i = _mm256_broadcast_ss(p + 1)};
-}
-template <class T> FFTN_FORCE_INLINE void pack_twc1(T* out, const T* p) {
-  out[0] = p[0];
-  out[1] = p[1];
 }
 
 FFTN_FORCE_INLINE __m256d add(__m256d a, __m256d b) { return _mm256_add_pd(a, b); }
@@ -199,38 +164,36 @@ FFTN_FORCE_INLINE __m256 subj(__m256 a, __m256 b) {
   return _mm256_fmadd_ps(swap_ri(b),
                          _mm256_setr_ps(1.0F, -1.0F, 1.0F, -1.0F, 1.0F, -1.0F, 1.0F, -1.0F), a);
 }
-// a*w = (ar*wr - ai*wi, ai*wr + ar*wi): FMADDSUB subtracts i*swap_ri(a) in the even lanes
-// and adds it in the odd ones. It rounds as an FMA of r*a and the rounded product
-// (-wi, wi)*swap_ri(a) does (x - y is x + (-y) exactly), so the bits are those of the
-// earlier (-wi, wi) form (X30).
+// a*w = (ar*wr - ai*wi, ai*wr + ar*wi) = r*a + i*swap_ri(a).
 FFTN_FORCE_INLINE __m256d mul(__m256d a, tw_f64 w) {
-  return _mm256_fmaddsub_pd(a, w.r, _mm256_mul_pd(swap_ri(a), w.i));
+  return _mm256_fmadd_pd(a, w.r, _mm256_mul_pd(swap_ri(a), w.i));
 }
 FFTN_FORCE_INLINE __m256 mul(__m256 a, tw_f32 w) {
-  return _mm256_fmaddsub_ps(a, w.r, _mm256_mul_ps(swap_ri(a), w.i));
+  return _mm256_fmadd_ps(a, w.r, _mm256_mul_ps(swap_ri(a), w.i));
 }
-// a*conj(w) = (ar*wr + ai*wi, ai*wr - ar*wi): FMSUBADD.
+// a*conj(w) = (ar*wr + ai*wi, ai*wr - ar*wi) = r*a - i*swap_ri(a).
 FFTN_FORCE_INLINE __m256d mulc(__m256d a, tw_f64 w) {
-  return _mm256_fmsubadd_pd(a, w.r, _mm256_mul_pd(swap_ri(a), w.i));
+  return _mm256_fmsub_pd(a, w.r, _mm256_mul_pd(swap_ri(a), w.i));
 }
 FFTN_FORCE_INLINE __m256 mulc(__m256 a, tw_f32 w) {
-  return _mm256_fmsubadd_ps(a, w.r, _mm256_mul_ps(swap_ri(a), w.i));
+  return _mm256_fmsub_ps(a, w.r, _mm256_mul_ps(swap_ri(a), w.i));
 }
 // a*b for two complex registers: b rearranged into mul's twiddle form, (br, br) and
-// (bi, bi), in registers.
+// (-bi, bi), in registers (the negation flips a sign bit, as pack_tw's does).
 FFTN_FORCE_INLINE __m256d cmul(__m256d a, __m256d b) {
-  return mul(a, tw_f64{.r = _mm256_movedup_pd(b), .i = _mm256_permute_pd(b, 0xF)});
+  const __m256d i = _mm256_xor_pd(_mm256_permute_pd(b, 0xF), _mm256_setr_pd(-0.0, 0.0, -0.0, 0.0));
+  return mul(a, tw_f64{.r = _mm256_movedup_pd(b), .i = i});
 }
 FFTN_FORCE_INLINE __m256 cmul(__m256 a, __m256 b) {
-  return mul(a, tw_f32{.r = _mm256_moveldup_ps(b), .i = _mm256_movehdup_ps(b)});
+  const __m256 i = _mm256_xor_ps(
+      _mm256_movehdup_ps(b), _mm256_setr_ps(-0.0F, 0.0F, -0.0F, 0.0F, -0.0F, 0.0F, -0.0F, 0.0F));
+  return mul(a, tw_f32{.r = _mm256_moveldup_ps(b), .i = i});
 }
-// acc + a*w: the inner FMADDSUB leaves the even lanes negated (wi*ai - acc_r, rounded as
-// the negation of acc_r - wi*ai), and the outer one subtracts them there.
 FFTN_FORCE_INLINE __m256d madd(__m256d acc, __m256d a, tw_f64 w) {
-  return _mm256_fmaddsub_pd(a, w.r, _mm256_fmaddsub_pd(swap_ri(a), w.i, acc));
+  return _mm256_fmadd_pd(a, w.r, _mm256_fmadd_pd(swap_ri(a), w.i, acc));
 }
 FFTN_FORCE_INLINE __m256 madd(__m256 acc, __m256 a, tw_f32 w) {
-  return _mm256_fmaddsub_ps(a, w.r, _mm256_fmaddsub_ps(swap_ri(a), w.i, acc));
+  return _mm256_fmadd_ps(a, w.r, _mm256_fmadd_ps(swap_ri(a), w.i, acc));
 }
 FFTN_FORCE_INLINE __m256d scale(__m256d a, double r) { return _mm256_mul_pd(a, _mm256_set1_pd(r)); }
 FFTN_FORCE_INLINE __m256 scale(__m256 a, float r) { return _mm256_mul_ps(a, _mm256_set1_ps(r)); }

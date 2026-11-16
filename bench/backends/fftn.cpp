@@ -59,10 +59,6 @@
 //   GRID_MIN_BYTES, GRID_THREE_BYTES, GRID_BLOCK_BYTES, GRID_BLOCK, GRID_FUSE_BYTES,
 //   GRID_PAD_PERIOD
 //                    the planner's grid fields of the machine profile (schedule.hpp)
-//   COMPACT_GROUPED_BYTES, COMPACT_SHARED_BYTES   the machine profile's compact_grouped_bytes
-//                    and compact_shared_bytes (schedule.hpp): grouped and twiddled lane
-//                    passes whose pre-arranged twiddle table exceeds them read the compact
-//                    storage (x86; experiment X30b); 1 every table, never none
 // ISA is a public option; the others reach the library only through the private build
 // settings, as a test's do: the library has no switch for them, so dev/KNOBS.toml does not
 // list them.

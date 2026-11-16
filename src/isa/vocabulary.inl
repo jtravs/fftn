@@ -12,13 +12,8 @@
 //   rv<T>        real register: W<T> reals (W = 2C on SIMD targets; 1 on scalar)
 //   tw<T>        C<T> twiddles in the form mul, mulc and madd consume
 //   tw_reals<T>  reals stored per twiddle: 2 (re, im), or 4 on x86 and plain NEON, where each
-//                twiddle w is pre-arranged as tw<T> holds it, (wr, wr) and (-wi, wi) on NEON,
-//                (wr, wr) and (wi, wi) on x86, so mul needs one shuffle and no sign fix-up
-//   compact_tw   whether the target also has the compact storage below (x86): tables of 2
-//                reals per twiddle, (re, im), read into tw<T> by load_twc and bcast_twc, which
-//                give the same registers as load_tw and bcast_tw do from the pre-arranged
-//                storage, so the same bits, from half the bytes but with more operations
-//                (experiments X30, X30b)
+//                twiddle w is pre-arranged as (wr, wr) and (-wi, wi) so mul needs one
+//                shuffle and no sign fix-up
 //   fused        whether fmadd and its relatives round once (FMA). Where false they multiply,
 //                then add: two roundings, and the operation order the generator emits for
 //                such targets (DESIGN.md 6.1). The scalar target is never fused, so it gives
@@ -59,10 +54,6 @@
 //                           the twiddle of a lane pass, whose lanes share it (DESIGN.md 8.4)
 //   pack_tw1(out, p)        writes the one interleaved twiddle at p as broadcast storage at
 //                           out (tw_reals reals); scalar code, run when a table is built
-//   load_twc(p), bcast_twc(p)  where compact_tw: as load_tw and bcast_tw, from storage
-//                           written by pack_twc and pack_twc1, which copy the interleaved
-//                           twiddles (2C and 2 reals). load_twc may read one real
-//                           past them: a compact table is two reals longer (chain.cpp)
 //   cmul(a, b)              a * b for two complex registers (a factor array's values, not
 //                           twiddle storage); rounds exactly as mul(a, w) with w = b
 //   transpose(v)            v points to C<T> registers holding a C x C block of complex

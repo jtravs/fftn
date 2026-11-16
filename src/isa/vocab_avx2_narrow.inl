@@ -22,8 +22,6 @@ inline constexpr bool fused = true;
 // No masked partial runs (load_n, store_n): only leaves are compiled with this vocabulary,
 // and a leaf has no partial runs.
 inline constexpr bool masked = false;
-// No compact twiddle storage (vocabulary.inl): one storage only.
-inline constexpr bool compact_tw = false;
 
 // Twiddles pre-arranged for mul as in vocab_avx2.inl: r holds (wr, wr), i holds (-wi, wi).
 struct tw_f64 {

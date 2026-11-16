@@ -473,8 +473,6 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       pairs != nullptr && settings.pair_leaves) {
     chain.use_pair_leaves(&of<T>(*pairs));
   }
-  chain.compact_twiddles_above(settings.profile.compact_grouped_bytes,
-                               settings.profile.compact_shared_bytes);
   program& p = c.prog;
   const std::size_t r = s.axes.size();
   const auto complex_bytes = static_cast<std::ptrdiff_t>(2 * sizeof(T));

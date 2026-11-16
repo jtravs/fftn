@@ -110,15 +110,6 @@ struct machine_profile {
   // 0.976 of the unpadded time) and none where each core has its own (x86: the padding cut
   // no L1 refills there and gained nothing on the Xeon and the EPYC).
   std::size_t grid_pad_period = std::numeric_limits<std::size_t>::max();
-  // The planner's (experiment X30b): a chain's twiddled lane pass (broadcast table) or
-  // grouped first pass (per-lane table) whose table would hold more than this many bytes in
-  // the pre-arranged storage reads the compact storage instead, where the target has one
-  // (x86; strategies/chain.hpp, compact_twiddles_above). 0: every table; SIZE_MAX: none.
-  // A compact broadcast costs no more operations than a pre-arranged one, so every lane
-  // pass's table is compact; a compact per-lane table costs shuffles that did not pay
-  // (EPYC counters: 2048 and 4096 points 1.06-1.13 of the cycles).
-  std::size_t compact_shared_bytes = 0;
-  std::size_t compact_grouped_bytes = std::numeric_limits<std::size_t>::max();
   // Exceptions to grid_min_bytes for rows whose length n is not a power of two (experiment
   // X29): such a row stays a chain at any size when the power-of-two part of n, in bytes of
   // complex values, is at most chain_part_bytes, and up to chain_mixed_bytes whatever that

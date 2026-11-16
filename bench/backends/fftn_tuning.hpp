@@ -112,14 +112,6 @@ constexpr std::array size_fields{
         .key = "GRID_PAD_PERIOD",
         .member = &fftn::detail::machine_profile::grid_pad_period,
     },
-    size_field{
-        .key = "COMPACT_GROUPED_BYTES",
-        .member = &fftn::detail::machine_profile::compact_grouped_bytes,
-    },
-    size_field{
-        .key = "COMPACT_SHARED_BYTES",
-        .member = &fftn::detail::machine_profile::compact_shared_bytes,
-    },
 };
 constexpr std::array int_fields{
     int_field{

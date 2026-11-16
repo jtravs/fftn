@@ -61,23 +61,6 @@ template <class T, std::size_t R> constexpr pass_fn c2r_first_entry() {
   }
 }
 
-// A grouped or twiddled lane pass reading its twiddles in the compact storage (experiment
-// X30b), or null where the target has none (compact_tw).
-template <class T, std::size_t R, int Sign> constexpr pass_fn grouped_compact_entry() {
-  if constexpr (compact_tw) {
-    return &grouped_pass<T, R, Sign, edge_op::none, true>;
-  } else {
-    return nullptr;
-  }
-}
-template <class T, std::size_t R, int Sign> constexpr pass_fn lane_compact_entry() {
-  if constexpr (compact_tw) {
-    return &lane_pass<T, R, Sign, true, edge_op::none, factor_sharing::none, true>;
-  } else {
-    return nullptr;
-  }
-}
-
 // A leaf for lines of stride 1 (unit_leaf.inl), or null for radices above 32, whose leaves
 // no plan takes by default (rules.cpp, leaf_limit_of: 32 at most), and on the x86 targets,
 // whose plans take the narrow leaves (isa/narrow_avx2.cpp) up to 23 and no leaf of 32 by
@@ -114,16 +97,6 @@ template <class T, std::size_t I> struct radix_entries {
           {
               &lane_pass<T, R, -1, true, nop>,
               &lane_pass<T, R, +1, true, nop>,
-          },
-      .grouped_compact =
-          {
-              grouped_compact_entry<T, R, -1>(),
-              grouped_compact_entry<T, R, +1>(),
-          },
-      .lane_compact =
-          {
-              lane_compact_entry<T, R, -1>(),
-              lane_compact_entry<T, R, +1>(),
           },
       .lane_shared_in = &lane_pass<T, R, +1, true, nop, factor_sharing::input>,
       .last_shared_out = &lane_pass<T, R, -1, false, nop, factor_sharing::output>,

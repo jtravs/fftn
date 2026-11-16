@@ -26,11 +26,6 @@ template <class T> struct kernels_of {
   // The same into broadcast storage, tw_reals reals per twiddle, each read into every lane
   // (bcast_tw). Any count.
   void (*pack_bcast_twiddles)(const T* w, std::size_t count, T* out);
-  // The same two into the compact storage, 2 reals per twiddle (vocabulary.inl,
-  // compact_tw), which the passes' compact variants read (pass_args.hpp); null where the
-  // target has only the pre-arranged storage.
-  void (*pack_compact_twiddles)(const T* w, std::size_t count, T* out);
-  void (*pack_compact_bcast_twiddles)(const T* w, std::size_t count, T* out);
   std::size_t complex_lanes; // C: complex numbers per complex register
   std::size_t real_lanes;    // W: reals per real register
   std::size_t tw_reals;      // reals stored per twiddle: 2, or 4 where pre-arranged (x86, neon)
