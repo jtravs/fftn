@@ -121,12 +121,17 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
   // Experiment X34: where those chains do not apply (Xeon 6240, 0.7 MiB of L3 per CPU), a
   // row whose length has an odd part of at least 15 stays in two grid phases beyond L2
   // (15 rows of 71680 to 4 x 10^6 points: 0.70-1.01 of the three phases' cycles, 100000 0.73).
-  // Experiment X39, same machines: three-phase grids in blocks of at most 16 columns, and
-  // grid phases of radix up to 64.
+  // Experiment X39, same machines: three-phase grids in blocks of at most 16 columns, grid
+  // phases of radix up to 64, two-phase blocks within twice L1, and c2c powers of two as grids
+  // beyond a quarter of L2 (32768 points).
   if (private_l2 && !large_l2 && !large_l3) {
     p.grid_two_odd_part = 15;
     p.grid_three_block = 16;
     p.grid_phase_radix = 64;
+    if (c.l1d.size != 0 && c.l2.size != 0) {
+      p.grid_two_block_bytes = 2 * c.l1d.size;
+      p.pow2_grid_bytes = c.l2.size / 4;
+    }
   }
   // Experiment X29, M5 Max: with the grid from L1, rows whose length has a power-of-two part
   // of at most 1024 points took 0.49-0.72 of the grid's time as chains (to 4 Mi points),

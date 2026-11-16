@@ -351,7 +351,7 @@ line_edges c2c_edges(const options& opts, const build_settings& settings, bool f
 // transform of a real row (X33).
 template <class T>
 grid_split plan_grid(std::size_t n, const side& in, const side& out, const build_settings& settings,
-                     const chain_builder<T>& chain, std::size_t lanes, [[maybe_unused]] bool real) {
+                     const chain_builder<T>& chain, std::size_t lanes, bool real) {
   if (n < 2 || settings.strategy == strategy_choice::chain ||
       settings.strategy == strategy_choice::lanes || settings.in_factor != nullptr ||
       settings.out_factor != nullptr || in.stride[0] != 1 || out.stride[0] != 1) {
@@ -365,7 +365,10 @@ grid_split plan_grid(std::size_t n, const side& in, const side& out, const build
       part *= 2;
     }
     const bool mixed = part != n;
-    if (bytes <= settings.profile.grid_min_bytes ||
+    // A c2c power of two may be a grid below grid_min_bytes (X39).
+    const bool pow2_grid = !real && !mixed && settings.profile.pow2_grid_bytes != 0 &&
+                           bytes > settings.profile.pow2_grid_bytes;
+    if ((bytes <= settings.profile.grid_min_bytes && !pow2_grid) ||
         (mixed && ((part * 2 * sizeof(T) <= settings.profile.chain_part_bytes &&
                     bytes <= settings.profile.chain_part_limit_bytes) ||
                    bytes <= settings.profile.chain_mixed_bytes)) ||
@@ -389,7 +392,10 @@ grid_split plan_grid(std::size_t n, const side& in, const side& out, const build
                                (settings.profile.grid_two_odd_part == 0 ||
                                 odd < settings.profile.grid_two_odd_part) &&
                                (odd == 1 || part_bytes > settings.profile.grid_two_part_bytes);
-  grid_split g = choose_grid(n, lanes, settings.profile.grid_block_bytes / (4 * sizeof(T)), three,
+  const std::size_t block_bytes = !three && settings.profile.grid_two_block_bytes != 0
+                                      ? settings.profile.grid_two_block_bytes
+                                      : settings.profile.grid_block_bytes;
+  grid_split g = choose_grid(n, lanes, block_bytes / (4 * sizeof(T)), three,
                              settings.profile.grid_block, settings.grid_factors,
                              settings.profile.grid_three_block != 0
                                  ? settings.profile.grid_three_block

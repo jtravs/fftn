@@ -109,6 +109,14 @@ constexpr std::array size_fields{
         .member = &fftn::detail::machine_profile::grid_phase_radix,
     },
     size_field{
+        .key = "GRID_TWO_BLOCK_BYTES",
+        .member = &fftn::detail::machine_profile::grid_two_block_bytes,
+    },
+    size_field{
+        .key = "POW2_GRID_BYTES",
+        .member = &fftn::detail::machine_profile::pow2_grid_bytes,
+    },
+    size_field{
         .key = "GRID_THREE_BLOCK",
         .member = &fftn::detail::machine_profile::grid_three_block,
     },

@@ -409,6 +409,40 @@ TEST(Grid, PowersOfTwoStayChainsUpToTheProfilesLimit) {
   EXPECT_TRUE(is_grid(*longer)) << described(*longer);
 }
 
+// The Xeon profile's powers of two (X39): a c2c row of a power-of-two length is a grid beyond
+// pow2_grid_bytes, below grid_min_bytes; other lengths and real rows keep grid_min_bytes. A
+// two-phase grid's block fills grid_two_block_bytes.
+TEST(Grid, PowersOfTwoBecomeGridsBeyondTheProfilesLimit) {
+  build_settings s;
+  s.profile.grid_min_bytes = std::size_t{512} * 1024;
+  s.profile.grid_three_bytes = std::size_t{1} << 20U;
+  s.profile.grid_block_bytes = std::size_t{32} * 1024;
+  s.profile.chain_part_bytes = 0;
+  s.profile.chain_mixed_bytes = 0;
+  s.profile.pow2_chain_bytes = 0;
+  s.profile.pow2_grid_bytes = std::size_t{256} * 1024;
+  const auto plan = [&](std::size_t n) {
+    return make_plan_core(
+        fftn::detail::view_of(fftn::rows_c2c<double>(n, 1, fftn::direction::forward)),
+        fftn::options(), s);
+  };
+  EXPECT_FALSE(is_grid(*plan(16384)));
+  EXPECT_FALSE(is_grid(*plan(25000)));
+  const auto g = plan(32768);
+  EXPECT_TRUE(is_grid(*g)) << described(*g);
+  const auto real =
+      make_plan_core(fftn::detail::view_of(fftn::rows_r2c<double>(65536, 1)), fftn::options(), s);
+  EXPECT_FALSE(is_grid(*real)) << described(*real);
+  // Blocks of 4 columns for 256-long phases within L1, 8 within twice L1 (complex lanes 4 or
+  // fewer: every target's double).
+  const std::string narrow = described(*g);
+  s.profile.grid_two_block_bytes = std::size_t{64} * 1024;
+  const std::string wide = described(*plan(32768));
+  if (narrow.find("blocks of 4 columns") != std::string::npos) {
+    EXPECT_NE(wide.find("blocks of 8 columns"), std::string::npos) << wide;
+  }
+}
+
 // build_settings::scale_on_input puts the scale on phase 1's input: its first pass, or its
 // gather when the phases copy their blocks.
 TEST(Grid, ScaleOnInputIsPhaseOnesInput) {
