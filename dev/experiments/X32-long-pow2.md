@@ -216,7 +216,10 @@ limit of 1.03 (re-run below). FFTN ÷ FFTW, `main` → branch: 65536 1.29 → 0.
 → 0.63, 2²⁰ 1.01 → 0.59, 2²² 1.05 → 0.90, 65536 in place 1.24 → 0.95; ÷ FFTL.jl: 1.61 → 1.01,
 1.78 → 0.94, 1.73 → 1.00, 0.97 → 0.83, 1.59 → 1.22.
 
-RERUN_EPYC
+Re-run of the short rows with the final branch bac9e02 (arm b reverted) against `main`
+(run 20261116-133313-0fb3, 30 rounds, none under load, band ±1.00 %; Slurm 510736,
+510737): c2c 8 points 1.014 [1.002, 1.034], no evidence; 16–128 points 0.989–0.999; 65536
+0.627. The 8-point case passes.
 
 The other four lengths (branch fa5a617, run 20261116-131325-9378, 20 rounds, 10 under
 load, band ±1.00 %; Slurm 510637, 510638): 32768 0.728, 131072 0.724, 524288 0.601, 2²¹
