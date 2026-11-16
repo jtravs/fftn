@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import gzip
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -121,7 +122,12 @@ def main() -> int:
         lines = gcc_lines(manifest, build, root)
 
     if opts.dump is not None and opts.dump.exists():
-        out = subprocess.run([str(opts.dump)], capture_output=True, text=True, check=False).stdout
+        # The dump is instrumented too: its profile goes nowhere rather than to the directory
+        # the gate runs in.
+        env = {**os.environ, "LLVM_PROFILE_FILE": os.devnull}
+        out = subprocess.run(
+            [str(opts.dump)], capture_output=True, text=True, check=False, env=env
+        ).stdout
         best = next((ln.split()[1] for ln in out.splitlines() if ln.startswith("best_target ")), "")
         skip = target_files(unrunnable(best))
         if skip:
