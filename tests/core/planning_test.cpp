@@ -410,6 +410,17 @@ TEST(Measure, MeasuredPlansComputeTheTransform) {
   check_measured(fftn::planes_c2c<double>(32, 24, 1, fftn::direction::forward), {});
 }
 
+// Candidates are admitted while half the budget is left: with almost none, only the rules'
+// choice is built and timed, and the plan is the rules' plan.
+TEST(Measure, ATinyBudgetTimesOnlyTheRules) {
+  const auto shape = fftn::rows_c2c<double>(65536, 1, fftn::direction::forward);
+  const fftn::options opts{.effort = fftn::planning::measure, .measure_seconds = 1e-9};
+  const auto core = d::make_plan_core(d::view_of(shape), opts);
+  EXPECT_EQ(core->candidates_timed, 1U);
+  EXPECT_EQ(d::program_fingerprint(*core),
+            d::program_fingerprint(*d::build_plan_core(d::view_of(shape), {}, build_settings{})));
+}
+
 TEST(Measure, ScratchLimitTimesFewerTransforms) {
   const auto shape = fftn::rows_c2c<double>(1024, 64, fftn::direction::forward);
   const fftn::c2c_plan<double> p(

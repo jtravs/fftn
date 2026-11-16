@@ -107,7 +107,7 @@ std::vector<batch> reduced_batches(const shape_view& s, const plan_core& full, s
 // Scratch data for timing: one buffer per side (one in place), filled with small values.
 class scratch_data {
 public:
-  scratch_data(const plan_core& c, std::size_t workspace_bytes) : ws_(workspace_bytes) {
+  explicit scratch_data(const plan_core& c) {
     const std::ptrdiff_t lo = c.in_place ? std::min(c.in_lo, c.out_lo) : c.in_lo;
     const std::ptrdiff_t hi = c.in_place ? std::max(c.in_hi, c.out_hi) : c.in_hi;
     in_ = aligned_buffer<double>(words(hi - lo));
@@ -126,6 +126,12 @@ public:
   [[nodiscard]] const void* in() const { return as_bytes(in_) + in_at_; }
   [[nodiscard]] void* out() { return out_.size() != 0 ? as_bytes(out_) + out_at_ : in_bytes(); }
   [[nodiscard]] const workspace& ws() const { return ws_; }
+  // Grows the workspace to hold `bytes` (candidates are built one after another).
+  void reserve(std::size_t bytes) {
+    if (bytes > ws_.size()) {
+      ws_ = workspace(bytes);
+    }
+  }
   // In place, the input is the output: restore it, so that repeated transforms do not grow
   // the values without bound (reps_cap bounds the growth within one sample).
   void restore() {
@@ -219,8 +225,8 @@ std::shared_ptr<const plan_core> measure(const shape_view& s, const options& bas
                                          const build_settings& settings,
                                          std::shared_ptr<plan_core> rules, const budget& b,
                                          double seconds, std::size_t scratch_limit,
-                                         const std::string& wisdom_note) {
-  const auto start = planning_clock::now();
+                                         const std::string& wisdom_note,
+                                         planning_clock::time_point start) {
   const std::vector<plan_choice> choices = enumerate_candidates(*rules, settings, b.radix_choices);
 
   // The candidates are timed on fewer transforms when the data would not fit the limit.
@@ -231,18 +237,27 @@ std::shared_ptr<const plan_core> measure(const shape_view& s, const options& bas
   }
   shape_view timing = s;
   timing.batches = reduced;
+  const bool forced = settings.strategy != strategy_choice::rules || !settings.radices.empty() ||
+                      !settings.grid_factors.empty() || settings.grid_phases != 0 ||
+                      settings.rader >= 0;
+  const bool real_clock = settings.measure_time == nullptr;
 
+  // Each candidate is built and warmed up in the model's order, and no new one is admitted
+  // once half the budget is spent, leaving the rest for the rounds. Building all of them
+  // first spent the whole budget at 2^22 points, where a plan takes 0.5-1.7 s to build, and
+  // left only the rules' choice timed (P1's first pass on the Xeon).
   std::vector<candidate> cands;
   std::vector<std::uint64_t> seen;
+  std::unique_ptr<scratch_data> data;
   for (const plan_choice& choice : choices) {
-    if (cands.size() == b.candidates || (!cands.empty() && seconds_since(start) > seconds)) {
+    if (cands.size() == b.candidates || (!cands.empty() && seconds_since(start) > seconds / 2)) {
       break;
     }
     build_settings cs = settings;
     apply_choice(choice, cs);
     std::shared_ptr<plan_core> core;
     try {
-      core = same_shape && cands.empty() ? rules : build_plan_core(timing, base, cs);
+      core = same_shape && !forced && cands.empty() ? rules : build_plan_core(timing, base, cs);
     } catch (const std::exception&) {
       continue; // a candidate the shape cannot take; the rules' plan always builds
     }
@@ -251,26 +266,22 @@ std::shared_ptr<const plan_core> measure(const shape_view& s, const options& bas
       continue;
     }
     seen.push_back(f);
-    cands.push_back({.choice = choice, .core = std::move(core)});
-  }
-
-  if (settings.measure_time == nullptr) {
-    std::size_t ws_bytes = 0;
-    for (const candidate& c : cands) {
-      ws_bytes = std::max(ws_bytes, workspace_bytes(*c.core, 1));
-    }
-    scratch_data data(*cands.front().core, ws_bytes);
-    // Round 0: a warm-up execution sets each candidate's repetitions per sample.
-    for (candidate& c : cands) {
-      if (&c != &cands.front() && seconds_since(start) > seconds) {
-        c.live = false;
-        continue;
+    candidate c{.choice = choice, .core = std::move(core)};
+    if (real_clock) {
+      if (!data) {
+        data = std::make_unique<scratch_data>(*c.core);
       }
-      const double once = time_once(*c.core, data, 1);
+      data->reserve(workspace_bytes(*c.core, 1));
+      // A warm-up execution sets the candidate's repetitions per sample.
+      const double once = time_once(*c.core, *data, 1);
       const double want = b.sample_seconds / std::max(once, 1e-9);
       c.reps = std::clamp<std::size_t>(static_cast<std::size_t>(std::ceil(want)), 1,
                                        std::min<std::size_t>(reps_cap(*c.core), 1U << 20U));
     }
+    cands.push_back(std::move(c));
+  }
+
+  if (real_clock) {
     for (std::size_t round = 0; round < b.max_rounds; ++round) {
       bool any = false;
       // Each round starts one candidate later, so that no candidate always takes the first
@@ -281,7 +292,7 @@ std::shared_ptr<const plan_core> measure(const shape_view& s, const options& bas
         if (!c.live || (c.samples > 0 && seconds_since(start) > seconds)) {
           continue;
         }
-        c.best = std::min(c.best, time_once(*c.core, data, c.reps));
+        c.best = std::min(c.best, time_once(*c.core, *data, c.reps));
         ++c.samples;
         any = true;
       }
@@ -353,6 +364,7 @@ std::shared_ptr<const plan_core> plan_with_effort(const shape_view& s, const opt
   options base = opts;
   base.use = nullptr;
   base.effort = planning::rules;
+  const auto start = planning_clock::now(); // the budget covers the rules' plan too
   std::shared_ptr<plan_core> rules = build_plan_core(s, base, settings);
 
   std::string wisdom_note;
@@ -379,7 +391,7 @@ std::shared_ptr<const plan_core> plan_with_effort(const shape_view& s, const opt
   const double seconds = opts.measure_seconds > 0 ? opts.measure_seconds : b.seconds;
   const std::size_t limit =
       opts.measure_scratch_bytes != 0 ? opts.measure_scratch_bytes : default_scratch_bytes;
-  return measure(s, base, settings, std::move(rules), b, seconds, limit, wisdom_note);
+  return measure(s, base, settings, std::move(rules), b, seconds, limit, wisdom_note, start);
 }
 
 } // namespace fftn::inline v0::detail
