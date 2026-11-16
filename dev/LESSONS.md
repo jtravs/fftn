@@ -376,6 +376,17 @@ same two-phase plans took 1.13–1.67 of the cycles below 16 MiB. Rows near a po
 (odd part 3–9) lost as two phases on both: their gathers' rows still collide in L1. One
 blocking rule does not fit both kinds of uncore. [X34](experiments/X34-xeon-mixed.md).
 
+3.17 **In a VM, "L3 per CPU" is the socket's L3 divided by the VM's CPUs.** A Granite
+Rapids VM of 8 cores reports one 504 MiB L3 shared by its 8 CPUs, 63 MiB each, against about
+4 MiB per physical core; a Zen 5 VM of 8 cores reports its CCX's 32 MiB, which is true.
+Rules keyed on L3 per CPU (X29's mixed chains, X32's power-of-two chains, X34's two phases)
+therefore gave Granite Rapids Zen's plans, and they lost: long powers of two ran at 1.07–1.69
+times the grid's time, and rows with a small power-of-two part beyond L2 at 1.46–1.69 times
+a two-phase grid's. Yet X34's two phases, the Xeon's plan, also lost there, by 1.03–1.46, on
+the rows with a large power-of-two part. The machine fits neither neighbour. A cache key is
+only as good as the topology the guest is shown, and crossovers that move by core want a
+measured choice, not a guessed key. [X31b](experiments/X31b-cloud-followup.md).
+
 ## 4. Kernels and algorithms
 
 4.1 **A whole-transform codelet wins only where it fills the register.** One 32-point
