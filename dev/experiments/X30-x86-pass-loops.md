@@ -76,6 +76,13 @@ has X23b's masked partial runs under `FFTN_MASKED_TAILS=AUTO` and X26):
 
 No switch: arms are commits, `dev/KNOBS.toml` is untouched.
 
+*Amendment (before any arm was timed):* X28 merged into main while the runs were queued
+(d8ca0f1, new pass interface and 128-bit x86 leaves), so the queued runs were cancelled
+unrun (EPYC 509855, 509857; Xeon 15853, 15855) and the arms rebuilt on main be593d1:
+A = be593d1, T = 9e6e1a9 (T and `tw_tail` in X28's narrow vocabulary), P = b7845ca, Q =
+a7253b5 (the branch merged with main: P, T and 1024 = 16 × 64). PT is dropped (Q holds
+P and T).
+
 ## Method
 
 - **Selection for P** (before P's commit): fbench on the EPYC, `RADICES` arms per length
