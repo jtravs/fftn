@@ -37,4 +37,12 @@ template <class T>
 bluestein_kernel(const std::vector<std::complex<double>>& w,
                  const std::vector<std::complex<double>>& roots);
 
+// A Rader stage's kernel spectrum (passes/rader.inl, experiment X27): dft(b) / L for
+// b_l = exp(sign 2 pi i g^(-l) / q), l < L = q - 1, g a primitive root of the prime q, from
+// the forward root table of L (unit_roots<double>(-1, L)); computed in double like
+// bluestein_kernel. Precondition: q prime, L = roots.size(), no prime factor of L above 13.
+[[nodiscard]] std::vector<std::complex<double>>
+rader_kernel(int sign, std::size_t q, std::size_t g,
+             const std::vector<std::complex<double>>& roots);
+
 } // namespace fftn::inline v0::detail

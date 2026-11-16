@@ -16,8 +16,9 @@ namespace fftn::inline v0::detail {
 namespace {
 
 // Every radix up to this one has a codelet (src/gen/codelets.hpp): lengths up to it are
-// leaves, it is the largest radix the pass costs price, and a prime factor above it is a
-// generic pass.
+// leaves, and it is the largest radix the pass costs price. A prime factor above it is a
+// pass after the priced ones: a codelet pass for 17, 19 and 23 (experiment X27), else the
+// generic pass or, above the profile's threshold, a Bluestein stage.
 constexpr std::size_t largest_leaf = 16;
 
 // The radices a pass may have, ascending (rules.hpp, cost_column).
@@ -466,7 +467,8 @@ std::size_t lanes_distance(std::size_t a, std::size_t b) { return a > b ? a - b 
 // composites with 64 or more copies of 17 ran up to 13 % faster in the generic pass, too
 // narrow for a rule. So every prime factor above the codelets goes through Bluestein; the
 // generic pass remains for radices a test forces. AArch64 Linux takes the same value
-// unmeasured.
+// unmeasured. The primes with a codelet (17, 19, 23, experiment X27) are never Bluestein's:
+// the threshold applies to factors without one (chain_builder::radices).
 constexpr std::size_t default_bluestein_above = 16;
 
 // Experiment X8 (dev/experiments/X8-leaves.md): a whole-transform leaf of 32 beat planner
@@ -505,6 +507,24 @@ std::size_t lanes_up_to_of(target t, std::size_t lanes) {
   default:
     return 0;
   }
+}
+
+// The Rader range (target_profile::rader_from, rader_below), from experiment X27
+// (dev/experiments/X27-prime-codelets.md), Rader against the Bluestein stage on single prime
+// rows. Lower end: a single row runs Rader's gather and scatter in scalar code while the
+// Bluestein stage's chirp passes fill the C lanes, so with C >= 4 small primes lose: 29 and
+// 61 on AVX2 in float (1.27, 1.22; EPYC 7763, run 20261115-233441-5bdc), 29 on AVX-512 in
+// double (1.11) and 29 to 97 in float (1.33-1.97; Xeon 6240, run 20261116-002300-c123),
+// while from 97 (C = 4) and 257 (C = 8) up every prime measured won (0.45-0.91, except
+// 8191 in AVX-512 float, 1.08); with C <= 2 every prime from 29 won (0.17-0.85: the M5 Max,
+// runs 20261115-200226-b1eb and 20261115-203357-1ff2; the EPYC in double). So Rader starts
+// at 16 C for C >= 4. Upper end: at 65537 Rader lost on the M5 Max (1.21: its gather and
+// scatter wander over a megabyte) and won on the EPYC (0.62 double, 0.83 float) and the Xeon
+// (0.62, 0.56), so NEON stops below 2^16 and x86 below 2^24, where the index table's floats
+// stop being exact (passes/rader.inl). The scalar target takes NEON's values, unmeasured.
+std::size_t rader_from_of(std::size_t lanes) { return lanes >= 4 ? 16 * lanes : 0; }
+std::size_t rader_below_of(target t) {
+  return t == target::avx2 || t == target::avx512 ? std::size_t{1} << 24U : std::size_t{1} << 16U;
 }
 
 struct sequence {
@@ -592,6 +612,8 @@ target_profile profile_of(target t, std::size_t lanes) noexcept {
           .bluestein_above = default_bluestein_above,
           .split = split_of(t, lanes),
           .lanes_up_to = lanes_up_to_of(t, lanes),
+          .rader_from = rader_from_of(lanes),
+          .rader_below = rader_below_of(t),
       };
     }
     if (m.t == fallback_target &&
@@ -606,6 +628,8 @@ target_profile profile_of(target t, std::size_t lanes) noexcept {
       .bluestein_above = default_bluestein_above,
       .split = split_of(t, lanes),
       .lanes_up_to = lanes_up_to_of(t, lanes),
+      .rader_from = rader_from_of(lanes),
+      .rader_below = rader_below_of(t),
   };
 }
 
@@ -628,7 +652,8 @@ std::vector<std::size_t> rule_radices(std::size_t n, const target_profile& p) {
       return out;
     }
   }
-  // n = smooth x the prime factors above 16, which become generic passes at the end.
+  // n = smooth x the prime factors above 16, which become passes at the end: a codelet's
+  // (17, 19, 23), the generic pass's or one Bluestein stage (chain_builder::radices).
   std::size_t smooth = 1;
   std::size_t rest = n;
   std::vector<std::size_t> big;
@@ -656,6 +681,56 @@ std::vector<std::size_t> rule_radices(std::size_t n, const target_profile& p) {
   std::vector<std::size_t> out = cheapest(n, smooth, !big.empty(), p).radices;
   out.insert(out.end(), big.begin(), big.end());
   return out;
+}
+
+namespace {
+
+std::uint64_t pow_mod(std::uint64_t b, std::uint64_t e, std::uint64_t q) {
+  std::uint64_t r = 1;
+  b %= q;
+  for (; e != 0; e >>= 1U) {
+    if ((e & 1U) != 0) {
+      r = r * b % q;
+    }
+    b = b * b % q;
+  }
+  return r;
+}
+
+} // namespace
+
+std::size_t rader_root(std::size_t q, const target_profile& p) {
+  if (q < 5 || q < p.rader_from || q >= p.rader_below || has_codelet(q)) {
+    return 0;
+  }
+  for (std::size_t d = 2; d <= q / d; ++d) {
+    if (q % d == 0) {
+      return 0;
+    }
+  }
+  std::size_t left = q - 1;
+  for (const std::size_t f : {2U, 3U, 5U, 7U, 11U, 13U}) {
+    while (left % f == 0) {
+      left /= f;
+    }
+  }
+  // The convolution needs two codelet passes or more (as a Bluestein stage's does).
+  if (left != 1 || rule_radices(q - 1, p).size() < 2) {
+    return 0;
+  }
+  for (std::uint64_t g = 2; g < q; ++g) {
+    bool primitive = true;
+    for (const std::uint64_t f : {2U, 3U, 5U, 7U, 11U, 13U}) {
+      if ((q - 1) % f == 0 && pow_mod(g, (q - 1) / f, q) == 1) {
+        primitive = false;
+        break;
+      }
+    }
+    if (primitive) {
+      return static_cast<std::size_t>(g);
+    }
+  }
+  return 0; // unreachable: every prime has a primitive root
 }
 
 std::size_t bluestein_length(std::size_t q, const target_profile& p) {

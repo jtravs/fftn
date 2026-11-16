@@ -15,6 +15,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 
 namespace fftn::inline v0::detail {
 
@@ -103,6 +104,12 @@ struct machine_profile {
   std::size_t grid_fuse_bytes = std::size_t{4} * 1024 * 1024;
   std::size_t grid_block_bytes = std::size_t{64} * 1024;
   std::size_t grid_block = 0;
+  // The set period (bytes) the grid pads the rows of its intermediate array against, so that
+  // the rows phase 2 gathers spread over the sets (grid_pad, experiment X26b); SIZE_MAX: no
+  // padding. set_grid_sizes sets 4 KiB where the L2 is shared by a cluster (Apple: long rows
+  // 0.976 of the unpadded time) and none where each core has its own (x86: the padding cut
+  // no L1 refills there and gained nothing on the Xeon and the EPYC).
+  std::size_t grid_pad_period = std::numeric_limits<std::size_t>::max();
 };
 
 // The profile of a machine of topology t (its CPU count aside): the defaults above, which

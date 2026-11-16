@@ -8,7 +8,7 @@
 // The codelet rows are instantiated by the target's row units instead (isa/rows.inl); the
 // table points at them.
 
-static_assert(gen::radix_count == 17, "the declarations below list the rows of gen::radices");
+static_assert(gen::radix_count == 20, "the declarations below list the rows of gen::radices");
 // NOLINTBEGIN(bugprone-macro-parentheses): a template argument list, not an expression.
 #define FFTN_ISA_ROW(I)                                                                            \
   extern template struct codelet_row<double, I>;                                                   \
@@ -31,6 +31,9 @@ FFTN_ISA_ROW(13)
 FFTN_ISA_ROW(14)
 FFTN_ISA_ROW(15)
 FFTN_ISA_ROW(16)
+FFTN_ISA_ROW(17)
+FFTN_ISA_ROW(18)
+FFTN_ISA_ROW(19)
 #undef FFTN_ISA_ROW
 
 constinit const kernel_table table{

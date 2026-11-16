@@ -6,7 +6,7 @@
 // an Armv8.0 build still uses FCMA where the processor has it.
 //
 // The target's main unit: its function table and the passes outside the codelet rows.
-// The rows are compiled in rows1_neon_fcma.cpp to rows5_neon_fcma.cpp (isa/rows.inl), so that no
+// The rows are compiled in rows1_neon_fcma.cpp to rows8_neon_fcma.cpp (isa/rows.inl), so that no
 // unit needs more memory to compile than a CI runner has (DESIGN.md 6.4).
 
 #include "isa/arch.hpp"

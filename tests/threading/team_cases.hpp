@@ -174,21 +174,36 @@ void add_cases(std::vector<team_case>& out, const fftn::detail::build_settings& 
                           3 * 1000, true, settings, target));
   out.push_back(make_case("c2c_inplace_prime_97x5" + suffix, fftn::rows_c2c<T>(97, 5, bwd), 485,
                           485, true, settings, target));
-  // Bluestein stages (strategies/chain.hpp): after codelet passes with copies (4 x 17, its
-  // chirp shared by the copies where C divides 4, per element otherwise; 3 x 17 always per
+  // Bluestein stages (strategies/chain.hpp): after codelet passes with copies (4 x 47, its
+  // chirp shared by the copies where C divides 4, per element otherwise; 3 x 47 always per
   // element where C > 1), on both axes of a plane of primes (one set of tables), and one
   // long row whose convolution passes, chirp passes and head passes are each cut into many
-  // chunks (16 x 257: 16 copies of a convolution of M >= 513 points, chunks of 64 points);
+  // chunks (16 x 263: 16 copies of a convolution of M >= 525 points, chunks of 64 points);
   // and a real row through a half-length chain that is one Bluestein stage (s = 1).
-  out.push_back(make_case("c2c_bluestein_68x3" + suffix, fftn::rows_c2c<T>(68, 3, bwd), 204, 204,
+  out.push_back(make_case("c2c_bluestein_188x3" + suffix, fftn::rows_c2c<T>(188, 3, bwd), 564, 564,
                           false, settings, target));
-  out.push_back(make_case("c2c_bluestein_inplace_51x2" + suffix, fftn::rows_c2c<T>(51, 2, fwd), 102,
-                          102, true, settings, target));
-  out.push_back(make_case("c2c_planes_bluestein_17x17x2" + suffix,
-                          fftn::planes_c2c<T>(17, 17, 2, fwd), 578, 578, false, settings, target));
-  out.push_back(make_case("c2c_bluestein_long_4112x1" + suffix, fftn::rows_c2c<T>(4112, 1, fwd),
-                          4112, 4112, false, settings, target));
-  out.push_back(make_case("r2c_bluestein_514x2" + suffix, fftn::rows_r2c<T>(514, 2), 1028, 2 * 258,
+  out.push_back(make_case("c2c_bluestein_inplace_141x2" + suffix, fftn::rows_c2c<T>(141, 2, fwd),
+                          282, 282, true, settings, target));
+  out.push_back(make_case("c2c_planes_bluestein_47x47x2" + suffix,
+                          fftn::planes_c2c<T>(47, 47, 2, fwd), 4418, 4418, false, settings,
+                          target));
+  out.push_back(make_case("c2c_bluestein_long_4208x1" + suffix, fftn::rows_c2c<T>(4208, 1, fwd),
+                          4208, 4208, false, settings, target));
+  out.push_back(make_case("r2c_bluestein_526x2" + suffix, fftn::rows_r2c<T>(526, 2), 1052, 2 * 264,
+                          false, settings, target));
+  // Rader stages (experiment X27), the same shapes: 4 x 151 (C copies per vector where C
+  // divides 4), 3 x 151 in place (one copy at a time), a plane of primes, 16 x 257 (a
+  // convolution of 256 points in many chunks) and a real row whose half is one Rader stage.
+  out.push_back(make_case("c2c_rader_604x3" + suffix, fftn::rows_c2c<T>(604, 3, bwd), 1812, 1812,
+                          false, settings, target));
+  out.push_back(make_case("c2c_rader_inplace_453x2" + suffix, fftn::rows_c2c<T>(453, 2, fwd), 906,
+                          906, true, settings, target));
+  out.push_back(make_case("c2c_planes_rader_151x151x2" + suffix,
+                          fftn::planes_c2c<T>(151, 151, 2, fwd), 45602, 45602, false, settings,
+                          target));
+  out.push_back(make_case("c2c_rader_long_4112x1" + suffix, fftn::rows_c2c<T>(4112, 1, fwd), 4112,
+                          4112, false, settings, target));
+  out.push_back(make_case("r2c_rader_514x2" + suffix, fftn::rows_r2c<T>(514, 2), 1028, 2 * 258,
                           false, settings, target));
   // A unit axis: one transform's phases mix stages and loop nests.
   out.push_back(make_case("c2c_planes_1x200x3" + suffix, fftn::planes_c2c<T>(1, 200, 3, fwd), 600,

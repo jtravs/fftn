@@ -253,8 +253,10 @@ TEST(Rules, MeasuredExamples) {
   EXPECT_EQ(r(16384, f64), (v{8, 16, 16, 8})); // the planner refresh
   EXPECT_EQ(r(3000, f64), (v{8, 5, 5, 15}));
   EXPECT_EQ(r(3600, f32), (v{16, 15, 15}));
-  // Primes above the codelets go last (the chain makes them a Bluestein stage).
+  // Primes above 16 go last (the chain makes them a codelet pass for 17, 19 and 23,
+  // experiment X27, else a Bluestein stage).
   EXPECT_EQ(r(34, f64), (v{2, 17}));
+  EXPECT_EQ(r(58, f64), (v{2, 29}));
 }
 
 // The planner refresh (experiment X2, Xeon Gold 6240): AVX-512 in double (C = 4) has
@@ -309,16 +311,58 @@ TEST(Rules, DescribeSaysWhenRadicesAreForced) {
 }
 
 // describe() names a Bluestein stage, its convolution length M and M's radices, in the
-// axis line and in the stages (strategies/chain.hpp).
+// axis line and in the stages (strategies/chain.hpp); 262 = 2 x 131 is not 7-smooth.
 TEST(Rules, DescribeNamesTheBluesteinStage) {
+  const auto shape = fftn::rows_c2c<double>(std::size_t{4} * 263, 1, fftn::direction::forward);
+  const auto core = make_plan_core(fftn::detail::view_of(shape), fftn::options(), build_settings{});
+  const std::string text = describe(*core);
+  EXPECT_NE(text.find("radices 4 x bluestein 263 (M "), std::string::npos) << text;
+  EXPECT_NE(text.find("bluestein in, chirp forward (Q 263, M "), std::string::npos) << text;
+  EXPECT_NE(text.find("bluestein convolution: "), std::string::npos) << text;
+  EXPECT_NE(text.find("bluestein out, chirp forward (Q 263, M "), std::string::npos) << text;
+  EXPECT_NE(text.find("copies 4"), std::string::npos) << text;
+}
+
+// And a Rader stage (experiment X27): a prime whose q - 1 is 13-smooth, its convolution
+// length L = q - 1 and L's radices, the primitive root.
+TEST(Rules, DescribeNamesTheRaderStage) {
   const auto shape = fftn::rows_c2c<double>(std::size_t{4} * 257, 1, fftn::direction::forward);
   const auto core = make_plan_core(fftn::detail::view_of(shape), fftn::options(), build_settings{});
   const std::string text = describe(*core);
-  EXPECT_NE(text.find("radices 4 x bluestein 257 (M "), std::string::npos) << text;
-  EXPECT_NE(text.find("bluestein in, chirp forward (Q 257, M "), std::string::npos) << text;
-  EXPECT_NE(text.find("bluestein convolution: "), std::string::npos) << text;
-  EXPECT_NE(text.find("bluestein out, chirp forward (Q 257, M "), std::string::npos) << text;
-  EXPECT_NE(text.find("copies 4"), std::string::npos) << text;
+  EXPECT_NE(text.find("radices 4 x rader 257 (L 256 = "), std::string::npos) << text;
+  EXPECT_NE(text.find("rader in, gather forward (Q 257, L 256, root 3, copies 4"),
+            std::string::npos)
+      << text;
+  EXPECT_NE(text.find("rader convolution: "), std::string::npos) << text;
+  EXPECT_NE(text.find("rader out, scatter forward (Q 257, L 256, root 3, copies 4"),
+            std::string::npos)
+      << text;
+}
+
+// The Rader rule: primes without a codelet in the profile's range whose q - 1 is 13-smooth,
+// with their smallest primitive root; the range from experiment X27.
+TEST(Rules, RaderRoot) {
+  using fftn::detail::rader_root;
+  using fftn::detail::target;
+  const auto neon = fftn::detail::profile_of(target::neon_fcma, 1);
+  EXPECT_EQ(rader_root(29, neon), 2U);
+  EXPECT_EQ(rader_root(31, neon), 3U);
+  EXPECT_EQ(rader_root(41, neon), 6U);
+  EXPECT_EQ(rader_root(97, neon), 5U);
+  EXPECT_EQ(rader_root(257, neon), 3U);
+  EXPECT_EQ(rader_root(8191, neon), 17U); // 8190 = 2 x 3^2 x 5 x 7 x 13
+  EXPECT_EQ(rader_root(40961, neon), 3U);
+  EXPECT_EQ(rader_root(65537, neon), 0U); // NEON's limit, 2^16
+  EXPECT_EQ(rader_root(17, neon), 0U);    // a codelet
+  EXPECT_EQ(rader_root(47, neon), 0U);    // 46 = 2 x 23
+  EXPECT_EQ(rader_root(4093, neon), 0U);  // 4092 = 4 x 3 x 11 x 31
+  EXPECT_EQ(rader_root(91, neon), 0U);    // 7 x 13
+  const auto avx2_double = fftn::detail::profile_of(target::avx2, 2);
+  EXPECT_EQ(rader_root(29, avx2_double), 2U);
+  EXPECT_EQ(rader_root(65537, avx2_double), 3U); // no limit below 2^24 on x86
+  const auto avx512_float = fftn::detail::profile_of(target::avx512, 8);
+  EXPECT_EQ(rader_root(97, avx512_float), 0U); // from 16 C = 128 with C = 8
+  EXPECT_EQ(rader_root(257, avx512_float), 3U);
 }
 
 std::vector<std::byte> run(const fftn::detail::plan_core& core, std::vector<std::byte> input,

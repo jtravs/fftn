@@ -80,6 +80,9 @@ void set_grid_sizes(machine_profile& p, const core_class& c) noexcept {
       p.grid_min_bytes = std::max(p.grid_min_bytes, c.l2.size / 2);
     }
     p.grid_three_bytes = private_l2 ? c.l2.size : c.l2.size / 8;
+    // X26b: padding the intermediate paid on the Mac (0.976 over the long rows) and nothing
+    // on the Xeon and the EPYC, whose L1 refills it did not cut.
+    p.grid_pad_period = private_l2 ? std::numeric_limits<std::size_t>::max() : 4096;
     p.grid_fuse_bytes = c.l2.size / 4;
   }
 }

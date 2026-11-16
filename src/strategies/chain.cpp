@@ -126,8 +126,12 @@ std::string chain_builder<T>::radix_text(std::size_t n, const std::vector<std::s
     return list(rad) + (from < rad.size() ? ", split from pass " + std::to_string(from + 1) : "");
   }
   const std::size_t q = rad.back();
-  const std::size_t m = bluestein_length(q, profile_);
   const std::vector<std::size_t> head(rad.begin(), rad.end() - 1);
+  if (rader_root(q, profile_) != 0) {
+    return (head.empty() ? "" : list(head) + " x ") + "rader " + std::to_string(q) + " (L " +
+           std::to_string(q - 1) + " = " + list(rule_radices(q - 1, profile_)) + ")";
+  }
+  const std::size_t m = bluestein_length(q, profile_);
   return (head.empty() ? "" : list(head) + " x ") + "bluestein " + std::to_string(q) + " (M " +
          std::to_string(m) + " = " + list(rule_radices(m, profile_)) + ")";
 }
@@ -341,6 +345,45 @@ chain_builder<T>::bluestein_tables chain_builder<T>::bluestein_tables_of(std::si
   return {.chirp = cit->second, .kernel = kit->second};
 }
 
+template <class T> const T* chain_builder<T>::rader_index_of(std::size_t q, std::size_t g) {
+  // g^m mod q for m < q - 1, as values of T: exact, since rader_root admits q < 2^16.
+  auto it = rader_index_tables_.find(q);
+  if (it == rader_index_tables_.end()) {
+    std::vector<T>& index = tables_.emplace_back(q - 1);
+    std::uint64_t e = 1;
+    for (std::size_t m = 0; m + 1 < q; ++m) {
+      index[m] = static_cast<T>(e);
+      e = e * g % q;
+    }
+    it = rader_index_tables_.emplace(q, index.data()).first;
+  }
+  return it->second;
+}
+
+template <class T>
+const T* chain_builder<T>::rader_kernel_of(std::size_t q, std::size_t g, int sign) {
+  // A prime takes either Rader or Bluestein (rader_root), so the key never collides.
+  const auto key = std::make_pair(q, sign);
+  auto it = kernel_tables_.find(key);
+  if (it == kernel_tables_.end()) {
+    const std::size_t len = q - 1;
+    std::vector<std::complex<double>> roots_l;
+    if constexpr (std::is_same_v<T, double>) {
+      roots_l = roots(len);
+    } else {
+      roots_l = unit_roots<double>(-1, len);
+    }
+    const std::vector<std::complex<double>> spectrum = rader_kernel(sign, q, g, roots_l);
+    std::vector<T>& kernel = tables_.emplace_back(2 * len);
+    for (std::size_t f = 0; f < len; ++f) {
+      kernel[2 * f] = static_cast<T>(spectrum[f].real());
+      kernel[2 * f + 1] = static_cast<T>(spectrum[f].imag());
+    }
+    it = kernel_tables_.emplace(key, kernel.data()).first;
+  }
+  return it->second;
+}
+
 template <class T>
 std::uint32_t chain_builder<T>::chunks_of(std::size_t units, std::size_t points_per_unit) const {
   const std::size_t per_chunk = std::max<std::size_t>(1, chunk_points_ / points_per_unit);
@@ -486,29 +529,151 @@ void chain_builder<T>::add_copy(std::size_t n, endpoint src, endpoint dst, const
 }
 
 template <class T>
+slot chain_builder<T>::add_convolution(std::size_t s, std::size_t len,
+                                       const std::vector<std::size_t>& rad, const T* kernel,
+                                       slot conv, std::vector<stage>& stages) {
+  // The convolution's passes must be codelet lane passes with at least two of them: the
+  // kernel spectrum is shared through the last lane pass's output or the first backward
+  // lane pass's input (factor_sharing), which the generic pass, a grouped pass with copies
+  // and a single pass that is both first and last would not honour.
+  const pass_kernels<T>& k = kernels_.passes;
+  if (rad.size() < 2) {
+    throw std::logic_error("fftn: a convolution of " + std::to_string(len) +
+                           " points has fewer than two passes");
+  }
+  for (const std::size_t r : rad) {
+    if (!has_codelet(r) || k.codelet[codelet_slot(r)]->lane[0] == nullptr) {
+      throw std::logic_error("fftn: a convolution of " + std::to_string(len) +
+                             " points has radix " + std::to_string(r) + ", which no codelet takes");
+    }
+  }
+  // The kernel spectrum, len entries for all the copies: output element t + s f of the
+  // forward chain (copy t) takes entry f. Its last pass applies it when C divides s, its
+  // lanes then sharing one entry (factor_sharing::output; s = 1 is the plain per-element
+  // factor). Otherwise the lanes of that pass straddle entries, and the first backward
+  // pass, a lane pass whose lanes are the copies, multiplies its input element t + s f by
+  // entry f instead (factor_sharing::input). Measured on the Mac (C = 1, task 2.3b): the
+  // input form cost 5 % at 4096 x 17 against the output form, whose multiplications hide
+  // under the last pass's memory traffic.
+  const std::size_t c = kernels_.complex_lanes;
+  line_edges forward;
+  line_edges backward;
+  if (s % c == 0 || s == 1) {
+    forward.out = edge_op::factor;
+    forward.out_factor = kernel;
+    forward.out_factor_copies = s;
+  } else {
+    backward.in = edge_op::factor;
+    backward.in_factor = kernel;
+  }
+  slot at = conv;
+  for (const int dir : {-1, +1}) {
+    std::size_t copies = s;
+    for (std::size_t i = 0; i < rad.size(); ++i) {
+      const slot next = other_scratch(at);
+      add_pass(s * len, rad, i, copies, dir, {at, 1}, {next, 1}, dir < 0 ? forward : backward,
+               stages, s);
+      at = next;
+      copies *= rad[i];
+    }
+  }
+  return at;
+}
+
+template <class T>
+endpoint chain_builder<T>::last_stage_to(std::size_t q, endpoint at, endpoint next) const {
+  const bool scratch = at.where == slot::a || at.where == slot::b;
+  if (rader_root(q, profile_) != 0 && scratch && next.where == other_scratch(at.where)) {
+    return endpoint{.where = at.where, .stride = 1};
+  }
+  return next;
+}
+
+template <class T>
+void chain_builder<T>::add_rader(std::size_t n, std::size_t q, std::size_t g, int sign,
+                                 endpoint src, endpoint dst, const line_edges& edges, bool first,
+                                 std::vector<stage>& stages) {
+  const std::size_t s = n / q;
+  const std::size_t len = q - 1;
+  const std::vector<std::size_t> rad = rule_radices(len, profile_);
+  const std::size_t c = kernels_.complex_lanes;
+  const edge_op in = first ? edges.in : edge_op::none;
+  const pass_kernels<T>& k = kernels_.passes;
+  const bool shared = s % c == 0;
+  const T* kernel = rader_kernel_of(q, g, sign);
+  const T* index = rader_index_of(q, g);
+  // The convolution runs in the two scratch slots and ends where it starts (an even number
+  // of passes), in neither the stage's source (rader_in gathers from it) nor its destination
+  // (rader_out scatters into it); its other slot may be either, which is read or not yet
+  // written by then. last_stage_to keeps the two apart.
+  const auto scratch = [](slot w) { return w == slot::a || w == slot::b; };
+  const slot conv = scratch(dst.where)   ? other_scratch(dst.where)
+                    : scratch(src.where) ? other_scratch(src.where)
+                                         : slot::a;
+  if (conv == src.where) {
+    throw std::logic_error("fftn: a Rader stage from scratch slot to the other scratch slot");
+  }
+  const std::string geometry = "Q " + std::to_string(q) + ", L " + std::to_string(len) + ", root " +
+                               std::to_string(g) + ", copies " + std::to_string(s);
+  const std::size_t units = shared ? s / c : s;
+  stage st;
+  st.run = k.rader_in[shared ? 1 : 0][edge_index(in)];
+  st.args.m = len;
+  st.args.s = s;
+  st.args.n = n;
+  st.args.roots = index;
+  st.args.scale = edges.scale;
+  st.args.in_factor = in == edge_op::factor ? edges.in_factor : nullptr;
+  st.args.src_stride = src.stride;
+  st.args.dst_stride = 1;
+  st.src = src.where;
+  st.dst = conv;
+  st.units = units;
+  st.chunks = chunks_of(units, q * (shared ? c : 1));
+  st.name = std::string("rader in, gather ") + direction_name(sign) + " (" + geometry +
+            edges_note(in, edge_op::none) + ")";
+  stages.push_back(std::move(st));
+
+  const slot at = add_convolution(s, len, rad, kernel, conv, stages);
+  for (std::size_t i = stages.size() - 2 * rad.size(); i < stages.size(); ++i) {
+    stages[i].name = "rader convolution: " + stages[i].name;
+  }
+
+  stage out;
+  out.run = k.rader_out[shared ? 1 : 0][edge_index(edges.out)];
+  out.args.m = len;
+  out.args.s = s;
+  out.args.n = n;
+  out.args.roots = index;
+  out.args.scale = edges.scale;
+  out.args.out_factor = edges.out == edge_op::factor ? edges.out_factor : nullptr;
+  out.args.src_stride = 1;
+  out.args.dst_stride = dst.stride;
+  out.src = at;
+  out.dst = dst.where;
+  out.units = units;
+  out.chunks = chunks_of(units, q * (shared ? c : 1));
+  out.name = std::string("rader out, scatter ") + direction_name(sign) + " (" + geometry +
+             edges_note(edge_op::none, edges.out) + ")";
+  stages.push_back(std::move(out));
+  // The convolution's s L elements, then x_0 and the sum of each copy (rader_in).
+  line_scratch_ = std::max(line_scratch_, s * (len + 2));
+}
+
+template <class T>
 void chain_builder<T>::add_bluestein(std::size_t n, std::size_t q, int sign, endpoint src,
                                      endpoint dst, const line_edges& edges, bool first,
                                      std::vector<stage>& stages) {
+  if (const std::size_t g = rader_root(q, profile_); g != 0) {
+    add_rader(n, q, g, sign, src, dst, edges, first, stages);
+    return;
+  }
   const std::size_t s = n / q;
   const std::size_t m = bluestein_length(q, profile_);
   const std::vector<std::size_t> rad = rule_radices(m, profile_);
   const std::size_t c = kernels_.complex_lanes;
   const edge_op in = first ? edges.in : edge_op::none;
   const pass_kernels<T>& k = kernels_.passes;
-  // The convolution's passes must be codelet lane passes with at least two of them: the
-  // kernel spectrum is shared through the last lane pass's output or the first backward
-  // lane pass's input (factor_sharing), which the generic pass, a grouped pass with copies
-  // and a single pass that is both first and last would not honour.
-  if (rad.size() < 2) {
-    throw std::logic_error("fftn: a Bluestein convolution of " + std::to_string(m) +
-                           " points has fewer than two passes");
-  }
-  for (const std::size_t r : rad) {
-    if (!has_codelet(r) || k.codelet[codelet_slot(r)]->lane[0] == nullptr) {
-      throw std::logic_error("fftn: a Bluestein convolution of " + std::to_string(m) +
-                             " points has radix " + std::to_string(r) + ", which no codelet takes");
-    }
-  }
   const bool shared = s > 1 && s % c == 0;
   const bluestein_tables tab = bluestein_tables_of(q, sign, shared ? 0 : s);
 
@@ -535,37 +700,8 @@ void chain_builder<T>::add_bluestein(std::size_t n, std::size_t q, int sign, end
             edges_note(in, edge_op::none) + ")";
   stages.push_back(std::move(st));
 
-  // The kernel spectrum, M entries for all the copies: output element t + s f of the
-  // forward chain (copy t) takes entry f. Its last pass applies it when C divides s, its
-  // lanes then sharing one entry (factor_sharing::output; s = 1 is the plain per-element
-  // factor). Otherwise the lanes of that pass straddle entries, and the first backward
-  // pass, a lane pass whose lanes are the copies, multiplies its input element t + s f by
-  // entry f instead (factor_sharing::input). Measured on the Mac (C = 1, task 2.3b): the
-  // input form cost 5 % at 4096 x 17 against the output form, whose multiplications hide
-  // under the last pass's memory traffic.
-  line_edges forward;
-  line_edges backward;
-  if (s % c == 0 || s == 1) {
-    forward.out = edge_op::factor;
-    forward.out_factor = tab.kernel;
-    forward.out_factor_copies = s;
-  } else {
-    backward.in = edge_op::factor;
-    backward.in_factor = tab.kernel;
-  }
-  const std::size_t first_conv = stages.size();
-  slot at = conv;
-  for (const int dir : {-1, +1}) {
-    std::size_t copies = s;
-    for (std::size_t i = 0; i < rad.size(); ++i) {
-      const slot next = other_scratch(at);
-      add_pass(s * m, rad, i, copies, dir, {at, 1}, {next, 1}, dir < 0 ? forward : backward, stages,
-               s);
-      at = next;
-      copies *= rad[i];
-    }
-  }
-  for (std::size_t i = first_conv; i < stages.size(); ++i) {
+  const slot at = add_convolution(s, m, rad, tab.kernel, conv, stages);
+  for (std::size_t i = stages.size() - 2 * rad.size(); i < stages.size(); ++i) {
     stages[i].name = "bluestein convolution: " + stages[i].name;
   }
 
@@ -629,8 +765,9 @@ slot chain_builder<T>::scratch_chain(std::size_t n, int sign, slot from,
   std::size_t s = 1;
   slot at = from;
   for (std::size_t i = 0; i < rad.size(); ++i) {
-    const slot next = other_scratch(at);
+    slot next = other_scratch(at);
     if (bluestein && i + 1 == rad.size()) {
+      next = last_stage_to(rad[i], {at, 1}, {next, 1}).where;
       add_bluestein(n, rad[i], sign, {at, 1}, {next, 1}, none, i == 0, stages);
     } else {
       add_pass(n, rad, i, s, sign, {at, 1}, {next, 1}, none, stages, 1,
@@ -685,6 +822,7 @@ std::size_t chain_builder<T>::c2c_line(std::size_t n, int sign, endpoint src, en
       next = (rad.size() - 1 - i) % 2 == 0 ? dst : endpoint{.where = slot::a, .stride = 1};
     }
     if (bluestein && last) {
+      next = last_stage_to(rad[i], at, next);
       add_bluestein(n, rad[i], sign, at, next, edges, i == 0, stages);
     } else {
       add_pass(n, rad, i, s, sign, at, next, edges, stages, 1, layout_of(i, split, rad.size()));
@@ -714,8 +852,9 @@ void chain_builder<T>::chain_tail(std::size_t n, const std::vector<std::size_t>&
   }
   for (std::size_t i = i0; i < rad.size(); ++i) {
     const bool last = i + 1 == rad.size();
-    const endpoint next = last ? dst : endpoint{.where = other_scratch(at.where), .stride = 1};
+    endpoint next = last ? dst : endpoint{.where = other_scratch(at.where), .stride = 1};
     if (bluestein && last) {
+      next = last_stage_to(rad[i], at, next);
       add_bluestein(n, rad[i], sign, at, next, edges, i == 0, stages);
     } else {
       add_pass(n, rad, i, s, sign, at, next, edges, stages, 1, layout_of(i, split, rad.size()));
@@ -740,7 +879,9 @@ template <class T> real_route chain_builder<T>::route(std::size_t n, bool r2c, b
     return real_route::separate;
   }
   const std::vector<std::size_t> rad = real_radices(h, r2c);
-  if (rad.size() == 1 && h <= dense_codelet_radix) {
+  // A leaf of h up to 16 or of the prime codelets (17, 19, 23: experiment X27); not of 32 or
+  // 64, whose leaves lose wherever C > 1 (experiment X8).
+  if (rad.size() == 1 && has_codelet(h) && (h <= dense_codelet_radix || h % 2 == 1)) {
     return real_route::leaf;
   }
   // r2c: the last pass must be a codelet's (not a Bluestein stage or a generic pass); c2r:

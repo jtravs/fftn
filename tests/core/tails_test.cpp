@@ -78,13 +78,22 @@ std::vector<tail_case> cases() {
     out.push_back({.n = a * 15, .radices = {a, 5, 3}, .rows = 1, .expect = "lane radix-5"});
   }
   // Bluestein chirp passes whose last block of C holds 1 to C - 1 data elements.
-  for (const std::size_t n : {17U, 19U, 23U, 29U, 34U, 51U, 68U, 102U}) {
+  for (const std::size_t n : {137U, 274U, 59U, 188U, 141U, 94U, 47U, 167U}) {
     out.push_back({.n = n, .radices = {}, .rows = 2, .expect = "bluestein"});
   }
+  // Rader stages (experiment X27): one copy at a time (1, 3 copies) and C copies at a time.
+  for (const std::size_t n : {151U, 453U, 302U, 604U, 1208U}) {
+    out.push_back({.n = n, .radices = {}, .rows = 2, .expect = "rader"});
+  }
   // Generic passes, first and last, with partial runs.
-  out.push_back({.n = 34, .radices = {2, 17}, .rows = 2, .generic = true, .expect = "generic"});
-  out.push_back({.n = 51, .radices = {17, 3}, .rows = 2, .generic = true, .expect = "generic"});
-  out.push_back({.n = 57, .radices = {3, 19}, .rows = 1, .generic = true, .expect = "generic"});
+  out.push_back({.n = 58, .radices = {2, 29}, .rows = 2, .generic = true, .expect = "generic"});
+  out.push_back({.n = 87, .radices = {29, 3}, .rows = 2, .generic = true, .expect = "generic"});
+  out.push_back({.n = 93, .radices = {3, 31}, .rows = 1, .generic = true, .expect = "generic"});
+  // The prime codelets (experiment X27), first and last, with partial runs.
+  out.push_back({.n = 34, .radices = {2, 17}, .rows = 2, .expect = "lane radix-17"});
+  out.push_back({.n = 51, .radices = {17, 3}, .rows = 2, .expect = "grouped radix-17"});
+  out.push_back({.n = 57, .radices = {3, 19}, .rows = 1, .expect = "lane radix-19"});
+  out.push_back({.n = 69, .radices = {23, 3}, .rows = 1, .expect = "grouped radix-23"});
   // The lanes strategy (two rows or more): a leaf, and two passes, over 2 to 9 adjacent rows.
   for (std::size_t rows = 2; rows <= 9; ++rows) {
     out.push_back(
@@ -194,7 +203,8 @@ template <class T> void check_case(const tail_case& tc, fftn::direction dir) {
       for (const std::string& v : got.violations) {
         ADD_FAILURE() << v << "; stages:" << listing;
       }
-      const bool bluestein = listing.find("bluestein") != std::string::npos;
+      const bool bluestein = listing.find("bluestein") != std::string::npos ||
+                             listing.find("rader") != std::string::npos;
       const auto tol = fftn::test::derived_tolerance<T>(
           n, bluestein ? fftn::test::bluestein_bound(n) : fftn::test::stable_fft_bound);
       for (std::size_t r = 0; r < rows; ++r) {
