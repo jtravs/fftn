@@ -422,6 +422,17 @@ inline constexpr pass_kernels<T> pass_table{
             &twiddle_scatter<T, +1>,
         },
     .c2r_pair_gather = &c2r_pair_gather<T>,
+    .r2c_pair_gather = &r2c_pair_gather<T>,
+    .r2c_pair_scatter =
+        {
+            &r2c_pair_scatter<T, false>,
+            &r2c_pair_scatter<T, true>,
+        },
+    .r2c_pair_column =
+        {
+            &r2c_pair_column<T, false>,
+            &r2c_pair_column<T, true>,
+        },
     .lanes_gather = &lanes_gather<T>,
     .lanes_scatter = &lanes_scatter<T>,
     .lanes_r2c_pair =

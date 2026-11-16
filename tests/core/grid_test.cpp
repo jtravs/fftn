@@ -325,7 +325,7 @@ TEST(Grid, ChainKeepsLengthsThatAreNotPowersOfTwo) {
 
 // A c2c row of a power of two stays a chain beyond grid_min_bytes up to pow2_chain_bytes,
 // with FFTL.jl's radices beyond grid_min_bytes: 8s up to pow2_radix8_bytes, 4s beyond
-// (X32); the half-length transform of a real row is unaffected, and lengths that are not
+// (X32), as does the half-length transform of a real row (X33); lengths that are not
 // powers of two keep their rules.
 TEST(Grid, PowersOfTwoStayChainsUpToTheProfilesLimit) {
   build_settings s;
@@ -364,10 +364,14 @@ TEST(Grid, PowersOfTwoStayChainsUpToTheProfilesLimit) {
       fftn::detail::view_of(fftn::rows_c2c<double>(4096, 1, fftn::direction::forward)),
       fftn::options(), forced));
   EXPECT_NE(three.find("16 x 16 x 16"), std::string::npos) << three;
-  // A real row of 8192 (half length 4096) stays a grid.
+  // A real row's half-length transform follows the same rule (X33): 8192 reals (half length
+  // 4096) a chain, 16384 a grid.
   const auto real =
       make_plan_core(fftn::detail::view_of(fftn::rows_r2c<double>(8192, 1)), fftn::options(), s);
-  EXPECT_TRUE(is_grid(*real)) << described(*real);
+  EXPECT_FALSE(is_grid(*real)) << described(*real);
+  const auto longer =
+      make_plan_core(fftn::detail::view_of(fftn::rows_r2c<double>(16384, 1)), fftn::options(), s);
+  EXPECT_TRUE(is_grid(*longer)) << described(*longer);
 }
 
 // build_settings::scale_on_input puts the scale on phase 1's input: its first pass, or its

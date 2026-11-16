@@ -131,8 +131,9 @@ struct machine_profile {
   // The largest row (bytes) chain_part_bytes keeps a chain: half of L3 where a private L2
   // has a large L3 behind it (x86 Zen), any size where the L2 is shared (X29).
   std::size_t chain_part_limit_bytes = std::numeric_limits<std::size_t>::max();
-  // Long power-of-two rows (experiment X32): a c2c row of a power-of-two length stays a
-  // chain beyond grid_min_bytes up to pow2_chain_bytes (0: never, and the rules' radices
+  // Long power-of-two rows (experiment X32): a c2c row of a power-of-two length (and the
+  // half-length transform of a real row, X33) stays a chain beyond grid_min_bytes up to
+  // pow2_chain_bytes (0: never, and the rules' radices
   // everywhere), and a power-of-two chain of more than grid_min_bytes takes FFTL.jl's
   // radices instead of the rules' (priced in cache, X2): 8s (4s for the spare factors of
   // two) up to pow2_radix8_bytes, 4s (one 8 for an odd exponent) beyond. The rules'

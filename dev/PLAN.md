@@ -75,8 +75,14 @@ Open, by phase:
 - 3: T2, T3, T4, T6; 3.5 (Kokkos executor); 3.6 to be checked against its acceptance.
 - 4–7: not started.
 
-In flight (lead session, 2026-11-16): round 2 of the push: X33 (lead (b), long real rows). Done, each merged
-with its pull request:
+In flight (lead session, 2026-11-16): round 2 of the push is merged; next: a formal phase 1 exit check (standard catalogue, c2c
+rows, double and float, the 5 % tail rule of DESIGN 1.3) and X31b (cloud follow-up: Zen 5
+and Granite Rapids). Done, each merged with its pull request:
+- X33 (lead (b), pull request 19): a real row's half-length power of two follows X32's chain
+  rule on Apple and Zen (EPYC long real rows 0.58–0.76 of main, FFTN ÷ FFTW 1.14–1.41 →
+  0.82–0.93, ÷ FFTL at 2²⁰ 1.76 → 1.03; Mac 0.69–0.97); the r2c pairing in the grid's last
+  phase on `avx512` and NEON (Xeon r2c 2¹⁸–2²⁰ 0.95–0.96; none on `avx2`). The pairing pass
+  was cheap: removing it saves 0–5 % (LESSONS 3.17).
 - X34 (lead (c), pull request 21): rows with an odd part ≥ 15 stay two-phase grids where a
   private L2 has < 2 MiB of L3 per CPU behind it (`grid_two_odd_part`): Xeon 100000 2.03 →
   1.44 of FFTW (MKL 1.34 → 0.95), 10⁶ 1.01 → 0.73, mixed rows 0.861 of main; chains rejected
@@ -132,11 +138,13 @@ prefetch, a second case for rules by core on `avx2`.
 **Next, ranked from the 2026-11-16 runs (one-dimensional double still first):**
 (a) long powers of two ≥ 16384: X32 makes them chains of FFTL.jl's radices on the Mac and
 the EPYC (FFTN ÷ FFTL.jl about 1.0 there now). Left: the Xeon (1.03 of FFTW; chains lose
-there, so the grid's copies again, X26), real rows of these lengths as chains (lead (b),
-X29's screen favoured them on the EPYC), Zen 5 unmeasured (the rule applies there), and
+there, so the grid's copies again, X26), Zen 5 unmeasured (the rule applies there), and
 fbench placing buffers as malloc does (16 bytes into a page) to judge X32's arm (b).
-(b) Long real rows (r2c and c2r of 65536 and 2²⁰, 1.17–1.44): the r2c pairing fused into
-the grid's last phase (needs block pairs, X29), the Xeon's r2c 65536 is memory (X25).
+(b) Long real rows (r2c and c2r of 65536 and 2²⁰, 1.17–1.44): X33 makes their half-length
+powers of two chains by X32's rule (EPYC 0.58–0.76 of main, FFTN ÷ FFTW 0.82–0.93; Mac
+0.69–0.97) and pairs r2c bins in the grid's last phase on `avx512` (Xeon 2¹⁸–2²⁰ 0.95–0.96).
+Left: the Xeon (65536 1.35–1.45 of FFTW: its half-length chain of 32768 is memory-bound,
+X25; 2²⁰ 1.13–1.46), and FFTW's real plans at 2²⁰, cheaper than its own c2c 2¹⁹.
 (c) The Xeon's long mixed rows (100000 1.99, 46080 1.29): X34 (pull request 21) keeps
 rows with an odd part ≥ 15 in two grid phases where L3 per CPU is small (Xeon 100000 2.03 →
 1.44 of FFTW, 0.95 of MKL; chains lose there). Left: 100000 still 1.44 (FFTW's
@@ -470,6 +478,7 @@ running, done (with verdict).
 | [X28b](experiments/X28b-short-leaves.md) | Single short rows after X28: do two-pass leaves held in registers (24, 48, 60 points and other short composites), leaves with constant offsets for rows of stride 1, and 128-bit leaves for 17, 19, 23 on x86 close what is left? (PLAN lead 4) | 1 | done: all adopted (pair leaves on x86: 20–120 points 0.42–0.69 of the chain on the Xeon's `avx512`, 0.51–0.76 on the EPYC; unit-stride leaves everywhere: 8–23 points 0.75–0.92; 128-bit 17–23 leaves 0.85–0.99); FFTN ÷ FFTW over single c2c rows Xeon 0.98 → 0.65, EPYC 0.94 → 0.73, Mac 0.80 → 0.76 |
 | [X30](experiments/X30-x86-pass-loops.md) | x86 chains at 128–4096 (lead 3): two-pass `avx2` double sequences with radix 32/64 (P), twiddles stored (wr, wi) with duplicating loads (T), 1024 = 16 × 64 (Q) | 1 | done: P adopted (EPYC x30 double 0.975: 256 0.905, 512 0.946, batches of 64 0.87–0.92, r2c/c2r 512–1024 0.90–0.95; nothing slower; Xeon `avx2` tracking 0.999, r2c 1024² 1.034 [0.997, 1.061] re-run pending); T rejected by single cases (geomeans 0.97–0.99, float 0.94, but short rows and small grouped passes up to 1.08–1.11); Q rejected (1024 batches 1.09) |
 | [X29](experiments/X29-real-footprint.md) | Real rows in the chain-or-grid rule: should r2c and c2r switch to the grid at another size than the c2c row of half their length, and is the grid's separate pairing pass worth fusing into its end phases? | 1–2 | done: real footprint rejected (no gain on any machine); c2r pairing in the grid's first gather adopted on Apple out of place in two phases (Mac 0.92–0.94; EPYC 1.11, not adopted); lengths with a power-of-two part ≤ 1024 points stay chains on Apple at any size (46080 0.65, 100000 0.62) and on Zen to half of L3 (0.64–0.85); power-of-two chains on the EPYC bimodal at 1–2 MiB, not adopted |
+| [X33](experiments/X33-long-real.md) | Long real rows (r2c and c2r of 65536 and 2²⁰, lead (b)): where the time goes, and does a pairing without a memory sweep of its own (fused into the grid's last phase with block pairs, or into the chain's last pass) close the gap? | 1–2 | done: real rows' half-length powers of two as chains (X32's rule) adopted on Apple and Zen (EPYC 0.58–0.76, ÷ FFTW 1.14–1.41 → 0.82–0.93; Mac 0.69–0.97); r2c pairing in the grid's last phase adopted on `avx512` and NEON (Xeon 0.95–0.96), not on `avx2` (EPYC no gain); fused pass saved only 0–5 %: the pass was cheap |
 | [X30b](experiments/X30b-twiddle-tables.md) | x86 chains at 1024–4096 (lead 3, after X30): 64-byte aligned plan tables (L), the half-size (wr, wi) twiddle storage only for passes with large tables (C), three-pass `avx2` double 4096 (R) | 1 | done: L adopted (aligned plan tables; EPYC x30 double 0.986, float 0.971; Xeon `avx512` 0.989, `avx2` 0.996; Mac 0.999); C rejected (EPYC x30 0.986 / 0.962 of L but float 256 × 64 1.04 in every variant, Xeon c2c 16 1.05, `avx512` double 1.001); R rejected (4096 three-pass 1.30–1.88) |
 | [X31](experiments/X31-cloud-1d.md) | One-dimensional double after the push on recent server chips (Zen 5, Granite Rapids with MKL, Axion): where does FFTN stand against FFTW, and does any core diverge from the EPYC, Xeon and Mac enough for per-core rules (lead (d))? | 1 | done: nothing badly off; FFTN ÷ FFTW over the 46 one-dimensional double cases Zen 5 0.80, Granite Rapids 0.88 (MKL 0.85), Axion 0.74 (before the push 1.05, 1.12, 0.86); Axion beats the Mac's ratios on long rows (0.75 against 1.19), in place, real rows and planes, mostly because FFTW is slower there; Axion 8 points 1.24; Granite Rapids repeats the Xeon's long mixed rows worse (100000 2.16, 46080 1.60) and in place 65536 1.50; Zen 5 diverges in no group; USD 0.75 |
 | [X31b](experiments/X31b-cloud-followup.md) | X32 and X34 on Zen 5 and Granite Rapids (cloud): does X32's power-of-two chain rule hold on Zen 5, and does Granite Rapids want the Xeon's plan, X29's chains or neither? Can the topology a VM reports separate the two? (leads (a), (c), (d)) | 1 | done, measurement only. Zen 5: X32 holds (long powers of two 0.58–0.86 of the grid; 65536 1.50 → 0.92 of FFTW); X34 changes no plan. Granite Rapids takes X32's chains (its VM reports 63 MiB of L3 per CPU), and they lose: the grid is 0.59–0.94 of their time. It wants two phases where X29 chains (100000 0.66, 10⁶ 0.59) but three phases where X34 would give two (X34's rule 1.03–1.46), and probably a grid from 512 KiB (0.81–0.96). That is a third profile; the VM's cache sizes separate it from Zen only on one sample per side, so the case is for a measured choice (planner 2.4) or a core field. USD 1.12 |

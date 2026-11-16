@@ -236,6 +236,10 @@ with `P` (X31: 0.88); ÷ MKL it is 0.84, 0.83 and 0.83.
   Intel profile has to ship first.
 - **No library change here.** X32 as merged costs Granite Rapids 0.59–0.94 on long powers
   of two (Intel cloud machines with large-L3 VMs); the decision on that belongs to the lead.
+  Since these runs, `main` has merged [X33](X33-long-real.md), which also lets the
+  half-length complex rows of long real transforms stay power-of-two chains up to
+  `pow2_chain_bytes`. Granite Rapids takes that route too; it was not measured here, and
+  given the c2c results it probably loses there as well.
   fbench's `CHAIN_PART_BYTES=0` spelling in X34's write-up is refused; use 1.
 - **Cost:** USD 1.12 (ledger below), within the USD 10 budget; the campaign has spent USD 1.87
   of its USD 20 cap.
