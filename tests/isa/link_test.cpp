@@ -72,15 +72,13 @@ TEST(link, lane_counts_and_fusion_match_each_target) {
   EXPECT_EQ(s.f32.complex_lanes, 1U);
   EXPECT_EQ(s.f64.real_lanes, 1U);
   EXPECT_EQ(s.f64.tw_reals, 2U);
-  EXPECT_EQ(s.f64.tw_tail, 0U);
   if (const kernel_table* a = find_kernels(target::avx2)) {
     EXPECT_TRUE(a->fused);
     EXPECT_EQ(a->f64.complex_lanes, 2U);
     EXPECT_EQ(a->f32.complex_lanes, 4U);
     EXPECT_EQ(a->f64.real_lanes, 4U);
     EXPECT_EQ(a->f32.real_lanes, 8U);
-    EXPECT_EQ(a->f64.tw_reals, 2U); // (wr, wi), read by duplicating loads
-    EXPECT_EQ(a->f64.tw_tail, 1U);  // which read one real past the last twiddle
+    EXPECT_EQ(a->f64.tw_reals, 4U); // pre-arranged (wr, wr), (-wi, wi)
   }
   if (const kernel_table* a = find_kernels(target::avx512)) {
     EXPECT_TRUE(a->fused);
@@ -88,8 +86,7 @@ TEST(link, lane_counts_and_fusion_match_each_target) {
     EXPECT_EQ(a->f32.complex_lanes, 8U);
     EXPECT_EQ(a->f64.real_lanes, 8U);
     EXPECT_EQ(a->f32.real_lanes, 16U);
-    EXPECT_EQ(a->f32.tw_reals, 2U); // (wr, wi), read by duplicating loads
-    EXPECT_EQ(a->f32.tw_tail, 1U);
+    EXPECT_EQ(a->f32.tw_reals, 4U); // pre-arranged (wr, wr), (-wi, wi)
   }
   if (const kernel_table* n = find_kernels(target::neon)) {
     EXPECT_TRUE(n->fused);
@@ -97,8 +94,7 @@ TEST(link, lane_counts_and_fusion_match_each_target) {
     EXPECT_EQ(n->f32.complex_lanes, 2U);
     EXPECT_EQ(n->f64.real_lanes, 2U);
     EXPECT_EQ(n->f32.real_lanes, 4U);
-    EXPECT_EQ(n->f64.tw_reals, 4U); // pre-arranged (wr, wr), (-wi, wi)
-    EXPECT_EQ(n->f64.tw_tail, 0U);
+    EXPECT_EQ(n->f64.tw_reals, 4U); // pre-arranged, as on x86
   }
   if (const kernel_table* f = find_kernels(target::neon_fcma)) {
     EXPECT_TRUE(f->fused);

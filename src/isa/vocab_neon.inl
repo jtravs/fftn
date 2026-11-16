@@ -42,7 +42,6 @@ template <> struct vec<double> {
   static constexpr std::size_t W = 2;
   static constexpr std::size_t split_block = W;
   static constexpr std::size_t tw_reals = 4;
-  static constexpr std::size_t tw_tail = 0;
 };
 
 template <> struct vec<float> {
@@ -53,7 +52,6 @@ template <> struct vec<float> {
   static constexpr std::size_t W = 4;
   static constexpr std::size_t split_block = W;
   static constexpr std::size_t tw_reals = 4;
-  static constexpr std::size_t tw_tail = 0;
 };
 
 // Complex-register operations (memory, add, sub, scale, fmadd_r, neg, conj, swap_ri,

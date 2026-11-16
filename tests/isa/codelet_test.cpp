@@ -113,8 +113,7 @@ void check_codelet(const codelet_table& t, const kernel_table& k, std::size_t in
     twiddles[2 * q] = static_cast<T>(std::cos(a));
     twiddles[2 * q + 1] = static_cast<T>(std::sin(a));
   }
-  std::vector<T> storage(
-      std::max<std::size_t>(1, of<T>(k).tw_reals * (r - 1) * lanes + of<T>(k).tw_tail));
+  std::vector<T> storage(std::max<std::size_t>(1, of<T>(k).tw_reals * (r - 1) * lanes));
   if (r > 1) {
     of<T>(k).pack_twiddles(twiddles.data(), (r - 1) * lanes, storage.data());
   }
