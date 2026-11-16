@@ -1325,7 +1325,23 @@ for any pass. Not done: running the s copies in blocks of B, which would shrink 
 lines from sM to BM (1.2 GB per team member at n = 17 · 2²⁰) and keep each block's
 convolution in cache, needs a loop over blocks whose source is a scratch line, which the
 program's loops (scratch slots do not move, section 8.3) cannot express yet. M is the 7-smooth length in [2Q − 1, next power of two] whose chain
-plus chirp passes cost least under the profile (`bluestein_length`, section 11.2).
+plus chirp passes cost least under the profile (`bluestein_length`, section 11.2), with a
+power-of-two part of at most `machine_profile::bluestein_pow2_part_bytes` (experiment X36:
+a quarter of L1 where the L2 is shared, as on Apple, whose chains of a power of two from
+the L1's size up ran 1.4–1.7 times as long per point as 7-smooth lengths just above; the
+L1's size on Zen-like caches, where the convolution's two scratch lines a power of two
+apart made 4093–32749 take 1.4–5 times as long; unlimited on the Xeon 6240, where a limit
+gained nothing); when that excludes the power of two, the candidates run up to 2 (2Q − 1).
+A convolution's chain takes the rules' radices, except that one of a power of two takes
+X32's long-row radices beyond `grid_min_bytes` where X32's chains apply (Apple, Zen) and
+beyond four times the L2 elsewhere (`machine_profile::long_convolution_bytes`; Granite
+Rapids takes the Xeon's rules, unmeasured), since a convolution is never a grid: the rules'
+radix-16 passes over 2¹⁸ points ran 2.5 times as long on the M5 Max, while on the Xeon the
+long-row radices lost at 1 MiB (X36). A single copy's convolution (s = 1) takes the split
+run its length would as a line (`split_from`; x86). A Bluestein stage that would have
+1 < s < C copies covers the whole line instead (Bluestein needs no prime) where that
+convolution is no longer than the copies' together, so its passes run whole units (X36:
+1018 = 2 · 509 on AVX-512 0.68, in float 0.40).
 Why a pass and not a strategy that wraps the chain: the program and stage design already
 expresses it, the passes before it (codelet and generic) keep their positions and edges,
 r2c and c2r get it through their inner complex chain unchanged, and the threading work
@@ -1571,7 +1587,10 @@ prices them) a cost per unit and a cost per tail, and a cost per pass. For a lin
    convolution length M is the
    7-smooth length from 2Q − 1 to the next power of two that minimises twice the cost of
    rule 4's sequence for M plus two elementwise passes of M points (priced as a last
-   radix-2 pass per point), the smallest on a tie (`bluestein_length`).
+   radix-2 pass per point), the smallest on a tie (`bluestein_length`), among those whose
+   power-of-two part the machine profile admits (up to 2 (2Q − 1) when that excludes the
+   power of two; experiment X36, section 8.5). A Bluestein stage with 1 < n / Q < C copies
+   becomes one stage of n where M(n) ≤ (n / Q) M(Q) (X36).
 4. The codelet passes are the sequence of radices from 2 to 16 (and 32 and 64 where the
    table's unit cost for them is not 0) multiplying to n_s with the
    lowest cost, the sum of its passes' costs. The pass of radix R after passes whose
@@ -2770,6 +2789,7 @@ to change before a release.
 | 2026-11-16 | `planning::measure` and wisdom built (task 2.4, sections 11.2 and 11.3): candidates are build settings of the rules' own builders (the threshold decisions of X7, X12b, X27, X29, X32–X34 and X2's next cheapest radix sequences), timed whole in interleaved rounds at the shape's size, the rules' choice kept unless beaten by 1 %; wisdom lines checked by the program's fingerprint; public `planning`, `options::effort`, `measure_seconds`, `measure_scratch_bytes`, `use`, `fftn::wisdom` (open choices in 18.2) | The maintainer's direction of the same day: measured choice instead of more threshold rules (X31b); reusing the forcing knobs keeps every candidate a program the tests already exercise and makes wisdom a few words of text; the fingerprint check makes "rebuilds exactly the same plan" a test rather than an assumption |
 | 2026-11-16 | C++20 stays (C++23 library features behind feature-test macros as before); no older standard is supported and no code is rewritten for one; compatibility with older toolchains and other languages comes from the C API (`fftn/c_api.h`) and possibly an FFTW-compatible interface, to be decided later | The maintainer prefers C++20 and newer; the public headers' C++20 use (nested inline namespaces, the executor concept, `std::span`, designated initialisers) is convenience, but a C interface serves old compilers, C, Fortran and FFTW users better than a C++17 subset |
 | 2026-11-16 | The planning API (task 2.4, pull request 26) as proposed: efforts `planning::rules` (default), `quick` and `measure`; budgets as two plain options (`measure_seconds`, `measure_scratch_bytes`, 0 = the effort's default); `class wisdom` as a value filled with `add` and passed by `options::use`, never global state; a stale or unbuildable entry is ignored and `describe()` says so; measure keeps the rules' choice unless another is at least 1 % faster; serial timing only for now | The maintainer agreed the public surface beyond section 5.3's sketch (AGENTS.md section 7) after the second reader's review; the reviewer's defects are fixed before merge |
+| 2026-11-16 | Bluestein and Rader convolutions follow the line rules (X36): long power-of-two convolutions take X32's long-row radices (from `grid_min_bytes` on Apple and Zen, beyond 4 L2 elsewhere); a Bluestein length's power-of-two part is limited per machine (`bluestein_pow2_part_bytes`: L1/4 on Apple, L1 on Zen, none on the Xeon); a single copy's convolution takes the split run; a stage of 1 < s < C copies covers the whole line where that convolution is no longer; half-form chirp passes rejected (section 8.5) | X36: the convolution took the in-cache table's radices and a power-of-two length at any size; Mac changed cases 0.49 (131071 2.61 → 0.88 of FFTW, 999983 1.99 → 0.75), EPYC 0.56 (4093 1.33 → 0.94, 65537 0.80), Xeon 1018 0.68 (÷ MKL 1.37 → 0.93) |
 
 ---
 

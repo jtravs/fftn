@@ -151,6 +151,19 @@ struct machine_profile {
   // time (X29's bimodal chains on the EPYC). set_grid_sizes sets them from X32's screens.
   std::size_t pow2_chain_bytes = 0;
   std::size_t pow2_radix8_bytes = 0;
+  // The largest power-of-two part (bytes of complex values) of a Bluestein stage's
+  // convolution length (experiment X36, planner/rules.hpp bluestein_length). Where the L2
+  // is shared (Apple), chains of a power of two of 8192 points and more ran 1.4-1.7 times
+  // as long per point as chains of 7-smooth lengths just above, so set_grid_sizes sets a
+  // quarter of L1 there, and the L1's size on Zen-like caches (the EPYC 7763's 4093-32749:
+  // 0.36-0.69 of the time); on the Xeon 6240 a limit gained nothing.
+  std::size_t bluestein_pow2_part_bytes = std::numeric_limits<std::size_t>::max();
+  // A Bluestein or Rader convolution of a power-of-two length of more than this many bytes
+  // takes X32's long-row radices (experiment X36; a convolution is a chain, never a grid):
+  // grid_min_bytes where X32's long chains apply (Apple, Zen), four times the L2 on other
+  // private L2s (the Xeon 6240 lost with them at 1 MiB and won from 8 MiB; Granite Rapids
+  // takes the same rule, unmeasured).
+  std::size_t long_convolution_bytes = std::size_t{8} * 1024 * 1024;
   // Whether a c2r row out of place in a two-phase grid pairs its bins in phase 1's gather
   // rather than in a separate pass (X29): set where the L2 is shared (Apple: 0.92-0.94 of
   // the separate route); on the EPYC it took 1.11.
