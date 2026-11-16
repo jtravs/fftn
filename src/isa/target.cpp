@@ -167,4 +167,17 @@ const narrow_leaf_table* find_narrow_leaves(target t) noexcept {
   return nullptr;
 }
 
+const pair_leaf_table* find_pair_leaves(target t) noexcept {
+#if FFTN_ARCH_X86_64
+  if (t == target::avx2) {
+    return &avx2::pairs::leaves;
+  }
+  if (t == target::avx512) {
+    return &avx512::pairs::leaves;
+  }
+#endif
+  static_cast<void>(t);
+  return nullptr;
+}
+
 } // namespace fftn::inline v0::detail

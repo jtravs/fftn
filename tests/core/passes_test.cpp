@@ -265,7 +265,8 @@ template <class T> void leaves_above_sixteen(fftn::isa target) {
     const auto plain =
         make_plan_core(fftn::detail::view_of(fftn::rows_c2c<T>(n, 1, fftn::direction::forward)),
                        {.force_isa = target}, {});
-    EXPECT_EQ(joined(stage_names(*plain)).find("leaf") != std::string::npos, leaf_by_default)
+    // (A pair leaf, experiment X28b, is no leaf of n: "pair leaf radix-8 x 4".)
+    EXPECT_EQ(joined(stage_names(*plain)).find(leaf + " ") != std::string::npos, leaf_by_default)
         << joined(stage_names(*plain));
     const auto real = make_plan_core(fftn::detail::view_of(fftn::rows_r2c<T>(2 * n, 1)),
                                      {.force_isa = target}, settings);
@@ -1111,8 +1112,9 @@ TEST(Passes, TargetsThatRoundAlikeGiveTheSameBits) {
 }
 
 // The 128-bit leaves of the x86 targets (experiment X28, kernel_table.hpp) against each
-// target's own leaves, which plans no longer use: every radix up to 16, both directions,
-// every edge variant, strided lines, several of them; every output bit equal.
+// target's own leaves, which plans no longer use: every radix up to 16 and 17, 19, 23
+// (X28b), both directions, every edge variant, strided lines, several of them; every
+// output bit equal.
 template <class T> void narrow_leaves_match(fftn::isa t) {
   const auto target = static_cast<fftn::detail::target>(static_cast<unsigned char>(t));
   const auto& own = fftn::detail::of<T>(*fftn::detail::find_kernels(target)).passes;
@@ -1122,7 +1124,8 @@ template <class T> void narrow_leaves_match(fftn::isa t) {
   constexpr std::size_t lines = 3;
   constexpr std::ptrdiff_t in_stride = 2;
   constexpr std::ptrdiff_t out_stride = 3;
-  for (std::size_t r = 2; r <= fftn::detail::dense_codelet_radix; ++r) {
+  for (std::size_t slot = 0; slot < fftn::detail::narrow_leaf_slots; ++slot) {
+    const std::size_t r = fftn::detail::gen::radices[slot];
     fftn::test::input_source src(0x4E41ULL + r);
     const cvec<T> x = src.complexes<T>(lines * r * in_stride);
     const cvec<T> in_factor = src.complexes<T>(r);
@@ -1133,7 +1136,6 @@ template <class T> void narrow_leaves_match(fftn::isa t) {
     args.scale = 0.37;
     args.in_factor = in_factor.data();
     args.out_factor = out_factor.data();
-    const std::size_t slot = fftn::detail::codelet_slot(r);
     for (std::size_t d = 0; d < 2; ++d) {
       for (std::size_t ie = 0; ie < fftn::detail::edge_op_count; ++ie) {
         for (std::size_t oe = 0; oe < fftn::detail::edge_op_count; ++oe) {
@@ -1157,6 +1159,162 @@ template <class T> void narrow_leaves_match(fftn::isa t) {
         }
       }
     }
+  }
+}
+
+// The leaves for lines of stride 1 (experiment X28b, passes/unit_leaf.inl) against the
+// leaves for any stride on the same lines, the target's own and the narrow ones: every
+// radix that has one, both directions, the edges none and scale, several lines in one call;
+// every output bit equal. A contiguous row takes them.
+template <class T> void unit_leaves_match(fftn::isa t) {
+  const auto target = static_cast<fftn::detail::target>(static_cast<unsigned char>(t));
+  const auto& own = fftn::detail::of<T>(*fftn::detail::find_kernels(target)).passes;
+  const fftn::detail::narrow_leaf_table* narrow = fftn::detail::find_narrow_leaves(target);
+  constexpr std::size_t lines = 3;
+  for (const std::uint8_t radix : fftn::detail::gen::radices) {
+    const std::size_t r = radix;
+    const std::size_t slot = fftn::detail::codelet_slot(r);
+    fftn::test::input_source src(0x7E1FULL + r);
+    const cvec<T> x = src.complexes<T>(lines * r);
+    fftn::detail::pass_args args;
+    args.scale = 0.37;
+    const auto dist = static_cast<std::ptrdiff_t>(r * sizeof(std::complex<T>));
+    for (std::size_t d = 0; d < 2; ++d) {
+      for (std::size_t ie = 0; ie < 2; ++ie) {
+        for (std::size_t oe = 0; oe < 2; ++oe) {
+          SCOPED_TRACE(std::string(fftn::isa_name(t)) + ", radix " + std::to_string(r) +
+                       ", direction " + std::to_string(d) + ", edges " + std::to_string(ie) +
+                       std::to_string(oe));
+          const fftn::detail::leaf_fn unit = own.codelet[slot]->leaf_unit[d][ie][oe];
+          const fftn::detail::leaf_fn any = own.codelet[slot]->leaf[d][ie][oe];
+          ASSERT_EQ(unit == nullptr, any == nullptr || r > 32 || narrow != nullptr);
+          if (unit != nullptr) {
+            cvec<T> y_unit(lines * r);
+            cvec<T> y_any(lines * r);
+            unit(&args, x.data(), y_unit.data(), dist, dist, lines);
+            any(&args, x.data(), y_any.data(), dist, dist, lines);
+            EXPECT_TRUE(bitwise_equal(y_unit, y_any));
+          }
+          if (narrow != nullptr && slot < fftn::detail::narrow_leaf_slots) {
+            const auto& half = fftn::detail::of<T>(*narrow);
+            const fftn::detail::leaf_fn half_unit = half.unit[slot][d][ie][oe];
+            const fftn::detail::leaf_fn half_any = half.leaf[slot][d][ie][oe];
+            ASSERT_EQ(half_unit == nullptr, half_any == nullptr);
+            if (half_unit != nullptr) {
+              cvec<T> y_unit(lines * r);
+              cvec<T> y_any(lines * r);
+              half_unit(&args, x.data(), y_unit.data(), dist, dist, lines);
+              half_any(&args, x.data(), y_any.data(), dist, dist, lines);
+              EXPECT_TRUE(bitwise_equal(y_unit, y_any));
+            }
+          }
+        }
+      }
+    }
+  }
+  const auto row =
+      make_plan_core(fftn::detail::view_of(fftn::rows_c2c<T>(8, 1, fftn::direction::forward)),
+                     {.force_isa = t}, {});
+  const auto* st = std::get_if<fftn::detail::stage>(&row->prog.records.back());
+  ASSERT_NE(st, nullptr);
+  const auto* half = narrow != nullptr ? &fftn::detail::of<T>(*narrow) : nullptr;
+  EXPECT_EQ(st->leaf, half != nullptr
+                          ? half->unit[fftn::detail::codelet_slot(8)][0][0][0]
+                          : own.codelet[fftn::detail::codelet_slot(8)]->leaf_unit[0][0][0]);
+}
+
+TEST(Passes, UnitLeavesMatchTheStridedLeaves) {
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    unit_leaves_match<double>(t);
+    unit_leaves_match<float>(t);
+  }
+}
+
+// The pair leaves (experiment X28b, passes/pair_leaf.inl): each entry of a target's table
+// is chosen for contiguous rows of its length, gives the bits of the chain r1 x m with
+// interleaved passes forced through build_settings::radices, out of place and in place,
+// for a batch of rows (one call) and with the scale on either edge, and is accurate against
+// the reference; a strided row, a factor edge and build_settings::pair_leaves = false take
+// the chain instead.
+template <class T> void pair_leaves_match(fftn::isa t) {
+  const auto target = static_cast<fftn::detail::target>(static_cast<unsigned char>(t));
+  const fftn::detail::pair_leaf_table* table = fftn::detail::find_pair_leaves(target);
+  ASSERT_NE(table, nullptr);
+  constexpr std::size_t rows = 3;
+  for (const fftn::detail::pair_leaf_entry& e : fftn::detail::of<T>(*table).entry) {
+    if (e.n == 0) {
+      break;
+    }
+    const std::size_t n = e.n;
+    const std::string name =
+        "pair leaf radix-" + std::to_string(e.r1) + " x " + std::to_string(e.m) + " ";
+    fftn::test::input_source src(0x9A1EULL + n);
+    const cvec<T> x = src.complexes<T>(rows * n);
+    for (const auto dir : {fftn::direction::forward, fftn::direction::backward}) {
+      for (const int edges : {0, 1, 2}) {
+        SCOPED_TRACE(std::string(fftn::isa_name(t)) + (sizeof(T) == 8 ? " double" : " float") +
+                     ", n = " + std::to_string(n) + ", direction " +
+                     std::to_string(static_cast<int>(dir)) + ", edges " + std::to_string(edges));
+        const fftn::options opts{.scale = edges == 0 ? 1.0 : 0.375, .force_isa = t};
+        build_settings pair;
+        pair.scale_on_input = edges == 2;
+        build_settings chain = pair;
+        chain.radices = {e.r1, e.m};
+        chain.layout = fftn::detail::layout_choice::interleaved;
+        const auto rows_shape = fftn::rows_c2c<T>(n, rows, dir);
+        const auto shape = fftn::detail::view_of(rows_shape);
+        const auto with = make_plan_core(shape, opts, pair);
+        const auto without = make_plan_core(shape, opts, chain);
+        EXPECT_NE(joined(stage_names(*with)).find(name), std::string::npos)
+            << joined(stage_names(*with));
+        EXPECT_EQ(joined(stage_names(*without)).find("pair leaf"), std::string::npos)
+            << joined(stage_names(*without));
+        using c = std::complex<T>;
+        const cvec<T> y = run<c, c>(*with, x, rows * n);
+        EXPECT_TRUE(bitwise_equal(y, run<c, c>(*without, x, rows * n)));
+        EXPECT_TRUE(bitwise_equal(y, run_in_place(*with, x)));
+      }
+      check_row<T>(t, n, dir, {}, 1.0, false, false, false, {name});
+      check_row<T>(t, n, dir, {}, 0.375, false, false, true, {name, "in: scale"});
+    }
+    // Where the pair leaf does not apply, the chain runs.
+    const auto row = fftn::rows_c2c<T>(n, 1, fftn::direction::forward);
+    const auto plain = fftn::detail::view_of(row);
+    build_settings off;
+    off.pair_leaves = false;
+    EXPECT_EQ(joined(stage_names(*make_plan_core(plain, {.force_isa = t}, off))).find("pair leaf"),
+              std::string::npos);
+    const cvec<T> f = src.complexes<T>(n);
+    build_settings factor;
+    factor.out_factor = f.data();
+    EXPECT_EQ(
+        joined(stage_names(*make_plan_core(plain, {.force_isa = t}, factor))).find("pair leaf"),
+        std::string::npos);
+    const fftn::shape<std::complex<T>, std::complex<T>> strided{
+        .dir = fftn::direction::forward,
+        .axes = {{.n = n, .in_stride = 2, .out_stride = 1}},
+        .batches = {},
+    };
+    EXPECT_EQ(
+        joined(stage_names(*make_plan_core(fftn::detail::view_of(strided), {.force_isa = t}, {})))
+            .find("pair leaf"),
+        std::string::npos);
+  }
+}
+
+TEST(Passes, PairLeavesMatchTheForcedChain) {
+  int targets = 0;
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    const auto target = static_cast<fftn::detail::target>(static_cast<unsigned char>(t));
+    if (fftn::detail::find_pair_leaves(target) == nullptr) {
+      continue;
+    }
+    pair_leaves_match<double>(t);
+    pair_leaves_match<float>(t);
+    ++targets;
+  }
+  if (targets == 0) {
+    GTEST_SKIP() << "no target with pair leaves runs here";
   }
 }
 

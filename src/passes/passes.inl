@@ -10,6 +10,8 @@
 
 #include "passes/stockham.inl"
 
+#include "passes/unit_leaf.inl"
+
 #include "passes/split.inl"
 
 #include "passes/generic.inl"
