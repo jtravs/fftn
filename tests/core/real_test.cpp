@@ -381,29 +381,31 @@ TEST(Real, HalfLengthGrid) {
 }
 
 // The r2c pairing in the grid's last phase (X33): pairs of mirror column sets of
-// hb = max(C, block / 2) columns, column 0 on its own; the last factor even and odd (the
-// middle bin in column 0, or in column L/2 paired with itself), two and three phases, in
-// and out of place, scaled and not (check_all); L of 24 splits into pairs of sets of 4 (or,
-// where C = 8, stays a pass after the grid).
+// hb = max(C, block / 2) columns (at least a cache line), column 0 on its own; the last factor even
+// and odd (the middle bin in column 0, or in column L/2 paired with itself), two and three phases,
+// in and out of place, scaled and not (check_all); L of 24 splits into pairs of sets of 4 (double;
+// float's sets of 4 are narrower than a line and keep a pass after the grid).
 TEST(Real, PairingInTheGridsLastPhase) {
   struct grid_real {
     std::size_t n;
     std::vector<std::size_t> factors;
+    std::size_t block;
     const char* route;
   };
   const char* fused = "the pairing in its last phase";
   for (const fftn::isa t : fftn::test::runnable_isas()) {
     for (const grid_real& g : {
-             grid_real{.n = 1024, .factors = {32, 16}, .route = fused},
-             grid_real{.n = 4096, .factors = {16, 8, 16}, .route = fused},
-             grid_real{.n = 7680, .factors = {16, 16, 15}, .route = fused},
-             grid_real{.n = 8192, .factors = {32, 128}, .route = fused},
-             grid_real{.n = 1920, .factors = {24, 40}, .route = "half-length complex grid"},
+             grid_real{.n = 1024, .factors = {32, 16}, .block = 16, .route = fused},
+             grid_real{.n = 4096, .factors = {16, 8, 16}, .block = 16, .route = fused},
+             grid_real{.n = 7680, .factors = {16, 16, 15}, .block = 16, .route = fused},
+             grid_real{.n = 8192, .factors = {32, 128}, .block = 16, .route = fused},
+             grid_real{
+                 .n = 1920, .factors = {24, 40}, .block = 8, .route = "half-length complex grid"},
          }) {
       build_settings s;
       s.strategy = fftn::detail::strategy_choice::grid;
       s.grid_factors = g.factors;
-      s.profile.grid_block = 8;
+      s.profile.grid_block = g.block;
       s.grid_fused = false; // a fused last phase (radices <= 8) keeps the separate pass
       check_all<double>(t, {.n = g.n, .settings = s, .route = g.route}, true);
       check_all<float>(t, {.n = g.n, .settings = s, .route = g.route}, true);

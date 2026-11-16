@@ -513,8 +513,11 @@ template <class T> bool grid_builder<T>::pairs_last(const grid_split& g) const n
   if (fused_ && fusible(phase_radix_list(nk))) {
     return false;
   }
+  // Sets narrower than a cache line write each output line from two or three iterations
+  // that lie apart in time: on the EPYC (blocks of 4, sets of 2 complex doubles) r2c 65536
+  // lost 5-7 % (X33).
   const std::size_t hb = pair_half(g);
-  return nk >= 2 && l % (2 * hb) == 0;
+  return nk >= 2 && l % (2 * hb) == 0 && hb * 2 * sizeof(T) >= 64;
 }
 
 // The tables of a paired last phase of L columns and Nk rows in an r2c row of n reals
