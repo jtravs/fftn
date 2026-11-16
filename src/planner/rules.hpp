@@ -42,7 +42,7 @@ inline constexpr std::array<std::size_t, 2> big_cost_radices{32, 64};
 // A length whose radices are fixed because the costs miss its measured best.
 struct radix_override {
   std::size_t n;
-  std::array<std::size_t, 4> radices; // in pass order, 0 after the last
+  std::array<std::size_t, 5> radices; // in pass order, 0 after the last
 };
 
 // One profile's pass costs, in arbitrary units: unit[kind][cost_column(R)] per unit of C

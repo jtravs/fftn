@@ -62,7 +62,7 @@ FLOOR = 0.4
 LOSS_SCALE = 0.05
 SCREEN_WEIGHT = 0.3
 SCALE = 10  # the fitted costs are multiplied by this and rounded
-MAX_OVERRIDE = 4  # radix_override holds up to four radices
+MAX_OVERRIDE = 5  # radix_override holds up to five radices
 SLOWER = math.log(1.02)  # an override is due where the choice is this much behind the baseline
 NOT_SLOWER = math.log(1.01)  # and must be within fbench's least band of it in every case
 
@@ -690,7 +690,7 @@ def cpp(name: str, t: Table) -> str:
         entries = "\n".join(
             "    {.n = " + str(n) + ", .radices = {" + ", ".join(map(str, padded)) + "}},"
             for n, seq in t.overrides
-            for padded in ((*seq, 0, 0, 0)[:MAX_OVERRIDE],)
+            for padded in ((*seq, 0, 0, 0, 0)[:MAX_OVERRIDE],)
         )
         head = f"constexpr std::array<radix_override, {len(t.overrides)}> {name}_overrides"
         ovr = head + "{{\n" + entries + "\n}};\n"
