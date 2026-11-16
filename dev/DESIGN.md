@@ -216,7 +216,7 @@ changed, with a line in the decision log, rather than kept for compatibility.
 
 Headers: `fftn.hpp` includes the whole core API, one concept per header: `shape.hpp`
 (`direction`, `axis`, `batch`, `shape` and the shape functions), `options.hpp`, `isa.hpp`,
-`workspace.hpp`, `plan.hpp`. The typed `plan<In, Out>` is a thin wrapper over a type-erased
+`workspace.hpp`, `plan.hpp`, `wisdom.hpp`. The typed `plan<In, Out>` is a thin wrapper over a type-erased
 core declared in `detail/core.hpp` and defined in `src/core/` (section 14.2): it passes its
 shape across as a `shape_view` of plain structs (the kind and precision as values, the axes
 and batch dimensions as spans borrowed for the call), so no `std::vector` crosses into
@@ -321,18 +321,31 @@ Points that matter:
 ```cpp
 namespace fftn {
 
+enum class planning : unsigned char { rules, quick, measure };   // section 11.2
+
 struct options {
   bool in_place = false;               // in == out at execute
+  double scale = 1.0;                  // fused into an edge pass; 1/n for normalised use
+  isa force_isa = isa::best;           // tests and benchmarks only
+  planning effort = planning::rules;   // section 11.2
+  double measure_seconds = 0;          // measured planning's time budget; 0: the effort's
+  std::size_t measure_scratch_bytes = 0;  // its scratch limit; 0: 1 GiB
+  const wisdom* use = nullptr;         // recorded programs to rebuild (section 11.3)
   // later, with their phases:
-  // planning effort = planning::rules;   rules | measure (section 11)
   // int max_lanes = 1;                   width hint: the most threads this plan will see
   // bool strict_layout = false;          ignore the width hint when choosing the program
   // bool may_destroy_input = false;
-  // double scale = 1.0;                  fused into an edge pass; 1/n for normalised use
   // edge_ops in_ops, out_ops;            fused pointwise work (section 12)
-  // isa force_isa = isa::best;           tests and benchmarks only
-  // const wisdom* use = nullptr;
   // table_cache* tables = nullptr;       share twiddle tables between plans (optional)
+};
+
+class wisdom {                         // caller-owned records of plans' programs (11.3)
+public:
+  wisdom(); explicit wisdom(std::string_view text);
+  static wisdom load(const std::filesystem::path&); void save(const std::filesystem::path&) const;
+  std::string text() const;
+  template <class In, class Out> void add(const plan<In, Out>&); void add(const wisdom&);
+  std::size_t size() const noexcept;
 };
 
 enum class isa : unsigned char { scalar, x86_v2, avx, avx2, avx512, neon, neon_fcma };
@@ -1523,7 +1536,7 @@ differs from x86's 4 KiB; nothing below hard-codes either.
 - Never touches user buffers; no process-global mutable state.
 - Catches the per-shape misses that fixed rules leave (finding E6) when asked to.
 
-### 11.2 Two efforts
+### 11.2 Efforts: rules and measurement
 
 **`planning::rules`** (default). Enumerate candidate programs for the shape: strategy ×
 factorisation and radix order × arithmetic layout × twiddle modes × blocking. Prune with
@@ -1634,6 +1647,35 @@ whole programs on scratch data with warmed caches and several repetitions, and k
 fastest. Whole plans are timed; no optimal-substructure assumption. The result is recorded
 as wisdom.
 
+*As built (task 2.4, `src/core/candidates.cpp`, `src/core/measure.cpp`).* A candidate is a
+few build settings (strategy, radices, grid factors or phase count, Rader on or off), so
+every candidate is a program the rules' code builds and can be written down as text. In the
+order they are timed: the rules' choice; for one axis whose complex line (the c2c row, or an
+even real row's half length) exceeds L1, the chain with the rules' radices, the grid in two
+phases and, beyond `grid_min_bytes`, in three, and for powers of two FFTL.jl's long-row
+radices in radix 8 and radix 4 (the choices X12b, X29, X32, X33 and X34 make by thresholds);
+for batches the lanes and the chain (X7); for every line length the next cheapest radix
+sequences by the profile's pass costs (`ranked_radices`, the shortest-path search keeping the
+k best continuations); and Rader off and on where a prime factor has no codelet (X27).
+Candidates that build the same program as an earlier one (by the fingerprint of
+`describe()`) are dropped. Candidates are built in the model's order and admitted while
+half the time budget is left and their tables, the workspace and the timing data fit
+`options::measure_scratch_bytes` (fewer transforms of the outer batch dimensions when the
+data would not); when only the rules' choice is admitted nothing is timed. The rest are
+timed at the shape's size in interleaved rounds: a warm-up execution sets each one's
+repetitions per sample, each round starts one candidate later and places the input and
+output at other 64-byte offsets within a page (as fbench does), the statistic is each
+candidate's median sample, and after the first rounds a candidate 25 % behind the fastest
+is dropped and its tables freed. In place, the input is restored before each sample and the
+repetitions are capped so that values cannot overflow. The budgets are targets: a large
+transform overruns the time by about one plan's construction and a few executions per
+candidate (P2), and the rules' plan and one transform's data are always allocated. The rules' choice stays
+unless another candidate is at least 1 % faster; otherwise the fastest wins, the earlier on
+a tie. `planning::quick` times at most 4 candidates with shorter samples (0.1 s budget),
+`planning::measure` at most 16 (10 s); P1 and P2 set these. Measurement is serial, on the
+calling thread, and times nothing combinatorial: the candidate list is linear in the
+alternatives above.
+
 The budget is generous by design (the maintainer, 2026-11-16): a transform that is cheap to
 compute is either planned with `planning::rules` or with a quick measure, while a hard one
 runs for minutes, hours or days, so longer planning with a bigger payoff is worth it. A
@@ -1650,7 +1692,21 @@ are set by experiment P2; faster planning that finds the same plan is always bet
 
 Wisdom is a small text record: shape key, CPU model, library version, program
 description. It can be exported and imported as a string or file and is an input to plan
-construction (`options::use`), never global state. A program description is also a valid
+construction (`options::use`), never global state.
+
+*As built (task 2.4, `src/core/wisdom.cpp`).* One tab-separated line per plan: a format
+tag, the build (the library version and a build identifier, a hash of the library's sources
+and of the configuration that changes its code, `cmake/FftnBuildId.cmake`, since the version
+does not change between development commits), the processor model (Linux `/proc/cpuinfo`,
+macOS `machdep.cpu.brand_string`, the Windows registry), the instruction set, the shape key
+(kind, precision, direction, in place, the scale written exactly, each axis's length and
+strides and each batch dimension's count and distances as given), the program (the
+candidate's text in canonical form, naming only what took effect, a grid's factors written
+out) and a check, the fingerprint of the program's `describe()`. An entry is found without
+building anything (an index by those fields) and applies only if its program builds, rebuilds
+to the same fingerprint and is named the same way; otherwise it is ignored (`describe()` says
+so) and the effort decides. Lines of other formats or builds are kept verbatim and exported
+again. A program description is also a valid
 plan input, so a result can be pinned and reproduced exactly on the same instruction set.
 Measured planning is the only source of run-to-run variation in program choice, and it is
 opt-in.
@@ -1658,8 +1714,9 @@ opt-in.
 ### 11.4 What the planner deliberately lacks
 
 No flag lattice, no exhaustive recursive search, no timing of sub-plans in isolation, no
-alignment in the problem key, no planning modes that differ in more than the two efforts
-above. If the model is poor on some machine, the remedy is a better profile, not more
+alignment in the problem key, no planning modes beyond the efforts above: the rules, and
+measurement at two budgets (`quick`, `measure`) that differ only in how many candidates
+they time and for how long. If the model is poor on some machine, the remedy is a better profile, not more
 planner.
 
 ---
@@ -2373,6 +2430,7 @@ infrastructure to maintain.
 | `README.md` | what FFTN is, a first example, links | Markdown |
 | `docs/conventions.md` | every convention, stated exactly: the formula each transform computes, signs, normalisation, the layout of every input and output (r2c and c2r sizes and padding, multi-dimensional halving), strides and distances, in-place rules, what is and is not preserved, alignment, accuracy bounds, the determinism contract | Markdown |
 | `docs/guide.md` | task-oriented: rows, planes, volumes, real transforms, choosing lengths, workspaces, planning effort and wisdom | Markdown with examples |
+| `docs/planning.md` | planning effort (rules, quick and full measurement) and wisdom | Markdown with an example |
 | `docs/kokkos.md` | the optional Kokkos adapter: View-based construction, the Kokkos-FFT-shaped plan, moving a Kokkos-FFT call site, the rules for Views and axes, normalisation, and every difference from Kokkos-FFT | Markdown with examples |
 | `docs/threading.md` | each integration model with a complete example: serial, inside an OpenMP region, the OpenMP executor, Kokkos, a custom pool, the built-in pool; what FFTN never does to the caller's runtime | Markdown with examples |
 | `docs/fusion.md` | edge operations, convolution, transform pairs, block callbacks | Markdown with examples |
@@ -2464,6 +2522,14 @@ data). To confirm: that rules from an MIT-licensed library, rewritten from a
 specification and cited, need nothing further (an MIT notice is needed only if code were
 copied). Planner v1 (experiment X2) has since replaced those rules by measured pass costs;
 nothing of FFTL's remains in the planner.
+
+**Task 2.4: the planning and wisdom API.** Settled: the maintainer agreed the API as
+proposed (decision log, 2026-11-16, "The planning API (task 2.4, pull request 26) as
+proposed"): three efforts, the two budget options, `fftn::wisdom` filled with `add` and passed
+by `options::use`, stale or unbuildable entries ignored with a note in `describe()`, the 1 %
+margin, serial timing. Still open, details below the API: the shape key uses strides and
+distances as given (0 for a default), so two spellings of one layout are two keys; a plan for
+a team is chosen by its serial time.
 
 **Threading API and contract (tasks 3.1 and 3.2), for the maintainer's review.** Built as
 below because section 5.3 left the shapes open; each is easy to change before a release.
@@ -2712,6 +2778,7 @@ to change before a release.
 | 2026-11-16 | An r2c row's grid pairs its bins in its last phase, over pairs of mirror column sets (half a block each, at least a line), except on `avx2` and where the last phase is fused | X33: the separate pairing pass over the half spectrum was 0.03–0.06 of the row's time on the Mac and the Xeon (r2c 0.94–0.98 there), nothing on the EPYC (0.98–1.02); narrower or wider sets lost (EPYC 1.05–1.07, Xeon 1.08–1.09) |
 | 2026-11-16 | A real row's half-length power of two stays a chain up to `pow2_chain_bytes`, as a c2c row of that length does (X32's rule, Apple and Zen-like caches) | X33: Mac r2c and c2r 32768–2²⁰ 0.69–0.97 of main, EPYC 65536–2²⁰ 0.58–0.76 (FFTN ÷ FFTW r2c 2²⁰ 1.41 → 0.82, c2r 1.35 → 0.84); the Xeon has no such chains |
 | 2026-11-16 | `planning::measure` gets a generous budget: real-size timing where scratch of the data's size is acceptable, seconds per shape if needed (of the order of FFTW's MEASURE), with a quick level for cheap transforms; never PATIENT- or EXHAUSTIVE-like combinatorial search, above all under threads (section 11.2); task 2.4 comes forward, ahead of more threshold rules | The maintainer: cheap transforms are planned by rules or a quick measure, hard ones run for minutes to days and repay longer planning; their single-thread codes used FFTW PATIENT. Granite Rapids (X31b) showed hand thresholds on cache geometry misfiring on an unmeasured chip |
+| 2026-11-16 | `planning::measure` and wisdom built (task 2.4, sections 11.2 and 11.3): candidates are build settings of the rules' own builders (the threshold decisions of X7, X12b, X27, X29, X32–X34 and X2's next cheapest radix sequences), timed whole in interleaved rounds at the shape's size, the rules' choice kept unless beaten by 1 %; wisdom lines checked by the program's fingerprint; public `planning`, `options::effort`, `measure_seconds`, `measure_scratch_bytes`, `use`, `fftn::wisdom` (open choices in 18.2) | The maintainer's direction of the same day: measured choice instead of more threshold rules (X31b); reusing the forcing knobs keeps every candidate a program the tests already exercise and makes wisdom a few words of text; the fingerprint check makes "rebuilds exactly the same plan" a test rather than an assumption |
 | 2026-11-16 | C++20 stays (C++23 library features behind feature-test macros as before); no older standard is supported and no code is rewritten for one; compatibility with older toolchains and other languages comes from the C API (`fftn/c_api.h`) and possibly an FFTW-compatible interface, to be decided later | The maintainer prefers C++20 and newer; the public headers' C++20 use (nested inline namespaces, the executor concept, `std::span`, designated initialisers) is convenience, but a C interface serves old compilers, C, Fortran and FFTW users better than a C++17 subset |
 | 2026-11-16 | The planning API (task 2.4, pull request 26) as proposed: efforts `planning::rules` (default), `quick` and `measure`; budgets as two plain options (`measure_seconds`, `measure_scratch_bytes`, 0 = the effort's default); `class wisdom` as a value filled with `add` and passed by `options::use`, never global state; a stale or unbuildable entry is ignored and `describe()` says so; measure keeps the rules' choice unless another is at least 1 % faster; serial timing only for now | The maintainer agreed the public surface beyond section 5.3's sketch (AGENTS.md section 7) after the second reader's review; the reviewer's defects are fixed before merge |
 

@@ -1,0 +1,499 @@
+// SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+// SPDX-License-Identifier: Apache-2.0
+//
+// Measured planning (DESIGN.md 11.2, task 2.4) and plans from wisdom (11.3): build the
+// candidates (core/candidates.hpp), time each whole program on scratch data at the
+// transform's size, keep the fastest. Candidates are timed in turn, round after round, so
+// that a drift in the machine's speed touches them all alike, with the input and output at
+// other offsets in every round (placement_of); the statistic is each candidate's median
+// sample. The budgets are first guesses that experiment P2 (dev/experiments/P2-*.md) sets.
+
+#include "core/measure.hpp"
+
+#include "core/candidates.hpp"
+#include "core/plan_core.hpp"
+#include "core/wisdom_entry.hpp"
+#include "fftn/detail/core.hpp"
+#include "fftn/isa.hpp"
+#include "fftn/options.hpp"
+#include "fftn/shape.hpp"
+#include "fftn/workspace.hpp"
+#include "platform/aligned_buffer.hpp"
+#include "platform/timer.hpp"
+
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <exception>
+#include <limits>
+#include <memory>
+#include <optional>
+#include <span>
+#include <sstream>
+#include <string>
+#include <utility>
+#include <vector>
+
+namespace fftn::inline v0::detail {
+
+std::vector<std::size_t> reduced_counts(std::span<const std::size_t> counts, std::size_t scaled,
+                                        std::size_t fixed, std::size_t limit) {
+  std::vector<std::size_t> out(counts.begin(), counts.end());
+  std::size_t transforms = 1;
+  for (const std::size_t c : counts) {
+    transforms *= c; // the shape's reach checks have bounded the product
+  }
+  if (scaled + fixed <= limit || transforms <= 1) {
+    return out;
+  }
+  const std::size_t per = std::max<std::size_t>(scaled / transforms, 1);
+  const std::size_t room = limit > fixed ? limit - fixed : 0;
+  const std::size_t want = std::max<std::size_t>(room / per, 1);
+  std::size_t product = transforms;
+  for (std::size_t& c : out) {
+    if (product <= want) {
+      break;
+    }
+    const std::size_t inner = product / c;
+    c = std::max<std::size_t>(1, std::min(c, want / std::max<std::size_t>(inner, 1)));
+    product = inner * c;
+  }
+  return out;
+}
+
+placement placement_of(std::size_t round) noexcept {
+  // Two odd steps through the 64 lines of a page; in - out = 16 round - 37 (mod 64) is never
+  // 0, so the two differ in every round, by a distance that changes too.
+  return {.in = (round * 29 % 64) * 64, .out = ((round * 13 + 37) % 64) * 64};
+}
+
+namespace {
+
+// One effort's budget (P2 sets them).
+struct budget {
+  double seconds;            // the target for the whole planning, building and timing
+  std::size_t candidates;    // the most programs timed, the rules' choice included
+  std::size_t radix_choices; // radix sequences per line length (enumerate_candidates)
+  double sample_seconds;     // a sample's executions take about this long
+  std::size_t min_rounds;    // samples per candidate before any is dropped
+  std::size_t max_rounds;
+};
+
+constexpr budget quick_budget{.seconds = 0.1,
+                              .candidates = 4,
+                              .radix_choices = 2,
+                              .sample_seconds = 2e-4,
+                              .min_rounds = 2,
+                              .max_rounds = 3};
+constexpr budget measure_budget{.seconds = 10,
+                                .candidates = 16,
+                                .radix_choices = 4,
+                                .sample_seconds = 1e-3,
+                                .min_rounds = 3,
+                                .max_rounds = 9};
+
+// The rules' choice stays unless another candidate is at least this much faster: timings of
+// close programs swap from run to run, and the rules' choice is the reproducible one.
+constexpr double keep_rules_margin = 0.01;
+// After min_rounds, a candidate this much slower than the fastest gets no more samples.
+constexpr double drop_margin = 0.25;
+// The default scratch limit (options::measure_scratch_bytes).
+constexpr std::size_t default_scratch_bytes = std::size_t{1} << 30U;
+// The room each data buffer keeps for placement_of's offsets.
+constexpr std::size_t placement_slack = 4096;
+
+double seconds_since(planning_clock::time_point start) {
+  return std::chrono::duration<double>(planning_clock::now() - start).count();
+}
+
+std::size_t span_bytes(std::ptrdiff_t lo, std::ptrdiff_t hi) {
+  return static_cast<std::size_t>(hi - lo);
+}
+
+// The data the timings allocate for a plan: input and output (one buffer in place, then
+// with a pristine copy of the input), each with room for the offsets.
+std::size_t data_bytes(const plan_core& c) {
+  const std::size_t in = span_bytes(c.in_lo, c.in_hi);
+  const std::size_t out = span_bytes(c.out_lo, c.out_hi);
+  return c.in_place ? 2 * (std::max(in, out) + placement_slack) : in + out + 2 * placement_slack;
+}
+
+std::size_t table_bytes(const plan_core& c) {
+  std::size_t bytes = 0;
+  for (const auto& t : c.tables_f64) {
+    bytes += t.size() * sizeof(double);
+  }
+  for (const auto& t : c.tables_f32) {
+    bytes += t.size() * sizeof(float);
+  }
+  return bytes;
+}
+
+// Scratch data for timing: one buffer per side (one in place), filled with small values, at
+// the offsets of the current round.
+class scratch_data {
+public:
+  explicit scratch_data(const plan_core& c) : in_place_(c.in_place) {
+    const std::ptrdiff_t lo = c.in_place ? std::min(c.in_lo, c.out_lo) : c.in_lo;
+    const std::ptrdiff_t hi = c.in_place ? std::max(c.in_hi, c.out_hi) : c.in_hi;
+    in_bytes_ = span_bytes(lo, hi);
+    in_ = aligned_buffer<std::byte>(in_bytes_ + placement_slack);
+    in_zero_ = -lo;
+    if (!c.in_place) {
+      out_ = aligned_buffer<std::byte>(span_bytes(c.out_lo, c.out_hi) + placement_slack);
+      out_zero_ = -c.out_lo;
+    }
+    fill(c.prec);
+    if (c.in_place) {
+      pristine_ = aligned_buffer<std::byte>(in_bytes_);
+      std::memcpy(pristine_.data(), in_.data(), in_bytes_);
+    }
+  }
+
+  [[nodiscard]] const void* in() const { return in_.data() + at_.in + in_zero_; }
+  [[nodiscard]] void* out() {
+    return in_place_ ? in_.data() + at_.in + in_zero_ : out_.data() + at_.out + out_zero_;
+  }
+  [[nodiscard]] const workspace& ws() const { return ws_; }
+  void reserve(std::size_t bytes) {
+    if (bytes > ws_.size()) {
+      ws_ = workspace(bytes);
+    }
+  }
+  // Moves the input (and output) to the round's offsets.
+  void place(std::size_t round) {
+    const placement next = placement_of(round);
+    if (!in_place_ && next.in != at_.in) {
+      std::memmove(in_.data() + next.in, in_.data() + at_.in, in_bytes_);
+    }
+    at_ = next;
+  }
+  // In place, the input is the output: restore it, so that repeated transforms do not grow
+  // the values without bound (reps_cap bounds the growth within one sample).
+  void restore() {
+    if (in_place_) {
+      std::memcpy(in_.data() + at_.in, pristine_.data(), in_bytes_);
+    }
+  }
+
+private:
+  void fill(precision p) {
+    // A fixed linear congruential sequence in [-0.5, 0.5): reproducible, never denormal.
+    std::uint64_t x = 0x9e3779b97f4a7c15ULL;
+    const auto next = [&] {
+      x = x * 6364136223846793005ULL + 1442695040888963407ULL;
+      return static_cast<double>(x >> 11U) * 0x1.0p-53 - 0.5;
+    };
+    if (p == precision::f64) {
+      for (std::size_t i = 0; i + sizeof(double) <= in_bytes_; i += sizeof(double)) {
+        const double v = next();
+        std::memcpy(in_.data() + i, &v, sizeof v);
+      }
+      return;
+    }
+    for (std::size_t i = 0; i + sizeof(float) <= in_bytes_; i += sizeof(float)) {
+      const auto v = static_cast<float>(next());
+      std::memcpy(in_.data() + i, &v, sizeof v);
+    }
+  }
+
+  bool in_place_;
+  std::size_t in_bytes_ = 0;
+  aligned_buffer<std::byte> in_;
+  aligned_buffer<std::byte> out_;
+  aligned_buffer<std::byte> pristine_;
+  std::ptrdiff_t in_zero_ = 0; // element 0's offset in its buffer, before the placement
+  std::ptrdiff_t out_zero_ = 0;
+  placement at_{};
+  workspace ws_;
+};
+
+// The most executions in one sample of an in-place plan before an unnormalised transform of
+// `points` points could overflow from values below 1: each multiplies the largest magnitude
+// by at most `points`. Out of place the input is never written, so no bound.
+std::size_t reps_cap(const plan_core& c) {
+  if (!c.in_place) {
+    return std::numeric_limits<std::size_t>::max();
+  }
+  std::size_t points = 1;
+  for (const std::size_t n : c.lengths) {
+    points *= n;
+  }
+  const double growth = std::max(1.0, std::log2(static_cast<double>(points)));
+  const double headroom = c.prec == precision::f64 ? 900.0 : 100.0; // bits of exponent, less margin
+  return std::max<std::size_t>(1, static_cast<std::size_t>(headroom / growth));
+}
+
+struct candidate {
+  plan_choice choice;
+  std::shared_ptr<plan_core> core;
+  std::size_t tables = 0; // bytes of the core's tables, while it is kept
+  std::size_t reps = 1;
+  std::vector<double> samples{}; // seconds per execution
+  double estimate = std::numeric_limits<double>::infinity();
+  bool live = true;
+};
+
+double median(std::vector<double> v) {
+  std::ranges::sort(v);
+  const std::size_t h = v.size() / 2;
+  return v.size() % 2 != 0 ? v[h] : (v[h - 1] + v[h]) / 2;
+}
+
+// Times `reps` executions; seconds per execution.
+double time_once(const plan_core& c, scratch_data& d, std::size_t reps) {
+  d.restore();
+  const auto start = planning_clock::now();
+  for (std::size_t i = 0; i < reps; ++i) {
+    execute_core(c, 0, c.prog.transforms, d.in(), d.out(), d.ws());
+  }
+  return seconds_since(start) / static_cast<double>(reps);
+}
+
+std::string fixed(double v, int digits) {
+  std::ostringstream o;
+  o.setf(std::ios::fixed);
+  o.precision(digits);
+  o << v;
+  return o.str();
+}
+
+std::string transforms_text(std::size_t n) {
+  return std::to_string(n) + (n == 1 ? " transform" : " transforms");
+}
+
+struct measure_limits {
+  double seconds;
+  std::size_t scratch;
+};
+
+std::shared_ptr<const plan_core>
+measure(const shape_view& s, const options& base, const build_settings& settings,
+        std::shared_ptr<plan_core> rules, const budget& b, const measure_limits& limits,
+        const std::string& wisdom_note, planning_clock::time_point start) {
+  const std::vector<plan_choice> choices = enumerate_candidates(*rules, settings, b.radix_choices);
+
+  // The candidates are timed on fewer transforms when the data, the workspace and the rules'
+  // tables would not fit the scratch limit.
+  const std::size_t rules_tables = table_bytes(*rules);
+  const std::vector<std::size_t> counts = reduced_counts(
+      rules->counts, data_bytes(*rules), workspace_bytes(*rules, 1) + rules_tables, limits.scratch);
+  const bool same_shape = counts == rules->counts;
+  std::vector<batch> reduced(s.batches.begin(), s.batches.end());
+  for (std::size_t i = 0; i < reduced.size(); ++i) {
+    reduced[i].count = counts[i];
+  }
+  shape_view timing = s;
+  timing.batches = reduced;
+  const bool forced = settings.strategy != strategy_choice::rules || !settings.radices.empty() ||
+                      !settings.grid_factors.empty() || settings.grid_phases != 0 ||
+                      settings.rader >= 0;
+  const bool real_clock = settings.measure_time == nullptr;
+
+  // Candidates are built in the model's order and admitted while half the time budget is
+  // left and their tables, the workspace and the data fit the scratch limit (the rules'
+  // choice always). Building all of them before timing spent the whole budget at 2^22
+  // points, where one plan takes 0.5-1.7 s to build (P1's first pass on the Xeon).
+  std::vector<candidate> cands;
+  std::vector<std::uint64_t> seen;
+  std::size_t data = 0;
+  std::size_t tables = 0;
+  std::size_t ws_bytes = 0;
+  for (const plan_choice& choice : choices) {
+    if (cands.size() == b.candidates ||
+        (!cands.empty() && seconds_since(start) > limits.seconds / 2)) {
+      break;
+    }
+    build_settings cs = settings;
+    apply_choice(choice, cs);
+    std::shared_ptr<plan_core> core;
+    try {
+      core = same_shape && !forced && cands.empty() ? rules : build_plan_core(timing, base, cs);
+    } catch (const std::exception&) {
+      continue; // a candidate the shape cannot take; the rules' plan always builds
+    }
+    const std::uint64_t f = program_fingerprint(*core);
+    if (std::ranges::find(seen, f) != seen.end()) {
+      continue;
+    }
+    seen.push_back(f);
+    const std::size_t t = table_bytes(*core);
+    const std::size_t d = std::max(data, data_bytes(*core));
+    const std::size_t w = std::max(ws_bytes, workspace_bytes(*core, 1));
+    if (!cands.empty() && d + w + tables + t > limits.scratch) {
+      break;
+    }
+    data = d;
+    ws_bytes = w;
+    tables += t;
+    cands.push_back({.choice = choice, .core = std::move(core), .tables = t});
+  }
+  if (rules != cands.front().core) {
+    rules.reset(); // not a candidate (another shape or a test's forced settings): free it
+  }
+
+  if (cands.size() == 1) {
+    // Nothing to compare: no scratch data, no timing.
+    cands.front().estimate = 1;
+  } else {
+    // The real clock times executions on scratch data; a test's stand-in clock
+    // (build_settings::measure_time) gives each sample instead, through the same rounds.
+    std::unique_ptr<scratch_data> scratch;
+    if (real_clock) {
+      scratch = std::make_unique<scratch_data>(*cands.front().core);
+      scratch->reserve(ws_bytes);
+    }
+    const auto sample = [&](const candidate& c) {
+      return real_clock ? time_once(*c.core, *scratch, c.reps)
+                        : settings.measure_time(choice_text(c.choice), settings.measure_context);
+    };
+    // A warm-up execution sets each candidate's repetitions per sample; a candidate reached
+    // after the budget is spent is not timed (the rules' choice always is).
+    for (candidate& c : cands) {
+      if (&c != &cands.front() && seconds_since(start) > limits.seconds) {
+        c.live = false;
+        continue;
+      }
+      if (real_clock) {
+        const double once = time_once(*c.core, *scratch, 1);
+        const double want = b.sample_seconds / std::max(once, 1e-9);
+        c.reps = std::clamp<std::size_t>(static_cast<std::size_t>(std::ceil(want)), 1,
+                                         std::min<std::size_t>(reps_cap(*c.core), 1U << 20U));
+      }
+    }
+    for (std::size_t round = 0; round < b.max_rounds; ++round) {
+      if (real_clock) {
+        scratch->place(round);
+      }
+      bool any = false;
+      // Each round starts one candidate later, so that no candidate always takes the first
+      // place after a round's checks (P2's first pass on the Mac: the rules' choice, always
+      // timed first, read 1.2-1.3 times its time in single rounds).
+      for (std::size_t k = 0; k < cands.size(); ++k) {
+        candidate& c = cands[(k + round) % cands.size()];
+        if (!c.live || (!c.samples.empty() && seconds_since(start) > limits.seconds)) {
+          continue;
+        }
+        c.samples.push_back(sample(c));
+        c.estimate = median(c.samples);
+        any = true;
+      }
+      if (round + 1 >= b.min_rounds) {
+        double fastest = std::numeric_limits<double>::infinity();
+        for (const candidate& c : cands) {
+          if (c.live) {
+            fastest = std::min(fastest, c.estimate);
+          }
+        }
+        for (std::size_t i = 0; i < cands.size(); ++i) {
+          candidate& c = cands[i];
+          c.live = c.live && c.estimate <= fastest * (1 + drop_margin);
+          if (!c.live && i != 0 && c.core) {
+            c.core.reset(); // a dropped candidate no longer competes: free its tables now
+          }
+        }
+      }
+      if (!any || seconds_since(start) > limits.seconds) {
+        break;
+      }
+    }
+  }
+
+  // The fastest still held, the earlier on a tie; the rules' choice unless clearly beaten.
+  // Only live candidates compete: a dropped one's median is frozen while the others' may
+  // still rise, and its plan has been freed.
+  std::size_t win = 0;
+  for (std::size_t i = 1; i < cands.size(); ++i) {
+    if (cands[i].live && cands[i].core && !cands[i].samples.empty() &&
+        cands[i].estimate < cands[win].estimate) {
+      win = i;
+    }
+  }
+  if (cands.front().estimate <= cands[win].estimate * (1 + keep_rules_margin)) {
+    win = 0;
+  }
+  std::size_t timed = 0;
+  for (const candidate& c : cands) {
+    if (!c.samples.empty()) {
+      ++timed;
+    }
+  }
+  const candidate& w = cands[win];
+  std::shared_ptr<plan_core> final_core = w.core;
+  const std::size_t timing_transforms =
+      cands.front().core ? cands.front().core->prog.transforms : final_core->prog.transforms;
+  if (!same_shape) {
+    build_settings cs = settings;
+    apply_choice(w.choice, cs);
+    final_core = build_plan_core(s, base, cs);
+  }
+  final_core->program_text = choice_text(pinned_choice(w.choice, *final_core));
+  final_core->planning_seconds = seconds_since(start);
+  final_core->candidates_timed = timed;
+  final_core->rules_over_chosen = cands.front().estimate / w.estimate;
+  final_core->chosen_rank = win;
+  final_core->planning_note =
+      wisdom_note + "measured (" + std::to_string(timed) + " of " + std::to_string(cands.size()) +
+      " distinct candidates timed" +
+      (same_shape ? "" : " on " + transforms_text(timing_transforms)) + ", " +
+      fixed(final_core->planning_seconds, 3) + " s): " + final_core->program_text +
+      (win == 0 ? ""
+                : "; the rules' choice took " + fixed(final_core->rules_over_chosen, 3) +
+                      " times as long");
+  return final_core;
+}
+
+} // namespace
+
+std::shared_ptr<const plan_core> plan_with_effort(const shape_view& s, const options& opts,
+                                                  const build_settings& settings) {
+  options base = opts;
+  base.use = nullptr;
+  base.effort = planning::rules;
+  const auto start = planning_clock::now(); // the budget covers the rules' plan too
+
+  std::string wisdom_note;
+  if (opts.use != nullptr) {
+    // The entry is found from the shape, the options, the instruction set, the processor and
+    // the build, without building the rules' plan; its program is then built and checked.
+    const std::string place =
+        wisdom_place(isa_name(static_cast<isa>(static_cast<unsigned char>(plan_target_of(base)))),
+                     shape_key(s, base));
+    if (const std::optional<wisdom_record> e = find_entry(*opts.use, place)) {
+      try {
+        if (const std::optional<plan_choice> choice = parse_choice(e->program)) {
+          build_settings cs = settings;
+          apply_choice(*choice, cs);
+          std::shared_ptr<plan_core> core = build_plan_core(s, base, cs);
+          // The same program, and the entry names it as this build would.
+          if (program_fingerprint(*core) == e->check && core->program_text == e->program) {
+            core->program_text = e->program;
+            core->planning_note = "from wisdom: " + e->program;
+            return core;
+          }
+        }
+      } catch (const std::exception&) {
+        // A program this build cannot make (a forged or foreign entry): stale, ignored. A
+        // shape that is not valid is refused below, by the rules' plan.
+      }
+      wisdom_note = "a wisdom entry for this shape does not rebuild its program here (ignored); ";
+    }
+  }
+  std::shared_ptr<plan_core> rules = build_plan_core(s, base, settings);
+  if (opts.effort == planning::rules) {
+    rules->planning_note = wisdom_note.empty() ? "" : wisdom_note + "the rules' choice";
+    return rules;
+  }
+  const budget& b = opts.effort == planning::quick ? quick_budget : measure_budget;
+  const measure_limits limits{
+      .seconds = opts.measure_seconds > 0 ? opts.measure_seconds : b.seconds,
+      .scratch =
+          opts.measure_scratch_bytes != 0 ? opts.measure_scratch_bytes : default_scratch_bytes,
+  };
+  return measure(s, base, settings, std::move(rules), b, limits, wisdom_note, start);
+}
+
+} // namespace fftn::inline v0::detail

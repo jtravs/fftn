@@ -85,6 +85,25 @@ FFTW's MEASURE plans changed from process to process on a loaded machine (60 poi
 processes describe different code unless the plan is shared through wisdom.
 [X25](experiments/X25-x86-diagnosis.md).
 
+1.10 **A measuring planner on a shared machine needs a budget for building, a fixed
+reproduction path, and its own check against the benchmark.** FFTN's `planning::measure`,
+first pass over 61 cases on three loaded machines:
+- only 43–66 % of cases kept one program over 12 process rounds; the choices that changed
+  were within noise of each other;
+- building plans, not timing them, set the cost of large transforms (one 2²² plan took
+  0.5–1.7 s to build); building all 16 candidates before timing any spent a 10 s budget and
+  left the rules' misfiring choice in place;
+- on the EPYC, choices that read 1.1–2.5 times faster inside planning were 0.90–0.94 of the
+  rules' speed in the benchmark, whose buffers sit at random 64-byte offsets where planning's
+  are page-aligned.
+
+So: build and time each candidate in turn, keep the rules' choice unless clearly beaten
+(1 %), record the winner as wisdom checked by a fingerprint of the program, and judge the
+planner by the benchmark rather than by its own timings. Where measurement did find real
+gains, they were stable across rounds: planes' radices (480 × 640 0.81–0.83 of the rules'
+time on the Mac) and Granite Rapids' misfiring chain rules forced on a Xeon (10 of 11
+recovered). [P1](experiments/P1-rules-vs-measure.md), [P2](experiments/P2-measure-budget.md).
+
 ## 2. The instruction set and the machine
 
 2.1 **The data layout that wins depends on the ISA.** Interleaved complex numbers suit

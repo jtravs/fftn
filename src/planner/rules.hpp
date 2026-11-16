@@ -100,6 +100,31 @@ struct target_profile {
 // radices above 16 are such primes.
 [[nodiscard]] std::vector<std::size_t> rule_radices(std::size_t n, const target_profile& p);
 
+// Up to k radix sequences for n, in pass order: rule_radices' first, then the cheapest
+// others by the profile's pass costs (cost, then lexicographic order), without repeats.
+// Measured planning (core/candidates.cpp) times them; a pure function like rule_radices.
+[[nodiscard]] std::vector<std::vector<std::size_t>>
+ranked_radices(std::size_t n, const target_profile& p, std::size_t k);
+
+// The product of radices (or grid factors), or 0 if it overflows std::size_t: a forced
+// sequence matches a length only when its product equals it, and a forged one (a wisdom
+// entry, a test knob) must not wrap around to a small length.
+[[nodiscard]] constexpr std::size_t checked_product(std::span<const std::size_t> factors) noexcept {
+  std::size_t product = 1;
+  for (const std::size_t f : factors) {
+    if (f != 0 && product > SIZE_MAX / f) {
+      return 0;
+    }
+    product *= f;
+  }
+  return product;
+}
+
+// FFTL.jl's radices for a long line of 2^k points (its src/factor.jl; MIT, the maintainer's
+// own; experiment X32): radix 8 with one or two 4s first, or radix 4 with an 8 first for an
+// odd k. k >= 2.
+[[nodiscard]] std::vector<std::size_t> long_pow2_radices(std::size_t k, bool radix8);
+
 // The primitive root (the smallest) of the Rader stage that a prime factor q above the
 // codelets takes instead of a Bluestein stage, or 0 for Bluestein: Rader when q lies in the
 // profile's range and q - 1 is 13-smooth (experiment X27), so that its convolution of q - 1

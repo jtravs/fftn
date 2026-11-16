@@ -126,6 +126,9 @@ one; its arms are written `fftn_omp`.
 
 | Option | Backends | Meaning |
 |---|---|---|
+| `PLANNING=rules\|quick\|measure` | fftn, fftn_omp | `options::effort` of every plan (default `rules`): with `quick` or `measure` each plan times its candidates when it is built, which fbench records as the case's `plan_s`, and each case's `note` starts with the chosen program (`chosen: ...`), the candidates timed and the rules' time over the chosen one's (`rules/chosen`). Experiments [P1](../dev/experiments/P1-rules-vs-measure.md) and [P2](../dev/experiments/P2-measure-budget.md) |
+| `MEASURE_SECONDS=S` | fftn, fftn_omp | `options::measure_seconds` (default 0: the effort's budget) |
+| `MEASURE_SCRATCH=B` | fftn, fftn_omp | `options::measure_scratch_bytes` in bytes (default 0: 1 GiB) |
 | `ISA=<name>` | fftn, fftn_omp | force every plan to one instruction set (`options::force_isa`; `scalar`, `avx2`, `avx512`, `neon`, `neon_fcma`, … as `fftn::isa_name` writes them; default `best`), so that one build compares targets: `A=fftn+ISA=avx2 B=fftn+ISA=avx512`. A target the build or processor lacks is refused; `describe` reports the plans' instruction set (`isa`) and `isa_forced` |
 | `THREADS=N` | fftn, fftn_omp | execute through an executor of N lanes: `fftn::thread_pool` (fftn) or `fftn::omp::executor` (fftn_omp), created once per process |
 | `GROUP_SIZE=G` | fftn, fftn_omp (with `THREADS`) | lanes per cache group the executor reports; default its own, `fftn::cache_group_size(N)`; 0 for one group |
@@ -147,8 +150,8 @@ one; its arms are written `fftn_omp`.
 | `GRID_PAD_PERIOD` | fftn, fftn_omp | the L1 set period the grid pads its intermediate array's rows against (`machine_profile::grid_pad_period`; default 4 KiB where the L2 is shared by a cluster, as on Apple processors, none where each core has its own); `never` turns the padding off (experiment [X26b](../dev/experiments/X26b-padded-grid.md)) |
 
 The backend builds and executes plans through the functions the public `plan` forwards
-every call to, so an arm with none of these options times exactly the public plan. `ISA`
-is the public `options::force_isa`. The profile and chunking options reach the library
+every call to, so an arm with none of these options times exactly the public plan. `ISA`,
+`PLANNING`, `MEASURE_SECONDS` and `MEASURE_SCRATCH` are public options. The profile and chunking options reach the library
 only through the private plan core's build settings, as the tests' do: the library has no
 switch for them, so `dev/KNOBS.toml` lists none. They exist for the threading experiments
 ([T1](../dev/experiments/T1-dispatch-wait-costs.md),
