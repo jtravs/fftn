@@ -244,6 +244,10 @@ TEST(Grid, PlannerChoosesByTheProfile) {
   s.profile.chain_part_bytes = 0;
   s.profile.chain_mixed_bytes = 0;
   s.profile.pow2_chain_bytes = 0;
+  s.profile.grid_three_block = 0; // X39's fields, which the running machine may set
+  s.profile.grid_phase_radix = 0;
+  s.profile.grid_two_block_bytes = 0;
+  s.profile.pow2_grid_bytes = 0;
   const auto plan = [&](std::size_t n, const build_settings& b) {
     return make_plan_core(
         fftn::detail::view_of(fftn::rows_c2c<double>(n, 1, fftn::direction::forward)),
@@ -421,6 +425,7 @@ TEST(Grid, PowersOfTwoBecomeGridsBeyondTheProfilesLimit) {
   s.profile.chain_mixed_bytes = 0;
   s.profile.pow2_chain_bytes = 0;
   s.profile.pow2_grid_bytes = std::size_t{256} * 1024;
+  s.profile.grid_two_block_bytes = 0;
   const auto plan = [&](std::size_t n) {
     return make_plan_core(
         fftn::detail::view_of(fftn::rows_c2c<double>(n, 1, fftn::direction::forward)),
