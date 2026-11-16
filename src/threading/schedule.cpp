@@ -18,10 +18,10 @@
 
 namespace fftn::inline v0::detail {
 
-machine_profile profile_for(const topology& t) noexcept {
+machine_profile profile_for(const topology& t, bool x86_64) noexcept {
   machine_profile p;
   if (!t.classes.empty()) {
-    set_grid_sizes(p, t.classes.front());
+    set_grid_sizes(p, t.classes.front(), x86_64);
   }
   // The defaults are a Zen 3 CCX's. Two other kinds of cache group were measured (T1, T5):
   // an Apple processor (macOS's reader, which numbers CPUs itself, topology.hpp, and an L2
@@ -69,7 +69,7 @@ machine_profile default_machine_profile() noexcept {
 // L2, and three phases only beyond L2 (Xeon Gold 6240, EPYC 7763). An L2 shared by a
 // cluster (Apple) is far: there the chain lost twofold once the row left L1, and three
 // phases paid from an eighth of L2 (X12).
-void set_grid_sizes(machine_profile& p, const core_class& c) noexcept {
+void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexcept {
   const bool private_l2 = c.l2.shared_by != 0 && c.l2.shared_by <= std::max(c.l1d.shared_by, 1U);
   if (c.l1d.size != 0) {
     p.grid_min_bytes = c.l1d.size;
@@ -95,7 +95,20 @@ void set_grid_sizes(machine_profile& p, const core_class& c) noexcept {
   // lost with chains beyond L2/2 at every length.
   const bool large_l3 = c.l3.size != 0 && c.l3.shared_by != 0 &&
                         c.l3.size / c.l3.shared_by >= std::size_t{2} * 1024 * 1024;
-  if (private_l2 && large_l3) {
+  // Experiment X35: on x86-64 a private L2 of 2 MiB or more (Granite Rapids; Intel's server
+  // cores since Sapphire Rapids, against Zen 2-5's 0.5-1 MiB) is its own case, whatever the
+  // L3 per CPU, which depends on the VM's size (a Granite Rapids VM of 8 cores reports 63 MiB
+  // per CPU). On that VM, against X29's, X32's and X33's chains: grids beyond L2/2 (long
+  // powers of two 0.61-0.97 of the chains' time, long real rows 0.59-0.88), three phases
+  // beyond L2/2 (131072 0.74 against 0.90 in two), but two phases where the power-of-two
+  // part is at most 2048 complex doubles (100000 0.67, 10^6 0.58; 71680 lost 1.10 in three;
+  // X34's odd-part rule lost 1.03-1.46). Not on AArch64: an Axion VM (Neoverse V2, 2 MiB of
+  // private L2) lost 1.28 over the rows this profile changed, and keeps X29's and X32's chains.
+  const bool large_l2 = x86_64 && private_l2 && c.l2.size >= std::size_t{2} * 1024 * 1024;
+  if (large_l2) {
+    p.grid_three_bytes = c.l2.size / 2;
+    p.grid_two_part_bytes = std::size_t{32} * 1024;
+  } else if (private_l2 && large_l3) {
     p.chain_part_bytes = std::size_t{16} * 1024;
     p.chain_part_limit_bytes = c.l3.size / 2;
     // Experiment X32, EPYC 7763: power-of-two rows as chains of FFTL.jl's radix-8 sequence
@@ -108,7 +121,7 @@ void set_grid_sizes(machine_profile& p, const core_class& c) noexcept {
   // Experiment X34: where those chains do not apply (Xeon 6240, 0.7 MiB of L3 per CPU), a
   // row whose length has an odd part of at least 15 stays in two grid phases beyond L2
   // (15 rows of 71680 to 4 x 10^6 points: 0.70-1.01 of the three phases' cycles, 100000 0.73).
-  if (private_l2 && !large_l3) {
+  if (private_l2 && !large_l2 && !large_l3) {
     p.grid_two_odd_part = 15;
   }
   // Experiment X29, M5 Max: with the grid from L1, rows whose length has a power-of-two part

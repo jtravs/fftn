@@ -76,3 +76,30 @@ cap; the month's total, with X21, is USD 3.23. Egress (results only, about 15 MB
 negligible. Teardown was verified on 2026-11-16 16:44 UTC: no instance, disk or address of
 the campaign is left; the firewall rule, subnet and network were deleted after matching
 their IDs; the watchdogs were stopped.
+
+## X35, 2026-11-16
+
+Rentals for [X35](X35-gnr-profile.md) (a cache-geometry key for Granite Rapids' plans), under
+the maintainer's 2026-11-16 approval (USD 20 cap for the campaign, at most USD 6 for X35).
+Same project, region, settings and prices as X31b: Spot VMs with `--max-run-duration=3h`
+(termination action DELETE), boot-disk auto-delete, and a Mac-side watchdog per VM that
+deletes by name only after matching the recorded ID. Creation times are those Compute Engine
+recorded; deletion times are when the delete call returned, or Google's preemption.
+
+Shared resources (free): VPC network `fftn-x35-net` (2494351373128600031), subnet
+`fftn-x35-sub` (5132173076327729617), firewall rule `fftn-x35-ssh` (8749658591903254953,
+SSH from the controller's address only; its source was changed once, when the controller's
+address changed).
+
+| Instance | Recorded ID | Type | Zone | Spot USD/h (VM) | Created (UTC) | Deleted (UTC) | Cost USD | Running total (X35) |
+|---|---|---|---|---:|---|---|---:|---:|
+| fftn-x35-c4 | 4451270156883495296 | c4-standard-16, 1 thread per core, minimum platform Granite Rapids | us-central1-a | 0.473 | 2026-11-16 17:03:43 | 2026-11-16 17:25:47 (preempted by Google) | 0.19 | 0.19 |
+| fftn-x35-c4a | 909358881553418641 | c4a-standard-16 | us-central1-a | 0.354 | 2026-11-16 17:03:59 | 2026-11-16 18:09:18 | 0.41 | 0.60 |
+| fftn-x35-c4b | 3593494037444099488 | c4-standard-16, 1 thread per core, minimum platform Granite Rapids | us-central1-a | 0.473 | 2026-11-16 17:54:23 | 2026-11-16 20:01:19 | 1.04 | 1.64 |
+
+X35 total USD 1.64 estimated gross. The first Granite Rapids VM was preempted before it
+produced a result, so its cost bought nothing. With X31 and X31b the campaign has spent
+USD 3.51 of its USD 20 cap; the month's total, with X21, is USD 4.87. Egress (results only,
+about 30 MB) is negligible. Teardown was verified on 2026-11-16 at 20:02 UTC: no instance,
+disk or address of the campaign is left; the firewall rule, subnet and network were deleted
+after matching their IDs; the watchdogs were stopped.
