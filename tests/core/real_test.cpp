@@ -32,6 +32,7 @@
 #include <complex>
 #include <cstddef>
 #include <cstring>
+#include <limits>
 #include <span>
 #include <string>
 #include <utility>
@@ -340,8 +341,9 @@ TEST(Real, EveryRoute) {
 }
 
 // Long real rows: the half-length transform through a grid, the pairing after it (r2c, in
-// place in the output) or before it (c2r, into the output, where the grid then runs in
-// place); two and three phases.
+// place in the output) or before it: out of place in two phases in phase 1's gather (c2r,
+// from the input, which stays intact), otherwise as a pass into the output, where the grid
+// then runs in place; two and three phases.
 TEST(Real, HalfLengthGrid) {
   struct grid_real {
     std::size_t n;
@@ -353,13 +355,26 @@ TEST(Real, HalfLengthGrid) {
              grid_real{.n = 1024, .factors = {8, 64}},
              grid_real{.n = 2048, .factors = {8, 8, 16}},
              grid_real{.n = 1920, .factors = {24, 40}},
+             grid_real{.n = 65536, .factors = {128, 256}},
          }) {
-      build_settings s;
-      s.strategy = fftn::detail::strategy_choice::grid;
-      s.grid_factors = g.factors;
-      for (const bool r2c : {true, false}) {
-        check_all<double>(t, {.n = g.n, .settings = s, .route = "half-length complex grid"}, r2c);
-        check_all<float>(t, {.n = g.n, .settings = s, .route = "half-length complex grid"}, r2c);
+      // With and without the padded intermediate (X26b), which the c2r rows whose phase 1
+      // gather pairs the bins must not take (they write phase 1 into the output, X29).
+      for (const std::size_t period :
+           {std::numeric_limits<std::size_t>::max(), std::size_t{4096}}) {
+        build_settings s;
+        s.strategy = fftn::detail::strategy_choice::grid;
+        s.grid_factors = g.factors;
+        s.profile.grid_pad_period = period;
+        check_all<double>(t, {.n = g.n, .settings = s, .route = "half-length complex grid"}, true);
+        check_all<float>(t, {.n = g.n, .settings = s, .route = "half-length complex grid"}, true);
+        // c2r with the pairing in a pass and, out of place in two phases, in the gather.
+        for (const bool paired : {false, true}) {
+          s.profile.c2r_paired_gather = paired;
+          check_all<double>(t, {.n = g.n, .settings = s, .route = "half-length complex grid"},
+                            false);
+          check_all<float>(t, {.n = g.n, .settings = s, .route = "half-length complex grid"},
+                           false);
+        }
       }
     }
   }
@@ -518,17 +533,18 @@ TEST(Real, PlanesAndVolumes) {
 }
 
 // The rules: a long row's half-length transform is a grid where a c2c row of that length
-// would be one; a short row is a leaf.
+// would be one (with a profile fixed here: the machine's own may keep 2^19 points a chain,
+// X29); a short row is a leaf.
 TEST(Real, RulesChooseTheRoute) {
   const std::size_t big = std::size_t{1} << 20U;
-  EXPECT_NE(fftn::r2c_plan<double>(fftn::rows_r2c<double>(big, 1))
-                .describe()
-                .find("half-length complex grid"),
-            std::string::npos);
-  EXPECT_NE(fftn::c2r_plan<double>(fftn::rows_c2r<double>(big, 1))
-                .describe()
-                .find("half-length complex grid"),
-            std::string::npos);
+  build_settings s;
+  s.profile.grid_min_bytes = std::size_t{512} * 1024;
+  for (const bool r2c : {true, false}) {
+    const auto core =
+        r2c ? make_plan_core(fftn::detail::view_of(fftn::rows_r2c<double>(big, 1)), {}, s)
+            : make_plan_core(fftn::detail::view_of(fftn::rows_c2r<double>(big, 1)), {}, s);
+    EXPECT_NE(fftn::detail::describe(*core).find("half-length complex grid"), std::string::npos);
+  }
   EXPECT_NE(fftn::c2r_plan<double>(fftn::rows_c2r<double>(16, 1)).describe().find("a leaf of 8"),
             std::string::npos);
 }

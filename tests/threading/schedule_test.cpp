@@ -428,8 +428,10 @@ TEST(Schedule, OwnedTasksPartition) {
 }
 
 // The grid's sizes from the recorded machines' caches (experiment X12b): a private L2
-// (Xeon, EPYC) keeps the chain to half of L2 and two phases to L2; an L2 shared by a cluster
-// (Apple) gets the grid beyond L1 and three phases beyond an eighth of L2.
+// (Xeon, EPYC) keeps the chain to half of L2 and two phases to L2, and with 2 MiB or more of
+// L3 per CPU (EPYC) lengths whose power-of-two part is small to half of L3 (X29); an L2
+// shared by a cluster (Apple) gets the grid beyond L1 and three phases beyond an eighth of
+// L2.
 TEST(Schedule, GridSizesFromCaches) {
   const std::filesystem::path data(FFTN_PLATFORM_DATA);
   const auto sizes = [&](const char* file) {
@@ -456,6 +458,19 @@ TEST(Schedule, GridSizesFromCaches) {
   EXPECT_EQ(xeon.grid_pad_period, std::numeric_limits<std::size_t>::max());
   EXPECT_EQ(epyc.grid_pad_period, std::numeric_limits<std::size_t>::max());
   EXPECT_EQ(m5.grid_pad_period, 4 * kib);
+  // Lengths that are not powers of two stay chains longer where the L2 is shared (X29).
+  EXPECT_EQ(m5.chain_part_bytes, 16 * kib);
+  EXPECT_EQ(m5.chain_mixed_bytes, 256 * kib);
+  EXPECT_EQ(m5.chain_part_limit_bytes, std::numeric_limits<std::size_t>::max());
+  EXPECT_EQ(xeon.chain_part_bytes, 0U);
+  EXPECT_EQ(epyc.chain_mixed_bytes, 0U);
+  // With 4 MiB of L3 per CPU the EPYC keeps them chains to half of its L3 (X29).
+  EXPECT_EQ(epyc.chain_part_bytes, 16 * kib);
+  EXPECT_EQ(epyc.chain_part_limit_bytes, 16 * 1024 * kib);
+  // The c2r grid pairs in its first gather only where the L2 is shared (X29).
+  EXPECT_TRUE(m5.c2r_paired_gather);
+  EXPECT_FALSE(epyc.c2r_paired_gather);
+  EXPECT_FALSE(xeon.c2r_paired_gather);
   // Unknown sizes keep the defaults; an unknown sharing counts as a shared L2.
   const machine_profile defaults;
   machine_profile unknown;

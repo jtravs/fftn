@@ -97,6 +97,18 @@ constexpr std::array size_fields{
     },
     size_field{.key = "GRID_BLOCK", .member = &fftn::detail::machine_profile::grid_block},
     size_field{
+        .key = "CHAIN_PART_BYTES",
+        .member = &fftn::detail::machine_profile::chain_part_bytes,
+    },
+    size_field{
+        .key = "CHAIN_MIXED_BYTES",
+        .member = &fftn::detail::machine_profile::chain_mixed_bytes,
+    },
+    size_field{
+        .key = "CHAIN_PART_LIMIT_BYTES",
+        .member = &fftn::detail::machine_profile::chain_part_limit_bytes,
+    },
+    size_field{
         .key = "GRID_PAD_PERIOD",
         .member = &fftn::detail::machine_profile::grid_pad_period,
     },

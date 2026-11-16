@@ -260,7 +260,12 @@ void add_cases(std::vector<team_case>& out, const fftn::detail::build_settings& 
   out.push_back(make_case("c2r_grid3_2048x2" + suffix, fftn::rows_c2r<T>(2048, 2), 2 * 1025,
                           2 * 2048, false, grid, target));
   grid.grid_factors = {16, 64};
+  grid.profile.c2r_paired_gather = false;
   out.push_back(make_case("c2r_grid_2048x2" + suffix, fftn::rows_c2r<T>(2048, 2), 2 * 1025,
+                          2 * 2048, false, grid, target));
+  // Phase 1's gather pairs the bins from the input (X29); its blocks are a team's lines.
+  grid.profile.c2r_paired_gather = true;
+  out.push_back(make_case("c2r_grid_paired_2048x2" + suffix, fftn::rows_c2r<T>(2048, 2), 2 * 1025,
                           2 * 2048, false, grid, target));
   // The lanes strategy (strategies/lanes.cpp): blocks of rows (here 8, and the tail's blocks
   // of C) that a team claims in runs of transforms of any length and alignment.
