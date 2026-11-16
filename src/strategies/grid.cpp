@@ -724,8 +724,7 @@ std::size_t grid_builder<T>::c2c_row(const grid_split& g, int sign, bool in_plac
 template <class T>
 std::size_t grid_builder<T>::paired_last_phase(std::size_t ni, std::size_t l, slot src,
                                                std::ptrdiff_t src_row, slot dst, double scale,
-                                               std::size_t r2c_n, const grid_split& g,
-                                               program& p) {
+                                               std::size_t r2c_n, const grid_split& g, program& p) {
   const std::size_t hb = pair_half(g);
   const auto cb = static_cast<std::ptrdiff_t>(2 * sizeof(T));
   const auto big_l = static_cast<std::ptrdiff_t>(l);
@@ -741,8 +740,8 @@ std::size_t grid_builder<T>::paired_last_phase(std::size_t ni, std::size_t l, sl
 
   add_copy("gather", kernels_.passes.block_copy[0], ni, hb, src, src_row, slot::a,
            static_cast<std::ptrdiff_t>(hb), 1.0, nullptr, p);
-  const slot z0 = phase_chain(ni, rad, hb, -1, side_of{.where = slot::a},
-                              side_of{.where = slot::a}, 1.0, 1.0, nullptr, p);
+  const slot z0 = phase_chain(ni, rad, hb, -1, side_of{.where = slot::a}, side_of{.where = slot::a},
+                              1.0, 1.0, nullptr, p);
   stage col;
   col.run = kernels_.passes.r2c_pair_column[scaled];
   col.args.m = ni;
@@ -754,8 +753,8 @@ std::size_t grid_builder<T>::paired_last_phase(std::size_t ni, std::size_t l, sl
   col.src = z0;
   col.dst = dst;
   col.units = 1;
-  col.name = "grid r2c pairing of column 0 (" + std::to_string(ni) + " rows " +
-             std::to_string(l) + " apart" + (scaled != 0 ? "; out: scale" : "") + ")";
+  col.name = "grid r2c pairing of column 0 (" + std::to_string(ni) + " rows " + std::to_string(l) +
+             " apart" + (scaled != 0 ? "; out: scale" : "") + ")";
   p.records.emplace_back(std::move(col));
 
   const std::size_t start = p.records.size();

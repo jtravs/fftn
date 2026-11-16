@@ -804,7 +804,7 @@ void r2c_pair_gather(const pass_args* a, const void* src, void* dst, std::size_t
   const std::ptrdiff_t ys = 2 * a->dst_stride;
   const std::size_t hb = a->s;
   const std::size_t c = pair_iteration<T>(a);
-  const T* lo = x + 2;                                // column c hb + 1
+  const T* lo = x + 2;                              // column c hb + 1
   const T* hi = x + at(a->n - (2 * c + 1) * hb, 2); // column L - (c + 1) hb
   const std::size_t bytes = 2 * sizeof(T) * hb;
   for (std::size_t r = first; r < last; ++r) {
@@ -837,7 +837,7 @@ void r2c_pair_scatter(const pass_args* a, const void* src, void* dst, std::size_
   const std::size_t c = pair_iteration<T>(a);
   const T* table = static_cast<const T*>(a->twiddles);
   const T half = half_of<T, Scaled>(a);
-  T* lo = y + 2;                                // column c hb + 1
+  T* lo = y + 2;                              // column c hb + 1
   T* hi = y + at(a->n - (2 * c + 1) * hb, 2); // column L - (c + 1) hb
   const std::size_t bytes = 2 * sizeof(T) * hb;
   for (std::size_t k = first; k < last; ++k) {
