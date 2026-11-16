@@ -65,7 +65,7 @@
 //                    grid_phase_radix; default 16): codelet radices up to R (experiment X3)
 //   GRID_MIN_BYTES, GRID_THREE_BYTES, GRID_BLOCK_BYTES, GRID_BLOCK, GRID_FUSE_BYTES,
 //   GRID_PAD_PERIOD, POW2_CHAIN_BYTES, POW2_RADIX8_BYTES, GRID_TWO_ODD_PART,
-//   BLUESTEIN_POW2_PART_BYTES
+//   GRID_TWO_PART_BYTES, BLUESTEIN_POW2_PART_BYTES, LONG_CONVOLUTION_BYTES
 //                    the planner's grid fields of the machine profile (schedule.hpp)
 // ISA is a public option; the others reach the library only through the private build
 // settings, as a test's do: the library has no switch for them, so dev/KNOBS.toml does not

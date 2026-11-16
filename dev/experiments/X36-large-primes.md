@@ -190,8 +190,10 @@ final rule requires it to be no longer (float 12279: 24576 against 3 × 8192, ke
 A = `main` 8ae4e49, N = 5098f3c (the final rules), I = N with `LAYOUT=interleaved` (on
 these single rows that turns arm 4 off and nothing else), F = FFTW.
 
-EPYC, run 20261116-203815-9d19 (band ±1.37 %, every round loaded; not in the serial
-queue, which had five jobs ahead): every changed case faster, none slower; changed cases
+EPYC, run 20261116-203815-9d19 (band ±1.37 %, every round loaded), and the tracking run
+below: both ran outside fbench_remote's serial queue (five jobs were ahead), on the same
+shared nodes as other agents' timing jobs, so they may have disturbed those runs' timings
+and been disturbed by them (the A/A band absorbs the second, not the first): every changed case faster, none slower; changed cases
 N ÷ A double 0.558 (0.269–0.843), float 0.548 (0.249–0.793). Arm 4 (N ÷ I): 65537 0.56,
 131071 0.82, 262139 0.88, 524287 0.87, 999983 0.92, 1019 0.85, float 2039 0.82, 65537
 0.79; 2039 double 1.03 (within its interval's reach of the band), 10403 1.00. FFTN ÷ FFTW

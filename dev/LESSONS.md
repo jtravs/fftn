@@ -417,6 +417,17 @@ the rows with a large power-of-two part. The machine fits neither neighbour. A c
 only as good as the topology the guest is shown, and crossovers that move by core want a
 measured choice, not a guessed key. [X31b](experiments/X31b-cloud-followup.md).
 
+3.19 **A cache size can stand for the core behind it only within one family.** The private
+L2's size, unlike L3 per CPU, does not change with a VM's size or SMT, and on x86 it separates
+the cores that want long-row chains (Zen 3 and Zen 5, 0.5–1 MiB) from Granite Rapids (2 MiB),
+which wants grids: its long powers of two ran at 0.59–0.98 and 100000 at 0.67 of the chains'
+time. Axion's Neoverse V2 has the same 2 MiB private L2 and lost 1.15–1.28 with Granite Rapids'
+plans, up to 1.97 on single rows. Within Granite Rapids itself, two- and three-phase grids
+traded places by factorisation (71680 lost 1.10 in three phases while 86016 and 98304 gained
+0.92–0.93; c2r rows lost 1.15 in two phases while c2c rows gained). Key such a rule on
+geometry and architecture together, and expect the fine crossovers to need a measured choice.
+[X35](experiments/X35-gnr-profile.md).
+
 ## 4. Kernels and algorithms
 
 4.1 **A whole-transform codelet wins only where it fills the register.** One 32-point

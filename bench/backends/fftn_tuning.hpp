@@ -92,6 +92,10 @@ constexpr std::array size_fields{
         .member = &fftn::detail::machine_profile::grid_two_odd_part,
     },
     size_field{
+        .key = "GRID_TWO_PART_BYTES",
+        .member = &fftn::detail::machine_profile::grid_two_part_bytes,
+    },
+    size_field{
         .key = "GRID_FUSE_BYTES",
         .member = &fftn::detail::machine_profile::grid_fuse_bytes,
     },
@@ -127,6 +131,10 @@ constexpr std::array size_fields{
     size_field{
         .key = "BLUESTEIN_POW2_PART_BYTES",
         .member = &fftn::detail::machine_profile::bluestein_pow2_part_bytes,
+    },
+    size_field{
+        .key = "LONG_CONVOLUTION_BYTES",
+        .member = &fftn::detail::machine_profile::long_convolution_bytes,
     },
 };
 constexpr std::array int_fields{
