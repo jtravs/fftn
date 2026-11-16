@@ -156,7 +156,10 @@ changed row won (0.53–0.84; geomean of the arm 0.80 of main).
 Arm commit 9752672 (with b2) against main, standard tracking tier (run
 20261115-210824-1a6a, 80 rounds, 55 loaded, band ±1.00 %): c2c 46080 0.630, 100000 0.600,
 c2r 65536 0.925; no other case outside ±2 %; geomean 0.983. FFTN ÷ FFTW at 46080 and
-100000 goes from 1.20–1.23 to 0.74–0.76.
+100000 goes from 1.20–1.23 to 0.74–0.76. Re-run against main at be593d1 (after X26, X23b
+and X28; branch cbe9386, run 20261116-012450-ab38, 80 rounds, 71 loaded, band ±1.08 %):
+46080 0.643, 100000 0.617, c2r 65536 0.937, r2c 2048 × 36 0.970; slowest case 1.014
+(c2c 17, no evidence); geomean 0.984. Adopted on the Mac by rule 2.
 
 ### Arm (d): the chain to half of L3 where each CPU has 2 MiB of L3
 
