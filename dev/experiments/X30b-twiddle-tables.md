@@ -151,6 +151,47 @@ compact per-lane tables (C at 1024–4096, C1) add instructions (+4 % at 2048–
 not cut L1 fills at 2048–4096 (they rise); the compact broadcast tables (C1 against C at
 1024, where only the lane passes differ) cut fills and cycles. Hence amendment 1.
 
+### Counter screen of C2 (EPYC)
+
+Same method (Slurm 510287), build C2 ead29f2: CN both kinds pre-arranged, CS (C2's default:
+broadcast tables compact), C1 every table compact. Cycles ÷ A:
+
+| n | L | CN | CS | C1 | L1 fills L / CS / C1 |
+|---|---|---|---|---|---|
+| double 512 | 0.948 | 0.932 | 0.923 | 0.927 | 517 / 512 / 194 |
+| double 1024 | 0.987 | 0.976 | 0.972 | 0.935 | 1810 / 1691 / 1468 |
+| double 2048 | 0.978 | 0.984 | 0.986 | 1.102 | 5201 / 5205 / 5515 |
+| double 3072 | 0.893 | 0.909 | 0.890 | 0.941 | 7318 / 7160 / 7580 |
+| double 4096 | 0.996 | 1.001 | 0.995 | 1.060 | 12694 / 12710 / 13424 |
+| float 512 | 0.995 | 1.001 | 0.927 | 0.965 | 0 |
+| float 1024 | 0.964 | 0.964 | 0.889 | 0.901 | 520 / 493 / 215 |
+| float 4096 | 1.004 | 1.003 | 1.014 | 1.022 | 5913 / 5970 / 5942 |
+
+The FMADDSUB arithmetic alone (CN) costs nothing against L. Compact broadcast tables gain
+where the lane passes' tables matter (float 512–1024 0.89–0.93 against L's 0.96–1.00) and
+cost nothing elsewhere; compact per-lane tables gain only at 1024 (radix-4 first pass,
+whose table halves from 24 to 12 KiB beside a 32 KiB line) and lose at 2048–4096, where the
+lines alone overflow L1.
+
+### Arm R: three passes at 4096, `avx2` double (EPYC, run 20261116-072518-0755)
+
+EPYC 7763, GCC 16.2, main e1879cb with `RADICES` forced, c2c 4096 double at batch 1 and
+64, 6 rounds (all loaded; every case resolved), A/A band ±1.00 %. Forced ÷ the planner's
+8 × 8 × 8 × 8:
+
+| sequence | batch 1 | batch 64 |
+|---|---|---|
+| 8 × 8 × 64 | 1.301 | 1.305 |
+| 4 × 16 × 64 | 1.495 | 1.520 |
+| 64 × 64 | 1.669 | 1.654 |
+| 16 × 16 × 16 | 1.744 | 1.576 |
+| 16 × 4 × 64 | 1.877 | 1.583 |
+
+Every three-pass (and the two-pass) sequence is 1.3–1.9 times slower: on AVX2 the radix-16
+and radix-64 passes at these strides cost more than the pass they save (X18's finding at
+4096; X30's lane radix-64 loop spills, 407 stack references per unit). R is rejected; no
+override changes.
+
 ## Verdict
 
 (pending)
