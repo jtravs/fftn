@@ -1213,9 +1213,12 @@ template <class T> void unit_leaves_match(fftn::isa t) {
       }
     }
   }
+  // Without the pair leaves, which take 8 points on x86 in double (X37).
+  build_settings no_pairs;
+  no_pairs.pair_leaves = false;
   const auto row =
       make_plan_core(fftn::detail::view_of(fftn::rows_c2c<T>(8, 1, fftn::direction::forward)),
-                     {.force_isa = t}, {});
+                     {.force_isa = t}, no_pairs);
   const auto* st = std::get_if<fftn::detail::stage>(&row->prog.records.back());
   ASSERT_NE(st, nullptr);
   const auto* half = narrow != nullptr ? &fftn::detail::of<T>(*narrow) : nullptr;
