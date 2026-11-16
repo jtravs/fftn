@@ -127,6 +127,11 @@ public:
   // Leaves (n <= 16) from this set instead of the target's own: the 128-bit leaves of the
   // x86 targets (kernel_table.hpp, experiment X28), which round alike. Null: the target's.
   void use_narrow_leaves(const narrow_leaf_set<T>* leaves) noexcept { narrow_ = leaves; }
+  // Pair leaves from this set (kernel_table.hpp, passes/pair_leaf.inl, experiment X28b):
+  // a c2c line of stride 1 on both sides whose length has an entry, with no factor edge and
+  // radices the rules choose (not a test's), is that entry's two passes in registers, one
+  // leaf. Null: none.
+  void use_pair_leaves(const pair_leaf_set<T>* leaves) noexcept { pairs_ = leaves; }
 
   // A grouped first pass (no input edge) whose per-lane table, or a twiddled lane pass whose
   // broadcast table, would hold more than `grouped` or `shared` bytes in the pre-arranged
@@ -241,6 +246,11 @@ private:
                 pass_layout layout = pass_layout::interleaved);
   void add_leaf(std::size_t n, int sign, endpoint src, endpoint dst, const line_edges& edges,
                 std::vector<stage>& stages);
+  // The pair leaf for a c2c line of n from src to dst with these edges, or null.
+  [[nodiscard]] const pair_leaf_entry* pair_for(std::size_t n, endpoint src, endpoint dst,
+                                                const line_edges& edges) const;
+  void add_pair_leaf(const pair_leaf_entry& e, int sign, endpoint src, endpoint dst,
+                     const line_edges& edges, std::vector<stage>& stages);
   // Passes i0 .. of rad (the radices of n) from `at`, s copies at i0, the last writing dst
   // with edges.out (a Bluestein stage when bluestein_last(n)); scratch in between.
   void chain_tail(std::size_t n, const std::vector<std::size_t>& rad, std::size_t i0, std::size_t s,
@@ -285,6 +295,8 @@ private:
 
   const kernels_of<T>& kernels_;
   const narrow_leaf_set<T>* narrow_ = nullptr;
+  const pair_leaf_set<T>* pairs_ = nullptr;
+  std::vector<std::size_t> pair_lines_; // the lengths of the lines built as pair leaves
   target_profile profile_;
   plan_tables<T>& tables_;
   std::size_t chunk_points_;

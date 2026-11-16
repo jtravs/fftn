@@ -45,6 +45,9 @@ struct build_settings {
   // The planner's leaf limit (planner/rules.hpp, target_profile::leaf_limit) instead of the
   // profile's; 0 keeps the profile's. Experiment X8 compares leaves with chains through it.
   std::size_t leaf_limit = 0;
+  // Pair leaves (strategies/chain.hpp, use_pair_leaves; experiment X28b) where the target
+  // has them; false: the chain of the rules' radices instead (tests).
+  bool pair_leaves = true;
   // The strategy of a plan of one axis (rows): the rules' choice (the lanes for a batch of
   // rows up to the profile's lanes_up_to, a c2c grid beyond profile.grid_min_bytes, else
   // the chain), or the chain, the grid or the lanes forced. A grid is built only for a c2c
