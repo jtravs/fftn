@@ -80,8 +80,9 @@ pull request:
 For the maintainer (decisions taken by the lead overnight, easy to revert): X23b's two
 exceptions; X27's 25 % larger library; X26's prefetch gate by target (Intel cores without
 AVX-512 lose up to 1.20 at 2²² until a rule by core and row width exists); X28's 128-bit
-leaves kept on `avx2` though they gain only at 8–16 points there; X30's 512 override,
-pending the Xeon `avx2` re-run of r2c 1024² (1.034, interval containing 1).
+leaves kept on `avx2` though they gain only at 8–16 points there; X30's 512 override
+kept although the Xeon under `avx2` loses r2c 1024² (1.057 on re-run; EPYC 1.014): with X26's
+prefetch, a second case for rules by core on `avx2`.
 
 ### Leads, one-dimensional double first
 

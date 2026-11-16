@@ -250,3 +250,14 @@ X25's cycle counts were about 1.75 times lower and are unexplained), with L1 ref
 times FFTW's from three lines plus twiddle tables twice FFTW's size. Follow-ups: the
 footprint (T restricted as above, aligned tables), and the radix-32/64 lane loops' spills
 (142 and 407 stack references per unit in GCC 16's code), a generator matter.
+
+### Addendum (lead, 2026-11-16): the Xeon `avx2` re-run of r2c 1024²
+
+Re-run quiet (run 20261116-072340-b100, band ±1.00 %, no round under load): P ÷ main
+over the re-run's cases 0.998, r2c 1024² 1.057 [1.033, 1.071], a real loss on the Xeon
+under `avx2` (its half-length rows are 512 = 16 × 32). The same case is 1.014 on the EPYC,
+the `avx2` target's measured release machine, where the 512 override gains (512 0.946,
+r2c 512 0.903, c2r 1024 0.942). Decision: keep the override and record the case as an
+exception; like X26's prefetch, the effect belongs to the core (Intel cores without
+AVX-512), and joins the follow-up for per-core rules. The Xeon x30 run of arm T
+(20261116-064327-9cea: 0.981, seven cases slower up to 1.046) confirms T's rejection.
