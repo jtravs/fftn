@@ -60,16 +60,16 @@ std::size_t first_columns(const grid_split& g) {
   return rest;
 }
 
-// The block of a split: the widest power of two from `least` to max_grid_block dividing N1
-// and n / N1 with block x max Ni within the budget, or `least`.
+// The block of a split: the widest multiple of `least` up to max_grid_block dividing N1
+// and n / N1 with block x max Ni within the budget, or `least`. Not only powers of two
+// (experiment X34): 100000 = 40 x 50 x 50 has blocks of 20 instead of 4.
 std::size_t widest_block(const grid_split& g, std::size_t least, std::size_t budget) {
   const std::size_t longest = longest_factor(g);
   std::size_t block = least;
-  for (std::size_t b = 2 * least; b <= max_grid_block; b *= 2) {
-    if (g.factors[0] % b != 0 || first_columns(g) % b != 0 || b * longest > budget) {
-      break;
+  for (std::size_t b = 2 * least; b <= max_grid_block && b * longest <= budget; b += least) {
+    if (g.factors[0] % b == 0 && first_columns(g) % b == 0) {
+      block = b;
     }
-    block = b;
   }
   return block;
 }

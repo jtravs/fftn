@@ -83,7 +83,7 @@ struct grid_split {
 // factors have no prime above 13 (each phase is a chain of codelet passes), the block (a
 // multiple of lanes, at least 2) divides N1 and n / N1, and lanes divides N1. forced: the
 // factors in phase order (two or three), or empty to choose; forced_block: the block, or 0
-// to choose. The block of a split is the widest power of two from max(2, lanes) to
+// to choose. The block of a split is the widest multiple of max(2, lanes) up to
 // max_grid_block that divides N1 and n / N1 and keeps block x max Ni within `budget` points
 // (the scratch lines a and b of one block in L1). The choice, among the splits into two or
 // (three_phases) into three: the widest block, then the shortest longest factor, then the
