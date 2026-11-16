@@ -1521,7 +1521,7 @@ differs from x86's 4 KiB; nothing below hard-codes either.
 - Never touches user buffers; no process-global mutable state.
 - Catches the per-shape misses that fixed rules leave (finding E6) when asked to.
 
-### 11.2 Two efforts
+### 11.2 Efforts: rules and measurement
 
 **`planning::rules`** (default). Enumerate candidate programs for the shape: strategy ×
 factorisation and radix order × arithmetic layout × twiddle modes × blocking. Prune with
@@ -1640,13 +1640,18 @@ for batches the lanes and the chain (X7); for every line length the next cheapes
 sequences by the profile's pass costs (`ranked_radices`, the shortest-path search keeping the
 k best continuations); and Rader off and on where a prime factor has no codelet (X27).
 Candidates that build the same program as an earlier one (by the fingerprint of
-`describe()`) are dropped. The candidates are timed at the shape's size (fewer transforms
-of the outer batch dimensions when data and workspace would exceed
-`options::measure_scratch_bytes`), in interleaved rounds: a warm-up execution sets each
-one's repetitions per sample, each sample's executions are timed with the steady clock, the
-statistic is each candidate's fastest sample, and after the first rounds a candidate 25 %
-behind the fastest gets no more samples. In place, the input is restored before each sample
-and the repetitions are capped so that values cannot overflow. The rules' choice stays
+`describe()`) are dropped. Candidates are built in the model's order and admitted while
+half the time budget is left and their tables, the workspace and the timing data fit
+`options::measure_scratch_bytes` (fewer transforms of the outer batch dimensions when the
+data would not); when only the rules' choice is admitted nothing is timed. The rest are
+timed at the shape's size in interleaved rounds: a warm-up execution sets each one's
+repetitions per sample, each round starts one candidate later and places the input and
+output at other 64-byte offsets within a page (as fbench does), the statistic is each
+candidate's median sample, and after the first rounds a candidate 25 % behind the fastest
+is dropped and its tables freed. In place, the input is restored before each sample and the
+repetitions are capped so that values cannot overflow. The budgets are targets: a large
+transform overruns the time by about one plan's construction and a few executions per
+candidate (P2), and the rules' plan and one transform's data are always allocated. The rules' choice stays
 unless another candidate is at least 1 % faster; otherwise the fastest wins, the earlier on
 a tie. `planning::quick` times at most 4 candidates with shorter samples (0.1 s budget),
 `planning::measure` at most 16 (10 s); P1 and P2 set these. Measurement is serial, on the
@@ -1672,15 +1677,18 @@ description. It can be exported and imported as a string or file and is an input
 construction (`options::use`), never global state.
 
 *As built (task 2.4, `src/core/wisdom.cpp`).* One tab-separated line per plan: a format
-tag, the library version, the processor model (Linux `/proc/cpuinfo`, macOS
-`machdep.cpu.brand_string`, the Windows registry), the instruction set, the shape key (kind,
-precision, direction, in place, each axis's length and strides and each batch dimension's
-count and distances as given), the program (the candidate's text, a grid's factors written
-out) and a check, the fingerprint of the program's `describe()`. An entry applies only to the
-same version, model, instruction set and key, and only if its program rebuilds to the same
-fingerprint, so it reproduces the recorded plan bit for bit or is ignored (`describe()` says
-which); it takes precedence over the effort. Entries of other versions or machines are kept
-and exported again. A program description is also a valid
+tag, the build (the library version and a build identifier, a hash of the library's sources
+and of the configuration that changes its code, `cmake/FftnBuildId.cmake`, since the version
+does not change between development commits), the processor model (Linux `/proc/cpuinfo`,
+macOS `machdep.cpu.brand_string`, the Windows registry), the instruction set, the shape key
+(kind, precision, direction, in place, the scale written exactly, each axis's length and
+strides and each batch dimension's count and distances as given), the program (the
+candidate's text in canonical form, naming only what took effect, a grid's factors written
+out) and a check, the fingerprint of the program's `describe()`. An entry is found without
+building anything (an index by those fields) and applies only if its program builds, rebuilds
+to the same fingerprint and is named the same way; otherwise it is ignored (`describe()` says
+so) and the effort decides. Lines of other formats or builds are kept verbatim and exported
+again. A program description is also a valid
 plan input, so a result can be pinned and reproduced exactly on the same instruction set.
 Measured planning is the only source of run-to-run variation in program choice, and it is
 opt-in.
@@ -1688,8 +1696,9 @@ opt-in.
 ### 11.4 What the planner deliberately lacks
 
 No flag lattice, no exhaustive recursive search, no timing of sub-plans in isolation, no
-alignment in the problem key, no planning modes that differ in more than the two efforts
-above. If the model is poor on some machine, the remedy is a better profile, not more
+alignment in the problem key, no planning modes beyond the efforts above: the rules, and
+measurement at two budgets (`quick`, `measure`) that differ only in how many candidates
+they time and for how long. If the model is poor on some machine, the remedy is a better profile, not more
 planner.
 
 ---

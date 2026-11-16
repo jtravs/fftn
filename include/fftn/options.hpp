@@ -30,7 +30,8 @@ enum class planning : unsigned char {
   rules,
   /// A short measurement: the rules' choice and the model's next few candidates, each
   /// timed briefly at the transform's size; the fastest is kept. Milliseconds for small
-  /// transforms, a tenth of a second at most by default.
+  /// transforms; its budget, a tenth of a second by default, is a target that the largest
+  /// transforms exceed by the time it takes to build their plans (`measure_seconds`).
   quick,
   /// The full measurement: the model's top candidates (the rules' choice, the strategies
   /// the rules decide between by size thresholds, the cheapest other radix sequences), each
@@ -81,22 +82,27 @@ struct options {
   /// `plan::describe()` says how the program was chosen.
   planning effort = planning::rules;
 
-  /// The most time, in seconds, that measured planning may spend on this plan (building and
-  /// timing candidates); 0 (the default) takes the effort's own budget (`planning::quick`
-  /// 0.1 s, `planning::measure` 10 s). Candidates are timed in the model's order, the rules'
-  /// choice first, so a smaller budget times fewer of them; each one timed is executed at
-  /// least twice, so a transform slower than the budget still costs a few executions.
-  /// Ignored by `planning::rules`.
+  /// The time, in seconds, that measured planning aims to spend on this plan, building the
+  /// rules' plan and the candidates and timing them; 0 (the default) takes the effort's own
+  /// budget (`planning::quick` 0.1 s, `planning::measure` 10 s). It is a target, not a
+  /// bound: candidates are admitted in the model's order while half of it is left, each one
+  /// admitted is executed at least twice, and the plan chosen is built once more when the
+  /// timings used fewer transforms, so a large transform exceeds it by about the time of
+  /// one plan's construction and a few executions per candidate (12.5 s for a 10 s budget
+  /// at 2^22 points in experiment P2). When only the rules' choice is admitted, nothing is
+  /// timed. Ignored by `planning::rules`.
   ///
-  /// Precondition: finite and not negative; plan construction refuses other values, naming
-  /// `options.measure_seconds`.
+  /// Precondition: finite and not negative, whatever the effort; plan construction refuses
+  /// other values, naming `options.measure_seconds`.
   double measure_seconds = 0;
 
-  /// The most scratch memory, in bytes, that measured planning may allocate for the input,
-  /// output and workspace of its timings; 0 (the default) is 1 GiB. When the shape's data
+  /// The most memory, in bytes, that measured planning may allocate besides the plan it
+  /// returns: the input and output of its timings (with a copy of the input in place), the
+  /// workspace and the candidates' tables; 0 (the default) is 1 GiB. When the shape's data
   /// need more, the candidates are timed on fewer transforms of the batch (outer batch
-  /// dimensions first), down to one; a single transform is always timed at its full size,
-  /// however large. Ignored by `planning::rules`.
+  /// dimensions first), down to one, and no candidate is admitted whose tables would pass
+  /// the limit. The rules' plan and a single transform's data are always allocated, however
+  /// large. Ignored by `planning::rules`.
   std::size_t measure_scratch_bytes = 0;
 
   /// Wisdom to plan from (`fftn::wisdom`), or none. When it holds an entry for this shape

@@ -23,9 +23,12 @@ the same with fewer candidates and shorter timings.
 Measuring costs time at construction: from milliseconds for small transforms to seconds for
 large ones (`options::measure_seconds` bounds it), and scratch memory of the data's size
 (`options::measure_scratch_bytes` bounds it by timing fewer transforms of a large batch).
-It pays when a plan is executed many times. The chosen program can differ from run to run
-when two candidates are close in speed; `plan::describe()` says how the program was chosen,
-which candidates were timed, and how much slower the rules' choice was.
+It pays when a plan is executed many times. Both bounds are targets: a transform whose plan
+takes long to build (around a second at 2²² points) overruns the time by about that much,
+and the rules' plan and one transform's data are always allocated. The chosen program can
+differ from run to run when two candidates are close in speed; `plan::describe()` says how
+the program was chosen, how many distinct candidates were timed (and on how many transforms,
+when fewer than the batch), the chosen program, and how much slower the rules' choice was.
 
 ## Wisdom
 
@@ -50,7 +53,9 @@ const fftn::c2c_plan<double> again(shape, {.use = &loaded});
 ```
 
 An entry applies only to the shape and options it was recorded for (lengths, counts,
-strides and distances as given, in place or not), to the same library version, processor
-model and instruction set, and only if its program rebuilds exactly: an entry that would
+strides and distances as given, in place or not, the scale), to the same build of the library
+(its version and an identifier of its sources, so a development build never takes another
+build's entries), processor model and instruction set, and only if its program rebuilds
+exactly: an entry that would
 give another program (on a machine whose caches differ, say) is ignored, and the plan's
 effort decides. Wisdom is plain data owned by the program; FFTN keeps none of its own.
