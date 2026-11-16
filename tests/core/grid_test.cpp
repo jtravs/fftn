@@ -596,12 +596,16 @@ TEST(Grid, SplitRules) {
   EXPECT_EQ(g.block, 8U);
   EXPECT_EQ(choose_grid(32, 8, 4096, false, 0, {}).phases, 0U);
   // Not only a power of two (X34): 100000 = 2^5 5^5 with four lanes takes blocks of 20.
-  g = choose_grid(100000, 4, 512, true, 0, {});
+  g = choose_grid(100000, 4, 1024, true, 0, {});
   EXPECT_EQ(g.phases, 3U);
   EXPECT_EQ(g.factors[0], 40U);
   EXPECT_EQ(g.factors[1], 50U);
   EXPECT_EQ(g.factors[2], 50U);
   EXPECT_EQ(g.block, 20U);
+  // Only where powers of two leave the narrowest block: 51200 keeps 32 x 40 x 40 in 32.
+  g = choose_grid(51200, 2, 1024, true, 0, {});
+  EXPECT_EQ(g.factors[0], 32U);
+  EXPECT_EQ(g.block, 32U);
   EXPECT_EQ(choose_grid(std::size_t{2} * 1031, 1, 4096, false, 0, {}).phases, 0U);
   // Forced factors and blocks are taken as given, or refused.
   g = choose_grid(1024, 2, 4096, false, 4, {32, 32});

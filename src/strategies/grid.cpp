@@ -60,15 +60,17 @@ std::size_t first_columns(const grid_split& g) {
   return rest;
 }
 
-// The block of a split: the widest multiple of `least` up to max_grid_block dividing N1
-// and n / N1 with block x max Ni within the budget, or `least`. Not only powers of two
-// (experiment X34): 100000 = 40 x 50 x 50 has blocks of 20 instead of 4.
-std::size_t widest_block(const grid_split& g, std::size_t least, std::size_t budget) {
+// The block of a split: the widest power of two (any: multiple of `least`) from `least` to
+// max_grid_block dividing N1 and n / N1 with block x max Ni within the budget, or `least`.
+std::size_t widest_block(const grid_split& g, std::size_t least, std::size_t budget, bool any) {
   const std::size_t longest = longest_factor(g);
   std::size_t block = least;
-  for (std::size_t b = 2 * least; b <= max_grid_block && b * longest <= budget; b += least) {
+  for (std::size_t b = 2 * least; b <= max_grid_block && b * longest <= budget;
+       b = any ? b + least : 2 * b) {
     if (g.factors[0] % b == 0 && first_columns(g) % b == 0) {
       block = b;
+    } else if (!any) {
+      break;
     }
   }
   return block;
@@ -200,11 +202,11 @@ grid_split choose_grid(std::size_t n, std::size_t lanes, std::size_t budget, boo
   if (lanes == 0 || least % lanes != 0 || forced.size() == 1 || forced.size() > max_grid_phases) {
     return {};
   }
-  const auto finish = [&](grid_split g) {
+  const auto finish = [&](grid_split g, bool any) {
     if (!runnable(g, lanes, least)) {
       return grid_split{};
     }
-    g.block = forced_block != 0 ? forced_block : widest_block(g, least, budget);
+    g.block = forced_block != 0 ? forced_block : widest_block(g, least, budget, any);
     return g;
   };
   if (!forced.empty()) {
@@ -214,38 +216,49 @@ grid_split choose_grid(std::size_t n, std::size_t lanes, std::size_t budget, boo
       g.factors.at(i) = forced[i];
       product *= forced[i];
     }
-    return product == n ? finish(g) : grid_split{};
+    return product == n ? finish(g, false) : grid_split{};
   }
   const std::vector<std::size_t> ds = divisors(n);
-  grid_split two;
-  grid_split three;
-  for (const std::size_t n1 : ds) {
-    if (n1 < 2 || n1 == n) {
-      continue;
-    }
-    const grid_split g2 = finish({.phases = 2, .factors = {n1, n / n1, 0}});
-    if (g2.phases != 0 && better(g2, two)) {
-      two = g2;
-    }
-    for (const std::size_t n2 : ds) {
-      if (n2 < 2 || (n / n1) % n2 != 0 || n / n1 == n2) {
+  const auto choose = [&](bool any) {
+    grid_split two;
+    grid_split three;
+    for (const std::size_t n1 : ds) {
+      if (n1 < 2 || n1 == n) {
         continue;
       }
-      const grid_split g3 = finish({.phases = 3, .factors = {n1, n2, n / n1 / n2}});
-      if (g3.phases != 0 && better(g3, three)) {
-        three = g3;
+      const grid_split g2 = finish({.phases = 2, .factors = {n1, n / n1, 0}}, any);
+      if (g2.phases != 0 && better(g2, two)) {
+        two = g2;
+      }
+      for (const std::size_t n2 : ds) {
+        if (n2 < 2 || (n / n1) % n2 != 0 || n / n1 == n2) {
+          continue;
+        }
+        const grid_split g3 = finish({.phases = 3, .factors = {n1, n2, n / n1 / n2}}, any);
+        if (g3.phases != 0 && better(g3, three)) {
+          three = g3;
+        }
       }
     }
+    if (two.phases != 0 && (!three_phases || three.phases == 0)) {
+      return two;
+    }
+    if (three.phases != 0 && forced_block == 0) {
+      // Three phases are for rows far beyond L2, where X12 measured wide rows in the gathers
+      // and scatters worth more than keeping a block's chain within L1.
+      three.block = widest_block(three, least, 2 * budget, any);
+    }
+    return three;
+  };
+  // Blocks are powers of two. Where that leaves the narrowest block (a row of one register
+  // on avx512 in double), a length with a large odd part may take a block that is another
+  // multiple of `least` (experiment X34: 100000 = 40 x 50 x 50 in blocks of 20, not 4).
+  const grid_split pow2 = choose(false);
+  if (pow2.phases == 0 || pow2.block > least || forced_block != 0) {
+    return pow2;
   }
-  if (two.phases != 0 && (!three_phases || three.phases == 0)) {
-    return two;
-  }
-  if (three.phases != 0 && forced_block == 0) {
-    // Three phases are for rows far beyond L2, where X12 measured wide rows in the gathers
-    // and scatters worth more than keeping a block's chain within L1.
-    three.block = widest_block(three, least, 2 * budget);
-  }
-  return three;
+  const grid_split wider = choose(true);
+  return wider.block > pow2.block ? wider : pow2;
 }
 
 std::size_t grid_pad(const grid_split& g, std::size_t element_bytes, std::size_t period) {
