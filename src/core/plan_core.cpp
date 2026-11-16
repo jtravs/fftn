@@ -491,6 +491,14 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   if (settings.profile.pow2_chain_bytes != 0) {
     chain.use_long_rows(settings.profile.grid_min_bytes, settings.profile.pow2_radix8_bytes);
   }
+  // X36: a convolution is always a chain, so a long one takes the long-row radices on
+  // every machine (radix 8 throughout where the profile sets no limit), and a Bluestein
+  // length has a power-of-two part of at most a quarter of the L1.
+  chain.use_long_convolutions(settings.profile.grid_min_bytes,
+                              settings.profile.pow2_chain_bytes != 0
+                                  ? settings.profile.pow2_radix8_bytes
+                                  : std::numeric_limits<std::size_t>::max(),
+                              settings.profile.grid_block_bytes / 4);
   if (const narrow_leaf_table* narrow = find_narrow_leaves(c.isa_target)) {
     chain.use_narrow_leaves(&of<T>(*narrow));
   }

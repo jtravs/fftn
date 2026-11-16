@@ -107,8 +107,14 @@ struct target_profile {
 [[nodiscard]] std::size_t rader_root(std::size_t q, const target_profile& p);
 
 // The convolution length of a Bluestein stage for a transform of q points: the 7-smooth
-// M >= 2q - 1, at most the next power of two, whose chain (rule_radices) plus the two
-// chirp passes cost least; the smallest on a tie. Precondition: q >= 2.
-[[nodiscard]] std::size_t bluestein_length(std::size_t q, const target_profile& p);
+// M >= 2q - 1 whose chain (rule_radices) plus the two chirp passes cost least, the smallest
+// on a tie; M is at most the next power of two, or at most 2 (2q - 1) when that power of
+// two is above pow2_part_limit, and its power-of-two part is at most pow2_part_limit
+// (experiment X36: chains of a long power of two, or of a length with a large power-of-two
+// part, ran 1.4-2 times as long per point as those of a 7-smooth length nearby, legs a power
+// of two apart conflicting in cache, which the cost table does not see). Precondition:
+// q >= 2.
+[[nodiscard]] std::size_t bluestein_length(std::size_t q, const target_profile& p,
+                                           std::size_t pow2_part_limit = SIZE_MAX);
 
 } // namespace fftn::inline v0::detail

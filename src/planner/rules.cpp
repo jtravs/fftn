@@ -733,21 +733,23 @@ std::size_t rader_root(std::size_t q, const target_profile& p) {
   return 0; // unreachable: every prime has a primitive root
 }
 
-std::size_t bluestein_length(std::size_t q, const target_profile& p) {
+std::size_t bluestein_length(std::size_t q, const target_profile& p, std::size_t pow2_part_limit) {
   const std::size_t least = 2 * q - 1;
   std::size_t power = 1;
   while (power < least) {
     power *= 2;
   }
+  const std::size_t top = power > pow2_part_limit ? 2 * least : power;
   // The two chirp passes touch M points each, priced like a last radix-2 pass per point.
   const std::uint64_t per_point = p.costs->unit[2][0] / (2 * p.lanes) + 1;
-  // The 7-smooth lengths in [least, power], ascending.
+  // The 7-smooth lengths in [least, top], ascending, without those whose power-of-two part
+  // is above pow2_part_limit.
   std::vector<std::size_t> candidates;
-  for (std::size_t a = 1; a <= power; a *= 2) {
-    for (std::size_t b = a; b <= power; b *= 3) {
-      for (std::size_t c = b; c <= power; c *= 5) {
-        for (std::size_t d = c; d <= power; d *= 7) {
-          if (d >= least) {
+  for (std::size_t a = 1; a <= top; a *= 2) {
+    for (std::size_t b = a; b <= top; b *= 3) {
+      for (std::size_t c = b; c <= top; c *= 5) {
+        for (std::size_t d = c; d <= top; d *= 7) {
+          if (d >= least && a <= pow2_part_limit) {
             candidates.push_back(d);
           }
         }

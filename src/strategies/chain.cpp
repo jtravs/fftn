@@ -125,6 +125,19 @@ template <class T> std::vector<std::size_t> chain_builder<T>::radices(std::size_
   return rad;
 }
 
+template <class T> std::size_t chain_builder<T>::bluestein_m(std::size_t q) const {
+  return bluestein_length(q, profile_, std::max<std::size_t>(conv_pow2_part_bytes_ / (2 * sizeof(T)), 1));
+}
+
+template <class T>
+std::vector<std::size_t> chain_builder<T>::convolution_radices(std::size_t len) const {
+  if (len >= 4 && (len & (len - 1)) == 0 && len * 2 * sizeof(T) > conv_from_bytes_) {
+    return long_pow2_radices(static_cast<std::size_t>(std::countr_zero(len)),
+                             len * 2 * sizeof(T) <= conv_radix8_bytes_);
+  }
+  return rule_radices(len, profile_);
+}
+
 template <class T> bool chain_builder<T>::bluestein_last(std::size_t n) const {
   const std::vector<std::size_t> rad = radices(n);
   return !rad.empty() && rad.back() > bluestein_above_ && !has_codelet(rad.back());
@@ -162,11 +175,11 @@ std::string chain_builder<T>::radix_text(std::size_t n, const std::vector<std::s
   const std::vector<std::size_t> head(rad.begin(), rad.end() - 1);
   if (rader_root(q, profile_) != 0) {
     return (head.empty() ? "" : list(head) + " x ") + "rader " + std::to_string(q) + " (L " +
-           std::to_string(q - 1) + " = " + list(rule_radices(q - 1, profile_)) + ")";
+           std::to_string(q - 1) + " = " + list(convolution_radices(q - 1)) + ")";
   }
-  const std::size_t m = bluestein_length(q, profile_);
+  const std::size_t m = bluestein_m(q);
   return (head.empty() ? "" : list(head) + " x ") + "bluestein " + std::to_string(q) + " (M " +
-         std::to_string(m) + " = " + list(rule_radices(m, profile_)) + ")";
+         std::to_string(m) + " = " + list(convolution_radices(m)) + ")";
 }
 
 template <class T> const std::vector<std::complex<T>>& chain_builder<T>::roots(std::size_t n) {
@@ -336,7 +349,7 @@ template <class T> const T* chain_builder<T>::edge_twiddles(std::size_t n) {
 template <class T>
 chain_builder<T>::bluestein_tables chain_builder<T>::bluestein_tables_of(std::size_t q, int sign,
                                                                          std::size_t copies) {
-  const std::size_t m = bluestein_length(q, profile_);
+  const std::size_t m = bluestein_m(q);
   const auto kernel_key = std::make_pair(q, sign);
   auto kit = kernel_tables_.find(kernel_key);
   if (kit == kernel_tables_.end()) {
@@ -683,7 +696,7 @@ void chain_builder<T>::add_rader(std::size_t n, std::size_t q, std::size_t g, in
                                  std::vector<stage>& stages) {
   const std::size_t s = n / q;
   const std::size_t len = q - 1;
-  const std::vector<std::size_t> rad = rule_radices(len, profile_);
+  const std::vector<std::size_t> rad = convolution_radices(len);
   const std::size_t c = kernels_.complex_lanes;
   const edge_op in = first ? edges.in : edge_op::none;
   const pass_kernels<T>& k = kernels_.passes;
@@ -757,8 +770,8 @@ void chain_builder<T>::add_bluestein(std::size_t n, std::size_t q, int sign, end
     return;
   }
   const std::size_t s = n / q;
-  const std::size_t m = bluestein_length(q, profile_);
-  const std::vector<std::size_t> rad = rule_radices(m, profile_);
+  const std::size_t m = bluestein_m(q);
+  const std::vector<std::size_t> rad = convolution_radices(m);
   const std::size_t c = kernels_.complex_lanes;
   const edge_op in = first ? edges.in : edge_op::none;
   const pass_kernels<T>& k = kernels_.passes;
