@@ -376,6 +376,17 @@ same two-phase plans took 1.13–1.67 of the cycles below 16 MiB. Rows near a po
 (odd part 3–9) lost as two phases on both: their gathers' rows still collide in L1. One
 blocking rule does not fit both kinds of uncore. [X34](experiments/X34-xeon-mixed.md).
 
+3.17 **Before fusing away a streaming pass, check what the pass costs alone.** FFTN's
+separate r2c pairing pass over the half spectrum looked like 10–30 % of a long real row
+(time of the real row over the c2c row of half its length), but fusing it into the grid's
+last phase (no pass, no extra sweep) recovered only 2–6 % on the M5 Max and the Xeon 6240
+and nothing on the EPYC 7763: a streaming in-place pass over an array in L2 or L3 is cheap,
+and the rest of the "real overhead" is the real row's own plan. The fused form's blocks
+also had to stay within the phase's scratch budget and be at least a cache line wide, or
+it lost 5–9 %. Meanwhile FFTW's r2c rows of 2²⁰ cost 0.76–0.86 of its own c2c of half
+their length: its real plans are not a half-length c2c plus a pass.
+[X33](experiments/X33-long-real.md).
+
 ## 4. Kernels and algorithms
 
 4.1 **A whole-transform codelet wins only where it fills the register.** One 32-point

@@ -1,0 +1,22 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Experiment X33's cases (dev/experiments/X33-long-real.md): long real rows in and out of
+# place beside the c2c rows of half their length, so that one run gives the real overhead
+# time(real n) / time(c2c n/2) - 1 of FFTN's routes and of FFTW.
+
+[catalogue]
+name = "x33"
+
+[[group]]
+name = "x33-real"
+kind = ["r2c", "c2r"]
+dims = [32768, 65536, 131072, 262144, 1048576]
+place = ["out", "in"]
+tiers = ["tracking"]
+
+[[group]]
+name = "x33-half"
+kind = "c2c"
+dims = [16384, 32768, 65536, 131072, 524288]
+tiers = ["tracking"]

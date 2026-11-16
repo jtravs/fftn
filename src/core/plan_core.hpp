@@ -89,6 +89,10 @@ struct build_settings {
   // (strategies/chain.hpp, DESIGN.md 9.1): 0 the rule (plan_core.cpp, fusion_of), 1 never
   // (a separate pass), 16 every codelet pass whatever the line's size.
   std::size_t fuse_real_radix = 0;
+  // The r2c pairing in a grid's last phase (strategies/grid.hpp, pairs_last; experiment
+  // X33): -1 the rule (plan_core.cpp, r2c_pairs_in_grid), 0 never (a separate pass after
+  // the grid), 1 wherever the last phase allows.
+  int r2c_pair_last = -1;
   // The machine the plan's team executions are scheduled for (schedule.hpp).
   machine_profile profile = default_machine_profile();
 };

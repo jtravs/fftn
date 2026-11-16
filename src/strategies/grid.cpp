@@ -491,6 +491,68 @@ std::pair<const T*, const T*> grid_builder<T>::c2r_pair_factors(std::size_t n1, 
   return {columns_data, rows.data()};
 }
 
+// The columns hb of each set of a paired last phase (r2c_pair_gather): half the block, so
+// that the two sets fill the phase's scratch as one block does.
+template <class T> std::size_t grid_builder<T>::pair_half(const grid_split& g) const noexcept {
+  return g.block / 2;
+}
+
+template <class T> bool grid_builder<T>::pairs_last(const grid_split& g) const noexcept {
+  if (g.phases < 2) {
+    return false;
+  }
+  const std::size_t nk = g.factors.at(g.phases - 1);
+  std::size_t l = 1;
+  for (std::size_t i = 0; i + 1 < g.phases; ++i) {
+    l *= g.factors.at(i);
+  }
+  // A last phase that reads and writes the arrays in its passes (fused, no gather or
+  // scatter) keeps the separate pairing pass: the paired phase gathers and scatters, and
+  // lost 3.5 % to it on the Mac at 262144 (X33).
+  if (fused_ && fusible(phase_radix_list(nk))) {
+    return false;
+  }
+  // Each set at least a register and a cache line: sets narrower than a line write each
+  // output line from two or three iterations that lie apart in time (EPYC, blocks of 4,
+  // sets of 2 complex doubles: r2c 65536 lost 5-7 %), and sets of more than half the block
+  // overfill the phase's scratch (Xeon, blocks of 4 with C = 4: r2c 131072 lost 8-9 %; X33).
+  const std::size_t hb = pair_half(g);
+  return nk >= 2 && hb % kernels_.complex_lanes == 0 && hb * 2 * sizeof(T) >= 64 &&
+         l % (2 * hb) == 0;
+}
+
+// The tables of a paired last phase of L columns and Nk rows in an r2c row of n reals
+// (r2c_pair_scatter, r2c_pair_column): for every iteration c, row k and column j < hb of
+// its low set, w^(K + n/4) = (Im w^K, -Re w^K) with K = c hb + 1 + j + L k, per-lane
+// storage; and for column 0 the same of K = L k, 1 <= k < Nk / 2, plain interleaved.
+template <class T>
+std::pair<const T*, const T*> grid_builder<T>::r2c_pair_tables(std::size_t l, std::size_t nk,
+                                                               std::size_t hb, std::size_t n) {
+  const std::size_t count = l / 2 * nk;
+  std::vector<T> plain(2 * count);
+  std::size_t e = 0;
+  for (std::size_t c = 0; c < l / (2 * hb); ++c) {
+    for (std::size_t k = 0; k < nk; ++k) {
+      for (std::size_t j = 0; j < hb; ++j) {
+        const std::complex<T> w = unit_root<T>(-1, c * hb + 1 + j + l * k, n);
+        plain[e++] = w.imag();
+        plain[e++] = -w.real();
+      }
+    }
+  }
+  auto& stored = tables_.emplace_back(count * kernels_.tw_reals);
+  kernels_.pack_twiddles(plain.data(), count, stored.data());
+  // Taken before the next table is appended (first_twiddles).
+  const T* stored_data = stored.data();
+  auto& column = tables_.emplace_back(2 * std::max<std::size_t>(1, (nk - 1) / 2));
+  for (std::size_t k = 1; 2 * k < nk; ++k) {
+    const std::complex<T> w = unit_root<T>(-1, l * k, n);
+    column[2 * (k - 1)] = w.imag();
+    column[2 * (k - 1) + 1] = -w.real();
+  }
+  return {stored_data, column.data()};
+}
+
 template <class T> bool grid_builder<T>::uses_block(const grid_split& g, bool in_place) noexcept {
   return g.phases == 3 || in_place;
 }
@@ -501,7 +563,8 @@ template <class T> std::size_t grid_builder<T>::block_elements(const grid_split&
 
 template <class T>
 std::size_t grid_builder<T>::c2c_row(const grid_split& g, int sign, bool in_place, double scale,
-                                     bool scale_on_input, program& p, std::size_t c2r_n) {
+                                     bool scale_on_input, program& p, std::size_t c2r_n,
+                                     std::size_t r2c_n) {
   const double in_scale = scale_on_input ? scale : 1.0;
   const double out_scale = scale_on_input ? 1.0 : scale;
   const std::size_t b = g.block;
@@ -601,6 +664,7 @@ std::size_t grid_builder<T>::c2c_row(const grid_split& g, int sign, bool in_plac
 
   // Later phases: blocks of b adjacent l < L at each column c < M.
   std::size_t l_count = n1;
+  std::size_t scratch_extra = 0;
   for (std::size_t i = 1; i < g.phases; ++i) {
     const std::size_t ni = g.factors.at(i);
     const std::size_t m = n / (l_count * ni);
@@ -610,6 +674,10 @@ std::size_t grid_builder<T>::c2c_row(const grid_split& g, int sign, bool in_plac
         big_l * static_cast<std::ptrdiff_t>(m) + static_cast<std::ptrdiff_t>(i == 1 ? pad : 0);
     const slot src = buf.at(i);
     const slot dst = buf.at(i + 1);
+    if (r2c_n != 0 && i + 1 == g.phases) {
+      scratch_extra = paired_last_phase(ni, l_count, src, src_row, dst, out_scale, r2c_n, g, p);
+      break;
+    }
     const std::size_t outer = p.records.size();
     if (m > 1) {
       loop lc{.kind = loop_kind::lines, .count = m};
@@ -650,7 +718,95 @@ std::size_t grid_builder<T>::c2c_row(const grid_split& g, int sign, bool in_plac
     }
     l_count *= ni;
   }
-  return b * longest_factor(g);
+  return std::max(b * longest_factor(g), scratch_extra);
+}
+
+// The last phase of an r2c row's grid with the pairing in it (r2c_pair_gather): Nk = ni rows
+// of L = l columns from src (rows src_row apart) to dst (rows L apart). Column 0 first,
+// through a gather and chain of its own block of hb columns, then a loop over the pairs of
+// column sets, 2 hb columns at once. Returns the scratch it needs.
+template <class T>
+std::size_t grid_builder<T>::paired_last_phase(std::size_t ni, std::size_t l, slot src,
+                                               std::ptrdiff_t src_row, slot dst, double scale,
+                                               std::size_t r2c_n, const grid_split& g, program& p) {
+  const std::size_t hb = pair_half(g);
+  const auto cb = static_cast<std::ptrdiff_t>(2 * sizeof(T));
+  const auto big_l = static_cast<std::ptrdiff_t>(l);
+  const std::size_t scaled = scale != 1.0 ? 1 : 0;
+  const std::vector<std::size_t> rad = phase_radix_list(ni);
+  const auto [table, column] = r2c_pair_tables(l, ni, hb, r2c_n);
+  const auto index = [](slot s) -> std::size_t {
+    if (s == slot::in) {
+      return 0;
+    }
+    return s == slot::out ? 1 : 2;
+  };
+
+  add_copy("gather", kernels_.passes.block_copy[0], ni, hb, src, src_row, slot::a,
+           static_cast<std::ptrdiff_t>(hb), 1.0, nullptr, p);
+  const slot z0 = phase_chain(ni, rad, hb, -1, side_of{.where = slot::a}, side_of{.where = slot::a},
+                              1.0, 1.0, nullptr, p);
+  stage col;
+  col.run = kernels_.passes.r2c_pair_column[scaled];
+  col.args.m = ni;
+  col.args.n = r2c_n;
+  col.args.src_stride = static_cast<std::ptrdiff_t>(hb);
+  col.args.dst_stride = big_l;
+  col.args.twiddles = column;
+  col.args.scale = scale;
+  col.src = z0;
+  col.dst = dst;
+  col.units = 1;
+  col.name = "grid r2c pairing of column 0 (" + std::to_string(ni) + " rows " + std::to_string(l) +
+             " apart" + (scaled != 0 ? "; out: scale" : "") + ")";
+  p.records.emplace_back(std::move(col));
+
+  const std::size_t start = p.records.size();
+  loop pairs{.kind = loop_kind::lines, .count = l / (2 * hb)};
+  const auto step = static_cast<std::ptrdiff_t>(hb) * cb;
+  pairs.step.at(index(src)) = step;
+  pairs.step.at(index(dst)) = step;
+  pairs.step[3] = static_cast<std::ptrdiff_t>(ni * hb * kernels_.tw_reals * sizeof(T));
+  p.records.emplace_back(pairs);
+  stage gather;
+  gather.run = kernels_.passes.r2c_pair_gather;
+  gather.args.m = ni;
+  gather.args.s = hb;
+  gather.args.n = l;
+  gather.args.src_stride = src_row;
+  gather.args.dst_stride = static_cast<std::ptrdiff_t>(2 * hb);
+  gather.args.twiddles = table;
+  gather.args.roots = table;
+  gather.moving_twiddles = true;
+  gather.src = src;
+  gather.dst = slot::a;
+  gather.units = ni;
+  gather.name = "grid r2c pair gather (2 x " + std::to_string(hb) + " columns x " +
+                std::to_string(ni) + " rows, row strides " + std::to_string(src_row) + " -> " +
+                std::to_string(2 * hb) + ")";
+  p.records.emplace_back(std::move(gather));
+  const slot z = phase_chain(ni, rad, 2 * hb, -1, side_of{.where = slot::a},
+                             side_of{.where = slot::a}, 1.0, 1.0, nullptr, p);
+  stage scatter;
+  scatter.run = kernels_.passes.r2c_pair_scatter[scaled];
+  scatter.args.m = ni;
+  scatter.args.s = hb;
+  scatter.args.n = l;
+  scatter.args.src_stride = static_cast<std::ptrdiff_t>(2 * hb);
+  scatter.args.dst_stride = big_l;
+  scatter.args.twiddles = table;
+  scatter.args.roots = table;
+  scatter.args.scale = scale;
+  scatter.moving_twiddles = true;
+  scatter.src = z;
+  scatter.dst = dst;
+  scatter.units = ni;
+  scatter.name = "grid r2c pairing and scatter (2 x " + std::to_string(hb) + " columns x " +
+                 std::to_string(ni) + " rows " + std::to_string(l) + " apart" +
+                 (scaled != 0 ? "; out: scale" : "") + ")";
+  p.records.emplace_back(std::move(scatter));
+  std::get<loop>(p.records[start]).body_end = static_cast<std::uint32_t>(p.records.size());
+  return 2 * hb * ni;
 }
 
 template <class T> std::string grid_builder<T>::note(const grid_split& g) const {

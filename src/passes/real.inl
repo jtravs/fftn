@@ -768,4 +768,145 @@ void c2r_pair_gather(const pass_args* a, const void* src, void* dst, std::size_t
   }
 }
 
+// ---- The r2c pairing in a grid's last phase (n = 2h even; experiment X33).
+
+// The last phase of the grid of h (strategies/grid.hpp) transforms columns l < L of Nk rows
+// k and writes bin K = l + L k. Bin K pairs with h - K = (L - l) + L (Nk - 1 - k) for
+// l >= 1, so the phase runs over pairs of column sets, one iteration c per pair: the low set
+// of hb columns l = c hb + 1 .. c hb + hb and the high set of their mirrors, columns
+// L - (c + 1) hb .. L - c hb - 1, in which low column j at row k pairs with high column
+// hb - 1 - j at row Nk - 1 - k. r2c_pair_gather gathers both sets into one tight block of
+// 2 hb columns (the low set first), the phase's chain transforms it, and r2c_pair_scatter
+// pairs the bins as r2c_post does and writes both sets: no pass over the half spectrum of
+// its own. The last iteration's sets share column L/2, which both write with the same
+// values. Column 0 (bins L k, which pair among themselves, and X_0, X_h) is
+// r2c_pair_column's, after a gather of its own. Both pairing kernels' src and dst are the
+// array at column c hb (the loop moves them by hb columns), and c comes from the loop's
+// twiddle cursor: twiddles is the pairing table as the loop has moved it (Nk hb entries per
+// iteration, the low set's w^(K + n/4) row by row, per-lane storage), roots its start.
+// Fields: m (Nk), s (hb), n (L), src_stride and dst_stride (rows, complex elements).
+
+// The iteration of a paired last phase, from the twiddle cursor.
+template <class T> FFTN_FORCE_INLINE std::size_t pair_iteration(const pass_args* a) {
+  const T* cursor = static_cast<const T*>(a->twiddles);
+  const T* start = static_cast<const T*>(a->roots);
+  return static_cast<std::size_t>(cursor - start) / (tw_reals<T> * a->m * a->s);
+}
+
+// Rows r of both sets into the tight block, y[q + 2 hb r] (q < hb: low; q >= hb: high).
+// A unit is a row. Reads src_stride, dst_stride, s, m, n, twiddles, roots.
+template <class T>
+void r2c_pair_gather(const pass_args* a, const void* src, void* dst, std::size_t first,
+                     std::size_t last) {
+  const T* x = static_cast<const T*>(src);
+  T* y = static_cast<T*>(dst);
+  const std::ptrdiff_t xs = 2 * a->src_stride;
+  const std::ptrdiff_t ys = 2 * a->dst_stride;
+  const std::size_t hb = a->s;
+  const std::size_t c = pair_iteration<T>(a);
+  const T* lo = x + 2;                              // column c hb + 1
+  const T* hi = x + at(a->n - (2 * c + 1) * hb, 2); // column L - (c + 1) hb
+  const std::size_t bytes = 2 * sizeof(T) * hb;
+  for (std::size_t r = first; r < last; ++r) {
+    const T* lr = lo + at(r, xs);
+    const T* hr = hi + at(r, xs);
+    T* yr = y + at(r, ys);
+    if (copies_prefetch && r + rows_ahead < last) {
+      prefetch_bytes<0>(lr + at(rows_ahead, xs), bytes);
+      prefetch_bytes<0>(hr + at(rows_ahead, xs), bytes);
+    }
+    for (std::size_t q = 0; q < hb; q += C<T>) {
+      store(yr + 2 * q, load(lr + 2 * q));
+      store(yr + 2 * (hb + q), load(hr + 2 * q));
+    }
+  }
+}
+
+// The pairing of the transformed block and its writing, scaled with Scaled: unit k pairs
+// low row k with high row Nk - 1 - k. Reads src_stride (2 hb), dst_stride (L), s, m, n,
+// twiddles, roots, scale.
+template <class T, bool Scaled>
+void r2c_pair_scatter(const pass_args* a, const void* src, void* dst, std::size_t first,
+                      std::size_t last) {
+  const T* z = static_cast<const T*>(src);
+  T* y = static_cast<T*>(dst);
+  const std::ptrdiff_t zs = 2 * a->src_stride;
+  const std::ptrdiff_t ys = 2 * a->dst_stride;
+  const std::size_t hb = a->s;
+  const std::size_t rows = a->m;
+  const std::size_t c = pair_iteration<T>(a);
+  const T* table = static_cast<const T*>(a->twiddles);
+  const T half = half_of<T, Scaled>(a);
+  T* lo = y + 2;                              // column c hb + 1
+  T* hi = y + at(a->n - (2 * c + 1) * hb, 2); // column L - (c + 1) hb
+  const std::size_t bytes = 2 * sizeof(T) * hb;
+  for (std::size_t k = first; k < last; ++k) {
+    const std::size_t km = rows - 1 - k;
+    const T* zl = z + at(k, zs);
+    const T* zh = z + at(km, zs) + at(2 * hb - 1, 2); // high column hb - 1 at row Nk - 1 - k
+    T* yl = lo + at(k, ys);
+    T* yh = hi + at(km, ys) + at(hb - 1, 2);
+    if (copies_prefetch && k + rows_ahead < last) {
+      prefetch_bytes<1>(yl + at(rows_ahead, ys), bytes);
+      prefetch_bytes<1>(yh - at(rows_ahead, ys) - at(hb - 1, 2), bytes);
+    }
+    for (std::size_t j = 0; j < hb; j += C<T>) {
+      const tw<T> v = load_tw(table + tw_reals<T> * (k * hb + j));
+      const cv<T> zk = load(zl + 2 * j);
+      const cv<T> zc = conj(load_down<T, true>(zh - at(j, 2), C<T>));
+      cv<T> xl;
+      cv<T> xh;
+      post_pair<T>(zk, zc, v, half, xl, xh);
+      store(yl + 2 * j, xl);
+      store_down<T, true>(yh - at(j, 2), C<T>, xh);
+    }
+  }
+}
+
+// Column 0 of the paired last phase, from a tight block of its hb columns (z[q + hb k],
+// column 0 used): X_0, X_h from Z_0, X_h/2 = conj Z_h/2 (Nk even), and the pairs L k,
+// L (Nk - k) for 1 <= k < Nk / 2 with twiddles w^(L k + n/4) (plain interleaved, k - 1).
+// One unit. dst is the half spectrum (bin K at K, X_h at h = L Nk). Reads src_stride (hb),
+// dst_stride (L), m (Nk), twiddles, scale.
+template <class T, bool Scaled>
+void r2c_pair_column(const pass_args* a, const void* src, void* dst, std::size_t first,
+                     std::size_t last) {
+  if (first != 0 || last == 0) {
+    return;
+  }
+  const T* z = static_cast<const T*>(src);
+  T* y = static_cast<T*>(dst);
+  const std::ptrdiff_t zs = 2 * a->src_stride;
+  const std::ptrdiff_t ys = 2 * a->dst_stride;
+  const std::size_t rows = a->m;
+  const T* table = static_cast<const T*>(a->twiddles);
+  const auto s = static_cast<T>(a->scale);
+  const T half = half_of<T, Scaled>(a);
+  post_ends<T, Scaled>(z[0], z[1], y, y + at(rows, ys), s);
+  if (rows % 2 == 0) {
+    const T* zm = z + at(rows / 2, zs);
+    y[at(rows / 2, ys)] = scaled<T, Scaled>(zm[0], s);
+    y[at(rows / 2, ys) + 1] = scaled<T, Scaled>(-zm[1], s);
+  }
+  for (std::size_t k = 1; 2 * k < rows; ++k) {
+    const T* zk = z + at(k, zs);
+    const T* zm = z + at(rows - k, zs);
+    // A = Z_k + conj Z_m, B = Z_k - conj Z_m, p = B v; X_k = (A + p) / 2, X_m = conj(A - p) / 2.
+    const T ar = zk[0] + zm[0];
+    const T ai = zk[1] - zm[1];
+    const T br = zk[0] - zm[0];
+    const T bi = zk[1] + zm[1];
+    const T vr = table[2 * (k - 1)];
+    const T vi = table[2 * (k - 1) + 1];
+    const T pr = br * vr - bi * vi;
+    const T pi = br * vi + bi * vr;
+    T* yk = y + at(k, ys);
+    T* ym = y + at(rows - k, ys);
+    yk[0] = (ar + pr) * half;
+    yk[1] = (ai + pi) * half;
+    ym[0] = (ar - pr) * half;
+    ym[1] = (pi - ai) * half;
+  }
+}
+
 } // namespace
