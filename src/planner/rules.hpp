@@ -80,6 +80,11 @@ struct target_profile {
   // axis whose length is at most this, one row per lane, instead of row by row (0: never).
   // Experiment X7 sets it per target and precision.
   std::size_t lanes_up_to = 0;
+  // A prime factor q without a codelet takes a Rader stage instead of a Bluestein stage when
+  // rader_from <= q < rader_below and q - 1 is 13-smooth (rader_root). Experiment X27 sets
+  // them per target and precision.
+  std::size_t rader_from = 0;
+  std::size_t rader_below = 0;
 };
 
 // The profile of target t for a precision with `lanes` complex lanes: the table measured
@@ -96,9 +101,9 @@ struct target_profile {
 [[nodiscard]] std::vector<std::size_t> rule_radices(std::size_t n, const target_profile& p);
 
 // The primitive root (the smallest) of the Rader stage that a prime factor q above the
-// codelets takes instead of a Bluestein stage, or 0 for Bluestein: Rader when q < 2^16 and
-// q - 1 is 13-smooth (experiment X27), so that its convolution of q - 1 points is a chain of
-// codelet passes and its kernel spectrum a transform of small prime factors.
+// codelets takes instead of a Bluestein stage, or 0 for Bluestein: Rader when q lies in the
+// profile's range and q - 1 is 13-smooth (experiment X27), so that its convolution of q - 1
+// points is a chain of codelet passes and its kernel spectrum a transform of small primes.
 [[nodiscard]] std::size_t rader_root(std::size_t q, const target_profile& p);
 
 // The convolution length of a Bluestein stage for a transform of q points: the 7-smooth

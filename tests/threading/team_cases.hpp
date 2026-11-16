@@ -191,15 +191,16 @@ void add_cases(std::vector<team_case>& out, const fftn::detail::build_settings& 
                           4208, 4208, false, settings, target));
   out.push_back(make_case("r2c_bluestein_526x2" + suffix, fftn::rows_r2c<T>(526, 2), 1052, 2 * 264,
                           false, settings, target));
-  // Rader stages (experiment X27), the same shapes: 4 x 29 (C copies per vector where C
-  // divides 4), 3 x 29 in place (one copy at a time), a plane of primes, 16 x 257 (a
+  // Rader stages (experiment X27), the same shapes: 4 x 151 (C copies per vector where C
+  // divides 4), 3 x 151 in place (one copy at a time), a plane of primes, 16 x 257 (a
   // convolution of 256 points in many chunks) and a real row whose half is one Rader stage.
-  out.push_back(make_case("c2c_rader_116x3" + suffix, fftn::rows_c2c<T>(116, 3, bwd), 348, 348,
+  out.push_back(make_case("c2c_rader_604x3" + suffix, fftn::rows_c2c<T>(604, 3, bwd), 1812, 1812,
                           false, settings, target));
-  out.push_back(make_case("c2c_rader_inplace_87x2" + suffix, fftn::rows_c2c<T>(87, 2, fwd), 174,
-                          174, true, settings, target));
-  out.push_back(make_case("c2c_planes_rader_29x29x2" + suffix, fftn::planes_c2c<T>(29, 29, 2, fwd),
-                          1682, 1682, false, settings, target));
+  out.push_back(make_case("c2c_rader_inplace_453x2" + suffix, fftn::rows_c2c<T>(453, 2, fwd), 906,
+                          906, true, settings, target));
+  out.push_back(make_case("c2c_planes_rader_151x151x2" + suffix,
+                          fftn::planes_c2c<T>(151, 151, 2, fwd), 45602, 45602, false, settings,
+                          target));
   out.push_back(make_case("c2c_rader_long_4112x1" + suffix, fftn::rows_c2c<T>(4112, 1, fwd), 4112,
                           4112, false, settings, target));
   out.push_back(make_case("r2c_rader_514x2" + suffix, fftn::rows_r2c<T>(514, 2), 1028, 2 * 258,

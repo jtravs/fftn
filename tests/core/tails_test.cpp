@@ -82,7 +82,7 @@ std::vector<tail_case> cases() {
     out.push_back({.n = n, .radices = {}, .rows = 2, .expect = "bluestein"});
   }
   // Rader stages (experiment X27): one copy at a time (1, 3 copies) and C copies at a time.
-  for (const std::size_t n : {29U, 87U, 58U, 116U, 232U}) {
+  for (const std::size_t n : {151U, 453U, 302U, 604U, 1208U}) {
     out.push_back({.n = n, .radices = {}, .rows = 2, .expect = "rader"});
   }
   // Generic passes, first and last, with partial runs.

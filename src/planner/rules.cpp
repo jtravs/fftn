@@ -505,6 +505,24 @@ std::size_t lanes_up_to_of(target t, std::size_t lanes) {
   }
 }
 
+// The Rader range (target_profile::rader_from, rader_below), from experiment X27
+// (dev/experiments/X27-prime-codelets.md), Rader against the Bluestein stage on single prime
+// rows. Lower end: a single row runs Rader's gather and scatter in scalar code while the
+// Bluestein stage's chirp passes fill the C lanes, so with C >= 4 small primes lose: 29 and
+// 61 on AVX2 in float (1.27, 1.22; EPYC 7763, run 20261115-233441-5bdc), 29 on AVX-512 in
+// double (1.11) and 29 to 97 in float (1.33-1.97; Xeon 6240, run 20261116-002300-c123),
+// while from 97 (C = 4) and 257 (C = 8) up every prime measured won (0.45-0.91, except
+// 8191 in AVX-512 float, 1.08); with C <= 2 every prime from 29 won (0.17-0.85: the M5 Max,
+// runs 20261115-200226-b1eb and 20261115-203357-1ff2; the EPYC in double). So Rader starts
+// at 16 C for C >= 4. Upper end: at 65537 Rader lost on the M5 Max (1.21: its gather and
+// scatter wander over a megabyte) and won on the EPYC (0.62 double, 0.83 float) and the Xeon
+// (0.62, 0.56), so NEON stops below 2^16 and x86 below 2^24, where the index table's floats
+// stop being exact (passes/rader.inl). The scalar target takes NEON's values, unmeasured.
+std::size_t rader_from_of(std::size_t lanes) { return lanes >= 4 ? 16 * lanes : 0; }
+std::size_t rader_below_of(target t) {
+  return t == target::avx2 || t == target::avx512 ? std::size_t{1} << 24U : std::size_t{1} << 16U;
+}
+
 struct sequence {
   std::uint64_t cost = 0;
   std::vector<std::size_t> radices;
@@ -590,6 +608,8 @@ target_profile profile_of(target t, std::size_t lanes) noexcept {
           .bluestein_above = default_bluestein_above,
           .split = split_of(t, lanes),
           .lanes_up_to = lanes_up_to_of(t, lanes),
+          .rader_from = rader_from_of(lanes),
+          .rader_below = rader_below_of(t),
       };
     }
     if (m.t == fallback_target &&
@@ -604,6 +624,8 @@ target_profile profile_of(target t, std::size_t lanes) noexcept {
       .bluestein_above = default_bluestein_above,
       .split = split_of(t, lanes),
       .lanes_up_to = lanes_up_to_of(t, lanes),
+      .rader_from = rader_from_of(lanes),
+      .rader_below = rader_below_of(t),
   };
 }
 
@@ -673,17 +695,8 @@ std::uint64_t pow_mod(std::uint64_t b, std::uint64_t e, std::uint64_t q) {
 
 } // namespace
 
-constexpr std::size_t rader_limit = std::size_t{1} << 16U;
-
 std::size_t rader_root(std::size_t q, const target_profile& p) {
-  // Experiment X27 (Apple M5 Max, neon_fcma): Rader took 0.17-0.82 of the Bluestein stage's
-  // time from 29 to 40961 in double and float (run 20261115-200226-b1eb) and 1.2 at 65537,
-  // where its gather and scatter wander over a megabyte and its convolution is a chain of
-  // 2^16 points; so it stops below 2^16. (That also keeps the index table's floats exact,
-  // passes/rader.inl, and the plan-time products within 64 bits.) q - 1 may have the
-  // factors 11 and 13 (codelet radices): 8191 and 16381 took 0.21-0.45 of Bluestein's time
-  // (run 20261115-203357-1ff2).
-  if (q < 5 || q >= rader_limit || has_codelet(q)) {
+  if (q < 5 || q < p.rader_from || q >= p.rader_below || has_codelet(q)) {
     return 0;
   }
   for (std::size_t d = 2; d <= q / d; ++d) {

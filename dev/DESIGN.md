@@ -1260,7 +1260,8 @@ one per prime (one convolution of about 2Q points instead of passes of about 2q�
 each, which is about the same work).
 
 A **Rader stage** (experiment X27, `passes/rader.inl`) takes the Bluestein stage's place
-when the product is a single prime q < 2¹⁶ whose q − 1 is 13-smooth (`rader_root`): with g
+when the product is a single prime q in the profile's Rader range whose q − 1 is 13-smooth
+(`rader_root`, below): with g
 the smallest primitive root, bins g⁻ᵏ are x₀ plus a cyclic convolution of length L = q − 1
 of a_m = x(g^m) with b_l = w^(g⁻ˡ), and bin 0 is x₀ plus the sum of the inputs. *rader
 in* gathers a (from an index table of g^m, values of T) into the convolution's slot and
@@ -1268,9 +1269,13 @@ keeps x₀ and the sum (taken pairwise) in two more rows; the convolution is the
 stage's chain with dft(b)/L as its kernel spectrum; *rader out* scatters x₀ + c_k to bin
 g^m for m = −k. A unit is C copies when C divides s, else one copy in scalar arithmetic.
 The convolution is about half a Bluestein stage's (257: 256 points against M ≥ 513), so
-Rader took about half the time from 97 to 12289 on the Mac; at 65537 the gather and
-scatter over a megabyte and a 2¹⁶-point chain lost (1.2 times Bluestein's), hence the
-limit. Because the scatter permutes, the stage cannot write the slot its convolution ends
+Rader took 0.4–0.8 of the time from 97 to 40961 on all three machines. The range
+(`target_profile::rader_from`, `rader_below`): with C ≥ 4 a single small prime loses,
+because Rader's gather and scatter of one row run in scalar code while the chirp passes
+fill C lanes, so Rader starts at 16C there (64 for AVX2 float and AVX-512 double, 128 for
+AVX-512 float); at 65537 it lost on the Mac (1.2: a megabyte gathered and scattered in
+random order) and won on x86 (0.56–0.83), so NEON stops below 2¹⁶ and x86 below 2²⁴, where
+the index table's floats stop being exact. Because the scatter permutes, the stage cannot write the slot its convolution ends
 in: from one scratch slot to the other it writes back over its source (`last_stage_to`).
 
 Strategies compose: a grid's row phase is a chain or a leaf; a plane transform is a lanes
@@ -1347,7 +1352,7 @@ being padding on the real side.
 | 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 16, (20, 25, 32, 64) | generated codelets |
 | 17, 19, 23 | generated codelets (symmetric-pair form), the leaf of n = p and a pass after the priced radices in composites (experiment X27: 0.15–0.42 of the Bluestein stage's time on the Mac) |
 | other primes above 16 up to the profile's threshold | one generic looped pass, O(p²) per butterfly, vectorised across copies, in direct form with pairwise sums; the threshold is 16 on every profile (X17: Bluestein was faster at every prime from 17 up on the Mac, the Xeon and the EPYC), so the rules do not choose it now |
-| a single prime q < 2¹⁶ with q − 1 13-smooth | Rader: a gather by powers of a primitive root, a cyclic convolution of q − 1 points with a precomputed kernel spectrum, a scatter (section 8.5; X27) |
+| a single prime with q − 1 13-smooth, in the profile's range (16C ≤ q for C ≥ 4; q < 2¹⁶ on NEON, 2²⁴ on x86) | Rader: a gather by powers of a primitive root, a cyclic convolution of q − 1 points with a precomputed kernel spectrum, a scatter (section 8.5; X27) |
 | other large primes | Bluestein: the smooth part of N is split off first; the product of the large prime factors becomes one stage at the end of the chain that performs a chirp-z transform through a smooth-length convolution with a precomputed kernel spectrum (section 8.5) |
 
 Rader and Bluestein share the convolution (`add_convolution`). The cost model prices
@@ -1469,8 +1474,9 @@ prices them) a cost per unit and a cost per tail, and a cost per pass. For a lin
    n_s = 1 they are the whole chain. (`rule_radices` returns this sequence.) Then the
    trailing qᵢ without a codelet above the profile's Bluestein threshold (16 on every
    profile, experiment X17, so all of them) are merged into one stage of their product Q
-   at the end of the chain (section 8.5): a Rader stage when Q is a prime below 2¹⁶ with
-   Q − 1 13-smooth (`rader_root`), otherwise a Bluestein stage, whose convolution length M is the
+   at the end of the chain (section 8.5): a Rader stage when Q is a prime in the profile's
+   Rader range with Q − 1 13-smooth (`rader_root`), otherwise a Bluestein stage, whose
+   convolution length M is the
    7-smooth length from 2Q − 1 to the next power of two that minimises twice the cost of
    rule 4's sequence for M plus two elementwise passes of M points (priced as a last
    radix-2 pass per point), the smallest on a tie (`bluestein_length`).

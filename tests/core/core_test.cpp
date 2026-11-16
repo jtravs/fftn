@@ -339,23 +339,30 @@ TEST(Rules, DescribeNamesTheRaderStage) {
       << text;
 }
 
-// The Rader rule: primes without a codelet below 2^16 whose q - 1 is 13-smooth, with their
-// smallest primitive root.
+// The Rader rule: primes without a codelet in the profile's range whose q - 1 is 13-smooth,
+// with their smallest primitive root; the range from experiment X27.
 TEST(Rules, RaderRoot) {
-  const auto profile = fftn::detail::profile_of(fftn::detail::target::avx2, 2);
   using fftn::detail::rader_root;
-  EXPECT_EQ(rader_root(29, profile), 2U);
-  EXPECT_EQ(rader_root(31, profile), 3U);
-  EXPECT_EQ(rader_root(41, profile), 6U);
-  EXPECT_EQ(rader_root(97, profile), 5U);
-  EXPECT_EQ(rader_root(257, profile), 3U);
-  EXPECT_EQ(rader_root(40961, profile), 3U);
-  EXPECT_EQ(rader_root(65537, profile), 0U); // above the size limit
-  EXPECT_EQ(rader_root(17, profile), 0U);    // a codelet
-  EXPECT_EQ(rader_root(47, profile), 0U);    // 46 = 2 x 23
-  EXPECT_EQ(rader_root(4093, profile), 0U);  // 4092 = 4 x 3 x 11 x 31
-  EXPECT_EQ(rader_root(8191, profile), 17U); // 8190 = 2 x 3^2 x 5 x 7 x 13
-  EXPECT_EQ(rader_root(91, profile), 0U);    // 7 x 13
+  using fftn::detail::target;
+  const auto neon = fftn::detail::profile_of(target::neon_fcma, 1);
+  EXPECT_EQ(rader_root(29, neon), 2U);
+  EXPECT_EQ(rader_root(31, neon), 3U);
+  EXPECT_EQ(rader_root(41, neon), 6U);
+  EXPECT_EQ(rader_root(97, neon), 5U);
+  EXPECT_EQ(rader_root(257, neon), 3U);
+  EXPECT_EQ(rader_root(8191, neon), 17U); // 8190 = 2 x 3^2 x 5 x 7 x 13
+  EXPECT_EQ(rader_root(40961, neon), 3U);
+  EXPECT_EQ(rader_root(65537, neon), 0U); // NEON's limit, 2^16
+  EXPECT_EQ(rader_root(17, neon), 0U);    // a codelet
+  EXPECT_EQ(rader_root(47, neon), 0U);    // 46 = 2 x 23
+  EXPECT_EQ(rader_root(4093, neon), 0U);  // 4092 = 4 x 3 x 11 x 31
+  EXPECT_EQ(rader_root(91, neon), 0U);    // 7 x 13
+  const auto avx2_double = fftn::detail::profile_of(target::avx2, 2);
+  EXPECT_EQ(rader_root(29, avx2_double), 2U);
+  EXPECT_EQ(rader_root(65537, avx2_double), 3U); // no limit below 2^24 on x86
+  const auto avx512_float = fftn::detail::profile_of(target::avx512, 8);
+  EXPECT_EQ(rader_root(97, avx512_float), 0U); // from 16 C = 128 with C = 8
+  EXPECT_EQ(rader_root(257, avx512_float), 3U);
 }
 
 std::vector<std::byte> run(const fftn::detail::plan_core& core, std::vector<std::byte> input,
