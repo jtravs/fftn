@@ -200,7 +200,11 @@ grid's second scratch buffer by seven cache lines made 2²² points about 8 % fa
 Mac; padding rows of the intermediate array did nothing on top of it. The prototype found
 the same with streams N/R apart at 4 KiB multiples: stagger work buffers by an odd number
 of cache lines, avoid radix ≥ 16 at large power-of-two strides.
-[X4](experiments/X4-padding.md).
+[X4](experiments/X4-padding.md). **Revised by X26b:** with more rounds the padding did pay on
+the Mac on top of the stagger (long rows 0.976 of the unpadded time, 2^18 0.94), as long as
+it pads only an intermediate the plan already keeps in its workspace: moving one there to
+pad it cost 1–9 %. On x86 (Xeon, EPYC) it gained nothing.
+[X26b](experiments/X26b-padded-grid.md).
 
 3.2 **Padding costs address arithmetic.** About 4 % on short rows on Apple in the
 prototype; pad only where conflicts occur, or compute padded addresses incrementally.
@@ -226,7 +230,15 @@ and beyond L2/2 on the Xeon, not in general; see 3.10 and 3.11.
 vector, a stride ≡ 2 mod 4 makes every other access split a 64-byte line (prototype).
 
 3.7 **Prefetchers differ by vendor.** Software next-row prefetch helped the Xeon by 25 % on
-45 MB batches and cost Zen 3 and Apple a few percent (prototype).
+45 MB batches and cost Zen 3 and Apple a few percent (prototype). In FFTN's grid copies the
+prefetch of rows eight ahead cost Zen 3 8 % (0.92 of the time without it), helped the Xeon
+and the Mac by 4–20 %, and the Xeon forced to AVX2 behaved like the Xeon, not like Zen 3
+(2^22 0.84 with it): the vendor decides, not the instruction set. But on the same Intel core
+it took float rows of 100000 points, whose copied rows are 32 bytes, to 1.27: a prefetch per
+row narrower than a cache line costs more than it fetches, so such a rule needs the row
+width as well as the core. A run-time prefetch distance instead of a compile-time one cost
+the narrow-row loop 8–10 % on Zen 3 and Apple.
+[X26](experiments/X26-grid-copies.md), [X26b](experiments/X26b-padded-grid.md).
 
 3.8 **Whether L2 is the core's own matters more than its size.** On the Xeon (32 KiB L1,
 1 MiB L2 per core) and the EPYC (32 KiB, 512 KiB per core), whole-row chains beat a blocked
@@ -259,7 +271,12 @@ loop's software prefetch of eight rows ahead, which adds eight more lines to tho
 gave 0.92 of the time. A high IPC with many instructions says what the core executes, not
 what limits it: test the instruction cut on the target before building on it, and for
 copies over power-of-two strides count L1 fills and data-cache accesses as well.
-[X26](experiments/X26-grid-copies.md).
+[X26](experiments/X26-grid-copies.md). **Then X26b:** padding the gathered rows so that they
+spread over all of L1's sets did not cut the L1 refills (EPYC +2–7 %, Xeon +0–10 %) nor the
+time: rows concentrated in one or two sets evict only those sets while they stream
+through, rows spread evenly turn over every set, the scratch block included. Set conflicts
+of a streaming copy are not by themselves a cost; what they evict is.
+[X26b](experiments/X26b-padded-grid.md).
 
 3.10 **A chain's cache trouble beyond L1 can be a power-of-two problem, not a size
 problem.** On the Mac a whole-row chain lost to the blocked grid beyond L1 for powers of

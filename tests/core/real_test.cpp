@@ -32,6 +32,7 @@
 #include <complex>
 #include <cstddef>
 #include <cstring>
+#include <limits>
 #include <span>
 #include <string>
 #include <utility>
@@ -353,13 +354,20 @@ TEST(Real, HalfLengthGrid) {
              grid_real{.n = 1024, .factors = {8, 64}},
              grid_real{.n = 2048, .factors = {8, 8, 16}},
              grid_real{.n = 1920, .factors = {24, 40}},
+             grid_real{.n = 65536, .factors = {128, 256}},
          }) {
-      build_settings s;
-      s.strategy = fftn::detail::strategy_choice::grid;
-      s.grid_factors = g.factors;
-      for (const bool r2c : {true, false}) {
-        check_all<double>(t, {.n = g.n, .settings = s, .route = "half-length complex grid"}, r2c);
-        check_all<float>(t, {.n = g.n, .settings = s, .route = "half-length complex grid"}, r2c);
+      // With and without the padded intermediate (X26b), which the c2r rows whose phase 1
+      // gather pairs the bins must not take (they write phase 1 into the output, X29).
+      for (const std::size_t period :
+           {std::numeric_limits<std::size_t>::max(), std::size_t{4096}}) {
+        build_settings s;
+        s.strategy = fftn::detail::strategy_choice::grid;
+        s.grid_factors = g.factors;
+        s.profile.grid_pad_period = period;
+        for (const bool r2c : {true, false}) {
+          check_all<double>(t, {.n = g.n, .settings = s, .route = "half-length complex grid"}, r2c);
+          check_all<float>(t, {.n = g.n, .settings = s, .route = "half-length complex grid"}, r2c);
+        }
       }
     }
   }

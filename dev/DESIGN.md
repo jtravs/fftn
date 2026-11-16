@@ -1157,7 +1157,10 @@ beyond L2 the copies' prefetching won (X12). Placement: the last phase writes th
 the output); phase 1 writes the output out of place with two phases, otherwise the
 workspace block (n complex values), which is also the in-place route (the scratch of N of
 the list above). Scratch line b is staggered from a by seven 64-byte lines (rule 4 of
-section 10; X4). The loops step a twiddle cursor (program.hpp) so a block's stage reads its
+section 10; X4). Where the L2 is shared by a cluster (Apple) an intermediate already in
+the workspace block is padded after each of phase 2's rows, so that the rows phase 2
+gathers spread over the cache sets (`grid_pad`, profile `grid_pad_period`; X26b: 0.976
+over the long rows); on x86 it gained nothing and is off. The loops step a twiddle cursor (program.hpp) so a block's stage reads its
 own table. Planner: a c2c row of one axis, contiguous on both sides, without edge factors,
 is a grid when its bytes exceed `grid_min_bytes`, in three phases beyond
 `grid_three_bytes`, by default half of L2 and L2 where each core has its own L2 (shared by
@@ -2609,6 +2612,7 @@ to change before a release.
 | 2026-11-15 | A c2r row out of place whose half-length transform is a two-phase grid pairs its bins in phase 1's gather (`c2r_pair_gather`), reading the input only; in place and three-phase grids keep the separate pairing pass; the r2c pairing stays separate (section 9.1) | X29 (Mac): 0.92–0.94 of the separate route's time at 32768–131072 and 46080 out of place, where the workspace block goes; 1.02–1.06 where the block stays (the gather reads the input twice) |
 | 2026-11-15 | Where a cluster shares L2 (Apple), a row whose length is not a power of two stays a chain when its power-of-two part is at most L1/8 in bytes, or the row at most 2 L1 (`chain_part_bytes`, `chain_mixed_bytes`; section 8.5) | X29 (M5 Max): chains took 0.49–0.72 of the grid's time for every such length tried (144 KiB to 62.5 MiB), the grid's L1-conflict problem being one of powers of two; tracking tier 0.983 (46080 0.63, 100000 0.60), nothing slower |
 | 2026-11-15 | With a private L2 and at least 2 MiB of L3 per CPU (Zen), the grid starts at half of L3 instead of half of L2 (section 8.5) | X29 (EPYC 7763): the chain took 0.51–0.81 of the grid's time on every row from L2/2 to 16 MiB, powers of two included; the Xeon 6240 (0.7 MiB of L3 per CPU) keeps L2/2, where the chain lost 1.1–1.6 |
+| 2026-11-16 | Where the L2 is shared by a cluster (Apple), an intermediate the grid already keeps in the workspace block is padded after each of phase 2's rows (`grid_pad`, profile `grid_pad_period`); off on x86. The copies' prefetch keeps X26's target gate: keying it to the core was rejected (experiment X26b) | Mac: double long rows 0.976 of main (2^18 0.94); Xeon 1.006 and EPYC 0.993, where counters showed no fewer L1 refills. The prefetch on an Intel core under `avx2` took 2^22 to 0.84 but float 100000 to 1.27; X26's cheaper copy loops were rejected again on the padded grid |
 
 ---
 

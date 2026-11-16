@@ -1,0 +1,41 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Experiment X26b's cases (dev/experiments/X26b-padded-grid.md): the long rows that run as
+# grids on x86 and the Mac, double first; float rows as collateral.
+
+[catalogue]
+name = "x26b"
+
+[[group]]
+name = "x26b-rows"
+kind = "c2c"
+dims = [16384, 65536, 262144, 1048576, 4194304, 46080, 100000]
+tiers = ["tracking"]
+
+[[group]]
+name = "x26b-rows-in-place"
+kind = "c2c"
+dims = [65536]
+place = "in"
+tiers = ["tracking"]
+
+[[group]]
+name = "x26b-real"
+kind = ["r2c", "c2r"]
+dims = [65536, 1048576, 4194304]
+tiers = ["tracking"]
+
+[[group]]
+name = "x26b-single"
+kind = "c2c"
+dims = [65536, 1048576, 4194304, 100000]
+precision = "f32"
+tiers = ["tracking"]
+
+[[group]]
+name = "x26b-single-real"
+kind = "r2c"
+dims = [1048576]
+precision = "f32"
+tiers = ["tracking"]

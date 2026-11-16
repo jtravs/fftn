@@ -29,6 +29,8 @@
 #include <complex>
 #include <cstddef>
 #include <cstring>
+#include <functional>
+#include <limits>
 #include <span>
 #include <string>
 #include <utility>
@@ -391,12 +393,15 @@ TEST(Grid, AgreesWithTheChainAtLengthsTheRulesTake) {
   }
 }
 
-// Fusing a phase's copies into its end passes moves data, not arithmetic: fused and
-// unfused plans give the same bits for every forced case, both directions, the scale on
-// the output and on the input, in and out of place, batches with gaps.
-template <class T> void fused_equals_unfused(fftn::isa target) {
-  std::vector<grid_case> cases = forced_cases();
-  cases.insert(cases.end(), last_small_cases().begin(), last_small_cases().end());
+// Two forced grids of one case that differ only in how they move data (fusion, padding)
+// give the same bits: every case, both directions, the scale on the output and on the
+// input, in and out of place, batches with gaps. variants[i] adjusts the settings of arm
+// i; `expect` (when not empty) must appear in some arm's describe() text.
+template <class T>
+void equal_bits(fftn::isa target, const std::vector<grid_case>& cases,
+                const std::vector<std::function<void(build_settings&)>>& variants,
+                const std::string& expect = "") {
+  bool seen = expect.empty();
   for (const grid_case& gc : cases) {
     for (const auto dir : {fftn::direction::forward, fftn::direction::backward}) {
       for (const int scaled : {0, 1, 2}) { // none, on the output, on the input
@@ -424,32 +429,44 @@ template <class T> void fused_equals_unfused(fftn::isa target) {
           fftn::test::input_source src(0xF05EULL + n);
           const cvec<T> x = src.complexes<T>(dist + n);
           std::vector<cvec<T>> out;
-          for (const bool fused : {true, false}) {
+          for (const auto& variant : variants) {
             build_settings s;
             s.strategy = strategy_choice::grid;
             s.grid_factors = gc.factors;
             s.profile.grid_block = gc.block;
-            s.grid_fused = fused;
             s.scale_on_input = scaled == 2;
+            variant(s);
             const auto core = make_plan_core(
                 fftn::detail::view_of(shape),
                 {.in_place = in_place, .scale = scaled != 0 ? 0.5 : 1.0, .force_isa = target}, s);
             if (!is_grid(*core)) {
               break; // a block this target's registers do not divide (check_grid covers it)
             }
+            seen = seen || described(*core).find(expect) != std::string::npos;
             cvec<T> y = in_place ? x : cvec<T>(dist + n, std::complex<T>(T(-1), T(2)));
             const fftn::workspace ws(fftn::detail::workspace_bytes(*core, 1));
             fftn::detail::execute_core(*core, 0, 2, in_place ? y.data() : x.data(), y.data(), ws);
             out.push_back(std::move(y));
           }
-          if (out.size() == 2) {
-            EXPECT_EQ(std::memcmp(out[0].data(), out[1].data(), out[0].size() * sizeof(out[0][0])),
-                      0);
+          for (std::size_t i = 1; i < out.size(); ++i) {
+            EXPECT_EQ(std::memcmp(out[0].data(), out[i].data(), out[0].size() * sizeof(out[0][0])),
+                      0)
+                << "arm " << i;
           }
         }
       }
     }
   }
+  EXPECT_TRUE(seen) << "no plan says: " << expect;
+}
+
+// Fusing a phase's copies into its end passes moves data, not arithmetic.
+template <class T> void fused_equals_unfused(fftn::isa target) {
+  std::vector<grid_case> cases = forced_cases();
+  cases.insert(cases.end(), last_small_cases().begin(), last_small_cases().end());
+  equal_bits<T>(target, cases,
+                {[](build_settings& s) { s.grid_fused = true; },
+                 [](build_settings& s) { s.grid_fused = false; }});
 }
 
 TEST(Grid, FusedEqualsUnfused) {
@@ -457,6 +474,83 @@ TEST(Grid, FusedEqualsUnfused) {
     fused_equals_unfused<double>(t);
     fused_equals_unfused<float>(t);
   }
+}
+
+// Padding the intermediate (grid_pad, experiment X26b) moves data, not arithmetic: padded
+// grids (the x86 machines' 4 KiB period, and a shorter one that pads more of these short
+// rows) give the bits of unpadded ones, fused and not, two phases in place and three.
+template <class T> void padding_keeps_bits(fftn::isa target) {
+  std::vector<grid_case> cases = forced_cases();
+  cases.insert(cases.end(), last_small_cases().begin(), last_small_cases().end());
+  cases.push_back({.n = 4096, .factors = {64, 64}, .phases = 2});
+  cases.push_back({.n = 8192, .factors = {16, 16, 32}, .phases = 3});
+  constexpr std::size_t never = std::numeric_limits<std::size_t>::max();
+  for (const bool fused : {true, false}) {
+    equal_bits<T>(target, cases,
+                  {[&](build_settings& s) {
+                     s.grid_fused = fused;
+                     s.profile.grid_pad_period = never;
+                   },
+                   [&](build_settings& s) {
+                     s.grid_fused = fused;
+                     s.profile.grid_pad_period = 4096;
+                   },
+                   [&](build_settings& s) {
+                     s.grid_fused = fused;
+                     s.profile.grid_pad_period = 512;
+                   }},
+                  "rows padded by");
+  }
+}
+
+TEST(Grid, PaddingKeepsBits) {
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    padding_keeps_bits<double>(t);
+    padding_keeps_bits<float>(t);
+  }
+}
+
+// The pad: a multiple of the block that spreads phase 2's rows over the period's sets.
+TEST(Grid, PadRule) {
+  using fftn::detail::grid_pad;
+  using fftn::detail::grid_split;
+  constexpr std::size_t never = std::numeric_limits<std::size_t>::max();
+  // The EPYC's 2^20 (64 x 128 x 128, blocks of 16): rows 128 KiB apart, one block of pad.
+  const grid_split g20{.phases = 3, .factors = {64, 128, 128}, .block = 16};
+  EXPECT_EQ(grid_pad(g20, 16, 4096), 16U);
+  EXPECT_EQ(grid_pad(g20, 8, 4096), 16U);
+  EXPECT_EQ(grid_pad(g20, 16, never), 0U);
+  // The Xeon's two-phase 65536 (256 x 256, blocks of 4): rows exactly 4 KiB apart.
+  const grid_split g16{.phases = 2, .factors = {256, 256, 0}, .block = 4};
+  EXPECT_EQ(grid_pad(g16, 16, 4096), 4U);
+  // A block that does not divide the last factor would straddle two padded rows.
+  EXPECT_EQ(grid_pad({.phases = 3, .factors = {32, 36, 40}, .block = 32}, 16, 4096), 0U);
+  // Rows already spread: no pad.
+  EXPECT_EQ(grid_pad({.phases = 2, .factors = {8, 64, 0}, .block = 8}, 16, 4096), 0U);
+  EXPECT_EQ(grid_pad({}, 16, 4096), 0U);
+}
+
+// The machine profile sets the plan's padding, and a padded grid says so.
+TEST(Grid, PlannerPadsByTheProfile) {
+  build_settings s;
+  s.strategy = strategy_choice::grid;
+  s.grid_factors = {64, 64};
+  s.profile.grid_block = 8;
+  s.profile.grid_pad_period = 4096;
+  const auto shape = fftn::rows_c2c<double>(4096, 1, fftn::direction::forward);
+  const auto padded =
+      make_plan_core(fftn::detail::view_of(shape), {.in_place = true}, s); // in the block
+  EXPECT_NE(described(*padded).find("rows padded by"), std::string::npos) << described(*padded);
+  EXPECT_GT(padded->block_elements, std::size_t{4096});
+  s.profile.grid_pad_period = std::numeric_limits<std::size_t>::max();
+  const auto plain = make_plan_core(fftn::detail::view_of(shape), {.in_place = true}, s);
+  EXPECT_EQ(described(*plain).find("rows padded by"), std::string::npos) << described(*plain);
+  EXPECT_EQ(plain->block_elements, std::size_t{4096});
+  // Two phases out of place keep the intermediate in the output, unpadded.
+  s.profile.grid_pad_period = 4096;
+  const auto out_of_place = make_plan_core(fftn::detail::view_of(shape), fftn::options(), s);
+  EXPECT_EQ(described(*out_of_place).find("rows padded by"), std::string::npos);
+  EXPECT_EQ(out_of_place->block_elements, 0U);
 }
 
 // A grid's scratch line b is staggered from a by seven 64-byte lines (DESIGN.md 10, rule 4;
