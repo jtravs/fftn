@@ -111,7 +111,96 @@ results change only where its chain had other factors or the leaf comes from `av
 
 ## Results
 
-(pending)
+Toolchains: GCC 14.4 on the Xeon (`avx512`), GCC 16.2 on the EPYC (DMOG, `-c 8`, shared),
+Clang 23 on the Mac; Release, one thread, double. Arms: A e8c2639 (`main`), B dd61535 (arm
+0), P b5457ac (arm 1), Q 6a305b3 (arm 2 as first written), R 3abec91 (arm 3 as first
+written), S df90c48 (the final branch: arm 2 without `avx512`'s 8 and 12, arm 3 without the
+split entry). Ratios are medians over rounds of the paired per-round ratio.
+
+### Where the time goes
+
+Counters (fbench `--pmu cycles,instructions`, user mode, three process rounds; FFTW with
+shared wisdom and `PLAN_NOTE=1`; Xeon job 16107, EPYC job 511080), ns / instructions per
+call, A → Q against FFTW:
+
+| case | Xeon A | Xeon Q | Xeon FFTW (plan) | EPYC A | EPYC Q | EPYC FFTW (plan) |
+|---|---|---|---|---|---|---|
+| 2 × 1 | 7.3 / 101 | 6.4 / 91 | 5.9 / 73 (`n2fv_2_sse2`) | 7.2 / 95 | 5.5 / 77 | 7.5 / 71 |
+| 18 × 1 | 45.5 / 506 | 25.0 / 213 | 37.0 / 393 (9 × 2, `t1fv_9`, `n2fv_2`) | 33.5 / 469 | 17.4 / 199 | 30.8 / 382 |
+| 22 × 1 | 61.6 / 641 | 32.9 / 260 | 46.4 / 500 (2 × 11, `n1fv_11` on 2 columns) | 44.6 / 583 | 23.0 / 248 | 41.7 / 499 |
+| 16 × 1 | 20.2 / 228 | 16.7 / 134 | 21.6 / 218 (`n2fv_16_avx2_128`) | 15.8 / 221 | 12.5 / 160 | 16.1 / 216 |
+| 16 × 16 | 208 / 2298 | 123 / 884 | 184 / 1962 (`n1fv_16_avx2`, 2 rows per register) | 197 / 2291 | 146 / 1555 | 157 / 1961 |
+| 16 × 256 | 3322 / 35418 | 1942 / 12884 | 3154 / 30282; MKL 1906 / 12749 | 3145 / 35411 | 2388 / 23875 | 2741 / 30281 |
+| 15 × 2 bwd | 38.9 / 392 | 37.4 / 382 | 32.0 / 321 (`n1bv_15_avx2`, 2 rows) | 34.9 / 385 | 31.8 / 367 | 27.1 / 321 |
+| 64 × 2 bwd | 73.5 / 598 | 72.2 / 588 | 143 / 1382 | 143.6 / 1951 | 142.1 / 1936 | 110.9 / 1374 (`n1bv_64_avx2`, 2 rows) |
+
+So: the composites without a pair leaf and the batches of 16 were kernel cost (2–3 times
+FFTW's instructions; the 128-bit leaf does a whole radix-16 codelet per row on one complex
+per register); the tiny rows were fixed cost (Xeon 2 points: 18 more instructions than FFTW
+per call, the extra library call of fbench's backend and the leaf's division of its
+distances); the EPYC's backward batches of 2 are FFTW running two rows in the lanes of one
+`ymm` with a whole codelet (15, 64), which no arm here addresses (FFTN's 64 on `avx2` is a
+chain of 1.4 times FFTW's instructions). The Mac's in-place 2 × 3 (1.39–1.44) is a latency
+chain: in place with one buffer set, each execution reads what the previous one stored, and
+FFTN's 2-point leaf (4 instructions) still takes 3.8 ns per call there against 3.1 out of
+place in a microbenchmark; a hand-written load-add-store loop on the same address measures
+3.1–3.3 ns per iteration with either paired or single 128-bit accesses, under FFTW's 2.6 ns
+per call. Not resolved.
+
+### Arms 0–2 (runs 20261116-190621-c3ce Xeon, 80 rounds, 19 loaded, band ±1.00 %, Slurm 16097, builds 16095; 20261116-190423-3869 EPYC, 80 rounds, all loaded, band ±1.00 %, Slurm 511074, builds 511073; 20261116-182910-c795 Mac, 12 rounds, band ±1.26 %)
+
+| arm (targets) | Xeon `avx512` | EPYC `avx2` | Mac `neon_fcma` |
+|---|---|---|---|
+| 0, bench (all x37; single rows 2–6) | 0.970; 0.889 (2 points 0.88, 6 0.86) | 0.949; 0.808 (2 points 0.80) | 0.995; 0.963 |
+| 1, short pairs (18, 22, 26, 30 x86; 18–30 NEON) | 0.468 (0.395–0.537) | 0.519 (0.486–0.543) | 0.718 (0.576–0.843; 20 points 0.66) |
+| 2, pairs of 8–16 (8, 12, 16) | 16: 0.661 (16 × 16 0.595, 16 × 256 0.589); 8 and 12: 1.009, in place 8 × 3 2.15, 12 × 3 1.55 | 0.852 (0.747–0.967) | does not apply |
+
+Rule 3 removed `avx512`'s 8 = 2 × 4 and 12 = 3 × 4 (r1 < C: the second pass stores partial
+runs, and an in-place batch whose next execution reads them back stalls); their
+out-of-place cases were 0.85–0.98. `avx512` plans take `avx2`'s 4 × 2 and 6 × 2 for them
+instead (find_more_pair_leaves), timed in the final runs. Other cases slower than the arm
+before beyond the band: Xeon c2c 28 × 1 1.035–1.049 in arms 0–2 (its 4 × 7 chain is
+unchanged; code placement of the entry), 22 and 26 × 1 1.014–1.017 in arm 0 only; EPYC 64 ×
+256 1.022 in arm 2 (plan unchanged).
+
+### Arm 3 (Mac run 20261116-185336-400d, 12 rounds, band ±2.23 %; EPYC run 20261116-201125-8509, 21 rounds, all loaded, band ±1.18 %, Slurm 511093)
+
+As first written (R): on the leaf rows (2–16 points, every batch) Mac R ÷ P 0.963 (single
+rows 2–6 0.83–0.89), EPYC R ÷ Q 0.969 (0.849–1.016). But on the EPYC single rows that
+take the general path got slower: 31, 60, 61, 100, 144, 192, 256 points and float 97 × 2 at
+1.03–1.13 of Q; the out-of-line general path (rule 3). The final arm (S) keeps the byte
+distances and drops the split.
+
+### Final branch (S df90c48 on x86; on arm64 the final 769f3c2 is R's code)
+
+The final branch adopts arm 3's leaf distances everywhere and its split entry on AArch64
+only (769f3c2: the general path is `noinline` on AArch64, forced inline elsewhere; Clang's
+x86-64 `execute_core` is instruction for instruction S's). Runs:
+
+- Xeon x37, run 20261116-225820-974d (Slurm 16147, build 16146; Q, S, FFTW, MKL; 24
+  rounds, all loaded, band ±2.66 %): S ÷ Q on arm 3's leaf targets (2–7, 15, 16 points)
+  0.961 (2 × 1 0.96, 4 × 1 0.89, 16 × 1 0.84), slower 3 × 3 in place 1.079 (a latency
+  chain, still 1.01 of FFTW); 8 and 12 points with `avx2`'s pair leaves against
+  `avx512`'s 2 × 4 and 3 × 4: 0.904 (in place 8 × 3 0.41, 12 × 3 0.62; 12 × 256 and
+  12 × 3 out of place 1.06–1.07, still 0.82–0.91 of FFTW); the general-path rows 31–256
+  0.996. FFTN ÷ FFTW over the x37 cases 0.721, over 1.05 only 28 × 1 (1.09, a 4 × 7 chain)
+  and 15 × 2 backward (1.13); ÷ MKL 0.576, over 1.05 24 × 64 and 24 × 1024 (1.10–1.15) and
+  32 × 256 (1.07).
+- Xeon tracking tier, run 20261116-230356-f5f4 (Slurm 16149, build 16148; A, S; 16
+  rounds, 9 loaded, band ±1.87 %): S ÷ A 0.983, 5 faster, nothing slower.
+- Xeon exit catalogue, run 20261116-202515-4a68 (Slurm 16118; A, Q, R, FFTW, MKL; 15
+  rounds, 2 loaded, band ±2.25 %): cases over 1.05 of FFTW, double, A 30 of 193 → R 24
+  (R still had `avx512`'s 2 × 4 and 3 × 4: 8 × 3 and 12 × 3 in place 1.87 and 1.21, which S
+  takes to 0.79–0.80 of FFTW, so the final branch has 22); of MKL A 32 → R 30 (final 29).
+- Mac exit catalogue, run 20261116-185638-1733 (A, R, FFTW; 10 rounds, band ±2.26 %): over
+  1.05 of FFTW A 24 of 193 → R 19; R ÷ A 0.983, nothing slower. Mac tracking tier, run
+  20261116-191129-ab4d (A, R; band ±2.94 %): 0.988, 4 faster, nothing slower. Mac x37, run
+  20261116-211646-3571 (R, S, FFTW; band ±1.00 %): without the split entry (S) single rows
+  of 2–6 points are 1.06–1.09 of R and the general-path rows 1.00, hence the split on
+  AArch64.
+
+Library text (`size` of `libfftn.a`): x86-64 GCC 14 A 47.82 MB, P +0.06 %, Q +0.10 %, R
+−0.23 % (the leaves lose their divisions); arm64 Clang A 19.25 MB, P +0.73 %, R +0.20 %.
 
 ## Verdict
 
