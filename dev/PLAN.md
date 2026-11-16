@@ -86,8 +86,8 @@ Open, by phase:
 - 1: 1.3's `x86_v2` and `avx` vocabularies and X14; X2 on the Mac above 1024; X4 on x86
   and for edge passes; X12 on x86; X5. The phase 1 exit is not met: x86 trails FFTW.
 - 2: 2.2's acceptance in double c2c on AVX-512 (the chain 1.01–1.26 of FFTW at 8–16
-  points; X24 rejected both planned fixes); 2.4 (cost model, `planning::measure`, wisdom;
-  not started); 2.5 (`next_fast_length` exists internally, not public); X6, X13, P1, P2.
+  points; X24 rejected both planned fixes); 2.4 (`planning::measure` and wisdom built, P1 and P2 in a first pass; the cost model and calibration remain;
+  task/2.4-measure); 2.5 (`next_fast_length` exists internally, not public); X6, X13.
 - 3: T2, T3, T4, T6; 3.5 (Kokkos executor); 3.6 to be checked against its acceptance.
 - 4–7: not started.
 
