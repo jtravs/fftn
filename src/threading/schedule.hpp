@@ -11,6 +11,7 @@
 #pragma once
 
 #include "fftn/team.hpp"
+#include "isa/arch.hpp"
 #include "threading/work_graph.hpp"
 
 #include <cstddef>
@@ -110,6 +111,14 @@ struct machine_profile {
   // phases. set_grid_sizes sets it where a private L2 has less than 2 MiB of L3 per CPU
   // behind it, the machines where X29's chains for such rows do not apply.
   std::size_t grid_two_odd_part = 0;
+  // A row whose length n is not a power of two and whose power-of-two part, in bytes of
+  // complex values, is at most grid_two_part_bytes stays in two grid phases at any size (0:
+  // off; experiment X35). On a Granite Rapids VM two phases took 0.58-0.83 of the time of
+  // X29's chains at 100000, 10^6 and 2 x 10^6 points, and 71680 (power-of-two part 2048)
+  // lost 1.10 in three, while rows with a larger power-of-two part gained in three phases
+  // (two lost up to 1.46). set_grid_sizes sets it to 32 KiB on x86-64 where the private L2
+  // has 2 MiB or more.
+  std::size_t grid_two_part_bytes = 0;
   std::size_t grid_block_bytes = std::size_t{64} * 1024;
   std::size_t grid_block = 0;
   // The set period (bytes) the grid pads the rows of its intermediate array against, so that
@@ -152,14 +161,18 @@ struct machine_profile {
 // are a Zen 3 CCX's, with the grid's sizes from t's caches, and an Apple cluster's or a
 // mesh's values where T1 and T5 measured them. A pure function of the topology, so that
 // the fixtures test it on any machine.
-[[nodiscard]] machine_profile profile_for(const topology& t) noexcept;
+// x86_64 says whether the machine is an x86-64 one (the build's architecture by default):
+// X35's rule for a private L2 of 2 MiB or more was adopted there only.
+[[nodiscard]] machine_profile profile_for(const topology& t,
+                                          bool x86_64 = FFTN_ARCH_X86_64 != 0) noexcept;
 
 // The profile of the running machine: profile_for its topology, with its CPU count.
 [[nodiscard]] machine_profile default_machine_profile() noexcept;
 
 // Sets the grid's size fields from the caches of one core class, the fastest (sizes of 0:
 // unknown, which keeps the fields' defaults).
-void set_grid_sizes(machine_profile& p, const core_class& c) noexcept;
+void set_grid_sizes(machine_profile& p, const core_class& c,
+                    bool x86_64 = FFTN_ARCH_X86_64 != 0) noexcept;
 
 // Which lanes (team members) share a cache: contiguous runs of group_size ranks (fftn::team).
 struct lane_map {

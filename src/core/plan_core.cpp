@@ -376,16 +376,19 @@ grid_split plan_grid(std::size_t n, const side& in, const side& out, const build
   if (!settings.radices.empty() && checked_product(settings.radices) == n) {
     return {};
   }
-  // Three phases beyond grid_three_bytes, unless the odd part of n keeps two (X34).
+  // Three phases beyond grid_three_bytes, unless the odd part of n (X34) or its small
+  // power-of-two part (X35) keeps two.
   std::size_t odd = n;
   while (odd % 2 == 0) {
     odd /= 2;
   }
+  const std::size_t part_bytes = n / odd * 2 * sizeof(T);
   const bool three = settings.grid_phases != 0
                          ? settings.grid_phases == 3
                          : n * 2 * sizeof(T) > settings.profile.grid_three_bytes &&
                                (settings.profile.grid_two_odd_part == 0 ||
-                                odd < settings.profile.grid_two_odd_part);
+                                odd < settings.profile.grid_two_odd_part) &&
+                               (odd == 1 || part_bytes > settings.profile.grid_two_part_bytes);
   grid_split g = choose_grid(n, lanes, settings.profile.grid_block_bytes / (4 * sizeof(T)), three,
                              settings.profile.grid_block, settings.grid_factors);
   g.pad = grid_pad(g, 2 * sizeof(T), settings.profile.grid_pad_period);
