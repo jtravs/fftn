@@ -453,6 +453,9 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   }
   chain_builder<T> chain(kernels, profile, tables_of<T>(c), settings.chunk_points, settings.radices,
                          settings.bluestein_above, fusion_of(settings, c.isa_target));
+  if (const narrow_leaf_table* narrow = find_narrow_leaves(c.isa_target)) {
+    chain.use_narrow_leaves(&of<T>(*narrow));
+  }
   program& p = c.prog;
   const std::size_t r = s.axes.size();
   const auto complex_bytes = static_cast<std::ptrdiff_t>(2 * sizeof(T));
@@ -836,6 +839,18 @@ std::shared_ptr<const plan_core> make_plan_core(const shape_view& shape, const o
 void execute_core(const plan_core& core, std::size_t first, std::size_t count, const void* in,
                   void* out, const workspace& ws) noexcept {
   assert(ws.size() >= core.bytes && "fftn: workspace smaller than plan::workspace_bytes()");
+  if (core.prog.leaf_rows) {
+    // Rows of leaves use no scratch, so they leave any team state in the workspace as it
+    // is, and need no slot_addresses (driver.hpp).
+    assert(first <= core.prog.transforms && count <= core.prog.transforms - first &&
+           "fftn: execute_transforms beyond the batch");
+    assert((!core.in_place || in == out) && "fftn: in-place plan executed with in != out");
+    assert((core.in_place || in != out) && "fftn: out-of-place plan executed with in == out");
+    if (count != 0) {
+      run_leaf_rows(core.prog, first, count, in, out);
+    }
+    return;
+  }
   // The scratch below overlaps any team state the workspace holds: the next team execution
   // sets it up afresh (team_state.hpp).
   const sync_word team = workspace_access::team_word(ws);
@@ -849,23 +864,34 @@ void execute_core(const plan_core& core, std::size_t first, std::size_t count, c
   if (count == 0) {
     return;
   }
-  if (core.prog.leaf_rows) {
-    // Rows of leaves use no scratch and need no slot_addresses (driver.hpp).
-    run_leaf_rows(core.prog, first, count, in, out);
-    return;
-  }
-  slot_addresses at{.in = static_cast<const std::byte*>(in), .out = static_cast<std::byte*>(out)};
+  std::byte* a = nullptr;
+  std::byte* b = nullptr;
+  std::byte* block = nullptr;
   if (core.bytes != 0) {
     // The workspace may have any alignment; its size includes the slack for this.
     std::byte* raw = ws.memory().data();
     const auto address = reinterpret_cast<std::uintptr_t>(raw);
     const std::size_t skip = (64 - address % 64) % 64;
     std::byte* base = raw + skip;
-    at.a = base;
-    at.b = base + core.offset_b;
-    at.block = core.block_elements != 0 ? base + core.offset_block : nullptr;
+    a = base;
+    b = base + core.offset_b;
+    block = core.block_elements != 0 ? base + core.offset_block : nullptr;
   }
+  if (core.prog.flat && first == 0 && count == 1) {
+    // One transform, the whole batch or its first (X28): no slot_addresses.
+    run_flat_first(core.prog, in, out, a, b, block);
+    return;
+  }
+  const slot_addresses at{.in = static_cast<const std::byte*>(in),
+                          .out = static_cast<std::byte*>(out),
+                          .block = block,
+                          .a = a,
+                          .b = b};
   run_transforms(core.prog, first, count, at);
+}
+
+void execute_all(const plan_core& core, const void* in, void* out, const workspace& ws) noexcept {
+  execute_core(core, 0, core.prog.transforms, in, out, ws);
 }
 
 std::size_t transform_count(const plan_core& core) noexcept { return core.prog.transforms; }

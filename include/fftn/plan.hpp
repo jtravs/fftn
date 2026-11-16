@@ -80,7 +80,7 @@ public:
   /// Guarantees: the input is preserved unless the plan is in place; nothing outside the
   /// described output elements is written. Never allocates, locks, throws or does I/O.
   void execute(const In* in, Out* out, workspace& ws) const noexcept {
-    detail::execute_core(*core_, 0, detail::transform_count(*core_), in, out, ws);
+    detail::execute_all(*core_, in, out, ws);
   }
 
   /// Transforms `count` transforms of the batch, starting with transform `first`, serially

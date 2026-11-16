@@ -1,6 +1,6 @@
 # X23: masked partial runs in the x86 vocabularies
 
-- **Status:** done (rejected)
+- **Status:** rejected as first judged; amendment 4 (GCC builds) done, rule missed by one case on two machine-targets; adopted for GCC builds with the two cases as recorded exceptions (lead, 2026-11-15)
 - **Owner:** masked-tails session, 2026-11-15
 - **Phase / task:** 1 (x86 kernels; follow-up of [X22](X22-icpx.md))
 
@@ -328,3 +328,120 @@ already decide the verdict below.
   the tile's element stores into the masked loads, and Clang's code for the lane pass's
   second loop), fix it, and run B5 (with P5's stores on `avx2`) again under this rule on a
   quieter Xeon. With GCC the change is worth 0.60–0.80 of the time on float 7-smooth rows.
+
+## Amendment 4: adoption for GCC builds (2026-11-15, written before its runs)
+
+The maintainer's decision after the verdict above: FFTN's x86 release builds use GCC, and
+decision rules judge the release toolchains (AGENTS.md section 6, "Decision rules judge
+the release toolchains"), so a loss seen only with Clang gates the change by compiler
+instead of rejecting it. P5 (B5 + T5 + P5) is therefore restored behind a build option,
+`FFTN_MASKED_TAILS` = `AUTO` (default: on with GCC, off with every other compiler, icpx
+included, which is Clang-based) | `ON` | `OFF`. With it off the passes are main's tile
+path (checked by disassembly, Results below); the bits are the same either way. Clang's
+loss on odd double lengths stays a follow-up. B5's GCC run had three cases just past the
+rule's limit under load 29 (double 980 on `avx512` 1.043, 70 and 162 on `avx2` 1.062 and
+1.042, against 1.040), and the EPYC's VMASKMOV chirp stores, which P5 fixes, were seen
+only with B5; this amendment re-runs the GCC machines before the option becomes the
+default.
+
+- **Arms:** A = main (3f90275), G = 1d97bb1 (P5 on main; `FFTN_MASKED_TAILS` left at
+  `AUTO`, so on: both machines build with GCC).
+- **Runs** (fbench_remote's `--serial`, one timing job at a time; the arms are built once
+  per machine by the build cache):
+  - Xeon Gold 6240, GCC 14.4 (`xeon` profile, Slurm `-c 8`, shared): arms `A512 G512 A256
+    G256` (A and G with `ISA=avx512` and with `ISA=avx2`; the A/A band is A512's, as in
+    the amendment's runs), on cases (1) and on (2), with `--max-load 80 --max-busy 60
+    --budget 10800`.
+  - EPYC 7763-class node, GCC 16 (`epyc` profile): A and G with `ISA=avx2`, on cases (1)
+    and (2), `--budget 10800`.
+- **Rule** (machine-targets: Xeon `avx512`, Xeon `avx2`, EPYC `avx2`). `FFTN_MASKED_TAILS`
+  stays on for GCC under `AUTO` if, on each machine-target, (a) G/A's float and double
+  geomeans over cases (1) are each at most 1 + band, (b) no case of (1) or (2) is slower
+  than 1 + band + 2 %, and (c) in particular the three borderline cases above are within
+  that limit. (The rule as proposed named "(1), (2) and the tracking tier"; (2) is the
+  tracking tier, so it is these two sets.) If a machine-target fails, its numbers are
+  reported and nothing further is iterated here: the maintainer decides between `AUTO` on
+  for GCC with a recorded exception, `AUTO` off for that target, or a follow-up.
+
+- **Re-runs** (added after the cases (1) runs, before any re-run): AGENTS.md section 6
+  re-runs a case a hair past a rule's limit on a loaded machine before it decides. Two
+  cases of (1) are past the limit and neither has a partial unit: Xeon `avx512` float 256
+  (1.047 against 1.039, interval [1.024, 1.098], load 31) and EPYC `avx2` double 72 = 6 ×
+  12 (1.033 against 1.030, [1.028, 1.039], load 3). Each is re-run once in a short run of
+  its own beside its neighbours (Xeon: float and double 128, 256, 512, arms `A512 G512`;
+  EPYC: 64, 72, 80, 144, arms A, G; same options as above), and the re-run's ratio
+  replaces the first one in condition (b). The EPYC's machine was not loaded, so its
+  re-run is extra evidence beyond the clause; if it confirms 72, (b) fails there.
+
+### Amendment 4: results
+
+The off path is main's. With `FFTN_MASKED_TAILS=OFF` the twelve `avx2` and `avx512`
+kernel objects (main and row units) are byte for byte main's: with Homebrew Clang 23
+(x86-64 cross build on the Mac) and with GCC 16.2 (DMOG login node), Release. CI on the
+pull request: the GCC 16 job builds it on (the vocabulary test's `load_n`/`store_n` cases
+run for `avx2` and `avx512`, the runner having AVX-512) and the Clang jobs off (those cases
+skipped); `isa.asm_check` passes in both; the emulation workflow (GCC 14, on) passes under
+SDE's Haswell and Skylake-SP.
+
+Timing, G ÷ A (one thread, fbench interleaved process rounds, A/A control of the first
+arm; "over" = cases above 1 + band + 2 %):
+
+| Run | Machine, compiler, cases | Load | Band | Target | Float geomean | Double geomean | Over (worst) |
+|---|---|---|---|---|---|---|---|
+| 20261115-185222-ae2b | Xeon, GCC 14.4, (1) | 31.4 | ±1.86 % | `avx512` | 0.525 [0.521, 0.533] | 0.781 [0.775, 0.792] | 1: float 256 1.047 [1.024, 1.098] (double worst 700 1.034) |
+| | | | | `avx2` | 0.769 [0.759, 0.777] | 0.886 [0.875, 0.896] | 0 (float worst 336 0.970, double 1024 1.009) |
+| 20261115-203213-c8ca | Xeon, GCC 14.4, (2) | 2.6 | ±1.38 % | `avx512` | | 0.932 [0.923, 0.940] | 0 (c2r 65536 1.002) |
+| | | | | `avx2` | | 0.958 [0.952, 0.966] | 0 (c2c 8 1.029) |
+| 20261115-185113-85a4 | EPYC, GCC 16.2, (1) | 3.4 | ±1.00 % | `avx2` | 0.717 [0.716, 0.718] | 0.854 [0.853, 0.856] | 1: double 72 1.033 [1.028, 1.039] (float worst 336 0.991) |
+| 20261115-193525-c5da | EPYC, GCC 16.2, (2) | 12.1 | ±1.00 % | `avx2` | | 0.953 [0.952, 0.954] | 0 (1024 backward 1.024) |
+
+B5's three borderline cases, now: Xeon `avx512` double 980 1.024 [1.000, 1.043]; Xeon
+`avx2` double 70 0.940 [0.905, 0.994] and 162 0.973 [0.953, 0.989]; all within the limit
+(1.039). On the EPYC they are 0.935 (70), 0.937 (162) and 0.901 (980).
+
+Neither case past the limit has a partial unit: float 256 on `avx512` (C = 8) runs whole
+units only, and 72 = 6 × 12 on `avx2` double (C = 2) too (grouped radix 6 with m = 12,
+then a lane pass with s = 6). What differs for them is only the code around the loops
+(the partial-unit code after them, a constant `valid` in the grouped loop), so these are
+layout or register-allocation effects, as in the amendment's B runs. 72 was 0.932 with P5
+on the older main in the EPYC run 20261115-150526-b521 (A's time then 1.423 ns per point,
+now 1.416; G's 1.460 against P5's 1.322, same radices): something main changed since,
+probably the kernel units' split by codelet rows, changed how the same pass text compiles
+there. Not investigated further (the amendment's rule says to report, not iterate).
+The re-runs (jobs `x23g-xeon-rerun`, Slurm 15788, and `x23g-epyc-rerun`, 509728) were
+queued behind other experiments' serial timing jobs on both machines and had not started
+when this was written; whoever fetches them (`fbench_remote.py fetch <job>` from the
+checkout that submitted them) adds their ratios here. The EPYC's does not change the
+verdict below, since its machine was not loaded.
+
+### Amendment 4: verdict
+
+**The rule is missed by one case on two of the three machine-targets; the choice is the
+maintainer's (the rule's last clause).** The branch keeps `FFTN_MASKED_TAILS=AUTO` on for
+GCC until then.
+
+- Conditions (a) and (c) hold everywhere, by far: G/A float geomeans 0.525 (Xeon
+  `avx512`), 0.769 (Xeon `avx2`) and 0.717 (EPYC `avx2`), double 0.781, 0.886 and 0.854
+  over cases (1); 0.932, 0.958 and 0.953 over the tracking tier. B5's three borderline
+  cases are now inside the limit (0.94–1.02).
+- Condition (b) holds on the Xeon `avx2` and fails by one case each on the Xeon `avx512`
+  (float 256 1.047 against 1.039, a loaded run, re-run pending) and on the EPYC `avx2`
+  (double 72 1.033 against 1.030, an unloaded run with a tight interval). Neither case has
+  a partial unit; both are code-layout effects of the loops' surroundings, the kind the
+  amendment's B5 fixes removed elsewhere.
+- Compared with B5's runs on the older main, the masked code gains more now (float on
+  `avx512` 0.525 against 0.604; on the EPYC 0.717 against 0.800).
+- Options, as the rule lists them: keep `AUTO` on for GCC with these two cases recorded as
+  exceptions (the geomeans are 0.53–0.95 of main and nothing else is slower than the
+  limit); turn it off for one target (the EPYC's 72 is `avx2`, which also gains 0.72 /
+  0.85 there); or a follow-up on whole-unit layout (perf at float 256 on `avx512` and
+  double 72 on `avx2`) before deciding.
+
+### Amendment 4: decision (lead, 2026-11-15)
+
+Adopted: `FFTN_MASKED_TAILS=AUTO` stays on for GCC, with float 256 on `avx512` (1.047) and
+double 72 on the EPYC's `avx2` (1.033) recorded as exceptions. The maintainer had already
+asked for X23 to be kept for GCC builds; the two misses are 0.8 and 0.3 points past the
+limit, in cases with no partial unit, against geomeans of 0.53–0.89 of main's time. The
+queued re-runs (Xeon 15788, EPYC 509728) are appended here when they finish; a follow-up on
+whole-unit layout at those two cases is lead 3's to pick up (x86 pass loops).

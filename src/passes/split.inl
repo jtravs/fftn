@@ -144,10 +144,11 @@ FFTN_FORCE_INLINE void split_unit(const In& in, const Out& out, const T* table, 
 // dst: scratch, or for the last pass any stride when W == 1, else 1. Reads src, dst_stride,
 // m, s, twiddles, scale, out_factor.
 template <class T, std::size_t R, int Sign, bool Twiddled, bool InIL, edge_op OutOp>
-void split_pass(const pass_args* a, std::size_t first, std::size_t last) {
+void split_pass(const pass_args* a, const void* src, void* dst, std::size_t first,
+                std::size_t last) {
   constexpr bool swap = Sign > 0;
-  const T* x = static_cast<const T*>(a->src);
-  T* y = static_cast<T*>(a->dst);
+  const T* x = static_cast<const T*>(src);
+  T* y = static_cast<T*>(dst);
   const std::ptrdiff_t ys = Twiddled ? 2 : 2 * a->dst_stride;
   const std::size_t m = a->m;
   const std::size_t s = a->s;

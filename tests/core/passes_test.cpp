@@ -1110,4 +1110,70 @@ TEST(Passes, TargetsThatRoundAlikeGiveTheSameBits) {
   }
 }
 
+// The 128-bit leaves of the x86 targets (experiment X28, kernel_table.hpp) against each
+// target's own leaves, which plans no longer use: every radix up to 16, both directions,
+// every edge variant, strided lines, several of them; every output bit equal.
+template <class T> void narrow_leaves_match(fftn::isa t) {
+  const auto target = static_cast<fftn::detail::target>(static_cast<unsigned char>(t));
+  const auto& own = fftn::detail::of<T>(*fftn::detail::find_kernels(target)).passes;
+  const fftn::detail::narrow_leaf_table* table = fftn::detail::find_narrow_leaves(target);
+  ASSERT_NE(table, nullptr);
+  const auto& narrow = fftn::detail::of<T>(*table);
+  constexpr std::size_t lines = 3;
+  constexpr std::ptrdiff_t in_stride = 2;
+  constexpr std::ptrdiff_t out_stride = 3;
+  for (std::size_t r = 2; r <= fftn::detail::dense_codelet_radix; ++r) {
+    fftn::test::input_source src(0x4E41ULL + r);
+    const cvec<T> x = src.complexes<T>(lines * r * in_stride);
+    const cvec<T> in_factor = src.complexes<T>(r);
+    const cvec<T> out_factor = src.complexes<T>(r);
+    fftn::detail::pass_args args;
+    args.src_stride = in_stride;
+    args.dst_stride = out_stride;
+    args.scale = 0.37;
+    args.in_factor = in_factor.data();
+    args.out_factor = out_factor.data();
+    const std::size_t slot = fftn::detail::codelet_slot(r);
+    for (std::size_t d = 0; d < 2; ++d) {
+      for (std::size_t ie = 0; ie < fftn::detail::edge_op_count; ++ie) {
+        for (std::size_t oe = 0; oe < fftn::detail::edge_op_count; ++oe) {
+          SCOPED_TRACE(std::string(fftn::isa_name(t)) + ", radix " + std::to_string(r) +
+                       ", direction " + std::to_string(d) + ", edges " + std::to_string(ie) +
+                       std::to_string(oe));
+          const fftn::detail::leaf_fn wide = own.codelet[slot]->leaf[d][ie][oe];
+          const fftn::detail::leaf_fn half = narrow.leaf[slot][d][ie][oe];
+          ASSERT_EQ(wide == nullptr, half == nullptr);
+          if (wide == nullptr) {
+            continue;
+          }
+          cvec<T> y_wide(lines * r * out_stride);
+          cvec<T> y_half(lines * r * out_stride);
+          const auto in_dist = static_cast<std::ptrdiff_t>(r * in_stride * sizeof(std::complex<T>));
+          const auto out_dist =
+              static_cast<std::ptrdiff_t>(r * out_stride * sizeof(std::complex<T>));
+          wide(&args, x.data(), y_wide.data(), in_dist, out_dist, lines);
+          half(&args, x.data(), y_half.data(), in_dist, out_dist, lines);
+          EXPECT_TRUE(bitwise_equal(y_wide, y_half));
+        }
+      }
+    }
+  }
+}
+
+TEST(Passes, NarrowLeavesMatchTheTargetsLeaves) {
+  int targets = 0;
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    const auto target = static_cast<fftn::detail::target>(static_cast<unsigned char>(t));
+    if (fftn::detail::find_narrow_leaves(target) == nullptr) {
+      continue;
+    }
+    narrow_leaves_match<double>(t);
+    narrow_leaves_match<float>(t);
+    ++targets;
+  }
+  if (targets == 0) {
+    GTEST_SKIP() << "no target with narrow leaves runs here";
+  }
+}
+
 } // namespace

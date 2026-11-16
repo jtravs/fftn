@@ -112,11 +112,11 @@ FFTN_FORCE_INLINE void rader_edge(const pass_args* a, const void* factor, std::s
 // of in(x[t + s j]) over 1 <= j < q, for each copy t of the unit. Arguments as a Bluestein
 // stage's edge passes (radix 1): n = s q, m = L, s, roots = the index table. The input
 // edge's operation applies to what is loaded. src: any stride when C == 1, else 1; dst:
-// scratch, stride 1, not src. Reads src, dst, src_stride, m, s, roots, scale, in_factor.
+// scratch, stride 1, not src. Reads src_stride, m, s, roots, scale, in_factor.
 template <class T, edge_op InOp, bool Shared>
-void rader_in(const pass_args* a, std::size_t first, std::size_t last) {
-  const T* x = static_cast<const T*>(a->src);
-  T* z = static_cast<T*>(a->dst);
+void rader_in(const pass_args* a, const void* src, void* dst, std::size_t first, std::size_t last) {
+  const T* x = static_cast<const T*>(src);
+  T* z = static_cast<T*>(dst);
   const std::ptrdiff_t xs = 2 * a->src_stride;
   const std::size_t s = a->s;
   const std::size_t len = a->m;
@@ -169,12 +169,13 @@ void rader_in(const pass_args* a, std::size_t first, std::size_t last) {
 // the convolution in the first s L elements of src and x_0 and the sum are the two rows
 // after it (rader_in). Units, arguments: as rader_in's. The output edge's operation applies
 // to what is stored. src: scratch, stride 1; dst: any stride when C == 1, else 1; dst may
-// be the stage's source line (rader_in has read it), never src. Reads src, dst, dst_stride,
-// m, s, roots, scale, out_factor.
+// be the stage's source line (rader_in has read it), never src. Reads dst_stride, m, s,
+// roots, scale, out_factor.
 template <class T, edge_op OutOp, bool Shared>
-void rader_out(const pass_args* a, std::size_t first, std::size_t last) {
-  const T* z = static_cast<const T*>(a->src);
-  T* y = static_cast<T*>(a->dst);
+void rader_out(const pass_args* a, const void* src, void* dst, std::size_t first,
+               std::size_t last) {
+  const T* z = static_cast<const T*>(src);
+  T* y = static_cast<T*>(dst);
   const std::ptrdiff_t ys = 2 * a->dst_stride;
   const std::size_t s = a->s;
   const std::size_t len = a->m;

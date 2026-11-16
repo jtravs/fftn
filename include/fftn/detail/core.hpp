@@ -77,6 +77,10 @@ class plan_core;
 void execute_core(const plan_core& core, std::size_t first, std::size_t count, const void* in,
                   void* out, const workspace& ws) noexcept;
 
+// Runs every transform of the batch: plan<In, Out>::execute, one call into the library
+// (execute_core with the batch's count read inside, X28).
+void execute_all(const plan_core& core, const void* in, void* out, const workspace& ws) noexcept;
+
 // The team overload of plan<In, Out>::execute (src/threading/team_execute.cpp).
 void execute_team(const plan_core& core, const void* in, void* out, const team& t,
                   const workspace& ws, completion done) noexcept;

@@ -18,6 +18,16 @@ namespace {
 // (experiment X12).
 inline constexpr std::size_t rows_ahead = 8;
 
+// Whether the copies prefetch at all. Not on avx2 (experiment X26, EPYC 7763): a block's rows
+// lie a multiple of 4 KiB apart, so all its lines share one or two of L1's 8-way sets, and
+// eight rows asked for ahead evict the scratch block the lane passes read next. Without the
+// prefetch the long rows took 0.83-0.97 of the time (rows of 2^16 to 2^20, mixed 46080 and
+// 100000, r2c and c2r). The Xeon's avx512 rows (1.16-1.22 slower at 2^20 and 2^22 without
+// it) and the Mac's (1.07-1.19) keep it. The effect belongs to the core, not the target:
+// the Xeon under avx2 also lost without it (1.14-1.20 at 2^20 and 2^22), so this follows the
+// measured release machine of each target until the profile can tell the cores apart.
+inline constexpr bool copies_prefetch = id != target::avx2;
+
 // Asks for the `bytes` bytes at p, to read (Write = 0) or to write (1).
 template <int Write> FFTN_FORCE_INLINE void prefetch_bytes(const void* p, std::size_t bytes) {
   const char* c = static_cast<const char*>(p);
@@ -33,9 +43,10 @@ template <int Write> FFTN_FORCE_INLINE void prefetch_bytes(const void* p, std::s
 // each other while a pass works on them (experiment X12). Reads src, dst, src_stride,
 // dst_stride, s, scale.
 template <class T, edge_op OutOp>
-void block_copy(const pass_args* a, std::size_t first, std::size_t last) {
-  const T* x = static_cast<const T*>(a->src);
-  T* y = static_cast<T*>(a->dst);
+void block_copy(const pass_args* a, const void* src, void* dst, std::size_t first,
+                std::size_t last) {
+  const T* x = static_cast<const T*>(src);
+  T* y = static_cast<T*>(dst);
   const std::ptrdiff_t xs = 2 * a->src_stride;
   const std::ptrdiff_t ys = 2 * a->dst_stride;
   const std::size_t cols = a->s;
@@ -44,7 +55,7 @@ void block_copy(const pass_args* a, std::size_t first, std::size_t last) {
   for (std::size_t r = first; r < last; ++r) {
     const T* xr = x + at(r, xs);
     T* yr = y + at(r, ys);
-    if (r + rows_ahead < last) {
+    if (copies_prefetch && r + rows_ahead < last) {
       prefetch_bytes<0>(xr + at(rows_ahead, xs), bytes);
       prefetch_bytes<1>(yr + at(rows_ahead, ys), bytes);
     }
@@ -71,9 +82,10 @@ void block_copy(const pass_args* a, std::size_t first, std::size_t last) {
 // within a column tile, transposed in registers so that every store is C adjacent elements
 // of one row of y. m and s are multiples of C. Reads src, dst, m, s, roots, twiddles.
 template <class T, int Sign>
-void twiddle_transpose(const pass_args* a, std::size_t first, std::size_t last) {
-  const T* z = static_cast<const T*>(a->src);
-  T* y = static_cast<T*>(a->dst);
+void twiddle_transpose(const pass_args* a, const void* src, void* dst, std::size_t first,
+                       std::size_t last) {
+  const T* z = static_cast<const T*>(src);
+  T* y = static_cast<T*>(dst);
   const T* local = static_cast<const T*>(a->roots);
   const T* rows = static_cast<const T*>(a->twiddles);
   const std::size_t m = a->m;
@@ -111,9 +123,10 @@ void twiddle_transpose(const pass_args* a, std::size_t first, std::size_t last) 
 // for Sign = +1); the stage advances the twiddles per column c (stage::moving_twiddles).
 // Reads src, dst, src_stride, dst_stride, s, twiddles.
 template <class T, int Sign>
-void twiddle_scatter(const pass_args* a, std::size_t first, std::size_t last) {
-  const T* x = static_cast<const T*>(a->src);
-  T* y = static_cast<T*>(a->dst);
+void twiddle_scatter(const pass_args* a, const void* src, void* dst, std::size_t first,
+                     std::size_t last) {
+  const T* x = static_cast<const T*>(src);
+  T* y = static_cast<T*>(dst);
   const T* w = static_cast<const T*>(a->twiddles);
   const std::ptrdiff_t xs = 2 * a->src_stride;
   const std::ptrdiff_t ys = 2 * a->dst_stride;
@@ -122,7 +135,7 @@ void twiddle_scatter(const pass_args* a, std::size_t first, std::size_t last) {
   for (std::size_t r = first; r < last; ++r) {
     const T* xr = x + at(r, xs);
     T* yr = y + at(r, ys);
-    if (r + rows_ahead < last) {
+    if (copies_prefetch && r + rows_ahead < last) {
       prefetch_bytes<1>(yr + at(rows_ahead, ys), bytes);
     }
     cv<T> f = bcast(w + 2 * r); // NOLINT(misc-const-correctness): set under if constexpr
@@ -164,9 +177,10 @@ template <class T, int Sign> struct row_twiddled_out {
 // advanced per column by the stage, stage::moving_twiddles). Reads src, dst, m, s, the
 // strides and columns, twiddles, scale.
 template <class T, std::size_t R, int Sign, bool Twiddled, edge_op InOp, int Out>
-void phase_pass(const pass_args* a, std::size_t first, std::size_t last) {
-  const T* x = static_cast<const T*>(a->src);
-  T* y = static_cast<T*>(a->dst);
+void phase_pass(const pass_args* a, const void* src, void* dst, std::size_t first,
+                std::size_t last) {
+  const T* x = static_cast<const T*>(src);
+  T* y = static_cast<T*>(dst);
   const std::size_t m = a->m;
   const std::size_t s = a->s;
   const std::size_t blocks = s / C<T>;
