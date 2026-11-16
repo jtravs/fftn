@@ -340,6 +340,16 @@ in-place and three-phase rows 2–6 % slower, where the array stayed and the inp
 twice instead of once by a streaming in-place pass; on the EPYC even the out-of-place
 rows lost (1.11). [X29](experiments/X29-real-footprint.md).
 
+3.14 **Where L3 is small and far, count the passes over memory before the cache fit of
+each pass.** X12b's rule (three grid phases beyond L2, so that each phase's block stays
+within L1) was set on powers of two. On the Xeon 6240 (1 MiB L2, 0.7 MiB of L3 per CPU)
+rows with an odd part of 15 or more ran in 0.70–1.01 of the cycles as two phases, whose
+blocks no longer fit L1, from 1.1 MiB to 64 MiB (100000 points 0.73, 10^6 0.70; L2
+misses per point 1.3 → 0.8), while on the EPYC 7763 (512 KiB L2, 4 MiB of L3 per CPU) the
+same two-phase plans took 1.13–1.67 of the cycles below 16 MiB. Rows near a power of two
+(odd part 3–9) lost as two phases on both: their gathers' rows still collide in L1. One
+blocking rule does not fit both kinds of uncore. [X34](experiments/X34-xeon-mixed.md).
+
 ## 4. Kernels and algorithms
 
 4.1 **A whole-transform codelet wins only where it fills the register.** One 32-point
