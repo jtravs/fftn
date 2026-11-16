@@ -89,9 +89,7 @@ struct grid_split {
 // (three_phases) into three: the widest block, then the shortest longest factor, then the
 // longest shortest factor, then the shortest first factor; three phases may fill twice the
 // budget (experiment X12). Two phases when three are not asked for or n has no such split,
-// and three when n has no split into two. Where that choice has the narrowest block,
-// max(2, lanes), it is made again with blocks that are any multiple of it, and taken if its
-// block is wider (X34: 100000 in blocks of 20 on avx512 in double). A pure function.
+// and three when n has no split into two. A pure function.
 [[nodiscard]] grid_split choose_grid(std::size_t n, std::size_t lanes, std::size_t budget,
                                      bool three_phases, std::size_t forced_block,
                                      const std::vector<std::size_t>& forced);
