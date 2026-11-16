@@ -1,0 +1,31 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Experiment X28b's cases (dev/experiments/X28b-short-leaves.md): single short rows after
+# X28, the leaves of 8 to 23 points and the short composites (20 to 128 points) whose
+# chains of two or three passes trail FFTW; the same lengths in batches, which must not get
+# slower; single real rows whose half-length transform is one of them.
+
+[catalogue]
+name = "x28b"
+
+[[group]]
+name = "x28b-single"
+note = "one row: leaves (8 to 23 points) and short composites (20 to 128)"
+kind = "c2c"
+dims = [8, 12, 16, 17, 19, 20, 23, 24, 30, 32, 36, 40, 48, 60, 64, 72, 80, 96, 120, 128]
+batch = 1
+precision = ["f64", "f32"]
+
+[[group]]
+name = "x28b-batches"
+note = "some of the same lengths in batches (collateral)"
+kind = "c2c"
+dims = [8, 16, 17, 24, 48, 60, 120]
+batch = [64, 4096]
+
+[[group]]
+name = "x28b-real"
+note = "one real row: half lengths 8 to 60"
+kind = ["r2c", "c2r"]
+dims = [16, 32, 34, 48, 64, 120]

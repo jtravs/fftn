@@ -112,7 +112,8 @@ runs; the numbers above are the baseline to beat. The rest (6–9) follow. X25's
    FFTW Xeon 1.62 → 1.27, EPYC 1.37 → 1.12, Mac 1.14 → 1.00). Left: 60 and 120 points
    (Xeon 1.50, EPYC 1.10–1.18): the partial-unit radix-4 pass (X23b) and, on the Xeon,
    three passes against FFTW's two; 24 points on the Xeon 2.0 (plan 4 × 6); leaves of
-   8–16 points 1.07–1.19 (a unit-stride leaf without the set-up for any stride).
+   8–16 points 1.07–1.19 (a unit-stride leaf without the set-up for any stride). X28b (claimed: X28b agent, 2026-11-16): pair leaves in registers, unit-stride
+   leaves, 128-bit prime leaves.
 5. Real transforms on x86 (EPYC 1.25): X6 real-input codelets. X25: r2c 65536 on the Xeon
    is memory (its 32768-point chain at IPC 0.84 with 3.4 times FFTW's L2 misses): count
    the whole real footprint in the chain-or-grid rule; on the EPYC it is the grid's
@@ -363,6 +364,7 @@ running, done (with verdict).
 | [X26b](experiments/X26b-padded-grid.md) | Long rows on x86: does a padded intermediate (phase 2's rows not a 4 KiB multiple apart) remove the grid's L1 set conflicts, and do X26's cheaper copy loops then pay? Can the copies' prefetch follow the core? | 1 | done: padding adopted where the L2 is shared by a cluster (Mac long rows 0.976 of main); on x86 it cuts no L1 refills and gains nothing (Xeon 1.006, EPYC 0.993), off; X26's copy loops rejected again; the prefetch by core rejected (Xeon `avx2` 2²² 0.84 but float 100000 1.27: needs a row-width condition) |
 | [X27](experiments/X27-prime-codelets.md) | Generated codelets of radix 17, 19 and 23 (leaf and pass) against Bluestein for prime factors above 16, and their build size (B3); Rader against Bluestein where p − 1 is smooth | 1 | done: codelets adopted everywhere (targets 0.24–0.31 of the Bluestein route; 17 now 0.28–0.47 of FFTW; library +25 %); Rader adopted per target (0.4–0.8 of Bluestein from 97 up; from 16C for C ≥ 4, below 2¹⁶ on NEON) |
 | [X28](experiments/X28-short-rows.md) | Single short rows (≤ 120 points, batch 1): what is left after X20, and do a lighter entry, 128-bit leaves on x86 or a flat path for two-pass chains close it? (PLAN lead 4) | 1 | done: all adopted (128-bit x86 leaves; one-call entry; passes take their addresses as arguments, no per-stage argument copy): single rows 0.79 (Xeon), 0.82 (EPYC), 0.82–0.88 (Mac) of `main`; tracking Mac 0.953, EPYC 0.964 |
+| [X28b](experiments/X28b-short-leaves.md) | Single short rows after X28: do two-pass leaves held in registers (24, 48, 60 points and other short composites), leaves with constant offsets for rows of stride 1, and 128-bit leaves for 17, 19, 23 on x86 close what is left? (PLAN lead 4) | 1 | running |
 | P1 | Cost-model accuracy: rank agreement with measurement across the catalogue per machine | 2 | planned |
 | P2 | Measurement budget: how many candidates and how long before the choice stops improving | 2 | planned |
 | [T1](experiments/T1-dispatch-wait-costs.md) | Dispatch, wake and wait costs per machine and runtime (libgomp, libomp, Kokkos, pool) | 3 | done: hand-off cost and claim runs adopted on Zen 3; dispatch and work costs wait for a per-lane dispatch term |
