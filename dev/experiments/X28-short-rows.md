@@ -230,7 +230,7 @@ the x28 band (48, 60, 120 at 64 and 4096 rows, both targets) is job 15861, queue
 
 All four arms adopted (branch `exp/x28-short-rows`, PR #10). Rule 1 holds for every arm:
 the full test suite passes on the Mac (Clang, 1688 tests), natively on the Xeon (GCC 14
-`-Werror`, `avx512` and `avx2`, 1677 tests, job 15786) and in CI; the kernels compute
+`-Werror`, `avx512` and `avx2`, 1677 tests, job 15786; 1689 after merging X23b's masked tails, job 15872) and in CI; the kernels compute
 exactly as before, and the new `Passes.NarrowLeavesMatchTheTargetsLeaves` holds the
 128-bit leaves bit for bit against both x86 targets' own leaves.
 
