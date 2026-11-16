@@ -59,6 +59,29 @@ Arms are commits of branch `exp/x38-epyc-mid`, against A = `origin/main` (e8c263
 
 No switch: arms are commits, `dev/KNOBS.toml` is untouched.
 
+*Amendment 1 (after the diagnostic and S's selection, before any arm was timed).* S is
+384 = 12 × 32, 3600 = 15 × 16 × 15 and 20000 = 8 × 5 × 10 × 5 × 10 (f745178;
+`radix_override` holds five radices). The selection left the planner's sequence best at 80,
+100, 160, 256, 512, 1024 and 2048 among every sequence FFTN can run, and 240 = 15 × 16 just
+missed the rule at batch 64 (0.973). FFTW's plans (diagnostic) take a radix-20 pass at 160,
+240, 2000, 3000, 3600 and 20000 (240 = 12 × 20, 2000 = 10 × 20 × 10, 20000 = 20 × 5 × 20 ×
+10), which FFTN cannot: it has no codelet of 20, and without one 2000 and 3000 need four
+passes and 20000 five. The second arm is therefore:
+
+- **R (a radix-20 codelet, on S).** The generator gains radix 20 (Good–Thomas 4 × 5, 208
+  additions and 48 multiplications, the derived reference; 22 live values at peak), a
+  pass radix only: never a whole-transform leaf (rule 1 of DESIGN 11.2 excludes it, so no
+  plan of 20 points changes on any target). Plans use it only through `avx2` double
+  overrides chosen like S's (the search driver with candidates that contain a 20, lengths
+  80, 100, 160, 240, 640, 2000, 3000, 3600, 20000; the same rule against the planner's
+  sequence, and against S's where S has one). Library text grows (+4.8 % in the Mac's
+  static library, all targets); bits change only at the overridden lengths.
+
+The third arm is not planned: 1024, 2048 and 512 keep the planner's sequences and their
+gap is in the passes (FFTN executes 1.27 times FFTW's instructions at 1024 with three
+passes against two; its radix-32 and 64 codelets peak at 35 and 67 live values in 16
+registers), a generator matter beyond this experiment.
+
 ## Method
 
 - **Diagnostic** (main only, before any arm): an fbench run on the EPYC with FFTW's plans
