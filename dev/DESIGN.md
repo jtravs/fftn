@@ -1545,7 +1545,8 @@ columns (X3) and overrides at every measured length whose choice was slow or nev
 in double (C = 4) AVX2's C = 4 costs with overrides where their choice was more than 2 %
 behind the measured winner in every case (mostly a first radix of 8, after which a split
 run starts). Every other table leaves the radix 32 and 64 columns 0, so those passes stay
-out of their chains: they tied or lost there (X3). The refresh kept the AVX2 and NEON
+out of their chains: they tied or lost there (X3), except AVX2 double's overrides 256 =
+8 · 32 and 512 = 16 · 32 (X30: two passes where the costs' choice ran three). The refresh kept the AVX2 and NEON
 costs (refits gained about 1 %) and added overrides from new searches on the EPYC (up to
 16384) and the Mac (up to 1024). NEON has its own tables (C = 1 and 2), fitted to X2's
 campaign on an Apple M5 Max with `neon_fcma`; plain `neon` takes them too, unmeasured on a
@@ -2629,6 +2630,7 @@ to change before a release.
 | 2026-11-16 | Where the L2 is shared by a cluster (Apple), an intermediate the grid already keeps in the workspace block is padded after each of phase 2's rows (`grid_pad`, profile `grid_pad_period`); off on x86. The copies' prefetch keeps X26's target gate: keying it to the core was rejected (experiment X26b) | Mac: double long rows 0.976 of main (2^18 0.94); Xeon 1.006 and EPYC 0.993, where counters showed no fewer L1 refills. The prefetch on an Intel core under `avx2` took 2^22 to 0.84 but float 100000 to 1.27; X26's cheaper copy loops were rejected again on the padded grid |
 | 2026-11-16 | Pair leaves on x86 (experiment X28b): a contiguous c2c row of n = r1 m with C dividing m and about n / C registers runs the chain r1 × m as one leaf, the grouped pass's C × C transposes held in registers as the last pass's input; a table of lengths per target and precision (`src/isa/pairs_<target>.cpp`); the lanes strategy runs the same chain on its tile | Single rows of 20–120 points 0.42–0.69 of the chain's time on the Xeon 6240 (`avx512`), 20–48 at 0.51–0.76 on the EPYC 7763, float 0.39–0.78; batches of 24 and 48 points 0.43–0.70; Xeon FFTN ÷ FFTW over single rows 0.98 → 0.65 with the other two X28b arms; +0.75 % library; the bits are the forced chain's |
 | 2026-11-16 | Leaves with constant leg offsets for lines of stride 1 (`leaf_unit`, `src/passes/unit_leaf.inl`), on every target, and the x86 narrow leaves extended to 17, 19 and 23 (X28b) | 8–23-point single rows 0.75–0.92 of their time (EPYC, Xeon, M5 Max), bit for bit the same; 17–23 a further 0.85–0.99 on x86 from the 128-bit leaf; the x86 targets keep only the narrow unit-stride leaves (their own were 3.5 % of the library unused) |
+| 2026-11-16 | AVX2 double plans 256 as 8 · 32 and 512 as 16 · 32 (overrides of `avx2_double`) | X30: two passes against the three the costs chose (2 · 16 · 8, 4 · 8 · 16): EPYC 0.90 of the time at 256 and 0.87–0.95 at 512 (rows, batches of 64, the real transforms whose half-length chains they are); X30's other arms, x86 twiddles stored (wr, wi) and 1024 as 16 · 64, were rejected by their rule |
 
 ---
 
