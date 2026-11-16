@@ -43,17 +43,26 @@ EPYC (to about FFTW's); arm 2 takes the mid sizes (509–8179) to about 0.8–0.
 
 ## Change under test
 
-- **Arm 1** (long convolutions): a convolution whose length is a power of two longer than
-  the profile's grid threshold takes FFTL.jl's long-row radices (X32), in every profile
-  (on the Xeon too: a convolution cannot be a grid, and the rule's radices are worse than
-  either); and a Bluestein stage whose power of two above 2Q − 1 is that long takes that
-  power of two as M. A = `main`, B = arm 1.
-- **Arm 2** (fused zero padding): the chirp-in pass also does the convolution's first
-  radix-2 pass, and the chirp-out pass the backward transform's last radix-2 pass, for a
-  single row (s = 1); the convolution chain is M / 2's radices between them. A = arm 1,
-  B = arm 2.
-- **Arm 3** (Rader range): with arm 1, the Rader range per profile revisited where
-  arm 1 changes the Rader convolution (65537 on NEON) and where X27 lost with C ≥ 4.
+- **Arm 1** (long convolutions; a74a388, amended by 19bc985): a convolution whose length
+  is a power of two of more than `grid_min_bytes` takes FFTL.jl's long-row radices (X32) in
+  every profile (on the Xeon too: a convolution cannot be a grid); and a Bluestein stage's
+  length M has a power-of-two part of at most `machine_profile::bluestein_pow2_part_bytes`
+  (a quarter of L1 where the L2 is shared, Apple; unlimited on private L2s), the
+  candidates then running up to 2 (2Q − 1). *Amendment, before the A/B runs:* the plan
+  was to give long stages the power of two; the screen of convolution lengths (Results)
+  showed the opposite on the Mac, and no effect worth a rule on x86. A = `main` (8ae4e49).
+- **Arm 2** (fused zero padding; 85c6a3e): the chirp-in pass also does the convolution's
+  first radix-2 pass (its butterflies have a zero leg) and the chirp-out pass the backward
+  chain's last (only its first half is read), for one copy or C | s; the chains run
+  M / 2's radices between them. `BLUESTEIN_HALVES=0|1` compares in one build.
+- **Arm 3** (few copies; 0740988), in place of the planned Rader-range arm (65537 already
+  beats FFTW on every machine at the base: Rader on x86, Bluestein on the Mac): a Bluestein
+  stage with 1 < s < C copies becomes one stage over the whole line (1018 = 2 · 509 on
+  AVX-512 double ran 1.42 times MKL's time, partial units in every convolution pass).
+- **Arm 4** (split convolutions; 8893751): a single-copy convolution (s = 1) takes the
+  split run its length would as a line (`split_from`), on the targets whose profile splits
+  (x86). The EPYC's 4093 at the base took 21 ns per point for a stage whose two chains of
+  8192 take about 6, while its c2c 8192 runs split from pass 2.
 
 Bits: every arm changes the result bits of the lengths whose plans it changes (a different
 algorithm or radix sequence), within the derived tolerances; other lengths give
