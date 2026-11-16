@@ -97,6 +97,12 @@ of 16), X38 (the EPYC's 240–2048), X39 (the Xeon's long rows, in-place 65536);
 steps (P1/P2 second passes on the Xeon and EPYC, then the cost model and `fbench
 calibrate`). Then the exit check again. Done, each merged with its
 pull request:
+- X36 (pull request 30): Bluestein convolutions take the long-row radices beyond a profile
+  threshold and a capped power-of-two part; small copy counts become one stage; split layout
+  for single convolutions on x86; the EPYC's 65537 was a radix-16 Rader convolution: exit-
+  check primes now below FFTW on the Mac and the EPYC (131071 0.87–0.88, 999983 0.75–0.86,
+  4093 0.90–0.94, 65537 0.80); still over: EPYC 1018 (1.51), Xeon 131071 (1.28) and 999983
+  (1.10).
 - X35 (cloud, USD 1.64; campaign USD 3.51 of 20; pull request 25): on x86-64 a private L2 of
   ≥ 2 MiB (Granite Rapids) gets its own profile, whatever its L3 per CPU: no X29/X32/X33
   chains, grids and three phases beyond L2/2, two phases for power-of-two parts ≤ 2048
