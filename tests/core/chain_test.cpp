@@ -157,7 +157,7 @@ template <class T> void narrow_leaves(fftn::isa t) {
   const std::vector<std::complex<T>> ones(64, std::complex<T>(1));
   for (const std::size_t n : {std::size_t{4}, std::size_t{8}, std::size_t{16}, std::size_t{23}}) {
     for (const int sign : {-1, 1}) {
-      for (const auto [in, out] : {
+      for (const auto& [in, out] : {
                std::pair{none, none},
                std::pair{none, scale},
                std::pair{scale, none},
@@ -225,13 +225,13 @@ template <class T> void pair_leaves(fftn::isa t) {
   builder<T> b(t);
   b.chain.use_pair_leaves(&set);
   const std::vector<std::complex<T>> ones(1024, std::complex<T>(1));
-  for (const auto [n, r1, m] : {
+  for (const auto& [n, r1, m] : {
            std::tuple{std::size_t{128}, std::size_t{16}, std::size_t{8}},
            std::tuple{std::size_t{256}, std::size_t{8}, std::size_t{32}},
        }) {
     ASSERT_GE(b.chain.radices(n).size(), 2U) << "n = " << n << " is a single codelet's leaf";
     for (const int sign : {-1, 1}) {
-      for (const auto [in, out] :
+      for (const auto& [in, out] :
            {std::pair{none, none}, std::pair{none, scale}, std::pair{scale, none}}) {
         SCOPED_TRACE("n = " + std::to_string(n) + ", sign " + std::to_string(sign) + ", edges " +
                      std::to_string(static_cast<int>(in)) + std::to_string(static_cast<int>(out)));
