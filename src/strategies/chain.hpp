@@ -61,6 +61,7 @@
 #include "isa/kernel_table.hpp"
 #include "passes/pass_args.hpp"
 #include "planner/rules.hpp"
+#include "platform/aligned_allocator.hpp"
 
 #include <complex>
 #include <cstddef>
@@ -120,7 +121,7 @@ public:
   // bluestein_above: the Bluestein threshold instead of the profile's, when not 0 (tests).
   // fusion: when the pairing of an even real line fuses into a pass (real_fusion).
   chain_builder(const kernels_of<T>& kernels, const target_profile& profile,
-                std::vector<std::vector<T>>& tables, std::size_t chunk_points,
+                plan_tables<T>& tables, std::size_t chunk_points,
                 std::vector<std::size_t> forced, std::size_t bluestein_above = 0,
                 real_fusion fusion = {});
 
@@ -273,7 +274,7 @@ private:
   const kernels_of<T>& kernels_;
   const narrow_leaf_set<T>* narrow_ = nullptr;
   target_profile profile_;
-  std::vector<std::vector<T>>& tables_;
+  plan_tables<T>& tables_;
   std::size_t chunk_points_;
   std::vector<std::size_t> forced_;
   real_fusion fusion_;

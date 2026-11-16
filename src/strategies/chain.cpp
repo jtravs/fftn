@@ -55,7 +55,7 @@ slot other_scratch(slot s) { return s == slot::a ? slot::b : slot::a; }
 
 template <class T>
 chain_builder<T>::chain_builder(const kernels_of<T>& kernels, const target_profile& profile,
-                                std::vector<std::vector<T>>& tables, std::size_t chunk_points,
+                                plan_tables<T>& tables, std::size_t chunk_points,
                                 std::vector<std::size_t> forced, std::size_t bluestein_above,
                                 real_fusion fusion)
     : kernels_(kernels), profile_(profile), tables_(tables),
@@ -153,7 +153,7 @@ const T* chain_builder<T>::pack(const std::vector<std::complex<T>>& w, bool broa
     plain[2 * i] = w[i].real();
     plain[2 * i + 1] = w[i].imag();
   }
-  std::vector<T>& stored = tables_.emplace_back(w.size() * kernels_.tw_reals);
+  auto& stored = tables_.emplace_back(w.size() * kernels_.tw_reals);
   if (broadcast) {
     kernels_.pack_bcast_twiddles(plain.data(), w.size(), stored.data());
   } else {
@@ -221,7 +221,7 @@ const T* chain_builder<T>::split_twiddles(std::size_t n, std::size_t radix, std:
   }
   const auto& w = roots(n);
   const std::size_t m = n / (radix * s);
-  std::vector<T>& t = tables_.emplace_back();
+  auto& t = tables_.emplace_back();
   t.reserve(2 * (radix - 1) * m);
   for (std::size_t p = 0; p < m; ++p) {
     for (std::size_t k = 1; k < radix; ++k) {
@@ -316,7 +316,7 @@ chain_builder<T>::bluestein_tables chain_builder<T>::bluestein_tables_of(std::si
     }
     const std::vector<std::complex<double>> spectrum =
         bluestein_kernel(bluestein_chirp<double>(sign, q), roots_m);
-    std::vector<T>& kernel = tables_.emplace_back(2 * m);
+    auto& kernel = tables_.emplace_back(2 * m);
     for (std::size_t f = 0; f < m; ++f) {
       kernel[2 * f] = static_cast<T>(spectrum[f].real());
       kernel[2 * f + 1] = static_cast<T>(spectrum[f].imag());
@@ -349,7 +349,7 @@ template <class T> const T* chain_builder<T>::rader_index_of(std::size_t q, std:
   // g^m mod q for m < q - 1, as values of T: exact, since rader_root admits q < 2^16.
   auto it = rader_index_tables_.find(q);
   if (it == rader_index_tables_.end()) {
-    std::vector<T>& index = tables_.emplace_back(q - 1);
+    auto& index = tables_.emplace_back(q - 1);
     std::uint64_t e = 1;
     for (std::size_t m = 0; m + 1 < q; ++m) {
       index[m] = static_cast<T>(e);
@@ -374,7 +374,7 @@ const T* chain_builder<T>::rader_kernel_of(std::size_t q, std::size_t g, int sig
       roots_l = unit_roots<double>(-1, len);
     }
     const std::vector<std::complex<double>> spectrum = rader_kernel(sign, q, g, roots_l);
-    std::vector<T>& kernel = tables_.emplace_back(2 * len);
+    auto& kernel = tables_.emplace_back(2 * len);
     for (std::size_t f = 0; f < len; ++f) {
       kernel[2 * f] = static_cast<T>(spectrum[f].real());
       kernel[2 * f + 1] = static_cast<T>(spectrum[f].imag());

@@ -222,7 +222,7 @@ void check_in_place(const shape_view& s, const side& in, const side& out) {
   }
 }
 
-template <class T> std::vector<std::vector<T>>& tables_of(plan_core& c) {
+template <class T> plan_tables<T>& tables_of(plan_core& c) {
   if constexpr (std::is_same_v<T, double>) {
     return c.tables_f64;
   } else {

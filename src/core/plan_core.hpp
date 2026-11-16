@@ -9,6 +9,7 @@
 #include "fftn/detail/core.hpp"
 #include "fftn/options.hpp"
 #include "isa/target.hpp"
+#include "platform/aligned_allocator.hpp"
 #include "threading/schedule.hpp"
 #include "threading/work_graph.hpp"
 
@@ -111,8 +112,8 @@ public:
   work_graph graph;         // the program's shareable work (DESIGN.md 13.2)
   machine_profile profile;  // what the scheduler assumes of the machine
   bool runs_inline = false; // rule 1 for the whole job (schedule.hpp): serial on any team
-  std::vector<std::vector<double>> tables_f64;
-  std::vector<std::vector<float>> tables_f32;
+  plan_tables<double> tables_f64;
+  plan_tables<float> tables_f32;
   std::vector<std::string> axis_notes; // one line per axis for describe()
   bool radices_forced = false;         // build_settings.radices was given (describe says so)
   std::string strategy_note;           // describe()'s strategy line
