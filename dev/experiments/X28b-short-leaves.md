@@ -210,7 +210,9 @@ Exceptions recorded under rule 3: on the EPYC, cases whose plans and kernel byte
 unchanged moved by 6–15 % between builds (r2c 120 and float 128 in arm 3's build, 60 × 64
 and 60 × 4096 in the final one: 1.06–1.09), each fine in the other build; a code-placement
 effect of the driver's offsets (above), not of the arms. Tracking tier, final against
-`main`: Mac 0.990, EPYC 0.979, nothing slower on either; Xeon below.
+`main`: Mac 0.990, EPYC 0.979, Xeon `avx512` 0.952 (run 20261116-073210-ce6e, Slurm 15969,
+10 quiet rounds, band ±3.02 %: 10 faster, among them 120 points 0.58, 60 0.59, 64 0.66,
+64 × 256 0.63, 8 0.81, 16 0.80, 17 0.85), nothing slower on any.
 
 What is left at single short rows (FFTN ÷ FFTW after X28b): Xeon `avx512` 30 points 1.24
 (no pair leaf: C does not divide 30) and 8 points 1.03; EPYC 60 (1.09) and 120 (1.05), which
