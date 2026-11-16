@@ -155,7 +155,26 @@ aligning them to 64 bytes alone took 0.97–0.98 of main's cycles at 1024–4096
 crosses lines on 863–3046 loads per transform there). These diagnostic builds are not
 arms (branches `diag/x30-*`, not pushed).
 
-(fbench runs pending)
+### EPYC, tracking tier (run 20261116-020626-31eb)
+
+EPYC 7763 (DMOG), GCC 16.2, `avx2`, one thread, 80 rounds, every round under load (other
+processes 64 cores of 128), A/A band ±1.00 %. Arm ÷ A (be593d1); "over" = slower than
+1.03, the rule's limit (b):
+
+| Arm | Geomean | Faster / slower | Over (worst) | Notable |
+|---|---|---|---|---|
+| T | 0.997 [0.996, 0.999] | 16 / 17 | 9: 97 1.081, 100 × 1024 1.084, c2r 256 1.059, 1009 1.057, 2048 × 36 1.055, r2c 256 1.040, 128 1.037, 64 1.036, 120 1.033 | 1024 0.957, 4096 0.961, 16384 0.912, 10403 0.878, 65537 0.956, c2r 2²⁰ 0.951 |
+| P | 0.997 [0.996, 0.998] | 4 / 1 | 0 (r2c 1024² 1.014) | 256 0.913, c2c 256² 0.965, r2c 256² 0.967, c2r 1024² 0.954 |
+| Q | 0.998 [0.997, 1.000] | 18 / 20 | 12: T's and 1024 × 256 1.094, 1024 1.032 | 256 0.886 |
+
+T and Q fail (b) on the EPYC, so neither can be adopted for `avx2`; both were reverted on
+the branch (eb329f5, 2acd6b5). T's pattern is the counters' trade: it wins where tables
+are large against L1 (1024, 4096, 16384, Bluestein's chirps at 10403 and 65537, long
+real rows) and loses on short rows and small grouped passes, where the unfolded
+duplicating loads cost more than the bytes save. 16 × 64 at 1024 loses for batches
+(1024 × 256: 1.094), whatever the single-row screens said.
+
+(EPYC x30 run and the Xeon runs pending)
 
 ## Verdict
 
