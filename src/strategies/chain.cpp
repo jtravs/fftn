@@ -716,10 +716,14 @@ slot chain_builder<T>::add_convolution(std::size_t s, std::size_t len,
     for (std::size_t i = 0; i < from; ++i) {
       copies *= seq[i];
     }
+    // Experiment X36: one copy runs the split run a line of len points would (split_from),
+    // its last forward pass applying the kernel spectrum as a per-element output factor;
+    // copies, whose factor or lanes are shared, stay interleaved.
+    const std::size_t split = s == 1 && !halves ? split_from(seq, false, 1) : seq.size();
     for (std::size_t i = from; i < to; ++i) {
       const slot next = other_scratch(at);
       add_pass(s * len, seq, i, copies, dir, {at, 1}, {next, 1}, dir < 0 ? forward : backward,
-               stages, s);
+               stages, s, layout_of(i, split, seq.size()));
       at = next;
       copies *= seq[i];
     }

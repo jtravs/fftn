@@ -595,6 +595,7 @@ template <class T> void split_only_where_it_fits(fftn::isa target) {
     settings.radices = std::move(radices);
     settings.bluestein_above = above;
     settings.layout = fftn::detail::layout_choice::split;
+    settings.bluestein_halves = false;
     const auto core =
         make_plan_core(fftn::detail::view_of(fftn::rows_c2c<T>(n, 1, fftn::direction::forward)),
                        {.force_isa = target}, settings);
@@ -607,8 +608,32 @@ template <class T> void split_only_where_it_fits(fftn::isa target) {
     EXPECT_FALSE(has_split({2, f / 2, 2}, 0)) << "a run of one pass";
   }
   EXPECT_FALSE(has_split({f, 2, 29}, no_bluestein)) << "a generic pass in the run";
-  EXPECT_FALSE(has_split({f, 2, 2, 47}, 16)) << "a Bluestein stage";
-  EXPECT_FALSE(has_split({f, 2, 2, 29}, 16)) << "a Rader stage";
+  EXPECT_FALSE(has_split({f, 2, 2, 47}, 16)) << "a Bluestein stage with copies";
+  EXPECT_FALSE(has_split({f, 2, 2, 29}, 16)) << "a Rader stage with copies";
+  // One copy: the convolution runs the split run its length would (experiment X36), its
+  // forward chain's last split pass applying the kernel spectrum; with the line's edges,
+  // both directions, against the reference.
+  // A Rader stage's convolution of 7680 has a split run where the line of 7680 with the
+  // same radices has one.
+  const auto t = static_cast<fftn::detail::target>(static_cast<unsigned char>(target));
+  const auto profile = fftn::detail::profile_of(
+      t, fftn::detail::of<T>(*fftn::detail::find_kernels(t)).complex_lanes);
+  const bool rader_split = has_split(fftn::detail::rule_radices(7680, profile), 0);
+  for (const std::size_t q : {std::size_t{4093}, std::size_t{7681}}) {
+    const bool split = q == 4093 || rader_split;
+    EXPECT_EQ(has_split({q}, 16), split) << q;
+    if (!split) {
+      continue;
+    }
+    build_settings one;
+    one.radices = {q};
+    one.layout = fftn::detail::layout_choice::split;
+    one.bluestein_halves = false;
+    check_row<T>(target, q, fftn::direction::forward, one, 1.0, true, true, false,
+                 {"convolution: split lane", "out: factor"});
+    check_row<T>(target, q, fftn::direction::backward, one, 0.375, false, false, false,
+                 {"convolution: split lane", "out: scale"});
+  }
   EXPECT_FALSE(has_split({f, 2, 17}, 0)) << "radix 17 has no split codelet";
   EXPECT_FALSE(has_split({f, 32, 2}, 0)) << "radix 32 has no split codelet";
 
