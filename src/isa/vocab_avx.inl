@@ -270,16 +270,16 @@ FFTN_FORCE_INLINE __m256 neg(__m256 a) { return _mm256_xor_ps(a, _mm256_set1_ps(
 // complex numbers 0, 1 and 2, 3 (double) are paired, then unpacked within each half, which
 // leaves re and im in natural order, lined up with data loaded by real::load.
 FFTN_FORCE_INLINE void deinterleave(const double* p, __m256d& re, __m256d& im) {
-  const __m256d a = _mm256_loadu_pd(p);                 // r0 i0 r1 i1
-  const __m256d b = _mm256_loadu_pd(p + 4);             // r2 i2 r3 i3
+  const __m256d a = _mm256_loadu_pd(p);                  // r0 i0 r1 i1
+  const __m256d b = _mm256_loadu_pd(p + 4);              // r2 i2 r3 i3
   const __m256d lo = _mm256_permute2f128_pd(a, b, 0x20); // r0 i0 r2 i2
   const __m256d hi = _mm256_permute2f128_pd(a, b, 0x31); // r1 i1 r3 i3
   re = _mm256_unpacklo_pd(lo, hi);                       // r0 r1 r2 r3
   im = _mm256_unpackhi_pd(lo, hi);
 }
 FFTN_FORCE_INLINE void deinterleave(const float* p, __m256& re, __m256& im) {
-  const __m256 a = _mm256_loadu_ps(p);                 // r0 i0 r1 i1 | r2 i2 r3 i3
-  const __m256 b = _mm256_loadu_ps(p + 8);             // r4 i4 r5 i5 | r6 i6 r7 i7
+  const __m256 a = _mm256_loadu_ps(p);                  // r0 i0 r1 i1 | r2 i2 r3 i3
+  const __m256 b = _mm256_loadu_ps(p + 8);              // r4 i4 r5 i5 | r6 i6 r7 i7
   const __m256 lo = _mm256_permute2f128_ps(a, b, 0x20); // r0 i0 r1 i1 | r4 i4 r5 i5
   const __m256 hi = _mm256_permute2f128_ps(a, b, 0x31); // r2 i2 r3 i3 | r6 i6 r7 i7
   re = _mm256_shuffle_ps(lo, hi, 0x88);                 // r0 r1 r2 r3 | r4 r5 r6 r7

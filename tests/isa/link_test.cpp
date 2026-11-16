@@ -78,7 +78,7 @@ TEST(link, lane_counts_and_fusion_match_each_target) {
     EXPECT_EQ(v->f32.complex_lanes, 2U);
     EXPECT_EQ(v->f64.real_lanes, 2U);
     EXPECT_EQ(v->f32.real_lanes, 4U);
-    EXPECT_EQ(v->f64.tw_reals, 4U); // pre-arranged, as on the other x86 targets
+    EXPECT_EQ(v->f64.tw_reals, 4U);    // pre-arranged, as on the other x86 targets
     EXPECT_EQ(v->f64.split_block, 4U); // avx's W: the pair rounds alike
   }
   if (const kernel_table* a = find_kernels(target::avx)) {
