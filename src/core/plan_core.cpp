@@ -321,11 +321,12 @@ line_edges c2c_edges(const options& opts, const build_settings& settings, bool f
 // two, outside its chain_part_bytes and chain_mixed_bytes, X29) or when forced, if the row
 // is contiguous on both sides, carries no edge factor (the grid applies only the scale, on its
 // output or, with build_settings::scale_on_input, its input), has no forced radices for its whole
-// length and has a split whose phases are codelet chains. The row is a c2c row or the
-// half-length complex transform of a real row of 2n (DESIGN.md 9.1).
+// length and has a split whose phases are codelet chains. The row is a c2c row or (real) the
+// half-length complex transform of a real row of 2n (DESIGN.md 9.1). A c2c row of a power of
+// two stays a chain up to the profile's pow2_chain_bytes (X32; real rows were not measured).
 template <class T>
 grid_split plan_grid(std::size_t n, const side& in, const side& out, const build_settings& settings,
-                     const chain_builder<T>& chain, std::size_t lanes) {
+                     const chain_builder<T>& chain, std::size_t lanes, bool real) {
   if (n < 2 || settings.strategy == strategy_choice::chain ||
       settings.strategy == strategy_choice::lanes || settings.in_factor != nullptr ||
       settings.out_factor != nullptr || in.stride[0] != 1 || out.stride[0] != 1) {
@@ -342,7 +343,8 @@ grid_split plan_grid(std::size_t n, const side& in, const side& out, const build
     if (bytes <= settings.profile.grid_min_bytes ||
         (mixed && ((part * 2 * sizeof(T) <= settings.profile.chain_part_bytes &&
                     bytes <= settings.profile.chain_part_limit_bytes) ||
-                   bytes <= settings.profile.chain_mixed_bytes))) {
+                   bytes <= settings.profile.chain_mixed_bytes)) ||
+        (!mixed && !real && bytes <= settings.profile.pow2_chain_bytes)) {
       return {};
     }
   }
@@ -467,6 +469,11 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   }
   chain_builder<T> chain(kernels, profile, tables_of<T>(c), settings.chunk_points, settings.radices,
                          settings.bluestein_above, fusion_of(settings, c.isa_target));
+  // X32: only on the machines whose profile keeps long powers of two as chains, the ones
+  // the radix sequences were measured on (the Xeon lost with chains of either).
+  if (settings.profile.pow2_chain_bytes != 0) {
+    chain.use_long_rows(settings.profile.grid_min_bytes, settings.profile.pow2_radix8_bytes);
+  }
   if (const narrow_leaf_table* narrow = find_narrow_leaves(c.isa_target)) {
     chain.use_narrow_leaves(&of<T>(*narrow));
   }
@@ -506,14 +513,14 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       lanes_block<T>(s, in, out, settings, profile, chain, kernels.complex_lanes);
   grid_split grid_plan =
       s.kind == transform_kind::c2c && r == 1
-          ? plan_grid<T>(c.lengths[0], in, out, settings, chain, kernels.complex_lanes)
+          ? plan_grid<T>(c.lengths[0], in, out, settings, chain, kernels.complex_lanes, false)
           : grid_split{};
   // A real row of one axis whose half-length complex transform is a grid (DESIGN.md 9.1):
   // the grid writes the output and the pairing runs after it in place (r2c), or the pairing
   // writes the output and the grid runs in place there (c2r).
   grid_split real_grid =
       s.kind != transform_kind::c2c && r == 1 && c.lengths[0] % 2 == 0
-          ? plan_grid<T>(c.lengths[0] / 2, in, out, settings, chain, kernels.complex_lanes)
+          ? plan_grid<T>(c.lengths[0] / 2, in, out, settings, chain, kernels.complex_lanes, true)
           : grid_split{};
   // Only an intermediate the plan keeps in the workspace block anyway is padded: moving a
   // two-phase plan's intermediate out of the output into the block cost 1-9 % (X26b).
