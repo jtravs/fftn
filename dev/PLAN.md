@@ -68,11 +68,14 @@ Open, by phase:
 - 3: T2, T3, T4, T6; 3.5 (Kokkos executor); 3.6 to be checked against its acceptance.
 - 4–7: not started.
 
-In flight (lead session, 2026-11-16): X30b (lead 3 continued: aligned twiddle tables,
-compact twiddles for large tables, three passes at 4096); round 2 of the push: X32 (lead
-(a), long powers of two), X33 (lead (b), long real rows), X34 (lead (c), the Xeon's long
-mixed rows), X31 (cloud: Zen 5, recent Intel with MKL, Axion; cap USD 20). Done, each merged with its pull
+In flight (lead session, 2026-11-16): round 2 of the push: X32 (lead (a), long powers of
+two), X33 (lead (b), long real rows), X34 (lead (c), the Xeon's long mixed rows), X31
+(cloud: Zen 5, recent Intel with MKL, Axion; cap USD 20). Done, each merged with its pull
 request:
+- X30b (lead 3): plan tables on 64-byte boundaries (EPYC 0.986 double, 0.971 float on its
+  cases; nothing slower anywhere); compact (wr, wi) twiddles rejected again (single cases
+  up to 1.04–1.07, apparently the FMADDSUB arithmetic, not the storage); three passes at
+  4096 rejected (1.30–1.88).
 - The GCC 14/15 ASan crash in `avx512` code on the Xeon: a GCC code-generation bug on
   ASan's fake stack (16.2 and Clang correct); sanitizer builds with GCC before 16 leave out
   use-after-return instrumentation (pull request 18, LESSONS 6.4).
@@ -171,6 +174,12 @@ runs; the numbers above are the baseline to beat. The rest (6–9) follow. X25's
    lost up to 1.08 on short rows, so next is that storage per table (large tables only, an
    aligned load for the imaginary parts) and 64-byte aligned twiddle tables (0.97–0.98 of
    the cycles alone).
+   X30b (done): plan tables now start on a 64-byte boundary (x30 double 0.986 EPYC, 0.989
+   Xeon `avx512`, 0.996 `avx2`; float 0.97–0.98; Mac neutral). The compact storage per
+   table kind won the EPYC's x30 cases (double 0.986, float 0.962 of that) but was rejected
+   on single cases its FMADDSUB form shares (float 256 × 64 1.04, Xeon c2c 16 1.05); no gain
+   in double on `avx512`. Three-pass `avx2` 4096 loses 1.3–1.9. Next: the compact storage
+   with the old arithmetic (an XOR for −wi on large tables only), or the lane loops' spills.
 4. Single short rows: X28 done (128-bit x86 leaves, a lighter entry, passes given their
    addresses: single c2c rows 8–120 at 0.79–0.88 of their time on every machine; FFTN ÷
    FFTW Xeon 1.62 → 1.27, EPYC 1.37 → 1.12, Mac 1.14 → 1.00). Left: 60 and 120 points
@@ -440,6 +449,7 @@ running, done (with verdict).
 | [X30](experiments/X30-x86-pass-loops.md) | x86 chains at 128–4096 (lead 3): two-pass `avx2` double sequences with radix 32/64 (P), twiddles stored (wr, wi) with duplicating loads (T), 1024 = 16 × 64 (Q) | 1 | done: P adopted (EPYC x30 double 0.975: 256 0.905, 512 0.946, batches of 64 0.87–0.92, r2c/c2r 512–1024 0.90–0.95; nothing slower; Xeon `avx2` tracking 0.999, r2c 1024² 1.034 [0.997, 1.061] re-run pending); T rejected by single cases (geomeans 0.97–0.99, float 0.94, but short rows and small grouped passes up to 1.08–1.11); Q rejected (1024 batches 1.09) |
 | [X29](experiments/X29-real-footprint.md) | Real rows in the chain-or-grid rule: should r2c and c2r switch to the grid at another size than the c2c row of half their length, and is the grid's separate pairing pass worth fusing into its end phases? | 1–2 | done: real footprint rejected (no gain on any machine); c2r pairing in the grid's first gather adopted on Apple out of place in two phases (Mac 0.92–0.94; EPYC 1.11, not adopted); lengths with a power-of-two part ≤ 1024 points stay chains on Apple at any size (46080 0.65, 100000 0.62) and on Zen to half of L3 (0.64–0.85); power-of-two chains on the EPYC bimodal at 1–2 MiB, not adopted |
 | [X33](experiments/X33-long-real.md) | Long real rows (r2c and c2r of 65536 and 2²⁰, lead (b)): where the time goes, and does a pairing without a memory sweep of its own (fused into the grid's last phase with block pairs, or into the chain's last pass) close the gap? | 1–2 | running |
+| [X30b](experiments/X30b-twiddle-tables.md) | x86 chains at 1024–4096 (lead 3, after X30): 64-byte aligned plan tables (L), the half-size (wr, wi) twiddle storage only for passes with large tables (C), three-pass `avx2` double 4096 (R) | 1 | done: L adopted (aligned plan tables; EPYC x30 double 0.986, float 0.971; Xeon `avx512` 0.989, `avx2` 0.996; Mac 0.999); C rejected (EPYC x30 0.986 / 0.962 of L but float 256 × 64 1.04 in every variant, Xeon c2c 16 1.05, `avx512` double 1.001); R rejected (4096 three-pass 1.30–1.88) |
 | P1 | Cost-model accuracy: rank agreement with measurement across the catalogue per machine | 2 | planned |
 | P2 | Measurement budget: how many candidates and how long before the choice stops improving | 2 | planned |
 | [T1](experiments/T1-dispatch-wait-costs.md) | Dispatch, wake and wait costs per machine and runtime (libgomp, libomp, Kokkos, pool) | 3 | done: hand-off cost and claim runs adopted on Zen 3; dispatch and work costs wait for a per-lane dispatch term |

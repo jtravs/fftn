@@ -297,8 +297,7 @@ std::size_t grid_pad(const grid_split& g, std::size_t element_bytes, std::size_t
 
 template <class T>
 grid_builder<T>::grid_builder(const kernels_of<T>& kernels, chain_builder<T>& chain,
-                              std::vector<std::vector<T>>& tables, bool fused,
-                              std::size_t phase_radix)
+                              plan_tables<T>& tables, bool fused, std::size_t phase_radix)
     : kernels_(kernels), chain_(chain), tables_(tables), fused_(fused),
       phase_radix_(phase_radix != 0 ? phase_radix : default_grid_phase_radix) {}
 
@@ -428,7 +427,7 @@ std::pair<const T*, const T*> grid_builder<T>::first_twiddles(const grid_split& 
   const std::size_t m = first_columns(g);
   const std::size_t n = n1 * m;
   const std::size_t lanes = kernels_.complex_lanes;
-  std::vector<T>& local = tables_.emplace_back(2 * g.block * n1);
+  auto& local = tables_.emplace_back(2 * g.block * n1);
   std::size_t e = 0;
   for (std::size_t q0 = 0; q0 < g.block; q0 += lanes) {
     for (std::size_t k0 = 0; k0 < n1; k0 += lanes) {
@@ -444,7 +443,7 @@ std::pair<const T*, const T*> grid_builder<T>::first_twiddles(const grid_split& 
   // Taken before the next table is appended: that may move the outer vector (the inner
   // buffers stay where they are).
   const T* local_data = local.data();
-  std::vector<T>& rows = tables_.emplace_back(2 * (m / g.block) * n1);
+  auto& rows = tables_.emplace_back(2 * (m / g.block) * n1);
   e = 0;
   for (std::size_t c0 = 0; c0 < m; c0 += g.block) {
     for (std::size_t k = 0; k < n1; ++k) {
@@ -458,7 +457,7 @@ std::pair<const T*, const T*> grid_builder<T>::first_twiddles(const grid_split& 
 
 // A later phase's w_(Ni M)^(c k): per column c < M, the Ni rows k (plain interleaved).
 template <class T> const T* grid_builder<T>::row_twiddles(std::size_t ni, std::size_t m) {
-  std::vector<T>& t = tables_.emplace_back(2 * ni * m);
+  auto& t = tables_.emplace_back(2 * ni * m);
   std::size_t e = 0;
   for (std::size_t c = 0; c < m; ++c) {
     for (std::size_t k = 0; k < ni; ++k) {
@@ -475,7 +474,7 @@ template <class T> const T* grid_builder<T>::row_twiddles(std::size_t ni, std::s
 template <class T>
 std::pair<const T*, const T*> grid_builder<T>::c2r_pair_factors(std::size_t n1, std::size_t m1,
                                                                 std::size_t n) {
-  std::vector<T>& columns = tables_.emplace_back(2 * m1);
+  auto& columns = tables_.emplace_back(2 * m1);
   for (std::size_t q = 0; q < m1; ++q) {
     const std::complex<T> v = unit_root<T>(+1, q, n);
     columns[2 * q] = -v.imag();
@@ -483,7 +482,7 @@ std::pair<const T*, const T*> grid_builder<T>::c2r_pair_factors(std::size_t n1, 
   }
   // Taken before the next table is appended (first_twiddles).
   const T* columns_data = columns.data();
-  std::vector<T>& rows = tables_.emplace_back(2 * n1);
+  auto& rows = tables_.emplace_back(2 * n1);
   for (std::size_t r = 0; r < n1; ++r) {
     const std::complex<T> v = unit_root<T>(+1, m1 * r, n);
     rows[2 * r] = v.real();
