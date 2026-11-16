@@ -530,11 +530,11 @@ std::pair<const T*, const T*> grid_builder<T>::r2c_pair_tables(std::size_t l, st
       }
     }
   }
-  std::vector<T>& stored = tables_.emplace_back(count * kernels_.tw_reals);
+  auto& stored = tables_.emplace_back(count * kernels_.tw_reals);
   kernels_.pack_twiddles(plain.data(), count, stored.data());
   // Taken before the next table is appended (first_twiddles).
   const T* stored_data = stored.data();
-  std::vector<T>& column = tables_.emplace_back(2 * std::max<std::size_t>(1, (nk - 1) / 2));
+  auto& column = tables_.emplace_back(2 * std::max<std::size_t>(1, (nk - 1) / 2));
   for (std::size_t k = 1; 2 * k < nk; ++k) {
     const std::complex<T> w = unit_root<T>(-1, l * k, n);
     column[2 * (k - 1)] = w.imag();
