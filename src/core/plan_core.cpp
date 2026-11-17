@@ -571,7 +571,11 @@ std::size_t column_block(std::size_t axis, const std::vector<std::size_t>& exten
   }
   if (stride < settings.profile.page_bytes) {
     const auto tiles = [&](std::size_t b) { return 2 * n * b * complex_bytes; };
-    while (block > line && tiles(block) > settings.profile.column_tile_bytes) {
+    // Down to 64 bytes of columns: an x86 line, half of Apple's 128-byte line, where blocks
+    // of 4 columns won at 2048 x 36 (X41 arm L1).
+    constexpr std::size_t narrowest_bytes = 64;
+    const std::size_t narrowest = std::min(line, up(narrowest_bytes / complex_bytes));
+    while (block > narrowest && tiles(block) > settings.profile.column_tile_bytes) {
       block = up(block / 2);
     }
     if (tiles(block) > settings.profile.column_tile_bytes) {

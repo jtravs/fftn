@@ -108,4 +108,43 @@ element on its own page) and the column exceeds half of L1; else the chain. On t
 that keeps 1024² (8208-byte stride, a 16 KiB column) and 2048 × 36 (304-byte stride) on the
 chain and 2048² on X40's block. Rule for R3: as for R2, on the EPYC and the Xeon.
 
+### S: small planes
+
+Diagnosis (Mac harness, one process, Clang, `neon_fcma`, `main` 4d00f0a with arm R): a plane
+costs the two 1-D batches it is made of plus about 10 ns: 8 × 6 30.6 ns per plane against
+9.6 ns for its 8 rows as a 1-D batch and 10.1 ns for its 6 columns as rows; 32 × 32 1005 ns
+against 476 + 476; 64 × 64 4.83 µs against 2.28 + 2.27. The rest is the driver walking the
+records per transform (a variant test, a recursion and the slots moved per loop iteration).
+
+Arm S1 (dd21c2e, `build_settings::unroll_calls`): a multi-axis program of at most 256
+kernel calls per transform is unrolled at construction into its calls with the slots' byte
+offsets (a loop of leaves one call), and the driver calls them in turn. Bits unchanged (the
+tests compare unrolled and walked output byte for byte); 1-D programs keep their paths.
+Harness: 8 × 6 b2 60 → 53 ns, 5 × 7 b2 51 → 45 ns, 64 × 64 4.83 → 4.64 µs. S1 against its
+parent (B: 31ea042), the 37 c2c planes; target cases the 11 planes of at most 1024 points:
+
+- EPYC run 20261117-105106-e6b7 (10 rounds, 8 loaded, band ±1.7 %): targets 0.90 (8 × 6
+  0.81, 5 × 7 0.78, 16 × 16 0.94–0.95, 32 × 32 0.96–0.98), worst of the 37 1.013. Rule met.
+- Xeon run 20261117-105256-e618 (10 rounds, all loaded, six overloaded; band ±11 %):
+  targets 0.87 (8 × 6 0.78–0.80, 5 × 7 0.74–0.76, 16 × 16 0.86–0.89), worst 1.038. Rule met
+  by the letter at that band.
+- Mac run 20261117-104725-7d2a (12 rounds, all loaded, band ±5.5 %): targets 0.94 (8 × 6
+  0.86–0.88, 5 × 7 0.84–0.87), worst 1.044. The lead reported the Mac on battery power
+  around the end of this run, so it cannot decide; a re-run on mains decides the Mac.
+
+### L: columns beyond L2 (the Mac's 2048 × 36)
+
+Screen (not a judging run), Mac run 20261117-111654-cd9f (band ±1.3 %), forced blocks on
+the head build against its rule (16 columns, tiles of 1 MiB): 2048 × 36 with 4 columns
+0.89–0.90 (FFTN ÷ FFTW 1.02–1.07 instead of 1.15–1.19), 8 columns 1.01, 32 columns 1.00,
+every column through the chain 1.06–1.08; 36 × 2048 and 1000² lose with narrow blocks
+(their column elements are a page or more apart, which the tile budget does not govern).
+Arm L1 (rule written before its runs, committed with it): where a cluster shares L2,
+`column_tile_bytes` is twice L1 (256 KiB on the M5 Max) instead of a quarter of L2, so
+2048 × 36 takes blocks of 4 (the halving below a page may go down to 64 bytes of columns,
+half of Apple's 128-byte line, instead of a whole line; on x86 a line is 64 bytes, so x86
+plans are unchanged). Rule for L1: on the Mac, adopt
+if 2048 × 36 (both placements) takes at most 0.95 of the head's time and none of the 37 c2c
+planes is slower by more than the larger of 2 % and the band.
+
 ## Verdict

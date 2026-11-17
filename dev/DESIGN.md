@@ -1056,7 +1056,11 @@ a batch with the slots moved by the batch step (experiments X20 and X28: at 8 po
 4.3 ns per call, 7.1 → 1.7 ns per transform in a batch on the M5 Max); in a walked program
 a loop over lines whose body is one leaf (the rows of a plane of short rows) is likewise one
 call of the leaf over all its lines (X40: 8 × 6 to 32 × 32 planes 0.59–0.85 of the walk's
-time on the Mac and the EPYC). Every kernel, leaf
+time on the Mac and the EPYC); and a multi-axis program of at most 256 kernel calls per
+transform is not walked at all: its calls are unrolled at construction with the slots' byte
+offsets (`program::calls`), and the driver calls them in turn (X41: planes of up to 1024
+points 0.87–0.94 of the walk's time on the three machines; the walk had cost about 10 ns a
+plane on the M5 Max). Every kernel, leaf
 or pass, takes its source and destination as arguments and reads the rest from the plan's
 own arguments: a fresh copy of the arguments per stage and transform cost 3–5 ns per stage
 on x86, most of it the copy's store-to-load forwarding into the kernel (X28). Every kernel
