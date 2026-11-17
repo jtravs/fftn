@@ -129,6 +129,7 @@ build_settings fixed_settings() {
   s.profile.grid_phase_radix = 0;
   s.profile.grid_two_block_bytes = 0;
   s.profile.pow2_grid_bytes = 0;
+  s.profile.grid_two_pow2_bytes = 0;
   s.profile.chain_part_bytes = 0;
   s.profile.chain_mixed_bytes = 0;
   s.profile.pow2_chain_bytes = 0;

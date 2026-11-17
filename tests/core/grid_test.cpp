@@ -247,6 +247,7 @@ TEST(Grid, PlannerChoosesByTheProfile) {
   s.profile.grid_three_block = 0; // X39's fields, which the running machine may set
   s.profile.grid_two_block_bytes = 0;
   s.profile.pow2_grid_bytes = 0;
+  s.profile.grid_two_pow2_bytes = 0;
   const auto plan = [&](std::size_t n, const build_settings& b) {
     return make_plan_core(
         fftn::detail::view_of(fftn::rows_c2c<double>(n, 1, fftn::direction::forward)),
@@ -425,6 +426,7 @@ TEST(Grid, PowersOfTwoBecomeGridsBeyondTheProfilesLimit) {
   s.profile.pow2_chain_bytes = 0;
   s.profile.pow2_grid_bytes = std::size_t{256} * 1024;
   s.profile.grid_two_block_bytes = 0;
+  s.profile.grid_two_pow2_bytes = 0;
   const auto plan = [&](std::size_t n) {
     return make_plan_core(
         fftn::detail::view_of(fftn::rows_c2c<double>(n, 1, fftn::direction::forward)),
@@ -434,9 +436,26 @@ TEST(Grid, PowersOfTwoBecomeGridsBeyondTheProfilesLimit) {
   EXPECT_FALSE(is_grid(*plan(25000)));
   const auto g = plan(32768);
   EXPECT_TRUE(is_grid(*g)) << described(*g);
-  const auto real =
+  // An r2c row's half length follows the rule (X39 arm D), a c2r row's does not.
+  const auto r2c =
       make_plan_core(fftn::detail::view_of(fftn::rows_r2c<double>(65536, 1)), fftn::options(), s);
-  EXPECT_FALSE(is_grid(*real)) << described(*real);
+  EXPECT_TRUE(is_grid(*r2c)) << described(*r2c);
+  const auto c2r =
+      make_plan_core(fftn::detail::view_of(fftn::rows_c2r<double>(65536, 1)), fftn::options(), s);
+  EXPECT_FALSE(is_grid(*c2r)) << described(*c2r);
+  // Beyond grid_two_pow2_bytes a c2c power of two out of place stays in two phases, in place
+  // three (X39 arm D).
+  s.profile.grid_two_pow2_bytes = std::size_t{8} * 1024 * 1024;
+  const std::string far = described(*plan(std::size_t{1} << 20U));
+  EXPECT_NE(far.find("in 2 phases"), std::string::npos) << far;
+  const std::string near = described(*plan(std::size_t{1} << 19U));
+  EXPECT_NE(near.find("in 3 phases"), std::string::npos) << near;
+  const std::string inplace =
+      described(*make_plan_core(fftn::detail::view_of(fftn::rows_c2c<double>(
+                                    std::size_t{1} << 20U, 1, fftn::direction::forward)),
+                                {.in_place = true}, s));
+  EXPECT_NE(inplace.find("in 3 phases"), std::string::npos) << inplace;
+  s.profile.grid_two_pow2_bytes = 0;
   // Blocks of 4 columns for 256-long phases within L1, 8 within twice L1 (complex lanes 4 or
   // fewer: every target's double).
   const std::string narrow = described(*g);

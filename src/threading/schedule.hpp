@@ -146,6 +146,11 @@ struct machine_profile {
   // two-phase grid's cycles, while 16384 lost as a grid (1.02-1.69 in every split) and so did
   // c2r 65536 (1.13; r2c 65536 gained, 0.88). set_grid_sizes sets a quarter of L2 there.
   std::size_t pow2_grid_bytes = 0;
+  // A c2c row out of place whose length is a power of two stays in two grid phases beyond
+  // grid_two_pow2_bytes (0: off; experiment X39). On the Xeon 6240 two phases took 0.88-0.92
+  // of the three phases' time at 2^20-2^23 points out of place, but lost in place (2^20 1.10)
+  // and for c2r 2^20 (1.23). set_grid_sizes sets it on the Xeon profile.
+  std::size_t grid_two_pow2_bytes = 0;
   // The set period (bytes) the grid pads the rows of its intermediate array against, so that
   // the rows phase 2 gathers spread over the sets (grid_pad, experiment X26b); SIZE_MAX: no
   // padding. set_grid_sizes sets 4 KiB where the L2 is shared by a cluster (Apple: long rows

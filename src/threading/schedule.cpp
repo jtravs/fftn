@@ -128,7 +128,8 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
   // (15 rows of 71680 to 4 x 10^6 points: 0.70-1.01 of the three phases' cycles, 100000 0.73).
   // Experiment X39, the same machines on x86-64 (measured on the Xeon 6240 only): three-phase
   // grids in blocks of at most 16 columns, grid phases with radix-20 passes, two-phase blocks
-  // within twice L1, and c2c powers of two as grids beyond a quarter of L2 (32768 points).
+  // within twice L1, c2c and r2c powers of two as grids beyond a quarter of L2 (32768 complex
+  // points), and c2c powers of two out of place in two phases beyond half of L3 (2^20 points).
   if (private_l2 && !large_l2 && !large_l3) {
     p.grid_two_odd_part = 15;
     if (x86_64) {
@@ -137,6 +138,7 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
       if (c.l1d.size != 0 && c.l2.size != 0) {
         p.grid_two_block_bytes = 2 * c.l1d.size;
         p.pow2_grid_bytes = c.l2.size / 4;
+        p.grid_two_pow2_bytes = c.l3.size / 2;
       }
     }
   }
