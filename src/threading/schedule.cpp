@@ -104,6 +104,7 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
     }
     if (!private_l2) {
       p.column_page_lines = 8;
+      p.column_block_bytes = 1024;
     }
   }
   // Experiment X29: with a private L2 and an L3 of at least 2 MiB per CPU sharing it (the
