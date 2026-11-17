@@ -277,7 +277,9 @@ template <class T> shape<T, std::complex<T>> rows_r2c(std::size_t n, std::size_t
 template <class T> shape<std::complex<T>, T> rows_c2r(std::size_t n, std::size_t count);
 template <class T> shape<std::complex<T>, std::complex<T>>
     planes_c2c(std::size_t ny, std::size_t nx, std::size_t count, direction);
-// later: volume_c2c, and along_axes(extents, axes, direction) for the axes of a strided array
+template <class T> shape<std::complex<T>, std::complex<T>>   // provisional (19)
+    volumes_c2c(std::size_t nz, std::size_t ny, std::size_t nx, std::size_t count, direction);
+// later: along_axes(extents, axes, direction) for the axes of a strided array
 }
 ```
 
@@ -2914,6 +2916,7 @@ to change before a release.
 | 2026-11-17 | The recorded protocol caveats, agreed by the maintainer, 2026-11-17: X35's and X14's, the queue bypasses of X36, X38 and X39, and the recorded exception cases (X23b's two) | each is recorded in its experiment file with its reason |
 
 | 2026-11-17 | Multi-axis programs of at most 256 kernel calls per transform run from their calls unrolled at construction (section 8.3); the complex axes of real planes take the lanes column phase where C > 1 with their own block rule; where a cluster shares L2 a column block's tiles stay within twice L1 when its column elements lie four to a page (section 9.3) | X41: planes of up to 1024 points 0.87–0.94 of the walk's time (three machines); real planes 0.89 (EPYC) and 0.83 (Xeon) of the chain columns' time, the M5 Max lost 1.04 and keeps the chain; M5 Max 2048 × 36 0.90; joining the narrower block's phase (T1) rejected at 0.96 |
+| 2026-11-17 | `volumes_c2c(nz, ny, nx, count, dir)` in `fftn/shape.hpp` beside `planes_c2c` (section 5.2), plural like `rows_c2c` and `planes_c2c` where 5.2 had said `volume_c2c`; no real-kind volume functions yet. Proposed by the lead, pending the maintainer (provisional) | task 4.2; the general `shape` already serves volumes, so this is a convenience only: the open choices are its name and whether r2c and c2r shape functions for planes and volumes come with it |
 ---
 
 ## 20. References

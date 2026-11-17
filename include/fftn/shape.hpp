@@ -151,4 +151,21 @@ template <class T>
   return s;
 }
 
+/// A batch of `count` complex volumes of `nz` planes of `ny` rows of `nx` values, C-ordered:
+/// x varies fastest, then y, then z, then the volume. The 3-D transform of each volume.
+/// (Provisional: proposed with task 4.2, pending the maintainer's agreement.)
+///
+/// Exceptions and guarantees: as for rows_c2c.
+template <class T>
+[[nodiscard]] shape<std::complex<T>, std::complex<T>>
+volumes_c2c(std::size_t nz, std::size_t ny, std::size_t nx, std::size_t count, direction dir) {
+  shape<std::complex<T>, std::complex<T>> s;
+  s.dir = dir;
+  s.axes.push_back(axis{.n = nz});
+  s.axes.push_back(axis{.n = ny});
+  s.axes.push_back(axis{.n = nx});
+  s.batches.push_back(batch{.count = count});
+  return s;
+}
+
 } // namespace fftn::inline v0
