@@ -202,7 +202,7 @@ on NEON, where the fast path is compiled out.
 - **N adopted on `avx2`** (0.936 over the EPYC's 100 cases with a column phase; its four
   cases past the limit sit on paths N does not touch and are re-run in Slurm 512179);
   **not adopted on `avx512`** (0.962 against 0.95; c2c planes 0.92) or NEON (0.997): the fast
-  path is compiled for `avx2` only. LESSONS 4.17.
+  path is compiled for `avx2` only. LESSONS 4.18.
 - No arm for the Mac: its 32²–64² gap is FFTW's radix-64 codelet (`n1fv_64`), against which
   FFTN's radix-64 pass loses in rows and columns alike (1.06–1.19); a faster generated
   radix-64 codelet on NEON is the generator's work (X42).

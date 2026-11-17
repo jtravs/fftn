@@ -115,6 +115,15 @@ every arm on one base: merging `main` into the branch mid-experiment moved the s
 1.14–1.16 on the EPYC (the merged `main` alone did), which first read as a loss of the arm
 being timed. [X37](experiments/X37-short-batches.md).
 
+1.12 **Across cloud VMs, compare ratios within a run, and distrust single long rows even
+then.** Two Granite Rapids VMs of one type (`c4-standard-16`), a day apart, ran both FFTN and
+FFTW about 6 % faster on the second over 35 shared rows, so times across VMs mislead. The
+ratio held over the set (FFTN ÷ FFTW 0.778 → 0.784), but single long rows did not: FFTW took
+0.46 of its earlier time at 2²² (FFTN 0.66) and 0.80 at 65536 (FFTN 0.99), turning 0.76 →
+1.10 and 1.24 → 1.53 with FFTN's plans unchanged; the competitor's MEASURE plans and the
+VM's memory placement both move. Judge a row by a same-run A/B on one VM, and a VM's
+standing by the geometric mean. [X45](experiments/X45-cloud-exit.md).
+
 ## 2. The instruction set and the machine
 
 2.1 **The data layout that wins depends on the ISA.** Interleaved complex numbers suit
@@ -726,7 +735,20 @@ carries its lane count and packing. Lengths that no C divides (18, 22, 26, 30 on
 are AVX2's pair leaves too: 0.40–0.54 of the two-pass chain's time.
 [X37](experiments/X37-short-batches.md).
 
-4.17 **Count a column phase's instructions against the rows' before tuning its radices.**
+4.17 **Count the spills before blaming them: a codelet that overflows the register file
+may already cost what a register-fitting one would.** FFTN's radix-32 and 64 codelets peak
+at 35 and 67 live values on AVX2's 16 registers, and FFTW-shaped two-pass plans with them
+lost to three radix-16 passes on the EPYC 7763; the obvious cause was spills. A two-level
+form that stages R values once through a fenced local array (each level within 13–16 live
+values) cut Clang's stack moves in the radix-64 lane pass by two thirds, but with GCC 16
+it left instructions (± 3 %) and time unchanged (1.000 of the flat codelets over `avx2`'s
+radix-32 plans; 1024 as 16 · 64 5.39 against 5.55 cycles per point): GCC already folds the
+reloads into memory operands. The two-pass plans executed 7–13 % fewer instructions than
+three passes and lost on IPC (3.0 against 3.5), with no FP pipe over 52 % busy. For an odd
+radix the staging cost more than it saved (radix 25: 12 % more vector operations, 3–8 %
+slower on both x86 machines). [X42](experiments/X42-codelets.md).
+
+4.18 **Count a column phase's instructions against the rows' before tuning its radices.**
 On the Xeon 6240 FFTN's rows of 16–64 points ran oneMKL's instructions and cycles, but its
 planes' column phases ran about twice MKL's instructions per point: each lanes edge pass cost
 as many instructions as the row's whole two-pass leaf, mostly scalar address arithmetic for

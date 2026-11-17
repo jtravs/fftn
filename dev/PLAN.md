@@ -40,6 +40,17 @@ Worst: Zen 5 65536 1.50; Granite Rapids 100000 2.16, 46080 1.60, in place 1.26 (
 is worse there); Axion 8 points 1.24. Axion's long rows (0.75 of FFTW) show that most of the
 Mac's long-row gap is FFTW being fast on Apple silicon (LESSONS 2.9). Zen 5 does not share
 Zen 3's 65537 loss (0.61). Planes and volumes: Zen 5 1.63, Granite Rapids 1.48, Axion 0.78.
+**Phase 1 exit check again (2026-11-17, `main` 509d123, before X42; the tail rule now counts
+cases beyond noise, DESIGN 1.3):** Mac ÷ FFTW 0.75, 3 cases beyond noise (1.6 %; 15 above a
+plain 1.05): 2 × 3 in place 1.37, 32 1.20, 2²³ 1.13; ÷ FFTL 0.53, 3 (1.6 %). EPYC ÷ FFTW 0.80,
+13 (6.7 %; 17 plain): 512–2048 (1.07–1.22, seven cases), short backward pairs (64 × 2 1.30,
+15 × 2 1.20), 64 × 16 1.14, 1018 1.09, 80 and 100 1.08; ÷ FFTL 0.47, 3 (3125, 15625, 16807;
+X42 takes the first two). Xeon ÷ FFTW 0.73, 10 (5.2 %; 21 plain): 32768, 100000, 25000
+(1.34–1.36), 16384 1.19, 131071 1.16, 160, 240 and 384 single rows (1.14–1.33, being
+re-timed against 304a8c5: the run was loaded, band ±4.68 %), 3 × 3 in place, 4; ÷ MKL 0.74,
+3 (1.6 %; 30 plain): 999983 1.43, 131071 1.33, 16384 1.23. Runs 20261117-143114-4e3e (Mac,
+band ±2.28 %), 20261117-143500-bc4b (EPYC, ±1.00 %), 20261117-144116-aa55 (Xeon).
+
 **Phase 1 exit check (2026-11-16, `main` 304a8c5, standard catalogue, the 201 c2c rows,
 193 with every reference; DESIGN 1.3 asks for the geometric mean and at most 5 % of cases
 slower than 1.05):** Mac ÷ FFTW 0.78 (target 0.85), 20 cases over 1.05 (10 %); ÷ FFTL 0.50
@@ -62,6 +73,12 @@ plain `neon` ÷ FFTW's NEON build 0.886 (Mac); all at or below FFTW, the tail ru
 each (29–46 % of cases above 1.05) with the causes above. Runs 20261117-004757-3a1d,
 20261116-234204-8175 (EPYC), 20261116-232600-139a, 20261117-002151-a927 (Xeon),
 20261116-232302-42c6 (Mac).
+Cloud exit check (X45, `main` 509d123, the same 193 rows): ÷ FFTW Zen 5 0.70 with 15 cases
+over 1.05 (7.8 %), Granite Rapids 0.77 with 25 (13.0 %; ÷ MKL 0.75, 22, 11.4 %), Axion 0.71
+with 9 (4.7 %, the tail rule met at its edge); runs 20261117-144317-7119, -144359-0a8f, -144321-6196. Beyond noise (DESIGN 1.3 since 2026-11-17): Zen 5 11 (5.7 %: 2²³, 2²⁴, 100000, 2048, 4096
+and rows of 2–6 points), Granite Rapids 22 (11.4 %; ÷ MKL 17, 8.8 %: 32768–262144, 46080 and
+100000 at 1.2–1.6, with FFTW fast on that VM, LESSONS 1.12; 131071, 999983), Axion 9 (4.7 %:
+rows of 2–8 points 1.2–1.47, the fixed cost of a call).
 FFTL.jl updated to libfftl 1ae621e (upstream main of 2026-11-16, 111 commits after 53171e8;
 same build: apple-m1, x86-64-v3), same case set, `main` e8c2639, the old libfftl as a third
 arm: FFTN ÷ FFTL 0.55 on the Mac (old libfftl 0.50 in the same run), 9 cases over 1.05
@@ -134,10 +151,13 @@ up-to-date rule), the full per-change set on main after each merge, weekly exten
 Open, by phase:
 
 - 0: the Xeon client-catalogue baseline.
-- 1: the exit: every mean target met, the 5 % tail rule not yet (re-run the exit check after
-  pull request 48); X2 on the Mac above 1024; X4 on x86 and for edge passes; X5 (twiddle
-  modes); the tail's leftovers (Xeon 16384, a radix-25 codelet for 20000/25000/100000, EPYC
-  512–2048 with radix-32/64 codelets that fit 16 registers, a few tiny batches).
+- 1: the exit: every mean target met; the tail rule (beyond noise since 2026-11-17) met on
+  the Mac and against MKL and FFTL, not yet against FFTW on the EPYC (6.7 %) and the Xeon
+  (5.2 %; see the exit check of 2026-11-17 above); X46 (a depth-first chain: Xeon 16384–100000)
+  and X47 (EPYC 512–2048) are running; X2 on the Mac above 1024; X4 on x86 and for edge
+  passes; X5 (twiddle modes); left for the next round: Xeon primes against MKL (131071,
+  999983), fixed cost of tiny calls (2 × 3 in place, short backward pairs), float radix-25
+  overrides.
 - 2: 2.2's acceptance in double c2c on AVX-512 (re-check after X37's batches of 16);
   X6 (real-input codelets), X13; the cost model's second pass and `fbench calibrate`.
 - 3: T2, T3, T4, T6; 3.5 (Kokkos executor); 3.6 to be checked against its acceptance;
@@ -155,6 +175,11 @@ In flight (lead session, 2026-11-17): task 1.3
 rules within 5 % of measure on 93–100 % of cases on all three machines); its cost model (P3)
 was rejected on the first pass, so the long-row thresholds stay. Then the exit check again. Done, each merged with its
 pull request:
+- X42 (pull request 52): a radix-25 pass codelet with
+  `avx2` and `avx512` double overrides (EPYC 500–25000 0.87–0.89 of main, FFTN ÷ FFTW 3125
+  0.77 → 0.65; Xeon 100–25000 0.84–0.86, 3125 0.81 → 0.53, 25000 1.23 → 1.18); two-level
+  radix-25/32/64 codelets for 16 registers rejected (no gain with GCC: the two-pass plans at
+  512–2048 lose on IPC, not on spills); EPYC 512–2048 stay 1.13–1.22 of FFTW.
 - Task 2.5 (pull requests 41, 50): `next_fast_length(n, kind)` and `relative_cost<T>(n, isa)`
   in `fftn/lengths.hpp`, a frozen reference table, the fast set to 2²⁰ pinned; API agreed
   by the maintainer (2026-11-17), with `length_kind` for the proposed `bool`; P4: picks 0.11–0.96 of the awkward lengths
@@ -659,7 +684,9 @@ running, done (with verdict).
 | [X39](experiments/X39-xeon-long.md) | The Xeon's long rows (exit-check causes 5 and 6: 16384–262144, 20000, 25000, 46080, 100000 1.22–1.50 of FFTW; in place 65536 1.16): why, and which plan rule closes them on `avx512` without changing other machines? | 1 | done: on the Xeon profile (x86-64) three-phase blocks ≤ 16 adopted (0.935 over 4 rows; 131072 1.20 → 1.09 of FFTW), two-phase blocks within 2 · L1 and c2c powers of two as grids beyond L2/4 adopted (0.958 over 7; 32768 1.51 → 1.29, 46080 1.33 → 1.26); radix-64 grid phases rejected (0.985); 16384–25000, 100000 unchanged: they need radix-20/25 codelets or a depth-first chain; measure finds 5000–25000's better chain orders; arm D (after X38): radix-20 first passes in `avx512` double sequences 300–25000, radix-20 grid phases, r2c 65536 as a grid, c2c powers of two ≥ 2²⁰ out of place in two phases (P1's misses): 0.905 over 26 changed cases (5000 1.04 → 0.89 of FFTW, 25000 1.50 → 1.34, 2²² 0.86 → 0.75) |
 | [X40](experiments/X40-planes.md) | Batched 2-D c2c planes (task 4.1; 1024² 2.1 / 4.1 of FFTW on the Mac / EPYC): where does the time go against FFTW's plans and MKL (rows or strided columns, passes over memory, copies, power-of-two set conflicts), and do lanes over blocks of adjacent columns close it? | 4 | done, first pass: the columns were the gap (every column alone, each line re-read per column; a last pass of radix 16 whose legs shared an L1 set); lanes over blocks of adjacent columns and one call per loop of leaves adopted: planes 0.613 / 0.453 / 0.537 of main (Mac / EPYC / Xeon), ÷ FFTW 0.88 / 0.94 / 0.80, ÷ MKL 1.00; tiny planes, EPYC 32², long columns and the Xeon against MKL left |
 | [X41](experiments/X41-planes-2.md) | The rest of task 4.1 after X40: real planes' complex axes through the column phase, small planes in batches, columns beyond L2, threaded planes against FFTW's and MKL's threads, the Xeon against MKL | 4 | done: unrolled calls (small planes 0.87–0.94), real planes' columns on x86 (0.83–0.89), Apple's long columns (0.90) adopted; T1 rejected; threaded large planes, EPYC 32² and the Xeon against MKL left |
+| [X42](experiments/X42-codelets.md) | Do a radix-25 pass codelet and two-level radix-25/32/64 codelets that fit 16 registers make FFTW's plan shapes pay in FFTN (25000, 20000, 5000, 15625 on `avx512` and `avx2`; two-pass 512–2048 on `avx2`)? | 1 | done: radix 25 (x86 and scalar rows only) with `avx2` double overrides (500–25000: 0.874 then 0.891 of the arm before on the EPYC) and `avx512` (100–25000: about 0.86 then 0.842 on the Xeon; 3125 0.81 → 0.53 of FFTW); two-level codelets rejected (1.000 with GCC: spills were not the cost; LESSONS 4.17); no radix-32/64 re-fit passed; library +6.1 % x86, +2.0 % Mac |
 | [X44](experiments/X44-small-planes.md) | The one-thread plane cases task 4.1 still misses after X41 (EPYC `avx2` 32², Mac 32²–64², the Xeon's c2c planes against MKL from 16², real planes against MKL): where the time goes (rows, columns, copies, fixed cost; counters on x86) and which column radices, column kernels or real-plane path close it | 4 | done: columns of 32 as one lane pass adopted on x86 (EPYC 32² 0.72, ÷ FFTW 1.39 → 1.00; Xeon 0.77–0.81, ÷ MKL 1.37 → 1.07); nested column runs adopted on `avx2` (planes and volumes 0.94), not on `avx512` (0.962) or NEON; the Mac's 32²–64² gap is the radix-64 codelet (X42); the Xeon's large c2c and real planes against MKL left |
+| [X45](experiments/X45-cloud-exit.md) | The phase 1 exit check on recent cloud cores (Zen 5, Granite Rapids with MKL, Axion) for `main` 509d123, and how far `main` moved since X31, X31b and X35 | 1 | done: every mean target met (÷ FFTW 0.70 / 0.77 / 0.71; Granite Rapids ÷ MKL 0.75); tail rule met on Axion only (4.7 %), Zen 5 7.8 %, Granite Rapids 13.0 % (MKL 11.4 %): Granite Rapids' long rows and in-place 65536, short single rows everywhere; Zen 5's shared rows 0.90 of X31's time |
 | [P1](experiments/P1-rules-vs-measure.md) | How often is the rules' choice within 5 % of `planning::measure`'s per machine (task 2.4's acceptance: 90 % of catalogue cases), which rules miss, and does measurement recover a misfiring profile (Granite Rapids' fields forced on the Xeon)? | 2 | first pass done: rules within 5 % of measure on 96.7 % of the tracking tier on the EPYC, 77 % on the Xeon (about 85 % without noise), Mac inconclusive under load; measure never slower by fbench; Granite Rapids' fields forced on the Xeon recovered in 10 of 11 cases (the miss a budget defect, fixed); planes' radices the repeat miss. Second pass (73eb719, placements per round, median): Mac 93.4 %, EPYC 95.1 %, Xeon 86.9 % (long real rows, planes, 2²², 2431 repeat); misfire 9 of 9 after the budget fix; EPYC r2c 65536 measure 1.18 slower (power-of-two chains bimodal by page backing); EPYC 65537 Bluestein 1.75 faster than the rules' Rader |
 | [P2](experiments/P2-measure-budget.md) | Measurement budget: how many candidates and how long before the choice stops improving; the quick and full efforts' budgets | 2 | first pass done: Q within 0.999–1.014 of M; no winner above rank 7; plan construction dominates large transforms (2²² 12.5 s for M); choices unstable under load (43–66 % of cases one program over 12 rounds), so budgets wait for a sampling revisit; indicated quick 6, measure 8 |
 | [P1b](experiments/P1b-rader-65537.md) | Rader or Bluestein at 65537 on x86: measure chose Bluestein on the EPYC (rules 1.75 of its time); should the x86 Rader range stop below 2¹⁶ as NEON's does? | 2 | done: rules unchanged. EPYC Bluestein 1.49 (double) and 1.18 (float) slower than Rader at 65537 in this run, the opposite of P1's 1.75: bimodal by process (Rader's gathers and the page size); a page-robust Rader stage is the follow-up |
