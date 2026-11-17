@@ -234,7 +234,7 @@ Mac (1883) and in CI. Library text (x86-64 Linux, GCC 16, `size` of `libfftn.a`)
 - **B (lane loops by group): rejected and reverted** (a7c8d05). 1.033 of A's time over
   512–2048 on the EPYC, up to 1.17 elsewhere, 1.007 on the Mac with five cases past the
   limit. GCC 16 turned the saved index arithmetic into 21 stack loads of leg offsets a unit:
-  17 % fewer instructions, lower IPC (LESSONS 4.18).
+  17 % fewer instructions, lower IPC (LESSONS 4.19).
 - **Not closed: 768, 1024 and 2048** (1.10, 1.19–1.21, 1.12 of FFTW after A). The counters
   place their gap in the third pass's instructions and in L1 refills of three-line chains
   (a three-pass chain cannot run its middle pass in place), shown as FP-register-file

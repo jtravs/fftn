@@ -60,6 +60,8 @@
 //                    (default), or every column alone through the chain (experiment X40)
 //   COLUMN_BLOCK=B   the lanes column phase's block in columns (build_settings::
 //                    column_block; default the rule's), rounded up to a multiple of C (X40)
+//   COLUMN_RADICES=r1.r2...   the lanes column phase's radices in pass order for columns
+//                    whose length they multiply to (build_settings::column_radices; X44)
 //   LAYOUT=rules|interleaved|split   the arithmetic of the chains' lane passes
 //                    (build_settings::layout): the profile's choice (default), or interleaved
 //                    or split forced where a chain has a split run; each case's note shows
@@ -166,12 +168,13 @@ struct session {
   double measure_seconds = 0;      // MEASURE_SECONDS=
   std::size_t measure_scratch = 0; // MEASURE_SCRATCH=
   std::unique_ptr<executor_type> exec;
-  std::string overrides;          // the profile and chunking options given, as JSON members
-  std::string radices_text;       // RADICES as given, r1.r2... (settings.radices holds them)
-  std::string strategy = "rules"; // STRATEGY as given
-  std::string layout = "rules";   // LAYOUT as given
-  std::string factors_text;       // GRID_FACTORS as given
-  std::string rader = "rules";    // RADER as given
+  std::string overrides;           // the profile and chunking options given, as JSON members
+  std::string radices_text;        // RADICES as given, r1.r2... (settings.radices holds them)
+  std::string column_radices_text; // COLUMN_RADICES as given
+  std::string strategy = "rules";  // STRATEGY as given
+  std::string layout = "rules";    // LAYOUT as given
+  std::string factors_text;        // GRID_FACTORS as given
+  std::string rader = "rules";     // RADER as given
   std::string description;
 };
 
@@ -484,6 +487,14 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
         return fbench_error;
       }
       s.settings.column_block = *v;
+    } else if (key == "COLUMN_RADICES") {
+      try {
+        s.settings.column_radices = parse_radices(value, "COLUMN_RADICES");
+      } catch (const std::exception& e) {
+        say(message, message_size, e.what());
+        return fbench_error;
+      }
+      s.column_radices_text = value;
     } else if (key == "LAYOUT") {
       if (value != "rules" && value != "interleaved" && value != "split") {
         say(message, message_size, "LAYOUT is rules, interleaved or split");
@@ -597,6 +608,9 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
     }
     if (s.settings.column_block != 0) {
       d.integer("column_block", static_cast<std::int64_t>(s.settings.column_block));
+    }
+    if (!s.settings.column_radices.empty()) {
+      d.str("column_radices", s.column_radices_text);
     }
 #ifdef FBENCH_FFTN_OMP
     // Always, so that this binary's identity differs from fbench-fftn's even without options

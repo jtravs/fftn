@@ -748,7 +748,20 @@ three passes and lost on IPC (3.0 against 3.5), with no FP pipe over 52 % busy. 
 radix the staging cost more than it saved (radix 25: 12 % more vector operations, 3–8 %
 slower on both x86 machines). [X42](experiments/X42-codelets.md).
 
-4.18 **In-cache FFTs on Zen 3 stall on the FP register file; count the lines a chain
+4.18 **Count a column phase's instructions against the rows' before tuning its radices.**
+On the Xeon 6240 FFTN's rows of 16–64 points ran oneMKL's instructions and cycles, but its
+planes' column phases ran about twice MKL's instructions per point: each lanes edge pass cost
+as many instructions as the row's whole two-pass leaf, mostly scalar address arithmetic for
+R legs on each side and loop state spilled to the stack, repeated for every run of C
+columns, with the group's twiddles reloaded per run. No choice of column radices or block
+width moved that (0.97–1.03 of the cycles); running a block's runs in an inner loop per
+group did (64² 0.84, 128² 0.89, 512² 0.92 of the cycles), and so did removing a pass where
+the row's pair leaf had left the columns two (32²: one radix-32 pass, 0.72 of the time on
+the EPYC 7763). The per-call set-up is the next cost for the smallest planes: a radix-16
+column leaf computes and spills 32 leg addresses for four runs at 16².
+[X44](experiments/X44-small-planes.md).
+
+4.19 **In-cache FFTs on Zen 3 stall on the FP register file; count the lines a chain
 touches, and judge integer savings by time, not instruction counts.** On the EPYC 7763
 (GCC 16, AVX2) FFTN's 512–2048-point rows did FFTW's FP work (FP-pipe uops within 3 %) in
 14–18 % more cycles, and most of the extra cycles were dispatch stalls on the FP register
@@ -764,7 +777,6 @@ GCC's radix-16 unit from 190 to 158 instructions, yet ran 1.02–1.17 times as l
 GCC then kept the 32 leg offsets in stack slots and every leg load waited on an offset load.
 Zen 3's counters need groups of at most five events with the NMI watchdog on (a group of
 six never runs). [X47](experiments/X47-epyc-mid-2.md).
-
 
 ## 5. Threading
 
