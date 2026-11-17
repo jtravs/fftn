@@ -1606,6 +1606,32 @@ planes, 32 × 30 0.74, 36 × 2048 0.77, 2048² 0.73–0.85; 1024² stays on the 
 (a two-phase split of the column, the grid's way), and padding or block ordering against the
 rows' own power-of-two conflicts.
 
+Volumes as built (task 4.2, experiment X43b; `add_volume_planes`): where the machine profile
+says so (`volume_planes`: x86-64 with less than 2 MiB of L3 per CPU behind a private L2, the
+Xeon 6240, 0.934 of the axes one by one at one thread and 0.788 at 8 lanes), a c2c volume runs
+its two inner axes plane at a time: a loop over the n0 planes whose body is the plane's rows
+and its column phase, then the outer axis over blocks of adjacent pencils (the same lanes
+column phase, `column_block`'s rule, the pencils' elements a plane apart). On the EPYC 7763
+one thread keeps the axes one by one (0.979; its 32 MiB L3 per CCX holds volumes to 128³) but
+a team runs plane at a time (`team_volume_planes`, the team program of 13.2; 0.778 at 8
+lanes): whole planes per member and one phase boundary fewer. The M5 Max keeps the axes one
+by one (0.962 at one thread; teams not measured).
+Either order computes every line alike, so the bits do not depend on it. Scratch per member
+is two lines of at most a plane or a tile of pencils (tests/core/volumes_test.cpp), never a
+second volume.
+
+Threaded column blocks (experiment X43): a team of two or more runs a team program
+(`plan_core::team`) whose lanes column blocks hold at most `column_team_bytes` of columns
+(128 bytes, 8 complex doubles against X40's 16, on x86-64 where a private L2 has a large L3
+behind it, the EPYC 7763; 0 elsewhere: the Xeon 6240's 1 MiB L2 holds X40's blocks, and
+narrower ones took 0.997 there, 512²–2048² 1.05–1.15), and whose columns
+that one thread runs alone through the chain because a line of them exceeds the tile budget
+(2048 × 36) run as blocks of one line with the chain's radices. At 8 lanes on the EPYC the
+narrower blocks took 0.887 of the time over the c2c planes and volumes they change (1000²
+0.66, 128² 0.75: tiles within a member's 512 KiB L2, and more blocks than members), the line
+blocks 0.72 at 2048 × 36 (members no longer write neighbouring columns of one line), while
+one thread lost up to 1.42 with the narrower blocks.
+
 ---
 
 ## 10. Memory-system rules
@@ -1949,7 +1975,12 @@ As built (`src/threading/work_graph.hpp`), the tasks are the transforms of the b
 task's phases are its body's records in order: a stage (the passes of a 1-D line) is a
 phase of the stage's own chunks, which share the task's scratch lines; a loop nest over the
 lines of one axis (2-D and 3-D) is a phase whose chunks are runs of whole lines, each line
-on the scratch of the member that runs it, the block (9.1) shared. Therefore:
+on the scratch of the member that runs it, the block (9.1) shared; a volume's loop over its
+planes (9.3) is a phase whose lines are whole planes, each running the plane's own phases
+on its member's scratch. A team of two or more members may run a *team program* instead of
+the program (`plan_core::team`, experiment X43): the same transform with narrower lanes
+column blocks and the same radices per column, which by construction computes every
+element as the program does. Therefore:
 
 > For a given plan the output is bitwise identical for serial execution, any team size,
 > any executor and any timing.
@@ -2938,6 +2969,8 @@ to change before a release.
 
 | 2026-11-17 | Multi-axis programs of at most 256 kernel calls per transform run from their calls unrolled at construction (section 8.3); the complex axes of real planes take the lanes column phase where C > 1 with their own block rule; where a cluster shares L2 a column block's tiles stay within twice L1 when its column elements lie four to a page (section 9.3) | X41: planes of up to 1024 points 0.87–0.94 of the walk's time (three machines); real planes 0.89 (EPYC) and 0.83 (Xeon) of the chain columns' time, the M5 Max lost 1.04 and keeps the chain; M5 Max 2048 × 36 0.90; joining the narrower block's phase (T1) rejected at 0.96 |
 | 2026-11-17 | `volumes_c2c(nz, ny, nx, count, dir)` in `fftn/shape.hpp` beside `planes_c2c` (section 5.2), plural like `rows_c2c` and `planes_c2c` where 5.2 had said `volume_c2c`; no real-kind volume functions yet. Proposed by the lead, pending the maintainer (provisional) | task 4.2; the general `shape` already serves volumes, so this is a convenience only: the open choices are its name and whether r2c and c2r shape functions for planes and volumes come with it |
+| 2026-11-17 | A plan may hold a team program (`plan_core::team`) that every team of two or more runs: the same transform with narrower lanes column blocks (at most `column_team_bytes`: 128 on x86-64 with a private L2 and a large L3, the EPYC), chain-only columns as blocks of a line with the chain's radices, and (X43b) a volume's inner axes plane at a time; serial executions run the program. Bits are the program's by construction (a column's result does not depend on its block, a line's on the order of lines) and tested (sections 9.3, 13.2) | X43: at 8 lanes on the EPYC the narrower blocks took 0.887 of the time over the c2c planes and volumes they change and the line blocks 0.72 at 2048 × 36, while one thread lost up to 1.42 with them; the plan does not know at construction whether teams will run it |
+| 2026-11-17 | c2c volumes: the two inner axes plane at a time in the program where the profile's `volume_planes` says (x86-64, private L2, less than 2 MiB of L3 per CPU: the Xeon 6240), in the team program wherever `team_volume_planes` says (the EPYC's profile); the outer axis over blocks of adjacent pencils by `column_block`'s rule (section 9.3) | X43b: Xeon 0.934 at one thread and 0.788 at 8 lanes; EPYC 0.979 at one thread (rejected there) but 0.778 at 8 lanes; M5 Max 0.962 at one thread (rejected; teams unmeasured) |
 ---
 
 ## 20. References
