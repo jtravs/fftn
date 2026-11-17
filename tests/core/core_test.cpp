@@ -22,6 +22,7 @@
 #include <complex>
 #include <cstddef>
 #include <cstring>
+#include <exception>
 #include <fstream>
 #include <set>
 #include <sstream>

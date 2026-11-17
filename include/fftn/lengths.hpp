@@ -59,7 +59,7 @@ enum class length_kind : unsigned char {
 [[nodiscard]] std::size_t next_fast_length(std::size_t n, length_kind kind = length_kind::complex);
 
 namespace detail {
-[[nodiscard]] double relative_cost(std::size_t n, bool single, isa target);
+[[nodiscard]] double relative_cost(std::size_t n, bool single, isa which);
 } // namespace detail
 
 /// The planner's estimate of how long a complex row of n points of `T` (`double` or `float`)

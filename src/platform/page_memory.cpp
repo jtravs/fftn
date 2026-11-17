@@ -4,13 +4,14 @@
 #include "platform/page_memory.hpp"
 
 #include <cstddef>
-#include <cstdint>
 #include <cstring>
+#include <memory>
 #include <new>
 
-#if defined(__linux__)
+#ifdef __linux__
 #include <sys/mman.h>
 
+#include <cstdint>
 #include <fstream>
 #include <iterator>
 #include <string>
@@ -27,7 +28,7 @@ std::size_t round_up(std::size_t v, std::size_t to) { return (v + to - 1) / to *
 } // namespace
 
 bool page_kinds_differ() noexcept {
-#if defined(__linux__)
+#ifdef __linux__
   static const bool differ = [] {
     try {
       std::ifstream in("/sys/kernel/mm/transparent_hugepage/enabled");
@@ -49,7 +50,7 @@ std::size_t page_region::reserved_for(std::size_t bytes) noexcept {
 }
 
 void page_release::operator()(std::byte* p) const noexcept {
-#if defined(__linux__)
+#ifdef __linux__
   if (page_kinds_differ()) {
     munmap(p, bytes);
     return;
@@ -60,7 +61,7 @@ void page_release::operator()(std::byte* p) const noexcept {
 
 page_region::page_region(std::size_t bytes, [[maybe_unused]] page_kind kind)
     : base_(nullptr, page_release{}), size_(bytes), reserved_(reserved_for(bytes)) {
-#if defined(__linux__)
+#ifdef __linux__
   if (page_kinds_differ()) {
     void* p = mmap(nullptr, reserved_, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (p == MAP_FAILED) {

@@ -13,16 +13,19 @@
 #include "platform/cpu_model.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <ios>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace fftn::inline v0 {
@@ -136,12 +139,14 @@ std::optional<wisdom_record> parse_record(std::string_view line) {
   if (!check) {
     return std::nullopt;
   }
-  return wisdom_record{.build = std::string(f[1]),
-                       .cpu = std::string(f[2]),
-                       .isa = std::string(f[3]),
-                       .key = std::string(f[4]),
-                       .program = std::string(f[5]),
-                       .check = *check};
+  return wisdom_record{
+      .build = std::string(f[1]),
+      .cpu = std::string(f[2]),
+      .isa = std::string(f[3]),
+      .key = std::string(f[4]),
+      .program = std::string(f[5]),
+      .check = *check,
+  };
 }
 
 std::string record_text(const wisdom_record& r) {
@@ -150,12 +155,14 @@ std::string record_text(const wisdom_record& r) {
 }
 
 wisdom_record record_of(const plan_core& c) {
-  return {.build = wisdom_build(),
-          .cpu = wisdom_cpu(),
-          .isa = isa_name(instruction_set(c)),
-          .key = c.shape_key,
-          .program = c.program_text,
-          .check = program_fingerprint(c)};
+  return {
+      .build = wisdom_build(),
+      .cpu = wisdom_cpu(),
+      .isa = isa_name(instruction_set(c)),
+      .key = c.shape_key,
+      .program = c.program_text,
+      .check = program_fingerprint(c),
+  };
 }
 
 std::optional<wisdom_record> find_entry(const wisdom& w, const std::string& place) {
@@ -163,20 +170,33 @@ std::optional<wisdom_record> find_entry(const wisdom& w, const std::string& plac
   return line == nullptr ? std::nullopt : parse_record(*line);
 }
 
+namespace {
+
+const char* kind_word(transform_kind k) {
+  switch (k) {
+  case transform_kind::c2c:
+    break;
+  case transform_kind::r2c:
+    return "r2c";
+  case transform_kind::c2r:
+    return "c2r";
+  }
+  return "c2c";
+}
+
+} // namespace
+
 std::string shape_key(const shape_view& s, const options& opts) {
   std::ostringstream o;
-  o << (s.kind == transform_kind::c2c   ? "c2c"
-        : s.kind == transform_kind::r2c ? "r2c"
-                                        : "c2r")
-    << (s.prec == precision::f64 ? " double" : " float");
+  o << kind_word(s.kind) << (s.prec == precision::f64 ? " double" : " float");
   if (s.kind == transform_kind::c2c) {
     o << (s.dir == direction::forward ? " forward" : " backward");
   }
   // The scale changes the results (and an edge operation of the program), so it is part of
   // the key, written exactly.
-  char scale[64];
-  std::snprintf(scale, sizeof scale, "%a", opts.scale);
-  o << (opts.in_place ? " in-place" : " out-of-place") << " scale " << scale << " axes";
+  std::array<char, 64> scale{};
+  std::snprintf(scale.data(), scale.size(), "%a", opts.scale);
+  o << (opts.in_place ? " in-place" : " out-of-place") << " scale " << scale.data() << " axes";
   for (const axis& a : s.axes) {
     o << ' ' << a.n << '/' << a.in_stride << '/' << a.out_stride;
   }
@@ -212,7 +232,7 @@ wisdom::wisdom(std::string_view text) {
 }
 
 wisdom wisdom::load(const std::filesystem::path& path) {
-  std::ifstream in(path, std::ios::binary);
+  const std::ifstream in(path, std::ios::binary);
   if (!in) {
     throw std::runtime_error("fftn::wisdom::load: cannot read " + path.string());
   }

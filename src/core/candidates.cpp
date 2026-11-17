@@ -6,8 +6,10 @@
 #include "core/plan_core.hpp"
 #include "fftn/detail/core.hpp"
 #include "isa/kernel_table.hpp"
+#include "isa/target.hpp"
 #include "passes/pass_args.hpp"
 #include "planner/rules.hpp"
+#include "threading/schedule.hpp"
 
 #include <algorithm>
 #include <bit>
@@ -18,6 +20,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 namespace fftn::inline v0::detail {
@@ -259,7 +262,11 @@ std::vector<plan_choice> enumerate_candidates(const plan_core& rules_plan,
 
   if (r == 1) {
     const std::size_t n = rules_plan.lengths[0];
-    const std::size_t line = real ? (n % 2 == 0 ? n / 2 : 0) : n;
+    // The complex line: n, or half an even real n (an odd real n has none).
+    std::size_t line = n;
+    if (real) {
+      line = n % 2 == 0 ? n / 2 : 0;
+    }
     if (line >= 2 && line * complex_bytes > m.grid_block_bytes) {
       add(out, {.strategy = strategy_choice::chain});
       add(out, {.strategy = strategy_choice::grid, .grid_phases = 2});

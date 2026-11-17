@@ -35,15 +35,14 @@ FFTN_FORCE_INLINE std::ptrdiff_t at(std::size_t index, std::ptrdiff_t stride) {
 template <class T>
 FFTN_FORCE_INLINE const T* line_at(const void* base, std::size_t u, std::ptrdiff_t bytes) {
 #if FFTN_ARCH_AARCH64
-  return static_cast<const T*>(
-      static_cast<const void*>(static_cast<const unsigned char*>(base) + at(u, bytes)));
+  return reinterpret_cast<const T*>(static_cast<const unsigned char*>(base) + at(u, bytes));
 #else
   return static_cast<const T*>(base) + at(u, bytes / static_cast<std::ptrdiff_t>(sizeof(T)));
 #endif
 }
 template <class T> FFTN_FORCE_INLINE T* line_at(void* base, std::size_t u, std::ptrdiff_t bytes) {
 #if FFTN_ARCH_AARCH64
-  return static_cast<T*>(static_cast<void*>(static_cast<unsigned char*>(base) + at(u, bytes)));
+  return reinterpret_cast<T*>(static_cast<unsigned char*>(base) + at(u, bytes));
 #else
   return static_cast<T*>(base) + at(u, bytes / static_cast<std::ptrdiff_t>(sizeof(T)));
 #endif
