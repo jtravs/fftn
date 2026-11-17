@@ -1052,7 +1052,10 @@ program whose body is a few stages and no loop (rows) is marked *flat* at constr
 the driver then runs a batch of leaves as one kernel call, one transform from a contiguous
 copy of the stages (entered straight from `execute_core`, its slots passed as scalars), and
 a batch with the slots moved by the batch step (experiments X20 and X28: at 8 points 7.7 →
-4.3 ns per call, 7.1 → 1.7 ns per transform in a batch on the M5 Max). Every kernel, leaf
+4.3 ns per call, 7.1 → 1.7 ns per transform in a batch on the M5 Max); in a walked program
+a loop over lines whose body is one leaf (the rows of a plane of short rows) is likewise one
+call of the leaf over all its lines (X40: 8 × 6 to 32 × 32 planes 0.59–0.85 of the walk's
+time on the Mac and the EPYC). Every kernel, leaf
 or pass, takes its source and destination as arguments and reads the rest from the plan's
 own arguments: a fresh copy of the arguments per stage and transform cost 3–5 ns per stage
 on x86, most of it the copy's store-to-load forwarding into the kernel (X28). Every kernel
@@ -1117,7 +1120,7 @@ a leaf, n = 1 a copy. The input edge's operation is applied by the first
 pass that is not a copy and the output edge's by the last, so neither costs a pass. On
 C > 1 a line whose stride is not 1 (a strided axis, a strided row) is copied into scratch
 before the chain or out of it after: an extra pass that the lanes strategy removes for
-batches of short rows (task 2.2) and, for strided axes of planes, will remove in phase 4. A single generic pass cannot run in place, so it writes scratch
+batches of short rows (task 2.2) and for the strided axes of c2c planes and volumes (X40, section 9.3). A single generic pass cannot run in place, so it writes scratch
 and is copied when its source is its destination. Scratch is two lines a and b; an
 out-of-place line with a contiguous destination (not aliased, no copy, no Bluestein
 stage) uses the destination in place of b, so a chain touches three lines, not four
@@ -1284,9 +1287,9 @@ tried X20's per-call preparation, with a lanes leaf run in one call: 1–7 % slo
 64 of 8–16 points, so it was not kept. X24 also tried edge passes that read and write rows
 one 128-bit unit per row instead of a gather and scatter (FFTW's inserts on x86). That won
 on AVX2 but cost up to 1.17 on AVX-512 at 24–256 points, so it was not kept either; even
-with both, double c2c lost to the chain at 8 points. Not built: lanes for the strided axes
-of planes (phase 4), lane blocks across an outer batch dimension, a threshold per
-transform kind (X24 follow-up).
+with both, double c2c lost to the chain at 8 points. The strided axes of c2c planes and
+volumes run as lanes over blocks of adjacent columns (section 9.3). Not built: lane blocks
+across an outer batch dimension, a threshold per transform kind (X24 follow-up).
 
 **Bluestein** and the **generic prime pass** cover lengths with large prime factors
 (section 9.2).
@@ -1501,6 +1504,35 @@ is the order in which memory is touched:
 - **Real multi-dimensional transforms** halve the last axis, as FFTW does.
 
 Axis order within a plan is a planner choice unless a pipeline pins it (section 12.3).
+
+As built (task 4.1, experiment X40; `src/core/plan_core.cpp`, `column_block`,
+`column_radices`, `add_column_phase`): a transform is finished before the next, axis by
+axis from the last. The last axis runs line by line through the chain (or a leaf, a loop of
+which is one leaf call, 8.3). In a c2c plan every other axis whose neighbouring columns are
+adjacent on both sides of its phase (the last axis contiguous there) runs as the lanes
+strategy (8.5) over blocks of B adjacent columns: the block's first pass reads its columns
+from the array (C columns are one vector, so there is neither a gather nor a transpose), the
+column's chain runs on a tile in scratch, and the last pass writes them back, in place or
+not; the first and last passes (and the scatter after a split run) take every array row's B
+columns at once (`pass_args::columns_inner`), so each line is read once. Each column is a
+lane computing its own chain, so the columns get the bits of the chain route where the
+radices agree. The radices are the row's unless its last pass would put more of its legs
+into one L1 set than the L1 has ways (legs s = n / R column elements apart): then the
+cheapest ranked sequence whose last pass does not (a last pass of radix 16 whose legs shared
+a set made 128² and 256² planes 2.2 times slower on the M5 Max; reads in the first pass did
+not matter). B is 256 bytes of columns (16 complex doubles), at most the columns there are;
+where a column's elements lie a page or more apart, at least four L1 lines (32 complex
+doubles on Apple's 128-byte lines); where they lie less than a page apart it is halved while
+the two tiles exceed a quarter of L2, down to a line, and the columns run alone through the
+chain if they still exceed it (X40's sweeps: wide blocks won where each element of a column
+has its own page, 2048² on the EPYC 0.126 of the chain columns' time with 16 columns against
+0.183 with 4, the M5 Max's 1024² 0.46 with 32 against 0.50 with 16; where rows share pages a
+block whose tiles left L2 lost, Xeon 2048 × 36 0.79 with 4 columns and 1.09 with 16). The columns past the last whole block run as one
+narrower block (a loop's `start` offsets its nest), its idle lanes never written. A block is
+a line of the phase's loop nest, so threads share blocks as they share rows (13.2). Not built
+yet: the strided axes of real transforms (their complex axes still run column by column),
+blocks over the columns of a long axis beyond L2 (a two-phase split of the column, the grid's
+way), and padding or block ordering against the rows' own power-of-two conflicts.
 
 ---
 
