@@ -105,6 +105,27 @@ Xeon (20261116-215950-1f7c, ±4.10 %) and EPYC (20261116-231702-f43c, ±1.82 %):
 - M's planning 0.050 and 0.048 s median per case, 10.2 and 6.3 s at the largest;
 - Q's summed over the tier 2.8 and 4.7 s per round (first pass 7.9 and 9.1 s).
 
+Third pass on the EPYC (run 20261117-015335-5209, Slurm 511473/511474, commit 4179bc5: large
+buffers timed on 4 KiB and on huge pages, judged by the slower; 12 of 12 rounds loaded,
+±2.16 %):
+- rules within 5 % of measure on 61 of 61 cases;
+- one program over 12 rounds in 44 of 61 (40 before);
+- r2c 65536 no longer "slower" (1.07, [0.96, 1.28]; it was 1.18);
+- c2c 65537 the one "slower" verdict (1.41): measure chose Bluestein in all 12 rounds,
+  where the rules' Rader was faster in this process. The case is bimodal by process (P1b),
+  and judging by the slower kind of memory picks the program that is robust to it.
+
+The Xeon's third pass (run 20261117-024749-2579, Slurm 16204/16205; 0 of 12 rounds loaded,
+±1.70 %):
+- rules within 5 % of measure on 56 of 61 cases (91.8 %);
+- fbench verdicts: measure 6 faster, 1 slower;
+- one program over 12 rounds in 32 of 61 cases.
+
+The slower case is c2c 262144 (1.07, [1.05, 1.10]). There measure chose a two-phase grid
+512 · 512 in every round over the rules' three phases 64 · 64 · 64, which is the price of
+judging by the slower kind of memory on a machine whose fbench buffers sit on the other
+kind.
+
 Rule 4 still fails on every machine. The instability that remains is between candidates within
 noise of each other; a rule judging stability should count a change of choice only when the
 programs differ by more than the band. That is a proposal for a third pass, not a change to

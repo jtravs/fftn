@@ -1,0 +1,33 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Experiment P3's cases (dev/experiments/P3-cost-model.md): long rows, from beyond L1 to
+# beyond the last-level cache on every machine, timed under each structure (the chain, the
+# grid in two phases and in three) so that a cost model can be fitted and checked against
+# the fastest. Single transforms, out of place.
+
+[catalogue]
+name = "p3"
+
+# Powers of two: X32's chains against X12b's grids.
+[[group]]
+name = "p3-pow2"
+kind = "c2c"
+precision = ["f64", "f32"]
+dims = [8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576, 2097152, 4194304]
+tiers = ["tracking"]
+
+# Mixed lengths, small and large odd parts: X29's chains and X34's two phases.
+[[group]]
+name = "p3-mixed"
+kind = "c2c"
+precision = ["f64", "f32"]
+dims = [12288, 46080, 61440, 98304, 100000, 245760, 393216, 1000000, 1024000, 4000000]
+tiers = ["tracking"]
+
+# Real rows: their half-length complex transforms follow the same rules (X33).
+[[group]]
+name = "p3-real"
+kind = ["r2c", "c2r"]
+dims = [32768, 65536, 262144, 1048576, 4194304, 100000]
+tiers = ["tracking"]

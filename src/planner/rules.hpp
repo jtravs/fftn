@@ -97,8 +97,10 @@ struct target_profile {
 // codelet radix n <= p.leaf_limit (a leaf).
 // Prime factors above 16 follow the cost-priced passes, ascending: a codelet pass for 17, 19
 // and 23 (experiment X27), otherwise a generic pass or Bluestein (chain_builder::radices);
-// radices above 16 are such primes.
-[[nodiscard]] std::vector<std::size_t> rule_radices(std::size_t n, const target_profile& p);
+// radices above 16 are such primes. overrides: false skips the profile's measured overrides
+// (the costs' sequence; chain_builder::real_radices, experiment X39).
+[[nodiscard]] std::vector<std::size_t> rule_radices(std::size_t n, const target_profile& p,
+                                                    bool overrides = true);
 
 // Up to k radix sequences for n, in pass order: rule_radices' first, then the cheapest
 // others by the profile's pass costs (cost, then lexicographic order), without repeats.

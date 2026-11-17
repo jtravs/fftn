@@ -244,6 +244,10 @@ TEST(Grid, PlannerChoosesByTheProfile) {
   s.profile.chain_part_bytes = 0;
   s.profile.chain_mixed_bytes = 0;
   s.profile.pow2_chain_bytes = 0;
+  s.profile.grid_three_block = 0; // X39's fields, which the running machine may set
+  s.profile.grid_two_block_bytes = 0;
+  s.profile.pow2_grid_bytes = 0;
+  s.profile.grid_two_pow2_bytes = 0;
   const auto plan = [&](std::size_t n, const build_settings& b) {
     return make_plan_core(
         fftn::detail::view_of(fftn::rows_c2c<double>(n, 1, fftn::direction::forward)),
@@ -410,6 +414,59 @@ TEST(Grid, PowersOfTwoStayChainsUpToTheProfilesLimit) {
   EXPECT_TRUE(is_grid(*longer)) << described(*longer);
 }
 
+// The Xeon profile's powers of two (X39): a c2c row of a power-of-two length is a grid beyond
+// pow2_grid_bytes, below grid_min_bytes; other lengths and real rows keep grid_min_bytes. A
+// two-phase grid's block fills grid_two_block_bytes.
+TEST(Grid, PowersOfTwoBecomeGridsBeyondTheProfilesLimit) {
+  build_settings s;
+  s.profile.grid_min_bytes = std::size_t{512} * 1024;
+  s.profile.grid_three_bytes = std::size_t{1} << 20U;
+  s.profile.grid_block_bytes = std::size_t{32} * 1024;
+  s.profile.chain_part_bytes = 0;
+  s.profile.chain_mixed_bytes = 0;
+  s.profile.pow2_chain_bytes = 0;
+  s.profile.pow2_grid_bytes = std::size_t{256} * 1024;
+  s.profile.grid_two_block_bytes = 0;
+  s.profile.grid_two_pow2_bytes = 0;
+  const auto plan = [&](std::size_t n) {
+    return make_plan_core(
+        fftn::detail::view_of(fftn::rows_c2c<double>(n, 1, fftn::direction::forward)),
+        fftn::options(), s);
+  };
+  EXPECT_FALSE(is_grid(*plan(16384)));
+  EXPECT_FALSE(is_grid(*plan(25000)));
+  const auto g = plan(32768);
+  EXPECT_TRUE(is_grid(*g)) << described(*g);
+  // An r2c row's half length follows the rule (X39 arm D), a c2r row's does not.
+  const auto r2c =
+      make_plan_core(fftn::detail::view_of(fftn::rows_r2c<double>(65536, 1)), fftn::options(), s);
+  EXPECT_TRUE(is_grid(*r2c)) << described(*r2c);
+  const auto c2r =
+      make_plan_core(fftn::detail::view_of(fftn::rows_c2r<double>(65536, 1)), fftn::options(), s);
+  EXPECT_FALSE(is_grid(*c2r)) << described(*c2r);
+  // Beyond grid_two_pow2_bytes a c2c power of two out of place stays in two phases, in place
+  // three (X39 arm D).
+  s.profile.grid_two_pow2_bytes = std::size_t{8} * 1024 * 1024;
+  const std::string far = described(*plan(std::size_t{1} << 20U));
+  EXPECT_NE(far.find("in 2 phases"), std::string::npos) << far;
+  const std::string near = described(*plan(std::size_t{1} << 19U));
+  EXPECT_NE(near.find("in 3 phases"), std::string::npos) << near;
+  const std::string inplace =
+      described(*make_plan_core(fftn::detail::view_of(fftn::rows_c2c<double>(
+                                    std::size_t{1} << 20U, 1, fftn::direction::forward)),
+                                {.in_place = true}, s));
+  EXPECT_NE(inplace.find("in 3 phases"), std::string::npos) << inplace;
+  s.profile.grid_two_pow2_bytes = 0;
+  // Blocks of 4 columns for 256-long phases within L1, 8 within twice L1 (complex lanes 4 or
+  // fewer: every target's double).
+  const std::string narrow = described(*g);
+  s.profile.grid_two_block_bytes = std::size_t{64} * 1024;
+  const std::string wide = described(*plan(32768));
+  if (narrow.find("blocks of 4 columns") != std::string::npos) {
+    EXPECT_NE(wide.find("blocks of 8 columns"), std::string::npos) << wide;
+  }
+}
+
 // build_settings::scale_on_input puts the scale on phase 1's input: its first pass, or its
 // gather when the phases copy their blocks.
 TEST(Grid, ScaleOnInputIsPhaseOnesInput) {
@@ -444,11 +501,18 @@ TEST(Grid, ScaleOnInputIsPhaseOnesInput) {
 // At the lengths the rules make grids (2^15 to 2^18, two and three phases), the grid
 // agrees with the chain to within both their error bounds: too long for the
 // quadruple-precision reference, which checks the chain in passes_test.
-template <class T> void grid_agrees_with_chain(std::size_t n, bool three) {
-  SCOPED_TRACE((sizeof(T) == 8 ? "double, n = " : "float, n = ") + std::to_string(n));
+// phase_radix: the grid's phase radix (build_settings); three_block: the profile's
+// three-phase block (X39).
+template <class T>
+void grid_agrees_with_chain(std::size_t n, bool three, std::size_t phase_radix = 0,
+                            std::size_t three_block = 0) {
+  SCOPED_TRACE((sizeof(T) == 8 ? "double, n = " : "float, n = ") + std::to_string(n) +
+               ", phase radix " + std::to_string(phase_radix));
   build_settings grid;
   grid.strategy = strategy_choice::grid;
   grid.profile.grid_three_bytes = three ? 1 : std::size_t{1} << 40U;
+  grid.grid_phase_radix = phase_radix;
+  grid.profile.grid_three_block = three_block;
   build_settings chain;
   chain.strategy = strategy_choice::chain;
   const auto shape = fftn::rows_c2c<T>(n, 1, fftn::direction::forward);
@@ -483,6 +547,16 @@ TEST(Grid, AgreesWithTheChainAtLengthsTheRulesTake) {
        }) {
     grid_agrees_with_chain<double>(n, three);
     grid_agrees_with_chain<float>(n, three);
+  }
+  // Radix-32 and radix-64 phases (X3, X39's arm B) and the Xeon profile's three-phase blocks
+  // of 16 (X39).
+  for (const auto& [n, three] : {
+           std::pair{std::size_t{131072}, true},
+           std::pair{std::size_t{262144}, true},
+           std::pair{std::size_t{131072}, false},
+       }) {
+    grid_agrees_with_chain<double>(n, three, 64, 16);
+    grid_agrees_with_chain<float>(n, three, 64, 16);
   }
 }
 
@@ -683,6 +757,12 @@ TEST(Grid, SplitRules) {
   EXPECT_EQ(g.factors[1], 128U);
   EXPECT_EQ(g.factors[2], 256U);
   EXPECT_EQ(g.block, 32U);
+  // A profile may cap the three-phase block (X39): the Xeon's 16 columns at 2^18.
+  g = choose_grid(std::size_t{1} << 18U, 4, 1024, true, 0, {});
+  EXPECT_EQ(g.block, 32U);
+  g = choose_grid(std::size_t{1} << 18U, 4, 1024, true, 0, {}, 16);
+  EXPECT_EQ(g.phases, 3U);
+  EXPECT_EQ(g.block, 16U);
   // The block is a multiple of the complex count and at least two.
   g = choose_grid(64, 8, 4096, false, 0, {});
   EXPECT_EQ(g.factors[0], 8U);
