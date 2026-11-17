@@ -1,6 +1,6 @@
 # X47: the EPYC's double rows of 512–2048 points, second attempt
 
-- **Status:** running
+- **Status:** done (A proposed for adoption, the lead's call; B rejected and reverted)
 - **Owner:** x47 session, 2026-11-17
 - **Phase / task:** 1 (phase 1 exit check, the tail rule; cause 4); follows X30, X38, X42
 
@@ -133,8 +133,115 @@ switch: arms are commits, `dev/KNOBS.toml` is untouched.
 
 ## Results
 
-(to come)
+### Static check of B and a counter screen (not deciding)
+
+GCC 16, `objdump` of the cached builds: B cut the plain radix-16 lane unit from 190 to 158
+instructions (integer 54 → 25), the twiddled radix-16 unit from 262 to 238 and the plain
+radix-32 unit from 477 to 438, but GCC now holds the 32 leg offsets of a radix-16 unit in
+stack slots, so each leg's load first loads its offset (21 integer stack loads a unit,
+against 11 before). `run --pmu` (Slurm 512121, five processes each, the arms' cache builds),
+per transform O → A → B: 512 702 → 669 → 709 ns, L1 fills 509 → 172 → 191; 1024 1822 →
+1830 → 1860 ns, instructions 19438 → 19438 → 18463, IPC 3.46 → 3.45 → 3.23; 768 and 2048
+within 1 % for A, B +2 % / −1 %; 256 B +7 %. A did what it was meant to (L1 refills at 512
+−66 %); B ran 5 % fewer instructions and lost more in IPC. Both judged as written.
+
+### EPYC, the exit check's cases (run 20261117-170142-1ab1)
+
+EPYC 7763 (DMOG), GCC 16.2, `avx2`, one thread, Slurm 512107 (`--serial`), arms O
+(b27970f), A (c893ef7), B (ee932d1), FFTW; standard catalogue, filter `^c2c-[0-9]+-b`, tier
+`full` (201 cases); 21 rounds, every one under load (other processes 35 cores, median), A/A
+band ±1.07 %, so rule (b)'s limit is 1.031.
+
+| case | A ÷ O | B ÷ A | FFTN ÷ FFTW, O → A |
+|---|---|---|---|
+| 512 | **0.950** [0.944, 0.954] | 1.048 | 1.112 → 1.057 |
+| 512 × 16 | **0.976** [0.965, 0.986] | 1.068 | 1.064 → 1.038 |
+| 512 × 256 | **0.971** [0.959, 0.980] | 1.056 | 1.060 → 1.030 |
+| 512 × 1024 | **0.962** [0.956, 0.978] | 1.067 | 1.063 → 1.022 |
+| 768 | 1.007 [0.990, 1.022] | 0.978 | 1.092 → 1.099 |
+| 1024 | 0.989 [0.984, 1.003] | 1.032 | 1.217 → 1.203 |
+| 1024 backward | 0.998 | 1.023 | 1.190 → 1.188 |
+| 1024 × 3 | 0.996 | 1.024 | 1.212 → 1.207 |
+| 1024 × 16 | 0.994 | 1.036 | 1.110 → 1.103 |
+| 1024 × 256 | 0.997 | 1.026 | 1.074 → 1.071 |
+| 1024 × 1024 | 0.989 | 1.046 | 0.917 → 0.907 |
+| 1024 in place | 0.994 | 1.016 | 0.962 → 0.957 |
+| 2048 | 0.990 [0.972, 1.014] | 1.002 | 1.135 → 1.124 |
+
+- **A**: over the 42 cases whose chain is two passes out of place (A's target set by the
+  rule) the geometric mean is **0.987**; over 512's four cases 0.965. The two-pass cases
+  of 256 points and more, whose three lines overfill L1 (a post-hoc grouping, not the
+  rule's), gain: 256 × 16 / × 256 / × 1024 0.977 / 0.947 / 0.959, 323 0.975, 384 0.980, 500
+  0.960, 640 0.963, and 96 0.952 and 100 × 1024 0.970; below that (45–240 points, single
+  rows of 64–256) 0.98–1.02, none outside the band but 64 × 4096 (1.021). The 159 cases A
+  does not change: 0.9997. All 201: 0.997 [0.995, 1.000]. Past 1.031: 65536 1.054 [0.958,
+  …] and 65537 1.041 [0.876, …] (unchanged programs: a six-pass chain and a Rader stage;
+  wide intervals); 61 1.027 and 101 1.029 ("slower" verdicts inside the limit; Rader stages, whose
+  convolutions of 60 and 100 points run in the two scratch slots, which A does not touch).
+  Re-run: see below.
+- **B**: ÷ A over the 16 cases of 512–2048 points **1.033** (768 0.978 the only gain);
+  past the limit in 36 cases (64-point rows 1.11–1.17, 31 1.13, 256 × 256 1.10).
+- FFTN ÷ FFTW over the 193 cases with every reference: O 0.802, A 0.799; cases over 1.05:
+  22 → 17 (512 1.057, 256 1.054 remain just over; 512 × 16 / × 256 / × 1024 leave the list).
+
+### Mac, tracking tier (run 20261117-163159-3214)
+
+Apple M5 Max, Clang 23.1.4, `neon_fcma`, arms O, A, B (built from the same commits), 80
+rounds, all under load (other processes 4 cores, median), band ±1.00 % (limit 1.030). A ÷
+O 0.999 [0.996, 1.000], one "slower" case: 128 × 4096 1.021 [1.013, 1.032] (inside the
+limit). B ÷ O 1.007 [1.005, 1.009], 13 slower, five past the limit: 128 × 4096 1.091, 128
+1.085, 2048 × 36 1.062, 97 1.053, c2r 256 1.040.
+
+### Xeon Gold 6240, tracking tier (run 20261117-174501-5595)
+
+GCC 14.4, `avx512`, Slurm 16380 (`--serial`), arms O, A, B, 70 rounds, 4 under load, band
+±1.00 % (limit 1.030). A ÷ O 0.997 [0.995, 0.999], no case slower; faster: 128 × 4096
+0.952, 100 × 1024 0.960, r2c 1000 0.953 (its half-length chain of 500 = 20 × 25 takes two
+lines), 256² 0.972, and 16 0.957 (a leaf: not A's change; placement). B ÷ O 1.004 [1.002,
+1.006], nine slower; B ÷ A up to 1.118 (100 × 1024), 1000 1.060, 128 1.044.
+
+### EPYC, tracking tier (run 20261117-180415-3cb9)
+
+Slurm 512109 (`--serial`), arms O, A, B, 76 rounds, 69 under load (other processes 15
+cores, median), band ±1.00 % (limit 1.030). A ÷ O 0.998 [0.997, 0.999], no case slower;
+faster: r2c 1000 0.967, 100 × 1024 0.970, 128 × 4096 0.976, c2r 256 0.976. B ÷ O 1.005
+[1.004, 1.006], 18 slower; B ÷ A up to 1.155 (64), 64 × 256 1.138, 64² 1.071.
+
+### EPYC re-run of the cases past the limit
+
+Slurm 512296 (`--serial`, O and A, 65536, 65537, 61 and 101 at batch 1, at least 20
+rounds): queued behind four other serial jobs when this was written; its run decides rule
+(b) for A. None of the four programs is changed by A (a six-pass chain and Rader stages
+whose convolutions run in the scratch slots), so a confirmed slowdown there would be code
+placement, as X38's 60 × 3 and 323.
+
+Bits: A and B change no arithmetic (the same units, the same order); the tests pass on the
+Mac (1883) and in CI. Library text (x86-64 Linux, GCC 16, `size` of `libfftn.a`): O
+86 942 337 bytes, A 86 943 812 (+0.002 %), B 91 967 625 (+5.8 %, reverted).
 
 ## Verdict
 
-(to come)
+- **A (two-line chains): fails rule (a) by the letter, passes (b) and (c) pending the
+  re-run of four unchanged programs; proposed for adoption, the lead's call.** Over its 42
+  target cases (every two-pass chain out of place in the exit check) A ÷ O is 0.987, not
+  ≤ 0.97: the rule's target set included rows of 45–240 points whose three lines already
+  fit L1, where A can change nothing (0.98–1.02, all inside the band). On the cases the
+  diagnosis named it does what was measured in the screen: 512 0.950, 512 × 16 / × 256 /
+  × 1024 0.976 / 0.971 / 0.962 (geomean 0.965), and the other two-pass rows of 256 points
+  and more 0.947–0.980. Nowhere slower: the 159 unchanged cases 0.9997, tracking tiers EPYC
+  0.998, Xeon 0.997, Mac 0.999, no case past the limit there. FFTN ÷ FFTW at 512 1.11 →
+  1.06, at 512 × 16–1024 1.06 → 1.02–1.04; exit-check cases over 1.05 22 → 17 of 193.
+- **B (lane loops by group): rejected and reverted** (a7c8d05). 1.033 of A's time over
+  512–2048 on the EPYC, up to 1.17 elsewhere, 1.007 on the Mac with five cases past the
+  limit. GCC 16 turned the saved index arithmetic into 21 stack loads of leg offsets a unit:
+  17 % fewer instructions, lower IPC (LESSONS 4.18).
+- **Not closed: 768, 1024 and 2048** (1.10, 1.19–1.21, 1.12 of FFTW after A). The counters
+  place their gap in the third pass's instructions and in L1 refills of three-line chains
+  (a three-pass chain cannot run its middle pass in place), shown as FP-register-file
+  dispatch stalls. What would close them: a two-pass plan whose radix-32/64 pass keeps
+  FFTW's IPC (FFTW's `t1fv_64`/`n2fv_64` run at IPC 3.2–3.5 with 16 registers; FFTN's
+  radix-64 unit spends 327 of 1161 instructions on stack moves), or a depth-first order
+  that keeps two passes' working set in L1 (X46's subject for long rows). With A, 1024 as
+  16 × 64 ran 1800 ns in place against the planner's 1839 (screen), so after A a radix-64
+  last pass is within 2 % of the three-pass plan: a re-fit of the `avx2` table on A's
+  build is the cheap next check.
