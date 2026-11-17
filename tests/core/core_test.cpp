@@ -97,7 +97,8 @@ TEST(Rules, RadicesMultiplyToTheLength) {
       std::size_t product = 1;
       for (const std::size_t r : fftn::detail::rule_radices(n, profile)) {
         product *= r;
-        EXPECT_TRUE(r <= 16 || r == 32 || r == 64 || is_prime(r)) << n << ": radix " << r;
+        EXPECT_TRUE(r <= 16 || r == 20 || r == 32 || r == 64 || is_prime(r))
+            << n << ": radix " << r;
       }
       EXPECT_EQ(product, n) << n;
     }
@@ -251,7 +252,7 @@ TEST(Rules, MeasuredExamples) {
   EXPECT_EQ(r(700, f32), (v{4, 5, 5, 7}));
   EXPECT_EQ(r(4096, f64), (v{8, 8, 8, 8}));    // experiment X18
   EXPECT_EQ(r(16384, f64), (v{8, 16, 16, 8})); // the planner refresh
-  EXPECT_EQ(r(3000, f64), (v{8, 5, 5, 15}));
+  EXPECT_EQ(r(3000, f64), (v{10, 15, 20}));    // experiment X38: a radix-20 pass
   EXPECT_EQ(r(3600, f32), (v{16, 15, 15}));
   // Primes above 16 go last (the chain makes them a codelet pass for 17, 19 and 23,
   // experiment X27, else a Bluestein stage).
