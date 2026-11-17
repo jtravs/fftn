@@ -66,7 +66,8 @@ page_region::page_region(std::size_t bytes, [[maybe_unused]] page_kind kind)
     if (p == MAP_FAILED) {
       throw std::bad_alloc();
     }
-    base_ = std::unique_ptr<std::byte, page_release>(static_cast<std::byte*>(p), page_release{reserved_});
+    base_ = std::unique_ptr<std::byte, page_release>(static_cast<std::byte*>(p),
+                                                     page_release{reserved_});
     const auto at = reinterpret_cast<std::uintptr_t>(p);
     data_ = static_cast<std::byte*>(p) + (round_up(at, huge_page) - at);
     // Advice only: a kernel that refuses it leaves the default, which is still a valid
