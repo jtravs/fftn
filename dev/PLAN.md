@@ -115,10 +115,15 @@ Open, by phase:
 
 In flight (lead session, 2026-11-17): task 1.3
 (`x86_v2` and `avx` targets, X14); task 2.5 (`next_fast_length` and per-length cost, API
-proposed by the lead); task 4.1 (planes, X40); a tidy fix. Task 2.4's acceptance is met (P1:
+proposed by the lead); task 4.1's next part (small planes, real planes, threaded planes); a tidy fix. Task 2.4's acceptance is met (P1:
 rules within 5 % of measure on 93–100 % of cases on all three machines); its cost model (P3)
 was rejected on the first pass, so the long-row thresholds stay. Then the exit check again. Done, each merged with its
 pull request:
+- Task 4.1, first part (X40, pull request 43): columns of planes and volumes in blocks of
+  adjacent columns, column radices counted against the L1's ways, leaf loops as one call: 37
+  c2c planes ÷ FFTW Mac 1.44 → 0.88, EPYC 2.07 → 0.94, Xeon 1.49 → 0.80 (÷ MKL 1.87 → 1.00);
+  64³ 0.09–0.46 of main. Left: small planes in batches, EPYC 32², columns beyond L2, Xeon ÷
+  MKL at 16²–1000², real planes' complex axes, threaded planes; volumes' pencil blocks (4.2).
 - X39 (pull request 31): the Xeon's long rows: block widths, grids for powers of two beyond
   L2/4, radix-20 passes in `avx512` double sequences and grid phases: Xeon ÷ FFTW 5000 1.04 →
   0.89, 10000 0.96 → 0.84, 32768 1.51 → 1.29, 2²² 0.86 → 0.75, 25000 1.50 → 1.34, 100000
