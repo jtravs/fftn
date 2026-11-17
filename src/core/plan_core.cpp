@@ -1029,7 +1029,9 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       c.axis_notes.push_back("axis " + std::to_string(d) + " (n = " + std::to_string(c.lengths[d]) +
                              "): radices " + chain.radix_text(c.lengths[d]));
     };
-    if (r == 3 && in.extent[0] > 1 && settings.profile.volume_planes) {
+    if (r == 3 && in.extent[0] > 1 &&
+        (settings.profile.volume_planes ||
+         (settings.team_program && settings.profile.team_volume_planes))) {
       add_volume_planes(
           p, in.extent, in_view, out_view,
           [&](const std::vector<std::size_t>& plane, const view& src, const view& dst) {
@@ -1298,13 +1300,16 @@ std::shared_ptr<plan_core> build_plan_core(const shape_view& s, const options& o
       .rader = settings.rader,
   };
   c->program_text = choice_text(pinned_choice(built, *c));
-  // The team program (X43 arm B1), kept where its column blocks differ from the program's.
-  if (s.kind == transform_kind::c2c && r > 1 && settings.profile.column_team_bytes != 0 &&
-      !settings.team_program) {
+  // The team program (X43 arms B1, B2), kept where it differs from the program: its column
+  // blocks or (X43b arm VT) a volume's order.
+  // X43b arm VT: a team core also where only a volume's order would differ.
+  const bool team_order = r == 3 && settings.profile.team_volume_planes;
+  if (s.kind == transform_kind::c2c && r > 1 &&
+      (settings.profile.column_team_bytes != 0 || team_order) && !settings.team_program) {
     build_settings team = settings;
     team.team_program = true;
     std::shared_ptr<const plan_core> t = build_plan_core(s, opts, team);
-    if (t->axis_notes != c->axis_notes) {
+    if (t->axis_notes != c->axis_notes || t->strategy_note != c->strategy_note) {
       c->team = std::move(t);
     }
   }
@@ -1449,6 +1454,9 @@ std::string describe(const plan_core& core) {
     o << note << "\n";
   }
   if (core.team != nullptr) {
+    if (core.team->strategy_note != core.strategy_note) {
+      o << "with a team of two or more: " << core.team->strategy_note << "\n";
+    }
     for (std::size_t i = 0; i < core.team->axis_notes.size(); ++i) {
       if (i >= core.axis_notes.size() || core.team->axis_notes[i] != core.axis_notes[i]) {
         o << "with a team of two or more: " << core.team->axis_notes[i] << "\n";

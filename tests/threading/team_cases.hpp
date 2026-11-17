@@ -302,6 +302,14 @@ void add_cases(std::vector<team_case>& out, const fftn::detail::build_settings& 
   one_volume.axes = {{.n = 12}, {.n = 40}, {.n = 36}};
   out.push_back(make_case("c2c_volume_team_inplace_12x40x36" + suffix, one_volume, 17280, 17280,
                           true, team, target));
+  // A team program that runs a volume plane at a time where the program runs its axes one by
+  // one (X43b arm VT): the same bits.
+  fftn::detail::build_settings order = settings;
+  order.profile.volume_planes = false;
+  order.profile.team_volume_planes = true;
+  one_volume.axes = {{.n = 10}, {.n = 24}, {.n = 30}};
+  out.push_back(make_case("c2c_volume_team_order_10x24x30" + suffix, one_volume, 7200, 7200, false,
+                          order, target));
   // Columns the program runs alone through the chain (their tiles exceed the budget), which
   // a team program runs as blocks of a line with the chain's radices (X43 arm B2).
   team.profile.column_tile_bytes = 1024;

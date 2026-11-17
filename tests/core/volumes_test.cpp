@@ -227,6 +227,22 @@ TEST(TeamProgram, NarrowerBlocksTheSameRadices) {
   EXPECT_NE(chain->team->axis_notes[1].find("lanes over blocks of 4 adjacent columns"),
             std::string::npos);
   EXPECT_EQ(radices(chain->axis_notes[1]), radices(chain->team->axis_notes[1]));
+  // A team program that differs only in a volume's order (X43b arm VT): the program runs the
+  // axes one by one, a team the inner two plane at a time.
+  fftn::detail::build_settings order;
+  order.profile.volume_planes = false;
+  order.profile.team_volume_planes = true;
+  order.profile.column_team_bytes = 0;
+  const auto ordered = fftn::detail::make_plan_core(
+      fftn::detail::view_of(shape_of<double>({24, 20, 36})), fftn::options(), order);
+  ASSERT_NE(ordered->team, nullptr);
+  EXPECT_EQ(ordered->graph.phases[0].nest, 2U); // the rows of every plane
+  EXPECT_EQ(ordered->team->graph.phases[0].nest, 1U);
+  EXPECT_EQ(ordered->team->graph.phases[0].units, 24U);
+  EXPECT_NE(fftn::detail::describe(*ordered).find("with a team of two or more: the two inner "
+                                                  "axes plane at a time"),
+            std::string::npos)
+      << fftn::detail::describe(*ordered);
   // A volume: both the plane's columns and the outer axis's pencils.
   const auto volume = fftn::detail::make_plan_core(
       fftn::detail::view_of(shape_of<double>({64, 64, 64})), fftn::options(), settings);

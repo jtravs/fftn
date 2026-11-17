@@ -111,6 +111,11 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
   if (x86_64) {
     p.column_team_bytes = 128;
   }
+  // X43b arm VT: at 8 lanes on the EPYC 7763 volumes plane at a time took 0.778 of the axes
+  // one by one (whole planes per member), where one thread gained only 0.979.
+  if (x86_64 && private_l2) {
+    p.team_volume_planes = true;
+  }
   // Experiment X29: with a private L2 and an L3 of at least 2 MiB per CPU sharing it (the
   // EPYC 7763's CCX: 32 MiB for 8 cores), a row whose length has a power-of-two part of at
   // most 1024 points took 0.64-0.85 of the grid's time as a chain, steadily, to 2 Mi points

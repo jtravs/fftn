@@ -174,6 +174,10 @@ struct machine_profile {
   // add_volume_planes; experiment X43b), else axis by axis over the whole volume.
   // set_grid_sizes sets it where a private L2 has less than 2 MiB of L3 per CPU behind it.
   bool volume_planes = false;
+  // The same in the team program only (plan_core::team; X43b arm VT): plane at a time changes
+  // no bits, so teams may take it where one thread does not. set_grid_sizes sets it on x86-64
+  // where each core has its own L2.
+  bool team_volume_planes = false;
   // The L1 data cache's associativity (8 where the topology does not say: macOS): with
   // grid_block_bytes it gives the set period against which a column phase's last pass
   // counts its legs (core/plan_core.cpp, column_radices; X40).
