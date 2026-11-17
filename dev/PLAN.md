@@ -104,10 +104,11 @@ Open, by phase:
 - 3: T2, T3, T4, T6; 3.5 (Kokkos executor); 3.6 to be checked against its acceptance.
 - 4–7: not started.
 
-In flight (lead session, 2026-11-16 night): the tail round's X39 (the Xeon's long rows, in-place 65536); task 1.3
-(`x86_v2` and `avx` targets, X14); the coverage fix; task 2.4's next
-steps (P1/P2 second passes on the Xeon and EPYC, then the cost model and `fbench
-calibrate`). Then the exit check again. Done, each merged with its
+In flight (lead session, 2026-11-17): X39 (the Xeon's long rows, radix 20 there); task 1.3
+(`x86_v2` and `avx` targets, X14); task 2.5 (`next_fast_length` and per-length cost, API
+proposed by the lead); task 4.1 (planes, X40); a tidy fix. Task 2.4's acceptance is met (P1:
+rules within 5 % of measure on 93–100 % of cases on all three machines); its cost model (P3)
+was rejected on the first pass, so the long-row thresholds stay. Then the exit check again. Done, each merged with its
 pull request:
 - X37 (pull request 28): pair leaves for 18–30 points on every target (`avx512` borrowing
   `avx2`'s), pair leaves for 8–16 on x86, a lighter leaf path on AArch64, fbench's single
