@@ -16,6 +16,41 @@
 
 namespace {
 
+// The partial blocks among the first pass's units first .. last - 1 (below): with one top
+// factor that C does not divide (cols = s), the last block of each group p, unit p blocks +
+// blocks - 1, copies q0 .. s - 1 (experiment X51: 25000 = 10 x 2500 on 4 lanes). The pass
+// runs them after its loop over whole blocks on the targets with masked partial runs, for
+// the reason given at grouped_tail (stockham.inl); units are independent, so the order
+// changes no bit.
+template <class T, std::size_t R, int Sign>
+FFTN_FORCE_INLINE void depth_first_tails(const pass_args* a, const T* x, T* y, std::size_t first,
+                                         std::size_t last, std::size_t blocks) {
+  const std::size_t m = a->m;
+  const std::size_t s = a->s;
+  const auto lane = static_cast<std::size_t>(a->dst_qstride);
+  const T* table = static_cast<const T*>(a->twiddles);
+  const std::ptrdiff_t in_leg = at(s * m, 2);
+  const std::size_t q0 = (blocks - 1) * C<T>;
+  const std::size_t valid = s - q0;
+  // From the group of unit `first`, whose last block is at or after it.
+  for (std::size_t p = first < blocks ? 0 : first / blocks; p * blocks + blocks - 1 < last; ++p) {
+    cv<T> v[R]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
+    const to_registers<T> out{v};
+    lane_unit<T, R, Sign, true>(
+        run_in<T, edge_op::none, false>{
+            .p = x + at(q0 + s * p, 2), .leg = in_leg, .step = 2, .valid = valid, .op = {}},
+        out, table, p);
+    T* yp = y + at(q0 * lane + R * p, 2);
+    if constexpr (R % C<T> == 0) {
+      store_transposed<T, R>(yp, v, valid, lane);
+    } else if constexpr (masked) {
+      store_padded<T, R>(yp, v, valid, lane);
+    } else {
+      store_tiled<T, R>(yp, v, valid, lane);
+    }
+  }
+}
+
 // The first pass of the chains of the s sub-rows of a line of n = s R m (DESIGN.md 8.2's
 // lane pass with s copies, m groups, twiddled by w_(R m)^(p k)), every copy's outputs
 // written to its own block of M = R m elements: copy q's y[o(q) + R p + k] instead of the
@@ -24,11 +59,13 @@ namespace {
 // F1 = cols and F2 = s / cols, copy q = d1 + F1 d2 goes to block d1 F2 + d2, so that each
 // of the F1 sub-transforms of the first top pass has its F2 sub-rows together
 // (dst_qstride = F2 M). Unit u is group p = u / blocks and copies q = (u % blocks) C .. + C
-// - 1, blocks = s / C (C divides cols, so a unit's copies are adjacent within one group of
-// cols); its R outputs are transposed in registers so that each store writes C legs of one
-// copy. twiddles: broadcast storage, as the lane pass's (chain_builder::shared_twiddles).
-// src and dst: stride 1, distinct. Reads m, s, dst_cols, dst_qstride, twiddles (n holds the
-// line's length, for the work graph's cost, work_graph.cpp; M = R m).
+// - 1, blocks = ceil(s / C); with two tops C divides cols, so a unit's copies are adjacent
+// within one group of cols; with one top the last block of a group has fewer copies when C
+// does not divide s (X51; depth_first_tails). Its R outputs are transposed in registers so
+// that each store writes C legs of one copy. twiddles: broadcast storage, as the lane pass's
+// (chain_builder::shared_twiddles). src and dst: stride 1, distinct. Reads m, s, dst_cols,
+// dst_qstride, twiddles (n holds the line's length, for the work graph's cost,
+// work_graph.cpp; M = R m).
 template <class T, std::size_t R, int Sign>
 void depth_first_pass(const pass_args* a, const void* src, void* dst, std::size_t first,
                       std::size_t last) {
@@ -39,7 +76,8 @@ void depth_first_pass(const pass_args* a, const void* src, void* dst, std::size_
   const std::size_t sub = R * m;
   const std::size_t cols = a->dst_cols;
   const auto lane = static_cast<std::size_t>(a->dst_qstride);
-  const std::size_t blocks = s / C<T>;
+  const std::size_t whole = s / C<T>;
+  const std::size_t blocks = (s + C<T> - 1) / C<T>;
   const T* table = static_cast<const T*>(a->twiddles);
   const std::ptrdiff_t in_leg = at(s * m, 2);
   std::size_t p = first < blocks ? 0 : first / blocks;
@@ -49,19 +87,23 @@ void depth_first_pass(const pass_args* a, const void* src, void* dst, std::size_
   std::size_t d2 = b * C<T> / cols;
   for (std::size_t u = first; u < last; ++u) {
     const std::size_t q0 = b * C<T>;
-    cv<T> v[R]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
-    const to_registers<T> out{v};
-    lane_unit<T, R, Sign, true>(
-        run_in<T, edge_op::none, true>{
-            .p = x + at(q0 + s * p, 2), .leg = in_leg, .step = 2, .valid = C<T>, .op = {}},
-        out, table, p);
-    T* yp = y + at(d1 * lane + d2 * sub + R * p, 2);
-    if constexpr (R % C<T> == 0) {
-      store_transposed<T, R>(yp, v, C<T>, lane);
-    } else if constexpr (masked) {
-      store_padded<T, R>(yp, v, C<T>, lane);
-    } else {
-      store_tiled<T, R>(yp, v, C<T>, lane);
+    if (b < whole) {
+      cv<T> v[R]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
+      const to_registers<T> out{v};
+      lane_unit<T, R, Sign, true>(
+          run_in<T, edge_op::none, true>{
+              .p = x + at(q0 + s * p, 2), .leg = in_leg, .step = 2, .valid = C<T>, .op = {}},
+          out, table, p);
+      T* yp = y + at(d1 * lane + d2 * sub + R * p, 2);
+      if constexpr (R % C<T> == 0) {
+        store_transposed<T, R>(yp, v, C<T>, lane);
+      } else if constexpr (masked) {
+        store_padded<T, R>(yp, v, C<T>, lane);
+      } else {
+        store_tiled<T, R>(yp, v, C<T>, lane);
+      }
+    } else if constexpr (!masked) {
+      depth_first_tails<T, R, Sign>(a, x, y, u, u + 1, blocks);
     }
     d1 += C<T>;
     if (d1 == cols) {
@@ -73,6 +115,11 @@ void depth_first_pass(const pass_args* a, const void* src, void* dst, std::size_
       d1 = 0;
       d2 = 0;
       ++p;
+    }
+  }
+  if constexpr (masked) {
+    if (whole != blocks) {
+      depth_first_tails<T, R, Sign>(a, x, y, first, last, blocks);
     }
   }
 }

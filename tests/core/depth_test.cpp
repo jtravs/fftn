@@ -89,7 +89,9 @@ void check_depth(fftn::isa target, const depth_case& dc, fftn::direction dir, do
   for (const std::size_t f : dc.tops) {
     subs *= f;
   }
-  const bool fits = dc.tops[0] % lanes == 0 && (n / subs) % lanes == 0;
+  // With one top the first pass's last block of sub-rows may be partial (X51); C divides M.
+  const bool fits =
+      (dc.tops.size() == 1 || dc.tops[0] % lanes == 0) && (n / subs) % lanes == 0;
   EXPECT_EQ(text.find("strategy: depth-first chain") != std::string::npos, fits) << text;
 
   fftn::test::input_source src(0xDE97ULL + n + count);
@@ -143,6 +145,11 @@ const std::vector<depth_case>& cases() {
       {.n = 1280, .tops = {16, 2}, .sub = {5, 8}},   // a first radix C does not divide
       {.n = 1200, .tops = {4}, .sub = {}},           // too narrow for 8 lanes
       {.n = 2000, .tops = {20}, .sub = {}},          // radix 20 at the top
+      // One top that C does not divide: the first pass's last block of sub-rows is partial
+      // (X51), whole blocks and one, two or three sub-rows left over.
+      {.n = 1000, .tops = {5}, .sub = {}},
+      {.n = 1000, .tops = {5}, .sub = {5, 8, 5}}, // a first radix C does not divide
+      {.n = 1200, .tops = {6}, .sub = {}},
   };
   return all;
 }
@@ -161,6 +168,9 @@ template <class T> void every_case(fftn::isa target) {
   // In place through the workspace block, with a scale and a batch; one and two tops.
   check_depth<T>(target, cases()[0], fftn::direction::forward, 1.0, 1, cases()[0].n, true);
   check_depth<T>(target, cases()[7], fftn::direction::backward, 0.5, 2, cases()[7].n + 3, true);
+  // A partial first-pass block with the scale, a batch with gaps and in place.
+  check_depth<T>(target, cases()[12], fftn::direction::backward, 0.25, 3, cases()[12].n + 7);
+  check_depth<T>(target, cases()[13], fftn::direction::forward, 0.5, 2, cases()[13].n + 1, true);
 }
 
 TEST(Depth, EveryTargetPrecisionDirectionAndSplit) {
@@ -258,7 +268,7 @@ TEST(Depth, RulesTakeItByTheProfile) {
 // many blocks of k.
 template <class T>
 void depth_agrees_with_chain(fftn::isa target, std::size_t n, fftn::direction dir, bool in_place,
-                             bool rules) {
+                             bool rules, const std::vector<std::size_t>& tops = {}) {
   SCOPED_TRACE(std::string(fftn::isa_name(target)) + (sizeof(T) == 8 ? " double" : " float") +
                ", n = " + std::to_string(n) +
                (dir == fftn::direction::forward ? " forward" : " backward") +
@@ -272,6 +282,7 @@ void depth_agrees_with_chain(fftn::isa target, std::size_t n, fftn::direction di
     depth.profile.depth_top_alt = 20;
   } else {
     depth.strategy = strategy_choice::depth;
+    depth.depth_tops = tops;
   }
   build_settings chain;
   chain.strategy = strategy_choice::chain;
@@ -318,6 +329,13 @@ TEST(Depth, AgreesWithTheChainAtLengthsTheRulesTake) {
       }
       depth_agrees_with_chain<float>(t, n, fftn::direction::forward, false, false);
     }
+    // Tops that C does not divide (X51): 25000 = 10 x 2500 and 5 x 5000 in double, 20000 =
+    // 10 x 2000 in float (C divides the sub-rows on every target).
+    for (const std::size_t top : {std::size_t{10}, std::size_t{5}}) {
+      depth_agrees_with_chain<double>(t, 25000, fftn::direction::forward, false, false, {top});
+    }
+    depth_agrees_with_chain<double>(t, 25000, fftn::direction::backward, true, false, {10});
+    depth_agrees_with_chain<float>(t, 20000, fftn::direction::forward, false, false, {10});
   }
 }
 
