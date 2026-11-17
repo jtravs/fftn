@@ -96,4 +96,16 @@ L1, else the chain (`column_block`, `real`). The Mac's plans are `main`'s. Rule 
 the decision rule above, over the real planes whose program R2 changes, on the EPYC and
 the Xeon, against `main` in fresh runs.
 
+R2 against the same build with every column through the chain (W: 3e405ec with
+`COLUMNS=chain`, which isolates the column choice), EPYC run 20261117-105625-db9e (10
+rounds, 3 loaded, band ±1.1 %): geometric mean 0.885 over the 71 (1.00 where R2 keeps the
+chain), 32 × 30 0.74–0.75, 36 × 2048 0.75–0.78, 2048² 0.73–0.87; but 1024² 1.05–1.06 with 4
+columns (rule (2) fails again) and c2r 2048 × 36 1.11 with a wide interval (19 columns, X40's
+block of 16). Arm R3 (the third and last arm of R; rule written before its runs and
+committed with it): as R2, but a block from the tile budget needs at least two L1 lines of
+columns, and X40's wide block applies only where the stride is a page or more (each column
+element on its own page) and the column exceeds half of L1; else the chain. On the EPYC
+that keeps 1024² (8208-byte stride, a 16 KiB column) and 2048 × 36 (304-byte stride) on the
+chain and 2048² on X40's block. Rule for R3: as for R2, on the EPYC and the Xeon.
+
 ## Verdict
