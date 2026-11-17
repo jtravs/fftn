@@ -592,7 +592,7 @@ The other interfaces are later work:
 |---|---|---|---|---|
 | `scalar` | 1 double | — | — | Portable fallback; reference for generator tests |
 | `x86_v2` | 128 bit, SSE2–SSE4.2, no FMA | 1 | 16 | Every x86-64 CPU since about 2009 (Nehalem, Westmere, Atom-class, older AMD). First class |
-| `avx` | 256 bit, no FMA, no AVX2 | 2 | 16 | Sandy Bridge, Ivy Bridge, AMD Bulldozer family (2011–2014). A variant of the `avx2` vocabulary; kept if experiment X14 shows a gain over `x86_v2` on such machines |
+| `avx` | 256 bit, no FMA, no AVX2 | 2 | 16 | Sandy Bridge, Ivy Bridge, AMD Bulldozer family (2011–2014). `avx2`'s shape without FMA; kept by experiment X14 (0.68–0.73 of `x86_v2`'s time, timed on Zen 3 and Cascade Lake) |
 | `avx2` | 256 bit + FMA | 2 | 16 | x86-64-v3: Zen 1–3, Intel since Haswell (2013) |
 | `avx512` | 512 bit (F, DQ, VL) | 4 | 32 | x86-64-v4: Zen 4/5, Intel server since Skylake-SP |
 | `neon` | 128 bit | 1 | 32 | AArch64 baseline (Neoverse N1, Graviton 2, Ampere) |
@@ -998,7 +998,8 @@ parameter, everything else accessors; gen/README.md has the codelet calling conv
   every lane (`bcast_tw`), the DIF codelet in the middle and the plain codelet in the last
   pass (m = 1).
 - The **leaf** is one codelet call on one line, for n ≤ 16 and for a codelet radix up to
-  the profile's leaf limit (32 on NEON in double, 16 elsewhere; experiment X8): values are
+  the profile's leaf limit (32 on NEON and `x86_v2` in double, 16 elsewhere; experiments X8
+  and X14): values are
   broadcast on loading and lane 0 is stored, so it takes any stride and runs in place, at
   the cost of C − 1 idle lanes; leaves vectorised across rows are the lanes strategy's
   (section 8.5, task 2.2). A leaf kernel takes its first line's addresses and the distances to the next
@@ -1562,7 +1563,7 @@ cost table: for each pass kind and codelet radix R (2 to 16, and 32 and 64 where
 prices them) a cost per unit and a cost per tail, and a cost per pass. For a line of n points:
 
 1. n = 1: no pass. n ≤ 16, or n a codelet radix (32, 64) no larger than the profile's
-   leaf limit (experiment X8: 32 on NEON in double, 16 elsewhere): one leaf of radix n.
+   leaf limit (experiments X8 and X14: 32 on NEON and `x86_v2` in double, 16 elsewhere): one leaf of radix n.
 2. A length the table overrides takes the table's radices (the lengths where rule 4 was
    measured more than 2 % slower than planner v0 or, since the planner refresh, more than
    2 % behind the measured winner in every case; 29 and 13 on AVX2).
@@ -2776,6 +2777,7 @@ to change before a release.
 | 2026-11-16 | `planning::measure` and wisdom built (task 2.4, sections 11.2 and 11.3): candidates are build settings of the rules' own builders (the threshold decisions of X7, X12b, X27, X29, X32–X34 and X2's next cheapest radix sequences), timed whole in interleaved rounds at the shape's size, the rules' choice kept unless beaten by 1 %; wisdom lines checked by the program's fingerprint; public `planning`, `options::effort`, `measure_seconds`, `measure_scratch_bytes`, `use`, `fftn::wisdom` (open choices in 18.2) | The maintainer's direction of the same day: measured choice instead of more threshold rules (X31b); reusing the forcing knobs keeps every candidate a program the tests already exercise and makes wisdom a few words of text; the fingerprint check makes "rebuilds exactly the same plan" a test rather than an assumption |
 | 2026-11-16 | C++20 stays (C++23 library features behind feature-test macros as before); no older standard is supported and no code is rewritten for one; compatibility with older toolchains and other languages comes from the C API (`fftn/c_api.h`) and possibly an FFTW-compatible interface, to be decided later | The maintainer prefers C++20 and newer; the public headers' C++20 use (nested inline namespaces, the executor concept, `std::span`, designated initialisers) is convenience, but a C interface serves old compilers, C, Fortran and FFTW users better than a C++17 subset |
 | 2026-11-16 | The planning API (task 2.4, pull request 26) as proposed: efforts `planning::rules` (default), `quick` and `measure`; budgets as two plain options (`measure_seconds`, `measure_scratch_bytes`, 0 = the effort's default); `class wisdom` as a value filled with `add` and passed by `options::use`, never global state; a stale or unbuildable entry is ignored and `describe()` says so; measure keeps the rules' choice unless another is at least 1 % faster; serial timing only for now | The maintainer agreed the public surface beyond section 5.3's sketch (AGENTS.md section 7) after the second reader's review; the reviewer's defects are fixed before merge |
+| 2026-11-17 | The `x86_v2` (SSE4.2) and `avx` (AVX without AVX2 or FMA) targets exist (task 1.3): their own vocabularies without FMA, rounding as the scalar target, interleaved passes (no split runs), `avx2`'s pass-cost tables of the nearest C, no 128-bit or pair leaves; `avx` is kept; `x86_v2` takes a leaf of 32 in double (experiment X14) | X14: `avx` 0.68–0.73 of `x86_v2`'s time (EPYC 7763, Xeon 6240); `x86_v2` 0.96–0.98 of FFTW built with SSE2 only, `avx` 0.90–0.94 of FFTW with SSE2 and AVX; split runs without FMA gained 0.5–2.4 % (rule: 3 %); NEON's tables for `x86_v2` lost (1.01–1.07); 128-bit leaves for `avx` lost on two-pass rows of 100–120 points on the EPYC (1.08–1.14); the leaf of 32 took 32-point rows to 0.55–0.65 |
 
 ---
 
