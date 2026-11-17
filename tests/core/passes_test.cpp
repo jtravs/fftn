@@ -159,8 +159,18 @@ void check_row(fftn::isa target, std::size_t n, fftn::direction dir, const build
 }
 
 template <class T> void every_codelet_in_every_position(fftn::isa target) {
+  const auto& own = fftn::detail::of<T>(*fftn::detail::find_kernels(
+                                            static_cast<fftn::detail::target>(target)))
+                        .passes;
   for (const std::uint8_t radix : fftn::detail::gen::radices) {
     const std::size_t r = radix;
+    // Radix 25 has passes on the x86 targets only (experiment X42, passes/entries.inl).
+    const bool x86 = target == fftn::isa::avx2 || target == fftn::isa::avx512;
+    if (own.codelet[fftn::detail::codelet_slot(r)]->lane[0] == nullptr) {
+      EXPECT_TRUE(r == 25 && !x86) << "radix " << r << " has no passes";
+      continue;
+    }
+    EXPECT_TRUE(r != 25 || x86) << "radix 25 has passes off x86";
     const std::string rs = "radix-" + std::to_string(r);
     struct sequence {
       std::vector<std::size_t> radices;

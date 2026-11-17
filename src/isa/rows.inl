@@ -21,7 +21,7 @@
 // a row left out fails to link.
 
 template <class T, std::size_t I>
-constinit const radix_passes codelet_row<T, I>::passes = radix_entries<T, I>::value;
+constinit const radix_passes codelet_row<T, I>::passes = row_entries<T, I>();
 
 // NOLINTBEGIN(bugprone-macro-parentheses): a template argument list, not an expression.
 #define FFTN_ISA_ROW(T, I) template struct codelet_row<T, I>;
