@@ -174,10 +174,12 @@ constexpr pass_costs avx2_float{
 // but planes and batches of 1000 1.02-1.04 (run 20261117-011743-1a01)
 // (dev/experiments/X39-xeon-long.md). Experiment X42: 100 and 500 end in a radix-25 pass,
 // one sequence at most 0.97 of the planner's at batch 1 and 64 (X2's search driver,
-// campaign x42-r25f-xeon; dev/experiments/X42-codelets.md).
+// campaign x42-r25f-xeon; dev/experiments/X42-codelets.md); 3125, 10000, 15625 and 25000 by
+// X42's arm B3: one sequence at most 0.97 of the planner's at both batches, though the two
+// batches' winners differ.
 // clang-format off
 // NOLINTBEGIN(readability-trailing-comma): bench/x2/fit.py writes and parses this layout
-constexpr std::array<radix_override, 29> avx512_double_overrides{{
+constexpr std::array<radix_override, 31> avx512_double_overrides{{
     {.n = 24, .radices = {4, 6, 0, 0}},
     {.n = 27, .radices = {3, 9, 0, 0}},
     {.n = 100, .radices = {4, 25, 0, 0}},
@@ -198,15 +200,17 @@ constexpr std::array<radix_override, 29> avx512_double_overrides{{
     {.n = 1000, .radices = {4, 10, 5, 5}},
     {.n = 2000, .radices = {20, 10, 10, 0}},
     {.n = 3000, .radices = {20, 10, 15, 0}},
+    {.n = 3125, .radices = {25, 5, 25, 0}},
     {.n = 3600, .radices = {12, 15, 20, 0}},
     {.n = 4000, .radices = {20, 20, 10, 0}},
     {.n = 4800, .radices = {20, 12, 20, 0}},
     {.n = 5000, .radices = {20, 10, 5, 5}},
     {.n = 6000, .radices = {20, 15, 20, 0}},
     {.n = 8000, .radices = {20, 20, 20, 0}},
-    {.n = 10000, .radices = {20, 20, 5, 5}},
+    {.n = 10000, .radices = {20, 20, 25, 0}},
+    {.n = 15625, .radices = {5, 5, 25, 25}},
     {.n = 20000, .radices = {20, 20, 5, 10}},
-    {.n = 25000, .radices = {20, 10, 5, 5, 5}},
+    {.n = 25000, .radices = {4, 25, 10, 25, 0}},
 }};
 
 constexpr pass_costs avx512_double{
