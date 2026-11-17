@@ -1,6 +1,6 @@
 # X42: a radix-25 codelet and register-fitting radix-32/64 codelets (phase 1 tail)
 
-- **Status:** running
+- **Status:** done (B, B2, B3 adopted on `avx2` and `avx512` double; C rejected; D not built)
 - **Owner:** x42 session, 2026-11-17
 - **Phase / task:** 1 (phase 1 exit check, the tail rule; causes 4 and 5); follows X3, X8,
   X27, X38, X39
@@ -214,6 +214,50 @@ plan, re-run (20261117-123726-548b, Slurm 511810; 40 rounds, band ±1.00 %): c2r
 these lengths were already at or under FFTW's time; 20000, its exit-check case at 1.07,
 gained nothing from radix 25.)
 
+### B2 and B3 on `avx512` (Xeon, `--serial`)
+
+Run 20261117-124940-9e53 (Slurm 16293; 30 rounds, all under load, band ±3.67 %, so rule
+(b)'s limit is 1.057), arms N (aca7427: `avx512` plans as main's), B2 (b8ca0b9), B3
+(f40822d), FFTW, MKL; the standard catalogue's cases with an axis of 100, 500, 1000, 3125,
+10000, 15625 or 25000 (39 cases: rows, batches, real rows whose complex half is 500, planes
+and the 100³ volume).
+
+- B2 ÷ N over the cases with an axis of 100 or 500 (rows, batches, planes, the volume, r2c
+  and c2r 1000 and 1000², 21 cases): about **0.86**; c2c 100 0.776, 100 × 64 0.814, × 1024
+  0.864, 500 0.824, r2c / c2r 1000 0.79–0.81 in and out of place, 100² 0.77–0.78, 100³
+  0.85–0.89, real 100² planes 0.93–0.96, real 1000² 0.87–0.94; none above 1.003.
+- B3 ÷ B2 over its four rows (ratio of the two ratios to N): 3125 0.677, 10000 0.921, 15625
+  0.844, 25000 0.956: **0.842**; no case of B3 above 1.023 (c2r 100, unchanged).
+- Weighted geomean over all 39: B2 0.915 [0.890, 0.932], B3 0.908 [0.881, 0.932].
+
+FFTN ÷ FFTW (÷ MKL), N → B3, same run: 100 1.14 → 0.88 (0.99 → 0.77), 500 0.98 → 0.81
+(0.82 → 0.68), 3125 0.81 → 0.53 (0.99 → 0.65), 10000 0.83 → 0.75 (0.99 → 0.89), 15625 0.73
+→ 0.61 (1.06 → 0.89), 25000 1.23 → 1.18 (0.92 → 0.89). **B2 and B3 pass (a)–(c) on
+`avx512`.** 25000 stays the Xeon's worst of these against FFTW (FFTW 3.83 ns per point
+against FFTN's 4.51): its batch-1 winner was within 3 % of the planner's.
+
 ## Verdict
 
-(pending)
+- **B (radix-25 codelet): adopted** as the carrier of B2 and B3: flat (Cooley–Tukey 5 × 5,
+  the derived reference reached exactly), a pass radix only, rows on the x86 and scalar
+  targets only (NEON: no gain on the Mac, so no code). Library text: x86-64 GCC 16
+  `libfftn.a` 53.90 → 57.22 MB (+6.1 %, every target compiled there has the rows); Mac
+  (Clang) 20.43 → 20.83 MB (+2.0 %, the scalar rows).
+- **B2 and B3 (radix-25 sequences): adopted** on `avx2` double (500, 3125, 5000, 10000,
+  15625, 25000: 0.874 and 0.891 of the arm before on the EPYC) and `avx512` double (100, 500,
+  3125, 10000, 15625, 25000: about 0.86 and 0.842 on the Xeon). B3's rule (amendment 1) was
+  written after the searches and before its judging runs, which decided it.
+- **C (two-level radix-25/32/64 codelets for 16 registers): rejected** (1.000 of B on
+  `avx2`'s radix-32 plans, run 20261117-113412-4c22) and reverted. With GCC the flat
+  codelets' spills cost no extra instructions to remove; the two-pass plans lose on IPC, not
+  on spills (LESSONS 4.17). The generator code stays in git (3fd2203).
+- **D (re-fitted `avx2` sequences at 512–4096): not built**: the search with radix-32/64
+  candidates found no length that passes the selection rule (x42-big-epyc). EPYC 512–2048
+  stay 1.13–1.22 of FFTW; closing them needs a pass or codelet whose IPC holds at radix 32
+  or 64, not register fitting. Open questions: front-end or load-port limits of the
+  1700-instruction radix-64 unit (op cache, 64 legs' address arithmetic: 365 integer stack
+  reloads per pass function in Clang's code), measured with the Zen 3 counters next.
+- Not measured: Clang on x86 for B2/B3 (recorded only for C's spill counts); the
+  overrides reach Zen 5 and Granite Rapids (`avx512`) and every AVX2 machine unmeasured;
+  float tables (the searches' float results suggest 1.1–1.2 gains with radix 25 on both
+  machines, a follow-up).
