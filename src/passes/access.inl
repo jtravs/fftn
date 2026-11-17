@@ -27,6 +27,28 @@ FFTN_FORCE_INLINE std::ptrdiff_t at(std::size_t index, std::ptrdiff_t stride) {
   return static_cast<std::ptrdiff_t>(index) * stride;
 }
 
+// Line u of a batch at base, lines `bytes` apart (the leaves' batch distances). On AArch64
+// the distance stays in bytes: dividing it into reals cost a signed division's six
+// instructions per call, which took single rows of 2-6 points to 0.83-0.89 of their time on
+// the M5 Max (X37). On x86 the reals' form stays: in bytes, the EPYC 7763 (GCC 16) ran the
+// same rows 1.10-1.20 of the time.
+template <class T>
+FFTN_FORCE_INLINE const T* line_at(const void* base, std::size_t u, std::ptrdiff_t bytes) {
+#if FFTN_ARCH_AARCH64
+  return static_cast<const T*>(
+      static_cast<const void*>(static_cast<const unsigned char*>(base) + at(u, bytes)));
+#else
+  return static_cast<const T*>(base) + at(u, bytes / static_cast<std::ptrdiff_t>(sizeof(T)));
+#endif
+}
+template <class T> FFTN_FORCE_INLINE T* line_at(void* base, std::size_t u, std::ptrdiff_t bytes) {
+#if FFTN_ARCH_AARCH64
+  return static_cast<T*>(static_cast<void*>(static_cast<unsigned char*>(base) + at(u, bytes)));
+#else
+  return static_cast<T*>(base) + at(u, bytes / static_cast<std::ptrdiff_t>(sizeof(T)));
+#endif
+}
+
 // A register of zeros.
 template <class T> FFTN_FORCE_INLINE cv<T> zeros() {
   T tile[2 * C<T>]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region

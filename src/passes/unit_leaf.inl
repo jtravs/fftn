@@ -29,13 +29,9 @@ void unit_leaf(const pass_args* a, const void* src, void* dst, std::ptrdiff_t sr
       .leg = 2,
       .op = make_edge<T, OutOp>(a, nullptr, 0, 1),
   };
-  constexpr auto real_bytes = static_cast<std::ptrdiff_t>(sizeof(T));
-  const std::ptrdiff_t src_step = src_dist / real_bytes;
-  const std::ptrdiff_t dst_step = dst_dist / real_bytes;
   for (std::size_t u = 0; u < count; ++u) {
-    const auto k = static_cast<std::ptrdiff_t>(u);
-    in.p = static_cast<const T*>(src) + k * src_step;
-    out.p = static_cast<T*>(dst) + k * dst_step;
+    in.p = line_at<T>(src, u, src_dist);
+    out.p = line_at<T>(dst, u, dst_dist);
     cdft<R>::template plain<T, Sign>(in, out);
   }
 }

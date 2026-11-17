@@ -104,12 +104,32 @@ Open, by phase:
 - 3: T2, T3, T4, T6; 3.5 (Kokkos executor); 3.6 to be checked against its acceptance.
 - 4–7: not started.
 
-In flight (lead session, 2026-11-16 night): the tail round's X37 (short rows and batches
-of 16), X38 (the EPYC's 240–2048), X39 (the Xeon's long rows, in-place 65536); task 1.3
+In flight (lead session, 2026-11-16 night): the tail round's X39 (the Xeon's long rows, in-place 65536); task 1.3
 (`x86_v2` and `avx` targets, X14); the coverage fix; task 2.4's next
 steps (P1/P2 second passes on the Xeon and EPYC, then the cost model and `fbench
 calibrate`). Then the exit check again. Done, each merged with its
 pull request:
+- X37 (pull request 28): pair leaves for 18–30 points on every target (`avx512` borrowing
+  `avx2`'s), pair leaves for 8–16 on x86, a lighter leaf path on AArch64, fbench's single
+  library call: Xeon 18–30 points 1.24–1.32 → 0.64–0.71 of FFTW, batches of 16 ÷ MKL 1.57–1.71
+  → 0.94–1.01, Mac 20 points 1.55 → 1.01; exit cases over 1.05: Xeon 30 → 23, EPYC 36 → 30,
+  Mac 24 → 19. Left: EPYC 15 × 2 and 64 × 2 backward, 64 × 16; Mac 2 × 3 in place.
+- X38 (pull request 27): a radix-20 codelet and re-fitted `avx2` double sequences (EPYC 0.868
+  on nine lengths; exit cases over 1.05: 32 → 27); 512–2048 left (radix-32/64 codelets spill).
+- X36b (pull request 36): a Bluestein stage of C copies covers the whole line (EPYC 1018 1.53 →
+  1.12 of FFTW).
+- X37 (causes 2 and 3 of the exit check, pull request 28): pair leaves where none applied
+  (`avx2` 18, 22, 26, taken also by `avx512` plans for 18–30; NEON 18–30 points, C = 1) and
+  for 8–16 points on x86 (whole registers instead of the 128-bit leaf): Xeon 18–30 points
+  0.40–0.54 of their time, 16 × 16–256 0.59 (÷ MKL 1.57–1.71 → 0.94–1.01); EPYC 18–26
+  0.49–0.54, 16 × 16–4096 ÷ FFTW 1.16–1.26 → 0.89–0.93; Mac 20 points 1.55 → 1.01 of FFTW.
+  fbench's backend now calls what `plan::execute` calls (2–6 points 0.80–0.96). A lighter
+  leaf path (byte distances, the general path out of line) only on AArch64 (Mac 2–6 points
+  0.83–0.89; on the EPYC it lost). Left: EPYC 15 × 2 and 64 × 2 backward and 64 × 16 (FFTW
+  runs two rows per `ymm` with whole codelets), Xeon 2 and 4 points (1.10), Mac 2 × 3 in
+  place (1.39, a latency chain between executions). Found on the way: `main` 1fe3fe7 runs
+  single rows of 2–8 points 1.14–1.16 times as long as e8c2639 on the EPYC (X37's run
+  20261117-014755-1442; the execute path did not change: probably code placement).
 - X36 (pull request 30): Bluestein convolutions take the long-row radices beyond a profile
   threshold and a capped power-of-two part; small copy counts become one stage; split layout
   for single convolutions on x86; the EPYC's 65537 was a radix-16 Rader convolution: exit-
@@ -553,6 +573,7 @@ running, done (with verdict).
 | [X34](experiments/X34-xeon-mixed.md) | The Xeon's long rows of mixed length (100000 1.99, 46080 1.29 of FFTW): why, and does a chain rule keyed on L2, wider grid blocks for lengths with a large odd part, or other grid factors close it without a vendor switch? (lead (c)) | 1 | done: chains lose on the Xeon (1.05–1.45); wider blocks superseded; two phases for rows with an odd part ≥ 15 where L3 per CPU is small adopted (Xeon 0.86 over the 14 changed rows, 100000 0.71: 2.03 → 1.44 of FFTW, 0.95 of MKL); the EPYC (two phases 1.13–1.67) and the Mac unchanged |
 | [X35](experiments/X35-gnr-profile.md) | A cache-geometry key that separates Granite Rapids from Zen 3/Zen 5 for X29's, X32's and X33's chain rules (its VM reports 63 MiB of L3 per CPU), with Granite Rapids' plans from X31b (leads (a), (c), (d)) | 1 | done: key = a private L2 of ≥ 2 MiB on x86-64 (VM- and SMT-independent; L3 per core cannot separate them). Granite Rapids (arm B9): grids and three phases beyond L2/2, two phases for power-of-two parts ≤ 2048, no chains: 30 changed cases 0.59–1.007 of main (262144 1.71 → 1.26 of FFTW, 100000 2.03 → 1.36, long real rows 0.59–0.88); 1-D double ÷ FFTW 0.87 → 0.83, ÷ MKL 0.85 → 0.81. The first profile and a variant each lost on 1–2 rows (71680 1.10, c2r out of place 1.15–1.16). Axion (same 2 MiB L2) lost 1.15–1.28 and keeps main's plans (x86 gate). Mac, EPYC, Zen 5, Xeon unchanged (profile tests). USD 1.64 |
 | [X36](experiments/X36-large-primes.md) | Large primes and prime factors outside Rader's range (exit check cause 1: 131071, 999983, 4093, 1018, EPYC 65537): the convolution's radices and length, chirp passes that absorb the zero padding, few-copy stages, split convolutions | 1 | done: long-row radices for long convolutions and a power-of-two limit on Bluestein lengths per machine (Mac changed cases 0.49, EPYC 0.56; ÷ FFTW Mac 131071 2.61 → 0.88, 999983 1.99 → 0.75, 4093 1.42 → 0.90; EPYC 131071 1.64 → 0.87, 4093 1.33 → 0.94, 65537 0.80: its old Rader convolution took radix-16 passes); few copies as one stage on C > 2 (Xeon 1018 0.68); split single-copy convolutions on x86 (EPYC 0.56–0.92); half-form chirp passes rejected; Xeon 1018 ÷ MKL 1.37 → 0.90; left: EPYC 1018 1.51, Xeon 131071 1.28 and 999983 1.10 |
+| [X37](experiments/X37-short-batches.md) | The exit check's short rows and small batches (causes 2 and 3): fixed cost or kernel, and do pair leaves for 18–30 points (x86 where C does not divide, NEON) and for batches of 8–16 points on x86 close them? | 1 | done: pair leaves adopted for 18, 22, 26, 30 on x86 (`avx512` takes `avx2`'s) and 18–30 on NEON (0.47–0.72 of their time), and for 8–16 points on x86 (Xeon 16 × 16–256 0.59–0.66, ÷ MKL 1.57–1.71 → 0.94–1.01; EPYC 0.85); fbench now calls `execute_all`; a lighter leaf path adopted on AArch64 only (2–6 points 0.83–0.89 on the Mac; lost on the EPYC). Exit-check cases over 1.05: Xeon 30 → 23 (MKL 32 → 27), EPYC 36 → 30, Mac 24 → 19 |
 | [X38](experiments/X38-epyc-mid.md) | The EPYC's double rows of 80–20000 points (exit check cause 4; 240, 384, 640, 1024 1.19–1.23 of FFTW): do sequences re-fitted on Zen 3 with radix 32/64 (two passes where FFTW runs two), split-aware first passes or cheaper twiddle arithmetic close them? | 1 | done: R adopted by the lead with two recorded exceptions: a radix-20 codelet with re-fitted `avx2` double sequences, 0.868 of main on its nine lengths (240, 2000, 3000, 3600 now under FFTW; exit cases over 1.05 of FFTW 32 → 27 of 193), tracking 1.000; two unchanged-plan cases past rule (b) after the re-run (60 × 3 1.036, 323 1.049: plans unchanged, placement likely) kept as exceptions; library +5.6 %; 512–2048 unchanged (FFTN's radix-32/64 codelets spill) |
 | [X36b](experiments/X36b-prime-tails.md) | What X36 left of the prime tail: EPYC 1018 (1.51 of FFTW; copies of a Bluestein stage one at a time or one stage over the line) and the Xeon's 131071 and 999983 (1.28, 1.10; a long convolution as a grid) | 1 | done: s = C copies as one stage while the line is not long (EPYC 1018 0.73: 1.53 → 1.12 of FFTW; Xeon 2036 0.81); the Xeon's grid convolution needs a second movable workspace slot (screen: 999983 would reach about 0.86 of FFTW, 131071 stays 1.24, its gap is cause 5) |
 | [P1](experiments/P1-rules-vs-measure.md) | How often is the rules' choice within 5 % of `planning::measure`'s per machine (task 2.4's acceptance: 90 % of catalogue cases), which rules miss, and does measurement recover a misfiring profile (Granite Rapids' fields forced on the Xeon)? | 2 | first pass done: rules within 5 % of measure on 96.7 % of the tracking tier on the EPYC, 77 % on the Xeon (about 85 % without noise), Mac inconclusive under load; measure never slower by fbench; Granite Rapids' fields forced on the Xeon recovered in 10 of 11 cases (the miss a budget defect, fixed); planes' radices the repeat miss. Second pass (73eb719, placements per round, median): Mac 93.4 %, EPYC 95.1 %, Xeon 86.9 % (long real rows, planes, 2²², 2431 repeat); misfire 9 of 9 after the budget fix; EPYC r2c 65536 measure 1.18 slower (power-of-two chains bimodal by page backing); EPYC 65537 Bluestein 1.75 faster than the rules' Rader |

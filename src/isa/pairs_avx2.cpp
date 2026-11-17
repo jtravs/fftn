@@ -27,9 +27,13 @@ namespace pairs {
 
 #include "passes/pair_leaf.inl"
 
-// C = 2 in double: m = 2 (one unit) up to 32 points, then m = 4.
+// C = 2 in double: m = 2 (one unit) up to 32 points, then m = 4. 18, 22 and 26 (X37) are
+// also what avx512 plans take, whose C = 4 divides none of them (find_more_pair_leaves); 8,
+// 12 and 16 points (X37) replace the 128-bit leaves of those codelets for rows of stride 1.
 #define FFTN_PAIRS_F64                                                                             \
-  FFTN_PAIR(double, 10, 2), FFTN_PAIR(double, 12, 2), FFTN_PAIR(double, 15, 2),                    \
+  FFTN_PAIR(double, 4, 2), FFTN_PAIR(double, 6, 2), FFTN_PAIR(double, 8, 2),                       \
+      FFTN_PAIR(double, 9, 2), FFTN_PAIR(double, 10, 2), FFTN_PAIR(double, 11, 2),                 \
+      FFTN_PAIR(double, 12, 2), FFTN_PAIR(double, 13, 2), FFTN_PAIR(double, 15, 2),                \
       FFTN_PAIR(double, 16, 2), FFTN_PAIR(double, 9, 4), FFTN_PAIR(double, 10, 4),                 \
       FFTN_PAIR(double, 12, 4)
 // C = 4 in float: m = 4, one unit.
