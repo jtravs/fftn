@@ -259,11 +259,12 @@ template <class T> void leaves_above_sixteen(fftn::isa target) {
                    {leaf, "in: scale", "out: factor"});
       check_row<T>(target, n, dir, settings, 1.0, false, false, false, {leaf}, 3, 2);
     }
-    // By default (X8): a leaf of 32 on NEON in double, chains elsewhere; the primes (X27) a
-    // leaf everywhere.
+    // By default (X8, X14): a leaf of 32 on NEON and x86_v2 in double, chains elsewhere; the
+    // primes (X27) a leaf everywhere.
     const bool leaf_by_default =
         n % 2 == 1 || (n == 32 && std::is_same_v<T, double> &&
-                       (target == fftn::isa::neon || target == fftn::isa::neon_fcma));
+                       (target == fftn::isa::neon || target == fftn::isa::neon_fcma ||
+                        target == fftn::isa::x86_v2));
     const auto plain =
         make_plan_core(fftn::detail::view_of(fftn::rows_c2c<T>(n, 1, fftn::direction::forward)),
                        {.force_isa = target}, {});
