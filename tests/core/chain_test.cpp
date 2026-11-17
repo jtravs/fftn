@@ -11,6 +11,7 @@
 // leaf's radices, so that each lane computes what the row alone would.
 
 #include "core/program.hpp"
+#include "core/twiddles.hpp"
 #include "fftn/isa.hpp"
 #include "isa/kernel_table.hpp"
 #include "isa/target.hpp"
@@ -24,6 +25,7 @@
 
 #include <complex>
 #include <cstddef>
+#include <initializer_list>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -103,6 +105,26 @@ fftn::detail::pair_leaf_entry pair_markers(std::size_t r1, std::size_t m) {
   e.leaf[1][0][1] = marker<3, 1, 0, 1>();
   e.leaf[1][1][0] = marker<3, 1, 1, 0>();
   return e;
+}
+
+// A table of marker pair leaves for target t, n = r1 m for each (r1, m), ascending: its
+// twiddle storage is t's own (lanes and packing), as a target's own table is (pairs.inl).
+fftn::detail::pair_leaf_table
+pair_marker_table(fftn::isa t, std::initializer_list<std::pair<std::size_t, std::size_t>> leaves) {
+  const auto& kernels =
+      *fftn::detail::find_kernels(static_cast<fftn::detail::target>(static_cast<unsigned char>(t)));
+  fftn::detail::pair_leaf_table table{};
+  table.f64.lanes = kernels.f64.complex_lanes;
+  table.f64.pack_twiddles = kernels.f64.pack_twiddles;
+  table.f32.lanes = kernels.f32.complex_lanes;
+  table.f32.pack_twiddles = kernels.f32.pack_twiddles;
+  std::size_t i = 0;
+  for (const auto& [r1, m] : leaves) {
+    table.f64.entry[i] = pair_markers(r1, m);
+    table.f32.entry[i] = pair_markers(r1, m);
+    ++i;
+  }
+  return table;
 }
 
 // A builder for target t as plan_core.cpp makes one, with the given forced radices and
@@ -214,11 +236,7 @@ TEST(Chain, NarrowLeavesReplaceTheTargetsLeaves) {
 template <class T> void pair_leaves(fftn::isa t) {
   SCOPED_TRACE(std::string(fftn::isa_name(t)) + (sizeof(T) == 8 ? " double" : " float"));
   // Entries ascend and end at the first n = 0, as the targets' tables do.
-  fftn::detail::pair_leaf_table table{};
-  for (auto* set : {&table.f64.entry, &table.f32.entry}) {
-    (*set)[0] = pair_markers(16, 8);
-    (*set)[1] = pair_markers(8, 32);
-  }
+  const fftn::detail::pair_leaf_table table = pair_marker_table(t, {{16, 8}, {8, 32}});
   const fftn::detail::pair_leaf_set<T>& set = fftn::detail::of<T>(table);
   EXPECT_EQ(&set, sizeof(T) == 8 ? static_cast<const void*>(&table.f64)
                                  : static_cast<const void*>(&table.f32));
@@ -304,14 +322,58 @@ TEST(Chain, PairLeavesTakeTheirLengths) {
   }
 }
 
+// A second set (use_pair_leaves' `more`, X37: avx512 plans take avx2's pair leaves) serves
+// the lengths the first lacks, with twiddles in its own storage: here one complex number per
+// register in the scalar target's packing, the table grouped_twiddles would give (twiddle
+// k p of the r1 x m leaf is w^(p k), w = exp(-2 pi i / n), for k = 1 .. r1 - 1, p < m).
+template <class T> void more_pair_leaves(fftn::isa t) {
+  SCOPED_TRACE(std::string(fftn::isa_name(t)) + (sizeof(T) == 8 ? " double" : " float"));
+  const fftn::detail::pair_leaf_table own = pair_marker_table(t, {{16, 8}});
+  const fftn::detail::pair_leaf_table scalar = pair_marker_table(fftn::isa::scalar, {{16, 24}});
+  builder<T> b(t);
+  b.chain.use_pair_leaves(&fftn::detail::of<T>(own), &fftn::detail::of<T>(scalar));
+  constexpr std::size_t r1 = 16;
+  constexpr std::size_t m = 24;
+  constexpr std::size_t n = r1 * m;
+  for (const std::size_t len : {std::size_t{128}, n}) {
+    std::vector<stage> stages;
+    b.chain.c2c_line(len, -1, {slot::in, 1}, {slot::out, 1}, false, line_edges(), stages);
+    ASSERT_EQ(stages.size(), 1U) << len << ":\n" << names(stages);
+    EXPECT_EQ(called(stages[0]), marker_of(3, -1, none, none));
+    if (len != n) {
+      continue;
+    }
+    ASSERT_NE(stages[0].args.twiddles, nullptr);
+    const auto* stored = static_cast<const T*>(stages[0].args.twiddles);
+    const std::vector<std::complex<T>> w = fftn::detail::unit_roots<T>(-1, n);
+    const std::size_t lanes =
+        fftn::detail::of<T>(*fftn::detail::find_kernels(b.target)).complex_lanes;
+    if (lanes != 1) {
+      // A plan of its own storage would pack another layout: the set's packing was used.
+      for (std::size_t k = 1; k < r1; ++k) {
+        for (std::size_t p = 0; p < m; ++p) {
+          const std::size_t at = 2 * ((k - 1) * m + p);
+          EXPECT_EQ(stored[at], w[p * k].real()) << "k " << k << ", p " << p;
+          EXPECT_EQ(stored[at + 1], w[p * k].imag()) << "k " << k << ", p " << p;
+        }
+      }
+    }
+  }
+}
+
+TEST(Chain, MorePairLeavesKeepTheirTwiddleStorage) {
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    more_pair_leaves<double>(t);
+    more_pair_leaves<float>(t);
+  }
+}
+
 // The lanes strategy over rows whose length has a pair leaf: the leaf's radices r1 x m, as
 // the radices forced to r1 x m give, for c2c rows and for real rows of twice the length on
 // the separate route (no pairing fused into a pass).
 template <class T> void pair_lanes(fftn::isa t) {
   SCOPED_TRACE(std::string(fftn::isa_name(t)) + (sizeof(T) == 8 ? " double" : " float"));
-  fftn::detail::pair_leaf_table table{};
-  table.f64.entry[0] = pair_markers(16, 8);
-  table.f32.entry[0] = pair_markers(16, 8);
+  const fftn::detail::pair_leaf_table table = pair_marker_table(t, {{16, 8}});
   constexpr std::size_t n = 128;
   const fftn::detail::real_fusion separate{.radix = 1};
   builder<T> b(t, {}, separate);
