@@ -34,10 +34,11 @@ template <class T> FFTN_FORCE_INLINE std::size_t block_rows(std::size_t rows, st
 // of a group (lanes_first; X44).
 inline constexpr std::size_t held_radix = 8;
 
-// The targets whose column edge passes run a block's runs in an inner loop (X44 arm N): the
-// x86 targets it was judged on; NEON gained nothing (0.997 over the planes on the M5 Max)
-// and keeps the unit loop.
-inline constexpr bool nested_column_runs = id == target::avx2 || id == target::avx512;
+// Whether the column edge passes run a block's runs in an inner loop (X44 arm N): adopted on
+// avx2 (the EPYC 7763's planes and volumes with a column phase 0.94 of the time). avx512
+// missed the rule (the Xeon 6240's 0.962 against 0.95, its c2c planes 0.92) and NEON gained
+// nothing (0.997 on the M5 Max): both keep the unit loop.
+inline constexpr bool nested_column_runs = id == target::avx2;
 
 // A lane pass's twiddles of one group (shared_twiddles' values), loaded once.
 template <class T, std::size_t R> struct held_twiddles {
