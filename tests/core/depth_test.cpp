@@ -178,14 +178,19 @@ TEST(Depth, EveryTargetPrecisionDirectionAndSplit) {
   }
 }
 
-// The rules (experiment X46 arm A): `avx512` in double, rows of [depth_min_bytes,
-// depth_max_bytes] (a profile field, off by default), one top of 16, else 20; not in float,
-// not on other targets, not outside the range, never where neither top fits.
+// The rules (experiment X46 arms A and C): in double on targets with 32 vector registers,
+// rows of [depth_min_bytes, depth_max_bytes] (profile fields, off by default) whose
+// power-of-two part has more than depth_part_bytes, one top of depth_top, else
+// depth_top_alt; not in float, not on other targets, not outside the range, never where
+// neither top fits.
 TEST(Depth, RulesTakeItByTheProfile) {
   const auto planned = [](std::size_t n, fftn::isa isa, bool on, bool in_place = false) {
     build_settings settings;
     settings.profile.depth_min_bytes = on ? std::size_t{256} * 1024 : 0;
     settings.profile.depth_max_bytes = on ? std::size_t{4} * 1024 * 1024 : 0;
+    settings.profile.depth_part_bytes = 0;
+    settings.profile.depth_top = 16;
+    settings.profile.depth_top_alt = 20;
     const fftn::shape<std::complex<double>, std::complex<double>> shape{
         .dir = fftn::direction::forward,
         .axes = {{.n = n}},
@@ -199,16 +204,44 @@ TEST(Depth, RulesTakeItByTheProfile) {
   };
   for (const fftn::isa t : fftn::test::runnable_isas()) {
     SCOPED_TRACE(fftn::isa_name(t));
-    const bool avx512 = std::string(fftn::isa_name(t)) == "avx512";
+    const std::string name = fftn::isa_name(t);
+    // 32 vector registers: avx512 and NEON. With C = 1 (NEON double) 25000 = 20 x 1250 fits.
+    const bool wide = name == "avx512" || name == "neon" || name == "neon_fcma";
     EXPECT_FALSE(depth(planned(16384, t, false)));
-    EXPECT_EQ(depth(planned(16384, t, true)), avx512);
-    EXPECT_EQ(depth(planned(65536, t, true, true)), avx512); // in place
-    EXPECT_FALSE(depth(planned(8192, t, true)));             // below the range
-    EXPECT_FALSE(depth(planned(524288, t, true)));           // beyond it
-    EXPECT_FALSE(depth(planned(25000, t, true)));            // no top fits on 4 lanes
-    if (avx512) {
+    EXPECT_EQ(depth(planned(16384, t, true)), wide);
+    EXPECT_EQ(depth(planned(65536, t, true, true)), wide); // in place
+    EXPECT_FALSE(depth(planned(8192, t, true)));           // below the range
+    EXPECT_FALSE(depth(planned(524288, t, true)));         // beyond it
+    if (name == "avx512") {
+      EXPECT_FALSE(depth(planned(25000, t, true))); // no top fits on 4 lanes
       EXPECT_NE(planned(32768, t, true).find("depth-first 16 x 2048"), std::string::npos);
       EXPECT_NE(planned(20000, t, true).find("depth-first 20 x 1000"), std::string::npos);
+    }
+  }
+  // A power-of-two part of at most depth_part_bytes keeps the old plan (the Apple profile).
+  {
+    build_settings settings;
+    settings.profile.depth_min_bytes = std::size_t{64} * 1024;
+    settings.profile.depth_max_bytes = std::size_t{256} * 1024;
+    settings.profile.depth_part_bytes = std::size_t{16} * 1024;
+    settings.profile.depth_top = 4;
+    const auto planned_on = [&](std::size_t n, fftn::isa isa) {
+      const fftn::shape<std::complex<double>, std::complex<double>> shape{
+          .dir = fftn::direction::forward,
+          .axes = {{.n = n}},
+          .batches = {},
+      };
+      return depth(fftn::detail::describe(
+          *make_plan_core(fftn::detail::view_of(shape), {.force_isa = isa}, settings)));
+    };
+    for (const fftn::isa t : fftn::test::runnable_isas()) {
+      const std::string name = fftn::isa_name(t);
+      const bool wide = name == "avx512" || name == "neon" || name == "neon_fcma";
+      SCOPED_TRACE(name);
+      EXPECT_EQ(planned_on(8192, t), wide);  // part 8192 points: 128 KiB
+      EXPECT_EQ(planned_on(12288, t), wide); // part 4096
+      EXPECT_FALSE(planned_on(10000, t));    // part 16
+      EXPECT_FALSE(planned_on(9216, t));     // part 1024: 16 KiB, not above
     }
   }
   // Float keeps the old plans (unmeasured).

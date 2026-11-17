@@ -147,6 +147,18 @@ counters within 0.03 on every case.
   not take it here).
 - **B (the commit after A).** The same plans with derived top-pass twiddles; the stored
   form is deleted if B is adopted.
+- **C (the Apple profile, a new arm named after the screen above and before its judging
+  run).** A local screen on the M5 Max (harness, two processes per variant, with derived
+  twiddles): a top of 4 took 0.88 (6144), 0.64 (8192), 0.91 (9216), 0.96 (10240), 0.85
+  (12288), 0.90 (14336), 0.83 (16384) and 0.84 (16384 × 3) of the rules' plan, 0.92–0.95 at
+  3072–5120, but 1.05–1.09 at 10000, 12000 and 16000 (power-of-two parts of 16–128 points)
+  and 1.06 at 32768 (X32's chain); 24576 and 49152, grids there, took 0.71–0.72. The rule:
+  where a cluster shares L2, rows of L1/2 to 2 L1 (4096–16384 complex doubles on the M5 Max)
+  whose power-of-two part is above L1/8 (1024 points) take one top of 4, on NEON in double
+  (the rule's target condition becomes "32 vector registers": `avx512`, `neon`,
+  `neon_fcma`). Judged on the Mac (Clang, `neon_fcma`) by the decision rule against B, on the
+  standard catalogue's rows it changes (c2c 4096 × 1, 16, 256, 1024 and in place, 8192,
+  16384) and the tracking tier.
 - Judging run: Xeon, `--serial`, arms N = 85b4ee0, A, B, F = FFTW, M = MKL, the standard
   catalogue's rows the rule changes (c2c 16384, 20000, 32768, 46080, 65536 out of place,
   in place, backward and × 3 in and out of place, 100000, 131072, 262144), then the tracking
