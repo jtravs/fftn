@@ -151,6 +151,20 @@ band at 8 lanes) in a fresh run against the axes one by one at 8 lanes.
 - EPYC, one thread (run 20261117-155546-f3c5, P, the EPYC's program): ÷ FFTW 0.848; over it
   16³ 1.13, 128 × 64 × 32 1.08–1.12, 32³ 1.04, 16 × 256 × 256 out of place 1.03, 512 × 64 ×
   64 and 64 × 64 × 512 in place 1.02.
+- EPYC, final programs (run 20261117-191501-efe5, ce01908: one thread the axes one by one,
+  teams VT with B1's blocks; FFTW at 8 threads and serial; 6 rounds, all under load, band
+  ±1.9 %): one thread ÷ FFTW 0.845 (worst 16³ 1.15); 8 lanes ÷ FFTW's better plan 0.904, 17
+  of 38 over it: 16 × 256 × 256 1.37–1.58, 512 × 64 × 64 1.11–1.37, 128³ out of place 1.33,
+  64 × 64 × 512 out of place 1.20, 256 × 256 × 16 1.06–1.20, 120³ out of place 1.16, 16³ 1.13–
+  1.15 (inline), 256³ 1.10–1.12, 100³ backward 1.12.
+- Xeon, one thread (run 20261117-154354-7453, P, the Xeon's program): ÷ FFTW 0.733 (over:
+  64 × 64 × 512 1.13–1.24, 512 × 64 × 64 in place 1.04); ÷ oneMKL 1.118 (worst 1.51; 16³
+  1.42–1.46, 128³ 1.43–1.49, 100³ 1.35–1.38).
+- Xeon, 8 lanes (run 20261117-184612-d6bc, ce01908, whose teams run what c4cec37's do: plane
+  at a time, no team blocks; 6 rounds, 3 under load, band ±3.1 %): ÷ FFTW's better plan 0.820
+  (over: 16 × 256 × 256 out of place 1.26, 512 × 64 × 64 out of place 1.07, 32 × 64 × 128 out of
+  place 1.06, 81³ 1.01–1.04, 64 × 64 × 512 out of place 1.02); ÷ oneMKL's better plan 1.268
+  (worst 1.77).
 - The 16-point outer axes of 16 × 256 × 256 (and 16³ on x86) run as one leaf of 16 whose 16
   legs, a plane apart, share one L1 set; `column_radices` offers no other sequence for a
   leaf length. A lead for the column radices' owner, not changed here.

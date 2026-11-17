@@ -119,7 +119,7 @@ gained nothing from the blocks (0.997, 1 MiB L2) but 0.788 from plane at a time 
 fresh run pending). One thread keeps every program: plane at a time gained 0.979 (EPYC),
 0.934 with 97³ 1.048 (Xeon), 0.962 (Mac). Volumes against the competitors' better plans (38
 cases): one thread Mac 0.80, EPYC 0.85, Xeon 0.73 of FFTW and 1.12 of oneMKL; threaded Mac
-0.76 and EPYC about 0.95 of FFTW, Xeon 1.28 of oneMKL. Not met case by case: 16 × 256 × 256
+0.76, EPYC 0.90, Xeon 0.82 of FFTW, Xeon 1.27 of oneMKL. Not met case by case: 16 × 256 × 256
 (a 16-point leaf whose legs share an L1 set), 512 × 64 × 64 and 64 × 64 × 512 against FFTW;
 oneMKL on the Xeon nearly everywhere. Runs in the experiment files.
 
