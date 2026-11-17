@@ -77,7 +77,9 @@ def parse_program(note: str) -> dict:
     """The structure of the first axis line of a note."""
     line = note.split("; axis ")[0]
     prog: dict = {"pairing": "then a pairing pass" in line or "after a pairing pass" in line}
-    g = re.search(r"grid ([\d x]+) \(decimation in frequency: phases of (.*?), each in blocks", line)
+    g = re.search(
+        r"grid ([\d x]+) \(decimation in frequency: phases of (.*?), each in blocks", line
+    )
     if g:
         prog["kind"] = "grid"
         prog["phases"] = [radices(m) for m in re.findall(r"\(radices ([\d x]+)\)", g.group(2))]
@@ -143,7 +145,7 @@ def predict(prm: dict, case: str, prog: dict, caches: tuple[int, int, int]) -> f
 
 
 def loss(logp: list[float], rows: list[tuple], caches) -> float:
-    prm = dict(zip(PARAMS, (math.exp(max(-30.0, min(30.0, v))) for v in logp)))
+    prm = dict(zip(PARAMS, (math.exp(max(-30.0, min(30.0, v))) for v in logp), strict=False))
     s = 0.0
     for case, prog, t in rows:
         d = math.log(predict(prm, case, prog, caches)) - math.log(t)
@@ -187,7 +189,7 @@ def fit(rows: list[tuple], caches, start: list[float] | None = None) -> dict:
     best = nelder_mead(lambda x: loss(x, rows, caches), x0)
     best = nelder_mead(lambda x: loss(x, rows, caches), best)  # a restart
     # Clamped as in loss(): a parameter the data cannot see may drift without bound.
-    return dict(zip(PARAMS, (math.exp(max(-30.0, min(30.0, v))) for v in best)))
+    return dict(zip(PARAMS, (math.exp(max(-30.0, min(30.0, v))) for v in best), strict=False))
 
 
 # ---- Data -----------------------------------------------------------------------------
@@ -215,8 +217,12 @@ def evaluate(path: Path, caches, out: Path | None) -> None:
     print(f"{path.name}: {cpu}; caches L1 {caches[0]} L2 {caches[1]} L3 {caches[2]}; arms {arms}")
     for prec in ("f64", "f32"):
         sel = [c for c in cases if (c.endswith("-f32")) == (prec == "f32")]
-        rows = [(c, parse_program(notes[(a, c)]), med[(a, c)]) for c in sel for a in arms
-                if (a, c) in med and a != "R"]
+        rows = [
+            (c, parse_program(notes[(a, c)]), med[(a, c)])
+            for c in sel
+            for a in arms
+            if (a, c) in med and a != "R"
+        ]
         if not rows:
             continue
         full = fit(rows, caches)
@@ -237,15 +243,21 @@ def evaluate(path: Path, caches, out: Path | None) -> None:
             else:
                 misses.append(f"{c} chose {choice} {ratio:.3f}")
         rms = math.sqrt(loss([math.log(full[p]) for p in PARAMS], rows, caches) / len(rows))
-        print(f"  {prec}: {len(sel)} cases; fit rms {rms:.3f} (log); params "
-              + ", ".join(f"{p} {full[p]:.3g}" for p in PARAMS))
-        print(f"    model within 5 % of the fastest: {within} of {len(sel)} "
-              f"({100 * within / len(sel):.1f} %); geomean {statistics.geometric_mean(ratios):.3f}; "
-              f"rules {statistics.geometric_mean(rules):.3f}")
+        print(
+            f"  {prec}: {len(sel)} cases; fit rms {rms:.3f} (log); params "
+            + ", ".join(f"{p} {full[p]:.3g}" for p in PARAMS)
+        )
+        print(
+            f"    model within 5 % of the fastest: {within} of {len(sel)} "
+            f"({100 * within / len(sel):.1f} %); geomean {statistics.geometric_mean(ratios):.3f}; "
+            f"rules {statistics.geometric_mean(rules):.3f}"
+        )
         for m in misses:
             print("      " + m)
         if out:
-            out.write_text(json.dumps({"cpu": cpu, "precision": prec, "caches": caches, **full}) + "\n")
+            out.write_text(
+                json.dumps({"cpu": cpu, "precision": prec, "caches": caches, **full}) + "\n"
+            )
 
 
 # ---- Calibrated thresholds (the fallback: the profile's own fields, fitted) ------------
@@ -255,13 +267,16 @@ SIZES = [2**k for k in range(13, 30)]  # candidate thresholds in bytes, 8 KiB to
 
 def structure(t: dict, n: int, e: int) -> str:
     """The arm the profile's long-row fields choose for a complex line of n (plan_grid's rule:
-    grid_min_bytes, chain_part_bytes and chain_mixed_bytes for mixed lengths, pow2_chain_bytes for powers of two,
-    grid_three_bytes and grid_two_odd_part)."""
+    grid_min_bytes, chain_part_bytes and chain_mixed_bytes for mixed lengths,
+    pow2_chain_bytes for powers of two, grid_three_bytes and grid_two_odd_part)."""
     b = n * e
     part = n & -n
     odd = n // part
-    chain = (b <= t["grid_min"] or (odd > 1 and (part * e <= t["part"] or b <= t["mixed"]))
-             or (odd == 1 and b <= t["pow2"]))
+    chain = (
+        b <= t["grid_min"]
+        or (odd > 1 and (part * e <= t["part"] or b <= t["mixed"]))
+        or (odd == 1 and b <= t["pow2"])
+    )
     if chain:
         return "C"
     three = b > t["three"] and (t["odd"] == 0 or odd < t["odd"])
@@ -285,9 +300,9 @@ def fit_thresholds(cases: list[str], med: dict) -> dict:
     # grid_min last: moved first, it would make every row a chain before the exceptions
     # (part, mixed, pow2) could keep the chains that win.
     choices = {
-        "part": [0] + SIZES[:8],
-        "mixed": [0] + SIZES[:8],
-        "pow2": [0] + SIZES,
+        "part": [0, *SIZES[:8]],
+        "mixed": [0, *SIZES[:8]],
+        "pow2": [0, *SIZES],
         "three": SIZES,
         "odd": [0, 3, 5, 15, 25, 125],
         "grid_min": SIZES,
@@ -328,9 +343,12 @@ def thresholds(path: Path) -> None:
             else:
                 misses.append(f"{c} chose {arm} {ratio:.3f}")
         print(f"  {prec}: fields {full}; the rules within 5 %: {rules_within} of {len(cases)}")
-        print(f"    calibrated fields within 5 % of the fastest: {within} of {len(cases)} "
-              f"({100 * within / len(cases):.1f} %); geomean {statistics.geometric_mean(ratios):.3f}; "
-              f"rules {statistics.geometric_mean(rules):.3f}")
+        print(
+            f"    calibrated fields within 5 % of the fastest: {within} of {len(cases)} "
+            f"({100 * within / len(cases):.1f} %); "
+            f"geomean {statistics.geometric_mean(ratios):.3f}; "
+            f"rules {statistics.geometric_mean(rules):.3f}"
+        )
         for m in misses:
             print("      " + m)
 
@@ -342,19 +360,27 @@ def granite_rapids(path: Path) -> None:
     gnr = MACHINES["granite-rapids"]
     arms = sorted({a for a, _ in med} - {"R"})
     cases = sorted(c for c in {c for _, c in med} if not c.endswith("-f32"))
-    rows = [(c, parse_program(notes[(a, c)]), med[(a, c)]) for c in cases for a in arms
-            if (a, c) in med]
+    rows = [
+        (c, parse_program(notes[(a, c)]), med[(a, c)]) for c in cases for a in arms if (a, c) in med
+    ]
     prm = fit(rows, xeon)
     print(f"{path.name}: {cpu}'s fit priced with Granite Rapids' caches {gnr}")
     for c in cases:
-        pred = {a: predict(prm, c, parse_program(notes[(a, c)]), gnr) for a in arms if (a, c) in med}
+        pred = {
+            a: predict(prm, c, parse_program(notes[(a, c)]), gnr) for a in arms if (a, c) in med
+        }
         here = {a: predict(prm, c, parse_program(notes[(a, c)]), xeon) for a in pred}
-        print(f"  {c:24s} Granite Rapids: {min(pred, key=pred.get):3s}  Xeon: {min(here, key=here.get):3s}  "
-              f"measured on the Xeon: {min(pred, key=lambda a: med[(a, c)])}")
+        print(
+            f"  {c:24s} Granite Rapids: {min(pred, key=pred.get):3s}  "
+            f"Xeon: {min(here, key=here.get):3s}  "
+            f"measured on the Xeon: {min(pred, key=lambda a: med[(a, c)])}"
+        )
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     sub = p.add_subparsers(dest="command", required=True)
     f = sub.add_parser("fit")
     f.add_argument("run", type=Path)
