@@ -12,8 +12,6 @@ namespace {
 
 inline constexpr target id = target::scalar;
 inline constexpr bool fused = false;
-// No pair: the flat codelets (vocabulary.inl; experiment X42).
-inline constexpr int codelet_registers = 32;
 inline constexpr bool masked = false;
 
 template <class T> struct cplx {

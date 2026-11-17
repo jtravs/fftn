@@ -38,7 +38,6 @@ gap.
 | `lower.py` | complex-register lowering: one vocabulary operation per node |
 | `split.py` | split lowering: real and imaginary parts on real registers, FMA-shaped |
 | `schedule.py` | emission order and the peak number of live values |
-| `staged.py` | two-level codelets staged through memory, for 16-register targets |
 | `verify.py` | the exact check of an operation list against the DFT |
 | `emit_cpp.py` | the C++ text and the metadata header |
 | `catalogue.py` | the radices generated and the output files: the only list of radices in FFTN |
@@ -323,30 +322,6 @@ twiddles (swap(z) = i·conj(z)); the passes do the exchange (`src/passes/split.i
 Split metadata counts real-register operations (`adds`, `muls`, `fmas`, `negs`, `vops`)
 and live real values: radix 16 needs 34 to 40 registers, which spills on AVX2's 16 and
 slightly on AVX-512's 32.
-
-## Two-level codelets
-
-`staged.py` (experiment X42) writes a second form of the plain and DIF codelets of the
-radices in `catalogue.STAGED` (25 = 5 × 5, 32 = 8 × 4, 64 = 8 × 8), whose flat forms peak at
-29, 35 and 67 live values. R = n1 n2 is split by Cooley–Tukey: level A computes the n2
-DFTs of n1 points over x[n2 j1 + j2], multiplies output k1 by w^(j2 k1) and stores it to slot
-k1 n2 + j2 of a local array `st`; level B loads the slots and computes the n1 DFTs of n2
-points, output k2 of DFT k1 being X[k1 + n1 k2] (times its twiddle, DIF). Each level is
-built, lowered (level A both as built and in real-coefficient form, whichever has fewer
-operations) and ordered on its own, so each peaks at 12–16 live values; level A's stores
-may hold a rotated value, which level B undoes for free (`lower(..., residual)`). Between
-the levels the emitter prints `gen_fence(st)`, an empty `asm` that reads and writes the
-array, so the compiler cannot fold it back into registers and spill on its own. Every load
-is in level A and every store in level B, so in and out may still alias. The cost is 4–12 %
-more vector operations (DIF: 25 275 against 246, 32 253 against 243, 64 657 against 591)
-and R stores and loads of the slots; Clang's `avx2` radix-64 lane pass keeps about 140
-vector moves to the stack per codelet against about 445 flat.
-
-The operation list, both levels and the slot traffic (`stage_store`, `stage_load`), is
-verified like a flat codelet's. The C++ text holds both forms inside `cdft<R>`; a target
-compiles the two-level one where its vocabulary's `codelet_registers` is 16 (`avx2`, and
-`avx512`, which rounds like `avx2` and must give the same bits with the same passes). dit
-keeps its flat form (no pass calls it), and the metadata table describes the flat forms.
 
 ## Subtleties
 

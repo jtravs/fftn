@@ -21,8 +21,6 @@ namespace {
 
 inline constexpr target id = target::avx512;
 inline constexpr bool fused = true;
-// avx2's 16: the two round alike, so both run the same codelets (vocabulary.inl, X42).
-inline constexpr int codelet_registers = 16;
 // Masked partial runs (load_n, store_n below) where the build enables them: on with GCC,
 // off with Clang and icpx by default (FFTN_MASKED_TAILS in CMakeLists.txt; experiment X23).
 inline constexpr bool masked = FFTN_MASKED_TAILS != 0;

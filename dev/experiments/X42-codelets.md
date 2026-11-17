@@ -58,11 +58,6 @@ Arms are commits of branch `exp/x42-codelets` against A = `origin/main` (4d00f0a
   C's build, candidates with radix 32 or 64 (`--radices 2-16,20,25,32,64 --require 32,64`),
   lengths 512, 640, 768, 1024, 1536, 2048, 3072, 4096; overrides by B2's selection rule.
 
-Order of the commits (amended before any timing): B, C, then B2 and D, whose sequences are
-searched on C's build, since that is the codelet text both x86 targets then run; C is
-judged against B on plans that already take a radix-32 pass on `avx2` (256, 384, 512, 640)
-and on forced radix-25/32/64 sequences, B2 and D against C.
-
 No switch: arms are commits, `dev/KNOBS.toml` is untouched. Library text size is recorded
 per arm (Mac static library, Clang; x86-64 Linux, GCC 16).
 

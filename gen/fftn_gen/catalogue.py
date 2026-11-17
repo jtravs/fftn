@@ -18,7 +18,6 @@ from .codelet import (
     build_split,
 )
 from .emit_cpp import codelet_inl, metadata_hpp, split_codelet_inl
-from .staged import build_staged
 
 # Every size 2 to 16; the primes 17, 19 and 23, the leaves of those lengths and the passes
 # of those factors in composites, which otherwise went through Bluestein (experiment X27);
@@ -28,13 +27,6 @@ from .staged import build_staged
 # whole-transform leaves (experiment X8) and few-big-pass chains (task 1.6, experiment X3)
 # use. Ascending: the C++ tables list the rows in this order.
 RADICES = (*range(2, 18), 19, 20, 23, 25, 32, 64)
-
-# The radices whose plain and dif codelets also have a two-level form, R = n1 x n2 staged
-# through memory (staged.py), which targets with 16 vector registers compile instead of the
-# flat form (codelet_registers in src/isa/vocabulary.inl): the flat forms peak at 29, 35
-# and 67 live values (experiment X42). dit keeps its flat form: no pass calls it.
-STAGED = {25: (5, 5), 32: (8, 4), 64: (8, 8)}
-STAGED_VARIANTS = ("plain", "dif")
 
 # The split lowering's radices (task 1.5, experiment X1): the lane passes of a chain, which
 # the planner prices up to 16. A split codelet holds about twice the live registers of a
@@ -47,33 +39,20 @@ def all_codelets() -> list[Codelet]:
     return [build(r, v, s) for r in RADICES for v in VARIANTS for s in SIGNS]
 
 
-def all_staged_codelets() -> list[Codelet]:
-    return [
-        build_staged(r, n1, n2, v, s)
-        for r, (n1, n2) in STAGED.items()
-        for v in STAGED_VARIANTS
-        for s in SIGNS
-    ]
-
-
 def all_split_codelets() -> list[SplitCodelet]:
     return [build_split(r, v) for r in SPLIT_RADICES for v in SPLIT_VARIANTS]
 
 
 def generate(
-    codelets: list[Codelet] | None = None,
-    split: list[SplitCodelet] | None = None,
-    staged: list[Codelet] | None = None,
+    codelets: list[Codelet] | None = None, split: list[SplitCodelet] | None = None
 ) -> dict[str, str]:
     """File name (under src/gen/) to contents."""
     if codelets is None:
         codelets = all_codelets()
-    if staged is None:
-        staged = all_staged_codelets()
     if split is None:
         split = all_split_codelets()
     return {
-        "complex_codelets.inl": codelet_inl(codelets, staged, STAGED),
+        "complex_codelets.inl": codelet_inl(codelets),
         "split_codelets.inl": split_codelet_inl(split),
         "codelets.hpp": metadata_hpp(codelets, split),
     }

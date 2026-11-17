@@ -19,8 +19,6 @@ namespace {
 
 inline constexpr target id = target::neon;
 inline constexpr bool fused = true;
-// The registers the codelets are written for (vocabulary.inl; experiment X42).
-inline constexpr int codelet_registers = 32;
 inline constexpr bool masked = false;
 
 // Twiddles pre-arranged as on x86 (DESIGN.md 6.2): r holds (wr, wr) and i holds (-wi, wi)
