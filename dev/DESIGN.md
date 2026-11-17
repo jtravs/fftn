@@ -1517,9 +1517,9 @@ the machine-specific estimate for callers who want it.
 - "Fast" is a property of the table, not a measured guarantee: in P4, 78 % of the picks ran
   within 1.3 of the power of two above on each x86 machine, and 140 (the pick for 131) ran
   at 1.76 on the Xeon.
-- **`next_fast_length(n, real)`** returns the smallest fast length at or above n, or with
-  `real` the smallest even one whose half is fast (2 for n ≤ 2). In 2-D and 3-D only the
-  halved axis takes `real`. It tests only the candidates in [n, 2n] (products of 2, 3, 5,
+- **`next_fast_length(n, kind)`** returns the smallest fast length at or above n, or with
+  `length_kind::real` the smallest even one whose half is fast (2 for n ≤ 2). In 2-D and
+  3-D only the halved axis takes `length_kind::real`. It tests only the candidates in [n, 2n] (products of 2, 3, 5,
   7 and 13, and the lone 11 to 23), so one query takes 5–200 µs on average up to 2⁴⁰ on
   the M5 Max, under 0.6 ms at worst. The largest step up to 200000 is 17 % (41 → 48).
 - Both queries accept n ≤ 2⁴⁰ and throw `std::invalid_argument` above it: `row_cost` is
@@ -2628,29 +2628,8 @@ margin, serial timing. Still open, details below the API: the shape key uses str
 distances as given (0 for a default), so two spellings of one layout are two keys; a plan for
 a team is chosen by its serial time.
 
-**Task 2.5: fast lengths and the per-length estimate.** Proposed by the lead, pending the
-maintainer.
-- (a) A new header, `fftn/lengths.hpp`, included by `fftn.hpp`, rather than the convenience
-  layer of 5.4, since applications choose grid sizes before they plan.
-- (b) `std::size_t next_fast_length(std::size_t n, bool real = false)`: a `bool` for real
-  transforms (scipy's `next_fast_len(target, real)`). The alternatives are a separate
-  `next_fast_real_length`, or a kind argument.
-- (c) What "fast" means: within 1.25 times the reference table's cost per point of the power
-  of two at or above, with the reference a frozen copy of AVX2's double table, fixed per
-  version. No prime
-  factor above 23 can be fast, and no composite with 11, 17, 19 or 23 (P4). The alternative is a plain smoothness rule (7-smooth, say),
-  which ignores the vector width's partial tiles: odd smooth lengths cost 1.5–3 times a
-  power of two per point.
-- (d) `template <class T> double relative_cost(std::size_t n, isa target = isa::best)`. It
-  returns a ratio to the power of two above rather than an absolute estimate, since the
-  tables' units are not time; it covers complex rows only (real rows use n / 2), and in-cache
-  rows. The lead's sketch had `estimated_cost(shape)`; a shape-wide estimate needs the cost
-  model that P3 rejected.
-- (e) Edge values: `next_fast_length(0)` is 1, n ≤ 2 returns n, and with `real` n ≤ 2
-  returns 2. Above 2⁴⁰ both queries throw `std::invalid_argument` (the alternative was to
-  return n, or with `real` the next even length, unsearched).
-- (f) Pending: an enum (`next_fast_length(n, length_kind::real)`, say) instead of the `bool`,
-  which reads better at the call site; kept as `bool` for now, scipy's spelling.
+**Task 2.5: fast lengths and the per-length estimate.** Settled: agreed by the maintainer,
+2026-11-17, with `bool real` replaced by `length_kind` (decision log).
 
 **Threading API and contract (tasks 3.1 and 3.2), for the maintainer's review.** Built as
 below because section 5.3 left the shapes open; each is easy to change before a release.
@@ -2912,6 +2891,11 @@ to change before a release.
 | 2026-11-17 | The strided axes of c2c planes and volumes run as lanes over blocks of adjacent columns (256 bytes of columns, four lines where each column element has its own page, halved to keep two tiles in L2/4 below a page, the chain beyond), with column radices whose last pass keeps its legs within the L1's ways; a loop over lines whose body is one leaf is one leaf call (section 9.3) | X40: the 37 c2c planes 0.613 (Mac), 0.453 (EPYC), 0.537 (Xeon) of the column-by-column chain's time; FFTN ÷ FFTW 1.44 → 0.88, 2.07 → 0.94, 1.49 → 0.80; ÷ MKL 1.87 → 1.00; no case slower |
 | 2026-11-17 | `next_fast_length` and `relative_cost` public in `fftn/lengths.hpp` (task 2.5, section 9.2): a fast length is one AVX2's double cost table prices within 1.25 of the power of two above, per point, and not a composite with a factor 11, 17, 19 or 23 (experiment P4's rule: such composites missed 1.3 of the power of two on two machines each); the API choices are proposed by the lead, pending the maintainer (18.2) | DESIGN 9.2's design (a pure function of the version, a machine-specific query beside it); the tables are the planner's own, so the two agree with what plans do; P4 checks the lengths are fast on the three machines |
 | 2026-11-17 | The fast lengths' reference table is a frozen copy of AVX2's double table (`reference_costs`), not the planner's; both length queries throw above 2⁴⁰; `next_fast_length` tests only the 2, 3, 5, 7, 13-smooth candidates in [n, 2n]; 20 is priced as the chain the planner builds (PR #41 review) | a refit of the planner's tables must not move users' grids (a checksum test pins the set to 2²⁰; unchanged by this change); the old trial of every integer took 1.8 s at 2³⁹ + 1, now under 0.6 ms; pricing above 2⁴⁰ was inexact or undefined |
+| 2026-11-17 | Task 2.5's API, agreed by the maintainer, 2026-11-17: `fftn/lengths.hpp`, included by `fftn.hpp`; `std::size_t next_fast_length(std::size_t n, length_kind kind = length_kind::complex)` with `enum class length_kind : unsigned char { complex, real }` (an enum replaces the proposed `bool real`, and a value outside it throws `std::invalid_argument`); `template <class T> double relative_cost(std::size_t n, isa target = isa::best)`, a ratio to the power of two above, complex in-cache rows only; edge values 1 for n = 0, 2 with `length_kind::real` for n ≤ 2 | the enum reads better at the call site than scipy's `bool`; a header of its own since grids are chosen before planning; a ratio since the tables' units are not time, and a shape-wide estimate needs the cost model P3 rejected |
+| 2026-11-17 | "Fast" as defined by the frozen reference table (within 1.25 of the power of two above, per point; no prime factor above 23; no composite with 11, 17, 19 or 23), the 2⁴⁰ limit of both queries, and P4's x86 shortfall (78 % of picks within 1.3 against the 90 % planned), agreed by the maintainer, 2026-11-17 | machine-independent grids are the point of the query; `relative_cost` gives each machine's own view; P4's rule 1 target is lowered to 75 % in the experiment file, with the reason |
+| 2026-11-17 | `FFTN_OLD_X86_TARGETS` (the `x86_v2` and `avx` targets of task 1.3) ON by default, agreed by the maintainer, 2026-11-17 | older x86 processors run a vector target rather than the scalar one |
+| 2026-11-17 | The library's size (X27's codelets of 17, 19 and 23: +25 % of library text) accepted, agreed by the maintainer, 2026-11-17; no size budget that can fail a pull request: phase 6 adds an informational report (CI prints the library's text size per target on each pull request), experiment files record size changes, and build options (`FFTN_OLD_X86_TARGETS`, instantiating only the kernels that win) remain the levers if size ever matters | speed takes precedence; the codelets cut those cases to 0.24–0.31 of main's time, and the report keeps growth visible |
+| 2026-11-17 | The recorded protocol caveats, agreed by the maintainer, 2026-11-17: X35's and X14's, the queue bypasses of X36, X38 and X39, and the recorded exception cases (X23b's two) | each is recorded in its experiment file with its reason |
 | 2026-11-17 | A radix-25 codelet (Cooley–Tukey 5 × 5), a pass radix only, with passes on the x86 and scalar targets only (none on NEON); `avx2` double overrides take it at 500, 3125, 5000, 10000, 15625, 25000 and `avx512` double at 100, 500, 3125, 10000, 15625, 25000; two-level codelets staged through memory for 16-register targets rejected (experiment X42) | EPYC 0.874 / 0.891 of the arm before over the changed lengths (FFTN ÷ FFTW 3125 0.77 → 0.65, 15625 0.79 → 0.66), Xeon about 0.86 / 0.842 (100 1.14 → 0.88 of FFTW, 3125 0.81 → 0.53); on the Mac radix 25 lost to radix-5 chains; the two-level form changed nothing with GCC (1.000) and slowed radix 25; library text +6.1 % on x86-64, +2.0 % on the Mac |
 
 ---

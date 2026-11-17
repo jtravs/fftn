@@ -94,24 +94,34 @@ task 4.2 measures them. Real planes still run their complex axes column by colum
 
 ### Tasks
 
+As of 2026-11-17 midday.
+
 Done: phase 0 (0.1–0.10, 0.5b, B1, B2, X15); phase 1 tasks 1.1, 1.2, 1.5 (X1), 1.6 (X3),
-1.7 and 1.7b (X12 on the Mac, X12b), with X8, X10 (rejected), X18, X19, X20, X21 (cloud,
-USD 1.36), X22 (icpx); phase 2 tasks 2.1, 2.3 and 2.3b (X17), the planner refresh (X2 refit
-on every machine, X16); phase 3 tasks 3.1–3.3 with T1 and T5. X24 rejected. CI restructured
-(per-push slim, weekly extended; CI on a pull request is the merge gate).
+1.7 and 1.7b (X12, X12b), 1.3 (`x86_v2` and `avx`, X14; merging as pull request 48), with
+X8, X10, X18–X39 (the 1-D double push and the tail round); phase 2 tasks 2.1, 2.3 and 2.3b
+(X17), 2.4 (`planning::measure`, wisdom, P1 acceptance met on all three machines; the cost
+model P3 rejected on a first pass), 2.5 (`next_fast_length`, `relative_cost`; API agreed by
+the maintainer, `length_kind` in pull request 50); phase 3 tasks 3.1–3.3 with T1 and T5; phase 4 task 4.1's first part (X40:
+one-thread c2c planes 0.80–0.94 of FFTW). CI: per-push gate on pull requests, a ruleset on
+main (checks required, branches up to date), weekly extended jobs green.
 
 Open, by phase:
 
 - 0: the Xeon client-catalogue baseline.
-- 1: 1.3's `x86_v2` and `avx` vocabularies and X14; X2 on the Mac above 1024; X4 on x86
-  and for edge passes; X12 on x86; X5. The phase 1 exit is not met: x86 trails FFTW.
-- 2: 2.2's acceptance in double c2c on AVX-512 (the chain 1.01–1.26 of FFTW at 8–16
-  points; X24 rejected both planned fixes); 2.4 (`planning::measure` and wisdom built, P1 and P2 in a first pass; the cost model and calibration remain;
-  task/2.4-measure); 2.5 (`next_fast_length` exists internally, not public); X6, X13.
-- 3: T2, T3, T4, T6; 3.5 (Kokkos executor); 3.6 to be checked against its acceptance.
-- 4: 4.1 in progress (X40 first pass adopted; next: rows of short-row planes in one call
-  per stage, long columns beyond L2 in two phases, real planes' complex axes, threaded planes).
-- 5–7: not started.
+- 1: the exit: every mean target met, the 5 % tail rule not yet (re-run the exit check after
+  pull request 48); X2 on the Mac above 1024; X4 on x86 and for edge passes; X5 (twiddle
+  modes); the tail's leftovers (Xeon 16384, a radix-25 codelet for 20000/25000/100000, EPYC
+  512–2048 with radix-32/64 codelets that fit 16 registers, a few tiny batches).
+- 2: 2.2's acceptance in double c2c on AVX-512 (re-check after X37's batches of 16);
+  X6 (real-input codelets), X13; the cost model's second pass and `fbench calibrate`.
+- 3: T2, T3, T4, T6; 3.5 (Kokkos executor); 3.6 to be checked against its acceptance;
+  threaded planes (4.1).
+- 4: 4.1's rest (small planes in batches, EPYC 32², columns beyond L2, Xeon ÷ MKL at
+  16²–1000², real planes' complex axes, threaded planes); 4.2 (volumes: pencil blocks sized
+  to L2, the scratch bound); 4.3 (axis subsets, strided arrays, real multi-dimensional).
+- 5–7: not started (5: fusion and pipelines; 6: float tuning, convenience layer, DCT/DST,
+  C API, cloud tuning, docs, packaging, first release; 7: on demand, FFTW3 shim, SVE,
+  Python).
 
 In flight (lead session, 2026-11-17): task 1.3
 (`x86_v2` and `avx` targets, X14); task 4.1's next part (small planes, real planes, threaded planes); a tidy fix. Task 2.4's acceptance is met (P1:
@@ -123,9 +133,9 @@ pull request:
   0.77 → 0.65; Xeon 100–25000 0.84–0.86, 3125 0.81 → 0.53, 25000 1.23 → 1.18); two-level
   radix-25/32/64 codelets for 16 registers rejected (no gain with GCC: the two-pass plans at
   512–2048 lose on IPC, not on spills); EPYC 512–2048 stay 1.13–1.22 of FFTW.
-- Task 2.5 (pull request 41): `next_fast_length(n, real)` and `relative_cost<T>(n, isa)` in
-  `fftn/lengths.hpp`, a frozen reference table, the fast set to 2²⁰ pinned; API proposed by
-  the lead, pending the maintainer (DESIGN 18.2); P4: picks 0.11–0.96 of the awkward lengths
+- Task 2.5 (pull requests 41, 50): `next_fast_length(n, kind)` and `relative_cost<T>(n, isa)`
+  in `fftn/lengths.hpp`, a frozen reference table, the fast set to 2²⁰ pinned; API agreed
+  by the maintainer (2026-11-17), with `length_kind` for the proposed `bool`; P4: picks 0.11–0.96 of the awkward lengths
   they replace; within 1.3 of the power of two above on 96 % (Mac), 78 % (x86).
 - Task 4.1, first part (X40, pull request 43): columns of planes and volumes in blocks of
   adjacent columns, column radices counted against the L1's ways, leaf loops as one call: 37
@@ -250,8 +260,7 @@ pull request:
   `avx512` float 256 1.047, EPYC double 72 1.033).
 - X25 (the x86 gap's causes) is done; its verdicts are folded into the leads below.
 
-For the maintainer (decisions taken by the lead overnight, easy to revert): X23b's two
-exceptions; X27's 25 % larger library; X26's prefetch gate by target (Intel cores without
+For the maintainer (decisions taken by the lead overnight, easy to revert): X26's prefetch gate by target (Intel cores without
 AVX-512 lose up to 1.20 at 2²² until a rule by core and row width exists); X28's 128-bit
 leaves kept on `avx2` though they gain only at 8–16 points there; X30's 512 override
 kept although the Xeon under `avx2` loses r2c 1024² (1.057 on re-run; EPYC 1.014): with X26's
@@ -486,7 +495,7 @@ behaves differently from the Cascade Lake Xeon's) and on an AArch64 Linux machin
 | 2.2 | Lanes strategy for row batches (tile gather and scatter) and strided lines; lane blocks sized by cache; experiment X7 | awkward short rows on AVX-512 at or below FFTW and MKL (built 2026-11-15; X7 after X20: lanes only in float on x86, 0.32–0.55 of the chain at 8–16 points; double c2c on AVX-512 still 1.1–1.3 of FFTW with the chain, not met; strided axes of planes are phase 4's) |
 | 2.3 | Codelets 7, 11, 13 and composites; vectorised generic prime pass; Bluestein pass with smooth-part split | every n ≤ 4096 correct and priced; no FFTW fallback anywhere |
 | 2.4 | Cost model, machine profiles and `fbench calibrate`; `planning::measure` with a generous budget (DESIGN 11.2: real-size timing, seconds per shape if needed, a quick level; never PATIENT-like search); wisdom export and import; experiments P1, P2; brought forward on 2026-11-16 ahead of more threshold rules (claimed: task/2.4-measure, 2026-11-16: `planning::measure`, wisdom, P1, P2 first pass) | the model's first choice is within 5 % of the measured best for ≥ 90 % of catalogue cases |
-| 2.5 | `next_fast_length` and published per-length cost (in progress, task/2.5-next-fast-length: `fftn/lengths.hpp`, P4) | documented and tested |
+| 2.5 | `next_fast_length` and published per-length cost (done: `fftn/lengths.hpp`, P4; pull requests 41 and 50) | documented and tested |
 
 Exit: all 1-D row shapes (c2c, r2c, c2r; 1 to thousands of rows; smooth, prime and
 awkward lengths) meet the section 1.3 targets on one thread on M-series, Zen 3, the Xeon,
@@ -550,7 +559,12 @@ layout; C API; Windows tuning; AArch64 Linux tuning on Neoverse N1, V1 and V2 (c
 Zen 4/5 and recent Intel (cloud); the documents of DESIGN.md section 17 complete and
 reviewed as a whole (each phase adds its own part as it lands); the per-release public benchmark
 report (one command, fixed cases and machines); packaging (CMake package,
-pkg-config, a generated amalgamation if wanted); first tagged release.
+pkg-config, a generated amalgamation if wanted); an informational library size report, never a gate
+(the maintainer, 2026-11-17: speed takes precedence, and the present size, X27's +25 %
+included, is accepted): CI prints the library's text size per target on each pull request,
+experiment files record size changes, and build options (`FFTN_OLD_X86_TARGETS`,
+instantiating only the kernels that win) remain the levers if size ever matters; first
+tagged release.
 
 ### Phase 7: on demand
 
@@ -620,7 +634,7 @@ running, done (with verdict).
 | [P2](experiments/P2-measure-budget.md) | Measurement budget: how many candidates and how long before the choice stops improving; the quick and full efforts' budgets | 2 | first pass done: Q within 0.999–1.014 of M; no winner above rank 7; plan construction dominates large transforms (2²² 12.5 s for M); choices unstable under load (43–66 % of cases one program over 12 rounds), so budgets wait for a sampling revisit; indicated quick 6, measure 8 |
 | [P1b](experiments/P1b-rader-65537.md) | Rader or Bluestein at 65537 on x86: measure chose Bluestein on the EPYC (rules 1.75 of its time); should the x86 Rader range stop below 2¹⁶ as NEON's does? | 2 | done: rules unchanged. EPYC Bluestein 1.49 (double) and 1.18 (float) slower than Rader at 65537 in this run, the opposite of P1's 1.75: bimodal by process (Rader's gathers and the page size); a page-robust Rader stage is the follow-up |
 | [P3](experiments/P3-cost-model.md) | A calibrated cost model for long rows (DESIGN 11.2's additive model with a memory factor per cache level, fitted per machine by `fbench calibrate`): does it choose chain, two or three grid phases within 5 % of the fastest on 90 % of long rows, and can it replace X12b/X29/X32/X33/X34's thresholds? | 2 | done, first pass: rejected (model within 5 % on 100/95 % on the EPYC but 72/55 % Mac, 72/80 % Xeon, worse than the rules there; calibrated thresholds also fail on Mac and Xeon); thresholds stay; misfires left to `planning::measure` and wisdom; a denser catalogue and a set-conflict term for a second pass |
-| [P4](experiments/P4-next-fast-length.md) | Are `next_fast_length`'s lengths fast on the Mac, the EPYC and the Xeon (within 1.3 of the power of two above, faster than the awkward length), and do composites with 11–23 belong in the fast set? (task 2.5) | 2 | done: every pick faster than its awkward length (0.11–0.96); composites with 11, 17, 19 or 23 removed by the rule; within 1.3 of the power of two above on 96 % (Mac) but 78 % (EPYC, Xeon), the misses short x86 lengths below 300 (maintainer's choice) |
+| [P4](experiments/P4-next-fast-length.md) | Are `next_fast_length`'s lengths fast on the Mac, the EPYC and the Xeon (within 1.3 of the power of two above, faster than the awkward length), and do composites with 11–23 belong in the fast set? (task 2.5) | 2 | done: every pick faster than its awkward length (0.11–0.96); composites with 11, 17, 19 or 23 removed by the rule; within 1.3 of the power of two above on 96 % (Mac) but 78 % (EPYC, Xeon), the misses short x86 lengths below 300; rule 1's target lowered to 75 % by the maintainer (2026-11-17) |
 | [T1](experiments/T1-dispatch-wait-costs.md) | Dispatch, wake and wait costs per machine and runtime (libgomp, libomp, Kokkos, pool) | 3 | done: hand-off cost and claim runs adopted on Zen 3; dispatch and work costs wait for a per-lane dispatch term |
 | T2 | Claiming engine against precomputed schedule with spin barriers; keep one or both? | 3 | planned |
 | T3 | Kokkos: cost of one `parallel_for` per transform; `team_barrier` behaviour | 3 | planned |
