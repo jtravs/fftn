@@ -448,9 +448,11 @@ grid_split plan_grid(std::size_t n, const side& in, const side& out, const build
 // The depth-first chain's top factors for a c2c row of n of one axis (DESIGN.md 8.5,
 // strategies/chain.hpp, c2c_depth; experiment X46), or none: for a row contiguous on both
 // sides (in place through the workspace block), with no factor edge and the scale (if any) on
-// its output, without forced radices for its whole length, whose split fits. Forced: the
-// forced factors (build_settings::depth_tops), else one codelet radix, the smallest whose
-// sub-row of n / F1 fits the L1 data cache (profile.grid_block_bytes), else the one with the
+// its output, without forced radices for its whole length, whose split fits. The given
+// factors (build_settings::depth_tops), when not empty, replace the default ones: wherever
+// they fit when the strategy is forced, and where the rules take the chain otherwise (none
+// where they do not fit). Forced, by default: one codelet radix, the smallest whose sub-row
+// of n / F1 fits the L1 data cache (profile.grid_block_bytes), else the one with the
 // shortest sub-row. By the rules (X46 arms A and C): in double on a target with 32 vector
 // registers (`avx512`, NEON; tops of 16 lost 1.2-1.7 on `avx2`'s 16), a row of
 // [depth_min_bytes, depth_max_bytes] whose power-of-two part has more than depth_part_bytes,
@@ -479,6 +481,10 @@ std::vector<std::size_t> depth_tops_of(std::size_t n, const side& in, const side
         bytes < m.depth_min_bytes || bytes > m.depth_max_bytes ||
         (n & (~n + 1)) * 2 * sizeof(T) <= m.depth_part_bytes) {
       return {};
+    }
+    if (!settings.depth_tops.empty()) {
+      return chain.depth_fits(n, settings.depth_tops) ? settings.depth_tops
+                                                      : std::vector<std::size_t>{};
     }
     for (const std::size_t r : {m.depth_top, m.depth_top_alt}) {
       if (r != 0 && chain.depth_fits(n, {r})) {
@@ -1038,6 +1044,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     const std::size_t subs = checked_product(depth_tops);
     const std::size_t m = n / subs;
     c.built = strategy_choice::depth;
+    c.depth_tops = depth_tops;
     // In place the blocks go to the workspace block: the first pass reads the whole input.
     const slot work = c.in_place ? slot::block : slot::out;
     if (c.in_place) {
@@ -1362,6 +1369,7 @@ std::shared_ptr<plan_core> build_plan_core(const shape_view& s, const options& o
       .grid_factors = settings.grid_factors,
       .grid_phases = settings.grid_phases,
       .rader = settings.rader,
+      .depth_tops = settings.depth_tops,
   };
   c->program_text = choice_text(pinned_choice(built, *c));
   return c;

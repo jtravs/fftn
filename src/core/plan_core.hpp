@@ -63,8 +63,10 @@ struct build_settings { // NOLINT(clang-analyzer-optin.performance.Padding)
   // says which was built. Experiments X12, X7 and X46 compare them.
   strategy_choice strategy = strategy_choice::rules;
   // The depth-first chain's top factors, one or two (n = F1 M or F1 F2 M;
-  // strategies/chain.hpp, c2c_depth), instead of the rule's (plan_core.cpp, depth_tops_of)
-  // when not empty. Experiment X46.
+  // strategies/chain.hpp, c2c_depth), when not empty, instead of the default ones
+  // (plan_core.cpp, depth_tops_of): wherever they fit with strategy depth, and with the rules
+  // on the rows the rules make depth-first chains (a row where they do not fit is then built
+  // as without the chain). Measured planning's pinned choice carries them. Experiment X46.
   std::vector<std::size_t> depth_tops;
   // The lanes strategy's block, in rows (rounded up to a multiple of the target's complex
   // count C), instead of the rule's when not 0 (plan_core.cpp, lane_block; experiment X7).
@@ -164,6 +166,7 @@ public:
   // planning enumerates the alternatives (core/candidates.cpp).
   strategy_choice built = strategy_choice::chain;
   std::vector<std::size_t> grid_factors; // a grid's factors as built, in phase order
+  std::vector<std::size_t> depth_tops;   // a depth-first chain's top factors as built
   // The candidate the plan was built from, as text (core/candidates.hpp, choice_text):
   // "rules" for the rules' plan. Wisdom records it (core/wisdom.cpp).
   std::string program_text = "rules";

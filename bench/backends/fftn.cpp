@@ -53,8 +53,9 @@
 //                    the planner's choice (default), or the chain, the grid, the lanes or the
 //                    depth-first chain forced where the row can be one; each case's note says
 //                    which was built (experiments X12, X7, X46)
-//   DEPTH_TOPS=f1[.f2]   the depth-first chain's top factors (build_settings::depth_tops;
-//                    default the rule's; experiment X46)
+//   DEPTH_TOPS=f1[.f2]   the depth-first chain's top factors (build_settings::depth_tops):
+//                    wherever they fit with STRATEGY=depth, and on the rows the rules make
+//                    depth-first chains otherwise (experiment X46)
 //   LANE_BLOCK=B     the lanes strategy's block in rows (build_settings::lane_block; default
 //                    the rule's), rounded up to a multiple of the complex count (X7)
 //   COLUMNS=lanes|chain   the strided axes of planes and volumes (build_settings::
@@ -485,7 +486,6 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
         return fbench_error;
       }
       s.depth_tops_text = value;
-
     } else if (key == "LANE_BLOCK") {
       const std::optional<std::size_t> v = fbench::fftn_tuning::parse_size(value, 1, false);
       if (!v || *v > 4096) {

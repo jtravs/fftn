@@ -10,6 +10,7 @@
 // and where it cannot run (complex counts that do not divide the factors) the row stays a
 // chain.
 
+#include "core/candidates.hpp"
 #include "core/plan_core.hpp"
 #include "fftn/detail/core.hpp"
 #include "fftn/fftn.hpp"
@@ -23,6 +24,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <complex>
 #include <cstddef>
 #include <span>
@@ -246,6 +248,124 @@ TEST(Depth, RulesTakeItByTheProfile) {
   EXPECT_EQ(fftn::detail::describe(*make_plan_core(fftn::detail::view_of(shape), {}, settings))
                 .find("strategy: depth-first chain"),
             std::string::npos);
+}
+
+// At the lengths the rules make depth-first chains (16384 and 65536 on the Xeon's profile),
+// too long for the quadruple-precision reference, the chain built with the default tops
+// (forced, no tops given: the scan over codelet radices) and with the rules' tops (on targets
+// with 32 vector registers) agrees with the plain chain within both their error bounds, in
+// both directions, in and out of place; the top pass's derived twiddles then step through
+// many blocks of k.
+template <class T>
+void depth_agrees_with_chain(fftn::isa target, std::size_t n, fftn::direction dir, bool in_place,
+                             bool rules) {
+  SCOPED_TRACE(std::string(fftn::isa_name(target)) + (sizeof(T) == 8 ? " double" : " float") +
+               ", n = " + std::to_string(n) +
+               (dir == fftn::direction::forward ? " forward" : " backward") +
+               (in_place ? ", in place" : "") + (rules ? ", the rules' tops" : ", default tops"));
+  build_settings depth;
+  if (rules) {
+    depth.profile.depth_min_bytes = std::size_t{256} * 1024;
+    depth.profile.depth_max_bytes = std::size_t{4} * 1024 * 1024;
+    depth.profile.depth_part_bytes = 0;
+    depth.profile.depth_top = 16;
+    depth.profile.depth_top_alt = 20;
+  } else {
+    depth.strategy = strategy_choice::depth;
+  }
+  build_settings chain;
+  chain.strategy = strategy_choice::chain;
+  const fftn::shape<std::complex<T>, std::complex<T>> shape{
+      .dir = dir,
+      .axes = {{.n = n}},
+      .batches = {},
+  };
+  const fftn::options opts{.in_place = in_place, .force_isa = target};
+  const auto dc = make_plan_core(fftn::detail::view_of(shape), opts, depth);
+  const auto cc = make_plan_core(fftn::detail::view_of(shape), opts, chain);
+  const std::string text = fftn::detail::describe(*dc);
+  ASSERT_NE(text.find("strategy: depth-first chain"), std::string::npos) << text;
+  fftn::test::input_source src(0xDEEDULL + n);
+  const cvec<T> x = src.complexes<T>(n);
+  cvec<T> yd = in_place ? x : cvec<T>(n);
+  cvec<T> yc = in_place ? x : cvec<T>(n);
+  const fftn::workspace wd(fftn::detail::workspace_bytes(*dc, 1));
+  const fftn::workspace wc(fftn::detail::workspace_bytes(*cc, 1));
+  fftn::detail::execute_core(*dc, 0, 1, in_place ? yd.data() : x.data(), yd.data(), wd);
+  fftn::detail::execute_core(*cc, 0, 1, in_place ? yc.data() : x.data(), yc.data(), wc);
+  double diff = 0;
+  double norm = 0;
+  for (std::size_t k = 0; k < n; ++k) {
+    diff += std::norm(std::complex<double>(yd[k]) - std::complex<double>(yc[k]));
+    norm += std::norm(std::complex<double>(yc[k]));
+  }
+  const auto tol = fftn::test::derived_tolerance<T>(n, fftn::test::stable_fft_bound) * 2.0;
+  EXPECT_LE(std::sqrt(diff / norm), tol.rms) << text;
+}
+
+TEST(Depth, AgreesWithTheChainAtLengthsTheRulesTake) {
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    const std::string name = fftn::isa_name(t);
+    const bool wide = name == "avx512" || name == "neon" || name == "neon_fcma";
+    for (const std::size_t n : {std::size_t{16384}, std::size_t{65536}}) {
+      for (const auto dir : {fftn::direction::forward, fftn::direction::backward}) {
+        for (const bool in_place : {false, true}) {
+          depth_agrees_with_chain<double>(t, n, dir, in_place, false);
+          if (wide) {
+            depth_agrees_with_chain<double>(t, n, dir, in_place, true);
+          }
+        }
+      }
+      depth_agrees_with_chain<float>(t, n, fftn::direction::forward, false, false);
+    }
+  }
+}
+
+// A plan records its tops (plan_core::program_text, measured planning's pinned choice), and
+// replaying the record builds the same program: forced tops, and tops the rules chose.
+TEST(Depth, PinnedChoiceCarriesTheTops) {
+  const fftn::shape<std::complex<double>, std::complex<double>> shape{
+      .dir = fftn::direction::forward,
+      .axes = {{.n = 4096}},
+      .batches = {},
+  };
+  build_settings forced;
+  forced.strategy = strategy_choice::depth;
+  forced.depth_tops = {8, 4};
+  const auto core = make_plan_core(fftn::detail::view_of(shape), {}, forced);
+  EXPECT_EQ(core->program_text, "strategy=depth tops=8.4");
+  const std::optional<fftn::detail::plan_choice> back =
+      fftn::detail::parse_choice(core->program_text);
+  ASSERT_TRUE(back.has_value());
+  build_settings replay;
+  fftn::detail::apply_choice(*back, replay);
+  const auto again = make_plan_core(fftn::detail::view_of(shape), {}, replay);
+  EXPECT_EQ(fftn::detail::describe(*again), fftn::detail::describe(*core));
+  // The rules' choice, recorded with its tops, and the given tops replacing the rules' own.
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    const std::string name = fftn::isa_name(t);
+    if (name != "avx512" && name != "neon" && name != "neon_fcma") {
+      continue;
+    }
+    SCOPED_TRACE(name);
+    build_settings rules;
+    rules.profile.depth_min_bytes = std::size_t{256} * 1024;
+    rules.profile.depth_max_bytes = std::size_t{4} * 1024 * 1024;
+    rules.profile.depth_part_bytes = 0;
+    rules.profile.depth_top = 16;
+    rules.profile.depth_top_alt = 20;
+    const auto longer = fftn::shape<std::complex<double>, std::complex<double>>{
+        .dir = fftn::direction::forward,
+        .axes = {{.n = 32768}},
+        .batches = {},
+    };
+    const auto r = make_plan_core(fftn::detail::view_of(longer), {.force_isa = t}, rules);
+    EXPECT_EQ(r->program_text, "strategy=depth tops=16");
+    rules.depth_tops = {8, 8};
+    const auto given = make_plan_core(fftn::detail::view_of(longer), {.force_isa = t}, rules);
+    EXPECT_NE(fftn::detail::describe(*given).find("depth-first 8 x 8 x 512"), std::string::npos);
+    EXPECT_EQ(given->program_text, "strategy=depth tops=8.8");
+  }
 }
 
 } // namespace
