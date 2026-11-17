@@ -37,8 +37,10 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <memory>
+#include <numeric>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -621,6 +623,16 @@ std::vector<std::size_t>
 column_radices(std::size_t n, std::ptrdiff_t stride, const build_settings& settings,
                const target_profile& profile, const chain_builder<T>& chain,
                const kernels_of<T>& kernels) {
+  const auto lane_codelets = [&](const std::vector<std::size_t>& r) {
+    return std::ranges::all_of(r, [&](std::size_t x) {
+      return has_codelet(x) && kernels.passes.codelet[codelet_slot(x)]->lane[0] != nullptr;
+    });
+  };
+  if (const std::vector<std::size_t>& forced = settings.column_radices;
+      !forced.empty() && lane_codelets(forced) &&
+      std::accumulate(forced.begin(), forced.end(), std::size_t{1}, std::multiplies<>()) == n) {
+    return forced;
+  }
   std::vector<std::size_t> rad = chain.radices(n);
   if (chain.forces(n)) {
     return rad;
@@ -637,10 +649,7 @@ column_radices(std::size_t n, std::ptrdiff_t stride, const build_settings& setti
   }
   constexpr std::size_t candidates = 64;
   for (const std::vector<std::size_t>& r : ranked_radices(n, profile, candidates)) {
-    const bool lanes = std::ranges::all_of(r, [&](std::size_t x) {
-      return has_codelet(x) && kernels.passes.codelet[codelet_slot(x)]->lane[0] != nullptr;
-    });
-    if (lanes && fits(r)) {
+    if (lane_codelets(r) && fits(r)) {
       return r;
     }
   }

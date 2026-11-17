@@ -188,6 +188,52 @@ TEST(Columns, LanesEqualTheChainBitForBit) {
   }
 }
 
+// Forced column radices (build_settings::column_radices, X44) apply to the column phase of
+// columns whose length they multiply to, and only there: the same transform as the chain's
+// columns within twice the tolerance of either.
+template <class T> void forced_column_radices(fftn::isa target) {
+  SCOPED_TRACE(std::string(fftn::isa_name(target)) + (sizeof(T) == 8 ? " double" : " float"));
+  struct forced_case {
+    plane_case pc;
+    std::vector<std::size_t> radices;
+    bool applies;
+  };
+  const std::vector<forced_case> cases = {
+      {{.n = {32, 32}}, {4, 8}, true},
+      {{.n = {32, 32}, .in_place = true, .dir = fftn::direction::backward}, {32}, true},
+      {{.n = {32, 20}, .count = 2, .scale = 0.5}, {8, 4}, true},
+      {{.n = {64, 64}}, {4, 16}, true},
+      {{.n = {16, 32}}, {4, 8}, false},
+  };
+  for (const forced_case& fc : cases) {
+    SCOPED_TRACE(label(fc.pc, 0));
+    build_settings forced;
+    forced.column_radices = fc.radices;
+    build_settings chain;
+    chain.lanes_columns = false;
+    std::string forced_text;
+    std::string chain_text;
+    const auto got = run<T>(fc.pc, forced, target, forced_text);
+    const auto want = run<T>(fc.pc, chain, target, chain_text);
+    std::string listed = "adjacent columns, radices ";
+    for (std::size_t i = 0; i < fc.radices.size(); ++i) {
+      listed += (i == 0 ? "" : " x ") + std::to_string(fc.radices[i]);
+    }
+    EXPECT_EQ(forced_text.find(listed + "\n") != std::string::npos, fc.applies) << forced_text;
+    std::size_t points = fc.pc.n[0] * fc.pc.n[1];
+    const double l = std::max(1.0, std::log2(static_cast<double>(points)));
+    const double tolerance = 2 * 3 * std::numeric_limits<T>::epsilon() * l;
+    EXPECT_LE(relative_difference<T>(got, want), tolerance) << forced_text << chain_text;
+  }
+}
+
+TEST(Columns, ForcedColumnRadices) {
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    forced_column_radices<double>(t);
+    forced_column_radices<float>(t);
+  }
+}
+
 // The strided complex axes of r2c and c2r planes and volumes take the same column phase
 // (X41): every output byte as with each column alone through the chain where the radices
 // agree, the same transform within twice the tolerance where they do not; in place and out
