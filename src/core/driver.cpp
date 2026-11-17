@@ -6,7 +6,6 @@
 #include "core/program.hpp"
 #include "passes/pass_args.hpp"
 
-#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -358,11 +357,6 @@ bool unroll_records(const program& p, std::size_t begin, std::size_t end, const 
 void mark_calls(program& p) {
   p.calls.clear();
   p.call_args.clear();
-  // Only multi-axis programs, whose bodies loop over lines: 1-D programs keep their paths.
-  if (std::none_of(p.records.begin() + static_cast<std::ptrdiff_t>(p.batch_loops), p.records.end(),
-                   [](const record& r) { return std::holds_alternative<loop>(r); })) {
-    return;
-  }
   std::vector<std::size_t> arg_of(p.records.size(), 0);
   std::vector<pass_args> args;
   for (std::size_t i = p.batch_loops; i < p.records.size(); ++i) {

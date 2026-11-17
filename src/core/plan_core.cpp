@@ -1220,7 +1220,9 @@ std::shared_ptr<plan_core> build_plan_core(const shape_view& s, const options& o
   for (const std::size_t n : c->lengths) {
     points *= n; // the layouts' reach checks have bounded the product
   }
-  mark_flat(c->prog, settings.unroll_calls);
+  // Only multi-axis programs are unrolled (X41): a 1-D grid without moving twiddles would
+  // otherwise change its execution path, which nothing measured.
+  mark_flat(c->prog, settings.unroll_calls && r > 1);
   c->graph = build_work_graph(c->prog, points, settings.chunk_points);
   c->profile = settings.profile;
   c->runs_inline = runs_inline(c->graph, c->profile);
