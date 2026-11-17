@@ -121,6 +121,7 @@ fresh run pending). One thread keeps every program: plane at a time gained 0.979
 cases): one thread Mac 0.80, EPYC 0.85, Xeon 0.73 of FFTW and 1.12 of oneMKL; threaded Mac
 0.76, EPYC 0.90, Xeon 0.82 of FFTW, Xeon 1.27 of oneMKL. Not met case by case: 16 × 256 × 256
 (a 16-point leaf whose legs share an L1 set), 512 × 64 × 64 and 64 × 64 × 512 against FFTW;
+the EPYC's 8 lanes on 17 of 38 volumes (128³ 1.33, 256³ 1.10–1.12, 256 × 256 × 16 1.06–1.20);
 oneMKL on the Xeon nearly everywhere. Runs in the experiment files.
 
 ### Tasks
