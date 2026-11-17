@@ -242,9 +242,6 @@ public:
   [[nodiscard]] bool depth_fits(std::size_t n, const std::vector<std::size_t>& tops) const;
   depth_stages c2c_depth(std::size_t n, const std::vector<std::size_t>& tops, int sign,
                          double scale, slot work);
-  // Top passes with derived twiddles (passes/depth.inl, experiment X46 arm B): two small
-  // tables, one more complex multiplication per leg, instead of the grouped table of about n.
-  void use_derived_tops(bool on) noexcept { derived_ = on; }
   // "depth-first 4 x 4 x 1024 (sub-rows 8 x 8 x 16)" for describe().
   [[nodiscard]] std::string depth_text(std::size_t n, const std::vector<std::size_t>& tops) const;
 
@@ -369,7 +366,6 @@ private:
   real_fusion fusion_;
   std::size_t bluestein_above_;
   std::size_t line_scratch_ = 0;           // scratch a Bluestein stage of the current line needs
-  bool derived_ = false;                   // use_derived_tops
   std::size_t long_from_bytes_ = SIZE_MAX; // use_long_rows
   std::size_t long_radix8_bytes_ = 0;
   std::size_t conv_from_bytes_ = SIZE_MAX; // use_long_convolutions

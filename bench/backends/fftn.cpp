@@ -55,8 +55,6 @@
 //                    which was built (experiments X12, X7, X46)
 //   DEPTH_TOPS=f1[.f2]   the depth-first chain's top factors (build_settings::depth_tops;
 //                    default the rule's; experiment X46)
-//   DEPTH_DERIVED=0|1   its top passes with derived twiddles (build_settings::depth_derived,
-//                    default 1)
 //   LANE_BLOCK=B     the lanes strategy's block in rows (build_settings::lane_block; default
 //                    the rule's), rounded up to a multiple of the complex count (X7)
 //   COLUMNS=lanes|chain   the strided axes of planes and volumes (build_settings::
@@ -484,12 +482,7 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
         return fbench_error;
       }
       s.depth_tops_text = value;
-    } else if (key == "DEPTH_DERIVED") {
-      if (value != "0" && value != "1") {
-        say(message, message_size, "DEPTH_DERIVED is 0 or 1");
-        return fbench_error;
-      }
-      s.settings.depth_derived = value == "1";
+
     } else if (key == "LANE_BLOCK") {
       const std::optional<std::size_t> v = fbench::fftn_tuning::parse_size(value, 1, false);
       if (!v || *v > 4096) {
@@ -617,9 +610,6 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
     }
     if (!s.settings.depth_tops.empty()) {
       d.str("depth_tops", s.depth_tops_text);
-    }
-    if (!s.settings.depth_derived) {
-      d.integer("depth_derived", 0);
     }
     if (s.settings.lane_block != 0) {
       d.integer("lane_block", static_cast<std::int64_t>(s.settings.lane_block));

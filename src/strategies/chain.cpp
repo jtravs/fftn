@@ -1023,7 +1023,7 @@ bool chain_builder<T>::depth_fits(std::size_t n, const std::vector<std::size_t>&
   std::size_t m = n;
   for (const std::size_t f : tops) {
     if (f < 2 || m % f != 0 || !has_codelet(f) ||
-        kernels_.passes.codelet[codelet_slot(f)]->depth_top[0][0][0] == nullptr) {
+        kernels_.passes.codelet[codelet_slot(f)]->depth_top[0][0] == nullptr) {
       return false;
     }
     m /= f;
@@ -1036,8 +1036,8 @@ bool chain_builder<T>::depth_fits(std::size_t n, const std::vector<std::size_t>&
          kernels_.passes.codelet[codelet_slot(rad[0])]->depth_first[0] != nullptr;
 }
 
-// The block B of a derived top pass over legs = M (depth.inl): the divisor of M that is a
-// multiple of C with the fewest entries B + M / B in its two tables, or 0 for none.
+// The block B of a top pass over legs = M (depth.inl): the divisor of M that is a multiple of
+// C with the fewest entries B + M / B in its two tables (C divides M: depth_fits).
 template <class T> std::size_t chain_builder<T>::derived_block(std::size_t legs) const {
   const std::size_t c = kernels_.complex_lanes;
   std::size_t best = 0;
@@ -1049,7 +1049,7 @@ template <class T> std::size_t chain_builder<T>::derived_block(std::size_t legs)
   return best;
 }
 
-// The derived top pass's two tables for a line of n = f M (depth.inl): rows r = 1 .. f - 1 of
+// The top pass's two tables for a line of n = f M (depth.inl): rows r = 1 .. f - 1 of
 // w_n^(r k_lo) for k_lo < block, per-lane, and w_n^(r k_hi block) for k_hi < M / block, r = 1
 // .. f - 1, grouped by k_hi, broadcast. Every entry is an entry of the root table of n.
 template <class T>
@@ -1153,16 +1153,12 @@ chain_builder<T>::c2c_depth(std::size_t n, const std::vector<std::size_t>& tops,
   const auto top_pass = [&](std::size_t f, std::size_t legs, bool last, std::vector<stage>& to) {
     stage st;
     const std::size_t e = last && scale != 1.0 ? 1 : 0;
-    const std::size_t block = derived_ ? derived_block(legs) : 0;
-    st.run = kernels_.passes.codelet[codelet_slot(f)]->depth_top[block != 0 ? 1 : 0][d][e];
-    if (block != 0) {
-      const auto [lo, hi] = derived_twiddles(f * legs, f, block);
-      st.args.twiddles = lo;
-      st.args.roots = hi;
-      st.args.s = block;
-    } else {
-      st.args.twiddles = grouped_twiddles(f * legs, f);
-    }
+    const std::size_t block = derived_block(legs);
+    const auto [lo, hi] = derived_twiddles(f * legs, f, block);
+    st.run = kernels_.passes.codelet[codelet_slot(f)]->depth_top[d][e];
+    st.args.twiddles = lo;
+    st.args.roots = hi;
+    st.args.s = block;
     st.args.radix = f;
     st.args.m = legs;
     st.args.n = f * legs;
@@ -1173,9 +1169,8 @@ chain_builder<T>::c2c_depth(std::size_t n, const std::vector<std::size_t>& tops,
     st.chunks = chunks_of(st.units, f * c);
     st.name = "depth-first top pass radix-" + std::to_string(f) + " " + direction_name(sign) +
               " (decimation in time, " + (st.dst == st.src ? "in place" : "to the output") +
-              ", legs " + std::to_string(legs) + " apart" +
-              (block != 0 ? "; twiddles derived over blocks of " + std::to_string(block) : "") +
-              (e != 0 ? "; out: scale" : "") + ")";
+              ", legs " + std::to_string(legs) + " apart" + "; twiddles derived over blocks of " +
+              std::to_string(block) + (e != 0 ? "; out: scale" : "") + ")";
     to.push_back(std::move(st));
   };
   if (f2 > 1) {

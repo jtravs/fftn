@@ -1024,18 +1024,17 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     if (c.in_place) {
       c.block_elements = n;
     }
-    chain.use_derived_tops(settings.depth_derived);
     typename chain_builder<T>::depth_stages parts =
         chain.c2c_depth(n, depth_tops, sign, opts.scale, work);
     const auto looped = [&](std::size_t count, std::size_t step, std::vector<stage>& body) {
-      const std::size_t at = p.records.size();
+      const std::size_t first = p.records.size();
       loop l{.kind = loop_kind::lines, .count = count};
       l.step[c.in_place ? 2 : 1] = static_cast<std::ptrdiff_t>(step) * complex_bytes;
       p.records.emplace_back(l);
       for (stage& st : body) {
         p.records.emplace_back(std::move(st));
       }
-      std::get<loop>(p.records[at]).body_end = static_cast<std::uint32_t>(p.records.size());
+      std::get<loop>(p.records[first]).body_end = static_cast<std::uint32_t>(p.records.size());
     };
     for (stage& st : parts.first) {
       p.records.emplace_back(std::move(st));
