@@ -1581,7 +1581,10 @@ radices agree. The radices are the row's unless its last pass would put more of 
 into one L1 set than the L1 has ways (legs s = n / R column elements apart): then the
 cheapest ranked sequence whose last pass does not (a last pass of radix 16 whose legs shared
 a set made 128² and 256² planes 2.2 times slower on the M5 Max; reads in the first pass did
-not matter). B is 256 bytes of columns (16 complex doubles), at most the columns there are;
+not matter). In double a column of 17–32 points whose length has a codelet is that one lane
+pass where its legs fit (X44: on x86 the row of 32 is a pair leaf, which the lanes cannot
+take, and its radices as two lane passes made the EPYC's 32² column phase 1.9 times its
+rows; one pass took the plane to 0.72 of that time, at FFTW's). B is 256 bytes of columns (16 complex doubles), at most the columns there are;
 where a column's elements lie a page or more apart, at least four L1 lines (32 complex
 doubles on Apple's 128-byte lines); where they lie less than a page apart it is halved while
 the two tiles exceed `column_tile_bytes` (a quarter of L2; twice L1 where a cluster shares
@@ -1603,7 +1606,14 @@ only for the copies a strided column costs where C > 1: none on NEON double (the
 tiles fit `column_tile_bytes`, X40's wide block only where each column element has its own
 page and the column exceeds half of L1, the chain otherwise (EPYC: 0.89 over the 71 real
 planes, 32 × 30 0.74, 36 × 2048 0.77, 2048² 0.73–0.85; 1024² stays on the chain, whose
-4-column tiles lost 1.05). Not built yet: blocks over the columns of a long axis beyond L2
+4-column tiles lost 1.05). On `avx2` the column phase's first and last passes run a whole
+block's B / C runs of C columns in an inner loop at one group (first pass) or copy (last
+pass), the group's twiddles loaded once up to radix 8, instead of one unit per run with its
+own leg addresses and loop state (X44: the Xeon's column edge passes each ran as many
+instructions as the row's whole pair leaf; the EPYC's planes and volumes with a column
+phase 0.94 of the time, 64³ 0.84). `avx512` (0.962 on the Xeon, against the rule's 0.95)
+and NEON (0.997) keep the unit loop. Not
+built yet: blocks over the columns of a long axis beyond L2
 (a two-phase split of the column, the grid's way), and padding or block ordering against the
 rows' own power-of-two conflicts.
 
@@ -2939,6 +2949,7 @@ to change before a release.
 | 2026-11-17 | The phase 1 tail rule (section 1.3) counts a case only when it is slower than 1.05 of the reference beyond noise (its whole interval above 1.05 × (1 + the A/A band)), decided by the maintainer, 2026-11-17 | a fixed 1.05 sat inside the noise of loaded runs (the Xeon's band was ±4.68 % on 2026-11-17) and of calls of a few nanoseconds (2 points in place); the geometric-mean targets are unchanged |
 | 2026-11-17 | A radix-25 codelet (Cooley–Tukey 5 × 5), a pass radix only, with passes on the x86 and scalar targets only (none on NEON); `avx2` double overrides take it at 500, 3125, 5000, 10000, 15625, 25000 and `avx512` double at 100, 500, 3125, 10000, 15625, 25000; two-level codelets staged through memory for 16-register targets rejected (experiment X42) | EPYC 0.874 / 0.891 of the arm before over the changed lengths (FFTN ÷ FFTW 3125 0.77 → 0.65, 15625 0.79 → 0.66), Xeon about 0.86 / 0.842 (100 1.14 → 0.88 of FFTW, 3125 0.81 → 0.53); on the Mac radix 25 lost to radix-5 chains; the two-level form changed nothing with GCC (1.000) and slowed radix 25; library text +6.1 % on x86-64, +2.0 % on the Mac |
 | 2026-11-17 | Multi-axis programs of at most 256 kernel calls per transform run from their calls unrolled at construction (section 8.3); the complex axes of real planes take the lanes column phase where C > 1 with their own block rule; where a cluster shares L2 a column block's tiles stay within twice L1 when its column elements lie four to a page (section 9.3) | X41: planes of up to 1024 points 0.87–0.94 of the walk's time (three machines); real planes 0.89 (EPYC) and 0.83 (Xeon) of the chain columns' time, the M5 Max lost 1.04 and keeps the chain; M5 Max 2048 × 36 0.90; joining the narrower block's phase (T1) rejected at 0.96 |
+| 2026-11-17 | In double, a lanes column phase of 17–32 points with a codelet of its length is that one pass (section 9.3); on `avx2` the column edge passes run a block's runs in an inner loop per group | X44: on x86 the row of 32 is a pair leaf and its columns took two lane passes (EPYC 32² 0.72, Xeon 0.77–0.81 of the time, ÷ FFTW 1.39 → 1.00, ÷ MKL 1.37 → 1.07); the nested runs 0.94 on the EPYC's planes and volumes, 0.962 on the Xeon (below the bar), 0.997 on the Mac |
 ---
 
 ## 20. References
