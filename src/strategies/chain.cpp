@@ -1114,7 +1114,7 @@ chain_builder<T>::c2c_depth(std::size_t n, const std::vector<std::size_t>& tops,
   first.args.radix = r2;
   first.args.m = m / r2;
   first.args.s = subs;
-  first.args.n = m;
+  first.args.n = n; // the pass moves the whole line (work_graph.cpp, stage_work)
   first.args.dst_cols = f1;
   first.args.dst_qstride = static_cast<std::ptrdiff_t>(f2 * m);
   first.src = slot::in;

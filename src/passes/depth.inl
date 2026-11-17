@@ -27,7 +27,8 @@ namespace {
 // - 1, blocks = s / C (C divides cols, so a unit's copies are adjacent within one group of
 // cols); its R outputs are transposed in registers so that each store writes C legs of one
 // copy. twiddles: broadcast storage, as the lane pass's (chain_builder::shared_twiddles).
-// src and dst: stride 1, distinct. Reads m, s, n (M), dst_cols, dst_qstride, twiddles.
+// src and dst: stride 1, distinct. Reads m, s, dst_cols, dst_qstride, twiddles (n holds the
+// line's length, for the work graph's cost, work_graph.cpp; M = R m).
 template <class T, std::size_t R, int Sign>
 void depth_first_pass(const pass_args* a, const void* src, void* dst, std::size_t first,
                       std::size_t last) {
@@ -35,7 +36,7 @@ void depth_first_pass(const pass_args* a, const void* src, void* dst, std::size_
   T* y = static_cast<T*>(dst);
   const std::size_t m = a->m;
   const std::size_t s = a->s;
-  const std::size_t sub = a->n;
+  const std::size_t sub = R * m;
   const std::size_t cols = a->dst_cols;
   const auto lane = static_cast<std::size_t>(a->dst_qstride);
   const std::size_t blocks = s / C<T>;
