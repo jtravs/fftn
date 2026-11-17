@@ -28,6 +28,8 @@
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <ios>
 #include <limits>
 #include <map>
 #include <memory>
@@ -595,6 +597,19 @@ TEST(Wisdom, PublicRoundTripThroughAFile) {
   EXPECT_EQ(d::program_fingerprint(*a),
             d::program_fingerprint(*d::make_plan_core(d::view_of(shape), {.use = &w})));
   EXPECT_THROW(static_cast<void>(fftn::wisdom::load(file)), std::runtime_error);
+  // A file whose text is not wisdom: refused, naming the file and the line.
+  {
+    std::ofstream bad(file, std::ios::binary);
+    bad << "# fftn wisdom\nnot wisdom\n";
+  }
+  try {
+    static_cast<void>(fftn::wisdom::load(file));
+    ADD_FAILURE() << "accepted a file of malformed wisdom";
+  } catch (const std::invalid_argument& e) {
+    EXPECT_EQ(std::string(e.what()).rfind(file.string() + ": ", 0), 0U) << e.what();
+    EXPECT_NE(std::string(e.what()).find("line 2"), std::string::npos) << e.what();
+  }
+  std::filesystem::remove(file);
 }
 
 TEST(Wisdom, AStaleEntryIsIgnored) {
@@ -627,7 +642,7 @@ TEST(Wisdom, MalformedTextIsRefusedNamingTheLine) {
   EXPECT_EQ(fftn::wisdom("# a comment\n\n" + good + "\n").size(), 1U);
   for (const std::string& bad :
        {std::string("not wisdom"), good + "\textra", good.substr(0, good.size() - 1) + "g",
-        good.substr(0, good.rfind('\t'))}) {
+        good.substr(0, good.size() - 1), good.substr(0, good.rfind('\t'))}) {
     try {
       const fftn::wisdom w(good + "\n" + bad + "\n");
       ADD_FAILURE() << "accepted " << bad;

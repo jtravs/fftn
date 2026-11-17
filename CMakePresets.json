@@ -77,7 +77,7 @@
       "inherits": "check-base",
       "configurePreset": "check-coverage",
       "environment": {
-        "LLVM_PROFILE_FILE": "${sourceDir}/build/check-coverage/profiles/%p.profraw"
+        "LLVM_PROFILE_FILE": "${sourceDir}/build/check-coverage/profiles/%4m.profraw"
       }
     }
   ]

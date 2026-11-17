@@ -19,6 +19,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <random>
@@ -238,35 +239,35 @@ expected_and_got<T> run(const kernel_table& kernels, const probe_table& probes, 
   return {e, got};
 }
 
-class vocab : public ::testing::TestWithParam<param> {
-protected:
-  template <class T> void check() {
-    const auto [t, prec, op] = GetParam();
-    const kernel_table* kernels = find_kernels(t);
-    const probe_table* probes = find_probes(t);
-    ASSERT_NE(kernels, nullptr);
-    ASSERT_NE(probes, nullptr);
-    if ((op == vop::c_load_n || op == vop::c_store_n) && !probes->masked) {
-      GTEST_SKIP() << "no masked partial runs on this target";
-    }
-    auto [expected, got] = run<T>(*kernels, *probes, op);
-    EXPECT_EQ(got.buffer.front(), T(-77)) << "wrote before its output";
-    EXPECT_EQ(got.buffer.back(), T(-77)) << "wrote past its output";
-    int reported = 0;
-    for (std::size_t i = 0; i < n && reported < 4; ++i) {
-      if (!(got[i] == expected[i])) {
-        ADD_FAILURE() << "element " << i << ": got " << got[i] << ", expected " << expected[i];
-        ++reported;
-      }
+// The probe of op in precision T against the reference: every element, and the canaries.
+template <class T> void check(const kernel_table& kernels, const probe_table& probes, vop op) {
+  if ((op == vop::c_load_n || op == vop::c_store_n) && !probes.masked) {
+    GTEST_SKIP() << "the vocabulary has no load_n and store_n";
+  }
+  auto [expected, got] = run<T>(kernels, probes, op);
+  EXPECT_EQ(got.buffer.front(), T(-77)) << "wrote before its output";
+  EXPECT_EQ(got.buffer.back(), T(-77)) << "wrote past its output";
+  int reported = 0;
+  for (std::size_t i = 0; i < n && reported < 4; ++i) {
+    if (!(got[i] == expected[i])) {
+      ADD_FAILURE() << "element " << i << ": got " << got[i] << ", expected " << expected[i];
+      ++reported;
     }
   }
-};
+}
+
+class vocab : public ::testing::TestWithParam<param> {};
 
 TEST_P(vocab, matches_reference) {
-  if (std::get<1>(GetParam()) == precision::f64) {
-    check<double>();
+  const auto [t, prec, op] = GetParam();
+  const kernel_table* kernels = find_kernels(t);
+  const probe_table* probes = find_probes(t);
+  ASSERT_NE(kernels, nullptr);
+  ASSERT_NE(probes, nullptr);
+  if (prec == precision::f64) {
+    check<double>(*kernels, *probes, op);
   } else {
-    check<float>();
+    check<float>(*kernels, *probes, op);
   }
 }
 
@@ -298,5 +299,36 @@ INSTANTIATE_TEST_SUITE_P(isa, vocab,
                                             ::testing::Values(precision::f64, precision::f32),
                                             ::testing::ValuesIn(all_vops())),
                          name);
+
+#if FFTN_ARCH_X86_64
+// The narrow leaves' vocabulary (avx2 at half width, experiment X28), wherever avx2 runs.
+using narrow_param = std::tuple<precision, vop>;
+class vocab_avx2_narrow : public ::testing::TestWithParam<narrow_param> {};
+
+TEST_P(vocab_avx2_narrow, matches_reference) {
+  const auto runnable = isa_test::runnable_targets();
+  if (std::ranges::find(runnable, target::avx2) == runnable.end()) {
+    GTEST_SKIP() << "avx2 does not run here";
+  }
+  const auto [prec, op] = GetParam();
+  namespace narrow = fftn::detail::avx2::narrow;
+  if (prec == precision::f64) {
+    check<double>(narrow::geometry, narrow::probes, op);
+  } else {
+    check<float>(narrow::geometry, narrow::probes, op);
+  }
+}
+
+std::string narrow_name(const ::testing::TestParamInfo<narrow_param>& info) {
+  const auto [prec, op] = info.param;
+  return std::string(prec == precision::f64 ? "f64_" : "f32_") +
+         std::string(vop_names.at(static_cast<std::size_t>(op)));
+}
+
+INSTANTIATE_TEST_SUITE_P(isa, vocab_avx2_narrow,
+                         ::testing::Combine(::testing::Values(precision::f64, precision::f32),
+                                            ::testing::ValuesIn(all_vops())),
+                         narrow_name);
+#endif
 
 } // namespace
