@@ -141,6 +141,14 @@ which P does not change, and its rows are 1-D). Rule as above, on the EPYC and t
 the Mac's plans are unchanged (checked by describe). Bits: the columns of 32 change route,
 within the tolerances.
 
+P against `main` (B: ed598e1), the 126 cases, FFTW in the same run (P÷B paired):
+
+- EPYC, run 20261117-153628-5fcb (Slurm 511991; 12 rounds, 4 loaded, band ±1.5 %): 0.793
+  over the 17 changed cases (c2c 32² 0.72, 32² × 16 0.75, 32 × 30 0.73, 32³ 0.84; real 32²
+  and 32 × 30 0.81–0.83, real 32³ 0.80–0.83); 0.970 over all 126. FFTN ÷ FFTW at 32²: 1.39
+  → 1.00 (op and ip), 32² × 16 1.31 → 0.97. Worst unchanged case c2c 36 × 2048 in place
+  1.032 (its program is unchanged), just past the 2 % limit: re-run (Slurm 512068).
+
 ### N: the column edge passes' runs in an inner loop
 
 From the Xeon's counters (D): in `lanes_first` and `lanes_last` with `columns_inner`, a whole
@@ -157,6 +165,11 @@ band. Target cases: the cases of the 126 (planes and volumes) whose plans have a
 column phase with at least one whole block. Base: P. Rule as above per machine-target (the
 Xeon and the EPYC by `fbench_remote.py submit --serial`, the Mac locally); where N is not
 adopted on a target, the fast path is compiled out for it.
+
+N against P on the Mac, run 20261117-154001-6cda (10 rounds, all loaded, band ±1.9 %; the 126
+cases and six more volumes of the filter): 0.997 over all, 256² 0.97, 64³ 0.94, 48³ 0.96;
+r2c 5 × 7 1.06 (a plan without a column phase). Rule (1) fails on the Mac: N is not adopted
+on NEON, where the fast path is compiled out.
 
 ## Verdict
 

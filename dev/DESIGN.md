@@ -1578,7 +1578,10 @@ radices agree. The radices are the row's unless its last pass would put more of 
 into one L1 set than the L1 has ways (legs s = n / R column elements apart): then the
 cheapest ranked sequence whose last pass does not (a last pass of radix 16 whose legs shared
 a set made 128² and 256² planes 2.2 times slower on the M5 Max; reads in the first pass did
-not matter). B is 256 bytes of columns (16 complex doubles), at most the columns there are;
+not matter). In double a column of 17–32 points whose length has a codelet is that one lane
+pass where its legs fit (X44: on x86 the row of 32 is a pair leaf, which the lanes cannot
+take, and its radices as two lane passes made the EPYC's 32² column phase 1.9 times its
+rows; one pass took the plane to 0.72 of that time, at FFTW's). B is 256 bytes of columns (16 complex doubles), at most the columns there are;
 where a column's elements lie a page or more apart, at least four L1 lines (32 complex
 doubles on Apple's 128-byte lines); where they lie less than a page apart it is halved while
 the two tiles exceed `column_tile_bytes` (a quarter of L2; twice L1 where a cluster shares

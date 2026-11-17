@@ -726,6 +726,19 @@ carries its lane count and packing. Lengths that no C divides (18, 22, 26, 30 on
 are AVX2's pair leaves too: 0.40–0.54 of the two-pass chain's time.
 [X37](experiments/X37-short-batches.md).
 
+4.17 **Count a column phase's instructions against the rows' before tuning its radices.**
+On the Xeon 6240 FFTN's rows of 16–64 points ran oneMKL's instructions and cycles, but its
+planes' column phases ran about twice MKL's instructions per point: each lanes edge pass cost
+as many instructions as the row's whole two-pass leaf, mostly scalar address arithmetic for
+R legs on each side and loop state spilled to the stack, repeated for every run of C
+columns, with the group's twiddles reloaded per run. No choice of column radices or block
+width moved that (0.97–1.03 of the cycles); running a block's runs in an inner loop per
+group did (64² 0.84, 128² 0.89, 512² 0.92 of the cycles), and so did removing a pass where
+the row's pair leaf had left the columns two (32²: one radix-32 pass, 0.72 of the time on
+the EPYC 7763). The per-call set-up is the next cost for the smallest planes: a radix-16
+column leaf computes and spills 32 leg addresses for four runs at 16².
+[X44](experiments/X44-small-planes.md).
+
 
 ## 5. Threading
 
