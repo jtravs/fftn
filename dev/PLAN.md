@@ -104,12 +104,17 @@ Open, by phase:
 - 3: T2, T3, T4, T6; 3.5 (Kokkos executor); 3.6 to be checked against its acceptance.
 - 4–7: not started.
 
-In flight (lead session, 2026-11-17): X39 (the Xeon's long rows, radix 20 there); task 1.3
+In flight (lead session, 2026-11-17): task 1.3
 (`x86_v2` and `avx` targets, X14); task 2.5 (`next_fast_length` and per-length cost, API
 proposed by the lead); task 4.1 (planes, X40); a tidy fix. Task 2.4's acceptance is met (P1:
 rules within 5 % of measure on 93–100 % of cases on all three machines); its cost model (P3)
 was rejected on the first pass, so the long-row thresholds stay. Then the exit check again. Done, each merged with its
 pull request:
+- X39 (pull request 31): the Xeon's long rows: block widths, grids for powers of two beyond
+  L2/4, radix-20 passes in `avx512` double sequences and grid phases: Xeon ÷ FFTW 5000 1.04 →
+  0.89, 10000 0.96 → 0.84, 32768 1.51 → 1.29, 2²² 0.86 → 0.75, 25000 1.50 → 1.34, 100000
+  1.36 → 1.24; left: 16384 (needs a depth-first chain), 20000/25000/100000 (a radix-25
+  codelet). The `avx512` overrides also reach Zen 5 and Granite Rapids, unmeasured.
 - X39 (causes (5) and (6), pull request 31): on the Xeon profile (x86-64, private L2, small L3
   per CPU) three-phase grids in blocks of at most 16, two-phase blocks within twice L1 and c2c
   powers of two as grids beyond L2/4; FFTN ÷ FFTW 32768 1.51 → 1.29, 131072 1.20 → 1.09,
