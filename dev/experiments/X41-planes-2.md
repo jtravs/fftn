@@ -235,7 +235,7 @@ Xeon against MKL in the same run, N ÷ MKL → X ÷ MKL: 1.016 → 1.057 (c2c), 
 changes only through S1: 1.040 is that run's noise); its real 1024² in place 1.29–1.67 and
 r2c 128² 1.24 are past even that band and are re-timed below.
 
-No case of either run is slower than `main` beyond its band (Mac worst r2c 2048 × 36 ip
+No case of the Mac and EPYC runs is slower than `main` beyond its band (Mac worst r2c 2048 × 36 ip
 1.059 with an unchanged program, EPYC worst 1.013). Over FFTW after X41, one thread: Mac
 c2c 32² 1.07, 64² 1.02–1.05, plane batches of 32² 1.09; EPYC c2c 32² 1.13–1.36, 32² × 16
 1.12, 2048 × 36 1.03; real planes of odd rows 5 × 7 (2.8–4.1 everywhere: odd real rows are
@@ -263,7 +263,7 @@ XEON_THREADS
   thread limit of 1 until cd183e9; the first threaded Xeon run's MKL numbers are void).
 
 Task 4.1's acceptance is not met case by case. One thread, c2c planes are below FFTW on
-the geometric means everywhere (Mac 0.85, EPYC 0.81, XEON_SUMMARY) with 32² on x86 (the
+the geometric means everywhere (Mac 0.85, EPYC 0.81, Xeon 0.77) with 32² on x86 (the
 `avx2` column phase costs 1.9 times the rows) and 32²–64² on the Mac (1.02–1.09) over;
 the Xeon trails MKL on c2c planes from 16² up (sub-item M, not diagnosed here); real planes
 are at FFTW on x86 and below it on the Mac, but far behind MKL on the Xeon. Threaded, the
