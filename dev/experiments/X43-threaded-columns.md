@@ -16,15 +16,12 @@ of task 4.2.
 
 Two suspects, both in what a team gets to share, not in what a chunk computes:
 
-1. **The column phase is cut too coarsely.** The work graph (`src/threading/work_graph.cpp`)
-   cuts a phase of lines into runs of about `chunk_points` (2048) points, counting a line
-   as its stages' length n. A line of a lanes column phase (X40) is a block of B adjacent
-   columns, B · n points, so its chunks hold B times the intended work: 16 blocks per chunk
-   at 256², 4 at 512², 2 at 1024², which leaves 2, 8 and 32 chunks for 8 members (256²:
-   2 of 8 members do all of the columns). Volumes are worse: 64³'s two column phases have
-   8 chunks each. Expected: counting a block's columns gives every member work in the
-   column phase and lifts 256²–1024² (and volumes) towards FFTW's scaling; serial plans
-   cannot change (the graph is not used serially).
+1. **The column phase is cut too coarsely** (checked against the code before any run, and
+   ruled out): the work graph (`src/threading/work_graph.cpp`) cuts a phase of lines into
+   runs of about `chunk_points` (2048) points by the length its stages record, and a lanes
+   pass records n · B for a block of B columns (`strategies/lanes.cpp`, `lanes_body`), so a
+   column phase already gets one block per chunk from 256² up (512²: 32 chunks, 2048²: 128).
+   The screen's `CHUNK_POINTS=256` arm still shows whether finer row chunks matter.
 2. **The column blocks are sized for one thread** (X41's diagnosis). Where a column's
    elements lie a page or more apart the block is X40's wide one (16 complex doubles on
    x86), whatever its tiles cost: at 2048² each member's two tiles take 1 MiB against the
@@ -37,14 +34,9 @@ Two suspects, both in what a team gets to share, not in what a chunk computes:
 ## Change under test
 
 - **Screen (diagnosis, no library change; not a judging run):** `main` 310d8d6 at 8 lanes
-  with fbench's existing knobs: `CHUNK_POINTS=256` (finer chunks everywhere, which at
-  these sizes approximates arm C1 for the column phases), `COLUMN_BLOCK=8` and `4`
+  with fbench's existing knobs: `CHUNK_POINTS=256` (finer chunks everywhere), `COLUMN_BLOCK=8` and `4`
   (narrower blocks forced, serial and threaded), against the default, FFTN serial, FFTW at
   8 threads and serial, and on the Xeon oneMKL at 8 threads (`mkl_omp`) and serial.
-- **Arm C1:** the work graph counts a line of a lanes column phase as its block's columns
-  times n (`pass_args::block`), so its chunks hold about `chunk_points` points like the
-  rows'. Programs and serial execution unchanged; a chunk still runs whole lines (blocks),
-  so the bits do not change (tests/threading compare team and serial output bitwise).
 - **Arm B1 (only if the screen supports it):** a threaded column block sized to a member's
   share of L2, kept apart from the one-thread rule (its own profile field or branch). Its
   exact form and its rule are written here and committed before its judging runs.
