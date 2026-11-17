@@ -168,13 +168,13 @@ struct session {
   double measure_seconds = 0;      // MEASURE_SECONDS=
   std::size_t measure_scratch = 0; // MEASURE_SCRATCH=
   std::unique_ptr<executor_type> exec;
-  std::string overrides;          // the profile and chunking options given, as JSON members
-  std::string radices_text;       // RADICES as given, r1.r2... (settings.radices holds them)
+  std::string overrides;           // the profile and chunking options given, as JSON members
+  std::string radices_text;        // RADICES as given, r1.r2... (settings.radices holds them)
   std::string column_radices_text; // COLUMN_RADICES as given
-  std::string strategy = "rules"; // STRATEGY as given
-  std::string layout = "rules";   // LAYOUT as given
-  std::string factors_text;       // GRID_FACTORS as given
-  std::string rader = "rules";    // RADER as given
+  std::string strategy = "rules";  // STRATEGY as given
+  std::string layout = "rules";    // LAYOUT as given
+  std::string factors_text;        // GRID_FACTORS as given
+  std::string rader = "rules";     // RADER as given
   std::string description;
 };
 

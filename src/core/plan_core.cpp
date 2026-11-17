@@ -650,9 +650,8 @@ column_radices(std::size_t n, std::ptrdiff_t stride, const build_settings& setti
   // leaf in registers, which the lanes cannot take, so the columns got its radices 2 x 16 as
   // two passes over the tile; one radix-32 pass took the EPYC's 32 x 32 plane to 0.69 of
   // that time (4 x 8: 0.87).
-  if (const std::vector<std::size_t> one{n};
-      std::is_same_v<T, double> && n <= single_pass_column && n > 16 && lane_codelets(one) &&
-      fits(one)) {
+  if (const std::vector<std::size_t> one{n}; std::is_same_v<T, double> && n <= single_pass_column &&
+                                             n > 16 && lane_codelets(one) && fits(one)) {
     return one;
   }
   if (rad.empty() || fits(rad)) {
