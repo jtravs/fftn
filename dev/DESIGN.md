@@ -1625,7 +1625,7 @@ profile's `team_volume_planes` says (x86-64 with a private L2 below 2 MiB: the E
 the Xeon 6240), runs a team program (13.2) with the two inner axes plane at a time: a loop
 over the n0 planes whose body is the plane's rows and its column phase, then the outer axis
 over blocks of adjacent pencils (the same lanes column phase, `column_block`'s rule, the
-pencils' elements a plane apart). At 8 lanes that took 0.778 (EPYC) and 0.788 (Xeon) of the
+pencils' elements a plane apart). At 8 lanes that took 0.775 (EPYC) and 0.771 (Xeon) of the
 axes one by one: whole planes per member and one phase boundary fewer. One thread gained too
 little to take it: EPYC 0.979 (its 32 MiB L3 per CCX holds volumes to 128³, so a third sweep
 is cheap), Xeon 0.934 but 97³ 1.048, M5 Max 0.962. Either order computes every line alike,
@@ -2984,7 +2984,7 @@ to change before a release.
 | 2026-11-17 | In double, a lanes column phase of 17–32 points with a codelet of its length is that one pass (section 9.3); on `avx2` the column edge passes run a block's runs in an inner loop per group | X44: on x86 the row of 32 is a pair leaf and its columns took two lane passes (EPYC 32² 0.72, Xeon 0.77–0.81 of the time, ÷ FFTW 1.39 → 1.00, ÷ MKL 1.37 → 1.07); the nested runs 0.94 on the EPYC's planes and volumes, 0.962 on the Xeon (below the bar), 0.997 on the Mac |
 | 2026-11-17 | `volumes_c2c(nz, ny, nx, count, dir)` in `fftn/shape.hpp` beside `planes_c2c` (section 5.2), plural like `rows_c2c` and `planes_c2c` where 5.2 had said `volume_c2c`; no real-kind volume functions yet. Proposed by the lead, pending the maintainer (provisional) | task 4.2; the general `shape` already serves volumes, so this is a convenience only: the open choices are its name and whether r2c and c2r shape functions for planes and volumes come with it |
 | 2026-11-17 | A plan may hold a team program (`plan_core::team`) that every team of two or more runs: the same transform with narrower lanes column blocks (at most `column_team_bytes`: 128 on x86-64 with a private L2 and a large L3, the EPYC), chain-only columns as blocks of a line with the chain's radices, and (X43b) a volume's inner axes plane at a time; serial executions run the program. Bits are the program's by construction (a column's result does not depend on its block, a line's on the order of lines) and tested (sections 9.3, 13.2) | X43: at 8 lanes on the EPYC the narrower blocks took 0.887 of the time over the c2c planes and volumes they change and the line blocks 0.72 at 2048 × 36, while one thread lost up to 1.42 with them; the plan does not know at construction whether teams will run it |
-| 2026-11-17 | c2c volumes: one thread keeps the axes one by one; a team runs the two inner axes plane at a time (the team program) where the profile's `team_volume_planes` says (x86-64, private L2 below 2 MiB); the outer axis over blocks of adjacent pencils by `column_block`'s rule (section 9.3) | X43b: one thread EPYC 0.979, Xeon 0.934 with 97³ 1.048, M5 Max 0.962 (rejected everywhere); 8 lanes EPYC 0.778, Xeon 0.788 (VT; VTX on the Xeon pending its fresh run) |
+| 2026-11-17 | c2c volumes: one thread keeps the axes one by one; a team runs the two inner axes plane at a time (the team program) where the profile's `team_volume_planes` says (x86-64, private L2 below 2 MiB); the outer axis over blocks of adjacent pencils by `column_block`'s rule (section 9.3) | X43b: one thread EPYC 0.979, Xeon 0.934 with 97³ 1.048, M5 Max 0.962 (rejected everywhere); 8 lanes EPYC 0.775 (VT), Xeon 0.771 (VTX) |
 ---
 
 ## 20. References

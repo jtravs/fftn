@@ -1,6 +1,6 @@
 # X43b: volumes plane at a time, the outer axis over blocks of pencils
 
-- **Status:** running
+- **Status:** done (plane at a time rejected for one thread on all three machines; adopted for teams on the EPYC and the Xeon)
 - **Owner:** task 4.2 agent, 2026-11-17
 - **Phase / task:** 4.2
 
@@ -140,6 +140,12 @@ the Xeon's classes; the Xeon builds no team column blocks, B1). Rule: on the Xeo
 (threaded volumes' geometric mean at most 0.95, none slower beyond the larger of 2 % and the
 band at 8 lanes) in a fresh run against the axes one by one at 8 lanes.
 
+VTX, Xeon run 20261117-193858-1598 (Slurm 16403; bce5979 against c4cec37 at 8 lanes, oneMKL at
+8 threads and serial, c4cec37 serial; 8 rounds, 6 under load, band ±11.8 %): 0.783 over the
+38, 0.771 over the 36 that run threaded; worst 16³ in place 1.048 (inline: its team program is
+never run). Rule met: VTX adopted on the Xeon. FFTN ÷ oneMKL's better plan in the same run:
+8 lanes 1.24 (worst 1.74), one thread 1.15 (worst 1.77).
+
 ## Task 4.2's acceptance (FFTN ÷ the competitor's better plan, the 38 volumes)
 
 - Mac, one thread (run 20261117-154622-1813, P, the Mac's program): ÷ FFTW 0.804; over it
@@ -169,3 +175,21 @@ band at 8 lanes) in a fresh run against the axes one by one at 8 lanes.
   legs, a plane apart, share one L1 set; `column_radices` offers no other sequence for a
   leaf length. A lead for the column radices' owner, not changed here.
 
+## Verdict
+
+- **V (one thread) rejected** on every machine: EPYC 0.979, Mac 0.962 (VM), Xeon 0.934 but 97³
+  out of place 1.048 on re-run (rule (2)). One thread keeps the axes one by one (c4cec37).
+- **VT adopted on the EPYC** (0.775 at 8 lanes) and **VTX on the Xeon** (0.771): teams run a
+  team program with the inner axes plane at a time (`team_volume_planes`, x86-64 with a
+  private L2 below 2 MiB; commits ca43a10, c4cec37). The Mac's teams are unmeasured and keep
+  the axes one by one.
+- The scratch bound is tested (tests/core/volumes_test.cpp); the outer axis's pencil blocks
+  follow `column_block` (and B1's team blocks on the EPYC). DESIGN 9.3, decision log;
+  LESSONS 5.11.
+- Task 4.2's acceptance is not met case by case (section above): against FFTW the Mac misses
+  16 × 256 × 256, 512 × 64 × 64 and 64 × 64 × 512 at one thread and threaded, the EPYC 16³,
+  128 × 64 × 32 and 32³ at one thread and 17 of 38 volumes at 8 lanes, the Xeon 64 × 64 × 512
+  at one thread and five volumes at 8 lanes; oneMKL stays ahead on the Xeon (1.15 one thread,
+  1.24 at 8 lanes). Leads: the 16-point outer leaf whose legs share an L1 set (column radices),
+  the outer axis of 512 × 64 × 64 (long pencils, wide tiles), and the team engine's lack of
+  affinity in hot loops (X43's verdict).

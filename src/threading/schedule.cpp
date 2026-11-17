@@ -133,8 +133,8 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
   if (x86_64 && private_l2 && large_l3 && !large_l2) {
     p.column_team_bytes = 128;
   }
-  // X43b arms VT and VTX: teams run volumes plane at a time (8 lanes: EPYC 0.778, Xeon 6240
-  // 0.788), where one thread gained too little (0.979, 0.934 with 97^3 slower, 1.048).
+  // X43b arms VT and VTX: teams run volumes plane at a time (8 lanes: EPYC 0.775, Xeon 6240
+  // 0.771), where one thread gained too little (0.979, 0.934 with 97^3 slower, 1.048).
   if (x86_64 && private_l2 && !large_l2) {
     p.team_volume_planes = true;
   }
