@@ -244,6 +244,14 @@ against B = f78509c, run 20261117-192813-a4df (Slurm 512205/512206, `--serial`, 
 - **Arm C as planned (100000 as 100 × 1000)** was not built: the depth-first chain takes
   100000 to 0.752 of its time.
 - **Library size**: text +4.4 % on the Mac (Homebrew Clang 23, `size` of `libfftn.a`, 20.83 → 21.75 MB at b27970f → 87fbb85); on x86-64 (GCC 14.4, the Xeon's build cache) the archive grew 3.0 % (107.5 → 110.8 MB, b27970f → 87fbb85).
+- **Reach of the rules beyond the measured machines** (second reader, 2026-11-17). The Xeon
+  branch's key is X39's (x86-64, a private L2 under 2 MiB with under 2 MiB of L3 per CPU)
+  plus `avx512` in double, so it also takes other AVX-512 x86 parts of that shape:
+  Skylake-SP, Cascade Lake, Ice Lake-SP and clients with AVX-512. The Apple branch's key is
+  an L2 shared by a cluster, which AArch64 Linux machines with shared-L2 clusters share. Each
+  rests on one machine (the Xeon 6240, the M5 Max). In-place plans on this path need a
+  workspace block of n complex elements per team member (the first pass cannot write over
+  its input); out of place they need only the scratch lines of the sub-row.
 - **Left open.** 25000 (1.33 of FFTW: three factors of 2, so C = 4 divides no top and its
   sub-row; a masked or tiled first pass for C not dividing the top would cover it); 100000 at
   FFTW's time; float rules (unmeasured); three or more tops for rows beyond 4 L2 (the
