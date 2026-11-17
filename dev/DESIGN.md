@@ -1488,17 +1488,28 @@ the machine-specific estimate for callers who want it.
   - a Rader or Bluestein stage, priced as its convolution's two transforms and two
     elementwise passes per copy.
 - **`relative_cost<T>(n, isa)`** is that cost per point over the cost per point of the power
-  of two at or above n, on the target's own table. It is 1 for a length computed in one
-  codelet. It does not price memory beyond L1, nor long rows' chain or grid (P3).
-- **A fast length** is one whose relative cost on the reference table, AVX2's double table
-  (X2's measured one), is at most 1.25. No length with a prime factor above 23 is fast:
-  such lengths are priced at 1.49 or more up to 20000. Nor is a composite with a factor 11,
-  17, 19 or 23: P4 measured them slower than the table believes, on two machines each.
+  of two at or above n, on the target's own table. It is 1 for a length the planner runs as
+  one codelet (`rule_radices(n) == {n}`; 20 is always a chain, X38, and is priced as one).
+  It does not price memory beyond L1, nor long rows' chain or grid (P3).
+- **A fast length** is one whose relative cost on the reference table is at most 1.25. The
+  reference is a frozen copy of AVX2's double table (X2's measured one), kept apart from
+  the planner's tuned table so that a refit changes plans, never the fast lengths. No
+  length with a prime factor above 23 is fast: such lengths are priced at 1.49 or more up
+  to 20000. Nor is a composite with a factor 11, 17, 19 or 23: P4 measured them slower than
+  the table believes, on two machines each.
+- "Fast" is a property of the table, not a measured guarantee: in P4, 78 % of the picks ran
+  within 1.3 of the power of two above on each x86 machine, and 140 (the pick for 131) ran
+  at 1.76 on the Xeon.
 - **`next_fast_length(n, real)`** returns the smallest fast length at or above n, or with
-  `real` the smallest even one whose half is fast. It searches up to 2⁴⁰. The largest step
-  up to 200000 is 17 % (41 → 48), and one query takes microseconds.
-- The fast lengths are pinned by a test, since a change to them changes every caller's grid.
-- Experiment P4 measures whether they are fast on the three machines.
+  `real` the smallest even one whose half is fast (2 for n ≤ 2). In 2-D and 3-D only the
+  halved axis takes `real`. It tests only the candidates in [n, 2n] (products of 2, 3, 5,
+  7 and 13, and the lone 11 to 23), so one query takes 5–200 µs on average up to 2⁴⁰ on
+  the M5 Max, under 0.6 ms at worst. The largest step up to 200000 is 17 % (41 → 48).
+- Both queries accept n ≤ 2⁴⁰ and throw `std::invalid_argument` above it: `row_cost` is
+  exact up to there, and a prime near 2⁶² took more than 30 s to price.
+- The fast lengths are pinned by tests (a list to 300 and a checksum to 2²⁰), since a change
+  to them changes every caller's grid.
+- Experiment P4 measured whether they are fast on the three machines.
 
 ### 9.3 Many dimensions
 
@@ -2579,7 +2590,8 @@ maintainer.
   transforms (scipy's `next_fast_len(target, real)`). The alternatives are a separate
   `next_fast_real_length`, or a kind argument.
 - (c) What "fast" means: within 1.25 times the reference table's cost per point of the power
-  of two at or above, with the reference AVX2's double table, fixed per version. No prime
+  of two at or above, with the reference a frozen copy of AVX2's double table, fixed per
+  version. No prime
   factor above 23 can be fast, and no composite with 11, 17, 19 or 23 (P4). The alternative is a plain smoothness rule (7-smooth, say),
   which ignores the vector width's partial tiles: odd smooth lengths cost 1.5–3 times a
   power of two per point.
@@ -2588,8 +2600,11 @@ maintainer.
   tables' units are not time; it covers complex rows only (real rows use n / 2), and in-cache
   rows. The lead's sketch had `estimated_cost(shape)`; a shape-wide estimate needs the cost
   model that P3 rejected.
-- (e) Edge values: `next_fast_length(0)` is 1, n ≤ 2 returns n, and above 2⁴⁰ it returns n
-  without searching.
+- (e) Edge values: `next_fast_length(0)` is 1, n ≤ 2 returns n, and with `real` n ≤ 2
+  returns 2. Above 2⁴⁰ both queries throw `std::invalid_argument` (the alternative was to
+  return n, or with `real` the next even length, unsearched).
+- (f) Pending: an enum (`next_fast_length(n, length_kind::real)`, say) instead of the `bool`,
+  which reads better at the call site; kept as `bool` for now, scipy's spelling.
 
 **Threading API and contract (tasks 3.1 and 3.2), for the maintainer's review.** Built as
 below because section 5.3 left the shapes open; each is easy to change before a release.
@@ -2847,6 +2862,7 @@ to change before a release.
 | 2026-11-16 | A radix-20 codelet (Good–Thomas 4 × 5), a pass radix only (rule 1 leaves it out, the narrow x86 leaf table has no row of it); `avx2` double overrides take it at 80, 160, 240, 640, 2000, 3000 and 3600, and re-fitted sequences at 384 and 20000; `radix_override` holds five radices (experiment X38, proposed in pull request 27) | FFTW's plans take radix 20 there; 0.868 of main on those lengths on the EPYC (0.81–0.96), tracking tier 1.000; library text +5.6 %; two unchanged-plan cases past the decision rule's limit, for the lead |
 | 2026-11-17 | A Bluestein stage of s = C copies covers the whole line while the line is not longer than `long_convolution_bytes` (X36b; s < C already did, X36) | X36b: EPYC 1018 0.73 (1.53 → 1.12 of FFTW), Xeon 2036 0.81; NEON float 262142 lost 1.23 as one stage, hence the length limit; a grid convolution for the Xeon and per-copy stages need a second movable workspace slot, not built |
 | 2026-11-17 | `next_fast_length` and `relative_cost` public in `fftn/lengths.hpp` (task 2.5, section 9.2): a fast length is one AVX2's double cost table prices within 1.25 of the power of two above, per point, and not a composite with a factor 11, 17, 19 or 23 (experiment P4's rule: such composites missed 1.3 of the power of two on two machines each); the API choices are proposed by the lead, pending the maintainer (18.2) | DESIGN 9.2's design (a pure function of the version, a machine-specific query beside it); the tables are the planner's own, so the two agree with what plans do; P4 checks the lengths are fast on the three machines |
+| 2026-11-17 | The fast lengths' reference table is a frozen copy of AVX2's double table (`reference_costs`), not the planner's; both length queries throw above 2⁴⁰; `next_fast_length` tests only the 2, 3, 5, 7, 13-smooth candidates in [n, 2n]; 20 is priced as the chain the planner builds (PR #41 review) | a refit of the planner's tables must not move users' grids (a checksum test pins the set to 2²⁰; unchanged by this change); the old trial of every integer took 1.8 s at 2³⁹ + 1, now under 0.6 ms; pricing above 2⁴⁰ was inexact or undefined |
 
 ---
 

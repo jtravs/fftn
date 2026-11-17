@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Task 2.5: next_fast_length and relative_cost (include/fftn/lengths.hpp). The fast lengths
-// are a pure function of the library version (a golden list), next_fast_length is the
-// smallest fast length at or above n, monotone and idempotent; the real variant is even with
-// a fast half; relative_cost is 1 for powers of two and low for fast lengths on every target
-// and precision, high for large primes; and the planner computes every fast length with
-// codelet passes only (no Rader or Bluestein stage).
+// are a pure function of the library version (a golden list to 300 and a checksum to 2^20),
+// next_fast_length is the smallest fast length at or above n, monotone and idempotent, and
+// cheap up to 2^40, above which both queries throw; the real variant is even with a fast
+// half; relative_cost is 1 for powers of two and low for fast lengths on every target and
+// precision, high for large primes; and the planner computes every fast length with codelet
+// passes only (no Rader or Bluestein stage).
 
 #include "fftn/fftn.hpp"
 #include "fftn/lengths.hpp"
@@ -16,8 +17,10 @@
 
 #include <algorithm>
 #include <bit>
+#include <chrono>
 #include <complex>
 #include <cstddef>
+#include <cstdint>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -44,6 +47,26 @@ TEST(NextFastLength, FastLengthsArePinnedForTheVersion) {
   EXPECT_EQ(fast, expected);
 }
 
+TEST(NextFastLength, FastSetUpTo2To20IsPinned) {
+  // The whole fast set up to 2^20 as a count and an FNV-1a hash of the lengths (8 bytes each,
+  // little-endian first): the reference table is a frozen copy (planner/rules.cpp,
+  // reference_costs), so a refit of the planner's tables cannot change it; a change here is a
+  // change of users' grids and belongs in the decision log.
+  std::uint64_t hash = 14695981039346656037ULL;
+  std::size_t count = 0;
+  for (std::size_t n = 1; n <= (std::size_t{1} << 20U); ++n) {
+    if (d::is_fast_length(n)) {
+      ++count;
+      for (unsigned byte = 0; byte < 8; ++byte) {
+        hash ^= (static_cast<std::uint64_t>(n) >> (8 * byte)) & 0xFFU;
+        hash *= 1099511628211ULL;
+      }
+    }
+  }
+  EXPECT_EQ(count, 1879U);
+  EXPECT_EQ(hash, 0xb972c9ac0cea111fULL);
+}
+
 TEST(NextFastLength, SmallestFastLengthAtOrAbove) {
   std::size_t previous = 1;
   for (std::size_t n = 0; n <= 20000; ++n) {
@@ -68,21 +91,72 @@ TEST(NextFastLength, Examples) {
   for (std::size_t k = 0; k <= 40; ++k) {
     EXPECT_EQ(fftn::next_fast_length(std::size_t{1} << k), std::size_t{1} << k);
   }
-  const std::size_t huge = (std::size_t{1} << 40U) + 1;
-  EXPECT_EQ(fftn::next_fast_length(huge), huge); // beyond the search: n itself
+  // The largest length accepted is 2^40, itself fast; above it both queries throw.
+  const std::size_t top = std::size_t{1} << 40U;
+  EXPECT_EQ(fftn::next_fast_length(top - 1), top);
+  EXPECT_EQ(fftn::next_fast_length(top - 1, true), top);
+  EXPECT_EQ(fftn::next_fast_length(top, true), top);
+  EXPECT_THROW(static_cast<void>(fftn::next_fast_length(top + 1)), std::invalid_argument);
+  EXPECT_THROW(static_cast<void>(fftn::next_fast_length(top + 1, true)), std::invalid_argument);
+  EXPECT_THROW(static_cast<void>(fftn::next_fast_length(SIZE_MAX)), std::invalid_argument);
+}
+
+// Far from the golden range, the candidate search agrees with a trial of every length.
+TEST(NextFastLength, LargeLengthsMatchATrialOfEveryLength) {
+  for (const std::size_t n : {1000003U, 16777259U, 123456789U, 1000000007U, 1162261468U}) {
+    const std::size_t m = fftn::next_fast_length(n);
+    ASSERT_TRUE(d::is_fast_length(m)) << n;
+    for (std::size_t k = n; k < m; ++k) {
+      ASSERT_FALSE(d::is_fast_length(k)) << k;
+    }
+    const std::size_t r = fftn::next_fast_length(n, true);
+    ASSERT_EQ(r % 2, 0U) << n;
+    ASSERT_TRUE(d::is_fast_length(r / 2)) << n;
+    for (std::size_t k = n + n % 2; k < r; k += 2) {
+      ASSERT_FALSE(d::is_fast_length(k / 2)) << k;
+    }
+  }
+}
+
+// DESIGN.md 9.2: a call costs microseconds to a fraction of a millisecond up to 2^40 (it
+// tests only products of 2, 3, 5, 7 and 13 in [n, 2n]). A trial of every length from n took
+// 1.8 s at 2^39 + 1 and 118 ms at 10^11; the bounds below leave sanitizers and slow runners
+// a wide margin.
+TEST(NextFastLength, CallsAreCheapUpTo2To40) {
+  using clock = std::chrono::steady_clock;
+  std::vector<std::size_t> lengths{(std::size_t{1} << 39U) + 1, 100000000003ULL,
+                                   (std::size_t{1} << 40U) - 1};
+  for (std::size_t n = 1000; n <= (std::size_t{1} << 40U); n = n / 2 * 3 + 1) {
+    lengths.push_back(n);
+  }
+  const clock::time_point start = clock::now();
+  double slowest = 0;
+  for (const std::size_t n : lengths) {
+    for (const bool real : {false, true}) {
+      const clock::time_point t0 = clock::now();
+      static_cast<void>(fftn::next_fast_length(n, real));
+      slowest = std::max(slowest, std::chrono::duration<double>(clock::now() - t0).count());
+    }
+  }
+  const double total = std::chrono::duration<double>(clock::now() - start).count();
+  EXPECT_LT(slowest, 0.25);
+  EXPECT_LT(total, 2.0) << lengths.size() << " lengths";
 }
 
 TEST(NextFastLength, RealLengthsAreEvenWithAFastHalf) {
-  for (std::size_t n = 3; n <= 20000; ++n) {
+  for (std::size_t n = 0; n <= 20000; ++n) {
     const std::size_t m = fftn::next_fast_length(n, true);
     ASSERT_GE(m, n);
     ASSERT_EQ(m % 2, 0U) << n;
     ASSERT_TRUE(d::is_fast_length(m / 2)) << n;
-    for (std::size_t k = n + n % 2; k < m; k += 2) {
+    for (std::size_t k = std::max<std::size_t>(n + n % 2, 2); k < m; k += 2) {
       ASSERT_FALSE(d::is_fast_length(k / 2)) << k;
     }
   }
+  EXPECT_EQ(fftn::next_fast_length(0, true), 2U);
+  EXPECT_EQ(fftn::next_fast_length(1, true), 2U);
   EXPECT_EQ(fftn::next_fast_length(2, true), 2U);
+  EXPECT_EQ(fftn::next_fast_length(3, true), 4U);
 }
 
 std::vector<fftn::isa> every_target() {
@@ -132,6 +206,26 @@ TEST(RelativeCost, PowersOfTwoAreOneFastLengthsLowPrimesHighOnEveryTarget) {
 TEST(RelativeCost, RefusesAValueThatIsNotATarget) {
   EXPECT_THROW(static_cast<void>(fftn::relative_cost<double>(64, static_cast<fftn::isa>(200))),
                std::invalid_argument);
+}
+
+TEST(RelativeCost, RefusesLengthsAbove2To40) {
+  const std::size_t top = std::size_t{1} << 40U;
+  EXPECT_DOUBLE_EQ(fftn::relative_cost<double>(top), 1.0);
+  EXPECT_THROW(static_cast<void>(fftn::relative_cost<double>(top + 1)), std::invalid_argument);
+  EXPECT_THROW(static_cast<void>(fftn::relative_cost<float>(SIZE_MAX, fftn::isa::avx2)),
+               std::invalid_argument);
+}
+
+// Lengths the planner runs as one codelet cost 1; 20 is a pass radix only (X38), so it is
+// priced as the chain the planner builds for it, not as a leaf.
+TEST(RelativeCost, OnlyPlannerLeavesCostOneByConstruction) {
+  for (const std::size_t n : {3U, 7U, 16U, 17U, 19U, 23U}) {
+    EXPECT_DOUBLE_EQ(fftn::relative_cost<double>(n, fftn::isa::avx2), 1.0) << n;
+  }
+  const double twenty = fftn::relative_cost<double>(20, fftn::isa::avx2);
+  EXPECT_NE(twenty, 1.0);
+  EXPECT_GT(twenty, 1.0);
+  EXPECT_TRUE(d::is_fast_length(20)); // 1.22 on the reference table
 }
 
 // The planner computes every fast length with codelet passes: no Rader or Bluestein stage.

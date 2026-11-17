@@ -25,16 +25,31 @@ const double padded = fftn::relative_cost<double>(4096); // a power of two: 1
 `next_fast_length(n)` is the smallest length at or above n that FFTN computes fast. Fast
 means that the planner's reference cost table prices a row of the length, per point, within
 1.25 times a row of the power of two at or above it.
-- The reference table is fixed for each library version, whatever machine the program runs
-  on, so a grid chosen with it is the same everywhere.
-- A fast length is a product of 2, 3, 5, 7 and 13, or one of the primes 11, 17, 19 and 23
-  alone, which FFTN computes in a single codelet. Composites with a factor 11, 17, 19 or 23
-  are not fast: measured, they were slower than the table believes (experiment P4).
+- "Fast" is a property of the reference table, not a measured guarantee on every machine.
+  Experiment P4 timed the lengths it picks: every pick was faster than the length it
+  replaced, and on the two x86 machines 78 % of them ran within 1.3 times the power of two
+  above, but some did not (140, the pick for 131, ran at 1.76 times 256's time per point on
+  one Xeon).
+- The reference table is a frozen copy, fixed for each library version whatever machine the
+  program runs on and apart from the tables the planner tunes, so a grid chosen with it is
+  the same everywhere.
+- Every fast length is a product of 2, 3, 5, 7 and 13, or one of the primes 11, 17, 19 and
+  23 alone, which FFTN computes in a single codelet. Not every such product is fast: 27, 39
+  and 45 are not, for example. Composites with a factor 11, 17, 19 or 23 are never fast:
+  measured, they were slower than the table believes (P4).
 - The result is never above the next power of two, and is usually within a few per cent of
   n: up to 200000, the largest step is from 41 to 48.
+- n may be at most 2^40; above it, `next_fast_length` throws `std::invalid_argument`. A call
+  costs microseconds, under a millisecond up to 2^40.
 
 `next_fast_length(n, true)` is for real transforms. The result is even and its half is fast,
-since a real transform of an even length runs a complex transform of half that length.
+since a real transform of an even length runs a complex transform of half that length; for n
+of 0, 1 or 2 it is 2.
+- In two or three dimensions only the halved axis, the last, takes `true`. The other axes
+  are complex transforms of their full length and take `next_fast_length(n)`.
+- scipy's `next_fast_len(target, real=True)` means something else: it returns a 5-smooth
+  length, odd ones included, since its real transforms take odd lengths directly. FFTN
+  halves only even real lengths, so its real lengths are even.
 
 ## `relative_cost`
 
@@ -45,6 +60,7 @@ is about 1 for lengths as fast as a power of two, and several for large primes.
 
 It is the planner's estimate for rows in cache, not a measurement. It does not price memory
 beyond the first-level cache, nor the long-row choice between a chain and a blocked grid.
+n may be at most 2^40, as for `next_fast_length`.
 Wider vector registers prefer lengths with a larger power-of-two factor: with eight complex
 floats per register (AVX-512 in float), lengths that 8 does not divide cost more, and
 `relative_cost` shows it where `next_fast_length`, fixed across machines, does not.

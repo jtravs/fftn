@@ -3,8 +3,13 @@
 #
 # Experiment P4's cases (dev/experiments/P4-next-fast-length.md): awkward lengths n, the
 # lengths next_fast_length(n) gives for them, and the powers of two at or above them, as
-# single c2c rows in double. The lists are next_fast_length's output at task 2.5's commit;
-# regenerate them if the fast set changes.
+# single c2c rows in double. The lists are next_fast_length's output when P4 ran, kept as
+# P4's record: p4-fast and p4-fast-2 are historical, since P4's rule 2 removed composites
+# with 11, 17, 19 or 23 from the fast set. Not fast now: 132, 304, 1020, 4104, 9016, 10010,
+# 15048, 30030, 65550, 150144, 250240 (p4-fast) and 10051, 150176 (p4-fast-2). The current
+# picks for p4-awkward are 40, 100, 112, 140, 252, 312, 512, 700, 1008, 1024, 1500, 2048,
+# 2500, 3024, 4096, 4116, 6048, 9072, 10080, 15120, 30240, 46080, 65610, 100000, 150528,
+# 250880; a re-run should time those.
 
 [catalogue]
 name = "p4"
@@ -16,6 +21,7 @@ dims = [37, 97, 101, 131, 250, 301, 509, 700, 1001, 1009, 1500, 2047, 2500, 3001
   6007, 9001, 10007, 15013, 30011, 46079, 65537, 99991, 150001, 250007]
 tiers = ["tracking"]
 
+# Historical: P4's first-pass picks.
 [[group]]
 name = "p4-fast"
 kind = "c2c"
@@ -23,8 +29,8 @@ dims = [40, 100, 112, 132, 252, 304, 512, 1008, 1020, 2048, 3024, 4096, 4104, 60
   15048, 30030, 46080, 65550, 100000, 150144, 250240]
 tiers = ["tracking"]
 
-# After P4's first pass removed composites with 11 or 17 (the new picks for the awkward
-# lengths whose pick changed).
+# Historical: after P4's first pass removed composites with 11 or 17 (the new picks for the
+# awkward lengths whose pick changed).
 [[group]]
 name = "p4-fast-2"
 kind = "c2c"

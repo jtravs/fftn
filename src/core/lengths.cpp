@@ -18,7 +18,13 @@
 
 namespace fftn::inline v0 {
 
-std::size_t next_fast_length(std::size_t n, bool real) { return detail::next_fast_length(n, real); }
+std::size_t next_fast_length(std::size_t n, bool real) {
+  if (n > detail::max_length_query) {
+    throw std::invalid_argument("fftn::next_fast_length: n is above 2^40, the longest length "
+                                "the length queries accept");
+  }
+  return detail::next_fast_length(n, real);
+}
 
 namespace detail {
 namespace {
@@ -53,6 +59,10 @@ std::size_t complex_lanes(target t, bool single) {
 double relative_cost(std::size_t n, bool single, isa which) {
   if (static_cast<unsigned>(which) > static_cast<unsigned>(isa::best)) {
     throw std::invalid_argument("fftn::relative_cost: target is not an fftn::isa enumerator");
+  }
+  if (n > max_length_query) {
+    throw std::invalid_argument("fftn::relative_cost: n is above 2^40, the longest length the "
+                                "length queries accept");
   }
   const target t = which == isa::best ? plan_target_of(options{})
                                       : static_cast<target>(static_cast<unsigned char>(which));
