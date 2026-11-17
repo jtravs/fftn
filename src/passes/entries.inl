@@ -65,9 +65,10 @@ template <class T, std::size_t R, int Sign> consteval pass_fn depth_first_entry(
   }
 }
 
-template <class T, std::size_t R, int Sign, edge_op OutOp> consteval pass_fn depth_top_entry() {
+template <class T, std::size_t R, int Sign, edge_op OutOp, bool Derived>
+consteval pass_fn depth_top_entry() {
   if constexpr (depth_top_radix<R>) {
-    return &depth_top_pass<T, R, Sign, OutOp>;
+    return &depth_top_pass<T, R, Sign, OutOp, Derived>;
   } else {
     return nullptr;
   }
@@ -275,8 +276,16 @@ template <class T, std::size_t I> struct radix_entries {
       .depth_first = {depth_first_entry<T, R, -1>(), depth_first_entry<T, R, +1>()},
       .depth_top =
           {
-              {depth_top_entry<T, R, -1, nop>(), depth_top_entry<T, R, -1, scl>()},
-              {depth_top_entry<T, R, +1, nop>(), depth_top_entry<T, R, +1, scl>()},
+              {
+                  {depth_top_entry<T, R, -1, nop, false>(),
+                   depth_top_entry<T, R, -1, scl, false>()},
+                  {depth_top_entry<T, R, +1, nop, false>(),
+                   depth_top_entry<T, R, +1, scl, false>()},
+              },
+              {
+                  {depth_top_entry<T, R, -1, nop, true>(), depth_top_entry<T, R, -1, scl, true>()},
+                  {depth_top_entry<T, R, +1, nop, true>(), depth_top_entry<T, R, +1, scl, true>()},
+              },
           },
   };
 };

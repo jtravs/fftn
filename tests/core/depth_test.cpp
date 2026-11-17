@@ -5,6 +5,7 @@
 // depth.inl; experiment X46) forced on short rows so that the quadruple-precision reference
 // stays cheap: one and two top factors, power-of-two and smooth sub-rows, sub-row chains of
 // two to four passes (the copy back, the alternation with scratch a, the detour through b),
+// top passes with stored and with derived twiddles,
 // every instruction set the machine runs, double and float, both directions, the scale on
 // the top pass, batches with padded distances and in place (through the workspace block);
 // and where it cannot run (complex counts that do not divide the factors) the row stays a
@@ -48,23 +49,25 @@ struct depth_case {
 // depth-first chain where it fits; every row against the reference, every gap untouched.
 template <class T>
 void check_depth(fftn::isa target, const depth_case& dc, fftn::direction dir, double scale,
-                 std::size_t count, std::size_t dist, bool in_place = false) {
+                 std::size_t count, std::size_t dist, bool in_place = false, bool derived = false) {
   const std::size_t n = dc.n;
   std::string tops;
   for (const std::size_t f : dc.tops) {
     tops += std::to_string(f) + " x ";
   }
-  const std::string what =
-      std::string(fftn::isa_name(target)) + (sizeof(T) == 8 ? " double" : " float") +
-      ", n = " + std::to_string(n) + " = " + tops + "..." +
-      (dir == fftn::direction::forward ? " forward" : " backward") +
-      (in_place ? ", in place" : "") + ", scale " + std::to_string(scale) + ", " +
-      std::to_string(count) + " rows " + std::to_string(dist) + " apart";
+  const std::string what = std::string(fftn::isa_name(target)) +
+                           (sizeof(T) == 8 ? " double" : " float") + ", n = " + std::to_string(n) +
+                           " = " + tops + "..." +
+                           (dir == fftn::direction::forward ? " forward" : " backward") +
+                           (in_place ? ", in place" : "") + (derived ? ", derived twiddles" : "") +
+                           ", scale " + std::to_string(scale) + ", " + std::to_string(count) +
+                           " rows " + std::to_string(dist) + " apart";
   SCOPED_TRACE(what);
   build_settings settings;
   settings.strategy = strategy_choice::depth;
   settings.depth_tops = dc.tops;
   settings.radices = dc.sub;
+  settings.depth_derived = derived;
   const fftn::shape<std::complex<T>, std::complex<T>> shape{
       .dir = dir,
       .axes = {{.n = n}},
@@ -156,6 +159,12 @@ template <class T> void every_case(fftn::isa target) {
     check_depth<T>(target, dc, fftn::direction::backward, 0.25, 2, dc.n + 3);
     check_depth<T>(target, dc, fftn::direction::forward, 1.0 / 3, 3, dc.n + 5);
   }
+  // Derived top-pass twiddles: one and two tops, an odd top factor, a scale, in place.
+  for (const std::size_t i : {1, 7, 8, 11}) {
+    check_depth<T>(target, cases()[i], fftn::direction::forward, 1.0, 1, cases()[i].n, false, true);
+  }
+  check_depth<T>(target, cases()[7], fftn::direction::backward, 0.5, 2, cases()[7].n + 3, true,
+                 true);
   // In place through the workspace block, with a scale and a batch; one and two tops.
   check_depth<T>(target, cases()[0], fftn::direction::forward, 1.0, 1, cases()[0].n, true);
   check_depth<T>(target, cases()[7], fftn::direction::backward, 0.5, 2, cases()[7].n + 3, true);

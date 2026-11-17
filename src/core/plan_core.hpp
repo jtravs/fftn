@@ -66,6 +66,9 @@ struct build_settings { // NOLINT(clang-analyzer-optin.performance.Padding)
   // strategies/chain.hpp, c2c_depth), instead of the rule's (plan_core.cpp, depth_tops_of)
   // when not empty. Experiment X46.
   std::vector<std::size_t> depth_tops;
+  // The depth-first chain's top passes with derived twiddles (two small tables, one more
+  // complex multiplication per leg; passes/depth.inl) instead of the grouped table. X46 arm B.
+  bool depth_derived = false;
   // The lanes strategy's block, in rows (rounded up to a multiple of the target's complex
   // count C), instead of the rule's when not 0 (plan_core.cpp, lane_block; experiment X7).
   std::size_t lane_block = 0;

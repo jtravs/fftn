@@ -242,6 +242,9 @@ public:
   [[nodiscard]] bool depth_fits(std::size_t n, const std::vector<std::size_t>& tops) const;
   depth_stages c2c_depth(std::size_t n, const std::vector<std::size_t>& tops, int sign,
                          double scale, slot work);
+  // Top passes with derived twiddles (passes/depth.inl, experiment X46 arm B): two small
+  // tables, one more complex multiplication per leg, instead of the grouped table of about n.
+  void use_derived_tops(bool on) noexcept { derived_ = on; }
   // "depth-first 4 x 4 x 1024 (sub-rows 8 x 8 x 16)" for describe().
   [[nodiscard]] std::string depth_text(std::size_t n, const std::vector<std::size_t>& tops) const;
 
@@ -255,6 +258,8 @@ private:
   const std::vector<std::complex<T>>& roots(std::size_t n);
   const T* pack(const std::vector<std::complex<T>>& w, bool broadcast);
   const T* grouped_twiddles(std::size_t n, std::size_t radix);
+  [[nodiscard]] std::size_t derived_block(std::size_t legs) const;
+  std::pair<const T*, const T*> derived_twiddles(std::size_t n, std::size_t f, std::size_t block);
   const T* shared_twiddles(std::size_t n, std::size_t radix, std::size_t s);
   const T* radix_roots(std::size_t radix);
   const T* edge_twiddles(std::size_t n);
@@ -364,6 +369,7 @@ private:
   real_fusion fusion_;
   std::size_t bluestein_above_;
   std::size_t line_scratch_ = 0;           // scratch a Bluestein stage of the current line needs
+  bool derived_ = false;                   // use_derived_tops
   std::size_t long_from_bytes_ = SIZE_MAX; // use_long_rows
   std::size_t long_radix8_bytes_ = 0;
   std::size_t conv_from_bytes_ = SIZE_MAX; // use_long_convolutions

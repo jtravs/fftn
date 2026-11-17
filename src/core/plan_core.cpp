@@ -998,6 +998,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     if (c.in_place) {
       c.block_elements = n;
     }
+    chain.use_derived_tops(settings.depth_derived);
     typename chain_builder<T>::depth_stages parts =
         chain.c2c_depth(n, depth_tops, sign, opts.scale, work);
     const auto looped = [&](std::size_t count, std::size_t step, std::vector<stage>& body) {

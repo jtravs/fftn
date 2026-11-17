@@ -76,33 +76,72 @@ void depth_first_pass(const pass_args* a, const void* src, void* dst, std::size_
   }
 }
 
+// Leg j of a run times a twiddle every lane shares (j >= 1; leg 0 untouched): the value at
+// hi + tw_reals (j - 1), broadcast. With the codelet's per-lane twiddles after it, a leg is
+// multiplied by w_n^(r k_hi B) and then by w_n^(r k_lo) (the derived top pass below).
+template <class T, int Sign> struct run_in_twiddled {
+  const T* p;
+  std::ptrdiff_t leg;
+  const T* hi;
+  [[nodiscard]] FFTN_FORCE_INLINE cv<T> get(std::size_t j) const {
+    const cv<T> v = load(p + at(j, leg));
+    if (j == 0) {
+      return v;
+    }
+    return twiddle<T, Sign>(v, bcast_tw(hi + tw_reals<T> * (j - 1)));
+  }
+};
+
 // The top pass of a depth-first chain of n = R M: for k < M, legs r < R at k + M r times
 // w_n^(r k), the R-point DFT (the DIT codelet), outputs t at k + M t. Lanes over C adjacent
 // k (C divides M), unit u is k = u C .. u C + C - 1. twiddles: the grouped first pass's table
 // of (n, R) (chain_builder::grouped_twiddles), whose row r - 1 holds w_n^(k r) for k < M, in
-// per-lane storage. Every output depends on every input, so src may be dst (it is, in the
-// chain). The output edge's operation (none or the scale) applies to what is stored. Reads
-// m (M), twiddles, scale.
-template <class T, std::size_t R, int Sign, edge_op OutOp>
+// per-lane storage; or (Derived, experiment X46 arm B) for k = k_hi B + k_lo, B = s (a
+// multiple of C dividing M), the per-lane table of w_n^(r k_lo) (rows r - 1 of B entries)
+// and the broadcast table `roots` of w_n^(r k_hi B) (R - 1 per k_hi), applied one after the
+// other: tables of about (R - 1)(B + M / B) entries instead of (R - 1) M, one more complex
+// multiplication per leg. Every output depends on every input, so src may be dst (it is, in
+// the chain). The output edge's operation (none or the scale) applies to what is stored.
+// Reads m (M), twiddles, scale, and with Derived s and roots.
+template <class T, std::size_t R, int Sign, edge_op OutOp, bool Derived>
 void depth_top_pass(const pass_args* a, const void* src, void* dst, std::size_t first,
                     std::size_t last) {
   const T* x = static_cast<const T*>(src);
   T* y = static_cast<T*>(dst);
   const std::size_t m = a->m;
   const T* table = static_cast<const T*>(a->twiddles);
-  const std::ptrdiff_t row = at(m, static_cast<std::ptrdiff_t>(tw_reals<T>));
+  const std::size_t block = Derived ? a->s : m;
+  const std::ptrdiff_t row = at(block, static_cast<std::ptrdiff_t>(tw_reals<T>));
   const std::ptrdiff_t leg = at(m, 2);
+  const T* hi = static_cast<const T*>(a->roots);
+  std::size_t k_lo = first * C<T>;
+  if constexpr (Derived) {
+    hi += tw_reals<T> * (R - 1) * (k_lo / block);
+    k_lo %= block;
+  }
   for (std::size_t u = first; u < last; ++u) {
     const std::size_t k0 = u * C<T>;
-    cdft<R>::template dit<T, Sign>(
-        run_in<T, edge_op::none, true>{
-            .p = x + at(k0, 2), .leg = leg, .step = 2, .valid = C<T>, .op = {}},
-        run_out<T, OutOp, true>{.p = y + at(k0, 2),
-                                .leg = leg,
-                                .step = 2,
-                                .valid = C<T>,
-                                .op = make_edge<T, OutOp>(a, nullptr, 0, 0)},
-        lane_twiddles<T>{.p = table + tw_reals<T> * k0, .row = row});
+    const run_out<T, OutOp, true> out{.p = y + at(k0, 2),
+                                      .leg = leg,
+                                      .step = 2,
+                                      .valid = C<T>,
+                                      .op = make_edge<T, OutOp>(a, nullptr, 0, 0)};
+    const lane_twiddles<T> tw{.p = table + tw_reals<T> * k_lo, .row = row};
+    if constexpr (Derived) {
+      cdft<R>::template dit<T, Sign>(
+          run_in_twiddled<T, Sign>{.p = x + at(k0, 2), .leg = leg, .hi = hi}, out, tw);
+      k_lo += C<T>;
+      if (k_lo == block) {
+        k_lo = 0;
+        hi += tw_reals<T> * (R - 1);
+      }
+    } else {
+      cdft<R>::template dit<T, Sign>(
+          run_in<T, edge_op::none, true>{
+              .p = x + at(k0, 2), .leg = leg, .step = 2, .valid = C<T>, .op = {}},
+          out, tw);
+      k_lo += C<T>;
+    }
   }
 }
 
