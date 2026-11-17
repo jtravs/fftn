@@ -125,6 +125,10 @@ struct machine_profile {
   // adjacent columns (core/plan_core.cpp, column_block; experiment X40). set_grid_sizes reads
   // it from the topology (128 on Apple's cores).
   std::size_t line_bytes = 64;
+  // A lanes column phase whose column elements lie less than a page apart keeps its block's
+  // two scratch tiles within this (core/plan_core.cpp, column_block; X40). set_grid_sizes
+  // sets a quarter of L2.
+  std::size_t column_tile_bytes = std::size_t{256} * 1024;
   // The L1 data cache's associativity (8 where the topology does not say: macOS): with
   // grid_block_bytes it gives the set period against which a column phase's last pass
   // counts its legs (core/plan_core.cpp, column_radices; X40).

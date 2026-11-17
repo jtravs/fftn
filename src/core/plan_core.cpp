@@ -484,9 +484,16 @@ std::size_t lanes_block(const shape_view& s, const side& in, const side& out,
 // strategy over blocks of adjacent columns, which needs the last axis contiguous in the
 // phase's source and destination (a run of C columns is then one vector access), a chain of
 // codelet lane passes for the column (lanes_fit) and no input edge or factor; else 0 (the
-// columns one at a time through the chain). The rule: a cache line of columns, at least C,
-// doubled while the two scratch tiles fit half the L1 data cache, up to max_lane_block and
-// the columns there are; or the forced block rounded up to a multiple of C.
+// columns one at a time through the chain). The rule, from X40's sweep of 4-32 columns: four
+// L1 lines of columns (16 complex doubles on x86, 32 on Apple's 128-byte lines), at least C
+// and at most the columns there are (rounded up to C); where a column's elements lie less
+// than a page apart, halved while the block's two tiles exceed a quarter of L2
+// (machine_profile::column_tile_bytes), down to a line of columns, and if they still exceed
+// it the columns run alone (0). Wide blocks won where every element of a column is on its
+// own page (2048^2: EPYC 0.126 of main's time with 16 columns, 0.183 with 4); where rows
+// share pages a block whose tiles left L2 lost (Xeon 2048 x 36: 4 columns 0.79 of main, 16
+// 1.09; EPYC 1.04 with any block, the chain's one column in L2 being as fast). A forced
+// block applies alone, rounded up to a multiple of C.
 template <class T>
 std::size_t column_block(std::size_t axis, const std::vector<std::size_t>& extent, const view& src,
                          const view& dst, const line_edges& edges, const build_settings& settings,
@@ -497,15 +504,28 @@ std::size_t column_block(std::size_t axis, const std::vector<std::size_t>& exten
       !chain.lanes_fit(extent[axis], false)) {
     return 0;
   }
+  const auto up = [c](std::size_t v) { return (v + c - 1) / c * c; };
   if (settings.column_block != 0) {
-    return (settings.column_block + c - 1) / c * c;
+    return up(settings.column_block);
   }
+  constexpr std::size_t lines_per_block = 4;
+  constexpr std::size_t page = 4096;
   const std::size_t n = extent[axis];
-  const std::size_t line = settings.profile.line_bytes / (2 * sizeof(T));
-  std::size_t block = (std::max(line, c) + c - 1) / c * c;
-  while (2 * block <= max_lane_block && 2 * block <= extent[last] &&
-         2 * (2 * block) * n * 2 * sizeof(T) <= settings.profile.grid_block_bytes / 2) {
-    block *= 2;
+  const std::size_t complex_bytes = 2 * sizeof(T);
+  const std::size_t line =
+      up(std::max<std::size_t>(settings.profile.line_bytes / complex_bytes, 1));
+  std::size_t block = std::min(up(lines_per_block * line), up(extent[last]));
+  const auto stride =
+      static_cast<std::size_t>(std::max(magnitude(src.stride[axis]) * src.element_bytes,
+                                        magnitude(dst.stride[axis]) * dst.element_bytes));
+  if (stride < page) {
+    const auto tiles = [&](std::size_t b) { return 2 * n * b * complex_bytes; };
+    while (block > line && tiles(block) > settings.profile.column_tile_bytes) {
+      block = up(block / 2);
+    }
+    if (tiles(block) > settings.profile.column_tile_bytes) {
+      return 0;
+    }
   }
   return block;
 }

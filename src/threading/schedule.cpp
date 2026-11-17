@@ -90,6 +90,7 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
     // on the Xeon and the EPYC, whose L1 refills it did not cut.
     p.grid_pad_period = private_l2 ? std::numeric_limits<std::size_t>::max() : 4096;
     p.grid_fuse_bytes = c.l2.size / 4;
+    p.column_tile_bytes = c.l2.size / 4;
   }
   // Experiment X29: with a private L2 and an L3 of at least 2 MiB per CPU sharing it (the
   // EPYC 7763's CCX: 32 MiB for 8 cores), a row whose length has a power-of-two part of at
