@@ -2591,11 +2591,8 @@ infrastructure to maintain.
 Decisions taken are in the decision log; questions that arise during implementation are
 listed here until settled.
 
-**`FFTN_OLD_X86_TARGETS` (proposed by the lead, pending the maintainer).** The `x86_v2` and
-`avx` targets add 52 % to an x86-64 library's text and 50 % to its kernel compile time for
-processors most users never have (X14). The option (section 14.3) keeps them by default and
-lets a build leave them out, those processors then running scalar code. Open: whether the
-default should stay `ON` for every build, and whether packagers should be told to keep it.
+**`FFTN_OLD_X86_TARGETS`: settled** (agreed by the maintainer, 2026-11-17: `ON` by default; see
+the decision log).
 
 **Deferred API ideas.** (a) A two-way plan: forward and backward programs of one shape over
 one set of twiddle tables, with `forward()` and `backward()`, for real kinds the r2c and c2r
