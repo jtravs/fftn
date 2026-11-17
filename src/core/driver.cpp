@@ -64,6 +64,22 @@ slot_addresses moved(const slot_addresses& at, const std::array<std::ptrdiff_t, 
   return next;
 }
 
+// The bytes a loop moves slot s per iteration (0 for the scratch lines, which never move).
+std::ptrdiff_t step_of(const loop& l, slot s) noexcept {
+  switch (s) {
+  case slot::in:
+    return l.step[0];
+  case slot::out:
+    return l.step[1];
+  case slot::block:
+    return l.step[2];
+  case slot::a:
+  case slot::b:
+    break;
+  }
+  return 0;
+}
+
 void run_records(const program& p, std::size_t begin, std::size_t end,
                  const slot_addresses& at) noexcept {
   for (std::size_t i = begin; i < end; ++i) {
@@ -74,6 +90,19 @@ void run_records(const program& p, std::size_t begin, std::size_t end,
     }
     const loop& l = *std::get_if<loop>(&r);
     const slot_addresses from = moved(at, l.start, 1);
+    // A loop over the lines of an axis whose body is one leaf (the rows of a plane of short
+    // rows) is one call of the leaf over all its lines, as run_flat runs a batch of leaf rows
+    // (X20); the leaf computes each line as it would alone (experiment X40).
+    if (l.body_end == i + 2) {
+      const stage* only = std::get_if<stage>(&p.records[i + 1]);
+      if (only != nullptr && only->leaf != nullptr && step_of(l, only->src) != 0 &&
+          step_of(l, only->dst) != 0) {
+        only->leaf(&only->args, source_of(only->src, from), destination_of(only->dst, from),
+                   step_of(l, only->src), step_of(l, only->dst), l.count);
+        i = l.body_end - 1;
+        continue;
+      }
+    }
     for (std::size_t c = 0; c < l.count; ++c) {
       run_records(p, i + 1, l.body_end, moved(from, l.step, c));
     }
