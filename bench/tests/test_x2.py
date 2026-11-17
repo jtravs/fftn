@@ -114,7 +114,7 @@ class Cases(unittest.TestCase):
         cases = search.x2_cases()
         ns = search.lengths_of(cases)
         self.assertNotIn(7, ns)  # one sequence only
-        self.assertNotIn(3125, ns)  # 5^5: radix 25 is no codelet
+        self.assertIn(3125, ns)  # 5^5: 5 x 25 x 25 and the like since radix 25 (X42)
         self.assertIn(1024, ns)
         self.assertIn(16777216, ns)
         self.assertTrue(all(radices.smooth(n) for n in ns if n <= 1024))
