@@ -460,6 +460,23 @@ passes and copies hit (strides, block widths, the power-of-two part of the lengt
 the level alone. Fitting the thresholds themselves did no better with one sample per region.
 [P3](experiments/P3-cost-model.md).
 
+3.22 **A strided axis is a batch of adjacent columns: vectorise across them and read each
+line once.** Running a plane's columns one at a time (copied element by element on wide
+registers) took 1.5–7.6 times FFTW's time from 64² to 2048²; blocks of 16–32 adjacent columns
+as the lanes of the column's chain, the block's first and last passes taking every row's
+columns at once, took the planes to 0.45–0.61 of that time (FFTN ÷ FFTW 0.80–0.94) on an M5
+Max, an EPYC 7763 and a Xeon 6240. Block by bytes per row (256 bytes, four lines where each
+element is on its own page), not by fitting tiles in L1: where every column element has its
+own page the widest blocks won (2048² 0.126 against 0.183), while tiles beyond L2 lost where
+rows share pages. [X40](experiments/X40-planes.md).
+
+3.23 **Count a pass's output legs against the L1's ways; its input legs mattered less.** A
+column chain whose last pass wrote 16 legs a power of two apart into one 8-way L1 set made
+128² and 256² planes 2.2 times slower on the M5 Max than the same columns ending in radix 8,
+whereas a first pass reading 16 legs from one set cost nothing measurable. Choose the
+radices of passes that write strided memory by the sets their legs hit (DESIGN.md 10,
+rule 1). [X40](experiments/X40-planes.md).
+
 ## 4. Kernels and algorithms
 
 4.1 **A whole-transform codelet wins only where it fills the register.** One 32-point
