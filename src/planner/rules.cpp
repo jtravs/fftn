@@ -172,19 +172,22 @@ constexpr pass_costs avx2_float{
 // the costs' sequences in user-mode cycles on the Xeon 6240 (screens 16183, 16184); a radix 20
 // last lost (1.04-1.22). 1000 keeps its X2 override: as 20.10.5 its single rows took 0.90
 // but planes and batches of 1000 1.02-1.04 (run 20261117-011743-1a01)
-// (dev/experiments/X39-xeon-long.md).
+// (dev/experiments/X39-xeon-long.md). Experiment X42: 100 and 500 end in a radix-25 pass,
+// one sequence at most 0.97 of the planner's at batch 1 and 64 (X2's search driver,
+// campaign x42-r25f-xeon; dev/experiments/X42-codelets.md).
 // clang-format off
 // NOLINTBEGIN(readability-trailing-comma): bench/x2/fit.py writes and parses this layout
-constexpr std::array<radix_override, 28> avx512_double_overrides{{
+constexpr std::array<radix_override, 29> avx512_double_overrides{{
     {.n = 24, .radices = {4, 6, 0, 0}},
     {.n = 27, .radices = {3, 9, 0, 0}},
+    {.n = 100, .radices = {4, 25, 0, 0}},
     {.n = 140, .radices = {4, 5, 7, 0}},
     {.n = 168, .radices = {4, 6, 7, 0}},
     {.n = 288, .radices = {8, 12, 3, 0}},
     {.n = 300, .radices = {20, 15, 0, 0}},
     {.n = 320, .radices = {8, 10, 4, 0}},
     {.n = 480, .radices = {8, 12, 5, 0}},
-    {.n = 500, .radices = {20, 5, 5, 0}},
+    {.n = 500, .radices = {20, 25, 0, 0}},
     {.n = 640, .radices = {8, 10, 8, 0}},
     {.n = 648, .radices = {4, 6, 9, 3}},
     {.n = 672, .radices = {8, 12, 7, 0}},
