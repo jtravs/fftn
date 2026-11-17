@@ -39,8 +39,10 @@ env:
 jobs:
   sde:
     # One job per processor model: the full suites on Nehalem and Sandy Bridge take longer
-    # than one job's limit for all four models together. Haswell and Skylake-SP now force
-    # four and five targets in the instruction-set programs (x86_v2 and avx too).
+    # than one job's limit for all four models together. Haswell and Skylake-SP leave out
+    # x86_v2 and avx ("skip", FFTN_TEST_SKIP_ISAS): under SDE x86_v2's legacy-SSE code ran so
+    # slowly there that fftn_core_tests took 61 minutes on Haswell and passed 106 on
+    # Skylake-SP (run 44008536496), and the Nehalem and Sandy Bridge jobs run both targets.
     name: x86-64 under Intel SDE (${{ matrix.model }})
     runs-on: ubuntu-24.04
     timeout-minutes: ${{ matrix.full && 180 || 120 }}
@@ -55,18 +57,22 @@ jobs:
             sde: -nhm
             expect: "sse42 1;popcnt 1;avx 0;avx2 0;fma 0;best_target x86_v2"
             full: true
+            skip: ""
           - model: Sandy Bridge (AVX without AVX2 or FMA; target avx)
             sde: -snb
             expect: "sse42 1;avx 1;avx2 0;fma 0;avx512f 0;best_target avx"
             full: true
+            skip: ""
           - model: Haswell (AVX2 and FMA; target avx2)
             sde: -hsw
             expect: "avx 1;avx2 1;fma 1;avx512f 0;best_target avx2"
             full: false
+            skip: x86_v2,avx
           - model: Skylake-SP (AVX-512 F, DQ, BW, VL; target avx512)
             sde: -skx
             expect: "avx2 1;avx512f 1;avx512dq 1;avx512bw 1;avx512vl 1;best_target avx512"
             full: false
+            skip: x86_v2,avx
           # No model here has AVX-512 F without DQ and VL: SDE 10 dropped Knights Landing (its
           # -knl option is rejected as a bad option). The avx512 target's DQ and VL gates are
           # tested on synthetic feature sets instead (tests/isa/target_test.cpp,
@@ -114,6 +120,7 @@ jobs:
           EXPECT: ${{ matrix.expect }}
           SDE_MODEL: ${{ matrix.sde }}
           EMULATE_FULL: ${{ matrix.full && '1' || '0' }}
+          FFTN_TEST_SKIP_ISAS: ${{ matrix.skip }}
         run: >
           bash .github/scripts/emulate.sh build/check-release "$EXPECT"
           "$SDE" "$SDE_MODEL" -chip_check_exe_only --
