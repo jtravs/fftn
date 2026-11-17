@@ -265,4 +265,4 @@ points 1.14–1.16 times as long as e8c2639 on the EPYC (above); the final branc
 rule 3, recorded: Xeon 28 × 1 1.035–1.049 from arm 0 on (plan unchanged), EPYC 64 × 256
 1.022 in arm 2 (plan unchanged). Library: x86-64 +0.10 %, arm64 +0.2–0.7 %.
 
-DESIGN.md 6.1, 8.2's table and the decision log, LESSONS 1.11 and 4.14 updated.
+DESIGN.md 6.1, 8.2's table and the decision log, LESSONS 1.11 and 4.16 updated.

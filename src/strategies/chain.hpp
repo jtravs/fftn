@@ -148,6 +148,19 @@ public:
     long_radix8_bytes_ = radix8_bytes;
   }
 
+  // Long convolutions (experiment X36), on every machine, since a Bluestein or Rader
+  // stage's convolution is a chain and never a grid: one of a power-of-two length of more
+  // than from_bytes takes the long-row radices (use_long_rows) with radix 8 up to
+  // radix8_bytes; and a Bluestein stage's length has a power-of-two part of at most
+  // pow2_part_bytes (bluestein_length). The rules' radices for a power of two of 2^18
+  // points took 2.5 times as long as the long-row radices on the M5 Max.
+  void use_long_convolutions(std::size_t from_bytes, std::size_t radix8_bytes,
+                             std::size_t pow2_part_bytes) noexcept {
+    conv_from_bytes_ = from_bytes;
+    conv_radix8_bytes_ = radix8_bytes;
+    conv_pow2_part_bytes_ = pow2_part_bytes;
+  }
+
   // The radices of a chain for n, in pass order (empty for n = 1); the last is a Bluestein
   // stage's when bluestein_last(n).
   [[nodiscard]] std::vector<std::size_t> radices(std::size_t n) const;
@@ -219,6 +232,10 @@ private:
     const T* kernel;
   };
   bluestein_tables bluestein_tables_of(std::size_t q, int sign, std::size_t copies);
+  // A Bluestein stage's convolution length for q (use_long_convolutions).
+  [[nodiscard]] std::size_t bluestein_m(std::size_t q) const;
+  // The radices of a Bluestein or Rader stage's convolution of len points.
+  [[nodiscard]] std::vector<std::size_t> convolution_radices(std::size_t len) const;
   const T* rader_kernel_of(std::size_t q, std::size_t g, int sign);
   const T* rader_index_of(std::size_t q, std::size_t g);
   std::complex<T> pairing_root(std::size_t n, std::size_t k);
@@ -318,6 +335,9 @@ private:
   std::size_t line_scratch_ = 0;           // scratch a Bluestein stage of the current line needs
   std::size_t long_from_bytes_ = SIZE_MAX; // use_long_rows
   std::size_t long_radix8_bytes_ = 0;
+  std::size_t conv_from_bytes_ = SIZE_MAX; // use_long_convolutions
+  std::size_t conv_radix8_bytes_ = 0;
+  std::size_t conv_pow2_part_bytes_ = SIZE_MAX;
   std::map<std::size_t, std::vector<std::complex<T>>> roots_;
   std::map<std::pair<std::size_t, std::size_t>, const T*> grouped_tables_;              // (n, R)
   std::map<std::tuple<std::size_t, std::size_t, std::size_t>, const T*> shared_tables_; // n, R, s

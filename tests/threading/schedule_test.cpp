@@ -458,6 +458,10 @@ TEST(Schedule, GridSizesFromCaches) {
   EXPECT_EQ(xeon.grid_pad_period, std::numeric_limits<std::size_t>::max());
   EXPECT_EQ(epyc.grid_pad_period, std::numeric_limits<std::size_t>::max());
   EXPECT_EQ(m5.grid_pad_period, 4 * kib);
+  // Bluestein lengths avoid large powers of two there too (X36).
+  EXPECT_EQ(m5.bluestein_pow2_part_bytes, 32 * kib);
+  EXPECT_EQ(xeon.bluestein_pow2_part_bytes, std::numeric_limits<std::size_t>::max());
+  EXPECT_EQ(epyc.bluestein_pow2_part_bytes, 32 * kib);
   // Lengths that are not powers of two stay chains longer where the L2 is shared (X29).
   EXPECT_EQ(m5.chain_part_bytes, 16 * kib);
   EXPECT_EQ(m5.chain_mixed_bytes, 256 * kib);
@@ -482,6 +486,9 @@ TEST(Schedule, GridSizesFromCaches) {
   EXPECT_EQ(epyc.pow2_chain_bytes, std::size_t{64} * 1024 * kib);
   EXPECT_EQ(epyc.pow2_radix8_bytes, std::numeric_limits<std::size_t>::max());
   EXPECT_EQ(xeon.pow2_chain_bytes, 0U);
+  EXPECT_EQ(xeon.grid_two_part_bytes, 0U);
+  EXPECT_EQ(epyc.grid_two_part_bytes, 0U);
+  EXPECT_EQ(m5.grid_two_part_bytes, 0U);
   // Unknown sizes keep the defaults; an unknown sharing counts as a shared L2.
   const machine_profile defaults;
   machine_profile unknown;
@@ -495,6 +502,98 @@ TEST(Schedule, GridSizesFromCaches) {
   fftn::detail::set_grid_sizes(shared, no_sharing);
   EXPECT_EQ(shared.grid_min_bytes, 32 * kib);
   EXPECT_EQ(shared.grid_three_bytes, 128 * kib);
+}
+
+// Experiment X35: the planner's fields of the profile of every recorded machine. The M5 Max,
+// the EPYC 7763, the Zen 5 VM (Google Cloud C4D, 8 cores) and the Xeon Gold 6240 keep the
+// values they had before X35; on x86-64 a private L2 of 2 MiB or more (the Granite Rapids
+// VM, Google Cloud C4) takes grids for long powers of two, two phases where the power-of-two
+// part is at most 2048 complex doubles, the grid and three phases beyond
+// half of L2, whatever its L3 per CPU (63 MiB in that VM). The Axion VM (C4A, AArch64,
+// also 2 MiB of private L2) keeps the profile it had: it lost with X35's. X36's two fields
+// follow: Granite Rapids takes the Xeon's rules (no Bluestein length limit, long
+// convolutions beyond 4 L2), the Axion VM the Zen ones; neither measured.
+struct planner_fields {
+  std::size_t grid_min_bytes;
+  std::size_t grid_three_bytes;
+  std::size_t grid_block_bytes;
+  std::size_t grid_fuse_bytes;
+  std::size_t grid_pad_period;
+  std::size_t grid_two_odd_part;
+  std::size_t grid_two_part_bytes;
+  std::size_t chain_part_bytes;
+  std::size_t chain_mixed_bytes;
+  std::size_t chain_part_limit_bytes;
+  std::size_t pow2_chain_bytes;
+  std::size_t pow2_radix8_bytes;
+  bool c2r_paired_gather;
+  std::size_t bluestein_pow2_part_bytes; // X36
+  std::size_t long_convolution_bytes;    // X36
+
+  bool operator==(const planner_fields&) const = default;
+};
+
+planner_fields fields_of(const machine_profile& p) {
+  return {
+      .grid_min_bytes = p.grid_min_bytes,
+      .grid_three_bytes = p.grid_three_bytes,
+      .grid_block_bytes = p.grid_block_bytes,
+      .grid_fuse_bytes = p.grid_fuse_bytes,
+      .grid_pad_period = p.grid_pad_period,
+      .grid_two_odd_part = p.grid_two_odd_part,
+      .grid_two_part_bytes = p.grid_two_part_bytes,
+      .chain_part_bytes = p.chain_part_bytes,
+      .chain_mixed_bytes = p.chain_mixed_bytes,
+      .chain_part_limit_bytes = p.chain_part_limit_bytes,
+      .pow2_chain_bytes = p.pow2_chain_bytes,
+      .pow2_radix8_bytes = p.pow2_radix8_bytes,
+      .c2r_paired_gather = p.c2r_paired_gather,
+      .bluestein_pow2_part_bytes = p.bluestein_pow2_part_bytes,
+      .long_convolution_bytes = p.long_convolution_bytes,
+  };
+}
+
+TEST(Schedule, ProfilesOfRecordedMachines) {
+  const std::filesystem::path data(FFTN_PLATFORM_DATA);
+  const auto fields = [&](const char* file, bool x86_64) {
+    return fields_of(fftn::detail::profile_for(fftn::detail::load_topology(data / file), x86_64));
+  };
+  constexpr std::size_t kib = 1024;
+  constexpr std::size_t mib = 1024 * kib;
+  constexpr std::size_t never = std::numeric_limits<std::size_t>::max();
+  // The values before X35 (main at 2eea943).
+  EXPECT_EQ(fields("macos-apple-m5-max.sysctl", false),
+            (planner_fields{128 * kib, 2 * mib, 128 * kib, 4 * mib, 4 * kib, 0, 0, 16 * kib,
+                            256 * kib, never, 64 * mib, 2 * mib, true, 32 * kib, 128 * kib}));
+  EXPECT_EQ(fields("linux-amd-epyc-7763.sysfs", true),
+            (planner_fields{256 * kib, 512 * kib, 32 * kib, 128 * kib, never, 0, 0, 16 * kib, 0,
+                            16 * mib, 64 * mib, never, false, 32 * kib, 256 * kib}));
+  EXPECT_EQ(fields("linux-gcp-c4d-zen5.sysfs", true),
+            (planner_fields{512 * kib, 1 * mib, 48 * kib, 256 * kib, never, 0, 0, 16 * kib, 0,
+                            16 * mib, 64 * mib, never, false, 48 * kib, 512 * kib}));
+  EXPECT_EQ(fields("linux-intel-xeon-gold-6240.sysfs", true),
+            (planner_fields{512 * kib, 1 * mib, 32 * kib, 256 * kib, never, 15, 0, 0, 0, never, 0,
+                            0, false, never, 4 * mib}));
+  const planner_fields axion{1 * mib,   2 * mib, 64 * kib, 512 * kib, never,
+                             0,         0,       16 * kib, 0,         40 * mib,
+                             160 * mib, never,   false,    64 * kib,  1 * mib};
+  EXPECT_EQ(fields("linux-gcp-c4a-axion.sysfs", false), axion);
+  // A private L2 of 2 MiB on x86-64.
+  const planner_fields large_l2{1 * mib, 1 * mib, 48 * kib, 512 * kib, never, 0,     32 * kib, 0,
+                                0,       never,   0,        0,         false, never, 8 * mib};
+  EXPECT_EQ(fields("linux-gcp-c4-granite-rapids.sysfs", true), large_l2);
+  // The same on bare metal with SMT, where Granite Rapids' L3 per CPU is under 2 MiB
+  // (504 MiB for 128 cores, 256 CPUs): the key is the L2, not the L3 per CPU.
+  fftn::detail::core_class metal;
+  metal.l1d = {.size = 48 * kib, .line_size = 64, .ways = 12, .shared_by = 2};
+  metal.l2 = {.size = 2 * mib, .line_size = 64, .ways = 16, .shared_by = 2};
+  metal.l3 = {.size = 504 * mib, .line_size = 64, .ways = 16, .shared_by = 256};
+  machine_profile p;
+  fftn::detail::set_grid_sizes(p, metal, true);
+  EXPECT_EQ(fields_of(p), large_l2);
+  // Off x86-64 the rule does not apply: those caches take the large-L3 profile (X29, X32).
+  EXPECT_EQ(fields("linux-gcp-c4-granite-rapids.sysfs", false).pow2_chain_bytes,
+            2 * std::size_t{516096} * kib);
 }
 
 } // namespace

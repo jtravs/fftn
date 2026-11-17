@@ -377,16 +377,19 @@ grid_split plan_grid(std::size_t n, const side& in, const side& out, const build
   if (!settings.radices.empty() && checked_product(settings.radices) == n) {
     return {};
   }
-  // Three phases beyond grid_three_bytes, unless the odd part of n keeps two (X34).
+  // Three phases beyond grid_three_bytes, unless the odd part of n (X34) or its small
+  // power-of-two part (X35) keeps two.
   std::size_t odd = n;
   while (odd % 2 == 0) {
     odd /= 2;
   }
+  const std::size_t part_bytes = n / odd * 2 * sizeof(T);
   const bool three = settings.grid_phases != 0
                          ? settings.grid_phases == 3
                          : n * 2 * sizeof(T) > settings.profile.grid_three_bytes &&
                                (settings.profile.grid_two_odd_part == 0 ||
-                                odd < settings.profile.grid_two_odd_part);
+                                odd < settings.profile.grid_two_odd_part) &&
+                               (odd == 1 || part_bytes > settings.profile.grid_two_part_bytes);
   grid_split g = choose_grid(n, lanes, settings.profile.grid_block_bytes / (4 * sizeof(T)), three,
                              settings.profile.grid_block, settings.grid_factors);
   g.pad = grid_pad(g, 2 * sizeof(T), settings.profile.grid_pad_period);
@@ -521,6 +524,14 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   if (settings.profile.pow2_chain_bytes != 0) {
     chain.use_long_rows(settings.profile.grid_min_bytes, settings.profile.pow2_radix8_bytes);
   }
+  // X36: a convolution is always a chain, so a long one takes the long-row radices beyond
+  // the profile's long_convolution_bytes, radix 8 throughout where the profile sets no
+  // limit; a Bluestein length's power-of-two part follows the profile.
+  chain.use_long_convolutions(settings.profile.long_convolution_bytes,
+                              settings.profile.pow2_chain_bytes != 0
+                                  ? settings.profile.pow2_radix8_bytes
+                                  : std::numeric_limits<std::size_t>::max(),
+                              settings.profile.bluestein_pow2_part_bytes);
   if (const narrow_leaf_table* narrow = find_narrow_leaves(c.isa_target)) {
     chain.use_narrow_leaves(&of<T>(*narrow));
   }

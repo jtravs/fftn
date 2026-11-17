@@ -17,6 +17,7 @@
 #include "fftn/fftn.hpp"
 #include "isa/target.hpp"
 #include "planner/rules.hpp"
+#include "platform/page_memory.hpp"
 
 #include <gtest/gtest.h>
 
@@ -416,18 +417,22 @@ TEST(Measure, QuickTimesFewerCandidates) {
 
 template <class In, class Out>
 void check_measured(const fftn::shape<In, Out>& shape, fftn::options opts) {
-  opts.measure_seconds = 0.05;
-  const fftn::plan<In, Out> rules(shape, {.in_place = opts.in_place});
+  // Candidates are admitted while half the budget is left, so a small budget on a slow or
+  // loaded machine may time nothing (CI's clang-cl runner did with 0.05 s). Two seconds
+  // leave room to build a second candidate of these small shapes anywhere; the loop's own
+  // round limit, not the budget, ends their timing in milliseconds.
+  opts.measure_seconds = 2;
   for (const fftn::planning effort : {fftn::planning::quick, fftn::planning::measure}) {
     opts.effort = effort;
-    const fftn::plan<In, Out> p(shape, opts);
-    const std::string text = p.describe();
-    SCOPED_TRACE(text);
-    EXPECT_NE(text.find("planning: measured"), std::string::npos);
+    // One plan: the one whose description is checked is the one whose account is checked.
     const auto core = d::make_plan_core(d::view_of(shape), opts);
+    const std::string text = d::describe(*core);
+    SCOPED_TRACE(text);
+    EXPECT_NE(text.find("planning: measured (" + std::to_string(core->candidates_timed) + " of "),
+              std::string::npos);
+    EXPECT_GE(core->candidates_timed, 1U);
     expect_same_transform(*core, *d::build_plan_core(d::view_of(shape), {.in_place = opts.in_place},
                                                      build_settings{}));
-    EXPECT_GE(core->candidates_timed, 1U);
   }
 }
 
@@ -446,8 +451,10 @@ TEST(Measure, ATinyBudgetTimesNothing) {
   const auto shape = fftn::rows_c2c<double>(65536, 1, fftn::direction::forward);
   const fftn::options opts{.effort = fftn::planning::measure, .measure_seconds = 1e-9};
   const auto core = d::make_plan_core(d::view_of(shape), opts);
+  // Building exhausted the budget before any timing: the plan says so.
   EXPECT_EQ(core->candidates_timed, 0U);
-  EXPECT_NE(d::describe(*core).find("0 of 1 distinct candidates timed"), std::string::npos);
+  EXPECT_NE(d::describe(*core).find("planning: measured (0 of 1 distinct candidates timed"),
+            std::string::npos);
   EXPECT_EQ(d::program_fingerprint(*core),
             d::program_fingerprint(*d::build_plan_core(d::view_of(shape), {}, build_settings{})));
 }
@@ -473,6 +480,22 @@ TEST(Measure, ScratchLimitTimesFewerTransforms) {
   const std::size_t transforms = std::stoul(more.substr(at + 10));
   EXPECT_GT(transforms, 1U) << more;
   EXPECT_LT(transforms, 64U) << more;
+}
+
+// Large buffers are timed on 4 KiB and on huge pages where the two can differ (Linux with
+// transparent huge pages), and a program is judged by the slower: P2 found a choice made on
+// huge-page scratch 1.18 times slower on the caller's memory (EPYC r2c 65536).
+TEST(Measure, LargeBuffersAreTimedOnBothPageKinds) {
+  const auto shape = fftn::rows_r2c<double>(65536, 1);
+  const auto core =
+      d::make_plan_core(d::view_of(shape), {.effort = fftn::planning::quick, .measure_seconds = 2});
+  const std::string text = d::describe(*core);
+  const bool both = text.find(", on 4 KiB and huge pages,") != std::string::npos;
+  EXPECT_EQ(both, fftn::detail::page_kinds_differ() && core->candidates_timed != 0) << text;
+  const auto small =
+      d::make_plan_core(d::view_of(fftn::rows_c2c<double>(256, 1, fftn::direction::forward)),
+                        {.effort = fftn::planning::quick, .measure_seconds = 2});
+  EXPECT_EQ(d::describe(*small).find("huge pages"), std::string::npos);
 }
 
 TEST(Measure, ReducedCountsShrinkTheOuterDimensionsFirst) {
