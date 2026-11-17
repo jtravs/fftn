@@ -439,6 +439,27 @@ traded places by factorisation (71680 lost 1.10 in three phases while 86016 and 
 geometry and architecture together, and expect the fine crossovers to need a measured choice.
 [X35](experiments/X35-gnr-profile.md).
 
+3.20 **Where the kernel backs memory with transparent huge pages, a program's speed can flip
+from process to process, and a timing-based choice inherits the flip.** On the EPYC (THP
+"always"), r2c 65536 ran 140 µs on 4 KiB pages and 176–184 µs on huge pages with the rules'
+radix-8 chain. The other chains changed less, so measured planning on scratch that happened
+to be huge-page backed chose programs 1.18 times slower on the benchmark's buffers. Rader's
+random gathers at 65537 were 1.75 times slower than Bluestein in one run and 1.41–1.49 times
+faster in two others. Time candidates on both page kinds (madvise each way) and judge each by
+the slower, or the "best" program is a property of one allocation. Judging by the slower
+kind trades a few cases where the caller's memory suits the faster program (Xeon 262144,
+1.07). [P1](experiments/P1-rules-vs-measure.md), [P1b](experiments/P1b-rader-65537.md),
+[P2](experiments/P2-measure-budget.md).
+
+3.21 **A cost model with one memory factor per cache level cannot rank blocked and unblocked
+long-row structures.** Fitted per machine to 52 long rows under chain, two and three grid
+phases, it chose within 5 % of the fastest on 100 % of rows on the EPYC, but on only 55–80 %
+on the Mac and the Xeon, worse than hand thresholds. Its fit errors of 15–29 % were as large
+as the gaps it had to rank. Which structure wins beyond L1 depends on the cache sets the
+passes and copies hit (strides, block widths, the power-of-two part of the length), not on
+the level alone. Fitting the thresholds themselves did no better with one sample per region.
+[P3](experiments/P3-cost-model.md).
+
 ## 4. Kernels and algorithms
 
 4.1 **A whole-transform codelet wins only where it fills the register.** One 32-point
