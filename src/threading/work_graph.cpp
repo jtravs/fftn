@@ -7,7 +7,6 @@
 #include "passes/pass_args.hpp"
 
 #include <algorithm>
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -45,13 +44,19 @@ double records_work(const program& p, std::size_t begin, std::size_t end) {
   return work;
 }
 
-// The longest line among the stages of [begin, end): the line length n every stage records.
-std::size_t line_length(const program& p, std::size_t begin, std::size_t end) {
+// The points of one line of a nest whose body is [begin, end): the longest line its stages
+// record (a lanes pass records its block's points), or where the body holds loops of its own
+// (a volume's plane, core/plan_core.cpp add_volume_planes) the most points one of them covers.
+std::size_t line_points(const program& p, std::size_t begin, std::size_t end) {
   std::size_t n = 1;
   for (std::size_t i = begin; i < end; ++i) {
     if (const stage* st = std::get_if<stage>(&p.records[i])) {
       n = std::max(n, st->args.n);
+      continue;
     }
+    const loop& l = std::get<loop>(p.records[i]);
+    n = std::max(n, l.count * line_points(p, i + 1, l.body_end));
+    i = l.body_end - 1;
   }
   return n;
 }
@@ -92,16 +97,17 @@ work_graph build_work_graph(const program& p, std::size_t points, std::size_t ch
       ++i;
     } else {
       // The loops over the lines of an axis are perfectly nested (plan_core.cpp, add_phase):
-      // each opens right after the one before and all end together.
+      // each opens right after the one before and all end together. A volume's loop over
+      // its planes (add_volume_planes) holds a plane's phases, loops that end before it: the
+      // nest is that one loop, and its lines are whole planes.
       const std::uint32_t nest_end = std::get<loop>(p.records[i]).body_end;
       std::size_t lines = 1;
       std::size_t j = i;
       while (j < nest_end) {
         const loop* l = std::get_if<loop>(&p.records[j]);
-        if (l == nullptr) {
+        if (l == nullptr || l->body_end != nest_end) {
           break;
         }
-        assert(l->body_end == nest_end && "fftn: the loops over lines are perfectly nested");
         lines *= l->count;
         ++j;
       }
@@ -109,7 +115,7 @@ work_graph build_work_graph(const program& p, std::size_t points, std::size_t ch
       ph.body_end = nest_end;
       ph.units = lines;
       const std::size_t per_chunk =
-          std::max<std::size_t>(1, chunk_points / line_length(p, j, nest_end));
+          std::max<std::size_t>(1, chunk_points / line_points(p, j, nest_end));
       const std::size_t chunks = (lines + per_chunk - 1) / per_chunk;
       ph.chunks = static_cast<std::uint32_t>(
           std::min<std::size_t>(chunks, std::numeric_limits<std::uint32_t>::max()));

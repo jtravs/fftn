@@ -528,7 +528,9 @@ TEST(TeamExecute, WorkspaceBytesSaturate) {
   mutable_core.slot_bytes = std::numeric_limits<std::size_t>::max() / 4 - 64;
   EXPECT_EQ(fftn::detail::workspace_bytes(*core, 4), std::numeric_limits<std::size_t>::max());
   mutable_core.slot_bytes = 1024;
-  EXPECT_LT(fftn::detail::workspace_bytes(*core, 4), 8192U);
+  // Not saturated; never below a serial execution's bytes, which an executor's fallback uses.
+  EXPECT_LT(fftn::detail::workspace_bytes(*core, 4), std::max<std::size_t>(8192U, core->bytes + 1));
+  EXPECT_GE(fftn::detail::workspace_bytes(*core, 4), core->bytes);
 }
 
 } // namespace

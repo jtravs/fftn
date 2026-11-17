@@ -139,12 +139,110 @@ template <class T>
 /// A batch of `count` complex planes of `ny` rows of `nx` values, C-ordered: x varies
 /// fastest, then y, then the plane. The 2-D transform of each plane.
 ///
-/// Exceptions and guarantees: as for rows_c2c.
+/// Throws `std::bad_alloc` when memory runs out (the axes and batch dimensions are vectors).
+///
+/// Guarantees: the shape has two axes and one batch dimension with default (tight) strides
+/// and distances; nothing is validated until a plan is built from it.
 template <class T>
 [[nodiscard]] shape<std::complex<T>, std::complex<T>> planes_c2c(std::size_t ny, std::size_t nx,
                                                                  std::size_t count, direction dir) {
   shape<std::complex<T>, std::complex<T>> s;
   s.dir = dir;
+  s.axes.push_back(axis{.n = ny});
+  s.axes.push_back(axis{.n = nx});
+  s.batches.push_back(batch{.count = count});
+  return s;
+}
+
+/// A batch of `count` real planes of `ny` rows of `nx` values, transformed to planes of `ny`
+/// rows of nx/2 + 1 complex values (the last axis halved), C-ordered as for planes_c2c. Out
+/// of place both sides are tight; in place (options::in_place) each real row is padded to
+/// the 2(nx/2 + 1) reals of its complex row.
+///
+/// Throws `std::bad_alloc` when memory runs out (the axes and batch dimensions are vectors).
+///
+/// Guarantees: the shape has two axes and one batch dimension with default (tight) strides
+/// and distances; nothing is validated until a plan is built from it.
+template <class T>
+[[nodiscard]] shape<T, std::complex<T>> planes_r2c(std::size_t ny, std::size_t nx,
+                                                   std::size_t count) {
+  shape<T, std::complex<T>> s;
+  s.axes.push_back(axis{.n = ny});
+  s.axes.push_back(axis{.n = nx});
+  s.batches.push_back(batch{.count = count});
+  return s;
+}
+
+/// A batch of `count` planes of `ny` rows of nx/2 + 1 complex values, transformed to real
+/// planes of `ny` rows of `nx` values. The layouts are those of planes_r2c.
+///
+/// Throws `std::bad_alloc` when memory runs out (the axes and batch dimensions are vectors).
+///
+/// Guarantees: the shape has two axes and one batch dimension with default (tight) strides
+/// and distances; nothing is validated until a plan is built from it.
+template <class T>
+[[nodiscard]] shape<std::complex<T>, T> planes_c2r(std::size_t ny, std::size_t nx,
+                                                   std::size_t count) {
+  shape<std::complex<T>, T> s;
+  s.dir = direction::backward;
+  s.axes.push_back(axis{.n = ny});
+  s.axes.push_back(axis{.n = nx});
+  s.batches.push_back(batch{.count = count});
+  return s;
+}
+
+/// A batch of `count` complex volumes of `nz` planes of `ny` rows of `nx` values, C-ordered:
+/// x varies fastest, then y, then z, then the volume. The 3-D transform of each volume.
+///
+/// Throws `std::bad_alloc` when memory runs out (the axes and batch dimensions are vectors).
+///
+/// Guarantees: the shape has three axes and one batch dimension with default (tight) strides
+/// and distances; nothing is validated until a plan is built from it.
+template <class T>
+[[nodiscard]] shape<std::complex<T>, std::complex<T>>
+volumes_c2c(std::size_t nz, std::size_t ny, std::size_t nx, std::size_t count, direction dir) {
+  shape<std::complex<T>, std::complex<T>> s;
+  s.dir = dir;
+  s.axes.push_back(axis{.n = nz});
+  s.axes.push_back(axis{.n = ny});
+  s.axes.push_back(axis{.n = nx});
+  s.batches.push_back(batch{.count = count});
+  return s;
+}
+
+/// A batch of `count` real volumes of `nz` planes of `ny` rows of `nx` values, transformed to
+/// volumes whose rows hold nx/2 + 1 complex values (the last axis halved), C-ordered as for
+/// volumes_c2c. Out of place both sides are tight; in place (options::in_place) each real row
+/// is padded to the 2(nx/2 + 1) reals of its complex row.
+///
+/// Throws `std::bad_alloc` when memory runs out (the axes and batch dimensions are vectors).
+///
+/// Guarantees: the shape has three axes and one batch dimension with default (tight) strides
+/// and distances; nothing is validated until a plan is built from it.
+template <class T>
+[[nodiscard]] shape<T, std::complex<T>> volumes_r2c(std::size_t nz, std::size_t ny, std::size_t nx,
+                                                    std::size_t count) {
+  shape<T, std::complex<T>> s;
+  s.axes.push_back(axis{.n = nz});
+  s.axes.push_back(axis{.n = ny});
+  s.axes.push_back(axis{.n = nx});
+  s.batches.push_back(batch{.count = count});
+  return s;
+}
+
+/// A batch of `count` volumes whose rows hold nx/2 + 1 complex values, transformed to real
+/// volumes of `nz` planes of `ny` rows of `nx` values. The layouts are those of volumes_r2c.
+///
+/// Throws `std::bad_alloc` when memory runs out (the axes and batch dimensions are vectors).
+///
+/// Guarantees: the shape has three axes and one batch dimension with default (tight) strides
+/// and distances; nothing is validated until a plan is built from it.
+template <class T>
+[[nodiscard]] shape<std::complex<T>, T> volumes_c2r(std::size_t nz, std::size_t ny, std::size_t nx,
+                                                    std::size_t count) {
+  shape<std::complex<T>, T> s;
+  s.dir = direction::backward;
+  s.axes.push_back(axis{.n = nz});
   s.axes.push_back(axis{.n = ny});
   s.axes.push_back(axis{.n = nx});
   s.batches.push_back(batch{.count = count});

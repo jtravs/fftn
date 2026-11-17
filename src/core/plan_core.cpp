@@ -650,8 +650,15 @@ std::size_t column_block(std::size_t axis, const std::vector<std::size_t>& exten
       block = up(block / 2);
     }
     if (tiles(block) > budget) {
-      return 0;
+      // A team program runs such columns as blocks of a line rather than alone through the
+      // chain (X43 arm B2): members running neighbouring columns alone would write the same
+      // cache lines. complex_columns gives them the chain's radices, so the bits agree.
+      return settings.team_program && settings.profile.column_team_bytes != 0 ? line : 0;
     }
+  }
+  // A team program's blocks (X43 arm B1; machine_profile::column_team_bytes).
+  if (settings.team_program && settings.profile.column_team_bytes != 0) {
+    block = std::min(block, std::max(line, up(settings.profile.column_team_bytes / complex_bytes)));
   }
   return block;
 }
@@ -774,6 +781,34 @@ std::size_t add_column_phase(program& p, chain_builder<T>& chain, std::size_t ax
   return need;
 }
 
+// A volume's two inner axes plane at a time (DESIGN.md 9.3, task 4.2): a loop over the
+// planes along axis 0 whose body, appended by `phases(plane, src, dst)` with the views of
+// one plane (axes 1 and 2 of the volume's), finishes each plane while it is in cache. The
+// loop's iterations are whole planes, so the work graph makes it one phase of whole planes
+// per member (threading/work_graph.cpp). Every line computes what it computes when the
+// axes run one by one over the whole volume: only the order of the lines changes.
+template <class Phases>
+void add_volume_planes(program& p, const std::vector<std::size_t>& extent, const view& src,
+                       const view& dst, const Phases& phases) {
+  const auto inner = [](const view& v) {
+    return view{
+        .where = v.where, .stride = {v.stride[1], v.stride[2]}, .element_bytes = v.element_bytes};
+  };
+  const std::size_t planes = p.records.size();
+  p.records.emplace_back(loop{
+      .kind = loop_kind::lines,
+      .count = extent[0],
+      .step = slot_bytes_along(0, 1, src, dst),
+  });
+  phases(std::vector<std::size_t>{extent[1], extent[2]}, inner(src), inner(dst));
+  std::get<loop>(p.records[planes]).body_end = static_cast<std::uint32_t>(p.records.size());
+}
+
+// The axes' own lines say how each axis runs.
+constexpr const char* volume_note = "the two inner axes plane at a time, each plane finished "
+                                    "before the next, then the outer axis; each transform "
+                                    "finished before the next";
+
 // When the pairing of an even real line fuses (strategies/chain.hpp, DESIGN.md 9.1). The
 // rule: radix 8 (4 on avx2, whose 16 registers two radix-8 butterflies overfill), r2c only
 // within L1 (the grid's threshold). A forced radix limit applies alone (tests).
@@ -891,22 +926,34 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   const int sign = static_cast<int>(s.dir);
   // A strided complex axis d as the lanes over blocks of adjacent columns where they fit
   // (column_block; DESIGN.md 9.3, experiments X40 and X41): returns whether it was built.
+  // `axis` names d in describe() when `extent` is not the plan's (a volume's plane).
   const auto complex_columns = [&](std::size_t d, const std::vector<std::size_t>& extent,
                                    const view& src, const view& dst, const line_edges& edges,
-                                   int dir, const char* what) {
+                                   int dir, const char* what, std::size_t axis = SIZE_MAX) {
     const std::size_t block = column_block<T>(d, extent, src, dst, edges, settings, chain,
                                               kernels.complex_lanes, s.kind != transform_kind::c2c);
     if (block == 0) {
       return false;
     }
-    const std::vector<std::size_t> rad = column_radices<T>(
-        c.lengths[d], dst.stride[d] * dst.element_bytes, settings, profile, chain, kernels);
+    const std::size_t n = extent[d];
+    // A team program's block where the program runs the columns alone through the chain
+    // (column_block, X43 arm B2) takes the chain's radices: the same bits as the program.
+    build_settings alone = settings;
+    alone.team_program = false;
+    const bool chain_columns =
+        settings.team_program &&
+        column_block<T>(d, extent, src, dst, edges, alone, chain, kernels.complex_lanes,
+                        s.kind != transform_kind::c2c) == 0;
+    const std::vector<std::size_t> rad =
+        chain_columns ? chain.radices(n)
+                      : column_radices<T>(n, dst.stride[d] * dst.element_bytes, settings, profile,
+                                          chain, kernels);
     scratch = std::max(scratch, add_column_phase<T>(p, chain, d, extent, src, dst, dir, edges,
                                                     block, kernels.complex_lanes, rad));
-    c.axis_notes.push_back("axis " + std::to_string(d) + " (n = " + std::to_string(c.lengths[d]) +
-                           "): " + what + (what[0] != '\0' ? ", " : "") + "lanes over blocks of " +
-                           std::to_string(block) + " adjacent columns, radices " +
-                           chain.radix_text(c.lengths[d], rad));
+    c.axis_notes.push_back(
+        "axis " + std::to_string(axis == SIZE_MAX ? d : axis) + " (n = " + std::to_string(n) +
+        "): " + what + (what[0] != '\0' ? ", " : "") + "lanes over blocks of " +
+        std::to_string(block) + " adjacent columns, radices " + chain.radix_text(n, rad));
     c.strategy_note = "chain for the last axis' rows, the lanes over blocks of adjacent columns "
                       "for the others; each transform finished before the next";
     return true;
@@ -1102,20 +1149,42 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
         (c.block_elements != 0 ? "; an intermediate array in the workspace block" : "") +
         "), each transform finished before the next";
   } else if (s.kind == transform_kind::c2c) {
-    for (std::size_t i = r; i > 0; --i) {
-      const std::size_t d = i - 1;
-      const view& src = d + 1 == r ? in_view : out_view;
+    // Axis d of the plan as axis e of `extent`: the whole transform's, or a volume's plane.
+    const auto c2c_axis = [&](std::size_t d, std::size_t e, const std::vector<std::size_t>& extent,
+                              const view& src, const view& dst) {
       const bool aliased = src.where == slot::out || c.in_place;
       const line_edges edges = c2c_edges(opts, settings, d + 1 == r, d == 0);
-      if (complex_columns(d, in.extent, src, out_view, edges, sign, "")) {
-        continue;
+      if (complex_columns(e, extent, src, dst, edges, sign, "", d)) {
+        return;
       }
       std::vector<stage> st;
       const std::size_t need =
-          chain.c2c_line(c.lengths[d], sign, at(src, d), at(out_view, d), aliased, edges, st);
-      lines(d, in.extent, src, out_view, need, std::move(st));
+          chain.c2c_line(c.lengths[d], sign, at(src, e), at(dst, e), aliased, edges, st);
+      lines(e, extent, src, dst, need, std::move(st));
       c.axis_notes.push_back("axis " + std::to_string(d) + " (n = " + std::to_string(c.lengths[d]) +
                              "): radices " + chain.radix_text(c.lengths[d]));
+    };
+    // A team program takes plane order only for volumes of at least team_min_planes planes:
+    // its plane phase has one line per plane, so fewer planes than members leave members
+    // idle (X43b measured 8 lanes on volumes of 16 planes and more; 2 x 1024 x 1024 and
+    // 4 x 512 x 512 keep the axes one by one, whose phases share out by lines).
+    constexpr std::size_t team_min_planes = 8;
+    if (r == 3 && in.extent[0] > 1 &&
+        (settings.volume_planes || (settings.team_program && settings.profile.team_volume_planes &&
+                                    in.extent[0] >= team_min_planes))) {
+      add_volume_planes(
+          p, in.extent, in_view, out_view,
+          [&](const std::vector<std::size_t>& plane, const view& src, const view& dst) {
+            c2c_axis(2, 1, plane, src, dst);
+            c2c_axis(1, 0, plane, dst, dst);
+          });
+      c2c_axis(0, 0, in.extent, out_view, out_view);
+      c.strategy_note = volume_note;
+    } else {
+      for (std::size_t i = r; i > 0; --i) {
+        const std::size_t d = i - 1;
+        c2c_axis(d, d, in.extent, d + 1 == r ? in_view : out_view, out_view);
+      }
     }
   } else if (s.kind == transform_kind::r2c) {
     std::vector<stage> st;
@@ -1372,6 +1441,19 @@ std::shared_ptr<plan_core> build_plan_core(const shape_view& s, const options& o
       .depth_tops = settings.depth_tops,
   };
   c->program_text = choice_text(pinned_choice(built, *c));
+  // The team program (X43 arms B1, B2), kept where it differs from the program: its column
+  // blocks or (X43b arm VT) a volume's order.
+  // X43b arm VT: a team core also where only a volume's order would differ.
+  const bool team_order = r == 3 && settings.profile.team_volume_planes;
+  if (s.kind == transform_kind::c2c && r > 1 &&
+      (settings.profile.column_team_bytes != 0 || team_order) && !settings.team_program) {
+    build_settings team = settings;
+    team.team_program = true;
+    std::shared_ptr<const plan_core> t = build_plan_core(s, opts, team);
+    if (t->axis_notes != c->axis_notes || t->strategy_note != c->strategy_note) {
+      c->team = std::move(t);
+    }
+  }
   return c;
 }
 
@@ -1511,6 +1593,16 @@ std::string describe(const plan_core& core) {
   }
   for (const std::string& note : core.axis_notes) {
     o << note << "\n";
+  }
+  if (core.team != nullptr) {
+    if (core.team->strategy_note != core.strategy_note) {
+      o << "with a team of two or more: " << core.team->strategy_note << "\n";
+    }
+    for (std::size_t i = 0; i < core.team->axis_notes.size(); ++i) {
+      if (i >= core.axis_notes.size() || core.team->axis_notes[i] != core.axis_notes[i]) {
+        o << "with a team of two or more: " << core.team->axis_notes[i] << "\n";
+      }
+    }
   }
   o << "workspace: " << core.bytes << " bytes (scratch lines a, b of " << core.scratch_line
     << " complex each; block of " << core.block_elements << " complex)\n";

@@ -93,6 +93,60 @@ its `count`: both default to 0, which plan construction refuses, so that `.batch
   columns, padded rows, planes, reversed strides) satisfies. Inputs may overlap each
   other.
 
+Planes and volumes have shape functions like rows': `planes_c2c`, `planes_r2c`,
+`planes_c2r`, `volumes_c2c`, `volumes_r2c` and `volumes_c2r` (`fftn/shape.hpp`), each a
+batch of `count` C-ordered transforms with the defaults above (the last axis halved on the
+complex side of the real kinds):
+
+```cpp file=examples/planes_volumes.cpp region=planes
+// Two planes of 6 rows of 10 complex values, one after another; back scaled by 1/60.
+const std::size_t ny = 6;
+const std::size_t nx = 10;
+const std::size_t count = 2;
+const fftn::c2c_plan<double> forward(
+    fftn::planes_c2c<double>(ny, nx, count, fftn::direction::forward));
+const fftn::c2c_plan<double> backward(
+    fftn::planes_c2c<double>(ny, nx, count, fftn::direction::backward),
+    {.scale = 1.0 / static_cast<double>(ny * nx)});
+fftn::workspace ws(std::max(forward.workspace_bytes(), backward.workspace_bytes()));
+
+std::vector<std::complex<double>> x(ny * nx * count);
+for (std::size_t i = 0; i < x.size(); ++i) {
+  x[i] = {std::cos(0.3 * static_cast<double>(i)), std::sin(0.7 * static_cast<double>(i))};
+}
+std::vector<std::complex<double>> spectrum(x.size());
+std::vector<std::complex<double>> back(x.size());
+forward.execute(x.data(), spectrum.data(), ws);
+backward.execute(spectrum.data(), back.data(), ws);
+```
+
+```cpp file=examples/planes_volumes.cpp region=volumes
+// Three real volumes of 4 x 5 x 7 values, in place: each real row of 7 is padded to the
+// 2 (7/2 + 1) = 8 reals of its complex row, so a volume takes 4 x 5 x 4 complex values.
+const std::size_t nz = 4;
+const std::size_t ny = 5;
+const std::size_t nx = 7;
+const std::size_t count = 3;
+const std::size_t half = nx / 2 + 1;
+const fftn::r2c_plan<double> forward(fftn::volumes_r2c<double>(nz, ny, nx, count),
+                                     {.in_place = true});
+const fftn::c2r_plan<double> backward(
+    fftn::volumes_c2r<double>(nz, ny, nx, count),
+    {.in_place = true, .scale = 1.0 / static_cast<double>(nz * ny * nx)});
+fftn::workspace ws(std::max(forward.workspace_bytes(), backward.workspace_bytes()));
+
+const std::size_t rows = nz * ny * count;
+std::vector<std::complex<double>> data(rows * half);
+auto* real = reinterpret_cast<double*>(data.data()); // the padded real rows
+for (std::size_t r = 0; r < rows; ++r) {
+  for (std::size_t j = 0; j < nx; ++j) {
+    real[r * 2 * half + j] = std::cos(0.1 * static_cast<double>(r * nx + j));
+  }
+}
+forward.execute(real, data.data(), ws);  // the half spectra, n/2 + 1 values per row
+backward.execute(data.data(), real, ws); // the real volumes again
+```
+
 ## In place
 
 A plan built with `options::in_place` is executed with the same address as input and

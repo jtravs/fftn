@@ -252,6 +252,20 @@ unfused order in the generator rather than de-fusing an FMA schedule, and re-mea
 choices per ISA level, not per register width. Caveat: modern cores, not Sandy Bridge,
 whose 256-bit loads take two cycles. [X14](experiments/X14-old-x86.md).
 
+2.11 **A code-placement jump on Cascade Lake is a branch-alignment effect; pad the AVX-512
+units.** Single c2c double rows of 160, 180 and 240 points on the Xeon 6240 went to 1.07–1.10
+of their time (360 and 384: 1.04–1.06) between main 304a8c5 and 509d123 with the same radices,
+the same kernels and the same execute path; bisecting the first-parent merges put the jump at
+X40's merge (20261117-184544-8056, band ±1.0 %), whose diff touches no code those rows run
+(X40 had seen c2c 128 do the same and X37 a jump at 2–8 points on the EPYC). Assembling the
+library with GCC's `-Wa,-mbranches-within-32B-boundaries` (no branch crosses or ends on a
+32-byte boundary, the Skylake-family JCC erratum's mitigation) took them back to 0.89–0.91 of
+the unpadded time on the Xeon (20261117-204818-1541, band ±1.0 %, none loaded; 360 and 384 0.94 and 0.92); the tracking tier showed nothing slower (20261117-205228-e841); the flag on `driver.cpp` alone did
+nothing, on the avx512 units alone it did all of it (20261117-193445-016d, loaded but paired). The same flag on every unit slowed 180 and 300 points by 5–11 % on the
+EPYC (Zen 3, 20261117-190948-906d): code placement is luck there too, so only the units
+that run on the affected cores take it. A sudden single-row jump with an unchanged plan is
+this before it is a code change: bisect, then try the flag on the units that run.
+
 ## 3. Memory and caches
 
 3.1 **Buffers a power of two apart conflict in cache; offset them.** Staggering the
@@ -862,6 +876,24 @@ planes 280–380 times slower than its serial plans on an EPYC 7763, and 16² to
 times slower: its planner does not fall back to one thread for tiny problems. A threaded
 comparison that takes FFTW's threaded time alone flatters the other library on every small
 case. [X41](experiments/X41-planes-2.md).
+
+5.10 **A team wants narrower column blocks than one thread, and a plan can give it them
+without changing a bit.** On the EPYC 7763 (512 KiB private L2) blocks of 8 adjacent columns
+took 0.887 of the time of 16 at 8 lanes over the planes they change (1000² 0.66, 128² 0.75),
+while one thread lost up to 1.42 with them (2048²): one thread has the whole 32 MiB L3 behind
+its tiles, eight share it, and narrower blocks also give the members more pieces to share.
+The Xeon 6240 (1 MiB L2) gained nothing (0.997). Because a column computes alike in any block,
+a plan can keep a second program for teams with the same results; finer chunks of the same
+blocks lost everywhere (1.11–1.13). Members running neighbouring columns alone through the
+chain write the same cache lines: blocks of one line instead took 0.72 at 2048 × 36.
+[X43](experiments/X43-threaded-columns.md).
+
+5.11 **Whole planes per member are worth more to a team than the saved sweep is to one
+thread.** Volumes with their inner two axes plane at a time took 0.778 (EPYC 7763) and 0.788
+(Xeon 6240) of the axes-one-by-one time at 8 lanes, but 0.979 and 0.934 at one thread: where
+the L3 holds the volume (32 MiB per CCX), the third sweep is cheap for one thread, while a
+team gains one phase boundary fewer and each plane's rows and columns on one core.
+[X43b](experiments/X43b-volumes.md).
 
 ## 6. Toolchain and testing pitfalls
 
