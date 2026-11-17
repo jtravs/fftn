@@ -106,6 +106,21 @@ crossovers themselves: `fbench calibrate` measuring, per machine, where chain, t
 phases cross, and writing the profile's thresholds. That keeps the planner deterministic and
 removes the hand-set constants that misfired on Granite Rapids.
 
+### EPYC (run 20261117-020528-aad3, Slurm 511481/511482, commit 059b383; 10 of 10 rounds loaded, ±3.49 %)
+
+| Precision | Cases | Model within 5 % (geomean) | Calibrated fields within 5 % (geomean) | Rules within 5 % (geomean) |
+|---|---|---|---|---|
+| double | 32 | 32 (100 %; 1.000) | 31 (96.9 %; 1.046) | 26 (81 %; 1.053) |
+| float | 20 | 19 (95 %; 1.017) | 18 (90 %; 1.036) | 14 (70 %; 1.055) |
+
+On the EPYC the model meets rules 1 and 2, where the rules themselves do not. Its fit is
+loose (rms 0.29 in log time), but the choices come out right: on Zen 3 the chain wins
+almost everywhere to beyond L3. The calibrated fields keep chains to 16 MiB, against the
+rules' X29 and X32 exceptions. The one float miss is 393216 (the chain chosen, 1.41).
+
+The model passes on the EPYC and fails on the Mac. The Xeon (Slurm 16209/16210) decides
+between a model by machine family and calibrated fields.
+
 ## Verdict
 
 Pending.
