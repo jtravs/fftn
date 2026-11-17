@@ -106,7 +106,9 @@ pull request:
   leaf path (byte distances, the general path out of line) only on AArch64 (Mac 2–6 points
   0.83–0.89; on the EPYC it lost). Left: EPYC 15 × 2 and 64 × 2 backward and 64 × 16 (FFTW
   runs two rows per `ymm` with whole codelets), Xeon 2 and 4 points (1.10), Mac 2 × 3 in
-  place (1.39, a latency chain between executions).
+  place (1.39, a latency chain between executions). Found on the way: `main` 1fe3fe7 runs
+  single rows of 2–8 points 1.14–1.16 times as long as e8c2639 on the EPYC (X37's run
+  20261117-014755-1442; the execute path did not change: probably code placement).
 - Task 2.4, first milestone (pull request 26): `planning::rules`/`quick`/`measure`, the
   budgets, `fftn::wisdom` (keyed by a build identifier), candidates from the rules'
   thresholds; the API agreed by the maintainer; P1 first pass: rules within 5 % of measure

@@ -110,8 +110,10 @@ recovered). [P1](experiments/P1-rules-vs-measure.md), [P2](experiments/P2-measur
 points: switching the backend took them to 0.80–0.82 of their time on the EPYC 7763,
 0.86–0.91 on the Xeon 6240 and 0.96 on the M5 Max (2 points: 1.22 → 1.15 of FFTW on the
 Mac, 0.86 → 0.69 on the EPYC). At a few nanoseconds per call the harness's own path is part
-of the result; check it against the public entry whenever the entry changes.
-[X37](experiments/X37-short-batches.md).
+of the result; check it against the public entry whenever the entry changes. And keep
+every arm on one base: merging `main` into the branch mid-experiment moved the same rows by
+1.14–1.16 on the EPYC (the merged `main` alone did), which first read as a loss of the arm
+being timed. [X37](experiments/X37-short-batches.md).
 
 ## 2. The instruction set and the machine
 

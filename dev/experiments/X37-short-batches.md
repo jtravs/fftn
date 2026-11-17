@@ -173,15 +173,32 @@ distances and drops the split.
 
 ### Arm 3 without the split entry (S df90c48), and the final branch (U e7063ff)
 
-S kept the leaves' byte distances and dropped the split. On the EPYC that was worse than
-arm 2 on its own targets: run 20261116-233121-5385 (Slurm 511237, builds 511236; Q, S,
-FFTW; 24 rounds, all loaded, band ±1.00 %): S ÷ Q over the leaf rows 1.042 (single rows of
-2–8 points 1.10–1.20, 2 × 3 1.13), the general-path rows 1.019 (61 points 1.13). With the
-split (R) the same leaf rows had been 0.85–0.95 of Q. On the Xeon S gained (below), on the
-Mac the split is worth 6–9 % at 2–6 points by itself. So arm 3 is kept on AArch64 only
-(e7063ff: the leaves' byte distances and the out-of-line general path under
-`FFTN_ARCH_AARCH64`; x86 builds compile arm 2's text), and the final branch U is arm 2 (with
-rule 3's table change) on x86 and arm 3 on arm64.
+S kept the leaves' byte distances and dropped the split. S and every later commit include
+the merge of `main` 1fe3fe7 (task 2.4), which Q and R do not, so S ÷ Q mixes two changes:
+run 20261116-233121-5385 (EPYC, Slurm 511237, builds 511236; 24 rounds, all loaded, band
+±1.00 %) put S at 1.10–1.20 of Q on single rows of 2–8 points. The clean comparison, run
+20261117-014755-1442 (EPYC, Slurm 511468; A, `main` 1fe3fe7 as M0, S, U, FFTW; 20 rounds,
+all loaded, band ±1.00 %): **`main` 1fe3fe7 is itself 1.14–1.16 of e8c2639 on single rows
+of 2–8 points and 2 × 3, 3 × 3 on the EPYC** (M0 ÷ A; the execute path did not change, so
+probably code placement, to be checked by task 2.4's owner); S ÷ U (arm 3's byte distances
+alone on x86) 0.980 over the leaf rows (3 × 3 0.87), 61 points 1.11: below rule 2's 0.97,
+so not adopted on `avx2`. On the Mac the split is worth 6–9 % at 2–6 points by itself, and
+the general path does not mind it there. So arm 3 is kept on AArch64 only (e7063ff: the
+leaves' byte distances and the out-of-line general path under `FFTN_ARCH_AARCH64`; x86
+builds compile arm 2's text), and the final branch U is arm 2 (with rule 3's table change)
+on x86 and arm 3 on arm64. The Xeon's own clean S ÷ U was not run (the queue; the
+confounded S ÷ Q there was 0.961).
+
+Final branch against `main` 1fe3fe7: EPYC x37 (run above) U ÷ M0 0.843, none over 1.05
+(64 × 2 backward 1.04 and 144 points 1.02 beyond the band; plans unchanged); FFTN ÷ FFTW
+over x37 0.822, over 1.05 only 15 × 2 and 64 × 2 backward, 64 × 16, and 60, 100, 256 points
+(X38's range). Tracking tier, U against `main` 1fe3fe7: EPYC run 20261117-003824-bd55
+(Slurm 511390, build 511388; 16 rounds, all loaded, band ±2.11 %) 0.987, 4 faster (8 and 16
+points 0.86, 0.80), nothing slower; Xeon run 20261117-010817-3a2c (Slurm 16190, build
+16189; 16 rounds, none loaded, band ±1.49 %) 0.982, 5 faster (16 points 0.61, 8 points 0.87
+with `avx2`'s 4 × 2), nothing slower; Mac run 20261116-234648-b138 (band ±1.00 %) 0.993,
+4 faster, nothing slower. EPYC x37 U ÷ Q (run 20261117-003337-e38a, Slurm 511384, build
+511383) repeats the merge's tiny-row loss (1.17–1.20) and is superseded by the run above.
 
 - Xeon x37, run 20261116-225820-974d (Slurm 16147, build 16146; Q, S, FFTW, MKL; 24
   rounds, all loaded, band ±2.66 %): S ÷ Q on arm 3's leaf targets (2–7, 15, 16 points)
@@ -221,7 +238,7 @@ rules' factors, so NEON results do not change.
 | 0, bench calls `execute_all` | kept (rule 4): single rows of 2–6 0.889 | kept: 0.808 | kept: 0.963 |
 | 1, short pair leaves | adopted: 0.468 | adopted: 0.519 | adopted: 0.718 |
 | 2, pair leaves of 8–16 | adopted for 16 (0.661); 8 and 12 take `avx2`'s 4 × 2 and 6 × 2 (rule 3: `avx512`'s 2 × 4 and 3 × 4 lost in place, 1.5–2.1) | adopted: 0.852 | does not apply |
-| 3, lighter leaf path | rejected on x86 (Xeon 0.961 without the split but 3 × 3 in place 1.08; EPYC 1.042 without the split, general path 1.03–1.13 with it) | rejected | adopted: 0.963 (single rows 2–6 0.83–0.89) |
+| 3, lighter leaf path | not adopted (the Xeon's S ÷ Q 0.961 is confounded by the merge of `main`; 3 × 3 in place 1.08) | rejected: byte distances alone 0.980 (rule 2), with the split the general path 1.03–1.13 (rule 3) | adopted: 0.963 (single rows 2–6 0.83–0.89) |
 
 The exit check's failing cases of causes 2 and 3, FFTN ÷ FFTW (÷ MKL on the Xeon), before →
 after (exit catalogue runs above; A = `main` e8c2639):
@@ -241,8 +258,10 @@ after (exit catalogue runs above; A = `main` e8c2639):
 
 Cases over 1.05 in the exit catalogue (double, 193 cases): Xeon ÷ FFTW 30 → 23, ÷ MKL 32 →
 27 (arm 2's run, less 8 × 3 and 12 × 3 in place, which the final branch fixes); EPYC ÷ FFTW 36 → 30 (arm 2's run; on the EPYC the final branch compiles arm 2's code);
-Mac ÷ FFTW 24 → 19. Tracking tier against `main`: Mac 0.988 (arm 3 run) and 0.993 (final
-against `main` 1fe3fe7), nothing slower; Xeon 0.983 (S), nothing slower. Exceptions under
+Mac ÷ FFTW 24 → 19. Tracking tier, final against `main` 1fe3fe7: Mac 0.993, Xeon 0.982,
+EPYC 0.987, nothing slower anywhere. For the lead: `main` 1fe3fe7 runs single rows of 2–8
+points 1.14–1.16 times as long as e8c2639 on the EPYC (above); the final branch is 0.83 of
+`main` there. Exceptions under
 rule 3, recorded: Xeon 28 × 1 1.035–1.049 from arm 0 on (plan unchanged), EPYC 64 × 256
 1.022 in arm 2 (plan unchanged). Library: x86-64 +0.10 %, arm64 +0.2–0.7 %.
 
