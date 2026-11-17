@@ -1325,7 +1325,27 @@ for any pass. Not done: running the s copies in blocks of B, which would shrink 
 lines from sM to BM (1.2 GB per team member at n = 17 · 2²⁰) and keep each block's
 convolution in cache, needs a loop over blocks whose source is a scratch line, which the
 program's loops (scratch slots do not move, section 8.3) cannot express yet. M is the 7-smooth length in [2Q − 1, next power of two] whose chain
-plus chirp passes cost least under the profile (`bluestein_length`, section 11.2).
+plus chirp passes cost least under the profile (`bluestein_length`, section 11.2), with a
+power-of-two part of at most `machine_profile::bluestein_pow2_part_bytes` (experiment X36:
+a quarter of L1 where the L2 is shared, as on Apple, whose chains of a power of two from
+the L1's size up ran 1.4–1.7 times as long per point as 7-smooth lengths just above; the
+L1's size on Zen-like caches, where the convolution's two scratch lines a power of two
+apart made 4093–32749 take 1.4–5 times as long; unlimited on the Xeon 6240, where a limit
+gained nothing); when that excludes the power of two, the candidates run up to 2 (2Q − 1).
+A convolution's chain takes the rules' radices, except that one of a power of two takes
+X32's long-row radices beyond `grid_min_bytes` where X32's chains apply (Apple, Zen) and
+beyond four times the L2 elsewhere (`machine_profile::long_convolution_bytes`; Granite
+Rapids takes the Xeon's rules, unmeasured), since a convolution is never a grid: the rules'
+radix-16 passes over 2¹⁸ points ran 2.5 times as long on the M5 Max, while on the Xeon the
+long-row radices lost at 1 MiB (X36). A single copy's convolution (s = 1) takes the split
+run its length would as a line (`split_from`; x86). A Bluestein stage that would have
+1 < s < C copies covers the whole line instead (Bluestein needs no prime) where that
+convolution is no longer than the copies' together, so its passes run whole units (X36:
+1018 = 2 · 509 on AVX-512 0.68, in float 0.40); so does one of s = C copies while the line
+is not longer than `long_convolution_bytes` (X36b: its chains over s = C copies have no
+grouped first pass; EPYC 1018 0.73). Running the copies one at a time, as FFTW does, needs a
+loop over a scratch-resident line, and a grid convolution a second movable workspace slot:
+neither is expressible yet (X36b).
 Why a pass and not a strategy that wraps the chain: the program and stage design already
 expresses it, the passes before it (codelet and generic) keep their positions and edges,
 r2c and c2r get it through their inner complex chain unchanged, and the threading work
@@ -1441,7 +1461,7 @@ being padding on the real side.
 
 | Factor | Route |
 |---|---|
-| 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 16, (20, 25, 32, 64) | generated codelets |
+| 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 16, 20, 32, 64, (25) | generated codelets (20 a pass radix only, never a leaf: experiment X38) |
 | 17, 19, 23 | generated codelets (symmetric-pair form), the leaf of n = p and a pass after the priced radices in composites (experiment X27: 0.15–0.42 of the Bluestein stage's time on the Mac) |
 | other primes above 16 up to the profile's threshold | one generic looped pass, O(p²) per butterfly, vectorised across copies, in direct form with pairwise sums; the threshold is 16 on every profile (X17: Bluestein was faster at every prime from 17 up on the Mac, the Xeon and the EPYC), so the rules do not choose it now |
 | a single prime with q − 1 13-smooth, in the profile's range (16C ≤ q for C ≥ 4; q < 2¹⁶ on NEON, 2²⁴ on x86) | Rader: a gather by powers of a primitive root, a cyclic convolution of q − 1 points with a precomputed kernel spectrum, a scatter (section 8.5; X27) |
@@ -1559,7 +1579,8 @@ prices them) a cost per unit and a cost per tail, and a cost per pass. For a lin
    leaf limit (experiment X8: 32 on NEON in double, 16 elsewhere): one leaf of radix n.
 2. A length the table overrides takes the table's radices (the lengths where rule 4 was
    measured more than 2 % slower than planner v0 or, since the planner refresh, more than
-   2 % behind the measured winner in every case; 29 and 13 on AVX2).
+   2 % behind the measured winner in every case; 36 and 13 on AVX2, double's with radix
+   20, 32 and 64 passes the costs cannot price: experiments X30 and X38).
 3. Otherwise write n = n_s q₁ q₂ … with n_s free of primes above 16 and q₁ ≤ q₂ ≤ … the
    prime factors above 16. Each qᵢ is one pass, in ascending order, after the codelet
    passes: a codelet pass for 17, 19 and 23 (experiment X27), otherwise a generic pass; if
@@ -1571,7 +1592,11 @@ prices them) a cost per unit and a cost per tail, and a cost per pass. For a lin
    convolution length M is the
    7-smooth length from 2Q − 1 to the next power of two that minimises twice the cost of
    rule 4's sequence for M plus two elementwise passes of M points (priced as a last
-   radix-2 pass per point), the smallest on a tie (`bluestein_length`).
+   radix-2 pass per point), the smallest on a tie (`bluestein_length`), among those whose
+   power-of-two part the machine profile admits (up to 2 (2Q − 1) when that excludes the
+   power of two; experiment X36, section 8.5). A Bluestein stage with 1 < n / Q < C copies
+   becomes one stage of n where M(n) ≤ (n / Q) M(Q) (X36), and so does one with
+   n / Q = C copies while n's line is not long (X36b).
 4. The codelet passes are the sequence of radices from 2 to 16 (and 32 and 64 where the
    table's unit cost for them is not 0) multiplying to n_s with the
    lowest cost, the sum of its passes' costs. The pass of radix R after passes whose
@@ -2770,6 +2795,9 @@ to change before a release.
 | 2026-11-16 | `planning::measure` and wisdom built (task 2.4, sections 11.2 and 11.3): candidates are build settings of the rules' own builders (the threshold decisions of X7, X12b, X27, X29, X32–X34 and X2's next cheapest radix sequences), timed whole in interleaved rounds at the shape's size, the rules' choice kept unless beaten by 1 %; wisdom lines checked by the program's fingerprint; public `planning`, `options::effort`, `measure_seconds`, `measure_scratch_bytes`, `use`, `fftn::wisdom` (open choices in 18.2) | The maintainer's direction of the same day: measured choice instead of more threshold rules (X31b); reusing the forcing knobs keeps every candidate a program the tests already exercise and makes wisdom a few words of text; the fingerprint check makes "rebuilds exactly the same plan" a test rather than an assumption |
 | 2026-11-16 | C++20 stays (C++23 library features behind feature-test macros as before); no older standard is supported and no code is rewritten for one; compatibility with older toolchains and other languages comes from the C API (`fftn/c_api.h`) and possibly an FFTW-compatible interface, to be decided later | The maintainer prefers C++20 and newer; the public headers' C++20 use (nested inline namespaces, the executor concept, `std::span`, designated initialisers) is convenience, but a C interface serves old compilers, C, Fortran and FFTW users better than a C++17 subset |
 | 2026-11-16 | The planning API (task 2.4, pull request 26) as proposed: efforts `planning::rules` (default), `quick` and `measure`; budgets as two plain options (`measure_seconds`, `measure_scratch_bytes`, 0 = the effort's default); `class wisdom` as a value filled with `add` and passed by `options::use`, never global state; a stale or unbuildable entry is ignored and `describe()` says so; measure keeps the rules' choice unless another is at least 1 % faster; serial timing only for now | The maintainer agreed the public surface beyond section 5.3's sketch (AGENTS.md section 7) after the second reader's review; the reviewer's defects are fixed before merge |
+| 2026-11-16 | Bluestein and Rader convolutions follow the line rules (X36): long power-of-two convolutions take X32's long-row radices (from `grid_min_bytes` on Apple and Zen, beyond 4 L2 elsewhere); a Bluestein length's power-of-two part is limited per machine (`bluestein_pow2_part_bytes`: L1/4 on Apple, L1 on Zen, none on the Xeon); a single copy's convolution takes the split run; a stage of 1 < s < C copies covers the whole line where that convolution is no longer; half-form chirp passes rejected (section 8.5) | X36: the convolution took the in-cache table's radices and a power-of-two length at any size; Mac changed cases 0.49 (131071 2.61 → 0.88 of FFTW, 999983 1.99 → 0.75), EPYC 0.56 (4093 1.33 → 0.94, 65537 0.80), Xeon 1018 0.68 (÷ MKL 1.37 → 0.93) |
+| 2026-11-16 | A radix-20 codelet (Good–Thomas 4 × 5), a pass radix only (rule 1 leaves it out, the narrow x86 leaf table has no row of it); `avx2` double overrides take it at 80, 160, 240, 640, 2000, 3000 and 3600, and re-fitted sequences at 384 and 20000; `radix_override` holds five radices (experiment X38, proposed in pull request 27) | FFTW's plans take radix 20 there; 0.868 of main on those lengths on the EPYC (0.81–0.96), tracking tier 1.000; library text +5.6 %; two unchanged-plan cases past the decision rule's limit, for the lead |
+| 2026-11-17 | A Bluestein stage of s = C copies covers the whole line while the line is not longer than `long_convolution_bytes` (X36b; s < C already did, X36) | X36b: EPYC 1018 0.73 (1.53 → 1.12 of FFTW), Xeon 2036 0.81; NEON float 262142 lost 1.23 as one stage, hence the length limit; a grid convolution for the Xeon and per-copy stages need a second movable workspace slot, not built |
 
 ---
 

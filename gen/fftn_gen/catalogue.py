@@ -21,10 +21,11 @@ from .emit_cpp import codelet_inl, metadata_hpp, split_codelet_inl
 
 # Every size 2 to 16; the primes 17, 19 and 23, the leaves of those lengths and the passes
 # of those factors in composites, which otherwise went through Bluestein (experiment X27);
-# then the powers of two that whole-transform leaves (experiment X8) and few-big-pass
-# chains (task 1.6, experiment X3) use. Ascending: the C++ tables list the rows in this
-# order.
-RADICES = (*range(2, 18), 19, 23, 32, 64)
+# 20, a pass radix only (never a leaf), which FFTW's plans use at 160-20000 points and
+# which saves a pass there (experiment X38); then the powers of two that whole-transform
+# leaves (experiment X8) and few-big-pass chains (task 1.6, experiment X3) use. Ascending:
+# the C++ tables list the rows in this order.
+RADICES = (*range(2, 18), 19, 20, 23, 32, 64)
 
 # The split lowering's radices (task 1.5, experiment X1): the lane passes of a chain, which
 # the planner prices up to 16. A split codelet holds about twice the live registers of a

@@ -11,6 +11,7 @@ target_sources(fftn PRIVATE
   cpu_model.cpp
   environment.cpp
   file_source.cpp
+  page_memory.cpp
   sysctl_values.cpp
   timer.cpp
   topology.cpp

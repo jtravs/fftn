@@ -254,7 +254,7 @@ template <class T, std::size_t I> struct codelet_row {
 
 namespace {
 
-static_assert(gen::radix_count == 20, "pass_table lists the rows of gen::radices");
+static_assert(gen::radix_count == 21, "pass_table lists the rows of gen::radices");
 
 template <class T>
 inline constexpr pass_kernels<T> pass_table{
@@ -266,7 +266,7 @@ inline constexpr pass_kernels<T> pass_table{
             &codelet_row<T, 9>::passes,  &codelet_row<T, 10>::passes, &codelet_row<T, 11>::passes,
             &codelet_row<T, 12>::passes, &codelet_row<T, 13>::passes, &codelet_row<T, 14>::passes,
             &codelet_row<T, 15>::passes, &codelet_row<T, 16>::passes, &codelet_row<T, 17>::passes,
-            &codelet_row<T, 18>::passes, &codelet_row<T, 19>::passes,
+            &codelet_row<T, 18>::passes, &codelet_row<T, 19>::passes, &codelet_row<T, 20>::passes,
         },
     .generic =
         {

@@ -723,7 +723,9 @@ TEST(Shape, BracedListsBuildShapes) {
 // ---- Describe, instruction set.
 
 TEST(Describe, NamesTheProgram) {
-  const fftn::c2c_plan<double> p(fftn::rows_c2c<double>(188, 3, fftn::direction::forward));
+  // 16 x 47: more copies of the Bluestein stage than any target's lanes in double, so the
+  // rules keep the stage after the codelet passes everywhere (experiments X36, X36b).
+  const fftn::c2c_plan<double> p(fftn::rows_c2c<double>(752, 3, fftn::direction::forward));
   const std::string d = p.describe();
   const std::string isa = std::string("instruction set: ") + fftn::isa_name(p.instruction_set());
   for (const char* part : {
@@ -731,8 +733,8 @@ TEST(Describe, NamesTheProgram) {
            "double",
            isa.c_str(),
            "chain",
-           "radices 4 x bluestein 47 (M ",
-           "grouped radix-4 forward",
+           " x bluestein 47 (M ",
+           "grouped radix-",
            "bluestein in, chirp forward (Q 47, M ",
            "bluestein out",
            "loop batch x3",

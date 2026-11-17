@@ -1,0 +1,52 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Experiment X36's cases (dev/experiments/X36-large-primes.md): the phase 1 exit check's
+# failing primes and prime factors (cause 1), other primes whose p - 1 is not 13-smooth, at
+# several sizes, and controls whose plans the arms do not change.
+
+[catalogue]
+name = "x36"
+
+[[group]]
+name = "x36-targets"
+note = "the exit check's failing cases (standard catalogue ids)"
+kind = "c2c"
+dims = [4093, 65537, 131071, 999983, 1018]
+precision = ["f64", "f32"]
+tiers = ["quick", "tracking"]
+
+[[group]]
+name = "x36-primes"
+note = "more primes and prime factors whose p - 1 is not 13-smooth, and long Bluestein rows"
+kind = "c2c"
+dims = [509, 1019, 2039, 8179, 32749, 262139, 524287, 12279, 10403]
+precision = ["f64", "f32"]
+tiers = ["tracking"]
+
+[[group]]
+name = "x36-controls"
+note = "plans no arm should change: Rader primes in range, a codelet prime, a smooth length"
+kind = "c2c"
+dims = [97, 1009, 8191, 16381, 2431, 65536]
+precision = ["f64"]
+tiers = ["tracking"]
+
+[[group]]
+name = "x36-lengths"
+note = "convolution lengths: powers of two against 7-smooth lengths just above 2q - 1 (tier full only)"
+kind = "c2c"
+dims = [
+  1024, 1050, 1080, 2048, 2100, 2160, 4096, 4200, 4320, 8192, 8232, 8400, 8640, 16384, 16464,
+  16800, 65536, 65610, 66150, 131072, 132300, 138240, 262144, 262440, 264600, 524288, 524880,
+  529200, 1048576, 1049760, 1058400, 2000000, 2073600, 2097152,
+]
+precision = ["f64", "f32"]
+
+[[group]]
+name = "x36b"
+note = "2-8 copies of a large prime (X36b): the few-copy rule of the Bluestein stage"
+kind = "c2c"
+dims = [1018, 2036, 2038, 4072, 8186, 262142, 1527]
+precision = ["f64", "f32"]
+tiers = ["tracking"]

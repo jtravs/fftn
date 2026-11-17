@@ -44,9 +44,9 @@ inline constexpr edge_op fac = edge_op::factor;
 
 static_assert(gen::radices[0] == 2 &&
                   gen::radices[dense_codelet_radix - 2] == dense_codelet_radix &&
-                  gen::radices[15] == 17 && gen::radices[16] == 19 && gen::radices[17] == 23 &&
-                  narrow_leaf_slots == 18,
-              "the table below lists radices 2 to 16, 17, 19 and 23 in codelet_slot order");
+                  gen::radices[15] == 17 && gen::radices[16] == 19 && gen::radices[17] == 20 &&
+                  gen::radices[18] == 23 && narrow_leaf_slots == 19,
+              "the table below lists radices 2 to 16, 17, 19, 20 and 23 in codelet_slot order");
 
 // As entries.inl's leaf rows: [input edge][output edge], null where both would scale.
 // NOLINTBEGIN(bugprone-macro-parentheses): template argument lists, not expressions.
@@ -64,7 +64,8 @@ static_assert(gen::radices[0] == 2 &&
    FFTN_NARROW_RADIX(T, 8),  FFTN_NARROW_RADIX(T, 9),  FFTN_NARROW_RADIX(T, 10),                   \
    FFTN_NARROW_RADIX(T, 11), FFTN_NARROW_RADIX(T, 12), FFTN_NARROW_RADIX(T, 13),                   \
    FFTN_NARROW_RADIX(T, 14), FFTN_NARROW_RADIX(T, 15), FFTN_NARROW_RADIX(T, 16),                   \
-   FFTN_NARROW_RADIX(T, 17), FFTN_NARROW_RADIX(T, 19), FFTN_NARROW_RADIX(T, 23)}
+   FFTN_NARROW_RADIX(T, 17), FFTN_NARROW_RADIX(T, 19), {} /* 20: no leaf */,                \
+   FFTN_NARROW_RADIX(T, 23)}
 // The unit-stride leaves (unit_leaf.inl): [input edge][output edge], none or scale.
 #define FFTN_NARROW_UNIT_EDGES(T, R, S)                                                            \
   {{&unit_leaf<T, R, S, nop, nop>, &unit_leaf<T, R, S, nop, scl>},                                 \
@@ -77,7 +78,8 @@ static_assert(gen::radices[0] == 2 &&
    FFTN_NARROW_UNIT_RADIX(T, 8),  FFTN_NARROW_UNIT_RADIX(T, 9),  FFTN_NARROW_UNIT_RADIX(T, 10),    \
    FFTN_NARROW_UNIT_RADIX(T, 11), FFTN_NARROW_UNIT_RADIX(T, 12), FFTN_NARROW_UNIT_RADIX(T, 13),    \
    FFTN_NARROW_UNIT_RADIX(T, 14), FFTN_NARROW_UNIT_RADIX(T, 15), FFTN_NARROW_UNIT_RADIX(T, 16),    \
-   FFTN_NARROW_UNIT_RADIX(T, 17), FFTN_NARROW_UNIT_RADIX(T, 19), FFTN_NARROW_UNIT_RADIX(T, 23)}
+   FFTN_NARROW_UNIT_RADIX(T, 17), FFTN_NARROW_UNIT_RADIX(T, 19), {} /* 20: no leaf */,   \
+   FFTN_NARROW_UNIT_RADIX(T, 23)}
 // clang-format on
 // NOLINTEND(bugprone-macro-parentheses)
 
