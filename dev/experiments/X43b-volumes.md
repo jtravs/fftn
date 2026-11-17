@@ -85,4 +85,16 @@ VM, run 20261117-154622-1813 (8 rounds, all under load, other processes about 4 
 0.91–0.95, 512 × 64 × 64 0.97 and 1.04); 0.977 over the 38; worst 1.036 (512 × 64 × 64 in
 place, inside the band). Rule (1) fails: VM rejected, the Mac keeps the axes one by one.
 
+### EPYC 7763 and Xeon 6240, one thread
+
+- EPYC, run 20261117-155546-f3c5 (Slurm 512004; 8 rounds, 4 under load, band ±1.1 %): V ÷ P
+  0.980 over the 38, 0.979 over the 30 target volumes; 120³ in place 0.92, 512 × 64 × 64 and
+  64 × 64 × 512 in place 0.90–0.91, 128³ 0.95–0.97, most others 0.96–1.00, but 256³ out of
+  place 1.065. Rule (1) fails (and (2) at 256³): V rejected on the EPYC. Its 32 MiB L3 per
+  CCX holds every volume up to 128³, so a third sweep costs little there.
+- Xeon, run 20261117-154354-7453 (Slurm 16339; 8 rounds, 2 under load, band ±4.1 %): V ÷ P
+  0.945 over the 38, 0.934 over the 30 targets; 64 × 64 × 512 0.75–0.78, 128³ 0.84–0.91,
+  256³ 0.87–0.97, 120³ 0.88–0.91, 100³ backward 0.92; 97³ out of place 1.092, past the band
+  (re-run below, rule (2)). The Xeon has 1.4 MiB of L3 per core behind its 1 MiB L2.
+
 ## Verdict
