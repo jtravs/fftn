@@ -11,6 +11,12 @@ const probe_table* find_probes(target t) noexcept {
   switch (t) {
   case target::scalar:
     return &scalar::probes;
+#if FFTN_HAS_OLD_X86
+  case target::x86_v2:
+    return &x86_v2::probes;
+  case target::avx:
+    return &avx::probes;
+#endif
 #if FFTN_ARCH_X86_64
   case target::avx2:
     return &avx2::probes;

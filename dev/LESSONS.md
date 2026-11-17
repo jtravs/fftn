@@ -232,6 +232,17 @@ the gap, and judge per-core rules on several cores of one ISA (Zen 3 against Zen
 Cascade Lake against Granite Rapids differed by up to 0.3–0.6 in single cases, not in which
 cases lose). [X31](experiments/X31-cloud-1d.md).
 
+2.10 **Without FMA, width still pays and split arithmetic stops paying.** Forced on a Zen 3
+(EPYC 7763) and a Cascade Lake Xeon, a 256-bit target without FMA or AVX2 ran 0.68–0.73 of
+the time of the same kernels on 128-bit SSE4.2 registers, and 0.90–0.94 of FFTW built with
+SSE2 and AVX; the 128-bit target ran 0.96–0.98 of FFTW's SSE2 build. Split re/im passes,
+7–23 % faster than interleaved ones with FMA (X1), gained only 0.5–2.4 % without it: the
+FMA-shaped split text, de-fused, needs up to 17 % more multiplies (3 % over radices 2–16)
+than the complex-register text, whose lowering never fuses a shared scale. Keep the
+unfused order in the generator rather than de-fusing an FMA schedule, and re-measure layout
+choices per ISA level, not per register width. Caveat: modern cores, not Sandy Bridge,
+whose 256-bit loads take two cycles. [X14](experiments/X14-old-x86.md).
+
 ## 3. Memory and caches
 
 3.1 **Buffers a power of two apart conflict in cache; offset them.** Staggering the

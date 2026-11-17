@@ -593,7 +593,7 @@ The other interfaces are later work:
 |---|---|---|---|---|
 | `scalar` | 1 double | — | — | Portable fallback; reference for generator tests |
 | `x86_v2` | 128 bit, SSE2–SSE4.2, no FMA | 1 | 16 | Every x86-64 CPU since about 2009 (Nehalem, Westmere, Atom-class, older AMD). First class |
-| `avx` | 256 bit, no FMA, no AVX2 | 2 | 16 | Sandy Bridge, Ivy Bridge, AMD Bulldozer family (2011–2014). A variant of the `avx2` vocabulary; kept if experiment X14 shows a gain over `x86_v2` on such machines |
+| `avx` | 256 bit, no FMA, no AVX2 | 2 | 16 | Sandy Bridge, Ivy Bridge, AMD Bulldozer family (2011–2014). `avx2`'s shape without FMA; kept by experiment X14 (0.68–0.73 of `x86_v2`'s time, timed on Zen 3 and Cascade Lake) |
 | `avx2` | 256 bit + FMA | 2 | 16 | x86-64-v3: Zen 1–3, Intel since Haswell (2013) |
 | `avx512` | 512 bit (F, DQ, VL) | 4 | 32 | x86-64-v4: Zen 4/5, Intel server since Skylake-SP |
 | `neon` | 128 bit | 1 | 32 | AArch64 baseline (Neoverse N1, Graviton 2, Ampere) |
@@ -613,21 +613,23 @@ operation order rather than a de-fused FMA order. `x86_v2` has the same shape as
 `neon` (one complex per register, no complex-arithmetic instructions beyond SSE3's
 `addsub`), so the two share planner rules as a starting point.
 
-The x86 targets share one set of 128-bit leaves (n ≤ 16 and the primes 17, 19, 23): the
-leaves compiled in the `avx2` region with `avx2`'s operations on 128-bit registers
+The FMA x86 targets (`avx2`, `avx512`) share one set of 128-bit leaves (n ≤ 16 and the
+primes 17, 19, 23): the leaves compiled in the `avx2` region with `avx2`'s operations on 128-bit registers
 (`src/isa/vocab_avx2_narrow.inl`, experiments X28 and X28b). A leaf broadcasts its one line
 into every lane, so wider registers only repeat the work, and on Cascade Lake a 512-bit
 leaf also lowers the clock; the half-width operations round as `avx2`'s and `avx512`'s do,
 so the bits are unchanged. Every leaf has a second instantiation for lines of stride 1 on
-both sides, whose leg offsets are constants (`src/passes/unit_leaf.inl`, X28b); the x86
-targets keep only the narrow one. Short composite rows on x86 and NEON are pair leaves
-(section 8.2): a table per target and precision (`src/isa/pairs_<target>.cpp`) lists the
-lengths and their factors r1 × m. On x86 in double the codelet lengths 8, 12 and 16 take a
-pair leaf before the narrow leaf (whole registers; X37), and `avx512` plans take `avx2`'s
+both sides, whose leg offsets are constants (`src/passes/unit_leaf.inl`, X28b); `avx2` and
+`avx512` keep only the narrow one. Short composite rows on those two and on NEON are pair
+leaves (section 8.2): a table per target and precision (`src/isa/pairs_<target>.cpp`) lists
+the lengths and their factors r1 × m. On x86 in double the codelet lengths 8, 12 and 16 take
+a pair leaf before the narrow leaf (whole registers; X37), and `avx512` plans take `avx2`'s
 pair leaves for lengths their own table lacks (C = 4 does not divide them, or r1 < C would
 store partial runs: 8, 12, 18, 22, 26, 30); each pair set carries its lane count and
 twiddle packing, so such a leaf's table is built in its own storage. On AArch64 the
-leaves' batch loops step by the batch distance in bytes (no division per call).
+leaves' batch loops step by the batch distance in bytes (no division per call). `x86_v2`
+and `avx`, which have no FMA and so cannot run `avx2` code, use their own leaves, as the
+scalar target does, and no pair leaves.
 
 The target is detected once per process (CPUID, `getauxval`/`sysctlbyname`, Windows
 `IsProcessorFeaturePresent`) and chosen once per plan. A plan may be forced to a lower
@@ -690,13 +692,16 @@ fused, so it gives the same bits on every processor. The full contract is
 Each SIMD target rounds every operation exactly as another of its architecture does, so
 the same passes give the same bits on both targets of a pair: plain `neon` takes FCMLA's
 order in its products (the product with wr rounded, the wi term fused onto it), `avx512`
-takes `avx2`'s FMA order, and `addj` and `subj` round one addition everywhere
+takes `avx2`'s FMA order, `x86_v2` and `avx` round each product and then sum them, in the
+scalar target's pairing (so all three agree operation by operation), and `addj` and `subj`
+round one addition everywhere
 (`tests/core/passes_test.cpp` holds whole transforms to it). Forming a ± i·b on AVX-512 as
 `fmaddsub` or `fmsubadd` by a vector of ones, which rounds once because the product is
 exact, is an idiom FFTW's AVX-512 SIMD header uses too (the idea only; FFTN's code is its
 own, AGENTS.md section 10). `neon` and `neon_fcma` share
 a planner profile, so their plans agree bit for bit; `avx2` and `avx512` do not (16 and
-32 registers), so for some lengths they choose different radices and so different bits.
+32 registers), so for some lengths they choose different radices and so different bits;
+`x86_v2` takes `avx`'s W as its `split_block`, as `avx2` takes `avx512`'s.
 The operations the two NEON targets share are written once
 (`src/isa/vocab_neon_common.inl`).
 
@@ -781,11 +786,11 @@ of every vocabulary function and kernel, and the linker cannot substitute a copy
 for one target for a caller of another. The library is compiled with `-Werror=psabi` under
 GCC (experiment B1, section 14.1), always, not only in the gate.
 
-Each target is compiled as six translation units with the same region and the same kernel
+Each target is compiled as nine translation units with the same region and the same kernel
 text (`src/isa/kernel_text.inl`: twiddle packing, codelets, passes), each instantiating a
-share of it. Five row units (`src/isa/rows<k>_<target>.cpp`) instantiate the passes of the
-codelet radices that `src/isa/rows.inl` gives them (radices 2–12, 13–16, 32, and 64 once per
-precision, about equal in compile time), each row as a constant
+share of it. Eight row units (`src/isa/rows<k>_<target>.cpp`) instantiate the passes of the
+codelet radices that `src/isa/rows.inl` gives them (radices 2–12, 13–16, 32, 64 once per
+precision, and 17, 19 and 23 one each, about equal in compile time), each row as a constant
 `codelet_row<T, I>::passes` of external linkage in the target's namespace (an explicit
 instantiation). The main unit (`src/isa/<target>.cpp`) instantiates the other passes and the
 function table, which points at the rows (declared there as explicit instantiations made
@@ -795,8 +800,10 @@ under ASan and UBSan (Apple M5 Max; avx512 the most, GCC more still), which ran 
 out of memory; split, each unit needs 3.1–4.8 GB and at most about 3 minutes (radix 64 in
 float, avx512), and the main units 0.3 GB.
 
-Target strings: `avx2` is `"avx2,fma"`, the features its run-time check requires, and no
-AVX-512 feature; `avx512` is `"avx2,fma,avx512f,avx512dq,avx512vl"`, again the features
+Target strings: `x86_v2` is `"sse4.2,popcnt"` and `avx` `"avx,popcnt"`, the features their
+run-time checks require (SSE4.2 implies SSE4.1, SSSE3, SSE3; AVX implies SSE4.2), with no
+AVX in the first and no AVX2 or FMA in the second, which the disassembly test checks;
+`avx2` is `"avx2,fma"`, the features its run-time check requires, and no AVX-512 feature; `avx512` is `"avx2,fma,avx512f,avx512dq,avx512vl"`, again the features
 its check requires (BW and CD, which every such processor also has, are left out).
 Compilers imply a few more from these names (Clang: POPCNT and CRC32 from the AVX2 chain,
 F16C from `avx512f`); the checks do not test them, and every processor that passes a
@@ -998,7 +1005,8 @@ parameter, everything else accessors; gen/README.md has the codelet calling conv
   every lane (`bcast_tw`), the DIF codelet in the middle and the plain codelet in the last
   pass (m = 1).
 - The **leaf** is one codelet call on one line, for n ≤ 16 and for a codelet radix up to
-  the profile's leaf limit (32 on NEON in double, 16 elsewhere; experiment X8): values are
+  the profile's leaf limit (32 on NEON and `x86_v2` in double, 16 elsewhere; experiments X8
+  and X14): values are
   broadcast on loading and lane 0 is stored, so it takes any stride and runs in place, at
   the cost of C − 1 idle lanes; leaves vectorised across rows are the lanes strategy's
   (section 8.5, task 2.2). A leaf kernel takes its first line's addresses and the distances to the next
@@ -1675,7 +1683,7 @@ cost table: for each pass kind and codelet radix R (2 to 16, and 32 and 64 where
 prices them) a cost per unit and a cost per tail, and a cost per pass. For a line of n points:
 
 1. n = 1: no pass. n ≤ 16, or n a codelet radix (32, 64) no larger than the profile's
-   leaf limit (experiment X8: 32 on NEON in double, 16 elsewhere): one leaf of radix n.
+   leaf limit (experiments X8 and X14: 32 on NEON and `x86_v2` in double, 16 elsewhere): one leaf of radix n.
 2. A length the table overrides takes the table's radices (the lengths where rule 4 was
    measured more than 2 % slower than planner v0 or, since the planner refresh, more than
    2 % behind the measured winner in every case; 36 and 13 on AVX2, double's with radix
@@ -2281,7 +2289,12 @@ What the experiments still require of the build:
   there. One changes the generated code: `FFTN_MASKED_TAILS` (`AUTO`, the default, is on
   with GCC and off with every other compiler; `ON`; `OFF`) selects masked partial runs on
   x86 (section 8.2). The release toolchain for x86-64 Linux is GCC, so release builds have
-  them; results are bitwise the same either way.
+  them; results are bitwise the same either way. Another chooses which targets exist:
+  `FFTN_OLD_X86_TARGETS` (`ON`, the default) builds `x86_v2` and `avx` (section 6.1), 52 % of
+  an x86-64 library's text for processors from before 2013 (X14); `OFF` leaves them out,
+  and on such processors dispatch falls back to the scalar target. Distributed builds keep
+  the default so dispatch stays complete; CI builds both (`.github/workflows/ci.yml`, the
+  post-merge job "clang-23 no old x86"). The option is part of the wisdom build identifier.
 - A generated single-file amalgamation is a possible release artefact (phase 6); it is
   the same implementation concatenated, not a separate code path.
 
@@ -2366,16 +2379,19 @@ may not fall, and an fbench smoke run.
 
 CI matrix (phase 0 onward, growing): Linux x86-64 with GCC 14 and current GCC and Clang;
 macOS arm64 with Apple Clang and Homebrew LLVM; Linux AArch64; Windows with clang on the
-MSVC ABI. Every push and pull request builds and tests one configuration per platform
-(both floors, GCC 14 and Clang 16, among them) and runs one ASan + UBSan job and one
-ThreadSanitizer job on Linux x86-64 with Clang; the other compilers, the other sanitizer runs, clang-tidy and coverage run weekly
-and on demand. AVX-512 paths run under Intel SDE and NEON-without-FCMA and SVE paths under
+MSVC ABI. A pull request runs a short set before it may merge (current GCC on Linux x86-64,
+one ASan + UBSan job there with Clang, Homebrew LLVM on macOS arm64, and lint); each push
+to `main` then builds and tests one configuration per platform (both floors, GCC 14 and
+Clang 16, among them) and runs one ThreadSanitizer job on Linux x86-64 with Clang, so a
+break shows within the hour and is fixed on `main` (decided 2026-11-17, while there are no
+users, for merge latency); the other compilers, the other sanitizer runs, clang-tidy and
+coverage run weekly and on demand. AVX-512 paths run under Intel SDE and NEON-without-FCMA and SVE paths under
 QEMU where the runner's CPU lacks them, so every kernel is executed in CI, not only on
 developers' machines. Old processors are emulated as whole machines too (SDE's Nehalem
 and Sandy Bridge models, QEMU's Neoverse N1), which checks detection and dispatch on
 them as well as the kernels: a stray newer instruction anywhere faults. Emulation runs the
 test programs that contain kernels or detection, not the long oracle suites (those run
-natively), and only on `main`, weekly and on demand.
+natively), weekly and on demand.
 
 The workflows in [`.github/workflows/`](../.github/workflows/) are the matrix: which gate
 stages run on which compiler and why, the emulated models with the target each must
@@ -2593,6 +2609,9 @@ infrastructure to maintain.
 
 Decisions taken are in the decision log; questions that arise during implementation are
 listed here until settled.
+
+**`FFTN_OLD_X86_TARGETS`: settled** (agreed by the maintainer, 2026-11-17: `ON` by default; see
+the decision log).
 
 **Deferred API ideas.** (a) A two-way plan: forward and backward programs of one shape over
 one set of twiddle tables, with `forward()` and `backward()`, for real kinds the r2c and c2r
@@ -2907,13 +2926,14 @@ to change before a release.
 | 2026-11-17 | The strided axes of c2c planes and volumes run as lanes over blocks of adjacent columns (256 bytes of columns, four lines where each column element has its own page, halved to keep two tiles in L2/4 below a page, the chain beyond), with column radices whose last pass keeps its legs within the L1's ways; a loop over lines whose body is one leaf is one leaf call (section 9.3) | X40: the 37 c2c planes 0.613 (Mac), 0.453 (EPYC), 0.537 (Xeon) of the column-by-column chain's time; FFTN ÷ FFTW 1.44 → 0.88, 2.07 → 0.94, 1.49 → 0.80; ÷ MKL 1.87 → 1.00; no case slower |
 | 2026-11-17 | `next_fast_length` and `relative_cost` public in `fftn/lengths.hpp` (task 2.5, section 9.2): a fast length is one AVX2's double cost table prices within 1.25 of the power of two above, per point, and not a composite with a factor 11, 17, 19 or 23 (experiment P4's rule: such composites missed 1.3 of the power of two on two machines each); the API choices are proposed by the lead, pending the maintainer (18.2) | DESIGN 9.2's design (a pure function of the version, a machine-specific query beside it); the tables are the planner's own, so the two agree with what plans do; P4 checks the lengths are fast on the three machines |
 | 2026-11-17 | The fast lengths' reference table is a frozen copy of AVX2's double table (`reference_costs`), not the planner's; both length queries throw above 2⁴⁰; `next_fast_length` tests only the 2, 3, 5, 7, 13-smooth candidates in [n, 2n]; 20 is priced as the chain the planner builds (PR #41 review) | a refit of the planner's tables must not move users' grids (a checksum test pins the set to 2²⁰; unchanged by this change); the old trial of every integer took 1.8 s at 2³⁹ + 1, now under 0.6 ms; pricing above 2⁴⁰ was inexact or undefined |
+| 2026-11-17 | The `x86_v2` (SSE4.2) and `avx` (AVX without AVX2 or FMA) targets exist (task 1.3): their own vocabularies without FMA, rounding as the scalar target, interleaved passes (no split runs), `avx2`'s pass-cost tables of the nearest C, no 128-bit or pair leaves; `avx` is kept; `x86_v2` takes a leaf of 32 in double (experiment X14) | X14: `avx` 0.68–0.73 of `x86_v2`'s time (EPYC 7763, Xeon 6240); `x86_v2` 0.96–0.98 of FFTW built with SSE2 only, `avx` 0.90–0.94 of FFTW with SSE2 and AVX; split runs without FMA gained 0.5–2.4 % (rule: 3 %); NEON's tables for `x86_v2` lost (1.01–1.07); 128-bit leaves for `avx` lost on two-pass rows of 100–120 points on the EPYC (1.08–1.14); the leaf of 32 took 32-point rows to 0.55–0.65 |
 | 2026-11-17 | Task 2.5's API, agreed by the maintainer, 2026-11-17: `fftn/lengths.hpp`, included by `fftn.hpp`; `std::size_t next_fast_length(std::size_t n, length_kind kind = length_kind::complex)` with `enum class length_kind : unsigned char { complex, real }` (an enum replaces the proposed `bool real`, and a value outside it throws `std::invalid_argument`); `template <class T> double relative_cost(std::size_t n, isa target = isa::best)`, a ratio to the power of two above, complex in-cache rows only; edge values 1 for n = 0, 2 with `length_kind::real` for n ≤ 2 | the enum reads better at the call site than scipy's `bool`; a header of its own since grids are chosen before planning; a ratio since the tables' units are not time, and a shape-wide estimate needs the cost model P3 rejected |
 | 2026-11-17 | "Fast" as defined by the frozen reference table (within 1.25 of the power of two above, per point; no prime factor above 23; no composite with 11, 17, 19 or 23), the 2⁴⁰ limit of both queries, and P4's x86 shortfall (78 % of picks within 1.3 against the 90 % planned), agreed by the maintainer, 2026-11-17 | machine-independent grids are the point of the query; `relative_cost` gives each machine's own view; P4's rule 1 target is lowered to 75 % in the experiment file, with the reason |
 | 2026-11-17 | `FFTN_OLD_X86_TARGETS` (the `x86_v2` and `avx` targets of task 1.3) ON by default, agreed by the maintainer, 2026-11-17 | older x86 processors run a vector target rather than the scalar one |
 | 2026-11-17 | The library's size (X27's codelets of 17, 19 and 23: +25 % of library text) accepted, agreed by the maintainer, 2026-11-17; no size budget that can fail a pull request: phase 6 adds an informational report (CI prints the library's text size per target on each pull request), experiment files record size changes, and build options (`FFTN_OLD_X86_TARGETS`, instantiating only the kernels that win) remain the levers if size ever matters | speed takes precedence; the codelets cut those cases to 0.24–0.31 of main's time, and the report keeps growth visible |
 | 2026-11-17 | The recorded protocol caveats, agreed by the maintainer, 2026-11-17: X35's and X14's, the queue bypasses of X36, X38 and X39, and the recorded exception cases (X23b's two) | each is recorded in its experiment file with its reason |
+| 2026-11-17 | CI for merge latency, decided by the maintainer, 2026-11-17: the ruleset on main requires four checks (lint; GCC 16 build and benchmark smoke and Clang 23 ASan + UBSan on Linux x86-64; Homebrew LLVM on macOS arm64) and no longer requires branches up to date; ThreadSanitizer, Clang 16, the build without the old x86 targets, AArch64 and Windows run after each merge on main (runs on main are not cancelled); emulation weekly and on demand only; the per-change sanitizer jobs leave out the old x86 targets | merges waited 30–90 minutes, and each merge restarted every other pull request's checks; with no users yet, a break on main found within the hour and fixed there costs less |
 | 2026-11-17 | A radix-25 codelet (Cooley–Tukey 5 × 5), a pass radix only, with passes on the x86 and scalar targets only (none on NEON); `avx2` double overrides take it at 500, 3125, 5000, 10000, 15625, 25000 and `avx512` double at 100, 500, 3125, 10000, 15625, 25000; two-level codelets staged through memory for 16-register targets rejected (experiment X42) | EPYC 0.874 / 0.891 of the arm before over the changed lengths (FFTN ÷ FFTW 3125 0.77 → 0.65, 15625 0.79 → 0.66), Xeon about 0.86 / 0.842 (100 1.14 → 0.88 of FFTW, 3125 0.81 → 0.53); on the Mac radix 25 lost to radix-5 chains; the two-level form changed nothing with GCC (1.000) and slowed radix 25; library text +6.1 % on x86-64, +2.0 % on the Mac |
-
 | 2026-11-17 | Multi-axis programs of at most 256 kernel calls per transform run from their calls unrolled at construction (section 8.3); the complex axes of real planes take the lanes column phase where C > 1 with their own block rule; where a cluster shares L2 a column block's tiles stay within twice L1 when its column elements lie four to a page (section 9.3) | X41: planes of up to 1024 points 0.87–0.94 of the walk's time (three machines); real planes 0.89 (EPYC) and 0.83 (Xeon) of the chain columns' time, the M5 Max lost 1.04 and keeps the chain; M5 Max 2048 × 36 0.90; joining the narrower block's phase (T1) rejected at 0.96 |
 ---
 

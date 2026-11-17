@@ -9,6 +9,7 @@
 
 #pragma once
 
+#include "support/skipped_targets.hpp"
 #include "support/tolerance.hpp"
 #include "support/transform_under_test.hpp"
 
@@ -46,7 +47,8 @@ auto call_of(const fftn::shape<In, Out>& s, placement place, fftn::isa target) {
 
 } // namespace detail
 
-// The instruction sets FFTN's plans can be forced to in this build on this machine.
+// The instruction sets FFTN's plans can be forced to in this build on this machine, less
+// those FFTN_TEST_SKIP_ISAS names (skipped_targets.hpp).
 inline std::vector<fftn::isa> runnable_isas() {
   std::vector<fftn::isa> out;
   for (const fftn::isa t : {
@@ -58,6 +60,9 @@ inline std::vector<fftn::isa> runnable_isas() {
            fftn::isa::neon,
            fftn::isa::neon_fcma,
        }) {
+    if (target_skipped(fftn::isa_name(t))) {
+      continue;
+    }
     try {
       const fftn::c2c_plan<double> probe(fftn::rows_c2c<double>(2, 1, fftn::direction::forward),
                                          {.force_isa = t});

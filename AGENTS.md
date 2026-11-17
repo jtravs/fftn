@@ -52,9 +52,11 @@ sanitize bench`: Release tests and ASan + UBSan tests under every kernel variant
 has) green on the machine where the change was made, plus `build` with one GCC version on
 Linux x86-64. Style, lint, documentation completeness, coverage, ThreadSanitizer (except
 for threading changes, which run `tsan` too), the second GCC version and the other
-platforms' sanitizers run in CI (`.github/workflows/`: every push runs one configuration per
-platform and one job per sanitizer, the weekly extended workflow the rest); their failures
-are fixed in batches and do not block merges. Second readers are for kernels, the
+platforms' sanitizers run in CI (`.github/workflows/`: a pull request runs a short required
+set, GCC 16 and Clang ASan + UBSan on Linux x86-64 and LLVM on macOS; each push to main adds
+one configuration per other platform, the floors and ThreadSanitizer; the weekly extended
+workflow runs the rest); failures after a merge are fixed on main promptly, the extended
+ones in batches, and do not block merges. Second readers are for kernels, the
 generator and the threading engine. In addition:
 
 - A kernel, vocabulary or generator change for an instruction set the machine lacks also

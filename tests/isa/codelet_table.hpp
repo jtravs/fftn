@@ -41,6 +41,12 @@ namespace scalar {
 extern const codelet_table codelet_entries;
 }
 #if FFTN_ARCH_X86_64
+namespace x86_v2 {
+extern const codelet_table codelet_entries;
+}
+namespace avx {
+extern const codelet_table codelet_entries;
+}
 namespace avx2 {
 extern const codelet_table codelet_entries;
 }
