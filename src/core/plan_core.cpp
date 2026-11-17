@@ -512,10 +512,19 @@ std::size_t lanes_block(const shape_view& s, const side& in, const side& out,
 // it the columns run alone (0): there a block whose tiles left L2 lost (Xeon 2048 x 36: 4
 // columns 0.79 of main, 16 1.09; EPYC 1.04 with any block, the chain's one column in L2
 // being as fast). A forced block applies alone, rounded up to a multiple of C.
+//
+// The complex axes of a real plan (`real`; X41) are rows of n/2 + 1 columns, whose stride is
+// an odd multiple of a complex value for even n, so a column alone never crowds an L1 set the
+// way X40's power-of-two c2c columns did: the lanes pay there only for the copies a column
+// costs where C > 1 (arm R: the M5 Max, C = 1, lost 1.04 on the real planes; the EPYC lost
+// 1.09-1.11 at 1024 x 1024, whose 16-column tiles of 512 KiB left L2, and 1.04 on the 5 x 7
+// planes). So: only where C > 1, for columns of at least 32 points, and the tiles held to
+// column_tile_bytes at any stride; if a line of columns still exceeds it, X40's block where
+// the column alone exceeds half of L1 (so the chain's line leaves L1 too), else the chain.
 template <class T>
 std::size_t column_block(std::size_t axis, const std::vector<std::size_t>& extent, const view& src,
                          const view& dst, const line_edges& edges, const build_settings& settings,
-                         const chain_builder<T>& chain, std::size_t c) {
+                         const chain_builder<T>& chain, std::size_t c, bool real = false) {
   const std::size_t last = extent.size() - 1;
   if (!settings.lanes_columns || axis == last || extent[last] < 2 || src.stride[last] != 1 ||
       dst.stride[last] != 1 || edges.in != edge_op::none || edges.out == edge_op::factor ||
@@ -525,6 +534,10 @@ std::size_t column_block(std::size_t axis, const std::vector<std::size_t>& exten
   const auto up = [c](std::size_t v) { return (v + c - 1) / c * c; };
   if (settings.column_block != 0) {
     return up(settings.column_block);
+  }
+  constexpr std::size_t real_min_column = 32;
+  if (real && (c == 1 || extent[axis] < real_min_column)) {
+    return 0;
   }
   constexpr std::size_t block_bytes = 256;
   constexpr std::size_t lines_per_block = 4;
@@ -540,6 +553,17 @@ std::size_t column_block(std::size_t axis, const std::vector<std::size_t>& exten
     block = std::max(block, up(lines_per_block * line));
   }
   block = std::min(block, up(extent[last]));
+  if (real) {
+    const std::size_t wide = block;
+    const auto tiles = [&](std::size_t b) { return 2 * n * b * complex_bytes; };
+    while (block > line && tiles(block) > settings.profile.column_tile_bytes) {
+      block = up(block / 2);
+    }
+    if (tiles(block) <= settings.profile.column_tile_bytes) {
+      return block;
+    }
+    return n * complex_bytes > settings.profile.grid_block_bytes / 2 ? wide : 0;
+  }
   if (stride < settings.profile.page_bytes) {
     const auto tiles = [&](std::size_t b) { return 2 * n * b * complex_bytes; };
     while (block > line && tiles(block) > settings.profile.column_tile_bytes) {
@@ -773,8 +797,8 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   const auto complex_columns = [&](std::size_t d, const std::vector<std::size_t>& extent,
                                    const view& src, const view& dst, const line_edges& edges,
                                    int dir, const char* what) {
-    const std::size_t block =
-        column_block<T>(d, extent, src, dst, edges, settings, chain, kernels.complex_lanes);
+    const std::size_t block = column_block<T>(d, extent, src, dst, edges, settings, chain,
+                                              kernels.complex_lanes, s.kind != transform_kind::c2c);
     if (block == 0) {
       return false;
     }

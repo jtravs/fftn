@@ -266,7 +266,11 @@ template <class T> void real_columns_equal_chain(fftn::isa target, bool r2c) {
       std::string walked_text;
       EXPECT_TRUE(run_real(rc, walked, walked_text) == got) << "unrolled and walked differ";
       const auto want = run_real(rc, chain, chain_text);
-      EXPECT_NE(lanes_text.find("adjacent columns"), std::string::npos) << lanes_text;
+      // The rule may keep a real plane's columns on the chain (column_block: C = 1, short
+      // columns, tiles beyond column_tile_bytes); a forced block always takes the lanes.
+      if (block != 0) {
+        EXPECT_NE(lanes_text.find("adjacent columns"), std::string::npos) << lanes_text;
+      }
       EXPECT_EQ(chain_text.find("adjacent columns"), std::string::npos) << chain_text;
       if (radices_of(lanes_text) == radices_of(chain_text)) {
         EXPECT_TRUE(got == want) << "lanes columns and chain columns differ\n"
