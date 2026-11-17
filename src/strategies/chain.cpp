@@ -101,9 +101,16 @@ template <class T> std::vector<std::size_t> chain_builder<T>::radices(std::size_
   // copies' together. 1018 = 2 x 509 took 0.68 of its time on AVX-512 in double (0.40 in
   // float); 12279 = 3 x 4093 in double, whose whole convolution (25920) is longer than
   // 3 x 8192, took 1.17. X36b: with s = C the units are whole but the copies' chains are
-  // lane passes of s = C (no grouped first pass), so s = C takes the whole line too.
-  if (q > 1 && !forces(n) && n / q > 1 && n / q <= kernels_.complex_lanes &&
-      rader_root(q, profile_) == 0 && bluestein_m(n) <= n / q * bluestein_m(q)) {
+  // lane passes of s = C (no grouped first pass), so s = C takes the whole line too while
+  // the line is not long (long_convolution_bytes): EPYC 1018 0.73 of its time, Xeon 2036
+  // 0.81; 262142 = 2 x 131071 in NEON float lost 1.23 (its whole convolution 552960 has a
+  // power-of-two part of 4096).
+  const std::size_t s_copies = q > 1 ? n / q : 0;
+  const bool few = s_copies > 1 &&
+                   (s_copies < kernels_.complex_lanes ||
+                    (s_copies == kernels_.complex_lanes && n * 2 * sizeof(T) <= conv_from_bytes_));
+  if (few && !forces(n) && rader_root(q, profile_) == 0 &&
+      bluestein_m(n) <= s_copies * bluestein_m(q)) {
     return {n};
   }
   if (q > 1) {
