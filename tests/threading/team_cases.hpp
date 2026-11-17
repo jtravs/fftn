@@ -300,6 +300,12 @@ void add_cases(std::vector<team_case>& out, const fftn::detail::build_settings& 
   one_volume.axes = {{.n = 12}, {.n = 40}, {.n = 36}};
   out.push_back(make_case("c2c_volume_team_inplace_12x40x36" + suffix, one_volume, 17280, 17280,
                           true, team, target));
+  // Columns the program runs alone through the chain (their tiles exceed the budget), which
+  // a team program runs as blocks of a line with the chain's radices (X43 arm B2).
+  team.profile.column_tile_bytes = 1024;
+  team.profile.column_near_tile_bytes = 0;
+  out.push_back(make_case("c2c_planes_team_chain_256x20x1" + suffix,
+                          fftn::planes_c2c<T>(256, 20, 1, bwd), 5120, 5120, false, team, target));
 }
 
 inline std::vector<team_case> standard_cases(const fftn::detail::build_settings& settings) {

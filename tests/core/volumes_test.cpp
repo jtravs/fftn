@@ -158,6 +158,19 @@ TEST(TeamProgram, NarrowerBlocksTheSameRadices) {
               static_cast<std::size_t>(team) * plane->team->slot_bytes);
   }
   EXPECT_EQ(fftn::detail::workspace_bytes(*plane, 1), plane->bytes);
+  // Columns the program runs alone through the chain (tiles beyond the budget) run as blocks
+  // of a line in the team program, with the chain's radices (X43 arm B2).
+  fftn::detail::build_settings tight = settings;
+  tight.profile.column_tile_bytes = 1024;
+  tight.profile.column_near_tile_bytes = 0;
+  const auto chain = fftn::detail::make_plan_core(
+      fftn::detail::view_of(fftn::planes_c2c<double>(2048, 36, 1, fftn::direction::forward)),
+      fftn::options(), tight);
+  ASSERT_NE(chain->team, nullptr);
+  EXPECT_EQ(chain->axis_notes[1].find("adjacent columns"), std::string::npos);
+  EXPECT_NE(chain->team->axis_notes[1].find("lanes over blocks of 4 adjacent columns"),
+            std::string::npos);
+  EXPECT_EQ(radices(chain->axis_notes[1]), radices(chain->team->axis_notes[1]));
   // A volume: both the plane's columns and the outer axis's pencils.
   const auto volume = fftn::detail::make_plan_core(
       fftn::detail::view_of(shape_of<double>({64, 64, 64})), fftn::options(), settings);

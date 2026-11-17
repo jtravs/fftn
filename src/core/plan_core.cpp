@@ -583,7 +583,10 @@ std::size_t column_block(std::size_t axis, const std::vector<std::size_t>& exten
       block = up(block / 2);
     }
     if (tiles(block) > budget) {
-      return 0;
+      // A team program runs such columns as blocks of a line rather than alone through the
+      // chain (X43 arm B2): members running neighbouring columns alone would write the same
+      // cache lines. complex_columns gives them the chain's radices, so the bits agree.
+      return settings.team_program && settings.profile.column_team_bytes != 0 ? line : 0;
     }
   }
   // A team program's blocks (X43 arm B1; machine_profile::column_team_bytes).
@@ -849,8 +852,18 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       return false;
     }
     const std::size_t n = extent[d];
+    // A team program's block where the program runs the columns alone through the chain
+    // (column_block, X43 arm B2) takes the chain's radices: the same bits as the program.
+    build_settings alone = settings;
+    alone.team_program = false;
+    const bool chain_columns =
+        settings.team_program &&
+        column_block<T>(d, extent, src, dst, edges, alone, chain, kernels.complex_lanes,
+                        s.kind != transform_kind::c2c) == 0;
     const std::vector<std::size_t> rad =
-        column_radices<T>(n, dst.stride[d] * dst.element_bytes, settings, profile, chain, kernels);
+        chain_columns ? chain.radices(n)
+                      : column_radices<T>(n, dst.stride[d] * dst.element_bytes, settings, profile,
+                                          chain, kernels);
     scratch = std::max(scratch, add_column_phase<T>(p, chain, d, extent, src, dst, dir, edges,
                                                     block, kernels.complex_lanes, rad));
     c.axis_notes.push_back(
