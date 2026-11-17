@@ -9,7 +9,7 @@
 # kernel units: they instantiate every codelet twice per target.
 set(fftn_codelet_units codelets_scalar.cpp codelets_avx2.cpp codelets_avx512.cpp
                        codelets_neon.cpp codelets_neon_fcma.cpp)
-add_library(fftn_isa_probes OBJECT probe_scalar.cpp probe_avx2.cpp probe_avx2_narrow.cpp
+add_library(fftn_isa_probes OBJECT probe_scalar.cpp probe_avx2.cpp probe_narrow_avx2.cpp
                                    probe_avx512.cpp probe_neon.cpp probe_neon_fcma.cpp
                                    probe_tables.cpp
                                    ${fftn_codelet_units} codelet_tables.cpp)

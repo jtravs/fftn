@@ -93,7 +93,7 @@ extern const probe_table probes;
 namespace avx512 {
 extern const probe_table probes;
 }
-// avx2 at half width, the narrow leaves' vocabulary (probe_avx2_narrow.cpp), and its
+// avx2 at half width, the narrow leaves' vocabulary (probe_narrow_avx2.cpp), and its
 // geometry and twiddle packing as a kernel table without passes.
 namespace avx2::narrow {
 extern const probe_table probes;
