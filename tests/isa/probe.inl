@@ -7,6 +7,14 @@
 
 namespace {
 
+// Whether the vocabulary has load_n and store_n: the x86 ones do, whether or not their
+// passes use them (`masked`), so the probes test them in every build.
+template <class T>
+constexpr bool partial_runs = requires(const T* p, T* q, cv<T> v) {
+  load_n(p, std::size_t{1});
+  store_n(q, std::size_t{1}, v);
+};
+
 template <class T>
 void probe(vop op, const T* a, const T* b, const T* c, T* out, std::size_t n, const T* r) {
   const std::size_t step = 2 * C<T>; // reals per complex register
@@ -104,14 +112,14 @@ void probe(vop op, const T* a, const T* b, const T* c, T* out, std::size_t n, co
     }
     break;
   case vop::c_load_n:
-    if constexpr (masked) {
+    if constexpr (partial_runs<T>) {
       for (std::size_t k = 0; k < n; k += step) {
         store(out + k, load_n(a + k, (k / step) % (C<T> + 1)));
       }
     }
     break;
   case vop::c_store_n:
-    if constexpr (masked) {
+    if constexpr (partial_runs<T>) {
       for (std::size_t k = 0; k < n; k += step) {
         store_n(out + k, (k / step) % (C<T> + 1), load(a + k));
       }

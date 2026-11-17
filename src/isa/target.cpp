@@ -180,6 +180,24 @@ const pair_leaf_table* find_pair_leaves(target t) noexcept {
     return &avx512::pairs::leaves;
   }
 #endif
+#if FFTN_ARCH_AARCH64
+  if (t == target::neon) {
+    return &neon::pairs::leaves;
+  }
+  if (t == target::neon_fcma) {
+    return &neon_fcma::pairs::leaves;
+  }
+#endif
+  static_cast<void>(t);
+  return nullptr;
+}
+
+const pair_leaf_table* find_more_pair_leaves(target t) noexcept {
+#if FFTN_ARCH_X86_64
+  if (t == target::avx512) {
+    return &avx2::pairs::leaves;
+  }
+#endif
   static_cast<void>(t);
   return nullptr;
 }

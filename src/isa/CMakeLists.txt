@@ -18,8 +18,8 @@ foreach(target IN LISTS fftn_isa_targets)
 endforeach()
 # The 128-bit leaves of the x86 targets (experiment X28), in the avx2 region.
 list(APPEND fftn_isa_units narrow_avx2.cpp)
-# The pair leaves of the x86 targets (experiment X28b).
-list(APPEND fftn_isa_units pairs_avx2.cpp pairs_avx512.cpp)
+# The pair leaves of the x86 targets (experiment X28b) and of NEON (X37).
+list(APPEND fftn_isa_units pairs_avx2.cpp pairs_avx512.cpp pairs_neon.cpp pairs_neon_fcma.cpp)
 target_sources(fftn PRIVATE ${fftn_isa_units} target.cpp)
 fftn_always_optimise(${fftn_isa_units})
 # For the disassembly test's second compilation (tests/isa).

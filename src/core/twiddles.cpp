@@ -8,6 +8,7 @@
 
 #include "core/twiddles.hpp"
 
+#include <cassert>
 #include <cmath>
 #include <complex>
 #include <cstddef>
@@ -115,8 +116,10 @@ void sin_cos(dd t, dd& sine, dd& cosine) {
   cosine = sum;
 }
 
-// cos and sin of 2 pi m / n, for m < n < 2^60.
+// cos and sin of 2 pi m / n, for 2 m <= n < 2^60: the callers mirror the second half of the
+// circle onto the first, so the octant is at most 4.
 void root(std::uint64_t m, std::uint64_t n, dd& c, dd& s) {
+  assert(2 * m <= n);
   // 2 pi m / n = (pi / 4)(o + r / n): octant o, remainder r < n, all in integers. In odd
   // octants the angle is measured back from the octant's end, (pi / 4)(n - r) / n, so the
   // series is always evaluated on [0, pi / 4] and the octant boundaries are exact.
@@ -145,20 +148,8 @@ void root(std::uint64_t m, std::uint64_t n, dd& c, dd& s) {
     c = -ct;
     s = st;
     break;
-  case 4:
+  default: // 4, at m = n / 2 exactly
     c = -ct;
-    s = -st;
-    break;
-  case 5:
-    c = -st;
-    s = -ct;
-    break;
-  case 6:
-    c = st;
-    s = -ct;
-    break;
-  default:
-    c = ct;
     s = -st;
     break;
   }

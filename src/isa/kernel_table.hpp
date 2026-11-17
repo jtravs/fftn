@@ -89,6 +89,11 @@ inline constexpr std::size_t pair_leaf_capacity = 16;
 template <class T> struct pair_leaf_set {
   // NOLINTNEXTLINE(modernize-avoid-c-arrays): filled inside an ISA region
   pair_leaf_entry entry[pair_leaf_capacity];
+  // The storage of the leaves' twiddle tables (kernels.inl): C of the leaves' vocabulary
+  // and its packing, which differ from the plan's own target where a plan takes another
+  // target's pair leaves (find_more_pair_leaves).
+  std::size_t lanes;
+  void (*pack_twiddles)(const T* w, std::size_t count, T* out);
 };
 struct pair_leaf_table {
   pair_leaf_set<double> f64;
@@ -105,8 +110,12 @@ template <class T>
   }
 }
 
-// The pair leaves of target t, or null (every target but avx2 and avx512).
+// The pair leaves of target t, or null (the scalar target).
 [[nodiscard]] const pair_leaf_table* find_pair_leaves(target t) noexcept;
+
+// The pair leaves that plans of target t take for lengths its own table lacks, or null:
+// avx2's (C = 2) for avx512, whose C = 4 divides none of 18, 22, 26, 30 (experiment X37).
+[[nodiscard]] const pair_leaf_table* find_more_pair_leaves(target t) noexcept;
 
 // The entry points of a table for precision T.
 template <class T> [[nodiscard]] constexpr const kernels_of<T>& of(const kernel_table& table) {
@@ -155,6 +164,12 @@ extern const kernel_table table;
 }
 namespace neon_fcma {
 extern const kernel_table table;
+}
+namespace neon::pairs {
+extern const pair_leaf_table leaves;
+}
+namespace neon_fcma::pairs {
+extern const pair_leaf_table leaves;
 }
 #endif
 

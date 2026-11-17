@@ -8,6 +8,7 @@
 #pragma once
 
 #include "isa/arch.hpp"
+#include "isa/kernel_table.hpp"
 #include "isa/target.hpp"
 
 #include <array>
@@ -63,11 +64,11 @@ inline constexpr std::array<std::string_view, 30> vop_names = {
 // out. Operands: a, b, c and the real *r, as each operation needs them; for c_mul, c_mulc
 // and c_madd, b is twiddle storage (pack_twiddles of the same target); for c_mul_bcast it is
 // broadcast storage (pack_bcast_twiddles), one twiddle per register of a. c_load_n and
-// c_store_n exist where the target has masked partial runs (probe_table::masked); elsewhere
-// they leave out untouched. For c_bcast and
-// r_bcast, output register g is the broadcast of input number g. For r_deinterleave, out
-// receives the n/2 real parts and then the n/2 imaginary parts; r_interleave takes them as
-// a and b. n is a multiple of 2 C^2 and of 2 W.
+// c_store_n exist where the vocabulary has load_n and store_n (probe_table::masked: the x86
+// ones, whether or not the build's passes use them); elsewhere they leave out untouched. For
+// c_bcast and r_bcast, output register g is the broadcast of input number g. For r_deinterleave,
+// out receives the n/2 real parts and then the n/2 imaginary parts; r_interleave takes them as a
+// and b. n is a multiple of 2 C^2 and of 2 W.
 template <class T>
 using probe_fn = void (*)(vop op, const T* a, const T* b, const T* c, T* out, std::size_t n,
                           const T* r);
@@ -98,6 +99,12 @@ extern const probe_table probes;
 namespace avx512 {
 extern const probe_table probes;
 }
+// avx2 at half width, the narrow leaves' vocabulary (probe_narrow_avx2.cpp), and its
+// geometry and twiddle packing as a kernel table without passes.
+namespace avx2::narrow {
+extern const probe_table probes;
+extern const kernel_table geometry;
+} // namespace avx2::narrow
 #endif
 #if FFTN_ARCH_AARCH64
 namespace neon {

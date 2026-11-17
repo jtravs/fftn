@@ -1,0 +1,53 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Experiment X37's cases (dev/experiments/X37-short-batches.md): the phase 1 exit check's
+# failing short rows and small batches (its causes 2 and 3), with the neighbours that the
+# pair leaves change. Double precision.
+
+[catalogue]
+name = "x37"
+
+[[group]]
+name = "x37-single"
+note = "one row: tiny rows, leaves and the composites of 18 to 30 points"
+kind = "c2c"
+dims = [2, 3, 4, 5, 6, 8, 12, 15, 16, 18, 20, 22, 24, 26, 28, 30]
+batch = 1
+
+[[group]]
+name = "x37-tiny-batches"
+note = "batches of three, out of and in place (the standard catalogue's smoke rows)"
+kind = "c2c"
+dims = [2, 3, 5, 7, 8, 12, 16]
+batch = 3
+place = ["out", "in"]
+
+[[group]]
+name = "x37-backward"
+note = "backward batches of two (the standard catalogue's smoke rows)"
+kind = "c2c"
+dims = [8, 15, 64]
+batch = 2
+direction = "bwd"
+
+[[group]]
+name = "x37-short-batches"
+note = "the standard catalogue's short-row batches"
+kind = "c2c"
+dims = [8, 12, 16, 32, 64]
+batch = [16, 256, 4096]
+
+[[group]]
+name = "x37-composite-batches"
+note = "batches of the lengths that get pair leaves (collateral)"
+kind = "c2c"
+dims = [12, 18, 20, 22, 24, 26, 30]
+batch = [64, 1024]
+
+[[group]]
+name = "x37-entry"
+note = "single rows through the general execution path (collateral for arm 3)"
+kind = "c2c"
+dims = [31, 60, 61, 100, 144, 192, 256]
+batch = 1

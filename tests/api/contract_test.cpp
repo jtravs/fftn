@@ -439,13 +439,25 @@ TEST(ExecutionDeathTest, PreconditionsAreAssertedInDebugBuilds) {
   fftn::workspace ws(in_place);
   EXPECT_DEATH(in_place.execute(x.data(), reinterpret_cast<double*>(y.data()), ws),
                "in-place plan executed with in != out");
-  // Rows of 40 need scratch (rows of 16 or fewer are leaves, which need none).
-  const fftn::c2c_plan<double> rows(fftn::rows_c2c<double>(40, 2, fftn::direction::forward));
-  ASSERT_GT(rows.workspace_bytes(), 0U);
+  // Rows that need scratch: leaves need none (rows of 16 or fewer, and on the x86 targets
+  // the pair leaves of X28b, rows of 40 among them), so the first of these lengths whose
+  // plan has a workspace.
+  std::size_t n = 0;
+  for (const std::size_t len : {std::size_t{40}, std::size_t{1000}, std::size_t{4096}}) {
+    if (fftn::c2c_plan<double>(fftn::rows_c2c<double>(len, 2, fftn::direction::forward))
+            .workspace_bytes() > 0) {
+      n = len;
+      break;
+    }
+  }
+  ASSERT_NE(n, 0U) << "no length here needs a workspace";
+  const fftn::c2c_plan<double> rows(fftn::rows_c2c<double>(n, 2, fftn::direction::forward));
+  cvec<double> rx(2 * n);
+  cvec<double> ry(2 * n);
   fftn::workspace small(rows.workspace_bytes() - 1);
-  EXPECT_DEATH(rows.execute(x.data(), y.data(), small), "workspace smaller");
+  EXPECT_DEATH(rows.execute(rx.data(), ry.data(), small), "workspace smaller");
   fftn::workspace enough(rows);
-  EXPECT_DEATH(rows.execute_transforms(1, 2, x.data(), y.data(), enough), "beyond the batch");
+  EXPECT_DEATH(rows.execute_transforms(1, 2, rx.data(), ry.data(), enough), "beyond the batch");
 #endif
 }
 
