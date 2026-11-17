@@ -98,24 +98,34 @@ task 4.2 measures them. Real planes still run their complex axes column by colum
 
 ### Tasks
 
+As of 2026-11-17 midday.
+
 Done: phase 0 (0.1–0.10, 0.5b, B1, B2, X15); phase 1 tasks 1.1, 1.2, 1.5 (X1), 1.6 (X3),
-1.7 and 1.7b (X12 on the Mac, X12b), with X8, X10 (rejected), X18, X19, X20, X21 (cloud,
-USD 1.36), X22 (icpx); phase 2 tasks 2.1, 2.3 and 2.3b (X17), the planner refresh (X2 refit
-on every machine, X16); phase 3 tasks 3.1–3.3 with T1 and T5. X24 rejected. CI restructured
-(per-push slim, weekly extended; CI on a pull request is the merge gate).
+1.7 and 1.7b (X12, X12b), 1.3 (`x86_v2` and `avx`, X14; merging as pull request 48), with
+X8, X10, X18–X39 (the 1-D double push and the tail round); phase 2 tasks 2.1, 2.3 and 2.3b
+(X17), 2.4 (`planning::measure`, wisdom, P1 acceptance met on all three machines; the cost
+model P3 rejected on a first pass), 2.5 (`next_fast_length`, `relative_cost`; API pending
+the maintainer); phase 3 tasks 3.1–3.3 with T1 and T5; phase 4 task 4.1's first part (X40:
+one-thread c2c planes 0.80–0.94 of FFTW). CI: per-push gate on pull requests, a ruleset on
+main (checks required, branches up to date), weekly extended jobs green.
 
 Open, by phase:
 
 - 0: the Xeon client-catalogue baseline.
-- 1: task 1.3 is in review (pull request 33: the `x86_v2` and `avx` targets, X14, and the build option `FFTN_OLD_X86_TARGETS` the lead proposed, pending the maintainer: DESIGN 18.2); X2 on the Mac above 1024; X4 on x86
-  and for edge passes; X12 on x86; X5. The phase 1 exit is not met: x86 trails FFTW.
-- 2: 2.2's acceptance in double c2c on AVX-512 (the chain 1.01–1.26 of FFTW at 8–16
-  points; X24 rejected both planned fixes); 2.4 (`planning::measure` and wisdom built, P1 and P2 in a first pass; the cost model and calibration remain;
-  task/2.4-measure); 2.5 (`next_fast_length` exists internally, not public); X6, X13.
-- 3: T2, T3, T4, T6; 3.5 (Kokkos executor); 3.6 to be checked against its acceptance.
-- 4: 4.1 in progress (X40 first pass adopted; next: rows of short-row planes in one call
-  per stage, long columns beyond L2 in two phases, real planes' complex axes, threaded planes).
-- 5–7: not started.
+- 1: the exit: every mean target met, the 5 % tail rule not yet (re-run the exit check after
+  pull request 48); X2 on the Mac above 1024; X4 on x86 and for edge passes; X5 (twiddle
+  modes); the tail's leftovers (Xeon 16384, a radix-25 codelet for 20000/25000/100000, EPYC
+  512–2048 with radix-32/64 codelets that fit 16 registers, a few tiny batches).
+- 2: 2.2's acceptance in double c2c on AVX-512 (re-check after X37's batches of 16);
+  X6 (real-input codelets), X13; the cost model's second pass and `fbench calibrate`.
+- 3: T2, T3, T4, T6; 3.5 (Kokkos executor); 3.6 to be checked against its acceptance;
+  threaded planes (4.1).
+- 4: 4.1's rest (small planes in batches, EPYC 32², columns beyond L2, Xeon ÷ MKL at
+  16²–1000², real planes' complex axes, threaded planes); 4.2 (volumes: pencil blocks sized
+  to L2, the scratch bound); 4.3 (axis subsets, strided arrays, real multi-dimensional).
+- 5–7: not started (5: fusion and pipelines; 6: float tuning, convenience layer, DCT/DST,
+  C API, cloud tuning, docs, packaging, first release; 7: on demand, FFTW3 shim, SVE,
+  Python).
 
 In flight (lead session, 2026-11-17): task 1.3
 (`x86_v2` and `avx` targets, X14); task 4.1's next part (small planes, real planes, threaded planes); a tidy fix. Task 2.4's acceptance is met (P1:
