@@ -135,6 +135,9 @@ X43's arms.
   re-run below before rule (2) decides. FFTN at 8 lanes over FFTW's better plan, the 37 c2c
   planes: 0.953 → 0.852 (still over: 2048 × 36 2.3–2.5, 32² 1.40 inline, 2048² 1.07–1.11,
   1024² out of place 1.06).
+- EPYC re-run of the nine real planes past the band, run 20261117-191401-dfbf (Slurm 512157;
+  10 rounds, all under load, band ±6.8 %): 0.920–1.023, none past 2 %. Rule met: B1 adopted on
+  the EPYC.
 - Xeon run 20261117-163920-b388 (Slurm 16345; A and B1 at 8 lanes, oneMKL at 8 threads and
   serial; 8 rounds, 5 under load, band ±8.9 %): B1 ÷ A 0.997 over the 39 (128² 0.86–0.87,
   100² 0.86–0.89, 256² 0.87–0.94, 1000² 0.79–0.90, 96² 0.93; but 512² 1.07–1.13, 1024²
