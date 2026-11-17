@@ -36,11 +36,12 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64" AND CMAKE_CXX_COMPILER_ID STREQ
   set(fftn_jcc_units "")
   foreach(unit IN LISTS fftn_isa_units)
     if(unit MATCHES "avx512")
-      list(APPEND fftn_jcc_units ${unit})
+      list(APPEND fftn_jcc_units ${CMAKE_CURRENT_SOURCE_DIR}/${unit})
     endif()
   endforeach()
-  set_property(SOURCE ${fftn_jcc_units} APPEND PROPERTY COMPILE_OPTIONS
-    -Wa,-mbranches-within-32B-boundaries)
+  # TARGET_DIRECTORY: the target is created in src/, so a property set here alone is not seen.
+  set_source_files_properties(${fftn_jcc_units} TARGET_DIRECTORY fftn
+    PROPERTIES COMPILE_OPTIONS -Wa,-mbranches-within-32B-boundaries)
 endif()
 # For the disassembly test's second compilation (tests/isa).
 list(TRANSFORM fftn_isa_units PREPEND ${CMAKE_CURRENT_SOURCE_DIR}/)
