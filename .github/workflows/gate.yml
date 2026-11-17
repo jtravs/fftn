@@ -71,6 +71,9 @@ jobs:
       CXX: ${{ matrix.cxx }}
       FFTN_CHECK_STAGES: ${{ matrix.stages }}
       FFTN_CHECK_JOBS: ${{ matrix.jobs }}
+      # "OFF" leaves out the old x86 targets (CMakeLists.txt, FFTN_OLD_X86_TARGETS); empty
+      # keeps the default.
+      FFTN_OLD_X86_TARGETS: ${{ matrix.old_x86 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

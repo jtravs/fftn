@@ -90,16 +90,21 @@ jobs:
       # one ThreadSanitizer job are here: Clang's TSan job is the quicker (14 minutes against
       # GCC's 18-26 before the kernel units were split), and both find what the code does
       # wrong on every platform. GCC's sanitizers (B1 found GCC-only failure modes) run in
-      # extended.yml.
+      # extended.yml. The two sanitizer jobs leave out the old x86 targets (x86_v2, avx):
+      # with them every kernel test runs twice more and the jobs took 61 and over 90
+      # minutes against 27 and 21 without. The plain clang-23, clang-16 and gcc-16 jobs
+      # test those targets; extended.yml runs the sanitizers with them weekly.
       linux: >-
         [
           {"name": "clang-23", "llvm": "23", "cxx": "/usr/lib/llvm-23/bin/clang++",
            "stages": "build bench"},
           {"name": "clang-23 asan", "llvm": "23", "cxx": "/usr/lib/llvm-23/bin/clang++",
-           "stages": "sanitize"},
+           "stages": "sanitize", "old_x86": "OFF"},
           {"name": "clang-23 tsan", "llvm": "23", "cxx": "/usr/lib/llvm-23/bin/clang++",
-           "stages": "tsan"},
-          {"name": "clang-16", "cxx": "/usr/lib/llvm-16/bin/clang++", "stages": "build"}
+           "stages": "tsan", "old_x86": "OFF"},
+          {"name": "clang-16", "cxx": "/usr/lib/llvm-16/bin/clang++", "stages": "build"},
+          {"name": "clang-23 no old x86", "llvm": "23", "cxx": "/usr/lib/llvm-23/bin/clang++",
+           "stages": "build", "old_x86": "OFF"}
         ]
       # The current GCC, from its official image.
       linux-gcc-current: >-

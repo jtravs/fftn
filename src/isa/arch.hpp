@@ -18,4 +18,11 @@
 #else
 #define FFTN_ARCH_AARCH64 0
 #endif
+
+// Whether this build contains the old x86 targets, x86_v2 and avx (the CMake option
+// FFTN_OLD_X86_TARGETS, which defines this for every FFTN unit).
+#ifndef FFTN_OLD_X86_TARGETS
+#error "FFTN_OLD_X86_TARGETS (0 or 1) is defined by the build (CMakeLists.txt)"
+#endif
+#define FFTN_HAS_OLD_X86 (FFTN_ARCH_X86_64 && FFTN_OLD_X86_TARGETS)
 // NOLINTEND(modernize-macro-to-enum)

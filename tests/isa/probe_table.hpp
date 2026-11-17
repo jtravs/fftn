@@ -87,6 +87,12 @@ namespace scalar {
 extern const probe_table probes;
 }
 #if FFTN_ARCH_X86_64
+namespace x86_v2 {
+extern const probe_table probes;
+}
+namespace avx {
+extern const probe_table probes;
+}
 namespace avx2 {
 extern const probe_table probes;
 }
