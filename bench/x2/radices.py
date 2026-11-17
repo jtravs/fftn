@@ -220,9 +220,7 @@ def long_lengths(standard: list[tuple[str, tuple[int, ...]]]) -> list[int]:
     (experiment X42). `standard`: (kind, dims) of its cases."""
     lengths = {d[0] for kind, d in standard if kind == "c2c" and len(d) == 1}
     every = tuple(sorted({r for r, _ in codelet_ops()}))
-    return sorted(
-        n for n in lengths if n > SMOOTH_LIMIT and len(sequences(n, codelets=every)) > 1
-    )
+    return sorted(n for n in lengths if n > SMOOTH_LIMIT and len(sequences(n, codelets=every)) > 1)
 
 
 def catalogue_text(smooth_ns: list[int], long_ns: list[int]) -> str:
