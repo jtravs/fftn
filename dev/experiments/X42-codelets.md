@@ -90,7 +90,7 @@ per arm (Mac static library, Clang; x86-64 Linux, GCC 16).
     re-run decides); (c) a length whose cases are slower than 1 + band at any batch or
     direction loses its override before adoption.
   - C (codelet text, both x86 targets together): adopted if on the EPYC (`avx2`) the
-    geometric mean of C ÷ B2 over the judged cases whose plans contain a radix-25, 32 or 64
+    geometric mean of C ÷ B over the judged cases whose plans contain a radix-25, 32 or 64
     pass is at most 1 − band with its interval below 1, and on the Xeon (`avx512`) that
     geometric mean is at most 1 + band with no such case slower than 1 + band + 2 %;
     collateral as (b) on both. If C wins on `avx2` and loses on `avx512` past that limit,
