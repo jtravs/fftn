@@ -35,7 +35,7 @@ bool same_results() {
   const fftn::c2c_plan<double> again(shape, {.use = &loaded});
   // snippet-end: measure
 
-  std::vector<std::complex<double>> x(4096 * 16);
+  std::vector<std::complex<double>> x(std::size_t{4096} * 16);
   for (std::size_t i = 0; i < x.size(); ++i) {
     x[i] = {static_cast<double>(i % 7), static_cast<double>(i % 5)};
   }

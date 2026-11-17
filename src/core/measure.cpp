@@ -32,6 +32,7 @@
 #include <cstdint>
 #include <cstring>
 #include <exception>
+#include <ios>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -86,18 +87,22 @@ struct budget {
   std::size_t max_rounds;
 };
 
-constexpr budget quick_budget{.seconds = 0.1,
-                              .candidates = 4,
-                              .radix_choices = 2,
-                              .sample_seconds = 2e-4,
-                              .min_rounds = 2,
-                              .max_rounds = 3};
-constexpr budget measure_budget{.seconds = 10,
-                                .candidates = 16,
-                                .radix_choices = 4,
-                                .sample_seconds = 1e-3,
-                                .min_rounds = 3,
-                                .max_rounds = 9};
+constexpr budget quick_budget{
+    .seconds = 0.1,
+    .candidates = 4,
+    .radix_choices = 2,
+    .sample_seconds = 2e-4,
+    .min_rounds = 2,
+    .max_rounds = 3,
+};
+constexpr budget measure_budget{
+    .seconds = 10,
+    .candidates = 16,
+    .radix_choices = 4,
+    .sample_seconds = 1e-3,
+    .min_rounds = 3,
+    .max_rounds = 9,
+};
 
 // The rules' choice stays unless another candidate is at least this much faster: timings of
 // close programs swap from run to run, and the rules' choice is the reproducible one.
@@ -200,7 +205,7 @@ public:
     return m.in.data() + m.at.in + in_zero_;
   }
   [[nodiscard]] void* out() {
-    memory& m = kinds_[current_];
+    const memory& m = kinds_[current_];
     return in_place_ ? m.in.data() + m.at.in + in_zero_ : m.out.data() + m.at.out + out_zero_;
   }
   [[nodiscard]] const workspace& ws() const { return kinds_[current_].ws; }
@@ -218,7 +223,7 @@ public:
   // the values without bound (reps_cap bounds the growth within one sample).
   void restore() {
     if (in_place_) {
-      memory& m = kinds_[current_];
+      const memory& m = kinds_[current_];
       std::memcpy(m.in.data() + m.at.in, pristine_.data(), in_bytes_);
     }
   }
@@ -542,7 +547,7 @@ std::shared_ptr<const plan_core> plan_with_effort(const shape_view& s, const opt
             return core;
           }
         }
-      } catch (const std::exception&) {
+      } catch (const std::exception&) { // NOLINT(bugprone-empty-catch): noted just below
         // A program this build cannot make (a forged or foreign entry): stale, ignored. A
         // shape that is not valid is refused below, by the rules' plan.
       }

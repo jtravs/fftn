@@ -512,10 +512,21 @@ std::size_t lanes_block(const shape_view& s, const side& in, const side& out,
 // it the columns run alone (0): there a block whose tiles left L2 lost (Xeon 2048 x 36: 4
 // columns 0.79 of main, 16 1.09; EPYC 1.04 with any block, the chain's one column in L2
 // being as fast). A forced block applies alone, rounded up to a multiple of C.
+//
+// The complex axes of a real plan (`real`; X41) are rows of n/2 + 1 columns, whose stride is
+// an odd multiple of a complex value for even n, so a column alone never crowds an L1 set the
+// way X40's power-of-two c2c columns did: the lanes pay there only for the copies a column
+// costs where C > 1 (arm R: the M5 Max, C = 1, lost 1.04 on the real planes; the EPYC lost
+// 1.09-1.11 at 1024 x 1024, whose 16-column tiles of 512 KiB left L2, and 1.04 on the 5 x 7
+// planes; arm R2, 4 columns there, still 1.05-1.06). So: only where C > 1, for columns of at
+// least 32 points, and blocks of at least two L1 lines of columns whose tiles fit
+// column_tile_bytes; failing that, X40's block where every column element has its own page
+// and the column alone exceeds half of L1 (the chain's line leaves L1 too: 2048 x 2048 0.80-
+// 0.87 of the chain's time on the EPYC), else the chain.
 template <class T>
 std::size_t column_block(std::size_t axis, const std::vector<std::size_t>& extent, const view& src,
                          const view& dst, const line_edges& edges, const build_settings& settings,
-                         const chain_builder<T>& chain, std::size_t c) {
+                         const chain_builder<T>& chain, std::size_t c, bool real = false) {
   const std::size_t last = extent.size() - 1;
   if (!settings.lanes_columns || axis == last || extent[last] < 2 || src.stride[last] != 1 ||
       dst.stride[last] != 1 || edges.in != edge_op::none || edges.out == edge_op::factor ||
@@ -525,6 +536,10 @@ std::size_t column_block(std::size_t axis, const std::vector<std::size_t>& exten
   const auto up = [c](std::size_t v) { return (v + c - 1) / c * c; };
   if (settings.column_block != 0) {
     return up(settings.column_block);
+  }
+  constexpr std::size_t real_min_column = 32;
+  if (real && (c == 1 || extent[axis] < real_min_column)) {
+    return 0;
   }
   constexpr std::size_t block_bytes = 256;
   constexpr std::size_t lines_per_block = 4;
@@ -540,12 +555,34 @@ std::size_t column_block(std::size_t axis, const std::vector<std::size_t>& exten
     block = std::max(block, up(lines_per_block * line));
   }
   block = std::min(block, up(extent[last]));
-  if (stride < settings.profile.page_bytes) {
+  if (real) {
+    const std::size_t wide = block;
     const auto tiles = [&](std::size_t b) { return 2 * n * b * complex_bytes; };
     while (block > line && tiles(block) > settings.profile.column_tile_bytes) {
       block = up(block / 2);
     }
-    if (tiles(block) > settings.profile.column_tile_bytes) {
+    if (block >= 2 * line && tiles(block) <= settings.profile.column_tile_bytes) {
+      return block;
+    }
+    return stride >= settings.profile.page_bytes &&
+                   n * complex_bytes > settings.profile.grid_block_bytes / 2
+               ? wide
+               : 0;
+  }
+  if (stride < settings.profile.page_bytes) {
+    const auto tiles = [&](std::size_t b) { return 2 * n * b * complex_bytes; };
+    // Down to 64 bytes of columns: an x86 line, half of Apple's 128-byte line, where blocks
+    // of 4 columns won at 2048 x 36 (X41 arm L1).
+    constexpr std::size_t narrowest_bytes = 64;
+    const std::size_t narrowest = std::min(line, up(narrowest_bytes / complex_bytes));
+    const std::size_t budget =
+        settings.profile.column_near_tile_bytes != 0 && 4 * stride <= settings.profile.page_bytes
+            ? settings.profile.column_near_tile_bytes
+            : settings.profile.column_tile_bytes;
+    while (block > narrowest && tiles(block) > budget) {
+      block = up(block / 2);
+    }
+    if (tiles(block) > budget) {
       return 0;
     }
   }
@@ -768,6 +805,28 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     return endpoint{.where = v.where, .stride = v.stride[axis]};
   };
   const int sign = static_cast<int>(s.dir);
+  // A strided complex axis d as the lanes over blocks of adjacent columns where they fit
+  // (column_block; DESIGN.md 9.3, experiments X40 and X41): returns whether it was built.
+  const auto complex_columns = [&](std::size_t d, const std::vector<std::size_t>& extent,
+                                   const view& src, const view& dst, const line_edges& edges,
+                                   int dir, const char* what) {
+    const std::size_t block = column_block<T>(d, extent, src, dst, edges, settings, chain,
+                                              kernels.complex_lanes, s.kind != transform_kind::c2c);
+    if (block == 0) {
+      return false;
+    }
+    const std::vector<std::size_t> rad = column_radices<T>(
+        c.lengths[d], dst.stride[d] * dst.element_bytes, settings, profile, chain, kernels);
+    scratch = std::max(scratch, add_column_phase<T>(p, chain, d, extent, src, dst, dir, edges,
+                                                    block, kernels.complex_lanes, rad));
+    c.axis_notes.push_back("axis " + std::to_string(d) + " (n = " + std::to_string(c.lengths[d]) +
+                           "): " + what + (what[0] != '\0' ? ", " : "") + "lanes over blocks of " +
+                           std::to_string(block) + " adjacent columns, radices " +
+                           chain.radix_text(c.lengths[d], rad));
+    c.strategy_note = "chain for the last axis' rows, the lanes over blocks of adjacent columns "
+                      "for the others; each transform finished before the next";
+    return true;
+  };
 
   const std::size_t lanes =
       lanes_block<T>(s, in, out, settings, profile, chain, kernels.complex_lanes);
@@ -913,20 +972,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       const view& src = d + 1 == r ? in_view : out_view;
       const bool aliased = src.where == slot::out || c.in_place;
       const line_edges edges = c2c_edges(opts, settings, d + 1 == r, d == 0);
-      if (const std::size_t block = column_block<T>(d, in.extent, src, out_view, edges, settings,
-                                                    chain, kernels.complex_lanes);
-          block != 0) {
-        const std::vector<std::size_t> rad =
-            column_radices<T>(c.lengths[d], out_view.stride[d] * out_view.element_bytes, settings,
-                              profile, chain, kernels);
-        scratch = std::max(scratch, add_column_phase<T>(p, chain, d, in.extent, src, out_view, sign,
-                                                        edges, block, kernels.complex_lanes, rad));
-        c.axis_notes.push_back("axis " + std::to_string(d) +
-                               " (n = " + std::to_string(c.lengths[d]) +
-                               "): lanes over blocks of " + std::to_string(block) +
-                               " adjacent columns, radices " + chain.radix_text(c.lengths[d], rad));
-        c.strategy_note = "chain for the last axis' rows, the lanes over blocks of adjacent "
-                          "columns for the others; each transform finished before the next";
+      if (complex_columns(d, in.extent, src, out_view, edges, sign, "")) {
         continue;
       }
       std::vector<stage> st;
@@ -947,10 +993,14 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
         chain.real_text(c.lengths[r - 1], true, in.stride[r - 1] != 1 || out.stride[r - 1] != 1));
     for (std::size_t i = r - 1; i > 0; --i) {
       const std::size_t d = i - 1;
-      std::vector<stage> cs;
       const std::size_t n = c.lengths[d];
-      const std::size_t cneed = chain.c2c_line(n, -1, at(out_view, d), at(out_view, d), true,
-                                               c2c_edges(opts, settings, false, d == 0), cs);
+      const line_edges edges = c2c_edges(opts, settings, false, d == 0);
+      if (complex_columns(d, out.extent, out_view, out_view, edges, -1, "c2c forward")) {
+        continue;
+      }
+      std::vector<stage> cs;
+      const std::size_t cneed =
+          chain.c2c_line(n, -1, at(out_view, d), at(out_view, d), true, edges, cs);
       lines(d, out.extent, out_view, out_view, cneed, std::move(cs));
       c.axis_notes.push_back("axis " + std::to_string(d) + " (n = " + std::to_string(n) +
                              "): c2c forward, radices " + chain.radix_text(n));
@@ -984,6 +1034,9 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     for (std::size_t i = r - 1; i > 0; --i) {
       const std::size_t d = i - 1;
       const view& src = d + 2 == r && !c.in_place ? in_view : work;
+      if (complex_columns(d, in.extent, src, work, line_edges(), +1, "c2c backward")) {
+        continue;
+      }
       std::vector<stage> cs;
       const std::size_t n = c.lengths[d];
       const std::size_t cneed =
@@ -1167,18 +1220,22 @@ std::shared_ptr<plan_core> build_plan_core(const shape_view& s, const options& o
   for (const std::size_t n : c->lengths) {
     points *= n; // the layouts' reach checks have bounded the product
   }
-  mark_flat(c->prog);
+  // Only multi-axis programs are unrolled (X41): a 1-D grid without moving twiddles would
+  // otherwise change its execution path, which nothing measured.
+  mark_flat(c->prog, settings.unroll_calls && r > 1);
   c->graph = build_work_graph(c->prog, points, settings.chunk_points);
   c->profile = settings.profile;
   c->runs_inline = runs_inline(c->graph, c->profile);
   c->radices_forced = !settings.radices.empty();
   c->shape_key = shape_key(s, opts);
-  c->program_text = choice_text(pinned_choice({.strategy = settings.strategy,
-                                               .radices = settings.radices,
-                                               .grid_factors = settings.grid_factors,
-                                               .grid_phases = settings.grid_phases,
-                                               .rader = settings.rader},
-                                              *c));
+  const plan_choice built{
+      .strategy = settings.strategy,
+      .radices = settings.radices,
+      .grid_factors = settings.grid_factors,
+      .grid_phases = settings.grid_phases,
+      .rader = settings.rader,
+  };
+  c->program_text = choice_text(pinned_choice(built, *c));
   return c;
 }
 

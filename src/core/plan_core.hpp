@@ -30,7 +30,9 @@ enum class layout_choice : std::uint8_t { rules, interleaved, split };
 
 // Construction knobs for tests; plans built through the public API use the defaults. They
 // force the paths the rules would not take for the lengths at hand (AGENTS.md section 5).
-struct build_settings {
+// The fields stay grouped by meaning, the order designated initializers follow; one is built
+// per plan, so its padding costs nothing.
+struct build_settings { // NOLINT(clang-analyzer-optin.performance.Padding)
   // About this many points of work per chunk of a stage (program.hpp) or of a run of
   // lines (work_graph.hpp). Experiment T5 (S4, runs 20261114-184234-4a75 and
   // 20261114-190017-fd3d) kept 2048: free at one thread, and best at 8 lanes, where smaller
@@ -67,6 +69,10 @@ struct build_settings {
   // multiple of C) instead of the rule's (plan_core.cpp, column_block) when not 0.
   bool lanes_columns = true;
   std::size_t column_block = 0;
+  // Walked programs (multi-axis) of at most calls_max kernel calls per transform run from
+  // their calls unrolled at construction (program.hpp, experiment X41); false: the driver
+  // walks the records (tests compare the two).
+  bool unroll_calls = true;
   // The grid's factors in phase order (two or three, multiplying to the row's length),
   // where they can be a grid; empty: the rules' (strategies/grid.hpp).
   std::vector<std::size_t> grid_factors;
@@ -115,7 +121,8 @@ struct build_settings {
   void* measure_context = nullptr;
 };
 
-class plan_core {
+// The fields stay grouped by meaning; one object per plan, so its padding costs nothing.
+class plan_core { // NOLINT(clang-analyzer-optin.performance.Padding)
 public:
   plan_core() = default;
   // Stages point into the tables, so a core never moves or copies.

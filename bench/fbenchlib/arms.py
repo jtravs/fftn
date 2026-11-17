@@ -121,6 +121,7 @@ BACKEND_SETTINGS = {
     "kfr": "FFTN_BENCH_KFR_ROOT",
     "accelerate": "FFTN_BENCH_ACCELERATE",
     "mkl": "FFTN_BENCH_MKL_ROOT",
+    "mkl_omp": "FFTN_BENCH_MKL_ROOT",
     "fftl": "FFTN_BENCH_FFTL_ROOT",
 }
 

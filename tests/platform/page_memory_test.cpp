@@ -39,7 +39,7 @@ TEST(PageMemory, RegionsAreZeroAlignedAndSized) {
 }
 
 TEST(PageMemory, MovingKeepsTheMemory) {
-  page_region a(1 << 16, page_kind::huge);
+  page_region a(std::size_t{1} << 16U, page_kind::huge);
   std::byte* p = a.data();
   page_region b(std::move(a));
   EXPECT_EQ(b.data(), p);
@@ -50,7 +50,7 @@ TEST(PageMemory, MovingKeepsTheMemory) {
 }
 
 TEST(PageMemory, KindsDifferOnlyOnLinux) {
-#if !defined(__linux__)
+#ifndef __linux__
   EXPECT_FALSE(page_kinds_differ());
 #endif
   EXPECT_EQ(page_kinds_differ(), page_kinds_differ()); // read once, stable

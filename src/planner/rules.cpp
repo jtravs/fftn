@@ -13,6 +13,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <utility>
 #include <vector>
 
 namespace fftn::inline v0::detail {
@@ -950,10 +951,13 @@ double row_cost(std::size_t n, const target_profile& p) {
         rader_root(rest, p) != 0
             ? rest - 1
             : bluestein_length(rest, p, std::numeric_limits<std::size_t>::max());
-    const double per_point = static_cast<double>(p.costs->unit[2][0] / (2 * p.lanes) + 1);
+    // Whole units per point (integer division, as bluestein_length prices them).
+    const std::size_t units = p.costs->unit[2][0] / (2 * p.lanes) + 1;
+    const auto per_point = static_cast<double>(units);
     const double conv = 2 * static_cast<double>(cheapest(len, len, false, p).cost) +
                         2 * per_point * static_cast<double>(len);
-    cost += conv * static_cast<double>(n / rest);
+    const std::size_t copies = n / rest; // exact: rest divides n
+    cost += conv * static_cast<double>(copies);
   }
   return cost;
 }
@@ -1003,6 +1007,7 @@ bool may_be_fast(std::size_t n) {
 // plans, never the fast lengths, so users' grids move only when this copy is changed on
 // purpose (tests/core/lengths_test.cpp pins the fast set up to 2^20).
 // clang-format off
+// NOLINTBEGIN(readability-trailing-comma): the layout of the tables above, which this copies
 constexpr pass_costs reference_costs{
     .unit = {{
         {28, 195, 114, 305, 235, 460, 387, 665, 557, 830, 684, 1238, 995, 1231, 1273, 0, 0},
@@ -1017,6 +1022,7 @@ constexpr pass_costs reference_costs{
     .pass = 436,
     .overrides = {},
 };
+// NOLINTEND(readability-trailing-comma)
 // clang-format on
 
 // AVX2's double profile over the frozen table, its other values written out for the same

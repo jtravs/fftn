@@ -1056,7 +1056,11 @@ a batch with the slots moved by the batch step (experiments X20 and X28: at 8 po
 4.3 ns per call, 7.1 → 1.7 ns per transform in a batch on the M5 Max); in a walked program
 a loop over lines whose body is one leaf (the rows of a plane of short rows) is likewise one
 call of the leaf over all its lines (X40: 8 × 6 to 32 × 32 planes 0.59–0.85 of the walk's
-time on the Mac and the EPYC). Every kernel, leaf
+time on the Mac and the EPYC); and a multi-axis program of at most 256 kernel calls per
+transform is not walked at all: its calls are unrolled at construction with the slots' byte
+offsets (`program::calls`), and the driver calls them in turn (X41: planes of up to 1024
+points 0.87–0.94 of the walk's time on the three machines; the walk had cost about 10 ns a
+plane on the M5 Max). Every kernel, leaf
 or pass, takes its source and destination as arguments and reads the rest from the plan's
 own arguments: a fresh copy of the arguments per stage and transform cost 3–5 ns per stage
 on x86, most of it the copy's store-to-load forwarding into the kernel (X28). Every kernel
@@ -1569,16 +1573,28 @@ a set made 128² and 256² planes 2.2 times slower on the M5 Max; reads in the f
 not matter). B is 256 bytes of columns (16 complex doubles), at most the columns there are;
 where a column's elements lie a page or more apart, at least four L1 lines (32 complex
 doubles on Apple's 128-byte lines); where they lie less than a page apart it is halved while
-the two tiles exceed a quarter of L2, down to a line, and the columns run alone through the
+the two tiles exceed `column_tile_bytes` (a quarter of L2; twice L1 where a cluster shares
+L2 and a column's elements lie at least four to a page, X41: the M5 Max's 2048 × 36 0.89–0.91
+of the time of 16 columns with 4, while 1000², nearly a page per element, lost 1.03), down to 64
+bytes of columns (an x86 line, half an Apple line), and the columns run alone through the
 chain if they still exceed it (X40's sweeps: wide blocks won where each element of a column
 has its own page, 2048² on the EPYC 0.126 of the chain columns' time with 16 columns against
 0.183 with 4, the M5 Max's 1024² 0.46 with 32 against 0.50 with 16; where rows share pages a
 block whose tiles left L2 lost, Xeon 2048 × 36 0.79 with 4 columns and 1.09 with 16). The columns past the last whole block run as one
 narrower block (a loop's `start` offsets its nest), its idle lanes never written. A block is
-a line of the phase's loop nest, so threads share blocks as they share rows (13.2). Not built
-yet: the strided axes of real transforms (their complex axes still run column by column),
-blocks over the columns of a long axis beyond L2 (a two-phase split of the column, the grid's
-way), and padding or block ordering against the rows' own power-of-two conflicts.
+a line of the phase's loop nest, so threads share blocks as they share rows (13.2); the
+narrower block's nest is a phase of its own, of one chunk (joining it to the whole blocks'
+phase gained 3–4 % at 8 lanes, X41, below the bar). The complex axes of r2c and c2r plans take the same phase with their
+own block rule (`column_block`, `real`; X41): their rows of n/2 + 1 columns lie an odd
+multiple of 16 bytes apart for even n, so a column alone crowds no L1 set and the lanes pay
+only for the copies a strided column costs where C > 1: none on NEON double (the M5 Max lost
+1.04 over the real planes with X40's rule), and on x86 blocks of at least two lines whose
+tiles fit `column_tile_bytes`, X40's wide block only where each column element has its own
+page and the column exceeds half of L1, the chain otherwise (EPYC: 0.89 over the 71 real
+planes, 32 × 30 0.74, 36 × 2048 0.77, 2048² 0.73–0.85; 1024² stays on the chain, whose
+4-column tiles lost 1.05). Not built yet: blocks over the columns of a long axis beyond L2
+(a two-phase split of the column, the grid's way), and padding or block ordering against the
+rows' own power-of-two conflicts.
 
 ---
 
@@ -2898,6 +2914,7 @@ to change before a release.
 | 2026-11-17 | The recorded protocol caveats, agreed by the maintainer, 2026-11-17: X35's and X14's, the queue bypasses of X36, X38 and X39, and the recorded exception cases (X23b's two) | each is recorded in its experiment file with its reason |
 | 2026-11-17 | A radix-25 codelet (Cooley–Tukey 5 × 5), a pass radix only, with passes on the x86 and scalar targets only (none on NEON); `avx2` double overrides take it at 500, 3125, 5000, 10000, 15625, 25000 and `avx512` double at 100, 500, 3125, 10000, 15625, 25000; two-level codelets staged through memory for 16-register targets rejected (experiment X42) | EPYC 0.874 / 0.891 of the arm before over the changed lengths (FFTN ÷ FFTW 3125 0.77 → 0.65, 15625 0.79 → 0.66), Xeon about 0.86 / 0.842 (100 1.14 → 0.88 of FFTW, 3125 0.81 → 0.53); on the Mac radix 25 lost to radix-5 chains; the two-level form changed nothing with GCC (1.000) and slowed radix 25; library text +6.1 % on x86-64, +2.0 % on the Mac |
 
+| 2026-11-17 | Multi-axis programs of at most 256 kernel calls per transform run from their calls unrolled at construction (section 8.3); the complex axes of real planes take the lanes column phase where C > 1 with their own block rule; where a cluster shares L2 a column block's tiles stay within twice L1 when its column elements lie four to a page (section 9.3) | X41: planes of up to 1024 points 0.87–0.94 of the walk's time (three machines); real planes 0.89 (EPYC) and 0.83 (Xeon) of the chain columns' time, the M5 Max lost 1.04 and keeps the chain; M5 Max 2048 × 36 0.90; joining the narrower block's phase (T1) rejected at 0.96 |
 ---
 
 ## 20. References

@@ -199,10 +199,15 @@ std::size_t chain_builder<T>::c2c_lanes(std::size_t n, int sign, endpoint src,
   // Where c2c_line takes a pair leaf (X28b), its chain r1 x m with interleaved passes, so
   // that each lane computes what the row alone would.
   const pair_leaf_entry* pair = given.empty() ? pair_for(n, src, dst, edges).entry : nullptr;
-  const std::vector<std::size_t> rad = !given.empty() ? given
-                                       : pair != nullptr
-                                           ? std::vector<std::size_t>{pair->r1, pair->m}
-                                           : radices(n);
+  const std::vector<std::size_t> rad = [&]() -> std::vector<std::size_t> {
+    if (!given.empty()) {
+      return given;
+    }
+    if (pair != nullptr) {
+      return {pair->r1, pair->m};
+    }
+    return radices(n);
+  }();
   // c2c_line's split run: a line with a stride other than 1 is copied on C > 1, so only C = 1
   // sees the destination's stride.
   const std::size_t split =

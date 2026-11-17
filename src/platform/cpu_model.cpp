@@ -3,20 +3,26 @@
 
 #include "platform/cpu_model.hpp"
 
-#include "platform/sysctl_values.hpp"
-
 #include <algorithm>
-#include <array>
 #include <cstddef>
-#include <fstream>
-#include <sstream>
 #include <string>
 #include <string_view>
 
-#if defined(_WIN32)
+// What each system's cpu_model() reads: sysctl on macOS, the registry on Windows,
+// /proc/cpuinfo elsewhere.
+#ifdef __APPLE__
+#include "platform/sysctl_values.hpp"
+
+#include <array>
+#elif defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+
+#include <array>
+#else
+#include <fstream>
+#include <sstream>
 #endif
 
 namespace fftn::inline v0::detail {
@@ -81,9 +87,10 @@ std::string cpu_model_from_cpuinfo(std::string_view text) {
 }
 
 std::string cpu_model() {
-#if defined(__APPLE__)
+#ifdef __APPLE__
   constexpr std::array keys{
-      sysctl_key{.name = "machdep.cpu.brand_string", .kind = sysctl_kind::text}};
+      sysctl_key{.name = "machdep.cpu.brand_string", .kind = sysctl_kind::text},
+  };
   const sysctl_values values = read_sysctl(keys);
   const auto it = values.find("machdep.cpu.brand_string");
   return it == values.end() ? std::string("unknown") : one_line(it->second);
@@ -97,7 +104,7 @@ std::string cpu_model() {
   }
   return one_line(std::string_view(name.data()));
 #else
-  std::ifstream in("/proc/cpuinfo");
+  const std::ifstream in("/proc/cpuinfo");
   if (!in) {
     return "unknown";
   }
