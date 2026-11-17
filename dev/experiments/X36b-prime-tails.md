@@ -35,7 +35,17 @@ long convolution is computed.
   and NEON float (C = 2, s = 2), AVX2 float and AVX-512 double (s = 4), AVX-512 float
   (s = 8). A = `main`, B = arm 1.
 - **Arm 2** (Xeon): a long convolution as a grid. Before measuring: whether the program
-  can express it (below).
+  can express it. It cannot without a change to the program model: the grid
+  (`grid_builder::c2c_row`) runs a row between the movable slots `in` and `out` (and the
+  workspace `block` for its intermediate), stepping them through the program's loops,
+  with scratch lines a and b holding one block of columns; a Bluestein convolution needs
+  an array of M > n points for its input and another for the grid's output or
+  intermediate, and the only movable array of that size is `block` (`in` must be
+  preserved, `out` holds n). So a grid convolution needs a second movable workspace slot
+  (or per-stage element offsets), through the driver, the loops' step arrays (moving_slots),
+  the work graph and describe(). Measured instead, as the size of the prize and a cheaper
+  stopgap: the Xeon's chains of 2¹⁸–2²⁰ points with the rules' radices, X32's radix-8 and
+  radix-4 sequences, against its grid (run x36b-len-xeon).
 
 Bits: arm 1 changes the result bits of the lengths whose plans it changes (within the
 derived tolerances).
