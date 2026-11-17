@@ -768,6 +768,28 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     return endpoint{.where = v.where, .stride = v.stride[axis]};
   };
   const int sign = static_cast<int>(s.dir);
+  // A strided complex axis d as the lanes over blocks of adjacent columns where they fit
+  // (column_block; DESIGN.md 9.3, experiments X40 and X41): returns whether it was built.
+  const auto complex_columns = [&](std::size_t d, const std::vector<std::size_t>& extent,
+                                   const view& src, const view& dst, const line_edges& edges,
+                                   int dir, const char* what) {
+    const std::size_t block =
+        column_block<T>(d, extent, src, dst, edges, settings, chain, kernels.complex_lanes);
+    if (block == 0) {
+      return false;
+    }
+    const std::vector<std::size_t> rad = column_radices<T>(
+        c.lengths[d], dst.stride[d] * dst.element_bytes, settings, profile, chain, kernels);
+    scratch = std::max(scratch, add_column_phase<T>(p, chain, d, extent, src, dst, dir, edges,
+                                                    block, kernels.complex_lanes, rad));
+    c.axis_notes.push_back("axis " + std::to_string(d) + " (n = " + std::to_string(c.lengths[d]) +
+                           "): " + what + (what[0] != '\0' ? ", " : "") + "lanes over blocks of " +
+                           std::to_string(block) + " adjacent columns, radices " +
+                           chain.radix_text(c.lengths[d], rad));
+    c.strategy_note = "chain for the last axis' rows, the lanes over blocks of adjacent columns "
+                      "for the others; each transform finished before the next";
+    return true;
+  };
 
   const std::size_t lanes =
       lanes_block<T>(s, in, out, settings, profile, chain, kernels.complex_lanes);
@@ -913,20 +935,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       const view& src = d + 1 == r ? in_view : out_view;
       const bool aliased = src.where == slot::out || c.in_place;
       const line_edges edges = c2c_edges(opts, settings, d + 1 == r, d == 0);
-      if (const std::size_t block = column_block<T>(d, in.extent, src, out_view, edges, settings,
-                                                    chain, kernels.complex_lanes);
-          block != 0) {
-        const std::vector<std::size_t> rad =
-            column_radices<T>(c.lengths[d], out_view.stride[d] * out_view.element_bytes, settings,
-                              profile, chain, kernels);
-        scratch = std::max(scratch, add_column_phase<T>(p, chain, d, in.extent, src, out_view, sign,
-                                                        edges, block, kernels.complex_lanes, rad));
-        c.axis_notes.push_back("axis " + std::to_string(d) +
-                               " (n = " + std::to_string(c.lengths[d]) +
-                               "): lanes over blocks of " + std::to_string(block) +
-                               " adjacent columns, radices " + chain.radix_text(c.lengths[d], rad));
-        c.strategy_note = "chain for the last axis' rows, the lanes over blocks of adjacent "
-                          "columns for the others; each transform finished before the next";
+      if (complex_columns(d, in.extent, src, out_view, edges, sign, "")) {
         continue;
       }
       std::vector<stage> st;
@@ -947,10 +956,14 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
         chain.real_text(c.lengths[r - 1], true, in.stride[r - 1] != 1 || out.stride[r - 1] != 1));
     for (std::size_t i = r - 1; i > 0; --i) {
       const std::size_t d = i - 1;
-      std::vector<stage> cs;
       const std::size_t n = c.lengths[d];
-      const std::size_t cneed = chain.c2c_line(n, -1, at(out_view, d), at(out_view, d), true,
-                                               c2c_edges(opts, settings, false, d == 0), cs);
+      const line_edges edges = c2c_edges(opts, settings, false, d == 0);
+      if (complex_columns(d, out.extent, out_view, out_view, edges, -1, "c2c forward")) {
+        continue;
+      }
+      std::vector<stage> cs;
+      const std::size_t cneed =
+          chain.c2c_line(n, -1, at(out_view, d), at(out_view, d), true, edges, cs);
       lines(d, out.extent, out_view, out_view, cneed, std::move(cs));
       c.axis_notes.push_back("axis " + std::to_string(d) + " (n = " + std::to_string(n) +
                              "): c2c forward, radices " + chain.radix_text(n));
@@ -984,6 +997,9 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     for (std::size_t i = r - 1; i > 0; --i) {
       const std::size_t d = i - 1;
       const view& src = d + 2 == r && !c.in_place ? in_view : work;
+      if (complex_columns(d, in.extent, src, work, line_edges(), +1, "c2c backward")) {
+        continue;
+      }
       std::vector<stage> cs;
       const std::size_t n = c.lengths[d];
       const std::size_t cneed =

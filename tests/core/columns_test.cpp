@@ -182,6 +182,119 @@ TEST(Columns, LanesEqualTheChainBitForBit) {
   }
 }
 
+// The strided complex axes of r2c and c2r planes and volumes take the same column phase
+// (X41): every output byte as with each column alone through the chain where the radices
+// agree, the same transform within twice the tolerance where they do not; in place and out
+// of place (the c2r input preserved), batches, a scale, blocks forced or the rule's.
+template <class T> void real_columns_equal_chain(fftn::isa target, bool r2c) {
+  SCOPED_TRACE(std::string(fftn::isa_name(target)) + (sizeof(T) == 8 ? " double" : " float") +
+               (r2c ? " r2c" : " c2r"));
+  struct real_case {
+    std::vector<std::size_t> n;
+    std::size_t count = 1;
+    bool in_place = false;
+    double scale = 1.0;
+  };
+  const std::vector<real_case> cases = {
+      {.n = {8, 6}, .count = 2},
+      {.n = {16, 16}, .count = 2, .in_place = true},
+      {.n = {5, 7}, .count = 2},
+      {.n = {32, 30}, .count = 1, .scale = 0.25},
+      {.n = {64, 32}, .count = 3},
+      {.n = {36, 20}, .count = 2, .in_place = true, .scale = 0.5},
+      {.n = {12, 4}, .count = 1},
+      {.n = {4, 6, 8}, .count = 1},
+      {.n = {3, 5, 4}, .count = 2, .in_place = true},
+      {.n = {256, 256}, .count = 1},
+      {.n = {128, 128}, .count = 1, .in_place = true},
+      {.n = {16, 512}, .count = 1},
+  };
+  const auto run_real = [&](const real_case& rc, const build_settings& settings,
+                            std::string& text) {
+    fftn::shape<T, std::complex<T>> fwd;
+    fftn::shape<std::complex<T>, T> bwd;
+    for (const std::size_t n : rc.n) {
+      fwd.axes.push_back({.n = n});
+      bwd.axes.push_back({.n = n});
+    }
+    fwd.batches = {{.count = rc.count}};
+    bwd.batches = {{.count = rc.count}};
+    bwd.dir = fftn::direction::backward;
+    const auto core = fftn::detail::make_plan_core(
+        r2c ? fftn::detail::view_of(fwd) : fftn::detail::view_of(bwd),
+        {.in_place = rc.in_place, .scale = rc.scale, .force_isa = target}, settings);
+    text = fftn::detail::describe(*core);
+    const auto bytes = static_cast<std::size_t>(std::max(core->in_hi, core->out_hi));
+    fftn::test::input_source src(0x2EA1ULL + bytes);
+    const auto v = src.reals<T>(bytes / sizeof(T));
+    std::vector<std::byte> in(bytes);
+    std::memcpy(in.data(), v.data(), in.size());
+    const fftn::workspace ws(fftn::detail::workspace_bytes(*core, 1));
+    if (rc.in_place) {
+      fftn::detail::execute_core(*core, 0, rc.count, in.data(), in.data(), ws);
+      return in;
+    }
+    const std::vector<std::byte> kept = in;
+    std::vector<std::byte> out(bytes, std::byte{0xa5});
+    fftn::detail::execute_core(*core, 0, rc.count, in.data(), out.data(), ws);
+    EXPECT_EQ(in, kept) << "the input was not preserved";
+    return out;
+  };
+  for (const real_case& rc : cases) {
+    for (const std::size_t block : {std::size_t{0}, std::size_t{3}, std::size_t{16}}) {
+      std::string what = "n =";
+      for (const std::size_t n : rc.n) {
+        what += " " + std::to_string(n);
+      }
+      SCOPED_TRACE(what + ", " + std::to_string(rc.count) + " transforms" +
+                   (rc.in_place ? ", in place" : "") + ", block " + std::to_string(block));
+      build_settings lanes;
+      lanes.column_block = block;
+      build_settings chain;
+      chain.lanes_columns = false;
+      std::string lanes_text;
+      std::string chain_text;
+      const auto got = run_real(rc, lanes, lanes_text);
+      const auto want = run_real(rc, chain, chain_text);
+      EXPECT_NE(lanes_text.find("adjacent columns"), std::string::npos) << lanes_text;
+      EXPECT_EQ(chain_text.find("adjacent columns"), std::string::npos) << chain_text;
+      if (radices_of(lanes_text) == radices_of(chain_text)) {
+        EXPECT_TRUE(got == want) << "lanes columns and chain columns differ\n"
+                                 << lanes_text << chain_text;
+        continue;
+      }
+      // Other radices where the row's last pass would crowd an L1 set (column_radices):
+      // the same transform to within twice the tolerance of either, compared as reals.
+      std::size_t points = 1;
+      for (const std::size_t n : rc.n) {
+        points *= n;
+      }
+      const double l = std::max(1.0, std::log2(static_cast<double>(points)));
+      const double tolerance = 2 * 3 * std::numeric_limits<T>::epsilon() * l;
+      std::vector<T> x(got.size() / sizeof(T));
+      std::vector<T> y(x.size());
+      std::memcpy(x.data(), got.data(), x.size() * sizeof(T));
+      std::memcpy(y.data(), want.data(), y.size() * sizeof(T));
+      double most = 0;
+      double largest = 0;
+      for (std::size_t i = 0; i < x.size(); ++i) {
+        most = std::max(most, static_cast<double>(std::abs(x[i] - y[i])));
+        largest = std::max(largest, static_cast<double>(std::abs(y[i])));
+      }
+      EXPECT_LE(most, tolerance * largest) << lanes_text << chain_text;
+    }
+  }
+}
+
+TEST(Columns, RealPlanesLanesEqualTheChain) {
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    for (const bool r2c : {true, false}) {
+      real_columns_equal_chain<double>(t, r2c);
+      real_columns_equal_chain<float>(t, r2c);
+    }
+  }
+}
+
 // Where the lanes cannot take a strided axis, its columns run alone through the chain: the
 // last axis strided (no adjacent columns), a column length whose chain has a Bluestein
 // stage or a generic pass, the last axis of length 1.
