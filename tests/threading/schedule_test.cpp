@@ -130,10 +130,12 @@ TEST(WorkGraph, PhasesOfRowsAndPlanes) {
   EXPECT_EQ(rows(58, 1)->graph.work, 58.0 + 58.0 * 29);
   // A copy or real edge pass touches two points per unit: n = 1 is one copy of one element.
   EXPECT_EQ(rows(1, 1)->graph.work, 2.0);
-  // Planes: one phase of lines per axis.
+  // Planes: one phase of lines per axis; the columns alone through the chain, or in blocks of
+  // adjacent columns through the lanes (X40), each block a line of the phase.
   const fftn::options opts;
   fftn::detail::build_settings fine;
   fine.chunk_points = 256;
+  fine.lanes_columns = false;
   const auto p = fftn::detail::make_plan_core(
       fftn::detail::view_of(fftn::planes_c2c<double>(64, 32, 1, fftn::direction::forward)), opts,
       fine);
@@ -142,15 +144,35 @@ TEST(WorkGraph, PhasesOfRowsAndPlanes) {
   EXPECT_EQ(p->graph.phases[0].units, 64U); // lines of 32 along axis 1
   EXPECT_EQ(p->graph.phases[0].chunks, 8U); // 256 / 32 lines per chunk
   EXPECT_EQ(p->graph.phases[1].units, 32U);
+  fine.lanes_columns = true;
+  fine.column_block = 8;
+  const auto blocks = fftn::detail::make_plan_core(
+      fftn::detail::view_of(fftn::planes_c2c<double>(64, 32, 1, fftn::direction::forward)), opts,
+      fine);
+  ASSERT_EQ(blocks->graph.phases.size(), 2U);
+  EXPECT_EQ(blocks->graph.phases[1].nest, 1U);
+  EXPECT_EQ(blocks->graph.phases[1].units, 4U);  // blocks of 8 of the 32 columns
+  EXPECT_EQ(blocks->graph.phases[1].chunks, 4U); // a block holds 64 x 8 points
   // A volume: the two loops over the other axes are one phase of their product.
   fftn::shape<std::complex<double>, std::complex<double>> v;
   v.axes = {{.n = 4}, {.n = 5}, {.n = 6}};
-  const auto vol =
-      fftn::detail::make_plan_core(fftn::detail::view_of(v), opts, fftn::detail::build_settings());
+  fftn::detail::build_settings alone;
+  alone.lanes_columns = false;
+  const auto vol = fftn::detail::make_plan_core(fftn::detail::view_of(v), opts, alone);
   ASSERT_EQ(vol->graph.phases.size(), 3U);
   EXPECT_EQ(vol->graph.phases[0].nest, 2U);
   EXPECT_EQ(vol->graph.phases[0].units, 20U);
   EXPECT_EQ(vol->graph.phases[2].units, 30U);
+  // With the lanes, one block of the 6 adjacent columns (rounded up to C, the idle lanes
+  // never written) per line of the other strided axis: 4 along axis 0 for axis 1, 5 along
+  // axis 1 for axis 0.
+  fftn::detail::build_settings six;
+  six.column_block = 6;
+  const auto lanes_vol = fftn::detail::make_plan_core(fftn::detail::view_of(v), opts, six);
+  ASSERT_EQ(lanes_vol->graph.phases.size(), 3U);
+  EXPECT_EQ(lanes_vol->graph.phases[1].nest, 2U);
+  EXPECT_EQ(lanes_vol->graph.phases[1].units, 4U);
+  EXPECT_EQ(lanes_vol->graph.phases[2].units, 5U);
 }
 
 // Rule 1: a job smaller than a few dispatch costs runs inline.

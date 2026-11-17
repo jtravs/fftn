@@ -151,6 +151,22 @@ struct machine_profile {
   // of the three phases' time at 2^20-2^23 points out of place, but lost in place (2^20 1.10)
   // and for c2r 2^20 (1.23). set_grid_sizes sets it on the Xeon profile.
   std::size_t grid_two_pow2_bytes = 0;
+  // The L1 data cache's line in bytes: a lanes column phase's block holds at least a line of
+  // adjacent columns (core/plan_core.cpp, column_block; experiment X40). set_grid_sizes reads
+  // it from the topology (128 on Apple's cores).
+  std::size_t line_bytes = 64;
+  // The memory page (16 KiB on Apple's processors): a lanes column phase chooses its block
+  // by whether a column's elements lie a page or more apart (core/plan_core.cpp,
+  // column_block; X40). profile_for reads it from the topology.
+  std::size_t page_bytes = 4096;
+  // A lanes column phase whose column elements lie less than a page apart keeps its block's
+  // two scratch tiles within this (core/plan_core.cpp, column_block; X40). set_grid_sizes
+  // sets a quarter of L2.
+  std::size_t column_tile_bytes = std::size_t{256} * 1024;
+  // The L1 data cache's associativity (8 where the topology does not say: macOS): with
+  // grid_block_bytes it gives the set period against which a column phase's last pass
+  // counts its legs (core/plan_core.cpp, column_radices; X40).
+  std::size_t l1_ways = 8;
   // The set period (bytes) the grid pads the rows of its intermediate array against, so that
   // the rows phase 2 gathers spread over the sets (grid_pad, experiment X26b); SIZE_MAX: no
   // padding. set_grid_sizes sets 4 KiB where the L2 is shared by a cluster (Apple: long rows

@@ -63,7 +63,11 @@ struct loop {
   loop_kind kind = loop_kind::batch;
   std::size_t count = 1;
   std::array<std::ptrdiff_t, moving_slots> step{}; // bytes per iteration: in, out, block, tw
-  std::uint32_t body_end = 0;                      // records [this + 1, body_end) are the body
+  // Bytes added once, before the first iteration: a lines loop that starts part-way along
+  // an axis (the last, narrower blocks of a lanes column phase, plan_core.cpp). Batch loops
+  // never have one (transform_addresses ignores it).
+  std::array<std::ptrdiff_t, moving_slots> start{};
+  std::uint32_t body_end = 0; // records [this + 1, body_end) are the body
 };
 
 using record = std::variant<stage, loop>;
