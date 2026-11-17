@@ -130,10 +130,12 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
   // share out better), and blocks of a line where one thread runs columns alone 0.72 at
   // 2048 x 36; one thread lost up to 1.42 with the narrow blocks. On the Xeon 6240 (1 MiB L2,
   // little L3) they took 0.997: 512^2-2048^2 lost 1.05-1.15, so it builds no team blocks.
-  // X43b arm VT, the same machines: teams run volumes plane at a time (EPYC 0.778 at 8 lanes,
-  // where one thread gained only 0.979).
   if (x86_64 && private_l2 && large_l3 && !large_l2) {
     p.column_team_bytes = 128;
+  }
+  // X43b arms VT and VTX: teams run volumes plane at a time (8 lanes: EPYC 0.778, Xeon 6240
+  // 0.788), where one thread gained too little (0.979, 0.934 with 97^3 slower, 1.048).
+  if (x86_64 && private_l2 && !large_l2) {
     p.team_volume_planes = true;
   }
   if (large_l2) {
@@ -164,10 +166,6 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
   if (private_l2 && !large_l2 && !large_l3) {
     p.grid_two_odd_part = 15;
     if (x86_64) {
-      // X43b: volumes plane at a time took 0.934 of the axes one by one over 30 volumes
-      // beyond L2 on the Xeon 6240 (64 x 64 x 512 0.75-0.78, 128^3 0.84-0.91), but 0.979 on
-      // the EPYC 7763, whose 32 MiB L3 holds volumes to 128^3, and 0.96 on the M5 Max.
-      p.volume_planes = true;
       p.grid_three_block = 16;
       p.grid_phase_radix = 20;
       if (c.l1d.size != 0 && c.l2.size != 0) {

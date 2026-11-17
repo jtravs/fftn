@@ -287,7 +287,7 @@ void add_cases(std::vector<team_case>& out, const fftn::detail::build_settings& 
   one_volume.dir = bwd;
   one_volume.axes = {{.n = 24}, {.n = 20}, {.n = 36}};
   fftn::detail::build_settings planes = settings;
-  planes.profile.volume_planes = true; // plane at a time on every machine (X43b)
+  planes.volume_planes = true; // plane at a time on every machine (X43b)
   out.push_back(
       make_case("c2c_volume_24x20x36" + suffix, one_volume, 17280, 17280, false, planes, target));
   one_volume.axes = {{.n = 17}, {.n = 15}, {.n = 37}};
@@ -305,7 +305,7 @@ void add_cases(std::vector<team_case>& out, const fftn::detail::build_settings& 
   // A team program that runs a volume plane at a time where the program runs its axes one by
   // one (X43b arm VT): the same bits.
   fftn::detail::build_settings order = settings;
-  order.profile.volume_planes = false;
+  order.volume_planes = false;
   order.profile.team_volume_planes = true;
   one_volume.axes = {{.n = 10}, {.n = 24}, {.n = 30}};
   out.push_back(make_case("c2c_volume_team_order_10x24x30" + suffix, one_volume, 7200, 7200, false,

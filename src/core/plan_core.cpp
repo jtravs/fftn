@@ -1030,7 +1030,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
                              "): radices " + chain.radix_text(c.lengths[d]));
     };
     if (r == 3 && in.extent[0] > 1 &&
-        (settings.profile.volume_planes ||
+        (settings.volume_planes ||
          (settings.team_program && settings.profile.team_volume_planes))) {
       add_volume_planes(
           p, in.extent, in_view, out_view,

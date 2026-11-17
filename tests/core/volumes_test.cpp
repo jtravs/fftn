@@ -60,7 +60,7 @@ template <class T> void scratch_within_bound(fftn::isa target, bool planes) {
   constexpr std::size_t widest_block = 512 / (2 * sizeof(T));
   constexpr std::size_t register_lanes = 8;
   fftn::detail::build_settings settings;
-  settings.profile.volume_planes = planes;
+  settings.volume_planes = planes;
   settings.profile.column_team_bytes = 128; // a team program on every machine (X43)
   const auto tiny = fftn::detail::make_plan_core(
       fftn::detail::view_of(fftn::rows_c2c<T>(8, 1, fftn::direction::forward)),
@@ -111,13 +111,13 @@ TEST(Volumes, ScratchStaysWithinAPlaneOrABlockOfPencils) {
   }
 }
 
-// Where the profile asks for it (machine_profile::volume_planes, X43b), the program's shape:
-// after the batch loops, one loop over the planes of axis 0 whose body holds the plane's two
+// Plane at a time (build_settings::volume_planes; a team program's order, X43b), the program's
+// shape: after the batch loops, one loop over the planes of axis 0 whose body holds the plane's two
 // phases, then the outer axis's phase, whose loops never step along axis 0 (its pencils'
 // elements are a whole plane apart).
 TEST(Volumes, InnerAxesPlaneAtATime) {
   fftn::detail::build_settings settings;
-  settings.profile.volume_planes = true;
+  settings.volume_planes = true;
   for (const volume_case& vc : volumes()) {
     SCOPED_TRACE(label(vc, false));
     const auto core = fftn::detail::make_plan_core(fftn::detail::view_of(shape_of<double>(vc)),
@@ -158,7 +158,7 @@ template <class T> void planes_equal_axes(fftn::isa target) {
       std::vector<std::vector<c>> got;
       for (const bool planes : {true, false}) {
         fftn::detail::build_settings settings;
-        settings.profile.volume_planes = planes;
+        settings.volume_planes = planes;
         const auto core =
             fftn::detail::make_plan_core(fftn::detail::view_of(shape_of<T>(vc)),
                                          {.in_place = in_place, .force_isa = target}, settings);
@@ -230,7 +230,7 @@ TEST(TeamProgram, NarrowerBlocksTheSameRadices) {
   // A team program that differs only in a volume's order (X43b arm VT): the program runs the
   // axes one by one, a team the inner two plane at a time.
   fftn::detail::build_settings order;
-  order.profile.volume_planes = false;
+  order.volume_planes = false;
   order.profile.team_volume_planes = true;
   order.profile.column_team_bytes = 0;
   const auto ordered = fftn::detail::make_plan_core(

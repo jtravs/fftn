@@ -160,7 +160,7 @@ TEST(WorkGraph, PhasesOfRowsAndPlanes) {
   v.axes = {{.n = 4}, {.n = 5}, {.n = 6}};
   fftn::detail::build_settings alone;
   alone.lanes_columns = false;
-  alone.profile.volume_planes = true;
+  alone.volume_planes = true;
   const auto vol = fftn::detail::make_plan_core(fftn::detail::view_of(v), opts, alone);
   ASSERT_EQ(vol->graph.phases.size(), 2U);
   EXPECT_EQ(vol->graph.phases[0].nest, 1U);
@@ -171,7 +171,7 @@ TEST(WorkGraph, PhasesOfRowsAndPlanes) {
   // C, the idle lanes never written) per line of axis 1.
   fftn::detail::build_settings six;
   six.column_block = 6;
-  six.profile.volume_planes = true;
+  six.volume_planes = true;
   const auto lanes_vol = fftn::detail::make_plan_core(fftn::detail::view_of(v), opts, six);
   ASSERT_EQ(lanes_vol->graph.phases.size(), 2U);
   EXPECT_EQ(lanes_vol->graph.phases[0].units, 4U);
@@ -182,13 +182,13 @@ TEST(WorkGraph, PhasesOfRowsAndPlanes) {
   fftn::shape<std::complex<double>, std::complex<double>> cube;
   cube.axes = {{.n = 64}, {.n = 64}, {.n = 64}};
   fftn::detail::build_settings planes;
-  planes.profile.volume_planes = true;
+  planes.volume_planes = true;
   const auto big = fftn::detail::make_plan_core(fftn::detail::view_of(cube), opts, planes);
   EXPECT_EQ(big->graph.phases[0].units, 64U);
   EXPECT_EQ(big->graph.phases[0].chunks, 64U);
   // Axis by axis (the profile's default): one phase per axis, the two loops over the other
   // axes one phase of their product.
-  alone.profile.volume_planes = false;
+  alone.volume_planes = false;
   const auto axes = fftn::detail::make_plan_core(fftn::detail::view_of(v), opts, alone);
   ASSERT_EQ(axes->graph.phases.size(), 3U);
   EXPECT_EQ(axes->graph.phases[0].nest, 2U);
@@ -518,9 +518,8 @@ TEST(Schedule, GridSizesFromCaches) {
   EXPECT_EQ(xeon.grid_two_odd_part, 15U);
   EXPECT_EQ(epyc.grid_two_odd_part, 0U);
   EXPECT_EQ(m5.grid_two_odd_part, 0U);
-  // Volumes and team programs (X43, X43b), as an x86-64 build sets them: the EPYC's teams run
-  // narrower column blocks and volumes plane at a time, the Xeon's program runs volumes plane
-  // at a time and its teams the program; the M5 Max neither.
+  // Team programs (X43, X43b), as an x86-64 build sets them: the EPYC's teams run narrower
+  // column blocks, both machines' teams run volumes plane at a time; the M5 Max neither.
   const auto x86 = [&](const char* file) {
     machine_profile p;
     fftn::detail::set_grid_sizes(p, fftn::detail::load_topology(data / file).classes.at(0), true);
@@ -530,12 +529,10 @@ TEST(Schedule, GridSizesFromCaches) {
   const machine_profile xeon86 = x86("linux-intel-xeon-gold-6240.sysfs");
   EXPECT_EQ(epyc86.column_team_bytes, 128U);
   EXPECT_TRUE(epyc86.team_volume_planes);
-  EXPECT_FALSE(epyc86.volume_planes);
   EXPECT_EQ(xeon86.column_team_bytes, 0U);
-  EXPECT_FALSE(xeon86.team_volume_planes);
-  EXPECT_TRUE(xeon86.volume_planes);
+  EXPECT_TRUE(xeon86.team_volume_planes);
   EXPECT_EQ(m5.column_team_bytes, 0U);
-  EXPECT_FALSE(m5.volume_planes || m5.team_volume_planes);
+  EXPECT_FALSE(m5.team_volume_planes);
   // The c2r grid pairs in its first gather only where the L2 is shared (X29).
   EXPECT_TRUE(m5.c2r_paired_gather);
   EXPECT_FALSE(epyc.c2r_paired_gather);

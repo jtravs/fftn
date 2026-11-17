@@ -72,6 +72,9 @@ struct build_settings { // NOLINT(clang-analyzer-optin.performance.Padding)
   // Builds the team program (plan_core::team) rather than the program: column blocks within
   // profile.column_team_bytes (X43). Set only by build_plan_core for the team core it adds.
   bool team_program = false;
+  // A c2c volume's inner axes plane at a time in the program too, not only in a team program
+  // where the profile asks (X43b); tests compare the two orders.
+  bool volume_planes = false;
   // Walked programs (multi-axis) of at most calls_max kernel calls per transform run from
   // their calls unrolled at construction (program.hpp, experiment X41); false: the driver
   // walks the records (tests compare the two).
