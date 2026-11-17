@@ -1,6 +1,7 @@
 # X47: the EPYC's double rows of 512–2048 points, second attempt
 
-- **Status:** done (A proposed for adoption, the lead's call; B rejected and reverted)
+- **Status:** done (A adopted by the lead's decision against rule (a)'s letter, see the
+  verdict; B rejected and reverted)
 - **Owner:** x47 session, 2026-11-17
 - **Phase / task:** 1 (phase 1 exit check, the tail rule; cause 4); follows X30, X38, X42
 
@@ -233,6 +234,14 @@ Mac (1883) and in CI. Library text (x86-64 Linux, GCC 16, `size` of `libfftn.a`)
   and more 0.947–0.980. Nowhere slower: the 159 unchanged cases 0.9997, tracking tiers EPYC
   0.998, Xeon 0.997, Mac 0.999, no case past the limit there. FFTN ÷ FFTW at 512 1.11 →
   1.06, at 512 × 16–1024 1.06 → 1.02–1.04; exit-check cases over 1.05 22 → 17 of 193.
+- **The lead's decision (2026-11-17): A is adopted.** Rule (a) is not met as written, and
+  the protocol would delete A; the lead adopts it anyway, recorded here as a departure from
+  the rule. Reasons: the rule's target set was drawn wider than the mechanism (rows whose
+  three lines already fit L1 cannot gain from dropping one, and 0.98–1.02 there is band);
+  on the four cases the rule itself named (512 at batches 1, 16, 256, 1024) the geomean is
+  0.965, inside 0.97; (b) and (c) pass on three machines with nothing slower; and the
+  change removes a scratch line rather than adding a path. Lesson for later rules: name
+  as target cases only those the mechanism can move, or judge the named cases separately.
 - **B (lane loops by group): rejected and reverted** (a7c8d05). 1.033 of A's time over
   512–2048 on the EPYC, up to 1.17 elsewhere, 1.007 on the Mac with five cases past the
   limit. GCC 16 turned the saved index arithmetic into 21 stack loads of leg offsets a unit:
