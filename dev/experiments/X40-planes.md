@@ -181,8 +181,18 @@ against X (61 cases): Mac 20261117-052850-a99d (band ±1.6 %): 6 faster (the c2c
 0.319), 55 no evidence, worst r2c 2048 × 36 1.034; EPYC 20261117-052446-7d2b (band ±2.6 %,
 every round loaded): 6 faster (64³ 0.088), 55 no evidence, worst r2c 65536 1.038; Xeon
 20261117-053128-6752 (band ±2.1 %): 8 faster (64³ 0.460), 51 no evidence, 2 slower, c2c 128
-(one row, an unchanged flat program) 1.125 and r2c 64² (unchanged program) 1.048: re-run
-below.
+(one row, an unchanged flat program) 1.125 and r2c 64² (unchanged program) 1.048. A re-run
+of the small 1-D cases (20261117-053911-a844, 12 rounds) kept c2c 128 at 1.167 and c2r 1000
+at 1.049. The flag `columns_inner` had grown `pass_args` by 8 bytes; f1e77a7 stores `block`
+and `rows` in 32 bits so the struct keeps its size. Tracking tier again, `main`, X and that
+commit P (Xeon 20261117-060511-d5dd, band ±1.9 %): P 6 faster, 54 no evidence, 1 slower:
+c2c 128 1.136 (X 1.147), c2r 1000 back within the band. c2c 128 is a flat program that no
+arm changes, on a path (`run_flat_one`) whose code no arm touches but whose placement in
+`driver.cpp` moves with `run_records`; X37 recorded the same kind of jump at 2–8 points on
+the EPYC with an unchanged execute path. Not chased further here (a JCC-erratum-class
+alignment effect on Cascade Lake is one candidate; GCC's `-Wa,-mbranches-within-32B-boundaries`
+would test it). Mac with P (20261117-060555-9172, band ±1.6 %): 5 faster, 56 no evidence,
+worst c2r 2²⁰ 1.016.
 
 ## Verdict
 
