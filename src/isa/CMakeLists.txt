@@ -31,7 +31,7 @@ fftn_always_optimise(${fftn_isa_units})
 # of X40 moved code and single c2c rows of 160, 180 and 240 points took 1.07-1.10 of their
 # time, 360 and 384 1.04-1.06 (bisect, Xeon 6240: 20261117-184544-8056). With the padding
 # they take 0.89-0.94 of the unpadded time and the other small rows stay level
-# (20261117-193445-016d; dev/LESSONS.md 2.11). No effect where the units never run.
+# (20261117-204818-1541; dev/LESSONS.md 2.11). No effect where the units never run.
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64" AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
   set(fftn_jcc_units "")
   foreach(unit IN LISTS fftn_isa_units)

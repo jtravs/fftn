@@ -259,10 +259,9 @@ the same kernels and the same execute path; bisecting the first-parent merges pu
 X40's merge (20261117-184544-8056, band ±1.0 %), whose diff touches no code those rows run
 (X40 had seen c2c 128 do the same and X37 a jump at 2–8 points on the EPYC). Assembling the
 library with GCC's `-Wa,-mbranches-within-32B-boundaries` (no branch crosses or ends on a
-32-byte boundary, the Skylake-family JCC erratum's mitigation) took them back to 0.89–0.94 of
-the unpadded time on the Xeon and also sped up 360 and 384; the flag on `driver.cpp` alone did
-nothing, on the avx512 units alone it did all of it (20261117-193445-016d; the first runs
-were noisy but paired). The same flag on every unit slowed 180 and 300 points by 5–11 % on the
+32-byte boundary, the Skylake-family JCC erratum's mitigation) took them back to 0.89–0.91 of
+the unpadded time on the Xeon (20261117-204818-1541, band ±1.0 %, none loaded; 360 and 384 0.94 and 0.92); the tracking tier showed nothing slower (20261117-205228-e841); the flag on `driver.cpp` alone did
+nothing, on the avx512 units alone it did all of it (20261117-193445-016d, loaded but paired). The same flag on every unit slowed 180 and 300 points by 5–11 % on the
 EPYC (Zen 3, 20261117-190948-906d): code placement is luck there too, so only the units
 that run on the affected cores take it. A sudden single-row jump with an unchanged plan is
 this before it is a code change: bisect, then try the flag on the units that run.
