@@ -53,10 +53,12 @@ constexpr std::array<std::size_t, cost_radices> pass_radices{
 // most 0.97 of the planner's at batch 1 and 64; 80, 160, 240, 640, 2000, 3000 and 3600 take
 // a radix-20 pass by the same rule (campaign x38-r20), as FFTW's plans do there
 // (dev/experiments/X38-epyc-mid.md). 500, 3125, 10000 and 15625 take a radix-25 pass by
-// that rule (experiment X42, campaign x42-r25f-epyc: dev/experiments/X42-codelets.md).
+// that rule (experiment X42, campaign x42-r25f-epyc: dev/experiments/X42-codelets.md); 5000
+// and 25000 by X42's arm B3: one sequence at most 0.97 of the planner's at both batches,
+// though the two batches' winners differ.
 // clang-format off
 // NOLINTBEGIN(readability-trailing-comma): bench/x2/fit.py writes and parses this layout
-constexpr std::array<radix_override, 40> avx2_double_overrides{{
+constexpr std::array<radix_override, 42> avx2_double_overrides{{
     {.n = 27, .radices = {3, 9, 0, 0}},
     {.n = 42, .radices = {2, 3, 7, 0}},
     {.n = 54, .radices = {2, 3, 9, 0}},
@@ -90,6 +92,7 @@ constexpr std::array<radix_override, 40> avx2_double_overrides{{
     {.n = 3600, .radices = {12, 15, 20, 0}},
     {.n = 4096, .radices = {8, 8, 8, 8}},
     {.n = 4800, .radices = {8, 12, 5, 10}},
+    {.n = 5000, .radices = {10, 20, 25, 0}},
     {.n = 6000, .radices = {8, 10, 5, 15}},
     {.n = 8192, .radices = {8, 8, 16, 8}},
     {.n = 10000, .radices = {20, 20, 25, 0}},
@@ -97,6 +100,7 @@ constexpr std::array<radix_override, 40> avx2_double_overrides{{
     {.n = 15625, .radices = {25, 25, 25, 0}},
     {.n = 16384, .radices = {8, 16, 16, 8}},
     {.n = 20000, .radices = {8, 5, 10, 5, 10}},
+    {.n = 25000, .radices = {10, 5, 20, 25, 0}},
 }};
 constexpr std::array<radix_override, 13> avx2_float_overrides{{
     {.n = 90, .radices = {9, 10, 0, 0}},
