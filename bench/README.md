@@ -59,6 +59,7 @@ other arm is compared with it. The label may be omitted (it defaults to the libr
 | `PLANNER=ESTIMATE\|MEASURE\|PATIENT\|EXHAUSTIVE` | fftw | planning effort (default MEASURE) |
 | `WISDOM=run\|none\|<file>` | fftw | wisdom: fresh per run and shared by that run's processes with the same binary and planner (default), none at all, or imported read-only from a file |
 | `PLAN_NOTE=0\|1` | fftw | write the plan FFTW chose (`fftw_sprint_plan`, one line) into each case's note (default 0) |
+| `THREADS=N` | fftw, mkl_omp | plan and execute with N threads (default 1): FFTW through `fftw_plan_with_nthreads` and its POSIX-threads library (linked when the installation has `libfftw3_threads`; no OpenMP runtime joins the process), each thread count with its own wisdom; oneMKL through `mkl_set_num_threads` in `fbench-mkl_omp` (see "Intel oneMKL") |
 | `API=dft\|interleaved` | accelerate | vDSP's split-complex DFT with conversions (default) or its interleaved DFT (see below) |
 | `DELAY=<fraction>` | any (test only) | spin for that fraction of every measured batch: a seeded slowdown that proves the statistics |
 | `PERTURB=<eps>` | any (test only) | multiply every output value by 1 ± eps before the check: proves the correctness guard |
@@ -382,7 +383,10 @@ batch, the layout through `DFTI_INPUT_`/`OUTPUT_STRIDES` and `_DISTANCE` (which 
 release has; 2025.2 and 2026.1 lack the newer `DFTI_FWD_`/`BWD_STRIDES`), and
 `DFTI_COMPLEX_COMPLEX` storage, with no scaling. `describe` reports the code path oneMKL
 chose (`isa`, from `MKLVersion::Processor`) and `MKL_ENABLE_INSTRUCTIONS` and `MKL_CBWR`,
-which must be unset for a fair run.
+which must be unset for a fair run. Where the compiler is GCC and has OpenMP, the build also
+makes `fbench-mkl_omp` (arms `mkl_omp`): the same backend linked with the advisor's threaded
+choice for GCC, `mkl_gnu_thread` and libgomp in place of `mkl_sequential`, whose `THREADS`
+option sets oneMKL's thread count (experiment X41's threaded comparisons).
 
 **FFTL.jl** through libfftl, its C library: FFTL.jl compiled ahead of time with juliac into a
 self-contained shared library (the Julia runtime is embedded; nothing of Julia is needed at

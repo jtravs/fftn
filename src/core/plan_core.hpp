@@ -69,6 +69,10 @@ struct build_settings { // NOLINT(clang-analyzer-optin.performance.Padding)
   // multiple of C) instead of the rule's (plan_core.cpp, column_block) when not 0.
   bool lanes_columns = true;
   std::size_t column_block = 0;
+  // Walked programs (multi-axis) of at most calls_max kernel calls per transform run from
+  // their calls unrolled at construction (program.hpp, experiment X41); false: the driver
+  // walks the records (tests compare the two).
+  bool unroll_calls = true;
   // The grid's factors in phase order (two or three, multiplying to the row's length),
   // where they can be a grid; empty: the rules' (strategies/grid.hpp).
   std::vector<std::size_t> grid_factors;

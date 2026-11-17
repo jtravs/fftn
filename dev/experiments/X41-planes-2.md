@@ -1,0 +1,287 @@
+# X41: the rest of task 4.1: real planes, small planes, long columns, threaded planes
+
+- **Status:** done (S1, R3 on x86, L2 on Apple adopted; R, R2, L1, T1 rejected; task 4.1 continues)
+- **Owner:** task 4.1 agent (second part), 2026-11-17
+- **Phase / task:** 4.1
+
+## Question
+
+After X40 (lanes over blocks of adjacent columns; c2c planes 0.80–0.94 of FFTW), which
+changes take the cases X40 left over FFTW and MKL to or below them, one thread and
+threaded? Each sub-item below is its own question and its own arms; the answers decide the
+multi-axis programs task 4.1 ends with.
+
+## Hypotheses and changes under test
+
+Sub-items, in the order they are worked; at most about three arms each.
+
+- **R: the complex axes of real planes.** r2c and c2r planes still run their strided
+  complex axes column by column (DESIGN.md 9.3 "Not built yet"); on C > 1 each column is
+  copied element by element. These axes are c2c transforms over adjacent columns (the
+  last, halved axis contiguous), exactly X40's case: give them X40's column phase
+  (`column_block`, `add_column_phase`). Expected: real planes take about what c2c planes
+  took in X40 (0.45–0.6 of main's time at 256² and beyond). Arm R: the column phase on
+  the complex axes of r2c (after the real rows) and c2r (before them, from the input or
+  the block to the block, or in place on the output). Bits: as X40 (each column is a
+  lane computing its own chain; results move within the tolerances where the column
+  radices differ from the chain's).
+- **S: small planes in batches.** 8 × 6, 5 × 7, 16 × 16 in batches of 2, 32 × 32: a fixed
+  cost per plane (records walked, kernels called per stage per plane). Diagnosis first
+  (time per plane against the leaf and column calls it makes), then arms such as one call
+  per stage over every plane of a batch where the planes are adjacent.
+- **L: columns beyond L2** (Mac 2048 × 36 1.12–1.16 of FFTW): a block's tiles leave L2;
+  a two-phase split of the column (the grid's way) or narrower blocks with the chain's
+  radices, after a diagnosis.
+- **T: threaded planes.** Column blocks are lines of the work graph (each member's
+  scratch holds its tiles). Baseline: FFTN's thread pool against FFTW's threads and
+  MKL's OpenMP threading at 8 lanes on the EPYC (whole cores, one CCX: 8 cores sharing an
+  L3, `--distribution=block:block`) and the Xeon (8 cores of one socket); fix what loses.
+  fbench gains `THREADS` for FFTW (`fftw_plan_with_nthreads`, libfftw3_threads, no OpenMP
+  runtime) and an `mkl_omp` backend (oneMKL's GNU OpenMP threading layer) for this.
+- **M: the Xeon against MKL at 16²–1000²** (1.08–1.38): diagnosis with counters only if
+  time remains.
+
+1-D plans are unchanged by every arm (their programs are identical; the tests' 1-D cases
+and the tracking tier's 1-D cases are the collateral check).
+
+## Method
+
+- Cases: the standard catalogue, tier full. R: `^(r2c|c2r)-[0-9]+x[0-9]+-b[0-9]+-(op|ip)$`
+  (the real planes: smoke planes in batches of 2, the planes group in and out of place,
+  r2c plane batches of 16). S, L, M: the 37 c2c planes of X40,
+  `^c2c-[0-9]+x[0-9]+-b[0-9]+-(op|ip)$`. T: the same planes and the threads catalogue's
+  planes, plane batches and volumes, at 8 lanes (`THREADS=8`).
+- Machines: Mac M5 Max (Homebrew Clang, `neon_fcma`, FFTW NEON build), EPYC 7763 (GCC 16,
+  `avx2`), Xeon 6240 (GCC 14, `avx512`, with MKL). fbench A/B, interleaved rounds, A/A
+  control; remote timing through `fbench_remote.py submit --serial` on shared 8-CPU
+  allocations.
+- Metric: per case the median paired ratio arm ÷ base, 95 % interval; the geometric mean
+  over the cases; FFTN ÷ FFTW and ÷ MKL for the record (and for task 4.1's acceptance).
+- Decision rule, written before running, per sub-item and machine-target (release
+  toolchains: Clang on the Mac, GCC on x86-64): adopt an arm if (1) the geometric mean of
+  arm ÷ base over the sub-item's target cases is at most 0.95 (R: the real planes whose
+  program changes; S: the c2c planes of at most 1024 points; L: the planes whose column
+  block changes; T: the threaded cases), and (2) no case of the sub-item's case set (and,
+  for S, L and T, none of the 37 c2c planes at one thread) is slower than base by more
+  than the larger of 2 % and the run's A/A band (a case just past it on a loaded machine
+  is re-run before it decides), and (3) 1-D plans are unchanged. A win on some targets and
+  a loss on others is adopted per target. Task 4.1's acceptance is judged separately on
+  FFTN ÷ FFTW and ÷ MKL per case, one thread and threaded.
+
+## Results
+
+### R: the complex axes of real planes
+
+Arm R (862b140) against `main` (4d00f0a), the 71 real planes, FFTW (and MKL) in the same
+runs; R ÷ main is the paired ratio:
+
+- Mac, run 20261117-102848-aba7 (10 rounds, all loaded, band ±2.8 %): geometric mean
+  1.039, 20 cases slower, worst r2c 512² 1.22, 1024² 1.13–1.16, 480 × 640 1.12–1.14. On
+  NEON double (C = 1) the chain reads a column at its stride without a copy, and a real
+  plane's complex rows (n/2 + 1 columns, an odd multiple of 16 bytes apart for even n) do
+  not crowd an L1 set as X40's power-of-two c2c columns did: the lanes' tiles only add
+  traffic. Rule (1) fails: R rejected on the Mac.
+- EPYC, run 20261117-103320-609d (10 rounds, none loaded, band ±1.0 %): geometric mean
+  0.899, 47 faster (32 × 32 0.74, 36 × 2048 0.76–0.79, c2r 2048² 0.76–0.78), but 1024²
+  1.09–1.11 (its 16-column tiles, 512 KiB, leave the 512 KiB L2; the chain's 16 KiB line
+  stays in L1) and c2r 5 × 7 1.04. Rule (2) fails: R rejected as written.
+- Xeon, run 20261117-103328-552d (6 of 10 rounds loaded, band ±18.5 %): geometric mean
+  0.838, no verdict possible at that band (re-run below with arm R2).
+
+Arm R2 (a new arm, its rule written before its runs; this paragraph was committed with it):
+the same column phase for real planes, but only where C > 1, for columns of at least 32
+points, with the tiles held to `column_tile_bytes` (a quarter of L2) at any stride, and if
+a line of columns still exceeds that, X40's block where the column alone exceeds half of
+L1, else the chain (`column_block`, `real`). The Mac's plans are `main`'s. Rule for R2: as
+the decision rule above, over the real planes whose program R2 changes, on the EPYC and
+the Xeon, against `main` in fresh runs.
+
+R2 against the same build with every column through the chain (W: 3e405ec with
+`COLUMNS=chain`, which isolates the column choice), EPYC run 20261117-105625-db9e (10
+rounds, 3 loaded, band ±1.1 %): geometric mean 0.885 over the 71 (1.00 where R2 keeps the
+chain), 32 × 30 0.74–0.75, 36 × 2048 0.75–0.78, 2048² 0.73–0.87; but 1024² 1.05–1.06 with 4
+columns (rule (2) fails again) and c2r 2048 × 36 1.11 with a wide interval (19 columns, X40's
+block of 16). Arm R3 (the third and last arm of R; rule written before its runs and
+committed with it): as R2, but a block from the tile budget needs at least two L1 lines of
+columns, and X40's wide block applies only where the stride is a page or more (each column
+element on its own page) and the column exceeds half of L1; else the chain. On the EPYC
+that keeps 1024² (8208-byte stride, a 16 KiB column) and 2048 × 36 (304-byte stride) on the
+chain and 2048² on X40's block. Rule for R3: as for R2, on the EPYC and the Xeon.
+
+R3 (4e804ba) against W (the same build, `COLUMNS=chain`), EPYC run 20261117-112604-304f (10
+rounds, none loaded, band ±1.0 %): 0.890 over the 71 real planes, 0.84 over the ones R3
+changes (32 × 30 0.73–0.75, 32 × 32 0.77–0.79, 36 × 2048 0.76–0.78, 2048² 0.73–0.85, 96² to
+512² 0.85–0.97); worst c2r 1024² ip 1.012 (on the chain, unchanged), r2c 8 × 6 1.007. Rule
+met on the EPYC: R3 adopted there. R2 on the Xeon, run 20261117-111109-09d7 (10 rounds, all
+loaded, five overloaded, band ±8.2 %): 0.829 over the 71, worst r2c 1024² ip 1.113 (op
+0.937; c2r 0.640 and 1.072): R2's Xeon plans are R3's except where R3 keeps the chain, so
+the Xeon is judged on R3's own run: run 20261117-114953-7364 (10 rounds, all loaded, four
+overloaded, band ±8.6 %): 0.827 over the 71 (32 × 30 0.65–0.67, 32² and 64² 0.65–0.72, 36 ×
+2048 0.63–0.65, 2048² 0.78–0.80), worst r2c 1024² op 1.085 (interval 0.995–1.257; ip 1.053,
+c2r 0.612 and 1.044: blocks of 8 there), inside the band. Rule met by the letter on the
+Xeon: R3 adopted there; 1024² is the case to re-time on a quieter Xeon.
+
+### S: small planes
+
+Diagnosis (Mac harness, one process, Clang, `neon_fcma`, `main` 4d00f0a with arm R): a plane
+costs the two 1-D batches it is made of plus about 10 ns: 8 × 6 30.6 ns per plane against
+9.6 ns for its 8 rows as a 1-D batch and 10.1 ns for its 6 columns as rows; 32 × 32 1005 ns
+against 476 + 476; 64 × 64 4.83 µs against 2.28 + 2.27. The rest is the driver walking the
+records per transform (a variant test, a recursion and the slots moved per loop iteration).
+
+Arm S1 (dd21c2e, `build_settings::unroll_calls`): a multi-axis program of at most 256
+kernel calls per transform is unrolled at construction into its calls with the slots' byte
+offsets (a loop of leaves one call), and the driver calls them in turn. Bits unchanged (the
+tests compare unrolled and walked output byte for byte); 1-D programs keep their paths.
+Harness: 8 × 6 b2 60 → 53 ns, 5 × 7 b2 51 → 45 ns, 64 × 64 4.83 → 4.64 µs. S1 against its
+parent (B: 31ea042), the 37 c2c planes; target cases the 11 planes of at most 1024 points:
+
+- EPYC run 20261117-105106-e6b7 (10 rounds, 8 loaded, band ±1.7 %): targets 0.90 (8 × 6
+  0.81, 5 × 7 0.78, 16 × 16 0.94–0.95, 32 × 32 0.96–0.98), worst of the 37 1.013. Rule met.
+- Xeon run 20261117-105256-e618 (10 rounds, all loaded, six overloaded; band ±11 %):
+  targets 0.87 (8 × 6 0.78–0.80, 5 × 7 0.74–0.76, 16 × 16 0.86–0.89), worst 1.038. Rule met
+  by the letter at that band.
+- Mac run 20261117-104725-7d2a (12 rounds, all loaded, band ±5.5 %): targets 0.94 (8 × 6
+  0.86–0.88, 5 × 7 0.84–0.87), worst 1.044. The lead reported the Mac on battery power
+  around the end of this run, so it cannot decide; a re-run on mains decides the Mac.
+- Mac re-run on mains, run 20261117-111242-2429 (12 rounds, 5 loaded, band ±1.0 %): targets
+  0.94 (8 × 6 0.87, 5 × 7 0.89, 16 × 16 0.98, 32 × 32 0.99), worst 1.010. Rule met.
+
+S1 adopted on all three machine-targets. The remaining small-plane gap, x41 catalogue on
+the EPYC (run 20261117-115010-a798, a screen): the 32 × 32 plane takes 2.11 ns per point
+against 0.73 for its 32 rows as a 1-D batch, so its lanes column phase costs about 1.9
+times its rows (FFTW: 1.48 per point, about twice its own row batch); on the Mac a plane is
+the sum of its two batches. That column phase on `avx2` is the lead for 32² (1.38 of FFTW).
+
+### T: threaded planes
+
+Baseline, EPYC (8 whole cores of one CCX, `--hint=nomultithread --distribution=block:block`):
+run 20261117-104129-206a (31ea042, the 37 c2c planes, band ±2.1 %) with FFTN's pool at 8
+lanes (T8), FFTN serial, FFTW at 8 threads (F8, `fftw_plan_with_nthreads`) and serial. FFTW's
+threaded plans of small planes are 7–380 times slower than its serial ones (a planner that
+chose threads for 48 points), so FFTN is compared with the better of FFTW's two per case.
+Planes up to 64² run inline (T8 = serial). From 128² FFTN's 8 lanes take 2.3–6.6 times less
+time than its one; against FFTW's better plan FFTN is faster everywhere except the small
+planes it already trails serially (8 × 6, 5 × 7, 32 × 32: S below) and 1000² (FFTW's 8
+threads 0.91–0.92 of FFTN's time), 2048² out of place (0.93). Threads catalogue, run
+20261117-110630-d7e0 (3e405ec, band ±1.4 %): FFTN ahead of FFTW's 8 threads on c2c planes and
+plane batches (1.12–1.26 of FFTN's time for FFTW) except 1024² (0.99); behind on r2c 1024²
+(0.77) and the volumes (64³–128³ 0.72–1.02, task 4.2's).
+
+A column phase's narrower last block was a phase of one chunk (the tail nest after the
+whole blocks), run by one member while the others waited. Arm T1 (947bfbe, `loop::joins`):
+that nest's lines join the whole blocks' phase. Serial programs and every plane whose
+column count the block divides are unchanged. T1 against 3e405ec, both at 8 lanes, the 108
+c2c and real planes, EPYC run 20261117-110929-0d06 (band ±2.7 %): 0.983 over all; on the
+planes with a narrower block 0.81–0.95 (100² 0.92, real 96²–512² 0.92–0.97, real 2048 × 36
+0.81–0.90); past the band c2c 512² op 1.030 (no narrower block: its program and graph are
+unchanged) and c2r 2048² ip 1.073 (wide interval). As written, rule (1) took "the threaded
+cases" as the target set, over which 0.983 fails; that set includes the planes T1 cannot
+change. Arm T1b (a new arm, the same code, judged by fresh runs): target cases the threaded
+planes whose work graph T1 changes (those with a narrower last block); adopt if their
+geometric mean is at most 0.95 and no threaded plane is slower than the base by more than
+the larger of 2 % and the band, a case past it re-run once; serial programs unchanged by
+construction.
+
+T1b, EPYC run 20261117-113521-9e86 (12 rounds, 8 loaded, band ±4.3 %; B8 3e405ec and T1b
+947bfbe at 8 lanes): nothing slower beyond the band (worst c2c 512² op 1.012), but the 55
+planes with a narrower block take 0.968 of the base's time (the 39 that run threaded rather
+than inline 0.957; T1's own run gave 0.965 on those): 100² 0.92, real 96²–512² 0.93–0.96,
+1000² 0.94–0.98, 2048 × 36 and real 2048² 1.00. Rule (1) fails: T1 rejected, reverted
+(revert of 947bfbe). The remainder phase costs a few per cent at 8 lanes, less than the bar.
+
+### L: columns beyond L2 (the Mac's 2048 × 36)
+
+Screen (not a judging run), Mac run 20261117-111654-cd9f (band ±1.3 %), forced blocks on
+the head build against its rule (16 columns, tiles of 1 MiB): 2048 × 36 with 4 columns
+0.89–0.90 (FFTN ÷ FFTW 1.02–1.07 instead of 1.15–1.19), 8 columns 1.01, 32 columns 1.00,
+every column through the chain 1.06–1.08; 36 × 2048 and 1000² lose with narrow blocks
+(their column elements are a page or more apart, which the tile budget does not govern).
+Arm L1 (rule written before its runs, committed with it): where a cluster shares L2,
+`column_tile_bytes` is twice L1 (256 KiB on the M5 Max) instead of a quarter of L2, so
+2048 × 36 takes blocks of 4 (the halving below a page may go down to 64 bytes of columns,
+half of Apple's 128-byte line, instead of a whole line; on x86 a line is 64 bytes, so x86
+plans are unchanged). Rule for L1: on the Mac, adopt
+if 2048 × 36 (both placements) takes at most 0.95 of the head's time and none of the 37 c2c
+planes is slower by more than the larger of 2 % and the band.
+
+L1 against the head (4e804ba), the 37 c2c planes, Mac run 20261117-112550-4ada (12 rounds,
+all loaded, band ±4.5 %): 2048 × 36 0.910 and 0.908; 64² ip 1.054 past the band with an
+unchanged program, so re-run: run 20261117-113445-eb0d (band ±1.1 %): 2048 × 36 0.903–0.904,
+64² 0.998–1.007, but 1000² 1.030 out of place and 1.014 in place: its stride (16000 bytes)
+is just under the M5 Max's 16 KiB page, so L1 halved its block to 8. Rule (2) fails: L1
+rejected. Arm L2 (second arm; rule written before its run, committed with it): the
+twice-L1 budget (`column_near_tile_bytes`) only for columns whose elements lie at least four
+to a page (2048 × 36: 576 bytes apart), a quarter of L2 otherwise, as before. Rule: as L1's.
+L2 (82f18a4) against the head (4e804ba), Mac run 20261117-113654-358d (12 rounds, 11 loaded,
+band ±2.6 %): 2048 × 36 0.908 and 0.890 (FFTN ÷ FFTW 0.97 and 0.93, from 1.07–1.12 in the
+same run's base), every other program unchanged and within the band (worst 36 × 2048 op
+1.025). Rule met: L2 adopted (it changes only plans where a cluster shares L2).
+
+### Confirmation: the adopted programs against `main`
+
+Arms N (`main` 4d00f0a) and X (e950835: S1, R3, L2; T1 reverted) with FFTW (and MKL) in the
+same runs, the 108 c2c and real planes, one thread; X ÷ N is the paired ratio, the others
+FFTN's time over the competitor's (geometric means; c2c / r2c / c2r):
+
+| machine, run | X ÷ N | N ÷ FFTW | X ÷ FFTW |
+|---|---|---|---|
+| Mac 20261117-115356-776c (10 rounds, 9 loaded, band ±1.7 %) | 0.975 / 0.919 / 0.910 | 0.867 / 1.029 / 1.046 | 0.845 / 0.945 / 0.953 |
+| EPYC 20261117-120955-e917 (10 rounds, all loaded, band ±4.7 %) | 0.966 / 0.824 / 0.811 | 0.840 / 1.236 / 1.246 | 0.812 / 1.018 / 1.011 |
+| Xeon 20261117-122833-3c7c (8 rounds, all loaded, band ±17.8 %) | 1.040 / 0.880 / 0.842 | 0.738 / 1.031 / 1.196 | 0.768 / 0.908 / 1.007 |
+
+Xeon against MKL in the same run, N ÷ MKL → X ÷ MKL: 1.016 → 1.057 (c2c), 1.278 → 1.125
+(r2c), 1.334 → 1.123 (c2r). The Xeon run is too loaded to resolve c2c (whose programs X
+changes only through S1: 1.040 is that run's noise); its real 1024² in place 1.29–1.67 and
+r2c 128² 1.24 are past even that band, so they were re-timed: run 20261117-134110-6845 (16
+rounds, 15 loaded, band ±5.0 %), real 128², 512², 1000² and 1024² against `main`: 0.882
+over the 16, worst r2c 1024² ip 1.048 (inside the band), c2r 1024² op 0.571, 512² 0.79–0.84;
+the same build with every column through the chain (W) 1.028. The first run's 1024² was
+noise.
+
+No case of the Mac and EPYC runs is slower than `main` beyond its band (Mac worst r2c 2048 × 36 ip
+1.059 with an unchanged program, EPYC worst 1.013). Over FFTW after X41, one thread: Mac
+c2c 32² 1.07, 64² 1.02–1.05, plane batches of 32² 1.09; EPYC c2c 32² 1.13–1.36, 32² × 16
+1.12, 2048 × 36 1.03; real planes of odd rows 5 × 7 (2.8–4.1 everywhere: odd real rows are
+1-D work) and 8 × 6 (1.1–1.5), EPYC real 1024² and 2048² 1.06–1.12.
+
+Threaded, EPYC run 20261117-122327-970c (8 lanes, 8 rounds, all loaded, band ±5.6 %), FFTN
+at 8 lanes over the better of FFTW's 8-thread and serial plans: c2c 0.76, r2c 0.95, c2r
+0.93; behind on the largest planes, where FFTN's 8 lanes take 2.3–4.7 times less time than
+its one but FFTW's 4–6 times: c2c 1000² 1.25–1.39, 1024² ip 1.15, 2048² 1.11–1.15; real
+1000²–2048² 1.3–2.45 (r2c 2048²: FFTN 2.6 times its serial speed, FFTW 5.8). At 2048² each
+member's two column tiles (16 columns of 2048, 1 MiB) exceed its 512 KiB L2: the serial
+block rule, made for one thread with the whole L3, is the first suspect.
+Threaded, Xeon run 20261117-131055-a1d0 (8 whole cores of one socket, 8 rounds, all
+loaded, band ±4.6 %; cd183e9, the library of e950835), the 37 c2c planes, FFTN at 8 lanes
+over the better of each competitor's 8-thread and serial plans: ÷ FFTW 0.81, ÷ MKL 1.16.
+oneMKL's OpenMP threads beat FFTN's pool from 16² to 1024² (MKL 0.46–0.86 of FFTN's time:
+512² 0.69–0.72, 1000² 0.69, 1024² 0.71–0.86, 128² × 16 0.46); FFTN ahead at 2048² (1.14–1.21)
+and on the planes MKL runs slowly in one thread (8 × 6, 5 × 7). The first threaded Xeon run
+(20261117-121139-0b02) had oneMKL on one thread (the descriptors' thread limit) and is void
+for MKL.
+
+## Verdict
+
+- **S1 adopted** on all three machine-targets (small planes 0.87–0.94 of their time; bits
+  unchanged). DESIGN 8.3.
+- **R3 adopted on x86** (EPYC 0.89, Xeon 0.83 over the 71 real planes); NEON keeps the chain
+  for real planes' columns (arm R lost there). R and R2 rejected. DESIGN 9.3, LESSONS 3.25.
+- **L2 adopted on Apple** (2048 × 36 0.89–0.91); L1 rejected (1000² 1.03).
+- **T1 rejected** (T1b: 0.957–0.968 of the time on the planes it changes, against 0.95).
+  LESSONS 5.9 (compare threaded runs with the competitor's better plan).
+- fbench gained `THREADS` for FFTW and a threaded oneMKL backend (whose descriptors set a
+  thread limit of 1 until cd183e9; the first threaded Xeon run's MKL numbers are void).
+
+Task 4.1's acceptance is not met case by case. One thread, c2c planes are below FFTW on
+the geometric means everywhere (Mac 0.85, EPYC 0.81, Xeon 0.77) with 32² on x86 (the
+`avx2` column phase costs 1.9 times the rows) and 32²–64² on the Mac (1.02–1.09) over;
+the Xeon trails MKL on c2c planes from 16² up (sub-item M, not diagnosed here); real planes
+are at FFTW on x86 and below it on the Mac, but far behind MKL on the Xeon. Threaded, the
+largest planes scale worse than FFTW's threads on the EPYC, and on the Xeon oneMKL's
+threads take 0.86 of FFTN's time over the 37 c2c planes (FFTN 1.16 of MKL's; ahead of
+FFTW's threads, 0.81). What 4.1 needs next: a threaded
+column block sized to one member's L2 (the plan's width hint); the `avx2` column phase at
+32²; the Xeon against MKL with counters; real planes against MKL. Task 4.2 inherits the
+column phase for volumes (64³ 0.72–1.02 of FFTW threaded) and the same threaded block
+question.

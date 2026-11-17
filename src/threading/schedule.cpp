@@ -94,6 +94,14 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
     p.grid_pad_period = private_l2 ? std::numeric_limits<std::size_t>::max() : 4096;
     p.grid_fuse_bytes = c.l2.size / 4;
     p.column_tile_bytes = c.l2.size / 4;
+    // X41 arm L2: where a cluster shares L2 (Apple), a block of columns whose elements lie at
+    // least four to a page keeps its tiles within twice L1 (M5 Max 2048 x 36: blocks of 4
+    // columns, 256 KiB of tiles, 0.90 of the time of X40's 16, 1 MiB), as the chain lost
+    // there once a row left L1 (X12b); 1000 x 1000, almost a page per element, lost 1.03
+    // with that budget (arm L1).
+    if (!private_l2 && c.l1d.size != 0) {
+      p.column_near_tile_bytes = 2 * c.l1d.size;
+    }
   }
   // Experiment X29: with a private L2 and an L3 of at least 2 MiB per CPU sharing it (the
   // EPYC 7763's CCX: 32 MiB for 8 cores), a row whose length has a power-of-two part of at

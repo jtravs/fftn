@@ -9,7 +9,9 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <utility>
 #include <variant>
+#include <vector>
 
 namespace fftn::inline v0::detail {
 namespace {
@@ -241,6 +243,135 @@ void run_flat_one(const program& p, const std::byte* in, std::byte* out, std::by
   }
 }
 
+// One transform of a program with calls (program.hpp): each call on the transform's slots
+// moved by its offsets. Every kernel gets the arguments and units run_records gives it (a
+// stage whole, a loop of leaves as one call), so the bits are the same (X41).
+void run_calls(const program& p, const slot_addresses& at) noexcept {
+  // Indexed by slot (program.hpp); the input is never a destination.
+  const std::array<const std::byte*, 5> sources = {at.in, at.out, at.a, at.b, at.block};
+  const std::array<std::byte*, 5> destinations = {at.out, at.out, at.a, at.b, at.block};
+  const pass_args* args = p.call_args.data();
+  for (const call& c : p.calls) {
+    const std::byte* src = sources[static_cast<std::size_t>(c.src)];
+    std::byte* dst = destinations[static_cast<std::size_t>(c.dst)];
+    // A slot that does not move has offset 0 and may be null (no block without a workspace).
+    if (c.src_off != 0) {
+      src += c.src_off;
+    }
+    if (c.dst_off != 0) {
+      dst += c.dst_off;
+    }
+    if (c.leaf != nullptr) {
+      c.leaf(&args[c.args], src, dst, c.src_step, c.dst_step, c.units);
+    } else {
+      c.run(&args[c.args], src, dst, 0, c.units);
+    }
+  }
+}
+
+// The bytes the slots in, out and block have moved (moved()'s step order).
+using offsets = std::array<std::ptrdiff_t, 3>;
+
+std::ptrdiff_t offset_of(slot s, const offsets& off) noexcept {
+  switch (s) {
+  case slot::in:
+    return off[0];
+  case slot::out:
+    return off[1];
+  case slot::block:
+    return off[2];
+  case slot::a:
+  case slot::b:
+    break;
+  }
+  return 0;
+}
+
+// Appends the calls of records [begin, end) at offsets `off` (run_records' order and
+// grouping); false when the program has moving twiddles or more than calls_max calls.
+bool unroll_records(const program& p, std::size_t begin, std::size_t end, const offsets& off,
+                    std::vector<std::size_t>& arg_of, std::vector<call>& out) {
+  for (std::size_t i = begin; i < end; ++i) {
+    const record& r = p.records[i];
+    if (const stage* st = std::get_if<stage>(&r)) {
+      if (st->moving_twiddles || out.size() == calls_max) {
+        return false;
+      }
+      if (st->leaf == nullptr && st->units == 0) {
+        continue; // run_whole runs nothing
+      }
+      out.push_back({
+          .run = st->run,
+          .leaf = st->leaf,
+          .units = st->leaf != nullptr ? 1 : st->units,
+          .src_off = offset_of(st->src, off),
+          .dst_off = offset_of(st->dst, off),
+          .args = static_cast<std::uint32_t>(arg_of[i]),
+          .src = st->src,
+          .dst = st->dst,
+      });
+      continue;
+    }
+    const loop& l = *std::get_if<loop>(&r);
+    const offsets from = {off[0] + l.start[0], off[1] + l.start[1], off[2] + l.start[2]};
+    if (l.body_end == i + 2) {
+      const stage* only = std::get_if<stage>(&p.records[i + 1]);
+      if (only != nullptr && only->leaf != nullptr && step_of(l, only->src) != 0 &&
+          step_of(l, only->dst) != 0) {
+        if (out.size() == calls_max) {
+          return false;
+        }
+        out.push_back({
+            .leaf = only->leaf,
+            .units = l.count,
+            .src_off = offset_of(only->src, from),
+            .dst_off = offset_of(only->dst, from),
+            .src_step = step_of(l, only->src),
+            .dst_step = step_of(l, only->dst),
+            .args = static_cast<std::uint32_t>(arg_of[i + 1]),
+            .src = only->src,
+            .dst = only->dst,
+        });
+        i = l.body_end - 1;
+        continue;
+      }
+    }
+    if (l.step[3] != 0) {
+      return false;
+    }
+    for (std::size_t c = 0; c < l.count; ++c) {
+      const auto k = static_cast<std::ptrdiff_t>(c);
+      if (!unroll_records(
+              p, i + 1, l.body_end,
+              {from[0] + l.step[0] * k, from[1] + l.step[1] * k, from[2] + l.step[2] * k}, arg_of,
+              out)) {
+        return false;
+      }
+    }
+    i = l.body_end - 1;
+  }
+  return true;
+}
+
+// Sets p.calls and p.call_args when the body unrolls (program.hpp).
+void mark_calls(program& p) {
+  p.calls.clear();
+  p.call_args.clear();
+  std::vector<std::size_t> arg_of(p.records.size(), 0);
+  std::vector<pass_args> args;
+  for (std::size_t i = p.batch_loops; i < p.records.size(); ++i) {
+    if (const stage* st = std::get_if<stage>(&p.records[i])) {
+      arg_of[i] = args.size();
+      args.push_back(st->args);
+    }
+  }
+  std::vector<call> calls;
+  if (unroll_records(p, p.batch_loops, p.records.size(), {}, arg_of, calls)) {
+    p.calls = std::move(calls);
+    p.call_args = std::move(args);
+  }
+}
+
 } // namespace
 
 void run_flat_first(const program& p, const void* in, void* out, std::byte* a, std::byte* b,
@@ -248,7 +379,9 @@ void run_flat_first(const program& p, const void* in, void* out, std::byte* a, s
   run_flat_one(p, static_cast<const std::byte*>(in), static_cast<std::byte*>(out), a, b, block);
 }
 
-void mark_flat(program& p) {
+void mark_flat(program& p, bool unroll) {
+  p.calls.clear();
+  p.call_args.clear();
   if (p.lanes != 0) {
     // Blocks of transforms (run_lane_blocks), never a transform at a time.
     p.flat = false;
@@ -288,6 +421,9 @@ void mark_flat(program& p) {
     p.rows_src_step = p.rows_from_in ? l.step[0] : l.step[1];
     p.rows_dst_step = l.step[1];
     p.rows_args = only->args;
+  }
+  if (!p.flat && unroll) {
+    mark_calls(p);
   }
 }
 
@@ -345,6 +481,12 @@ void run_transforms(const program& p, std::size_t first, std::size_t count,
       run_flat_one(p, at.in, at.out, at.a, at.b, at.block);
     } else {
       run_flat(p, first, count, base);
+    }
+    return;
+  }
+  if (!p.calls.empty()) {
+    for (std::size_t t = first; t < first + count; ++t) {
+      run_calls(p, transform_addresses(p, t, base));
     }
     return;
   }

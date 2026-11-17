@@ -488,6 +488,16 @@ whereas a first pass reading 16 legs from one set cost nothing measurable. Choos
 radices of passes that write strided memory by the sets their legs hit (DESIGN.md 10,
 rule 1). [X40](experiments/X40-planes.md).
 
+3.25 **Vectorising across adjacent columns pays only for what a column alone costs.** The
+same column blocks that took X40's c2c planes to half their time lost 1.04 over the real
+planes on an M5 Max: there a column needs no copy (one complex double per NEON register) and
+the real planes' complex rows, n/2 + 1 values long, lie an odd multiple of 16 bytes apart,
+so a column alone crowds no L1 set; the blocks' tiles only added traffic. On x86 (two or
+four complex values per register, each strided column copied) the blocks won 0.73–0.97 on
+an EPYC 7763, except where their tiles left L2 while the column alone fit L1 (1024²: 1.05
+with 4 columns). Ask what the column route pays (copies, set conflicts) before blocking.
+[X41](experiments/X41-planes-2.md).
+
 ## 4. Kernels and algorithms
 
 4.1 **A whole-transform codelet wins only where it fills the register.** One 32-point
@@ -769,6 +779,13 @@ its OpenMP binary). [T1](experiments/T1-dispatch-wait-costs.md).
 puts idle threads to sleep at once: a region through an executor cost 20–26 µs at 6
 threads, against 1.6–2.4 µs with `KMP_BLOCKTIME=200`, and split rows up to 10240 points
 were slower than serial, 16384 no faster (prototype: 14.7 µs; FFTN's T1 and T5 on the M5).
+
+5.9 **Compare threaded runs against the competitor's better plan, serial or threaded.**
+FFTW 3.3.11 planned with 8 threads (`fftw_plan_with_nthreads`, MEASURE) ran 8 × 6 and 5 × 7
+planes 280–380 times slower than its serial plans on an EPYC 7763, and 16² to 64² 3–50
+times slower: its planner does not fall back to one thread for tiny problems. A threaded
+comparison that takes FFTW's threaded time alone flatters the other library on every small
+case. [X41](experiments/X41-planes-2.md).
 
 ## 6. Toolchain and testing pitfalls
 
