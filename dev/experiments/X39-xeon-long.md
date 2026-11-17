@@ -1,6 +1,6 @@
 # X39: the Xeon's long rows and in-place 65536 (exit-check causes 5 and 6)
 
-- **Status:** done (arms A and C adopted on the Xeon profile, arm B rejected)
+- **Status:** done (arms A, C and D adopted on the Xeon profile and `avx512` double, arm B rejected)
 - **Owner:** x39 session, 2026-11-16
 - **Phase / task:** 1 (phase 1 exit check, the tail rule; follows X25, X26, X26b, X32, X34)
 
@@ -262,7 +262,15 @@ The final form 274f870 also takes two of task 2.4's P1 misses on the Xeon
   2²³ 0.92–0.94; 2¹⁹ 0.95 cycles / 1.05 ns, 2¹⁸ 1.03–1.21; in place 2²⁰ 1.10–1.22 and c2r 2²⁰
   1.20–1.23, so neither takes it (r2c 2²⁰ 0.97–0.985, left out).
 
-RESULT_D3
+Final form 274f870 against C, run 20261117-033154-673d (Slurm 16213 build, 16214 timing,
+`--serial`; 16 quiet rounds, band ±1.70 %): 26 changed cases, geomean **0.905**, none above
+1.010 (r2c 1000² 1.002–1.010). c2c 300 0.867, 500 0.914, 2000 0.824, 3000 0.863, 3600 0.854,
+4800 0.882, 5000 0.849, 6000 0.866, 10000 0.867, 20000 0.919, 25000 0.903, 100000 0.908;
+two phases 2²⁰ 0.874, 2²¹ 0.903, 2²² 0.870, 2²³ 0.923, 2²⁴ 0.952; r2c 65536 0.900 out of
+place, 0.968–0.985 in place; r2c 1000 0.940, 10000 0.876. c2r rows and 1000 no longer change.
+FFTN ÷ FFTW (÷ MKL), C → D: 5000 1.04 → 0.89 (1.17 → 0.99), 10000 0.96 → 0.84 (1.13 →
+0.96), 20000 1.40 → 1.28, 25000 1.50 → 1.34 (1.12 → 1.00), 100000 1.36 → 1.24, 2²² 0.86 →
+0.75, r2c 65536 1.42 → 1.27. TRACKING_D
 
 ## Verdict
 
@@ -290,9 +298,20 @@ RESULT_D3
   `Schedule.ProfilesOfRecordedMachines` test now checks every new field.
 - **Confirmation.** The adopted branch (A + C) against `main`: 0.958 over its 11 changed
   cases, none above 1.009 (run 20261116-225143-281a).
+- **Arm D, radix-20 passes and two of P1's misses: adopted** in its final form (274f870):
+  0.905 over its 26 changed cases, none above 1.010 (run 20261117-033154-673d, `--serial`).
+  It has four parts:
+  - `avx512` double overrides with a radix-20 first pass for 300–25000;
+  - radix-20 grid phases on the Xeon profile;
+  - r2c half-lengths as grids beyond L2/4;
+  - c2c powers of two out of place in two phases beyond L3/2.
+
+  The first form lost on c2r rows (1.19–1.25) and planes of 1000 (1.02–1.04); both are fixed.
+  The overrides apply to every `avx512` machine (Zen 5 and Granite Rapids too, unmeasured).
 - **What stays open, with numbers.**
-  - 25000 (1.45 of FFTW), 20000 (1.35), 100000 (1.45) and 46080 (1.26) need radix-20 and
-    radix-25 codelets: a generator change, not tried.
+  - After arm D, 25000 (1.34 of FFTW), 20000 (1.28) and 100000 (1.24) still trail: a radix-25
+    pass (FFTW's `t3fv_25`) would take 25000 to about 1.05 by the pass-count proxy above;
+    46080 (1.26) is unchanged.
   - 100000 also gains 0.92–0.94 as 100 × 1000 (five passes against six), a factor-choice
     rule that X39 did not take.
   - 16384 (1.23 of FFTW and of MKL) needs a depth-first long chain: no grid or radix order
