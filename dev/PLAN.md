@@ -118,7 +118,7 @@ In flight (lead session, 2026-11-17): task 1.3
 rules within 5 % of measure on 93–100 % of cases on all three machines); its cost model (P3)
 was rejected on the first pass, so the long-row thresholds stay. Then the exit check again. Done, each merged with its
 pull request:
-- Task 2.5 (pull requests 41, 48): `next_fast_length(n, kind)` and `relative_cost<T>(n, isa)`
+- Task 2.5 (pull requests 41, 50): `next_fast_length(n, kind)` and `relative_cost<T>(n, isa)`
   in `fftn/lengths.hpp`, a frozen reference table, the fast set to 2²⁰ pinned; API agreed
   by the maintainer (2026-11-17), with `length_kind` for the proposed `bool`; P4: picks 0.11–0.96 of the awkward lengths
   they replace; within 1.3 of the power of two above on 96 % (Mac), 78 % (x86).
