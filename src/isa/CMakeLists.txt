@@ -25,6 +25,24 @@ list(APPEND fftn_isa_units narrow_avx2.cpp)
 list(APPEND fftn_isa_units pairs_avx2.cpp pairs_avx512.cpp pairs_neon.cpp pairs_neon_fcma.cpp)
 target_sources(fftn PRIVATE ${fftn_isa_units} target.cpp)
 fftn_always_optimise(${fftn_isa_units})
+# The avx512 units' branches are padded so that none crosses or ends on a 32-byte boundary.
+# Skylake-derived cores (the Xeon 6240) fetch such a branch from the slow decoders once the
+# JCC erratum's microcode update is installed, and which kernel lands where is luck: the merge
+# of X40 moved code and single c2c rows of 160, 180 and 240 points took 1.07-1.10 of their
+# time, 360 and 384 1.04-1.06 (bisect, Xeon 6240: 20261117-184544-8056). With the padding
+# they take 0.89-0.94 of the unpadded time and the other small rows stay level
+# (20261117-204818-1541; dev/LESSONS.md 2.11). No effect where the units never run.
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64" AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+  set(fftn_jcc_units "")
+  foreach(unit IN LISTS fftn_isa_units)
+    if(unit MATCHES "avx512")
+      list(APPEND fftn_jcc_units ${CMAKE_CURRENT_SOURCE_DIR}/${unit})
+    endif()
+  endforeach()
+  # TARGET_DIRECTORY: the target is created in src/, so a property set here alone is not seen.
+  set_source_files_properties(${fftn_jcc_units} TARGET_DIRECTORY fftn
+    PROPERTIES COMPILE_OPTIONS -Wa,-mbranches-within-32B-boundaries)
+endif()
 # For the disassembly test's second compilation (tests/isa).
 list(TRANSFORM fftn_isa_units PREPEND ${CMAKE_CURRENT_SOURCE_DIR}/)
 set_property(GLOBAL PROPERTY FFTN_ISA_UNITS ${fftn_isa_units})
