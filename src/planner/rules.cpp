@@ -158,7 +158,8 @@ constexpr pass_costs avx2_float{
 // Double, experiment X39 arm D (after X38's radix-20 codelet): 300-25000 with 2^2 x 5 to spare
 // take a radix-20 first pass, which the costs (no radix-20 column) cannot choose: 0.82-0.92 of
 // the costs' sequences in user-mode cycles on the Xeon 6240 (screens 16183, 16184); a radix 20
-// last lost (1.04-1.22). 1000 replaces its X2 override (4.10.5.5, 0.89)
+// last lost (1.04-1.22). 1000 keeps its X2 override: as 20.10.5 its single rows took 0.90
+// but planes and batches of 1000 1.02-1.04 (run 20261117-011743-1a01)
 // (dev/experiments/X39-xeon-long.md).
 // clang-format off
 // NOLINTBEGIN(readability-trailing-comma): bench/x2/fit.py writes and parses this layout
@@ -179,7 +180,7 @@ constexpr std::array<radix_override, 28> avx512_double_overrides{{
     {.n = 768, .radices = {8, 12, 8, 0}},
     {.n = 864, .radices = {8, 9, 12, 0}},
     {.n = 896, .radices = {8, 14, 8, 0}},
-    {.n = 1000, .radices = {20, 10, 5, 0}},
+    {.n = 1000, .radices = {4, 10, 5, 5}},
     {.n = 2000, .radices = {20, 10, 10, 0}},
     {.n = 3000, .radices = {20, 10, 15, 0}},
     {.n = 3600, .radices = {12, 15, 20, 0}},
@@ -772,7 +773,7 @@ std::vector<sequence> ranked_sequences(std::size_t n, std::size_t smooth, bool m
 } // namespace
 
 // The specification is DESIGN.md 11.2, rule by rule.
-std::vector<std::size_t> rule_radices(std::size_t n, const target_profile& p) {
+std::vector<std::size_t> rule_radices(std::size_t n, const target_profile& p, bool overrides) {
   if (n <= 1) {
     return {};
   }
@@ -781,7 +782,8 @@ std::vector<std::size_t> rule_radices(std::size_t n, const target_profile& p) {
   if (n <= largest_leaf || (n <= p.leaf_limit && has_codelet(n) && n != 20)) {
     return {n};
   }
-  if (std::vector<std::size_t> o = override_of(n, p); !o.empty()) {
+  if (std::vector<std::size_t> o = overrides ? override_of(n, p) : std::vector<std::size_t>{};
+      !o.empty()) {
     return o;
   }
   std::vector<std::size_t> big;
