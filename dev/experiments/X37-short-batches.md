@@ -1,6 +1,6 @@
 # X37: short rows and small batches in the phase 1 tail
 
-- **Status:** running
+- **Status:** done (arms 0–2 adopted on x86 and NEON where they apply, arm 2 without `avx512`'s 8 and 12; arm 3 adopted on AArch64 only)
 - **Owner:** X37 agent, 2026-11-16
 - **Phase / task:** 1 (exit criteria: the 5 % tail rule of DESIGN 1.3); causes (2) and (3)
   of the exit check in PLAN Status; follows X28b and X24
@@ -171,11 +171,17 @@ take the general path got slower: 31, 60, 61, 100, 144, 192, 256 points and floa
 1.03–1.13 of Q; the out-of-line general path (rule 3). The final arm (S) keeps the byte
 distances and drops the split.
 
-### Final branch (S df90c48 on x86; on arm64 the final 769f3c2 is R's code)
+### Arm 3 without the split entry (S df90c48), and the final branch (U e7063ff)
 
-The final branch adopts arm 3's leaf distances everywhere and its split entry on AArch64
-only (769f3c2: the general path is `noinline` on AArch64, forced inline elsewhere; Clang's
-x86-64 `execute_core` is instruction for instruction S's). Runs:
+S kept the leaves' byte distances and dropped the split. On the EPYC that was worse than
+arm 2 on its own targets: run 20261116-233121-5385 (Slurm 511237, builds 511236; Q, S,
+FFTW; 24 rounds, all loaded, band ±1.00 %): S ÷ Q over the leaf rows 1.042 (single rows of
+2–8 points 1.10–1.20, 2 × 3 1.13), the general-path rows 1.019 (61 points 1.13). With the
+split (R) the same leaf rows had been 0.85–0.95 of Q. On the Xeon S gained (below), on the
+Mac the split is worth 6–9 % at 2–6 points by itself. So arm 3 is kept on AArch64 only
+(e7063ff: the leaves' byte distances and the out-of-line general path under
+`FFTN_ARCH_AARCH64`; x86 builds compile arm 2's text), and the final branch U is arm 2 (with
+rule 3's table change) on x86 and arm 3 on arm64.
 
 - Xeon x37, run 20261116-225820-974d (Slurm 16147, build 16146; Q, S, FFTW, MKL; 24
   rounds, all loaded, band ±2.66 %): S ÷ Q on arm 3's leaf targets (2–7, 15, 16 points)
@@ -189,9 +195,9 @@ x86-64 `execute_core` is instruction for instruction S's). Runs:
 - Xeon tracking tier, run 20261116-230356-f5f4 (Slurm 16149, build 16148; A, S; 16
   rounds, 9 loaded, band ±1.87 %): S ÷ A 0.983, 5 faster, nothing slower.
 - Xeon exit catalogue, run 20261116-202515-4a68 (Slurm 16118; A, Q, R, FFTW, MKL; 15
-  rounds, 2 loaded, band ±2.25 %): cases over 1.05 of FFTW, double, A 30 of 193 → R 24
-  (R still had `avx512`'s 2 × 4 and 3 × 4: 8 × 3 and 12 × 3 in place 1.87 and 1.21, which S
-  takes to 0.79–0.80 of FFTW, so the final branch has 22); of MKL A 32 → R 30 (final 29).
+  rounds, 2 loaded, band ±2.25 %): cases over 1.05 of FFTW, double, A 30 of 193 → Q 25 (Q
+  still had `avx512`'s 2 × 4 and 3 × 4: 8 × 3 and 12 × 3 in place 1.88 and 1.24, which S
+  takes to 0.79–0.80 of FFTW, so the final branch has 23); of MKL A 32 → Q 29 (final 27).
 - Mac exit catalogue, run 20261116-185638-1733 (A, R, FFTW; 10 rounds, band ±2.26 %): over
   1.05 of FFTW A 24 of 193 → R 19; R ÷ A 0.983, nothing slower. Mac tracking tier, run
   20261116-191129-ab4d (A, R; band ±2.94 %): 0.988, 4 faster, nothing slower. Mac x37, run
@@ -204,4 +210,40 @@ Library text (`size` of `libfftn.a`): x86-64 GCC 14 A 47.82 MB, P +0.06 %, Q +0.
 
 ## Verdict
 
-(pending)
+Rule 1 holds: the whole suite passes natively on the Xeon (GCC 14 `-Werror`, `avx512` and
+`avx2`, 1797 tests, Slurm 16099; one test fixed for arm 2, 66696ad), on the Mac (1850 tests
+after merging `main`) and in CI; `Passes.PairLeavesMatchTheForcedChain` now also checks the
+`avx2` leaves an `avx512` plan takes. Arm 3 is bit-identical; NEON's pair leaves keep the
+rules' factors, so NEON results do not change.
+
+| arm | Xeon `avx512` | EPYC `avx2` | Mac `neon_fcma` |
+|---|---|---|---|
+| 0, bench calls `execute_all` | kept (rule 4): single rows of 2–6 0.889 | kept: 0.808 | kept: 0.963 |
+| 1, short pair leaves | adopted: 0.468 | adopted: 0.519 | adopted: 0.718 |
+| 2, pair leaves of 8–16 | adopted for 16 (0.661); 8 and 12 take `avx2`'s 4 × 2 and 6 × 2 (rule 3: `avx512`'s 2 × 4 and 3 × 4 lost in place, 1.5–2.1) | adopted: 0.852 | does not apply |
+| 3, lighter leaf path | rejected on x86 (Xeon 0.961 without the split but 3 × 3 in place 1.08; EPYC 1.042 without the split, general path 1.03–1.13 with it) | rejected | adopted: 0.963 (single rows 2–6 0.83–0.89) |
+
+The exit check's failing cases of causes 2 and 3, FFTN ÷ FFTW (÷ MKL on the Xeon), before →
+after (exit catalogue runs above; A = `main` e8c2639):
+
+- Xeon: 2, 4, 6 points 1.25, 1.23, 1.13 → 1.10, 1.11, 0.98; 18, 22, 26, 30 1.24–1.32 →
+  0.64–0.71; 2 × 3 in place 1.18 → 1.01; 16 × 16 1.13 → 0.67; ÷ MKL 16 × 16 1.57 → 0.94,
+  16 × 256 1.71 → 1.01, 16 × 3 1.19–1.28 → 0.74–0.77. Left: 2 and 4 points (1.10–1.11, a
+  few cycles of entry: 91 instructions per call against FFTW's 73), 15 × 2 backward
+  (1.19: FFTW runs both rows in one register), ÷ MKL 512 × 16 (1.18, not short).
+- EPYC: 18 and 26 points 1.10–1.14 → 0.53–0.57; 16 × 16, 256, 4096 1.26, 1.19, 1.16 →
+  0.93, 0.90, 0.89; 12 × 64 and 1024 → 0.77–0.91. Left: 15 × 2 and 64 × 2 backward (1.22,
+  1.30) and 64 × 16 (1.15): FFTW's two-row codelets (`n1bv_15`, `n1bv_64`, `n1fv_64` on
+  `ymm`), which pair leaves do not reach (C divides neither 15 nor, in registers, 64).
+- Mac: 20 points 1.55 → 1.01; 2 and 4 points 1.23, 1.20 → 0.97, 0.98; 2 × 3 out of place
+  1.09 → 0.94, 3 × 3 1.11 → 0.99; 22 and 26 0.86–0.91. Left: 2 × 3 in place 1.39 (a memory
+  latency chain between executions, above), 7 × 3 in place 1.09.
+
+Cases over 1.05 in the exit catalogue (double, 193 cases): Xeon ÷ FFTW 30 → 23, ÷ MKL 32 →
+27 (arm 2's run, less 8 × 3 and 12 × 3 in place, which the final branch fixes); EPYC ÷ FFTW 36 → 30 (arm 2's run; on the EPYC the final branch compiles arm 2's code);
+Mac ÷ FFTW 24 → 19. Tracking tier against `main`: Mac 0.988 (arm 3 run) and 0.993 (final
+against `main` 1fe3fe7), nothing slower; Xeon 0.983 (S), nothing slower. Exceptions under
+rule 3, recorded: Xeon 28 × 1 1.035–1.049 from arm 0 on (plan unchanged), EPYC 64 × 256
+1.022 in arm 2 (plan unchanged). Library: x86-64 +0.10 %, arm64 +0.2–0.7 %.
+
+DESIGN.md 6.1, 8.2's table and the decision log, LESSONS 1.11 and 4.14 updated.
