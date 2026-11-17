@@ -1,6 +1,6 @@
 # P4: are `next_fast_length`'s lengths fast?
 
-- **Status:** done (rule 1 fails on x86 at short lengths; rule 2 applied twice: composites with 11, 17, 19 or 23 left the fast set)
+- **Status:** done (rule 1 as amended holds; rule 2 applied twice: composites with 11, 17, 19 or 23 left the fast set)
 - **Owner:** task/2.5-next-fast-length session, 2026-11-17
 - **Phase / task:** 2.5 (`next_fast_length` and published per-length cost)
 
@@ -106,3 +106,13 @@ Every pick ran at 0.12–0.42 of the awkward length's time. 10051 missed on two 
    - accept it, since `relative_cost` shows each machine's own view.
 4. **13 stays.** Its composites measured fine (10010 and 30030 at 0.93–1.10, with 11 in
    them as well), but 13 has no composite pick of its own here.
+
+## Amendment (the maintainer, 2026-11-17)
+
+Rule 1's target is lowered from 90 % to 75 % of the pairs within 1.3 of the power of two
+above: what x86 meets (78 % on the EPYC and the Xeon; the Mac 96 %). The reason: the
+reference is machine-independent by design, and the misses are short lengths whose powers
+of two are exceptionally fast on x86 (pair leaves, X28b; two-pass 256 and 512, X30), so a
+target set by the Mac's 96 % would demand an x86-specific reference, which gives up
+machine-independent grids. Of verdict 3's choices the third is taken: the shortfall is
+accepted, and `relative_cost` shows each machine's own view (decision log, 2026-11-17).

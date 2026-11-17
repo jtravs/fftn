@@ -20,7 +20,7 @@ bool as_documented() {
   const fftn::c2c_plan<double> plan(fftn::rows_c2c<double>(n, 1, fftn::direction::forward));
 
   // Real transforms: an even length whose half is fast.
-  const std::size_t r = fftn::next_fast_length(1001, true);
+  const std::size_t r = fftn::next_fast_length(1001, fftn::length_kind::real);
 
   // This machine's estimate, per point, relative to the power of two at or above the length.
   const double prime = fftn::relative_cost<double>(4093);  // a large prime: several times

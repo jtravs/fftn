@@ -118,9 +118,9 @@ In flight (lead session, 2026-11-17): task 1.3
 rules within 5 % of measure on 93–100 % of cases on all three machines); its cost model (P3)
 was rejected on the first pass, so the long-row thresholds stay. Then the exit check again. Done, each merged with its
 pull request:
-- Task 2.5 (pull request 41): `next_fast_length(n, real)` and `relative_cost<T>(n, isa)` in
-  `fftn/lengths.hpp`, a frozen reference table, the fast set to 2²⁰ pinned; API proposed by
-  the lead, pending the maintainer (DESIGN 18.2); P4: picks 0.11–0.96 of the awkward lengths
+- Task 2.5 (pull requests 41, 48): `next_fast_length(n, kind)` and `relative_cost<T>(n, isa)`
+  in `fftn/lengths.hpp`, a frozen reference table, the fast set to 2²⁰ pinned; API agreed
+  by the maintainer (2026-11-17), with `length_kind` for the proposed `bool`; P4: picks 0.11–0.96 of the awkward lengths
   they replace; within 1.3 of the power of two above on 96 % (Mac), 78 % (x86).
 - Task 4.1, first part (X40, pull request 43): columns of planes and volumes in blocks of
   adjacent columns, column radices counted against the L1's ways, leaf loops as one call: 37
@@ -245,8 +245,7 @@ pull request:
   `avx512` float 256 1.047, EPYC double 72 1.033).
 - X25 (the x86 gap's causes) is done; its verdicts are folded into the leads below.
 
-For the maintainer (decisions taken by the lead overnight, easy to revert): X23b's two
-exceptions; X27's 25 % larger library; X26's prefetch gate by target (Intel cores without
+For the maintainer (decisions taken by the lead overnight, easy to revert): X26's prefetch gate by target (Intel cores without
 AVX-512 lose up to 1.20 at 2²² until a rule by core and row width exists); X28's 128-bit
 leaves kept on `avx2` though they gain only at 8–16 points there; X30's 512 override
 kept although the Xeon under `avx2` loses r2c 1024² (1.057 on re-run; EPYC 1.014): with X26's
@@ -545,7 +544,12 @@ layout; C API; Windows tuning; AArch64 Linux tuning on Neoverse N1, V1 and V2 (c
 Zen 4/5 and recent Intel (cloud); the documents of DESIGN.md section 17 complete and
 reviewed as a whole (each phase adds its own part as it lands); the per-release public benchmark
 report (one command, fixed cases and machines); packaging (CMake package,
-pkg-config, a generated amalgamation if wanted); first tagged release.
+pkg-config, a generated amalgamation if wanted); an informational library size report, never a gate
+(the maintainer, 2026-11-17: speed takes precedence, and the present size, X27's +25 %
+included, is accepted): CI prints the library's text size per target on each pull request,
+experiment files record size changes, and build options (`FFTN_OLD_X86_TARGETS`,
+instantiating only the kernels that win) remain the levers if size ever matters; first
+tagged release.
 
 ### Phase 7: on demand
 
