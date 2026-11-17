@@ -170,6 +170,10 @@ struct machine_profile {
   // whose lanes column blocks hold at most this many bytes of columns, for executions by
   // teams of two or more (X43 arm B1). set_grid_sizes sets 128 on x86-64.
   std::size_t column_team_bytes = 0;
+  // A c2c volume runs its two inner axes plane at a time (core/plan_core.cpp,
+  // add_volume_planes; experiment X43b), else axis by axis over the whole volume.
+  // set_grid_sizes sets it where a private L2 has less than 2 MiB of L3 per CPU behind it.
+  bool volume_planes = false;
   // The L1 data cache's associativity (8 where the topology does not say: macOS): with
   // grid_block_bytes it gives the set period against which a column phase's last pass
   // counts its legs (core/plan_core.cpp, column_radices; X40).

@@ -1029,7 +1029,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       c.axis_notes.push_back("axis " + std::to_string(d) + " (n = " + std::to_string(c.lengths[d]) +
                              "): radices " + chain.radix_text(c.lengths[d]));
     };
-    if (r == 3 && in.extent[0] > 1) {
+    if (r == 3 && in.extent[0] > 1 && settings.profile.volume_planes) {
       add_volume_planes(
           p, in.extent, in_view, out_view,
           [&](const std::vector<std::size_t>& plane, const view& src, const view& dst) {

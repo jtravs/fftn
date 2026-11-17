@@ -159,6 +159,10 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
   if (private_l2 && !large_l2 && !large_l3) {
     p.grid_two_odd_part = 15;
     if (x86_64) {
+      // X43b: volumes plane at a time took 0.934 of the axes one by one over 30 volumes
+      // beyond L2 on the Xeon 6240 (64 x 64 x 512 0.75-0.78, 128^3 0.84-0.91), but 0.979 on
+      // the EPYC 7763, whose 32 MiB L3 holds volumes to 128^3, and 0.96 on the M5 Max.
+      p.volume_planes = true;
       p.grid_three_block = 16;
       p.grid_phase_radix = 20;
       if (c.l1d.size != 0 && c.l2.size != 0) {

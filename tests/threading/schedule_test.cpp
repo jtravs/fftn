@@ -160,6 +160,7 @@ TEST(WorkGraph, PhasesOfRowsAndPlanes) {
   v.axes = {{.n = 4}, {.n = 5}, {.n = 6}};
   fftn::detail::build_settings alone;
   alone.lanes_columns = false;
+  alone.profile.volume_planes = true;
   const auto vol = fftn::detail::make_plan_core(fftn::detail::view_of(v), opts, alone);
   ASSERT_EQ(vol->graph.phases.size(), 2U);
   EXPECT_EQ(vol->graph.phases[0].nest, 1U);
@@ -170,6 +171,7 @@ TEST(WorkGraph, PhasesOfRowsAndPlanes) {
   // C, the idle lanes never written) per line of axis 1.
   fftn::detail::build_settings six;
   six.column_block = 6;
+  six.profile.volume_planes = true;
   const auto lanes_vol = fftn::detail::make_plan_core(fftn::detail::view_of(v), opts, six);
   ASSERT_EQ(lanes_vol->graph.phases.size(), 2U);
   EXPECT_EQ(lanes_vol->graph.phases[0].units, 4U);
@@ -179,10 +181,19 @@ TEST(WorkGraph, PhasesOfRowsAndPlanes) {
   // has 64 chunks of one plane of 4096 points each.
   fftn::shape<std::complex<double>, std::complex<double>> cube;
   cube.axes = {{.n = 64}, {.n = 64}, {.n = 64}};
-  const auto big = fftn::detail::make_plan_core(fftn::detail::view_of(cube), opts,
-                                                fftn::detail::build_settings());
+  fftn::detail::build_settings planes;
+  planes.profile.volume_planes = true;
+  const auto big = fftn::detail::make_plan_core(fftn::detail::view_of(cube), opts, planes);
   EXPECT_EQ(big->graph.phases[0].units, 64U);
   EXPECT_EQ(big->graph.phases[0].chunks, 64U);
+  // Axis by axis (the profile's default): one phase per axis, the two loops over the other
+  // axes one phase of their product.
+  alone.profile.volume_planes = false;
+  const auto axes = fftn::detail::make_plan_core(fftn::detail::view_of(v), opts, alone);
+  ASSERT_EQ(axes->graph.phases.size(), 3U);
+  EXPECT_EQ(axes->graph.phases[0].nest, 2U);
+  EXPECT_EQ(axes->graph.phases[0].units, 20U);
+  EXPECT_EQ(axes->graph.phases[2].units, 30U);
 }
 
 // Rule 1: a job smaller than a few dispatch costs runs inline.

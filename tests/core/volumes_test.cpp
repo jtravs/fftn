@@ -12,6 +12,7 @@
 #include "fftn/detail/core.hpp"
 #include "fftn/fftn.hpp"
 #include "support/fftn_subject.hpp"
+#include "support/inputs.hpp"
 
 #include <gtest/gtest.h>
 
@@ -55,18 +56,21 @@ std::string label(const volume_case& vc, bool in_place) {
 // of Apple's 128-byte lines: 64 complex floats), and a block is never wider than the last axis
 // rounded up to a register of complex values (at most 8), whose idle lanes the tile still
 // holds.
-template <class T> void scratch_within_bound(fftn::isa target) {
+template <class T> void scratch_within_bound(fftn::isa target, bool planes) {
   constexpr std::size_t widest_block = 512 / (2 * sizeof(T));
   constexpr std::size_t register_lanes = 8;
+  fftn::detail::build_settings settings;
+  settings.profile.volume_planes = planes;
+  settings.profile.column_team_bytes = 128; // a team program on every machine (X43)
   const auto tiny = fftn::detail::make_plan_core(
       fftn::detail::view_of(fftn::rows_c2c<T>(8, 1, fftn::direction::forward)),
-      {.force_isa = target}, fftn::detail::build_settings());
+      {.force_isa = target}, settings);
   for (const volume_case& vc : volumes()) {
     for (const bool in_place : {false, true}) {
       SCOPED_TRACE(label(vc, in_place));
-      const auto core = fftn::detail::make_plan_core(fftn::detail::view_of(shape_of<T>(vc)),
-                                                     {.in_place = in_place, .force_isa = target},
-                                                     fftn::detail::build_settings());
+      const auto core =
+          fftn::detail::make_plan_core(fftn::detail::view_of(shape_of<T>(vc)),
+                                       {.in_place = in_place, .force_isa = target}, settings);
       const std::size_t last = (vc.n2 + register_lanes - 1) / register_lanes * register_lanes;
       const std::size_t plane = vc.n1 * last;
       const std::size_t pencils = vc.n0 * std::min(widest_block, last);
@@ -75,13 +79,17 @@ template <class T> void scratch_within_bound(fftn::isa target) {
       EXPECT_LE(core->scratch_line, bound) << fftn::detail::describe(*core);
       // The bytes a member's scratch takes: two lines, each on a 64-byte boundary, in whole
       // 128-byte lines; a team adds its synchronisation state, which is the plan's no more
-      // than any other plan's.
+      // than any other plan's. A team runs the team program where there is one (X43), whose
+      // blocks are narrower, so the same bound holds for it.
       const std::size_t lines = (2 * bound * 2 * sizeof(T) + 2 * 64 + 127) / 128 * 128;
+      const fftn::detail::plan_core& team_core = fftn::detail::team_core(*core);
       EXPECT_LE(core->slot_bytes, lines);
+      EXPECT_LE(team_core.slot_bytes, lines);
+      EXPECT_LE(team_core.scratch_line, bound);
       EXPECT_LE(fftn::detail::workspace_bytes(*core, 1), lines + 64);
       for (const int team : {2, 8, 64}) {
         const auto t = static_cast<std::size_t>(team);
-        EXPECT_EQ(fftn::detail::workspace_bytes(*core, team) - t * core->slot_bytes,
+        EXPECT_EQ(fftn::detail::workspace_bytes(*core, team) - t * team_core.slot_bytes,
                   fftn::detail::workspace_bytes(*tiny, team) - t * tiny->slot_bytes);
       }
       // Never a second volume (the smallest volumes fit a few lines of scratch anyway).
@@ -96,19 +104,24 @@ template <class T> void scratch_within_bound(fftn::isa target) {
 TEST(Volumes, ScratchStaysWithinAPlaneOrABlockOfPencils) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
     SCOPED_TRACE(fftn::isa_name(t));
-    scratch_within_bound<double>(t);
-    scratch_within_bound<float>(t);
+    for (const bool planes : {true, false}) {
+      scratch_within_bound<double>(t, planes);
+      scratch_within_bound<float>(t, planes);
+    }
   }
 }
 
-// The program's shape: after the batch loops, one loop over the planes of axis 0 whose body
-// holds the plane's two phases, then the outer axis's phase, whose loops never step along
-// axis 0 (its pencils' elements are a whole plane apart).
+// Where the profile asks for it (machine_profile::volume_planes, X43b), the program's shape:
+// after the batch loops, one loop over the planes of axis 0 whose body holds the plane's two
+// phases, then the outer axis's phase, whose loops never step along axis 0 (its pencils'
+// elements are a whole plane apart).
 TEST(Volumes, InnerAxesPlaneAtATime) {
+  fftn::detail::build_settings settings;
+  settings.profile.volume_planes = true;
   for (const volume_case& vc : volumes()) {
     SCOPED_TRACE(label(vc, false));
     const auto core = fftn::detail::make_plan_core(fftn::detail::view_of(shape_of<double>(vc)),
-                                                   fftn::options(), fftn::detail::build_settings());
+                                                   fftn::options(), settings);
     const auto& records = core->prog.records;
     const std::size_t first = core->prog.batch_loops;
     ASSERT_LT(first, records.size());
@@ -126,6 +139,49 @@ TEST(Volumes, InnerAxesPlaneAtATime) {
     ASSERT_GE(core->graph.phases.size(), 2U);
     EXPECT_EQ(core->graph.phases[0].nest, 1U);
     EXPECT_EQ(core->graph.phases[0].units, vc.n0);
+  }
+}
+
+// Plane at a time changes only the order of the lines: its output equals the axes one by one
+// (which tests/api checks against the reference) byte for byte, on every instruction set the
+// machine runs, in place and out of place, odd and prime extents included.
+template <class T> void planes_equal_axes(fftn::isa target) {
+  using c = std::complex<T>;
+  const std::vector<volume_case> cases = {{9, 7, 11},  {17, 15, 37}, {12, 10, 64},
+                                          {31, 2, 19}, {16, 32, 24}, {5, 64, 3}};
+  for (const volume_case& vc : cases) {
+    for (const bool in_place : {false, true}) {
+      SCOPED_TRACE(label(vc, in_place));
+      const std::size_t points = vc.n0 * vc.n1 * vc.n2;
+      fftn::test::input_source src(points);
+      const auto x = src.complexes<T>(points);
+      std::vector<std::vector<c>> got;
+      for (const bool planes : {true, false}) {
+        fftn::detail::build_settings settings;
+        settings.profile.volume_planes = planes;
+        const auto core =
+            fftn::detail::make_plan_core(fftn::detail::view_of(shape_of<T>(vc)),
+                                         {.in_place = in_place, .force_isa = target}, settings);
+        const fftn::workspace ws(fftn::detail::workspace_bytes(*core, 1));
+        std::vector<c> y(points);
+        if (in_place) {
+          y = x;
+          fftn::detail::execute_core(*core, 0, 1, y.data(), y.data(), ws);
+        } else {
+          fftn::detail::execute_core(*core, 0, 1, x.data(), y.data(), ws);
+        }
+        got.push_back(std::move(y));
+      }
+      EXPECT_TRUE(got[0] == got[1]) << "plane at a time and axis by axis differ";
+    }
+  }
+}
+
+TEST(Volumes, PlaneAtATimeEqualsTheAxesOneByOne) {
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    SCOPED_TRACE(fftn::isa_name(t));
+    planes_equal_axes<double>(t);
+    planes_equal_axes<float>(t);
   }
 }
 
