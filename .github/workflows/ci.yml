@@ -1,12 +1,17 @@
 # SPDX-FileCopyrightText: 2026 John C. Travers and contributors
 # SPDX-License-Identifier: Apache-2.0
 #
-# What every push and pull request runs: the gate (scripts/check.sh) on one configuration
-# per platform of DESIGN.md 15.4, one ASan + UBSan job and one ThreadSanitizer job. The
-# hygiene and lint stages run once, in the lint job; the code stages run in gate.yml with
-# the matrices below (the reason for each entry beside it). The other compilers, the other
-# platforms' sanitizers, clang-tidy and coverage run weekly and on demand (extended.yml), and
-# emulated processors on main, weekly and on demand (emulation.yml).
+# The per-change checks. Pull requests run a short set, the checks the repository's ruleset
+# requires before a merge (lint, GCC 16 and Clang 23 ASan + UBSan on Linux x86-64, Homebrew
+# LLVM on macOS arm64), so that a merge waits about 20 minutes. Each push to main then runs
+# the full set: those plus ThreadSanitizer, the Clang floor, Clang without the old x86
+# targets, AArch64 and Windows (the post-merge jobs), so that a break, including one that
+# only two merged pull requests make together, shows within the hour and is fixed on main
+# (maintainer, 2026-11-17: no users yet, latency matters more than a green main at every
+# commit). The hygiene and lint stages run once, in the lint job; the code stages run in
+# gate.yml with the matrices below (the reason for each entry beside it). The other
+# compilers, the other platforms' sanitizers, clang-tidy and coverage run weekly and on
+# demand (extended.yml), and emulated processors weekly and on demand (emulation.yml).
 #
 # Kernel units are compiled as several translation units per instruction set (DESIGN.md
 # 6.4), so instrumented builds fit the runners at full parallelism (16 GB and 4 cores on
@@ -22,22 +27,22 @@ on:
 permissions:
   contents: read
 
-# A newer push to a pull request, or to main, cancels the run it supersedes: every change
-# reaches main through a pull request whose checks ran on its merge with main (required,
-# with branches up to date, by the repository's ruleset), so main's own run is a final
-# confirmation, and an older one need not hold the queue.
+# A newer push to a pull request cancels the run it supersedes. Runs on main are not
+# cancelled, since main's run is the only one of the full set: one runs at a time and a
+# newer push replaces only a run still waiting, so each finished run covers every merge
+# before it.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   # uv for the gate's Python, and the uvx tools it pins (ruff, clang-format).
   UV_VERSION: "0.13.6"
 
 jobs:
-  # Pull requests run on their merge with main (the checks the ruleset requires); pushes run
-  # on main only. The jobs run in parallel; lint does not gate the builds, since latency
-  # matters more here than runner minutes.
+  # Pull requests run on their merge with main (lint and gate: the checks the ruleset
+  # requires); pushes run on main only (lint, gate and post-merge). The jobs run in parallel;
+  # lint does not gate the builds, since latency matters more here than runner minutes.
   lint:
     name: lint (hygiene, format, Python, shell, API docs)
     runs-on: ubuntu-24.04
@@ -82,42 +87,59 @@ jobs:
           FFTN_CHECK_STAGES: spdx docs knobs format python shell gen apidoc
         run: bash scripts/check.sh
 
+  # The checks the ruleset requires: one x86-64 build with GCC (the current release, which
+  # also tests the old x86 targets), one sanitizer job, and the maintainer's configuration on
+  # Arm.
   gate:
     uses: ./.github/workflows/gate.yml
     with:
-      # Linux x86-64. Clang 23 is the development compiler; Clang 16 is the Clang floor
-      # (AGENTS.md section 4), preinstalled on the image. The one ASan + UBSan job and the
-      # one ThreadSanitizer job are here: Clang's TSan job is the quicker (14 minutes against
-      # GCC's 18-26 before the kernel units were split), and both find what the code does
-      # wrong on every platform. GCC's sanitizers (B1 found GCC-only failure modes) run in
-      # extended.yml.
+      # Clang 23 is the development compiler. Its ASan + UBSan job finds what the code does
+      # wrong on every platform; it leaves out the old x86 targets (x86_v2, avx), with which
+      # every kernel test runs twice more and the job passed its 90-minute timeout against
+      # 21 minutes without. GCC's sanitizers (B1 found GCC-only failure modes) run in
+      # extended.yml, with the old targets.
+      linux: >-
+        [
+          {"name": "clang-23 asan", "llvm": "23", "cxx": "/usr/lib/llvm-23/bin/clang++",
+           "stages": "sanitize", "old_x86": "OFF"}
+        ]
+      # The current GCC, from its official image, with the benchmark smoke.
+      linux-gcc-current: >-
+        [
+          {"name": "gcc-16", "stages": "build bench"}
+        ]
+      # Homebrew LLVM, the maintainer's configuration. Its ASan + UBSan (the only sanitizer
+      # run of NEON with FCMA) took 61 minutes on these runners, the slowest job by far, and
+      # runs weekly in extended.yml; AArch64 sanitizers come from Linux in extended.yml.
+      macos: >-
+        [
+          {"name": "llvm", "brew-llvm": true, "stages": "build bench"}
+        ]
+
+  # The rest of the per-change set, on pushes to main (and on demand), not on pull requests.
+  post-merge:
+    if: github.event_name != 'pull_request'
+    uses: ./.github/workflows/gate.yml
+    with:
+      # Linux x86-64: Clang 23 with the benchmark smoke; its ThreadSanitizer job (the quicker
+      # of Clang's and GCC's, without the old x86 targets for the reason above); Clang 16, the
+      # Clang floor (AGENTS.md section 4), preinstalled on the image; and a build without the
+      # old x86 targets (FFTN_OLD_X86_TARGETS=OFF).
       linux: >-
         [
           {"name": "clang-23", "llvm": "23", "cxx": "/usr/lib/llvm-23/bin/clang++",
            "stages": "build bench"},
-          {"name": "clang-23 asan", "llvm": "23", "cxx": "/usr/lib/llvm-23/bin/clang++",
-           "stages": "sanitize"},
           {"name": "clang-23 tsan", "llvm": "23", "cxx": "/usr/lib/llvm-23/bin/clang++",
-           "stages": "tsan"},
-          {"name": "clang-16", "cxx": "/usr/lib/llvm-16/bin/clang++", "stages": "build"}
-        ]
-      # The current GCC, from its official image.
-      linux-gcc-current: >-
-        [
-          {"name": "gcc-16", "stages": "build"}
+           "stages": "tsan", "old_x86": "OFF"},
+          {"name": "clang-16", "cxx": "/usr/lib/llvm-16/bin/clang++", "stages": "build"},
+          {"name": "clang-23 no old x86", "llvm": "23", "cxx": "/usr/lib/llvm-23/bin/clang++",
+           "stages": "build", "old_x86": "OFF"}
         ]
       # AArch64 with GCC 14, the GCC floor: the getauxval feature path (Neoverse N2 runners,
       # FCMA and pointer authentication, so neon and neon_fcma are forced beside scalar).
       linux-arm64: >-
         [
           {"name": "gcc-14", "cxx": "g++-14", "stages": "build bench"}
-        ]
-      # Homebrew LLVM, the maintainer's configuration. Its ASan + UBSan (the only sanitizer
-      # run of NEON with FCMA) took 61 minutes on these runners, the slowest job by far, and
-      # runs weekly in extended.yml; AArch64 sanitizers on every push come from Linux.
-      macos: >-
-        [
-          {"name": "llvm", "brew-llvm": true, "stages": "build bench"}
         ]
       # Clang on the MSVC ABI with clang-cl, x64 and Arm64 (experiment B2), with LLVM as
       # installed on the image. The C compiler (GoogleTest's project() enables C) is named

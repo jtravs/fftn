@@ -27,7 +27,7 @@ file(GLOB_RECURSE fftn_identity_sources CONFIGURE_DEPENDS
 list(SORT fftn_identity_sources)
 set(fftn_identity_list ${CMAKE_CURRENT_BINARY_DIR}/build_id_files.txt)
 string(JOIN "\n" fftn_identity_lines
-  "${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION} $<CONFIG> masked-tails ${FFTN_MASKED_TAILS}"
+  "${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION} $<CONFIG> masked-tails ${FFTN_MASKED_TAILS} old-x86 ${FFTN_OLD_X86_TARGETS_ON}"
   ${fftn_identity_sources})
 file(GENERATE OUTPUT ${fftn_identity_list} CONTENT "${fftn_identity_lines}\n")
 set(fftn_build_id_cpp ${CMAKE_CURRENT_BINARY_DIR}/build_id.cpp)

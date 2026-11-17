@@ -8,6 +8,9 @@
 # cross builds need no CMake logic. Kernel units are always optimised.
 
 set(fftn_isa_targets scalar avx2 avx512 neon neon_fcma)
+if(FFTN_OLD_X86_TARGETS) # CMakeLists.txt; their units guard themselves to x86-64 too
+  list(APPEND fftn_isa_targets x86_v2 avx)
+endif()
 set(fftn_isa_row_units 8) # FFTN_ISA_ROWS 1 to 8 in isa/rows.inl
 set(fftn_isa_units "")
 foreach(target IN LISTS fftn_isa_targets)
