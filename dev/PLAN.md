@@ -144,7 +144,7 @@ In flight (lead session, 2026-11-17): task 1.3
 rules within 5 % of measure on 93–100 % of cases on all three machines); its cost model (P3)
 was rejected on the first pass, so the long-row thresholds stay. Then the exit check again. Done, each merged with its
 pull request:
-- X42 (pull request 52, not merged: the verdict is the lead's): a radix-25 pass codelet with
+- X42 (pull request 52): a radix-25 pass codelet with
   `avx2` and `avx512` double overrides (EPYC 500–25000 0.87–0.89 of main, FFTN ÷ FFTW 3125
   0.77 → 0.65; Xeon 100–25000 0.84–0.86, 3125 0.81 → 0.53, 25000 1.23 → 1.18); two-level
   radix-25/32/64 codelets for 16 registers rejected (no gain with GCC: the two-pass plans at
