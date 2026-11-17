@@ -10,6 +10,10 @@
 //   WISDOM_IN=<file>    import wisdom from the file when it exists
 //   WISDOM_OUT=<file>   export the session's wisdom to the file at the end
 //   PLAN_NOTE=1         write the plan FFTW chose (fftw_sprint_plan) into the case's note
+//   THREADS=N           plan with N threads (fftw_plan_with_nthreads, FFTW's POSIX-threads
+//                       library, so no OpenMP runtime joins the process); default 1, which
+//                       never initialises FFTW's threads; N > 1 needs libfftw3_threads in
+//                       the installation (FBENCH_FFTW_THREADS)
 // Wisdom is otherwise fresh in every process: stale accumulated wisdom slowed FFTW by
 // 1.3x in the prototype (DESIGN.md finding E10). The driver keeps one wisdom file per run
 // and planner setting, so a campaign starts fresh and its rounds share their plans.
@@ -42,6 +46,7 @@ struct session {
   std::string wisdom_in;
   std::string wisdom_out;
   bool plan_note = false;
+  int threads = 1;
   std::string description;
 };
 
@@ -133,11 +138,35 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
         return fbench_error;
       }
       s.plan_note = val == "1";
+    } else if (key == "THREADS") {
+      const std::string v(val);
+      char* stop = nullptr;
+      const long t = std::strtol(v.c_str(), &stop, 10);
+      if (v.empty() || stop != v.c_str() + v.size() || t < 1 || t > 4096) {
+        say(message, message_size, "THREADS is a whole number from 1 to 4096");
+        return fbench_error;
+      }
+      s.threads = static_cast<int>(t);
     } else {
       say(message, message_size, "unknown FFTW option " + std::string(key));
       return fbench_error;
     }
   }
+#ifdef FBENCH_FFTW_THREADS
+  if (s.threads > 1) {
+    if (fftw_init_threads() == 0) {
+      say(message, message_size, "fftw_init_threads failed");
+      return fbench_error;
+    }
+    fftw_plan_with_nthreads(s.threads);
+  }
+#else
+  if (s.threads > 1) {
+    say(message, message_size, "THREADS > 1 needs libfftw3_threads, which " FBENCH_FFTW_ROOT
+                               " does not have");
+    return fbench_error;
+  }
+#endif
   fftw_forget_wisdom();
   if (!s.wisdom_in.empty()) {
     if (std::FILE* f = std::fopen(s.wisdom_in.c_str(), "r"); f != nullptr) {
@@ -157,6 +186,7 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
                       .str("precision", "double")
                       .raw("supports", R"(["c2c","r2c","c2r"])")
                       .str("planner", s.planner)
+                      .integer("threads", s.threads)
                       .str("cc", fftw_cc)
                       .str("codelet_optim", fftw_codelet_optim)
                       .str("loaded_from", loaded_from())
@@ -173,6 +203,12 @@ void fbench_end() {
       std::fclose(f);
     }
   }
+#ifdef FBENCH_FFTW_THREADS
+  if (s.threads > 1) {
+    fftw_cleanup_threads();
+    return;
+  }
+#endif
   fftw_cleanup();
 }
 

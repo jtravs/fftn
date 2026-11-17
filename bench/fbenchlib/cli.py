@@ -115,7 +115,10 @@ def wisdom_options(arm: arms.Arm, binary: arms.Binary, work: Path) -> dict[str, 
     if mode != "run":
         return {"WISDOM_IN": str(Path(mode).resolve())}
     planner = arm.backend_options().get("PLANNER", "MEASURE")
-    key = hashlib.sha256(f"{binary.path}|{planner}".encode()).hexdigest()[:12]
+    threads = arm.backend_options().get("THREADS", "1")
+    # Plans made with other thread counts are other plans: one wisdom file per count.
+    key_text = f"{binary.path}|{planner}" + (f"|{threads}" if threads != "1" else "")
+    key = hashlib.sha256(key_text.encode()).hexdigest()[:12]
     path = work / f"fftw-{key}.wisdom"
     return {"WISDOM_IN": str(path), "WISDOM_OUT": str(path)}
 

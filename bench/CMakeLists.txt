@@ -116,7 +116,16 @@ if(_fbench_fftw_root)
   if(NOT _fbench_fftw_include OR NOT _fbench_fftw_lib)
     message(FATAL_ERROR "fbench: no double-precision FFTW under ${_fbench_fftw_root}")
   endif()
-  fbench_add_backend(fftw ${_fbench_fftw_lib} ${CMAKE_DL_LIBS})
+  # FFTW's POSIX-threads library, for the THREADS option (no OpenMP runtime in the process).
+  find_library(_fbench_fftw_threads_lib fftw3_threads PATHS ${_fbench_fftw_root}/lib
+               ${_fbench_fftw_root}/lib64 NO_DEFAULT_PATH NO_CACHE)
+  if(_fbench_fftw_threads_lib)
+    fbench_add_backend(fftw ${_fbench_fftw_threads_lib} ${_fbench_fftw_lib} Threads::Threads
+                       ${CMAKE_DL_LIBS})
+    target_compile_definitions(fbench-fftw PRIVATE FBENCH_FFTW_THREADS)
+  else()
+    fbench_add_backend(fftw ${_fbench_fftw_lib} ${CMAKE_DL_LIBS})
+  endif()
   target_include_directories(fbench-fftw SYSTEM PRIVATE ${_fbench_fftw_include})
   target_compile_definitions(fbench-fftw PRIVATE "FBENCH_FFTW_ROOT=\"${_fbench_fftw_root}\"")
   message(STATUS "fbench: FFTW backend against ${_fbench_fftw_lib}")
@@ -236,6 +245,26 @@ if(_fbench_mkl_root)
   target_compile_definitions(fbench-mkl PRIVATE "FBENCH_MKL_ROOT=\"${_fbench_mkl_root}\"")
   list(APPEND _fbench_competitors mkl)
   message(STATUS "fbench: MKL backend from ${_fbench_mkl_root}")
+  # fbench-mkl_omp: oneMKL's GNU OpenMP threading layer with the compiler's libgomp, the
+  # advisor's threaded link line for GCC (experiment X41); one OpenMP runtime per process.
+  find_library(_fbench_mkl_gnu_thread mkl_gnu_thread PATHS ${_fbench_mkl_root}/lib
+               ${_fbench_mkl_root}/lib/intel64 NO_DEFAULT_PATH NO_CACHE)
+  if(_fbench_mkl_gnu_thread AND TARGET OpenMP::OpenMP_CXX AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU"
+     AND NOT FFTN_SANITIZE MATCHES "thread")
+    add_executable(fbench-mkl_omp backends/mkl.cpp)
+    fftn_configure_target(fbench-mkl_omp)
+    target_include_directories(fbench-mkl_omp PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                               ${CMAKE_CURRENT_BINARY_DIR})
+    target_include_directories(fbench-mkl_omp SYSTEM PRIVATE ${_fbench_mkl_include})
+    target_compile_definitions(fbench-mkl_omp PRIVATE FBENCH_MKL_OMP
+                               "FBENCH_MKL_ROOT=\"${_fbench_mkl_root}\"")
+    target_link_libraries(fbench-mkl_omp PRIVATE fbench_harness ${_fbench_mkl_mkl_intel_lp64}
+                          ${_fbench_mkl_gnu_thread} ${_fbench_mkl_mkl_core} Threads::Threads
+                          ${CMAKE_DL_LIBS} m)
+    fbench_link_openmp(fbench-mkl_omp)
+    list(APPEND _fbench_competitors mkl_omp)
+    message(STATUS "fbench: MKL backend with OpenMP threads (mkl_omp)")
+  endif()
 else()
   message(STATUS "fbench: MKL backend not built (set FFTN_BENCH_MKL_ROOT to a oneMKL root)")
 endif()

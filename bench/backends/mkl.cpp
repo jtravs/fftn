@@ -19,7 +19,10 @@
 // that can change it (MKL_ENABLE_INSTRUCTIONS, MKL_CBWR), which would otherwise handicap
 // or favour it silently.
 //
-// Options: none.
+// Options: none, except in fbench-mkl_omp (FBENCH_MKL_OMP), the same backend linked with
+// oneMKL's GNU OpenMP threading layer (mkl_gnu_thread and the compiler's libgomp, the link
+// line the advisor gives for GCC) instead of mkl_sequential, for threaded comparisons
+// (experiment X41): THREADS=N, oneMKL's thread count (mkl_set_num_threads; default 1).
 
 #include "backends/common.hpp"
 #include "harness/backend.hpp"
@@ -80,10 +83,29 @@ std::array<MKL_LONG, 4> strides(const fbench_case& c, std::int64_t last) {
 extern "C" {
 
 std::int32_t fbench_begin(const char* options, char* message, std::size_t message_size) {
-  if (!fbench::backends::parse_options(options).empty()) {
-    fbench::backends::say(message, message_size, std::string("MKL has no options: ") + options);
+  int threads = 1;
+  for (const auto& [key, value] : fbench::backends::parse_options(options)) {
+#ifdef FBENCH_MKL_OMP
+    if (key == "THREADS") {
+      char* end = nullptr;
+      const long t = std::strtol(value.c_str(), &end, 10);
+      if (value.empty() || end != value.c_str() + value.size() || t < 1 || t > 4096) {
+        fbench::backends::say(message, message_size, "THREADS is a whole number from 1 to 4096");
+        return fbench_error;
+      }
+      threads = static_cast<int>(t);
+      continue;
+    }
+#endif
+    fbench::backends::say(message, message_size, "unknown MKL option " + key);
     return fbench_error;
   }
+#ifdef FBENCH_MKL_OMP
+  mkl_set_num_threads(threads);
+  const char* threading = "gnu_thread";
+#else
+  const char* threading = "sequential";
+#endif
   MKLVersion v{};
   MKL_Get_Version(&v);
   const std::string version = std::to_string(v.MajorVersion) + "." +
@@ -96,7 +118,8 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
                       .str("platform", v.Platform)
                       .str("precision", "double")
                       .raw("supports", R"(["c2c","r2c","c2r"])")
-                      .str("threading", "sequential")
+                      .str("threading", threading)
+                      .integer("threads", threads)
                       .integer("max_threads", MKL_Get_Max_Threads())
                       .str("MKL_ENABLE_INSTRUCTIONS", environment("MKL_ENABLE_INSTRUCTIONS"))
                       .str("MKL_CBWR", environment("MKL_CBWR"))
