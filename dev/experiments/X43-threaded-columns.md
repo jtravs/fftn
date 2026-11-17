@@ -148,5 +148,8 @@ X43's arms.
   37 c2c planes; 8 rounds, all under load, band ±3.9 %): 2048 × 36 0.728 and 0.714, no other
   team program changes; worst 1.042 (32² in place, whose program and team program B2 does
   not change), inside the band. Rule met on the EPYC.
+- Xeon run 20261117-174124-1543 (Slurm 16377; the same arms; 8 rounds, none under load, band
+  ±3.6 %): 2048 × 36 1.004 and 0.998; rule (1) fails: B2 rejected on the Xeon (whose profile
+  builds no team blocks after B1's verdict anyway).
 
 ## Verdict
