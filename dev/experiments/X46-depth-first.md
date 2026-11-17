@@ -92,7 +92,65 @@ bitwise equality between serial and threaded runs.
 
 ## Results
 
-(pending)
+### Step 1, the screen (Xeon, counters and times)
+
+Builds: base b27970f (X42 merged with `main`; the same plans as `main` on these rows), A0
+41c7903 and 85b4ee0 (forced only). Campaign `~/awork/fftn-x46` on the Xeon, `fbench-fftn run
+--pmu cycles,instructions,l2miss=0x3f24` (user mode, `l2_rqsts.miss`), min over three
+processes; Slurm 16388 (first screen) and 16391 (second, with derived twiddles), `-c 8`
+shared, node load 3–12. Times per point and the ratio to the base plan in the same job;
+D = stored top-pass twiddles, E = derived (arm B's form). The fbench screen of the first
+(run 20261117-165423-78a6, Slurm 16386/16387, 10 quiet rounds, band ±1.86 %) agreed with the
+counters within 0.03 on every case.
+
+| row (base plan) | base ns/pt, L2 misses/pt | best D (ratio, misses) | E16 or E20 (ratio, misses) | FFTW, MKL ns/pt |
+|---|---|---|---|---|
+| 8192 (chain) | 2.02, 0.00 | 8 × 1024 0.90–0.99 | E16 1.06; E8 0.94 | 2.32, 1.99 |
+| 16384 (chain 16·8·8·16) | 3.17, 0.83 | 8 × 8 × 256 0.79, 16 0.81, 8 0.77 | E16 **0.69**, 0.01 | 2.64, 2.44 |
+| 20000 (chain 20·20·5·10) | 3.33, 0.96 | 20 × 1000 0.86–0.87 | E20 **0.73**, 0.00 | 2.82, 3.91 |
+| 25000 (chain) | 3.94, 1.26 | no split: C = 4 divides no top and its sub-row | — | 3.02, 4.03 |
+| 32768 (grid 128 × 256) | 4.19, 0.27 | 4 × 8 × 1024 0.89, 8 0.88 | E16 **0.67**, 0.29 (E32 0.63) | 3.14, 3.60 |
+| 46080 (grid 192 × 240) | 4.32, 0.52 | 16 0.86–0.89 | E16 **0.63**, 0.56 | 3.48, 4.64 |
+| 65536 (grid 256 × 256) | 5.10, 0.86 | 16 0.83–0.86 | E16 **0.70**, 0.83 | 4.75, 4.82 |
+| 65536 in place | 5.71, 1.02 | 16 0.88 | E16 **0.69**, 1.21 | 4.67, 4.79 |
+| 65536 backward | 5.15, 0.87 | 16 0.85 | E16 **0.69**, 0.85 | 4.65, 4.81 |
+| 100000 (grid 200 × 500) | 5.04, 0.78 | 20 × 5000 1.01 | E20 **0.77**, 0.99 | 3.77, 5.86 |
+| 131072 (grid 32 × 64 × 64) | 5.90, 1.30 | 16 0.81–0.85 | E16 **0.71**, 1.06 | 5.50, 6.62 |
+| 262144 (grid 64³) | 6.43, 1.31 | 16 0.84 | E16 **0.71**, 1.22 | 5.61, 7.19 |
+
+- The breadth-first chain's misses (0.8–1.3 per point at 16384–25000) fall to FFTW's level
+  only with derived twiddles (0.00–0.01): the top pass's stored table, (R1 − 1) M entries in
+  the pre-arranged storage of 32 bytes each (384 KiB at 16384 = 4 × 4096, 480 KiB for the
+  current chain's first pass), was the rest of the L2 traffic. With them the depth-first
+  chain runs at 0.63–0.77 of the base plan from 16384 to 262144 points, below FFTW's time
+  except at 100000 (1.02), and below MKL's everywhere.
+- Top factors: one top of 16 (20 where C does not divide n / 16) was within 0.05 of the
+  best split tried at every row; tops of 4 left sub-rows too long (D4 at 65536–131072
+  0.99–1.01), two tops added a pass over the row without fewer misses.
+- 8192 (L2/8) gains nothing that the counters resolve; 25000 has no split on `avx512` (it
+  has three factors of 2 and needs four).
+- The EPYC (`avx2`, screen run 20261117-165514-af0c, every round under load, band ±1.27 %,
+  stored twiddles): tops of 16 lose (1.19–1.71: 16 legs on 16 registers), tops of 4 and 8
+  win on some rows (46080 0.81, 65536 0.91, 16384 0.93) and lose on others (25000 1.13–1.60,
+  32768 1.04): no rule from this screen; the Mac (local screen, stored twiddles) gains at
+  8192 (0.65) and loses or ties beyond. Neither profile changes in this experiment.
+
+### The rule (arms A and B), written before the judging run
+
+- **A (commit after 85b4ee0).** Profile fields `depth_min_bytes`, `depth_max_bytes`, set to
+  L2/4 and 4 L2 where X39's fields are (x86-64, a private L2 with less than 2 MiB of L3 per
+  CPU: the Xeon 6240): a c2c row of one axis in that range, `avx512`, double, contiguous on
+  both sides (in place through the workspace block), no factor edge, is a depth-first chain
+  with one top factor, 16 where C divides n / 16, else 20, where it fits; stored twiddles.
+  Float and other targets keep their plans (unmeasured). In bytes against the L2 so that the
+  rule carries to other profiles once measured there (Granite Rapids' 2 MiB L2 profile does
+  not take it here).
+- **B (the commit after A).** The same plans with derived top-pass twiddles; the stored
+  form is deleted if B is adopted.
+- Judging run: Xeon, `--serial`, arms N = 85b4ee0, A, B, F = FFTW, M = MKL, the standard
+  catalogue's rows the rule changes (c2c 16384, 20000, 32768, 46080, 65536 out of place,
+  in place, backward and × 3 in and out of place, 100000, 131072, 262144), then the tracking
+  tier N against B. The decision rule above applies to A against N and to B against A.
 
 ## Verdict
 

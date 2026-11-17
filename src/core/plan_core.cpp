@@ -444,19 +444,39 @@ grid_split plan_grid(std::size_t n, const side& in, const side& out, const build
 }
 
 // The depth-first chain's top factors for a c2c row of n of one axis (DESIGN.md 8.5,
-// strategies/chain.hpp, c2c_depth; experiment X46), or none. Only where forced, for a row
-// contiguous on both sides (in place through the workspace block), with no factor edge and
-// the scale (if any) on its output, without forced radices for its whole length, whose split
-// fits: the forced factors
-// (build_settings::depth_tops), else one codelet radix, the smallest whose sub-row of n / F1
-// fits the L1 data cache (profile.grid_block_bytes), else the one with the shortest sub-row.
+// strategies/chain.hpp, c2c_depth; experiment X46), or none: for a row contiguous on both
+// sides (in place through the workspace block), with no factor edge and the scale (if any) on
+// its output, without forced radices for its whole length, whose split fits. Forced: the
+// forced factors (build_settings::depth_tops), else one codelet radix, the smallest whose
+// sub-row of n / F1 fits the L1 data cache (profile.grid_block_bytes), else the one with the
+// shortest sub-row. By the rules (X46 arm A): `avx512` in double, a row of
+// [depth_min_bytes, depth_max_bytes] (the profile's; the Xeon 6240's L2/4 to 4 L2), one top
+// factor, 16 where C divides n / 16, else 20. On the Xeon 6240's counters screen one top of
+// 16 (20 where C does not divide n / 16) was the best or within 0.05 of the best of the
+// splits tried (one or two tops of 4 to 32) at every length from 16384 to 262144 points.
 template <class T>
 std::vector<std::size_t> depth_tops_of(std::size_t n, const side& in, const side& out,
                                        const build_settings& settings,
-                                       const chain_builder<T>& chain) {
-  if (settings.strategy != strategy_choice::depth || settings.in_factor != nullptr ||
-      settings.out_factor != nullptr || settings.scale_on_input || in.stride[0] != 1 ||
-      out.stride[0] != 1 || (!settings.radices.empty() && checked_product(settings.radices) == n)) {
+                                       const chain_builder<T>& chain, target isa) {
+  if ((settings.strategy != strategy_choice::depth &&
+       settings.strategy != strategy_choice::rules) ||
+      settings.in_factor != nullptr || settings.out_factor != nullptr || settings.scale_on_input ||
+      in.stride[0] != 1 || out.stride[0] != 1 ||
+      (!settings.radices.empty() && checked_product(settings.radices) == n)) {
+    return {};
+  }
+  if (settings.strategy == strategy_choice::rules) {
+    const std::size_t bytes = n * 2 * sizeof(T);
+    if (!std::is_same_v<T, double> || isa != target::avx512 ||
+        settings.profile.depth_max_bytes == 0 || bytes < settings.profile.depth_min_bytes ||
+        bytes > settings.profile.depth_max_bytes) {
+      return {};
+    }
+    for (const std::size_t r : {std::size_t{16}, std::size_t{20}}) {
+      if (chain.depth_fits(n, {r})) {
+        return {r};
+      }
+    }
     return {};
   }
   if (!settings.depth_tops.empty()) {
@@ -876,7 +896,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
                              : grid_split{};
   const std::vector<std::size_t> depth_tops =
       s.kind == transform_kind::c2c && r == 1 && lanes == 0
-          ? depth_tops_of<T>(c.lengths[0], in, out, settings, chain)
+          ? depth_tops_of<T>(c.lengths[0], in, out, settings, chain, c.isa_target)
           : std::vector<std::size_t>{};
   if (!depth_tops.empty()) {
     grid_plan = grid_split{};

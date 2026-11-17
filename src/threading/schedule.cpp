@@ -157,6 +157,9 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
         p.grid_two_block_bytes = 2 * c.l1d.size;
         p.pow2_grid_bytes = c.l2.size / 4;
         p.grid_two_pow2_bytes = c.l3.size / 2;
+        // Experiment X46: the depth-first chain from L2/4 to 4 L2 (16384-262144 points).
+        p.depth_min_bytes = c.l2.size / 4;
+        p.depth_max_bytes = 4 * c.l2.size;
       }
     }
   }

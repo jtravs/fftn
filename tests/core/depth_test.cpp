@@ -160,7 +160,7 @@ template <class T> void every_case(fftn::isa target) {
     check_depth<T>(target, dc, fftn::direction::forward, 1.0 / 3, 3, dc.n + 5);
   }
   // Derived top-pass twiddles: one and two tops, an odd top factor, a scale, in place.
-  for (const std::size_t i : {1, 7, 8, 11}) {
+  for (const std::size_t i : {std::size_t{1}, std::size_t{7}, std::size_t{8}, std::size_t{11}}) {
     check_depth<T>(target, cases()[i], fftn::direction::forward, 1.0, 1, cases()[i].n, false, true);
   }
   check_depth<T>(target, cases()[7], fftn::direction::backward, 0.5, 2, cases()[7].n + 3, true,
@@ -177,15 +177,51 @@ TEST(Depth, EveryTargetPrecisionDirectionAndSplit) {
   }
 }
 
-// Without the strategy forced the rules never take it (experiment X46, arm A0).
-TEST(Depth, RulesDoNotTakeIt) {
-  const fftn::shape<std::complex<double>, std::complex<double>> shape{
+// The rules (experiment X46 arm A): `avx512` in double, rows of [depth_min_bytes,
+// depth_max_bytes] (a profile field, off by default), one top of 16, else 20; not in float,
+// not on other targets, not outside the range, never where neither top fits.
+TEST(Depth, RulesTakeItByTheProfile) {
+  const auto planned = [](std::size_t n, fftn::isa isa, bool on, bool in_place = false) {
+    build_settings settings;
+    settings.profile.depth_min_bytes = on ? std::size_t{256} * 1024 : 0;
+    settings.profile.depth_max_bytes = on ? std::size_t{4} * 1024 * 1024 : 0;
+    const fftn::shape<std::complex<double>, std::complex<double>> shape{
+        .dir = fftn::direction::forward,
+        .axes = {{.n = n}},
+        .batches = {},
+    };
+    return fftn::detail::describe(*make_plan_core(
+        fftn::detail::view_of(shape), {.in_place = in_place, .force_isa = isa}, settings));
+  };
+  const auto depth = [](const std::string& text) {
+    return text.find("strategy: depth-first chain") != std::string::npos;
+  };
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    SCOPED_TRACE(fftn::isa_name(t));
+    const bool avx512 = std::string(fftn::isa_name(t)) == "avx512";
+    EXPECT_FALSE(depth(planned(16384, t, false)));
+    EXPECT_EQ(depth(planned(16384, t, true)), avx512);
+    EXPECT_EQ(depth(planned(65536, t, true, true)), avx512); // in place
+    EXPECT_FALSE(depth(planned(8192, t, true)));             // below the range
+    EXPECT_FALSE(depth(planned(524288, t, true)));           // beyond it
+    EXPECT_FALSE(depth(planned(25000, t, true)));            // no top fits on 4 lanes
+    if (avx512) {
+      EXPECT_NE(planned(32768, t, true).find("depth-first 16 x 2048"), std::string::npos);
+      EXPECT_NE(planned(20000, t, true).find("depth-first 20 x 1000"), std::string::npos);
+    }
+  }
+  // Float keeps the old plans (unmeasured).
+  build_settings settings;
+  settings.profile.depth_min_bytes = std::size_t{128} * 1024;
+  settings.profile.depth_max_bytes = std::size_t{4} * 1024 * 1024;
+  const fftn::shape<std::complex<float>, std::complex<float>> shape{
       .dir = fftn::direction::forward,
-      .axes = {{.n = 16384}},
+      .axes = {{.n = 32768}},
       .batches = {},
   };
-  const auto core = make_plan_core(fftn::detail::view_of(shape), {}, build_settings{});
-  EXPECT_EQ(fftn::detail::describe(*core).find("strategy: depth-first chain"), std::string::npos);
+  EXPECT_EQ(fftn::detail::describe(*make_plan_core(fftn::detail::view_of(shape), {}, settings))
+                .find("strategy: depth-first chain"),
+            std::string::npos);
 }
 
 } // namespace

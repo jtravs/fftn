@@ -151,6 +151,14 @@ struct machine_profile {
   // of the three phases' time at 2^20-2^23 points out of place, but lost in place (2^20 1.10)
   // and for c2r 2^20 (1.23). set_grid_sizes sets it on the Xeon profile.
   std::size_t grid_two_pow2_bytes = 0;
+  // A c2c row of one axis of [depth_min_bytes, depth_max_bytes] is a depth-first chain on
+  // `avx512` in double (strategies/chain.hpp, c2c_depth; core/plan_core.cpp, depth_tops_of)
+  // where its split fits; depth_max_bytes 0: never (experiment X46). On the Xeon 6240's
+  // counters screen such chains took 0.80-0.90 of the chains' and grids' cycles from 16384 to
+  // 262144 points (L2/4 to 4 L2); 8192 points (L2/8) gained nothing. set_grid_sizes sets
+  // L2/4 to 4 L2 where a private L2 has less than 2 MiB of L3 per CPU behind it, on x86-64.
+  std::size_t depth_min_bytes = 0;
+  std::size_t depth_max_bytes = 0;
   // The L1 data cache's line in bytes: a lanes column phase's block holds at least a line of
   // adjacent columns (core/plan_core.cpp, column_block; experiment X40). set_grid_sizes reads
   // it from the topology (128 on Apple's cores).
