@@ -96,6 +96,10 @@ place, inside the band). Rule (1) fails: VM rejected, the Mac keeps the axes one
   0.945 over the 38, 0.934 over the 30 targets; 64 × 64 × 512 0.75–0.78, 128³ 0.84–0.91,
   256³ 0.87–0.97, 120³ 0.88–0.91, 100³ backward 0.92; 97³ out of place 1.092, past the band
   (re-run below, rule (2)). The Xeon has 1.4 MiB of L3 per core behind its 1 MiB L2.
+- Xeon re-run of 97³, run 20261117-184525-337a (Slurm 16382; 12 rounds, none under load, band
+  ±1.0 %): out of place 1.048 (interval 1.035–1.088), in place 1.012. Rule (2) fails: V
+  rejected on the Xeon too (commit 06229fa had adopted it there before this re-run; reverted
+  below). No machine runs volumes plane at a time in its one-thread program.
 
 ### EPYC 7763, 8 lanes
 
@@ -124,7 +128,13 @@ that run threaded (not inline) is at most 0.95, and (2) no volume is slower than
 more than the larger of 2 % and the band at 8 lanes, in a fresh run; one-thread programs are
 unchanged by construction (the base is 06229fa, the axes one by one on the EPYC).
 
-### Task 4.2's acceptance (FFTN ÷ the competitor's better plan, the 38 volumes)
+#**Arm VTX (written before its run, after V's rejection on the Xeon):** VT on the Xeon's
+profile too (`team_volume_planes` on x86-64 with a private L2 below 2 MiB, both the EPYC's and
+the Xeon's classes; the Xeon builds no team column blocks, B1). Rule: on the Xeon, VT's rule
+(threaded volumes' geometric mean at most 0.95, none slower beyond the larger of 2 % and the
+band at 8 lanes) in a fresh run against the axes one by one at 8 lanes.
+
+## Task 4.2's acceptance (FFTN ÷ the competitor's better plan, the 38 volumes)
 
 - Mac, one thread (run 20261117-154622-1813, P, the Mac's program): ÷ FFTW 0.804; over it
   16 × 256 × 256 1.57–1.63, 512 × 64 × 64 1.19–1.24, 64 × 64 × 512 1.10–1.21, 64³ out of
