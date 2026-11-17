@@ -97,4 +97,24 @@ place, inside the band). Rule (1) fails: VM rejected, the Mac keeps the axes one
   256³ 0.87–0.97, 120³ 0.88–0.91, 100³ backward 0.92; 97³ out of place 1.092, past the band
   (re-run below, rule (2)). The Xeon has 1.4 MiB of L3 per core behind its 1 MiB L2.
 
+### EPYC 7763, 8 lanes
+
+Run 20261117-160908-2b72 (Slurm 512006; 8 rounds, all under load, other processes about 35
+cores of 128, band ±2.4 %; P and V at 8 lanes, FFTW at 8 threads and serial): V ÷ P 0.778
+over the 38 volumes (0.66–0.95; 16³ 0.99, which runs inline); FFTN at 8 lanes over FFTW's
+better plan 1.219 → 0.950 (worst 16 × 256 × 256 1.53, 100³ 1.39–1.48, 120³ out of place
+1.43, 512 × 64 × 64 out of place 1.26, 128³ out of place 1.26, 128 × 64 × 32 1.23–1.26).
+Whole planes per member, one phase boundary fewer and each plane's rows and columns on one
+core, are worth far more to a team than the third sweep is to one thread.
+
+**Arm VT (written before its runs):** V's order in the team program only (X43's team core,
+`plan_core::team`): plane at a time changes no bits, so a team may run it while serial
+executions keep the axes one by one. A profile field `team_volume_planes`, set on x86-64
+where each core has its own L2 (the EPYC; the Xeon's program already has V); the team core
+is then built for any c2c volume and kept where its program differs. Rule: on the EPYC, adopt
+VT if (1) the geometric mean of VT ÷ base at 8 lanes over the volumes catalogue's volumes
+that run threaded (not inline) is at most 0.95, and (2) no volume is slower than the base by
+more than the larger of 2 % and the band at 8 lanes, in a fresh run; one-thread programs are
+unchanged by construction (the base is 06229fa, the axes one by one on the EPYC).
+
 ## Verdict
