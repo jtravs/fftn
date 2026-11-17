@@ -349,10 +349,12 @@ line_edges c2c_edges(const options& opts, const build_settings& settings, bool f
 // length and has a split whose phases are codelet chains. The row is a c2c row or (real) the
 // half-length complex transform of a real row of 2n (DESIGN.md 9.1). A c2c row of a power of
 // two stays a chain up to the profile's pow2_chain_bytes (X32), and so does the half-length
-// transform of a real row (X33).
+// transform of a real row (X33). kind: the plan's (c2c, or the real row's); in_place: whether
+// the plan is in place (X39's rules).
 template <class T>
 grid_split plan_grid(std::size_t n, const side& in, const side& out, const build_settings& settings,
-                     const chain_builder<T>& chain, std::size_t lanes, [[maybe_unused]] bool real) {
+                     const chain_builder<T>& chain, std::size_t lanes, transform_kind kind,
+                     bool in_place) {
   if (n < 2 || settings.strategy == strategy_choice::chain ||
       settings.strategy == strategy_choice::lanes || settings.in_factor != nullptr ||
       settings.out_factor != nullptr || in.stride[0] != 1 || out.stride[0] != 1) {
@@ -366,7 +368,12 @@ grid_split plan_grid(std::size_t n, const side& in, const side& out, const build
       part *= 2;
     }
     const bool mixed = part != n;
-    if (bytes <= settings.profile.grid_min_bytes ||
+    // A c2c power of two, or an r2c row's half-length one, may be a grid below grid_min_bytes
+    // (X39; c2r 65536 lost 1.13 as a grid out of place).
+    const bool pow2_grid = kind != transform_kind::c2r && !mixed &&
+                           settings.profile.pow2_grid_bytes != 0 &&
+                           bytes > settings.profile.pow2_grid_bytes;
+    if ((bytes <= settings.profile.grid_min_bytes && !pow2_grid) ||
         (mixed && ((part * 2 * sizeof(T) <= settings.profile.chain_part_bytes &&
                     bytes <= settings.profile.chain_part_limit_bytes) ||
                    bytes <= settings.profile.chain_mixed_bytes)) ||
@@ -384,14 +391,23 @@ grid_split plan_grid(std::size_t n, const side& in, const side& out, const build
     odd /= 2;
   }
   const std::size_t part_bytes = n / odd * 2 * sizeof(T);
+  // A c2c power of two out of place stays in two phases beyond grid_two_pow2_bytes (X39).
+  const bool two_pow2 = kind == transform_kind::c2c && !in_place && odd == 1 &&
+                        settings.profile.grid_two_pow2_bytes != 0 &&
+                        n * 2 * sizeof(T) > settings.profile.grid_two_pow2_bytes;
   const bool three = settings.grid_phases != 0
                          ? settings.grid_phases == 3
-                         : n * 2 * sizeof(T) > settings.profile.grid_three_bytes &&
+                         : n * 2 * sizeof(T) > settings.profile.grid_three_bytes && !two_pow2 &&
                                (settings.profile.grid_two_odd_part == 0 ||
                                 odd < settings.profile.grid_two_odd_part) &&
                                (odd == 1 || part_bytes > settings.profile.grid_two_part_bytes);
-  grid_split g = choose_grid(n, lanes, settings.profile.grid_block_bytes / (4 * sizeof(T)), three,
-                             settings.profile.grid_block, settings.grid_factors);
+  const std::size_t block_bytes = !three && settings.profile.grid_two_block_bytes != 0
+                                      ? settings.profile.grid_two_block_bytes
+                                      : settings.profile.grid_block_bytes;
+  grid_split g = choose_grid(
+      n, lanes, block_bytes / (4 * sizeof(T)), three, settings.profile.grid_block,
+      settings.grid_factors,
+      settings.profile.grid_three_block != 0 ? settings.profile.grid_three_block : max_grid_block);
   g.pad = grid_pad(g, 2 * sizeof(T), settings.profile.grid_pad_period);
   for (std::size_t i = 0; i < g.phases; ++i) {
     for (const std::size_t radix : chain.radices(g.factors.at(i))) {
@@ -573,17 +589,17 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
 
   const std::size_t lanes =
       lanes_block<T>(s, in, out, settings, profile, chain, kernels.complex_lanes);
-  grid_split grid_plan =
-      s.kind == transform_kind::c2c && r == 1
-          ? plan_grid<T>(c.lengths[0], in, out, settings, chain, kernels.complex_lanes, false)
-          : grid_split{};
+  grid_split grid_plan = s.kind == transform_kind::c2c && r == 1
+                             ? plan_grid<T>(c.lengths[0], in, out, settings, chain,
+                                            kernels.complex_lanes, s.kind, c.in_place)
+                             : grid_split{};
   // A real row of one axis whose half-length complex transform is a grid (DESIGN.md 9.1):
   // the grid writes the output and the pairing runs after it in place (r2c), or the pairing
   // writes the output and the grid runs in place there (c2r).
-  grid_split real_grid =
-      s.kind != transform_kind::c2c && r == 1 && c.lengths[0] % 2 == 0
-          ? plan_grid<T>(c.lengths[0] / 2, in, out, settings, chain, kernels.complex_lanes, true)
-          : grid_split{};
+  grid_split real_grid = s.kind != transform_kind::c2c && r == 1 && c.lengths[0] % 2 == 0
+                             ? plan_grid<T>(c.lengths[0] / 2, in, out, settings, chain,
+                                            kernels.complex_lanes, s.kind, c.in_place)
+                             : grid_split{};
   // Only an intermediate the plan keeps in the workspace block anyway is padded: moving a
   // two-phase plan's intermediate out of the output into the block cost 1-9 % (X26b).
   if (!grid_builder<T>::uses_block(grid_plan, c.in_place)) {
@@ -649,7 +665,8 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     grid_builder<T> grid(kernels, chain, tables_of<T>(c),
                          settings.grid_fused &&
                              (n / 2) * 2 * sizeof(T) <= settings.profile.grid_fuse_bytes,
-                         settings.grid_phase_radix);
+                         settings.grid_phase_radix != 0 ? settings.grid_phase_radix
+                                                        : settings.profile.grid_phase_radix);
     const bool in_place = real_in_place;
     if (grid_builder<T>::uses_block(real_grid, in_place)) {
       c.block_elements = grid_builder<T>::block_elements(real_grid);
@@ -695,7 +712,8 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     grid_builder<T> grid(kernels, chain, tables_of<T>(c),
                          settings.grid_fused &&
                              c.lengths[0] * 2 * sizeof(T) <= settings.profile.grid_fuse_bytes,
-                         settings.grid_phase_radix);
+                         settings.grid_phase_radix != 0 ? settings.grid_phase_radix
+                                                        : settings.profile.grid_phase_radix);
     if (grid_builder<T>::uses_block(grid_plan, c.in_place)) {
       c.block_elements = grid_builder<T>::block_elements(grid_plan);
     }

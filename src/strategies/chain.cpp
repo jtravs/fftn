@@ -1072,6 +1072,19 @@ std::vector<std::size_t> chain_builder<T>::real_radices(std::size_t h, bool r2c)
   if ((r2c ? rad.back() : rad.front()) <= limit) {
     return rad;
   }
+  // Experiment X39: an override that starts with a radix-20 pass (X38's codelet) is worth it
+  // only first; moved behind the c2r pairing's small radix it lost (c2r 1000 and 10000 on the
+  // Xeon 1.19-1.25), so a c2r line takes the costs' sequence instead, where one has a radix
+  // the pairing can take.
+  if (!r2c && rad.front() == 20 && !bluestein &&
+      std::ranges::any_of(rad, [limit](std::size_t r) { return r <= limit; })) {
+    if (std::vector<std::size_t> costs = rule_radices(h, profile_, false); costs.size() >= 2) {
+      rad = std::move(costs);
+      if (rad.front() <= limit) {
+        return rad;
+      }
+    }
+  }
   const std::size_t end = bluestein ? rad.size() - 1 : rad.size();
   std::size_t pick = end;
   for (std::size_t i = 0; i < end; ++i) {

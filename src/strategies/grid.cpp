@@ -62,12 +62,13 @@ std::size_t first_columns(const grid_split& g) {
   return rest;
 }
 
-// The block of a split: the widest power of two from `least` to max_grid_block dividing N1
-// and n / N1 with block x max Ni within the budget, or `least`.
-std::size_t widest_block(const grid_split& g, std::size_t least, std::size_t budget) {
+// The block of a split: the widest power of two from `least` to `most` dividing N1 and
+// n / N1 with block x max Ni within the budget, or `least`.
+std::size_t widest_block(const grid_split& g, std::size_t least, std::size_t budget,
+                         std::size_t most = max_grid_block) {
   const std::size_t longest = longest_factor(g);
   std::size_t block = least;
-  for (std::size_t b = 2 * least; b <= max_grid_block; b *= 2) {
+  for (std::size_t b = 2 * least; b <= most; b *= 2) {
     if (g.factors[0] % b != 0 || first_columns(g) % b != 0 || b * longest > budget) {
       break;
     }
@@ -196,7 +197,8 @@ std::vector<std::size_t> divisors(std::size_t n) {
 } // namespace
 
 grid_split choose_grid(std::size_t n, std::size_t lanes, std::size_t budget, bool three_phases,
-                       std::size_t forced_block, const std::vector<std::size_t>& forced) {
+                       std::size_t forced_block, const std::vector<std::size_t>& forced,
+                       std::size_t three_most) {
   // Two columns at least: a block of one would gather single elements a row apart.
   const std::size_t least = forced_block != 0 ? forced_block : std::max<std::size_t>(lanes, 2);
   if (lanes == 0 || least % lanes != 0 || forced.size() == 1 || forced.size() > max_grid_phases) {
@@ -243,7 +245,7 @@ grid_split choose_grid(std::size_t n, std::size_t lanes, std::size_t budget, boo
   if (three.phases != 0 && forced_block == 0) {
     // Three phases are for rows far beyond L2, where X12 measured wide rows in the gathers
     // and scatters worth more than keeping a block's chain within L1.
-    three.block = widest_block(three, least, 2 * budget);
+    three.block = widest_block(three, least, 2 * budget, std::min(three_most, max_grid_block));
   }
   return three;
 }
