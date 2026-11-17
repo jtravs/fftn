@@ -1014,6 +1014,128 @@ void chain_builder<T>::chain_tail(std::size_t n, const std::vector<std::size_t>&
   }
 }
 
+template <class T>
+bool chain_builder<T>::depth_fits(std::size_t n, const std::vector<std::size_t>& tops) const {
+  const std::size_t c = kernels_.complex_lanes;
+  if (tops.empty() || tops.size() > 2 || tops[0] % c != 0) {
+    return false;
+  }
+  std::size_t m = n;
+  for (const std::size_t f : tops) {
+    if (f < 2 || m % f != 0 || !has_codelet(f) ||
+        kernels_.passes.codelet[codelet_slot(f)]->depth_top[0][0] == nullptr) {
+      return false;
+    }
+    m /= f;
+  }
+  if (m % c != 0) {
+    return false;
+  }
+  const std::vector<std::size_t> rad = radices(m);
+  return rad.size() >= 2 && std::ranges::all_of(rad, has_codelet) &&
+         kernels_.passes.codelet[codelet_slot(rad[0])]->depth_first[0] != nullptr;
+}
+
+template <class T>
+std::string chain_builder<T>::depth_text(std::size_t n,
+                                         const std::vector<std::size_t>& tops) const {
+  std::size_t m = n;
+  std::string text = "depth-first ";
+  for (const std::size_t f : tops) {
+    text += std::to_string(f) + " x ";
+    m /= f;
+  }
+  return text + std::to_string(m) + " (sub-rows " + radix_text(m) + ")";
+}
+
+// The passes, in order: the first pass of the sub-rows' chains (depth_first_pass) over the
+// whole line, from the input to the output; for each sub-row (the plan's loop), passes 2 ..
+// of its chain on its block, alternating with scratch a and ending in the block (an odd
+// count takes b for one pass, a single pass a copy back); the top passes in place, the inner
+// one (two tops) on each of F1 runs. The sub-rows' chains are the chain of M the line would
+// get, so they take its split run.
+template <class T>
+typename chain_builder<T>::depth_stages
+chain_builder<T>::c2c_depth(std::size_t n, const std::vector<std::size_t>& tops, int sign,
+                            double scale) {
+  depth_stages out;
+  const std::size_t f1 = tops[0];
+  const std::size_t f2 = tops.size() > 1 ? tops[1] : 1;
+  const std::size_t subs = f1 * f2;
+  const std::size_t m = n / subs;
+  const std::size_t c = kernels_.complex_lanes;
+  const std::size_t d = direction_index(sign);
+  const std::vector<std::size_t> rad = radices(m);
+  const std::size_t r2 = rad[0];
+  const line_edges none;
+
+  stage first;
+  first.run = kernels_.passes.codelet[codelet_slot(r2)]->depth_first[d];
+  first.args.twiddles = shared_twiddles(n, r2, subs); // w_n^(p k S) = w_M^(p k)
+  first.args.radix = r2;
+  first.args.m = m / r2;
+  first.args.s = subs;
+  first.args.n = m;
+  first.args.dst_cols = f1;
+  first.args.dst_qstride = static_cast<std::ptrdiff_t>(f2 * m);
+  first.src = slot::in;
+  first.dst = slot::out;
+  first.units = (m / r2) * (subs / c);
+  first.chunks = chunks_of(first.units, r2 * c);
+  first.name = "depth-first first pass radix-" + std::to_string(r2) + " " + direction_name(sign) +
+               " (" + std::to_string(subs) + " sub-rows of " + std::to_string(m) +
+               ", each to its block)";
+  out.first.push_back(std::move(first));
+
+  const std::size_t passes = rad.size() - 1;
+  const std::size_t split = split_from(rad, false, 1);
+  endpoint at{.where = slot::out, .stride = 1};
+  std::size_t s = r2;
+  for (std::size_t i = 1; i < rad.size(); ++i) {
+    const std::size_t left = rad.size() - i; // passes from this one to the end
+    endpoint next{.where = slot::a, .stride = 1};
+    if (passes > 1 && left == 1) {
+      next = endpoint{.where = slot::out, .stride = 1};
+    } else if (passes > 1 && passes % 2 == 1 && left == 2) {
+      next = endpoint{.where = slot::b, .stride = 1};
+    } else if (passes > 1 && at.where != slot::out) {
+      next = endpoint{.where = slot::out, .stride = 1};
+    }
+    add_pass(m, rad, i, s, sign, at, next, none, out.sub, 1, layout_of(i, split, rad.size()));
+    at = next;
+    s *= rad[i];
+  }
+  if (at.where != slot::out) {
+    add_copy(m, at, {slot::out, 1}, none, out.sub);
+  }
+  out.scratch = m;
+
+  // A top pass of radix f over runs of f * legs elements (legs apart), the scale on the last.
+  const auto top_pass = [&](std::size_t f, std::size_t legs, bool last, std::vector<stage>& to) {
+    stage st;
+    const std::size_t e = last && scale != 1.0 ? 1 : 0;
+    st.run = kernels_.passes.codelet[codelet_slot(f)]->depth_top[d][e];
+    st.args.twiddles = grouped_twiddles(f * legs, f);
+    st.args.radix = f;
+    st.args.m = legs;
+    st.args.n = f * legs;
+    st.args.scale = scale;
+    st.src = slot::out;
+    st.dst = slot::out;
+    st.units = legs / c;
+    st.chunks = chunks_of(st.units, f * c);
+    st.name = "depth-first top pass radix-" + std::to_string(f) + " " + direction_name(sign) +
+              " (decimation in time, in place, legs " + std::to_string(legs) + " apart" +
+              (e != 0 ? "; out: scale" : "") + ")";
+    to.push_back(std::move(st));
+  };
+  if (f2 > 1) {
+    top_pass(f2, m, false, out.mid);
+  }
+  top_pass(f1, f2 * m, true, out.top);
+  return out;
+}
+
 template <class T> real_route chain_builder<T>::route(std::size_t n, bool r2c, bool strided) const {
   if (n % 2 == 1) {
     return real_route::full;

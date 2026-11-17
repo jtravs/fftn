@@ -22,7 +22,7 @@
 namespace fftn::inline v0::detail {
 
 // Which strategy builds a c2c row (DESIGN.md 8.5): the planner's choice, or one forced.
-enum class strategy_choice : std::uint8_t { rules, chain, grid, lanes };
+enum class strategy_choice : std::uint8_t { rules, chain, grid, lanes, depth };
 
 // The arithmetic of a chain's lane passes (DESIGN.md 6.3): the profile's choice, or
 // interleaved or split forced.
@@ -52,13 +52,20 @@ struct build_settings { // NOLINT(clang-analyzer-optin.performance.Padding)
   bool pair_leaves = true;
   // The strategy of a plan of one axis (rows): the rules' choice (the lanes for a batch of
   // rows up to the profile's lanes_up_to, a c2c grid beyond profile.grid_min_bytes, else
-  // the chain), or the chain, the grid or the lanes forced. A grid is built only for a c2c
+  // the chain), or the chain, the grid, the lanes or the depth-first chain forced. A grid
+  // is built only for a c2c
   // row with a split (strategies/grid.hpp) and no edge factor, the lanes only for a batch
   // (the innermost batch dimension's count at least 2) of rows every pass of whose chain is
   // a codelet's, without input edge operations, real rows contiguous on the real side
-  // (strategies/lanes.cpp); elsewhere, forced or not, the row is a chain, and describe()
-  // says which was built. Experiments X12 and X7 compare them.
+  // (strategies/lanes.cpp), the depth-first chain only for a c2c row of one axis,
+  // contiguous on both sides, out of place, with no factor edge, whose split fits
+  // (chain_builder::depth_fits); elsewhere, forced or not, the row is a chain, and describe()
+  // says which was built. Experiments X12, X7 and X46 compare them.
   strategy_choice strategy = strategy_choice::rules;
+  // The depth-first chain's top factors, one or two (n = F1 M or F1 F2 M;
+  // strategies/chain.hpp, c2c_depth), instead of the rule's (plan_core.cpp, depth_tops_of)
+  // when not empty. Experiment X46.
+  std::vector<std::size_t> depth_tops;
   // The lanes strategy's block, in rows (rounded up to a multiple of the target's complex
   // count C), instead of the rule's when not 0 (plan_core.cpp, lane_block; experiment X7).
   std::size_t lane_block = 0;

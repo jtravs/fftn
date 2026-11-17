@@ -59,6 +59,8 @@ const char* strategy_name(strategy_choice s) {
     return "grid";
   case strategy_choice::lanes:
     return "lanes";
+  case strategy_choice::depth:
+    return "depth";
   case strategy_choice::rules:
     break;
   }
@@ -139,6 +141,8 @@ std::optional<plan_choice> parse_choice(std::string_view text) {
         c.strategy = strategy_choice::grid;
       } else if (value == "lanes") {
         c.strategy = strategy_choice::lanes;
+      } else if (value == "depth") {
+        c.strategy = strategy_choice::depth;
       } else {
         return std::nullopt;
       }
@@ -194,7 +198,8 @@ plan_choice pinned_choice(const plan_choice& c, const plan_core& built) {
     p.grid_factors.clear();
     p.grid_phases = 0;
     if (p.strategy == strategy_choice::grid ||
-        (p.strategy == strategy_choice::lanes && built.built != strategy_choice::lanes)) {
+        (p.strategy == strategy_choice::lanes && built.built != strategy_choice::lanes) ||
+        (p.strategy == strategy_choice::depth && built.built != strategy_choice::depth)) {
       p.strategy = strategy_choice::rules;
     }
   }

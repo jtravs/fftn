@@ -219,6 +219,31 @@ public:
                         std::ptrdiff_t dst_dist, double scale, std::size_t block,
                         std::vector<stage>& stages);
 
+  // The depth-first chain (passes/depth.inl, experiment X46) of a c2c line of n = F1 M or
+  // F1 F2 M (tops: the top factors, one or two) from the in slot to the out slot, both stride
+  // 1 and distinct, with no edge operation but an output scale (1: none). `first`: the first
+  // pass of every sub-row's chain (the S = F1 F2 sub-rows x[S j + q], each through the rules'
+  // radices of M), each sub-row written to its own block of M elements of the output;
+  // `sub`: the rest of one sub-row's chain from its block (the out slot, which the plan's
+  // loop over the S blocks moves by M elements) back to it through scratch a (and b); with
+  // two tops `mid`: the radix-F2 top pass in place on one of F1 runs of F2 M elements (a
+  // loop moves the out slot by F2 M); `top`: the radix-F1 top pass in place on the output.
+  // scratch: the complex elements it needs in each of a and b. depth_fits: whether n can run
+  // so (C divides F1 and M, the passes exist for the tops and the sub-row's first radix, the
+  // sub-row's chain has two passes or more of codelet radices).
+  struct depth_stages {
+    std::vector<stage> first;
+    std::vector<stage> sub;
+    std::vector<stage> mid;
+    std::vector<stage> top;
+    std::size_t scratch = 0;
+  };
+  [[nodiscard]] bool depth_fits(std::size_t n, const std::vector<std::size_t>& tops) const;
+  depth_stages c2c_depth(std::size_t n, const std::vector<std::size_t>& tops, int sign,
+                         double scale);
+  // "depth-first 4 x 4 x 1024 (sub-rows 8 x 8 x 16)" for describe().
+  [[nodiscard]] std::string depth_text(std::size_t n, const std::vector<std::size_t>& tops) const;
+
   // For the grid (strategies/grid.hpp), whose phases are lane passes of this builder's
   // kind: the table of a lane pass of `radix` with s copies in a line of n.
   const T* lane_twiddles(std::size_t n, std::size_t radix, std::size_t s) {
