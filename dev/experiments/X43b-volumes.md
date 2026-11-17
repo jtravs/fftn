@@ -62,4 +62,22 @@ are the members' work instead of lines of each axis, one phase boundary fewer.
 
 ## Results
 
+### Mac M5 Max, one thread
+
+Run 20261117-153528-4b71 (P bce5979 against V 9323b8b, FFTW NEON; 6 rounds, the first under
+load, band ±3.6 %; Homebrew Clang, `neon_fcma`): V ÷ P 0.963 over the 38 volumes, none
+slower than 1.004; 128³ 0.87–0.89, 64 × 64 × 512 0.83 out of place, 512 × 64 × 64 0.92,
+256 × 256 × 16 0.92–0.97, 256³ 0.95–0.98, 32³ 0.93, the rest 0.95–1.00. Over the volumes the
+rule names by size (64³ and larger, the non-cubes of 1 MiB or more) 0.96: rule (1) fails as
+written. The rule's sizes were x86's (512 KiB–1 MiB of private L2); the M5 Max's L2 is 16 MiB
+per cluster, and over the volumes beyond it (128³, 256³, 120³, 64 × 64 × 512, 512 × 64 × 64)
+the same run gives 0.925. Reading the rule by its words rather than its listed sizes would
+be a rule changed after seeing results, so the Mac takes a new arm:
+
+**Arm VM (written before its run; the same code as V):** on the Mac, adopt V if (1) the
+geometric mean of V ÷ P over the catalogue's volumes whose arrays exceed the M5 Max's
+16 MiB cluster L2 (128³, 256³, 120³, 64 × 64 × 512, 512 × 64 × 64, in and out of place) is at
+most 0.95 at one thread, and (2) no volume is slower than P by more than the larger of 2 %
+and the band, in a fresh run.
+
 ## Verdict
