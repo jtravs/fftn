@@ -489,7 +489,11 @@ passes' twiddles overfill L2. FFTW plans the same rows as recursive decimation i
 0.0–0.3 times per point. A two-phase grid, the blocked answer FFTN has, pays only from 512
 KiB (32768: 0.89 of the chain); at 16384 its copies cost 30–50 instructions per point and it
 lost in every split (1.02–1.69). So the gap between L2/4 and L2/2 is a missing strategy, a
-depth-first chain, not a threshold. [X39](experiments/X39-xeon-long.md).
+depth-first chain, not a threshold. [X39](experiments/X39-xeon-long.md). **Then X46:** the
+depth-first chain (the sub-rows' first pass over the row, every sub-row finished on its own
+block, a decimation-in-time top pass in place) took 16384–262144 to 0.86 of their time with
+the top pass's twiddles stored and to 0.67 with them derived (lesson 3.26); FFTN ÷ FFTW
+1.06–1.34 → 0.70–0.86. [X46](experiments/X46-depth-first.md).
 
 3.23 **A strided axis is a batch of adjacent columns: vectorise across them and read each
 line once.** Running a plane's columns one at a time (copied element by element on wide
@@ -517,6 +521,16 @@ four complex values per register, each strided column copied) the blocks won 0.7
 an EPYC 7763, except where their tiles left L2 while the column alone fit L1 (1024²: 1.05
 with 4 columns). Ask what the column route pays (copies, set conflicts) before blocking.
 [X41](experiments/X41-planes-2.md).
+
+3.26 **A long row's twiddle table can weigh as much as the row: derive it, don't store it.**
+A pass of radix R over a row of n reads (R − 1) n / R twiddles; in x86's pre-arranged
+per-lane storage (32 bytes per complex double) that is 384–480 KiB for 16384 points, more
+than the 256 KiB row. On the Xeon 6240 (1 MiB L2) a depth-first chain whose top pass read
+such a table still missed L2 0.3–0.7 times per point at 16384–25000; forming w^(r k) as
+w^(r k_lo) · w^(r k_hi B) from two tables of about √n entries (one more complex
+multiplication per leg, one more rounding) took the misses to 0.00–0.01 and the time to
+0.69–0.84 of the stored table's at 16384–262144 points. The breadth-first chain's first
+pass has the same table. [X46](experiments/X46-depth-first.md).
 
 ## 4. Kernels and algorithms
 

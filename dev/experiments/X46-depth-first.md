@@ -1,6 +1,6 @@
 # X46: a depth-first long chain (rows between L2/4 and a few times L2)
 
-- **Status:** running
+- **Status:** done (A0, A, B adopted on the Xeon profile; C rejected, C2 adopted on the Apple profile; EPYC unchanged)
 - **Owner:** x46 session, 2026-11-17
 - **Phase / task:** 1 (phase 1 exit check, the tail rule; cause 5); follows X3, X26, X30b,
   X39, X42
@@ -172,6 +172,74 @@ counters within 0.03 on every case.
   in place, backward and × 3 in and out of place, 100000, 131072, 262144), then the tracking
   tier N against B. The decision rule above applies to A against N and to B against A.
 
+### Step 2, the judging runs
+
+**Xeon, A and B** (run 20261117-191049-bba3; Slurm 16394 build, 16395 timing, `--serial`;
+GCC 14.4, `avx512`, double, one thread; 30 rounds, 5 under load, band ±1.00 %): arms N =
+85b4ee0 (the plans of `main`), A = 326017c, B = f78509c, F = FFTW 3.3.11 (MEASURE), M = oneMKL
+2026.1. The 13 standard rows of the range; 25000 has no split and keeps its plan (A 1.008,
+B 0.999, no evidence).
+
+| row | A ÷ N | B ÷ N | B ÷ A | FFTN ÷ FFTW, N → B | FFTN ÷ MKL, N → B |
+|---|---|---|---|---|---|
+| 16384 | 0.777 | 0.654 | 0.842 | 1.29 → 0.84 | 1.31 → 0.85 |
+| 20000 | 0.851 | 0.698 | 0.820 | 1.25 → 0.86 | 0.88 → 0.60 |
+| 32768 | 0.895 | 0.636 | 0.711 | 1.32 → 0.86 | 1.11 → 0.72 |
+| 46080 | 0.883 | 0.606 | 0.686 | 1.18 → 0.72 | 0.96 → 0.58 |
+| 65536 | 0.828 | 0.658 | 0.795 | 1.06 → 0.70 | 1.07 → 0.71 |
+| 65536 backward | 0.836 | 0.671 | 0.803 | 1.07 → 0.72 | 1.07 → 0.72 |
+| 65536 in place | 0.933 | 0.697 | 0.747 | 1.14 → 0.80 | 1.13 → 0.79 |
+| 65536 × 3 | 0.809 | 0.662 | 0.818 | 1.06 → 0.70 | 1.09 → 0.72 |
+| 65536 × 3 in place | 0.916 | 0.699 | 0.763 | 1.14 → 0.79 | 1.13 → 0.79 |
+| 100000 | 0.986 | 0.752 | 0.763 | 1.34 → 1.02 | 0.88 → 0.67 |
+| 131072 | 0.806 | 0.676 | 0.839 | 1.09 → 0.73 | 0.90 → 0.61 |
+| 262144 | 0.817 | 0.685 | 0.838 | 1.07 → 0.74 | 0.87 → 0.60 |
+
+Over the 12 changed rows: A ÷ N 0.859 (every interval below 1; the largest 100000 0.986
+[0.971, 0.995]); B ÷ A 0.784 (at most 0.842); B ÷ N 0.674 (weighted geomean over the 13 rows
+0.694 [0.689, 0.700]). Tracking tier, N against B (run 20261117-192031-e85d, Slurm 16396/16397,
+`--serial`; 24 rounds, every one under load, band ±6.66 %): 6 faster, all of them changed rows
+(46080 0.547, 262144 0.554, 65536 0.638, in place 0.646, 100000 0.679, 16384 0.685), 55 no
+evidence, weighted geomean 0.939 [0.888, 0.987]; the largest median ratios were rows whose
+plans do not change (c2c 16 1.093 [0.974, 1.293], with B's own median time below N's; r2c 256
+1.064; c2c 1024 backward 1.036; 2²⁰ 1.037). RERUN
+
+**Mac, C and C2** (Homebrew Clang 23, `neon_fcma`, NEON FFTW 3.3.11): C above. C2 = d64e468
+against N = f78509c, run 20261117-175324-c4e7 (30 rounds, 1 under load, band ±1.00 %): 8192
+0.728 [0.706, 0.738], 16384 0.837 [0.812, 0.874]; the five rows of 4096 unchanged (0.993–1.005,
+no evidence); FFTN ÷ FFTW 8192 1.14 → 0.83, 16384 0.98 → 0.82. Tracking tier N against C2, run
+20261117-175507-1075 (24 rounds, 3 under load, band ±1.00 %): 1 faster (16384 0.848), 58 no
+evidence, 2 slower by 1.016 (4093 and 10403, Bluestein rows whose plans do not change),
+weighted geomean 0.998 [0.996, 0.999].
+
+**EPYC** (no plan changes; collateral of the shared code): TRACKE
+
 ## Verdict
 
-(pending)
+- **Diagnosis.** On the Xeon 6240 the rows from L2/4 up missed L2 because three lines and a
+  first pass's twiddle table of about n entries (32 bytes each in x86's pre-arranged storage)
+  overfill the 1 MiB L2. A depth-first chain keeps two lines and finishes every middle pass
+  on a sub-row in cache; with derived top-pass twiddles its misses at 16384–25000 fall to
+  FFTW's (0.00–0.01 per point).
+- **A0 (the strategy, forced only): built**, every target, both precisions, in and out of
+  place, tested against the reference and bit for bit across team sizes.
+- **A (the Xeon profile's rule, stored twiddles): adopted** (0.859 over 12 changed rows,
+  none slower), and then superseded by B.
+- **B (derived top-pass twiddles): adopted** (0.784 against A on the same rows, at most
+  0.842); the stored form is deleted (87fbb85). The Xeon's changed rows take 0.674 of
+  `main`'s time; FFTN ÷ FFTW there 1.06–1.34 → 0.70–0.86 (100000 1.02), ÷ MKL 0.58–0.85.
+- **C (Apple, L1/2 to 2 L1): rejected** by two batch rows of 4096 (1.031, 1.039).
+  **C2 (Apple, L1 to 2 L1): adopted** (8192 0.728, 16384 0.837, tracking none slower than
+  1.016 on rows it does not change).
+- **The EPYC 7763 keeps its plans**: no rule passed the screens (tops of 16 lose 1.2–1.7 on
+  16 registers; tops of 4 and 8 win at 20000 and 46080 only). Granite Rapids' profile (2 MiB
+  L2) does not take the rule; the fields are in bytes against L2 so that it can once measured.
+- **Arm C as planned (100000 as 100 × 1000)** was not built: the depth-first chain takes
+  100000 to 0.752 of its time.
+- **Library size**: text +4.4 % on the Mac (Homebrew Clang 23, `size` of `libfftn.a`, 20.83 → 21.75 MB at b27970f → 87fbb85); on x86-64 (GCC 14.4) the archive grew 4.7 % with both top-pass forms (b27970f → 85b4ee0), less after the stored form was deleted (not measured).
+- **Left open.** 25000 (1.33 of FFTW: three factors of 2, so C = 4 divides no top and its
+  sub-row; a masked or tiled first pass for C not dividing the top would cover it); 100000 at
+  FFTW's time; float rules (unmeasured); three or more tops for rows beyond 4 L2 (the
+  sub-rows of 524288 would be 512 KiB); the EPYC's 46080 and 20000 (0.83 and 0.94 with a top
+  of 4); Granite Rapids and Zen 5 runs; rows of 24576 and 49152 on the Mac (grids there,
+  0.71–0.72 in the screen) and 65536–131072 (0.90–0.92).
