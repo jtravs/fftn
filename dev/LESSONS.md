@@ -776,6 +776,22 @@ the EPYC 7763). The per-call set-up is the next cost for the smallest planes: a 
 column leaf computes and spills 32 leg addresses for four runs at 16².
 [X44](experiments/X44-small-planes.md).
 
+4.19 **In-cache FFTs on Zen 3 stall on the FP register file; count the lines a chain
+touches, and judge integer savings by time, not instruction counts.** On the EPYC 7763
+(GCC 16, AVX2) FFTN's 512–2048-point rows did FFTW's FP work (FP-pipe uops within 3 %) in
+14–18 % more cycles, and most of the extra cycles were dispatch stalls on the FP register
+file (PMCx0AE unit 0x20: 26–37 % of cycles against FFTW's 21–32 %), which fills while
+retirement waits on loads that miss L1. FFTN refilled L1 1.4–2.9 times as often, because a
+Stockham chain out of place touches three lines (source, destination, scratch) where FFTW's
+in-place passes on the output touch two. The last pass of a Stockham chain reads and writes
+the same elements per unit, so it can run in place: two-pass chains then touch two lines,
+and 512 points refilled L1 172 times instead of 509 and took 0.95 of the time (batches of
+256–512 points 0.95–0.98; rows that already fit L1 unchanged, as was the Mac's tracking
+tier). The converse warning: taking per-unit index arithmetic out of the lane-pass loop cut
+GCC's radix-16 unit from 190 to 158 instructions, yet ran 1.02–1.17 times as long, because
+GCC then kept the 32 leg offsets in stack slots and every leg load waited on an offset load.
+Zen 3's counters need groups of at most five events with the NMI watchdog on (a group of
+six never runs). [X47](experiments/X47-epyc-mid-2.md).
 
 ## 5. Threading
 

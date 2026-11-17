@@ -961,12 +961,18 @@ std::size_t chain_builder<T>::c2c_line(std::size_t n, int sign, endpoint src, en
   // a 32 KiB L1 longer (dev/experiments/X18-x86-kernels.md).
   const bool via_dst = !aliased && !copy_in && !copy_out && !bluestein && dst.stride == 1 &&
                        dst.where != slot::a && dst.where != slot::b;
+  // Two passes touch two lines: the first writes the destination and the last runs there in
+  // place. A last pass (m = 1) reads and writes the same R elements in each unit, and every
+  // output of a codelet depends on every input, so each unit loads all before it stores. On
+  // the EPYC a 512-point row refilled L1 517 times with three lines against FFTW's 181
+  // (dev/experiments/X47-epyc-mid-2.md). Not after a generic pass, which may store as it goes.
+  const bool two_lines = via_dst && rad.size() == 2 && has_codelet(rad.back());
   const std::size_t split = split_from(rad, bluestein, copy_out ? 1 : dst.stride);
   std::size_t s = 1;
   for (std::size_t i = 0; i < rad.size(); ++i) {
     const bool last = i + 1 == rad.size();
     endpoint next{.where = at.where == slot::a ? slot::b : slot::a, .stride = 1};
-    if (last && !copy_out) {
+    if ((last && !copy_out) || two_lines) {
       next = dst;
     } else if (via_dst) {
       next = (rad.size() - 1 - i) % 2 == 0 ? dst : endpoint{.where = slot::a, .stride = 1};
@@ -983,8 +989,9 @@ std::size_t chain_builder<T>::c2c_line(std::size_t n, int sign, endpoint src, en
   if (copy_out) {
     add_copy(n, at, dst, none, stages);
   }
-  // A single pass from the caller's memory to the caller's memory touches no scratch.
-  return std::max(copy_in || copy_out || rad.size() > 1 ? n : 0, line_scratch_);
+  // A single pass from the caller's memory to the caller's memory touches no scratch, nor do
+  // two-line chains.
+  return std::max(copy_in || copy_out || (rad.size() > 1 && !two_lines) ? n : 0, line_scratch_);
 }
 
 template <class T>

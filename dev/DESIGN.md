@@ -1140,7 +1140,10 @@ batches of short rows (task 2.2) and for the strided axes of c2c planes and volu
 and is copied when its source is its destination. Scratch is two lines a and b; an
 out-of-place line with a contiguous destination (not aliased, no copy, no Bluestein
 stage) uses the destination in place of b, so a chain touches three lines, not four
-(experiment X18: up to 15 % faster at 512–16384 on a 32 KiB L1).
+(experiment X18: up to 15 % faster at 512–16384 on a 32 KiB L1). A chain of two such passes
+whose last radix has a codelet runs its first pass into the destination and its last pass
+in place there (a last pass reads and writes the same elements in each unit), so it touches
+two lines and no scratch (experiment X47: 512 points 0.95 of the time on the EPYC 7763).
 
 **Grid** (two-phase Cooley–Tukey; the family that contains FFTW's recursion, Bailey's
 four-step and KFR's sandwich). N = N1·N2, the data viewed as N1 rows of N2. One phase is
@@ -2950,6 +2953,7 @@ to change before a release.
 | 2026-11-17 | A radix-25 codelet (Cooley–Tukey 5 × 5), a pass radix only, with passes on the x86 and scalar targets only (none on NEON); `avx2` double overrides take it at 500, 3125, 5000, 10000, 15625, 25000 and `avx512` double at 100, 500, 3125, 10000, 15625, 25000; two-level codelets staged through memory for 16-register targets rejected (experiment X42) | EPYC 0.874 / 0.891 of the arm before over the changed lengths (FFTN ÷ FFTW 3125 0.77 → 0.65, 15625 0.79 → 0.66), Xeon about 0.86 / 0.842 (100 1.14 → 0.88 of FFTW, 3125 0.81 → 0.53); on the Mac radix 25 lost to radix-5 chains; the two-level form changed nothing with GCC (1.000) and slowed radix 25; library text +6.1 % on x86-64, +2.0 % on the Mac |
 | 2026-11-17 | Multi-axis programs of at most 256 kernel calls per transform run from their calls unrolled at construction (section 8.3); the complex axes of real planes take the lanes column phase where C > 1 with their own block rule; where a cluster shares L2 a column block's tiles stay within twice L1 when its column elements lie four to a page (section 9.3) | X41: planes of up to 1024 points 0.87–0.94 of the walk's time (three machines); real planes 0.89 (EPYC) and 0.83 (Xeon) of the chain columns' time, the M5 Max lost 1.04 and keeps the chain; M5 Max 2048 × 36 0.90; joining the narrower block's phase (T1) rejected at 0.96 |
 | 2026-11-17 | In double, a lanes column phase of 17–32 points with a codelet of its length is that one pass (section 9.3); on `avx2` the column edge passes run a block's runs in an inner loop per group | X44: on x86 the row of 32 is a pair leaf and its columns took two lane passes (EPYC 32² 0.72, Xeon 0.77–0.81 of the time, ÷ FFTW 1.39 → 1.00, ÷ MKL 1.37 → 1.07); the nested runs 0.94 on the EPYC's planes and volumes, 0.962 on the Xeon (below the bar), 0.997 on the Mac |
+| 2026-11-17 | An out-of-place chain of two passes runs its last pass in place on the destination (two lines, no scratch) (X47) | Zen 3 refilled L1 1.4–2.9 times as often as FFTW at 512–2048 points; with two lines a 512-point row refilled 172 times instead of 509: EPYC exit-check cases of 256–640 points 0.95–0.98, every other case unchanged (tracking EPYC 0.998, Xeon 0.997, Mac 0.999); bits unchanged |
 ---
 
 ## 20. References
