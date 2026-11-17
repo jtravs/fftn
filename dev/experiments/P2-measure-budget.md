@@ -115,7 +115,16 @@ buffers timed on 4 KiB and on huge pages, judged by the slower; 12 of 12 rounds 
   where the rules' Rader was faster in this process. The case is bimodal by process (P1b),
   and judging by the slower kind of memory picks the program that is robust to it.
 
-The Xeon's third pass (Slurm 16204/16205) is queued.
+The Xeon's third pass (run 20261117-024749-2579, Slurm 16204/16205; 0 of 12 rounds loaded,
+±1.70 %):
+- rules within 5 % of measure on 56 of 61 cases (91.8 %);
+- fbench verdicts: measure 6 faster, 1 slower;
+- one program over 12 rounds in 32 of 61 cases.
+
+The slower case is c2c 262144 (1.07, [1.05, 1.10]). There measure chose a two-phase grid
+512 · 512 in every round over the rules' three phases 64 · 64 · 64, which is the price of
+judging by the slower kind of memory on a machine whose fbench buffers sit on the other
+kind.
 
 Rule 4 still fails on every machine. The instability that remains is between candidates within
 noise of each other; a rule judging stability should count a change of choice only when the
