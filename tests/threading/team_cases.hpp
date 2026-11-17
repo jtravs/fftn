@@ -310,6 +310,22 @@ void add_cases(std::vector<team_case>& out, const fftn::detail::build_settings& 
   one_volume.axes = {{.n = 10}, {.n = 24}, {.n = 30}};
   out.push_back(make_case("c2c_volume_team_order_10x24x30" + suffix, one_volume, 7200, 7200, false,
                           order, target));
+  out.push_back(make_case("c2c_volume_team_order_inplace_10x24x30" + suffix, one_volume, 7200, 7200,
+                          true, order, target));
+  // Three volumes with padded rows and planes, in a team plane at a time (X43b): element
+  // (z, y, x) of volume v at v 7740 + z 774 + y 43 + x (rows of 30 padded to 43, planes of
+  // 17 rows padded to 18).
+  const fftn::shape<c, c> padded_volumes{
+      .dir = fwd,
+      .axes = {{.n = 10, .in_stride = 774, .out_stride = 774},
+               {.n = 17, .in_stride = 43, .out_stride = 43},
+               {.n = 30, .in_stride = 1, .out_stride = 1}},
+      .batches = {{.count = 3, .in_dist = 7745, .out_dist = 7745}},
+  };
+  out.push_back(make_case("c2c_volumes_team_padded_3x10x17x30" + suffix, padded_volumes, 3 * 7745,
+                          3 * 7745, false, order, target));
+  out.push_back(make_case("c2c_volumes_team_padded_inplace_3x10x17x30" + suffix, padded_volumes,
+                          3 * 7745, 3 * 7745, true, order, target));
   // Columns the program runs alone through the chain (their tiles exceed the budget), which
   // a team program runs as blocks of a line with the chain's radices (X43 arm B2).
   team.profile.column_tile_bytes = 1024;

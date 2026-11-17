@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <complex>
 #include <cstddef>
+#include <limits>
 #include <string>
 #include <variant>
 #include <vector>
@@ -89,8 +90,11 @@ template <class T> void scratch_within_bound(fftn::isa target, bool planes) {
       EXPECT_LE(fftn::detail::workspace_bytes(*core, 1), lines + 64);
       for (const int team : {2, 8, 64}) {
         const auto t = static_cast<std::size_t>(team);
-        EXPECT_EQ(fftn::detail::workspace_bytes(*core, team) - t * team_core.slot_bytes,
-                  fftn::detail::workspace_bytes(*tiny, team) - t * tiny->slot_bytes);
+        // At least a serial execution's bytes, which an executor's fallback needs.
+        EXPECT_EQ(fftn::detail::workspace_bytes(*core, team),
+                  std::max(core->bytes,
+                           t * team_core.slot_bytes + (fftn::detail::workspace_bytes(*tiny, team) -
+                                                       t * tiny->slot_bytes)));
       }
       // Never a second volume (the smallest volumes fit a few lines of scratch anyway).
       const std::size_t volume = vc.n0 * vc.n1 * vc.n2 * 2 * sizeof(T);
@@ -144,35 +148,55 @@ TEST(Volumes, InnerAxesPlaneAtATime) {
 
 // Plane at a time changes only the order of the lines: its output equals the axes one by one
 // (which tests/api checks against the reference) byte for byte, on every instruction set the
-// machine runs, in place and out of place, odd and prime extents included.
+// machine runs, in place and out of place, odd and prime extents included, for one tight
+// volume and for three volumes with padded rows and planes and a gap between volumes.
+template <class T>
+fftn::shape<std::complex<T>, std::complex<T>> padded_volumes(const volume_case& vc,
+                                                             std::size_t count) {
+  auto s = shape_of<T>(vc);
+  const auto row = static_cast<std::ptrdiff_t>(vc.n2 + 3);
+  const auto plane = row * static_cast<std::ptrdiff_t>(vc.n1 + 1);
+  s.axes[0].in_stride = s.axes[0].out_stride = plane;
+  s.axes[1].in_stride = s.axes[1].out_stride = row;
+  s.axes[2].in_stride = s.axes[2].out_stride = 1;
+  const std::ptrdiff_t dist = plane * static_cast<std::ptrdiff_t>(vc.n0) + 5;
+  s.batches = {{.count = count, .in_dist = dist, .out_dist = dist}};
+  return s;
+}
+
 template <class T> void planes_equal_axes(fftn::isa target) {
   using c = std::complex<T>;
   const std::vector<volume_case> cases = {{9, 7, 11},  {17, 15, 37}, {12, 10, 64},
                                           {31, 2, 19}, {16, 32, 24}, {5, 64, 3}};
   for (const volume_case& vc : cases) {
-    for (const bool in_place : {false, true}) {
-      SCOPED_TRACE(label(vc, in_place));
-      const std::size_t points = vc.n0 * vc.n1 * vc.n2;
-      fftn::test::input_source src(points);
-      const auto x = src.complexes<T>(points);
-      std::vector<std::vector<c>> got;
-      for (const bool planes : {true, false}) {
-        fftn::detail::build_settings settings;
-        settings.volume_planes = planes;
-        const auto core =
-            fftn::detail::make_plan_core(fftn::detail::view_of(shape_of<T>(vc)),
-                                         {.in_place = in_place, .force_isa = target}, settings);
-        const fftn::workspace ws(fftn::detail::workspace_bytes(*core, 1));
-        std::vector<c> y(points);
-        if (in_place) {
-          y = x;
-          fftn::detail::execute_core(*core, 0, 1, y.data(), y.data(), ws);
-        } else {
-          fftn::detail::execute_core(*core, 0, 1, x.data(), y.data(), ws);
+    for (const bool padded : {false, true}) {
+      const auto shape = padded ? padded_volumes<T>(vc, 3) : shape_of<T>(vc);
+      const std::size_t count = shape.batches.empty() ? 1 : shape.batches[0].count;
+      const std::size_t elements = padded
+                                       ? static_cast<std::size_t>(shape.batches[0].in_dist) * count
+                                       : vc.n0 * vc.n1 * vc.n2;
+      for (const bool in_place : {false, true}) {
+        SCOPED_TRACE(label(vc, in_place) + (padded ? ", 3 padded volumes" : ""));
+        fftn::test::input_source src(elements);
+        const auto x = src.complexes<T>(elements);
+        std::vector<std::vector<c>> got;
+        for (const bool planes : {true, false}) {
+          fftn::detail::build_settings settings;
+          settings.volume_planes = planes;
+          const auto core = fftn::detail::make_plan_core(
+              fftn::detail::view_of(shape), {.in_place = in_place, .force_isa = target}, settings);
+          const fftn::workspace ws(fftn::detail::workspace_bytes(*core, 1));
+          std::vector<c> y(elements);
+          if (in_place) {
+            y = x;
+            fftn::detail::execute_core(*core, 0, count, y.data(), y.data(), ws);
+          } else {
+            fftn::detail::execute_core(*core, 0, count, x.data(), y.data(), ws);
+          }
+          got.push_back(std::move(y));
         }
-        got.push_back(std::move(y));
+        EXPECT_TRUE(got[0] == got[1]) << "plane at a time and axis by axis differ";
       }
-      EXPECT_TRUE(got[0] == got[1]) << "plane at a time and axis by axis differ";
     }
   }
 }
@@ -184,6 +208,19 @@ TEST(Volumes, PlaneAtATimeEqualsTheAxesOneByOne) {
     planes_equal_axes<float>(t);
   }
 }
+
+// An executor of two lanes that runs its tasks in order and counts its dispatches.
+struct two_lanes {
+  int calls = 0;
+  [[nodiscard]] int concurrency() const { return 2; }
+  [[nodiscard]] int group_size() const { return 0; }
+  void bulk(int n, fftn::task_function task, void* arg) {
+    ++calls;
+    for (int k = 0; k < n; ++k) {
+      task(arg, k);
+    }
+  }
+};
 
 // The team program (X43 arm B1): with machine_profile::column_team_bytes a c2c plan of several
 // axes keeps a second core whose column blocks are narrower and whose radices are the same,
@@ -214,6 +251,35 @@ TEST(TeamProgram, NarrowerBlocksTheSameRadices) {
               static_cast<std::size_t>(team) * plane->team->slot_bytes);
   }
   EXPECT_EQ(fftn::detail::workspace_bytes(*plane, 1), plane->bytes);
+  // A team's workspace is never smaller than a serial execution's (here the team core's
+  // tiles are about half the program's), since an executor that dispatches one member runs
+  // the program on it: a schedule that splits nothing (one transform, no split) on two lanes
+  // falls back to the serial program, on exactly workspace_bytes(2) bytes.
+  for (const int team : {2, 3, 8}) {
+    EXPECT_GE(fftn::detail::workspace_bytes(*plane, team),
+              fftn::detail::workspace_bytes(*plane, 1));
+  }
+  {
+    fftn::detail::build_settings unsplit = settings;
+    unsplit.profile.split_min_points = std::numeric_limits<std::size_t>::max();
+    unsplit.profile.split_min_points_mesh = std::numeric_limits<std::size_t>::max();
+    const auto shape = fftn::planes_c2c<double>(256, 256, 1, fftn::direction::forward);
+    const auto core =
+        fftn::detail::make_plan_core(fftn::detail::view_of(shape), fftn::options(), unsplit);
+    ASSERT_NE(core->team, nullptr);
+    ASSERT_GT(core->bytes, core->team->slot_bytes);
+    fftn::test::input_source src(256);
+    const auto x = src.complexes<double>(256 * 256);
+    std::vector<std::complex<double>> serial(x.size());
+    std::vector<std::complex<double>> fallback(x.size());
+    const fftn::workspace one(fftn::detail::workspace_bytes(*core, 1));
+    fftn::detail::execute_core(*core, 0, 1, x.data(), serial.data(), one);
+    two_lanes ex;
+    const fftn::workspace two(fftn::detail::workspace_bytes(*core, 2));
+    fftn::detail::execute_on(*core, x.data(), fallback.data(), ex, two);
+    EXPECT_EQ(ex.calls, 0) << "the schedule dispatched a team";
+    EXPECT_TRUE(fallback == serial);
+  }
   // Columns the program runs alone through the chain (tiles beyond the budget) run as blocks
   // of a line in the team program, with the chain's radices (X43 arm B2).
   fftn::detail::build_settings tight = settings;

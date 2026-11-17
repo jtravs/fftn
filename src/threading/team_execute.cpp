@@ -19,6 +19,7 @@
 #include "threading/wait.hpp"
 #include "threading/work_graph.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <cassert>
 #include <chrono>
@@ -92,14 +93,17 @@ std::size_t workspace_bytes(const plan_core& core, int lanes) noexcept {
   const auto l = static_cast<std::size_t>(lanes);
   // The slack aligns the state to its 128-byte lines at any workspace address. A size that
   // does not fit saturates, so that allocating it fails rather than wrapping to a small one.
-  // A team runs the team program where there is one (execute_member).
+  // A team runs the team program where there is one (execute_member), whose slots may be
+  // smaller than the program's scratch; but an executor that hands back one lane and a
+  // schedule that dispatches only one member run the program serially on the same workspace
+  // (executor_execute.cpp), so the bytes are never fewer than a serial execution's.
   std::size_t slots = 0;
   std::size_t total = 0;
   if (__builtin_mul_overflow(l, team_core(core).slot_bytes, &slots) ||
       __builtin_add_overflow(slots, sync_line + team_layout{l}.bytes(), &total)) {
     return std::numeric_limits<std::size_t>::max();
   }
-  return total;
+  return std::max(total, core.bytes);
 }
 
 transform_range transforms_of(const plan_core& core, const team& t) noexcept {
