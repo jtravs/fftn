@@ -171,6 +171,13 @@ geometric mean is at most 0.95 and no threaded plane is slower than the base by 
 the larger of 2 % and the band, a case past it re-run once; serial programs unchanged by
 construction.
 
+T1b, EPYC run 20261117-113521-9e86 (12 rounds, 8 loaded, band ±4.3 %; B8 3e405ec and T1b
+947bfbe at 8 lanes): nothing slower beyond the band (worst c2c 512² op 1.012), but the 55
+planes with a narrower block take 0.968 of the base's time (the 39 that run threaded rather
+than inline 0.957; T1's own run gave 0.965 on those): 100² 0.92, real 96²–512² 0.93–0.96,
+1000² 0.94–0.98, 2048 × 36 and real 2048² 1.00. Rule (1) fails: T1 rejected, reverted
+(revert of 947bfbe). The remainder phase costs a few per cent at 8 lanes, less than the bar.
+
 ### L: columns beyond L2 (the Mac's 2048 × 36)
 
 Screen (not a judging run), Mac run 20261117-111654-cd9f (band ±1.3 %), forced blocks on

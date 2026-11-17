@@ -1583,8 +1583,8 @@ has its own page, 2048² on the EPYC 0.126 of the chain columns' time with 16 co
 block whose tiles left L2 lost, Xeon 2048 × 36 0.79 with 4 columns and 1.09 with 16). The columns past the last whole block run as one
 narrower block (a loop's `start` offsets its nest), its idle lanes never written. A block is
 a line of the phase's loop nest, so threads share blocks as they share rows (13.2); the
-narrower block's nest joins the whole blocks' phase (`loop::joins`, X41), so that it is not
-a phase of one chunk. The complex axes of r2c and c2r plans take the same phase with their
+narrower block's nest is a phase of its own, of one chunk (joining it to the whole blocks'
+phase gained 3–4 % at 8 lanes, X41, below the bar). The complex axes of r2c and c2r plans take the same phase with their
 own block rule (`column_block`, `real`; X41): their rows of n/2 + 1 columns lie an odd
 multiple of 16 bytes apart for even n, so a column alone crowds no L1 set and the lanes pay
 only for the copies a strided column costs where C > 1: none on NEON double (the M5 Max lost

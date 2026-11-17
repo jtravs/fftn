@@ -787,12 +787,6 @@ times slower: its planner does not fall back to one thread for tiny problems. A 
 comparison that takes FFTW's threaded time alone flatters the other library on every small
 case. [X41](experiments/X41-planes-2.md).
 
-5.10 **A remainder that is its own phase serialises the team.** A plane's columns past its
-last whole block ran as a nest of one line after the blocks' nest, so one member ran it
-while seven waited at the phase boundary: joining it to the blocks' phase took threaded
-real planes (always n/2 + 1 columns) and 100² to 0.81–0.95 of their time at 8 lanes on the
-EPYC. [X41](experiments/X41-planes-2.md).
-
 ## 6. Toolchain and testing pitfalls
 
 6.1 **Build with GCC as well as Clang before a remote round trip.** GCC warns where Clang
