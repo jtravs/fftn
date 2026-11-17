@@ -52,10 +52,11 @@ constexpr std::array<std::size_t, cost_radices> pass_radices{
 // radix 32 and 64 candidates (campaign x38-epyc-avx2), the lengths where one sequence was at
 // most 0.97 of the planner's at batch 1 and 64; 80, 160, 240, 640, 2000, 3000 and 3600 take
 // a radix-20 pass by the same rule (campaign x38-r20), as FFTW's plans do there
-// (dev/experiments/X38-epyc-mid.md).
+// (dev/experiments/X38-epyc-mid.md). 500, 3125, 10000 and 15625 take a radix-25 pass by
+// that rule (experiment X42, campaign x42-r25f-epyc: dev/experiments/X42-codelets.md).
 // clang-format off
 // NOLINTBEGIN(readability-trailing-comma): bench/x2/fit.py writes and parses this layout
-constexpr std::array<radix_override, 36> avx2_double_overrides{{
+constexpr std::array<radix_override, 40> avx2_double_overrides{{
     {.n = 27, .radices = {3, 9, 0, 0}},
     {.n = 42, .radices = {2, 3, 7, 0}},
     {.n = 54, .radices = {2, 3, 9, 0}},
@@ -71,6 +72,7 @@ constexpr std::array<radix_override, 36> avx2_double_overrides{{
     {.n = 384, .radices = {12, 32, 0, 0}},
     {.n = 448, .radices = {2, 16, 14, 0}},
     {.n = 490, .radices = {2, 7, 5, 7}},
+    {.n = 500, .radices = {20, 25, 0, 0}},
     {.n = 512, .radices = {16, 32, 0, 0}},
     {.n = 567, .radices = {9, 9, 7, 0}},
     {.n = 588, .radices = {6, 7, 14, 0}},
@@ -84,12 +86,15 @@ constexpr std::array<radix_override, 36> avx2_double_overrides{{
     {.n = 2000, .radices = {10, 10, 20, 0}},
     {.n = 2400, .radices = {10, 15, 16, 0}},
     {.n = 3000, .radices = {10, 15, 20, 0}},
+    {.n = 3125, .radices = {5, 25, 25, 0}},
     {.n = 3600, .radices = {12, 15, 20, 0}},
     {.n = 4096, .radices = {8, 8, 8, 8}},
     {.n = 4800, .radices = {8, 12, 5, 10}},
     {.n = 6000, .radices = {8, 10, 5, 15}},
     {.n = 8192, .radices = {8, 8, 16, 8}},
+    {.n = 10000, .radices = {20, 20, 25, 0}},
     {.n = 12000, .radices = {8, 10, 15, 10}},
+    {.n = 15625, .radices = {25, 25, 25, 0}},
     {.n = 16384, .radices = {8, 16, 16, 8}},
     {.n = 20000, .radices = {8, 5, 10, 5, 10}},
 }};

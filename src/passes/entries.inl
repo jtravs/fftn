@@ -77,12 +77,13 @@ consteval leaf_fn unit_leaf_entry() {
 }
 
 // Whether the target has passes of radix R at all. Radix 25 (experiment X42) is a pass
-// radix of the x86 targets' sequences only: on NEON its passes lost to radix-5 passes
-// (3125, 25000 on the Mac), so no plan takes it there and its rows stay empty, about 5 % of
-// a target's code. An empty row has no lane pass, which the chain's checks of forced
-// radices, the lanes strategy and the Bluestein convolutions read as "no codelet".
+// radix of the x86 sequences only (and of the scalar target, which plans with avx2's
+// tables): on NEON its passes lost to radix-5 passes (3125, 25000 on the Mac), so no plan
+// takes it there and its rows stay empty, about 5 % of a target's code. An empty row has no
+// lane pass, which the chain's checks of forced radices, the lanes strategy and the
+// Bluestein convolutions read as "no codelet".
 template <std::size_t R>
-inline constexpr bool radix_on_target = R != 25 || id == target::avx2 || id == target::avx512;
+inline constexpr bool radix_on_target = R != 25 || (id != target::neon && id != target::neon_fcma);
 
 // The passes of the codelet in row I of gen::radices. A plan has one scale, on one edge
 // (core/plan_core.cpp), so no pass scales both: that entry stays null rather than
