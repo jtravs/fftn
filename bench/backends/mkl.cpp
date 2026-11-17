@@ -41,6 +41,12 @@
 
 namespace {
 
+// The descriptors' DFTI_THREAD_LIMIT: 1, or THREADS in fbench-mkl_omp.
+int& thread_limit() {
+  static int limit = 1;
+  return limit;
+}
+
 std::string& description() {
   static std::string text;
   return text;
@@ -100,6 +106,7 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
     fbench::backends::say(message, message_size, "unknown MKL option " + key);
     return fbench_error;
   }
+  thread_limit() = threads;
 #ifdef FBENCH_MKL_OMP
   mkl_set_num_threads(threads);
   const char* threading = "gnu_thread";
@@ -180,7 +187,7 @@ std::int32_t fbench_create(const fbench_case* c, void* /*in*/, void* /*out*/, vo
 #if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic pop
 #endif
-  set(DFTI_THREAD_LIMIT, static_cast<MKL_LONG>(1));
+  set(DFTI_THREAD_LIMIT, static_cast<MKL_LONG>(thread_limit()));
   if (status == DFTI_NO_ERROR) {
     status = DftiCommitDescriptor(r->handle);
   }
