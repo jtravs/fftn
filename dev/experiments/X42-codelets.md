@@ -176,6 +176,43 @@ leg was not needed). Library text: C changed x86-64 GCC 16 `libfftn.a` by −0.0
   10 · 5 · 20 · 25 (winners differ: B3 takes 10 · 20 · 25, 0.870 / 0.901, and
   10 · 5 · 20 · 25, 0.932 / 0.948); 20000 no sequence passes at both batches; 100, 1000,
   2000, 3000: the planner's sequence is best.
+- x42-r25f-xeon (flat build, `avx512`, confirmations 20261117-121144-f413 to -122306-e8c2;
+  bands up to ±7.3 % on the shared Xeon): one winner at both batches, intervals clear of the
+  band (B2): 100 4 · 25 1.297 / 1.270, 500 20 · 25 1.247 / 1.204; winners differ (B3): 3125
+  25 · 5 · 25 (0.644 / 0.683), 10000 20 · 20 · 25 (0.897 / 0.923), 15625 5 · 5 · 25 · 25
+  (0.839 / 0.904), 25000 4 · 25 · 10 · 25 (0.968 / 0.734); 5000 20 · 25 · 10 0.914 / 0.952
+  with the batch-64 interval in the band (neither arm); 1000 and 20000 pass at one batch
+  only (20000 and 25000 at batch 64 0.70–0.74: radix 25 last where the batch leaves L2).
+- The campaigns on C's build (x42-r25-epyc, x42-r25-xeon) chose 3125, 5000, 15625 on the
+  EPYC and only 100 on the Xeon; not used.
+
+### B2 and B3 on `avx2` (EPYC, `--serial`)
+
+Run 20261117-115206-d594 (Slurm 511780; 30 rounds, 5 under load, band ±1.00 %), arms N
+(1137965: main's plans with the radix-25 rows), B2 (a44c8e5), B3 (10e9487), FFTW; the
+standard catalogue's rows of the overridden lengths (all at batch 1) and the r2c and c2r
+rows of 10000 (complex half 5000):
+
+| case | B2 ÷ N | B3 ÷ N | FFTN ÷ FFTW, N → B3 |
+|---|---|---|---|
+| c2c 500 | **0.900** | 0.900 | 0.98 → 0.88 |
+| c2c 3125 | **0.831** | 0.836 | 0.77 → 0.65 |
+| c2c 5000 | 1.010 | **0.866** | 0.96 → 0.83 |
+| c2c 10000 | **0.932** | 0.928 | 0.92 → 0.85 |
+| c2c 15625 | **0.836** | 0.836 | 0.79 → 0.66 |
+| c2c 25000 | 0.994 | **0.907** | 0.98 → 0.89 |
+| r2c 10000 | 1.002 | **0.895** | 1.01 → 0.90 |
+| c2r 10000 | 1.004 | **0.906** | 0.99 → 0.89 |
+
+B2 over its four changed cases: geomean **0.874**, none slower; B3 against B2 over its four
+(5000, 25000, r2c and c2r 10000): **0.891**; B3 against N over all eight 0.884 [0.879,
+0.889]. Tracking tier, N against B3 (run 20261117-115432-0b0b, Slurm 511781; 24 rounds, all
+under load, band ±4.22 %): 0.987 [0.751, 1.003], r2c and c2r 1000 (complex half 500) 0.93
+and 0.90 faster, 59 no evidence; c2r 65536 1.074 past 1 + band + 2 % with an unchanged
+plan, re-run (20261117-123726-548b, Slurm 511810; 40 rounds, band ±1.00 %): c2r 65536
+0.993, c2c 65536 0.997. **B2 and B3 pass (a)–(c) on `avx2`.** (The EPYC's c2c rows of
+these lengths were already at or under FFTW's time; 20000, its exit-check case at 1.07,
+gained nothing from radix 25.)
 
 ## Verdict
 
