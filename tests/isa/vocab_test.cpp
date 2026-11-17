@@ -11,6 +11,7 @@
 // (reference.hpp), and the data is checked to tell it from the unfused order. A lost FMA
 // therefore fails, as does any wrong sign, part or lane.
 
+#include "isa/arch.hpp"
 #include "isa/kernel_table.hpp"
 #include "isa/probe_table.hpp"
 #include "isa/reference.hpp"
@@ -19,13 +20,16 @@
 
 #include <gtest/gtest.h>
 
-#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <random>
 #include <string>
 #include <tuple>
 #include <vector>
+
+#if FFTN_ARCH_X86_64
+#include <algorithm> // the narrow vocabulary's suite
+#endif
 
 namespace {
 

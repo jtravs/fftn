@@ -21,10 +21,14 @@ namespace fftn::inline v0::detail {
 // One candidate: the build_settings fields it sets. The default is the rules' plan.
 struct plan_choice {
   strategy_choice strategy = strategy_choice::rules;
+  // The {} is not redundant: designated initializers that leave these out would otherwise
+  // warn (-Wmissing-field-initializers, Clang and GCC).
+  // NOLINTBEGIN(readability-redundant-member-init)
   std::vector<std::size_t> radices{};      // build_settings::radices
   std::vector<std::size_t> grid_factors{}; // build_settings::grid_factors
-  std::size_t grid_phases = 0;             // build_settings::grid_phases
-  int rader = -1;                          // build_settings::rader
+  // NOLINTEND(readability-redundant-member-init)
+  std::size_t grid_phases = 0; // build_settings::grid_phases
+  int rader = -1;              // build_settings::rader
 
   bool operator==(const plan_choice&) const = default;
 };

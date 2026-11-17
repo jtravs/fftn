@@ -23,7 +23,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <complex>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -33,6 +32,7 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -68,10 +68,10 @@ std::vector<unsigned char> run(const plan_core& c) {
       f[i] = static_cast<float>(std::sin(0.37 * static_cast<double>(i) + 0.1));
     }
   }
-  fftn::workspace ws(d::workspace_bytes(c, 1));
+  const fftn::workspace ws(d::workspace_bytes(c, 1));
   if (c.in_place) {
     d::execute_core(c, 0, d::transform_count(c), in.data(), in.data(), ws);
-    out = in;
+    out = std::move(in);
   } else {
     d::execute_core(c, 0, d::transform_count(c), in.data(), out.data(), ws);
   }
@@ -196,7 +196,7 @@ TEST(RankedRadices, LongPowersOfTwoFollowFftl) {
 
 TEST(PlanChoice, TextRoundTrips) {
   const std::vector<plan_choice> choices{
-      {},
+      plan_choice(),
       {.strategy = strategy_choice::chain},
       {.strategy = strategy_choice::grid, .grid_phases = 3},
       {.strategy = strategy_choice::grid, .grid_factors = {64, 32, 32}},
@@ -208,8 +208,7 @@ TEST(PlanChoice, TextRoundTrips) {
     const std::string t = d::choice_text(c);
     SCOPED_TRACE(t);
     const std::optional<plan_choice> back = d::parse_choice(t);
-    ASSERT_TRUE(back.has_value());
-    EXPECT_EQ(*back, c);
+    EXPECT_TRUE(back == c);
   }
   EXPECT_EQ(d::choice_text({}), "rules");
   EXPECT_EQ(d::choice_text({.strategy = strategy_choice::grid, .grid_factors = {64, 1024}}),
@@ -217,10 +216,23 @@ TEST(PlanChoice, TextRoundTrips) {
 }
 
 TEST(PlanChoice, MalformedTextIsRefused) {
-  for (const char* t :
-       {"", "foo", "strategy=", "strategy=fast", "radices=1.2", "radices=4..4",
-        "radices=", "grid=64", "grid=2.2.2.2", "phases=4", "rader=2", "radices=4.4 strategy=chain",
-        "rader=0 rader=1", "rules extra", "strategy=chain  radices=4.4"}) {
+  for (const char* t : {
+           "",
+           "foo",
+           "strategy=",
+           "strategy=fast",
+           "radices=1.2",
+           "radices=4..4",
+           "radices=",
+           "grid=64",
+           "grid=2.2.2.2",
+           "phases=4",
+           "rader=2",
+           "radices=4.4 strategy=chain",
+           "rader=0 rader=1",
+           "rules extra",
+           "strategy=chain  radices=4.4",
+       }) {
     SCOPED_TRACE(t);
     EXPECT_FALSE(d::parse_choice(t).has_value());
   }
@@ -373,7 +385,7 @@ TEST(Measure, KeepsTheRulesUnlessBeatenByOnePercent) {
   fake_clock clock;
   clock.seconds["strategy=chain"] = 0.995;
   const auto core = measured(d::view_of(shape), clock);
-  const auto rules = d::build_plan_core(d::view_of(shape), {}, fixed_settings());
+  const auto rules = d::build_plan_core(d::view_of(shape), fftn::options(), fixed_settings());
   EXPECT_EQ(rules->built, strategy_choice::grid);
   EXPECT_EQ(core->program_text, rules->program_text);
   EXPECT_EQ(d::program_fingerprint(*core), d::program_fingerprint(*rules));
@@ -398,7 +410,7 @@ TEST(Measure, ADroppedCandidateNeverWins) {
   clock.seconds["strategy=chain"] = 2; // dropped after three rounds, then the lowest median
   clock.others = 20;
   const auto core = measured(d::view_of(shape), clock);
-  const auto rules = d::build_plan_core(d::view_of(shape), {}, fixed_settings());
+  const auto rules = d::build_plan_core(d::view_of(shape), fftn::options(), fixed_settings());
   EXPECT_EQ(d::program_fingerprint(*core), d::program_fingerprint(*rules));
   EXPECT_EQ(std::ranges::count(clock.asked, "strategy=chain"), 3);
 }
@@ -458,7 +470,8 @@ TEST(Measure, ATinyBudgetTimesNothing) {
   EXPECT_NE(d::describe(*core).find("planning: measured (0 of 1 distinct candidates timed"),
             std::string::npos);
   EXPECT_EQ(d::program_fingerprint(*core),
-            d::program_fingerprint(*d::build_plan_core(d::view_of(shape), {}, build_settings{})));
+            d::program_fingerprint(
+                *d::build_plan_core(d::view_of(shape), fftn::options(), build_settings{})));
 }
 
 // A scratch limit below one transform's data times one transform, and only the rules'
@@ -473,9 +486,11 @@ TEST(Measure, ScratchLimitTimesFewerTransforms) {
   EXPECT_NE(text.find("0 of 1 distinct candidates timed on 1 transform,"), std::string::npos)
       << text;
   EXPECT_NE(text.find("64 transforms"), std::string::npos) << text;
-  const fftn::c2c_plan<double> q(shape, {.effort = fftn::planning::quick,
-                                         .measure_seconds = 0.05,
-                                         .measure_scratch_bytes = std::size_t{1} << 20U});
+  const fftn::c2c_plan<double> q(shape, {
+                                            .effort = fftn::planning::quick,
+                                            .measure_seconds = 0.05,
+                                            .measure_scratch_bytes = std::size_t{1} << 20U,
+                                        });
   const std::string more = q.describe();
   const std::size_t at = more.find(" timed on ");
   ASSERT_NE(at, std::string::npos) << more;
@@ -614,7 +629,7 @@ TEST(Wisdom, PublicRoundTripThroughAFile) {
 
 TEST(Wisdom, AStaleEntryIsIgnored) {
   const auto shape = fftn::rows_c2c<double>(4096, 1, fftn::direction::forward);
-  const auto core = d::build_plan_core(d::view_of(shape), {}, build_settings{});
+  const auto core = d::build_plan_core(d::view_of(shape), fftn::options(), build_settings{});
   d::wisdom_record r = d::record_of(*core);
   r.check ^= 1U;
   const fftn::wisdom w(d::record_text(r));
@@ -625,7 +640,7 @@ TEST(Wisdom, AStaleEntryIsIgnored) {
 
 TEST(Wisdom, OtherMachinesEntriesAreKeptButNotUsed) {
   const auto shape = fftn::rows_c2c<double>(4096, 1, fftn::direction::forward);
-  const auto core = d::build_plan_core(d::view_of(shape), {}, build_settings{});
+  const auto core = d::build_plan_core(d::view_of(shape), fftn::options(), build_settings{});
   d::wisdom_record r = d::record_of(*core);
   r.cpu = "Some Other Processor";
   r.program = "radices=2.2.2.2.2.2.2.2.2.2.2.2";
@@ -637,14 +652,22 @@ TEST(Wisdom, OtherMachinesEntriesAreKeptButNotUsed) {
 
 TEST(Wisdom, MalformedTextIsRefusedNamingTheLine) {
   const auto shape = fftn::rows_c2c<double>(64, 1, fftn::direction::forward);
-  const auto core = d::build_plan_core(d::view_of(shape), {}, build_settings{});
+  const auto core = d::build_plan_core(d::view_of(shape), fftn::options(), build_settings{});
   const std::string good = d::record_text(d::record_of(*core));
   EXPECT_EQ(fftn::wisdom("# a comment\n\n" + good + "\n").size(), 1U);
-  for (const std::string& bad :
-       {std::string("not wisdom"), good + "\textra", good.substr(0, good.size() - 1) + "g",
-        good.substr(0, good.size() - 1), good.substr(0, good.rfind('\t'))}) {
+  for (const std::string& bad : {
+           std::string("not wisdom"),
+           good + "\textra",
+           good.substr(0, good.size() - 1) + "g",
+           good.substr(0, good.size() - 1),
+           good.substr(0, good.rfind('\t')),
+       }) {
+    std::string text = good;
+    text += '\n';
+    text += bad;
+    text += '\n';
     try {
-      const fftn::wisdom w(good + "\n" + bad + "\n");
+      const fftn::wisdom w(text);
       ADD_FAILURE() << "accepted " << bad;
     } catch (const std::invalid_argument& e) {
       EXPECT_NE(std::string(e.what()).find("line 2"), std::string::npos) << e.what();
@@ -664,9 +687,13 @@ TEST(Wisdom, CheckedProductRefusesOverflow) {
 // apply to the shape, is stale: ignored, and describe() says so.
 TEST(Wisdom, AnUnbuildableOrInapplicableProgramIsIgnored) {
   const auto shape = fftn::rows_c2c<double>(4096, 1, fftn::direction::forward);
-  const auto core = d::build_plan_core(d::view_of(shape), {}, build_settings{});
-  for (const char* program : {"radices=4611686018427387905.16.256", "grid=3.5",
-                              "strategy=grid grid=64.64", "radices=7.7"}) {
+  const auto core = d::build_plan_core(d::view_of(shape), fftn::options(), build_settings{});
+  for (const char* program : {
+           "radices=4611686018427387905.16.256",
+           "grid=3.5",
+           "strategy=grid grid=64.64",
+           "radices=7.7",
+       }) {
     SCOPED_TRACE(program);
     d::wisdom_record r = d::record_of(*core);
     r.program = program;
@@ -694,7 +721,7 @@ TEST(Wisdom, TheScaleIsPartOfTheKey) {
 // again, and never used; a changed build identifier is another build.
 TEST(Wisdom, OtherBuildsAndFormatsAreKeptVerbatim) {
   const auto shape = fftn::rows_c2c<double>(4096, 1, fftn::direction::forward);
-  const auto core = d::build_plan_core(d::view_of(shape), {}, build_settings{});
+  const auto core = d::build_plan_core(d::view_of(shape), fftn::options(), build_settings{});
   d::wisdom_record r = d::record_of(*core);
   const std::string build = r.build;
   ASSERT_NE(build.find('+'), std::string::npos);
@@ -742,7 +769,7 @@ TEST(Wisdom, SavingToAnUnwritablePathThrows) {
 TEST(Wisdom, AStaleEntryUnderMeasureFallsBackToTiming) {
   const auto shape = fftn::rows_c2c<double>(65536, 1, fftn::direction::forward);
   build_settings settings = fixed_settings();
-  const auto core = d::build_plan_core(d::view_of(shape), {}, settings);
+  const auto core = d::build_plan_core(d::view_of(shape), fftn::options(), settings);
   d::wisdom_record r = d::record_of(*core);
   r.check ^= 1U;
   const fftn::wisdom w(d::record_text(r));
@@ -766,6 +793,7 @@ TEST(Wisdom, SharedReadOnlyByConcurrentMeasuredPlanning) {
   }
   std::vector<std::string> notes(8);
   std::vector<std::thread> threads;
+  threads.reserve(notes.size());
   for (std::size_t t = 0; t < notes.size(); ++t) {
     threads.emplace_back([&, t] {
       const std::size_t n = lengths[t % lengths.size()];

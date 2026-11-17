@@ -574,13 +574,42 @@ TEST(Schedule, ProfilesOfRecordedMachines) {
   EXPECT_EQ(fields("linux-intel-xeon-gold-6240.sysfs", true),
             (planner_fields{512 * kib, 1 * mib, 32 * kib, 256 * kib, never, 15, 0, 0, 0, never, 0,
                             0, false, never, 4 * mib}));
-  const planner_fields axion{1 * mib,   2 * mib, 64 * kib, 512 * kib, never,
-                             0,         0,       16 * kib, 0,         40 * mib,
-                             160 * mib, never,   false,    64 * kib,  1 * mib};
+  const planner_fields axion{
+      .grid_min_bytes = 1 * mib,
+      .grid_three_bytes = 2 * mib,
+      .grid_block_bytes = 64 * kib,
+      .grid_fuse_bytes = 512 * kib,
+      .grid_pad_period = never,
+      .grid_two_odd_part = 0,
+      .grid_two_part_bytes = 0,
+      .chain_part_bytes = 16 * kib,
+      .chain_mixed_bytes = 0,
+      .chain_part_limit_bytes = 40 * mib,
+      .pow2_chain_bytes = 160 * mib,
+      .pow2_radix8_bytes = never,
+      .c2r_paired_gather = false,
+      .bluestein_pow2_part_bytes = 64 * kib,
+      .long_convolution_bytes = 1 * mib,
+  };
   EXPECT_EQ(fields("linux-gcp-c4a-axion.sysfs", false), axion);
   // A private L2 of 2 MiB on x86-64.
-  const planner_fields large_l2{1 * mib, 1 * mib, 48 * kib, 512 * kib, never, 0,     32 * kib, 0,
-                                0,       never,   0,        0,         false, never, 8 * mib};
+  const planner_fields large_l2{
+      .grid_min_bytes = 1 * mib,
+      .grid_three_bytes = 1 * mib,
+      .grid_block_bytes = 48 * kib,
+      .grid_fuse_bytes = 512 * kib,
+      .grid_pad_period = never,
+      .grid_two_odd_part = 0,
+      .grid_two_part_bytes = 32 * kib,
+      .chain_part_bytes = 0,
+      .chain_mixed_bytes = 0,
+      .chain_part_limit_bytes = never,
+      .pow2_chain_bytes = 0,
+      .pow2_radix8_bytes = 0,
+      .c2r_paired_gather = false,
+      .bluestein_pow2_part_bytes = never,
+      .long_convolution_bytes = 8 * mib,
+  };
   EXPECT_EQ(fields("linux-gcp-c4-granite-rapids.sysfs", true), large_l2);
   // The same on bare metal with SMT, where Granite Rapids' L3 per CPU is under 2 MiB
   // (504 MiB for 128 cores, 256 CPUs): the key is the L2, not the L3 per CPU.

@@ -376,9 +376,12 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
         say(message, message_size, "PLANNING is rules, quick or measure");
         return fbench_error;
       }
-      s.effort = value == "quick"     ? fftn::planning::quick
-                 : value == "measure" ? fftn::planning::measure
-                                      : fftn::planning::rules;
+      s.effort = fftn::planning::rules;
+      if (value == "quick") {
+        s.effort = fftn::planning::quick;
+      } else if (value == "measure") {
+        s.effort = fftn::planning::measure;
+      }
       s.planning = value;
     } else if (key == "MEASURE_SECONDS") {
       const std::optional<double> v = fbench::fftn_tuning::parse_real(value);
@@ -486,7 +489,10 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
         say(message, message_size, "RADER is rules, 0 or 1");
         return fbench_error;
       }
-      s.settings.rader = value == "rules" ? -1 : value == "0" ? 0 : 1;
+      s.settings.rader = -1; // rules
+      if (value != "rules") {
+        s.settings.rader = value == "0" ? 0 : 1;
+      }
       s.rader = value;
     } else if (key == "GRID_PHASE_RADIX") {
       const std::optional<std::size_t> v = fbench::fftn_tuning::parse_size(value, 2, false);
@@ -599,11 +605,13 @@ std::int32_t fbench_create(const fbench_case* c, void* /*in*/, void* /*out*/, vo
       check_radices_fit(*c);
     }
     auto record = std::make_unique<plan_record>();
-    const fftn::options opts{.in_place = c->in_place != 0,
-                             .force_isa = s.isa,
-                             .effort = s.effort,
-                             .measure_seconds = s.measure_seconds,
-                             .measure_scratch_bytes = s.measure_scratch};
+    const fftn::options opts{
+        .in_place = c->in_place != 0,
+        .force_isa = s.isa,
+        .effort = s.effort,
+        .measure_seconds = s.measure_seconds,
+        .measure_scratch_bytes = s.measure_scratch,
+    };
     record->core =
         c->precision == fbench_f32 ? make_core<float>(*c, opts) : make_core<double>(*c, opts);
     const std::string described = detail::describe(*record->core);

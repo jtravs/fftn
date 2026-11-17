@@ -952,12 +952,14 @@ std::shared_ptr<plan_core> build_plan_core(const shape_view& s, const options& o
   c->runs_inline = runs_inline(c->graph, c->profile);
   c->radices_forced = !settings.radices.empty();
   c->shape_key = shape_key(s, opts);
-  c->program_text = choice_text(pinned_choice({.strategy = settings.strategy,
-                                               .radices = settings.radices,
-                                               .grid_factors = settings.grid_factors,
-                                               .grid_phases = settings.grid_phases,
-                                               .rader = settings.rader},
-                                              *c));
+  const plan_choice built{
+      .strategy = settings.strategy,
+      .radices = settings.radices,
+      .grid_factors = settings.grid_factors,
+      .grid_phases = settings.grid_phases,
+      .rader = settings.rader,
+  };
+  c->program_text = choice_text(pinned_choice(built, *c));
   return c;
 }
 

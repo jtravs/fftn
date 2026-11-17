@@ -334,7 +334,7 @@ TEST(Grid, SmallPowerOfTwoPartKeepsTwoPhases) {
   s.profile.chain_part_bytes = 0;
   s.profile.chain_mixed_bytes = 0;
   s.profile.pow2_chain_bytes = 0;
-  s.profile.grid_two_part_bytes = 16 * 16; // power-of-two parts up to 16 points
+  s.profile.grid_two_part_bytes = std::size_t{16} * 16; // power-of-two parts up to 16 points
   const auto phases = [&](std::size_t n) {
     const std::string text = described(*make_plan_core(
         fftn::detail::view_of(fftn::rows_c2c<double>(n, 1, fftn::direction::forward)),
@@ -347,15 +347,16 @@ TEST(Grid, SmallPowerOfTwoPartKeepsTwoPhases) {
   // The rule keeps two phases where the planner would otherwise take three, and changes
   // nothing for a larger power-of-two part or a power of two (whose phase count choose_grid
   // decides by the target's radices).
-  const int part16 = phases(16 * 729); // part 16: 186624 bytes, beyond grid_three_bytes
-  const int part32 = phases(32 * 729); // part 32
+  constexpr std::size_t odd = 729;
+  const int part16 = phases(16 * odd); // part 16: 186624 bytes, beyond grid_three_bytes
+  const int part32 = phases(32 * odd); // part 32
   const int pow2 = phases(8192);
   EXPECT_EQ(part16, 2);
   s.profile.grid_two_part_bytes = 0;
-  EXPECT_EQ(phases(32 * 729), part32);
+  EXPECT_EQ(phases(32 * odd), part32);
   EXPECT_EQ(phases(8192), pow2);
   EXPECT_EQ(pow2, 3);
-  EXPECT_GE(phases(16 * 729), 2);
+  EXPECT_GE(phases(16 * odd), 2);
 }
 
 // A c2c row of a power of two stays a chain beyond grid_min_bytes up to pow2_chain_bytes,
