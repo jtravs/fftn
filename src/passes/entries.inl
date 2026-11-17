@@ -76,6 +76,15 @@ consteval leaf_fn unit_leaf_entry() {
   }
 }
 
+// Whether the target has passes of radix R at all. Radix 25 (experiment X42) is a pass
+// radix of the x86 sequences only (and of the scalar target, which plans with avx2's
+// tables): on NEON its passes lost to radix-5 passes (3125, 25000 on the Mac), so no plan
+// takes it there and its rows stay empty, about 5 % of a target's code. An empty row has no
+// lane pass, which the chain's checks of forced radices, the lanes strategy and the
+// Bluestein convolutions read as "no codelet".
+template <std::size_t R>
+inline constexpr bool radix_on_target = R != 25 || (id != target::neon && id != target::neon_fcma);
+
 // The passes of the codelet in row I of gen::radices. A plan has one scale, on one edge
 // (core/plan_core.cpp), so no pass scales both: that entry stays null rather than
 // instantiating a variant nothing selects.
@@ -242,7 +251,16 @@ template <class T, std::size_t I> struct radix_entries {
 
 } // namespace
 
-// Row I of the codelet table for precision T: radix_entries<T, I>::value, defined by exactly
+// Row I's entries on this target: radix_entries<T, I>::value, or none (radix_on_target).
+template <class T, std::size_t I> consteval radix_passes row_entries() {
+  if constexpr (radix_on_target<gen::radices[I]>) {
+    return radix_entries<T, I>::value;
+  } else {
+    return radix_passes{};
+  }
+}
+
+// Row I of the codelet table for precision T: row_entries<T, I>(), defined by exactly
 // one of the target's row units (isa/rows.inl) and read through a pointer by the target's
 // table. The only names of the region besides the table with external linkage: data, so no
 // unit's copy of a function can stand in for another's. Each target's are distinct
@@ -254,7 +272,7 @@ template <class T, std::size_t I> struct codelet_row {
 
 namespace {
 
-static_assert(gen::radix_count == 21, "pass_table lists the rows of gen::radices");
+static_assert(gen::radix_count == 22, "pass_table lists the rows of gen::radices");
 
 template <class T>
 inline constexpr pass_kernels<T> pass_table{
@@ -267,6 +285,7 @@ inline constexpr pass_kernels<T> pass_table{
             &codelet_row<T, 12>::passes, &codelet_row<T, 13>::passes, &codelet_row<T, 14>::passes,
             &codelet_row<T, 15>::passes, &codelet_row<T, 16>::passes, &codelet_row<T, 17>::passes,
             &codelet_row<T, 18>::passes, &codelet_row<T, 19>::passes, &codelet_row<T, 20>::passes,
+            &codelet_row<T, 21>::passes,
         },
     .generic =
         {

@@ -98,7 +98,7 @@ TEST(Rules, RadicesMultiplyToTheLength) {
       std::size_t product = 1;
       for (const std::size_t r : fftn::detail::rule_radices(n, profile)) {
         product *= r;
-        EXPECT_TRUE(r <= 16 || r == 20 || r == 32 || r == 64 || is_prime(r))
+        EXPECT_TRUE(r <= 16 || r == 20 || r == 25 || r == 32 || r == 64 || is_prime(r))
             << n << ": radix " << r;
       }
       EXPECT_EQ(product, n) << n;
@@ -287,8 +287,8 @@ TEST(Rules, Avx512Tables) {
   };
   EXPECT_EQ(r(768, f64), (v{8, 12, 8}));
   EXPECT_EQ(r(1000, f64), (v{4, 10, 5, 5}));
-  EXPECT_EQ(r(5000, f64), (v{20, 10, 5, 5})); // X39 arm D: a radix-20 first pass
-  EXPECT_EQ(r(25000, f64), (v{20, 10, 5, 5, 5}));
+  EXPECT_EQ(r(5000, f64), (v{20, 10, 5, 5}));   // X39 arm D: a radix-20 first pass
+  EXPECT_EQ(r(25000, f64), (v{4, 25, 10, 25})); // X42 arm B3: radix-25 passes
   EXPECT_EQ(r(140, f32), (v{10, 14}));
   EXPECT_EQ(r(256, f32), (v{32, 8}));
   EXPECT_EQ(r(512, f32), (v{32, 16}));

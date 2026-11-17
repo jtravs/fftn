@@ -15,22 +15,23 @@
 // 135 s and 2.9 GB; the main unit (isa/table.inl) 2 s. So radix 64 has a unit per precision,
 // and the units below take about the same time each. The primes 17, 19 and 23 (experiment
 // X27; 168, 207 and 297 vocabulary operations per codelet, radix 32 212) have a unit each,
-// radix 20 (X38, 116 operations) shares 19's.
+// radix 20 (X38, 116 operations) shares 19's and radix 25 (X42, 222) shares 17's.
 //
 // Every row is defined by exactly one unit: the main unit's table refers to all of them, so
 // a row left out fails to link.
 
 template <class T, std::size_t I>
-constinit const radix_passes codelet_row<T, I>::passes = radix_entries<T, I>::value;
+constinit const radix_passes codelet_row<T, I>::passes = row_entries<T, I>();
 
 // NOLINTBEGIN(bugprone-macro-parentheses): a template argument list, not an expression.
 #define FFTN_ISA_ROW(T, I) template struct codelet_row<T, I>;
 #define FFTN_ISA_ROWS_OF(I) FFTN_ISA_ROW(double, I) FFTN_ISA_ROW(float, I)
 // NOLINTEND(bugprone-macro-parentheses)
 
-static_assert(gen::radix_count == 21 && gen::radices[10] == 12 && gen::radices[14] == 16 &&
+static_assert(gen::radix_count == 22 && gen::radices[10] == 12 && gen::radices[14] == 16 &&
                   gen::radices[15] == 17 && gen::radices[16] == 19 && gen::radices[17] == 20 &&
-                  gen::radices[18] == 23 && gen::radices[19] == 32 && gen::radices[20] == 64,
+                  gen::radices[18] == 23 && gen::radices[19] == 25 && gen::radices[20] == 32 &&
+                  gen::radices[21] == 64,
               "the row units below split gen::radices by radix");
 
 #if FFTN_ISA_ROWS == 1 // radices 2 to 12
@@ -51,13 +52,14 @@ FFTN_ISA_ROWS_OF(12)
 FFTN_ISA_ROWS_OF(13)
 FFTN_ISA_ROWS_OF(14)
 #elif FFTN_ISA_ROWS == 3 // radix 32
-FFTN_ISA_ROWS_OF(19)
+FFTN_ISA_ROWS_OF(20)
 #elif FFTN_ISA_ROWS == 4 // radix 64, double
-FFTN_ISA_ROW(double, 20)
+FFTN_ISA_ROW(double, 21)
 #elif FFTN_ISA_ROWS == 5 // radix 64, float
-FFTN_ISA_ROW(float, 20)
-#elif FFTN_ISA_ROWS == 6 // radix 17
+FFTN_ISA_ROW(float, 21)
+#elif FFTN_ISA_ROWS == 6 // radices 17 and 25
 FFTN_ISA_ROWS_OF(15)
+FFTN_ISA_ROWS_OF(19)
 #elif FFTN_ISA_ROWS == 7 // radices 19 and 20
 FFTN_ISA_ROWS_OF(16)
 FFTN_ISA_ROWS_OF(17)

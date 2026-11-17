@@ -53,10 +53,13 @@ constexpr std::array<std::size_t, cost_radices> pass_radices{
 // radix 32 and 64 candidates (campaign x38-epyc-avx2), the lengths where one sequence was at
 // most 0.97 of the planner's at batch 1 and 64; 80, 160, 240, 640, 2000, 3000 and 3600 take
 // a radix-20 pass by the same rule (campaign x38-r20), as FFTW's plans do there
-// (dev/experiments/X38-epyc-mid.md).
+// (dev/experiments/X38-epyc-mid.md). 500, 3125, 10000 and 15625 take a radix-25 pass by
+// that rule (experiment X42, campaign x42-r25f-epyc: dev/experiments/X42-codelets.md); 5000
+// and 25000 by X42's arm B3: one sequence at most 0.97 of the planner's at both batches,
+// though the two batches' winners differ.
 // clang-format off
 // NOLINTBEGIN(readability-trailing-comma): bench/x2/fit.py writes and parses this layout
-constexpr std::array<radix_override, 36> avx2_double_overrides{{
+constexpr std::array<radix_override, 42> avx2_double_overrides{{
     {.n = 27, .radices = {3, 9, 0, 0}},
     {.n = 42, .radices = {2, 3, 7, 0}},
     {.n = 54, .radices = {2, 3, 9, 0}},
@@ -72,6 +75,7 @@ constexpr std::array<radix_override, 36> avx2_double_overrides{{
     {.n = 384, .radices = {12, 32, 0, 0}},
     {.n = 448, .radices = {2, 16, 14, 0}},
     {.n = 490, .radices = {2, 7, 5, 7}},
+    {.n = 500, .radices = {20, 25, 0, 0}},
     {.n = 512, .radices = {16, 32, 0, 0}},
     {.n = 567, .radices = {9, 9, 7, 0}},
     {.n = 588, .radices = {6, 7, 14, 0}},
@@ -85,14 +89,19 @@ constexpr std::array<radix_override, 36> avx2_double_overrides{{
     {.n = 2000, .radices = {10, 10, 20, 0}},
     {.n = 2400, .radices = {10, 15, 16, 0}},
     {.n = 3000, .radices = {10, 15, 20, 0}},
+    {.n = 3125, .radices = {5, 25, 25, 0}},
     {.n = 3600, .radices = {12, 15, 20, 0}},
     {.n = 4096, .radices = {8, 8, 8, 8}},
     {.n = 4800, .radices = {8, 12, 5, 10}},
+    {.n = 5000, .radices = {10, 20, 25, 0}},
     {.n = 6000, .radices = {8, 10, 5, 15}},
     {.n = 8192, .radices = {8, 8, 16, 8}},
+    {.n = 10000, .radices = {20, 20, 25, 0}},
     {.n = 12000, .radices = {8, 10, 15, 10}},
+    {.n = 15625, .radices = {25, 25, 25, 0}},
     {.n = 16384, .radices = {8, 16, 16, 8}},
     {.n = 20000, .radices = {8, 5, 10, 5, 10}},
+    {.n = 25000, .radices = {10, 5, 20, 25, 0}},
 }};
 constexpr std::array<radix_override, 13> avx2_float_overrides{{
     {.n = 90, .radices = {9, 10, 0, 0}},
@@ -164,19 +173,24 @@ constexpr pass_costs avx2_float{
 // the costs' sequences in user-mode cycles on the Xeon 6240 (screens 16183, 16184); a radix 20
 // last lost (1.04-1.22). 1000 keeps its X2 override: as 20.10.5 its single rows took 0.90
 // but planes and batches of 1000 1.02-1.04 (run 20261117-011743-1a01)
-// (dev/experiments/X39-xeon-long.md).
+// (dev/experiments/X39-xeon-long.md). Experiment X42: 100 and 500 end in a radix-25 pass,
+// one sequence at most 0.97 of the planner's at batch 1 and 64 (X2's search driver,
+// campaign x42-r25f-xeon; dev/experiments/X42-codelets.md); 3125, 10000, 15625 and 25000 by
+// X42's arm B3: one sequence at most 0.97 of the planner's at both batches, though the two
+// batches' winners differ.
 // clang-format off
 // NOLINTBEGIN(readability-trailing-comma): bench/x2/fit.py writes and parses this layout
-constexpr std::array<radix_override, 28> avx512_double_overrides{{
+constexpr std::array<radix_override, 31> avx512_double_overrides{{
     {.n = 24, .radices = {4, 6, 0, 0}},
     {.n = 27, .radices = {3, 9, 0, 0}},
+    {.n = 100, .radices = {4, 25, 0, 0}},
     {.n = 140, .radices = {4, 5, 7, 0}},
     {.n = 168, .radices = {4, 6, 7, 0}},
     {.n = 288, .radices = {8, 12, 3, 0}},
     {.n = 300, .radices = {20, 15, 0, 0}},
     {.n = 320, .radices = {8, 10, 4, 0}},
     {.n = 480, .radices = {8, 12, 5, 0}},
-    {.n = 500, .radices = {20, 5, 5, 0}},
+    {.n = 500, .radices = {20, 25, 0, 0}},
     {.n = 640, .radices = {8, 10, 8, 0}},
     {.n = 648, .radices = {4, 6, 9, 3}},
     {.n = 672, .radices = {8, 12, 7, 0}},
@@ -187,15 +201,17 @@ constexpr std::array<radix_override, 28> avx512_double_overrides{{
     {.n = 1000, .radices = {4, 10, 5, 5}},
     {.n = 2000, .radices = {20, 10, 10, 0}},
     {.n = 3000, .radices = {20, 10, 15, 0}},
+    {.n = 3125, .radices = {25, 5, 25, 0}},
     {.n = 3600, .radices = {12, 15, 20, 0}},
     {.n = 4000, .radices = {20, 20, 10, 0}},
     {.n = 4800, .radices = {20, 12, 20, 0}},
     {.n = 5000, .radices = {20, 10, 5, 5}},
     {.n = 6000, .radices = {20, 15, 20, 0}},
     {.n = 8000, .radices = {20, 20, 20, 0}},
-    {.n = 10000, .radices = {20, 20, 5, 5}},
+    {.n = 10000, .radices = {20, 20, 25, 0}},
+    {.n = 15625, .radices = {5, 5, 25, 25}},
     {.n = 20000, .radices = {20, 20, 5, 10}},
-    {.n = 25000, .radices = {20, 10, 5, 5, 5}},
+    {.n = 25000, .radices = {4, 25, 10, 25, 0}},
 }};
 
 constexpr pass_costs avx512_double{
@@ -792,9 +808,9 @@ std::vector<std::size_t> rule_radices(std::size_t n, const target_profile& p, bo
   if (n <= 1) {
     return {};
   }
-  // Whole-transform leaves above 16: the powers of two (X8) and the primes (X27). Radix 20
-  // is a pass radix only (experiment X38): its leaf was never measured.
-  if (n <= largest_leaf || (n <= p.leaf_limit && has_codelet(n) && n != 20)) {
+  // Whole-transform leaves above 16: the powers of two (X8) and the primes (X27). Radices 20
+  // and 25 are pass radices only (experiments X38, X42): their leaves were never measured.
+  if (n <= largest_leaf || (n <= p.leaf_limit && has_codelet(n) && n != 20 && n != 25)) {
     return {n};
   }
   if (std::vector<std::size_t> o = overrides ? override_of(n, p) : std::vector<std::size_t>{};
@@ -959,8 +975,8 @@ double relative_row_cost(std::size_t n, const target_profile& p) {
   // A transform the planner runs as one codelet (a leaf, rule 1, or a lone 17, 19 or 23) is
   // as fast per point as a leaf of a power of two: the tables' first-pass costs at m = 1 do
   // not price leaves (X8 measured them apart), so they are not compared. Every other length
-  // is priced as the chain the planner builds; 20 is one (rule_radices: X38 measured no leaf
-  // of 20).
+  // is priced as the chain the planner builds; 20 and 25 are (rule_radices: X38 and X42
+  // measured no leaf of either).
   if ((n <= largest_leaf || has_codelet(n)) && rule_radices(n, p).size() == 1) {
     return 1;
   }
