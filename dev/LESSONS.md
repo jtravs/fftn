@@ -863,6 +863,24 @@ times slower: its planner does not fall back to one thread for tiny problems. A 
 comparison that takes FFTW's threaded time alone flatters the other library on every small
 case. [X41](experiments/X41-planes-2.md).
 
+5.10 **A team wants narrower column blocks than one thread, and a plan can give it them
+without changing a bit.** On the EPYC 7763 (512 KiB private L2) blocks of 8 adjacent columns
+took 0.887 of the time of 16 at 8 lanes over the planes they change (1000² 0.66, 128² 0.75),
+while one thread lost up to 1.42 with them (2048²): one thread has the whole 32 MiB L3 behind
+its tiles, eight share it, and narrower blocks also give the members more pieces to share.
+The Xeon 6240 (1 MiB L2) gained nothing (0.997). Because a column computes alike in any block,
+a plan can keep a second program for teams with the same results; finer chunks of the same
+blocks lost everywhere (1.11–1.13). Members running neighbouring columns alone through the
+chain write the same cache lines: blocks of one line instead took 0.72 at 2048 × 36.
+[X43](experiments/X43-threaded-columns.md).
+
+5.11 **Whole planes per member are worth more to a team than the saved sweep is to one
+thread.** Volumes with their inner two axes plane at a time took 0.778 (EPYC 7763) and 0.788
+(Xeon 6240) of the axes-one-by-one time at 8 lanes, but 0.979 and 0.934 at one thread: where
+the L3 holds the volume (32 MiB per CCX), the third sweep is cheap for one thread, while a
+team gains one phase boundary fewer and each plane's rows and columns on one core.
+[X43b](experiments/X43b-volumes.md).
+
 ## 6. Toolchain and testing pitfalls
 
 6.1 **Build with GCC as well as Clang before a remote round trip.** GCC warns where Clang
