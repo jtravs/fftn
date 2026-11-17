@@ -56,8 +56,12 @@ main, 240, 2000, 3000, 3600 under FFTW; 512–2048 stay 1.13–1.22); (5) the Xe
 long rows (16384–262144 1.22–1.48; 20000, 25000, 46080, 100000 1.31–1.50); (6) in-place
 65536 (Xeon 1.14–1.16). Runs 20261116-160815-6deb (Mac, 10 of 12 rounds under load),
 20261116-161226-416e (EPYC, every round under load, band ±1.85 %), 20261116-161123-f848
-(Xeon, band ±2.03 %). Also open for the exit: the `x86_v2` and `avx` targets (task 1.3) and
-plain `neon` against FFTW restricted to the same instructions.
+(Xeon, band ±2.03 %). The old targets (X14, task 1.3, 2026-11-17): `x86_v2` ÷ FFTW built
+with SSE2 only 0.957 (EPYC) and 0.984 (Xeon); `avx` ÷ FFTW with SSE2 and AVX 0.897 and 0.943;
+plain `neon` ÷ FFTW's NEON build 0.886 (Mac); all at or below FFTW, the tail rule failed by
+each (29–46 % of cases above 1.05) with the causes above. Runs 20261117-004757-3a1d,
+20261116-234204-8175 (EPYC), 20261116-232600-139a, 20261117-002151-a927 (Xeon),
+20261116-232302-42c6 (Mac).
 FFTL.jl updated to libfftl 1ae621e (upstream main of 2026-11-16, 111 commits after 53171e8;
 same build: apple-m1, x86-64-v3), same case set, `main` e8c2639, the old libfftl as a third
 arm: FFTN ÷ FFTL 0.55 on the Mac (old libfftl 0.50 in the same run), 9 cases over 1.05
@@ -103,7 +107,7 @@ on every machine, X16); phase 3 tasks 3.1–3.3 with T1 and T5. X24 rejected. CI
 Open, by phase:
 
 - 0: the Xeon client-catalogue baseline.
-- 1: 1.3's `x86_v2` and `avx` vocabularies and X14; X2 on the Mac above 1024; X4 on x86
+- 1: task 1.3 is in review (pull request 33: the `x86_v2` and `avx` targets, X14, and the build option `FFTN_OLD_X86_TARGETS` the lead proposed, pending the maintainer: DESIGN 18.2); X2 on the Mac above 1024; X4 on x86
   and for edge passes; X12 on x86; X5. The phase 1 exit is not met: x86 trails FFTW.
 - 2: 2.2's acceptance in double c2c on AVX-512 (the chain 1.01–1.26 of FFTW at 8–16
   points; X24 rejected both planned fixes); 2.4 (`planning::measure` and wisdom built, P1 and P2 in a first pass; the cost model and calibration remain;
@@ -577,7 +581,7 @@ running, done (with verdict).
 | X11 | SVE at 128 and 256 bits on Graviton 3/4 against NEON | 7 | planned |
 | [X12](experiments/X12-beyond-l2.md) | Beyond-L2 forms: DIF grid, DIT grid, in-place sandwich; block sizes by cache level; the in-place route (scratch of N, permutation pass, or palindromic swap) | 1 | running: DIF grid in two or three phases adopted for rows beyond L1 on the Mac (0.47–0.71 of the chain's time, run 20261114-110844-8b03); copies fused into end passes for small-radix phases within L2/4 (2^18: 1.03 → 0.92, run 20261114-132841-80e0); x86 runs pending |
 | [X12b](experiments/X12b-grid-thresholds.md) | The grid's thresholds (chain or grid, two or three phases) as rules of L1 and L2 that suit the Xeon, the EPYC and the Mac | 1 | done: with a private L2 (x86) the grid starts beyond L2/2 and three phases beyond L2; the Mac (cluster-shared L2) unchanged; x86 0.91–0.96 of the old default over the X12b cases, 4096 points on the Xeon 1.42 → 1.05 times FFTW |
-| X14 | Is a separate `avx` target (256 bit, no FMA, no AVX2) worth keeping over `x86_v2` on Sandy Bridge-class machines? | 1 | planned |
+| [X14](experiments/X14-old-x86.md) | Is a separate `avx` target (256 bit, no FMA, no AVX2) worth keeping over `x86_v2` on Sandy Bridge-class machines? Do the old targets meet the exit against FFTW restricted to their instruction sets? Operation order without FMA | 1 | done: `avx` kept (0.68–0.74 of `x86_v2`); both at or below the restricted FFTW, tails fail; no split runs without FMA; leaf of 32 for `x86_v2` in double |
 | X13 | Next-row prefetch and non-temporal stores per machine for out-of-cache batches | 2 | planned |
 | [X15](experiments/X15-compiler-vectorised-scalar.md) | What does a current compiler get from the scalar pass loops (`omp simd`, the scalar text in the `avx2` region, `-march=native` as a ceiling), against a hand vocabulary? | 0 | done: omp simd rejected (compiler-dependent); old targets need hand vocabularies |
 | [X16](experiments/X16-avx512-table.md) | `avx512` against `avx2` on AVX-512 machines: does `avx512` need its own cost table, or an R × C transpose for leading radices below C? | 1 | done (Cascade Lake only): own table in float (0.955 of before); `avx512` first in double (0.80–0.87 of `avx2`); float loses at batch 64 (1.02) because of tails (lengths 8 does not divide 1.20–1.23, the rest 0.78–0.85): per-plan choice and tail work go to phase 2 |

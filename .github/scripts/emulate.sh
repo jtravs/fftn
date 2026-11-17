@@ -11,9 +11,12 @@
 # lines> (separated by ';', for example "avx2 0;best_target scalar") must appear in its
 # output exactly: that checks feature detection and the target a plan would choose. Then
 # the instruction-set test programs run (EMULATED_TESTS below), forcing in turn each target
-# that processor can execute. The long oracle suites run natively in ci.yml; under emulation
-# they cost an hour per model and check arithmetic, not instruction sets. A test program
-# with kernels for a target (phase 1 on) belongs in EMULATED_TESTS. The
+# that processor can execute. The long oracle suites run natively in ci.yml, which forces
+# every target the runner has; under emulation they cost up to an hour per model, so they
+# run here only with EMULATE_FULL=1: for the processors whose best target is one no runner
+# chooses by itself (x86_v2 on Nehalem, avx on Sandy Bridge), so that every path the suites
+# reach there runs with that processor's instructions only and as its default plans. A
+# test program with kernels for a target belongs in EMULATED_TESTS. The
 # emulators reject any instruction the emulated processor lacks (SDE's chip check, QEMU's
 # undefined-instruction trap), so a newer instruction reaching code that runs there fails
 # the run, wherever it sits.
@@ -25,9 +28,10 @@ failed=()
 
 run() {
   echo "::group::$*"
-  local status=0
+  local status=0 start=$SECONDS
   "${emulator[@]}" "$@" || status=$?
   echo "::endgroup::"
+  echo "emulate: $((SECONDS - start)) s for $(basename "$1")"
   if ((status != 0)); then
     echo "emulate: exit status $status from $*"
     failed+=("$(basename "$1")")
@@ -51,6 +55,13 @@ done
 shopt -s nullglob
 EMULATED_TESTS=(isa/fftn_isa_tests platform/fftn_platform_tests core/fftn_core_tests
   support/fftn_support_tests kokkos/fftn_kokkos_tests)
+# The rest of the suite, with EMULATE_FULL=1: the oracle suites, the API and contract tests,
+# threading and OpenMP.
+FULL_TESTS=(analytic/fftn_analytic_tests reference/fftn_reference_tests fftw/fftn_fftw_tests
+  api/fftn_api_tests api/fftn_contract_tests threading/fftn_threading_tests omp/fftn_omp_tests)
+if [[ ${EMULATE_FULL:-0} == 1 ]]; then
+  EMULATED_TESTS+=("${FULL_TESTS[@]}")
+fi
 tests=()
 for t in "${EMULATED_TESTS[@]}"; do
   if [[ -x $build/tests/$t ]]; then tests+=("$build/tests/$t"); fi

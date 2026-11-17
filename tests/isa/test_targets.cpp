@@ -5,6 +5,7 @@
 
 #include "isa/target.hpp"
 #include "platform/cpu_features.hpp"
+#include "support/skipped_targets.hpp"
 
 #include <string>
 #include <vector>
@@ -20,7 +21,7 @@ std::vector<target> runnable_targets() {
   const cpu_features f = machine_features();
   std::vector<target> out;
   for (const target t : all_targets) {
-    if (compiled_in(t) && runs_on(t, f)) {
+    if (compiled_in(t) && runs_on(t, f) && !fftn::test::target_skipped(label(t))) {
       out.push_back(t);
     }
   }

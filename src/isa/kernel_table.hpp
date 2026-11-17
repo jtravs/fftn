@@ -136,6 +136,12 @@ namespace scalar {
 extern const kernel_table table;
 }
 #if FFTN_ARCH_X86_64
+namespace x86_v2 {
+extern const kernel_table table;
+}
+namespace avx {
+extern const kernel_table table;
+}
 namespace avx2 {
 extern const kernel_table table;
 }
