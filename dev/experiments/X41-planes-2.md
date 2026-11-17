@@ -115,7 +115,11 @@ changes (32 × 30 0.73–0.75, 32 × 32 0.77–0.79, 36 × 2048 0.76–0.78, 204
 met on the EPYC: R3 adopted there. R2 on the Xeon, run 20261117-111109-09d7 (10 rounds, all
 loaded, five overloaded, band ±8.2 %): 0.829 over the 71, worst r2c 1024² ip 1.113 (op
 0.937; c2r 0.640 and 1.072): R2's Xeon plans are R3's except where R3 keeps the chain, so
-the Xeon is judged on R3's own run below.
+the Xeon is judged on R3's own run: run 20261117-114953-7364 (10 rounds, all loaded, four
+overloaded, band ±8.6 %): 0.827 over the 71 (32 × 30 0.65–0.67, 32² and 64² 0.65–0.72, 36 ×
+2048 0.63–0.65, 2048² 0.78–0.80), worst r2c 1024² op 1.085 (interval 0.995–1.257; ip 1.053,
+c2r 0.612 and 1.044: blocks of 8 there), inside the band. Rule met by the letter on the
+Xeon: R3 adopted there; 1024² is the case to re-time on a quieter Xeon.
 
 ### S: small planes
 
@@ -140,6 +144,14 @@ parent (B: 31ea042), the 37 c2c planes; target cases the 11 planes of at most 10
 - Mac run 20261117-104725-7d2a (12 rounds, all loaded, band ±5.5 %): targets 0.94 (8 × 6
   0.86–0.88, 5 × 7 0.84–0.87), worst 1.044. The lead reported the Mac on battery power
   around the end of this run, so it cannot decide; a re-run on mains decides the Mac.
+- Mac re-run on mains, run 20261117-111242-2429 (12 rounds, 5 loaded, band ±1.0 %): targets
+  0.94 (8 × 6 0.87, 5 × 7 0.89, 16 × 16 0.98, 32 × 32 0.99), worst 1.010. Rule met.
+
+S1 adopted on all three machine-targets. The remaining small-plane gap, x41 catalogue on
+the EPYC (run 20261117-115010-a798, a screen): the 32 × 32 plane takes 2.11 ns per point
+against 0.73 for its 32 rows as a 1-D batch, so its lanes column phase costs about 1.9
+times its rows (FFTW: 1.48 per point, about twice its own row batch); on the Mac a plane is
+the sum of its two batches. That column phase on `avx2` is the lead for 32² (1.38 of FFTW).
 
 ### T: threaded planes
 
