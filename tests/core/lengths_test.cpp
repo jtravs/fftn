@@ -37,7 +37,8 @@ TEST(NextFastLength, FastLengthsArePinnedForTheVersion) {
       1,   2,   3,   4,   5,   6,   7,   8,   9,   10,  11,  12,  13,  14,  15,  16,
       17,  19,  20,  23,  24,  28,  32,  36,  40,  48,  56,  60,  64,  72,  80,  84,
       96,  100, 112, 120, 128, 130, 140, 144, 150, 156, 160, 162, 168, 180, 182, 192,
-      196, 200, 208, 210, 216, 224, 234, 240, 252, 256, 260, 270, 280, 288, 294, 300};
+      196, 200, 208, 210, 216, 224, 234, 240, 252, 256, 260, 270, 280, 288, 294, 300,
+  };
   std::vector<std::size_t> fast;
   for (std::size_t n = 1; n <= 300; ++n) {
     if (d::is_fast_length(n)) {
@@ -124,8 +125,11 @@ TEST(NextFastLength, LargeLengthsMatchATrialOfEveryLength) {
 // a wide margin.
 TEST(NextFastLength, CallsAreCheapUpTo2To40) {
   using clock = std::chrono::steady_clock;
-  std::vector<std::size_t> lengths{(std::size_t{1} << 39U) + 1, 100000000003ULL,
-                                   (std::size_t{1} << 40U) - 1};
+  std::vector<std::size_t> lengths{
+      (std::size_t{1} << 39U) + 1,
+      100000000003ULL,
+      (std::size_t{1} << 40U) - 1,
+  };
   for (std::size_t n = 1000; n <= (std::size_t{1} << 40U); n = n / 2 * 3 + 1) {
     lengths.push_back(n);
   }
@@ -160,8 +164,10 @@ TEST(NextFastLength, RealLengthsAreEvenWithAFastHalf) {
 }
 
 std::vector<fftn::isa> every_target() {
-  return {fftn::isa::scalar, fftn::isa::x86_v2, fftn::isa::avx,       fftn::isa::avx2,
-          fftn::isa::avx512, fftn::isa::neon,   fftn::isa::neon_fcma, fftn::isa::best};
+  return {
+      fftn::isa::scalar, fftn::isa::x86_v2, fftn::isa::avx,       fftn::isa::avx2,
+      fftn::isa::avx512, fftn::isa::neon,   fftn::isa::neon_fcma, fftn::isa::best,
+  };
 }
 
 template <class T> void check_relative_costs() {
@@ -204,6 +210,8 @@ TEST(RelativeCost, PowersOfTwoAreOneFastLengthsLowPrimesHighOnEveryTarget) {
 }
 
 TEST(RelativeCost, RefusesAValueThatIsNotATarget) {
+  // An out-of-range value on purpose.
+  // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
   EXPECT_THROW(static_cast<void>(fftn::relative_cost<double>(64, static_cast<fftn::isa>(200))),
                std::invalid_argument);
 }

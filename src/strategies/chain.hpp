@@ -205,13 +205,13 @@ public:
   // operation (c2c); real rows of stride 1 on the real side. columns: the rows are a
   // plane's adjacent columns (the strided axis of a multi-axis plan, experiment X40), so the
   // first and last passes run each array row's columns at once (pass_args::columns_inner);
-  // rad: the radices of the chain instead of the row's (codelet radices with lane passes,
+  // given: the radices of the chain instead of the row's (codelet radices with lane passes,
   // multiplying to n; core/plan_core.cpp, column_radices).
   [[nodiscard]] bool lanes_fit(std::size_t n, bool real) const;
   std::size_t c2c_lanes(std::size_t n, int sign, endpoint src, std::ptrdiff_t src_dist,
                         endpoint dst, std::ptrdiff_t dst_dist, const line_edges& edges,
                         std::size_t block, std::vector<stage>& stages, bool columns = false,
-                        const std::vector<std::size_t>& rad = {});
+                        const std::vector<std::size_t>& given = {});
   std::size_t r2c_lanes(std::size_t n, endpoint src, std::ptrdiff_t src_dist, endpoint dst,
                         std::ptrdiff_t dst_dist, double scale, std::size_t block,
                         std::vector<stage>& stages);

@@ -51,7 +51,7 @@ namespace fftn::inline v0 {
 [[nodiscard]] std::size_t next_fast_length(std::size_t n, bool real = false);
 
 namespace detail {
-[[nodiscard]] double relative_cost(std::size_t n, bool single, isa target);
+[[nodiscard]] double relative_cost(std::size_t n, bool single, isa which);
 } // namespace detail
 
 /// The planner's estimate of how long a complex row of n points of `T` (`double` or `float`)

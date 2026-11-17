@@ -187,15 +187,17 @@ TEST(Columns, LanesEqualTheChainBitForBit) {
 // stage or a generic pass, the last axis of length 1.
 TEST(Columns, OnlyWhereTheColumnsAreAdjacent) {
   const auto text = [](const fftn::shape<std::complex<double>, std::complex<double>>& sh) {
-    return fftn::detail::describe(
-        *fftn::detail::make_plan_core(fftn::detail::view_of(sh), {}, build_settings()));
+    return fftn::detail::describe(*fftn::detail::make_plan_core(fftn::detail::view_of(sh),
+                                                                fftn::options(), build_settings()));
   };
   EXPECT_NE(text(fftn::planes_c2c<double>(64, 64, 1, fftn::direction::forward))
                 .find("axis 0 (n = 64): lanes over blocks of"),
             std::string::npos);
   fftn::shape<std::complex<double>, std::complex<double>> strided;
-  strided.axes = {{.n = 16, .in_stride = 2, .out_stride = 2},
-                  {.n = 16, .in_stride = 32, .out_stride = 32}};
+  strided.axes = {
+      {.n = 16, .in_stride = 2, .out_stride = 2},
+      {.n = 16, .in_stride = 32, .out_stride = 32},
+  };
   EXPECT_EQ(text(strided).find("adjacent columns"), std::string::npos) << text(strided);
   EXPECT_EQ(
       text(fftn::planes_c2c<double>(97, 16, 1, fftn::direction::forward)).find("adjacent columns"),
