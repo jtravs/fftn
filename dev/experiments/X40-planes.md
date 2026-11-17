@@ -201,7 +201,7 @@ main's time, no case slower beyond the band (worst 100² ip 1.008); EPYC `avx2` 
 0.453, worst 2048 × 36 ip 0.977; Xeon `avx512` (GCC 14): 0.537, worst 1000² ip 0.862. 1-D
 plans unchanged. FFTN ÷ FFTW over the 37 planes: Mac 1.44 → 0.88, EPYC 2.07 → 0.94, Xeon
 1.49 → 0.80; ÷ MKL 1.87 → 1.00. DESIGN.md 9.3 ("as built"), 8.3 and 8.5 updated, decision
-log entry, lessons 3.22 and 3.23.
+log entry, lessons 3.23 and 3.24.
 
 Task 4.1's acceptance (at or below FFTW and MKL, one thread and threaded) is met on the
 geometric means against FFTW and on the mean against MKL, but not case by case:
