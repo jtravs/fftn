@@ -785,9 +785,9 @@ std::vector<std::size_t> rule_radices(std::size_t n, const target_profile& p, bo
   if (n <= 1) {
     return {};
   }
-  // Whole-transform leaves above 16: the powers of two (X8) and the primes (X27). Radix 20
-  // is a pass radix only (experiment X38): its leaf was never measured.
-  if (n <= largest_leaf || (n <= p.leaf_limit && has_codelet(n) && n != 20)) {
+  // Whole-transform leaves above 16: the powers of two (X8) and the primes (X27). Radices 20
+  // and 25 are pass radices only (experiments X38, X42): their leaves were never measured.
+  if (n <= largest_leaf || (n <= p.leaf_limit && has_codelet(n) && n != 20 && n != 25)) {
     return {n};
   }
   if (std::vector<std::size_t> o = overrides ? override_of(n, p) : std::vector<std::size_t>{};
@@ -949,8 +949,8 @@ double relative_row_cost(std::size_t n, const target_profile& p) {
   // A transform the planner runs as one codelet (a leaf, rule 1, or a lone 17, 19 or 23) is
   // as fast per point as a leaf of a power of two: the tables' first-pass costs at m = 1 do
   // not price leaves (X8 measured them apart), so they are not compared. Every other length
-  // is priced as the chain the planner builds; 20 is one (rule_radices: X38 measured no leaf
-  // of 20).
+  // is priced as the chain the planner builds; 20 and 25 are (rule_radices: X38 and X42
+  // measured no leaf of either).
   if ((n <= largest_leaf || has_codelet(n)) && rule_radices(n, p).size() == 1) {
     return 1;
   }
