@@ -233,7 +233,11 @@ FFTN's time over the competitor's (geometric means; c2c / r2c / c2r):
 Xeon against MKL in the same run, N ÷ MKL → X ÷ MKL: 1.016 → 1.057 (c2c), 1.278 → 1.125
 (r2c), 1.334 → 1.123 (c2r). The Xeon run is too loaded to resolve c2c (whose programs X
 changes only through S1: 1.040 is that run's noise); its real 1024² in place 1.29–1.67 and
-r2c 128² 1.24 are past even that band and are re-timed below.
+r2c 128² 1.24 are past even that band, so they were re-timed: run 20261117-134110-6845 (16
+rounds, 15 loaded, band ±5.0 %), real 128², 512², 1000² and 1024² against `main`: 0.882
+over the 16, worst r2c 1024² ip 1.048 (inside the band), c2r 1024² op 0.571, 512² 0.79–0.84;
+the same build with every column through the chain (W) 1.028. The first run's 1024² was
+noise.
 
 No case of the Mac and EPYC runs is slower than `main` beyond its band (Mac worst r2c 2048 × 36 ip
 1.059 with an unchanged program, EPYC worst 1.013). Over FFTW after X41, one thread: Mac
