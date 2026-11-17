@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # The code stages of the gate (scripts/check.sh) on the platforms of DESIGN.md 15.4, called
-# by ci.yml (every push and pull request) and extended.yml (weekly and on demand) with the
+# by ci.yml (pull requests and pushes to main) and extended.yml (weekly and on demand) with the
 # matrix of each platform as a JSON list. A matrix entry names its job ("name"), the gate
 # stages it runs ("stages") and the compiler ("cxx", or "llvm" to install that LLVM release
 # from apt.llvm.org, or "brew-llvm" on macOS); "jobs" limits parallel compiles where memory

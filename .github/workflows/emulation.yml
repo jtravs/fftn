@@ -12,10 +12,9 @@
 name: emulation
 
 # Emulation checks instruction-set safety, which changes only when kernels or detection do:
-# it runs on main, weekly, and on demand, not on every branch push (maintainer, 2026-11-13).
+# it runs weekly and on demand (maintainer: 2026-11-13 not on every branch push, 2026-11-17
+# not on every push to main either, where it took an hour and was mostly superseded).
 on:
-  push:
-    branches: [main]
   schedule:
     - cron: "17 3 * * 1"
   workflow_dispatch:

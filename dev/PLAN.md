@@ -106,8 +106,8 @@ X8, X10, X18–X39 (the 1-D double push and the tail round); phase 2 tasks 2.1, 
 (X17), 2.4 (`planning::measure`, wisdom, P1 acceptance met on all three machines; the cost
 model P3 rejected on a first pass), 2.5 (`next_fast_length`, `relative_cost`; API agreed by
 the maintainer, `length_kind` in pull request 50); phase 3 tasks 3.1–3.3 with T1 and T5; phase 4 task 4.1's first part (X40:
-one-thread c2c planes 0.80–0.94 of FFTW). CI: per-push gate on pull requests, a ruleset on
-main (checks required, branches up to date), weekly extended jobs green.
+one-thread c2c planes 0.80–0.94 of FFTW). CI: a short required set on pull requests (no
+up-to-date rule), the full per-change set on main after each merge, weekly extended jobs.
 
 Open, by phase:
 
@@ -377,8 +377,10 @@ Decisions the maintainer has not yet taken are listed in DESIGN.md section 18.2.
 
 ### Working notes for whoever resumes
 
-- CI on a pull request is the gate (`ci.yml` per push, `extended.yml` weekly and on demand,
-  `emulation.yml` for SDE and QEMU). Build and test what you touch locally; do not spend
+- CI on a pull request is the gate (`ci.yml`: a short required set on pull requests, the
+  full per-change set on each push to main; `extended.yml` weekly and on demand;
+  `emulation.yml` for SDE and QEMU, weekly and on demand). Check main's run after a merge
+  and fix a break there first. Build and test what you touch locally; do not spend
   local time on full gates.
 - Remote timing: `uv run --frozen python scripts/remote/fbench_remote.py submit
   <xeon|epyc|xeon-clang> ARMS -- fbench-args` (profiles in `~/.config/fftn/remote.toml`,
