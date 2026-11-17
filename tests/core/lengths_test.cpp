@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <complex>
 #include <cstddef>
 #include <stdexcept>
 #include <string>
@@ -107,7 +108,13 @@ template <class T> void check_relative_costs() {
     // pay for partial tiles (X16: 1.20-1.23), and its table prices radix 32 and 64, so its
     // powers of two are cheap. The reference's fast lengths are machine-independent by
     // design (DESIGN.md 9.2); relative_cost is the query that shows such a target's view.
-    const bool wide = t == fftn::isa::avx512 && sizeof(T) == 4;
+    // isa::best is the target a plan uses here (AVX-512 on some CI runners).
+    const fftn::isa resolved = t == fftn::isa::best
+                                   ? fftn::plan<std::complex<T>, std::complex<T>>(
+                                         fftn::rows_c2c<T>(8, 1, fftn::direction::forward))
+                                         .instruction_set()
+                                   : t;
+    const bool wide = resolved == fftn::isa::avx512 && sizeof(T) == 4;
     EXPECT_LE(fast[fast.size() / 2], wide ? 2.5 : 1.35);
     // Large primes take a Rader or Bluestein stage and are slower per point. (Short ones are
     // not compared: the tables' first-pass costs at a few units do not price them well.)
