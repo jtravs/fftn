@@ -100,6 +100,21 @@ medians against the rule's plan (A), ns per point from A.
   0.725, 16² 0.775, 256² 0.83, 128² 0.88, 64² 0.92) and on the rows as batches 0.91–1.02
   (c2c), 0.73–0.90 (r2c), 0.76–0.99 (c2r). Radix 32 in one pass: c2c 32² 0.772, real 32²
   0.86–0.87; 4 × 8 (the rule's), 8 × 4, 4 × 16, blocks of 8: 0.97–1.03.
+- **Xeon counters** (`fbench-<lib> run --pmu`, user mode, one process per library and
+  event group, FFTW from its own wisdom; Slurm job 16351, ddf8737; per point). FFTN's rows as
+  batches run MKL's instructions and cycles (16–64 points: 3.4–3.9 instructions, 1.6–2.2
+  cycles both). The planes do not: 32² 12.2 instructions and 4.66 cycles against MKL's 7.9
+  and 3.32; 256² 20.0 and 14.1 against 14.0 and 11.4; 512² 24.1 and 19.7 against 15.8 and
+  14.8. Subtracting the rows, FFTN's column phase runs about twice MKL's instructions, with
+  1.3–1.5 more scalar uops per point (port 1, which only scalar work uses beside 512-bit
+  vectors), about 1.3 more loads, and at 256²–512² two to three times MKL's L1 refills; at
+  32² the front end failed to deliver 2.2 uops per point (MKL 0.09). `perf record` of 64²
+  and 256² (Slurm, `srun`): the column edge passes `lanes_first` and `lanes_last` each take
+  as many instructions as the row phase's whole pair leaf; their hot instructions are scalar
+  address arithmetic, loop state spilled to the stack and to `xmm` registers, the per-unit
+  run counter, and each run of C columns reloading its group's R − 1 broadcast twiddles
+  (two loads each). FFTW's printed plans: one `n1fv` codelet over the columns at 16², 32²
+  and 64², buffered columns from 128².
 - **Mac, runs 20261117-142835-4a2c and 20261117-143226-dcc7** (8 and 10 rounds, all loaded,
   bands ±4.3 % and ±3.0 %). A plane costs the sum of its two batches (32²: 1.06 against
   0.52 + 0.52); FFTW's plane costs less than twice its own batch because its columns are
@@ -125,6 +140,23 @@ the rule's case set (2) is those 126 (the x44 catalogue's planes are among them 
 which P does not change, and its rows are 1-D). Rule as above, on the EPYC and the Xeon;
 the Mac's plans are unchanged (checked by describe). Bits: the columns of 32 change route,
 within the tolerances.
+
+### N: the column edge passes' runs in an inner loop
+
+From the Xeon's counters (D): in `lanes_first` and `lanes_last` with `columns_inner`, a whole
+block of columns (every run of C full) over whole groups or copies runs its B / C runs in an
+inner loop at one group or copy, so the leg addresses and the loop state are set up once
+per group instead of once per run; `lanes_first` also loads a group's twiddles once for
+its runs at radices up to 8 (2b3056c, with db0f483). Same operations on the same values:
+bits unchanged; 1-D plans never set `columns_inner`, so their programs and kernels' paths
+are unchanged. Counter screen on the Xeon against P (cycles per point, one process each,
+three alternations): 64² 0.84, 128² 0.89, 96² 0.91, 100² 0.93, 36 × 2048 0.89, 512² 0.92,
+real 64² 0.95–0.97, the rest 0.98–1.04 (noise about ±4 %); the Mac (run
+20261117-152334-8e57, 8 rounds, band ±3.5 %) 0.995 over the 108 planes, nothing beyond the
+band. Target cases: the cases of the 126 (planes and volumes) whose plans have a lanes
+column phase with at least one whole block. Base: P. Rule as above per machine-target (the
+Xeon and the EPYC by `fbench_remote.py submit --serial`, the Mac locally); where N is not
+adopted on a target, the fast path is compiled out for it.
 
 ## Verdict
 
