@@ -1639,7 +1639,10 @@ over blocks of adjacent pencils (the same lanes column phase, `column_block`'s r
 pencils' elements a plane apart). At 8 lanes that took 0.775 (EPYC) and 0.771 (Xeon) of the
 axes one by one: whole planes per member and one phase boundary fewer. One thread gained too
 little to take it: EPYC 0.979 (its 32 MiB L3 per CCX holds volumes to 128³, so a third sweep
-is cheap), Xeon 0.934 but 97³ 1.048, M5 Max 0.962. Either order computes every line alike,
+is cheap), Xeon 0.934 but 97³ 1.048, M5 Max 0.962. Only volumes of at least 8 planes take
+plane order in a team: the plane phase has one line per plane, so 2 × 1024 × 1024 or
+4 × 512 × 512 keep the axes one by one, whose phases share out by lines (teams of more
+members than planes still idle some, a known limit). Either order computes every line alike,
 so the bits do not depend on it. Scratch per member is two lines of at most a plane or a tile
 of pencils (tests/core/volumes_test.cpp), never a second volume.
 
@@ -2001,9 +2004,12 @@ lines of one axis (2-D and 3-D) is a phase whose chunks are runs of whole lines,
 on the scratch of the member that runs it, the block (9.1) shared; a volume's loop over its
 planes (9.3) is a phase whose lines are whole planes, each running the plane's own phases
 on its member's scratch. A team of two or more members may run a *team program* instead of
-the program (`plan_core::team`, experiment X43): the same transform with narrower lanes
-column blocks and the same radices per column, which by construction computes every
-element as the program does. Therefore:
+the program (`plan_core::team`, experiments X43 and X43b): the same transform with narrower
+lanes column blocks, columns that one thread runs alone through the chain run as blocks of
+one line with the chain's radices, and a volume of at least 8 planes with its inner axes
+plane at a time (9.3). Each column computes alike in any block and each line alike in either
+order, so the team program computes every element as the program does; a team's workspace
+covers both, since an executor that dispatches one member runs the program. Therefore:
 
 > For a given plan the output is bitwise identical for serial execution, any team size,
 > any executor and any timing.

@@ -193,3 +193,9 @@ never run). Rule met: VTX adopted on the Xeon. FFTN ÷ oneMKL's better plan in t
   1.24 at 8 lanes). Leads: the 16-point outer leaf whose legs share an L1 set (column radices),
   the outer axis of 512 × 64 × 64 (long pencils, wide tiles), and the team engine's lack of
   affinity in hot loops (X43's verdict).
+- **Few planes (second reader, after the verdict):** the team program's plane phase has one
+  line per plane, so a volume of fewer planes than members leaves members idle. Team plane
+  order is therefore limited to volumes of at least 8 planes (no measured case changes: the
+  catalogue's thinnest had 16; commit 135b63f); 4 × 512 × 512 and 2 × 1024 × 1024 were added
+  to the volumes catalogue, unmeasured. Teams of more than 8 members on volumes of 8 to 63
+  planes remain a known limit (not measured).
