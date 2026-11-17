@@ -207,13 +207,15 @@ cores, median), band ±1.00 % (limit 1.030). A ÷ O 0.998 [0.997, 0.999], no cas
 faster: r2c 1000 0.967, 100 × 1024 0.970, 128 × 4096 0.976, c2r 256 0.976. B ÷ O 1.005
 [1.004, 1.006], 18 slower; B ÷ A up to 1.155 (64), 64 × 256 1.138, 64² 1.071.
 
-### EPYC re-run of the cases past the limit
+### EPYC re-run of the cases past the limit (run 20261117-194215-1604)
 
-Slurm 512296 (`--serial`, O and A, 65536, 65537, 61 and 101 at batch 1, at least 20
-rounds): queued behind four other serial jobs when this was written; its run decides rule
-(b) for A. None of the four programs is changed by A (a six-pass chain and Rader stages
-whose convolutions run in the scratch slots), so a confirmed slowdown there would be code
-placement, as X38's 60 × 3 and 323.
+Slurm 512296 (`--serial`), O and A, 65536, 65537, 61 and 101 at batch 1, 21 rounds, all
+under load (other processes 24 cores), band ±1.00 % (limit 1.030): 65536 1.000 [0.996,
+1.001], 65537 0.998 [0.991, 1.003], 61 1.026 [1.022, 1.029], 101 1.022 [1.019, 1.027]. The
+re-run decides: no case past the limit, so A passes (b). 61 and 101 stay 2–3 % slower in
+both runs although A builds the same stages for them (a single Rader stage, whose chain of
+one stage A does not touch, and the same scratch size): code or table placement, not shown,
+as X38's 60 × 3 and 323.
 
 Bits: A and B change no arithmetic (the same units, the same order); the tests pass on the
 Mac (1883) and in CI. Library text (x86-64 Linux, GCC 16, `size` of `libfftn.a`): O
@@ -221,8 +223,8 @@ Mac (1883) and in CI. Library text (x86-64 Linux, GCC 16, `size` of `libfftn.a`)
 
 ## Verdict
 
-- **A (two-line chains): fails rule (a) by the letter, passes (b) and (c) pending the
-  re-run of four unchanged programs; proposed for adoption, the lead's call.** Over its 42
+- **A (two-line chains): fails rule (a) by the letter, passes (b) (after the re-run) and
+  (c); proposed for adoption, the lead's call.** Over its 42
   target cases (every two-pass chain out of place in the exit check) A ÷ O is 0.987, not
   ≤ 0.97: the rule's target set included rows of 45–240 points whose three lines already
   fit L1, where A can change nothing (0.98–1.02, all inside the band). On the cases the
