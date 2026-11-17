@@ -1573,8 +1573,9 @@ a set made 128² and 256² planes 2.2 times slower on the M5 Max; reads in the f
 not matter). B is 256 bytes of columns (16 complex doubles), at most the columns there are;
 where a column's elements lie a page or more apart, at least four L1 lines (32 complex
 doubles on Apple's 128-byte lines); where they lie less than a page apart it is halved while
-the two tiles exceed `column_tile_bytes` (a quarter of a private L2; twice L1 where a cluster
-shares L2, X41: the M5 Max's 2048 × 36 0.91 of the time of 16 columns with 4), down to 64
+the two tiles exceed `column_tile_bytes` (a quarter of L2; twice L1 where a cluster shares
+L2 and a column's elements lie at least four to a page, X41: the M5 Max's 2048 × 36 0.89–0.91
+of the time of 16 columns with 4, while 1000², nearly a page per element, lost 1.03), down to 64
 bytes of columns (an x86 line, half an Apple line), and the columns run alone through the
 chain if they still exceed it (X40's sweeps: wide blocks won where each element of a column
 has its own page, 2048² on the EPYC 0.126 of the chain columns' time with 16 columns against

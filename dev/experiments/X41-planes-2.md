@@ -108,6 +108,15 @@ element on its own page) and the column exceeds half of L1; else the chain. On t
 that keeps 1024² (8208-byte stride, a 16 KiB column) and 2048 × 36 (304-byte stride) on the
 chain and 2048² on X40's block. Rule for R3: as for R2, on the EPYC and the Xeon.
 
+R3 (4e804ba) against W (the same build, `COLUMNS=chain`), EPYC run 20261117-112604-304f (10
+rounds, none loaded, band ±1.0 %): 0.890 over the 71 real planes, 0.84 over the ones R3
+changes (32 × 30 0.73–0.75, 32 × 32 0.77–0.79, 36 × 2048 0.76–0.78, 2048² 0.73–0.85, 96² to
+512² 0.85–0.97); worst c2r 1024² ip 1.012 (on the chain, unchanged), r2c 8 × 6 1.007. Rule
+met on the EPYC: R3 adopted there. R2 on the Xeon, run 20261117-111109-09d7 (10 rounds, all
+loaded, five overloaded, band ±8.2 %): 0.829 over the 71, worst r2c 1024² ip 1.113 (op
+0.937; c2r 0.640 and 1.072): R2's Xeon plans are R3's except where R3 keeps the chain, so
+the Xeon is judged on R3's own run below.
+
 ### S: small planes
 
 Diagnosis (Mac harness, one process, Clang, `neon_fcma`, `main` 4d00f0a with arm R): a plane
@@ -185,5 +194,9 @@ is just under the M5 Max's 16 KiB page, so L1 halved its block to 8. Rule (2) fa
 rejected. Arm L2 (second arm; rule written before its run, committed with it): the
 twice-L1 budget (`column_near_tile_bytes`) only for columns whose elements lie at least four
 to a page (2048 × 36: 576 bytes apart), a quarter of L2 otherwise, as before. Rule: as L1's.
+L2 (82f18a4) against the head (4e804ba), Mac run 20261117-113654-358d (12 rounds, 11 loaded,
+band ±2.6 %): 2048 × 36 0.908 and 0.890 (FFTN ÷ FFTW 0.97 and 0.93, from 1.07–1.12 in the
+same run's base), every other program unchanged and within the band (worst 36 × 2048 op
+1.025). Rule met: L2 adopted (it changes only plans where a cluster shares L2).
 
 ## Verdict
