@@ -29,11 +29,18 @@ def evaluate(ops: list[Op] | tuple[Op, ...], x: list, w: list) -> list:
     """Runs the operations on inputs x and twiddles w (w[k] for leg k; w[0] unused)."""
     env: dict[int, mpmath.mpc] = {}
     out: dict[int, mpmath.mpc] = {}
+    stage: dict[int, mpmath.mpc] = {}  # the slots of a two-level codelet (staged.py)
     for op in ops:
         a = [env[v] for v in op.args]
         match op.kind:
             case "load":
                 env[op.dst] = x[op.index]
+            case "stage_store":
+                if op.index in stage:
+                    raise VerificationError(f"slot {op.index} stored twice")
+                stage[op.index] = a[0]
+            case "stage_load":
+                env[op.dst] = stage[op.index]
             case "load_tw":
                 env[op.dst] = w[op.index]
             case "add":

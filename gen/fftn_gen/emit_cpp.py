@@ -57,12 +57,26 @@ def _body(ops: tuple[Op, ...], indent: str) -> list[str]:
             )
         return ("-" if c < 0 else "") + consts[d]
 
+    fenced = False
+    slots = sum(op.kind == "stage_store" for op in ops)
+    if slots:
+        lines.append(f"{indent}cv<T> st[{slots}]; // NOLINT(modernize-avoid-c-arrays)")
     for op in ops:
         a = [names[v] for v in op.args]
         match op.kind:
             case "load":
                 names[op.dst] = f"x{op.index}"
                 lines.append(f"{indent}const cv<T> x{op.index} = in.get({op.index});")
+                continue
+            case "stage_store":
+                lines.append(f"{indent}st[{op.index}] = {a[0]};")
+                continue
+            case "stage_load":
+                if not fenced:
+                    lines.append(f"{indent}gen_fence(st);")
+                    fenced = True
+                names[op.dst] = f"s{op.index}"
+                lines.append(f"{indent}const cv<T> s{op.index} = st[{op.index}];")
                 continue
             case "load_tw":
                 names[op.dst] = f"w{op.index}"
@@ -112,10 +126,20 @@ def _summary(c: Codelet) -> str:
     )
 
 
-def codelet_inl(codelets: list[Codelet]) -> str:
+def codelet_inl(
+    codelets: list[Codelet],
+    staged: list[Codelet] | None = None,
+    splits: dict[int, tuple[int, int]] | None = None,
+) -> str:
+    """staged: two-level codelets (staged.py) of the radices in splits, R = n1 x n2, which
+    replace the flat plain and dif variants on targets whose codelet_registers is 16."""
     by_radix: dict[int, dict[tuple[str, int], Codelet]] = {}
     for c in codelets:
         by_radix.setdefault(c.radix, {})[(c.variant, c.sign)] = c
+    two_level: dict[int, dict[tuple[str, int], Codelet]] = {}
+    for c in staged or []:
+        two_level.setdefault(c.radix, {})[(c.variant, c.sign)] = c
+    splits = splits or {}
     out = [
         SPDX,
         "//\n",
@@ -146,6 +170,14 @@ def codelet_inl(codelets: list[Codelet]) -> str:
         "  }\n",
         "}\n",
         "\n",
+        "// Keeps the slots of a two-level codelet in memory (gen/fftn_gen/staged.py): the\n",
+        "// empty statement reads and writes the whole array, so the compiler stores level A's\n",
+        "// values before it and loads level B's after it, instead of folding the array into\n",
+        "// registers and spilling where its allocator chooses.\n",
+        "template <class V, std::size_t N> FFTN_FORCE_INLINE void gen_fence(V (&st)[N]) {\n",
+        '  asm("" : "+m"(st));\n',
+        "}\n",
+        "\n",
         "template <std::size_t R> struct cdft;\n",
     ]
     for radix in sorted(by_radix):
@@ -164,7 +196,21 @@ def codelet_inl(codelets: list[Codelet]) -> str:
             out.append(
                 '    static_assert(Sign == -1 || Sign == 1, "Sign is -1 (forward) or +1");\n'
             )
-            out.append("    if constexpr (Sign < 0) {\n")
+            if (variant, -1) in two_level.get(radix, {}):
+                sfwd, sbwd = two_level[radix][(variant, -1)], two_level[radix][(variant, 1)]
+                n1, n2 = splits[radix]
+                out.append("    if constexpr (codelet_registers <= 16) {\n")
+                out.append(f"      // Two levels, {n1} x {n2}, staged (gen/fftn_gen/staged.py).\n")
+                out.append(f"      // Forward: {_summary(sfwd)}.\n")
+                out.append(f"      // Backward: {_summary(sbwd)}.\n")
+                out.append("      if constexpr (Sign < 0) {\n")
+                out.extend(line + "\n" for line in _body(sfwd.ops, "        "))
+                out.append("      } else {\n")
+                out.extend(line + "\n" for line in _body(sbwd.ops, "        "))
+                out.append("      }\n")
+                out.append("    } else if constexpr (Sign < 0) {\n")
+            else:
+                out.append("    if constexpr (Sign < 0) {\n")
             out.extend(line + "\n" for line in _body(fwd.ops, "      "))
             out.append("    } else {\n")
             out.extend(line + "\n" for line in _body(bwd.ops, "      "))

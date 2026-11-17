@@ -45,8 +45,13 @@ class ForcedRotation(Exception):
     pass
 
 
-def lower(g: Graph, outputs: list[Term]) -> list[Op]:
-    """Operations computing outputs[k] into store k, in topological order."""
+def lower(g: Graph, outputs: list[Term], residual: list[int] | None = None) -> list[Op]:
+    """Operations computing outputs[k] into store k, in topological order.
+
+    residual: for a store whose reader can rotate for free (the first level of a two-level
+    codelet, staged.py), a list that receives, per output, the rotation q such that the
+    output is the stored register times (-i)^q; without it a store that needs a rotation
+    raises ForcedRotation."""
     live = g.live(outputs)
     uses: dict[int, int] = dict.fromkeys(live, 0)
     for n in live:
@@ -134,7 +139,9 @@ def lower(g: Graph, outputs: list[Term]) -> list[Op]:
     for k, t in enumerate(outputs):
         if t.node == 0:
             raise ValueError(f"output {k} is identically zero")
-        if (t.rot - mat[t.node]) % 4:
+        if residual is not None:
+            residual.append((t.rot - mat[t.node]) % 4)
+        elif (t.rot - mat[t.node]) % 4:
             raise ForcedRotation(
                 f"output {k} needs its register rotated by (-i)^{(t.rot - mat[t.node]) % 4}"
             )

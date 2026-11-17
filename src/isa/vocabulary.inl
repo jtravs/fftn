@@ -23,6 +23,11 @@
 //                build sets FFTN_MASKED_TAILS: GCC by default; experiment X23). Elsewhere
 //                passes move partial runs through a tile (access.inl).
 //   id           the target (target.hpp)
+//   codelet_registers  the vector registers the generated codelets are written for: where
+//                it is 16, the codelets of radix 25, 32 and 64 take their two-level form,
+//                staged through memory (gen/fftn_gen/staged.py, experiment X42). The
+//                smallest count among the targets that round alike (avx512 takes avx2's
+//                16), so that both of a pair run the same arithmetic and give the same bits
 //   split_block  the copy count, a multiple of W, from which a chain's lane passes may run
 //                in split arithmetic (strategies/chain.hpp): the largest W among the targets
 //                that round alike (DESIGN.md 6.2), so that both targets of a pair choose the
