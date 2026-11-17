@@ -135,6 +135,12 @@ X43's arms.
   re-run below before rule (2) decides. FFTN at 8 lanes over FFTW's better plan, the 37 c2c
   planes: 0.953 → 0.852 (still over: 2048 × 36 2.3–2.5, 32² 1.40 inline, 2048² 1.07–1.11,
   1024² out of place 1.06).
+- Xeon run 20261117-163920-b388 (Slurm 16345; A and B1 at 8 lanes, oneMKL at 8 threads and
+  serial; 8 rounds, 5 under load, band ±8.9 %): B1 ÷ A 0.997 over the 39 (128² 0.86–0.87,
+  100² 0.86–0.89, 256² 0.87–0.94, 1000² 0.79–0.90, 96² 0.93; but 512² 1.07–1.13, 1024²
+  1.10–1.15, 2048² 1.05–1.13, 100³ 1.13), the screen's pattern again: with a 1 MiB L2 per core
+  a block of 16 columns of up to 2048 fits a member's L2 and the wider block wins. Rule (1)
+  fails: B1 rejected on the Xeon.
 
 ### Arm B2 (team program, chain-only columns as blocks of a line)
 

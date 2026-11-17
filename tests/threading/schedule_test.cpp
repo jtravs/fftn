@@ -518,6 +518,24 @@ TEST(Schedule, GridSizesFromCaches) {
   EXPECT_EQ(xeon.grid_two_odd_part, 15U);
   EXPECT_EQ(epyc.grid_two_odd_part, 0U);
   EXPECT_EQ(m5.grid_two_odd_part, 0U);
+  // Volumes and team programs (X43, X43b), as an x86-64 build sets them: the EPYC's teams run
+  // narrower column blocks and volumes plane at a time, the Xeon's program runs volumes plane
+  // at a time and its teams the program; the M5 Max neither.
+  const auto x86 = [&](const char* file) {
+    machine_profile p;
+    fftn::detail::set_grid_sizes(p, fftn::detail::load_topology(data / file).classes.at(0), true);
+    return p;
+  };
+  const machine_profile epyc86 = x86("linux-amd-epyc-7763.sysfs");
+  const machine_profile xeon86 = x86("linux-intel-xeon-gold-6240.sysfs");
+  EXPECT_EQ(epyc86.column_team_bytes, 128U);
+  EXPECT_TRUE(epyc86.team_volume_planes);
+  EXPECT_FALSE(epyc86.volume_planes);
+  EXPECT_EQ(xeon86.column_team_bytes, 0U);
+  EXPECT_FALSE(xeon86.team_volume_planes);
+  EXPECT_TRUE(xeon86.volume_planes);
+  EXPECT_EQ(m5.column_team_bytes, 0U);
+  EXPECT_FALSE(m5.volume_planes || m5.team_volume_planes);
   // The c2r grid pairs in its first gather only where the L2 is shared (X29).
   EXPECT_TRUE(m5.c2r_paired_gather);
   EXPECT_FALSE(epyc.c2r_paired_gather);
