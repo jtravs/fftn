@@ -80,4 +80,9 @@ geometric mean of V ÷ P over the catalogue's volumes whose arrays exceed the M5
 most 0.95 at one thread, and (2) no volume is slower than P by more than the larger of 2 %
 and the band, in a fresh run.
 
+VM, run 20261117-154622-1813 (8 rounds, all under load, other processes about 4 cores, band
+±5.2 %): 0.962 over those ten (128³ 0.96–0.97, 256³ 0.95–0.97, 120³ 0.94–0.98, 64 × 64 × 512
+0.91–0.95, 512 × 64 × 64 0.97 and 1.04); 0.977 over the 38; worst 1.036 (512 × 64 × 64 in
+place, inside the band). Rule (1) fails: VM rejected, the Mac keeps the axes one by one.
+
 ## Verdict
