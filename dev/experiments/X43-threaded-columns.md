@@ -1,6 +1,6 @@
 # X43: column blocks and phases of planes under threads
 
-- **Status:** running
+- **Status:** done (B1 and B2 adopted on the EPYC-like profile, rejected on the Xeon)
 - **Owner:** task 4.2 agent, 2026-11-17
 - **Phase / task:** 4.1 (threaded planes), feeding 4.2 (volumes)
 
@@ -156,3 +156,22 @@ X43's arms.
   builds no team blocks after B1's verdict anyway).
 
 ## Verdict
+
+- **Coarse chunks: ruled out** from the code before any run (a lanes pass records its block's
+  points); finer chunks lost on both machines in the screen (1.11–1.13).
+- **B1 adopted on the EPYC** (team blocks of at most 128 bytes of columns: 0.887 over the 39
+  threaded c2c planes and volumes they change; 1000² 0.66, 128² 0.75), **rejected on the
+  Xeon** (0.997; 512²–2048² 1.05–1.15 with its 1 MiB L2). `column_team_bytes` is set on x86-64
+  where a private L2 has 2 MiB or more of L3 per CPU behind it, below 2 MiB of L2 (commits
+  5eb077f, 3736727).
+- **B2 adopted on the EPYC** (2048 × 36 0.71–0.73), **rejected on the Xeon** (1.00), where no
+  team blocks are built anyway (de05523).
+- One-thread programs are unchanged by both. The mechanism, a team program that every team
+  of two or more runs, is DESIGN 13.2's and 9.3's; LESSONS 5.10.
+- Not met: FFTN's 8 lanes still trail FFTW's better plan on the EPYC at 2048 × 36 (about 1.7
+  after B2), 2048² (1.07–1.11), 1024² out of place (1.06) and 32² (1.40, inline: a serial
+  gap); oneMKL's threads stay ahead on the Xeon's planes from 128² to 1024² (0.48–0.83 of
+  FFTN's 8 lanes in the screen) and on hot whole-plane batches (128² × 16: 0.40), where
+  oneMKL scales super-linearly. A suspect outside these arms: the claiming engine gives
+  whole transforms to whichever member arrives, so in a hot loop a plane's data rarely meets
+  the core that last touched it; OpenMP's static deal keeps it in that core's L2. Not tested.
