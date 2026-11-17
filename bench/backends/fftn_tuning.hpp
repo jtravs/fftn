@@ -105,6 +105,26 @@ constexpr std::array size_fields{
     },
     size_field{.key = "GRID_BLOCK", .member = &fftn::detail::machine_profile::grid_block},
     size_field{
+        .key = "GRID_TWO_BLOCK_BYTES",
+        .member = &fftn::detail::machine_profile::grid_two_block_bytes,
+    },
+    size_field{
+        .key = "GRID_TWO_POW2_BYTES",
+        .member = &fftn::detail::machine_profile::grid_two_pow2_bytes,
+    },
+    size_field{
+        .key = "POW2_GRID_BYTES",
+        .member = &fftn::detail::machine_profile::pow2_grid_bytes,
+    },
+    size_field{
+        .key = "GRID_PROFILE_PHASE_RADIX",
+        .member = &fftn::detail::machine_profile::grid_phase_radix,
+    },
+    size_field{
+        .key = "GRID_THREE_BLOCK",
+        .member = &fftn::detail::machine_profile::grid_three_block,
+    },
+    size_field{
         .key = "CHAIN_PART_BYTES",
         .member = &fftn::detail::machine_profile::chain_part_bytes,
     },

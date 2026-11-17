@@ -88,11 +88,13 @@ struct grid_split {
 // (the scratch lines a and b of one block in L1). The choice, among the splits into two or
 // (three_phases) into three: the widest block, then the shortest longest factor, then the
 // longest shortest factor, then the shortest first factor; three phases may fill twice the
-// budget (experiment X12). Two phases when three are not asked for or n has no such split,
+// budget (experiment X12), with blocks of at most three_most columns (machine_profile::
+// grid_three_block, X39). Two phases when three are not asked for or n has no such split,
 // and three when n has no split into two. A pure function.
 [[nodiscard]] grid_split choose_grid(std::size_t n, std::size_t lanes, std::size_t budget,
                                      bool three_phases, std::size_t forced_block,
-                                     const std::vector<std::size_t>& forced);
+                                     const std::vector<std::size_t>& forced,
+                                     std::size_t three_most = max_grid_block);
 
 // The padding of g's intermediate array (grid_split::pad) for complex elements of
 // `element_bytes` and an L1 set period of `period` bytes (machine_profile::grid_pad_period):

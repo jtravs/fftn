@@ -286,12 +286,34 @@ TEST(Rules, Avx512Tables) {
   };
   EXPECT_EQ(r(768, f64), (v{8, 12, 8}));
   EXPECT_EQ(r(1000, f64), (v{4, 10, 5, 5}));
+  EXPECT_EQ(r(5000, f64), (v{20, 10, 5, 5})); // X39 arm D: a radix-20 first pass
+  EXPECT_EQ(r(25000, f64), (v{20, 10, 5, 5, 5}));
   EXPECT_EQ(r(140, f32), (v{10, 14}));
   EXPECT_EQ(r(256, f32), (v{32, 8}));
   EXPECT_EQ(r(512, f32), (v{32, 16}));
   EXPECT_EQ(r(1024, f32), (v{16, 16, 4}));
   EXPECT_EQ(r(2048, f32), (v{16, 8, 16}));
   EXPECT_EQ(r(4096, f32), (v{32, 8, 16}));
+}
+
+// Experiment X39: a radix-20-first override (avx512 double, 5000) stays first in r2c, whose
+// pairing fuses into the last pass; a c2r line, whose pairing takes the first pass, takes the
+// costs' sequence instead of moving the radix 20 behind a small radix.
+TEST(Rules, C2rTakesTheCostsWhereARadix20OverrideWouldMove) {
+  const build_settings s;
+  const fftn::options avx512{.force_isa = fftn::isa::avx512};
+  std::string c2r;
+  std::string r2c;
+  try {
+    c2r = describe(
+        *make_plan_core(fftn::detail::view_of(fftn::rows_c2r<double>(10000, 1)), avx512, s));
+    r2c = describe(
+        *make_plan_core(fftn::detail::view_of(fftn::rows_r2c<double>(10000, 1)), avx512, s));
+  } catch (const std::exception&) {
+    GTEST_SKIP() << "no avx512 here";
+  }
+  EXPECT_NE(r2c.find("20 x 10 x 5 x 5"), std::string::npos) << r2c;
+  EXPECT_EQ(c2r.find("x 20"), std::string::npos) << c2r;
 }
 
 // Runs a plan core on a fresh copy of `input` and returns the output bytes.
