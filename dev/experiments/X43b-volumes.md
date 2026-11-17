@@ -107,6 +107,13 @@ better plan 1.219 → 0.950 (worst 16 × 256 × 256 1.53, 100³ 1.39–1.48, 120
 Whole planes per member, one phase boundary fewer and each plane's rows and columns on one
 core, are worth far more to a team than the third sweep is to one thread.
 
+### Xeon 6240, 8 lanes
+
+Run 20261117-160719-6a3c (Slurm 16341; 8 rounds, 2 under load, band ±4.7 %; P and V at 8 lanes,
+FFTW and oneMKL at 8 threads and serial): V ÷ P 0.788 over the 38 (0.66–0.96), none slower.
+FFTN at 8 lanes over FFTW's better plan 0.78 with V (worst 1.25); over oneMKL's better plan 1.65 → 1.28
+(worst 1.82): oneMKL's threads stay well ahead on the Xeon.
+
 **Arm VT (written before its runs):** V's order in the team program only (X43's team core,
 `plan_core::team`): plane at a time changes no bits, so a team may run it while serial
 executions keep the axes one by one. A profile field `team_volume_planes`, set on x86-64
