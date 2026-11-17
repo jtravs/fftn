@@ -487,8 +487,9 @@ Points that matter:
 (C++20 has no `mdspan`; the view converts from one where available), with `axes`,
 `norm = backward | ortho | forward`, a cache of plans and per-thread workspaces keyed by
 shape (the one place FFTN allocates behind the caller's back, and documented), and the helpers
-`fftfreq`, `rfftfreq`, `fftshift`, `ifftshift`, `next_fast_length`. All of it is
-expressed through the core API; none of it adds kernels.
+`fftfreq`, `rfftfreq`, `fftshift`, `ifftshift` (`next_fast_length` is already in the core API,
+`fftn/lengths.hpp`, task 2.5). All of it is expressed through the core API; none of it adds
+kernels.
 
 ### 5.5 Other interfaces
 
@@ -579,7 +580,7 @@ The other interfaces are later work:
 | Tier | Contents | Phase |
 |---|---|---|
 | Core | c2c, r2c, c2r; 1-D rows, 2-D planes, 3-D volumes; strides and distances; in place and out of place; any length; double; serial, team and executor execution; edge ops; convolution and transform-pair pipelines | 1–5 |
-| General | float on every target, tuned where asked for; convenience layer; DCT/DST types I–IV and the discrete Hartley transform as composed plans; split-complex layout; C API; wisdom import and export; `next_fast_length` backed by the cost model | 6 |
+| General | float on every target, tuned where asked for; convenience layer; DCT/DST types I–IV and the discrete Hartley transform as composed plans; split-complex layout; C API; wisdom import and export | 6 |
 | Later, on demand | FFTW shim; more than three transformed axes; SVE; Python binding | 7 |
 
 ---
@@ -1052,7 +1053,10 @@ program whose body is a few stages and no loop (rows) is marked *flat* at constr
 the driver then runs a batch of leaves as one kernel call, one transform from a contiguous
 copy of the stages (entered straight from `execute_core`, its slots passed as scalars), and
 a batch with the slots moved by the batch step (experiments X20 and X28: at 8 points 7.7 →
-4.3 ns per call, 7.1 → 1.7 ns per transform in a batch on the M5 Max). Every kernel, leaf
+4.3 ns per call, 7.1 → 1.7 ns per transform in a batch on the M5 Max); in a walked program
+a loop over lines whose body is one leaf (the rows of a plane of short rows) is likewise one
+call of the leaf over all its lines (X40: 8 × 6 to 32 × 32 planes 0.59–0.85 of the walk's
+time on the Mac and the EPYC). Every kernel, leaf
 or pass, takes its source and destination as arguments and reads the rest from the plan's
 own arguments: a fresh copy of the arguments per stage and transform cost 3–5 ns per stage
 on x86, most of it the copy's store-to-load forwarding into the kernel (X28). Every kernel
@@ -1117,7 +1121,7 @@ a leaf, n = 1 a copy. The input edge's operation is applied by the first
 pass that is not a copy and the output edge's by the last, so neither costs a pass. On
 C > 1 a line whose stride is not 1 (a strided axis, a strided row) is copied into scratch
 before the chain or out of it after: an extra pass that the lanes strategy removes for
-batches of short rows (task 2.2) and, for strided axes of planes, will remove in phase 4. A single generic pass cannot run in place, so it writes scratch
+batches of short rows (task 2.2) and for the strided axes of c2c planes and volumes (X40, section 9.3). A single generic pass cannot run in place, so it writes scratch
 and is copied when its source is its destination. Scratch is two lines a and b; an
 out-of-place line with a contiguous destination (not aliased, no copy, no Bluestein
 stage) uses the destination in place of b, so a chain touches three lines, not four
@@ -1298,9 +1302,9 @@ tried X20's per-call preparation, with a lanes leaf run in one call: 1–7 % slo
 64 of 8–16 points, so it was not kept. X24 also tried edge passes that read and write rows
 one 128-bit unit per row instead of a gather and scatter (FFTW's inserts on x86). That won
 on AVX2 but cost up to 1.17 on AVX-512 at 24–256 points, so it was not kept either; even
-with both, double c2c lost to the chain at 8 points. Not built: lanes for the strided axes
-of planes (phase 4), lane blocks across an outer batch dimension, a threshold per
-transform kind (X24 follow-up).
+with both, double c2c lost to the chain at 8 points. The strided axes of c2c planes and
+volumes run as lanes over blocks of adjacent columns (section 9.3). Not built: lane blocks
+across an outer batch dimension, a threshold per transform kind (X24 follow-up).
 
 **Bluestein** and the **generic prime pass** cover lengths with large prime factors
 (section 9.2).
@@ -1493,6 +1497,37 @@ on another library; it is a pure function of the library version (a fixed refere
 table), so a grid chosen on one machine is the same on another. A separate query returns
 the machine-specific estimate for callers who want it.
 
+*As built (task 2.5, `fftn/lengths.hpp`, `src/planner/rules.cpp`).*
+- **The cost of a row** (`row_cost`) is the planner's own estimate:
+  - the cost table's cheapest sequence for the length's 13-smooth part, leaves included, the
+    overrides left out because they use radices the table does not price;
+  - 17, 19 and 23 codelet passes, priced as radix-16 passes scaled by r log₂ r;
+  - a Rader or Bluestein stage, priced as its convolution's two transforms and two
+    elementwise passes per copy.
+- **`relative_cost<T>(n, isa)`** is that cost per point over the cost per point of the power
+  of two at or above n, on the target's own table. It is 1 for a length the planner runs as
+  one codelet (`rule_radices(n) == {n}`; 20 is always a chain, X38, and is priced as one).
+  It does not price memory beyond L1, nor long rows' chain or grid (P3).
+- **A fast length** is one whose relative cost on the reference table is at most 1.25. The
+  reference is a frozen copy of AVX2's double table (X2's measured one), kept apart from
+  the planner's tuned table so that a refit changes plans, never the fast lengths. No
+  length with a prime factor above 23 is fast: such lengths are priced at 1.49 or more up
+  to 20000. Nor is a composite with a factor 11, 17, 19 or 23: P4 measured them slower than
+  the table believes, on two machines each.
+- "Fast" is a property of the table, not a measured guarantee: in P4, 78 % of the picks ran
+  within 1.3 of the power of two above on each x86 machine, and 140 (the pick for 131) ran
+  at 1.76 on the Xeon.
+- **`next_fast_length(n, real)`** returns the smallest fast length at or above n, or with
+  `real` the smallest even one whose half is fast (2 for n ≤ 2). In 2-D and 3-D only the
+  halved axis takes `real`. It tests only the candidates in [n, 2n] (products of 2, 3, 5,
+  7 and 13, and the lone 11 to 23), so one query takes 5–200 µs on average up to 2⁴⁰ on
+  the M5 Max, under 0.6 ms at worst. The largest step up to 200000 is 17 % (41 → 48).
+- Both queries accept n ≤ 2⁴⁰ and throw `std::invalid_argument` above it: `row_cost` is
+  exact up to there, and a prime near 2⁶² took more than 30 s to price.
+- The fast lengths are pinned by tests (a list to 300 and a checksum to 2²⁰), since a change
+  to them changes every caller's grid.
+- Experiment P4 measured whether they are fast on the three machines.
+
 ### 9.3 Many dimensions
 
 A multi-dimensional transform is a sequence of 1-D transforms, one per axis. What matters
@@ -1515,6 +1550,35 @@ is the order in which memory is touched:
 - **Real multi-dimensional transforms** halve the last axis, as FFTW does.
 
 Axis order within a plan is a planner choice unless a pipeline pins it (section 12.3).
+
+As built (task 4.1, experiment X40; `src/core/plan_core.cpp`, `column_block`,
+`column_radices`, `add_column_phase`): a transform is finished before the next, axis by
+axis from the last. The last axis runs line by line through the chain (or a leaf, a loop of
+which is one leaf call, 8.3). In a c2c plan every other axis whose neighbouring columns are
+adjacent on both sides of its phase (the last axis contiguous there) runs as the lanes
+strategy (8.5) over blocks of B adjacent columns: the block's first pass reads its columns
+from the array (C columns are one vector, so there is neither a gather nor a transpose), the
+column's chain runs on a tile in scratch, and the last pass writes them back, in place or
+not; the first and last passes (and the scatter after a split run) take every array row's B
+columns at once (`pass_args::columns_inner`), so each line is read once. Each column is a
+lane computing its own chain, so the columns get the bits of the chain route where the
+radices agree. The radices are the row's unless its last pass would put more of its legs
+into one L1 set than the L1 has ways (legs s = n / R column elements apart): then the
+cheapest ranked sequence whose last pass does not (a last pass of radix 16 whose legs shared
+a set made 128² and 256² planes 2.2 times slower on the M5 Max; reads in the first pass did
+not matter). B is 256 bytes of columns (16 complex doubles), at most the columns there are;
+where a column's elements lie a page or more apart, at least four L1 lines (32 complex
+doubles on Apple's 128-byte lines); where they lie less than a page apart it is halved while
+the two tiles exceed a quarter of L2, down to a line, and the columns run alone through the
+chain if they still exceed it (X40's sweeps: wide blocks won where each element of a column
+has its own page, 2048² on the EPYC 0.126 of the chain columns' time with 16 columns against
+0.183 with 4, the M5 Max's 1024² 0.46 with 32 against 0.50 with 16; where rows share pages a
+block whose tiles left L2 lost, Xeon 2048 × 36 0.79 with 4 columns and 1.09 with 16). The columns past the last whole block run as one
+narrower block (a loop's `start` offsets its nest), its idle lanes never written. A block is
+a line of the phase's loop nest, so threads share blocks as they share rows (13.2). Not built
+yet: the strided axes of real transforms (their complex axes still run column by column),
+blocks over the columns of a long axis beyond L2 (a two-phase split of the column, the grid's
+way), and padding or block ordering against the rows' own power-of-two conflicts.
 
 ---
 
@@ -2463,6 +2527,7 @@ infrastructure to maintain.
 | `docs/conventions.md` | every convention, stated exactly: the formula each transform computes, signs, normalisation, the layout of every input and output (r2c and c2r sizes and padding, multi-dimensional halving), strides and distances, in-place rules, what is and is not preserved, alignment, accuracy bounds, the determinism contract | Markdown |
 | `docs/guide.md` | task-oriented: rows, planes, volumes, real transforms, choosing lengths, workspaces, planning effort and wisdom | Markdown with examples |
 | `docs/planning.md` | planning effort (rules, quick and full measurement) and wisdom | Markdown with an example |
+| `docs/lengths.md` | fast lengths (`next_fast_length`) and the per-length estimate (`relative_cost`) | Markdown with an example |
 | `docs/kokkos.md` | the optional Kokkos adapter: View-based construction, the Kokkos-FFT-shaped plan, moving a Kokkos-FFT call site, the rules for Views and axes, normalisation, and every difference from Kokkos-FFT | Markdown with examples |
 | `docs/threading.md` | each integration model with a complete example: serial, inside an OpenMP region, the OpenMP executor, Kokkos, a custom pool, the built-in pool; what FFTN never does to the caller's runtime | Markdown with examples |
 | `docs/fusion.md` | edge operations, convolution, transform pairs, block callbacks | Markdown with examples |
@@ -2562,6 +2627,30 @@ by `options::use`, stale or unbuildable entries ignored with a note in `describe
 margin, serial timing. Still open, details below the API: the shape key uses strides and
 distances as given (0 for a default), so two spellings of one layout are two keys; a plan for
 a team is chosen by its serial time.
+
+**Task 2.5: fast lengths and the per-length estimate.** Proposed by the lead, pending the
+maintainer.
+- (a) A new header, `fftn/lengths.hpp`, included by `fftn.hpp`, rather than the convenience
+  layer of 5.4, since applications choose grid sizes before they plan.
+- (b) `std::size_t next_fast_length(std::size_t n, bool real = false)`: a `bool` for real
+  transforms (scipy's `next_fast_len(target, real)`). The alternatives are a separate
+  `next_fast_real_length`, or a kind argument.
+- (c) What "fast" means: within 1.25 times the reference table's cost per point of the power
+  of two at or above, with the reference a frozen copy of AVX2's double table, fixed per
+  version. No prime
+  factor above 23 can be fast, and no composite with 11, 17, 19 or 23 (P4). The alternative is a plain smoothness rule (7-smooth, say),
+  which ignores the vector width's partial tiles: odd smooth lengths cost 1.5–3 times a
+  power of two per point.
+- (d) `template <class T> double relative_cost(std::size_t n, isa target = isa::best)`. It
+  returns a ratio to the power of two above rather than an absolute estimate, since the
+  tables' units are not time; it covers complex rows only (real rows use n / 2), and in-cache
+  rows. The lead's sketch had `estimated_cost(shape)`; a shape-wide estimate needs the cost
+  model that P3 rejected.
+- (e) Edge values: `next_fast_length(0)` is 1, n ≤ 2 returns n, and with `real` n ≤ 2
+  returns 2. Above 2⁴⁰ both queries throw `std::invalid_argument` (the alternative was to
+  return n, or with `real` the next even length, unsearched).
+- (f) Pending: an enum (`next_fast_length(n, length_kind::real)`, say) instead of the `bool`,
+  which reads better at the call site; kept as `bool` for now, scipy's spelling.
 
 **Threading API and contract (tasks 3.1 and 3.2), for the maintainer's review.** Built as
 below because section 5.3 left the shapes open; each is easy to change before a release.
@@ -2820,6 +2909,9 @@ to change before a release.
 | 2026-11-16 | Bluestein and Rader convolutions follow the line rules (X36): long power-of-two convolutions take X32's long-row radices (from `grid_min_bytes` on Apple and Zen, beyond 4 L2 elsewhere); a Bluestein length's power-of-two part is limited per machine (`bluestein_pow2_part_bytes`: L1/4 on Apple, L1 on Zen, none on the Xeon); a single copy's convolution takes the split run; a stage of 1 < s < C copies covers the whole line where that convolution is no longer; half-form chirp passes rejected (section 8.5) | X36: the convolution took the in-cache table's radices and a power-of-two length at any size; Mac changed cases 0.49 (131071 2.61 → 0.88 of FFTW, 999983 1.99 → 0.75), EPYC 0.56 (4093 1.33 → 0.94, 65537 0.80), Xeon 1018 0.68 (÷ MKL 1.37 → 0.93) |
 | 2026-11-16 | A radix-20 codelet (Good–Thomas 4 × 5), a pass radix only (rule 1 leaves it out, the narrow x86 leaf table has no row of it); `avx2` double overrides take it at 80, 160, 240, 640, 2000, 3000 and 3600, and re-fitted sequences at 384 and 20000; `radix_override` holds five radices (experiment X38, proposed in pull request 27) | FFTW's plans take radix 20 there; 0.868 of main on those lengths on the EPYC (0.81–0.96), tracking tier 1.000; library text +5.6 %; two unchanged-plan cases past the decision rule's limit, for the lead |
 | 2026-11-17 | A Bluestein stage of s = C copies covers the whole line while the line is not longer than `long_convolution_bytes` (X36b; s < C already did, X36) | X36b: EPYC 1018 0.73 (1.53 → 1.12 of FFTW), Xeon 2036 0.81; NEON float 262142 lost 1.23 as one stage, hence the length limit; a grid convolution for the Xeon and per-copy stages need a second movable workspace slot, not built |
+| 2026-11-17 | The strided axes of c2c planes and volumes run as lanes over blocks of adjacent columns (256 bytes of columns, four lines where each column element has its own page, halved to keep two tiles in L2/4 below a page, the chain beyond), with column radices whose last pass keeps its legs within the L1's ways; a loop over lines whose body is one leaf is one leaf call (section 9.3) | X40: the 37 c2c planes 0.613 (Mac), 0.453 (EPYC), 0.537 (Xeon) of the column-by-column chain's time; FFTN ÷ FFTW 1.44 → 0.88, 2.07 → 0.94, 1.49 → 0.80; ÷ MKL 1.87 → 1.00; no case slower |
+| 2026-11-17 | `next_fast_length` and `relative_cost` public in `fftn/lengths.hpp` (task 2.5, section 9.2): a fast length is one AVX2's double cost table prices within 1.25 of the power of two above, per point, and not a composite with a factor 11, 17, 19 or 23 (experiment P4's rule: such composites missed 1.3 of the power of two on two machines each); the API choices are proposed by the lead, pending the maintainer (18.2) | DESIGN 9.2's design (a pure function of the version, a machine-specific query beside it); the tables are the planner's own, so the two agree with what plans do; P4 checks the lengths are fast on the three machines |
+| 2026-11-17 | The fast lengths' reference table is a frozen copy of AVX2's double table (`reference_costs`), not the planner's; both length queries throw above 2⁴⁰; `next_fast_length` tests only the 2, 3, 5, 7, 13-smooth candidates in [n, 2n]; 20 is priced as the chain the planner builds (PR #41 review) | a refit of the planner's tables must not move users' grids (a checksum test pins the set to 2²⁰; unchanged by this change); the old trial of every integer took 1.8 s at 2³⁹ + 1, now under 0.6 ms; pricing above 2⁴⁰ was inexact or undefined |
 
 ---
 

@@ -23,6 +23,9 @@ machine_profile profile_for(const topology& t, bool x86_64) noexcept {
   if (!t.classes.empty()) {
     set_grid_sizes(p, t.classes.front(), x86_64);
   }
+  if (t.page_size != 0) {
+    p.page_bytes = t.page_size;
+  }
   // The defaults are a Zen 3 CCX's. Two other kinds of cache group were measured (T1, T5):
   // an Apple processor (macOS's reader, which numbers CPUs itself, topology.hpp, and an L2
   // shared by a cluster of cores rather than each core's own: an Intel Mac has per-core L2s
@@ -75,6 +78,12 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
     p.grid_min_bytes = c.l1d.size;
     p.grid_block_bytes = c.l1d.size;
   }
+  if (c.l1d.line_size != 0) {
+    p.line_bytes = c.l1d.line_size;
+  }
+  if (c.l1d.ways != 0) {
+    p.l1_ways = c.l1d.ways;
+  }
   if (c.l2.size != 0) {
     if (private_l2) {
       p.grid_min_bytes = std::max(p.grid_min_bytes, c.l2.size / 2);
@@ -84,6 +93,7 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
     // on the Xeon and the EPYC, whose L1 refills it did not cut.
     p.grid_pad_period = private_l2 ? std::numeric_limits<std::size_t>::max() : 4096;
     p.grid_fuse_bytes = c.l2.size / 4;
+    p.column_tile_bytes = c.l2.size / 4;
   }
   // Experiment X29: with a private L2 and an L3 of at least 2 MiB per CPU sharing it (the
   // EPYC 7763's CCX: 32 MiB for 8 cores), a row whose length has a power-of-two part of at

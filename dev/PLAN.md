@@ -82,8 +82,15 @@ EPYC (libfftl x86-64-v3, run 20261115-171147-bc20, no round under load): FFTN 0.
 FFTL's time overall (FFTL 1.49 of FFTW's); the same pattern: FFTL ahead on rows ≥ 16384
 (1.51; 262144 2.04, 100000 2.00, r2c and c2r 2²⁰ 2.0–2.2) and 2431 (2.93), FFTN far ahead
 on rows ≤ 64 (0.12), batches (0.40) and 128–4096 (0.75).
-Planes and volumes are far behind (phase 4 has not started): c2c 1024² 2.1 / 4.1, 64³
-3.1 / 10.9 (EPYC: likely cache aliasing of power-of-two strides).
+Planes (task 4.1, X40 first pass, pull request 43): the strided axes of c2c planes and
+volumes run as lanes over blocks of adjacent columns, and a loop of leaves is one call. The
+37 c2c planes of the standard catalogue, FFTN ÷ FFTW before → after: Mac 1.44 → 0.88, EPYC
+2.07 → 0.94, Xeon 1.49 → 0.80; ÷ MKL 1.87 → 1.00 (1024² Mac 2.1 → 1.0, EPYC 4.0 → 0.96).
+Still over FFTW or MKL: tiny planes in batches of 2 (8 × 6, 5 × 7: 1.13–1.7 of FFTW), EPYC
+32 × 32 (1.35–1.42), Mac 2048 × 36 (1.12–1.16), the Xeon against MKL from 16² to 1000²
+(1.08–1.38). Runs 20261117-052127-ef6a (Mac), 20261117-051803-7358 (EPYC),
+20261117-051743-62dd (Xeon). Volumes (64³ 3.1 / 10.9 before) take the same column phase;
+task 4.2 measures them. Real planes still run their complex axes column by column.
 
 ### Tasks
 
@@ -102,14 +109,24 @@ Open, by phase:
   points; X24 rejected both planned fixes); 2.4 (`planning::measure` and wisdom built, P1 and P2 in a first pass; the cost model and calibration remain;
   task/2.4-measure); 2.5 (`next_fast_length` exists internally, not public); X6, X13.
 - 3: T2, T3, T4, T6; 3.5 (Kokkos executor); 3.6 to be checked against its acceptance.
-- 4–7: not started.
+- 4: 4.1 in progress (X40 first pass adopted; next: rows of short-row planes in one call
+  per stage, long columns beyond L2 in two phases, real planes' complex axes, threaded planes).
+- 5–7: not started.
 
 In flight (lead session, 2026-11-17): task 1.3
-(`x86_v2` and `avx` targets, X14); task 2.5 (`next_fast_length` and per-length cost, API
-proposed by the lead); task 4.1 (planes, X40); a tidy fix. Task 2.4's acceptance is met (P1:
+(`x86_v2` and `avx` targets, X14); task 4.1's next part (small planes, real planes, threaded planes); a tidy fix. Task 2.4's acceptance is met (P1:
 rules within 5 % of measure on 93–100 % of cases on all three machines); its cost model (P3)
 was rejected on the first pass, so the long-row thresholds stay. Then the exit check again. Done, each merged with its
 pull request:
+- Task 2.5 (pull request 41): `next_fast_length(n, real)` and `relative_cost<T>(n, isa)` in
+  `fftn/lengths.hpp`, a frozen reference table, the fast set to 2²⁰ pinned; API proposed by
+  the lead, pending the maintainer (DESIGN 18.2); P4: picks 0.11–0.96 of the awkward lengths
+  they replace; within 1.3 of the power of two above on 96 % (Mac), 78 % (x86).
+- Task 4.1, first part (X40, pull request 43): columns of planes and volumes in blocks of
+  adjacent columns, column radices counted against the L1's ways, leaf loops as one call: 37
+  c2c planes ÷ FFTW Mac 1.44 → 0.88, EPYC 2.07 → 0.94, Xeon 1.49 → 0.80 (÷ MKL 1.87 → 1.00);
+  64³ 0.09–0.46 of main. Left: small planes in batches, EPYC 32², columns beyond L2, Xeon ÷
+  MKL at 16²–1000², real planes' complex axes, threaded planes; volumes' pencil blocks (4.2).
 - X39 (pull request 31): the Xeon's long rows: block widths, grids for powers of two beyond
   L2/4, radix-20 passes in `avx512` double sequences and grid phases: Xeon ÷ FFTW 5000 1.04 →
   0.89, 10000 0.96 → 0.84, 32768 1.51 → 1.29, 2²² 0.86 → 0.75, 25000 1.50 → 1.34, 100000
@@ -464,7 +481,7 @@ behaves differently from the Cascade Lake Xeon's) and on an AArch64 Linux machin
 | 2.2 | Lanes strategy for row batches (tile gather and scatter) and strided lines; lane blocks sized by cache; experiment X7 | awkward short rows on AVX-512 at or below FFTW and MKL (built 2026-11-15; X7 after X20: lanes only in float on x86, 0.32–0.55 of the chain at 8–16 points; double c2c on AVX-512 still 1.1–1.3 of FFTW with the chain, not met; strided axes of planes are phase 4's) |
 | 2.3 | Codelets 7, 11, 13 and composites; vectorised generic prime pass; Bluestein pass with smooth-part split | every n ≤ 4096 correct and priced; no FFTW fallback anywhere |
 | 2.4 | Cost model, machine profiles and `fbench calibrate`; `planning::measure` with a generous budget (DESIGN 11.2: real-size timing, seconds per shape if needed, a quick level; never PATIENT-like search); wisdom export and import; experiments P1, P2; brought forward on 2026-11-16 ahead of more threshold rules (claimed: task/2.4-measure, 2026-11-16: `planning::measure`, wisdom, P1, P2 first pass) | the model's first choice is within 5 % of the measured best for ≥ 90 % of catalogue cases |
-| 2.5 | `next_fast_length` and published per-length cost | documented and tested |
+| 2.5 | `next_fast_length` and published per-length cost (in progress, task/2.5-next-fast-length: `fftn/lengths.hpp`, P4) | documented and tested |
 
 Exit: all 1-D row shapes (c2c, r2c, c2r; 1 to thousands of rows; smooth, prime and
 awkward lengths) meet the section 1.3 targets on one thread on M-series, Zen 3, the Xeon,
@@ -592,10 +609,12 @@ running, done (with verdict).
 | [X38](experiments/X38-epyc-mid.md) | The EPYC's double rows of 80–20000 points (exit check cause 4; 240, 384, 640, 1024 1.19–1.23 of FFTW): do sequences re-fitted on Zen 3 with radix 32/64 (two passes where FFTW runs two), split-aware first passes or cheaper twiddle arithmetic close them? | 1 | done: R adopted by the lead with two recorded exceptions: a radix-20 codelet with re-fitted `avx2` double sequences, 0.868 of main on its nine lengths (240, 2000, 3000, 3600 now under FFTW; exit cases over 1.05 of FFTW 32 → 27 of 193), tracking 1.000; two unchanged-plan cases past rule (b) after the re-run (60 × 3 1.036, 323 1.049: plans unchanged, placement likely) kept as exceptions; library +5.6 %; 512–2048 unchanged (FFTN's radix-32/64 codelets spill) |
 | [X36b](experiments/X36b-prime-tails.md) | What X36 left of the prime tail: EPYC 1018 (1.51 of FFTW; copies of a Bluestein stage one at a time or one stage over the line) and the Xeon's 131071 and 999983 (1.28, 1.10; a long convolution as a grid) | 1 | done: s = C copies as one stage while the line is not long (EPYC 1018 0.73: 1.53 → 1.12 of FFTW; Xeon 2036 0.81); the Xeon's grid convolution needs a second movable workspace slot (screen: 999983 would reach about 0.86 of FFTW, 131071 stays 1.24, its gap is cause 5) |
 | [X39](experiments/X39-xeon-long.md) | The Xeon's long rows (exit-check causes 5 and 6: 16384–262144, 20000, 25000, 46080, 100000 1.22–1.50 of FFTW; in place 65536 1.16): why, and which plan rule closes them on `avx512` without changing other machines? | 1 | done: on the Xeon profile (x86-64) three-phase blocks ≤ 16 adopted (0.935 over 4 rows; 131072 1.20 → 1.09 of FFTW), two-phase blocks within 2 · L1 and c2c powers of two as grids beyond L2/4 adopted (0.958 over 7; 32768 1.51 → 1.29, 46080 1.33 → 1.26); radix-64 grid phases rejected (0.985); 16384–25000, 100000 unchanged: they need radix-20/25 codelets or a depth-first chain; measure finds 5000–25000's better chain orders; arm D (after X38): radix-20 first passes in `avx512` double sequences 300–25000, radix-20 grid phases, r2c 65536 as a grid, c2c powers of two ≥ 2²⁰ out of place in two phases (P1's misses): 0.905 over 26 changed cases (5000 1.04 → 0.89 of FFTW, 25000 1.50 → 1.34, 2²² 0.86 → 0.75) |
+| [X40](experiments/X40-planes.md) | Batched 2-D c2c planes (task 4.1; 1024² 2.1 / 4.1 of FFTW on the Mac / EPYC): where does the time go against FFTW's plans and MKL (rows or strided columns, passes over memory, copies, power-of-two set conflicts), and do lanes over blocks of adjacent columns close it? | 4 | done, first pass: the columns were the gap (every column alone, each line re-read per column; a last pass of radix 16 whose legs shared an L1 set); lanes over blocks of adjacent columns and one call per loop of leaves adopted: planes 0.613 / 0.453 / 0.537 of main (Mac / EPYC / Xeon), ÷ FFTW 0.88 / 0.94 / 0.80, ÷ MKL 1.00; tiny planes, EPYC 32², long columns and the Xeon against MKL left |
 | [P1](experiments/P1-rules-vs-measure.md) | How often is the rules' choice within 5 % of `planning::measure`'s per machine (task 2.4's acceptance: 90 % of catalogue cases), which rules miss, and does measurement recover a misfiring profile (Granite Rapids' fields forced on the Xeon)? | 2 | first pass done: rules within 5 % of measure on 96.7 % of the tracking tier on the EPYC, 77 % on the Xeon (about 85 % without noise), Mac inconclusive under load; measure never slower by fbench; Granite Rapids' fields forced on the Xeon recovered in 10 of 11 cases (the miss a budget defect, fixed); planes' radices the repeat miss. Second pass (73eb719, placements per round, median): Mac 93.4 %, EPYC 95.1 %, Xeon 86.9 % (long real rows, planes, 2²², 2431 repeat); misfire 9 of 9 after the budget fix; EPYC r2c 65536 measure 1.18 slower (power-of-two chains bimodal by page backing); EPYC 65537 Bluestein 1.75 faster than the rules' Rader |
 | [P2](experiments/P2-measure-budget.md) | Measurement budget: how many candidates and how long before the choice stops improving; the quick and full efforts' budgets | 2 | first pass done: Q within 0.999–1.014 of M; no winner above rank 7; plan construction dominates large transforms (2²² 12.5 s for M); choices unstable under load (43–66 % of cases one program over 12 rounds), so budgets wait for a sampling revisit; indicated quick 6, measure 8 |
 | [P1b](experiments/P1b-rader-65537.md) | Rader or Bluestein at 65537 on x86: measure chose Bluestein on the EPYC (rules 1.75 of its time); should the x86 Rader range stop below 2¹⁶ as NEON's does? | 2 | done: rules unchanged. EPYC Bluestein 1.49 (double) and 1.18 (float) slower than Rader at 65537 in this run, the opposite of P1's 1.75: bimodal by process (Rader's gathers and the page size); a page-robust Rader stage is the follow-up |
 | [P3](experiments/P3-cost-model.md) | A calibrated cost model for long rows (DESIGN 11.2's additive model with a memory factor per cache level, fitted per machine by `fbench calibrate`): does it choose chain, two or three grid phases within 5 % of the fastest on 90 % of long rows, and can it replace X12b/X29/X32/X33/X34's thresholds? | 2 | done, first pass: rejected (model within 5 % on 100/95 % on the EPYC but 72/55 % Mac, 72/80 % Xeon, worse than the rules there; calibrated thresholds also fail on Mac and Xeon); thresholds stay; misfires left to `planning::measure` and wisdom; a denser catalogue and a set-conflict term for a second pass |
+| [P4](experiments/P4-next-fast-length.md) | Are `next_fast_length`'s lengths fast on the Mac, the EPYC and the Xeon (within 1.3 of the power of two above, faster than the awkward length), and do composites with 11–23 belong in the fast set? (task 2.5) | 2 | done: every pick faster than its awkward length (0.11–0.96); composites with 11, 17, 19 or 23 removed by the rule; within 1.3 of the power of two above on 96 % (Mac) but 78 % (EPYC, Xeon), the misses short x86 lengths below 300 (maintainer's choice) |
 | [T1](experiments/T1-dispatch-wait-costs.md) | Dispatch, wake and wait costs per machine and runtime (libgomp, libomp, Kokkos, pool) | 3 | done: hand-off cost and claim runs adopted on Zen 3; dispatch and work costs wait for a per-lane dispatch term |
 | T2 | Claiming engine against precomputed schedule with spin barriers; keep one or both? | 3 | planned |
 | T3 | Kokkos: cost of one `parallel_for` per transform; `team_barrier` behaviour | 3 | planned |

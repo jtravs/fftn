@@ -202,11 +202,16 @@ public:
   // row's arithmetic: the same codelets, twiddles and split run as c2c_line, r2c_line and
   // c2r_line), and a scatter. Every stage is one chunk. Each returns the complex elements of
   // scratch the block needs in each of a and b. Preconditions: lanes_fit; no input edge
-  // operation (c2c); real rows of stride 1 on the real side.
+  // operation (c2c); real rows of stride 1 on the real side. columns: the rows are a
+  // plane's adjacent columns (the strided axis of a multi-axis plan, experiment X40), so the
+  // first and last passes run each array row's columns at once (pass_args::columns_inner);
+  // rad: the radices of the chain instead of the row's (codelet radices with lane passes,
+  // multiplying to n; core/plan_core.cpp, column_radices).
   [[nodiscard]] bool lanes_fit(std::size_t n, bool real) const;
   std::size_t c2c_lanes(std::size_t n, int sign, endpoint src, std::ptrdiff_t src_dist,
                         endpoint dst, std::ptrdiff_t dst_dist, const line_edges& edges,
-                        std::size_t block, std::vector<stage>& stages);
+                        std::size_t block, std::vector<stage>& stages, bool columns = false,
+                        const std::vector<std::size_t>& rad = {});
   std::size_t r2c_lanes(std::size_t n, endpoint src, std::ptrdiff_t src_dist, endpoint dst,
                         std::ptrdiff_t dst_dist, double scale, std::size_t block,
                         std::vector<stage>& stages);
@@ -317,9 +322,9 @@ private:
   // b in between. edges.out applies to the last pass.
   void lanes_body(std::size_t n, const std::vector<std::size_t>& rad, std::size_t split, int sign,
                   lane_rows src, lane_rows dst, const line_edges& edges, std::size_t block,
-                  std::vector<stage>& stages);
+                  std::vector<stage>& stages, bool columns = false);
   void add_lanes_copy(bool gather, std::size_t elements, lane_rows rows, slot tile,
-                      std::size_t block, std::vector<stage>& stages);
+                      std::size_t block, std::vector<stage>& stages, bool columns = false);
 
   const kernels_of<T>& kernels_;
   const narrow_leaf_set<T>* narrow_ = nullptr;

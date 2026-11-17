@@ -8,6 +8,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <variant>
 
 namespace fftn::inline v0::detail {
@@ -64,6 +65,22 @@ slot_addresses moved(const slot_addresses& at, const std::array<std::ptrdiff_t, 
   return next;
 }
 
+// The bytes a loop moves slot s per iteration (0 for the scratch lines, which never move).
+std::ptrdiff_t step_of(const loop& l, slot s) noexcept {
+  switch (s) {
+  case slot::in:
+    return l.step[0];
+  case slot::out:
+    return l.step[1];
+  case slot::block:
+    return l.step[2];
+  case slot::a:
+  case slot::b:
+    break;
+  }
+  return 0;
+}
+
 void run_records(const program& p, std::size_t begin, std::size_t end,
                  const slot_addresses& at) noexcept {
   for (std::size_t i = begin; i < end; ++i) {
@@ -73,8 +90,22 @@ void run_records(const program& p, std::size_t begin, std::size_t end,
       continue;
     }
     const loop& l = *std::get_if<loop>(&r);
+    const slot_addresses from = moved(at, l.start, 1);
+    // A loop over the lines of an axis whose body is one leaf (the rows of a plane of short
+    // rows) is one call of the leaf over all its lines, as run_flat runs a batch of leaf rows
+    // (X20); the leaf computes each line as it would alone (experiment X40).
+    if (l.body_end == i + 2) {
+      const stage* only = std::get_if<stage>(&p.records[i + 1]);
+      if (only != nullptr && only->leaf != nullptr && step_of(l, only->src) != 0 &&
+          step_of(l, only->dst) != 0) {
+        only->leaf(&only->args, source_of(only->src, from), destination_of(only->dst, from),
+                   step_of(l, only->src), step_of(l, only->dst), l.count);
+        i = l.body_end - 1;
+        continue;
+      }
+    }
     for (std::size_t c = 0; c < l.count; ++c) {
-      run_records(p, i + 1, l.body_end, moved(at, l.step, c));
+      run_records(p, i + 1, l.body_end, moved(from, l.step, c));
     }
     i = l.body_end - 1;
   }
@@ -102,7 +133,7 @@ slot_addresses moved_in_nest(const program& p, std::size_t begin, std::size_t de
 // A stage of a lanes block (program.hpp): whole, with the block's rows.
 void run_lane_stage(const stage& st, const slot_addresses& at, std::size_t rows) noexcept {
   pass_args args = st.args;
-  args.rows = rows;
+  args.rows = static_cast<std::uint32_t>(rows);
   st.run(&args, source_of(st.src, at), destination_of(st.dst, at), 0, st.units);
 }
 
@@ -324,8 +355,12 @@ void run_transforms(const program& p, std::size_t first, std::size_t count,
 
 void run_lines(const program& p, std::size_t begin, std::size_t nest, std::size_t body_end,
                std::size_t first, std::size_t last, const slot_addresses& at) noexcept {
+  slot_addresses from = at;
+  for (std::size_t i = begin; i < begin + nest; ++i) {
+    from = moved(from, std::get_if<loop>(&p.records[i])->start, 1);
+  }
   for (std::size_t line = first; line < last; ++line) {
-    run_records(p, begin + nest, body_end, moved_in_nest(p, begin, nest, line, at));
+    run_records(p, begin + nest, body_end, moved_in_nest(p, begin, nest, line, from));
   }
 }
 

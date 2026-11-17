@@ -471,6 +471,23 @@ KiB (32768: 0.89 of the chain); at 16384 its copies cost 30–50 instructions pe
 lost in every split (1.02–1.69). So the gap between L2/4 and L2/2 is a missing strategy, a
 depth-first chain, not a threshold. [X39](experiments/X39-xeon-long.md).
 
+3.23 **A strided axis is a batch of adjacent columns: vectorise across them and read each
+line once.** Running a plane's columns one at a time (copied element by element on wide
+registers) took 1.5–7.6 times FFTW's time from 64² to 2048²; blocks of 16–32 adjacent columns
+as the lanes of the column's chain, the block's first and last passes taking every row's
+columns at once, took the planes to 0.45–0.61 of that time (FFTN ÷ FFTW 0.80–0.94) on an M5
+Max, an EPYC 7763 and a Xeon 6240. Block by bytes per row (256 bytes, four lines where each
+element is on its own page), not by fitting tiles in L1: where every column element has its
+own page the widest blocks won (2048² 0.126 against 0.183), while tiles beyond L2 lost where
+rows share pages. [X40](experiments/X40-planes.md).
+
+3.24 **Count a pass's output legs against the L1's ways; its input legs mattered less.** A
+column chain whose last pass wrote 16 legs a power of two apart into one 8-way L1 set made
+128² and 256² planes 2.2 times slower on the M5 Max than the same columns ending in radix 8,
+whereas a first pass reading 16 legs from one set cost nothing measurable. Choose the
+radices of passes that write strided memory by the sets their legs hit (DESIGN.md 10,
+rule 1). [X40](experiments/X40-planes.md).
+
 ## 4. Kernels and algorithms
 
 4.1 **A whole-transform codelet wins only where it fills the register.** One 32-point

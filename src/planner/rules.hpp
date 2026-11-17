@@ -122,6 +122,38 @@ ranked_radices(std::size_t n, const target_profile& p, std::size_t k);
   return product;
 }
 
+// The planner's estimate of one row of n points on profile p, in the cost tables' units: the
+// rules' radices priced pass by pass (pass_cost), a 17, 19 or 23 codelet pass as a radix-16
+// pass scaled by r log2 r, a Rader or Bluestein stage as its convolution's two transforms
+// and two elementwise passes per copy. An in-cache estimate: memory beyond L1 is not priced
+// (experiment P3). Precondition: n <= 2^40.
+[[nodiscard]] double row_cost(std::size_t n, const target_profile& p);
+
+// row_cost per point of n over row_cost per point of the power of two at or above n: about
+// 1 for lengths as cheap per point as a power of two, more for slower ones; 1 for n <= 1 and
+// for a length the planner runs as one codelet (rule_radices(n, p) == {n} with a codelet: n
+// <= 16, 17, 19, 23, and 32 or 64 within the leaf limit; not 20, which is always a chain).
+// Precondition: n <= max_length_query.
+[[nodiscard]] double relative_row_cost(std::size_t n, const target_profile& p);
+
+// Task 2.5: a fast length is one whose relative_row_cost on the reference profile is at most
+// fast_tolerance. The reference is a frozen copy of AVX2's double table (X2's measured one;
+// rules.cpp, reference_costs), not the planner's tuned table, so that a length chosen on one
+// machine is the same on another and a refit never moves the fast set (DESIGN.md 9.2).
+// Lengths with a prime factor above 23, and composites with a factor 11, 17, 19 or 23
+// (experiment P4), never are. The tolerance was checked by measurement (P4): it is a
+// property of the table, not a guarantee on every machine.
+inline constexpr double fast_tolerance = 1.25;
+// The longest length the length queries accept (fftn/lengths.hpp throws above it): row_cost
+// is exact up to here, and next_fast_length's search stays within [n, 2n].
+inline constexpr std::size_t max_length_query = std::size_t{1} << 40U;
+[[nodiscard]] bool is_fast_length(std::size_t n);
+// The smallest fast m >= n; 1 for n = 0. With real: the smallest even m >= n with m / 2 fast,
+// so 2 for n <= 2. A pure function of the library version. It tests only the candidates in
+// [n, 2n] (products of 2, 3, 5, 7 and 13, and the lone 11 to 23). Precondition: n <=
+// max_length_query.
+[[nodiscard]] std::size_t next_fast_length(std::size_t n, bool real);
+
 // FFTL.jl's radices for a long line of 2^k points (its src/factor.jl; MIT, the maintainer's
 // own; experiment X32): radix 8 with one or two 4s first, or radix 4 with an 8 first for an
 // odd k. k >= 2.

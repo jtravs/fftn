@@ -62,6 +62,13 @@ struct build_settings { // NOLINT(clang-analyzer-optin.performance.Padding)
   // The lanes strategy's block, in rows (rounded up to a multiple of the target's complex
   // count C), instead of the rule's when not 0 (plan_core.cpp, lane_block; experiment X7).
   std::size_t lane_block = 0;
+  // The strided axes of a c2c plan of two or three axes (DESIGN.md 9.3, experiment X40):
+  // true, the rules: lanes over blocks of adjacent columns wherever the last axis is
+  // contiguous on both sides of the phase and the column's chain fits the lanes; false: every
+  // column alone through the chain. column_block: the block in columns (rounded up to a
+  // multiple of C) instead of the rule's (plan_core.cpp, column_block) when not 0.
+  bool lanes_columns = true;
+  std::size_t column_block = 0;
   // The grid's factors in phase order (two or three, multiplying to the row's length),
   // where they can be a grid; empty: the rules' (strategies/grid.hpp).
   std::vector<std::size_t> grid_factors;

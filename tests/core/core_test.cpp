@@ -440,12 +440,16 @@ void check_chunking(const fftn::shape<In, Out>& s, std::size_t in_count, std::si
   const fftn::options defaults;
   const auto whole = make_plan_core(view, defaults, coarse);
   const auto fine = make_plan_core(view, defaults, tiny);
-  // The fine plan really is divided.
+  // The fine plan really is divided: a stage into ranges of units, or a phase of lines
+  // (planes) into runs of lines.
   std::size_t chunked = 0;
   for (const auto& rec : fine->prog.records) {
     if (const auto* st = std::get_if<fftn::detail::stage>(&rec); st != nullptr) {
       chunked += st->chunks > 1 ? 1 : 0;
     }
+  }
+  for (const auto& ph : fine->graph.phases) {
+    chunked += ph.nest != 0 && ph.chunks > 1 ? 1 : 0;
   }
   EXPECT_GT(chunked, 0U);
   fftn::test::input_source src(in_count);
