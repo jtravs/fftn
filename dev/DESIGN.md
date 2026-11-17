@@ -280,8 +280,16 @@ template <class T> shape<T, std::complex<T>> rows_r2c(std::size_t n, std::size_t
 template <class T> shape<std::complex<T>, T> rows_c2r(std::size_t n, std::size_t count);
 template <class T> shape<std::complex<T>, std::complex<T>>
     planes_c2c(std::size_t ny, std::size_t nx, std::size_t count, direction);
-template <class T> shape<std::complex<T>, std::complex<T>>   // provisional (19)
+template <class T> shape<T, std::complex<T>>
+    planes_r2c(std::size_t ny, std::size_t nx, std::size_t count);
+template <class T> shape<std::complex<T>, T>
+    planes_c2r(std::size_t ny, std::size_t nx, std::size_t count);
+template <class T> shape<std::complex<T>, std::complex<T>>
     volumes_c2c(std::size_t nz, std::size_t ny, std::size_t nx, std::size_t count, direction);
+template <class T> shape<T, std::complex<T>>
+    volumes_r2c(std::size_t nz, std::size_t ny, std::size_t nx, std::size_t count);
+template <class T> shape<std::complex<T>, T>
+    volumes_c2r(std::size_t nz, std::size_t ny, std::size_t nx, std::size_t count);
 // later: along_axes(extents, axes, direction) for the axes of a strided array
 }
 ```
@@ -1142,7 +1150,10 @@ batches of short rows (task 2.2) and for the strided axes of c2c planes and volu
 and is copied when its source is its destination. Scratch is two lines a and b; an
 out-of-place line with a contiguous destination (not aliased, no copy, no Bluestein
 stage) uses the destination in place of b, so a chain touches three lines, not four
-(experiment X18: up to 15 % faster at 512–16384 on a 32 KiB L1).
+(experiment X18: up to 15 % faster at 512–16384 on a 32 KiB L1). A chain of two such passes
+whose last radix has a codelet runs its first pass into the destination and its last pass
+in place there (a last pass reads and writes the same elements in each unit), so it touches
+two lines and no scratch (experiment X47: 512 points 0.95 of the time on the EPYC 7763).
 
 **Grid** (two-phase Cooley–Tukey; the family that contains FFTW's recursion, Bailey's
 four-step and KFR's sandwich). N = N1·N2, the data viewed as N1 rows of N2. One phase is
@@ -2982,7 +2993,8 @@ to change before a release.
 | 2026-11-17 | A radix-25 codelet (Cooley–Tukey 5 × 5), a pass radix only, with passes on the x86 and scalar targets only (none on NEON); `avx2` double overrides take it at 500, 3125, 5000, 10000, 15625, 25000 and `avx512` double at 100, 500, 3125, 10000, 15625, 25000; two-level codelets staged through memory for 16-register targets rejected (experiment X42) | EPYC 0.874 / 0.891 of the arm before over the changed lengths (FFTN ÷ FFTW 3125 0.77 → 0.65, 15625 0.79 → 0.66), Xeon about 0.86 / 0.842 (100 1.14 → 0.88 of FFTW, 3125 0.81 → 0.53); on the Mac radix 25 lost to radix-5 chains; the two-level form changed nothing with GCC (1.000) and slowed radix 25; library text +6.1 % on x86-64, +2.0 % on the Mac |
 | 2026-11-17 | Multi-axis programs of at most 256 kernel calls per transform run from their calls unrolled at construction (section 8.3); the complex axes of real planes take the lanes column phase where C > 1 with their own block rule; where a cluster shares L2 a column block's tiles stay within twice L1 when its column elements lie four to a page (section 9.3) | X41: planes of up to 1024 points 0.87–0.94 of the walk's time (three machines); real planes 0.89 (EPYC) and 0.83 (Xeon) of the chain columns' time, the M5 Max lost 1.04 and keeps the chain; M5 Max 2048 × 36 0.90; joining the narrower block's phase (T1) rejected at 0.96 |
 | 2026-11-17 | In double, a lanes column phase of 17–32 points with a codelet of its length is that one pass (section 9.3); on `avx2` the column edge passes run a block's runs in an inner loop per group | X44: on x86 the row of 32 is a pair leaf and its columns took two lane passes (EPYC 32² 0.72, Xeon 0.77–0.81 of the time, ÷ FFTW 1.39 → 1.00, ÷ MKL 1.37 → 1.07); the nested runs 0.94 on the EPYC's planes and volumes, 0.962 on the Xeon (below the bar), 0.997 on the Mac |
-| 2026-11-17 | `volumes_c2c(nz, ny, nx, count, dir)` in `fftn/shape.hpp` beside `planes_c2c` (section 5.2), plural like `rows_c2c` and `planes_c2c` where 5.2 had said `volume_c2c`; no real-kind volume functions yet. Proposed by the lead, pending the maintainer (provisional) | task 4.2; the general `shape` already serves volumes, so this is a convenience only: the open choices are its name and whether r2c and c2r shape functions for planes and volumes come with it |
+| 2026-11-17 | An out-of-place chain of two passes runs its last pass in place on the destination (two lines, no scratch) (X47) | Zen 3 refilled L1 1.4–2.9 times as often as FFTW at 512–2048 points; with two lines a 512-point row refilled 172 times instead of 509: EPYC exit-check cases of 256–640 points 0.95–0.98, every other case unchanged (tracking EPYC 0.998, Xeon 0.997, Mac 0.999); bits unchanged |
+| 2026-11-17 | Shape functions are plural, as the code has them: `rows_*`, `planes_*`, `volumes_*`, each returning a shape of `count` transforms; c2c, r2c and c2r for each (`planes_r2c`, `planes_c2r`, `volumes_c2c`, `volumes_r2c`, `volumes_c2r` in `fftn/shape.hpp`, section 5.2), shape builders only, laid out as `rows_r2c` and `rows_c2r` lay out theirs. Agreed by the maintainer, 2026-11-17 | task 4.2 proposed `volumes_c2c` (5.2 had said `volume_c2c`); the maintainer kept the plural and asked for the real kinds of both; the general `shape` already serves every kind at every rank |
 | 2026-11-17 | A plan may hold a team program (`plan_core::team`) that every team of two or more runs: the same transform with narrower lanes column blocks (at most `column_team_bytes`: 128 on x86-64 with a private L2 and a large L3, the EPYC), chain-only columns as blocks of a line with the chain's radices, and (X43b) a volume's inner axes plane at a time; serial executions run the program. Bits are the program's by construction (a column's result does not depend on its block, a line's on the order of lines) and tested (sections 9.3, 13.2) | X43: at 8 lanes on the EPYC the narrower blocks took 0.887 of the time over the c2c planes and volumes they change and the line blocks 0.72 at 2048 × 36, while one thread lost up to 1.42 with them; the plan does not know at construction whether teams will run it |
 | 2026-11-17 | c2c volumes: one thread keeps the axes one by one; a team runs the two inner axes plane at a time (the team program) where the profile's `team_volume_planes` says (x86-64, private L2 below 2 MiB); the outer axis over blocks of adjacent pencils by `column_block`'s rule (section 9.3) | X43b: one thread EPYC 0.979, Xeon 0.934 with 97³ 1.048, M5 Max 0.962 (rejected everywhere); 8 lanes EPYC 0.775 (VT), Xeon 0.771 (VTX) |
 ---
