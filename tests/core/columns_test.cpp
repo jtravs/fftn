@@ -234,6 +234,51 @@ TEST(Columns, ForcedColumnRadices) {
   }
 }
 
+// A column of a leaf length whose legs fall into one L1 set (column_radices, X52 arm L) runs
+// as two lane passes, the most balanced that fit (16 = 4 x 4), not as the leaf: the same
+// transform as the chain's columns within twice the tolerance of either. The profile's L1 is
+// fixed (32 KiB, 8 ways, 64-byte lines) so that the choice does not depend on the host.
+template <class T> void crowded_leaf_columns(fftn::isa target) {
+  SCOPED_TRACE(std::string(fftn::isa_name(target)) + (sizeof(T) == 8 ? " double" : " float"));
+  const std::vector<plane_case> cases = {
+      {.n = {16, 4096}},
+      {.n = {16, 2048}, .in_place = true, .dir = fftn::direction::backward},
+      {.n = {16, 8, 512}, .count = 2},
+  };
+  for (const plane_case& pc : cases) {
+    SCOPED_TRACE(label(pc, 0));
+    build_settings lanes;
+    lanes.profile.grid_block_bytes = std::size_t{32} * 1024;
+    lanes.profile.l1_ways = 8;
+    lanes.profile.line_bytes = 64;
+    build_settings chain = lanes;
+    chain.lanes_columns = false;
+    std::string lanes_text;
+    std::string chain_text;
+    const auto got = run<T>(pc, lanes, target, lanes_text);
+    const auto want = run<T>(pc, chain, target, chain_text);
+    const std::size_t at = lanes_text.find("axis 0 (n = 16): lanes over");
+    if (at != std::string::npos) {
+      const std::string line = lanes_text.substr(at, lanes_text.find('\n', at) - at);
+      EXPECT_TRUE(line.ends_with("radices 4 x 4")) << lanes_text;
+    }
+    std::size_t points = 1;
+    for (const std::size_t n : pc.n) {
+      points *= n;
+    }
+    const double l = std::max(1.0, std::log2(static_cast<double>(points)));
+    const double tolerance = 2 * 3 * std::numeric_limits<T>::epsilon() * l;
+    EXPECT_LE(relative_difference<T>(got, want), tolerance) << lanes_text << chain_text;
+  }
+}
+
+TEST(Columns, CrowdedLeafColumnsTakeTwoPasses) {
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    crowded_leaf_columns<double>(t);
+    crowded_leaf_columns<float>(t);
+  }
+}
+
 // The strided complex axes of r2c and c2r planes and volumes take the same column phase
 // (X41): every output byte as with each column alone through the chain where the radices
 // agree, the same transform within twice the tolerance where they do not; in place and out

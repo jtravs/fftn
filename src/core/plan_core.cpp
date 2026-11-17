@@ -664,6 +664,27 @@ column_radices(std::size_t n, std::ptrdiff_t stride, const build_settings& setti
   if (rad.empty() || fits(rad)) {
     return rad;
   }
+  // A leaf (one pass of radix n) whose legs crowd one L1 set: ranked_radices has nothing
+  // else for a leaf length, so two lane passes a x b = n, the most balanced first (X52 arm
+  // L: the M5 Max's 16 x 256 x 256, whose outer leaf of 16 has its legs 1 MiB apart, took
+  // 0.67 of the leaf's time as 4 x 4 and 0.82 as 8 x 2).
+  if (rad.size() == 1) {
+    std::vector<std::vector<std::size_t>> two;
+    for (std::size_t a = 2; a < n; ++a) {
+      if (n % a == 0) {
+        two.push_back({a, n / a});
+      }
+    }
+    const auto skew = [](const std::vector<std::size_t>& r) {
+      return r[0] > r[1] ? r[0] / r[1] : r[1] / r[0];
+    };
+    std::ranges::stable_sort(two, [&](const auto& x, const auto& y) { return skew(x) < skew(y); });
+    for (const std::vector<std::size_t>& r : two) {
+      if (lane_codelets(r) && fits(r)) {
+        return r;
+      }
+    }
+  }
   constexpr std::size_t candidates = 64;
   for (const std::vector<std::size_t>& r : ranked_radices(n, profile, candidates)) {
     if (lane_codelets(r) && fits(r)) {
