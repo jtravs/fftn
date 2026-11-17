@@ -1,0 +1,38 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Task 4.2's volumes (dev/PLAN.md, phase 4): 3-D c2c in double, one transform each, judged
+# against FFTW and oneMKL one thread and threaded. Cubes from 16^3 to 256^3 (256 MiB per
+# array), odd and prime extents (whose columns take generic passes or Rader and Bluestein
+# stages), and volumes with a short or a long axis at either end. Format in bench/README.md;
+# weights are equal.
+
+[catalogue]
+name = "volumes"
+
+[[group]]
+name = "cubes"
+kind = "c2c"
+dims = ["16x16x16", "32x32x32", "64x64x64", "128x128x128", "256x256x256"]
+place = ["out", "in"]
+
+[[group]]
+name = "odd-cubes"
+kind = "c2c"
+dims = ["48x48x48", "81x81x81", "100x100x100", "97x97x97", "120x120x120"]
+place = ["out", "in"]
+
+[[group]]
+name = "non-cubes"
+kind = "c2c"
+dims = [
+  "32x64x128", "128x64x32", "16x256x256", "256x256x16", "64x64x512", "512x64x64",
+  "30x40x50", "17x15x37",
+]
+place = ["out", "in"]
+
+[[group]]
+name = "backward"
+kind = "c2c"
+dims = ["64x64x64", "100x100x100"]
+direction = "bwd"

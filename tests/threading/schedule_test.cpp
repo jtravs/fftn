@@ -153,26 +153,36 @@ TEST(WorkGraph, PhasesOfRowsAndPlanes) {
   EXPECT_EQ(blocks->graph.phases[1].nest, 1U);
   EXPECT_EQ(blocks->graph.phases[1].units, 4U);  // blocks of 8 of the 32 columns
   EXPECT_EQ(blocks->graph.phases[1].chunks, 4U); // a block holds 64 x 8 points
-  // A volume: the two loops over the other axes are one phase of their product.
+  // A volume (task 4.2): its two inner axes plane at a time, one phase whose lines are the
+  // 4 whole planes (the loop over them holds each plane's own loops), then the outer axis,
+  // whose two loops over the other axes are one phase of their product.
   fftn::shape<std::complex<double>, std::complex<double>> v;
   v.axes = {{.n = 4}, {.n = 5}, {.n = 6}};
   fftn::detail::build_settings alone;
   alone.lanes_columns = false;
   const auto vol = fftn::detail::make_plan_core(fftn::detail::view_of(v), opts, alone);
-  ASSERT_EQ(vol->graph.phases.size(), 3U);
-  EXPECT_EQ(vol->graph.phases[0].nest, 2U);
-  EXPECT_EQ(vol->graph.phases[0].units, 20U);
-  EXPECT_EQ(vol->graph.phases[2].units, 30U);
-  // With the lanes, one block of the 6 adjacent columns (rounded up to C, the idle lanes
-  // never written) per line of the other strided axis: 4 along axis 0 for axis 1, 5 along
-  // axis 1 for axis 0.
+  ASSERT_EQ(vol->graph.phases.size(), 2U);
+  EXPECT_EQ(vol->graph.phases[0].nest, 1U);
+  EXPECT_EQ(vol->graph.phases[0].units, 4U);
+  EXPECT_EQ(vol->graph.phases[1].nest, 2U);
+  EXPECT_EQ(vol->graph.phases[1].units, 30U);
+  // With the lanes, the outer axis takes one block of the 6 adjacent pencils (rounded up to
+  // C, the idle lanes never written) per line of axis 1.
   fftn::detail::build_settings six;
   six.column_block = 6;
   const auto lanes_vol = fftn::detail::make_plan_core(fftn::detail::view_of(v), opts, six);
-  ASSERT_EQ(lanes_vol->graph.phases.size(), 3U);
+  ASSERT_EQ(lanes_vol->graph.phases.size(), 2U);
+  EXPECT_EQ(lanes_vol->graph.phases[0].units, 4U);
   EXPECT_EQ(lanes_vol->graph.phases[1].nest, 2U);
-  EXPECT_EQ(lanes_vol->graph.phases[1].units, 4U);
-  EXPECT_EQ(lanes_vol->graph.phases[2].units, 5U);
+  EXPECT_EQ(lanes_vol->graph.phases[1].units, 5U);
+  // A volume's planes are cut by a plane's points: 64 x 64 x 64 at 2048 points per chunk
+  // has 64 chunks of one plane of 4096 points each.
+  fftn::shape<std::complex<double>, std::complex<double>> cube;
+  cube.axes = {{.n = 64}, {.n = 64}, {.n = 64}};
+  const auto big = fftn::detail::make_plan_core(fftn::detail::view_of(cube), opts,
+                                                fftn::detail::build_settings());
+  EXPECT_EQ(big->graph.phases[0].units, 64U);
+  EXPECT_EQ(big->graph.phases[0].chunks, 64U);
 }
 
 // Rule 1: a job smaller than a few dispatch costs runs inline.

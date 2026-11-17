@@ -145,10 +145,13 @@ std::vector<fftn::axis> axes_of(const dims_t& dims) {
   return a;
 }
 
+// The last four are volumes whose inner axes run plane at a time and whose outer axis runs
+// over blocks of pencils (task 4.2): odd and prime extents, narrower last blocks, an axis of 2.
 const std::vector<dims_t>& shapes() {
   static const std::vector<dims_t> v{
-      {8, 6}, {5, 7},    {16, 16},  {32, 30},  {1, 9},    {9, 1},
-      {6, 1}, {4, 6, 8}, {3, 5, 4}, {2, 3, 5}, {1, 4, 1}, {7, 1, 3},
+      {8, 6},     {5, 7},       {16, 16},     {32, 30},    {1, 9},    {9, 1},
+      {6, 1},     {4, 6, 8},    {3, 5, 4},    {2, 3, 5},   {1, 4, 1}, {7, 1, 3},
+      {9, 7, 11}, {17, 15, 37}, {12, 10, 64}, {31, 2, 19},
   };
   return v;
 }

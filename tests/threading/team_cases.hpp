@@ -280,6 +280,17 @@ void add_cases(std::vector<team_case>& out, const fftn::detail::build_settings& 
                           false, lanes, target));
   out.push_back(make_case("c2r_lanes_inplace_100x11" + suffix, fftn::rows_c2r<T>(100, 11), 51 * 11,
                           102 * 11, true, lanes, target));
+  // Single volumes (task 4.2): whole planes of the inner two axes per member, then the outer
+  // axis's blocks of pencils, out of place and in place, with odd and prime extents (a
+  // narrower last block of pencils and of columns).
+  fftn::shape<c, c> one_volume;
+  one_volume.dir = bwd;
+  one_volume.axes = {{.n = 24}, {.n = 20}, {.n = 36}};
+  out.push_back(
+      make_case("c2c_volume_24x20x36" + suffix, one_volume, 17280, 17280, false, settings, target));
+  one_volume.axes = {{.n = 17}, {.n = 15}, {.n = 37}};
+  out.push_back(make_case("c2c_volume_inplace_17x15x37" + suffix, one_volume, 9435, 9435, true,
+                          settings, target));
 }
 
 inline std::vector<team_case> standard_cases(const fftn::detail::build_settings& settings) {
