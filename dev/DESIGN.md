@@ -1525,9 +1525,9 @@ the machine-specific estimate for callers who want it.
 - "Fast" is a property of the table, not a measured guarantee: in P4, 78 % of the picks ran
   within 1.3 of the power of two above on each x86 machine, and 140 (the pick for 131) ran
   at 1.76 on the Xeon.
-- **`next_fast_length(n, real)`** returns the smallest fast length at or above n, or with
-  `real` the smallest even one whose half is fast (2 for n ≤ 2). In 2-D and 3-D only the
-  halved axis takes `real`. It tests only the candidates in [n, 2n] (products of 2, 3, 5,
+- **`next_fast_length(n, kind)`** returns the smallest fast length at or above n, or with
+  `length_kind::real` the smallest even one whose half is fast (2 for n ≤ 2). In 2-D and
+  3-D only the halved axis takes `length_kind::real`. It tests only the candidates in [n, 2n] (products of 2, 3, 5,
   7 and 13, and the lone 11 to 23), so one query takes 5–200 µs on average up to 2⁴⁰ on
   the M5 Max, under 0.6 ms at worst. The largest step up to 200000 is 17 % (41 → 48).
 - Both queries accept n ≤ 2⁴⁰ and throw `std::invalid_argument` above it: `row_cost` is
@@ -2647,29 +2647,8 @@ margin, serial timing. Still open, details below the API: the shape key uses str
 distances as given (0 for a default), so two spellings of one layout are two keys; a plan for
 a team is chosen by its serial time.
 
-**Task 2.5: fast lengths and the per-length estimate.** Proposed by the lead, pending the
-maintainer.
-- (a) A new header, `fftn/lengths.hpp`, included by `fftn.hpp`, rather than the convenience
-  layer of 5.4, since applications choose grid sizes before they plan.
-- (b) `std::size_t next_fast_length(std::size_t n, bool real = false)`: a `bool` for real
-  transforms (scipy's `next_fast_len(target, real)`). The alternatives are a separate
-  `next_fast_real_length`, or a kind argument.
-- (c) What "fast" means: within 1.25 times the reference table's cost per point of the power
-  of two at or above, with the reference a frozen copy of AVX2's double table, fixed per
-  version. No prime
-  factor above 23 can be fast, and no composite with 11, 17, 19 or 23 (P4). The alternative is a plain smoothness rule (7-smooth, say),
-  which ignores the vector width's partial tiles: odd smooth lengths cost 1.5–3 times a
-  power of two per point.
-- (d) `template <class T> double relative_cost(std::size_t n, isa target = isa::best)`. It
-  returns a ratio to the power of two above rather than an absolute estimate, since the
-  tables' units are not time; it covers complex rows only (real rows use n / 2), and in-cache
-  rows. The lead's sketch had `estimated_cost(shape)`; a shape-wide estimate needs the cost
-  model that P3 rejected.
-- (e) Edge values: `next_fast_length(0)` is 1, n ≤ 2 returns n, and with `real` n ≤ 2
-  returns 2. Above 2⁴⁰ both queries throw `std::invalid_argument` (the alternative was to
-  return n, or with `real` the next even length, unsearched).
-- (f) Pending: an enum (`next_fast_length(n, length_kind::real)`, say) instead of the `bool`,
-  which reads better at the call site; kept as `bool` for now, scipy's spelling.
+**Task 2.5: fast lengths and the per-length estimate.** Settled: agreed by the maintainer,
+2026-11-17, with `bool real` replaced by `length_kind` (decision log).
 
 **Threading API and contract (tasks 3.1 and 3.2), for the maintainer's review.** Built as
 below because section 5.3 left the shapes open; each is easy to change before a release.
@@ -2932,6 +2911,11 @@ to change before a release.
 | 2026-11-17 | `next_fast_length` and `relative_cost` public in `fftn/lengths.hpp` (task 2.5, section 9.2): a fast length is one AVX2's double cost table prices within 1.25 of the power of two above, per point, and not a composite with a factor 11, 17, 19 or 23 (experiment P4's rule: such composites missed 1.3 of the power of two on two machines each); the API choices are proposed by the lead, pending the maintainer (18.2) | DESIGN 9.2's design (a pure function of the version, a machine-specific query beside it); the tables are the planner's own, so the two agree with what plans do; P4 checks the lengths are fast on the three machines |
 | 2026-11-17 | The fast lengths' reference table is a frozen copy of AVX2's double table (`reference_costs`), not the planner's; both length queries throw above 2⁴⁰; `next_fast_length` tests only the 2, 3, 5, 7, 13-smooth candidates in [n, 2n]; 20 is priced as the chain the planner builds (PR #41 review) | a refit of the planner's tables must not move users' grids (a checksum test pins the set to 2²⁰; unchanged by this change); the old trial of every integer took 1.8 s at 2³⁹ + 1, now under 0.6 ms; pricing above 2⁴⁰ was inexact or undefined |
 | 2026-11-17 | The `x86_v2` (SSE4.2) and `avx` (AVX without AVX2 or FMA) targets exist (task 1.3): their own vocabularies without FMA, rounding as the scalar target, interleaved passes (no split runs), `avx2`'s pass-cost tables of the nearest C, no 128-bit or pair leaves; `avx` is kept; `x86_v2` takes a leaf of 32 in double (experiment X14) | X14: `avx` 0.68–0.73 of `x86_v2`'s time (EPYC 7763, Xeon 6240); `x86_v2` 0.96–0.98 of FFTW built with SSE2 only, `avx` 0.90–0.94 of FFTW with SSE2 and AVX; split runs without FMA gained 0.5–2.4 % (rule: 3 %); NEON's tables for `x86_v2` lost (1.01–1.07); 128-bit leaves for `avx` lost on two-pass rows of 100–120 points on the EPYC (1.08–1.14); the leaf of 32 took 32-point rows to 0.55–0.65 |
+| 2026-11-17 | Task 2.5's API, agreed by the maintainer, 2026-11-17: `fftn/lengths.hpp`, included by `fftn.hpp`; `std::size_t next_fast_length(std::size_t n, length_kind kind = length_kind::complex)` with `enum class length_kind : unsigned char { complex, real }` (an enum replaces the proposed `bool real`, and a value outside it throws `std::invalid_argument`); `template <class T> double relative_cost(std::size_t n, isa target = isa::best)`, a ratio to the power of two above, complex in-cache rows only; edge values 1 for n = 0, 2 with `length_kind::real` for n ≤ 2 | the enum reads better at the call site than scipy's `bool`; a header of its own since grids are chosen before planning; a ratio since the tables' units are not time, and a shape-wide estimate needs the cost model P3 rejected |
+| 2026-11-17 | "Fast" as defined by the frozen reference table (within 1.25 of the power of two above, per point; no prime factor above 23; no composite with 11, 17, 19 or 23), the 2⁴⁰ limit of both queries, and P4's x86 shortfall (78 % of picks within 1.3 against the 90 % planned), agreed by the maintainer, 2026-11-17 | machine-independent grids are the point of the query; `relative_cost` gives each machine's own view; P4's rule 1 target is lowered to 75 % in the experiment file, with the reason |
+| 2026-11-17 | `FFTN_OLD_X86_TARGETS` (the `x86_v2` and `avx` targets of task 1.3) ON by default, agreed by the maintainer, 2026-11-17 | older x86 processors run a vector target rather than the scalar one |
+| 2026-11-17 | The library's size (X27's codelets of 17, 19 and 23: +25 % of library text) accepted, agreed by the maintainer, 2026-11-17; no size budget that can fail a pull request: phase 6 adds an informational report (CI prints the library's text size per target on each pull request), experiment files record size changes, and build options (`FFTN_OLD_X86_TARGETS`, instantiating only the kernels that win) remain the levers if size ever matters | speed takes precedence; the codelets cut those cases to 0.24–0.31 of main's time, and the report keeps growth visible |
+| 2026-11-17 | The recorded protocol caveats, agreed by the maintainer, 2026-11-17: X35's and X14's, the queue bypasses of X36, X38 and X39, and the recorded exception cases (X23b's two) | each is recorded in its experiment file with its reason |
 
 ---
 
