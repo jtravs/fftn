@@ -32,7 +32,7 @@ template <class T> FFTN_FORCE_INLINE std::size_t block_rows(std::size_t rows, st
 
 // The largest radix whose R - 1 twiddles a column pass holds in registers across the runs
 // of a group (lanes_first; X44).
-inline constexpr std::size_t held_radix = 16;
+inline constexpr std::size_t held_radix = 8;
 
 // A lane pass's twiddles of one group (shared_twiddles' values), loaded once.
 template <class T, std::size_t R> struct held_twiddles {
@@ -303,6 +303,22 @@ void lanes_c2r_pair(const pass_args* a, const void* src, void* dst, std::size_t 
 // apart (a strided axis, or the tile itself). Rows from `rows` on are read as zeros and
 // never written.
 
+// The g runs of C columns of one group of lanes_first's fast path (X44), with the group's
+// twiddles from `twid`.
+template <class T, std::size_t R, int Sign, class Twiddles>
+FFTN_FORCE_INLINE void lanes_first_runs(const Twiddles& twid, const T* xp, T* yp, std::ptrdiff_t xd,
+                                        std::ptrdiff_t in_leg, std::ptrdiff_t out_leg,
+                                        std::size_t b) {
+  for (std::size_t r0 = 0; r0 < b; r0 += C<T>) {
+    cdft<R>::template dif<T, Sign>(
+        run_in<T, edge_op::none, true>{
+            .p = xp + at(r0, xd), .leg = in_leg, .step = xd, .valid = C<T>, .op = {}},
+        run_out<T, edge_op::none, true>{
+            .p = yp + at(r0, 2), .leg = out_leg, .step = 2, .valid = C<T>, .op = {}},
+        twid);
+  }
+}
+
 // The first pass of a block's chain (the row's s = 1, m > 1: the DIF codelet with the
 // row's twiddles w^(p k), broadcast) reading the rows: unit u is rows r0 = (u / m) C .. +
 // C - 1 and group p = u % m, written to the tile as lane_pass writes copies q = r0 of s = B.
@@ -331,23 +347,18 @@ void lanes_first(const pass_args* a, const void* src, void* dst, std::size_t fir
   // A plane's whole block of columns over whole groups (X44): the g runs of a group in an
   // inner loop with the group's twiddles loaded once, for radices whose twiddles stay in
   // registers. The same operations on the same values as the loop below.
-  if constexpr (R <= held_radix) {
-    if (inner && rows == b && first % g == 0 && last % g == 0) {
-      for (std::size_t p = first / g; p < last / g; ++p) {
-        const held_twiddles<T, R> twid(table + tw_reals<T> * (R - 1) * p);
-        const T* xp = x + at(p, xs);
-        T* yp = y + at(b * R * p, 2);
-        for (std::size_t r0 = 0; r0 < b; r0 += C<T>) {
-          cdft<R>::template dif<T, Sign>(
-              run_in<T, edge_op::none, true>{
-                  .p = xp + at(r0, xd), .leg = in_leg, .step = xd, .valid = C<T>, .op = {}},
-              run_out<T, edge_op::none, true>{
-                  .p = yp + at(r0, 2), .leg = out_leg, .step = 2, .valid = C<T>, .op = {}},
-              twid);
-        }
+  if (inner && rows == b && first % g == 0 && last % g == 0) {
+    for (std::size_t p = first / g; p < last / g; ++p) {
+      const T* xp = x + at(p, xs);
+      T* yp = y + at(b * R * p, 2);
+      const T* tp = table + tw_reals<T> * (R - 1) * p;
+      if constexpr (R <= held_radix) {
+        lanes_first_runs<T, R, Sign>(held_twiddles<T, R>(tp), xp, yp, xd, in_leg, out_leg, b);
+      } else {
+        lanes_first_runs<T, R, Sign>(shared_twiddles<T>{tp}, xp, yp, xd, in_leg, out_leg, b);
       }
-      return;
     }
+    return;
   }
   std::size_t k = 0;
   std::size_t p = 0;
