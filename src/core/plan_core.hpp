@@ -67,8 +67,10 @@ struct build_settings { // NOLINT(clang-analyzer-optin.performance.Padding)
   // when not empty. Experiment X46.
   std::vector<std::size_t> depth_tops;
   // The depth-first chain's top passes with derived twiddles (two small tables, one more
-  // complex multiplication per leg; passes/depth.inl) instead of the grouped table. X46 arm B.
-  bool depth_derived = false;
+  // complex multiplication per leg; passes/depth.inl), or (false) the grouped table of about
+  // n. X46 arm B: on the Xeon 6240 derived tables took the L2 misses of 16384-25000 from
+  // 0.3-0.7 to 0.00-0.01 per point and the time to 0.80-0.88 of the stored tables'.
+  bool depth_derived = true;
   // The lanes strategy's block, in rows (rounded up to a multiple of the target's complex
   // count C), instead of the rule's when not 0 (plan_core.cpp, lane_block; experiment X7).
   std::size_t lane_block = 0;

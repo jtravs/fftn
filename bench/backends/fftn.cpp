@@ -55,7 +55,8 @@
 //                    which was built (experiments X12, X7, X46)
 //   DEPTH_TOPS=f1[.f2]   the depth-first chain's top factors (build_settings::depth_tops;
 //                    default the rule's; experiment X46)
-//   DEPTH_DERIVED=0|1   its top passes with derived twiddles (build_settings::depth_derived)
+//   DEPTH_DERIVED=0|1   its top passes with derived twiddles (build_settings::depth_derived,
+//                    default 1)
 //   LANE_BLOCK=B     the lanes strategy's block in rows (build_settings::lane_block; default
 //                    the rule's), rounded up to a multiple of the complex count (X7)
 //   COLUMNS=lanes|chain   the strided axes of planes and volumes (build_settings::
@@ -617,8 +618,8 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
     if (!s.settings.depth_tops.empty()) {
       d.str("depth_tops", s.depth_tops_text);
     }
-    if (s.settings.depth_derived) {
-      d.integer("depth_derived", 1);
+    if (!s.settings.depth_derived) {
+      d.integer("depth_derived", 0);
     }
     if (s.settings.lane_block != 0) {
       d.integer("lane_block", static_cast<std::int64_t>(s.settings.lane_block));
