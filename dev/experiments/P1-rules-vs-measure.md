@@ -136,6 +136,25 @@ fbench's buffers can sit on different page sizes, which offsets cannot fix.
 within 5 % of `N` on all 9, choosing the Xeon's grids in every round. c2c 2²² came back too,
 at 0.87 of `N` (a two-phase grid 2048 · 2048, where `N` runs three phases).
 
+### The Xeon's misses, case by case
+
+The Xeon's second pass (run 20261116-215950-1f7c) missed the acceptance (86.9 %). Each miss
+below repeated in the first pass (20261116-183511-33b2) with the same choice. The rules'
+plan is shown against measure's choice, with `N ÷ M` (rules' time over measure's).
+
+| Case | Rules | Measure | `N ÷ M` | What it needs |
+|---|---|---|---|---|
+| r2c 1024² | the real axis's 512 as 8 · 16 · 4 | 8 · 8 · 8 (and 4 · 8 · 16) | 1.15–1.19 | planes' radices: the cost tables were fitted to rows, and in a plane these lines run many at a time (phase 4). Until then measure and wisdom |
+| c2c 2²² | three grid phases 128 · 128 · 256 | two phases 2048 · 2048 | 1.14 (misfire run: 0.87 of `N`) | a refit of the three-phase threshold (X12b's "three phases beyond L2") for rows far beyond L3 on the Xeon; in X39's scope (the Xeon's long rows) |
+| r2c 1000 | the half length 500 as 4 · 5 · 5 · 5 | 10 · 5 · 10 | 1.12–1.13 | an `avx512` double override for 500 (X2's tables) |
+| r2c 65536, out of and in place | the half length 32768 as a chain 16 · 8 · 16 · 16 | a two-phase grid 128 · 256 | 1.06–1.10 | a radix-16 power-of-two chain at exactly `grid_min_bytes` (512 KiB), the kind X32 found page-dependent. The real rows' grid threshold, or the long-row radices, on the Xeon; X39's scope |
+| c2c 2431 | 13 · 11 · 17 | 11 · 13 · 17 | 1.07 | the radix 11 and 13 columns, scaled from 10's and 12's rather than measured (DESIGN 11.2): a refit, or an override |
+| c2c 16384 | 16 · 8 · 8 · 16 | 8 · 8 · 16 · 16 | 1.05 | at the limit; an override if it repeats on a quiet machine |
+
+The other first-pass misses are noise: c2c 360, c2c 2²⁰ and r2c 2²⁰, where measure chose the
+rules' program in 10 or more of 12 rounds. So the Xeon needs two threshold refits (in X39's
+scope) and three table overrides; planes are measure's until phase 4.
+
 ## Verdict
 
 Second pass, measurement only; no default changed.
