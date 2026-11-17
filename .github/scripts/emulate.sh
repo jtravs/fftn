@@ -28,9 +28,10 @@ failed=()
 
 run() {
   echo "::group::$*"
-  local status=0
+  local status=0 start=$SECONDS
   "${emulator[@]}" "$@" || status=$?
   echo "::endgroup::"
+  echo "emulate: $((SECONDS - start)) s for $(basename "$1")"
   if ((status != 0)); then
     echo "emulate: exit status $status from $*"
     failed+=("$(basename "$1")")

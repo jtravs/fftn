@@ -39,10 +39,11 @@ env:
 jobs:
   sde:
     # One job per processor model: the full suites on Nehalem and Sandy Bridge take longer
-    # than one job's limit for all four models together.
+    # than one job's limit for all four models together. Haswell and Skylake-SP now force
+    # four and five targets in the instruction-set programs (x86_v2 and avx too).
     name: x86-64 under Intel SDE (${{ matrix.model }})
     runs-on: ubuntu-24.04
-    timeout-minutes: ${{ matrix.full && 180 || 60 }}
+    timeout-minutes: ${{ matrix.full && 180 || 120 }}
     strategy:
       fail-fast: false
       matrix:
