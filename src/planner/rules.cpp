@@ -8,8 +8,11 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 namespace fftn::inline v0::detail {
@@ -867,6 +870,110 @@ std::size_t rader_root(std::size_t q, const target_profile& p) {
     }
   }
   return 0; // unreachable: every prime has a primitive root
+}
+
+double row_cost(std::size_t n, const target_profile& p) {
+  if (n <= 1) {
+    return 0;
+  }
+  // The table's own cheapest sequence for the smooth part, leaves included (a leaf is a first
+  // pass with m = 1), so that every length is priced alike; the overrides are left out, since
+  // they use radices the table does not price (32 and 64 on AVX2). Then the prime factors
+  // above 16: a codelet's (17, 19, 23) priced as a middle radix-16 pass scaled by r log2 r,
+  // the rest merged into one Rader or Bluestein stage at the end (chain_builder::radices).
+  std::vector<std::size_t> big;
+  const std::size_t smooth = split_smooth(n, big);
+  std::size_t rest = 1;
+  std::vector<std::size_t> codelet_primes;
+  for (const std::size_t q : big) {
+    if (has_codelet(q)) {
+      codelet_primes.push_back(q);
+    } else {
+      rest *= q;
+    }
+  }
+  double cost = smooth > 1 ? static_cast<double>(cheapest(n, smooth, !big.empty(), p).cost) : 0;
+  for (const std::size_t r : codelet_primes) {
+    // n / r butterflies of radix r, C to a unit, at a middle radix-16 unit's cost scaled by
+    // the operations' ratio, r log2 r over 16 log2 16.
+    const double scale = static_cast<double>(r) * std::log2(static_cast<double>(r)) / 64.0;
+    const auto units = static_cast<double>(ceil_div(n / r, p.lanes));
+    cost += (static_cast<double>(p.costs->unit[1][cost_column(16)]) * units +
+             static_cast<double>(p.costs->pass)) *
+            scale;
+  }
+  if (rest > 1) {
+    // The stage runs n / rest copies of a convolution of L points: two transforms of L and
+    // two elementwise passes (bluestein_length's pricing).
+    const std::size_t len = rader_root(rest, p) != 0
+                                ? rest - 1
+                                : bluestein_length(rest, p, std::numeric_limits<std::size_t>::max());
+    const double per_point = static_cast<double>(p.costs->unit[2][0] / (2 * p.lanes) + 1);
+    const double conv = 2 * static_cast<double>(cheapest(len, len, false, p).cost) +
+                        2 * per_point * static_cast<double>(len);
+    cost += conv * static_cast<double>(n / rest);
+  }
+  return cost;
+}
+
+double relative_row_cost(std::size_t n, const target_profile& p) {
+  // A whole transform in one codelet (a leaf, rule 1) is as fast per point as a leaf of a
+  // power of two: the tables' first-pass costs at m = 1 do not price leaves (X8 measured them
+  // apart), so they are not compared.
+  if (n <= largest_leaf || (has_codelet(n) && (n <= p.leaf_limit || n < 32))) {
+    return 1;
+  }
+  const std::size_t power = std::bit_ceil(n);
+  return (row_cost(n, p) / static_cast<double>(n)) /
+         (row_cost(power, p) / static_cast<double>(power));
+}
+
+namespace {
+
+// Whether every prime factor of n has a codelet (at most 23): a length with a larger one
+// takes a Rader or Bluestein stage, which the reference prices at 1.4 times a power of two
+// per point or more at every length (task 2.5), so it is never fast and is not priced.
+bool codelet_smooth(std::size_t n) {
+  for (const std::size_t q : {2U, 3U, 5U, 7U, 11U, 13U, 17U, 19U, 23U}) {
+    while (n % q == 0) {
+      n /= q;
+    }
+  }
+  return n == 1;
+}
+
+} // namespace
+
+bool is_fast_length(std::size_t n) {
+  if (n <= 2) {
+    return true;
+  }
+  if (!codelet_smooth(n)) {
+    return false;
+  }
+  static const target_profile reference = profile_of(target::avx2, 2);
+  return relative_row_cost(n, reference) <= fast_tolerance;
+}
+
+std::size_t next_fast_length(std::size_t n, bool real) {
+  if (n <= 2) {
+    return n == 0 ? 1 : n;
+  }
+  if (n > max_fast_search) {
+    return n;
+  }
+  if (real) {
+    std::size_t m = n + n % 2;
+    while (!is_fast_length(m / 2)) {
+      m += 2;
+    }
+    return m;
+  }
+  std::size_t m = n;
+  while (!is_fast_length(m)) {
+    ++m;
+  }
+  return m;
 }
 
 std::size_t bluestein_length(std::size_t q, const target_profile& p, std::size_t pow2_part_limit) {

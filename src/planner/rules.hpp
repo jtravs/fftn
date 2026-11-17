@@ -120,6 +120,31 @@ ranked_radices(std::size_t n, const target_profile& p, std::size_t k);
   return product;
 }
 
+// The planner's estimate of one row of n points on profile p, in the cost tables' units: the
+// rules' radices priced pass by pass (pass_cost), a 17, 19 or 23 codelet pass as a radix-16
+// pass scaled by r log2 r, a Rader or Bluestein stage as its convolution's two transforms
+// and two elementwise passes per copy. An in-cache estimate: memory beyond L1 is not priced
+// (experiment P3). Precondition: n <= 2^40.
+[[nodiscard]] double row_cost(std::size_t n, const target_profile& p);
+
+// row_cost per point of n over row_cost per point of the power of two at or above n: about
+// 1 for lengths as cheap per point as a power of two, more for slower ones; 1 for a length
+// that is one codelet (n <= 16, 17, 19, 23, and 32 or 64 within the leaf limit).
+[[nodiscard]] double relative_row_cost(std::size_t n, const target_profile& p);
+
+// Task 2.5: a fast length is one whose relative_row_cost on the reference profile (AVX2's
+// double table, X2's measured one, fixed for the library version so that a length chosen on
+// one machine is the same on another, DESIGN.md 9.2) is at most fast_tolerance; lengths
+// with a prime factor above 23 never are. The tolerance is checked by measurement (task
+// 2.5's fbench check).
+inline constexpr double fast_tolerance = 1.25;
+// next_fast_length searches up to this length; beyond it, n is returned as it is.
+inline constexpr std::size_t max_fast_search = std::size_t{1} << 40U;
+[[nodiscard]] bool is_fast_length(std::size_t n);
+// The smallest fast m >= n (real: the smallest even m >= n with m / 2 fast); 1 for n = 0,
+// n for n <= 2 and for n > max_fast_search. A pure function of the library version.
+[[nodiscard]] std::size_t next_fast_length(std::size_t n, bool real);
+
 // FFTL.jl's radices for a long line of 2^k points (its src/factor.jl; MIT, the maintainer's
 // own; experiment X32): radix 8 with one or two 4s first, or radix 4 with an 8 first for an
 // odd k. k >= 2.

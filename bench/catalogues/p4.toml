@@ -1,0 +1,30 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Experiment P4's cases (dev/experiments/P4-next-fast-length.md): awkward lengths n, the
+# lengths next_fast_length(n) gives for them, and the powers of two at or above them, as
+# single c2c rows in double. The lists are next_fast_length's output at task 2.5's commit;
+# regenerate them if the fast set changes.
+
+[catalogue]
+name = "p4"
+
+[[group]]
+name = "p4-awkward"
+kind = "c2c"
+dims = [37, 97, 101, 131, 250, 301, 509, 700, 1001, 1009, 1500, 2047, 2500, 3001, 4093, 4097,
+  6007, 9001, 10007, 15013, 30011, 46079, 65537, 99991, 150001, 250007]
+tiers = ["tracking"]
+
+[[group]]
+name = "p4-fast"
+kind = "c2c"
+dims = [40, 100, 112, 132, 252, 304, 512, 1008, 1020, 2048, 3024, 4096, 4104, 6048, 9016, 10010,
+  15048, 30030, 46080, 65550, 100000, 150144, 250240]
+tiers = ["tracking"]
+
+[[group]]
+name = "p4-pow2"
+kind = "c2c"
+dims = [64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144]
+tiers = ["tracking"]
