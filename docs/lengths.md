@@ -13,7 +13,7 @@ const std::size_t n = fftn::next_fast_length(1001); // 1008 = 2^4 * 3^2 * 7
 const fftn::c2c_plan<double> plan(fftn::rows_c2c<double>(n, 1, fftn::direction::forward));
 
 // Real transforms: an even length whose half is fast.
-const std::size_t r = fftn::next_fast_length(1001, true);
+const std::size_t r = fftn::next_fast_length(1001, fftn::length_kind::real);
 
 // This machine's estimate, per point, relative to the power of two at or above the length.
 const double prime = fftn::relative_cost<double>(4093);  // a large prime: several times
@@ -42,10 +42,10 @@ means that the planner's reference cost table prices a row of the length, per po
 - n may be at most 2^40; above it, `next_fast_length` throws `std::invalid_argument`. A call
   costs microseconds, under a millisecond up to 2^40.
 
-`next_fast_length(n, true)` is for real transforms. The result is even and its half is fast,
+`next_fast_length(n, fftn::length_kind::real)` is for real transforms. The result is even and its half is fast,
 since a real transform of an even length runs a complex transform of half that length; for n
 of 0, 1 or 2 it is 2.
-- In two or three dimensions only the halved axis, the last, takes `true`. The other axes
+- In two or three dimensions only the halved axis, the last, takes `length_kind::real`. The other axes
   are complex transforms of their full length and take `next_fast_length(n)`.
 - scipy's `next_fast_len(target, real=True)` means something else: it returns a 5-smooth
   length, odd ones included, since its real transforms take odd lengths directly. FFTN
