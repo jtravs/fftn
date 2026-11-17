@@ -76,7 +76,7 @@ class Cost(unittest.TestCase):
         cls.ops = radices.codelet_ops()
 
     def test_codelet_table(self):
-        self.assertEqual(set(r for r, _ in self.ops), set(range(2, 18)) | {19, 20, 23, 32, 64})
+        self.assertEqual(set(r for r, _ in self.ops), set(range(2, 18)) | {19, 20, 23, 25, 32, 64})
         # The radix-16 forward codelets of src/gen/codelets.hpp: plain and DIF.
         self.assertEqual(self.ops[(16, False)], 80)
         self.assertEqual(self.ops[(16, True)], 95)
@@ -114,7 +114,7 @@ class Cases(unittest.TestCase):
         cases = search.x2_cases()
         ns = search.lengths_of(cases)
         self.assertNotIn(7, ns)  # one sequence only
-        self.assertNotIn(3125, ns)  # 5^5: radix 25 is no codelet
+        self.assertIn(3125, ns)  # 5^5: 5 x 25 x 25 and the like since radix 25 (X42)
         self.assertIn(1024, ns)
         self.assertIn(16777216, ns)
         self.assertTrue(all(radices.smooth(n) for n in ns if n <= 1024))
@@ -262,7 +262,7 @@ class Fit(unittest.TestCase):
     def test_search_is_the_planners(self):
         """fit.py's port of rule_radices on rules.cpp's AVX2 tables gives the recorded
         radices (tests/core/data/rule_radices.txt) for C = 2 and C = 4."""
-        self.assertEqual(len(self.tables["avx2_double"].overrides), 36)
+        self.assertEqual(len(self.tables["avx2_double"].overrides), 42)
         path = search.REPO / "tests" / "core" / "data" / "rule_radices.txt"
         checked = 0
         for line in path.read_text().splitlines():

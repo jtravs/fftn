@@ -215,7 +215,8 @@ muls + fmas + 4·cmuls multiplications (`Counts.flops_adds`, `flops_muls`).
   4n log₂ n − 6n + 8;
 - **derived**: no count is cited for the size, so the reference is the sum of its parts
   under the generator's algorithm, from the entries above (`good_thomas(n1, n2)`; at task
-  1.1 this is how 6, 10 and 14 are referenced);
+  1.1 this is how 6, 10 and 14 are referenced; 20 likewise, and 25 as `cooley_tukey(5, 5)`,
+  the parts and 16 general complex multiplies between them: 352 / 184);
 - **none**, with a reason: the radix is generated without a count check, and `--table`
   shows "none".
 
@@ -232,7 +233,8 @@ task 1.1 the one gap is:
 
 The primes 17, 19 and 23 (experiment X27) have no published count and are marked "none":
 plain 320 / 242, 396 / 308 and 572 / 464 additions / multiplies in the symmetric-pair form,
-with peak live values 20, 22 and 26 (they spill on AVX2's 16 registers).
+with peak live values 20, 22 and 26 (they spill on AVX2's 16 registers). Radix 25
+(experiment X42) peaks at 29.
 
 ## Adding a radix
 

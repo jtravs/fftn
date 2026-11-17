@@ -78,7 +78,10 @@ ability to fuse the pointwise work around a transform into the transform's own p
 Ratios are time ÷ reference time on one thread unless stated; below 1 is faster. Each is
 measured by fbench over the standard catalogues (section 16) as a geometric mean, with the
 additional rule that no more than 5 % of cases may be slower than the reference by more
-than 5 %.
+than 5 % beyond noise: a case counts when the whole bootstrap interval of its time ÷ the
+reference's lies above 1.05 × (1 + the run's A/A noise band), fbench's own test for a
+claimed effect (section 16) moved from 1 to 1.05. A run whose band is wide (a loaded
+machine) is lenient by that rule, so a borderline result is repeated on a quieter run.
 
 | Machine family | Reference | Target |
 |---|---|---|
@@ -1498,7 +1501,7 @@ being padding on the real side.
 
 | Factor | Route |
 |---|---|
-| 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 16, 20, 32, 64, (25) | generated codelets (20 a pass radix only, never a leaf: experiment X38) |
+| 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 16, 20, 25, 32, 64 | generated codelets (20 and 25 pass radices only, never leaves: experiments X38, X42; 25 has passes on the x86 and scalar targets only, where `avx2` and `avx512` double overrides take it, and none on NEON, where it lost) |
 | 17, 19, 23 | generated codelets (symmetric-pair form), the leaf of n = p and a pass after the priced radices in composites (experiment X27: 0.15–0.42 of the Bluestein stage's time on the Mac) |
 | other primes above 16 up to the profile's threshold | one generic looped pass, O(p²) per butterfly, vectorised across copies, in direct form with pairwise sums; the threshold is 16 on every profile (X17: Bluestein was faster at every prime from 17 up on the Mac, the Xeon and the EPYC), so the rules do not choose it now |
 | a single prime with q − 1 13-smooth, in the profile's range (16C ≤ q for C ≥ 4; q < 2¹⁶ on NEON, 2²⁴ on x86) | Rader: a gather by powers of a primitive root, a cyclic convolution of q − 1 points with a precomputed kernel spectrum, a scatter (section 8.5; X27) |
@@ -1580,7 +1583,10 @@ radices agree. The radices are the row's unless its last pass would put more of 
 into one L1 set than the L1 has ways (legs s = n / R column elements apart): then the
 cheapest ranked sequence whose last pass does not (a last pass of radix 16 whose legs shared
 a set made 128² and 256² planes 2.2 times slower on the M5 Max; reads in the first pass did
-not matter). B is 256 bytes of columns (16 complex doubles), at most the columns there are;
+not matter). In double a column of 17–32 points whose length has a codelet is that one lane
+pass where its legs fit (X44: on x86 the row of 32 is a pair leaf, which the lanes cannot
+take, and its radices as two lane passes made the EPYC's 32² column phase 1.9 times its
+rows; one pass took the plane to 0.72 of that time, at FFTW's). B is 256 bytes of columns (16 complex doubles), at most the columns there are;
 where a column's elements lie a page or more apart, at least four L1 lines (32 complex
 doubles on Apple's 128-byte lines); where they lie less than a page apart it is halved while
 the two tiles exceed `column_tile_bytes` (a quarter of L2; twice L1 where a cluster shares
@@ -1602,7 +1608,14 @@ only for the copies a strided column costs where C > 1: none on NEON double (the
 tiles fit `column_tile_bytes`, X40's wide block only where each column element has its own
 page and the column exceeds half of L1, the chain otherwise (EPYC: 0.89 over the 71 real
 planes, 32 × 30 0.74, 36 × 2048 0.77, 2048² 0.73–0.85; 1024² stays on the chain, whose
-4-column tiles lost 1.05). Not built yet: blocks over the columns of a long axis beyond L2
+4-column tiles lost 1.05). On `avx2` the column phase's first and last passes run a whole
+block's B / C runs of C columns in an inner loop at one group (first pass) or copy (last
+pass), the group's twiddles loaded once up to radix 8, instead of one unit per run with its
+own leg addresses and loop state (X44: the Xeon's column edge passes each ran as many
+instructions as the row's whole pair leaf; the EPYC's planes and volumes with a column
+phase 0.94 of the time, 64³ 0.84). `avx512` (0.962 on the Xeon, against the rule's 0.95)
+and NEON (0.997) keep the unit loop. Not
+built yet: blocks over the columns of a long axis beyond L2
 (a two-phase split of the column, the grid's way), and padding or block ordering against the
 rows' own power-of-two conflicts.
 
@@ -2965,8 +2978,10 @@ to change before a release.
 | 2026-11-17 | The library's size (X27's codelets of 17, 19 and 23: +25 % of library text) accepted, agreed by the maintainer, 2026-11-17; no size budget that can fail a pull request: phase 6 adds an informational report (CI prints the library's text size per target on each pull request), experiment files record size changes, and build options (`FFTN_OLD_X86_TARGETS`, instantiating only the kernels that win) remain the levers if size ever matters | speed takes precedence; the codelets cut those cases to 0.24–0.31 of main's time, and the report keeps growth visible |
 | 2026-11-17 | The recorded protocol caveats, agreed by the maintainer, 2026-11-17: X35's and X14's, the queue bypasses of X36, X38 and X39, and the recorded exception cases (X23b's two) | each is recorded in its experiment file with its reason |
 | 2026-11-17 | CI for merge latency, decided by the maintainer, 2026-11-17: the ruleset on main requires four checks (lint; GCC 16 build and benchmark smoke and Clang 23 ASan + UBSan on Linux x86-64; Homebrew LLVM on macOS arm64) and no longer requires branches up to date; ThreadSanitizer, Clang 16, the build without the old x86 targets, AArch64 and Windows run after each merge on main (runs on main are not cancelled); emulation weekly and on demand only; the per-change sanitizer jobs leave out the old x86 targets | merges waited 30–90 minutes, and each merge restarted every other pull request's checks; with no users yet, a break on main found within the hour and fixed there costs less |
-
+| 2026-11-17 | The phase 1 tail rule (section 1.3) counts a case only when it is slower than 1.05 of the reference beyond noise (its whole interval above 1.05 × (1 + the A/A band)), decided by the maintainer, 2026-11-17 | a fixed 1.05 sat inside the noise of loaded runs (the Xeon's band was ±4.68 % on 2026-11-17) and of calls of a few nanoseconds (2 points in place); the geometric-mean targets are unchanged |
+| 2026-11-17 | A radix-25 codelet (Cooley–Tukey 5 × 5), a pass radix only, with passes on the x86 and scalar targets only (none on NEON); `avx2` double overrides take it at 500, 3125, 5000, 10000, 15625, 25000 and `avx512` double at 100, 500, 3125, 10000, 15625, 25000; two-level codelets staged through memory for 16-register targets rejected (experiment X42) | EPYC 0.874 / 0.891 of the arm before over the changed lengths (FFTN ÷ FFTW 3125 0.77 → 0.65, 15625 0.79 → 0.66), Xeon about 0.86 / 0.842 (100 1.14 → 0.88 of FFTW, 3125 0.81 → 0.53); on the Mac radix 25 lost to radix-5 chains; the two-level form changed nothing with GCC (1.000) and slowed radix 25; library text +6.1 % on x86-64, +2.0 % on the Mac |
 | 2026-11-17 | Multi-axis programs of at most 256 kernel calls per transform run from their calls unrolled at construction (section 8.3); the complex axes of real planes take the lanes column phase where C > 1 with their own block rule; where a cluster shares L2 a column block's tiles stay within twice L1 when its column elements lie four to a page (section 9.3) | X41: planes of up to 1024 points 0.87–0.94 of the walk's time (three machines); real planes 0.89 (EPYC) and 0.83 (Xeon) of the chain columns' time, the M5 Max lost 1.04 and keeps the chain; M5 Max 2048 × 36 0.90; joining the narrower block's phase (T1) rejected at 0.96 |
+| 2026-11-17 | In double, a lanes column phase of 17–32 points with a codelet of its length is that one pass (section 9.3); on `avx2` the column edge passes run a block's runs in an inner loop per group | X44: on x86 the row of 32 is a pair leaf and its columns took two lane passes (EPYC 32² 0.72, Xeon 0.77–0.81 of the time, ÷ FFTW 1.39 → 1.00, ÷ MKL 1.37 → 1.07); the nested runs 0.94 on the EPYC's planes and volumes, 0.962 on the Xeon (below the bar), 0.997 on the Mac |
 | 2026-11-17 | `volumes_c2c(nz, ny, nx, count, dir)` in `fftn/shape.hpp` beside `planes_c2c` (section 5.2), plural like `rows_c2c` and `planes_c2c` where 5.2 had said `volume_c2c`; no real-kind volume functions yet. Proposed by the lead, pending the maintainer (provisional) | task 4.2; the general `shape` already serves volumes, so this is a convenience only: the open choices are its name and whether r2c and c2r shape functions for planes and volumes come with it |
 | 2026-11-17 | A plan may hold a team program (`plan_core::team`) that every team of two or more runs: the same transform with narrower lanes column blocks (at most `column_team_bytes`: 128 on x86-64 with a private L2 and a large L3, the EPYC), chain-only columns as blocks of a line with the chain's radices, and (X43b) a volume's inner axes plane at a time; serial executions run the program. Bits are the program's by construction (a column's result does not depend on its block, a line's on the order of lines) and tested (sections 9.3, 13.2) | X43: at 8 lanes on the EPYC the narrower blocks took 0.887 of the time over the c2c planes and volumes they change and the line blocks 0.72 at 2048 × 36, while one thread lost up to 1.42 with them; the plan does not know at construction whether teams will run it |
 | 2026-11-17 | c2c volumes: one thread keeps the axes one by one; a team runs the two inner axes plane at a time (the team program) where the profile's `team_volume_planes` says (x86-64, private L2 below 2 MiB); the outer axis over blocks of adjacent pencils by `column_block`'s rule (section 9.3) | X43b: one thread EPYC 0.979, Xeon 0.934 with 97³ 1.048, M5 Max 0.962 (rejected everywhere); 8 lanes EPYC 0.778, Xeon 0.788 (VT; VTX on the Xeon pending its fresh run) |

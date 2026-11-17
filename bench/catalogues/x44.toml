@@ -1,0 +1,83 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Experiment X44's diagnosis of the one-thread planes task 4.1 still misses
+# (dev/experiments/X44-small-planes.md): c2c and real planes of 16^2 to 256^2 against their
+# rows as 1-D batches (ny rows of nx; a square plane's columns are as many rows of ny), so
+# that a plane's time splits into its row phase and its column phase. Double precision.
+
+[catalogue]
+name = "x44"
+
+[[group]]
+name = "x44-planes"
+kind = "c2c"
+dims = ["16x16", "32x32", "64x64", "128x128", "256x256"]
+
+[[group]]
+name = "x44-real-planes"
+kind = ["r2c", "c2r"]
+dims = ["32x32", "64x64", "128x128", "256x256"]
+
+[[group]]
+name = "x44-rows-16"
+note = "the rows (and columns) of the 16^2 plane as one 1-D batch"
+kind = "c2c"
+dims = [16]
+batch = 16
+
+[[group]]
+name = "x44-rows-32"
+note = "the rows (and columns) of the 32^2 plane as one 1-D batch"
+kind = "c2c"
+dims = [32]
+batch = 32
+
+[[group]]
+name = "x44-rows-64"
+note = "the rows (and columns) of the 64^2 plane as one 1-D batch"
+kind = "c2c"
+dims = [64]
+batch = 64
+
+[[group]]
+name = "x44-rows-128"
+note = "the rows (and columns) of the 128^2 plane as one 1-D batch"
+kind = "c2c"
+dims = [128]
+batch = 128
+
+[[group]]
+name = "x44-rows-256"
+note = "the rows (and columns) of the 256^2 plane as one 1-D batch"
+kind = "c2c"
+dims = [256]
+batch = 256
+
+[[group]]
+name = "x44-real-rows-32"
+note = "the real rows of the 32^2 real planes as one 1-D batch"
+kind = ["r2c", "c2r"]
+dims = [32]
+batch = 32
+
+[[group]]
+name = "x44-real-rows-64"
+note = "the real rows of the 64^2 real planes as one 1-D batch"
+kind = ["r2c", "c2r"]
+dims = [64]
+batch = 64
+
+[[group]]
+name = "x44-real-rows-128"
+note = "the real rows of the 128^2 real planes as one 1-D batch"
+kind = ["r2c", "c2r"]
+dims = [128]
+batch = 128
+
+[[group]]
+name = "x44-real-rows-256"
+note = "the real rows of the 256^2 real planes as one 1-D batch"
+kind = ["r2c", "c2r"]
+dims = [256]
+batch = 256

@@ -75,6 +75,10 @@ struct build_settings { // NOLINT(clang-analyzer-optin.performance.Padding)
   // A c2c volume's inner axes plane at a time in the program too, not only in a team program
   // where the profile asks (X43b); tests compare the two orders.
   bool volume_planes = false;
+  // The radices, in pass order, of a lanes column phase whose columns' length they multiply
+  // to, every one a codelet with lane passes, instead of the rule's (plan_core.cpp,
+  // column_radices); otherwise ignored. Experiment X44 compares column chains through it.
+  std::vector<std::size_t> column_radices;
   // Walked programs (multi-axis) of at most calls_max kernel calls per transform run from
   // their calls unrolled at construction (program.hpp, experiment X41); false: the driver
   // walks the records (tests compare the two).
