@@ -159,9 +159,9 @@ void check_row(fftn::isa target, std::size_t n, fftn::direction dir, const build
 }
 
 template <class T> void every_codelet_in_every_position(fftn::isa target) {
-  const auto& own = fftn::detail::of<T>(*fftn::detail::find_kernels(
-                                            static_cast<fftn::detail::target>(target)))
-                        .passes;
+  const auto& own =
+      fftn::detail::of<T>(*fftn::detail::find_kernels(static_cast<fftn::detail::target>(target)))
+          .passes;
   for (const std::uint8_t radix : fftn::detail::gen::radices) {
     const std::size_t r = radix;
     // Radix 25 has no passes on NEON (experiment X42, passes/entries.inl).
