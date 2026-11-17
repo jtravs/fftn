@@ -100,9 +100,17 @@ template <class T> std::vector<std::size_t> chain_builder<T>::radices(std::size_
   // (Bluestein needs no prime) runs them whole, where its convolution is no longer than the
   // copies' together. 1018 = 2 x 509 took 0.68 of its time on AVX-512 in double (0.40 in
   // float); 12279 = 3 x 4093 in double, whose whole convolution (25920) is longer than
-  // 3 x 8192, took 1.17.
-  if (q > 1 && !forces(n) && n / q > 1 && n / q < kernels_.complex_lanes &&
-      rader_root(q, profile_) == 0 && bluestein_m(n) <= n / q * bluestein_m(q)) {
+  // 3 x 8192, took 1.17. X36b: with s = C the units are whole but the copies' chains are
+  // lane passes of s = C (no grouped first pass), so s = C takes the whole line too while
+  // the line is not long (long_convolution_bytes): EPYC 1018 0.73 of its time, Xeon 2036
+  // 0.81; 262142 = 2 x 131071 in NEON float lost 1.23 (its whole convolution 552960 has a
+  // power-of-two part of 4096).
+  const std::size_t s_copies = q > 1 ? n / q : 0;
+  const bool few = s_copies > 1 &&
+                   (s_copies < kernels_.complex_lanes ||
+                    (s_copies == kernels_.complex_lanes && n * 2 * sizeof(T) <= conv_from_bytes_));
+  if (few && !forces(n) && rader_root(q, profile_) == 0 &&
+      bluestein_m(n) <= s_copies * bluestein_m(q)) {
     return {n};
   }
   if (q > 1) {
@@ -132,10 +140,9 @@ template <class T> bool chain_builder<T>::bluestein_last(std::size_t n) const {
 
 template <class T> std::string chain_builder<T>::radix_text(std::size_t n) const {
   if (std::ranges::find(pair_lines_, n) != pair_lines_.end()) {
-    for (const pair_leaf_entry& e : pairs_->entry) {
-      if (e.n == n) {
-        return std::to_string(e.r1) + " x " + std::to_string(e.m) + " in registers (pair leaf)";
-      }
+    if (const pair_choice p = pair_of(n); p.entry != nullptr) {
+      return std::to_string(p.entry->r1) + " x " + std::to_string(p.entry->m) +
+             " in registers (pair leaf)";
     }
   }
   return radix_text(n, radices(n));
@@ -552,30 +559,68 @@ void chain_builder<T>::add_leaf(std::size_t n, int sign, endpoint src, endpoint 
 }
 
 template <class T>
-const pair_leaf_entry* chain_builder<T>::pair_for(std::size_t n, endpoint src, endpoint dst,
-                                                  const line_edges& edges) const {
+typename chain_builder<T>::pair_choice chain_builder<T>::pair_for(std::size_t n, endpoint src,
+                                                                  endpoint dst,
+                                                                  const line_edges& edges) const {
   if (pairs_ == nullptr || forces(n) || src.stride != 1 || dst.stride != 1 ||
       edges.in == edge_op::factor || edges.out == edge_op::factor) {
-    return nullptr;
+    return {};
   }
-  for (const pair_leaf_entry& e : pairs_->entry) {
-    if (e.n == 0 || e.n > n) {
-      break;
-    }
-    if (e.n == n) {
-      return &e;
-    }
-  }
-  return nullptr;
+  return pair_of(n);
 }
 
 template <class T>
-void chain_builder<T>::add_pair_leaf(const pair_leaf_entry& e, int sign, endpoint src, endpoint dst,
+typename chain_builder<T>::pair_choice chain_builder<T>::pair_of(std::size_t n) const {
+  for (const pair_leaf_set<T>* set : {pairs_, more_pairs_}) {
+    if (set == nullptr) {
+      continue;
+    }
+    for (const pair_leaf_entry& e : set->entry) {
+      if (e.n == 0 || e.n > n) {
+        break;
+      }
+      if (e.n == n) {
+        return {.entry = &e, .set = set};
+      }
+    }
+  }
+  return {};
+}
+
+// As grouped_twiddles, padded to the set's C and in its storage: the same table where the
+// set's storage is the plan's own.
+template <class T>
+const T* chain_builder<T>::pair_twiddles(std::size_t n, std::size_t r1,
+                                         const pair_leaf_set<T>& set) {
+  if (set.lanes == kernels_.complex_lanes && set.pack_twiddles == kernels_.pack_twiddles) {
+    return grouped_twiddles(n, r1);
+  }
+  const auto& w = roots(n);
+  const std::size_t m = n / r1;
+  const std::size_t padded = (m + set.lanes - 1) / set.lanes * set.lanes;
+  std::vector<T> plain;
+  plain.reserve(2 * (r1 - 1) * padded);
+  for (std::size_t k = 1; k < r1; ++k) {
+    for (std::size_t p = 0; p < padded; ++p) {
+      const std::complex<T> v = p < m ? w[p * k] : std::complex<T>(1, 0);
+      plain.push_back(v.real());
+      plain.push_back(v.imag());
+    }
+  }
+  const std::size_t count = plain.size() / 2;
+  auto& stored = tables_.emplace_back(count * kernels_.tw_reals);
+  set.pack_twiddles(plain.data(), count, stored.data());
+  return stored.data();
+}
+
+template <class T>
+void chain_builder<T>::add_pair_leaf(const pair_choice& p, int sign, endpoint src, endpoint dst,
                                      const line_edges& edges, std::vector<stage>& stages) {
+  const pair_leaf_entry& e = *p.entry;
   stage st;
   st.leaf = e.leaf[direction_index(sign)][edges.in == edge_op::scale ? 1 : 0]
                   [edges.out == edge_op::scale ? 1 : 0];
-  st.args.twiddles = grouped_twiddles(e.n, e.r1);
+  st.args.twiddles = pair_twiddles(e.n, e.r1, *p.set);
   st.args.radix = e.r1;
   st.args.m = e.m;
   st.args.n = e.n;
@@ -886,11 +931,18 @@ std::size_t chain_builder<T>::c2c_line(std::size_t n, int sign, endpoint src, en
     return 0;
   }
   if (rad.size() == 1 && has_codelet(n)) {
+    // A codelet of up to 16 points with a pair leaf (8, 12, 16 on x86, X37) takes it: two
+    // passes on whole registers rather than one on a quarter or half of each.
+    if (const pair_choice p = n <= 16 ? pair_for(n, src, dst, edges) : pair_choice{};
+        p.entry != nullptr) {
+      add_pair_leaf(p, sign, src, dst, edges, stages);
+      return 0;
+    }
     add_leaf(n, sign, src, dst, edges, stages);
     return 0;
   }
-  if (const pair_leaf_entry* e = pair_for(n, src, dst, edges); e != nullptr) {
-    add_pair_leaf(*e, sign, src, dst, edges, stages);
+  if (const pair_choice p = pair_for(n, src, dst, edges); p.entry != nullptr) {
+    add_pair_leaf(p, sign, src, dst, edges, stages);
     return 0;
   }
   const bool wide = kernels_.complex_lanes > 1;

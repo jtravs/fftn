@@ -8,6 +8,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
+#include <new>
 #include <vector>
 
 namespace {
@@ -41,6 +43,27 @@ template <class T> void check_tables() {
 TEST(AlignedAllocator, TablesStartOnACacheLine) {
   check_tables<double>();
   check_tables<float>();
+}
+
+// A count whose bytes do not fit in size_t is refused before any allocation, as
+// std::allocator refuses it; the largest count that fits is only too large for memory.
+template <class T> void check_too_many() {
+  fftn::detail::line_aligned_allocator<T> a;
+  const std::size_t most = std::numeric_limits<std::size_t>::max() / sizeof(T);
+  EXPECT_THROW(static_cast<void>(a.allocate(most + 1)), std::bad_array_new_length);
+  EXPECT_THROW(static_cast<void>(a.allocate(std::numeric_limits<std::size_t>::max())),
+               std::bad_array_new_length);
+  // Copies for other element types compare equal: any instance frees any other's memory.
+  const fftn::detail::line_aligned_allocator<char> other(a);
+  EXPECT_TRUE(a == other);
+  T* p = a.allocate(3);
+  EXPECT_EQ(reinterpret_cast<std::uintptr_t>(p) % default_alignment, 0U);
+  fftn::detail::line_aligned_allocator<T>(other).deallocate(p, 3);
+}
+
+TEST(AlignedAllocator, RefusesACountWhoseBytesOverflow) {
+  check_too_many<double>();
+  check_too_many<float>();
 }
 
 } // namespace

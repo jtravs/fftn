@@ -104,6 +104,17 @@ gains, they were stable across rounds: planes' radices (480 × 640 0.81–0.83 o
 time on the Mac) and Granite Rapids' misfiring chain rules forced on a Xeon (10 of 11
 recovered). [P1](experiments/P1-rules-vs-measure.md), [P2](experiments/P2-measure-budget.md).
 
+1.11 **Time the call a user makes, not the one next to it.** fbench's FFTN backend called
+`transform_count` and then `execute_core`, two calls into the library, where
+`plan::execute` makes one (`execute_all`). The extra call was 4–20 % of a single row of 2–6
+points: switching the backend took them to 0.80–0.82 of their time on the EPYC 7763,
+0.86–0.91 on the Xeon 6240 and 0.96 on the M5 Max (2 points: 1.22 → 1.15 of FFTW on the
+Mac, 0.86 → 0.69 on the EPYC). At a few nanoseconds per call the harness's own path is part
+of the result; check it against the public entry whenever the entry changes. And keep
+every arm on one base: merging `main` into the branch mid-experiment moved the same rows by
+1.14–1.16 on the EPYC (the merged `main` alone did), which first read as a loss of the arm
+being timed. [X37](experiments/X37-short-batches.md).
+
 ## 2. The instruction set and the machine
 
 2.1 **The data layout that wins depends on the ISA.** Interleaved complex numbers suit
@@ -428,7 +439,28 @@ traded places by factorisation (71680 lost 1.10 in three phases while 86016 and 
 geometry and architecture together, and expect the fine crossovers to need a measured choice.
 [X35](experiments/X35-gnr-profile.md).
 
-3.20 **A breadth-first chain that half fills a private L2 already misses it.** On the Xeon
+3.20 **Where the kernel backs memory with transparent huge pages, a program's speed can flip
+from process to process, and a timing-based choice inherits the flip.** On the EPYC (THP
+"always"), r2c 65536 ran 140 µs on 4 KiB pages and 176–184 µs on huge pages with the rules'
+radix-8 chain. The other chains changed less, so measured planning on scratch that happened
+to be huge-page backed chose programs 1.18 times slower on the benchmark's buffers. Rader's
+random gathers at 65537 were 1.75 times slower than Bluestein in one run and 1.41–1.49 times
+faster in two others. Time candidates on both page kinds (madvise each way) and judge each by
+the slower, or the "best" program is a property of one allocation. Judging by the slower
+kind trades a few cases where the caller's memory suits the faster program (Xeon 262144,
+1.07). [P1](experiments/P1-rules-vs-measure.md), [P1b](experiments/P1b-rader-65537.md),
+[P2](experiments/P2-measure-budget.md).
+
+3.21 **A cost model with one memory factor per cache level cannot rank blocked and unblocked
+long-row structures.** Fitted per machine to 52 long rows under chain, two and three grid
+phases, it chose within 5 % of the fastest on 100 % of rows on the EPYC, but on only 55–80 %
+on the Mac and the Xeon, worse than hand thresholds. Its fit errors of 15–29 % were as large
+as the gaps it had to rank. Which structure wins beyond L1 depends on the cache sets the
+passes and copies hit (strides, block widths, the power-of-two part of the length), not on
+the level alone. Fitting the thresholds themselves did no better with one sample per region.
+[P3](experiments/P3-cost-model.md).
+
+3.22 **A breadth-first chain that half fills a private L2 already misses it.** On the Xeon
 6240 (1 MiB L2) FFTN's Stockham chains of 16384–32768 complex doubles (256–512 KiB) missed L2
 0.7–1.7 times per point at an IPC near 1, with fewer instructions than FFTW (12 against 16
 per point), and ran 1.23–1.51 times FFTW's time: input, output, a scratch line and four
@@ -639,6 +671,23 @@ codelet gained 4–19 % at seven (0.868 of the time over the changed lengths, 24
 1.2–1.3 times FFTN's three passes, because FFTN's radix-64 codelet holds 67 live values in
 16 registers; a plan shape transfers only with codelets that keep it in registers.
 [X38](experiments/X38-epyc-mid.md).
+
+4.16 **A batch of short rows wants whole registers: a two-pass leaf beats a one-pass leaf
+that fills one lane.** The x86 leaves of 8–16 points hold one complex double per register
+(128-bit, X28), so a batch of them does a whole radix-16 codelet per row at a quarter
+(AVX-512) or half (AVX2) of the machine's width. The same rows as pair leaves (4.12) on
+whole registers, 16 = 4 × 4 on AVX-512 and 8 × 2 on AVX2, took 16 × 16 and 16 × 256 to
+0.59–0.60 of their time on the Xeon 6240 (FFTN ÷ MKL 1.58–1.70 → 0.94–1.01, instructions
+per 16-point row 138 → 50) and 0.75 on the EPYC 7763 (÷ FFTW 1.19–1.26 → 0.90–0.93), and
+single rows of 16 to 0.67 and 0.83. Two pitfalls: where r1 < C (8 = 2 × 4, 12 = 3 × 4 on
+AVX-512) the second pass stores partial runs, and an in-place batch whose next execution
+reads them back ran 1.5–2.1 times as long (masked stores do not forward to the next
+loads), so those lengths take AVX2's leaves (r1 ≥ C) in an AVX-512 plan instead; and the
+leaves of another vector width need their twiddles in that width's storage, so a pair set
+carries its lane count and packing. Lengths that no C divides (18, 22, 26, 30 on AVX-512)
+are AVX2's pair leaves too: 0.40–0.54 of the two-pass chain's time.
+[X37](experiments/X37-short-batches.md).
+
 
 ## 5. Threading
 

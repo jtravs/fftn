@@ -438,7 +438,8 @@ template <class T> void every_edge_variant(fftn::isa target) {
   };
   const std::vector<line> lines{
       {.n = 1, .radices = {}, .first = "copy", .last = "copy"},
-      {.n = 12, .radices = {}, .first = "leaf radix-12", .last = "leaf radix-12"},
+      // Forced, so that no pair leaf replaces the leaf (X37).
+      {.n = 12, .radices = {12}, .first = "leaf radix-12", .last = "leaf radix-12"},
       {.n = 40, .radices = {5, 8}, .first = "grouped radix-5", .last = "lane radix-8"},
       {
           .n = 29,
@@ -875,15 +876,14 @@ TEST(Passes, ScratchOnlyWhenUsed) {
   }
 }
 
-// A Bluestein stage with fewer copies than a register's lanes becomes one stage over the
-// whole line (experiment X36): 2 x 509 is "bluestein 1018" where C > 2, and the plain
-// "2 x bluestein 509" elsewhere; with C | 2 nothing changes. Both are within tolerance
-// (the oracle suites).
+// A Bluestein stage with at most a register's lanes of copies becomes one stage over the
+// whole line (experiments X36, X36b): 2 x 509 is "bluestein 1018" where C >= 2, and the
+// plain "2 x bluestein 509" where C = 1. Both are within tolerance (the oracle suites).
 template <class T> void few_copies_take_the_whole_line(fftn::isa t) {
   const auto shape = fftn::rows_c2c<T>(std::size_t{2} * 509, 1, fftn::direction::forward);
   const auto core = make_plan_core(fftn::detail::view_of(shape), {.force_isa = t}, {});
   const std::string listing = joined(stage_names(*core));
-  if (lanes_of<T>(t) > 2) {
+  if (lanes_of<T>(t) >= 2) {
     EXPECT_NE(listing.find("Q 1018, "), std::string::npos) << fftn::isa_name(t) << listing;
   } else {
     EXPECT_NE(listing.find("Q 509, "), std::string::npos) << fftn::isa_name(t) << listing;
@@ -1276,9 +1276,12 @@ template <class T> void unit_leaves_match(fftn::isa t) {
       }
     }
   }
+  // Without the pair leaves, which take 8 points on x86 in double (X37).
+  build_settings no_pairs;
+  no_pairs.pair_leaves = false;
   const auto row =
       make_plan_core(fftn::detail::view_of(fftn::rows_c2c<T>(8, 1, fftn::direction::forward)),
-                     {.force_isa = t}, {});
+                     {.force_isa = t}, no_pairs);
   const auto* st = std::get_if<fftn::detail::stage>(&row->prog.records.back());
   ASSERT_NE(st, nullptr);
   const auto* half = narrow != nullptr ? &fftn::detail::of<T>(*narrow) : nullptr;
@@ -1299,16 +1302,12 @@ TEST(Passes, UnitLeavesMatchTheStridedLeaves) {
 // interleaved passes forced through build_settings::radices, out of place and in place,
 // for a batch of rows (one call) and with the scale on either edge, and is accurate against
 // the reference; a strided row, a factor edge and build_settings::pair_leaves = false take
-// the chain instead.
-template <class T> void pair_leaves_match(fftn::isa t) {
-  const auto target = static_cast<fftn::detail::target>(static_cast<unsigned char>(t));
-  const fftn::detail::pair_leaf_table* table = fftn::detail::find_pair_leaves(target);
-  ASSERT_NE(table, nullptr);
+// the chain instead. The same for the leaves a plan takes from another target's table
+// (find_more_pair_leaves, X37: avx2's in an avx512 plan, double), whose chain r1 x m on the
+// plan's own target gives the same bits (each lane does the same arithmetic).
+template <class T> void pair_leaf_matches(fftn::isa t, const fftn::detail::pair_leaf_entry& e) {
   constexpr std::size_t rows = 3;
-  for (const fftn::detail::pair_leaf_entry& e : fftn::detail::of<T>(*table).entry) {
-    if (e.n == 0) {
-      break;
-    }
+  {
     const std::size_t n = e.n;
     const std::string name =
         "pair leaf radix-" + std::to_string(e.r1) + " x " + std::to_string(e.m) + " ";
@@ -1365,6 +1364,31 @@ template <class T> void pair_leaves_match(fftn::isa t) {
         joined(stage_names(*make_plan_core(fftn::detail::view_of(strided), {.force_isa = t}, {})))
             .find("pair leaf"),
         std::string::npos);
+  }
+}
+
+template <class T> void pair_leaves_match(fftn::isa t) {
+  const auto target = static_cast<fftn::detail::target>(static_cast<unsigned char>(t));
+  const fftn::detail::pair_leaf_table* table = fftn::detail::find_pair_leaves(target);
+  ASSERT_NE(table, nullptr);
+  const auto& own = fftn::detail::of<T>(*table).entry;
+  for (const fftn::detail::pair_leaf_entry& e : own) {
+    if (e.n == 0) {
+      break;
+    }
+    pair_leaf_matches<T>(t, e);
+  }
+  const fftn::detail::pair_leaf_table* more = fftn::detail::find_more_pair_leaves(target);
+  if (more == nullptr || !std::is_same_v<T, double>) {
+    return;
+  }
+  for (const fftn::detail::pair_leaf_entry& e : fftn::detail::of<T>(*more).entry) {
+    if (e.n == 0) {
+      break;
+    }
+    if (std::ranges::none_of(own, [&](const auto& o) { return o.n == e.n; })) {
+      pair_leaf_matches<T>(t, e);
+    }
   }
 }
 

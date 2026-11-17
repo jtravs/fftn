@@ -42,3 +42,11 @@ dims = [
   529200, 1048576, 1049760, 1058400, 2000000, 2073600, 2097152,
 ]
 precision = ["f64", "f32"]
+
+[[group]]
+name = "x36b"
+note = "2-8 copies of a large prime (X36b): the few-copy rule of the Bluestein stage"
+kind = "c2c"
+dims = [1018, 2036, 2038, 4072, 8186, 262142, 1527]
+precision = ["f64", "f32"]
+tiers = ["tracking"]

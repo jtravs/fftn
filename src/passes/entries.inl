@@ -5,7 +5,9 @@
 // inside the region for every codelet radix of src/gen/codelets.hpp, both directions and
 // every edge variant. Which rows exist comes from the generated table, so a radix added to
 // the generator gets its passes here without any change. The table is constant data, built
-// by the compiler (no function computes it at run time). No include guard.
+// by the compiler (no function computes it at run time): the helpers that choose an entry
+// are consteval, so no code is emitted for them (and the coverage gate does not count
+// lines that only the compiler runs). No include guard.
 //
 // A target is compiled as several units (DESIGN.md 6.4): each row unit instantiates some
 // rows of the codelet table, codelet_row<T, I>::passes (isa/rows.inl), and the target's main
@@ -19,7 +21,7 @@ inline constexpr edge_op fac = edge_op::factor;
 
 // A split lane pass (split.inl), or null where radix R has no split codelet.
 template <class T, std::size_t R, int Sign, bool Twiddled, bool InIL, edge_op OutOp>
-constexpr pass_fn split_entry() {
+consteval pass_fn split_entry() {
   if constexpr (has_split_codelet(R)) {
     return &split_pass<T, R, Sign, Twiddled, InIL, OutOp>;
   } else {
@@ -37,7 +39,7 @@ constexpr pass_fn split_entry() {
 template <std::size_t R> inline constexpr bool phase_radix = R <= dense_codelet_radix || R % 2 == 0;
 
 template <class T, std::size_t R, int Sign, bool Twiddled, edge_op InOp, int Out>
-constexpr pass_fn phase_entry() {
+consteval pass_fn phase_entry() {
   if constexpr (phase_radix<R>) {
     return &phase_pass<T, R, Sign, Twiddled, InOp, Out>;
   } else {
@@ -45,7 +47,7 @@ constexpr pass_fn phase_entry() {
   }
 }
 
-template <class T, std::size_t R, bool Scaled> constexpr pass_fn r2c_last_entry() {
+template <class T, std::size_t R, bool Scaled> consteval pass_fn r2c_last_entry() {
   if constexpr (phase_radix<R>) {
     return &r2c_last<T, R, Scaled>;
   } else {
@@ -53,7 +55,7 @@ template <class T, std::size_t R, bool Scaled> constexpr pass_fn r2c_last_entry(
   }
 }
 
-template <class T, std::size_t R> constexpr pass_fn c2r_first_entry() {
+template <class T, std::size_t R> consteval pass_fn c2r_first_entry() {
   if constexpr (phase_radix<R>) {
     return &c2r_first<T, R>;
   } else {
@@ -66,7 +68,7 @@ template <class T, std::size_t R> constexpr pass_fn c2r_first_entry() {
 // whose plans take the narrow leaves (isa/narrow_avx2.cpp) up to 23 and no leaf of 32 by
 // default: 3.5 % of the x86 library for nothing (X28b).
 template <class T, std::size_t R, int Sign, edge_op InOp, edge_op OutOp>
-constexpr leaf_fn unit_leaf_entry() {
+consteval leaf_fn unit_leaf_entry() {
   if constexpr (R <= 32 && id != target::avx2 && id != target::avx512) {
     return &unit_leaf<T, R, Sign, InOp, OutOp>;
   } else {

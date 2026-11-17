@@ -18,7 +18,7 @@ FFTN_ISA_BEGIN(avx2)
 
 constinit const probe_table probes{
     .id = id,
-    .masked = masked,
+    .masked = partial_runs<double>,
     .f64 = &probe<double>,
     .f32 = &probe<float>,
 };

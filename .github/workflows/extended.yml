@@ -28,14 +28,18 @@ jobs:
       timeout: 240
       # Linux x86-64. GCC 14 is the GCC floor (AGENTS.md section 4) with both sanitizers:
       # B1 found GCC-only failure modes, and GCC 14's TSan is the one that needs the
-      # address-space fix. Clang 23 runs clang-tidy and coverage here.
+      # address-space fix. Clang 23 runs clang-tidy and coverage here, in jobs of their own,
+      # so that a tidy finding (the gate stops at the first failing stage) does not hide the
+      # coverage result, and the two builds run side by side.
       linux: >-
         [
           {"name": "gcc-14", "cxx": "g++-14", "stages": "build bench"},
           {"name": "gcc-14 asan", "cxx": "g++-14", "stages": "sanitize"},
           {"name": "gcc-14 tsan", "cxx": "g++-14", "stages": "tsan"},
-          {"name": "clang-23 tidy coverage", "llvm": "23", "cxx": "/usr/lib/llvm-23/bin/clang++",
-           "stages": "tidy coverage"}
+          {"name": "clang-23 tidy", "llvm": "23", "cxx": "/usr/lib/llvm-23/bin/clang++",
+           "stages": "tidy"},
+          {"name": "clang-23 coverage", "llvm": "23", "cxx": "/usr/lib/llvm-23/bin/clang++",
+           "stages": "coverage"}
         ]
       # The current GCC's sanitizers.
       linux-gcc-current: >-

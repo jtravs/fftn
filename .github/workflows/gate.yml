@@ -148,6 +148,16 @@ jobs:
             done
           done
           echo "no fftn_platform_dump was built"
+      - &disk
+        # The Debug coverage build alone is about 8 GB, and a runner whose disk fills shuts
+        # down without a word ("received a shutdown signal"): the margin left is worth a
+        # line in every log.
+        name: Disk use
+        if: always()
+        shell: bash
+        run: |
+          df -h . || true
+          du -sh build/* 2> /dev/null || true
       - &fetchcontent-collect
         name: FetchContent archives (collect)
         if: always()
@@ -202,6 +212,7 @@ jobs:
       - *ccache-stats
       - *ccache-save
       - *detected
+      - *disk
       - *fetchcontent-collect
       - *logs
 
@@ -243,6 +254,7 @@ jobs:
       - *ccache-stats
       - *ccache-save
       - *detected
+      - *disk
       - *fetchcontent-collect
       - *logs
 
@@ -286,6 +298,7 @@ jobs:
       - *ccache-stats
       - *ccache-save
       - *detected
+      - *disk
       - *fetchcontent-collect
       - *logs
 

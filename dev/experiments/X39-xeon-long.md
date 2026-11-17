@@ -277,7 +277,7 @@ FFTN ÷ FFTW (÷ MKL), C → D: 5000 1.04 → 0.89 (1.17 → 0.99), 10000 0.96 �
 - **Diagnosis.** The failing rows up to 32768 points are chains on the Xeon, not grids.
   Two causes keep them 1.2–1.5 times FFTW's time.
   - The breadth-first chain misses L2 at 256–512 KiB (0.7–1.7 misses per point, IPC near 1),
-    where FFTW's recursion finishes sub-transforms in L1 (LESSONS 3.20).
+    where FFTW's recursion finishes sub-transforms in L1 (LESSONS 3.22).
   - Rows with an odd part 5⁴–5⁵ need five or six passes without radix-20 and radix-25
     codelets. FFTW uses three or four (`t3fv_25`, `t3fv_20`).
 

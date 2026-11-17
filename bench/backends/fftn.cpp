@@ -10,7 +10,7 @@
 // radices it uses).
 //
 // Plans are built and executed through the functions that the public plan<In, Out>
-// forwards every call to (include/fftn/plan.hpp: make_plan_core, execute_core, execute_on,
+// forwards every call to (include/fftn/plan.hpp: make_plan_core, execute_all, execute_on,
 // execute_team), so that an arm can also set the private build settings
 // (src/core/plan_core.hpp): the threading experiments T1 and T5 set the machine profile
 // and chunking, experiment X2 the chain's radices. With no options the plan is exactly the
@@ -64,6 +64,8 @@
 //   RADER=rules|0|1  Rader stages (build_settings::rader): the profile's range (default),
 //                    never (Bluestein instead), or for every prime factor whose q - 1 is
 //                    13-smooth (experiment X27; task 2.4's 65537 check)
+//   GRID_PHASES=2|3  the grid's phase count instead of the rule's (build_settings::
+//                    grid_phases), where the row is a grid; experiment P3
 //   GRID_PHASE_RADIX=R          the largest radix of the grid's phase rule (build_settings::
 //                    grid_phase_radix; default 16): codelet radices up to R (experiment X3)
 //   GRID_MIN_BYTES, GRID_THREE_BYTES, GRID_BLOCK_BYTES, GRID_BLOCK, GRID_FUSE_BYTES,
@@ -488,6 +490,12 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
       }
       s.settings.rader = value == "rules" ? -1 : value == "0" ? 0 : 1;
       s.rader = value;
+    } else if (key == "GRID_PHASES") {
+      if (value != "2" && value != "3") {
+        say(message, message_size, "GRID_PHASES is 2 or 3");
+        return fbench_error;
+      }
+      s.settings.grid_phases = value == "2" ? 2 : 3;
     } else if (key == "GRID_PHASE_RADIX") {
       const std::optional<std::size_t> v = fbench::fftn_tuning::parse_size(value, 2, false);
       if (!v || *v > 64) {
@@ -547,6 +555,9 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
     }
     if (!s.settings.radices.empty()) {
       d.str("radices", s.radices_text);
+    }
+    if (s.settings.grid_phases != 0) {
+      d.integer("grid_phases", static_cast<std::int64_t>(s.settings.grid_phases));
     }
     if (s.settings.grid_phase_radix != 0) {
       d.integer("grid_phase_radix", static_cast<std::int64_t>(s.settings.grid_phase_radix));
@@ -637,7 +648,9 @@ void fbench_execute(const void* plan, void* in, void* out) {
   const session& s = state();
   switch (s.mode) {
   case call::serial:
-    detail::execute_core(*r.core, 0, detail::transform_count(*r.core), in, out, r.ws);
+    // What plan::execute calls: one call into the library (X28), not transform_count and
+    // execute_core, whose extra call fbench timed until X37.
+    detail::execute_all(*r.core, in, out, r.ws);
     return;
   case call::executor:
     detail::execute_on(*r.core, in, out, regrouped(*s.exec, s.group_size), r.ws);

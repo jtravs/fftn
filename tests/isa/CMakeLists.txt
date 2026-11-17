@@ -9,8 +9,9 @@
 # kernel units: they instantiate every codelet twice per target.
 set(fftn_codelet_units codelets_scalar.cpp codelets_avx2.cpp codelets_avx512.cpp
                        codelets_neon.cpp codelets_neon_fcma.cpp)
-add_library(fftn_isa_probes OBJECT probe_scalar.cpp probe_avx2.cpp probe_avx512.cpp
-                                   probe_neon.cpp probe_neon_fcma.cpp probe_tables.cpp
+add_library(fftn_isa_probes OBJECT probe_scalar.cpp probe_avx2.cpp probe_narrow_avx2.cpp
+                                   probe_avx512.cpp probe_neon.cpp probe_neon_fcma.cpp
+                                   probe_tables.cpp
                                    ${fftn_codelet_units} codelet_tables.cpp)
 fftn_always_optimise(${fftn_codelet_units})
 fftn_configure_target(fftn_isa_probes)
@@ -89,10 +90,13 @@ if(CMAKE_INTERPROCEDURAL_OPTIMIZATION)
 else()
   set(fftn_asm_inputs $<TARGET_FILE:fftn> "$<TARGET_OBJECTS:fftn_isa_probes>")
 endif()
-# The disassembly check reads the code users get: the Release, tidy and coverage builds.
-# Sanitizer instrumentation changes inlining and folding (wrappers, fake-stack frames), which
-# the check cannot tell from a missed inline, so it does not run there.
-if(NOT FFTN_SANITIZE)
+# The disassembly check reads the code users get: the Release and tidy builds. Sanitizer
+# instrumentation changes inlining and folding (wrappers, fake-stack frames), which the check
+# cannot tell from a missed inline, so it does not run there. Nor in the coverage build, whose
+# counters are in every function and which executes no C++ in this test: the disassembly of
+# its Debug library took asm_check past 32 GB on the Mac, and on the 16 GB Linux x86-64
+# runners the runner shut down mid-test (extended runs 43916357065, 43941831420, 43966547286).
+if(NOT FFTN_SANITIZE AND NOT FFTN_COVERAGE)
   add_test(NAME isa.asm_check
            COMMAND ${fftn_asm_check} ${fftn_baseline_has} ${fftn_asm_inputs}
            WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
@@ -106,8 +110,9 @@ endif()
 # regions, not a property of the Apple baseline. Like the check above, it reads the code users
 # get, so sanitizer builds skip it: compiling the kernel units a second time with
 # instrumentation doubled the slowest part of the macOS sanitizer jobs, which then ran past
-# their time limit (CI run 43656723703).
-if(APPLE AND FFTN_TARGET_IS_AARCH64 AND NOT FFTN_SANITIZE)
+# their time limit (CI run 43656723703). The coverage build skips it too: on its instrumented
+# objects asm_check peaked at 18 GB, on runners with 7.
+if(APPLE AND FFTN_TARGET_IS_AARCH64 AND NOT FFTN_SANITIZE AND NOT FFTN_COVERAGE)
   check_cxx_compiler_flag(-mcpu=generic FFTN_HAS_MCPU_GENERIC)
   if(NOT FFTN_HAS_MCPU_GENERIC)
     message(FATAL_ERROR "isa tests: the compiler does not accept -mcpu=generic")

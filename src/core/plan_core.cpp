@@ -17,6 +17,7 @@
 #include "fftn/options.hpp"
 #include "fftn/shape.hpp"
 #include "fftn/workspace.hpp"
+#include "isa/arch.hpp"
 #include "isa/kernel_table.hpp"
 #include "isa/target.hpp"
 #include "passes/pass_args.hpp"
@@ -552,7 +553,11 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   }
   if (const pair_leaf_table* pairs = find_pair_leaves(c.isa_target);
       pairs != nullptr && settings.pair_leaves) {
-    chain.use_pair_leaves(&of<T>(*pairs));
+    // Another target's leaves in double only (X37): in float they would also change the
+    // lanes' chains (strategies/lanes.cpp), which nothing has measured.
+    const pair_leaf_table* more =
+        std::is_same_v<T, double> ? find_more_pair_leaves(c.isa_target) : nullptr;
+    chain.use_pair_leaves(&of<T>(*pairs), more != nullptr ? &of<T>(*more) : nullptr);
   }
   program& p = c.prog;
   const std::size_t r = s.axes.size();
@@ -996,28 +1001,20 @@ std::shared_ptr<const plan_core> make_plan_core(const shape_view& shape, const o
   return make_plan_core(shape, opts, build_settings{});
 }
 
-void execute_core(const plan_core& core, std::size_t first, std::size_t count, const void* in,
-                  void* out, const workspace& ws) noexcept {
-  assert(ws.size() >= core.bytes && "fftn: workspace smaller than plan::workspace_bytes()");
-  // A serial execution leaves the workspace ready for the next team execution to set its
-  // state up afresh (team_state.hpp): the scratch below overlaps that state, and a team
-  // that skipped an execution must not carry its state into the next one
-  // (TeamExecute.ResetAfterASkippedExecution, which a plan of leaf rows failed until X28b).
-  const sync_word team = workspace_access::team_word(ws);
-  if (team.load(std::memory_order_relaxed) != 0) {
-    team.store(0, std::memory_order_relaxed);
-  }
-  if (core.prog.leaf_rows) {
-    // Rows of leaves use no scratch and need no slot_addresses (driver.hpp).
-    assert(first <= core.prog.transforms && count <= core.prog.transforms - first &&
-           "fftn: execute_transforms beyond the batch");
-    assert((!core.in_place || in == out) && "fftn: in-place plan executed with in != out");
-    assert((core.in_place || in != out) && "fftn: out-of-place plan executed with in == out");
-    if (count != 0) {
-      run_leaf_rows(core.prog, first, count, in, out);
-    }
-    return;
-  }
+namespace {
+
+// execute_core's path for every program but leaf rows (X37): out of line on AArch64, where
+// a frame shared with the path of leaf rows cost single rows of 2-6 points 6-9 % on the
+// M5 Max; inline elsewhere, since out of line it slowed single rows of 31-300 points by
+// 3-13 % on the EPYC 7763 (GCC 16) while its gain on leaf rows did not survive without the
+// leaves' byte distances (passes/access.inl).
+#if FFTN_ARCH_AARCH64
+[[gnu::noinline]]
+#else
+[[gnu::always_inline]] inline
+#endif
+void execute_program(const plan_core& core, std::size_t first, std::size_t count, const void* in,
+                     void* out, const workspace& ws) noexcept {
   assert(first <= core.prog.transforms && count <= core.prog.transforms - first &&
          "fftn: execute_transforms beyond the batch");
   assert((!core.in_place || in == out) && "fftn: in-place plan executed with in != out");
@@ -1051,6 +1048,33 @@ void execute_core(const plan_core& core, std::size_t first, std::size_t count, c
       .b = b,
   };
   run_transforms(core.prog, first, count, at);
+}
+
+} // namespace
+
+void execute_core(const plan_core& core, std::size_t first, std::size_t count, const void* in,
+                  void* out, const workspace& ws) noexcept {
+  assert(ws.size() >= core.bytes && "fftn: workspace smaller than plan::workspace_bytes()");
+  // A serial execution leaves the workspace ready for the next team execution to set its
+  // state up afresh (team_state.hpp): the scratch below overlaps that state, and a team
+  // that skipped an execution must not carry its state into the next one
+  // (TeamExecute.ResetAfterASkippedExecution, which a plan of leaf rows failed until X28b).
+  const sync_word team = workspace_access::team_word(ws);
+  if (team.load(std::memory_order_relaxed) != 0) {
+    team.store(0, std::memory_order_relaxed);
+  }
+  if (core.prog.leaf_rows) {
+    // Rows of leaves use no scratch and need no slot_addresses (driver.hpp).
+    assert(first <= core.prog.transforms && count <= core.prog.transforms - first &&
+           "fftn: execute_transforms beyond the batch");
+    assert((!core.in_place || in == out) && "fftn: in-place plan executed with in != out");
+    assert((core.in_place || in != out) && "fftn: out-of-place plan executed with in == out");
+    if (count != 0) {
+      run_leaf_rows(core.prog, first, count, in, out);
+    }
+    return;
+  }
+  execute_program(core, first, count, in, out, ws);
 }
 
 void execute_all(const plan_core& core, const void* in, void* out, const workspace& ws) noexcept {

@@ -439,13 +439,25 @@ TEST(ExecutionDeathTest, PreconditionsAreAssertedInDebugBuilds) {
   fftn::workspace ws(in_place);
   EXPECT_DEATH(in_place.execute(x.data(), reinterpret_cast<double*>(y.data()), ws),
                "in-place plan executed with in != out");
-  // Rows of 40 need scratch (rows of 16 or fewer are leaves, which need none).
-  const fftn::c2c_plan<double> rows(fftn::rows_c2c<double>(40, 2, fftn::direction::forward));
-  ASSERT_GT(rows.workspace_bytes(), 0U);
+  // Rows that need scratch: leaves need none (rows of 16 or fewer, and on the x86 targets
+  // the pair leaves of X28b, rows of 40 among them), so the first of these lengths whose
+  // plan has a workspace.
+  std::size_t n = 0;
+  for (const std::size_t len : {std::size_t{40}, std::size_t{1000}, std::size_t{4096}}) {
+    if (fftn::c2c_plan<double>(fftn::rows_c2c<double>(len, 2, fftn::direction::forward))
+            .workspace_bytes() > 0) {
+      n = len;
+      break;
+    }
+  }
+  ASSERT_NE(n, 0U) << "no length here needs a workspace";
+  const fftn::c2c_plan<double> rows(fftn::rows_c2c<double>(n, 2, fftn::direction::forward));
+  cvec<double> rx(2 * n);
+  cvec<double> ry(2 * n);
   fftn::workspace small(rows.workspace_bytes() - 1);
-  EXPECT_DEATH(rows.execute(x.data(), y.data(), small), "workspace smaller");
+  EXPECT_DEATH(rows.execute(rx.data(), ry.data(), small), "workspace smaller");
   fftn::workspace enough(rows);
-  EXPECT_DEATH(rows.execute_transforms(1, 2, x.data(), y.data(), enough), "beyond the batch");
+  EXPECT_DEATH(rows.execute_transforms(1, 2, rx.data(), ry.data(), enough), "beyond the batch");
 #endif
 }
 
@@ -711,7 +723,9 @@ TEST(Shape, BracedListsBuildShapes) {
 // ---- Describe, instruction set.
 
 TEST(Describe, NamesTheProgram) {
-  const fftn::c2c_plan<double> p(fftn::rows_c2c<double>(188, 3, fftn::direction::forward));
+  // 16 x 47: more copies of the Bluestein stage than any target's lanes in double, so the
+  // rules keep the stage after the codelet passes everywhere (experiments X36, X36b).
+  const fftn::c2c_plan<double> p(fftn::rows_c2c<double>(752, 3, fftn::direction::forward));
   const std::string d = p.describe();
   const std::string isa = std::string("instruction set: ") + fftn::isa_name(p.instruction_set());
   for (const char* part : {
@@ -719,8 +733,8 @@ TEST(Describe, NamesTheProgram) {
            "double",
            isa.c_str(),
            "chain",
-           "radices 4 x bluestein 47 (M ",
-           "grouped radix-4 forward",
+           " x bluestein 47 (M ",
+           "grouped radix-",
            "bluestein in, chirp forward (Q 47, M ",
            "bluestein out",
            "loop batch x3",

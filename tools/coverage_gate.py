@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import gzip
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -121,7 +122,12 @@ def main() -> int:
         lines = gcc_lines(manifest, build, root)
 
     if opts.dump is not None and opts.dump.exists():
-        out = subprocess.run([str(opts.dump)], capture_output=True, text=True, check=False).stdout
+        # The dump is instrumented too: its profile goes nowhere rather than to the directory
+        # the gate runs in.
+        env = {**os.environ, "LLVM_PROFILE_FILE": os.devnull}
+        out = subprocess.run(
+            [str(opts.dump)], capture_output=True, text=True, check=False, env=env
+        ).stdout
         best = next((ln.split()[1] for ln in out.splitlines() if ln.startswith("best_target ")), "")
         skip = target_files(unrunnable(best))
         if skip:
@@ -139,14 +145,33 @@ def main() -> int:
         for rel, v in lines.items()
         if v
     )
+    below = percent < opts.min_lines
     for pct, rel, n in rows[: opts.show]:
         if pct < 100.0:
             print(f"   {pct:6.1f} %  {n:5d} lines  {rel}")
+            if below:
+                # Which lines, so that a run on another platform says what to test.
+                print(f"             missed: {line_ranges(lines[rel])}")
     print(f"   line coverage {percent:.2f} % ({hit} of {total} lines, {len(lines)} files)")
-    if percent < opts.min_lines:
+    if below:
         print(f"coverage: {percent:.2f} % is below the threshold of {opts.min_lines} %")
         return 1
     return 0
+
+
+def line_ranges(per_line: dict[int, int]) -> str:
+    """The lines never executed, as ranges: "12-15, 40"."""
+    missed = sorted(n for n, c in per_line.items() if c == 0)
+    ranges: list[str] = []
+    start = prev = None
+    for n in [*missed, None]:
+        if n is not None and prev is not None and n == prev + 1:
+            prev = n
+            continue
+        if start is not None:
+            ranges.append(str(start) if start == prev else f"{start}-{prev}")
+        start = prev = n
+    return ", ".join(ranges)
 
 
 if __name__ == "__main__":
