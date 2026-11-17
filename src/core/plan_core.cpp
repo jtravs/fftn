@@ -623,7 +623,7 @@ std::size_t add_column_phase(program& p, chain_builder<T>& chain, std::size_t ax
                                           src.stride[last], {dst.where, dst.stride[axis]},
                                           dst.stride[last], edges, width, st, true, rad));
     for (stage& x : st) {
-      x.args.rows = rows;
+      x.args.rows = static_cast<std::uint32_t>(rows);
       p.records.emplace_back(std::move(x));
     }
     close_loops(p, open);

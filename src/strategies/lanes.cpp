@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <utility>
 #include <vector>
@@ -69,7 +70,7 @@ void chain_builder<T>::add_lanes_copy(bool gather, std::size_t elements, lane_ro
   st.args.columns_inner = columns;
   st.run = gather ? kernels_.passes.lanes_gather : kernels_.passes.lanes_scatter;
   st.args.n = elements;
-  st.args.block = block;
+  st.args.block = static_cast<std::uint32_t>(block);
   if (gather) {
     st.args.src_stride = rows.stride;
     st.args.src_dist = rows.dist;
@@ -108,7 +109,7 @@ void chain_builder<T>::lanes_body(std::size_t n, const std::vector<std::size_t>&
                           const lane_rows& to) {
     st.args.radix = radix;
     st.args.n = n * block;
-    st.args.block = block;
+    st.args.block = static_cast<std::uint32_t>(block);
     st.args.scale = edges.scale;
     st.args.src_stride = from.stride;
     st.args.src_dist = from.dist;
@@ -248,7 +249,7 @@ std::size_t chain_builder<T>::r2c_lanes(std::size_t n, endpoint src, std::ptrdif
   stage st;
   st.run = kernels_.passes.lanes_r2c_pair[scale != 1.0 ? 1 : 0];
   st.args.n = n;
-  st.args.block = block;
+  st.args.block = static_cast<std::uint32_t>(block);
   st.args.twiddles = leaf_pairing_twiddles(n);
   st.args.scale = scale;
   st.args.dst_stride = to.stride;
@@ -300,7 +301,7 @@ std::size_t chain_builder<T>::c2r_lanes(std::size_t n, endpoint src, std::ptrdif
   stage st;
   st.run = kernels_.passes.lanes_c2r_pair;
   st.args.n = n;
-  st.args.block = block;
+  st.args.block = static_cast<std::uint32_t>(block);
   st.args.twiddles = leaf_pairing_twiddles(n);
   st.args.src_stride = from.stride;
   st.args.src_dist = from.dist;

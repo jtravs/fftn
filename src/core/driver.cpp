@@ -8,6 +8,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <variant>
 
 namespace fftn::inline v0::detail {
@@ -132,7 +133,7 @@ slot_addresses moved_in_nest(const program& p, std::size_t begin, std::size_t de
 // A stage of a lanes block (program.hpp): whole, with the block's rows.
 void run_lane_stage(const stage& st, const slot_addresses& at, std::size_t rows) noexcept {
   pass_args args = st.args;
-  args.rows = rows;
+  args.rows = static_cast<std::uint32_t>(rows);
   st.run(&args, source_of(st.src, at), destination_of(st.dst, at), 0, st.units);
 }
 
