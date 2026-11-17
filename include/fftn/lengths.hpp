@@ -14,6 +14,12 @@
 
 namespace fftn::inline v0 {
 
+/// What a length is for, in `next_fast_length`.
+enum class length_kind : unsigned char {
+  complex, ///< a complex transform's length, or a real transform's axis that is not halved
+  real,    ///< the halved axis of a real transform: an even length with a fast half
+};
+
 /// The smallest length m >= n that FFTN transforms fast: for an application that may pad its
 /// grid, for example to 1008 instead of 1001 points, or to 4096 instead of the prime 4093.
 ///
@@ -32,23 +38,25 @@ namespace fftn::inline v0 {
 /// pick for 131, ran at 1.76 on one Xeon. Every pick measured was faster than the length it
 /// replaced. For this machine's own estimate of a length, see `relative_cost`.
 ///
-/// With `real`, the result is even and its half is fast: real transforms of an even length
-/// run a complex transform of half that length. In two or three dimensions only the halved
-/// axis (the last) takes `real`; the others take `next_fast_length(n)`. (scipy's
-/// `next_fast_len(target, real=True)` differs: it may return an odd length.)
+/// With `length_kind::real`, the result is even and its half is fast: real transforms of an
+/// even length run a complex transform of half that length. In two or three dimensions only
+/// the halved axis (the last) takes `length_kind::real`; the others take
+/// `next_fast_length(n)`. (scipy's `next_fast_len(target, real=True)` differs: it may return
+/// an odd length.)
 ///
 /// Throws `std::invalid_argument` for n above 2^40, the longest length the length queries
-/// accept. Returns 1 for n = 0, and with `real` 2 for n <= 2. The result is at most the
+/// accept, and naming `kind` for a value that is not a `length_kind` enumerator. Returns 1
+/// for n = 0, and with `length_kind::real` 2 for n <= 2. The result is at most the
 /// power of two at or above n (powers of two are fast), it is non-decreasing in n, and
 /// `next_fast_length(next_fast_length(n)) == next_fast_length(n)`. A call tests only the
 /// candidates in [n, 2n] and costs microseconds, under a millisecond up to 2^40.
 ///
 /// ```cpp
 /// const std::size_t n = fftn::next_fast_length(1001);        // 1008 = 2^4 * 3^2 * 7
-/// const std::size_t r = fftn::next_fast_length(1001, true);  // even, half fast
+/// const std::size_t r = fftn::next_fast_length(1001, fftn::length_kind::real); // even
 /// const fftn::c2c_plan<double> p(fftn::rows_c2c<double>(n, 1, fftn::direction::forward));
 /// ```
-[[nodiscard]] std::size_t next_fast_length(std::size_t n, bool real = false);
+[[nodiscard]] std::size_t next_fast_length(std::size_t n, length_kind kind = length_kind::complex);
 
 namespace detail {
 [[nodiscard]] double relative_cost(std::size_t n, bool single, isa which);

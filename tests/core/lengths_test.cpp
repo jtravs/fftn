@@ -28,6 +28,7 @@
 namespace {
 
 namespace d = fftn::detail;
+constexpr fftn::length_kind real = fftn::length_kind::real;
 
 TEST(NextFastLength, FastLengthsArePinnedForTheVersion) {
   // The reference is fixed per library version (DESIGN.md 9.2): a change to this list is a
@@ -95,10 +96,10 @@ TEST(NextFastLength, Examples) {
   // The largest length accepted is 2^40, itself fast; above it both queries throw.
   const std::size_t top = std::size_t{1} << 40U;
   EXPECT_EQ(fftn::next_fast_length(top - 1), top);
-  EXPECT_EQ(fftn::next_fast_length(top - 1, true), top);
-  EXPECT_EQ(fftn::next_fast_length(top, true), top);
+  EXPECT_EQ(fftn::next_fast_length(top - 1, real), top);
+  EXPECT_EQ(fftn::next_fast_length(top, real), top);
   EXPECT_THROW(static_cast<void>(fftn::next_fast_length(top + 1)), std::invalid_argument);
-  EXPECT_THROW(static_cast<void>(fftn::next_fast_length(top + 1, true)), std::invalid_argument);
+  EXPECT_THROW(static_cast<void>(fftn::next_fast_length(top + 1, real)), std::invalid_argument);
   EXPECT_THROW(static_cast<void>(fftn::next_fast_length(SIZE_MAX)), std::invalid_argument);
 }
 
@@ -110,7 +111,7 @@ TEST(NextFastLength, LargeLengthsMatchATrialOfEveryLength) {
     for (std::size_t k = n; k < m; ++k) {
       ASSERT_FALSE(d::is_fast_length(k)) << k;
     }
-    const std::size_t r = fftn::next_fast_length(n, true);
+    const std::size_t r = fftn::next_fast_length(n, real);
     ASSERT_EQ(r % 2, 0U) << n;
     ASSERT_TRUE(d::is_fast_length(r / 2)) << n;
     for (std::size_t k = n + n % 2; k < r; k += 2) {
@@ -136,9 +137,9 @@ TEST(NextFastLength, CallsAreCheapUpTo2To40) {
   const clock::time_point start = clock::now();
   double slowest = 0;
   for (const std::size_t n : lengths) {
-    for (const bool real : {false, true}) {
+    for (const fftn::length_kind kind : {fftn::length_kind::complex, real}) {
       const clock::time_point t0 = clock::now();
-      static_cast<void>(fftn::next_fast_length(n, real));
+      static_cast<void>(fftn::next_fast_length(n, kind));
       slowest = std::max(slowest, std::chrono::duration<double>(clock::now() - t0).count());
     }
   }
@@ -149,7 +150,7 @@ TEST(NextFastLength, CallsAreCheapUpTo2To40) {
 
 TEST(NextFastLength, RealLengthsAreEvenWithAFastHalf) {
   for (std::size_t n = 0; n <= 20000; ++n) {
-    const std::size_t m = fftn::next_fast_length(n, true);
+    const std::size_t m = fftn::next_fast_length(n, real);
     ASSERT_GE(m, n);
     ASSERT_EQ(m % 2, 0U) << n;
     ASSERT_TRUE(d::is_fast_length(m / 2)) << n;
@@ -157,10 +158,10 @@ TEST(NextFastLength, RealLengthsAreEvenWithAFastHalf) {
       ASSERT_FALSE(d::is_fast_length(k / 2)) << k;
     }
   }
-  EXPECT_EQ(fftn::next_fast_length(0, true), 2U);
-  EXPECT_EQ(fftn::next_fast_length(1, true), 2U);
-  EXPECT_EQ(fftn::next_fast_length(2, true), 2U);
-  EXPECT_EQ(fftn::next_fast_length(3, true), 4U);
+  EXPECT_EQ(fftn::next_fast_length(0, real), 2U);
+  EXPECT_EQ(fftn::next_fast_length(1, real), 2U);
+  EXPECT_EQ(fftn::next_fast_length(2, real), 2U);
+  EXPECT_EQ(fftn::next_fast_length(3, real), 4U);
 }
 
 std::vector<fftn::isa> every_target() {
@@ -207,6 +208,13 @@ template <class T> void check_relative_costs() {
 TEST(RelativeCost, PowersOfTwoAreOneFastLengthsLowPrimesHighOnEveryTarget) {
   check_relative_costs<double>();
   check_relative_costs<float>();
+}
+
+TEST(NextFastLength, ComplexIsTheDefaultAndOtherKindsAreRefused) {
+  EXPECT_EQ(fftn::next_fast_length(1001, fftn::length_kind::complex), fftn::next_fast_length(1001));
+  EXPECT_EQ(fftn::next_fast_length(41, real), 46U); // halves 21 and 22 are not fast, 23 is
+  EXPECT_THROW(static_cast<void>(fftn::next_fast_length(64, static_cast<fftn::length_kind>(2))),
+               std::invalid_argument);
 }
 
 TEST(RelativeCost, RefusesAValueThatIsNotATarget) {

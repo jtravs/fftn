@@ -18,12 +18,16 @@
 
 namespace fftn::inline v0 {
 
-std::size_t next_fast_length(std::size_t n, bool real) {
+std::size_t next_fast_length(std::size_t n, length_kind kind) {
+  if (kind != length_kind::complex && kind != length_kind::real) {
+    throw std::invalid_argument(
+        "fftn::next_fast_length: kind is not an fftn::length_kind enumerator");
+  }
   if (n > detail::max_length_query) {
     throw std::invalid_argument("fftn::next_fast_length: n is above 2^40, the longest length "
                                 "the length queries accept");
   }
-  return detail::next_fast_length(n, real);
+  return detail::next_fast_length(n, kind == length_kind::real);
 }
 
 namespace detail {
