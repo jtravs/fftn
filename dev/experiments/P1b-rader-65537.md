@@ -1,6 +1,6 @@
 # P1b: Rader or Bluestein at 65537 on x86
 
-- **Status:** running
+- **Status:** done (rules unchanged: Rader stays at 65537 on x86)
 - **Owner:** task/2.4-measure-2 session, 2026-11-17
 - **Phase / task:** 2.4, a follow-up of [P1](P1-rules-vs-measure.md); PLAN lead (e)
 
@@ -42,8 +42,42 @@ everywhere). Same commit.
 
 ## Results
 
-Pending.
+EPYC (run 20261117-024156-2814, Slurm 511470/511484, commit 611f929; 8 of 8 rounds loaded,
+A/A band ±1.00 %): `B ÷ N`, Bluestein's time over the rules' Rader:
+
+| Case | double | float |
+|---|---|---|
+| 97 (control) | 1.517 [1.224, 1.581] | 1.357 [1.353, 1.373] |
+| 257 (control) | 1.680 [1.646, 1.744] | 1.083 [1.056, 1.105] |
+| 65537 | 1.493 [1.473, 1.499] | 1.178 [1.159, 1.187] |
+
+At 65537 Rader is faster in this run, by 1.49 in double, the opposite of what measure found
+in P1's second pass (Bluestein 0.57 of Rader's time). Three runs on the EPYC now disagree:
+- P1's second pass (20261116-231702-f43c): Bluestein 1.75 times faster under measure;
+- P2's verification (20261117-015335-5209): measure's Bluestein 1.41 times slower than
+  the rules' Rader;
+- here: Bluestein 1.49 times slower.
+
+65537 on the EPYC is bimodal by process. The likely cause is the page backing of Rader's
+random gathers over a megabyte, its index and kernel tables included (LESSONS 4.11; the page
+kinds of P2's third pass).
+
+Xeon (run 20261117-033046-7640, Slurm 16202/16212; 0 of 16 rounds loaded, ±1.00 %): `B ÷ N`
+on `avx512`, and `B2 ÷ N2` on `avx2` from the same rounds:
+
+| Case | `avx512` double | `avx512` float | `avx2` double | `avx2` float |
+|---|---|---|---|---|
+| 97 | 1.367 | 1.008 | 1.437 | 1.154 |
+| 257 | 1.511 | 0.877 | 1.726 | 1.353 |
+| 65537 | 1.844 | 1.990 | 1.676 | 1.572 |
+
+On the Xeon, Rader wins at 65537 by 1.6–2.0 on both targets.
 
 ## Verdict
 
-Pending.
+Rules unchanged. The rule (Bluestein below 0.95 at 65537 on the EPYC and both Xeon targets)
+fails on the EPYC, where Rader is faster at 65537 in this run (1.49 and 1.18), and on the
+Xeon, where it is faster by 1.6–2.0 on both targets. PLAN lead (e)'s
+EPYC 65537 numbers (1.09 against 1.63 of FFTW) are the same bimodality. A Rader stage whose
+gathers do not depend on the page size (blocked permutations, or tables laid out in the
+order of access) is the follow-up, not a smaller range.

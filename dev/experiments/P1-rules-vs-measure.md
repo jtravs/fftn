@@ -155,6 +155,18 @@ The other first-pass misses are noise: c2c 360, c2c 2²⁰ and r2c 2²⁰, where
 rules' program in 10 or more of 12 rounds. So the Xeon needs two threshold refits (in X39's
 scope) and three table overrides; planes are measure's until phase 4.
 
+### Third pass (commit 4179bc5: large buffers timed on both page kinds; see P2)
+
+| Machine | Run | Load, A/A band | Rules within 5 % of M | fbench verdicts M vs N |
+|---|---|---|---|---|
+| EPYC | 20261117-015335-5209 | 12 of 12 loaded, ±2.16 % | 61 of 61 (100 %) | 60 no evidence, 1 slower (65537, bimodal, P1b) |
+| Xeon | 20261117-024749-2579 | 0 of 12 loaded, ±1.70 % | 56 of 61 (91.8 %) | 6 faster, 54 no evidence, 1 slower (262144, 1.07) |
+
+With the Mac's second pass (93.4 %), the acceptance (90 %) is now met on all three machines.
+Rule 2 still fails once on each x86 machine:
+- EPYC 65537, a bimodal case;
+- Xeon 262144, a two-phase grid chosen by its slower page kind over the rules' three phases.
+
 ## Verdict
 
 Second pass, measurement only; no default changed.
