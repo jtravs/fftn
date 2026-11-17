@@ -27,7 +27,8 @@ means that the planner's reference cost table prices a row of the length, per po
 1.25 times a row of the power of two at or above it.
 - The reference table is fixed for each library version, whatever machine the program runs
   on, so a grid chosen with it is the same everywhere.
-- Every prime factor of a fast length is at most 23.
+- Every prime factor of a fast length is at most 23. Composites with a factor 11 or 17 are
+  not fast: measured, they were slower than the table believes (experiment P4).
 - The result is never above the next power of two, and is usually within a few per cent of
   n: up to 200000, the largest step is from 41 to 48.
 

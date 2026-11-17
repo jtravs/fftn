@@ -23,6 +23,14 @@ dims = [40, 100, 112, 132, 252, 304, 512, 1008, 1020, 2048, 3024, 4096, 4104, 60
   15048, 30030, 46080, 65550, 100000, 150144, 250240]
 tiers = ["tracking"]
 
+# After P4's first pass removed composites with 11 or 17 (the new picks for the awkward
+# lengths whose pick changed).
+[[group]]
+name = "p4-fast-2"
+kind = "c2c"
+dims = [140, 1024, 10051, 15120, 30240, 150176, 250880]
+tiers = ["tracking"]
+
 [[group]]
 name = "p4-pow2"
 kind = "c2c"

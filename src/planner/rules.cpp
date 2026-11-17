@@ -905,9 +905,10 @@ double row_cost(std::size_t n, const target_profile& p) {
   if (rest > 1) {
     // The stage runs n / rest copies of a convolution of L points: two transforms of L and
     // two elementwise passes (bluestein_length's pricing).
-    const std::size_t len = rader_root(rest, p) != 0
-                                ? rest - 1
-                                : bluestein_length(rest, p, std::numeric_limits<std::size_t>::max());
+    const std::size_t len =
+        rader_root(rest, p) != 0
+            ? rest - 1
+            : bluestein_length(rest, p, std::numeric_limits<std::size_t>::max());
     const double per_point = static_cast<double>(p.costs->unit[2][0] / (2 * p.lanes) + 1);
     const double conv = 2 * static_cast<double>(cheapest(len, len, false, p).cost) +
                         2 * per_point * static_cast<double>(len);
@@ -930,11 +931,18 @@ double relative_row_cost(std::size_t n, const target_profile& p) {
 
 namespace {
 
-// Whether every prime factor of n has a codelet (at most 23): a length with a larger one
-// takes a Rader or Bluestein stage, which the reference prices at 1.4 times a power of two
-// per point or more at every length (task 2.5), so it is never fast and is not priced.
-bool codelet_smooth(std::size_t n) {
-  for (const std::size_t q : {2U, 3U, 5U, 7U, 11U, 13U, 17U, 19U, 23U}) {
+// Whether n may be fast: every prime factor has a codelet (at most 23; a length with a
+// larger one takes a Rader or Bluestein stage, which the reference prices at 1.49 times a
+// power of two per point or more up to 20000, so it is never fast), and n is not a composite
+// with a factor 11 or 17. Experiment P4: lengths with them missed 1.3 times the power of two
+// above on two machines each (132 on the EPYC and the Xeon, 1.40-1.68; 1020 on the Mac and
+// the Xeon, 1.32-1.38; 150144 and 250240 on the EPYC, 1.47-1.56), the reference's scaled
+// columns being optimistic for them. Their single codelets (11, 17) stay.
+bool may_be_fast(std::size_t n) {
+  if (n == 11 || n == 17) {
+    return true;
+  }
+  for (const std::size_t q : {2U, 3U, 5U, 7U, 13U, 19U, 23U}) {
     while (n % q == 0) {
       n /= q;
     }
@@ -948,7 +956,7 @@ bool is_fast_length(std::size_t n) {
   if (n <= 2) {
     return true;
   }
-  if (!codelet_smooth(n)) {
+  if (!may_be_fast(n)) {
     return false;
   }
   static const target_profile reference = profile_of(target::avx2, 2);

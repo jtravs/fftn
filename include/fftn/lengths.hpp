@@ -19,8 +19,10 @@ namespace fftn::inline v0 {
 ///
 /// A length is fast when the planner's reference cost table prices a row of that length,
 /// per point, within 1.25 times a row of the power of two at or above it. Every prime factor
-/// of a fast length is at most 23, and a length that FFTN computes in a single codelet
-/// (up to 16 points, and 17, 19 and 23) is fast.
+/// of a fast length is at most 23, a length with a factor 11 or 17 is fast only as that
+/// prime alone (experiment P4 measured such composites slower than the table believes), and
+/// a length that FFTN computes in a single codelet (up to 16 points, and 17, 19 and 23) is
+/// fast.
 ///
 /// The reference table is fixed for each library version (AVX2's double table), whatever
 /// the machine, so a grid chosen on one machine is the same on every other. For this

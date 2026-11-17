@@ -135,7 +135,8 @@ ranked_radices(std::size_t n, const target_profile& p, std::size_t k);
 // Task 2.5: a fast length is one whose relative_row_cost on the reference profile (AVX2's
 // double table, X2's measured one, fixed for the library version so that a length chosen on
 // one machine is the same on another, DESIGN.md 9.2) is at most fast_tolerance; lengths
-// with a prime factor above 23 never are. The tolerance is checked by measurement (task
+// with a prime factor above 23, and composites with a factor 11 or 17 (experiment P4), never
+// are. The tolerance is checked by measurement (task
 // 2.5's fbench check).
 inline constexpr double fast_tolerance = 1.25;
 // next_fast_length searches up to this length; beyond it, n is returned as it is.
