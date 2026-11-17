@@ -705,6 +705,19 @@ carries its lane count and packing. Lengths that no C divides (18, 22, 26, 30 on
 are AVX2's pair leaves too: 0.40–0.54 of the two-pass chain's time.
 [X37](experiments/X37-short-batches.md).
 
+4.17 **Count the spills before blaming them: a codelet that overflows the register file
+may already cost what a register-fitting one would.** FFTN's radix-32 and 64 codelets peak
+at 35 and 67 live values on AVX2's 16 registers, and FFTW-shaped two-pass plans with them
+lost to three radix-16 passes on the EPYC 7763; the obvious cause was spills. A two-level
+form that stages R values once through a fenced local array (each level within 13–16 live
+values) cut Clang's stack moves in the radix-64 lane pass by two thirds, but with GCC 16
+it left instructions (± 3 %) and time unchanged (1.000 of the flat codelets over `avx2`'s
+radix-32 plans; 1024 as 16 · 64 5.39 against 5.55 cycles per point): GCC already folds the
+reloads into memory operands. The two-pass plans executed 7–13 % fewer instructions than
+three passes and lost on IPC (3.0 against 3.5), with no FP pipe over 52 % busy. For an odd
+radix the staging cost more than it saved (radix 25: 12 % more vector operations, 3–8 %
+slower on both x86 machines). [X42](experiments/X42-codelets.md).
+
 
 ## 5. Threading
 
