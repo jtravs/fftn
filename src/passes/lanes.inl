@@ -30,6 +30,21 @@ template <class T> FFTN_FORCE_INLINE std::size_t block_rows(std::size_t rows, st
   return rows - r0 < C<T> ? rows - r0 : C<T>;
 }
 
+// The largest radix whose R - 1 twiddles a column pass holds in registers across the runs
+// of a group (lanes_first; X44).
+inline constexpr std::size_t held_radix = 16;
+
+// A lane pass's twiddles of one group (shared_twiddles' values), loaded once.
+template <class T, std::size_t R> struct held_twiddles {
+  tw<T> w[R - 1]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
+  FFTN_FORCE_INLINE explicit held_twiddles(const T* p) {
+    for (std::size_t k = 1; k < R; ++k) {
+      w[k - 1] = bcast_tw(p + tw_reals<T> * (k - 1));
+    }
+  }
+  [[nodiscard]] FFTN_FORCE_INLINE tw<T> get(std::size_t k) const { return w[k - 1]; }
+};
+
 // C rows' element at p, the rows dist reals apart: the first `valid` of them, the other
 // lanes zero.
 template <class T>
@@ -313,6 +328,27 @@ void lanes_first(const pass_args* a, const void* src, void* dst, std::size_t fir
   // Unit u is (k, p) = (u / m, u % m), or (u % g, u / g) with columns_inner (g runs of C).
   const bool inner = a->columns_inner;
   const std::size_t g = b / C<T>;
+  // A plane's whole block of columns over whole groups (X44): the g runs of a group in an
+  // inner loop with the group's twiddles loaded once, for radices whose twiddles stay in
+  // registers. The same operations on the same values as the loop below.
+  if constexpr (R <= held_radix) {
+    if (inner && rows == b && first % g == 0 && last % g == 0) {
+      for (std::size_t p = first / g; p < last / g; ++p) {
+        const held_twiddles<T, R> twid(table + tw_reals<T> * (R - 1) * p);
+        const T* xp = x + at(p, xs);
+        T* yp = y + at(b * R * p, 2);
+        for (std::size_t r0 = 0; r0 < b; r0 += C<T>) {
+          cdft<R>::template dif<T, Sign>(
+              run_in<T, edge_op::none, true>{
+                  .p = xp + at(r0, xd), .leg = in_leg, .step = xd, .valid = C<T>, .op = {}},
+              run_out<T, edge_op::none, true>{
+                  .p = yp + at(r0, 2), .leg = out_leg, .step = 2, .valid = C<T>, .op = {}},
+              twid);
+        }
+      }
+      return;
+    }
+  }
   std::size_t k = 0;
   std::size_t p = 0;
   if (inner) {
@@ -388,6 +424,22 @@ void lanes_last(const pass_args* a, const void* src, void* dst, std::size_t firs
   // Unit u is (k, q) = (u / s, u % s), or (u % g, u / g) with columns_inner (g runs of C).
   const bool inner = a->columns_inner;
   const std::size_t g = b / C<T>;
+  // A plane's whole block of columns over whole copies (X44): the g runs of a copy in an
+  // inner loop, the same operations on the same values as the loop below.
+  if (inner && rows == b && first % g == 0 && last % g == 0) {
+    for (std::size_t q = first / g; q < last / g; ++q) {
+      const T* xq = x + at(q * b, 2);
+      T* yq = y + at(q, ys);
+      for (std::size_t r0 = 0; r0 < b; r0 += C<T>) {
+        cdft<R>::template plain<T, Sign>(
+            run_in<T, edge_op::none, true>{
+                .p = xq + at(r0, 2), .leg = in_leg, .step = 2, .valid = C<T>, .op = {}},
+            run_out<T, OutOp, true>{
+                .p = yq + at(r0, yd), .leg = out_leg, .step = yd, .valid = C<T>, .op = op});
+      }
+    }
+    return;
+  }
   std::size_t k = 0;
   std::size_t q = 0;
   if (inner) {
