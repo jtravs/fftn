@@ -544,7 +544,7 @@ std::size_t column_block(std::size_t axis, const std::vector<std::size_t>& exten
     return 0;
   }
   constexpr std::size_t block_bytes = 256;
-  constexpr std::size_t lines_per_block = 4;
+  const std::size_t lines_per_block = settings.profile.column_page_lines;
   const std::size_t n = extent[axis];
   const std::size_t complex_bytes = 2 * sizeof(T);
   const std::size_t line =

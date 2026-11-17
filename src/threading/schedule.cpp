@@ -102,6 +102,9 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
     if (!private_l2 && c.l1d.size != 0) {
       p.column_near_tile_bytes = 2 * c.l1d.size;
     }
+    if (!private_l2) {
+      p.column_page_lines = 8;
+    }
   }
   // Experiment X29: with a private L2 and an L3 of at least 2 MiB per CPU sharing it (the
   // EPYC 7763's CCX: 32 MiB for 8 cores), a row whose length has a power-of-two part of at
