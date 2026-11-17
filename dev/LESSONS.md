@@ -115,6 +115,15 @@ every arm on one base: merging `main` into the branch mid-experiment moved the s
 1.14–1.16 on the EPYC (the merged `main` alone did), which first read as a loss of the arm
 being timed. [X37](experiments/X37-short-batches.md).
 
+1.12 **Across cloud VMs, compare ratios within a run, and distrust single long rows even
+then.** Two Granite Rapids VMs of one type (`c4-standard-16`), a day apart, ran both FFTN and
+FFTW about 6 % faster on the second over 35 shared rows, so times across VMs mislead. The
+ratio held over the set (FFTN ÷ FFTW 0.778 → 0.784), but single long rows did not: FFTW took
+0.46 of its earlier time at 2²² (FFTN 0.66) and 0.80 at 65536 (FFTN 0.99), turning 0.76 →
+1.10 and 1.24 → 1.53 with FFTN's plans unchanged; the competitor's MEASURE plans and the
+VM's memory placement both move. Judge a row by a same-run A/B on one VM, and a VM's
+standing by the geometric mean. [X45](experiments/X45-cloud-exit.md).
+
 ## 2. The instruction set and the machine
 
 2.1 **The data layout that wins depends on the ISA.** Interleaved complex numbers suit
