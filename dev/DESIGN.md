@@ -2293,8 +2293,8 @@ What the experiments still require of the build:
   `FFTN_OLD_X86_TARGETS` (`ON`, the default) builds `x86_v2` and `avx` (section 6.1), 52 % of
   an x86-64 library's text for processors from before 2013 (X14); `OFF` leaves them out,
   and on such processors dispatch falls back to the scalar target. Distributed builds keep
-  the default so dispatch stays complete; CI builds both (`.github/workflows/ci.yml`, the job
-  "clang-23 no old x86"). The option is part of the wisdom build identifier.
+  the default so dispatch stays complete; CI builds both (`.github/workflows/ci.yml`, the
+  post-merge job "clang-23 no old x86"). The option is part of the wisdom build identifier.
 - A generated single-file amalgamation is a possible release artefact (phase 6); it is
   the same implementation concatenated, not a separate code path.
 
@@ -2379,16 +2379,19 @@ may not fall, and an fbench smoke run.
 
 CI matrix (phase 0 onward, growing): Linux x86-64 with GCC 14 and current GCC and Clang;
 macOS arm64 with Apple Clang and Homebrew LLVM; Linux AArch64; Windows with clang on the
-MSVC ABI. Every push and pull request builds and tests one configuration per platform
-(both floors, GCC 14 and Clang 16, among them) and runs one ASan + UBSan job and one
-ThreadSanitizer job on Linux x86-64 with Clang; the other compilers, the other sanitizer runs, clang-tidy and coverage run weekly
-and on demand. AVX-512 paths run under Intel SDE and NEON-without-FCMA and SVE paths under
+MSVC ABI. A pull request runs a short set before it may merge (current GCC on Linux x86-64,
+one ASan + UBSan job there with Clang, Homebrew LLVM on macOS arm64, and lint); each push
+to `main` then builds and tests one configuration per platform (both floors, GCC 14 and
+Clang 16, among them) and runs one ThreadSanitizer job on Linux x86-64 with Clang, so a
+break shows within the hour and is fixed on `main` (decided 2026-11-17, while there are no
+users, for merge latency); the other compilers, the other sanitizer runs, clang-tidy and
+coverage run weekly and on demand. AVX-512 paths run under Intel SDE and NEON-without-FCMA and SVE paths under
 QEMU where the runner's CPU lacks them, so every kernel is executed in CI, not only on
 developers' machines. Old processors are emulated as whole machines too (SDE's Nehalem
 and Sandy Bridge models, QEMU's Neoverse N1), which checks detection and dispatch on
 them as well as the kernels: a stray newer instruction anywhere faults. Emulation runs the
 test programs that contain kernels or detection, not the long oracle suites (those run
-natively), and only on `main`, weekly and on demand.
+natively), weekly and on demand.
 
 The workflows in [`.github/workflows/`](../.github/workflows/) are the matrix: which gate
 stages run on which compiler and why, the emulated models with the target each must
@@ -2929,6 +2932,7 @@ to change before a release.
 | 2026-11-17 | `FFTN_OLD_X86_TARGETS` (the `x86_v2` and `avx` targets of task 1.3) ON by default, agreed by the maintainer, 2026-11-17 | older x86 processors run a vector target rather than the scalar one |
 | 2026-11-17 | The library's size (X27's codelets of 17, 19 and 23: +25 % of library text) accepted, agreed by the maintainer, 2026-11-17; no size budget that can fail a pull request: phase 6 adds an informational report (CI prints the library's text size per target on each pull request), experiment files record size changes, and build options (`FFTN_OLD_X86_TARGETS`, instantiating only the kernels that win) remain the levers if size ever matters | speed takes precedence; the codelets cut those cases to 0.24–0.31 of main's time, and the report keeps growth visible |
 | 2026-11-17 | The recorded protocol caveats, agreed by the maintainer, 2026-11-17: X35's and X14's, the queue bypasses of X36, X38 and X39, and the recorded exception cases (X23b's two) | each is recorded in its experiment file with its reason |
+| 2026-11-17 | CI for merge latency, decided by the maintainer, 2026-11-17: the ruleset on main requires four checks (lint; GCC 16 build and benchmark smoke and Clang 23 ASan + UBSan on Linux x86-64; Homebrew LLVM on macOS arm64) and no longer requires branches up to date; ThreadSanitizer, Clang 16, the build without the old x86 targets, AArch64 and Windows run after each merge on main (runs on main are not cancelled); emulation weekly and on demand only; the per-change sanitizer jobs leave out the old x86 targets | merges waited 30–90 minutes, and each merge restarted every other pull request's checks; with no users yet, a break on main found within the hour and fixed there costs less |
 
 | 2026-11-17 | Multi-axis programs of at most 256 kernel calls per transform run from their calls unrolled at construction (section 8.3); the complex axes of real planes take the lanes column phase where C > 1 with their own block rule; where a cluster shares L2 a column block's tiles stay within twice L1 when its column elements lie four to a page (section 9.3) | X41: planes of up to 1024 points 0.87–0.94 of the walk's time (three machines); real planes 0.89 (EPYC) and 0.83 (Xeon) of the chain columns' time, the M5 Max lost 1.04 and keeps the chain; M5 Max 2048 × 36 0.90; joining the narrower block's phase (T1) rejected at 0.96 |
 ---
