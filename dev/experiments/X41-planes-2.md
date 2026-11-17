@@ -177,4 +177,13 @@ plans are unchanged). Rule for L1: on the Mac, adopt
 if 2048 × 36 (both placements) takes at most 0.95 of the head's time and none of the 37 c2c
 planes is slower by more than the larger of 2 % and the band.
 
+L1 against the head (4e804ba), the 37 c2c planes, Mac run 20261117-112550-4ada (12 rounds,
+all loaded, band ±4.5 %): 2048 × 36 0.910 and 0.908; 64² ip 1.054 past the band with an
+unchanged program, so re-run: run 20261117-113445-eb0d (band ±1.1 %): 2048 × 36 0.903–0.904,
+64² 0.998–1.007, but 1000² 1.030 out of place and 1.014 in place: its stride (16000 bytes)
+is just under the M5 Max's 16 KiB page, so L1 halved its block to 8. Rule (2) fails: L1
+rejected. Arm L2 (second arm; rule written before its run, committed with it): the
+twice-L1 budget (`column_near_tile_bytes`) only for columns whose elements lie at least four
+to a page (2048 × 36: 576 bytes apart), a quarter of L2 otherwise, as before. Rule: as L1's.
+
 ## Verdict

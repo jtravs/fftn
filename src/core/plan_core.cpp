@@ -575,10 +575,14 @@ std::size_t column_block(std::size_t axis, const std::vector<std::size_t>& exten
     // of 4 columns won at 2048 x 36 (X41 arm L1).
     constexpr std::size_t narrowest_bytes = 64;
     const std::size_t narrowest = std::min(line, up(narrowest_bytes / complex_bytes));
-    while (block > narrowest && tiles(block) > settings.profile.column_tile_bytes) {
+    const std::size_t budget =
+        settings.profile.column_near_tile_bytes != 0 && 4 * stride <= settings.profile.page_bytes
+            ? settings.profile.column_near_tile_bytes
+            : settings.profile.column_tile_bytes;
+    while (block > narrowest && tiles(block) > budget) {
       block = up(block / 2);
     }
-    if (tiles(block) > settings.profile.column_tile_bytes) {
+    if (tiles(block) > budget) {
       return 0;
     }
   }

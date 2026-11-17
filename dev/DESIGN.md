@@ -1573,16 +1573,27 @@ a set made 128² and 256² planes 2.2 times slower on the M5 Max; reads in the f
 not matter). B is 256 bytes of columns (16 complex doubles), at most the columns there are;
 where a column's elements lie a page or more apart, at least four L1 lines (32 complex
 doubles on Apple's 128-byte lines); where they lie less than a page apart it is halved while
-the two tiles exceed a quarter of L2, down to a line, and the columns run alone through the
+the two tiles exceed `column_tile_bytes` (a quarter of a private L2; twice L1 where a cluster
+shares L2, X41: the M5 Max's 2048 × 36 0.91 of the time of 16 columns with 4), down to 64
+bytes of columns (an x86 line, half an Apple line), and the columns run alone through the
 chain if they still exceed it (X40's sweeps: wide blocks won where each element of a column
 has its own page, 2048² on the EPYC 0.126 of the chain columns' time with 16 columns against
 0.183 with 4, the M5 Max's 1024² 0.46 with 32 against 0.50 with 16; where rows share pages a
 block whose tiles left L2 lost, Xeon 2048 × 36 0.79 with 4 columns and 1.09 with 16). The columns past the last whole block run as one
 narrower block (a loop's `start` offsets its nest), its idle lanes never written. A block is
-a line of the phase's loop nest, so threads share blocks as they share rows (13.2). Not built
-yet: the strided axes of real transforms (their complex axes still run column by column),
-blocks over the columns of a long axis beyond L2 (a two-phase split of the column, the grid's
-way), and padding or block ordering against the rows' own power-of-two conflicts.
+a line of the phase's loop nest, so threads share blocks as they share rows (13.2); the
+narrower block's nest joins the whole blocks' phase (`loop::joins`, X41), so that it is not
+a phase of one chunk. The complex axes of r2c and c2r plans take the same phase with their
+own block rule (`column_block`, `real`; X41): their rows of n/2 + 1 columns lie an odd
+multiple of 16 bytes apart for even n, so a column alone crowds no L1 set and the lanes pay
+only for the copies a strided column costs where C > 1: none on NEON double (the M5 Max lost
+1.04 over the real planes with X40's rule), and on x86 blocks of at least two lines whose
+tiles fit `column_tile_bytes`, X40's wide block only where each column element has its own
+page and the column exceeds half of L1, the chain otherwise (EPYC: 0.89 over the 71 real
+planes, 32 × 30 0.74, 36 × 2048 0.77, 2048² 0.73–0.85; 1024² stays on the chain, whose
+4-column tiles lost 1.05). Not built yet: blocks over the columns of a long axis beyond L2
+(a two-phase split of the column, the grid's way), and padding or block ordering against the
+rows' own power-of-two conflicts.
 
 ---
 

@@ -161,8 +161,11 @@ struct machine_profile {
   std::size_t page_bytes = 4096;
   // A lanes column phase whose column elements lie less than a page apart keeps its block's
   // two scratch tiles within this (core/plan_core.cpp, column_block; X40). set_grid_sizes
-  // sets a quarter of a private L2, twice L1 where a cluster shares L2 (X41).
+  // sets a quarter of L2.
   std::size_t column_tile_bytes = std::size_t{256} * 1024;
+  // When not 0, the budget instead for columns whose elements lie at least four to a page
+  // (X41: twice L1 where a cluster shares L2).
+  std::size_t column_near_tile_bytes = 0;
   // The L1 data cache's associativity (8 where the topology does not say: macOS): with
   // grid_block_bytes it gives the set period against which a column phase's last pass
   // counts its legs (core/plan_core.cpp, column_radices; X40).
