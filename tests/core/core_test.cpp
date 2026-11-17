@@ -132,7 +132,8 @@ TEST(Rules, LeafLimit) {
     profile.leaf_limit = 1; // lengths up to 16 stay leaves
     EXPECT_EQ(rule_radices(16, profile), (std::vector<std::size_t>{16}));
   }
-  // X8's verdict: 32 on NEON in double (C = 1), 16 everywhere else.
+  // X8's verdict: 32 on NEON in double (C = 1), and X14's on x86_v2 in double; 16
+  // everywhere else.
   using fftn::detail::target;
   for (const target t : {
            target::scalar,
@@ -144,10 +145,11 @@ TEST(Rules, LeafLimit) {
            target::neon_fcma,
        }) {
     for (const std::size_t lanes : {1U, 2U, 4U, 8U}) {
-      const bool neon_double = (t == target::neon || t == target::neon_fcma) && lanes == 1;
+      const bool leaf32 =
+          (t == target::neon || t == target::neon_fcma || t == target::x86_v2) && lanes == 1;
       const auto p = fftn::detail::profile_of(t, lanes);
-      EXPECT_EQ(p.leaf_limit, neon_double ? 32U : 16U);
-      EXPECT_EQ(rule_radices(32, p).size() == 1, neon_double);
+      EXPECT_EQ(p.leaf_limit, leaf32 ? 32U : 16U);
+      EXPECT_EQ(rule_radices(32, p).size() == 1, leaf32);
       EXPECT_GT(rule_radices(64, p).size(), 1U);
     }
   }

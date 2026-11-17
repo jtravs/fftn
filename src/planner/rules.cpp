@@ -474,9 +474,15 @@ constexpr std::size_t default_bluestein_above = 16;
 // Experiment X8 (dev/experiments/X8-leaves.md): a whole-transform leaf of 32 beat planner
 // v1's chain by 16 to 22 % on NEON in double (C = 1, neon and neon_fcma, M5 Max) and lost
 // on every target with C > 1 and at 64 everywhere (radix 64 spills; a leaf idles C - 1
-// lanes). So the leaf limit is 32 on NEON in double and 16 elsewhere.
+// lanes). So the leaf limit is 32 on NEON in double and 16 elsewhere. x86_v2 in double
+// (C = 1, experiment X14) takes 32 too: rows of 32 points ran 0.55-0.65 of the 2 x 16
+// chain's time on the EPYC 7763 and the Xeon 6240, though its 16 registers spill radix 32,
+// and nothing else moved (all cases 0.99 of the chain).
 std::size_t leaf_limit_of(target t, std::size_t lanes) {
-  return (t == target::neon || t == target::neon_fcma) && lanes == 1 ? 32 : default_leaf_limit;
+  const bool one_lane = lanes == 1;
+  return (t == target::neon || t == target::neon_fcma || t == target::x86_v2) && one_lane
+             ? 32
+             : default_leaf_limit;
 }
 
 // Whether chains on target t end in split passes (DESIGN.md 6.3, strategies/chain.hpp),
