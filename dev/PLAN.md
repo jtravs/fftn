@@ -40,6 +40,17 @@ Worst: Zen 5 65536 1.50; Granite Rapids 100000 2.16, 46080 1.60, in place 1.26 (
 is worse there); Axion 8 points 1.24. Axion's long rows (0.75 of FFTW) show that most of the
 Mac's long-row gap is FFTW being fast on Apple silicon (LESSONS 2.9). Zen 5 does not share
 Zen 3's 65537 loss (0.61). Planes and volumes: Zen 5 1.63, Granite Rapids 1.48, Axion 0.78.
+**Phase 1 exit check again (2026-11-17, `main` 509d123, before X42; the tail rule now counts
+cases beyond noise, DESIGN 1.3):** Mac ÷ FFTW 0.75, 3 cases beyond noise (1.6 %; 15 above a
+plain 1.05): 2 × 3 in place 1.37, 32 1.20, 2²³ 1.13; ÷ FFTL 0.53, 3 (1.6 %). EPYC ÷ FFTW 0.80,
+13 (6.7 %; 17 plain): 512–2048 (1.07–1.22, seven cases), short backward pairs (64 × 2 1.30,
+15 × 2 1.20), 64 × 16 1.14, 1018 1.09, 80 and 100 1.08; ÷ FFTL 0.47, 3 (3125, 15625, 16807;
+X42 takes the first two). Xeon ÷ FFTW 0.73, 10 (5.2 %; 21 plain): 32768, 100000, 25000
+(1.34–1.36), 16384 1.19, 131071 1.16, 160, 240 and 384 single rows (1.14–1.33, being
+re-timed against 304a8c5: the run was loaded, band ±4.68 %), 3 × 3 in place, 4; ÷ MKL 0.74,
+3 (1.6 %; 30 plain): 999983 1.43, 131071 1.33, 16384 1.23. Runs 20261117-143114-4e3e (Mac,
+band ±2.28 %), 20261117-143500-bc4b (EPYC, ±1.00 %), 20261117-144116-aa55 (Xeon).
+
 **Phase 1 exit check (2026-11-16, `main` 304a8c5, standard catalogue, the 201 c2c rows,
 193 with every reference; DESIGN 1.3 asks for the geometric mean and at most 5 % of cases
 slower than 1.05):** Mac ÷ FFTW 0.78 (target 0.85), 20 cases over 1.05 (10 %); ÷ FFTL 0.50
@@ -124,10 +135,13 @@ up-to-date rule), the full per-change set on main after each merge, weekly exten
 Open, by phase:
 
 - 0: the Xeon client-catalogue baseline.
-- 1: the exit: every mean target met, the 5 % tail rule not yet (re-run the exit check after
-  pull request 48); X2 on the Mac above 1024; X4 on x86 and for edge passes; X5 (twiddle
-  modes); the tail's leftovers (Xeon 16384, a radix-25 codelet for 20000/25000/100000, EPYC
-  512–2048 with radix-32/64 codelets that fit 16 registers, a few tiny batches).
+- 1: the exit: every mean target met; the tail rule (beyond noise since 2026-11-17) met on
+  the Mac and against MKL and FFTL, not yet against FFTW on the EPYC (6.7 %) and the Xeon
+  (5.2 %; see the exit check of 2026-11-17 above); X46 (a depth-first chain: Xeon 16384–100000)
+  and X47 (EPYC 512–2048) are running; X2 on the Mac above 1024; X4 on x86 and for edge
+  passes; X5 (twiddle modes); left for the next round: Xeon primes against MKL (131071,
+  999983), fixed cost of tiny calls (2 × 3 in place, short backward pairs), float radix-25
+  overrides.
 - 2: 2.2's acceptance in double c2c on AVX-512 (re-check after X37's batches of 16);
   X6 (real-input codelets), X13; the cost model's second pass and `fbench calibrate`.
 - 3: T2, T3, T4, T6; 3.5 (Kokkos executor); 3.6 to be checked against its acceptance;
