@@ -484,16 +484,18 @@ std::size_t lanes_block(const shape_view& s, const side& in, const side& out,
 // strategy over blocks of adjacent columns, which needs the last axis contiguous in the
 // phase's source and destination (a run of C columns is then one vector access), a chain of
 // codelet lane passes for the column (lanes_fit) and no input edge or factor; else 0 (the
-// columns one at a time through the chain). The rule, from X40's sweep of 4-32 columns: four
-// L1 lines of columns (16 complex doubles on x86, 32 on Apple's 128-byte lines), at least C
-// and at most the columns there are (rounded up to C); where a column's elements lie less
-// than a page apart, halved while the block's two tiles exceed a quarter of L2
+// columns one at a time through the chain). The rule, from X40's sweeps of 4-32 columns:
+// 256 bytes of columns (16 complex doubles), at least C and a line, at most the columns
+// there are (rounded up to C). Where a column's elements lie a page or more apart, at least
+// four L1 lines of columns (32 complex doubles on Apple's 128-byte lines, where 1024^2 and
+// 36 x 2048 took 0.46 and 0.38 of main's time with 32 against 0.50 and 0.47 with 16, while
+// 100^2 lost 1.03 with 32): wide blocks won where every element of a column is on its own
+// page (2048^2: EPYC 0.126 of main's time with 16 columns, 0.183 with 4). Where they lie
+// less than a page apart, halved while the block's two tiles exceed a quarter of L2
 // (machine_profile::column_tile_bytes), down to a line of columns, and if they still exceed
-// it the columns run alone (0). Wide blocks won where every element of a column is on its
-// own page (2048^2: EPYC 0.126 of main's time with 16 columns, 0.183 with 4); where rows
-// share pages a block whose tiles left L2 lost (Xeon 2048 x 36: 4 columns 0.79 of main, 16
-// 1.09; EPYC 1.04 with any block, the chain's one column in L2 being as fast). A forced
-// block applies alone, rounded up to a multiple of C.
+// it the columns run alone (0): there a block whose tiles left L2 lost (Xeon 2048 x 36: 4
+// columns 0.79 of main, 16 1.09; EPYC 1.04 with any block, the chain's one column in L2
+// being as fast). A forced block applies alone, rounded up to a multiple of C.
 template <class T>
 std::size_t column_block(std::size_t axis, const std::vector<std::size_t>& extent, const view& src,
                          const view& dst, const line_edges& edges, const build_settings& settings,
@@ -508,17 +510,21 @@ std::size_t column_block(std::size_t axis, const std::vector<std::size_t>& exten
   if (settings.column_block != 0) {
     return up(settings.column_block);
   }
+  constexpr std::size_t block_bytes = 256;
   constexpr std::size_t lines_per_block = 4;
-  constexpr std::size_t page = 4096;
   const std::size_t n = extent[axis];
   const std::size_t complex_bytes = 2 * sizeof(T);
   const std::size_t line =
       up(std::max<std::size_t>(settings.profile.line_bytes / complex_bytes, 1));
-  std::size_t block = std::min(up(lines_per_block * line), up(extent[last]));
+  std::size_t block = std::max(up(block_bytes / complex_bytes), line);
   const auto stride =
       static_cast<std::size_t>(std::max(magnitude(src.stride[axis]) * src.element_bytes,
                                         magnitude(dst.stride[axis]) * dst.element_bytes));
-  if (stride < page) {
+  if (stride >= settings.profile.page_bytes) {
+    block = std::max(block, up(lines_per_block * line));
+  }
+  block = std::min(block, up(extent[last]));
+  if (stride < settings.profile.page_bytes) {
     const auto tiles = [&](std::size_t b) { return 2 * n * b * complex_bytes; };
     while (block > line && tiles(block) > settings.profile.column_tile_bytes) {
       block = up(block / 2);

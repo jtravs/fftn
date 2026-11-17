@@ -23,6 +23,9 @@ machine_profile profile_for(const topology& t, bool x86_64) noexcept {
   if (!t.classes.empty()) {
     set_grid_sizes(p, t.classes.front(), x86_64);
   }
+  if (t.page_size != 0) {
+    p.page_bytes = t.page_size;
+  }
   // The defaults are a Zen 3 CCX's. Two other kinds of cache group were measured (T1, T5):
   // an Apple processor (macOS's reader, which numbers CPUs itself, topology.hpp, and an L2
   // shared by a cluster of cores rather than each core's own: an Intel Mac has per-core L2s
