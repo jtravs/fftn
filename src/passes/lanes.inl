@@ -34,6 +34,11 @@ template <class T> FFTN_FORCE_INLINE std::size_t block_rows(std::size_t rows, st
 // of a group (lanes_first; X44).
 inline constexpr std::size_t held_radix = 8;
 
+// The targets whose column edge passes run a block's runs in an inner loop (X44 arm N): the
+// x86 targets it was judged on; NEON gained nothing (0.997 over the planes on the M5 Max)
+// and keeps the unit loop.
+inline constexpr bool nested_column_runs = id == target::avx2 || id == target::avx512;
+
 // A lane pass's twiddles of one group (shared_twiddles' values), loaded once.
 template <class T, std::size_t R> struct held_twiddles {
   tw<T> w[R - 1]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
@@ -347,7 +352,7 @@ void lanes_first(const pass_args* a, const void* src, void* dst, std::size_t fir
   // A plane's whole block of columns over whole groups (X44): the g runs of a group in an
   // inner loop with the group's twiddles loaded once, for radices whose twiddles stay in
   // registers. The same operations on the same values as the loop below.
-  if (inner && rows == b && first % g == 0 && last % g == 0) {
+  if (nested_column_runs && inner && rows == b && first % g == 0 && last % g == 0) {
     for (std::size_t p = first / g; p < last / g; ++p) {
       const T* xp = x + at(p, xs);
       T* yp = y + at(b * R * p, 2);
@@ -437,7 +442,7 @@ void lanes_last(const pass_args* a, const void* src, void* dst, std::size_t firs
   const std::size_t g = b / C<T>;
   // A plane's whole block of columns over whole copies (X44): the g runs of a copy in an
   // inner loop, the same operations on the same values as the loop below.
-  if (inner && rows == b && first % g == 0 && last % g == 0) {
+  if (nested_column_runs && inner && rows == b && first % g == 0 && last % g == 0) {
     for (std::size_t q = first / g; q < last / g; ++q) {
       const T* xq = x + at(q * b, 2);
       T* yq = y + at(q, ys);
