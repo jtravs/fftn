@@ -309,6 +309,10 @@ TEST(TeamProgram, NarrowerBlocksTheSameRadices) {
                                                   "axes plane at a time"),
             std::string::npos)
       << fftn::detail::describe(*ordered);
+  // Fewer planes than a team of 8 has members: the team program keeps the axes one by one.
+  const auto few = fftn::detail::make_plan_core(
+      fftn::detail::view_of(shape_of<double>({4, 64, 64})), fftn::options(), order);
+  EXPECT_EQ(few->team, nullptr);
   // A volume: both the plane's columns and the outer axis's pencils.
   const auto volume = fftn::detail::make_plan_core(
       fftn::detail::view_of(shape_of<double>({64, 64, 64})), fftn::options(), settings);

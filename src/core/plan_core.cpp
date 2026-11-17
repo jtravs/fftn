@@ -1048,9 +1048,14 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       c.axis_notes.push_back("axis " + std::to_string(d) + " (n = " + std::to_string(c.lengths[d]) +
                              "): radices " + chain.radix_text(c.lengths[d]));
     };
+    // A team program takes plane order only for volumes of at least team_min_planes planes:
+    // its plane phase has one line per plane, so fewer planes than members leave members
+    // idle (X43b measured 8 lanes on volumes of 16 planes and more; 2 x 1024 x 1024 and
+    // 4 x 512 x 512 keep the axes one by one, whose phases share out by lines).
+    constexpr std::size_t team_min_planes = 8;
     if (r == 3 && in.extent[0] > 1 &&
-        (settings.volume_planes ||
-         (settings.team_program && settings.profile.team_volume_planes))) {
+        (settings.volume_planes || (settings.team_program && settings.profile.team_volume_planes &&
+                                    in.extent[0] >= team_min_planes))) {
       add_volume_planes(
           p, in.extent, in_view, out_view,
           [&](const std::vector<std::size_t>& plane, const view& src, const view& dst) {
