@@ -202,7 +202,11 @@ Over the 12 changed rows: A ÷ N 0.859 (every interval below 1; the largest 1000
 (46080 0.547, 262144 0.554, 65536 0.638, in place 0.646, 100000 0.679, 16384 0.685), 55 no
 evidence, weighted geomean 0.939 [0.888, 0.987]; the largest median ratios were rows whose
 plans do not change (c2c 16 1.093 [0.974, 1.293], with B's own median time below N's; r2c 256
-1.064; c2c 1024 backward 1.036; 2²⁰ 1.037). RERUN
+1.064; c2c 1024 backward 1.036; 2²⁰ 1.037). Re-run once, as the rule asks for a case past its
+limit on a loaded run, with the final head 87fbb85 (run 20261117-200611-a98e, Slurm
+16413/16414, `--serial`; 30 quiet rounds, band ±1.00 %): c2c 16 0.986, r2c 256 1.002, 1024
+backward 0.995, 2²⁰ 1.013 [0.999, 1.033], no evidence on all; 16384 0.674 and 65536 0.648
+faster.
 
 **Mac, C and C2** (Homebrew Clang 23, `neon_fcma`, NEON FFTW 3.3.11): C above. C2 = d64e468
 against N = f78509c, run 20261117-175324-c4e7 (30 rounds, 1 under load, band ±1.00 %): 8192
@@ -212,7 +216,10 @@ no evidence); FFTN ÷ FFTW 8192 1.14 → 0.83, 16384 0.98 → 0.82. Tracking tie
 evidence, 2 slower by 1.016 (4093 and 10403, Bluestein rows whose plans do not change),
 weighted geomean 0.998 [0.996, 0.999].
 
-**EPYC** (no plan changes; collateral of the shared code): TRACKE
+**EPYC** (no plan changes; collateral of the shared code): tracking tier N = 85b4ee0
+against B = f78509c, run 20261117-192813-a4df (Slurm 512205/512206, `--serial`, GCC 16,
+`avx2`; 24 rounds, all under load, band ±1.00 %): 60 no evidence, c2c 257 1.029 [1.025, 1.034]
+(a Rader row whose plan does not change), weighted geomean 1.000 [0.996, 1.002].
 
 ## Verdict
 
@@ -236,7 +243,7 @@ weighted geomean 0.998 [0.996, 0.999].
   L2) does not take the rule; the fields are in bytes against L2 so that it can once measured.
 - **Arm C as planned (100000 as 100 × 1000)** was not built: the depth-first chain takes
   100000 to 0.752 of its time.
-- **Library size**: text +4.4 % on the Mac (Homebrew Clang 23, `size` of `libfftn.a`, 20.83 → 21.75 MB at b27970f → 87fbb85); on x86-64 (GCC 14.4) the archive grew 4.7 % with both top-pass forms (b27970f → 85b4ee0), less after the stored form was deleted (not measured).
+- **Library size**: text +4.4 % on the Mac (Homebrew Clang 23, `size` of `libfftn.a`, 20.83 → 21.75 MB at b27970f → 87fbb85); on x86-64 (GCC 14.4, the Xeon's build cache) the archive grew 3.0 % (107.5 → 110.8 MB, b27970f → 87fbb85).
 - **Left open.** 25000 (1.33 of FFTW: three factors of 2, so C = 4 divides no top and its
   sub-row; a masked or tiled first pass for C not dividing the top would cover it); 100000 at
   FFTW's time; float rules (unmeasured); three or more tops for rows beyond 4 L2 (the
