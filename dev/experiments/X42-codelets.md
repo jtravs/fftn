@@ -98,9 +98,73 @@ per arm (Mac static library, Clang; x86-64 Linux, GCC 16).
     contract changed for codelets above 23) is put to the lead, not adopted here.
   - An arm that fails is reported with its numbers and removed; at most three arms per part.
 
+*Amendment 1 (after the screens and searches below, before any judging run of an override
+arm).* The screens showed the two-level radix-25 codelet slower than the flat one on both
+x86 targets, so B2's sequences are searched on a build without C (515b0c1, campaigns
+x42-r25f-epyc and x42-r25f-xeon; the campaigns on C's build, x42-r25-epyc and
+x42-r25-xeon, are recorded but not used). B2 keeps the selection rule as written (one
+winner at both batches). A further arm, written now and judged by fresh runs:
+
+- **B3 (radix-25 sequences, either batch's winner).** B2 plus each length of the searched set
+  whose confirmation run has a sequence at most 0.97 of the planner's at batch 1 and at
+  batch 64 though the two batches' winners differ: the sequence with the lower geometric
+  mean of the two ratios. Judged against B2 by the same rule (a)–(c).
+
 ## Results
 
-(pending)
+### Screens: flat against two-level codelets (EPYC, `avx2`, GCC 16.2)
+
+Forced sequences, the planner's plan as baseline, flat (B, 7954244) and two-level (C,
+3fd2203) builds in one run each, 12 rounds, band ±1.0 % (runs 20261117-110218-defb,
+-20d7, -7067, -b9c8; screens: four ran at once on shared nodes, so not deciding). Time ÷
+the planner's, batch 1 / 64, flat → two-level:
+
+| n | sequence | flat | two-level |
+|---|---|---|---|
+| 512 | 16 · 32 (the planner's) | 0.99 / 0.99 | 1.00 / 0.99 |
+| 512 | 8 · 64 | 1.17 / 1.10 | 1.10 / 1.04 |
+| 1024 | 16 · 64 | 0.99 / 1.07 | 0.99 / 1.04 |
+| 1024 | 32 · 32 | 1.04 / 1.11 | 1.05 / 1.09 |
+| 1024 | 64 · 16 | 1.21 / 1.24 | 1.24 / 1.26 |
+| 2048 | 32 · 64 | 1.16 / 1.23 | 1.17 / 1.23 |
+| 25000 | 10 · 10 · 10 · 25 | **0.92 / 0.97** | 0.97 / 1.01 |
+| 25000 | 25 · 10 · 10 · 10 | 1.10 / 1.33 | 1.16 / 1.45 |
+
+Counters (`fbench-fftn run --pmu`, user mode, median of three processes, Slurm 511713 and
+511720, node17-class), per point at batch 1: 1024 as 4 · 16 · 16 (the planner's) 5.47
+cycles, 19.0 instructions, IPC 3.46; 16 · 64 flat 5.55 cycles, 16.6 instructions, IPC 2.98;
+two-level 5.39, 16.7, 3.10; 32 · 32 flat 5.91 / 17.6, two-level 5.90 / 18.2. GCC 16 already
+folds the flat codelets' spills into memory operands: the two-level form leaves the
+instruction count unchanged (± 3 %) where Clang's lane pass loses two thirds of its stack
+moves (gen/README.md). The two-pass plans execute 7–13 % fewer instructions than three
+passes but at a lower IPC (2.5–3.1 against 2.9–3.5), and no FP pipe is the limit (busiest
+pipe, fp2, 52 % of cycles at 1024 16 · 64). 25000: 10 · 10 · 10 · 25 flat 10.0 cycles per
+point against 10.9 for the planner's, two-level 11.1 (more instructions: 40.6 against
+38.9 at 25 · 10 · 10 · 10).
+
+Xeon Gold 6240, `avx512`, GCC 14.4, run 20261117-111807-dd3c (12 rounds, 10 under load,
+band ±1.0 %): 25000 as 10 · 10 · 10 · 25 flat 1.07 / 0.81, two-level 1.10 / 0.84; as
+25 · 10 · 10 · 10 flat 1.09 / 1.09, two-level 1.20 / 1.21.
+
+Mac (M5 Max, `neon_fcma`, Clang), runs 20261117-112402-d7a2 and -112417-040a (8 rounds,
+band ±1.0 %): radix 25 does not win: 25000 as 10 · 10 · 10 · 25 1.00, others 1.02–1.25;
+3125 as 25 · 5 · 25 1.01, 5 · 25 · 25 1.03–1.05, against the planner's radix-5 chains. So
+radix 25's rows exist on `avx2` and `avx512` only (0aaf15b; Mac library text back to
+main's).
+
+### Searches (X2's driver)
+
+- x42-big-epyc (C's build, `avx2`, candidates with 32 or 64; screening from
+  20261117-110824-0d5b): no double length passes the selection rule; best 768 = 12 · 64 1.030
+  at batch 1 only, 1024 = 16 · 64 1.017 at batch 1 only; 512, 640, 2048, 4096: the planner's
+  sequence is best. So arm D has no override and is not built.
+- x42-r25f-epyc (flat build, `avx2`, candidates with 25; confirmations 20261117-112854-1cfd
+  to -113026-0983), planner ÷ winner at batch 1 / 64: 500 20 · 25 1.093 / 1.039, 3125
+  5 · 25 · 25 1.201 / 1.195, 10000 20 · 20 · 25 1.066 / 1.057, 15625 25 · 25 · 25 1.176 /
+  1.158 (one winner: B2); 5000 10 · 25 · 20 / 10 · 20 · 25 and 25000 20 · 5 · 10 · 25 /
+  10 · 5 · 20 · 25 (winners differ: B3 takes 10 · 20 · 25, 0.870 / 0.901, and
+  10 · 5 · 20 · 25, 0.932 / 0.948); 20000 no sequence passes at both batches; 100, 1000,
+  2000, 3000: the planner's sequence is best.
 
 ## Verdict
 
