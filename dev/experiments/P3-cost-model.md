@@ -1,6 +1,6 @@
 # P3: a calibrated cost model for long rows
 
-- **Status:** running (data collection and an offline fit first)
+- **Status:** done, first pass (rejected as a replacement for the thresholds; see Verdict)
 - **Owner:** task/2.4-cost-model session, 2026-11-17
 - **Phase / task:** 2.4 (the cost model of DESIGN 11.2, machine profiles, `fbench calibrate`)
 
@@ -118,9 +118,52 @@ loose (rms 0.29 in log time), but the choices come out right: on Zen 3 the chain
 almost everywhere to beyond L3. The calibrated fields keep chains to 16 MiB, against the
 rules' X29 and X32 exceptions. The one float miss is 393216 (the chain chosen, 1.41).
 
-The model passes on the EPYC and fails on the Mac. The Xeon (Slurm 16209/16210) decides
-between a model by machine family and calibrated fields.
+### Xeon (run 20261117-030022-5a80, Slurm 16209/16210, commit 059b383; 2 of 10 rounds loaded, ±3.21 %)
+
+| Precision | Cases | Model within 5 % (geomean) | Calibrated fields within 5 % (geomean) | Rules within 5 % (geomean) |
+|---|---|---|---|---|
+| double | 32 | 23 (71.9 %; 1.038) | 27 (84.4 %; 1.026) | 25 (78 %; 1.017) |
+| float | 20 | 16 (80 %; 1.027) | 14 (70 %; 1.043) | 17 (85 %; 1.013) |
+
+The model's misses on the Xeon:
+- real rows, chains chosen where grids win: c2r 2²⁰ 1.54, c2r 100000 1.14, r2c 65536 1.13;
+- the boundaries between two and three phases: 262144, 393216 and 524288 in float, up to 1.21.
+
+Rule 3, the Xeon's fit with Granite Rapids' caches:
+- grids for the long powers of two (2¹⁷ to 2²²) and two phases for 100000, 10⁶ and 1024000,
+  as X31b measured;
+- chains at 46080, 61440 and 65536, where X31b found grids faster (0.85–0.88).
+
+So rule 3 is half met.
 
 ## Verdict
 
-Pending.
+First pass: **rejected** as a replacement for the long-row thresholds; the thresholds stay.
+- **Rule 1** (90 % within 5 %) holds only on the EPYC (100 % and 95 %). It fails on the Mac
+  (72 %, 55 %) and the Xeon (72 %, 80 %).
+- **Rule 2** (no worse than the rules by 1 %) fails on both too: the model's geomean is
+  1.07–1.10 of the fastest on the Mac against the rules' 1.03–1.07, and 1.03–1.04 on the Xeon
+  against 1.01.
+- **Rule 3** is half met.
+- **The calibrated fields**, the fallback, also fail rule 1 on the Mac and the Xeon. They
+  beat the rules only on the EPYC (97 % and 90 %).
+
+What the fits say:
+- **A per-pass model with one memory factor per level is too coarse.** What decides between
+  structures beyond L1 is the copies' and passes' cache sets and the block widths, which
+  change with the factorisation, not with the level alone. Its fit errors of 15–29 % in log
+  time are as large as the differences it must rank.
+- **The EPYC's success is easy to explain.** There the chain wins almost everywhere to
+  16 MiB, so any model that learns "chains are cheap" chooses well.
+- **The P3 catalogue is too sparse for calibration:** one length per region. Leaving a case
+  out removes the only sample of its region.
+
+What follows:
+- The rules stay deterministic and stay the default.
+- Misfires on unmeasured machines (Granite Rapids) are `planning::measure`'s and wisdom's to
+  correct: P1 recovered 9 of 9 of the forced misfire.
+- A second pass of P3, if wanted, needs a denser catalogue (several lengths per region and
+  structure) and a model of the copies' set conflicts by stride (X26, X26b), before
+  `fbench calibrate` writes any profile field.
+- The tools stay for that pass: `GRID_PHASES`, the `p3` catalogue and `calibrate.py` (fit,
+  thresholds, gnr). No library change.
