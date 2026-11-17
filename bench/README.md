@@ -382,7 +382,7 @@ run time) that implements FFTW's C interface. Building it needs Julia 1.12 or ne
 juliaup, `juliaup add 1.13`) and takes about five minutes:
 
 ```bash
-git clone https://github.com/jtravs/FFTL.jl && cd FFTL.jl && git checkout 53171e8
+git clone https://github.com/JuliaMath/FFTL.jl && cd FFTL.jl && git checkout 1ae621e
 cd libfftl && ./build.sh        # JULIA_CPU_TARGET: apple-m1 on macOS, x86-64-v3 on x86-64
 export FFTN_BENCH_FFTL_ROOT=$PWD
 ```
