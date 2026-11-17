@@ -58,6 +58,12 @@ Arms are commits of branch `exp/x42-codelets` against A = `origin/main` (4d00f0a
   C's build, candidates with radix 32 or 64 (`--radices 2-16,20,25,32,64 --require 32,64`),
   lengths 512, 640, 768, 1024, 1536, 2048, 3072, 4096; overrides by B2's selection rule.
 
+Order of the commits (amended before any timing): B, C, then B2 and D, whose sequences are
+searched on C's build, since that is the codelet text both x86 targets then run; C is
+judged against B on plans that already take a radix-32 pass on `avx2` (256, 384, 512, 640)
+and on forced radix-25/32/64 sequences, B2 and D against C. (C's revert, 07fa979, removed
+this paragraph with C's commit; it is restored here.)
+
 No switch: arms are commits, `dev/KNOBS.toml` is untouched. Library text size is recorded
 per arm (Mac static library, Clang; x86-64 Linux, GCC 16).
 
@@ -146,6 +152,16 @@ band ±1.0 %): radix 25 does not win: 25000 as 10 · 10 · 10 · 25 1.00, others
 3125 as 25 · 5 · 25 1.01, 5 · 25 · 25 1.03–1.05, against the planner's radix-5 chains. So
 radix 25's rows exist on `avx2` and `avx512` only (0aaf15b; Mac library text back to
 main's).
+
+### C judged (EPYC, `avx2`, `--serial`)
+
+Run 20261117-113412-4c22 (Slurm 511719, `--serial`; 30 rounds, none under load, band
+±1.00 %), arms B (7954244) and C (3fd2203), the exit check's cases whose `avx2` plans take
+a radix-32 pass (256, 384, 512, 640 at their batches; 10 cases): C ÷ B weighted geomean
+**1.000** [0.998, 1.003]; 384 0.977, 512 × 16 1.015, the rest 0.996–1.008. Rule (a) asks for
+at most 0.99 with the interval below 1: **C is rejected** and reverted (07fa979; the Xeon
+leg was not needed). Library text: C changed x86-64 GCC 16 `libfftn.a` by −0.03 % (57.22 →
+57.20 MB) and the Mac's not at all.
 
 ### Searches (X2's driver)
 
