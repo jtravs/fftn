@@ -34,9 +34,9 @@ namespace {
 using fftn::detail::build_settings;
 
 struct plane_case {
-  std::vector<std::size_t> n;       // the axes, slowest first
-  std::size_t count = 1;            // transforms
-  std::ptrdiff_t row_pad = 0;       // elements after each row of the last axis
+  std::vector<std::size_t> n; // the axes, slowest first
+  std::size_t count = 1;      // transforms
+  std::ptrdiff_t row_pad = 0; // elements after each row of the last axis
   bool in_place = false;
   double scale = 1.0;
   fftn::direction dir = fftn::direction::forward;
@@ -144,7 +144,8 @@ template <class T> void columns_equal_chain(fftn::isa target) {
       {.n = {16, 512}, .count = 1},
   };
   for (const plane_case& pc : cases) {
-    for (const std::size_t block : {std::size_t{0}, std::size_t{1}, std::size_t{3}, std::size_t{16}}) {
+    for (const std::size_t block :
+         {std::size_t{0}, std::size_t{1}, std::size_t{3}, std::size_t{16}}) {
       SCOPED_TRACE(label(pc, block));
       build_settings lanes;
       lanes.column_block = block;
@@ -193,17 +194,18 @@ TEST(Columns, OnlyWhereTheColumnsAreAdjacent) {
                 .find("axis 0 (n = 64): lanes over blocks of"),
             std::string::npos);
   fftn::shape<std::complex<double>, std::complex<double>> strided;
-  strided.axes = {{.n = 16, .in_stride = 2, .out_stride = 2}, {.n = 16, .in_stride = 32, .out_stride = 32}};
+  strided.axes = {{.n = 16, .in_stride = 2, .out_stride = 2},
+                  {.n = 16, .in_stride = 32, .out_stride = 32}};
   EXPECT_EQ(text(strided).find("adjacent columns"), std::string::npos) << text(strided);
-  EXPECT_EQ(text(fftn::planes_c2c<double>(97, 16, 1, fftn::direction::forward))
-                .find("adjacent columns"),
-            std::string::npos);
-  EXPECT_EQ(text(fftn::planes_c2c<double>(29, 16, 1, fftn::direction::forward))
-                .find("adjacent columns"),
-            std::string::npos);
-  EXPECT_EQ(text(fftn::planes_c2c<double>(16, 1, 1, fftn::direction::forward))
-                .find("adjacent columns"),
-            std::string::npos);
+  EXPECT_EQ(
+      text(fftn::planes_c2c<double>(97, 16, 1, fftn::direction::forward)).find("adjacent columns"),
+      std::string::npos);
+  EXPECT_EQ(
+      text(fftn::planes_c2c<double>(29, 16, 1, fftn::direction::forward)).find("adjacent columns"),
+      std::string::npos);
+  EXPECT_EQ(
+      text(fftn::planes_c2c<double>(16, 1, 1, fftn::direction::forward)).find("adjacent columns"),
+      std::string::npos);
 }
 
 } // namespace

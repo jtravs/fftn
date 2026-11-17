@@ -221,8 +221,8 @@ template <class T> void pair_leaves(fftn::isa t) {
   }
   // The leaves' twiddle storage is the target's own, so the chain packs their tables as its
   // own (chain.cpp, pair_twiddles; a null packing function was called before).
-  const fftn::detail::kernel_table& own = *fftn::detail::find_kernels(
-      static_cast<fftn::detail::target>(static_cast<unsigned char>(t)));
+  const fftn::detail::kernel_table& own =
+      *fftn::detail::find_kernels(static_cast<fftn::detail::target>(static_cast<unsigned char>(t)));
   table.f64.lanes = fftn::detail::of<double>(own).complex_lanes;
   table.f64.pack_twiddles = fftn::detail::of<double>(own).pack_twiddles;
   table.f32.lanes = fftn::detail::of<float>(own).complex_lanes;

@@ -538,11 +538,10 @@ std::size_t legs_per_set(std::size_t r, std::size_t apart, std::size_t period, s
 // radix 16 whose legs shared a set made 128^2 and 256^2 planes 2.2 times as long as the
 // same chain ending in radix 8 (reads in the first pass did not matter). Forced radices win.
 template <class T>
-std::vector<std::size_t> column_radices(std::size_t n, std::ptrdiff_t stride,
-                                        const build_settings& settings,
-                                        const target_profile& profile,
-                                        const chain_builder<T>& chain,
-                                        const kernels_of<T>& kernels) {
+std::vector<std::size_t>
+column_radices(std::size_t n, std::ptrdiff_t stride, const build_settings& settings,
+               const target_profile& profile, const chain_builder<T>& chain,
+               const kernels_of<T>& kernels) {
   std::vector<std::size_t> rad = chain.radices(n);
   if (chain.forces(n)) {
     return rad;
@@ -878,10 +877,10 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
                               profile, chain, kernels);
         scratch = std::max(scratch, add_column_phase<T>(p, chain, d, in.extent, src, out_view, sign,
                                                         edges, block, kernels.complex_lanes, rad));
-        c.axis_notes.push_back("axis " + std::to_string(d) + " (n = " +
-                               std::to_string(c.lengths[d]) + "): lanes over blocks of " +
-                               std::to_string(block) + " adjacent columns, radices " +
-                               chain.radix_text(c.lengths[d], rad));
+        c.axis_notes.push_back("axis " + std::to_string(d) +
+                               " (n = " + std::to_string(c.lengths[d]) +
+                               "): lanes over blocks of " + std::to_string(block) +
+                               " adjacent columns, radices " + chain.radix_text(c.lengths[d], rad));
         c.strategy_note = "chain for the last axis' rows, the lanes over blocks of adjacent "
                           "columns for the others; each transform finished before the next";
         continue;
@@ -1259,8 +1258,7 @@ std::string describe(const plan_core& core) {
   if (!core.planning_note.empty()) {
     o << "planning: " << core.planning_note << "\n";
   }
-  const char* rule =
-      core.built == strategy_choice::grid ? "the grid's phase rule" : "planner v1";
+  const char* rule = core.built == strategy_choice::grid ? "the grid's phase rule" : "planner v1";
   if (!core.strategy_note.empty()) {
     o << "strategy: " << core.strategy_note << "; radices from ";
   } else {
@@ -1290,8 +1288,7 @@ std::string describe(const plan_core& core) {
     if (const loop* l = std::get_if<loop>(&rec)) {
       o << indent << "loop " << (l->kind == loop_kind::batch ? "batch" : "lines") << " x"
         << l->count << " (steps in bytes: in " << l->step[0] << ", out " << l->step[1] << ", block "
-        << l->step[2] << (l->step[3] != 0 ? ", twiddles " + std::to_string(l->step[3]) : "")
-        << ")";
+        << l->step[2] << (l->step[3] != 0 ? ", twiddles " + std::to_string(l->step[3]) : "") << ")";
       if (l->start != std::array<std::ptrdiff_t, moving_slots>{}) {
         o << " from (in " << l->start[0] << ", out " << l->start[1] << ", block " << l->start[2]
           << ")";
