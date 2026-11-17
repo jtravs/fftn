@@ -124,4 +124,18 @@ that run threaded (not inline) is at most 0.95, and (2) no volume is slower than
 more than the larger of 2 % and the band at 8 lanes, in a fresh run; one-thread programs are
 unchanged by construction (the base is 06229fa, the axes one by one on the EPYC).
 
-## Verdict
+### Task 4.2's acceptance (FFTN ÷ the competitor's better plan, the 38 volumes)
+
+- Mac, one thread (run 20261117-154622-1813, P, the Mac's program): ÷ FFTW 0.804; over it
+  16 × 256 × 256 1.57–1.63, 512 × 64 × 64 1.19–1.24, 64 × 64 × 512 1.10–1.21, 64³ out of
+  place 1.02, 32³ out of place 1.01, 32 × 64 × 128 in place 1.02.
+- Mac, 6 lanes of one cluster (run 20261117-171803-2bd5, ce01908, FFTW at 6 threads and
+  serial; 5 rounds, all under load, band ±12.4 %): 0.755; over 16 × 256 × 256 1.35–1.40,
+  512 × 64 × 64 1.19–1.20.
+- EPYC, one thread (run 20261117-155546-f3c5, P, the EPYC's program): ÷ FFTW 0.848; over it
+  16³ 1.13, 128 × 64 × 32 1.08–1.12, 32³ 1.04, 16 × 256 × 256 out of place 1.03, 512 × 64 ×
+  64 and 64 × 64 × 512 in place 1.02.
+- The 16-point outer axes of 16 × 256 × 256 (and 16³ on x86) run as one leaf of 16 whose 16
+  legs, a plane apart, share one L1 set; `column_radices` offers no other sequence for a
+  leaf length. A lead for the column radices' owner, not changed here.
+
