@@ -92,6 +92,27 @@ struct flat_stage {
   pass_args args;
 };
 
+// One kernel call of a walked program, unrolled for one transform (driver.cpp, mark_flat;
+// experiment X41): a stage of one line, or a loop of leaves as one leaf call over its lines.
+// The slots in, out and block are offset by the bytes the loops would have moved them;
+// scratch never moves.
+struct call {
+  pass_fn run = nullptr;    // a stage's kernel over units [0, units)
+  leaf_fn leaf = nullptr;   // or a leaf over `units` lines, src_step and dst_step bytes apart
+  std::size_t units = 0;
+  std::ptrdiff_t src_off = 0; // bytes from the transform's address of the src slot
+  std::ptrdiff_t dst_off = 0;
+  std::ptrdiff_t src_step = 0;
+  std::ptrdiff_t dst_step = 0;
+  std::uint32_t args = 0; // index into program::call_args
+  slot src = slot::in;
+  slot dst = slot::out;
+};
+
+// The most calls per transform a program is unrolled into (mark_flat): beyond it the
+// records are walked.
+inline constexpr std::size_t calls_max = 256;
+
 struct program {
   std::vector<record> records;
   std::size_t batch_loops = 0; // the leading records that are the batch loops
@@ -121,6 +142,14 @@ struct program {
   std::ptrdiff_t rows_src_step = 0; // bytes between the lines the leaf reads
   std::ptrdiff_t rows_dst_step = 0; // and writes
   pass_args rows_args;
+  // A multi-axis program (a loop over lines in its body), neither flat nor lanes, every stage
+  // without moving twiddles, and at most calls_max kernel
+  // calls per transform: the body unrolled into its calls, in serial order, and the
+  // arguments they use, one copy per stage record (mark_flat). The driver then runs a
+  // transform by calling them in turn, without walking the records (X41); empty otherwise,
+  // or when the plan's build settings turn it off (build_settings::unroll_calls).
+  std::vector<call> calls;
+  std::vector<pass_args> call_args;
 };
 
 // The longest body run_flat handles; its arguments live on the stack.

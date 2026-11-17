@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 John C. Travers and contributors
 // SPDX-License-Identifier: Apache-2.0
 
-// The lanes column phase (DESIGN.md 9.3, experiment X40): the strided axes of c2c planes
+// The lanes column phase (DESIGN.md 9.3, experiments X40 and X41): the strided axes of planes
 // and volumes run as the lanes strategy over blocks of adjacent columns. Each column is a
 // lane computing its own chain (strategies/lanes.cpp), so the plan must write every output
 // byte that the same plan with every column alone through the chain writes
@@ -154,6 +154,12 @@ template <class T> void columns_equal_chain(fftn::isa target) {
       std::string lanes_text;
       std::string chain_text;
       const auto got = run<T>(pc, lanes, target, lanes_text);
+      // The program's calls unrolled at construction (the default, X41) and its records
+      // walked give the same bytes.
+      build_settings walked = lanes;
+      walked.unroll_calls = false;
+      std::string walked_text;
+      EXPECT_TRUE(run<T>(pc, walked, target, walked_text) == got) << "unrolled and walked differ";
       const auto want = run<T>(pc, chain, target, chain_text);
       EXPECT_NE(lanes_text.find("adjacent columns"), std::string::npos) << lanes_text;
       EXPECT_EQ(chain_text.find("adjacent columns"), std::string::npos) << chain_text;
@@ -255,6 +261,10 @@ template <class T> void real_columns_equal_chain(fftn::isa target, bool r2c) {
       std::string lanes_text;
       std::string chain_text;
       const auto got = run_real(rc, lanes, lanes_text);
+      build_settings walked = lanes;
+      walked.unroll_calls = false;
+      std::string walked_text;
+      EXPECT_TRUE(run_real(rc, walked, walked_text) == got) << "unrolled and walked differ";
       const auto want = run_real(rc, chain, chain_text);
       EXPECT_NE(lanes_text.find("adjacent columns"), std::string::npos) << lanes_text;
       EXPECT_EQ(chain_text.find("adjacent columns"), std::string::npos) << chain_text;
