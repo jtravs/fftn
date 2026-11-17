@@ -142,7 +142,7 @@ def predict(prm: dict, case: str, prog: dict, caches: tuple[int, int, int]) -> f
 
 
 def loss(logp: list[float], rows: list[tuple], caches) -> float:
-    prm = dict(zip(PARAMS, (math.exp(v) for v in logp)))
+    prm = dict(zip(PARAMS, (math.exp(max(-30.0, min(30.0, v))) for v in logp)))
     s = 0.0
     for case, prog, t in rows:
         d = math.log(predict(prm, case, prog, caches)) - math.log(t)
@@ -185,7 +185,8 @@ def fit(rows: list[tuple], caches, start: list[float] | None = None) -> dict:
     x0 = start or [math.log(v) for v in (0.2, 0.05, 1.5, 2.5, 4.0, 0.3, 0.1, 0.5, 1.0, 2.0, 0.5)]
     best = nelder_mead(lambda x: loss(x, rows, caches), x0)
     best = nelder_mead(lambda x: loss(x, rows, caches), best)  # a restart
-    return dict(zip(PARAMS, (math.exp(v) for v in best)))
+    # Clamped as in loss(): a parameter the data cannot see may drift without bound.
+    return dict(zip(PARAMS, (math.exp(max(-30.0, min(30.0, v))) for v in best)))
 
 
 # ---- Data -----------------------------------------------------------------------------

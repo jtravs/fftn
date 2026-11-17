@@ -69,7 +69,32 @@ Each case's note gives the program (radices and phases) that the model prices.
 
 ## Results
 
-Pending.
+### Mac, first fit (run 20261117-015214-834a, commit 059b383; 7 of 10 rounds loaded, ±3.64 %)
+
+The model as written in the hypothesis, with the conflict term widened so that it applies to
+any row whose power-of-two part spans 16 KiB, separately for radix 16 and up (`k`) and
+below (`k8`), as X29 and X32 imply. Leave-one-out:
+
+| Precision | Cases | Fit rms (log) | Model within 5 % | Model geomean ÷ fastest | Rules ÷ fastest |
+|---|---|---|---|---|---|
+| double | 32 | 0.198 | 23 (71.9 %) | 1.071 | 1.031 |
+| float | 20 | 0.180 | 11 (55.0 %) | 1.096 | 1.066 |
+
+- Rule 1 fails, and so does rule 2: the model's choices are worse than the rules' on the Mac.
+- The misses are mixed lengths with a large power-of-two part (12288, 61440, 245760,
+  393216: the model chooses the chain where grids win by 1.1–1.7) and powers of two from 8192
+  to 131072 (it chooses three phases where the chain or two phases win).
+- The fitted factors are degenerate. L2 prices below L1 (`m1` 0.70). The L3 terms are
+  unconstrained, since the Mac has no level between its L2 and memory.
+- A fit error of about 20 % cannot separate structures that differ by 5–30 %.
+
+A per-pass model with a factor per level does not capture what decides a grid's cost on the
+Mac: the block widths, the copies' sets and the padding. Before adding terms, the EPYC and
+Xeon runs (Slurm 511481/511482, 16209/16210), on machines with three cache levels, will show
+whether the form fails generally. If it does, the practical replacement is calibration of the
+crossovers themselves: `fbench calibrate` measuring, per machine, where chain, two and three
+phases cross, and writing the profile's thresholds. That keeps the planner deterministic and
+removes the hand-set constants that misfired on Granite Rapids.
 
 ## Verdict
 
