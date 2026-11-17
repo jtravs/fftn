@@ -17,6 +17,7 @@
 #include "fftn/fftn.hpp"
 #include "isa/target.hpp"
 #include "planner/rules.hpp"
+#include "platform/page_memory.hpp"
 
 #include <gtest/gtest.h>
 
@@ -483,6 +484,22 @@ TEST(Measure, ScratchLimitTimesFewerTransforms) {
   const std::size_t transforms = std::stoul(more.substr(at + 10));
   EXPECT_GT(transforms, 1U) << more;
   EXPECT_LT(transforms, 64U) << more;
+}
+
+// Large buffers are timed on 4 KiB and on huge pages where the two can differ (Linux with
+// transparent huge pages), and a program is judged by the slower: P2 found a choice made on
+// huge-page scratch 1.18 times slower on the caller's memory (EPYC r2c 65536).
+TEST(Measure, LargeBuffersAreTimedOnBothPageKinds) {
+  const auto shape = fftn::rows_r2c<double>(65536, 1);
+  const auto core =
+      d::make_plan_core(d::view_of(shape), {.effort = fftn::planning::quick, .measure_seconds = 2});
+  const std::string text = d::describe(*core);
+  const bool both = text.find(", on 4 KiB and huge pages,") != std::string::npos;
+  EXPECT_EQ(both, fftn::detail::page_kinds_differ() && core->candidates_timed != 0) << text;
+  const auto small =
+      d::make_plan_core(d::view_of(fftn::rows_c2c<double>(256, 1, fftn::direction::forward)),
+                        {.effort = fftn::planning::quick, .measure_seconds = 2});
+  EXPECT_EQ(d::describe(*small).find("huge pages"), std::string::npos);
 }
 
 TEST(Measure, ReducedCountsShrinkTheOuterDimensionsFirst) {

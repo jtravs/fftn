@@ -13,6 +13,7 @@ fftn_add_test(fftn_platform_tests
     cpu_features_test.cpp
     cpu_list_test.cpp
     cpu_model_test.cpp
+    page_memory_test.cpp
     environment_test.cpp
     file_source_test.cpp
     platform_text.cpp

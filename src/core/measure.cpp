@@ -5,8 +5,10 @@
 // candidates (core/candidates.hpp), time each whole program on scratch data at the
 // transform's size, keep the fastest. Candidates are timed in turn, round after round, so
 // that a drift in the machine's speed touches them all alike, with the input and output at
-// other offsets in every round (placement_of); the statistic is each candidate's median
-// sample. The budgets are first guesses that experiment P2 (dev/experiments/P2-*.md) sets.
+// other offsets in every round (placement_of) and, where the kernel offers transparent huge
+// pages, on 4 KiB pages and on huge pages in alternate rounds (page_memory.hpp); the
+// statistic is each candidate's median sample on the kind of memory it runs slower on. The budgets
+// are first guesses that experiment P2 (dev/experiments/P2-*.md) sets.
 
 #include "core/measure.hpp"
 
@@ -19,9 +21,11 @@
 #include "fftn/shape.hpp"
 #include "fftn/workspace.hpp"
 #include "platform/aligned_buffer.hpp"
+#include "platform/page_memory.hpp"
 #include "platform/timer.hpp"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -113,8 +117,8 @@ std::size_t span_bytes(std::ptrdiff_t lo, std::ptrdiff_t hi) {
   return static_cast<std::size_t>(hi - lo);
 }
 
-// The data the timings allocate for a plan: input and output (one buffer in place, then
-// with a pristine copy of the input), each with room for the offsets.
+// The data the timings allocate for a plan, for one kind of page memory: input and output
+// (one buffer in place, then with a pristine copy of the input), with room for the offsets.
 std::size_t data_bytes(const plan_core& c) {
   const std::size_t in = span_bytes(c.in_lo, c.in_hi);
   const std::size_t out = span_bytes(c.out_lo, c.out_hi);
@@ -132,56 +136,105 @@ std::size_t table_bytes(const plan_core& c) {
   return bytes;
 }
 
-// Scratch data for timing: one buffer per side (one in place), filled with small values, at
-// the offsets of the current round.
+// Below this many bytes in the largest buffer, the page size of the scratch cannot matter
+// enough to time both kinds (P2: the case that misled was 512 KiB per buffer).
+constexpr std::size_t two_kinds_from = std::size_t{128} * 1024;
+
+// How many kinds of page memory the timings use for a plan with a workspace of `ws` bytes:
+// both (huge and 4 KiB) where they can differ and the buffers are large, else one.
+std::size_t page_kinds_for(const plan_core& c, std::size_t ws) {
+  const std::size_t largest =
+      std::max({span_bytes(c.in_lo, c.in_hi), span_bytes(c.out_lo, c.out_hi), ws});
+  return page_kinds_differ() && largest >= two_kinds_from ? 2 : 1;
+}
+
+// The bytes the timings reserve for a plan: per kind of page memory, its input and output
+// (one buffer in place) with room for the offsets and a workspace, then a pristine copy of
+// the input in place.
+std::size_t scratch_bytes(const plan_core& c, std::size_t ws, std::size_t kinds) {
+  const std::size_t in = span_bytes(c.in_place ? std::min(c.in_lo, c.out_lo) : c.in_lo,
+                                    c.in_place ? std::max(c.in_hi, c.out_hi) : c.in_hi);
+  std::size_t per = page_region::reserved_for(in + placement_slack) + page_region::reserved_for(ws);
+  if (!c.in_place) {
+    per += page_region::reserved_for(span_bytes(c.out_lo, c.out_hi) + placement_slack);
+  }
+  return kinds * per + (c.in_place ? in : 0);
+}
+
+// Scratch data for timing, on one or two kinds of page memory (page_memory.hpp): per kind an
+// input and an output buffer (one in place) filled with the same small values, and a
+// workspace. Round r uses kind r % kinds, at placement_of(r)'s offsets.
 class scratch_data {
 public:
-  explicit scratch_data(const plan_core& c) : in_place_(c.in_place) {
+  scratch_data(const plan_core& c, std::size_t ws_bytes, std::size_t kinds)
+      : in_place_(c.in_place) {
     const std::ptrdiff_t lo = c.in_place ? std::min(c.in_lo, c.out_lo) : c.in_lo;
     const std::ptrdiff_t hi = c.in_place ? std::max(c.in_hi, c.out_hi) : c.in_hi;
     in_bytes_ = span_bytes(lo, hi);
-    in_ = aligned_buffer<std::byte>(in_bytes_ + placement_slack);
     in_zero_ = -lo;
-    if (!c.in_place) {
-      out_ = aligned_buffer<std::byte>(span_bytes(c.out_lo, c.out_hi) + placement_slack);
-      out_zero_ = -c.out_lo;
+    out_zero_ = -c.out_lo;
+    for (std::size_t k = 0; k < kinds; ++k) {
+      const page_kind kind = k == 0 ? page_kind::small : page_kind::huge;
+      memory& m = kinds_.emplace_back();
+      m.in = page_region(in_bytes_ + placement_slack, kind);
+      if (!c.in_place) {
+        m.out = page_region(span_bytes(c.out_lo, c.out_hi) + placement_slack, kind);
+      }
+      m.ws_memory = page_region(ws_bytes, kind);
+      m.ws = workspace(std::span<std::byte>(m.ws_memory.data(), ws_bytes));
     }
     fill(c.prec);
+    for (std::size_t k = 1; k < kinds; ++k) {
+      std::memcpy(kinds_[k].in.data(), kinds_[0].in.data(), in_bytes_);
+    }
     if (c.in_place) {
       pristine_ = aligned_buffer<std::byte>(in_bytes_);
-      std::memcpy(pristine_.data(), in_.data(), in_bytes_);
+      std::memcpy(pristine_.data(), kinds_[0].in.data(), in_bytes_);
     }
   }
 
-  [[nodiscard]] const void* in() const { return in_.data() + at_.in + in_zero_; }
+  [[nodiscard]] std::size_t kinds() const { return kinds_.size(); }
+  [[nodiscard]] std::size_t kind() const { return current_; }
+  [[nodiscard]] const void* in() const {
+    const memory& m = kinds_[current_];
+    return m.in.data() + m.at.in + in_zero_;
+  }
   [[nodiscard]] void* out() {
-    return in_place_ ? in_.data() + at_.in + in_zero_ : out_.data() + at_.out + out_zero_;
+    memory& m = kinds_[current_];
+    return in_place_ ? m.in.data() + m.at.in + in_zero_ : m.out.data() + m.at.out + out_zero_;
   }
-  [[nodiscard]] const workspace& ws() const { return ws_; }
-  void reserve(std::size_t bytes) {
-    if (bytes > ws_.size()) {
-      ws_ = workspace(bytes);
-    }
-  }
-  // Moves the input (and output) to the round's offsets.
+  [[nodiscard]] const workspace& ws() const { return kinds_[current_].ws; }
+  // Selects round r's kind of memory and moves its input (and output) to r's offsets.
   void place(std::size_t round) {
+    current_ = round % kinds_.size();
+    memory& m = kinds_[current_];
     const placement next = placement_of(round);
-    if (!in_place_ && next.in != at_.in) {
-      std::memmove(in_.data() + next.in, in_.data() + at_.in, in_bytes_);
+    if (!in_place_ && next.in != m.at.in) {
+      std::memmove(m.in.data() + next.in, m.in.data() + m.at.in, in_bytes_);
     }
-    at_ = next;
+    m.at = next;
   }
   // In place, the input is the output: restore it, so that repeated transforms do not grow
   // the values without bound (reps_cap bounds the growth within one sample).
   void restore() {
     if (in_place_) {
-      std::memcpy(in_.data() + at_.in, pristine_.data(), in_bytes_);
+      memory& m = kinds_[current_];
+      std::memcpy(m.in.data() + m.at.in, pristine_.data(), in_bytes_);
     }
   }
 
 private:
+  struct memory {
+    page_region in;
+    page_region out;
+    page_region ws_memory;
+    workspace ws;
+    placement at{};
+  };
+
   void fill(precision p) {
     // A fixed linear congruential sequence in [-0.5, 0.5): reproducible, never denormal.
+    std::byte* to = kinds_[0].in.data();
     std::uint64_t x = 0x9e3779b97f4a7c15ULL;
     const auto next = [&] {
       x = x * 6364136223846793005ULL + 1442695040888963407ULL;
@@ -190,25 +243,23 @@ private:
     if (p == precision::f64) {
       for (std::size_t i = 0; i + sizeof(double) <= in_bytes_; i += sizeof(double)) {
         const double v = next();
-        std::memcpy(in_.data() + i, &v, sizeof v);
+        std::memcpy(to + i, &v, sizeof v);
       }
       return;
     }
     for (std::size_t i = 0; i + sizeof(float) <= in_bytes_; i += sizeof(float)) {
       const auto v = static_cast<float>(next());
-      std::memcpy(in_.data() + i, &v, sizeof v);
+      std::memcpy(to + i, &v, sizeof v);
     }
   }
 
   bool in_place_;
   std::size_t in_bytes_ = 0;
-  aligned_buffer<std::byte> in_;
-  aligned_buffer<std::byte> out_;
+  std::vector<memory> kinds_;
+  std::size_t current_ = 0;
   aligned_buffer<std::byte> pristine_;
   std::ptrdiff_t in_zero_ = 0; // element 0's offset in its buffer, before the placement
   std::ptrdiff_t out_zero_ = 0;
-  placement at_{};
-  workspace ws_;
 };
 
 // The most executions in one sample of an in-place plan before an unnormalised transform of
@@ -227,21 +278,33 @@ std::size_t reps_cap(const plan_core& c) {
   return std::max<std::size_t>(1, static_cast<std::size_t>(headroom / growth));
 }
 
-struct candidate {
-  plan_choice choice;
-  std::shared_ptr<plan_core> core;
-  std::size_t tables = 0; // bytes of the core's tables, while it is kept
-  std::size_t reps = 1;
-  std::vector<double> samples{}; // seconds per execution
-  double estimate = std::numeric_limits<double>::infinity();
-  bool live = true;
-};
-
 double median(std::vector<double> v) {
   std::ranges::sort(v);
   const std::size_t h = v.size() / 2;
   return v.size() % 2 != 0 ? v[h] : (v[h - 1] + v[h]) / 2;
 }
+
+struct candidate {
+  plan_choice choice;
+  std::shared_ptr<plan_core> core;
+  std::size_t tables = 0; // bytes of the core's tables, while it is kept
+  std::size_t reps = 1;
+  std::array<std::vector<double>, 2> samples{}; // seconds per execution, by kind of memory
+  double estimate = std::numeric_limits<double>::infinity();
+
+  [[nodiscard]] bool timed() const { return !samples[0].empty() || !samples[1].empty(); }
+  // The worse kind's median: a program is judged by the memory it runs slower on, since a
+  // caller's arrays may be either.
+  void update() {
+    estimate = 0;
+    for (const std::vector<double>& v : samples) {
+      if (!v.empty()) {
+        estimate = std::max(estimate, median(v));
+      }
+    }
+  }
+  bool live = true;
+};
 
 // Times `reps` executions; seconds per execution.
 double time_once(const plan_core& c, scratch_data& d, std::size_t reps) {
@@ -279,8 +342,11 @@ measure(const shape_view& s, const options& base, const build_settings& settings
   // The candidates are timed on fewer transforms when the data, the workspace and the rules'
   // tables would not fit the scratch limit.
   const std::size_t rules_tables = table_bytes(*rules);
-  const std::vector<std::size_t> counts = reduced_counts(
-      rules->counts, data_bytes(*rules), workspace_bytes(*rules, 1) + rules_tables, limits.scratch);
+  const std::size_t rules_ws = workspace_bytes(*rules, 1);
+  const std::size_t rules_kinds = page_kinds_for(*rules, rules_ws);
+  const std::vector<std::size_t> counts =
+      reduced_counts(rules->counts, rules_kinds * data_bytes(*rules),
+                     rules_kinds * rules_ws + rules_tables, limits.scratch);
   const bool same_shape = counts == rules->counts;
   std::vector<batch> reduced(s.batches.begin(), s.batches.end());
   for (std::size_t i = 0; i < reduced.size(); ++i) {
@@ -299,7 +365,6 @@ measure(const shape_view& s, const options& base, const build_settings& settings
   // points, where one plan takes 0.5-1.7 s to build (P1's first pass on the Xeon).
   std::vector<candidate> cands;
   std::vector<std::uint64_t> seen;
-  std::size_t data = 0;
   std::size_t tables = 0;
   std::size_t ws_bytes = 0;
   for (const plan_choice& choice : choices) {
@@ -321,12 +386,11 @@ measure(const shape_view& s, const options& base, const build_settings& settings
     }
     seen.push_back(f);
     const std::size_t t = table_bytes(*core);
-    const std::size_t d = std::max(data, data_bytes(*core));
     const std::size_t w = std::max(ws_bytes, workspace_bytes(*core, 1));
-    if (!cands.empty() && d + w + tables + t > limits.scratch) {
+    if (!cands.empty() &&
+        scratch_bytes(*core, w, page_kinds_for(*core, w)) + tables + t > limits.scratch) {
       break;
     }
-    data = d;
     ws_bytes = w;
     tables += t;
     cands.push_back({.choice = choice, .core = std::move(core), .tables = t});
@@ -335,6 +399,7 @@ measure(const shape_view& s, const options& base, const build_settings& settings
     rules.reset(); // not a candidate (another shape or a test's forced settings): free it
   }
 
+  std::size_t kinds_timed = 0; // kinds of page memory the timings used
   if (cands.size() == 1) {
     // Nothing to compare: no scratch data, no timing.
     cands.front().estimate = 1;
@@ -343,8 +408,9 @@ measure(const shape_view& s, const options& base, const build_settings& settings
     // (build_settings::measure_time) gives each sample instead, through the same rounds.
     std::unique_ptr<scratch_data> scratch;
     if (real_clock) {
-      scratch = std::make_unique<scratch_data>(*cands.front().core);
-      scratch->reserve(ws_bytes);
+      const plan_core& first = *cands.front().core;
+      scratch = std::make_unique<scratch_data>(first, ws_bytes, page_kinds_for(first, ws_bytes));
+      kinds_timed = scratch->kinds();
     }
     const auto sample = [&](const candidate& c) {
       return real_clock ? time_once(*c.core, *scratch, c.reps)
@@ -374,11 +440,11 @@ measure(const shape_view& s, const options& base, const build_settings& settings
       // timed first, read 1.2-1.3 times its time in single rounds).
       for (std::size_t k = 0; k < cands.size(); ++k) {
         candidate& c = cands[(k + round) % cands.size()];
-        if (!c.live || (!c.samples.empty() && seconds_since(start) > limits.seconds)) {
+        if (!c.live || (c.timed() && seconds_since(start) > limits.seconds)) {
           continue;
         }
-        c.samples.push_back(sample(c));
-        c.estimate = median(c.samples);
+        c.samples.at(real_clock ? scratch->kind() : 0).push_back(sample(c));
+        c.update();
         any = true;
       }
       if (round + 1 >= b.min_rounds) {
@@ -407,7 +473,7 @@ measure(const shape_view& s, const options& base, const build_settings& settings
   // still rise, and its plan has been freed.
   std::size_t win = 0;
   for (std::size_t i = 1; i < cands.size(); ++i) {
-    if (cands[i].live && cands[i].core && !cands[i].samples.empty() &&
+    if (cands[i].live && cands[i].core && cands[i].timed() &&
         cands[i].estimate < cands[win].estimate) {
       win = i;
     }
@@ -417,7 +483,7 @@ measure(const shape_view& s, const options& base, const build_settings& settings
   }
   std::size_t timed = 0;
   for (const candidate& c : cands) {
-    if (!c.samples.empty()) {
+    if (c.timed()) {
       ++timed;
     }
   }
@@ -438,7 +504,8 @@ measure(const shape_view& s, const options& base, const build_settings& settings
   final_core->planning_note =
       wisdom_note + "measured (" + std::to_string(timed) + " of " + std::to_string(cands.size()) +
       " distinct candidates timed" +
-      (same_shape ? "" : " on " + transforms_text(timing_transforms)) + ", " +
+      (same_shape ? "" : " on " + transforms_text(timing_transforms)) +
+      (kinds_timed == 2 ? ", on 4 KiB and huge pages" : "") + ", " +
       fixed(final_core->planning_seconds, 3) + " s): " + final_core->program_text +
       (win == 0 ? ""
                 : "; the rules' choice took " + fixed(final_core->rules_over_chosen, 3) +
