@@ -95,10 +95,42 @@ template <class T> std::vector<std::size_t> chain_builder<T>::radices(std::size_
     q *= rad.back();
     rad.pop_back();
   }
+  // Experiment X36: a Bluestein stage with fewer copies than a register holds (1 < s < C)
+  // runs every pass of its convolution on partial units; one stage over the whole line
+  // (Bluestein needs no prime) runs them whole, where its convolution is no longer than the
+  // copies' together. 1018 = 2 x 509 took 0.68 of its time on AVX-512 in double (0.40 in
+  // float); 12279 = 3 x 4093 in double, whose whole convolution (25920) is longer than
+  // 3 x 8192, took 1.17. X36b: with s = C the units are whole but the copies' chains are
+  // lane passes of s = C (no grouped first pass), so s = C takes the whole line too while
+  // the line is not long (long_convolution_bytes): EPYC 1018 0.73 of its time, Xeon 2036
+  // 0.81; 262142 = 2 x 131071 in NEON float lost 1.23 (its whole convolution 552960 has a
+  // power-of-two part of 4096).
+  const std::size_t s_copies = q > 1 ? n / q : 0;
+  const bool few = s_copies > 1 &&
+                   (s_copies < kernels_.complex_lanes ||
+                    (s_copies == kernels_.complex_lanes && n * 2 * sizeof(T) <= conv_from_bytes_));
+  if (few && !forces(n) && rader_root(q, profile_) == 0 &&
+      bluestein_m(n) <= s_copies * bluestein_m(q)) {
+    return {n};
+  }
   if (q > 1) {
     rad.push_back(q);
   }
   return rad;
+}
+
+template <class T> std::size_t chain_builder<T>::bluestein_m(std::size_t q) const {
+  return bluestein_length(q, profile_,
+                          std::max<std::size_t>(conv_pow2_part_bytes_ / (2 * sizeof(T)), 1));
+}
+
+template <class T>
+std::vector<std::size_t> chain_builder<T>::convolution_radices(std::size_t len) const {
+  if (len >= 4 && (len & (len - 1)) == 0 && len * 2 * sizeof(T) > conv_from_bytes_) {
+    return long_pow2_radices(static_cast<std::size_t>(std::countr_zero(len)),
+                             len * 2 * sizeof(T) <= conv_radix8_bytes_);
+  }
+  return rule_radices(len, profile_);
 }
 
 template <class T> bool chain_builder<T>::bluestein_last(std::size_t n) const {
@@ -138,11 +170,11 @@ std::string chain_builder<T>::radix_text(std::size_t n, const std::vector<std::s
   const std::vector<std::size_t> head(rad.begin(), rad.end() - 1);
   if (rader_root(q, profile_) != 0) {
     return (head.empty() ? "" : list(head) + " x ") + "rader " + std::to_string(q) + " (L " +
-           std::to_string(q - 1) + " = " + list(rule_radices(q - 1, profile_)) + ")";
+           std::to_string(q - 1) + " = " + list(convolution_radices(q - 1)) + ")";
   }
-  const std::size_t m = bluestein_length(q, profile_);
+  const std::size_t m = bluestein_m(q);
   return (head.empty() ? "" : list(head) + " x ") + "bluestein " + std::to_string(q) + " (M " +
-         std::to_string(m) + " = " + list(rule_radices(m, profile_)) + ")";
+         std::to_string(m) + " = " + list(convolution_radices(m)) + ")";
 }
 
 template <class T> const std::vector<std::complex<T>>& chain_builder<T>::roots(std::size_t n) {
@@ -312,7 +344,7 @@ template <class T> const T* chain_builder<T>::edge_twiddles(std::size_t n) {
 template <class T>
 chain_builder<T>::bluestein_tables chain_builder<T>::bluestein_tables_of(std::size_t q, int sign,
                                                                          std::size_t copies) {
-  const std::size_t m = bluestein_length(q, profile_);
+  const std::size_t m = bluestein_m(q);
   const auto kernel_key = std::make_pair(q, sign);
   auto kit = kernel_tables_.find(kernel_key);
   if (kit == kernel_tables_.end()) {
@@ -495,7 +527,9 @@ void chain_builder<T>::add_leaf(std::size_t n, int sign, endpoint src, endpoint 
   const std::size_t d = direction_index(sign);
   const std::size_t in = edge_index(edges.in);
   const std::size_t out = edge_index(edges.out);
-  const bool narrow = narrow_ != nullptr && codelet_slot(n) < narrow_leaf_slots;
+  // The narrow table has no row of 20 (a pass radix only, X38): the target's own leaf then.
+  const bool narrow = narrow_ != nullptr && codelet_slot(n) < narrow_leaf_slots &&
+                      narrow_->leaf[codelet_slot(n)][0][0][0] != nullptr;
   const radix_passes& own = *kernels_.passes.codelet[codelet_slot(n)];
   // Lines of stride 1 without a factor edge: the leaf with constant offsets (X28b).
   if (src.stride == 1 && dst.stride == 1 && edges.in != edge_op::factor &&
@@ -631,12 +665,16 @@ slot chain_builder<T>::add_convolution(std::size_t s, std::size_t len,
     backward.in_factor = kernel;
   }
   slot at = conv;
+  // Experiment X36: one copy runs the split run a line of len points would (split_from), its
+  // last forward pass applying the kernel spectrum as a per-element output factor; copies,
+  // whose factor or lanes are shared, stay interleaved.
+  const std::size_t split = s == 1 ? split_from(rad, false, 1) : rad.size();
   for (const int dir : {-1, +1}) {
     std::size_t copies = s;
     for (std::size_t i = 0; i < rad.size(); ++i) {
       const slot next = other_scratch(at);
       add_pass(s * len, rad, i, copies, dir, {at, 1}, {next, 1}, dir < 0 ? forward : backward,
-               stages, s);
+               stages, s, layout_of(i, split, rad.size()));
       at = next;
       copies *= rad[i];
     }
@@ -659,7 +697,7 @@ void chain_builder<T>::add_rader(std::size_t n, std::size_t q, std::size_t g, in
                                  std::vector<stage>& stages) {
   const std::size_t s = n / q;
   const std::size_t len = q - 1;
-  const std::vector<std::size_t> rad = rule_radices(len, profile_);
+  const std::vector<std::size_t> rad = convolution_radices(len);
   const std::size_t c = kernels_.complex_lanes;
   const edge_op in = first ? edges.in : edge_op::none;
   const pass_kernels<T>& k = kernels_.passes;
@@ -736,14 +774,13 @@ void chain_builder<T>::add_bluestein(std::size_t n, std::size_t q, int sign, end
     return;
   }
   const std::size_t s = n / q;
-  const std::size_t m = bluestein_length(q, profile_);
-  const std::vector<std::size_t> rad = rule_radices(m, profile_);
+  const std::size_t m = bluestein_m(q);
+  const std::vector<std::size_t> rad = convolution_radices(m);
   const std::size_t c = kernels_.complex_lanes;
   const edge_op in = first ? edges.in : edge_op::none;
   const pass_kernels<T>& k = kernels_.passes;
   const bool shared = s > 1 && s % c == 0;
   const bluestein_tables tab = bluestein_tables_of(q, sign, shared ? 0 : s);
-
   // The convolution starts in the scratch line the source is not in, and ends there.
   const slot conv =
       src.where == slot::a || src.where == slot::b ? other_scratch(src.where) : slot::a;

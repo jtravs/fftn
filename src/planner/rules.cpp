@@ -45,39 +45,50 @@ constexpr std::array<std::size_t, cost_radices> pass_radices{
 // 256 and 512 are experiment X30's: two passes with a radix-32 codelet, which the costs (no
 // radix 32 or 64 column, X3) cannot choose, where the chain ran three
 // (dev/experiments/X30-x86-pass-loops.md).
+// 384 and 20000 are experiment X38's: X2's search driver re-run on the EPYC 7763 with
+// radix 32 and 64 candidates (campaign x38-epyc-avx2), the lengths where one sequence was at
+// most 0.97 of the planner's at batch 1 and 64; 80, 160, 240, 640, 2000, 3000 and 3600 take
+// a radix-20 pass by the same rule (campaign x38-r20), as FFTW's plans do there
+// (dev/experiments/X38-epyc-mid.md).
 // clang-format off
 // NOLINTBEGIN(readability-trailing-comma): bench/x2/fit.py writes and parses this layout
-constexpr std::array<radix_override, 30> avx2_double_overrides{{
+constexpr std::array<radix_override, 36> avx2_double_overrides{{
     {.n = 27, .radices = {3, 9, 0, 0}},
     {.n = 42, .radices = {2, 3, 7, 0}},
     {.n = 54, .radices = {2, 3, 9, 0}},
     {.n = 63, .radices = {7, 9, 0, 0}},
     {.n = 70, .radices = {2, 5, 7, 0}},
+    {.n = 80, .radices = {4, 20, 0, 0}},
+    {.n = 160, .radices = {8, 20, 0, 0}},
     {.n = 168, .radices = {12, 14, 0, 0}},
     {.n = 216, .radices = {2, 12, 9, 0}},
+    {.n = 240, .radices = {12, 20, 0, 0}},
     {.n = 256, .radices = {8, 32, 0, 0}},
     {.n = 350, .radices = {2, 5, 5, 7}},
-    {.n = 384, .radices = {2, 16, 12, 0}},
+    {.n = 384, .radices = {12, 32, 0, 0}},
     {.n = 448, .radices = {2, 16, 14, 0}},
     {.n = 490, .radices = {2, 7, 5, 7}},
     {.n = 512, .radices = {16, 32, 0, 0}},
     {.n = 567, .radices = {9, 9, 7, 0}},
     {.n = 588, .radices = {6, 7, 14, 0}},
+    {.n = 640, .radices = {20, 32, 0, 0}},
     {.n = 675, .radices = {15, 5, 9, 0}},
     {.n = 700, .radices = {10, 5, 14, 0}},
     {.n = 768, .radices = {4, 16, 12, 0}},
     {.n = 896, .radices = {4, 16, 14, 0}},
     {.n = 1536, .radices = {6, 16, 16, 0}},
     {.n = 1920, .radices = {10, 16, 12, 0}},
-    {.n = 2000, .radices = {8, 10, 5, 5}},
+    {.n = 2000, .radices = {10, 10, 20, 0}},
     {.n = 2400, .radices = {10, 15, 16, 0}},
-    {.n = 3000, .radices = {8, 5, 5, 15}},
+    {.n = 3000, .radices = {10, 15, 20, 0}},
+    {.n = 3600, .radices = {12, 15, 20, 0}},
     {.n = 4096, .radices = {8, 8, 8, 8}},
     {.n = 4800, .radices = {8, 12, 5, 10}},
     {.n = 6000, .radices = {8, 10, 5, 15}},
     {.n = 8192, .radices = {8, 8, 16, 8}},
     {.n = 12000, .radices = {8, 10, 15, 10}},
     {.n = 16384, .radices = {8, 16, 16, 8}},
+    {.n = 20000, .radices = {8, 5, 10, 5, 10}},
 }};
 constexpr std::array<radix_override, 13> avx2_float_overrides{{
     {.n = 90, .radices = {9, 10, 0, 0}},
@@ -753,7 +764,9 @@ std::vector<std::size_t> rule_radices(std::size_t n, const target_profile& p) {
   if (n <= 1) {
     return {};
   }
-  if (n <= largest_leaf || (n <= p.leaf_limit && has_codelet(n))) {
+  // Whole-transform leaves above 16: the powers of two (X8) and the primes (X27). Radix 20
+  // is a pass radix only (experiment X38): its leaf was never measured.
+  if (n <= largest_leaf || (n <= p.leaf_limit && has_codelet(n) && n != 20)) {
     return {n};
   }
   if (std::vector<std::size_t> o = override_of(n, p); !o.empty()) {
@@ -862,21 +875,23 @@ std::size_t rader_root(std::size_t q, const target_profile& p) {
   return 0; // unreachable: every prime has a primitive root
 }
 
-std::size_t bluestein_length(std::size_t q, const target_profile& p) {
+std::size_t bluestein_length(std::size_t q, const target_profile& p, std::size_t pow2_part_limit) {
   const std::size_t least = 2 * q - 1;
   std::size_t power = 1;
   while (power < least) {
     power *= 2;
   }
+  const std::size_t top = power > pow2_part_limit ? 2 * least : power;
   // The two chirp passes touch M points each, priced like a last radix-2 pass per point.
   const std::uint64_t per_point = p.costs->unit[2][0] / (2 * p.lanes) + 1;
-  // The 7-smooth lengths in [least, power], ascending.
+  // The 7-smooth lengths in [least, top], ascending, without those whose power-of-two part
+  // is above pow2_part_limit.
   std::vector<std::size_t> candidates;
-  for (std::size_t a = 1; a <= power; a *= 2) {
-    for (std::size_t b = a; b <= power; b *= 3) {
-      for (std::size_t c = b; c <= power; c *= 5) {
-        for (std::size_t d = c; d <= power; d *= 7) {
-          if (d >= least) {
+  for (std::size_t a = 1; a <= top; a *= 2) {
+    for (std::size_t b = a; b <= top; b *= 3) {
+      for (std::size_t c = b; c <= top; c *= 5) {
+        for (std::size_t d = c; d <= top; d *= 7) {
+          if (d >= least && a <= pow2_part_limit) {
             candidates.push_back(d);
           }
         }

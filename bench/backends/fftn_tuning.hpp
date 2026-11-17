@@ -128,6 +128,14 @@ constexpr std::array size_fields{
         .key = "POW2_RADIX8_BYTES",
         .member = &fftn::detail::machine_profile::pow2_radix8_bytes,
     },
+    size_field{
+        .key = "BLUESTEIN_POW2_PART_BYTES",
+        .member = &fftn::detail::machine_profile::bluestein_pow2_part_bytes,
+    },
+    size_field{
+        .key = "LONG_CONVOLUTION_BYTES",
+        .member = &fftn::detail::machine_profile::long_convolution_bytes,
+    },
 };
 constexpr std::array int_fields{
     int_field{

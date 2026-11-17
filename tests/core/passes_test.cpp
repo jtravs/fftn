@@ -244,7 +244,8 @@ TEST(Passes, GenericInEveryPosition) {
 template <class T> void leaves_above_sixteen(fftn::isa target) {
   for (const std::uint8_t radix : fftn::detail::gen::radices) {
     const std::size_t n = radix;
-    if (n <= 16) {
+    // Radix 20 is a pass radix only (experiment X38): never a leaf.
+    if (n <= 16 || n == 20) {
       continue;
     }
     const std::string leaf = "leaf radix-" + std::to_string(n);
@@ -614,8 +615,39 @@ template <class T> void split_only_where_it_fits(fftn::isa target) {
     EXPECT_FALSE(has_split({2, f / 2, 2}, 0)) << "a run of one pass";
   }
   EXPECT_FALSE(has_split({f, 2, 29}, no_bluestein)) << "a generic pass in the run";
-  EXPECT_FALSE(has_split({f, 2, 2, 47}, 16)) << "a Bluestein stage";
-  EXPECT_FALSE(has_split({f, 2, 2, 29}, 16)) << "a Rader stage";
+  EXPECT_FALSE(has_split({f, 2, 2, 47}, 16)) << "a Bluestein stage with copies";
+  EXPECT_FALSE(has_split({f, 2, 2, 29}, 16)) << "a Rader stage with copies";
+  // One copy: the convolution runs the split run its length would (experiment X36), its
+  // forward chain's last split pass applying the kernel spectrum: a split run exactly where
+  // the line of the convolution's length with the same radices has one (4093: Bluestein,
+  // M from the plan's listing; 7681: Rader, L = 7680), and then with the line's edges,
+  // both directions, against the reference.
+  const auto t = static_cast<fftn::detail::target>(static_cast<unsigned char>(target));
+  const auto profile = fftn::detail::profile_of(
+      t, fftn::detail::of<T>(*fftn::detail::find_kernels(t)).complex_lanes);
+  for (const std::size_t q : {std::size_t{4093}, std::size_t{7681}}) {
+    build_settings one;
+    one.radices = {q};
+    one.layout = fftn::detail::layout_choice::split;
+    const auto core =
+        make_plan_core(fftn::detail::view_of(fftn::rows_c2c<T>(q, 1, fftn::direction::forward)),
+                       {.force_isa = target}, one);
+    const std::string listing = joined(stage_names(*core));
+    std::size_t len = q - 1;
+    if (const std::size_t at = listing.find(", M "); at != std::string::npos) {
+      len = std::stoul(listing.substr(at + 4));
+    }
+    const bool split = has_split(fftn::detail::rule_radices(len, profile), 0);
+    EXPECT_EQ(listing.find("convolution: split lane") != std::string::npos, split)
+        << q << " " << len << listing;
+    if (!split) {
+      continue;
+    }
+    check_row<T>(target, q, fftn::direction::forward, one, 1.0, true, true, false,
+                 {"convolution: split lane", "out: factor"});
+    check_row<T>(target, q, fftn::direction::backward, one, 0.375, false, false, false,
+                 {"convolution: split lane", "out: scale"});
+  }
   EXPECT_FALSE(has_split({f, 2, 17}, 0)) << "radix 17 has no split codelet";
   EXPECT_FALSE(has_split({f, 32, 2}, 0)) << "radix 32 has no split codelet";
 
@@ -840,6 +872,27 @@ TEST(Passes, ScratchOnlyWhenUsed) {
     EXPECT_NE(rader_listing.find("rader out"), std::string::npos) << rader_listing;
     EXPECT_EQ(rader_listing.find("copy"), std::string::npos) << rader_listing;
     EXPECT_EQ(rader->scratch_line, 152U) << fftn::isa_name(t);
+  }
+}
+
+// A Bluestein stage with at most a register's lanes of copies becomes one stage over the
+// whole line (experiments X36, X36b): 2 x 509 is "bluestein 1018" where C >= 2, and the
+// plain "2 x bluestein 509" where C = 1. Both are within tolerance (the oracle suites).
+template <class T> void few_copies_take_the_whole_line(fftn::isa t) {
+  const auto shape = fftn::rows_c2c<T>(std::size_t{2} * 509, 1, fftn::direction::forward);
+  const auto core = make_plan_core(fftn::detail::view_of(shape), {.force_isa = t}, {});
+  const std::string listing = joined(stage_names(*core));
+  if (lanes_of<T>(t) >= 2) {
+    EXPECT_NE(listing.find("Q 1018, "), std::string::npos) << fftn::isa_name(t) << listing;
+  } else {
+    EXPECT_NE(listing.find("Q 509, "), std::string::npos) << fftn::isa_name(t) << listing;
+  }
+}
+
+TEST(Passes, FewBluesteinCopiesTakeTheWholeLine) {
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    few_copies_take_the_whole_line<double>(t);
+    few_copies_take_the_whole_line<float>(t);
   }
 }
 
@@ -1142,6 +1195,9 @@ template <class T> void narrow_leaves_match(fftn::isa t) {
   constexpr std::ptrdiff_t out_stride = 3;
   for (std::size_t slot = 0; slot < fftn::detail::narrow_leaf_slots; ++slot) {
     const std::size_t r = fftn::detail::gen::radices[slot];
+    if (r == 20) {
+      continue; // a pass radix only, no narrow leaf (experiment X38)
+    }
     fftn::test::input_source src(0x4E41ULL + r);
     const cvec<T> x = src.complexes<T>(lines * r * in_stride);
     const cvec<T> in_factor = src.complexes<T>(r);

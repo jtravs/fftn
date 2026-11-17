@@ -614,6 +614,32 @@ Xeon 6240 and 0.80–0.87 on the M5 Max, bit for bit the same. The one rare path
 arithmetic at this size: specialise the common case at plan time.
 [X28b](experiments/X28b-short-leaves.md).
 
+4.14 **A Bluestein stage is only as fast as the long-row and layout rules its convolution
+inherits.** FFTW runs Bluestein for 131071, 999983 and 4093 too and was 1.3–2.6 times
+faster: FFTN's convolution, a chain of M points built apart from the line rules, took the
+in-cache cost table's radices at any size (radix-16 passes over 2¹⁸ points: 2.5 times the
+long-row radices' time on the M5 Max), never the split layout x86 lines take, and the
+cheapest length by the table, which is a power of two. On Apple powers of two from the L1's
+size up ran 1.4–1.7 times as long per point as 7-smooth lengths just above (as did lengths
+with a power-of-two part of 4096 or more), and on the EPYC 7763 the convolution's two
+scratch lines, a power of two apart when M is one, made 4093–32749 take 1.4–5 times as
+long as with a 7-smooth M; the Xeon 6240 showed neither. With the line rules applied and
+the length's power-of-two part limited per machine, the Mac's large primes took 0.33–0.64
+of their time (FFTN ÷ FFTW 1.4–2.6 → 0.70–0.90). Choose transform lengths inside other
+algorithms with the same memory rules as the user's lengths, and avoid power-of-two
+distances between buffers that are read together.
+[X36](experiments/X36-large-primes.md).
+4.15 **Read the competitor's printed plans for the radices you lack before tuning the ones
+you have.** On the EPYC (Zen 3, AVX2) FFTW planned 160–3600 points with radix-20 passes (240
+= 12 × 20, 2000 = 10 × 20 × 10) and FFTN, without a codelet of 20, needed a pass more;
+re-running FFTN's exhaustive sequence search over every radix it had (2–16, 32, 64) gained
+nothing at 80–160 and 512–2048 and 4–16 % at three lengths, while one generated radix-20
+codelet gained 4–19 % at seven (0.868 of the time over the changed lengths, 240 from 1.13 to
+0.93 of FFTW). The converse also held: FFTW's two-pass plans with a radix-64 first pass ran
+1.2–1.3 times FFTN's three passes, because FFTN's radix-64 codelet holds 67 live values in
+16 registers; a plan shape transfers only with codelets that keep it in registers.
+[X38](experiments/X38-epyc-mid.md).
+
 ## 5. Threading
 
 5.1 **Synchronisation costs set the smallest row worth splitting.** Spin barrier /

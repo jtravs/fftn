@@ -61,11 +61,14 @@
 //                    the split passes (experiment X1)
 //   GRID_FACTORS=n1.n2[.n3]     the grid's factors in phase order (build_settings::
 //                    grid_factors), for rows they multiply to
+//   RADER=rules|0|1  Rader stages (build_settings::rader): the profile's range (default),
+//                    never (Bluestein instead), or for every prime factor whose q - 1 is
+//                    13-smooth (experiment X27; task 2.4's 65537 check)
 //   GRID_PHASE_RADIX=R          the largest radix of the grid's phase rule (build_settings::
 //                    grid_phase_radix; default 16): codelet radices up to R (experiment X3)
 //   GRID_MIN_BYTES, GRID_THREE_BYTES, GRID_BLOCK_BYTES, GRID_BLOCK, GRID_FUSE_BYTES,
 //   GRID_PAD_PERIOD, POW2_CHAIN_BYTES, POW2_RADIX8_BYTES, GRID_TWO_ODD_PART,
-//   GRID_TWO_PART_BYTES
+//   GRID_TWO_PART_BYTES, BLUESTEIN_POW2_PART_BYTES, LONG_CONVOLUTION_BYTES
 //                    the planner's grid fields of the machine profile (schedule.hpp)
 // ISA is a public option; the others reach the library only through the private build
 // settings, as a test's do: the library has no switch for them, so dev/KNOBS.toml does not
@@ -161,6 +164,7 @@ struct session {
   std::string strategy = "rules"; // STRATEGY as given
   std::string layout = "rules";   // LAYOUT as given
   std::string factors_text;       // GRID_FACTORS as given
+  std::string rader = "rules";    // RADER as given
   std::string description;
 };
 
@@ -477,6 +481,13 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
         return fbench_error;
       }
       s.factors_text = value;
+    } else if (key == "RADER") {
+      if (value != "rules" && value != "0" && value != "1") {
+        say(message, message_size, "RADER is rules, 0 or 1");
+        return fbench_error;
+      }
+      s.settings.rader = value == "rules" ? -1 : value == "0" ? 0 : 1;
+      s.rader = value;
     } else if (key == "GRID_PHASE_RADIX") {
       const std::optional<std::size_t> v = fbench::fftn_tuning::parse_size(value, 2, false);
       if (!v || *v > 64) {
@@ -522,6 +533,7 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
         .raw("supports", R"(["c2c","r2c","c2r"])")
         .raw("precisions", R"(["f64","f32"])")
         .str("planning", s.planning)
+        .str("rader", s.rader)
         .str("strategy", s.strategy)
         .str("layout", s.layout);
     if (s.measure_seconds != 0) {

@@ -97,7 +97,8 @@ TEST(Rules, RadicesMultiplyToTheLength) {
       std::size_t product = 1;
       for (const std::size_t r : fftn::detail::rule_radices(n, profile)) {
         product *= r;
-        EXPECT_TRUE(r <= 16 || r == 32 || r == 64 || is_prime(r)) << n << ": radix " << r;
+        EXPECT_TRUE(r <= 16 || r == 20 || r == 32 || r == 64 || is_prime(r))
+            << n << ": radix " << r;
       }
       EXPECT_EQ(product, n) << n;
     }
@@ -253,7 +254,7 @@ TEST(Rules, MeasuredExamples) {
   EXPECT_EQ(r(700, f32), (v{4, 5, 5, 7}));
   EXPECT_EQ(r(4096, f64), (v{8, 8, 8, 8}));    // experiment X18
   EXPECT_EQ(r(16384, f64), (v{8, 16, 16, 8})); // the planner refresh
-  EXPECT_EQ(r(3000, f64), (v{8, 5, 5, 15}));
+  EXPECT_EQ(r(3000, f64), (v{10, 15, 20}));    // experiment X38: a radix-20 pass
   EXPECT_EQ(r(3600, f32), (v{16, 15, 15}));
   // Primes above 16 go last (the chain makes them a codelet pass for 17, 19 and 23,
   // experiment X27, else a Bluestein stage).
@@ -316,7 +317,10 @@ TEST(Rules, DescribeSaysWhenRadicesAreForced) {
 // axis line and in the stages (strategies/chain.hpp); 262 = 2 x 131 is not 7-smooth.
 TEST(Rules, DescribeNamesTheBluesteinStage) {
   const auto shape = fftn::rows_c2c<double>(std::size_t{4} * 263, 1, fftn::direction::forward);
-  const auto core = make_plan_core(fftn::detail::view_of(shape), fftn::options(), build_settings{});
+  // Forced, since on targets with C >= 4 the rules make 1052 one stage (X36, X36b).
+  build_settings forced;
+  forced.radices = {4, 263};
+  const auto core = make_plan_core(fftn::detail::view_of(shape), fftn::options(), forced);
   const std::string text = describe(*core);
   EXPECT_NE(text.find("radices 4 x bluestein 263 (M "), std::string::npos) << text;
   EXPECT_NE(text.find("bluestein in, chirp forward (Q 263, M "), std::string::npos) << text;
@@ -365,6 +369,35 @@ TEST(Rules, RaderRoot) {
   const auto avx512_float = fftn::detail::profile_of(target::avx512, 8);
   EXPECT_EQ(rader_root(97, avx512_float), 0U); // from 16 C = 128 with C = 8
   EXPECT_EQ(rader_root(257, avx512_float), 3U);
+}
+
+// The Bluestein length (experiment X36): at least 2q - 1, 7-smooth; with a limit on its
+// power-of-two part, no candidate exceeds it, and the candidates then run past the next
+// power of two (131071: 2q - 1 = 262141, whose only 7-smooth length up to 2^18 is 2^18).
+TEST(Rules, BluesteinLength) {
+  using fftn::detail::bluestein_length;
+  const auto neon = fftn::detail::profile_of(fftn::detail::target::neon_fcma, 1);
+  const auto power_part = [](std::size_t m) { return m & (~m + 1); };
+  const auto smooth = [](std::size_t m) {
+    for (const std::size_t f : {2U, 3U, 5U, 7U}) {
+      while (m % f == 0) {
+        m /= f;
+      }
+    }
+    return m == 1;
+  };
+  EXPECT_EQ(bluestein_length(131071, neon), std::size_t{1} << 18U);
+  for (const std::size_t q : {29U, 509U, 4093U, 65537U, 131071U, 999983U}) {
+    for (const std::size_t limit : {std::size_t{64}, std::size_t{2048}}) {
+      const std::size_t m = bluestein_length(q, neon, limit);
+      EXPECT_GE(m, 2 * q - 1) << q;
+      EXPECT_LT(m, 4 * q) << q;
+      EXPECT_TRUE(smooth(m)) << q << " " << m;
+      EXPECT_LE(power_part(m), limit) << q << " " << m;
+    }
+  }
+  // A limit above the next power of two changes nothing.
+  EXPECT_EQ(bluestein_length(509, neon, 1024), bluestein_length(509, neon));
 }
 
 std::vector<std::byte> run(const fftn::detail::plan_core& core, std::vector<std::byte> input,

@@ -98,7 +98,14 @@ Mac result (run 20261116-200843-f54c, band ±1.93 %):
   0.8 s, because nothing is timed when only one candidate is admitted;
 - M's median planning time is 0.042 s per case, and 2²² takes 6.4 s.
 
-Rule 4 still fails on the Mac. The instability that remains is between candidates within
+Xeon (20261116-215950-1f7c, ±4.10 %) and EPYC (20261116-231702-f43c, ±1.82 %):
+- `Q ÷ M` 1.010 and 1.006;
+- one program over 12 rounds in 23 and 40 of 61 cases;
+- winners up to rank 6 and 5;
+- M's planning 0.050 and 0.048 s median per case, 10.2 and 6.3 s at the largest;
+- Q's summed over the tier 2.8 and 4.7 s per round (first pass 7.9 and 9.1 s).
+
+Rule 4 still fails on every machine. The instability that remains is between candidates within
 noise of each other; a rule judging stability should count a change of choice only when the
 programs differ by more than the band. That is a proposal for a third pass, not a change to
 this pass's rule.
