@@ -162,8 +162,8 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
   }
 #else
   if (s.threads > 1) {
-    say(message, message_size, "THREADS > 1 needs libfftw3_threads, which " FBENCH_FFTW_ROOT
-                               " does not have");
+    say(message, message_size,
+        "THREADS > 1 needs libfftw3_threads, which " FBENCH_FFTW_ROOT " does not have");
     return fbench_error;
   }
 #endif

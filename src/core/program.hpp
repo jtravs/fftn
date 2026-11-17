@@ -97,8 +97,8 @@ struct flat_stage {
 // The slots in, out and block are offset by the bytes the loops would have moved them;
 // scratch never moves.
 struct call {
-  pass_fn run = nullptr;    // a stage's kernel over units [0, units)
-  leaf_fn leaf = nullptr;   // or a leaf over `units` lines, src_step and dst_step bytes apart
+  pass_fn run = nullptr;  // a stage's kernel over units [0, units)
+  leaf_fn leaf = nullptr; // or a leaf over `units` lines, src_step and dst_step bytes apart
   std::size_t units = 0;
   std::ptrdiff_t src_off = 0; // bytes from the transform's address of the src slot
   std::ptrdiff_t dst_off = 0;

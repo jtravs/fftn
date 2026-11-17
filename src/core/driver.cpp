@@ -291,7 +291,7 @@ std::ptrdiff_t offset_of(slot s, const offsets& off) noexcept {
 // Appends the calls of records [begin, end) at offsets `off` (run_records' order and
 // grouping); false when the program has moving twiddles or more than calls_max calls.
 bool unroll_records(const program& p, std::size_t begin, std::size_t end, const offsets& off,
-            std::vector<std::size_t>& arg_of, std::vector<call>& out) {
+                    std::vector<std::size_t>& arg_of, std::vector<call>& out) {
   for (std::size_t i = begin; i < end; ++i) {
     const record& r = p.records[i];
     if (const stage* st = std::get_if<stage>(&r)) {
@@ -342,9 +342,10 @@ bool unroll_records(const program& p, std::size_t begin, std::size_t end, const 
     }
     for (std::size_t c = 0; c < l.count; ++c) {
       const auto k = static_cast<std::ptrdiff_t>(c);
-      if (!unroll_records(p, i + 1, l.body_end,
-                  {from[0] + l.step[0] * k, from[1] + l.step[1] * k, from[2] + l.step[2] * k},
-                  arg_of, out)) {
+      if (!unroll_records(
+              p, i + 1, l.body_end,
+              {from[0] + l.step[0] * k, from[1] + l.step[1] * k, from[2] + l.step[2] * k}, arg_of,
+              out)) {
         return false;
       }
     }
