@@ -1603,7 +1603,14 @@ only for the copies a strided column costs where C > 1: none on NEON double (the
 tiles fit `column_tile_bytes`, X40's wide block only where each column element has its own
 page and the column exceeds half of L1, the chain otherwise (EPYC: 0.89 over the 71 real
 planes, 32 × 30 0.74, 36 × 2048 0.77, 2048² 0.73–0.85; 1024² stays on the chain, whose
-4-column tiles lost 1.05). Not built yet: blocks over the columns of a long axis beyond L2
+4-column tiles lost 1.05). On `avx2` the column phase's first and last passes run a whole
+block's B / C runs of C columns in an inner loop at one group (first pass) or copy (last
+pass), the group's twiddles loaded once up to radix 8, instead of one unit per run with its
+own leg addresses and loop state (X44: the Xeon's column edge passes each ran as many
+instructions as the row's whole pair leaf; the EPYC's planes and volumes with a column
+phase 0.94 of the time, 64³ 0.84). `avx512` (0.962 on the Xeon, against the rule's 0.95)
+and NEON (0.997) keep the unit loop. Not
+built yet: blocks over the columns of a long axis beyond L2
 (a two-phase split of the column, the grid's way), and padding or block ordering against the
 rows' own power-of-two conflicts.
 
@@ -2938,6 +2945,7 @@ to change before a release.
 | 2026-11-17 | CI for merge latency, decided by the maintainer, 2026-11-17: the ruleset on main requires four checks (lint; GCC 16 build and benchmark smoke and Clang 23 ASan + UBSan on Linux x86-64; Homebrew LLVM on macOS arm64) and no longer requires branches up to date; ThreadSanitizer, Clang 16, the build without the old x86 targets, AArch64 and Windows run after each merge on main (runs on main are not cancelled); emulation weekly and on demand only; the per-change sanitizer jobs leave out the old x86 targets | merges waited 30–90 minutes, and each merge restarted every other pull request's checks; with no users yet, a break on main found within the hour and fixed there costs less |
 
 | 2026-11-17 | Multi-axis programs of at most 256 kernel calls per transform run from their calls unrolled at construction (section 8.3); the complex axes of real planes take the lanes column phase where C > 1 with their own block rule; where a cluster shares L2 a column block's tiles stay within twice L1 when its column elements lie four to a page (section 9.3) | X41: planes of up to 1024 points 0.87–0.94 of the walk's time (three machines); real planes 0.89 (EPYC) and 0.83 (Xeon) of the chain columns' time, the M5 Max lost 1.04 and keeps the chain; M5 Max 2048 × 36 0.90; joining the narrower block's phase (T1) rejected at 0.96 |
+| 2026-11-17 | In double, a lanes column phase of 17–32 points with a codelet of its length is that one pass (section 9.3); on `avx2` the column edge passes run a block's runs in an inner loop per group | X44: on x86 the row of 32 is a pair leaf and its columns took two lane passes (EPYC 32² 0.72, Xeon 0.77–0.81 of the time, ÷ FFTW 1.39 → 1.00, ÷ MKL 1.37 → 1.07); the nested runs 0.94 on the EPYC's planes and volumes, 0.962 on the Xeon (below the bar), 0.997 on the Mac |
 ---
 
 ## 20. References

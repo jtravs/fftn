@@ -1,6 +1,6 @@
 # X44: the one-thread plane cases task 4.1 still misses
 
-- **Status:** running
+- **Status:** done (P adopted on x86; N adopted on `avx2`; re-run of past-limit cases pending)
 - **Owner:** X44 agent, 2026-11-17
 - **Phase / task:** 4.1
 
@@ -149,6 +149,12 @@ P against `main` (B: ed598e1), the 126 cases, FFTW in the same run (P÷B paired)
   → 1.00 (op and ip), 32² × 16 1.31 → 0.97. Worst unchanged case c2c 36 × 2048 in place
   1.032 (its program is unchanged), just past the 2 % limit: re-run (Slurm 512068).
 
+- Xeon, run 20261117-165710-e283 (Slurm 16371; 12 rounds, 5 loaded, band ±4.3 %; arms B, P,
+  N, FFTW, MKL in one run; the filter's 132 cases): 0.870 over the 17 changed cases (c2c 32²
+  0.77–0.81, 32² × 16 0.78, 32 × 30 0.85–0.87, 32³ 0.88; real 0.86–0.93); worst unchanged
+  case r2c 36 × 2048 1.036, inside the band. FFTN ÷ MKL at 32²: 1.36–1.38 → 1.06–1.09, 32² ×
+  16 1.30 → 1.06. Rule met: P adopted on `avx512`.
+
 ### N: the column edge passes' runs in an inner loop
 
 From the Xeon's counters (D): in `lanes_first` and `lanes_last` with `columns_inner`, a whole
@@ -166,6 +172,22 @@ column phase with at least one whole block. Base: P. Rule as above per machine-t
 Xeon and the EPYC by `fbench_remote.py submit --serial`, the Mac locally); where N is not
 adopted on a target, the fast path is compiled out for it.
 
+N against P on the EPYC, run 20261117-164127-b5e3 (Slurm 512049; 12 rounds, all loaded, band
+±1.6 %; the filter's 132 plane and volume cases): 0.936 over the 100 with a lanes column
+phase (64³ 0.84, 48³ 0.85, 32³ 0.86, 96² 0.87, 64² 0.87–0.88, 64² × 16 0.87, 100³ 0.87),
+0.951 over all; FFTN ÷ FFTW 0.981 → 0.931 over the 132. Past the 2 % limit: c2c 4 × 6 × 8
+1.034, 32 × 30 × 2 in place 1.031, 32² in place 1.021, c2r 32² 1.020 (columns of 32 or of
+4–8 points, single-pass leaves that N does not touch): re-run with P against B's 36 × 2048
+in one job (Slurm 512179).
+
+N against P on the Xeon, the same run 20261117-165710-e283: 0.962 over the 110 cases with a
+lanes column phase, 0.969 over all; c2c planes 0.92 (64² 0.83–0.84, 64² × 16 0.87, 256² in
+place 0.87, 128² 0.88–0.89, 100² 0.88, 36 × 2048 0.89), real planes 0.96–0.97, volumes 0.96
+(64³ 0.86); worst c2r 8 × 6 × 2 in place 1.038, inside the band. Rule (1) fails on `avx512`
+(0.962 against 0.95): N is not adopted there as written. Over MKL the c2c planes would go
+from 0.95 (P) to 0.905 and 64² to 0.90–0.93; a narrower arm for `avx512` would need its own
+rule and fresh runs (a decision for the maintainer, below).
+
 N against P on the Mac, run 20261117-154001-6cda (10 rounds, all loaded, band ±1.9 %; the 126
 cases and six more volumes of the filter): 0.997 over all, 256² 0.97, 64³ 0.94, 48³ 0.96;
 r2c 5 × 7 1.06 (a plan without a column phase). Rule (1) fails on the Mac: N is not adopted
@@ -173,4 +195,29 @@ on NEON, where the fast path is compiled out.
 
 ## Verdict
 
-(Pending.)
+- **P adopted** (columns of 17–32 points as one lane pass, double): Xeon 0.870 over the 17
+  changed cases; EPYC 0.793 (its one unchanged case past the limit, c2c 36 × 2048 in place
+  1.032, re-run in Slurm 512179); NEON plans unchanged. EPYC 32² ÷ FFTW 1.39 → 1.00, Xeon
+  32² ÷ MKL 1.37 → 1.07. DESIGN 9.3 and the decision log.
+- **N adopted on `avx2`** (0.936 over the EPYC's 100 cases with a column phase; its four
+  cases past the limit sit on paths N does not touch and are re-run in Slurm 512179);
+  **not adopted on `avx512`** (0.962 against 0.95; c2c planes 0.92) or NEON (0.997): the fast
+  path is compiled for `avx2` only. LESSONS 4.17.
+- No arm for the Mac: its 32²–64² gap is FFTW's radix-64 codelet (`n1fv_64`), against which
+  FFTN's radix-64 pass loses in rows and columns alike (1.06–1.19); a faster generated
+  radix-64 codelet on NEON is the generator's work (X42).
+- Column radices and blocks beyond P: no forced radix sequence or block width moved a plane
+  of 64²–512² by more than 2–4 % on the EPYC or the Xeon (D; after N, on the Xeon, radix 64
+  in one pass 1.17 at 64²).
+
+Not met (task 4.1, one thread), from run 20261117-165710-e283 with the adopted code (on the
+Xeon that is P without N): the Xeon against MKL on c2c planes 64² (1.07–1.08), 128² (1.14–1.16),
+256² (1.21–1.23), 100² (1.39), 480 × 640 (1.32–1.33), 512² (1.32–1.34), 1024² (1.24–1.32),
+16² × 2 (1.24–1.25), 36 × 2048 and 2048 × 36 (1.14–1.23), 32² (1.06–1.09), though their
+geometric mean is 0.95 (MKL is slow on others); real planes against MKL (geometric means
+r2c 1.005, c2r 1.023; up to 1.6 at 16² × 2 and 1.3–1.5 at 256²–1024²), where the real rows
+as 1-D batches already take 1.1–1.4 times MKL's time (the pairing pass's scalar work, X6's
+question); EPYC real planes 64²–256² 4–7 % behind FFTW. Next: the column edge kernels'
+per-call set-up (a radix-16 column leaf spills 32 leg addresses for four runs at 16²), the
+middle lane passes' per-unit set-up (the same as N's, in `lane_pass`, shared with rows),
+and a narrower arm of N for `avx512` if the maintainer wants one.
