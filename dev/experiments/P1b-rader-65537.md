@@ -60,13 +60,24 @@ in P1's second pass (Bluestein 0.57 of Rader's time). Three runs on the EPYC now
 
 65537 on the EPYC is bimodal by process. The likely cause is the page backing of Rader's
 random gathers over a megabyte, its index and kernel tables included (LESSONS 4.11; the page
-kinds of P2's third pass). The Xeon's run (Slurm 16212) is still queued. The decision does
-not wait for it, since the rule needs a gain on every machine.
+kinds of P2's third pass).
+
+Xeon (run 20261117-033046-7640, Slurm 16202/16212; 0 of 16 rounds loaded, ±1.00 %): `B ÷ N`
+on `avx512`, and `B2 ÷ N2` on `avx2` from the same rounds:
+
+| Case | `avx512` double | `avx512` float | `avx2` double | `avx2` float |
+|---|---|---|---|---|
+| 97 | 1.367 | 1.008 | 1.437 | 1.154 |
+| 257 | 1.511 | 0.877 | 1.726 | 1.353 |
+| 65537 | 1.844 | 1.990 | 1.676 | 1.572 |
+
+On the Xeon, Rader wins at 65537 by 1.6–2.0 on both targets.
 
 ## Verdict
 
 Rules unchanged. The rule (Bluestein below 0.95 at 65537 on the EPYC and both Xeon targets)
-fails on the EPYC: there Rader is faster at 65537 in this run (1.49 and 1.18). PLAN lead (e)'s
+fails on the EPYC, where Rader is faster at 65537 in this run (1.49 and 1.18), and on the
+Xeon, where it is faster by 1.6–2.0 on both targets. PLAN lead (e)'s
 EPYC 65537 numbers (1.09 against 1.63 of FFTW) are the same bimodality. A Rader stage whose
 gathers do not depend on the page size (blocked permutations, or tables laid out in the
 order of access) is the follow-up, not a smaller range.
