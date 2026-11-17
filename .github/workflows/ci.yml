@@ -99,7 +99,9 @@ jobs:
            "stages": "sanitize"},
           {"name": "clang-23 tsan", "llvm": "23", "cxx": "/usr/lib/llvm-23/bin/clang++",
            "stages": "tsan"},
-          {"name": "clang-16", "cxx": "/usr/lib/llvm-16/bin/clang++", "stages": "build"}
+          {"name": "clang-16", "cxx": "/usr/lib/llvm-16/bin/clang++", "stages": "build"},
+          {"name": "clang-23 no old x86", "llvm": "23", "cxx": "/usr/lib/llvm-23/bin/clang++",
+           "stages": "build", "old_x86": "OFF"}
         ]
       # The current GCC, from its official image.
       linux-gcc-current: >-

@@ -71,8 +71,12 @@ cpu_features a64fx() {
 
 TEST(target, builds_scalar_and_the_simd_targets_of_its_architecture) {
   EXPECT_TRUE(compiled_in(target::scalar));
-  for (const target t : {target::x86_v2, target::avx, target::avx2, target::avx512}) {
+  for (const target t : {target::avx2, target::avx512}) {
     EXPECT_EQ(compiled_in(t), FFTN_ARCH_X86_64 != 0) << target_name(t);
+  }
+  // Unless the build leaves them out (FFTN_OLD_X86_TARGETS).
+  for (const target t : {target::x86_v2, target::avx}) {
+    EXPECT_EQ(compiled_in(t), FFTN_HAS_OLD_X86 != 0) << target_name(t);
   }
   EXPECT_EQ(compiled_in(target::neon), FFTN_ARCH_AARCH64 != 0);
   EXPECT_EQ(compiled_in(target::neon_fcma), FFTN_ARCH_AARCH64 != 0);
@@ -151,8 +155,10 @@ TEST(target, best_is_the_fastest_compiled_target_the_processor_runs) {
   const bool x86 = FFTN_ARCH_X86_64 != 0;
   const bool arm = FFTN_ARCH_AARCH64 != 0;
   EXPECT_EQ(best_target(cpu_features{}), target::scalar);
-  EXPECT_EQ(best_target(x86_v2()), x86 ? target::x86_v2 : target::scalar);
-  EXPECT_EQ(best_target(sandy_bridge()), x86 ? target::avx : target::scalar);
+  // Without the old x86 targets such processors fall back to scalar.
+  const bool old_x86 = FFTN_HAS_OLD_X86 != 0;
+  EXPECT_EQ(best_target(x86_v2()), old_x86 ? target::x86_v2 : target::scalar);
+  EXPECT_EQ(best_target(sandy_bridge()), old_x86 ? target::avx : target::scalar);
   EXPECT_EQ(best_target(haswell()), x86 ? target::avx2 : target::scalar);
   EXPECT_EQ(best_target(skylake_sp()), x86 ? target::avx512 : target::scalar);
   EXPECT_EQ(best_target(neoverse_n1()), arm ? target::neon : target::scalar);

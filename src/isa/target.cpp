@@ -35,14 +35,17 @@ constexpr std::array preference = {
 };
 
 // The table of each target this build contains; null for the others.
-#if FFTN_ARCH_X86_64
+#if FFTN_HAS_OLD_X86
 constexpr const kernel_table* x86_v2_kernels = &x86_v2::table;
 constexpr const kernel_table* avx_kernels = &avx::table;
-constexpr const kernel_table* avx2_kernels = &avx2::table;
-constexpr const kernel_table* avx512_kernels = &avx512::table;
 #else
 constexpr const kernel_table* x86_v2_kernels = nullptr;
 constexpr const kernel_table* avx_kernels = nullptr;
+#endif
+#if FFTN_ARCH_X86_64
+constexpr const kernel_table* avx2_kernels = &avx2::table;
+constexpr const kernel_table* avx512_kernels = &avx512::table;
+#else
 constexpr const kernel_table* avx2_kernels = nullptr;
 constexpr const kernel_table* avx512_kernels = nullptr;
 #endif
@@ -71,6 +74,7 @@ bool compiled_in(target t) noexcept {
     return true;
   case target::x86_v2:
   case target::avx:
+    return FFTN_HAS_OLD_X86 != 0;
   case target::avx2:
   case target::avx512:
     return FFTN_ARCH_X86_64 != 0;

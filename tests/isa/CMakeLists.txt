@@ -7,12 +7,15 @@
 # the library's kernel units, compiled into an object library so the disassembly check can
 # read them. The codelet units are optimised in every build type, like the library's
 # kernel units: they instantiate every codelet twice per target.
-set(fftn_codelet_units codelets_scalar.cpp codelets_x86_v2.cpp codelets_avx.cpp
-                       codelets_avx2.cpp codelets_avx512.cpp codelets_neon.cpp
-                       codelets_neon_fcma.cpp)
-add_library(fftn_isa_probes OBJECT probe_scalar.cpp probe_x86_v2.cpp probe_avx.cpp
-                                   probe_avx2.cpp probe_narrow_avx2.cpp probe_avx512.cpp
-                                   probe_neon.cpp probe_neon_fcma.cpp probe_tables.cpp
+set(fftn_codelet_units codelets_scalar.cpp codelets_avx2.cpp codelets_avx512.cpp
+                       codelets_neon.cpp codelets_neon_fcma.cpp)
+set(fftn_probe_units probe_scalar.cpp probe_avx2.cpp probe_narrow_avx2.cpp probe_avx512.cpp
+                     probe_neon.cpp probe_neon_fcma.cpp)
+if(FFTN_OLD_X86_TARGETS) # CMakeLists.txt
+  list(APPEND fftn_codelet_units codelets_x86_v2.cpp codelets_avx.cpp)
+  list(APPEND fftn_probe_units probe_x86_v2.cpp probe_avx.cpp)
+endif()
+add_library(fftn_isa_probes OBJECT ${fftn_probe_units} probe_tables.cpp
                                    ${fftn_codelet_units} codelet_tables.cpp)
 fftn_always_optimise(${fftn_codelet_units})
 fftn_configure_target(fftn_isa_probes)
@@ -54,6 +57,9 @@ if(NOT CMAKE_OBJDUMP)
 endif()
 set(fftn_asm_check ${fftn_python} ${PROJECT_SOURCE_DIR}/tools/asm_check.py
                    --objdump ${CMAKE_OBJDUMP})
+if(NOT FFTN_OLD_X86_TARGETS)
+  list(APPEND fftn_asm_check --no-old-x86)
+endif()
 # What the build's own baseline already has may appear in baseline code. On Apple arm64
 # the compiler targets Apple silicon (apple-m1 or newer), which has FCMA, and keeps doing so
 # under -march=armv8-a (only -mcpu=generic drops it): scalar code there may use FCADD

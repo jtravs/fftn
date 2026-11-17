@@ -31,6 +31,25 @@ else()
 endif()
 message(STATUS "fftn: masked partial runs on x86 ${FFTN_MASKED_TAILS_ON} (FFTN_MASKED_TAILS=${FFTN_MASKED_TAILS})")
 
+# The old x86 targets, x86_v2 (SSE4.2) and avx (AVX without AVX2 or FMA): 52 % of an x86
+# library's text (experiment X14) for processors from before 2013. ON keeps dispatch
+# complete, as a distributed library needs; OFF leaves both out, and such processors run
+# the scalar target. The default may come from the environment variable of the same name
+# (CI builds the OFF configuration that way, .github/workflows/ci.yml); an empty value counts
+# as unset. DESIGN.md 14.3; the choice is pending the maintainer (DESIGN.md 18.2).
+set(_fftn_old_x86_default ON)
+if(NOT "$ENV{FFTN_OLD_X86_TARGETS}" STREQUAL "")
+  set(_fftn_old_x86_default "$ENV{FFTN_OLD_X86_TARGETS}")
+endif()
+option(FFTN_OLD_X86_TARGETS "Build the x86_v2 and avx targets (old x86-64 processors)"
+       ${_fftn_old_x86_default})
+if(FFTN_OLD_X86_TARGETS)
+  set(FFTN_OLD_X86_TARGETS_ON 1)
+else()
+  set(FFTN_OLD_X86_TARGETS_ON 0)
+endif()
+message(STATUS "fftn: old x86 targets (x86_v2, avx) ${FFTN_OLD_X86_TARGETS_ON}")
+
 # Read by scripts/check.sh to report the compiler with every gate run (AGENTS.md section 3).
 set(FFTN_CXX_COMPILER "${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}" CACHE INTERNAL "")
 

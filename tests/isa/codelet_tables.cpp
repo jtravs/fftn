@@ -11,11 +11,13 @@ const codelet_table* find_codelets(target t) noexcept {
   switch (t) {
   case target::scalar:
     return &scalar::codelet_entries;
-#if FFTN_ARCH_X86_64
+#if FFTN_HAS_OLD_X86
   case target::x86_v2:
     return &x86_v2::codelet_entries;
   case target::avx:
     return &avx::codelet_entries;
+#endif
+#if FFTN_ARCH_X86_64
   case target::avx2:
     return &avx2::codelet_entries;
   case target::avx512:

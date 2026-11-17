@@ -100,7 +100,7 @@ on every machine, X16); phase 3 tasks 3.1–3.3 with T1 and T5. X24 rejected. CI
 Open, by phase:
 
 - 0: the Xeon client-catalogue baseline.
-- 1: task 1.3 is in review (pull request 33: the `x86_v2` and `avx` targets, X14); X2 on the Mac above 1024; X4 on x86
+- 1: task 1.3 is in review (pull request 33: the `x86_v2` and `avx` targets, X14, and the build option `FFTN_OLD_X86_TARGETS` the lead proposed, pending the maintainer: DESIGN 18.2); X2 on the Mac above 1024; X4 on x86
   and for edge passes; X12 on x86; X5. The phase 1 exit is not met: x86 trails FFTW.
 - 2: 2.2's acceptance in double c2c on AVX-512 (the chain 1.01–1.26 of FFTW at 8–16
   points; X24 rejected both planned fixes); 2.4 (`planning::measure` and wisdom built, P1 and P2 in a first pass; the cost model and calibration remain;

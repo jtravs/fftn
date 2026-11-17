@@ -2209,7 +2209,12 @@ What the experiments still require of the build:
   there. One changes the generated code: `FFTN_MASKED_TAILS` (`AUTO`, the default, is on
   with GCC and off with every other compiler; `ON`; `OFF`) selects masked partial runs on
   x86 (section 8.2). The release toolchain for x86-64 Linux is GCC, so release builds have
-  them; results are bitwise the same either way.
+  them; results are bitwise the same either way. Another chooses which targets exist:
+  `FFTN_OLD_X86_TARGETS` (`ON`, the default) builds `x86_v2` and `avx` (section 6.1), 52 % of
+  an x86-64 library's text for processors from before 2013 (X14); `OFF` leaves them out,
+  and on such processors dispatch falls back to the scalar target. Distributed builds keep
+  the default so dispatch stays complete; CI builds both (`.github/workflows/ci.yml`, the job
+  "clang-23 no old x86"). The option is part of the wisdom build identifier.
 - A generated single-file amalgamation is a possible release artefact (phase 6); it is
   the same implementation concatenated, not a separate code path.
 
@@ -2520,6 +2525,12 @@ infrastructure to maintain.
 
 Decisions taken are in the decision log; questions that arise during implementation are
 listed here until settled.
+
+**`FFTN_OLD_X86_TARGETS` (proposed by the lead, pending the maintainer).** The `x86_v2` and
+`avx` targets add 52 % to an x86-64 library's text and 50 % to its kernel compile time for
+processors most users never have (X14). The option (section 14.3) keeps them by default and
+lets a build leave them out, those processors then running scalar code. Open: whether the
+default should stay `ON` for every build, and whether packagers should be told to keep it.
 
 **Deferred API ideas.** (a) A two-way plan: forward and backward programs of one shape over
 one set of twiddle tables, with `forward()` and `backward()`, for real kinds the r2c and c2r

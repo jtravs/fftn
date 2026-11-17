@@ -36,6 +36,8 @@ function(fftn_configure_target target)
   # Read by the x86 vocabularies (CMakeLists.txt): the library's units and the tests' probes
   # must agree.
   target_compile_definitions(${target} PRIVATE FFTN_MASKED_TAILS=${FFTN_MASKED_TAILS_ON})
+  # Whether the x86_v2 and avx targets are built (CMakeLists.txt): read by isa/arch.hpp.
+  target_compile_definitions(${target} PRIVATE FFTN_OLD_X86_TARGETS=${FFTN_OLD_X86_TARGETS_ON})
   if(FFTN_WARNINGS_AS_ERRORS)
     target_compile_options(${target} PRIVATE ${_fftn_werror})
   endif()

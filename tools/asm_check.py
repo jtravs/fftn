@@ -29,6 +29,8 @@ namespace, fftn::<version>::detail::<target>::; everything else is baseline code
   "arch=armv8.3-a" also allows; pointer authentication outside the hint space only in
   neon_fcma, which is dispatched only where the processor has it (the hint forms, such as
   PACIASP, are NOPs on Armv8.0 and are what branch protection emits everywhere);
+- --no-old-x86 says the build left out x86_v2 and avx (FFTN_OLD_X86_TARGETS=OFF): x86 groups
+  need not contain them;
 - --baseline-has relaxes the baseline checks for what the build's baseline already has:
   Apple's compilers target Apple silicon by default, which has FCMA, so scalar and neon
   code there may legitimately use FCADD;
@@ -363,7 +365,9 @@ def is_pauth(base: str) -> bool:
     return base in PAUTH_OTHER or re.match(r"^bl?ra[ab]z?$", base) is not None
 
 
-def check_group(objdump: str, group: list[str], baseline_has: set[str]) -> list[str]:
+def check_group(
+    objdump: str, group: list[str], baseline_has: set[str], old_x86: bool = True
+) -> list[str]:
     errors: list[str] = []
     arch = ""
     funcs: list[Function] = []
@@ -374,6 +378,8 @@ def check_group(objdump: str, group: list[str], baseline_has: set[str]) -> list[
     if arch not in SIMD_TARGETS:
         return [f"{group}: unknown architecture (need x86-64 or AArch64 objects)"]
     simd = SIMD_TARGETS[arch]
+    if not old_x86:
+        simd = tuple(t for t in simd if t not in ("x86_v2", "avx"))
     by_target: dict[str, list[Function]] = {t: [] for t in TARGETS}
     baseline: list[Function] = []
     for f in funcs:
@@ -475,6 +481,11 @@ def main() -> int:
         help="the build's baseline already has this (as when the compiler targets Apple"
         " silicon, which has FCMA): baseline code may use it",
     )
+    ap.add_argument(
+        "--no-old-x86",
+        action="store_true",
+        help="the build leaves out x86_v2 and avx (FFTN_OLD_X86_TARGETS=OFF)",
+    )
     ap.add_argument("groups", nargs="+", help="objects or archives; ';' joins one group")
     opts = ap.parse_args()
     for feature in opts.baseline_has:
@@ -487,7 +498,7 @@ def main() -> int:
             errors.append(f"not found: {', '.join(missing)}")
             continue
         print(f"== {', '.join(Path(p).name for p in group)}")
-        errors += check_group(opts.objdump, group, set(opts.baseline_has))
+        errors += check_group(opts.objdump, group, set(opts.baseline_has), not opts.no_old_x86)
     for e in errors:
         print(f"asm_check: {e}")
     if errors:

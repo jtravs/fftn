@@ -62,7 +62,9 @@ TEST(link, every_compiled_target_has_its_own_table) {
       EXPECT_TRUE(seen.insert(e).second) << target_name(t) << " shares an entry point";
     }
   }
-  EXPECT_EQ(tables, FFTN_ARCH_X86_64 != 0 ? 5 : FFTN_ARCH_AARCH64 != 0 ? 3 : 1);
+  EXPECT_EQ(tables, FFTN_HAS_OLD_X86 != 0                             ? 5
+                    : FFTN_ARCH_X86_64 != 0 || FFTN_ARCH_AARCH64 != 0 ? 3
+                                                                      : 1);
 }
 
 TEST(link, lane_counts_and_fusion_match_each_target) {
