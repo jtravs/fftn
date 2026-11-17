@@ -236,6 +236,11 @@ FFTN ÷ FFTW (÷ MKL), N → B3, same run: 100 1.14 → 0.88 (0.99 → 0.77), 50
 `avx512`.** 25000 stays the Xeon's worst of these against FFTW (FFTW 3.83 ns per point
 against FFTN's 4.51): its batch-1 winner was within 3 % of the planner's.
 
+Tracking tier, N against B3 (run 20261117-132053-ad53, Slurm 16295, `--serial`; 24 rounds,
+23 under load, band ±3.58 %, limit 1.056): 0.991 [0.971, 1.006]; faster c2c 100 × 1024 0.89,
+r2c 1000 0.82, c2r 1000 0.80; 58 no evidence, the highest r2c 65536 in place 1.046 and plane
+480 × 640 1.044 (plans unchanged). Collateral passes.
+
 ## Verdict
 
 - **B (radix-25 codelet): adopted** as the carrier of B2 and B3: flat (Cooley–Tukey 5 × 5,
