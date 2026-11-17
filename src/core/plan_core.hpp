@@ -135,6 +135,24 @@ public:
   std::vector<std::string> axis_notes; // one line per axis for describe()
   bool radices_forced = false;         // build_settings.radices was given (describe says so)
   std::string strategy_note;           // describe()'s strategy line
+
+  // Workspace: scratch lines a and b of scratch_line complex values each, then the block,
+  // each starting on a 64-byte boundary of the aligned workspace; bytes includes the slack
+  // for aligning an arbitrary workspace address.
+  std::size_t scratch_line = 0;
+  std::size_t block_elements = 0;
+  std::size_t offset_b = 0;
+  std::size_t offset_block = 0;
+  std::size_t bytes = 0;
+  // One lane's scratch in a team's workspace: the layout above, in whole 128-byte lines.
+  std::size_t slot_bytes = 0;
+
+  // Planning's record, read at construction and by describe() and wisdom, never by an
+  // execution: kept after the fields the execute paths read (prog, the workspace layout),
+  // so that those keep the offsets and cache lines they had before task 2.4 (X37 saw single
+  // rows of 2-8 points 1.14-1.16 times slower on the EPYC in the build where these fields
+  // came first, run 20261117-014755-1442).
+  //
   // What the rows were built as (one axis only; multi-axis plans are chains): measured
   // planning enumerates the alternatives (core/candidates.cpp).
   strategy_choice built = strategy_choice::chain;
@@ -160,17 +178,6 @@ public:
   std::size_t candidates_timed = 0;
   double rules_over_chosen = 0;
   std::size_t chosen_rank = 0; // among the distinct candidates; 0: the rules' choice
-
-  // Workspace: scratch lines a and b of scratch_line complex values each, then the block,
-  // each starting on a 64-byte boundary of the aligned workspace; bytes includes the slack
-  // for aligning an arbitrary workspace address.
-  std::size_t scratch_line = 0;
-  std::size_t block_elements = 0;
-  std::size_t offset_b = 0;
-  std::size_t offset_block = 0;
-  std::size_t bytes = 0;
-  // One lane's scratch in a team's workspace: the layout above, in whole 128-byte lines.
-  std::size_t slot_bytes = 0;
 };
 
 // A plan as the options ask: built by the rules (build_plan_core), or through measured
