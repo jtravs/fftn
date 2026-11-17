@@ -246,7 +246,23 @@ moved a radix 5 in front of the radix 20: 5 · 20 · 5, 5 · 20 · 10 · 5) and 
 batches of 1000 1.02–1.04. It fails the rule. Refined form 3cb6b32: 1000 keeps X2's
 override, and a c2r line whose override starts with radix 20 takes the costs' sequence
 (`chain_builder::real_radices`; avx2's X38 overrides do not start with 20 where a small
-radix could move). RESULT_D2
+radix could move). Its tracking tier (run 20261117-012733-b1e1, Slurm 16194; 20 rounds, band ±1.45 %) had the
+same picture: 1000 0.909, 100000 0.922, r2c 1000 0.949, c2r 1000 **1.235**, nothing else
+changed.
+
+The final form 274f870 also takes two of task 2.4's P1 misses on the Xeon
+(`P1-rules-vs-measure.md`), which fit the same profile fields; screens Slurm 16208 and
+16211 (cycles and ns ÷ the rules' plan):
+
+- r2c rows' half-length powers of two follow `pow2_grid_bytes` (a grid beyond L2/4): r2c
+  65536 as a two-phase grid 0.89 out of place, 0.96–0.99 in place. c2r stays a chain (1.13 out
+  of place, 0.94–0.96 in place); `plan_grid` now takes the plan's kind and placement.
+- c2c powers of two out of place stay in two phases beyond half of L3
+  (`grid_two_pow2_bytes`): 2²⁰ 0.89–0.98, 2²¹ 0.91, 2²² 0.88–0.92 (P1: measure 1.14 faster),
+  2²³ 0.92–0.94; 2¹⁹ 0.95 cycles / 1.05 ns, 2¹⁸ 1.03–1.21; in place 2²⁰ 1.10–1.22 and c2r 2²⁰
+  1.20–1.23, so neither takes it (r2c 2²⁰ 0.97–0.985, left out).
+
+RESULT_D3
 
 ## Verdict
 
