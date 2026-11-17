@@ -252,6 +252,20 @@ unfused order in the generator rather than de-fusing an FMA schedule, and re-mea
 choices per ISA level, not per register width. Caveat: modern cores, not Sandy Bridge,
 whose 256-bit loads take two cycles. [X14](experiments/X14-old-x86.md).
 
+2.11 **A code-placement jump on Cascade Lake is a branch-alignment effect; pad the AVX-512
+units.** Single c2c double rows of 160, 180 and 240 points on the Xeon 6240 went to 1.07–1.10
+of their time (360 and 384: 1.04–1.06) between main 304a8c5 and 509d123 with the same radices,
+the same kernels and the same execute path; bisecting the first-parent merges put the jump at
+X40's merge (20261117-184544-8056, band ±1.0 %), whose diff touches no code those rows run
+(X40 had seen c2c 128 do the same and X37 a jump at 2–8 points on the EPYC). Assembling the
+library with GCC's `-Wa,-mbranches-within-32B-boundaries` (no branch crosses or ends on a
+32-byte boundary, the Skylake-family JCC erratum's mitigation) took them back to 0.89–0.91 of
+the unpadded time on the Xeon (20261117-204818-1541, band ±1.0 %, none loaded; 360 and 384 0.94 and 0.92); the tracking tier showed nothing slower (20261117-205228-e841); the flag on `driver.cpp` alone did
+nothing, on the avx512 units alone it did all of it (20261117-193445-016d, loaded but paired). The same flag on every unit slowed 180 and 300 points by 5–11 % on the
+EPYC (Zen 3, 20261117-190948-906d): code placement is luck there too, so only the units
+that run on the affected cores take it. A sudden single-row jump with an unchanged plan is
+this before it is a code change: bisect, then try the flag on the units that run.
+
 ## 3. Memory and caches
 
 3.1 **Buffers a power of two apart conflict in cache; offset them.** Staggering the
