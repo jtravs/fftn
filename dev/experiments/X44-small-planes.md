@@ -77,7 +77,54 @@ chain's columns within twice the tolerance). A block change keeps bits.
 
 ## Results
 
-(Pending.)
+### D: diagnosis (screens; none decides)
+
+Screens of the x44 catalogue against `main`'s library (ddf8737: `main` 310d8d6 with the
+knob), forced column radices and blocks, FFTW (and MKL) in the same run; ratios are paired
+medians against the rule's plan (A), ns per point from A.
+
+- **EPYC, run 20261117-143058-da8f** (8 rounds, all loaded, band ±1.5 %). 32²: A 2.10 ns
+  per point, its rows as a batch 0.73, so its column phase (2 × 16) costs 1.9 times its
+  rows. One radix-32 lane pass (`COLUMN_RADICES=32`) 0.694, 4 × 8 0.873, 8 × 4 0.908, 16 × 2
+  1.048, blocks of 4 or 8 columns 1.00; FFTW 0.694. Real 32² (complex columns of 32): radix
+  32 0.80–0.82. 64² columns: radix 64 in one pass 1.33, 4 × 16 1.40 (8 × 8 stays). Columns
+  through the chain 1.25–3.2. Run 20261117-143626-3be6 (band ±1.5 %), 64²–256² columns
+  under 8 × 8, 16 × 8, 8 × 16, 4 × 32, 32 × 4, 4 × 8 × 8, 8 × 4 × 8, 8 × 32, 16 × 16: nothing
+  beyond 0.96–0.98 (real 64² with 8 × 8 0.97–0.98, real 256² with 16 × 16 0.96 but c2c 256²
+  1.33). The EPYC's real planes trail FFTW by 4–7 % at 64²–256² although FFTN's real rows
+  beat FFTW's (r2c 64 × 64 rows: FFTW 1.14 of FFTN's time): FFTW's column phase of a real
+  plane costs about 0.98 ns per complex point against FFTN's 1.38 at 64².
+- **Xeon, run 20261117-143847-64ba** (8 rounds, none loaded, band ±2.9 %; with MKL). The
+  column phase costs 1.3–1.95 times the rows (16² 1.3, 32² 1.45, 64² 1.95, 128² 1.28, 256²
+  1.46), MKL's about 1.1–1.2 times its own; MKL ÷ FFTN on the c2c planes 0.73–0.92 (32²
+  0.725, 16² 0.775, 256² 0.83, 128² 0.88, 64² 0.92) and on the rows as batches 0.91–1.02
+  (c2c), 0.73–0.90 (r2c), 0.76–0.99 (c2r). Radix 32 in one pass: c2c 32² 0.772, real 32²
+  0.86–0.87; 4 × 8 (the rule's), 8 × 4, 4 × 16, blocks of 8: 0.97–1.03.
+- **Mac, runs 20261117-142835-4a2c and 20261117-143226-dcc7** (8 and 10 rounds, all loaded,
+  bands ±4.3 % and ±3.0 %). A plane costs the sum of its two batches (32²: 1.06 against
+  0.52 + 0.52); FFTW's plane costs less than twice its own batch because its columns are
+  one codelet over the columns (`PLAN_NOTE`: `n1fv_32` and `n1fv_64` vector loops). FFTN's
+  32² columns are already one radix-32 pass. At 64² FFTW's radix-64 codelet is the
+  difference: FFTN's rows and columns of 64 as one radix-64 pass lose (1.06–1.14; rows
+  through `LEAF_LIMIT=64` 1.19), and 4 × 16, 16 × 4, blocks of 8 or 32 change nothing beyond
+  the band. The Mac's 32²–64² gap (FFTW 0.87–0.95 of FFTN's time in these runs) needs a
+  faster radix-64 codelet on NEON, the generator's work (X42), not a plane program.
+
+### P: columns of 32 as one lane pass (double)
+
+On x86 the row of 32 is a pair leaf (two passes in registers), which a column phase cannot
+take, so its columns got the row's radices as two lane passes over the tile (2 × 16 on
+`avx2`, 4 × 8 on `avx512`). Arm P: a column of 17–32 points in double whose length has a
+codelet with lane passes runs as that one pass, where its 32 legs fit the L1's ways
+(`column_radices`); in practice columns of 32 (17, 19, 23 already had one pass; NEON's 32
+already had one). Float is unchanged (not measured). It changes the c2c planes and volumes
+with columns of 32 and the real planes whose complex columns have 32 points, on x86. Target
+cases: the planes of the standard catalogue's plane and volume rows (filter
+`^(c2c|r2c|c2r)-[0-9]+x[0-9]+(x[0-9]+)?-b[0-9]+-(op|ip)$`, 126 cases) whose program P changes;
+the rule's case set (2) is those 126 (the x44 catalogue's planes are among them except 16²,
+which P does not change, and its rows are 1-D). Rule as above, on the EPYC and the Xeon;
+the Mac's plans are unchanged (checked by describe). Bits: the columns of 32 change route,
+within the tolerances.
 
 ## Verdict
 

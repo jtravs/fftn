@@ -637,6 +637,7 @@ column_radices(std::size_t n, std::ptrdiff_t stride, const build_settings& setti
   if (chain.forces(n)) {
     return rad;
   }
+  constexpr std::size_t single_pass_column = 32;
   const std::size_t ways = std::max<std::size_t>(settings.profile.l1_ways, 1);
   const std::size_t period = std::max<std::size_t>(settings.profile.grid_block_bytes / ways, 1);
   const std::size_t line = std::clamp<std::size_t>(settings.profile.line_bytes, 1, period);
@@ -644,6 +645,16 @@ column_radices(std::size_t n, std::ptrdiff_t stride, const build_settings& setti
   const auto fits = [&](const std::vector<std::size_t>& r) {
     return legs_per_set(r.back(), n / r.back() * bytes, period, line) <= ways;
   };
+  // Columns of up to 32 points with a codelet of their length run as that one lane pass in
+  // double, where its legs fit the L1's ways (X44): the row's chain of 32 on x86 is a pair
+  // leaf in registers, which the lanes cannot take, so the columns got its radices 2 x 16 as
+  // two passes over the tile; one radix-32 pass took the EPYC's 32 x 32 plane to 0.69 of
+  // that time (4 x 8: 0.87).
+  if (const std::vector<std::size_t> one{n};
+      std::is_same_v<T, double> && n <= single_pass_column && n > 16 && lane_codelets(one) &&
+      fits(one)) {
+    return one;
+  }
   if (rad.empty() || fits(rad)) {
     return rad;
   }
