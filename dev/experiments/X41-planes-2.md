@@ -132,6 +132,36 @@ parent (B: 31ea042), the 37 c2c planes; target cases the 11 planes of at most 10
   0.86–0.88, 5 × 7 0.84–0.87), worst 1.044. The lead reported the Mac on battery power
   around the end of this run, so it cannot decide; a re-run on mains decides the Mac.
 
+### T: threaded planes
+
+Baseline, EPYC (8 whole cores of one CCX, `--hint=nomultithread --distribution=block:block`):
+run 20261117-104129-206a (31ea042, the 37 c2c planes, band ±2.1 %) with FFTN's pool at 8
+lanes (T8), FFTN serial, FFTW at 8 threads (F8, `fftw_plan_with_nthreads`) and serial. FFTW's
+threaded plans of small planes are 7–380 times slower than its serial ones (a planner that
+chose threads for 48 points), so FFTN is compared with the better of FFTW's two per case.
+Planes up to 64² run inline (T8 = serial). From 128² FFTN's 8 lanes take 2.3–6.6 times less
+time than its one; against FFTW's better plan FFTN is faster everywhere except the small
+planes it already trails serially (8 × 6, 5 × 7, 32 × 32: S below) and 1000² (FFTW's 8
+threads 0.91–0.92 of FFTN's time), 2048² out of place (0.93). Threads catalogue, run
+20261117-110630-d7e0 (3e405ec, band ±1.4 %): FFTN ahead of FFTW's 8 threads on c2c planes and
+plane batches (1.12–1.26 of FFTN's time for FFTW) except 1024² (0.99); behind on r2c 1024²
+(0.77) and the volumes (64³–128³ 0.72–1.02, task 4.2's).
+
+A column phase's narrower last block was a phase of one chunk (the tail nest after the
+whole blocks), run by one member while the others waited. Arm T1 (947bfbe, `loop::joins`):
+that nest's lines join the whole blocks' phase. Serial programs and every plane whose
+column count the block divides are unchanged. T1 against 3e405ec, both at 8 lanes, the 108
+c2c and real planes, EPYC run 20261117-110929-0d06 (band ±2.7 %): 0.983 over all; on the
+planes with a narrower block 0.81–0.95 (100² 0.92, real 96²–512² 0.92–0.97, real 2048 × 36
+0.81–0.90); past the band c2c 512² op 1.030 (no narrower block: its program and graph are
+unchanged) and c2r 2048² ip 1.073 (wide interval). As written, rule (1) took "the threaded
+cases" as the target set, over which 0.983 fails; that set includes the planes T1 cannot
+change. Arm T1b (a new arm, the same code, judged by fresh runs): target cases the threaded
+planes whose work graph T1 changes (those with a narrower last block); adopt if their
+geometric mean is at most 0.95 and no threaded plane is slower than the base by more than
+the larger of 2 % and the band, a case past it re-run once; serial programs unchanged by
+construction.
+
 ### L: columns beyond L2 (the Mac's 2048 × 36)
 
 Screen (not a judging run), Mac run 20261117-111654-cd9f (band ±1.3 %), forced blocks on
