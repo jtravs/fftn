@@ -76,6 +76,10 @@ struct build_settings { // NOLINT(clang-analyzer-optin.performance.Padding)
   // multiple of C) instead of the rule's (plan_core.cpp, column_block) when not 0.
   bool lanes_columns = true;
   std::size_t column_block = 0;
+  // The radices, in pass order, of a lanes column phase whose columns' length they multiply
+  // to, every one a codelet with lane passes, instead of the rule's (plan_core.cpp,
+  // column_radices); otherwise ignored. Experiment X44 compares column chains through it.
+  std::vector<std::size_t> column_radices;
   // Walked programs (multi-axis) of at most calls_max kernel calls per transform run from
   // their calls unrolled at construction (program.hpp, experiment X41); false: the driver
   // walks the records (tests compare the two).
