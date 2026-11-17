@@ -159,6 +159,14 @@ counters within 0.03 on every case.
   `neon_fcma`). Judged on the Mac (Clang, `neon_fcma`) by the decision rule against B, on the
   standard catalogue's rows it changes (c2c 4096 × 1, 16, 256, 1024 and in place, 8192,
   16384) and the tracking tier.
+- **C judged (Mac, run 20261117-174232-3f7a; Homebrew Clang 23, `neon_fcma`; 30 rounds, all
+  under load, band ±1.00 %)**, C = 6ea41f4 against N = f78509c (B: the Mac's plans as `main`):
+  the 7 changed cases 0.938 [0.930, 0.944]; 8192 0.753 [0.743, 0.775], 16384 0.886, 4096 0.942,
+  4096 in place 0.958, 4096 × 16 0.993, but 4096 × 256 **1.031** and × 1024 **1.039** (beyond
+  1 + max(band, 3 %); batches of 4096 run from memory). **C fails the rule.**
+- **C2 (named after C's run, before its own).** The same with the range L1 to 2 L1 (8192–16384
+  complex doubles on the M5 Max): rows of 4096 keep their plans. Judged by the same rule
+  against B on the same cases and the tracking tier.
 - Judging run: Xeon, `--serial`, arms N = 85b4ee0, A, B, F = FFTW, M = MKL, the standard
   catalogue's rows the rule changes (c2c 16384, 20000, 32768, 46080, 65536 out of place,
   in place, backward and × 3 in and out of place, 100000, 131072, 262144), then the tracking

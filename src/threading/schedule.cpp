@@ -179,9 +179,10 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
     p.pow2_radix8_bytes = c.l2.size / 8;
     // Experiment X36, M5 Max: the same conflicts in a Bluestein stage's convolution.
     p.bluestein_pow2_part_bytes = c.l1d.size / 4;
-    // Experiment X46 (arm C), M5 Max: depth-first chains with a top of 4 from L1/2 to 2 L1
-    // where the length's power-of-two part is above L1/8 (4096-16384 complex doubles).
-    p.depth_min_bytes = c.l1d.size / 2;
+    // Experiment X46 (arm C2), M5 Max: depth-first chains with a top of 4 from L1 to 2 L1
+    // where the length's power-of-two part is above L1/8 (8192-16384 complex doubles; from
+    // L1/2, batches of 256-1024 rows of 4096 lost 1.03-1.04, arm C).
+    p.depth_min_bytes = c.l1d.size;
     p.depth_max_bytes = 2 * c.l1d.size;
     p.depth_part_bytes = c.l1d.size / 8;
     p.depth_top = 4;

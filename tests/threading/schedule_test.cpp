@@ -607,7 +607,7 @@ TEST(Schedule, ProfilesOfRecordedMachines) {
   EXPECT_EQ(fields("macos-apple-m5-max.sysctl", false),
             (planner_fields{128 * kib, 2 * mib,   128 * kib, 4 * mib,   4 * kib, 0,    0,
                             16 * kib,  256 * kib, never,     64 * mib,  2 * mib, true, 0,
-                            0,         0,         32 * kib,  128 * kib, 0,       0,    64 * kib,
+                            0,         0,         32 * kib,  128 * kib, 0,       0,    128 * kib,
                             256 * kib, 16 * kib,  4,         0}));
   EXPECT_EQ(
       fields("linux-amd-epyc-7763.sysfs", true),

@@ -161,7 +161,7 @@ struct machine_profile {
   // 16384 points where the power-of-two part had 2048 points or more, and lost 1.05-1.09
   // where it had 16-128 (the cluster L2's conflicts are a power-of-two problem, X29) and at
   // 32768 (1.06, against X32's chain). set_grid_sizes sets L2/4 to 4 L2 and tops 16, 20 where
-  // a private L2 has less than 2 MiB of L3 per CPU behind it, on x86-64; L1/2 to 2 L1, top 4
+  // a private L2 has less than 2 MiB of L3 per CPU behind it, on x86-64; L1 to 2 L1, top 4
   // and a power-of-two part above L1/8 where a cluster shares L2.
   std::size_t depth_min_bytes = 0;
   std::size_t depth_max_bytes = 0;
