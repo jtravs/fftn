@@ -295,11 +295,9 @@ void lane_pass(const pass_args* a, const void* src, void* dst, std::size_t first
   const std::size_t m = a->m;
   const std::size_t s = a->s;
   const std::size_t blocks = (s + C<T> - 1) / C<T>;
-  const std::size_t whole = s / C<T>;
   const T* table = static_cast<const T*>(a->twiddles);
   const std::ptrdiff_t in_leg = at(s * m, 2);
   const std::ptrdiff_t out_leg = at(s, ys);
-  const std::ptrdiff_t out_step = at(C<T>, ys);
   // No division when the range starts in the first group (a whole stage): it is slow on
   // some x86 cores (dev/experiments/X18-x86-kernels.md).
   std::size_t p = first < blocks ? 0 : first / blocks;
@@ -318,47 +316,30 @@ void lane_pass(const pass_args* a, const void* src, void* dst, std::size_t first
     g_left = per_entry - (first < per_entry ? first : first % per_entry);
     f_leg = at(s / a->factor_copies, 2);
   }
-  // The units of one group at a time: its whole blocks in a loop with the pointers stepped
-  // by C, then its partial block. Per unit, forming the addresses from p and b, advancing the
-  // two and testing for a partial block cost a quarter of the integer instructions of a
-  // radix-16 unit with GCC (two multiplies, two conditional moves; X47).
-  std::size_t u = first;
-  while (u < last) {
-    const std::size_t end = last - u < blocks - b ? b + (last - u) : blocks;
-    const std::size_t stop = end < whole ? end : whole;
-    const T* xp = x + at(b * C<T> + s * p, 2);
-    std::size_t e0 = b * C<T> + s * R * p;
+  for (std::size_t u = first; u < last; ++u) {
+    const std::size_t q0 = b * C<T>;
+    const std::size_t valid = s - q0 < C<T> ? s - q0 : C<T>;
+    const T* xp = x + at(q0 + s * p, 2);
+    const std::size_t e0 = q0 + s * R * p;
     T* yp = y + at(e0, ys);
-    for (std::size_t k = b; k < stop; ++k) {
+    if (valid == C<T>) {
       lane_unit<T, R, Sign, Twiddled>(
-          lane_input<T, true, Share>(a, xp, in_leg, C<T>, p),
-          lane_output<T, true, OutOp, Share>(a, yp, out_leg, ys, C<T>, e0, f_leg, g), table, p);
-      xp += 2 * C<T>;
-      yp += out_step;
-      e0 += C<T>;
-      if constexpr (Share == factor_sharing::output) {
-        if (--g_left == 0) {
-          ++g;
-          g_left = per_entry;
-        }
-      }
+          lane_input<T, true, Share>(a, xp, in_leg, valid, p),
+          lane_output<T, true, OutOp, Share>(a, yp, out_leg, ys, valid, e0, f_leg, g), table, p);
+    } else if constexpr (!masked) {
+      lane_unit<T, R, Sign, Twiddled>(
+          lane_input<T, false, Share>(a, xp, in_leg, valid, p),
+          lane_output<T, false, OutOp, Share>(a, yp, out_leg, ys, valid, e0, f_leg, g), table, p);
     }
-    if (stop < end) {
-      // The group's partial block (C does not divide s), which the masked targets run after
-      // the loop (lane_tails). factor_sharing::output has none: C divides s.
-      if constexpr (!masked) {
-        const std::size_t valid = s - stop * C<T>;
-        lane_unit<T, R, Sign, Twiddled>(
-            lane_input<T, false, Share>(a, xp, in_leg, valid, p),
-            lane_output<T, false, OutOp, Share>(a, yp, out_leg, ys, valid, e0, f_leg, g), table,
-            p);
-      }
-    }
-    u += end - b;
-    b = end;
-    if (b == blocks) {
+    if (++b == blocks) {
       b = 0;
       ++p;
+    }
+    if constexpr (Share == factor_sharing::output) {
+      if (--g_left == 0) {
+        ++g;
+        g_left = per_entry;
+      }
     }
   }
   // The partial blocks, which the loop skipped on the targets with masked partial runs.
