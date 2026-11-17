@@ -205,6 +205,14 @@ void add_cases(std::vector<team_case>& out, const fftn::detail::build_settings& 
                           4112, false, settings, target));
   out.push_back(make_case("r2c_rader_514x2" + suffix, fftn::rows_r2c<T>(514, 2), 1028, 2 * 258,
                           false, settings, target));
+  // Columns past the last whole block: the narrower block's nest joins the phase (X41).
+  out.push_back(make_case("c2c_planes_64x40x2" + suffix, fftn::planes_c2c<T>(64, 40, 2, fwd), 5120,
+                          5120, false, settings, target));
+  fftn::shape<T, c> r2c_wide;
+  r2c_wide.axes = {{.n = 64}, {.n = 40}};
+  r2c_wide.batches = {{.count = 2}};
+  out.push_back(make_case("r2c_planes_64x40x2" + suffix, r2c_wide, 2 * 64 * 40, 2 * 64 * 21, false,
+                          settings, target));
   // A unit axis: one transform's phases mix stages and loop nests.
   out.push_back(make_case("c2c_planes_1x200x3" + suffix, fftn::planes_c2c<T>(1, 200, 3, fwd), 600,
                           600, false, settings, target));
