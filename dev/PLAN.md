@@ -114,11 +114,14 @@ Open, by phase:
 - 5–7: not started.
 
 In flight (lead session, 2026-11-17): task 1.3
-(`x86_v2` and `avx` targets, X14); task 2.5 (`next_fast_length` and per-length cost, API
-proposed by the lead); task 4.1's next part (small planes, real planes, threaded planes); a tidy fix. Task 2.4's acceptance is met (P1:
+(`x86_v2` and `avx` targets, X14); task 4.1's next part (small planes, real planes, threaded planes); a tidy fix. Task 2.4's acceptance is met (P1:
 rules within 5 % of measure on 93–100 % of cases on all three machines); its cost model (P3)
 was rejected on the first pass, so the long-row thresholds stay. Then the exit check again. Done, each merged with its
 pull request:
+- Task 2.5 (pull request 41): `next_fast_length(n, real)` and `relative_cost<T>(n, isa)` in
+  `fftn/lengths.hpp`, a frozen reference table, the fast set to 2²⁰ pinned; API proposed by
+  the lead, pending the maintainer (DESIGN 18.2); P4: picks 0.11–0.96 of the awkward lengths
+  they replace; within 1.3 of the power of two above on 96 % (Mac), 78 % (x86).
 - Task 4.1, first part (X40, pull request 43): columns of planes and volumes in blocks of
   adjacent columns, column radices counted against the L1's ways, leaf loops as one call: 37
   c2c planes ÷ FFTW Mac 1.44 → 0.88, EPYC 2.07 → 0.94, Xeon 1.49 → 0.80 (÷ MKL 1.87 → 1.00);
