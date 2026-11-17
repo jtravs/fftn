@@ -35,12 +35,6 @@ struct graph_phase {
   std::uint32_t chunks = 1;
   std::uint64_t first = 0; // the index of the phase's first chunk among the task's chunks
   double work = 0;         // the phase's work in the cost model's units (schedule.hpp)
-  // A second nest whose lines follow the first's (loop::joins; X41): lines [0, head) of the
-  // phase are the first nest's, [head, units) this one's. tail_nest 0: none.
-  std::uint32_t tail_record = 0;
-  std::uint32_t tail_nest = 0;
-  std::uint32_t tail_body_end = 0;
-  std::size_t head = 0;
 };
 
 struct work_graph {

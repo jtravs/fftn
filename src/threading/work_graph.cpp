@@ -56,30 +56,6 @@ std::size_t line_length(const program& p, std::size_t begin, std::size_t end) {
   return n;
 }
 
-struct nest_shape {
-  std::uint32_t depth = 0; // loops
-  std::uint32_t end = 0;   // one past the innermost body
-  std::size_t lines = 1;
-};
-
-// The perfectly nested loops opening at record i.
-nest_shape nest_at(const program& p, std::size_t i) {
-  nest_shape n;
-  n.end = std::get<loop>(p.records[i]).body_end;
-  std::size_t j = i;
-  while (j < n.end) {
-    const loop* l = std::get_if<loop>(&p.records[j]);
-    if (l == nullptr) {
-      break;
-    }
-    assert(l->body_end == n.end && "fftn: the loops over lines are perfectly nested");
-    n.lines *= l->count;
-    ++j;
-  }
-  n.depth = static_cast<std::uint32_t>(j - i);
-  return n;
-}
-
 } // namespace
 
 work_graph build_work_graph(const program& p, std::size_t points, std::size_t chunk_points) {
@@ -117,29 +93,28 @@ work_graph build_work_graph(const program& p, std::size_t points, std::size_t ch
     } else {
       // The loops over the lines of an axis are perfectly nested (plan_core.cpp, add_phase):
       // each opens right after the one before and all end together.
-      const nest_shape first = nest_at(p, i);
-      ph.nest = first.depth;
-      ph.body_end = first.end;
-      ph.units = first.lines;
-      ph.work = static_cast<double>(first.lines) * records_work(p, i + first.depth, first.end);
-      i = first.end;
-      // A nest that joins this one (loop::joins): its lines follow, in the same phase.
-      if (i < end && std::holds_alternative<loop>(p.records[i]) &&
-          std::get<loop>(p.records[i]).joins) {
-        const nest_shape tail = nest_at(p, i);
-        ph.head = ph.units;
-        ph.tail_record = static_cast<std::uint32_t>(i);
-        ph.tail_nest = tail.depth;
-        ph.tail_body_end = tail.end;
-        ph.units += tail.lines;
-        ph.work += static_cast<double>(tail.lines) * records_work(p, i + tail.depth, tail.end);
-        i = tail.end;
+      const std::uint32_t nest_end = std::get<loop>(p.records[i]).body_end;
+      std::size_t lines = 1;
+      std::size_t j = i;
+      while (j < nest_end) {
+        const loop* l = std::get_if<loop>(&p.records[j]);
+        if (l == nullptr) {
+          break;
+        }
+        assert(l->body_end == nest_end && "fftn: the loops over lines are perfectly nested");
+        lines *= l->count;
+        ++j;
       }
+      ph.nest = static_cast<std::uint32_t>(j - i);
+      ph.body_end = nest_end;
+      ph.units = lines;
       const std::size_t per_chunk =
-          std::max<std::size_t>(1, chunk_points / line_length(p, ph.record + ph.nest, ph.body_end));
-      const std::size_t chunks = (ph.units + per_chunk - 1) / per_chunk;
+          std::max<std::size_t>(1, chunk_points / line_length(p, j, nest_end));
+      const std::size_t chunks = (lines + per_chunk - 1) / per_chunk;
       ph.chunks = static_cast<std::uint32_t>(
           std::min<std::size_t>(chunks, std::numeric_limits<std::uint32_t>::max()));
+      ph.work = static_cast<double>(lines) * records_work(p, j, nest_end);
+      i = nest_end;
     }
     g.chunks += ph.chunks;
     g.widest = std::max(g.widest, ph.chunks);

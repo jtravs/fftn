@@ -153,16 +153,6 @@ TEST(WorkGraph, PhasesOfRowsAndPlanes) {
   EXPECT_EQ(blocks->graph.phases[1].nest, 1U);
   EXPECT_EQ(blocks->graph.phases[1].units, 4U);  // blocks of 8 of the 32 columns
   EXPECT_EQ(blocks->graph.phases[1].chunks, 4U); // a block holds 64 x 8 points
-  // 30 columns: three blocks of 8 and a narrower one of 6 (rounded up to C), whose nest
-  // joins the whole blocks' phase (loop::joins, X41) rather than running alone after it.
-  const auto tail = fftn::detail::make_plan_core(
-      fftn::detail::view_of(fftn::planes_c2c<double>(64, 30, 1, fftn::direction::forward)), opts,
-      fine);
-  ASSERT_EQ(tail->graph.phases.size(), 2U);
-  EXPECT_EQ(tail->graph.phases[1].units, 4U);
-  EXPECT_EQ(tail->graph.phases[1].head, 3U);
-  EXPECT_EQ(tail->graph.phases[1].tail_nest, 1U);
-  EXPECT_EQ(tail->graph.phases[1].chunks, 4U);
   // A volume: the two loops over the other axes are one phase of their product.
   fftn::shape<std::complex<double>, std::complex<double>> v;
   v.axes = {{.n = 4}, {.n = 5}, {.n = 6}};

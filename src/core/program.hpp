@@ -68,10 +68,6 @@ struct loop {
   // never have one (transform_addresses ignores it).
   std::array<std::ptrdiff_t, moving_slots> start{};
   std::uint32_t body_end = 0; // records [this + 1, body_end) are the body
-  // A lines loop opening a nest whose lines are disjoint from those of the nest just before
-  // it, of the same axis (the narrower last block of a lanes column phase): the work graph
-  // shares both nests' lines as one phase instead of running this one after (X41).
-  bool joins = false;
 };
 
 using record = std::variant<stage, loop>;
