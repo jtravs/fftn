@@ -28,12 +28,12 @@ namespace d = fftn::detail;
 TEST(NextFastLength, FastLengthsArePinnedForTheVersion) {
   // The reference is fixed per library version (DESIGN.md 9.2): a change to this list is a
   // change of every caller's grid sizes and belongs in the decision log.
-  // Composites with 11 or 17 left the set after experiment P4.
+  // Composites with 11, 17, 19 or 23 left the set after experiment P4.
   const std::vector<std::size_t> expected{
-      1,   2,   3,   4,   5,   6,   7,   8,   9,   10,  11,  12,  13,  14,  15,  16,  17,
-      19,  20,  23,  24,  28,  32,  36,  40,  48,  56,  60,  64,  72,  80,  84,  96,  100,
-      112, 120, 128, 130, 140, 144, 150, 156, 160, 162, 168, 180, 182, 192, 196, 200, 208,
-      210, 216, 224, 234, 240, 252, 256, 260, 270, 276, 280, 288, 294, 300};
+      1,   2,   3,   4,   5,   6,   7,   8,   9,   10,  11,  12,  13,  14,  15,  16,
+      17,  19,  20,  23,  24,  28,  32,  36,  40,  48,  56,  60,  64,  72,  80,  84,
+      96,  100, 112, 120, 128, 130, 140, 144, 150, 156, 160, 162, 168, 180, 182, 192,
+      196, 200, 208, 210, 216, 224, 234, 240, 252, 256, 260, 270, 280, 288, 294, 300};
   std::vector<std::size_t> fast;
   for (std::size_t n = 1; n <= 300; ++n) {
     if (d::is_fast_length(n)) {

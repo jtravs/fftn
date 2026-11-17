@@ -1492,8 +1492,8 @@ the machine-specific estimate for callers who want it.
   codelet. It does not price memory beyond L1, nor long rows' chain or grid (P3).
 - **A fast length** is one whose relative cost on the reference table, AVX2's double table
   (X2's measured one), is at most 1.25. No length with a prime factor above 23 is fast:
-  such lengths are priced at 1.49 or more up to 20000. Nor is a composite with a factor 11
-  or 17: P4 measured them slower than the table believes, on two machines each.
+  such lengths are priced at 1.49 or more up to 20000. Nor is a composite with a factor 11,
+  17, 19 or 23: P4 measured them slower than the table believes, on two machines each.
 - **`next_fast_length(n, real)`** returns the smallest fast length at or above n, or with
   `real` the smallest even one whose half is fast. It searches up to 2⁴⁰. The largest step
   up to 200000 is 17 % (41 → 48), and one query takes microseconds.
@@ -2580,7 +2580,7 @@ maintainer.
   `next_fast_real_length`, or a kind argument.
 - (c) What "fast" means: within 1.25 times the reference table's cost per point of the power
   of two at or above, with the reference AVX2's double table, fixed per version. No prime
-  factor above 23 can be fast, and no composite with 11 or 17 (P4). The alternative is a plain smoothness rule (7-smooth, say),
+  factor above 23 can be fast, and no composite with 11, 17, 19 or 23 (P4). The alternative is a plain smoothness rule (7-smooth, say),
   which ignores the vector width's partial tiles: odd smooth lengths cost 1.5–3 times a
   power of two per point.
 - (d) `template <class T> double relative_cost(std::size_t n, isa target = isa::best)`. It

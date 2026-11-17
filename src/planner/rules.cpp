@@ -934,15 +934,16 @@ namespace {
 // Whether n may be fast: every prime factor has a codelet (at most 23; a length with a
 // larger one takes a Rader or Bluestein stage, which the reference prices at 1.49 times a
 // power of two per point or more up to 20000, so it is never fast), and n is not a composite
-// with a factor 11 or 17. Experiment P4: lengths with them missed 1.3 times the power of two
-// above on two machines each (132 on the EPYC and the Xeon, 1.40-1.68; 1020 on the Mac and
-// the Xeon, 1.32-1.38; 150144 and 250240 on the EPYC, 1.47-1.56), the reference's scaled
-// columns being optimistic for them. Their single codelets (11, 17) stay.
+// with a factor 11, 17, 19 or 23. Experiment P4: lengths with them missed 1.3 times the
+// power of two above on two machines each (132 on the EPYC and the Xeon, 1.40-1.68; 1020 on
+// the Mac and the Xeon, 1.32-1.38; 150144 and 250240 on the EPYC, 1.47-1.56; then 10051 =
+// 19 x 23^2 on the Mac and the EPYC, 1.41-1.66), the reference's scaled columns being
+// optimistic for them. Their single codelets stay.
 bool may_be_fast(std::size_t n) {
-  if (n == 11 || n == 17) {
+  if (n == 11 || n == 17 || n == 19 || n == 23) {
     return true;
   }
-  for (const std::size_t q : {2U, 3U, 5U, 7U, 13U, 19U, 23U}) {
+  for (const std::size_t q : {2U, 3U, 5U, 7U, 13U}) {
     while (n % q == 0) {
       n /= q;
     }
