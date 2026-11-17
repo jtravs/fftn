@@ -55,6 +55,11 @@
 //                    (experiments X12, X7)
 //   LANE_BLOCK=B     the lanes strategy's block in rows (build_settings::lane_block; default
 //                    the rule's), rounded up to a multiple of the complex count (X7)
+//   COLUMNS=lanes|chain   the strided axes of planes and volumes (build_settings::
+//                    lanes_columns): lanes over blocks of adjacent columns where they fit
+//                    (default), or every column alone through the chain (experiment X40)
+//   COLUMN_BLOCK=B   the lanes column phase's block in columns (build_settings::
+//                    column_block; default the rule's), rounded up to a multiple of C (X40)
 //   LAYOUT=rules|interleaved|split   the arithmetic of the chains' lane passes
 //                    (build_settings::layout): the profile's choice (default), or interleaved
 //                    or split forced where a chain has a split run; each case's note shows
@@ -463,6 +468,19 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
         return fbench_error;
       }
       s.settings.lane_block = *v;
+    } else if (key == "COLUMNS") {
+      if (value != "lanes" && value != "chain") {
+        say(message, message_size, "COLUMNS is lanes or chain");
+        return fbench_error;
+      }
+      s.settings.lanes_columns = value == "lanes";
+    } else if (key == "COLUMN_BLOCK") {
+      const std::optional<std::size_t> v = fbench::fftn_tuning::parse_size(value, 1, false);
+      if (!v || *v > 4096) {
+        say(message, message_size, "COLUMN_BLOCK is a whole number from 1 to 4096");
+        return fbench_error;
+      }
+      s.settings.column_block = *v;
     } else if (key == "LAYOUT") {
       if (value != "rules" && value != "interleaved" && value != "split") {
         say(message, message_size, "LAYOUT is rules, interleaved or split");
@@ -567,6 +585,12 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
     }
     if (s.settings.lane_block != 0) {
       d.integer("lane_block", static_cast<std::int64_t>(s.settings.lane_block));
+    }
+    if (!s.settings.lanes_columns) {
+      d.str("columns", "chain");
+    }
+    if (s.settings.column_block != 0) {
+      d.integer("column_block", static_cast<std::int64_t>(s.settings.column_block));
     }
 #ifdef FBENCH_FFTN_OMP
     // Always, so that this binary's identity differs from fbench-fftn's even without options

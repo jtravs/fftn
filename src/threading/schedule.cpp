@@ -75,6 +75,12 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
     p.grid_min_bytes = c.l1d.size;
     p.grid_block_bytes = c.l1d.size;
   }
+  if (c.l1d.line_size != 0) {
+    p.line_bytes = c.l1d.line_size;
+  }
+  if (c.l1d.ways != 0) {
+    p.l1_ways = c.l1d.ways;
+  }
   if (c.l2.size != 0) {
     if (private_l2) {
       p.grid_min_bytes = std::max(p.grid_min_bytes, c.l2.size / 2);

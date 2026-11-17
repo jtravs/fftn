@@ -73,8 +73,9 @@ void run_records(const program& p, std::size_t begin, std::size_t end,
       continue;
     }
     const loop& l = *std::get_if<loop>(&r);
+    const slot_addresses from = moved(at, l.start, 1);
     for (std::size_t c = 0; c < l.count; ++c) {
-      run_records(p, i + 1, l.body_end, moved(at, l.step, c));
+      run_records(p, i + 1, l.body_end, moved(from, l.step, c));
     }
     i = l.body_end - 1;
   }
@@ -324,8 +325,12 @@ void run_transforms(const program& p, std::size_t first, std::size_t count,
 
 void run_lines(const program& p, std::size_t begin, std::size_t nest, std::size_t body_end,
                std::size_t first, std::size_t last, const slot_addresses& at) noexcept {
+  slot_addresses from = at;
+  for (std::size_t i = begin; i < begin + nest; ++i) {
+    from = moved(from, std::get_if<loop>(&p.records[i])->start, 1);
+  }
   for (std::size_t line = first; line < last; ++line) {
-    run_records(p, begin + nest, body_end, moved_in_nest(p, begin, nest, line, at));
+    run_records(p, begin + nest, body_end, moved_in_nest(p, begin, nest, line, from));
   }
 }
 

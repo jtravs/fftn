@@ -121,6 +121,14 @@ struct machine_profile {
   std::size_t grid_two_part_bytes = 0;
   std::size_t grid_block_bytes = std::size_t{64} * 1024;
   std::size_t grid_block = 0;
+  // The L1 data cache's line in bytes: a lanes column phase's block holds at least a line of
+  // adjacent columns (core/plan_core.cpp, column_block; experiment X40). set_grid_sizes reads
+  // it from the topology (128 on Apple's cores).
+  std::size_t line_bytes = 64;
+  // The L1 data cache's associativity (8 where the topology does not say: macOS): with
+  // grid_block_bytes it gives the set period against which a column phase's last pass
+  // counts its legs (core/plan_core.cpp, column_radices; X40).
+  std::size_t l1_ways = 8;
   // The set period (bytes) the grid pads the rows of its intermediate array against, so that
   // the rows phase 2 gathers spread over the sets (grid_pad, experiment X26b); SIZE_MAX: no
   // padding. set_grid_sizes sets 4 KiB where the L2 is shared by a cluster (Apple: long rows

@@ -57,6 +57,11 @@ struct pass_args {
   std::ptrdiff_t dst_dist = 0;
   std::size_t block = 0; // B: the rows of a tile
   std::size_t rows = 0;
+  // lanes_first and lanes_last take their units with the block's runs of C rows innermost
+  // instead of outermost: for the strided axis of a plane, whose lanes' rows are adjacent
+  // columns, so that each array row's B columns are read or written at once, whole cache
+  // lines, before the next (experiment X40).
+  bool columns_inner = false;
 };
 
 // Runs units [first, last) of a pass from src to dst (the line's first elements). A unit is

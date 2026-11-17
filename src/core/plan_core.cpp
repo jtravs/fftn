@@ -277,42 +277,66 @@ struct view {
   std::ptrdiff_t element_bytes = 0;
 };
 
+// The bytes `elements` steps along axis e move each of the views' slots, as a loop's step
+// or start holds them (in, out, block, twiddles).
+std::array<std::ptrdiff_t, moving_slots> slot_bytes_along(std::size_t e, std::ptrdiff_t elements,
+                                                          const view& src, const view& dst) {
+  std::array<std::ptrdiff_t, moving_slots> step{};
+  for (const view* v : {&src, &dst}) {
+    const std::ptrdiff_t bytes = elements * v->stride[e] * v->element_bytes;
+    switch (v->where) {
+    case slot::in:
+      step[0] = bytes;
+      break;
+    case slot::out:
+      step[1] = bytes;
+      break;
+    case slot::block:
+      step[2] = bytes;
+      break;
+    case slot::a:
+    case slot::b:
+      break;
+    }
+  }
+  return step;
+}
+
+// Appends the loops over the lines of every axis but `axis` and `skip` (outermost first),
+// returning their records' indices for close_loops.
+std::vector<std::size_t> open_loops(program& p, std::size_t axis, std::size_t skip,
+                                    const std::vector<std::size_t>& extent, const view& src,
+                                    const view& dst) {
+  std::vector<std::size_t> open;
+  for (std::size_t e = 0; e < extent.size(); ++e) {
+    if (e == axis || e == skip || extent[e] == 1) {
+      continue;
+    }
+    open.push_back(p.records.size());
+    p.records.emplace_back(loop{
+        .kind = loop_kind::lines,
+        .count = extent[e],
+        .step = slot_bytes_along(e, 1, src, dst),
+    });
+  }
+  return open;
+}
+
+void close_loops(program& p, const std::vector<std::size_t>& open) {
+  for (const std::size_t i : open) {
+    std::get<loop>(p.records[i]).body_end = static_cast<std::uint32_t>(p.records.size());
+  }
+}
+
 // Appends the loops over the lines of every axis but `axis` (outermost first), the line's
 // stages inside them, and closes the loops.
 void add_phase(program& p, std::size_t axis, const std::vector<std::size_t>& extent,
                const view& src, const view& dst, std::vector<stage>&& line) {
-  std::vector<std::size_t> open;
-  for (std::size_t e = 0; e < extent.size(); ++e) {
-    if (e == axis || extent[e] == 1) {
-      continue;
-    }
-    loop l{.kind = loop_kind::lines, .count = extent[e]};
-    for (const view* v : {&src, &dst}) {
-      const std::ptrdiff_t bytes = v->stride[e] * v->element_bytes;
-      switch (v->where) {
-      case slot::in:
-        l.step[0] = bytes;
-        break;
-      case slot::out:
-        l.step[1] = bytes;
-        break;
-      case slot::block:
-        l.step[2] = bytes;
-        break;
-      case slot::a:
-      case slot::b:
-        break;
-      }
-    }
-    open.push_back(p.records.size());
-    p.records.emplace_back(l);
-  }
+  const std::vector<std::size_t> open = open_loops(p, axis, axis, extent, src, dst);
   for (stage& st : line) {
     p.records.emplace_back(std::move(st));
   }
-  for (const std::size_t i : open) {
-    std::get<loop>(p.records[i]).body_end = static_cast<std::uint32_t>(p.records.size());
-  }
+  close_loops(p, open);
 }
 
 // The edge operations of the c2c phases: the input edge belongs to the first phase, the
@@ -453,6 +477,139 @@ std::size_t lanes_block(const shape_view& s, const side& in, const side& out,
     block *= 2;
   }
   return block;
+}
+
+// The block (adjacent columns per block) of a lanes column phase (DESIGN.md 9.3, experiment
+// X40): axis `axis` of a c2c plan of two or three axes, not the last, run as the lanes
+// strategy over blocks of adjacent columns, which needs the last axis contiguous in the
+// phase's source and destination (a run of C columns is then one vector access), a chain of
+// codelet lane passes for the column (lanes_fit) and no input edge or factor; else 0 (the
+// columns one at a time through the chain). The rule: a cache line of columns, at least C,
+// doubled while the two scratch tiles fit half the L1 data cache, up to max_lane_block and
+// the columns there are; or the forced block rounded up to a multiple of C.
+template <class T>
+std::size_t column_block(std::size_t axis, const std::vector<std::size_t>& extent, const view& src,
+                         const view& dst, const line_edges& edges, const build_settings& settings,
+                         const chain_builder<T>& chain, std::size_t c) {
+  const std::size_t last = extent.size() - 1;
+  if (!settings.lanes_columns || axis == last || extent[last] < 2 || src.stride[last] != 1 ||
+      dst.stride[last] != 1 || edges.in != edge_op::none || edges.out == edge_op::factor ||
+      !chain.lanes_fit(extent[axis], false)) {
+    return 0;
+  }
+  if (settings.column_block != 0) {
+    return (settings.column_block + c - 1) / c * c;
+  }
+  const std::size_t n = extent[axis];
+  const std::size_t line = settings.profile.line_bytes / (2 * sizeof(T));
+  std::size_t block = (std::max(line, c) + c - 1) / c * c;
+  while (2 * block <= max_lane_block && 2 * block <= extent[last] &&
+         2 * (2 * block) * n * 2 * sizeof(T) <= settings.profile.grid_block_bytes / 2) {
+    block *= 2;
+  }
+  return block;
+}
+
+// The most of r legs `apart` bytes apart that fall into one set of the L1 data cache, whose
+// set period is `period` bytes and whose lines are `line` bytes.
+std::size_t legs_per_set(std::size_t r, std::size_t apart, std::size_t period, std::size_t line) {
+  std::vector<std::size_t> sets(r);
+  for (std::size_t j = 0; j < r; ++j) {
+    sets[j] = j * (apart % period) % period / line;
+  }
+  std::ranges::sort(sets);
+  std::size_t most = 0;
+  for (std::size_t j = 0; j < r;) {
+    std::size_t k = j;
+    while (k < r && sets[k] == sets[j]) {
+      ++k;
+    }
+    most = std::max(most, k - j);
+    j = k;
+  }
+  return most;
+}
+
+// The radices of a lanes column phase's chain for columns of n, `stride` bytes between a
+// column's elements: the row's (chain.radices), unless the last pass, which writes its legs
+// to the array s = n / R columns' elements apart, would put more of them into one L1 set
+// than the L1 has ways; then the cheapest sequence (ranked_radices) whose last pass does
+// not, of codelet radices with lane passes. Experiment X40: on the M5 Max a last pass of
+// radix 16 whose legs shared a set made 128^2 and 256^2 planes 2.2 times as long as the
+// same chain ending in radix 8 (reads in the first pass did not matter). Forced radices win.
+template <class T>
+std::vector<std::size_t> column_radices(std::size_t n, std::ptrdiff_t stride,
+                                        const build_settings& settings,
+                                        const target_profile& profile,
+                                        const chain_builder<T>& chain,
+                                        const kernels_of<T>& kernels) {
+  std::vector<std::size_t> rad = chain.radices(n);
+  if (chain.forces(n)) {
+    return rad;
+  }
+  const std::size_t ways = std::max<std::size_t>(settings.profile.l1_ways, 1);
+  const std::size_t period = std::max<std::size_t>(settings.profile.grid_block_bytes / ways, 1);
+  const std::size_t line = std::clamp<std::size_t>(settings.profile.line_bytes, 1, period);
+  const auto bytes = static_cast<std::size_t>(stride < 0 ? -stride : stride);
+  const auto fits = [&](const std::vector<std::size_t>& r) {
+    return legs_per_set(r.back(), n / r.back() * bytes, period, line) <= ways;
+  };
+  if (rad.empty() || fits(rad)) {
+    return rad;
+  }
+  constexpr std::size_t candidates = 64;
+  for (const std::vector<std::size_t>& r : ranked_radices(n, profile, candidates)) {
+    const bool lanes = std::ranges::all_of(r, [&](std::size_t x) {
+      return has_codelet(x) && kernels.passes.codelet[codelet_slot(x)]->lane[0] != nullptr;
+    });
+    if (lanes && fits(r)) {
+      return r;
+    }
+  }
+  return rad;
+}
+
+// Appends a lanes column phase (column_block) and returns the scratch it needs: the loops
+// over the other axes, then over the whole blocks of `block` adjacent columns along the
+// last axis, each block's stages inside (strategies/lanes.cpp, pass_args::rows the block's
+// columns); then the same nest once for the columns left over, as one narrower block rounded
+// up to C whose idle lanes read nothing and are never written.
+template <class T>
+std::size_t add_column_phase(program& p, chain_builder<T>& chain, std::size_t axis,
+                             const std::vector<std::size_t>& extent, const view& src,
+                             const view& dst, int sign, const line_edges& edges, std::size_t block,
+                             std::size_t c, const std::vector<std::size_t>& rad) {
+  const std::size_t last = extent.size() - 1;
+  const std::size_t whole = extent[last] / block;
+  const std::size_t left = extent[last] % block;
+  std::size_t need = 0;
+  const auto nest = [&](std::size_t count, std::size_t width, std::size_t rows,
+                        std::size_t first_column) {
+    std::vector<std::size_t> open = open_loops(p, axis, last, extent, src, dst);
+    open.push_back(p.records.size());
+    p.records.emplace_back(loop{
+        .kind = loop_kind::lines,
+        .count = count,
+        .step = slot_bytes_along(last, static_cast<std::ptrdiff_t>(width), src, dst),
+        .start = slot_bytes_along(last, static_cast<std::ptrdiff_t>(first_column), src, dst),
+    });
+    std::vector<stage> st;
+    need = std::max(need, chain.c2c_lanes(extent[axis], sign, {src.where, src.stride[axis]},
+                                          src.stride[last], {dst.where, dst.stride[axis]},
+                                          dst.stride[last], edges, width, st, true, rad));
+    for (stage& x : st) {
+      x.args.rows = rows;
+      p.records.emplace_back(std::move(x));
+    }
+    close_loops(p, open);
+  };
+  if (whole != 0) {
+    nest(whole, block, block, 0);
+  }
+  if (left != 0) {
+    nest(1, (left + c - 1) / c * c, left, whole * block);
+  }
+  return need;
 }
 
 // When the pairing of an even real line fuses (strategies/chain.hpp, DESIGN.md 9.1). The
@@ -712,10 +869,26 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       const std::size_t d = i - 1;
       const view& src = d + 1 == r ? in_view : out_view;
       const bool aliased = src.where == slot::out || c.in_place;
+      const line_edges edges = c2c_edges(opts, settings, d + 1 == r, d == 0);
+      if (const std::size_t block = column_block<T>(d, in.extent, src, out_view, edges, settings,
+                                                    chain, kernels.complex_lanes);
+          block != 0) {
+        const std::vector<std::size_t> rad =
+            column_radices<T>(c.lengths[d], out_view.stride[d] * out_view.element_bytes, settings,
+                              profile, chain, kernels);
+        scratch = std::max(scratch, add_column_phase<T>(p, chain, d, in.extent, src, out_view, sign,
+                                                        edges, block, kernels.complex_lanes, rad));
+        c.axis_notes.push_back("axis " + std::to_string(d) + " (n = " +
+                               std::to_string(c.lengths[d]) + "): lanes over blocks of " +
+                               std::to_string(block) + " adjacent columns, radices " +
+                               chain.radix_text(c.lengths[d], rad));
+        c.strategy_note = "chain for the last axis' rows, the lanes over blocks of adjacent "
+                          "columns for the others; each transform finished before the next";
+        continue;
+      }
       std::vector<stage> st;
       const std::size_t need =
-          chain.c2c_line(c.lengths[d], sign, at(src, d), at(out_view, d), aliased,
-                         c2c_edges(opts, settings, d + 1 == r, d == 0), st);
+          chain.c2c_line(c.lengths[d], sign, at(src, d), at(out_view, d), aliased, edges, st);
       lines(d, in.extent, src, out_view, need, std::move(st));
       c.axis_notes.push_back("axis " + std::to_string(d) + " (n = " + std::to_string(c.lengths[d]) +
                              "): radices " + chain.radix_text(c.lengths[d]));
@@ -1087,7 +1260,7 @@ std::string describe(const plan_core& core) {
     o << "planning: " << core.planning_note << "\n";
   }
   const char* rule =
-      core.strategy_note.empty() || core.prog.lanes != 0 ? "planner v1" : "the grid's phase rule";
+      core.built == strategy_choice::grid ? "the grid's phase rule" : "planner v1";
   if (!core.strategy_note.empty()) {
     o << "strategy: " << core.strategy_note << "; radices from ";
   } else {
@@ -1118,7 +1291,12 @@ std::string describe(const plan_core& core) {
       o << indent << "loop " << (l->kind == loop_kind::batch ? "batch" : "lines") << " x"
         << l->count << " (steps in bytes: in " << l->step[0] << ", out " << l->step[1] << ", block "
         << l->step[2] << (l->step[3] != 0 ? ", twiddles " + std::to_string(l->step[3]) : "")
-        << ")\n";
+        << ")";
+      if (l->start != std::array<std::ptrdiff_t, moving_slots>{}) {
+        o << " from (in " << l->start[0] << ", out " << l->start[1] << ", block " << l->start[2]
+          << ")";
+      }
+      o << "\n";
       ends.push_back(l->body_end);
       continue;
     }

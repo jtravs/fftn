@@ -106,7 +106,9 @@ void lanes_gather(const pass_args* a, const void* src, void* dst, std::size_t fi
 
 // The inverse of lanes_gather for the first `rows` rows of the tile: element i B + r to
 // element i of row r, dst_stride reals between a row's elements and dst_dist between rows.
-// One unit. Reads src (scratch), dst, dst_stride, dst_dist, n, block (B), rows.
+// With columns_inner (the rows are a plane's adjacent columns, X40) element i of every row
+// is written before element i + 1. One unit. Reads src (scratch), dst, dst_stride, dst_dist,
+// n, block (B), rows, columns_inner.
 template <class T>
 void lanes_scatter(const pass_args* a, const void* src, void* dst, std::size_t first,
                    std::size_t last) {
@@ -118,6 +120,23 @@ void lanes_scatter(const pass_args* a, const void* src, void* dst, std::size_t f
   const std::size_t b = a->block;
   const std::size_t rows = a->rows;
   const std::ptrdiff_t tile_leg = at(b, 2);
+  if (a->columns_inner) {
+    for (std::size_t u = first; u < last; ++u) { // the one unit, when the range holds it
+      for (std::size_t i = 0; i < n; ++i) {
+        for (std::size_t r0 = 0; r0 < rows; r0 += C<T>) {
+          const std::size_t valid = rows - r0 < C<T> ? rows - r0 : C<T>;
+          const cv<T> v = load(x + at(r0, 2) + at(i, tile_leg));
+          T* yp = y + at(r0, yd) + at(i, ys);
+          if (valid == C<T> && yd == 2) {
+            store(yp, v);
+          } else {
+            store_part(yp, yd, valid, v);
+          }
+        }
+      }
+    }
+    return;
+  }
   for (std::size_t u = first; u < last; ++u) { // the one unit, when the range holds it
     for (std::size_t r0 = 0; r0 < rows; r0 += C<T>) {
       const std::size_t valid = rows - r0 < C<T> ? rows - r0 : C<T>;
@@ -273,8 +292,11 @@ void lanes_c2r_pair(const pass_args* a, const void* src, void* dst, std::size_t 
 // row's twiddles w^(p k), broadcast) reading the rows: unit u is rows r0 = (u / m) C .. +
 // C - 1 and group p = u % m, written to the tile as lane_pass writes copies q = r0 of s = B.
 // Rows outermost, so that the rows are read in order (the order the chain reads them: run
-// group-major, a block of 1024-point-rows beyond L1 was 1.3 times slower on the M5). Reads
-// src, src_stride, src_dist (reals), m, block, rows, twiddles; dst: the tile.
+// group-major, a block of 1024-point-rows beyond L1 was 1.3 times slower on the M5). With
+// columns_inner the runs of C rows are innermost instead (u % (B / C) and p = u / (B / C)):
+// the rows are a plane's adjacent columns, and one element of every row is one stretch of
+// the array (X40). Reads src, src_stride, src_dist (reals), m, block, rows, twiddles,
+// columns_inner; dst: the tile.
 template <class T, std::size_t R, int Sign>
 void lanes_first(const pass_args* a, const void* src, void* dst, std::size_t first,
                  std::size_t last) {
@@ -288,8 +310,18 @@ void lanes_first(const pass_args* a, const void* src, void* dst, std::size_t fir
   const T* table = static_cast<const T*>(a->twiddles);
   const std::ptrdiff_t in_leg = at(m, xs);
   const std::ptrdiff_t out_leg = at(b, 2);
-  std::size_t k = first < m ? 0 : first / m;
-  std::size_t p = first < m ? first : first % m;
+  // Unit u is (k, p) = (u / m, u % m), or (u % g, u / g) with columns_inner (g runs of C).
+  const bool inner = a->columns_inner;
+  const std::size_t g = b / C<T>;
+  std::size_t k = 0;
+  std::size_t p = 0;
+  if (inner) {
+    k = first % g;
+    p = first / g;
+  } else {
+    k = first < m ? 0 : first / m;
+    p = first < m ? first : first % m;
+  }
   for (std::size_t u = first; u < last; ++u) {
     const std::size_t r0 = k * C<T>;
     const std::size_t valid = block_rows<T>(rows, r0);
@@ -322,7 +354,12 @@ void lanes_first(const pass_args* a, const void* src, void* dst, std::size_t fir
           },
           out, table, p);
     }
-    if (++p == m) {
+    if (inner) {
+      if (++k == g) {
+        k = 0;
+        ++p;
+      }
+    } else if (++p == m) {
       p = 0;
       ++k;
     }
@@ -331,8 +368,9 @@ void lanes_first(const pass_args* a, const void* src, void* dst, std::size_t fir
 
 // The last pass of a block's chain (m = 1, the plain codelet, with the output edge) writing
 // the rows: the tile's copies q' = q B + r of s' = s B are copy q of row r; unit u is rows
-// r0 = (u / s) C .. + C - 1 and copy q = u % s, rows outermost (as lanes_first). Reads src
-// (the tile), s (s'), block, rows, dst, dst_stride, dst_dist (reals), scale.
+// r0 = (u / s) C .. + C - 1 and copy q = u % s, rows outermost (as lanes_first, and like it
+// innermost with columns_inner). Reads src (the tile), s (s'), block, rows, dst, dst_stride,
+// dst_dist (reals), scale, columns_inner.
 template <class T, std::size_t R, int Sign, edge_op OutOp>
 void lanes_last(const pass_args* a, const void* src, void* dst, std::size_t first,
                 std::size_t last) {
@@ -347,8 +385,18 @@ void lanes_last(const pass_args* a, const void* src, void* dst, std::size_t firs
   const std::ptrdiff_t in_leg = at(tile_copies, 2);
   const std::ptrdiff_t out_leg = at(s, ys);
   const edge<T, OutOp> op = make_edge<T, OutOp>(a, nullptr, 0, 1);
-  std::size_t k = first < s ? 0 : first / s;
-  std::size_t q = first < s ? first : first % s;
+  // Unit u is (k, q) = (u / s, u % s), or (u % g, u / g) with columns_inner (g runs of C).
+  const bool inner = a->columns_inner;
+  const std::size_t g = b / C<T>;
+  std::size_t k = 0;
+  std::size_t q = 0;
+  if (inner) {
+    k = first % g;
+    q = first / g;
+  } else {
+    k = first < s ? 0 : first / s;
+    q = first < s ? first : first % s;
+  }
   for (std::size_t u = first; u < last; ++u) {
     const std::size_t r0 = k * C<T>;
     if (r0 < rows) {
@@ -375,7 +423,12 @@ void lanes_last(const pass_args* a, const void* src, void* dst, std::size_t firs
                                              });
       }
     }
-    if (++q == s) {
+    if (inner) {
+      if (++k == g) {
+        k = 0;
+        ++q;
+      }
+    } else if (++q == s) {
       q = 0;
       ++k;
     }
