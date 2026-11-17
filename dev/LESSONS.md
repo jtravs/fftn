@@ -755,7 +755,8 @@ as many instructions as the row's whole two-pass leaf, mostly scalar address ari
 R legs on each side and loop state spilled to the stack, repeated for every run of C
 columns, with the group's twiddles reloaded per run. No choice of column radices or block
 width moved that (0.97–1.03 of the cycles); running a block's runs in an inner loop per
-group did (64² 0.84, 128² 0.89, 512² 0.92 of the cycles), and so did removing a pass where
+group did (64² 0.84, 128² 0.89, 512² 0.92 of the cycles; in time the EPYC's planes 0.94, the
+Xeon's c2c planes 0.92, though a tiny volume lost 3 % and the arm was not adopted), and so did removing a pass where
 the row's pair leaf had left the columns two (32²: one radix-32 pass, 0.72 of the time on
 the EPYC 7763). The per-call set-up is the next cost for the smallest planes: a radix-16
 column leaf computes and spills 32 leg addresses for four runs at 16².
