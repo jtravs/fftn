@@ -75,7 +75,10 @@ each (29–46 % of cases above 1.05) with the causes above. Runs 20261117-004757
 20261116-232302-42c6 (Mac).
 Cloud exit check (X45, `main` 509d123, the same 193 rows): ÷ FFTW Zen 5 0.70 with 15 cases
 over 1.05 (7.8 %), Granite Rapids 0.77 with 25 (13.0 %; ÷ MKL 0.75, 22, 11.4 %), Axion 0.71
-with 9 (4.7 %, the tail rule met at its edge); runs 20261117-144317-7119, -144359-0a8f, -144321-6196.
+with 9 (4.7 %, the tail rule met at its edge); runs 20261117-144317-7119, -144359-0a8f, -144321-6196. Beyond noise (DESIGN 1.3 since 2026-11-17): Zen 5 11 (5.7 %: 2²³, 2²⁴, 100000, 2048, 4096
+and rows of 2–6 points), Granite Rapids 22 (11.4 %; ÷ MKL 17, 8.8 %: 32768–262144, 46080 and
+100000 at 1.2–1.6, with FFTW fast on that VM, LESSONS 1.12; 131071, 999983), Axion 9 (4.7 %:
+rows of 2–8 points 1.2–1.47, the fixed cost of a call).
 FFTL.jl updated to libfftl 1ae621e (upstream main of 2026-11-16, 111 commits after 53171e8;
 same build: apple-m1, x86-64-v3), same case set, `main` e8c2639, the old libfftl as a third
 arm: FFTN ÷ FFTL 0.55 on the Mac (old libfftl 0.50 in the same run), 9 cases over 1.05
