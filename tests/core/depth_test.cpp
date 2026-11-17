@@ -6,8 +6,9 @@
 // stays cheap: one and two top factors, power-of-two and smooth sub-rows, sub-row chains of
 // two to four passes (the copy back, the alternation with scratch a, the detour through b),
 // every instruction set the machine runs, double and float, both directions, the scale on
-// the top pass, and batches with padded distances; and where it cannot run (complex counts
-// that do not divide the factors, in place) the row stays a chain.
+// the top pass, batches with padded distances and in place (through the workspace block);
+// and where it cannot run (complex counts that do not divide the factors) the row stays a
+// chain.
 
 #include "core/plan_core.hpp"
 #include "fftn/detail/core.hpp"
@@ -86,7 +87,7 @@ void check_depth(fftn::isa target, const depth_case& dc, fftn::direction dir, do
   for (const std::size_t f : dc.tops) {
     subs *= f;
   }
-  const bool fits = !in_place && dc.tops[0] % lanes == 0 && (n / subs) % lanes == 0;
+  const bool fits = dc.tops[0] % lanes == 0 && (n / subs) % lanes == 0;
   EXPECT_EQ(text.find("strategy: depth-first chain") != std::string::npos, fits) << text;
 
   fftn::test::input_source src(0xDE97ULL + n + count);
@@ -155,8 +156,9 @@ template <class T> void every_case(fftn::isa target) {
     check_depth<T>(target, dc, fftn::direction::backward, 0.25, 2, dc.n + 3);
     check_depth<T>(target, dc, fftn::direction::forward, 1.0 / 3, 3, dc.n + 5);
   }
-  // In place it does not run (the first pass would overwrite its input): a chain.
+  // In place through the workspace block, with a scale and a batch; one and two tops.
   check_depth<T>(target, cases()[0], fftn::direction::forward, 1.0, 1, cases()[0].n, true);
+  check_depth<T>(target, cases()[7], fftn::direction::backward, 0.5, 2, cases()[7].n + 3, true);
 }
 
 TEST(Depth, EveryTargetPrecisionDirectionAndSplit) {

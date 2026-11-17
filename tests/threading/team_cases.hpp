@@ -229,6 +229,8 @@ void add_cases(std::vector<team_case>& out, const fftn::detail::build_settings& 
   depth.depth_tops = {8, 4};
   out.push_back(make_case("c2c_depth2_4096x2" + suffix, fftn::rows_c2c<T>(4096, 2, bwd), 8192, 8192,
                           false, depth, target));
+  out.push_back(make_case("c2c_depth2_inplace_4096x2" + suffix, fftn::rows_c2c<T>(4096, 2, fwd),
+                          8192, 8192, true, depth, target));
   // Split lane passes (DESIGN.md 6.3, strategies/chain.hpp), forced with a first radix of
   // 16, which every target's split_block divides: a run of three passes (BL in the
   // middle), of two in place, in the complex chains of real rows, and on the long axis of

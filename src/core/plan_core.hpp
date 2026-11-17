@@ -58,7 +58,7 @@ struct build_settings { // NOLINT(clang-analyzer-optin.performance.Padding)
   // (the innermost batch dimension's count at least 2) of rows every pass of whose chain is
   // a codelet's, without input edge operations, real rows contiguous on the real side
   // (strategies/lanes.cpp), the depth-first chain only for a c2c row of one axis,
-  // contiguous on both sides, out of place, with no factor edge, whose split fits
+  // contiguous on both sides, with no factor edge, whose split fits
   // (chain_builder::depth_fits); elsewhere, forced or not, the row is a chain, and describe()
   // says which was built. Experiments X12, X7 and X46 compare them.
   strategy_choice strategy = strategy_choice::rules;

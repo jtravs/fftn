@@ -1052,12 +1052,12 @@ std::string chain_builder<T>::depth_text(std::size_t n,
 // whole line, from the input to the output; for each sub-row (the plan's loop), passes 2 ..
 // of its chain on its block, alternating with scratch a and ending in the block (an odd
 // count takes b for one pass, a single pass a copy back); the top passes in place, the inner
-// one (two tops) on each of F1 runs. The sub-rows' chains are the chain of M the line would
-// get, so they take its split run.
+// one (two tops) on each of F1 runs, the last from the work slot to the output. The sub-rows'
+// chains are the chain of M the line would get, so they take its split run.
 template <class T>
 typename chain_builder<T>::depth_stages
 chain_builder<T>::c2c_depth(std::size_t n, const std::vector<std::size_t>& tops, int sign,
-                            double scale) {
+                            double scale, slot work) {
   depth_stages out;
   const std::size_t f1 = tops[0];
   const std::size_t f2 = tops.size() > 1 ? tops[1] : 1;
@@ -1079,7 +1079,7 @@ chain_builder<T>::c2c_depth(std::size_t n, const std::vector<std::size_t>& tops,
   first.args.dst_cols = f1;
   first.args.dst_qstride = static_cast<std::ptrdiff_t>(f2 * m);
   first.src = slot::in;
-  first.dst = slot::out;
+  first.dst = work;
   first.units = (m / r2) * (subs / c);
   first.chunks = chunks_of(first.units, r2 * c);
   first.name = "depth-first first pass radix-" + std::to_string(r2) + " " + direction_name(sign) +
@@ -1089,24 +1089,24 @@ chain_builder<T>::c2c_depth(std::size_t n, const std::vector<std::size_t>& tops,
 
   const std::size_t passes = rad.size() - 1;
   const std::size_t split = split_from(rad, false, 1);
-  endpoint at{.where = slot::out, .stride = 1};
+  endpoint at{.where = work, .stride = 1};
   std::size_t s = r2;
   for (std::size_t i = 1; i < rad.size(); ++i) {
     const std::size_t left = rad.size() - i; // passes from this one to the end
     endpoint next{.where = slot::a, .stride = 1};
     if (passes > 1 && left == 1) {
-      next = endpoint{.where = slot::out, .stride = 1};
+      next = endpoint{.where = work, .stride = 1};
     } else if (passes > 1 && passes % 2 == 1 && left == 2) {
       next = endpoint{.where = slot::b, .stride = 1};
-    } else if (passes > 1 && at.where != slot::out) {
-      next = endpoint{.where = slot::out, .stride = 1};
+    } else if (passes > 1 && at.where != work) {
+      next = endpoint{.where = work, .stride = 1};
     }
     add_pass(m, rad, i, s, sign, at, next, none, out.sub, 1, layout_of(i, split, rad.size()));
     at = next;
     s *= rad[i];
   }
-  if (at.where != slot::out) {
-    add_copy(m, at, {slot::out, 1}, none, out.sub);
+  if (at.where != work) {
+    add_copy(m, at, {work, 1}, none, out.sub);
   }
   out.scratch = m;
 
@@ -1120,13 +1120,13 @@ chain_builder<T>::c2c_depth(std::size_t n, const std::vector<std::size_t>& tops,
     st.args.m = legs;
     st.args.n = f * legs;
     st.args.scale = scale;
-    st.src = slot::out;
-    st.dst = slot::out;
+    st.src = work;
+    st.dst = last ? slot::out : work;
     st.units = legs / c;
     st.chunks = chunks_of(st.units, f * c);
     st.name = "depth-first top pass radix-" + std::to_string(f) + " " + direction_name(sign) +
-              " (decimation in time, in place, legs " + std::to_string(legs) + " apart" +
-              (e != 0 ? "; out: scale" : "") + ")";
+              " (decimation in time, " + (st.dst == st.src ? "in place" : "to the output") +
+              ", legs " + std::to_string(legs) + " apart" + (e != 0 ? "; out: scale" : "") + ")";
     to.push_back(std::move(st));
   };
   if (f2 > 1) {
