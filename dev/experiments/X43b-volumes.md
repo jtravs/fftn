@@ -128,7 +128,13 @@ that run threaded (not inline) is at most 0.95, and (2) no volume is slower than
 more than the larger of 2 % and the band at 8 lanes, in a fresh run; one-thread programs are
 unchanged by construction (the base is 06229fa, the axes one by one on the EPYC).
 
-#**Arm VTX (written before its run, after V's rejection on the Xeon):** VT on the Xeon's
+#VT, EPYC run 20261117-190518-b8a6 (Slurm 512116; 06229fa against ca43a10, both at 8 lanes; 8
+rounds, all under load, other processes about 24 cores, band ±1.0 %): 0.775 over the 38, 0.77
+over the 36 that run threaded (48³ 0.69–0.70, 100³ 0.69–0.71, 256³ 0.71–0.74, 128³ 0.77, 97³
+0.85–0.86, 16 × 256 × 256 0.77–0.83); 16³ (inline) 1.000–1.012, inside the 2 %. Rule met: VT
+adopted on the EPYC.
+
+**Arm VTX (written before its run, after V's rejection on the Xeon):** VT on the Xeon's
 profile too (`team_volume_planes` on x86-64 with a private L2 below 2 MiB, both the EPYC's and
 the Xeon's classes; the Xeon builds no team column blocks, B1). Rule: on the Xeon, VT's rule
 (threaded volumes' geometric mean at most 0.95, none slower beyond the larger of 2 % and the
