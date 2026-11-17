@@ -52,6 +52,14 @@ Two suspects, both in what a team gets to share, not in what a chunk computes:
   alone through the chain stay there (2048 × 36: the Xeon's forced blocks of 8 took 2.0 of
   the chain's time; not changed by B1). The rule is X43's decision rule above, the target
   cases the threaded c2c planes and volumes whose team program differs from the program.
+- **Arm B2 (written before its runs, on top of B1):** in the team program, c2c columns that
+  the one-thread rule runs alone through the chain because even a line of them would put
+  the tiles past the budget (2048 × 36) run as lanes blocks of one line (4 complex doubles on
+  x86), with the chain's radices so the bits stay the program's. Members running
+  neighbouring columns alone write the same cache lines; the EPYC screen's blocks of 4 took
+  0.72–0.77 of the chain columns' time at 8 lanes there (blocks of 8: 1.06, and 2.0 on the
+  Xeon). Rule: X43's decision rule, against B1 at 8 lanes, the target cases the threaded
+  planes whose team program B2 changes (2048 × 36 in and out of place in the case set).
 - Rows-against-columns split: the screen shows how the two phases scale; an arm only if it
   points at one.
 
