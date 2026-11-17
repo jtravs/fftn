@@ -243,5 +243,10 @@ Mac (1883) and in CI. Library text (x86-64 Linux, GCC 16, `size` of `libfftn.a`)
   radix-64 unit spends 327 of 1161 instructions on stack moves), or a depth-first order
   that keeps two passes' working set in L1 (X46's subject for long rows). With A, 1024 as
   16 × 64 ran 1800 ns in place against the planner's 1839 (screen), so after A a radix-64
-  last pass is within 2 % of the three-pass plan: a re-fit of the `avx2` table on A's
-  build is the cheap next check.
+  last pass is within 2 % of the three-pass plan. A screen on A's build (not deciding; not
+  `--serial`; runs 20261117-190918-99ff, -190928-81b1, -190948-ea48, band ±1.00 %), forced
+  sequences ÷ the planner's: 1024 as 16 × 64 0.957 at batch 1 but 0.994 / 1.006 / 1.101 at
+  batches 16 / 256 / 1024, as 32 × 32 1.01–1.17; 768 as 12 × 64 0.964; 2048 as 32 × 64
+  1.096. So a two-pass single row of 768 or 1024 now gains 4 %, and batches lose it: an
+  override would need the batch in the rule (X38's selection rule asks for both batches),
+  which closes a third of 1024's gap at most.
