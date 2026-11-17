@@ -5,6 +5,7 @@
 
     calibrate.py fit RUN.jsonl [--machine NAME] [--json OUT]
     calibrate.py gnr RUN.jsonl              (rule 3: the Xeon's fit with Granite Rapids' caches)
+    calibrate.py thresholds RUN.jsonl       (the fallback: the profile's long-row fields fitted)
 
 The run times every case of bench/catalogues/p3.toml under the arms R (the rules), C (the
 chain), G2 and G3 (the grid in two and three phases); each timing's note names the program
@@ -247,6 +248,93 @@ def evaluate(path: Path, caches, out: Path | None) -> None:
             out.write_text(json.dumps({"cpu": cpu, "precision": prec, "caches": caches, **full}) + "\n")
 
 
+# ---- Calibrated thresholds (the fallback: the profile's own fields, fitted) ------------
+
+SIZES = [2**k for k in range(13, 30)]  # candidate thresholds in bytes, 8 KiB to 512 MiB
+
+
+def structure(t: dict, n: int, e: int) -> str:
+    """The arm the profile's long-row fields choose for a complex line of n (plan_grid's rule:
+    grid_min_bytes, chain_part_bytes and chain_mixed_bytes for mixed lengths, pow2_chain_bytes for powers of two,
+    grid_three_bytes and grid_two_odd_part)."""
+    b = n * e
+    part = n & -n
+    odd = n // part
+    chain = (b <= t["grid_min"] or (odd > 1 and (part * e <= t["part"] or b <= t["mixed"]))
+             or (odd == 1 and b <= t["pow2"]))
+    if chain:
+        return "C"
+    three = b > t["three"] and (t["odd"] == 0 or odd < t["odd"])
+    return "G3" if three else "G2"
+
+
+def chosen(t: dict, c: str, med: dict) -> str:
+    _, n, e = case_line(c)
+    arm = structure(t, n, e)
+    if (arm, c) not in med:
+        arm = "G2" if arm == "G3" else "C"
+    return arm
+
+
+def fit_thresholds(cases: list[str], med: dict) -> dict:
+    """Coordinate search over the six fields, minimising the summed log time of the choices."""
+
+    def cost(t: dict) -> float:
+        return sum(math.log(med[(chosen(t, c, med), c)]) for c in cases)
+
+    # grid_min last: moved first, it would make every row a chain before the exceptions
+    # (part, mixed, pow2) could keep the chains that win.
+    choices = {
+        "part": [0] + SIZES[:8],
+        "mixed": [0] + SIZES[:8],
+        "pow2": [0] + SIZES,
+        "three": SIZES,
+        "odd": [0, 3, 5, 15, 25, 125],
+        "grid_min": SIZES,
+    }
+    best: dict | None = None
+    for start in SIZES:  # one coordinate descent from every grid_min: the cost is not convex
+        t = {"grid_min": start, "part": 0, "mixed": 0, "pow2": 0, "three": 2 * start, "odd": 0}
+        for _ in range(3):
+            for key, values in choices.items():
+                t[key] = min(values, key=lambda v: cost({**t, key: v}))
+        if best is None or cost(t) < cost(best):
+            best = t
+    return best
+
+
+def thresholds(path: Path) -> None:
+    cpu, med, _ = load(path)
+    cases_all = sorted({c for _, c in med})
+    print(f"{path.name}: {cpu}: the profile's long-row fields fitted to the fastest arms")
+    for prec in ("f64", "f32"):
+        cases = [c for c in cases_all if c.endswith("-f32") == (prec == "f32")]
+        if not cases:
+            continue
+        full = fit_thresholds(cases, med)
+        within, ratios, rules = 0, [], []
+        rules_within = 0
+        misses = []
+        for c in cases:
+            t = fit_thresholds([x for x in cases if x != c], med)
+            arm = chosen(t, c, med)
+            best = min(med[(a, c)] for a in ("C", "G2", "G3") if (a, c) in med)
+            ratio = med[(arm, c)] / best
+            ratios.append(ratio)
+            rules.append(med[("R", c)] / best)
+            rules_within += 1 if med[("R", c)] / best <= 1.05 else 0
+            if ratio <= 1.05:
+                within += 1
+            else:
+                misses.append(f"{c} chose {arm} {ratio:.3f}")
+        print(f"  {prec}: fields {full}; the rules within 5 %: {rules_within} of {len(cases)}")
+        print(f"    calibrated fields within 5 % of the fastest: {within} of {len(cases)} "
+              f"({100 * within / len(cases):.1f} %); geomean {statistics.geometric_mean(ratios):.3f}; "
+              f"rules {statistics.geometric_mean(rules):.3f}")
+        for m in misses:
+            print("      " + m)
+
+
 def granite_rapids(path: Path) -> None:
     """Rule 3: the Xeon's fit, with Granite Rapids' cache sizes, chooses for X31b's rows."""
     cpu, med, notes = load(path)
@@ -274,7 +362,12 @@ def main(argv: list[str] | None = None) -> int:
     f.add_argument("--json", type=Path)
     g = sub.add_parser("gnr")
     g.add_argument("run", type=Path)
+    th = sub.add_parser("thresholds")
+    th.add_argument("run", type=Path)
     args = p.parse_args(argv)
+    if args.command == "thresholds":
+        thresholds(args.run)
+        return 0
     if args.command == "gnr":
         granite_rapids(args.run)
         return 0

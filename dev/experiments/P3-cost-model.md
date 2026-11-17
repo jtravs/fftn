@@ -88,6 +88,16 @@ below (`k8`), as X29 and X32 imply. Leave-one-out:
   unconstrained, since the Mac has no level between its L2 and memory.
 - A fit error of about 20 % cannot separate structures that differ by 5–30 %.
 
+The fallback, the profile's own long-row fields fitted to the same timings (`calibrate.py
+thresholds`: `grid_min_bytes`, `chain_part_bytes`, `chain_mixed_bytes`, `pow2_chain_bytes`,
+`grid_three_bytes`, `grid_two_odd_part`; a coordinate search from every `grid_min`, leaving
+one case out), is no better on these data:
+- double: 26 of 32 (81 %) within 5 %, geomean 1.084, against the rules' 28 of 32 and 1.031;
+- float: 15 of 20 (75 %), 1.090, against the rules' 13 of 20 and 1.066.
+
+With six fields and one case per length, leaving a case out often leaves its region without
+a sample: a calibration catalogue needs several lengths per region.
+
 A per-pass model with a factor per level does not capture what decides a grid's cost on the
 Mac: the block widths, the copies' sets and the padding. Before adding terms, the EPYC and
 Xeon runs (Slurm 511481/511482, 16209/16210), on machines with three cache levels, will show
