@@ -122,4 +122,25 @@ remaining gap to oneMKL's threads on the Xeon (small planes, whole planes per me
 volumes) is not in the column blocks: it is the cost of a team execution itself, outside
 X43's arms.
 
+### Arm B1 (team program, column blocks of at most 128 bytes)
+
+- EPYC run 20261117-162414-89ca (Slurm 512008; A 9323b8b and B1 5eb077f at 8 lanes, FFTW at
+  8 threads and serial; 8 rounds, all under load, other processes about 35 cores of 128,
+  band ±2.5 %). B1 ÷ A over the 39 threaded c2c planes and volumes whose team program
+  differs: 0.887 (1000² 0.66–0.67, 480 × 640 0.71–0.73, 128² 0.75–0.76, 96² 0.78–0.81, 100²
+  0.83, 1024² 0.82–0.84, 256² 0.82–0.91, 512² 0.87–0.89, 2048² 0.87–0.90, 36 × 2048 0.91–0.96,
+  volumes 0.75–0.97 with V's plane-at-a-time order, the base's). Worst c2c 1.017 (32² op,
+  inline: no team runs it). The real planes, whose programs B1 cannot change (no team core
+  for real kinds), came out 1.010 overall with nine cases at 1.026–1.050, past the band:
+  re-run below before rule (2) decides. FFTN at 8 lanes over FFTW's better plan, the 37 c2c
+  planes: 0.953 → 0.852 (still over: 2048 × 36 2.3–2.5, 32² 1.40 inline, 2048² 1.07–1.11,
+  1024² out of place 1.06).
+
+### Arm B2 (team program, chain-only columns as blocks of a line)
+
+- EPYC run 20261117-163827-f12d (Slurm 512041; B1 5eb077f against B2 de05523 at 8 lanes, the
+  37 c2c planes; 8 rounds, all under load, band ±3.9 %): 2048 × 36 0.728 and 0.714, no other
+  team program changes; worst 1.042 (32² in place, whose program and team program B2 does
+  not change), inside the band. Rule met on the EPYC.
+
 ## Verdict
