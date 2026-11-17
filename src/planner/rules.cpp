@@ -8,8 +8,11 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 namespace fftn::inline v0::detail {
@@ -601,12 +604,17 @@ sequence cheapest(std::size_t n, std::size_t smooth, bool more, const target_pro
   std::vector<std::uint64_t> best(divisors.size(), 0);
   for (std::size_t i = divisors.size() - 1; i-- > 0;) {
     const std::size_t s = divisors[i];
+    const std::size_t left = smooth / s;
     bool found = false;
     for (const std::size_t r : pass_radices) {
-      if (!allowed(s, r)) {
+      if (left % r != 0 || !allowed(s, r)) {
         continue;
       }
-      const std::uint64_t c = pass_cost(p, n, s, r, kind(s, s * r)) + best[index(s * r)];
+      // s r is a divisor above s: search only past i.
+      const auto next = std::ranges::lower_bound(
+          divisors.begin() + static_cast<std::ptrdiff_t>(i) + 1, divisors.end(), s * r);
+      const std::uint64_t c = pass_cost(p, n, s, r, kind(s, s * r)) +
+                              best[static_cast<std::size_t>(next - divisors.begin())];
       if (!found || c < best[i]) {
         best[i] = c;
         found = true;
@@ -887,6 +895,183 @@ std::size_t rader_root(std::size_t q, const target_profile& p) {
     }
   }
   return 0; // unreachable: every prime has a primitive root
+}
+
+double row_cost(std::size_t n, const target_profile& p) {
+  if (n <= 1) {
+    return 0;
+  }
+  // The table's own cheapest sequence for the smooth part, leaves included (a leaf is a first
+  // pass with m = 1), so that every length is priced alike; the overrides are left out, since
+  // they use radices the table does not price (32 and 64 on AVX2). Then the prime factors
+  // above 16: a codelet's (17, 19, 23) priced as a middle radix-16 pass scaled by r log2 r,
+  // the rest merged into one Rader or Bluestein stage at the end (chain_builder::radices).
+  std::vector<std::size_t> big;
+  const std::size_t smooth = split_smooth(n, big);
+  std::size_t rest = 1;
+  std::vector<std::size_t> codelet_primes;
+  for (const std::size_t q : big) {
+    if (has_codelet(q)) {
+      codelet_primes.push_back(q);
+    } else {
+      rest *= q;
+    }
+  }
+  double cost = smooth > 1 ? static_cast<double>(cheapest(n, smooth, !big.empty(), p).cost) : 0;
+  for (const std::size_t r : codelet_primes) {
+    // n / r butterflies of radix r, C to a unit, at a middle radix-16 unit's cost scaled by
+    // the operations' ratio, r log2 r over 16 log2 16.
+    const double scale = static_cast<double>(r) * std::log2(static_cast<double>(r)) / 64.0;
+    const auto units = static_cast<double>(ceil_div(n / r, p.lanes));
+    cost += (static_cast<double>(p.costs->unit[1][cost_column(16)]) * units +
+             static_cast<double>(p.costs->pass)) *
+            scale;
+  }
+  if (rest > 1) {
+    // The stage runs n / rest copies of a convolution of L points: two transforms of L and
+    // two elementwise passes (bluestein_length's pricing).
+    const std::size_t len =
+        rader_root(rest, p) != 0
+            ? rest - 1
+            : bluestein_length(rest, p, std::numeric_limits<std::size_t>::max());
+    const double per_point = static_cast<double>(p.costs->unit[2][0] / (2 * p.lanes) + 1);
+    const double conv = 2 * static_cast<double>(cheapest(len, len, false, p).cost) +
+                        2 * per_point * static_cast<double>(len);
+    cost += conv * static_cast<double>(n / rest);
+  }
+  return cost;
+}
+
+double relative_row_cost(std::size_t n, const target_profile& p) {
+  if (n <= 1) {
+    return 1;
+  }
+  // A transform the planner runs as one codelet (a leaf, rule 1, or a lone 17, 19 or 23) is
+  // as fast per point as a leaf of a power of two: the tables' first-pass costs at m = 1 do
+  // not price leaves (X8 measured them apart), so they are not compared. Every other length
+  // is priced as the chain the planner builds; 20 is one (rule_radices: X38 measured no leaf
+  // of 20).
+  if ((n <= largest_leaf || has_codelet(n)) && rule_radices(n, p).size() == 1) {
+    return 1;
+  }
+  const std::size_t power = std::bit_ceil(n);
+  return (row_cost(n, p) / static_cast<double>(n)) /
+         (row_cost(power, p) / static_cast<double>(power));
+}
+
+namespace {
+
+// Whether n may be fast: every prime factor has a codelet (at most 23; a length with a
+// larger one takes a Rader or Bluestein stage, which the reference prices at 1.49 times a
+// power of two per point or more up to 20000, so it is never fast), and n is not a composite
+// with a factor 11, 17, 19 or 23. Experiment P4: lengths with them missed 1.3 times the
+// power of two above on two machines each (132 on the EPYC and the Xeon, 1.40-1.68; 1020 on
+// the Mac and the Xeon, 1.32-1.38; 150144 and 250240 on the EPYC, 1.47-1.56; then 10051 =
+// 19 x 23^2 on the Mac and the EPYC, 1.41-1.66), the reference's scaled columns being
+// optimistic for them. Their single codelets stay.
+bool may_be_fast(std::size_t n) {
+  if (n == 11 || n == 17 || n == 19 || n == 23) {
+    return true;
+  }
+  for (const std::size_t q : {2U, 3U, 5U, 7U, 13U}) {
+    while (n % q == 0) {
+      n /= q;
+    }
+  }
+  return n == 1;
+}
+
+// The reference table of the fast lengths (task 2.5, DESIGN.md 9.2): a frozen copy of X2's
+// AVX2 double table (avx2_double as it was at task 2.5) without its overrides, which
+// row_cost does not read. It is not the planner's table: a refit of avx2_double changes
+// plans, never the fast lengths, so users' grids move only when this copy is changed on
+// purpose (tests/core/lengths_test.cpp pins the fast set up to 2^20).
+// clang-format off
+constexpr pass_costs reference_costs{
+    .unit = {{
+        {28, 195, 114, 305, 235, 460, 387, 665, 557, 830, 684, 1238, 995, 1231, 1273, 0, 0},
+        {88, 147, 190, 286, 324, 468, 486, 696, 658, 982, 758, 1371, 1096, 1200, 1255, 0, 0},
+        {46, 58, 79, 116, 143, 236, 221, 364, 323, 504, 326, 639, 636, 667, 652, 0, 0},
+    }},
+    .tail = {{
+        {391, 748, 914, 1102, 1467, 1552, 1879, 2354, 2535, 3780, 3073, 5560, 3464, 3140, 3836, 0, 0},
+        {377, 536, 702, 884, 1061, 1348, 1354, 1733, 1749, 2608, 2073, 3752, 2522, 2810, 3152, 0, 0},
+        {19, 1635, 518, 2086, 859, 2215, 1308, 3223, 1804, 2819, 2381, 4671, 2853, 3738, 3002, 0, 0},
+    }},
+    .pass = 436,
+    .overrides = {},
+};
+// clang-format on
+
+// AVX2's double profile over the frozen table, its other values written out for the same
+// reason (C = 2, leaf limit 16, AVX2's Rader range).
+constexpr target_profile reference_profile{
+    .lanes = 2,
+    .costs = &reference_costs,
+    .leaf_limit = default_leaf_limit,
+    .bluestein_above = 16,
+    .split = true,
+    .lanes_up_to = 0,
+    .rader_from = 0,
+    .rader_below = std::size_t{1} << 24U,
+};
+
+// The lengths in [lo, hi] that may_be_fast accepts, ascending: the products of 2, 3, 5, 7
+// and 13 there, and the lone 11, 17, 19 and 23. A few thousand at most up to 2^41.
+std::vector<std::size_t> fast_candidates(std::size_t lo, std::size_t hi) {
+  std::vector<std::size_t> out;
+  for (const std::size_t q : {11U, 17U, 19U, 23U}) {
+    if (lo <= q && q <= hi) {
+      out.push_back(q);
+    }
+  }
+  for (std::size_t a = 1; a <= hi; a *= 2) {
+    for (std::size_t b = a; b <= hi; b *= 3) {
+      for (std::size_t c = b; c <= hi; c *= 5) {
+        for (std::size_t d = c; d <= hi; d *= 7) {
+          for (std::size_t e = d; e <= hi; e *= 13) {
+            if (e >= lo) {
+              out.push_back(e);
+            }
+          }
+        }
+      }
+    }
+  }
+  std::ranges::sort(out);
+  return out;
+}
+
+// The smallest fast length in [lo, 2 lo], lo >= 1: there is one, the power of two there.
+std::size_t first_fast_from(std::size_t lo) {
+  for (const std::size_t m : fast_candidates(lo, 2 * lo)) {
+    if (m <= 2 || relative_row_cost(m, reference_profile) <= fast_tolerance) {
+      return m;
+    }
+  }
+  return std::bit_ceil(lo); // unreachable: the power of two is a candidate and fast
+}
+
+} // namespace
+
+bool is_fast_length(std::size_t n) {
+  if (n <= 2) {
+    return true;
+  }
+  if (!may_be_fast(n)) {
+    return false;
+  }
+  return relative_row_cost(n, reference_profile) <= fast_tolerance;
+}
+
+std::size_t next_fast_length(std::size_t n, bool real) {
+  // Every candidate tested is a product of 2, 3, 5, 7 and 13 (or a lone 11 to 23) in
+  // [n, 2n]: the call costs microseconds up to 2^40 (DESIGN.md 9.2), not a trial of every
+  // integer above n.
+  if (real) {
+    return 2 * first_fast_from(n <= 2 ? 1 : (n + 1) / 2);
+  }
+  return n <= 2 ? std::max<std::size_t>(n, 1) : first_fast_from(n);
 }
 
 std::size_t bluestein_length(std::size_t q, const target_profile& p, std::size_t pow2_part_limit) {

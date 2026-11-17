@@ -8,6 +8,7 @@
 #include "fftn/config.hpp"      // IWYU pragma: export
 #include "fftn/executor.hpp"    // IWYU pragma: export
 #include "fftn/isa.hpp"         // IWYU pragma: export
+#include "fftn/lengths.hpp"     // IWYU pragma: export
 #include "fftn/options.hpp"     // IWYU pragma: export
 #include "fftn/plan.hpp"        // IWYU pragma: export
 #include "fftn/shape.hpp"       // IWYU pragma: export
