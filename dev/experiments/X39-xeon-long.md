@@ -234,6 +234,20 @@ pass; FFTW's four (25 · 5 · 10 · 20) at 3.08 ns per point suggest a radix-25 
 (25 · 10 · 10 · 10) would take 25000 from 1.28 to about 1.05 of FFTW, and 100000's phase of
 500 from three passes to two (about 0.85 of arm D's time); not measured.
 
+### Arm D, judged (Xeon, `--serial`)
+
+First form 76019fa (all 14 overrides, 1000 as 20 · 10 · 5) against C = d50585e (A + C with
+X36 and X38), run 20261117-011743-1a01 (Slurm 16192 build, 16193 timing; 20 quiet rounds,
+band ±1.71 %), the standard rows of the overridden lengths: 28 changed cases, geomean 0.954;
+c2c 300 0.856, 500 0.905, 1000 0.904, 2000 0.828, 3000 0.862, 3600 0.854, 4800 0.880, 5000
+0.843, 6000 0.864, 10000 0.847, 20000 0.913, 25000 0.899, 100000 0.916, r2c 10000 0.878;
+but c2r 1000 and 10000 **1.19–1.25** (the c2r pairing fuses into the first pass, so the rule
+moved a radix 5 in front of the radix 20: 5 · 20 · 5, 5 · 20 · 10 · 5) and planes and
+batches of 1000 1.02–1.04. It fails the rule. Refined form 3cb6b32: 1000 keeps X2's
+override, and a c2r line whose override starts with radix 20 takes the costs' sequence
+(`chain_builder::real_radices`; avx2's X38 overrides do not start with 20 where a small
+radix could move). RESULT_D2
+
 ## Verdict
 
 - **Diagnosis.** The failing rows up to 32768 points are chains on the Xeon, not grids.
