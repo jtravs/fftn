@@ -100,7 +100,9 @@ Mac 0.85 / 0.95 / 0.95, EPYC 0.81 / 1.02 / 1.01 (runs 20261117-115356-776c,
 `avx2` column phase costs 1.9 times its rows), Mac 32²–64² (1.02–1.09), real planes of odd
 or tiny rows; the Xeon trails MKL on c2c planes from 16² and far behind it on real planes;
 threaded (8 lanes, EPYC run 20261117-122327-970c) the largest planes scale 2.3–4.7 times
-against FFTW's 4–6 (c2c 1000²–2048² 1.11–1.39 of FFTW's threads, real 1000²–2048² 1.3–2.45).
+against FFTW's 4–6 (c2c 1000²–2048² 1.11–1.39 of FFTW's threads, real 1000²–2048² 1.3–2.45);
+on the Xeon (run 20261117-131055-a1d0) FFTN's 8 lanes take 0.81 of FFTW's threaded time but
+1.16 of oneMKL's (512²–1024² 1.2–1.45).
 
 ### Tasks
 

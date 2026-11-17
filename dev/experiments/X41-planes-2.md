@@ -248,7 +248,14 @@ its one but FFTW's 4–6 times: c2c 1000² 1.25–1.39, 1024² ip 1.15, 2048² 1
 1000²–2048² 1.3–2.45 (r2c 2048²: FFTN 2.6 times its serial speed, FFTW 5.8). At 2048² each
 member's two column tiles (16 columns of 2048, 1 MiB) exceed its 512 KiB L2: the serial
 block rule, made for one thread with the whole L3, is the first suspect.
-XEON_THREADS
+Threaded, Xeon run 20261117-131055-a1d0 (8 whole cores of one socket, 8 rounds, all
+loaded, band ±4.6 %; cd183e9, the library of e950835), the 37 c2c planes, FFTN at 8 lanes
+over the better of each competitor's 8-thread and serial plans: ÷ FFTW 0.81, ÷ MKL 1.16.
+oneMKL's OpenMP threads beat FFTN's pool from 16² to 1024² (MKL 0.46–0.86 of FFTN's time:
+512² 0.69–0.72, 1000² 0.69, 1024² 0.71–0.86, 128² × 16 0.46); FFTN ahead at 2048² (1.14–1.21)
+and on the planes MKL runs slowly in one thread (8 × 6, 5 × 7). The first threaded Xeon run
+(20261117-121139-0b02) had oneMKL on one thread (the descriptors' thread limit) and is void
+for MKL.
 
 ## Verdict
 
@@ -267,7 +274,9 @@ the geometric means everywhere (Mac 0.85, EPYC 0.81, Xeon 0.77) with 32² on x86
 `avx2` column phase costs 1.9 times the rows) and 32²–64² on the Mac (1.02–1.09) over;
 the Xeon trails MKL on c2c planes from 16² up (sub-item M, not diagnosed here); real planes
 are at FFTW on x86 and below it on the Mac, but far behind MKL on the Xeon. Threaded, the
-largest planes scale worse than FFTW's threads (above). What 4.1 needs next: a threaded
+largest planes scale worse than FFTW's threads on the EPYC, and on the Xeon oneMKL's
+threads take 0.86 of FFTN's time over the 37 c2c planes (FFTN 1.16 of MKL's; ahead of
+FFTW's threads, 0.81). What 4.1 needs next: a threaded
 column block sized to one member's L2 (the plan's width hint); the `avx2` column phase at
 32²; the Xeon against MKL with counters; real planes against MKL. Task 4.2 inherits the
 column phase for volumes (64³ 0.72–1.02 of FFTW threaded) and the same threaded block
