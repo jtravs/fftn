@@ -103,3 +103,28 @@ USD 3.51 of its USD 20 cap; the month's total, with X21, is USD 4.87. Egress (re
 about 30 MB) is negligible. Teardown was verified on 2026-11-16 at 20:02 UTC: no instance,
 disk or address of the campaign is left; the firewall rule, subnet and network were deleted
 after matching their IDs; the watchdogs were stopped.
+
+## X45, 2026-11-17
+
+Rentals for [X45](X45-cloud-exit.md) (the phase 1 exit check on Zen 5, Granite Rapids and
+Axion), under the maintainer's 2026-11-16 approval (USD 20 cap for the campaign, at most
+USD 6 for X45). Same project, region, settings and prices as X35: Spot VMs with
+`--max-run-duration=3h` (termination action DELETE), boot-disk auto-delete, and a Mac-side
+watchdog per VM that deletes by name only after matching the recorded ID. Creation times are
+those Compute Engine recorded; deletion times are when the delete call returned.
+
+Shared resources (free): VPC network `fftn-x45-net` (8456314417235220721), subnet
+`fftn-x45-sub` (7877984435035035844), firewall rule `fftn-x45-ssh` (1353138198478444763,
+SSH from the controller's address only).
+
+| Instance | Recorded ID | Type | Zone | Spot USD/h (VM) | Created (UTC) | Deleted (UTC) | Cost USD | Running total (X45) |
+|---|---|---|---|---:|---|---|---:|---:|
+| fftn-x45-c4d | 6028098383780108448 | c4d-standard-16, 1 thread per core | us-central1-a | 0.335 | 2026-11-17 14:36:00 | 2026-11-17 15:01:27 | 0.15 | 0.15 |
+| fftn-x45-c4a | 6714390765626316960 | c4a-standard-16 | us-central1-a | 0.354 | 2026-11-17 14:35:59 | 2026-11-17 15:02:37 | 0.17 | 0.32 |
+| fftn-x45-c4 | 7614195218821273760 | c4-standard-16, 1 thread per core, minimum platform Granite Rapids | us-central1-a | 0.473 | 2026-11-17 14:35:59 | 2026-11-17 15:06:45 | 0.26 | 0.58 |
+
+X45 total USD 0.58 estimated gross; no VM was preempted. With X31, X31b and X35 the campaign
+has spent USD 4.09 of its USD 20 cap; the month's total, with X21, is USD 5.45. Egress
+(results only, about 10 MB) is negligible. Teardown was verified on 2026-11-17 at 15:08 UTC:
+no instance, disk or address of the campaign is left; the firewall rule, subnet and network
+were deleted after matching their IDs; the watchdogs were stopped.

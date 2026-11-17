@@ -29,6 +29,8 @@ template <class T> cnum<T> product(fftn::detail::target t, cnum<T> a, cnum<T> w,
   const T wi = w.im;
   switch (t) {
   case target::scalar: // plain C++: two products, then one sum
+  case target::x86_v2: // no FMA: r*a + i*swap_ri(a), the same products and sums
+  case target::avx:
     if (conj_w) {
       return {ar * wr + ai * wi, ai * wr - ar * wi};
     }
@@ -54,7 +56,9 @@ template <class T> cnum<T> product(fftn::detail::target t, cnum<T> a, cnum<T> w,
 template <class T> cnum<T> multiply_add(fftn::detail::target t, cnum<T> acc, cnum<T> a, cnum<T> w) {
   using fftn::detail::target;
   switch (t) {
-  case target::scalar: {
+  case target::scalar:
+  case target::x86_v2:
+  case target::avx: {
     const cnum<T> p = product(t, a, w, false);
     return {acc.re + p.re, acc.im + p.im};
   }

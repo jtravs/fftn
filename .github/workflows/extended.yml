@@ -5,7 +5,7 @@
 # Run workflow, on any branch): the second GCC version, Apple Clang, clang++ on Windows,
 # every sanitizer that ci.yml does not run, clang-tidy and coverage. Their findings are
 # fixed in batches (AGENTS.md section 3); ci.yml keeps one configuration per platform and
-# one job per sanitizer on every push. The matrices are read by gate.yml.
+# one job per sanitizer on each push to main. The matrices are read by gate.yml.
 name: extended
 
 on:

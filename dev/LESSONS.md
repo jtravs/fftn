@@ -115,6 +115,15 @@ every arm on one base: merging `main` into the branch mid-experiment moved the s
 1.14–1.16 on the EPYC (the merged `main` alone did), which first read as a loss of the arm
 being timed. [X37](experiments/X37-short-batches.md).
 
+1.12 **Across cloud VMs, compare ratios within a run, and distrust single long rows even
+then.** Two Granite Rapids VMs of one type (`c4-standard-16`), a day apart, ran both FFTN and
+FFTW about 6 % faster on the second over 35 shared rows, so times across VMs mislead. The
+ratio held over the set (FFTN ÷ FFTW 0.778 → 0.784), but single long rows did not: FFTW took
+0.46 of its earlier time at 2²² (FFTN 0.66) and 0.80 at 65536 (FFTN 0.99), turning 0.76 →
+1.10 and 1.24 → 1.53 with FFTN's plans unchanged; the competitor's MEASURE plans and the
+VM's memory placement both move. Judge a row by a same-run A/B on one VM, and a VM's
+standing by the geometric mean. [X45](experiments/X45-cloud-exit.md).
+
 ## 2. The instruction set and the machine
 
 2.1 **The data layout that wins depends on the ISA.** Interleaved complex numbers suit
@@ -231,6 +240,17 @@ competitor's strength there; check the absolute times on a second core before sp
 the gap, and judge per-core rules on several cores of one ISA (Zen 3 against Zen 5 and
 Cascade Lake against Granite Rapids differed by up to 0.3–0.6 in single cases, not in which
 cases lose). [X31](experiments/X31-cloud-1d.md).
+
+2.10 **Without FMA, width still pays and split arithmetic stops paying.** Forced on a Zen 3
+(EPYC 7763) and a Cascade Lake Xeon, a 256-bit target without FMA or AVX2 ran 0.68–0.73 of
+the time of the same kernels on 128-bit SSE4.2 registers, and 0.90–0.94 of FFTW built with
+SSE2 and AVX; the 128-bit target ran 0.96–0.98 of FFTW's SSE2 build. Split re/im passes,
+7–23 % faster than interleaved ones with FMA (X1), gained only 0.5–2.4 % without it: the
+FMA-shaped split text, de-fused, needs up to 17 % more multiplies (3 % over radices 2–16)
+than the complex-register text, whose lowering never fuses a shared scale. Keep the
+unfused order in the generator rather than de-fusing an FMA schedule, and re-measure layout
+choices per ISA level, not per register width. Caveat: modern cores, not Sandy Bridge,
+whose 256-bit loads take two cycles. [X14](experiments/X14-old-x86.md).
 
 ## 3. Memory and caches
 

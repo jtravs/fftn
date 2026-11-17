@@ -62,7 +62,9 @@ TEST(link, every_compiled_target_has_its_own_table) {
       EXPECT_TRUE(seen.insert(e).second) << target_name(t) << " shares an entry point";
     }
   }
-  EXPECT_EQ(tables, (FFTN_ARCH_X86_64 != 0 || FFTN_ARCH_AARCH64 != 0) ? 3 : 1);
+  EXPECT_EQ(tables, FFTN_HAS_OLD_X86 != 0                             ? 5
+                    : FFTN_ARCH_X86_64 != 0 || FFTN_ARCH_AARCH64 != 0 ? 3
+                                                                      : 1);
 }
 
 TEST(link, lane_counts_and_fusion_match_each_target) {
@@ -72,6 +74,24 @@ TEST(link, lane_counts_and_fusion_match_each_target) {
   EXPECT_EQ(s.f32.complex_lanes, 1U);
   EXPECT_EQ(s.f64.real_lanes, 1U);
   EXPECT_EQ(s.f64.tw_reals, 2U);
+  if (const kernel_table* v = find_kernels(target::x86_v2)) {
+    EXPECT_FALSE(v->fused);
+    EXPECT_EQ(v->f64.complex_lanes, 1U);
+    EXPECT_EQ(v->f32.complex_lanes, 2U);
+    EXPECT_EQ(v->f64.real_lanes, 2U);
+    EXPECT_EQ(v->f32.real_lanes, 4U);
+    EXPECT_EQ(v->f64.tw_reals, 4U);    // pre-arranged, as on the other x86 targets
+    EXPECT_EQ(v->f64.split_block, 4U); // avx's W: the pair rounds alike
+  }
+  if (const kernel_table* a = find_kernels(target::avx)) {
+    EXPECT_FALSE(a->fused);
+    EXPECT_EQ(a->f64.complex_lanes, 2U);
+    EXPECT_EQ(a->f32.complex_lanes, 4U);
+    EXPECT_EQ(a->f64.real_lanes, 4U);
+    EXPECT_EQ(a->f32.real_lanes, 8U);
+    EXPECT_EQ(a->f32.tw_reals, 4U);
+    EXPECT_EQ(a->f32.split_block, 8U);
+  }
   if (const kernel_table* a = find_kernels(target::avx2)) {
     EXPECT_TRUE(a->fused);
     EXPECT_EQ(a->f64.complex_lanes, 2U);
