@@ -103,6 +103,14 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
       p.column_near_tile_bytes = 2 * c.l1d.size;
     }
   }
+  // X43 arm B1: at 8 lanes, blocks of 8 columns (128 bytes of complex doubles) took 0.67-0.86
+  // of the time of X40's 16 on 1000^2-2048^2 planes on the EPYC 7763 (16 columns of 1000-2048
+  // fill or overfill each member's 512 KiB L2) and 0.65-0.84 on 128^2-256^2 on both x86
+  // machines (twice the blocks for the members to share), while one thread lost up to 1.42
+  // with them (2048^2): a team program takes them, the program stays.
+  if (x86_64) {
+    p.column_team_bytes = 128;
+  }
   // Experiment X29: with a private L2 and an L3 of at least 2 MiB per CPU sharing it (the
   // EPYC 7763's CCX: 32 MiB for 8 cores), a row whose length has a power-of-two part of at
   // most 1024 points took 0.64-0.85 of the grid's time as a chain, steadily, to 2 Mi points

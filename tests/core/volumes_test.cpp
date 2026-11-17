@@ -129,4 +129,58 @@ TEST(Volumes, InnerAxesPlaneAtATime) {
   }
 }
 
+// The team program (X43 arm B1): with machine_profile::column_team_bytes a c2c plan of several
+// axes keeps a second core whose column blocks are narrower and whose radices are the same,
+// for teams of two or more; the workspace of a team covers it; nothing is built where the
+// blocks would not differ or the field is 0. Its results equal the program's byte for byte
+// (tests/threading, the team cases with a team program).
+TEST(TeamProgram, NarrowerBlocksTheSameRadices) {
+  fftn::detail::build_settings settings;
+  settings.profile.column_team_bytes = 64;
+  settings.profile.line_bytes = 64;
+  const auto plane = fftn::detail::make_plan_core(
+      fftn::detail::view_of(fftn::planes_c2c<double>(256, 256, 1, fftn::direction::forward)),
+      fftn::options(), settings);
+  ASSERT_NE(plane->team, nullptr);
+  EXPECT_EQ(plane->team->team, nullptr);
+  const std::string text = fftn::detail::describe(*plane);
+  EXPECT_NE(text.find("with a team of two or more: axis 0 (n = 256): lanes over blocks of 4 "),
+            std::string::npos)
+      << text;
+  // The same radices: only the block in each axis line differs.
+  const auto radices = [](const std::string& note) { return note.substr(note.find("radices")); };
+  ASSERT_EQ(plane->axis_notes.size(), plane->team->axis_notes.size());
+  for (std::size_t i = 0; i < plane->axis_notes.size(); ++i) {
+    EXPECT_EQ(radices(plane->axis_notes[i]), radices(plane->team->axis_notes[i]));
+  }
+  for (const int team : {2, 8}) {
+    EXPECT_GE(fftn::detail::workspace_bytes(*plane, team),
+              static_cast<std::size_t>(team) * plane->team->slot_bytes);
+  }
+  EXPECT_EQ(fftn::detail::workspace_bytes(*plane, 1), plane->bytes);
+  // A volume: both the plane's columns and the outer axis's pencils.
+  const auto volume = fftn::detail::make_plan_core(
+      fftn::detail::view_of(shape_of<double>({64, 64, 64})), fftn::options(), settings);
+  ASSERT_NE(volume->team, nullptr);
+  // No team program without the field, for rows, or where every block is already that narrow.
+  settings.profile.column_team_bytes = 0;
+  EXPECT_EQ(fftn::detail::make_plan_core(fftn::detail::view_of(fftn::planes_c2c<double>(
+                                             256, 256, 1, fftn::direction::forward)),
+                                         fftn::options(), settings)
+                ->team,
+            nullptr);
+  settings.profile.column_team_bytes = 64;
+  EXPECT_EQ(fftn::detail::make_plan_core(
+                fftn::detail::view_of(fftn::rows_c2c<double>(256, 64, fftn::direction::forward)),
+                fftn::options(), settings)
+                ->team,
+            nullptr);
+  settings.column_block = 4;
+  EXPECT_EQ(fftn::detail::make_plan_core(fftn::detail::view_of(fftn::planes_c2c<double>(
+                                             256, 256, 1, fftn::direction::forward)),
+                                         fftn::options(), settings)
+                ->team,
+            nullptr);
+}
+
 } // namespace

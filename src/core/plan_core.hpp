@@ -69,6 +69,9 @@ struct build_settings { // NOLINT(clang-analyzer-optin.performance.Padding)
   // multiple of C) instead of the rule's (plan_core.cpp, column_block) when not 0.
   bool lanes_columns = true;
   std::size_t column_block = 0;
+  // Builds the team program (plan_core::team) rather than the program: column blocks within
+  // profile.column_team_bytes (X43). Set only by build_plan_core for the team core it adds.
+  bool team_program = false;
   // Walked programs (multi-axis) of at most calls_max kernel calls per transform run from
   // their calls unrolled at construction (program.hpp, experiment X41); false: the driver
   // walks the records (tests compare the two).
@@ -185,7 +188,19 @@ public:
   std::size_t bytes = 0;
   // One lane's scratch in a team's workspace: the layout above, in whole 128-byte lines.
   std::size_t slot_bytes = 0;
+
+  // What a team of two or more members runs (X43 arm B1), when it differs from this core:
+  // the same transform with narrower lanes column blocks (machine_profile::column_team_bytes)
+  // and the same radices per column. A column's result does not depend on its block's width
+  // (each column is a lane computing its own chain), so serial and team executions give the
+  // same bits. A whole core, with its own program, work graph, tables and scratch layout.
+  std::shared_ptr<const plan_core> team;
 };
+
+// The core a team of two or more members runs: the team program where there is one.
+[[nodiscard]] inline const plan_core& team_core(const plan_core& c) noexcept {
+  return c.team != nullptr ? *c.team : c;
+}
 
 // A plan as the options ask: built by the rules (build_plan_core), or through measured
 // planning or a wisdom entry (plan_with_effort, core/measure.cpp).

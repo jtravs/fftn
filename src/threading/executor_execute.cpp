@@ -61,7 +61,9 @@ void execute_on(const plan_core& core, const void* in, void* out, const executor
   if (width > 1) {
     const int group_size = ex.group_size();
     const lane_map lanes{.lanes = width, .group_size = group_size < 0 ? 0 : group_size};
-    const schedule plan = make_schedule(core.graph, lanes, core.profile);
+    // The team that runs it runs the team program where there is one (execute_member).
+    const plan_core& runner = team_core(core);
+    const schedule plan = make_schedule(runner.graph, lanes, runner.profile);
     if (!plan.inline_all && plan.dispatch > 1) {
       assert(ws.size() >= workspace_bytes(core, width) &&
              "fftn: workspace smaller than plan::workspace_bytes(executor concurrency)");

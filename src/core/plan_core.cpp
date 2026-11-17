@@ -586,6 +586,10 @@ std::size_t column_block(std::size_t axis, const std::vector<std::size_t>& exten
       return 0;
     }
   }
+  // A team program's blocks (X43 arm B1; machine_profile::column_team_bytes).
+  if (settings.team_program && settings.profile.column_team_bytes != 0) {
+    block = std::min(block, std::max(line, up(settings.profile.column_team_bytes / complex_bytes)));
+  }
   return block;
 }
 
@@ -1281,6 +1285,16 @@ std::shared_ptr<plan_core> build_plan_core(const shape_view& s, const options& o
       .rader = settings.rader,
   };
   c->program_text = choice_text(pinned_choice(built, *c));
+  // The team program (X43 arm B1), kept where its column blocks differ from the program's.
+  if (s.kind == transform_kind::c2c && r > 1 && settings.profile.column_team_bytes != 0 &&
+      !settings.team_program) {
+    build_settings team = settings;
+    team.team_program = true;
+    std::shared_ptr<const plan_core> t = build_plan_core(s, opts, team);
+    if (t->axis_notes != c->axis_notes) {
+      c->team = std::move(t);
+    }
+  }
   return c;
 }
 
@@ -1420,6 +1434,13 @@ std::string describe(const plan_core& core) {
   }
   for (const std::string& note : core.axis_notes) {
     o << note << "\n";
+  }
+  if (core.team != nullptr) {
+    for (std::size_t i = 0; i < core.team->axis_notes.size(); ++i) {
+      if (i >= core.axis_notes.size() || core.team->axis_notes[i] != core.axis_notes[i]) {
+        o << "with a team of two or more: " << core.team->axis_notes[i] << "\n";
+      }
+    }
   }
   o << "workspace: " << core.bytes << " bytes (scratch lines a, b of " << core.scratch_line
     << " complex each; block of " << core.block_elements << " complex)\n";

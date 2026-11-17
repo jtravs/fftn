@@ -92,9 +92,10 @@ std::size_t workspace_bytes(const plan_core& core, int lanes) noexcept {
   const auto l = static_cast<std::size_t>(lanes);
   // The slack aligns the state to its 128-byte lines at any workspace address. A size that
   // does not fit saturates, so that allocating it fails rather than wrapping to a small one.
+  // A team runs the team program where there is one (execute_member).
   std::size_t slots = 0;
   std::size_t total = 0;
-  if (__builtin_mul_overflow(l, core.slot_bytes, &slots) ||
+  if (__builtin_mul_overflow(l, team_core(core).slot_bytes, &slots) ||
       __builtin_add_overflow(slots, sync_line + team_layout{l}.bytes(), &total)) {
     return std::numeric_limits<std::size_t>::max();
   }
@@ -110,16 +111,19 @@ void execute_team(const plan_core& core, const void* in, void* out, const team& 
   execute_member(core, in, out, t, ws, done, 0);
 }
 
-void execute_member(const plan_core& core, const void* in, void* out, const team& t,
+void execute_member(const plan_core& plan, const void* in, void* out, const team& t,
                     const workspace& ws, completion done, int threads) noexcept {
   assert(t.size >= 1 && t.rank >= 0 && t.rank < t.size && t.group_size >= 0 &&
          "fftn: invalid team");
   if (t.size == 1) {
-    execute_core(core, 0, core.prog.transforms, in, out, ws);
+    execute_core(plan, 0, plan.prog.transforms, in, out, ws);
     return;
   }
-  assert(ws.size() >= workspace_bytes(core, t.size) &&
+  assert(ws.size() >= workspace_bytes(plan, t.size) &&
          "fftn: workspace smaller than plan::workspace_bytes(team size)");
+  // Every member of a team of two or more runs the team program where there is one (X43),
+  // whatever the schedule: its results are the program's, bit for bit.
+  const plan_core& core = team_core(plan);
   assert((!core.in_place || in == out) && "fftn: in-place plan executed with in != out");
   const team_layout layout{static_cast<std::size_t>(t.size)};
   std::byte* state = align_up(ws.memory().data(), sync_line);

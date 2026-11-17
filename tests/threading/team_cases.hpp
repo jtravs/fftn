@@ -291,6 +291,15 @@ void add_cases(std::vector<team_case>& out, const fftn::detail::build_settings& 
   one_volume.axes = {{.n = 17}, {.n = 15}, {.n = 37}};
   out.push_back(make_case("c2c_volume_inplace_17x15x37" + suffix, one_volume, 9435, 9435, true,
                           settings, target));
+  // A team program (X43 arm B1): teams run narrower column blocks than the program (here a
+  // line of columns), which must give the program's bits; a plane, a volume in place.
+  fftn::detail::build_settings team = settings;
+  team.profile.column_team_bytes = 32;
+  out.push_back(make_case("c2c_planes_team_64x48x1" + suffix, fftn::planes_c2c<T>(64, 48, 1, fwd),
+                          3072, 3072, false, team, target));
+  one_volume.axes = {{.n = 12}, {.n = 40}, {.n = 36}};
+  out.push_back(make_case("c2c_volume_team_inplace_12x40x36" + suffix, one_volume, 17280, 17280,
+                          true, team, target));
 }
 
 inline std::vector<team_case> standard_cases(const fftn::detail::build_settings& settings) {
