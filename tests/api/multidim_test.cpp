@@ -145,8 +145,9 @@ std::vector<fftn::axis> axes_of(const dims_t& dims) {
   return a;
 }
 
-// The last four are volumes whose inner axes run plane at a time and whose outer axis runs
-// over blocks of pencils (task 4.2): odd and prime extents, narrower last blocks, an axis of 2.
+// The last four are volumes with odd and prime extents, narrower last blocks of columns and
+// pencils, and an axis of 2 (task 4.2). They run as the profile orders them (axis by axis in
+// one thread); tests/core/volumes_test.cpp holds plane at a time byte for byte equal to that.
 const std::vector<dims_t>& shapes() {
   static const std::vector<dims_t> v{
       {8, 6},     {5, 7},       {16, 16},     {32, 30},    {1, 9},    {9, 1},
@@ -329,6 +330,101 @@ TYPED_TEST(MultiDim, ComplexToReal) {
         y.insert(y.end(), real + l * 2 * h, real + l * 2 * h + n);
       }
       check.within<T>(as_complex(y), want, tol, describe(dims, "c2r in place"));
+    }
+  }
+}
+
+// ---- The shape functions of real planes and volumes.
+
+// planes_r2c, planes_c2r, volumes_r2c and volumes_c2r build the shapes the general form
+// builds (tight C-ordered defaults, one batch dimension of `count`, c2r backward), and their
+// plans compute the transform: r2c and c2r against the reference, out of place and in place
+// (FFTW's padded rows), and a round trip r2c then c2r scaled by 1/points, which gives the
+// input back; odd and even last axes, three transforms.
+template <class T> fftn::shape<T, std::complex<T>> real_shape(const dims_t& d, std::size_t k) {
+  return d.size() == 2 ? fftn::planes_r2c<T>(d[0], d[1], k)
+                       : fftn::volumes_r2c<T>(d[0], d[1], d[2], k);
+}
+template <class T> fftn::shape<std::complex<T>, T> complex_shape(const dims_t& d, std::size_t k) {
+  return d.size() == 2 ? fftn::planes_c2r<T>(d[0], d[1], k)
+                       : fftn::volumes_c2r<T>(d[0], d[1], d[2], k);
+}
+
+template <class In, class Out>
+void expect_tight(const fftn::shape<In, Out>& s, const dims_t& d, std::size_t k) {
+  ASSERT_EQ(s.axes.size(), d.size());
+  for (std::size_t a = 0; a < d.size(); ++a) {
+    EXPECT_EQ(s.axes[a].n, d[a]);
+    EXPECT_EQ(s.axes[a].in_stride, 0);
+    EXPECT_EQ(s.axes[a].out_stride, 0);
+  }
+  ASSERT_EQ(s.batches.size(), 1U);
+  EXPECT_EQ(s.batches[0].count, k);
+  EXPECT_EQ(s.batches[0].in_dist, 0);
+  EXPECT_EQ(s.batches[0].out_dist, 0);
+}
+
+// The n reals of each of `lines` rows that lie `row` reals apart, made complex.
+template <class T>
+std::vector<std::complex<T>> rows_of(const T* v, std::size_t lines, std::size_t row,
+                                     std::size_t n) {
+  std::vector<std::complex<T>> out;
+  for (std::size_t l = 0; l < lines; ++l) {
+    out.insert(out.end(), v + l * row, v + l * row + n);
+  }
+  return out;
+}
+
+TYPED_TEST(MultiDim, RealPlaneAndVolumeShapeFunctions) {
+  using T = TypeParam;
+  using c = std::complex<T>;
+  constexpr std::size_t transforms = 3;
+  checker check;
+  const std::vector<dims_t> cases = {{6, 9}, {5, 7}, {8, 10}, {3, 5, 7}, {4, 6, 9}, {7, 3, 4}};
+  for (const dims_t& dims : cases) {
+    const std::size_t n = dims.back();
+    const std::size_t h = n / 2 + 1;
+    const std::size_t points = product(dims);
+    const std::size_t lines = points / n * transforms;
+    const auto r2c = real_shape<T>(dims, transforms);
+    const auto c2r = complex_shape<T>(dims, transforms);
+    expect_tight(r2c, dims, transforms);
+    expect_tight(c2r, dims, transforms);
+    EXPECT_EQ(c2r.dir, fftn::direction::backward);
+    const real_case data = real_data<T>(dims, points + 7, transforms);
+    const std::vector<T> x = real_parts<T>(data.reals);
+    for (const bool in_place : {false, true}) {
+      const std::string where = in_place ? " in place" : "";
+      const fftn::r2c_plan<T> forward(r2c, {.in_place = in_place});
+      const fftn::c2r_plan<T> unscaled(c2r, {.in_place = in_place});
+      const fftn::c2r_plan<T> backward(
+          c2r, {.in_place = in_place, .scale = 1.0 / static_cast<double>(points)});
+      fftn::workspace ws(std::max(
+          {forward.workspace_bytes(), unscaled.workspace_bytes(), backward.workspace_bytes()}));
+      // In place each real row is padded to the 2h reals of its complex row.
+      const std::size_t row = in_place ? 2 * h : n;
+      std::vector<c> y(lines * h);
+      std::vector<T> separate(lines * row);
+      T* real = in_place ? reinterpret_cast<T*>(y.data()) : separate.data();
+      for (std::size_t l = 0; l < lines; ++l) {
+        std::memcpy(real + l * row, x.data() + l * n, n * sizeof(T));
+      }
+      forward.execute(real, y.data(), ws);
+      check.within<T>(y, data.spectrum, tolerance_for<T>(dims, false),
+                      describe(dims, ("r2c shape function" + where).c_str()));
+      // c2r unscaled, from a copy of the reference spectrum: points times the data.
+      std::vector<c> spectrum(data.spectrum.begin(), data.spectrum.end());
+      std::vector<T> z(lines * row);
+      T* z_real = in_place ? reinterpret_cast<T*>(spectrum.data()) : z.data();
+      unscaled.execute(spectrum.data(), z_real, ws);
+      check.within<T>(rows_of(z_real, lines, row, n), scaled(data.reals, points),
+                      tolerance_for<T>(dims, true),
+                      describe(dims, ("c2r shape function" + where).c_str()));
+      // The round trip: the scaled c2r of the r2c's output gives x back.
+      backward.execute(y.data(), real, ws);
+      check.within<T>(rows_of(real, lines, row, n), data.reals,
+                      tolerance_for<T>(dims, false) + tolerance_for<T>(dims, true),
+                      describe(dims, ("round trip" + where).c_str()));
     }
   }
 }
