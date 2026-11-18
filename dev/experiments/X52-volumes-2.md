@@ -203,6 +203,17 @@ Arms L1 (446be06) and A1 (`main` a0dffe1) at one thread, L8, A8 and G8 (f6f9b4d,
   1.33, 16³ 1.29–1.31); 8 lanes ÷ oneMKL's better plan 1.15 (`main`) → 1.055 (G), 29 over
   1.05 (30 × 40 × 50 1.53–1.77, 48³ 1.37–1.45, 32³ 1.41–1.44, 81³ 1.32–1.33).
 
+### L and G on the EPYC and the Xeon (judging), the standard catalogue's planes and volumes
+
+- EPYC, run 20261118-012443-6c99 (Slurm 512539; all rounds loaded, band ±2.6 %), the 132 c2c,
+  r2c and c2r planes and volumes. L changes c2c 16³ alone here: 0.657. Unchanged programs up
+  to 1.091 at one thread (c2r 3 × 5 × 4) and 1.135 at 8 lanes (c2r 512² in place). G ÷ L at 8
+  lanes over the 83 that split 0.882 (real 1000²–1024² 0.45–0.54, c2r 1000² in place 0.50);
+  past the limit: r2c 256² out of place 1.142, c2c 2048 × 36 1.05–1.08, r2c 128² × 16 1.052,
+  r2c 100² in place 1.044: re-run with the unchanged cases past it (Slurm 512564). FFTN ÷ FFTW's
+  better plan at 8 lanes: 0.980 (`main`, 47 over 1.05) → 0.911 (G, 36 over: tiny real batches
+  5 × 7 and 8 × 6 at 1.5–3.6, real 2048² 1.40–1.71, c2c 2048 × 36 1.35–1.36).
+
 ## Verdict
 
 Pending.
