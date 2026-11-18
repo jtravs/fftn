@@ -271,6 +271,44 @@ TEST(Depth, RulesTakeItByTheProfile) {
       EXPECT_FALSE(planned_on(9216, t));     // part 1024: 16 KiB, not above
     }
   }
+  // X51's limits: powers of two only up to depth_pow2_max_bytes; tops up to 8 on `avx2` too
+  // (16 registers), larger tops only with 32; float where depth_float says so.
+  {
+    build_settings settings;
+    settings.profile.depth_min_bytes = std::size_t{128} * 1024;
+    settings.profile.depth_max_bytes = std::size_t{2} * 1024 * 1024;
+    settings.profile.depth_pow2_max_bytes = std::size_t{256} * 1024;
+    settings.profile.depth_top = 4;
+    const auto taken = [&](std::size_t n, fftn::isa isa, bool single = false) {
+      const fftn::options opts{.force_isa = isa};
+      if (single) {
+        const fftn::shape<std::complex<float>, std::complex<float>> shape{
+            .dir = fftn::direction::forward, .axes = {{.n = n}}, .batches = {}};
+        return depth(fftn::detail::describe(
+            *make_plan_core(fftn::detail::view_of(shape), opts, settings)));
+      }
+      const fftn::shape<std::complex<double>, std::complex<double>> shape{
+          .dir = fftn::direction::forward, .axes = {{.n = n}}, .batches = {}};
+      return depth(
+          fftn::detail::describe(*make_plan_core(fftn::detail::view_of(shape), opts, settings)));
+    };
+    for (const fftn::isa t : fftn::test::runnable_isas()) {
+      const std::string name = fftn::isa_name(t);
+      SCOPED_TRACE(name);
+      const bool measured =
+          name == "avx512" || name == "avx2" || name == "neon" || name == "neon_fcma";
+      EXPECT_EQ(taken(16384, t), measured); // a power of two within its limit: 256 KiB
+      EXPECT_FALSE(taken(32768, t));        // beyond it
+      EXPECT_EQ(taken(49152, t), measured); // not a power of two: 768 KiB
+      EXPECT_FALSE(taken(49152, t, true));  // float: off
+      settings.profile.depth_float = true;
+      EXPECT_EQ(taken(98304, t, true), measured); // 768 KiB of complex floats
+      settings.profile.depth_float = false;
+      settings.profile.depth_top = 16; // 16 needs 32 registers
+      EXPECT_EQ(taken(49152, t), name == "avx512" || name == "neon" || name == "neon_fcma");
+      settings.profile.depth_top = 4;
+    }
+  }
   // Float keeps the old plans (unmeasured).
   build_settings settings;
   settings.profile.depth_min_bytes = std::size_t{128} * 1024;

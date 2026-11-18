@@ -453,16 +453,18 @@ grid_split plan_grid(std::size_t n, const side& in, const side& out, const build
 // they fit when the strategy is forced, and where the rules take the chain otherwise (none
 // where they do not fit). Forced, by default: one codelet radix, the smallest whose sub-row
 // of n / F1 fits the L1 data cache (profile.grid_block_bytes), else the one with the
-// shortest sub-row. By the rules (X46 arms A and C): in double on a target with 32 vector
-// registers (`avx512`, NEON; tops of 16 lost 1.2-1.7 on `avx2`'s 16), a row of
-// [depth_min_bytes, depth_max_bytes] whose power-of-two part has more than depth_part_bytes,
-// with one top factor, the profile's depth_top, else its depth_top_alt, else its
-// depth_top_last, the first whose split fits (C divides the sub-row; X51: the top need not be
-// a multiple of C, so 25000 on 4 lanes takes 10 x 2500). On the Xeon 6240's counters screen one top of 16 (20 where C does not divide
-// n / 16) was the best or within 0.05 of the best of the splits tried (one or two tops of 4
-// to 32) at every length from 16384 to 262144 points; on the M5 Max a top of 4 won from 3072
-// to 16384 points where the power-of-two part had 2048 points or more and lost (1.05-1.09)
-// on 10000, 12000 and 16000.
+// shortest sub-row. By the rules (X46 arms A and C, X51): a row of [depth_min_bytes,
+// depth_max_bytes] (powers of two only to depth_pow2_max_bytes) whose power-of-two part has
+// more than depth_part_bytes, in double (and in float where the profile says so), with one
+// top factor, the profile's depth_top, else its depth_top_alt, else its depth_top_last, the
+// first whose split fits (C divides the sub-row; X51: the top need not be a multiple of C,
+// so 25000 on 4 lanes takes 10 x 2500); on a target with 32 vector registers (`avx512`,
+// NEON), or tops up to 8 on `avx2` (tops of 16 lost 1.2-1.7 on its 16, X46); other targets
+// keep their plans (unmeasured). On the Xeon 6240's counters screen one top of 16 (20 where
+// C does not divide n / 16) was the best or within 0.05 of the best of the splits tried (one
+// or two tops of 4 to 32) at every length from 16384 to 262144 points; on the M5 Max a top
+// of 4 won from 3072 to 16384 points where the power-of-two part had 2048 points or more and
+// lost (1.05-1.09) on 10000, 12000 and 16000.
 template <class T>
 std::vector<std::size_t> depth_tops_of(std::size_t n, const side& in, const side& out,
                                        const build_settings& settings,
@@ -478,8 +480,11 @@ std::vector<std::size_t> depth_tops_of(std::size_t n, const side& in, const side
     const std::size_t bytes = n * 2 * sizeof(T);
     const machine_profile& m = settings.profile;
     const bool wide = isa == target::avx512 || isa == target::neon || isa == target::neon_fcma;
-    if (!std::is_same_v<T, double> || !wide || m.depth_max_bytes == 0 ||
-        bytes < m.depth_min_bytes || bytes > m.depth_max_bytes ||
+    const bool pow2 = (n & (n - 1)) == 0;
+    const std::size_t most =
+        pow2 ? std::min(m.depth_max_bytes, m.depth_pow2_max_bytes) : m.depth_max_bytes;
+    if ((!std::is_same_v<T, double> && !m.depth_float) || m.depth_max_bytes == 0 ||
+        bytes < m.depth_min_bytes || bytes > most ||
         (n & (~n + 1)) * 2 * sizeof(T) <= m.depth_part_bytes) {
       return {};
     }
@@ -488,7 +493,8 @@ std::vector<std::size_t> depth_tops_of(std::size_t n, const side& in, const side
                                                       : std::vector<std::size_t>{};
     }
     for (const std::size_t r : {m.depth_top, m.depth_top_alt, m.depth_top_last}) {
-      if (r != 0 && chain.depth_fits(n, {r})) {
+      const bool fits_registers = wide || (r <= 8 && isa == target::avx2);
+      if (r != 0 && fits_registers && chain.depth_fits(n, {r})) {
         return {r};
       }
     }
