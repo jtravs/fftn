@@ -121,8 +121,9 @@ template <class T, std::size_t R, int Sign, edge_op InOp, edge_op OutOp, bool Fu
 FFTN_FORCE_INLINE void batch_group(const void* src, void* dst, std::ptrdiff_t src_dist,
                                    std::ptrdiff_t dst_dist, std::size_t u, std::size_t valid,
                                    const edge<T, InOp>& ein, const edge<T, OutOp>& eout) {
-  const T* in[C<T>]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
-  T* out[C<T>];      // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
+  // Initialised for GCC 14, which otherwise reports them maybe uninitialized in a partial group.
+  const T* in[C<T>] = {}; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
+  T* out[C<T>] = {};      // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
   for (std::size_t l = 0; l < C<T>; ++l) {
     // Idle rows form no address: their pointers stay at the group's first row.
     const std::size_t r = Full || l < valid ? u + l : u;
