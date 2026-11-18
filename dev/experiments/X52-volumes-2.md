@@ -347,6 +347,9 @@ construction).
   with W4b's wider blocks: **W4b rejected on the Xeon**. On the EPYC W4b's one-thread programs
   are W4's (0.933, worst 1.015 after the re-run) and its team programs unchanged: **W4b adopted
   on the EPYC** (and the profiles like it: a private L2 with 2 MiB or more of L3 per CPU).
+- **Re-run of L's unchanged volumes on the EPYC,** run 20261118-072213-2cf1 (Slurm 512627; 12
+  rounds, all loaded, band ±1.0 %): L ÷ `main` at one thread within 1.001; at 8 lanes up to
+  1.025 (100³ backward, whose program L does not change). L stays adopted.
 - **G2 on the EPYC,** runs 20261118-070041-3619 (volumes; Slurm 512622; band ±11.1 %) and
   20261118-071016-b698 (the 132 planes and volumes; Slurm 512624; band ±6.5 %): G2 ÷ L at 8
   lanes 0.910 and 0.896 over the cases that split; r2c 256² now 1.04; past the band c2r 2048 ×
