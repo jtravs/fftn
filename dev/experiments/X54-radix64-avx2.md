@@ -1,6 +1,6 @@
 # X54: radix-32 and radix-64 passes without most of their spills on `avx2`
 
-- **Status:** running
+- **Status:** done (A, C adopted; B adopted for 768, 1024 dropped by rule (c))
 - **Owner:** x54 session, 2026-11-18
 - **Phase / task:** 1 (phase 1 exit check, the tail rule; cause 4); follows X38, X42, X47
 
@@ -216,6 +216,28 @@ backward 1.200 → 1.209 → 1.079; 1024 × 3 1.218 → 1.219 → 1.026; 1024 ×
 1.120; 64 × 16 1.136 → 1.140 → 1.134 (no radix-32/64 plan); 1024 × 1024 0.763 → 0.782 →
 0.978.
 
+### EPYC, tracking tier (run 20261118-053931-36ed)
+
+Slurm 512604 (`--serial`), arms O, A, B, C, 60 rounds, every one under load (other processes
+44 cores, median), band ±2.46 % (limit 1.045).
+
+- A ÷ O **0.994 [0.988, 0.999]**; faster r2c 256 × 256 0.960; none slower, the highest
+  r2c 2²⁰ 1.009 and 1024 × 256 1.006.
+- B ÷ O 0.991 [0.988, 0.995]; faster 1024 0.847, backward 0.901, in place 0.861, × 256
+  0.939, r2c 1024 × 1024 0.960 (its complex half rows of 512 and columns), r2c 256 × 256
+  0.966; **slower: the c2c plane 1024 × 1024 1.144 [1.127, 1.158]** (rows and columns of
+  1024 in the two-pass plan, as 1024 × 1024 above). Otherwise at most 1.018 (65536 in place).
+- C ÷ O 0.989 [0.985, 0.993], the same cases (the tier's float cases are not C's lengths);
+  plane 1024 × 1024 1.162.
+
+### C, float cases of its lengths (run 20261118-063911-e1a2)
+
+Slurm 512606 (`--serial`), arms B and C, x2 catalogue's float rows of 512, 640, 768, 2048,
+4096 at batches 1 and 64; 20 rounds, all under load, band ±1.00 % (the FFTW build has no
+single precision, so no ratio to FFTW). C ÷ B **0.898 [0.893, 0.902]**, every case faster:
+512 0.787 / 0.829, 640 0.925 / 0.921, 768 0.921 / 0.951, 2048 0.888 / 0.909, 4096 0.922 /
+0.938 (batch 1 / 64).
+
 ### Mac, tracking tier, A ÷ O (run 20261118-032911-79d7)
 
 Apple M5 Max, Homebrew Clang, `neon_fcma`, arms O (4d75c48) and A (d8b5376) built from the
@@ -234,6 +256,35 @@ GCC 14.4, `avx512`, Slurm 16476 (`--serial`), 50 rounds, none under load, band �
 x86-64 Linux, GCC 16.2, `size` of `libfftn.a` (the fbench cache builds): O 90 427 634 bytes
 of text, A 90 146 912 (−0.31 %).
 
+### Tests
+
+Generator tests (55) and `gen --check` pass; Mac Release (Homebrew Clang; `neon_fcma`,
+`neon`, scalar): 2084 of 2087 passed on C before the recorded-radices fixture was updated
+(fd94ec1's message says 2111 of 2114 by mistake), all after; CI's four required checks pass.
+
 ## Verdict
 
-(running)
+- **A (fitted order): adopted.** (a) 0.975 [0.970, 0.980] over the 12 exit-check cases
+  whose plan has a radix-32/64 codelet, against 1 − band = 0.979; (b) no case of the EPYC's
+  tracking tier slower (0.994 overall), two exit-check cases whose programs A does not
+  change past 1.041 (524288 1.067, 80 1.050): re-run below; (c) Xeon 0.999 and Mac 0.999,
+  nothing slower. Bit-identical; library text −0.31 % (x86-64 GCC 16).
+- **B (two-pass `avx2` double overrides): adopted for 768 only.** (a) B ÷ A 0.913 over the
+  9 double cases of 768 and 1024. (c) 1024 × 1024 at 1.25 (and the 1024 × 1024 plane at
+  1.14 in the tracking tier) take 1024's override away (1a9d95a), as the rule says; 768
+  (0.844, ÷ FFTW 1.08 → 0.91) keeps its own. (b) outside 1024's cases: 80 1.042, an
+  unchanged program (re-run below). Read as written, (b) would also count 1024 × 1024 and
+  reject the arm; (c) exists to drop a length whose own cases lose, so it is applied first,
+  as X42 wrote it to be. The lead may read it otherwise.
+- **C (`avx2` float overrides): adopted.** (a) 0.898 [0.893, 0.902] over its 10 float
+  cases, all faster; (b) and (c): no case slower beyond B's 1024 cases, which the pruning
+  removes.
+- **Not closed:** 1024 (1.21 of FFTW), 1024 backward (1.20), 1024 × 3 (1.22), 1024 × 16
+  (1.12): the 16 · 64 plan takes them to 1.01–1.08 of FFTW and 1024 × 256 to 0.97 of the
+  three-pass plan, but per-length overrides cannot see that 1024 × 1024 needs the
+  three-pass plan. A batch- or footprint-aware choice (the override only while the
+  transform's data fits a cache level; 1024 × 256, 4 MiB, still gained 0.94–0.97) is the
+  next experiment. 2048 (1.12): its 32 · 64 plan's grouped radix-32 first pass still loses
+  (1.05–1.09; IPC 2.54, FP-register-file stalls 42 % of cycles). 64 × 16 (1.14): no
+  radix-32/64 plan. 512 (now 0.97 of FFTW) is closed by A.
+- Lesson 4.20 in `dev/LESSONS.md`; DESIGN 7.2 step 5 and the decision log updated.
