@@ -84,6 +84,20 @@ an `avx512` plan); no library switch, so nothing in `dev/KNOBS.toml`.
      Xeon (`x37`, `x53`, tracking tier) and no case of `x37` or the tracking tier on the
      EPYC is slower than A beyond the band (the padding moves code there too); else the
      Xeon keeps no batch leaves and R stands on the EPYC and NEON.
+  6. Added after the maintainer dropped the requirement that a batch's row match a plan of
+     that row alone (2026-11-18, AGENTS.md section 6 and DESIGN 15.5; the published
+     guarantee, every row of a plan getting the same arithmetic whatever its position,
+     stays), before any run of it: **arm R4** adds the lengths R left out for that reason
+     only, at the batches the B4 screens gave: on `avx2` 12 from 8 rows and 25 from 2; on
+     `avx512` 8 from 1024 rows, 12 from 8 and 25 from 2 (its own four rows per register from
+     4); in float on NEON 20 and 32 from 2. Baseline: R's branch head with `main` merged
+     (b89ca02). R4 is adopted per target if, over the cases R4 changes (`x53`, the new lengths
+     from their rows), the geometric mean is at most 0.97 of the baseline with its interval
+     clear of the A/A band and none of them is slower beyond the band, and no other case of
+     `x53` or of the tracking tier is slower beyond the band except one whose code R4
+     provably leaves as it was (same plan, byte-identical objects: AGENTS.md section 6),
+     recorded with that evidence. `--serial` runs on the EPYC and the Xeon; the Mac (float)
+     once it runs on mains power.
 
 ## Results
 
