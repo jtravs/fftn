@@ -1,6 +1,6 @@
 # X53: batch leaves (C rows per register) for tiny batches
 
-- **Status:** running
+- **Status:** done (NEON adopted; x86 adopted provisionally, rule 2 missed on unchanged cases)
 - **Owner:** X53 agent, 2026-11-18
 - **Phase / task:** 1 (exit criteria: the tail rule of DESIGN 1.3); exit-check cause 2
 
@@ -144,6 +144,78 @@ row alone is the leaf of n, so that a batch's rows keep the bits of a plan of on
 (tests/api `BatchedRowsMatchSingleRows`): this leaves out 12 on x86 (0.86-0.98), 8 on avx512,
 20 and 25 (never leaves; 25 gains 0.43-0.56 on x86) and 32 in float on NEON.
 
+### Judging runs of arm R (fd75adf against A, `main` 4d75c48; `--serial`)
+
+Geometric mean over the cases R's rule changes; FFTN ÷ FFTW (÷ MKL) from the same runs.
+
+- **EPYC 7763** (every round loaded by other jobs on the node): `x37` run
+  20261118-064012-095a (band ±1.75 %): 15 × 2 backward 0.723 (FFTN ÷ FFTW 1.21 → 0.88), 64 ×
+  2 backward 0.992 (1.30 → 1.29), nothing slower. `x53` run 20261118-064329-911a (band
+  ±1.12 %): the 68 changed cases 0.810, worst 7 × 8 0.972 (9-15, 17, 19, 23 at their rows
+  0.63-0.95); one case past the band, 4 × 4 1.148 [1.012, 1.273], whose plan R does not
+  change (4 points from 8 rows): re-run (job 512652, below). Tracking tier run
+  20261118-065015-043b (band ±3.07 %): 1.001, nothing slower.
+- **Xeon 6240** (quiet): `x37` run 20261118-061230-7b61 (band ±1.00 %): 15 × 2 backward 0.780
+  (FFTN ÷ FFTW 1.16 → 0.90; ÷ MKL 0.78 → 0.61), 64 × 2 backward 1.014 (0.54 of FFTW); four
+  cases slower beyond the band whose plans R does not change: single rows of 2 (1.106), 4
+  (1.078) and 144 points (1.049), 30 × 1024 (1.037). Re-run 20261118-065943-3d75 (band
+  ±1.71 %): only the row of 2 points stays slower (1.091 [1.076, 1.100]): code placement (the
+  narrow leaves' unit is unpadded, LESSONS 2.11), hence arm R2 (rule 5). `x53` run
+  20261118-061610-5ef1 (band ±1.78 %): the 83 changed cases 0.688, worst 15 × 3 backward
+  0.959 (avx512's own four rows per register from 4 rows: 13-23 points 0.38-0.57), nothing
+  slower. Tracking tier run 20261118-062417-2a58 (band ±1.73 %): 0.995, nothing slower.
+- **M5 Max** (float, `neon_fcma`): `x53` f32 run 20261118-035249-9ff7 (band ±1.00 %): the 100
+  changed cases 0.606, worst 5 × 3 0.919, nothing slower. Tracking tier run
+  20261118-035829-0210 (band ±1.00 %, 6 of 12 rounds loaded): 1.000, all 61 cases no
+  evidence (the rule changes no double case: NEON has no batch leaves in double).
+
+### Arms R2 and R3 (the tiny rows R does not change)
+
+- **R2** (56c30b6: R plus `-Wa,-mbranches-within-32B-boundaries` on the avx2-region leaf
+  units, rule 5). Xeon: `x37` run 20261118-072152-c97d (band ±1.42 %): the row of 2 points
+  still 1.092, the row of 4 1.035; `x53` run 20261118-072627-62b4: the changed cases 0.702,
+  and 3 × 4 backward, unchanged, 1.061; tracking run 20261118-073120-b16f 0.996. EPYC: `x37`
+  run 20261118-072654-7292: three unchanged cases newly slower (4 points 1.055, 16 × 3 1.023,
+  256 points 1.041); tracking run 20261118-073011-ecba 0.997. **Rejected** (rule 5) and
+  reverted (cd19adf): the padding moved the losses rather than removing them.
+- **R3** (0461442, a diagnostic on a side branch, never for merge: R without avx512's batch
+  tables and without the Xeon's rule). Xeon run 20261118-073846-febc (band ±1.00 %, quiet):
+  the row of 2 points 1.099 of `main` with R3, 1.103 with R in the same run. The loss on the
+  2-point row does not come from the Xeon's batch leaves or from its rule; deleting them
+  (rule 3) would not remove it.
+- The EPYC's 4 × 4, unchanged by R's rule (4 points from 8 rows), re-run (job 512652, run
+  20261118-072527-ded1, band ±1.03 %): 1.243 again, bimodal over the rounds (R at 9.1 ns in
+  2 of 20 rounds, 10.7-13.0 in the others; A at 9.0-9.9 in all), the plan text identical.
+  The 7 × 8 case it re-ran with, changed, 0.969.
+
+The cases slower than `main` beyond the band whose plans R does not change, then, are the
+Xeon's single row of 2 points (1.09-1.10 in three runs) and the EPYC's 4 × 4 (1.15, 1.24),
+and each move or vanish when code moves (R2, re-runs: the Xeon's 4, 30 × 1024, 144 and 3 × 4
+and the EPYC's 16 × 3 and 256 came and went). FFTN ÷ FFTW on them stays below 1 (Xeon 2
+points 0.83, EPYC 4 × 4 below FFTW in the screens).
+
 ## Verdict
 
-Pending.
+- **NEON (float): adopted** (rule 2): the 100 changed cases 0.606 of `main`, nothing slower,
+  tracking tier 1.000.
+- **avx2 (EPYC) and avx512 (Xeon), double: rule 2 missed on one case each that the rule does
+  not change**, everything else met: EPYC changed cases 0.810, 15 × 2 backward 0.723 (FFTN ÷
+  FFTW 1.21 → 0.88), tracking 1.001; Xeon changed cases 0.688, 15 × 2 backward 0.780 (1.16 →
+  0.90 of FFTW, 0.78 → 0.61 of MKL), tracking 0.995. The misses are code placement (R2, R3
+  above), and rule 3's remedy, deleting the target's batch leaves, does not remove the
+  Xeon's (R3). The branch keeps the x86 rules **provisionally, for the maintainer to
+  decide** before merge: adopting departs from rule 2 as written; the alternative is to set
+  `batch_rows_avx2_f64` and the avx512 tables in rules.cpp to none (or delete the x86 batch
+  units), which leaves the 15 × 2 exit case where it was.
+- **64 × 2 backward is not closed** on the EPYC (FFTN ÷ FFTW 1.30 → 1.29): the codelet over
+  two rows (1.00 of the chain), per-element gathering (0.91) and the chains through a tile
+  (0.97) all lost to FFTW's 0.77. Its gap is the radix-64 codelet's register use with GCC
+  (about a thousand spill moves on avx2), a generator question.
+- **Not addressed:** the Mac's 2 × 3 in place (double: NEON has no batch leaves there; X49's
+  store-to-load forwarding) and the Xeon's 2 × 3 in place and single row of 4 (single rows
+  and batches of three of 2-4 points take no batch leaves; in these runs FFTN was 0.91 and
+  0.83 of FFTW on them). Lengths that gained but whose row alone is not the leaf (12 and 25
+  on x86, 20 and 32 in float on NEON) are left out, so a batch's rows keep the bits of a
+  plan of one row; taking them would change that (not a documented guarantee, but tested by
+  tests/api `BatchedRowsMatchSingleRows`): a decision for the maintainer.
+- Library size: eight new kernel units (two per target with batch leaves).
