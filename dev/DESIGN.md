@@ -1627,7 +1627,9 @@ radices agree. The radices are the row's unless its last pass would put more of 
 into one L1 set than the L1 has ways (legs s = n / R column elements apart): then the
 cheapest ranked sequence whose last pass does not (a last pass of radix 16 whose legs shared
 a set made 128² and 256² planes 2.2 times slower on the M5 Max; reads in the first pass did
-not matter). In double a column of 17–32 points whose length has a codelet is that one lane
+not matter). A leaf length (one pass of radix n), which the ranking cannot replace, whose
+legs crowd a set runs as the most balanced two lane passes whose last pass fits (16 = 4 × 4;
+X52: the M5 Max's 16 × 256 × 256, legs 1 MiB apart, took 0.55 of the leaf's time). In double a column of 17–32 points whose length has a codelet is that one lane
 pass where its legs fit (X44: on x86 the row of 32 is a pair leaf, which the lanes cannot
 take, and its radices as two lane passes made the EPYC's 32² column phase 1.9 times its
 rows; one pass took the plane to 0.72 of that time, at FFTW's). B is 256 bytes of columns (16 complex doubles), at most the columns there are;
@@ -2079,8 +2081,9 @@ As built (`src/threading/engine.hpp`, task 3.1):
 
 - **Claiming.** A member claims its group's whole tasks in runs (a share of what is left,
   shrinking to single tasks at the end), then joins its group's split tasks (at most `cap`
-  members each, members starting on different tasks) and claims their chunks one at a
-  time, in order; a chunk of phase p waits until the task's done counter shows phase p − 1
+  members each, members starting on different tasks) and claims their chunks in order,
+  in runs within one phase (a share of the phase's chunks left, shrinking to single chunks,
+  as for whole tasks; X52); a chunk of phase p waits until the task's done counter shows phase p − 1
   complete. Those chunks were all claimed before it, by members that are running, so no
   wait depends on a member that has not arrived. The member that claims a task's first
   chunk owns it: the task's shared scratch is the owner's slot, and the owner leaves only
@@ -2807,7 +2810,7 @@ below because section 5.3 left the shapes open; each is easy to change before a 
 8. *Stealing split tasks.* A member of another group runs a split task whole, and only when
    no member of its group has arrived (13.3 left open how the stealing group runs it).
 9. *Not built*: the prototype's static fast path (experiment T2 decides), hierarchical
-   completion across groups, claim batches for chunks (one atomic operation per chunk now).
+   completion across groups.
 10. *The epoch limit.* Epochs are 64-bit counts and never wrap; tags carry their low 40 bits
     and are compared only for equality. A wrong result needs a state word left unwritten
     for exactly a multiple of 2^40 executions and then reused at that execution: at least
