@@ -304,6 +304,9 @@ TEST(TeamProgram, NarrowerBlocksTheSameRadices) {
   order.volume_planes = false;
   order.profile.team_volume_planes = true;
   order.profile.column_team_bytes = 0;
+  // Nor wide one-thread blocks (X52 arm W4b), which the host's profile turns on where a private
+  // L2 has a large L3 behind it (CI's AMD runners): they too would make a team program differ.
+  order.profile.column_wide_bytes = 0;
   const auto ordered = fftn::detail::make_plan_core(
       fftn::detail::view_of(shape_of<double>({24, 20, 36})), fftn::options(), order);
   ASSERT_NE(ordered->team, nullptr);
