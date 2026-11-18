@@ -656,8 +656,9 @@ std::size_t column_block(std::size_t axis, const std::vector<std::size_t>& exten
       return settings.team_program && settings.profile.column_team_bytes != 0 ? line : 0;
     }
   }
-  // X52 arm W4b: wider blocks where their tiles fit column_tile_bytes, in the one-thread
-  // program only (teams keep X40's blocks: the Xeon's 8 lanes lost up to 1.14 with them).
+  // Wider blocks where their tiles fit column_tile_bytes, in the one-thread program only
+  // (machine_profile::column_wide_bytes; X52 arm W4b: teams keep X40's blocks, with which the
+  // Xeon's 8 lanes ran up to 1.46 times faster than with the wide ones).
   if (const std::size_t wide = up(settings.profile.column_wide_bytes / complex_bytes);
       settings.profile.column_wide_bytes != 0 && !settings.team_program && wide > block &&
       2 * n * wide * complex_bytes <= settings.profile.column_tile_bytes) {

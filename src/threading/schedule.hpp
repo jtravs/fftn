@@ -186,10 +186,12 @@ struct machine_profile {
   // by whether a column's elements lie a page or more apart (core/plan_core.cpp,
   // column_block; X40). profile_for reads it from the topology.
   std::size_t page_bytes = 4096;
-  // When not 0, a c2c lanes column phase widens its block to this many bytes of columns
-  // where the block's two tiles stay within column_tile_bytes (core/plan_core.cpp,
-  // column_block; X52 arm W4). set_grid_sizes sets 1 KiB on x86-64 where each core has its
-  // own L2.
+  // When not 0, the one-thread program's c2c lanes column phases widen their blocks to this
+  // many bytes of columns where both tiles stay within column_tile_bytes; teams keep the
+  // narrower blocks in a team program (core/plan_core.cpp, column_block; X52 arm W4b).
+  // set_grid_sizes sets 1 KiB on x86-64 where a private L2 has a large L3 behind it (the EPYC
+  // 7763: 0.933 of the time over the planes and volumes it changes); the Xeon 6240 gained
+  // 0.95 but lost 1.05 at 30 x 40 x 50.
   std::size_t column_wide_bytes = 0;
   // A lanes column phase whose column elements lie less than a page apart keeps its block's
   // two scratch tiles within this (core/plan_core.cpp, column_block; X40). set_grid_sizes

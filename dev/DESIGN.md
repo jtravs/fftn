@@ -1642,7 +1642,12 @@ bytes of columns (an x86 line, half an Apple line), and the columns run alone th
 chain if they still exceed it (X40's sweeps: wide blocks won where each element of a column
 has its own page, 2048² on the EPYC 0.126 of the chain columns' time with 16 columns against
 0.183 with 4, the M5 Max's 1024² 0.46 with 32 against 0.50 with 16; where rows share pages a
-block whose tiles left L2 lost, Xeon 2048 × 36 0.79 with 4 columns and 1.09 with 16). The columns past the last whole block run as one
+block whose tiles left L2 lost, Xeon 2048 × 36 0.79 with 4 columns and 1.09 with 16). On
+the profile of a private L2 with a large L3 behind it (the EPYC 7763), the one-thread
+program's c2c blocks then widen to 1 KiB of columns where both tiles fit `column_tile_bytes`
+(`column_wide_bytes`; X52 arm W4b: 0.933 of the time over the 38 planes and volumes it
+changes, 64 × 64 × 512 0.87–0.88), while teams keep these blocks in a team program (the Xeon's
+8 lanes lost up to 1.46 with the wide ones, and its one thread 1.05 at 30 × 40 × 50). The columns past the last whole block run as one
 narrower block (a loop's `start` offsets its nest), its idle lanes never written. A block is
 a line of the phase's loop nest, so threads share blocks as they share rows (13.2); the
 narrower block's nest is a phase of its own, of one chunk (joining it to the whole blocks'
@@ -3042,6 +3047,7 @@ to change before a release.
 | 2026-11-18 | A lanes column phase whose column has a leaf length and whose legs crowd one L1 set runs as the most balanced two lane passes whose last pass fits (16 = 4 × 4), except on `avx512` (section 9.3) | X52: M5 Max 16 × 256 × 256 0.54–0.57 of the leaf's time, EPYC 16³ 0.66–0.67 and 16 × 256 × 256 0.85–0.87; Xeon 6240 0.94–1.00 (0.966, under the rule's 0.95) |
 | 2026-11-18 | A member claims a split task's chunks in runs within a phase (a share of the phase's chunks left, as for whole tasks) where the profile's claim divisor is 2 (Apple, the mesh); single chunks on the CCX (section 13) | X52: at 8 lanes Xeon 0.91 over the planes and volumes that split, Mac at 6 lanes 0.86–0.94; EPYC volumes 0.877 and planes 0.882 but real 256² 1.035 on re-run (rule 2 failed; arm G2 pending); bits unchanged |
 | 2026-11-18 | A real plane or volume is split by its complex points (last axis n / 2 + 1) where each core has its own L2; on a mesh-connected L3 a plane or volume is split only from 32768 points (`machine_profile::split_complex_points`, `split_min_points_lines`; section 13, rule 3) | X52 arm S: at 8 lanes single planes of 9216–16384 points took up to 2.9 times their one-thread time on the Xeon 6240 and real 96²–100² 1.1–1.3 on the EPYC 7763; with S, Xeon 0.35–0.67 on those cases, EPYC real 96²–100² 0.72–0.90; the M5 Max (cluster L2) lost 1.29 with S1, so it keeps the real points |
+| 2026-11-18 | On x86-64 with a private L2 and a large L3 (the EPYC 7763), the one-thread program's c2c column blocks widen to 1 KiB of columns where both tiles fit `column_tile_bytes`; teams keep the narrower blocks in a team program (section 9.3) | X52 arms W4 and W4b: one thread EPYC 0.933 over 38 changed cases, Xeon 0.95 but 30 × 40 × 50 1.05 on re-run (rejected there); W4 in teams lost up to 1.46 on the Xeon's 8 lanes |
 ---
 
 ## 20. References
