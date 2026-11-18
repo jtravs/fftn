@@ -1,6 +1,6 @@
 # X49: the fixed cost of tiny calls
 
-- **Status:** running
+- **Status:** done (arm 0 kept; arms U and U2 rejected)
 - **Owner:** X49 agent, 2026-11-18
 - **Phase / task:** 1 (exit criteria: the tail rule of DESIGN 1.3); exit-check cause 2
 
@@ -117,6 +117,14 @@ FFTW. EPYC: 2 points 20.0 / 86 → 15.0 / 66 (FFTW 22.0 / 71), 4 points 23.0 / 9
 GCC 16 now emit a load, a test and a tail call). No store-forwarding blocks
 (`LD_BLOCKS.STORE_FORWARD`) anywhere on the Xeon.
 
+With the second part (1caa4f9; Slurm 512563 EPYC, 16456 Xeon), cycles / instructions per
+call against FFTW: Xeon 2 points 20.4 / 73 (21.0 / 72), 3 points 25.1 / 82 (25.8 / 87), 4
+points 22.2 / 83 (24.9 / 86), 2 in place 21.3 / 70 (21.4 / 69), 2 × 3 in place 25.7 / 92
+(28.7 / 93), 3 × 3 in place 38.4 / 119 (37.8 / 134): 0.89–1.02 of FFTW's cycles, from
+1.05–1.17. EPYC unchanged from the first part (GCC 16 had no frame left to remove): 0.68–0.86
+of FFTW's cycles on every tiny case. Left above FFTW: 15 × 2 (EPYC 1.11–1.17, Xeon 1.14–1.20
+of FFTW's cycles) and the EPYC's 64 × 2 (1.24–1.30), the kernels of the hypothesis.
+
 ### Mac, `x37` (run 20261118-002900-6819; 30 rounds, all loaded: load 11.7, other processes 8.1 cores; band ±2.39 %)
 
 - Arm 0 against A: 0.961 over the 69 cases; single rows of 2–12 points 0.79–0.88, tiny
@@ -145,4 +153,20 @@ GCC 16 now emit a load, a test and a tail call). No store-forwarding blocks
 
 ## Verdict
 
-(pending)
+- **Arm 0 kept** (rule 2; bench only, no library change): fbench now times what a caller of
+  `plan::execute` runs. Most of the tiny-call gap on x86 and the Mac was fbench's own
+  backend: single rows of 2–8 points are 0.77–0.81 of FFTW on the Mac (were 0.92–1.01),
+  the EPYC's tiny cases 0.68–0.86 of FFTW's cycles, the Xeon's 0.89–1.02 (were 1.05–1.17).
+  The exit checks before X49 measured FFTN through the heavier backend, so their tiny-call
+  cases on every machine, Zen 5 and Axion included, need re-timing with it.
+- **Arm U (rule 3) and arm U2 (rule 4) rejected**, reverted: the store-forwarding cost of
+  paired accesses is real on the M5 Max (LESSONS 2.12) but reaches only in-place batches of
+  2 and 3 points in FFTN; the Mac's 2 × 3 in place stays 1.28–1.32 of FFTW.
+- **Not addressed:** 15 × 2 and 64 × 2 (EPYC 1.20–1.30, Xeon 15 × 2 1.15–1.21 of FFTW's
+  cycles) are kernels: FFTW runs both rows in the two halves of one `ymm` with one codelet.
+  The follow-up is a leaf that runs C rows in the lanes of one register for batches of C
+  (bit-identical per lane, as the 128-bit leaves are); FFTN's lanes strategy, built for long
+  batches, is 1.6–10 times slower on them. Zen 5 and Axion were not measured (no cloud in
+  this round).
+- x86 fbench runs of arm 0 (x37, `--serial`): EPYC job 512548, Xeon job 16446; queued
+  behind the exit check when this was written.
