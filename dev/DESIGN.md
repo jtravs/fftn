@@ -1429,7 +1429,22 @@ convolution is no longer than the copies' together, so its passes run whole unit
 is not longer than `long_convolution_bytes` (X36b: its chains over s = C copies have no
 grouped first pass; EPYC 1018 0.73). Running the copies one at a time, as FFTW does, needs a
 loop over a scratch-resident line, and a grid convolution a second movable workspace slot:
-neither is expressible yet (X36b).
+neither is expressible yet (X36b). A Bluestein stage of one copy (a c2c row of one axis
+whose chain is that stage, `chain_builder::bluestein_single`) instead runs its convolution
+as two depth-first chains (section 8.5's depth-first chain; experiment X50,
+`chain_builder::bluestein_depth`) where the profile's depth-first fields would make a row of
+M one, and on profiles with `machine_profile::depth_convolution_max_bytes` beyond that range
+too (the Xeon's: no limit, since the alternative there is the breadth-first chain, never a
+grid). The workspace block is the movable line: the forward chain's first pass reads the
+input times the chirp (zero from Q on: the chirp pass in, fused) and writes its sub-row
+blocks into the block, a loop over the blocks runs the sub-rows (with scratch a and b), and
+its top pass writes into scratch a times the kernel spectrum (the top pass's factor edge);
+the backward chain's first pass reads a into the block, its sub-rows run the same way (a is
+dead by then), and its top pass stores only the first Q outputs, times the chirp with the
+output edge's scale, to the output (the chirp pass out, fused). Scratch a holds M elements,
+the block M. On the Xeon 6240 the depth-first chain took 0.54 of the breadth-first chain's
+time at 2¹⁸ points and 0.56 at 2073600; the stage took 131071 to 0.70 of its time and
+999983 to 0.79 before the chirp passes were fused (X50).
 Why a pass and not a strategy that wraps the chain: the program and stage design already
 expresses it, the passes before it (codelet and generic) keep their positions and edges,
 r2c and c2r get it through their inner complex chain unchanged, and the threading work
@@ -1790,7 +1805,9 @@ prices them) a cost per unit and a cost per tail, and a cost per pass. For a lin
    power-of-two part the machine profile admits (up to 2 (2Q − 1) when that excludes the
    power of two; experiment X36, section 8.5). A Bluestein stage with 1 < n / Q < C copies
    becomes one stage of n where M(n) ≤ (n / Q) M(Q) (X36), and so does one with
-   n / Q = C copies while n's line is not long (X36b).
+   n / Q = C copies while n's line is not long (X36b). A stage of one copy runs its
+   convolution on two depth-first chains where a row of M would be a depth-first chain, or
+   M lies up to the profile's `depth_convolution_max_bytes` (X50, section 8.5).
 4. The codelet passes are the sequence of radices from 2 to 16 (and 32 and 64 where the
    table's unit cost for them is not 0) multiplying to n_s with the
    lowest cost, the sum of its passes' costs. The pass of radix R after passes whose

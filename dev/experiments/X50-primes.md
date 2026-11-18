@@ -115,9 +115,62 @@ take about 0.65 of its time (about 0.87 of MKL's) and 999983 about 0.62 (about 0
 MKL's). The rows beyond 4 L2 gain too (2073600 0.85, 2²¹ 0.75 of the grid): a lead for
 X51 (rows beyond 4 L2), not changed here.
 
-### Judging
+### Judging A and B (Xeon)
 
-(pending)
+Run 20261118-001558-967f (Slurm 16433 build, 16434 timing, `--serial`; GCC 14.4, `avx512`;
+24 rounds, 11 under load, band ±1.67 %), catalogue `x36` tier `tracking` (46 cases), arms
+N = 80dbcdb, A = e024a70, B = ebda2a7, F = FFTW, M = MKL. No case of A or B was slower than
+N beyond the band; every case whose plan did not change (float, the controls, 4093, 65537,
+1018 and the other copies) was within 0.98–1.02.
+
+| case (double) | A ÷ N | B ÷ N | FFTN ÷ FFTW, N → B | FFTN ÷ MKL, N → B |
+|---|---|---|---|---|
+| 8179 (M 16384) | 0.796 | 0.801 | 0.94 → 0.76 | 1.11 → 0.89 |
+| 8186 = 2 × 4093 (one stage) | 0.808 | 0.799 | – | – |
+| 10403 = 101 × 103 (one stage) | 0.788 | 0.776 | – | – |
+| 32749 | 0.658 | 0.657 | 1.30 → 0.85 | 1.46 → 0.96 |
+| 131071 (M 2¹⁸) | 0.721 | 0.704 | 1.25 → 0.88 | 1.34 → 0.94 |
+| 262139 | 1.019 | 0.742 | 1.11 → 0.82 | 1.63 → 1.21 |
+| 262142 = 2 × 131071 (one stage) | 1.008 | 0.740 | 1.54 → 1.14 | 1.62 → 1.20 |
+| 524287 | 1.001 | 0.727 | 1.13 → 0.82 | 1.64 → 1.19 |
+| 999983 (M 2073600) | 1.000 | 0.786 | 1.15 → 0.90 | 1.44 → 1.13 |
+
+A over its 5 changed cases: geometric mean 0.752 (every interval below 0.84). B against A
+over the 4 cases B adds: 0.748 (at most 0.786). Both pass the rule on the Xeon profile.
+
+### A on the Mac
+
+Run 20261118-001926-1f9e (Homebrew Clang 23, `neon_fcma`; 18 rounds, 17 under load, band
+±1.00 %), catalogue `x50`, the primes whose convolution is 10240 points: A ÷ N 4813 0.949,
+4999 0.949, 5119 0.951 (all faster beyond the band), float unchanged (1.001–1.004); FFTN ÷
+FFTW (NEON) 0.83 → 0.79. A passes on the Apple profile. (B changes nothing on the Mac.)
+
+### Collateral
+
+- Mac, standard tracking tier, N against B (run 20261118-002010-e039; 24 rounds, all under
+  load, band ±2.22 %): 61 no evidence, weighted geometric mean 0.995; the largest median,
+  r2c 2048 × 36 1.046 (a plan B does not change), re-run once: 0.970 (run
+  20261118-003128-7bf4, band ±2.26 %).
+- EPYC (no plan changes), standard tracking tier, N against B (run 20261118-001628-7178,
+  Slurm 512530/512531, `--serial`; 24 rounds, all under load, band ±3.38 %): 61 no evidence,
+  weighted geometric mean 1.009; medians above 1.034 on unchanged power-of-two rows (c2c
+  65536 1.109, c2r 65536 1.107, r2c 65536 1.064, c2c 262144 1.058, 16384 1.043, c2r 1024²
+  1.044): re-run (pending).
+- Xeon, standard tracking tier (pending).
+
+### EPYC 65537 (P1b's flip)
+
+DMOG, Slurm 512533 and 512537 (`-c 8`, nodes 17 and 18, both loaded): the benchmark binary
+of N run directly, 12 processes each of the rules (Rader) and `RADER=0` (Bluestein),
+alternating, with Zen 3's L1 data-TLB events (PMCx045: all reloads, 4 KiB reloads, L2 TLB
+misses). Rader 15.6–16.0 ns per point in every process, Bluestein 23.0–24.2 (float 9.7–9.9
+against 11.2–11.5); Rader missed the L1 DTLB 1.66 times per point (all on 4 KiB pages,
+nearly all hitting the L2 TLB: 0.002–0.015 walks per point), Bluestein 0.06–0.15. The
+1 MiB buffers were never huge-page backed (THP "always"), so the flip P1 saw is not
+reproduced by the caller's rows; it belongs to measured planning's own scratch (LESSONS
+3.20, corrected). Rader's TLB reloads cost at most about 11 of its 47.5 cycles per point
+(7 cycles each), so a blocked permutation could gain at most about 0.2 of 65537's time,
+which already runs at 0.80 of FFTW's: not built.
 
 ## Verdict
 

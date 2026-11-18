@@ -810,6 +810,18 @@ GCC then kept the 32 leg offsets in stack slots and every leg load waited on an 
 Zen 3's counters need groups of at most five events with the NMI watchdog on (a group of
 six never runs). [X47](experiments/X47-epyc-mid-2.md).
 
+4.20 **An algorithm's inner transform deserves the best structure the user's rows get, and
+a workspace can stand in for a missing slot.** A Bluestein stage is two transforms of M
+points between chirp passes; on the Xeon 6240 FFTN's ran them as breadth-first chains
+(8.2 ns per point at 2¹⁸, 17.0 at 2073600) after the user's rows of those lengths had
+moved to a depth-first chain (4.4 and 9.5). Running the convolution on that chain, with the
+plan's workspace block as the movable line its sub-row loop needs (the chirped input in
+scratch, the blocks in the workspace, the forward chain's output back in scratch), took
+131071 and 999983 to 0.70 and 0.79 of their time (FFTN ÷ MKL 1.34 → 0.94, 1.44 → 1.13) and
+the M5 Max's primes of 4813–5119 to 0.95, with no new program slot: X36b had judged the
+same change to need one. One top factor of 16 beat two even at 2²¹ points (32 MiB).
+[X50](experiments/X50-primes.md).
+
 ## 5. Threading
 
 5.1 **Synchronisation costs set the smallest row worth splitting.** Spin barrier /
