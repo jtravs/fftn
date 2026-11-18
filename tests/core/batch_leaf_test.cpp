@@ -19,6 +19,7 @@
 #include "gen/codelets.hpp"
 #include "isa/kernel_table.hpp"
 #include "isa/target.hpp"
+#include "planner/rules.hpp"
 #include "reference/reference_dft.hpp"
 #include "support/exact.hpp"
 #include "support/fftn_subject.hpp"
@@ -28,6 +29,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <complex>
 #include <cstddef>
 #include <cstdint>
@@ -284,6 +286,77 @@ TEST(BatchLeaves, ForcedOnlyWhereTheRowsCanTakeThem) {
     two.axes = {{.n = 16}};
     two.batches = {{.count = 2}, {.count = 3}};
     EXPECT_FALSE(has(two, batch));
+  }
+}
+
+// The rules (target_profile::batch_rows, batch_narrower, batch_own_rows; experiment X53): a
+// batch of at least the profile's rows of a length it lists takes batch leaves, the narrower
+// target's where the profile says so up to batch_own_rows, the target's own from there; a
+// batch one row short of it, and single rows, do not. Rows keep the leaf's bits, so a batch's
+// rows equal a plan of one of them (tests/api has the contract test).
+template <class T> void rules_choose(fftn::isa t) {
+  const auto target = target_of(t);
+  const std::size_t lanes = fftn::detail::of<T>(*fftn::detail::find_kernels(target)).complex_lanes;
+  const fftn::detail::target_profile profile = fftn::detail::profile_of(target, lanes);
+  for (std::size_t slot = 0; slot < profile.batch_rows.size(); ++slot) {
+    const std::size_t rows = profile.batch_rows[slot];
+    if (rows == 0) {
+      continue;
+    }
+    const std::size_t n = fftn::detail::gen::radices[slot];
+    SCOPED_TRACE(std::string(fftn::isa_name(t)) + (sizeof(T) == 8 ? " double" : " float") +
+                 ", n = " + std::to_string(n) + ", from " + std::to_string(rows) + " rows");
+    const auto text = [&](std::size_t count) {
+      return described(*make_plan_core(
+          fftn::detail::view_of(fftn::rows_c2c<T>(n, count, fftn::direction::backward)),
+          {.force_isa = t}, build_settings{}));
+    };
+    const std::size_t own = slot < profile.batch_own_rows.size() ? profile.batch_own_rows[slot] : 0;
+    const std::size_t narrower_lanes = profile.batch_narrower ? lanes / 2 : lanes;
+    const std::string at_rows = text(rows);
+    EXPECT_NE(at_rows.find("batch leaf radix-" + std::to_string(n) + " backward, " +
+                           std::to_string(own != 0 && rows >= own ? lanes : narrower_lanes) +
+                           " rows per register"),
+              std::string::npos)
+        << at_rows;
+    if (own != 0) {
+      const std::string at_own = text(own);
+      EXPECT_NE(at_own.find(std::to_string(lanes) + " rows per register"), std::string::npos)
+          << at_own;
+    }
+    if (rows > 2) {
+      EXPECT_EQ(text(rows - 1).find("batch leaf"), std::string::npos);
+    }
+    // Every row of the batch gets the bits a plan of that row alone gives it.
+    for (const std::size_t count : {rows, own != 0 ? own + 1 : rows + 1}) {
+      using c = std::complex<T>;
+      const auto batched = make_plan_core(
+          fftn::detail::view_of(fftn::rows_c2c<T>(n, count, fftn::direction::backward)),
+          {.force_isa = t}, build_settings{});
+      const auto single =
+          make_plan_core(fftn::detail::view_of(fftn::rows_c2c<T>(n, 1, fftn::direction::backward)),
+                         {.force_isa = t}, build_settings{});
+      fftn::test::input_source src(0xB0B5ULL + n);
+      const auto x = src.complexes<T>(n * count);
+      std::vector<c> y(n * count);
+      const fftn::workspace ws(std::max(fftn::detail::workspace_bytes(*batched, 1),
+                                        fftn::detail::workspace_bytes(*single, 1)));
+      fftn::detail::execute_core(*batched, 0, count, x.data(), y.data(), ws);
+      for (std::size_t r = 0; r < count; ++r) {
+        std::vector<c> one(n);
+        fftn::detail::execute_core(*single, 0, 1, x.data() + r * n, one.data(), ws);
+        EXPECT_EQ(std::memcmp(one.data(), y.data() + r * n, n * sizeof(c)), 0)
+            << count << " rows, row " << r;
+      }
+    }
+    EXPECT_EQ(text(1).find("batch leaf"), std::string::npos);
+  }
+}
+
+TEST(BatchLeaves, RulesChoose) {
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    rules_choose<double>(t);
+    rules_choose<float>(t);
   }
 }
 

@@ -92,6 +92,10 @@ struct target_profile {
   // Experiment X53 sets them per target and precision.
   std::span<const std::uint16_t> batch_rows;
   bool batch_narrower = false;
+  // Where batch_narrower: from a batch of batch_own_rows[codelet_slot(n)] rows (0, or no
+  // entry: never) the target's own leaves instead, C rows per register (X53: avx512's four
+  // rows per register won from four rows at 11 and 13-25 points).
+  std::span<const std::uint16_t> batch_own_rows;
 };
 
 // The profile of target t for a precision with `lanes` complex lanes: the table measured

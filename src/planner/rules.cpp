@@ -664,19 +664,54 @@ sequence cheapest(std::size_t n, std::size_t smooth, bool more, const target_pro
 
 namespace {
 
-// The batch leaves' smallest batch per codelet slot (target_profile::batch_rows) and whether
-// an avx512 plan takes avx2's, from experiment X53 (dev/experiments/X53-two-row-leaves.md).
+// The batch leaves' smallest batch per codelet slot (target_profile::batch_rows, in
+// gen::radices order: 2-16, 17, 19, 20, 23, 25, 32, 64), whether an avx512 plan takes avx2's
+// and from which batch it takes its own instead (batch_own_rows), from experiment X53
+// (dev/experiments/X53-two-row-leaves.md): per length, the smallest batch of the screen from
+// which every case (2, 3, 4 rows both directions, 8, 64, 1024, in place) ran below 0.97 of
+// the leaf, the pair leaf or the chain, and none slower. Short lengths gain little (the leaf
+// moves as much data, and a group's transposes cost shuffles), and where the target already
+// fills its registers with a pair leaf (avx512 16, 32, 64; avx2 8, 16, 20) the batch leaf
+// lost. Only lengths whose row alone is the leaf of n: a batch leaf gives a row its leaf's
+// bits (passes/batch_leaf.inl), so a batch's rows keep the bits of a plan of one of them
+// (tests/api, BatchedRowsMatchSingleRows); left out where the screen gained but a row alone is
+// a pair leaf or a chain: 12 on x86 (0.86-0.98), 8 on avx512 (0.90 at 1024 rows), 20 and 25,
+// which are never leaves (25 0.43-0.56 on x86, 20 0.42-0.59 in float on NEON), 32 in float on
+// NEON (0.83-0.96). Measured in
+// double on avx2 (EPYC 7763, GCC 16) and avx512 (Xeon 6240, GCC 14), in float on NEON (M5
+// Max, Clang 23; NEON has none in double, C = 1); none elsewhere.
+// clang-format off
+constexpr std::array<std::uint16_t, gen::radix_count> batch_rows_avx2_f64 =
+    {0, 0, 8, 0, 8, 8, 0, 4, 4, 4, 0, 4, 2, 2, 0, 4, 4, 0, 2, 0, 0, 0};
+constexpr std::array<std::uint16_t, gen::radix_count> batch_rows_avx512_f64 =
+    {1024, 0, 0, 64, 64, 8, 0, 4, 4, 2, 0, 2, 2, 2, 0, 2, 2, 0, 2, 0, 0, 0};
+constexpr std::array<std::uint16_t, gen::radix_count> batch_own_avx512_f64 =
+    {0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 0, 4, 4, 4, 0, 4, 4, 0, 4, 0, 0, 0};
+constexpr std::array<std::uint16_t, gen::radix_count> batch_rows_neon_f32 =
+    {0, 4, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 0, 2, 0, 0, 0};
+// clang-format on
+
 std::span<const std::uint16_t> batch_rows_of(target t, std::size_t lanes) {
-  static_cast<void>(t);
-  static_cast<void>(lanes);
+  if (t == target::avx2 && lanes == 2) {
+    return batch_rows_avx2_f64;
+  }
+  if (t == target::avx512 && lanes == 4) {
+    return batch_rows_avx512_f64;
+  }
+  if ((t == target::neon || t == target::neon_fcma) && lanes == 2) {
+    return batch_rows_neon_f32;
+  }
   return {};
 }
 
-bool batch_narrower_of(target t, std::size_t lanes) {
-  static_cast<void>(t);
-  static_cast<void>(lanes);
-  return false;
+std::span<const std::uint16_t> batch_own_rows_of(target t, std::size_t lanes) {
+  if (t == target::avx512 && lanes == 4) {
+    return batch_own_avx512_f64;
+  }
+  return {};
 }
+
+bool batch_narrower_of(target t, std::size_t lanes) { return t == target::avx512 && lanes == 4; }
 
 } // namespace
 
@@ -695,6 +730,7 @@ target_profile profile_of(target t, std::size_t lanes) noexcept {
           .rader_below = rader_below_of(t),
           .batch_rows = batch_rows_of(t, lanes),
           .batch_narrower = batch_narrower_of(t, lanes),
+          .batch_own_rows = batch_own_rows_of(t, lanes),
       };
     }
     if (m.t == fallback_target &&
@@ -713,6 +749,7 @@ target_profile profile_of(target t, std::size_t lanes) noexcept {
       .rader_below = rader_below_of(t),
       .batch_rows = batch_rows_of(t, lanes),
       .batch_narrower = batch_narrower_of(t, lanes),
+      .batch_own_rows = batch_own_rows_of(t, lanes),
   };
 }
 
@@ -1066,6 +1103,7 @@ constexpr target_profile reference_profile{
     .rader_below = std::size_t{1} << 24U,
     .batch_rows = {},
     .batch_narrower = false,
+    .batch_own_rows = {},
 };
 
 // The lengths in [lo, hi] that may_be_fast accepts, ascending: the products of 2, 3, 5, 7

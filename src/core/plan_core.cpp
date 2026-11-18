@@ -514,7 +514,8 @@ std::vector<std::size_t> depth_tops_of(std::size_t n, const side& in, const side
 // X53; strategies/chain.hpp, use_batch_leaves), or null: only for one axis of contiguous
 // rows in one batch dimension of at least two rows, the driver's one call of the leaf over
 // the batch (driver.hpp, run_leaf_rows); a precision with one complex number per register
-// has none. By the rules, the profile's (target_profile::batch_rows, batch_narrower).
+// has none. By the rules, the profile's (target_profile::batch_rows, batch_narrower,
+// batch_own_rows).
 template <class T>
 const batch_leaf_set<T>* batch_leaves_of(const shape_view& s, const side& in, const side& out,
                                          const build_settings& settings,
@@ -540,7 +541,11 @@ const batch_leaf_set<T>* batch_leaves_of(const shape_view& s, const side& in, co
     if (const std::size_t slot = codelet_slot(n); slot < profile.batch_rows.size() &&
                                                   profile.batch_rows[slot] != 0 &&
                                                   s.batches[0].count >= profile.batch_rows[slot]) {
-      table = profile.batch_narrower ? find_narrower_batch_leaves(t, n) : find_batch_leaves(t, n);
+      const std::size_t rows = s.batches[0].count;
+      const bool own = !profile.batch_narrower ||
+                       (slot < profile.batch_own_rows.size() && profile.batch_own_rows[slot] != 0 &&
+                        rows >= profile.batch_own_rows[slot]);
+      table = own ? find_batch_leaves(t, n) : find_narrower_batch_leaves(t, n);
     }
     break;
   case batch_leaf_choice::never:

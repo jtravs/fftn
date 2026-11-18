@@ -73,10 +73,69 @@ an `avx512` plan); no library switch, so nothing in `dev/KNOBS.toml`.
      before it decides);
   3. a target whose rule takes no case, or that misses rule 2, keeps no batch leaves: its
      tables are deleted.
+  4. Added after the screens, before any judging run (the rule above names 64 × 2, which no
+     arm closed): **arm R** is the rule's commit, judged by fresh `--serial` runs under rule
+     2 without the 64 × 2 clause; 64 × 2 is reported, not judged. On NEON (float only) the
+     15 × 2 clause does not apply.
 
 ## Results
 
-Not yet run.
+Toolchains: GCC 16.2 on the EPYC 7763 (DMOG, `-c 8` shared, every round loaded by other
+jobs on the node), GCC 14.4 on the Xeon Gold 6240 (`-c 8` shared), Clang 23.1.4 on the M5 Max
+(`neon_fcma`, float); Release, one thread. Screens are `fbench_remote.py submit` without
+`--serial` (DMOG and the Xeon) and local runs on the Mac; ratios are the forced arm ÷
+`BATCH_LEAVES=never` of the same commit.
+
+### Arms
+
+- **B** (18a3d1b): C × C block transposes of all R inputs before the codelet and of the
+  outputs after it; a last block that overlaps where C does not divide n; a partial group
+  for the rows left over.
+- **B2** (f06050c): each input gathered when the codelet asks for it (C broadcasts,
+  transposed) and each output stored lane by lane. Clang emits FFTW's form on avx2 (a 128-bit
+  load and a `vinsertf128` from memory per element); GCC 16 broadcasts and shuffles.
+  **Rejected**: slower than B on every machine (EPYC 1.05-1.4 of B's time where B wins, run
+  20261118-024008-3317; Xeon with avx2's leaves 1.05-1.25, run 20261118-024044-e8cf; M5 Max
+  float 1.1-1.2, run 20261118-023555-b948), except the EPYC's 64 (0.91 of the chain against
+  B's 1.00).
+- **B3** (ec43a2d, on B2): a single row left over runs in the leaf's form (broadcast, lane
+  0 stored) instead of a partial group, which cost as much as a whole group (B's batches of
+  three: 15 × 3 1.00 of the leaf where 15 × 2 and 15 × 4 were 0.74).
+- **B4** (9f03409): B's blocks with B3's last row. **Kept**: on the Xeon (quiet run, band
+  ±2.76 %, 20261118-025722-2bc0) batches of three moved from 1.0-1.3 to 0.87-1.05 of the
+  leaf at 9-25 points; elsewhere as B.
+- **B5** (f0ae7d6): 16, 32 and 64 as the chains 4 × 4, 4 × 8, 8 × 8 through a stack tile
+  with C rows per register (64's codelet over two rows spilled about a thousand registers
+  with GCC 16). **Rejected** (deleted, c5d9292): EPYC 64 × 2 0.97 of the chain, 16 and 32
+  1.2-1.6 (run 20261118-032128-4316); Xeon 1.7-3.8 of avx512's pair leaves (run
+  20261118-032040-94a1); M5 Max float 16 0.70 against the codelet's 0.55, 64 1.05-1.31 (run
+  20261118-031708-11d0).
+- avx512's own leaves (C = 4) on batches of 2 and 3: 1.4-4.3 of the leaf with B, 4-15 with
+  B2 (partial groups of 2 and 3 rows in one `zmm`); from 4 rows they beat avx2's at 11 and
+  13-25 points (15: 0.61-0.67 against 0.73-0.78; runs 20261118-022102-90c2,
+  20261118-032040-94a1).
+
+### Screen of B4 (the rule's evidence)
+
+B4 ÷ the leaf, pair leaf or chain of `main`, per length (rows across: 2, 3, 4 both
+directions, 8, 64, 1024, in place 2 and 3). EPYC (run 20261118-025728-609b, band ±1.28 %):
+lengths 2-8 lose at 2-4 rows (1.0-1.2; in place 1.1-1.85) and gain little from 8 rows
+(0.90-0.96); 9-15, 17, 19, 23 gain 0.65-0.95, 25 0.45-0.56; 16, 20, 32 lose (1.0-1.4: their
+rows are pair leaves or chains already on whole registers); 64 1.00. Xeon with avx2's leaves
+(run 20261118-025722-2bc0, band ±2.76 %): 9-15, 17, 19, 23 0.67-0.96, 25 0.43-0.55, 2-8 lose
+at 2-4 rows, 16, 32, 64 1.4-3.0 (avx512's pair leaves). M5 Max float (run
+20261118-025350-b624, band ±1.00 %): 4-23 0.53-0.92 at every batch, 2 loses (1.0-1.16), 64
+1.42-1.73.
+
+Targets, FFTN ÷ FFTW from the B4 screens (`main` → B4): EPYC 15 × 2 backward 1.24 → 0.91,
+64 × 2 backward 1.29 → 1.30 (no arm closes it: B2 0.91, B5 0.97 of the chain); Xeon 15 × 2
+backward 1.14 → 0.88 (÷ MKL 0.78 → 0.60).
+
+The rule (rules.cpp, `batch_rows_of`; arm R): per length the smallest batch from which
+every screened case ran below 0.97 of `main` with none slower, restricted to lengths whose
+row alone is the leaf of n, so that a batch's rows keep the bits of a plan of one row
+(tests/api `BatchedRowsMatchSingleRows`): this leaves out 12 on x86 (0.86-0.98), 8 on avx512,
+20 and 25 (never leaves; 25 gains 0.43-0.56 on x86) and 32 in float on NEON.
 
 ## Verdict
 
