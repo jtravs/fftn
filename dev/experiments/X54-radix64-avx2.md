@@ -108,9 +108,58 @@ No switch: arms are commits, `dev/KNOBS.toml` is untouched.
     than 1 + band loses its override before adoption.
   - An arm that fails is reported with its numbers and removed; at most three arms.
 
+*Amendment 1 (after B's search, before any judging run of B or C).* The search on A's
+build (below) found, in float, five lengths whose winner passes X38's rule at both batches
+by 6–26 %. A third arm, written now and judged by fresh runs:
+
+- **C (two-pass `avx2` float overrides, on B).** `avx2_float_overrides` gain 512 = 8 · 64,
+  640 = 32 · 20, 768 = 12 · 64, 2048 = 32 · 64, 4096 = 8 · 32 · 16 (the campaign's float
+  winners that are one sequence at both batches; 1024's two batches chose different
+  sequences and is left out). `avx2` float only.
+- **Rule for C** (C ÷ B), on the EPYC: (a) the geometric mean over the x2 catalogue's float
+  cases of the five lengths (batches 1 and 64; the standard catalogue has none of them in
+  float) is at most 0.97 with its interval clear of the band; (b) and (c) as for B, on the
+  same judged set and the EPYC's tracking tier.
+
 ## Results
 
-(running)
+### Screens: forced two-pass sequences, O and A (EPYC, not deciding)
+
+EPYC 7763 (DMOG), GCC 16.2, `avx2`, Slurm 512588–512590 (not `--serial`), 12 rounds, every
+round under load (other processes 66 cores), band ±1.00 %; time ÷ O's planner plan:
+
+| case | O, two passes | A, two passes | A, planner's plan |
+|---|---|---|---|
+| 1024 b1 / b1 bwd / b3 (16 · 64) | 0.961 / 0.959 / 0.959 | **0.837 / 0.906 / 0.840** | 0.993 / 0.996 / 1.001 |
+| 1024 b16 / b256 / b1024 | 1.002 / 1.007 / 1.102 | 0.908 / 0.916 / 1.011 | 1.005 / 0.999 / 0.994 |
+| 1024 in place | 0.959 | 0.851 | 1.002 |
+| 1024 as 32 · 32, b1 / b1024 | | 0.889 / 1.087 | |
+| 768 b1 / b64 (12 · 64) | 0.984 / 1.028 | **0.856 / 0.930** | 0.999 / 0.998 |
+| 2048 b1 / b64 (32 · 64) | 1.097 / 1.106 | 1.047 / 1.090 | 0.998 / 1.006 |
+
+Runs 20261118-033045-25ab (1024), -6964 (768), -bbe2 (2048). A takes the radix-64 last pass
+from about break-even to 0.84–0.93 of the planner's plan; it changes no plan by itself
+(0.993–1.006 where the plans have no radix-32/64 pass). 2048's radix-32 grouped first pass
+still loses.
+
+### Search for B (campaign x54-big-epyc)
+
+X2's driver on A's build (d8b5376), EPYC 7763, `ISA=avx2`, Slurm 512591 (a screen, not
+`--serial`), 333 candidates with radix 32 or 64 over 512, 640, 768, 1024, 1536, 2048, 4096;
+confirmations 20261118-034240-7fbe onwards. Planner ÷ winner (above 1: the winner is faster):
+
+| n | double b1 | double b64 | float b1 | float b64 |
+|---|---|---|---|---|
+| 512 | planner best | 8 · 64 1.029 | 8 · 64 1.262 | 8 · 64 1.198 |
+| 640 | planner best | planner best | 32 · 20 1.079 | 32 · 20 1.084 |
+| 768 | **12 · 64 1.162** | **12 · 64 1.089** | 12 · 64 1.097 | 12 · 64 1.063 |
+| 1024 | **16 · 64 1.181** | **16 · 64 1.076** | 16 · 64 1.165 | 32 · 32 1.104 |
+| 1536 | 8 · 6 · 32 1.031 | 8 · 6 · 32 1.020 | planner best | planner best |
+| 2048 | planner best | planner best | 32 · 64 1.127 | 32 · 64 1.105 |
+| 4096 | planner best | planner best | 8 · 32 · 16 1.088 | 8 · 32 · 16 1.068 |
+
+By X38's rule B takes 768 = 12 · 64 and 1024 = 16 · 64 in double; C (amendment 1) the five
+float lengths with one winner.
 
 ## Verdict
 
