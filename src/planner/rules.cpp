@@ -1145,6 +1145,7 @@ constexpr target_profile reference_profile{
     .batch_rows = {},
     .batch_narrower = false,
     .batch_own_rows = {},
+    .fit_overrides = {},
 };
 
 // The lengths in [lo, hi] that may_be_fast accepts, ascending: the products of 2, 3, 5, 7
