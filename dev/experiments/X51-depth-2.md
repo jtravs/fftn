@@ -162,4 +162,32 @@ under load, band ±3.84 %): 1 faster (46080 0.770), 60 no evidence, weighted geo
 [0.982, 0.995]; the largest median c2c 257 1.023 (a Rader row whose plan does not change).
 The EPYC's exit-check rows of 64–2048 points do not change. **E passes the rule.**
 
+**Xeon, T and L, standard catalogue** (GCC 14.4, `avx512`, FFTW 3.3.11 AVX-512 (W), oneMKL
+2026.1 (M); arms N = beed63c, T = c6d4c4a, L = c2b30f2, F = 70abbae; Slurm 16450/16451,
+`--serial`): run 20261118-034300-d6dc (30 rounds, 3 under load, band ±1.00 %):
+
+| row | T ÷ N | L ÷ N | FFTN ÷ FFTW, N → final | FFTN ÷ MKL, N → final |
+|---|---|---|---|---|
+| 25000 | **0.746** [0.732, 0.759] | 0.739 | 1.35 → 1.00 | 0.99 → 0.73 |
+| 524288 | 0.987 | **0.677** [0.627, 0.695] | 0.73 → 0.50 | 1.00 → 0.68 |
+| 2²⁰ | 1.004 | **0.739** | 0.74 → 0.55 | 0.86 → 0.64 |
+| 2²¹ | 1.001 | **0.741** | 0.79 → 0.58 | 0.72 → 0.54 |
+| 2²² | 0.995 | **0.752** | 0.76 → 0.57 | 0.45 → 0.33 |
+| 10⁶ | 0.999 | **0.953** [0.936, 0.975] | 0.73 → 0.70 | 0.94 → 0.90 |
+| 2²⁰ in place | 0.984 | **0.724** | 0.78 → 0.56 | 0.46 → 0.33 |
+
+T changes only 25000 (0.746, the rest within 0.984–1.004, no evidence); L changes the six
+long rows (L ÷ T there equals L ÷ N): weighted geomean about 0.75, every interval below 1, no
+case slower. F changes no double row (F ÷ N equals L ÷ N within 0.006). **T and L pass the
+target-row part of the rule** (the tracking tier follows).
+
+**Xeon, T and F, x51 rows** (arms N, T, F, W, M; Slurm 16452, `--serial`): run
+20261118-041137-33b1 (30 rounds, none under load, band ±1.43 %): T on 25000 in place
+**0.785** [0.779, 0.797] and backward **0.740** [0.734, 0.746] (FFTN ÷ FFTW 1.09 → 0.85 and
+1.32 → 0.98; ÷ MKL 0.79 → 0.62 and 0.98 → 0.73); T changes no float row (0.991–1.004). F on
+the float rows, against T's (= N's) plans: 32768 **0.782**, 46080 0.630, 65536 0.723, 100000
+0.652, 131072 0.608, 262144 0.648, 524288 0.697, 2²⁰ 0.780; weighted geomean over the eight
+0.687, every interval below 1, none slower (FFTW and MKL do not time float in fbench).
+**F passes the target-row part of the rule.**
+
 ## Verdict
