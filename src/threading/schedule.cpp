@@ -162,6 +162,21 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
     // of two at 4093-32749 (two scratch lines a power of two apart); 552960 (2^12 x 135) lost
     // to 2^19 (1.17), so the limit is the L1's size.
     p.bluestein_pow2_part_bytes = c.l1d.size;
+    // Experiment X51 (arm E), EPYC 7763: depth-first chains with a top of 4 (16 registers:
+    // tops of 16 lost, X46) for rows that are not powers of two, from L2/4 to 4 L2, whose
+    // power-of-two part is above L1/4: rows of a small odd part times 2^k took 0.63-0.82 of
+    // the rules' time from 12288 to 163840 points in the screen (FFTW 0.70-0.84), 46080 0.83;
+    // powers of two tied or lost (X32's chains), and 20000-100000 with parts of 8-64 points
+    // gained little or lost (25000 1.16). Only where it was measured: x86-64 with a private
+    // L2 under 1 MiB (Zen 3's 512 KiB); Zen 4 and Zen 5 (1 MiB, `avx512`) and the Axion VM
+    // (AArch64) share this profile branch, unmeasured, and keep their plans.
+    if (x86_64 && c.l1d.size != 0 && c.l2.size != 0 && c.l2.size < std::size_t{1024} * 1024) {
+      p.depth_min_bytes = c.l2.size / 4;
+      p.depth_max_bytes = 4 * c.l2.size;
+      p.depth_pow2_max_bytes = 0;
+      p.depth_part_bytes = c.l1d.size / 4;
+      p.depth_top = 4;
+    }
   }
   // Experiment X34: where those chains do not apply (Xeon 6240, 0.7 MiB of L3 per CPU), a
   // row whose length has an odd part of at least 15 stays in two grid phases beyond L2
@@ -179,11 +194,19 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
         p.grid_two_block_bytes = 2 * c.l1d.size;
         p.pow2_grid_bytes = c.l2.size / 4;
         p.grid_two_pow2_bytes = c.l3.size / 2;
-        // Experiment X46: the depth-first chain from L2/4 to 4 L2 (16384-262144 points).
+        // Experiment X46: the depth-first chain from L2/4 to 4 L2 (16384-262144 points);
+        // X51: a top of 10 where neither 16 nor 20 fits (25000), and the range to 64 L2
+        // (2^22 points: one top of 16 took 0.62-0.76 of the grids' time from 524288 to 2^22
+        // points, 0.72-0.83 in place; 2^23 and 2^24 gained too little to tell, 0.88-0.94).
         p.depth_min_bytes = c.l2.size / 4;
-        p.depth_max_bytes = 4 * c.l2.size;
+        p.depth_max_bytes = 64 * c.l2.size;
         p.depth_top = 16;
         p.depth_top_alt = 20;
+        p.depth_top_last = 10;
+        // X51 (arm F): single precision too, by its bytes, to 8 L2 (32768-2^20 points, the
+        // measured range): tops of 16 (20 at 100000) took 0.61-0.80 of the rules' time
+        // there; every split lost below L2/4 (8192-20000 points, 1.14-2.0).
+        p.depth_float_max_bytes = 8 * c.l2.size;
       }
     }
   }
@@ -203,9 +226,13 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
     p.bluestein_pow2_part_bytes = c.l1d.size / 4;
     // Experiment X46 (arm C2), M5 Max: depth-first chains with a top of 4 from L1 to 2 L1
     // where the length's power-of-two part is above L1/8 (8192-16384 complex doubles; from
-    // L1/2, batches of 256-1024 rows of 4096 lost 1.03-1.04, arm C).
+    // L1/2, batches of 256-1024 rows of 4096 lost 1.03-1.04, arm C). X51 (arm M): rows of a
+    // small odd part times a power of two above L1/8 to 16 L1 (20480-122880 points took
+    // 0.67-0.86 of their grids' time in the screen); powers of two stay at 2 L1 (32768-262144
+    // gained nothing against X32's chains).
     p.depth_min_bytes = c.l1d.size;
-    p.depth_max_bytes = 2 * c.l1d.size;
+    p.depth_max_bytes = 16 * c.l1d.size;
+    p.depth_pow2_max_bytes = 2 * c.l1d.size;
     p.depth_part_bytes = c.l1d.size / 8;
     p.depth_top = 4;
   }
