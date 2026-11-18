@@ -100,7 +100,13 @@ For each radix R, variant and direction (`codelet.build`):
    fewest live values goes next, ties to the one using the most recently computed value
    (depth first). Loads go just before their first use, stores just after their producer.
    Where the builders' creation order keeps fewer values live (radix 9), it is kept
-   instead. The peak number of live values is recorded.
+   instead. A complex codelet that keeps more than 16 values live (AVX2's registers) is
+   also ordered by `fitted_order`, which scores each ready operation by its operands
+   outside a model register file of the 12–16 values touched most recently; that order
+   is taken where `spill_moves` (Belady's furthest-next-use eviction in 16 registers)
+   counts at least a quarter and 16 fewer stack moves: radix 32 (93 → 40 plain) and 64
+   (292 → 146), plain and DIF (experiment X54). The peak number of live values is
+   recorded.
 7. **Verify** (`verify.py`) the ordered operation list, the same objects the emitter prints,
    in 256-bit arithmetic on every basis input (every column of the codelet's matrix) and
    three random inputs, each with random twiddles, against the definition of the variant
@@ -359,7 +365,8 @@ slightly on AVX-512's 32.
   keeps its register allocator out of trouble. A codelet whose `live` exceeds 16 spills a
   little on AVX2's 16 registers, and above 32 on every target; `--table` shows `live` (at
   task 1.1, radices 14 to 16 were at 17 and 18, and still are in real-coefficient form;
-  32 is at 35 and 64 at 67).
+  32 is at 35 and 64 at 67 in the fewest-live order, 37 and 71 in the fitted order that
+  the generated text carries, which spills less).
 - **Constants** are printed twice, each the exact value rounded once to its precision (to
   double, and to float directly: rounding the double to float would round twice), and
   `gen_k<T>` picks one. The double literal is the shortest decimal that reads back as that

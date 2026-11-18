@@ -19,7 +19,7 @@ from .algorithms import dft
 from .ir import Graph
 from .lower import Op, lower
 from .realify import realify
-from .schedule import peak_live, schedule
+from .schedule import REGISTERS, peak_live, schedule
 from .split import SPLIT_FUSED, expand, lower_split
 from .verify import verify, verify_split
 
@@ -112,7 +112,7 @@ def build_ops(radix: int, variant: str, sign: int, real: bool = True) -> list[Op
 
 def build(radix: int, variant: str, sign: int) -> Codelet:
     """Builds and verifies one codelet; raises VerificationError if it is wrong."""
-    ops = schedule(build_ops(radix, variant, sign))
+    ops = schedule(build_ops(radix, variant, sign), REGISTERS)
     verify(ops, radix, variant, sign)
     return Codelet(radix, variant, sign, tuple(ops), count(ops), peak_live(ops))
 
