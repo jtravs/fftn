@@ -77,6 +77,9 @@ struct rows_case {
   fftn::direction dir;
 };
 
+// Complex values past the last row in every buffer: a store beyond the batch changes them.
+constexpr std::size_t guard = 5;
+
 [[nodiscard]] std::size_t elements(const rows_case& rc) {
   return rc.count * (rc.n + rc.gap) - rc.gap;
 }
@@ -100,7 +103,7 @@ std::vector<std::byte> run(fftn::isa t, const rows_case& rc, const build_setting
                      {.in_place = rc.in_place, .scale = rc.scale, .force_isa = t}, settings);
   text = described(*core);
   fftn::test::input_source src(0xBA7CULL + rc.n * 131 + rc.count);
-  const auto x = src.complexes<T>(elements(rc));
+  const auto x = src.complexes<T>(elements(rc) + guard);
   std::vector<std::byte> in(x.size() * sizeof(c));
   std::memcpy(in.data(), x.data(), in.size());
   const fftn::workspace ws(fftn::detail::workspace_bytes(*core, 1));
@@ -121,7 +124,7 @@ void against_reference(const rows_case& rc, const std::vector<std::byte>& out, s
                        const std::string& what) {
   using c = std::complex<T>;
   fftn::test::input_source src(0xBA7CULL + rc.n * 131 + rc.count);
-  const auto x = src.complexes<T>(elements(rc));
+  const auto x = src.complexes<T>(elements(rc) + guard);
   const std::size_t base = row * (rc.n + rc.gap);
   std::vector<std::complex<double>> xin(rc.n);
   for (std::size_t j = 0; j < rc.n; ++j) {
@@ -159,6 +162,7 @@ template <class T> void batch_leaves_match(fftn::isa t, batch_leaf_choice choice
                rows_case{n, count, 3, false, 1.0, false, fftn::direction::forward},
                rows_case{n, count, 0, true, 0.375, false, fftn::direction::backward},
                rows_case{n, count, 1, false, 0.375, true, fftn::direction::forward},
+               rows_case{n, count, 2, true, 1.0, false, fftn::direction::forward},
            }) {
         const std::string what =
             std::string(fftn::isa_name(t)) + (sizeof(T) == 8 ? " double" : " float") +
@@ -178,7 +182,7 @@ template <class T> void batch_leaves_match(fftn::isa t, batch_leaf_choice choice
             << batch_text;
         EXPECT_EQ(leaf_text.find("batch leaf"), std::string::npos) << leaf_text;
         EXPECT_TRUE(got == want) << batch_text << leaf_text;
-        if (!rc.in_place && count > 2) {
+        if (count > 2) {
           for (const auto& [first, part] : {
                    std::pair<std::size_t, std::size_t>{1, count - 1},
                    {count / 2, 1},
