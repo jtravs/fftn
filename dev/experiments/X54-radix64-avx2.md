@@ -1,6 +1,7 @@
 # X54: radix-32 and radix-64 passes without most of their spills on `avx2`
 
-- **Status:** done (A, C adopted; B adopted for 768, 1024 dropped by rule (c))
+- **Status:** done; A proposed for adoption against rule (b)'s letter (80, placement), the
+  lead's call; B (768 only, 1024 dropped by rule (c)) and C stand or fall with A
 - **Owner:** x54 session, 2026-11-18
 - **Phase / task:** 1 (phase 1 exit check, the tail rule; cause 4); follows X38, X42, X47
 
@@ -238,6 +239,23 @@ single precision, so no ratio to FFTW). C ÷ B **0.898 [0.893, 0.902]**, every c
 512 0.787 / 0.829, 640 0.925 / 0.921, 768 0.921 / 0.951, 2048 0.888 / 0.909, 4096 0.922 /
 0.938 (batch 1 / 64).
 
+### EPYC re-run of the cases past the limit (run 20261118-072327-1a75)
+
+Slurm 512633 (`--serial`), arms O, A, B, C on 80, 524288 and 1024 × 1024; 30 rounds, all
+under load (other processes 44 cores), band ±1.44 % (limit 1.034):
+
+| case | A ÷ O | B ÷ O | C ÷ O |
+|---|---|---|---|
+| 80 | **1.035** [1.029, 1.048] | 1.038 | 1.039 |
+| 524288 | 1.029 [0.939, 1.054] | 1.020 | 1.021 |
+| 1024 × 1024 | 1.000 [0.958, 1.048] | 1.266 [1.237, 1.321] | 1.297 |
+
+80's plan (4 · 20) runs code that A does not change: the GCC 16 objects of its row units
+(`rows1_avx2.cpp.o`, `rows7_avx2.cpp.o`) are byte-identical in O's and A's builds (same
+MD5); only their addresses in the binary moved (the radix-20 lane pass from 0x1641320 to
+0x1701060, the radix-4 grouped pass from 0x23853c0 to 0x23f0b00), because the radix-32/64
+units before them shrank. The 3.5 % is code placement, as X47 found for 61 and 101.
+
 ### Mac, tracking tier, A ÷ O (run 20261118-032911-79d7)
 
 Apple M5 Max, Homebrew Clang, `neon_fcma`, arms O (4d75c48) and A (d8b5376) built from the
@@ -264,21 +282,29 @@ Generator tests (55) and `gen --check` pass; Mac Release (Homebrew Clang; `neon_
 
 ## Verdict
 
-- **A (fitted order): adopted.** (a) 0.975 [0.970, 0.980] over the 12 exit-check cases
-  whose plan has a radix-32/64 codelet, against 1 − band = 0.979; (b) no case of the EPYC's
-  tracking tier slower (0.994 overall), two exit-check cases whose programs A does not
-  change past 1.041 (524288 1.067, 80 1.050): re-run below; (c) Xeon 0.999 and Mac 0.999,
-  nothing slower. Bit-identical; library text −0.31 % (x86-64 GCC 16).
-- **B (two-pass `avx2` double overrides): adopted for 768 only.** (a) B ÷ A 0.913 over the
-  9 double cases of 768 and 1024. (c) 1024 × 1024 at 1.25 (and the 1024 × 1024 plane at
-  1.14 in the tracking tier) take 1024's override away (1a9d95a), as the rule says; 768
-  (0.844, ÷ FFTW 1.08 → 0.91) keeps its own. (b) outside 1024's cases: 80 1.042, an
-  unchanged program (re-run below). Read as written, (b) would also count 1024 × 1024 and
-  reject the arm; (c) exists to drop a length whose own cases lose, so it is applied first,
-  as X42 wrote it to be. The lead may read it otherwise.
-- **C (`avx2` float overrides): adopted.** (a) 0.898 [0.893, 0.902] over its 10 float
-  cases, all faster; (b) and (c): no case slower beyond B's 1024 cases, which the pruning
-  removes.
+- **A (fitted order): passes (a) and (c), fails (b) by the letter on one case whose code it
+  does not change; proposed for adoption, the lead's call.** (a) 0.975 [0.970, 0.980] over
+  the 12 exit-check cases whose plan has a radix-32/64 codelet, against 1 − band = 0.979;
+  (c) Xeon 0.999 and Mac 0.999, nothing slower; (b) the EPYC's tracking tier 0.994 with no
+  case slower, but two exit-check cases past 1.041 were re-run and the re-run decides:
+  524288 1.029 (inside 1.034), **80 1.035 [1.029, 1.048] against a limit of 1.034**. 80's
+  plan runs byte-identical objects at moved addresses (above): placement, not the change.
+  Bit-identical results; library text −0.31 % (x86-64 GCC 16). By the protocol A would be
+  deleted, and B and C with it (both were selected on A's build: O's 12 · 64 at 768 was
+  0.98 / 1.03 of the planner's, not a win). Reasons to adopt anyway: the miss is 0.1 % past
+  the limit on code A does not touch, the arms of the same run (B, C) show 80 at the same
+  1.038–1.039, and nothing A does change is slower anywhere (three machines).
+- **B (two-pass `avx2` double overrides): adopted for 768 only, if A is.** (a) B ÷ A 0.913
+  over the 9 double cases of 768 and 1024. (c) 1024 × 1024 at 1.25 (1.27 in the re-run)
+  and the 1024 × 1024 plane at 1.14 in the tracking tier take 1024's override away
+  (1a9d95a), as the rule says; 768 (0.844, ÷ FFTW 1.08 → 0.91) keeps its own. (b) outside
+  1024's cases: 80, as for A (1.038 in the re-run, the same placement). Read as written,
+  (b) would also count 1024 × 1024 and reject the arm; (c) exists to drop a length whose
+  own cases lose, so it is applied first, as X42 wrote it to be.
+- **C (`avx2` float overrides): adopted, if A is.** (a) 0.898 [0.893, 0.902] over its 10
+  float cases, all faster; (b) and (c): no case slower beyond B's 1024 cases, which the
+  pruning removes, and 80 (placement, as above).
+- The branch carries A, B (768) and C, as proposed; reverting A means reverting all three.
 - **Not closed:** 1024 (1.21 of FFTW), 1024 backward (1.20), 1024 × 3 (1.22), 1024 × 16
   (1.12): the 16 · 64 plan takes them to 1.01–1.08 of FFTW and 1024 × 256 to 0.97 of the
   three-pass plan, but per-length overrides cannot see that 1024 × 1024 needs the
