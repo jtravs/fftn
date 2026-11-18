@@ -684,23 +684,21 @@ namespace {
 // the leaf, the pair leaf or the chain, and none slower. Short lengths gain little (the leaf
 // moves as much data, and a group's transposes cost shuffles), and where the target already
 // fills its registers with a pair leaf (avx512 16, 32, 64; avx2 8, 16, 20) the batch leaf
-// lost. Only lengths whose row alone is the leaf of n: a batch leaf gives a row its leaf's
-// bits (passes/batch_leaf.inl), so a batch's rows keep the bits of a plan of one of them
-// (tests/api, BatchedRowsMatchSingleRows); left out where the screen gained but a row alone is
-// a pair leaf or a chain: 12 on x86 (0.86-0.98), 8 on avx512 (0.90 at 1024 rows), 20 and 25,
-// which are never leaves (25 0.43-0.56 on x86, 20 0.42-0.59 in float on NEON), 32 in float on
-// NEON (0.83-0.96). Measured in
+// lost. A batch's row gets the leaf of n's arithmetic, which for 8 and 12 (pair leaves), 20
+// and 25 (never leaves) and 32 (a chain in float) is not what a row alone gets; the published
+// guarantee is only that every row of a plan gets the same (DESIGN 15.5, the maintainer's
+// decision of 2026-11-18), so those lengths are taken too (arm R4). Measured in
 // double on avx2 (EPYC 7763, GCC 16) and avx512 (Xeon 6240, GCC 14), in float on NEON (M5
 // Max, Clang 23; NEON has none in double, C = 1); none elsewhere.
 // clang-format off
 constexpr std::array<std::uint16_t, gen::radix_count> batch_rows_avx2_f64 =
-    {0, 0, 8, 0, 8, 8, 0, 4, 4, 4, 0, 4, 2, 2, 0, 4, 4, 0, 2, 0, 0, 0};
+    {0, 0, 8, 0, 8, 8, 0, 4, 4, 4, 8, 4, 2, 2, 0, 4, 4, 0, 2, 2, 0, 0};
 constexpr std::array<std::uint16_t, gen::radix_count> batch_rows_avx512_f64 =
-    {1024, 0, 0, 64, 64, 8, 0, 4, 4, 2, 0, 2, 2, 2, 0, 2, 2, 0, 2, 0, 0, 0};
+    {1024, 0, 0, 64, 64, 8, 1024, 4, 4, 2, 8, 2, 2, 2, 0, 2, 2, 0, 2, 2, 0, 0};
 constexpr std::array<std::uint16_t, gen::radix_count> batch_own_avx512_f64 =
-    {0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 0, 4, 4, 4, 0, 4, 4, 0, 4, 0, 0, 0};
+    {0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 0, 4, 4, 4, 0, 4, 4, 0, 4, 4, 0, 0};
 constexpr std::array<std::uint16_t, gen::radix_count> batch_rows_neon_f32 =
-    {0, 4, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 0, 2, 0, 0, 0};
+    {0, 4, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 0, 2, 0};
 // clang-format on
 
 std::span<const std::uint16_t> batch_rows_of(target t, std::size_t lanes) {

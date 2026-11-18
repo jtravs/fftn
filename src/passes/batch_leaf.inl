@@ -21,8 +21,10 @@
 // lane l of an output from register l of the transposed broadcasts.
 //
 // Each lane does the arithmetic the leaf does to its row (the same codelet, with the edge's
-// scale on loading or storing), so the bits are the leaf's, the narrow leaf's on x86 (which
-// round alike), whatever the group a row falls in. A last row alone runs as the leaf runs it
+// scale on loading or storing), so the bits are the leaf's of R, the narrow leaf's on x86
+// (which round alike), whatever the group a row falls in: every row of a plan gets the same
+// arithmetic, as DESIGN 15.5 requires (not a plan of one row's, where that row is not the
+// leaf of R). A last row alone runs as the leaf runs it
 // (broadcast into every lane, lane 0 stored): a partial group gathers and scatters as a whole
 // one does and cost about as much (X53 arm B3); a partial group of more rows (C > 2) holds
 // zeros in its idle lanes and neither reads nor writes their rows.

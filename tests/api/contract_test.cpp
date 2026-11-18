@@ -200,59 +200,73 @@ TYPED_TEST(Contracts, ResultDoesNotDependOnPosition) {
   check_positions(fftn::c2r_plan<T>(four_c2r), 12, 15, 24, 15, 24);
 }
 
-// A batch of leaves runs as one kernel call over its rows, other one-stage rows through the
-// driver's flat path (dev/experiments/X20-call-overhead.md): every row must still get exactly
-// what a plan of that one row gives it, at any distance and sign, in place, scaled, and over
-// any range of execute_transforms.
-TYPED_TEST(Contracts, BatchedRowsMatchSingleRows) {
+// A batch of leaves runs as one kernel call over its rows (batch leaves C rows per register,
+// a leftover row alone; other one-stage rows through the driver's flat path, X20, X53): the
+// published guarantee is that within a plan every row gets the same arithmetic whatever its
+// position. Every row holds the same input, so every output row must equal row 0's, bit for
+// bit, for batches that leave every remainder modulo 8 (the widest C), at any distance and
+// sign, in place, scaled, and through execute_transforms from every first. A batch's row need
+// not match a plan of that row alone (the maintainer's decision, 2026-11-18: DESIGN 15.5).
+TYPED_TEST(Contracts, BatchRowsGetTheSameArithmeticAnywhere) {
   using T = TypeParam;
   using c = std::complex<T>;
-  constexpr std::size_t count = 9;
   for (const std::size_t n : {
            std::size_t{2},
            std::size_t{7},
            std::size_t{8},
+           std::size_t{12},
+           std::size_t{15},
            std::size_t{16},
+           std::size_t{20},
+           std::size_t{25},
            std::size_t{32},
            std::size_t{64},
        }) {
-    for (const double scale : {1.0, 0.25}) {
-      for (const bool in_place : {false, true}) {
-        for (const std::ptrdiff_t gap : {std::ptrdiff_t{0}, std::ptrdiff_t{3}}) {
-          for (const bool reversed : {false, true}) {
-            const auto dist = static_cast<std::ptrdiff_t>(n) + gap;
-            const std::ptrdiff_t signed_dist = reversed ? -dist : dist;
-            const fftn::shape<c, c> s{
-                .dir = fftn::direction::backward,
-                .axes = {{.n = n}},
-                .batches = {{.count = count, .in_dist = signed_dist, .out_dist = signed_dist}},
-            };
-            const fftn::options opts{.in_place = in_place, .scale = scale};
-            const fftn::c2c_plan<T> batched(s, opts);
-            const fftn::c2c_plan<T> single(fftn::rows_c2c<T>(n, 1, fftn::direction::backward),
-                                           {.scale = scale});
-            fftn::workspace ws(std::max(batched.workspace_bytes(), single.workspace_bytes()));
-            input_source src(n * count);
-            const std::size_t span = static_cast<std::size_t>(dist) * count;
-            const cvec<T> data = src.complexes<T>(span);
-            // Row t starts at element t dist from row 0, which is at the end when reversed.
-            const std::size_t row0 = reversed ? span - static_cast<std::size_t>(dist) : 0;
-            const auto row = [&](std::size_t t) {
-              return static_cast<std::ptrdiff_t>(row0) +
-                     static_cast<std::ptrdiff_t>(t) * signed_dist;
-            };
-            for (const std::size_t first : {std::size_t{0}, std::size_t{4}}) {
-              cvec<T> in = data;
-              cvec<T> out(in_place ? 0 : span);
-              c* out_base = in_place ? in.data() : out.data();
-              batched.execute_transforms(first, count - first, in.data() + row0, out_base + row0,
-                                         ws);
-              for (std::size_t t = first; t < count; ++t) {
-                cvec<T> one(n);
-                single.execute(data.data() + row(t), one.data(), ws);
-                EXPECT_TRUE(same_bits<c>(std::span<const c>(out_base + row(t), n), one))
-                    << "n " << n << ", scale " << scale << ", in place " << in_place << ", gap "
-                    << gap << ", reversed " << reversed << ", first " << first << ", row " << t;
+    input_source src(n);
+    const cvec<T> one_row = src.complexes<T>(n);
+    for (const std::size_t count : {std::size_t{9}, std::size_t{12}}) {
+      for (const double scale : {1.0, 0.25}) {
+        for (const bool in_place : {false, true}) {
+          for (const std::ptrdiff_t gap : {std::ptrdiff_t{0}, std::ptrdiff_t{3}}) {
+            for (const bool reversed : {false, true}) {
+              const auto dist = static_cast<std::ptrdiff_t>(n) + gap;
+              const std::ptrdiff_t signed_dist = reversed ? -dist : dist;
+              const fftn::shape<c, c> s{
+                  .dir = fftn::direction::backward,
+                  .axes = {{.n = n}},
+                  .batches = {{.count = count, .in_dist = signed_dist, .out_dist = signed_dist}},
+              };
+              const fftn::c2c_plan<T> plan(s, {.in_place = in_place, .scale = scale});
+              fftn::workspace ws(plan.workspace_bytes());
+              const std::size_t span = static_cast<std::size_t>(dist) * count;
+              // Row t starts at element t dist from row 0, which is at the end when reversed.
+              const std::size_t row0 = reversed ? span - static_cast<std::size_t>(dist) : 0;
+              const auto row = [&](std::size_t t) {
+                return static_cast<std::size_t>(static_cast<std::ptrdiff_t>(row0) +
+                                                static_cast<std::ptrdiff_t>(t) * signed_dist);
+              };
+              cvec<T> data(span);
+              for (std::size_t t = 0; t < count; ++t) {
+                std::copy(one_row.begin(), one_row.end(),
+                          data.begin() + static_cast<std::ptrdiff_t>(row(t)));
+              }
+              // Row 0 of the whole batch is the reference for every row of every range.
+              cvec<T> want;
+              for (std::size_t first = 0; first < count; ++first) {
+                cvec<T> in = data;
+                cvec<T> out(in_place ? 0 : span);
+                c* out_base = in_place ? in.data() : out.data();
+                plan.execute_transforms(first, count - first, in.data() + row0, out_base + row0,
+                                        ws);
+                if (first == 0) {
+                  want.assign(out_base + row(0), out_base + row(0) + n);
+                }
+                for (std::size_t t = first; t < count; ++t) {
+                  EXPECT_TRUE(same_bits<c>(std::span<const c>(out_base + row(t), n), want))
+                      << "n " << n << ", " << count << " rows, scale " << scale << ", in place "
+                      << in_place << ", gap " << gap << ", reversed " << reversed << ", first "
+                      << first << ", row " << t;
+                }
               }
             }
           }

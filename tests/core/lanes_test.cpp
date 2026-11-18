@@ -160,6 +160,8 @@ std::vector<std::byte> lanes_equal_chain(fftn::isa target, const batch_case& bc,
   lanes.lane_block = block;
   build_settings chain = base;
   chain.strategy = strategy_choice::chain;
+  // Row by row: batch leaves (X53) run some lengths as the leaf where the lanes run the chain.
+  chain.batch_leaves = fftn::detail::batch_leaf_choice::never;
   std::string lanes_text;
   std::string chain_text;
   const auto got = run(sh, bc, lanes, target, in_elems, out_elems, 0, bc.count, lanes_text);
