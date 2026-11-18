@@ -161,6 +161,18 @@ confirmations 20261118-034240-7fbe onwards. Planner ÷ winner (above 1: the winn
 By X38's rule B takes 768 = 12 · 64 and 1024 = 16 · 64 in double; C (amendment 1) the five
 float lengths with one winner.
 
+### Mac, tracking tier, A ÷ O (run 20261118-032911-79d7)
+
+Apple M5 Max, Homebrew Clang, `neon_fcma`, arms O (4d75c48) and A (d8b5376) built from the
+commits, 60 rounds, 46 under load (other processes up to 6 cores), band ±1.00 % (limit
+1.030): **0.999 [0.997, 1.001]**, one case faster (r2c 64 × 64 0.979), none slower; the
+highest ratio 1.007 (128 × 4096). A passes (c) on the Mac.
+
+### Library size
+
+x86-64 Linux, GCC 16.2, `size` of `libfftn.a` (the fbench cache builds): O 90 427 634 bytes
+of text, A 90 146 912 (−0.31 %).
+
 ## Verdict
 
 (running)

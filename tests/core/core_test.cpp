@@ -247,9 +247,10 @@ TEST(Rules, MeasuredExamples) {
   EXPECT_EQ(r(960, f64), (v{8, 10, 12}));
   EXPECT_EQ(r(1000, f64), (v{10, 10, 10}));
   EXPECT_EQ(r(1000, f32), (v{4, 5, 5, 10}));
-  EXPECT_EQ(r(1024, f64), (v{4, 16, 16}));
   EXPECT_EQ(r(1024, f32), (v{8, 8, 16}));
   // Overrides.
+  EXPECT_EQ(r(1024, f64), (v{16, 64})); // experiment X54: a radix-64 last pass
+  EXPECT_EQ(r(2048, f32), (v{32, 64}));
   EXPECT_EQ(r(42, f64), (v{2, 3, 7}));
   EXPECT_EQ(r(490, f64), (v{2, 7, 5, 7}));
   EXPECT_EQ(r(700, f32), (v{4, 5, 5, 7}));
