@@ -87,10 +87,47 @@ No switch in `dev/KNOBS.toml`: each arm is a commit.
      most 0.99 of arm 0 with its interval clear of the A/A band, 2 × 3 in place is at most
      0.85 of arm 0, and no case of `x37` or of the tracking tier is slower than arm 0 beyond
      the band (a case just past it on a loaded machine is re-run before it decides).
+  4. Added after arm U's run (below) missed rule 3, before any run of its own: **arm U2**
+     is arm U's code (1caa4f9) judged by fresh runs under a rule aimed at the cases the
+     change can reach, which rule 3 diluted with 60 cases it cannot touch. Targets: the
+     exit catalogue's in-place batches of three of 2–16 points (2, 3, 5, 7, 8, 12, 16) and
+     its single rows of 32 and 64 points (codelets that spill). U2 is adopted on Clang
+     AArch64 if the geometric mean over these targets is at most 0.97 of arm 0 with its
+     interval clear of the A/A band, and no case of the exit catalogue (`standard`,
+     `^c2c-[0-9]+-b`, `full`) or of the tracking tier is slower than arm 0 beyond the band
+     (a case just past it is re-run before it decides).
 
 ## Results
 
-(pending)
+Toolchains: Clang 23.1.4 on the Mac (`neon_fcma`), GCC 16.2 on the EPYC (DMOG, `-c 8`),
+GCC 14.4 on the Xeon (`avx512`); Release, one thread, double. Arms: A a0dffe1 (`main`),
+Z 94bf6b7 (arm 0 alone: 88890ae plus its second part, the threaded executes out of line,
+cherry-picked onto it for the Mac's comparison), U 1caa4f9 (the branch: arm 0 then arm U;
+on x86 its library is A's).
+
+### Counters after arm 0 (Slurm 512540 EPYC, 16442 Xeon)
+
+Cycles and instructions per call, `main` → arm 0 (88890ae, before its second part) against
+FFTW. EPYC: 2 points 20.0 / 86 → 15.0 / 66 (FFTW 22.0 / 71), 4 points 23.0 / 97 → 18.1 / 77
+(26.0 / 85), 2 × 3 in place 26.8 / 106 → 20.4 / 86 (27.4 / 104): every tiny case now
+0.68–0.86 of FFTW's cycles. Xeon: 2 points 24.5 / 93 → 22.0 / 84 (21.0 / 72), 4 points
+28.8 / 103 → 24.0 / 94 (24.9 / 86), 2 × 3 in place 29.3 / 112 → 27.4 / 103 (28.7 / 93),
+3 × 3 in place 43.6 / 139 → 40.5 / 130 (37.8 / 134): only 9 instructions went, because GCC
+14 still saved three registers before testing the mode, hence the second part (Clang 23 and
+GCC 16 now emit a load, a test and a tail call). No store-forwarding blocks
+(`LD_BLOCKS.STORE_FORWARD`) anywhere on the Xeon.
+
+### Mac, `x37` (run 20261118-002900-6819; 30 rounds, all loaded: load 11.7, other processes 8.1 cores; band ±2.39 %)
+
+- Arm 0 against A: 0.961 over the 69 cases; single rows of 2–12 points 0.79–0.88, tiny
+  batches out of place 0.82–0.93, in place 0.95–0.98; nothing slower. FFTN ÷ FFTW, single
+  rows of 2–8 points 0.92–1.01 → 0.77–0.81.
+- Arm U against arm 0 (paired, the same run): 1.002 over the 69 cases (rule 3 asks 0.99), 2 ×
+  3 in place 0.857 (rule 3 asks 0.85), 3 × 3 in place 0.909, 5 × 3 in place 0.961; nothing
+  slower beyond the band (worst 8 × 3 in place 1.046 [1.019, 1.059], 16 × 256 1.046 [1.017,
+  1.088], 26 points 1.030). **Arm U is not adopted under rule 3.** FFTN ÷ FFTW, 2 × 3 in
+  place 1.317 (A) → 1.283 (arm 0) → 1.093 (U); 3 × 3 in place 1.043 → 1.003 → 0.910. The
+  catalogue holds no single row of 32 or 64 points, the spilling codelets of the screen.
 
 ## Verdict
 
