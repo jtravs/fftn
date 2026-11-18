@@ -43,32 +43,6 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64" AND CMAKE_CXX_COMPILER_ID STREQ
   set_source_files_properties(${fftn_jcc_units} TARGET_DIRECTORY fftn
     PROPERTIES COMPILE_OPTIONS -Wa,-mbranches-within-32B-boundaries)
 endif()
-# Clang on AArch64 compiles the NEON units without load and store pairs (LDP, STP). On the
-# Apple M5 Max a load fed by a recent store forwards in about 1 ns when both are single
-# 128-bit accesses and takes 3.4-3.8 ns when either is a pair, so pairs cost wherever data
-# comes back through memory soon: in-place executions of tiny transforms (each reads what
-# the last one stored; 2 x 3 in place took 1.46 of FFTW's time) and codelets that spill
-# (the 32-point leaf). Experiment X49; dev/LESSONS.md.
-if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64|ARM64" AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-  include(CheckCXXSourceCompiles)
-  # A string in COMPILE_FLAGS, not a list in COMPILE_OPTIONS, which would merge the repeated
-  # -Xclang options.
-  set(fftn_unpaired_flags
-      "-Xclang -target-feature -Xclang +disable-ldp -Xclang -target-feature -Xclang +disable-stp")
-  set(CMAKE_REQUIRED_FLAGS "${fftn_unpaired_flags} -Werror")
-  check_cxx_source_compiles("int main() { return 0; }" FFTN_HAVE_UNPAIRED_NEON)
-  unset(CMAKE_REQUIRED_FLAGS)
-  if(FFTN_HAVE_UNPAIRED_NEON)
-    set(fftn_neon_units "")
-    foreach(unit IN LISTS fftn_isa_units)
-      if(unit MATCHES "neon")
-        list(APPEND fftn_neon_units ${CMAKE_CURRENT_SOURCE_DIR}/${unit})
-      endif()
-    endforeach()
-    set_source_files_properties(${fftn_neon_units} TARGET_DIRECTORY fftn
-      PROPERTIES COMPILE_FLAGS "${fftn_unpaired_flags}")
-  endif()
-endif()
 # For the disassembly test's second compilation (tests/isa).
 list(TRANSFORM fftn_isa_units PREPEND ${CMAKE_CURRENT_SOURCE_DIR}/)
 set_property(GLOBAL PROPERTY FFTN_ISA_UNITS ${fftn_isa_units})
