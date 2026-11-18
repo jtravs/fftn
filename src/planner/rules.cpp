@@ -724,8 +724,8 @@ std::span<const std::uint16_t> batch_own_rows_of(target t, std::size_t lanes) {
 bool batch_narrower_of(target t, std::size_t lanes) { return t == target::avx512 && lanes == 4; }
 
 // Two-pass plans of `avx2` double whose first pass reads 12-16 streams at once: on the EPYC
-// 7763 16 x 64 took 0.84-0.95 of 4 x 16 x 16's time for 1024 x 1 to 1024 x 768 and 1.30 at
-// 1024 x 2048, and 12 x 64 at 768 x 2048 1.27 of 4 x 16 x 12's, once the rows and their
+// 7763 16 x 64 took 0.84-0.96 of 4 x 16 x 16's time for 1024 x 1 to 1024 x 768 and 1.30 at
+// 1024 x 2048, and 12 x 64 at 768 x 2048 1.33 of 4 x 12 x 16's, once the rows and their
 // output no longer fit the L3 (experiment X57). 768's sequence is also its override, for the
 // rows of planes; 1024's is not (rules above, X54: planes lost).
 constexpr std::array<radix_override, 2> avx2_double_fit_overrides{{

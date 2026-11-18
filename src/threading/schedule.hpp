@@ -219,8 +219,8 @@ struct machine_profile {
   // many bytes runs the two-pass rows of the profile's fit_overrides; beyond it, the
   // three-pass plan (planner/rules.hpp, fitting_radices; 0: the rules as without this field).
   // Experiment X57 on the EPYC 7763 (`avx2` double, 32 MiB L3 per CCX): 1024 = 16 x 64 took
-  // 0.84-0.95 of 4 x 16 x 16's time from 1 to 768 rows (24 MiB) and 1.04-1.30 from 1024 rows
-  // (32 and 64 MiB); 768 = 12 x 64 at 24 MiB 0.95 of 4 x 16 x 12's and 1.27 at 48 MiB.
+  // 0.84-0.96 of 4 x 16 x 16's time from 1 to 768 rows (24 MiB) and 1.04-1.30 from 1024 rows
+  // (32 and 64 MiB); at 768 x 2048 (48 MiB) 4 x 12 x 16 took 0.75 of 12 x 64's.
   // set_grid_sizes sets three quarters of the L3 where a private L2 has a large L3 behind it
   // (x86-64, the EPYC class).
   std::size_t fit_row_bytes = 0;
