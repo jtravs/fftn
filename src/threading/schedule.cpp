@@ -97,6 +97,7 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
     p.grid_pad_period = private_l2 ? std::numeric_limits<std::size_t>::max() : 4096;
     p.grid_fuse_bytes = c.l2.size / 4;
     p.column_tile_bytes = c.l2.size / 4;
+    p.split_complex_points = private_l2;
     // X41 arm L2: where a cluster shares L2 (Apple), a block of columns whose elements lie at
     // least four to a page keeps its tiles within twice L1 (M5 Max 2048 x 36: blocks of 4
     // columns, 256 KiB of tiles, 0.90 of the time of X40's 16, 1 MiB), as the chain lost

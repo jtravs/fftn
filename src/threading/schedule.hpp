@@ -69,6 +69,10 @@ struct machine_profile {
   // took 1.4-2.0 times their one-thread time split, 16384 about the same, 32768 0.6.
   // profile_for sets 32768 where the cache group is a mesh.
   std::size_t split_min_points_lines = 0;
+  // A real plane or volume is split by its complex points (core/plan_core.cpp; X52 arm S1).
+  // set_grid_sizes sets it where each core has its own L2: on the M5 Max, whose cluster
+  // shares L2, the real 96^2 and 100^2 planes it would leave whole took 1.3 times as long.
+  bool split_complex_points = false;
   int mesh_group_lanes = 8;
   // Rule 2: leftover transforms after the whole ones are split only from this size (T5,
   // S3, run 20261114-182042-1f0c: at 8 lanes leftovers of 4096 points gained 0.85-0.98 and
