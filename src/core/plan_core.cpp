@@ -543,7 +543,7 @@ std::size_t column_block(std::size_t axis, const std::vector<std::size_t>& exten
   if (real && (c == 1 || extent[axis] < real_min_column)) {
     return 0;
   }
-  const std::size_t block_bytes = settings.profile.column_block_bytes;
+  constexpr std::size_t block_bytes = 256;
   const std::size_t lines_per_block = settings.profile.column_page_lines;
   const std::size_t n = extent[axis];
   const std::size_t complex_bytes = 2 * sizeof(T);
