@@ -71,6 +71,13 @@ dims = [24576, 49152]
 batch = 8
 
 [[group]]
+name = "x51-float-mixed"
+note = "single-precision rows of a small odd part times a large power of two (the Mac)"
+kind = "c2c"
+precision = "f32"
+dims = [24576, 40960, 49152, 98304, 122880, 196608]
+
+[[group]]
 name = "x51-25000"
 note = "judging rows of arm T: 25000 in place and backward"
 kind = "c2c"

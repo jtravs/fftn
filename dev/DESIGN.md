@@ -1306,7 +1306,9 @@ multiplications, by w_N^(r k_lo) (per lane, B entries a row) and w_N^(r k_hi B) 
 B the divisor of M with the fewest entries; the stored table would hold (F1 − 1) M entries of
 32 bytes on x86, as many bytes as the row (X46: with it the depth-first chain still missed L2
 0.3–0.7 times per point at 16384–25000 on the Xeon 6240, with the derived tables 0.00–0.01).
-Requirements: C divides F1 and M (so 25000 = 2³ · 5⁵ has no split on `avx512`), codelet
+Requirements: C divides M, and F1 when there are two tops (with one top the first pass's
+last block of sub-rows may be partial, as a lane pass's is: X51, so 25000 = 2³ · 5⁵ runs as
+10 × 2500 on `avx512`'s 4 lanes), codelet
 radices with a depth-first pass for the tops and the sub-row's first radix (2–16, 20, 32;
 25 only as a first pass), a sub-row chain of two passes or more. The rules take it in double
 on targets with 32 vector registers (`avx512`, NEON) where the profile's fields say: the
