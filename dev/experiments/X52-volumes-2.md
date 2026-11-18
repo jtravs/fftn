@@ -242,6 +242,22 @@ Arms L1 (446be06) and A1 (`main` a0dffe1) at one thread, L8, A8 and G8 (f6f9b4d,
   rows; a plane's phases move it between cores' caches. Screens of higher thresholds for the
   planes and volumes: EPYC Slurm 512568, Xeon Slurm 16460.
 
+### S (judging on the Mac; screens on the EPYC)
+
+- EPYC split-threshold screen, run 20261118-021016-b769 (Slurm 512568; G at 8 lanes with
+  `SPLIT_MIN_POINTS` 16384, 32768, 65536; band ±2.6 %): unsplit, c2c 96²–100² take 1.29–1.41 of
+  the split time but real 96²–100² 0.77–0.93; unsplit 128² loses for every kind (1.18–2.63).
+  So on the EPYC the real planes alone are split too early, by about their real/complex ratio:
+  hence S1.
+- EPYC S1 screen, run 20261118-023720-caa7 (Slurm 512574; band ±2.6 %): S ÷ G 0.887 over the
+  eight real 96² and 100² planes it changes (0.78–0.99), 0.993 over the 87 real planes and
+  volumes.
+- Mac, run 20261118-023738-b4bf (G and S at 6 lanes, G serial; 6 of 8 rounds loaded, band
+  ±14.7 %): S changes the real 96² and 100² planes (split at 6 lanes, unsplit with S1), and
+  they take 1.01–1.49 of G's time unsplit (geometric mean about 1.29); on the M5 Max, whose
+  cluster shares L2, splitting them pays. **S rejected on the Mac**: S1 applies only where each
+  core has its own L2 (S2 never applies there: no mesh).
+
 ## Verdict
 
 Pending.
