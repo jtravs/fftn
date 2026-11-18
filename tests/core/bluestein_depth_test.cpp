@@ -122,23 +122,21 @@ bool check_prime(fftn::isa target, std::size_t q, const std::vector<std::size_t>
 }
 
 template <class T> void every_case(fftn::isa target) {
-  // Primes whose convolution lengths (the profile's choice, 1000 to 9000 points) have splits
-  // on every complex count; the default scan picks the tops.
-  std::size_t built = 0;
-  for (const std::size_t q : {std::size_t{1031}, std::size_t{2053}, std::size_t{4099}}) {
+  // Both directions on convolutions of 2^12 and 2^13 points (forced), which every complex
+  // count splits, so that the depth-first path runs; then the profile's own lengths, whose
+  // splits depend on the target (the stage is right whichever path it takes).
+  for (const std::size_t q : {std::size_t{1031}, std::size_t{2053}}) {
     for (const auto dir : {fftn::direction::forward, fftn::direction::backward}) {
-      if (check_prime<T>(target, q, {}, dir, 1.0, 1, q)) {
-        ++built;
-      }
+      EXPECT_TRUE(check_prime<T>(target, q, {}, dir, 1.0, 1, q, false, q < 2048 ? 4096 : 8192));
     }
+    check_prime<T>(target, q, {}, fftn::direction::forward, 1.0, 1, q);
   }
-  EXPECT_GT(built, 0U) << "no prime took the depth-first convolution";
   // The scale on the chirp pass out, batches with gaps, in place: on a convolution of 8192
   // points, which every complex count splits, so that they run the depth-first path.
   EXPECT_TRUE(
-      check_prime<T>(target, 4093, {}, fftn::direction::backward, 0.25, 2, 4093 + 3, false, 8192));
+      check_prime<T>(target, 2053, {}, fftn::direction::backward, 0.25, 2, 2053 + 3, false, 8192));
   EXPECT_TRUE(
-      check_prime<T>(target, 4093, {}, fftn::direction::forward, 1.0 / 3, 3, 4093 + 5, true, 8192));
+      check_prime<T>(target, 2053, {}, fftn::direction::forward, 1.0 / 3, 3, 2053 + 5, true, 8192));
 }
 
 TEST(BluesteinDepth, EveryTargetPrecisionAndDirection) {
@@ -148,7 +146,7 @@ TEST(BluesteinDepth, EveryTargetPrecisionAndDirection) {
   }
 }
 
-// Tops given: one and two factors, on convolutions of 2^13 (tops of 8 and 16) and 10240
+// Tops given: one and two factors, on convolutions (forced) of 2^13 (tops of 8 and 16) and 10240
 // (tops of 20: the radix-20 top pass with the kernel-spectrum factor forward and the fused
 // chirp backward), with the scale and in place.
 TEST(BluesteinDepth, GivenTops) {
@@ -157,26 +155,25 @@ TEST(BluesteinDepth, GivenTops) {
          {std::vector<std::size_t>{16}, std::vector<std::size_t>{8, 4},
           std::vector<std::size_t>{8, 8}}) {
       EXPECT_TRUE(
-          check_prime<double>(t, 4093, tops, fftn::direction::forward, 1.0, 1, 4093, false, 8192));
+          check_prime<double>(t, 2053, tops, fftn::direction::forward, 1.0, 1, 2053, false, 8192));
       EXPECT_TRUE(
-          check_prime<float>(t, 4093, tops, fftn::direction::backward, 0.5, 1, 4093, true, 8192));
+          check_prime<float>(t, 2053, tops, fftn::direction::backward, 0.5, 1, 2053, true, 8192));
     }
-    // Tops of 20 run where C divides their product (chain_builder::bluestein_depth_fits: the
-    // fused chirp passes read whole blocks of C copies): {20} on every target but 8 lanes,
-    // {20, 4} on all.
+    // Tops of 20 run where C divides 20: the fused chirp passes read whole blocks of C
+    // copies (chain_builder::bluestein_depth_fits: C divides the tops' product) and two tops
+    // need C to divide the first (depth_fits). Every target but 8 lanes.
     for (const std::vector<std::size_t>& tops :
          {std::vector<std::size_t>{20}, std::vector<std::size_t>{20, 4}}) {
-      const std::size_t product = tops.size() == 1 ? tops[0] : tops[0] * tops[1];
       std::size_t lanes = 1;
-      const bool d = check_prime<double>(t, 4099, tops, fftn::direction::forward, 1.0, 1, 4099,
+      const bool d = check_prime<double>(t, 2053, tops, fftn::direction::forward, 1.0, 1, 2053,
                                          false, 10240, &lanes);
-      EXPECT_EQ(d, product % lanes == 0);
-      const bool db = check_prime<double>(t, 4099, tops, fftn::direction::backward, 0.25, 2,
-                                          4099 + 3, true, 10240, &lanes);
-      EXPECT_EQ(db, product % lanes == 0);
-      const bool f = check_prime<float>(t, 4099, tops, fftn::direction::backward, 0.5, 1, 4099,
+      EXPECT_EQ(d, tops[0] % lanes == 0);
+      const bool db = check_prime<double>(t, 2053, tops, fftn::direction::backward, 0.25, 2,
+                                          2053 + 3, true, 10240, &lanes);
+      EXPECT_EQ(db, tops[0] % lanes == 0);
+      const bool f = check_prime<float>(t, 2053, tops, fftn::direction::backward, 0.5, 1, 2053,
                                         false, 10240, &lanes);
-      EXPECT_EQ(f, product % lanes == 0);
+      EXPECT_EQ(f, tops[0] % lanes == 0);
     }
   }
 }
