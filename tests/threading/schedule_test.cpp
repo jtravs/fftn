@@ -646,27 +646,28 @@ TEST(Schedule, ProfilesOfRecordedMachines) {
   constexpr std::size_t mib = 1024 * kib;
   constexpr std::size_t never = std::numeric_limits<std::size_t>::max();
   // The values before X35 (main at 2eea943).
-  EXPECT_EQ(fields("macos-apple-m5-max.sysctl", false),
-            (planner_fields{128 * kib, 2 * mib,   128 * kib, 4 * mib,   4 * kib, 0,    0,
-                            16 * kib,  256 * kib, never,     64 * mib,  2 * mib, true, 0,
-                            0,         0,         32 * kib,  128 * kib, 0,       0,    128 * kib,
-                            2 * mib,   16 * kib,  4,         0,       0,    256 * kib, false}));
   EXPECT_EQ(
-      fields("linux-amd-epyc-7763.sysfs", true),
-      (planner_fields{256 * kib, 512 * kib, 32 * kib, 128 * kib, never, 0, 0, 16 * kib, 0,
-                      16 * mib,  64 * mib,  never,    false,     0,     0, 0, 32 * kib, 256 * kib,
-                      0,         0,         128 * kib, 2 * mib,  8 * kib, 4, 0, 0, 0, false}));
-  EXPECT_EQ(
-      fields("linux-gcp-c4d-zen5.sysfs", true),
-      (planner_fields{512 * kib, 1 * mib,  48 * kib, 256 * kib, never, 0, 0, 16 * kib, 0,
-                      16 * mib,  64 * mib, never,    false,     0,     0, 0, 48 * kib, 512 * kib,
-                      0,         0,        256 * kib, 4 * mib,  12 * kib, 4, 0, 0, 0, false}));
+      fields("macos-apple-m5-max.sysctl", false),
+      (planner_fields{128 * kib, 2 * mib,   128 * kib, 4 * mib,   4 * kib, 0,         0,
+                      16 * kib,  256 * kib, never,     64 * mib,  2 * mib, true,      0,
+                      0,         0,         32 * kib,  128 * kib, 0,       0,         128 * kib,
+                      2 * mib,   16 * kib,  4,         0,         0,       256 * kib, false}));
+  EXPECT_EQ(fields("linux-amd-epyc-7763.sysfs", true),
+            (planner_fields{256 * kib, 512 * kib, 32 * kib, 128 * kib, never, 0,     0,
+                            16 * kib,  0,         16 * mib, 64 * mib,  never, false, 0,
+                            0,         0,         32 * kib, 256 * kib, 0,     0,     128 * kib,
+                            2 * mib,   8 * kib,   4,        0,         0,     0,     false}));
+  EXPECT_EQ(fields("linux-gcp-c4d-zen5.sysfs", true),
+            (planner_fields{512 * kib, 1 * mib,  48 * kib, 256 * kib, never, 0,     0,
+                            16 * kib,  0,        16 * mib, 64 * mib,  never, false, 0,
+                            0,         0,        48 * kib, 512 * kib, 0,     0,     256 * kib,
+                            4 * mib,   12 * kib, 4,        0,         0,     0,     false}));
   EXPECT_EQ(
       fields("linux-intel-xeon-gold-6240.sysfs", true),
       (planner_fields{512 * kib, 1 * mib,   32 * kib, 256 * kib, never, 15,          0,
                       0,         0,         never,    0,         0,     false,       16,
                       64 * kib,  256 * kib, never,    4 * mib,   20,    12672 * kib, 256 * kib,
-                      4 * mib,   0,         16,       20,    10,          never, false}));
+                      4 * mib,   0,         16,       20,        10,    never,       false}));
   const planner_fields axion{
       .grid_min_bytes = 1 * mib,
       .grid_three_bytes = 2 * mib,

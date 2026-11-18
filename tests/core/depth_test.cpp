@@ -91,8 +91,7 @@ void check_depth(fftn::isa target, const depth_case& dc, fftn::direction dir, do
     subs *= f;
   }
   // With one top the first pass's last block of sub-rows may be partial (X51); C divides M.
-  const bool fits =
-      (dc.tops.size() == 1 || dc.tops[0] % lanes == 0) && (n / subs) % lanes == 0;
+  const bool fits = (dc.tops.size() == 1 || dc.tops[0] % lanes == 0) && (n / subs) % lanes == 0;
   EXPECT_EQ(text.find("strategy: depth-first chain") != std::string::npos, fits) << text;
 
   fftn::test::input_source src(0xDE97ULL + n + count);
@@ -297,8 +296,8 @@ TEST(Depth, RulesTakeItByTheProfile) {
       if (single) {
         const fftn::shape<std::complex<float>, std::complex<float>> shape{
             .dir = fftn::direction::forward, .axes = {{.n = n}}, .batches = {}};
-        return depth(fftn::detail::describe(
-            *make_plan_core(fftn::detail::view_of(shape), opts, settings)));
+        return depth(
+            fftn::detail::describe(*make_plan_core(fftn::detail::view_of(shape), opts, settings)));
       }
       const fftn::shape<std::complex<double>, std::complex<double>> shape{
           .dir = fftn::direction::forward, .axes = {{.n = n}}, .batches = {}};
