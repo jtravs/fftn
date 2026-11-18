@@ -77,6 +77,13 @@ an `avx512` plan); no library switch, so nothing in `dev/KNOBS.toml`.
      arm closed): **arm R** is the rule's commit, judged by fresh `--serial` runs under rule
      2 without the 64 × 2 clause; 64 × 2 is reported, not judged. On NEON (float only) the
      15 × 2 clause does not apply.
+  5. Added after arm R's Xeon judging run, before any run of R2: R had one case slower
+     beyond the band whose plan it does not change (a single row of 2 points, 1.106, re-run
+     1.091). **Arm R2** (R plus the JCC padding of the avx2-region leaf units, 56c30b6) is
+     adopted in R's place if, against A with fresh `--serial` runs, it meets rule 2 on the
+     Xeon (`x37`, `x53`, tracking tier) and no case of `x37` or the tracking tier on the
+     EPYC is slower than A beyond the band (the padding moves code there too); else the
+     Xeon keeps no batch leaves and R stands on the EPYC and NEON.
 
 ## Results
 
