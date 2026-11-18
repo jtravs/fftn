@@ -152,8 +152,8 @@ struct machine_profile {
   // and for c2r 2^20 (1.23). set_grid_sizes sets it on the Xeon profile.
   std::size_t grid_two_pow2_bytes = 0;
   // A c2c row of one axis of [depth_min_bytes, depth_max_bytes] whose power-of-two part has
-  // more than depth_part_bytes is a depth-first chain in double on a target with 32 vector
-  // registers (strategies/chain.hpp, c2c_depth; core/plan_core.cpp, depth_tops_of), with one
+  // more than depth_part_bytes is a depth-first chain in double (strategies/chain.hpp,
+  // c2c_depth; core/plan_core.cpp, depth_tops_of, which also names the limits below), with one
   // top factor, depth_top, else depth_top_alt, where its split fits; depth_max_bytes 0: never
   // (experiment X46). On the Xeon 6240's counters screen such chains with tops of 16 or 20
   // took 0.63-0.77 of the chains' and grids' time from 16384 to 262144 points (L2/4 to 4 L2);
@@ -168,6 +168,18 @@ struct machine_profile {
   std::size_t depth_part_bytes = 0;
   std::size_t depth_top = 0;
   std::size_t depth_top_alt = 0;
+  // A third top, tried after depth_top and depth_top_alt (0: none). X51, Xeon 6240: 25000 (three
+  // factors of 2, so on `avx512`'s 4 lanes neither 16 nor 20 leaves a sub-row C divides) as
+  // 10 x 2500 took 0.78 of its chain's time; set_grid_sizes sets 10 with tops 16 and 20.
+  std::size_t depth_top_last = 0;
+  // Powers of two take the depth-first chain only up to depth_pow2_max_bytes (X51: on the
+  // M5 Max X32's chains stay faster from 2 L1 up, where rows of a small odd part times a
+  // large power of two gain to 16 L1; on the EPYC 7763 they do not gain at all).
+  std::size_t depth_pow2_max_bytes = std::numeric_limits<std::size_t>::max();
+  // Rows in single precision take the depth-first chain by their bytes, as in double, but
+  // only up to depth_float_max_bytes (0: never; X51: measured on the Xeon 6240 to 2^20
+  // complex floats, 8 MiB).
+  std::size_t depth_float_max_bytes = 0;
   // The L1 data cache's line in bytes: a lanes column phase's block holds at least a line of
   // adjacent columns (core/plan_core.cpp, column_block; experiment X40). set_grid_sizes reads
   // it from the topology (128 on Apple's cores).
