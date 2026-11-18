@@ -138,6 +138,14 @@ public:
     more_pairs_ = more;
   }
 
+  // Batch leaves from this set (kernel_table.hpp, passes/batch_leaf.inl, experiment X53): a
+  // c2c line of stride 1 on both sides whose length is a codelet radix with an entry in the
+  // set, with no factor edge and radices the rules choose (not a test's), is that leaf, C
+  // lines of the batch per call's register. Only for a plan whose lines the driver hands to
+  // the leaf many at a time (one axis, one batch dimension: plan_core.cpp decides). Null:
+  // none.
+  void use_batch_leaves(const batch_leaf_set<T>* leaves) noexcept { batch_ = leaves; }
+
   // Long power-of-two lines (experiment X32): a line of a power-of-two length of more than
   // from_bytes takes FFTL.jl's radices instead of the rules': 8s, with one or two 4s first
   // for the spare factors, up to radix8_bytes, and 4s, with an 8 first for an odd exponent,
@@ -336,6 +344,12 @@ private:
                 pass_layout layout = pass_layout::interleaved);
   void add_leaf(std::size_t n, int sign, endpoint src, endpoint dst, const line_edges& edges,
                 std::vector<stage>& stages);
+  // Whether a c2c line of n from src to dst with these edges is a batch leaf
+  // (use_batch_leaves), and the stage that is.
+  [[nodiscard]] leaf_fn batch_leaf_for(std::size_t n, int sign, endpoint src, endpoint dst,
+                                       const line_edges& edges) const;
+  void add_batch_leaf(leaf_fn leaf, std::size_t n, int sign, endpoint src, endpoint dst,
+                      const line_edges& edges, std::vector<stage>& stages);
   // A pair leaf and the set it is from.
   struct pair_choice {
     const pair_leaf_entry* entry = nullptr;
@@ -404,6 +418,8 @@ private:
   const pair_leaf_set<T>* pairs_ = nullptr;
   const pair_leaf_set<T>* more_pairs_ = nullptr;
   std::vector<std::size_t> pair_lines_; // the lengths of the lines built as pair leaves
+  const batch_leaf_set<T>* batch_ = nullptr;
+  std::vector<std::size_t> batch_lines_; // the lengths of the lines built as batch leaves
   target_profile profile_;
   plan_tables<T>& tables_;
   std::size_t chunk_points_;

@@ -872,6 +872,23 @@ and 1.44 → 1.05, the M5 Max's primes of 4813–5119 0.86. One top factor of 16
 at 2²¹ points (32 MiB).
 [X50](experiments/X50-primes.md).
 
+4.22 **To run short rows side by side in the lanes, transpose blocks in registers; gather
+per element only where registers run out, and keep the last row out of a padded group.** A
+leaf over C rows of a batch at once (one row per lane) beat the 128-bit leaf by 0.65–0.95
+at 9–23 points on the EPYC 7763 and the Xeon 6240 (25 points 0.45) and by about 0.55 in float
+on the M5 Max, when the C × C blocks of C consecutive elements of each row were transposed in
+registers. Gathering each element when the codelet asked for it (C broadcasts and a
+transpose; Clang made it FFTW's load-and-insert, GCC 16 broadcasts and shuffles) cost 1.05–
+1.4 of the blocks everywhere except radix 64 (0.91 against 1.00), whose 64 live values the
+blocks spill. A padded group for the rows left over (zeros in the idle lanes) costs a whole
+group: a batch of three took as long as a batch of four until the last row ran alone in
+the leaf's form. Wider vectors lose on tiny batches: avx512's four rows per register ran
+batches of two and three 1.4–4.3 times as long as the leaf (a padded `zmm` group), while
+avx2's two rows per register won there; from four rows avx512's own won at 11–25 points.
+And it gains least where it is needed most: 2–8 points lose at 2–4 rows (the leaf moves as
+much data and the transposes add shuffles), and lengths whose row is already a pair leaf
+on whole registers lose by 1.1–3.8. [X53](experiments/X53-two-row-leaves.md).
+
 ## 5. Threading
 
 5.1 **Synchronisation costs set the smallest row worth splitting.** Spin barrier /
