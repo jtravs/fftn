@@ -55,10 +55,62 @@ precisions and bitwise equality between serial and threaded runs.
   whose plan it changes the weighted geomean B ÷ A is below 1 − band with its interval below
   1, no such case is slower than 1 + max(band, 3 %), and no tracking-tier case is slower than
   1 + max(band, 3 %) (a case just past the limit on a loaded run is re-run once). A profile on
-  which an arm is not judged keeps its plans. At most three rule arms.
+  which an arm is not judged keeps its plans. At most three rule arms per profile.
 
 ## Results
 
 ### Step 1, the screens
+
+Builds f0fc171 / beed63c / ea6b9d9 (X46's head 80dbcdb plus this file, the catalogue and arm
+P; the rules' plans are `main`'s). Ratios are forced split ÷ the rules' plan in the same run
+(below 1: faster); where a forced split does not fit the row is a plain chain (not shown). F,
+M: FFTW, MKL ÷ the rules' plan.
+
+- **Xeon, 25000 and 100000** (run 20261117-235845-911c, Slurm 16428/16429, 12 quiet rounds,
+  band ±2.37 %): 25000 with arm P's tops 10 × 2500 **0.776**, 5 × 5000 0.797 (FFTW 0.771,
+  MKL 1.056: FFTN ÷ FFTW 1.30 → 1.01); 100000: 20 × 5000 is the rules' plan, 10 × 10000
+  1.028, 5 1.27, 8 1.13 (FFTW 0.981: FFTN ÷ FFTW 1.02, at parity within the band); 20000: 10
+  0.957, 5 1.10, 8 1.08.
+- **Xeon, double rows beyond 4 L2 and 100000** (run 20261117-234639-ec26, Slurm 16424/16425,
+  12 rounds, 6 loaded, band ±1.81 %): one top of 16 took 0.619 (524288), 0.718 (2²⁰), 0.713
+  (2²¹), 0.757 (2²²) of the rules' grids; two tops (16 × 16, 16 × 32, 32 × 16, 32 × 32) and a
+  top of 8 were no better (0.60–0.93); FFTW 1.27–1.54 and MKL 1.00–2.19 of the rules' time
+  there. 100000: no split beat 20 × 5000 (20 × 5 1.085, 20 × 10 1.039, 4 × 10 1.134).
+- **Xeon, single precision** (run 20261117-235845-911c): from L2/4 (32768 points) up one top
+  of 16 (20 where 16 does not fit) took 0.795 (32768), 0.656 (46080; 32 0.622), 0.725 (65536;
+  32 0.623), 0.679 (100000, top 20, a partial first-pass block on 8 lanes; 5 0.594), 0.605
+  (131072), 0.648 (262144), 0.696 (524288), 0.741 (2²⁰; 32 × 16 0.651); below L2/4 every split
+  lost (8192 1.16–2.0, 16384 1.14–1.36, 20000 1.49–1.54).
+- **EPYC, double** (run 20261117-234716-9091, Slurm 512514/512515, 12 rounds all loaded, band
+  ±1.00 %): one top of 4 took 0.755 (12288), 0.725 (24576), 0.765 (49152), 0.698 (98304),
+  0.831 (46080), 0.921 (40000), 0.915 (20000), 0.958 (16384), but lost at 25000 (1.157),
+  262144 (1.168), 524288 (1.150) and tied on the other powers of two (32768–131072, 1.02–1.06,
+  no evidence); tops of 16 lost everywhere (0.92–1.70), two tops did not beat one. FFTW's
+  times: 0.78–0.81 of the rules' at 12288–98304 (FFTN behind), 1.00–1.50 elsewhere.
+- **M5 Max, double and float** (run 20261117-235532-bd1a, 8 rounds, all loaded, band
+  ±11.2 %; run 20261118-000640-8f33, 16 rounds, all loaded, band ±4.85 %, the library rebuilt
+  once during the run with an arm that changes no Apple plan): rows of an odd part of 3–15
+  times a power of two above L1/8 (part 4096 points and more) took 0.67–0.75 with one top of 4
+  from 20480 to 81920 points, 0.754 at 122880 and 0.856 at 98304 (top 8 0.760); beyond 2 MiB
+  a top of 4 lost (147456 1.57, 196608 1.36, 393216 1.36); powers of two from 32768 to 262144
+  gained nothing (0.89–1.11, no evidence at that band); the X46 range (8192, 16384, 12288)
+  is unchanged. Float: no split cleared the band of the first run.
+
+### Arms named after the screens (before their judging runs)
+
+- **T (Xeon profile)**, c6d4c4a: a third top, `depth_top_last` = 10, tried after 16 and 20
+  (arm P's partial first-pass block): 25000 = 10 × 2500 on `avx512`. Judged against P's
+  plans (beed63c, `main`'s) on c2c 25000 out of place, in place, backward, and the tracking
+  tier.
+- **Generic limits** (3a6bda4, no plan change): `depth_pow2_max_bytes`, `depth_float`, tops up
+  to 8 on `avx2`.
+- **M (Apple profile)**, df67c89: the range from L1 to 16 L1 for rows that are not powers of
+  two (powers of two stay at 2 L1), top 4, power-of-two part above L1/8 as before. Judged
+  against N = 1a78533 (the Mac's plans as `main`) on the x51 catalogue's mixed rows
+  (20480–122880; 24576, 49152, 98304 in place and backward, batches of 8) and the tracking
+  tier.
+  The standard catalogue has no row this changes (its non-power-of-two rows in range have
+  power-of-two parts of 1024 points or fewer).
+- Further arms (Xeon beyond 4 L2 and float; the EPYC) are named below before their runs.
 
 ## Verdict

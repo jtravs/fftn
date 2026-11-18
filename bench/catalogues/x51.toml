@@ -50,3 +50,35 @@ name = "x51-long-backward"
 kind = "c2c"
 dims = [524288, 1048576, 4194304]
 direction = "bwd"
+
+[[group]]
+name = "x51-mixed-in-place"
+note = "judging rows of arms M and E: in place, backward and in batches"
+kind = "c2c"
+dims = [24576, 49152, 98304]
+place = "in"
+
+[[group]]
+name = "x51-mixed-backward"
+kind = "c2c"
+dims = [24576, 49152, 98304]
+direction = "bwd"
+
+[[group]]
+name = "x51-mixed-batches"
+kind = "c2c"
+dims = [24576, 49152]
+batch = 8
+
+[[group]]
+name = "x51-25000"
+note = "judging rows of arm T: 25000 in place and backward"
+kind = "c2c"
+dims = [25000]
+place = "in"
+
+[[group]]
+name = "x51-25000-backward"
+kind = "c2c"
+dims = [25000]
+direction = "bwd"
