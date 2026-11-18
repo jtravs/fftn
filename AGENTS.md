@@ -194,6 +194,27 @@ Further rules:
   follow-up, not to reject it. Likewise a change that wins on one target and loses on
   another is adopted per target. A case a hair past a rule's limit on a loaded machine is
   re-run before it decides a verdict.
+- **A decision rule's target set names only the cases the change can move** (by its
+  mechanism: the plans it changes, the code it touches), or judges those cases on their
+  own; cases outside it belong to the collateral check. A case past a limit whose code the
+  change provably leaves as it was (the same plan and byte-identical objects: only code
+  placement moved) does not decide the verdict; record it with that evidence. X47 and X54
+  were adopted by the maintainer's decision (2026-11-18) on these grounds after missing
+  their rules' letter.
+- **Where a measured rule reaches** (maintainer, 2026-11-18): a planner rule measured on
+  one machine extends by its cache key to unmeasured machines with the same instruction
+  set target and register file (Sapphire Rapids takes Granite Rapids' rules, Ice Lake-SP
+  the Xeon 6240's). It never crosses an instruction set, the `avx2`/`avx512` boundary or a
+  different register count: there the machine keeps its old plans until measured. Every
+  phase exit screens, on rented machines, each family a rule reaches, and a family that
+  loses gets its own key.
+- **Last bits are not a goal** (maintainer, 2026-11-18): the accuracy contract (DESIGN
+  section 15) is the requirement; identical last bits are not. The published determinism
+  guarantees (`docs/conventions.md`, "Determinism") stay while they cost nothing measurable.
+  A change that would break one is adopted only for a real measured gain (speed, memory or
+  a practical simplification), and narrows the guarantee in the docs in the same change.
+  Bit properties the docs do not promise (a batch's row against a plan of that row alone,
+  say) are not protected: tests may check them only as long as the code delivers them.
 
 ## 7. Working in this repository
 

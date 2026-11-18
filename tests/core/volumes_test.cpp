@@ -53,16 +53,21 @@ std::string label(const volume_case& vc, bool in_place) {
 
 // The scratch bound (DESIGN.md 9.3): each of a member's two scratch lines holds at most a
 // plane of the inner axes or a block of pencils of the outer axis, so the workspace grows with
-// a plane, not the volume. The widest block of columns or pencils is 512 bytes of them (four
-// of Apple's 128-byte lines: 64 complex floats), and a block is never wider than the last axis
-// rounded up to a register of complex values (at most 8), whose idle lanes the tile still
-// holds.
+// a plane, not the volume. The widest block of columns or pencils is 1 KiB of them (the
+// one-thread program's wide blocks, machine_profile::column_wide_bytes, X52 arm W4b, which
+// the test turns on everywhere: 128 complex floats), and a block is never wider than the last
+// axis rounded up to a register of complex values (at most 8), whose idle lanes the tile
+// still holds.
 template <class T> void scratch_within_bound(fftn::isa target, bool planes) {
-  constexpr std::size_t widest_block = 512 / (2 * sizeof(T));
+  constexpr std::size_t widest_block = 1024 / (2 * sizeof(T));
   constexpr std::size_t register_lanes = 8;
   fftn::detail::build_settings settings;
   settings.volume_planes = planes;
   settings.profile.column_team_bytes = 128; // a team program on every machine (X43)
+  // Wide blocks in the program, with the tile budget of the machine that has them (X52 W4b:
+  // the EPYC 7763, a quarter of its 512 KiB L2).
+  settings.profile.column_wide_bytes = 1024;
+  settings.profile.column_tile_bytes = std::size_t{128} * 1024;
   const auto tiny = fftn::detail::make_plan_core(
       fftn::detail::view_of(fftn::rows_c2c<T>(8, 1, fftn::direction::forward)),
       {.force_isa = target}, settings);
@@ -228,9 +233,13 @@ struct two_lanes {
 // blocks would not differ or the field is 0. Its results equal the program's byte for byte
 // (tests/threading, the team cases with a team program).
 TEST(TeamProgram, NarrowerBlocksTheSameRadices) {
+  // The team programs here come from column_team_bytes and a volume's order alone: the
+  // one-thread program's wide blocks (column_wide_bytes, X52 W4b), which the host's profile
+  // sets on the EPYC class, would make a team program differ too, so they are off.
   fftn::detail::build_settings settings;
   settings.profile.column_team_bytes = 64;
   settings.profile.line_bytes = 64;
+  settings.profile.column_wide_bytes = 0;
   const auto plane = fftn::detail::make_plan_core(
       fftn::detail::view_of(fftn::planes_c2c<double>(256, 256, 1, fftn::direction::forward)),
       fftn::options(), settings);
@@ -299,6 +308,7 @@ TEST(TeamProgram, NarrowerBlocksTheSameRadices) {
   order.volume_planes = false;
   order.profile.team_volume_planes = true;
   order.profile.column_team_bytes = 0;
+  order.profile.column_wide_bytes = 0;
   const auto ordered = fftn::detail::make_plan_core(
       fftn::detail::view_of(shape_of<double>({24, 20, 36})), fftn::options(), order);
   ASSERT_NE(ordered->team, nullptr);
