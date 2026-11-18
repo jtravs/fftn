@@ -2532,8 +2532,14 @@ choose, and every pinned version.
   row 0 for every k modulo the lane count.
 - **May differ in the last bits** between: instruction sets; plans built with different
   options (width hint without `strict_layout`, edge operations, in place versus out of
-  place); plans chosen by measurement on different runs, unless pinned by wisdom; library
-  versions.
+  place); plans of different batch counts (a batch's row against a plan of that row alone:
+  batch leaves run C rows side by side, X53); plans chosen by measurement on different runs,
+  unless pinned by wisdom; library versions.
+- **What the guarantees are worth** (maintainer, 2026-11-18): the accuracy contract is the
+  requirement, identical last bits are not. The bitwise guarantees above are kept while
+  they cost nothing measurable; a change that would break one is adopted only for a real
+  measured gain, and narrows the published guarantee (`docs/conventions.md`,
+  "Determinism") in the same change.
 - Error grows as O(ε·√log n) RMS for all lengths with codelet factors; Bluestein lengths
   have the bound of section 15.2 (the same growth in log₂ of the convolution's length).
 
@@ -3070,6 +3076,8 @@ to change before a release.
 | 2026-11-18 | On x86-64 with a private L2 and a large L3 (the EPYC 7763), the one-thread program's c2c column blocks widen to 1 KiB of columns where both tiles fit `column_tile_bytes`; teams keep the narrower blocks in a team program (section 9.3) | X52 arms W4 and W4b: one thread EPYC 0.933 over 38 changed cases, Xeon 0.95 but 30 × 40 × 50 1.05 on re-run (rejected there); W4 in teams lost up to 1.46 on the Xeon's 8 lanes |
 | 2026-11-18 | Chunk runs on every profile, of at most left / (2 × cap) chunks (X52 arm G2), replacing their restriction to claim divisor 2 | X52: EPYC at 8 lanes 0.910 (volumes) and 0.896 (planes) over the cases that split, the real 256² that failed G at 1.04 and 0.98 on re-run; the Mac and the Xeon unchanged (their divisor is 2) |
 | 2026-11-18 | The depth-first chain (section 8.5) takes one top factor that C does not divide (a partial first-pass block); the rules gain a third top, a limit for powers of two, single precision by profile and tops up to 8 on `avx2`; the Xeon 6240's profile runs it to 64 L2 with a third top of 10 and in float to 8 L2, the Apple profile to 16 L1 for lengths that are not powers of two, the EPYC 7763's profile (top 4, private L2 under 1 MiB) for lengths that are not powers of two from L2/4 to 4 L2 (X51) | X51 judged on each machine: Xeon 25000 0.75 (1.35 → 1.00 of FFTW), 524288–2²² 0.68–0.75, float 0.687; Mac mixed rows 0.735; EPYC mixed rows and 46080 0.730 (1.06–1.39 → 0.83–1.01 of FFTW); tracking tiers clean; Granite Rapids unmeasured, unchanged |
+| 2026-11-18 | A measured planner rule extends by its cache key to unmeasured machines of the same instruction set target and register file, never across an instruction set, `avx2`/`avx512` or register count; every phase exit screens each family a rule reaches (AGENTS section 6) | Maintainer's decision. Granite Rapids lost 1.15–1.65 × FFTW on plans that kept it out of the Xeon's rule (X48) and gained 0.688 with it (X55); the moves that lost crossed an ISA (Axion with Granite Rapids' rules, 1.28; X35) or a register count (tops of 16 on `avx2`, X46) |
+| 2026-11-18 | Last bits are not a goal: the bitwise guarantees of section 15.5 stay while they cost nothing measurable; a change that would break one needs a real measured gain and narrows the published guarantee with it; unpublished bit properties are not protected | Maintainer's decision ("rounding in other parts of calculations matter more"). First use: X53's batch leaves for 12 and 25 (x86) and 20 and 32 (NEON float), 0.43–0.56 of the time in screens, give a batch's rows other last bits than a plan of one row; the published position guarantee holds (leftover rows run padded in the batch form) |
 
 ---
 
