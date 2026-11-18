@@ -49,10 +49,13 @@
 //   LEAF_LIMIT=N     the planner's leaf limit (build_settings::leaf_limit): every length
 //                    up to N that has a codelet is one leaf instead of a chain (default: the
 //                    profile's, 32 on NEON in double, else 16)
-//   STRATEGY=rules|chain|grid|lanes   the strategy of rows (build_settings::strategy): the
-//                    planner's choice (default), or the chain, the grid or the lanes forced
-//                    where the row can be one; each case's note says which was built
-//                    (experiments X12, X7)
+//   STRATEGY=rules|chain|grid|lanes|depth   the strategy of rows (build_settings::strategy):
+//                    the planner's choice (default), or the chain, the grid, the lanes or the
+//                    depth-first chain forced where the row can be one; each case's note says
+//                    which was built (experiments X12, X7, X46)
+//   DEPTH_TOPS=f1[.f2]   the depth-first chain's top factors (build_settings::depth_tops):
+//                    wherever they fit with STRATEGY=depth, and on the rows the rules make
+//                    depth-first chains otherwise (experiment X46)
 //   LANE_BLOCK=B     the lanes strategy's block in rows (build_settings::lane_block; default
 //                    the rule's), rounded up to a multiple of the complex count (X7)
 //   COLUMNS=lanes|chain   the strided axes of planes and volumes (build_settings::
@@ -174,6 +177,7 @@ struct session {
   std::string strategy = "rules";  // STRATEGY as given
   std::string layout = "rules";    // LAYOUT as given
   std::string factors_text;        // GRID_FACTORS as given
+  std::string depth_tops_text;     // DEPTH_TOPS as given
   std::string rader = "rules";     // RADER as given
   std::string description;
 };
@@ -487,8 +491,9 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
       }
       s.settings.leaf_limit = *v;
     } else if (key == "STRATEGY") {
-      if (value != "rules" && value != "chain" && value != "grid" && value != "lanes") {
-        say(message, message_size, "STRATEGY is rules, chain, grid or lanes");
+      if (value != "rules" && value != "chain" && value != "grid" && value != "lanes" &&
+          value != "depth") {
+        say(message, message_size, "STRATEGY is rules, chain, grid, lanes or depth");
         return fbench_error;
       }
       s.settings.strategy = detail::strategy_choice::rules;
@@ -498,8 +503,22 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
         s.settings.strategy = detail::strategy_choice::grid;
       } else if (value == "lanes") {
         s.settings.strategy = detail::strategy_choice::lanes;
+      } else if (value == "depth") {
+        s.settings.strategy = detail::strategy_choice::depth;
       }
       s.strategy = value;
+    } else if (key == "DEPTH_TOPS") {
+      try {
+        s.settings.depth_tops = parse_radices(value, "DEPTH_TOPS");
+      } catch (const std::exception& e) {
+        say(message, message_size, e.what());
+        return fbench_error;
+      }
+      if (s.settings.depth_tops.size() > 2) {
+        say(message, message_size, "DEPTH_TOPS is one or two factors, f1 or f1.f2");
+        return fbench_error;
+      }
+      s.depth_tops_text = value;
     } else if (key == "LANE_BLOCK") {
       const std::optional<std::size_t> v = fbench::fftn_tuning::parse_size(value, 1, false);
       if (!v || *v > 4096) {
@@ -632,6 +651,9 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
     }
     if (s.settings.leaf_limit != 0) {
       d.integer("leaf_limit", static_cast<std::int64_t>(s.settings.leaf_limit));
+    }
+    if (!s.settings.depth_tops.empty()) {
+      d.str("depth_tops", s.depth_tops_text);
     }
     if (s.settings.lane_block != 0) {
       d.integer("lane_block", static_cast<std::int64_t>(s.settings.lane_block));

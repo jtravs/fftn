@@ -208,6 +208,9 @@ TEST(PlanChoice, TextRoundTrips) {
       {.strategy = strategy_choice::lanes, .radices = {4, 4}},
       {.radices = {2, 16, 8}, .rader = 0},
       {.rader = 1},
+      {.strategy = strategy_choice::depth},
+      {.strategy = strategy_choice::depth, .depth_tops = {8, 4}},
+      {.strategy = strategy_choice::depth, .radices = {8, 16}, .depth_tops = {16}},
   };
   for (const plan_choice& c : choices) {
     const std::string t = d::choice_text(c);
@@ -218,6 +221,8 @@ TEST(PlanChoice, TextRoundTrips) {
   EXPECT_EQ(d::choice_text({}), "rules");
   EXPECT_EQ(d::choice_text({.strategy = strategy_choice::grid, .grid_factors = {64, 1024}}),
             "strategy=grid grid=64.1024");
+  EXPECT_EQ(d::choice_text({.strategy = strategy_choice::depth, .depth_tops = {8, 4}}),
+            "strategy=depth tops=8.4");
 }
 
 TEST(PlanChoice, MalformedTextIsRefused) {
@@ -235,6 +240,10 @@ TEST(PlanChoice, MalformedTextIsRefused) {
            "rader=2",
            "radices=4.4 strategy=chain",
            "rader=0 rader=1",
+           "strategy=deep",
+           "tops=1",
+           "tops=4.4.4",
+           "tops=8 strategy=depth",
            "rules extra",
            "strategy=chain  radices=4.4",
        }) {

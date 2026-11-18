@@ -26,13 +26,15 @@ namespace {
 // `valid` inside, so every index into v is a constant after unrolling: a loop to `valid`
 // indexes v at run time, and GCC then keeps the caller's v in memory in every unit of the
 // pass, whole units included (X23: 1.03-1.09 of main's time at double 128, 512, 1024).
+// lane: the elements between consecutive lanes' outputs, R for a grouped pass; the
+// depth-first first pass (depth.inl) stores each lane in its own sub-row's block.
 template <class T, std::size_t R>
-FFTN_FORCE_INLINE void store_transposed(T* y, cv<T>* v, std::size_t valid) {
+FFTN_FORCE_INLINE void store_transposed(T* y, cv<T>* v, std::size_t valid, std::size_t lane = R) {
   for (std::size_t b = 0; b < R / C<T>; ++b) {
     transpose(v + b * C<T>);
     for (std::size_t l = 0; l < C<T>; ++l) {
       if (l < valid) {
-        store(y + 2 * (R * l + b * C<T>), v[b * C<T> + l]);
+        store(y + 2 * (lane * l + b * C<T>), v[b * C<T> + l]);
       }
     }
   }
@@ -42,15 +44,15 @@ FFTN_FORCE_INLINE void store_transposed(T* y, cv<T>* v, std::size_t valid) {
 // a multiple of C, and for the last unit of a pass, on the targets without masked partial
 // runs.
 template <class T, std::size_t R>
-FFTN_FORCE_INLINE void store_tiled(T* y, const cv<T>* v, std::size_t valid) {
+FFTN_FORCE_INLINE void store_tiled(T* y, const cv<T>* v, std::size_t valid, std::size_t lane = R) {
   T tile[R][2 * C<T>]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
   for (std::size_t k = 0; k < R; ++k) {
     store(tile[k], v[k]);
   }
   for (std::size_t l = 0; l < valid; ++l) {
     for (std::size_t k = 0; k < R; ++k) {
-      y[2 * (R * l + k)] = tile[k][2 * l];
-      y[2 * (R * l + k) + 1] = tile[k][2 * l + 1];
+      y[2 * (lane * l + k)] = tile[k][2 * l];
+      y[2 * (lane * l + k) + 1] = tile[k][2 * l + 1];
     }
   }
 }
@@ -59,7 +61,7 @@ FFTN_FORCE_INLINE void store_tiled(T* y, const cv<T>* v, std::size_t valid) {
 // legs padded with registers of zeros to whole C x C blocks and transposed, then each
 // butterfly's R outputs stored as R / C whole runs and one masked run of R mod C.
 template <class T, std::size_t R>
-FFTN_FORCE_INLINE void store_padded(T* y, const cv<T>* v, std::size_t valid) {
+FFTN_FORCE_INLINE void store_padded(T* y, const cv<T>* v, std::size_t valid, std::size_t lane = R) {
   constexpr std::size_t whole = R / C<T>;
   constexpr std::size_t padded = (whole + 1) * C<T>;
   cv<T> w[padded]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
@@ -71,9 +73,9 @@ FFTN_FORCE_INLINE void store_padded(T* y, const cv<T>* v, std::size_t valid) {
   }
   for (std::size_t l = 0; l < valid; ++l) {
     for (std::size_t b = 0; b < whole; ++b) {
-      store(y + 2 * (R * l + b * C<T>), w[b * C<T> + l]);
+      store(y + 2 * (lane * l + b * C<T>), w[b * C<T> + l]);
     }
-    store_n(y + 2 * (R * l + whole * C<T>), R % C<T>, w[whole * C<T> + l]);
+    store_n(y + 2 * (lane * l + whole * C<T>), R % C<T>, w[whole * C<T> + l]);
   }
 }
 
