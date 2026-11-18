@@ -238,8 +238,8 @@ public:
   // with two tops `mid`: the radix-F2 top pass in place on one of F1 runs of F2 M elements (a
   // loop moves `work` by F2 M); `top`: the radix-F1 top pass from `work` to the output.
   // scratch: the complex elements it needs in each of a and b. depth_fits: whether n can run
-  // so (C divides F1 and M, the passes exist for the tops and the sub-row's first radix, the
-  // sub-row's chain has two passes or more of codelet radices).
+  // so (C divides M, and F1 with two tops: X51; the passes exist for the tops and the
+  // sub-row's first radix, the sub-row's chain has two passes or more of codelet radices).
   struct depth_stages {
     std::vector<stage> first;
     std::vector<stage> sub;
