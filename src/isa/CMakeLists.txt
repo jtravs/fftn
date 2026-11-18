@@ -35,11 +35,14 @@ fftn_always_optimise(${fftn_isa_units})
 # of X40 moved code and single c2c rows of 160, 180 and 240 points took 1.07-1.10 of their
 # time, 360 and 384 1.04-1.06 (bisect, Xeon 6240: 20261117-184544-8056). With the padding
 # they take 0.89-0.94 of the unpadded time and the other small rows stay level
-# (20261117-204818-1541; dev/LESSONS.md 2.11). No effect where the units never run.
+# (20261117-204818-1541; dev/LESSONS.md 2.11). No effect where the units never run. The
+# avx2-region units whose leaves avx512 plans take (narrow, pair and batch leaves) are padded
+# too: X53's new units moved the narrow leaves, and a single row of 2 points took 1.09 of its
+# time on the Xeon (runs 20261118-061230-7b61, 20261118-065943-3d75).
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64" AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
   set(fftn_jcc_units "")
   foreach(unit IN LISTS fftn_isa_units)
-    if(unit MATCHES "avx512")
+    if(unit MATCHES "avx512|narrow_avx2|pairs_avx2|batch_avx2|batch_large_avx2")
       list(APPEND fftn_jcc_units ${CMAKE_CURRENT_SOURCE_DIR}/${unit})
     endif()
   endforeach()
