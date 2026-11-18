@@ -1,6 +1,6 @@
 # X53: batch leaves (C rows per register) for tiny batches
 
-- **Status:** done (NEON adopted; x86 adopted provisionally, rule 2 missed on unchanged cases)
+- **Status:** done (adopted on NEON float, avx2 and avx512 double)
 - **Owner:** X53 agent, 2026-11-18
 - **Phase / task:** 1 (exit criteria: the tail rule of DESIGN 1.3); exit-check cause 2
 
@@ -198,15 +198,32 @@ points 0.83, EPYC 4 × 4 below FFTW in the screens).
 
 - **NEON (float): adopted** (rule 2): the 100 changed cases 0.606 of `main`, nothing slower,
   tracking tier 1.000.
-- **avx2 (EPYC) and avx512 (Xeon), double: rule 2 missed on one case each that the rule does
-  not change**, everything else met: EPYC changed cases 0.810, 15 × 2 backward 0.723 (FFTN ÷
-  FFTW 1.21 → 0.88), tracking 1.001; Xeon changed cases 0.688, 15 × 2 backward 0.780 (1.16 →
-  0.90 of FFTW, 0.78 → 0.61 of MKL), tracking 0.995. The misses are code placement (R2, R3
-  above), and rule 3's remedy, deleting the target's batch leaves, does not remove the
-  Xeon's (R3). The branch keeps the x86 rules **provisionally, for the maintainer to
-  decide** before merge: adopting departs from rule 2 as written; the alternative is to set
-  `batch_rows_avx2_f64` and the avx512 tables in rules.cpp to none (or delete the x86 batch
-  units), which leaves the 15 × 2 exit case where it was.
+- **avx2 (EPYC) and avx512 (Xeon), double: adopted** under the maintainer's rule of
+  2026-11-18 (AGENTS.md section 6, pull request 71): a case past a limit whose code the
+  change provably leaves as it was does not decide the verdict. Everything else in rule 2 is
+  met: EPYC changed cases 0.810, 15 × 2 backward 0.723 (FFTN ÷ FFTW 1.21 → 0.88), tracking
+  1.001; Xeon changed cases 0.688, 15 × 2 backward 0.780 (1.16 → 0.90 of FFTW, 0.78 → 0.61
+  of MKL), tracking 0.995. The two cases past the band, the Xeon's single row of 2 points
+  (1.09-1.10) and the EPYC's 4 × 4 (1.15, 1.24), meet the rule:
+  - **Same plan.** fbench's plan note for both arms in every run that timed them reads
+    `axis 0 (n = 2): radices 2` and `axis 0 (n = 4): radices 4` (runs
+    20261118-061230-7b61, -065943-3d75, -073846-febc on the Xeon; -064329-911a,
+    -072527-ded1 on the EPYC); a batch leaf would read `(batch leaf, C rows per register)`.
+    The rule cannot take them: a single row has no batch, and 4 points take batch leaves
+    from 8 rows.
+  - **Byte-identical code on the path they run**, release GCC (16.2 on the EPYC, 14.4 on
+    the Xeon), the fbench build cache's objects of `main` 4d75c48 and of R fd75adf: the
+    narrow leaves' object (`narrow_avx2.cpp.o`, whose 128-bit unit leaves of 2 and 4 points
+    these plans call), `driver.cpp.o` and `api.cpp.o` identical byte for byte (md5);
+    in `plan_core.cpp.o`, `execute_all` and `execute_core` identical in bytes and in the
+    relocations inside them (only `build`, `make_plan_core`, `describe` and other plan-time
+    functions differ); in fbench's FFTN backend, `fbench_execute` identical (its threaded
+    branch's callee `execute_threaded` differs: the session record gained a field; serial
+    runs never call it); the harness's functions identical. Each function is compared by
+    its bytes and the relocations inside it with `bench/x53/funccmp.py`.
+  - **Code placement.** R3 (without X53's avx512 code and the Xeon's rule) keeps the 2-point
+    loss (1.099 of `main`, run 20261118-073846-febc), and R2's padding moved such losses to
+    other unchanged cases (above).
 - **64 × 2 backward is not closed** on the EPYC (FFTN ÷ FFTW 1.30 → 1.29): the codelet over
   two rows (1.00 of the chain), per-element gathering (0.91) and the chains through a tile
   (0.97) all lost to FFTW's 0.77. Its gap is the radix-64 codelet's register use with GCC
