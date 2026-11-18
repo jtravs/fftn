@@ -123,7 +123,9 @@ template <class T> void every_case(fftn::isa target) {
   std::size_t built = 0;
   for (const std::size_t q : {std::size_t{1031}, std::size_t{2053}, std::size_t{4099}}) {
     for (const auto dir : {fftn::direction::forward, fftn::direction::backward}) {
-      built += check_prime<T>(target, q, {}, dir, 1.0, 1, q) ? 1 : 0;
+      if (check_prime<T>(target, q, {}, dir, 1.0, 1, q)) {
+        ++built;
+      }
     }
   }
   EXPECT_GT(built, 0U) << "no prime took the depth-first convolution";
@@ -154,11 +156,12 @@ TEST(BluesteinDepth, GivenTops) {
 }
 
 // The rules: where the profile's depth-first range holds the convolution's length (and the
-// rest of depth_tops_of's conditions on a row of that length hold), not elsewhere; never with
+// rest of depth_tops_of's conditions on a row of that length hold), beyond it up to the
+// profile's depth_convolution_max_bytes, not elsewhere; never with
 // the chain forced, with a stride, or for a Rader prime.
 TEST(BluesteinDepth, RulesTakeItWhereARowOfMWould) {
   const auto planned = [](std::size_t q, fftn::isa isa, bool on, strategy_choice strategy,
-                          std::ptrdiff_t stride = 1, int rader = 0) {
+                          std::ptrdiff_t stride = 1, int rader = 0, bool beyond = false) {
     build_settings settings;
     settings.strategy = strategy;
     settings.rader = rader;
@@ -167,6 +170,7 @@ TEST(BluesteinDepth, RulesTakeItWhereARowOfMWould) {
     settings.profile.depth_part_bytes = 0;
     settings.profile.depth_top = 16;
     settings.profile.depth_top_alt = 20;
+    settings.profile.depth_convolution_max_bytes = beyond ? SIZE_MAX : 0;
     settings.profile.bluestein_pow2_part_bytes = SIZE_MAX;
     const fftn::shape<std::complex<double>, std::complex<double>> shape{
         .dir = fftn::direction::forward,
@@ -186,6 +190,10 @@ TEST(BluesteinDepth, RulesTakeItWhereARowOfMWould) {
     EXPECT_FALSE(depth_convolution(planned(16411, t, true, strategy_choice::chain)));
     EXPECT_FALSE(depth_convolution(planned(16411, t, true, strategy_choice::rules, 2)));
     EXPECT_FALSE(depth_convolution(planned(1031, t, true, strategy_choice::rules))); // M short
+    // Beyond the rows' range (M at least 2^19 points, 8 MiB) only with the convolutions' limit.
+    EXPECT_FALSE(depth_convolution(planned(400009, t, true, strategy_choice::rules)));
+    EXPECT_EQ(depth_convolution(planned(400009, t, true, strategy_choice::rules, 1, 0, true)),
+              wide);
     // 65537 = 2^16 + 1 has a Rader root on every target where Rader is on.
     EXPECT_FALSE(depth_convolution(planned(65537, t, true, strategy_choice::rules, 1, 1)));
   }

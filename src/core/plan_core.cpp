@@ -466,13 +466,17 @@ grid_split plan_grid(std::size_t n, const side& in, const side& out, const build
 // after its conditions on the row; also a Bluestein convolution's, bluestein_tops_of).
 template <class T>
 std::vector<std::size_t> depth_tops_for(std::size_t n, const build_settings& settings,
-                                        const chain_builder<T>& chain, target isa) {
+                                        const chain_builder<T>& chain, target isa,
+                                        bool convolution = false) {
   if (settings.strategy == strategy_choice::rules) {
     const std::size_t bytes = n * 2 * sizeof(T);
     const machine_profile& m = settings.profile;
     const bool wide = isa == target::avx512 || isa == target::neon || isa == target::neon_fcma;
+    const std::size_t max_bytes = convolution
+                                      ? std::max(m.depth_max_bytes, m.depth_convolution_max_bytes)
+                                      : m.depth_max_bytes;
     if (!std::is_same_v<T, double> || !wide || m.depth_max_bytes == 0 ||
-        bytes < m.depth_min_bytes || bytes > m.depth_max_bytes ||
+        bytes < m.depth_min_bytes || bytes > max_bytes ||
         (n & (~n + 1)) * 2 * sizeof(T) <= m.depth_part_bytes) {
       return {};
     }
@@ -522,10 +526,10 @@ std::vector<std::size_t> depth_tops_of(std::size_t n, const side& in, const side
 // bluestein_depth; experiment X50) for a c2c row of one axis of n whose chain is that one
 // stage (bluestein_single: a prime, one copy, no Rader root), or none: on the conditions of
 // depth_tops_of for the row, and with the tops a row of the convolution's length M would
-// take (depth_tops_for: by the rules where the profile's depth-first range holds M, or forced
-// with strategy depth). The convolution's two chains of M are the stage's cost: on the Xeon
-// 6240 a breadth-first chain of 2^18 points took 7.4 ns per point against 4.4 depth-first
-// (X36b, X46).
+// take (depth_tops_for: by the rules where the profile's depth-first range, extended to
+// depth_convolution_max_bytes, holds M, or forced with strategy depth). The convolution's two
+// chains of M are the stage's cost: on the Xeon 6240 a breadth-first chain of 2^18 points took
+// 8.2 ns per point against 4.4 depth-first, of 2073600 points 17.0 against 9.5 (X50's screen).
 template <class T>
 std::vector<std::size_t> bluestein_tops_of(std::size_t n, const side& in, const side& out,
                                            const build_settings& settings,
@@ -540,7 +544,7 @@ std::vector<std::size_t> bluestein_tops_of(std::size_t n, const side& in, const 
   if (q == 0) {
     return {};
   }
-  return depth_tops_for<T>(chain.bluestein_length_of(q), settings, chain, isa);
+  return depth_tops_for<T>(chain.bluestein_length_of(q), settings, chain, isa, true);
 }
 
 // The most rows in a block of the lanes strategy by default (lanes_block). Experiment X7.
