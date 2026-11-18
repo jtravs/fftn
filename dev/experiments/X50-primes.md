@@ -52,6 +52,16 @@ Arms are commits of `exp/x50-primes` against N = its base (X46's head 80dbcdb, t
   `depth_convolution_max_bytes` extends the range for convolutions only, with the same tops;
   the Xeon profile sets no limit (262139, 524287, 999983 change). Other profiles keep A's
   range.
+- **C (fused chirp passes; named after B's partial judging results, before its own run).**
+  B left 999983 at about 1.1 of MKL's time. The stage still sweeps M elements twice more
+  than its chains need: the chirp pass writes the zero-padded line into scratch a, which the
+  forward first pass reads back, and the backward top pass writes M elements to the block,
+  of which the chirp pass out reads Q. C fuses the chirp into the forward first pass (it
+  reads the input times the chirp, zero from Q on: `depth_first_pass<..., Chirp>`) and into
+  the backward chain's last top pass (it stores only the first Q outputs, times the chirp,
+  to the output: `depth_top_pass<..., Chirp>`). Same plans otherwise, so judged against B on
+  the cases whose convolutions B runs depth-first, by the decision rule below, on the Xeon
+  and on the Mac (its primes 4813–5119).
 
 Bits: a changed plan changes the rounding of its rows (another factorisation of the
 convolution), within the derived tolerances; tests hold both precisions to them and the
