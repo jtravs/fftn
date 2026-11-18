@@ -129,6 +129,20 @@ GCC 16 now emit a load, a test and a tail call). No store-forwarding blocks
   place 1.317 (A) → 1.283 (arm 0) → 1.093 (U); 3 × 3 in place 1.043 → 1.003 → 0.910. The
   catalogue holds no single row of 32 or 64 points, the spilling codelets of the screen.
 
+### Mac, exit catalogue (run 20261118-004545-cfca; Z, U, FFTW; 24 rounds, all loaded; band ±3.36 %)
+
+- Arm U2 against arm 0, its nine targets: in place 2 × 3 0.849, 3 × 3 0.895, 5 × 3 0.986,
+  7 × 3 1.002, 8 × 3 1.041, 12 × 3 0.994, 16 × 3 1.012; single rows of 32 and 64 points
+  1.008 and 0.999 (the screen's 0.94 had LLVM's whole load/store optimiser off in every
+  unit, not only the pairs in the NEON units). Geometric mean **0.974** against the rule's
+  0.97. Over the 201 cases 0.999; slower beyond the band: float 8 × 2 in place 1.086 [1.046,
+  1.138]; faster: 1024 × 1024 0.891 besides the two targets. **Arm U2 is rejected** (both
+  halves of rule 4) and reverted (ad7ac2d).
+- Arm 0's FFTN ÷ FFTW over the exit catalogue's 193 rows with a reference (`main` a0dffe1's
+  library, so before X46): 0.733, 7 above 1.05: 2 × 3 in place 1.32, 2²³ 1.13, 8192 1.10,
+  65536 1.08, 32 × 4096, 64 × 4096 and 32 × 256 1.05–1.07. No single row of 2–8 points
+  is among them; the Mac's 32 points (1.20 in the exit check of 509d123) is at 0.98.
+
 ## Verdict
 
 (pending)
