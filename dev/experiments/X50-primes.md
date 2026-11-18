@@ -188,7 +188,10 @@ FFTW (NEON) 0.83 → 0.79. A passes on the Apple profile. (B changes nothing on 
   Bluestein stage it changes), 60 no evidence, weighted geometric mean 0.997; B 1 faster,
   60 no evidence, 1.005. Medians past 1 + max(band, 3 %) on plans the arms do not change:
   C c2c 1009 1.063 [0.995, 1.092] (a Rader prime; 0.985 and 1.005 in the x36 run above), B
-  r2c 4096 1.049, r2c 1024² 1.048, r2c 256² 1.038: re-run once (below).
+  r2c 4096 1.049, r2c 1024² 1.048, r2c 256² 1.038. Re-run once, N against C (run
+  20261118-061105-0916, Slurm 16477, `--serial`; 30 rounds, none under load, band ±2.21 %):
+  c2c 1009 1.004, r2c 4096 1.007, r2c 256² 1.003, r2c 1024² 1.024 [1.002, 1.040], all no
+  evidence and all within 1 + max(band, 3 %).
 
 ### EPYC 65537 (P1b's flip)
 
