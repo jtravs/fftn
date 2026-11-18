@@ -940,7 +940,9 @@ times their one-thread time on the Xeon 6240 (c2c 96² 1.7–2.0, real 96² 2.3�
 96²–100² 1.1–1.3 on the EPYC 7763, while c2c 96² gained there (unsplit 1.3–1.4): each phase
 of a plane moves it between the members' private caches. On the M5 Max, whose cluster shares
 L2, the same real planes gained from splitting (unsplit 1.2–1.5). Compare a real transform's
-complex points with thresholds fitted on complex rows. [X52](experiments/X52-volumes-2.md).
+complex points with thresholds fitted on complex rows: with that, and planes split only from
+32768 points on the mesh, those Xeon planes took 0.35–0.67 of the time and the EPYC's real ones
+0.72–0.90. [X52](experiments/X52-volumes-2.md).
 
 ## 6. Toolchain and testing pitfalls
 

@@ -53,16 +53,21 @@ std::string label(const volume_case& vc, bool in_place) {
 
 // The scratch bound (DESIGN.md 9.3): each of a member's two scratch lines holds at most a
 // plane of the inner axes or a block of pencils of the outer axis, so the workspace grows with
-// a plane, not the volume. The widest block of columns or pencils is 512 bytes of them (four
-// of Apple's 128-byte lines: 64 complex floats), and a block is never wider than the last axis
-// rounded up to a register of complex values (at most 8), whose idle lanes the tile still
-// holds.
+// a plane, not the volume. The widest block of columns or pencils is 1 KiB of them (the
+// one-thread program's wide blocks, machine_profile::column_wide_bytes, X52 arm W4b, which
+// the test turns on everywhere: 128 complex floats), and a block is never wider than the last
+// axis rounded up to a register of complex values (at most 8), whose idle lanes the tile
+// still holds.
 template <class T> void scratch_within_bound(fftn::isa target, bool planes) {
-  constexpr std::size_t widest_block = 512 / (2 * sizeof(T));
+  constexpr std::size_t widest_block = 1024 / (2 * sizeof(T));
   constexpr std::size_t register_lanes = 8;
   fftn::detail::build_settings settings;
   settings.volume_planes = planes;
   settings.profile.column_team_bytes = 128; // a team program on every machine (X43)
+  // Wide blocks in the program, with the tile budget of the machine that has them (X52 W4b:
+  // the EPYC 7763, a quarter of its 512 KiB L2).
+  settings.profile.column_wide_bytes = 1024;
+  settings.profile.column_tile_bytes = std::size_t{128} * 1024;
   const auto tiny = fftn::detail::make_plan_core(
       fftn::detail::view_of(fftn::rows_c2c<T>(8, 1, fftn::direction::forward)),
       {.force_isa = target}, settings);

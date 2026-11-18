@@ -63,6 +63,16 @@ struct machine_profile {
   // points 1.5-2.4 times slower unsplit), so the mesh keeps 8192.
   std::size_t split_min_points = 6144;
   std::size_t split_min_points_mesh = 8192;
+  // A plane or volume (a work graph of line phases, whose phases move the transform between
+  // the members' caches) is split only from this many points too (0: no further limit). X52
+  // arm S2: on the Xeon 6240 (a mesh-connected L3) at 8 lanes c2c planes of 9216-10000 points
+  // took 1.4-2.0 times their one-thread time split, 16384 about the same, 32768 0.6.
+  // profile_for sets 32768 where the cache group is a mesh.
+  std::size_t split_min_points_lines = 0;
+  // A real plane or volume is split by its complex points (core/plan_core.cpp; X52 arm S1).
+  // set_grid_sizes sets it where each core has its own L2: on the M5 Max, whose cluster
+  // shares L2, the real 96^2 and 100^2 planes it would leave whole took 1.3 times as long.
+  bool split_complex_points = false;
   int mesh_group_lanes = 8;
   // Rule 2: leftover transforms after the whole ones are split only from this size (T5,
   // S3, run 20261114-182042-1f0c: at 8 lanes leftovers of 4096 points gained 0.85-0.98 and
@@ -188,6 +198,13 @@ struct machine_profile {
   // by whether a column's elements lie a page or more apart (core/plan_core.cpp,
   // column_block; X40). profile_for reads it from the topology.
   std::size_t page_bytes = 4096;
+  // When not 0, the one-thread program's c2c lanes column phases widen their blocks to this
+  // many bytes of columns where both tiles stay within column_tile_bytes; teams keep the
+  // narrower blocks in a team program (core/plan_core.cpp, column_block; X52 arm W4b).
+  // set_grid_sizes sets 1 KiB on x86-64 where a private L2 has a large L3 behind it (the EPYC
+  // 7763: 0.933 of the time over the planes and volumes it changes); the Xeon 6240 gained
+  // 0.95 but lost 1.05 at 30 x 40 x 50.
+  std::size_t column_wide_bytes = 0;
   // A lanes column phase whose column elements lie less than a page apart keeps its block's
   // two scratch tiles within this (core/plan_core.cpp, column_block; X40). set_grid_sizes
   // sets a quarter of L2.
@@ -322,6 +339,7 @@ struct schedule {
   std::size_t phases = 0;
   std::uint32_t widest = 1;
   std::size_t points = 1;
+  bool lines = false; // the graph has a phase of lines (a plane or volume)
   machine_profile profile;
 };
 
