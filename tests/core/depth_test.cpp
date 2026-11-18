@@ -192,9 +192,7 @@ TEST(Depth, RulesTakeItByTheProfile) {
     settings.profile.depth_max_bytes = on ? std::size_t{4} * 1024 * 1024 : 0;
     settings.profile.depth_top_last = 0; // the host profile may set X51's fields
     settings.profile.depth_pow2_max_bytes = std::numeric_limits<std::size_t>::max();
-    settings.profile.depth_float = false;
-    settings.profile.depth_part_bytes = 0;
-    settings.profile.depth_top_alt = 0;
+    settings.profile.depth_float_max_bytes = 0;
     settings.profile.depth_part_bytes = 0;
     settings.profile.depth_top = 16;
     settings.profile.depth_top_alt = 20;
@@ -234,11 +232,9 @@ TEST(Depth, RulesTakeItByTheProfile) {
     build_settings settings;
     settings.profile.depth_min_bytes = std::size_t{256} * 1024;
     settings.profile.depth_max_bytes = std::size_t{4} * 1024 * 1024;
-    settings.profile.depth_top_last = 0; // the host profile may set X51's fields
     settings.profile.depth_pow2_max_bytes = std::numeric_limits<std::size_t>::max();
-    settings.profile.depth_float = false;
+    settings.profile.depth_float_max_bytes = 0;
     settings.profile.depth_part_bytes = 0;
-    settings.profile.depth_top_alt = 0;
     settings.profile.depth_top = 16;
     settings.profile.depth_top_alt = 20;
     settings.profile.depth_top_last = 10;
@@ -262,8 +258,7 @@ TEST(Depth, RulesTakeItByTheProfile) {
     settings.profile.depth_max_bytes = std::size_t{256} * 1024;
     settings.profile.depth_top_last = 0; // the host profile may set X51's fields
     settings.profile.depth_pow2_max_bytes = std::numeric_limits<std::size_t>::max();
-    settings.profile.depth_float = false;
-    settings.profile.depth_part_bytes = 0;
+    settings.profile.depth_float_max_bytes = 0;
     settings.profile.depth_top_alt = 0;
     settings.profile.depth_part_bytes = std::size_t{16} * 1024;
     settings.profile.depth_top = 4;
@@ -289,14 +284,13 @@ TEST(Depth, RulesTakeItByTheProfile) {
     }
   }
   // X51's limits: powers of two only up to depth_pow2_max_bytes; tops up to 8 on `avx2` too
-  // (16 registers), larger tops only with 32; float where depth_float says so.
+  // (16 registers), larger tops only with 32; float up to depth_float_max_bytes.
   {
     build_settings settings;
     settings.profile.depth_min_bytes = std::size_t{128} * 1024;
     settings.profile.depth_max_bytes = std::size_t{2} * 1024 * 1024;
     settings.profile.depth_top_last = 0; // the host profile may set X51's fields
-    settings.profile.depth_pow2_max_bytes = std::numeric_limits<std::size_t>::max();
-    settings.profile.depth_float = false;
+    settings.profile.depth_float_max_bytes = 0;
     settings.profile.depth_part_bytes = 0;
     settings.profile.depth_top_alt = 0;
     settings.profile.depth_pow2_max_bytes = std::size_t{256} * 1024;
@@ -337,9 +331,12 @@ TEST(Depth, RulesTakeItByTheProfile) {
       EXPECT_FALSE(taken(32768, t));
       EXPECT_EQ(taken(49152, t), measured && fits(49152, t));
       EXPECT_FALSE(taken(49152, t, true)); // float: off
-      settings.profile.depth_float = true;
+      settings.profile.depth_float_max_bytes = std::size_t{2} * 1024 * 1024;
       EXPECT_EQ(taken(98304, t, true), measured && fits(98304, t, true)); // 768 KiB of floats
-      settings.profile.depth_float = false;
+      settings.profile.depth_float_max_bytes = std::size_t{512} * 1024;   // float's own cap
+      EXPECT_FALSE(taken(98304, t, true));
+      EXPECT_EQ(taken(49152, t, true), measured && fits(49152, t, true)); // 384 KiB: within it
+      settings.profile.depth_float_max_bytes = 0;
       settings.profile.depth_top = 16; // 16 needs 32 registers
       const bool wide = name == "avx512" || name == "neon" || name == "neon_fcma";
       EXPECT_EQ(taken(49152, t), wide && fits(49152, t));
@@ -352,7 +349,7 @@ TEST(Depth, RulesTakeItByTheProfile) {
   settings.profile.depth_max_bytes = std::size_t{4} * 1024 * 1024;
   settings.profile.depth_top_last = 0; // the host profile may set X51's fields
   settings.profile.depth_pow2_max_bytes = std::numeric_limits<std::size_t>::max();
-  settings.profile.depth_float = false;
+  settings.profile.depth_float_max_bytes = 0;
   settings.profile.depth_part_bytes = 0;
   settings.profile.depth_top_alt = 0;
   const fftn::shape<std::complex<float>, std::complex<float>> shape{
@@ -384,9 +381,7 @@ void depth_agrees_with_chain(fftn::isa target, std::size_t n, fftn::direction di
     depth.profile.depth_max_bytes = std::size_t{4} * 1024 * 1024;
     depth.profile.depth_top_last = 0; // the host profile may set X51's fields
     depth.profile.depth_pow2_max_bytes = std::numeric_limits<std::size_t>::max();
-    depth.profile.depth_float = false;
-    depth.profile.depth_part_bytes = 0;
-    depth.profile.depth_top_alt = 0;
+    depth.profile.depth_float_max_bytes = 0;
     depth.profile.depth_part_bytes = 0;
     depth.profile.depth_top = 16;
     depth.profile.depth_top_alt = 20;
@@ -481,9 +476,7 @@ TEST(Depth, PinnedChoiceCarriesTheTops) {
     rules.profile.depth_max_bytes = std::size_t{4} * 1024 * 1024;
     rules.profile.depth_top_last = 0; // the host profile may set X51's fields
     rules.profile.depth_pow2_max_bytes = std::numeric_limits<std::size_t>::max();
-    rules.profile.depth_float = false;
-    rules.profile.depth_part_bytes = 0;
-    rules.profile.depth_top_alt = 0;
+    rules.profile.depth_float_max_bytes = 0;
     rules.profile.depth_part_bytes = 0;
     rules.profile.depth_top = 16;
     rules.profile.depth_top_alt = 20;

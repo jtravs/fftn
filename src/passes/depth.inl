@@ -102,7 +102,8 @@ void depth_first_pass(const pass_args* a, const void* src, void* dst, std::size_
       } else {
         store_tiled<T, R>(yp, v, C<T>, lane);
       }
-    } else if constexpr (!masked) {
+    } else if constexpr (!masked && C<T> > 1) {
+      // C = 1 (NEON double) has no partial block: no tail code in its loop (X23).
       depth_first_tails<T, R, Sign>(a, x, y, u, u + 1, blocks);
     }
     d1 += C<T>;
@@ -117,7 +118,7 @@ void depth_first_pass(const pass_args* a, const void* src, void* dst, std::size_
       ++p;
     }
   }
-  if constexpr (masked) {
+  if constexpr (masked && C<T> > 1) {
     if (whole != blocks) {
       depth_first_tails<T, R, Sign>(a, x, y, first, last, blocks);
     }
