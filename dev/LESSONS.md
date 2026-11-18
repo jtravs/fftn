@@ -113,7 +113,14 @@ Mac, 0.86 → 0.69 on the EPYC). At a few nanoseconds per call the harness's own
 of the result; check it against the public entry whenever the entry changes. And keep
 every arm on one base: merging `main` into the branch mid-experiment moved the same rows by
 1.14–1.16 on the EPYC (the merged `main` alone did), which first read as a loss of the arm
-being timed. [X37](experiments/X37-short-batches.md).
+being timed. The backend's own bookkeeping counts too: reading the session's mode through a
+function-local static (a guard check, a call, three saved registers) cost about 20
+instructions and 4–7 cycles a call, which FFTW's five-instruction backend did not pay; with
+the mode in the plan record, single rows of 2–12 points took 0.79–0.88 of their time on the
+M5 Max and 2–8 points went from 0.92–1.01 to 0.77–0.81 of FFTW, the EPYC's tiny cases from
+20–27 to 15–20 cycles. A compiler that saves registers before the first branch (GCC 14) needs
+the slow paths out of line as well. [X37](experiments/X37-short-batches.md),
+[X49](experiments/X49-tiny-calls.md).
 
 1.12 **Across cloud VMs, compare ratios within a run, and distrust single long rows even
 then.** Two Granite Rapids VMs of one type (`c4-standard-16`), a day apart, ran both FFTN and
@@ -265,6 +272,19 @@ nothing, on the avx512 units alone it did all of it (20261117-193445-016d, loade
 EPYC (Zen 3, 20261117-190948-906d): code placement is luck there too, so only the units
 that run on the affected cores take it. A sudden single-row jump with an unchanged plan is
 this before it is a code change: bisect, then try the flag on the units that run.
+
+2.12 **On Apple cores, a paired load or store forfeits fast store-to-load forwarding, but a
+kernel rarely depends on it.** On the M5 Max a 2-point butterfly whose every call loads what
+the previous call stored (in place on a hot buffer) runs 0.72 ns a call with single 128-bit
+`ldr`/`str`, and 3.2–3.8 ns when the loads, the stores or both are pairs (`ldp`/`stp`), at
+any alignment tried; Clang and GCC pair adjacent accesses by themselves. Compiling every NEON
+kernel without pairs (Clang's target features `+disable-ldp,+disable-stp`) took in-place
+batches of three rows of 2 and 3 points to 0.85–0.90 of their time and moved nothing else
+beyond noise (32 and 64 points, whose codelets spill, 1.01 and 1.00; float 8 × 2 in place
+1.09 slower), so it was not adopted: only transforms whose next execution starts while the
+last one's stores are still in flight see the cost. Check for it when an in-place tiny case
+is slower than its out-of-place twin by more than the copy. Neoverse not measured.
+[X49](experiments/X49-tiny-calls.md) (`bench/x49/pairs_forwarding.cpp`).
 
 ## 3. Memory and caches
 
