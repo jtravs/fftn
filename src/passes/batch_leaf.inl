@@ -115,26 +115,44 @@ FFTN_FORCE_INLINE void batch_scatter(T* const* row, std::size_t valid, const edg
   }
 }
 
-// Rows u .. u + valid - 1 (Full: valid = C): gathered, the codelet, scattered. Every load
-// precedes every store, so src may be dst (in place).
+// The rows in[], out[] (the first `valid`; Full: all C): gathered, the codelet, scattered.
+// Every load precedes every store, so a row's source may be its destination (in place).
 template <class T, std::size_t R, int Sign, edge_op InOp, edge_op OutOp, bool Full>
-FFTN_FORCE_INLINE void batch_group(const void* src, void* dst, std::ptrdiff_t src_dist,
-                                   std::ptrdiff_t dst_dist, std::size_t u, std::size_t valid,
-                                   const edge<T, InOp>& ein, const edge<T, OutOp>& eout) {
-  // Initialised for GCC 14, which otherwise reports them maybe uninitialized in a partial group.
-  const T* in[C<T>] = {}; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
-  T* out[C<T>] = {};      // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
-  for (std::size_t l = 0; l < C<T>; ++l) {
-    // Idle rows form no address: their pointers stay at the group's first row.
-    const std::size_t r = Full || l < valid ? u + l : u;
-    in[l] = line_at<T>(src, r, src_dist);
-    out[l] = line_at<T>(dst, r, dst_dist);
-  }
+FFTN_FORCE_INLINE void batch_run(const T* const* in, T* const* out, std::size_t valid,
+                                 const edge<T, InOp>& ein, const edge<T, OutOp>& eout) {
   cv<T> x[R]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
   cv<T> y[R]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
   batch_gather<T, R, Full, InOp>(in, valid, ein, x);
   cdft<R>::template plain<T, Sign>(from_registers<T>{x}, to_registers<T>{y});
   batch_scatter<T, R, Full, OutOp>(out, valid, eout, y);
+}
+
+// Rows u .. u + valid - 1 (Full: valid = C).
+template <class T, std::size_t R, int Sign, edge_op InOp, edge_op OutOp, bool Full>
+FFTN_FORCE_INLINE void batch_group(const void* src, void* dst, std::ptrdiff_t src_dist,
+                                   std::ptrdiff_t dst_dist, std::size_t u, std::size_t valid,
+                                   const edge<T, InOp>& ein, const edge<T, OutOp>& eout) {
+  if constexpr (Full) {
+    const T* in[C<T>]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
+    T* out[C<T>];      // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
+    for (std::size_t l = 0; l < C<T>; ++l) {
+      in[l] = line_at<T>(src, u + l, src_dist);
+      out[l] = line_at<T>(dst, u + l, dst_dist);
+    }
+    batch_run<T, R, Sign, InOp, OutOp, true>(in, out, valid, ein, eout);
+  } else {
+    // Initialised only here: GCC 14 reports a partial group's arrays maybe uninitialized, and
+    // initialising a whole group's as well changed the code of most of its leaves.
+    const T* in[C<T>] = {}; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
+    T* out[C<T>] = {};      // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
+    for (std::size_t l = 0; l < C<T>; ++l) {
+      // Idle rows form no address: their pointers stay at the group's first row.
+      const std::size_t r = l < valid ? u + l : u;
+      in[l] = line_at<T>(src, r, src_dist);
+      out[l] = line_at<T>(dst, r, dst_dist);
+    }
+    batch_run<T, R, Sign, InOp, OutOp, false>(in, out, valid, ein, eout);
+  }
 }
 
 // The transform of R points of `count` lines of stride 1 on both sides (line u at src +
