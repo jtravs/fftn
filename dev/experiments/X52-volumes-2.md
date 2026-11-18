@@ -179,6 +179,30 @@ volumes 0.859 (81³ 0.70–0.75, 120³ 0.72–0.75, 64 × 64 × 512 and 512 × 6
 1.12, 256² in place 1.055, inside their bands. Rule met: **G adopted on the Mac** (the Mac
 was loaded by other work throughout; the bands are wide).
 
+### L and G on the EPYC and the Xeon (judging), the volumes
+
+Arms L1 (446be06) and A1 (`main` a0dffe1) at one thread, L8, A8 and G8 (f6f9b4d, L with G) at
+8 lanes, and the competitors serial and at 8 threads, 8 rounds each.
+
+- EPYC, run 20261118-005711-d018 (Slurm 512538; all rounds on a node with other work, band
+  ±2.7 % from the one-thread A/A control). L changes 16³ and 16 × 256 × 256 (by describe): L ÷
+  `main` 0.755 over them (16³ 0.66–0.67, 16 × 256 × 256 0.85–0.87). Unchanged programs
+  measured up to 1.049 at one thread (100³ backward) and 1.125 at 8 lanes (48³ in place;
+  programs identical by describe, so this is the 8-lane noise of the node, which the one-thread
+  band understates). G ÷ L at 8 lanes over the 40 volumes that split: 0.877 (256 × 256 × 16
+  0.65–0.75, 512 × 64 × 64 0.71, 128 × 64 × 32 0.72, 4 × 512 × 512 0.74, 16 × 256 × 256 0.78);
+  worst 1.021 (17 × 15 × 37 in place), inside the band. FFTN ÷ FFTW's better plan: one thread
+  0.786 (`main`, 16³ 1.12–1.14) → 0.764 (L, none over 1.05); 8 lanes 0.857 with 10 over 1.05
+  (`main`) → 0.755 with one (G: 120³ out of place 1.17).
+- Xeon, run 20261118-005716-711d (Slurm 16439; 5 of 8 rounds loaded, band ±1.9 %). L ÷ `main`
+  0.966 over the four cases it changes (16³ 0.94–0.95, 16 × 256 × 256 0.97–1.00): rule (1)
+  fails, **L rejected on `avx512`** (gated off there, commit after this run). G ÷ L at 8 lanes
+  over the 40 that split 0.910 (32 × 64 × 128 0.76–0.78, 81³ 0.79–0.82, 16 × 256 × 256 0.85);
+  worst 0.986 (32³ in place), 16³ (inline) 1.019. FFTN ÷ oneMKL: one thread 1.06 (29 of 42
+  over 1.05: 64 × 64 × 512 in place 1.52, 128³ in place 1.48, 120³ 1.34, 512 × 64 × 64 1.25–
+  1.33, 16³ 1.29–1.31); 8 lanes ÷ oneMKL's better plan 1.15 (`main`) → 1.055 (G), 29 over
+  1.05 (30 × 40 × 50 1.53–1.77, 48³ 1.37–1.45, 32³ 1.41–1.44, 81³ 1.32–1.33).
+
 ## Verdict
 
 Pending.
