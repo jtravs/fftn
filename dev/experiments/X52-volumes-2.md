@@ -100,6 +100,39 @@ here and committed before its judging run.
   8: 1.15–1.28); other column radices lost (512 as 8 × 64 2.4, 16 × 32 2.1; 64 as one pass
   2.9–3.3, 4 × 16 1.8); FFTW 0.77–0.83.
 
+- EPYC, run 20261117-234518-1124 (Slurm 512510; `main` at 8 lanes; 6 rounds, all on a node
+  whose other jobs used about 71 of 128 cores, band ±3.6 %), the volumes: FFTN at 8 lanes ÷
+  FFTW's better plan (8 threads or serial) 0.687, over 1.05 only 16³ (1.13–1.14, which runs
+  inline) and 4 × 512 × 512 out of place (1.06); X43b's 17 of 38 did not recur on this
+  loaded node. Forced 4 × 4 columns of 16 took 16³ to 0.68 and 16 × 256 × 256 to 0.87–0.93.
+  Coarser chunks (`CHUNK_POINTS=8192`) took 128³ to 0.84–0.92, 128 × 64 × 32 0.89, 16 × 256 ×
+  256 0.91 but 32³ 1.52–1.54 and 17 × 15 × 37 2.4–2.5 (32768: 1.25 overall).
+- EPYC, run 20261117-234518-a518 (Slurm 512512; the same node load, band ±3.4 %), the 37 c2c
+  planes: FFTN at 8 lanes ÷ FFTW's better plan 0.64, over 1.05 only 2048 × 36 (1.10–1.14);
+  coarser chunks lost (8192: 1.17, 32768: 1.41).
+- Xeon, run 20261117-234934-c994 (Slurm 16423; 6 rounds, 3 loaded, band ±13.5 %), the
+  volumes: one thread ÷ oneMKL 1.05 (26 of 42 over 1.05: 16³ 1.35–1.41, 64 × 64 × 512
+  1.29–1.49, 128³ 1.25–1.46, 512 × 64 × 64 1.32–1.35, 81³ 1.22–1.27, 120³ 1.22–1.31); 8 lanes
+  ÷ oneMKL's better plan 0.97 (18 over 1.05: 16³ 1.41–1.43 inline, 30 × 40 × 50 1.52–1.64,
+  81³ 1.26–1.51, 32³ 1.31–1.40, 48³ 1.32–1.33, 100³ and 120³ out of place 1.26–1.27). FFTN's
+  8 lanes take 0.60–0.69 of its one thread at 32³ and 0.44–0.52 at 30 × 40 × 50, where
+  oneMKL's 8 threads take 0.51 and 0.29 of its own: the small volumes scale poorly. Forced
+  4 × 4 columns of 16: 16³ 0.93–0.97 (they also change axis 1 there).
+- EPYC, run 20261118-000233-c39a (Slurm 512521; L and G at 8 lanes, the standard
+  catalogue's 132 c2c planes and volumes; 8 rounds, all loaded, band ±2.5 %): G ÷ L 0.984
+  (128³ 0.87, 36 × 2048 0.90, 1024² 0.94, 48³ 0.94, 100³ 0.94, 480 × 640 0.95; 2048² 1.02–1.04,
+  2048 × 36 in place 1.03, inside the band).
+
+### L and W1 on the Mac (judging)
+
+Run 20261118-000801-5e21 (L 446be06 against `main` a0dffe1 and W1 c3d80f8, FFTW; 10 rounds, 9
+loaded, band ±6.4 %), the volumes catalogue. L changes 16 × 256 × 256 alone on the Mac (by
+describe; none of the standard catalogue's planes and volumes): L ÷ `main` 0.57 out of place,
+0.54 in place (`main` 1.76–1.85 of L); FFTN ÷ FFTW there 1.41–1.42 → 0.76–0.81. No case slower
+than `main` beyond 1.058 (81³, unchanged program), inside the band. **L adopted on the Mac.**
+W1 changes 30 of the 42 volumes: W1 ÷ L 0.993 over them (worst 100³ 1.06, 2 × 1024 × 1024
+1.03–1.05), against the rule's 0.97: **W1 rejected** (reverted).
+
 ## Verdict
 
 Pending.
