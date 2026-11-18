@@ -136,6 +136,9 @@ build_settings fixed_settings() {
   s.profile.chain_mixed_bytes = 0;
   s.profile.pow2_chain_bytes = 0;
   s.profile.pow2_radix8_bytes = 0;
+  // No depth-first chains (X46, X51, X55): the host's profile may set them.
+  s.profile.depth_max_bytes = 0;
+  s.profile.depth_float_max_bytes = 0;
   return s;
 }
 
