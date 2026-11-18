@@ -140,9 +140,8 @@ template <class T> bool chain_builder<T>::bluestein_last(std::size_t n) const {
 
 template <class T> std::string chain_builder<T>::radix_text(std::size_t n) const {
   if (std::ranges::find(batch_lines_, n) != batch_lines_.end()) {
-    const std::size_t r1 = batch_->r1[codelet_slot(n)];
-    return (r1 != 0 ? std::to_string(r1) + " x " + std::to_string(n / r1) : std::to_string(n)) +
-           " (batch leaf, " + std::to_string(batch_->lanes) + " rows per register)";
+    return std::to_string(n) + " (batch leaf, " + std::to_string(batch_->lanes) +
+           " rows per register)";
   }
   if (std::ranges::find(pair_lines_, n) != pair_lines_.end()) {
     if (const pair_choice p = pair_of(n); p.entry != nullptr) {
@@ -580,11 +579,8 @@ void chain_builder<T>::add_batch_leaf(leaf_fn leaf, std::size_t n, int sign, end
                                       std::vector<stage>& stages) {
   stage st;
   st.leaf = leaf;
-  const std::size_t r1 = batch_->r1[codelet_slot(n)];
-  st.args.radix = r1 != 0 ? r1 : n;
-  st.args.m = r1 != 0 ? n / r1 : 1;
+  st.args.radix = n;
   st.args.n = n;
-  st.args.twiddles = r1 != 0 ? shared_twiddles(n, r1, 1) : nullptr;
   st.args.scale = edges.scale;
   st.args.src_stride = src.stride;
   st.args.dst_stride = dst.stride;
@@ -592,10 +588,8 @@ void chain_builder<T>::add_batch_leaf(leaf_fn leaf, std::size_t n, int sign, end
   st.dst = dst.where;
   st.units = 1;
   st.chunks = 1;
-  st.name = "batch leaf radix-" +
-            (r1 != 0 ? std::to_string(r1) + " x " + std::to_string(n / r1) : std::to_string(n)) +
-            " " + direction_name(sign) + ", " + std::to_string(batch_->lanes) +
-            " rows per register" +
+  st.name = "batch leaf radix-" + std::to_string(n) + " " + direction_name(sign) + ", " +
+            std::to_string(batch_->lanes) + " rows per register" +
             (edges.in != edge_op::none || edges.out != edge_op::none
                  ? " (" + edges_note(edges.in, edges.out).substr(2) + ")"
                  : "");

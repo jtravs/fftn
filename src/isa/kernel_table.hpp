@@ -126,11 +126,6 @@ template <class T>
 template <class T> struct batch_leaf_set {
   // NOLINTNEXTLINE(modernize-avoid-c-arrays): filled inside an ISA region
   leaf_fn leaf[gen::radix_count][2][2][2];
-  // 0 where the leaf is the codelet of its length; else the first factor r1 of the chain
-  // r1 x (n / r1) it runs (passes/batch_leaf.inl, batch_pair_leaf), whose first pass's
-  // broadcast twiddle table it reads (pass_args::twiddles).
-  // NOLINTNEXTLINE(modernize-avoid-c-arrays): filled inside an ISA region
-  std::size_t r1[gen::radix_count];
   std::size_t lanes; // rows per register: C of the leaves' vocabulary
 };
 struct batch_leaf_table {
