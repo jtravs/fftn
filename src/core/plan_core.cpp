@@ -994,8 +994,15 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     return true;
   };
 
+  // Batch leaves a test or fbench forces take the rows from the lanes the rules would choose
+  // (avx2 and avx512 in float); the rules' own only where the rules choose no lanes.
+  const batch_leaf_set<T>* batch = batch_leaves_of<T>(s, in, out, settings, c.isa_target);
+  const bool forced_batch = batch != nullptr && settings.batch_leaves != batch_leaf_choice::rules &&
+                            settings.strategy == strategy_choice::rules &&
+                            !chain.forces(s.axes[0].n);
   const std::size_t lanes =
-      lanes_block<T>(s, in, out, settings, profile, chain, kernels.complex_lanes);
+      forced_batch ? 0
+                   : lanes_block<T>(s, in, out, settings, profile, chain, kernels.complex_lanes);
   grid_split grid_plan = s.kind == transform_kind::c2c && r == 1
                              ? plan_grid<T>(c.lengths[0], in, out, settings, chain,
                                             kernels.complex_lanes, s.kind, c.in_place)
@@ -1031,7 +1038,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     real_grid.pad = 0;
   }
   if (lanes == 0 && grid_plan.phases == 0 && depth_tops.empty()) {
-    chain.use_batch_leaves(batch_leaves_of<T>(s, in, out, settings, c.isa_target));
+    chain.use_batch_leaves(batch);
   }
   if (lanes != 0) {
     // The lanes strategy (DESIGN.md 8.5): blocks of `lanes` rows of the innermost batch
