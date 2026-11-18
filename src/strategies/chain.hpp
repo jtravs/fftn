@@ -156,6 +156,15 @@ public:
     long_radix8_bytes_ = radix8_bytes;
   }
 
+  // The one row length of a c2c plan of one axis, and whether the plan's data fit
+  // machine_profile::fit_row_bytes (core/plan_core.cpp): that length takes
+  // fitting_radices (planner/rules.hpp, experiment X57) where the profile lists it. Rows of
+  // planes and volumes, and other lengths of the plan, keep the rules. Forced radices win.
+  void use_row_fit(std::size_t n, bool fits) noexcept {
+    fit_row_ = n;
+    fit_row_fits_ = fits;
+  }
+
   // Long convolutions (experiment X36), on every machine, since a Bluestein or Rader
   // stage's convolution is a chain and never a grid: one of a power-of-two length of more
   // than from_bytes takes the long-row radices (use_long_rows) with radix 8 up to
@@ -427,6 +436,8 @@ private:
   real_fusion fusion_;
   std::size_t bluestein_above_;
   std::size_t line_scratch_ = 0;           // scratch a Bluestein stage of the current line needs
+  std::size_t fit_row_ = 0; // use_row_fit
+  bool fit_row_fits_ = false;
   std::size_t long_from_bytes_ = SIZE_MAX; // use_long_rows
   std::size_t long_radix8_bytes_ = 0;
   std::size_t conv_from_bytes_ = SIZE_MAX; // use_long_convolutions

@@ -113,6 +113,10 @@ constexpr std::array size_fields{
         .member = &fftn::detail::machine_profile::grid_two_pow2_bytes,
     },
     size_field{
+        .key = "FIT_ROW_BYTES",
+        .member = &fftn::detail::machine_profile::fit_row_bytes,
+    },
+    size_field{
         .key = "DEPTH_MIN_BYTES",
         .member = &fftn::detail::machine_profile::depth_min_bytes,
     },
