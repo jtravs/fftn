@@ -617,7 +617,8 @@ TEST(Schedule, GridSizesFromCaches) {
 // half of L2, whatever its L3 per CPU (63 MiB in that VM). The Axion VM (C4A, AArch64,
 // also 2 MiB of private L2) keeps the profile it had: it lost with X35's. X36's two fields
 // follow: Granite Rapids takes the Xeon's rules (no Bluestein length limit, long
-// convolutions beyond 4 L2), the Axion VM the Zen ones; neither measured.
+// convolutions beyond 4 L2), the Axion VM the Zen ones; neither measured. X55: Granite Rapids
+// takes the Xeon's depth-first chain from L2/4 to 64 L2 in double.
 struct planner_fields {
   std::size_t grid_min_bytes;
   std::size_t grid_three_bytes;
@@ -772,12 +773,12 @@ TEST(Schedule, ProfilesOfRecordedMachines) {
       .long_convolution_bytes = 8 * mib,
       .grid_phase_radix = 0,
       .grid_two_pow2_bytes = 0,
-      .depth_min_bytes = 0,
-      .depth_max_bytes = 0,
+      .depth_min_bytes = 512 * kib, // X55
+      .depth_max_bytes = 128 * mib,
       .depth_part_bytes = 0,
-      .depth_top = 0,
-      .depth_top_alt = 0,
-      .depth_top_last = 0,
+      .depth_top = 16,
+      .depth_top_alt = 20,
+      .depth_top_last = 10,
       .depth_pow2_max_bytes = never,
       .depth_float_max_bytes = 0,
       .depth_convolution_max_bytes = 0,

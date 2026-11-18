@@ -148,6 +148,17 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
   if (large_l2) {
     p.grid_three_bytes = c.l2.size / 2;
     p.grid_two_part_bytes = std::size_t{32} * 1024;
+    // Experiment X55, Granite Rapids VM (Xeon 6985P-C, 2 MiB private L2): X46's and X51's
+    // depth-first chain as on the Xeon 6240, from L2/4 to 64 L2 in double. One top of 16
+    // took 0.44-0.81 of the grids' time in the screen (46080 0.44, 65536 0.52, 131072-2^20
+    // 0.62-0.81, 2^22 0.67; run 20261118-084057-ff56); 2^21 tied (1.03).
+    if (c.l1d.size != 0) {
+      p.depth_min_bytes = c.l2.size / 4;
+      p.depth_max_bytes = 64 * c.l2.size;
+      p.depth_top = 16;
+      p.depth_top_alt = 20;
+      p.depth_top_last = 10;
+    }
   } else if (private_l2 && large_l3) {
     p.chain_part_bytes = std::size_t{16} * 1024;
     p.chain_part_limit_bytes = c.l3.size / 2;

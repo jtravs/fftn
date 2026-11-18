@@ -154,3 +154,25 @@ campaign has spent USD 4.72 of its USD 20 cap; the month's total, with X21, is U
 Egress (results only, about 10 MB) is negligible. Teardown was verified on 2026-11-18 at
 00:57 UTC: no instance, disk or address of the campaign is left; the firewall rule, subnet
 and network were deleted after matching their IDs; the watchdogs were stopped.
+
+## X55, 2026-11-18
+
+Rental for [X55](X55-gnr-depth.md) (the depth-first chain on Granite Rapids), approved by
+the maintainer on 2026-11-18 ("yes, run Granite Rapids within the cap"; at most USD 2).
+Same project, region, prices and safeguards as X48: `--max-run-duration=150m` with
+termination action DELETE, boot-disk auto-delete, a guest shutdown after 145 minutes and a
+Mac-side watchdog (155 minutes) deleting by name only after matching the recorded ID.
+
+Shared resources (free): VPC network `fftn-x55-net` (7806003257055173776), subnet
+`fftn-x55-sub` (5101221257069780067), firewall rule `fftn-x55-ssh` (582455747989789818,
+SSH from the controller's address only).
+
+| Instance | Recorded ID | Type | Zone | Spot USD/h (VM) | Created (UTC) | Deleted (UTC) | Cost USD | Running total (X55) |
+|---|---|---|---|---:|---|---|---:|---:|
+| fftn-x55-c4 | 2451080659952786504 | c4-standard-16, 1 thread per core, minimum platform Granite Rapids | us-central1-a | 0.473 | 2026-11-18 08:32:39 | 2026-11-18 09:23:30 | 0.40 | 0.40 |
+
+X55 total USD 0.40 estimated gross; not preempted. The campaign has spent USD 5.12 of its
+USD 20 cap; the month's total, with X21, is USD 6.48. Teardown verified on 2026-11-18 at
+09:24 UTC: the instance was deleted after matching its ID, then the firewall rule, subnet
+and network after matching theirs; the inventory lists no instance, no `fftn` disk or
+firewall rule and only the `default` network; the watchdog was stopped.
