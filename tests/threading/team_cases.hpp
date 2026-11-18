@@ -242,6 +242,17 @@ void add_cases(std::vector<team_case>& out, const fftn::detail::build_settings& 
   depth.depth_tops = {10};
   out.push_back(make_case("c2c_depth_partial_inplace_2000x2" + suffix,
                           fftn::rows_c2c<T>(2000, 2, bwd), 4000, 4000, true, depth, target));
+  // A Bluestein stage on the depth-first chains (experiment X50): the fused chirp passes,
+  // both chains' first and top passes and their loops over sub-rows; Bluestein forced for the
+  // prime and its convolution 8192 points, which every target's complex count splits (team
+  // test DepthCasesTakeTheDepthFirstConvolution checks that they did), the default tops.
+  depth.depth_tops = {};
+  depth.rader = 0;
+  depth.bluestein_length = 8192;
+  out.push_back(make_case("c2c_bluestein_depth_4093x2" + suffix, fftn::rows_c2c<T>(4093, 2, bwd),
+                          8186, 8186, false, depth, target));
+  out.push_back(make_case("c2c_bluestein_depth_inplace_4093x2" + suffix,
+                          fftn::rows_c2c<T>(4093, 2, fwd), 8186, 8186, true, depth, target));
   // Batch leaves (experiment X53): C rows per register, the batch's rows what a team shares,
   // counts that leave a partial group of rows.
   fftn::detail::build_settings batch = settings;

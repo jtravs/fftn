@@ -120,6 +120,17 @@ template <class T> std::vector<std::size_t> chain_builder<T>::radices(std::size_
 }
 
 template <class T> std::size_t chain_builder<T>::bluestein_m(std::size_t q) const {
+  if (forced_conv_ >= 2 * q - 1) {
+    std::size_t rest = forced_conv_;
+    for (const std::size_t f : {std::size_t{2}, std::size_t{3}, std::size_t{5}, std::size_t{7}}) {
+      while (rest % f == 0) {
+        rest /= f;
+      }
+    }
+    if (rest == 1) {
+      return forced_conv_;
+    }
+  }
   return bluestein_length(q, profile_,
                           std::max<std::size_t>(conv_pow2_part_bytes_ / (2 * sizeof(T)), 1));
 }
@@ -842,28 +853,14 @@ void chain_builder<T>::add_rader(std::size_t n, std::size_t q, std::size_t g, in
 }
 
 template <class T>
-void chain_builder<T>::add_bluestein(std::size_t n, std::size_t q, int sign, endpoint src,
-                                     endpoint dst, const line_edges& edges, bool first,
-                                     std::vector<stage>& stages) {
-  if (const std::size_t g = rader_root(q, profile_); g != 0) {
-    add_rader(n, q, g, sign, src, dst, edges, first, stages);
-    return;
-  }
+stage chain_builder<T>::bluestein_in_stage(std::size_t n, std::size_t q, std::size_t m, int sign,
+                                           endpoint src, slot conv, edge_op in,
+                                           const line_edges& edges, const bluestein_tables& tab) {
   const std::size_t s = n / q;
-  const std::size_t m = bluestein_m(q);
-  const std::vector<std::size_t> rad = convolution_radices(m);
   const std::size_t c = kernels_.complex_lanes;
-  const edge_op in = first ? edges.in : edge_op::none;
-  const pass_kernels<T>& k = kernels_.passes;
   const bool shared = s > 1 && s % c == 0;
-  const bluestein_tables tab = bluestein_tables_of(q, sign, shared ? 0 : s);
-  // The convolution starts in the scratch line the source is not in, and ends there.
-  const slot conv =
-      src.where == slot::a || src.where == slot::b ? other_scratch(src.where) : slot::a;
-  const std::string geometry =
-      "Q " + std::to_string(q) + ", M " + std::to_string(m) + ", copies " + std::to_string(s);
   stage st;
-  st.run = k.bluestein_in[shared ? 1 : 0][edge_index(in)];
+  st.run = kernels_.passes.bluestein_in[shared ? 1 : 0][edge_index(in)];
   st.args.m = m;
   st.args.s = s;
   st.args.n = n;
@@ -876,17 +873,21 @@ void chain_builder<T>::add_bluestein(std::size_t n, std::size_t q, int sign, end
   st.dst = conv;
   st.units = blocks(s * m);
   st.chunks = chunks_of(st.units, c);
-  st.name = std::string("bluestein in, chirp ") + direction_name(sign) + " (" + geometry +
+  st.name = std::string("bluestein in, chirp ") + direction_name(sign) + " (Q " +
+            std::to_string(q) + ", M " + std::to_string(m) + ", copies " + std::to_string(s) +
             edges_note(in, edge_op::none) + ")";
-  stages.push_back(std::move(st));
+  return st;
+}
 
-  const slot at = add_convolution(s, m, rad, tab.kernel, conv, stages);
-  for (std::size_t i = stages.size() - 2 * rad.size(); i < stages.size(); ++i) {
-    stages[i].name = "bluestein convolution: " + stages[i].name;
-  }
-
+template <class T>
+stage chain_builder<T>::bluestein_out_stage(std::size_t n, std::size_t q, std::size_t m, int sign,
+                                            slot from, endpoint dst, const line_edges& edges,
+                                            const bluestein_tables& tab) {
+  const std::size_t s = n / q;
+  const std::size_t c = kernels_.complex_lanes;
+  const bool shared = s > 1 && s % c == 0;
   stage out;
-  out.run = k.bluestein_out[shared ? 1 : 0][edge_index(edges.out)];
+  out.run = kernels_.passes.bluestein_out[shared ? 1 : 0][edge_index(edges.out)];
   out.args.m = m;
   out.args.s = s;
   out.args.n = n;
@@ -895,13 +896,40 @@ void chain_builder<T>::add_bluestein(std::size_t n, std::size_t q, int sign, end
   out.args.out_factor = edges.out == edge_op::factor ? edges.out_factor : nullptr;
   out.args.src_stride = 1;
   out.args.dst_stride = dst.stride;
-  out.src = at;
+  out.src = from;
   out.dst = dst.where;
   out.units = blocks(s * q);
   out.chunks = chunks_of(out.units, c);
-  out.name = std::string("bluestein out, chirp ") + direction_name(sign) + " (" + geometry +
+  out.name = std::string("bluestein out, chirp ") + direction_name(sign) + " (Q " +
+             std::to_string(q) + ", M " + std::to_string(m) + ", copies " + std::to_string(s) +
              edges_note(edge_op::none, edges.out) + ")";
-  stages.push_back(std::move(out));
+  return out;
+}
+
+template <class T>
+void chain_builder<T>::add_bluestein(std::size_t n, std::size_t q, int sign, endpoint src,
+                                     endpoint dst, const line_edges& edges, bool first,
+                                     std::vector<stage>& stages) {
+  if (const std::size_t g = rader_root(q, profile_); g != 0) {
+    add_rader(n, q, g, sign, src, dst, edges, first, stages);
+    return;
+  }
+  const std::size_t s = n / q;
+  const std::size_t m = bluestein_m(q);
+  const std::vector<std::size_t> rad = convolution_radices(m);
+  const std::size_t c = kernels_.complex_lanes;
+  const edge_op in = first ? edges.in : edge_op::none;
+  const bool shared = s > 1 && s % c == 0;
+  const bluestein_tables tab = bluestein_tables_of(q, sign, shared ? 0 : s);
+  // The convolution starts in the scratch line the source is not in, and ends there.
+  const slot conv =
+      src.where == slot::a || src.where == slot::b ? other_scratch(src.where) : slot::a;
+  stages.push_back(bluestein_in_stage(n, q, m, sign, src, conv, in, edges, tab));
+  const slot at = add_convolution(s, m, rad, tab.kernel, conv, stages);
+  for (std::size_t i = stages.size() - 2 * rad.size(); i < stages.size(); ++i) {
+    stages[i].name = "bluestein convolution: " + stages[i].name;
+  }
+  stages.push_back(bluestein_out_stage(n, q, m, sign, at, dst, edges, tab));
   line_scratch_ = std::max(line_scratch_, s * m);
 }
 
@@ -1150,7 +1178,7 @@ std::string chain_builder<T>::depth_text(std::size_t n,
 template <class T>
 typename chain_builder<T>::depth_stages
 chain_builder<T>::c2c_depth(std::size_t n, const std::vector<std::size_t>& tops, int sign,
-                            double scale, slot work) {
+                            double scale, slot work, slot src, slot dst, const T* out_factor) {
   depth_stages out;
   const std::size_t f1 = tops[0];
   const std::size_t f2 = tops.size() > 1 ? tops[1] : 1;
@@ -1171,7 +1199,7 @@ chain_builder<T>::c2c_depth(std::size_t n, const std::vector<std::size_t>& tops,
   first.args.n = n; // the pass moves the whole line (work_graph.cpp, stage_work)
   first.args.dst_cols = f1;
   first.args.dst_qstride = static_cast<std::ptrdiff_t>(f2 * m);
-  first.src = slot::in;
+  first.src = src;
   first.dst = work;
   first.units = (m / r2) * ((subs + c - 1) / c);
   first.chunks = chunks_of(first.units, r2 * c);
@@ -1206,7 +1234,10 @@ chain_builder<T>::c2c_depth(std::size_t n, const std::vector<std::size_t>& tops,
   // A top pass of radix f over runs of f * legs elements (legs apart), the scale on the last.
   const auto top_pass = [&](std::size_t f, std::size_t legs, bool last, std::vector<stage>& to) {
     stage st;
-    const std::size_t e = last && scale != 1.0 ? 1 : 0;
+    std::size_t e = last && scale != 1.0 ? 1 : 0;
+    if (last && out_factor != nullptr) {
+      e = 2;
+    }
     const std::size_t block = derived_block(legs);
     const auto [lo, hi] = derived_twiddles(f * legs, f, block);
     st.run = kernels_.passes.codelet[codelet_slot(f)]->depth_top[d][e];
@@ -1217,14 +1248,16 @@ chain_builder<T>::c2c_depth(std::size_t n, const std::vector<std::size_t>& tops,
     st.args.m = legs;
     st.args.n = f * legs;
     st.args.scale = scale;
+    st.args.out_factor = last ? out_factor : nullptr;
     st.src = work;
-    st.dst = last ? slot::out : work;
+    st.dst = last ? dst : work;
     st.units = legs / c;
     st.chunks = chunks_of(st.units, f * c);
     st.name = "depth-first top pass radix-" + std::to_string(f) + " " + direction_name(sign) +
               " (decimation in time, " + (st.dst == st.src ? "in place" : "to the output") +
               ", legs " + std::to_string(legs) + " apart" + "; twiddles derived over blocks of " +
-              std::to_string(block) + (e != 0 ? "; out: scale" : "") + ")";
+              std::to_string(block) + (e == 1 ? "; out: scale" : "") +
+              (e == 2 ? "; out: factor" : "") + ")";
     to.push_back(std::move(st));
   };
   if (f2 > 1) {
@@ -1232,6 +1265,68 @@ chain_builder<T>::c2c_depth(std::size_t n, const std::vector<std::size_t>& tops,
   }
   top_pass(f1, f2 * m, true, out.top);
   return out;
+}
+
+template <class T>
+bool chain_builder<T>::bluestein_depth_fits(std::size_t m,
+                                            const std::vector<std::size_t>& tops) const {
+  return depth_fits(m, tops) && checked_product(tops) % kernels_.complex_lanes == 0;
+}
+
+template <class T> std::size_t chain_builder<T>::bluestein_single(std::size_t n) const {
+  const std::vector<std::size_t> rad = radices(n);
+  return rad.size() == 1 && bluestein_last(n) && rader_root(n, profile_) == 0 ? n : 0;
+}
+
+// Experiment X50: the convolution of a Bluestein stage of one copy as two depth-first chains
+// (c2c_depth), the forward one's blocks in the workspace block and its top pass into scratch
+// a, where the backward one's first pass reads, so that each chain's sub-rows run in cache
+// with a loop moving the block, as a row of M would (X46). Once the backward first pass has
+// read scratch a, it is free for the sub-rows' passes (the forward sub-rows run before a is
+// written).
+template <class T>
+typename chain_builder<T>::bluestein_depth_stages
+chain_builder<T>::bluestein_depth(std::size_t q, const std::vector<std::size_t>& tops, int sign,
+                                  endpoint src, endpoint dst, const line_edges& edges) {
+  const std::size_t m = bluestein_m(q);
+  const bluestein_tables tab = bluestein_tables_of(q, sign, 1);
+  bluestein_depth_stages out;
+  out.forward = c2c_depth(m, tops, -1, 1.0, slot::block, src.where, slot::a, tab.kernel);
+  out.backward = c2c_depth(m, tops, +1, 1.0, slot::block, slot::a, slot::block);
+  // Arm C: the chirp passes fused into the forward chain's first pass (reading the input) and
+  // the backward chain's last top pass (writing the first Q outputs), which saves a pass over
+  // M elements each way.
+  stage& first = out.forward.first.front();
+  first.run = kernels_.passes.codelet[codelet_slot(first.args.radix)]->depth_first_chirp;
+  first.args.in_factor = tab.chirp;
+  first.args.src_cols = q;
+  first.name += "; chirp " + std::string(direction_name(sign)) + " in, from the input";
+  stage& top = out.backward.top.back();
+  const bool scaled = edges.out == edge_op::scale;
+  top.run = kernels_.passes.codelet[codelet_slot(top.args.radix)]->depth_top_chirp[scaled ? 1 : 0];
+  top.args.out_factor = tab.chirp;
+  top.args.dst_cols = q;
+  top.args.scale = edges.scale;
+  top.dst = dst.where;
+  top.name += "; chirp " + std::string(direction_name(sign)) + " out, the first " +
+              std::to_string(q) + " to the output" + (scaled ? "; out: scale" : "");
+  for (std::vector<stage>* part :
+       {&out.forward.first, &out.forward.sub, &out.forward.mid, &out.forward.top,
+        &out.backward.first, &out.backward.sub, &out.backward.mid, &out.backward.top}) {
+    for (stage& st : *part) {
+      st.name = "bluestein convolution: " + st.name;
+    }
+  }
+  out.scratch = std::max({m, out.forward.scratch, out.backward.scratch});
+  return out;
+}
+
+template <class T>
+std::string chain_builder<T>::bluestein_depth_text(std::size_t q,
+                                                   const std::vector<std::size_t>& tops) const {
+  const std::size_t m = bluestein_m(q);
+  return "bluestein " + std::to_string(q) + " (M " + std::to_string(m) + " = " +
+         depth_text(m, tops) + ")";
 }
 
 template <class T> real_route chain_builder<T>::route(std::size_t n, bool r2c, bool strided) const {
