@@ -23,8 +23,9 @@
 //
 // Each lane does the arithmetic the leaf does to its row (the same codelet, with the edge's
 // scale on loading or storing), so the bits are the leaf's, the narrow leaf's on x86 (which
-// round alike), whatever the group a row falls in. A partial group (fewer than C rows left)
-// holds zeros in its idle lanes and neither reads nor writes their rows.
+// round alike), whatever the group a row falls in. A last row alone runs as the leaf runs it
+// (broadcast into every lane, lane 0 stored); a partial group of more (C > 2) holds zeros in
+// its idle lanes and neither reads nor writes their rows.
 
 namespace {
 
@@ -98,9 +99,18 @@ void batch_leaf(const pass_args* a, const void* src, void* dst, std::ptrdiff_t s
   for (; u + C<T> <= count; u += C<T>) {
     batch_group<T, R, Sign, InOp, OutOp, true>(src, dst, src_dist, dst_dist, u, C<T>, ein, eout);
   }
-  if (u < count) {
-    batch_group<T, R, Sign, InOp, OutOp, false>(src, dst, src_dist, dst_dist, u, count - u, ein,
-                                                eout);
+  if (count - u == 1) {
+    // One row left: the leaf's own form, the row in every lane (one load and one store per
+    // element), which costs a row what the leaf does; a partial group gathers and scatters
+    // as a whole group does and cost about as much as two leaves (X53 arm B3).
+    one_in<T, InOp> in{.p = line_at<T>(src, u, src_dist), .leg = 2, .op = ein};
+    one_out<T, OutOp> out{.p = line_at<T>(dst, u, dst_dist), .leg = 2, .op = eout};
+    cdft<R>::template plain<T, Sign>(in, out);
+  } else if constexpr (C<T> > 2) {
+    if (u < count) {
+      batch_group<T, R, Sign, InOp, OutOp, false>(src, dst, src_dist, dst_dist, u, count - u, ein,
+                                                  eout);
+    }
   }
 }
 
