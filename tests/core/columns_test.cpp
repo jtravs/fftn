@@ -235,7 +235,8 @@ TEST(Columns, ForcedColumnRadices) {
 }
 
 // A column of a leaf length whose legs fall into one L1 set (column_radices, X52 arm L) runs
-// as two lane passes, the most balanced that fit (16 = 4 x 4), not as the leaf: the same
+// as two lane passes, the most balanced that fit (16 = 4 x 4), not as the leaf (except on
+// avx512): the same
 // transform as the chain's columns within twice the tolerance of either. The profile's L1 is
 // fixed (32 KiB, 8 ways, 64-byte lines) so that the choice does not depend on the host.
 template <class T> void crowded_leaf_columns(fftn::isa target) {
@@ -260,7 +261,9 @@ template <class T> void crowded_leaf_columns(fftn::isa target) {
     const std::size_t at = lanes_text.find("axis 0 (n = 16): lanes over");
     if (at != std::string::npos) {
       const std::string line = lanes_text.substr(at, lanes_text.find('\n', at) - at);
-      EXPECT_TRUE(line.ends_with("radices 4 x 4")) << lanes_text;
+      // Not on avx512, where the Xeon 6240 gained too little (X52).
+      EXPECT_TRUE(line.ends_with(target == fftn::isa::avx512 ? "radices 16" : "radices 4 x 4"))
+          << lanes_text;
     }
     std::size_t points = 1;
     for (const std::size_t n : pc.n) {

@@ -700,7 +700,7 @@ template <class T>
 std::vector<std::size_t>
 column_radices(std::size_t n, std::ptrdiff_t stride, const build_settings& settings,
                const target_profile& profile, const chain_builder<T>& chain,
-               const kernels_of<T>& kernels) {
+               const kernels_of<T>& kernels, bool split_leaves) {
   const auto lane_codelets = [&](const std::vector<std::size_t>& r) {
     return std::ranges::all_of(r, [&](std::size_t x) {
       return has_codelet(x) && kernels.passes.codelet[codelet_slot(x)]->lane[0] != nullptr;
@@ -738,8 +738,9 @@ column_radices(std::size_t n, std::ptrdiff_t stride, const build_settings& setti
   // A leaf (one pass of radix n) whose legs crowd one L1 set: ranked_radices has nothing
   // else for a leaf length, so two lane passes a x b = n, the most balanced first (X52 arm
   // L: the M5 Max's 16 x 256 x 256, whose outer leaf of 16 has its legs 1 MiB apart, took
-  // 0.67 of the leaf's time as 4 x 4 and 0.82 as 8 x 2).
-  if (rad.size() == 1) {
+  // 0.67 of the leaf's time as 4 x 4 and 0.82 as 8 x 2). Not on avx512 (split_leaves false),
+  // where the Xeon 6240 gained too little (0.966 over the volumes it changes).
+  if (split_leaves && rad.size() == 1) {
     std::vector<std::vector<std::size_t>> two;
     for (std::size_t a = 2; a < n; ++a) {
       if (n % a == 0) {
@@ -974,7 +975,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     const std::vector<std::size_t> rad =
         chain_columns ? chain.radices(n)
                       : column_radices<T>(n, dst.stride[d] * dst.element_bytes, settings, profile,
-                                          chain, kernels);
+                                          chain, kernels, c.isa_target != target::avx512);
     scratch = std::max(scratch, add_column_phase<T>(p, chain, d, extent, src, dst, dir, edges,
                                                     block, kernels.complex_lanes, rad));
     c.axis_notes.push_back(
