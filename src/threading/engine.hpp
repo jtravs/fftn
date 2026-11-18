@@ -32,6 +32,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <new>
 
 namespace fftn::inline v0::detail {
@@ -242,11 +243,15 @@ private:
     // Chunks are claimed in runs within one phase, each a share of the phase's chunks left
     // (left / (cap x claim_divisor), at least one), as whole tasks are: one claim and one
     // count per run rather than per chunk, and a member's chunks of a phase adjacent (X52 arm
-    // G: 8 lanes, EPYC volumes 0.90; Mac 6 lanes volumes 0.86). A run never crosses a phase:
-    // the counter only rises within an epoch, so the value `claim` hands the lambda is at
-    // least this member's last claim, in phase p or later, and below `total`.
-    const auto runs = static_cast<std::uint32_t>(std::max(job_.plan.profile.claim_divisor, 1) *
-                                                 std::max(share.cap, 1));
+    // G: Xeon 8 lanes 0.91, Mac 6 lanes 0.86-0.94 over the planes and volumes that split).
+    // Only where the profile claims whole tasks in runs of at most a half share (claim_divisor
+    // 2: the Mac, the mesh); on the CCX (divisor 1) a real 256^2 plane took 1.035 of the time
+    // with G's runs, so chunks stay single there (X52). A run never crosses a phase: the
+    // counter only rises within an epoch, so the value `claim` hands the lambda is at least
+    // this member's last claim, in phase p or later, and below `total`.
+    const int divisor = job_.plan.profile.claim_divisor;
+    const auto runs = divisor >= 2 ? static_cast<std::uint32_t>(divisor * std::max(share.cap, 1))
+                                   : std::numeric_limits<std::uint32_t>::max();
     for (;;) {
       // While this member holds a claim the execution cannot end, so no word of this task
       // can carry a later tag before the loop leaves.
