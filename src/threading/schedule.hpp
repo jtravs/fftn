@@ -190,6 +190,10 @@ struct machine_profile {
   // only up to depth_float_max_bytes (0: never; X51: measured on the Xeon 6240 to 2^20
   // complex floats, 8 MiB).
   std::size_t depth_float_max_bytes = 0;
+  // Whether the rules may take the batch leaf of 12 points (`avx512`, double): false on a
+  // private L2 of 2 MiB or more, where it lost (X58: Sapphire Rapids 12 x 64 1.17 of the
+  // chain's time; it won on the Xeon 6240 and Ice Lake).
+  bool batch_leaf_12 = true;
   // A Bluestein stage's convolution of one copy runs on two depth-first chains where a row
   // of its length would be one in double, by the fields above, but with this upper limit in
   // place of depth_max_bytes (0: never; core/plan_core.cpp, bluestein_tops_of; experiment

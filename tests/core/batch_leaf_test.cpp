@@ -310,10 +310,13 @@ template <class T> void rules_choose(fftn::isa t) {
     const std::size_t n = fftn::detail::gen::radices[slot];
     SCOPED_TRACE(std::string(fftn::isa_name(t)) + (sizeof(T) == 8 ? " double" : " float") +
                  ", n = " + std::to_string(n) + ", from " + std::to_string(rows) + " rows");
+    // Not the host's profile: a private L2 of 2 MiB leaves out the leaf of 12 (X58).
+    build_settings settings;
+    settings.profile.batch_leaf_12 = true;
     const auto text = [&](std::size_t count) {
       return described(*make_plan_core(
           fftn::detail::view_of(fftn::rows_c2c<T>(n, count, fftn::direction::backward)),
-          {.force_isa = t}, build_settings{}));
+          {.force_isa = t}, settings));
     };
     const std::size_t own = slot < profile.batch_own_rows.size() ? profile.batch_own_rows[slot] : 0;
     const std::size_t narrower_lanes = profile.batch_narrower ? lanes / 2 : lanes;

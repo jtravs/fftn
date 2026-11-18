@@ -587,9 +587,10 @@ const batch_leaf_set<T>* batch_leaves_of(const shape_view& s, const side& in, co
     }
     break;
   case batch_leaf_choice::rules:
-    if (const std::size_t slot = codelet_slot(n); slot < profile.batch_rows.size() &&
-                                                  profile.batch_rows[slot] != 0 &&
-                                                  s.batches[0].count >= profile.batch_rows[slot]) {
+    if (const std::size_t slot = codelet_slot(n);
+        slot < profile.batch_rows.size() && profile.batch_rows[slot] != 0 &&
+        s.batches[0].count >= profile.batch_rows[slot] &&
+        (n != 12 || t != target::avx512 || settings.profile.batch_leaf_12)) {
       const std::size_t rows = s.batches[0].count;
       const bool own = !profile.batch_narrower ||
                        (slot < profile.batch_own_rows.size() && profile.batch_own_rows[slot] != 0 &&
