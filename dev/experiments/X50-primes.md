@@ -235,5 +235,5 @@ which already runs at 0.80 of FFTW's: not built.
   beyond 4 L2 also gained from one top of 16 in the screen (2073600 0.85, 2²¹ 0.75 of the
   grid), a lead for X51.
 
-Done: DESIGN 8.5 and 11.2 and the decision log; LESSONS 3.20 (corrected) and 4.20; PLAN
+Done: DESIGN 8.5 and 11.2 and the decision log; LESSONS 3.20 (corrected) and 4.21; PLAN
 index and Status.

@@ -282,6 +282,41 @@ TEST(Columns, CrowdedLeafColumnsTakeTwoPasses) {
   }
 }
 
+// Wide blocks (machine_profile::column_wide_bytes, X52 arm W4b) widen the program's column
+// blocks to 1 KiB where both tiles fit column_tile_bytes, and only the program's: a team runs
+// the team program, which keeps the narrower blocks. Bits are the chain's either way.
+template <class T> void wide_blocks_program_only(fftn::isa target) {
+  SCOPED_TRACE(std::string(fftn::isa_name(target)) + (sizeof(T) == 8 ? " double" : " float"));
+  const plane_case pc{.n = {64, 64}};
+  build_settings wide;
+  wide.profile.column_wide_bytes = 1024;
+  wide.profile.column_tile_bytes = std::size_t{1} << 20U;
+  build_settings chain = wide;
+  chain.lanes_columns = false;
+  std::string wide_text;
+  std::string chain_text;
+  const auto got = run<T>(pc, wide, target, wide_text);
+  const auto want = run<T>(pc, chain, target, chain_text);
+  if (wide_text.find("adjacent columns") == std::string::npos) {
+    return; // no lanes column phase on this target
+  }
+  EXPECT_NE(wide_text.find("blocks of 64 adjacent columns"), std::string::npos) << wide_text;
+  const auto core = fftn::detail::make_plan_core(fftn::detail::view_of(shape_of<T>(pc)),
+                                                 {.force_isa = target}, wide);
+  const std::string team = fftn::detail::describe(fftn::detail::team_core(*core));
+  EXPECT_EQ(team.find("blocks of 64 adjacent columns"), std::string::npos) << team;
+  if (radices_of(wide_text) == radices_of(chain_text)) {
+    EXPECT_TRUE(got == want) << wide_text << chain_text;
+  }
+}
+
+TEST(Columns, WideBlocksInTheProgramOnly) {
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    wide_blocks_program_only<double>(t);
+    wide_blocks_program_only<float>(t);
+  }
+}
+
 // The strided complex axes of r2c and c2r planes and volumes take the same column phase
 // (X41): every output byte as with each column alone through the chain where the radices
 // agree, the same transform within twice the tolerance where they do not; in place and out

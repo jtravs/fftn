@@ -705,6 +705,14 @@ std::size_t column_block(std::size_t axis, const std::vector<std::size_t>& exten
       return settings.team_program && settings.profile.column_team_bytes != 0 ? line : 0;
     }
   }
+  // Wider blocks where their tiles fit column_tile_bytes, in the one-thread program only
+  // (machine_profile::column_wide_bytes; X52 arm W4b: teams keep X40's blocks, with which the
+  // Xeon's 8 lanes ran up to 1.46 times faster than with the wide ones).
+  if (const std::size_t wide = up(settings.profile.column_wide_bytes / complex_bytes);
+      settings.profile.column_wide_bytes != 0 && !settings.team_program && wide > block &&
+      2 * n * wide * complex_bytes <= settings.profile.column_tile_bytes) {
+    block = std::min(wide, up(extent[last]));
+  }
   // A team program's blocks (X43 arm B1; machine_profile::column_team_bytes).
   if (settings.team_program && settings.profile.column_team_bytes != 0) {
     block = std::min(block, std::max(line, up(settings.profile.column_team_bytes / complex_bytes)));
@@ -1543,6 +1551,13 @@ std::shared_ptr<plan_core> build_plan_core(const shape_view& s, const options& o
   for (const std::size_t n : c->lengths) {
     points *= n; // the layouts' reach checks have bounded the product
   }
+  // A real plane or volume is split by its complex points (the last axis n / 2 + 1 long), the
+  // work its phases share, where the profile says (X52 arm S1: at 8 lanes real planes of
+  // 96^2-100^2 took 1.1-1.3 times their one-thread time on the EPYC when split by their real
+  // points). Rows are unchanged.
+  if (r > 1 && s.kind != transform_kind::c2c && settings.profile.split_complex_points) {
+    points = points / c->lengths.back() * (c->lengths.back() / 2 + 1);
+  }
   // Only multi-axis programs are unrolled (X41): a 1-D grid without moving twiddles would
   // otherwise change its execution path, which nothing measured.
   mark_flat(c->prog, settings.unroll_calls && r > 1);
@@ -1565,7 +1580,9 @@ std::shared_ptr<plan_core> build_plan_core(const shape_view& s, const options& o
   // X43b arm VT: a team core also where only a volume's order would differ.
   const bool team_order = r == 3 && settings.profile.team_volume_planes;
   if (s.kind == transform_kind::c2c && r > 1 &&
-      (settings.profile.column_team_bytes != 0 || team_order) && !settings.team_program) {
+      (settings.profile.column_team_bytes != 0 || team_order ||
+       settings.profile.column_wide_bytes != 0) &&
+      !settings.team_program) {
     build_settings team = settings;
     team.team_program = true;
     std::shared_ptr<const plan_core> t = build_plan_core(s, opts, team);

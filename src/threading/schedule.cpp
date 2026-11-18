@@ -50,6 +50,9 @@ machine_profile profile_for(const topology& t, bool x86_64) noexcept {
     p.sync_ns = 700;
     p.claim_divisor = 2;
   }
+  if (mesh) {
+    p.split_min_points_lines = 32768;
+  }
   return p;
 }
 
@@ -94,6 +97,7 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
     p.grid_pad_period = private_l2 ? std::numeric_limits<std::size_t>::max() : 4096;
     p.grid_fuse_bytes = c.l2.size / 4;
     p.column_tile_bytes = c.l2.size / 4;
+    p.split_complex_points = private_l2;
     // X41 arm L2: where a cluster shares L2 (Apple), a block of columns whose elements lie at
     // least four to a page keeps its tiles within twice L1 (M5 Max 2048 x 36: blocks of 4
     // columns, 256 KiB of tiles, 0.90 of the time of X40's 16, 1 MiB), as the chain lost
@@ -137,6 +141,9 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
   // 0.771), where one thread gained too little (0.979, 0.934 with 97^3 slower, 1.048).
   if (x86_64 && private_l2 && !large_l2) {
     p.team_volume_planes = true;
+  }
+  if (x86_64 && private_l2 && large_l3 && !large_l2) {
+    p.column_wide_bytes = 1024;
   }
   if (large_l2) {
     p.grid_three_bytes = c.l2.size / 2;
@@ -258,6 +265,7 @@ schedule make_schedule(const work_graph& g, const lane_map& lanes,
   s.phases = g.phases.size();
   s.widest = g.widest;
   s.points = g.points;
+  s.lines = std::ranges::any_of(g.phases, [](const graph_phase& ph) { return ph.nest != 0; });
   s.splittable = g.chunks > 1 && g.chunks < max_counted;
   s.oversubscribed = profile.cpus > 0 && std::max(lanes.lanes, lanes.threads) > profile.cpus;
   s.grain = g.tasks < max_counted ? 1 : (g.tasks + max_counted - 1) / max_counted;
@@ -308,7 +316,8 @@ group_share share_of(const schedule& s, const lane_map& lanes, int group) noexce
   const auto members = static_cast<std::size_t>(lanes.size_of(group));
   const machine_profile& p = s.profile;
   const bool mesh = lanes.size_of(group) > p.mesh_group_lanes;
-  if (s.points < (mesh ? p.split_min_points_mesh : p.split_min_points)) {
+  if (s.points < (mesh ? p.split_min_points_mesh : p.split_min_points) ||
+      (s.lines && s.points < p.split_min_points_lines)) {
     return share;
   }
   std::size_t split = 0;

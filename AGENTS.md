@@ -194,6 +194,13 @@ Further rules:
   follow-up, not to reject it. Likewise a change that wins on one target and loses on
   another is adopted per target. A case a hair past a rule's limit on a loaded machine is
   re-run before it decides a verdict.
+- **A decision rule's target set names only the cases the change can move** (by its
+  mechanism: the plans it changes, the code it touches), or judges those cases on their
+  own; cases outside it belong to the collateral check. A case past a limit whose code the
+  change provably leaves as it was (the same plan and byte-identical objects: only code
+  placement moved) does not decide the verdict; record it with that evidence. X47 and X54
+  were adopted by the maintainer's decision (2026-11-18) on these grounds after missing
+  their rules' letter.
 
 ## 7. Working in this repository
 
