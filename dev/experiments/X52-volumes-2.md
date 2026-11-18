@@ -1,6 +1,6 @@
 # X52: volumes and threaded planes against MKL and FFTW
 
-- **Status:** done for L, W1, W3 and G; W4b, G2 and S judging runs pending (job IDs below)
+- **Status:** done
 - **Owner:** X52 agent, 2026-11-18 (overnight round)
 - **Phase / task:** 4.1 (threaded planes), 4.2 (volumes)
 
@@ -355,33 +355,34 @@ construction).
   lanes 0.910 and 0.896 over the cases that split; r2c 256² now 1.04; past the band c2r 2048 ×
   36 in place 1.086: re-run (Slurm 512657).
 
+- **G2's re-run on the EPYC,** run 20261118-073717-a7df (Slurm 512657; 12 rounds, all loaded,
+  band ±8.4 %): every case past the limit now at or below 0.99 (c2r 2048 × 36 0.95–0.99, r2c
+  256² 0.98). Rule met: **G2 adopted on the EPYC**; chunk runs now apply on every profile, of at
+  most left / (2 × cap), the same as G where the claim divisor is already 2.
+
 ## Verdict
 
-- **L adopted on the Mac and the EPYC, rejected on `avx512`** (gated off there): leaf
-  columns whose legs crowd an L1 set run as two lane passes. Mac 16 × 256 × 256 0.54–0.57 of
-  `main` (÷ FFTW 1.41 → 0.76–0.81); EPYC 0.755 over the changed volumes (16³ 0.66–0.67, the
-  last case over FFTW at one thread there); Xeon 0.966 against the rule's 0.95. The EPYC's
-  unchanged programs that measured past the limits (100³ backward 1.049 one thread; 8-lane
-  noise up to 1.13) are being re-run (Slurm 512626, 512627).
-- **G adopted on the Mac and the Xeon** (chunks of a split task claimed in runs; profiles
-  with claim divisor 2): Xeon 0.910 (volumes) and 0.913 (planes) at 8 lanes, Mac 0.86–0.94 at
-  6 lanes; **failed rule (2) on the EPYC** (r2c 256² 1.035 on re-run, while volumes 0.877 and
-  planes 0.882): chunks stay single there; arm G2 (smaller first runs on the CCX) is judged by
-  Slurm 512622 and 512624. Second reader: approve with nits; tsan stage green (Mac).
+- **L adopted on the Mac and the EPYC, rejected on `avx512`** (pull request 64): leaf columns
+  whose legs crowd an L1 set run as two lane passes. Mac 16 × 256 × 256 0.54–0.57 of `main`
+  (÷ FFTW 1.41 → 0.78); EPYC 0.755 over the changed volumes (16³ 0.66); Xeon 0.966. Its
+  unchanged cases re-ran within 1.001 at one thread on the EPYC.
+- **G and G2 adopted on every profile** (pull requests 64 and the X52b follow-up): a split
+  task's chunks are claimed in runs of at most left / (2 × cap). Xeon 0.910 and 0.913 at 8
+  lanes, Mac 0.86–0.94 at 6 lanes, EPYC 0.910 and 0.896 (G's larger runs left a real 256² at
+  1.035 there). Second reader: approve with nits; tsan stage green.
+- **S adopted on the Xeon and the EPYC, rejected on the Mac:** a real plane or volume is split
+  by its complex points where L2 is private, and on a mesh a plane or volume only from 32768
+  points. Xeon 0.35–0.67 on the planes of 9216–16384 points that ran up to 2.9 times slower at
+  8 lanes than on one thread; EPYC 0.72–0.90 on real 96²–100²; on the EPYC two c2c cases that S
+  cannot change measured past the band twice (8-lane noise), adopted on that ground and
+  flagged; Mac 1.29 (S1 gated off where a cluster shares L2).
+- **W4b adopted on the EPYC class, rejected on the Xeon:** the one-thread program's c2c column
+  blocks widen to 1 KiB where both tiles fit a quarter of L2; teams keep the narrow blocks.
+  EPYC 0.933 over 38 changed cases (64 × 64 × 512 0.87–0.88); Xeon one thread 0.95 but
+  30 × 40 × 50 1.05 on re-run; W4 in teams lost up to 1.46 on the Xeon's 8 lanes.
 - **W1 rejected** (Mac, 0.993), **W3 dropped** at its screen (Mac planes 1.03).
-- **W4** (1 KiB column blocks where the tiles fit a quarter of L2; x86): one thread EPYC 0.933
-  over 38 changed cases and Xeon 0.936 over 34 (64 × 64 × 512 0.66, 128³ 0.75–0.77), but the
-  Xeon's 8 lanes lost (32³ 1.14): not adopted. **W4b** (W4 in the one-thread program only)
-  is judged on the Xeon by Slurm 16485; the EPYC's re-run of one unchanged case is Slurm
-  512626; if adopted, the volumes' scratch bound test and DESIGN 9.3's widest block (512
-  bytes) change to 1 KiB. Code: branch `exp/x52-w4b` (f8c07cd).
-- **S** (real planes split by complex points where L2 is private; planes from 32768 points
-  on a mesh): EPYC 0.82 over the eight real planes it changes (re-run of unchanged cases
-  pending, Slurm 512626); **rejected on the Mac** (1.29); Xeon judged by Slurm 16469. Code:
-  branch `exp/x52-s` (f105e8f, S1 gated to a private L2).
-- Not closed: the Xeon against oneMKL (one thread 1.06 with 29 of 42 volumes over 1.05; at 8
-  lanes 1.055 with G; real planes at 8 lanes 2.5–3.9 times oneMKL's threads), the EPYC's c2c
-  2048 × 36 at 8 lanes (1.35 of FFTW: 9 column blocks for 8 members), real 2048² at 8 lanes
-  (1.4–1.7 of FFTW), the Mac's 512 × 64 × 64, 64 × 64 × 512 and 128³ (1.09–1.17 of FFTW;
-  wider blocks helped only some cases). LESSONS 5.12 and 5.13; DESIGN 9.3, 13 and the
-  decision log.
+- **Library size, L + G:** +0.07 % (`libfftn.a` on the Mac).
+- Not closed: the Xeon against oneMKL (one thread 1.06; real planes at 8 lanes 2.5–3.9 times
+  oneMKL's threads), the EPYC's c2c 2048 × 36 at 8 lanes (1.35 of FFTW: 9 column blocks for 8
+  members), real 2048² at 8 lanes (1.4–1.7 of FFTW), the Mac's 512 × 64 × 64, 64 × 64 × 512 and
+  128³ (1.09–1.17 of FFTW). LESSONS 5.12 and 5.13; DESIGN 9.3, 13 and the decision log.

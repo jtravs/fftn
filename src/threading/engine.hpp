@@ -6,9 +6,8 @@
 //
 // 1. Whole tasks of its own cache group, in runs, from the group's counter.
 // 2. The split tasks of its group: it joins one (at most `cap` members each) and claims
-//    its chunks in order, in runs within one phase where the profile's claim divisor is 2
-//    (a share of the phase's chunks left, shrinking to single chunks; X52), else one at a
-//    time. A chunk of phase p runs once every chunk of phase
+//    its chunks in order, in runs within one phase (a share of the phase's chunks left,
+//    shrinking to single chunks; X52). A chunk of phase p runs once every chunk of phase
 //    p - 1 is done, which the task's done counter shows; the chunks of earlier phases were
 //    all claimed before it, by members that are running, so the wait never depends on a
 //    member that has not arrived. The member that claims chunk 0 owns the task: the task's
@@ -33,7 +32,6 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <limits>
 #include <new>
 
 namespace fftn::inline v0::detail {
@@ -242,17 +240,16 @@ private:
     int owner = -1;
     std::size_t p = 0;
     // Chunks are claimed in runs within one phase, each a share of the phase's chunks left
-    // (left / (cap x claim_divisor), at least one), as whole tasks are: one claim and one
-    // count per run rather than per chunk, and a member's chunks of a phase adjacent (X52 arm
-    // G: Xeon 8 lanes 0.91, Mac 6 lanes 0.86-0.94 over the planes and volumes that split).
-    // Only where the profile claims whole tasks in runs of at most a half share (claim_divisor
-    // 2: the Mac, the mesh); on the CCX (divisor 1) a real 256^2 plane took 1.035 of the time
-    // with G's runs, so chunks stay single there (X52). A run never crosses a phase: the
-    // counter only rises within an epoch, so the value `claim` hands the lambda is at least
-    // this member's last claim, in phase p or later, and below `total`.
-    const int divisor = job_.plan.profile.claim_divisor;
-    const auto runs = divisor >= 2 ? static_cast<std::uint32_t>(divisor * std::max(share.cap, 1))
-                                   : std::numeric_limits<std::uint32_t>::max();
+    // (left / (cap x max(claim_divisor, 2)), at least one): one claim and one count per run
+    // rather than per chunk, and a member's chunks of a phase adjacent (X52 arms G and G2: at
+    // 8 lanes Xeon 0.91, EPYC 0.90, Mac at 6 lanes 0.86-0.94 over the planes and volumes that
+    // split; on the CCX, whose whole tasks go in runs of left / members, runs that large
+    // left a real 256^2 plane 1.035 slower, so chunk runs take at most half that share). A run
+    // never crosses a phase: the counter only rises within an epoch, so the value `claim`
+    // hands the lambda is at least this member's last claim, in phase p or later, and below
+    // `total`.
+    const auto runs = static_cast<std::uint32_t>(std::max(job_.plan.profile.claim_divisor, 2) *
+                                                 std::max(share.cap, 1));
     for (;;) {
       // While this member holds a claim the execution cannot end, so no word of this task
       // can carry a later tag before the loop leaves.
