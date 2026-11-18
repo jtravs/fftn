@@ -975,6 +975,7 @@ lanes run over is the pass's defining choice.
 | **Lane pass** | `q`: independent copies | R contiguous runs, a stream apart | one set per `p`, broadcast | every pass with at least C copies (s ≥ C): later passes of a chain; column phase of a grid; batches across rows; strided axes |
 | **Grouped pass** | `p`: consecutive butterflies | DIF: R contiguous runs, with the R × C block transposed in registers before the store; DIT: one contiguous block of R·C values transposed after the load | per-lane, from a table contiguous in `p` | every pass with fewer than C copies (s < C): the leading passes of a chain; leaf phase of a grid |
 | **Leaf** | — (whole transform in registers) | n values | constants | rows of n ≤ 16 … 64 |
+| **Batch leaf** | rows: lane l holds row u + l | C consecutive elements of each of C rows, C × C transposed in registers (the last block overlapping where C does not divide n); outputs transposed back | constants | contiguous c2c batches of rows of a codelet length whose row alone is the leaf, from a per-length batch count (X53): `avx2`, `avx512` (avx2's two rows per register, its own four from 4 rows at 11–23 points) in double, NEON in float |
 | **Pair leaf** | `p` then `q`: a grouped pass of whole units and a lane pass, both in registers | R1 contiguous runs per unit; the C × C transposes of the grouped pass's outputs are the lane pass's input | per-lane, as the grouped pass | contiguous c2c rows of n = R1 M (C dividing M) whose n / C registers fit the file: x86, 20–120 points (X28b), 8–18 and 22, 26 points in double (X37); NEON double 18–30 points, C = 1 (X37) |
 
 Each kind exists in DIF and DIT form, in complex-register and split arithmetic, and with
@@ -1022,7 +1023,11 @@ parameter, everything else accessors; gen/README.md has the codelet calling conv
   and X14): values are
   broadcast on loading and lane 0 is stored, so it takes any stride and runs in place, at
   the cost of C − 1 idle lanes; leaves vectorised across rows are the lanes strategy's
-  (section 8.5, task 2.2). A leaf kernel takes its first line's addresses and the distances to the next
+  (section 8.5, task 2.2) and, for short batches of contiguous rows, the **batch leaf**
+  (`src/passes/batch_leaf.inl`, X53): the same codelet over C rows at once, each lane doing
+  the leaf's arithmetic to its row, so a batch's rows keep the bits of a plan of one row
+  (the rules take it only for lengths whose row alone is the leaf); a single row left over
+  runs in the leaf's form. A leaf kernel takes its first line's addresses and the distances to the next
   line as arguments (`leaf_fn`), so the driver runs a batch of leaf rows as one call on the
   plan's own arguments (section 8.3, X20).
 - The **generic** pass (any radix by direct evaluation) and the copy are lane-form passes
