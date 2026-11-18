@@ -6,8 +6,9 @@
 //
 // 1. Whole tasks of its own cache group, in runs, from the group's counter.
 // 2. The split tasks of its group: it joins one (at most `cap` members each) and claims
-//    its chunks in order, in runs within one phase (a share of the phase's chunks left,
-//    shrinking to single chunks; X52). A chunk of phase p runs once every chunk of phase
+//    its chunks in order, in runs within one phase where the profile's claim divisor is 2
+//    (a share of the phase's chunks left, shrinking to single chunks; X52), else one at a
+//    time. A chunk of phase p runs once every chunk of phase
 //    p - 1 is done, which the task's done counter shows; the chunks of earlier phases were
 //    all claimed before it, by members that are running, so the wait never depends on a
 //    member that has not arrived. The member that claims chunk 0 owns the task: the task's

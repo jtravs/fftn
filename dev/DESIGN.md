@@ -2082,8 +2082,9 @@ As built (`src/threading/engine.hpp`, task 3.1):
 - **Claiming.** A member claims its group's whole tasks in runs (a share of what is left,
   shrinking to single tasks at the end), then joins its group's split tasks (at most `cap`
   members each, members starting on different tasks) and claims their chunks in order,
-  in runs within one phase (a share of the phase's chunks left, shrinking to single chunks,
-  as for whole tasks; X52); a chunk of phase p waits until the task's done counter shows phase p − 1
+  in runs within one phase where the profile's claim divisor is 2 (a share of the phase's
+  chunks left, shrinking to single chunks, as for whole tasks; X52: the Mac and the mesh),
+  one at a time on the CCX; a chunk of phase p waits until the task's done counter shows phase p − 1
   complete. Those chunks were all claimed before it, by members that are running, so no
   wait depends on a member that has not arrived. The member that claims a task's first
   chunk owns it: the task's shared scratch is the owner's slot, and the owner leaves only
