@@ -56,10 +56,12 @@ constexpr std::array<std::size_t, cost_radices> pass_radices{
 // (dev/experiments/X38-epyc-mid.md). 500, 3125, 10000 and 15625 take a radix-25 pass by
 // that rule (experiment X42, campaign x42-r25f-epyc: dev/experiments/X42-codelets.md); 5000
 // and 25000 by X42's arm B3: one sequence at most 0.97 of the planner's at both batches,
-// though the two batches' winners differ.
+// though the two batches' winners differ. 768 = 12 x 64 and 1024 = 16 x 64 are experiment
+// X54's (campaign x54-big-epyc, X38's rule): two passes, once the radix-64 codelet was ordered
+// for 16 registers (dev/experiments/X54-radix64-avx2.md).
 // clang-format off
 // NOLINTBEGIN(readability-trailing-comma): bench/x2/fit.py writes and parses this layout
-constexpr std::array<radix_override, 42> avx2_double_overrides{{
+constexpr std::array<radix_override, 43> avx2_double_overrides{{
     {.n = 27, .radices = {3, 9, 0, 0}},
     {.n = 42, .radices = {2, 3, 7, 0}},
     {.n = 54, .radices = {2, 3, 9, 0}},
@@ -82,8 +84,9 @@ constexpr std::array<radix_override, 42> avx2_double_overrides{{
     {.n = 640, .radices = {20, 32, 0, 0}},
     {.n = 675, .radices = {15, 5, 9, 0}},
     {.n = 700, .radices = {10, 5, 14, 0}},
-    {.n = 768, .radices = {4, 16, 12, 0}},
+    {.n = 768, .radices = {12, 64, 0, 0}},
     {.n = 896, .radices = {4, 16, 14, 0}},
+    {.n = 1024, .radices = {16, 64, 0, 0}},
     {.n = 1536, .radices = {6, 16, 16, 0}},
     {.n = 1920, .radices = {10, 16, 12, 0}},
     {.n = 2000, .radices = {10, 10, 20, 0}},
