@@ -113,10 +113,6 @@ constexpr std::array size_fields{
         .member = &fftn::detail::machine_profile::grid_two_pow2_bytes,
     },
     size_field{
-        .key = "FIT_ROW_BYTES",
-        .member = &fftn::detail::machine_profile::fit_row_bytes,
-    },
-    size_field{
         .key = "DEPTH_MIN_BYTES",
         .member = &fftn::detail::machine_profile::depth_min_bytes,
     },
@@ -191,6 +187,16 @@ inline bool apply_tuning(fftn::detail::build_settings& s, std::string_view key,
       }
       return true;
     }
+  }
+  // 0 is a value here: the field off, the plans as without it (X57's control arm).
+  if (key == "FIT_ROW_BYTES") {
+    const std::optional<std::size_t> v = parse_size(value, 0, false);
+    if (!v) {
+      error = bad + " (a whole number)";
+    } else {
+      s.profile.fit_row_bytes = *v;
+    }
+    return true;
   }
   for (const size_field& f : size_fields) {
     if (key == f.key) {
