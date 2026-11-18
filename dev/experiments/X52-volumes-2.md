@@ -87,6 +87,16 @@ here and committed before its judging run.
   measured in this experiment; G is adopted there only if a Mac run at 6 lanes meets the same
   rule.
 
+- **Arm W4 (x86-64 with a private L2):** a c2c lanes column phase widens its block to 1 KiB of
+  columns (64 complex doubles) where both tiles fit `column_tile_bytes` (a quarter of L2):
+  columns of up to 64 points on the EPYC, 128 on the Xeon (`machine_profile::
+  column_wide_bytes`). The team program's blocks are clamped after it as before (B1). Bits
+  unchanged. Decision rule, written before its judging runs, per machine (EPYC, Xeon; GCC):
+  adopt W4 if (1) the geometric mean of W4 ÷ L at one thread over the cases of the case set
+  whose program W4 changes (by describe) is at most 0.97, and (2) no case of the case set is
+  slower than L by more than the larger of 2 % and the run's A/A band, at one thread or at 8
+  lanes (a case just past it on a loaded machine is re-run once before it decides).
+
 ## Results
 
 ### Screens (not judging)
@@ -149,6 +159,13 @@ W1 changes 30 of the 42 volumes: W1 ÷ L 0.993 over them (worst 100³ 1.06, 2 ×
   overloaded, band ±6.8 %): G ÷ L 0.904 (128 × 64 × 32 0.71–0.76, 256 × 256 × 16 0.70–0.78,
   512 × 64 × 64 0.77–0.78, 4 × 512 × 512 0.78–0.84, 128³ 0.83–0.88, 64³ 0.86; 97³ in place
   1.17, 64 × 64 × 512 1.09–1.10, past or near the band).
+
+- EPYC W4 screens, runs 20261118-010214-dc58 (volumes; Slurm 512556; band ±2.3 %) and
+  20261118-010214-5323 (the 132 planes and volumes; Slurm 512558; band ±2.0 %), against L at one
+  thread and at 8 lanes: W4 ÷ L 0.932 over the 25 volumes it changes (64³ 0.88–0.89, 48³
+  0.88–0.89, 512 × 64 × 64 0.88–0.93, 64 × 64 × 512 0.89–0.94), none slower; 0.959 over the
+  13 planes it changes; at 8 lanes 1.001 (64³ 1.07–1.08, past the band; the team program's
+  blocks are the same).
 
 ### G on the Mac at 6 lanes (judging)
 
