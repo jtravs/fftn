@@ -278,12 +278,14 @@ TEST(Depth, RulesTakeItByTheProfile) {
     };
     for (const fftn::isa t : fftn::test::runnable_isas()) {
       const std::string name = fftn::isa_name(t);
-      const bool wide = name == "avx512" || name == "neon" || name == "neon_fcma";
+      // A top of 4 is taken on `avx2` too (16 registers suffice up to 8, X51).
+      const bool taken =
+          name == "avx512" || name == "neon" || name == "neon_fcma" || name == "avx2";
       SCOPED_TRACE(name);
-      EXPECT_EQ(planned_on(8192, t), wide);  // part 8192 points: 128 KiB
-      EXPECT_EQ(planned_on(12288, t), wide); // part 4096
-      EXPECT_FALSE(planned_on(10000, t));    // part 16
-      EXPECT_FALSE(planned_on(9216, t));     // part 1024: 16 KiB, not above
+      EXPECT_EQ(planned_on(8192, t), taken);  // part 8192 points: 128 KiB
+      EXPECT_EQ(planned_on(12288, t), taken); // part 4096
+      EXPECT_FALSE(planned_on(10000, t));     // part 16
+      EXPECT_FALSE(planned_on(9216, t));      // part 1024: 16 KiB, not above
     }
   }
   // X51's limits: powers of two only up to depth_pow2_max_bytes; tops up to 8 on `avx2` too
