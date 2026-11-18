@@ -472,12 +472,9 @@ std::vector<std::size_t> depth_tops_for(std::size_t n, const build_settings& set
     const std::size_t bytes = n * 2 * sizeof(T);
     const machine_profile& m = settings.profile;
     const bool wide = isa == target::avx512 || isa == target::neon || isa == target::neon_fcma;
-    const std::size_t max_bytes = convolution
-                                      ? std::max(m.depth_max_bytes, m.depth_convolution_max_bytes)
-                                      : m.depth_max_bytes;
-    if (!std::is_same_v<T, double> || !wide || m.depth_max_bytes == 0 ||
-        bytes < m.depth_min_bytes || bytes > max_bytes ||
-        (n & (~n + 1)) * 2 * sizeof(T) <= m.depth_part_bytes) {
+    const std::size_t max_bytes = convolution ? m.depth_convolution_max_bytes : m.depth_max_bytes;
+    if (!std::is_same_v<T, double> || !wide || max_bytes == 0 || bytes < m.depth_min_bytes ||
+        bytes > max_bytes || (n & (~n + 1)) * 2 * sizeof(T) <= m.depth_part_bytes) {
       return {};
     }
     if (!settings.depth_tops.empty()) {
@@ -526,10 +523,11 @@ std::vector<std::size_t> depth_tops_of(std::size_t n, const side& in, const side
 // bluestein_depth; experiment X50) for a c2c row of one axis of n whose chain is that one
 // stage (bluestein_single: a prime, one copy, no Rader root), or none: on the conditions of
 // depth_tops_of for the row, and with the tops a row of the convolution's length M would
-// take (depth_tops_for: by the rules where the profile's depth-first range, extended to
-// depth_convolution_max_bytes, holds M, or forced with strategy depth). The convolution's two
-// chains of M are the stage's cost: on the Xeon 6240 a breadth-first chain of 2^18 points took
-// 8.2 ns per point against 4.4 depth-first, of 2073600 points 17.0 against 9.5 (X50's screen).
+// take (depth_tops_for: by the rules where the profile's depth-first range, with
+// depth_convolution_max_bytes as its upper limit, holds M, or forced with strategy depth). The
+// convolution's two chains of M are the stage's cost: on the Xeon 6240 a breadth-first chain of
+// 2^18 points took 8.2 ns per point against 4.4 depth-first, of 2073600 points 17.0 against 9.5
+// (X50's screen).
 template <class T>
 std::vector<std::size_t> bluestein_tops_of(std::size_t n, const side& in, const side& out,
                                            const build_settings& settings,

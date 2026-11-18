@@ -643,10 +643,10 @@ TEST(Schedule, ProfilesOfRecordedMachines) {
   constexpr std::size_t never = std::numeric_limits<std::size_t>::max();
   // The values before X35 (main at 2eea943).
   EXPECT_EQ(fields("macos-apple-m5-max.sysctl", false),
-            (planner_fields{128 * kib, 2 * mib,   128 * kib, 4 * mib,   4 * kib, 0,    0,
-                            16 * kib,  256 * kib, never,     64 * mib,  2 * mib, true, 0,
-                            0,         0,         32 * kib,  128 * kib, 0,       0,    128 * kib,
-                            256 * kib, 16 * kib,  4,         0,         0}));
+            (planner_fields{128 * kib, 2 * mib,   128 * kib, 4 * mib,   4 * kib,  0,    0,
+                            16 * kib,  256 * kib, never,     64 * mib,  2 * mib,  true, 0,
+                            0,         0,         32 * kib,  128 * kib, 0,        0,    128 * kib,
+                            256 * kib, 16 * kib,  4,         0,         256 * kib}));
   EXPECT_EQ(
       fields("linux-amd-epyc-7763.sysfs", true),
       (planner_fields{256 * kib, 512 * kib, 32 * kib, 128 * kib, never, 0, 0, 16 * kib, 0,

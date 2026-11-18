@@ -1432,11 +1432,12 @@ loop over a scratch-resident line, and a grid convolution a second movable works
 neither is expressible yet (X36b). A Bluestein stage of one copy (a c2c row of one axis
 whose chain is that stage, `chain_builder::bluestein_single`) instead runs its convolution
 as two depth-first chains (section 8.5's depth-first chain; experiment X50,
-`chain_builder::bluestein_depth`) where the profile's depth-first fields would make a row of
-M one, and on profiles with `machine_profile::depth_convolution_max_bytes` beyond that range
-too (the Xeon's: 32 MiB, 2²¹ complex doubles, the longest convolution measured; beyond it
-the breadth-first chain, unmeasured. A convolution is never a grid, so the alternative is the
-breadth-first chain). The workspace block is the movable line: the forward chain's first pass reads the
+`chain_builder::bluestein_depth`) in double where the profile's depth-first fields would make
+a row of M one, with `machine_profile::depth_convolution_max_bytes` as the upper limit in
+place of the rows' (the convolutions measured: the Xeon's 32 MiB, 2²¹ complex doubles, beyond
+its rows' original 4 L2 since a convolution is never a grid and the alternative is the
+breadth-first chain; Apple's 2 L1); longer convolutions keep the breadth-first chain,
+unmeasured. The workspace block is the movable line: the forward chain's first pass reads the
 input times the chirp (zero from Q on: the chirp pass in, fused) and writes its sub-row
 blocks into the block, a loop over the blocks runs the sub-rows (with scratch a and b), and
 its top pass writes into scratch a times the kernel spectrum (the top pass's factor edge);
@@ -1807,8 +1808,8 @@ prices them) a cost per unit and a cost per tail, and a cost per pass. For a lin
    power of two; experiment X36, section 8.5). A Bluestein stage with 1 < n / Q < C copies
    becomes one stage of n where M(n) ≤ (n / Q) M(Q) (X36), and so does one with
    n / Q = C copies while n's line is not long (X36b). A stage of one copy runs its
-   convolution on two depth-first chains where a row of M would be a depth-first chain, or
-   M lies up to the profile's `depth_convolution_max_bytes` (X50, section 8.5).
+   convolution on two depth-first chains in double where a row of M would be a depth-first
+   chain, M up to the profile's `depth_convolution_max_bytes` (X50, section 8.5).
 4. The codelet passes are the sequence of radices from 2 to 16 (and 32 and 64 where the
    table's unit cost for them is not 0) multiplying to n_s with the
    lowest cost, the sum of its passes' costs. The pass of radix R after passes whose

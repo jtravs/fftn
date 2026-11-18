@@ -198,6 +198,7 @@ void rules_agree_with_chain(fftn::isa target, std::size_t q, fftn::direction dir
   depth.profile.depth_part_bytes = 0;
   depth.profile.depth_top = 16;
   depth.profile.depth_top_alt = 20;
+  depth.profile.depth_convolution_max_bytes = std::size_t{4} * 1024 * 1024;
   depth.profile.bluestein_pow2_part_bytes = SIZE_MAX;
   // 34560 = 2^8 3^3 5 points (540 KiB in double), which a top of 16 and every complex count
   // split; the rule's own length may be odd (no top fits).
@@ -247,9 +248,9 @@ TEST(BluesteinDepth, RulesPlanAgreesWithTheChain) {
   }
 }
 
-// The rules: where the profile's depth-first range holds the convolution's length (and the
-// rest of depth_tops_of's conditions on a row of that length hold), beyond it up to the
-// profile's depth_convolution_max_bytes, not elsewhere; never with
+// The rules: where the profile's depth-first range, with depth_convolution_max_bytes as its
+// upper limit, holds the convolution's length (and the rest of depth_tops_of's conditions on a
+// row of that length hold), not elsewhere; never with
 // the chain forced, with a stride, or for a Rader prime.
 TEST(BluesteinDepth, RulesTakeItWhereARowOfMWould) {
   const auto planned = [](std::size_t q, fftn::isa isa, bool on, strategy_choice strategy,
@@ -262,7 +263,8 @@ TEST(BluesteinDepth, RulesTakeItWhereARowOfMWould) {
     settings.profile.depth_part_bytes = 0;
     settings.profile.depth_top = 16;
     settings.profile.depth_top_alt = 20;
-    settings.profile.depth_convolution_max_bytes = beyond ? SIZE_MAX : 0;
+    settings.profile.depth_convolution_max_bytes =
+        !on ? 0 : (beyond ? SIZE_MAX : std::size_t{4} * 1024 * 1024);
     settings.profile.bluestein_pow2_part_bytes = SIZE_MAX;
     const fftn::shape<std::complex<double>, std::complex<double>> shape{
         .dir = fftn::direction::forward,
@@ -282,7 +284,7 @@ TEST(BluesteinDepth, RulesTakeItWhereARowOfMWould) {
     EXPECT_FALSE(depth_convolution(planned(16411, t, true, strategy_choice::chain)));
     EXPECT_FALSE(depth_convolution(planned(16411, t, true, strategy_choice::rules, 2)));
     EXPECT_FALSE(depth_convolution(planned(1031, t, true, strategy_choice::rules))); // M short
-    // Beyond the rows' range (M at least 2^19 points, 8 MiB) only with the convolutions' limit.
+    // Beyond 4 MiB (M at least 2^19 points, 8 MiB) only with a larger convolutions' limit.
     EXPECT_FALSE(depth_convolution(planned(400009, t, true, strategy_choice::rules)));
     EXPECT_EQ(depth_convolution(planned(400009, t, true, strategy_choice::rules, 1, 0, true)),
               wide);

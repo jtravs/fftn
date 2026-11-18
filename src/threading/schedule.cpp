@@ -204,6 +204,9 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
     p.depth_max_bytes = 2 * c.l1d.size;
     p.depth_part_bytes = c.l1d.size / 8;
     p.depth_top = 4;
+    // Experiment X50: Bluestein convolutions on the depth-first chain over the same range
+    // (primes 4813-5119, M 10240, 0.86 of their time on the M5 Max).
+    p.depth_convolution_max_bytes = 2 * c.l1d.size;
   }
   p.c2r_paired_gather = c.l2.size != 0 && !private_l2;
   // Experiment X36: long convolutions (machine_profile::long_convolution_bytes).
