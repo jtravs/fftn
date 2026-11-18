@@ -836,7 +836,24 @@ GCC then kept the 32 leg offsets in stack slots and every leg load waited on an 
 Zen 3's counters need groups of at most five events with the NMI watchdog on (a group of
 six never runs). [X47](experiments/X47-epyc-mid-2.md).
 
-4.20 **To run short rows side by side in the lanes, transpose blocks in registers; gather
+4.20 **Past the register file, order straight-line code for the allocator, not for the
+fewest live values; a model of the allocator is enough to choose the order.** GCC on x86
+allocates registers in source order (it schedules only after allocation), so a generated
+codelet's emission order decides its spills. FFTN's radix-64 codelet, ordered for the fewest
+live values (peak 67), spilled 149 values and reloaded 178 per AVX2 lane unit with GCC 16; a
+furthest-next-use (Belady) model of eviction in 16 registers counted 292 moves where GCC had
+327, close enough to rank orders. A list scheduler that prefers operations whose operands
+are among the 12–16 values touched most recently (peak 71, more live values) cut the model
+to 146 and GCC's stack stores and loads to 87 + 107, with the same operations and bits. That
+took a 1024-point 16 × 64 plan on the EPYC 7763 from 0.96 to 0.84 of the planner's
+three-pass plan (IPC 3.14 → 3.48, cycles level with FFTW's), where X42's two-level
+codelets (staged through memory, 4–12 % more arithmetic) had changed nothing: the same
+spill reduction is free when it comes from order alone. The other warning: the 16 × 64
+plan then won at batches 1–256 and lost 25 % at 1024 × 1024 (16 MiB, beyond L2; FFTW's
+two-pass plan lost as much), so a per-length radix override was the wrong carrier.
+[X54](experiments/X54-radix64-avx2.md).
+
+4.21 **To run short rows side by side in the lanes, transpose blocks in registers; gather
 per element only where registers run out, and keep the last row out of a padded group.** A
 leaf over C rows of a batch at once (one row per lane) beat the 128-bit leaf by 0.65–0.95
 at 9–23 points on the EPYC 7763 and the Xeon 6240 (25 points 0.45) and by about 0.55 in float
@@ -957,7 +974,9 @@ times their one-thread time on the Xeon 6240 (c2c 96² 1.7–2.0, real 96² 2.3�
 96²–100² 1.1–1.3 on the EPYC 7763, while c2c 96² gained there (unsplit 1.3–1.4): each phase
 of a plane moves it between the members' private caches. On the M5 Max, whose cluster shares
 L2, the same real planes gained from splitting (unsplit 1.2–1.5). Compare a real transform's
-complex points with thresholds fitted on complex rows. [X52](experiments/X52-volumes-2.md).
+complex points with thresholds fitted on complex rows: with that, and planes split only from
+32768 points on the mesh, those Xeon planes took 0.35–0.67 of the time and the EPYC's real ones
+0.72–0.90. [X52](experiments/X52-volumes-2.md).
 
 ## 6. Toolchain and testing pitfalls
 

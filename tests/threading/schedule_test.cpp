@@ -265,6 +265,53 @@ TEST(Schedule, SplitThresholds) {
   EXPECT_EQ(share_of(tiny, {.lanes = 8}, 0).split, 0U);
 }
 
+// Planes and volumes (X52 arm S): a real plane is split by its complex points where the
+// profile says (a private L2), and on a mesh a plane is split only from
+// split_min_points_lines points.
+TEST(Schedule, PlaneSplitThresholds) {
+  const auto plane = [](bool real, const machine_profile& p) {
+    fftn::detail::build_settings settings;
+    settings.profile = p;
+    return real ? fftn::detail::make_plan_core(
+                      fftn::detail::view_of(fftn::planes_r2c<double>(96, 96, 1)), {}, settings)
+                : fftn::detail::make_plan_core(fftn::detail::view_of(fftn::planes_c2c<double>(
+                                                   96, 96, 1, fftn::direction::forward)),
+                                               {}, settings);
+  };
+  const lane_map lanes{.lanes = 8};
+  const auto split = [&](bool real, const machine_profile& p) {
+    const schedule s = make_schedule(plane(real, p)->graph, lanes, p);
+    return share_of(s, lanes, 0).split;
+  };
+  machine_profile p = profile();
+  EXPECT_EQ(split(false, p), 1U); // 9216 points
+  EXPECT_EQ(split(true, p), 1U);  // 9216 real points
+  p.split_complex_points = true;  // 96 x 49 complex points: below 6144
+  EXPECT_EQ(split(false, p), 1U);
+  EXPECT_EQ(split(true, p), 0U);
+  machine_profile mesh = profile();
+  mesh.split_min_points_lines = 32768;
+  EXPECT_EQ(split(false, mesh), 0U);
+  // Rows are unaffected by either.
+  mesh.split_complex_points = true;
+  const schedule row = make_schedule(rows(65536, 1)->graph, lanes, mesh);
+  EXPECT_EQ(share_of(row, lanes, 0).split, 1U);
+  // The recorded machines: the Xeon's mesh and both x86 private L2s, not the M5 Max.
+  const std::filesystem::path data(FFTN_PLATFORM_DATA);
+  const machine_profile m5 =
+      fftn::detail::profile_for(fftn::detail::load_topology(data / "macos-apple-m5-max.sysctl"));
+  const machine_profile epyc =
+      fftn::detail::profile_for(fftn::detail::load_topology(data / "linux-amd-epyc-7763.sysfs"));
+  const machine_profile xeon = fftn::detail::profile_for(
+      fftn::detail::load_topology(data / "linux-intel-xeon-gold-6240.sysfs"));
+  EXPECT_EQ(xeon.split_min_points_lines, 32768U);
+  EXPECT_EQ(epyc.split_min_points_lines, 0U);
+  EXPECT_EQ(m5.split_min_points_lines, 0U);
+  EXPECT_TRUE(xeon.split_complex_points);
+  EXPECT_TRUE(epyc.split_complex_points);
+  EXPECT_FALSE(m5.split_complex_points);
+}
+
 // Rules 4 and 5: rows are dealt to groups in proportion to their members; a batch smaller
 // than a group stays in one group.
 TEST(Schedule, DealsToGroups) {

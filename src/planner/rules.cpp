@@ -56,7 +56,14 @@ constexpr std::array<std::size_t, cost_radices> pass_radices{
 // (dev/experiments/X38-epyc-mid.md). 500, 3125, 10000 and 15625 take a radix-25 pass by
 // that rule (experiment X42, campaign x42-r25f-epyc: dev/experiments/X42-codelets.md); 5000
 // and 25000 by X42's arm B3: one sequence at most 0.97 of the planner's at both batches,
-// though the two batches' winners differ.
+// though the two batches' winners differ. 768 = 12 x 64 is experiment X54's (campaign
+// x54-big-epyc, X38's rule): two passes, once the radix-64 codelet was ordered for 16
+// registers (dev/experiments/X54-radix64-avx2.md). 1024 = 16 x 64 passed the same rule and ran
+// 0.84-0.95 of 4.16.16's time at batches 1-256, but 1.25 at 1024 x 1024 (16 MiB; FFTW's
+// two-pass plan as slow) and 1.14 in the 1024 x 1024 plane, so it has no override: an override
+// cannot see the batch (X54). In float (avx2_float_overrides) the
+// same campaign and rule chose 512 = 8 x 64, 640 = 32 x 20, 768 = 12 x 64, 2048 = 32 x 64 and
+// 4096 = 8 x 32 x 16 (X54 arm C).
 // clang-format off
 // NOLINTBEGIN(readability-trailing-comma): bench/x2/fit.py writes and parses this layout
 constexpr std::array<radix_override, 42> avx2_double_overrides{{
@@ -82,7 +89,7 @@ constexpr std::array<radix_override, 42> avx2_double_overrides{{
     {.n = 640, .radices = {20, 32, 0, 0}},
     {.n = 675, .radices = {15, 5, 9, 0}},
     {.n = 700, .radices = {10, 5, 14, 0}},
-    {.n = 768, .radices = {4, 16, 12, 0}},
+    {.n = 768, .radices = {12, 64, 0, 0}},
     {.n = 896, .radices = {4, 16, 14, 0}},
     {.n = 1536, .radices = {6, 16, 16, 0}},
     {.n = 1920, .radices = {10, 16, 12, 0}},
@@ -103,16 +110,21 @@ constexpr std::array<radix_override, 42> avx2_double_overrides{{
     {.n = 20000, .radices = {8, 5, 10, 5, 10}},
     {.n = 25000, .radices = {10, 5, 20, 25, 0}},
 }};
-constexpr std::array<radix_override, 13> avx2_float_overrides{{
+constexpr std::array<radix_override, 18> avx2_float_overrides{{
     {.n = 90, .radices = {9, 10, 0, 0}},
     {.n = 140, .radices = {4, 5, 7, 0}},
     {.n = 240, .radices = {4, 6, 10, 0}},
     {.n = 336, .radices = {4, 12, 7, 0}},
     {.n = 486, .radices = {9, 9, 6, 0}},
+    {.n = 512, .radices = {8, 64, 0, 0}},
     {.n = 560, .radices = {4, 10, 14, 0}},
     {.n = 567, .radices = {9, 9, 7, 0}},
+    {.n = 640, .radices = {32, 20, 0, 0}},
     {.n = 700, .radices = {4, 5, 5, 7}},
+    {.n = 768, .radices = {12, 64, 0, 0}},
+    {.n = 2048, .radices = {32, 64, 0, 0}},
     {.n = 3600, .radices = {16, 15, 15, 0}},
+    {.n = 4096, .radices = {8, 32, 16, 0}},
     {.n = 4800, .radices = {8, 10, 4, 15}},
     {.n = 7200, .radices = {12, 4, 10, 15}},
     {.n = 8192, .radices = {8, 8, 16, 8}},

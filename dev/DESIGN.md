@@ -896,7 +896,11 @@ high-precision verification. It is documented in `gen/README.md` (section 17).
    the number of live values near the minimum, which matters for radix ≥ 16 on 16
    registers and ≥ 32 on 32. (The recursive partition of Frigo's PLDI 1999 paper was tried
    first and kept more values live; the commit that holds it is named in
-   `gen/fftn_gen/schedule.py`.) A codelet whose radix exceeds
+   `gen/fftn_gen/schedule.py`.) Past the register file the fewest live values is the wrong
+   aim: a complex codelet that cannot fit 16 registers is also ordered by a list scheduler
+   that tracks a model register file, and takes that order where a furthest-next-use model
+   of the allocator counts at least a quarter fewer spill moves (radix 32 and 64; GCC
+   allocates in source order on x86; experiment X54). A codelet whose radix exceeds
    the register count necessarily keeps some values on the stack; that is acceptable when
    the spills are few and ordered (FFTW's radix-32 and radix-64 codelets work this way),
    and ruinous when they are not: the prototype's hand-built radix 20, 24 and 32
@@ -1663,7 +1667,12 @@ bytes of columns (an x86 line, half an Apple line), and the columns run alone th
 chain if they still exceed it (X40's sweeps: wide blocks won where each element of a column
 has its own page, 2048² on the EPYC 0.126 of the chain columns' time with 16 columns against
 0.183 with 4, the M5 Max's 1024² 0.46 with 32 against 0.50 with 16; where rows share pages a
-block whose tiles left L2 lost, Xeon 2048 × 36 0.79 with 4 columns and 1.09 with 16). The columns past the last whole block run as one
+block whose tiles left L2 lost, Xeon 2048 × 36 0.79 with 4 columns and 1.09 with 16). On
+the profile of a private L2 with a large L3 behind it (the EPYC 7763), the one-thread
+program's c2c blocks then widen to 1 KiB of columns where both tiles fit `column_tile_bytes`
+(`column_wide_bytes`; X52 arm W4b: 0.933 of the time over the 38 planes and volumes it
+changes, 64 × 64 × 512 0.87–0.88), while teams keep these blocks in a team program (the Xeon's
+8 lanes lost up to 1.46 with the wide ones, and its one thread 1.05 at 30 × 40 × 50). The columns past the last whole block run as one
 narrower block (a loop's `start` offsets its nest), its idle lanes never written. A block is
 a line of the phase's loop nest, so threads share blocks as they share rows (13.2); the
 narrower block's nest is a phase of its own, of one chunk (joining it to the whole blocks'
@@ -2097,9 +2106,8 @@ As built (`src/threading/engine.hpp`, task 3.1):
 - **Claiming.** A member claims its group's whole tasks in runs (a share of what is left,
   shrinking to single tasks at the end), then joins its group's split tasks (at most `cap`
   members each, members starting on different tasks) and claims their chunks in order,
-  in runs within one phase where the profile's claim divisor is 2 (a share of the phase's
-  chunks left, shrinking to single chunks, as for whole tasks; X52: the Mac and the mesh),
-  one at a time on the CCX; a chunk of phase p waits until the task's done counter shows phase p − 1
+  in runs within one phase (a share of the phase's chunks left, at most left / (2 × cap),
+  shrinking to single chunks; X52); a chunk of phase p waits until the task's done counter shows phase p − 1
   complete. Those chunks were all claimed before it, by members that are running, so no
   wait depends on a member that has not arrived. The member that claims a task's first
   chunk owns it: the task's shared scratch is the owner's slot, and the owner leaves only
@@ -2136,7 +2144,10 @@ schedule, tested by simulation. Starting rules, each with its measurement:
    long enough to split, so the last row does not cost a whole extra round.
 3. Split a row only inside one cache group, with at least about 1024 points per member,
    and only from about 6000 points in a small group, 8000 on an Apple performance
-   cluster or a large mesh-connected one (experiment T5).
+   cluster or a large mesh-connected one (experiment T5). A real plane or volume counts its
+   complex points where each core has its own L2, and on a mesh-connected L3 a plane or
+   volume is split only from 32768 points (X52 arm S: its phases move it between the members'
+   caches).
 4. Deal rows to cache groups; only lanes that have work do any. Under OpenMP that means
    surplus team members return at once from a region of constant width, not a narrower
    region: libgomp ends and restarts threads when the width changes.
@@ -3057,9 +3068,13 @@ to change before a release.
 | 2026-11-17 | A plan may hold a team program (`plan_core::team`) that every team of two or more runs: the same transform with narrower lanes column blocks (at most `column_team_bytes`: 128 on x86-64 with a private L2 and a large L3, the EPYC), chain-only columns as blocks of a line with the chain's radices, and (X43b) a volume's inner axes plane at a time; serial executions run the program. Bits are the program's by construction (a column's result does not depend on its block, a line's on the order of lines) and tested (sections 9.3, 13.2) | X43: at 8 lanes on the EPYC the narrower blocks took 0.887 of the time over the c2c planes and volumes they change and the line blocks 0.72 at 2048 × 36, while one thread lost up to 1.42 with them; the plan does not know at construction whether teams will run it |
 | 2026-11-17 | c2c volumes: one thread keeps the axes one by one; a team runs the two inner axes plane at a time (the team program) where the profile's `team_volume_planes` says (x86-64, private L2 below 2 MiB); the outer axis over blocks of adjacent pencils by `column_block`'s rule (section 9.3) | X43b: one thread EPYC 0.979, Xeon 0.934 with 97³ 1.048, M5 Max 0.962 (rejected everywhere); 8 lanes EPYC 0.775 (VT), Xeon 0.771 (VTX) |
 | 2026-11-17 | The `avx512` units are assembled with branches padded off 32-byte boundaries (`-Wa,-mbranches-within-32B-boundaries`, GCC on x86-64 only) | Bisect of the Xeon 6240's small-row loss: the plans did not change; the merge of X40 moved code and c2c 160, 180, 240 took 1.10 of their time (run 20261117-184544-8056), a JCC-erratum placement effect; padded, 160–384 0.89–0.94 and tracking 0.996 with nothing slower (20261117-204818-1541, -205228-e841); the flag on every unit slowed the EPYC 5–11 %, so `avx2` units stay unpadded; LESSONS 2.11. Unmeasured on Ice Lake and later and on Zen 4/5 (cloud tracking checks it) |
+| 2026-11-18 | Complex codelets that cannot fit 16 registers (radix 32 and 64) are emitted in an order fitted to a model register file where a furthest-next-use model of the allocator counts at least a quarter fewer spill moves (section 7.2, step 5); `avx2` double 768 = 12 × 64 and float 512 = 8 × 64, 640 = 32 × 20, 768 = 12 × 64, 2048 = 32 × 64, 4096 = 8 × 32 × 16 (X54) | GCC 16 allocates in source order on x86: radix-64 lane unit stack stores and loads 149 + 178 → 87 + 107; EPYC plans with a radix-32/64 pass 0.975, tracking EPYC 0.994, Xeon 0.999, Mac 0.999; bit-identical. With it the two-pass plans win: 768 0.84 (÷ FFTW 1.08 → 0.91), float 0.79–0.95. 1024 = 16 × 64 (÷ FFTW 1.21 → 1.01 at batch 1) is not taken: 1.25 at 1024 × 1024, and an override cannot see the batch |
 | 2026-11-18 | Batch leaves (X53): a contiguous c2c batch of a codelet length whose row alone is the leaf runs C rows per register (C × C block transposes in registers, a last row alone in the leaf's form) from a per-length batch count in the target profile; NEON float, avx2 and avx512 double (avx2's two rows per register in avx512 plans, its own four from four rows at 11–23 points) | Each lane does the leaf's arithmetic, so a batch's rows keep a single row's bits; 15 × 2 backward 1.21 → 0.88 of FFTW on the EPYC, 1.16 → 0.90 on the Xeon, NEON float batches 0.61 of the leaf; per-element gathers, padded groups for leftover rows, avx512's four rows on batches of two or three and chains through a tile all lost (experiment file) |
 | 2026-11-18 | A lanes column phase whose column has a leaf length and whose legs crowd one L1 set runs as the most balanced two lane passes whose last pass fits (16 = 4 × 4), except on `avx512` (section 9.3) | X52: M5 Max 16 × 256 × 256 0.54–0.57 of the leaf's time, EPYC 16³ 0.66–0.67 and 16 × 256 × 256 0.85–0.87; Xeon 6240 0.94–1.00 (0.966, under the rule's 0.95) |
 | 2026-11-18 | A member claims a split task's chunks in runs within a phase (a share of the phase's chunks left, as for whole tasks) where the profile's claim divisor is 2 (Apple, the mesh); single chunks on the CCX (section 13) | X52: at 8 lanes Xeon 0.91 over the planes and volumes that split, Mac at 6 lanes 0.86–0.94; EPYC volumes 0.877 and planes 0.882 but real 256² 1.035 on re-run (rule 2 failed; arm G2 pending); bits unchanged |
+| 2026-11-18 | A real plane or volume is split by its complex points (last axis n / 2 + 1) where each core has its own L2; on a mesh-connected L3 a plane or volume is split only from 32768 points (`machine_profile::split_complex_points`, `split_min_points_lines`; section 13, rule 3) | X52 arm S: at 8 lanes single planes of 9216–16384 points took up to 2.9 times their one-thread time on the Xeon 6240 and real 96²–100² 1.1–1.3 on the EPYC 7763; with S, Xeon 0.35–0.67 on those cases, EPYC real 96²–100² 0.72–0.90; the M5 Max (cluster L2) lost 1.29 with S1, so it keeps the real points |
+| 2026-11-18 | On x86-64 with a private L2 and a large L3 (the EPYC 7763), the one-thread program's c2c column blocks widen to 1 KiB of columns where both tiles fit `column_tile_bytes`; teams keep the narrower blocks in a team program (section 9.3) | X52 arms W4 and W4b: one thread EPYC 0.933 over 38 changed cases, Xeon 0.95 but 30 × 40 × 50 1.05 on re-run (rejected there); W4 in teams lost up to 1.46 on the Xeon's 8 lanes |
+| 2026-11-18 | Chunk runs on every profile, of at most left / (2 × cap) chunks (X52 arm G2), replacing their restriction to claim divisor 2 | X52: EPYC at 8 lanes 0.910 (volumes) and 0.896 (planes) over the cases that split, the real 256² that failed G at 1.04 and 0.98 on re-run; the Mac and the Xeon unchanged (their divisor is 2) |
 | 2026-11-18 | The depth-first chain (section 8.5) takes one top factor that C does not divide (a partial first-pass block); the rules gain a third top, a limit for powers of two, single precision by profile and tops up to 8 on `avx2`; the Xeon 6240's profile runs it to 64 L2 with a third top of 10 and in float to 8 L2, the Apple profile to 16 L1 for lengths that are not powers of two, the EPYC 7763's profile (top 4, private L2 under 1 MiB) for lengths that are not powers of two from L2/4 to 4 L2 (X51) | X51 judged on each machine: Xeon 25000 0.75 (1.35 → 1.00 of FFTW), 524288–2²² 0.68–0.75, float 0.687; Mac mixed rows 0.735; EPYC mixed rows and 46080 0.730 (1.06–1.39 → 0.83–1.01 of FFTW); tracking tiers clean; Granite Rapids unmeasured, unchanged |
 
 ---

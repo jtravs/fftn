@@ -70,8 +70,7 @@ inline fftn::detail::machine_profile eager_profile() {
   p.split_min_points_mesh = 1;
   p.remainder_split_min_points = 1;
   p.cpus = 0;
-  // Runs of chunks as well as of whole tasks (team_engine::join claims a split task's chunks
-  // in runs only where the divisor is at least 2, X52).
+  // Whole tasks in runs of at most half a share, as chunks are (team_engine::join, X52).
   p.claim_divisor = 2;
   // Short budgets, so that waiting members block and the wake-ups are exercised.
   p.spin_ns = 2000;
