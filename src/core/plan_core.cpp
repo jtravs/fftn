@@ -530,9 +530,10 @@ template <class T>
 std::vector<std::size_t> bluestein_tops_of(std::size_t n, const side& in, const side& out,
                                            const build_settings& settings,
                                            const chain_builder<T>& chain, target isa) {
-  if (settings.strategy != strategy_choice::depth || settings.in_factor != nullptr ||
-      settings.out_factor != nullptr || settings.scale_on_input || in.stride[0] != 1 ||
-      out.stride[0] != 1 || !settings.radices.empty()) {
+  if ((settings.strategy != strategy_choice::depth &&
+       settings.strategy != strategy_choice::rules) ||
+      settings.in_factor != nullptr || settings.out_factor != nullptr || settings.scale_on_input ||
+      in.stride[0] != 1 || out.stride[0] != 1 || !settings.radices.empty()) {
     return {};
   }
   const std::size_t q = chain.bluestein_single(n);

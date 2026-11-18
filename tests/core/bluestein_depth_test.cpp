@@ -5,7 +5,9 @@
 // src/strategies/chain.hpp bluestein_depth; experiment X50), forced on short primes so that
 // the quadruple-precision reference stays cheap: one and two top factors, every instruction
 // set the machine runs, double and float, both directions, the scale on the chirp pass out,
-// batches with padded distances, and in place.
+// batches with padded distances, and in place; the rules take it where a row of the
+// convolution's length would be a depth-first chain; and where it cannot run (strides, a
+// Rader prime, copies) the row keeps its Bluestein chain.
 
 #include "core/plan_core.hpp"
 #include "fftn/detail/core.hpp"
@@ -148,6 +150,44 @@ TEST(BluesteinDepth, GivenTops) {
       EXPECT_TRUE(
           check_prime<float>(t, 4093, tops, fftn::direction::backward, 0.5, 1, 4093, true, true));
     }
+  }
+}
+
+// The rules: where the profile's depth-first range holds the convolution's length (and the
+// rest of depth_tops_of's conditions on a row of that length hold), not elsewhere; never with
+// the chain forced, with a stride, or for a Rader prime.
+TEST(BluesteinDepth, RulesTakeItWhereARowOfMWould) {
+  const auto planned = [](std::size_t q, fftn::isa isa, bool on, strategy_choice strategy,
+                          std::ptrdiff_t stride = 1, int rader = 0) {
+    build_settings settings;
+    settings.strategy = strategy;
+    settings.rader = rader;
+    settings.profile.depth_min_bytes = on ? std::size_t{256} * 1024 : 0;
+    settings.profile.depth_max_bytes = on ? std::size_t{4} * 1024 * 1024 : 0;
+    settings.profile.depth_part_bytes = 0;
+    settings.profile.depth_top = 16;
+    settings.profile.depth_top_alt = 20;
+    settings.profile.bluestein_pow2_part_bytes = SIZE_MAX;
+    const fftn::shape<std::complex<double>, std::complex<double>> shape{
+        .dir = fftn::direction::forward,
+        .axes = {{.n = q, .in_stride = stride, .out_stride = stride}},
+        .batches = {},
+    };
+    return fftn::detail::describe(
+        *make_plan_core(fftn::detail::view_of(shape), {.force_isa = isa}, settings));
+  };
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    SCOPED_TRACE(fftn::isa_name(t));
+    const std::string name = fftn::isa_name(t);
+    const bool wide = name == "avx512" || name == "neon" || name == "neon_fcma";
+    const std::string on = planned(16411, t, true, strategy_choice::rules);
+    EXPECT_EQ(depth_convolution(on), wide) << on;
+    EXPECT_FALSE(depth_convolution(planned(16411, t, false, strategy_choice::rules)));
+    EXPECT_FALSE(depth_convolution(planned(16411, t, true, strategy_choice::chain)));
+    EXPECT_FALSE(depth_convolution(planned(16411, t, true, strategy_choice::rules, 2)));
+    EXPECT_FALSE(depth_convolution(planned(1031, t, true, strategy_choice::rules))); // M short
+    // 65537 = 2^16 + 1 has a Rader root on every target where Rader is on.
+    EXPECT_FALSE(depth_convolution(planned(65537, t, true, strategy_choice::rules, 1, 1)));
   }
 }
 
