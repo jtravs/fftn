@@ -27,6 +27,7 @@
 #include <cmath>
 #include <complex>
 #include <cstddef>
+#include <limits>
 #include <span>
 #include <string>
 #include <vector>
@@ -190,6 +191,9 @@ TEST(Depth, RulesTakeItByTheProfile) {
     build_settings settings;
     settings.profile.depth_min_bytes = on ? std::size_t{256} * 1024 : 0;
     settings.profile.depth_max_bytes = on ? std::size_t{4} * 1024 * 1024 : 0;
+    settings.profile.depth_top_last = 0; // the host profile may set X51's fields
+    settings.profile.depth_pow2_max_bytes = std::numeric_limits<std::size_t>::max();
+    settings.profile.depth_float = false;
     settings.profile.depth_part_bytes = 0;
     settings.profile.depth_top = 16;
     settings.profile.depth_top_alt = 20;
@@ -229,6 +233,9 @@ TEST(Depth, RulesTakeItByTheProfile) {
     build_settings settings;
     settings.profile.depth_min_bytes = std::size_t{256} * 1024;
     settings.profile.depth_max_bytes = std::size_t{4} * 1024 * 1024;
+    settings.profile.depth_top_last = 0; // the host profile may set X51's fields
+    settings.profile.depth_pow2_max_bytes = std::numeric_limits<std::size_t>::max();
+    settings.profile.depth_float = false;
     settings.profile.depth_top = 16;
     settings.profile.depth_top_alt = 20;
     settings.profile.depth_top_last = 10;
@@ -250,6 +257,9 @@ TEST(Depth, RulesTakeItByTheProfile) {
     build_settings settings;
     settings.profile.depth_min_bytes = std::size_t{64} * 1024;
     settings.profile.depth_max_bytes = std::size_t{256} * 1024;
+    settings.profile.depth_top_last = 0; // the host profile may set X51's fields
+    settings.profile.depth_pow2_max_bytes = std::numeric_limits<std::size_t>::max();
+    settings.profile.depth_float = false;
     settings.profile.depth_part_bytes = std::size_t{16} * 1024;
     settings.profile.depth_top = 4;
     const auto planned_on = [&](std::size_t n, fftn::isa isa) {
@@ -277,6 +287,9 @@ TEST(Depth, RulesTakeItByTheProfile) {
     build_settings settings;
     settings.profile.depth_min_bytes = std::size_t{128} * 1024;
     settings.profile.depth_max_bytes = std::size_t{2} * 1024 * 1024;
+    settings.profile.depth_top_last = 0; // the host profile may set X51's fields
+    settings.profile.depth_pow2_max_bytes = std::numeric_limits<std::size_t>::max();
+    settings.profile.depth_float = false;
     settings.profile.depth_pow2_max_bytes = std::size_t{256} * 1024;
     settings.profile.depth_top = 4;
     const auto taken = [&](std::size_t n, fftn::isa isa, bool single = false) {
@@ -313,6 +326,9 @@ TEST(Depth, RulesTakeItByTheProfile) {
   build_settings settings;
   settings.profile.depth_min_bytes = std::size_t{128} * 1024;
   settings.profile.depth_max_bytes = std::size_t{4} * 1024 * 1024;
+  settings.profile.depth_top_last = 0; // the host profile may set X51's fields
+  settings.profile.depth_pow2_max_bytes = std::numeric_limits<std::size_t>::max();
+  settings.profile.depth_float = false;
   const fftn::shape<std::complex<float>, std::complex<float>> shape{
       .dir = fftn::direction::forward,
       .axes = {{.n = 32768}},
@@ -340,6 +356,9 @@ void depth_agrees_with_chain(fftn::isa target, std::size_t n, fftn::direction di
   if (rules) {
     depth.profile.depth_min_bytes = std::size_t{256} * 1024;
     depth.profile.depth_max_bytes = std::size_t{4} * 1024 * 1024;
+    depth.profile.depth_top_last = 0; // the host profile may set X51's fields
+    depth.profile.depth_pow2_max_bytes = std::numeric_limits<std::size_t>::max();
+    depth.profile.depth_float = false;
     depth.profile.depth_part_bytes = 0;
     depth.profile.depth_top = 16;
     depth.profile.depth_top_alt = 20;
@@ -432,6 +451,9 @@ TEST(Depth, PinnedChoiceCarriesTheTops) {
     build_settings rules;
     rules.profile.depth_min_bytes = std::size_t{256} * 1024;
     rules.profile.depth_max_bytes = std::size_t{4} * 1024 * 1024;
+    rules.profile.depth_top_last = 0; // the host profile may set X51's fields
+    rules.profile.depth_pow2_max_bytes = std::numeric_limits<std::size_t>::max();
+    rules.profile.depth_float = false;
     rules.profile.depth_part_bytes = 0;
     rules.profile.depth_top = 16;
     rules.profile.depth_top_alt = 20;
