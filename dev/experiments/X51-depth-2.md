@@ -150,4 +150,16 @@ three medians past 1 + max(band, 3 %) on rows whose plans do not change (r2c 204
 c2c 256² 1.050, r2c 64³ 1.047), re-run once with c2c 16 and 46080, run 20261118-004154-53ed
 (30 rounds, band ±2.18 %): 0.988–0.999, all no evidence. **M passes the rule.**
 
+**EPYC, E** (GCC 16, `avx2`, FFTW 3.3.11; E = 83bd92f against N = c3a5eba; Slurm
+512549/512550, `--serial`): run 20261118-025713-3ae3 (30 rounds, all under load, band
+±1.08 %): the 21 changed cases **0.730 [0.725, 0.734]** (the filter's 46080 in float does not
+change: 1.007, no evidence), every one faster, from 0.625 (61440) to 0.794 (49152 in place):
+12288 0.760, 24576 0.716, 46080 0.781, 49152 0.760, 98304 0.704, 20480–122880 0.625–0.772,
+in place 0.730–0.794, backward 0.702–0.750, batches of 8 0.719–0.727. FFTW ÷ N on the same
+cases 0.790: FFTN ÷ FFTW 1.06–1.39 → 0.83–1.01 (46080 1.06 → 0.83, 49152 1.32 → 1.01).
+Tracking tier N against E, run 20261118-030329-f2c2 (Slurm 512551/512552, 24 rounds, all
+under load, band ±3.84 %): 1 faster (46080 0.770), 60 no evidence, weighted geomean 0.989
+[0.982, 0.995]; the largest median c2c 257 1.023 (a Rader row whose plan does not change).
+The EPYC's exit-check rows of 64–2048 points do not change. **E passes the rule.**
+
 ## Verdict
