@@ -15,9 +15,18 @@ inline constexpr edge_op batch_nop = edge_op::none;
 inline constexpr edge_op batch_scl = edge_op::scale;
 
 // Radix 25 has no passes on NEON (passes/entries.inl, radix_on_target), so no leaf either.
+// Lengths 16, 32 and 64 as the chains 4 x 4, 4 x 8 and 8 x 8 through a tile (batch_pair_leaf,
+// X53 arm B5); the others one codelet.
+template <std::size_t R>
+inline constexpr std::size_t batch_r1 = R == 16 || R == 32 ? 4
+                                        : R == 64          ? 8
+                                                           : 0;
+
 template <class T, std::size_t R, int S, edge_op I, edge_op O> constexpr leaf_fn batch_entry() {
   if constexpr (C<T> == 1 || (R == 25 && (id == target::neon || id == target::neon_fcma))) {
     return nullptr;
+  } else if constexpr (batch_r1<R> != 0) {
+    return &batch_pair_leaf<T, batch_r1<R>, R / batch_r1<R>, S, I, O>;
   } else {
     return &batch_leaf<T, R, S, I, O>;
   }
@@ -56,10 +65,14 @@ static_assert(gen::radix_count == 22 && gen::radices[19] == 25 && gen::radices[2
 // clang-format on
 // NOLINTEND(bugprone-macro-parentheses)
 
+#define FFTN_BATCH_R1                                                                              \
+  {0,           0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, batch_r1<16>, 0, 0, 0, 0, 0, batch_r1<32>,  \
+   batch_r1<64>}
 constinit const batch_leaf_table FFTN_BATCH_TABLE{
-    .f64 = {.leaf = FFTN_BATCH_SET(double), .lanes = C<double>},
-    .f32 = {.leaf = FFTN_BATCH_SET(float), .lanes = C<float>},
+    .f64 = {.leaf = FFTN_BATCH_SET(double), .r1 = FFTN_BATCH_R1, .lanes = C<double>},
+    .f32 = {.leaf = FFTN_BATCH_SET(float), .r1 = FFTN_BATCH_R1, .lanes = C<float>},
 };
+#undef FFTN_BATCH_R1
 
 #undef FFTN_BATCH_TABLE
 #undef FFTN_BATCH_SET

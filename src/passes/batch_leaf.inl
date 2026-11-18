@@ -163,4 +163,147 @@ void batch_leaf(const pass_args* a, const void* src, void* dst, std::ptrdiff_t s
   }
 }
 
+// Batch pair leaves (X53 arm B5): n = R1 M as the chain R1 x M (a DIF first pass of M
+// butterflies of R1 with twiddles w_n^(p k), a plain last pass of R1 butterflies of M) with C
+// rows per register, the first pass's outputs kept in a tile of n registers on the stack. The
+// codelet of 64 holds 64 values at once and spilled about a thousand registers on avx2 with
+// GCC 16; a butterfly of 8 fits the register file. The twiddles are the first lane pass's
+// broadcast table (chain_builder::shared_twiddles(n, R1, 1)): every row shares them. Each
+// lane does the arithmetic of the chain R1 x M with interleaved passes (the grouped first
+// pass's twiddles have the same values), so the bits are that chain's.
+
+// Element base + leg j of rows row[0 .. C - 1] (the first `valid`; Full: all C), row l in
+// lane l, the other lanes zero, times the input edge: C broadcasts, transposed, register 0
+// (on avx2 in double, one load and one insert of the other half from memory).
+template <class T, bool Full, edge_op InOp> struct rows_in {
+  const T* const* row;
+  std::size_t valid;
+  edge<T, InOp> e;
+  std::size_t base;
+  std::size_t leg;
+  [[nodiscard]] FFTN_FORCE_INLINE cv<T> get(std::size_t j) const {
+    cv<T> v[C<T>]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
+    for (std::size_t l = 0; l < C<T>; ++l) {
+      v[l] = Full || l < valid ? bcast(row[l] + at(base + leg * j, 2)) : zeros<T>();
+    }
+    transpose(v);
+    return on_one<T, InOp>(e, v[0], j);
+  }
+};
+
+// Lane l of output k times the output edge to element base + leg k of row row[l], for the
+// first `valid` rows (Full: all C).
+template <class T, bool Full, edge_op OutOp> struct rows_out {
+  T* const* row;
+  std::size_t valid;
+  edge<T, OutOp> e;
+  std::size_t base;
+  std::size_t leg;
+  FFTN_FORCE_INLINE void put(std::size_t k, cv<T> y) const {
+    const cv<T> out = on_one<T, OutOp>(e, y, k);
+    cv<T> v[C<T>]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
+    for (std::size_t l = 0; l < C<T>; ++l) {
+      v[l] = out;
+    }
+    transpose(v); // v[l]: lane l of out, in every lane
+    for (std::size_t l = 0; l < C<T>; ++l) {
+      if (Full || l < valid) {
+        store_first(row[l] + at(base + leg * k, 2), v[l]);
+      }
+    }
+  }
+};
+
+// One row in the leaf's form: element base + leg j in every lane, lane 0 stored.
+template <class T, edge_op Op> struct row_in {
+  const T* p;
+  edge<T, Op> e;
+  std::size_t base;
+  std::size_t leg;
+  [[nodiscard]] FFTN_FORCE_INLINE cv<T> get(std::size_t j) const {
+    return on_one<T, Op>(e, bcast(p + at(base + leg * j, 2)), j);
+  }
+};
+template <class T, edge_op Op> struct row_out {
+  T* p;
+  edge<T, Op> e;
+  std::size_t base;
+  std::size_t leg;
+  FFTN_FORCE_INLINE void put(std::size_t k, cv<T> v) const {
+    store_first(p + at(base + leg * k, 2), on_one<T, Op>(e, v, k));
+  }
+};
+
+// Register j of a tile from p, leg registers apart.
+template <class T> struct tile_in {
+  const cv<T>* p;
+  std::size_t leg;
+  [[nodiscard]] FFTN_FORCE_INLINE cv<T> get(std::size_t j) const { return p[leg * j]; }
+};
+
+// The chain R1 x M of one group through the tile: `in` and `out` are rows_in and rows_out
+// (or row_in and row_out) whose base and leg are set per butterfly.
+template <class T, std::size_t R1, std::size_t M, int Sign, class In, class Out>
+FFTN_FORCE_INLINE void batch_pair_chain(In in, Out out, const T* table) {
+  cv<T> tile[R1 * M]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
+  for (std::size_t p = 0; p < M; ++p) {
+    in.base = p;
+    in.leg = M;
+    const shared_twiddles<T> tw{table + tw_reals<T> * (R1 - 1) * p};
+    cdft<R1>::template dif<T, Sign>(in, to_registers<T>{tile + R1 * p}, tw);
+  }
+  for (std::size_t q = 0; q < R1; ++q) {
+    out.base = q;
+    out.leg = R1;
+    cdft<M>::template plain<T, Sign>(tile_in<T>{.p = tile + q, .leg = R1}, out);
+  }
+}
+
+// The transform of n = R1 M points of `count` lines of stride 1 on both sides, C lines at a
+// time, a last line alone in the leaf's form, with the scale on either edge. Reads
+// twiddles (the first pass's broadcast table) and scale.
+template <class T, std::size_t R1, std::size_t M, int Sign, edge_op InOp, edge_op OutOp>
+void batch_pair_leaf(const pass_args* a, const void* src, void* dst, std::ptrdiff_t src_dist,
+                     std::ptrdiff_t dst_dist, std::size_t count) {
+  static_assert(InOp != edge_op::factor && OutOp != edge_op::factor,
+                "the factor edges keep leaf_lines");
+  const T* table = static_cast<const T*>(a->twiddles);
+  const edge<T, InOp> ein = make_edge<T, InOp>(a, nullptr, 0, 1);
+  const edge<T, OutOp> eout = make_edge<T, OutOp>(a, nullptr, 0, 1);
+  std::size_t u = 0;
+  for (; u + C<T> <= count; u += C<T>) {
+    const T* in[C<T>]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
+    T* out[C<T>];      // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
+    for (std::size_t l = 0; l < C<T>; ++l) {
+      in[l] = line_at<T>(src, u + l, src_dist);
+      out[l] = line_at<T>(dst, u + l, dst_dist);
+    }
+    batch_pair_chain<T, R1, M, Sign>(
+        rows_in<T, true, InOp>{.row = in, .valid = C<T>, .e = ein, .base = 0, .leg = 0},
+        rows_out<T, true, OutOp>{.row = out, .valid = C<T>, .e = eout, .base = 0, .leg = 0}, table);
+  }
+  if (count - u == 1) {
+    batch_pair_chain<T, R1, M, Sign>(
+        row_in<T, InOp>{.p = line_at<T>(src, u, src_dist), .e = ein, .base = 0, .leg = 0},
+        row_out<T, OutOp>{.p = line_at<T>(dst, u, dst_dist), .e = eout, .base = 0, .leg = 0},
+        table);
+  } else if constexpr (C<T> > 2) {
+    if (u < count) {
+      const std::size_t valid = count - u;
+      const T* in[C<T>]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
+      T* out[C<T>];      // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
+      for (std::size_t l = 0; l < C<T>; ++l) {
+        // Idle rows form no address: their pointers stay at the group's first row.
+        const std::size_t r = l < valid ? u + l : u;
+        in[l] = line_at<T>(src, r, src_dist);
+        out[l] = line_at<T>(dst, r, dst_dist);
+      }
+      batch_pair_chain<T, R1, M, Sign>(
+          rows_in<T, false, InOp>{.row = in, .valid = valid, .e = ein, .base = 0, .leg = 0},
+          rows_out<T, false, OutOp>{.row = out, .valid = valid, .e = eout, .base = 0, .leg = 0},
+          table);
+    }
+  }
+}
+
 } // namespace

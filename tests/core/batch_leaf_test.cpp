@@ -7,8 +7,9 @@
 // avx512 plan), every codelet radix, both directions, the scale on either edge. Every
 // output byte (the gaps between rows included, which hold a canary) must equal what the leaf
 // of the same radix writes row by row (forced radices {n}, which the batch leaves leave
-// alone): a lane does the arithmetic the leaf does to its row. Batch counts from 2 to 2C + 1
-// (full groups and every partial group), in place and out of place, and execute_transforms
+// alone), or for the batch pair leaves of 16, 32 and 64 the chain r1 x m with interleaved
+// passes: a lane does the arithmetic the leaf or the chain does to its row. Batch counts from 2 to
+// 2C + 1 (full groups and every partial group), in place and out of place, and execute_transforms
 // over sub-ranges that start and end anywhere; a sample of rows against the
 // quadruple-precision reference; and where a plan cannot take them. Bitwise independence of
 // the team size is tests/threading's (team_cases.hpp has batch leaf cases).
@@ -149,8 +150,14 @@ template <class T> void batch_leaves_match(fftn::isa t, batch_leaf_choice choice
     if (set == nullptr || set->leaf[fftn::detail::codelet_slot(n)][0][0][0] == nullptr) {
       continue;
     }
+    // The leaf of n, or the chain r1 x (n / r1) of a batch pair leaf with interleaved passes.
+    const std::size_t r1 = set->r1[fftn::detail::codelet_slot(n)];
     build_settings leaf;
-    leaf.radices = {n};
+    leaf.radices = r1 != 0 ? std::vector<std::size_t>{r1, n / r1} : std::vector<std::size_t>{n};
+    leaf.layout = fftn::detail::layout_choice::interleaved;
+    const std::string name =
+        "batch leaf radix-" +
+        (r1 != 0 ? std::to_string(r1) + " x " + std::to_string(n / r1) : std::to_string(n)) + " ";
     const std::size_t c = set->lanes;
     for (std::size_t count = 2; count <= 2 * c + 1; ++count) {
       for (const rows_case rc : {
@@ -170,8 +177,7 @@ template <class T> void batch_leaves_match(fftn::isa t, batch_leaf_choice choice
         std::string leaf_text;
         const auto got = run<T>(t, rc, batch, 0, count, batch_text);
         const auto want = run<T>(t, rc, leaf, 0, count, leaf_text);
-        ASSERT_NE(batch_text.find("batch leaf radix-" + std::to_string(n)), std::string::npos)
-            << batch_text;
+        ASSERT_NE(batch_text.find(name), std::string::npos) << batch_text;
         EXPECT_NE(batch_text.find(std::to_string(c) + " rows per register"), std::string::npos)
             << batch_text;
         EXPECT_EQ(leaf_text.find("batch leaf"), std::string::npos) << leaf_text;
