@@ -138,6 +138,9 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
   if (x86_64 && private_l2 && !large_l2) {
     p.team_volume_planes = true;
   }
+  if (x86_64 && private_l2) {
+    p.column_wide_bytes = 1024;
+  }
   if (large_l2) {
     p.grid_three_bytes = c.l2.size / 2;
     p.grid_two_part_bytes = std::size_t{32} * 1024;

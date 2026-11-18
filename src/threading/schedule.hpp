@@ -159,6 +159,11 @@ struct machine_profile {
   // by whether a column's elements lie a page or more apart (core/plan_core.cpp,
   // column_block; X40). profile_for reads it from the topology.
   std::size_t page_bytes = 4096;
+  // When not 0, a c2c lanes column phase widens its block to this many bytes of columns
+  // where the block's two tiles stay within column_tile_bytes (core/plan_core.cpp,
+  // column_block; X52 arm W4). set_grid_sizes sets 1 KiB on x86-64 where each core has its
+  // own L2.
+  std::size_t column_wide_bytes = 0;
   // A lanes column phase whose column elements lie less than a page apart keeps its block's
   // two scratch tiles within this (core/plan_core.cpp, column_block; X40). set_grid_sizes
   // sets a quarter of L2.
