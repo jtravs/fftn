@@ -59,8 +59,10 @@ plans). Runs 20261118-004301-b779 (Mac, 44 of 46 rounds under load, band ±1.60 
 16–20 instructions per call, so the tiny cases overstate FFTN; they were re-timed on `main`
 4d75c48 (rows of 2–16 points and their batches, 15 × 2 and 64 × 2 backward; each case judged
 against its own run's band): Mac ÷ FFTW 0.75, 3 (64 × 2 backward 1.07 joins), ÷ FFTL
-unchanged (run 20261118-015403-cf4b, ±1.20 %); the EPYC and Xeon re-times are queued (they
-cannot change a verdict: the EPYC's two tiny cases would leave 10, 5.2 %).
+unchanged (run 20261118-015403-cf4b, ±1.20 %); EPYC ÷ FFTW 0.79, still 12 beyond noise
+(6.2 %; 64 × 2 backward 1.29, 15 × 2 backward 1.24; run 20261118-041517-af64, ±1.00 %); Xeon
+÷ FFTW 0.69, 5 (2.6 %, was 7), ÷ MKL 0.69, 2 (run 20261118-051517-636c, ±1.00 %). No verdict
+changes.
 Cloud (X48, the same rows, `main` 8c18dd2): ÷ FFTW Zen 5 0.69 with 6 beyond noise (3.1 %, was
 11), Axion 0.71 with 9 (4.7 %, rows of 2–8 points, 20, 65537), Granite Rapids 0.76 with 18
 (9.3 %; ÷ MKL 0.73, 11, 5.7 %: 46080, 65536 in every form, 100000, 131071–262144, 32768, 160,
