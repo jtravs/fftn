@@ -160,9 +160,10 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
     // power-of-two part is above L1/4: rows of a small odd part times 2^k took 0.63-0.82 of
     // the rules' time from 12288 to 163840 points in the screen (FFTW 0.70-0.84), 46080 0.83;
     // powers of two tied or lost (X32's chains), and 20000-100000 with parts of 8-64 points
-    // gained little or lost (25000 1.16). On x86-64 only: the Axion VM (AArch64, this
-    // profile) is unmeasured.
-    if (x86_64 && c.l1d.size != 0 && c.l2.size != 0) {
+    // gained little or lost (25000 1.16). Only where it was measured: x86-64 with a private
+    // L2 under 1 MiB (Zen 3's 512 KiB); Zen 4 and Zen 5 (1 MiB, `avx512`) and the Axion VM
+    // (AArch64) share this profile branch, unmeasured, and keep their plans.
+    if (x86_64 && c.l1d.size != 0 && c.l2.size != 0 && c.l2.size < std::size_t{1024} * 1024) {
       p.depth_min_bytes = c.l2.size / 4;
       p.depth_max_bytes = 4 * c.l2.size;
       p.depth_pow2_max_bytes = 0;
@@ -195,10 +196,10 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
         p.depth_top = 16;
         p.depth_top_alt = 20;
         p.depth_top_last = 10;
-        // X51 (arm F): single precision too, by its bytes (32768 points and more): tops of 16
-        // (20 at 100000) took 0.61-0.80 of the rules' time from 32768 to 2^20 points; every
-        // split lost below L2/4 (8192-20000 points, 1.14-2.0).
-        p.depth_float = true;
+        // X51 (arm F): single precision too, by its bytes, to 8 L2 (32768-2^20 points, the
+        // measured range): tops of 16 (20 at 100000) took 0.61-0.80 of the rules' time
+        // there; every split lost below L2/4 (8192-20000 points, 1.14-2.0).
+        p.depth_float_max_bytes = 8 * c.l2.size;
       }
     }
   }

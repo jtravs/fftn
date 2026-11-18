@@ -176,9 +176,10 @@ struct machine_profile {
   // M5 Max X32's chains stay faster from 2 L1 up, where rows of a small odd part times a
   // large power of two gain to 16 L1; on the EPYC 7763 they do not gain at all).
   std::size_t depth_pow2_max_bytes = std::numeric_limits<std::size_t>::max();
-  // Whether rows in single precision take the depth-first chain too (by their bytes, as in
-  // double; X51).
-  bool depth_float = false;
+  // Rows in single precision take the depth-first chain by their bytes, as in double, but
+  // only up to depth_float_max_bytes (0: never; X51: measured on the Xeon 6240 to 2^20
+  // complex floats, 8 MiB).
+  std::size_t depth_float_max_bytes = 0;
   // The L1 data cache's line in bytes: a lanes column phase's block holds at least a line of
   // adjacent columns (core/plan_core.cpp, column_block; experiment X40). set_grid_sizes reads
   // it from the topology (128 on Apple's cores).

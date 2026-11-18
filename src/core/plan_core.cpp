@@ -455,7 +455,7 @@ grid_split plan_grid(std::size_t n, const side& in, const side& out, const build
 // of n / F1 fits the L1 data cache (profile.grid_block_bytes), else the one with the
 // shortest sub-row. By the rules (X46 arms A and C, X51): a row of [depth_min_bytes,
 // depth_max_bytes] (powers of two only to depth_pow2_max_bytes) whose power-of-two part has
-// more than depth_part_bytes, in double (and in float where the profile says so), with one
+// more than depth_part_bytes, in double (in float to depth_float_max_bytes), with one
 // top factor, the profile's depth_top, else its depth_top_alt, else its depth_top_last, the
 // first whose split fits (C divides the sub-row; X51: the top need not be a multiple of C,
 // so 25000 on 4 lanes takes 10 x 2500); on a target with 32 vector registers (`avx512`,
@@ -481,10 +481,12 @@ std::vector<std::size_t> depth_tops_of(std::size_t n, const side& in, const side
     const machine_profile& m = settings.profile;
     const bool wide = isa == target::avx512 || isa == target::neon || isa == target::neon_fcma;
     const bool pow2 = (n & (n - 1)) == 0;
-    const std::size_t most =
+    std::size_t most =
         pow2 ? std::min(m.depth_max_bytes, m.depth_pow2_max_bytes) : m.depth_max_bytes;
-    if ((!std::is_same_v<T, double> && !m.depth_float) || m.depth_max_bytes == 0 ||
-        bytes < m.depth_min_bytes || bytes > most ||
+    if constexpr (!std::is_same_v<T, double>) {
+      most = std::min(most, m.depth_float_max_bytes);
+    }
+    if (m.depth_max_bytes == 0 || most == 0 || bytes < m.depth_min_bytes || bytes > most ||
         (n & (~n + 1)) * 2 * sizeof(T) <= m.depth_part_bytes) {
       return {};
     }
