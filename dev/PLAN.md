@@ -225,7 +225,8 @@ experiment index): Xeon 25000 (1.35 → 1.00 of FFTW), rows to 2²² and float; 
 rows of a small odd part times a large power of two (0.73 of their time). Left: 100000 at
 FFTW's time (no split beat 20 × 5000), Granite Rapids (the cloud run was not made: its
 profile keeps its plans), float on the Mac (mixed rows gain, 24576 and 196608 do not) and the
-EPYC, 2²³–2²⁴ on the Xeon.
+EPYC, 2²³–2²⁴ on the Xeon (float above 2²⁰), Zen 4 and Zen 5 (rule E is keyed to an L2
+under 1 MiB).
 
 In flight (lead session, 2026-11-17): task 1.3
 (`x86_v2` and `avx` targets, X14); task 4.1's next part (X41, task/4.1-planes-2, pull request 51, awaiting merge); a tidy fix. Task 2.4's acceptance is met (P1:

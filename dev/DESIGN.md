@@ -1315,21 +1315,25 @@ powers of two, a power-of-two part above a size, up to three tops tried in order
 and optionally float), on targets with 32 vector registers (`avx512`, NEON) or, with tops up
 to 8, on `avx2`:
 - the Xeon 6240's profile (x86-64, private L2 under 2 MiB with little L3) from L2/4 to 64 L2
-  (16384–2²² complex doubles, 32768–2²² complex floats) with one top of 16, else 20, else 10
+  (16384–2²² complex doubles) and in float from L2/4 to 8 L2 (32768–2²⁰ complex floats, the
+  measured range) with one top of 16, else 20, else 10
   (X46: 16384–262144 0.67 of their time; X51: 25000 0.75, 524288–2²² 0.68–0.75, float
   0.61–0.78; FFTN ÷ FFTW 1.06–1.35 → 0.50–1.00, ÷ MKL 0.33–0.90);
 - the Apple profile (a cluster shares L2) from L1 when the length's power-of-two part is
   above L1/8, with one top of 4, to 2 L1 for powers of two and to 16 L1 for the rest (X46:
   8192 0.73, 16384 0.84; X51: 20480–122880 0.69–0.86; from L1/2, batches of 4096 lost
   1.03–1.04; powers of two beyond 2 L1 gained nothing against X32's chains);
-- the EPYC 7763's profile (x86-64, private L2 with a large L3; Zen 5 takes it unmeasured)
-  for lengths that are not powers of two, from L2/4 to 4 L2, power-of-two part above L1/4,
+- the EPYC 7763's profile (x86-64, private L2 with a large L3) where that L2 is under 1 MiB
+  (Zen 3; Zen 4 and Zen 5, 1 MiB and `avx512`, keep their plans: unmeasured), for lengths
+  that are not powers of two, from L2/4 to 4 L2, power-of-two part above L1/4,
   one top of 4 (X51: 12288–122880 and 46080 0.63–0.79; tops of 16 lost 1.2–1.7 on `avx2`'s
   16 registers; powers of two tied or lost against X32's chains).
 Granite Rapids' profile (a 2 MiB private L2) does not take it: unmeasured there (X51's run
 was not made). Not built: three or more top factors, edge factors; float on the Apple and
 EPYC profiles (X51's Apple float screen: mixed rows 0.69–0.84, but 24576 and 196608 did
-not gain).
+not gain). In place, the blocks live in the workspace block: n complex elements per team
+member (X51's range on the Xeon 6240 makes that up to 64 MiB per member at 2²² points, 8 MiB
+in float at 2²⁰), where the out-of-place chain needs only two sub-row lines of scratch.
 
 **Lanes** (vectorise across rows). C rows, or C neighbouring lines of a strided axis,
 become the lanes of every pass; the whole transform is lane passes. For row-major batches
@@ -3044,7 +3048,7 @@ to change before a release.
 | 2026-11-17 | A plan may hold a team program (`plan_core::team`) that every team of two or more runs: the same transform with narrower lanes column blocks (at most `column_team_bytes`: 128 on x86-64 with a private L2 and a large L3, the EPYC), chain-only columns as blocks of a line with the chain's radices, and (X43b) a volume's inner axes plane at a time; serial executions run the program. Bits are the program's by construction (a column's result does not depend on its block, a line's on the order of lines) and tested (sections 9.3, 13.2) | X43: at 8 lanes on the EPYC the narrower blocks took 0.887 of the time over the c2c planes and volumes they change and the line blocks 0.72 at 2048 × 36, while one thread lost up to 1.42 with them; the plan does not know at construction whether teams will run it |
 | 2026-11-17 | c2c volumes: one thread keeps the axes one by one; a team runs the two inner axes plane at a time (the team program) where the profile's `team_volume_planes` says (x86-64, private L2 below 2 MiB); the outer axis over blocks of adjacent pencils by `column_block`'s rule (section 9.3) | X43b: one thread EPYC 0.979, Xeon 0.934 with 97³ 1.048, M5 Max 0.962 (rejected everywhere); 8 lanes EPYC 0.775 (VT), Xeon 0.771 (VTX) |
 | 2026-11-17 | The `avx512` units are assembled with branches padded off 32-byte boundaries (`-Wa,-mbranches-within-32B-boundaries`, GCC on x86-64 only) | Bisect of the Xeon 6240's small-row loss: the plans did not change; the merge of X40 moved code and c2c 160, 180, 240 took 1.10 of their time (run 20261117-184544-8056), a JCC-erratum placement effect; padded, 160–384 0.89–0.94 and tracking 0.996 with nothing slower (20261117-204818-1541, -205228-e841); the flag on every unit slowed the EPYC 5–11 %, so `avx2` units stay unpadded; LESSONS 2.11. Unmeasured on Ice Lake and later and on Zen 4/5 (cloud tracking checks it) |
-| 2026-11-18 | The depth-first chain (section 8.5) takes one top factor that C does not divide (a partial first-pass block); the rules gain a third top, a limit for powers of two, single precision by profile and tops up to 8 on `avx2`; the Xeon 6240's profile runs it to 64 L2 with a third top of 10 and in float, the Apple profile to 16 L1 for lengths that are not powers of two, the EPYC 7763's profile (top 4) for lengths that are not powers of two from L2/4 to 4 L2 (X51) | X51 judged on each machine: Xeon 25000 0.75 (1.35 → 1.00 of FFTW), 524288–2²² 0.68–0.75, float 0.687; Mac mixed rows 0.735; EPYC mixed rows and 46080 0.730 (1.06–1.39 → 0.83–1.01 of FFTW); tracking tiers clean; Granite Rapids unmeasured, unchanged |
+| 2026-11-18 | The depth-first chain (section 8.5) takes one top factor that C does not divide (a partial first-pass block); the rules gain a third top, a limit for powers of two, single precision by profile and tops up to 8 on `avx2`; the Xeon 6240's profile runs it to 64 L2 with a third top of 10 and in float to 8 L2, the Apple profile to 16 L1 for lengths that are not powers of two, the EPYC 7763's profile (top 4, private L2 under 1 MiB) for lengths that are not powers of two from L2/4 to 4 L2 (X51) | X51 judged on each machine: Xeon 25000 0.75 (1.35 → 1.00 of FFTW), 524288–2²² 0.68–0.75, float 0.687; Mac mixed rows 0.735; EPYC mixed rows and 46080 0.730 (1.06–1.39 → 0.83–1.01 of FFTW); tracking tiers clean; Granite Rapids unmeasured, unchanged |
 
 ---
 

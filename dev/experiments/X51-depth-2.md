@@ -207,12 +207,20 @@ c2c 1009 1.026 and 60 1.021, rows whose plans do not change, within 1 + max(band
   FFTW there 0.73–0.79 → 0.50–0.70, ÷ MKL 0.45–1.00 → 0.33–0.90. Two tops never beat one in
   the screens; 2²³ and 2²⁴ stay out (0.88–0.94 within an ±11 % band).
 - **F (Xeon: single precision): adopted.** 32768–2²⁰ in float 0.61–0.78 (0.687 over eight
-  rows); below L2/4 every split lost, which the byte range excludes.
+  rows); below L2/4 every split lost, which the byte range excludes. Capped after review at
+  8 L2 (`depth_float_max_bytes`, 2²⁰ complex floats), the measured range: without the cap
+  L's 64 L2 would have taken float rows to 2²³ unmeasured.
+- **Workspace in place.** An in-place depth-first plan keeps its blocks in the workspace
+  block, n complex elements per team member: up to 64 MiB per member at 2²² double points on
+  the Xeon 6240 (8 MiB at 2²⁰ in float). Recorded, not bounded: the first pass reads the
+  whole input before any of it may be overwritten, and no cheap way around that was found.
 - **M (Apple: lengths that are not powers of two to 16 L1): adopted.** 0.735 over 19 cases
   (20480–122880, in place, backward, batches): FFTN ÷ FFTW about 1.04–1.35 → 0.77–0.94.
 - **E (EPYC: lengths that are not powers of two, L2/4 to 4 L2, top 4): adopted.** 0.730 over
   21 cases; 46080 (the standard catalogue's row) 0.78, FFTN ÷ FFTW 1.06 → 0.83; the mixed rows
-  1.2–1.4 → 0.9–1.0 of FFTW. Zen 5 shares the profile branch and takes it unmeasured.
+  1.2–1.4 → 0.9–1.0 of FFTW. Keyed after review to a private L2 under 1 MiB (Zen 3, where it
+  was measured): Zen 4 and Zen 5 (1 MiB, `avx512`) share the profile branch and keep their
+  plans. **Zen 5: not done** (needs its own screen and judging run).
 - **Not done or not adopted.** 100000 (Xeon): at FFTW's time already (1.02 in X46, 0.96 in
   the screen); no split beat the rules' 20 × 5000. Granite Rapids (X48's long-row failures,
   2 MiB private L2, outside X46's branch): the cloud run was prepared (one c4-standard-16
