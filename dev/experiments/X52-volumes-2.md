@@ -258,6 +258,15 @@ Arms L1 (446be06) and A1 (`main` a0dffe1) at one thread, L8, A8 and G8 (f6f9b4d,
   cluster shares L2, splitting them pays. **S rejected on the Mac**: S1 applies only where each
   core has its own L2 (S2 never applies there: no mesh).
 
+### W4 on the EPYC (judging)
+
+- Run 20261118-032100-228a (Slurm 512561; L1 446be06 and W41 e9160a0 at one thread, both at 8
+  lanes; all rounds loaded, band ±4.7 %), the volumes: W4 ÷ L 0.926 at one thread over the 25
+  volumes it changes (64 × 64 × 512 0.87–0.88, 48³ 0.87–0.89, 64³ backward 0.87, 512 × 64 × 64
+  out of place 0.88), worst 0.994; none of the 42 slower than 1.013. At 8 lanes 1.002, worst
+  30 × 40 × 50 1.093 and 81³ 1.08; the EPYC's team programs are the same with and without W4
+  (B1 clamps their blocks to 8 columns after it), so these are the 8-lane noise.
+
 ## Verdict
 
 Pending.
