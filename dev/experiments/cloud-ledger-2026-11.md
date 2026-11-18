@@ -128,3 +128,29 @@ has spent USD 4.09 of its USD 20 cap; the month's total, with X21, is USD 5.45. 
 (results only, about 10 MB) is negligible. Teardown was verified on 2026-11-17 at 15:08 UTC:
 no instance, disk or address of the campaign is left; the firewall rule, subnet and network
 were deleted after matching their IDs; the watchdogs were stopped.
+
+## X48, 2026-11-18
+
+Rentals for [X48](X48-exit-3.md) (the phase 1 exit check on Zen 5, Granite Rapids and Axion
+again, `main` 8c18dd2), approved by the maintainer on 2026-11-17 night (USD 20 cap for the
+campaign, at most USD 6 for X48). Same project, region, settings and prices as X45, except
+`--max-run-duration=2h` (termination action DELETE); boot-disk auto-delete, and a Mac-side
+watchdog per VM (2 h 15 min) that deletes by name only after matching the recorded ID.
+Creation times are those Compute Engine recorded; deletion times are when the delete call
+returned.
+
+Shared resources (free): VPC network `fftn-x48-net` (5903739121847849715), subnet
+`fftn-x48-sub` (3524167475670373060), firewall rule `fftn-x48-ssh` (4522014242547782359,
+SSH from the controller's address only).
+
+| Instance | Recorded ID | Type | Zone | Spot USD/h (VM) | Created (UTC) | Deleted (UTC) | Cost USD | Running total (X48) |
+|---|---|---|---|---:|---|---|---:|---:|
+| fftn-x48-c4a | 5987786258826482065 | c4a-standard-16 | us-central1-a | 0.354 | 2026-11-18 00:21:18 | 2026-11-18 00:47:47 | 0.17 | 0.17 |
+| fftn-x48-c4d | 9061261565899133329 | c4d-standard-16, 1 thread per core | us-central1-a | 0.335 | 2026-11-18 00:21:19 | 2026-11-18 00:49:01 | 0.17 | 0.34 |
+| fftn-x48-c4 | 6931765661841576336 | c4-standard-16, 1 thread per core, minimum platform Granite Rapids | us-central1-a | 0.473 | 2026-11-18 00:21:20 | 2026-11-18 00:56:01 | 0.29 | 0.63 |
+
+X48 total USD 0.63 estimated gross; no VM was preempted. With X31, X31b, X35 and X45 the
+campaign has spent USD 4.72 of its USD 20 cap; the month's total, with X21, is USD 6.08.
+Egress (results only, about 10 MB) is negligible. Teardown was verified on 2026-11-18 at
+00:57 UTC: no instance, disk or address of the campaign is left; the firewall rule, subnet
+and network were deleted after matching their IDs; the watchdogs were stopped.
