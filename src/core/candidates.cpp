@@ -59,6 +59,8 @@ const char* strategy_name(strategy_choice s) {
     return "grid";
   case strategy_choice::lanes:
     return "lanes";
+  case strategy_choice::depth:
+    return "depth";
   case strategy_choice::rules:
     break;
   }
@@ -110,6 +112,9 @@ std::string choice_text(const plan_choice& c) {
   if (c.rader >= 0) {
     field("rader=" + std::to_string(c.rader));
   }
+  if (!c.depth_tops.empty()) {
+    field("tops=" + dotted(c.depth_tops));
+  }
   return text.empty() ? "rules" : text;
 }
 
@@ -139,6 +144,8 @@ std::optional<plan_choice> parse_choice(std::string_view text) {
         c.strategy = strategy_choice::grid;
       } else if (value == "lanes") {
         c.strategy = strategy_choice::lanes;
+      } else if (value == "depth") {
+        c.strategy = strategy_choice::depth;
       } else {
         return std::nullopt;
       }
@@ -161,6 +168,13 @@ std::optional<plan_choice> parse_choice(std::string_view text) {
         return std::nullopt;
       }
       c.rader = value == "0" ? 0 : 1;
+    } else if (key == "tops") {
+      field = 5;
+      std::optional<std::vector<std::size_t>> v = parse_dotted(value);
+      if (!v || v->size() > 2) {
+        return std::nullopt;
+      }
+      c.depth_tops = *v;
     } else {
       return std::nullopt;
     }
@@ -181,10 +195,18 @@ void apply_choice(const plan_choice& c, build_settings& s) {
   s.grid_factors = c.grid_factors;
   s.grid_phases = c.grid_phases;
   s.rader = c.rader;
+  s.depth_tops = c.depth_tops;
 }
 
 plan_choice pinned_choice(const plan_choice& c, const plan_core& built) {
   plan_choice p = c;
+  // A depth-first chain's tops as built; none without one.
+  p.depth_tops =
+      built.built == strategy_choice::depth ? built.depth_tops : std::vector<std::size_t>{};
+  if (built.built == strategy_choice::depth && p.strategy == strategy_choice::rules) {
+    // The rules took it: tops recorded, so a replay builds the same split.
+    p.strategy = strategy_choice::depth;
+  }
   if (built.built == strategy_choice::grid && !built.grid_factors.empty()) {
     p.strategy = strategy_choice::grid;
     p.grid_factors = built.grid_factors;
@@ -194,7 +216,8 @@ plan_choice pinned_choice(const plan_choice& c, const plan_core& built) {
     p.grid_factors.clear();
     p.grid_phases = 0;
     if (p.strategy == strategy_choice::grid ||
-        (p.strategy == strategy_choice::lanes && built.built != strategy_choice::lanes)) {
+        (p.strategy == strategy_choice::lanes && built.built != strategy_choice::lanes) ||
+        (p.strategy == strategy_choice::depth && built.built != strategy_choice::depth)) {
       p.strategy = strategy_choice::rules;
     }
   }

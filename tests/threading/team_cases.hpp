@@ -219,6 +219,18 @@ void add_cases(std::vector<team_case>& out, const fftn::detail::build_settings& 
   grid.grid_factors = {8, 16, 16};
   out.push_back(make_case("c2c_grid3_inplace_2048x2" + suffix, fftn::rows_c2c<T>(2048, 2, bwd),
                           4096, 4096, true, grid, target));
+  // The depth-first chain (strategies/chain.hpp, experiment X46): its first and top passes'
+  // units and the loop over sub-rows are what a team shares; one and two top factors.
+  fftn::detail::build_settings depth = settings;
+  depth.strategy = fftn::detail::strategy_choice::depth;
+  depth.depth_tops = {16};
+  out.push_back(make_case("c2c_depth_2048x3" + suffix, fftn::rows_c2c<T>(2048, 3, fwd), 6144, 6144,
+                          false, depth, target));
+  depth.depth_tops = {8, 4};
+  out.push_back(make_case("c2c_depth2_4096x2" + suffix, fftn::rows_c2c<T>(4096, 2, bwd), 8192, 8192,
+                          false, depth, target));
+  out.push_back(make_case("c2c_depth2_inplace_4096x2" + suffix, fftn::rows_c2c<T>(4096, 2, fwd),
+                          8192, 8192, true, depth, target));
   // Split lane passes (DESIGN.md 6.3, strategies/chain.hpp), forced with a first radix of
   // 16, which every target's split_block divides: a run of three passes (BL in the
   // middle), of two in place, in the complex chains of real rows, and on the long axis of

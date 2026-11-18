@@ -47,6 +47,32 @@ consteval pass_fn phase_entry() {
   }
 }
 
+// Whether the depth-first chain's passes (depth.inl, experiment X46) take radix R: as its
+// first pass, the first radix of a sub-row's chain; as its top pass, a top factor. The primes
+// 17, 19 and 23 and radix 64 are neither: their passes would add code that no rule selects
+// (X3: radix 64 spills). Radix 25 is a first pass only: GCC 14.4 crashed (an internal
+// compiler error in its value-range pass) compiling the top pass of radix 25, the first use
+// of that codelet's decimation-in-time form.
+template <std::size_t R>
+inline constexpr bool depth_radix = R <= dense_codelet_radix || R == 20 || R == 25 || R == 32;
+template <std::size_t R> inline constexpr bool depth_top_radix = depth_radix<R> && R != 25;
+
+template <class T, std::size_t R, int Sign> consteval pass_fn depth_first_entry() {
+  if constexpr (depth_radix<R>) {
+    return &depth_first_pass<T, R, Sign>;
+  } else {
+    return nullptr;
+  }
+}
+
+template <class T, std::size_t R, int Sign, edge_op OutOp> consteval pass_fn depth_top_entry() {
+  if constexpr (depth_top_radix<R>) {
+    return &depth_top_pass<T, R, Sign, OutOp>;
+  } else {
+    return nullptr;
+  }
+}
+
 template <class T, std::size_t R, bool Scaled> consteval pass_fn r2c_last_entry() {
   if constexpr (phase_radix<R>) {
     return &r2c_last<T, R, Scaled>;
@@ -245,6 +271,12 @@ template <class T, std::size_t I> struct radix_entries {
           {
               {&lanes_leaf<T, R, -1, nop>, &lanes_leaf<T, R, -1, scl>},
               {&lanes_leaf<T, R, +1, nop>, &lanes_leaf<T, R, +1, scl>},
+          },
+      .depth_first = {depth_first_entry<T, R, -1>(), depth_first_entry<T, R, +1>()},
+      .depth_top =
+          {
+              {depth_top_entry<T, R, -1, nop>(), depth_top_entry<T, R, -1, scl>()},
+              {depth_top_entry<T, R, +1, nop>(), depth_top_entry<T, R, +1, scl>()},
           },
   };
 };
