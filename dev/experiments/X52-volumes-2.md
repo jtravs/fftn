@@ -133,6 +133,35 @@ than `main` beyond 1.058 (81³, unchanged program), inside the band. **L adopted
 W1 changes 30 of the 42 volumes: W1 ÷ L 0.993 over them (worst 100³ 1.06, 2 × 1024 × 1024
 1.03–1.05), against the rule's 0.97: **W1 rejected** (reverted).
 
+### Screens after the Mac verdicts (not judging)
+
+- W3 (Mac; column blocks of 1 KiB where their tiles fit twice L1): runs 20261118-002050-0efb
+  (volumes, band ±7.7 %) and 20261118-002621-c540 (the 132 planes and volumes, band ±4.8 %):
+  0.985 over the 34 volumes and 1.031 over the 22 planes it changes (64 × 64 × 512 and 512 ×
+  64 × 64 0.87–0.94, but 96² 1.10–1.11, 64² 1.06–1.08): dropped without a judging run.
+- EPYC one thread, run 20261118-002217-a671 (Slurm 512541; band ±2.6 %), every column block
+  forced: 8 columns 1.12; 32 0.99; 64 0.974, with short columns gaining (64³ 0.87–0.96, 48³
+  0.86–0.90, 120³ in place 0.77, 128 × 64 × 32 0.88–0.89, 64 × 64 × 512 0.91–0.94) and long
+  ones losing (4 × 512 × 512 1.15–1.19, 512 × 64 × 64 1.07–1.10, 256³ 1.05–1.06). Hence arm W4
+  (x86-64 with a private L2): blocks widen to 1 KiB of columns where both tiles fit
+  `column_tile_bytes` (a quarter of L2); screened before any rule.
+- EPYC, run 20261118-000233-49d2 (Slurm 512519; L and G at 8 lanes, the volumes; 8 rounds, all
+  overloaded, band ±6.8 %): G ÷ L 0.904 (128 × 64 × 32 0.71–0.76, 256 × 256 × 16 0.70–0.78,
+  512 × 64 × 64 0.77–0.78, 4 × 512 × 512 0.78–0.84, 128³ 0.83–0.88, 64³ 0.86; 97³ in place
+  1.17, 64 × 64 × 512 1.09–1.10, past or near the band).
+
+### G on the Mac at 6 lanes (judging)
+
+Runs 20261118-010152-2709 (volumes; 8 rounds, all loaded, band ±12.0 %), 20261118-010632-1cd0
+(the 45 c2c planes and volumes of the standard catalogue; band ±9.1 %) and
+20261118-011212-0662 (its 87 real planes and volumes; band ±14.6 %), L 446be06 against G
+f6f9b4d, both at 6 lanes. Over the cases whose single transform reaches the Mac's split
+threshold (8192 points; the smaller ones run inline or whole, where G changes nothing):
+volumes 0.859 (81³ 0.70–0.75, 120³ 0.72–0.75, 64 × 64 × 512 and 512 × 64 × 64 out of place
+0.72, 100³ in place 0.75), c2c planes 0.937, real planes 0.828; worst c2r 96² out of place
+1.12, 256² in place 1.055, inside their bands. Rule met: **G adopted on the Mac** (the Mac
+was loaded by other work throughout; the bands are wide).
+
 ## Verdict
 
 Pending.
