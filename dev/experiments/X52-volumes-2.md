@@ -76,6 +76,17 @@ here and committed before its judging run.
   more than the larger of 2 % and the run's A/A band (a case just past it on a loaded machine
   is re-run once before it decides).
 
+- Decision rule for **G**, written before its judging runs, per machine (EPYC, Xeon; GCC):
+  adopt G if (1) the geometric mean of G ÷ L at 8 lanes over the cases of the case set that
+  a team runs split (not inline, not as whole transforms only: the planes and volumes whose
+  single transform the schedule splits) is at most 0.97, (2) no case of the case set is
+  slower than L at 8 lanes by more than the larger of 2 % and the run's A/A band (a case just
+  past it on a loaded machine is re-run once before it decides), and (3) one-thread
+  programs are unchanged (by construction: the engine runs only for teams). Where G is not
+  adopted on a machine it is compiled out or gated off there. The Mac's teams are not
+  measured in this experiment; G is adopted there only if a Mac run at 6 lanes meets the same
+  rule.
+
 ## Results
 
 ### Screens (not judging)
