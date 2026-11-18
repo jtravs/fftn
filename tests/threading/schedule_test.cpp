@@ -274,10 +274,9 @@ TEST(Schedule, PlaneSplitThresholds) {
     settings.profile = p;
     return real ? fftn::detail::make_plan_core(
                       fftn::detail::view_of(fftn::planes_r2c<double>(96, 96, 1)), {}, settings)
-                : fftn::detail::make_plan_core(
-                      fftn::detail::view_of(fftn::planes_c2c<double>(
-                          96, 96, 1, fftn::direction::forward)),
-                      {}, settings);
+                : fftn::detail::make_plan_core(fftn::detail::view_of(fftn::planes_c2c<double>(
+                                                   96, 96, 1, fftn::direction::forward)),
+                                               {}, settings);
   };
   const lane_map lanes{.lanes = 8};
   const auto split = [&](bool real, const machine_profile& p) {
