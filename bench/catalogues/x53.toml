@@ -3,7 +3,8 @@
 #
 # Experiment X53's cases (dev/experiments/X53-two-row-leaves.md): batches of rows of every
 # codelet length, from two rows (FFTW's two rows in one register) to long batches, where a
-# batch leaf could replace the leaf, the pair leaf or the short chain. Double precision.
+# batch leaf could replace the leaf, the pair leaf or the short chain. Double precision, and
+# float in its own group.
 
 [catalogue]
 name = "x53"
@@ -30,3 +31,11 @@ kind = "c2c"
 dims = [2, 3, 5, 7, 8, 12, 15, 16, 64]
 batch = [2, 3]
 place = "in"
+
+[[group]]
+name = "x53-float"
+note = "float, for NEON (C = 2 in float, 1 in double) and the x86 float rules"
+kind = "c2c"
+dims = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 19, 20, 23, 25, 32, 64]
+batch = [2, 3, 4, 8, 64, 1024]
+precision = "f32"
