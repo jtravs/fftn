@@ -228,7 +228,8 @@ For a given plan, results are bitwise identical:
 - at any alignment of the arrays and the workspace.
 
 Results may differ in the last bits between instruction sets, between plans built with
-different options (in place or not), and between library versions. A plan's instruction
+different options (in place or not), between plans of different batch counts (a row of a
+batch against a plan of that row alone), and between library versions. A plan's instruction
 set is the fastest the processor and the build support (`plan::instruction_set()`);
 `options::force_isa` picks another, for tests and benchmarks.
 Measured planning (`options::effort`, [planning](planning.md)) may choose a different
