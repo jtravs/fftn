@@ -304,6 +304,11 @@ one thread 0.936 over the 34 volumes it changes (64 × 64 × 512 0.66, 128³ 0.7
 Xeon's teams run the program (no team blocks there), and W4's wider blocks lose: 32³ 1.144,
 30 × 40 × 50 1.10–1.11, 48³ 1.10, past the band: **W4 fails rule (2) on the Xeon.**
 
+Run 20261118-045514-4a3d (Slurm 16457; 3 of 8 rounds loaded, band ±3.2 %), the 132 planes and
+volumes: W4 ÷ L at one thread 0.982 over the 22 it changes (128³ 0.79, 64³ 0.93), worst 96² in
+place 1.026; with the volumes 0.954 over 56 changed cases, rule (1) met. At 8 lanes c2c 96²–
+128² lose 1.24–1.46 (fewer, wider blocks for the members).
+
 **Arm W4b (written before its run):** W4's wide blocks in the one-thread program only; a
 plan whose program W4 widens also builds the team program (X43's mechanism), which keeps
 X40's blocks. One-thread programs are W4's (so rule (1) is W4's measurement); team executions
