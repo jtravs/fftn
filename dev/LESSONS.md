@@ -499,7 +499,11 @@ from process to process, and a timing-based choice inherits the flip.** On the E
 radix-8 chain. The other chains changed less, so measured planning on scratch that happened
 to be huge-page backed chose programs 1.18 times slower on the benchmark's buffers. Rader's
 random gathers at 65537 were 1.75 times slower than Bluestein in one run and 1.41–1.49 times
-faster in two others. Time candidates on both page kinds (madvise each way) and judge each by
+faster in two others. (X50, correcting the reading of that flip as Rader's: in 24 processes
+of the benchmark binary on two EPYC nodes Rader took 15.6–16.0 ns per point and Bluestein
+23.0–24.2 every time, and every L1 data-TLB miss was a 4 KiB page's: a 1 MiB buffer is not
+huge-page backed, so the flip lives in measured planning's larger scratch, not in the
+caller's rows.) Time candidates on both page kinds (madvise each way) and judge each by
 the slower, or the "best" program is a property of one allocation. Judging by the slower
 kind trades a few cases where the caller's memory suits the faster program (Xeon 262144,
 1.07). [P1](experiments/P1-rules-vs-measure.md), [P1b](experiments/P1b-rader-65537.md),
@@ -852,6 +856,21 @@ spill reduction is free when it comes from order alone. The other warning: the 1
 plan then won at batches 1–256 and lost 25 % at 1024 × 1024 (16 MiB, beyond L2; FFTW's
 two-pass plan lost as much), so a per-length radix override was the wrong carrier.
 [X54](experiments/X54-radix64-avx2.md).
+
+4.21 **An algorithm's inner transform deserves the best structure the user's rows get, and
+a workspace can stand in for a missing slot.** A Bluestein stage is two transforms of M
+points between chirp passes; on the Xeon 6240 FFTN's ran them as breadth-first chains
+(8.2 ns per point at 2¹⁸, 17.0 at 2073600) after the user's rows of those lengths had
+moved to a depth-first chain (4.4 and 9.5). Running the convolution on that chain, with the
+plan's workspace block as the movable line its sub-row loop needs (the chirped input in
+scratch, the blocks in the workspace, the forward chain's output back in scratch), took
+131071 and 999983 to 0.70 and 0.79 of their time, with no new program slot: X36b had judged
+the same change to need one. Fusing the chirp passes into the chains' outer passes (the
+first reads the input times the chirp, the last writes only the Q outputs kept) saved
+another 0.86–0.93: 131071 0.61 and 999983 0.71 of their time in all, FFTN ÷ MKL 1.34 → 0.84
+and 1.44 → 1.05, the M5 Max's primes of 4813–5119 0.86. One top factor of 16 beat two even
+at 2²¹ points (32 MiB).
+[X50](experiments/X50-primes.md).
 
 ## 5. Threading
 

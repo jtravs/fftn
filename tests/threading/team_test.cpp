@@ -129,6 +129,21 @@ std::string case_name(const ::testing::TestParamInfo<std::size_t>& param) {
 INSTANTIATE_TEST_SUITE_P(Cases, TeamBits,
                          ::testing::Range(std::size_t{0}, TeamBits::cases().size()), case_name);
 
+// The Bluestein cases on the depth-first chains (team_cases.hpp, experiment X50) took that
+// path on every target, so that a later profile or rule change cannot drop their coverage.
+TEST(TeamBitsCoverage, DepthCasesTakeTheDepthFirstConvolution) {
+  std::size_t seen = 0;
+  for (const team_case& c : TeamBits::cases()) {
+    if (c.name.find("bluestein_depth") == std::string::npos) {
+      continue;
+    }
+    ++seen;
+    const std::string text = fftn::detail::describe(*c.core);
+    EXPECT_NE(text.find("two depth-first chains"), std::string::npos) << c.name << "\n" << text;
+  }
+  EXPECT_GE(seen, 4U);
+}
+
 // The same through the public API, with the default machine profile and chunking: long
 // rows, leftover rows, planes, many short rows.
 TEST(TeamExecute, PublicApiDefaultsEqualSerial) {

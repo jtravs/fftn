@@ -161,6 +161,10 @@ public:
     conv_pow2_part_bytes_ = pow2_part_bytes;
   }
 
+  // Every Bluestein stage's convolution length m instead of the rule's, where m is at least
+  // 2Q - 1 and 7-smooth (build_settings::bluestein_length; tests). 0: the rule's.
+  void force_convolution_length(std::size_t m) noexcept { forced_conv_ = m; }
+
   // The radices of a chain for n, in pass order (empty for n = 1); the last is a Bluestein
   // stage's when bluestein_last(n).
   [[nodiscard]] std::vector<std::size_t> radices(std::size_t n) const;
@@ -239,9 +243,43 @@ public:
     std::vector<stage> top;
     std::size_t scratch = 0;
   };
+  // src: where the first pass reads (stride 1); dst: where the last top pass writes (stride
+  // 1; `work` itself for a top pass in place); out_factor: when not null, the last top pass
+  // multiplies its output element i by entry i (n complex values; then scale is 1).
   [[nodiscard]] bool depth_fits(std::size_t n, const std::vector<std::size_t>& tops) const;
   depth_stages c2c_depth(std::size_t n, const std::vector<std::size_t>& tops, int sign,
-                         double scale, slot work);
+                         double scale, slot work, slot src = slot::in, slot dst = slot::out,
+                         const T* out_factor = nullptr);
+
+  // A Bluestein stage whose convolution runs as two depth-first chains (experiment X50), for
+  // a c2c line of one prime q above the Bluestein threshold with no Rader root (one copy):
+  // bluestein_single(n) is q when n's chain is that one stage, else 0; bluestein_length_of(q)
+  // its convolution's length M. bluestein_depth gives `forward`, the depth-first chain of M
+  // whose first pass reads src (stride 1) times the chirp, zero beyond Q (the chirp pass in,
+  // fused), with its blocks in the workspace block (M elements) and its top pass into scratch
+  // a times the kernel spectrum; and `backward`, the depth-first chain of M from a with its
+  // blocks in the block, its inner top pass in place there and its last writing the first Q
+  // outputs to dst (stride 1) times the chirp with the output edge's operation (the chirp
+  // pass out, fused). Both chains' sub-rows use scratch a (dead by then) and b. scratch: the
+  // complex elements it needs in each of a and b. Preconditions: depth_fits(M, tops); no
+  // input edge operation; the output's none or the scale.
+  struct bluestein_depth_stages {
+    depth_stages forward;
+    depth_stages backward;
+    std::size_t scratch = 0;
+  };
+  [[nodiscard]] std::size_t bluestein_single(std::size_t n) const;
+  // depth_fits(m, tops) with C dividing the tops' product: the fused chirp passes read whole,
+  // aligned blocks of C copies (passes/depth.inl, depth_first_pass with Chirp).
+  [[nodiscard]] bool bluestein_depth_fits(std::size_t m,
+                                          const std::vector<std::size_t>& tops) const;
+  [[nodiscard]] std::size_t bluestein_length_of(std::size_t q) const { return bluestein_m(q); }
+  bluestein_depth_stages bluestein_depth(std::size_t q, const std::vector<std::size_t>& tops,
+                                         int sign, endpoint src, endpoint dst,
+                                         const line_edges& edges);
+  // "bluestein 131071 (M 262144 = depth-first 16 x 16384 (sub-rows ...))" for describe().
+  [[nodiscard]] std::string bluestein_depth_text(std::size_t q,
+                                                 const std::vector<std::size_t>& tops) const;
   // "depth-first 4 x 4 x 1024 (sub-rows 8 x 8 x 16)" for describe().
   [[nodiscard]] std::string depth_text(std::size_t n, const std::vector<std::size_t>& tops) const;
 
@@ -319,6 +357,13 @@ private:
                   std::vector<stage>& stages);
   void add_copy(std::size_t n, endpoint src, endpoint dst, const line_edges& edges,
                 std::vector<stage>& stages);
+  // A Bluestein stage's chirp passes over s copies of q (M: the convolution's length), into
+  // scratch slot conv with the input edge `in`, and out of slot `from` with edges.out.
+  stage bluestein_in_stage(std::size_t n, std::size_t q, std::size_t m, int sign, endpoint src,
+                           slot conv, edge_op in, const line_edges& edges,
+                           const bluestein_tables& tab);
+  stage bluestein_out_stage(std::size_t n, std::size_t q, std::size_t m, int sign, slot from,
+                            endpoint dst, const line_edges& edges, const bluestein_tables& tab);
   // The Bluestein stage of radix q as the last pass of a line of n (s = n / q copies), its
   // edges' operations applied when `first` (input) and always (output).
   void add_bluestein(std::size_t n, std::size_t q, int sign, endpoint src, endpoint dst,
@@ -371,6 +416,7 @@ private:
   std::size_t conv_from_bytes_ = SIZE_MAX; // use_long_convolutions
   std::size_t conv_radix8_bytes_ = 0;
   std::size_t conv_pow2_part_bytes_ = SIZE_MAX;
+  std::size_t forced_conv_ = 0; // force_convolution_length
   std::map<std::size_t, std::vector<std::complex<T>>> roots_;
   std::map<std::pair<std::size_t, std::size_t>, const T*> grouped_tables_;              // (n, R)
   std::map<std::tuple<std::size_t, std::size_t, std::size_t>, const T*> shared_tables_; // n, R, s

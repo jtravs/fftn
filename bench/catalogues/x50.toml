@@ -1,0 +1,27 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Experiment X50's cases (dev/experiments/X50-primes.md): primes whose Bluestein convolution
+# the rules run on two depth-first chains on one profile and not on others, beyond the x36
+# catalogue's: on the M5 Max the primes whose convolution is 10240 points (4813-5119), on the
+# Xeon 6240 more convolutions of 2^15-2^21 points; and their float counterparts, which keep
+# their plans.
+
+[catalogue]
+name = "x50"
+
+[[group]]
+name = "x50-mac"
+note = "convolutions of 10240 points on the M5 Max (power-of-two part 2048)"
+kind = "c2c"
+dims = [4813, 4999, 5119]
+precision = ["f64", "f32"]
+tiers = ["quick", "tracking"]
+
+[[group]]
+name = "x50-xeon"
+note = "more primes whose convolutions lie in or beyond the Xeon's depth-first range"
+kind = "c2c"
+dims = [16411, 65519, 196613, 400009]
+precision = ["f64"]
+tiers = ["tracking"]

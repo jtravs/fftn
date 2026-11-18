@@ -73,6 +73,24 @@ template <class T, std::size_t R, int Sign, edge_op OutOp> consteval pass_fn dep
   }
 }
 
+// A Bluestein convolution's forward first pass and backward top pass with the stage's chirp
+// passes fused in (experiment X50 arm C).
+template <class T, std::size_t R> consteval pass_fn depth_first_chirp_entry() {
+  if constexpr (depth_radix<R>) {
+    return &depth_first_pass<T, R, -1, true>;
+  } else {
+    return nullptr;
+  }
+}
+
+template <class T, std::size_t R, edge_op OutOp> consteval pass_fn depth_top_chirp_entry() {
+  if constexpr (depth_top_radix<R>) {
+    return &depth_top_pass<T, R, +1, OutOp, true>;
+  } else {
+    return nullptr;
+  }
+}
+
 template <class T, std::size_t R, bool Scaled> consteval pass_fn r2c_last_entry() {
   if constexpr (phase_radix<R>) {
     return &r2c_last<T, R, Scaled>;
@@ -275,9 +293,13 @@ template <class T, std::size_t I> struct radix_entries {
       .depth_first = {depth_first_entry<T, R, -1>(), depth_first_entry<T, R, +1>()},
       .depth_top =
           {
-              {depth_top_entry<T, R, -1, nop>(), depth_top_entry<T, R, -1, scl>()},
-              {depth_top_entry<T, R, +1, nop>(), depth_top_entry<T, R, +1, scl>()},
+              {depth_top_entry<T, R, -1, nop>(), depth_top_entry<T, R, -1, scl>(),
+               depth_top_entry<T, R, -1, fac>()},
+              {depth_top_entry<T, R, +1, nop>(), depth_top_entry<T, R, +1, scl>(),
+               depth_top_entry<T, R, +1, fac>()},
           },
+      .depth_first_chirp = depth_first_chirp_entry<T, R>(),
+      .depth_top_chirp = {depth_top_chirp_entry<T, R, nop>(), depth_top_chirp_entry<T, R, scl>()},
   };
 };
 
