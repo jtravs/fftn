@@ -896,7 +896,11 @@ high-precision verification. It is documented in `gen/README.md` (section 17).
    the number of live values near the minimum, which matters for radix ≥ 16 on 16
    registers and ≥ 32 on 32. (The recursive partition of Frigo's PLDI 1999 paper was tried
    first and kept more values live; the commit that holds it is named in
-   `gen/fftn_gen/schedule.py`.) A codelet whose radix exceeds
+   `gen/fftn_gen/schedule.py`.) Past the register file the fewest live values is the wrong
+   aim: a complex codelet that cannot fit 16 registers is also ordered by a list scheduler
+   that tracks a model register file, and takes that order where a furthest-next-use model
+   of the allocator counts at least a quarter fewer spill moves (radix 32 and 64; GCC
+   allocates in source order on x86; experiment X54). A codelet whose radix exceeds
    the register count necessarily keeps some values on the stack; that is acceptable when
    the spills are few and ordered (FFTW's radix-32 and radix-64 codelets work this way),
    and ruinous when they are not: the prototype's hand-built radix 20, 24 and 32

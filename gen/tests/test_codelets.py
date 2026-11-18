@@ -14,7 +14,14 @@ from fftn_gen.catalogue import RADICES, all_codelets
 from fftn_gen.codelet import build_ops, count
 from fftn_gen.ir import Graph, rotate
 from fftn_gen.lower import ForcedRotation, lower
-from fftn_gen.schedule import creation_order, greedy_order, peak_live, schedule
+from fftn_gen.schedule import (
+    REGISTERS,
+    creation_order,
+    greedy_order,
+    peak_live,
+    schedule,
+    spill_moves,
+)
 from fftn_gen.verify import VerificationError, verify
 
 
@@ -115,6 +122,19 @@ class Codelets(unittest.TestCase):
                     for name, value in live.items():
                         totals[name] += value
         self.assertLess(totals["greedy"], totals["creation"], totals)
+
+    def test_fitted_order_spills_less_in_sixteen_registers(self) -> None:
+        # The generated codelets (codelet.build) against the fewest-live order: never more
+        # modelled spill moves in AVX2's 16 registers, and radix 32 and 64, plain and DIF
+        # (the passes' variants), at most three quarters of them (X54).
+        for c in codelets():
+            fewest = schedule(build_ops(c.radix, c.variant, c.sign))
+            before, after = spill_moves(fewest, REGISTERS), spill_moves(c.ops, REGISTERS)
+            self.assertLessEqual(after, before, (c.radix, c.variant, c.sign))
+            if c.radix in (32, 64) and c.variant != "dit":
+                self.assertLessEqual(4 * after, 3 * before, (c.radix, c.variant, c.sign))
+            if c.live <= REGISTERS:
+                self.assertEqual(after, 0, (c.radix, c.variant, c.sign))
 
 
 def _with(ops: list, i: int, **changes: object) -> list:
