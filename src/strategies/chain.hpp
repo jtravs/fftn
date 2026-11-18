@@ -435,8 +435,8 @@ private:
   std::vector<std::size_t> forced_;
   real_fusion fusion_;
   std::size_t bluestein_above_;
-  std::size_t line_scratch_ = 0;           // scratch a Bluestein stage of the current line needs
-  std::size_t fit_row_ = 0; // use_row_fit
+  std::size_t line_scratch_ = 0; // scratch a Bluestein stage of the current line needs
+  std::size_t fit_row_ = 0;      // use_row_fit
   bool fit_row_fits_ = false;
   std::size_t long_from_bytes_ = SIZE_MAX; // use_long_rows
   std::size_t long_radix8_bytes_ = 0;

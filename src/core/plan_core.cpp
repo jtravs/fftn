@@ -1043,8 +1043,8 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   if (s.kind == transform_kind::c2c && r == 1 && settings.profile.fit_row_bytes != 0 &&
       in.stride[0] == 1 && out.stride[0] == 1) {
     const std::size_t sides = c.in_place ? 1 : 2;
-    const std::size_t touched = checked_product(
-        std::array{c.lengths[0], std::size_t{2} * sizeof(T), p.transforms, sides});
+    const std::size_t touched =
+        checked_product(std::array{c.lengths[0], std::size_t{2} * sizeof(T), p.transforms, sides});
     chain.use_row_fit(c.lengths[0], touched != 0 && touched <= settings.profile.fit_row_bytes);
   }
 

@@ -61,9 +61,9 @@ constexpr std::array<std::size_t, cost_radices> pass_radices{
 // registers (dev/experiments/X54-radix64-avx2.md). 1024 = 16 x 64 passed the same rule and ran
 // 0.84-0.95 of 4.16.16's time at batches 1-256, but 1.25 at 1024 x 1024 (16 MiB; FFTW's
 // two-pass plan as slow) and 1.14 in the 1024 x 1024 plane, so it has no override: an override
-// cannot see the batch (X54; avx2_double_fit_overrides sees it, X57). In float (avx2_float_overrides) the
-// same campaign and rule chose 512 = 8 x 64, 640 = 32 x 20, 768 = 12 x 64, 2048 = 32 x 64 and
-// 4096 = 8 x 32 x 16 (X54 arm C).
+// cannot see the batch (X54; avx2_double_fit_overrides sees it, X57). In float
+// (avx2_float_overrides) the same campaign and rule chose 512 = 8 x 64, 640 = 32 x 20, 768 = 12 x
+// 64, 2048 = 32 x 64 and 4096 = 8 x 32 x 16 (X54 arm C).
 // clang-format off
 // NOLINTBEGIN(readability-trailing-comma): bench/x2/fit.py writes and parses this layout
 constexpr std::array<radix_override, 42> avx2_double_overrides{{
