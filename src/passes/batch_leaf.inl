@@ -11,63 +11,110 @@
 // lane, so on C > 1 the other lanes repeat the work; the narrow leaves of the x86 targets
 // halve that waste, and the lanes strategy fills the lanes with rows but moves them through
 // a tile in memory, which costs more than a leaf for short batches (X49: 1.6-10 times the
-// chain on 15 x 2 and 64 x 2). Here the codelet's input j is element j of C rows, gathered
-// when the codelet asks for it (C broadcasts, transposed: lane l of register 0 is row l's
-// element; on avx2 in double the compilers make it one load and one insert of the other
-// half from memory), and its output k goes back lane by lane (the output in every register,
-// transposed: lane 0 of register l is lane l; one store of the low half and one of the high
-// half from the register). The loads and stores stay where the codelet puts them, as in the
-// leaf, so a codelet needs no more registers than the leaf's. X53's first arm gathered all R
-// inputs by C x C block transposes before the codelet and scattered the outputs after it:
-// all R live at once, and GCC 16 spilled the radix-15 leaf's registers about twice as often.
+// chain on 15 x 2 and 64 x 2). Here element j of C rows is gathered into one register by
+// C x C transposes in registers: C consecutive elements of each row loaded as one vector,
+// transposed, and the block's registers are the codelet's inputs j .. j + C - 1. The outputs
+// go back the same way. Where C does not divide R the last block overlaps the one before
+// it (it starts at R - C), so every access is a whole vector: the overlap loads elements
+// twice and stores the same values twice. Rows shorter than C take one element of each row
+// at a time (C broadcasts, transposed: lane l of register 0 is row l's element), and store
+// lane l of an output from register l of the transposed broadcasts.
 //
 // Each lane does the arithmetic the leaf does to its row (the same codelet, with the edge's
 // scale on loading or storing), so the bits are the leaf's, the narrow leaf's on x86 (which
 // round alike), whatever the group a row falls in. A last row alone runs as the leaf runs it
-// (broadcast into every lane, lane 0 stored); a partial group of more (C > 2) holds zeros in
-// its idle lanes and neither reads nor writes their rows.
+// (broadcast into every lane, lane 0 stored): a partial group gathers and scatters as a whole
+// one does and cost about as much (X53 arm B3); a partial group of more rows (C > 2) holds
+// zeros in its idle lanes and neither reads nor writes their rows.
+//
+// X53's arm B2 gathered each input when the codelet asked for it (C broadcasts, transposed)
+// and stored each output lane by lane, so that no more values were live than in the leaf: it
+// was slower than the block transposes on the Xeon 6240 (GCC 14: 1.05-1.25 of them where
+// they win) and the M5 Max (Clang 23, float: 1.1-1.2; runs in the experiment file).
 
 namespace {
 
-// Element j of rows row[0 .. C - 1] (the first `valid`; Full: all C), row l in lane l, the
-// other lanes zero, times the input edge.
-template <class T, bool Full, edge_op InOp> struct rows_in {
-  const T* const* row;
-  std::size_t valid;
-  edge<T, InOp> e;
-  [[nodiscard]] FFTN_FORCE_INLINE cv<T> get(std::size_t j) const {
-    cv<T> v[C<T>]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
-    for (std::size_t l = 0; l < C<T>; ++l) {
-      v[l] = Full || l < valid ? bcast(row[l] + at(j, 2)) : zeros<T>();
-    }
-    transpose(v);
-    return on_one<T, InOp>(e, v[0], j);
-  }
+// The codelet's inputs from registers already loaded.
+template <class T> struct from_registers {
+  const cv<T>* v;
+  [[nodiscard]] FFTN_FORCE_INLINE cv<T> get(std::size_t j) const { return v[j]; }
 };
 
-// Lane l of output k times the output edge to element k of row row[l], for the first `valid`
-// rows (Full: all C).
-template <class T, bool Full, edge_op OutOp> struct rows_out {
-  T* const* row;
-  std::size_t valid;
-  edge<T, OutOp> e;
-  FFTN_FORCE_INLINE void put(std::size_t k, cv<T> y) const {
-    const cv<T> out = on_one<T, OutOp>(e, y, k);
+// The first element of block b: b C, or R - C for the block that overlaps when C does not
+// divide R.
+template <class T, std::size_t R> constexpr std::size_t batch_block_start(std::size_t b) {
+  return (b + 1) * C<T> <= R ? b * C<T> : R - C<T>;
+}
+
+// The blocks of R elements: whole vectors where R >= C.
+template <class T, std::size_t R>
+inline constexpr std::size_t batch_blocks = R >= C<T> ? (R + C<T> - 1) / C<T> : 0;
+
+// Elements 0 .. R - 1 of rows row[0 .. C - 1] (the first `valid`; Full: all C) into x, row l
+// in lane l, the other lanes zero, each times the input edge.
+template <class T, std::size_t R, bool Full, edge_op InOp>
+FFTN_FORCE_INLINE void batch_gather(const T* const* row, std::size_t valid, const edge<T, InOp>& e,
+                                    cv<T>* x) {
+  for (std::size_t b = 0; b < batch_blocks<T, R>; ++b) {
+    const std::size_t j0 = batch_block_start<T, R>(b);
     cv<T> v[C<T>]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
     for (std::size_t l = 0; l < C<T>; ++l) {
-      v[l] = out;
+      v[l] = Full || l < valid ? load(row[l] + at(j0, 2)) : zeros<T>();
     }
-    transpose(v); // v[l]: lane l of out, in every lane
+    transpose(v);
+    for (std::size_t l = 0; l < C<T>; ++l) {
+      x[j0 + l] = on_one<T, InOp>(e, v[l], j0 + l);
+    }
+  }
+  if constexpr (R < C<T>) {
+    for (std::size_t j = 0; j < R; ++j) {
+      cv<T> v[C<T>]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
+      for (std::size_t l = 0; l < C<T>; ++l) {
+        v[l] = Full || l < valid ? bcast(row[l] + at(j, 2)) : zeros<T>();
+      }
+      transpose(v);
+      x[j] = on_one<T, InOp>(e, v[0], j);
+    }
+  }
+}
+
+// The inverse for the outputs y: lane l of y[k] times the output edge to element k of row
+// row[l], for the first `valid` rows (Full: all C).
+template <class T, std::size_t R, bool Full, edge_op OutOp>
+FFTN_FORCE_INLINE void batch_scatter(T* const* row, std::size_t valid, const edge<T, OutOp>& e,
+                                     const cv<T>* y) {
+  for (std::size_t b = 0; b < batch_blocks<T, R>; ++b) {
+    const std::size_t k0 = batch_block_start<T, R>(b);
+    cv<T> v[C<T>]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
+    for (std::size_t l = 0; l < C<T>; ++l) {
+      v[l] = on_one<T, OutOp>(e, y[k0 + l], k0 + l);
+    }
+    transpose(v);
     for (std::size_t l = 0; l < C<T>; ++l) {
       if (Full || l < valid) {
-        store_first(row[l] + at(k, 2), v[l]);
+        store(row[l] + at(k0, 2), v[l]);
       }
     }
   }
-};
+  if constexpr (R < C<T>) {
+    for (std::size_t k = 0; k < R; ++k) {
+      cv<T> v[C<T>]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
+      const cv<T> out = on_one<T, OutOp>(e, y[k], k);
+      for (std::size_t l = 0; l < C<T>; ++l) {
+        v[l] = out;
+      }
+      transpose(v); // v[l]: lane l of out, in every lane
+      for (std::size_t l = 0; l < C<T>; ++l) {
+        if (Full || l < valid) {
+          store_first(row[l] + at(k, 2), v[l]);
+        }
+      }
+    }
+  }
+}
 
-// Rows u .. u + valid - 1 (Full: valid = C) through the codelet. The codelet reads every
-// input before it writes an output, so src may be dst (in place).
+// Rows u .. u + valid - 1 (Full: valid = C): gathered, the codelet, scattered. Every load
+// precedes every store, so src may be dst (in place).
 template <class T, std::size_t R, int Sign, edge_op InOp, edge_op OutOp, bool Full>
 FFTN_FORCE_INLINE void batch_group(const void* src, void* dst, std::ptrdiff_t src_dist,
                                    std::ptrdiff_t dst_dist, std::size_t u, std::size_t valid,
@@ -80,9 +127,11 @@ FFTN_FORCE_INLINE void batch_group(const void* src, void* dst, std::ptrdiff_t sr
     in[l] = line_at<T>(src, r, src_dist);
     out[l] = line_at<T>(dst, r, dst_dist);
   }
-  const rows_in<T, Full, InOp> x{.row = in, .valid = valid, .e = ein};
-  const rows_out<T, Full, OutOp> y{.row = out, .valid = valid, .e = eout};
-  cdft<R>::template plain<T, Sign>(x, y);
+  cv<T> x[R]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
+  cv<T> y[R]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
+  batch_gather<T, R, Full, InOp>(in, valid, ein, x);
+  cdft<R>::template plain<T, Sign>(from_registers<T>{x}, to_registers<T>{y});
+  batch_scatter<T, R, Full, OutOp>(out, valid, eout, y);
 }
 
 // The transform of R points of `count` lines of stride 1 on both sides (line u at src +
