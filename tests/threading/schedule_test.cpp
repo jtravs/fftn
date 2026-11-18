@@ -655,12 +655,12 @@ TEST(Schedule, ProfilesOfRecordedMachines) {
       fields("linux-amd-epyc-7763.sysfs", true),
       (planner_fields{256 * kib, 512 * kib, 32 * kib, 128 * kib, never, 0, 0, 16 * kib, 0,
                       16 * mib,  64 * mib,  never,    false,     0,     0, 0, 32 * kib, 256 * kib,
-                      0,         0,         0,        0,         0,     0, 0, 0, never, false}));
+                      0,         0,         128 * kib, 2 * mib,  8 * kib, 4, 0, 0, 0, false}));
   EXPECT_EQ(
       fields("linux-gcp-c4d-zen5.sysfs", true),
       (planner_fields{512 * kib, 1 * mib,  48 * kib, 256 * kib, never, 0, 0, 16 * kib, 0,
                       16 * mib,  64 * mib, never,    false,     0,     0, 0, 48 * kib, 512 * kib,
-                      0,         0,        0,        0,         0,     0, 0, 0, never, false}));
+                      0,         0,        256 * kib, 4 * mib,  12 * kib, 4, 0, 0, 0, false}));
   EXPECT_EQ(
       fields("linux-intel-xeon-gold-6240.sysfs", true),
       (planner_fields{512 * kib, 1 * mib,   32 * kib, 256 * kib, never, 15,          0,

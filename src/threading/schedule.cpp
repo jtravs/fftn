@@ -155,6 +155,20 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
     // of two at 4093-32749 (two scratch lines a power of two apart); 552960 (2^12 x 135) lost
     // to 2^19 (1.17), so the limit is the L1's size.
     p.bluestein_pow2_part_bytes = c.l1d.size;
+    // Experiment X51 (arm E), EPYC 7763: depth-first chains with a top of 4 (16 registers:
+    // tops of 16 lost, X46) for rows that are not powers of two, from L2/4 to 4 L2, whose
+    // power-of-two part is above L1/4: rows of a small odd part times 2^k took 0.63-0.82 of
+    // the rules' time from 12288 to 163840 points in the screen (FFTW 0.70-0.84), 46080 0.83;
+    // powers of two tied or lost (X32's chains), and 20000-100000 with parts of 8-64 points
+    // gained little or lost (25000 1.16). On x86-64 only: the Axion VM (AArch64, this
+    // profile) is unmeasured.
+    if (x86_64 && c.l1d.size != 0 && c.l2.size != 0) {
+      p.depth_min_bytes = c.l2.size / 4;
+      p.depth_max_bytes = 4 * c.l2.size;
+      p.depth_pow2_max_bytes = 0;
+      p.depth_part_bytes = c.l1d.size / 4;
+      p.depth_top = 4;
+    }
   }
   // Experiment X34: where those chains do not apply (Xeon 6240, 0.7 MiB of L3 per CPU), a
   // row whose length has an odd part of at least 15 stays in two grid phases beyond L2
