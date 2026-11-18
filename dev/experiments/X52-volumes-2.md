@@ -267,6 +267,12 @@ Arms L1 (446be06) and A1 (`main` a0dffe1) at one thread, L8, A8 and G8 (f6f9b4d,
   30 × 40 × 50 1.093 and 81³ 1.08; the EPYC's team programs are the same with and without W4
   (B1 clamps their blocks to 8 columns after it), so these are the 8-lane noise.
 
+- Run 20261118-033804-a8a8 (Slurm 512562; band ±1.6 %), the 132 planes and volumes: W4 ÷ L
+  0.947 at one thread over the 13 it changes (64³ 0.89, 48³ 0.89, 64² × 16 0.92, 64² 0.93),
+  worst 36 × 2048 out of place 1.017; with the volumes, 0.933 over the 38 changed cases.
+  Unchanged programs up to 1.026 (512² in place), just past the 2 % limit on a loaded node:
+  re-run (Slurm 512620). At 8 lanes 1.000 (team programs unchanged on the EPYC).
+
 ## Verdict
 
 Pending.
