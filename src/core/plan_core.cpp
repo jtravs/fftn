@@ -456,8 +456,9 @@ grid_split plan_grid(std::size_t n, const side& in, const side& out, const build
 // shortest sub-row. By the rules (X46 arms A and C): in double on a target with 32 vector
 // registers (`avx512`, NEON; tops of 16 lost 1.2-1.7 on `avx2`'s 16), a row of
 // [depth_min_bytes, depth_max_bytes] whose power-of-two part has more than depth_part_bytes,
-// with one top factor, the profile's depth_top, else its depth_top_alt, where C divides the
-// sub-row. On the Xeon 6240's counters screen one top of 16 (20 where C does not divide
+// with one top factor, the profile's depth_top, else its depth_top_alt, else its
+// depth_top_last, the first whose split fits (C divides the sub-row; X51: the top need not be
+// a multiple of C, so 25000 on 4 lanes takes 10 x 2500). On the Xeon 6240's counters screen one top of 16 (20 where C does not divide
 // n / 16) was the best or within 0.05 of the best of the splits tried (one or two tops of 4
 // to 32) at every length from 16384 to 262144 points; on the M5 Max a top of 4 won from 3072
 // to 16384 points where the power-of-two part had 2048 points or more and lost (1.05-1.09)
@@ -486,7 +487,7 @@ std::vector<std::size_t> depth_tops_of(std::size_t n, const side& in, const side
       return chain.depth_fits(n, settings.depth_tops) ? settings.depth_tops
                                                       : std::vector<std::size_t>{};
     }
-    for (const std::size_t r : {m.depth_top, m.depth_top_alt}) {
+    for (const std::size_t r : {m.depth_top, m.depth_top_alt, m.depth_top_last}) {
       if (r != 0 && chain.depth_fits(n, {r})) {
         return {r};
       }

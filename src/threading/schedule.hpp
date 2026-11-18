@@ -168,6 +168,10 @@ struct machine_profile {
   std::size_t depth_part_bytes = 0;
   std::size_t depth_top = 0;
   std::size_t depth_top_alt = 0;
+  // A third top, tried after depth_top and depth_top_alt (0: none). X51, Xeon 6240: 25000 (three
+  // factors of 2, so on `avx512`'s 4 lanes neither 16 nor 20 leaves a sub-row C divides) as
+  // 10 x 2500 took 0.78 of its chain's time; set_grid_sizes sets 10 with tops 16 and 20.
+  std::size_t depth_top_last = 0;
   // The L1 data cache's line in bytes: a lanes column phase's block holds at least a line of
   // adjacent columns (core/plan_core.cpp, column_block; experiment X40). set_grid_sizes reads
   // it from the topology (128 on Apple's cores).

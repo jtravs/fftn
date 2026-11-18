@@ -215,10 +215,35 @@ TEST(Depth, RulesTakeItByTheProfile) {
     EXPECT_FALSE(depth(planned(8192, t, true)));           // below the range
     EXPECT_FALSE(depth(planned(524288, t, true)));         // beyond it
     if (name == "avx512") {
-      EXPECT_FALSE(depth(planned(25000, t, true))); // no top fits on 4 lanes
+      EXPECT_FALSE(depth(planned(25000, t, true))); // neither 16 nor 20 fits on 4 lanes
       EXPECT_NE(planned(32768, t, true).find("depth-first 16 x 2048"), std::string::npos);
       EXPECT_NE(planned(20000, t, true).find("depth-first 20 x 1000"), std::string::npos);
     }
+  }
+  // A third top (X51): 25000 takes 10 x 2500 on avx512 (a partial block of sub-rows in the
+  // first pass), where neither 16 nor 20 fits; rows that 16 or 20 fit keep them.
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    if (std::string(fftn::isa_name(t)) != "avx512") {
+      continue;
+    }
+    build_settings settings;
+    settings.profile.depth_min_bytes = std::size_t{256} * 1024;
+    settings.profile.depth_max_bytes = std::size_t{4} * 1024 * 1024;
+    settings.profile.depth_top = 16;
+    settings.profile.depth_top_alt = 20;
+    settings.profile.depth_top_last = 10;
+    const auto text = [&](std::size_t n) {
+      const fftn::shape<std::complex<double>, std::complex<double>> shape{
+          .dir = fftn::direction::forward,
+          .axes = {{.n = n}},
+          .batches = {},
+      };
+      return fftn::detail::describe(
+          *make_plan_core(fftn::detail::view_of(shape), {.force_isa = t}, settings));
+    };
+    EXPECT_NE(text(25000).find("depth-first 10 x 2500"), std::string::npos);
+    EXPECT_NE(text(20000).find("depth-first 20 x 1000"), std::string::npos);
+    EXPECT_NE(text(32768).find("depth-first 16 x 2048"), std::string::npos);
   }
   // A power-of-two part of at most depth_part_bytes keeps the old plan (the Apple profile).
   {
