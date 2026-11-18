@@ -24,3 +24,11 @@ note = "single-precision rows of the double rules' byte range and beyond"
 kind = "c2c"
 precision = "f32"
 dims = [8192, 16384, 20000, 32768, 46080, 65536, 100000, 131072, 262144, 524288, 1048576]
+
+[[group]]
+name = "x51-mixed"
+note = "rows with a large power-of-two part and a small odd part (3, 5, 7, 9, 15 times 2^k)"
+kind = "c2c"
+dims = [
+  20480, 28672, 36864, 40960, 61440, 73728, 81920, 122880, 147456, 163840, 196608, 393216,
+]
