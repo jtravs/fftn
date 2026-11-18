@@ -223,6 +223,12 @@ commits, 60 rounds, 46 under load (other processes up to 6 cores), band ±1.00 %
 1.030): **0.999 [0.997, 1.001]**, one case faster (r2c 64 × 64 0.979), none slower; the
 highest ratio 1.007 (128 × 4096). A passes (c) on the Mac.
 
+### Xeon Gold 6240, tracking tier, A ÷ O (run 20261118-053949-7e40)
+
+GCC 14.4, `avx512`, Slurm 16476 (`--serial`), 50 rounds, none under load, band ±1.35 %
+(limit 1.034): **0.999 [0.996, 1.004]**, no case faster or slower; the highest ratios 4093
+1.014 and 60 1.013. A passes (c) on the Xeon.
+
 ### Library size
 
 x86-64 Linux, GCC 16.2, `size` of `libfftn.a` (the fbench cache builds): O 90 427 634 bytes
