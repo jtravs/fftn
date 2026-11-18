@@ -194,6 +194,8 @@ TEST(Depth, RulesTakeItByTheProfile) {
     settings.profile.depth_pow2_max_bytes = std::numeric_limits<std::size_t>::max();
     settings.profile.depth_float = false;
     settings.profile.depth_part_bytes = 0;
+    settings.profile.depth_top_alt = 0;
+    settings.profile.depth_part_bytes = 0;
     settings.profile.depth_top = 16;
     settings.profile.depth_top_alt = 20;
     const fftn::shape<std::complex<double>, std::complex<double>> shape{
@@ -235,6 +237,8 @@ TEST(Depth, RulesTakeItByTheProfile) {
     settings.profile.depth_top_last = 0; // the host profile may set X51's fields
     settings.profile.depth_pow2_max_bytes = std::numeric_limits<std::size_t>::max();
     settings.profile.depth_float = false;
+    settings.profile.depth_part_bytes = 0;
+    settings.profile.depth_top_alt = 0;
     settings.profile.depth_top = 16;
     settings.profile.depth_top_alt = 20;
     settings.profile.depth_top_last = 10;
@@ -259,6 +263,8 @@ TEST(Depth, RulesTakeItByTheProfile) {
     settings.profile.depth_top_last = 0; // the host profile may set X51's fields
     settings.profile.depth_pow2_max_bytes = std::numeric_limits<std::size_t>::max();
     settings.profile.depth_float = false;
+    settings.profile.depth_part_bytes = 0;
+    settings.profile.depth_top_alt = 0;
     settings.profile.depth_part_bytes = std::size_t{16} * 1024;
     settings.profile.depth_top = 4;
     const auto planned_on = [&](std::size_t n, fftn::isa isa) {
@@ -289,35 +295,52 @@ TEST(Depth, RulesTakeItByTheProfile) {
     settings.profile.depth_top_last = 0; // the host profile may set X51's fields
     settings.profile.depth_pow2_max_bytes = std::numeric_limits<std::size_t>::max();
     settings.profile.depth_float = false;
+    settings.profile.depth_part_bytes = 0;
+    settings.profile.depth_top_alt = 0;
     settings.profile.depth_pow2_max_bytes = std::size_t{256} * 1024;
     settings.profile.depth_top = 4;
-    const auto taken = [&](std::size_t n, fftn::isa isa, bool single = false) {
+    // With `forced`, the chain forced with the profile's top: whether the split fits there
+    // (C divides the sub-row, and the sub-row's first radix has a depth-first pass: on `avx2`
+    // 4096 starts with radix 64, which has none).
+    const auto build = [&](std::size_t n, fftn::isa isa, bool single, bool forced) {
+      build_settings s = settings;
+      if (forced) {
+        s.strategy = strategy_choice::depth;
+        s.depth_tops = {s.profile.depth_top};
+      }
       const fftn::options opts{.force_isa = isa};
       if (single) {
         const fftn::shape<std::complex<float>, std::complex<float>> shape{
             .dir = fftn::direction::forward, .axes = {{.n = n}}, .batches = {}};
         return depth(
-            fftn::detail::describe(*make_plan_core(fftn::detail::view_of(shape), opts, settings)));
+            fftn::detail::describe(*make_plan_core(fftn::detail::view_of(shape), opts, s)));
       }
       const fftn::shape<std::complex<double>, std::complex<double>> shape{
           .dir = fftn::direction::forward, .axes = {{.n = n}}, .batches = {}};
-      return depth(
-          fftn::detail::describe(*make_plan_core(fftn::detail::view_of(shape), opts, settings)));
+      return depth(fftn::detail::describe(*make_plan_core(fftn::detail::view_of(shape), opts, s)));
+    };
+    const auto taken = [&](std::size_t n, fftn::isa isa, bool single = false) {
+      return build(n, isa, single, false);
+    };
+    const auto fits = [&](std::size_t n, fftn::isa isa, bool single = false) {
+      return build(n, isa, single, true);
     };
     for (const fftn::isa t : fftn::test::runnable_isas()) {
       const std::string name = fftn::isa_name(t);
       SCOPED_TRACE(name);
       const bool measured =
           name == "avx512" || name == "avx2" || name == "neon" || name == "neon_fcma";
-      EXPECT_EQ(taken(16384, t), measured); // a power of two within its limit: 256 KiB
-      EXPECT_FALSE(taken(32768, t));        // beyond it
-      EXPECT_EQ(taken(49152, t), measured); // not a power of two: 768 KiB
-      EXPECT_FALSE(taken(49152, t, true));  // float: off
+      // A power of two within its limit (256 KiB), beyond it; not a power of two (768 KiB).
+      EXPECT_EQ(taken(16384, t), measured && fits(16384, t));
+      EXPECT_FALSE(taken(32768, t));
+      EXPECT_EQ(taken(49152, t), measured && fits(49152, t));
+      EXPECT_FALSE(taken(49152, t, true)); // float: off
       settings.profile.depth_float = true;
-      EXPECT_EQ(taken(98304, t, true), measured); // 768 KiB of complex floats
+      EXPECT_EQ(taken(98304, t, true), measured && fits(98304, t, true)); // 768 KiB of floats
       settings.profile.depth_float = false;
       settings.profile.depth_top = 16; // 16 needs 32 registers
-      EXPECT_EQ(taken(49152, t), name == "avx512" || name == "neon" || name == "neon_fcma");
+      const bool wide = name == "avx512" || name == "neon" || name == "neon_fcma";
+      EXPECT_EQ(taken(49152, t), wide && fits(49152, t));
       settings.profile.depth_top = 4;
     }
   }
@@ -328,6 +351,8 @@ TEST(Depth, RulesTakeItByTheProfile) {
   settings.profile.depth_top_last = 0; // the host profile may set X51's fields
   settings.profile.depth_pow2_max_bytes = std::numeric_limits<std::size_t>::max();
   settings.profile.depth_float = false;
+  settings.profile.depth_part_bytes = 0;
+  settings.profile.depth_top_alt = 0;
   const fftn::shape<std::complex<float>, std::complex<float>> shape{
       .dir = fftn::direction::forward,
       .axes = {{.n = 32768}},
@@ -358,6 +383,8 @@ void depth_agrees_with_chain(fftn::isa target, std::size_t n, fftn::direction di
     depth.profile.depth_top_last = 0; // the host profile may set X51's fields
     depth.profile.depth_pow2_max_bytes = std::numeric_limits<std::size_t>::max();
     depth.profile.depth_float = false;
+    depth.profile.depth_part_bytes = 0;
+    depth.profile.depth_top_alt = 0;
     depth.profile.depth_part_bytes = 0;
     depth.profile.depth_top = 16;
     depth.profile.depth_top_alt = 20;
@@ -453,6 +480,8 @@ TEST(Depth, PinnedChoiceCarriesTheTops) {
     rules.profile.depth_top_last = 0; // the host profile may set X51's fields
     rules.profile.depth_pow2_max_bytes = std::numeric_limits<std::size_t>::max();
     rules.profile.depth_float = false;
+    rules.profile.depth_part_bytes = 0;
+    rules.profile.depth_top_alt = 0;
     rules.profile.depth_part_bytes = 0;
     rules.profile.depth_top = 16;
     rules.profile.depth_top_alt = 20;

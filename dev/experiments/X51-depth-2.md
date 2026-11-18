@@ -94,7 +94,11 @@ M: FFTW, MKL ÷ the rules' plan.
   from 20480 to 81920 points, 0.754 at 122880 and 0.856 at 98304 (top 8 0.760); beyond 2 MiB
   a top of 4 lost (147456 1.57, 196608 1.36, 393216 1.36); powers of two from 32768 to 262144
   gained nothing (0.89–1.11, no evidence at that band); the X46 range (8192, 16384, 12288)
-  is unchanged. Float: no split cleared the band of the first run.
+  is unchanged. Float: no split cleared the band of the first run; a float screen (run
+  20261118-011734-7804, 16 rounds, all loaded, band ±4.70 %) gave a top of 4 0.69 (40960,
+  49152), 0.84 (98304, 122880) on mixed rows but 1.06 at 24576 and 1.03 at 196608, and
+  nothing on powers of two (0.90–1.10) or 100000 (1.16): no float arm for the Apple profile
+  (its rule would need a range of its own).
 
 ### Arms named after the screens (before their judging runs)
 
