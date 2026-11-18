@@ -151,6 +151,23 @@ struct machine_profile {
   // of the three phases' time at 2^20-2^23 points out of place, but lost in place (2^20 1.10)
   // and for c2r 2^20 (1.23). set_grid_sizes sets it on the Xeon profile.
   std::size_t grid_two_pow2_bytes = 0;
+  // A c2c row of one axis of [depth_min_bytes, depth_max_bytes] whose power-of-two part has
+  // more than depth_part_bytes is a depth-first chain in double on a target with 32 vector
+  // registers (strategies/chain.hpp, c2c_depth; core/plan_core.cpp, depth_tops_of), with one
+  // top factor, depth_top, else depth_top_alt, where its split fits; depth_max_bytes 0: never
+  // (experiment X46). On the Xeon 6240's counters screen such chains with tops of 16 or 20
+  // took 0.63-0.77 of the chains' and grids' time from 16384 to 262144 points (L2/4 to 4 L2);
+  // 8192 points (L2/8) gained nothing. On the M5 Max tops of 4 took 0.64-0.96 from 3072 to
+  // 16384 points where the power-of-two part had 2048 points or more, and lost 1.05-1.09
+  // where it had 16-128 (the cluster L2's conflicts are a power-of-two problem, X29) and at
+  // 32768 (1.06, against X32's chain). set_grid_sizes sets L2/4 to 4 L2 and tops 16, 20 where
+  // a private L2 has less than 2 MiB of L3 per CPU behind it, on x86-64; L1 to 2 L1, top 4
+  // and a power-of-two part above L1/8 where a cluster shares L2.
+  std::size_t depth_min_bytes = 0;
+  std::size_t depth_max_bytes = 0;
+  std::size_t depth_part_bytes = 0;
+  std::size_t depth_top = 0;
+  std::size_t depth_top_alt = 0;
   // The L1 data cache's line in bytes: a lanes column phase's block holds at least a line of
   // adjacent columns (core/plan_core.cpp, column_block; experiment X40). set_grid_sizes reads
   // it from the topology (128 on Apple's cores).

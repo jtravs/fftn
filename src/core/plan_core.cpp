@@ -445,6 +445,71 @@ grid_split plan_grid(std::size_t n, const side& in, const side& out, const build
   return g;
 }
 
+// The depth-first chain's top factors for a c2c row of n of one axis (DESIGN.md 8.5,
+// strategies/chain.hpp, c2c_depth; experiment X46), or none: for a row contiguous on both
+// sides (in place through the workspace block), with no factor edge and the scale (if any) on
+// its output, without forced radices for its whole length, whose split fits. The given
+// factors (build_settings::depth_tops), when not empty, replace the default ones: wherever
+// they fit when the strategy is forced, and where the rules take the chain otherwise (none
+// where they do not fit). Forced, by default: one codelet radix, the smallest whose sub-row
+// of n / F1 fits the L1 data cache (profile.grid_block_bytes), else the one with the
+// shortest sub-row. By the rules (X46 arms A and C): in double on a target with 32 vector
+// registers (`avx512`, NEON; tops of 16 lost 1.2-1.7 on `avx2`'s 16), a row of
+// [depth_min_bytes, depth_max_bytes] whose power-of-two part has more than depth_part_bytes,
+// with one top factor, the profile's depth_top, else its depth_top_alt, where C divides the
+// sub-row. On the Xeon 6240's counters screen one top of 16 (20 where C does not divide
+// n / 16) was the best or within 0.05 of the best of the splits tried (one or two tops of 4
+// to 32) at every length from 16384 to 262144 points; on the M5 Max a top of 4 won from 3072
+// to 16384 points where the power-of-two part had 2048 points or more and lost (1.05-1.09)
+// on 10000, 12000 and 16000.
+template <class T>
+std::vector<std::size_t> depth_tops_of(std::size_t n, const side& in, const side& out,
+                                       const build_settings& settings,
+                                       const chain_builder<T>& chain, target isa) {
+  if ((settings.strategy != strategy_choice::depth &&
+       settings.strategy != strategy_choice::rules) ||
+      settings.in_factor != nullptr || settings.out_factor != nullptr || settings.scale_on_input ||
+      in.stride[0] != 1 || out.stride[0] != 1 ||
+      (!settings.radices.empty() && checked_product(settings.radices) == n)) {
+    return {};
+  }
+  if (settings.strategy == strategy_choice::rules) {
+    const std::size_t bytes = n * 2 * sizeof(T);
+    const machine_profile& m = settings.profile;
+    const bool wide = isa == target::avx512 || isa == target::neon || isa == target::neon_fcma;
+    if (!std::is_same_v<T, double> || !wide || m.depth_max_bytes == 0 ||
+        bytes < m.depth_min_bytes || bytes > m.depth_max_bytes ||
+        (n & (~n + 1)) * 2 * sizeof(T) <= m.depth_part_bytes) {
+      return {};
+    }
+    if (!settings.depth_tops.empty()) {
+      return chain.depth_fits(n, settings.depth_tops) ? settings.depth_tops
+                                                      : std::vector<std::size_t>{};
+    }
+    for (const std::size_t r : {m.depth_top, m.depth_top_alt}) {
+      if (r != 0 && chain.depth_fits(n, {r})) {
+        return {r};
+      }
+    }
+    return {};
+  }
+  if (!settings.depth_tops.empty()) {
+    return chain.depth_fits(n, settings.depth_tops) ? settings.depth_tops
+                                                    : std::vector<std::size_t>{};
+  }
+  std::vector<std::size_t> best;
+  for (const std::size_t r : gen::radices) {
+    if (!chain.depth_fits(n, {r})) {
+      continue;
+    }
+    best = {r};
+    if (n / r * 2 * sizeof(T) <= settings.profile.grid_block_bytes) {
+      break;
+    }
+  }
+  return best;
+}
+
 // The most rows in a block of the lanes strategy by default (lanes_block). Experiment X7.
 constexpr std::size_t max_lane_block = 64;
 
@@ -459,8 +524,8 @@ std::size_t lanes_block(const shape_view& s, const side& in, const side& out,
                         const build_settings& settings, const target_profile& profile,
                         const chain_builder<T>& chain, std::size_t c) {
   if (s.axes.size() != 1 || s.batches.empty() || settings.strategy == strategy_choice::chain ||
-      settings.strategy == strategy_choice::grid || settings.in_factor != nullptr ||
-      settings.out_factor != nullptr || settings.scale_on_input) {
+      settings.strategy == strategy_choice::grid || settings.strategy == strategy_choice::depth ||
+      settings.in_factor != nullptr || settings.out_factor != nullptr || settings.scale_on_input) {
     return 0;
   }
   const std::size_t rows = s.batches.back().count;
@@ -907,6 +972,13 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
                              ? plan_grid<T>(c.lengths[0] / 2, in, out, settings, chain,
                                             kernels.complex_lanes, s.kind, c.in_place)
                              : grid_split{};
+  const std::vector<std::size_t> depth_tops =
+      s.kind == transform_kind::c2c && r == 1 && lanes == 0
+          ? depth_tops_of<T>(c.lengths[0], in, out, settings, chain, c.isa_target)
+          : std::vector<std::size_t>{};
+  if (!depth_tops.empty()) {
+    grid_plan = grid_split{};
+  }
   // Only an intermediate the plan keeps in the workspace block anyway is padded: moving a
   // two-phase plan's intermediate out of the output into the block cost 1-9 % (X26b).
   if (!grid_builder<T>::uses_block(grid_plan, c.in_place)) {
@@ -1011,6 +1083,50 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
         std::to_string(real_grid.phases) + " phases, each depth-first over blocks of columns" +
         (c.block_elements != 0 ? "; an intermediate array in the workspace block" : "") +
         "), each transform finished before the next";
+  } else if (!depth_tops.empty()) {
+    // The depth-first chain (strategies/chain.hpp, c2c_depth): the sub-rows' first pass, a
+    // loop over the sub-rows, each block's chain inside it, then the top passes (the inner
+    // one in a loop over the first top factor's runs).
+    const std::size_t n = c.lengths[0];
+    const std::size_t subs = checked_product(depth_tops);
+    const std::size_t m = n / subs;
+    c.built = strategy_choice::depth;
+    c.depth_tops = depth_tops;
+    // In place the blocks go to the workspace block: the first pass reads the whole input.
+    const slot work = c.in_place ? slot::block : slot::out;
+    if (c.in_place) {
+      c.block_elements = n;
+    }
+    typename chain_builder<T>::depth_stages parts =
+        chain.c2c_depth(n, depth_tops, sign, opts.scale, work);
+    const auto looped = [&](std::size_t count, std::size_t step, std::vector<stage>& body) {
+      const std::size_t first = p.records.size();
+      loop l{.kind = loop_kind::lines, .count = count};
+      l.step[c.in_place ? 2 : 1] = static_cast<std::ptrdiff_t>(step) * complex_bytes;
+      p.records.emplace_back(l);
+      for (stage& st : body) {
+        p.records.emplace_back(std::move(st));
+      }
+      std::get<loop>(p.records[first]).body_end = static_cast<std::uint32_t>(p.records.size());
+    };
+    for (stage& st : parts.first) {
+      p.records.emplace_back(std::move(st));
+    }
+    looped(subs, m, parts.sub);
+    if (!parts.mid.empty()) {
+      looped(depth_tops[0], n / depth_tops[0], parts.mid);
+    }
+    for (stage& st : parts.top) {
+      p.records.emplace_back(std::move(st));
+    }
+    scratch = parts.scratch;
+    c.axis_notes.push_back("axis 0 (n = " + std::to_string(n) +
+                           "): " + chain.depth_text(n, depth_tops));
+    c.strategy_note = std::string("depth-first chain (the sub-rows' first pass over the row, "
+                                  "each sub-row's chain finished on its block, "
+                                  "decimation-in-time top passes") +
+                      (c.in_place ? "; the blocks in the workspace block" : " in place") +
+                      "), each transform finished before the next";
   } else if (grid_plan.phases != 0) {
     c.built = strategy_choice::grid;
     for (std::size_t i = 0; i < grid_plan.phases; ++i) {
@@ -1322,6 +1438,7 @@ std::shared_ptr<plan_core> build_plan_core(const shape_view& s, const options& o
       .grid_factors = settings.grid_factors,
       .grid_phases = settings.grid_phases,
       .rader = settings.rader,
+      .depth_tops = settings.depth_tops,
   };
   c->program_text = choice_text(pinned_choice(built, *c));
   // The team program (X43 arms B1, B2), kept where it differs from the program: its column

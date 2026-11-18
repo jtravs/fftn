@@ -238,6 +238,7 @@ TEST(Grid, ScaleIsFusedIntoTheLastPhase) {
 // below and wherever the row cannot be a grid.
 TEST(Grid, PlannerChoosesByTheProfile) {
   build_settings s;
+  s.profile.depth_max_bytes = 0; // the grid and chain rules alone (no depth-first chain, X46)
   s.profile.grid_min_bytes = 8192;
   s.profile.grid_three_bytes = 32768;
   s.profile.grid_block_bytes = 16384;
@@ -304,6 +305,7 @@ TEST(Grid, PlannerChoosesByTheProfile) {
 // unaffected.
 TEST(Grid, ChainKeepsLengthsThatAreNotPowersOfTwo) {
   build_settings s;
+  s.profile.depth_max_bytes = 0; // the grid and chain rules alone (no depth-first chain, X46)
   s.profile.grid_min_bytes = 8192;
   s.profile.grid_three_bytes = std::size_t{1} << 30U;
   s.profile.grid_block_bytes = 16384;
@@ -332,6 +334,7 @@ TEST(Grid, ChainKeepsLengthsThatAreNotPowersOfTwo) {
 // rows with a larger power-of-two part take three.
 TEST(Grid, SmallPowerOfTwoPartKeepsTwoPhases) {
   build_settings s;
+  s.profile.depth_max_bytes = 0; // the grid and chain rules alone (no depth-first chain, X46)
   s.profile.grid_min_bytes = 8192;
   s.profile.grid_three_bytes = 32768;
   s.profile.grid_block_bytes = 16384;
@@ -369,6 +372,7 @@ TEST(Grid, SmallPowerOfTwoPartKeepsTwoPhases) {
 // powers of two keep their rules.
 TEST(Grid, PowersOfTwoStayChainsUpToTheProfilesLimit) {
   build_settings s;
+  s.profile.depth_max_bytes = 0; // the grid and chain rules alone (no depth-first chain, X46)
   s.profile.grid_min_bytes = 8192;
   s.profile.grid_three_bytes = std::size_t{1} << 30U;
   s.profile.grid_block_bytes = 16384;
@@ -419,6 +423,7 @@ TEST(Grid, PowersOfTwoStayChainsUpToTheProfilesLimit) {
 // two-phase grid's block fills grid_two_block_bytes.
 TEST(Grid, PowersOfTwoBecomeGridsBeyondTheProfilesLimit) {
   build_settings s;
+  s.profile.depth_max_bytes = 0; // the grid and chain rules alone (no depth-first chain, X46)
   s.profile.grid_min_bytes = std::size_t{512} * 1024;
   s.profile.grid_three_bytes = std::size_t{1} << 20U;
   s.profile.grid_block_bytes = std::size_t{32} * 1024;
@@ -704,6 +709,7 @@ TEST(Grid, PadRule) {
 // The machine profile sets the plan's padding, and a padded grid says so.
 TEST(Grid, PlannerPadsByTheProfile) {
   build_settings s;
+  s.profile.depth_max_bytes = 0; // the grid and chain rules alone (no depth-first chain, X46)
   s.strategy = strategy_choice::grid;
   s.grid_factors = {64, 64};
   s.profile.grid_block = 8;
