@@ -32,3 +32,21 @@ kind = "c2c"
 dims = [
   20480, 28672, 36864, 40960, 61440, 73728, 81920, 122880, 147456, 163840, 196608, 393216,
 ]
+
+[[group]]
+name = "x51-long"
+note = "double rows beyond 4 L2 on the Xeon: the longest, in place and backward"
+kind = "c2c"
+dims = [1000000, 8388608, 16777216]
+
+[[group]]
+name = "x51-long-in-place"
+kind = "c2c"
+dims = [524288, 1048576, 4194304]
+place = "in"
+
+[[group]]
+name = "x51-long-backward"
+kind = "c2c"
+dims = [524288, 1048576, 4194304]
+direction = "bwd"
