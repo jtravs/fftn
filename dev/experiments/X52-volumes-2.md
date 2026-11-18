@@ -273,6 +273,20 @@ Arms L1 (446be06) and A1 (`main` a0dffe1) at one thread, L8, A8 and G8 (f6f9b4d,
   Unchanged programs up to 1.026 (512² in place), just past the 2 % limit on a loaded node:
   re-run (Slurm 512620). At 8 lanes 1.000 (team programs unchanged on the EPYC).
 
+### G's re-run on the EPYC, and arm G2
+
+Run 20261118-040129-38fb (Slurm 512564; 12 rounds, all loaded, band ±1.0 %), the cases past the
+limit in the planes run: G ÷ L at 8 lanes r2c 256² out of place 1.035, c2c 2048 × 36 0.995–
+1.000, r2c 100² in place 1.008, r2c 128² × 16 0.994; unchanged programs at one thread 1.001
+(worst 1.010) and at 8 lanes up to 1.08 (c2r 3 × 5 × 4, inline). r2c 256² stays past 2 %:
+**G fails rule (2) on the EPYC** and is not adopted there as written.
+
+**Arm G2 (written before its run):** G with runs of at most left / (cap × max(claim_divisor,
+2)): the same as G where the profile's claim divisor is already 2 (the Mac, the Xeon), smaller
+first runs on the CCX (divisor 1), which leave more chunks for members that arrive later. Rule
+on the EPYC: G's rule, G2 ÷ L at 8 lanes, in a fresh run of the volumes and the 132 planes and
+volumes, with the same re-run provision.
+
 ## Verdict
 
 Pending.
