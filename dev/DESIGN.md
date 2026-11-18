@@ -2115,7 +2115,10 @@ schedule, tested by simulation. Starting rules, each with its measurement:
    long enough to split, so the last row does not cost a whole extra round.
 3. Split a row only inside one cache group, with at least about 1024 points per member,
    and only from about 6000 points in a small group, 8000 on an Apple performance
-   cluster or a large mesh-connected one (experiment T5).
+   cluster or a large mesh-connected one (experiment T5). A real plane or volume counts its
+   complex points where each core has its own L2, and on a mesh-connected L3 a plane or
+   volume is split only from 32768 points (X52 arm S: its phases move it between the members'
+   caches).
 4. Deal rows to cache groups; only lanes that have work do any. Under OpenMP that means
    surplus team members return at once from a region of constant width, not a narrower
    region: libgomp ends and restarts threads when the width changes.
@@ -3038,6 +3041,7 @@ to change before a release.
 | 2026-11-17 | The `avx512` units are assembled with branches padded off 32-byte boundaries (`-Wa,-mbranches-within-32B-boundaries`, GCC on x86-64 only) | Bisect of the Xeon 6240's small-row loss: the plans did not change; the merge of X40 moved code and c2c 160, 180, 240 took 1.10 of their time (run 20261117-184544-8056), a JCC-erratum placement effect; padded, 160–384 0.89–0.94 and tracking 0.996 with nothing slower (20261117-204818-1541, -205228-e841); the flag on every unit slowed the EPYC 5–11 %, so `avx2` units stay unpadded; LESSONS 2.11. Unmeasured on Ice Lake and later and on Zen 4/5 (cloud tracking checks it) |
 | 2026-11-18 | A lanes column phase whose column has a leaf length and whose legs crowd one L1 set runs as the most balanced two lane passes whose last pass fits (16 = 4 × 4), except on `avx512` (section 9.3) | X52: M5 Max 16 × 256 × 256 0.54–0.57 of the leaf's time, EPYC 16³ 0.66–0.67 and 16 × 256 × 256 0.85–0.87; Xeon 6240 0.94–1.00 (0.966, under the rule's 0.95) |
 | 2026-11-18 | A member claims a split task's chunks in runs within a phase (a share of the phase's chunks left, as for whole tasks) where the profile's claim divisor is 2 (Apple, the mesh); single chunks on the CCX (section 13) | X52: at 8 lanes Xeon 0.91 over the planes and volumes that split, Mac at 6 lanes 0.86–0.94; EPYC volumes 0.877 and planes 0.882 but real 256² 1.035 on re-run (rule 2 failed; arm G2 pending); bits unchanged |
+| 2026-11-18 | A real plane or volume is split by its complex points (last axis n / 2 + 1) where each core has its own L2; on a mesh-connected L3 a plane or volume is split only from 32768 points (`machine_profile::split_complex_points`, `split_min_points_lines`; section 13, rule 3) | X52 arm S: at 8 lanes single planes of 9216–16384 points took up to 2.9 times their one-thread time on the Xeon 6240 and real 96²–100² 1.1–1.3 on the EPYC 7763; with S, Xeon 0.35–0.67 on those cases, EPYC real 96²–100² 0.72–0.90; the M5 Max (cluster L2) lost 1.29 with S1, so it keeps the real points |
 ---
 
 ## 20. References

@@ -316,6 +316,21 @@ run what they ran before W4 on every machine. Rule on the Xeon and the EPYC: W4'
 judged at 8 lanes against L in a fresh run (EPYC: the team programs are unchanged by
 construction).
 
+### After the merge of L and G (pull request 64)
+
+- **Library size, L + G:** `libfftn.a` on the Mac (Homebrew Clang 23, Release), `main` 50c8956
+  against d2aee1f: 25 351 288 → 25 369 656 bytes (+18 368, +0.07 %); text 21 758 060 →
+  21 771 632 (+13 572, +0.06 %); data unchanged.
+- **S on the Xeon (judging),** run 20261118-052427-d6c8 (Slurm 16469; no round loaded, band
+  ±5.0 %): S changes the split of the planes of 9216–16384 points of every kind and of real
+  32³ (S2's 32768-point limit, S1's complex points): S ÷ G 0.35–0.67 on 96², 100² and real
+  128² (c2c 128² 0.86–1.00), real 32³ 0.84; no case of the 132 slower than 1.029. One thread
+  takes 0.34–0.62 of G's 8-lane time on those planes. Rule met: **S adopted on the Xeon.**
+- **W4b on the Xeon,** run 20261118-063749-c82e (Slurm 16485; no round loaded, band ±8.7 %), the
+  volumes: at 8 lanes W4b ÷ L 1.006, worst 1.039 (16 × 256 × 256 in place), inside the band;
+  at one thread 0.948 over W4's 34 changed volumes, but 30 × 40 × 50 in place 1.102, just past
+  the band: re-run (Slurm 16488); the planes at 8 lanes are Slurm 16487.
+
 ## Verdict
 
 - **L adopted on the Mac and the EPYC, rejected on `avx512`** (gated off there): leaf
