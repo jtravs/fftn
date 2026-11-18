@@ -234,6 +234,15 @@ void add_cases(std::vector<team_case>& out, const fftn::detail::build_settings& 
                           false, depth, target));
   out.push_back(make_case("c2c_depth2_inplace_4096x2" + suffix, fftn::rows_c2c<T>(4096, 2, fwd),
                           8192, 8192, true, depth, target));
+  // One top that C does not divide (X51): the first pass's partial blocks of sub-rows, the
+  // units a team shares among the whole ones (5 on every x86 target, 10 on avx512's 4 lanes
+  // and 8-lane float).
+  depth.depth_tops = {5};
+  out.push_back(make_case("c2c_depth_partial_2000x3" + suffix, fftn::rows_c2c<T>(2000, 3, fwd),
+                          6000, 6000, false, depth, target));
+  depth.depth_tops = {10};
+  out.push_back(make_case("c2c_depth_partial_inplace_2000x2" + suffix,
+                          fftn::rows_c2c<T>(2000, 2, bwd), 4000, 4000, true, depth, target));
   // Split lane passes (DESIGN.md 6.3, strategies/chain.hpp), forced with a first radix of
   // 16, which every target's split_block divides: a run of three passes (BL in the
   // middle), of two in place, in the complex chains of real rows, and on the long axis of

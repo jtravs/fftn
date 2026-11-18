@@ -217,7 +217,7 @@ Open, by phase:
   Rapids (FFTW 9.3 %, MKL 5.7 %: its long rows, without X46's rule; see the exit check of
   2026-11-18 above and X48); X2 on the Mac above 1024; X4 on x86 and for edge passes; X5
   (twiddle modes); the night round of 2026-11-17: X50 (Xeon primes against MKL: 131071,
-  999983), X51 (X46's loose ends: 25000, Granite Rapids' profile), X52 (volumes); float
+  999983), X51 (X46's loose ends; done but Granite Rapids' profile, below), X52 (volumes); float
   radix-25 overrides.
 - 2: 2.2's acceptance in double c2c on AVX-512 (re-check after X37's batches of 16);
   X6 (real-input codelets), X13; the cost model's second pass and `fbench calibrate`.
@@ -233,8 +233,15 @@ Open, by phase:
   Python).
 
 X46 (x46 session, 2026-11-17, pull request 59): a depth-first chain (DESIGN 8.5) for the
-Xeon's rows of L2/4 to 4 L2 and the Mac's 8192–16384; see the experiment index. Left: 25000,
-100000 at FFTW's time, float, the EPYC, rows beyond 4 L2.
+Xeon's rows of L2/4 to 4 L2 and the Mac's 8192–16384; see the experiment index.
+
+X51 (x51 session, 2026-11-18, pull request 66): X46's loose ends, adopted per profile (see the
+experiment index): Xeon 25000 (1.35 → 1.00 of FFTW), rows to 2²² and float; Mac and EPYC
+rows of a small odd part times a large power of two (0.73 of their time). Left: 100000 at
+FFTW's time (no split beat 20 × 5000), Granite Rapids (the cloud run was not made: its
+profile keeps its plans), float on the Mac (mixed rows gain, 24576 and 196608 do not) and the
+EPYC, 2²³–2²⁴ on the Xeon (float above 2²⁰), Zen 4 and Zen 5 (rule E is keyed to an L2
+under 1 MiB).
 
 In flight (lead session, 2026-11-17): task 1.3
 (`x86_v2` and `avx` targets, X14); task 4.1's next part (X41, task/4.1-planes-2, pull request 51, awaiting merge); a tidy fix. Task 2.4's acceptance is met (P1:
@@ -760,6 +767,7 @@ running, done (with verdict).
 | [X52](experiments/X52-volumes-2.md) | Volumes and threaded planes against MKL and FFTW after X43, X43b and X44 (Mac 16 × 256 × 256 1.4–1.6 of FFTW, 512 × 64 × 64 and 64 × 64 × 512 1.1–1.2; EPYC 8 lanes 17 of 38 volumes over FFTW, 2048 × 36, 2048²; Xeon ÷ oneMKL 1.15 one thread, 1.24 at 8 lanes): leaf columns whose legs share an L1 set, column blocks, how a team claims a split task's chunks | 4 | leaf columns as two passes adopted on the Mac and the EPYC (16 × 256 × 256 0.55, EPYC 16³ 0.66), not `avx512`; chunk runs for split tasks adopted on the Mac and the Xeon (0.86–0.94), not the EPYC (r2c 256² 1.035); wider column blocks W4 win one thread on x86 (0.93) but lose the Xeon's 8 lanes; W4b, G2 and S (real planes split by complex points) pending |
 | [X48](experiments/X48-exit-3.md) | The phase 1 exit check on the cloud cores again (Zen 5, Granite Rapids with MKL, Axion) for `main` 8c18dd2, after X42, X46, X47 and task 4.2 | 1 | done: every mean target met (÷ FFTW 0.69 / 0.76 / 0.71; Granite Rapids ÷ MKL 0.73); tail rule beyond noise met on Zen 5 (3.1 %, was 5.7 %) and Axion (4.7 %), not on Granite Rapids (÷ FFTW 9.3 %, ÷ MKL 5.7 %: long rows, in-place 65536, 160–1024, primes against MKL) |
 | [X49](experiments/X49-tiny-calls.md) | The fixed cost of tiny calls: single rows of 2–8 points, 64 × 2 and 15 × 2 backward, 2 × 3 and 3 × 3 in place (1.1–1.5 of FFTW on five machines): fbench's own backend cost, store-to-load forwarding through paired accesses on Apple, or kernels? | 1 | done: mostly fbench's backend (arm 0 kept: tiny rows Mac 0.77–0.81 of FFTW, EPYC 0.68–0.86 and Xeon 0.89–1.02 of FFTW's cycles); unpaired NEON (U, U2) rejected (0.974 over its targets; 2 × 3 in place 0.85); 15 × 2 and 64 × 2 on x86 are kernels (two-row lane leaf, follow-up) |
+| [X51](experiments/X51-depth-2.md) | The depth-first chain's loose ends after X46: Xeon 25000 (no split with C = 4) and 100000, double rows beyond 4 L2 (two tops), single precision on the Xeon and the Mac, the Mac's 24576 and 49152, the EPYC's tops of 4 | 1 | done: P (a partial first-pass block) and T (third top 10: Xeon 25000 0.75, 1.35 → 1.00 of FFTW), L (Xeon to 64 L2: 524288–2²² 0.68–0.75), F (Xeon float: 0.687), M (Apple mixed rows to 16 L1: 0.735), E (EPYC mixed rows, top 4: 0.730) adopted; 100000 unchanged (no split wins); Granite Rapids not measured (cloud run not made) |
 | [X54](experiments/X54-radix64-avx2.md) | Can the radix-32 and radix-64 codelets be ordered so that GCC spills far less of them on `avx2` (a list scheduler against a model register file; bits identical), and does that let two-pass plans of 768, 1024, 2048 win at both batches on the EPYC so the planner takes them? | 1 | done: A (fitted order, bit-identical) proposed for adoption, the lead's call (fails rule (b) by 0.1 % on 80, byte-identical code at a moved address): radix-32/64 plans 0.975 on the EPYC, tracking EPYC 0.994, Xeon 0.999, Mac 0.999; B (two-pass `avx2` double overrides) adopted for 768 (0.84; ÷ FFTW 1.08 → 0.91), 1024 dropped by rule (c) (0.84–0.95 at batches 1–256, 1.25 at 1024 × 1024); C (`avx2` float 512, 640, 768, 2048, 4096) adopted (0.898); 2048 double and 64 × 16 not moved |
 | [P1](experiments/P1-rules-vs-measure.md) | How often is the rules' choice within 5 % of `planning::measure`'s per machine (task 2.4's acceptance: 90 % of catalogue cases), which rules miss, and does measurement recover a misfiring profile (Granite Rapids' fields forced on the Xeon)? | 2 | first pass done: rules within 5 % of measure on 96.7 % of the tracking tier on the EPYC, 77 % on the Xeon (about 85 % without noise), Mac inconclusive under load; measure never slower by fbench; Granite Rapids' fields forced on the Xeon recovered in 10 of 11 cases (the miss a budget defect, fixed); planes' radices the repeat miss. Second pass (73eb719, placements per round, median): Mac 93.4 %, EPYC 95.1 %, Xeon 86.9 % (long real rows, planes, 2²², 2431 repeat); misfire 9 of 9 after the budget fix; EPYC r2c 65536 measure 1.18 slower (power-of-two chains bimodal by page backing); EPYC 65537 Bluestein 1.75 faster than the rules' Rader |
 | [P2](experiments/P2-measure-budget.md) | Measurement budget: how many candidates and how long before the choice stops improving; the quick and full efforts' budgets | 2 | first pass done: Q within 0.999–1.014 of M; no winner above rank 7; plan construction dominates large transforms (2²² 12.5 s for M); choices unstable under load (43–66 % of cases one program over 12 rounds), so budgets wait for a sampling revisit; indicated quick 6, measure 8 |

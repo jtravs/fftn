@@ -1310,18 +1310,34 @@ multiplications, by w_N^(r k_lo) (per lane, B entries a row) and w_N^(r k_hi B) 
 B the divisor of M with the fewest entries; the stored table would hold (F1 − 1) M entries of
 32 bytes on x86, as many bytes as the row (X46: with it the depth-first chain still missed L2
 0.3–0.7 times per point at 16384–25000 on the Xeon 6240, with the derived tables 0.00–0.01).
-Requirements: C divides F1 and M (so 25000 = 2³ · 5⁵ has no split on `avx512`), codelet
-radices with a depth-first pass for the tops and the sub-row's first radix (2–16, 20, 32;
-25 only as a first pass), a sub-row chain of two passes or more. The rules take it in double
-on targets with 32 vector registers (`avx512`, NEON) where the profile's fields say: the
-Xeon 6240's profile from L2/4 to 4 L2 (16384–262144 complex doubles) with one top of 16, else
-20 (X46: the changed rows 0.67 of their time, FFTN ÷ FFTW 1.06–1.34 → 0.70–0.86, 100000 1.02;
-÷ MKL 0.58–0.85); where a cluster shares L2 (Apple) from L1 to 2 L1 (8192–16384) when the
-length's power-of-two part is above L1/8, with one top of 4 (8192 0.73, 16384 0.84 of their
-time; from L1/2, batches of 4096 lost 1.03–1.04; mixed lengths with small power-of-two parts
-lost 1.05–1.09). The EPYC 7763 keeps its plans: tops of 16 lost 1.2–1.7 on `avx2`'s 16
-registers, tops of 4 and 8 won at 20000 and 46080 and lost elsewhere against X32's chains.
-Not built: three or more top factors, edge factors, float rules (unmeasured).
+Requirements: C divides M, and F1 when there are two tops (with one top the first pass's
+last block of sub-rows may be partial, as a lane pass's is: X51, so 25000 = 2³ · 5⁵ runs as
+10 × 2500 on `avx512`'s 4 lanes), codelet radices with a depth-first pass for the tops and
+the sub-row's first radix (2–16, 20, 32; 25 only as a first pass), a sub-row chain of two
+passes or more. The rules take it where the profile's fields say (a byte range, a limit for
+powers of two, a power-of-two part above a size, up to three tops tried in order, double
+and optionally float), on targets with 32 vector registers (`avx512`, NEON) or, with tops up
+to 8, on `avx2`:
+- the Xeon 6240's profile (x86-64, private L2 under 2 MiB with little L3) from L2/4 to 64 L2
+  (16384–2²² complex doubles) and in float from L2/4 to 8 L2 (32768–2²⁰ complex floats, the
+  measured range) with one top of 16, else 20, else 10
+  (X46: 16384–262144 0.67 of their time; X51: 25000 0.75, 524288–2²² 0.68–0.75, float
+  0.61–0.78; FFTN ÷ FFTW 1.06–1.35 → 0.50–1.00, ÷ MKL 0.33–0.90);
+- the Apple profile (a cluster shares L2) from L1 when the length's power-of-two part is
+  above L1/8, with one top of 4, to 2 L1 for powers of two and to 16 L1 for the rest (X46:
+  8192 0.73, 16384 0.84; X51: 20480–122880 0.69–0.86; from L1/2, batches of 4096 lost
+  1.03–1.04; powers of two beyond 2 L1 gained nothing against X32's chains);
+- the EPYC 7763's profile (x86-64, private L2 with a large L3) where that L2 is under 1 MiB
+  (Zen 3; Zen 4 and Zen 5, 1 MiB and `avx512`, keep their plans: unmeasured), for lengths
+  that are not powers of two, from L2/4 to 4 L2, power-of-two part above L1/4,
+  one top of 4 (X51: 12288–122880 and 46080 0.63–0.79; tops of 16 lost 1.2–1.7 on `avx2`'s
+  16 registers; powers of two tied or lost against X32's chains).
+Granite Rapids' profile (a 2 MiB private L2) does not take it: unmeasured there (X51's run
+was not made). Not built: three or more top factors, edge factors; float on the Apple and
+EPYC profiles (X51's Apple float screen: mixed rows 0.69–0.84, but 24576 and 196608 did
+not gain). In place, the blocks live in the workspace block: n complex elements per team
+member (X51's range on the Xeon 6240 makes that up to 64 MiB per member at 2²² points, 8 MiB
+in float at 2²⁰), where the out-of-place chain needs only two sub-row lines of scratch.
 
 **Lanes** (vectorise across rows). C rows, or C neighbouring lines of a strided axis,
 become the lanes of every pass; the whole transform is lane passes. For row-major batches
@@ -3043,6 +3059,8 @@ to change before a release.
 | 2026-11-18 | Complex codelets that cannot fit 16 registers (radix 32 and 64) are emitted in an order fitted to a model register file where a furthest-next-use model of the allocator counts at least a quarter fewer spill moves (section 7.2, step 5); `avx2` double 768 = 12 × 64 and float 512 = 8 × 64, 640 = 32 × 20, 768 = 12 × 64, 2048 = 32 × 64, 4096 = 8 × 32 × 16 (X54) | GCC 16 allocates in source order on x86: radix-64 lane unit stack stores and loads 149 + 178 → 87 + 107; EPYC plans with a radix-32/64 pass 0.975, tracking EPYC 0.994, Xeon 0.999, Mac 0.999; bit-identical. With it the two-pass plans win: 768 0.84 (÷ FFTW 1.08 → 0.91), float 0.79–0.95. 1024 = 16 × 64 (÷ FFTW 1.21 → 1.01 at batch 1) is not taken: 1.25 at 1024 × 1024, and an override cannot see the batch |
 | 2026-11-18 | A lanes column phase whose column has a leaf length and whose legs crowd one L1 set runs as the most balanced two lane passes whose last pass fits (16 = 4 × 4), except on `avx512` (section 9.3) | X52: M5 Max 16 × 256 × 256 0.54–0.57 of the leaf's time, EPYC 16³ 0.66–0.67 and 16 × 256 × 256 0.85–0.87; Xeon 6240 0.94–1.00 (0.966, under the rule's 0.95) |
 | 2026-11-18 | A member claims a split task's chunks in runs within a phase (a share of the phase's chunks left, as for whole tasks) where the profile's claim divisor is 2 (Apple, the mesh); single chunks on the CCX (section 13) | X52: at 8 lanes Xeon 0.91 over the planes and volumes that split, Mac at 6 lanes 0.86–0.94; EPYC volumes 0.877 and planes 0.882 but real 256² 1.035 on re-run (rule 2 failed; arm G2 pending); bits unchanged |
+| 2026-11-18 | The depth-first chain (section 8.5) takes one top factor that C does not divide (a partial first-pass block); the rules gain a third top, a limit for powers of two, single precision by profile and tops up to 8 on `avx2`; the Xeon 6240's profile runs it to 64 L2 with a third top of 10 and in float to 8 L2, the Apple profile to 16 L1 for lengths that are not powers of two, the EPYC 7763's profile (top 4, private L2 under 1 MiB) for lengths that are not powers of two from L2/4 to 4 L2 (X51) | X51 judged on each machine: Xeon 25000 0.75 (1.35 → 1.00 of FFTW), 524288–2²² 0.68–0.75, float 0.687; Mac mixed rows 0.735; EPYC mixed rows and 46080 0.730 (1.06–1.39 → 0.83–1.01 of FFTW); tracking tiers clean; Granite Rapids unmeasured, unchanged |
+
 ---
 
 ## 20. References
