@@ -202,6 +202,11 @@ std::optional<fftn::isa> isa_from_name(std::string_view name) {
 struct plan_record {
   std::shared_ptr<const detail::plan_core> core;
   fftn::workspace ws;
+  // The session's mode when the plan was made (it does not change while plans exist), so that
+  // a serial execute reads nothing else: reaching it through state() cost a guard check, a
+  // call and three saved registers per execute, about 16 instructions that FFTW's backend
+  // does not run (X49).
+  call mode = call::serial;
 };
 
 // FFTW's many-interface layout: row-major arrays whose last dimension is embedded in
@@ -373,6 +378,34 @@ std::string omp_environment() {
   return env.object();
 }
 #endif
+
+// The executes through an executor or a team, out of line so that the serial execute needs
+// no frame: with them inline GCC 14 saved three registers before testing the mode (X49).
+[[gnu::noinline]] void execute_threaded(const plan_record& r, void* in, void* out) {
+  const session& s = state();
+  switch (r.mode) {
+  case call::serial:
+    return;
+  case call::executor:
+    detail::execute_on(*r.core, in, out, regrouped(*s.exec, s.group_size), r.ws);
+    return;
+  case call::team:
+#ifdef FBENCH_FFTN_OMP
+  {
+    const int group = s.group_size;
+#pragma omp parallel num_threads(s.threads)
+    {
+      fftn::team me = fftn::omp::this_team();
+      if (group >= 0) {
+        me.group_size = group;
+      }
+      detail::execute_team(*r.core, in, out, me, r.ws, fftn::completion::all);
+    }
+  }
+#endif
+    return;
+  }
+}
 
 } // namespace
 
@@ -676,6 +709,7 @@ std::int32_t fbench_create(const fbench_case* c, void* /*in*/, void* /*out*/, vo
       check_radices_fit(*c);
     }
     auto record = std::make_unique<plan_record>();
+    record->mode = s.mode;
     const fftn::options opts{
         .in_place = c->in_place != 0,
         .force_isa = s.isa,
@@ -713,32 +747,13 @@ std::int32_t fbench_create(const fbench_case* c, void* /*in*/, void* /*out*/, vo
 // NOLINTNEXTLINE(misc-const-correctness): the harness fixes this C signature
 void fbench_execute(const void* plan, void* in, void* out) {
   const auto& r = *static_cast<const plan_record*>(plan);
-  const session& s = state();
-  switch (s.mode) {
-  case call::serial:
-    // What plan::execute calls: one call into the library (X28), not transform_count and
-    // execute_core, whose extra call fbench timed until X37.
-    detail::execute_all(*r.core, in, out, r.ws);
-    return;
-  case call::executor:
-    detail::execute_on(*r.core, in, out, regrouped(*s.exec, s.group_size), r.ws);
-    return;
-  case call::team:
-#ifdef FBENCH_FFTN_OMP
-  {
-    const int group = s.group_size;
-#pragma omp parallel num_threads(s.threads)
-    {
-      fftn::team me = fftn::omp::this_team();
-      if (group >= 0) {
-        me.group_size = group;
-      }
-      detail::execute_team(*r.core, in, out, me, r.ws, fftn::completion::all);
-    }
-  }
-#endif
+  if (r.mode != call::serial) {
+    execute_threaded(r, in, out);
     return;
   }
+  // What plan::execute calls: one call into the library (X28), not transform_count and
+  // execute_core, whose extra call fbench timed until X37; and nothing before it (X49).
+  detail::execute_all(*r.core, in, out, r.ws);
 }
 
 void fbench_destroy(void* plan) {
