@@ -479,7 +479,11 @@ from process to process, and a timing-based choice inherits the flip.** On the E
 radix-8 chain. The other chains changed less, so measured planning on scratch that happened
 to be huge-page backed chose programs 1.18 times slower on the benchmark's buffers. Rader's
 random gathers at 65537 were 1.75 times slower than Bluestein in one run and 1.41–1.49 times
-faster in two others. Time candidates on both page kinds (madvise each way) and judge each by
+faster in two others. (X50, correcting the reading of that flip as Rader's: in 24 processes
+of the benchmark binary on two EPYC nodes Rader took 15.6–16.0 ns per point and Bluestein
+23.0–24.2 every time, and every L1 data-TLB miss was a 4 KiB page's: a 1 MiB buffer is not
+huge-page backed, so the flip lives in measured planning's larger scratch, not in the
+caller's rows.) Time candidates on both page kinds (madvise each way) and judge each by
 the slower, or the "best" program is a property of one allocation. Judging by the slower
 kind trades a few cases where the caller's memory suits the faster program (Xeon 262144,
 1.07). [P1](experiments/P1-rules-vs-measure.md), [P1b](experiments/P1b-rader-65537.md),
