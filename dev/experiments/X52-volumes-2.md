@@ -331,6 +331,27 @@ construction).
   at one thread 0.948 over W4's 34 changed volumes, but 30 × 40 × 50 in place 1.102, just past
   the band: re-run (Slurm 16488); the planes at 8 lanes are Slurm 16487.
 
+- **Re-run of the EPYC's past-limit cases,** run 20261118-071911-3c57 (Slurm 512626; 12 rounds,
+  all loaded, band ±5.6 %): L ÷ `main` at one thread worst 1.016; W4 ÷ L at one thread worst
+  1.015 (512² in place 1.013): W4's rule met on the EPYC. S ÷ G at 8 lanes c2c 36 × 2048 out
+  of place 1.089 and 48³ 1.081 again past the band, but on the EPYC S changes nothing for c2c
+  plans (S1 counts real kinds only, S2 applies on a mesh only): their plans, work graphs and
+  schedules are the same under S and G, so these are the 8-lane noise of a loaded node, which
+  the one-thread A/A band understates. **S adopted on the EPYC** on that ground (the rule's
+  letter fails on two cases S cannot change; flagged for the lead).
+- **W4b on the Xeon:** planes, run 20261118-070124-3ab4 (Slurm 16487; band ±7.0 %): at one
+  thread 0.974 over W4's 22 changed planes; past the band only cases W4b does not change (real
+  planes, untouched by the c2c column rule: r2c 1000² in place 1.14 at 8 lanes, c2r 512² 1.135,
+  r2c 128² 1.10 at one thread). Re-run of 30 × 40 × 50 and 100³, run 20261118-072101-8aa7
+  (Slurm 16488; 12 rounds, none loaded, band ±1.0 %): 30 × 40 × 50 at one thread 1.050–1.052
+  with W4b's wider blocks: **W4b rejected on the Xeon**. On the EPYC W4b's one-thread programs
+  are W4's (0.933, worst 1.015 after the re-run) and its team programs unchanged: **W4b adopted
+  on the EPYC** (and the profiles like it: a private L2 with 2 MiB or more of L3 per CPU).
+- **G2 on the EPYC,** runs 20261118-070041-3619 (volumes; Slurm 512622; band ±11.1 %) and
+  20261118-071016-b698 (the 132 planes and volumes; Slurm 512624; band ±6.5 %): G2 ÷ L at 8
+  lanes 0.910 and 0.896 over the cases that split; r2c 256² now 1.04; past the band c2r 2048 ×
+  36 in place 1.086: re-run (Slurm 512657).
+
 ## Verdict
 
 - **L adopted on the Mac and the EPYC, rejected on `avx512`** (gated off there): leaf
