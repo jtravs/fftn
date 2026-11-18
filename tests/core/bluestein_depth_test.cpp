@@ -161,19 +161,22 @@ TEST(BluesteinDepth, GivenTops) {
       EXPECT_TRUE(
           check_prime<float>(t, 4093, tops, fftn::direction::backward, 0.5, 1, 4093, true, 8192));
     }
-    // A top of 20 runs where C divides it (depth_fits): every target but 8 lanes.
+    // Tops of 20 run where C divides their product (chain_builder::bluestein_depth_fits: the
+    // fused chirp passes read whole blocks of C copies): {20} on every target but 8 lanes,
+    // {20, 4} on all.
     for (const std::vector<std::size_t>& tops :
          {std::vector<std::size_t>{20}, std::vector<std::size_t>{20, 4}}) {
+      const std::size_t product = tops.size() == 1 ? tops[0] : tops[0] * tops[1];
       std::size_t lanes = 1;
       const bool d = check_prime<double>(t, 4099, tops, fftn::direction::forward, 1.0, 1, 4099,
                                          false, 10240, &lanes);
-      EXPECT_EQ(d, 20 % lanes == 0);
+      EXPECT_EQ(d, product % lanes == 0);
       const bool db = check_prime<double>(t, 4099, tops, fftn::direction::backward, 0.25, 2,
                                           4099 + 3, true, 10240, &lanes);
-      EXPECT_EQ(db, 20 % lanes == 0);
+      EXPECT_EQ(db, product % lanes == 0);
       const bool f = check_prime<float>(t, 4099, tops, fftn::direction::backward, 0.5, 1, 4099,
                                         false, 10240, &lanes);
-      EXPECT_EQ(f, 20 % lanes == 0);
+      EXPECT_EQ(f, product % lanes == 0);
     }
   }
 }

@@ -70,6 +70,9 @@ inline fftn::detail::machine_profile eager_profile() {
   p.split_min_points_mesh = 1;
   p.remainder_split_min_points = 1;
   p.cpus = 0;
+  // Runs of chunks as well as of whole tasks (team_engine::join claims a split task's chunks
+  // in runs only where the divisor is at least 2, X52).
+  p.claim_divisor = 2;
   // Short budgets, so that waiting members block and the wake-ups are exercised.
   p.spin_ns = 2000;
   p.yield_ns = 2000;
@@ -231,6 +234,15 @@ void add_cases(std::vector<team_case>& out, const fftn::detail::build_settings& 
                           false, depth, target));
   out.push_back(make_case("c2c_depth2_inplace_4096x2" + suffix, fftn::rows_c2c<T>(4096, 2, fwd),
                           8192, 8192, true, depth, target));
+  // One top that C does not divide (X51): the first pass's partial blocks of sub-rows, the
+  // units a team shares among the whole ones (5 on every x86 target, 10 on avx512's 4 lanes
+  // and 8-lane float).
+  depth.depth_tops = {5};
+  out.push_back(make_case("c2c_depth_partial_2000x3" + suffix, fftn::rows_c2c<T>(2000, 3, fwd),
+                          6000, 6000, false, depth, target));
+  depth.depth_tops = {10};
+  out.push_back(make_case("c2c_depth_partial_inplace_2000x2" + suffix,
+                          fftn::rows_c2c<T>(2000, 2, bwd), 4000, 4000, true, depth, target));
   // A Bluestein stage on the depth-first chains (experiment X50): the fused chirp passes,
   // both chains' first and top passes and their loops over sub-rows; Bluestein forced for the
   // prime and its convolution 8192 points, which every target's complex count splits (team

@@ -234,8 +234,8 @@ public:
   // with two tops `mid`: the radix-F2 top pass in place on one of F1 runs of F2 M elements (a
   // loop moves `work` by F2 M); `top`: the radix-F1 top pass from `work` to the output.
   // scratch: the complex elements it needs in each of a and b. depth_fits: whether n can run
-  // so (C divides F1 and M, the passes exist for the tops and the sub-row's first radix, the
-  // sub-row's chain has two passes or more of codelet radices).
+  // so (C divides M, and F1 with two tops: X51; the passes exist for the tops and the
+  // sub-row's first radix, the sub-row's chain has two passes or more of codelet radices).
   struct depth_stages {
     std::vector<stage> first;
     std::vector<stage> sub;
@@ -269,6 +269,10 @@ public:
     std::size_t scratch = 0;
   };
   [[nodiscard]] std::size_t bluestein_single(std::size_t n) const;
+  // depth_fits(m, tops) with C dividing the tops' product: the fused chirp passes read whole,
+  // aligned blocks of C copies (passes/depth.inl, depth_first_pass with Chirp).
+  [[nodiscard]] bool bluestein_depth_fits(std::size_t m,
+                                          const std::vector<std::size_t>& tops) const;
   [[nodiscard]] std::size_t bluestein_length_of(std::size_t q) const { return bluestein_m(q); }
   bluestein_depth_stages bluestein_depth(std::size_t q, const std::vector<std::size_t>& tops,
                                          int sign, endpoint src, endpoint dst,

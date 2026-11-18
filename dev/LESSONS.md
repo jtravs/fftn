@@ -570,6 +570,15 @@ multiplication per leg, one more rounding) took the misses to 0.00–0.01 and th
 0.69–0.84 of the stored table's at 16384–262144 points. The breadth-first chain's first
 pass has the same table. [X46](experiments/X46-depth-first.md).
 
+3.27 **Lengths of a small odd part times a large power of two hide between a catalogue's
+smooth and power-of-two rows.** On an EPYC 7763 the rules' plans for 3, 5, 7, 9 and 15 times
+2^k (12288–122880 points) ran 3.9–6.2 ns per point where their power-of-two and smooth
+neighbours (8192–131072) ran 2.8–4.0, and 1.06–1.39 of FFTW's time; a depth-first chain with one top of 4 took
+them to 0.63–0.79 of that time (0.83–1.01 of FFTW). The M5 Max showed the same shape (0.69–0.86
+with the same top). The standard catalogue held one such row (46080) and its exit checks
+never flagged the rest. Screen a strategy on lengths built to stress it (odd part × 2^k
+across the cache sizes), not only on the catalogue's. [X51](experiments/X51-depth-2.md).
+
 ## 4. Kernels and algorithms
 
 4.1 **A whole-transform codelet wins only where it fills the register.** One 32-point
@@ -807,7 +816,8 @@ as many instructions as the row's whole two-pass leaf, mostly scalar address ari
 R legs on each side and loop state spilled to the stack, repeated for every run of C
 columns, with the group's twiddles reloaded per run. No choice of column radices or block
 width moved that (0.97–1.03 of the cycles); running a block's runs in an inner loop per
-group did (64² 0.84, 128² 0.89, 512² 0.92 of the cycles), and so did removing a pass where
+group did (64² 0.84, 128² 0.89, 512² 0.92 of the cycles; in time the EPYC's planes 0.94, the
+Xeon's c2c planes 0.92, though a tiny volume lost 3 % and the arm was not adopted), and so did removing a pass where
 the row's pair leaf had left the columns two (32²: one radix-32 pass, 0.72 of the time on
 the EPYC 7763). The per-call set-up is the next cost for the smallest planes: a radix-16
 column leaf computes and spills 32 leg addresses for four runs at 16².
@@ -933,6 +943,23 @@ thread.** Volumes with their inner two axes plane at a time took 0.778 (EPYC 776
 the L3 holds the volume (32 MiB per CCX), the third sweep is cheap for one thread, while a
 team gains one phase boundary fewer and each plane's rows and columns on one core.
 [X43b](experiments/X43b-volumes.md).
+
+5.12 **Claim a split transform's chunks in runs, as you claim whole transforms.** Claiming
+the chunks of a phase one at a time from one shared counter (and counting each done) cost a
+team of 8 about 10 % on planes and volumes: guided runs (a share of the phase's chunks left,
+shrinking to single chunks) took 0.877 (EPYC 7763) and 0.910 (Xeon 6240) of the time at 8
+lanes over the volumes that split, real planes of 1000²–1024² 0.45–0.54, and 0.86 on the M5
+Max at 6 lanes, with nothing slower beyond the noise. Coarser chunks are not the same cure:
+they lose the balance at the small end (32³ 1.5 with chunks of 8192 points).
+[X52](experiments/X52-volumes-2.md).
+
+5.13 **A split threshold fitted on rows is too low for planes, and real planes have half
+the work their size says.** At 8 lanes single planes of 9216–16384 points took up to 2.6
+times their one-thread time on the Xeon 6240 (c2c 96² 1.7–2.0, real 96² 2.3–2.6) and real
+96²–100² 1.1–1.3 on the EPYC 7763, while c2c 96² gained there (unsplit 1.3–1.4): each phase
+of a plane moves it between the members' private caches. On the M5 Max, whose cluster shares
+L2, the same real planes gained from splitting (unsplit 1.2–1.5). Compare a real transform's
+complex points with thresholds fitted on complex rows. [X52](experiments/X52-volumes-2.md).
 
 ## 6. Toolchain and testing pitfalls
 

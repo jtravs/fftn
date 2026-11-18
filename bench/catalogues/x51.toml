@@ -1,0 +1,91 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Experiment X51's screens of the depth-first chain's open cases
+# (dev/experiments/X51-depth-2.md): rows X46 left open, single c2c rows out of place, one
+# group per question. Arms force the chain's split (STRATEGY=depth, DEPTH_TOPS) against the
+# rules' plan; select a group's rows with --filter.
+
+[catalogue]
+name = "x51"
+
+[[group]]
+name = "x51-double"
+note = "double rows: 25000 and 100000 (Xeon), beyond 4 L2 (two tops), the EPYC's and the Mac's range"
+kind = "c2c"
+dims = [
+  8192, 12288, 16384, 20000, 24576, 25000, 32768, 40000, 46080, 49152, 65536, 98304, 100000,
+  131072, 262144, 524288, 1048576, 2097152, 4194304,
+]
+
+[[group]]
+name = "x51-float"
+note = "single-precision rows of the double rules' byte range and beyond"
+kind = "c2c"
+precision = "f32"
+dims = [8192, 16384, 20000, 32768, 46080, 65536, 100000, 131072, 262144, 524288, 1048576]
+
+[[group]]
+name = "x51-mixed"
+note = "rows with a large power-of-two part and a small odd part (3, 5, 7, 9, 15 times 2^k)"
+kind = "c2c"
+dims = [
+  20480, 28672, 36864, 40960, 61440, 73728, 81920, 122880, 147456, 163840, 196608, 393216,
+]
+
+[[group]]
+name = "x51-long"
+note = "double rows beyond 4 L2 on the Xeon: the longest, in place and backward"
+kind = "c2c"
+dims = [1000000, 8388608, 16777216]
+
+[[group]]
+name = "x51-long-in-place"
+kind = "c2c"
+dims = [524288, 1048576, 4194304]
+place = "in"
+
+[[group]]
+name = "x51-long-backward"
+kind = "c2c"
+dims = [524288, 1048576, 4194304]
+direction = "bwd"
+
+[[group]]
+name = "x51-mixed-in-place"
+note = "judging rows of arms M and E: in place, backward and in batches"
+kind = "c2c"
+dims = [24576, 49152, 98304]
+place = "in"
+
+[[group]]
+name = "x51-mixed-backward"
+kind = "c2c"
+dims = [24576, 49152, 98304]
+direction = "bwd"
+
+[[group]]
+name = "x51-mixed-batches"
+kind = "c2c"
+dims = [24576, 49152]
+batch = 8
+
+[[group]]
+name = "x51-float-mixed"
+note = "single-precision rows of a small odd part times a large power of two (the Mac)"
+kind = "c2c"
+precision = "f32"
+dims = [24576, 40960, 49152, 98304, 122880, 196608]
+
+[[group]]
+name = "x51-25000"
+note = "judging rows of arm T: 25000 in place and backward"
+kind = "c2c"
+dims = [25000]
+place = "in"
+
+[[group]]
+name = "x51-25000-backward"
+kind = "c2c"
+dims = [25000]
+direction = "bwd"

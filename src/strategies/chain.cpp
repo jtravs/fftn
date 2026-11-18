@@ -1052,7 +1052,9 @@ void chain_builder<T>::chain_tail(std::size_t n, const std::vector<std::size_t>&
 template <class T>
 bool chain_builder<T>::depth_fits(std::size_t n, const std::vector<std::size_t>& tops) const {
   const std::size_t c = kernels_.complex_lanes;
-  if (tops.empty() || tops.size() > 2 || tops[0] % c != 0) {
+  // The first pass's last block of sub-rows may be partial with one top (X51), not with two:
+  // its stepping over blocks of the first top's columns needs C to divide F1 (depth.inl).
+  if (tops.empty() || tops.size() > 2 || (tops.size() == 2 && tops[0] % c != 0)) {
     return false;
   }
   std::size_t m = n;
@@ -1154,7 +1156,7 @@ chain_builder<T>::c2c_depth(std::size_t n, const std::vector<std::size_t>& tops,
   first.args.dst_qstride = static_cast<std::ptrdiff_t>(f2 * m);
   first.src = src;
   first.dst = work;
-  first.units = (m / r2) * (subs / c);
+  first.units = (m / r2) * ((subs + c - 1) / c);
   first.chunks = chunks_of(first.units, r2 * c);
   first.name = "depth-first first pass radix-" + std::to_string(r2) + " " + direction_name(sign) +
                " (" + std::to_string(subs) + " sub-rows of " + std::to_string(m) +
@@ -1218,6 +1220,12 @@ chain_builder<T>::c2c_depth(std::size_t n, const std::vector<std::size_t>& tops,
   }
   top_pass(f1, f2 * m, true, out.top);
   return out;
+}
+
+template <class T>
+bool chain_builder<T>::bluestein_depth_fits(std::size_t m,
+                                            const std::vector<std::size_t>& tops) const {
+  return depth_fits(m, tops) && checked_product(tops) % kernels_.complex_lanes == 0;
 }
 
 template <class T> std::size_t chain_builder<T>::bluestein_single(std::size_t n) const {

@@ -453,48 +453,62 @@ grid_split plan_grid(std::size_t n, const side& in, const side& out, const build
 // they fit when the strategy is forced, and where the rules take the chain otherwise (none
 // where they do not fit). Forced, by default: one codelet radix, the smallest whose sub-row
 // of n / F1 fits the L1 data cache (profile.grid_block_bytes), else the one with the
-// shortest sub-row. By the rules (X46 arms A and C): in double on a target with 32 vector
-// registers (`avx512`, NEON; tops of 16 lost 1.2-1.7 on `avx2`'s 16), a row of
-// [depth_min_bytes, depth_max_bytes] whose power-of-two part has more than depth_part_bytes,
-// with one top factor, the profile's depth_top, else its depth_top_alt, where C divides the
-// sub-row. On the Xeon 6240's counters screen one top of 16 (20 where C does not divide
-// n / 16) was the best or within 0.05 of the best of the splits tried (one or two tops of 4
-// to 32) at every length from 16384 to 262144 points; on the M5 Max a top of 4 won from 3072
-// to 16384 points where the power-of-two part had 2048 points or more and lost (1.05-1.09)
-// on 10000, 12000 and 16000.
+// shortest sub-row. By the rules (X46 arms A and C, X51): a row of [depth_min_bytes,
+// depth_max_bytes] (powers of two only to depth_pow2_max_bytes) whose power-of-two part has
+// more than depth_part_bytes, in double (in float to depth_float_max_bytes), with one
+// top factor, the profile's depth_top, else its depth_top_alt, else its depth_top_last, the
+// first whose split fits (C divides the sub-row; X51: the top need not be a multiple of C,
+// so 25000 on 4 lanes takes 10 x 2500); on a target with 32 vector registers (`avx512`,
+// NEON), or tops up to 8 on `avx2` (tops of 16 lost 1.2-1.7 on its 16, X46); other targets
+// keep their plans (unmeasured). On the Xeon 6240's counters screen one top of 16 (20 where
+// C does not divide n / 16) was the best or within 0.05 of the best of the splits tried (one
+// or two tops of 4 to 32) at every length from 16384 to 262144 points; on the M5 Max a top
+// of 4 won from 3072 to 16384 points where the power-of-two part had 2048 points or more and
+// lost (1.05-1.09) on 10000, 12000 and 16000.
 // The tops for a contiguous line of n with neither edge factor (depth_tops_of's choice
 // after its conditions on the row; also a Bluestein convolution's, bluestein_tops_of).
 template <class T>
 std::vector<std::size_t> depth_tops_for(std::size_t n, const build_settings& settings,
                                         const chain_builder<T>& chain, target isa,
                                         bool convolution = false) {
+  // A convolution's fused chirp passes need whole blocks of C copies in the first pass
+  // (chain_builder::bluestein_depth_fits; X51 lets a row's top leave a partial block).
+  const auto fits = [&](const std::vector<std::size_t>& tops) {
+    return convolution ? chain.bluestein_depth_fits(n, tops) : chain.depth_fits(n, tops);
+  };
   if (settings.strategy == strategy_choice::rules) {
     const std::size_t bytes = n * 2 * sizeof(T);
     const machine_profile& m = settings.profile;
     const bool wide = isa == target::avx512 || isa == target::neon || isa == target::neon_fcma;
-    const std::size_t max_bytes = convolution ? m.depth_convolution_max_bytes : m.depth_max_bytes;
-    if (!std::is_same_v<T, double> || !wide || max_bytes == 0 || bytes < m.depth_min_bytes ||
-        bytes > max_bytes || (n & (~n + 1)) * 2 * sizeof(T) <= m.depth_part_bytes) {
+    // A Bluestein convolution (X50): in double, on 32 vector registers, up to the profile's
+    // depth_convolution_max_bytes, the convolutions measured; rows by X46's and X51's fields.
+    const bool pow2 = (n & (n - 1)) == 0;
+    const std::size_t top = convolution ? m.depth_convolution_max_bytes : m.depth_max_bytes;
+    std::size_t most = pow2 ? std::min(top, m.depth_pow2_max_bytes) : top;
+    if constexpr (!std::is_same_v<T, double>) {
+      most = convolution ? 0 : std::min(most, m.depth_float_max_bytes);
+    }
+    if ((convolution && !wide) || top == 0 || most == 0 || bytes < m.depth_min_bytes ||
+        bytes > most || (n & (~n + 1)) * 2 * sizeof(T) <= m.depth_part_bytes) {
       return {};
     }
     if (!settings.depth_tops.empty()) {
-      return chain.depth_fits(n, settings.depth_tops) ? settings.depth_tops
-                                                      : std::vector<std::size_t>{};
+      return fits(settings.depth_tops) ? settings.depth_tops : std::vector<std::size_t>{};
     }
-    for (const std::size_t r : {m.depth_top, m.depth_top_alt}) {
-      if (r != 0 && chain.depth_fits(n, {r})) {
+    for (const std::size_t r : {m.depth_top, m.depth_top_alt, m.depth_top_last}) {
+      const bool fits_registers = wide || (r <= 8 && isa == target::avx2);
+      if (r != 0 && fits_registers && fits({r})) {
         return {r};
       }
     }
     return {};
   }
   if (!settings.depth_tops.empty()) {
-    return chain.depth_fits(n, settings.depth_tops) ? settings.depth_tops
-                                                    : std::vector<std::size_t>{};
+    return fits(settings.depth_tops) ? settings.depth_tops : std::vector<std::size_t>{};
   }
   std::vector<std::size_t> best;
   for (const std::size_t r : gen::radices) {
-    if (!chain.depth_fits(n, {r})) {
+    if (!fits({r})) {
       continue;
     }
     best = {r};
@@ -729,7 +743,7 @@ template <class T>
 std::vector<std::size_t>
 column_radices(std::size_t n, std::ptrdiff_t stride, const build_settings& settings,
                const target_profile& profile, const chain_builder<T>& chain,
-               const kernels_of<T>& kernels) {
+               const kernels_of<T>& kernels, bool split_leaves) {
   const auto lane_codelets = [&](const std::vector<std::size_t>& r) {
     return std::ranges::all_of(r, [&](std::size_t x) {
       return has_codelet(x) && kernels.passes.codelet[codelet_slot(x)]->lane[0] != nullptr;
@@ -763,6 +777,28 @@ column_radices(std::size_t n, std::ptrdiff_t stride, const build_settings& setti
   }
   if (rad.empty() || fits(rad)) {
     return rad;
+  }
+  // A leaf (one pass of radix n) whose legs crowd one L1 set: ranked_radices has nothing
+  // else for a leaf length, so two lane passes a x b = n, the most balanced first (X52 arm
+  // L: the M5 Max's 16 x 256 x 256, whose outer leaf of 16 has its legs 1 MiB apart, took
+  // 0.67 of the leaf's time as 4 x 4 and 0.82 as 8 x 2). Not on avx512 (split_leaves false),
+  // where the Xeon 6240 gained too little (0.966 over the volumes it changes).
+  if (split_leaves && rad.size() == 1) {
+    std::vector<std::vector<std::size_t>> two;
+    for (std::size_t a = 2; a < n; ++a) {
+      if (n % a == 0) {
+        two.push_back({a, n / a});
+      }
+    }
+    const auto skew = [](const std::vector<std::size_t>& r) {
+      return r[0] > r[1] ? r[0] / r[1] : r[1] / r[0];
+    };
+    std::ranges::stable_sort(two, [&](const auto& x, const auto& y) { return skew(x) < skew(y); });
+    for (const std::vector<std::size_t>& r : two) {
+      if (lane_codelets(r) && fits(r)) {
+        return r;
+      }
+    }
   }
   constexpr std::size_t candidates = 64;
   for (const std::vector<std::size_t>& r : ranked_radices(n, profile, candidates)) {
@@ -983,7 +1019,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     const std::vector<std::size_t> rad =
         chain_columns ? chain.radices(n)
                       : column_radices<T>(n, dst.stride[d] * dst.element_bytes, settings, profile,
-                                          chain, kernels);
+                                          chain, kernels, c.isa_target != target::avx512);
     scratch = std::max(scratch, add_column_phase<T>(p, chain, d, extent, src, dst, dir, edges,
                                                     block, kernels.complex_lanes, rad));
     c.axis_notes.push_back(
