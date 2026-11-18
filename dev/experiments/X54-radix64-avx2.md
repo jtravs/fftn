@@ -161,6 +161,32 @@ confirmations 20261118-034240-7fbe onwards. Planner ÷ winner (above 1: the winn
 By X38's rule B takes 768 = 12 · 64 and 1024 = 16 · 64 in double; C (amendment 1) the five
 float lengths with one winner.
 
+### Counters (EPYC, not deciding)
+
+`fbench-<lib> run --pmu`, Zen 3 events in groups of five, user mode, medians of three
+processes, O's and B's cache builds (planner plans) and FFTW 3.3.11 (MEASURE, shared
+wisdom); Slurm 512619 (node load about 47). Per transform:
+
+| case | plan | cycles | instructions | IPC | L1 fills | stores | FP-register-file stall, % |
+|---|---|---|---|---|---|---|---|
+| 768 | O 4 · 16 · 12 | 3985 | 14439 | 3.62 | 1080 | 1441 | 27.8 |
+| 768 | B 12 · 64 | **3369** | 11478 | 3.41 | 848 | 1443 | 27.9 |
+| 768 | FFTW | 3650 | 11920 | 3.27 | 443 | 1665 | 15.5 |
+| 1024 | O 4 · 16 · 16 | 5521 | 19418 | 3.52 | 1766 | 2054 | 32.5 |
+| 1024 | O, forced 16 · 64 | 5387 | 16926 | 3.14 | 1257 | 2697 | 26.2 |
+| 1024 | B 16 · 64 | **4720** | 16429 | 3.48 | 1248 | 2230 | 28.0 |
+| 1024 | FFTW | 4731 | 15276 | 3.23 | 1224 | 2412 | 21.8 |
+| 1024 × 16 | O / B / FFTW | 94051 / 89204 / 87033 | 310476 / 262637 / 244251 | 3.30 / 2.94 / 2.81 | | | 33.1 / 32.3 / 22.5 |
+| 1024 × 1024 | O / B / FFTW | 7.89 M / 10.15 M / 9.89 M | 19.9 M / 16.8 M / 15.6 M | 2.52 / 1.66 / 1.58 | | | 44.9 / 54.1 / 43.4 |
+| 2048 | B forced 32 · 64 | 14335 | 36442 | 2.54 | 3804 | 4891 | 42.4 |
+
+With the fitted order the 16 · 64 plan of 1024 keeps its instruction count (16 429 against
+16 926 for the old order) and regains the IPC of the three-pass plan (3.48 against 3.14):
+467 fewer stores a transform, 0.876 of the old order's cycles, level with FFTW's at batch 1
+and 768 at 0.92 of FFTW's. At 1024 × 1024 (16 MiB, beyond L2) the two-pass plan takes 1.29
+times O's cycles in this screen, as FFTW's own two-pass plan does (1.25): a memory effect of
+the plan shape, not of the codelet; the judging run decides (rule (c) for B).
+
 ### Mac, tracking tier, A ÷ O (run 20261118-032911-79d7)
 
 Apple M5 Max, Homebrew Clang, `neon_fcma`, arms O (4d75c48) and A (d8b5376) built from the
