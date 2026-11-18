@@ -47,8 +47,11 @@ Arms are commits of `exp/x50-primes` against N = its base (X46's head 80dbcdb, t
   depth-first chain (the profile's depth-first fields on M's bytes, X46's conditions): on
   the Xeon M of 16384–262144 points (8179, 32749, 131071), on the Mac M of 8192–16384 points
   with a power-of-two part above 1024 points; nothing on the EPYC.
-- **B (two tops beyond the range), only if the screen supports it:** convolutions longer
-  than the profile's depth-first range take two tops (999983).
+- **B (beyond the range; named after the screen, before the judging run).** The screen
+  (below) found one top of 16 better than two even at 2²¹ points, so B is: a profile field
+  `depth_convolution_max_bytes` extends the range for convolutions only, with the same tops;
+  the Xeon profile sets no limit (262139, 524287, 999983 change). Other profiles keep A's
+  range.
 
 Bits: a changed plan changes the rounding of its rows (another factorisation of the
 convolution), within the derived tolerances; tests hold both precisions to them and the
@@ -76,6 +79,33 @@ threaded runs bit for bit to the serial ones.
   is rejected on that profile. At most three arms.
 
 ## Results
+
+### Screen (Xeon, no default change)
+
+Run 20261117-235037-3881 (Slurm 16426 build, 16427 timing, not `--serial`; GCC 14.4,
+`avx512`, double; 10 rounds, 3 under load, band ±3.33 %): N = 80dbcdb (rules), C = chain,
+G = grid, D = depth-first with one top of 16, E = two tops of 16, F = FFTW, M = MKL; ns per
+point:
+
+| case | N (rules) | C | G | D | E | FFTW | MKL |
+|---|---|---|---|---|---|---|---|
+| c2c 131071 | 42.7 (Bluestein, chain M 2¹⁸) | 44.2 | 45.0 | as N | as N | 35.6 | 32.1 |
+| c2c 999983 | 81.7 (Bluestein, chain) | 83.9 | 83.5 | as N | as N | 73.0 | 56.4 |
+| c2c 65537 | 20.4 (Rader) | 20.6 | 20.3 | as N | as N | 39.0 | 61.4 |
+| c2c 262144 | 4.42 (depth-first 16) | 8.16 | 6.46 | 4.50 | 4.95 | 5.95 | 7.44 |
+| c2c 2000000 | 12.7 (grid) | 18.3 | 12.6 | 11.9 | 12.9 | 17.3 | 16.3 |
+| c2c 2073600 | 11.3 (grid) | 17.0 | 11.8 | **9.50** | 10.5 | 17.6 | 13.5 |
+| c2c 2097152 | 13.8 (grid) | 16.8 | 13.8 | **10.4** | 10.8 | 17.6 | 18.5 |
+
+(The primes' plans do not change with D or E in this build: the depth-first strategy does
+not fit a prime.) The convolution's chains are the C column: at 2¹⁸ the depth-first chain
+takes 0.54 of their time, at 2073600 0.56 and at 2²¹ 0.62, with one top of 16 better than
+two. By the stage's arithmetic (two transforms of M and two chirp passes), 131071 should
+take about 0.65 of its time (about 0.87 of MKL's) and 999983 about 0.62 (about 0.90 of
+MKL's). The rows beyond 4 L2 gain too (2073600 0.85, 2²¹ 0.75 of the grid): a lead for
+X51 (rows beyond 4 L2), not changed here.
+
+### Judging
 
 (pending)
 
