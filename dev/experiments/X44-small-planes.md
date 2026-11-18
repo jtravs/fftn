@@ -1,6 +1,6 @@
 # X44: the one-thread plane cases task 4.1 still misses
 
-- **Status:** done (P adopted on x86; N adopted on `avx2`; re-run of past-limit cases pending)
+- **Status:** done (P adopted on x86; N rejected)
 - **Owner:** X44 agent, 2026-11-17
 - **Phase / task:** 4.1
 
@@ -188,6 +188,12 @@ place 0.87, 128² 0.88–0.89, 100² 0.88, 36 × 2048 0.89), real planes 0.96–
 from 0.95 (P) to 0.905 and 64² to 0.90–0.93; a narrower arm for `avx512` would need its own
 rule and fresh runs (a decision for the maintainer, below).
 
+Re-run on the EPYC, run 20261117-192713-da02 (Slurm 512179; 12 rounds, all loaded, band
+±1.0 %; B, P, N on the six cases past the limit): P ÷ B 36 × 2048 0.999 and 1.001, 32 × 30 ×
+2 in place 0.752, 32² in place 0.738, c2r 32² 0.811 (P's rule met on the EPYC); N ÷ P 32 ×
+30 × 2 0.991, 32² 1.011, c2r 32² 1.012, 36 × 2048 0.911–0.913, but c2c 4 × 6 × 8 1.029 again,
+past the 2 % limit: rule (2) fails on `avx2`, and N is rejected there too.
+
 N against P on the Mac, run 20261117-154001-6cda (10 rounds, all loaded, band ±1.9 %; the 126
 cases and six more volumes of the filter): 0.997 over all, 256² 0.97, 64³ 0.94, 48³ 0.96;
 r2c 5 × 7 1.06 (a plan without a column phase). Rule (1) fails on the Mac: N is not adopted
@@ -197,12 +203,11 @@ on NEON, where the fast path is compiled out.
 
 - **P adopted** (columns of 17–32 points as one lane pass, double): Xeon 0.870 over the 17
   changed cases; EPYC 0.793 (its one unchanged case past the limit, c2c 36 × 2048 in place
-  1.032, re-run in Slurm 512179); NEON plans unchanged. EPYC 32² ÷ FFTW 1.39 → 1.00, Xeon
+  1.032, re-run: 0.999); NEON plans unchanged. EPYC 32² ÷ FFTW 1.39 → 1.00, Xeon
   32² ÷ MKL 1.37 → 1.07. DESIGN 9.3 and the decision log.
-- **N adopted on `avx2`** (0.936 over the EPYC's 100 cases with a column phase; its four
-  cases past the limit sit on paths N does not touch and are re-run in Slurm 512179);
-  **not adopted on `avx512`** (0.962 against 0.95; c2c planes 0.92) or NEON (0.997): the fast
-  path is compiled for `avx2` only. LESSONS 4.18.
+- **N rejected** on every target: on `avx2` it met rule (1) (0.936) but c2c 4 × 6 × 8 was
+  1.034 and, re-run, 1.029 against a ±1.0 % band (rule (2)); on `avx512` 0.962 against 0.95
+  (its c2c planes 0.92); on NEON 0.997. Its code is removed (764b74a). LESSONS 4.18.
 - No arm for the Mac: its 32²–64² gap is FFTW's radix-64 codelet (`n1fv_64`), against which
   FFTN's radix-64 pass loses in rows and columns alike (1.06–1.19); a faster generated
   radix-64 codelet on NEON is the generator's work (X42).
@@ -210,8 +215,8 @@ on NEON, where the fast path is compiled out.
   of 64²–512² by more than 2–4 % on the EPYC or the Xeon (D; after N, on the Xeon, radix 64
   in one pass 1.17 at 64²).
 
-Not met (task 4.1, one thread), from run 20261117-165710-e283 with the adopted code (on the
-Xeon that is P without N): the Xeon against MKL on c2c planes 64² (1.07–1.08), 128² (1.14–1.16),
+Not met (task 4.1, one thread), from run 20261117-165710-e283 with the adopted code (P;
+N's numbers are not the adopted code's): the Xeon against MKL on c2c planes 64² (1.07–1.08), 128² (1.14–1.16),
 256² (1.21–1.23), 100² (1.39), 480 × 640 (1.32–1.33), 512² (1.32–1.34), 1024² (1.24–1.32),
 16² × 2 (1.24–1.25), 36 × 2048 and 2048 × 36 (1.14–1.23), 32² (1.06–1.09), though their
 geometric mean is 0.95 (MKL is slow on others); real planes against MKL (geometric means
@@ -219,5 +224,6 @@ r2c 1.005, c2r 1.023; up to 1.6 at 16² × 2 and 1.3–1.5 at 256²–1024²), w
 as 1-D batches already take 1.1–1.4 times MKL's time (the pairing pass's scalar work, X6's
 question); EPYC real planes 64²–256² 4–7 % behind FFTW. Next: the column edge kernels'
 per-call set-up (a radix-16 column leaf spills 32 leg addresses for four runs at 16²), the
-middle lane passes' per-unit set-up (the same as N's, in `lane_pass`, shared with rows),
-and a narrower arm of N for `avx512` if the maintainer wants one.
+middle lane passes' per-unit set-up (in `lane_pass`, shared with rows), and N again
+without its loss at tiny volumes (a minimum block or column count) if the maintainer wants
+one.
