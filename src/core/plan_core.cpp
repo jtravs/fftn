@@ -514,10 +514,11 @@ std::vector<std::size_t> depth_tops_of(std::size_t n, const side& in, const side
 // X53; strategies/chain.hpp, use_batch_leaves), or null: only for one axis of contiguous
 // rows in one batch dimension of at least two rows, the driver's one call of the leaf over
 // the batch (driver.hpp, run_leaf_rows); a precision with one complex number per register
-// has none. The rules take none yet.
+// has none. By the rules, the profile's (target_profile::batch_rows, batch_narrower).
 template <class T>
 const batch_leaf_set<T>* batch_leaves_of(const shape_view& s, const side& in, const side& out,
-                                         const build_settings& settings, target t) {
+                                         const build_settings& settings,
+                                         const target_profile& profile, target t) {
   if (settings.batch_leaves == batch_leaf_choice::never || s.kind != transform_kind::c2c ||
       s.axes.size() != 1 || s.batches.size() != 1 || s.batches[0].count < 2 || in.stride[0] != 1 ||
       out.stride[0] != 1) {
@@ -536,6 +537,12 @@ const batch_leaf_set<T>* batch_leaves_of(const shape_view& s, const side& in, co
     }
     break;
   case batch_leaf_choice::rules:
+    if (const std::size_t slot = codelet_slot(n); slot < profile.batch_rows.size() &&
+                                                  profile.batch_rows[slot] != 0 &&
+                                                  s.batches[0].count >= profile.batch_rows[slot]) {
+      table = profile.batch_narrower ? find_narrower_batch_leaves(t, n) : find_batch_leaves(t, n);
+    }
+    break;
   case batch_leaf_choice::never:
     break;
   }
@@ -996,7 +1003,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
 
   // Batch leaves a test or fbench forces take the rows from the lanes the rules would choose
   // (avx2 and avx512 in float); the rules' own only where the rules choose no lanes.
-  const batch_leaf_set<T>* batch = batch_leaves_of<T>(s, in, out, settings, c.isa_target);
+  const batch_leaf_set<T>* batch = batch_leaves_of<T>(s, in, out, settings, profile, c.isa_target);
   const bool forced_batch = batch != nullptr && settings.batch_leaves != batch_leaf_choice::rules &&
                             settings.strategy == strategy_choice::rules &&
                             !chain.forces(s.axes[0].n);

@@ -662,6 +662,24 @@ sequence cheapest(std::size_t n, std::size_t smooth, bool more, const target_pro
 
 } // namespace
 
+namespace {
+
+// The batch leaves' smallest batch per codelet slot (target_profile::batch_rows) and whether
+// an avx512 plan takes avx2's, from experiment X53 (dev/experiments/X53-two-row-leaves.md).
+std::span<const std::uint16_t> batch_rows_of(target t, std::size_t lanes) {
+  static_cast<void>(t);
+  static_cast<void>(lanes);
+  return {};
+}
+
+bool batch_narrower_of(target t, std::size_t lanes) {
+  static_cast<void>(t);
+  static_cast<void>(lanes);
+  return false;
+}
+
+} // namespace
+
 target_profile profile_of(target t, std::size_t lanes) noexcept {
   const measured_table* nearest = &measured_tables.front();
   for (const measured_table& m : measured_tables) {
@@ -675,6 +693,8 @@ target_profile profile_of(target t, std::size_t lanes) noexcept {
           .lanes_up_to = lanes_up_to_of(t, lanes),
           .rader_from = rader_from_of(lanes),
           .rader_below = rader_below_of(t),
+          .batch_rows = batch_rows_of(t, lanes),
+          .batch_narrower = batch_narrower_of(t, lanes),
       };
     }
     if (m.t == fallback_target &&
@@ -691,6 +711,8 @@ target_profile profile_of(target t, std::size_t lanes) noexcept {
       .lanes_up_to = lanes_up_to_of(t, lanes),
       .rader_from = rader_from_of(lanes),
       .rader_below = rader_below_of(t),
+      .batch_rows = batch_rows_of(t, lanes),
+      .batch_narrower = batch_narrower_of(t, lanes),
   };
 }
 
@@ -1042,6 +1064,8 @@ constexpr target_profile reference_profile{
     .lanes_up_to = 0,
     .rader_from = 0,
     .rader_below = std::size_t{1} << 24U,
+    .batch_rows = {},
+    .batch_narrower = false,
 };
 
 // The lengths in [lo, hi] that may_be_fast accepts, ascending: the products of 2, 3, 5, 7

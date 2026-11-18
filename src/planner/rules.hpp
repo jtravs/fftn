@@ -85,6 +85,13 @@ struct target_profile {
   // them per target and precision.
   std::size_t rader_from = 0;
   std::size_t rader_below = 0;
+  // A c2c batch of at least batch_rows[codelet_slot(n)] contiguous rows of a codelet length n
+  // (one axis, one batch dimension) runs as batch leaves, C rows per register
+  // (passes/batch_leaf.inl); 0, or no entry: never. batch_narrower: the leaves of the narrower
+  // target that rounds alike (avx2's, two rows per register in double, in an avx512 plan).
+  // Experiment X53 sets them per target and precision.
+  std::span<const std::uint16_t> batch_rows;
+  bool batch_narrower = false;
 };
 
 // The profile of target t for a precision with `lanes` complex lanes: the table measured
