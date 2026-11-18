@@ -198,9 +198,13 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
     p.bluestein_pow2_part_bytes = c.l1d.size / 4;
     // Experiment X46 (arm C2), M5 Max: depth-first chains with a top of 4 from L1 to 2 L1
     // where the length's power-of-two part is above L1/8 (8192-16384 complex doubles; from
-    // L1/2, batches of 256-1024 rows of 4096 lost 1.03-1.04, arm C).
+    // L1/2, batches of 256-1024 rows of 4096 lost 1.03-1.04, arm C). X51 (arm M): rows of a
+    // small odd part times a power of two above L1/8 to 16 L1 (20480-122880 points took
+    // 0.67-0.86 of their grids' time in the screen); powers of two stay at 2 L1 (32768-262144
+    // gained nothing against X32's chains).
     p.depth_min_bytes = c.l1d.size;
-    p.depth_max_bytes = 2 * c.l1d.size;
+    p.depth_max_bytes = 16 * c.l1d.size;
+    p.depth_pow2_max_bytes = 2 * c.l1d.size;
     p.depth_part_bytes = c.l1d.size / 8;
     p.depth_top = 4;
   }
