@@ -177,8 +177,9 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
         p.depth_max_bytes = 4 * c.l2.size;
         p.depth_top = 16;
         p.depth_top_alt = 20;
-        // Experiment X50: Bluestein convolutions on the depth-first chain at any length beyond.
-        p.depth_convolution_max_bytes = std::numeric_limits<std::size_t>::max();
+        // Experiment X50: Bluestein convolutions on the depth-first chain beyond, up to the
+        // longest convolution measured (2^21 complex doubles, 32 MiB); longer is unmeasured.
+        p.depth_convolution_max_bytes = std::size_t{32} << 20U;
       }
     }
   }

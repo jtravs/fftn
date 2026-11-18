@@ -12,6 +12,7 @@
 #include "core/plan_core.hpp"
 #include "fftn/detail/core.hpp"
 #include "fftn/fftn.hpp"
+#include "isa/kernel_table.hpp"
 #include "reference/reference_dft.hpp"
 #include "support/exact.hpp"
 #include "support/fftn_subject.hpp"
@@ -21,6 +22,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <complex>
 #include <cstddef>
 #include <span>
@@ -41,11 +43,13 @@ bool depth_convolution(const std::string& text) {
 
 // A batch of `count` rows of the prime q, `dist` apart (the gaps are canaries), through the
 // forced depth-first convolution with the given tops (empty: the default scan) where it
-// fits; every row against the reference, every gap untouched. Returns whether it was built.
+// fits; every row against the reference, every gap untouched. length: the convolution's
+// length (build_settings::bluestein_length; 0: the rule's). Returns whether it was built;
+// lanes, when given, receives the plan's complex count C.
 template <class T>
 bool check_prime(fftn::isa target, std::size_t q, const std::vector<std::size_t>& tops,
                  fftn::direction dir, double scale, std::size_t count, std::size_t dist,
-                 bool in_place = false, bool pow2 = false) {
+                 bool in_place = false, std::size_t length = 0, std::size_t* lanes = nullptr) {
   const std::string what =
       std::string(fftn::isa_name(target)) + (sizeof(T) == 8 ? " double" : " float") +
       ", q = " + std::to_string(q) + ", " + std::to_string(tops.size()) + " tops given" +
@@ -57,10 +61,7 @@ bool check_prime(fftn::isa target, std::size_t q, const std::vector<std::size_t>
   settings.strategy = strategy_choice::depth;
   settings.depth_tops = tops;
   settings.rader = 0; // Bluestein for every prime
-  if (pow2) {
-    // Any power-of-two part: the convolution of 4093 is then 2^13 on every target.
-    settings.profile.bluestein_pow2_part_bytes = SIZE_MAX;
-  }
+  settings.bluestein_length = length;
   const fftn::shape<std::complex<T>, std::complex<T>> shape{
       .dir = dir,
       .axes = {{.n = q}},
@@ -78,6 +79,9 @@ bool check_prime(fftn::isa target, std::size_t q, const std::vector<std::size_t>
                      {.in_place = in_place, .scale = scale, .force_isa = target}, settings);
   const std::string text = fftn::detail::describe(*core);
   EXPECT_NE(text.find("bluestein " + std::to_string(q)), std::string::npos) << text;
+  if (lanes != nullptr) {
+    *lanes = fftn::detail::of<T>(*fftn::detail::find_kernels(core->isa_target)).complex_lanes;
+  }
 
   fftn::test::input_source src(0xB1D3ULL + q + count);
   const std::size_t total = dist * (count - 1) + q;
@@ -129,9 +133,12 @@ template <class T> void every_case(fftn::isa target) {
     }
   }
   EXPECT_GT(built, 0U) << "no prime took the depth-first convolution";
-  // The scale on the chirp pass out, batches with gaps, in place.
-  check_prime<T>(target, 2053, {}, fftn::direction::backward, 0.25, 2, 2053 + 3);
-  check_prime<T>(target, 1031, {}, fftn::direction::forward, 1.0 / 3, 3, 1031 + 5, true);
+  // The scale on the chirp pass out, batches with gaps, in place: on a convolution of 8192
+  // points, which every complex count splits, so that they run the depth-first path.
+  EXPECT_TRUE(
+      check_prime<T>(target, 4093, {}, fftn::direction::backward, 0.25, 2, 4093 + 3, false, 8192));
+  EXPECT_TRUE(
+      check_prime<T>(target, 4093, {}, fftn::direction::forward, 1.0 / 3, 3, 4093 + 5, true, 8192));
 }
 
 TEST(BluesteinDepth, EveryTargetPrecisionAndDirection) {
@@ -141,17 +148,102 @@ TEST(BluesteinDepth, EveryTargetPrecisionAndDirection) {
   }
 }
 
-// Tops given: one and two factors, on a convolution of 2^13, which 8 lanes divide either way.
+// Tops given: one and two factors, on convolutions of 2^13 (tops of 8 and 16) and 10240
+// (tops of 20: the radix-20 top pass with the kernel-spectrum factor forward and the fused
+// chirp backward), with the scale and in place.
 TEST(BluesteinDepth, GivenTops) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
     for (const std::vector<std::size_t>& tops :
          {std::vector<std::size_t>{16}, std::vector<std::size_t>{8, 4},
           std::vector<std::size_t>{8, 8}}) {
       EXPECT_TRUE(
-          check_prime<double>(t, 4093, tops, fftn::direction::forward, 1.0, 1, 4093, false, true));
+          check_prime<double>(t, 4093, tops, fftn::direction::forward, 1.0, 1, 4093, false, 8192));
       EXPECT_TRUE(
-          check_prime<float>(t, 4093, tops, fftn::direction::backward, 0.5, 1, 4093, true, true));
+          check_prime<float>(t, 4093, tops, fftn::direction::backward, 0.5, 1, 4093, true, 8192));
     }
+    // A top of 20 runs where C divides it (depth_fits): every target but 8 lanes.
+    for (const std::vector<std::size_t>& tops :
+         {std::vector<std::size_t>{20}, std::vector<std::size_t>{20, 4}}) {
+      std::size_t lanes = 1;
+      const bool d = check_prime<double>(t, 4099, tops, fftn::direction::forward, 1.0, 1, 4099,
+                                         false, 10240, &lanes);
+      EXPECT_EQ(d, 20 % lanes == 0);
+      const bool db = check_prime<double>(t, 4099, tops, fftn::direction::backward, 0.25, 2,
+                                          4099 + 3, true, 10240, &lanes);
+      EXPECT_EQ(db, 20 % lanes == 0);
+      const bool f = check_prime<float>(t, 4099, tops, fftn::direction::backward, 0.5, 1, 4099,
+                                        false, 10240, &lanes);
+      EXPECT_EQ(f, 20 % lanes == 0);
+    }
+  }
+}
+
+// A plan the rules chose (M of at least 16384 points, in the Xeon profile's range, in double
+// on targets with 32 vector registers; forced elsewhere), too long for the quadruple-precision
+// reference, agrees with the breadth-first Bluestein stage within both their error bounds,
+// both directions, in and out of place, with a scale.
+template <class T>
+void rules_agree_with_chain(fftn::isa target, std::size_t q, fftn::direction dir, bool in_place,
+                            double scale) {
+  SCOPED_TRACE(std::string(fftn::isa_name(target)) + (sizeof(T) == 8 ? " double" : " float") +
+               ", q = " + std::to_string(q) +
+               (dir == fftn::direction::forward ? " forward" : " backward") +
+               (in_place ? ", in place" : "") + ", scale " + std::to_string(scale));
+  const std::string name = fftn::isa_name(target);
+  const bool wide = name == "avx512" || name == "neon" || name == "neon_fcma";
+  build_settings depth;
+  depth.rader = 0;
+  depth.profile.depth_min_bytes = std::size_t{256} * 1024;
+  depth.profile.depth_max_bytes = std::size_t{4} * 1024 * 1024;
+  depth.profile.depth_part_bytes = 0;
+  depth.profile.depth_top = 16;
+  depth.profile.depth_top_alt = 20;
+  depth.profile.bluestein_pow2_part_bytes = SIZE_MAX;
+  // 34560 = 2^8 3^3 5 points (540 KiB in double), which a top of 16 and every complex count
+  // split; the rule's own length may be odd (no top fits).
+  depth.bluestein_length = 34560;
+  if (!wide || sizeof(T) != 8) {
+    depth.strategy = strategy_choice::depth; // the rules take it in double on 32 registers
+  }
+  build_settings chain = depth;
+  chain.strategy = strategy_choice::chain;
+  const fftn::shape<std::complex<T>, std::complex<T>> shape{
+      .dir = dir,
+      .axes = {{.n = q}},
+      .batches = {},
+  };
+  const fftn::options opts{.in_place = in_place, .scale = scale, .force_isa = target};
+  const auto dc = make_plan_core(fftn::detail::view_of(shape), opts, depth);
+  const auto cc = make_plan_core(fftn::detail::view_of(shape), opts, chain);
+  const std::string text = fftn::detail::describe(*dc);
+  ASSERT_TRUE(depth_convolution(text)) << text;
+  ASSERT_FALSE(depth_convolution(fftn::detail::describe(*cc)));
+  fftn::test::input_source src(0xB1D4ULL + q);
+  const cvec<T> x = src.complexes<T>(q);
+  cvec<T> yd = in_place ? x : cvec<T>(q);
+  cvec<T> yc = in_place ? x : cvec<T>(q);
+  const fftn::workspace wd(fftn::detail::workspace_bytes(*dc, 1));
+  const fftn::workspace wc(fftn::detail::workspace_bytes(*cc, 1));
+  fftn::detail::execute_core(*dc, 0, 1, in_place ? yd.data() : x.data(), yd.data(), wd);
+  fftn::detail::execute_core(*cc, 0, 1, in_place ? yc.data() : x.data(), yc.data(), wc);
+  double diff = 0;
+  double norm = 0;
+  for (std::size_t k = 0; k < q; ++k) {
+    diff += std::norm(std::complex<double>(yd[k]) - std::complex<double>(yc[k]));
+    norm += std::norm(std::complex<double>(yc[k]));
+  }
+  const auto tol = fftn::test::derived_tolerance<T>(4 * q, fftn::test::stable_fft_bound) * 2.0;
+  EXPECT_LE(std::sqrt(diff / norm), tol.rms) << text;
+}
+
+TEST(BluesteinDepth, RulesPlanAgreesWithTheChain) {
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    for (const auto dir : {fftn::direction::forward, fftn::direction::backward}) {
+      for (const bool in_place : {false, true}) {
+        rules_agree_with_chain<double>(t, 16411, dir, in_place, in_place ? 0.5 : 1.0);
+      }
+    }
+    rules_agree_with_chain<float>(t, 16411, fftn::direction::forward, false, 1.0);
   }
 }
 

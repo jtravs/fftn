@@ -659,10 +659,10 @@ TEST(Schedule, ProfilesOfRecordedMachines) {
                       0,         0,        0,        0,         0,     0, 0, 0}));
   EXPECT_EQ(
       fields("linux-intel-xeon-gold-6240.sysfs", true),
-      (planner_fields{512 * kib, 1 * mib,   32 * kib, 256 * kib, never, 15,          0,
-                      0,         0,         never,    0,         0,     false,       16,
-                      64 * kib,  256 * kib, never,    4 * mib,   20,    12672 * kib, 256 * kib,
-                      4 * mib,   0,         16,       20,        never}));
+      (planner_fields{512 * kib, 1 * mib,   32 * kib, 256 * kib, never,   15,          0,
+                      0,         0,         never,    0,         0,       false,       16,
+                      64 * kib,  256 * kib, never,    4 * mib,   20,      12672 * kib, 256 * kib,
+                      4 * mib,   0,         16,       20,        32 * mib}));
   const planner_fields axion{
       .grid_min_bytes = 1 * mib,
       .grid_three_bytes = 2 * mib,

@@ -120,6 +120,17 @@ template <class T> std::vector<std::size_t> chain_builder<T>::radices(std::size_
 }
 
 template <class T> std::size_t chain_builder<T>::bluestein_m(std::size_t q) const {
+  if (forced_conv_ >= 2 * q - 1) {
+    std::size_t rest = forced_conv_;
+    for (const std::size_t f : {std::size_t{2}, std::size_t{3}, std::size_t{5}, std::size_t{7}}) {
+      while (rest % f == 0) {
+        rest /= f;
+      }
+    }
+    if (rest == 1) {
+      return forced_conv_;
+    }
+  }
   return bluestein_length(q, profile_,
                           std::max<std::size_t>(conv_pow2_part_bytes_ / (2 * sizeof(T)), 1));
 }

@@ -231,15 +231,17 @@ void add_cases(std::vector<team_case>& out, const fftn::detail::build_settings& 
                           false, depth, target));
   out.push_back(make_case("c2c_depth2_inplace_4096x2" + suffix, fftn::rows_c2c<T>(4096, 2, fwd),
                           8192, 8192, true, depth, target));
-  // A Bluestein stage on the depth-first chains (experiment X50): the chirp passes, both
-  // chains' first and top passes and their loops over sub-rows; Bluestein forced for the
-  // prime, the default tops (a chain of one Bluestein stage where none fits).
+  // A Bluestein stage on the depth-first chains (experiment X50): the fused chirp passes,
+  // both chains' first and top passes and their loops over sub-rows; Bluestein forced for the
+  // prime and its convolution 8192 points, which every target's complex count splits (team
+  // test DepthCasesTakeTheDepthFirstConvolution checks that they did), the default tops.
   depth.depth_tops = {};
   depth.rader = 0;
-  out.push_back(make_case("c2c_bluestein_depth_4099x2" + suffix, fftn::rows_c2c<T>(4099, 2, bwd),
-                          8198, 8198, false, depth, target));
-  out.push_back(make_case("c2c_bluestein_depth_inplace_4099x2" + suffix,
-                          fftn::rows_c2c<T>(4099, 2, fwd), 8198, 8198, true, depth, target));
+  depth.bluestein_length = 8192;
+  out.push_back(make_case("c2c_bluestein_depth_4093x2" + suffix, fftn::rows_c2c<T>(4093, 2, bwd),
+                          8186, 8186, false, depth, target));
+  out.push_back(make_case("c2c_bluestein_depth_inplace_4093x2" + suffix,
+                          fftn::rows_c2c<T>(4093, 2, fwd), 8186, 8186, true, depth, target));
   // Split lane passes (DESIGN.md 6.3, strategies/chain.hpp), forced with a first radix of
   // 16, which every target's split_block divides: a run of three passes (BL in the
   // middle), of two in place, in the complex chains of real rows, and on the long axis of

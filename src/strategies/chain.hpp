@@ -161,6 +161,10 @@ public:
     conv_pow2_part_bytes_ = pow2_part_bytes;
   }
 
+  // Every Bluestein stage's convolution length m instead of the rule's, where m is at least
+  // 2Q - 1 and 7-smooth (build_settings::bluestein_length; tests). 0: the rule's.
+  void force_convolution_length(std::size_t m) noexcept { forced_conv_ = m; }
+
   // The radices of a chain for n, in pass order (empty for n = 1); the last is a Bluestein
   // stage's when bluestein_last(n).
   [[nodiscard]] std::vector<std::size_t> radices(std::size_t n) const;
@@ -408,6 +412,7 @@ private:
   std::size_t conv_from_bytes_ = SIZE_MAX; // use_long_convolutions
   std::size_t conv_radix8_bytes_ = 0;
   std::size_t conv_pow2_part_bytes_ = SIZE_MAX;
+  std::size_t forced_conv_ = 0; // force_convolution_length
   std::map<std::size_t, std::vector<std::complex<T>>> roots_;
   std::map<std::pair<std::size_t, std::size_t>, const T*> grouped_tables_;              // (n, R)
   std::map<std::tuple<std::size_t, std::size_t, std::size_t>, const T*> shared_tables_; // n, R, s

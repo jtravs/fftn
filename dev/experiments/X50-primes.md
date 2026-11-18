@@ -51,7 +51,9 @@ Arms are commits of `exp/x50-primes` against N = its base (X46's head 80dbcdb, t
   (below) found one top of 16 better than two even at 2²¹ points, so B is: a profile field
   `depth_convolution_max_bytes` extends the range for convolutions only, with the same tops;
   the Xeon profile sets no limit (262139, 524287, 999983 change). Other profiles keep A's
-  range.
+  range. *After review (2026-11-18):* the Xeon's limit is the longest convolution measured,
+  2²¹ complex doubles (32 MiB; the screen's 2097152 and 999983's 2073600); longer
+  convolutions keep the breadth-first chain, unmeasured. No judged case changes.
 - **C (fused chirp passes; named after B's partial judging results, before its own run).**
   B left 999983 at about 1.1 of MKL's time. The stage still sweeps M elements twice more
   than its chains need: the chirp pass writes the zero-padded line into scratch a, which the

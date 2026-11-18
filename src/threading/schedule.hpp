@@ -173,7 +173,8 @@ struct machine_profile {
   // also beyond depth_max_bytes up to depth_convolution_max_bytes, with the same tops: a
   // convolution is never a grid, so the alternative there is the breadth-first chain. On the
   // Xeon 6240 a top of 16 took 0.56 of the chain's time at 2073600 points and 0.62 at 2^21
-  // (32 MiB; two tops of 16 0.62 and 0.64). set_grid_sizes sets no limit on the Xeon profile.
+  // (32 MiB; two tops of 16 0.62 and 0.64). set_grid_sizes sets 32 MiB on the Xeon profile,
+  // the longest convolution measured; beyond it is unmeasured.
   std::size_t depth_convolution_max_bytes = 0;
   // The L1 data cache's line in bytes: a lanes column phase's block holds at least a line of
   // adjacent columns (core/plan_core.cpp, column_block; experiment X40). set_grid_sizes reads
