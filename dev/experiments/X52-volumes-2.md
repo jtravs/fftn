@@ -97,6 +97,18 @@ here and committed before its judging run.
   slower than L by more than the larger of 2 % and the run's A/A band, at one thread or at 8
   lanes (a case just past it on a loaded machine is re-run once before it decides).
 
+- **Arm S (written after the pathology below, before its judging runs; on top of G):** (S1)
+  a real plane or volume is split by its complex points (the last axis n / 2 + 1 long), not
+  its real points, against the split thresholds; (S2) where the cache group is a mesh (the
+  Xeon), a plane or volume (a work graph with a phase of lines) is split only from 32768
+  points. Rows unchanged; one-thread programs unchanged; bits unchanged (only who runs what).
+  Decision rule per machine (EPYC, Xeon at 8 lanes; Mac at 6 lanes): adopt S if (1) the
+  geometric mean of S ÷ G over the cases of the case set whose split decision S changes (by
+  the thresholds' arithmetic) is at most 0.95, (2) no case of the case set is slower than G by
+  more than the larger of 2 % and the run's A/A band (a case just past it on a loaded machine
+  is re-run once), and (3) one-thread programs unchanged (by construction). The parts are
+  adopted together; a machine where S changes no case keeps it by construction.
+
 ## Results
 
 ### Screens (not judging)
