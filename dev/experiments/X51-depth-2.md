@@ -111,6 +111,26 @@ M: FFTW, MKL ÷ the rules' plan.
   tier.
   The standard catalogue has no row this changes (its non-power-of-two rows in range have
   power-of-two parts of 1024 points or fewer).
-- Further arms (Xeon beyond 4 L2 and float; the EPYC) are named below before their runs.
+- **E (EPYC profile; x86-64, private L2 with a large L3)**, 83bd92f: rows that are not
+  powers of two, L2/4 to 4 L2 (8192–131072 complex doubles on the EPYC 7763), power-of-two
+  part above L1/4 (512 points), one top of 4 (the generic commit's 16-register limit). Judged
+  against N = c3a5eba (`main`'s plans on the EPYC) on the x51 rows it changes (12288,
+  20480–122880, 46080; 24576, 49152, 98304 in place and backward, batches of 8) and the
+  tracking tier (which holds 46080, the one standard catalogue row it changes). Zen 5 (the
+  same profile branch) takes it unmeasured; the AArch64 machines of that branch do not.
+- Further arms (Xeon beyond 4 L2 and float) are named below before their runs.
+
+### Step 2, the judging runs
+
+**Mac, M** (Homebrew Clang 23, `neon_fcma`, NEON FFTW 3.3.11; M = df67c89 against N =
+1a78533): run 20261118-002000-b403 (30 rounds, all under load, band ±2.98 %): the 19 changed
+cases **0.735 [0.724, 0.751]**, every one faster, from 0.688 (20480) to 0.858 (98304 in
+place); out of place 0.688–0.812, in place 0.748–0.858, backward 0.693–0.794, batches of 8
+0.732–0.749. FFTW ÷ N on the same cases 0.866 (0.741–0.961): FFTN ÷ FFTW goes from about
+1.04–1.35 to 0.79–0.98 on them. Tracking tier N against M, run 20261118-002935-541e (24
+rounds, all under load, band ±4.40 %): 61 no evidence, weighted geomean 1.010 [0.994, 1.028];
+three medians past 1 + max(band, 3 %) on rows whose plans do not change (r2c 2048 × 36 1.067,
+c2c 256² 1.050, r2c 64³ 1.047), re-run once with c2c 16 and 46080, run 20261118-004154-53ed
+(30 rounds, band ±2.18 %): 0.988–0.999, all no evidence. **M passes the rule.**
 
 ## Verdict
