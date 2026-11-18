@@ -226,10 +226,9 @@ points 0.83, EPYC 4 × 4 below FFTW in the screens).
 
 After these runs a native GCC 14 `-Werror` build on the Xeon showed a false
 maybe-uninitialized warning in partial groups (CI builds GCC 16 on pull requests), so a
-partial group now initialises its row arrays (cda37db). The double leaves of `avx2` that the
-rules take are unchanged in bytes but for two functions under GCC 14 and one radix-64 one
-(none of radices below 32 under GCC 16); `avx512`'s are recompiled. The head against the commit
-timed above (d38c42f against fd18d63, `x53`, Xeon, `--serial`, run 20261118-162006-601d, band
+partial group now initialises its row arrays (cda37db). Of `avx2`'s 120 double leaves below
+radix 32, 118 keep their bytes under GCC 14 and all 120 under GCC 16; `avx512`'s double leaves
+compile differently. The head against the commit timed above (d38c42f against fd18d63, `x53`, Xeon, `--serial`, run 20261118-162006-601d, band
 ±1.40 %): 0.998 over the 216 cases, nothing slower.
 
 ### The EPYC's 64 × 2 after X54 (a screen, not a verdict)
