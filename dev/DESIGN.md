@@ -1328,8 +1328,11 @@ to 8, on `avx2`:
   that are not powers of two, from L2/4 to 4 L2, power-of-two part above L1/4,
   one top of 4 (X51: 12288–122880 and 46080 0.63–0.79; tops of 16 lost 1.2–1.7 on `avx2`'s
   16 registers; powers of two tied or lost against X32's chains).
-Granite Rapids' profile (a 2 MiB private L2) does not take it: unmeasured there (X51's run
-was not made). Not built: three or more top factors, edge factors; float on the Apple and
+- x86-64 with a private L2 of 2 MiB or more (X55, Granite Rapids): the Xeon 6240's fields,
+  from L2/4 to 64 L2 with tops 16, 20 and 10, double only (32768–2^22 and 46080, 100000:
+  0.44–0.82 of the grids' time, 0.688 over the rows it changes; 2^21 tied). Sapphire and
+  Emerald Rapids share the branch, unmeasured.
+Not built: three or more top factors, edge factors; float on the Apple and
 EPYC profiles (X51's Apple float screen: mixed rows 0.69–0.84, but 24576 and 196608 did
 not gain). In place, the blocks live in the workspace block: n complex elements per team
 member (X51's range on the Xeon 6240 makes that up to 64 MiB per member at 2²² points, 8 MiB
@@ -3055,6 +3058,7 @@ to change before a release.
 | 2026-11-18 | A lanes column phase whose column has a leaf length and whose legs crowd one L1 set runs as the most balanced two lane passes whose last pass fits (16 = 4 × 4), except on `avx512` (section 9.3) | X52: M5 Max 16 × 256 × 256 0.54–0.57 of the leaf's time, EPYC 16³ 0.66–0.67 and 16 × 256 × 256 0.85–0.87; Xeon 6240 0.94–1.00 (0.966, under the rule's 0.95) |
 | 2026-11-18 | A member claims a split task's chunks in runs within a phase (a share of the phase's chunks left, as for whole tasks) where the profile's claim divisor is 2 (Apple, the mesh); single chunks on the CCX (section 13) | X52: at 8 lanes Xeon 0.91 over the planes and volumes that split, Mac at 6 lanes 0.86–0.94; EPYC volumes 0.877 and planes 0.882 but real 256² 1.035 on re-run (rule 2 failed; arm G2 pending); bits unchanged |
 | 2026-11-18 | The depth-first chain (section 8.5) takes one top factor that C does not divide (a partial first-pass block); the rules gain a third top, a limit for powers of two, single precision by profile and tops up to 8 on `avx2`; the Xeon 6240's profile runs it to 64 L2 with a third top of 10 and in float to 8 L2, the Apple profile to 16 L1 for lengths that are not powers of two, the EPYC 7763's profile (top 4, private L2 under 1 MiB) for lengths that are not powers of two from L2/4 to 4 L2 (X51) | X51 judged on each machine: Xeon 25000 0.75 (1.35 → 1.00 of FFTW), 524288–2²² 0.68–0.75, float 0.687; Mac mixed rows 0.735; EPYC mixed rows and 46080 0.730 (1.06–1.39 → 0.83–1.01 of FFTW); tracking tiers clean; Granite Rapids unmeasured, unchanged |
+| 2026-11-18 | x86-64 with a private L2 of 2 MiB or more (Granite Rapids) takes the depth-first chain from L2/4 to 64 L2 in double, with the Xeon 6240's tops (section 8.5) | X55 on a Granite Rapids VM: 0.688 of the grids' time over the 14 rows it changes (46080 0.44, 65536 0.52, 131072–262144 0.63, 2^22 0.69), none slower, tracking tier 0.940; ÷ FFTW 1.15–1.65 → 0.70–0.83 on X48's failing long rows |
 
 ---
 
