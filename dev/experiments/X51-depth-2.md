@@ -190,6 +190,12 @@ the float rows, against T's (= N's) plans: 32768 **0.782**, 46080 0.630, 65536 0
 0.687, every interval below 1, none slower (FFTW and MKL do not time float in fbench).
 **F passes the target-row part of the rule.**
 
+**Xeon tracking tier**, N against F (the Xeon arms together; Slurm 16453, `--serial`): run
+20261118-041641-d32d (24 rounds, none under load, band ±1.53 %): 2 faster (2²⁰ 0.737, 2²²
+0.754, L's rows), 59 no evidence, weighted geomean 0.990 [0.984, 0.995]; the largest medians
+c2c 1009 1.026 and 60 1.021, rows whose plans do not change, within 1 + max(band, 3 %).
+**T, L and F pass the rule.**
+
 ## Verdict
 
 - **P (one top that C does not divide): built**, every target, both precisions; tested
