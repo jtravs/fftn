@@ -208,6 +208,29 @@ and each move or vanish when code moves (R2, re-runs: the Xeon's 4, 30 × 1024, 
 and the EPYC's 16 × 3 and 256 came and went). FFTN ÷ FFTW on them stays below 1 (Xeon 2
 points 0.83, EPYC 4 × 4 below FFTW in the screens).
 
+### Arm R4 (fd18d63 against R's head with `main` merged, b89ca02; rule 6; `--serial`)
+
+- **EPYC**: `x53` run 20261118-104720-4fbd (band ±1.00 %, every round loaded): the 12 cases
+  R4 changes (12 from 8 rows, 25 from 2) 0.565, worst 12 × 8 0.890; no case slower. Tracking
+  tier run 20261118-105311-28ba (band ±2.10 %): 0.999, nothing slower. **Adopted.**
+- **Xeon**: `x53` run 20261118-104834-112c (band ±2.20 %, quiet): the 13 cases R4 changes
+  (8 × 1024, 12 from 8 rows, 25 from 2) 0.511, worst 12 × 8 0.968 [0.960, 0.974]; no case
+  slower. Tracking tier run 20261118-105414-c1aa (band ±2.43 %): 1.001, nothing slower.
+  **Adopted.**
+- **M5 Max** (float, on mains power): `x53` f32 run 20261118-110350-322f (band ±1.00 %): the
+  12 cases R4 changes (20 and 32 from 2 rows) 0.583, worst 32 × 3 0.837; no case slower.
+  Tracking tier run 20261118-110843-8571 (band ±1.00 %): 1.001, nothing slower. **Adopted.**
+
+### The EPYC's 64 × 2 after X54 (a screen, not a verdict)
+
+X54 (pull request 69) ordered the radix-64 codelet for 16 registers. The batch leaf of 64 forced
+on the merged head (run 20261118-104206-ee09, one DMOG screen, band ±1.00 %, every round
+loaded) now runs 64 × 2 backward at 0.908 of the chain (1.00 before X54), 64 × 4, × 8 and
+× 64 at 0.90-0.93; 64 × 3 (the leftover row as a full-width leaf) 1.06-1.08 and 64 × 1024
+1.035 lose. FFTN ÷ FFTW on 64 × 2 backward would go from 1.30 to 1.18: the gain is real but
+does not clear the exit case, and a rule would need an upper batch limit and even counts, so
+no new arm was built.
+
 ## Verdict
 
 - **NEON (float): adopted** (rule 2): the 100 changed cases 0.606 of `main`, nothing slower,
@@ -238,15 +261,16 @@ points 0.83, EPYC 4 × 4 below FFTW in the screens).
   - **Code placement.** R3 (without X53's avx512 code and the Xeon's rule) keeps the 2-point
     loss (1.099 of `main`, run 20261118-073846-febc), and R2's padding moved such losses to
     other unchanged cases (above).
-- **64 × 2 backward is not closed** on the EPYC (FFTN ÷ FFTW 1.30 → 1.29): the codelet over
-  two rows (1.00 of the chain), per-element gathering (0.91) and the chains through a tile
-  (0.97) all lost to FFTW's 0.77. Its gap is the radix-64 codelet's register use with GCC
-  (about a thousand spill moves on avx2), a generator question.
+- **Arm R4 adopted on every target** (rule 6): the lengths left out for single-row bits (8
+  on avx512, 12 and 25 on x86, 20 and 32 in float on NEON) run at 0.51-0.58 of R on the
+  cases they change, nothing slower; every row of a plan still gets the same arithmetic
+  (tests/api `BatchRowsGetTheSameArithmeticAnywhere`).
+- **64 × 2 backward is not closed** on the EPYC (FFTN ÷ FFTW 1.30 → 1.29). Before X54 the
+  codelet over two rows ran at 1.00 of the chain, per-element gathering 0.91 and the chains
+  through a tile 0.97, all short of FFTW's 0.77. After X54 the codelet runs at 0.91 (1.18 of
+  FFTW), which still does not clear the case (screen above).
 - **Not addressed:** the Mac's 2 × 3 in place (double: NEON has no batch leaves there; X49's
   store-to-load forwarding) and the Xeon's 2 × 3 in place and single row of 4 (single rows
   and batches of three of 2-4 points take no batch leaves; in these runs FFTN was 0.91 and
-  0.83 of FFTW on them). Lengths that gained but whose row alone is not the leaf (12 and 25
-  on x86, 20 and 32 in float on NEON) are left out, so a batch's rows keep the bits of a
-  plan of one row; taking them would change that (not a documented guarantee, but tested by
-  tests/api `BatchedRowsMatchSingleRows`): a decision for the maintainer.
+  0.83 of FFTW on them).
 - Library size: eight new kernel units (two per target with batch leaves).
