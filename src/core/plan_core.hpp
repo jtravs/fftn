@@ -126,6 +126,10 @@ struct build_settings { // NOLINT(clang-analyzer-optin.performance.Padding)
   // instead), 1 for every prime factor whose q - 1 is 13-smooth (experiment X27's rule
   // without its range). Measured planning times both where they differ.
   int rader = -1;
+  // The convolution length of every Bluestein stage instead of the rule's (planner/rules.hpp,
+  // bluestein_length), where it is at least 2Q - 1 and 7-smooth; 0: the rule's. For tests
+  // that need a length with given splits (the depth-first convolution's, experiment X50).
+  std::size_t bluestein_length = 0;
   // The factor edge operation (DESIGN.md 12.1), which the public API does not offer yet:
   // n complex values of the plan's precision multiplying the input (before the transform)
   // or the output (after it) of every row of a c2c plan of one axis. The arrays must

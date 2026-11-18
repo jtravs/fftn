@@ -1457,7 +1457,24 @@ convolution is no longer than the copies' together, so its passes run whole unit
 is not longer than `long_convolution_bytes` (X36b: its chains over s = C copies have no
 grouped first pass; EPYC 1018 0.73). Running the copies one at a time, as FFTW does, needs a
 loop over a scratch-resident line, and a grid convolution a second movable workspace slot:
-neither is expressible yet (X36b).
+neither is expressible yet (X36b). A Bluestein stage of one copy (a c2c row of one axis
+whose chain is that stage, `chain_builder::bluestein_single`) instead runs its convolution
+as two depth-first chains (section 8.5's depth-first chain; experiment X50,
+`chain_builder::bluestein_depth`) in double where the profile's depth-first fields would make
+a row of M one, with `machine_profile::depth_convolution_max_bytes` as the upper limit in
+place of the rows' (the convolutions measured: the Xeon's 32 MiB, 2²¹ complex doubles, beyond
+its rows' original 4 L2 since a convolution is never a grid and the alternative is the
+breadth-first chain; Apple's 2 L1); longer convolutions keep the breadth-first chain,
+unmeasured. The workspace block is the movable line: the forward chain's first pass reads the
+input times the chirp (zero from Q on: the chirp pass in, fused) and writes its sub-row
+blocks into the block, a loop over the blocks runs the sub-rows (with scratch a and b), and
+its top pass writes into scratch a times the kernel spectrum (the top pass's factor edge);
+the backward chain's first pass reads a into the block, its sub-rows run the same way (a is
+dead by then), and its top pass stores only the first Q outputs, times the chirp with the
+output edge's scale, to the output (the chirp pass out, fused). Scratch a holds M elements,
+the block M. On the Xeon 6240 the depth-first chain took 0.54 of the breadth-first chain's
+time at 2¹⁸ points and 0.56 at 2073600; the stage took 131071 to 0.70 of its time and
+999983 to 0.79 before the chirp passes were fused (X50).
 Why a pass and not a strategy that wraps the chain: the program and stage design already
 expresses it, the passes before it (codelet and generic) keep their positions and edges,
 r2c and c2r get it through their inner complex chain unchanged, and the threading work
@@ -1819,7 +1836,9 @@ prices them) a cost per unit and a cost per tail, and a cost per pass. For a lin
    power-of-two part the machine profile admits (up to 2 (2Q − 1) when that excludes the
    power of two; experiment X36, section 8.5). A Bluestein stage with 1 < n / Q < C copies
    becomes one stage of n where M(n) ≤ (n / Q) M(Q) (X36), and so does one with
-   n / Q = C copies while n's line is not long (X36b).
+   n / Q = C copies while n's line is not long (X36b). A stage of one copy runs its
+   convolution on two depth-first chains in double where a row of M would be a depth-first
+   chain, M up to the profile's `depth_convolution_max_bytes` (X50, section 8.5).
 4. The codelet passes are the sequence of radices from 2 to 16 (and 32 and 64 where the
    table's unit cost for them is not 0) multiplying to n_s with the
    lowest cost, the sum of its passes' costs. The pass of radix R after passes whose
@@ -3088,6 +3107,7 @@ to change before a release.
 | 2026-11-18 | A measured planner rule extends by its cache key to unmeasured machines of the same instruction set target and register file, never across an instruction set, `avx2`/`avx512` or register count; every phase exit screens each family a rule reaches (AGENTS section 6) | Maintainer's decision. Granite Rapids lost 1.15–1.65 × FFTW on plans that kept it out of the Xeon's rule (X48) and gained 0.688 with it (X55); the moves that lost crossed an ISA (Axion with Granite Rapids' rules, 1.28; X35) or a register count (tops of 16 on `avx2`, X46) |
 | 2026-11-18 | Last bits are not a goal: the bitwise guarantees of section 15.5 stay while they cost nothing measurable; a change that would break one needs a real measured gain and narrows the published guarantee with it; unpublished bit properties are not protected | Maintainer's decision ("rounding in other parts of calculations matter more"). First use: X53's batch leaves for 12 and 25 (x86) and 20 and 32 (NEON float), 0.43–0.56 of the time in screens, give a batch's rows other last bits than a plan of one row; the published position guarantee holds (leftover rows run padded in the batch form) |
 | 2026-11-18 | x86-64 with a private L2 of 2 MiB or more (Granite Rapids) takes the depth-first chain from L2/4 to 64 L2 in double, with the Xeon 6240's tops (section 8.5) | X55 on a Granite Rapids VM: 0.688 of the grids' time over the 14 rows it changes (46080 0.44, 65536 0.52, 131072–262144 0.63, 2^22 0.69), none slower, tracking tier 0.940; ÷ FFTW 1.15–1.65 → 0.70–0.83 on X48's failing long rows |
+| 2026-11-18 | A Bluestein stage of one copy runs its convolution as two depth-first chains where a row of M would be one, and on the Xeon profile beyond, up to 32 MiB, the longest measured (`depth_convolution_max_bytes`); the workspace block holds the chains' blocks, scratch a the forward output; the chirp passes are fused into the forward first pass and the backward last top pass (sections 8.5, 11.2; experiment X50) | Xeon 6240: 8179–999983 0.56–0.73 of `main`'s time (131071 0.61, 999983 0.71), FFTN ÷ MKL 131071 1.34 → 0.84, 999983 1.44 → 1.05, ÷ FFTW 0.65–0.83; M5 Max 4813–5119 0.86; the EPYC unchanged; X36b had judged a grid convolution to need a new slot, the block serves |
 
 ---
 

@@ -184,10 +184,15 @@ struct radix_passes {
   pass_fn lanes_leaf[2][2];
   // The depth-first chain's passes (src/passes/depth.inl, experiment X46), by direction: the
   // first pass of every sub-row, each written to its own block, and the in-place top pass
-  // [direction][output edge none or scale]. Null for the radices
-  // the chain does not take (passes/entries.inl, depth_radix).
+  // [direction][output edge none, scale or factor (a Bluestein convolution's kernel spectrum,
+  // experiment X50)]. Null for the radices the chain does not take (passes/entries.inl,
+  // depth_radix).
   pass_fn depth_first[2];
-  pass_fn depth_top[2][2];
+  pass_fn depth_top[2][3];
+  // A Bluestein convolution's forward first pass and backward top pass [output edge none or
+  // scale] with the stage's chirp passes fused in (experiment X50 arm C).
+  pass_fn depth_first_chirp;
+  pass_fn depth_top_chirp[2];
 };
 
 template <class T> struct pass_kernels {

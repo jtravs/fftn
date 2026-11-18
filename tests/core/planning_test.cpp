@@ -123,6 +123,8 @@ void expect_same_transform(const plan_core& a, const plan_core& b) {
 // rules make long rows grids and the candidate lists do not depend on this machine's caches.
 build_settings fixed_settings() {
   build_settings s;
+  // No depth-first Bluestein convolutions (X50): the host's profile may set them.
+  s.profile.depth_convolution_max_bytes = 0;
   s.profile.grid_block_bytes = std::size_t{64} * 1024;
   s.profile.grid_min_bytes = std::size_t{512} * 1024;
   s.profile.grid_three_bytes = std::size_t{1} << 30U;

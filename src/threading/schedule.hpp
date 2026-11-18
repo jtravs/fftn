@@ -190,6 +190,16 @@ struct machine_profile {
   // only up to depth_float_max_bytes (0: never; X51: measured on the Xeon 6240 to 2^20
   // complex floats, 8 MiB).
   std::size_t depth_float_max_bytes = 0;
+  // A Bluestein stage's convolution of one copy runs on two depth-first chains where a row
+  // of its length would be one in double, by the fields above, but with this upper limit in
+  // place of depth_max_bytes (0: never; core/plan_core.cpp, bluestein_tops_of; experiment
+  // X50): the convolutions measured, so that a later widening of the rows' range does not
+  // carry to convolutions unmeasured. A convolution is never a grid, so beyond the rows' range
+  // the alternative is the breadth-first chain: on the Xeon 6240 a top of 16 took 0.56 of its
+  // time at 2073600 points and 0.62 at 2^21 (32 MiB; two tops of 16 0.62 and 0.64).
+  // set_grid_sizes sets 32 MiB on the Xeon profile, the longest convolution measured, and
+  // 2 L1 (X46's rows' range, M of 8192-16384 points on the M5 Max) on the Apple profile.
+  std::size_t depth_convolution_max_bytes = 0;
   // The L1 data cache's line in bytes: a lanes column phase's block holds at least a line of
   // adjacent columns (core/plan_core.cpp, column_block; experiment X40). set_grid_sizes reads
   // it from the topology (128 on Apple's cores).
