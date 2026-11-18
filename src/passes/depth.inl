@@ -103,8 +103,9 @@ template <class T, int Sign> struct run_in_twiddled {
 // x86 and kept the chain missing L2 (X46: 0.3-0.7 misses per point at 16384-25000 on the
 // Xeon 6240, 0.00-0.01 derived), for one more complex multiplication per leg. Every output
 // depends on every input, so src may be dst (it is, in the chain). The output edge's
-// operation (none or the scale) applies to what is stored. Reads m (M), s, twiddles, roots,
-// scale.
+// operation (none, the scale, or a factor per element of the line: a Bluestein convolution's
+// kernel spectrum, experiment X50) applies to what is stored. Reads m (M), s, twiddles,
+// roots, scale, out_factor.
 template <class T, std::size_t R, int Sign, edge_op OutOp>
 void depth_top_pass(const pass_args* a, const void* src, void* dst, std::size_t first,
                     std::size_t last) {
@@ -126,7 +127,7 @@ void depth_top_pass(const pass_args* a, const void* src, void* dst, std::size_t 
                                 .leg = leg,
                                 .step = 2,
                                 .valid = C<T>,
-                                .op = make_edge<T, OutOp>(a, nullptr, 0, 0)},
+                                .op = make_edge<T, OutOp>(a, a->out_factor, k0, m)},
         lane_twiddles<T>{.p = table + tw_reals<T> * k_lo, .row = row});
     k_lo += C<T>;
     if (k_lo == block) {

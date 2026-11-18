@@ -275,8 +275,10 @@ template <class T, std::size_t I> struct radix_entries {
       .depth_first = {depth_first_entry<T, R, -1>(), depth_first_entry<T, R, +1>()},
       .depth_top =
           {
-              {depth_top_entry<T, R, -1, nop>(), depth_top_entry<T, R, -1, scl>()},
-              {depth_top_entry<T, R, +1, nop>(), depth_top_entry<T, R, +1, scl>()},
+              {depth_top_entry<T, R, -1, nop>(), depth_top_entry<T, R, -1, scl>(),
+               depth_top_entry<T, R, -1, fac>()},
+              {depth_top_entry<T, R, +1, nop>(), depth_top_entry<T, R, +1, scl>(),
+               depth_top_entry<T, R, +1, fac>()},
           },
   };
 };

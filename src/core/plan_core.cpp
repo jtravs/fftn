@@ -462,17 +462,11 @@ grid_split plan_grid(std::size_t n, const side& in, const side& out, const build
 // to 32) at every length from 16384 to 262144 points; on the M5 Max a top of 4 won from 3072
 // to 16384 points where the power-of-two part had 2048 points or more and lost (1.05-1.09)
 // on 10000, 12000 and 16000.
+// The tops for a contiguous line of n with neither edge factor (depth_tops_of's choice
+// after its conditions on the row; also a Bluestein convolution's, bluestein_tops_of).
 template <class T>
-std::vector<std::size_t> depth_tops_of(std::size_t n, const side& in, const side& out,
-                                       const build_settings& settings,
-                                       const chain_builder<T>& chain, target isa) {
-  if ((settings.strategy != strategy_choice::depth &&
-       settings.strategy != strategy_choice::rules) ||
-      settings.in_factor != nullptr || settings.out_factor != nullptr || settings.scale_on_input ||
-      in.stride[0] != 1 || out.stride[0] != 1 ||
-      (!settings.radices.empty() && checked_product(settings.radices) == n)) {
-    return {};
-  }
+std::vector<std::size_t> depth_tops_for(std::size_t n, const build_settings& settings,
+                                        const chain_builder<T>& chain, target isa) {
   if (settings.strategy == strategy_choice::rules) {
     const std::size_t bytes = n * 2 * sizeof(T);
     const machine_profile& m = settings.profile;
@@ -508,6 +502,44 @@ std::vector<std::size_t> depth_tops_of(std::size_t n, const side& in, const side
     }
   }
   return best;
+}
+
+template <class T>
+std::vector<std::size_t> depth_tops_of(std::size_t n, const side& in, const side& out,
+                                       const build_settings& settings,
+                                       const chain_builder<T>& chain, target isa) {
+  if ((settings.strategy != strategy_choice::depth &&
+       settings.strategy != strategy_choice::rules) ||
+      settings.in_factor != nullptr || settings.out_factor != nullptr || settings.scale_on_input ||
+      in.stride[0] != 1 || out.stride[0] != 1 ||
+      (!settings.radices.empty() && checked_product(settings.radices) == n)) {
+    return {};
+  }
+  return depth_tops_for<T>(n, settings, chain, isa);
+}
+
+// The top factors of the depth-first convolution of a Bluestein stage (chain_builder::
+// bluestein_depth; experiment X50) for a c2c row of one axis of n whose chain is that one
+// stage (bluestein_single: a prime, one copy, no Rader root), or none: on the conditions of
+// depth_tops_of for the row, and with the tops a row of the convolution's length M would
+// take (depth_tops_for: by the rules where the profile's depth-first range holds M, or forced
+// with strategy depth). The convolution's two chains of M are the stage's cost: on the Xeon
+// 6240 a breadth-first chain of 2^18 points took 7.4 ns per point against 4.4 depth-first
+// (X36b, X46).
+template <class T>
+std::vector<std::size_t> bluestein_tops_of(std::size_t n, const side& in, const side& out,
+                                           const build_settings& settings,
+                                           const chain_builder<T>& chain, target isa) {
+  if (settings.strategy != strategy_choice::depth || settings.in_factor != nullptr ||
+      settings.out_factor != nullptr || settings.scale_on_input || in.stride[0] != 1 ||
+      out.stride[0] != 1 || !settings.radices.empty()) {
+    return {};
+  }
+  const std::size_t q = chain.bluestein_single(n);
+  if (q == 0) {
+    return {};
+  }
+  return depth_tops_for<T>(chain.bluestein_length_of(q), settings, chain, isa);
 }
 
 // The most rows in a block of the lanes strategy by default (lanes_block). Experiment X7.
@@ -976,7 +1008,11 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       s.kind == transform_kind::c2c && r == 1 && lanes == 0
           ? depth_tops_of<T>(c.lengths[0], in, out, settings, chain, c.isa_target)
           : std::vector<std::size_t>{};
-  if (!depth_tops.empty()) {
+  const std::vector<std::size_t> bluestein_tops =
+      s.kind == transform_kind::c2c && r == 1 && lanes == 0 && depth_tops.empty()
+          ? bluestein_tops_of<T>(c.lengths[0], in, out, settings, chain, c.isa_target)
+          : std::vector<std::size_t>{};
+  if (!depth_tops.empty() || !bluestein_tops.empty()) {
     grid_plan = grid_split{};
   }
   // Only an intermediate the plan keeps in the workspace block anyway is padded: moving a
@@ -1127,6 +1163,50 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
                                   "decimation-in-time top passes") +
                       (c.in_place ? "; the blocks in the workspace block" : " in place") +
                       "), each transform finished before the next";
+  } else if (!bluestein_tops.empty()) {
+    // A Bluestein stage whose convolution is two depth-first chains (chain_builder::
+    // bluestein_depth, experiment X50): the chirp pass into scratch a, each chain's first
+    // pass, a loop over its sub-rows on their blocks of the workspace block (and with two
+    // tops a loop over the inner top pass's runs), its top passes, then the chirp pass out.
+    const std::size_t n = c.lengths[0];
+    const std::size_t m = chain.bluestein_length_of(n);
+    const std::size_t subs = checked_product(bluestein_tops);
+    c.built = strategy_choice::depth;
+    c.depth_tops = bluestein_tops;
+    c.block_elements = m;
+    typename chain_builder<T>::bluestein_depth_stages parts = chain.bluestein_depth(
+        n, bluestein_tops, sign, {.where = slot::in, .stride = 1},
+        {.where = slot::out, .stride = 1}, c2c_edges(opts, settings, true, true));
+    const auto looped = [&](std::size_t count, std::size_t step, std::vector<stage>& body) {
+      const std::size_t first = p.records.size();
+      loop l{.kind = loop_kind::lines, .count = count};
+      l.step[2] = static_cast<std::ptrdiff_t>(step) * complex_bytes;
+      p.records.emplace_back(l);
+      for (stage& st : body) {
+        p.records.emplace_back(std::move(st));
+      }
+      std::get<loop>(p.records[first]).body_end = static_cast<std::uint32_t>(p.records.size());
+    };
+    p.records.emplace_back(std::move(parts.in));
+    for (typename chain_builder<T>::depth_stages* d : {&parts.forward, &parts.backward}) {
+      for (stage& st : d->first) {
+        p.records.emplace_back(std::move(st));
+      }
+      looped(subs, m / subs, d->sub);
+      if (!d->mid.empty()) {
+        looped(bluestein_tops[0], m / bluestein_tops[0], d->mid);
+      }
+      for (stage& st : d->top) {
+        p.records.emplace_back(std::move(st));
+      }
+    }
+    p.records.emplace_back(std::move(parts.out));
+    scratch = parts.scratch;
+    c.axis_notes.push_back("axis 0 (n = " + std::to_string(n) +
+                           "): " + chain.bluestein_depth_text(n, bluestein_tops));
+    c.strategy_note = "chain (one Bluestein stage whose convolution runs as two depth-first "
+                      "chains, their blocks in the workspace block), each transform finished "
+                      "before the next";
   } else if (grid_plan.phases != 0) {
     c.built = strategy_choice::grid;
     for (std::size_t i = 0; i < grid_plan.phases; ++i) {
