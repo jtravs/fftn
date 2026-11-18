@@ -217,9 +217,11 @@ points 0.83, EPYC 4 × 4 below FFTW in the screens).
   (8 × 1024, 12 from 8 rows, 25 from 2) 0.511, worst 12 × 8 0.968 [0.960, 0.974]; no case
   slower. Tracking tier run 20261118-105414-c1aa (band ±2.43 %): 1.001, nothing slower.
   **Adopted.**
-- **M5 Max** (float, on mains power): `x53` f32 run 20261118-110350-322f (band ±1.00 %): the
-  12 cases R4 changes (20 and 32 from 2 rows) 0.583, worst 32 × 3 0.837; no case slower.
-  Tracking tier run 20261118-110843-8571 (band ±1.00 %): 1.001, nothing slower. **Adopted.**
+- **M5 Max** (float): `x53` f32 run 20261118-120534-6bf3 (band ±3.32 %, 12 of 14 rounds
+  loaded): the 12 cases R4 changes (20 and 32 from 2 rows) 0.589, worst 32 × 3 0.826; no case
+  slower. Tracking tier run 20261118-120958-0099: 0.997, nothing slower. **Adopted.** These
+  re-run the first pair (20261118-110350-322f, -110843-8571: 0.583 and 1.001), which started
+  within minutes of the Mac's return to mains power.
 
 ### The EPYC's 64 × 2 after X54 (a screen, not a verdict)
 
