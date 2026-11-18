@@ -159,10 +159,6 @@ struct machine_profile {
   // by whether a column's elements lie a page or more apart (core/plan_core.cpp,
   // column_block; X40). profile_for reads it from the topology.
   std::size_t page_bytes = 4096;
-  // A lanes column phase whose column elements lie a page or more apart takes blocks of at
-  // least this many L1 lines of columns (core/plan_core.cpp, column_block; X40: 4). X52 arm
-  // W1: set_grid_sizes sets 8 where a cluster shares L2 (Apple).
-  std::size_t column_page_lines = 4;
   // A lanes column phase whose column elements lie less than a page apart keeps its block's
   // two scratch tiles within this (core/plan_core.cpp, column_block; X40). set_grid_sizes
   // sets a quarter of L2.
