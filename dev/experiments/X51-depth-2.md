@@ -118,7 +118,20 @@ M: FFTW, MKL ÷ the rules' plan.
   20480–122880, 46080; 24576, 49152, 98304 in place and backward, batches of 8) and the
   tracking tier (which holds 46080, the one standard catalogue row it changes). Zen 5 (the
   same profile branch) takes it unmeasured; the AArch64 machines of that branch do not.
-- Further arms (Xeon beyond 4 L2 and float) are named below before their runs.
+- **L (Xeon profile)**, c2b30f2: the range from 4 L2 to 64 L2 (to 2²² complex doubles),
+  same tops; a third screen (run 20261118-001544-4037, Slurm 16435/16436, 12 rounds, 4
+  loaded, band ±11.1 %) gave one top of 16 0.83 / 0.72 / 0.74 in place (524288, 2²⁰, 2²²),
+  0.67–0.77 backward, 10⁶ 0.89 (top 20 0.82), 2²³ 0.88 and 2²⁴ 0.94 (within the band: left
+  out). Judged against T on the standard catalogue's c2c rows it changes (524288, 2²⁰, 2²¹,
+  2²², 10⁶ out of place, 2²⁰ in place).
+- **F (Xeon profile)**, 70abbae: `depth_float` on, so single-precision rows take the chain
+  by their bytes (32768 to 2²² points). The standard catalogue has no single-precision row
+  in range; judged against L on the x51 float rows 32768–2²⁰.
+- Xeon judging runs: arms N = beed63c (`main`'s plans), T, L, F, FFTW, MKL on the standard
+  catalogue's changed rows (25000 and those of L); N, T, F on the x51 rows (25000 in place
+  and backward, the float rows); then the tracking tier N against F. Each arm changes rows
+  the others do not, so T ÷ N, L ÷ N and F ÷ N on its own rows are each arm against the one
+  before.
 
 ### Step 2, the judging runs
 
