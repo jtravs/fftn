@@ -1,7 +1,7 @@
 # X54: radix-32 and radix-64 passes without most of their spills on `avx2`
 
-- **Status:** done; A proposed for adoption against rule (b)'s letter (80, placement), the
-  lead's call; B (768 only, 1024 dropped by rule (c)) and C stand or fall with A
+- **Status:** done (A, B for 768 and C adopted by the maintainer's decision against rule
+  (b)'s letter, see the verdict; 1024's override dropped by rule (c))
 - **Owner:** x54 session, 2026-11-18
 - **Phase / task:** 1 (phase 1 exit check, the tail rule; cause 4); follows X38, X42, X47
 
@@ -283,7 +283,7 @@ Generator tests (55) and `gen --check` pass; Mac Release (Homebrew Clang; `neon_
 ## Verdict
 
 - **A (fitted order): passes (a) and (c), fails (b) by the letter on one case whose code it
-  does not change; proposed for adoption, the lead's call.** (a) 0.975 [0.970, 0.980] over
+  does not change.** (a) 0.975 [0.970, 0.980] over
   the 12 exit-check cases whose plan has a radix-32/64 codelet, against 1 − band = 0.979;
   (c) Xeon 0.999 and Mac 0.999, nothing slower; (b) the EPYC's tracking tier 0.994 with no
   case slower, but two exit-check cases past 1.041 were re-run and the re-run decides:
@@ -294,23 +294,38 @@ Generator tests (55) and `gen --check` pass; Mac Release (Homebrew Clang; `neon_
   0.98 / 1.03 of the planner's, not a win). Reasons to adopt anyway: the miss is 0.1 % past
   the limit on code A does not touch, the arms of the same run (B, C) show 80 at the same
   1.038–1.039, and nothing A does change is slower anywhere (three machines).
-- **B (two-pass `avx2` double overrides): adopted for 768 only, if A is.** (a) B ÷ A 0.913
+- **B (two-pass `avx2` double overrides): 768 only.** (a) B ÷ A 0.913
   over the 9 double cases of 768 and 1024. (c) 1024 × 1024 at 1.25 (1.27 in the re-run)
   and the 1024 × 1024 plane at 1.14 in the tracking tier take 1024's override away
   (1a9d95a), as the rule says; 768 (0.844, ÷ FFTW 1.08 → 0.91) keeps its own. (b) outside
   1024's cases: 80, as for A (1.038 in the re-run, the same placement). Read as written,
   (b) would also count 1024 × 1024 and reject the arm; (c) exists to drop a length whose
   own cases lose, so it is applied first, as X42 wrote it to be.
-- **C (`avx2` float overrides): adopted, if A is.** (a) 0.898 [0.893, 0.902] over its 10
-  float cases, all faster; (b) and (c): no case slower beyond B's 1024 cases, which the
-  pruning removes, and 80 (placement, as above).
-- The branch carries A, B (768) and C, as proposed; reverting A means reverting all three.
-- **Not closed:** 1024 (1.21 of FFTW), 1024 backward (1.20), 1024 × 3 (1.22), 1024 × 16
-  (1.12): the 16 · 64 plan takes them to 1.01–1.08 of FFTW and 1024 × 256 to 0.97 of the
-  three-pass plan, but per-length overrides cannot see that 1024 × 1024 needs the
-  three-pass plan. A batch- or footprint-aware choice (the override only while the
-  transform's data fits a cache level; 1024 × 256, 4 MiB, still gained 0.94–0.97) is the
-  next experiment. 2048 (1.12): its 32 · 64 plan's grouped radix-32 first pass still loses
+- **C (`avx2` float overrides).** (a) 0.898 [0.893, 0.902] over its 10 float cases, all
+  faster; (b) and (c): no case slower beyond B's 1024 cases, which the pruning removes, and
+  80 (placement, as above).
+- **The maintainer's decision (2026-11-18): A, B (768) and C are adopted** against rule
+  (b)'s letter, which by the protocol would have deleted A and, with it, B and C (selected
+  on A's build). Reason: the one case past the limit, c2c 80 at 1.035 against 1.034 after
+  the re-run, runs object code byte-identical in O and A at moved addresses (placement,
+  not the change), the other arms of the same run show it alike (1.038–1.039), and nothing
+  A changes is slower on any of the three machines. Applying rule (c) before rule (b), so
+  that 1024's override is dropped and 768's kept, is accepted.
+
+## Not done
+
+- **1024 (the proposal for the next experiment): a batch- or footprint-aware radix choice.**
+  1024 (1.21 of FFTW), 1024 backward (1.20), 1024 × 3 (1.22), 1024 × 16 (1.12) stay open:
+  the 16 · 64 plan takes them to 1.01–1.08 of FFTW and 1024 × 256 to 0.95–0.97 of the
+  three-pass plan, but loses 1.25–1.27 at 1024 × 1024 (16 MiB per batch; FFTW's two-pass plan
+  is as slow there) and 1.14 on the 1024² plane, which a per-length override cannot see.
+  Proposed: choose 16 · 64 only while the transform's data fits a cache level (1024 × 256,
+  4 MiB, still gained; 1024 × 1024 lost), with the threshold from a screen of batches
+  256–1024 and the rule written before its judging run; the chain's radix choice then needs
+  the batch (today `rule_radices(n, profile)` sees only n).
+- 2048 (1.12): its 32 · 64 plan's grouped radix-32 first pass still loses
   (1.05–1.09; IPC 2.54, FP-register-file stalls 42 % of cycles). 64 × 16 (1.14): no
-  radix-32/64 plan. 512 (now 0.97 of FFTW) is closed by A.
-- Lesson 4.20 in `dev/LESSONS.md`; DESIGN 7.2 step 5 and the decision log updated.
+  radix-32/64 plan. (512, now 0.97 of FFTW, is closed by A.)
+- Not measured: Clang on x86, the cloud machines (Zen 5, Granite Rapids, Axion).
+
+Lesson 4.20 in `dev/LESSONS.md`; DESIGN 7.2 step 5 and the decision log updated.
