@@ -187,6 +187,35 @@ and 768 at 0.92 of FFTW's. At 1024 × 1024 (16 MiB, beyond L2) the two-pass plan
 times O's cycles in this screen, as FFTW's own two-pass plan does (1.25): a memory effect of
 the plan shape, not of the codelet; the judging run decides (rule (c) for B).
 
+### EPYC, the exit check's cases (run 20261118-043810-5f74)
+
+EPYC 7763 (DMOG node17), GCC 16.2, `avx2`, one thread, Slurm 512602 (`--serial`), arms O
+(4d75c48), A (d8b5376), B (5d2b71c), C (a91736b), FFTW 3.3.11 (MEASURE); standard catalogue,
+filter `^c2c-[0-9]+-b`, tier `full` (201 cases); 17 rounds, every one under load (other
+processes 43 cores, median), A/A band ±2.10 %, so the limit of (b) is 1.041.
+
+- **A ÷ O**, over the 12 cases whose plan has a radix-32 or radix-64 codelet (256 at
+  batches 1, 16, 256, 1024; 384; 512 at 1, 16, 256, 1024; 640; 257 and 65535, whose Rader
+  convolutions of 256 run 8 · 32): **0.975 [0.970, 0.980]**; 384 0.962, 512 0.968, 640
+  0.968, 256 × 16 / × 256 / × 1024 0.968 / 0.956 / 0.961, 257 0.974, 512 × 16 0.977, the
+  rest 0.986–0.999. All 201: 1.002 [0.997, 1.007]. Past 1.041: 524288 1.067 [1.032, 1.122]
+  and 80 1.050 [1.041, 1.076], whose programs A does not change (80 = 4 · 20; a six-pass
+  chain): re-run below.
+- **B ÷ A**, over the double cases of 768 and 1024 (9): **0.913**; 768 0.844, 1024 0.845,
+  1024 backward 0.893, 1024 × 3 0.841, 1024 × 3 in place 0.861, 1024 in place 0.857,
+  1024 × 16 0.933, 1024 × 256 0.952, and **1024 × 1024 1.252** (B ÷ O 1.281 [1.231, 1.307]),
+  where the batch is 16 MiB and FFTW's own two-pass plan is as slow (FFTW ÷ O 1.31; the
+  counters above). Past 1.041 elsewhere: 80 1.042 (unchanged program). B ÷ O over all 201:
+  0.992 [0.990, 0.996].
+- **C ÷ B**: the exit check has no float case of C's lengths; 0.98–1.03 on the double cases
+  (unchanged programs).
+
+FFTN ÷ FFTW in this run, O → A → B (the named cases): 1024 1.211 → 1.197 → **1.012**; 1024
+backward 1.200 → 1.209 → 1.079; 1024 × 3 1.218 → 1.219 → 1.026; 1024 × 16 1.116 → 1.105 →
+1.031; 768 1.082 → 1.076 → **0.908**; 512 1.002 → 0.970 → 0.966; 2048 1.120 → 1.116 →
+1.120; 64 × 16 1.136 → 1.140 → 1.134 (no radix-32/64 plan); 1024 × 1024 0.763 → 0.782 →
+0.978.
+
 ### Mac, tracking tier, A ÷ O (run 20261118-032911-79d7)
 
 Apple M5 Max, Homebrew Clang, `neon_fcma`, arms O (4d75c48) and A (d8b5376) built from the
