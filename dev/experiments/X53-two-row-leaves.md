@@ -178,7 +178,7 @@ Geometric mean over the cases R's rule changes; FFTN ÷ FFTW (÷ MKL) from the s
   run 20261118-072654-7292: three unchanged cases newly slower (4 points 1.055, 16 × 3 1.023,
   256 points 1.041); tracking run 20261118-073011-ecba 0.997. **Rejected** (rule 5) and
   reverted (cd19adf): the padding moved the losses rather than removing them.
-- **R3** (0461442, a diagnostic on a side branch, never for merge: R without avx512's batch
+- **R3** (0461442, a local diagnostic commit, not pushed: R without avx512's batch
   tables and without the Xeon's rule). Xeon run 20261118-073846-febc (band ±1.00 %, quiet):
   the row of 2 points 1.099 of `main` with R3, 1.103 with R in the same run. The loss on the
   2-point row does not come from the Xeon's batch leaves or from its rule; deleting them
