@@ -1,6 +1,6 @@
 # X51: the depth-first chain's loose ends (after X46)
 
-- **Status:** running
+- **Status:** done (P, T, L, F on the Xeon profile, M on the Apple profile, E on the EPYC profile adopted; Granite Rapids not measured)
 - **Owner:** x51 session, 2026-11-17 (overnight)
 - **Phase / task:** 1 (phase 1 exit check, the tail rule); follows X46
 
@@ -144,7 +144,7 @@ M: FFTW, MKL ÷ the rules' plan.
 cases **0.735 [0.724, 0.751]**, every one faster, from 0.688 (20480) to 0.858 (98304 in
 place); out of place 0.688–0.812, in place 0.748–0.858, backward 0.693–0.794, batches of 8
 0.732–0.749. FFTW ÷ N on the same cases 0.866 (0.741–0.961): FFTN ÷ FFTW goes from about
-1.04–1.35 to 0.79–0.98 on them. Tracking tier N against M, run 20261118-002935-541e (24
+1.04–1.35 to 0.77–0.94 on them. Tracking tier N against M, run 20261118-002935-541e (24
 rounds, all under load, band ±4.40 %): 61 no evidence, weighted geomean 1.010 [0.994, 1.028];
 three medians past 1 + max(band, 3 %) on rows whose plans do not change (r2c 2048 × 36 1.067,
 c2c 256² 1.050, r2c 64³ 1.047), re-run once with c2c 16 and 46080, run 20261118-004154-53ed
@@ -191,3 +191,30 @@ the float rows, against T's (= N's) plans: 32768 **0.782**, 46080 0.630, 65536 0
 **F passes the target-row part of the rule.**
 
 ## Verdict
+
+- **P (one top that C does not divide): built**, every target, both precisions; tested
+  (partial blocks of one to three sub-rows, scale, batches, in place, 25000 and 20000 against
+  the chain) and checked by fbench's reference on every judged row.
+- **T (Xeon: a third top of 10): adopted.** 25000 0.746 out of place, 0.785 in place, 0.740
+  backward; FFTN ÷ FFTW 1.35 → 1.00 (in place 1.09 → 0.85), ÷ MKL 0.99 → 0.73.
+- **L (Xeon: to 64 L2): adopted.** 524288–2²² 0.68–0.75 (in place 0.72), 10⁶ 0.95; FFTN ÷
+  FFTW there 0.73–0.79 → 0.50–0.70, ÷ MKL 0.45–1.00 → 0.33–0.90. Two tops never beat one in
+  the screens; 2²³ and 2²⁴ stay out (0.88–0.94 within an ±11 % band).
+- **F (Xeon: single precision): adopted.** 32768–2²⁰ in float 0.61–0.78 (0.687 over eight
+  rows); below L2/4 every split lost, which the byte range excludes.
+- **M (Apple: lengths that are not powers of two to 16 L1): adopted.** 0.735 over 19 cases
+  (20480–122880, in place, backward, batches): FFTN ÷ FFTW about 1.04–1.35 → 0.77–0.94.
+- **E (EPYC: lengths that are not powers of two, L2/4 to 4 L2, top 4): adopted.** 0.730 over
+  21 cases; 46080 (the standard catalogue's row) 0.78, FFTN ÷ FFTW 1.06 → 0.83; the mixed rows
+  1.2–1.4 → 0.9–1.0 of FFTW. Zen 5 shares the profile branch and takes it unmeasured.
+- **Not done or not adopted.** 100000 (Xeon): at FFTW's time already (1.02 in X46, 0.96 in
+  the screen); no split beat the rules' 20 × 5000. Granite Rapids (X48's long-row failures,
+  2 MiB private L2, outside X46's branch): the cloud run was prepared (one c4-standard-16
+  Spot VM, screen then judging, under USD 2) but not made: creating the cloud resources was
+  refused by this session's permission settings; its profile keeps its plans. Whether its
+  key should be "private L2 of at most 2 MiB" or a rule on L2 per lane width stays open.
+  Float on the Apple profile (mixed rows 0.69–0.84 but 24576 and 196608 did not gain) and on
+  the EPYC; 2²³–2²⁴ on the Xeon; the EPYC's powers of two (no gain).
+- **Library size:** text +1.4 % on the Mac (Homebrew Clang 23, `size` of `libfftn.a`, main
+  8c18dd2 21.76 MB → 22.06 MB) and +1.1 % on x86-64 (GCC 14.4, the Xeon's build cache,
+  f0fc171 88.72 MB → 70abbae 89.69 MB): arm P's partial-block code per radix.
