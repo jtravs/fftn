@@ -195,6 +195,10 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
         p.depth_top = 16;
         p.depth_top_alt = 20;
         p.depth_top_last = 10;
+        // X51 (arm F): single precision too, by its bytes (32768 points and more): tops of 16
+        // (20 at 100000) took 0.61-0.80 of the rules' time from 32768 to 2^20 points; every
+        // split lost below L2/4 (8192-20000 points, 1.14-2.0).
+        p.depth_float = true;
       }
     }
   }

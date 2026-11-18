@@ -667,7 +667,7 @@ TEST(Schedule, ProfilesOfRecordedMachines) {
       (planner_fields{512 * kib, 1 * mib,   32 * kib, 256 * kib, never, 15,          0,
                       0,         0,         never,    0,         0,     false,       16,
                       64 * kib,  256 * kib, never,    4 * mib,   20,    12672 * kib, 256 * kib,
-                      64 * mib,  0,         16,       20,        10,    never,       false}));
+                      64 * mib,  0,         16,       20,        10,    never,       true}));
   const planner_fields axion{
       .grid_min_bytes = 1 * mib,
       .grid_three_bytes = 2 * mib,
