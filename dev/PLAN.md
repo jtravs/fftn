@@ -40,6 +40,32 @@ Worst: Zen 5 65536 1.50; Granite Rapids 100000 2.16, 46080 1.60, in place 1.26 (
 is worse there); Axion 8 points 1.24. Axion's long rows (0.75 of FFTW) show that most of the
 Mac's long-row gap is FFTW being fast on Apple silicon (LESSONS 2.9). Zen 5 does not share
 Zen 3's 65537 loss (0.61). Planes and volumes: Zen 5 1.63, Granite Rapids 1.48, Axion 0.78.
+**Phase 1 exit check (2026-11-18, `main` 8c18dd2: after X42, X46, X47, the `avx512` branch
+padding and task 4.2; standard catalogue, the 193 c2c rows with every reference; tail rule
+beyond noise, DESIGN 1.3):** Mac ÷ FFTW 0.76, 2 cases beyond noise (1.0 %; 7 above a plain
+1.05): 2 × 3 in place 1.37, 32 × 4096 1.10; ÷ FFTL 0.53, 4 (2.1 %): 2²⁴ 1.69, 2²³ 1.58,
+1024 × 1024 1.20, 512 × 1024 1.16. EPYC ÷ FFTW 0.80, **12 (6.2 %, the one local failure)**:
+short backward pairs (64 × 2 1.31, 15 × 2 1.22), 1024 (× 3 1.22, single 1.21, backward 1.20,
+× 16 1.13), 64 × 16 1.14, 2048 1.11, 1018 1.10, 768 and 100 1.09, 512 1.07; ÷ FFTL 0.46, 1
+(16807 1.08). Xeon ÷ FFTW 0.70, 7 (3.6 %): 131071 1.29, 25000 1.25, 160 1.16, 15 × 2 backward
+1.15, 240 1.13, 2 × 3 in place 1.11, 4 1.10; ÷ MKL 0.70, 2 (1.0 %): 999983 1.41, 131071 1.32.
+X46 shows on the Xeon (FFTN 0.93 of its 2026-11-17 time over the set; 16384–262144 and 65536
+in every form 0.56–0.69, 32768 1.22 → 0.82 of FFTW, 65536 ÷ MKL 1.17 → 0.69) and the Mac
+(8192 1.10 → 0.85, 16384 1.05 → 0.87; 2²³ 1.12 → 0.93); X42 on 3125 and 15625 everywhere.
+The Mac's 48, 96, 180 and 500 lost ratio to FFTW with FFTN's time unchanged (FFTW's MEASURE
+plans). Runs 20261118-004301-b779 (Mac, 44 of 46 rounds under load, band ±1.60 %),
+20261118-015016-b9d2 (EPYC, every round under load, ±1.36 %), 20261118-020838-b37b (Xeon,
+14 of 20 under load, ±2.48 %). X49 (pull request 63) found fbench's FFTN backend added about
+16–20 instructions per call, so the tiny cases overstate FFTN; they were re-timed on `main`
+4d75c48 (rows of 2–16 points and their batches, 15 × 2 and 64 × 2 backward; each case judged
+against its own run's band): Mac ÷ FFTW 0.75, 3 (64 × 2 backward 1.07 joins), ÷ FFTL
+unchanged (run 20261118-015403-cf4b, ±1.20 %); the EPYC and Xeon re-times are queued (they
+cannot change a verdict: the EPYC's two tiny cases would leave 10, 5.2 %).
+Cloud (X48, the same rows, `main` 8c18dd2): ÷ FFTW Zen 5 0.69 with 6 beyond noise (3.1 %, was
+11), Axion 0.71 with 9 (4.7 %, rows of 2–8 points, 20, 65537), Granite Rapids 0.76 with 18
+(9.3 %; ÷ MKL 0.73, 11, 5.7 %: 46080, 65536 in every form, 100000, 131071–262144, 32768, 160,
+240, 1024; against MKL also 999983): Granite Rapids' 2 MiB L2 does not take X46's rule.
+
 **Phase 1 exit check again (2026-11-17, `main` 509d123, before X42; the tail rule now counts
 cases beyond noise, DESIGN 1.3):** Mac ÷ FFTW 0.75, 3 cases beyond noise (1.6 %; 15 above a
 plain 1.05): 2 × 3 in place 1.37, 32 1.20, 2²³ 1.13; ÷ FFTL 0.53, 3 (1.6 %). EPYC ÷ FFTW 0.80,
@@ -163,14 +189,14 @@ up-to-date rule), the full per-change set on main after each merge, weekly exten
 Open, by phase:
 
 - 0: the Xeon client-catalogue baseline.
-- 1: the exit: every mean target met; the tail rule (beyond noise since 2026-11-17) met on
-  the Mac and against MKL and FFTL, not yet against FFTW on the EPYC (6.7 %) and the Xeon
-  (5.2 %; see the exit check of 2026-11-17 above); X46 (a depth-first chain: Xeon 16384–100000)
-  is running; X47 adopted two-pass chains on two lines (EPYC 512 0.95 of its time, 1.06 of
-  FFTW; 768–2048 not closed); X2 on the Mac above 1024; X4 on x86 and for edge
-  passes; X5 (twiddle modes); left for the next round: Xeon primes against MKL (131071,
-  999983), fixed cost of tiny calls (2 × 3 in place, short backward pairs), float radix-25
-  overrides.
+- 1: the exit: every mean target met; the tail rule (beyond noise) met at 8c18dd2 on the
+  Mac, the Xeon (FFTW 3.6 %, MKL 1.0 %), Zen 5 and Axion and against FFTL, not on the EPYC
+  against FFTW (6.2 %: short backward pairs, 512–2048, 64 × 16, 1018, 100) nor on Granite
+  Rapids (FFTW 9.3 %, MKL 5.7 %: its long rows, without X46's rule; see the exit check of
+  2026-11-18 above and X48); X2 on the Mac above 1024; X4 on x86 and for edge passes; X5
+  (twiddle modes); the night round of 2026-11-17: X50 (Xeon primes against MKL: 131071,
+  999983), X51 (X46's loose ends: 25000, Granite Rapids' profile), X52 (volumes); float
+  radix-25 overrides.
 - 2: 2.2's acceptance in double c2c on AVX-512 (re-check after X37's batches of 16);
   X6 (real-input codelets), X13; the cost model's second pass and `fbench calibrate`.
 - 3: T2, T3, T4, T6; 3.5 (Kokkos executor); 3.6 to be checked against its acceptance;
