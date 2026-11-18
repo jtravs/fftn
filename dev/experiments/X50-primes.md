@@ -1,6 +1,6 @@
 # X50: large primes against MKL on the Xeon (Bluestein on the depth-first chain)
 
-- **Status:** running
+- **Status:** done: A0, A, B and C adopted (Xeon and Apple profiles); EPYC unchanged; the Rader arm not built
 - **Owner:** x50 session, 2026-11-18
 - **Phase / task:** 1 (phase 1 exit check, the tail rule; cause 1, the primes); follows X36,
   X36b, P1b and X46
@@ -138,6 +138,26 @@ N beyond the band; every case whose plan did not change (float, the controls, 40
 A over its 5 changed cases: geometric mean 0.752 (every interval below 0.84). B against A
 over the 4 cases B adds: 0.748 (at most 0.786). Both pass the rule on the Xeon profile.
 
+### Judging C (Xeon and Mac)
+
+Xeon, run 20261118-031525-5c5c (Slurm 16447 build, 16448 timing, `--serial`; 20 rounds, 5
+under load, band ±1.15 %), B = ebda2a7 against C = 1f7fc8d, F = FFTW, M = MKL, the primes
+whose convolutions B runs depth-first and two controls:
+
+| case (double) | C ÷ B | FFTN ÷ FFTW, B → C | FFTN ÷ MKL, B → C | C ÷ N (main), from both runs |
+|---|---|---|---|---|
+| 8179 | 0.908 | 0.72 → 0.65 | 0.87 → 0.79 | 0.73 |
+| 32749 | 0.857 | 0.81 → 0.70 | 0.96 → 0.82 | 0.56 |
+| 131071 | 0.869 | 0.92 → 0.80 | 0.96 → 0.84 | 0.61 |
+| 262139 | 0.925 | 0.79 → 0.73 | 1.19 → 1.10 | 0.69 |
+| 524287 | 0.898 | 0.80 → 0.72 | 1.22 → 1.09 | 0.65 |
+| 999983 | 0.908 | 0.91 → 0.83 | 1.16 → 1.05 | 0.71 |
+| 4093, 65537 (unchanged) | 1.006, 1.009 | – | – | – |
+
+C over its 6 changed cases: geometric mean 0.894 (at most 0.925, every interval below
+0.96). Mac, run 20261118-005441-4014 (10 rounds, all under load, band ±1.72 %): C ÷ B 4813
+0.914, 4999 0.919, 5119 0.891. C passes on both profiles.
+
 ### A on the Mac
 
 Run 20261118-001926-1f9e (Homebrew Clang 23, `neon_fcma`; 18 rounds, 17 under load, band
@@ -155,8 +175,15 @@ FFTW (NEON) 0.83 → 0.79. A passes on the Apple profile. (B changes nothing on 
   Slurm 512530/512531, `--serial`; 24 rounds, all under load, band ±3.38 %): 61 no evidence,
   weighted geometric mean 1.009; medians above 1.034 on unchanged power-of-two rows (c2c
   65536 1.109, c2r 65536 1.107, r2c 65536 1.064, c2c 262144 1.058, 16384 1.043, c2r 1024²
-  1.044): re-run (pending).
-- Xeon, standard tracking tier (pending).
+  1.044): re-run with 30 rounds (run 20261118-031743-095b, Slurm 512554, band ±2.20 %):
+  0.979–1.032, all no evidence (c2r 2²⁰ 1.032 [1.003, 1.049], 1.029 in the first run: a plan
+  and code path the arms do not change; recorded).
+- Xeon, standard tracking tier, N against B and C (run 20261118-032601-14d8, Slurm 16449,
+  `--serial`; 20 rounds, 3 under load, band ±3.62 %): C 1 faster (10403 0.711, a whole-line
+  Bluestein stage it changes), 60 no evidence, weighted geometric mean 0.997; B 1 faster,
+  60 no evidence, 1.005. Medians past 1 + max(band, 3 %) on plans the arms do not change:
+  C c2c 1009 1.063 [0.995, 1.092] (a Rader prime; 0.985 and 1.005 in the x36 run above), B
+  r2c 4096 1.049, r2c 1024² 1.048, r2c 256² 1.038: re-run once (below).
 
 ### EPYC 65537 (P1b's flip)
 
@@ -174,4 +201,34 @@ which already runs at 0.80 of FFTW's: not built.
 
 ## Verdict
 
-(pending)
+- **A0 (the stage, forced only): built**, every target, both precisions, in and out of
+  place, tested against the reference and bit for bit across team sizes.
+- **A (the rule within the depth-first range): adopted** on the Xeon profile (0.752 over 5
+  changed cases) and the Apple profile (0.95 over 3); the EPYC has no depth-first range and
+  keeps its plans.
+- **B (beyond the range, the Xeon profile): adopted** (0.748 over the 4 cases it adds:
+  262139, 262142, 524287, 999983).
+- **C (fused chirp passes): adopted** (Xeon 0.894 over 6 changed cases, Mac 0.89–0.92).
+- Together, against `main`: Xeon 8179–999983 0.56–0.73 of their time (131071 0.61, 999983
+  0.71); FFTN ÷ MKL 131071 1.34 → 0.84, 999983 1.44 → 1.05, 262139 and 524287 1.63 → 1.10,
+  1.64 → 1.09; FFTN ÷ FFTW 0.65–0.83 on the changed primes; Mac 4813–5119 about 0.86. The
+  exit check's 999983 ÷ MKL stays just past 1.05 in this run.
+- **EPYC 65537: no change.** P1b's flip was not reproduced (24 processes, Rader 1.5 times
+  faster every time; 1.66 L1 DTLB misses per point, all 4 KiB pages); a page-robust Rader
+  stage could gain at most about 0.2 and 65537 already runs at 0.80 of FFTW's time there.
+  Not built. EPYC 1018 (1.10 of FFTW, s = 2 copies of 509, no depth-first range on Zen) and
+  Axion's 65537 (a Bluestein stage on NEON, no depth-first range on that profile) are
+  untouched by this experiment.
+- **Library size:** text +6.2 % on the Mac (Homebrew Clang 23, `size` of `libfftn.a`,
+  21.76 → 23.10 MB, 80dbcdb → 1f7fc8d), +3.5 % on x86-64 (GCC 14.4, the Xeon's build
+  cache, 88.72 → 91.83 MB): the depth-first top pass's factor and chirp variants and the
+  chirp first pass, per radix, direction and precision.
+- **Left open:** float (the depth-first rules are double only); the EPYC and Zen 5 (no
+  depth-first range); Granite Rapids (its large-L2 profile takes neither range, unmeasured);
+  Bluestein stages of several copies (the block holds one copy's convolution); 999983 ÷ MKL
+  (1.05: MKL's 2²¹-point-class convolution is faster than FFTN's depth-first 2073600); rows
+  beyond 4 L2 also gained from one top of 16 in the screen (2073600 0.85, 2²¹ 0.75 of the
+  grid), a lead for X51.
+
+Done: DESIGN 8.5 and 11.2 and the decision log; LESSONS 3.20 (corrected) and 4.20; PLAN
+index and Status.

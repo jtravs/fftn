@@ -817,9 +817,12 @@ points between chirp passes; on the Xeon 6240 FFTN's ran them as breadth-first c
 moved to a depth-first chain (4.4 and 9.5). Running the convolution on that chain, with the
 plan's workspace block as the movable line its sub-row loop needs (the chirped input in
 scratch, the blocks in the workspace, the forward chain's output back in scratch), took
-131071 and 999983 to 0.70 and 0.79 of their time (FFTN ÷ MKL 1.34 → 0.94, 1.44 → 1.13) and
-the M5 Max's primes of 4813–5119 to 0.95, with no new program slot: X36b had judged the
-same change to need one. One top factor of 16 beat two even at 2²¹ points (32 MiB).
+131071 and 999983 to 0.70 and 0.79 of their time, with no new program slot: X36b had judged
+the same change to need one. Fusing the chirp passes into the chains' outer passes (the
+first reads the input times the chirp, the last writes only the Q outputs kept) saved
+another 0.86–0.93: 131071 0.61 and 999983 0.71 of their time in all, FFTN ÷ MKL 1.34 → 0.84
+and 1.44 → 1.05, the M5 Max's primes of 4813–5119 0.86. One top factor of 16 beat two even
+at 2²¹ points (32 MiB).
 [X50](experiments/X50-primes.md).
 
 ## 5. Threading
