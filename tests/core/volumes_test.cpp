@@ -233,9 +233,13 @@ struct two_lanes {
 // blocks would not differ or the field is 0. Its results equal the program's byte for byte
 // (tests/threading, the team cases with a team program).
 TEST(TeamProgram, NarrowerBlocksTheSameRadices) {
+  // The team programs here come from column_team_bytes and a volume's order alone: the
+  // one-thread program's wide blocks (column_wide_bytes, X52 W4b), which the host's profile
+  // sets on the EPYC class, would make a team program differ too, so they are off.
   fftn::detail::build_settings settings;
   settings.profile.column_team_bytes = 64;
   settings.profile.line_bytes = 64;
+  settings.profile.column_wide_bytes = 0;
   const auto plane = fftn::detail::make_plan_core(
       fftn::detail::view_of(fftn::planes_c2c<double>(256, 256, 1, fftn::direction::forward)),
       fftn::options(), settings);
@@ -304,8 +308,6 @@ TEST(TeamProgram, NarrowerBlocksTheSameRadices) {
   order.volume_planes = false;
   order.profile.team_volume_planes = true;
   order.profile.column_team_bytes = 0;
-  // Nor wide one-thread blocks (X52 arm W4b), which the host's profile turns on where a private
-  // L2 has a large L3 behind it (CI's AMD runners): they too would make a team program differ.
   order.profile.column_wide_bytes = 0;
   const auto ordered = fftn::detail::make_plan_core(
       fftn::detail::view_of(shape_of<double>({24, 20, 36})), fftn::options(), order);
