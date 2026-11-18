@@ -214,6 +214,22 @@ Arms L1 (446be06) and A1 (`main` a0dffe1) at one thread, L8, A8 and G8 (f6f9b4d,
   better plan at 8 lanes: 0.980 (`main`, 47 over 1.05) → 0.911 (G, 36 over: tiny real batches
   5 × 7 and 8 × 6 at 1.5–3.6, real 2048² 1.40–1.71, c2c 2048 × 36 1.35–1.36).
 
+- Xeon, run 20261118-013706-3586 (Slurm 16441; no round loaded, band ±4.6 %). L changes c2c
+  16³ alone here (0.964; gated off `avx512` anyway). G ÷ L at 8 lanes over the 83 that split
+  0.913 (real 128³ 0.54–0.61, real 100³ 0.63–0.73, real 1000² in place 0.76); worst c2c 96² in
+  place 1.035, inside the band; unchanged programs at 8 lanes measured up to 1.23 (c2r 100² in
+  place), the 8-lane noise again. Rule met: **G adopted on the Xeon.** FFTN at 8 lanes ÷
+  oneMKL's better plan: 1.35 (`main`) → 1.30 (G), 99 of 132 over 1.05; the real planes are the
+  gap (c2r 32³ 3.9, c2r 128² 3.8, r2c 96² 2.9–3.0, c2r 256² 3.2).
+- **A pathology the runs show (not an arm of this experiment's rules):** single planes just
+  above the split threshold run slower on a team than on one thread. With G at 8 lanes ÷ one
+  thread, Xeon: c2c 96² 1.69–1.96, 100² 1.37–1.52, 128² 0.98–1.07; real 96² 2.3–2.6, 100²
+  1.4–1.7, 128² 1.5–1.9, 32³ 1.06–1.15, 256² in place 1.00–1.06. EPYC: real 96² 1.18–1.34,
+  100² 1.09–1.19 (c2c fine: 0.78–0.90). oneMKL's 8 threads take c2r 256² to 0.28 of its one.
+  The split rule (T5's thresholds, 6144 points on the CCX, 8192 on the mesh) was fitted on
+  rows; a plane's phases move it between cores' caches. Screens of higher thresholds for the
+  planes and volumes: EPYC Slurm 512568, Xeon Slurm 16460.
+
 ## Verdict
 
 Pending.
