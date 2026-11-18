@@ -40,6 +40,16 @@ here and committed before its judging run.
   Bits: the changed columns move within the derived tolerances (each column still a lane
   of its own chain; tests/core/columns_test.cpp compares with the chain's columns).
 
+- **Arm W1 (Mac):** a column phase whose column elements lie a page or more apart takes
+  blocks of at least 8 L1 lines of columns where a cluster shares L2 (Apple: 64 complex
+  doubles), not X40's 4 (`machine_profile::column_page_lines`); x86 unchanged. On top of L.
+  Bits unchanged (a block's width does not change what a column computes, X40).
+- **Arm G (screen first):** a split task's chunks are claimed in runs within one phase, each
+  a share of the phase's chunks left (left / (cap × claim_divisor), at least one), as whole
+  tasks already are (`threading/engine.hpp`, `join`): one claim and one count per run, a
+  member's chunks of a phase adjacent. Bits unchanged (a chunk computes the same whoever runs
+  it, DESIGN 15.5).
+
 ## Method
 
 - Cases: the volumes catalogue (42 cases, tier full) and the standard catalogue's planes
@@ -59,6 +69,12 @@ here and committed before its judging run.
   it on a loaded machine is re-run once before it decides), and (3) one-dimensional plans
   are unchanged (by construction: rows never take a column phase). A machine where L
   changes no case keeps it by construction.
+
+- Decision rule for **W1**, written before its judging run, on the Mac: adopt W1 if (1) the
+  geometric mean of W1 ÷ L at one thread over the cases of the case set whose program W1
+  changes (by describe) is at most 0.97, and (2) no case of the case set is slower than L by
+  more than the larger of 2 % and the run's A/A band (a case just past it on a loaded machine
+  is re-run once before it decides).
 
 ## Results
 
