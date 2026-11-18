@@ -296,6 +296,21 @@ the eight real 96² and 100² planes (S2 applies only on a mesh): S ÷ G 0.82 ov
 place, 48³, 256² in place: noise of this run); re-run with the other unchanged cases past their
 limits (Slurm 512626, 512627).
 
+### W4 on the Xeon (judging), and arm W4b
+
+Run 20261118-043156-345d (Slurm 16455; no round loaded, band ±6.4 %), the volumes: W4 ÷ L at
+one thread 0.936 over the 34 volumes it changes (64 × 64 × 512 0.66, 128³ 0.75–0.77, 64³ 0.90,
+81³ in place 0.90), worst 30 × 40 × 50 out of place 1.062, inside the band. At 8 lanes the
+Xeon's teams run the program (no team blocks there), and W4's wider blocks lose: 32³ 1.144,
+30 × 40 × 50 1.10–1.11, 48³ 1.10, past the band: **W4 fails rule (2) on the Xeon.**
+
+**Arm W4b (written before its run):** W4's wide blocks in the one-thread program only; a
+plan whose program W4 widens also builds the team program (X43's mechanism), which keeps
+X40's blocks. One-thread programs are W4's (so rule (1) is W4's measurement); team executions
+run what they ran before W4 on every machine. Rule on the Xeon and the EPYC: W4's rule, (2)
+judged at 8 lanes against L in a fresh run (EPYC: the team programs are unchanged by
+construction).
+
 ## Verdict
 
 Pending.
