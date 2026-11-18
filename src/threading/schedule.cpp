@@ -101,6 +101,8 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
     // with that budget (arm L1).
     if (!private_l2 && c.l1d.size != 0) {
       p.column_near_tile_bytes = 2 * c.l1d.size;
+      p.column_wide_bytes = 1024;
+      p.column_wide_tile_bytes = 2 * c.l1d.size;
     }
   }
   // Experiment X29: with a private L2 and an L3 of at least 2 MiB per CPU sharing it (the
