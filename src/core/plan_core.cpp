@@ -656,9 +656,10 @@ std::size_t column_block(std::size_t axis, const std::vector<std::size_t>& exten
       return settings.team_program && settings.profile.column_team_bytes != 0 ? line : 0;
     }
   }
-  // X52 arm W4: wider blocks where their tiles fit column_tile_bytes.
+  // X52 arm W4b: wider blocks where their tiles fit column_tile_bytes, in the one-thread
+  // program only (teams keep X40's blocks: the Xeon's 8 lanes lost up to 1.14 with them).
   if (const std::size_t wide = up(settings.profile.column_wide_bytes / complex_bytes);
-      settings.profile.column_wide_bytes != 0 && wide > block &&
+      settings.profile.column_wide_bytes != 0 && !settings.team_program && wide > block &&
       2 * n * wide * complex_bytes <= settings.profile.column_tile_bytes) {
     block = std::min(wide, up(extent[last]));
   }
@@ -1481,7 +1482,9 @@ std::shared_ptr<plan_core> build_plan_core(const shape_view& s, const options& o
   // X43b arm VT: a team core also where only a volume's order would differ.
   const bool team_order = r == 3 && settings.profile.team_volume_planes;
   if (s.kind == transform_kind::c2c && r > 1 &&
-      (settings.profile.column_team_bytes != 0 || team_order) && !settings.team_program) {
+      (settings.profile.column_team_bytes != 0 || team_order ||
+       settings.profile.column_wide_bytes != 0) &&
+      !settings.team_program) {
     build_settings team = settings;
     team.team_program = true;
     std::shared_ptr<const plan_core> t = build_plan_core(s, opts, team);
