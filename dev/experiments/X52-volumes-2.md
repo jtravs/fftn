@@ -287,6 +287,15 @@ first runs on the CCX (divisor 1), which leave more chunks for members that arri
 on the EPYC: G's rule, G2 ÷ L at 8 lanes, in a fresh run of the volumes and the 132 planes and
 volumes, with the same re-run provision.
 
+### S on the EPYC (judging)
+
+Run 20261118-042536-8e39 (Slurm 512579; G f6f9b4d and S 57cbafe at 8 lanes, G serial; all
+rounds loaded, band ±8.5 %), the 132 planes and volumes. On the EPYC S changes the split of
+the eight real 96² and 100² planes (S2 applies only on a mesh): S ÷ G 0.82 over them
+(0.72–0.90). Cases whose schedule S does not change measured up to 1.16 (r2c 100³, c2c 96² in
+place, 48³, 256² in place: noise of this run); re-run with the other unchanged cases past their
+limits (Slurm 512626, 512627).
+
 ## Verdict
 
 Pending.
