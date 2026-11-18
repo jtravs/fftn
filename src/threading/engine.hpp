@@ -6,7 +6,9 @@
 //
 // 1. Whole tasks of its own cache group, in runs, from the group's counter.
 // 2. The split tasks of its group: it joins one (at most `cap` members each) and claims
-//    its chunks one at a time, in order. A chunk of phase p runs once every chunk of phase
+//    its chunks in order, in runs within one phase where the profile's claim divisor is 2
+//    (a share of the phase's chunks left, shrinking to single chunks; X52), else one at a
+//    time. A chunk of phase p runs once every chunk of phase
 //    p - 1 is done, which the task's done counter shows; the chunks of earlier phases were
 //    all claimed before it, by members that are running, so the wait never depends on a
 //    member that has not arrived. The member that claims chunk 0 owns the task: the task's
@@ -31,6 +33,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <new>
 
 namespace fftn::inline v0::detail {
@@ -238,10 +241,31 @@ private:
     const std::uint64_t tag = tag_;
     int owner = -1;
     std::size_t p = 0;
+    // Chunks are claimed in runs within one phase, each a share of the phase's chunks left
+    // (left / (cap x claim_divisor), at least one), as whole tasks are: one claim and one
+    // count per run rather than per chunk, and a member's chunks of a phase adjacent (X52 arm
+    // G: Xeon 8 lanes 0.91, Mac 6 lanes 0.86-0.94 over the planes and volumes that split).
+    // Only where the profile claims whole tasks in runs of at most a half share (claim_divisor
+    // 2: the Mac, the mesh); on the CCX (divisor 1) a real 256^2 plane took 1.035 of the time
+    // with G's runs, so chunks stay single there (X52). A run never crosses a phase: the
+    // counter only rises within an epoch, so the value `claim` hands the lambda is at least
+    // this member's last claim, in phase p or later, and below `total`.
+    const int divisor = job_.plan.profile.claim_divisor;
+    const auto runs = divisor >= 2 ? static_cast<std::uint32_t>(divisor * std::max(share.cap, 1))
+                                   : std::numeric_limits<std::uint32_t>::max();
     for (;;) {
       // While this member holds a claim the execution cannot end, so no word of this task
       // can carry a later tag before the loop leaves.
-      const claimed c = claim_one(word(layout_.claim(slot)), total);
+      const claimed c =
+          claim(word(layout_.claim(slot)), total, [&phases, total, runs, p](std::uint32_t left) {
+            const std::uint32_t at = total - left;
+            std::size_t q = p;
+            while (at >= phases[q].first + phases[q].chunks) {
+              ++q;
+            }
+            const auto end = static_cast<std::uint32_t>(phases[q].first + phases[q].chunks);
+            return std::max((end - at) / runs, 1U);
+          });
       if (c.count == 0) {
         if (c.stale) {
           return false;
@@ -266,8 +290,10 @@ private:
         env_.wait(done, &blocked,
                   [tag, from](std::uint64_t v) { return count_in(v, tag) >= from; });
       }
-      env_.run_chunk(task, p, static_cast<std::uint32_t>(c.at - from), owner, job_.rank);
-      const std::uint32_t now = add(done, 1);
+      for (std::uint32_t k = 0; k < c.count; ++k) {
+        env_.run_chunk(task, p, static_cast<std::uint32_t>(c.at + k - from), owner, job_.rank);
+      }
+      const std::uint32_t now = add(done, c.count);
       if (now == phases[p].first + phases[p].chunks) {
         env_.wake(done, &blocked);
         if (now == total) {

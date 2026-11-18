@@ -925,6 +925,23 @@ the L3 holds the volume (32 MiB per CCX), the third sweep is cheap for one threa
 team gains one phase boundary fewer and each plane's rows and columns on one core.
 [X43b](experiments/X43b-volumes.md).
 
+5.12 **Claim a split transform's chunks in runs, as you claim whole transforms.** Claiming
+the chunks of a phase one at a time from one shared counter (and counting each done) cost a
+team of 8 about 10 % on planes and volumes: guided runs (a share of the phase's chunks left,
+shrinking to single chunks) took 0.877 (EPYC 7763) and 0.910 (Xeon 6240) of the time at 8
+lanes over the volumes that split, real planes of 1000²–1024² 0.45–0.54, and 0.86 on the M5
+Max at 6 lanes, with nothing slower beyond the noise. Coarser chunks are not the same cure:
+they lose the balance at the small end (32³ 1.5 with chunks of 8192 points).
+[X52](experiments/X52-volumes-2.md).
+
+5.13 **A split threshold fitted on rows is too low for planes, and real planes have half
+the work their size says.** At 8 lanes single planes of 9216–16384 points took up to 2.6
+times their one-thread time on the Xeon 6240 (c2c 96² 1.7–2.0, real 96² 2.3–2.6) and real
+96²–100² 1.1–1.3 on the EPYC 7763, while c2c 96² gained there (unsplit 1.3–1.4): each phase
+of a plane moves it between the members' private caches. On the M5 Max, whose cluster shares
+L2, the same real planes gained from splitting (unsplit 1.2–1.5). Compare a real transform's
+complex points with thresholds fitted on complex rows. [X52](experiments/X52-volumes-2.md).
+
 ## 6. Toolchain and testing pitfalls
 
 6.1 **Build with GCC as well as Clang before a remote round trip.** GCC warns where Clang
