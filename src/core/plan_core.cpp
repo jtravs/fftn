@@ -656,12 +656,6 @@ std::size_t column_block(std::size_t axis, const std::vector<std::size_t>& exten
       return settings.team_program && settings.profile.column_team_bytes != 0 ? line : 0;
     }
   }
-  // X52 arm W4: wider blocks where their tiles fit column_tile_bytes.
-  if (const std::size_t wide = up(settings.profile.column_wide_bytes / complex_bytes);
-      settings.profile.column_wide_bytes != 0 && wide > block &&
-      2 * n * wide * complex_bytes <= settings.profile.column_tile_bytes) {
-    block = std::min(wide, up(extent[last]));
-  }
   // A team program's blocks (X43 arm B1; machine_profile::column_team_bytes).
   if (settings.team_program && settings.profile.column_team_bytes != 0) {
     block = std::min(block, std::max(line, up(settings.profile.column_team_bytes / complex_bytes)));
