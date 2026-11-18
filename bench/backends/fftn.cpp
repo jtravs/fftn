@@ -375,6 +375,34 @@ std::string omp_environment() {
 }
 #endif
 
+// The executes through an executor or a team, out of line so that the serial execute needs
+// no frame: with them inline GCC 14 saved three registers before testing the mode (X49).
+[[gnu::noinline]] void execute_threaded(const plan_record& r, void* in, void* out) {
+  const session& s = state();
+  switch (r.mode) {
+  case call::serial:
+    return;
+  case call::executor:
+    detail::execute_on(*r.core, in, out, regrouped(*s.exec, s.group_size), r.ws);
+    return;
+  case call::team:
+#ifdef FBENCH_FFTN_OMP
+  {
+    const int group = s.group_size;
+#pragma omp parallel num_threads(s.threads)
+    {
+      fftn::team me = fftn::omp::this_team();
+      if (group >= 0) {
+        me.group_size = group;
+      }
+      detail::execute_team(*r.core, in, out, me, r.ws, fftn::completion::all);
+    }
+  }
+#endif
+    return;
+  }
+}
+
 } // namespace
 
 extern "C" {
@@ -697,35 +725,13 @@ std::int32_t fbench_create(const fbench_case* c, void* /*in*/, void* /*out*/, vo
 // NOLINTNEXTLINE(misc-const-correctness): the harness fixes this C signature
 void fbench_execute(const void* plan, void* in, void* out) {
   const auto& r = *static_cast<const plan_record*>(plan);
-  if (r.mode == call::serial) {
-    // What plan::execute calls: one call into the library (X28), not transform_count and
-    // execute_core, whose extra call fbench timed until X37; and nothing before it (X49).
-    detail::execute_all(*r.core, in, out, r.ws);
+  if (r.mode != call::serial) {
+    execute_threaded(r, in, out);
     return;
   }
-  const session& s = state();
-  switch (r.mode) {
-  case call::serial:
-    return;
-  case call::executor:
-    detail::execute_on(*r.core, in, out, regrouped(*s.exec, s.group_size), r.ws);
-    return;
-  case call::team:
-#ifdef FBENCH_FFTN_OMP
-  {
-    const int group = s.group_size;
-#pragma omp parallel num_threads(s.threads)
-    {
-      fftn::team me = fftn::omp::this_team();
-      if (group >= 0) {
-        me.group_size = group;
-      }
-      detail::execute_team(*r.core, in, out, me, r.ws, fftn::completion::all);
-    }
-  }
-#endif
-    return;
-  }
+  // What plan::execute calls: one call into the library (X28), not transform_count and
+  // execute_core, whose extra call fbench timed until X37; and nothing before it (X49).
+  detail::execute_all(*r.core, in, out, r.ws);
 }
 
 void fbench_destroy(void* plan) {
