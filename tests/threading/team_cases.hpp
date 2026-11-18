@@ -231,6 +231,14 @@ void add_cases(std::vector<team_case>& out, const fftn::detail::build_settings& 
                           false, depth, target));
   out.push_back(make_case("c2c_depth2_inplace_4096x2" + suffix, fftn::rows_c2c<T>(4096, 2, fwd),
                           8192, 8192, true, depth, target));
+  // Batch leaves (experiment X53): C rows per register, the batch's rows what a team shares,
+  // counts that leave a partial group of rows.
+  fftn::detail::build_settings batch = settings;
+  batch.batch_leaves = fftn::detail::batch_leaf_choice::own;
+  out.push_back(make_case("c2c_batch_leaf_15x7" + suffix, fftn::rows_c2c<T>(15, 7, bwd), 105, 105,
+                          false, batch, target));
+  out.push_back(make_case("c2c_batch_leaf_inplace_64x5" + suffix, fftn::rows_c2c<T>(64, 5, fwd),
+                          320, 320, true, batch, target));
   // Split lane passes (DESIGN.md 6.3, strategies/chain.hpp), forced with a first radix of
   // 16, which every target's split_block divides: a run of three passes (BL in the
   // middle), of two in place, in the complex chains of real rows, and on the long axis of

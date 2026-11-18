@@ -139,6 +139,10 @@ template <class T> bool chain_builder<T>::bluestein_last(std::size_t n) const {
 }
 
 template <class T> std::string chain_builder<T>::radix_text(std::size_t n) const {
+  if (std::ranges::find(batch_lines_, n) != batch_lines_.end()) {
+    return std::to_string(n) + " (batch leaf, " + std::to_string(batch_->lanes) +
+           " rows per register)";
+  }
   if (std::ranges::find(pair_lines_, n) != pair_lines_.end()) {
     if (const pair_choice p = pair_of(n); p.entry != nullptr) {
       return std::to_string(p.entry->r1) + " x " + std::to_string(p.entry->m) +
@@ -559,6 +563,43 @@ void chain_builder<T>::add_leaf(std::size_t n, int sign, endpoint src, endpoint 
 }
 
 template <class T>
+leaf_fn chain_builder<T>::batch_leaf_for(std::size_t n, int sign, endpoint src, endpoint dst,
+                                         const line_edges& edges) const {
+  if (batch_ == nullptr || !has_codelet(n) || forces(n) || src.stride != 1 || dst.stride != 1 ||
+      edges.in == edge_op::factor || edges.out == edge_op::factor) {
+    return nullptr;
+  }
+  return batch_->leaf[codelet_slot(n)][direction_index(sign)][edges.in == edge_op::scale ? 1 : 0]
+                     [edges.out == edge_op::scale ? 1 : 0];
+}
+
+template <class T>
+void chain_builder<T>::add_batch_leaf(leaf_fn leaf, std::size_t n, int sign, endpoint src,
+                                      endpoint dst, const line_edges& edges,
+                                      std::vector<stage>& stages) {
+  stage st;
+  st.leaf = leaf;
+  st.args.radix = n;
+  st.args.n = n;
+  st.args.scale = edges.scale;
+  st.args.src_stride = src.stride;
+  st.args.dst_stride = dst.stride;
+  st.src = src.where;
+  st.dst = dst.where;
+  st.units = 1;
+  st.chunks = 1;
+  st.name = "batch leaf radix-" + std::to_string(n) + " " + direction_name(sign) + ", " +
+            std::to_string(batch_->lanes) + " rows per register" +
+            (edges.in != edge_op::none || edges.out != edge_op::none
+                 ? " (" + edges_note(edges.in, edges.out).substr(2) + ")"
+                 : "");
+  stages.push_back(std::move(st));
+  if (std::ranges::find(batch_lines_, n) == batch_lines_.end()) {
+    batch_lines_.push_back(n);
+  }
+}
+
+template <class T>
 chain_builder<T>::pair_choice chain_builder<T>::pair_for(std::size_t n, endpoint src, endpoint dst,
                                                          const line_edges& edges) const {
   if (pairs_ == nullptr || forces(n) || src.stride != 1 || dst.stride != 1 ||
@@ -923,6 +964,10 @@ std::size_t chain_builder<T>::c2c_line(std::size_t n, int sign, endpoint src, en
                                        bool aliased, const line_edges& edges,
                                        std::vector<stage>& stages) {
   line_scratch_ = 0;
+  if (const leaf_fn batch = batch_leaf_for(n, sign, src, dst, edges); batch != nullptr) {
+    add_batch_leaf(batch, n, sign, src, dst, edges, stages);
+    return 0;
+  }
   const std::vector<std::size_t> rad = radices(n);
   if (rad.empty()) {
     add_copy(n, src, dst, edges, stages);

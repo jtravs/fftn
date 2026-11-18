@@ -58,6 +58,10 @@
 //                    depth-first chains otherwise (experiment X46)
 //   LANE_BLOCK=B     the lanes strategy's block in rows (build_settings::lane_block; default
 //                    the rule's), rounded up to a multiple of the complex count (X7)
+//   BATCH_LEAVES=rules|never|own|narrower   the batch leaves of c2c rows (build_settings::
+//                    batch_leaves): the rules' choice (default), none, the target's own, or a
+//                    narrower target's that rounds alike (avx2's on avx512), where a row can
+//                    take one (experiment X53)
 //   COLUMNS=lanes|chain   the strided axes of planes and volumes (build_settings::
 //                    lanes_columns): lanes over blocks of adjacent columns where they fit
 //                    (default), or every column alone through the chain (experiment X40)
@@ -171,14 +175,15 @@ struct session {
   double measure_seconds = 0;      // MEASURE_SECONDS=
   std::size_t measure_scratch = 0; // MEASURE_SCRATCH=
   std::unique_ptr<executor_type> exec;
-  std::string overrides;           // the profile and chunking options given, as JSON members
-  std::string radices_text;        // RADICES as given, r1.r2... (settings.radices holds them)
-  std::string column_radices_text; // COLUMN_RADICES as given
-  std::string strategy = "rules";  // STRATEGY as given
-  std::string layout = "rules";    // LAYOUT as given
-  std::string factors_text;        // GRID_FACTORS as given
-  std::string depth_tops_text;     // DEPTH_TOPS as given
-  std::string rader = "rules";     // RADER as given
+  std::string overrides;              // the profile and chunking options given, as JSON members
+  std::string radices_text;           // RADICES as given, r1.r2... (settings.radices holds them)
+  std::string column_radices_text;    // COLUMN_RADICES as given
+  std::string strategy = "rules";     // STRATEGY as given
+  std::string layout = "rules";       // LAYOUT as given
+  std::string factors_text;           // GRID_FACTORS as given
+  std::string depth_tops_text;        // DEPTH_TOPS as given
+  std::string rader = "rules";        // RADER as given
+  std::string batch_leaves = "rules"; // BATCH_LEAVES as given
   std::string description;
 };
 
@@ -526,6 +531,20 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
         return fbench_error;
       }
       s.settings.lane_block = *v;
+    } else if (key == "BATCH_LEAVES") {
+      if (value != "rules" && value != "never" && value != "own" && value != "narrower") {
+        say(message, message_size, "BATCH_LEAVES is rules, never, own or narrower");
+        return fbench_error;
+      }
+      s.settings.batch_leaves = detail::batch_leaf_choice::rules;
+      if (value == "never") {
+        s.settings.batch_leaves = detail::batch_leaf_choice::never;
+      } else if (value == "own") {
+        s.settings.batch_leaves = detail::batch_leaf_choice::own;
+      } else if (value == "narrower") {
+        s.settings.batch_leaves = detail::batch_leaf_choice::narrower;
+      }
+      s.batch_leaves = value;
     } else if (key == "COLUMNS") {
       if (value != "lanes" && value != "chain") {
         say(message, message_size, "COLUMNS is lanes or chain");
@@ -657,6 +676,9 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
     }
     if (s.settings.lane_block != 0) {
       d.integer("lane_block", static_cast<std::int64_t>(s.settings.lane_block));
+    }
+    if (s.batch_leaves != "rules") {
+      d.str("batch_leaves", s.batch_leaves);
     }
     if (!s.settings.lanes_columns) {
       d.str("columns", "chain");

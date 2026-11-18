@@ -510,6 +510,41 @@ std::vector<std::size_t> depth_tops_of(std::size_t n, const side& in, const side
   return best;
 }
 
+// The batch leaves the rows of a c2c plan take (build_settings::batch_leaves, experiment
+// X53; strategies/chain.hpp, use_batch_leaves), or null: only for one axis of contiguous
+// rows in one batch dimension of at least two rows, the driver's one call of the leaf over
+// the batch (driver.hpp, run_leaf_rows); a precision with one complex number per register
+// has none. The rules take none yet.
+template <class T>
+const batch_leaf_set<T>* batch_leaves_of(const shape_view& s, const side& in, const side& out,
+                                         const build_settings& settings, target t) {
+  if (settings.batch_leaves == batch_leaf_choice::never || s.kind != transform_kind::c2c ||
+      s.axes.size() != 1 || s.batches.size() != 1 || s.batches[0].count < 2 || in.stride[0] != 1 ||
+      out.stride[0] != 1) {
+    return nullptr;
+  }
+  const std::size_t n = s.axes[0].n;
+  const batch_leaf_table* table = nullptr;
+  switch (settings.batch_leaves) {
+  case batch_leaf_choice::own:
+    table = find_batch_leaves(t, n);
+    break;
+  case batch_leaf_choice::narrower:
+    table = find_narrower_batch_leaves(t, n);
+    if (table == nullptr) {
+      table = find_batch_leaves(t, n);
+    }
+    break;
+  case batch_leaf_choice::rules:
+  case batch_leaf_choice::never:
+    break;
+  }
+  if (table == nullptr || of<T>(*table).lanes == 1) {
+    return nullptr;
+  }
+  return &of<T>(*table);
+}
+
 // The most rows in a block of the lanes strategy by default (lanes_block). Experiment X7.
 constexpr std::size_t max_lane_block = 64;
 
@@ -994,6 +1029,9 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   const bool real_in_place = c.in_place || (s.kind == transform_kind::c2r && !paired_gather);
   if (!grid_builder<T>::uses_block(real_grid, real_in_place)) {
     real_grid.pad = 0;
+  }
+  if (lanes == 0 && grid_plan.phases == 0 && depth_tops.empty()) {
+    chain.use_batch_leaves(batch_leaves_of<T>(s, in, out, settings, c.isa_target));
   }
   if (lanes != 0) {
     // The lanes strategy (DESIGN.md 8.5): blocks of `lanes` rows of the innermost batch
