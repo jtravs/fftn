@@ -50,6 +50,9 @@ machine_profile profile_for(const topology& t, bool x86_64) noexcept {
     p.sync_ns = 700;
     p.claim_divisor = 2;
   }
+  if (mesh) {
+    p.split_min_points_lines = 32768;
+  }
   return p;
 }
 
@@ -225,6 +228,7 @@ schedule make_schedule(const work_graph& g, const lane_map& lanes,
   s.phases = g.phases.size();
   s.widest = g.widest;
   s.points = g.points;
+  s.lines = std::ranges::any_of(g.phases, [](const graph_phase& ph) { return ph.nest != 0; });
   s.splittable = g.chunks > 1 && g.chunks < max_counted;
   s.oversubscribed = profile.cpus > 0 && std::max(lanes.lanes, lanes.threads) > profile.cpus;
   s.grain = g.tasks < max_counted ? 1 : (g.tasks + max_counted - 1) / max_counted;
@@ -275,7 +279,8 @@ group_share share_of(const schedule& s, const lane_map& lanes, int group) noexce
   const auto members = static_cast<std::size_t>(lanes.size_of(group));
   const machine_profile& p = s.profile;
   const bool mesh = lanes.size_of(group) > p.mesh_group_lanes;
-  if (s.points < (mesh ? p.split_min_points_mesh : p.split_min_points)) {
+  if (s.points < (mesh ? p.split_min_points_mesh : p.split_min_points) ||
+      (s.lines && s.points < p.split_min_points_lines)) {
     return share;
   }
   std::size_t split = 0;

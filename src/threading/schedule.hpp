@@ -63,6 +63,12 @@ struct machine_profile {
   // points 1.5-2.4 times slower unsplit), so the mesh keeps 8192.
   std::size_t split_min_points = 6144;
   std::size_t split_min_points_mesh = 8192;
+  // A plane or volume (a work graph of line phases, whose phases move the transform between
+  // the members' caches) is split only from this many points too (0: no further limit). X52
+  // arm S2: on the Xeon 6240 (a mesh-connected L3) at 8 lanes c2c planes of 9216-10000 points
+  // took 1.4-2.0 times their one-thread time split, 16384 about the same, 32768 0.6.
+  // profile_for sets 32768 where the cache group is a mesh.
+  std::size_t split_min_points_lines = 0;
   int mesh_group_lanes = 8;
   // Rule 2: leftover transforms after the whole ones are split only from this size (T5,
   // S3, run 20261114-182042-1f0c: at 8 lanes leftovers of 4096 points gained 0.85-0.98 and
@@ -310,6 +316,7 @@ struct schedule {
   std::size_t phases = 0;
   std::uint32_t widest = 1;
   std::size_t points = 1;
+  bool lines = false; // the graph has a phase of lines (a plane or volume)
   machine_profile profile;
 };
 
