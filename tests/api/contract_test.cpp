@@ -83,6 +83,7 @@ TYPED_TEST(Contracts, ExecuteNeverAllocates) {
   expect_no_allocation(fftn::rows_r2c<T>(1000, 2), 1000, 2 * 501);
   expect_no_allocation(fftn::rows_c2r<T>(999, 2), 2 * 500, 999);
   expect_no_allocation(fftn::planes_c2c<T>(12, 10, 2, fftn::direction::forward), 240, 240, true);
+  expect_no_allocation(fftn::volumes_c2c<T>(6, 5, 8, 2, fftn::direction::backward), 480, 480, true);
   fftn::shape<c, T> c2r_planes;
   c2r_planes.axes = {{.n = 6}, {.n = 8}};
   expect_no_allocation(c2r_planes, 6 * 5, 6 * 8); // goes through the block
@@ -173,6 +174,8 @@ TYPED_TEST(Contracts, ResultDoesNotDependOnPosition) {
     check_positions(fftn::c2r_plan<T>(fftn::rows_c2r<T>(n, 37)), 37, n / 2 + 1, n, n / 2 + 1, n);
   }
   check_positions(fftn::c2c_plan<T>(fftn::planes_c2c<T>(6, 10, 9, fftn::direction::backward)), 9,
+                  60, 60, 60, 60);
+  check_positions(fftn::c2c_plan<T>(fftn::volumes_c2c<T>(3, 4, 5, 7, fftn::direction::forward)), 7,
                   60, 60, 60, 60);
   // Two batch dimensions: 3 x 4 transforms, numbered with the inner one fastest.
   fftn::shape<c, c> two;
@@ -490,6 +493,8 @@ TEST(Validation, InvalidShapesThrowNamingTheArgument) {
   expect_refused(zero_third, "shape.batches[2].count");
   expect_refused(fftn::rows_c2c<double>(0, 1, fftn::direction::forward), "shape.axes[0].n");
   expect_refused(fftn::planes_c2c<double>(4, 0, 1, fftn::direction::forward), "shape.axes[1].n");
+  expect_refused(fftn::volumes_c2c<double>(4, 3, 0, 1, fftn::direction::forward),
+                 "shape.axes[2].n");
   expect_refused(fftn::rows_c2c<double>(8, 0, fftn::direction::forward), "shape.batches[0].count");
   auto bad_dir = fftn::rows_c2c<double>(8, 1, fftn::direction::forward);
   // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange): invalid on purpose

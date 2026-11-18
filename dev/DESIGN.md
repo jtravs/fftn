@@ -280,7 +280,17 @@ template <class T> shape<T, std::complex<T>> rows_r2c(std::size_t n, std::size_t
 template <class T> shape<std::complex<T>, T> rows_c2r(std::size_t n, std::size_t count);
 template <class T> shape<std::complex<T>, std::complex<T>>
     planes_c2c(std::size_t ny, std::size_t nx, std::size_t count, direction);
-// later: volume_c2c, and along_axes(extents, axes, direction) for the axes of a strided array
+template <class T> shape<T, std::complex<T>>
+    planes_r2c(std::size_t ny, std::size_t nx, std::size_t count);
+template <class T> shape<std::complex<T>, T>
+    planes_c2r(std::size_t ny, std::size_t nx, std::size_t count);
+template <class T> shape<std::complex<T>, std::complex<T>>
+    volumes_c2c(std::size_t nz, std::size_t ny, std::size_t nx, std::size_t count, direction);
+template <class T> shape<T, std::complex<T>>
+    volumes_r2c(std::size_t nz, std::size_t ny, std::size_t nx, std::size_t count);
+template <class T> shape<std::complex<T>, T>
+    volumes_c2r(std::size_t nz, std::size_t ny, std::size_t nx, std::size_t count);
+// later: along_axes(extents, axes, direction) for the axes of a strided array
 }
 ```
 
@@ -1094,7 +1104,10 @@ consequences:
 - Storage mode is per pass. **Full** (every twiddle stored) is the only mode built at
   first. **Shared** (conjugate-pair and symmetry sharing: fewer loads) and **derived** (a
   few stored, the rest computed in registers: for long rows where twiddle traffic competes
-  with data traffic) are added only if experiment X5 shows they pay.
+  with data traffic) are added only if experiment X5 shows they pay. Built so far: the
+  depth-first chain's top passes derive theirs from two small tables, one more complex
+  multiplication per leg (section 8.5; X46: 0.69–0.84 of the stored table's time on the
+  Xeon 6240 at 16384–262144 points, which deleted the stored form).
 - Values are computed with exact integer octant reduction and double-double evaluation,
   rounded once; no recurrences. Tables are shared between plans through the twiddle cache.
 - As built (task 1.2), full mode, per plan (deduplicated within a plan, not yet shared
@@ -1113,7 +1126,7 @@ consequences:
 
 ### 8.5 Strategies
 
-A strategy builds a program for a 1-D transform of length N from passes. There are four.
+A strategy builds a program for a 1-D transform of length N from passes. There are five.
 The planner picks among them per shape (section 11); the regimes named here are the
 starting hypotheses.
 
@@ -1140,7 +1153,10 @@ batches of short rows (task 2.2) and for the strided axes of c2c planes and volu
 and is copied when its source is its destination. Scratch is two lines a and b; an
 out-of-place line with a contiguous destination (not aliased, no copy, no Bluestein
 stage) uses the destination in place of b, so a chain touches three lines, not four
-(experiment X18: up to 15 % faster at 512–16384 on a 32 KiB L1).
+(experiment X18: up to 15 % faster at 512–16384 on a 32 KiB L1). A chain of two such passes
+whose last radix has a codelet runs its first pass into the destination and its last pass
+in place there (a last pass reads and writes the same elements in each unit), so it touches
+two lines and no scratch (experiment X47: 512 points 0.95 of the time on the EPYC 7763).
 
 **Grid** (two-phase Cooley–Tukey; the family that contains FFTW's recursion, Bailey's
 four-step and KFR's sandwich). N = N1·N2, the data viewed as N1 rows of N2. One phase is
@@ -1272,6 +1288,36 @@ L1 for rows beyond about 2^24 points on a 128 KiB L1), DIT order, padded work ar
 that end passes of radix 16 could read rows without set conflicts), and
 splitting one row's blocks across threads beyond what the work graph already shares (task
 3.6).
+
+**Depth-first chain** (decimation in time at the top; experiment X46, `src/passes/depth.inl`,
+`chain_builder::c2c_depth`). N = F1 M (or F1 F2 M): X[k + M t] = Σ_r ω_F1^(r t) w_N^(r k)
+Y_r[k], Y_r the length-M transform of the sub-row x[F1 j + r]. The sub-rows are F1
+interleaved sequences, the layout a Stockham lane pass reads with s = F1 copies, so one pass
+(lanes over C adjacent sub-rows, broadcast twiddles) runs the first pass of every sub-row's
+chain and stores each sub-row's outputs, transposed in registers, into its own block of M
+elements of the output (with two tops, sub-row d1 + F1 d2 into block d1 F2 + d2); a loop then
+runs the rest of each sub-row's chain (the chain of M, from its second pass) on its block
+with scratch lines a and b of M, in L1 or L2; one or two top passes (the DIT codelet, lanes
+over adjacent k, legs M apart) combine the blocks in place. In place the blocks live in the
+workspace block and the last top pass writes the output. So a row is touched in three sweeps
+by two lines, where the breadth-first chain makes one sweep per pass over three. The top
+pass's twiddles are derived (section 8.4): w_N^(r k) with k = k_hi B + k_lo as two
+multiplications, by w_N^(r k_lo) (per lane, B entries a row) and w_N^(r k_hi B) (broadcast),
+B the divisor of M with the fewest entries; the stored table would hold (F1 − 1) M entries of
+32 bytes on x86, as many bytes as the row (X46: with it the depth-first chain still missed L2
+0.3–0.7 times per point at 16384–25000 on the Xeon 6240, with the derived tables 0.00–0.01).
+Requirements: C divides F1 and M (so 25000 = 2³ · 5⁵ has no split on `avx512`), codelet
+radices with a depth-first pass for the tops and the sub-row's first radix (2–16, 20, 32;
+25 only as a first pass), a sub-row chain of two passes or more. The rules take it in double
+on targets with 32 vector registers (`avx512`, NEON) where the profile's fields say: the
+Xeon 6240's profile from L2/4 to 4 L2 (16384–262144 complex doubles) with one top of 16, else
+20 (X46: the changed rows 0.67 of their time, FFTN ÷ FFTW 1.06–1.34 → 0.70–0.86, 100000 1.02;
+÷ MKL 0.58–0.85); where a cluster shares L2 (Apple) from L1 to 2 L1 (8192–16384) when the
+length's power-of-two part is above L1/8, with one top of 4 (8192 0.73, 16384 0.84 of their
+time; from L1/2, batches of 4096 lost 1.03–1.04; mixed lengths with small power-of-two parts
+lost 1.05–1.09). The EPYC 7763 keeps its plans: tops of 16 lost 1.2–1.7 on `avx2`'s 16
+registers, tops of 4 and 8 won at 20000 and 46080 and lost elsewhere against X32's chains.
+Not built: three or more top factors, edge factors, float rules (unmeasured).
 
 **Lanes** (vectorise across rows). C rows, or C neighbouring lines of a strided axis,
 become the lanes of every pass; the whole transform is lane passes. For row-major batches
@@ -1610,6 +1656,34 @@ planes, 32 × 30 0.74, 36 × 2048 0.77, 2048² 0.73–0.85; 1024² stays on the 
 built yet: blocks over the columns of a long axis beyond L2
 (a two-phase split of the column, the grid's way), and padding or block ordering against the
 rows' own power-of-two conflicts.
+
+Volumes as built (task 4.2, experiment X43b; `add_volume_planes`): one thread runs a c2c
+volume axis by axis over the whole volume, as X40 built it; a team of two or more, where the
+profile's `team_volume_planes` says (x86-64 with a private L2 below 2 MiB: the EPYC 7763 and
+the Xeon 6240), runs a team program (13.2) with the two inner axes plane at a time: a loop
+over the n0 planes whose body is the plane's rows and its column phase, then the outer axis
+over blocks of adjacent pencils (the same lanes column phase, `column_block`'s rule, the
+pencils' elements a plane apart). At 8 lanes that took 0.775 (EPYC) and 0.771 (Xeon) of the
+axes one by one: whole planes per member and one phase boundary fewer. One thread gained too
+little to take it: EPYC 0.979 (its 32 MiB L3 per CCX holds volumes to 128³, so a third sweep
+is cheap), Xeon 0.934 but 97³ 1.048, M5 Max 0.962. Only volumes of at least 8 planes take
+plane order in a team: the plane phase has one line per plane, so 2 × 1024 × 1024 or
+4 × 512 × 512 keep the axes one by one, whose phases share out by lines (teams of more
+members than planes still idle some, a known limit). Either order computes every line alike,
+so the bits do not depend on it. Scratch per member is two lines of at most a plane or a tile
+of pencils (tests/core/volumes_test.cpp), never a second volume.
+
+Threaded column blocks (experiment X43): a team of two or more runs a team program
+(`plan_core::team`) whose lanes column blocks hold at most `column_team_bytes` of columns
+(128 bytes, 8 complex doubles against X40's 16, on x86-64 where a private L2 has a large L3
+behind it, the EPYC 7763; 0 elsewhere: the Xeon 6240's 1 MiB L2 holds X40's blocks, and
+narrower ones took 0.997 there, 512²–2048² 1.05–1.15), and whose columns
+that one thread runs alone through the chain because a line of them exceeds the tile budget
+(2048 × 36) run as blocks of one line with the chain's radices. At 8 lanes on the EPYC the
+narrower blocks took 0.887 of the time over the c2c planes and volumes they change (1000²
+0.66, 128² 0.75: tiles within a member's 512 KiB L2, and more blocks than members), the line
+blocks 0.72 at 2048 × 36 (members no longer write neighbouring columns of one line), while
+one thread lost up to 1.42 with the narrower blocks.
 
 ---
 
@@ -1954,7 +2028,15 @@ As built (`src/threading/work_graph.hpp`), the tasks are the transforms of the b
 task's phases are its body's records in order: a stage (the passes of a 1-D line) is a
 phase of the stage's own chunks, which share the task's scratch lines; a loop nest over the
 lines of one axis (2-D and 3-D) is a phase whose chunks are runs of whole lines, each line
-on the scratch of the member that runs it, the block (9.1) shared. Therefore:
+on the scratch of the member that runs it, the block (9.1) shared; a volume's loop over its
+planes (9.3) is a phase whose lines are whole planes, each running the plane's own phases
+on its member's scratch. A team of two or more members may run a *team program* instead of
+the program (`plan_core::team`, experiments X43 and X43b): the same transform with narrower
+lanes column blocks, columns that one thread runs alone through the chain run as blocks of
+one line with the chain's radices, and a volume of at least 8 planes with its inner axes
+plane at a time (9.3). Each column computes alike in any block and each line alike in either
+order, so the team program computes every element as the program does; a team's workspace
+covers both, since an executor that dispatches one member runs the program. Therefore:
 
 > For a given plan the output is bitwise identical for serial execution, any team size,
 > any executor and any timing.
@@ -2940,10 +3022,16 @@ to change before a release.
 | 2026-11-17 | The library's size (X27's codelets of 17, 19 and 23: +25 % of library text) accepted, agreed by the maintainer, 2026-11-17; no size budget that can fail a pull request: phase 6 adds an informational report (CI prints the library's text size per target on each pull request), experiment files record size changes, and build options (`FFTN_OLD_X86_TARGETS`, instantiating only the kernels that win) remain the levers if size ever matters | speed takes precedence; the codelets cut those cases to 0.24–0.31 of main's time, and the report keeps growth visible |
 | 2026-11-17 | The recorded protocol caveats, agreed by the maintainer, 2026-11-17: X35's and X14's, the queue bypasses of X36, X38 and X39, and the recorded exception cases (X23b's two) | each is recorded in its experiment file with its reason |
 | 2026-11-17 | CI for merge latency, decided by the maintainer, 2026-11-17: the ruleset on main requires four checks (lint; GCC 16 build and benchmark smoke and Clang 23 ASan + UBSan on Linux x86-64; Homebrew LLVM on macOS arm64) and no longer requires branches up to date; ThreadSanitizer, Clang 16, the build without the old x86 targets, AArch64 and Windows run after each merge on main (runs on main are not cancelled); emulation weekly and on demand only; the per-change sanitizer jobs leave out the old x86 targets | merges waited 30–90 minutes, and each merge restarted every other pull request's checks; with no users yet, a break on main found within the hour and fixed there costs less |
+| 2026-11-17 | A fifth strategy, the depth-first chain (section 8.5): the sub-rows' first pass over the row, each sub-row's chain on its own block in cache, decimation-in-time top passes in place with derived twiddles (section 8.4); taken by the rules in double on `avx512` and NEON where the profile sets its range: the Xeon 6240's profile from L2/4 to 4 L2 with a top of 16 or 20, Apple's from L1 to 2 L1 with a top of 4 where the power-of-two part exceeds L1/8 (experiment X46) | Xeon 6240: 0.674 over the 12 changed rows (16384–262144, 20000, 46080, 100000, in place, backward, batches of 3), L2 misses per point at 16384–25000 0.8–1.3 → 0.00–0.01, FFTN ÷ FFTW 0.70–0.86 there (100000 1.02); stored top-pass tables lost to derived ones on every row (0.784); M5 Max 8192 0.73, 16384 0.84; the EPYC lost with every rule tried; library text +4.4 % on the Mac, the x86-64 archive +3.0 % |
 | 2026-11-17 | The phase 1 tail rule (section 1.3) counts a case only when it is slower than 1.05 of the reference beyond noise (its whole interval above 1.05 × (1 + the A/A band)), decided by the maintainer, 2026-11-17 | a fixed 1.05 sat inside the noise of loaded runs (the Xeon's band was ±4.68 % on 2026-11-17) and of calls of a few nanoseconds (2 points in place); the geometric-mean targets are unchanged |
 | 2026-11-17 | A radix-25 codelet (Cooley–Tukey 5 × 5), a pass radix only, with passes on the x86 and scalar targets only (none on NEON); `avx2` double overrides take it at 500, 3125, 5000, 10000, 15625, 25000 and `avx512` double at 100, 500, 3125, 10000, 15625, 25000; two-level codelets staged through memory for 16-register targets rejected (experiment X42) | EPYC 0.874 / 0.891 of the arm before over the changed lengths (FFTN ÷ FFTW 3125 0.77 → 0.65, 15625 0.79 → 0.66), Xeon about 0.86 / 0.842 (100 1.14 → 0.88 of FFTW, 3125 0.81 → 0.53); on the Mac radix 25 lost to radix-5 chains; the two-level form changed nothing with GCC (1.000) and slowed radix 25; library text +6.1 % on x86-64, +2.0 % on the Mac |
 | 2026-11-17 | Multi-axis programs of at most 256 kernel calls per transform run from their calls unrolled at construction (section 8.3); the complex axes of real planes take the lanes column phase where C > 1 with their own block rule; where a cluster shares L2 a column block's tiles stay within twice L1 when its column elements lie four to a page (section 9.3) | X41: planes of up to 1024 points 0.87–0.94 of the walk's time (three machines); real planes 0.89 (EPYC) and 0.83 (Xeon) of the chain columns' time, the M5 Max lost 1.04 and keeps the chain; M5 Max 2048 × 36 0.90; joining the narrower block's phase (T1) rejected at 0.96 |
 | 2026-11-17 | In double, a lanes column phase of 17–32 points with a codelet of its length is that one pass (section 9.3) | X44: on x86 the row of 32 is a pair leaf and its columns took two lane passes (EPYC 32² 0.72–0.75, Xeon 0.77–0.81 of the time; ÷ FFTW 1.39 → 1.00, ÷ MKL 1.37 → 1.07); nested runs in the column edge passes rejected (EPYC 0.936 but 4 × 6 × 8 1.03 in two runs, Xeon 0.962, Mac 0.997) |
+| 2026-11-17 | An out-of-place chain of two passes runs its last pass in place on the destination (two lines, no scratch) (X47) | Zen 3 refilled L1 1.4–2.9 times as often as FFTW at 512–2048 points; with two lines a 512-point row refilled 172 times instead of 509: EPYC exit-check cases of 256–640 points 0.95–0.98, every other case unchanged (tracking EPYC 0.998, Xeon 0.997, Mac 0.999); bits unchanged |
+| 2026-11-17 | Shape functions are plural, as the code has them: `rows_*`, `planes_*`, `volumes_*`, each returning a shape of `count` transforms; c2c, r2c and c2r for each (`planes_r2c`, `planes_c2r`, `volumes_c2c`, `volumes_r2c`, `volumes_c2r` in `fftn/shape.hpp`, section 5.2), shape builders only, laid out as `rows_r2c` and `rows_c2r` lay out theirs. Agreed by the maintainer, 2026-11-17 | task 4.2 proposed `volumes_c2c` (5.2 had said `volume_c2c`); the maintainer kept the plural and asked for the real kinds of both; the general `shape` already serves every kind at every rank |
+| 2026-11-17 | A plan may hold a team program (`plan_core::team`) that every team of two or more runs: the same transform with narrower lanes column blocks (at most `column_team_bytes`: 128 on x86-64 with a private L2 and a large L3, the EPYC), chain-only columns as blocks of a line with the chain's radices, and (X43b) a volume's inner axes plane at a time; serial executions run the program. Bits are the program's by construction (a column's result does not depend on its block, a line's on the order of lines) and tested (sections 9.3, 13.2) | X43: at 8 lanes on the EPYC the narrower blocks took 0.887 of the time over the c2c planes and volumes they change and the line blocks 0.72 at 2048 × 36, while one thread lost up to 1.42 with them; the plan does not know at construction whether teams will run it |
+| 2026-11-17 | c2c volumes: one thread keeps the axes one by one; a team runs the two inner axes plane at a time (the team program) where the profile's `team_volume_planes` says (x86-64, private L2 below 2 MiB); the outer axis over blocks of adjacent pencils by `column_block`'s rule (section 9.3) | X43b: one thread EPYC 0.979, Xeon 0.934 with 97³ 1.048, M5 Max 0.962 (rejected everywhere); 8 lanes EPYC 0.775 (VT), Xeon 0.771 (VTX) |
+| 2026-11-17 | The `avx512` units are assembled with branches padded off 32-byte boundaries (`-Wa,-mbranches-within-32B-boundaries`, GCC on x86-64 only) | Bisect of the Xeon 6240's small-row loss: the plans did not change; the merge of X40 moved code and c2c 160, 180, 240 took 1.10 of their time (run 20261117-184544-8056), a JCC-erratum placement effect; padded, 160–384 0.89–0.94 and tracking 0.996 with nothing slower (20261117-204818-1541, -205228-e841); the flag on every unit slowed the EPYC 5–11 %, so `avx2` units stay unpadded; LESSONS 2.11. Unmeasured on Ice Lake and later and on Zen 4/5 (cloud tracking checks it) |
 ---
 
 ## 20. References

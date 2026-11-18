@@ -113,7 +113,14 @@ Mac, 0.86 → 0.69 on the EPYC). At a few nanoseconds per call the harness's own
 of the result; check it against the public entry whenever the entry changes. And keep
 every arm on one base: merging `main` into the branch mid-experiment moved the same rows by
 1.14–1.16 on the EPYC (the merged `main` alone did), which first read as a loss of the arm
-being timed. [X37](experiments/X37-short-batches.md).
+being timed. The backend's own bookkeeping counts too: reading the session's mode through a
+function-local static (a guard check, a call, three saved registers) cost about 20
+instructions and 4–7 cycles a call, which FFTW's five-instruction backend did not pay; with
+the mode in the plan record, single rows of 2–12 points took 0.79–0.88 of their time on the
+M5 Max and 2–8 points went from 0.92–1.01 to 0.77–0.81 of FFTW, the EPYC's tiny cases from
+20–27 to 15–20 cycles. A compiler that saves registers before the first branch (GCC 14) needs
+the slow paths out of line as well. [X37](experiments/X37-short-batches.md),
+[X49](experiments/X49-tiny-calls.md).
 
 1.12 **Across cloud VMs, compare ratios within a run, and distrust single long rows even
 then.** Two Granite Rapids VMs of one type (`c4-standard-16`), a day apart, ran both FFTN and
@@ -251,6 +258,33 @@ than the complex-register text, whose lowering never fuses a shared scale. Keep 
 unfused order in the generator rather than de-fusing an FMA schedule, and re-measure layout
 choices per ISA level, not per register width. Caveat: modern cores, not Sandy Bridge,
 whose 256-bit loads take two cycles. [X14](experiments/X14-old-x86.md).
+
+2.11 **A code-placement jump on Cascade Lake is a branch-alignment effect; pad the AVX-512
+units.** Single c2c double rows of 160, 180 and 240 points on the Xeon 6240 went to 1.07–1.10
+of their time (360 and 384: 1.04–1.06) between main 304a8c5 and 509d123 with the same radices,
+the same kernels and the same execute path; bisecting the first-parent merges put the jump at
+X40's merge (20261117-184544-8056, band ±1.0 %), whose diff touches no code those rows run
+(X40 had seen c2c 128 do the same and X37 a jump at 2–8 points on the EPYC). Assembling the
+library with GCC's `-Wa,-mbranches-within-32B-boundaries` (no branch crosses or ends on a
+32-byte boundary, the Skylake-family JCC erratum's mitigation) took them back to 0.89–0.91 of
+the unpadded time on the Xeon (20261117-204818-1541, band ±1.0 %, none loaded; 360 and 384 0.94 and 0.92); the tracking tier showed nothing slower (20261117-205228-e841); the flag on `driver.cpp` alone did
+nothing, on the avx512 units alone it did all of it (20261117-193445-016d, loaded but paired). The same flag on every unit slowed 180 and 300 points by 5–11 % on the
+EPYC (Zen 3, 20261117-190948-906d): code placement is luck there too, so only the units
+that run on the affected cores take it. A sudden single-row jump with an unchanged plan is
+this before it is a code change: bisect, then try the flag on the units that run.
+
+2.12 **On Apple cores, a paired load or store forfeits fast store-to-load forwarding, but a
+kernel rarely depends on it.** On the M5 Max a 2-point butterfly whose every call loads what
+the previous call stored (in place on a hot buffer) runs 0.72 ns a call with single 128-bit
+`ldr`/`str`, and 3.2–3.8 ns when the loads, the stores or both are pairs (`ldp`/`stp`), at
+any alignment tried; Clang and GCC pair adjacent accesses by themselves. Compiling every NEON
+kernel without pairs (Clang's target features `+disable-ldp,+disable-stp`) took in-place
+batches of three rows of 2 and 3 points to 0.85–0.90 of their time and moved nothing else
+beyond noise (32 and 64 points, whose codelets spill, 1.01 and 1.00; float 8 × 2 in place
+1.09 slower), so it was not adopted: only transforms whose next execution starts while the
+last one's stores are still in flight see the cost. Check for it when an in-place tiny case
+is slower than its out-of-place twin by more than the copy. Neoverse not measured.
+[X49](experiments/X49-tiny-calls.md) (`bench/x49/pairs_forwarding.cpp`).
 
 ## 3. Memory and caches
 
@@ -489,7 +523,11 @@ passes' twiddles overfill L2. FFTW plans the same rows as recursive decimation i
 0.0–0.3 times per point. A two-phase grid, the blocked answer FFTN has, pays only from 512
 KiB (32768: 0.89 of the chain); at 16384 its copies cost 30–50 instructions per point and it
 lost in every split (1.02–1.69). So the gap between L2/4 and L2/2 is a missing strategy, a
-depth-first chain, not a threshold. [X39](experiments/X39-xeon-long.md).
+depth-first chain, not a threshold. [X39](experiments/X39-xeon-long.md). **Then X46:** the
+depth-first chain (the sub-rows' first pass over the row, every sub-row finished on its own
+block, a decimation-in-time top pass in place) took 16384–262144 to 0.86 of their time with
+the top pass's twiddles stored and to 0.67 with them derived (lesson 3.26); FFTN ÷ FFTW
+1.06–1.34 → 0.70–0.86. [X46](experiments/X46-depth-first.md).
 
 3.23 **A strided axis is a batch of adjacent columns: vectorise across them and read each
 line once.** Running a plane's columns one at a time (copied element by element on wide
@@ -517,6 +555,16 @@ four complex values per register, each strided column copied) the blocks won 0.7
 an EPYC 7763, except where their tiles left L2 while the column alone fit L1 (1024²: 1.05
 with 4 columns). Ask what the column route pays (copies, set conflicts) before blocking.
 [X41](experiments/X41-planes-2.md).
+
+3.26 **A long row's twiddle table can weigh as much as the row: derive it, don't store it.**
+A pass of radix R over a row of n reads (R − 1) n / R twiddles; in x86's pre-arranged
+per-lane storage (32 bytes per complex double) that is 384–480 KiB for 16384 points, more
+than the 256 KiB row. On the Xeon 6240 (1 MiB L2) a depth-first chain whose top pass read
+such a table still missed L2 0.3–0.7 times per point at 16384–25000; forming w^(r k) as
+w^(r k_lo) · w^(r k_hi B) from two tables of about √n entries (one more complex
+multiplication per leg, one more rounding) took the misses to 0.00–0.01 and the time to
+0.69–0.84 of the stored table's at 16384–262144 points. The breadth-first chain's first
+pass has the same table. [X46](experiments/X46-depth-first.md).
 
 ## 4. Kernels and algorithms
 
@@ -762,6 +810,22 @@ the EPYC 7763). The per-call set-up is the next cost for the smallest planes: a 
 column leaf computes and spills 32 leg addresses for four runs at 16².
 [X44](experiments/X44-small-planes.md).
 
+4.19 **In-cache FFTs on Zen 3 stall on the FP register file; count the lines a chain
+touches, and judge integer savings by time, not instruction counts.** On the EPYC 7763
+(GCC 16, AVX2) FFTN's 512–2048-point rows did FFTW's FP work (FP-pipe uops within 3 %) in
+14–18 % more cycles, and most of the extra cycles were dispatch stalls on the FP register
+file (PMCx0AE unit 0x20: 26–37 % of cycles against FFTW's 21–32 %), which fills while
+retirement waits on loads that miss L1. FFTN refilled L1 1.4–2.9 times as often, because a
+Stockham chain out of place touches three lines (source, destination, scratch) where FFTW's
+in-place passes on the output touch two. The last pass of a Stockham chain reads and writes
+the same elements per unit, so it can run in place: two-pass chains then touch two lines,
+and 512 points refilled L1 172 times instead of 509 and took 0.95 of the time (batches of
+256–512 points 0.95–0.98; rows that already fit L1 unchanged, as was the Mac's tracking
+tier). The converse warning: taking per-unit index arithmetic out of the lane-pass loop cut
+GCC's radix-16 unit from 190 to 158 instructions, yet ran 1.02–1.17 times as long, because
+GCC then kept the 32 leg offsets in stack slots and every leg load waited on an offset load.
+Zen 3's counters need groups of at most five events with the NMI watchdog on (a group of
+six never runs). [X47](experiments/X47-epyc-mid-2.md).
 
 ## 5. Threading
 
@@ -833,6 +897,24 @@ planes 280–380 times slower than its serial plans on an EPYC 7763, and 16² to
 times slower: its planner does not fall back to one thread for tiny problems. A threaded
 comparison that takes FFTW's threaded time alone flatters the other library on every small
 case. [X41](experiments/X41-planes-2.md).
+
+5.10 **A team wants narrower column blocks than one thread, and a plan can give it them
+without changing a bit.** On the EPYC 7763 (512 KiB private L2) blocks of 8 adjacent columns
+took 0.887 of the time of 16 at 8 lanes over the planes they change (1000² 0.66, 128² 0.75),
+while one thread lost up to 1.42 with them (2048²): one thread has the whole 32 MiB L3 behind
+its tiles, eight share it, and narrower blocks also give the members more pieces to share.
+The Xeon 6240 (1 MiB L2) gained nothing (0.997). Because a column computes alike in any block,
+a plan can keep a second program for teams with the same results; finer chunks of the same
+blocks lost everywhere (1.11–1.13). Members running neighbouring columns alone through the
+chain write the same cache lines: blocks of one line instead took 0.72 at 2048 × 36.
+[X43](experiments/X43-threaded-columns.md).
+
+5.11 **Whole planes per member are worth more to a team than the saved sweep is to one
+thread.** Volumes with their inner two axes plane at a time took 0.778 (EPYC 7763) and 0.788
+(Xeon 6240) of the axes-one-by-one time at 8 lanes, but 0.979 and 0.934 at one thread: where
+the L3 holds the volume (32 MiB per CCX), the third sweep is cheap for one thread, while a
+team gains one phase boundary fewer and each plane's rows and columns on one core.
+[X43b](experiments/X43b-volumes.md).
 
 ## 6. Toolchain and testing pitfalls
 

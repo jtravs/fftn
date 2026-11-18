@@ -22,7 +22,7 @@
 namespace fftn::inline v0::detail {
 
 // Which strategy builds a c2c row (DESIGN.md 8.5): the planner's choice, or one forced.
-enum class strategy_choice : std::uint8_t { rules, chain, grid, lanes };
+enum class strategy_choice : std::uint8_t { rules, chain, grid, lanes, depth };
 
 // The arithmetic of a chain's lane passes (DESIGN.md 6.3): the profile's choice, or
 // interleaved or split forced.
@@ -52,13 +52,22 @@ struct build_settings { // NOLINT(clang-analyzer-optin.performance.Padding)
   bool pair_leaves = true;
   // The strategy of a plan of one axis (rows): the rules' choice (the lanes for a batch of
   // rows up to the profile's lanes_up_to, a c2c grid beyond profile.grid_min_bytes, else
-  // the chain), or the chain, the grid or the lanes forced. A grid is built only for a c2c
+  // the chain), or the chain, the grid, the lanes or the depth-first chain forced. A grid
+  // is built only for a c2c
   // row with a split (strategies/grid.hpp) and no edge factor, the lanes only for a batch
   // (the innermost batch dimension's count at least 2) of rows every pass of whose chain is
   // a codelet's, without input edge operations, real rows contiguous on the real side
-  // (strategies/lanes.cpp); elsewhere, forced or not, the row is a chain, and describe()
-  // says which was built. Experiments X12 and X7 compare them.
+  // (strategies/lanes.cpp), the depth-first chain only for a c2c row of one axis,
+  // contiguous on both sides, with no factor edge, whose split fits
+  // (chain_builder::depth_fits); elsewhere, forced or not, the row is a chain, and describe()
+  // says which was built. Experiments X12, X7 and X46 compare them.
   strategy_choice strategy = strategy_choice::rules;
+  // The depth-first chain's top factors, one or two (n = F1 M or F1 F2 M;
+  // strategies/chain.hpp, c2c_depth), when not empty, instead of the default ones
+  // (plan_core.cpp, depth_tops_of): wherever they fit with strategy depth, and with the rules
+  // on the rows the rules make depth-first chains (a row where they do not fit is then built
+  // as without the chain). Measured planning's pinned choice carries them. Experiment X46.
+  std::vector<std::size_t> depth_tops;
   // The lanes strategy's block, in rows (rounded up to a multiple of the target's complex
   // count C), instead of the rule's when not 0 (plan_core.cpp, lane_block; experiment X7).
   std::size_t lane_block = 0;
@@ -69,6 +78,12 @@ struct build_settings { // NOLINT(clang-analyzer-optin.performance.Padding)
   // multiple of C) instead of the rule's (plan_core.cpp, column_block) when not 0.
   bool lanes_columns = true;
   std::size_t column_block = 0;
+  // Builds the team program (plan_core::team) rather than the program: column blocks within
+  // profile.column_team_bytes (X43). Set only by build_plan_core for the team core it adds.
+  bool team_program = false;
+  // A c2c volume's inner axes plane at a time in the program too, not only in a team program
+  // where the profile asks (X43b); tests compare the two orders.
+  bool volume_planes = false;
   // The radices, in pass order, of a lanes column phase whose columns' length they multiply
   // to, every one a codelet with lane passes, instead of the rule's (plan_core.cpp,
   // column_radices); otherwise ignored. Experiment X44 compares column chains through it.
@@ -157,6 +172,7 @@ public:
   // planning enumerates the alternatives (core/candidates.cpp).
   strategy_choice built = strategy_choice::chain;
   std::vector<std::size_t> grid_factors; // a grid's factors as built, in phase order
+  std::vector<std::size_t> depth_tops;   // a depth-first chain's top factors as built
   // The candidate the plan was built from, as text (core/candidates.hpp, choice_text):
   // "rules" for the rules' plan. Wisdom records it (core/wisdom.cpp).
   std::string program_text = "rules";
@@ -189,7 +205,19 @@ public:
   std::size_t bytes = 0;
   // One lane's scratch in a team's workspace: the layout above, in whole 128-byte lines.
   std::size_t slot_bytes = 0;
+
+  // What a team of two or more members runs (X43 arm B1), when it differs from this core:
+  // the same transform with narrower lanes column blocks (machine_profile::column_team_bytes)
+  // and the same radices per column. A column's result does not depend on its block's width
+  // (each column is a lane computing its own chain), so serial and team executions give the
+  // same bits. A whole core, with its own program, work graph, tables and scratch layout.
+  std::shared_ptr<const plan_core> team;
 };
+
+// The core a team of two or more members runs: the team program where there is one.
+[[nodiscard]] inline const plan_core& team_core(const plan_core& c) noexcept {
+  return c.team != nullptr ? *c.team : c;
+}
 
 // A plan as the options ask: built by the rules (build_plan_core), or through measured
 // planning or a wisdom entry (plan_with_effort, core/measure.cpp).

@@ -151,6 +151,23 @@ struct machine_profile {
   // of the three phases' time at 2^20-2^23 points out of place, but lost in place (2^20 1.10)
   // and for c2r 2^20 (1.23). set_grid_sizes sets it on the Xeon profile.
   std::size_t grid_two_pow2_bytes = 0;
+  // A c2c row of one axis of [depth_min_bytes, depth_max_bytes] whose power-of-two part has
+  // more than depth_part_bytes is a depth-first chain in double on a target with 32 vector
+  // registers (strategies/chain.hpp, c2c_depth; core/plan_core.cpp, depth_tops_of), with one
+  // top factor, depth_top, else depth_top_alt, where its split fits; depth_max_bytes 0: never
+  // (experiment X46). On the Xeon 6240's counters screen such chains with tops of 16 or 20
+  // took 0.63-0.77 of the chains' and grids' time from 16384 to 262144 points (L2/4 to 4 L2);
+  // 8192 points (L2/8) gained nothing. On the M5 Max tops of 4 took 0.64-0.96 from 3072 to
+  // 16384 points where the power-of-two part had 2048 points or more, and lost 1.05-1.09
+  // where it had 16-128 (the cluster L2's conflicts are a power-of-two problem, X29) and at
+  // 32768 (1.06, against X32's chain). set_grid_sizes sets L2/4 to 4 L2 and tops 16, 20 where
+  // a private L2 has less than 2 MiB of L3 per CPU behind it, on x86-64; L1 to 2 L1, top 4
+  // and a power-of-two part above L1/8 where a cluster shares L2.
+  std::size_t depth_min_bytes = 0;
+  std::size_t depth_max_bytes = 0;
+  std::size_t depth_part_bytes = 0;
+  std::size_t depth_top = 0;
+  std::size_t depth_top_alt = 0;
   // The L1 data cache's line in bytes: a lanes column phase's block holds at least a line of
   // adjacent columns (core/plan_core.cpp, column_block; experiment X40). set_grid_sizes reads
   // it from the topology (128 on Apple's cores).
@@ -166,6 +183,16 @@ struct machine_profile {
   // When not 0, the budget instead for columns whose elements lie at least four to a page
   // (X41: twice L1 where a cluster shares L2).
   std::size_t column_near_tile_bytes = 0;
+  // When not 0, a c2c plan of several axes also builds a team program (plan_core::team),
+  // whose lanes column blocks hold at most this many bytes of columns, for executions by
+  // teams of two or more (X43 arm B1). set_grid_sizes sets 128 on x86-64 where a private L2 has
+  // 2 MiB or more of L3 per CPU behind it (the EPYC 7763).
+  std::size_t column_team_bytes = 0;
+  // A team program (plan_core::team) runs a c2c volume's two inner axes plane at a time
+  // (core/plan_core.cpp, add_volume_planes; X43b arms VT and VTX): plane at a time changes no
+  // bits, and teams gained where one thread did not. set_grid_sizes sets it on x86-64 where
+  // each core has its own L2 of less than 2 MiB.
+  bool team_volume_planes = false;
   // The L1 data cache's associativity (8 where the topology does not say: macOS): with
   // grid_block_bytes it gives the set period against which a column phase's last pass
   // counts its legs (core/plan_core.cpp, column_radices; X40).

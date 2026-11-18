@@ -153,26 +153,47 @@ TEST(WorkGraph, PhasesOfRowsAndPlanes) {
   EXPECT_EQ(blocks->graph.phases[1].nest, 1U);
   EXPECT_EQ(blocks->graph.phases[1].units, 4U);  // blocks of 8 of the 32 columns
   EXPECT_EQ(blocks->graph.phases[1].chunks, 4U); // a block holds 64 x 8 points
-  // A volume: the two loops over the other axes are one phase of their product.
+  // A volume (task 4.2): its two inner axes plane at a time, one phase whose lines are the
+  // 4 whole planes (the loop over them holds each plane's own loops), then the outer axis,
+  // whose two loops over the other axes are one phase of their product.
   fftn::shape<std::complex<double>, std::complex<double>> v;
   v.axes = {{.n = 4}, {.n = 5}, {.n = 6}};
   fftn::detail::build_settings alone;
   alone.lanes_columns = false;
+  alone.volume_planes = true;
   const auto vol = fftn::detail::make_plan_core(fftn::detail::view_of(v), opts, alone);
-  ASSERT_EQ(vol->graph.phases.size(), 3U);
-  EXPECT_EQ(vol->graph.phases[0].nest, 2U);
-  EXPECT_EQ(vol->graph.phases[0].units, 20U);
-  EXPECT_EQ(vol->graph.phases[2].units, 30U);
-  // With the lanes, one block of the 6 adjacent columns (rounded up to C, the idle lanes
-  // never written) per line of the other strided axis: 4 along axis 0 for axis 1, 5 along
-  // axis 1 for axis 0.
+  ASSERT_EQ(vol->graph.phases.size(), 2U);
+  EXPECT_EQ(vol->graph.phases[0].nest, 1U);
+  EXPECT_EQ(vol->graph.phases[0].units, 4U);
+  EXPECT_EQ(vol->graph.phases[1].nest, 2U);
+  EXPECT_EQ(vol->graph.phases[1].units, 30U);
+  // With the lanes, the outer axis takes one block of the 6 adjacent pencils (rounded up to
+  // C, the idle lanes never written) per line of axis 1.
   fftn::detail::build_settings six;
   six.column_block = 6;
+  six.volume_planes = true;
   const auto lanes_vol = fftn::detail::make_plan_core(fftn::detail::view_of(v), opts, six);
-  ASSERT_EQ(lanes_vol->graph.phases.size(), 3U);
+  ASSERT_EQ(lanes_vol->graph.phases.size(), 2U);
+  EXPECT_EQ(lanes_vol->graph.phases[0].units, 4U);
   EXPECT_EQ(lanes_vol->graph.phases[1].nest, 2U);
-  EXPECT_EQ(lanes_vol->graph.phases[1].units, 4U);
-  EXPECT_EQ(lanes_vol->graph.phases[2].units, 5U);
+  EXPECT_EQ(lanes_vol->graph.phases[1].units, 5U);
+  // A volume's planes are cut by a plane's points: 64 x 64 x 64 at 2048 points per chunk
+  // has 64 chunks of one plane of 4096 points each.
+  fftn::shape<std::complex<double>, std::complex<double>> cube;
+  cube.axes = {{.n = 64}, {.n = 64}, {.n = 64}};
+  fftn::detail::build_settings planes;
+  planes.volume_planes = true;
+  const auto big = fftn::detail::make_plan_core(fftn::detail::view_of(cube), opts, planes);
+  EXPECT_EQ(big->graph.phases[0].units, 64U);
+  EXPECT_EQ(big->graph.phases[0].chunks, 64U);
+  // Axis by axis (the profile's default): one phase per axis, the two loops over the other
+  // axes one phase of their product.
+  alone.volume_planes = false;
+  const auto axes = fftn::detail::make_plan_core(fftn::detail::view_of(v), opts, alone);
+  ASSERT_EQ(axes->graph.phases.size(), 3U);
+  EXPECT_EQ(axes->graph.phases[0].nest, 2U);
+  EXPECT_EQ(axes->graph.phases[0].units, 20U);
+  EXPECT_EQ(axes->graph.phases[2].units, 30U);
 }
 
 // Rule 1: a job smaller than a few dispatch costs runs inline.
@@ -497,6 +518,21 @@ TEST(Schedule, GridSizesFromCaches) {
   EXPECT_EQ(xeon.grid_two_odd_part, 15U);
   EXPECT_EQ(epyc.grid_two_odd_part, 0U);
   EXPECT_EQ(m5.grid_two_odd_part, 0U);
+  // Team programs (X43, X43b), as an x86-64 build sets them: the EPYC's teams run narrower
+  // column blocks, both machines' teams run volumes plane at a time; the M5 Max neither.
+  const auto x86 = [&](const char* file) {
+    machine_profile p;
+    fftn::detail::set_grid_sizes(p, fftn::detail::load_topology(data / file).classes.at(0), true);
+    return p;
+  };
+  const machine_profile epyc86 = x86("linux-amd-epyc-7763.sysfs");
+  const machine_profile xeon86 = x86("linux-intel-xeon-gold-6240.sysfs");
+  EXPECT_EQ(epyc86.column_team_bytes, 128U);
+  EXPECT_TRUE(epyc86.team_volume_planes);
+  EXPECT_EQ(xeon86.column_team_bytes, 0U);
+  EXPECT_TRUE(xeon86.team_volume_planes);
+  EXPECT_EQ(m5.column_team_bytes, 0U);
+  EXPECT_FALSE(m5.team_volume_planes);
   // The c2r grid pairs in its first gather only where the L2 is shared (X29).
   EXPECT_TRUE(m5.c2r_paired_gather);
   EXPECT_FALSE(epyc.c2r_paired_gather);
@@ -556,6 +592,11 @@ struct planner_fields {
   std::size_t long_convolution_bytes;    // X36
   std::size_t grid_phase_radix;          // X39 (arm D)
   std::size_t grid_two_pow2_bytes;       // X39 (arm D)
+  std::size_t depth_min_bytes;           // X46
+  std::size_t depth_max_bytes;           // X46
+  std::size_t depth_part_bytes;          // X46 (arm C)
+  std::size_t depth_top;                 // X46
+  std::size_t depth_top_alt;             // X46
 
   bool operator==(const planner_fields&) const = default;
 };
@@ -582,6 +623,11 @@ planner_fields fields_of(const machine_profile& p) {
       .long_convolution_bytes = p.long_convolution_bytes,
       .grid_phase_radix = p.grid_phase_radix,
       .grid_two_pow2_bytes = p.grid_two_pow2_bytes,
+      .depth_min_bytes = p.depth_min_bytes,
+      .depth_max_bytes = p.depth_max_bytes,
+      .depth_part_bytes = p.depth_part_bytes,
+      .depth_top = p.depth_top,
+      .depth_top_alt = p.depth_top_alt,
   };
 }
 
@@ -597,19 +643,24 @@ TEST(Schedule, ProfilesOfRecordedMachines) {
   EXPECT_EQ(fields("macos-apple-m5-max.sysctl", false),
             (planner_fields{128 * kib, 2 * mib,   128 * kib, 4 * mib,   4 * kib, 0,    0,
                             16 * kib,  256 * kib, never,     64 * mib,  2 * mib, true, 0,
-                            0,         0,         32 * kib,  128 * kib, 0,       0}));
-  EXPECT_EQ(fields("linux-amd-epyc-7763.sysfs", true),
-            (planner_fields{256 * kib, 512 * kib, 32 * kib, 128 * kib, never, 0,     0,
-                            16 * kib,  0,         16 * mib, 64 * mib,  never, false, 0,
-                            0,         0,         32 * kib, 256 * kib, 0,     0}));
-  EXPECT_EQ(fields("linux-gcp-c4d-zen5.sysfs", true),
-            (planner_fields{512 * kib, 1 * mib, 48 * kib, 256 * kib, never, 0,     0,
-                            16 * kib,  0,       16 * mib, 64 * mib,  never, false, 0,
-                            0,         0,       48 * kib, 512 * kib, 0,     0}));
-  EXPECT_EQ(fields("linux-intel-xeon-gold-6240.sysfs", true),
-            (planner_fields{512 * kib, 1 * mib,   32 * kib, 256 * kib, never, 15,         0,
-                            0,         0,         never,    0,         0,     false,      16,
-                            64 * kib,  256 * kib, never,    4 * mib,   20,    12672 * kib}));
+                            0,         0,         32 * kib,  128 * kib, 0,       0,    128 * kib,
+                            256 * kib, 16 * kib,  4,         0}));
+  EXPECT_EQ(
+      fields("linux-amd-epyc-7763.sysfs", true),
+      (planner_fields{256 * kib, 512 * kib, 32 * kib, 128 * kib, never, 0, 0, 16 * kib, 0,
+                      16 * mib,  64 * mib,  never,    false,     0,     0, 0, 32 * kib, 256 * kib,
+                      0,         0,         0,        0,         0,     0, 0}));
+  EXPECT_EQ(
+      fields("linux-gcp-c4d-zen5.sysfs", true),
+      (planner_fields{512 * kib, 1 * mib,  48 * kib, 256 * kib, never, 0, 0, 16 * kib, 0,
+                      16 * mib,  64 * mib, never,    false,     0,     0, 0, 48 * kib, 512 * kib,
+                      0,         0,        0,        0,         0,     0, 0}));
+  EXPECT_EQ(
+      fields("linux-intel-xeon-gold-6240.sysfs", true),
+      (planner_fields{512 * kib, 1 * mib,   32 * kib, 256 * kib, never, 15,          0,
+                      0,         0,         never,    0,         0,     false,       16,
+                      64 * kib,  256 * kib, never,    4 * mib,   20,    12672 * kib, 256 * kib,
+                      4 * mib,   0,         16,       20}));
   const planner_fields axion{
       .grid_min_bytes = 1 * mib,
       .grid_three_bytes = 2 * mib,
@@ -631,6 +682,11 @@ TEST(Schedule, ProfilesOfRecordedMachines) {
       .long_convolution_bytes = 1 * mib,
       .grid_phase_radix = 0,
       .grid_two_pow2_bytes = 0,
+      .depth_min_bytes = 0,
+      .depth_max_bytes = 0,
+      .depth_part_bytes = 0,
+      .depth_top = 0,
+      .depth_top_alt = 0,
   };
   EXPECT_EQ(fields("linux-gcp-c4a-axion.sysfs", false), axion);
   // A private L2 of 2 MiB on x86-64.
@@ -655,6 +711,11 @@ TEST(Schedule, ProfilesOfRecordedMachines) {
       .long_convolution_bytes = 8 * mib,
       .grid_phase_radix = 0,
       .grid_two_pow2_bytes = 0,
+      .depth_min_bytes = 0,
+      .depth_max_bytes = 0,
+      .depth_part_bytes = 0,
+      .depth_top = 0,
+      .depth_top_alt = 0,
   };
   EXPECT_EQ(fields("linux-gcp-c4-granite-rapids.sysfs", true), large_l2);
   // The same on bare metal with SMT, where Granite Rapids' L3 per CPU is under 2 MiB

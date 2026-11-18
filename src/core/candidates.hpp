@@ -29,13 +29,16 @@ struct plan_choice {
   // NOLINTEND(readability-redundant-member-init)
   std::size_t grid_phases = 0; // build_settings::grid_phases
   int rader = -1;              // build_settings::rader
+  // NOLINTNEXTLINE(readability-redundant-member-init): as radices above
+  std::vector<std::size_t> depth_tops{}; // build_settings::depth_tops (experiment X46)
 
   bool operator==(const plan_choice&) const = default;
 };
 
 // The choice as text: "rules" for the default, else space-separated fields among
-// "strategy=chain|grid|lanes", "radices=4.8.8", "grid=64.64.16", "phases=2|3", "rader=0|1",
-// in that order. parse_choice reads it back (nullopt for text that is not a choice).
+// "strategy=chain|grid|lanes|depth", "radices=4.8.8", "grid=64.64.16", "phases=2|3",
+// "rader=0|1", "tops=8.4" (one or two depth-first top factors), in that order. parse_choice reads
+// it back (nullopt for text that is not a choice).
 [[nodiscard]] std::string choice_text(const plan_choice& c);
 [[nodiscard]] std::optional<plan_choice> parse_choice(std::string_view text);
 
@@ -43,8 +46,9 @@ struct plan_choice {
 void apply_choice(const plan_choice& c, build_settings& s);
 
 // The choice to record for a plan built from c, in a canonical form that names only what
-// took effect: a grid's factors written out (so that the record does not depend on the
-// grid's phase rule), and grid fields without a grid, lanes not built, radices whose product
+// took effect: a grid's factors and a depth-first chain's top factors written out (so that
+// the record does not depend on the grid's phase rule or the depth-first default), and grid
+// or depth-first fields without that strategy built, lanes not built, radices whose product
 // is no line's length and a Rader setting without a prime factor to take it dropped.
 [[nodiscard]] plan_choice pinned_choice(const plan_choice& c, const plan_core& built);
 

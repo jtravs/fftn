@@ -49,10 +49,13 @@
 //   LEAF_LIMIT=N     the planner's leaf limit (build_settings::leaf_limit): every length
 //                    up to N that has a codelet is one leaf instead of a chain (default: the
 //                    profile's, 32 on NEON in double, else 16)
-//   STRATEGY=rules|chain|grid|lanes   the strategy of rows (build_settings::strategy): the
-//                    planner's choice (default), or the chain, the grid or the lanes forced
-//                    where the row can be one; each case's note says which was built
-//                    (experiments X12, X7)
+//   STRATEGY=rules|chain|grid|lanes|depth   the strategy of rows (build_settings::strategy):
+//                    the planner's choice (default), or the chain, the grid, the lanes or the
+//                    depth-first chain forced where the row can be one; each case's note says
+//                    which was built (experiments X12, X7, X46)
+//   DEPTH_TOPS=f1[.f2]   the depth-first chain's top factors (build_settings::depth_tops):
+//                    wherever they fit with STRATEGY=depth, and on the rows the rules make
+//                    depth-first chains otherwise (experiment X46)
 //   LANE_BLOCK=B     the lanes strategy's block in rows (build_settings::lane_block; default
 //                    the rule's), rounded up to a multiple of the complex count (X7)
 //   COLUMNS=lanes|chain   the strided axes of planes and volumes (build_settings::
@@ -174,6 +177,7 @@ struct session {
   std::string strategy = "rules";  // STRATEGY as given
   std::string layout = "rules";    // LAYOUT as given
   std::string factors_text;        // GRID_FACTORS as given
+  std::string depth_tops_text;     // DEPTH_TOPS as given
   std::string rader = "rules";     // RADER as given
   std::string description;
 };
@@ -198,6 +202,11 @@ std::optional<fftn::isa> isa_from_name(std::string_view name) {
 struct plan_record {
   std::shared_ptr<const detail::plan_core> core;
   fftn::workspace ws;
+  // The session's mode when the plan was made (it does not change while plans exist), so that
+  // a serial execute reads nothing else: reaching it through state() cost a guard check, a
+  // call and three saved registers per execute, about 16 instructions that FFTW's backend
+  // does not run (X49).
+  call mode = call::serial;
 };
 
 // FFTW's many-interface layout: row-major arrays whose last dimension is embedded in
@@ -370,6 +379,34 @@ std::string omp_environment() {
 }
 #endif
 
+// The executes through an executor or a team, out of line so that the serial execute needs
+// no frame: with them inline GCC 14 saved three registers before testing the mode (X49).
+[[gnu::noinline]] void execute_threaded(const plan_record& r, void* in, void* out) {
+  const session& s = state();
+  switch (r.mode) {
+  case call::serial:
+    return;
+  case call::executor:
+    detail::execute_on(*r.core, in, out, regrouped(*s.exec, s.group_size), r.ws);
+    return;
+  case call::team:
+#ifdef FBENCH_FFTN_OMP
+  {
+    const int group = s.group_size;
+#pragma omp parallel num_threads(s.threads)
+    {
+      fftn::team me = fftn::omp::this_team();
+      if (group >= 0) {
+        me.group_size = group;
+      }
+      detail::execute_team(*r.core, in, out, me, r.ws, fftn::completion::all);
+    }
+  }
+#endif
+    return;
+  }
+}
+
 } // namespace
 
 extern "C" {
@@ -454,8 +491,9 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
       }
       s.settings.leaf_limit = *v;
     } else if (key == "STRATEGY") {
-      if (value != "rules" && value != "chain" && value != "grid" && value != "lanes") {
-        say(message, message_size, "STRATEGY is rules, chain, grid or lanes");
+      if (value != "rules" && value != "chain" && value != "grid" && value != "lanes" &&
+          value != "depth") {
+        say(message, message_size, "STRATEGY is rules, chain, grid, lanes or depth");
         return fbench_error;
       }
       s.settings.strategy = detail::strategy_choice::rules;
@@ -465,8 +503,22 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
         s.settings.strategy = detail::strategy_choice::grid;
       } else if (value == "lanes") {
         s.settings.strategy = detail::strategy_choice::lanes;
+      } else if (value == "depth") {
+        s.settings.strategy = detail::strategy_choice::depth;
       }
       s.strategy = value;
+    } else if (key == "DEPTH_TOPS") {
+      try {
+        s.settings.depth_tops = parse_radices(value, "DEPTH_TOPS");
+      } catch (const std::exception& e) {
+        say(message, message_size, e.what());
+        return fbench_error;
+      }
+      if (s.settings.depth_tops.size() > 2) {
+        say(message, message_size, "DEPTH_TOPS is one or two factors, f1 or f1.f2");
+        return fbench_error;
+      }
+      s.depth_tops_text = value;
     } else if (key == "LANE_BLOCK") {
       const std::optional<std::size_t> v = fbench::fftn_tuning::parse_size(value, 1, false);
       if (!v || *v > 4096) {
@@ -600,6 +652,9 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
     if (s.settings.leaf_limit != 0) {
       d.integer("leaf_limit", static_cast<std::int64_t>(s.settings.leaf_limit));
     }
+    if (!s.settings.depth_tops.empty()) {
+      d.str("depth_tops", s.depth_tops_text);
+    }
     if (s.settings.lane_block != 0) {
       d.integer("lane_block", static_cast<std::int64_t>(s.settings.lane_block));
     }
@@ -654,6 +709,7 @@ std::int32_t fbench_create(const fbench_case* c, void* /*in*/, void* /*out*/, vo
       check_radices_fit(*c);
     }
     auto record = std::make_unique<plan_record>();
+    record->mode = s.mode;
     const fftn::options opts{
         .in_place = c->in_place != 0,
         .force_isa = s.isa,
@@ -691,32 +747,13 @@ std::int32_t fbench_create(const fbench_case* c, void* /*in*/, void* /*out*/, vo
 // NOLINTNEXTLINE(misc-const-correctness): the harness fixes this C signature
 void fbench_execute(const void* plan, void* in, void* out) {
   const auto& r = *static_cast<const plan_record*>(plan);
-  const session& s = state();
-  switch (s.mode) {
-  case call::serial:
-    // What plan::execute calls: one call into the library (X28), not transform_count and
-    // execute_core, whose extra call fbench timed until X37.
-    detail::execute_all(*r.core, in, out, r.ws);
-    return;
-  case call::executor:
-    detail::execute_on(*r.core, in, out, regrouped(*s.exec, s.group_size), r.ws);
-    return;
-  case call::team:
-#ifdef FBENCH_FFTN_OMP
-  {
-    const int group = s.group_size;
-#pragma omp parallel num_threads(s.threads)
-    {
-      fftn::team me = fftn::omp::this_team();
-      if (group >= 0) {
-        me.group_size = group;
-      }
-      detail::execute_team(*r.core, in, out, me, r.ws, fftn::completion::all);
-    }
-  }
-#endif
+  if (r.mode != call::serial) {
+    execute_threaded(r, in, out);
     return;
   }
+  // What plan::execute calls: one call into the library (X28), not transform_count and
+  // execute_core, whose extra call fbench timed until X37; and nothing before it (X49).
+  detail::execute_all(*r.core, in, out, r.ws);
 }
 
 void fbench_destroy(void* plan) {

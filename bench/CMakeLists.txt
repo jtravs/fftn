@@ -95,6 +95,14 @@ add_executable(x20_overhead x20/x20_overhead.cpp)
 fftn_configure_target(x20_overhead)
 target_include_directories(x20_overhead PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(x20_overhead PRIVATE fftn::fftn)
+
+# The screen of experiment X49 (bench/x49/): store-to-load forwarding through paired and
+# single accesses. AArch64 assembly in naked functions, so Clang on AArch64 only.
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64" AND CMAKE_CXX_COMPILER_ID MATCHES "Clang"
+   AND NOT CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+  add_executable(x49_pairs_forwarding x49/pairs_forwarding.cpp)
+  fftn_configure_target(x49_pairs_forwarding)
+endif()
 if(_fbench_fftn_omp)
   fbench_add_t1(t1_costs_omp)
   target_compile_definitions(t1_costs_omp PRIVATE T1_WITH_OPENMP)

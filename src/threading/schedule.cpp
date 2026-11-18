@@ -123,6 +123,21 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
   // X34's odd-part rule lost 1.03-1.46). Not on AArch64: an Axion VM (Neoverse V2, 2 MiB of
   // private L2) lost 1.28 over the rows this profile changed, and keeps X29's and X32's chains.
   const bool large_l2 = x86_64 && private_l2 && c.l2.size >= std::size_t{2} * 1024 * 1024;
+  // X43 arms B1 and B2, on a private L2 with a large L3 behind it (the EPYC 7763; Zen-like): at
+  // 8 lanes the team program's blocks of 8 columns (128 bytes of complex doubles) took 0.887 of
+  // the time of X40's 16 over the c2c planes and volumes they change (1000^2 0.66, 128^2 0.75:
+  // 16 columns of 1000-2048 fill or overfill each member's 512 KiB L2, and twice the blocks
+  // share out better), and blocks of a line where one thread runs columns alone 0.72 at
+  // 2048 x 36; one thread lost up to 1.42 with the narrow blocks. On the Xeon 6240 (1 MiB L2,
+  // little L3) they took 0.997: 512^2-2048^2 lost 1.05-1.15, so it builds no team blocks.
+  if (x86_64 && private_l2 && large_l3 && !large_l2) {
+    p.column_team_bytes = 128;
+  }
+  // X43b arms VT and VTX: teams run volumes plane at a time (8 lanes: EPYC 0.775, Xeon 6240
+  // 0.771), where one thread gained too little (0.979, 0.934 with 97^3 slower, 1.048).
+  if (x86_64 && private_l2 && !large_l2) {
+    p.team_volume_planes = true;
+  }
   if (large_l2) {
     p.grid_three_bytes = c.l2.size / 2;
     p.grid_two_part_bytes = std::size_t{32} * 1024;
@@ -157,6 +172,11 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
         p.grid_two_block_bytes = 2 * c.l1d.size;
         p.pow2_grid_bytes = c.l2.size / 4;
         p.grid_two_pow2_bytes = c.l3.size / 2;
+        // Experiment X46: the depth-first chain from L2/4 to 4 L2 (16384-262144 points).
+        p.depth_min_bytes = c.l2.size / 4;
+        p.depth_max_bytes = 4 * c.l2.size;
+        p.depth_top = 16;
+        p.depth_top_alt = 20;
       }
     }
   }
@@ -174,6 +194,13 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
     p.pow2_radix8_bytes = c.l2.size / 8;
     // Experiment X36, M5 Max: the same conflicts in a Bluestein stage's convolution.
     p.bluestein_pow2_part_bytes = c.l1d.size / 4;
+    // Experiment X46 (arm C2), M5 Max: depth-first chains with a top of 4 from L1 to 2 L1
+    // where the length's power-of-two part is above L1/8 (8192-16384 complex doubles; from
+    // L1/2, batches of 256-1024 rows of 4096 lost 1.03-1.04, arm C).
+    p.depth_min_bytes = c.l1d.size;
+    p.depth_max_bytes = 2 * c.l1d.size;
+    p.depth_part_bytes = c.l1d.size / 8;
+    p.depth_top = 4;
   }
   p.c2r_paired_gather = c.l2.size != 0 && !private_l2;
   // Experiment X36: long convolutions (machine_profile::long_convolution_bytes).
