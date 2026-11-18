@@ -210,69 +210,81 @@ TYPED_TEST(Contracts, ResultDoesNotDependOnPosition) {
 TYPED_TEST(Contracts, BatchRowsGetTheSameArithmeticAnywhere) {
   using T = TypeParam;
   using c = std::complex<T>;
-  for (const std::size_t n : {
-           std::size_t{2},
-           std::size_t{7},
-           std::size_t{8},
-           std::size_t{12},
-           std::size_t{15},
-           std::size_t{16},
-           std::size_t{20},
-           std::size_t{25},
-           std::size_t{32},
-           std::size_t{64},
-       }) {
+  const auto check = [](fftn::isa target, std::size_t n, std::size_t count) {
     input_source src(n);
     const cvec<T> one_row = src.complexes<T>(n);
-    for (const std::size_t count : {std::size_t{9}, std::size_t{12}}) {
-      for (const double scale : {1.0, 0.25}) {
-        for (const bool in_place : {false, true}) {
-          for (const std::ptrdiff_t gap : {std::ptrdiff_t{0}, std::ptrdiff_t{3}}) {
-            for (const bool reversed : {false, true}) {
-              const auto dist = static_cast<std::ptrdiff_t>(n) + gap;
-              const std::ptrdiff_t signed_dist = reversed ? -dist : dist;
-              const fftn::shape<c, c> s{
-                  .dir = fftn::direction::backward,
-                  .axes = {{.n = n}},
-                  .batches = {{.count = count, .in_dist = signed_dist, .out_dist = signed_dist}},
-              };
-              const fftn::c2c_plan<T> plan(s, {.in_place = in_place, .scale = scale});
-              fftn::workspace ws(plan.workspace_bytes());
-              const std::size_t span = static_cast<std::size_t>(dist) * count;
-              // Row t starts at element t dist from row 0, which is at the end when reversed.
-              const std::size_t row0 = reversed ? span - static_cast<std::size_t>(dist) : 0;
-              const auto row = [&](std::size_t t) {
-                return static_cast<std::size_t>(static_cast<std::ptrdiff_t>(row0) +
-                                                static_cast<std::ptrdiff_t>(t) * signed_dist);
-              };
-              cvec<T> data(span);
-              for (std::size_t t = 0; t < count; ++t) {
-                std::copy(one_row.begin(), one_row.end(),
-                          data.begin() + static_cast<std::ptrdiff_t>(row(t)));
+    // Every first for short batches; a sample of them for the long one.
+    const std::size_t step = count > 32 ? 127 : 1;
+    for (const double scale : {1.0, 0.25}) {
+      for (const bool in_place : {false, true}) {
+        for (const std::ptrdiff_t gap : {std::ptrdiff_t{0}, std::ptrdiff_t{3}}) {
+          for (const bool reversed : {false, true}) {
+            const auto dist = static_cast<std::ptrdiff_t>(n) + gap;
+            const std::ptrdiff_t signed_dist = reversed ? -dist : dist;
+            const fftn::shape<c, c> s{
+                .dir = fftn::direction::backward,
+                .axes = {{.n = n}},
+                .batches = {{.count = count, .in_dist = signed_dist, .out_dist = signed_dist}},
+            };
+            const fftn::c2c_plan<T> plan(
+                s, {.in_place = in_place, .scale = scale, .force_isa = target});
+            fftn::workspace ws(plan.workspace_bytes());
+            const std::size_t span = static_cast<std::size_t>(dist) * count;
+            // Row t starts at element t dist from row 0, which is at the end when reversed.
+            const std::size_t row0 = reversed ? span - static_cast<std::size_t>(dist) : 0;
+            const auto row = [&](std::size_t t) {
+              return static_cast<std::size_t>(static_cast<std::ptrdiff_t>(row0) +
+                                              static_cast<std::ptrdiff_t>(t) * signed_dist);
+            };
+            cvec<T> data(span);
+            for (std::size_t t = 0; t < count; ++t) {
+              std::copy(one_row.begin(), one_row.end(),
+                        data.begin() + static_cast<std::ptrdiff_t>(row(t)));
+            }
+            // Row 0 of the whole batch is the reference for every row of every range.
+            cvec<T> want;
+            for (std::size_t first = 0; first < count; first += step) {
+              cvec<T> in = data;
+              cvec<T> out(in_place ? 0 : span);
+              c* out_base = in_place ? in.data() : out.data();
+              plan.execute_transforms(first, count - first, in.data() + row0, out_base + row0, ws);
+              if (first == 0) {
+                want.assign(out_base + row(0), out_base + row(0) + n);
               }
-              // Row 0 of the whole batch is the reference for every row of every range.
-              cvec<T> want;
-              for (std::size_t first = 0; first < count; ++first) {
-                cvec<T> in = data;
-                cvec<T> out(in_place ? 0 : span);
-                c* out_base = in_place ? in.data() : out.data();
-                plan.execute_transforms(first, count - first, in.data() + row0, out_base + row0,
-                                        ws);
-                if (first == 0) {
-                  want.assign(out_base + row(0), out_base + row(0) + n);
-                }
-                for (std::size_t t = first; t < count; ++t) {
-                  EXPECT_TRUE(same_bits<c>(std::span<const c>(out_base + row(t), n), want))
-                      << "n " << n << ", " << count << " rows, scale " << scale << ", in place "
-                      << in_place << ", gap " << gap << ", reversed " << reversed << ", first "
-                      << first << ", row " << t;
-                }
+              for (std::size_t t = first; t < count; ++t) {
+                EXPECT_TRUE(same_bits<c>(std::span<const c>(out_base + row(t), n), want))
+                    << fftn::isa_name(target) << ", n " << n << ", " << count << " rows, scale "
+                    << scale << ", in place " << in_place << ", gap " << gap << ", reversed "
+                    << reversed << ", first " << first << ", row " << t;
               }
             }
           }
         }
       }
     }
+  };
+  // Every target this processor runs (batch leaves are per target; the emulators do not run
+  // this program), with the counts from which the rules take each length: 2 and 3 rows
+  // (the narrower set), 9 and 12 (every remainder of the widest C), 1024 for avx512's 8.
+  for (const fftn::isa target : fftn::test::runnable_isas()) {
+    for (const std::size_t n : {
+             std::size_t{2},
+             std::size_t{7},
+             std::size_t{8},
+             std::size_t{12},
+             std::size_t{15},
+             std::size_t{16},
+             std::size_t{20},
+             std::size_t{25},
+             std::size_t{32},
+             std::size_t{64},
+         }) {
+      for (const std::size_t count :
+           {std::size_t{2}, std::size_t{3}, std::size_t{9}, std::size_t{12}}) {
+        check(target, n, count);
+      }
+    }
+    check(target, 8, 1024);
   }
 }
 
