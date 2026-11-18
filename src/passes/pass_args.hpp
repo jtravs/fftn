@@ -189,6 +189,10 @@ struct radix_passes {
   // depth_radix).
   pass_fn depth_first[2];
   pass_fn depth_top[2][3];
+  // A Bluestein convolution's forward first pass and backward top pass [output edge none or
+  // scale] with the stage's chirp passes fused in (experiment X50 arm C).
+  pass_fn depth_first_chirp;
+  pass_fn depth_top_chirp[2];
 };
 
 template <class T> struct pass_kernels {

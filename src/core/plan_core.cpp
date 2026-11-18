@@ -1170,9 +1170,10 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
                       "), each transform finished before the next";
   } else if (!bluestein_tops.empty()) {
     // A Bluestein stage whose convolution is two depth-first chains (chain_builder::
-    // bluestein_depth, experiment X50): the chirp pass into scratch a, each chain's first
-    // pass, a loop over its sub-rows on their blocks of the workspace block (and with two
-    // tops a loop over the inner top pass's runs), its top passes, then the chirp pass out.
+    // bluestein_depth, experiment X50): each chain's first pass (the forward one with the
+    // chirp pass in), a loop over its sub-rows on their blocks of the workspace block (and
+    // with two tops a loop over the inner top pass's runs), its top passes (the backward
+    // one's last with the chirp pass out).
     const std::size_t n = c.lengths[0];
     const std::size_t m = chain.bluestein_length_of(n);
     const std::size_t subs = checked_product(bluestein_tops);
@@ -1192,7 +1193,6 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       }
       std::get<loop>(p.records[first]).body_end = static_cast<std::uint32_t>(p.records.size());
     };
-    p.records.emplace_back(std::move(parts.in));
     for (typename chain_builder<T>::depth_stages* d : {&parts.forward, &parts.backward}) {
       for (stage& st : d->first) {
         p.records.emplace_back(std::move(st));
@@ -1205,7 +1205,6 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
         p.records.emplace_back(std::move(st));
       }
     }
-    p.records.emplace_back(std::move(parts.out));
     scratch = parts.scratch;
     c.axis_notes.push_back("axis 0 (n = " + std::to_string(n) +
                            "): " + chain.bluestein_depth_text(n, bluestein_tops));

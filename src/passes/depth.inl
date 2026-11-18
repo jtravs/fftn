@@ -16,6 +16,55 @@
 
 namespace {
 
+// Leg j of a run of a Bluestein convolution's input with the chirp pass fused in (experiment
+// X50 arm C): the C elements from i + leg j of the line, x[e] w[e] for e < data and zero
+// beyond (a run that straddles data loads only its valid lanes). w: the chirp in per-element
+// storage, at element i.
+template <class T> struct run_in_chirp {
+  const T* p;
+  const T* w;
+  std::size_t i;
+  std::size_t leg;
+  std::size_t data;
+  [[nodiscard]] FFTN_FORCE_INLINE cv<T> get(std::size_t j) const {
+    const std::size_t e = i + j * leg;
+    if (e >= data) {
+      return zeros<T>();
+    }
+    const T* xp = p + at(j * leg, 2);
+    const tw<T> wv = load_tw(w + tw_reals<T> * (j * leg));
+    if (e + C<T> <= data) {
+      return mul(load(xp), wv);
+    }
+    return mul(load_run<T, false>(xp, 2, data - e), wv);
+  }
+};
+
+// Leg k of a run of a Bluestein stage's output with its chirp pass fused in (arm C): the C
+// elements from i + leg k of the convolution, stored times w[e] with the output edge's
+// operation for e < data; nothing from data on (the stage keeps its first Q outputs).
+template <class T, edge_op Op> struct run_out_chirp {
+  T* p;
+  const T* w;
+  std::size_t i;
+  std::size_t leg;
+  std::size_t data;
+  edge<T, Op> op;
+  FFTN_FORCE_INLINE void put(std::size_t k, cv<T> v) const {
+    const std::size_t e = i + k * leg;
+    if (e >= data) {
+      return;
+    }
+    T* yp = p + at(k * leg, 2);
+    const cv<T> z = mul(v, load_tw(w + tw_reals<T> * (k * leg)));
+    if (e + C<T> <= data) {
+      store(yp, on_run<T, Op, true>(op, z, k, C<T>));
+    } else {
+      store_run<T, false>(yp, 2, data - e, on_run<T, Op, false>(op, z, k, data - e));
+    }
+  }
+};
+
 // The first pass of the chains of the s sub-rows of a line of n = s R m (DESIGN.md 8.2's
 // lane pass with s copies, m groups, twiddled by w_(R m)^(p k)), every copy's outputs
 // written to its own block of M = R m elements: copy q's y[o(q) + R p + k] instead of the
@@ -28,8 +77,11 @@ namespace {
 // cols); its R outputs are transposed in registers so that each store writes C legs of one
 // copy. twiddles: broadcast storage, as the lane pass's (chain_builder::shared_twiddles).
 // src and dst: stride 1, distinct. Reads m, s, dst_cols, dst_qstride, twiddles (n holds the
-// line's length, for the work graph's cost, work_graph.cpp; M = R m).
-template <class T, std::size_t R, int Sign>
+// line's length, for the work graph's cost, work_graph.cpp; M = R m). Chirp (a Bluestein
+// stage's chirp pass fused in, experiment X50 arm C): element i of the line is
+// src[i] w[i] for i < Q and zero from Q on, w the chirp in per-element storage (in_factor,
+// chain_builder::bluestein_tables_of) and Q = src_cols; src then holds only Q elements.
+template <class T, std::size_t R, int Sign, bool Chirp = false>
 void depth_first_pass(const pass_args* a, const void* src, void* dst, std::size_t first,
                       std::size_t last) {
   const T* x = static_cast<const T*>(src);
@@ -41,7 +93,7 @@ void depth_first_pass(const pass_args* a, const void* src, void* dst, std::size_
   const auto lane = static_cast<std::size_t>(a->dst_qstride);
   const std::size_t blocks = s / C<T>;
   const T* table = static_cast<const T*>(a->twiddles);
-  const std::ptrdiff_t in_leg = at(s * m, 2);
+  [[maybe_unused]] const std::ptrdiff_t in_leg = at(s * m, 2);
   std::size_t p = first < blocks ? 0 : first / blocks;
   std::size_t b = first < blocks ? first : first % blocks;
   // q0 = b C as (q0 % cols, q0 / cols), stepped rather than divided per unit.
@@ -51,10 +103,21 @@ void depth_first_pass(const pass_args* a, const void* src, void* dst, std::size_
     const std::size_t q0 = b * C<T>;
     cv<T> v[R]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
     const to_registers<T> out{v};
-    lane_unit<T, R, Sign, true>(
-        run_in<T, edge_op::none, true>{
-            .p = x + at(q0 + s * p, 2), .leg = in_leg, .step = 2, .valid = C<T>, .op = {}},
-        out, table, p);
+    if constexpr (Chirp) {
+      const std::size_t i0 = q0 + s * p;
+      lane_unit<T, R, Sign, true>(
+          run_in_chirp<T>{.p = x + at(i0, 2),
+                          .w = static_cast<const T*>(a->in_factor) + tw_reals<T> * i0,
+                          .i = i0,
+                          .leg = s * m,
+                          .data = a->src_cols},
+          out, table, p);
+    } else {
+      lane_unit<T, R, Sign, true>(
+          run_in<T, edge_op::none, true>{
+              .p = x + at(q0 + s * p, 2), .leg = in_leg, .step = 2, .valid = C<T>, .op = {}},
+          out, table, p);
+    }
     T* yp = y + at(d1 * lane + d2 * sub + R * p, 2);
     if constexpr (R % C<T> == 0) {
       store_transposed<T, R>(yp, v, C<T>, lane);
@@ -105,8 +168,11 @@ template <class T, int Sign> struct run_in_twiddled {
 // depends on every input, so src may be dst (it is, in the chain). The output edge's
 // operation (none, the scale, or a factor per element of the line: a Bluestein convolution's
 // kernel spectrum, experiment X50) applies to what is stored. Reads m (M), s, twiddles,
-// roots, scale, out_factor.
-template <class T, std::size_t R, int Sign, edge_op OutOp>
+// roots, scale, out_factor. Chirp (a Bluestein stage's chirp pass out fused in, experiment
+// X50 arm C): only the outputs below Q = dst_cols are stored, each times the chirp
+// (out_factor, per-element storage) with the output edge's operation (none or the scale);
+// dst then holds Q elements and is not src.
+template <class T, std::size_t R, int Sign, edge_op OutOp, bool Chirp = false>
 void depth_top_pass(const pass_args* a, const void* src, void* dst, std::size_t first,
                     std::size_t last) {
   const T* x = static_cast<const T*>(src);
@@ -121,14 +187,26 @@ void depth_top_pass(const pass_args* a, const void* src, void* dst, std::size_t 
   k_lo %= block;
   for (std::size_t u = first; u < last; ++u) {
     const std::size_t k0 = u * C<T>;
-    cdft<R>::template dit<T, Sign>(
-        run_in_twiddled<T, Sign>{.p = x + at(k0, 2), .leg = leg, .hi = hi},
-        run_out<T, OutOp, true>{.p = y + at(k0, 2),
-                                .leg = leg,
-                                .step = 2,
-                                .valid = C<T>,
-                                .op = make_edge<T, OutOp>(a, a->out_factor, k0, m)},
-        lane_twiddles<T>{.p = table + tw_reals<T> * k_lo, .row = row});
+    if constexpr (Chirp) {
+      cdft<R>::template dit<T, Sign>(
+          run_in_twiddled<T, Sign>{.p = x + at(k0, 2), .leg = leg, .hi = hi},
+          run_out_chirp<T, OutOp>{.p = y + at(k0, 2),
+                                  .w = static_cast<const T*>(a->out_factor) + tw_reals<T> * k0,
+                                  .i = k0,
+                                  .leg = m,
+                                  .data = a->dst_cols,
+                                  .op = make_edge<T, OutOp>(a, nullptr, 0, 0)},
+          lane_twiddles<T>{.p = table + tw_reals<T> * k_lo, .row = row});
+    } else {
+      cdft<R>::template dit<T, Sign>(
+          run_in_twiddled<T, Sign>{.p = x + at(k0, 2), .leg = leg, .hi = hi},
+          run_out<T, OutOp, true>{.p = y + at(k0, 2),
+                                  .leg = leg,
+                                  .step = 2,
+                                  .valid = C<T>,
+                                  .op = make_edge<T, OutOp>(a, a->out_factor, k0, m)},
+          lane_twiddles<T>{.p = table + tw_reals<T> * k_lo, .row = row});
+    }
     k_lo += C<T>;
     if (k_lo == block) {
       k_lo = 0;

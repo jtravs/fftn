@@ -250,19 +250,18 @@ public:
   // A Bluestein stage whose convolution runs as two depth-first chains (experiment X50), for
   // a c2c line of one prime q above the Bluestein threshold with no Rader root (one copy):
   // bluestein_single(n) is q when n's chain is that one stage, else 0; bluestein_length_of(q)
-  // its convolution's length M. bluestein_depth gives `in`, the chirp pass from src into
-  // scratch a (M elements, zero-padded), with the input edge's operation; `forward`, the
-  // depth-first chain of M from a with its blocks in the workspace block (M elements) and its
-  // top pass back to a times the kernel spectrum; `backward`, the depth-first chain of M from
-  // a with its blocks in the block and its top pass in place there; `out`, the chirp pass
-  // from the block to dst with the output edge's operation. Both chains' sub-rows use scratch
-  // a (dead by then) and b. scratch: the complex elements it needs in each of a and b.
-  // Precondition: depth_fits(M, tops).
+  // its convolution's length M. bluestein_depth gives `forward`, the depth-first chain of M
+  // whose first pass reads src (stride 1) times the chirp, zero beyond Q (the chirp pass in,
+  // fused), with its blocks in the workspace block (M elements) and its top pass into scratch
+  // a times the kernel spectrum; and `backward`, the depth-first chain of M from a with its
+  // blocks in the block, its inner top pass in place there and its last writing the first Q
+  // outputs to dst (stride 1) times the chirp with the output edge's operation (the chirp
+  // pass out, fused). Both chains' sub-rows use scratch a (dead by then) and b. scratch: the
+  // complex elements it needs in each of a and b. Preconditions: depth_fits(M, tops); no
+  // input edge operation; the output's none or the scale.
   struct bluestein_depth_stages {
-    stage in;
     depth_stages forward;
     depth_stages backward;
-    stage out;
     std::size_t scratch = 0;
   };
   [[nodiscard]] std::size_t bluestein_single(std::size_t n) const;

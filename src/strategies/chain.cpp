@@ -1215,10 +1215,11 @@ template <class T> std::size_t chain_builder<T>::bluestein_single(std::size_t n)
 }
 
 // Experiment X50: the convolution of a Bluestein stage of one copy as two depth-first chains
-// (c2c_depth), the forward one's blocks in the workspace block and its top pass back into
-// scratch a, where the backward one's first pass reads, so that each chain's sub-rows run in
-// cache with a loop moving the block, as a row of M would (X46). Scratch a holds the chirped
-// line; when each first pass has read it, it is free for the sub-rows' passes.
+// (c2c_depth), the forward one's blocks in the workspace block and its top pass into scratch
+// a, where the backward one's first pass reads, so that each chain's sub-rows run in cache
+// with a loop moving the block, as a row of M would (X46). Once the backward first pass has
+// read scratch a, it is free for the sub-rows' passes (the forward sub-rows run before a is
+// written).
 template <class T>
 typename chain_builder<T>::bluestein_depth_stages
 chain_builder<T>::bluestein_depth(std::size_t q, const std::vector<std::size_t>& tops, int sign,
@@ -1226,10 +1227,25 @@ chain_builder<T>::bluestein_depth(std::size_t q, const std::vector<std::size_t>&
   const std::size_t m = bluestein_m(q);
   const bluestein_tables tab = bluestein_tables_of(q, sign, 1);
   bluestein_depth_stages out;
-  out.in = bluestein_in_stage(q, q, m, sign, src, slot::a, edges.in, edges, tab);
-  out.forward = c2c_depth(m, tops, -1, 1.0, slot::block, slot::a, slot::a, tab.kernel);
+  out.forward = c2c_depth(m, tops, -1, 1.0, slot::block, src.where, slot::a, tab.kernel);
   out.backward = c2c_depth(m, tops, +1, 1.0, slot::block, slot::a, slot::block);
-  out.out = bluestein_out_stage(q, q, m, sign, slot::block, dst, edges, tab);
+  // Arm C: the chirp passes fused into the forward chain's first pass (reading the input) and
+  // the backward chain's last top pass (writing the first Q outputs), which saves a pass over
+  // M elements each way.
+  stage& first = out.forward.first.front();
+  first.run = kernels_.passes.codelet[codelet_slot(first.args.radix)]->depth_first_chirp;
+  first.args.in_factor = tab.chirp;
+  first.args.src_cols = q;
+  first.name += "; chirp " + std::string(direction_name(sign)) + " in, from the input";
+  stage& top = out.backward.top.back();
+  const bool scaled = edges.out == edge_op::scale;
+  top.run = kernels_.passes.codelet[codelet_slot(top.args.radix)]->depth_top_chirp[scaled ? 1 : 0];
+  top.args.out_factor = tab.chirp;
+  top.args.dst_cols = q;
+  top.args.scale = edges.scale;
+  top.dst = dst.where;
+  top.name += "; chirp " + std::string(direction_name(sign)) + " out, the first " +
+              std::to_string(q) + " to the output" + (scaled ? "; out: scale" : "");
   for (std::vector<stage>* part :
        {&out.forward.first, &out.forward.sub, &out.forward.mid, &out.forward.top,
         &out.backward.first, &out.backward.sub, &out.backward.mid, &out.backward.top}) {
