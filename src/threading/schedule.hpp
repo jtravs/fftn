@@ -248,10 +248,11 @@ struct machine_profile {
   bool team_volume_planes = false;
   // Column phases of planes whose neighbouring lines write the same cache lines claim small
   // shares in fair runs (work_graph.hpp, chunk_run; core/plan_core.cpp, lines_share_cache_lines;
-  // X59 arm R6). set_grid_sizes sets it on x86-64 where a private L2 has a large L3 behind it
-  // (EPYC 7763 at 8 lanes: 0.909 of the guided runs' time over the real planes that split,
-  // 512^2 0.70) and where a cluster shares L2 (M5 Max at 6 lanes: 0.979); the Xeon 6240 lost
-  // (1.017, c2r 1000^2 1.21), and the profiles like it keep the guided runs.
+  // X59 arm R6). set_grid_sizes sets it on x86-64 where a private L2 under 1 MiB has a large L3
+  // behind it (Zen 3; Zen 4 and Zen 5 are not measured) (EPYC 7763 at 8 lanes: 0.909 of the guided
+  // runs' time over the real planes that split, 512^2 0.70) and where a cluster shares L2 (M5 Max
+  // at 6 lanes: 0.979); the Xeon 6240 lost (1.017, c2r 1000^2 1.21), and the profiles like it keep
+  // the guided runs.
   bool fair_line_runs = false;
   // The L1 data cache's associativity (8 where the topology does not say: macOS): with
   // grid_block_bytes it gives the set period against which a column phase's last pass

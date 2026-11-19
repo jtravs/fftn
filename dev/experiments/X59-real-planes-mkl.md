@@ -275,8 +275,11 @@ Mac**; R3 keeps the volumes on the guided runs.
   change slower beyond the band. Serial programs and bits unchanged.
 - **Arm R6 adopted on the EPYC and the Mac, rejected on the Xeon** (a column phase of a plane
   whose neighbouring lines write the same cache lines is claimed in runs of its fair share where
-  that share holds at most 65 536 points; `machine_profile::fair_line_runs`, set where a private
-  L2 has a large L3 behind it on x86-64 and where a cluster shares L2): EPYC 0.909 over the real
+  that share holds at most 65 536 points; `machine_profile::fair_line_runs`, set only on the
+  measured families: x86-64 with a private L2 under 1 MiB and a large L3 behind it (Zen 3, as
+  X51's arm E) and where a cluster shares L2 (Apple). **Zen 4 and Zen 5 are not measured**: they
+  use the `avx512` target, which the rule does not cross (AGENTS.md section 6), and keep the
+  guided runs until measured): EPYC 0.909 over the real
   planes (512² and 480 × 640 0.70–0.73, 2048 × 36 0.82, 1000²–1024² 0.86–0.96), Mac 0.979; Xeon
   1.017, c2r 1000² 1.21. R, R2, R3, R4 and R5 were steps to it, each rejected by its rule on at
   least one machine (records above). Bits unchanged.

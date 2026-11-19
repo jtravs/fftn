@@ -2153,7 +2153,8 @@ As built (`src/threading/engine.hpp`, task 3.1):
   in runs within one phase (a share of the phase's chunks left, at most left / (2 × cap),
   shrinking to single chunks; X52), or, for a column phase of a plane whose neighbouring
   lines write the same cache lines, in runs of a member's fair share where that share holds at
-  most 65 536 points and the profile says so (`machine_profile::fair_line_runs`, X59 arm R6:
+  most 65 536 points on the measured profiles (`machine_profile::fair_line_runs`: Zen 3 and
+  Apple; X59 arm R6:
   EPYC 7763 0.909 over the real planes at 8 lanes, M5 Max 0.979; the Xeon 6240 lost, 1.017);
   a chunk of phase p waits until the task's done counter shows phase p − 1
   complete. Those chunks were all claimed before it, by members that are running, so no
@@ -3165,7 +3166,7 @@ to change before a release.
 | 2026-11-19 | Windows CI installs its own LLVM (the release archive, pinned by URL and SHA-256, 23.1.5, the series the Linux jobs use) instead of using the runner image's | The x64 image moved to Visual Studio 18, whose standard library refuses any Clang older than 22 (STL1000), while its LLVM stayed at 20.1.8 (CI run 44409722437). The images update Visual Studio and LLVM separately, so this would recur; `_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH` would test an unsupported pair |
 | 2026-11-19 | Provisional, for the maintainer's review: `fftn::kokkos::executor` (one `parallel_for` per transform on the caller's instance, then a fence), `team_of(member)`, and `view_plan` executing through the executor, serial inside a kernel, sharing large scaling passes among threads; Kokkos' tests build one threaded back end per configuration (`FFTN_KOKKOS_BACKEND`, Threads by default) | Task 3.5; experiment T3 for the costs; the adapter detects kernels per back end because Kokkos 5 removed `in_parallel` |
 | 2026-11-19 | A lanes column phase's narrower last block joins the whole blocks' phase of the work graph | X59 arm T: alone it was a phase of one chunk that one member ran while the others waited, on nearly every real plane; at 8 lanes 0.911 (Xeon 6240, real planes that split) and 0.978 (EPYC 7763), 0.998 on the M5 Max at 6 lanes; serial programs and bits unchanged |
-| 2026-11-19 | A column phase of a plane whose neighbouring lines write the same cache lines is claimed in runs of a member's fair share where that share holds at most 65 536 points, on the profiles with a private L2 and a large L3 (x86-64) or a cluster-shared L2 (`machine_profile::fair_line_runs`) | X59 arm R6: EPYC 7763 0.909 over the real planes that split at 8 lanes (512² 0.70), M5 Max 0.979 at 6 lanes; the Xeon 6240 lost (1.017, c2r 1000² 1.21) and keeps X52's guided runs; larger shares lost balance at the end (2048², 1.05–1.15) |
+| 2026-11-19 | A column phase of a plane whose neighbouring lines write the same cache lines is claimed in runs of a member's fair share where that share holds at most 65 536 points, on the measured profiles, x86-64 with a private L2 under 1 MiB and a large L3 (Zen 3; Zen 4 and Zen 5, on `avx512`, not measured, keep the guided runs) or a cluster-shared L2 (`machine_profile::fair_line_runs`) | X59 arm R6: EPYC 7763 0.909 over the real planes that split at 8 lanes (512² 0.70), M5 Max 0.979 at 6 lanes; the Xeon 6240 lost (1.017, c2r 1000² 1.21) and keeps X52's guided runs; larger shares lost balance at the end (2048², 1.05–1.15) |
 
 ---
 

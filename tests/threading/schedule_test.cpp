@@ -666,10 +666,15 @@ TEST(Schedule, GridSizesFromCaches) {
   EXPECT_TRUE(xeon86.team_volume_planes);
   EXPECT_EQ(m5.column_team_bytes, 0U);
   EXPECT_FALSE(m5.team_volume_planes);
-  // Fair runs for column phases whose lines share cache lines (X59): not on the Xeon 6240.
+  // Fair runs for column phases whose lines share cache lines (X59): where measured to win, the
+  // EPYC 7763 (Zen 3) and the M5 Max; not the Xeon 6240 (lost), nor Zen 5 (not measured).
   EXPECT_TRUE(epyc86.fair_line_runs);
   EXPECT_FALSE(xeon86.fair_line_runs);
-  EXPECT_TRUE(m5.fair_line_runs);
+  EXPECT_FALSE(x86("linux-gcp-c4d-zen5.sysfs").fair_line_runs);
+  machine_profile apple;
+  fftn::detail::set_grid_sizes(
+      apple, fftn::detail::load_topology(data / "macos-apple-m5-max.sysctl").classes.at(0), false);
+  EXPECT_TRUE(apple.fair_line_runs);
   // Rows' two-pass radices while the data fit three quarters of the CCX's L3 (X57).
   EXPECT_EQ(epyc86.fit_row_bytes, std::size_t{24} * 1024 * kib);
   EXPECT_EQ(xeon86.fit_row_bytes, 0U);
