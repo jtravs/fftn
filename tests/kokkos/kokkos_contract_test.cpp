@@ -172,7 +172,7 @@ TYPED_TEST(KokkosAdapterContracts, ScalingGappedOutputLeavesTheGaps) {
 }
 
 // execute allocates nothing, from the first call after construction on, scaled or not, in
-// place or not (the fence's label is built at construction).
+// place or not (the labels are built at construction).
 TYPED_TEST(KokkosAdapterContracts, ExecuteAllocatesNothing) {
   using T = TypeParam;
   using cube = Kokkos::View<Kokkos::complex<T>***, Kokkos::LayoutRight, Kokkos::HostSpace>;
@@ -196,8 +196,8 @@ TYPED_TEST(KokkosAdapterContracts, ExecuteAllocatesNothing) {
 }
 
 // A second execution of a plan while one runs is refused, not run on the shared workspace.
-// Deterministically: a Kokkos Tools fence callback, called from inside the first execution
-// (execute fences before it transforms), starts the second on the same thread.
+// Deterministically: a Kokkos Tools region callback, called from inside the first execution
+// (execute opens its region before it transforms), starts the second on the same thread.
 struct reentry {
   std::function<void()> call;
   bool armed = false;
@@ -207,7 +207,7 @@ reentry& the_reentry() {
   static reentry r;
   return r;
 }
-void begin_fence(const char* /*name*/, std::uint32_t /*device*/, std::uint64_t* /*handle*/) {
+void push_region(const char* /*name*/) {
   reentry& r = the_reentry();
   if (!r.armed) {
     return;
@@ -233,10 +233,10 @@ TYPED_TEST(KokkosAdapterContracts, ConcurrentExecutionIsRefused) {
   reentry& r = the_reentry();
   r.call = [&] { p.execute(a, d, normalization::none); };
   r.armed = true;
-  Kokkos::Tools::Experimental::set_begin_fence_callback(begin_fence);
+  Kokkos::Tools::Experimental::set_push_region_callback(push_region);
   fill(b, 0);
   p.execute(a, b, normalization::none);
-  Kokkos::Tools::Experimental::set_begin_fence_callback(nullptr);
+  Kokkos::Tools::Experimental::set_push_region_callback(nullptr);
   EXPECT_EQ(r.error.rfind("fftn::kokkos: view_plan::execute was called while another", 0), 0U)
       << r.error;
   // The first execution was not disturbed, and the plan is free again afterwards.

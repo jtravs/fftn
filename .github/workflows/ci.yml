@@ -103,10 +103,11 @@ jobs:
           {"name": "clang-23 asan", "llvm": "23", "cxx": "/usr/lib/llvm-23/bin/clang++",
            "stages": "sanitize", "old_x86": "OFF"}
         ]
-      # The current GCC, from its official image, with the benchmark smoke.
+      # The current GCC, from its official image, with the benchmark smoke; the Kokkos
+      # adapter's tests on the OpenMP back end (libgomp) here, on Threads elsewhere.
       linux-gcc-current: >-
         [
-          {"name": "gcc-16", "stages": "build bench"}
+          {"name": "gcc-16", "stages": "build bench", "kokkos": "OpenMP"}
         ]
       # Homebrew LLVM, the maintainer's configuration. Its ASan + UBSan (the only sanitizer
       # run of NEON with FCMA) took 61 minutes on these runners, the slowest job by far, and

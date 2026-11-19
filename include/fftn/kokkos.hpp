@@ -6,29 +6,39 @@
 ///
 /// Optional and header-only. `fftn.hpp` does not include it, and it compiles only in a
 /// translation unit that can include `Kokkos_Core.hpp`: FFTN itself never depends on Kokkos.
-/// It offers two levels:
+/// It offers three levels:
 ///
 /// - View-based construction: `shape_of` and `make_plan` turn a pair of Views and the axes to
 ///   transform into an ordinary `fftn::shape` or `fftn::plan`, and `data_of` gives the
 ///   pointers to execute it with. Views of `LayoutRight`, `LayoutLeft` and `LayoutStride`
 ///   are read through their extents and strides.
+/// - Threads: `fftn::kokkos::executor` runs a plan's work on an execution-space instance, one
+///   `Kokkos::parallel_for` per transform, and `fftn::kokkos::team_of` makes the members of a
+///   `Kokkos::TeamPolicy` kernel an `fftn::team`.
 /// - `fftn::kokkos::view_plan`, a plan class with the constructor and execute shape of
-///   Kokkos-FFT 2.0's `KokkosFFT::Plan`, and the free `execute(plan, in, out, norm)`.
-///   `fftn::kokkos::compat` spells these as Kokkos-FFT does (`Plan`, `Direction`,
-///   `Normalization`, `axis_type`, `shape_type`, `execute`), so code written for Kokkos-FFT
-///   changes only its include and its namespace.
+///   Kokkos-FFT 2.0's `KokkosFFT::Plan`, threaded on its instance, and the free
+///   `execute(plan, in, out, norm)`. `fftn::kokkos::compat` spells these as Kokkos-FFT does
+///   (`Plan`, `Direction`, `Normalization`, `axis_type`, `shape_type`, `execute`), so code
+///   written for Kokkos-FFT changes only its include and its namespace.
 ///
-/// Execution is serial, on the calling thread. How this differs from Kokkos-FFT, and the
+/// `executor`, `team_of` and the threaded `view_plan` are provisional: their shape awaits the
+/// maintainer's review (dev/DESIGN.md 5.5). How the adapter differs from Kokkos-FFT, and the
 /// rules for each argument, are in docs/kokkos.md.
 #pragma once
 
 #include "fftn/config.hpp"
+#include "fftn/executor.hpp"
 #include "fftn/options.hpp"
 #include "fftn/plan.hpp"
 #include "fftn/shape.hpp"
+#include "fftn/team.hpp"
 #include "fftn/workspace.hpp"
 
 #include <Kokkos_Core.hpp>
+
+#ifdef KOKKOS_ENABLE_OPENMP
+#include <omp.h>
+#endif
 
 #include <algorithm>
 #include <array>
@@ -187,6 +197,92 @@ inline const std::string& fence_label() {
   static const std::string label("fftn::kokkos::view_plan::execute: fence before the transform");
   return label;
 }
+
+// The name of the Kokkos Tools region around a plan's execution; built as fence_label is.
+inline const std::string& region_label() {
+  static const std::string label("fftn::kokkos::view_plan::execute");
+  return label;
+}
+
+// The label of the executor's parallel_for and of the fence after it. Kokkos::parallel_for
+// copies its label into a std::string on every call, so this one must fit the small-string
+// buffer of every standard library (15 characters in libstdc++ and Microsoft's, 22 in libc++),
+// or each dispatch would allocate.
+inline const std::string& bulk_label() {
+  static const std::string label("fftn::bulk");
+  return label;
+}
+
+// Whether the calling thread must not dispatch to or fence this back end: it is inside one of
+// its kernels (or, on Threads, is not the one thread that may dispatch). Kokkos 5 has no query
+// for this (ExecutionSpace::in_parallel is gone), and getting it wrong is fatal: a nested
+// parallel_for aborts on OpenMP and throws on Threads, and a fence in a kernel waits for that
+// kernel. Serial needs no answer: it never dispatches (width 1) and execute does not fence it.
+template <class ExecutionSpace> [[nodiscard]] bool in_kernel() noexcept {
+#ifdef KOKKOS_ENABLE_OPENMP
+  if constexpr (std::is_same_v<ExecutionSpace, Kokkos::OpenMP>) {
+    // The level, not omp_in_parallel(): Kokkos also refuses to dispatch from inside an inactive
+    // region (one of a single thread), which omp_in_parallel() does not report.
+    return omp_get_level() > 0;
+  }
+#endif
+#ifdef KOKKOS_ENABLE_THREADS
+  if constexpr (std::is_same_v<ExecutionSpace, Kokkos::Threads>) {
+    using internal = Kokkos::Impl::ThreadsInternal;
+    if (!internal::is_process()) {
+      return true;
+    }
+    // The dispatching thread is the pool's last rank, and its state is Active only while it
+    // runs its share of a kernel. No public interface says so: this is pinned to the Kokkos
+    // version the tests build (cmake/FftnTestDeps.cmake), and they cover it.
+    internal* const self = internal::get_thread(Kokkos::Threads::impl_thread_pool_size(0) - 1);
+    return self->state().load(std::memory_order_relaxed) == Kokkos::Impl::ThreadState::Active;
+  }
+#endif
+  return false;
+}
+
+// Whether view_plan::execute fences its instance first. On Serial a kernel runs on the thread
+// that dispatched it, so nothing can be outstanding when that thread gets here; and since
+// Serial cannot tell whether the caller is inside a kernel, a fence there could wait for the
+// caller itself (it takes the mutex the running kernel holds).
+template <class ExecutionSpace>
+inline constexpr bool fences_before_transform =
+#ifdef KOKKOS_ENABLE_SERIAL
+    !std::is_same_v<ExecutionSpace, Kokkos::Serial>;
+#else
+    true;
+#endif
+
+// What parallel_for runs for the executor: the functor of one bulk call.
+struct bulk_call {
+  task_function task;
+  void* arg;
+  void operator()(int i) const { task(arg, i); }
+};
+
+// The Kokkos Tools region around a plan's execution, on the thread that dispatches; none in a
+// kernel, where several threads would push and pop one tool's stack at once.
+class region_guard {
+public:
+  explicit region_guard(bool active) : active_(active) {
+    if (active_) {
+      Kokkos::Profiling::pushRegion(region_label());
+    }
+  }
+  region_guard(const region_guard&) = delete;
+  region_guard& operator=(const region_guard&) = delete;
+  region_guard(region_guard&&) = delete;
+  region_guard& operator=(region_guard&&) = delete;
+  ~region_guard() {
+    if (active_) {
+      Kokkos::Profiling::popRegion();
+    }
+  }
+
+private:
+  bool active_;
+};
 
 // Clears a plan's busy flag when an execution ends, however it ends.
 class busy_guard {
@@ -454,15 +550,118 @@ make_plan(const InView& in, const OutView& out, direction dir, const axis_type<D
   return detail::plan_of(shape_of(in, out, dir, axes), detail::same_first_element(in, out));
 }
 
+/// An executor (`fftn::executor`) that runs FFTN's tasks on a host execution-space instance,
+/// for the executor overload of `plan::execute`. Provisional (dev/DESIGN.md 5.5).
+///
+/// A transform that is worth sharing costs one `Kokkos::parallel_for` on the instance, labelled
+/// `fftn::bulk`, with one index per lane that has work, followed by a fence of the instance. A
+/// job too small to share, and every job at width 1 (so every job on `Kokkos::Serial`), runs on
+/// the calling thread without one (`plan::execute` decides that).
+///
+/// Inside a kernel of the back end `concurrency()` is 1, so an execution there runs serially on
+/// the calling thread instead of nesting; on `Kokkos::Threads` the same holds on every thread
+/// but the one that may dispatch. Such an execution needs a workspace of its own per thread.
+///
+/// Preconditions: Kokkos is initialised and not finalised while the executor is used;
+/// `ExecutionSpace` runs on the host. Construct it outside kernels: inside one, the width it
+/// reads may be that of the enclosing region.
+///
+/// Guarantees: results are bitwise those of serial execution. FFTN allocates nothing and sets
+/// no runtime option; Kokkos's own `parallel_for` and fence allocate nothing on the Serial,
+/// OpenMP and Threads back ends unless a Kokkos Tools library is loaded (they take the
+/// instance's mutex on OpenMP, so dispatches from several host threads take turns). Copyable;
+/// holds the instance, its width and its grouping, fixed at construction. Constructing the
+/// process's first executor may allocate, to detect the machine's topology.
+template <class ExecutionSpace = Kokkos::DefaultHostExecutionSpace> class executor {
+  static_assert(Kokkos::is_execution_space_v<ExecutionSpace>,
+                "fftn::kokkos::executor: ExecutionSpace must be a Kokkos execution space");
+  static_assert(Kokkos::SpaceAccessibility<ExecutionSpace, Kokkos::HostSpace>::accessible,
+                "fftn::kokkos::executor: ExecutionSpace must run on the host");
+
+public:
+  /// An executor on `exec`, of `exec.concurrency()` lanes.
+  explicit executor(const ExecutionSpace& exec = ExecutionSpace())
+      : exec_(exec), width_(std::max(exec.concurrency(), 1)),
+        group_size_(cache_group_size(width_)) {
+    static_cast<void>(detail::bulk_label());
+  }
+
+  /// The most tasks it runs at once: the instance's width, or 1 when the calling thread cannot
+  /// dispatch to the instance (inside a kernel).
+  [[nodiscard]] int concurrency() const noexcept {
+    return detail::in_kernel<ExecutionSpace>() ? 1 : width_;
+  }
+
+  /// The instance's width as read at construction, wherever it is called from: the lanes to
+  /// size a workspace for (`plan::workspace_bytes`).
+  [[nodiscard]] int width() const noexcept { return width_; }
+
+  /// Lanes per cache group: `fftn::cache_group_size` of the width.
+  [[nodiscard]] int group_size() const noexcept { return group_size_; }
+
+  /// The execution-space instance it dispatches to.
+  [[nodiscard]] const ExecutionSpace& space() const noexcept { return exec_; }
+
+  /// Runs `task(arg, i)` once for every `i` in `[0, n)` and returns when all have returned: in
+  /// one `parallel_for` on the instance, or on the calling thread for a single task, at width
+  /// 1 and inside a kernel.
+  ///
+  /// Preconditions: `task` does not throw (an exception cannot leave a kernel).
+  void bulk(int n, task_function task, void* arg) const {
+    if (n <= 0) {
+      return;
+    }
+    if (n == 1 || width_ == 1 || detail::in_kernel<ExecutionSpace>()) {
+      for (int i = 0; i < n; ++i) {
+        task(arg, i);
+      }
+      return;
+    }
+    using policy = Kokkos::RangePolicy<ExecutionSpace, Kokkos::Schedule<Kokkos::Static>,
+                                       Kokkos::IndexType<int>>;
+    // Chunks of one: with n up to the width, no thread takes two tasks while another idles.
+    Kokkos::parallel_for(detail::bulk_label(), policy(exec_, 0, n).set_chunk_size(1),
+                         detail::bulk_call{task, arg});
+    // Kokkos lets parallel_for return before the work is done; bulk may not. The host back
+    // ends tested here have finished by now, and this costs them next to nothing.
+    exec_.fence(detail::bulk_label());
+  }
+
+private:
+  ExecutionSpace exec_;
+  int width_;
+  int group_size_;
+};
+
+/// The calling member of a `Kokkos::TeamPolicy` kernel as a member of an `fftn::team`: rank
+/// `member.team_rank()`, size `member.team_size()`, `fftn::cache_group_size(size)` members per
+/// cache group. Provisional (dev/DESIGN.md 5.5).
+///
+/// For the team overload of `plan::execute`, called by every member of the team from the
+/// kernel's body with one workspace per team, of `plan.workspace_bytes(team_size)` bytes; a
+/// kernel with several teams uses one workspace for each league rank. With `completion::own`,
+/// `member.team_barrier()` is the synchronisation that the team overload then requires.
+/// Not from inside `single`, `TeamThreadRange` or `TeamVectorRange`, where the members do not
+/// each make the call once.
+///
+/// Guarantees: results are bitwise those of serial execution; allocates nothing once the
+/// machine's topology is known (the first `fftn::cache_group_size` in the process detects it).
+template <class TeamMember> [[nodiscard]] team team_of(const TeamMember& member) noexcept {
+  const int size = member.team_size();
+  return {.rank = member.team_rank(), .size = size, .group_size = cache_group_size(size)};
+}
+
 /// A plan with the constructor and execute shape of Kokkos-FFT 2.0's `KokkosFFT::Plan`, over
 /// FFTN.
 ///
 /// It transforms the dimensions `axes` of Views typed `InView` into Views typed `OutView`,
-/// with the rules of `shape_of`, and owns everything an execution needs: the FFTN plan and
-/// a workspace, both made at construction.
+/// with the rules of `shape_of`, and owns everything an execution needs: the FFTN plan, an
+/// `executor` on the plan's instance and a workspace for the instance's width, all made at
+/// construction.
 ///
 /// Differences from Kokkos-FFT (docs/kokkos.md has the full list):
-/// - Execution is serial on the calling thread, whatever `ExecutionSpace` is.
+/// - Execution is threaded through Kokkos on the plan's instance (`executor`), with results
+///   bitwise equal to serial execution; a Kokkos-FFT host plan threads FFTW instead.
 /// - One plan runs one execution at a time: its executions share its workspace, and a
 ///   second concurrent execution throws `std::logic_error`. Concurrent transforms need one
 ///   plan each, or an `fftn::plan` from `make_plan` with a workspace per execution.
@@ -547,23 +746,27 @@ public:
   /// default: backward transforms by 1/N).
   ///
   /// First fences the plan's execution-space instance, so that work queued on it before the
-  /// call is complete; then transforms on the calling thread and returns when `out` holds
-  /// the result. Scaling multiplies each real and imaginary part of the described output by
-  /// a coefficient computed in `double` and rounded once to the precision of the data.
+  /// call is complete (`Kokkos::Serial` needs no fence: its kernels have finished when the
+  /// thread that dispatched them gets here); then transforms on the instance, in a Kokkos
+  /// Tools region `fftn::kokkos::view_plan::execute`, and returns when `out` holds the result.
+  /// Scaling multiplies each real and imaginary part of the described output by a coefficient
+  /// computed in `double` and rounded once to the precision of the data, and is shared among
+  /// the instance's threads when the output is large.
   ///
-  /// Preconditions: not called inside a Kokkos kernel (it fences); a transform inside a
-  /// kernel needs a core plan from `make_plan` and a workspace per thread.
+  /// Inside a Kokkos kernel it neither fences nor dispatches: it runs serially on the calling
+  /// thread. Executions on several threads at once still need one plan each.
   ///
   /// Throws `std::invalid_argument` naming `in` or `out` when their extents or strides
   /// differ from those the plan was built with, when they start at the same address and the
   /// plan is not in place or the reverse, or when an out-of-place plan is given overlapping
   /// Views. Throws `std::logic_error` when another execution of this plan is running: one plan
   /// runs one execution at a time, since its executions share its workspace. Allocates
-  /// nothing unless it throws (the fence's label is built at construction; a loaded Kokkos
-  /// Tools library may allocate in the fence).
+  /// nothing unless it throws (the labels are built at construction; a loaded Kokkos Tools
+  /// library may allocate in the fence and the dispatch).
   ///
   /// Guarantees: as for `fftn::plan::execute` (the input of an out-of-place plan is
-  /// preserved; nothing outside the described output elements is written).
+  /// preserved; nothing outside the described output elements is written), with results
+  /// bitwise equal to those of serial execution for every instance width.
   void execute(const InView& in, const OutView& out,
                normalization norm = normalization::backward) const {
     check("in", in, in_extent_, in_stride_);
@@ -582,9 +785,12 @@ public:
                              "time (use a plan per thread, or make_plan and a workspace each)");
     }
     const detail::busy_guard release(busy_);
-    exec_space_.fence(detail::fence_label());
-    workspace scratch(workspace_.memory());
-    plan_.execute(data_of(in), data_of(out), scratch);
+    const bool nested = detail::in_kernel<ExecutionSpace>();
+    const detail::region_guard region(!nested);
+    if (detail::fences_before_transform<ExecutionSpace> && !nested) {
+      executor_.space().fence(detail::fence_label());
+    }
+    plan_.execute(data_of(in), data_of(out), executor_, workspace_);
     scale(out, norm);
   }
 
@@ -608,13 +814,13 @@ public:
   [[nodiscard]] std::string describe() const { return plan_.describe(); }
 
 private:
-  view_plan(ExecutionSpace exec_space, const InView& in, const OutView& out,
+  view_plan(const ExecutionSpace& exec_space, const InView& in, const OutView& out,
             const shape<in_element, out_element>& s)
-      : exec_space_(std::move(exec_space)),
-        plan_(detail::plan_of(s, detail::same_first_element(in, out))),
-        workspace_(plan_.workspace_bytes()), dir_(s.dir),
+      : executor_(exec_space), plan_(detail::plan_of(s, detail::same_first_element(in, out))),
+        workspace_(plan_.workspace_bytes(executor_.width())), dir_(s.dir),
         in_place_(detail::same_first_element(in, out)) {
     static_cast<void>(detail::fence_label());
+    static_cast<void>(detail::region_label());
     for (const axis& a : s.axes) {
       points_ *= a.n;
     }
@@ -623,6 +829,9 @@ private:
       out_extent_[d] = out.extent(d);
       in_stride_[d] = in.stride(d);
       out_stride_[d] = out.stride(d);
+      if (out_extent_[d] > out_extent_[split_]) {
+        split_ = d;
+      }
     }
   }
 
@@ -663,6 +872,60 @@ private:
     }
   }
 
+  using out_value = OutView::non_const_value_type;
+  using out_real = detail::real_of<out_value>::type;
+
+  // One scaling of an output: its elements, cut along dimension split_ into `parts` ranges.
+  struct scale_job {
+    const view_plan* self;
+    out_value* first;
+    out_real coefficient;
+    int parts;
+  };
+
+  // Multiplies every element of the box of `extent` elements that starts at `first`, walking
+  // it with an odometer over the dimensions, so any layout works.
+  void scale_box(out_value* first, const std::array<std::size_t, rank>& extent,
+                 out_real c) const noexcept {
+    std::size_t total = 1;
+    for (const std::size_t e : extent) {
+      total *= e;
+    }
+    std::array<std::size_t, rank> index{};
+    std::ptrdiff_t offset = 0;
+    for (std::size_t k = 0; k < total; ++k) {
+      out_value& x = first[offset];
+      if constexpr (std::is_floating_point_v<out_value>) {
+        x *= c;
+      } else {
+        x.real(x.real() * c);
+        x.imag(x.imag() * c);
+      }
+      for (std::size_t d = rank; d-- > 0;) {
+        const auto step = static_cast<std::ptrdiff_t>(out_stride_[d]);
+        if (++index[d] < extent[d]) {
+          offset += step;
+          break;
+        }
+        offset -= step * static_cast<std::ptrdiff_t>(extent[d] - 1);
+        index[d] = 0;
+      }
+    }
+  }
+
+  static void scale_part(void* arg, int part) {
+    const auto& job = *static_cast<const scale_job*>(arg);
+    const view_plan& self = *job.self;
+    const std::size_t length = self.out_extent_[self.split_];
+    const auto parts = static_cast<std::size_t>(job.parts);
+    const auto p = static_cast<std::size_t>(part);
+    const std::size_t begin = length * p / parts;
+    std::array<std::size_t, rank> extent = self.out_extent_;
+    extent[self.split_] = length * (p + 1) / parts - begin;
+    const auto start = static_cast<std::ptrdiff_t>(begin * self.out_stride_[self.split_]);
+    self.scale_box(job.first + start, extent, job.coefficient);
+  }
+
   void scale(const OutView& out, normalization norm) const {
     const bool forward = dir_ == direction::forward;
     double coefficient = 1;
@@ -674,42 +937,36 @@ private:
     } else {
       return;
     }
-    using value = OutView::non_const_value_type;
-    using T = detail::real_of<value>::type;
-    const auto c = static_cast<T>(coefficient);
-    // Every described element once, in any layout: an odometer over the dimensions.
-    std::array<std::size_t, rank> index{};
-    std::ptrdiff_t offset = 0;
-    value* const p = out.data();
-    for (std::size_t k = 0, total = out.size(); k < total; ++k) {
-      value& x = p[offset];
-      if constexpr (std::is_floating_point_v<value>) {
-        x *= c;
-      } else {
-        x.real(x.real() * c);
-        x.imag(x.imag() * c);
-      }
-      for (std::size_t d = rank; d-- > 0;) {
-        const auto step = static_cast<std::ptrdiff_t>(out_stride_[d]);
-        if (++index[d] < out_extent_[d]) {
-          offset += step;
-          break;
-        }
-        offset -= step * static_cast<std::ptrdiff_t>(out_extent_[d] - 1);
-        index[d] = 0;
-      }
+    const auto c = static_cast<out_real>(coefficient);
+    // Shared only when the multiplications outweigh a dispatch (experiment T3).
+    int parts = 1;
+    if (out.size() >= scale_share_elements) {
+      const auto most = std::min<std::size_t>(out_extent_[split_],
+                                              static_cast<std::size_t>(executor_.concurrency()));
+      parts = static_cast<int>(most);
     }
+    if (parts <= 1) {
+      scale_box(out.data(), out_extent_, c);
+      return;
+    }
+    scale_job job{.self = this, .first = out.data(), .coefficient = c, .parts = parts};
+    executor_.bulk(parts, &scale_part, &job);
   }
 
-  ExecutionSpace exec_space_;
+  static constexpr std::size_t scale_share_elements = std::size_t{1} << 16;
+
+  executor<ExecutionSpace> executor_;
   fftn::plan<in_element, out_element> plan_;
-  // The scratch of the plan's executions, lent to each in turn through a borrowing
-  // workspace; busy_ makes them take turns (execute is const, as Kokkos-FFT's).
-  workspace workspace_;
+  // The scratch of the plan's executions, for the instance's width; busy_ makes them take
+  // turns (execute is const, as Kokkos-FFT's). One object throughout, so that the team state
+  // it holds stays valid from one execution to the next.
+  mutable workspace workspace_;
   mutable std::atomic<bool> busy_{false};
   direction dir_;
   bool in_place_;
   std::size_t points_ = 1;
+  // The output dimension that scaling cuts among threads: the longest.
+  std::size_t split_ = 0;
   std::array<std::size_t, rank> in_extent_{};
   std::array<std::size_t, rank> out_extent_{};
   std::array<std::size_t, rank> in_stride_{};

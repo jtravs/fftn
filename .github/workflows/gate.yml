@@ -197,6 +197,9 @@ jobs:
       CXX: g++
       FFTN_CHECK_STAGES: ${{ matrix.stages }}
       FFTN_CHECK_JOBS: ${{ matrix.jobs }}
+      # The threaded Kokkos back end for fftn/kokkos.hpp's tests (cmake/FftnTestDeps.cmake);
+      # empty keeps the default.
+      FFTN_KOKKOS_BACKEND: ${{ matrix.kokkos }}
     steps:
       - name: Packages (CMake, Ninja, ccache)
         run: |
