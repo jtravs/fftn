@@ -144,6 +144,7 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
   }
   if (x86_64 && private_l2 && large_l3 && !large_l2) {
     p.column_wide_bytes = 1024;
+    p.fit_row_bytes = c.l3.size / 4 * 3; // X57: three quarters of the CCX's L3
   }
   // Experiment X58, an Ice Lake VM (Google Cloud N2: private L2 1.25 MiB, 6.9 MiB of L3 per
   // CPU, so the large-L3 branch below): the depth-first chain as on the Xeon 6240. One top of

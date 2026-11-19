@@ -286,6 +286,17 @@ last one's stores are still in flight see the cost. Check for it when an in-plac
 is slower than its out-of-place twin by more than the copy. Neoverse not measured.
 [X49](experiments/X49-tiny-calls.md) (`bench/x49/pairs_forwarding.cpp`).
 
+2.13 **On Zen 3, aligning functions redraws the placement lottery instead of ending it.** Single
+c2c rows of 72 and 120 points took 1.05–1.06 of their time between two commits on the EPYC 7763
+with the same plans and the same pass code, and across the merges between them the ratios went
+up and down (72: 0.98, 1.03, 1.07, 0.95, 1.08) on cases no merge touched. Compiling the `avx2`
+units with `-falign-functions=64` took 72 to 0.89 and 120 to 0.93 of their time, and a screen of
+90 single rows showed nothing slower; the 201 cases of the exit check then gave 0.999 [0.997,
+1.003], with 1024 × 3 at 1.04–1.06 and 32 bytes worse in the screen (144 at 1.05). A screen on one
+shape does not clear a build flag that moves every kernel: judge it on every shape. For a jump
+with an unchanged plan, compare the functions first, then bisect: a ratio that wanders across
+merges is placement. [X57](experiments/X57-epyc-1024.md).
+
 ## 3. Memory and caches
 
 3.1 **Buffers a power of two apart conflict in cache; offset them.** Staggering the
@@ -578,6 +589,15 @@ them to 0.63–0.79 of that time (0.83–1.01 of FFTW). The M5 Max showed the sa
 with the same top). The standard catalogue held one such row (46080) and its exit checks
 never flagged the rest. Screen a strategy on lengths built to stress it (odd part × 2^k
 across the cache sizes), not only on the catalogue's. [X51](experiments/X51-depth-2.md).
+
+3.28 **Cache facts seen from inside a VM can put a machine in the wrong class; screen the
+families a rule reaches.** A Google Cloud Ice Lake VM (private L2 1.25 MiB) reports 55 MiB of L3
+for 8 CPUs, so a key on L3 per CPU filed it with the EPYC and it missed the depth-first chain of
+the Xeon 6240, its nearest relative: its long rows took 1.13–1.53 of FFTW's time, and 0.64–0.79
+with a key on the L2 alone (0.596 of the time over the rows that changed). The same screen found
+that a batch leaf of 12 won on 1–1.25 MiB of L2 and lost on 2 MiB (12 × 64 1.15–1.17 of the
+chain's time on Granite and Sapphire Rapids). Prefer the private levels for a key, and rent an
+hour of each family before trusting a rule there. [X58](experiments/X58-intel-keys.md).
 
 ## 4. Kernels and algorithms
 
@@ -888,6 +908,18 @@ avx2's two rows per register won there; from four rows avx512's own won at 11–
 And it gains least where it is needed most: 2–8 points lose at 2–4 rows (the leaf moves as
 much data and the transposes add shuffles), and lengths whose row is already a pair leaf
 on whole registers lose by 1.1–3.8. [X53](experiments/X53-two-row-leaves.md).
+
+4.23 **The best radices for a row depend on how much data the plan touches, so let the choice
+see it.** On the EPYC 7763 (32 MiB of L3 per core complex, `avx2` double) 1024 = 16 · 64 took
+0.84–0.96 of 4 · 16 · 16's time from one row to 768 rows, 24 MiB of rows and output; at 1024 rows
+out of place (32 MiB) it no longer won (1.04 here, 1.25 in X54) and at 2048 rows it lost 1.30,
+while in place, with half the data, 1024 rows still gained 0.94. 768 = 12 · 64 behaved alike
+(4 · 12 · 16 took 0.75 of its time at 2048 rows). A first pass that reads 12–16 streams is
+cheap while they hit the L3 and expensive once every stream misses. A limit on rows plus output
+in bytes (three quarters of the L3), applied to one-axis plans only, kept every gain and lost
+nothing; a per-length override had to give up 1024 altogether, because the plane's rows and
+the long batches lost. Count what the plan touches, not what one row needs.
+[X57](experiments/X57-epyc-1024.md).
 
 ## 5. Threading
 

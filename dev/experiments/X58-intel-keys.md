@@ -1,6 +1,6 @@
 # X58: profile keys for recent Intel (Ice Lake VMs, batch leaves of 12)
 
-- **Status:** running
+- **Status:** done: both changes adopted
 - **Owner:** lead, 2026-11-18
 - **Phase / task:** 1 (phase 1 exit check); follows X53, X55 and X56
 
@@ -48,4 +48,40 @@ same plan does not decide (placement). Each change is judged and kept separately
 
 ## Results
 
+Spot VMs of Google Cloud, GCC 14.2, `avx512`, every arm pinned to CPU 2, no round under load.
+G is 5f8b14a, N is `main` 0508037. A first Ice Lake run was stopped: it added 2^23 points,
+where FFTW's MEASURE planning took over 100 minutes. Two VMs were preempted before they
+finished, and their replacements are the runs below.
+
+**Depth-first chain, Ice Lake VM** (`n2-standard-16`, one thread per core, private L2 1.25 MiB,
+55 MiB of L3 for 8 CPUs). Forced tops on N, screen run in X56's `n2b` VM: a top of 16 took
+0.50–0.68 of the time from 32768 to 2^22 points, a top of 20 0.49 at 100000.
+
+| Run | Cases | G ÷ N | Band |
+|---|---|---|---|
+| 20261119-002713-2377 | 18 rows of 16384 points and more | 0.596 [0.589, 0.603], 16 faster, none slower | ±4.30 % |
+| 20261119-003220-1982 | tracking tier (61) | 0.929 [0.922, 0.937], 7 faster, none slower | ±3.60 % |
+
+FFTN ÷ FFTW, N → G: 32768 1.20 → 0.78, 46080 1.43 → 0.70, 65536 (every form) 1.41–1.53 →
+0.72–0.79, 100000 1.44 → 0.71, 131072 1.32 → 0.70, 262144 1.34 → 0.68, 2^22 1.13 → 0.64. ÷ oneMKL:
+1.08–1.71 → 0.55–0.90 on the same rows. 16384 and 20000 lie below L2/4 and keep their plans.
+
+**No batch leaf of 12** (`batch_leaf_12` false on a private L2 of 2 MiB or more). The rule
+changes 12 × 64 and 12 × 1024 only.
+
+| Machine | Run | 12 × 64 | 12 × 1024 | Changed cases | Band | Tracking tier |
+|---|---|---|---|---|---|---|
+| Granite Rapids (`c4-standard-16`) | 20261119-002918-a348 | 0.865 | 0.870 | 0.867 | ±1.00 % | 0.998, none slower (20261119-013614-c63c, ±2.25 %) |
+| Sapphire Rapids (`c3-standard-8`) | 20261119-003032-02b8 | 0.854 | 0.932 | 0.892 | ±1.00 % | 1.000, none slower (20261119-020423-7938, ±2.06 %) |
+
+With batch leaves off altogether on N (X56's `n2b` and `c3b` VMs): Ice Lake 12 × 64 1.233 and
+12 × 1024 1.076, so it keeps the leaf; Sapphire Rapids 0.857 and 0.926, so it drops it.
+
 ## Verdict
+
+**Both changes adopted**, each meeting the rule on every family it reaches and was measured
+on. Not measured: Emerald Rapids (2 MiB of L2, takes the second change), Ice Lake on bare metal
+(its small L3 per core already takes the Xeon 6240's branch), client cores with an L2 between 1
+and 2 MiB, float on Ice Lake (stays off). Why the batch leaf of 12 loses with 2 MiB of L2 and
+wins with 1–1.25 MiB was not traced. Cloud cost of this experiment and its screens: about USD
+3.0 ([ledger](cloud-ledger-2026-11.md), X56 and X58).
