@@ -268,9 +268,11 @@ precisions:
   at sampled outputs beyond;
 - complex and real arrays of two and three axes (up to 32 × 30 and 4 × 6 × 8 points) at
   every output, with default and strided layouts, and rows and planes with three and four
-  batch dimensions in several memory orders, axes and batch dimensions interleaved; their
-  bounds add the rounding of the reference's values between axes and, for c2r, of the
-  input spectrum.
+  batch dimensions in several memory orders, axes and batch dimensions interleaved; every
+  ordered selection of one to three dimensions of arrays of up to four dimensions (up to
+  8 x 9 x 16 and 2 x 3 x 4 x 5 points), the others as batch dimensions, under C, Fortran and
+  rotated memory orders, on every instruction set the machine runs; their bounds add the
+  rounding of the reference's values between axes and, for c2r, of the input spectrum.
 
 The same rows and planes are compared with FFTW at every output, within the sum of the
 two libraries' bounds. Measured on an Apple M-series Mac (Clang 23), the largest error in
