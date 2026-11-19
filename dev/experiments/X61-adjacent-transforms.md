@@ -1,6 +1,6 @@
 # X61: strided axes of an array as lanes over adjacent transforms
 
-- **Status:** judging the final x86 condition (one thread adopted on the Mac)
+- **Status:** done (adopted on NEON; restricted on the measured x86 profiles)
 - **Owner:** task 4.3 agent, 2026-11-19
 - **Phase / task:** 4 / 4.3
 
@@ -139,15 +139,32 @@ transforms is one task, which a team cannot split:
   (20261119-074020-cde5).
 - `fbd01d8` (final): on the x86 profiles the route is taken only where `column_radices` are the
   chain's on every axis, and a team runs the chain there with the same bits; elsewhere the plan
-  is the chain. Judging runs x61-epyc-1t, x61-xeon-1t, x61-epyc-8t, x61-xeon-8t: RESULTS.
+  is the chain. Judging runs x61-epyc-1t, x61-xeon-1t, x61-epyc-8t, x61-xeon-8t:
+
+  | Run (A/A band) | B ÷ A | worst B ÷ A |
+  |---|---|---|
+  | EPYC, one thread (20261119-082911-ac82, ±1.41 %) | 0.946 | 1.01 |
+  | Xeon, one thread (20261119-082934-65c7, ±1.92 %) | 0.774 | 1.02 |
+  | EPYC, 8 lanes (20261119-090928-c329, ±2.56 %) | 0.966 | 1.03 |
+  | Xeon, 8 lanes (20261119-090955-8ab7, ±2.65 %) | 0.918 | 1.02 |
+
+  Few axes' `column_radices` match the chain's, so most x86 plans are the chain again. Against
+  FFTW the x86 one-thread results go back to 2.6 (EPYC) and 1.5 (Xeon) of its time.
 
 FFTN's threaded interleaved planes and volumes stay 2–7 times FFTW's threaded time in both arms
 (the chain route with few transforms), a gap this experiment does not address.
 
 ## Verdict
 
-One thread: adopted on the M5 Max (0.48 of the chain's time, no case slower; the x86 condition
-does not apply there). On the x86 profiles: VERDICT. DESIGN 9.3 describes the route; LESSONS
+Adopted on the M5 Max: 0.48 of the chain's time at one thread, no case slower; the x86
+condition does not apply there, and its 8 lanes were not measured.
+
+On the EPYC 7763 and the Xeon 6240 the unrestricted route met the one-thread rule (0.29, 0.37)
+but failed the 8-lane clause (up to 1.7 and 2.4). The final condition is never slower at either
+thread count but keeps little: 0.95 and 0.77 at one thread. The EPYC's 0.95 misses the 0.85 bar,
+so as a gain it is the Xeon's alone. It is kept as the safe form of the route on x86 until a team
+can share a block's lines, which would bring back the one-thread 0.29 and 0.37 without the 8-lane
+loss. That follow-up is the main open item. DESIGN 9.3 describes the route; LESSONS
 3.29 the lesson. Follow-ups:
 - let a team share a block's lines (work-graph phases for lanes programs), so that teams can run
   the lanes and x86 can keep column_radices everywhere;

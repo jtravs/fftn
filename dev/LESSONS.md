@@ -616,7 +616,10 @@ such cases to 0.48 of that time on the M5 Max, 0.29 on an EPYC 7763 and 0.37 on 
 and to 0.80–0.86 of FFTW's. Within L1 the strided chain is not slow: there the lanes lost on
 one complex per register (M5 Max double) and on leaf lengths of 16 or fewer, while on `avx2`
 and `avx512` longer axes still gained (Xeon: 32 × 16 0.23). Count the whole array against L1,
-not one block: blocks that each fit L1 still meet cold memory one after another.
+not one block: blocks that each fit L1 still meet cold memory one after another. And plan the
+team's share before adopting a one-thread win: a block of transforms that a team cannot split
+lost up to 2.4 times at 8 lanes on the Xeon on interleaved planes of 8–64 transforms, where the
+chain lets every member take lines of each transform.
 [X61](experiments/X61-adjacent-transforms.md).
 
 ## 4. Kernels and algorithms
