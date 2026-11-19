@@ -1,6 +1,6 @@
 # X61: strided axes of an array as lanes over adjacent transforms
 
-- **Status:** done (adopted)
+- **Status:** judging the final x86 condition (one thread adopted on the Mac)
 - **Owner:** task 4.3 agent, 2026-11-19
 - **Phase / task:** 4 / 4.3
 
@@ -121,12 +121,38 @@ float 8 x 64 at 1.045 (run 20261119-031709-6855, ±1.00 %, after the driver kept
 1.037 before it), a float case outside the release targets' double tuning and a hair past the
 collateral limit of 1.03 beyond the band: left open.
 
-Threaded (8 lanes): the first run (b95d5fd, EPYC run 20261119-044638-2ed8, ±1.67 %) failed the rule on planes and volumes of 8–64 transforms (up to 1.74 of A: a block of transforms is one task); a team now runs the chain below 128 transforms (365a96a), judged in the runs below.
+**Threaded (8 lanes)**, A and B with `THREADS=8`, FFTW at 8 threads. A block of adjacent
+transforms is one task, which a team cannot split:
+- `b95d5fd`: the rule failed on planes and volumes of 8–64 transforms. EPYC up to 1.74 of A
+  (20261119-044638-2ed8, ±1.67 %); Xeon up to 2.4, with 1024 x 256 at 1.2–1.6
+  (20261119-045607-bb58, ±3.68 %).
+- `365a96a`: a team ran the chain below 128 transforms, with the lanes on the chain's radices.
+  The M5 Max's one thread lost 1.15 on 256 x 64 (run 20261119-053243-2402), and the Xeon's
+  1024 x 256 was untouched.
+- `60a110c`: on the x86 profiles (`adjacent_team_chain`) every team ran the chain, the lanes on
+  the chain's radices. 8 lanes passed: EPYC B ÷ A 0.927, worst 1.01 (20261119-060449-88fb);
+  Xeon 0.854, worst 1.04 within ±4.61 % (20261119-055855-0364). One thread on the EPYC lost
+  0.29 → 0.40, with 1024 x 16 at 1.25 and 256 x 16 at 1.21 (20261119-064525-3299). The Xeon's
+  one thread was fine: 0.362 (20261119-063911-f5cc).
+- `c33d576`: a team ran the chain only where the radices agree, and the lanes elsewhere. The rule
+  failed at 8 lanes again: EPYC up to 1.52 (20261119-073845-683d), Xeon up to 2.1
+  (20261119-074020-cde5).
+- `fbd01d8` (final): on the x86 profiles the route is taken only where `column_radices` are the
+  chain's on every axis, and a team runs the chain there with the same bits; elsewhere the plan
+  is the chain. Judging runs x61-epyc-1t, x61-xeon-1t, x61-epyc-8t, x61-xeon-8t: RESULTS.
+
+FFTN's threaded interleaved planes and volumes stay 2–7 times FFTW's threaded time in both arms
+(the chain route with few transforms), a gap this experiment does not address.
 
 ## Verdict
 
-Adopted on every target by the decision rule (B ÷ A at most 0.85 and no case slower than 1.05
-beyond the band): 0.48 on the M5 Max, 0.29 on the EPYC, 0.37 on the Xeon. DESIGN 9.3 describes
-the route; LESSONS 3.29 the lesson. Follow-ups: a per-target condition within L1 (the EPYC's
-leaf-length cases, Z), a real lane path for a strided halved axis, small interleaved planes
-against FFTW, oneMKL's short columns, the x7 float case.
+One thread: adopted on the M5 Max (0.48 of the chain's time, no case slower; the x86 condition
+does not apply there). On the x86 profiles: VERDICT. DESIGN 9.3 describes the route; LESSONS
+3.29 the lesson. Follow-ups:
+- let a team share a block's lines (work-graph phases for lanes programs), so that teams can run
+  the lanes and x86 can keep column_radices everywhere;
+- a per-target condition within L1 (the EPYC's leaf-length cases, arm Z);
+- a real lane path for a strided halved axis;
+- small interleaved planes against FFTW;
+- oneMKL's short columns;
+- the x7 float case.
