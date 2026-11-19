@@ -73,8 +73,9 @@ struct loop {
   // shares both nests' lines as one phase instead of running this one after (X41).
   bool joins = false;
   // A lines loop opening a nest whose neighbouring lines write the same cache lines (the
-  // columns of a plane whose rows or blocks are not whole cache lines): a team claims its
-  // lines in runs of a fair share, so that few of them border another member's (X59).
+  // columns of a plane whose rows or blocks are not whole cache lines): a team claims a phase
+  // of few lines per member in runs of a fair share (chunk_run), so that few runs border
+  // another member's (X59).
   bool shares_lines = false;
 };
 

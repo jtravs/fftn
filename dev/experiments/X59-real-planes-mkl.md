@@ -23,8 +23,8 @@ Arms are written here, each with its decision rule, after the diagnosis and befo
 run.
 
 - **Arm T** (`loop::joins`, X41's T1 on the current work graph): the narrower last block of a
-  lanes column phase joins the whole blocks' phase instead of running alone afterwards. Every
-  real plane of even length has such a block (n/2 + 1 columns is odd). X41 rejected T1 against
+  lanes column phase joins the whole blocks' phase instead of running alone afterwards. Nearly
+  every real plane has such a block (n/2 + 1 columns, odd for n a multiple of 4). X41 rejected T1 against
   a 0.95 bar on the EPYC (0.957–0.968 over the planes it changes); the diagnosis below finds this
   phase at 7–12 % of the 8-lane time of real 256²–512² on the Xeon. One-thread programs are
   unchanged (the work graph is read by teams only); bits unchanged (the same lines, in any
@@ -43,7 +43,7 @@ run.
   (chunks / cap, at least one) instead of X52's guided runs (a share of what is left, at most
   left / (2 × cap)). A member's lines are then adjacent and a phase has about cap runs. The
   diagnosis shows why it matters: neighbouring columns of a real plane share cache lines in most
-  rows (a row of n/2 + 1 complex values is an odd multiple of 16 bytes), so each boundary between
+  rows (a row of n/2 + 1 complex values, for n a multiple of 4, is an odd multiple of 16 bytes), so each boundary between
   two members' runs bounces lines; FFTN's team takes 9000–11 000 loads of lines modified in
   another core's cache per real 512² plane where oneMKL's static split takes 340 (r2c) to 4700
   (c2r), and 20 000 against 1000 at r2c 2048 × 36. Stage phases keep the guided runs. Bits
@@ -147,7 +147,7 @@ narrower last block):
   core's cache, per transform at 8 lanes, FFTN against oneMKL: r2c 256² 1007 / 59, r2c 512²
   11 804 / 1940, c2r 512² 9792 / 4968, r2c 2048 × 36 19 944 / 964, c2r 2048 × 36 8856 / 657; L2
   demand misses are about twice oneMKL's from 512² up. Part of this is false sharing: a real row
-  is n/2 + 1 complex values long, an odd multiple of 16 bytes, so neighbouring columns share
+  is n/2 + 1 complex values long, for n a multiple of 4 an odd multiple of 16 bytes, so neighbouring columns share
   cache lines in three rows of four, and at 2048 × 36 (19 columns through the chain, one per chunk,
   for 8 members) in every row. How much is the question arm R tests (below): most of it is not.
 - **c2r carries a third array.** Out of place FFTN keeps the input and puts the half spectrum in

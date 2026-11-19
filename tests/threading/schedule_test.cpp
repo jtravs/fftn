@@ -109,8 +109,7 @@ TEST(WorkGraph, FairRunsWhereNeighbouringLinesShareCacheLines) {
   fftn::shape<double, std::complex<double>> volume;
   volume.axes = {{.n = 16}, {.n = 16}, {.n = 16}};
   volume.batches = {{.count = 1}};
-  for (const d::graph_phase& phase :
-       d::make_plan_core(d::view_of(volume), opts, s)->graph.phases) {
+  for (const d::graph_phase& phase : d::make_plan_core(d::view_of(volume), opts, s)->graph.phases) {
     EXPECT_FALSE(phase.fair_runs);
   }
 
@@ -218,6 +217,18 @@ TEST(WorkGraph, PhasesOfRowsAndPlanes) {
   EXPECT_EQ(tail->graph.phases[1].head, 3U);
   EXPECT_EQ(tail->graph.phases[1].tail_nest, 1U);
   EXPECT_EQ(tail->graph.phases[1].chunks, 4U);
+  // Coarse chunks: 40 columns are two blocks of 16 and a tail; two lines per chunk, so the second
+  // chunk holds the last whole block and the tail (team_env::run_chunk splits it at head).
+  fftn::detail::build_settings coarse = fine;
+  coarse.chunk_points = 2048;
+  coarse.column_block = 16;
+  const auto straddle = fftn::detail::make_plan_core(
+      fftn::detail::view_of(fftn::planes_c2c<double>(64, 40, 1, fftn::direction::forward)), opts,
+      coarse);
+  ASSERT_EQ(straddle->graph.phases.size(), 2U);
+  EXPECT_EQ(straddle->graph.phases[1].units, 3U);
+  EXPECT_EQ(straddle->graph.phases[1].head, 2U);
+  EXPECT_EQ(straddle->graph.phases[1].chunks, 2U);
   // A volume (task 4.2): its two inner axes plane at a time, one phase whose lines are the
   // 4 whole planes (the loop over them holds each plane's own loops), then the outer axis,
   // whose two loops over the other axes are one phase of their product.

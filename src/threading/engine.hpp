@@ -248,15 +248,16 @@ private:
     // never crosses a phase: the counter only rises within an epoch, so the value `claim`
     // hands the lambda is at least this member's last claim, in phase p or later, and below
     // `total`.
-    // Where a phase's neighbouring lines write the same cache lines, a run is a fair share
-    // instead (chunk_run, work_graph.hpp; X59).
+    // Where a phase's neighbouring lines write the same cache lines and it has at most a few
+    // chunks per member, a run is a fair share instead (chunk_run, work_graph.hpp; X59).
     const auto cap = static_cast<std::uint32_t>(std::max(share.cap, 1));
-    const auto runs = static_cast<std::uint32_t>(std::max(job_.plan.profile.claim_divisor, 2)) * cap;
+    const auto runs =
+        static_cast<std::uint32_t>(std::max(job_.plan.profile.claim_divisor, 2)) * cap;
     for (;;) {
       // While this member holds a claim the execution cannot end, so no word of this task
       // can carry a later tag before the loop leaves.
-      const claimed c =
-          claim(word(layout_.claim(slot)), total, [&phases, total, runs, cap, p](std::uint32_t left) {
+      const claimed c = claim(
+          word(layout_.claim(slot)), total, [&phases, total, runs, cap, p](std::uint32_t left) {
             const std::uint32_t at = total - left;
             std::size_t q = p;
             while (at >= phases[q].first + phases[q].chunks) {

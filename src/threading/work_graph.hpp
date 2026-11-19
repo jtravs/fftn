@@ -13,7 +13,8 @@
 //   scratch lines a and b;
 // - a loop nest over the lines of one axis (2-D and 3-D transforms) is a phase whose
 //   chunks are runs of whole lines; each line runs all its stages on the scratch lines of
-//   the thread that runs it, and the task's block (if any) is shared.
+//   the thread that runs it, and the task's block (if any) is shared. A nest that joins it
+//   (loop::joins: a column phase's narrower last block) adds its lines to the same phase.
 //
 // Either way a chunk runs exactly the code serial execution runs for it, on the same
 // elements, so the output does not depend on who runs which chunk (DESIGN.md 15.5).
@@ -32,7 +33,7 @@ struct graph_phase {
   std::uint32_t record = 0;   // the stage, or the outermost loop of the nest
   std::uint32_t nest = 0;     // loops in the nest; 0 for a stage
   std::uint32_t body_end = 0; // lines: one past the nest's last record
-  std::size_t units = 0;      // the stage's units, or the nest's lines
+  std::size_t units = 0;      // the stage's units, or the lines of the nest (and its tail)
   std::uint32_t chunks = 1;
   std::uint64_t first = 0; // the index of the phase's first chunk among the task's chunks
   double work = 0;         // the phase's work in the cost model's units (schedule.hpp)
@@ -42,7 +43,8 @@ struct graph_phase {
   std::uint32_t tail_nest = 0;
   std::uint32_t tail_body_end = 0;
   std::size_t head = 0;
-  // Neighbouring lines write the same cache lines (loop::shares_lines): claimed in fair runs.
+  // Neighbouring lines write the same cache lines (loop::shares_lines): fair runs where the
+  // phase has few chunks per member (chunk_run).
   bool fair_runs = false;
 };
 
