@@ -597,6 +597,15 @@ with the same top). The standard catalogue held one such row (46080) and its exi
 never flagged the rest. Screen a strategy on lengths built to stress it (odd part × 2^k
 across the cache sizes), not only on the catalogue's. [X51](experiments/X51-depth-2.md).
 
+3.28 **Cache facts seen from inside a VM can put a machine in the wrong class; screen the
+families a rule reaches.** A Google Cloud Ice Lake VM (private L2 1.25 MiB) reports 55 MiB of L3
+for 8 CPUs, so a key on L3 per CPU filed it with the EPYC and it missed the depth-first chain of
+the Xeon 6240, its nearest relative: its long rows took 1.13–1.53 of FFTW's time, and 0.64–0.79
+with a key on the L2 alone (0.596 of the time over the rows that changed). The same screen found
+that a batch leaf of 12 won on 1–1.25 MiB of L2 and lost on 2 MiB (12 × 64 1.15–1.17 of the
+chain's time on Granite and Sapphire Rapids). Prefer the private levels for a key, and rent an
+hour of each family before trusting a rule there. [X58](experiments/X58-intel-keys.md).
+
 ## 4. Kernels and algorithms
 
 4.1 **A whole-transform codelet wins only where it fills the register.** One 32-point

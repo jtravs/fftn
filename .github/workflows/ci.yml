@@ -142,17 +142,18 @@ jobs:
         [
           {"name": "gcc-14", "cxx": "g++-14", "stages": "build bench"}
         ]
-      # Clang on the MSVC ABI with clang-cl, x64 and Arm64 (experiment B2), with LLVM as
-      # installed on the image. The C compiler (GoogleTest's project() enables C) is named
-      # too: left to itself, CMake finds the GNU-driver clang.exe beside clang-cl and hands
-      # it MSVC-style flags, which it rejects.
+      # Clang on the MSVC ABI with clang-cl, x64 and Arm64 (experiment B2), with the pinned
+      # LLVM that gate.yml installs in C:/fftn-llvm (.github/scripts/install-llvm-windows.sh).
+      # The C compiler (GoogleTest's project() enables C) is named too: left to itself, CMake
+      # finds the GNU-driver clang.exe beside clang-cl and hands it MSVC-style flags, which
+      # it rejects.
       windows: >-
         [
           {"name": "x64 clang-cl", "runner": "windows-2025", "arch": "x64", "stages": "build",
-           "cc": "C:/Program Files/LLVM/bin/clang-cl.exe",
-           "cxx": "C:/Program Files/LLVM/bin/clang-cl.exe"},
+           "cc": "C:/fftn-llvm/bin/clang-cl.exe",
+           "cxx": "C:/fftn-llvm/bin/clang-cl.exe"},
           {"name": "arm64 clang-cl", "runner": "windows-11-arm", "arch": "arm64",
            "stages": "build",
-           "cc": "C:/Program Files/LLVM/bin/clang-cl.exe",
-           "cxx": "C:/Program Files/LLVM/bin/clang-cl.exe"}
+           "cc": "C:/fftn-llvm/bin/clang-cl.exe",
+           "cxx": "C:/fftn-llvm/bin/clang-cl.exe"}
         ]

@@ -788,6 +788,22 @@ TEST(Schedule, ProfilesOfRecordedMachines) {
       .depth_convolution_max_bytes = 0,
   };
   EXPECT_EQ(fields("linux-gcp-c4-granite-rapids.sysfs", true), large_l2);
+  // X58: a private L2 of 2 MiB leaves out the batch leaf of 12; the other machines keep it.
+  const auto batch_leaf_12 = [&](const char* file) {
+    return fftn::detail::profile_for(fftn::detail::load_topology(data / file), true).batch_leaf_12;
+  };
+  EXPECT_FALSE(batch_leaf_12("linux-gcp-c4-granite-rapids.sysfs"));
+  EXPECT_TRUE(batch_leaf_12("linux-intel-xeon-gold-6240.sysfs"));
+  EXPECT_TRUE(batch_leaf_12("linux-gcp-c4d-zen5.sysfs"));
+  // X58: an Ice Lake VM (1.25 MiB of private L2, much L3 per CPU) takes the depth-first chain.
+  const planner_fields ice_lake = fields("linux-gcp-n2-ice-lake.sysfs", true);
+  EXPECT_EQ(ice_lake.depth_min_bytes, 320 * kib);
+  EXPECT_EQ(ice_lake.depth_max_bytes, 80 * mib);
+  EXPECT_EQ(ice_lake.depth_top, 16U);
+  EXPECT_EQ(ice_lake.depth_top_alt, 20U);
+  EXPECT_EQ(ice_lake.depth_top_last, 10U);
+  EXPECT_EQ(ice_lake.depth_float_max_bytes, 0U);
+  EXPECT_TRUE(batch_leaf_12("linux-gcp-n2-ice-lake.sysfs"));
   // The same on bare metal with SMT, where Granite Rapids' L3 per CPU is under 2 MiB
   // (504 MiB for 128 cores, 256 CPUs): the key is the L2, not the L3 per CPU.
   fftn::detail::core_class metal;
