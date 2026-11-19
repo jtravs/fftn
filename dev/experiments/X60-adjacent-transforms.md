@@ -47,7 +47,11 @@ the L1 data cache (`machine_profile::adjacent_min_bytes`): added after the first
 which showed every case slower than the chain lies within L1. (A first form of the condition
 counted one block of `outer`'s transforms and took the middle axes, whose blocks fit L1, back
 to the chain, which the Mac's run of `e296850` showed: 0.81 against 0.62. All the transforms
-count: a block that fits L1 still meets cold memory when many blocks follow one another.)
+count: a block that fits L1 still meets cold memory when many blocks follow one another. The
+final condition, from the Xeon's screen, keeps the chain within L1 only where C = 1 or every
+axis is of a leaf length of 16 points or fewer: on the Xeon the route gains within L1 too at
+longer axes, 32 x 16 0.23, 64 x 16 0.40, 256 x 16 0.51.) An arm `Z` (`ADJACENT_MIN_BYTES=0`,
+the route wherever it fits) stays in the judging runs to show what the condition costs.
 
 ## Method
 

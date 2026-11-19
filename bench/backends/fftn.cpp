@@ -560,6 +560,13 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
         return fbench_error;
       }
       s.settings.lanes_columns = value == "lanes";
+    } else if (key == "ADJACENT_MIN_BYTES") {
+      const std::optional<std::size_t> v = fbench::fftn_tuning::parse_size(value, 0, false);
+      if (!v) {
+        say(message, message_size, "ADJACENT_MIN_BYTES is a whole number of bytes");
+        return fbench_error;
+      }
+      s.settings.profile.adjacent_min_bytes = *v;
     } else if (key == "COLUMN_BLOCK") {
       const std::optional<std::size_t> v = fbench::fftn_tuning::parse_size(value, 1, false);
       if (!v || *v > 4096) {

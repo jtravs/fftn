@@ -1164,13 +1164,18 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
         s.batches.back().count < 2) {
       return 0;
     }
-    // All the plan's transforms together within L1 stay on the chain
-    // (machine_profile::adjacent_min_bytes).
+    // Within L1 (machine_profile::adjacent_min_bytes) the chain keeps a plan with one complex
+    // value per register, which the lanes cannot widen, and with more a plan whose axes are all
+    // of leaf lengths (X60).
+    constexpr std::size_t leaf_axis = 16;
     std::size_t bytes = p.transforms * static_cast<std::size_t>(complex_bytes);
+    bool short_axes = true;
     for (const std::size_t d : active) {
       bytes *= c.lengths[d];
+      short_axes = short_axes && c.lengths[d] <= leaf_axis;
     }
-    if (bytes <= settings.profile.adjacent_min_bytes) {
+    if (bytes <= settings.profile.adjacent_min_bytes &&
+        (kernels.complex_lanes == 1 || short_axes)) {
       return 0;
     }
     build_settings alone = settings;

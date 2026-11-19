@@ -1753,9 +1753,11 @@ vector access and every line of memory is touched once; the block is the narrowe
 `column_radices`, and transforms left over go through the tail in blocks of C. Each lane
 computes its transform alone, so blocks and execution ranges do not change the bits. A block is
 one task of the team (the work graph's one phase), so whole transforms are shared out, never
-their lines. The route is taken only when all the plan's transforms together exceed L1
-(`machine_profile::adjacent_min_bytes`): within L1 a strided line costs no more than a
-contiguous one and the chain's short passes win (X60's screen). Lengths without
+their lines. Within L1 (all the plan's transforms together, `machine_profile::
+adjacent_min_bytes`) the chain keeps a plan with one complex value per register, and on wider
+registers a plan whose axes are all of leaf lengths, 16 points or fewer: there a strided line
+costs no more than a contiguous one and the chain's short passes win, while longer axes gain
+from the lanes even within L1 on x86 (X60). Lengths without
 lane passes (a Bluestein or Rader stage, generic passes) and the
 real kinds keep one transform at a time through the chain: a strided halved axis has no lane
 path yet.
