@@ -1,6 +1,6 @@
 # X61: strided axes of an array as lanes over adjacent transforms
 
-- **Status:** done (adopted on NEON and, restricted, on the Xeon 6240's profile; off on the EPYC 7763's)
+- **Status:** done (adopted, restricted with a team running the chain, on Apple's and the Xeon 6240's classes; off elsewhere)
 - **Owner:** task 4.3 agent, 2026-11-19
 - **Phase / task:** 4 / 4.3
 
@@ -166,6 +166,12 @@ condition does not apply there, and its 8 lanes were not measured.
 On the EPYC 7763 and the Xeon 6240 the unrestricted route met the one-thread rule (0.29, 0.37)
 but failed the 8-lane clause (up to 1.7 and 2.4). The restricted form is never slower at either
 thread count, but it keeps only part of the gain: 0.95 and 0.77 at one thread.
+
+After the second reader (AGENTS section 6: unmeasured families keep their old plans), the route
+is off unless a profile is a measured class that passed. Apple's class takes the restricted form
+too: its 8 lanes were never measured, and the unrestricted route lost at 8 lanes on both x86
+machines. M5 Max at `9da996f`: B ÷ A 0.745 over the 86 c2c cases, no case slower (worst 1.01),
+÷ FFTW 1.35 (run 20261119-112501-c289, ±1.00 %), against 0.484 unrestricted.
 
 Per target, as AGENTS section 6 asks:
 - The Xeon 6240 passes (0.774 ≤ 0.85; 8 lanes 0.918) and keeps the restricted route.
