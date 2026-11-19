@@ -163,6 +163,19 @@ remain in each of 2048 rows whatever the runs (14 000 lines, the count measured)
 cannot be shared by 8 members without sharing lines. oneMKL's 1000 there suggests it divides
 such a plane along the long axis instead.
 
+### The Xeon's judging runs: unpinned, then confined
+
+Run 20261119-021905-0d98 (Slurm 16585; `main`, T, R3 and oneMKL at 8 unpinned threads, the 132
+planes and volumes; 10 rounds, all loaded by about 28 other busy cores, A/A band ±19 %) decides
+nothing: cases neither arm can change moved up to 1.46 (R3 ÷ T: c2c 1024² 1.46, c2c 100³ 1.43, whose
+programs and schedules R3 leaves as they are), and T ÷ `main` over the cases T cannot change
+averaged 0.966. **Amendment, written before the next run:** since Slurm confines nothing here,
+the Xeon's judging runs for T and R3 are the same fbench command in the same `--serial` chain,
+started under `taskset` and `numactl -m` on the eight idlest whole cores of the idlest socket and
+that socket's memory (chosen once at the job's start). The rules are otherwise unchanged. Both
+libraries' threads then stay on eight cores of one socket, which is what X43 and X52 took their
+runs to be.
+
 ### Arms T and R on the Mac (6 lanes)
 
 Run 20261119-015223-410e (M5 Max, Homebrew Clang, `neon_fcma`; A = `main` 0508037, T 79669a6, R
