@@ -132,10 +132,11 @@ struct machine_profile {
   std::size_t grid_block_bytes = std::size_t{64} * 1024;
   std::size_t grid_block = 0;
   // A c2c plan whose transforms lie one element apart runs as lanes over blocks of them only
-  // when those transforms together exceed this many bytes (core/plan_core.cpp; experiment
+  // when all its transforms together exceed this many bytes (core/plan_core.cpp; experiment
   // X60): the L1 data cache. Within it a strided line costs no more than a contiguous one and
   // the chain's own passes win (8 points x 16 transforms: 1.42 of the chain on the M5 Max, 1.20
-  // on the Xeon 6240).
+  // on the Xeon 6240). All of them: blocks that each fit L1 but together do not still gain
+  // (32 x 128 x 16 blocks: 0.62 of the chain's time over the middle axes on the M5 Max).
   std::size_t adjacent_min_bytes = std::size_t{64} * 1024;
   // The widest block of a three-phase grid (0: max_grid_block, strategies/grid.hpp;
   // experiment X39). Three phases may fill twice grid_block_bytes (X12), which gives blocks of

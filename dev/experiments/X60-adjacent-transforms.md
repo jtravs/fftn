@@ -42,9 +42,12 @@ lanes (`lanes_fit`: codelet radices, no Bluestein stage) runs as the lanes progr
 DESIGN 9.3 with B = min over the axes of the block `column_block` gives for columns of that
 axis (the transforms taking the place of the columns), the chain otherwise. Radices per axis
 as `column_radices`. Not for r2c and c2r, whose halved axis needs a real lane path of its own
-(left for later; they stay on the chain). Only when the block's transforms together exceed the
-L1 data cache (`machine_profile::adjacent_min_bytes`): added after the first screen below, which
-showed every case slower than the chain lies within L1.
+(left for later; they stay on the chain). Only when all the plan's transforms together exceed
+the L1 data cache (`machine_profile::adjacent_min_bytes`): added after the first screen below,
+which showed every case slower than the chain lies within L1. (A first form of the condition
+counted one block of `outer`'s transforms and took the middle axes, whose blocks fit L1, back
+to the chain, which the Mac's run of `e296850` showed: 0.81 against 0.62. All the transforms
+count: a block that fits L1 still meets cold memory when many blocks follow one another.)
 
 ## Method
 
