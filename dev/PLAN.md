@@ -798,7 +798,7 @@ running, done (with verdict).
 | [P4](experiments/P4-next-fast-length.md) | Are `next_fast_length`'s lengths fast on the Mac, the EPYC and the Xeon (within 1.3 of the power of two above, faster than the awkward length), and do composites with 11–23 belong in the fast set? (task 2.5) | 2 | done: every pick faster than its awkward length (0.11–0.96); composites with 11, 17, 19 or 23 removed by the rule; within 1.3 of the power of two above on 96 % (Mac) but 78 % (EPYC, Xeon), the misses short x86 lengths below 300; rule 1's target lowered to 75 % by the maintainer (2026-11-17) |
 | [T1](experiments/T1-dispatch-wait-costs.md) | Dispatch, wake and wait costs per machine and runtime (libgomp, libomp, Kokkos, pool) | 3 | done: hand-off cost and claim runs adopted on Zen 3; dispatch and work costs wait for a per-lane dispatch term |
 | T2 | Claiming engine against precomputed schedule with spin barriers; keep one or both? | 3 | planned |
-| T3 | Kokkos: cost of one `parallel_for` per transform; `team_barrier` behaviour | 3 | planned |
+| [T3](experiments/T3-kokkos-dispatch.md) | Kokkos: cost of one `parallel_for` per transform; `team_barrier` behaviour | 3 | running |
 | T4 | Run-to-run swings with several concurrent teams: first touch, NUMA balancing, false sharing of synchronisation words | 3 | planned |
 | [T5](experiments/T5-split-thresholds.md) | Thresholds for splitting a row, by cache-group type | 3 | done: 6144 points (Zen 3 CCX), 8192 (Apple cluster, mesh); 1024 points per member |
 | T6 | Hybrid processors: performance cores only, or all | 3 | planned |
