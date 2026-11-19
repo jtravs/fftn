@@ -73,10 +73,11 @@ jobs:
           {"name": "llvm coverage", "brew-llvm": true, "stages": "coverage"},
           {"name": "llvm tsan", "brew-llvm": true, "stages": "tsan", "jobs": 2}
         ]
-      # The GNU-style driver on the MSVC ABI (experiment B2).
+      # The GNU-style driver on the MSVC ABI (experiment B2), with the pinned LLVM that
+      # gate.yml installs in C:/fftn-llvm.
       windows: >-
         [
           {"name": "x64 clang++", "runner": "windows-2025", "arch": "x64", "stages": "build",
-           "cc": "C:/Program Files/LLVM/bin/clang.exe",
-           "cxx": "C:/Program Files/LLVM/bin/clang++.exe"}
+           "cc": "C:/fftn-llvm/bin/clang.exe",
+           "cxx": "C:/fftn-llvm/bin/clang++.exe"}
         ]
