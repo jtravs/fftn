@@ -39,6 +39,7 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
@@ -390,48 +391,16 @@ shape_of(const InView& in, const OutView& out, direction dir, const axis_type<Di
                           "the same first element)");
   }
 
-  shape<In, Out> s;
-  s.dir = dir;
-  for (std::size_t i = 0; i < Dim; ++i) {
-    s.axes.push_back(axis{
-        .n = extent[dims[i]],
-        .in_stride = in_stride[dims[i]],
-        .out_stride = out_stride[dims[i]],
-    });
-  }
-
-  // Batch dimensions, widest input stride first; then merge the ones that nest.
-  std::array<batch, rank> loops{};
-  std::size_t count = 0;
+  // One axis per dimension of the Views, in their own strides; the shape function does the rest
+  // (the batch dimensions by stride, widest first, merged where they nest).
+  std::array<axis, rank> array{};
   for (std::size_t d = 0; d < rank; ++d) {
-    if (!transformed[d] && extent[d] > 1) {
-      loops[count++] =
-          batch{.count = extent[d], .in_dist = in_stride[d], .out_dist = out_stride[d]};
-    }
+    array[d] = axis{.n = extent[d], .in_stride = in_stride[d], .out_stride = out_stride[d]};
   }
-  std::stable_sort(loops.begin(), loops.begin() + static_cast<std::ptrdiff_t>(count),
-                   [](const batch& a, const batch& b) { return a.in_dist > b.in_dist; });
-  std::size_t merged = 0;
-  for (std::size_t i = 0; i < count; ++i) {
-    const batch& inner = loops[i];
-    if (merged > 0) {
-      batch& outer = loops[merged - 1];
-      const auto c = static_cast<std::ptrdiff_t>(inner.count);
-      if (outer.in_dist == inner.in_dist * c && outer.out_dist == inner.out_dist * c) {
-        outer = batch{
-            .count = outer.count * inner.count,
-            .in_dist = inner.in_dist,
-            .out_dist = inner.out_dist,
-        };
-        continue;
-      }
-    }
-    loops[merged++] = inner;
-  }
-  for (std::size_t i = 0; i < merged; ++i) {
-    s.batches.push_back(loops[i]);
-  }
-  return s;
+  const std::size_t last_n = extent[halved];
+  return fftn::detail::shape_along_axes<In, Out>(array, std::span<const std::size_t>(dims), dir,
+                                                 r2c || !c2r ? last_n : last_n / 2 + 1,
+                                                 r2c ? last_n / 2 + 1 : last_n);
 }
 
 /// An FFTN plan that transforms the dimensions `axes` of `in` into `out`: the plan of

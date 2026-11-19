@@ -147,6 +147,79 @@ forward.execute(real, data.data(), ws);  // the half spectra, n/2 + 1 values per
 backward.execute(data.data(), real, ws); // the real volumes again
 ```
 
+## Chosen axes of a strided array
+
+To transform some dimensions of an array and leave its other dimensions as batches, without
+moving the data, list one `axis` per dimension of the array and the dimensions to transform.
+`axes_c2c`, `axes_r2c` and `axes_c2r` (provisional: they may change before the first release)
+return the shape; every other dimension becomes a batch dimension:
+
+```cpp file=examples/axes.cpp region=axes
+// An array of ny x nx x nw complex values, C-ordered: w varies fastest. The planes (y, x), one
+// per w, are transformed where they lie: their elements stand nw apart.
+const std::size_t ny = 12;
+const std::size_t nx = 10;
+const std::size_t nw = 8;
+const std::array<fftn::axis, 3> array{{{.n = ny}, {.n = nx}, {.n = nw}}};
+const std::array<std::size_t, 2> yx{0, 1};
+const auto points = static_cast<double>(ny * nx);
+const fftn::c2c_plan<double> forward(
+    fftn::axes_c2c<double>(array, yx, fftn::direction::forward));
+const fftn::c2c_plan<double> backward(
+    fftn::axes_c2c<double>(array, yx, fftn::direction::backward), {.scale = 1.0 / points});
+fftn::workspace ws(std::max(forward.workspace_bytes(), backward.workspace_bytes()));
+
+std::vector<std::complex<double>> x(ny * nx * nw);
+for (std::size_t i = 0; i < x.size(); ++i) {
+  x[i] = {std::cos(0.3 * static_cast<double>(i)), std::sin(0.7 * static_cast<double>(i))};
+}
+std::vector<std::complex<double>> spectrum(x.size());
+std::vector<std::complex<double>> back(x.size());
+forward.execute(x.data(), spectrum.data(), ws);
+backward.execute(spectrum.data(), back.data(), ws);
+```
+
+- **The array.** A stride of 0 is the tight C-ordered default for that dimension of the array,
+  each dimension spanning the ones after it; give strides, of either sign, for any other
+  layout. The dimensions need not nest in the order they are listed.
+- **The axes** are listed by index, one to three, in any order. Within a c2c plan the order
+  changes neither the result nor (to rounding) how it is computed: the planner runs the axes
+  in memory order, the fastest-varying first.
+- **The batch dimensions** are the remaining dimensions, widest input stride first (ties in
+  the array's order), those of length 1 dropped and neighbours that nest exactly merged. This
+  fixes the transforms' numbering for `execute_transforms`.
+- **Real transforms.** `array` gives the real side's lengths. The last axis listed is the
+  halved one: n/2 + 1 complex values along it on the complex side, whose default strides are
+  worked out with that length (the other sides of the layout rules above apply unchanged).
+  `in_place` asks for the padded default strides of an in-place plan, which needs the halved
+  dimension to be the array's fastest; see below.
+
+```cpp file=examples/axes.cpp region=axes-real
+// The columns of a real ny x nx array, each of ny reals nx apart, to half spectra of
+// ny/2 + 1 complex values stored the same way. The last axis listed is the halved one.
+const std::size_t ny = 16;
+const std::size_t nx = 6;
+const std::array<fftn::axis, 2> array{{{.n = ny}, {.n = nx}}};
+const std::array<std::size_t, 1> columns{0};
+const fftn::r2c_plan<double> forward(fftn::axes_r2c<double>(array, columns));
+const fftn::c2r_plan<double> backward(fftn::axes_c2r<double>(array, columns),
+                                      {.scale = 1.0 / static_cast<double>(ny)});
+fftn::workspace ws(std::max(forward.workspace_bytes(), backward.workspace_bytes()));
+
+std::vector<double> x(ny * nx);
+for (std::size_t i = 0; i < x.size(); ++i) {
+  x[i] = std::cos(0.1 * static_cast<double>(i * i));
+}
+std::vector<std::complex<double>> spectrum((ny / 2 + 1) * nx);
+std::vector<double> back(x.size());
+forward.execute(x.data(), spectrum.data(), ws);
+backward.execute(spectrum.data(), back.data(), ws);
+```
+
+For any other arrangement, or to choose the batch order yourself, write the `shape` directly:
+its axes and batch dimensions take any strides and distances of either sign, nested in any
+order, as "Shapes and layouts" above describes.
+
 ## In place
 
 A plan built with `options::in_place` is executed with the same address as input and

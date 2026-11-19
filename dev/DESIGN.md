@@ -290,7 +290,14 @@ template <class T> shape<T, std::complex<T>>
     volumes_r2c(std::size_t nz, std::size_t ny, std::size_t nx, std::size_t count);
 template <class T> shape<std::complex<T>, T>
     volumes_c2r(std::size_t nz, std::size_t ny, std::size_t nx, std::size_t count);
-// later: along_axes(extents, axes, direction) for the axes of a strided array
+// Chosen dimensions of a strided array (provisional, task 4.3): one `axis` per dimension of
+// the array, the dimensions to transform by index, the others becoming batch dimensions.
+template <class T> shape<std::complex<T>, std::complex<T>>
+    axes_c2c(std::span<const axis> array, std::span<const std::size_t> axes, direction);
+template <class T> shape<T, std::complex<T>>
+    axes_r2c(std::span<const axis> array, std::span<const std::size_t> axes, bool in_place = false);
+template <class T> shape<std::complex<T>, T>
+    axes_c2r(std::span<const axis> array, std::span<const std::size_t> axes, bool in_place = false);
 }
 ```
 
@@ -307,6 +314,12 @@ Points that matter:
 - **Batch dimensions** are as many as the caller needs: a `Kokkos::View` of any rank, or a
   sub-array whose loops do not nest, maps onto one shape without a copy. Each becomes one
   loop of the program (8.3).
+- **Chosen axes of an array** (`axes_c2c`, `axes_r2c`, `axes_c2r`; provisional until the
+  maintainer has reviewed them). The general `shape` already describes any selection and order
+  of the axes of a strided array, with the rest as batch dimensions; these functions write it
+  from the array's description, working out the array's tight defaults and sorting the batch
+  dimensions by input stride, widest first, merged where they nest (`fftn/kokkos.hpp`'s
+  `shape_of` goes through the same code). For real kinds the last axis listed is halved.
 - **Containers.** `axes` and `batches` are `std::vector`s: plan construction allocates
   anyway, so an inline container would buy nothing and would freeze the rank limits into
   the type. The limits are checked at construction like every other misuse. `axis::n` and
@@ -1655,7 +1668,11 @@ is the order in which memory is touched:
   never of the whole array.
 - **Real multi-dimensional transforms** halve the last axis, as FFTW does.
 
-Axis order within a plan is a planner choice unless a pipeline pins it (section 12.3).
+Axis order within a plan is a planner choice unless a pipeline pins it (section 12.3). As
+built (task 4.3): whatever order the shape lists them in, the axes run widest output stride
+first as a C-ordered array lists them, so the contiguous axis is the one that runs as rows
+(`order_axes`, `plan_core::axis_of`); a real transform's halved axis stays last. Two listings of
+the same transform are the same program. Axes of extent 1 never step and sort first.
 
 As built (task 4.1, experiment X40; `src/core/plan_core.cpp`, `column_block`,
 `column_radices`, `add_column_phase`): a transform is finished before the next, axis by
@@ -3108,6 +3125,8 @@ to change before a release.
 | 2026-11-18 | Last bits are not a goal: the bitwise guarantees of section 15.5 stay while they cost nothing measurable; a change that would break one needs a real measured gain and narrows the published guarantee with it; unpublished bit properties are not protected | Maintainer's decision ("rounding in other parts of calculations matter more"). First use: X53's batch leaves for 8, 12 and 25 (x86) and 20 and 32 (NEON float), 0.43–0.56 of the time in screens, give a batch's rows other last bits than a plan of one row; the published position guarantee holds (one leftover row runs the same leaf with the row in every lane, two or more a padded group) |
 | 2026-11-18 | x86-64 with a private L2 of 2 MiB or more (Granite Rapids) takes the depth-first chain from L2/4 to 64 L2 in double, with the Xeon 6240's tops (section 8.5) | X55 on a Granite Rapids VM: 0.688 of the grids' time over the 14 rows it changes (46080 0.44, 65536 0.52, 131072–262144 0.63, 2^22 0.69), none slower, tracking tier 0.940; ÷ FFTW 1.15–1.65 → 0.70–0.83 on X48's failing long rows |
 | 2026-11-18 | A Bluestein stage of one copy runs its convolution as two depth-first chains where a row of M would be one, and on the Xeon profile beyond, up to 32 MiB, the longest measured (`depth_convolution_max_bytes`); the workspace block holds the chains' blocks, scratch a the forward output; the chirp passes are fused into the forward first pass and the backward last top pass (sections 8.5, 11.2; experiment X50) | Xeon 6240: 8179–999983 0.56–0.73 of `main`'s time (131071 0.61, 999983 0.71), FFTN ÷ MKL 131071 1.34 → 0.84, 999983 1.44 → 1.05, ÷ FFTW 0.65–0.83; M5 Max 4813–5119 0.86; the EPYC unchanged; X36b had judged a grid convolution to need a new slot, the block serves |
+| 2026-11-19 | Whatever order a shape lists its axes in, a plan runs them widest stride first (section 9.3, `order_axes`), keeping a real transform's halved axis last | A plan built from `{x, y}` used to run y as a strided rows phase and could not use the column blocks that need the last axis contiguous; two listings of one transform are now one program, bit for bit |
+| 2026-11-19 | Provisional API (task 4.3, to be agreed by the maintainer): `axes_c2c`, `axes_r2c`, `axes_c2r` build the shape of chosen dimensions of a strided array from one `axis` per dimension (section 5.2); batch dimensions by decreasing input stride, merged where they nest | The general `shape` could already express every selection (property tests against the reference), but only by hand; DESIGN named `along_axes` as "later". The name follows `rows_c2c`, `planes_c2c`, `volumes_c2c`, one function per kind |
 
 ---
 

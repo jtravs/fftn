@@ -1043,4 +1043,217 @@ TYPED_TEST(MultiDim, EveryAxisSelectionReal) {
   });
 }
 
+// ---- The shape functions for chosen axes of an array (axes_c2c, axes_r2c, axes_c2r).
+
+// One side of the layout a shape states explicitly.
+template <class In, class Out>
+batched_layout layout_of(const fftn::shape<In, Out>& s, bool input) {
+  batched_layout l;
+  for (const fftn::axis& a : s.axes) {
+    l.stride.push_back(input ? a.in_stride : a.out_stride);
+  }
+  for (const fftn::batch& b : s.batches) {
+    l.dist.push_back(input ? b.in_dist : b.out_dist);
+  }
+  return l;
+}
+
+template <class In, class Out> dims_t counts_of(const fftn::shape<In, Out>& s) {
+  dims_t c;
+  for (const fftn::batch& b : s.batches) {
+    c.push_back(b.count);
+  }
+  return c;
+}
+
+// The array as the shape functions take it: tight C order, or strided with gaps, nested in
+// another order on each side and with strides of both signs.
+struct array_layouts {
+  std::vector<fftn::axis> tight;
+  std::vector<fftn::axis> strided;
+};
+
+array_layouts layouts_of(const dims_t& array) {
+  const std::size_t r = array.size();
+  std::vector<std::size_t> order(r);
+  for (std::size_t d = 0; d < r; ++d) {
+    order[d] = r - 1 - d;
+  }
+  const std::vector<std::size_t> reversed(order.rbegin(), order.rend());
+  const batched_layout in = nest(array, {}, order, 2, 1, alternating(r, 1));
+  const batched_layout out = nest(array, {}, reversed, 1, 3, alternating(r, -1));
+  array_layouts l;
+  for (std::size_t d = 0; d < r; ++d) {
+    l.tight.push_back({.n = array[d]});
+    l.strided.push_back({.n = array[d], .in_stride = in.stride[d], .out_stride = out.stride[d]});
+  }
+  return l;
+}
+
+// Whether `offsets` fill [0, elements) exactly: a tight layout.
+bool fills_tightly(std::vector<std::ptrdiff_t> offsets, std::size_t elements) {
+  std::ranges::sort(offsets);
+  for (std::size_t i = 0; i < elements; ++i) {
+    if (i >= offsets.size() || offsets[i] != static_cast<std::ptrdiff_t>(i)) {
+      return false;
+    }
+  }
+  return offsets.size() == elements;
+}
+
+TYPED_TEST(MultiDim, AxesShapeFunctionComplex) {
+  using T = TypeParam;
+  using c = std::complex<T>;
+  checker check;
+  for (const dims_t& array : axis_arrays()) {
+    const array_layouts layouts = layouts_of(array);
+    for (const auto& selected : axis_selections(array.size())) {
+      for (const bool strided : {false, true}) {
+        const auto& given = strided ? layouts.strided : layouts.tight;
+        for (const fftn::direction dir : {fftn::direction::forward, fftn::direction::backward}) {
+          const auto s = fftn::axes_c2c<T>(given, selected, dir);
+          ASSERT_EQ(s.axes.size(), selected.size());
+          dims_t extents;
+          for (std::size_t i = 0; i < selected.size(); ++i) {
+            EXPECT_EQ(s.axes[i].n, array[selected[i]]);
+            extents.push_back(s.axes[i].n);
+          }
+          const dims_t counts = counts_of(s);
+          const std::size_t points = product(extents);
+          const std::size_t transforms = product(counts);
+          EXPECT_EQ(points * transforms, product(array));
+          EXPECT_EQ(s.dir, dir);
+          const batched_layout in = layout_of(s, true);
+          const batched_layout out = layout_of(s, false);
+          const auto in_offsets = offsets_of(extents, counts, in);
+          const auto out_offsets = offsets_of(extents, counts, out);
+          if (!strided) {
+            EXPECT_TRUE(fills_tightly(in_offsets, product(array)));
+            EXPECT_TRUE(fills_tightly(out_offsets, product(array)));
+          }
+          fftn::test::input_source src(points + transforms + 9);
+          const auto x = src.complexes<T>(points * transforms);
+          std::vector<cd> want;
+          for (std::size_t t = 0; t < transforms; ++t) {
+            const std::vector<cd> one(x.begin() + static_cast<std::ptrdiff_t>(t * points),
+                                      x.begin() + static_cast<std::ptrdiff_t>((t + 1) * points));
+            const auto y = dft(static_cast<int>(dir), extents, one);
+            want.insert(want.end(), y.begin(), y.end());
+          }
+          const auto y = run_at<c, c>(s, false, in_offsets, out_offsets, x, {}, "axes_c2c");
+          check.within<T>(y, want, tolerance_for<T>(extents, false), describe(extents, "axes_c2c"));
+          if (!strided) {
+            const auto z = run_at<c, c>(s, true, in_offsets, out_offsets, x, {}, "axes_c2c in place");
+            check.within<T>(z, want, tolerance_for<T>(extents, false),
+                            describe(extents, "axes_c2c in place"));
+          }
+        }
+      }
+    }
+  }
+}
+
+TYPED_TEST(MultiDim, AxesShapeFunctionReal) {
+  using T = TypeParam;
+  using c = std::complex<T>;
+  checker check;
+  const auto as_complex = [](const std::vector<T>& v) {
+    return std::vector<c>(v.begin(), v.end());
+  };
+  for (const dims_t& array : axis_arrays()) {
+    const array_layouts layouts = layouts_of(array);
+    for (const auto& selected : axis_selections(array.size())) {
+      // In place the halved dimension must be the fastest, which only the array's last is
+      // by default.
+      const bool can_be_in_place = selected.back() + 1 == array.size();
+      for (const int variant : {0, 1, 2}) {
+        const bool strided = variant == 1;
+        const bool in_place = variant == 2;
+        if (in_place && !can_be_in_place) {
+          continue;
+        }
+        const auto& given = strided ? layouts.strided : layouts.tight;
+        const auto forward = fftn::axes_r2c<T>(given, selected, in_place);
+        const auto backward = fftn::axes_c2r<T>(given, selected, in_place);
+        EXPECT_EQ(backward.dir, fftn::direction::backward);
+        dims_t extents;
+        for (const fftn::axis& a : forward.axes) {
+          extents.push_back(a.n);
+        }
+        const dims_t cplx = halved(extents);
+        const dims_t counts = counts_of(forward);
+        const std::size_t transforms = product(counts);
+        const std::size_t points = product(extents);
+        EXPECT_EQ(points * transforms, product(array));
+        const real_case data = real_data<T>(extents, points + transforms + 11, transforms);
+        const std::vector<T> x = real_parts<T>(data.reals);
+        const std::vector<c> spectrum(data.spectrum.begin(), data.spectrum.end());
+        const std::string name = in_place ? "axes_r2c in place" : "axes_r2c";
+        const auto y = run_at<T, c>(forward, in_place, offsets_of(extents, counts, layout_of(forward, true)),
+                                    offsets_of(cplx, counts, layout_of(forward, false)), x, {}, name);
+        check.within<T>(y, data.spectrum, tolerance_for<T>(extents, false),
+                        describe(extents, name.c_str()));
+        const auto z =
+            run_at<c, T>(backward, in_place, offsets_of(cplx, counts, layout_of(backward, true)),
+                         offsets_of(extents, counts, layout_of(backward, false)), spectrum, {}, name);
+        check.within<T>(as_complex(z), scaled(data.reals, points), tolerance_for<T>(extents, true),
+                        describe(extents, name.c_str()));
+      }
+    }
+  }
+}
+
+// The axes run in memory order however the shape lists them (DESIGN.md 9.3), so two listings
+// of one transform are the same program and give the same bits.
+TYPED_TEST(MultiDim, AxisOrderOfAShapeChangesNoBit) {
+  using T = TypeParam;
+  using c = std::complex<T>;
+  const dims_t array{16, 9, 8};
+  const std::vector<fftn::axis> given{{.n = 16}, {.n = 9}, {.n = 8}};
+  fftn::test::input_source src(41);
+  const auto x = src.complexes<T>(product(array));
+  const auto run = [&](const std::vector<std::size_t>& selected) {
+    const auto s = fftn::axes_c2c<T>(given, selected, fftn::direction::forward);
+    const fftn::c2c_plan<T> p(s);
+    fftn::workspace ws(p);
+    std::vector<c> y(x.size());
+    p.execute(x.data(), y.data(), ws);
+    return y;
+  };
+  for (const auto& [a, b] :
+       std::vector<std::pair<std::vector<std::size_t>, std::vector<std::size_t>>>{
+           {{0, 1, 2}, {2, 1, 0}}, {{0, 2}, {2, 0}}, {{1, 2}, {2, 1}}, {{0, 1}, {1, 0}}}) {
+    const auto ya = run(a);
+    const auto yb = run(b);
+    EXPECT_TRUE(std::ranges::equal(std::as_bytes(std::span<const c>(ya)),
+                                   std::as_bytes(std::span<const c>(yb))))
+        << "axes " << a.size();
+  }
+}
+
+TEST(AxesShape, RefusesBadSelections) {
+  const std::vector<fftn::axis> array{{.n = 4}, {.n = 5}, {.n = 6}};
+  const auto with = [&](std::vector<std::size_t> selected) {
+    return fftn::axes_c2c<double>(array, selected, fftn::direction::forward);
+  };
+  EXPECT_THROW(static_cast<void>(with({3})), std::invalid_argument);
+  EXPECT_THROW(static_cast<void>(with({1, 1})), std::invalid_argument);
+  EXPECT_EQ(with({2, 0}).axes[0].n, 6U);
+}
+
+TEST(AxesShape, BatchesAreOrderedByStrideAndMerged) {
+  // Dimension {1} of a tight 4 x 5 x 6 x 7: batch dimensions 4 (widest stride) and 6 x 7, which
+  // nest exactly and merge into one of 42 transforms one element apart.
+  const std::vector<fftn::axis> array{{.n = 4}, {.n = 5}, {.n = 6}, {.n = 7}};
+  const std::vector<std::size_t> middle{1};
+  const auto s = fftn::axes_c2c<double>(array, middle, fftn::direction::forward);
+  ASSERT_EQ(s.axes.size(), 1U);
+  EXPECT_EQ(s.axes[0].in_stride, 42);
+  ASSERT_EQ(s.batches.size(), 2U);
+  EXPECT_EQ(s.batches[0].count, 4U);
+  EXPECT_EQ(s.batches[0].in_dist, 210);
+  EXPECT_EQ(s.batches[1].count, 42U);
+  EXPECT_EQ(s.batches[1].in_dist, 1);
+}
+
 } // namespace
