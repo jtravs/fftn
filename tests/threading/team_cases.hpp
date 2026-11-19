@@ -183,6 +183,7 @@ void add_cases(std::vector<team_case>& out, const fftn::detail::build_settings& 
   fftn::detail::build_settings adjacent = settings;
   adjacent.profile.adjacent_min_bytes = 0;     // whatever this machine's L1
   adjacent.profile.adjacent_team_chain = true; // a team runs the chain, with the same bits
+  adjacent.profile.adjacent_lanes = true;
   out.push_back(make_case("c2c_interleaved_24x20x11x2" + suffix, interleaved, 2 * 24 * 20 * 11,
                           2 * 24 * 20 * 11, false, adjacent, target));
   out.push_back(make_case("c2c_interleaved_inplace_24x20x11x2" + suffix, interleaved,

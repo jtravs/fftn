@@ -150,6 +150,10 @@ struct machine_profile {
   // up to 2.4 and 1024 x 256 still 1.2-1.6. Where it was measured: x86-64 with a private L2 below 2
   // MiB.
   bool adjacent_team_chain = false;
+  // Whether a plan may take the lanes over adjacent transforms at all (X61). Off on x86-64 with
+  // a private L2 under 1 MiB and a large L3 (the EPYC 7763's class), where under
+  // adjacent_team_chain the route kept 0.946 of the chain's time, short of X61's 0.85 bar.
+  bool adjacent_lanes = true;
   // The widest block of a three-phase grid (0: max_grid_block, strategies/grid.hpp;
   // experiment X39). Three phases may fill twice grid_block_bytes (X12), which gives blocks of
   // 32 columns to phases of 64; on the Xeon 6240 blocks of 16 took 0.91-0.96 of their time

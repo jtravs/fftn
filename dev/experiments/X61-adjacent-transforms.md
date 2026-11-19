@@ -1,6 +1,6 @@
 # X61: strided axes of an array as lanes over adjacent transforms
 
-- **Status:** done (adopted on NEON; restricted on the measured x86 profiles)
+- **Status:** done (adopted on NEON and, restricted, on the Xeon 6240's profile; off on the EPYC 7763's)
 - **Owner:** task 4.3 agent, 2026-11-19
 - **Phase / task:** 4 / 4.3
 
@@ -118,8 +118,12 @@ Collateral (EPYC, the commits before and after the route): the standard catalogu
 tier, 61 cases, no evidence of change (geomean 0.996; run 20261119-020114-b31d, ±1.77 %); `x7`
 (the lanes over rows, whose driver path changed) 1.004 with 87 of 88 cases without evidence and
 float 8 x 64 at 1.045 (run 20261119-031709-6855, ±1.00 %, after the driver kept stages inline;
-1.037 before it), a float case outside the release targets' double tuning and a hair past the
-collateral limit of 1.03 beyond the band: left open.
+1.037 before it). Its plan is unchanged: every arm's note in both runs reads "axis 0 (n = 8): on
+the lanes' tile, radices 8", the lanes over rows that `lanes_up_to` gives float on `avx2`. The
+interleaved route does not apply to contiguous rows. What changed on its path is the driver's
+lanes loop: `lane_tail` holds records, and stages are found by variant. So this is code placement
+and a few instructions per block in the lanes driver, not a change of plan; it is recorded as
+that, not as a verdict on the route.
 
 **Threaded (8 lanes)**, A and B with `THREADS=8`, FFTW at 8 threads. A block of adjacent
 transforms is one task, which a team cannot split:
@@ -160,11 +164,17 @@ Adopted on the M5 Max: 0.48 of the chain's time at one thread, no case slower; t
 condition does not apply there, and its 8 lanes were not measured.
 
 On the EPYC 7763 and the Xeon 6240 the unrestricted route met the one-thread rule (0.29, 0.37)
-but failed the 8-lane clause (up to 1.7 and 2.4). The final condition is never slower at either
-thread count but keeps little: 0.95 and 0.77 at one thread. The EPYC's 0.95 misses the 0.85 bar,
-so as a gain it is the Xeon's alone. It is kept as the safe form of the route on x86 until a team
-can share a block's lines, which would bring back the one-thread 0.29 and 0.37 without the 8-lane
-loss. That follow-up is the main open item. DESIGN 9.3 describes the route; LESSONS
+but failed the 8-lane clause (up to 1.7 and 2.4). The restricted form is never slower at either
+thread count, but it keeps only part of the gain: 0.95 and 0.77 at one thread.
+
+Per target, as AGENTS section 6 asks:
+- The Xeon 6240 passes (0.774 ≤ 0.85; 8 lanes 0.918) and keeps the restricted route.
+- The EPYC 7763 misses the bar (0.946), so the route is off on its class (x86-64, a private L2
+  under 1 MiB with a large L3: `machine_profile::adjacent_lanes`, keyed like X59's `zen3_like`).
+  The EPYC therefore runs the old route on these shapes.
+
+Letting a team share a block's lines would bring back the one-thread 0.29 and 0.37 without the
+8-lane loss, and would let the EPYC take the route. That follow-up is the main open item. DESIGN 9.3 describes the route; LESSONS
 3.29 the lesson. Follow-ups:
 - let a team share a block's lines (work-graph phases for lanes programs), so that teams can run
   the lanes and x86 can keep column_radices everywhere;

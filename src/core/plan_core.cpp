@@ -1207,7 +1207,8 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     // Where the profile says and the radices agree, a team program runs the chain
     // (machine_profile::adjacent_team_chain).
     if (lanes != 0 || s.kind != transform_kind::c2c || s.batches.empty() || active.empty() ||
-        !settings.lanes_columns || (settings.team_program && team_chain) ||
+        !settings.lanes_columns || !settings.profile.adjacent_lanes ||
+        (settings.team_program && team_chain) ||
         (settings.profile.adjacent_team_chain && !chain_radices) ||
         (settings.strategy != strategy_choice::rules &&
          settings.strategy != strategy_choice::lanes) ||

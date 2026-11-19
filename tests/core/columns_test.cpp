@@ -511,6 +511,7 @@ template <class T> void adjacent_transforms(fftn::isa target) {
     build_settings on;
     on.profile.adjacent_min_bytes = 0;      // whatever the arrays' size against this machine's L1
     on.profile.adjacent_team_chain = false; // the route whatever the radices; a team runs it too
+    on.profile.adjacent_lanes = true;
     const auto lanes = fftn::detail::make_plan_core(fftn::detail::view_of(sh), opts, on);
     const std::string lanes_text = fftn::detail::describe(*lanes);
     // Short rows of one axis in float on x86 take the lanes over rows instead (lanes_up_to).
@@ -579,6 +580,7 @@ TEST(Columns, AdjacentTransformsOnlyWhereTheyFit) {
     build_settings settings;
     settings.profile.adjacent_min_bytes = min_bytes;
     settings.profile.adjacent_team_chain = false;
+    settings.profile.adjacent_lanes = true;
     return fftn::detail::describe(
         *fftn::detail::make_plan_core(fftn::detail::view_of(sh), {}, settings));
   };
@@ -588,6 +590,17 @@ TEST(Columns, AdjacentTransformsOnlyWhereTheyFit) {
   columns.batches = {{.count = 32, .in_dist = 1, .out_dist = 1}};
   EXPECT_NE(described(columns, 8191).find("adjacent transforms"), std::string::npos);
   EXPECT_EQ(described(columns, 8192).find("adjacent transforms"), std::string::npos);
+  {
+    // Off where the profile says (machine_profile::adjacent_lanes: the EPYC 7763's class).
+    build_settings off;
+    off.profile.adjacent_min_bytes = 0;
+    off.profile.adjacent_team_chain = false;
+    off.profile.adjacent_lanes = false;
+    EXPECT_EQ(fftn::detail::describe(
+                  *fftn::detail::make_plan_core(fftn::detail::view_of(columns), {}, off))
+                  .find("adjacent transforms"),
+              std::string::npos);
+  }
   fftn::shape<c, c> gapped;
   gapped.axes = {{.n = 16, .in_stride = 8, .out_stride = 8}};
   gapped.batches = {{.count = 4, .in_dist = 2, .out_dist = 2}};

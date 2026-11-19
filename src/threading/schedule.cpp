@@ -150,6 +150,11 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
   // and keep the guided runs; so do the Xeon 6240's profile, where it lost, and Granite Rapids.
   const bool zen3_like =
       x86_64 && private_l2 && large_l3 && c.l2.size != 0 && c.l2.size < std::size_t{1024} * 1024;
+  // X61: no lanes over adjacent transforms in the EPYC 7763's class (machine_profile::
+  // adjacent_lanes).
+  if (zen3_like) {
+    p.adjacent_lanes = false;
+  }
   if (zen3_like || (c.l2.shared_by != 0 && !private_l2)) {
     p.fair_line_runs = true;
   }
