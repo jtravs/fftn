@@ -10,9 +10,10 @@
 #
 # Pins: actions by commit; the uv version below; tools by URL and SHA-256
 # (.github/scripts/fetch.sh); the current-GCC image by digest; LLVM from apt.llvm.org with
-# its signing key pinned (.github/scripts/install-llvm.sh). Compilers that come with the
-# runner images (GCC 14, Clang 16, Apple Clang, Homebrew LLVM, LLVM on Windows) are
-# reported by the gate in every log.
+# its signing key pinned (.github/scripts/install-llvm.sh), and on Windows the release
+# archive by URL and SHA-256 (.github/scripts/install-llvm-windows.sh). Compilers that come
+# with the runner images (GCC 14, Clang 16, Apple Clang, Homebrew LLVM) are reported by the
+# gate in every log.
 #
 # Compiles go through ccache on Linux and macOS (CMake's compiler launcher, set from the
 # environment, so scripts/check.sh and the presets are unchanged), one cache per job. Runs
@@ -330,6 +331,8 @@ jobs:
       - name: Visual Studio environment (${{ matrix.arch }})
         shell: pwsh
         run: .github/scripts/msvc-env.ps1 ${{ matrix.arch }}
+      - name: LLVM (pinned)
+        run: bash .github/scripts/install-llvm-windows.sh "${{ matrix.arch }}"
       - name: Toolchain
         env:
           ARCH: ${{ matrix.arch }}
@@ -339,12 +342,12 @@ jobs:
           ninja --version
           echo "FFTN_CHECK_JOBS=$NUMBER_OF_PROCESSORS" >> "$GITHUB_ENV"
           # The OpenMP tests' runtime DLL must be on PATH when they start (gtest discovery
-          # runs them). Where LLVM brings no libomp of its own (the Arm64 install), clang-cl
-          # links Visual Studio's libomp.lib, whose DLL (libomp140.<arch>.dll, the runtime of
-          # MSVC's /openmp:llvm) is only in the toolset's debug_nonredist directory: CI run
+          # runs them). Where LLVM brings no libomp of its own, clang-cl links Visual
+          # Studio's libomp.lib, whose DLL (libomp140.<arch>.dll, the runtime of MSVC's
+          # /openmp:llvm) is only in the toolset's debug_nonredist directory: CI run
           # 43656723703 failed with 0xc0000135 (DLL not found) there.
           echo "OpenMP runtime DLLs:"
-          find "/c/Program Files/LLVM/bin" -maxdepth 1 -iname 'libomp*.dll' || true
+          find "$(dirname "$CXX")" -maxdepth 1 -iname 'libomp*.dll' || true
           if [[ -n ${VCToolsRedistDir:-} ]]; then
             redist=$(cygpath -u "$VCToolsRedistDir")
             for d in "${redist%/}"/debug_nonredist/"$ARCH"/Microsoft.VC*.OpenMP.LLVM; do
