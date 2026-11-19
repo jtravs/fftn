@@ -173,8 +173,8 @@ public:
   // The axis of the shape each entry of `lengths` is, where that order is not the shape's
   // (empty when it is); describe() names axes by it.
   std::vector<std::size_t> axis_of;
-  // Lanes over adjacent transforms whose team program is the chain (plan_core.cpp,
-  // machine_profile::adjacent_team_chain).
+  // Lanes over adjacent transforms whose team program is the chain, their radices being the
+  // chain's (plan_core.cpp, machine_profile::adjacent_team_chain).
   bool adjacent_team_chain = false;
   std::vector<std::size_t> counts; // per batch dimension
   target isa_target = target::scalar;

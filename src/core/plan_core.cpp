@@ -1155,12 +1155,23 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   // transforms one element apart on both sides, every axis strided. Each axis's column_block
   // for columns of its length, the transforms being the columns; the narrowest of them. The
   // team program takes these blocks too: the one-thread rule, so that the bits agree.
+  // The radices of each axis's lanes over adjacent transforms (column_radices), and whether they
+  // are the chain's for every axis: only then can a team run the chain with the program's bits.
+  std::vector<std::vector<std::size_t>> adjacent_rad(r);
+  bool chain_radices = true;
+  if (s.kind == transform_kind::c2c && !s.batches.empty() && in.dist.back() == 1) {
+    for (const std::size_t d : active) {
+      adjacent_rad[d] = column_radices<T>(c.lengths[d], out.stride[d] * complex_bytes, settings,
+                                          profile, chain, kernels, c.isa_target != target::avx512);
+      chain_radices = chain_radices && adjacent_rad[d] == chain.radices(c.lengths[d]);
+    }
+  }
+  const bool team_chain = settings.profile.adjacent_team_chain && chain_radices;
   const std::size_t adjacent = [&]() -> std::size_t {
-    // Where the profile says, a team program runs the chain (machine_profile::
-    // adjacent_team_chain), the program's lanes taking the chain's radices so that the bits agree.
+    // Where the profile says and the radices agree, a team program runs the chain
+    // (machine_profile::adjacent_team_chain).
     if (lanes != 0 || s.kind != transform_kind::c2c || s.batches.empty() || active.empty() ||
-        !settings.lanes_columns ||
-        (settings.team_program && settings.profile.adjacent_team_chain) ||
+        !settings.lanes_columns || (settings.team_program && team_chain) ||
         (settings.strategy != strategy_choice::rules &&
          settings.strategy != strategy_choice::lanes) ||
         settings.in_factor != nullptr || settings.out_factor != nullptr ||
@@ -1288,16 +1299,8 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     // transform of the block, whose C neighbours are one vector access. A body of those phases
     // for whole blocks and a tail for blocks of C, as for the lanes over rows.
     const std::size_t unit = kernels.complex_lanes;
-    // Where a team runs the chain instead (machine_profile::adjacent_team_chain) no radices are
-    // given: the lanes take the chain's own (c2c_lanes), so that every transform gets its bits.
-    std::vector<std::vector<std::size_t>> rad(r);
-    c.adjacent_team_chain = settings.profile.adjacent_team_chain;
-    for (const std::size_t d : active) {
-      if (!c.adjacent_team_chain) {
-        rad[d] = column_radices<T>(c.lengths[d], out.stride[d] * complex_bytes, settings, profile,
-                                   chain, kernels, c.isa_target != target::avx512);
-      }
-    }
+    const std::vector<std::vector<std::size_t>>& rad = adjacent_rad;
+    c.adjacent_team_chain = team_chain;
     const auto phases = [&](program& q, std::size_t block) {
       for (std::size_t i = 0; i < active.size(); ++i) {
         const std::size_t d = active[i];
@@ -1320,8 +1323,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     for (const std::size_t d : active) {
       c.axis_notes.push_back("axis " + std::to_string(listed(d)) +
                              " (n = " + std::to_string(c.lengths[d]) + "): lanes, radices " +
-                             (rad[d].empty() ? chain.radix_text(c.lengths[d])
-                                             : chain.radix_text(c.lengths[d], rad[d])));
+                             chain.radix_text(c.lengths[d], rad[d]));
     }
     c.strategy_note = "lanes over blocks of " + std::to_string(adjacent) +
                       " adjacent transforms, one element apart, every axis a lanes phase, " +

@@ -140,11 +140,13 @@ struct machine_profile {
   // All the transforms count: blocks that each fit L1 but together do not still gain (32 x 128
   // x 16 blocks: 0.62 of the chain's time over the middle axes on the M5 Max).
   std::size_t adjacent_min_bytes = std::size_t{64} * 1024;
-  // A team runs such a plan's transforms through the chain, sharing their lines, while one thread
-  // runs the lanes over adjacent transforms with the chain's radices, so that the bits agree
-  // (X60). A block of transforms is one task: at 8 lanes the EPYC 7763 ran planes and volumes of
-  // 8-64 transforms up to 1.74 times slower than the chain, and the Xeon 6240 up to 2.4 and
-  // 1024 x 256 still 1.2-1.6. Where it was measured: x86-64 with a private L2 below 2 MiB.
+  // A team runs such a plan's transforms through the chain, sharing their lines, where the lanes'
+  // radices (column_radices) are the chain's on every axis, so that the bits agree (X60); giving
+  // the lanes the chain's radices instead took the EPYC's one thread from 0.29 to 0.40 of the
+  // chain's time (1024 x 16 1.25). A block of transforms is one task: at 8 lanes the EPYC 7763 ran
+  // planes and volumes of 8-64 transforms up to 1.74 times slower than the chain, and the Xeon 6240
+  // up to 2.4 and 1024 x 256 still 1.2-1.6. Where it was measured: x86-64 with a private L2 below 2
+  // MiB.
   bool adjacent_team_chain = false;
   // The widest block of a three-phase grid (0: max_grid_block, strategies/grid.hpp;
   // experiment X39). Three phases may fill twice grid_block_bytes (X12), which gives blocks of

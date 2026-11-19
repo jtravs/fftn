@@ -1767,8 +1767,8 @@ vector access and every line of memory is touched once; the block is the narrowe
 computes its transform alone, so blocks and execution ranges do not change the bits. A block is
 one task of the team (the work graph's one phase), so whole transforms are shared out, never
 their lines. On x86-64 with a private L2 below 2 MiB (`machine_profile::adjacent_team_chain`,
-measured on the EPYC and the Xeon) a team runs the chain instead, which shares lines, and the
-program's lanes take the chain's radices so that the bits agree: at 8 lanes the blocks lost up
+measured on the EPYC and the Xeon) a team runs the chain instead, which shares lines, where the
+lanes' radices are the chain's on every axis, so that the bits agree: at 8 lanes the blocks lost up
 to 1.74 (EPYC) and 2.4 (Xeon) of the chain's time on planes and volumes of few transforms. Within L1 (all the plan's transforms together, `machine_profile::
 adjacent_min_bytes`) the chain keeps a plan with one complex value per register, and on wider
 registers a plan whose axes are all of leaf lengths, 16 points or fewer: there a strided line
