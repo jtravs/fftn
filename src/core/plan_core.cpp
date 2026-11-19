@@ -1113,12 +1113,16 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   const int sign = static_cast<int>(s.dir);
   // A strided complex axis d as the lanes over blocks of adjacent columns where they fit
   // (column_block; DESIGN.md 9.3, experiments X40 and X41): returns whether it was built.
-  // `axis` names d in describe() when `extent` is not the plan's (a volume's plane).
+  // `axis` names d in describe() when `extent` is not the plan's (a volume's plane). `real`:
+  // column_block's rule for the complex axes of a real plan (rows of n/2 + 1 columns), by
+  // default where the plan is real.
   const auto complex_columns = [&](std::size_t d, const std::vector<std::size_t>& extent,
                                    const view& src, const view& dst, const line_edges& edges,
-                                   int dir, const char* what, std::size_t axis = SIZE_MAX) {
+                                   int dir, const char* what, std::size_t axis = SIZE_MAX,
+                                   int real_rule = -1) {
+    const bool real = real_rule < 0 ? s.kind != transform_kind::c2c : real_rule != 0;
     const std::size_t block = column_block<T>(d, extent, src, dst, edges, settings, chain,
-                                              kernels.complex_lanes, s.kind != transform_kind::c2c);
+                                              kernels.complex_lanes, real);
     if (block == 0) {
       return false;
     }
@@ -1129,8 +1133,8 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     alone.team_program = false;
     const bool chain_columns =
         settings.team_program &&
-        column_block<T>(d, extent, src, dst, edges, alone, chain, kernels.complex_lanes,
-                        s.kind != transform_kind::c2c) == 0;
+        column_block<T>(d, extent, src, dst, edges, alone, chain, kernels.complex_lanes, real) ==
+            0;
     const std::vector<std::size_t> rad =
         chain_columns ? chain.radices(n)
                       : column_radices<T>(n, dst.stride[d] * dst.element_bytes, settings, profile,
@@ -1476,8 +1480,12 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     for (std::size_t i = r - 1; i > 0; --i) {
       const std::size_t d = i - 1;
       const view& src = d + 2 == r ? in_view : packed;
+      // The output's rows are those of a c2c plane (n complex values, a power of two for
+      // most n): c2c columns' rule (column_block, column_radices), not that of the odd rows
+      // of n/2 + 1 columns. With the real rule the M5 Max ran these columns alone through
+      // the chain, their elements a power of two apart, and lost 1.6-2.6 from 128^2 up.
       if (complex_columns(d, columns, src, packed, line_edges(), +1,
-                          "c2c backward into the output, packed")) {
+                          "c2c backward into the output, packed", SIZE_MAX, 0)) {
         continue;
       }
       std::vector<stage> cs;
