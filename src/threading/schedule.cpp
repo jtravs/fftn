@@ -142,6 +142,7 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
   // 0.771), where one thread gained too little (0.979, 0.934 with 97^3 slower, 1.048).
   if (x86_64 && private_l2 && !large_l2) {
     p.team_volume_planes = true;
+    p.adjacent_team_chain = true; // X60
   }
   if (x86_64 && private_l2 && large_l3 && !large_l2) {
     p.column_wide_bytes = 1024;

@@ -58,12 +58,6 @@ namespace {
 // Transforms of one to three axes (DESIGN.md 5.6); any number of batch dimensions.
 constexpr std::size_t max_axes = 3;
 
-// The fewest transforms whose lanes over adjacent transforms a team runs too (X60): a block of
-// transforms is one task, so with fewer a team of 8 on the EPYC 7763 ran planes and volumes of
-// 8-64 transforms up to 1.74 times slower than the chain, whose lines it shares; from 256 on
-// none was slower.
-constexpr std::size_t adjacent_team_min = 128;
-
 [[noreturn]] void reject(const std::string& argument, const std::string& why) {
   throw std::invalid_argument("fftn::plan: " + argument + " " + why);
 }
@@ -1162,10 +1156,11 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   // for columns of its length, the transforms being the columns; the narrowest of them. The
   // team program takes these blocks too: the one-thread rule, so that the bits agree.
   const std::size_t adjacent = [&]() -> std::size_t {
-    // A team program of few transforms runs the chain (adjacent_team_min), the program's lanes
-    // taking the chain's radices so that the bits agree.
+    // Where the profile says, a team program runs the chain (machine_profile::
+    // adjacent_team_chain), the program's lanes taking the chain's radices so that the bits agree.
     if (lanes != 0 || s.kind != transform_kind::c2c || s.batches.empty() || active.empty() ||
-        !settings.lanes_columns || (settings.team_program && p.transforms < adjacent_team_min) ||
+        !settings.lanes_columns ||
+        (settings.team_program && settings.profile.adjacent_team_chain) ||
         (settings.strategy != strategy_choice::rules &&
          settings.strategy != strategy_choice::lanes) ||
         settings.in_factor != nullptr || settings.out_factor != nullptr ||
@@ -1293,12 +1288,12 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     // transform of the block, whose C neighbours are one vector access. A body of those phases
     // for whole blocks and a tail for blocks of C, as for the lanes over rows.
     const std::size_t unit = kernels.complex_lanes;
-    // With few transforms a team runs the chain instead (adjacent_team_min): no radices given,
-    // the lanes take the chain's own (c2c_lanes), so that every transform gets its bits.
+    // Where a team runs the chain instead (machine_profile::adjacent_team_chain) no radices are
+    // given: the lanes take the chain's own (c2c_lanes), so that every transform gets its bits.
     std::vector<std::vector<std::size_t>> rad(r);
-    c.adjacent_few = p.transforms < adjacent_team_min;
+    c.adjacent_team_chain = settings.profile.adjacent_team_chain;
     for (const std::size_t d : active) {
-      if (!c.adjacent_few) {
+      if (!c.adjacent_team_chain) {
         rad[d] = column_radices<T>(c.lengths[d], out.stride[d] * complex_bytes, settings, profile,
                                    chain, kernels, c.isa_target != target::avx512);
       }
@@ -1799,7 +1794,7 @@ std::shared_ptr<plan_core> build_plan_core(const shape_view& s, const options& o
   if (s.kind == transform_kind::c2c &&
       ((r > 1 && (settings.profile.column_team_bytes != 0 || team_order ||
                   settings.profile.column_wide_bytes != 0)) ||
-       c->adjacent_few) &&
+       c->adjacent_team_chain) &&
       !settings.team_program) {
     build_settings team = settings;
     team.team_program = true;
