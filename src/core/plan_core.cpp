@@ -330,6 +330,16 @@ void close_loops(program& p, const std::vector<std::size_t>& open) {
   }
 }
 
+// Whether neighbouring lines of a column phase write the same cache lines: lines of
+// `line_bytes` of adjacent elements along the last axis, in rows `row_bytes` apart, unless
+// both are whole cache lines. A real plane's rows of n/2 + 1 complex values are an odd multiple
+// of 16 bytes long, so its columns do in most rows, and columns alone through the chain always
+// do (X59: at 8 lanes on the Xeon 6240 these phases took 2.5-6.9 times their one-thread work).
+bool lines_share_cache_lines(std::size_t line_bytes, std::size_t row_bytes,
+                             std::size_t cache_line) noexcept {
+  return cache_line != 0 && (line_bytes % cache_line != 0 || row_bytes % cache_line != 0);
+}
+
 // Appends the loops over the lines of every axis but `axis` (outermost first), the line's
 // stages inside them, and closes the loops.
 void add_phase(program& p, std::size_t axis, const std::vector<std::size_t>& extent,
@@ -873,7 +883,8 @@ template <class T>
 std::size_t add_column_phase(program& p, chain_builder<T>& chain, std::size_t axis,
                              const std::vector<std::size_t>& extent, const view& src,
                              const view& dst, int sign, const line_edges& edges, std::size_t block,
-                             std::size_t c, const std::vector<std::size_t>& rad) {
+                             std::size_t c, const std::vector<std::size_t>& rad,
+                             std::size_t cache_line) {
   const std::size_t last = extent.size() - 1;
   const std::size_t whole = extent[last] / block;
   const std::size_t left = extent[last] % block;
@@ -899,7 +910,11 @@ std::size_t add_column_phase(program& p, chain_builder<T>& chain, std::size_t ax
     }
     close_loops(p, open);
     // The narrower block's lines are disjoint from the whole blocks': one phase for threads.
-    std::get<loop>(p.records[outermost]).joins = first_column != 0;
+    loop& first = std::get<loop>(p.records[outermost]);
+    first.joins = first_column != 0;
+    first.shares_lines = lines_share_cache_lines(
+        width * static_cast<std::size_t>(magnitude(dst.stride[last])) * dst.element_bytes,
+        static_cast<std::size_t>(magnitude(dst.stride[axis])) * dst.element_bytes, cache_line);
   };
   if (whole != 0) {
     nest(whole, block, block, 0);
@@ -1048,7 +1063,18 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   const auto lines = [&](std::size_t axis, const std::vector<std::size_t>& extent, const view& src,
                          const view& dst, std::size_t line_scratch, std::vector<stage>&& stages) {
     scratch = std::max(scratch, line_scratch);
+    const std::size_t outermost = p.records.size();
     add_phase(p, axis, extent, src, dst, std::move(stages));
+    // Columns alone through the chain (not the rows of the last axis).
+    const std::size_t last = extent.size() - 1;
+    if (axis != last && outermost < p.records.size()) {
+      if (loop* l = std::get_if<loop>(&p.records[outermost])) {
+        l->shares_lines = lines_share_cache_lines(
+            static_cast<std::size_t>(magnitude(dst.stride[last])) * dst.element_bytes,
+            static_cast<std::size_t>(magnitude(dst.stride[axis])) * dst.element_bytes,
+            settings.profile.line_bytes);
+      }
+    }
   };
   const auto at = [](const view& v, std::size_t axis) {
     return endpoint{.where = v.where, .stride = v.stride[axis]};
@@ -1079,7 +1105,8 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
                       : column_radices<T>(n, dst.stride[d] * dst.element_bytes, settings, profile,
                                           chain, kernels, c.isa_target != target::avx512);
     scratch = std::max(scratch, add_column_phase<T>(p, chain, d, extent, src, dst, dir, edges,
-                                                    block, kernels.complex_lanes, rad));
+                                                    block, kernels.complex_lanes, rad,
+                                                    settings.profile.line_bytes));
     c.axis_notes.push_back(
         "axis " + std::to_string(axis == SIZE_MAX ? d : axis) + " (n = " + std::to_string(n) +
         "): " + what + (what[0] != '\0' ? ", " : "") + "lanes over blocks of " +

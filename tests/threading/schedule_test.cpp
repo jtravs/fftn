@@ -76,6 +76,49 @@ void expect_partition(const schedule& s, const lane_map& lanes) {
   EXPECT_EQ(next, s.tasks);
 }
 
+// X59: a phase whose neighbouring lines write the same cache lines goes in fair runs.
+TEST(WorkGraph, FairRunsWhereNeighbouringLinesShareCacheLines) {
+  namespace d = fftn::detail;
+  const fftn::options opts;
+  d::build_settings s;
+  s.chunk_points = 256;
+  s.column_block = 8;
+  s.profile.line_bytes = 64;
+  const auto plane = [&](std::size_t n0, std::size_t n1) {
+    return d::make_plan_core(
+        d::view_of(fftn::planes_c2c<double>(n0, n1, 1, fftn::direction::forward)), opts, s);
+  };
+  // Blocks of 8 complex doubles and rows of 32: both whole cache lines.
+  const auto whole = plane(64, 32);
+  ASSERT_EQ(whole->graph.phases.size(), 2U);
+  EXPECT_FALSE(whole->graph.phases[0].fair_runs); // the rows
+  EXPECT_FALSE(whole->graph.phases[1].fair_runs);
+  // Rows of 30 complex doubles are 480 bytes: blocks meet inside cache lines.
+  EXPECT_TRUE(plane(64, 30)->graph.phases[1].fair_runs);
+  // A real plane's rows hold 33 complex doubles.
+  fftn::shape<double, std::complex<double>> real;
+  real.axes = {{.n = 64}, {.n = 64}};
+  real.batches = {{.count = 1}};
+  const auto r2c = d::make_plan_core(d::view_of(real), opts, s);
+  EXPECT_FALSE(r2c->graph.phases[0].fair_runs);
+  EXPECT_TRUE(r2c->graph.phases[1].fair_runs);
+  // Columns alone through the chain are 16 bytes wide.
+  s.lanes_columns = false;
+  EXPECT_TRUE(plane(64, 32)->graph.phases[1].fair_runs);
+
+  d::graph_phase ph;
+  ph.chunks = 16;
+  ph.fair_runs = true;
+  EXPECT_EQ(d::chunk_run(ph, 16, 8, 16), 2U); // a fair share, 16 / 8
+  EXPECT_EQ(d::chunk_run(ph, 1, 8, 16), 1U);  // never more than is left
+  ph.chunks = 5;
+  EXPECT_EQ(d::chunk_run(ph, 5, 8, 16), 1U); // fewer chunks than members
+  ph.chunks = 64;
+  ph.fair_runs = false;
+  EXPECT_EQ(d::chunk_run(ph, 64, 8, 16), 4U); // a share of what is left
+  EXPECT_EQ(d::chunk_run(ph, 3, 8, 16), 1U);
+}
+
 TEST(WorkGraph, PhasesOfRowsAndPlanes) {
   // A 1-D row: one phase per stage, chunks as the stages have them.
   const auto r = rows(16384, 2);

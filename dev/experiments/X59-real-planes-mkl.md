@@ -56,6 +56,20 @@ run.
   and (3) over every plane and volume that splits. A machine that fails keeps the guided runs
   (gated by profile).
 
+- **Arm R2** (on top of T, replacing R after R's run on the Mac, below): fair runs only for a
+  phase whose neighbouring lines write the same cache lines: a column phase whose block is not
+  a whole number of cache lines wide or whose rows are not a whole number of cache lines long,
+  which every real plane is and which columns alone through the chain are (`loop::shares_lines`,
+  `graph_phase::fair_runs`, `chunk_run`). Rows and c2c blocks on whole lines keep X52's guided
+  runs. Bits unchanged. **Decision rule, written before its judging runs,** R2 against T at 8
+  lanes through `--serial` (GCC) and at 6 lanes on the Mac (Homebrew Clang), over the same case
+  set; the cases R2 can change are those a team splits with such a phase. Xeon: adopt R2 if (1) the
+  geometric mean of R2 ÷ T over the real planes of one transform with at least 32768 complex
+  points is at most 0.97, and (2) no case it can change is slower than T by more than the larger
+  of 2 % and the run's A/A band (a case just past it on a loaded machine is re-run once). EPYC and
+  Mac: (1) at most 1.00 over the cases it can change, and (2). A machine that fails keeps the
+  guided runs (by profile).
+
 ## Method
 
 - Cases: the standard catalogue's real planes (`^(r2c|c2r)-[0-9]+x[0-9]+-b1-(op|ip)$`).
@@ -132,5 +146,16 @@ narrower last block):
 - **Unpinned**, FFTN loses more than oneMKL (8 lanes pinned ÷ unpinned at c2r 512²: FFTN 0.51,
   oneMKL 0.64; 4–11 context switches per transform at 512²–1024² for FFTN's waiting members,
   none for libgomp's spinning ones).
+
+### Arms T and R on the Mac (6 lanes)
+
+Run 20261119-015223-410e (M5 Max, Homebrew Clang, `neon_fcma`; A = `main` 0508037, T 79669a6, R
+f14f6c1; 8 rounds, all loaded with about 6 other cores busy, band ±1.4 %), the 132 planes and
+volumes. T ÷ A: 0.996 over the 44 real planes that split, 0.991 over the 37 other planes and
+volumes that split (c2c 100² 0.94); worst real plane r2c 2048 × 36 out of place 1.021. R ÷ T:
+0.978 over the real planes (2048 × 36 0.82–0.88, 1024² and 512² 0.90–0.92, but 256² 1.07–1.12),
+**1.053 over the other planes and volumes** (c2c 480 × 640 1.19–1.20, c2c 256² 1.17–1.18, 48³
+1.19–1.20): fair runs of whole phases cost balance where neighbouring lines do not share cache
+lines, on a machine with other work on it. **R fails its rule on the Mac**; hence arm R2.
 
 ## Verdict

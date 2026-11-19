@@ -126,6 +126,7 @@ work_graph build_work_graph(const program& p, std::size_t points, std::size_t ch
       const nest_shape first = nest_at(p, i);
       ph.nest = first.depth;
       ph.body_end = first.end;
+      ph.fair_runs = std::get<loop>(p.records[i]).shares_lines;
       ph.units = first.lines;
       ph.work = static_cast<double>(first.lines) * records_work(p, i + first.depth, first.end);
       i = first.end;

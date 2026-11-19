@@ -72,6 +72,10 @@ struct loop {
   // it, of the same axis (the narrower last block of a lanes column phase): the work graph
   // shares both nests' lines as one phase instead of running this one after (X41).
   bool joins = false;
+  // A lines loop opening a nest whose neighbouring lines write the same cache lines (the
+  // columns of a plane whose rows or blocks are not whole cache lines): a team claims its
+  // lines in runs of a fair share, so that few of them border another member's (X59).
+  bool shares_lines = false;
 };
 
 using record = std::variant<stage, loop>;

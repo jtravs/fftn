@@ -21,6 +21,7 @@
 
 #include "core/program.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <vector>
@@ -41,7 +42,21 @@ struct graph_phase {
   std::uint32_t tail_nest = 0;
   std::uint32_t tail_body_end = 0;
   std::size_t head = 0;
+  // Neighbouring lines write the same cache lines (loop::shares_lines): claimed in fair runs.
+  bool fair_runs = false;
 };
+
+// How many chunks of phase ph a member claims at once, `left` of them being unclaimed: a phase
+// whose neighbouring lines share cache lines goes in runs of its fair share (chunks / cap), so
+// that about cap runs border each other (X59); any other in a share of what is left,
+// left / runs (X52), at least one. Never more than `left`: a run stays within its phase.
+[[nodiscard]] inline std::uint32_t chunk_run(const graph_phase& ph, std::uint32_t left,
+                                             std::uint32_t cap, std::uint32_t runs) noexcept {
+  if (ph.fair_runs) {
+    return std::min(left, std::max(ph.chunks / cap, 1U));
+  }
+  return std::max(left / runs, 1U);
+}
 
 struct work_graph {
   std::vector<graph_phase> phases;
