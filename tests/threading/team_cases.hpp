@@ -72,6 +72,9 @@ inline fftn::detail::machine_profile eager_profile() {
   p.cpus = 0;
   // Whole tasks in runs of at most half a share, as chunks are (team_engine::join, X52).
   p.claim_divisor = 2;
+  // Fair runs for the column phases that qualify (X59), so that the engine runs both kinds.
+  p.fair_line_runs = true;
+  p.line_bytes = 64;
   // Short budgets, so that waiting members block and the wake-ups are exercised.
   p.spin_ns = 2000;
   p.yield_ns = 2000;

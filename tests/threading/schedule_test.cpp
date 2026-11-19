@@ -84,6 +84,7 @@ TEST(WorkGraph, FairRunsWhereNeighbouringLinesShareCacheLines) {
   s.chunk_points = 256;
   s.column_block = 8;
   s.profile.line_bytes = 64;
+  s.profile.fair_line_runs = true;
   const auto plane = [&](std::size_t n0, std::size_t n1) {
     return d::make_plan_core(
         d::view_of(fftn::planes_c2c<double>(n0, n1, 1, fftn::direction::forward)), opts, s);
@@ -105,6 +106,10 @@ TEST(WorkGraph, FairRunsWhereNeighbouringLinesShareCacheLines) {
   // Columns alone through the chain are 16 bytes wide.
   s.lanes_columns = false;
   EXPECT_TRUE(plane(64, 32)->graph.phases[1].fair_runs);
+  // A profile without fair runs (the Xeon 6240's) flags nothing.
+  s.profile.fair_line_runs = false;
+  EXPECT_FALSE(plane(64, 32)->graph.phases[1].fair_runs);
+  s.profile.fair_line_runs = true;
   // Volumes keep the guided runs, whatever their lines share.
   fftn::shape<double, std::complex<double>> volume;
   volume.axes = {{.n = 16}, {.n = 16}, {.n = 16}};
@@ -661,6 +666,10 @@ TEST(Schedule, GridSizesFromCaches) {
   EXPECT_TRUE(xeon86.team_volume_planes);
   EXPECT_EQ(m5.column_team_bytes, 0U);
   EXPECT_FALSE(m5.team_volume_planes);
+  // Fair runs for column phases whose lines share cache lines (X59): not on the Xeon 6240.
+  EXPECT_TRUE(epyc86.fair_line_runs);
+  EXPECT_FALSE(xeon86.fair_line_runs);
+  EXPECT_TRUE(m5.fair_line_runs);
   // Rows' two-pass radices while the data fit three quarters of the CCX's L3 (X57).
   EXPECT_EQ(epyc86.fit_row_bytes, std::size_t{24} * 1024 * kib);
   EXPECT_EQ(xeon86.fit_row_bytes, 0U);

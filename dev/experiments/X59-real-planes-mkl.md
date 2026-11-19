@@ -1,6 +1,6 @@
 # X59: threaded real planes on the Xeon 6240 against oneMKL
 
-- **Status:** running
+- **Status:** done
 - **Owner:** X59 agent, 2026-11-19 (night round 2)
 - **Phase / task:** 4.1 (threaded planes)
 
@@ -216,8 +216,17 @@ place 1.021, whose schedule R6 leaves as T's (one chunk per member either way), 
 place 1.018: **R6 meets its rule on the Mac.** On the EPYC, run 20261119-052656-fdaa (Slurm
 513269; 10 rounds, all loaded, band ±2.6 %): R6 ÷ T **0.909 over the real planes** (512² 0.70–0.73,
 480 × 640 0.70–0.73, 2048 × 36 0.82–0.83, 36 × 2048 0.83–0.86, 1000²–1024² 0.86–0.88), 1.000 over
-the others; past the band only c2r 1024² out of place 1.074, which R6 can change: re-run (Slurm
-513291).
+the others; past the band only c2r 1024² out of place 1.074, which R6 can change. Re-run
+20261119-054230-68ef (Slurm 513291; the eight real 1000² and 1024² planes, 20 rounds, all loaded,
+band ±1.3 %): c2r 1024² out of place 0.961, c2r 1000² out of place 1.019, the others 0.87–0.96:
+**R6 meets its rule on the EPYC.**
+
+R6 on the Xeon, confined run 20261119-053703-c52a (Slurm 16625; T, R6 and oneMKL at 8 threads; 10
+rounds, 9 loaded by about 30 other busy cores, band ±11.6 %): R6 ÷ T 1.017 over the 32 real planes
+that split (c2r 1000² out of place 1.21, r2c 1000² 1.12–1.15, r2c 480 × 640 1.12–1.15, r2c 2048 × 36
+in place 1.15; 1024² in place 0.91), 1.000 over the others and 1.024 over the cases R6 cannot
+change. **R6 fails rule (1) on the Xeon** (and R3, its predecessor, lost there too): the Xeon keeps
+the guided runs (`machine_profile::fair_line_runs` is off on its profile).
 
 ### The Xeon's judging runs: unpinned, then confined
 
@@ -259,3 +268,36 @@ the columns of a volume through the chain, 29 chunks a phase). **R2 fails its ru
 Mac**; R3 keeps the volumes on the guided runs.
 
 ## Verdict
+
+- **Arm T adopted on every profile** (the narrower last block of a lanes column phase joins the
+  whole blocks' phase): at 8 lanes over the real planes that split, Xeon 0.911 (confined run,
+  band ±8.4 %), EPYC 0.978 (and real volumes 0.61–0.89), Mac at 6 lanes 0.998; nothing it can
+  change slower beyond the band. Serial programs and bits unchanged.
+- **Arm R6 adopted on the EPYC and the Mac, rejected on the Xeon** (a column phase of a plane
+  whose neighbouring lines write the same cache lines is claimed in runs of its fair share where
+  that share holds at most 65 536 points; `machine_profile::fair_line_runs`, set where a private
+  L2 has a large L3 behind it on x86-64 and where a cluster shares L2): EPYC 0.909 over the real
+  planes (512² and 480 × 640 0.70–0.73, 2048 × 36 0.82, 1000²–1024² 0.86–0.96), Mac 0.979; Xeon
+  1.017, c2r 1000² 1.21. R, R2, R3, R4 and R5 were steps to it, each rejected by its rule on at
+  least one machine (records above). Bits unchanged.
+- **What the Xeon's gap to oneMKL is made of** (diagnosis): oneMKL is faster alone (c2r 1.2–1.7,
+  r2c about 1.1, 1024² 1.4; at 1024² FFTN executes 38 % more instructions per r2c plane), and
+  FFTN's team pays more for moving the plane between private L2s (2–3 times oneMKL's L2 misses and
+  10–20 times its loads of lines modified elsewhere at 512² and 2048 × 36). The engine itself
+  (dispatch, hand-offs, claims) costs 1–3 µs. Arm T removes the serial tail; fair runs, which win
+  on the EPYC, do not help the Xeon, whose cross-core cost is mostly the move itself.
+- **Not closed, and the leads for it:** (1) c2r out of place keeps the half spectrum in a third
+  array (in + block + out): a packed intermediate in the output (each row's DC and Nyquist bins
+  real after the column pass, so n reals hold the row) would remove it; c2r runs 15–25 % slower
+  than r2c at one thread. (2) Planes of few, long columns (2048 × 36): share the columns' work
+  along the long axis instead of across 19 columns. (3) One-thread r2c instructions at 1024².
+  (4) Small planes on the Xeon stay unsplit (X52's S): oneMKL's 8 threads take c2r 128² to 0.37
+  of its one-thread time, pinned. (5) The column-block screen (runs 20261119-010850-59e5 and the
+  rerun queued as Slurm 16573, cancelled) was too noisy to decide; 16 columns at 1000²–1024² on
+  the Xeon looked 0.88–0.92 at one thread.
+- **Placement:** the Xeon's Slurm confines nothing, so its earlier "8 lanes" runs were unpinned;
+  the judging runs here were confined by `taskset`/`numactl` (amendment above). Unpinned, FFTN's
+  team loses more than oneMKL's (LESSONS 5.15).
+- **Library size:** `libfftn.a` on the Mac (Homebrew Clang, Release), `main` 0508037 against R6
+  bbcf198: 27 086 944 → 27 090 184 bytes (+3 240, +0.01 %).
+- LESSONS 5.15–5.17; DESIGN 9.3, 13.2, 13.3 and the decision log.

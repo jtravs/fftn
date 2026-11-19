@@ -887,7 +887,7 @@ std::size_t add_column_phase(program& p, chain_builder<T>& chain, std::size_t ax
                              const std::vector<std::size_t>& extent, const view& src,
                              const view& dst, int sign, const line_edges& edges, std::size_t block,
                              std::size_t c, const std::vector<std::size_t>& rad,
-                             std::size_t cache_line) {
+                             std::size_t cache_line, bool fair) {
   const std::size_t last = extent.size() - 1;
   const std::size_t whole = extent[last] / block;
   const std::size_t left = extent[last] % block;
@@ -916,7 +916,7 @@ std::size_t add_column_phase(program& p, chain_builder<T>& chain, std::size_t ax
     loop& first = std::get<loop>(p.records[outermost]);
     first.joins = first_column != 0;
     first.shares_lines =
-        extent.size() == 2 &&
+        fair && extent.size() == 2 &&
         lines_share_cache_lines(
             width * static_cast<std::size_t>(magnitude(dst.stride[last]) * dst.element_bytes),
             static_cast<std::size_t>(magnitude(dst.stride[axis]) * dst.element_bytes), cache_line);
@@ -1081,7 +1081,8 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     add_phase(p, axis, extent, src, dst, std::move(stages));
     // Columns alone through the chain (not the rows of the last axis).
     const std::size_t last = extent.size() - 1;
-    if (extent.size() == 2 && axis != last && outermost < p.records.size()) {
+    if (settings.profile.fair_line_runs && extent.size() == 2 && axis != last &&
+        outermost < p.records.size()) {
       if (loop* l = std::get_if<loop>(&p.records[outermost])) {
         l->shares_lines = lines_share_cache_lines(
             static_cast<std::size_t>(magnitude(dst.stride[last]) * dst.element_bytes),
@@ -1118,9 +1119,10 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
         chain_columns ? chain.radices(n)
                       : column_radices<T>(n, dst.stride[d] * dst.element_bytes, settings, profile,
                                           chain, kernels, c.isa_target != target::avx512);
-    scratch = std::max(scratch, add_column_phase<T>(p, chain, d, extent, src, dst, dir, edges,
-                                                    block, kernels.complex_lanes, rad,
-                                                    settings.profile.line_bytes));
+    scratch = std::max(scratch,
+                       add_column_phase<T>(p, chain, d, extent, src, dst, dir, edges, block,
+                                           kernels.complex_lanes, rad, settings.profile.line_bytes,
+                                           settings.profile.fair_line_runs));
     c.axis_notes.push_back(
         "axis " + std::to_string(axis == SIZE_MAX ? d : axis) + " (n = " + std::to_string(n) +
         "): " + what + (what[0] != '\0' ? ", " : "") + "lanes over blocks of " +

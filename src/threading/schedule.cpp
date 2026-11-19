@@ -142,6 +142,10 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
   if (x86_64 && private_l2 && !large_l2) {
     p.team_volume_planes = true;
   }
+  // X59 arm R6 (machine_profile::fair_line_runs).
+  if ((x86_64 && private_l2 && large_l3 && !large_l2) || (c.l2.shared_by != 0 && !private_l2)) {
+    p.fair_line_runs = true;
+  }
   if (x86_64 && private_l2 && large_l3 && !large_l2) {
     p.column_wide_bytes = 1024;
     p.fit_row_bytes = c.l3.size / 4 * 3; // X57: three quarters of the CCX's L3
