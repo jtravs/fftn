@@ -68,6 +68,16 @@ struct loop {
   // never have one (transform_addresses ignores it).
   std::array<std::ptrdiff_t, moving_slots> start{};
   std::uint32_t body_end = 0; // records [this + 1, body_end) are the body
+  // A lines loop opening a nest whose lines are disjoint from those of the nest just before
+  // it, of the same axis (the narrower last block of a lanes column phase): the work graph
+  // shares both nests' lines as one phase instead of running this one after (X41).
+  bool joins = false;
+  // A lines loop opening a nest whose neighbouring lines write the same cache lines (the
+  // columns of a plane whose rows or blocks are not whole cache lines), on a profile that
+  // takes fair runs (machine_profile::fair_line_runs): a team claims a phase
+  // whose shares are small in runs of a fair share (chunk_run), so that few runs border
+  // another member's (X59).
+  bool shares_lines = false;
 };
 
 using record = std::variant<stage, loop>;

@@ -61,6 +61,29 @@ std::size_t line_points(const program& p, std::size_t begin, std::size_t end) {
   return n;
 }
 
+// The loops that open at record i (a nest, as build_work_graph describes it).
+struct nest_shape {
+  std::uint32_t depth = 0;
+  std::uint32_t end = 0;
+  std::size_t lines = 1;
+};
+
+nest_shape nest_at(const program& p, std::size_t i) {
+  nest_shape s;
+  s.end = std::get<loop>(p.records[i]).body_end;
+  std::size_t j = i;
+  while (j < s.end) {
+    const loop* l = std::get_if<loop>(&p.records[j]);
+    if (l == nullptr || l->body_end != s.end) {
+      break;
+    }
+    s.lines *= l->count;
+    ++j;
+  }
+  s.depth = static_cast<std::uint32_t>(j - i);
+  return s;
+}
+
 } // namespace
 
 work_graph build_work_graph(const program& p, std::size_t points, std::size_t chunk_points) {
@@ -100,27 +123,31 @@ work_graph build_work_graph(const program& p, std::size_t points, std::size_t ch
       // each opens right after the one before and all end together. A volume's loop over
       // its planes (add_volume_planes) holds a plane's phases, loops that end before it: the
       // nest is that one loop, and its lines are whole planes.
-      const std::uint32_t nest_end = std::get<loop>(p.records[i]).body_end;
-      std::size_t lines = 1;
-      std::size_t j = i;
-      while (j < nest_end) {
-        const loop* l = std::get_if<loop>(&p.records[j]);
-        if (l == nullptr || l->body_end != nest_end) {
-          break;
-        }
-        lines *= l->count;
-        ++j;
+      const nest_shape first = nest_at(p, i);
+      ph.nest = first.depth;
+      ph.body_end = first.end;
+      ph.fair_runs = std::get<loop>(p.records[i]).shares_lines;
+      ph.units = first.lines;
+      ph.work = static_cast<double>(first.lines) * records_work(p, i + first.depth, first.end);
+      i = first.end;
+      // A nest that joins this one (loop::joins): its lines follow, in the same phase.
+      if (i < end && std::holds_alternative<loop>(p.records[i]) &&
+          std::get<loop>(p.records[i]).joins) {
+        const nest_shape tail = nest_at(p, i);
+        ph.head = ph.units;
+        ph.tail_record = static_cast<std::uint32_t>(i);
+        ph.tail_nest = tail.depth;
+        ph.tail_body_end = tail.end;
+        ph.units += tail.lines;
+        ph.work += static_cast<double>(tail.lines) * records_work(p, i + tail.depth, tail.end);
+        i = tail.end;
       }
-      ph.nest = static_cast<std::uint32_t>(j - i);
-      ph.body_end = nest_end;
-      ph.units = lines;
       const std::size_t per_chunk =
-          std::max<std::size_t>(1, chunk_points / line_points(p, j, nest_end));
-      const std::size_t chunks = (lines + per_chunk - 1) / per_chunk;
+          std::max<std::size_t>(1, chunk_points / line_points(p, ph.record + ph.nest, ph.body_end));
+      const std::size_t chunks = (ph.units + per_chunk - 1) / per_chunk;
+      ph.chunk_points = per_chunk * line_points(p, ph.record + ph.nest, ph.body_end);
       ph.chunks = static_cast<std::uint32_t>(
           std::min<std::size_t>(chunks, std::numeric_limits<std::uint32_t>::max()));
-      ph.work = static_cast<double>(lines) * records_work(p, j, nest_end);
-      i = nest_end;
     }
     g.chunks += ph.chunks;
     g.widest = std::max(g.widest, ph.chunks);

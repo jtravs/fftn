@@ -142,6 +142,15 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
   if (x86_64 && private_l2 && !large_l2) {
     p.team_volume_planes = true;
   }
+  // X59 arm R6 (machine_profile::fair_line_runs), only where it was measured: x86-64 with a
+  // private L2 under 1 MiB and a large L3 (Zen 3's CCX), as X51's arm E, and a cluster-shared
+  // L2 (Apple). Zen 4 and Zen 5 (1 MiB of L2, `avx512`) share the large-L3 branch, unmeasured,
+  // and keep the guided runs; so do the Xeon 6240's profile, where it lost, and Granite Rapids.
+  const bool zen3_like =
+      x86_64 && private_l2 && large_l3 && c.l2.size != 0 && c.l2.size < std::size_t{1024} * 1024;
+  if (zen3_like || (c.l2.shared_by != 0 && !private_l2)) {
+    p.fair_line_runs = true;
+  }
   if (x86_64 && private_l2 && large_l3 && !large_l2) {
     p.column_wide_bytes = 1024;
     p.fit_row_bytes = c.l3.size / 4 * 3; // X57: three quarters of the CCX's L3

@@ -72,6 +72,9 @@ inline fftn::detail::machine_profile eager_profile() {
   p.cpus = 0;
   // Whole tasks in runs of at most half a share, as chunks are (team_engine::join, X52).
   p.claim_divisor = 2;
+  // Fair runs for the column phases that qualify (X59), so that the engine runs both kinds.
+  p.fair_line_runs = true;
+  p.line_bytes = 64;
   // Short budgets, so that waiting members block and the wake-ups are exercised.
   p.spin_ns = 2000;
   p.yield_ns = 2000;
@@ -207,6 +210,35 @@ void add_cases(std::vector<team_case>& out, const fftn::detail::build_settings& 
                           4112, false, settings, target));
   out.push_back(make_case("r2c_rader_514x2" + suffix, fftn::rows_r2c<T>(514, 2), 1028, 2 * 258,
                           false, settings, target));
+  // Columns past the last whole block: the narrower block's nest joins the phase (X41).
+  out.push_back(make_case("c2c_planes_64x40x2" + suffix, fftn::planes_c2c<T>(64, 40, 2, fwd), 5120,
+                          5120, false, settings, target));
+  fftn::shape<T, c> r2c_wide;
+  r2c_wide.axes = {{.n = 64}, {.n = 40}};
+  r2c_wide.batches = {{.count = 2}};
+  out.push_back(make_case("r2c_planes_64x40x2" + suffix, r2c_wide, 2 * 64 * 40, 2 * 64 * 21, false,
+                          settings, target));
+  // The same through the lanes on every target (C = 1 would take the chain): a c2r plane's
+  // narrower block writes the owner's workspace block; 51 columns are three blocks and a tail,
+  // whose phase goes in fair runs (X59). With coarse chunks a chunk holds lines of both nests.
+  fftn::detail::build_settings blocks = settings;
+  blocks.column_block = 16;
+  fftn::shape<c, T> c2r_wide;
+  c2r_wide.axes = {{.n = 64}, {.n = 40}};
+  c2r_wide.batches = {{.count = 2}};
+  out.push_back(make_case("c2r_planes_b16_64x40x2" + suffix, c2r_wide, 2 * 64 * 21, 2 * 64 * 40,
+                          false, blocks, target));
+  fftn::shape<T, c> r2c_odd;
+  r2c_odd.axes = {{.n = 64}, {.n = 100}};
+  r2c_odd.batches = {{.count = 1}};
+  out.push_back(
+      make_case("r2c_planes_b16_64x100x1" + suffix, r2c_odd, 6400, 64 * 51, false, blocks, target));
+  fftn::detail::build_settings coarse = blocks;
+  coarse.chunk_points = 2048;
+  out.push_back(make_case("c2c_planes_coarse_64x40x2" + suffix, fftn::planes_c2c<T>(64, 40, 2, fwd),
+                          5120, 5120, false, coarse, target));
+  out.push_back(make_case("r2c_planes_coarse_64x100x1" + suffix, r2c_odd, 6400, 64 * 51, false,
+                          coarse, target));
   // A unit axis: one transform's phases mix stages and loop nests.
   out.push_back(make_case("c2c_planes_1x200x3" + suffix, fftn::planes_c2c<T>(1, 200, 3, fwd), 600,
                           600, false, settings, target));
