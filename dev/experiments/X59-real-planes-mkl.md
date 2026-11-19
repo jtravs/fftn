@@ -223,6 +223,15 @@ that socket's memory (chosen once at the job's start). The rules are otherwise u
 libraries' threads then stay on eight cores of one socket, which is what X43 and X52 took their
 runs to be.
 
+Confined run 20261119-033959-2e05 (Slurm 16592; `main`, T, R3, oneMKL at 8 threads; node 1, CPUs
+18, 21, 23, 25–27, 31, 34; 10 rounds, 5 loaded, band ±8.4 %): T ÷ `main` **0.911 over the 32 real
+planes that split** (c2r 1024² 0.80–0.82, c2r 512² op 0.81, r2c 512² ip 0.85, 256² 0.87–0.90),
+0.942 over the other planes and volumes that split, 0.978 over the cases T cannot change; no real
+plane slower than 1.01. **T meets its rule on the Xeon.** R3 ÷ T 1.070 over the real planes, with
+c2r 1000²–1024² at 1.30–1.35 and r2c 480 × 640 out of place 1.24 (the cases R3 cannot change 1.036,
+so this run's arms differ by a few per cent anyway): R3 fails on the Xeon too, at 1000²–1024²,
+whose fair shares there are 8 blocks of 8 columns (65 536 points).
+
 ### Arms T and R on the Mac (6 lanes)
 
 Run 20261119-015223-410e (M5 Max, Homebrew Clang, `neon_fcma`; A = `main` 0508037, T 79669a6, R
