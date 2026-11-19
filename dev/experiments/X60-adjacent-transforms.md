@@ -1,6 +1,6 @@
 # X60: strided axes of an array as lanes over adjacent transforms
 
-- **Status:** running
+- **Status:** done (adopted)
 - **Owner:** task 4.3 agent, 2026-11-19
 - **Phase / task:** 4 / 4.3
 
@@ -86,8 +86,47 @@ within L1: M5 Max (128 KiB) 8 x 16 and 8 x 256 1.34–1.42, 16 x 16 x 8 1.19, 16
 and 16 x 16 x 8 1.13. The chain's leaves and short passes do no strided work worth avoiding
 there. Hence the L1 condition.
 
-To fill in: the judging runs.
+Intermediate runs at `e296850` (the condition counted one block; Mac run
+20261119-022026-b8fd: 0.492, its middle axes 0.81) and `a927f5d` (all the transforms, L1 for
+every target; Mac middle axes alone, run 20261119-025917-b00a: 0.613; Xeon 20261119-024858-37a3:
+0.425, no case slower, but its in-L1 columns back on the chain at 2–7 times FFTW's and
+oneMKL's time) led to the final condition.
+
+**Judging runs** at `b95d5fd` (the final rule), arms A (`COLUMNS=chain`), B, Z
+(`ADJACENT_MIN_BYTES=0`), FFTW MEASURE, oneMKL on the Xeon; one thread; release toolchains (GCC
+16 on the EPYC, GCC 14 on the Xeon, Homebrew Clang on the Mac). Geometric means over the 86 c2c
+cases (group: columns 37, planes 33, volumes 8, middle axes 8):
+
+| Machine (run, A/A band) | B ÷ A | columns | planes | volumes | middle | B ÷ FFTW | B ÷ oneMKL | worst B ÷ A |
+|---|---|---|---|---|---|---|---|---|
+| M5 Max `neon_fcma` (20261119-034655-4b0d, ±1.00 %, loaded) | 0.484 | 0.567 | 0.393 | 0.423 | 0.621 | 0.861 | – | 1.01 |
+| EPYC 7763 `avx2` (20261119-035613-7c79, ±1.17 %) | 0.287 | 0.373 | 0.208 | 0.240 | 0.388 | 0.804 | – | 1.00 |
+| Xeon 6240 `avx512` (20261119-040543-716a, ±4.33 %, loaded) | 0.367 | 0.438 | 0.325 | 0.288 | 0.346 | 0.760 | 0.968 | 1.01 |
+
+No c2c case is slower than A beyond its band on any machine. The real cases are unchanged (B ÷ A
+1.00, 0.998–1.000). Against FFTW the losses that remain are small interleaved planes and volumes
+(Mac 32³ x 8 1.74–1.88, 16³ x 32 1.57–1.68, 128² x 8 1.38–1.45; EPYC 16² x 8 1.29–1.72, 64 x 16
+1.38–1.48; Xeon 16² x 8 1.25–1.54, 16³ x 8 1.13–1.43) and the real transforms along a strided
+halved axis (1.17–1.49), which keep the chain. oneMKL stays far ahead on short columns within L1
+(Xeon 16 x 16 2.5–2.9, 8 x 16 1.7–1.9) and on middle axes (1.28). Arm Z (the route wherever it
+fits) against B: on the EPYC the leaf-length cases within L1 would gain (B ÷ Z 1.20–1.58 on 16
+x 16, 8 x 16, 8 x 256, 16² x 8), on the Xeon the comparison is within its band for most and the
+screen's 8 x 16 lost 1.20 with the route, on the Mac Z ÷ B is 1.0 but for 32² x 8 out of place
+(0.72) and 32 x 256 (0.87).
+
+Collateral (EPYC, the commits before and after the route): the standard catalogue's tracking
+tier, 61 cases, no evidence of change (geomean 0.996; run 20261119-020114-b31d, ±1.77 %); `x7`
+(the lanes over rows, whose driver path changed) 1.004 with 87 of 88 cases without evidence and
+float 8 x 64 at 1.045 (run 20261119-031709-6855, ±1.00 %, after the driver kept stages inline;
+1.037 before it), a float case outside the release targets' double tuning and a hair past the
+collateral limit of 1.03 beyond the band: left open.
+
+Threaded (8 lanes): the first run (b95d5fd, EPYC run 20261119-044638-2ed8, ±1.67 %) failed the rule on planes and volumes of 8–64 transforms (up to 1.74 of A: a block of transforms is one task); a team now runs the chain below 128 transforms (365a96a), judged in the runs below.
 
 ## Verdict
 
-Open.
+Adopted on every target by the decision rule (B ÷ A at most 0.85 and no case slower than 1.05
+beyond the band): 0.48 on the M5 Max, 0.29 on the EPYC, 0.37 on the Xeon. DESIGN 9.3 describes
+the route; LESSONS 3.28 the lesson. Follow-ups: a per-target condition within L1 (the EPYC's
+leaf-length cases, Z), a real lane path for a strided halved axis, small interleaved planes
+against FFTW, oneMKL's short columns, the x7 float case.

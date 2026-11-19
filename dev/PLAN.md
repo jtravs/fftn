@@ -210,6 +210,20 @@ it; EPYC real 96²–100² 0.72–0.90); the EPYC's one-thread column blocks wid
 their tiles fit (0.933). Open: oneMKL's threaded real planes (2.5–3.9 times faster on the
 Xeon), EPYC 2048 × 36 at 8 lanes (1.35 of FFTW), the Mac's 512 × 64 × 64, 64 × 64 × 512, 128³.
 
+Axis subsets (task 4.3, pull request 82, 2026-11-19): every ordered selection of one to three
+dimensions of arrays of rank 1 to 4, under C, Fortran and rotated memory orders, strides of both
+signs, in and out of place, c2c, r2c and c2r, against the quadruple-precision reference on every
+instruction set: already correct on main through the general shape. New: `axes_c2c`,
+`axes_r2c`, `axes_c2r` (provisional, awaiting the maintainer), the axes run in memory order
+whatever their listing, and X60's lanes over adjacent transforms (the transformed axes all
+strided, the batch's transforms one element apart): over 86 c2c cases of the new `axes`
+catalogue (fbench's interleaved layout) 0.48 (Mac), 0.29 (EPYC) and 0.37 (Xeon) of the old
+route's time, ÷ FFTW 0.86 / 0.80 / 0.76, ÷ oneMKL 0.97; one thread. Left: real
+transforms whose halved axis is strided (the chain still: 1.17–1.49 of FFTW), small
+interleaved planes and volumes against FFTW on the Mac (b8 1.3–1.9), oneMKL's tiny columns
+(the Xeon's 32 x 16 6.6 of its time), and the EPYC's leaf-length cases within L1, which the
+lanes would take to 0.63–0.83 of their time but the Xeon's lose (a per-target rule). Runs in X60.
+
 Planes, one thread (X44, pull request 54): columns of 32 run as one radix-32 lane pass in
 double on x86 (the row's pair leaf had left them two passes): EPYC 32² ÷ FFTW 1.39 → 1.00,
 32² × 16 1.31 → 0.97; Xeon 32² ÷ MKL 1.37 → 1.07. Running the column edge passes'
@@ -253,7 +267,9 @@ Open, by phase:
   MKL; the Mac's 32²–64², which needs a faster radix-64 codelet; the threaded gap to oneMKL on
   the Xeon); 4.2 (volumes, X43b, pull request 55: built, scratch bound tested; acceptance not
   met case by case: the 16-point outer leaf, 512 × 64 × 64 and 64 × 64 × 512 against FFTW,
-  oneMKL on the Xeon); 4.3 (axis subsets, strided arrays, real multi-dimensional).
+  oneMKL on the Xeon); 4.3 (pull request 82: acceptance met, the property tests; left: real
+  transforms along a strided halved axis without lanes, more than three axes, in-place real
+  with a strided halved axis, the EPYC's leaf-length cases within L1, see below).
 - 5–7: not started (5: fusion and pipelines; 6: float tuning, convenience layer, DCT/DST,
   C API, cloud tuning, docs, packaging, first release; 7: on demand, FFTW3 shim, SVE,
   Python).
@@ -687,7 +703,7 @@ slower than serial; never slower than a team of serial plans by more than 2 %.
 |---|---|---|
 | 4.1 | Multi-axis shapes; plane-at-a-time programs; in place for all strategies | batched 2-D c2c at or below FFTW and MKL, one thread and threaded |
 | 4.2 | Volumes with pencil blocks; per-thread scratch of plane or pencil-block size | 3-D c2c at or below FFTW and MKL; scratch bound tested |
-| 4.3 | Arbitrary axis subsets and orders of strided arrays; real multi-dimensional transforms | property tests against the reference |
+| 4.3 | Arbitrary axis subsets and orders of strided arrays; real multi-dimensional transforms (done 2026-11-19, pull request 82: property tests for every selection, `axes_c2c`/`axes_r2c`/`axes_c2r` provisional, X60) | property tests against the reference |
 
 Exit: fbench planes and volumes catalogues meet the one-thread and threaded targets.
 
@@ -802,7 +818,7 @@ running, done (with verdict).
 | [X54](experiments/X54-radix64-avx2.md) | Can the radix-32 and radix-64 codelets be ordered so that GCC spills far less of them on `avx2` (a list scheduler against a model register file; bits identical), and does that let two-pass plans of 768, 1024, 2048 win at both batches on the EPYC so the planner takes them? | 1 | done: A (fitted order, bit-identical), B (768) and C adopted by the maintainer's decision against rule (b)'s letter (80 at 1.035 against 1.034, byte-identical code at a moved address): radix-32/64 plans 0.975 on the EPYC, tracking EPYC 0.994, Xeon 0.999, Mac 0.999; B (two-pass `avx2` double overrides) adopted for 768 (0.84; ÷ FFTW 1.08 → 0.91), 1024 dropped by rule (c) (0.84–0.95 at batches 1–256, 1.25 at 1024 × 1024); C (`avx2` float 512, 640, 768, 2048, 4096) adopted (0.898); 2048 double and 64 × 16 not moved |
 | [X53](experiments/X53-two-row-leaves.md) | Batch leaves: C short rows of a batch side by side, one row per lane, transposed in registers (15 × 2 and 64 × 2 backward at 1.15–1.3 of FFTW on x86): for which lengths and batch counts? | 1 | done: adopted on NEON float (changed cases 0.61 of `main`), avx2 (EPYC 0.81, 15 × 2 bwd 1.21 → 0.88 of FFTW) and avx512 (Xeon 0.69, 15 × 2 bwd 1.16 → 0.90); one unchanged tiny case per x86 machine past the band set aside by the code-placement rule (same plan, byte-identical code); R4 adds 8, 12, 20, 25, 32 (0.51-0.58 of R); 64 × 2 not closed (EPYC 1.29 of FFTW; 1.18 with X54's codelet, not taken) |
 | [X55](experiments/X55-gnr-depth.md) | Should the depth-first rule reach Granite Rapids (a 2 MiB private L2, outside X46's branch), and with what range and tops? (X48: its long rows over 1.05 of FFTW and MKL) | 1 | done: G adopted (0.688 over the rows it changes, tracking 0.940; long rows ÷ FFTW 0.70–0.83) |
-| [X60](experiments/X60-adjacent-transforms.md) | Strided axes of an array (a batch dimension one element apart, varying fastest) as lanes over blocks of adjacent transforms, instead of each transform through the chain | 4 | running |
+| [X60](experiments/X60-adjacent-transforms.md) | Strided axes of an array (a batch dimension one element apart, varying fastest) as lanes over blocks of adjacent transforms, instead of each transform through the chain | 4 | done: adopted on every target (0.48 Mac, 0.29 EPYC, 0.37 Xeon of the chain's time over 86 cases); within L1 only for C > 1 and axes longer than 16 |
 | [X57](experiments/X57-epyc-1024.md) | The EPYC's last exit-check cases: are 72 and 120's 5–6 % since 8c18dd2 a regression, and can 1024's radix choice see the plan's data? | 1 | done: 72 and 120 are code placement; B adopted (768 and 1024 two-pass rows while rows and output fit 3/4 of L3: moved cases 0.88, tracking 0.989, EPYC beyond noise 9 → 4 of 193); C (64-byte `avx2` functions) rejected (0.999, 1024 × 3 1.04–1.06) |
 | [P1](experiments/P1-rules-vs-measure.md) | How often is the rules' choice within 5 % of `planning::measure`'s per machine (task 2.4's acceptance: 90 % of catalogue cases), which rules miss, and does measurement recover a misfiring profile (Granite Rapids' fields forced on the Xeon)? | 2 | first pass done: rules within 5 % of measure on 96.7 % of the tracking tier on the EPYC, 77 % on the Xeon (about 85 % without noise), Mac inconclusive under load; measure never slower by fbench; Granite Rapids' fields forced on the Xeon recovered in 10 of 11 cases (the miss a budget defect, fixed); planes' radices the repeat miss. Second pass (73eb719, placements per round, median): Mac 93.4 %, EPYC 95.1 %, Xeon 86.9 % (long real rows, planes, 2²², 2431 repeat); misfire 9 of 9 after the budget fix; EPYC r2c 65536 measure 1.18 slower (power-of-two chains bimodal by page backing); EPYC 65537 Bluestein 1.75 faster than the rules' Rader |
 | [P2](experiments/P2-measure-budget.md) | Measurement budget: how many candidates and how long before the choice stops improving; the quick and full efforts' budgets | 2 | first pass done: Q within 0.999–1.014 of M; no winner above rank 7; plan construction dominates large transforms (2²² 12.5 s for M); choices unstable under load (43–66 % of cases one program over 12 rounds), so budgets wait for a sampling revisit; indicated quick 6, measure 8 |

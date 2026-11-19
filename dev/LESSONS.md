@@ -590,6 +590,19 @@ with the same top). The standard catalogue held one such row (46080) and its exi
 never flagged the rest. Screen a strategy on lengths built to stress it (odd part × 2^k
 across the cache sizes), not only on the catalogue's. [X51](experiments/X51-depth-2.md).
 
+3.28 **When the fastest dimension of an array is not transformed, transform its neighbours
+together.** The columns of a matrix, the planes (y, x) of a (y, x, w) array and a middle axis
+all leave every transformed element `batch` elements from the next, a cache line or more,
+while the next transform's element sits beside it. One transform at a time through a strided
+chain ran 1.4–3.9 times FFTW's time on an M5 Max; running each axis as lanes over blocks of
+adjacent transforms (C of them one vector access, the block in a tile in scratch) took 86
+such cases to 0.48 of that time on the M5 Max, 0.29 on an EPYC 7763 and 0.43 on a Xeon 6240,
+and to 0.80–0.86 of FFTW's. Within L1 the strided chain is not slow: there the lanes lost on
+one complex per register (M5 Max double) and on leaf lengths of 16 or fewer, while on `avx2`
+and `avx512` longer axes still gained (Xeon: 32 × 16 0.23). Count the whole array against L1,
+not one block: blocks that each fit L1 still meet cold memory one after another.
+[X60](experiments/X60-adjacent-transforms.md).
+
 ## 4. Kernels and algorithms
 
 4.1 **A whole-transform codelet wins only where it fills the register.** One 32-point
