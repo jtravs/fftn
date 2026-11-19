@@ -11,6 +11,7 @@
 #include "reference/reference_dft.hpp"
 #include "support/canary.hpp"
 #include "support/exact.hpp"
+#include "support/fftn_subject.hpp"
 #include "support/harness.hpp"
 #include "support/inputs.hpp"
 #include "support/outcome.hpp"
@@ -504,8 +505,9 @@ template <class In, class Out>
 std::vector<Out> run_at(const fftn::shape<In, Out>& s, bool in_place,
                         const std::vector<std::ptrdiff_t>& in_offsets,
                         const std::vector<std::ptrdiff_t>& out_offsets, std::span<const In> input,
-                        const fftn::test::run_options& options, const std::string& what) {
-  const fftn::plan<In, Out> p(s, {.in_place = in_place});
+                        const fftn::test::run_options& options, const std::string& what,
+                        fftn::isa target = fftn::isa::best) {
+  const fftn::plan<In, Out> p(s, {.in_place = in_place, .force_isa = target});
   fftn::workspace ws(p);
   const auto call = [&p, &ws](const In* x, Out* y) { p.execute(x, y, ws); };
   const auto r = fftn::test::execute<In, Out>(call, in_offsets, out_offsets,
@@ -789,115 +791,256 @@ std::vector<std::size_t> last_axis_innermost(std::vector<std::size_t> order, std
   return order;
 }
 
-TYPED_TEST(MultiDim, ManyBatchDimensionsComplex) {
-  using T = TypeParam;
+// One case through every complex layout: strided with gaps out of place (the output nested the
+// other way round and reversed), and in place.
+template <class T>
+void check_batched_complex(checker& check, const batched_case& k,
+                           fftn::isa target = fftn::isa::best) {
   using c = std::complex<T>;
+  const std::size_t dims = k.axes.size() + k.counts.size();
+  const std::size_t points = product(k.axes);
+  const std::size_t transforms = product(k.counts);
+  fftn::test::input_source src(points + transforms);
+  const auto x = src.complexes<T>(points * transforms);
+  const std::vector<std::size_t> reversed(k.order.rbegin(), k.order.rend());
+  const batched_layout in = nest(k.axes, k.counts, k.order, 2, 1, alternating(dims, 1));
+  const batched_layout out = nest(k.axes, k.counts, reversed, 1, 3, std::vector<int>(dims, -1));
+  const batched_layout shared = nest(k.axes, k.counts, k.order, 1, 2, alternating(dims, -1));
+  for (const fftn::direction dir : {fftn::direction::forward, fftn::direction::backward}) {
+    std::vector<cd> want;
+    for (std::size_t t = 0; t < transforms; ++t) {
+      const std::vector<cd> one(x.begin() + static_cast<std::ptrdiff_t>(t * points),
+                                x.begin() + static_cast<std::ptrdiff_t>((t + 1) * points));
+      const auto y = dft(static_cast<int>(dir), k.axes, one);
+      want.insert(want.end(), y.begin(), y.end());
+    }
+    const auto tol = tolerance_for<T>(k.axes, false);
+    const std::string what = describe(k, "c2c");
+    const auto y =
+        run_at<c, c>(batched_shape<c, c>(k.axes, k.counts, in, out, dir), false,
+                     offsets_of(k.axes, k.counts, in), offsets_of(k.axes, k.counts, out), x,
+                     {.in_offset = 8, .out_offset = 24}, what, target);
+    check.within<T>(y, want, tol, what);
+    const std::string what_in_place = describe(k, "c2c in place");
+    const auto offsets = offsets_of(k.axes, k.counts, shared);
+    const auto z = run_at<c, c>(
+        batched_shape<c, c>(k.axes, k.counts, shared, shared, dir), true, offsets, offsets, x,
+        {.in_offset = 16, .out_offset = 16, .guard = fftn::test::guard_side::below}, what_in_place,
+        target);
+    check.within<T>(z, want, tol, what_in_place);
+  }
+}
+
+// One case through every real layout: r2c and c2r, out of place (strided, the complex side
+// nested the other way round and reversed) and in place (FFTW's padded layout, the halved axis
+// innermost).
+template <class T>
+void check_batched_real(checker& check, const batched_case& k,
+                        fftn::isa target = fftn::isa::best) {
+  using c = std::complex<T>;
+  const std::size_t r = k.axes.size();
+  const std::size_t dims = r + k.counts.size();
+  const dims_t cplx = halved(k.axes);
+  const std::size_t points = product(k.axes);
+  const std::size_t transforms = product(k.counts);
+  const real_case data = real_data<T>(k.axes, points + transforms + 5, transforms);
+  const std::vector<T> x = real_parts<T>(data.reals);
+  const std::vector<c> spectrum(data.spectrum.begin(), data.spectrum.end());
+  const std::vector<cd> want_reals = scaled(data.reals, points);
+  const auto as_complex = [](const std::vector<T>& v) {
+    return std::vector<c>(v.begin(), v.end());
+  };
+  const std::vector<std::size_t> reversed(k.order.rbegin(), k.order.rend());
+  const batched_layout complex_in_place =
+      nest(cplx, k.counts, last_axis_innermost(k.order, r), 1, 1, [&] {
+        auto s = alternating(dims, -1);
+        s[r - 1] = 1; // in place the last axis is contiguous on both sides
+        return s;
+      }());
+  struct layout {
+    batched_layout real;
+    batched_layout complex;
+    bool in_place;
+    fftn::test::run_options options; // offsets in units of T, so either side may take them
+  };
+  const std::vector<layout> layouts{
+      {
+          .real = nest(k.axes, k.counts, k.order, 2, 1, alternating(dims, -1)),
+          .complex = nest(cplx, k.counts, reversed, 1, 3, std::vector<int>(dims, -1)),
+          .in_place = false,
+          .options = {.in_offset = sizeof(T), .out_offset = 2 * sizeof(T)},
+      },
+      {
+          .real = real_twin(complex_in_place),
+          .complex = complex_in_place,
+          .in_place = true,
+          .options =
+              {
+                  .in_offset = 3 * sizeof(T),
+                  .out_offset = 3 * sizeof(T),
+                  .guard = fftn::test::guard_side::below,
+              },
+      },
+  };
+  for (const layout& lay : layouts) {
+    const std::string r2c_what = describe(k, lay.in_place ? "r2c in place" : "r2c");
+    const auto y =
+        run_at<T, c>(batched_shape<T, c>(k.axes, k.counts, lay.real, lay.complex), lay.in_place,
+                     offsets_of(k.axes, k.counts, lay.real),
+                     offsets_of(cplx, k.counts, lay.complex), x, lay.options, r2c_what, target);
+    check.within<T>(y, data.spectrum, tolerance_for<T>(k.axes, false), r2c_what);
+    const std::string c2r_what = describe(k, lay.in_place ? "c2r in place" : "c2r");
+    const fftn::test::run_options swapped{
+        .in_offset = lay.options.out_offset,
+        .out_offset = lay.options.in_offset,
+        .guard = lay.options.guard,
+    };
+    const auto z = run_at<c, T>(
+        batched_shape<c, T>(k.axes, k.counts, lay.complex, lay.real, fftn::direction::backward),
+        lay.in_place, offsets_of(cplx, k.counts, lay.complex),
+        offsets_of(k.axes, k.counts, lay.real), spectrum, swapped, c2r_what, target);
+    check.within<T>(as_complex(z), want_reals, tolerance_for<T>(k.axes, true), c2r_what);
+  }
+}
+
+TYPED_TEST(MultiDim, ManyBatchDimensionsComplex) {
   checker check;
   for (const batched_case& k : batched_cases()) {
-    const std::size_t dims = k.axes.size() + k.counts.size();
-    const std::size_t points = product(k.axes);
-    const std::size_t transforms = product(k.counts);
-    fftn::test::input_source src(points + transforms);
-    const auto x = src.complexes<T>(points * transforms);
-    const std::vector<std::size_t> reversed(k.order.rbegin(), k.order.rend());
-    const batched_layout in = nest(k.axes, k.counts, k.order, 2, 1, alternating(dims, 1));
-    const batched_layout out = nest(k.axes, k.counts, reversed, 1, 3, std::vector<int>(dims, -1));
-    const batched_layout shared = nest(k.axes, k.counts, k.order, 1, 2, alternating(dims, -1));
-    for (const fftn::direction dir : {fftn::direction::forward, fftn::direction::backward}) {
-      std::vector<cd> want;
-      for (std::size_t t = 0; t < transforms; ++t) {
-        const std::vector<cd> one(x.begin() + static_cast<std::ptrdiff_t>(t * points),
-                                  x.begin() + static_cast<std::ptrdiff_t>((t + 1) * points));
-        const auto y = dft(static_cast<int>(dir), k.axes, one);
-        want.insert(want.end(), y.begin(), y.end());
-      }
-      const auto tol = tolerance_for<T>(k.axes, false);
-      const std::string what = describe(k, "c2c");
-      const auto y =
-          run_at<c, c>(batched_shape<c, c>(k.axes, k.counts, in, out, dir), false,
-                       offsets_of(k.axes, k.counts, in), offsets_of(k.axes, k.counts, out), x,
-                       {.in_offset = 8, .out_offset = 24}, what);
-      check.within<T>(y, want, tol, what);
-      const std::string what_in_place = describe(k, "c2c in place");
-      const auto offsets = offsets_of(k.axes, k.counts, shared);
-      const auto z = run_at<c, c>(
-          batched_shape<c, c>(k.axes, k.counts, shared, shared, dir), true, offsets, offsets, x,
-          {.in_offset = 16, .out_offset = 16, .guard = fftn::test::guard_side::below},
-          what_in_place);
-      check.within<T>(z, want, tol, what_in_place);
-    }
+    check_batched_complex<TypeParam>(check, k);
   }
 }
 
 TYPED_TEST(MultiDim, ManyBatchDimensionsReal) {
-  using T = TypeParam;
-  using c = std::complex<T>;
   checker check;
   for (const batched_case& k : batched_cases()) {
-    const std::size_t r = k.axes.size();
-    const std::size_t dims = r + k.counts.size();
-    const dims_t cplx = halved(k.axes);
-    const std::size_t points = product(k.axes);
-    const std::size_t transforms = product(k.counts);
-    const real_case data = real_data<T>(k.axes, points + transforms + 5, transforms);
-    const std::vector<T> x = real_parts<T>(data.reals);
-    const std::vector<c> spectrum(data.spectrum.begin(), data.spectrum.end());
-    const std::vector<cd> want_reals = scaled(data.reals, points);
-    const auto as_complex = [](const std::vector<T>& v) {
-      return std::vector<c>(v.begin(), v.end());
-    };
-    const std::vector<std::size_t> reversed(k.order.rbegin(), k.order.rend());
-    const batched_layout complex_in_place =
-        nest(cplx, k.counts, last_axis_innermost(k.order, r), 1, 1, [&] {
-          auto s = alternating(dims, -1);
-          s[r - 1] = 1; // in place the last axis is contiguous on both sides
-          return s;
-        }());
-    struct layout {
-      batched_layout real;
-      batched_layout complex;
-      bool in_place;
-      fftn::test::run_options options; // offsets in units of T, so either side may take them
-    };
-    const std::vector<layout> layouts{
-        {
-            .real = nest(k.axes, k.counts, k.order, 2, 1, alternating(dims, -1)),
-            .complex = nest(cplx, k.counts, reversed, 1, 3, std::vector<int>(dims, -1)),
-            .in_place = false,
-            .options = {.in_offset = sizeof(T), .out_offset = 2 * sizeof(T)},
-        },
-        {
-            .real = real_twin(complex_in_place),
-            .complex = complex_in_place,
-            .in_place = true,
-            .options =
-                {
-                    .in_offset = 3 * sizeof(T),
-                    .out_offset = 3 * sizeof(T),
-                    .guard = fftn::test::guard_side::below,
-                },
-        },
-    };
-    for (const layout& lay : layouts) {
-      const std::string r2c_what = describe(k, lay.in_place ? "r2c in place" : "r2c");
-      const auto y =
-          run_at<T, c>(batched_shape<T, c>(k.axes, k.counts, lay.real, lay.complex), lay.in_place,
-                       offsets_of(k.axes, k.counts, lay.real),
-                       offsets_of(cplx, k.counts, lay.complex), x, lay.options, r2c_what);
-      check.within<T>(y, data.spectrum, tolerance_for<T>(k.axes, false), r2c_what);
-      const std::string c2r_what = describe(k, lay.in_place ? "c2r in place" : "c2r");
-      const fftn::test::run_options swapped{
-          .in_offset = lay.options.out_offset,
-          .out_offset = lay.options.in_offset,
-          .guard = lay.options.guard,
-      };
-      const auto z = run_at<c, T>(
-          batched_shape<c, T>(k.axes, k.counts, lay.complex, lay.real, fftn::direction::backward),
-          lay.in_place, offsets_of(cplx, k.counts, lay.complex),
-          offsets_of(k.axes, k.counts, lay.real), spectrum, swapped, c2r_what);
-      check.within<T>(as_complex(z), want_reals, tolerance_for<T>(k.axes, true), c2r_what);
+    check_batched_real<TypeParam>(check, k);
+  }
+}
+
+// ---- Every subset and order of the axes of a strided array (task 4.3).
+
+// The ordered selections of one to three of the dimensions of an array of rank `rank`.
+std::vector<std::vector<std::size_t>> axis_selections(std::size_t rank) {
+  std::vector<std::vector<std::size_t>> all;
+  std::vector<std::size_t> now;
+  const auto extend = [&](const auto& self) -> void {
+    if (!now.empty()) {
+      all.push_back(now);
+    }
+    if (now.size() == 3) {
+      return;
+    }
+    for (std::size_t d = 0; d < rank; ++d) {
+      if (std::ranges::find(now, d) == now.end()) {
+        now.push_back(d);
+        self(self);
+        now.pop_back();
+      }
+    }
+  };
+  extend(extend);
+  return all;
+}
+
+// How the array's dimensions nest in memory, innermost first: C order, the reverse (Fortran
+// order) and C order rotated, so that the fastest dimension is neither end's.
+std::vector<std::vector<std::size_t>> memory_orders(std::size_t rank) {
+  std::vector<std::size_t> c_order(rank);
+  for (std::size_t d = 0; d < rank; ++d) {
+    c_order[d] = rank - 1 - d;
+  }
+  std::vector<std::size_t> rotated = c_order;
+  std::ranges::rotate(rotated, rotated.begin() + 1);
+  std::vector<std::vector<std::size_t>> v{c_order};
+  for (const auto& o : {std::vector<std::size_t>(c_order.rbegin(), c_order.rend()), rotated}) {
+    if (std::ranges::find(v, o) == v.end()) {
+      v.push_back(o);
     }
   }
+  return v;
+}
+
+// The case of transforming the dimensions `selected` of an array of extents `array` whose
+// dimensions nest as `memory`: the other dimensions are batch dimensions, listed in the
+// array's order or (`reverse_batches`) the opposite one, so that neither the batch order nor
+// the axes' has to follow the memory's.
+batched_case selection_case(const dims_t& array, const std::vector<std::size_t>& selected,
+                            const std::vector<std::size_t>& memory, bool reverse_batches) {
+  batched_case k;
+  std::vector<std::size_t> rest;
+  for (std::size_t d = 0; d < array.size(); ++d) {
+    if (std::ranges::find(selected, d) == selected.end()) {
+      rest.push_back(d);
+    }
+  }
+  if (reverse_batches) {
+    std::ranges::reverse(rest);
+  }
+  std::vector<std::size_t> position(array.size());
+  for (std::size_t i = 0; i < selected.size(); ++i) {
+    k.axes.push_back(array[selected[i]]);
+    position[selected[i]] = i;
+  }
+  for (std::size_t j = 0; j < rest.size(); ++j) {
+    k.counts.push_back(array[rest[j]]);
+    position[rest[j]] = selected.size() + j;
+  }
+  for (const std::size_t d : memory) {
+    k.order.push_back(position[d]);
+  }
+  return k;
+}
+
+// Arrays of rank 1 to 4; extents odd and even (a halved axis of either parity), of 1, and
+// long enough for the strategies of strided columns (blocks of lanes, X40).
+const std::vector<dims_t>& axis_arrays() {
+  static const std::vector<dims_t> v{
+      {7}, {4, 5}, {6, 3}, {16, 12}, {3, 4, 5}, {5, 1, 6}, {8, 9, 16}, {2, 3, 4, 5},
+  };
+  return v;
+}
+
+// Runs every selection of every array under every instruction set the machine has.
+template <class Check> void for_each_selection(const Check& run) {
+  for (const fftn::isa target : fftn::test::runnable_isas()) {
+    SCOPED_TRACE(fftn::isa_name(target));
+    for (const dims_t& array : axis_arrays()) {
+      for (const auto& selected : axis_selections(array.size())) {
+        for (const auto& memory : memory_orders(array.size())) {
+          for (const bool reverse_batches : {false, true}) {
+            std::string trace = "array";
+            for (const std::size_t n : array) {
+              trace += " " + std::to_string(n);
+            }
+            trace += ", axes";
+            for (const std::size_t d : selected) {
+              trace += " " + std::to_string(d);
+            }
+            trace += ", memory (innermost first)";
+            for (const std::size_t d : memory) {
+              trace += " " + std::to_string(d);
+            }
+            SCOPED_TRACE(trace + (reverse_batches ? ", batches reversed" : ""));
+            run(selection_case(array, selected, memory, reverse_batches), target);
+          }
+        }
+      }
+    }
+  }
+}
+
+TYPED_TEST(MultiDim, EveryAxisSelectionComplex) {
+  checker check;
+  for_each_selection([&](const batched_case& k, fftn::isa target) {
+    check_batched_complex<TypeParam>(check, k, target);
+  });
+}
+
+TYPED_TEST(MultiDim, EveryAxisSelectionReal) {
+  checker check;
+  for_each_selection([&](const batched_case& k, fftn::isa target) {
+    check_batched_real<TypeParam>(check, k, target);
+  });
 }
 
 } // namespace
