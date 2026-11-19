@@ -105,6 +105,16 @@ alone (the maintainer, 2026-11-18). Still over FFTW:
 the EPYC's 64 × 2 backward (1.29; the radix-64 codelet spills over two rows), the Mac's 2 × 3
 in place.
 
+EPYC 1024 (X57, 2026-11-18): `avx2` double rows of 768 and 1024 take their two-pass plans only
+while the plan's rows and output fit three quarters of the L3 (`fit_row_bytes`). 1024 ÷ FFTW
+1.19 → 0.99, backward 1.16 → 1.04, × 3 1.19 → 0.99, × 16 1.13 → 1.02, × 256 1.08 → 1.01; the
+cases the rule moves 0.88 of their time, tracking tier 0.989, planes and volumes unchanged. The
+EPYC's cases beyond noise against FFTW: 9 → 4 of 193 in the same run (limit 9), which should
+pass the tail rule; the exit check itself has not been re-run. Left: 64 × 2 backward,
+64 × 16, 1018, 2048. 72 and 120 (1.05–1.06 since 8c18dd2) are code placement: same plans and
+pass code, ratios that wander from merge to merge. Aligning the `avx2` functions to 64 bytes
+fixes them but moved 1024 × 3 by 4–6 % and was rejected.
+
 **Phase 1 exit check (2026-11-16, `main` 304a8c5, standard catalogue, the 201 c2c rows,
 193 with every reference; DESIGN 1.3 asks for the geometric mean and at most 5 % of cases
 slower than 1.05):** Mac ÷ FFTW 0.78 (target 0.85), 20 cases over 1.05 (10 %); ÷ FFTL 0.50
@@ -228,7 +238,8 @@ Open, by phase:
 - 0: the Xeon client-catalogue baseline.
 - 1: the exit: every mean target met; the tail rule (beyond noise) met at 8c18dd2 on the
   Mac, the Xeon (FFTW 3.6 %, MKL 1.0 %), Zen 5 and Axion and against FFTL, not on the EPYC
-  against FFTW (6.2 %: short backward pairs, 512–2048, 64 × 16, 1018, 100) nor on Granite
+  against FFTW (6.2 %: short backward pairs, 512–2048, 64 × 16, 1018, 100; after X57 4 cases,
+  2.1 %, in X57's own run, the exit check to be repeated) nor on Granite
   Rapids (FFTW 9.3 %, MKL 5.7 %: its long rows, without X46's rule; see the exit check of
   2026-11-18 above and X48); X2 on the Mac above 1024; X4 on x86 and for edge passes; X5
   (twiddle modes); the night round of 2026-11-17: X50 (Xeon primes against MKL: 131071,
@@ -791,6 +802,7 @@ running, done (with verdict).
 | [X54](experiments/X54-radix64-avx2.md) | Can the radix-32 and radix-64 codelets be ordered so that GCC spills far less of them on `avx2` (a list scheduler against a model register file; bits identical), and does that let two-pass plans of 768, 1024, 2048 win at both batches on the EPYC so the planner takes them? | 1 | done: A (fitted order, bit-identical), B (768) and C adopted by the maintainer's decision against rule (b)'s letter (80 at 1.035 against 1.034, byte-identical code at a moved address): radix-32/64 plans 0.975 on the EPYC, tracking EPYC 0.994, Xeon 0.999, Mac 0.999; B (two-pass `avx2` double overrides) adopted for 768 (0.84; ÷ FFTW 1.08 → 0.91), 1024 dropped by rule (c) (0.84–0.95 at batches 1–256, 1.25 at 1024 × 1024); C (`avx2` float 512, 640, 768, 2048, 4096) adopted (0.898); 2048 double and 64 × 16 not moved |
 | [X53](experiments/X53-two-row-leaves.md) | Batch leaves: C short rows of a batch side by side, one row per lane, transposed in registers (15 × 2 and 64 × 2 backward at 1.15–1.3 of FFTW on x86): for which lengths and batch counts? | 1 | done: adopted on NEON float (changed cases 0.61 of `main`), avx2 (EPYC 0.81, 15 × 2 bwd 1.21 → 0.88 of FFTW) and avx512 (Xeon 0.69, 15 × 2 bwd 1.16 → 0.90); one unchanged tiny case per x86 machine past the band set aside by the code-placement rule (same plan, byte-identical code); R4 adds 8, 12, 20, 25, 32 (0.51-0.58 of R); 64 × 2 not closed (EPYC 1.29 of FFTW; 1.18 with X54's codelet, not taken) |
 | [X55](experiments/X55-gnr-depth.md) | Should the depth-first rule reach Granite Rapids (a 2 MiB private L2, outside X46's branch), and with what range and tops? (X48: its long rows over 1.05 of FFTW and MKL) | 1 | done: G adopted (0.688 over the rows it changes, tracking 0.940; long rows ÷ FFTW 0.70–0.83) |
+| [X57](experiments/X57-epyc-1024.md) | The EPYC's last exit-check cases: are 72 and 120's 5–6 % since 8c18dd2 a regression, and can 1024's radix choice see the plan's data? | 1 | done: 72 and 120 are code placement; B adopted (768 and 1024 two-pass rows while rows and output fit 3/4 of L3: moved cases 0.88, tracking 0.989, EPYC beyond noise 9 → 4 of 193); C (64-byte `avx2` functions) rejected (0.999, 1024 × 3 1.04–1.06) |
 | [P1](experiments/P1-rules-vs-measure.md) | How often is the rules' choice within 5 % of `planning::measure`'s per machine (task 2.4's acceptance: 90 % of catalogue cases), which rules miss, and does measurement recover a misfiring profile (Granite Rapids' fields forced on the Xeon)? | 2 | first pass done: rules within 5 % of measure on 96.7 % of the tracking tier on the EPYC, 77 % on the Xeon (about 85 % without noise), Mac inconclusive under load; measure never slower by fbench; Granite Rapids' fields forced on the Xeon recovered in 10 of 11 cases (the miss a budget defect, fixed); planes' radices the repeat miss. Second pass (73eb719, placements per round, median): Mac 93.4 %, EPYC 95.1 %, Xeon 86.9 % (long real rows, planes, 2²², 2431 repeat); misfire 9 of 9 after the budget fix; EPYC r2c 65536 measure 1.18 slower (power-of-two chains bimodal by page backing); EPYC 65537 Bluestein 1.75 faster than the rules' Rader |
 | [P2](experiments/P2-measure-budget.md) | Measurement budget: how many candidates and how long before the choice stops improving; the quick and full efforts' budgets | 2 | first pass done: Q within 0.999–1.014 of M; no winner above rank 7; plan construction dominates large transforms (2²² 12.5 s for M); choices unstable under load (43–66 % of cases one program over 12 rounds), so budgets wait for a sampling revisit; indicated quick 6, measure 8 |
 | [P1b](experiments/P1b-rader-65537.md) | Rader or Bluestein at 65537 on x86: measure chose Bluestein on the EPYC (rules 1.75 of its time); should the x86 Rader range stop below 2¹⁶ as NEON's does? | 2 | done: rules unchanged. EPYC Bluestein 1.49 (double) and 1.18 (float) slower than Rader at 65537 in this run, the opposite of P1's 1.75: bimodal by process (Rader's gathers and the page size); a page-robust Rader stage is the follow-up |

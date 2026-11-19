@@ -1,0 +1,53 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Experiment X57's cases (dev/experiments/X57-epyc-1024.md): the rows the EPYC's exit check
+# still fails, at the batches where a radix choice that sees the batch's bytes could differ.
+# Double precision, out of place unless a group says otherwise.
+
+[catalogue]
+name = "x57"
+
+[[group]]
+name = "x57-1024"
+note = "1024 points from one row to past the L3 share"
+kind = "c2c"
+dims = [1024]
+batch = [1, 2, 3, 4, 8, 16, 32, 64, 128, 256, 384, 512, 768, 1024, 2048]
+
+[[group]]
+name = "x57-1024-other"
+note = "backward and in place, where the exit check has them"
+kind = "c2c"
+dims = [1024]
+batch = [1, 3, 16, 256]
+direction = ["bwd"]
+
+[[group]]
+name = "x57-1024-in-place"
+kind = "c2c"
+dims = [1024]
+batch = [1, 3, 16, 256, 1024]
+place = "in"
+
+[[group]]
+name = "x57-2048"
+note = "2048 (no two-pass plan has won here: X54)"
+kind = "c2c"
+dims = [2048]
+batch = [1, 2, 4, 16, 64, 256, 512]
+
+[[group]]
+name = "x57-768"
+note = "768's override (X54) at batches the rule did not see"
+kind = "c2c"
+dims = [768]
+batch = [1, 16, 256, 1024, 2048]
+
+[[group]]
+name = "x57-64"
+note = "64-point rows, the batches around 64 x 16"
+kind = "c2c"
+dims = [64]
+batch = [1, 2, 4, 8, 16, 32, 64, 256]
+direction = ["fwd", "bwd"]
