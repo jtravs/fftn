@@ -146,7 +146,18 @@ geometric means:
 **Why 512² and 480 × 640 lose.** In the output their columns' elements lie 4–5 KiB apart, so the
 c2c rule's leg check (`column_radices`, X40) gives them three-pass chains: 4 × 16 × 8 for 512 and
 6 × 10 × 8 for 480. In the block, at an odd stride, they had two passes (16 × 32). That costs
-about 10 % more instructions (counters, Slurm 513327). On the M5 Max the crowded two-pass chain
+about 10 % more instructions (counters, Slurm 513327). The two-pass chain forced into the output
+is worse still on the EPYC (Slurm 513338, one thread, the node at load 37), so the leg check is
+right there too:
+
+| EPYC, ns | block (its radices) | packed (rule) | packed, block's radices |
+|---|---|---|---|
+| 512² | 664 000–683 000 (16 × 32) | 750 000 (4 × 16 × 8) | 888 000 (16 × 32) |
+| 480 × 640 | 797 000 (4 × 10 × 12) | 842 000 (6 × 10 × 8) | 861 000 (15 × 32) |
+| 32³ | 70 700 (32) | 86 800 (4 × 8) | 132 000 (32) |
+| 256² | 158 000 (8 × 32) | 156 000 (4 × 8 × 8) | 204 000 (8 × 32) |
+
+On the M5 Max the crowded two-pass chain
 forced into the output took twice the time (local runs). There, even with the block route's own
 radices (8 × 8 × 8 at 512²), the packed columns were 13–15 % slower at 256²–512² whatever the
 block width (4–32 columns). The packed route's power-of-two output strides cost more inside the
@@ -166,10 +177,10 @@ caches than the third array does.
   M5 Max by its screen but not on the EPYC (512², 480 × 640). The Xeon was not timed. The code
   stays on the branch as the lead; `main` keeps the block.
 - **Next steps** (the handoff in the pull request):
-  1. Keep 512² and 480 × 640 on the block on x86 (gate by the column chain's pass count: pack only
-     where the packed columns' radices have as many passes as the block's), or measure whether
-     the leg check can be relaxed for the packed columns on x86 (the radix-variant job, Slurm
-     513338, was still building when the campaign paused).
+  1. A gate that keeps 512², 480 × 640 and 32³ on the block. The leg check cannot be relaxed
+     (above). Candidates: pack only where in + block + out passes the last-level cache share, or
+     where the packed columns need no more passes than the block's. Each must be measured against
+     256², 36 × 2048, 48³ and 64³, which gain with it.
   2. Write the rule over the cases the final arm changes, then judge one thread on the EPYC, the
      Xeon (`--serial`) and the M5 Max, the tracking tier, and 8 lanes on the EPYC.
   3. The X29 paired gather for the Xeon's two-phase c2r grids (no catalogue row).
