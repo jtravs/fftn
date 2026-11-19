@@ -997,6 +997,30 @@ complex points with thresholds fitted on complex rows: with that, and planes spl
 32768 points on the mesh, those Xeon planes took 0.35–0.67 of the time and the EPYC's real ones
 0.72–0.90. [X52](experiments/X52-volumes-2.md).
 
+5.14 **Check that a scheduler's allocation binds anything before calling a run "8 cores".** On
+the two-socket Xeon 6240, Slurm's `-c 8 --hint=nomultithread` left jobs free on all 72 CPUs
+(`Cpus_allowed_list: 0-71`), so earlier "8 lanes on 8 cores of one socket" runs were 8 unpinned
+threads among other users' work. Pinned to 8 cores of one socket, FFTN's 8 lanes took 0.51 of
+their unpinned time at c2r 512² (oneMKL's 0.64), and a judging run's A/A band fell from ±19 %
+to ±8 %. DMOG's Slurm does bind (8 CPUs per job). [X59](experiments/X59-real-planes-mkl.md).
+
+5.15 **Sharing a plane's rows and columns among private L2s costs the data's move, and most of
+it is not false sharing.** At 8 lanes on the Xeon 6240 a real plane's column phase took 2.5–4
+times its one-thread work at 256²–512² (6.9 at 2048 × 36), with 10 000–20 000 loads per
+transform of lines modified in another core's cache. Claiming the columns in fair runs, which
+leaves about one border per member, removed only a fifth of those loads: the rest is the rows'
+output sitting dirty in the writers' L2s, which any row-then-column split pays. Where 19
+columns are shared by 8 members (2048 × 36) every row's cache lines are shared whatever the
+runs; oneMKL takes 1000 such loads there against FFTN's 20 000, so it must divide that plane
+along its long axis. [X59](experiments/X59-real-planes-mkl.md).
+
+5.16 **Equal runs lose at the end of a long phase.** Claiming a phase in runs of its fair
+share cut the borders between members and won where shares were small (EPYC 7763 real 512²
+0.70, 2048 × 36 0.81–0.84), but at 2048², 8 blocks of 16 columns a member, the last runs left
+one member working alone: 1.05–1.15 on the EPYC and the M5 Max, capped at 4 chunks a run or
+not. Guided runs, which shrink to single chunks, keep that end balanced.
+[X59](experiments/X59-real-planes-mkl.md).
+
 ## 6. Toolchain and testing pitfalls
 
 6.1 **Build with GCC as well as Clang before a remote round trip.** GCC warns where Clang
