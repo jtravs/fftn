@@ -183,6 +183,14 @@ void add_cases(std::vector<team_case>& out, const fftn::detail::build_settings& 
                           2 * 24 * 20 * 11, false, adjacent, target));
   out.push_back(make_case("c2c_interleaved_inplace_24x20x11x2" + suffix, interleaved,
                           2 * 24 * 20 * 11, 2 * 24 * 20 * 11, true, adjacent, target));
+  // Enough transforms that a team runs the lanes too (adjacent_team_min).
+  const fftn::shape<c, c> many_columns{
+      .dir = fwd,
+      .axes = {{.n = 24, .in_stride = 160, .out_stride = 160}},
+      .batches = {{.count = 160, .in_dist = 1, .out_dist = 1}},
+  };
+  out.push_back(make_case("c2c_interleaved_24x160" + suffix, many_columns, 24 * 160, 24 * 160,
+                          false, adjacent, target));
   // In place: real kinds in FFTW's padded rows; a prime row, whose one pass goes through
   // scratch and a copy when source and destination are the same memory.
   out.push_back(make_case("r2c_inplace_1000x3" + suffix, fftn::rows_r2c<T>(1000, 3), 3 * 1002,

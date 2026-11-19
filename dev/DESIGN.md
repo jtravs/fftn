@@ -1753,7 +1753,8 @@ vector access and every line of memory is touched once; the block is the narrowe
 `column_radices`, and transforms left over go through the tail in blocks of C. Each lane
 computes its transform alone, so blocks and execution ranges do not change the bits. A block is
 one task of the team (the work graph's one phase), so whole transforms are shared out, never
-their lines. Within L1 (all the plan's transforms together, `machine_profile::
+their lines; with fewer than 128 transforms (`adjacent_team_min`) the team program is the chain,
+which shares lines, and the program's lanes take the chain's radices so that the bits agree. Within L1 (all the plan's transforms together, `machine_profile::
 adjacent_min_bytes`) the chain keeps a plan with one complex value per register, and on wider
 registers a plan whose axes are all of leaf lengths, 16 points or fewer: there a strided line
 costs no more than a contiguous one and the chain's short passes win, while longer axes gain
@@ -3152,6 +3153,7 @@ to change before a release.
 | 2026-11-18 | x86-64 with a private L2 of 2 MiB or more (Granite Rapids) takes the depth-first chain from L2/4 to 64 L2 in double, with the Xeon 6240's tops (section 8.5) | X55 on a Granite Rapids VM: 0.688 of the grids' time over the 14 rows it changes (46080 0.44, 65536 0.52, 131072–262144 0.63, 2^22 0.69), none slower, tracking tier 0.940; ÷ FFTW 1.15–1.65 → 0.70–0.83 on X48's failing long rows |
 | 2026-11-18 | A Bluestein stage of one copy runs its convolution as two depth-first chains where a row of M would be one, and on the Xeon profile beyond, up to 32 MiB, the longest measured (`depth_convolution_max_bytes`); the workspace block holds the chains' blocks, scratch a the forward output; the chirp passes are fused into the forward first pass and the backward last top pass (sections 8.5, 11.2; experiment X50) | Xeon 6240: 8179–999983 0.56–0.73 of `main`'s time (131071 0.61, 999983 0.71), FFTN ÷ MKL 131071 1.34 → 0.84, 999983 1.44 → 1.05, ÷ FFTW 0.65–0.83; M5 Max 4813–5119 0.86; the EPYC unchanged; X36b had judged a grid convolution to need a new slot, the block serves |
 | 2026-11-19 | Whatever order a shape lists its axes in, a plan runs them widest stride first (section 9.3, `order_axes`), keeping a real transform's halved axis last | A plan built from `{x, y}` used to run y as a strided rows phase and could not use the column blocks that need the last axis contiguous; two listings of one transform are now one program, bit for bit |
+| 2026-11-19 | A c2c plan whose axes are all strided and whose innermost batch dimension's transforms lie one element apart runs as lanes over blocks of adjacent transforms, every axis a lanes phase (section 9.3, X60); within L1 the chain stays for one complex per register or leaf-length axes | X60: 0.48 (M5 Max), 0.29 (EPYC 7763), 0.37 (Xeon 6240) of the chain's time over 86 interleaved cases, no case slower; ÷ FFTW 0.86 / 0.80 / 0.76 |
 | 2026-11-19 | Provisional API (task 4.3, to be agreed by the maintainer): `axes_c2c`, `axes_r2c`, `axes_c2r` build the shape of chosen dimensions of a strided array from one `axis` per dimension (section 5.2); batch dimensions by decreasing input stride, merged where they nest | The general `shape` could already express every selection (property tests against the reference), but only by hand; DESIGN named `along_axes` as "later". The name follows `rows_c2c`, `planes_c2c`, `volumes_c2c`, one function per kind |
 
 ---
