@@ -40,6 +40,18 @@
 #include <omp.h>
 #endif
 
+/// @def FFTN_KOKKOS_THREADS_SUPPORTED
+/// 1 when plans and executors may run on `Kokkos::Threads`, else 0. Telling whether a thread is
+/// inside one of its kernels takes Kokkos' internal names, and a wrong answer hangs or aborts,
+/// so that back end is accepted only with the Kokkos release those names were checked against,
+/// the one the tests build (cmake/FftnTestDeps.cmake), 5.2.1. With any other release a plan or
+/// executor on it does not compile.
+#if defined(KOKKOS_ENABLE_THREADS) && KOKKOS_VERSION == 50201
+#define FFTN_KOKKOS_THREADS_SUPPORTED 1
+#else
+#define FFTN_KOKKOS_THREADS_SUPPORTED 0
+#endif
+
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -213,46 +225,63 @@ inline const std::string& bulk_label() {
   return label;
 }
 
-// Whether the calling thread must not dispatch to or fence this back end: it is inside one of
-// its kernels (or, on Threads, is not the one thread that may dispatch). Kokkos 5 has no query
-// for this (ExecutionSpace::in_parallel is gone), and getting it wrong is fatal: a nested
-// parallel_for aborts on OpenMP and throws on Threads, and a fence in a kernel waits for that
-// kernel. Serial needs no answer: it never dispatches (width 1) and execute does not fence it.
-template <class ExecutionSpace> [[nodiscard]] bool in_kernel() noexcept {
+template <class ExecutionSpace>
+inline constexpr bool is_serial_space =
+#ifdef KOKKOS_ENABLE_SERIAL
+    std::is_same_v<ExecutionSpace, Kokkos::Serial>;
+#else
+    false;
+#endif
+
+// The back ends the adapter can run on: those whose kernels it can reason about. Another host
+// back end (HPX) would pass every other check, and then fence or dispatch from inside its own
+// kernels.
+template <class ExecutionSpace> constexpr bool supported_space() {
 #ifdef KOKKOS_ENABLE_OPENMP
   if constexpr (std::is_same_v<ExecutionSpace, Kokkos::OpenMP>) {
-    // The level, not omp_in_parallel(): Kokkos also refuses to dispatch from inside an inactive
-    // region (one of a single thread), which omp_in_parallel() does not report.
-    return omp_get_level() > 0;
+    return true;
   }
 #endif
-#ifdef KOKKOS_ENABLE_THREADS
+#if FFTN_KOKKOS_THREADS_SUPPORTED
   if constexpr (std::is_same_v<ExecutionSpace, Kokkos::Threads>) {
-    using internal = Kokkos::Impl::ThreadsInternal;
-    if (!internal::is_process()) {
-      return true;
-    }
-    // The dispatching thread is the pool's last rank, and its state is Active only while it
-    // runs its share of a kernel. No public interface says so: this is pinned to the Kokkos
-    // version the tests build (cmake/FftnTestDeps.cmake), and they cover it.
-    internal* const self = internal::get_thread(Kokkos::Threads::impl_thread_pool_size(0) - 1);
-    return self->state().load(std::memory_order_relaxed) == Kokkos::Impl::ThreadState::Active;
+    return true;
+  }
+#endif
+  return is_serial_space<ExecutionSpace>;
+}
+
+// Whether the calling thread must not dispatch, fence or open a Kokkos Tools region: it is inside
+// a kernel of the build's threaded host back end (or, on Threads, is not the one thread that may
+// dispatch). Every enabled back end is asked, whichever the plan runs on, because a plan on
+// Serial can be called from a kernel of the other one. Kokkos 5 has no query for this
+// (ExecutionSpace::in_parallel is gone), and getting it wrong is fatal: a nested parallel_for
+// aborts on OpenMP and throws on Threads, and a fence in a kernel waits for that kernel.
+//
+// A kernel of Kokkos::Serial cannot be detected. That is why nothing here fences, dispatches or
+// opens a region for a plan on Serial, and why a plan on a threaded back end has the
+// precondition of not being called from a Serial kernel.
+[[nodiscard]] inline bool in_host_kernel() noexcept {
+#ifdef KOKKOS_ENABLE_OPENMP
+  // The level, not omp_in_parallel(): Kokkos also refuses to dispatch from inside an inactive
+  // region (one of a single thread), which omp_in_parallel() does not report.
+  if (omp_get_level() > 0) {
+    return true;
+  }
+#endif
+#if FFTN_KOKKOS_THREADS_SUPPORTED
+  using internal = Kokkos::Impl::ThreadsInternal;
+  if (!internal::is_process()) {
+    return true;
+  }
+  // The dispatching thread is the pool's last rank, and its state is Active only while it runs
+  // its share of a kernel. No public interface says so: see FFTN_KOKKOS_THREADS_SUPPORTED.
+  internal* const self = internal::get_thread(Kokkos::Threads::impl_thread_pool_size(0) - 1);
+  if (self->state().load(std::memory_order_relaxed) == Kokkos::Impl::ThreadState::Active) {
+    return true;
   }
 #endif
   return false;
 }
-
-// Whether view_plan::execute fences its instance first. On Serial a kernel runs on the thread
-// that dispatched it, so nothing can be outstanding when that thread gets here; and since
-// Serial cannot tell whether the caller is inside a kernel, a fence there could wait for the
-// caller itself (it takes the mutex the running kernel holds).
-template <class ExecutionSpace>
-inline constexpr bool fences_before_transform =
-#ifdef KOKKOS_ENABLE_SERIAL
-    !std::is_same_v<ExecutionSpace, Kokkos::Serial>;
-#else
-    true;
-#endif
 
 // What parallel_for runs for the executor: the functor of one bulk call.
 struct bulk_call {
@@ -261,8 +290,10 @@ struct bulk_call {
   void operator()(int i) const { task(arg, i); }
 };
 
-// The Kokkos Tools region around a plan's execution, on the thread that dispatches; none in a
-// kernel, where several threads would push and pop one tool's stack at once.
+// The Kokkos Tools region around a plan's execution. Only outside every kernel: unless the tool
+// opts out, Kokkos fences every execution space before it calls a region callback, which inside
+// a kernel waits for that kernel for ever; a tool that opts out would have several threads
+// pushing and popping one stack at once.
 class region_guard {
 public:
   explicit region_guard(bool active) : active_(active) {
@@ -558,25 +589,33 @@ make_plan(const InView& in, const OutView& out, direction dir, const axis_type<D
 /// job too small to share, and every job at width 1 (so every job on `Kokkos::Serial`), runs on
 /// the calling thread without one (`plan::execute` decides that).
 ///
-/// Inside a kernel of the back end `concurrency()` is 1, so an execution there runs serially on
-/// the calling thread instead of nesting; on `Kokkos::Threads` the same holds on every thread
-/// but the one that may dispatch. Such an execution needs a workspace of its own per thread.
+/// `ExecutionSpace` is `Kokkos::Serial`, `Kokkos::OpenMP` or `Kokkos::Threads`, the last only
+/// with Kokkos 5.2.1, whose internals it relies on; anything else does not compile.
 ///
-/// Preconditions: Kokkos is initialised and not finalised while the executor is used;
-/// `ExecutionSpace` runs on the host. Construct it outside kernels: inside one, the width it
-/// reads may be that of the enclosing region.
+/// Inside a kernel of the OpenMP or Threads back end `concurrency()` is 1, so an execution there
+/// runs serially on the calling thread instead of nesting; on `Kokkos::Threads` the same holds
+/// on every thread but the one that may dispatch. Such an execution needs a workspace of its own
+/// per thread.
+///
+/// Preconditions: Kokkos is initialised and not finalised while the executor is used. Construct
+/// it outside kernels: inside one, the width it reads may be that of the enclosing region. An
+/// executor on OpenMP or Threads is not used from inside a `Kokkos::Serial` kernel, which it
+/// cannot detect: it would dispatch from there, and with a Kokkos Tools library loaded the global
+/// fence before that dispatch never returns.
 ///
 /// Guarantees: results are bitwise those of serial execution. FFTN allocates nothing and sets
-/// no runtime option; Kokkos's own `parallel_for` and fence allocate nothing on the Serial,
-/// OpenMP and Threads back ends unless a Kokkos Tools library is loaded (they take the
-/// instance's mutex on OpenMP, so dispatches from several host threads take turns). Copyable;
-/// holds the instance, its width and its grouping, fixed at construction. Constructing the
-/// process's first executor may allocate, to detect the machine's topology.
+/// no runtime option. A dispatch allocates nothing in Kokkos on the Serial and OpenMP back ends
+/// unless a Kokkos Tools library is loaded; on `Kokkos::Threads` every `parallel_for` allocates
+/// short-lived strings inside Kokkos. Dispatches take the instance's mutex on OpenMP, so those
+/// from several host threads take turns. Copyable; holds the instance, its width and its
+/// grouping, fixed at construction. Constructing the process's first executor may allocate, to
+/// detect the machine's topology.
 template <class ExecutionSpace = Kokkos::DefaultHostExecutionSpace> class executor {
   static_assert(Kokkos::is_execution_space_v<ExecutionSpace>,
                 "fftn::kokkos::executor: ExecutionSpace must be a Kokkos execution space");
-  static_assert(Kokkos::SpaceAccessibility<ExecutionSpace, Kokkos::HostSpace>::accessible,
-                "fftn::kokkos::executor: ExecutionSpace must run on the host");
+  static_assert(detail::supported_space<ExecutionSpace>(),
+                "fftn::kokkos::executor: ExecutionSpace must be Kokkos::Serial, Kokkos::OpenMP or "
+                "Kokkos::Threads (Threads needs Kokkos 5.2.1)");
 
 public:
   /// An executor on `exec`, of `exec.concurrency()` lanes.
@@ -588,9 +627,7 @@ public:
 
   /// The most tasks it runs at once: the instance's width, or 1 when the calling thread cannot
   /// dispatch to the instance (inside a kernel).
-  [[nodiscard]] int concurrency() const noexcept {
-    return detail::in_kernel<ExecutionSpace>() ? 1 : width_;
-  }
+  [[nodiscard]] int concurrency() const noexcept { return detail::in_host_kernel() ? 1 : width_; }
 
   /// The instance's width as read at construction, wherever it is called from: the lanes to
   /// size a workspace for (`plan::workspace_bytes`).
@@ -611,7 +648,7 @@ public:
     if (n <= 0) {
       return;
     }
-    if (n == 1 || width_ == 1 || detail::in_kernel<ExecutionSpace>()) {
+    if (n == 1 || width_ == 1 || detail::in_host_kernel()) {
       for (int i = 0; i < n; ++i) {
         task(arg, i);
       }
@@ -676,8 +713,9 @@ template <class TeamMember> [[nodiscard]] team team_of(const TeamMember& member)
 template <class ExecutionSpace, class InView, class OutView, std::size_t Dim = 1> class view_plan {
   static_assert(Kokkos::is_execution_space_v<ExecutionSpace>,
                 "fftn::kokkos::view_plan: ExecutionSpace must be a Kokkos execution space");
-  static_assert(Kokkos::SpaceAccessibility<ExecutionSpace, Kokkos::HostSpace>::accessible,
-                "fftn::kokkos::view_plan: ExecutionSpace must run on the host");
+  static_assert(detail::supported_space<ExecutionSpace>(),
+                "fftn::kokkos::view_plan: ExecutionSpace must be Kokkos::Serial, Kokkos::OpenMP "
+                "or Kokkos::Threads (Threads needs Kokkos 5.2.1)");
   static constexpr std::size_t rank = InView::rank();
   using in_element = element_t<InView>;
   using out_element = element_t<OutView>;
@@ -745,24 +783,35 @@ public:
   /// Transforms `in` into `out`, then scales the output as `norm` says (Kokkos-FFT's
   /// default: backward transforms by 1/N).
   ///
-  /// First fences the plan's execution-space instance, so that work queued on it before the
-  /// call is complete (`Kokkos::Serial` needs no fence: its kernels have finished when the
-  /// thread that dispatched them gets here); then transforms on the instance, in a Kokkos
-  /// Tools region `fftn::kokkos::view_plan::execute`, and returns when `out` holds the result.
-  /// Scaling multiplies each real and imaginary part of the described output by a coefficient
-  /// computed in `double` and rounded once to the precision of the data, and is shared among
-  /// the instance's threads when the output is large.
+  /// On OpenMP and Threads it first fences the plan's execution-space instance, so that work
+  /// queued on it before the call is complete, then transforms on the instance, in a Kokkos
+  /// Tools region `fftn::kokkos::view_plan::execute`. A plan on `Kokkos::Serial` transforms on
+  /// the calling thread with neither fence nor region: its kernels have finished when the thread
+  /// that dispatched them gets here, and it may be inside one, which it could not tell. It
+  /// returns when `out` holds the result. Scaling multiplies each real and imaginary part of the
+  /// described output by a coefficient computed in `double` and rounded once to the precision
+  /// of the data, and is shared among the instance's threads when the output is large.
   ///
-  /// Inside a Kokkos kernel it neither fences nor dispatches: it runs serially on the calling
-  /// thread. Executions on several threads at once still need one plan each.
+  /// Inside a kernel of the OpenMP or Threads back end, on any plan, it neither fences, nor
+  /// dispatches, nor opens a region: it runs serially on the calling thread. So does a plan on
+  /// `Kokkos::Serial` inside any kernel. Executions on several threads at once still need one
+  /// plan each.
+  ///
+  /// Preconditions: a plan on OpenMP or Threads is not executed from inside a `Kokkos::Serial`
+  /// kernel, which it cannot detect (use a plan on `Kokkos::Serial` there).
   ///
   /// Throws `std::invalid_argument` naming `in` or `out` when their extents or strides
   /// differ from those the plan was built with, when they start at the same address and the
   /// plan is not in place or the reverse, or when an out-of-place plan is given overlapping
   /// Views. Throws `std::logic_error` when another execution of this plan is running: one plan
-  /// runs one execution at a time, since its executions share its workspace. Allocates
-  /// nothing unless it throws (the labels are built at construction; a loaded Kokkos Tools
-  /// library may allocate in the fence and the dispatch).
+  /// runs one execution at a time, since its executions share its workspace. Inside a kernel of
+  /// the OpenMP or Threads back end these exceptions cannot be caught outside the kernel: one
+  /// that leaves the kernel's body ends the program (`std::terminate`).
+  ///
+  /// FFTN allocates nothing unless it throws (the labels are built at construction). Kokkos
+  /// allocates nothing either on Serial and OpenMP, unless a Kokkos Tools library is loaded; on
+  /// `Kokkos::Threads` it allocates short-lived strings in every `parallel_for`, so an execution
+  /// that dispatches allocates through Kokkos.
   ///
   /// Guarantees: as for `fftn::plan::execute` (the input of an out-of-place plan is
   /// preserved; nothing outside the described output elements is written), with results
@@ -785,9 +834,11 @@ public:
                              "time (use a plan per thread, or make_plan and a workspace each)");
     }
     const detail::busy_guard release(busy_);
-    const bool nested = detail::in_kernel<ExecutionSpace>();
-    const detail::region_guard region(!nested);
-    if (detail::fences_before_transform<ExecutionSpace> && !nested) {
+    // A plan on Serial may be inside a Serial kernel, which nothing can detect, and a fence
+    // there would wait for the caller's own kernel (it takes the mutex the kernel holds).
+    const bool on_instance = !detail::is_serial_space<ExecutionSpace> && !detail::in_host_kernel();
+    const detail::region_guard region(on_instance);
+    if (on_instance) {
       executor_.space().fence(detail::fence_label());
     }
     plan_.execute(data_of(in), data_of(out), executor_, workspace_);

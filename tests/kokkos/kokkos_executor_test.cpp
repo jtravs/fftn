@@ -18,11 +18,16 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <complex>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <mutex>
 #include <set>
 #include <string>
 #include <thread>
@@ -254,9 +259,9 @@ TYPED_TEST(KokkosThreaded, OneParallelForPerTransform) {
   EXPECT_EQ(counter.count(), 0);
 }
 
-// FFTN allocates nothing while executing. Kokkos may, per dispatch: its Threads back end builds
-// a std::string for an internal fence on every parallel_for (OpenMP and Serial allocate
-// nothing), so the allowance is what one dispatch of empty tasks costs, times the dispatches.
+// FFTN allocates nothing while executing. Kokkos may, per dispatch: its Threads back end
+// allocates short-lived strings on every parallel_for (OpenMP and Serial allocate nothing), so
+// each execution must allocate exactly what its dispatches of empty tasks would.
 TYPED_TEST(KokkosThreaded, ExecutionAllocatesOnlyWhatKokkosDoes) {
   using space = TypeParam::space;
   using T = TypeParam::real;
@@ -281,14 +286,18 @@ TYPED_TEST(KokkosThreaded, ExecutionAllocatesOnlyWhatKokkosDoes) {
 #if !defined(KOKKOS_ENABLE_THREADS)
   EXPECT_EQ(news_per_dispatch, 0U);
 #endif
-  // Four dispatches when threaded: two transforms and a scaling, then one more transform.
-  const std::size_t dispatches_at_most = 4;
-  const fftn::test::allocation_counter counter;
-  vp.execute(x, y, normalization::none);
-  vp.execute(x, y); // scaled, shared among the threads
-  p.execute(data_of(x), data_of(y), ex, ws);
-  EXPECT_LE(counter.allocations(), dispatches_at_most * news_per_dispatch);
-  EXPECT_LE(counter.deallocations(), dispatches_at_most * deletes_per_dispatch);
+  // Each execution allocates exactly what its dispatches do inside Kokkos: nothing of FFTN's
+  // can hide in that allowance. Serial, and any width of one, dispatches nothing.
+  const std::size_t per_transform = ex.width() > 1 ? 1 : 0;
+  const auto expect_allocations = [&](std::size_t dispatches, const auto& run) {
+    const fftn::test::allocation_counter counter;
+    run();
+    EXPECT_EQ(counter.allocations(), dispatches * news_per_dispatch);
+    EXPECT_EQ(counter.deallocations(), dispatches * deletes_per_dispatch);
+  };
+  expect_allocations(per_transform, [&] { vp.execute(x, y, normalization::none); });
+  expect_allocations(2 * per_transform, [&] { vp.execute(x, y); }); // the scaling is shared too
+  expect_allocations(per_transform, [&] { p.execute(data_of(x), data_of(y), ex, ws); });
 }
 
 TYPED_TEST(KokkosThreaded, BulkRunsEveryTaskOnce) {
@@ -362,6 +371,130 @@ TYPED_TEST(KokkosThreaded, ExecutorInsideAKernelRunsSerially) {
   exec.fence();
   EXPECT_EQ(wider.load(), 0);
   expect_same_bits(reals_of(z), reals_of(y));
+}
+
+// Kokkos Tools callbacks make Kokkos fence every space before it calls them, which inside a
+// kernel would never return. They count what happens while a kernel runs; a watchdog turns a
+// hang into a failure.
+std::atomic<int> kernels_running{0};
+std::atomic<int> pushes{0};
+std::atomic<int> pops{0};
+std::atomic<int> pushes_in_kernels{0};
+std::atomic<int> fences_in_kernels{0};
+void on_push(const char* /*name*/) {
+  pushes.fetch_add(1);
+  if (kernels_running.load() > 0) {
+    pushes_in_kernels.fetch_add(1);
+  }
+}
+void on_pop() { pops.fetch_add(1); }
+void on_fence(const char* /*name*/, std::uint32_t /*device*/, std::uint64_t* /*handle*/) {
+  if (kernels_running.load() > 0) {
+    fences_in_kernels.fetch_add(1);
+  }
+}
+
+class tools_watch {
+public:
+  tools_watch() : watchdog_([this] { watch(); }) {
+    pushes.store(0);
+    pops.store(0);
+    pushes_in_kernels.store(0);
+    fences_in_kernels.store(0);
+    Kokkos::Tools::Experimental::set_push_region_callback(on_push);
+    Kokkos::Tools::Experimental::set_pop_region_callback(on_pop);
+    Kokkos::Tools::Experimental::set_begin_fence_callback(on_fence);
+  }
+  tools_watch(const tools_watch&) = delete;
+  tools_watch& operator=(const tools_watch&) = delete;
+  tools_watch(tools_watch&&) = delete;
+  tools_watch& operator=(tools_watch&&) = delete;
+  ~tools_watch() {
+    Kokkos::Tools::Experimental::set_push_region_callback(nullptr);
+    Kokkos::Tools::Experimental::set_pop_region_callback(nullptr);
+    Kokkos::Tools::Experimental::set_begin_fence_callback(nullptr);
+    {
+      const std::scoped_lock lock(mutex_);
+      done_ = true;
+    }
+    finished_.notify_all();
+    watchdog_.join();
+  }
+
+private:
+  void watch() {
+    std::unique_lock lock(mutex_);
+    if (!finished_.wait_for(lock, std::chrono::minutes(5), [this] { return done_; })) {
+      std::fputs("fftn_kokkos_tests: hung with Kokkos Tools callbacks set\n", stderr);
+      std::abort();
+    }
+  }
+
+  std::mutex mutex_;
+  std::condition_variable finished_;
+  bool done_ = false;
+  std::thread watchdog_;
+};
+
+// One plan per index on PlanSpace, each executed from a kernel of KernelSpace.
+template <class PlanSpace, class KernelSpace, class T> void plans_in_a_kernel() {
+  using rows = complex2<T>;
+  using plan_type = fftn::kokkos::view_plan<PlanSpace, rows, rows>;
+  const std::size_t count = 8;
+  std::vector<rows> in;
+  std::vector<rows> out;
+  std::vector<rows> want;
+  std::vector<std::unique_ptr<plan_type>> plans;
+  for (std::size_t i = 0; i < count; ++i) {
+    in.emplace_back("x", 8, 1024);
+    out.emplace_back("y", 8, 1024);
+    want.emplace_back("w", 8, 1024);
+    fill(in[i], static_cast<std::uint32_t>(100 + i));
+    plans.push_back(
+        std::make_unique<plan_type>(PlanSpace{}, in[i], out[i], direction::forward, -1));
+    plans[i]->execute(in[i], want[i], normalization::none);
+  }
+  {
+    const tools_watch watch;
+    using policy = Kokkos::RangePolicy<KernelSpace, Kokkos::IndexType<int>>;
+    Kokkos::parallel_for("fftn test: plans in a kernel",
+                         policy(KernelSpace{}, 0, static_cast<int>(count)), [&](int i) {
+                           kernels_running.fetch_add(1);
+                           const auto k = static_cast<std::size_t>(i);
+                           plans[k]->execute(in[k], out[k], normalization::none);
+                           kernels_running.fetch_sub(1);
+                         });
+    KernelSpace{}.fence();
+    EXPECT_EQ(pushes_in_kernels.load(), 0);
+    EXPECT_EQ(fences_in_kernels.load(), 0);
+    EXPECT_EQ(pushes.load(), pops.load());
+  }
+  for (std::size_t i = 0; i < count; ++i) {
+    expect_same_bits(reals_of(out[i]), reals_of(want[i]));
+  }
+}
+
+TYPED_TEST(KokkosThreaded, PlansInsideKernelsWithToolsLoaded) {
+  using space = TypeParam::space;
+  using T = TypeParam::real;
+  plans_in_a_kernel<space, space, T>();
+  plans_in_a_kernel<Kokkos::Serial, space, T>();
+  plans_in_a_kernel<Kokkos::Serial, Kokkos::Serial, T>();
+}
+
+// Outside kernels a plan on a threaded back end opens one region; a plan on Serial opens none.
+TYPED_TEST(KokkosThreaded, ToolsRegionsOutsideKernels) {
+  using space = TypeParam::space;
+  using T = TypeParam::real;
+  const complex2<T> x("x", 8, 1024);
+  const complex2<T> y("y", 8, 1024);
+  fill(x, 97);
+  const fftn::kokkos::view_plan p(space{}, x, y, direction::forward, -1);
+  const tools_watch watch;
+  p.execute(x, y, normalization::none);
+  const int regions = fftn::kokkos::detail::is_serial_space<space> ? 0 : 1;
+  EXPECT_EQ(pushes.load(), regions);
+  EXPECT_EQ(pops.load(), regions);
 }
 
 // view_plan::execute inside a kernel neither fences (the kernel would wait for itself) nor

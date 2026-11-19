@@ -539,10 +539,13 @@ the header and the docs until it happens.
   each. `execute` checks the Views against the plan's extents, strides and placement and
   throws `std::invalid_argument` naming `in` or `out`; it allocates nothing itself (the
   labels Kokkos takes as `std::string` are built at construction). It fences the instance
-  and then executes through the plan's `executor` (13.6); `Kokkos::Serial` is not fenced,
-  because its kernels finish before their dispatch returns and it cannot tell whether the
-  caller is inside one (a fence there would wait for the caller's own kernel). Inside a
-  kernel it neither fences nor dispatches and runs serially. Normalisation follows Kokkos-FFT
+  and then executes through the plan's `executor` (13.6), inside a Kokkos Tools region. A plan
+  on `Kokkos::Serial` has neither fence nor region: its kernels finish before their dispatch
+  returns, and it cannot tell whether the caller is inside one, where a fence, or the global
+  fence Kokkos makes before a region callback, would wait for the caller's own kernel. Inside a
+  kernel of OpenMP or Threads (detected whichever space the plan runs on) it neither fences,
+  dispatches nor opens a region, and runs serially. Exceptions from `execute` end the program
+  there. A plan on a threaded back end must not be called from a Serial kernel. Normalisation follows Kokkos-FFT
   (`backward` by default) as a separate pass after the transform, each part multiplied by the
   coefficient computed in `double` and rounded once to `T` (Kokkos-FFT multiplies real
   `float` outputs in `double`), shared among the instance's threads from 2^16 output
@@ -564,9 +567,10 @@ the header and the docs until it happens.
   Kokkos-FFT later. CTAD through the `Plan` alias needs Clang 19 or GCC; the class itself
   deduces everywhere.
 - Host accessibility is a property of the types and is checked at compile time
-  (`static_assert`), so a device View does not compile against the adapter; until the
-  header compiles out or forwards under CUDA and HIP builds (13.6), an application selects
-  the provider per build. Errors are `std::invalid_argument` with the prefix
+  (`static_assert`), so a device View does not compile against the adapter, and plans and
+  executors accept only `Kokkos::Serial`, `Kokkos::OpenMP` and `Kokkos::Threads` (HPX would pass
+  the host checks and then fence inside its own kernels; Threads needs Kokkos 5.2.1, 13.6). An
+  application that builds for devices selects the provider per build. Errors are `std::invalid_argument` with the prefix
   `fftn::kokkos:` and the argument's name (Kokkos-FFT throws `std::runtime_error`).
 - *Not provided yet:* the one-shot functions (`KokkosFFT::fft` and the rest, which would make
   a plan per call and belong with the convenience layer of 5.4); `DynPlan`.
@@ -2299,19 +2303,23 @@ As built (task 3.3):
   `parallel_for` return before its work is done, though the host back ends tested do not.
   The label `fftn::bulk` must fit the small-string buffer, because `parallel_for` copies its
   label into a `std::string` on every call. Kokkos 5 has no query for "inside a kernel", so
-  the adapter asks per back end: on OpenMP `omp_get_level() > 0` (not `omp_in_parallel()`: a
-  `parallel_for` also aborts inside an inactive region), on Threads whether this is the
-  thread that may dispatch and whether its pool entry is active (`Impl` names, pinned by the
-  test configuration's Kokkos). There `concurrency()` is 1 and `bulk` runs on the caller, so
-  an execution inside a kernel is serial. Serial needs no answer. **`team_of(member)`** is
+  the adapter asks every enabled threaded back end: on OpenMP `omp_get_level() > 0` (not
+  `omp_in_parallel()`: a `parallel_for` also aborts inside an inactive region), on Threads
+  whether this is the thread that may dispatch and whether its pool entry is active (`Impl`
+  names, so `Kokkos::Threads` is accepted only with Kokkos 5.2.1, checked at compile time).
+  There `concurrency()` is 1 and `bulk` runs on the caller, so an execution inside a kernel is
+  serial. A `Kokkos::Serial` kernel cannot be detected: on Serial nothing fences, dispatches or
+  opens a region, and a plan or executor on a threaded back end has the precondition of not
+  being used from one. **`team_of(member)`** is
   `{team_rank, team_size, cache_group_size(team_size)}`. T3 measured what these cost.
 
 What "natural in Kokkos" means concretely: plans accept host `View`s of any layout
 through their extents and strides; the executor takes the caller's execution-space
 instance and its concurrency; `view_plan`'s executions appear as a Kokkos Tools region, their
-dispatches as `parallel_for`s named `fftn::bulk`; a plan class matching Kokkos-FFT's `Plan`
-interface makes adoption a type change; device back ends are untouched (the header compiles
-out or forwards under CUDA and HIP builds). Kokkos is never a dependency of the core.
+dispatches as `parallel_for`s named `fftn::bulk` (a plan on Serial opens no region); a plan class matching Kokkos-FFT's `Plan`
+interface makes adoption a type change; the adapter is for the host only (with a device space
+or View it does not compile, so an application building for devices selects the provider per
+build). Kokkos is never a dependency of the core.
 
 ### 13.7 Testing threads
 

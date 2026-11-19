@@ -25,7 +25,10 @@ The header offers three levels:
 
 The executor, `team_of` and the threaded `view_plan` are **provisional**: their shape has not
 yet had its review and may change. The results on any instance width are bitwise those of serial
-execution.
+execution. Plans and executors run on `Kokkos::Serial`, `Kokkos::OpenMP` and `Kokkos::Threads`;
+any other execution space is refused at compile time, and so is `Kokkos::Threads` with a Kokkos
+other than 5.2.1, because telling whether a thread is inside one of its kernels takes Kokkos'
+internal names.
 
 ## Example
 
@@ -93,20 +96,27 @@ forward.execute(fk::data_of(x), fk::data_of(y), threads, ws); // one parallel_fo
 ```
 
 A transform worth sharing costs one `Kokkos::parallel_for` on the instance, labelled
-`fftn::bulk` (Kokkos Tools show it, and `view_plan` adds a region named
+`fftn::bulk` (Kokkos Tools show it, and a `view_plan` on OpenMP or Threads adds a region named
 `fftn::kokkos::view_plan::execute`), then a fence. A small job runs on the calling thread
 without one, and so does every job at width 1, which is every job on `Kokkos::Serial`.
 
 FFTN allocates nothing while executing. Kokkos allocates nothing for a dispatch on Serial and
-OpenMP; its Threads back end builds a `std::string` for an internal fence on every
-`parallel_for`. Dispatches on one instance take turns (the OpenMP back end holds the instance's
-mutex for each), and `Kokkos::Threads` accepts them only from the thread that initialised it:
-from any other thread the executor runs serially there.
+OpenMP; its Threads back end allocates short-lived strings on every `parallel_for`. Dispatches on
+one instance take turns (the OpenMP back end holds the instance's mutex for each), and
+`Kokkos::Threads` accepts them only from the thread that initialised it: from any other thread
+the executor runs serially there.
 
-Inside a kernel, nothing is dispatched: the executor reports one lane and the execution runs
-serially on the calling thread (with a workspace per thread, as any concurrent execution). The
-same holds for `view_plan::execute`, which then does not fence either; each thread needs a plan
-of its own, because a plan runs one execution at a time.
+Inside a kernel of the OpenMP or Threads back end nothing is dispatched: the executor reports one
+lane and the execution runs serially on the calling thread (with a workspace per thread, as any
+concurrent execution). The same holds for `view_plan::execute`, which then neither fences nor
+opens a Tools region; each thread needs a plan of its own, because a plan runs one execution at
+a time, and the exceptions `execute` documents end the program there, since they cannot leave
+the kernel.
+
+A `Kokkos::Serial` kernel cannot be detected. Inside one, use a plan or executor on
+`Kokkos::Serial`, which never fences, dispatches or opens a region. A plan on OpenMP or Threads
+must not be called from a Serial kernel: it would dispatch from there, and with a Kokkos Tools
+library loaded Kokkos' global fence would wait for the kernel for ever.
 
 ### Team kernels
 
@@ -198,12 +208,13 @@ the core plan bit for bit.
 The plan makes its FFTN plan, an executor on its instance and a workspace for the instance's
 width when it is constructed; `execute` allocates nothing itself (see
 [Threads](#threads) for what Kokkos does, and a loaded Kokkos Tools library may allocate too).
-`execute` first fences the plan's execution-space instance, so that work queued on it before
-the call is complete (not on `Kokkos::Serial`, whose kernels have finished by the time the
-thread that dispatched them gets here), then transforms on the instance and returns when the
-output is written. Scaling a large output is shared among the instance's threads. `execute` is
+On OpenMP and Threads, `execute` first fences the plan's execution-space instance, so that work
+queued on it before the call is complete (`Kokkos::Serial` needs no fence: its kernels have
+finished by the time the thread that dispatched them gets here), then transforms on the instance
+and returns when the output is written. Scaling a large output is shared among the instance's threads. `execute` is
 not `noexcept`: it throws on the checks below, and its fence and dispatch take the instance's
-mutex. Inside a Kokkos kernel it runs serially on the calling thread, without fencing.
+mutex. Inside a kernel it runs serially on the calling thread, without fencing
+([Threads](#threads) gives the rules for each back end).
 
 Because a plan owns one workspace, **one plan runs one execution at a time**. A second
 execution that starts while one is running throws `std::logic_error` rather than share the
