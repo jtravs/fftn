@@ -6,7 +6,8 @@
 //
 // A stage is one pass over one line. Its source and destination are slots: the caller's
 // input and output arrays, two scratch lines a and b, and a block holding one transform's
-// half spectrum (multi-dimensional c2r out of place, DESIGN.md 9.1). The driver keeps a
+// half spectrum or its last column (multi-dimensional c2r out of place, DESIGN.md 9.1), or a
+// grid's intermediate (strategies/grid.hpp). The driver keeps a
 // cursor into the in, out and block slots; loops move it. Scratch lines do not move: every
 // line uses them from their start.
 //

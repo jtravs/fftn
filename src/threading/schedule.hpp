@@ -305,6 +305,13 @@ struct machine_profile {
   // rather than in a separate pass (X29): set where the L2 is shared (Apple: 0.92-0.94 of
   // the separate route); on the EPYC it took 1.11.
   bool c2r_paired_gather = false;
+  // A c2r of two or more axes out of place builds its intermediate packed in the output
+  // (core/plan_core.cpp, c2r_packed) where one transform's half spectrum exceeds this many
+  // bytes, and keeps it in the workspace block otherwise (X60): beyond the L2 on a private L2
+  // (EPYC 7763 1000^2 0.79, 64^3 0.86 of the block's time; within it the packed columns' power-
+  // of-two strides and column h cost more than the block: 32 x 30 1.10, 32^3 1.07), a quarter of
+  // a shared one (M5 Max: 1000^2-2048^2 0.93-0.94, 128^2-640 x 480 1.14-1.24).
+  std::size_t c2r_packed_bytes = std::size_t{512} * 1024;
 };
 
 // The profile of a machine of topology t (its CPU count aside): the defaults above, which

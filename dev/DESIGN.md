@@ -1593,9 +1593,9 @@ beyond L1 (grid plus separate pairing) and 15–43 % within it (r2c 39–43 %, c
 the 20 % target within L1 needs X6's real-input codelets.
 
 c2r preserves its input by default; with permission to destroy it the planner may take a
-faster route. A multi-dimensional c2r that preserves its input needs scratch for the
-half-spectrum of one plane (or pencil block) per thread, because the real output cannot
-hold it; this is reported by `workspace_bytes`. In-place r2c and c2r use FFTW's padded
+faster route. A multi-dimensional c2r out of place cannot run its complex axes in its input;
+its intermediate goes into the output, packed, or into the workspace block (below). In-place
+r2c and c2r use FFTW's padded
 layout: each row of the last axis holds n + 2 reals (n/2 + 1 complex), the last two
 being padding on the real side.
 
