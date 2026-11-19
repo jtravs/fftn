@@ -6,11 +6,20 @@ session; update a phase when its tasks or findings change.
 
 ## Status
 
-**As of 2026-11-16, midday.** Leads 1–5 of the one-dimensional double push have each had
-their experiments (X23b, X26–X30, X26b, X28b, X29 merged; X30b in flight) and the new
-one-dimensional double numbers are below; this section is also the handoff. Lessons
-that generalise are in [LESSONS.md](LESSONS.md), decisions in DESIGN.md section 19, open
-questions in DESIGN.md section 18.2.
+**As of 2026-11-19, early morning (lead).** **Phase 1's exit is met.** The exit check (X56)
+passes the geometric-mean targets and the tail rule beyond noise on all nine machines checked:
+Mac M5 Max (÷ FFTW 0.74, ÷ FFTL 0.52), Xeon 6240 (÷ FFTW 0.66, ÷ oneMKL 0.69), EPYC 7763 (÷ FFTW
+0.79, ÷ FFTL 0.46), and on Spot VMs Zen 5, Axion, Granite Rapids, Sapphire Rapids and Ice Lake
+(÷ FFTW 0.67–0.72; ÷ oneMKL 0.69–0.71). The details are in the exit-check paragraphs below and in
+X56. Since 2026-11-16: depth-first chains for rows between L2/4 and 64 L2 (X46, X51, X55, X58),
+Bluestein convolutions on them (X50), two-line chains (X47), radix-32/64 codelets ordered for 16
+registers (X54), data-size-aware radices for the EPYC's 768 and 1024 (X57), batch leaves for
+tiny batches (X53), the fixed benchmark backend (X49), threaded planes and volumes with team
+programs (task 4.2, X43, X52), and the threaded Kokkos integration (task 3.5, T3; provisional
+API). Running: task 4.3 (axis subsets, strided arrays, real multi-dimensional; PR 82) and X59
+(threaded real planes against oneMKL on the Xeon; PR 84). This section is also the handoff.
+Lessons that generalise are in [LESSONS.md](LESSONS.md), decisions in DESIGN.md section 19,
+open questions in DESIGN.md section 18.2.
 
 ### Where FFTN stands
 
@@ -415,11 +424,21 @@ pull request:
   `avx512` float 256 1.047, EPYC double 72 1.033).
 - X25 (the x86 gap's causes) is done; its verdicts are folded into the leads below.
 
-For the maintainer (decisions taken by the lead overnight, easy to revert): X26's prefetch gate by target (Intel cores without
-AVX-512 lose up to 1.20 at 2²² until a rule by core and row width exists); X28's 128-bit
-leaves kept on `avx2` though they gain only at 8–16 points there; X30's 512 override
-kept although the Xeon under `avx2` loses r2c 1024² (1.057 on re-run; EPYC 1.014): with X26's
-prefetch, a second case for rules by core on `avx2`.
+For the maintainer (decisions open for review; the ones the maintainer took on 2026-11-18 are in
+AGENTS.md section 6 and DESIGN 15.5):
+
+- Kokkos (task 3.5, provisional API): `Kokkos::Threads` is accepted only at the pinned Kokkos
+  5.2.1, because kernel detection reads its internals; a plan on OpenMP or Threads must not run
+  inside a `Kokkos::Serial` kernel (undetectable; it would deadlock). The OpenMP back end the
+  client application uses is not affected by either.
+- Rules reach unmeasured relatives by cache key (the maintainer's rule): X58's Ice Lake key also
+  covers client Intel cores with 1–2 MiB of L2, and the 2 MiB key Emerald Rapids; X57's footprint
+  rule covers other `avx2` cores with a large L3. None measured.
+- X57's in-place limit (1024 rows to 1536) is extrapolated from the footprint, not measured.
+- The CI's Clang ASan job takes about 70 of its 90 minutes; the Windows jobs install a pinned
+  LLVM 23.1.5 (PR 81) because the runner image's LLVM is older than its Visual Studio needs.
+- Older and still open: X26's prefetch gate by target, X28's 128-bit leaves on `avx2`, X30's
+  512 override (rules by core on `avx2`, deferred by the maintainer on 2026-11-16).
 
 ### Leads, one-dimensional double first
 
