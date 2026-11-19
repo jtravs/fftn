@@ -115,17 +115,20 @@ TEST(WorkGraph, FairRunsWhereNeighbouringLinesShareCacheLines) {
 
   d::graph_phase ph;
   ph.chunks = 16;
+  ph.chunk_points = 4096;
   ph.fair_runs = true;
   EXPECT_EQ(d::chunk_run(ph, 16, 8, 16), 2U); // a fair share, 16 / 8
   EXPECT_EQ(d::chunk_run(ph, 1, 8, 16), 1U);  // never more than is left
   ph.chunks = 5;
   EXPECT_EQ(d::chunk_run(ph, 5, 8, 16), 1U); // fewer chunks than members
-  ph.chunks = 8 * d::max_fair_run;
-  EXPECT_EQ(d::chunk_run(ph, ph.chunks, 8, 16), d::max_fair_run);
-  ph.chunks = 8 * (d::max_fair_run + 1); // more per member: guided, for the balance of its end
-  EXPECT_EQ(d::chunk_run(ph, ph.chunks, 8, 16), ph.chunks / 16);
   ph.chunks = 64;
+  ph.chunk_points = d::max_fair_points / 8;
+  EXPECT_EQ(d::chunk_run(ph, 64, 8, 16), 8U); // a share of max_fair_points
+  ph.chunk_points = d::max_fair_points / 4;   // larger: guided, for the balance of its end
+  EXPECT_EQ(d::chunk_run(ph, 64, 8, 16), 4U);
+  EXPECT_EQ(d::chunk_run(ph, 20, 8, 16), 1U);
   ph.fair_runs = false;
+  ph.chunk_points = 4096;
   EXPECT_EQ(d::chunk_run(ph, 64, 8, 16), 4U); // a share of what is left
   EXPECT_EQ(d::chunk_run(ph, 3, 8, 16), 1U);
 }

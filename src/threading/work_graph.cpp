@@ -145,6 +145,7 @@ work_graph build_work_graph(const program& p, std::size_t points, std::size_t ch
       const std::size_t per_chunk =
           std::max<std::size_t>(1, chunk_points / line_points(p, ph.record + ph.nest, ph.body_end));
       const std::size_t chunks = (ph.units + per_chunk - 1) / per_chunk;
+      ph.chunk_points = per_chunk * line_points(p, ph.record + ph.nest, ph.body_end);
       ph.chunks = static_cast<std::uint32_t>(
           std::min<std::size_t>(chunks, std::numeric_limits<std::uint32_t>::max()));
     }

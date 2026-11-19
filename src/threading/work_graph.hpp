@@ -43,24 +43,28 @@ struct graph_phase {
   std::uint32_t tail_nest = 0;
   std::uint32_t tail_body_end = 0;
   std::size_t head = 0;
-  // Neighbouring lines write the same cache lines (loop::shares_lines): fair runs where the
-  // phase has few chunks per member (chunk_run).
+  // Neighbouring lines write the same cache lines (loop::shares_lines): fair runs where a
+  // member's share is small (chunk_run).
   bool fair_runs = false;
+  std::size_t chunk_points = 0; // lines: the points of one chunk's lines
 };
 
-// The largest fair share (chunks per member) that goes in fair runs (chunk_run). X59: phases of
-// more chunks per member need the guided runs' shrinking tail: 2048^2, 8 blocks per member at 8
-// lanes, took 1.05-1.15 of the guided time with fair runs, capped at 4 chunks or not.
-inline constexpr std::uint32_t max_fair_run = 3;
+// The most points of one member's fair share (chunk_run): 1 MiB of complex doubles. X59 arms
+// R3-R6: fair runs of 8 blocks of 16 columns of a 2048^2 plane (262144 points) took 1.05-1.15 of
+// the guided runs' time on the EPYC 7763 and the M5 Max (one member works alone at the end),
+// while shares of up to 65536 points gained (EPYC 1024^2 0.88, 512^2 0.70).
+inline constexpr std::size_t max_fair_points = 65536;
 
 // How many chunks of phase ph a member claims at once, `left` of them being unclaimed: a phase
-// of few chunks per member whose neighbouring lines share cache lines goes in runs of its fair
-// share (chunks / cap), so that few runs border each other (X59); any other in a share of what
-// is left, left / runs (X52), at least one. Never more than `left`: a run stays within its phase.
+// whose neighbouring lines share cache lines goes in runs of its fair share (chunks / cap) where
+// that share holds at most max_fair_points, so that few runs border each other (X59); any other
+// in a share of what is left, left / runs (X52), at least one. Never more than `left`: a run
+// stays within its phase.
 [[nodiscard]] inline std::uint32_t chunk_run(const graph_phase& ph, std::uint32_t left,
                                              std::uint32_t cap, std::uint32_t runs) noexcept {
-  if (const std::uint32_t fair = ph.chunks / cap; ph.fair_runs && fair <= max_fair_run) {
-    return std::min(left, std::max(fair, 1U));
+  if (const std::uint32_t fair = std::max(ph.chunks / cap, 1U);
+      ph.fair_runs && fair * ph.chunk_points <= max_fair_points) {
+    return std::min(left, fair);
   }
   return std::max(left / runs, 1U);
 }

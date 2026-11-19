@@ -248,8 +248,8 @@ private:
     // never crosses a phase: the counter only rises within an epoch, so the value `claim`
     // hands the lambda is at least this member's last claim, in phase p or later, and below
     // `total`.
-    // Where a phase's neighbouring lines write the same cache lines and it has at most a few
-    // chunks per member, a run is a fair share instead (chunk_run, work_graph.hpp; X59).
+    // Where a phase's neighbouring lines write the same cache lines and a member's fair share
+    // of it is small, a run is that share instead (chunk_run, work_graph.hpp; X59).
     const auto cap = static_cast<std::uint32_t>(std::max(share.cap, 1));
     const auto runs =
         static_cast<std::uint32_t>(std::max(job_.plan.profile.claim_divisor, 2)) * cap;

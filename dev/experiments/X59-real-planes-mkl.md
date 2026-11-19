@@ -82,6 +82,11 @@ run.
   of at most 3 chunks per member; phases of more keep the guided runs, so 2048² and 1024² run as
   under T. R2's rule, unchanged, R5 against T.
 
+- **Arm R6** (on top of T, replacing R5 after R5's EPYC run, below): fair runs where a member's
+  fair share holds at most 65536 points (1 MiB of complex doubles), whatever its chunk count. That
+  keeps R3's gains at 512²–1024² on the EPYC (shares of 16 384–65 536 points) and gives 2048² (262 144
+  points a share) the guided runs, under which R3 lost. R2's rule, unchanged, R6 against T.
+
 ## Method
 
 - Cases: the standard catalogue's real planes (`^(r2c|c2r)-[0-9]+x[0-9]+-b1-(op|ip)$`).
@@ -195,6 +200,15 @@ R4 on the Mac, run 20261119-032302-1382 (10 rounds, all loaded, band ±1.6 %): R
 the real planes (r2c 2048 × 36 0.84, r2c 512² 0.86–0.87), but 2048² still 1.07–1.15: the loss is
 the end of the phase, where equal runs leave one member with its last run while the others have
 finished, not the length of the runs. Hence arm R5.
+
+R5 on the Mac, run 20261119-033050-e68e (10 rounds, all loaded, band ±1.6 %): R5 ÷ T 0.986 over
+the real planes (2048 × 36 0.83–0.92), 0.997 over the others; past 2 % only cases whose schedule R5
+leaves as T's (r2c 5 × 7 runs inline; c2r 256² has one chunk per member either way). On the EPYC,
+run 20261119-034511-befa (Slurm 513255; 10 rounds, all loaded, band ±2.2 %): R5 ÷ T 0.975 over the
+real planes (2048 × 36 0.81–0.84, 36 × 2048 0.84–0.88), 1.001 over the others, past the band only
+cases R5 leaves as T's (2048², c2r 1000², c2c). R5 meets its rule on both, but it drops R3's
+largest gains (EPYC 512² 0.70, 480 × 640 0.70, 1000²–1024² 0.88: 4–8 chunks per member there).
+Hence arm R6, a limit on a member's share in points instead of in chunks.
 
 ### The Xeon's judging runs: unpinned, then confined
 
