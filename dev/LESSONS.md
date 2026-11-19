@@ -131,6 +131,13 @@ ratio held over the set (FFTN ÷ FFTW 0.778 → 0.784), but single long rows did
 VM's memory placement both move. Judge a row by a same-run A/B on one VM, and a VM's
 standing by the geometric mean. [X45](experiments/X45-cloud-exit.md).
 
+1.13 **In an interleaved threaded benchmark, the arm after a serial one pays for it.** A serial
+run leaves the data in one core's cache, so the next threaded arm starts by moving it: in
+T3's first run the arm that always followed the serial one measured 1.1 to 1.3 of the same
+work run through another route, and four executions in one region (three of them after a
+threaded run) measured 0.98. Time serial references in a pair of their own, or discard the
+threaded run after them. [T3](experiments/T3-kokkos-dispatch.md).
+
 ## 2. The instruction set and the machine
 
 2.1 **The data layout that wins depends on the ISA.** Interleaved complex numbers suit
@@ -590,13 +597,22 @@ with the same top). The standard catalogue held one such row (46080) and its exi
 never flagged the rest. Screen a strategy on lengths built to stress it (odd part × 2^k
 across the cache sizes), not only on the catalogue's. [X51](experiments/X51-depth-2.md).
 
-3.28 **When the fastest dimension of an array is not transformed, transform its neighbours
+3.28 **Cache facts seen from inside a VM can put a machine in the wrong class; screen the
+families a rule reaches.** A Google Cloud Ice Lake VM (private L2 1.25 MiB) reports 55 MiB of L3
+for 8 CPUs, so a key on L3 per CPU filed it with the EPYC and it missed the depth-first chain of
+the Xeon 6240, its nearest relative: its long rows took 1.13–1.53 of FFTW's time, and 0.64–0.79
+with a key on the L2 alone (0.596 of the time over the rows that changed). The same screen found
+that a batch leaf of 12 won on 1–1.25 MiB of L2 and lost on 2 MiB (12 × 64 1.15–1.17 of the
+chain's time on Granite and Sapphire Rapids). Prefer the private levels for a key, and rent an
+hour of each family before trusting a rule there. [X58](experiments/X58-intel-keys.md).
+
+3.29 **When the fastest dimension of an array is not transformed, transform its neighbours
 together.** The columns of a matrix, the planes (y, x) of a (y, x, w) array and a middle axis
 all leave every transformed element `batch` elements from the next, a cache line or more,
 while the next transform's element sits beside it. One transform at a time through a strided
 chain ran 1.4–3.9 times FFTW's time on an M5 Max; running each axis as lanes over blocks of
 adjacent transforms (C of them one vector access, the block in a tile in scratch) took 86
-such cases to 0.48 of that time on the M5 Max, 0.29 on an EPYC 7763 and 0.43 on a Xeon 6240,
+such cases to 0.48 of that time on the M5 Max, 0.29 on an EPYC 7763 and 0.37 on a Xeon 6240,
 and to 0.80–0.86 of FFTW's. Within L1 the strided chain is not slow: there the lanes lost on
 one complex per register (M5 Max double) and on leaf lengths of 16 or fewer, while on `avx2`
 and `avx512` longer axes still gained (Xeon: 32 × 16 0.23). Count the whole array against L1,
@@ -1032,6 +1048,17 @@ L2, the same real planes gained from splitting (unsplit 1.2–1.5). Compare a re
 complex points with thresholds fitted on complex rows: with that, and planes split only from
 32768 points on the mesh, those Xeon planes took 0.35–0.67 of the time and the EPYC's real ones
 0.72–0.90. [X52](experiments/X52-volumes-2.md).
+
+5.14 **One `Kokkos::parallel_for` per transform costs next to nothing on the host, once it is
+allocation-free.** Against the OpenMP region it wraps, Kokkos 5.2 adds 0.2 to 0.45 µs per
+dispatch at 8 to 16 threads (EPYC 7763: 2.9 against 2.6 µs at 8, 4.2 against 3.8 at 16; Xeon 6240: 2.1
+against 1.9), fence included, and no transform of 100 µs or more ran measurably faster without it. Three
+things to know before dispatching from a library: `parallel_for` copies its label into a
+`std::string` on every call, so a label beyond the small-string buffer allocates per dispatch;
+the Threads back end itself builds a `std::string` for an internal fence on every `parallel_for`;
+and Kokkos 5 has no "am I in a kernel" query, while a nested dispatch aborts on OpenMP and throws on
+Threads. `team_barrier` costs 1.5 to 3 µs at 8 to 16 threads, 1.6 to 4 times an OpenMP barrier,
+with no added penalty for a member 10 or 100 µs late. [T3](experiments/T3-kokkos-dispatch.md).
 
 ## 6. Toolchain and testing pitfalls
 

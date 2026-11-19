@@ -127,6 +127,6 @@ Threaded (8 lanes): the first run (b95d5fd, EPYC run 20261119-044638-2ed8, ±1.6
 
 Adopted on every target by the decision rule (B ÷ A at most 0.85 and no case slower than 1.05
 beyond the band): 0.48 on the M5 Max, 0.29 on the EPYC, 0.37 on the Xeon. DESIGN 9.3 describes
-the route; LESSONS 3.28 the lesson. Follow-ups: a per-target condition within L1 (the EPYC's
+the route; LESSONS 3.29 the lesson. Follow-ups: a per-target condition within L1 (the EPYC's
 leaf-length cases, Z), a real lane path for a strided halved axis, small interleaved planes
 against FFTW, oneMKL's short columns, the x7 float case.

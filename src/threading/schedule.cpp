@@ -147,7 +147,20 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
     p.column_wide_bytes = 1024;
     p.fit_row_bytes = c.l3.size / 4 * 3; // X57: three quarters of the CCX's L3
   }
+  // Experiment X58, an Ice Lake VM (Google Cloud N2: private L2 1.25 MiB, 6.9 MiB of L3 per
+  // CPU, so the large-L3 branch below): the depth-first chain as on the Xeon 6240. One top of
+  // 16 took 0.50-0.68 of the time from 32768 to 2^22 points, 20 took 0.49 at 100000. Zen 4
+  // and Zen 5 (exactly 1 MiB of L2) stay out: unmeasured there.
+  if (x86_64 && private_l2 && !large_l2 && c.l1d.size != 0 &&
+      c.l2.size > std::size_t{1024} * 1024) {
+    p.depth_min_bytes = c.l2.size / 4;
+    p.depth_max_bytes = 64 * c.l2.size;
+    p.depth_top = 16;
+    p.depth_top_alt = 20;
+    p.depth_top_last = 10;
+  }
   if (large_l2) {
+    p.batch_leaf_12 = false; // X58
     p.grid_three_bytes = c.l2.size / 2;
     p.grid_two_part_bytes = std::size_t{32} * 1024;
     // Experiment X55, Granite Rapids VM (Xeon 6985P-C, 2 MiB private L2): X46's and X51's

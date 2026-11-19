@@ -58,7 +58,7 @@ for (std::thread& t : team) {
 `fftn::cache_group_size(members)` gives a `group_size` for a team whose consecutive ranks
 run on consecutive cores, from the machine's topology. The threads of an OpenMP parallel
 region form a team the same way (`fftn::omp::this_team()`, below); so do the members of a
-Kokkos team.
+Kokkos team (`fftn::kokkos::team_of`, [Kokkos](kokkos.md#team-kernels)).
 
 ## How the work is shared
 
