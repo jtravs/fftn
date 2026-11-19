@@ -90,6 +90,14 @@ function(fbench_add_t1 name)
   target_link_libraries(${name} PRIVATE fftn::fftn Threads::Threads)
 endfunction()
 fbench_add_t1(t1_costs)
+# The harness of experiment T3 (bench/t3/): Kokkos dispatch and team_barrier costs, on the test
+# configuration's Kokkos (needs FFTN_BUILD_TESTS and FFTN_KOKKOS_BACKEND's back end).
+if(TARGET Kokkos::kokkos)
+  add_executable(t3_kokkos t3/t3_kokkos.cpp)
+  fftn_configure_target(t3_kokkos)
+  target_link_libraries(t3_kokkos PRIVATE fftn::fftn)
+  fftn_link_kokkos(t3_kokkos)
+endif()
 # The harness of experiment X20 (bench/x20/): where a tiny serial execute's time goes.
 add_executable(x20_overhead x20/x20_overhead.cpp)
 fftn_configure_target(x20_overhead)

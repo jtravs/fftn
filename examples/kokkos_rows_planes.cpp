@@ -1,12 +1,13 @@
 // SPDX-FileCopyrightText: 2026 John C. Travers and contributors
 // SPDX-License-Identifier: Apache-2.0
 
-// A small Kokkos program: real rows forward and back through the Kokkos-FFT spellings, then
-// in-place batched planes through the adapter's own names. The example quoted in
-// docs/kokkos.md. Exits with 0 when both round trips give back their input.
+// A small Kokkos program: real rows forward and back through the Kokkos-FFT spellings, in-place
+// batched planes through the adapter's own names, then core plans on Kokkos' threads, through
+// the executor and in a team kernel. The example quoted in docs/kokkos.md. Exits with 0 when
+// every round trip gives back its input.
 
+#include <fftn/fftn.hpp>
 #include <fftn/kokkos.hpp>
-#include <fftn/shape.hpp>
 
 #include <Kokkos_Core.hpp>
 
@@ -96,6 +97,51 @@ double planes_round_trip(const host& exec) {
   return error;
 }
 
+// The largest error of a round trip of core plans on the instance's threads: forward through
+// the executor, backward in a team kernel.
+double threaded_round_trip(const host& exec) {
+  const std::size_t rows = 32;
+  const std::size_t n = 1024;
+  using rows_view = Kokkos::View<complex**, Kokkos::LayoutRight, Kokkos::HostSpace>;
+  const rows_view x("x", rows, n);
+  const rows_view y("y", rows, n);
+  const rows_view z("z", rows, n);
+  for (std::size_t r = 0; r < rows; ++r) {
+    for (std::size_t j = 0; j < n; ++j) {
+      x(r, j) = complex(std::cos(0.01 * static_cast<double>((r + 1) * j)), 0.5);
+    }
+  }
+  // snippet-begin: executor
+  namespace fk = fftn::kokkos;
+  const auto forward = fk::make_plan(x, y, fftn::direction::forward, fk::axis_type<1>{-1});
+  const fk::executor threads(exec); // the instance's threads; width 1 on Kokkos::Serial
+  fftn::workspace ws(forward.workspace_bytes(threads.width()));
+  forward.execute(fk::data_of(x), fk::data_of(y), threads, ws); // one parallel_for
+  // snippet-end: executor
+
+  // snippet-begin: team
+  using team_policy = Kokkos::TeamPolicy<host>;
+  const auto backward = fk::make_plan(y, z, fftn::direction::backward, fk::axis_type<1>{-1});
+  const int team_size = exec.concurrency();
+  fftn::workspace team_ws(backward.workspace_bytes(team_size));
+  Kokkos::parallel_for(
+      "inverse", team_policy(exec, 1, team_size), [&](const team_policy::member_type& member) {
+        // Every member makes the call; work done before or after it shares this kernel.
+        backward.execute(fk::data_of(y), fk::data_of(z), fk::team_of(member), team_ws);
+      });
+  // snippet-end: team
+  exec.fence();
+
+  double error = 0;
+  const auto scale = 1.0 / static_cast<double>(n);
+  for (std::size_t r = 0; r < rows; ++r) {
+    for (std::size_t j = 0; j < n; ++j) {
+      error = std::max(error, Kokkos::abs(z(r, j) * scale - x(r, j)));
+    }
+  }
+  return error;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -104,8 +150,10 @@ int main(int argc, char** argv) {
     const host exec;
     const double rows = rows_round_trip(exec);
     const double planes = planes_round_trip(exec);
-    std::printf("largest round-trip errors: rows %.3g, planes %.3g\n", rows, planes);
-    return rows < 1e-14 && planes < 1e-13 ? 0 : 1;
+    const double threaded = threaded_round_trip(exec);
+    std::printf("largest round-trip errors: rows %.3g, planes %.3g, threaded %.3g\n", rows, planes,
+                threaded);
+    return rows < 1e-14 && planes < 1e-13 && threaded < 1e-13 ? 0 : 1;
   } catch (const std::exception& e) {
     std::printf("failed: %s\n", e.what());
     return 1;

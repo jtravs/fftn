@@ -19,8 +19,9 @@
 #   OpenMP::OpenMP_CXX  the compiler's OpenMP runtime, when found, for the tests and the
 #                       example of the optional header fftn/omp.hpp (FFTN_TEST_WITH_OPENMP,
 #                       default ON except under ThreadSanitizer). Never linked by the library.
-#   Kokkos::kokkos      Kokkos core 5.2.1 with the Serial back end only, for the tests and
-#                       the example of the optional header fftn/kokkos.hpp
+#   Kokkos::kokkos      Kokkos core 5.2.1 with the Serial back end and one threaded back end
+#                       (FFTN_KOKKOS_BACKEND), for the tests and the example of the optional
+#                       header fftn/kokkos.hpp
 #                       (FFTN_TEST_WITH_KOKKOS, default ON; it builds in seconds). The
 #                       library never links it: the header is compiled in its user's
 #                       translation units. Consumers test `if(TARGET Kokkos::kokkos)`.
@@ -62,8 +63,8 @@ target_compile_definitions(fftn_test_boost_mp INTERFACE BOOST_MP_STANDALONE)
 # kokkos-5.2.1-SHA-256.txt); the hash was also computed from the downloaded file.
 # Off by default in GCC ThreadSanitizer builds: GCC warns that TSan does not support
 # atomic_thread_fence (-Wtsan) for Kokkos' desul atomics after they are inlined into our test
-# units, where SYSTEM cannot silence it, and the gate builds with -Werror. The adapter runs
-# serially, so TSan has nothing of ours to check there; Clang's TSan builds still run these tests.
+# units, where SYSTEM cannot silence it, and the gate builds with -Werror. Clang's TSan builds
+# run these tests, on the Threads back end.
 # Off by default on Windows on Arm too: Kokkos 5.2.1 adds -mcx16 for every Clang build on
 # Windows (cmake/kokkos_arch.cmake), an x86 option that clang-cl refuses for Arm64 targets.
 set(_fftn_kokkos_default ON)
@@ -73,16 +74,40 @@ endif()
 if(WIN32 AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(ARM64|arm64|aarch64)$")
   set(_fftn_kokkos_default OFF)
 endif()
-option(FFTN_TEST_WITH_KOKKOS "Test fftn/kokkos.hpp against Kokkos 5.2.1 (Serial back end)"
+option(FFTN_TEST_WITH_KOKKOS "Test fftn/kokkos.hpp against Kokkos 5.2.1"
        ${_fftn_kokkos_default})
+# Kokkos builds with one threaded host back end at a time, so each configuration tests Serial
+# and the one named here: Threads by default (no OpenMP runtime enters the test binaries),
+# OpenMP in the CI job that sets the environment variable, Serial alone on Windows, where the
+# Threads back end has not been tried.
+set(_fftn_kokkos_backend Threads)
+if(WIN32)
+  set(_fftn_kokkos_backend Serial)
+endif()
+if(NOT "$ENV{FFTN_KOKKOS_BACKEND}" STREQUAL "")
+  set(_fftn_kokkos_backend "$ENV{FFTN_KOKKOS_BACKEND}")
+endif()
+set(FFTN_KOKKOS_BACKEND ${_fftn_kokkos_backend} CACHE STRING
+    "Kokkos' threaded back end for the tests of fftn/kokkos.hpp: Threads, OpenMP or Serial (none)")
+set_property(CACHE FFTN_KOKKOS_BACKEND PROPERTY STRINGS Threads OpenMP Serial)
 if(FFTN_TEST_WITH_KOKKOS)
+  if(NOT FFTN_KOKKOS_BACKEND MATCHES "^(Threads|OpenMP|Serial)$")
+    message(FATAL_ERROR "FFTN_KOKKOS_BACKEND must be Threads, OpenMP or Serial")
+  endif()
   FetchContent_Declare(fftn_kokkos
     URL https://github.com/kokkos/kokkos/releases/download/5.2.1/kokkos-5.2.1.tar.gz
     URL_HASH SHA256=3f754c99aa6130b1dd6520d904db7b2fd44ed618cd91e0dfd921956f23f6812d
     SYSTEM)
   set(Kokkos_ENABLE_SERIAL ON CACHE BOOL "" FORCE)
-  set(Kokkos_ENABLE_OPENMP OFF CACHE BOOL "" FORCE)
-  set(Kokkos_ENABLE_THREADS OFF CACHE BOOL "" FORCE)
+  set(_fftn_kokkos_openmp OFF)
+  set(_fftn_kokkos_threads OFF)
+  if(FFTN_KOKKOS_BACKEND STREQUAL "OpenMP")
+    set(_fftn_kokkos_openmp ON)
+  elseif(FFTN_KOKKOS_BACKEND STREQUAL "Threads")
+    set(_fftn_kokkos_threads ON)
+  endif()
+  set(Kokkos_ENABLE_OPENMP ${_fftn_kokkos_openmp} CACHE BOOL "" FORCE)
+  set(Kokkos_ENABLE_THREADS ${_fftn_kokkos_threads} CACHE BOOL "" FORCE)
   set(Kokkos_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
   set(Kokkos_ENABLE_EXAMPLES OFF CACHE BOOL "" FORCE)
   set(Kokkos_ENABLE_BENCHMARKS OFF CACHE BOOL "" FORCE)
