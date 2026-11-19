@@ -39,6 +39,23 @@ run.
   planes it splits. Mac, 6 lanes, Homebrew Clang: the same with (1) at most 1.00 over the real
   planes that split; a machine that fails keeps the old graph (the flag is set per profile).
 
+- **Arm R** (on top of T): a split task's phase of lines is claimed in runs of its fair share
+  (chunks / cap, at least one) instead of X52's guided runs (a share of what is left, at most
+  left / (2 × cap)). A member's lines are then adjacent and a phase has about cap runs. The
+  diagnosis shows why it matters: neighbouring columns of a real plane share cache lines in most
+  rows (a row of n/2 + 1 complex values is an odd multiple of 16 bytes), so each boundary between
+  two members' runs bounces lines; FFTN's team takes 9000–11 000 loads of lines modified in
+  another core's cache per real 512² plane where oneMKL's static split takes 340 (r2c) to 4700
+  (c2r), and 20 000 against 1000 at r2c 2048 × 36. Stage phases keep the guided runs. Bits
+  unchanged (only who runs which chunk). **Decision rule, written before its judging runs,**
+  R against T at 8 lanes through `--serial` over the same case set. Xeon: adopt R if (1) the
+  geometric mean of R ÷ T over the real planes that split (as for T) is at most 0.97, (2) the
+  geometric mean over the other planes and volumes that split is at most 1.00, and (3) no case
+  of the set is slower than T by more than the larger of 2 % and the run's A/A band (re-run once
+  as for T; a case whose schedule R cannot change does not decide). EPYC and Mac (6 lanes): (2)
+  and (3) over every plane and volume that splits. A machine that fails keeps the guided runs
+  (gated by profile).
+
 ## Method
 
 - Cases: the standard catalogue's real planes (`^(r2c|c2r)-[0-9]+x[0-9]+-b1-(op|ip)$`).

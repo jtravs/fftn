@@ -248,21 +248,32 @@ private:
     // never crosses a phase: the counter only rises within an epoch, so the value `claim`
     // hands the lambda is at least this member's last claim, in phase p or later, and below
     // `total`.
-    const auto runs = static_cast<std::uint32_t>(std::max(job_.plan.profile.claim_divisor, 2) *
-                                                 std::max(share.cap, 1));
+    //
+    // A phase of lines goes in runs of its fair share (chunks / cap), so that a member's lines
+    // are adjacent and the phase has about cap runs, each ending at a neighbour's lines. X59:
+    // neighbouring columns of a real plane share cache lines in most rows (a row of n/2 + 1
+    // complex values is an odd multiple of 16 bytes long), so every boundary between two
+    // members' runs bounces lines between their caches; guided runs left a boundary at nearly
+    // every block.
+    const auto cap = static_cast<std::uint32_t>(std::max(share.cap, 1));
+    const auto runs = static_cast<std::uint32_t>(std::max(job_.plan.profile.claim_divisor, 2)) * cap;
     for (;;) {
       // While this member holds a claim the execution cannot end, so no word of this task
       // can carry a later tag before the loop leaves.
-      const claimed c =
-          claim(word(layout_.claim(slot)), total, [&phases, total, runs, p](std::uint32_t left) {
-            const std::uint32_t at = total - left;
-            std::size_t q = p;
-            while (at >= phases[q].first + phases[q].chunks) {
-              ++q;
-            }
-            const auto end = static_cast<std::uint32_t>(phases[q].first + phases[q].chunks);
-            return std::max((end - at) / runs, 1U);
-          });
+      const claimed c = claim(word(layout_.claim(slot)), total,
+                              [&phases, total, runs, cap, p](std::uint32_t left) {
+                                const std::uint32_t at = total - left;
+                                std::size_t q = p;
+                                while (at >= phases[q].first + phases[q].chunks) {
+                                  ++q;
+                                }
+                                const graph_phase& ph = phases[q];
+                                const auto end = static_cast<std::uint32_t>(ph.first + ph.chunks);
+                                if (ph.nest != 0) {
+                                  return std::min(end - at, std::max(ph.chunks / cap, 1U));
+                                }
+                                return std::max((end - at) / runs, 1U);
+                              });
       if (c.count == 0) {
         if (c.stale) {
           return false;
