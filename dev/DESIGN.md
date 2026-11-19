@@ -508,7 +508,9 @@ kernels.
 
 **`fftn/kokkos.hpp`** (optional, header-only, compiled in the user's translation units
 against the user's Kokkos; `docs/kokkos.md` lists every difference from Kokkos-FFT). It
-has two levels:
+has three levels. **The threaded parts (`executor`, `team_of`, the threaded `view_plan`, task
+3.5) are provisional**: written without the maintainer's review of their shape, flagged in
+the header and the docs until it happens.
 
 - *View-based construction returns ordinary core types:* `shape_of(in, out, dir, axes)` an
   `fftn::shape`, `make_plan` an `fftn::plan` (in place when the Views share their first
@@ -531,21 +533,29 @@ has two levels:
   `execute`). It is not named `plan` because `fftn::plan` and `fftn::kokkos::plan` would
   be ambiguous under using-directives for both namespaces. Its constructors are `explicit`,
   and it is neither copyable nor movable, as Kokkos-FFT's. It owns its workspace, made at
-  construction and lent to each execution through a borrowing `workspace`, so one plan runs
-  one execution at a time: an atomic busy flag (its one `mutable` member) makes a second
-  concurrent execution throw `std::logic_error` rather than compute wrong results;
-  concurrent executions use `make_plan` and a workspace each, until task 3.5's executor
-  brings per-execution contexts. `execute` checks the Views against the plan's extents,
-  strides and placement and throws `std::invalid_argument` naming `in` or `out`; it
-  allocates nothing (the fence's label, a `std::string` as Kokkos requires, is built at
-  construction). It first fences the plan's execution-space instance, so it must not be
-  called inside a Kokkos kernel; the "serial when called inside a kernel" of 13.6 is offered
-  by the `make_plan` route only, for now. Normalisation follows Kokkos-FFT (`backward` by
-  default) as a separate pass after the transform, each part multiplied by the coefficient
-  computed in `double` and rounded once to `T` (Kokkos-FFT multiplies real `float` outputs
-  in `double`); the core stays unnormalised, and `options::scale` can later fuse it into
-  the last pass. The direction of real plans is checked as in Kokkos-FFT (r2c forward, c2r
-  backward).
+  construction for the width of the plan's instance, so one plan runs one execution at a
+  time: an atomic busy flag makes a second concurrent execution throw `std::logic_error`
+  rather than compute wrong results; concurrent executions use `make_plan` and a workspace
+  each. `execute` checks the Views against the plan's extents, strides and placement and
+  throws `std::invalid_argument` naming `in` or `out`; it allocates nothing itself (the
+  labels Kokkos takes as `std::string` are built at construction). It fences the instance
+  and then executes through the plan's `executor` (13.6), inside a Kokkos Tools region. A plan
+  on `Kokkos::Serial` has neither fence nor region: its kernels finish before their dispatch
+  returns, and it cannot tell whether the caller is inside one, where a fence, or the global
+  fence Kokkos makes before a region callback, would wait for the caller's own kernel. Inside a
+  kernel of OpenMP or Threads (detected whichever space the plan runs on) it neither fences,
+  dispatches nor opens a region, and runs serially. Exceptions from `execute` end the program
+  there. A plan on a threaded back end must not be called from a Serial kernel. Normalisation follows Kokkos-FFT
+  (`backward` by default) as a separate pass after the transform, each part multiplied by the
+  coefficient computed in `double` and rounded once to `T` (Kokkos-FFT multiplies real
+  `float` outputs in `double`), shared among the instance's threads from 2^16 output
+  elements, cut along the output's longest dimension (T3); the core stays unnormalised, and
+  `options::scale` can later fuse it into the last pass. The direction of real plans is
+  checked as in Kokkos-FFT (r2c forward, c2r backward).
+- *`executor<ExecutionSpace>` and `team_of(member)`* put core plans on Kokkos' threads (13.6):
+  the executor overload of `plan::execute` from outside a kernel, the team overload from the
+  members of a `TeamPolicy` kernel. Either is serial inside a kernel, the executor by
+  reporting one lane.
 - *`fftn::kokkos::compat`* spells all of this as Kokkos-FFT does (`Plan`, `Direction`,
   `Normalization`, `axis_type`, `shape_type`, `execute`), so a call site changes its include
   and namespace only. It is a deliberate exception to the naming rule of AGENTS.md section
@@ -557,14 +567,13 @@ has two levels:
   Kokkos-FFT later. CTAD through the `Plan` alias needs Clang 19 or GCC; the class itself
   deduces everywhere.
 - Host accessibility is a property of the types and is checked at compile time
-  (`static_assert`), so a device View does not compile against the adapter; until the
-  header compiles out or forwards under CUDA and HIP builds (13.6), an application selects
-  the provider per build. Errors are `std::invalid_argument` with the prefix
+  (`static_assert`), so a device View does not compile against the adapter, and plans and
+  executors accept only `Kokkos::Serial`, `Kokkos::OpenMP` and `Kokkos::Threads` (HPX would pass
+  the host checks and then fence inside its own kernels; Threads needs Kokkos 5.2.1, 13.6). An
+  application that builds for devices selects the provider per build. Errors are `std::invalid_argument` with the prefix
   `fftn::kokkos:` and the argument's name (Kokkos-FFT throws `std::runtime_error`).
-- *Not provided yet:* the executor and threaded execution (task 3.5), and with them the
-  transforms as named Kokkos Tools regions (only the fence is named now); the one-shot
-  functions (`KokkosFFT::fft` and the rest, which would make a plan per call and belong
-  with the convenience layer of 5.4); `DynPlan`.
+- *Not provided yet:* the one-shot functions (`KokkosFFT::fft` and the rest, which would make
+  a plan per call and belong with the convenience layer of 5.4); `DynPlan`.
 
 **`fftn/omp.hpp`** (optional, header-only, compiled in the user's translation units against
 the user's OpenMP runtime, so the process has one OpenMP runtime; the library links none):
@@ -1341,6 +1350,10 @@ to 8, on `avx2`:
   from L2/4 to 64 L2 with tops 16, 20 and 10, double only (32768–2^22 and 46080, 100000:
   0.44–0.82 of the grids' time, 0.688 over the rows it changes; 2^21 tied). Sapphire and
   Emerald Rapids share the branch, unmeasured.
+- x86-64 with a private L2 between 1 and 2 MiB (X58, an Ice Lake VM, whose large L3 per CPU
+  otherwise puts it with the EPYC): the same fields, from L2/4 to 64 L2 (0.596 of the time over
+  the rows it changes; long rows ÷ FFTW 1.13–1.53 → 0.64–0.79). Zen 4 and Zen 5 (exactly 1 MiB)
+  stay out, unmeasured.
 Not built: three or more top factors, edge factors; float on the Apple and
 EPYC profiles (X51's Apple float screen: mixed rows 0.69–0.84, but 24576 and 196608 did
 not gain). In place, the blocks live in the workspace block: n complex elements per team
@@ -1821,7 +1834,7 @@ prices them) a cost per unit and a cost per tail, and a cost per pass. For a lin
    measured more than 2 % slower than planner v0 or, since the planner refresh, more than
    2 % behind the measured winner in every case; 36 and 13 on AVX2, double's with radix
    20, 32 and 64 passes the costs cannot price: experiments X30 and X38). The rows of a
-   one-axis c2c plan of a length in the profile's `fit_overrides` (`avx2` double: 768 = 12 · 64,
+   one-axis c2c plan of contiguous rows of a length in the profile's `fit_overrides` (`avx2` double: 768 = 12 · 64,
    1024 = 16 · 64; X57) instead take that sequence while the plan's rows and output (rows alone
    in place) fit `machine_profile::fit_row_bytes`, three quarters of the L3 where a private L2
    has a large L3 behind it, and rule 4's sequence beyond; rows of planes and volumes keep
@@ -2234,7 +2247,7 @@ first) and the topology says the numbers are not the OS's.
 | Serial code | `plan.execute(in, out)` | no threads anywhere |
 | Inside `#pragma omp parallel` | every thread calls `execute(in, out, fftn::omp::this_team(), ws)` | no fork/join; pointwise work and the transform share one region |
 | OpenMP, FFTN opens the region | `execute(in, out, fftn::omp::executor{}, ws)` | header-only: compiled against the caller's runtime; inline when one lane has all the work |
-| Kokkos | `fftn::kokkos::executor(exec_space_instance)` and View-based plans | one `parallel_for` per transform on the caller's instance; correct on Serial, OpenMP and Threads back ends; serial when called inside a kernel |
+| Kokkos | `fftn::kokkos::executor(exec_space_instance)`, View-based plans and `view_plan`; `team_of(member)` inside a `TeamPolicy` kernel | one `parallel_for` per transform on the caller's instance; correct on Serial, OpenMP and Threads back ends; serial when called inside a kernel |
 | Custom pool | any type with `concurrency()` and `bulk(n, fn, arg)` (optionally `group_size()`), or a C pool's `fftn_executor` | the only requirement is "run n callables and return when done" |
 | No runtime at hand | `fftn::thread_pool` | explicit, opt-in, `std::thread` based, grouped by cache topology; never created implicitly |
 
@@ -2284,12 +2297,29 @@ As built (task 3.3):
   0 (one group) when the team fits in one group or nothing is known. The pool and both
   OpenMP adapters use it.
 
+- **`fftn::kokkos::executor`** (task 3.5, provisional) holds the instance, its
+  `concurrency()` and the grouping. `bulk` is one `Kokkos::parallel_for` of a static
+  `RangePolicy` with chunks of one, then a fence of the instance: Kokkos lets a
+  `parallel_for` return before its work is done, though the host back ends tested do not.
+  The label `fftn::bulk` must fit the small-string buffer, because `parallel_for` copies its
+  label into a `std::string` on every call. Kokkos 5 has no query for "inside a kernel", so
+  the adapter asks every enabled threaded back end: on OpenMP `omp_get_level() > 0` (not
+  `omp_in_parallel()`: a `parallel_for` also aborts inside an inactive region), on Threads
+  whether this is the thread that may dispatch and whether its pool entry is active (`Impl`
+  names, so `Kokkos::Threads` is accepted only with Kokkos 5.2.1, checked at compile time).
+  There `concurrency()` is 1 and `bulk` runs on the caller, so an execution inside a kernel is
+  serial. A `Kokkos::Serial` kernel cannot be detected: on Serial nothing fences, dispatches or
+  opens a region, and a plan or executor on a threaded back end has the precondition of not
+  being used from one. **`team_of(member)`** is
+  `{team_rank, team_size, cache_group_size(team_size)}`. T3 measured what these cost.
+
 What "natural in Kokkos" means concretely: plans accept host `View`s of any layout
 through their extents and strides; the executor takes the caller's execution-space
-instance and its concurrency; transforms appear as named regions to Kokkos Tools; a plan
-class matching Kokkos-FFT's `Plan` interface makes adoption a type change; device
-back ends are untouched (the header compiles out or forwards under CUDA and HIP builds).
-Kokkos is never a dependency of the core.
+instance and its concurrency; `view_plan`'s executions appear as a Kokkos Tools region, their
+dispatches as `parallel_for`s named `fftn::bulk` (a plan on Serial opens no region); a plan class matching Kokkos-FFT's `Plan`
+interface makes adoption a type change; the adapter is for the host only (with a device space
+or View it does not compile, so an application building for devices selects the provider per
+build). Kokkos is never a dependency of the core.
 
 ### 13.7 Testing threads
 
@@ -2331,6 +2361,15 @@ ThreadSanitizer: the OpenMP runtimes here are not instrumented, and TSan then re
 join of every region as a race (checked with Homebrew LLVM 23's libomp); an Archer-enabled
 libomp would lift that. The runtime matrix is libomp (Clang) on macOS and Linux and libgomp
 (GCC) on Linux.
+
+The Kokkos adapter (`tests/kokkos`, task 3.5) runs on `Kokkos::Serial` and on the one threaded
+back end a configuration builds (`FFTN_KOKKOS_BACKEND`: Threads by default, OpenMP in CI's
+GCC 16 job), at four threads and again on a pool of one: every kind, bitwise against serial;
+one `parallel_for` per transform (counted through a Kokkos Tools callback), none for an inline
+job; allocations no more than Kokkos' own per dispatch; kernels calling the executor and
+`view_plan`; `team_of` with both completions and with several teams; host threads other than
+the one that started Kokkos. The Threads back end runs under ThreadSanitizer (Clang's tsan
+stage); OpenMP cannot, as above.
 
 ---
 
@@ -3113,7 +3152,10 @@ to change before a release.
 | 2026-11-18 | A measured planner rule extends by its cache key to unmeasured machines of the same instruction set target and register file, never across an instruction set, `avx2`/`avx512` or register count; every phase exit screens each family a rule reaches (AGENTS section 6) | Maintainer's decision. Granite Rapids lost 1.15–1.65 × FFTW on plans that kept it out of the Xeon's rule (X48) and gained 0.688 with it (X55); the moves that lost crossed an ISA (Axion with Granite Rapids' rules, 1.28; X35) or a register count (tops of 16 on `avx2`, X46) |
 | 2026-11-18 | Last bits are not a goal: the bitwise guarantees of section 15.5 stay while they cost nothing measurable; a change that would break one needs a real measured gain and narrows the published guarantee with it; unpublished bit properties are not protected | Maintainer's decision ("rounding in other parts of calculations matter more"). First use: X53's batch leaves for 8, 12 and 25 (x86) and 20 and 32 (NEON float), 0.43–0.56 of the time in screens, give a batch's rows other last bits than a plan of one row; the published position guarantee holds (one leftover row runs the same leaf with the row in every lane, two or more a padded group) |
 | 2026-11-18 | x86-64 with a private L2 of 2 MiB or more (Granite Rapids) takes the depth-first chain from L2/4 to 64 L2 in double, with the Xeon 6240's tops (section 8.5) | X55 on a Granite Rapids VM: 0.688 of the grids' time over the 14 rows it changes (46080 0.44, 65536 0.52, 131072–262144 0.63, 2^22 0.69), none slower, tracking tier 0.940; ÷ FFTW 1.15–1.65 → 0.70–0.83 on X48's failing long rows |
+| 2026-11-19 | x86-64 with a private L2 between 1 and 2 MiB takes the depth-first chain; a private L2 of 2 MiB or more does not take the batch leaf of 12 (`machine_profile::batch_leaf_12`) | X58, from X56's screen of the families the rules reach: Ice Lake VM 0.596 over the changed rows, tracking 0.929; 12 × 64 and 12 × 1024 without the leaf 0.867 on Granite Rapids and 0.892 on Sapphire Rapids, tracking 0.998 and 1.000 |
 | 2026-11-18 | A Bluestein stage of one copy runs its convolution as two depth-first chains where a row of M would be one, and on the Xeon profile beyond, up to 32 MiB, the longest measured (`depth_convolution_max_bytes`); the workspace block holds the chains' blocks, scratch a the forward output; the chirp passes are fused into the forward first pass and the backward last top pass (sections 8.5, 11.2; experiment X50) | Xeon 6240: 8179–999983 0.56–0.73 of `main`'s time (131071 0.61, 999983 0.71), FFTN ÷ MKL 131071 1.34 → 0.84, 999983 1.44 → 1.05, ÷ FFTW 0.65–0.83; M5 Max 4813–5119 0.86; the EPYC unchanged; X36b had judged a grid convolution to need a new slot, the block serves |
+| 2026-11-19 | Windows CI installs its own LLVM (the release archive, pinned by URL and SHA-256, 23.1.5, the series the Linux jobs use) instead of using the runner image's | The x64 image moved to Visual Studio 18, whose standard library refuses any Clang older than 22 (STL1000), while its LLVM stayed at 20.1.8 (CI run 44409722437). The images update Visual Studio and LLVM separately, so this would recur; `_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH` would test an unsupported pair |
+| 2026-11-19 | Provisional, for the maintainer's review: `fftn::kokkos::executor` (one `parallel_for` per transform on the caller's instance, then a fence), `team_of(member)`, and `view_plan` executing through the executor, serial inside a kernel, sharing large scaling passes among threads; Kokkos' tests build one threaded back end per configuration (`FFTN_KOKKOS_BACKEND`, Threads by default) | Task 3.5; experiment T3 for the costs; the adapter detects kernels per back end because Kokkos 5 removed `in_parallel` |
 
 ---
 
