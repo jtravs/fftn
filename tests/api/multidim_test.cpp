@@ -817,10 +817,9 @@ void check_batched_complex(checker& check, const batched_case& k,
     }
     const auto tol = tolerance_for<T>(k.axes, false);
     const std::string what = describe(k, "c2c");
-    const auto y =
-        run_at<c, c>(batched_shape<c, c>(k.axes, k.counts, in, out, dir), false,
-                     offsets_of(k.axes, k.counts, in), offsets_of(k.axes, k.counts, out), x,
-                     {.in_offset = 8, .out_offset = 24}, what, target);
+    const auto y = run_at<c, c>(batched_shape<c, c>(k.axes, k.counts, in, out, dir), false,
+                                offsets_of(k.axes, k.counts, in), offsets_of(k.axes, k.counts, out),
+                                x, {.in_offset = 8, .out_offset = 24}, what, target);
     check.within<T>(y, want, tol, what);
     const std::string what_in_place = describe(k, "c2c in place");
     const auto offsets = offsets_of(k.axes, k.counts, shared);
@@ -845,8 +844,7 @@ void check_batched_complex(checker& check, const batched_case& k,
 // nested the other way round and reversed) and in place (FFTW's padded layout, the halved axis
 // innermost).
 template <class T>
-void check_batched_real(checker& check, const batched_case& k,
-                        fftn::isa target = fftn::isa::best) {
+void check_batched_real(checker& check, const batched_case& k, fftn::isa target = fftn::isa::best) {
   using c = std::complex<T>;
   const std::size_t r = k.axes.size();
   const std::size_t dims = r + k.counts.size();
@@ -1056,8 +1054,7 @@ TYPED_TEST(MultiDim, EveryAxisSelectionReal) {
 // ---- The shape functions for chosen axes of an array (axes_c2c, axes_r2c, axes_c2r).
 
 // One side of the layout a shape states explicitly.
-template <class In, class Out>
-batched_layout layout_of(const fftn::shape<In, Out>& s, bool input) {
+template <class In, class Out> batched_layout layout_of(const fftn::shape<In, Out>& s, bool input) {
   batched_layout l;
   for (const fftn::axis& a : s.axes) {
     l.stride.push_back(input ? a.in_stride : a.out_stride);
@@ -1153,7 +1150,8 @@ TYPED_TEST(MultiDim, AxesShapeFunctionComplex) {
           const auto y = run_at<c, c>(s, false, in_offsets, out_offsets, x, {}, "axes_c2c");
           check.within<T>(y, want, tolerance_for<T>(extents, false), describe(extents, "axes_c2c"));
           if (!strided) {
-            const auto z = run_at<c, c>(s, true, in_offsets, out_offsets, x, {}, "axes_c2c in place");
+            const auto z =
+                run_at<c, c>(s, true, in_offsets, out_offsets, x, {}, "axes_c2c in place");
             check.within<T>(z, want, tolerance_for<T>(extents, false),
                             describe(extents, "axes_c2c in place"));
           }
@@ -1199,13 +1197,14 @@ TYPED_TEST(MultiDim, AxesShapeFunctionReal) {
         const std::vector<T> x = real_parts<T>(data.reals);
         const std::vector<c> spectrum(data.spectrum.begin(), data.spectrum.end());
         const std::string name = in_place ? "axes_r2c in place" : "axes_r2c";
-        const auto y = run_at<T, c>(forward, in_place, offsets_of(extents, counts, layout_of(forward, true)),
-                                    offsets_of(cplx, counts, layout_of(forward, false)), x, {}, name);
+        const auto y =
+            run_at<T, c>(forward, in_place, offsets_of(extents, counts, layout_of(forward, true)),
+                         offsets_of(cplx, counts, layout_of(forward, false)), x, {}, name);
         check.within<T>(y, data.spectrum, tolerance_for<T>(extents, false),
                         describe(extents, name.c_str()));
-        const auto z =
-            run_at<c, T>(backward, in_place, offsets_of(cplx, counts, layout_of(backward, true)),
-                         offsets_of(extents, counts, layout_of(backward, false)), spectrum, {}, name);
+        const auto z = run_at<c, T>(
+            backward, in_place, offsets_of(cplx, counts, layout_of(backward, true)),
+            offsets_of(extents, counts, layout_of(backward, false)), spectrum, {}, name);
         check.within<T>(as_complex(z), scaled(data.reals, points), tolerance_for<T>(extents, true),
                         describe(extents, name.c_str()));
       }

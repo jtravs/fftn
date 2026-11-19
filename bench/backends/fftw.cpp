@@ -262,10 +262,12 @@ std::int32_t fbench_create(const fbench_case* c, void* in, void* out, void** pla
                                c->sign, flags);
     } else if (c->kind == fbench_r2c) {
       p = fftw_plan_guru64_dft_r2c(c->rank, axes.data(), loop_rank, loops.data(),
-                                   static_cast<double*>(in), static_cast<fftw_complex*>(out), flags);
+                                   static_cast<double*>(in), static_cast<fftw_complex*>(out),
+                                   flags);
     } else {
       p = fftw_plan_guru64_dft_c2r(c->rank, axes.data(), loop_rank, loops.data(),
-                                   static_cast<fftw_complex*>(in), static_cast<double*>(out), flags);
+                                   static_cast<fftw_complex*>(in), static_cast<double*>(out),
+                                   flags);
     }
   } else if (c->kind == fbench_c2c) {
     p = fftw_plan_many_dft(c->rank, n.data(), batch, static_cast<fftw_complex*>(in),

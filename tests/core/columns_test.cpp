@@ -546,7 +546,8 @@ template <class T> void adjacent_transforms(fftn::isa target) {
     }
     // Any split of the transforms into ranges gives the same bits (DESIGN.md 15.5): every
     // transform alone, then runs of 2, 3 and 5.
-    for (const std::size_t run_of : {std::size_t{1}, std::size_t{2}, std::size_t{3}, std::size_t{5}}) {
+    for (const std::size_t run_of :
+         {std::size_t{1}, std::size_t{2}, std::size_t{3}, std::size_t{5}}) {
       std::vector<std::byte> x = in;
       std::vector<std::byte> y(in.size(), std::byte{0xa5});
       for (std::size_t first = 0; first < transforms; first += run_of) {

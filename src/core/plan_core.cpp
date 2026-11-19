@@ -260,8 +260,8 @@ void order_axes(const shape_view& s, side& in, side& out, plan_core& c) {
     const bool unit = c.lengths[d] == 1;
     return std::tuple(unit ? 1 : 0, magnitude(out.stride[d]), magnitude(in.stride[d]));
   };
-  const auto end = order.begin() + static_cast<std::ptrdiff_t>(
-                                       s.kind == transform_kind::c2c ? r : r - 1);
+  const auto end =
+      order.begin() + static_cast<std::ptrdiff_t>(s.kind == transform_kind::c2c ? r : r - 1);
   std::stable_sort(order.begin(), end,
                    [&](std::size_t a, std::size_t b) { return key(a) > key(b); });
   if (std::ranges::is_sorted(order)) {
@@ -1115,11 +1115,11 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
                                           chain, kernels, c.isa_target != target::avx512);
     scratch = std::max(scratch, add_column_phase<T>(p, chain, d, extent, src, dst, dir, edges,
                                                     block, kernels.complex_lanes, rad));
-    c.axis_notes.push_back(
-        "axis " + std::to_string(listed(axis == SIZE_MAX ? d : axis)) +
-        " (n = " + std::to_string(n) +
-        "): " + what + (what[0] != '\0' ? ", " : "") + "lanes over blocks of " +
-        std::to_string(block) + " adjacent columns, radices " + chain.radix_text(n, rad));
+    c.axis_notes.push_back("axis " + std::to_string(listed(axis == SIZE_MAX ? d : axis)) +
+                           " (n = " + std::to_string(n) + "): " + what +
+                           (what[0] != '\0' ? ", " : "") + "lanes over blocks of " +
+                           std::to_string(block) + " adjacent columns, radices " +
+                           chain.radix_text(n, rad));
     c.strategy_note = "chain for the last axis' rows, the lanes over blocks of adjacent columns "
                       "for the others; each transform finished before the next";
     return true;
@@ -1166,9 +1166,8 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       const auto two = [&](const side& v, slot where) {
         return view{.where = where, .stride = {v.stride[d], 1}, .element_bytes = complex_bytes};
       };
-      const std::size_t b =
-          column_block<T>(0, extent, two(in, slot::in), two(out, slot::out), line_edges(), alone,
-                          chain, kernels.complex_lanes);
+      const std::size_t b = column_block<T>(0, extent, two(in, slot::in), two(out, slot::out),
+                                            line_edges(), alone, chain, kernels.complex_lanes);
       if (b == 0) {
         return 0;
       }
@@ -1273,10 +1272,9 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
         const view& src = i == 0 ? in_view : out_view;
         std::vector<stage> st;
         scratch = std::max(
-            scratch,
-            chain.c2c_lanes(c.lengths[d], sign, at(src, d), 1, at(out_view, d), 1,
-                            c2c_edges(opts, settings, i == 0, i + 1 == active.size()), block, st,
-                            true, rad[d]));
+            scratch, chain.c2c_lanes(c.lengths[d], sign, at(src, d), 1, at(out_view, d), 1,
+                                     c2c_edges(opts, settings, i == 0, i + 1 == active.size()),
+                                     block, st, true, rad[d]));
         add_phase(q, d, in.extent, src, out_view, std::move(st));
       }
     };
@@ -1289,8 +1287,8 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     c.built = strategy_choice::lanes;
     for (const std::size_t d : active) {
       c.axis_notes.push_back("axis " + std::to_string(listed(d)) +
-                             " (n = " + std::to_string(c.lengths[d]) +
-                             "): lanes, radices " + chain.radix_text(c.lengths[d], rad[d]));
+                             " (n = " + std::to_string(c.lengths[d]) + "): lanes, radices " +
+                             chain.radix_text(c.lengths[d], rad[d]));
     }
     c.strategy_note = "lanes over blocks of " + std::to_string(adjacent) +
                       " adjacent transforms, one element apart, every axis a lanes phase, " +

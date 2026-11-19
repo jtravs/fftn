@@ -27,8 +27,7 @@ double planes_of_a_volume() {
   const std::array<fftn::axis, 3> array{{{.n = ny}, {.n = nx}, {.n = nw}}};
   const std::array<std::size_t, 2> yx{0, 1};
   const auto points = static_cast<double>(ny * nx);
-  const fftn::c2c_plan<double> forward(
-      fftn::axes_c2c<double>(array, yx, fftn::direction::forward));
+  const fftn::c2c_plan<double> forward(fftn::axes_c2c<double>(array, yx, fftn::direction::forward));
   const fftn::c2c_plan<double> backward(
       fftn::axes_c2c<double>(array, yx, fftn::direction::backward), {.scale = 1.0 / points});
   fftn::workspace ws(std::max(forward.workspace_bytes(), backward.workspace_bytes()));

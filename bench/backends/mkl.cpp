@@ -153,10 +153,10 @@ std::int32_t fbench_create(const fbench_case* c, void* /*in*/, void* /*out*/, vo
   r->outer = c->outer;
   {
     // Bytes between blocks: complex elements on the complex sides, reals on the real one.
-    const auto in_element = static_cast<std::ptrdiff_t>(c->kind == fbench_r2c ? sizeof(double)
-                                                                              : 2 * sizeof(double));
-    const auto out_element = static_cast<std::ptrdiff_t>(
-        c->kind == fbench_c2r ? sizeof(double) : 2 * sizeof(double));
+    const auto in_element =
+        static_cast<std::ptrdiff_t>(c->kind == fbench_r2c ? sizeof(double) : 2 * sizeof(double));
+    const auto out_element =
+        static_cast<std::ptrdiff_t>(c->kind == fbench_c2r ? sizeof(double) : 2 * sizeof(double));
     r->in_step = static_cast<std::ptrdiff_t>(c->outer_in_dist) * in_element;
     r->out_step = static_cast<std::ptrdiff_t>(c->outer_out_dist) * out_element;
   }

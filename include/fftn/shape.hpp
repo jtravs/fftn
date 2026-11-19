@@ -376,12 +376,11 @@ axes_c2c(std::span<const axis> array, std::span<const std::size_t> axes, directi
 ///
 /// Exceptions and guarantees: as for axes_c2c.
 template <class T>
-[[nodiscard]] shape<T, std::complex<T>> axes_r2c(std::span<const axis> array,
-                                                 std::span<const std::size_t> axes,
-                                                 bool in_place = false) {
+[[nodiscard]] shape<T, std::complex<T>>
+axes_r2c(std::span<const axis> array, std::span<const std::size_t> axes, bool in_place = false) {
   const std::size_t n = axes.empty() || axes.back() >= array.size() ? 0 : array[axes.back()].n;
-  return detail::shape_along_axes<T, std::complex<T>>(
-      array, axes, direction::forward, in_place ? 2 * (n / 2 + 1) : n, n / 2 + 1);
+  return detail::shape_along_axes<T, std::complex<T>>(array, axes, direction::forward,
+                                                      in_place ? 2 * (n / 2 + 1) : n, n / 2 + 1);
 }
 
 /// The complex-to-real transform along some dimensions of a strided array, the inverse layout
@@ -390,12 +389,11 @@ template <class T>
 ///
 /// Exceptions and guarantees: as for axes_c2c.
 template <class T>
-[[nodiscard]] shape<std::complex<T>, T> axes_c2r(std::span<const axis> array,
-                                                 std::span<const std::size_t> axes,
-                                                 bool in_place = false) {
+[[nodiscard]] shape<std::complex<T>, T>
+axes_c2r(std::span<const axis> array, std::span<const std::size_t> axes, bool in_place = false) {
   const std::size_t n = axes.empty() || axes.back() >= array.size() ? 0 : array[axes.back()].n;
-  return detail::shape_along_axes<std::complex<T>, T>(
-      array, axes, direction::backward, n / 2 + 1, in_place ? 2 * (n / 2 + 1) : n);
+  return detail::shape_along_axes<std::complex<T>, T>(array, axes, direction::backward, n / 2 + 1,
+                                                      in_place ? 2 * (n / 2 + 1) : n);
 }
 
 } // namespace fftn::inline v0
