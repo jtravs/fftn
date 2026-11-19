@@ -168,6 +168,19 @@ void add_cases(std::vector<team_case>& out, const fftn::detail::build_settings& 
   };
   out.push_back(
       make_case("c2c_strided_300x4" + suffix, strided, 1200, 1200, false, settings, target));
+  // A plane's axes strided, its transforms one element apart: lanes over adjacent transforms
+  // (task 4.3).
+  const fftn::shape<c, c> interleaved{
+      .dir = bwd,
+      .axes = {{.n = 24, .in_stride = 20 * 11, .out_stride = 20 * 11},
+               {.n = 20, .in_stride = 11, .out_stride = 11}},
+      .batches = {{.count = 2, .in_dist = 24 * 20 * 11, .out_dist = 24 * 20 * 11},
+                  {.count = 11, .in_dist = 1, .out_dist = 1}},
+  };
+  out.push_back(make_case("c2c_interleaved_24x20x11x2" + suffix, interleaved, 2 * 24 * 20 * 11,
+                          2 * 24 * 20 * 11, false, settings, target));
+  out.push_back(make_case("c2c_interleaved_inplace_24x20x11x2" + suffix, interleaved,
+                          2 * 24 * 20 * 11, 2 * 24 * 20 * 11, true, settings, target));
   // In place: real kinds in FFTW's padded rows; a prime row, whose one pass goes through
   // scratch and a copy when source and destination are the same memory.
   out.push_back(make_case("r2c_inplace_1000x3" + suffix, fftn::rows_r2c<T>(1000, 3), 3 * 1002,

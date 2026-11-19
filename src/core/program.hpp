@@ -118,14 +118,16 @@ struct program {
   std::size_t batch_loops = 0; // the leading records that are the batch loops
   std::size_t transforms = 1;  // product of the batch loops' counts
   // The lanes strategy (DESIGN.md 8.5, strategies/lanes.cpp): when `lanes` is not 0 the
-  // body (the stages after the batch loops) runs `lanes` consecutive transforms of the
+  // body (the records after the batch loops) runs `lanes` consecutive transforms of the
   // innermost batch loop at once, one per vector lane, reading them through that loop's
   // steps; the transforms left over (fewer than `lanes` in a run of the innermost loop) run
-  // through `lane_tail`, the same stages for blocks of `lane_unit` (C) transforms, the last
-  // one padded. The driver sets pass_args::rows to each block's transforms (driver.cpp).
+  // through `lane_tail`, the same body for blocks of `lane_unit` (C) transforms, the last
+  // one padded. The driver sets pass_args::rows to each block's transforms (driver.cpp). The
+  // body may hold loops: the lines of the axes of a multi-axis transform whose transforms
+  // are adjacent (plan_core.cpp; their steps and body_end are within records and lane_tail).
   std::size_t lanes = 0;
   std::size_t lane_unit = 0;
-  std::vector<stage> lane_tail;
+  std::vector<record> lane_tail;
   // The body (the records after the batch loops) is at most flat_stages_max stages, none
   // with moving twiddles, and no loop: the driver then prepares each stage's arguments once
   // per call and only moves the slots per transform (driver.cpp, run_flat). Set by

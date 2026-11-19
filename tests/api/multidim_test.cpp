@@ -806,6 +806,7 @@ void check_batched_complex(checker& check, const batched_case& k,
   const batched_layout in = nest(k.axes, k.counts, k.order, 2, 1, alternating(dims, 1));
   const batched_layout out = nest(k.axes, k.counts, reversed, 1, 3, std::vector<int>(dims, -1));
   const batched_layout shared = nest(k.axes, k.counts, k.order, 1, 2, alternating(dims, -1));
+  const batched_layout tight = nest(k.axes, k.counts, k.order, 1, 0, std::vector<int>(dims, 1));
   for (const fftn::direction dir : {fftn::direction::forward, fftn::direction::backward}) {
     std::vector<cd> want;
     for (std::size_t t = 0; t < transforms; ++t) {
@@ -828,6 +829,15 @@ void check_batched_complex(checker& check, const batched_case& k,
         {.in_offset = 16, .out_offset = 16, .guard = fftn::test::guard_side::below}, what_in_place,
         target);
     check.within<T>(z, want, tol, what_in_place);
+    // Tight on both sides, in and out of place: where the innermost dimension is a batch
+    // dimension one element apart, the transforms run as blocks of adjacent lanes.
+    const std::string what_tight = describe(k, "c2c tight");
+    const auto tight_offsets = offsets_of(k.axes, k.counts, tight);
+    for (const bool same : {false, true}) {
+      const auto t = run_at<c, c>(batched_shape<c, c>(k.axes, k.counts, tight, tight, dir), same,
+                                  tight_offsets, tight_offsets, x, {}, what_tight, target);
+      check.within<T>(t, want, tol, what_tight);
+    }
   }
 }
 

@@ -93,6 +93,15 @@ TYPED_TEST(Contracts, ExecuteNeverAllocates) {
       .batches = {{.count = 2}, {.count = 3}, {.count = 1}, {.count = 2}},
   };
   expect_no_allocation(four_batches, 12 * 10, 12 * 6);
+  // Interleaved transforms (the strided axes of an array, task 4.3): lanes over adjacent
+  // transforms, the batch's innermost dimension one element apart.
+  const fftn::shape<c, c> interleaved{
+      .axes = {{.n = 16, .in_stride = 8 * 10, .out_stride = 8 * 10},
+               {.n = 8, .in_stride = 10, .out_stride = 10}},
+      .batches = {{.count = 10, .in_dist = 1, .out_dist = 1}},
+  };
+  expect_no_allocation(interleaved, 16 * 8 * 10, 16 * 8 * 10);
+  expect_no_allocation(interleaved, 16 * 8 * 10, 16 * 8 * 10, true);
 }
 
 // ---- Any alignment: the same bits at every offset of the arrays.

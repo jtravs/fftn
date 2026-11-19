@@ -38,6 +38,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <iterator>
 #include <limits>
 #include <memory>
 #include <numeric>
@@ -1133,6 +1134,48 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   const std::size_t lanes =
       forced_batch ? 0
                    : lanes_block<T>(s, in, out, settings, profile, chain, kernels.complex_lanes);
+  // The axes with more than one point, in the order they run (`order_axes`: the last first).
+  std::vector<std::size_t> active;
+  for (std::size_t i = r; i > 0; --i) {
+    if (c.lengths[i - 1] > 1) {
+      active.push_back(i - 1);
+    }
+  }
+  // Blocks of adjacent transforms (add_adjacent_transforms): the innermost batch dimension's
+  // transforms one element apart on both sides, every axis strided. Each axis's column_block
+  // for columns of its length, the transforms being the columns; the narrowest of them. The
+  // team program takes these blocks too: the one-thread rule, so that the bits agree.
+  const std::size_t adjacent = [&]() -> std::size_t {
+    if (lanes != 0 || s.kind != transform_kind::c2c || s.batches.empty() || active.empty() ||
+        !settings.lanes_columns ||
+        (settings.strategy != strategy_choice::rules &&
+         settings.strategy != strategy_choice::lanes) ||
+        settings.in_factor != nullptr || settings.out_factor != nullptr ||
+        settings.scale_on_input || in.dist.back() != 1 || out.dist.back() != 1 ||
+        s.batches.back().count < 2) {
+      return 0;
+    }
+    build_settings alone = settings;
+    alone.team_program = false;
+    std::size_t block = std::numeric_limits<std::size_t>::max();
+    for (const std::size_t d : active) {
+      if (magnitude(in.stride[d]) == 1 || magnitude(out.stride[d]) == 1) {
+        return 0;
+      }
+      const std::vector<std::size_t> extent{c.lengths[d], s.batches.back().count};
+      const auto two = [&](const side& v, slot where) {
+        return view{.where = where, .stride = {v.stride[d], 1}, .element_bytes = complex_bytes};
+      };
+      const std::size_t b =
+          column_block<T>(0, extent, two(in, slot::in), two(out, slot::out), line_edges(), alone,
+                          chain, kernels.complex_lanes);
+      if (b == 0) {
+        return 0;
+      }
+      block = std::min(block, b);
+    }
+    return block;
+  }();
   grid_split grid_plan = s.kind == transform_kind::c2c && r == 1
                              ? plan_grid<T>(c.lengths[0], in, out, settings, chain,
                                             kernels.complex_lanes, s.kind, c.in_place)
@@ -1202,7 +1245,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     }
     p.lanes = lanes;
     p.lane_unit = unit;
-    p.lane_tail = std::move(tail);
+    p.lane_tail.assign(std::make_move_iterator(tail.begin()), std::make_move_iterator(tail.end()));
     c.built = strategy_choice::lanes;
     const bool real = s.kind != transform_kind::c2c;
     c.axis_notes.push_back("axis 0 (n = " + std::to_string(n) + "): on the lanes' tile, " +
@@ -1213,6 +1256,45 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
                       "blocks of " +
                       std::to_string(unit) +
                       "; each row's own chain on a tile of the block's rows)";
+  } else if (adjacent != 0) {
+    // The lanes strategy over blocks of `adjacent` adjacent transforms (DESIGN.md 9.3, task
+    // 4.3): every axis of the block's transforms runs as a lanes phase, its lines one per
+    // transform of the block, whose C neighbours are one vector access. A body of those phases
+    // for whole blocks and a tail for blocks of C, as for the lanes over rows.
+    const std::size_t unit = kernels.complex_lanes;
+    std::vector<std::vector<std::size_t>> rad(r);
+    for (const std::size_t d : active) {
+      rad[d] = column_radices<T>(c.lengths[d], out.stride[d] * complex_bytes, settings, profile,
+                                 chain, kernels, c.isa_target != target::avx512);
+    }
+    const auto phases = [&](program& q, std::size_t block) {
+      for (std::size_t i = 0; i < active.size(); ++i) {
+        const std::size_t d = active[i];
+        const view& src = i == 0 ? in_view : out_view;
+        std::vector<stage> st;
+        scratch = std::max(
+            scratch,
+            chain.c2c_lanes(c.lengths[d], sign, at(src, d), 1, at(out_view, d), 1,
+                            c2c_edges(opts, settings, i == 0, i + 1 == active.size()), block, st,
+                            true, rad[d]));
+        add_phase(q, d, in.extent, src, out_view, std::move(st));
+      }
+    };
+    phases(p, adjacent);
+    program tail;
+    phases(tail, unit);
+    p.lanes = adjacent;
+    p.lane_unit = unit;
+    p.lane_tail = std::move(tail.records);
+    c.built = strategy_choice::lanes;
+    for (const std::size_t d : active) {
+      c.axis_notes.push_back("axis " + std::to_string(listed(d)) +
+                             " (n = " + std::to_string(c.lengths[d]) +
+                             "): lanes, radices " + chain.radix_text(c.lengths[d], rad[d]));
+    }
+    c.strategy_note = "lanes over blocks of " + std::to_string(adjacent) +
+                      " adjacent transforms, one element apart, every axis a lanes phase, " +
+                      "then blocks of " + std::to_string(unit);
   } else if (real_grid.phases != 0) {
     const std::size_t n = c.lengths[0];
     const bool r2c = s.kind == transform_kind::r2c;
@@ -1846,35 +1928,37 @@ std::string describe(const plan_core& core) {
   }
   o << "workspace: " << core.bytes << " bytes (scratch lines a, b of " << core.scratch_line
     << " complex each; block of " << core.block_elements << " complex)\n";
-  o << "program:\n";
-  std::vector<std::size_t> ends;
-  for (std::size_t i = 0; i < core.prog.records.size(); ++i) {
-    while (!ends.empty() && ends.back() == i) {
-      ends.pop_back();
-    }
-    const std::string indent(2 * (ends.size() + 1), ' ');
-    const record& rec = core.prog.records[i];
-    if (const loop* l = std::get_if<loop>(&rec)) {
-      o << indent << "loop " << (l->kind == loop_kind::batch ? "batch" : "lines") << " x"
-        << l->count << " (steps in bytes: in " << l->step[0] << ", out " << l->step[1] << ", block "
-        << l->step[2] << (l->step[3] != 0 ? ", twiddles " + std::to_string(l->step[3]) : "") << ")";
-      if (l->start != std::array<std::ptrdiff_t, moving_slots>{}) {
-        o << " from (in " << l->start[0] << ", out " << l->start[1] << ", block " << l->start[2]
-          << ")";
+  const auto list = [&o](const std::vector<record>& records) {
+    std::vector<std::size_t> ends;
+    for (std::size_t i = 0; i < records.size(); ++i) {
+      while (!ends.empty() && ends.back() == i) {
+        ends.pop_back();
       }
-      o << "\n";
-      ends.push_back(l->body_end);
-      continue;
+      const std::string indent(2 * (ends.size() + 1), ' ');
+      const record& rec = records[i];
+      if (const loop* l = std::get_if<loop>(&rec)) {
+        o << indent << "loop " << (l->kind == loop_kind::batch ? "batch" : "lines") << " x"
+          << l->count << " (steps in bytes: in " << l->step[0] << ", out " << l->step[1]
+          << ", block " << l->step[2]
+          << (l->step[3] != 0 ? ", twiddles " + std::to_string(l->step[3]) : "") << ")";
+        if (l->start != std::array<std::ptrdiff_t, moving_slots>{}) {
+          o << " from (in " << l->start[0] << ", out " << l->start[1] << ", block " << l->start[2]
+            << ")";
+        }
+        o << "\n";
+        ends.push_back(l->body_end);
+        continue;
+      }
+      const auto& st = std::get<stage>(rec);
+      o << indent << st.name << ": " << slot_name(st.src) << " -> " << slot_name(st.dst) << ", "
+        << st.units << " units in " << st.chunks << (st.chunks == 1 ? " chunk" : " chunks") << "\n";
     }
-    const auto& st = std::get<stage>(rec);
-    o << indent << st.name << ": " << slot_name(st.src) << " -> " << slot_name(st.dst) << ", "
-      << st.units << " units in " << st.chunks << (st.chunks == 1 ? " chunk" : " chunks") << "\n";
-  }
+  };
+  o << "program:\n";
+  list(core.prog.records);
   if (core.prog.lanes != 0) {
     o << "lanes tail (blocks of " << core.prog.lane_unit << " rows, the last padded):\n";
-    for (const stage& st : core.prog.lane_tail) {
-      o << "  " << st.name << ": " << slot_name(st.src) << " -> " << slot_name(st.dst) << "\n";
-    }
+    list(core.prog.lane_tail);
   }
   return o.str();
 }
