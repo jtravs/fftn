@@ -196,10 +196,16 @@ void r2c_post(const pass_args* a, const void* src, void* dst, std::size_t first,
   }
 }
 
+// Where a c2r line holds Re X_h, in reals from X_0: after X_0 .. X_h-1, or in the imaginary
+// place of element 0 when the line is packed (pass_args::packed, experiment X60).
+FFTN_FORCE_INLINE std::ptrdiff_t real_nyquist(const pass_args* a, std::size_t h) {
+  return a->packed ? 1 : at(h, 2);
+}
+
 // Z_0 .. Z_h-1 from X_0 .. X_h in the same line, the mirror of r2c_post: unit 0 is Z_0 and
 // (h even) Z_h/2; unit u >= 1 the bins k = 1 + (u - 1) C .. up to K with their partners.
 // twiddles: as r2c_post's. src may be dst. The scale (Scaled) is for h = 1, where no
-// transform follows. Reads src, dst, n, twiddles, scale.
+// transform follows. Reads src, dst, n, twiddles, scale, packed.
 template <class T, bool Scaled>
 void c2r_pre(const pass_args* a, const void* src, void* dst, std::size_t first, std::size_t last) {
   const T* x = static_cast<const T*>(src);
@@ -211,7 +217,7 @@ void c2r_pre(const pass_args* a, const void* src, void* dst, std::size_t first, 
   std::size_t u = first;
   if (u == 0 && u < last) {
     const T x0 = x[0];
-    const T xh = x[at(h, 2)];
+    const T xh = x[real_nyquist(a, h)];
     if (h % 2 == 0) {
       store_first(z + at(h / 2, 2), scaled<T, Scaled>(pre_middle<T>(bcast(x + at(h / 2, 2))), s));
     }
@@ -407,7 +413,7 @@ FFTN_FORCE_INLINE void c2r_groups(const T* x, T* y, std::size_t h, std::size_t m
 // rows of w_h^((m - 1 - i) k) (the groups m - p), R rows j of w^(1 + i + m j + n/4) (the
 // pairing); roots: broadcast storage, w^(m j + n/4) and w^(m/2 + m j + n/4) for j < R, then
 // w_h^((m/2) k) for k = 1 .. R - 1. src: the h + 1 bins, stride 1; dst: scratch. Units
-// 1 + ceil(pm / C). Reads src, dst, m, twiddles, roots.
+// 1 + ceil(pm / C). Reads src, dst, m, twiddles, roots, packed (src then holds the packed bins).
 template <class T, std::size_t R>
 void c2r_first(const pass_args* a, const void* src, void* dst, std::size_t first,
                std::size_t last) {
@@ -427,7 +433,8 @@ void c2r_first(const pass_args* a, const void* src, void* dst, std::size_t first
   if (u == 0 && u < last) {
     {
       cv<T> v[R]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
-      v[0] = splat<T>(x[0] + x[at(h, 2)], x[0] - x[at(h, 2)]);
+      const T xh = x[real_nyquist(a, h)];
+      v[0] = splat<T>(x[0] + xh, x[0] - xh);
       for (std::size_t j = 1; j < R - j; ++j) {
         pre_pair<T>(bcast(x + at(m * j, 2)), conj(bcast(x + at(m * (R - j), 2))),
                     bcast_tw(ends + tw_reals<T> * j), v[j], v[R - j]);
@@ -502,7 +509,8 @@ void r2c_leaf(const pass_args* a, const void* src, void* dst, std::size_t first,
 
 // A c2r of n = 2R, R <= 16 or a prime codelet radix, in registers: the pairing, then the backward
 // codelet, storing the reals in pairs with the output edge's operation. One unit. twiddles: w^(j +
-// n/4) for j = 0 .. R/2, broadcast storage. src may be dst. Reads src, dst, twiddles, scale.
+// n/4) for j = 0 .. R/2, broadcast storage. src may be dst. Reads src, dst, twiddles, scale,
+// packed.
 template <class T, std::size_t R, edge_op OutOp>
 void c2r_leaf(const pass_args* a, const void* src, void* dst, std::size_t first, std::size_t last) {
   const T* x = static_cast<const T*>(src);
@@ -514,7 +522,8 @@ void c2r_leaf(const pass_args* a, const void* src, void* dst, std::size_t first,
   };
   for (std::size_t u = first; u < last; ++u) { // the one unit, when the range holds it
     cv<T> v[R]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
-    v[0] = splat<T>(x[0] + x[at(R, 2)], x[0] - x[at(R, 2)]);
+    const T xh = x[real_nyquist(a, R)];
+    v[0] = splat<T>(x[0] + xh, x[0] - xh);
     for (std::size_t j = 1; j < R - j; ++j) {
       pre_pair<T>(bcast(x + at(j, 2)), conj(bcast(x + at(R - j, 2))),
                   bcast_tw(table + tw_reals<T> * j), v[j], v[R - j]);

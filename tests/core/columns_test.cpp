@@ -438,6 +438,165 @@ TEST(Columns, RealPlanesLanesEqualTheChain) {
   }
 }
 
+// A c2r of two or more axes out of place builds its intermediate packed in the output where
+// the output's layout allows (X60; plan_core.cpp, c2r_packed) and otherwise keeps it in the
+// workspace block (an odd real axis, an odd output stride, build_settings::c2r_packed 0). Both
+// compute the same transform, of any input (the spectrum need not be Hermitian), to within
+// twice the tolerance; the input is preserved and no output byte outside the described
+// elements is written; the block shrinks to one value per row; unrolled and walked programs
+// agree. Every shape class of the real axis: the pairing alone (n = 2), the leaves, the fused
+// and the separate pairing pass; planes, volumes, batches, a scale, padded outputs.
+template <class T> void c2r_packed_matches_block(fftn::isa target) {
+  SCOPED_TRACE(std::string(fftn::isa_name(target)) + (sizeof(T) == 8 ? " double" : " float"));
+  struct packed_case {
+    std::vector<std::size_t> n;
+    std::size_t count = 1;
+    std::ptrdiff_t pad = 0; // reals added to every output row (the last axis' rows)
+    double scale = 1.0;
+    std::size_t fuse = 0; // build_settings::fuse_real_radix (1: the separate pairing pass)
+    bool packs = true;
+  };
+  const std::vector<packed_case> cases = {
+      {.n = {8, 6}, .count = 2},
+      {.n = {6, 2}, .count = 1},
+      {.n = {12, 4}, .count = 1},
+      {.n = {16, 16}, .count = 2, .pad = 2},
+      {.n = {16, 16}, .count = 2, .pad = 1, .packs = false},
+      {.n = {5, 7}, .count = 2, .packs = false},
+      {.n = {1, 16}, .count = 3},
+      {.n = {32, 30}, .count = 1, .scale = 0.25},
+      {.n = {64, 32}, .count = 3},
+      {.n = {48, 64}, .count = 1, .fuse = 1},
+      {.n = {40, 96}, .count = 2, .pad = 4, .scale = 0.5, .fuse = 16},
+      {.n = {17, 200}, .count = 1, .fuse = 1},
+      {.n = {256, 256}, .count = 1},
+      {.n = {16, 512}, .count = 1},
+      {.n = {4, 6, 8}, .count = 1},
+      {.n = {3, 5, 4}, .count = 2, .pad = 2, .scale = 0.125},
+      {.n = {4, 6, 8}, .count = 1, .pad = 1, .packs = false},
+      {.n = {6, 4, 34}, .count = 2},
+  };
+  const auto run = [&](const packed_case& pc, const build_settings& settings, std::string& text,
+                       std::size_t& block, std::size_t& ws_bytes) {
+    fftn::shape<std::complex<T>, T> sh;
+    const std::size_t r = pc.n.size();
+    std::vector<std::ptrdiff_t> stride(r, 1);
+    for (std::size_t d = r - 1; d > 0; --d) {
+      const auto row = static_cast<std::ptrdiff_t>(pc.n[d]) + (d + 1 == r ? pc.pad : 0);
+      stride[d - 1] = stride[d] * row;
+    }
+    for (std::size_t d = 0; d < r; ++d) {
+      sh.axes.push_back({.n = pc.n[d], .out_stride = stride[d]});
+    }
+    const std::ptrdiff_t dist = stride[0] * static_cast<std::ptrdiff_t>(pc.n[0]);
+    sh.batches = {{.count = pc.count, .out_dist = dist}};
+    const auto core = fftn::detail::make_plan_core(
+        fftn::detail::view_of(sh), {.scale = pc.scale, .force_isa = target}, settings);
+    text = fftn::detail::describe(*core);
+    block = core->block_elements;
+    ws_bytes = fftn::detail::workspace_bytes(*core, 1);
+    const auto in_bytes = static_cast<std::size_t>(core->in_hi);
+    const auto out_bytes = static_cast<std::size_t>(core->out_hi);
+    fftn::test::input_source src(0x60ULL + in_bytes);
+    const auto v = src.reals<T>(in_bytes / sizeof(T));
+    std::vector<std::byte> in(in_bytes);
+    std::memcpy(in.data(), v.data(), in.size());
+    const std::vector<std::byte> kept = in;
+    std::vector<std::byte> out(out_bytes, std::byte{0xa5});
+    const fftn::workspace ws(ws_bytes);
+    fftn::detail::execute_core(*core, 0, pc.count, in.data(), out.data(), ws);
+    EXPECT_EQ(in, kept) << "the input was not preserved";
+    // The described output elements; every other byte must be the fill.
+    std::vector<bool> described(out_bytes / sizeof(T), false);
+    std::vector<std::size_t> index(r, 0);
+    for (std::size_t b = 0; b < pc.count; ++b) {
+      for (bool more = true; more;) {
+        std::ptrdiff_t at = static_cast<std::ptrdiff_t>(b) * dist;
+        for (std::size_t d = 0; d < r; ++d) {
+          at += static_cast<std::ptrdiff_t>(index[d]) * stride[d];
+        }
+        described.at(static_cast<std::size_t>(at)) = true;
+        more = false;
+        for (std::size_t d = r; d > 0; --d) {
+          if (++index[d - 1] < pc.n[d - 1]) {
+            more = true;
+            break;
+          }
+          index[d - 1] = 0;
+        }
+      }
+    }
+    for (std::size_t i = 0; i < described.size(); ++i) {
+      if (!described[i]) {
+        for (std::size_t k = 0; k < sizeof(T); ++k) {
+          EXPECT_EQ(out[i * sizeof(T) + k], std::byte{0xa5}) << "a gap was written at " << i;
+        }
+      }
+    }
+    return out;
+  };
+  for (const packed_case& pc : cases) {
+    std::string what = "n =";
+    std::size_t points = 1;
+    std::size_t rows = 1;
+    for (std::size_t d = 0; d < pc.n.size(); ++d) {
+      what += " " + std::to_string(pc.n[d]);
+      points *= pc.n[d];
+      rows *= d + 1 < pc.n.size() ? pc.n[d] : 1;
+    }
+    SCOPED_TRACE(what + ", " + std::to_string(pc.count) + " transforms, pad " +
+                 std::to_string(pc.pad) + ", fuse " + std::to_string(pc.fuse));
+    build_settings rules;
+    rules.fuse_real_radix = pc.fuse;
+    build_settings walked = rules;
+    walked.unroll_calls = false;
+    build_settings kept = rules;
+    kept.c2r_packed = 0;
+    std::string text;
+    std::string walked_text;
+    std::string kept_text;
+    std::size_t block = 0;
+    std::size_t kept_block = 0;
+    std::size_t ws_bytes = 0;
+    std::size_t kept_ws = 0;
+    const auto got = run(pc, rules, text, block, ws_bytes);
+    EXPECT_TRUE(run(pc, walked, walked_text, block, ws_bytes) == got)
+        << "unrolled and walked differ";
+    const auto want = run(pc, kept, kept_text, kept_block, kept_ws);
+    EXPECT_EQ(text.find("packed") != std::string::npos, pc.packs) << text;
+    EXPECT_EQ(kept_text.find("packed"), std::string::npos) << kept_text;
+    const std::size_t half = pc.n.back() / 2 + 1;
+    EXPECT_EQ(kept_block, rows * half);
+    if (pc.packs) {
+      EXPECT_EQ(block, rows) << text;
+      EXPECT_LE(ws_bytes, kept_ws);
+    } else {
+      EXPECT_TRUE(got == want) << "the same plan should give the same bytes";
+      continue;
+    }
+    const double l = std::max(1.0, std::log2(static_cast<double>(points)));
+    const double tolerance = 2 * 3 * std::numeric_limits<T>::epsilon() * l;
+    std::vector<T> x(got.size() / sizeof(T));
+    std::vector<T> y(x.size());
+    std::memcpy(x.data(), got.data(), x.size() * sizeof(T));
+    std::memcpy(y.data(), want.data(), y.size() * sizeof(T));
+    double most = 0;
+    double largest = 0;
+    for (std::size_t i = 0; i < x.size(); ++i) {
+      most = std::max(most, static_cast<double>(std::abs(x[i] - y[i])));
+      largest = std::max(largest, static_cast<double>(std::abs(y[i])));
+    }
+    EXPECT_LE(most, tolerance * largest) << text << kept_text;
+  }
+}
+
+TEST(Columns, C2rPackedMatchesTheBlock) {
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    c2r_packed_matches_block<double>(t);
+    c2r_packed_matches_block<float>(t);
+  }
+}
+
 // Where the lanes cannot take a strided axis, its columns run alone through the chain: the
 // last axis strided (no adjacent columns), a column length whose chain has a Bluestein
 // stage or a generic pass, the last axis of length 1.

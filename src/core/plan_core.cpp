@@ -982,6 +982,22 @@ bool r2c_pairs_in_grid(const build_settings& settings, target t) {
   return t != target::avx2;
 }
 
+// Whether a c2r plan builds its intermediate packed in the output (experiment X60): of two
+// or more axes, out of place, an even real axis contiguous on the output and every other
+// output stride an even number of reals, so that each output row holds its h = n/2 complex
+// values (pass_args::packed). Otherwise the intermediate is one transform's half spectrum in
+// the workspace block. build_settings::c2r_packed 0 keeps the block (tests).
+bool c2r_packed(const shape_view& s, const side& out, bool in_place,
+                const build_settings& settings) {
+  const std::size_t r = s.axes.size();
+  if (s.kind != transform_kind::c2r || r < 2 || in_place || settings.c2r_packed == 0 ||
+      s.axes[r - 1].n % 2 != 0 || out.stride[r - 1] != 1) {
+    return false;
+  }
+  return std::all_of(out.stride.begin(), out.stride.end() - 1,
+                     [](std::ptrdiff_t v) { return v % 2 == 0; });
+}
+
 // Makes the records from `first` on read the output slot where they read the input: the
 // grid of a c2r row runs in place on the output, which the pairing pass has written (the
 // grid builder reads its input from the input slot, and with in_place set touches it only
@@ -1439,6 +1455,96 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       c.axis_notes.push_back("axis " + std::to_string(d) + " (n = " + std::to_string(n) +
                              "): c2c forward, radices " + chain.radix_text(n));
     }
+  } else if (c2r_packed(s, out, c.in_place, settings)) {
+    // c2r of two or more axes out of place, its intermediate packed in the output
+    // (DESIGN.md 9.1, experiment X60): each output row's n reals hold its h = n/2 complex
+    // values after the complex axes, X_0 .. X_h-1 with the imaginary place of X_0 holding
+    // Re X_h (pass_args::packed), which is all the row's c2r reads. The complex axes run on
+    // columns 0 .. h-1 from the input into the output; column h, whose real part alone is
+    // needed, runs through the complex axes from the input into the block (one value per
+    // row) and its real part goes into the imaginary places of column 0, which that
+    // column's own transform wrote first; then the rows run in place.
+    const std::size_t n = c.lengths[r - 1];
+    const std::size_t h = n / 2;
+    view packed{.where = slot::out, .stride = out.stride, .element_bytes = complex_bytes};
+    for (std::size_t d = 0; d + 1 < r; ++d) {
+      packed.stride[d] = out.stride[d] / 2;
+    }
+    packed.stride[r - 1] = 1;
+    std::vector<std::size_t> columns = in.extent;
+    columns[r - 1] = h;
+    for (std::size_t i = r - 1; i > 0; --i) {
+      const std::size_t d = i - 1;
+      const view& src = d + 2 == r ? in_view : packed;
+      if (complex_columns(d, columns, src, packed, line_edges(), +1,
+                          "c2c backward into the output, packed")) {
+        continue;
+      }
+      std::vector<stage> cs;
+      const std::size_t cneed = chain.c2c_line(c.lengths[d], +1, at(src, d), at(packed, d),
+                                               src.where == slot::out, line_edges(), cs);
+      lines(d, columns, src, packed, cneed, std::move(cs));
+      c.axis_notes.push_back("axis " + std::to_string(d) + " (n = " +
+                             std::to_string(c.lengths[d]) +
+                             "): c2c backward into the output, packed, radices " +
+                             chain.radix_text(c.lengths[d]));
+    }
+    // Column h: one line of a loop that starts there on the input and at the imaginary place
+    // of column 0 on the output.
+    view block_view{
+        .where = slot::block,
+        .stride = std::vector<std::ptrdiff_t>(r, 0),
+        .element_bytes = complex_bytes,
+    };
+    std::vector<std::size_t> edge = in.extent;
+    edge[r - 1] = 1;
+    std::ptrdiff_t span = 1;
+    for (std::size_t i = r - 1; i > 0; --i) {
+      block_view.stride[i - 1] = span;
+      span = checked_mul(span, to_signed(in.extent[i - 1], "shape"), "shape");
+    }
+    c.block_elements = static_cast<std::size_t>(span);
+    const std::size_t wrapper = p.records.size();
+    p.records.emplace_back(loop{
+        .kind = loop_kind::lines,
+        .count = 1,
+        .start = {to_signed(h, "shape") * in.stride[r - 1] * in.element_bytes, out.element_bytes, 0,
+                  0},
+    });
+    for (std::size_t i = r - 1; i > 0; --i) {
+      const std::size_t d = i - 1;
+      const view& src = d + 2 == r ? in_view : block_view;
+      std::vector<stage> cs;
+      const std::size_t cneed =
+          chain.c2c_line(c.lengths[d], +1, at(src, d), at(block_view, d),
+                         src.where == slot::block, line_edges(), cs);
+      scratch = std::max(scratch, cneed);
+      add_phase(p, d, edge, src, block_view, std::move(cs));
+    }
+    {
+      stage st;
+      st.run = kernels.passes.c2r_store[0];
+      st.args.src_stride = block_view.stride[r - 2];
+      st.args.dst_stride = out.stride[r - 2];
+      st.args.n = in.extent[r - 2];
+      st.src = slot::block;
+      st.dst = slot::out;
+      st.units = in.extent[r - 2];
+      st.name = "column " + std::to_string(h) + "'s real part into column 0";
+      std::vector<stage> one;
+      one.push_back(std::move(st));
+      add_phase(p, r - 2, edge, block_view, out_view, std::move(one));
+    }
+    std::get<loop>(p.records[wrapper]).body_end = static_cast<std::uint32_t>(p.records.size());
+    c.axis_notes.push_back("column " + std::to_string(h) +
+                           " through the complex axes into the block, its real part into "
+                           "column 0's imaginary places");
+    std::vector<stage> st;
+    const std::size_t need =
+        chain.c2r_line(n, {slot::out, 1}, {slot::out, 1}, opts.scale, st, true);
+    lines(r - 1, out.extent, out_view, out_view, need, std::move(st));
+    c.axis_notes.push_back("axis " + std::to_string(r - 1) + " (n = " + std::to_string(n) +
+                           "): in place on the packed rows, " + chain.real_text(n, false, false));
   } else {
     // c2r: the complex axes first, then the real one, which must come last because the
     // real output cannot hold a complex intermediate. Out of place the input is preserved,

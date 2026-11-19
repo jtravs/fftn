@@ -65,6 +65,12 @@ struct pass_args {
   // columns, so that each array row's B columns are read or written at once, whole cache
   // lines, before the next (experiment X40).
   bool columns_inner = false;
+  // The c2r passes that read a line's half spectrum (passes/real.inl: c2r_pre, c2r_first,
+  // c2r_leaf) read it packed into h complex values: element 0 holds (Re X_0, Re X_h), the
+  // others X_1 .. X_h-1; otherwise it is the h + 1 values X_0 .. X_h. The packed line fits the
+  // n reals of the output, where a multi-axis c2r out of place builds it (experiment X60).
+  // In the struct's tail padding: its size is unchanged.
+  bool packed = false;
 };
 
 // Runs units [first, last) of a pass from src to dst (the line's first elements). A unit is
