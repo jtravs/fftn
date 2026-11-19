@@ -286,6 +286,17 @@ last one's stores are still in flight see the cost. Check for it when an in-plac
 is slower than its out-of-place twin by more than the copy. Neoverse not measured.
 [X49](experiments/X49-tiny-calls.md) (`bench/x49/pairs_forwarding.cpp`).
 
+2.13 **On Zen 3, aligning functions redraws the placement lottery instead of ending it.** Single
+c2c rows of 72 and 120 points took 1.05–1.06 of their time between two commits on the EPYC 7763
+with the same plans and the same pass code, and across the merges between them the ratios went
+up and down (72: 0.98, 1.03, 1.07, 0.95, 1.08) on cases no merge touched. Compiling the `avx2`
+units with `-falign-functions=64` took 72 to 0.89 and 120 to 0.93 of their time, and a screen of
+90 single rows showed nothing slower; the 201 cases of the exit check then gave 0.999 [0.997,
+1.003], with 1024 × 3 at 1.04–1.06 and 32 bytes worse in the screen (144 at 1.05). A screen on one
+shape does not clear a build flag that moves every kernel: judge it on every shape. For a jump
+with an unchanged plan, compare the functions first, then bisect: a ratio that wanders across
+merges is placement. [X57](experiments/X57-epyc-1024.md).
+
 ## 3. Memory and caches
 
 3.1 **Buffers a power of two apart conflict in cache; offset them.** Staggering the
@@ -871,6 +882,35 @@ another 0.86–0.93: 131071 0.61 and 999983 0.71 of their time in all, FFTN ÷ M
 and 1.44 → 1.05, the M5 Max's primes of 4813–5119 0.86. One top factor of 16 beat two even
 at 2²¹ points (32 MiB).
 [X50](experiments/X50-primes.md).
+
+4.22 **To run short rows side by side in the lanes, transpose blocks in registers; gather
+per element only where registers run out, and keep the last row out of a padded group.** A
+leaf over C rows of a batch at once (one row per lane) beat the 128-bit leaf by 0.65–0.95
+at 9–23 points on the EPYC 7763 and the Xeon 6240 (25 points 0.45) and by about 0.55 in float
+on the M5 Max, when the C × C blocks of C consecutive elements of each row were transposed in
+registers. Gathering each element when the codelet asked for it (C broadcasts and a
+transpose; Clang made it FFTW's load-and-insert, GCC 16 broadcasts and shuffles) cost 1.05–
+1.4 of the blocks everywhere except radix 64 (0.91 against 1.00), whose 64 live values the
+blocks spill. A padded group for the rows left over (zeros in the idle lanes) costs a whole
+group: a batch of three took as long as a batch of four until the last row ran alone in
+the leaf's form. Wider vectors lose on tiny batches: avx512's four rows per register ran
+batches of two and three 1.4–4.3 times as long as the leaf (a padded `zmm` group), while
+avx2's two rows per register won there; from four rows avx512's own won at 11–25 points.
+And it gains least where it is needed most: 2–8 points lose at 2–4 rows (the leaf moves as
+much data and the transposes add shuffles), and lengths whose row is already a pair leaf
+on whole registers lose by 1.1–3.8. [X53](experiments/X53-two-row-leaves.md).
+
+4.23 **The best radices for a row depend on how much data the plan touches, so let the choice
+see it.** On the EPYC 7763 (32 MiB of L3 per core complex, `avx2` double) 1024 = 16 · 64 took
+0.84–0.96 of 4 · 16 · 16's time from one row to 768 rows, 24 MiB of rows and output; at 1024 rows
+out of place (32 MiB) it no longer won (1.04 here, 1.25 in X54) and at 2048 rows it lost 1.30,
+while in place, with half the data, 1024 rows still gained 0.94. 768 = 12 · 64 behaved alike
+(4 · 12 · 16 took 0.75 of its time at 2048 rows). A first pass that reads 12–16 streams is
+cheap while they hit the L3 and expensive once every stream misses. A limit on rows plus output
+in bytes (three quarters of the L3), applied to one-axis plans only, kept every gain and lost
+nothing; a per-length override had to give up 1024 altogether, because the plane's rows and
+the long batches lost. Count what the plan touches, not what one row needs.
+[X57](experiments/X57-epyc-1024.md).
 
 ## 5. Threading
 

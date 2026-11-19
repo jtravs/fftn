@@ -196,6 +196,54 @@ const pair_leaf_table* find_pair_leaves(target t) noexcept {
   return nullptr;
 }
 
+#if FFTN_ARCH_X86_64 || FFTN_ARCH_AARCH64
+namespace {
+
+// The unit of a target's batch leaves that holds codelet radix r (isa/batch.inl).
+const batch_leaf_table* batch_part(const batch_leaf_table& small, const batch_leaf_table& large,
+                                   std::size_t r) noexcept {
+  if (!has_codelet(r)) {
+    return nullptr;
+  }
+  return r >= 32 ? &large : &small;
+}
+
+} // namespace
+#endif
+
+const batch_leaf_table* find_batch_leaves(target t, std::size_t r) noexcept {
+#if FFTN_ARCH_X86_64
+  if (t == target::avx2) {
+    return batch_part(avx2::batch::leaves, avx2::batch::large_leaves, r);
+  }
+  if (t == target::avx512) {
+    return batch_part(avx512::batch::leaves, avx512::batch::large_leaves, r);
+  }
+#endif
+#if FFTN_ARCH_AARCH64
+  if (t == target::neon) {
+    return batch_part(neon::batch::leaves, neon::batch::large_leaves, r);
+  }
+  if (t == target::neon_fcma) {
+    return batch_part(neon_fcma::batch::leaves, neon_fcma::batch::large_leaves, r);
+  }
+#endif
+  static_cast<void>(t);
+  static_cast<void>(r);
+  return nullptr;
+}
+
+const batch_leaf_table* find_narrower_batch_leaves(target t, std::size_t r) noexcept {
+#if FFTN_ARCH_X86_64
+  if (t == target::avx512) {
+    return find_batch_leaves(target::avx2, r);
+  }
+#endif
+  static_cast<void>(t);
+  static_cast<void>(r);
+  return nullptr;
+}
+
 const pair_leaf_table* find_more_pair_leaves(target t) noexcept {
 #if FFTN_ARCH_X86_64
   if (t == target::avx512) {

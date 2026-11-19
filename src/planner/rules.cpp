@@ -61,9 +61,9 @@ constexpr std::array<std::size_t, cost_radices> pass_radices{
 // registers (dev/experiments/X54-radix64-avx2.md). 1024 = 16 x 64 passed the same rule and ran
 // 0.84-0.95 of 4.16.16's time at batches 1-256, but 1.25 at 1024 x 1024 (16 MiB; FFTW's
 // two-pass plan as slow) and 1.14 in the 1024 x 1024 plane, so it has no override: an override
-// cannot see the batch (X54). In float (avx2_float_overrides) the
-// same campaign and rule chose 512 = 8 x 64, 640 = 32 x 20, 768 = 12 x 64, 2048 = 32 x 64 and
-// 4096 = 8 x 32 x 16 (X54 arm C).
+// cannot see the batch (X54; avx2_double_fit_overrides sees it, X57). In float
+// (avx2_float_overrides) the same campaign and rule chose 512 = 8 x 64, 640 = 32 x 20, 768 = 12 x
+// 64, 2048 = 32 x 64 and 4096 = 8 x 32 x 16 (X54 arm C).
 // clang-format off
 // NOLINTBEGIN(readability-trailing-comma): bench/x2/fit.py writes and parses this layout
 constexpr std::array<radix_override, 42> avx2_double_overrides{{
@@ -674,6 +674,74 @@ sequence cheapest(std::size_t n, std::size_t smooth, bool more, const target_pro
 
 } // namespace
 
+namespace {
+
+// The batch leaves' smallest batch per codelet slot (target_profile::batch_rows, in
+// gen::radices order: 2-16, 17, 19, 20, 23, 25, 32, 64), whether an avx512 plan takes avx2's
+// and from which batch it takes its own instead (batch_own_rows), from experiment X53
+// (dev/experiments/X53-two-row-leaves.md): per length, the smallest batch of the screen from
+// which every case (2, 3, 4 rows both directions, 8, 64, 1024, in place) ran below 0.97 of
+// the leaf, the pair leaf or the chain, and none slower. Short lengths gain little (the leaf
+// moves as much data, and a group's transposes cost shuffles), and where the target already
+// fills its registers with a pair leaf (avx512 16, 32, 64; avx2 8, 16, 20) the batch leaf
+// lost. A batch's row gets the leaf of n's arithmetic, which for 8 and 12 (pair leaves), 20
+// and 25 (never leaves) and 32 (a chain in float) is not what a row alone gets; the published
+// guarantee is only that every row of a plan gets the same (DESIGN 15.5, the maintainer's
+// decision of 2026-11-18), so those lengths are taken too (arm R4). Measured in
+// double on avx2 (EPYC 7763, GCC 16) and avx512 (Xeon 6240, GCC 14), in float on NEON (M5
+// Max, Clang 23; NEON has none in double, C = 1); none elsewhere.
+// clang-format off
+constexpr std::array<std::uint16_t, gen::radix_count> batch_rows_avx2_f64 =
+    {0, 0, 8, 0, 8, 8, 0, 4, 4, 4, 8, 4, 2, 2, 0, 4, 4, 0, 2, 2, 0, 0};
+constexpr std::array<std::uint16_t, gen::radix_count> batch_rows_avx512_f64 =
+    {1024, 0, 0, 64, 64, 8, 1024, 4, 4, 2, 8, 2, 2, 2, 0, 2, 2, 0, 2, 2, 0, 0};
+constexpr std::array<std::uint16_t, gen::radix_count> batch_own_avx512_f64 =
+    {0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 0, 4, 4, 4, 0, 4, 4, 0, 4, 4, 0, 0};
+constexpr std::array<std::uint16_t, gen::radix_count> batch_rows_neon_f32 =
+    {0, 4, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 0, 2, 0};
+// clang-format on
+
+std::span<const std::uint16_t> batch_rows_of(target t, std::size_t lanes) {
+  if (t == target::avx2 && lanes == 2) {
+    return batch_rows_avx2_f64;
+  }
+  if (t == target::avx512 && lanes == 4) {
+    return batch_rows_avx512_f64;
+  }
+  if ((t == target::neon || t == target::neon_fcma) && lanes == 2) {
+    return batch_rows_neon_f32;
+  }
+  return {};
+}
+
+std::span<const std::uint16_t> batch_own_rows_of(target t, std::size_t lanes) {
+  if (t == target::avx512 && lanes == 4) {
+    return batch_own_avx512_f64;
+  }
+  return {};
+}
+
+bool batch_narrower_of(target t, std::size_t lanes) { return t == target::avx512 && lanes == 4; }
+
+// Two-pass plans of `avx2` double whose first pass reads 12-16 streams at once: on the EPYC
+// 7763 16 x 64 took 0.84-0.96 of 4 x 16 x 16's time for 1024 x 1 to 1024 x 768 and 1.30 at
+// 1024 x 2048, and 12 x 64 at 768 x 2048 1.33 of 4 x 12 x 16's, once the rows and their
+// output no longer fit the L3 (experiment X57). 768's sequence is also its override, for the
+// rows of planes; 1024's is not (rules above, X54: planes lost).
+constexpr std::array<radix_override, 2> avx2_double_fit_overrides{{
+    {.n = 768, .radices = {12, 64, 0, 0}},
+    {.n = 1024, .radices = {16, 64, 0, 0}},
+}};
+
+std::span<const radix_override> fit_overrides_of(target t, std::size_t lanes) {
+  if (t == target::avx2 && lanes == 2) {
+    return avx2_double_fit_overrides;
+  }
+  return {};
+}
+
+} // namespace
+
 target_profile profile_of(target t, std::size_t lanes) noexcept {
   const measured_table* nearest = &measured_tables.front();
   for (const measured_table& m : measured_tables) {
@@ -687,6 +755,10 @@ target_profile profile_of(target t, std::size_t lanes) noexcept {
           .lanes_up_to = lanes_up_to_of(t, lanes),
           .rader_from = rader_from_of(lanes),
           .rader_below = rader_below_of(t),
+          .batch_rows = batch_rows_of(t, lanes),
+          .batch_narrower = batch_narrower_of(t, lanes),
+          .batch_own_rows = batch_own_rows_of(t, lanes),
+          .fit_overrides = fit_overrides_of(t, lanes),
       };
     }
     if (m.t == fallback_target &&
@@ -703,6 +775,10 @@ target_profile profile_of(target t, std::size_t lanes) noexcept {
       .lanes_up_to = lanes_up_to_of(t, lanes),
       .rader_from = rader_from_of(lanes),
       .rader_below = rader_below_of(t),
+      .batch_rows = batch_rows_of(t, lanes),
+      .batch_narrower = batch_narrower_of(t, lanes),
+      .batch_own_rows = batch_own_rows_of(t, lanes),
+      .fit_overrides = fit_overrides_of(t, lanes),
   };
 }
 
@@ -735,8 +811,8 @@ std::size_t split_smooth(std::size_t n, std::vector<std::size_t>& big) {
   return smooth;
 }
 
-std::vector<std::size_t> override_of(std::size_t n, const target_profile& p) {
-  for (const radix_override& o : p.costs->overrides) {
+std::vector<std::size_t> override_in(std::size_t n, std::span<const radix_override> table) {
+  for (const radix_override& o : table) {
     if (o.n == n) {
       std::vector<std::size_t> out;
       for (const std::size_t r : o.radices) {
@@ -748,6 +824,10 @@ std::vector<std::size_t> override_of(std::size_t n, const target_profile& p) {
     }
   }
   return {};
+}
+
+std::vector<std::size_t> override_of(std::size_t n, const target_profile& p) {
+  return override_in(n, p.costs->overrides);
 }
 
 // The k cheapest sequences of codelet radices for the smooth part of a line of n points
@@ -837,6 +917,14 @@ std::vector<std::size_t> rule_radices(std::size_t n, const target_profile& p, bo
   std::vector<std::size_t> out = cheapest(n, smooth, !big.empty(), p).radices;
   out.insert(out.end(), big.begin(), big.end());
   return out;
+}
+
+std::vector<std::size_t> fitting_radices(std::size_t n, const target_profile& p, bool fits) {
+  std::vector<std::size_t> fitted = override_in(n, p.fit_overrides);
+  if (fitted.empty() || fits) {
+    return fitted;
+  }
+  return rule_radices(n, p, false);
 }
 
 std::vector<std::vector<std::size_t>> ranked_radices(std::size_t n, const target_profile& p,
@@ -1054,6 +1142,10 @@ constexpr target_profile reference_profile{
     .lanes_up_to = 0,
     .rader_from = 0,
     .rader_below = std::size_t{1} << 24U,
+    .batch_rows = {},
+    .batch_narrower = false,
+    .batch_own_rows = {},
+    .fit_overrides = {},
 };
 
 // The lengths in [lo, hi] that may_be_fast accepts, ascending: the products of 2, 3, 5, 7

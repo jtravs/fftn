@@ -23,6 +23,10 @@ endforeach()
 list(APPEND fftn_isa_units narrow_avx2.cpp)
 # The pair leaves of the x86 targets (experiment X28b) and of NEON (X37).
 list(APPEND fftn_isa_units pairs_avx2.cpp pairs_avx512.cpp pairs_neon.cpp pairs_neon_fcma.cpp)
+# The batch leaves (experiment X53), two units per target (isa/batch.inl).
+foreach(target IN ITEMS avx2 avx512 neon neon_fcma)
+  list(APPEND fftn_isa_units batch_${target}.cpp batch_large_${target}.cpp)
+endforeach()
 target_sources(fftn PRIVATE ${fftn_isa_units} target.cpp)
 fftn_always_optimise(${fftn_isa_units})
 # The avx512 units' branches are padded so that none crosses or ends on a 32-byte boundary.

@@ -215,6 +215,15 @@ struct machine_profile {
   // 7763: 0.933 of the time over the planes and volumes it changes); the Xeon 6240 gained
   // 0.95 but lost 1.05 at 30 x 40 x 50.
   std::size_t column_wide_bytes = 0;
+  // A c2c plan of one axis whose rows and output (in place: rows) together take at most this
+  // many bytes runs the two-pass rows of the profile's fit_overrides; beyond it, the
+  // three-pass plan (planner/rules.hpp, fitting_radices; 0: the rules as without this field).
+  // Experiment X57 on the EPYC 7763 (`avx2` double, 32 MiB L3 per CCX): 1024 = 16 x 64 took
+  // 0.84-0.96 of 4 x 16 x 16's time from 1 to 768 rows (24 MiB) and 1.04-1.30 from 1024 rows
+  // (32 and 64 MiB); at 768 x 2048 (48 MiB) 4 x 12 x 16 took 0.75 of 12 x 64's.
+  // set_grid_sizes sets three quarters of the L3 where a private L2 has a large L3 behind it
+  // (x86-64, the EPYC class).
+  std::size_t fit_row_bytes = 0;
   // A lanes column phase whose column elements lie less than a page apart keeps its block's
   // two scratch tiles within this (core/plan_core.cpp, column_block; X40). set_grid_sizes
   // sets a quarter of L2.

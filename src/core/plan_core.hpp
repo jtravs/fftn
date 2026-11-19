@@ -24,6 +24,9 @@ namespace fftn::inline v0::detail {
 // Which strategy builds a c2c row (DESIGN.md 8.5): the planner's choice, or one forced.
 enum class strategy_choice : std::uint8_t { rules, chain, grid, lanes, depth };
 
+// Which batch leaves a c2c plan of rows takes (build_settings::batch_leaves).
+enum class batch_leaf_choice : std::uint8_t { rules, never, own, narrower };
+
 // The arithmetic of a chain's lane passes (DESIGN.md 6.3): the profile's choice, or
 // interleaved or split forced.
 enum class layout_choice : std::uint8_t { rules, interleaved, split };
@@ -50,6 +53,13 @@ struct build_settings { // NOLINT(clang-analyzer-optin.performance.Padding)
   // Pair leaves (strategies/chain.hpp, use_pair_leaves; experiment X28b) where the target
   // has them; false: the chain of the rules' radices instead (tests).
   bool pair_leaves = true;
+  // Batch leaves (strategies/chain.hpp, use_batch_leaves; experiment X53) for the rows of a
+  // c2c plan of one axis and one batch dimension: the rules' choice (batch_leaves_rules),
+  // never, the target's own set, or a narrower target's that rounds alike (avx2's in an
+  // avx512 plan; the target's own where there is none). Where a row cannot be one (a
+  // strided row, a factor edge, a length without a codelet, forced radices, a single row,
+  // the lanes strategy) the plan is built as without it.
+  batch_leaf_choice batch_leaves = batch_leaf_choice::rules;
   // The strategy of a plan of one axis (rows): the rules' choice (the lanes for a batch of
   // rows up to the profile's lanes_up_to, a c2c grid beyond profile.grid_min_bytes, else
   // the chain), or the chain, the grid, the lanes or the depth-first chain forced. A grid

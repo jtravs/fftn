@@ -138,6 +138,14 @@ public:
     more_pairs_ = more;
   }
 
+  // Batch leaves from this set (kernel_table.hpp, passes/batch_leaf.inl, experiment X53): a
+  // c2c line of stride 1 on both sides whose length is a codelet radix with an entry in the
+  // set, with no factor edge and radices the rules choose (not a test's), is that leaf, C
+  // lines of the batch per call's register. Only for a plan whose lines the driver hands to
+  // the leaf many at a time (one axis, one batch dimension: plan_core.cpp decides). Null:
+  // none.
+  void use_batch_leaves(const batch_leaf_set<T>* leaves) noexcept { batch_ = leaves; }
+
   // Long power-of-two lines (experiment X32): a line of a power-of-two length of more than
   // from_bytes takes FFTL.jl's radices instead of the rules': 8s, with one or two 4s first
   // for the spare factors, up to radix8_bytes, and 4s, with an 8 first for an odd exponent,
@@ -146,6 +154,15 @@ public:
   void use_long_rows(std::size_t from_bytes, std::size_t radix8_bytes) noexcept {
     long_from_bytes_ = from_bytes;
     long_radix8_bytes_ = radix8_bytes;
+  }
+
+  // The one row length of a c2c plan of one axis, and whether the plan's data fit
+  // machine_profile::fit_row_bytes (core/plan_core.cpp): that length takes
+  // fitting_radices (planner/rules.hpp, experiment X57) where the profile lists it. Rows of
+  // planes and volumes, and other lengths of the plan, keep the rules. Forced radices win.
+  void use_row_fit(std::size_t n, bool fits) noexcept {
+    fit_row_ = n;
+    fit_row_fits_ = fits;
   }
 
   // Long convolutions (experiment X36), on every machine, since a Bluestein or Rader
@@ -336,6 +353,12 @@ private:
                 pass_layout layout = pass_layout::interleaved);
   void add_leaf(std::size_t n, int sign, endpoint src, endpoint dst, const line_edges& edges,
                 std::vector<stage>& stages);
+  // Whether a c2c line of n from src to dst with these edges is a batch leaf
+  // (use_batch_leaves), and the stage that is.
+  [[nodiscard]] leaf_fn batch_leaf_for(std::size_t n, int sign, endpoint src, endpoint dst,
+                                       const line_edges& edges) const;
+  void add_batch_leaf(leaf_fn leaf, std::size_t n, int sign, endpoint src, endpoint dst,
+                      const line_edges& edges, std::vector<stage>& stages);
   // A pair leaf and the set it is from.
   struct pair_choice {
     const pair_leaf_entry* entry = nullptr;
@@ -404,13 +427,17 @@ private:
   const pair_leaf_set<T>* pairs_ = nullptr;
   const pair_leaf_set<T>* more_pairs_ = nullptr;
   std::vector<std::size_t> pair_lines_; // the lengths of the lines built as pair leaves
+  const batch_leaf_set<T>* batch_ = nullptr;
+  std::vector<std::size_t> batch_lines_; // the lengths of the lines built as batch leaves
   target_profile profile_;
   plan_tables<T>& tables_;
   std::size_t chunk_points_;
   std::vector<std::size_t> forced_;
   real_fusion fusion_;
   std::size_t bluestein_above_;
-  std::size_t line_scratch_ = 0;           // scratch a Bluestein stage of the current line needs
+  std::size_t line_scratch_ = 0; // scratch a Bluestein stage of the current line needs
+  std::size_t fit_row_ = 0;      // use_row_fit
+  bool fit_row_fits_ = false;
   std::size_t long_from_bytes_ = SIZE_MAX; // use_long_rows
   std::size_t long_radix8_bytes_ = 0;
   std::size_t conv_from_bytes_ = SIZE_MAX; // use_long_convolutions
