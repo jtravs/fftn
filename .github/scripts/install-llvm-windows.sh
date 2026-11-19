@@ -34,7 +34,9 @@ bash "$here/fetch.sh" \
   "https://github.com/llvm/llvm-project/releases/download/llvmorg-$version/clang+llvm-$version-$triple.tar.zst" \
   "$sha256" "$tmp/llvm.tar.zst"
 mkdir -p /c/fftn-llvm
-tar --use-compress-program=zstd -xf "$tmp/llvm.tar.zst" -C /c/fftn-llvm --strip-components=1
+# The archive is compressed with a long window, which zstd will not decode unless told to.
+tar --use-compress-program="zstd -d --long=31" -xf "$tmp/llvm.tar.zst" -C /c/fftn-llvm \
+  --strip-components=1
 rm -rf "$tmp"
 cygpath -w /c/fftn-llvm/bin >> "$GITHUB_PATH"
 /c/fftn-llvm/bin/clang --version
