@@ -295,9 +295,9 @@ template <class T> shape<std::complex<T>, T>
 template <class T> shape<std::complex<T>, std::complex<T>>
     axes_c2c(std::span<const axis> array, std::span<const std::size_t> axes, direction);
 template <class T> shape<T, std::complex<T>>
-    axes_r2c(std::span<const axis> array, std::span<const std::size_t> axes, bool in_place = false);
+    axes_r2c(std::span<const axis> array, std::span<const std::size_t> axes, bool padded = false);
 template <class T> shape<std::complex<T>, T>
-    axes_c2r(std::span<const axis> array, std::span<const std::size_t> axes, bool in_place = false);
+    axes_c2r(std::span<const axis> array, std::span<const std::size_t> axes, bool padded = false);
 }
 ```
 

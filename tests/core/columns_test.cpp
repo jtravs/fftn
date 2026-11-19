@@ -591,6 +591,25 @@ TEST(Columns, AdjacentTransformsOnlyWhereTheyFit) {
   EXPECT_NE(described(columns, 8191).find("adjacent transforms"), std::string::npos);
   EXPECT_EQ(described(columns, 8192).find("adjacent transforms"), std::string::npos);
   {
+    // With adjacent_team_chain, a plan whose lanes take the chain's radices keeps the route for
+    // one thread and holds a team program that is the chain (the team tests run 16 x 16 x 7).
+    build_settings teams;
+    teams.profile.adjacent_min_bytes = 0;
+    teams.profile.adjacent_team_chain = true;
+    teams.profile.adjacent_lanes = true;
+    fftn::shape<c, c> planes;
+    planes.axes = {{.n = 16, .in_stride = 16 * 7, .out_stride = 16 * 7},
+                   {.n = 16, .in_stride = 7, .out_stride = 7}};
+    planes.batches = {{.count = 7, .in_dist = 1, .out_dist = 1}};
+    for (const fftn::isa t : fftn::test::runnable_isas()) {
+      const auto core =
+          fftn::detail::make_plan_core(fftn::detail::view_of(planes), {.force_isa = t}, teams);
+      EXPECT_NE(fftn::detail::describe(*core).find("adjacent transforms"), std::string::npos)
+          << fftn::isa_name(t);
+      EXPECT_NE(core->team, nullptr) << fftn::isa_name(t);
+    }
+  }
+  {
     // Off where the profile says (machine_profile::adjacent_lanes: the EPYC 7763's class).
     build_settings off;
     off.profile.adjacent_min_bytes = 0;

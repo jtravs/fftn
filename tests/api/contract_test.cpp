@@ -8,6 +8,8 @@
 // invalid shape. Memory outside the rows (canaries) and input preservation are checked by
 // the harness on every run of the oracle suites; they are exercised here too through it.
 
+#include "core/plan_core.hpp"
+#include "fftn/detail/core.hpp"
 #include "support/alloc_hook.hpp"
 #include "support/fftn_subject.hpp"
 #include "support/harness.hpp"
@@ -103,6 +105,25 @@ TYPED_TEST(Contracts, ExecuteNeverAllocates) {
   };
   expect_no_allocation(interleaved, 128 * 64 * 32, 128 * 64 * 32);
   expect_no_allocation(interleaved, 128 * 64 * 32, 128 * 64 * 32, true);
+  // The same with a profile that takes that route (and runs a team's chain), whatever the host.
+  fftn::detail::build_settings route;
+  route.profile.adjacent_lanes = true;
+  route.profile.adjacent_team_chain = false;
+  route.profile.adjacent_min_bytes = 0;
+  for (const bool in_place : {false, true}) {
+    const auto core = fftn::detail::make_plan_core(fftn::detail::view_of(interleaved),
+                                                   {.in_place = in_place}, route);
+    ASSERT_NE(fftn::detail::describe(*core).find("adjacent transforms"), std::string::npos);
+    const fftn::workspace ws(fftn::detail::workspace_bytes(*core, 1));
+    std::vector<c> storage(2 * 128 * 64 * 32 + 1);
+    c* in = storage.data();
+    c* out = in_place ? in : storage.data() + 128 * 64 * 32 + 1;
+    const fftn::test::allocation_counter counter;
+    fftn::detail::execute_core(*core, 0, 32, in, out, ws);
+    fftn::detail::execute_core(*core, 3, 5, in, out, ws);
+    EXPECT_EQ(counter.allocations(), 0U);
+    EXPECT_EQ(counter.deallocations(), 0U);
+  }
 }
 
 // ---- Any alignment: the same bits at every offset of the arrays.

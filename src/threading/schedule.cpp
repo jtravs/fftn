@@ -142,7 +142,6 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
   // 0.771), where one thread gained too little (0.979, 0.934 with 97^3 slower, 1.048).
   if (x86_64 && private_l2 && !large_l2) {
     p.team_volume_planes = true;
-    p.adjacent_team_chain = true; // X61
   }
   // X59 arm R6 (machine_profile::fair_line_runs), only where it was measured: x86-64 with a
   // private L2 under 1 MiB and a large L3 (Zen 3's CCX), as X51's arm E, and a cluster-shared
@@ -150,10 +149,15 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
   // and keep the guided runs; so do the Xeon 6240's profile, where it lost, and Granite Rapids.
   const bool zen3_like =
       x86_64 && private_l2 && large_l3 && c.l2.size != 0 && c.l2.size < std::size_t{1024} * 1024;
-  // X61: no lanes over adjacent transforms in the EPYC 7763's class (machine_profile::
-  // adjacent_lanes).
-  if (zen3_like) {
-    p.adjacent_lanes = false;
+  // X61 (machine_profile::adjacent_lanes), only where it was measured and passed: the Xeon
+  // 6240's class (x86-64, a private L2 below 2 MiB without Zen 3's large L3 per core) and Apple
+  // (a cluster-shared L2), both with a team running the chain, which Apple's unmeasured 8 lanes
+  // need as much as the x86 machines did. Off on the EPYC 7763's class (0.946 against the bar of
+  // 0.85), on Granite and Sapphire Rapids, other AArch64 and unknown topologies.
+  const bool apple_like = !x86_64 && c.l2.shared_by != 0 && !private_l2;
+  if ((x86_64 && private_l2 && !large_l2 && !large_l3) || apple_like) {
+    p.adjacent_lanes = true;
+    p.adjacent_team_chain = true;
   }
   if (zen3_like || (c.l2.shared_by != 0 && !private_l2)) {
     p.fair_line_runs = true;

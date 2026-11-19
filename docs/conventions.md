@@ -190,8 +190,9 @@ backward.execute(spectrum.data(), back.data(), ws);
 - **Real transforms.** `array` gives the real side's lengths. The last axis listed is the
   halved one: n/2 + 1 complex values along it on the complex side, whose default strides are
   worked out with that length (the other sides of the layout rules above apply unchanged).
-  `in_place` asks for the padded default strides of an in-place plan, which needs the halved
-  dimension to be the array's fastest; see below.
+  `padded` asks for FFTW's padded real rows as the default strides. An in-place plan needs it
+  (pass the same value as `options::in_place`) and needs the halved dimension to be the array's
+  fastest; see below.
 
 ```cpp file=examples/axes.cpp region=axes-real
 // The columns of a real ny x nx array, each of ny reals nx apart, to half spectra of

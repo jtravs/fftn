@@ -229,20 +229,25 @@ void check_in_place(const shape_view& s, const side& in, const side& out) {
   }
   const side& real = in.complex ? out : in;
   const side& cplx = in.complex ? in : out;
+  // A shape from axes_r2c or axes_c2r with `padded` false is laid out for an out-of-place plan.
+  const std::string padded_hint =
+      " (FFTW's padded layout; axes_r2c and axes_c2r give it with padded = true)";
   if (s.axes[r - 1].n > 1 && (real.stride[r - 1] != 1 || cplx.stride[r - 1] != 1)) {
     reject("options.in_place", "needs the last axis contiguous on both sides (" + axis_name(r - 1) +
-                                   " strides 1) for a real transform");
+                                   " strides 1) for a real transform" + padded_hint);
   }
   for (std::size_t d = 0; d + 1 < r; ++d) {
     if (s.axes[d].n > 1 && real.stride[d] != 2 * cplx.stride[d]) {
-      reject("options.in_place",
-             "needs " + axis_name(d) + "'s real-side stride twice its complex-side stride");
+      reject("options.in_place", "needs " + axis_name(d) +
+                                     "'s real-side stride twice its complex-side stride" +
+                                     padded_hint);
     }
   }
   for (std::size_t b = 0; b < real.dist.size(); ++b) {
     if (s.batches[b].count > 1 && real.dist[b] != 2 * cplx.dist[b]) {
-      reject("options.in_place",
-             "needs " + batch_name(b) + "'s real-side distance twice its complex-side distance");
+      reject("options.in_place", "needs " + batch_name(b) +
+                                     "'s real-side distance twice its complex-side distance" +
+                                     padded_hint);
     }
   }
 }

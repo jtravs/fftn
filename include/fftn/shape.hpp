@@ -280,6 +280,12 @@ inline std::vector<std::ptrdiff_t> array_strides(std::span<const axis> array, bo
 template <class In, class Out>
 shape<In, Out> shape_along_axes(std::span<const axis> array, std::span<const std::size_t> selected,
                                 direction dir, std::size_t halved_in, std::size_t halved_out) {
+  for (std::size_t d = 0; d < array.size(); ++d) {
+    if (array[d].n == 0) {
+      throw std::invalid_argument("fftn::axes: array dimension " + std::to_string(d) +
+                                  " has length 0; every dimension needs its length");
+    }
+  }
   std::vector<bool> transformed(array.size(), false);
   for (const std::size_t d : selected) {
     if (d >= array.size()) {
@@ -315,8 +321,14 @@ shape<In, Out> shape_along_axes(std::span<const axis> array, std::span<const std
   for (const batch& inner : loops) {
     if (!s.batches.empty()) {
       batch& outer = s.batches.back();
+      // Merged only where the spans are representable; a product past PTRDIFF_MAX never
+      // equals a valid distance, so such neighbours stay two batch dimensions.
       const auto c = static_cast<std::ptrdiff_t>(inner.count);
-      if (outer.in_dist == inner.in_dist * c && outer.out_dist == inner.out_dist * c) {
+      std::ptrdiff_t in_span = 0;
+      std::ptrdiff_t out_span = 0;
+      if (!__builtin_mul_overflow(inner.in_dist, c, &in_span) &&
+          !__builtin_mul_overflow(inner.out_dist, c, &out_span) && outer.in_dist == in_span &&
+          outer.out_dist == out_span) {
         outer = batch{
             .count = outer.count * inner.count,
             .in_dist = inner.in_dist,
@@ -351,12 +363,13 @@ shape<In, Out> shape_along_axes(std::span<const axis> array, std::span<const std
 /// `nz` planes; dimensions {0, 1} are `nx` planes `nx` elements apart in memory, transformed
 /// without moving the data.
 ///
-/// Throws `std::invalid_argument` when `axes` names a dimension outside `array` or names one
-/// twice, or when the default strides do not fit `std::ptrdiff_t`; `std::bad_alloc` when memory
-/// runs out.
+/// Throws `std::invalid_argument` when a dimension of `array` has length 0, when `axes` names a
+/// dimension outside `array` or names one twice, or when the default strides do not fit
+/// `std::ptrdiff_t`; `std::bad_alloc` when memory runs out.
 ///
-/// Guarantees: every stride and distance of the result is explicit, except that the strides
-/// of a length-1 axis are ignored. Nothing else is validated until a plan is built from it.
+/// Guarantees: every stride and distance of the result is explicit (nonzero), the strides of a
+/// selected axis of length 1 included, though a plan never uses those. Nothing else is
+/// validated until a plan is built from it.
 template <class T>
 [[nodiscard]] shape<std::complex<T>, std::complex<T>>
 axes_c2c(std::span<const axis> array, std::span<const std::size_t> axes, direction dir) {
@@ -369,31 +382,36 @@ axes_c2c(std::span<const axis> array, std::span<const std::size_t> axes, directi
 ///
 /// As axes_c2c, for an array of real values: `array` holds the real side's lengths, and the
 /// last dimension listed in `axes` is the halved one, with n/2 + 1 complex values on the
-/// complex side, whose default strides are worked out with that length. With `in_place`, the
-/// default strides are FFTW's padded layout for a plan built with options::in_place: the halved
-/// dimension is taken as 2(n/2 + 1) reals on the real side. That layout needs the halved
-/// dimension to be the array's fastest (docs/conventions.md, "In place"); the plan checks it.
+/// complex side, whose default strides are worked out with that length.
+///
+/// `padded` chooses the real side's default strides: false, tight rows of n reals; true, FFTW's
+/// padded layout, the halved dimension taken as 2(n/2 + 1) reals, the last two padding. An
+/// in-place plan (options::in_place) needs `padded` true and the halved dimension the array's
+/// fastest (docs/conventions.md, "In place"), and refuses the shape otherwise. `padded` true with
+/// an out-of-place plan is a valid layout too: the plan then reads (or writes) the padded real
+/// rows, leaving the padding alone. Pass the same value as options::in_place unless you mean that.
 ///
 /// Exceptions and guarantees: as for axes_c2c.
 template <class T>
 [[nodiscard]] shape<T, std::complex<T>>
-axes_r2c(std::span<const axis> array, std::span<const std::size_t> axes, bool in_place = false) {
+axes_r2c(std::span<const axis> array, std::span<const std::size_t> axes, bool padded = false) {
   const std::size_t n = axes.empty() || axes.back() >= array.size() ? 0 : array[axes.back()].n;
   return detail::shape_along_axes<T, std::complex<T>>(array, axes, direction::forward,
-                                                      in_place ? 2 * (n / 2 + 1) : n, n / 2 + 1);
+                                                      padded ? 2 * (n / 2 + 1) : n, n / 2 + 1);
 }
 
 /// The complex-to-real transform along some dimensions of a strided array, the inverse layout
 /// of axes_r2c: `array` holds the real side's lengths, the last dimension listed in `axes` has
-/// n/2 + 1 complex values on the input side. Provisional, as axes_c2c.
+/// n/2 + 1 complex values on the input side; `padded` as for axes_r2c, the output's real side.
+/// Provisional, as axes_c2c.
 ///
 /// Exceptions and guarantees: as for axes_c2c.
 template <class T>
 [[nodiscard]] shape<std::complex<T>, T>
-axes_c2r(std::span<const axis> array, std::span<const std::size_t> axes, bool in_place = false) {
+axes_c2r(std::span<const axis> array, std::span<const std::size_t> axes, bool padded = false) {
   const std::size_t n = axes.empty() || axes.back() >= array.size() ? 0 : array[axes.back()].n;
   return detail::shape_along_axes<std::complex<T>, T>(array, axes, direction::backward, n / 2 + 1,
-                                                      in_place ? 2 * (n / 2 + 1) : n);
+                                                      padded ? 2 * (n / 2 + 1) : n);
 }
 
 } // namespace fftn::inline v0

@@ -44,9 +44,6 @@ double records_work(const program& p, std::size_t begin, std::size_t end) {
   return work;
 }
 
-// The points of one line of a nest whose body is [begin, end): the longest line its stages
-// record (a lanes pass records its block's points), or where the body holds loops of its own
-// (a volume's plane, core/plan_core.cpp add_volume_planes) the most points one of them covers.
 // The work of records [begin, end) of a lanes program: its gather, scatter and pairing
 // (radix 1) move a block's points.
 double lane_records_work(const program& p, std::size_t begin, std::size_t end) {
@@ -63,6 +60,9 @@ double lane_records_work(const program& p, std::size_t begin, std::size_t end) {
   return work;
 }
 
+// The points of one line of a nest whose body is [begin, end): the longest line its stages
+// record (a lanes pass records its block's points), or where the body holds loops of its own
+// (a volume's plane, core/plan_core.cpp add_volume_planes) the most points one of them covers.
 std::size_t line_points(const program& p, std::size_t begin, std::size_t end) {
   std::size_t n = 1;
   for (std::size_t i = begin; i < end; ++i) {

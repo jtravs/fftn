@@ -8,6 +8,8 @@
 // each array against a guard page, checks that no byte outside the described elements is
 // written and, out of place, that the input is unchanged.
 
+#include "core/plan_core.hpp"
+#include "fftn/detail/core.hpp"
 #include "reference/reference_dft.hpp"
 #include "support/canary.hpp"
 #include "support/exact.hpp"
@@ -833,9 +835,30 @@ void check_batched_complex(checker& check, const batched_case& k,
     const std::string what_tight = describe(k, "c2c tight");
     const auto tight_offsets = offsets_of(k.axes, k.counts, tight);
     for (const bool same : {false, true}) {
-      const auto t = run_at<c, c>(batched_shape<c, c>(k.axes, k.counts, tight, tight, dir), same,
-                                  tight_offsets, tight_offsets, x, {}, what_tight, target);
+      const auto sh = batched_shape<c, c>(k.axes, k.counts, tight, tight, dir);
+      const auto t =
+          run_at<c, c>(sh, same, tight_offsets, tight_offsets, x, {}, what_tight, target);
       check.within<T>(t, want, tol, what_tight);
+      // The same through a profile that takes the lanes over adjacent transforms wherever they
+      // fit (X61), so that the route meets the reference on every machine.
+      fftn::detail::build_settings route;
+      route.profile.adjacent_lanes = true;
+      route.profile.adjacent_team_chain = false;
+      route.profile.adjacent_min_bytes = 0;
+      const auto core = fftn::detail::make_plan_core(
+          fftn::detail::view_of(sh), {.in_place = same, .force_isa = target}, route);
+      const fftn::workspace ws(fftn::detail::workspace_bytes(*core, 1));
+      const auto call = [&core, &ws](const c* in, c* out) {
+        fftn::detail::execute_core(*core, 0, fftn::detail::transform_count(*core), in, out, ws);
+      };
+      const auto r = fftn::test::execute<c, c>(call, tight_offsets, tight_offsets,
+                                               same ? fftn::test::placement::in_place
+                                                    : fftn::test::placement::out_of_place,
+                                               std::span<const c>(x), {});
+      for (const std::string& v : r.violations) {
+        ADD_FAILURE() << what_tight << " (route): " << v;
+      }
+      check.within<T>(r.out, want, tol, what_tight + " (route)");
     }
   }
 }
@@ -1238,6 +1261,45 @@ TYPED_TEST(MultiDim, AxisOrderOfAShapeChangesNoBit) {
                                    std::as_bytes(std::span<const c>(yb))))
         << "axes " << a.size();
   }
+}
+
+// Neighbours whose merged span would overflow ptrdiff_t stay two batch dimensions (the product
+// is never formed), and a dimension of length 0 is refused by name.
+TEST(AxesShape, MergeNeverOverflows) {
+  const std::vector<fftn::axis> array{
+      {.n = 2, .in_stride = std::ptrdiff_t{1} << 50, .out_stride = std::ptrdiff_t{1} << 50},
+      {.n = std::size_t{1} << 24,
+       .in_stride = std::ptrdiff_t{1} << 40,
+       .out_stride = std::ptrdiff_t{1} << 40},
+      {.n = 2}};
+  const std::vector<std::size_t> last{2};
+  const auto s = fftn::axes_c2c<double>(array, last, fftn::direction::forward);
+  ASSERT_EQ(s.batches.size(), 2U);
+  EXPECT_EQ(s.batches[0].count, 2U);
+  EXPECT_EQ(s.batches[1].count, std::size_t{1} << 24);
+  const std::vector<fftn::axis> empty{{.n = 4}, {.n = 0}};
+  const std::vector<std::size_t> first{0};
+  try {
+    static_cast<void>(fftn::axes_c2c<double>(empty, first, fftn::direction::forward));
+    ADD_FAILURE() << "a dimension of length 0 was accepted";
+  } catch (const std::invalid_argument& e) {
+    EXPECT_NE(std::string(e.what()).find("dimension 1 has length 0"), std::string::npos)
+        << e.what();
+  }
+}
+
+// A real shape built without `padded` and planned in place is refused with a hint at `padded`.
+TEST(AxesShape, UnpaddedRealShapeInPlaceSaysSo) {
+  const std::vector<fftn::axis> array{{.n = 6}, {.n = 8}};
+  const std::vector<std::size_t> both{0, 1};
+  try {
+    const fftn::r2c_plan<double> p(fftn::axes_r2c<double>(array, both), {.in_place = true});
+    ADD_FAILURE() << "an unpadded in-place real shape was accepted";
+  } catch (const std::invalid_argument& e) {
+    EXPECT_NE(std::string(e.what()).find("padded = true"), std::string::npos) << e.what();
+  }
+  const fftn::r2c_plan<double> ok(fftn::axes_r2c<double>(array, both, true), {.in_place = true});
+  EXPECT_FALSE(ok.describe().empty());
 }
 
 TEST(AxesShape, RefusesBadSelections) {

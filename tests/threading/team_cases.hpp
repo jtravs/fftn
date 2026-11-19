@@ -188,6 +188,25 @@ void add_cases(std::vector<team_case>& out, const fftn::detail::build_settings& 
                           2 * 24 * 20 * 11, false, adjacent, target));
   out.push_back(make_case("c2c_interleaved_inplace_24x20x11x2" + suffix, interleaved,
                           2 * 24 * 20 * 11, 2 * 24 * 20 * 11, true, adjacent, target));
+  // Shapes whose lanes take the chain's radices on NEON as on x86, so that one thread runs the
+  // lanes and a team the chain (adjacent_team_chain) with the same bits.
+  const auto interleaved_case = [&](std::string name, std::vector<std::size_t> n, std::size_t k) {
+    fftn::shape<c, c> sh;
+    sh.dir = fwd;
+    auto span = static_cast<std::ptrdiff_t>(k);
+    std::size_t points = 1;
+    sh.axes.resize(n.size());
+    for (std::size_t i = n.size(); i > 0; --i) {
+      sh.axes[i - 1] = {.n = n[i - 1], .in_stride = span, .out_stride = span};
+      span *= static_cast<std::ptrdiff_t>(n[i - 1]);
+      points *= n[i - 1];
+    }
+    sh.batches = {{.count = k, .in_dist = 1, .out_dist = 1}};
+    out.push_back(
+        make_case(std::move(name) + suffix, sh, points * k, points * k, false, adjacent, target));
+  };
+  interleaved_case("c2c_interleaved_16x16x7", {16, 16}, 7);
+  interleaved_case("c2c_interleaved_12x10x8x5", {12, 10, 8}, 5);
   // A team that runs the lanes too.
   fftn::detail::build_settings adjacent_teams = adjacent;
   adjacent_teams.profile.adjacent_team_chain = false;
