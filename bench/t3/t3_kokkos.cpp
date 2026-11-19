@@ -185,6 +185,12 @@ void transform_arms(const std::string& name, const exec_space& exec, const View&
   const fftn::omp::executor omp_ex(threads);
   fftn::workspace wo(bytes);
   arms.push_back({"omp", [&] { p.execute(in, out, omp_ex, wo); }});
+  // The members of a plain OpenMP region as the team: team_all without Kokkos' team set-up.
+  fftn::workspace wot(bytes);
+  arms.push_back({"omp_team", [&] {
+#pragma omp parallel num_threads(threads)
+                    p.execute(in, out, fftn::omp::this_team(), wot);
+                  }});
 #endif
   measure("transform", name, std::move(arms));
 }
