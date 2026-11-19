@@ -1466,8 +1466,9 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     // Re X_h (pass_args::packed), which is all the row's c2r reads. The complex axes run on
     // columns 0 .. h-1 from the input into the output; column h, whose real part alone is
     // needed, runs through the complex axes from the input into the block (one value per
-    // row) and its real part goes into the imaginary places of column 0, which that
-    // column's own transform wrote first; then the rows run in place.
+    // row), as one more line of the last column phase where that phase has no other tail;
+    // each row then takes its Re X_h from the block into the imaginary place of its column 0,
+    // which that column's own transform wrote, and runs its c2r in place.
     const std::size_t n = c.lengths[r - 1];
     const std::size_t h = n / 2;
     view packed{.where = slot::out, .stride = out.stride, .element_bytes = complex_bytes};
@@ -1477,9 +1478,11 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     packed.stride[r - 1] = 1;
     std::vector<std::size_t> columns = in.extent;
     columns[r - 1] = h;
+    std::size_t last_phase = p.records.size();
     for (std::size_t i = r - 1; i > 0; --i) {
       const std::size_t d = i - 1;
       const view& src = d + 2 == r ? in_view : packed;
+      last_phase = p.records.size();
       // The output's rows are those of a c2c plane (n complex values, a power of two for
       // most n): c2c columns' rule (column_block, column_radices), not that of the odd rows
       // of n/2 + 1 columns. With the real rule the M5 Max ran these columns alone through
@@ -1497,8 +1500,18 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
                              "): c2c backward into the output, packed, radices " +
                              chain.radix_text(c.lengths[d]));
     }
-    // Column h: one line of a loop that starts there on the input and at the imaginary place
-    // of column 0 on the output.
+    // Column h: one line of a loop that starts there on the input. It joins the last column
+    // phase where that phase is one nest of lines (no narrower block of its own): its line
+    // reads only the input and writes only the block.
+    std::size_t nests = 0;
+    for (std::size_t i = last_phase; i < p.records.size(); ++nests) {
+      const loop* l = std::get_if<loop>(&p.records[i]);
+      if (l == nullptr) {
+        nests = 2;
+        break;
+      }
+      i = l->body_end;
+    }
     view block_view{
         .where = slot::block,
         .stride = std::vector<std::ptrdiff_t>(r, 0),
@@ -1516,8 +1529,8 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     p.records.emplace_back(loop{
         .kind = loop_kind::lines,
         .count = 1,
-        .start = {to_signed(h, "shape") * in.stride[r - 1] * in.element_bytes, out.element_bytes, 0,
-                  0},
+        .start = {to_signed(h, "shape") * in.stride[r - 1] * in.element_bytes, 0, 0, 0},
+        .joins = nests == 1,
     });
     for (std::size_t i = r - 1; i > 0; --i) {
       const std::size_t d = i - 1;
@@ -1529,28 +1542,33 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       scratch = std::max(scratch, cneed);
       add_phase(p, d, edge, src, block_view, std::move(cs));
     }
-    {
-      stage st;
-      st.run = kernels.passes.c2r_store[0];
-      st.args.src_stride = block_view.stride[r - 2];
-      st.args.dst_stride = out.stride[r - 2];
-      st.args.n = in.extent[r - 2];
-      st.src = slot::block;
-      st.dst = slot::out;
-      st.units = in.extent[r - 2];
-      st.name = "column " + std::to_string(h) + "'s real part into column 0";
-      std::vector<stage> one;
-      one.push_back(std::move(st));
-      add_phase(p, r - 2, edge, block_view, out_view, std::move(one));
-    }
     std::get<loop>(p.records[wrapper]).body_end = static_cast<std::uint32_t>(p.records.size());
-    c.axis_notes.push_back("column " + std::to_string(h) +
-                           " through the complex axes into the block, its real part into "
-                           "column 0's imaginary places");
+    c.axis_notes.push_back("column " + std::to_string(h) + " through the complex axes into the " +
+                           "block" + (nests == 1 ? ", one more line of the column phase" : "") +
+                           "; each row takes its real part in place of its column 0's imaginary "
+                           "part");
     std::vector<stage> st;
+    {
+      stage ny;
+      ny.run = kernels.passes.c2r_nyquist;
+      ny.src = slot::block;
+      ny.dst = slot::out;
+      ny.units = 1;
+      ny.name = "Re X_" + std::to_string(h) + " from the block into the packed row";
+      st.push_back(std::move(ny));
+    }
     const std::size_t need =
         chain.c2r_line(n, {slot::out, 1}, {slot::out, 1}, opts.scale, st, true);
+    const std::size_t rows_first = p.records.size();
     lines(r - 1, out.extent, out_view, out_view, need, std::move(st));
+    // The rows' loops move the block too, a value per row (lines() moves only the out slot).
+    std::size_t at_loop = rows_first;
+    for (std::size_t e = 0; e + 1 < r; ++e) {
+      if (out.extent[e] == 1) {
+        continue;
+      }
+      std::get<loop>(p.records[at_loop++]).step[2] = block_view.stride[e] * complex_bytes;
+    }
     c.axis_notes.push_back("axis " + std::to_string(r - 1) + " (n = " + std::to_string(n) +
                            "): in place on the packed rows, " + chain.real_text(n, false, false));
   } else {

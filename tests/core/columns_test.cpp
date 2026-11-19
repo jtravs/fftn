@@ -443,7 +443,8 @@ TEST(Columns, RealPlanesLanesEqualTheChain) {
 // workspace block (an odd real axis, an odd output stride, build_settings::c2r_packed 0). Both
 // compute the same transform, of any input (the spectrum need not be Hermitian), to within
 // twice the tolerance; the input is preserved and no output byte outside the described
-// elements is written; the block shrinks to one value per row; unrolled and walked programs
+// elements is written; the block shrinks to one value per row (and the workspace with it where
+// the half spectrum outweighs the lanes' tiles); unrolled and walked programs
 // agree. Every shape class of the real axis: the pairing alone (n = 2), the leaves, the fused
 // and the separate pairing pass; planes, volumes, batches, a scale, padded outputs.
 template <class T> void c2r_packed_matches_block(fftn::isa target) {
@@ -455,6 +456,7 @@ template <class T> void c2r_packed_matches_block(fftn::isa target) {
     double scale = 1.0;
     std::size_t fuse = 0; // build_settings::fuse_real_radix (1: the separate pairing pass)
     bool packs = true;
+    bool shrinks = false; // the workspace too, not only the block (the lanes' tiles may grow)
   };
   const std::vector<packed_case> cases = {
       {.n = {8, 6}, .count = 2},
@@ -469,8 +471,8 @@ template <class T> void c2r_packed_matches_block(fftn::isa target) {
       {.n = {48, 64}, .count = 1, .fuse = 1},
       {.n = {40, 96}, .count = 2, .pad = 4, .scale = 0.5, .fuse = 16},
       {.n = {17, 200}, .count = 1, .fuse = 1},
-      {.n = {256, 256}, .count = 1},
-      {.n = {16, 512}, .count = 1},
+      {.n = {256, 256}, .count = 1, .shrinks = true},
+      {.n = {16, 512}, .count = 1, .shrinks = true},
       {.n = {4, 6, 8}, .count = 1},
       {.n = {3, 5, 4}, .count = 2, .pad = 2, .scale = 0.125},
       {.n = {4, 6, 8}, .count = 1, .pad = 1, .packs = false},
@@ -569,7 +571,9 @@ template <class T> void c2r_packed_matches_block(fftn::isa target) {
     EXPECT_EQ(kept_block, rows * half);
     if (pc.packs) {
       EXPECT_EQ(block, rows) << text;
-      EXPECT_LE(ws_bytes, kept_ws);
+      if (pc.shrinks) {
+        EXPECT_LT(ws_bytes, kept_ws);
+      }
     } else {
       EXPECT_TRUE(got == want) << "the same plan should give the same bytes";
       continue;

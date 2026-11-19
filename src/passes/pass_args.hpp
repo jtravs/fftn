@@ -231,6 +231,8 @@ template <class T> struct pass_kernels {
   pass_fn c2r_pre[2];
   pass_fn c2r_expand;
   pass_fn c2r_store[2];
+  // Re X_h into a packed line (pass_args::packed; experiment X60).
+  pass_fn c2r_nyquist;
   // Even real lines with a stride other than 1: packing, pairing at any stride, unpacking.
   pass_fn r2c_pack_pairs;
   pass_fn r2c_post_strided[2];

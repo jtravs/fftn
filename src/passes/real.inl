@@ -719,6 +719,17 @@ void c2r_store(const pass_args* a, const void* src, void* dst, std::size_t first
   }
 }
 
+// The imaginary place of a packed c2r line's element 0 (pass_args::packed) from the real part
+// of the complex value at src: Re X_h, which a multi-axis c2r out of place computes apart
+// (core/plan_core.cpp; experiment X60). One unit. Reads src, dst.
+template <class T>
+void c2r_nyquist(const pass_args* /*a*/, const void* src, void* dst, std::size_t first,
+                 std::size_t last) {
+  if (first < last) {
+    static_cast<T*>(dst)[1] = static_cast<const T*>(src)[0];
+  }
+}
+
 // ---- The c2r pairing in a grid's first gather (n = 2h even; experiment X29).
 
 // Phase 1 of the grid of h (strategies/grid.hpp) gathers a block of s adjacent columns
