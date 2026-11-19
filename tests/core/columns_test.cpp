@@ -550,6 +550,7 @@ template <class T> void c2r_packed_matches_block(fftn::isa target) {
                  std::to_string(pc.pad) + ", fuse " + std::to_string(pc.fuse));
     build_settings rules;
     rules.fuse_real_radix = pc.fuse;
+    rules.c2r_packed = 1; // wherever the layout allows, whatever the size
     build_settings walked = rules;
     walked.unroll_calls = false;
     build_settings kept = rules;
@@ -592,6 +593,38 @@ template <class T> void c2r_packed_matches_block(fftn::isa target) {
     }
     EXPECT_LE(most, tolerance * largest) << text << kept_text;
   }
+}
+
+// By the rules a c2r packs its intermediate where one transform's half spectrum exceeds the
+// profile's c2r_packed_bytes (X60): 64 x 64 doubles have 64 x 33 x 16 = 33792 bytes of it.
+TEST(Columns, C2rPacksBeyondTheProfilesBytes) {
+  fftn::shape<std::complex<double>, double> sh;
+  sh.axes = {{.n = 64}, {.n = 64}};
+  sh.batches = {{.count = 3}};
+  const auto text = [&](std::size_t limit, int forced) {
+    build_settings settings;
+    settings.profile.c2r_packed_bytes = limit;
+    settings.c2r_packed = forced;
+    return fftn::detail::describe(
+        *fftn::detail::make_plan_core(fftn::detail::view_of(sh), {}, settings));
+  };
+  EXPECT_NE(text(33791, -1).find("packed"), std::string::npos);
+  EXPECT_EQ(text(33792, -1).find("packed"), std::string::npos);
+  EXPECT_NE(text(33792, 1).find("packed"), std::string::npos);
+  EXPECT_EQ(text(0, 0).find("packed"), std::string::npos);
+  fftn::shape<std::complex<float>, float> single;
+  single.axes = sh.axes;
+  build_settings settings;
+  settings.profile.c2r_packed_bytes = 16896; // the float plane's half spectrum
+  EXPECT_EQ(fftn::detail::describe(*fftn::detail::make_plan_core(fftn::detail::view_of(single),
+                                                                 {}, settings))
+                .find("packed"),
+            std::string::npos);
+  settings.profile.c2r_packed_bytes = 16895;
+  EXPECT_NE(fftn::detail::describe(*fftn::detail::make_plan_core(fftn::detail::view_of(single),
+                                                                 {}, settings))
+                .find("packed"),
+            std::string::npos);
 }
 
 TEST(Columns, C2rPackedMatchesTheBlock) {

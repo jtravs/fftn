@@ -277,6 +277,9 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
     p.depth_convolution_max_bytes = 2 * c.l1d.size;
   }
   p.c2r_paired_gather = c.l2.size != 0 && !private_l2;
+  if (c.l2.size != 0) {
+    p.c2r_packed_bytes = private_l2 ? c.l2.size : c.l2.size / 4; // X60
+  }
   // Experiment X36: long convolutions (machine_profile::long_convolution_bytes).
   if (p.pow2_chain_bytes != 0) {
     p.long_convolution_bytes = p.grid_min_bytes;

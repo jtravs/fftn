@@ -86,9 +86,7 @@ TYPED_TEST(Contracts, ExecuteNeverAllocates) {
   expect_no_allocation(fftn::volumes_c2c<T>(6, 5, 8, 2, fftn::direction::backward), 480, 480, true);
   fftn::shape<c, T> c2r_planes;
   c2r_planes.axes = {{.n = 6}, {.n = 8}};
-  expect_no_allocation(c2r_planes, 6 * 5, 6 * 8); // packed in the output (X60)
-  c2r_planes.axes = {{.n = 6}, {.n = 7}};
-  expect_no_allocation(c2r_planes, 6 * 4, 6 * 7); // an odd real axis: through the block
+  expect_no_allocation(c2r_planes, 6 * 5, 6 * 8); // goes through the block
   expect_no_allocation(fftn::rows_c2c<T>(1, 1, fftn::direction::forward), 1, 1, true);
   const fftn::shape<T, c> four_batches{
       .axes = {{.n = 10}},
@@ -792,8 +790,8 @@ TEST(Describe, NamesTheProgram) {
   for (const char* part : {
            "c2r",
            "float",
-           "block of 12 complex", // column 3 alone: the rest is packed in the output (X60)
-           "c2c backward into the output, packed",
+           "block of 48 complex", // too small to pack its intermediate in the output (X60)
+           "c2c backward",
            "a leaf of 3 with the pairing fused",
            "loop lines x3",
            "out of place",

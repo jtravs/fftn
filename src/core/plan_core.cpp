@@ -985,17 +985,30 @@ bool r2c_pairs_in_grid(const build_settings& settings, target t) {
 // Whether a c2r plan builds its intermediate packed in the output (experiment X60): of two
 // or more axes, out of place, an even real axis contiguous on the output and every other
 // output stride an even number of reals, so that each output row holds its h = n/2 complex
-// values (pass_args::packed). Otherwise the intermediate is one transform's half spectrum in
-// the workspace block. build_settings::c2r_packed 0 keeps the block (tests).
-bool c2r_packed(const shape_view& s, const side& out, bool in_place,
+// values (pass_args::packed); by the rules where one transform's half spectrum exceeds the
+// profile's c2r_packed_bytes. Otherwise the intermediate is that half spectrum in the
+// workspace block. build_settings::c2r_packed 0 keeps the block, 1 packs wherever the layout
+// allows (tests).
+bool c2r_packed(const shape_view& s, const side& in, const side& out, bool in_place,
                 const build_settings& settings) {
   const std::size_t r = s.axes.size();
   if (s.kind != transform_kind::c2r || r < 2 || in_place || settings.c2r_packed == 0 ||
-      s.axes[r - 1].n % 2 != 0 || out.stride[r - 1] != 1) {
+      s.axes[r - 1].n % 2 != 0 || out.stride[r - 1] != 1 ||
+      !std::all_of(out.stride.begin(), out.stride.end() - 1,
+                   [](std::ptrdiff_t v) { return v % 2 == 0; })) {
     return false;
   }
-  return std::all_of(out.stride.begin(), out.stride.end() - 1,
-                     [](std::ptrdiff_t v) { return v % 2 == 0; });
+  if (settings.c2r_packed > 0) {
+    return true;
+  }
+  std::size_t bytes = 2 * sizeof(double);
+  for (const std::size_t e : in.extent) {
+    bytes = e != 0 && bytes > SIZE_MAX / e ? SIZE_MAX : bytes * e;
+  }
+  if (s.prec == precision::f32) {
+    bytes /= 2;
+  }
+  return bytes > settings.profile.c2r_packed_bytes;
 }
 
 // Makes the records from `first` on read the output slot where they read the input: the
@@ -1459,7 +1472,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       c.axis_notes.push_back("axis " + std::to_string(d) + " (n = " + std::to_string(n) +
                              "): c2c forward, radices " + chain.radix_text(n));
     }
-  } else if (c2r_packed(s, out, c.in_place, settings)) {
+  } else if (c2r_packed(s, in, out, c.in_place, settings)) {
     // c2r of two or more axes out of place, its intermediate packed in the output
     // (DESIGN.md 9.1, experiment X60): each output row's n reals hold its h = n/2 complex
     // values after the complex axes, X_0 .. X_h-1 with the imaginary place of X_0 holding

@@ -683,6 +683,11 @@ TEST(Schedule, GridSizesFromCaches) {
   EXPECT_TRUE(m5.c2r_paired_gather);
   EXPECT_FALSE(epyc.c2r_paired_gather);
   EXPECT_FALSE(xeon.c2r_paired_gather);
+  // A multi-axis c2r packs its intermediate in the output beyond a private L2 or a quarter of a
+  // shared one (X60).
+  EXPECT_EQ(m5.c2r_packed_bytes, 4 * 1024 * kib);
+  EXPECT_EQ(epyc.c2r_packed_bytes, 512 * kib);
+  EXPECT_EQ(xeon.c2r_packed_bytes, 1024 * kib);
   // Power-of-two rows stay chains to four times a shared L2, radix 8 up to an eighth of it;
   // to twice L3 with radix 8 on the EPYC; never on the Xeon (X32).
   EXPECT_EQ(m5.pow2_chain_bytes, std::size_t{64} * 1024 * kib);
