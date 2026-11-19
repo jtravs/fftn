@@ -1695,8 +1695,11 @@ changes, 64 × 64 × 512 0.87–0.88), while teams keep these blocks in a team p
 8 lanes lost up to 1.46 with the wide ones, and its one thread 1.05 at 30 × 40 × 50). The columns past the last whole block run as one
 narrower block (a loop's `start` offsets its nest), its idle lanes never written. A block is
 a line of the phase's loop nest, so threads share blocks as they share rows (13.2); the
-narrower block's nest is a phase of its own, of one chunk (joining it to the whole blocks'
-phase gained 3–4 % at 8 lanes, X41, below the bar). The complex axes of r2c and c2r plans take the same phase with their
+narrower block's nest joins the whole blocks' phase (`loop::joins`), whose lines follow
+theirs (X59 arm T: at 8 lanes the real planes that split took 0.911 of the time on the Xeon 6240
+and 0.978 on the EPYC 7763, 0.998 on the M5 Max at 6 lanes; as a phase of its own it was one
+chunk that one member ran while the rest waited, 7–12 % of real 256²–512² at 8 lanes; X41's T1,
+the same change, had measured 0.96 on the EPYC against a 0.95 bar). The complex axes of r2c and c2r plans take the same phase with their
 own block rule (`column_block`, `real`; X41): their rows of n/2 + 1 columns lie an odd
 multiple of 16 bytes apart for even n, so a column alone crowds no L1 set and the lanes pay
 only for the copies a strided column costs where C > 1: none on NEON double (the M5 Max lost
@@ -2082,7 +2085,8 @@ As built (`src/threading/work_graph.hpp`), the tasks are the transforms of the b
 task's phases are its body's records in order: a stage (the passes of a 1-D line) is a
 phase of the stage's own chunks, which share the task's scratch lines; a loop nest over the
 lines of one axis (2-D and 3-D) is a phase whose chunks are runs of whole lines, each line
-on the scratch of the member that runs it, the block (9.1) shared; a volume's loop over its
+on the scratch of the member that runs it, the block (9.1) shared; a column phase's
+narrower last block (9.3) adds its lines to the whole blocks' phase; a volume's loop over its
 planes (9.3) is a phase whose lines are whole planes, each running the plane's own phases
 on its member's scratch. A team of two or more members may run a *team program* instead of
 the program (`plan_core::team`, experiments X43 and X43b): the same transform with narrower
@@ -3108,6 +3112,7 @@ to change before a release.
 | 2026-11-18 | Last bits are not a goal: the bitwise guarantees of section 15.5 stay while they cost nothing measurable; a change that would break one needs a real measured gain and narrows the published guarantee with it; unpublished bit properties are not protected | Maintainer's decision ("rounding in other parts of calculations matter more"). First use: X53's batch leaves for 8, 12 and 25 (x86) and 20 and 32 (NEON float), 0.43–0.56 of the time in screens, give a batch's rows other last bits than a plan of one row; the published position guarantee holds (one leftover row runs the same leaf with the row in every lane, two or more a padded group) |
 | 2026-11-18 | x86-64 with a private L2 of 2 MiB or more (Granite Rapids) takes the depth-first chain from L2/4 to 64 L2 in double, with the Xeon 6240's tops (section 8.5) | X55 on a Granite Rapids VM: 0.688 of the grids' time over the 14 rows it changes (46080 0.44, 65536 0.52, 131072–262144 0.63, 2^22 0.69), none slower, tracking tier 0.940; ÷ FFTW 1.15–1.65 → 0.70–0.83 on X48's failing long rows |
 | 2026-11-18 | A Bluestein stage of one copy runs its convolution as two depth-first chains where a row of M would be one, and on the Xeon profile beyond, up to 32 MiB, the longest measured (`depth_convolution_max_bytes`); the workspace block holds the chains' blocks, scratch a the forward output; the chirp passes are fused into the forward first pass and the backward last top pass (sections 8.5, 11.2; experiment X50) | Xeon 6240: 8179–999983 0.56–0.73 of `main`'s time (131071 0.61, 999983 0.71), FFTN ÷ MKL 131071 1.34 → 0.84, 999983 1.44 → 1.05, ÷ FFTW 0.65–0.83; M5 Max 4813–5119 0.86; the EPYC unchanged; X36b had judged a grid convolution to need a new slot, the block serves |
+| 2026-11-19 | A lanes column phase's narrower last block joins the whole blocks' phase of the work graph | X59 arm T: alone it was a phase of one chunk that one member ran while the others waited, on nearly every real plane; at 8 lanes 0.911 (Xeon 6240, real planes that split) and 0.978 (EPYC 7763), 0.998 on the M5 Max at 6 lanes; serial programs and bits unchanged |
 
 ---
 
