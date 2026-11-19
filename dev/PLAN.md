@@ -16,8 +16,10 @@ Bluestein convolutions on them (X50), two-line chains (X47), radix-32/64 codelet
 registers (X54), data-size-aware radices for the EPYC's 768 and 1024 (X57), batch leaves for
 tiny batches (X53), the fixed benchmark backend (X49), threaded planes and volumes with team
 programs (task 4.2, X43, X52), and the threaded Kokkos integration (task 3.5, T3; provisional
-API). Running: task 4.3 (axis subsets, strided arrays, real multi-dimensional; PR 82) and X59
-(threaded real planes against oneMKL on the Xeon; PR 84). This section is also the handoff.
+API), task 4.3 (axis subsets of strided arrays, axes in memory order; X61's lanes over adjacent
+transforms on the Xeon 6240 class and Apple; provisional `axes_*` API) and X59 (threaded real
+planes: phase joins everywhere, fair line runs on Zen 3 and Apple). Paused: X60 (out-of-place
+c2r without the workspace block; diagnosed, its change not judged; draft PR 86). This section is also the handoff.
 Lessons that generalise are in [LESSONS.md](LESSONS.md), decisions in DESIGN.md section 19,
 open questions in DESIGN.md section 18.2.
 
