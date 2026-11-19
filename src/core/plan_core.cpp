@@ -880,6 +880,7 @@ std::size_t add_column_phase(program& p, chain_builder<T>& chain, std::size_t ax
   std::size_t need = 0;
   const auto nest = [&](std::size_t count, std::size_t width, std::size_t rows,
                         std::size_t first_column) {
+    const std::size_t outermost = p.records.size();
     std::vector<std::size_t> open = open_loops(p, axis, last, extent, src, dst);
     open.push_back(p.records.size());
     p.records.emplace_back(loop{
@@ -897,6 +898,8 @@ std::size_t add_column_phase(program& p, chain_builder<T>& chain, std::size_t ax
       p.records.emplace_back(std::move(x));
     }
     close_loops(p, open);
+    // The narrower block's lines are disjoint from the whole blocks': one phase for threads.
+    std::get<loop>(p.records[outermost]).joins = first_column != 0;
   };
   if (whole != 0) {
     nest(whole, block, block, 0);
