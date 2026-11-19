@@ -599,9 +599,10 @@ const batch_leaf_set<T>* batch_leaves_of(const shape_view& s, const side& in, co
     }
     break;
   case batch_leaf_choice::rules:
-    if (const std::size_t slot = codelet_slot(n); slot < profile.batch_rows.size() &&
-                                                  profile.batch_rows[slot] != 0 &&
-                                                  s.batches[0].count >= profile.batch_rows[slot]) {
+    if (const std::size_t slot = codelet_slot(n);
+        slot < profile.batch_rows.size() && profile.batch_rows[slot] != 0 &&
+        s.batches[0].count >= profile.batch_rows[slot] &&
+        (n != 12 || t != target::avx512 || settings.profile.batch_leaf_12)) {
       const std::size_t rows = s.batches[0].count;
       const bool own = !profile.batch_narrower ||
                        (slot < profile.batch_own_rows.size() && profile.batch_own_rows[slot] != 0 &&
@@ -1060,6 +1061,15 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     p.transforms *= s.batches[b].count;
   }
   p.batch_loops = s.batches.size();
+  // X57: a two-pass row plan reads 12-16 streams at once, which pays only while the batch's
+  // rows and their output stay in the cache (machine_profile::fit_row_bytes).
+  if (s.kind == transform_kind::c2c && r == 1 && settings.profile.fit_row_bytes != 0 &&
+      in.stride[0] == 1 && out.stride[0] == 1) {
+    const std::size_t sides = c.in_place ? 1 : 2;
+    const std::size_t touched =
+        checked_product(std::array{c.lengths[0], std::size_t{2} * sizeof(T), p.transforms, sides});
+    chain.use_row_fit(c.lengths[0], touched != 0 && touched <= settings.profile.fit_row_bytes);
+  }
 
   const view in_view{.where = slot::in, .stride = in.stride, .element_bytes = in.element_bytes};
   const view out_view{.where = slot::out, .stride = out.stride, .element_bytes = out.element_bytes};

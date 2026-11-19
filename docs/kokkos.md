@@ -8,7 +8,7 @@ library itself never depends on Kokkos. Link your target to both `fftn::fftn` an
 their errors are documented in the header; this page explains how to use it. The
 transforms themselves follow [the conventions](conventions.md).
 
-The header offers two levels:
+The header offers three levels:
 
 - **The Kokkos-FFT-shaped plan.** `fftn::kokkos::view_plan` has the constructor and
   execute shape of Kokkos-FFT 2.0's `KokkosFFT::Plan`, and `fftn::kokkos::execute(plan, in,
@@ -19,9 +19,16 @@ The header offers two levels:
   `fftn::shape` of a pair of Views, `make_plan` the ordinary `fftn::plan`, and `data_of(view)`
   the pointer to execute it with. Use this level for concurrent executions of one plan (a
   workspace each) or to manage workspaces yourself.
+- **Threads.** `fftn::kokkos::executor` runs a core plan on an execution-space instance, and
+  `fftn::kokkos::team_of` makes the members of a `Kokkos::TeamPolicy` kernel an `fftn::team`.
+  `view_plan` executes through the executor already.
 
-Execution is serial, on the calling thread. Threaded execution on the caller's Kokkos
-instance comes later.
+The executor, `team_of` and the threaded `view_plan` are **provisional**: their shape has not
+yet had its review and may change. The results on any instance width are bitwise those of serial
+execution. Plans and executors run on `Kokkos::Serial`, `Kokkos::OpenMP` and `Kokkos::Threads`;
+any other execution space is refused at compile time, and so is `Kokkos::Threads` with a Kokkos
+other than 5.2.1, because telling whether a thread is inside one of its kernels takes Kokkos'
+internal names.
 
 ## Example
 
@@ -74,6 +81,70 @@ Kokkos::deep_copy(original, v);
 forward.execute(v, v, fftn::kokkos::normalization::none);
 backward.execute(v, v); // scaled by 1/(ny nx)
 ```
+
+## Threads
+
+A `view_plan` runs on the threads of the execution-space instance it was built with, with no
+further code. Any core plan does the same through the executor:
+
+```cpp file=examples/kokkos_rows_planes.cpp region=executor
+namespace fk = fftn::kokkos;
+const auto forward = fk::make_plan(x, y, fftn::direction::forward, fk::axis_type<1>{-1});
+const fk::executor threads(exec); // the instance's threads; width 1 on Kokkos::Serial
+fftn::workspace ws(forward.workspace_bytes(threads.width()));
+forward.execute(fk::data_of(x), fk::data_of(y), threads, ws); // one parallel_for
+```
+
+A transform worth sharing costs one `Kokkos::parallel_for` on the instance, labelled
+`fftn::bulk` (Kokkos Tools show it, and a `view_plan` on OpenMP or Threads adds a region named
+`fftn::kokkos::view_plan::execute`), then a fence. A small job runs on the calling thread
+without one, and so does every job at width 1, which is every job on `Kokkos::Serial`.
+
+FFTN allocates nothing while executing. Kokkos allocates nothing for a dispatch on Serial and
+OpenMP; its Threads back end allocates short-lived strings on every `parallel_for`. Dispatches on
+one instance take turns (the OpenMP back end holds the instance's mutex for each), and
+`Kokkos::Threads` accepts them only from the thread that initialised it: from any other thread
+the executor runs serially there.
+
+Inside a kernel of the OpenMP or Threads back end nothing is dispatched: the executor reports one
+lane and the execution runs serially on the calling thread (with a workspace per thread, as any
+concurrent execution). The same holds for `view_plan::execute`, which then neither fences nor
+opens a Tools region; each thread needs a plan of its own, because a plan runs one execution at
+a time, and the exceptions `execute` documents end the program there, since they cannot leave
+the kernel.
+
+A `Kokkos::Serial` kernel cannot be detected. Inside one, use a plan or executor on
+`Kokkos::Serial`, which never fences, dispatches or opens a region. A plan on OpenMP or Threads
+must not be called from a Serial kernel: it would dispatch from there, and with a Kokkos Tools
+library loaded Kokkos' global fence would wait for the kernel for ever.
+
+### Team kernels
+
+When a transform belongs to a kernel that does other work on the same threads, make the members
+of a `Kokkos::TeamPolicy` the team, as `fftn::omp::this_team()` does for an OpenMP region:
+
+```cpp file=examples/kokkos_rows_planes.cpp region=team
+using team_policy = Kokkos::TeamPolicy<host>;
+const auto backward = fk::make_plan(y, z, fftn::direction::backward, fk::axis_type<1>{-1});
+const int team_size = exec.concurrency();
+fftn::workspace team_ws(backward.workspace_bytes(team_size));
+Kokkos::parallel_for(
+    "inverse", team_policy(exec, 1, team_size), [&](const team_policy::member_type& member) {
+      // Every member makes the call; work done before or after it shares this kernel.
+      backward.execute(fk::data_of(y), fk::data_of(z), fk::team_of(member), team_ws);
+    });
+```
+
+Every member of the team makes every call, from the kernel's body (not from inside `single` or
+a nested range), with one workspace per team, sized for the team. With `completion::all`, the
+default, each call returns when the whole output is written, and no barrier is needed.
+With `completion::own` each member returns once its own transforms (`plan::transforms_of`) are
+written, and `member.team_barrier()` is the synchronisation to use before reading the others'.
+Measured (experiment [T3](../dev/experiments/T3-kokkos-dispatch.md)): a transform in a team
+kernel costs what the executor's dispatch costs, within the runs' noise of a few percent, so use
+one when other work shares the kernel, and the executor otherwise. `completion::own` with `team_barrier` is slower: no member
+splits a transform, so a batch of few transforms runs on few threads, and the barrier itself
+costs more than an OpenMP one (1.5 to 3 µs against 0.6 to 1.3 at 8 to 16 threads).
 
 ## Moving a Kokkos-FFT call site
 
@@ -134,14 +205,16 @@ the core plan bit for bit.
 
 ## Execution and workspaces
 
-The plan makes its FFTN plan and a workspace when it is constructed; `execute` allocates
-nothing (with no Kokkos Tools library loaded, which may allocate for the fence). `execute`
-first fences the plan's execution-space instance, so that work queued on it before the call
-is complete, then transforms on the calling thread and returns when the output is written.
-It is not `noexcept`: it throws on the checks below, and its fence takes the execution-space
-instance's mutex. Because it fences, it must not be called inside a Kokkos kernel: a
-transform inside a kernel needs a core plan from `make_plan` and a workspace per thread, the
-only route that runs serially inside a kernel for now.
+The plan makes its FFTN plan, an executor on its instance and a workspace for the instance's
+width when it is constructed; `execute` allocates nothing itself (see
+[Threads](#threads) for what Kokkos does, and a loaded Kokkos Tools library may allocate too).
+On OpenMP and Threads, `execute` first fences the plan's execution-space instance, so that work
+queued on it before the call is complete (`Kokkos::Serial` needs no fence: its kernels have
+finished by the time the thread that dispatched them gets here), then transforms on the instance
+and returns when the output is written. Scaling a large output is shared among the instance's threads. `execute` is
+not `noexcept`: it throws on the checks below, and its fence and dispatch take the instance's
+mutex. Inside a kernel it runs serially on the calling thread, without fencing
+([Threads](#threads) gives the rules for each back end).
 
 Because a plan owns one workspace, **one plan runs one execution at a time**. A second
 execution that starts while one is running throws `std::logic_error` rather than share the
@@ -155,11 +228,10 @@ planned layout may be transformed.
 
 ## Differences from Kokkos-FFT 2.0
 
-- Serial execution on the calling thread, whatever the execution space; the FFTW back end of
-  Kokkos-FFT threads FFTW on OpenMP and Threads builds.
+- Threaded execution goes through Kokkos on the plan's instance; the FFTW back end of Kokkos-FFT
+  threads FFTW on OpenMP and Threads builds instead.
 - One execution per plan at a time (above); a concurrent one throws.
-- No named Kokkos Tools regions around transforms; only the fence is labelled. `execute`
-  must not be called inside a Kokkos kernel.
+- Inside a kernel, `execute` runs serially on the calling thread.
 - `LayoutStride` Views are accepted; Kokkos-FFT takes `LayoutLeft` and `LayoutRight` only.
 - In-place real transforms read the real side's padding from its View's strides. Kokkos-FFT
   assumes the padding whatever the real View's strides say, so a tight real View that it

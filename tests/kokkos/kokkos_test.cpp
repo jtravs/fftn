@@ -18,6 +18,7 @@
 #include <complex>
 #include <cstddef>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <exception>
 #include <string>
@@ -728,7 +729,14 @@ TYPED_TEST(KokkosAdapter, RealKindsThroughLayoutStride) {
 int main(int argc, char** argv) {
   try {
     ::testing::InitGoogleTest(&argc, argv);
-    const Kokkos::ScopeGuard kokkos(argc, argv);
+    // A fixed width for the threaded back end, whatever the machine has, unless the test names
+    // one: FFTN_KOKKOS_TEST_THREADS.
+    int threads = 4;
+    if (const char* const named = std::getenv("FFTN_KOKKOS_TEST_THREADS")) {
+      threads = std::atoi(named);
+    }
+    const Kokkos::ScopeGuard kokkos(
+        Kokkos::InitializationSettings().set_num_threads(threads).set_disable_warnings(true));
     return RUN_ALL_TESTS();
   } catch (const std::exception& e) {
     std::fprintf(stderr, "fftn_kokkos_tests: %s\n", e.what());

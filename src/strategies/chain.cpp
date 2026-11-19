@@ -87,6 +87,12 @@ template <class T> std::vector<std::size_t> chain_builder<T>::radices(std::size_
     return long_pow2_radices(static_cast<std::size_t>(std::countr_zero(n)),
                              n * 2 * sizeof(T) <= long_radix8_bytes_);
   }
+  if (!forces(n) && n == fit_row_) {
+    if (std::vector<std::size_t> fitted = fitting_radices(n, profile_, fit_row_fits_);
+        !fitted.empty()) {
+      return fitted;
+    }
+  }
   std::vector<std::size_t> rad = forces(n) ? forced_ : rule_radices(n, profile_);
   // The trailing radices above the Bluestein threshold (the rules' largest primes) become one
   // Bluestein stage.

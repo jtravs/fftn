@@ -131,6 +131,13 @@ ratio held over the set (FFTN ÷ FFTW 0.778 → 0.784), but single long rows did
 VM's memory placement both move. Judge a row by a same-run A/B on one VM, and a VM's
 standing by the geometric mean. [X45](experiments/X45-cloud-exit.md).
 
+1.13 **In an interleaved threaded benchmark, the arm after a serial one pays for it.** A serial
+run leaves the data in one core's cache, so the next threaded arm starts by moving it: in
+T3's first run the arm that always followed the serial one measured 1.1 to 1.3 of the same
+work run through another route, and four executions in one region (three of them after a
+threaded run) measured 0.98. Time serial references in a pair of their own, or discard the
+threaded run after them. [T3](experiments/T3-kokkos-dispatch.md).
+
 ## 2. The instruction set and the machine
 
 2.1 **The data layout that wins depends on the ISA.** Interleaved complex numbers suit
@@ -285,6 +292,17 @@ beyond noise (32 and 64 points, whose codelets spill, 1.01 and 1.00; float 8 × 
 last one's stores are still in flight see the cost. Check for it when an in-place tiny case
 is slower than its out-of-place twin by more than the copy. Neoverse not measured.
 [X49](experiments/X49-tiny-calls.md) (`bench/x49/pairs_forwarding.cpp`).
+
+2.13 **On Zen 3, aligning functions redraws the placement lottery instead of ending it.** Single
+c2c rows of 72 and 120 points took 1.05–1.06 of their time between two commits on the EPYC 7763
+with the same plans and the same pass code, and across the merges between them the ratios went
+up and down (72: 0.98, 1.03, 1.07, 0.95, 1.08) on cases no merge touched. Compiling the `avx2`
+units with `-falign-functions=64` took 72 to 0.89 and 120 to 0.93 of their time, and a screen of
+90 single rows showed nothing slower; the 201 cases of the exit check then gave 0.999 [0.997,
+1.003], with 1024 × 3 at 1.04–1.06 and 32 bytes worse in the screen (144 at 1.05). A screen on one
+shape does not clear a build flag that moves every kernel: judge it on every shape. For a jump
+with an unchanged plan, compare the functions first, then bisect: a ratio that wanders across
+merges is placement. [X57](experiments/X57-epyc-1024.md).
 
 ## 3. Memory and caches
 
@@ -578,6 +596,15 @@ them to 0.63–0.79 of that time (0.83–1.01 of FFTW). The M5 Max showed the sa
 with the same top). The standard catalogue held one such row (46080) and its exit checks
 never flagged the rest. Screen a strategy on lengths built to stress it (odd part × 2^k
 across the cache sizes), not only on the catalogue's. [X51](experiments/X51-depth-2.md).
+
+3.28 **Cache facts seen from inside a VM can put a machine in the wrong class; screen the
+families a rule reaches.** A Google Cloud Ice Lake VM (private L2 1.25 MiB) reports 55 MiB of L3
+for 8 CPUs, so a key on L3 per CPU filed it with the EPYC and it missed the depth-first chain of
+the Xeon 6240, its nearest relative: its long rows took 1.13–1.53 of FFTW's time, and 0.64–0.79
+with a key on the L2 alone (0.596 of the time over the rows that changed). The same screen found
+that a batch leaf of 12 won on 1–1.25 MiB of L2 and lost on 2 MiB (12 × 64 1.15–1.17 of the
+chain's time on Granite and Sapphire Rapids). Prefer the private levels for a key, and rent an
+hour of each family before trusting a rule there. [X58](experiments/X58-intel-keys.md).
 
 ## 4. Kernels and algorithms
 
@@ -889,6 +916,18 @@ And it gains least where it is needed most: 2–8 points lose at 2–4 rows (the
 much data and the transposes add shuffles), and lengths whose row is already a pair leaf
 on whole registers lose by 1.1–3.8. [X53](experiments/X53-two-row-leaves.md).
 
+4.23 **The best radices for a row depend on how much data the plan touches, so let the choice
+see it.** On the EPYC 7763 (32 MiB of L3 per core complex, `avx2` double) 1024 = 16 · 64 took
+0.84–0.96 of 4 · 16 · 16's time from one row to 768 rows, 24 MiB of rows and output; at 1024 rows
+out of place (32 MiB) it no longer won (1.04 here, 1.25 in X54) and at 2048 rows it lost 1.30,
+while in place, with half the data, 1024 rows still gained 0.94. 768 = 12 · 64 behaved alike
+(4 · 12 · 16 took 0.75 of its time at 2048 rows). A first pass that reads 12–16 streams is
+cheap while they hit the L3 and expensive once every stream misses. A limit on rows plus output
+in bytes (three quarters of the L3), applied to one-axis plans only, kept every gain and lost
+nothing; a per-length override had to give up 1024 altogether, because the plane's rows and
+the long batches lost. Count what the plan touches, not what one row needs.
+[X57](experiments/X57-epyc-1024.md).
+
 ## 5. Threading
 
 5.1 **Synchronisation costs set the smallest row worth splitting.** Spin barrier /
@@ -997,14 +1036,25 @@ complex points with thresholds fitted on complex rows: with that, and planes spl
 32768 points on the mesh, those Xeon planes took 0.35–0.67 of the time and the EPYC's real ones
 0.72–0.90. [X52](experiments/X52-volumes-2.md).
 
-5.14 **Check that a scheduler's allocation binds anything before calling a run "8 cores".** On
+5.14 **One `Kokkos::parallel_for` per transform costs next to nothing on the host, once it is
+allocation-free.** Against the OpenMP region it wraps, Kokkos 5.2 adds 0.2 to 0.45 µs per
+dispatch at 8 to 16 threads (EPYC 7763: 2.9 against 2.6 µs at 8, 4.2 against 3.8 at 16; Xeon 6240: 2.1
+against 1.9), fence included, and no transform of 100 µs or more ran measurably faster without it. Three
+things to know before dispatching from a library: `parallel_for` copies its label into a
+`std::string` on every call, so a label beyond the small-string buffer allocates per dispatch;
+the Threads back end itself builds a `std::string` for an internal fence on every `parallel_for`;
+and Kokkos 5 has no "am I in a kernel" query, while a nested dispatch aborts on OpenMP and throws on
+Threads. `team_barrier` costs 1.5 to 3 µs at 8 to 16 threads, 1.6 to 4 times an OpenMP barrier,
+with no added penalty for a member 10 or 100 µs late. [T3](experiments/T3-kokkos-dispatch.md).
+
+5.15 **Check that a scheduler's allocation binds anything before calling a run "8 cores".** On
 the two-socket Xeon 6240, Slurm's `-c 8 --hint=nomultithread` left jobs free on all 72 CPUs
 (`Cpus_allowed_list: 0-71`), so earlier "8 lanes on 8 cores of one socket" runs were 8 unpinned
 threads among other users' work. Pinned to 8 cores of one socket, FFTN's 8 lanes took 0.51 of
 their unpinned time at c2r 512² (oneMKL's 0.64), and a judging run's A/A band fell from ±19 %
 to ±8 %. DMOG's Slurm does bind (8 CPUs per job). [X59](experiments/X59-real-planes-mkl.md).
 
-5.15 **Sharing a plane's rows and columns among private L2s costs the data's move, and most of
+5.16 **Sharing a plane's rows and columns among private L2s costs the data's move, and most of
 it is not false sharing.** At 8 lanes on the Xeon 6240 a real plane's column phase took 2.5–4
 times its one-thread work at 256²–512² (6.9 at 2048 × 36), with 10 000–20 000 loads per
 transform of lines modified in another core's cache. Claiming the columns in fair runs, which
@@ -1014,7 +1064,7 @@ columns are shared by 8 members (2048 × 36) every row's cache lines are shared 
 runs; oneMKL takes 1000 such loads there against FFTN's 20 000, so it must divide that plane
 along its long axis. [X59](experiments/X59-real-planes-mkl.md).
 
-5.16 **Equal runs lose at the end of a long phase.** Claiming a phase in runs of its fair
+5.17 **Equal runs lose at the end of a long phase.** Claiming a phase in runs of its fair
 share cut the borders between members and won where shares were small (EPYC 7763 real 512²
 0.70, 2048 × 36 0.81–0.84), but at 2048², 8 blocks of 16 columns a member, the last runs left
 one member working alone: 1.05–1.15 on the EPYC and the M5 Max, capped at 4 chunks a run or

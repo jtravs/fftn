@@ -659,6 +659,10 @@ TEST(Schedule, GridSizesFromCaches) {
   EXPECT_TRUE(xeon86.team_volume_planes);
   EXPECT_EQ(m5.column_team_bytes, 0U);
   EXPECT_FALSE(m5.team_volume_planes);
+  // Rows' two-pass radices while the data fit three quarters of the CCX's L3 (X57).
+  EXPECT_EQ(epyc86.fit_row_bytes, std::size_t{24} * 1024 * kib);
+  EXPECT_EQ(xeon86.fit_row_bytes, 0U);
+  EXPECT_EQ(m5.fit_row_bytes, 0U);
   // The c2r grid pairs in its first gather only where the L2 is shared (X29).
   EXPECT_TRUE(m5.c2r_paired_gather);
   EXPECT_FALSE(epyc.c2r_paired_gather);
@@ -863,6 +867,22 @@ TEST(Schedule, ProfilesOfRecordedMachines) {
       .depth_convolution_max_bytes = 0,
   };
   EXPECT_EQ(fields("linux-gcp-c4-granite-rapids.sysfs", true), large_l2);
+  // X58: a private L2 of 2 MiB leaves out the batch leaf of 12; the other machines keep it.
+  const auto batch_leaf_12 = [&](const char* file) {
+    return fftn::detail::profile_for(fftn::detail::load_topology(data / file), true).batch_leaf_12;
+  };
+  EXPECT_FALSE(batch_leaf_12("linux-gcp-c4-granite-rapids.sysfs"));
+  EXPECT_TRUE(batch_leaf_12("linux-intel-xeon-gold-6240.sysfs"));
+  EXPECT_TRUE(batch_leaf_12("linux-gcp-c4d-zen5.sysfs"));
+  // X58: an Ice Lake VM (1.25 MiB of private L2, much L3 per CPU) takes the depth-first chain.
+  const planner_fields ice_lake = fields("linux-gcp-n2-ice-lake.sysfs", true);
+  EXPECT_EQ(ice_lake.depth_min_bytes, 320 * kib);
+  EXPECT_EQ(ice_lake.depth_max_bytes, 80 * mib);
+  EXPECT_EQ(ice_lake.depth_top, 16U);
+  EXPECT_EQ(ice_lake.depth_top_alt, 20U);
+  EXPECT_EQ(ice_lake.depth_top_last, 10U);
+  EXPECT_EQ(ice_lake.depth_float_max_bytes, 0U);
+  EXPECT_TRUE(batch_leaf_12("linux-gcp-n2-ice-lake.sysfs"));
   // The same on bare metal with SMT, where Granite Rapids' L3 per CPU is under 2 MiB
   // (504 MiB for 128 cores, 256 CPUs): the key is the L2, not the L3 per CPU.
   fftn::detail::core_class metal;

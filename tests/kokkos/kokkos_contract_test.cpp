@@ -17,13 +17,15 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <functional>
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -172,7 +174,7 @@ TYPED_TEST(KokkosAdapterContracts, ScalingGappedOutputLeavesTheGaps) {
 }
 
 // execute allocates nothing, from the first call after construction on, scaled or not, in
-// place or not (the fence's label is built at construction).
+// place or not (the labels are built at construction).
 TYPED_TEST(KokkosAdapterContracts, ExecuteAllocatesNothing) {
   using T = TypeParam;
   using cube = Kokkos::View<Kokkos::complex<T>***, Kokkos::LayoutRight, Kokkos::HostSpace>;
@@ -195,57 +197,51 @@ TYPED_TEST(KokkosAdapterContracts, ExecuteAllocatesNothing) {
   EXPECT_EQ(counter.deallocations(), 0U);
 }
 
-// A second execution of a plan while one runs is refused, not run on the shared workspace.
-// Deterministically: a Kokkos Tools fence callback, called from inside the first execution
-// (execute fences before it transforms), starts the second on the same thread.
-struct reentry {
-  std::function<void()> call;
-  bool armed = false;
-  std::string error;
-};
-reentry& the_reentry() {
-  static reentry r;
-  return r;
-}
-void begin_fence(const char* /*name*/, std::uint32_t /*device*/, std::uint64_t* /*handle*/) {
-  reentry& r = the_reentry();
-  if (!r.armed) {
-    return;
-  }
-  r.armed = false;
-  try {
-    r.call();
-    r.error = "accepted";
-  } catch (const std::logic_error& e) {
-    r.error = e.what();
-  }
-}
-
+// A second execution of a plan while one runs is refused, not run on the shared workspace: one
+// thread executes the plan over and over while another tries until it is refused. Neither fence
+// nor Tools region serves as a hook here, since a plan on Serial makes neither.
 TYPED_TEST(KokkosAdapterContracts, ConcurrentExecutionIsRefused) {
   using T = TypeParam;
-  const complex2<T> a("a", 3, 16);
-  const complex2<T> b("b", 3, 16);
-  const complex2<T> d("d", 3, 16);
+  const complex2<T> a("a", 8, 1024);
+  const complex2<T> b("b", 8, 1024);
+  const complex2<T> d("d", 8, 1024);
   fill(a, 53);
   const fftn::kokkos::view_plan p(host{}, a, b, direction::forward, -1);
   p.execute(a, b, normalization::none);
   const auto want = reals_of(b);
-  reentry& r = the_reentry();
-  r.call = [&] { p.execute(a, d, normalization::none); };
-  r.armed = true;
-  Kokkos::Tools::Experimental::set_begin_fence_callback(begin_fence);
-  fill(b, 0);
+  std::atomic<bool> refused{false};
+  std::string error;
+  std::thread other([&] {
+    const auto give_up = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+    while (!refused.load() && std::chrono::steady_clock::now() < give_up) {
+      try {
+        p.execute(a, d, normalization::none);
+      } catch (const std::logic_error& e) {
+        error = e.what();
+        refused.store(true);
+      }
+    }
+    refused.store(true);
+  });
+  while (!refused.load()) {
+    try {
+      p.execute(a, b, normalization::none);
+    } catch (const std::logic_error&) {
+      // The other thread held the plan this time.
+      continue;
+    }
+  }
+  other.join();
+  EXPECT_EQ(error.rfind("fftn::kokkos: view_plan::execute was called while another", 0), 0U)
+      << error;
+  // Whichever executions ran gave right results, and the plan is free again afterwards.
   p.execute(a, b, normalization::none);
-  Kokkos::Tools::Experimental::set_begin_fence_callback(nullptr);
-  EXPECT_EQ(r.error.rfind("fftn::kokkos: view_plan::execute was called while another", 0), 0U)
-      << r.error;
-  // The first execution was not disturbed, and the plan is free again afterwards.
   expect_same_bits(reals_of(b), want);
   p.execute(a, d, normalization::none);
   expect_same_bits(reals_of(d), want);
 
   // The flag is released when an execution throws, too.
-  const complex2<T> wrong("wrong", 2, 16);
+  const complex2<T> wrong("wrong", 2, 1024);
   expect_refused([&] { p.execute(wrong, b); }, "in.extent(0)");
   p.execute(a, b, normalization::none);
   expect_same_bits(reals_of(b), want);

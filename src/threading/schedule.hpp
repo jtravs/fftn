@@ -190,6 +190,10 @@ struct machine_profile {
   // only up to depth_float_max_bytes (0: never; X51: measured on the Xeon 6240 to 2^20
   // complex floats, 8 MiB).
   std::size_t depth_float_max_bytes = 0;
+  // Whether the rules may take the batch leaf of 12 points (`avx512`, double): false on a
+  // private L2 of 2 MiB or more, where it lost (X58: Sapphire Rapids 12 x 64 1.17 of the
+  // chain's time; it won on the Xeon 6240 and Ice Lake).
+  bool batch_leaf_12 = true;
   // A Bluestein stage's convolution of one copy runs on two depth-first chains where a row
   // of its length would be one in double, by the fields above, but with this upper limit in
   // place of depth_max_bytes (0: never; core/plan_core.cpp, bluestein_tops_of; experiment
@@ -215,6 +219,16 @@ struct machine_profile {
   // 7763: 0.933 of the time over the planes and volumes it changes); the Xeon 6240 gained
   // 0.95 but lost 1.05 at 30 x 40 x 50.
   std::size_t column_wide_bytes = 0;
+  // A c2c plan of one axis of contiguous rows whose rows and output (in place: rows) together
+  // take at most this many bytes runs the two-pass rows of the profile's fit_overrides; beyond
+  // it, the three-pass plan (planner/rules.hpp, fitting_radices; 0: the rules as without this
+  // field).
+  // Experiment X57 on the EPYC 7763 (`avx2` double, 32 MiB L3 per CCX): 1024 = 16 x 64 took
+  // 0.84-0.96 of 4 x 16 x 16's time from 1 to 768 rows (24 MiB) and 1.04-1.30 from 1024 rows
+  // (32 and 64 MiB); at 768 x 2048 (48 MiB) 4 x 12 x 16 took 0.75 of 12 x 64's.
+  // set_grid_sizes sets three quarters of the L3 where a private L2 has a large L3 behind it
+  // (x86-64, the EPYC class).
+  std::size_t fit_row_bytes = 0;
   // A lanes column phase whose column elements lie less than a page apart keeps its block's
   // two scratch tiles within this (core/plan_core.cpp, column_block; X40). set_grid_sizes
   // sets a quarter of L2.
