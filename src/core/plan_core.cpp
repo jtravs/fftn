@@ -246,6 +246,41 @@ void check_in_place(const shape_view& s, const side& in, const side& out) {
   }
 }
 
+// The order the axes run in (DESIGN.md 9.3), whatever order the shape lists them in: widest
+// stride first, as a C-ordered array lists its dimensions, so that the contiguous axis runs
+// as rows and the others as columns over it. The transform does not depend on the order
+// (c2c, and the complex axes of a real transform; a real transform's halved axis stays last).
+// Axes of extent 1 never step and go first, out of the way. Ties keep the shape's order.
+void order_axes(const shape_view& s, side& in, side& out, plan_core& c) {
+  const std::size_t r = s.axes.size();
+  std::vector<std::size_t> order(r);
+  std::iota(order.begin(), order.end(), std::size_t{0});
+  const auto key = [&](std::size_t d) {
+    const bool unit = c.lengths[d] == 1;
+    return std::tuple(unit ? 1 : 0, magnitude(out.stride[d]), magnitude(in.stride[d]));
+  };
+  const auto end = order.begin() + static_cast<std::ptrdiff_t>(
+                                       s.kind == transform_kind::c2c ? r : r - 1);
+  std::stable_sort(order.begin(), end,
+                   [&](std::size_t a, std::size_t b) { return key(a) > key(b); });
+  if (std::ranges::is_sorted(order)) {
+    return;
+  }
+  const auto arrange = [&](auto& v) {
+    auto w = v;
+    for (std::size_t i = 0; i < r; ++i) {
+      w[i] = v[order[i]];
+    }
+    v = std::move(w);
+  };
+  arrange(in.extent);
+  arrange(in.stride);
+  arrange(out.extent);
+  arrange(out.stride);
+  arrange(c.lengths);
+  c.axis_of = std::move(order);
+}
+
 template <class T> plan_tables<T>& tables_of(plan_core& c) {
   if constexpr (std::is_same_v<T, double>) {
     return c.tables_f64;
@@ -1051,6 +1086,8 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     return endpoint{.where = v.where, .stride = v.stride[axis]};
   };
   const int sign = static_cast<int>(s.dir);
+  // Axis d of the plan as the shape lists it (plan_core::axis_of), for describe().
+  const auto listed = [&c](std::size_t d) { return c.axis_of.empty() ? d : c.axis_of[d]; };
   // A strided complex axis d as the lanes over blocks of adjacent columns where they fit
   // (column_block; DESIGN.md 9.3, experiments X40 and X41): returns whether it was built.
   // `axis` names d in describe() when `extent` is not the plan's (a volume's plane).
@@ -1078,7 +1115,8 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     scratch = std::max(scratch, add_column_phase<T>(p, chain, d, extent, src, dst, dir, edges,
                                                     block, kernels.complex_lanes, rad));
     c.axis_notes.push_back(
-        "axis " + std::to_string(axis == SIZE_MAX ? d : axis) + " (n = " + std::to_string(n) +
+        "axis " + std::to_string(listed(axis == SIZE_MAX ? d : axis)) +
+        " (n = " + std::to_string(n) +
         "): " + what + (what[0] != '\0' ? ", " : "") + "lanes over blocks of " +
         std::to_string(block) + " adjacent columns, radices " + chain.radix_text(n, rad));
     c.strategy_note = "chain for the last axis' rows, the lanes over blocks of adjacent columns "
@@ -1345,8 +1383,9 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       const std::size_t need =
           chain.c2c_line(c.lengths[d], sign, at(src, e), at(dst, e), aliased, edges, st);
       lines(e, extent, src, dst, need, std::move(st));
-      c.axis_notes.push_back("axis " + std::to_string(d) + " (n = " + std::to_string(c.lengths[d]) +
-                             "): radices " + chain.radix_text(c.lengths[d]));
+      c.axis_notes.push_back("axis " + std::to_string(listed(d)) +
+                             " (n = " + std::to_string(c.lengths[d]) + "): radices " +
+                             chain.radix_text(c.lengths[d]));
     };
     // A team program takes plane order only for volumes of at least team_min_planes planes:
     // its plane phase has one line per plane, so fewer planes than members leave members
@@ -1377,7 +1416,8 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
                        r == 1 ? opts.scale : 1.0, st);
     lines(r - 1, in.extent, in_view, out_view, need, std::move(st));
     c.axis_notes.push_back(
-        "axis " + std::to_string(r - 1) + " (n = " + std::to_string(c.lengths[r - 1]) + "): " +
+        "axis " + std::to_string(listed(r - 1)) + " (n = " + std::to_string(c.lengths[r - 1]) +
+        "): " +
         chain.real_text(c.lengths[r - 1], true, in.stride[r - 1] != 1 || out.stride[r - 1] != 1));
     for (std::size_t i = r - 1; i > 0; --i) {
       const std::size_t d = i - 1;
@@ -1390,7 +1430,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       const std::size_t cneed =
           chain.c2c_line(n, -1, at(out_view, d), at(out_view, d), true, edges, cs);
       lines(d, out.extent, out_view, out_view, cneed, std::move(cs));
-      c.axis_notes.push_back("axis " + std::to_string(d) + " (n = " + std::to_string(n) +
+      c.axis_notes.push_back("axis " + std::to_string(listed(d)) + " (n = " + std::to_string(n) +
                              "): c2c forward, radices " + chain.radix_text(n));
     }
   } else {
@@ -1430,7 +1470,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       const std::size_t cneed =
           chain.c2c_line(n, +1, at(src, d), at(work, d), src.where == work.where, line_edges(), cs);
       lines(d, in.extent, src, work, cneed, std::move(cs));
-      c.axis_notes.push_back("axis " + std::to_string(d) + " (n = " + std::to_string(n) +
+      c.axis_notes.push_back("axis " + std::to_string(listed(d)) + " (n = " + std::to_string(n) +
                              "): c2c backward, radices " + chain.radix_text(n));
     }
     const view& src = r > 1 && !c.in_place ? block_view : in_view;
@@ -1439,7 +1479,8 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
         chain.c2r_line(c.lengths[r - 1], at(src, r - 1), at(out_view, r - 1), opts.scale, st);
     lines(r - 1, out.extent, src, out_view, need, std::move(st));
     c.axis_notes.push_back(
-        "axis " + std::to_string(r - 1) + " (n = " + std::to_string(c.lengths[r - 1]) + "): " +
+        "axis " + std::to_string(listed(r - 1)) + " (n = " + std::to_string(c.lengths[r - 1]) +
+        "): " +
         chain.real_text(c.lengths[r - 1], false, src.stride[r - 1] != 1 || out.stride[r - 1] != 1));
   }
   for (std::size_t b = 0; b < p.batch_loops; ++b) {
@@ -1573,6 +1614,7 @@ std::shared_ptr<plan_core> build_plan_core(const shape_view& s, const options& o
   }
   std::tie(c->in_lo, c->in_hi) = span_of(s, in);
   std::tie(c->out_lo, c->out_hi) = span_of(s, out);
+  order_axes(s, in, out, *c);
 
   // The scale is applied in the plan's precision: it must be finite there, and a non-zero
   // scale must not vanish. (Converting a double beyond float's range to float is undefined,
@@ -1760,8 +1802,13 @@ std::string describe(const plan_core& core) {
     o << (core.dir == direction::forward ? " forward" : " backward");
   }
   o << ", " << (core.prec == precision::f64 ? "double" : "float") << ", n = ";
-  for (std::size_t d = 0; d < core.lengths.size(); ++d) {
-    o << (d == 0 ? "" : " x ") << core.lengths[d];
+  // The lengths as the shape lists its axes (plan_core::axis_of).
+  std::vector<std::size_t> listed = core.lengths;
+  for (std::size_t d = 0; d < core.axis_of.size(); ++d) {
+    listed[core.axis_of[d]] = core.lengths[d];
+  }
+  for (std::size_t d = 0; d < listed.size(); ++d) {
+    o << (d == 0 ? "" : " x ") << listed[d];
   }
   o << ", " << core.prog.transforms << (core.prog.transforms == 1 ? " transform" : " transforms")
     << (core.in_place ? ", in place" : ", out of place") << "\n";
