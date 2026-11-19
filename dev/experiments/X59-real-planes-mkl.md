@@ -69,4 +69,68 @@ run.
 
 ## Results
 
+### Diagnosis (Xeon 6240, `main` 0508037)
+
+Baseline, fbench run 20261119-003606-6cac (Slurm 16555; FFTN at 1, 2, 4, 8 lanes, oneMKL
+serial and at 2, 4, 8 threads, 28 real planes; 8 rounds, all loaded, 17–32 other cores busy,
+band ±11 %, so this run ranks cases only): FFTN's 8 lanes ÷ oneMKL's 8 threads 1.1–2.0 from
+256² up (c2r 256² 1.98, c2r 36 × 2048 1.76, c2r 1024² 1.58, r2c 2048² 1.10). X52's "2.5–3.9" was
+measured before its arm S; since S the planes below 32768 complex points are not split.
+
+**Placement.** Slurm's allocations on this machine bind nothing: `-c 8 --hint=nomultithread`
+leaves a job free on all 72 CPUs (`Cpus_allowed_list: 0-71`), so every "8 lanes" run here, X43's
+and X52's included, is 8 unpinned threads on a two-socket machine with other users' work on it,
+not 8 cores of one socket. The diagnosis therefore runs both ways.
+
+Harness runs (Slurm 16557 and 16563; three and four repeats, each on the idlest socket, others'
+work on the machine throughout, so times of the large planes, which depend on the shared L3 and
+memory, move by up to 2 between repeats; medians over repeats). Pinned: one thread per core on
+one socket (FFTN by the harness, oneMKL by `OMP_PLACES`).
+
+| | one thread ÷ oneMKL | 8 lanes ÷ oneMKL | FFTN speed-up | oneMKL speed-up | unpinned 8 ÷ oneMKL |
+|---|---|---|---|---|---|
+| r2c 128² | 1.33 | 2.17 | 0.73 (not split) | 1.18 | 0.98 |
+| c2r 128² | 1.32 | 3.52 | 1.00 (not split) | 2.68 | 1.80 |
+| r2c 256² | 1.09 | 1.23 | 2.35 | 2.65 | 0.79 |
+| c2r 256² | 1.51 | 1.64 | 3.33 | 3.61 | 1.76 |
+| r2c 512² | 1.08 | 1.36 | 3.25 | 4.09 | 1.64 |
+| c2r 512² | 1.41 | 1.69 | 4.48 | 5.37 | 1.90 |
+| r2c 1024² | 1.40 | 1.62 | 6.92 | 7.99 | 0.96 |
+| c2r 1024² | 1.66 | 1.89 | 7.96 | 9.05 | 1.50 |
+| r2c 2048² | 1.09 | 1.09 | 7.48 | 7.48 | 1.00 |
+| c2r 2048² | 1.23 | 1.40 | 6.19 | 7.05 | 1.31 |
+| r2c 2048 × 36 | 0.91 | 1.80 | 1.37 | 2.71 | 1.27 |
+| c2r 2048 × 36 | 1.07 | 0.97 | 2.37 | 2.15 | 0.92 |
+| r2c 36 × 2048 | 0.93 | 1.11 | 2.43 | 2.89 | 1.04 |
+| c2r 36 × 2048 | 1.18 | 1.52 | 2.80 | 3.60 | 1.58 |
+
+Both effects are real: **oneMKL is faster alone** (c2r 1.2–1.7, r2c about 1.1, 1024² 1.4), and
+**FFTN scales somewhat worse** (a further 1.0–1.3 at 8 lanes, 1.8 at r2c 2048 × 36).
+
+Where a team's time goes (pinned, 8 lanes; phase = the rows, the whole column blocks, the
+narrower last block):
+
+- **The engine is not the cost.** First chunk 1–3 µs after the call, phase hand-offs 0.2–1 µs,
+  claims and bookkeeping about 3 µs per member per transform at 256².
+- **The narrower last column block runs alone**: 8 µs of r2c 256²'s 67 µs (12 %), 14.5 of 196 µs
+  at 512² (7 %), 44 of 1124 µs at 1024² (4 %), while seven members wait.
+- **The work grows when shared**: summed over members, the column phase of r2c 256² takes 4.1
+  times its one-thread time, 512² 2.5, 36 × 2048 4.2, 2048 × 36 6.9; the rows 1.2–1.7. At 1024²
+  and above, where one thread already misses L2, about 1.0–1.3.
+- **Cross-core traffic** explains the growth. Loads that find their line modified in another
+  core's cache, per transform at 8 lanes, FFTN against oneMKL: r2c 256² 1007 / 59, r2c 512²
+  11 804 / 1940, c2r 512² 9792 / 4968, r2c 2048 × 36 19 944 / 964, c2r 2048 × 36 8856 / 657. A
+  real row is n/2 + 1 complex values long, an odd multiple of 16 bytes, so neighbouring columns
+  share cache lines in three rows of four, and at 2048 × 36 (columns through the chain, one column
+  per chunk) in every row. FFTN's guided runs give a phase of few chunks about one run per chunk,
+  so nearly every block borders another member's; a static split as oneMKL's has seven such
+  borders.
+- **c2r carries a third array.** Out of place FFTN keeps the input and puts the half spectrum in
+  a workspace block (in + block + out, 1.5 MiB at 256² against a 1 MiB L2): 15 100 L2 demand
+  misses per transform at one thread against r2c's 1500 and oneMKL's c2r 6800. oneMKL keeps
+  its input too (checked: no element changes), so it is not a contract difference.
+- **Unpinned**, FFTN loses more than oneMKL (8 lanes pinned ÷ unpinned at c2r 512²: FFTN 0.51,
+  oneMKL 0.64; 4–11 context switches per transform at 512²–1024² for FFTN's waiting members,
+  none for libgomp's spinning ones).
+
 ## Verdict
