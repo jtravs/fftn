@@ -1742,6 +1742,21 @@ members than planes still idle some, a known limit). Either order computes every
 so the bits do not depend on it. Scratch per member is two lines of at most a plane or a tile
 of pencils (tests/core/volumes_test.cpp), never a second volume.
 
+Strided axes over adjacent transforms (task 4.3, experiment X60; `adjacent` in `build`): when
+a dimension that is not transformed varies fastest (the columns of a matrix, the planes (y, x)
+of a (y, x, w) array, a middle axis), every transformed axis is strided and the innermost batch
+dimension's transforms lie one element apart on both sides. Such a c2c plan is a lanes program
+(8.3, `program::lanes`) whose body holds one phase per axis, each a loop over the lines of the
+other axes around a lanes pass with one transform per lane, so a run of C transforms is one
+vector access and every line of memory is touched once; the block is the narrowest
+`column_block` of the axes (the transforms in the role of the columns), the radices each axis's
+`column_radices`, and transforms left over go through the tail in blocks of C. Each lane
+computes its transform alone, so blocks and execution ranges do not change the bits. A block is
+one task of the team (the work graph's one phase), so whole transforms are shared out, never
+their lines. Lengths without lane passes (a Bluestein or Rader stage, generic passes) and the
+real kinds keep one transform at a time through the chain: a strided halved axis has no lane
+path yet.
+
 Threaded column blocks (experiment X43): a team of two or more runs a team program
 (`plan_core::team`) whose lanes column blocks hold at most `column_team_bytes` of columns
 (128 bytes, 8 complex doubles against X40's 16, on x86-64 where a private L2 has a large L3

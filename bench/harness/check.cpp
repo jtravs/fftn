@@ -223,7 +223,7 @@ fbench_case layout::to_case() const {
       .kind = kind,
       .rank = rank,
       .dims = dims.data(),
-      .batch = batch,
+      .batch = interleave > 1 ? interleave : batch, // the transforms of one block
       .sign = sign,
       .in_place = in_place ? 1 : 0,
       .in_last = in.last_phys,

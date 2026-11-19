@@ -26,11 +26,15 @@ probe with the change was 0.34–1.10 of FFTW.
 
 ## Change under test
 
-Arm A: the branch without the change (`axes` catalogue and shape functions present, commit
-named below). Arm B: the same plus the change: `build_settings` unchanged, the planner (rule
-below), `program::lane_tail` as records, the driver's lanes loop running the body's records,
-`build_work_graph` over a lanes program with loops, describe(). No switch: `lanes_columns`
-(already registered behaviour, fbench `COLUMNS=chain`) turns the route off in both arms.
+Arm B: the change: the planner (rule below), `program::lane_tail` as records, the driver's
+lanes loop running the body's records, `build_work_graph` over a lanes program with loops,
+describe(). Arm A: the same binary with fbench's `COLUMNS=chain` (`build_settings::
+lanes_columns` false), which turns the route off. On these cases A's program is the one the
+branch had before the change: all their axes are strided, so the column phases `lanes_columns`
+also governs never applied to them. (A first submission compared the commits before and after
+the change; its runs stopped on a harness bug in the interleaved cases with `outer` blocks,
+fixed before any result was read, and one binary is the cleaner comparison. The collateral runs
+keep the two commits, since they judge the code that changed.)
 
 Rule: a c2c plan whose innermost batch dimension has at least 2 transforms one element apart on
 both sides and whose every axis of more than one point is strided on both sides and fits the
