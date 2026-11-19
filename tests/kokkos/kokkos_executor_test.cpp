@@ -289,11 +289,11 @@ TYPED_TEST(KokkosThreaded, ExecutionAllocatesOnlyWhatKokkosDoes) {
   // Each execution allocates exactly what its dispatches do inside Kokkos: nothing of FFTN's
   // can hide in that allowance. Serial, and any width of one, dispatches nothing.
   const std::size_t per_transform = ex.width() > 1 ? 1 : 0;
-  const auto expect_allocations = [&](std::size_t dispatches, const auto& run) {
+  const auto expect_allocations = [&](std::size_t parallel_fors, const auto& run) {
     const fftn::test::allocation_counter counter;
     run();
-    EXPECT_EQ(counter.allocations(), dispatches * news_per_dispatch);
-    EXPECT_EQ(counter.deallocations(), dispatches * deletes_per_dispatch);
+    EXPECT_EQ(counter.allocations(), parallel_fors * news_per_dispatch);
+    EXPECT_EQ(counter.deallocations(), parallel_fors * deletes_per_dispatch);
   };
   expect_allocations(per_transform, [&] { vp.execute(x, y, normalization::none); });
   expect_allocations(2 * per_transform, [&] { vp.execute(x, y); }); // the scaling is shared too
