@@ -105,6 +105,14 @@ TEST(WorkGraph, FairRunsWhereNeighbouringLinesShareCacheLines) {
   // Columns alone through the chain are 16 bytes wide.
   s.lanes_columns = false;
   EXPECT_TRUE(plane(64, 32)->graph.phases[1].fair_runs);
+  // Volumes keep the guided runs, whatever their lines share.
+  fftn::shape<double, std::complex<double>> volume;
+  volume.axes = {{.n = 16}, {.n = 16}, {.n = 16}};
+  volume.batches = {{.count = 1}};
+  for (const d::graph_phase& phase :
+       d::make_plan_core(d::view_of(volume), opts, s)->graph.phases) {
+    EXPECT_FALSE(phase.fair_runs);
+  }
 
   d::graph_phase ph;
   ph.chunks = 16;

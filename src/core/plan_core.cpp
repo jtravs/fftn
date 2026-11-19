@@ -335,6 +335,7 @@ void close_loops(program& p, const std::vector<std::size_t>& open) {
 // both are whole cache lines. A real plane's rows of n/2 + 1 complex values are an odd multiple
 // of 16 bytes long, so its columns do in most rows, and columns alone through the chain always
 // do (X59: at 8 lanes on the Xeon 6240 these phases took 2.5-6.9 times their one-thread work).
+// Planes only: on the M5 Max the fair runs this leads to cost real 48^3 volumes 1.2 of the time.
 bool lines_share_cache_lines(std::size_t line_bytes, std::size_t row_bytes,
                              std::size_t cache_line) noexcept {
   return cache_line != 0 && (line_bytes % cache_line != 0 || row_bytes % cache_line != 0);
@@ -912,9 +913,11 @@ std::size_t add_column_phase(program& p, chain_builder<T>& chain, std::size_t ax
     // The narrower block's lines are disjoint from the whole blocks': one phase for threads.
     loop& first = std::get<loop>(p.records[outermost]);
     first.joins = first_column != 0;
-    first.shares_lines = lines_share_cache_lines(
-        width * static_cast<std::size_t>(magnitude(dst.stride[last])) * dst.element_bytes,
-        static_cast<std::size_t>(magnitude(dst.stride[axis])) * dst.element_bytes, cache_line);
+    first.shares_lines =
+        extent.size() == 2 &&
+        lines_share_cache_lines(
+            width * static_cast<std::size_t>(magnitude(dst.stride[last])) * dst.element_bytes,
+            static_cast<std::size_t>(magnitude(dst.stride[axis])) * dst.element_bytes, cache_line);
   };
   if (whole != 0) {
     nest(whole, block, block, 0);
@@ -1067,7 +1070,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     add_phase(p, axis, extent, src, dst, std::move(stages));
     // Columns alone through the chain (not the rows of the last axis).
     const std::size_t last = extent.size() - 1;
-    if (axis != last && outermost < p.records.size()) {
+    if (extent.size() == 2 && axis != last && outermost < p.records.size()) {
       if (loop* l = std::get_if<loop>(&p.records[outermost])) {
         l->shares_lines = lines_share_cache_lines(
             static_cast<std::size_t>(magnitude(dst.stride[last])) * dst.element_bytes,

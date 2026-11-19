@@ -70,6 +70,10 @@ run.
   Mac: (1) at most 1.00 over the cases it can change, and (2). A machine that fails keeps the
   guided runs (by profile).
 
+- **Arm R3** (on top of T, replacing R2 after R2's run on the Mac, below): R2 for planes only;
+  volumes keep the guided runs. R2's rule, unchanged, R3 against T, over the same case set (the
+  cases it can change are planes).
+
 ## Method
 
 - Cases: the standard catalogue's real planes (`^(r2c|c2r)-[0-9]+x[0-9]+-b1-(op|ip)$`).
@@ -157,5 +161,11 @@ volumes that split (c2c 100² 0.94); worst real plane r2c 2048 × 36 out of plac
 **1.053 over the other planes and volumes** (c2c 480 × 640 1.19–1.20, c2c 256² 1.17–1.18, 48³
 1.19–1.20): fair runs of whole phases cost balance where neighbouring lines do not share cache
 lines, on a machine with other work on it. **R fails its rule on the Mac**; hence arm R2.
+
+Run 20261119-020343-b186 (R2 8080398 against T; 10 rounds, all loaded, band ±1.2 %): R2 ÷ T
+0.968 over the 44 real planes that split (r2c 2048 × 36 0.84–0.89, c2r 0.90–0.94, 1024² 0.88–0.92,
+512² 0.91–0.92), 1.009 over the 37 other planes and volumes, but real 48³ 1.20–1.22 (out of place,
+the columns of a volume through the chain, 29 chunks a phase). **R2 fails its rule (2) on the
+Mac**; R3 keeps the volumes on the guided runs.
 
 ## Verdict
