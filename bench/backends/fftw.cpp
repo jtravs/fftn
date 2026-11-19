@@ -18,6 +18,7 @@
 // 1.3x in the prototype (DESIGN.md finding E10). The driver keeps one wisdom file per run
 // and planner setting, so a campaign starts fresh and its rounds share their plans.
 
+#include "backends/common.hpp"
 #include "harness/backend.hpp"
 #include "harness/json.hpp"
 
@@ -237,7 +238,38 @@ std::int32_t fbench_create(const fbench_case* c, void* in, void* out, void** pla
   // No FFTW_UNALIGNED: the harness plans on buffers with the alignment of every later
   // execute, and FFTW_UNALIGNED silently drops FFTW's aligned SIMD codelets (finding E10).
   fftw_plan p = nullptr;
-  if (c->kind == fbench_c2c) {
+  if (c->interleave > 1) {
+    // The interleaved layout (fbench_case::interleave) through the guru interface: strided
+    // axes, the transforms one element apart.
+    const auto in_strides = fbench::backends::element_strides(*c, c->in_last);
+    const auto out_strides = fbench::backends::element_strides(*c, c->out_last);
+    std::array<fftw_iodim64, 3> axes{};
+    for (int d = 0; d < c->rank; ++d) {
+      const auto i = static_cast<std::size_t>(d);
+      axes.at(i) = {c->dims[i], in_strides[i] * c->interleave, out_strides[i] * c->interleave};
+    }
+    std::array<fftw_iodim64, 2> loops{};
+    int loop_rank = 0;
+    if (c->outer > 1) {
+      loops.at(0) = {c->outer, c->outer_in_dist, c->outer_out_dist};
+      loop_rank = 1;
+    }
+    loops.at(static_cast<std::size_t>(loop_rank)) = {c->batch, c->in_dist, c->out_dist};
+    ++loop_rank;
+    if (c->kind == fbench_c2c) {
+      p = fftw_plan_guru64_dft(c->rank, axes.data(), loop_rank, loops.data(),
+                               static_cast<fftw_complex*>(in), static_cast<fftw_complex*>(out),
+                               c->sign, flags);
+    } else if (c->kind == fbench_r2c) {
+      p = fftw_plan_guru64_dft_r2c(c->rank, axes.data(), loop_rank, loops.data(),
+                                   static_cast<double*>(in), static_cast<fftw_complex*>(out),
+                                   flags);
+    } else {
+      p = fftw_plan_guru64_dft_c2r(c->rank, axes.data(), loop_rank, loops.data(),
+                                   static_cast<fftw_complex*>(in), static_cast<double*>(out),
+                                   flags);
+    }
+  } else if (c->kind == fbench_c2c) {
     p = fftw_plan_many_dft(c->rank, n.data(), batch, static_cast<fftw_complex*>(in),
                            in_embed.data(), 1, in_dist, static_cast<fftw_complex*>(out),
                            out_embed.data(), 1, out_dist, c->sign, flags);

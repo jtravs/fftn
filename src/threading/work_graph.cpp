@@ -44,6 +44,22 @@ double records_work(const program& p, std::size_t begin, std::size_t end) {
   return work;
 }
 
+// The work of records [begin, end) of a lanes program: its gather, scatter and pairing
+// (radix 1) move a block's points.
+double lane_records_work(const program& p, std::size_t begin, std::size_t end) {
+  double work = 0;
+  for (std::size_t i = begin; i < end; ++i) {
+    if (const stage* st = std::get_if<stage>(&p.records[i])) {
+      work += st->args.radix > 1 ? stage_work(*st) : static_cast<double>(st->args.n * st->args.s);
+      continue;
+    }
+    const loop& l = std::get<loop>(p.records[i]);
+    work += static_cast<double>(l.count) * lane_records_work(p, i + 1, l.body_end);
+    i = l.body_end - 1;
+  }
+  return work;
+}
+
 // The points of one line of a nest whose body is [begin, end): the longest line its stages
 // record (a lanes pass records its block's points), or where the body holds loops of its own
 // (a volume's plane, core/plan_core.cpp add_volume_planes) the most points one of them covers.
@@ -98,12 +114,7 @@ work_graph build_work_graph(const program& p, std::size_t points, std::size_t ch
     graph_phase ph;
     ph.record = static_cast<std::uint32_t>(p.batch_loops);
     ph.units = 1;
-    double work = 0;
-    for (std::size_t i = p.batch_loops; i < end; ++i) {
-      const auto& st = std::get<stage>(p.records[i]);
-      work += st.args.radix > 1 ? stage_work(st) : static_cast<double>(st.args.n * st.args.s);
-    }
-    ph.work = work / static_cast<double>(p.lanes);
+    ph.work = lane_records_work(p, p.batch_loops, end) / static_cast<double>(p.lanes);
     g.chunks = 1;
     g.work = ph.work;
     g.phases.push_back(ph);

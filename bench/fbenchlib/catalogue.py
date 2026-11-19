@@ -24,6 +24,8 @@ GROUP_KEYS = {
     "place",
     "direction",
     "precision",
+    "layout",
+    "outer",
     "weight",
     "tiers",
     "note",
@@ -41,12 +43,16 @@ class Case:
     tiers: frozenset[str] = field(default_factory=frozenset)
     group: str = ""
     precision: str = "f64"
+    layout: str = "tight"  # or "interleaved": transforms one element apart (bench/README.md)
+    outer: int = 1  # blocks of interleaved transforms
 
     @property
     def id(self) -> str:
         shape = "x".join(str(d) for d in self.dims)
         tail = "-bwd" if self.kind == "c2c" and self.sign > 0 else ""
         tail += "-f32" if self.precision == "f32" else ""
+        if self.layout == "interleaved":
+            tail += f"-il-o{self.outer}"
         return f"{self.kind}-{shape}-b{self.batch}-{'ip' if self.place == 'in' else 'op'}{tail}"
 
     @property
@@ -58,16 +64,17 @@ class Case:
         """The benchFFT convention: 5 n log2 n per complex transform, half that for real."""
         n = self.points
         per = (5.0 if self.kind == "c2c" else 2.5) * n * math.log2(n) if n > 1 else 0.0
-        return per * self.batch
+        return per * self.batch * self.outer
 
     def line(self) -> str:
         """The harness's case line. The precision is written only when it is f32, so that
         double-precision cases still run on harnesses older than the key."""
         dims = "x".join(str(d) for d in self.dims)
         prec = " prec=f32" if self.precision == "f32" else ""
+        layout = f" layout=interleaved outer={self.outer}" if self.layout == "interleaved" else ""
         return (
             f"id={self.id} kind={self.kind} dims={dims} batch={self.batch} "
-            f"place={self.place} sign={self.sign}{prec}"
+            f"place={self.place} sign={self.sign}{prec}{layout}"
         )
 
 
@@ -136,8 +143,12 @@ def load(name_or_path: str) -> Catalogue:
             _as_list(group.get("place", "out")),
             _as_list(group.get("direction", "fwd")),
             _as_list(group.get("precision", "f64")),
+            _as_list(group.get("outer", 1)),
         )
-        for kind, dims, batch, place, direction, precision in product:
+        layout = str(group.get("layout", "tight"))
+        if layout not in ("tight", "interleaved"):
+            raise ValueError(f"{where}: layout is tight or interleaved")
+        for kind, dims, batch, place, direction, precision, outer in product:
             if kind not in KINDS or place not in ("in", "out") or direction not in ("fwd", "bwd"):
                 raise ValueError(f"{where}: bad kind, place or direction")
             if precision not in PRECISIONS:
@@ -146,7 +157,19 @@ def load(name_or_path: str) -> Catalogue:
                 raise ValueError(f"{where}: direction applies to c2c only")
             sign = {"r2c": -1, "c2r": 1}.get(kind, -1 if direction == "fwd" else 1)
             name = str(group.get("name"))
-            case = Case(kind, dims, int(batch), place, sign, weight, tiers, name, precision)
+            case = Case(
+                kind,
+                dims,
+                int(batch),
+                place,
+                sign,
+                weight,
+                tiers,
+                name,
+                precision,
+                layout,
+                int(outer),
+            )
             old = cases.get(case.id)
             if old is not None:
                 if old.weight != case.weight:
@@ -161,6 +184,8 @@ def load(name_or_path: str) -> Catalogue:
                     old.tiers | tiers,
                     old.group,
                     precision,
+                    layout,
+                    int(outer),
                 )
             cases[case.id] = case
     return Catalogue(

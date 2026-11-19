@@ -56,6 +56,11 @@ struct plan_record {
   DFTI_DESCRIPTOR_HANDLE handle = nullptr;
   bool forward = true;
   bool in_place = false;
+  // The interleaved layout's blocks (fbench_case::outer): one descriptor runs one block, so
+  // the blocks are a loop around it, by these distances in bytes.
+  std::int64_t outer = 1;
+  std::ptrdiff_t in_step = 0;
+  std::ptrdiff_t out_step = 0;
 
   plan_record() = default;
   plan_record(const plan_record&) = delete;
@@ -79,7 +84,7 @@ std::array<MKL_LONG, 4> strides(const fbench_case& c, std::int64_t last) {
   std::array<MKL_LONG, 4> s{};
   const auto e = fbench::backends::element_strides(c, last);
   for (std::size_t d = 0; d < e.size(); ++d) {
-    s.at(d + 1) = static_cast<MKL_LONG>(e[d]);
+    s.at(d + 1) = static_cast<MKL_LONG>(e[d] * c.interleave);
   }
   return s;
 }
@@ -145,6 +150,16 @@ std::int32_t fbench_create(const fbench_case* c, void* /*in*/, void* /*out*/, vo
   auto r = std::make_unique<plan_record>();
   r->forward = c->sign < 0;
   r->in_place = c->in_place != 0;
+  r->outer = c->outer;
+  {
+    // Bytes between blocks: complex elements on the complex sides, reals on the real one.
+    const auto in_element =
+        static_cast<std::ptrdiff_t>(c->kind == fbench_r2c ? sizeof(double) : 2 * sizeof(double));
+    const auto out_element =
+        static_cast<std::ptrdiff_t>(c->kind == fbench_c2r ? sizeof(double) : 2 * sizeof(double));
+    r->in_step = static_cast<std::ptrdiff_t>(c->outer_in_dist) * in_element;
+    r->out_step = static_cast<std::ptrdiff_t>(c->outer_out_dist) * out_element;
+  }
   const DFTI_CONFIG_VALUE domain = c->kind == fbench_c2c ? DFTI_COMPLEX : DFTI_REAL;
   std::array<MKL_LONG, 3> dims{};
   for (int d = 0; d < c->rank; ++d) {
@@ -202,14 +217,20 @@ std::int32_t fbench_create(const fbench_case* c, void* /*in*/, void* /*out*/, vo
 // NOLINTNEXTLINE(misc-const-correctness): the signature is the interface's
 void fbench_execute(const void* plan, void* in, void* out) {
   const auto* r = static_cast<const plan_record*>(plan);
-  if (r->forward && r->in_place) {
-    DftiComputeForward(r->handle, in);
-  } else if (r->forward) {
-    DftiComputeForward(r->handle, in, out);
-  } else if (r->in_place) {
-    DftiComputeBackward(r->handle, in);
-  } else {
-    DftiComputeBackward(r->handle, in, out);
+  auto* x = static_cast<char*>(in);
+  auto* y = static_cast<char*>(out);
+  for (std::int64_t b = 0; b < r->outer; ++b) {
+    if (r->forward && r->in_place) {
+      DftiComputeForward(r->handle, x);
+    } else if (r->forward) {
+      DftiComputeForward(r->handle, x, y);
+    } else if (r->in_place) {
+      DftiComputeBackward(r->handle, x);
+    } else {
+      DftiComputeBackward(r->handle, x, y);
+    }
+    x += r->in_step;
+    y += r->out_step;
   }
 }
 

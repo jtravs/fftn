@@ -139,6 +139,36 @@ void run_lane_stage(const stage& st, const slot_addresses& at, std::size_t rows)
   st.run(&args, source_of(st.src, at), destination_of(st.dst, at), 0, st.units);
 }
 
+void run_lane_loop(const std::vector<record>& records, std::size_t index, const slot_addresses& at,
+                   std::size_t rows) noexcept;
+
+// Records [begin, end) of a lanes program (its body or its tail), a block of `rows` rows.
+// Inline, loops apart: most lanes programs are a few stages run per short block (X61: a call
+// here took float rows of 8 points in batches to 1.02-1.04 of their time).
+[[gnu::always_inline]] inline void run_lane_records(const std::vector<record>& records,
+                                                    std::size_t begin, std::size_t end,
+                                                    const slot_addresses& at,
+                                                    std::size_t rows) noexcept {
+  for (std::size_t i = begin; i < end; ++i) {
+    const record& r = records[i];
+    if (const stage* st = std::get_if<stage>(&r)) {
+      run_lane_stage(*st, at, rows);
+      continue;
+    }
+    run_lane_loop(records, i, at, rows);
+    i = std::get_if<loop>(&r)->body_end - 1;
+  }
+}
+
+void run_lane_loop(const std::vector<record>& records, std::size_t index, const slot_addresses& at,
+                   std::size_t rows) noexcept {
+  const loop& l = *std::get_if<loop>(&records[index]);
+  const slot_addresses from = moved(at, l.start, 1);
+  for (std::size_t c = 0; c < l.count; ++c) {
+    run_lane_records(records, index + 1, l.body_end, moved(from, l.step, c), rows);
+  }
+}
+
 // Transforms [first, first + count) of a lanes program: within each run of the innermost
 // batch loop, blocks of p.lanes rows through the body, then blocks of p.lane_unit through
 // the tail. Every lane computes its row alone (strategies/lanes.cpp), so how the rows fall
@@ -161,13 +191,9 @@ void run_lane_blocks(const program& p, std::size_t first, std::size_t count,
         rows = run < p.lane_unit ? run : p.lane_unit;
       }
       if (whole) {
-        for (std::size_t i = p.batch_loops; i < p.records.size(); ++i) {
-          run_lane_stage(*std::get_if<stage>(&p.records[i]), at, rows);
-        }
+        run_lane_records(p.records, p.batch_loops, p.records.size(), at, rows);
       } else {
-        for (const stage& st : p.lane_tail) {
-          run_lane_stage(st, at, rows);
-        }
+        run_lane_records(p.lane_tail, 0, p.lane_tail.size(), at, rows);
       }
       run -= rows;
       if (run != 0) {

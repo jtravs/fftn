@@ -80,6 +80,10 @@ const char* fbench_describe() { return description().c_str(); }
 
 std::int32_t fbench_create(const fbench_case* c, void* in, void* out, void** plan, char* message,
                            std::size_t message_size) {
+  if (c->interleave > 1) {
+    fbench::backends::say(message, message_size, "no interleaved layout");
+    return fbench_unsupported;
+  }
   // The interface takes int; the harness keeps every length below 2^31.
   std::array<int, 3> n{};
   std::array<int, 3> in_embed{};

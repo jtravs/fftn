@@ -169,8 +169,14 @@ public:
   precision prec = precision::f64;
   direction dir = direction::forward;
   bool in_place = false;
-  std::vector<std::size_t> lengths; // per axis
-  std::vector<std::size_t> counts;  // per batch dimension
+  std::vector<std::size_t> lengths; // per axis, in the order the axes run (order_axes)
+  // The axis of the shape each entry of `lengths` is, where that order is not the shape's
+  // (empty when it is); describe() names axes by it.
+  std::vector<std::size_t> axis_of;
+  // Lanes over adjacent transforms whose team program is the chain, their radices being the
+  // chain's (plan_core.cpp, machine_profile::adjacent_team_chain).
+  bool adjacent_team_chain = false;
+  std::vector<std::size_t> counts; // per batch dimension
   target isa_target = target::scalar;
 
   program prog;

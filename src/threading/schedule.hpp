@@ -131,6 +131,30 @@ struct machine_profile {
   std::size_t grid_two_part_bytes = 0;
   std::size_t grid_block_bytes = std::size_t{64} * 1024;
   std::size_t grid_block = 0;
+  // A c2c plan whose transforms lie one element apart stays on the chain when all its
+  // transforms together fit this many bytes (the L1 data cache; core/plan_core.cpp, experiment
+  // X61) and either a register holds one complex value or every axis has a leaf length. There
+  // a strided line costs no more than a contiguous one and the chain's own passes win (8 points
+  // x 16 transforms: 1.42 of the chain on the M5 Max, 1.20 on the Xeon 6240), while with wider
+  // registers longer axes gain from the lanes within L1 too (Xeon: 32 x 16 0.23 of the chain).
+  // All the transforms count: blocks that each fit L1 but together do not still gain (32 x 128
+  // x 16 blocks: 0.62 of the chain's time over the middle axes on the M5 Max).
+  std::size_t adjacent_min_bytes = std::size_t{64} * 1024;
+  // A team runs such a plan's transforms through the chain, sharing their lines, so the lanes
+  // over adjacent transforms are taken only where their radices (column_radices) are the
+  // chain's on every axis, and the bits agree (X61). Elsewhere the plan is the chain: giving the
+  // lanes the chain's radices took the EPYC's one thread from 0.29 to 0.40 of the chain's time
+  // (1024 x 16 1.25), and letting a team run the lanes where the radices differ lost up to 2.1
+  // at 8 lanes on the Xeon. A block of transforms is one task: at 8 lanes the EPYC 7763 ran
+  // planes and volumes of 8-64 transforms up to 1.74 times slower than the chain, and the Xeon 6240
+  // up to 2.4 and 1024 x 256 still 1.2-1.6. Where it was measured: x86-64 with a private L2 below 2
+  // MiB.
+  bool adjacent_team_chain = false;
+  // Whether a plan may take the lanes over adjacent transforms at all (X61): only on the classes
+  // measured where it passed, the Xeon 6240's and Apple's (set_grid_sizes). Off on the
+  // EPYC 7763's class, where under adjacent_team_chain the route kept 0.946 of the chain's
+  // time, short of X61's 0.85 bar, and everywhere unmeasured.
+  bool adjacent_lanes = false;
   // The widest block of a three-phase grid (0: max_grid_block, strategies/grid.hpp;
   // experiment X39). Three phases may fill twice grid_block_bytes (X12), which gives blocks of
   // 32 columns to phases of 64; on the Xeon 6240 blocks of 16 took 0.91-0.96 of their time

@@ -1,0 +1,81 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Task 4.3's transforms along chosen axes of a strided array (dev/PLAN.md, phase 4): the
+# interleaved layout of bench/README.md, the transforms one element apart and each
+# element of a transform `batch` elements from the next, as when the array's fastest dimension
+# is not transformed. Format in bench/README.md; weights are equal.
+
+[catalogue]
+name = "axes"
+
+# The columns of an n x batch array.
+[[group]]
+name = "columns"
+kind = "c2c"
+layout = "interleaved"
+dims = [8, 16, 32, 64, 256, 1024, 60, 100]
+batch = [16, 256]
+place = ["out", "in"]
+
+[[group]]
+name = "columns-many"
+kind = "c2c"
+layout = "interleaved"
+dims = [64, 256]
+batch = 2048
+place = ["out", "in"]
+
+# The planes (y, x) of a y x x x batch array: the transverse planes of a state stored with its
+# frequency axis fastest.
+[[group]]
+name = "planes"
+kind = "c2c"
+layout = "interleaved"
+dims = ["16x16", "32x32", "64x64", "128x128", "256x256", "64x256", "60x40"]
+batch = [8, 64]
+place = ["out", "in"]
+
+[[group]]
+name = "planes-long-axis"
+kind = "c2c"
+layout = "interleaved"
+dims = ["32x32", "64x64"]
+batch = [512]
+place = ["out", "in"]
+
+[[group]]
+name = "backward"
+kind = "c2c"
+layout = "interleaved"
+dims = [256, "64x64"]
+batch = 64
+direction = "bwd"
+
+# A middle dimension of an array: the columns of `outer` blocks after one another.
+[[group]]
+name = "middle-axis"
+kind = "c2c"
+layout = "interleaved"
+dims = [32, 128]
+batch = [32, 128]
+outer = 16
+place = ["out", "in"]
+
+# A volume's three axes, the fourth dimension not transformed.
+[[group]]
+name = "volumes"
+kind = "c2c"
+layout = "interleaved"
+dims = ["16x16x16", "32x32x32"]
+batch = [8, 32]
+place = ["out", "in"]
+
+# Real transforms along strided axes (the halved axis strided, out of place): the columns and
+# the planes of a real array.
+[[group]]
+name = "real"
+kind = ["r2c", "c2r"]
+layout = "interleaved"
+dims = [64, 256, "64x64"]
+batch = 64
