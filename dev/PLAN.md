@@ -229,7 +229,7 @@ Done: phase 0 (0.1–0.10, 0.5b, B1, B2, X15); phase 1 tasks 1.1, 1.2, 1.5 (X1),
 X8, X10, X18–X39 (the 1-D double push and the tail round); phase 2 tasks 2.1, 2.3 and 2.3b
 (X17), 2.4 (`planning::measure`, wisdom, P1 acceptance met on all three machines; the cost
 model P3 rejected on a first pass), 2.5 (`next_fast_length`, `relative_cost`; API agreed by
-the maintainer, `length_kind` in pull request 50); phase 3 tasks 3.1–3.3 with T1 and T5; phase 4 task 4.1's first part (X40:
+the maintainer, `length_kind` in pull request 50); phase 3 tasks 3.1–3.3 with T1 and T5, 3.5 (Kokkos adapter, provisional API) with T3; phase 4 task 4.1's first part (X40:
 one-thread c2c planes 0.80–0.94 of FFTW). CI: a short required set on pull requests (no
 up-to-date rule), the full per-change set on main after each merge, weekly extended jobs.
 
@@ -810,7 +810,7 @@ running, done (with verdict).
 | [P4](experiments/P4-next-fast-length.md) | Are `next_fast_length`'s lengths fast on the Mac, the EPYC and the Xeon (within 1.3 of the power of two above, faster than the awkward length), and do composites with 11–23 belong in the fast set? (task 2.5) | 2 | done: every pick faster than its awkward length (0.11–0.96); composites with 11, 17, 19 or 23 removed by the rule; within 1.3 of the power of two above on 96 % (Mac) but 78 % (EPYC, Xeon), the misses short x86 lengths below 300; rule 1's target lowered to 75 % by the maintainer (2026-11-17) |
 | [T1](experiments/T1-dispatch-wait-costs.md) | Dispatch, wake and wait costs per machine and runtime (libgomp, libomp, Kokkos, pool) | 3 | done: hand-off cost and claim runs adopted on Zen 3; dispatch and work costs wait for a per-lane dispatch term |
 | T2 | Claiming engine against precomputed schedule with spin barriers; keep one or both? | 3 | planned |
-| [T3](experiments/T3-kokkos-dispatch.md) | Kokkos: cost of one `parallel_for` per transform; `team_barrier` behaviour | 3 | running |
+| [T3](experiments/T3-kokkos-dispatch.md) | Kokkos: cost of one `parallel_for` per transform; `team_barrier` behaviour | 3 | done: the dispatch costs 0.2–0.45 µs over the OpenMP region it wraps and no transform of 100 µs or more gains by bypassing Kokkos (EPYC, Xeon); team kernels match the executor; `completion::own` with `team_barrier` loses |
 | T4 | Run-to-run swings with several concurrent teams: first touch, NUMA balancing, false sharing of synchronisation words | 3 | planned |
 | [T5](experiments/T5-split-thresholds.md) | Thresholds for splitting a row, by cache-group type | 3 | done: 6144 points (Zen 3 CCX), 8192 (Apple cluster, mesh); 1024 points per member |
 | T6 | Hybrid processors: performance cores only, or all | 3 | planned |

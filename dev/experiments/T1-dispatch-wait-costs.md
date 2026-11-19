@@ -243,5 +243,5 @@ not (T5 shows the threshold moving from 3072 to 6144 points with the executor's 
 then re-try `ns_per_work` from this file. (2) `fftn::thread_pool` started after a bound
 OpenMP runtime inherits a one-CPU mask (above): the pool could widen its threads' masks to
 the process's allowed CPUs (its own threads; DESIGN 13.5 forbids only re-pinning threads
-FFTN does not own). (3) Kokkos's executor probe when task 3.5 lands. Lessons 5.1, 5.5–5.8
+FFTN does not own). (3) Kokkos's executor probe: done in [T3](T3-kokkos-dispatch.md). Lessons 5.1, 5.5–5.8
 in `dev/LESSONS.md`.

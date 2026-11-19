@@ -130,9 +130,9 @@ a nested range), with one workspace per team, sized for the team. With `completi
 default, each call returns when the whole output is written, and no barrier is needed.
 With `completion::own` each member returns once its own transforms (`plan::transforms_of`) are
 written, and `member.team_barrier()` is the synchronisation to use before reading the others'.
-Measured (experiment [T3](../dev/experiments/T3-kokkos-dispatch.md)): a team kernel costs the
-same as the executor's dispatch, to within 1 or 2 %, so use one when other work shares the
-kernel, and the executor otherwise. `completion::own` with `team_barrier` is slower: no member
+Measured (experiment [T3](../dev/experiments/T3-kokkos-dispatch.md)): a transform in a team
+kernel costs what the executor's dispatch costs, within the runs' noise of a few percent, so use
+one when other work shares the kernel, and the executor otherwise. `completion::own` with `team_barrier` is slower: no member
 splits a transform, so a batch of few transforms runs on few threads, and the barrier itself
 costs more than an OpenMP one (1.5 to 3 µs against 0.6 to 1.3 at 8 to 16 threads).
 
