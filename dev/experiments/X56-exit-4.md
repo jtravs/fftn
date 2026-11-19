@@ -1,50 +1,55 @@
-# X56: the phase 1 exit check on the code X53 brings to `main` (71307e0)
+# X56: the phase 1 exit check on `main` after X49–X57
 
-- **Status:** running (local machines done: the Mac and the Xeon pass; the EPYC meets its mean
-  target and misses the tail rule against FFTW, 11 of 193 where 9 are allowed; the cloud
-  section is still to come)
-- **Owner:** exit-final session, 2026-11-18
+- **Status:** running (local machines done: every mean target and the tail rule are met on the
+  Mac, the EPYC and the Xeon; the cloud section is still to come)
+- **Owner:** exit-final session, 2026-11-18 and 19
 - **Phase / task:** the phase 1 exit ([PLAN.md](../PLAN.md) "Status", "Phase 1 exit check
   (2026-11-18 evening)"); repeats the local part of the check of 2026-11-18 on `main` 8c18dd2
-  and [X48](X48-exit-3.md)'s cloud part, after X49–X55
+  and [X48](X48-exit-3.md)'s cloud part, after X49–X57
 
 ## Question
 
-Does the code `main` holds once X53 has merged meet the phase 1 exit (DESIGN.md 1.3: the
-geometric-mean target, and at most 5 % of cases slower than 1.05 of the reference beyond
-noise), and which cases still fail?
+Does `main` after X53 and X57 meet the phase 1 exit (DESIGN.md 1.3: the geometric-mean target,
+and at most 5 % of cases slower than 1.05 of the reference beyond noise), and which cases still
+fail?
 
 ## Hypothesis
 
 The means stay met. X49 (fbench's backend), X50 (primes), X51 and X55 (depth-first chains), X53
 (two-row leaves) and X54 (radix-32/64 order) each aimed at cases on the earlier list, so the
-lists should shrink. The estimate made when X53 was handed over was about 9 of 193 on the EPYC
-against FFTW, exactly at the limit.
+lists should shrink. When X53 was handed over the estimate for the EPYC against FFTW was about
+9 of 193, at the limit; it measured 11, and [X57](X57-epyc-1024.md) then predicted 4 or 5 from
+its own run.
 
 ## Change under test
 
-None (a measurement). Commit 71307e0, the head of `exp/x53b-batch-lengths` (pull request 74,
-which contains pull request 68). Its library code is what `main` becomes once X53 merges: `main`
-664e377 has only `dev/PLAN.md` beyond the merge base 37f386b.
+None (a measurement). Two commits, because `main` moved during the check:
 
-Arms, fbench Release builds at 71307e0: `N` = FFTN with the identical-arm control `N~`; `F` =
-FFTW 3.3.11 with its SIMD codelets, MEASURE, fresh wisdom (the NEON build on the Mac); `L` =
-FFTL.jl's library on the Mac and the EPYC; `M` = oneMKL on the Xeon. The references per machine
+- **EPYC: `main` fa155c9** (X53 and X57 merged).
+- **Mac and Xeon: 71307e0**, the head of X53's branch. Its library, generator and benchmark
+  sources are identical to those of X53's merge 0508037. The only library change from there to
+  fa155c9 is X57, whose fit overrides exist for `avx2` double alone, so `neon_fcma` and `avx512`
+  plans are the same (`fit_overrides_of`, `src/planner/rules.cpp`). These two machines were not
+  re-timed; the binaries differ from fa155c9's, so code placement can differ.
+
+Arms, fbench Release builds at those commits: `N` = FFTN with the identical-arm control `N~`;
+`F` = FFTW 3.3.11 with its SIMD codelets, MEASURE, fresh wisdom (the NEON build on the Mac); `L`
+= FFTL.jl's library on the Mac and the EPYC; `M` = oneMKL on the Xeon. The references per machine
 are those of the earlier check.
 
 ## Method
 
 - **Cases:** `--catalogue standard --tier full --filter '^c2c-[0-9]+-b'`: 201 c2c rows, 193 of
   them double rows that every arm timed. One thread, hot, median statistic. X49's backend fix is
-  in this commit, so no separate re-time of the tiny cases is needed.
+  in these commits, so no separate re-time of the tiny cases is needed.
 - **Machines:** Mac M5 Max (Clang 23.1.4, `neon_fcma`), EPYC 7763 on DMOG (GCC 16.2.0, `avx2`,
   Slurm, 8 CPUs of a shared node), Xeon Gold 6240 (GCC 14.4.0, `avx512`, MKL 2026.0.1, Slurm
   `--serial`, 8 CPUs of the shared node).
 - **Metric:** FFTN ÷ reference over the 193 rows: geometric mean, and the cases whose whole
   bootstrap interval lies above 1.05 × (1 + the run's A/A band).
-- **Decision rule** (DESIGN 1.3, fixed before these runs; this file was written after them): a
-  machine passes against a reference when the mean is at or below its target and at most 9 of
-  the 193 cases count beyond noise.
+- **Decision rule** (DESIGN 1.3, fixed before these runs; this file was written after the first
+  three): a machine passes against a reference when the mean is at or below its target and at
+  most 9 of the 193 cases count beyond noise.
 - **Mac validity:** the run started on AC power with no other fbench running; a watcher checked
   the power source every 15 s and would have stopped the run on battery or on a gap (sleep).
 
@@ -52,43 +57,58 @@ are those of the earlier check.
 
 ### Local machines
 
-| Machine | Run | Valid rounds | Under load | Other processes (median) | Band (A/A) |
-|---|---|---|---|---|---|
-| Mac | 20261118-194015-01cf | 53 | 34 of 53 | 1.6 cores | ±1.00 % |
-| EPYC | 20261118-194340-02a4 | 28 | 28 of 28 | 48 cores of 128 | ±1.00 % |
-| Xeon | 20261118-194333-fbac | 21 | 4 of 21 | 0.5 cores (33 at most) | ±1.91 % |
+| Machine | Commit | Run | Valid rounds | Under load | Other processes (median) | Band (A/A) |
+|---|---|---|---|---|---|---|
+| EPYC | fa155c9 | 20261119-005944-cb48 | 26 | 26 of 26 | 40 cores of 128 | ±1.67 % |
+| Mac | 71307e0 | 20261118-194015-01cf | 53 | 34 of 53 | 1.6 cores | ±1.00 % |
+| Xeon | 71307e0 | 20261118-194333-fbac | 21 | 4 of 21 | 0.5 cores (33 at most) | ±1.91 % |
 
 The Mac stayed on AC power from 19:40 to 20:42 UTC with no sleep or wake in the power log. Slurm
-jobs: EPYC build 513012, timing 513013; Xeon build 16532, timing 16533.
+jobs: EPYC build 513180, timing 513181 (node17); Xeon build 16532, timing 16533.
 
 The earlier figures in brackets are the check on `main` 8c18dd2 with its tiny cases replaced by
 their re-times on 4d75c48 (each case judged against the band of its own run).
 
 | Machine | Reference | Geomean (target) | Beyond noise (limit 9) | Plain > 1.05 |
 |---|---|---|---|---|
+| EPYC | FFTW | **0.788** (0.90) [0.793] | **6, 3.1 %** [12] | 11 |
+| EPYC | FFTL | **0.456** [0.450] | **1, 0.5 %** [1] | 7 |
 | Mac | FFTW | **0.737** (0.85) [0.749] | **3, 1.6 %** [3] | 11 |
 | Mac | FFTL | **0.522** (0.95) [0.525] | **4, 2.1 %** [4] | 6 |
-| EPYC | FFTW | **0.776** (0.90) [0.793] | **11, 5.7 %** [12] | 13 |
-| EPYC | FFTL | **0.451** [0.450] | **2, 1.0 %** [1] | 8 |
 | Xeon | FFTW | **0.658** (0.85) [0.689] | **1, 0.5 %** [5] | 2 |
 | Xeon | MKL | **0.688** (1.00) [0.694] | **2, 1.0 %** [2] | 9 |
 
+The EPYC's band is wider than the 1.00 % of its run on 71307e0, and a wide band is lenient (DESIGN
+1.3). At the 1.00 % floor it would count 8 cases against FFTW (adding 1024 backward and 100) and
+2 against FFTL (adding 65536 in place 1.11): the verdict is the same.
+
 Cases beyond noise (FFTN ÷ reference, the earlier value in brackets):
 
+- **EPYC ÷ FFTW (6):** 64 × 2 backward 1.30 [1.28], 64 × 16 1.13 [1.14], 15 × 2 backward 1.13
+  [1.23], 1018 1.10 [1.10], 2048 1.09 [1.11]; new: 120 1.08 [1.02]. Out: 1024 (1.21 → 1.01), 1024 × 3
+  (1.22 → 1.02), 1024 × 16 (1.13 → 1.01), 768 (1.09 → 0.97), 512 (1.07 → 1.03), and within this
+  run's band 1024 backward (1.20 → 1.08) and 100 (1.09 → 1.07).
+- **EPYC ÷ FFTL (1):** 16807 1.13 [1.08].
 - **Mac ÷ FFTW (3):** 2 × 3 in place 1.42 [1.36], 2²⁴ 1.16 [1.10, new], 7 × 3 in place 1.09
   [1.09, new: the earlier band was wider]. Out: 32 × 4096 (1.10 → 1.06), 64 × 2 backward
   (1.07 → 0.95).
 - **Mac ÷ FFTL (4):** 2²³ 1.92 [1.56], 2²⁴ 1.85 [1.68], 1024 × 1024 1.16 [1.17], 512 × 1024
   1.08 [1.09]; the same four cases.
-- **EPYC ÷ FFTW (11):** 64 × 2 backward 1.28 [1.28], 1024 × 3 1.22 [1.22], 1024 1.21 [1.21],
-  1024 backward 1.18 [1.20], 64 × 16 1.14 [1.14], 1024 × 16 1.12 [1.13], 1018 1.10 [1.10], 2048
-  1.10 [1.11], 100 1.07 [1.09]; new: 120 1.08 [1.02], 1024 × 256 1.08 [1.06]. Out: 15 × 2
-  backward (1.23 → 0.91), 768 (1.09 → 0.97), 512 (1.07 → 1.03).
-- **EPYC ÷ FFTL (2):** 16807 1.15 [1.08]; new: 65536 × 3 in place 1.19 [0.98].
 - **Xeon ÷ FFTW (1):** 160 1.12 [1.16]. Out: 131071 (1.29 → 0.80), 25000 (1.25 → 0.99), 15 × 2
   backward (1.16 → 0.90), 240 (1.13 → 1.02).
 - **Xeon ÷ MKL (2):** new: 512 × 16 1.15 [1.16, inside the earlier run's wider interval], 1024 × 3
   in place 1.10 [1.08]. Out: 999983 (1.41 → 1.04), 131071 (1.32 → 0.83).
+
+### The EPYC before X57 (71307e0)
+
+Run 20261118-194340-02a4 (Slurm 513012, 513013, node21; 28 rounds, all under load, other
+processes 48 cores, band ±1.00 %): ÷ FFTW 0.776 with **11 beyond noise (5.7 %, over the limit)**:
+64 × 2 backward 1.28, 1024 × 3 1.22, 1024 1.21, 1024 backward 1.18, 64 × 16 1.14, 1024 × 16 1.12,
+1018 1.10, 2048 1.10, 120 1.08, 1024 × 256 1.08, 100 1.07; ÷ FFTL 0.451 with 2 (65536 × 3 in place
+1.19, 16807 1.15). That result led to X57.
+
+Between the two runs FFTN's 1024 went 1.796 → 1.508 ns per point and 1024 × 3 1.840 → 1.550, with
+FFTW unchanged (1.496 → 1.499, 1.512 → 1.517).
 
 ### Against the earlier check
 
@@ -98,19 +118,23 @@ These compare separate runs under different load, so they locate questions and p
 
 | Machine | FFTN | FFTW | Third reference |
 |---|---|---|---|
+| EPYC | 0.988 | 0.994 | FFTL 0.976 |
 | Mac | 0.910 | 0.925 | FFTL 0.914 |
-| EPYC | 0.971 | 0.992 | FFTL 0.969 |
 | Xeon | 0.916 | 0.959 | MKL 0.924 |
 
+- **EPYC, tiny cases:** FFTN's rows of a few points scattered from round to round on this node
+  while FFTW's did not. 15 × 2 backward keeps its plan (the batch leaf) yet went from 0.91 of
+  FFTW on 71307e0 to 1.13: its rounds run 0.78–1.27 ns per point (0.77–1.11 on 71307e0), the
+  identical-arm control shows the same spread, and FFTW stays near 0.88. 2, 10 and 26 points
+  behave alike, which raises the mean a little over 71307e0's 0.776. The cause was not traced;
+  the plans are the same, and the fastest rounds match 71307e0's.
+- **EPYC, 72 and 120:** slower than at 8c18dd2 with FFTW unchanged; X57 found this to be code
+  placement. The 65536 family's rise against FFTL since 8c18dd2 is FFTL's (× 3 in place: FFTN 4.83
+  → 4.73 on 71307e0, FFTL 5.03 → 3.99 ns per point).
 - **Mac:** every arm is about 8–9 % faster; the earlier run was loaded (44 of 46 rounds, other
   processes up to 16 cores), so most of this is the quieter machine. 2²³ and 2²⁴ rose against
   both references while FFTN itself got faster (2²³ 9.31 → 8.37 ns per point): FFTL went 5.88 →
   4.35 and FFTW 10.00 → 6.98.
-- **EPYC:** 120 (1.154 → 1.221 ns per point) and 72 (1.162 → 1.250) are slower with FFTW
-  unchanged (1.124 → 1.120, 1.173 → 1.179). This looks like a change in FFTN between 8c18dd2 and
-  71307e0; the cause is not known and needs a same-run A/B. 72 is 1.06 of FFTW, within noise. The
-  65536 family's rise against FFTL is FFTL's: FFTN 4.83 → 4.73, FFTL 5.03 → 3.99 ns per point
-  (× 3 in place).
 - **Xeon:** X50 shows in the primes (131071 43.8 → 25.7, 999983 84.7 → 57.6 ns per point) and X51
   in 25000 (4.16 → 2.98). Part of the mean's gain against FFTW is FFTW's own: its MEASURE plans
   differ between runs (97 points 13.9 → 26.8 ns per point, 128 × 3 1.70 → 0.91), which is why the
@@ -122,17 +146,14 @@ To be added.
 
 ## Verdict
 
-Measurement only; no library change. Local machines at 71307e0: every mean target is met. The
-tail rule is met on the **Mac** (FFTW 1.6 %, FFTL 2.1 %) and the **Xeon** (FFTW 0.5 %, MKL 1.0 %)
-and against FFTL on the EPYC (1.0 %). **The EPYC fails it against FFTW: 11 of 193 (5.7 %), two
-cases over the limit**, against the 9 estimated.
+Measurement only; no library change. On the local machines every mean target is met and **the
+tail rule is met on all three**: EPYC at fa155c9 (FFTW 3.1 %, FFTL 0.5 %; 8 and 2 cases at the
+1.00 % band floor), Mac (FFTW 1.6 %, FFTL 2.1 %) and Xeon (FFTW 0.5 %, MKL 1.0 %) at X53's code.
+The phase 1 exit now depends on the cloud part.
 
-What stands in the way on the EPYC:
+What is left beyond noise on the EPYC against FFTW: 64 × 2 backward 1.30, 64 × 16 1.13, 15 × 2
+backward 1.13 (0.91 in the run before, see above), 1018 1.10, 2048 1.09, and 120 1.08 (code
+placement, X57).
 
-1. **1024 in five forms** (single, backward, × 3, × 16, × 256; 1.08–1.22): the radix choice that
-   sees the data size, left open by [X54](X54-radix64-avx2.md).
-2. **64 × 2 backward 1.28:** X53 took 15 × 2 backward under FFTW, not this one.
-3. **64 × 16 1.14, 2048 1.10, 1018 1.10, 100 1.07.**
-4. **120 1.08,** newly over, with the same-run question above.
-
-Not done: the same-run A/B of 8c18dd2 against 71307e0 on the EPYC's 72 and 120; the cloud part.
+Not done: the Mac and the Xeon were not re-timed on fa155c9 (their plans are unchanged); the
+scatter of the EPYC's tiny cases was not traced; the cloud part.
