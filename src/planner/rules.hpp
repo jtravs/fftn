@@ -96,6 +96,9 @@ struct target_profile {
   // entry: never) the target's own leaves instead, C rows per register (X53: avx512's four
   // rows per register won from four rows at 11 and 13-25 points).
   std::span<const std::uint16_t> batch_own_rows;
+  // Lengths whose radices depend on whether a plan's rows fit the cache (fitting_radices;
+  // experiment X57).
+  std::span<const radix_override> fit_overrides;
 };
 
 // The profile of target t for a precision with `lanes` complex lanes: the table measured
@@ -112,6 +115,14 @@ struct target_profile {
 // (the costs' sequence; chain_builder::real_radices, experiment X39).
 [[nodiscard]] std::vector<std::size_t> rule_radices(std::size_t n, const target_profile& p,
                                                     bool overrides = true);
+
+// The radices of the rows of a one-axis c2c plan of n points where they depend on the plan's
+// data (experiment X57), in pass order, or empty where they do not (rule_radices then
+// decides): for a length of the profile's fit_overrides, its two-pass sequence while the
+// plan's data fit (machine_profile::fit_row_bytes, core/plan_core.cpp) and otherwise the
+// costs' sequence without the overrides. A pure function like rule_radices.
+[[nodiscard]] std::vector<std::size_t> fitting_radices(std::size_t n, const target_profile& p,
+                                                       bool fits);
 
 // Up to k radix sequences for n, in pass order: rule_radices' first, then the cheapest
 // others by the profile's pass costs (cost, then lexicographic order), without repeats.

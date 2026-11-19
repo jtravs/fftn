@@ -18,11 +18,13 @@
 #include "isa/target.hpp"
 #include "planner/rules.hpp"
 #include "platform/page_memory.hpp"
+#include "support/fftn_subject.hpp"
 
 #include <gtest/gtest.h>
 
 #include <algorithm>
 #include <cmath>
+#include <complex>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -200,6 +202,84 @@ TEST(RankedRadices, LongPowersOfTwoFollowFftl) {
   EXPECT_EQ(d::long_pow2_radices(16, true), (std::vector<std::size_t>{4, 4, 8, 8, 8, 8}));
   EXPECT_EQ(d::long_pow2_radices(15, true), (std::vector<std::size_t>{8, 8, 8, 8, 8}));
   EXPECT_EQ(d::long_pow2_radices(17, false), (std::vector<std::size_t>{8, 4, 4, 4, 4, 4, 4, 4}));
+}
+
+// ---- Rows whose radices see the plan's data (X57) ---------------------------------------
+
+TEST(FitRows, RadicesByLengthAndWhetherTheDataFit) {
+  const d::target_profile p = d::profile_of(d::target::avx2, 2);
+  EXPECT_EQ(d::fitting_radices(1024, p, true), (std::vector<std::size_t>{16, 64}));
+  EXPECT_EQ(d::fitting_radices(1024, p, false), d::rule_radices(1024, p, false));
+  EXPECT_EQ(d::fitting_radices(768, p, true), (std::vector<std::size_t>{12, 64}));
+  EXPECT_EQ(d::fitting_radices(768, p, false), d::rule_radices(768, p, false));
+  EXPECT_NE(d::fitting_radices(768, p, false), d::rule_radices(768, p)); // 768's override
+  EXPECT_TRUE(d::fitting_radices(512, p, true).empty());
+  for (const auto& [t, lanes] : std::vector<std::pair<d::target, std::size_t>>{
+           {d::target::avx2, 4}, {d::target::avx512, 4}, {d::target::neon_fcma, 1}}) {
+    EXPECT_TRUE(d::fitting_radices(1024, d::profile_of(t, lanes), true).empty());
+  }
+}
+
+// By the profile field alone (set here, not the host's): rows take the two-pass radices only
+// where the listed length's rows and output fit, a plane's rows never.
+TEST(FitRows, PlansFollowTheProfileField) {
+  const auto text = [](std::size_t rows, bool in_place, std::size_t fit_bytes, fftn::isa isa,
+                       std::size_t n = 1024) {
+    build_settings settings;
+    settings.profile.fit_row_bytes = fit_bytes;
+    settings.profile.depth_max_bytes = 0;
+    const fftn::shape<std::complex<double>, std::complex<double>> shape{
+        .dir = fftn::direction::forward,
+        .axes = {{.n = n}},
+        .batches = {{.count = rows,
+                     .in_dist = static_cast<std::ptrdiff_t>(n),
+                     .out_dist = static_cast<std::ptrdiff_t>(n)}},
+    };
+    return d::describe(
+        *d::make_plan_core(d::view_of(shape), {.in_place = in_place, .force_isa = isa}, settings));
+  };
+  const auto two_pass = [](const std::string& t) {
+    return t.find("radices 16 x 64") != std::string::npos;
+  };
+  const std::size_t kib = 1024;
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    SCOPED_TRACE(fftn::isa_name(t));
+    if (std::string(fftn::isa_name(t)) != "avx2") {
+      // No listed lengths: the field changes nothing.
+      EXPECT_EQ(text(3, false, 0, t), text(3, false, std::size_t{1} << 40U, t));
+      continue;
+    }
+    // 1024 x 3 out of place: 48 KiB of rows and 48 of output.
+    EXPECT_TRUE(two_pass(text(3, false, 96 * kib, t)));
+    EXPECT_FALSE(two_pass(text(3, false, 96 * kib - 1, t)));
+    // In place the rows are all the data.
+    EXPECT_TRUE(two_pass(text(6, true, 96 * kib, t)));
+    EXPECT_FALSE(two_pass(text(7, true, 96 * kib, t)));
+    EXPECT_FALSE(two_pass(text(3, false, 0, t))); // off
+    // 768 leaves its override only where the rows do not fit.
+    EXPECT_NE(text(1, false, 96 * kib, t, 768).find("radices 12 x 64"), std::string::npos);
+    EXPECT_EQ(text(9, false, 96 * kib, t, 768).find("radices 12 x 64"), std::string::npos);
+    // The fitting plan is the forced sequence's plan, bit for bit.
+    build_settings fit;
+    fit.profile.fit_row_bytes = 96 * kib;
+    fit.profile.depth_max_bytes = 0;
+    build_settings forced = fit;
+    forced.radices = {16, 64};
+    const fftn::shape<std::complex<double>, std::complex<double>> rows{
+        .dir = fftn::direction::forward,
+        .axes = {{.n = 1024}},
+        .batches = {{.count = 3, .in_dist = 1024, .out_dist = 1024}},
+    };
+    EXPECT_EQ(run(*d::make_plan_core(d::view_of(rows), {.force_isa = t}, fit)),
+              run(*d::make_plan_core(d::view_of(rows), {.force_isa = t}, forced)));
+    // A plane's rows keep the rules whatever the field says.
+    const fftn::shape<std::complex<double>, std::complex<double>> plane{
+        .dir = fftn::direction::forward, .axes = {{.n = 1024}, {.n = 1024}}, .batches = {}};
+    build_settings off = fit;
+    off.profile.fit_row_bytes = 0;
+    EXPECT_EQ(d::describe(*d::make_plan_core(d::view_of(plane), {.force_isa = t}, fit)),
+              d::describe(*d::make_plan_core(d::view_of(plane), {.force_isa = t}, off)));
+  }
 }
 
 // ---- Choices as text --------------------------------------------------------------------
