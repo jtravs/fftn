@@ -121,6 +121,8 @@ TEST(WorkGraph, FairRunsWhereNeighbouringLinesShareCacheLines) {
   EXPECT_EQ(d::chunk_run(ph, 1, 8, 16), 1U);  // never more than is left
   ph.chunks = 5;
   EXPECT_EQ(d::chunk_run(ph, 5, 8, 16), 1U); // fewer chunks than members
+  ph.chunks = 800;
+  EXPECT_EQ(d::chunk_run(ph, 800, 8, 16), d::max_fair_run); // a long phase keeps its balance
   ph.chunks = 64;
   ph.fair_runs = false;
   EXPECT_EQ(d::chunk_run(ph, 64, 8, 16), 4U); // a share of what is left

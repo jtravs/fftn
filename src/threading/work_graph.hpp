@@ -46,14 +46,18 @@ struct graph_phase {
   bool fair_runs = false;
 };
 
+// The most chunks of a fair run (chunk_run). X59 arm R4: uncapped, the runs of 8 blocks of a
+// 2048^2 plane lost balance (EPYC 7763 1.05-1.12, M5 Max 1.04-1.12 of the guided runs' time).
+inline constexpr std::uint32_t max_fair_run = 4;
+
 // How many chunks of phase ph a member claims at once, `left` of them being unclaimed: a phase
-// whose neighbouring lines share cache lines goes in runs of its fair share (chunks / cap), so
-// that about cap runs border each other (X59); any other in a share of what is left,
-// left / runs (X52), at least one. Never more than `left`: a run stays within its phase.
+// whose neighbouring lines share cache lines goes in runs of its fair share (chunks / cap, at
+// most max_fair_run), so that few runs border each other (X59); any other in a share of what is
+// left, left / runs (X52), at least one. Never more than `left`: a run stays within its phase.
 [[nodiscard]] inline std::uint32_t chunk_run(const graph_phase& ph, std::uint32_t left,
                                              std::uint32_t cap, std::uint32_t runs) noexcept {
   if (ph.fair_runs) {
-    return std::min(left, std::max(ph.chunks / cap, 1U));
+    return std::min({left, std::max(ph.chunks / cap, 1U), max_fair_run});
   }
   return std::max(left / runs, 1U);
 }

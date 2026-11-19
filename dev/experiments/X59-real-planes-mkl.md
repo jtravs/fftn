@@ -74,6 +74,10 @@ run.
   volumes keep the guided runs. R2's rule, unchanged, R3 against T, over the same case set (the
   cases it can change are planes).
 
+- **Arm R4** (on top of T, replacing R3 after R3's EPYC and Mac runs, below): R3 with a fair run
+  of at most 4 chunks. On both machines R3 lost at 2048² (runs of 8 blocks of 16 columns; EPYC
+  1.05-1.12, Mac 1.04-1.12) while it gained at 256²-1024². R2's rule, unchanged, R4 against T.
+
 ## Method
 
 - Cases: the standard catalogue's real planes (`^(r2c|c2r)-[0-9]+x[0-9]+-b1-(op|ip)$`).
@@ -162,6 +166,26 @@ when the columns read it, which any row-then-column split pays. At 2048 × 36 se
 remain in each of 2048 rows whatever the runs (14 000 lines, the count measured): 19 columns
 cannot be shared by 8 members without sharing lines. oneMKL's 1000 there suggests it divides
 such a plane along the long axis instead.
+
+### Arm T and R3 on the EPYC (8 lanes)
+
+Run 20261119-025048-a9d9 (Slurm 513193; `main` 0508037 against T 79669a6, FFTW at 8 threads; 10
+rounds, all loaded, band ±2.2 %), the 132 planes and volumes: T ÷ `main` 0.978 over the 44 real
+planes that split, 0.941 over the other planes and volumes that split (real 32³ 0.61–0.67, 64³
+0.78–0.84, 100³ 0.82–0.89; c2c 100² 0.88–0.90). Past the band only c2c 36 × 2048 in place 1.045,
+which has no narrower block (2048 columns in blocks of 8): its graph is T's as well as `main`'s, so
+it does not decide. **T meets its rule on the EPYC.**
+
+Run 20261119-030608-cba4 (Slurm 513225; T against R3 949454b; 10 rounds, all loaded, band ±2.4 %):
+R3 ÷ T **0.916 over the 44 real planes** (512² 0.70, 480 × 640 0.70–0.72, 2048 × 36 0.81–0.84,
+36 × 2048 0.85–0.87, 1000²–1024² 0.87–0.88), 0.998 over the other planes and volumes; but 2048²
+1.05–1.12 and c2r 36 × 2048 out of place 1.037, past the band: R3 fails rule (2) as written.
+
+Mac, run 20261119-030342-22f8 (the real planes and four c2c shapes; 14 rounds, all loaded, band
+±2.7 %): T ÷ `main` 0.998 over the 44 real planes, worst 1.019: **T meets its rule on the Mac** (its
+earlier 1.021 at r2c 2048 × 36 was 1.00 here). R3 ÷ T 0.968 over the real planes (512² 0.85–0.89,
+2048 × 36 0.87–0.95, 256² 0.91–0.93), but r2c 2048² 1.04–1.12, c2r 2048² 1.02–1.06, c2r 1024² out
+of place 1.07. Hence arm R4.
 
 ### The Xeon's judging runs: unpinned, then confined
 
