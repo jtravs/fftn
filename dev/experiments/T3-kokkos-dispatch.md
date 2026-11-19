@@ -32,10 +32,11 @@ process, on the same plan and data, interleaved repetition by repetition.
 | `kokkos` | `plan.execute(in, out, fftn::kokkos::executor, ws)`: the implementation under test, and the base of every ratio |
 | `kokkos2` | the same again with its own workspace: the identical-arm control |
 | `omp` | `plan.execute(in, out, fftn::omp::executor, ws)` on the same OpenMP runtime: the bypass (OpenMP builds) |
-| `serial` | the serial overload, for the speed-up |
+| `serial` | the serial overload, for the speed-up; timed in its own pair with `kokkos` (see the correction below) |
 | `team_all` | one `TeamPolicy(exec, 1, P)` kernel in which every member calls the team overload, `completion::all` |
 | `team_own_barrier` | the same with `completion::own`, then `member.team_barrier()` |
 | `team_four_in_a_region` | four executions in one team kernel, time per execution |
+| `omp_team` | the threads of a plain `#pragma omp parallel` as the team (`fftn::omp::this_team()`): the team route without Kokkos' team set-up (added after the first run, recorded, not judged) |
 
 The `dispatch` probe times empty dispatches (`kokkos`, `kokkos2`, `parallel_for` without the
 fence, `team_region`, `omp`); the `scale` probe, `view_plan` with `normalization::none` and
@@ -80,6 +81,14 @@ distance of `kokkos2`'s ratio from 1 (the median over rounds, widened by its ran
    both machines, at every width, the shared scaling of 2^16 elements (`scaled` minus `none`)
    costs no more than twice the serial scaling of 2^15 elements. Otherwise the threshold moves
    to the smallest size measured where shared scaling wins.
+
+**Correction after the first run, before the second (the rules are unchanged).** In the first
+run the serial arm was part of the cycle of arms, so the arm after it (`team_all`, always,
+since the rotation keeps the cyclic order) found the data in one core's cache and paid for
+moving it: `team_all` came out 1.1 to 1.3 of `kokkos` where four executions in one region came
+out 0.98. The `serial` arm now runs in a separate pair, and the second run replaces the first
+for the `transform` probe; the `dispatch`, `scale` and `barrier` probes of the first run stand.
+Rule 1 is judged on the second run too (it passed on the first).
 
 ## Results
 

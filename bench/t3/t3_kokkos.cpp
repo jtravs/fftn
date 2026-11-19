@@ -156,7 +156,6 @@ void transform_arms(const std::string& name, const exec_space& exec, const View&
   std::vector<arm> arms;
   arms.push_back({"kokkos", [&] { p.execute(in, out, ex, wk); }});
   arms.push_back({"kokkos2", [&] { p.execute(in, out, ex, wk2); }});
-  arms.push_back({"serial", [&] { p.execute(in, out, ws); }});
   arms.push_back({"team_all", [&] {
                     Kokkos::parallel_for("fftn team", team_policy(exec, 1, threads),
                                          [&](const team_member& m) {
@@ -193,6 +192,12 @@ void transform_arms(const std::string& name, const exec_space& exec, const View&
                   }});
 #endif
   measure("transform", name, std::move(arms));
+  // The speed-up, apart from the arms above: a serial run leaves the data in one core's cache,
+  // which slows whichever threaded arm runs after it (the first runs of T3 showed that).
+  std::vector<arm> pair;
+  pair.push_back({"kokkos", [&] { p.execute(in, out, ex, wk); }});
+  pair.push_back({"serial", [&] { p.execute(in, out, ws); }});
+  measure("speedup", name, std::move(pair));
 }
 
 void probe_transform(const exec_space& exec) {
