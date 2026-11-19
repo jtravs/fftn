@@ -78,6 +78,10 @@ run.
   of at most 4 chunks. On both machines R3 lost at 2048² (runs of 8 blocks of 16 columns; EPYC
   1.05-1.12, Mac 1.04-1.12) while it gained at 256²-1024². R2's rule, unchanged, R4 against T.
 
+- **Arm R5** (on top of T, replacing R4 after R4's Mac run, below): fair runs only for a phase
+  of at most 3 chunks per member; phases of more keep the guided runs, so 2048² and 1024² run as
+  under T. R2's rule, unchanged, R5 against T.
+
 ## Method
 
 - Cases: the standard catalogue's real planes (`^(r2c|c2r)-[0-9]+x[0-9]+-b1-(op|ip)$`).
@@ -186,6 +190,11 @@ Mac, run 20261119-030342-22f8 (the real planes and four c2c shapes; 14 rounds, a
 earlier 1.021 at r2c 2048 × 36 was 1.00 here). R3 ÷ T 0.968 over the real planes (512² 0.85–0.89,
 2048 × 36 0.87–0.95, 256² 0.91–0.93), but r2c 2048² 1.04–1.12, c2r 2048² 1.02–1.06, c2r 1024² out
 of place 1.07. Hence arm R4.
+
+R4 on the Mac, run 20261119-032302-1382 (10 rounds, all loaded, band ±1.6 %): R4 ÷ T 0.988 over
+the real planes (r2c 2048 × 36 0.84, r2c 512² 0.86–0.87), but 2048² still 1.07–1.15: the loss is
+the end of the phase, where equal runs leave one member with its last run while the others have
+finished, not the length of the runs. Hence arm R5.
 
 ### The Xeon's judging runs: unpinned, then confined
 
