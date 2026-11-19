@@ -135,14 +135,13 @@ narrower last block):
 - **The work grows when shared**: summed over members, the column phase of r2c 256² takes 4.1
   times its one-thread time, 512² 2.5, 36 × 2048 4.2, 2048 × 36 6.9; the rows 1.2–1.7. At 1024²
   and above, where one thread already misses L2, about 1.0–1.3.
-- **Cross-core traffic** explains the growth. Loads that find their line modified in another
+- **Cross-core traffic** goes with the growth. Loads that find their line modified in another
   core's cache, per transform at 8 lanes, FFTN against oneMKL: r2c 256² 1007 / 59, r2c 512²
-  11 804 / 1940, c2r 512² 9792 / 4968, r2c 2048 × 36 19 944 / 964, c2r 2048 × 36 8856 / 657. A
-  real row is n/2 + 1 complex values long, an odd multiple of 16 bytes, so neighbouring columns
-  share cache lines in three rows of four, and at 2048 × 36 (columns through the chain, one column
-  per chunk) in every row. FFTN's guided runs give a phase of few chunks about one run per chunk,
-  so nearly every block borders another member's; a static split as oneMKL's has seven such
-  borders.
+  11 804 / 1940, c2r 512² 9792 / 4968, r2c 2048 × 36 19 944 / 964, c2r 2048 × 36 8856 / 657; L2
+  demand misses are about twice oneMKL's from 512² up. Part of this is false sharing: a real row
+  is n/2 + 1 complex values long, an odd multiple of 16 bytes, so neighbouring columns share
+  cache lines in three rows of four, and at 2048 × 36 (19 columns through the chain, one per chunk,
+  for 8 members) in every row. How much is the question arm R tests (below): most of it is not.
 - **c2r carries a third array.** Out of place FFTN keeps the input and puts the half spectrum in
   a workspace block (in + block + out, 1.5 MiB at 256² against a 1 MiB L2): 15 100 L2 demand
   misses per transform at one thread against r2c's 1500 and oneMKL's c2r 6800. oneMKL keeps
@@ -150,6 +149,19 @@ narrower last block):
 - **Unpinned**, FFTN loses more than oneMKL (8 lanes pinned ÷ unpinned at c2r 512²: FFTN 0.51,
   oneMKL 0.64; 4–11 context switches per transform at 512²–1024² for FFTN's waiting members,
   none for libgomp's spinning ones).
+
+### Arm R in the harness (Xeon, 8 lanes)
+
+Slurm 16572 (four repeats, the machine shared as before): T + R ÷ `main`, pinned / unpinned: r2c
+256² 0.88 / 0.76, c2r 256² 1.02 / 0.94, r2c 512² 0.97 / 0.67, c2r 512² 0.95 / 0.90, r2c 1024² 0.87 /
+0.93, c2r 1024² 0.94 / 1.22, 2048² 0.98–1.02 / 1.05–1.08, r2c 2048 × 36 1.04 / 1.32, c2r 2048 × 36
+1.14 / 1.04. The modified-line loads hardly fall (r2c 512² 13 900 → 10 700, r2c 2048 × 36 21 400 →
+16 200, c2r 512² 10 100 → 8700, 256² and 1024² not at all), so **boundaries between members' runs
+are not the main source**: most of it is the rows' output sitting modified in the writers' L2s
+when the columns read it, which any row-then-column split pays. At 2048 × 36 seven borders
+remain in each of 2048 rows whatever the runs (14 000 lines, the count measured): 19 columns
+cannot be shared by 8 members without sharing lines. oneMKL's 1000 there suggests it divides
+such a plane along the long axis instead.
 
 ### Arms T and R on the Mac (6 lanes)
 
