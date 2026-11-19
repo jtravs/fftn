@@ -109,7 +109,9 @@ TEST(WorkGraph, FairRunsWhereNeighbouringLinesShareCacheLines) {
   fftn::shape<double, std::complex<double>> volume;
   volume.axes = {{.n = 16}, {.n = 16}, {.n = 16}};
   volume.batches = {{.count = 1}};
-  for (const d::graph_phase& phase : d::make_plan_core(d::view_of(volume), opts, s)->graph.phases) {
+  // The plan is held: a range over a member of a temporary would outlive the temporary.
+  const auto vol = d::make_plan_core(d::view_of(volume), opts, s);
+  for (const d::graph_phase& phase : vol->graph.phases) {
     EXPECT_FALSE(phase.fair_runs);
   }
 
