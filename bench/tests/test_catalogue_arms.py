@@ -55,6 +55,19 @@ class Standard(unittest.TestCase):
         self.assertEqual(d.id, "c2c-8-b1-op-bwd")
         self.assertAlmostEqual(d.flops, 5 * 8 * 3)
 
+    def test_interleaved_case(self):
+        c = catalogue.Case("c2c", (32,), 8, "out", -1, layout="interleaved", outer=16)
+        self.assertEqual(c.id, "c2c-32-b8-op-il-o16")
+        self.assertEqual(
+            c.line(),
+            "id=c2c-32-b8-op-il-o16 kind=c2c dims=32 batch=8 place=out sign=-1 "
+            "layout=interleaved outer=16",
+        )
+        self.assertAlmostEqual(c.flops, 8 * 16 * 5 * 32 * 5)
+        cases = catalogue.load("axes").cases
+        self.assertTrue(all(c.layout == "interleaved" for c in cases))
+        self.assertTrue(any(c.outer > 1 for c in cases))
+
     def test_single_precision_case(self):
         c = catalogue.Case("c2c", (8,), 1, "out", 1, precision="f32")
         self.assertEqual(c.id, "c2c-8-b1-op-bwd-f32")

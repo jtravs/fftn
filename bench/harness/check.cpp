@@ -41,9 +41,11 @@ std::size_t idx(std::int64_t i) { return static_cast<std::size_t>(i); }
 // columns 0 and n/2 stand for themselves, the others for a conjugate pair too.
 double half_weight(std::int64_t k, std::int64_t n) { return (k == 0 || 2 * k == n) ? 1.0 : 2.0; }
 
+// `interleave` above 1: the fbench_case::interleave layout, `batch` is `interleave`, and
+// `blocks` of it lie one after another.
 side make_side(bool complex, int rank, const std::array<std::int64_t, 3>& dims,
                std::int64_t last_logical, std::int64_t last_phys, std::int64_t batch,
-               std::size_t real_bytes) {
+               std::size_t real_bytes, std::int64_t interleave = 1, std::int64_t blocks = 1) {
   side s;
   s.complex = complex;
   s.rank = rank;
@@ -54,9 +56,20 @@ side make_side(bool complex, int rank, const std::array<std::int64_t, 3>& dims,
   for (int d = 0; d + 1 < rank; ++d) {
     outer *= dims.at(idx(d));
   }
-  s.dist = outer * last_phys;
+  const std::int64_t span = outer * last_phys; // of one transform
   s.count = outer * last_logical;
-  s.bytes = static_cast<std::size_t>(batch * s.dist) * (complex ? 2 * real_bytes : real_bytes);
+  const std::size_t unit = complex ? 2 * real_bytes : real_bytes;
+  if (interleave > 1) {
+    s.stride = interleave;
+    s.dist = 1;
+    s.block = interleave;
+    s.block_dist = interleave * span;
+    s.bytes = static_cast<std::size_t>(blocks * s.block_dist) * unit;
+  } else {
+    s.dist = span;
+    s.block = batch;
+    s.bytes = static_cast<std::size_t>(batch * s.dist) * unit;
+  }
   return s;
 }
 
@@ -218,16 +231,27 @@ fbench_case layout::to_case() const {
       .in_dist = in.dist,
       .out_dist = out.dist,
       .precision = precision,
+      .interleave = interleave,
+      .outer = outer,
+      .outer_in_dist = in.block_dist,
+      .outer_out_dist = out.block_dist,
   };
 }
 
 layout make_layout(std::int32_t kind, int rank, const std::array<std::int64_t, 3>& dims,
-                   std::int64_t batch, int sign, bool in_place, std::int32_t precision) {
+                   std::int64_t batch, int sign, bool in_place, std::int32_t precision,
+                   bool interleaved, std::int64_t outer) {
   if (rank < 1 || rank > 3) {
     throw std::invalid_argument("rank must be 1, 2 or 3");
   }
   if (batch < 1) {
     throw std::invalid_argument("batch must be at least 1");
+  }
+  if (outer < 1 || (!interleaved && outer != 1)) {
+    throw std::invalid_argument("outer needs the interleaved layout and must be at least 1");
+  }
+  if (interleaved && (batch < 2 || (in_place && kind != fbench_c2c))) {
+    throw std::invalid_argument("the interleaved layout needs batch >= 2 and not in-place real");
   }
   if (precision != fbench_f64 && precision != fbench_f32) {
     throw std::invalid_argument("unknown precision");
@@ -237,7 +261,10 @@ layout make_layout(std::int32_t kind, int rank, const std::array<std::int64_t, 3
   l.real_bytes = precision == fbench_f32 ? sizeof(float) : sizeof(double);
   l.kind = kind;
   l.rank = rank;
-  l.batch = batch;
+  const std::int64_t interleave = interleaved ? batch : 1;
+  l.batch = batch * outer;
+  l.interleave = interleave;
+  l.outer = outer;
   l.in_place = in_place;
   for (int d = 0; d < 3; ++d) {
     const std::int64_t n = d < rank ? dims.at(idx(d)) : 1;
@@ -256,16 +283,16 @@ layout make_layout(std::int32_t kind, int rank, const std::array<std::int64_t, 3
       throw std::invalid_argument("sign must be -1 or +1");
     }
     l.sign = sign;
-    l.in = make_side(true, rank, l.dims, n_last, n_last, batch, l.real_bytes);
+    l.in = make_side(true, rank, l.dims, n_last, n_last, batch, l.real_bytes, interleave, outer);
     l.out = l.in;
   } else if (kind == fbench_r2c) {
     l.sign = -1;
-    l.in = make_side(false, rank, l.dims, n_last, padded, batch, l.real_bytes);
-    l.out = make_side(true, rank, l.dims, half, half, batch, l.real_bytes);
+    l.in = make_side(false, rank, l.dims, n_last, padded, batch, l.real_bytes, interleave, outer);
+    l.out = make_side(true, rank, l.dims, half, half, batch, l.real_bytes, interleave, outer);
   } else if (kind == fbench_c2r) {
     l.sign = 1;
-    l.in = make_side(true, rank, l.dims, half, half, batch, l.real_bytes);
-    l.out = make_side(false, rank, l.dims, n_last, padded, batch, l.real_bytes);
+    l.in = make_side(true, rank, l.dims, half, half, batch, l.real_bytes, interleave, outer);
+    l.out = make_side(false, rank, l.dims, n_last, padded, batch, l.real_bytes, interleave, outer);
   } else {
     throw std::invalid_argument("unknown kind");
   }

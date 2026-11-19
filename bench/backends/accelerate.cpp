@@ -184,6 +184,10 @@ const char* fbench_describe() { return state().description.c_str(); }
 
 std::int32_t fbench_create(const fbench_case* c, void* /*in*/, void* /*out*/, void** plan,
                            char* message, std::size_t message_size) {
+  if (c->interleave > 1) {
+    fbench::backends::say(message, message_size, "no interleaved layout");
+    return fbench_unsupported;
+  }
   if (c->rank != 1) {
     fbench::backends::say(message, message_size, "vDSP has no general multidimensional DFT");
     return fbench_unsupported;

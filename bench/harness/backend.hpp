@@ -52,6 +52,16 @@ struct fbench_case {
   std::int64_t in_dist;     ///< elements between consecutive input transforms
   std::int64_t out_dist;    ///< elements between consecutive output transforms
   std::int32_t precision;   ///< fbench_f64 or fbench_f32
+  /// 1, or the interleaved layout (chosen axes of a strided array): the `batch` transforms lie
+  /// one element apart, every element of a transform `interleave` (= `batch`) apart, so the
+  /// array's fastest dimension is not transformed. Backends other than FFTN's, FFTW's and
+  /// oneMKL's answer fbench_unsupported.
+  std::int64_t interleave;
+  /// 1, or the number of blocks of `batch` interleaved transforms one after another, each
+  /// `outer_in_dist` and `outer_out_dist` elements apart: a middle dimension of an array.
+  std::int64_t outer;
+  std::int64_t outer_in_dist;
+  std::int64_t outer_out_dist;
 };
 
 /// Starts the session. `options` is the arm's backend options as space-separated

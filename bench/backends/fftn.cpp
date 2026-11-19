@@ -223,8 +223,10 @@ template <class In, class Out> fftn::shape<In, Out> shape_of(const fbench_case& 
   for (std::size_t d = 0; d < rank; ++d) {
     s.axes.push_back({.n = static_cast<std::size_t>(c.dims[d])});
   }
-  std::ptrdiff_t in_stride = 1;
-  std::ptrdiff_t out_stride = 1;
+  // The interleaved layout (fbench_case::interleave): every element of a transform stands
+  // `interleave` elements from the next.
+  std::ptrdiff_t in_stride = static_cast<std::ptrdiff_t>(c.interleave);
+  std::ptrdiff_t out_stride = static_cast<std::ptrdiff_t>(c.interleave);
   for (std::size_t i = rank; i > 0; --i) {
     const std::size_t d = i - 1;
     s.axes[d].in_stride = in_stride;
@@ -232,6 +234,13 @@ template <class In, class Out> fftn::shape<In, Out> shape_of(const fbench_case& 
     const bool last = d + 1 == rank;
     in_stride *= last ? c.in_last : c.dims[d];
     out_stride *= last ? c.out_last : c.dims[d];
+  }
+  if (c.outer > 1) {
+    s.batches.push_back({
+        .count = static_cast<std::size_t>(c.outer),
+        .in_dist = static_cast<std::ptrdiff_t>(c.outer_in_dist),
+        .out_dist = static_cast<std::ptrdiff_t>(c.outer_out_dist),
+    });
   }
   s.batches.push_back({
       .count = static_cast<std::size_t>(c.batch),

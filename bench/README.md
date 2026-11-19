@@ -273,6 +273,8 @@ batch = [1, 256]                 # default 1
 place = ["out", "in"]            # default out
 direction = "fwd"                # c2c only: fwd or bwd
 precision = ["f64", "f32"]       # default f64
+layout = "interleaved"           # default "tight" (below)
+outer = [1, 16]                  # interleaved blocks one after another (default 1)
 weight = 1.0                     # share in the weighted geomean (default 1)
 tiers = ["quick", "tracking"]    # every case is also in "full"
 ```
@@ -284,7 +286,12 @@ A backend takes single-precision cases only when its `describe` lists `"f32"` un
 `precisions` (FFTN does; the competitors do not yet); for the others the harness reports
 them unsupported, and `smoke` does not count that as a failure.
 Layouts follow FFTW: rows and batches contiguous, r2c output n/2+1 complex values in the
-last dimension, in-place real arrays padded to 2(n/2+1).
+last dimension, in-place real arrays padded to 2(n/2+1). With `layout = "interleaved"` the
+`batch` transforms lie one element apart and every element of a transform `batch` elements
+from the next, in `outer` such blocks one after another (`-il-oOUTER` in the case ID): the
+transformed dimensions of a strided array whose fastest dimension is not transformed, in
+FFTN's general shape, FFTW's guru interface and oneMKL's strides (the other backends answer
+unsupported). Not for in-place real transforms.
 
 The standard catalogue has tiers `smoke` (seconds, correctness, every kind, placement and
 rank), `quick` (an A/B in a few minutes), `tracking` (a fixed set for history) and `full`.
@@ -547,7 +554,8 @@ stops.
 
 ## Limits of v0
 
-- Contiguous rows, planes and volumes. Strided axes come with the phases that need them.
+- Contiguous rows, planes and volumes, and the interleaved layout above. Any other strided
+  layout comes with the phase that needs it.
   Single precision is timed for FFTN only, and threaded arms exist for FFTN only
   (competitors' own threading and a team of serial plans, DESIGN.md 16.1, come with
   phase 3's exit).
