@@ -580,6 +580,10 @@ TEST(Schedule, GridSizesFromCaches) {
   EXPECT_TRUE(xeon86.team_volume_planes);
   EXPECT_EQ(m5.column_team_bytes, 0U);
   EXPECT_FALSE(m5.team_volume_planes);
+  // Rows' two-pass radices while the data fit three quarters of the CCX's L3 (X57).
+  EXPECT_EQ(epyc86.fit_row_bytes, std::size_t{24} * 1024 * kib);
+  EXPECT_EQ(xeon86.fit_row_bytes, 0U);
+  EXPECT_EQ(m5.fit_row_bytes, 0U);
   // The c2r grid pairs in its first gather only where the L2 is shared (X29).
   EXPECT_TRUE(m5.c2r_paired_gather);
   EXPECT_FALSE(epyc.c2r_paired_gather);

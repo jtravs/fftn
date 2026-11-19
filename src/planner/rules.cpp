@@ -61,9 +61,9 @@ constexpr std::array<std::size_t, cost_radices> pass_radices{
 // registers (dev/experiments/X54-radix64-avx2.md). 1024 = 16 x 64 passed the same rule and ran
 // 0.84-0.95 of 4.16.16's time at batches 1-256, but 1.25 at 1024 x 1024 (16 MiB; FFTW's
 // two-pass plan as slow) and 1.14 in the 1024 x 1024 plane, so it has no override: an override
-// cannot see the batch (X54). In float (avx2_float_overrides) the
-// same campaign and rule chose 512 = 8 x 64, 640 = 32 x 20, 768 = 12 x 64, 2048 = 32 x 64 and
-// 4096 = 8 x 32 x 16 (X54 arm C).
+// cannot see the batch (X54; avx2_double_fit_overrides sees it, X57). In float
+// (avx2_float_overrides) the same campaign and rule chose 512 = 8 x 64, 640 = 32 x 20, 768 = 12 x
+// 64, 2048 = 32 x 64 and 4096 = 8 x 32 x 16 (X54 arm C).
 // clang-format off
 // NOLINTBEGIN(readability-trailing-comma): bench/x2/fit.py writes and parses this layout
 constexpr std::array<radix_override, 42> avx2_double_overrides{{
@@ -723,6 +723,23 @@ std::span<const std::uint16_t> batch_own_rows_of(target t, std::size_t lanes) {
 
 bool batch_narrower_of(target t, std::size_t lanes) { return t == target::avx512 && lanes == 4; }
 
+// Two-pass plans of `avx2` double whose first pass reads 12-16 streams at once: on the EPYC
+// 7763 16 x 64 took 0.84-0.96 of 4 x 16 x 16's time for 1024 x 1 to 1024 x 768 and 1.30 at
+// 1024 x 2048, and 12 x 64 at 768 x 2048 1.33 of 4 x 12 x 16's, once the rows and their
+// output no longer fit the L3 (experiment X57). 768's sequence is also its override, for the
+// rows of planes; 1024's is not (rules above, X54: planes lost).
+constexpr std::array<radix_override, 2> avx2_double_fit_overrides{{
+    {.n = 768, .radices = {12, 64, 0, 0}},
+    {.n = 1024, .radices = {16, 64, 0, 0}},
+}};
+
+std::span<const radix_override> fit_overrides_of(target t, std::size_t lanes) {
+  if (t == target::avx2 && lanes == 2) {
+    return avx2_double_fit_overrides;
+  }
+  return {};
+}
+
 } // namespace
 
 target_profile profile_of(target t, std::size_t lanes) noexcept {
@@ -741,6 +758,7 @@ target_profile profile_of(target t, std::size_t lanes) noexcept {
           .batch_rows = batch_rows_of(t, lanes),
           .batch_narrower = batch_narrower_of(t, lanes),
           .batch_own_rows = batch_own_rows_of(t, lanes),
+          .fit_overrides = fit_overrides_of(t, lanes),
       };
     }
     if (m.t == fallback_target &&
@@ -760,6 +778,7 @@ target_profile profile_of(target t, std::size_t lanes) noexcept {
       .batch_rows = batch_rows_of(t, lanes),
       .batch_narrower = batch_narrower_of(t, lanes),
       .batch_own_rows = batch_own_rows_of(t, lanes),
+      .fit_overrides = fit_overrides_of(t, lanes),
   };
 }
 
@@ -792,8 +811,8 @@ std::size_t split_smooth(std::size_t n, std::vector<std::size_t>& big) {
   return smooth;
 }
 
-std::vector<std::size_t> override_of(std::size_t n, const target_profile& p) {
-  for (const radix_override& o : p.costs->overrides) {
+std::vector<std::size_t> override_in(std::size_t n, std::span<const radix_override> table) {
+  for (const radix_override& o : table) {
     if (o.n == n) {
       std::vector<std::size_t> out;
       for (const std::size_t r : o.radices) {
@@ -805,6 +824,10 @@ std::vector<std::size_t> override_of(std::size_t n, const target_profile& p) {
     }
   }
   return {};
+}
+
+std::vector<std::size_t> override_of(std::size_t n, const target_profile& p) {
+  return override_in(n, p.costs->overrides);
 }
 
 // The k cheapest sequences of codelet radices for the smooth part of a line of n points
@@ -894,6 +917,14 @@ std::vector<std::size_t> rule_radices(std::size_t n, const target_profile& p, bo
   std::vector<std::size_t> out = cheapest(n, smooth, !big.empty(), p).radices;
   out.insert(out.end(), big.begin(), big.end());
   return out;
+}
+
+std::vector<std::size_t> fitting_radices(std::size_t n, const target_profile& p, bool fits) {
+  std::vector<std::size_t> fitted = override_in(n, p.fit_overrides);
+  if (fitted.empty() || fits) {
+    return fitted;
+  }
+  return rule_radices(n, p, false);
 }
 
 std::vector<std::vector<std::size_t>> ranked_radices(std::size_t n, const target_profile& p,
@@ -1114,6 +1145,7 @@ constexpr target_profile reference_profile{
     .batch_rows = {},
     .batch_narrower = false,
     .batch_own_rows = {},
+    .fit_overrides = {},
 };
 
 // The lengths in [lo, hi] that may_be_fast accepts, ascending: the products of 2, 3, 5, 7
