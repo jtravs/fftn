@@ -616,13 +616,13 @@ TEST(Columns, C2rPacksBeyondTheProfilesBytes) {
   single.axes = sh.axes;
   build_settings settings;
   settings.profile.c2r_packed_bytes = 16896; // the float plane's half spectrum
-  EXPECT_EQ(fftn::detail::describe(*fftn::detail::make_plan_core(fftn::detail::view_of(single),
-                                                                 {}, settings))
+  EXPECT_EQ(fftn::detail::describe(
+                *fftn::detail::make_plan_core(fftn::detail::view_of(single), {}, settings))
                 .find("packed"),
             std::string::npos);
   settings.profile.c2r_packed_bytes = 16895;
-  EXPECT_NE(fftn::detail::describe(*fftn::detail::make_plan_core(fftn::detail::view_of(single),
-                                                                 {}, settings))
+  EXPECT_NE(fftn::detail::describe(
+                *fftn::detail::make_plan_core(fftn::detail::view_of(single), {}, settings))
                 .find("packed"),
             std::string::npos);
 }

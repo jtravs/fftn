@@ -241,8 +241,8 @@ void add_cases(std::vector<team_case>& out, const fftn::detail::build_settings& 
   c2r_volume.batches = {{.count = 2}};
   fftn::detail::build_settings packed = settings;
   packed.c2r_packed = 1;
-  out.push_back(make_case("c2r_volume_8x6x10x2" + suffix, c2r_volume, 2 * 8 * 6 * 6,
-                          2 * 8 * 6 * 10, false, packed, target));
+  out.push_back(make_case("c2r_volume_8x6x10x2" + suffix, c2r_volume, 2 * 8 * 6 * 6, 2 * 8 * 6 * 10,
+                          false, packed, target));
   fftn::shape<T, c> r2c_odd;
   r2c_odd.axes = {{.n = 64}, {.n = 100}};
   r2c_odd.batches = {{.count = 1}};

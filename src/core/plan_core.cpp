@@ -994,8 +994,8 @@ bool c2r_packed(const shape_view& s, const side& in, const side& out, bool in_pl
   const std::size_t r = s.axes.size();
   if (s.kind != transform_kind::c2r || r < 2 || in_place || settings.c2r_packed == 0 ||
       s.axes[r - 1].n % 2 != 0 || out.stride[r - 1] != 1 ||
-      !std::all_of(out.stride.begin(), out.stride.end() - 1,
-                   [](std::ptrdiff_t v) { return v % 2 == 0; })) {
+      !std::all_of(
+          out.stride.begin(), out.stride.end() - 1, [](std::ptrdiff_t v) { return v % 2 == 0; })) {
     return false;
   }
   if (settings.c2r_packed > 0) {
@@ -1134,8 +1134,8 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
                                    int dir, const char* what, std::size_t axis = SIZE_MAX,
                                    int real_rule = -1) {
     const bool real = real_rule < 0 ? s.kind != transform_kind::c2c : real_rule != 0;
-    const std::size_t block = column_block<T>(d, extent, src, dst, edges, settings, chain,
-                                              kernels.complex_lanes, real);
+    const std::size_t block =
+        column_block<T>(d, extent, src, dst, edges, settings, chain, kernels.complex_lanes, real);
     if (block == 0) {
       return false;
     }
@@ -1146,8 +1146,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     alone.team_program = false;
     const bool chain_columns =
         settings.team_program &&
-        column_block<T>(d, extent, src, dst, edges, alone, chain, kernels.complex_lanes, real) ==
-            0;
+        column_block<T>(d, extent, src, dst, edges, alone, chain, kernels.complex_lanes, real) == 0;
     const std::vector<std::size_t> rad =
         chain_columns ? chain.radices(n)
                       : column_radices<T>(n, dst.stride[d] * dst.element_bytes, settings, profile,
@@ -1508,8 +1507,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       const std::size_t cneed = chain.c2c_line(c.lengths[d], +1, at(src, d), at(packed, d),
                                                src.where == slot::out, line_edges(), cs);
       lines(d, columns, src, packed, cneed, std::move(cs));
-      c.axis_notes.push_back("axis " + std::to_string(d) + " (n = " +
-                             std::to_string(c.lengths[d]) +
+      c.axis_notes.push_back("axis " + std::to_string(d) + " (n = " + std::to_string(c.lengths[d]) +
                              "): c2c backward into the output, packed, radices " +
                              chain.radix_text(c.lengths[d]));
     }
@@ -1549,9 +1547,8 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       const std::size_t d = i - 1;
       const view& src = d + 2 == r ? in_view : block_view;
       std::vector<stage> cs;
-      const std::size_t cneed =
-          chain.c2c_line(c.lengths[d], +1, at(src, d), at(block_view, d),
-                         src.where == slot::block, line_edges(), cs);
+      const std::size_t cneed = chain.c2c_line(c.lengths[d], +1, at(src, d), at(block_view, d),
+                                               src.where == slot::block, line_edges(), cs);
       scratch = std::max(scratch, cneed);
       add_phase(p, d, edge, src, block_view, std::move(cs));
     }
