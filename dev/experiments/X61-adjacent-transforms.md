@@ -1,4 +1,4 @@
-# X60: strided axes of an array as lanes over adjacent transforms
+# X61: strided axes of an array as lanes over adjacent transforms
 
 - **Status:** done (adopted)
 - **Owner:** task 4.3 agent, 2026-11-19

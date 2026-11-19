@@ -617,7 +617,7 @@ and to 0.80–0.86 of FFTW's. Within L1 the strided chain is not slow: there the
 one complex per register (M5 Max double) and on leaf lengths of 16 or fewer, while on `avx2`
 and `avx512` longer axes still gained (Xeon: 32 × 16 0.23). Count the whole array against L1,
 not one block: blocks that each fit L1 still meet cold memory one after another.
-[X60](experiments/X60-adjacent-transforms.md).
+[X61](experiments/X61-adjacent-transforms.md).
 
 ## 4. Kernels and algorithms
 

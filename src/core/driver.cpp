@@ -143,7 +143,7 @@ void run_lane_loop(const std::vector<record>& records, std::size_t index, const 
                    std::size_t rows) noexcept;
 
 // Records [begin, end) of a lanes program (its body or its tail), a block of `rows` rows.
-// Inline, loops apart: most lanes programs are a few stages run per short block (X60: a call
+// Inline, loops apart: most lanes programs are a few stages run per short block (X61: a call
 // here took float rows of 8 points in batches to 1.02-1.04 of their time).
 [[gnu::always_inline]] inline void run_lane_records(const std::vector<record>& records,
                                                     std::size_t begin, std::size_t end,

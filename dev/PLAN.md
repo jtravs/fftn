@@ -247,14 +247,14 @@ dimensions of arrays of rank 1 to 4, under C, Fortran and rotated memory orders,
 signs, in and out of place, c2c, r2c and c2r, against the quadruple-precision reference on every
 instruction set: already correct on main through the general shape. New: `axes_c2c`,
 `axes_r2c`, `axes_c2r` (provisional, awaiting the maintainer), the axes run in memory order
-whatever their listing, and X60's lanes over adjacent transforms (the transformed axes all
+whatever their listing, and X61's lanes over adjacent transforms (the transformed axes all
 strided, the batch's transforms one element apart): over 86 c2c cases of the new `axes`
 catalogue (fbench's interleaved layout) 0.48 (Mac), 0.29 (EPYC) and 0.37 (Xeon) of the old
 route's time, ÷ FFTW 0.86 / 0.80 / 0.76, ÷ oneMKL 0.97; one thread. Left: real
 transforms whose halved axis is strided (the chain still: 1.17–1.49 of FFTW), small
 interleaved planes and volumes against FFTW on the Mac (b8 1.3–1.9), oneMKL's tiny columns
 (the Xeon's 32 x 16 6.6 of its time), and the EPYC's leaf-length cases within L1, which the
-lanes would take to 0.63–0.83 of their time but the Xeon's lose (a per-target rule). Runs in X60.
+lanes would take to 0.63–0.83 of their time but the Xeon's lose (a per-target rule). Runs in X61.
 
 Planes, one thread (X44, pull request 54): columns of 32 run as one radix-32 lane pass in
 double on x86 (the row's pair leaf had left them two passes): EPYC 32² ÷ FFTW 1.39 → 1.00,
@@ -742,7 +742,7 @@ slower than serial; never slower than a team of serial plans by more than 2 %.
 |---|---|---|
 | 4.1 | Multi-axis shapes; plane-at-a-time programs; in place for all strategies | batched 2-D c2c at or below FFTW and MKL, one thread and threaded |
 | 4.2 | Volumes with pencil blocks; per-thread scratch of plane or pencil-block size | 3-D c2c at or below FFTW and MKL; scratch bound tested |
-| 4.3 | Arbitrary axis subsets and orders of strided arrays; real multi-dimensional transforms (done 2026-11-19, pull request 82: property tests for every selection, `axes_c2c`/`axes_r2c`/`axes_c2r` provisional, X60) | property tests against the reference |
+| 4.3 | Arbitrary axis subsets and orders of strided arrays; real multi-dimensional transforms (done 2026-11-19, pull request 82: property tests for every selection, `axes_c2c`/`axes_r2c`/`axes_c2r` provisional, X61) | property tests against the reference |
 
 Exit: fbench planes and volumes catalogues meet the one-thread and threaded targets.
 
@@ -858,7 +858,7 @@ running, done (with verdict).
 | [X54](experiments/X54-radix64-avx2.md) | Can the radix-32 and radix-64 codelets be ordered so that GCC spills far less of them on `avx2` (a list scheduler against a model register file; bits identical), and does that let two-pass plans of 768, 1024, 2048 win at both batches on the EPYC so the planner takes them? | 1 | done: A (fitted order, bit-identical), B (768) and C adopted by the maintainer's decision against rule (b)'s letter (80 at 1.035 against 1.034, byte-identical code at a moved address): radix-32/64 plans 0.975 on the EPYC, tracking EPYC 0.994, Xeon 0.999, Mac 0.999; B (two-pass `avx2` double overrides) adopted for 768 (0.84; ÷ FFTW 1.08 → 0.91), 1024 dropped by rule (c) (0.84–0.95 at batches 1–256, 1.25 at 1024 × 1024); C (`avx2` float 512, 640, 768, 2048, 4096) adopted (0.898); 2048 double and 64 × 16 not moved |
 | [X53](experiments/X53-two-row-leaves.md) | Batch leaves: C short rows of a batch side by side, one row per lane, transposed in registers (15 × 2 and 64 × 2 backward at 1.15–1.3 of FFTW on x86): for which lengths and batch counts? | 1 | done: adopted on NEON float (changed cases 0.61 of `main`), avx2 (EPYC 0.81, 15 × 2 bwd 1.21 → 0.88 of FFTW) and avx512 (Xeon 0.69, 15 × 2 bwd 1.16 → 0.90); one unchanged tiny case per x86 machine past the band set aside by the code-placement rule (same plan, byte-identical code); R4 adds 8, 12, 20, 25, 32 (0.51-0.58 of R); 64 × 2 not closed (EPYC 1.29 of FFTW; 1.18 with X54's codelet, not taken) |
 | [X55](experiments/X55-gnr-depth.md) | Should the depth-first rule reach Granite Rapids (a 2 MiB private L2, outside X46's branch), and with what range and tops? (X48: its long rows over 1.05 of FFTW and MKL) | 1 | done: G adopted (0.688 over the rows it changes, tracking 0.940; long rows ÷ FFTW 0.70–0.83) |
-| [X60](experiments/X60-adjacent-transforms.md) | Strided axes of an array (a batch dimension one element apart, varying fastest) as lanes over blocks of adjacent transforms, instead of each transform through the chain | 4 | done: adopted on every target (0.48 Mac, 0.29 EPYC, 0.37 Xeon of the chain's time over 86 cases); within L1 only for C > 1 and axes longer than 16 |
+| [X61](experiments/X61-adjacent-transforms.md) | Strided axes of an array (a batch dimension one element apart, varying fastest) as lanes over blocks of adjacent transforms, instead of each transform through the chain | 4 | done: adopted on every target (0.48 Mac, 0.29 EPYC, 0.37 Xeon of the chain's time over 86 cases); within L1 only for C > 1 and axes longer than 16 |
 | [X56](experiments/X56-exit-4.md) | The phase 1 exit check on `main` after X49–X57: EPYC at fa155c9, Mac and Xeon at X53's code (71307e0), then the cloud cores | 1 | done: the phase 1 exit met on all nine machines (local: EPYC ÷ FFTW 6 of 193; cloud: Zen 5 5, Axion 1, Granite Rapids 7, Sapphire Rapids 7, Ice Lake 0 after X58; oneMKL at most 9) |
 | [X57](experiments/X57-epyc-1024.md) | The EPYC's last exit-check cases: are 72 and 120's 5–6 % since 8c18dd2 a regression, and can 1024's radix choice see the plan's data? | 1 | done: 72 and 120 are code placement; B adopted (768 and 1024 two-pass rows while rows and output fit 3/4 of L3: moved cases 0.88, tracking 0.989, EPYC beyond noise 9 → 4 of 193); C (64-byte `avx2` functions) rejected (0.999, 1024 × 3 1.04–1.06) |
 | [X58](experiments/X58-intel-keys.md) | Recent Intel keys from X56's screen: the depth-first chain on Ice Lake VMs (private L2 between 1 and 2 MiB), and no batch leaf of 12 on a private L2 of 2 MiB or more | 1 | done: both adopted. Ice Lake's changed rows 0.596 of their time (long rows ÷ FFTW 1.13–1.53 → 0.64–0.79), tracking 0.929; 12 × 64 and 12 × 1024 0.867 (Granite Rapids) and 0.892 (Sapphire Rapids) |

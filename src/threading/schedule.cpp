@@ -142,7 +142,7 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
   // 0.771), where one thread gained too little (0.979, 0.934 with 97^3 slower, 1.048).
   if (x86_64 && private_l2 && !large_l2) {
     p.team_volume_planes = true;
-    p.adjacent_team_chain = true; // X60
+    p.adjacent_team_chain = true; // X61
   }
   // X59 arm R6 (machine_profile::fair_line_runs), only where it was measured: x86-64 with a
   // private L2 under 1 MiB and a large L3 (Zen 3's CCX), as X51's arm E, and a cluster-shared

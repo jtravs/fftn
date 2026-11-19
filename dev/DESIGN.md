@@ -1758,7 +1758,7 @@ members than planes still idle some, a known limit). Either order computes every
 so the bits do not depend on it. Scratch per member is two lines of at most a plane or a tile
 of pencils (tests/core/volumes_test.cpp), never a second volume.
 
-Strided axes over adjacent transforms (task 4.3, experiment X60; `adjacent` in `build`): when
+Strided axes over adjacent transforms (task 4.3, experiment X61; `adjacent` in `build`): when
 a dimension that is not transformed varies fastest (the columns of a matrix, the planes (y, x)
 of a (y, x, w) array, a middle axis), every transformed axis is strided and the innermost batch
 dimension's transforms lie one element apart on both sides. Such a c2c plan is a lanes program
@@ -1770,13 +1770,15 @@ vector access and every line of memory is touched once; the block is the narrowe
 computes its transform alone, so blocks and execution ranges do not change the bits. A block is
 one task of the team (the work graph's one phase), so whole transforms are shared out, never
 their lines. On x86-64 with a private L2 below 2 MiB (`machine_profile::adjacent_team_chain`,
-measured on the EPYC and the Xeon) a team runs the chain instead, which shares lines, where the
-lanes' radices are the chain's on every axis, so that the bits agree: at 8 lanes the blocks lost up
-to 1.74 (EPYC) and 2.4 (Xeon) of the chain's time on planes and volumes of few transforms. Within L1 (all the plan's transforms together, `machine_profile::
+measured on the EPYC and the Xeon) a team runs the chain instead, which shares lines, so the
+route is taken there only where the lanes' radices (`column_radices`) are the chain's on every
+axis and the bits agree; elsewhere the plan is the chain. At 8 lanes the blocks lost up to 1.74
+(EPYC) and 2.4 (Xeon) of the chain's time on planes and volumes of few transforms, and the lanes
+on the chain's radices lost up to 1.25 at one thread on the EPYC (X61). Within L1 (all the plan's transforms together, `machine_profile::
 adjacent_min_bytes`) the chain keeps a plan with one complex value per register, and on wider
 registers a plan whose axes are all of leaf lengths, 16 points or fewer: there a strided line
 costs no more than a contiguous one and the chain's short passes win, while longer axes gain
-from the lanes even within L1 on x86 (X60). Lengths without
+from the lanes even within L1 on x86 (X61). Lengths without
 lane passes (a Bluestein or Rader stage, generic passes) and the
 real kinds keep one transform at a time through the chain: a strided halved axis has no lane
 path yet.
@@ -3204,7 +3206,7 @@ to change before a release.
 | 2026-11-19 | x86-64 with a private L2 between 1 and 2 MiB takes the depth-first chain; a private L2 of 2 MiB or more does not take the batch leaf of 12 (`machine_profile::batch_leaf_12`) | X58, from X56's screen of the families the rules reach: Ice Lake VM 0.596 over the changed rows, tracking 0.929; 12 × 64 and 12 × 1024 without the leaf 0.867 on Granite Rapids and 0.892 on Sapphire Rapids, tracking 0.998 and 1.000 |
 | 2026-11-18 | A Bluestein stage of one copy runs its convolution as two depth-first chains where a row of M would be one, and on the Xeon profile beyond, up to 32 MiB, the longest measured (`depth_convolution_max_bytes`); the workspace block holds the chains' blocks, scratch a the forward output; the chirp passes are fused into the forward first pass and the backward last top pass (sections 8.5, 11.2; experiment X50) | Xeon 6240: 8179–999983 0.56–0.73 of `main`'s time (131071 0.61, 999983 0.71), FFTN ÷ MKL 131071 1.34 → 0.84, 999983 1.44 → 1.05, ÷ FFTW 0.65–0.83; M5 Max 4813–5119 0.86; the EPYC unchanged; X36b had judged a grid convolution to need a new slot, the block serves |
 | 2026-11-19 | Whatever order a shape lists its axes in, a plan runs them widest stride first (section 9.3, `order_axes`), keeping a real transform's halved axis last | A plan built from `{x, y}` used to run y as a strided rows phase and could not use the column blocks that need the last axis contiguous; two listings of one transform are now one program, bit for bit |
-| 2026-11-19 | A c2c plan whose axes are all strided and whose innermost batch dimension's transforms lie one element apart runs as lanes over blocks of adjacent transforms, every axis a lanes phase (section 9.3, X60); within L1 the chain stays for one complex per register or leaf-length axes | X60: 0.48 (M5 Max), 0.29 (EPYC 7763), 0.37 (Xeon 6240) of the chain's time over 86 interleaved cases, no case slower; ÷ FFTW 0.86 / 0.80 / 0.76 |
+| 2026-11-19 | A c2c plan whose axes are all strided and whose innermost batch dimension's transforms lie one element apart runs as lanes over blocks of adjacent transforms, every axis a lanes phase (section 9.3, X61); within L1 the chain stays for one complex per register or leaf-length axes | X61: 0.48 (M5 Max), 0.29 (EPYC 7763), 0.37 (Xeon 6240) of the chain's time over 86 interleaved cases, no case slower; ÷ FFTW 0.86 / 0.80 / 0.76 |
 | 2026-11-19 | Provisional API (task 4.3, to be agreed by the maintainer): `axes_c2c`, `axes_r2c`, `axes_c2r` build the shape of chosen dimensions of a strided array from one `axis` per dimension (section 5.2); batch dimensions by decreasing input stride, merged where they nest | The general `shape` could already express every selection (property tests against the reference), but only by hand; DESIGN named `along_axes` as "later". The name follows `rows_c2c`, `planes_c2c`, `volumes_c2c`, one function per kind |
 | 2026-11-19 | Windows CI installs its own LLVM (the release archive, pinned by URL and SHA-256, 23.1.5, the series the Linux jobs use) instead of using the runner image's | The x64 image moved to Visual Studio 18, whose standard library refuses any Clang older than 22 (STL1000), while its LLVM stayed at 20.1.8 (CI run 44409722437). The images update Visual Studio and LLVM separately, so this would recur; `_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH` would test an unsupported pair |
 | 2026-11-19 | Provisional, for the maintainer's review: `fftn::kokkos::executor` (one `parallel_for` per transform on the caller's instance, then a fence), `team_of(member)`, and `view_plan` executing through the executor, serial inside a kernel, sharing large scaling passes among threads; Kokkos' tests build one threaded back end per configuration (`FFTN_KOKKOS_BACKEND`, Threads by default) | Task 3.5; experiment T3 for the costs; the adapter detects kernels per back end because Kokkos 5 removed `in_parallel` |

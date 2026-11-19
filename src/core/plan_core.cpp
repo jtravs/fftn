@@ -1208,6 +1208,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     // (machine_profile::adjacent_team_chain).
     if (lanes != 0 || s.kind != transform_kind::c2c || s.batches.empty() || active.empty() ||
         !settings.lanes_columns || (settings.team_program && team_chain) ||
+        (settings.profile.adjacent_team_chain && !chain_radices) ||
         (settings.strategy != strategy_choice::rules &&
          settings.strategy != strategy_choice::lanes) ||
         settings.in_factor != nullptr || settings.out_factor != nullptr ||
@@ -1217,7 +1218,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     }
     // Within L1 (machine_profile::adjacent_min_bytes) the chain keeps a plan with one complex
     // value per register, which the lanes cannot widen, and with more a plan whose axes are all
-    // of leaf lengths (X60).
+    // of leaf lengths (X61).
     constexpr std::size_t leaf_axis = 16;
     std::size_t bytes = p.transforms * static_cast<std::size_t>(complex_bytes);
     bool short_axes = true;

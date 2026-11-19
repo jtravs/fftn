@@ -509,7 +509,8 @@ template <class T> void adjacent_transforms(fftn::isa target) {
     const auto sh = shape_of<T>(ic);
     const fftn::options opts{.in_place = ic.in_place, .scale = ic.scale, .force_isa = target};
     build_settings on;
-    on.profile.adjacent_min_bytes = 0; // whatever the arrays' size against this machine's L1
+    on.profile.adjacent_min_bytes = 0;      // whatever the arrays' size against this machine's L1
+    on.profile.adjacent_team_chain = false; // the route whatever the radices; a team runs it too
     const auto lanes = fftn::detail::make_plan_core(fftn::detail::view_of(sh), opts, on);
     const std::string lanes_text = fftn::detail::describe(*lanes);
     // Short rows of one axis in float on x86 take the lanes over rows instead (lanes_up_to).
@@ -577,6 +578,7 @@ TEST(Columns, AdjacentTransformsOnlyWhereTheyFit) {
   const auto described = [](const fftn::shape<c, c>& sh, std::size_t min_bytes) {
     build_settings settings;
     settings.profile.adjacent_min_bytes = min_bytes;
+    settings.profile.adjacent_team_chain = false;
     return fftn::detail::describe(
         *fftn::detail::make_plan_core(fftn::detail::view_of(sh), {}, settings));
   };
