@@ -22,6 +22,23 @@ member's rows and columns in its L2, fused post-processing, the real-plane progr
 Arms are written here, each with its decision rule, after the diagnosis and before its judging
 run.
 
+- **Arm T** (`loop::joins`, X41's T1 on the current work graph): the narrower last block of a
+  lanes column phase joins the whole blocks' phase instead of running alone afterwards. Every
+  real plane of even length has such a block (n/2 + 1 columns is odd). X41 rejected T1 against
+  a 0.95 bar on the EPYC (0.957–0.968 over the planes it changes); the diagnosis below finds this
+  phase at 7–12 % of the 8-lane time of real 256²–512² on the Xeon. One-thread programs are
+  unchanged (the work graph is read by teams only); bits unchanged (the same lines, in any
+  order). **Decision rule, written before its judging runs**, over the standard catalogue's
+  planes and volumes (`^(c2c|r2c|c2r)-[0-9]+x[0-9]+(x[0-9]+)?-b[0-9]+-(op|ip)$`), T against
+  its base at 8 lanes through `--serial` (GCC; Xeon and EPYC). Xeon: adopt T if (1) the geometric
+  mean of T ÷ base over the real planes of one transform with at least 32768 complex points (the
+  ones a team splits there and T changes) is at most 0.97, and (2) no case of the set is slower
+  than the base by more than the larger of 2 % and the run's A/A band (a case just past it on a
+  loaded machine is re-run once before it decides; a case whose work graph T does not change
+  does not decide, AGENTS.md section 6). EPYC: the same with (1) at most 1.00 over the real
+  planes it splits. Mac, 6 lanes, Homebrew Clang: the same with (1) at most 1.00 over the real
+  planes that split; a machine that fails keeps the old graph (the flag is set per profile).
+
 ## Method
 
 - Cases: the standard catalogue's real planes (`^(r2c|c2r)-[0-9]+x[0-9]+-b1-(op|ip)$`).

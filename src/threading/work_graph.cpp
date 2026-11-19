@@ -61,30 +61,6 @@ std::size_t line_points(const program& p, std::size_t begin, std::size_t end) {
   return n;
 }
 
-struct nest_shape {
-  std::uint32_t depth = 0; // loops
-  std::uint32_t end = 0;   // one past the innermost body
-  std::size_t lines = 1;
-};
-
-// The perfectly nested loops opening at record i.
-nest_shape nest_at(const program& p, std::size_t i) {
-  nest_shape n;
-  n.end = std::get<loop>(p.records[i]).body_end;
-  std::size_t j = i;
-  while (j < n.end) {
-    const loop* l = std::get_if<loop>(&p.records[j]);
-    if (l == nullptr) {
-      break;
-    }
-    assert(l->body_end == n.end && "fftn: the loops over lines are perfectly nested");
-    n.lines *= l->count;
-    ++j;
-  }
-  n.depth = static_cast<std::uint32_t>(j - i);
-  return n;
-}
-
 // The loops that open at record i (a nest, as build_work_graph describes it).
 struct nest_shape {
   std::uint32_t depth = 0;
