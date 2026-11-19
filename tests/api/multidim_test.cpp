@@ -848,8 +848,8 @@ void check_batched_complex(checker& check, const batched_case& k,
       const auto core = fftn::detail::make_plan_core(
           fftn::detail::view_of(sh), {.in_place = same, .force_isa = target}, route);
       const fftn::workspace ws(fftn::detail::workspace_bytes(*core, 1));
-      const auto call = [&core, &ws](const c* in, c* out) {
-        fftn::detail::execute_core(*core, 0, fftn::detail::transform_count(*core), in, out, ws);
+      const auto call = [&core, &ws](const c* from, c* to) {
+        fftn::detail::execute_core(*core, 0, fftn::detail::transform_count(*core), from, to, ws);
       };
       const auto r = fftn::test::execute<c, c>(call, tight_offsets, tight_offsets,
                                                same ? fftn::test::placement::in_place
