@@ -606,6 +606,17 @@ that a batch leaf of 12 won on 1–1.25 MiB of L2 and lost on 2 MiB (12 × 64 1.
 chain's time on Granite and Sapphire Rapids). Prefer the private levels for a key, and rent an
 hour of each family before trusting a rule there. [X58](experiments/X58-intel-keys.md).
 
+3.29 **A third array costs only past a cache level, and removing it can bring power-of-two
+strides back.** A c2r plane out of place that keeps its intermediate in scratch (input + scratch +
+output) ran 1.62 times its in-place time on a Xeon 6240 at 256² (1.55 MB against a 1 MiB L2,
+16 times the L2 misses) and 2.03 at 1024² (25 MB against a 24.75 MiB L3, 7 times the LLC misses).
+Below L2 the counters showed no cost. Building the intermediate in the output instead took the
+large cases to 0.80–0.91 of the time on an EPYC 7763 and 0.85–0.94 on an M5 Max. Inside the caches
+it lost, because the output's rows are a power of two long where the scratch rows (n/2 + 1
+complex values) were an odd multiple of 16 bytes: longer column chains to avoid set conflicts
+(EPYC 512² 1.08) and 1.14–1.27 on the M5 Max at 128²–640. Count the strides an intermediate's new
+home brings, not only its bytes. [X60](experiments/X60-c2r-two-arrays.md).
+
 ## 4. Kernels and algorithms
 
 4.1 **A whole-transform codelet wins only where it fills the register.** One 32-point
