@@ -236,7 +236,7 @@ Open, by phase:
   radix-25 overrides.
 - 2: 2.2's acceptance in double c2c on AVX-512 (re-check after X37's batches of 16);
   X6 (real-input codelets), X13; the cost model's second pass and `fbench calibrate`.
-- 3: T2, T3, T4, T6; 3.5 (Kokkos executor); 3.6 to be checked against its acceptance;
+- 3: T2, T4, T6; 3.6 to be checked against its acceptance;
   threaded planes (4.1: large planes scale worse than FFTW's and oneMKL's threads, X41).
 - 4: 4.1's rest after X41, X43 and X44 (the Xeon's c2c planes from 64² and real planes against
   MKL; the Mac's 32²–64², which needs a faster radix-64 codelet; the threaded gap to oneMKL on
