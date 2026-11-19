@@ -1,7 +1,7 @@
 # X56: the phase 1 exit check on `main` after X49–X57
 
-- **Status:** running (local machines done: every mean target and the tail rule are met on the
-  Mac, the EPYC and the Xeon; the cloud section is still to come)
+- **Status:** done: every mean target and the tail rule are met on every machine checked, the
+  three local ones and six cloud cores (Ice Lake after X58)
 - **Owner:** exit-final session, 2026-11-18 and 19
 - **Phase / task:** the phase 1 exit ([PLAN.md](../PLAN.md) "Status", "Phase 1 exit check
   (2026-11-18 evening)"); repeats the local part of the check of 2026-11-18 on `main` 8c18dd2
@@ -142,18 +142,56 @@ These compare separate runs under different load, so they locate questions and p
 
 ### Cloud
 
-To be added.
+Google Cloud Spot VMs in us-central1-a, one thread per core, GCC 14.2, FFTW 3.3.11 built with
+every SIMD option, oneMKL 2026.0.2 (wheel) on Intel; standard catalogue, `^c2c-[0-9]+-b`, 193
+rows, every arm pinned to CPU 2, at most one round in twelve under load. The lead ran these:
+sub-agents cannot create cloud resources. Ledger: [cloud-ledger-2026-11.md](cloud-ledger-2026-11.md),
+"X56 and X58" (USD 7.07 for both experiments; the campaign at USD 12.19 of 20).
+
+First round at 71307e0 (X53's code; X57 changes `avx2` double only, which none of these cores runs):
+
+| Core (VM) | Run | Band | ÷ FFTW: geomean, beyond noise | ÷ oneMKL |
+|---|---|---|---|---|
+| Zen 5, EPYC 9B45 (`c4d-standard-16`) | 20261118-205528-8c25 | ±1.07 % | 0.67, 5 (2.6 %): 2^24 1.18, 100000 1.16, 2048 1.13, 2^23 1.12, 4096 1.09 | — |
+| Axion, Neoverse V2 (`c4a-standard-16`) | 20261118-194313-91a3 | ±1.00 % | 0.67, 1 (0.5 %): 65537 1.08 | — |
+| Granite Rapids, Xeon 6985P-C (`c4-standard-16`) | 20261118-194721-9d5d | ±2.11 % | 0.71, 9 (4.7 %) | 0.69, 5 (2.6 %) |
+| Sapphire Rapids, Xeon 8481C (`c3-standard-8`) | 20261118-195508-bd24 | ±1.99 % | 0.70, 8 (4.1 %) | 0.69, 7 (3.6 %) |
+| Ice Lake (`n2-standard-16`) | 20261118-194932-98a7 | ±3.31 % | 0.71, **12 (6.2 %)**: long rows 1.14–1.51 | 0.74, **14 (7.3 %)** |
+
+Zen 5's first VM was preempted after 54 minutes and replaced. Ice Lake failed: its VM reports a
+large L3 per CPU, so the rules filed it with the EPYC and it missed the depth-first chain. The
+same round showed X53's batch leaf of 12 losing on Granite and Sapphire Rapids (12 × 64 at
+1.18–1.22 of FFTW). [X58](X58-intel-keys.md) gave both their own keys, and the three Intel cores
+were checked again on its merge candidate 11817ba (library as `main` 602d0af):
+
+| Core | Run | Band | ÷ FFTW | ÷ oneMKL |
+|---|---|---|---|---|
+| Ice Lake | 20261119-024441-0417 | ±4.23 % | 0.67, **0** | 0.71, 4 (2.1 %): 999983 1.43, 131071 1.23, 10^6 1.22, 2^23 1.13 |
+| Sapphire Rapids | 20261119-024650-416a | ±2.36 % | 0.70, 7 (3.6 %): 131071 1.20, 1024 backward 1.18, 160 1.15, 240 1.11, 384 1.10, 15 × 2 backward 1.10, 1024 1.09 | 0.69, 9 (4.7 %, at the limit): 999983 1.61, 131071 1.23, 1024 × 3 in place 1.20, 1024 in place 1.16, 32 × 256 1.15, 1024 × 16 1.13, 32 × 16 1.13, 1024 × 3 1.12, 1000 in place 1.11 |
+| Granite Rapids | 20261119-021835-b712 | ±2.41 % | 0.72, 7 (3.6 %): 131071 1.32, 160 1.26, 240 1.15, 1024 backward 1.14, 1024 1.14, 1024 × 16 1.11, 1024 × 3 1.10 | 0.69, 4 (2.1 %): 131071 1.34, 999983 1.30, 1024 × 3 in place 1.17, 1024 × 16 1.11 |
+
+The `avx512` branch padding (PR 62) was timed against a build without it on the same commit
+(rows of 32–2048 points): Granite Rapids 1.000 [0.996, 1.002] (run 20261118-201122-73d9),
+Sapphire Rapids 0.999 (20261118-202454-3c31), Ice Lake 1.003 (20261118-202315-75ad), Zen 5
+1.037 [1.028, 1.044] with 240 points 1.35 slower without it (20261118-211132-2bd7). The padding
+stays: free on recent Intel, a gain on Zen 5 by placement.
 
 ## Verdict
 
 Measurement only; no library change. On the local machines every mean target is met and **the
 tail rule is met on all three**: EPYC at fa155c9 (FFTW 3.1 %, FFTL 0.5 %; 8 and 2 cases at the
 1.00 % band floor), Mac (FFTW 1.6 %, FFTL 2.1 %) and Xeon (FFTW 0.5 %, MKL 1.0 %) at X53's code.
-The phase 1 exit now depends on the cloud part.
+On the cloud cores too: Zen 5, Axion and Granite Rapids at X53's code, and after X58 Ice Lake
+(FFTW 0 cases, oneMKL 2.1 %), Sapphire Rapids (3.6 %, oneMKL 4.7 %) and Granite Rapids (3.6 %,
+2.1 %). **The phase 1 exit is met** on all nine machines checked.
 
 What is left beyond noise on the EPYC against FFTW: 64 × 2 backward 1.30, 64 × 16 1.13, 15 × 2
 backward 1.13 (0.91 in the run before, see above), 1018 1.10, 2048 1.09, and 120 1.08 (code
 placement, X57).
 
 Not done: the Mac and the Xeon were not re-timed on fa155c9 (their plans are unchanged); the
-scatter of the EPYC's tiny cases was not traced; the cloud part.
+scatter of the EPYC's tiny cases was not traced; the cloud cores were not re-timed after X57
+(no `avx2` double there) or, apart from the three Intel ones, after X58; Emerald Rapids and Zen 4
+were not checked. Cases common to several cores and worth an experiment: 131071 and 999983
+against oneMKL (X50's convolutions are off outside the Xeon 6240 and Apple), 160 and 240 on
+recent Intel, the 1024 family on recent Intel against both references.

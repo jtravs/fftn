@@ -176,3 +176,45 @@ USD 20 cap; the month's total, with X21, is USD 6.48. Teardown verified on 2026-
 09:24 UTC: the instance was deleted after matching its ID, then the firewall rule, subnet
 and network after matching theirs; the inventory lists no instance, no `fftn` disk or
 firewall rule and only the `default` network; the watchdog was stopped.
+
+## X56 and X58, 2026-11-18 and 19
+
+Rentals for [X56](X56-exit-4.md) (the phase 1 exit check on the cloud cores: Zen 5, Axion,
+Granite Rapids, and two Intel families the rules reach unmeasured, Sapphire Rapids and Ice Lake)
+and [X58](X58-intel-keys.md) (the profile keys that check called for), all in us-central1-a,
+Spot, created by the lead session under the maintainer's cap (USD 20 for the campaign).
+Safeguards as in X55: `--max-run-duration=150m` with termination action DELETE, boot-disk
+auto-delete, a guest shutdown after 145 minutes, and a Mac-side watchdog (150–165 minutes) that
+deleted by name only after matching the recorded ID. Spot prices for C3 and N2 are from the
+Cloud Billing catalogue on 2026-11-18 (vCPU and memory rates, billed for all vCPUs with one
+thread per core); the others as before. A VM marked preempted ends where its loss was first
+seen (an upper bound). Shared resources (free): network `fftn-x56-net` (1594255085495402557),
+subnet `fftn-x56-sub` (6565651907817259020), firewall rule `fftn-x56-ssh` (7001961555060342785,
+SSH from the controller's address only).
+
+| Instance | Recorded ID | Type | Spot USD/h | Created (UTC) | Deleted or lost (UTC) | Cost USD | Running total | Use |
+|---|---|---|---:|---|---|---:|---:|---|
+| fftn-x56-c3 | 4802825887329304592 | c3-standard-8, 1 thread per core | 0.150 | 2026-11-18 19:39:44 | 2026-11-18 21:12:10 | 0.23 | 0.23 | exit check, padding (Sapphire Rapids) |
+| fftn-x56-c4a | 2341279391533776912 | c4a-standard-16 | 0.354 | 2026-11-18 19:39:44 | 2026-11-18 20:45:06 | 0.39 | 0.62 | exit check (Axion) |
+| fftn-x56-n2 | 2367672626992660496 | n2-standard-16, 1 thread per core | 0.443 | 2026-11-18 19:39:43 | 2026-11-18 21:17:00 | 0.72 | 1.34 | exit check, padding (Ice Lake) |
+| fftn-x56-c4 | 344820189664133136 | c4-standard-16, 1 thread per core | 0.473 | 2026-11-18 19:39:43 | 2026-11-18 20:49:18 | 0.55 | 1.88 | exit check, padding (Granite Rapids) |
+| fftn-x56-c4d | 5160643053027868688 | c4d-standard-16, 1 thread per core | 0.335 | 2026-11-18 19:39:44 | 2026-11-18 20:33:45 | 0.30 | 2.19 | Zen 5, preempted, no results |
+| fftn-x56-c4d | 8060973165948678284 | c4d-standard-16, 1 thread per core | 0.335 | 2026-11-18 20:45:23 | 2026-11-18 21:44:13 | 0.33 | 2.51 | exit check, padding (Zen 5) |
+| fftn-x56-n2b | 1834219031491750143 | n2-standard-16, 1 thread per core | 0.443 | 2026-11-18 21:18:08 | 2026-11-18 22:26:23 | 0.50 | 3.02 | X58 screens (Ice Lake) |
+| fftn-x56-c3b | 6555559202823317759 | c3-standard-8, 1 thread per core | 0.150 | 2026-11-18 21:18:09 | 2026-11-18 22:10:11 | 0.13 | 3.15 | X58 screen (Sapphire Rapids) |
+| fftn-x56-c4b | 5676626624239610110 | c4-standard-16, 1 thread per core | 0.473 | 2026-11-18 21:18:09 | 2026-11-18 21:44:34 | 0.21 | 3.36 | preempted, no results |
+| fftn-x56-c4c | 5137926575862552518 | c4-standard-16, 1 thread per core | 0.473 | 2026-11-18 22:39:37 | 2026-11-18 23:04:20 | 0.19 | 3.55 | preempted, no results |
+| fftn-x56-n2c | 3501819253295912902 | n2-standard-16, 1 thread per core | 0.443 | 2026-11-18 22:39:37 | 2026-11-19 00:39:42 | 0.89 | 4.44 | X58 judging (Ice Lake) |
+| fftn-x56-c3c | 8955151675842336710 | c3-standard-8, 1 thread per core | 0.150 | 2026-11-18 22:39:37 | 2026-11-19 00:12:58 | 0.23 | 4.67 | preempted, no results |
+| fftn-x56-c3e | 6094541188546952388 | c3-standard-8, 1 thread per core | 0.150 | 2026-11-19 00:26:19 | 2026-11-19 02:09:40 | 0.26 | 4.93 | X58 judging (Sapphire Rapids) |
+| fftn-x56-c4e | 1275711212420857028 | c4-standard-16, 1 thread per core | 0.473 | 2026-11-19 00:26:19 | 2026-11-19 01:39:53 | 0.58 | 5.51 | X58 judging (Granite Rapids) |
+| fftn-x56-c4f | 3048537879573947694 | c4-standard-16, 1 thread per core | 0.473 | 2026-11-19 02:15:29 | 2026-11-19 03:16:08 | 0.48 | 5.99 | final exit check (Granite Rapids) |
+| fftn-x56-n2f | 450551761822016813 | n2-standard-16, 1 thread per core | 0.443 | 2026-11-19 02:15:30 | 2026-11-19 04:04:34 | 0.81 | 6.79 | final exit check (Ice Lake) |
+| fftn-x56-c3f | 7382853677370041646 | c3-standard-8, 1 thread per core | 0.150 | 2026-11-19 02:15:30 | 2026-11-19 04:07:36 | 0.28 | 7.07 | final exit check (Sapphire Rapids) |
+
+X56 and X58 total USD 7.07 estimated gross (four VMs preempted, three of them without
+results). With the earlier experiments the campaign has spent USD 12.19 of its USD 20
+cap. Teardown verified on 2026-11-19 at 04:15 UTC: every instance above deleted (by the job
+loop after matching its ID, by its termination action, or on preemption), then the firewall
+rule, subnet and network after matching their IDs; the inventory lists no `fftn` instance, disk
+or firewall rule and only the `default` network; every watchdog stopped.
