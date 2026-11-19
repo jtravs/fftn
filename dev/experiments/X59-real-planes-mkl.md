@@ -210,6 +210,15 @@ cases R5 leaves as T's (2048², c2r 1000², c2c). R5 meets its rule on both, but
 largest gains (EPYC 512² 0.70, 480 × 640 0.70, 1000²–1024² 0.88: 4–8 chunks per member there).
 Hence arm R6, a limit on a member's share in points instead of in chunks.
 
+R6 on the Mac, run 20261119-043131-d510 (10 rounds, all loaded, band ±1.0 %): R6 ÷ T 0.979 over the
+44 real planes (2048 × 36 0.86–0.92, 512² 0.91–0.92), 0.999 over the others; worst c2r 256² out of
+place 1.021, whose schedule R6 leaves as T's (one chunk per member either way), then r2c 256² in
+place 1.018: **R6 meets its rule on the Mac.** On the EPYC, run 20261119-052656-fdaa (Slurm
+513269; 10 rounds, all loaded, band ±2.6 %): R6 ÷ T **0.909 over the real planes** (512² 0.70–0.73,
+480 × 640 0.70–0.73, 2048 × 36 0.82–0.83, 36 × 2048 0.83–0.86, 1000²–1024² 0.86–0.88), 1.000 over
+the others; past the band only c2r 1024² out of place 1.074, which R6 can change: re-run (Slurm
+513291).
+
 ### The Xeon's judging runs: unpinned, then confined
 
 Run 20261119-021905-0d98 (Slurm 16585; `main`, T, R3 and oneMKL at 8 unpinned threads, the 132
