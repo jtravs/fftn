@@ -508,10 +508,12 @@ template <class T> void adjacent_transforms(fftn::isa target) {
                  (ic.in_place ? ", in place" : ""));
     const auto sh = shape_of<T>(ic);
     const fftn::options opts{.in_place = ic.in_place, .scale = ic.scale, .force_isa = target};
-    const auto lanes = fftn::detail::make_plan_core(fftn::detail::view_of(sh), opts);
+    build_settings on;
+    on.profile.adjacent_min_bytes = 0; // whatever the arrays' size against this machine's L1
+    const auto lanes = fftn::detail::make_plan_core(fftn::detail::view_of(sh), opts, on);
     const std::string lanes_text = fftn::detail::describe(*lanes);
     EXPECT_NE(lanes_text.find("adjacent transforms"), std::string::npos) << lanes_text;
-    build_settings off;
+    build_settings off = on;
     off.lanes_columns = false;
     const auto chain = fftn::detail::make_plan_core(fftn::detail::view_of(sh), opts, off);
     const std::string chain_text = fftn::detail::describe(*chain);
@@ -565,13 +567,22 @@ TEST(Columns, AdjacentTransformsRunAsLanes) {
   }
 }
 
-// Not where the transforms are not one element apart, an axis is contiguous, or a length has
-// no lane passes: those stay on the chain.
+// Not where the transforms are not one element apart, an axis is contiguous, a length has no
+// lane passes, or the transforms together fit adjacent_min_bytes: those stay on the chain.
 TEST(Columns, AdjacentTransformsOnlyWhereTheyFit) {
   using c = std::complex<double>;
-  const auto strategy = [](const fftn::shape<c, c>& sh) {
-    return fftn::detail::describe(*fftn::detail::make_plan_core(fftn::detail::view_of(sh), {}));
+  const auto described = [](const fftn::shape<c, c>& sh, std::size_t min_bytes) {
+    build_settings settings;
+    settings.profile.adjacent_min_bytes = min_bytes;
+    return fftn::detail::describe(
+        *fftn::detail::make_plan_core(fftn::detail::view_of(sh), {}, settings));
   };
+  const auto strategy = [&](const fftn::shape<c, c>& sh) { return described(sh, 0); };
+  fftn::shape<c, c> columns; // 16 columns of 32 points: 8192 bytes
+  columns.axes = {{.n = 32, .in_stride = 16, .out_stride = 16}};
+  columns.batches = {{.count = 16, .in_dist = 1, .out_dist = 1}};
+  EXPECT_NE(described(columns, 8191).find("adjacent transforms"), std::string::npos);
+  EXPECT_EQ(described(columns, 8192).find("adjacent transforms"), std::string::npos);
   fftn::shape<c, c> gapped;
   gapped.axes = {{.n = 16, .in_stride = 8, .out_stride = 8}};
   gapped.batches = {{.count = 4, .in_dist = 2, .out_dist = 2}};

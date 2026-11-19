@@ -177,10 +177,12 @@ void add_cases(std::vector<team_case>& out, const fftn::detail::build_settings& 
       .batches = {{.count = 2, .in_dist = 24 * 20 * 11, .out_dist = 24 * 20 * 11},
                   {.count = 11, .in_dist = 1, .out_dist = 1}},
   };
+  fftn::detail::build_settings adjacent = settings;
+  adjacent.profile.adjacent_min_bytes = 0; // whatever this machine's L1
   out.push_back(make_case("c2c_interleaved_24x20x11x2" + suffix, interleaved, 2 * 24 * 20 * 11,
-                          2 * 24 * 20 * 11, false, settings, target));
+                          2 * 24 * 20 * 11, false, adjacent, target));
   out.push_back(make_case("c2c_interleaved_inplace_24x20x11x2" + suffix, interleaved,
-                          2 * 24 * 20 * 11, 2 * 24 * 20 * 11, true, settings, target));
+                          2 * 24 * 20 * 11, 2 * 24 * 20 * 11, true, adjacent, target));
   // In place: real kinds in FFTW's padded rows; a prime row, whose one pass goes through
   // scratch and a copy when source and destination are the same memory.
   out.push_back(make_case("r2c_inplace_1000x3" + suffix, fftn::rows_r2c<T>(1000, 3), 3 * 1002,

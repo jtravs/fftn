@@ -1753,7 +1753,10 @@ vector access and every line of memory is touched once; the block is the narrowe
 `column_radices`, and transforms left over go through the tail in blocks of C. Each lane
 computes its transform alone, so blocks and execution ranges do not change the bits. A block is
 one task of the team (the work graph's one phase), so whole transforms are shared out, never
-their lines. Lengths without lane passes (a Bluestein or Rader stage, generic passes) and the
+their lines. The route is taken only when the transforms of the innermost batch dimension
+together exceed L1 (`machine_profile::adjacent_min_bytes`): within L1 a strided line costs no
+more than a contiguous one and the chain's short passes win (X60's screen). Lengths without
+lane passes (a Bluestein or Rader stage, generic passes) and the
 real kinds keep one transform at a time through the chain: a strided halved axis has no lane
 path yet.
 

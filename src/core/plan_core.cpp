@@ -1164,6 +1164,14 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
         s.batches.back().count < 2) {
       return 0;
     }
+    // The transforms together within L1 stay on the chain (machine_profile::adjacent_min_bytes).
+    std::size_t bytes = s.batches.back().count * static_cast<std::size_t>(complex_bytes);
+    for (const std::size_t d : active) {
+      bytes *= c.lengths[d];
+    }
+    if (bytes <= settings.profile.adjacent_min_bytes) {
+      return 0;
+    }
     build_settings alone = settings;
     alone.team_program = false;
     std::size_t block = std::numeric_limits<std::size_t>::max();

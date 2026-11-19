@@ -42,7 +42,9 @@ lanes (`lanes_fit`: codelet radices, no Bluestein stage) runs as the lanes progr
 DESIGN 9.3 with B = min over the axes of the block `column_block` gives for columns of that
 axis (the transforms taking the place of the columns), the chain otherwise. Radices per axis
 as `column_radices`. Not for r2c and c2r, whose halved axis needs a real lane path of its own
-(left for later; they stay on the chain).
+(left for later; they stay on the chain). Only when the block's transforms together exceed the
+L1 data cache (`machine_profile::adjacent_min_bytes`): added after the first screen below, which
+showed every case slower than the chain lies within L1.
 
 ## Method
 
@@ -69,7 +71,15 @@ as `column_radices`. Not for r2c and c2r, whose halved axis needs a real lane pa
 
 ## Results
 
-To fill in: run IDs, A/A bands, the tables.
+**Screen** (`4b02a69`, the rule without the L1 condition, so these runs are not the judgement):
+B ÷ A over the 86 c2c cases: M5 Max 0.496 (run 20261119-010745-4c74, loaded, band ±1.00 %), Xeon
+6240 0.387 (20261119-012036-2d43, band ±5.02 %). Every case slower than A beyond the band was
+within L1: M5 Max (128 KiB) 8 x 16 and 8 x 256 1.34–1.42, 16 x 16 x 8 1.19, 16 x 16 and 16 x
+256 1.09–1.15, 32 x 32 x 8 and 32 x 256 1.11–1.13, 256 x 16 1.07; Xeon (32 KiB) 8 x 16 1.20
+and 16 x 16 x 8 1.13. The chain's leaves and short passes do no strided work worth avoiding
+there. Hence the L1 condition.
+
+To fill in: the judging runs.
 
 ## Verdict
 

@@ -80,6 +80,7 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
   if (c.l1d.size != 0) {
     p.grid_min_bytes = c.l1d.size;
     p.grid_block_bytes = c.l1d.size;
+    p.adjacent_min_bytes = c.l1d.size;
   }
   if (c.l1d.line_size != 0) {
     p.line_bytes = c.l1d.line_size;
