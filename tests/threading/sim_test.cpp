@@ -60,6 +60,7 @@ const std::vector<team_case>& interleaving_cases() {
                "c2r_45x9",
                "c2c_planes_24x20x3",
                "c2r_planes_12x16x2",
+               "r2c_planes_b16_64x100x1",
                "c2c_volume_8x6x10x2",
                "c2c_many_64x100",
                "c2c_bluestein_188x3",

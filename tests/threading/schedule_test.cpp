@@ -76,6 +76,70 @@ void expect_partition(const schedule& s, const lane_map& lanes) {
   EXPECT_EQ(next, s.tasks);
 }
 
+// X59: a phase whose neighbouring lines write the same cache lines goes in fair runs.
+TEST(WorkGraph, FairRunsWhereNeighbouringLinesShareCacheLines) {
+  namespace d = fftn::detail;
+  const fftn::options opts;
+  d::build_settings s;
+  s.chunk_points = 256;
+  s.column_block = 8;
+  s.profile.line_bytes = 64;
+  s.profile.fair_line_runs = true;
+  const auto plane = [&](std::size_t n0, std::size_t n1) {
+    return d::make_plan_core(
+        d::view_of(fftn::planes_c2c<double>(n0, n1, 1, fftn::direction::forward)), opts, s);
+  };
+  // Blocks of 8 complex doubles and rows of 32: both whole cache lines.
+  const auto whole = plane(64, 32);
+  ASSERT_EQ(whole->graph.phases.size(), 2U);
+  EXPECT_FALSE(whole->graph.phases[0].fair_runs); // the rows
+  EXPECT_FALSE(whole->graph.phases[1].fair_runs);
+  // Rows of 30 complex doubles are 480 bytes: blocks meet inside cache lines.
+  EXPECT_TRUE(plane(64, 30)->graph.phases[1].fair_runs);
+  // A real plane's rows hold 33 complex doubles.
+  fftn::shape<double, std::complex<double>> real;
+  real.axes = {{.n = 64}, {.n = 64}};
+  real.batches = {{.count = 1}};
+  const auto r2c = d::make_plan_core(d::view_of(real), opts, s);
+  EXPECT_FALSE(r2c->graph.phases[0].fair_runs);
+  EXPECT_TRUE(r2c->graph.phases[1].fair_runs);
+  // Columns alone through the chain are 16 bytes wide.
+  s.lanes_columns = false;
+  EXPECT_TRUE(plane(64, 32)->graph.phases[1].fair_runs);
+  // A profile without fair runs (the Xeon 6240's) flags nothing.
+  s.profile.fair_line_runs = false;
+  EXPECT_FALSE(plane(64, 32)->graph.phases[1].fair_runs);
+  s.profile.fair_line_runs = true;
+  // Volumes keep the guided runs, whatever their lines share.
+  fftn::shape<double, std::complex<double>> volume;
+  volume.axes = {{.n = 16}, {.n = 16}, {.n = 16}};
+  volume.batches = {{.count = 1}};
+  // The plan is held: a range over a member of a temporary would outlive the temporary.
+  const auto vol = d::make_plan_core(d::view_of(volume), opts, s);
+  for (const d::graph_phase& phase : vol->graph.phases) {
+    EXPECT_FALSE(phase.fair_runs);
+  }
+
+  d::graph_phase ph;
+  ph.chunks = 16;
+  ph.chunk_points = 4096;
+  ph.fair_runs = true;
+  EXPECT_EQ(d::chunk_run(ph, 16, 8, 16), 2U); // a fair share, 16 / 8
+  EXPECT_EQ(d::chunk_run(ph, 1, 8, 16), 1U);  // never more than is left
+  ph.chunks = 5;
+  EXPECT_EQ(d::chunk_run(ph, 5, 8, 16), 1U); // fewer chunks than members
+  ph.chunks = 64;
+  ph.chunk_points = d::max_fair_points / 8;
+  EXPECT_EQ(d::chunk_run(ph, 64, 8, 16), 8U); // a share of max_fair_points
+  ph.chunk_points = d::max_fair_points / 4;   // larger: guided, for the balance of its end
+  EXPECT_EQ(d::chunk_run(ph, 64, 8, 16), 4U);
+  EXPECT_EQ(d::chunk_run(ph, 20, 8, 16), 1U);
+  ph.fair_runs = false;
+  ph.chunk_points = 4096;
+  EXPECT_EQ(d::chunk_run(ph, 64, 8, 16), 4U); // a share of what is left
+  EXPECT_EQ(d::chunk_run(ph, 3, 8, 16), 1U);
+}
+
 TEST(WorkGraph, PhasesOfRowsAndPlanes) {
   // A 1-D row: one phase per stage, chunks as the stages have them.
   const auto r = rows(16384, 2);
@@ -153,6 +217,28 @@ TEST(WorkGraph, PhasesOfRowsAndPlanes) {
   EXPECT_EQ(blocks->graph.phases[1].nest, 1U);
   EXPECT_EQ(blocks->graph.phases[1].units, 4U);  // blocks of 8 of the 32 columns
   EXPECT_EQ(blocks->graph.phases[1].chunks, 4U); // a block holds 64 x 8 points
+  // 30 columns: three blocks of 8 and a narrower one of 6 (rounded up to C), whose nest
+  // joins the whole blocks' phase (loop::joins, X41) rather than running alone after it.
+  const auto tail = fftn::detail::make_plan_core(
+      fftn::detail::view_of(fftn::planes_c2c<double>(64, 30, 1, fftn::direction::forward)), opts,
+      fine);
+  ASSERT_EQ(tail->graph.phases.size(), 2U);
+  EXPECT_EQ(tail->graph.phases[1].units, 4U);
+  EXPECT_EQ(tail->graph.phases[1].head, 3U);
+  EXPECT_EQ(tail->graph.phases[1].tail_nest, 1U);
+  EXPECT_EQ(tail->graph.phases[1].chunks, 4U);
+  // Coarse chunks: 40 columns are two blocks of 16 and a tail; two lines per chunk, so the second
+  // chunk holds the last whole block and the tail (team_env::run_chunk splits it at head).
+  fftn::detail::build_settings coarse = fine;
+  coarse.chunk_points = 2048;
+  coarse.column_block = 16;
+  const auto straddle = fftn::detail::make_plan_core(
+      fftn::detail::view_of(fftn::planes_c2c<double>(64, 40, 1, fftn::direction::forward)), opts,
+      coarse);
+  ASSERT_EQ(straddle->graph.phases.size(), 2U);
+  EXPECT_EQ(straddle->graph.phases[1].units, 3U);
+  EXPECT_EQ(straddle->graph.phases[1].head, 2U);
+  EXPECT_EQ(straddle->graph.phases[1].chunks, 2U);
   // A volume (task 4.2): its two inner axes plane at a time, one phase whose lines are the
   // 4 whole planes (the loop over them holds each plane's own loops), then the outer axis,
   // whose two loops over the other axes are one phase of their product.
@@ -580,6 +666,15 @@ TEST(Schedule, GridSizesFromCaches) {
   EXPECT_TRUE(xeon86.team_volume_planes);
   EXPECT_EQ(m5.column_team_bytes, 0U);
   EXPECT_FALSE(m5.team_volume_planes);
+  // Fair runs for column phases whose lines share cache lines (X59): where measured to win, the
+  // EPYC 7763 (Zen 3) and the M5 Max; not the Xeon 6240 (lost), nor Zen 5 (not measured).
+  EXPECT_TRUE(epyc86.fair_line_runs);
+  EXPECT_FALSE(xeon86.fair_line_runs);
+  EXPECT_FALSE(x86("linux-gcp-c4d-zen5.sysfs").fair_line_runs);
+  machine_profile apple;
+  fftn::detail::set_grid_sizes(
+      apple, fftn::detail::load_topology(data / "macos-apple-m5-max.sysctl").classes.at(0), false);
+  EXPECT_TRUE(apple.fair_line_runs);
   // Rows' two-pass radices while the data fit three quarters of the CCX's L3 (X57).
   EXPECT_EQ(epyc86.fit_row_bytes, std::size_t{24} * 1024 * kib);
   EXPECT_EQ(xeon86.fit_row_bytes, 0U);

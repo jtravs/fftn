@@ -82,8 +82,20 @@ void team_env::run_chunk(std::size_t task, std::size_t phase, std::uint32_t chun
   const slot_addresses mine = scratch(lane);
   at.a = mine.a;
   at.b = mine.b;
-  run_lines(core_.prog, ph.record, ph.nest, ph.body_end, chunk_start(ph.units, ph.chunks, chunk),
-            chunk_start(ph.units, ph.chunks, std::size_t{chunk} + 1), at);
+  const std::size_t lo = chunk_start(ph.units, ph.chunks, chunk);
+  const std::size_t hi = chunk_start(ph.units, ph.chunks, std::size_t{chunk} + 1);
+  if (ph.tail_nest == 0) {
+    run_lines(core_.prog, ph.record, ph.nest, ph.body_end, lo, hi, at);
+    return;
+  }
+  // Lines [0, head) are the first nest's, the rest the joining nest's (work_graph.hpp).
+  if (lo < ph.head) {
+    run_lines(core_.prog, ph.record, ph.nest, ph.body_end, lo, std::min(hi, ph.head), at);
+  }
+  if (hi > ph.head) {
+    run_lines(core_.prog, ph.tail_record, ph.tail_nest, ph.tail_body_end,
+              std::max(lo, ph.head) - ph.head, hi - ph.head, at);
+  }
 }
 
 std::size_t workspace_bytes(const plan_core& core, int lanes) noexcept {
