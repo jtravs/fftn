@@ -162,12 +162,10 @@ FFTN_FORCE_INLINE void batch_group(const void* src, void* dst, std::ptrdiff_t sr
   if constexpr (Full && batch_by_element<T, R>) {
     // The codelet reads every input before it writes an output (each output depends on every
     // input), so src may be dst (in place).
-    const pair_rows_in<T, InOp> x{.r0 = line_at<T>(src, u, src_dist),
-                                  .r1 = line_at<T>(src, u + 1, src_dist),
-                                  .e = ein};
-    const pair_rows_out<T, OutOp> y{.r0 = line_at<T>(dst, u, dst_dist),
-                                    .r1 = line_at<T>(dst, u + 1, dst_dist),
-                                    .e = eout};
+    const pair_rows_in<T, InOp> x{
+        .r0 = line_at<T>(src, u, src_dist), .r1 = line_at<T>(src, u + 1, src_dist), .e = ein};
+    const pair_rows_out<T, OutOp> y{
+        .r0 = line_at<T>(dst, u, dst_dist), .r1 = line_at<T>(dst, u + 1, dst_dist), .e = eout};
     cdft<R>::template plain<T, Sign>(x, y);
   } else if constexpr (Full) {
     const T* in[C<T>]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
