@@ -93,7 +93,7 @@ jobs:
   gate:
     uses: ./.github/workflows/gate.yml
     with:
-      # The sanitizer job takes 10-15 minutes with a current ccache (tests 7-13 of them, since
+      # The sanitizer job takes about 15 minutes with a current ccache (12 of them tests, since
       # the quadruple-precision reference remembers its results, PR 89; 25-27 before). Its
       # 70-90-minute runs of 2026-11-18/19 were a rebuild of the kernel units under ASan from a
       # stale ccache (41-66 minutes, now rarer: main saves its ccache whatever the result) and
