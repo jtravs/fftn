@@ -204,7 +204,19 @@ void batch_leaf(const pass_args* a, const void* src, void* dst, std::ptrdiff_t s
   for (; u + C<T> <= count; u += C<T>) {
     batch_group<T, R, Sign, InOp, OutOp, true>(src, dst, src_dist, dst_dist, u, C<T>, ein, eout);
   }
-  if (count - u == 1) {
+  if constexpr (batch_by_element<T, R>) {
+    if (count - u == 1) {
+      // X62 arm K2: one row left runs in both lanes through the accessors the pairs use (the
+      // same loads and stores, the row's halves twice). The leaf's form below, after two or
+      // more pairs, took 650-750 cycles for the row against 280 after one pair (counters on
+      // the EPYC 7763, backward); the arithmetic per lane is the same.
+      const pair_rows_in<T, InOp> x{
+          .r0 = line_at<T>(src, u, src_dist), .r1 = line_at<T>(src, u, src_dist), .e = ein};
+      const pair_rows_out<T, OutOp> y{
+          .r0 = line_at<T>(dst, u, dst_dist), .r1 = line_at<T>(dst, u, dst_dist), .e = eout};
+      cdft<R>::template plain<T, Sign>(x, y);
+    }
+  } else if (count - u == 1) {
     // One row left: the leaf's own form, the row in every lane (one load and one store per
     // element), which costs a row what the leaf does; a partial group gathers and scatters
     // as a whole group does and cost about as much as two leaves (X53 arm B3).
