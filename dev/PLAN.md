@@ -20,7 +20,8 @@ API), task 4.3 (axis subsets of strided arrays, axes in memory order; X61's lane
 transforms on the Xeon 6240 class and Apple; provisional `axes_*` API) and X59 (threaded real
 planes: phase joins everywhere, fair line runs on Zen 3 and Apple). X60 (out-of-place
 c2r intermediate packed in the output; PR 86) judged: not adopted, won at one thread, lost at 8
-lanes. This section is also the handoff.
+lanes; its planes-only follow-up X63 (PR 91) adopted on the Xeon 6240 class and Zen 3. This
+section is also the handoff.
 Lessons that generalise are in [LESSONS.md](LESSONS.md), decisions in DESIGN.md section 19,
 open questions in DESIGN.md section 18.2.
 
