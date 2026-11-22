@@ -261,6 +261,22 @@ the Xeon), Homebrew Clang 23 on the Mac.
   a target that passes keeps R's threshold. If the EPYC passes one thread and fails 8 lanes it
   keeps the block (a team must not lose what one thread gains).
 
+### Arm R2, Apple only (rule written 2026-11-22 after arm R's Mac judging run, before R2's)
+
+Arm R failed its rule on the M5 Max (512 × 1024 1.068, below). Arm R2 (6e16a77) changes only
+Apple's threshold, to a third of the cluster's L2 (5.3 MiB on the M5 Max). The threshold was
+chosen on arm R's judged cases, so R2 is judged also on held-out sizes that no screen timed
+(`bench/catalogues/x60b.toml`).
+
+- Arms: M = `main` 021c117, R2 = 6e16a77, with the identical-arm control of M; the M5 Max, one
+  thread, Homebrew Clang 23, AC power.
+- Judged cases (half spectrum above 5.3 MiB): 864², 96³, 1000², 1024², 2048², 100³, 128³ of
+  `x60.toml` and 640 × 1280, 1280 × 640, 960², 1200², 1536², 112³ of `x60b.toml` (13 cases), in one
+  run over both catalogues' cases or two runs, each held to the rule.
+- The criteria (1) and (2) above, over these cases. The other cases of both catalogues keep M's
+  plan and are the collateral check with the tracking tier of arm R (Apple's change does not
+  touch other classes).
+
 ## Verdict (provisional: no judging run)
 
 - **The third array is real but only costs beyond a cache.** Out of place, c2r planes run 1.1–2.0
