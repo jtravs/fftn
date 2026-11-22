@@ -171,6 +171,52 @@ void add_cases(std::vector<team_case>& out, const fftn::detail::build_settings& 
   };
   out.push_back(
       make_case("c2c_strided_300x4" + suffix, strided, 1200, 1200, false, settings, target));
+  // A plane's axes strided, its transforms one element apart: lanes over adjacent transforms
+  // (task 4.3).
+  const fftn::shape<c, c> interleaved{
+      .dir = bwd,
+      .axes = {{.n = 24, .in_stride = 20 * 11, .out_stride = 20 * 11},
+               {.n = 20, .in_stride = 11, .out_stride = 11}},
+      .batches = {{.count = 2, .in_dist = 24 * 20 * 11, .out_dist = 24 * 20 * 11},
+                  {.count = 11, .in_dist = 1, .out_dist = 1}},
+  };
+  fftn::detail::build_settings adjacent = settings;
+  adjacent.profile.adjacent_min_bytes = 0;     // whatever this machine's L1
+  adjacent.profile.adjacent_team_chain = true; // a team runs the chain, with the same bits
+  adjacent.profile.adjacent_lanes = true;
+  out.push_back(make_case("c2c_interleaved_24x20x11x2" + suffix, interleaved, 2 * 24 * 20 * 11,
+                          2 * 24 * 20 * 11, false, adjacent, target));
+  out.push_back(make_case("c2c_interleaved_inplace_24x20x11x2" + suffix, interleaved,
+                          2 * 24 * 20 * 11, 2 * 24 * 20 * 11, true, adjacent, target));
+  // Shapes whose lanes take the chain's radices on NEON as on x86, so that one thread runs the
+  // lanes and a team the chain (adjacent_team_chain) with the same bits.
+  const auto interleaved_case = [&](std::string name, std::vector<std::size_t> n, std::size_t k) {
+    fftn::shape<c, c> sh;
+    sh.dir = fwd;
+    auto span = static_cast<std::ptrdiff_t>(k);
+    std::size_t points = 1;
+    sh.axes.resize(n.size());
+    for (std::size_t i = n.size(); i > 0; --i) {
+      sh.axes[i - 1] = {.n = n[i - 1], .in_stride = span, .out_stride = span};
+      span *= static_cast<std::ptrdiff_t>(n[i - 1]);
+      points *= n[i - 1];
+    }
+    sh.batches = {{.count = k, .in_dist = 1, .out_dist = 1}};
+    out.push_back(
+        make_case(std::move(name) + suffix, sh, points * k, points * k, false, adjacent, target));
+  };
+  interleaved_case("c2c_interleaved_16x16x7", {16, 16}, 7);
+  interleaved_case("c2c_interleaved_12x10x8x5", {12, 10, 8}, 5);
+  // A team that runs the lanes too.
+  fftn::detail::build_settings adjacent_teams = adjacent;
+  adjacent_teams.profile.adjacent_team_chain = false;
+  const fftn::shape<c, c> many_columns{
+      .dir = fwd,
+      .axes = {{.n = 24, .in_stride = 160, .out_stride = 160}},
+      .batches = {{.count = 160, .in_dist = 1, .out_dist = 1}},
+  };
+  out.push_back(make_case("c2c_interleaved_24x160" + suffix, many_columns, 24 * 160, 24 * 160,
+                          false, adjacent_teams, target));
   // In place: real kinds in FFTW's padded rows; a prime row, whose one pass goes through
   // scratch and a copy when source and destination are the same memory.
   out.push_back(make_case("r2c_inplace_1000x3" + suffix, fftn::rows_r2c<T>(1000, 3), 3 * 1002,

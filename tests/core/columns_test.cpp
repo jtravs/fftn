@@ -637,6 +637,199 @@ TEST(Columns, C2rPackedMatchesTheBlock) {
 // Where the lanes cannot take a strided axis, its columns run alone through the chain: the
 // last axis strided (no adjacent columns), a column length whose chain has a Bluestein
 // stage or a generic pass, the last axis of length 1.
+// ---- Lanes over adjacent transforms (DESIGN.md 9.3, task 4.3): the axes of a transform all
+// strided, its neighbours one element away in the innermost batch dimension, as when the
+// dimension of an array that is not transformed varies fastest.
+
+struct interleaved_case {
+  std::vector<std::size_t> n; // the axes, slowest first
+  std::size_t count = 1;      // transforms one element apart
+  std::size_t outer = 1;      // such blocks after one another
+  bool in_place = false;
+  double scale = 1.0;
+  fftn::direction dir = fftn::direction::forward;
+};
+
+template <class T>
+fftn::shape<std::complex<T>, std::complex<T>> shape_of(const interleaved_case& ic) {
+  fftn::shape<std::complex<T>, std::complex<T>> sh;
+  sh.dir = ic.dir;
+  auto span = static_cast<std::ptrdiff_t>(ic.count);
+  sh.axes.resize(ic.n.size());
+  for (std::size_t i = ic.n.size(); i > 0; --i) {
+    sh.axes[i - 1] = {.n = ic.n[i - 1], .in_stride = span, .out_stride = span};
+    span *= static_cast<std::ptrdiff_t>(ic.n[i - 1]);
+  }
+  if (ic.outer > 1) {
+    sh.batches.push_back({.count = ic.outer, .in_dist = span, .out_dist = span});
+  }
+  sh.batches.push_back({.count = ic.count, .in_dist = 1, .out_dist = 1});
+  return sh;
+}
+
+std::size_t elements_of(const interleaved_case& ic) {
+  std::size_t e = ic.count * ic.outer;
+  for (const std::size_t n : ic.n) {
+    e *= n;
+  }
+  return e;
+}
+
+// Runs transforms [first, first + count) of the plan on `in` (out of place into `out`).
+template <class T>
+void run_range(const fftn::detail::plan_core& core, std::size_t first, std::size_t count,
+               std::vector<std::byte>& in, std::vector<std::byte>& out, bool in_place) {
+  const fftn::workspace ws(fftn::detail::workspace_bytes(core, 1));
+  fftn::detail::execute_core(core, first, count, in.data(), in_place ? in.data() : out.data(), ws);
+}
+
+template <class T> void adjacent_transforms(fftn::isa target) {
+  using c = std::complex<T>;
+  SCOPED_TRACE(std::string(fftn::isa_name(target)) + (sizeof(T) == 8 ? " double" : " float"));
+  const std::vector<interleaved_case> cases = {
+      {.n = {16}, .count = 12},
+      {.n = {8}, .count = 1000},
+      {.n = {64}, .count = 3, .scale = 0.25},
+      {.n = {256}, .count = 64, .in_place = true},
+      {.n = {16, 12}, .count = 2},
+      {.n = {16, 16}, .count = 7, .dir = fftn::direction::backward},
+      {.n = {36, 20}, .count = 17, .in_place = true, .scale = 0.5},
+      {.n = {16, 16}, .count = 7, .outer = 3},
+      {.n = {30}, .count = 9, .outer = 4, .in_place = true},
+      {.n = {12, 10, 8}, .count = 5},
+  };
+  for (const interleaved_case& ic : cases) {
+    SCOPED_TRACE("n[0] = " + std::to_string(ic.n[0]) + ", axes " + std::to_string(ic.n.size()) +
+                 ", " + std::to_string(ic.count) + " x " + std::to_string(ic.outer) +
+                 (ic.in_place ? ", in place" : ""));
+    const auto sh = shape_of<T>(ic);
+    const fftn::options opts{.in_place = ic.in_place, .scale = ic.scale, .force_isa = target};
+    build_settings on;
+    on.profile.adjacent_min_bytes = 0;      // whatever the arrays' size against this machine's L1
+    on.profile.adjacent_team_chain = false; // the route whatever the radices; a team runs it too
+    on.profile.adjacent_lanes = true;
+    const auto lanes = fftn::detail::make_plan_core(fftn::detail::view_of(sh), opts, on);
+    const std::string lanes_text = fftn::detail::describe(*lanes);
+    // Short rows of one axis in float on x86 take the lanes over rows instead (lanes_up_to).
+    EXPECT_TRUE(lanes_text.find("adjacent transforms") != std::string::npos ||
+                lanes_text.find("lanes (blocks of") != std::string::npos)
+        << lanes_text;
+    build_settings off = on;
+    off.lanes_columns = false;
+    const auto chain = fftn::detail::make_plan_core(fftn::detail::view_of(sh), opts, off);
+    const std::string chain_text = fftn::detail::describe(*chain);
+    EXPECT_EQ(chain_text.find("adjacent transforms"), std::string::npos) << chain_text;
+    const std::size_t elems = elements_of(ic);
+    fftn::test::input_source src(0xAD1ULL + elems);
+    const auto v = src.complexes<T>(elems);
+    std::vector<std::byte> in(elems * sizeof(c));
+    std::memcpy(in.data(), v.data(), in.size());
+    const std::size_t transforms = ic.count * ic.outer;
+    const auto whole = [&](const fftn::detail::plan_core& core) {
+      std::vector<std::byte> x = in;
+      std::vector<std::byte> y(in.size(), std::byte{0xa5});
+      run_range<T>(core, 0, transforms, x, y, ic.in_place);
+      if (!ic.in_place) {
+        EXPECT_EQ(x, in) << "the input was not preserved";
+      }
+      return ic.in_place ? x : y;
+    };
+    const auto got = whole(*lanes);
+    const auto want = whole(*chain);
+    std::size_t points = 1;
+    for (const std::size_t n : ic.n) {
+      points *= n;
+    }
+    if (radices_of(lanes_text) == radices_of(chain_text)) {
+      EXPECT_TRUE(got == want) << lanes_text << chain_text;
+    } else {
+      const double l = std::max(1.0, std::log2(static_cast<double>(points)));
+      EXPECT_LE(relative_difference<T>(got, want), 2 * 3 * std::numeric_limits<T>::epsilon() * l)
+          << lanes_text << chain_text;
+    }
+    // Any split of the transforms into ranges gives the same bits (DESIGN.md 15.5): every
+    // transform alone, then runs of 2, 3 and 5.
+    for (const std::size_t run_of :
+         {std::size_t{1}, std::size_t{2}, std::size_t{3}, std::size_t{5}}) {
+      std::vector<std::byte> x = in;
+      std::vector<std::byte> y(in.size(), std::byte{0xa5});
+      for (std::size_t first = 0; first < transforms; first += run_of) {
+        run_range<T>(*lanes, first, std::min(run_of, transforms - first), x, y, ic.in_place);
+      }
+      EXPECT_TRUE((ic.in_place ? x : y) == got) << "runs of " << run_of;
+    }
+  }
+}
+
+TEST(Columns, AdjacentTransformsRunAsLanes) {
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    adjacent_transforms<double>(t);
+    adjacent_transforms<float>(t);
+  }
+}
+
+// Not where the transforms are not one element apart, an axis is contiguous, a length has no
+// lane passes, or the transforms together fit adjacent_min_bytes: those stay on the chain.
+TEST(Columns, AdjacentTransformsOnlyWhereTheyFit) {
+  using c = std::complex<double>;
+  const auto described = [](const fftn::shape<c, c>& sh, std::size_t min_bytes) {
+    build_settings settings;
+    settings.profile.adjacent_min_bytes = min_bytes;
+    settings.profile.adjacent_team_chain = false;
+    settings.profile.adjacent_lanes = true;
+    return fftn::detail::describe(
+        *fftn::detail::make_plan_core(fftn::detail::view_of(sh), {}, settings));
+  };
+  const auto strategy = [&](const fftn::shape<c, c>& sh) { return described(sh, 0); };
+  fftn::shape<c, c> columns; // 32 columns of 16 points (a leaf length): 8192 bytes
+  columns.axes = {{.n = 16, .in_stride = 32, .out_stride = 32}};
+  columns.batches = {{.count = 32, .in_dist = 1, .out_dist = 1}};
+  EXPECT_NE(described(columns, 8191).find("adjacent transforms"), std::string::npos);
+  EXPECT_EQ(described(columns, 8192).find("adjacent transforms"), std::string::npos);
+  {
+    // With adjacent_team_chain, a plan whose lanes take the chain's radices keeps the route for
+    // one thread and holds a team program that is the chain (the team tests run 16 x 16 x 7).
+    build_settings teams;
+    teams.profile.adjacent_min_bytes = 0;
+    teams.profile.adjacent_team_chain = true;
+    teams.profile.adjacent_lanes = true;
+    fftn::shape<c, c> planes;
+    planes.axes = {{.n = 16, .in_stride = 16 * 7, .out_stride = 16 * 7},
+                   {.n = 16, .in_stride = 7, .out_stride = 7}};
+    planes.batches = {{.count = 7, .in_dist = 1, .out_dist = 1}};
+    for (const fftn::isa t : fftn::test::runnable_isas()) {
+      const auto core =
+          fftn::detail::make_plan_core(fftn::detail::view_of(planes), {.force_isa = t}, teams);
+      EXPECT_NE(fftn::detail::describe(*core).find("adjacent transforms"), std::string::npos)
+          << fftn::isa_name(t);
+      EXPECT_NE(core->team, nullptr) << fftn::isa_name(t);
+    }
+  }
+  {
+    // Off where the profile says (machine_profile::adjacent_lanes: the EPYC 7763's class).
+    build_settings off;
+    off.profile.adjacent_min_bytes = 0;
+    off.profile.adjacent_team_chain = false;
+    off.profile.adjacent_lanes = false;
+    EXPECT_EQ(fftn::detail::describe(
+                  *fftn::detail::make_plan_core(fftn::detail::view_of(columns), {}, off))
+                  .find("adjacent transforms"),
+              std::string::npos);
+  }
+  fftn::shape<c, c> gapped;
+  gapped.axes = {{.n = 16, .in_stride = 8, .out_stride = 8}};
+  gapped.batches = {{.count = 4, .in_dist = 2, .out_dist = 2}};
+  EXPECT_EQ(strategy(gapped).find("adjacent transforms"), std::string::npos);
+  fftn::shape<c, c> contiguous; // rows, the batch dimension outermost
+  contiguous.axes = {{.n = 16}};
+  contiguous.batches = {{.count = 4}};
+  EXPECT_EQ(strategy(contiguous).find("adjacent transforms"), std::string::npos);
+  fftn::shape<c, c> prime; // Bluestein has no lanes
+  prime.axes = {{.n = 1009, .in_stride = 4, .out_stride = 4}};
+  prime.batches = {{.count = 4, .in_dist = 1, .out_dist = 1}};
+  EXPECT_EQ(strategy(prime).find("adjacent transforms"), std::string::npos);
+}
+
 TEST(Columns, OnlyWhereTheColumnsAreAdjacent) {
   const auto text = [](const fftn::shape<std::complex<double>, std::complex<double>>& sh) {
     return fftn::detail::describe(*fftn::detail::make_plan_core(fftn::detail::view_of(sh),

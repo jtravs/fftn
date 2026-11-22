@@ -143,6 +143,7 @@ one; its arms are written `fftn_omp`.
 | `DEPTH_TOPS=f1[.f2]` | fftn, fftn_omp | the depth-first chain's top factors, one or two (`build_settings::depth_tops`; n = f1 M or f1 f2 M), instead of the default ones: wherever they fit with `STRATEGY=depth`, and on the rows the rules make depth-first chains otherwise ([X46](../dev/experiments/X46-depth-first.md)) |
 | `LANE_BLOCK=B` | fftn, fftn_omp | the lanes strategy's block in rows (`build_settings::lane_block`), rounded up to a multiple of the complex count C; default the rule's ([X7](../dev/experiments/X7-lanes.md)) |
 | `BATCH_LEAVES=rules\|never\|own\|narrower` | fftn, fftn_omp | the batch leaves of c2c rows (`build_settings::batch_leaves`): the rules' choice (default), none, the target's own (C rows per register), or a narrower target's that rounds alike (avx2's on avx512), on rows that can take one: one axis of contiguous rows of a codelet length in one batch dimension of at least two rows ([X53](../dev/experiments/X53-two-row-leaves.md)) |
+| `ADJACENT_MIN_BYTES=N` | fftn, fftn_omp | replaces `machine_profile::adjacent_min_bytes`: at or below N bytes of transforms, lanes over adjacent transforms stay off where the rule says (0: the route wherever it fits; [X61](../dev/experiments/X61-adjacent-transforms.md)) |
 | `COLUMNS=lanes\|chain` | fftn, fftn_omp | the strided axes of planes and volumes (`build_settings::lanes_columns`): lanes over blocks of adjacent columns where they fit (default), or every column alone through the chain ([X40](../dev/experiments/X40-planes.md)) |
 | `COLUMN_BLOCK=B` | fftn, fftn_omp | the lanes column phase's block in columns (`build_settings::column_block`), rounded up to a multiple of C; default the rule's (X40) |
 | `COLUMN_RADICES=r1.r2...` | fftn, fftn_omp | the lanes column phase's radices in pass order (`build_settings::column_radices`) for columns whose length they multiply to, each a codelet radix; other columns keep the rule's ([X44](../dev/experiments/X44-small-planes.md)) |
@@ -274,6 +275,8 @@ batch = [1, 256]                 # default 1
 place = ["out", "in"]            # default out
 direction = "fwd"                # c2c only: fwd or bwd
 precision = ["f64", "f32"]       # default f64
+layout = "interleaved"           # default "tight" (below)
+outer = [1, 16]                  # interleaved blocks one after another (default 1)
 weight = 1.0                     # share in the weighted geomean (default 1)
 tiers = ["quick", "tracking"]    # every case is also in "full"
 ```
@@ -285,7 +288,12 @@ A backend takes single-precision cases only when its `describe` lists `"f32"` un
 `precisions` (FFTN does; the competitors do not yet); for the others the harness reports
 them unsupported, and `smoke` does not count that as a failure.
 Layouts follow FFTW: rows and batches contiguous, r2c output n/2+1 complex values in the
-last dimension, in-place real arrays padded to 2(n/2+1).
+last dimension, in-place real arrays padded to 2(n/2+1). With `layout = "interleaved"` the
+`batch` transforms lie one element apart and every element of a transform `batch` elements
+from the next, in `outer` such blocks one after another (`-il-oOUTER` in the case ID): the
+transformed dimensions of a strided array whose fastest dimension is not transformed, in
+FFTN's general shape, FFTW's guru interface and oneMKL's strides (the other backends answer
+unsupported). Not for in-place real transforms.
 
 The standard catalogue has tiers `smoke` (seconds, correctness, every kind, placement and
 rank), `quick` (an A/B in a few minutes), `tracking` (a fixed set for history) and `full`.
@@ -548,7 +556,8 @@ stops.
 
 ## Limits of v0
 
-- Contiguous rows, planes and volumes. Strided axes come with the phases that need them.
+- Contiguous rows, planes and volumes, and the interleaved layout above. Any other strided
+  layout comes with the phase that needs it.
   Single precision is timed for FFTN only, and threaded arms exist for FFTN only
   (competitors' own threading and a team of serial plans, DESIGN.md 16.1, come with
   phase 3's exit).

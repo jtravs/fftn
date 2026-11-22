@@ -200,7 +200,8 @@ struct case_spec {
 };
 
 // One line of `key=value` tokens: id, kind (c2c, r2c, c2r), dims (e.g. 64x48), batch,
-// place (in, out), for c2c sign (-1, +1), and prec (f64, the default, or f32).
+// place (in, out), for c2c sign (-1, +1), prec (f64, the default, or f32), and for the
+// interleaved layout layout=interleaved and outer (blocks; 1 by default).
 case_spec parse_case(const std::string& line) {
   case_spec c;
   std::int32_t kind = fbench_c2c;
@@ -210,6 +211,8 @@ case_spec parse_case(const std::string& line) {
   int sign = -1;
   bool in_place = false;
   std::int32_t precision = fbench_f64;
+  bool interleaved = false;
+  std::int64_t outer = 1;
   std::size_t at = 0;
   while (at < line.size()) {
     const std::size_t end = std::min(line.find(' ', at), line.size());
@@ -261,6 +264,13 @@ case_spec parse_case(const std::string& line) {
         throw std::invalid_argument("prec is f64 or f32");
       }
       precision = val == "f32" ? fbench_f32 : fbench_f64;
+    } else if (key == "layout") {
+      if (val != "tight" && val != "interleaved") {
+        throw std::invalid_argument("layout is tight or interleaved");
+      }
+      interleaved = val == "interleaved";
+    } else if (key == "outer") {
+      outer = parse_number<std::int64_t>(val, key);
     } else {
       throw std::invalid_argument("unknown case key " + std::string(key));
     }
@@ -268,7 +278,8 @@ case_spec parse_case(const std::string& line) {
   if (c.id.empty() || rank == 0) {
     throw std::invalid_argument("a case needs id and dims");
   }
-  c.layout = fbench::make_layout(kind, rank, dims, batch, sign, in_place, precision);
+  c.layout =
+      fbench::make_layout(kind, rank, dims, batch, sign, in_place, precision, interleaved, outer);
   return c;
 }
 

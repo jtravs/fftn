@@ -38,6 +38,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <iterator>
 #include <limits>
 #include <memory>
 #include <numeric>
@@ -228,22 +229,62 @@ void check_in_place(const shape_view& s, const side& in, const side& out) {
   }
   const side& real = in.complex ? out : in;
   const side& cplx = in.complex ? in : out;
+  // A shape from axes_r2c or axes_c2r with `padded` false is laid out for an out-of-place plan.
+  const std::string padded_hint =
+      " (FFTW's padded layout; axes_r2c and axes_c2r give it with padded = true)";
   if (s.axes[r - 1].n > 1 && (real.stride[r - 1] != 1 || cplx.stride[r - 1] != 1)) {
     reject("options.in_place", "needs the last axis contiguous on both sides (" + axis_name(r - 1) +
-                                   " strides 1) for a real transform");
+                                   " strides 1) for a real transform" + padded_hint);
   }
   for (std::size_t d = 0; d + 1 < r; ++d) {
     if (s.axes[d].n > 1 && real.stride[d] != 2 * cplx.stride[d]) {
-      reject("options.in_place",
-             "needs " + axis_name(d) + "'s real-side stride twice its complex-side stride");
+      reject("options.in_place", "needs " + axis_name(d) +
+                                     "'s real-side stride twice its complex-side stride" +
+                                     padded_hint);
     }
   }
   for (std::size_t b = 0; b < real.dist.size(); ++b) {
     if (s.batches[b].count > 1 && real.dist[b] != 2 * cplx.dist[b]) {
-      reject("options.in_place",
-             "needs " + batch_name(b) + "'s real-side distance twice its complex-side distance");
+      reject("options.in_place", "needs " + batch_name(b) +
+                                     "'s real-side distance twice its complex-side distance" +
+                                     padded_hint);
     }
   }
+}
+
+// The order the axes run in (DESIGN.md 9.3), whatever order the shape lists them in: widest
+// stride first, as a C-ordered array lists its dimensions, so that the contiguous axis runs
+// as rows and the others as columns over it. The transform does not depend on the order
+// (c2c, and the complex axes of a real transform; a real transform's halved axis stays last).
+// Axes of extent 1 never step and go first, out of the way. Ties keep the shape's order.
+void order_axes(const shape_view& s, side& in, side& out, plan_core& c) {
+  const std::size_t r = s.axes.size();
+  std::vector<std::size_t> order(r);
+  std::iota(order.begin(), order.end(), std::size_t{0});
+  const auto key = [&](std::size_t d) {
+    const bool unit = c.lengths[d] == 1;
+    return std::tuple(unit ? 1 : 0, magnitude(out.stride[d]), magnitude(in.stride[d]));
+  };
+  const auto end =
+      order.begin() + static_cast<std::ptrdiff_t>(s.kind == transform_kind::c2c ? r : r - 1);
+  std::stable_sort(order.begin(), end,
+                   [&](std::size_t a, std::size_t b) { return key(a) > key(b); });
+  if (std::ranges::is_sorted(order)) {
+    return;
+  }
+  const auto arrange = [&](auto& v) {
+    auto w = v;
+    for (std::size_t i = 0; i < r; ++i) {
+      w[i] = v[order[i]];
+    }
+    v = std::move(w);
+  };
+  arrange(in.extent);
+  arrange(in.stride);
+  arrange(out.extent);
+  arrange(out.stride);
+  arrange(c.lengths);
+  c.axis_of = std::move(order);
 }
 
 template <class T> plan_tables<T>& tables_of(plan_core& c) {
@@ -1124,6 +1165,8 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     return endpoint{.where = v.where, .stride = v.stride[axis]};
   };
   const int sign = static_cast<int>(s.dir);
+  // Axis d of the plan as the shape lists it (plan_core::axis_of), for describe().
+  const auto listed = [&c](std::size_t d) { return c.axis_of.empty() ? d : c.axis_of[d]; };
   // A strided complex axis d as the lanes over blocks of adjacent columns where they fit
   // (column_block; DESIGN.md 9.3, experiments X40 and X41): returns whether it was built.
   // `axis` names d in describe() when `extent` is not the plan's (a volume's plane). `real`:
@@ -1155,10 +1198,11 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
                        add_column_phase<T>(p, chain, d, extent, src, dst, dir, edges, block,
                                            kernels.complex_lanes, rad, settings.profile.line_bytes,
                                            settings.profile.fair_line_runs));
-    c.axis_notes.push_back(
-        "axis " + std::to_string(axis == SIZE_MAX ? d : axis) + " (n = " + std::to_string(n) +
-        "): " + what + (what[0] != '\0' ? ", " : "") + "lanes over blocks of " +
-        std::to_string(block) + " adjacent columns, radices " + chain.radix_text(n, rad));
+    c.axis_notes.push_back("axis " + std::to_string(listed(axis == SIZE_MAX ? d : axis)) +
+                           " (n = " + std::to_string(n) + "): " + what +
+                           (what[0] != '\0' ? ", " : "") + "lanes over blocks of " +
+                           std::to_string(block) + " adjacent columns, radices " +
+                           chain.radix_text(n, rad));
     c.strategy_note = "chain for the last axis' rows, the lanes over blocks of adjacent columns "
                       "for the others; each transform finished before the next";
     return true;
@@ -1173,6 +1217,77 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   const std::size_t lanes =
       forced_batch ? 0
                    : lanes_block<T>(s, in, out, settings, profile, chain, kernels.complex_lanes);
+  // The axes with more than one point, in the order they run (`order_axes`: the last first).
+  std::vector<std::size_t> active;
+  for (std::size_t i = r; i > 0; --i) {
+    if (c.lengths[i - 1] > 1) {
+      active.push_back(i - 1);
+    }
+  }
+  // Blocks of adjacent transforms (add_adjacent_transforms): the innermost batch dimension's
+  // transforms one element apart on both sides, every axis strided. Each axis's column_block
+  // for columns of its length, the transforms being the columns; the narrowest of them. The
+  // team program takes these blocks too: the one-thread rule, so that the bits agree.
+  // The radices of each axis's lanes over adjacent transforms (column_radices), and whether they
+  // are the chain's for every axis: only then can a team run the chain with the program's bits.
+  std::vector<std::vector<std::size_t>> adjacent_rad(r);
+  bool chain_radices = true;
+  if (s.kind == transform_kind::c2c && !s.batches.empty() && in.dist.back() == 1) {
+    for (const std::size_t d : active) {
+      adjacent_rad[d] = column_radices<T>(c.lengths[d], out.stride[d] * complex_bytes, settings,
+                                          profile, chain, kernels, c.isa_target != target::avx512);
+      chain_radices = chain_radices && adjacent_rad[d] == chain.radices(c.lengths[d]);
+    }
+  }
+  const bool team_chain = settings.profile.adjacent_team_chain && chain_radices;
+  const std::size_t adjacent = [&]() -> std::size_t {
+    // Where the profile says and the radices agree, a team program runs the chain
+    // (machine_profile::adjacent_team_chain).
+    if (lanes != 0 || s.kind != transform_kind::c2c || s.batches.empty() || active.empty() ||
+        !settings.lanes_columns || !settings.profile.adjacent_lanes ||
+        (settings.team_program && team_chain) ||
+        (settings.profile.adjacent_team_chain && !chain_radices) ||
+        (settings.strategy != strategy_choice::rules &&
+         settings.strategy != strategy_choice::lanes) ||
+        settings.in_factor != nullptr || settings.out_factor != nullptr ||
+        settings.scale_on_input || in.dist.back() != 1 || out.dist.back() != 1 ||
+        s.batches.back().count < 2) {
+      return 0;
+    }
+    // Within L1 (machine_profile::adjacent_min_bytes) the chain keeps a plan with one complex
+    // value per register, which the lanes cannot widen, and with more a plan whose axes are all
+    // of leaf lengths (X61).
+    constexpr std::size_t leaf_axis = 16;
+    std::size_t bytes = p.transforms * static_cast<std::size_t>(complex_bytes);
+    bool short_axes = true;
+    for (const std::size_t d : active) {
+      bytes *= c.lengths[d];
+      short_axes = short_axes && c.lengths[d] <= leaf_axis;
+    }
+    if (bytes <= settings.profile.adjacent_min_bytes &&
+        (kernels.complex_lanes == 1 || short_axes)) {
+      return 0;
+    }
+    build_settings alone = settings;
+    alone.team_program = false;
+    std::size_t block = std::numeric_limits<std::size_t>::max();
+    for (const std::size_t d : active) {
+      if (magnitude(in.stride[d]) == 1 || magnitude(out.stride[d]) == 1) {
+        return 0;
+      }
+      const std::vector<std::size_t> extent{c.lengths[d], s.batches.back().count};
+      const auto two = [&](const side& v, slot where) {
+        return view{.where = where, .stride = {v.stride[d], 1}, .element_bytes = complex_bytes};
+      };
+      const std::size_t b = column_block<T>(0, extent, two(in, slot::in), two(out, slot::out),
+                                            line_edges(), alone, chain, kernels.complex_lanes);
+      if (b == 0) {
+        return 0;
+      }
+      block = std::min(block, b);
+    }
+    return block;
+  }();
   grid_split grid_plan = s.kind == transform_kind::c2c && r == 1
                              ? plan_grid<T>(c.lengths[0], in, out, settings, chain,
                                             kernels.complex_lanes, s.kind, c.in_place)
@@ -1242,7 +1357,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     }
     p.lanes = lanes;
     p.lane_unit = unit;
-    p.lane_tail = std::move(tail);
+    p.lane_tail.assign(std::make_move_iterator(tail.begin()), std::make_move_iterator(tail.end()));
     c.built = strategy_choice::lanes;
     const bool real = s.kind != transform_kind::c2c;
     c.axis_notes.push_back("axis 0 (n = " + std::to_string(n) + "): on the lanes' tile, " +
@@ -1253,6 +1368,41 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
                       "blocks of " +
                       std::to_string(unit) +
                       "; each row's own chain on a tile of the block's rows)";
+  } else if (adjacent != 0) {
+    // The lanes strategy over blocks of `adjacent` adjacent transforms (DESIGN.md 9.3, task
+    // 4.3): every axis of the block's transforms runs as a lanes phase, its lines one per
+    // transform of the block, whose C neighbours are one vector access. A body of those phases
+    // for whole blocks and a tail for blocks of C, as for the lanes over rows.
+    const std::size_t unit = kernels.complex_lanes;
+    const std::vector<std::vector<std::size_t>>& rad = adjacent_rad;
+    c.adjacent_team_chain = team_chain;
+    const auto phases = [&](program& q, std::size_t block) {
+      for (std::size_t i = 0; i < active.size(); ++i) {
+        const std::size_t d = active[i];
+        const view& src = i == 0 ? in_view : out_view;
+        std::vector<stage> st;
+        scratch = std::max(
+            scratch, chain.c2c_lanes(c.lengths[d], sign, at(src, d), 1, at(out_view, d), 1,
+                                     c2c_edges(opts, settings, i == 0, i + 1 == active.size()),
+                                     block, st, true, rad[d]));
+        add_phase(q, d, in.extent, src, out_view, std::move(st));
+      }
+    };
+    phases(p, adjacent);
+    program tail;
+    phases(tail, unit);
+    p.lanes = adjacent;
+    p.lane_unit = unit;
+    p.lane_tail = std::move(tail.records);
+    c.built = strategy_choice::lanes;
+    for (const std::size_t d : active) {
+      c.axis_notes.push_back("axis " + std::to_string(listed(d)) +
+                             " (n = " + std::to_string(c.lengths[d]) + "): lanes, radices " +
+                             chain.radix_text(c.lengths[d], rad[d]));
+    }
+    c.strategy_note = "lanes over blocks of " + std::to_string(adjacent) +
+                      " adjacent transforms, one element apart, every axis a lanes phase, " +
+                      "then blocks of " + std::to_string(unit);
   } else if (real_grid.phases != 0) {
     const std::size_t n = c.lengths[0];
     const bool r2c = s.kind == transform_kind::r2c;
@@ -1423,8 +1573,9 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       const std::size_t need =
           chain.c2c_line(c.lengths[d], sign, at(src, e), at(dst, e), aliased, edges, st);
       lines(e, extent, src, dst, need, std::move(st));
-      c.axis_notes.push_back("axis " + std::to_string(d) + " (n = " + std::to_string(c.lengths[d]) +
-                             "): radices " + chain.radix_text(c.lengths[d]));
+      c.axis_notes.push_back("axis " + std::to_string(listed(d)) +
+                             " (n = " + std::to_string(c.lengths[d]) + "): radices " +
+                             chain.radix_text(c.lengths[d]));
     };
     // A team program takes plane order only for volumes of at least team_min_planes planes:
     // its plane phase has one line per plane, so fewer planes than members leave members
@@ -1455,7 +1606,8 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
                        r == 1 ? opts.scale : 1.0, st);
     lines(r - 1, in.extent, in_view, out_view, need, std::move(st));
     c.axis_notes.push_back(
-        "axis " + std::to_string(r - 1) + " (n = " + std::to_string(c.lengths[r - 1]) + "): " +
+        "axis " + std::to_string(listed(r - 1)) + " (n = " + std::to_string(c.lengths[r - 1]) +
+        "): " +
         chain.real_text(c.lengths[r - 1], true, in.stride[r - 1] != 1 || out.stride[r - 1] != 1));
     for (std::size_t i = r - 1; i > 0; --i) {
       const std::size_t d = i - 1;
@@ -1468,7 +1620,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       const std::size_t cneed =
           chain.c2c_line(n, -1, at(out_view, d), at(out_view, d), true, edges, cs);
       lines(d, out.extent, out_view, out_view, cneed, std::move(cs));
-      c.axis_notes.push_back("axis " + std::to_string(d) + " (n = " + std::to_string(n) +
+      c.axis_notes.push_back("axis " + std::to_string(listed(d)) + " (n = " + std::to_string(n) +
                              "): c2c forward, radices " + chain.radix_text(n));
     }
   } else if (c2r_packed(s, in, out, c.in_place, settings)) {
@@ -1618,7 +1770,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       const std::size_t cneed =
           chain.c2c_line(n, +1, at(src, d), at(work, d), src.where == work.where, line_edges(), cs);
       lines(d, in.extent, src, work, cneed, std::move(cs));
-      c.axis_notes.push_back("axis " + std::to_string(d) + " (n = " + std::to_string(n) +
+      c.axis_notes.push_back("axis " + std::to_string(listed(d)) + " (n = " + std::to_string(n) +
                              "): c2c backward, radices " + chain.radix_text(n));
     }
     const view& src = r > 1 && !c.in_place ? block_view : in_view;
@@ -1627,7 +1779,8 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
         chain.c2r_line(c.lengths[r - 1], at(src, r - 1), at(out_view, r - 1), opts.scale, st);
     lines(r - 1, out.extent, src, out_view, need, std::move(st));
     c.axis_notes.push_back(
-        "axis " + std::to_string(r - 1) + " (n = " + std::to_string(c.lengths[r - 1]) + "): " +
+        "axis " + std::to_string(listed(r - 1)) + " (n = " + std::to_string(c.lengths[r - 1]) +
+        "): " +
         chain.real_text(c.lengths[r - 1], false, src.stride[r - 1] != 1 || out.stride[r - 1] != 1));
   }
   for (std::size_t b = 0; b < p.batch_loops; ++b) {
@@ -1761,6 +1914,7 @@ std::shared_ptr<plan_core> build_plan_core(const shape_view& s, const options& o
   }
   std::tie(c->in_lo, c->in_hi) = span_of(s, in);
   std::tie(c->out_lo, c->out_hi) = span_of(s, out);
+  order_axes(s, in, out, *c);
 
   // The scale is applied in the plan's precision: it must be finite there, and a non-zero
   // scale must not vanish. (Converting a double beyond float's range to float is undefined,
@@ -1824,9 +1978,10 @@ std::shared_ptr<plan_core> build_plan_core(const shape_view& s, const options& o
   // blocks or (X43b arm VT) a volume's order.
   // X43b arm VT: a team core also where only a volume's order would differ.
   const bool team_order = r == 3 && settings.profile.team_volume_planes;
-  if (s.kind == transform_kind::c2c && r > 1 &&
-      (settings.profile.column_team_bytes != 0 || team_order ||
-       settings.profile.column_wide_bytes != 0) &&
+  if (s.kind == transform_kind::c2c &&
+      ((r > 1 && (settings.profile.column_team_bytes != 0 || team_order ||
+                  settings.profile.column_wide_bytes != 0)) ||
+       c->adjacent_team_chain) &&
       !settings.team_program) {
     build_settings team = settings;
     team.team_program = true;
@@ -1948,8 +2103,13 @@ std::string describe(const plan_core& core) {
     o << (core.dir == direction::forward ? " forward" : " backward");
   }
   o << ", " << (core.prec == precision::f64 ? "double" : "float") << ", n = ";
-  for (std::size_t d = 0; d < core.lengths.size(); ++d) {
-    o << (d == 0 ? "" : " x ") << core.lengths[d];
+  // The lengths as the shape lists its axes (plan_core::axis_of).
+  std::vector<std::size_t> listed = core.lengths;
+  for (std::size_t d = 0; d < core.axis_of.size(); ++d) {
+    listed[core.axis_of[d]] = core.lengths[d];
+  }
+  for (std::size_t d = 0; d < listed.size(); ++d) {
+    o << (d == 0 ? "" : " x ") << listed[d];
   }
   o << ", " << core.prog.transforms << (core.prog.transforms == 1 ? " transform" : " transforms")
     << (core.in_place ? ", in place" : ", out of place") << "\n";
@@ -1987,35 +2147,37 @@ std::string describe(const plan_core& core) {
   }
   o << "workspace: " << core.bytes << " bytes (scratch lines a, b of " << core.scratch_line
     << " complex each; block of " << core.block_elements << " complex)\n";
-  o << "program:\n";
-  std::vector<std::size_t> ends;
-  for (std::size_t i = 0; i < core.prog.records.size(); ++i) {
-    while (!ends.empty() && ends.back() == i) {
-      ends.pop_back();
-    }
-    const std::string indent(2 * (ends.size() + 1), ' ');
-    const record& rec = core.prog.records[i];
-    if (const loop* l = std::get_if<loop>(&rec)) {
-      o << indent << "loop " << (l->kind == loop_kind::batch ? "batch" : "lines") << " x"
-        << l->count << " (steps in bytes: in " << l->step[0] << ", out " << l->step[1] << ", block "
-        << l->step[2] << (l->step[3] != 0 ? ", twiddles " + std::to_string(l->step[3]) : "") << ")";
-      if (l->start != std::array<std::ptrdiff_t, moving_slots>{}) {
-        o << " from (in " << l->start[0] << ", out " << l->start[1] << ", block " << l->start[2]
-          << ")";
+  const auto list = [&o](const std::vector<record>& records) {
+    std::vector<std::size_t> ends;
+    for (std::size_t i = 0; i < records.size(); ++i) {
+      while (!ends.empty() && ends.back() == i) {
+        ends.pop_back();
       }
-      o << "\n";
-      ends.push_back(l->body_end);
-      continue;
+      const std::string indent(2 * (ends.size() + 1), ' ');
+      const record& rec = records[i];
+      if (const loop* l = std::get_if<loop>(&rec)) {
+        o << indent << "loop " << (l->kind == loop_kind::batch ? "batch" : "lines") << " x"
+          << l->count << " (steps in bytes: in " << l->step[0] << ", out " << l->step[1]
+          << ", block " << l->step[2]
+          << (l->step[3] != 0 ? ", twiddles " + std::to_string(l->step[3]) : "") << ")";
+        if (l->start != std::array<std::ptrdiff_t, moving_slots>{}) {
+          o << " from (in " << l->start[0] << ", out " << l->start[1] << ", block " << l->start[2]
+            << ")";
+        }
+        o << "\n";
+        ends.push_back(l->body_end);
+        continue;
+      }
+      const auto& st = std::get<stage>(rec);
+      o << indent << st.name << ": " << slot_name(st.src) << " -> " << slot_name(st.dst) << ", "
+        << st.units << " units in " << st.chunks << (st.chunks == 1 ? " chunk" : " chunks") << "\n";
     }
-    const auto& st = std::get<stage>(rec);
-    o << indent << st.name << ": " << slot_name(st.src) << " -> " << slot_name(st.dst) << ", "
-      << st.units << " units in " << st.chunks << (st.chunks == 1 ? " chunk" : " chunks") << "\n";
-  }
+  };
+  o << "program:\n";
+  list(core.prog.records);
   if (core.prog.lanes != 0) {
     o << "lanes tail (blocks of " << core.prog.lane_unit << " rows, the last padded):\n";
-    for (const stage& st : core.prog.lane_tail) {
-      o << "  " << st.name << ": " << slot_name(st.src) << " -> " << slot_name(st.dst) << "\n";
-    }
+    list(core.prog.lane_tail);
   }
   return o.str();
 }

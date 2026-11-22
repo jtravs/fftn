@@ -22,11 +22,18 @@ struct side {
   std::int64_t dist = 0;               // elements between transforms
   std::int64_t count = 0;              // logical elements per transform
   std::size_t bytes = 0;               // whole buffer, all transforms, in the case's precision
+  // The interleaved layout (fbench_case::interleave): a block holds `block` transforms, each
+  // element `stride` apart, and blocks lie `block_dist` apart. Otherwise `block` is the whole
+  // batch and `stride` 1.
+  std::int64_t stride = 1;
+  std::int64_t block = 1;
+  std::int64_t block_dist = 0;
 
   // Element offset of logical flat index `flat` (row-major) in transform `b`.
   [[nodiscard]] std::int64_t offset(std::int64_t b, std::int64_t flat) const {
     const std::int64_t last = shape.at(static_cast<std::size_t>(rank - 1));
-    return b * dist + (flat / last) * last_phys + flat % last;
+    return (b / block) * block_dist + (b % block) * dist +
+           stride * ((flat / last) * last_phys + flat % last);
   }
 };
 
@@ -34,7 +41,9 @@ struct layout {
   std::int32_t kind = fbench_c2c;
   int rank = 1;
   std::array<std::int64_t, 3> dims{}; // logical transform lengths
-  std::int64_t batch = 1;
+  std::int64_t batch = 1;             // all transforms (blocks times `interleave`)
+  std::int64_t interleave = 1;        // fbench_case::interleave
+  std::int64_t outer = 1;             // fbench_case::outer
   int sign = -1;
   bool in_place = false;
   std::int32_t precision = fbench_f64;
@@ -57,9 +66,12 @@ struct layout {
 
 // Builds a layout with FFTW's conventions: rows contiguous, transforms contiguous, r2c
 // output of n/2+1 complex values in the last dimension, in-place real arrays padded to
-// 2(n/2+1) reals. Throws std::invalid_argument for an impossible case.
+// 2(n/2+1) reals. With `interleaved`, the layout of fbench_case::interleave instead (not for
+// in-place real transforms): `batch` transforms per block, `outer` blocks. Throws
+// std::invalid_argument for an impossible case.
 layout make_layout(std::int32_t kind, int rank, const std::array<std::int64_t, 3>& dims,
-                   std::int64_t batch, int sign, bool in_place, std::int32_t precision);
+                   std::int64_t batch, int sign, bool in_place, std::int32_t precision,
+                   bool interleaved = false, std::int64_t outer = 1);
 
 // The functions below read and write arrays of double whatever the case's precision:
 // reals_in() or reals_out() values at the case's element offsets. The harness converts

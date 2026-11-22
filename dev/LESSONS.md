@@ -606,7 +606,23 @@ that a batch leaf of 12 won on 1–1.25 MiB of L2 and lost on 2 MiB (12 × 64 1.
 chain's time on Granite and Sapphire Rapids). Prefer the private levels for a key, and rent an
 hour of each family before trusting a rule there. [X58](experiments/X58-intel-keys.md).
 
-3.29 **A third array costs only past a cache level, and removing it can bring power-of-two
+3.29 **When the fastest dimension of an array is not transformed, transform its neighbours
+together.** The columns of a matrix, the planes (y, x) of a (y, x, w) array and a middle axis
+all leave every transformed element `batch` elements from the next, a cache line or more,
+while the next transform's element sits beside it. One transform at a time through a strided
+chain ran 1.4–3.9 times FFTW's time on an M5 Max; running each axis as lanes over blocks of
+adjacent transforms (C of them one vector access, the block in a tile in scratch) took 86
+such cases to 0.48 of that time on the M5 Max, 0.29 on an EPYC 7763 and 0.37 on a Xeon 6240,
+and to 0.80–0.86 of FFTW's. Within L1 the strided chain is not slow: there the lanes lost on
+one complex per register (M5 Max double) and on leaf lengths of 16 or fewer, while on `avx2`
+and `avx512` longer axes still gained (Xeon: 32 × 16 0.23). Count the whole array against L1,
+not one block: blocks that each fit L1 still meet cold memory one after another. And plan the
+team's share before adopting a one-thread win: a block of transforms that a team cannot split
+lost up to 2.4 times at 8 lanes on the Xeon on interleaved planes of 8–64 transforms, where the
+chain lets every member take lines of each transform.
+[X61](experiments/X61-adjacent-transforms.md).
+
+3.30 **A third array costs only past a cache level, and removing it can bring power-of-two
 strides back.** A c2r plane out of place that keeps its intermediate in scratch (input + scratch +
 output) ran 1.62 times its in-place time on a Xeon 6240 at 256² (1.55 MB against a 1 MiB L2,
 16 times the L2 misses) and 2.03 at 1024² (25 MB against a 24.75 MiB L3, 7 times the LLC misses).

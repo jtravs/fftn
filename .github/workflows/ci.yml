@@ -93,6 +93,11 @@ jobs:
   gate:
     uses: ./.github/workflows/gate.yml
     with:
+      # The sanitizer job grew from about 20 to 70-90 minutes with the depth-first, Bluestein and
+      # team tests (Passes.SplitOnlyWhereItFits, Passes.RaderInEveryPosition and
+      # Depth.EveryTargetPrecisionDirectionAndSplit take 14-15 minutes each under ASan) and was
+      # cancelled at 90 on main on 2026-11-19; 150 until those tests are trimmed.
+      timeout: 150
       # Clang 23 is the development compiler. Its ASan + UBSan job finds what the code does
       # wrong on every platform; it leaves out the old x86 targets (x86_v2, avx), with which
       # every kernel test runs twice more and the job passed its 90-minute timeout against
