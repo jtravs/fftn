@@ -610,22 +610,24 @@ TEST(Schedule, OwnedTasksPartition) {
 // L2.
 TEST(Schedule, GridSizesFromCaches) {
   const std::filesystem::path data(FFTN_PLATFORM_DATA);
-  const auto sizes = [&](const char* file) {
+  // The architecture is the recorded machine's, never the host's (X62: the Bluestein limit of
+  // Zen 3's class is set on x86-64 only).
+  const auto sizes = [&](const char* file, bool x86_64) {
     machine_profile p;
-    fftn::detail::set_grid_sizes(p, fftn::detail::load_topology(data / file).classes.at(0));
+    fftn::detail::set_grid_sizes(p, fftn::detail::load_topology(data / file).classes.at(0), x86_64);
     return p;
   };
   constexpr std::size_t kib = 1024;
-  const machine_profile xeon = sizes("linux-intel-xeon-gold-6240.sysfs"); // 32 KiB, 1 MiB
+  const machine_profile xeon = sizes("linux-intel-xeon-gold-6240.sysfs", true); // 32 KiB, 1 MiB
   EXPECT_EQ(xeon.grid_min_bytes, 512 * kib);
   EXPECT_EQ(xeon.grid_three_bytes, 1024 * kib);
   EXPECT_EQ(xeon.grid_block_bytes, 32 * kib);
   EXPECT_EQ(xeon.grid_fuse_bytes, 256 * kib);
-  const machine_profile epyc = sizes("linux-amd-epyc-7763.sysfs"); // 32 KiB, 512 KiB
+  const machine_profile epyc = sizes("linux-amd-epyc-7763.sysfs", true); // 32 KiB, 512 KiB
   EXPECT_EQ(epyc.grid_min_bytes, 256 * kib);
   EXPECT_EQ(epyc.grid_three_bytes, 512 * kib);
   EXPECT_EQ(epyc.grid_block_bytes, 32 * kib);
-  const machine_profile m5 = sizes("macos-apple-m5-max.sysctl"); // 128 KiB, 16 MiB for 6
+  const machine_profile m5 = sizes("macos-apple-m5-max.sysctl", false); // 128 KiB, 16 MiB for 6
   EXPECT_EQ(m5.grid_min_bytes, 128 * kib);
   EXPECT_EQ(m5.grid_three_bytes, 2048 * kib);
   EXPECT_EQ(m5.grid_block_bytes, 128 * kib);
@@ -637,7 +639,7 @@ TEST(Schedule, GridSizesFromCaches) {
   // Bluestein lengths avoid large powers of two there too (X36).
   EXPECT_EQ(m5.bluestein_pow2_part_bytes, 32 * kib);
   EXPECT_EQ(xeon.bluestein_pow2_part_bytes, std::numeric_limits<std::size_t>::max());
-  EXPECT_EQ(epyc.bluestein_pow2_part_bytes, 32 * kib);
+  EXPECT_EQ(epyc.bluestein_pow2_part_bytes, 16 * kib); // half the L1 on Zen 3's class (X62)
   // Lengths that are not powers of two stay chains longer where the L2 is shared (X29).
   EXPECT_EQ(m5.chain_part_bytes, 16 * kib);
   EXPECT_EQ(m5.chain_mixed_bytes, 256 * kib);
