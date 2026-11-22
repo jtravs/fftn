@@ -63,3 +63,10 @@ kind = "c2c"
 dims = [15]
 batch = [2, 3, 4]
 direction = ["bwd"]
+
+[[group]]
+name = "x62-bluestein-wide"
+note = "Bluestein lengths whose convolution's power-of-two part a limit could move"
+kind = "c2c"
+dims = [509, 1013, 1019, 1021, 2027, 2039, 4093, 10403, 131071, 999983]
+batch = [1]
