@@ -72,6 +72,23 @@ the short rows), every round under heavy load (other processes 91–94 cores of 
   evidence); K ÷ `main`'s forced leaf about 0.85. 32 points 0.93–1.17 (3 rows 1.17): no gain to
   build a rule on.
 
+- Run 20261122-181832-866a (Slurm 515470, 16 rounds, every one started overloaded, band ±1.00
+  %), Bluestein limits on `main` ÷ `main`, with the plans they gave:
+
+  | case | `main`'s M | 16 KiB (1024 points): M, time | 8 KiB (512 points): M, time |
+  |---|---|---|---|
+  | 1013, 1019, 1021 | 2048 | 2160, 0.92–0.93 | 2160, 0.93 |
+  | 1018 = 2 × 509 | 2048 (whole line) | two copies of 509 at 1024, **1.37** | 2160 (whole line), 0.94 |
+  | 509 | 1024 | 1024, 1.00 | 1080, **1.05** |
+  | 131071 | 276480 | 268800, 0.98 | 268800, 0.98 |
+  | 999983 | 2073600 | 2073600, 1.00 | 2032128, 0.95 |
+  | 2027, 2039, 4093, 10403 | (unchanged) | 0.99–1.00 | 0.99–1.00 |
+
+  A power-of-two part of the L1's size (2048 points) is what loses: half the L1 moves only the
+  M of 2048 and 276480 and gains on each. At 1018 it also flips X36b's whole-line rule (the whole
+  line's 2160 is longer than two copies' 1024), and the copies, lane passes over s = C = 2 copies,
+  cost 1.37 (X36b measured them at 16.3 against 10.0 ns per point).
+
 ## Hypothesis
 
 (K) A batch leaf that holds all R inputs and outputs in registers is a copy through the stack once
@@ -80,7 +97,11 @@ inputs and outputs and reload them. Moving each element when the codelet asks fo
 form, which X53's arm B2 tried before X54 with broadcasts that GCC turned into shuffles) leaves the
 codelet's own order (X54's fitted order) to decide the spills. (L) With that leaf, a batch of
 64-point rows beats the 4 × 16 chain per row at every batch the screens show up to 1024 rows,
-which takes 64 × 2 backward and 64 × 16 under FFTW's time.
+which takes 64 × 2 backward and 64 × 16 under FFTW's time. (C) On Zen 3 a Bluestein convolution
+whose power-of-two part is the L1's size (2048 complex doubles) loses to a 7-smooth length a
+little longer (X36's effect one step further), so the limit belongs at half the L1; and a stage
+over C copies should keep the whole line even when its convolution is the longer, since the
+copies' lane passes cost about 1.6 times as much per point.
 
 ## Change under test
 
@@ -95,15 +116,25 @@ Arms are commits of branch `exp/x62-epyc-tail` on `main` 021c117 (the base, arm 
   `avx2` double plan (the ISA target and its 16 registers, AGENTS.md section 6), as X53's table;
   no `avx512`, NEON or float plan changes (the `avx512` profile takes no leaf of 64).
 
+- **C** (94ed7f3, on L): on Zen 3's class only (`zen3_like` in `set_grid_sizes`: x86-64, a
+  private L2 under 1 MiB, at least 2 MiB of L3 per CPU; Zen 4, Zen 5 and the Ice Lake VMs share
+  the Bluestein branch and keep the L1's size), `bluestein_pow2_part_bytes` is half the L1 and
+  `bluestein_whole_lanes` (new) lets a stage over s = C copies take the whole line, while the line
+  is not long, whatever the two convolutions' lengths. Both precisions, every ISA target that
+  machine runs (it has only `avx2` and the older ones; 16 registers). Reach by key: Zen 2 and Zen 3
+  machines. One change in purpose (the Bluestein length on Zen 3); the second field exists so
+  that the first does not split 1018 into copies.
+
 ## Method
 
 - Judging, EPYC 7763 (DMOG, GCC 16.2, `avx2`, one thread), `fbench_remote.py submit --serial`,
   interleaved process rounds, A/A control:
   1. K: catalogue `x62`, filter `^c2c-(64|32)-`, arms 0 and K both with `BATCH_LEAVES=own`.
   2. L: catalogue `x62`, filter `^c2c-64-`, arms 0, L and FFTW.
-  3. L: the exit check's cases (standard catalogue, filter `^c2c-[0-9]+-b`, tier `full`), arms
-     0, L, FFTW.
-  4. L: tracking tier, arms 0 and L.
+  3. L and C: the exit check's cases (standard catalogue, filter `^c2c-[0-9]+-b`, tier `full`),
+     arms L, 0, C, FFTW (L the baseline: L ÷ 0 is read as the inverse of 0 ÷ L).
+  4. L and C: tracking tier, arms L, 0, C.
+  5. C: catalogue `x62`, the Bluestein lines, arms L, C, FFTW.
 - **The moved cases** of L are the c2c cases of one axis of 64 contiguous points in one batch
   dimension of 2 to 1024 rows, whose plan note reads `batch leaf radix-64` under L and `4 x 16`
   under 0. No other plan can change.
@@ -119,6 +150,16 @@ Arms are commits of branch `exp/x62-epyc-tail` on `main` 021c117 (the base, arm 
     and 4; (d) tracking tier, L ÷ 0: geometric mean at most 1 + band and no unmoved case past
     1 + band + 2 % unless its plan is unchanged and its code byte-identical (placement).
   - 64 × 2 backward and 64 × 16 against FFTW are reported, not judged.
+  - C, judged against L (*amendment, written after runs 1 and 2 had started and before any run
+    of C; runs 3 and 4 were resubmitted with C as a fourth arm, L as the baseline*): run 5,
+    catalogue `x62`, its Bluestein lines (c2c double and float, r2c and c2r), arms L, C, FFTW; runs
+    3 and 4 with arms L, 0, C (and FFTW in 3). **The moved cases** of C are those whose plan note
+    differs between L and C. C is adopted if (a) over the moved cases of runs 3 and 5 the geometric
+    mean of C ÷ L is at most 0.97 with its interval below 1 − band; (b) no moved case is slower
+    than 1 + band (one `--serial` re-run decides a case past it; if it stands, C is rejected);
+    (c) tracking tier (run 4), C ÷ L: geometric mean at most 1 + band and no unmoved case past
+    1 + band + 2 % unless its plan is unchanged and its code byte-identical. 1018 against FFTW is
+    reported, not judged.
   - The Xeon and the Mac are not run: their default plans cannot change (no `avx2` double plan), and
     K's code is in an `avx2`-region unit that their plans do not call.
 
