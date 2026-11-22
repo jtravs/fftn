@@ -207,7 +207,7 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
     // of two at 4093-32749 (two scratch lines a power of two apart); 552960 (2^12 x 135) lost
     // to 2^19 (1.17), so the limit is the L1's size. Experiment X62, on Zen 3's class only
     // (zen3_like; Zen 4 and 5 and the Ice Lake VMs share this branch, unmeasured): half the
-    // L1, and a stage over C copies over the whole line: 1013-1021 and 1018 took 0.92-0.94 of
+    // L1, and a stage over C copies over the whole line: 1013-1021 and 1018 took 0.93 of
     // their time with M = 2160 for 2048, 131071 0.98 (268800 for 276480).
     p.bluestein_pow2_part_bytes = zen3_like ? c.l1d.size / 2 : c.l1d.size;
     p.bluestein_whole_lanes = zen3_like;

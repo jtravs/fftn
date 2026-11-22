@@ -34,6 +34,7 @@
 #include <complex>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -892,7 +893,12 @@ TEST(Passes, ScratchOnlyWhenUsed) {
 // plain "2 x bluestein 509" where C = 1. Both are within tolerance (the oracle suites).
 template <class T> void few_copies_take_the_whole_line(fftn::isa t) {
   const auto shape = fftn::rows_c2c<T>(std::size_t{2} * 509, 1, fftn::direction::forward);
-  const auto core = make_plan_core(fftn::detail::view_of(shape), {.force_isa = t}, {});
+  // Not the host's profile: Zen 3's limit and whole-lane flag (X62) would decide here.
+  build_settings settings;
+  settings.profile.bluestein_pow2_part_bytes = std::numeric_limits<std::size_t>::max();
+  settings.profile.long_convolution_bytes = std::size_t{8} * 1024 * 1024;
+  settings.profile.bluestein_whole_lanes = false;
+  const auto core = make_plan_core(fftn::detail::view_of(shape), {.force_isa = t}, settings);
   const std::string listing = joined(stage_names(*core));
   if (lanes_of<T>(t) >= 2) {
     EXPECT_NE(listing.find("Q 1018, "), std::string::npos) << fftn::isa_name(t) << listing;
