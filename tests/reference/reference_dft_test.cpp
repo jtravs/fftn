@@ -136,6 +136,39 @@ TEST(ReferenceDft, SampledBinsEqualTheFullTransform) {
   }
 }
 
+// The full transforms come from a store that keeps only the forward transform and reads the
+// backward one from it, bin k from bin (n - k) mod n: that is bit for bit what a fresh
+// evaluation of either sign gives (the overload with a list of bins is never stored), for
+// lengths of every residue modulo 8, primes and the suites' long rows, whichever sign is
+// asked for first.
+TEST(ReferenceDft, BothSignsShareOneEvaluation) {
+  input_source src(5);
+  for (const std::size_t n :
+       std::initializer_list<std::size_t>{1, 2, 3, 4, 5, 6, 7, 8, 9, 12, 97, 100, 151, 1000}) {
+    for (const int first : {-1, 1}) {
+      const auto x = widen(src.complexes<double>(n));
+      std::vector<std::size_t> all(n);
+      for (std::size_t k = 0; k < n; ++k) {
+        all[k] = k;
+      }
+      const auto fresh_fwd = reference::c2c(-1, x, all);
+      const auto fresh_bwd = reference::c2c(1, x, all);
+      const auto stored_first = reference::c2c(first, x);
+      const auto stored_second = reference::c2c(-first, x);
+      const auto& want_first = first < 0 ? fresh_fwd : fresh_bwd;
+      const auto& want_second = first < 0 ? fresh_bwd : fresh_fwd;
+      ASSERT_EQ(stored_first.size(), n);
+      ASSERT_EQ(stored_second.size(), n);
+      for (std::size_t k = 0; k < n; ++k) {
+        SCOPED_TRACE("n = " + std::to_string(n) + ", bin " + std::to_string(k));
+        expect_same(fresh_bwd[k], fresh_fwd[(n - k) % n]);
+        expect_same(stored_first[k], want_first[k]);
+        expect_same(stored_second[k], want_second[k]);
+      }
+    }
+  }
+}
+
 TEST(ReferenceDft, RealTransformsAgreeWithComplex) {
   input_source src(2);
   for (const std::size_t n : std::initializer_list<std::size_t>{1, 2, 3, 8, 15, 64}) {

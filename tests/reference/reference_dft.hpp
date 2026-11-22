@@ -37,7 +37,9 @@ exact_complex unit_root(int sign, std::size_t m, std::size_t n);
 // the life of the process (thread-safe), since the analytic checks look them up often.
 const std::vector<exact_complex>& unit_roots(int sign, std::size_t n);
 
-// The DFT of x (length n) with exponent sign: all n outputs, or the listed bins.
+// The DFT of x (length n) with exponent sign: all n outputs, or the listed bins. All n
+// outputs of an input already transformed (in either direction) come from a bounded
+// per-process store, bit for bit what a new evaluation would give.
 std::vector<exact_complex> c2c(int sign, std::span<const std::complex<double>> x);
 std::vector<exact_complex> c2c(int sign, std::span<const std::complex<double>> x,
                                std::span<const std::size_t> bins);

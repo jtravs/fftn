@@ -9,8 +9,10 @@
 // include-cleaner would instead name the internal headers it happens to use.
 #include <boost/multiprecision/cpp_bin_float.hpp> // NOLINT(misc-include-cleaner): as above
 
+#include <bit>
 #include <complex>
 #include <cstddef>
+#include <cstdint>
 #include <map>
 #include <mutex>
 #include <numeric>
@@ -229,8 +231,71 @@ std::vector<exact_complex> c2c(int sign, std::span<const std::complex<double>> x
   return out;
 }
 
+// Full transforms are remembered for the life of the process, by the bits of the input:
+// the suites that force every instruction set, both precisions' plans of one input, both
+// directions and every edge variant ask for the same transform again and again (the same
+// rows on each target, with scales and output factors applied afterwards), and at O(n^2)
+// in 113-bit arithmetic those repeats were most of the sanitizer job's time. Only the
+// forward transform is stored: bin k of the backward one is bin (n - k) mod n of the
+// forward one, bit for bit, since both sum the same twiddle (w+[m] is the conjugate of
+// w-[m] in the tables, and w-[n - m] is that conjugate exactly) in the same order
+// (ReferenceDft.BothSignsShareOneEvaluation holds this). The store is bounded and starts
+// afresh when full; the overloads with a list of bins are never remembered.
+namespace {
+
+constexpr std::size_t memo_limit_bytes = std::size_t{256} << 20U;
+
+std::vector<std::uint64_t> bits_of(std::span<const std::complex<double>> x) {
+  std::vector<std::uint64_t> key;
+  key.reserve(2 * x.size());
+  for (const std::complex<double>& v : x) {
+    key.push_back(std::bit_cast<std::uint64_t>(v.real()));
+    key.push_back(std::bit_cast<std::uint64_t>(v.imag()));
+  }
+  return key;
+}
+
+std::vector<exact_complex> with_sign(int sign, const std::vector<exact_complex>& forward) {
+  if (sign < 0) {
+    return forward;
+  }
+  const std::size_t n = forward.size();
+  std::vector<exact_complex> out(n);
+  for (std::size_t k = 0; k < n; ++k) {
+    out[k] = forward[(n - k) % n];
+  }
+  return out;
+}
+
+} // namespace
+
 std::vector<exact_complex> c2c(int sign, std::span<const std::complex<double>> x) {
-  return c2c(sign, x, all_indices(x.size()));
+  static_cast<void>(checked_sign(sign));
+  if (x.empty()) {
+    return {};
+  }
+  static std::mutex lock;
+  static std::map<std::vector<std::uint64_t>, std::vector<exact_complex>> memo;
+  static std::size_t bytes = 0;
+  std::vector<std::uint64_t> key = bits_of(x);
+  {
+    const std::scoped_lock guard(lock);
+    if (const auto it = memo.find(key); it != memo.end()) {
+      return with_sign(sign, it->second);
+    }
+  }
+  std::vector<exact_complex> forward = c2c(-1, x, all_indices(x.size()));
+  std::vector<exact_complex> out = with_sign(sign, forward);
+  const std::size_t size = key.size() * sizeof(std::uint64_t) + x.size() * sizeof(exact_complex);
+  const std::scoped_lock guard(lock);
+  if (bytes + size > memo_limit_bytes) {
+    memo.clear();
+    bytes = 0;
+  }
+  if (size <= memo_limit_bytes && memo.try_emplace(std::move(key), std::move(forward)).second) {
+    bytes += size;
+  }
+  return out;
 }
 
 std::vector<exact_complex> r2c(std::span<const double> x, std::span<const std::size_t> bins) {
