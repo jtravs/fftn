@@ -679,6 +679,12 @@ TEST(Schedule, GridSizesFromCaches) {
   EXPECT_EQ(epyc86.fit_row_bytes, std::size_t{24} * 1024 * kib);
   EXPECT_EQ(xeon86.fit_row_bytes, 0U);
   EXPECT_EQ(m5.fit_row_bytes, 0U);
+  // A Bluestein stage over C copies keeps the whole line on Zen 3's class only (X62).
+  EXPECT_TRUE(epyc86.bluestein_whole_lanes);
+  EXPECT_FALSE(xeon86.bluestein_whole_lanes);
+  EXPECT_FALSE(m5.bluestein_whole_lanes);
+  EXPECT_FALSE(x86("linux-gcp-c4d-zen5.sysfs").bluestein_whole_lanes);
+  EXPECT_EQ(x86("linux-gcp-c4d-zen5.sysfs").bluestein_pow2_part_bytes, 48 * kib);
   // The c2r grid pairs in its first gather only where the L2 is shared (X29).
   EXPECT_TRUE(m5.c2r_paired_gather);
   EXPECT_FALSE(epyc.c2r_paired_gather);
@@ -801,10 +807,11 @@ TEST(Schedule, ProfilesOfRecordedMachines) {
                       never,     64 * mib, 2 * mib,   true,    0,        0, 0, 32 * kib, 128 * kib,
                       0,         0,        128 * kib, 2 * mib, 16 * kib, 4, 0, 0,        256 * kib,
                       0,         256 * kib}));
+  // X62: the EPYC 7763's Bluestein power-of-two limit is half its L1.
   EXPECT_EQ(fields("linux-amd-epyc-7763.sysfs", true),
             (planner_fields{256 * kib, 512 * kib, 32 * kib,  128 * kib, never,    0,
                             0,         16 * kib,  0,         16 * mib,  64 * mib, never,
-                            false,     0,         0,         0,         32 * kib, 256 * kib,
+                            false,     0,         0,         0,         16 * kib, 256 * kib,
                             0,         0,         128 * kib, 2 * mib,   8 * kib,  4,
                             0,         0,         0,         0,         0}));
   EXPECT_EQ(fields("linux-gcp-c4d-zen5.sysfs", true),

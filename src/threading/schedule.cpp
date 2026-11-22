@@ -205,8 +205,12 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
     // Experiment X36, EPYC 7763 (run 20261116-193025-47d4): Bluestein lengths with a
     // power-of-two part of at most 4096 double points took 0.36-0.69 of the time of powers
     // of two at 4093-32749 (two scratch lines a power of two apart); 552960 (2^12 x 135) lost
-    // to 2^19 (1.17), so the limit is the L1's size.
-    p.bluestein_pow2_part_bytes = c.l1d.size;
+    // to 2^19 (1.17), so the limit is the L1's size. Experiment X62, on Zen 3's class only
+    // (zen3_like; Zen 4 and 5 and the Ice Lake VMs share this branch, unmeasured): half the
+    // L1, and a stage over C copies over the whole line: 1013-1021 and 1018 took 0.92-0.94 of
+    // their time with M = 2160 for 2048, 131071 0.98 (268800 for 276480).
+    p.bluestein_pow2_part_bytes = zen3_like ? c.l1d.size / 2 : c.l1d.size;
+    p.bluestein_whole_lanes = zen3_like;
     // Experiment X51 (arm E), EPYC 7763: depth-first chains with a top of 4 (16 registers:
     // tops of 16 lost, X46) for rows that are not powers of two, from L2/4 to 4 L2, whose
     // power-of-two part is above L1/4: rows of a small odd part times 2^k took 0.63-0.82 of

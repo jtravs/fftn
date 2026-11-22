@@ -1078,6 +1078,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
                                   ? settings.profile.pow2_radix8_bytes
                                   : std::numeric_limits<std::size_t>::max(),
                               settings.profile.bluestein_pow2_part_bytes);
+  chain.use_whole_lanes(settings.profile.bluestein_whole_lanes);
   chain.force_convolution_length(settings.bluestein_length);
   if (const narrow_leaf_table* narrow = find_narrow_leaves(c.isa_target)) {
     chain.use_narrow_leaves(&of<T>(*narrow));

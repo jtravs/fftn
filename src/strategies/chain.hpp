@@ -178,6 +178,10 @@ public:
     conv_pow2_part_bytes_ = pow2_part_bytes;
   }
 
+  // A Bluestein stage over C copies takes the whole line while it is not long, whatever the
+  // convolutions' lengths (machine_profile::bluestein_whole_lanes; experiment X62).
+  void use_whole_lanes(bool on) noexcept { whole_lanes_ = on; }
+
   // Every Bluestein stage's convolution length m instead of the rule's, where m is at least
   // 2Q - 1 and 7-smooth (build_settings::bluestein_length; tests). 0: the rule's.
   void force_convolution_length(std::size_t m) noexcept { forced_conv_ = m; }
@@ -444,6 +448,7 @@ private:
   std::size_t conv_radix8_bytes_ = 0;
   std::size_t conv_pow2_part_bytes_ = SIZE_MAX;
   std::size_t forced_conv_ = 0; // force_convolution_length
+  bool whole_lanes_ = false;    // use_whole_lanes
   std::map<std::size_t, std::vector<std::complex<T>>> roots_;
   std::map<std::pair<std::size_t, std::size_t>, const T*> grouped_tables_;              // (n, R)
   std::map<std::tuple<std::size_t, std::size_t, std::size_t>, const T*> shared_tables_; // n, R, s

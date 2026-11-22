@@ -198,6 +198,15 @@ inline bool apply_tuning(fftn::detail::build_settings& s, std::string_view key,
     }
     return true;
   }
+  // X62's switch for a Bluestein stage over C copies (machine_profile::bluestein_whole_lanes).
+  if (key == "BLUESTEIN_WHOLE_LANES") {
+    if (value == "0" || value == "1") {
+      s.profile.bluestein_whole_lanes = value == "1";
+    } else {
+      error = bad + " (0 or 1)";
+    }
+    return true;
+  }
   for (const size_field& f : size_fields) {
     if (key == f.key) {
       const std::optional<std::size_t> v = parse_size(value, 1, true);

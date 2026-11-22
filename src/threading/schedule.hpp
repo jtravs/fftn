@@ -317,8 +317,18 @@ struct machine_profile {
   // is shared (Apple), chains of a power of two of 8192 points and more ran 1.4-1.7 times
   // as long per point as chains of 7-smooth lengths just above, so set_grid_sizes sets a
   // quarter of L1 there, and the L1's size on Zen-like caches (the EPYC 7763's 4093-32749:
-  // 0.36-0.69 of the time); on the Xeon 6240 a limit gained nothing.
+  // 0.36-0.69 of the time); on the Xeon 6240 a limit gained nothing. Zen 3's class (X62)
+  // takes half the L1: 1013-1021 took 0.92-0.93 of their time with M = 2160 for M = 2048.
   std::size_t bluestein_pow2_part_bytes = std::numeric_limits<std::size_t>::max();
+  // A Bluestein stage over as many copies of a prime as a register holds (s = C) runs as one
+  // stage over the whole line, while the line is not long (long_convolution_bytes), whatever
+  // the two convolutions' lengths; false: only where the whole line's convolution is no
+  // longer than the copies' together (strategies/chain.cpp, X36b). On s = C the copies' chains
+  // are lane passes without a grouped first pass (X36b: 16.3 against 10.0 ns per point on the
+  // EPYC 7763), so a somewhat longer whole convolution still wins: X62 sets it on Zen 3's
+  // class, where half the L1 as the power-of-two limit takes 1018's whole convolution to 2160
+  // points, longer than two of 509's 1024.
+  bool bluestein_whole_lanes = false;
   // A Bluestein or Rader convolution of a power-of-two length of more than this many bytes
   // takes X32's long-row radices (experiment X36; a convolution is a chain, never a grid):
   // grid_min_bytes where X32's long chains apply (Apple, Zen), four times the L2 on other

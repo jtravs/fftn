@@ -908,6 +908,33 @@ TEST(Passes, FewBluesteinCopiesTakeTheWholeLine) {
   }
 }
 
+// Experiment X62: with a power-of-two limit of 1024 points, 1018's whole convolution is
+// longer than two of 509's (M = 1024), so a stage over C = 2 copies takes the whole line only
+// where the profile says so (machine_profile::bluestein_whole_lanes), the copies elsewhere.
+template <class T> void whole_lanes_take_the_whole_line(fftn::isa t) {
+  if (lanes_of<T>(t) != 2) {
+    return;
+  }
+  const auto shape = fftn::rows_c2c<T>(std::size_t{2} * 509, 1, fftn::direction::forward);
+  for (const bool whole : {false, true}) {
+    build_settings settings;
+    settings.profile.bluestein_pow2_part_bytes = 1024 * 2 * sizeof(T);
+    settings.profile.long_convolution_bytes = std::size_t{8} * 1024 * 1024;
+    settings.profile.bluestein_whole_lanes = whole;
+    const auto core = make_plan_core(fftn::detail::view_of(shape), {.force_isa = t}, settings);
+    const std::string listing = joined(stage_names(*core));
+    EXPECT_NE(listing.find(whole ? "Q 1018, " : "Q 509, "), std::string::npos)
+        << fftn::isa_name(t) << listing;
+  }
+}
+
+TEST(Passes, WholeLanesTakeTheWholeLine) {
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    whole_lanes_take_the_whole_line<double>(t);
+    whole_lanes_take_the_whole_line<float>(t);
+  }
+}
+
 // The radix test knob refuses radices no pass has: radix 1 once selected a null entry.
 TEST(Passes, ForcedRadicesAreChecked) {
   // The view borrows the shape's axes, so the shape must outlive it.
