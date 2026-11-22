@@ -17,6 +17,11 @@
 // Cost: about 0.14 us per complex multiply-add, so a full 1024-point transform takes about
 // 0.15 s (measured on an Apple M5 Max). For large n, evaluate only some outputs with the
 // overloads that take a list of bins or indices.
+//
+// Results are remembered for the life of the process (in bounded stores), by the input's
+// bits and the outputs asked for: a repeated call returns at once, bit for bit what a new
+// evaluation would give. All n outputs of a complex transform in one direction give those
+// of the other direction too.
 
 #pragma once
 
