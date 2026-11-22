@@ -623,15 +623,19 @@ chain lets every member take lines of each transform.
 [X61](experiments/X61-adjacent-transforms.md).
 
 3.30 **A third array costs only past a cache level, and removing it can bring power-of-two
-strides back.** A c2r plane out of place that keeps its intermediate in scratch (input + scratch +
-output) ran 1.62 times its in-place time on a Xeon 6240 at 256² (1.55 MB against a 1 MiB L2,
-16 times the L2 misses) and 2.03 at 1024² (25 MB against a 24.75 MiB L3, 7 times the LLC misses).
-Below L2 the counters showed no cost. Building the intermediate in the output instead took the
-large cases to 0.80–0.91 of the time on an EPYC 7763 and 0.85–0.94 on an M5 Max. Inside the caches
-it lost, because the output's rows are a power of two long where the scratch rows (n/2 + 1
-complex values) were an odd multiple of 16 bytes: longer column chains to avoid set conflicts
-(EPYC 512² 1.08) and 1.14–1.27 on the M5 Max at 128²–640. Count the strides an intermediate's new
-home brings, not only its bytes. [X60](experiments/X60-c2r-two-arrays.md).
+strides back; where the two cross depends on the machine.** A c2r plane out of place that keeps
+its intermediate in scratch (input + scratch + output) ran 1.62 times its in-place time on a Xeon
+6240 at 256² (1.55 MB against a 1 MiB L2, 16 times the L2 misses) and 2.03 at 1024² (25 MB against
+a 24.75 MiB L3, 7 times the LLC misses). Building the intermediate in the output instead removes
+the third array but lays the columns a power of two apart, where the scratch rows (n/2 + 1 complex
+values) were an odd multiple of 16 bytes. On the Xeon (small L3 per core) that won from its L2
+up, 0.82 of the time over 16 judged planes and volumes. On an EPYC 7763 (32 MiB of L3 per CCX) it
+lost inside the L3 (512 × 1024 1.10) and won only where the three arrays passed two thirds of it
+(0.91 over 5 cases). On an M5 Max wide planes (512 × 1024, 640 × 1280) lost 1.07–1.14 at sizes
+where their transposes won, so no byte threshold worked. Count the strides an intermediate's new
+home brings, not only its bytes; and judge a threshold chosen on a screen on sizes the screen did
+not time: the M5 Max's held-out 640 × 1280 caught a rule that passed the screen's cases.
+[X60](experiments/X60-c2r-two-arrays.md).
 
 ## 4. Kernels and algorithms
 

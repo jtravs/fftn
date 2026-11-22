@@ -1606,11 +1606,24 @@ beyond L1 (grid plus separate pairing) and 15–43 % within it (r2c 39–43 %, c
 the 20 % target within L1 needs X6's real-input codelets.
 
 c2r preserves its input by default; with permission to destroy it the planner may take a
-faster route. A multi-dimensional c2r out of place cannot run its complex axes in its input;
-its intermediate goes into the output, packed, or into the workspace block (below). In-place
-r2c and c2r use FFTW's padded
-layout: each row of the last axis holds n + 2 reals (n/2 + 1 complex), the last two
-being padding on the real side.
+faster route. A multi-dimensional c2r out of place cannot run its complex axes in its input,
+so its intermediate goes into the workspace block (one transform's half spectrum per thread,
+reported by `workspace_bytes`) or, on the profiles where experiment X60 measured a gain,
+packed in the output. The c2r of a row reads only n reals of its half spectrum, X_1 … X_h−1
+and the real parts of X_0 and X_h (h = n/2), so each output row can hold X_0 … X_h−1 with
+Re X_h in X_0's imaginary place: the complex axes run on columns 0 … h−1 from the input into
+the output, column h goes through them into a block of one value per row (one more line of the
+last column phase), and each row takes its Re X_h from there and runs its c2r in place. That
+needs an even real axis contiguous on the output and even output strides. It saves the third
+array, which costs where input, block and output pass a cache level that input and output fit
+(Xeon 6240 c2r 1024² out of place 2.0 times its in-place time, seven times the LLC misses), but
+the output's rows of n reals put the packed columns a power of two apart where the block's
+n/2 + 1 complex values were an odd multiple of 16 bytes, which costs inside the caches. So a
+plan packs only where one transform's half spectrum exceeds `machine_profile::c2r_packed_bytes`:
+the L2 on the Xeon 6240's class (`avx512` plans only), two ninths of the CCX's L3 on Zen 3's
+(the three arrays past two thirds of it); the block elsewhere (on Apple wide planes lost at
+every threshold tried). In-place r2c and c2r use FFTW's padded layout: each row of the last
+axis holds n + 2 reals (n/2 + 1 complex), the last two being padding on the real side.
 
 ### 9.2 Any length
 
@@ -3216,6 +3229,7 @@ to change before a release.
 | 2026-11-19 | Provisional, for the maintainer's review: `fftn::kokkos::executor` (one `parallel_for` per transform on the caller's instance, then a fence), `team_of(member)`, and `view_plan` executing through the executor, serial inside a kernel, sharing large scaling passes among threads; Kokkos' tests build one threaded back end per configuration (`FFTN_KOKKOS_BACKEND`, Threads by default) | Task 3.5; experiment T3 for the costs; the adapter detects kernels per back end because Kokkos 5 removed `in_parallel` |
 | 2026-11-19 | A lanes column phase's narrower last block joins the whole blocks' phase of the work graph | X59 arm T: alone it was a phase of one chunk that one member ran while the others waited, on nearly every real plane; at 8 lanes 0.911 (Xeon 6240, real planes that split) and 0.978 (EPYC 7763), 0.998 on the M5 Max at 6 lanes; serial programs and bits unchanged |
 | 2026-11-19 | A column phase of a plane whose neighbouring lines write the same cache lines is claimed in runs of a member's fair share where that share holds at most 65 536 points, on the measured profiles, x86-64 with a private L2 under 1 MiB and a large L3 (Zen 3; Zen 4 and Zen 5, on `avx512`, not measured, keep the guided runs) or a cluster-shared L2 (`machine_profile::fair_line_runs`) | X59 arm R6: EPYC 7763 0.909 over the real planes that split at 8 lanes (512² 0.70), M5 Max 0.979 at 6 lanes; the Xeon 6240 lost (1.017, c2r 1000² 1.21) and keeps X52's guided runs; larger shares lost balance at the end (2048², 1.05–1.15) |
+| 2026-11-22 | A multi-axis c2r out of place builds its intermediate packed in the output where one transform's half spectrum exceeds `machine_profile::c2r_packed_bytes`: the L2 on the Xeon 6240's class (`avx512` only), two ninths of the L3 on Zen 3's; the workspace block elsewhere (`docs/conventions.md` promises only that the input is not written) | X60: Xeon 6240 0.82 of the block's time over the 16 cases it moves (1000² 0.71), EPYC 7763 0.91 over 5 at one thread; inside the caches the output's power-of-two row strides lost (EPYC 512 × 1024 1.10), and on the M5 Max wide planes lost at 4 and 5.3 MiB (512 × 1024 1.07, 640 × 1280 1.14), so Apple keeps the block |
 
 ---
 
