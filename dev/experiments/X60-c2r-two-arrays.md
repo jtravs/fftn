@@ -330,7 +330,7 @@ R ÷ M (M = `main` 021c117) on the judged cases; band from fbench's identical-ar
 - **Adopted on Zen 3's class (EPYC 7763, `avx2`)**: packed where the three arrays pass two
   thirds of the CCX's L3. Judged 0.911 at one thread over 5 cases and 0.945 at 8 lanes (re-run;
   the first 8-lane run 0.970), held-out 1200², 1536² and 112³ 0.92–0.98, no collateral damage.
-  At 8 lanes 1000² and 1024² tie or lose a little on a crowded node (1.04–1.13 without evidence).**
+  At 8 lanes 1000² and 1024² tie or lose a little on a crowded node (1.04–1.13 without evidence).
 - **Rejected on Apple**: the M5 Max keeps the block (wide planes 1.07–1.14 at every threshold
   tried).
 - **Elsewhere the block** (Zen 4 and Zen 5, Granite and Sapphire Rapids, Ice Lake VMs whose L3
@@ -343,8 +343,9 @@ R ÷ M (M = `main` 021c117) on the judged cases; band from fbench's identical-ar
   1.10, 96³ 1.04 in the screen). On the M5 Max a 16 MiB shared L2 holds them, and wide planes
   lose to the strides even beyond it.
 - **Code.** The final commit is arm R with Apple's value removed (R2's third of the L2 too), so
-  Apple keeps the block. Arm R's mechanism stays (`pass_args::packed`, `c2r_nyquist`, column h as a line of
-  the last column phase); `machine_profile::c2r_packed_bytes` is SIZE_MAX by default and set
+  Apple keeps the block. Arm R's mechanism stays (`pass_args::packed`, `c2r_nyquist`, column h
+  as a line of the last column phase); `machine_profile::c2r_packed_bytes` is SIZE_MAX by
+  default and set
   for the classes adopted; `c2r_packed_avx512_only` keeps the Xeon class's value to `avx512`
   plans. DESIGN 9.1 and the decision log describe it; `docs/conventions.md` promises only that
   the input is not written.
