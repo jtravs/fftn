@@ -323,6 +323,13 @@ R ÷ M (M = `main` 021c117) on the judged cases; band from fbench's identical-ar
   it to criterion (1), which the maintainer may want to review. 1000² and 1024² at 8 lanes are
   the open question: 0.96 and 0.87 on a quieter node on 2026-11-19 (P3, load 6.6), 1.04–1.13 on
   nodes with 95–103 other busy cores, where the team shares its CCX's L3 with other jobs.
+- **Xeon 6240, 8 lanes** (confined to node 1, CPUs 23, 26–29, 31, 32, 35; Slurm 16804): run
+  20261122-212441-d091, 20 rounds, 12 loaded, band ±2.17 %. Geometric mean 0.901 over the 16
+  judged cases (planes 0.70–1.01: 1024² 0.70, 1000² 0.76, 1024 × 512 0.77), but the volumes went
+  the other way: 64³ 0.955, 96³ 1.068 [1.044, 1.104], 100³ 1.087 and 128³ 1.050 without evidence.
+  96³'s interval clears the limit of 1.02 × 1.0217 = 1.042 by 0.002: a case a hair past
+  criterion (2) on a loaded machine, so by the rule it is re-run before it decides (the same 16
+  cases, same pinning).
 - **M5 Max** (Homebrew Clang 23, `neon_fcma`, AC power throughout, no sleep): arm R failed on
   512 × 1024 (1.068 against a limit of 1.033). Arm R2 (a third of the L2) passed the screen's
   cases but failed on a held-out one, 640 × 1280 at 1.142, while its transpose 1280 × 640 took
