@@ -1,6 +1,6 @@
 # X63: out-of-place c2r planes with the intermediate packed in the output
 
-- **Status:** running (2026-11-22): arm built, decision rule written before the judging runs
+- **Status:** done (2026-11-22): adopted on the Xeon 6240 class (`avx512`) and Zen 3 (`avx2`)
 - **Owner:** X63 agent, 2026-11-22 (wave 1; the maintainer approved the follow-up)
 - **Phase / task:** 4.1 (planes), task 2.1's c2r; follows [X60](X60-c2r-two-arrays.md)
 
@@ -88,10 +88,60 @@ Bits differ from the block route in the last places, which `docs/conventions.md`
   the block (its value back to SIZE_MAX). If no class passes, the packed route is deleted and
   only this file, its PLAN row and a LESSONS note remain.
 
-## Results
+## Results (2026-11-22)
 
-(Judging runs to follow.)
+A ÷ M (M = `main` c6ebf02, A = 1f0b17b) over the judged cases; band from the identical-arm
+control of M in the same run. No run needed the re-run clause.
 
-## Verdict
+| run | machine, threads | load | band | judged | geometric mean | worst judged case | verdict |
+|---|---|---|---|---|---|---|---|
+| 20261122-222557-06db | EPYC 7763, 1 | ~25 other busy cores, every round | ±1.00 % | 9 | **0.837** | 2560² 0.987 [0.972, 1.064] | passes |
+| 20261122-222557-5494 | EPYC 7763, 8 lanes | ~25 other busy cores, every round | ±2.51 % | 9 | **0.767** | 1024 × 4096 0.865 [0.834, 0.891] | passes |
+| 20261122-222653-8557 | Xeon 6240, 1 | 4 of 20 rounds loaded | ±2.34 % | 31 | **0.807** | 512² 0.958 [0.940, 0.968] | passes |
+| 20261122-224320-1482 | Xeon 6240, 8 lanes, pinned | 6 of 20 rounds loaded | ±2.20 % | 31 | **0.824** | 512² 0.984 [0.973, 1.011] | passes |
 
-(After the judging runs.)
+- **EPYC 7763** (GCC 16, `avx2`, DMOG; Slurm 515713 and 515715, builds 515712, 515714): at one
+  thread 1536²–2048² 0.91–0.94, 4096 × 1024 0.46, 1024 × 4096 0.72, 2560² 0.99 (no evidence);
+  at 8 lanes 0.72–0.87, every judged case faster beyond noise. The planes at or below 16 MiB
+  (X60's 1000², 1024², which lost at 8 lanes in X60, among them) and the two volumes kept M's
+  plan: nothing slower beyond 1.05 × (1 + band) in either run.
+- **Xeon 6240** (GCC 14.4, `avx512`; Slurm 16822 and 16823, build 16821; the 8-lane run confined
+  to node 0, CPUs 2–5, 10, 14, 16, 17): one thread 0.69–0.96 (2048 × 320 0.69, 1000² 0.72,
+  3000 × 1000 0.73), 8 lanes 0.61–0.98 (2048 × 320 0.61, 1024² 0.72, 960² 0.75); the widest planes
+  gained too (320 × 2048 0.89 and 0.94, 1024 × 4096 0.79 at both). 256², 36 × 2048, 2048 × 36 and
+  the volumes (64³, 128³), which keep the block, 0.98–1.02.
+- **Held-out sizes** (the 12 of `x63.toml` no run had timed, inside the judged sets): EPYC 1600²,
+  2000², 1500 × 2000, 3000 × 1000, 4096 × 1024, 1024 × 4096 and 2560² 0.46–0.99 at one thread and
+  0.72–0.87 at 8 lanes; Xeon all twelve 0.61–0.94 in both runs.
+- **Collateral, tracking tier, A ÷ M, one thread**: EPYC run 20261122-222557-0c83 (Slurm 515717,
+  ±1.98 %) 1 faster (c2r 1000, a row A does not change), 60 no evidence; Xeon run 20261122-225712-05cd (Slurm 16824, ±3.37 %, 15 of 16 rounds loaded) 2 faster (c2r 1024² 0.70 and 480 × 640 0.85, both judged planes), 59 no evidence. Nothing slower.
+
+## Verdict (2026-11-22)
+
+- **Adopted on the Xeon 6240's class (`avx512` plans)**: c2r planes out of place pack their
+  intermediate from a half spectrum above the L2 (1 MiB). Both judged runs pass (0.807 at one
+  thread, 0.824 at 8 lanes pinned, over 31 planes; nothing slower), held-out sizes included.
+- **Adopted on Zen 3's class (`avx2` plans)**: from a half spectrum above half the CCX's L3
+  (16 MiB). Both judged runs pass (0.837 and 0.767 over 9 planes, all held out but 1536² and
+  2048²).
+- **Volumes keep the block** everywhere (X60's 8-lane losses on the Xeon), and so do Apple (X60's
+  wide planes) and every unmeasured class.
+- **Reach.** The Xeon class's key (x86-64, a private L2 under 2 MiB, under 2 MiB of L3 per CPU)
+  also takes, unmeasured, Ice Lake-SP, Zen 4c, Zen 4 VMs that report a small L3 per CPU and Intel
+  client parts with AVX-512 (Ice Lake and Tiger Lake laptops, Rocket Lake): the same `avx512`
+  target and register file, which the reach rule allows; `c2r_packed_isa` keeps `avx2` machines
+  of that cache class (Alder Lake, Zen 2) on the block. Zen 3's key (a private L2 under 1 MiB and
+  at least 2 MiB of L3 per CPU) takes Zen 3 parts only among current x86 (Zen 4 and Zen 5 have
+  1 MiB of L2 and `avx512`). The next phase exit should screen these families.
+- **Not measured**: whether a threshold below 16 MiB would also pass on Zen 3 (X60 timed nothing
+  between 8 and 32 MiB at 8 lanes); the Mac (Apple keeps the block, by X60).
+- **Code.** `c2r_packed` (plan_core.cpp) takes planes only; `machine_profile::c2r_packed_bytes`
+  is SIZE_MAX by default and `c2r_packed_isa` holds each class to its measured target. DESIGN 9.1
+  and the decision log describe the route; `docs/conventions.md` promises only that the input is
+  not written.
+- **Tests**: `Columns.C2rPackedMatchesTheBlock`, `Columns.C2rPackedStridedLayouts` (fails with
+  `in.stride[r - 1]` dropped from column h's start or the rows' block step zeroed; checked by
+  mutation), `Columns.C2rPacksBeyondTheProfilesBytes` (thresholds, the target restriction,
+  volumes never pack), team case `c2r_planes_strided_6x16x3`, `Schedule.GridSizesFromCaches`.
+  Mac Homebrew Clang 23 Release, all 2549 tests; Mac GCC 16 build with `-Werror` and its
+  targeted suites.
