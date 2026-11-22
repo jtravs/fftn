@@ -288,23 +288,22 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
     p.depth_convolution_max_bytes = 2 * c.l1d.size;
   }
   p.c2r_paired_gather = c.l2.size != 0 && !private_l2;
-  // Experiment X60 (machine_profile::c2r_packed_bytes), only on the three classes measured;
-  // elsewhere the block stays. In the screen the packed route won where the block pushed the
-  // three arrays past a cache level and lost inside the caches, where the output's power-of-two
-  // row strides cost more than the block's odd ones; where that turns depends on the machine.
-  // The Xeon 6240's class (avx512): packed from its L2 (384^2-2048^2 and 64^3-128^3
-  // 0.69-0.97 of the block's time; within L2 2048 x 36 lost 1.08, 16^3 1.09). Zen 3's: packed
-  // where the three arrays (in, block, out: three half spectra) pass two thirds of the CCX's L3
-  // (1000^2 0.78, 100^3-2048^2 0.91-0.95); below, 512 x 1024 lost 1.10 and 96^3 1.04 at 4-7
-  // MiB. Apple's: a third of the cluster's L2 (5.3 MiB on the M5 Max; 864^2-128^3 0.77-1.01 in
-  // arm R's judging run); from a quarter, 512 x 1024 lost 1.07 at 4 MiB.
+  // Experiment X60 (machine_profile::c2r_packed_bytes), only on the classes where it passed;
+  // elsewhere the block stays. The packed route wins where the block pushes the three arrays
+  // past a cache level and loses inside the caches, where the output's power-of-two row
+  // strides cost more than the block's odd ones; where that turns depends on the machine.
+  // The Xeon 6240's class (avx512): packed from its L2 (judged: 384^2-2048^2 and 64^3-128^3
+  // 0.71-0.98 of the block's time, 0.82 over 16 cases; within L2 2048 x 36 lost 1.08 and 16^3
+  // 1.09 in the screen). Zen 3's: packed where the three arrays (in, block, out: three half
+  // spectra) pass two thirds of the CCX's L3 (judged: 1000^2-2048^2, 100^3 and 128^3 0.80-0.96
+  // at one thread); below, 512 x 1024 lost 1.10 and 96^3 1.04 at 4-7 MiB. Apple keeps the block:
+  // wide planes lost at every threshold tried (M5 Max 512 x 1024 1.07 at 4 MiB, 640 x 1280 1.14
+  // at 6.3 MiB) while their transposes and squares gained.
   if (c.l2.size != 0 && x86_64 && private_l2 && !large_l2 && !large_l3) {
     p.c2r_packed_bytes = c.l2.size;
     p.c2r_packed_avx512_only = true;
   } else if (zen3_like) {
     p.c2r_packed_bytes = c.l3.size / 9 * 2;
-  } else if (apple_like && c.l2.size != 0) {
-    p.c2r_packed_bytes = c.l2.size / 3;
   }
   // Experiment X36: long convolutions (machine_profile::long_convolution_bytes).
   if (p.pow2_chain_bytes != 0) {

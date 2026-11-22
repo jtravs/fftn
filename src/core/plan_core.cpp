@@ -1027,9 +1027,9 @@ bool r2c_pairs_in_grid(const build_settings& settings, target t) {
 // or more axes, out of place, an even real axis contiguous on the output and every other
 // output stride an even number of reals, so that each output row holds its h = n/2 complex
 // values (pass_args::packed); by the rules where one transform's half spectrum exceeds the
-// profile's c2r_packed_bytes, which is set only for the classes X60 measured (and for the
-// Xeon 6240's only on avx512, c2r_packed_avx512_only). Otherwise the intermediate is that half spectrum in the
-// workspace block. build_settings::c2r_packed 0 keeps the block, 1 packs wherever the layout
+// profile's c2r_packed_bytes, set only for the classes where X60 passed (the Xeon 6240's on
+// avx512 alone, c2r_packed_avx512_only). Otherwise the intermediate is that half spectrum in
+// the workspace block. build_settings::c2r_packed 0 keeps the block, 1 packs wherever the layout
 // allows (tests).
 bool c2r_packed(const shape_view& s, const side& in, const side& out, bool in_place,
                 const build_settings& settings, target t) {
