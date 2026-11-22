@@ -136,6 +136,68 @@ TEST(ReferenceDft, SampledBinsEqualTheFullTransform) {
   }
 }
 
+// The full transforms come from a store that keeps only the forward transform and reads the
+// backward one from it, bin k from bin (n - k) mod n: that is bit for bit what a fresh
+// evaluation of either sign gives (the first call of the overload with a list of bins, whose
+// store is separate), for lengths of every residue modulo 8, primes and the suites' long
+// rows, whichever sign is asked for first. Repeated sampled calls (c2c, r2c, c2r) give the
+// first call's bits.
+TEST(ReferenceDft, BothSignsShareOneEvaluation) {
+  input_source src(5);
+  for (const std::size_t n :
+       std::initializer_list<std::size_t>{1, 2, 3, 4, 5, 6, 7, 8, 9, 12, 97, 100, 151, 1000}) {
+    for (const int first : {-1, 1}) {
+      const auto x = widen(src.complexes<double>(n));
+      std::vector<std::size_t> all(n);
+      for (std::size_t k = 0; k < n; ++k) {
+        all[k] = k;
+      }
+      const auto fresh_fwd = reference::c2c(-1, x, all);
+      const auto fresh_bwd = reference::c2c(1, x, all);
+      const auto stored_first = reference::c2c(first, x);
+      const auto stored_second = reference::c2c(-first, x);
+      const auto& want_first = first < 0 ? fresh_fwd : fresh_bwd;
+      const auto& want_second = first < 0 ? fresh_bwd : fresh_fwd;
+      ASSERT_EQ(stored_first.size(), n);
+      ASSERT_EQ(stored_second.size(), n);
+      for (std::size_t k = 0; k < n; ++k) {
+        SCOPED_TRACE("n = " + std::to_string(n) + ", bin " + std::to_string(k));
+        expect_same(fresh_bwd[k], fresh_fwd[(n - k) % n]);
+        expect_same(stored_first[k], want_first[k]);
+        expect_same(stored_second[k], want_second[k]);
+      }
+      const std::vector<std::size_t> some{n - 1, 0, n / 2};
+      const auto again = reference::c2c(1, x, all);
+      const auto sampled = reference::c2c(-1, x, some);
+      const auto sampled_again = reference::c2c(-1, x, some);
+      for (std::size_t k = 0; k < n; ++k) {
+        expect_same(again[k], fresh_bwd[k]);
+      }
+      for (std::size_t i = 0; i < some.size(); ++i) {
+        expect_same(sampled[i], fresh_fwd[some[i]]);
+        expect_same(sampled_again[i], sampled[i]);
+      }
+      const auto reals = widen(src.reals<double>(n));
+      const std::vector<std::size_t> half{0, n / 2};
+      const auto r = reference::r2c(reals, half);
+      const auto r_again = reference::r2c(reals, half);
+      std::vector<std::complex<double>> spectrum(n / 2 + 1);
+      for (std::size_t k = 0; k <= n / 2; ++k) {
+        spectrum[k] = x[k];
+      }
+      const auto c = reference::c2r(n, spectrum, some);
+      const auto c_again = reference::c2r(n, spectrum, some);
+      for (std::size_t i = 0; i < half.size(); ++i) {
+        expect_same(r_again[i], r[i]);
+      }
+      for (std::size_t i = 0; i < some.size(); ++i) {
+        EXPECT_EQ(c_again[i].hi, c[i].hi);
+        EXPECT_EQ(c_again[i].lo, c[i].lo);
+      }
+    }
+  }
+}
+
 TEST(ReferenceDft, RealTransformsAgreeWithComplex) {
   input_source src(2);
   for (const std::size_t n : std::initializer_list<std::size_t>{1, 2, 3, 8, 15, 64}) {

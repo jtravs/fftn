@@ -622,6 +622,23 @@ lost up to 2.4 times at 8 lanes on the Xeon on interleaved planes of 8–64 tran
 chain lets every member take lines of each transform.
 [X61](experiments/X61-adjacent-transforms.md).
 
+3.30 **A third array costs only past a cache level, and removing it can bring power-of-two
+strides back; where the two cross depends on the machine and on the team.** A c2r plane out of
+place that keeps its intermediate in scratch (input + scratch + output) ran 1.62 times its
+in-place time on a Xeon 6240 at 256² (1.55 MB against a 1 MiB L2, 16 times the L2 misses) and
+2.03 at 1024² (25 MB against a 24.75 MiB L3, 7 times the LLC misses). Building the intermediate in
+the output instead removes the third array but lays the columns a power of two apart, where the
+scratch rows (n/2 + 1 complex values) were an odd multiple of 16 bytes. At one thread that won on
+the Xeon from its L2 up (0.82 over 16 planes and volumes) and on an EPYC 7763 only where the three
+arrays passed two thirds of its 32 MiB CCX L3 (0.91); on an M5 Max wide planes (512 × 1024,
+640 × 1280) lost 1.07–1.14 at sizes where their transposes won. At 8 lanes the Xeon's volumes,
+which its teams run plane at a time, lost 1.06–1.09 and the EPYC missed its bar (0.970), so the
+change was adopted nowhere. Count the strides an intermediate's new home brings, not only its
+bytes; judge a threshold chosen on a screen on sizes the screen did not time (the M5 Max's
+held-out 640 × 1280 caught a rule that passed the screen's cases); and judge a planner rule at the
+team sizes that will run its plans, since a plan cannot tell which will.
+[X60](experiments/X60-c2r-two-arrays.md).
+
 ## 4. Kernels and algorithms
 
 4.1 **A whole-transform codelet wins only where it fills the register.** One 32-point
@@ -1203,3 +1220,16 @@ dispatch picks the scalar path by default. With it, FFTN's whole x86-64 suite (1
 emulated; that still needs SDE or the hardware. Build the test oracles for x86-64 too (an
 ExternalProject that ignores `CMAKE_OSX_ARCHITECTURES` links arm64 objects).
 [X23](experiments/X23-masked-tails.md).
+
+6.15 **Read a slow CI job's step timestamps before trimming its tests, and remember an
+expensive oracle's results.** The required ASan + UBSan job took 70-90 minutes on some runs
+and was blamed on three slow tests; its logs showed the tests at 24-27 minutes in every run,
+AVX2 and AVX-512 runners alike, and the long runs spent 41-66 minutes rebuilding the
+kernel units from a stale ccache (main saved its cache only after a successful job) or 90
+minutes in a stalled `apt-get update`. The tests themselves were dominated by the
+quadruple-precision O(n²) reference DFT (about 1 µs per complex multiply-add under ASan on
+the runners, 0.17 µs in Release on the Mac) evaluated again for the same rows on every
+instruction set, in both directions and in every edge variant. Remembering its results by
+the input's bits (and reading the backward transform from the forward one, bit for bit)
+changed no check and cut the job's tests from 26 to 12 minutes, GCC 16's from 17 to 10.
+PR 89.
