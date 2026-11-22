@@ -288,8 +288,22 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
     p.depth_convolution_max_bytes = 2 * c.l1d.size;
   }
   p.c2r_paired_gather = c.l2.size != 0 && !private_l2;
-  if (c.l2.size != 0) {
-    p.c2r_packed_bytes = 0; // X60 screen arm PA: packed wherever the layout allows
+  // Experiment X60 (machine_profile::c2r_packed_bytes), only on the three classes measured;
+  // elsewhere the block stays. In the screen the packed route won where the block pushed the
+  // three arrays past a cache level and lost inside the caches, where the output's power-of-two
+  // row strides cost more than the block's odd ones; where that turns depends on the machine.
+  // The Xeon 6240's class (avx512): packed from its L2 (384^2-2048^2 and 64^3-128^3
+  // 0.69-0.97 of the block's time; within L2 2048 x 36 lost 1.08, 16^3 1.09). Zen 3's: packed
+  // where the three arrays (in, block, out: three half spectra) pass two thirds of the CCX's L3
+  // (1000^2 0.78, 100^3-2048^2 0.91-0.95); below, 512 x 1024 lost 1.10 and 96^3 1.04 at 4-7
+  // MiB. Apple's: a quarter of the cluster's L2 (768^2-128^3 0.84-1.02).
+  if (c.l2.size != 0 && x86_64 && private_l2 && !large_l2 && !large_l3) {
+    p.c2r_packed_bytes = c.l2.size;
+    p.c2r_packed_avx512_only = true;
+  } else if (zen3_like) {
+    p.c2r_packed_bytes = c.l3.size / 9 * 2;
+  } else if (apple_like && c.l2.size != 0) {
+    p.c2r_packed_bytes = c.l2.size / 4;
   }
   // Experiment X36: long convolutions (machine_profile::long_convolution_bytes).
   if (p.pow2_chain_bytes != 0) {

@@ -625,6 +625,21 @@ TEST(Columns, C2rPacksBeyondTheProfilesBytes) {
                 *fftn::detail::make_plan_core(fftn::detail::view_of(single), {}, settings))
                 .find("packed"),
             std::string::npos);
+  // A limit measured on avx512 (the Xeon 6240's class) leaves every other target's plans on the
+  // block; a forced setting still packs.
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    build_settings wide;
+    wide.profile.c2r_packed_bytes = 0;
+    wide.profile.c2r_packed_avx512_only = true;
+    const auto packs = [&](int forced) {
+      wide.c2r_packed = forced;
+      return fftn::detail::describe(*fftn::detail::make_plan_core(fftn::detail::view_of(sh),
+                                                                  {.force_isa = t}, wide))
+                 .find("packed") != std::string::npos;
+    };
+    EXPECT_EQ(packs(-1), t == fftn::isa::avx512) << static_cast<int>(t);
+    EXPECT_TRUE(packs(1)) << static_cast<int>(t);
+  }
 }
 
 TEST(Columns, C2rPackedMatchesTheBlock) {

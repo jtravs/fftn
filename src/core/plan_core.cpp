@@ -1027,11 +1027,12 @@ bool r2c_pairs_in_grid(const build_settings& settings, target t) {
 // or more axes, out of place, an even real axis contiguous on the output and every other
 // output stride an even number of reals, so that each output row holds its h = n/2 complex
 // values (pass_args::packed); by the rules where one transform's half spectrum exceeds the
-// profile's c2r_packed_bytes. Otherwise the intermediate is that half spectrum in the
+// profile's c2r_packed_bytes, which is set only for the classes X60 measured (and for the
+// Xeon 6240's only on avx512, c2r_packed_avx512_only). Otherwise the intermediate is that half spectrum in the
 // workspace block. build_settings::c2r_packed 0 keeps the block, 1 packs wherever the layout
 // allows (tests).
 bool c2r_packed(const shape_view& s, const side& in, const side& out, bool in_place,
-                const build_settings& settings) {
+                const build_settings& settings, target t) {
   const std::size_t r = s.axes.size();
   if (s.kind != transform_kind::c2r || r < 2 || in_place || settings.c2r_packed == 0 ||
       s.axes[r - 1].n % 2 != 0 || out.stride[r - 1] != 1 ||
@@ -1041,6 +1042,9 @@ bool c2r_packed(const shape_view& s, const side& in, const side& out, bool in_pl
   }
   if (settings.c2r_packed > 0) {
     return true;
+  }
+  if (settings.profile.c2r_packed_avx512_only && t != target::avx512) {
+    return false;
   }
   std::size_t bytes = 2 * sizeof(double);
   for (const std::size_t e : in.extent) {
@@ -1623,7 +1627,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       c.axis_notes.push_back("axis " + std::to_string(listed(d)) + " (n = " + std::to_string(n) +
                              "): c2c forward, radices " + chain.radix_text(n));
     }
-  } else if (c2r_packed(s, in, out, c.in_place, settings)) {
+  } else if (c2r_packed(s, in, out, c.in_place, settings, c.isa_target)) {
     // c2r of two or more axes out of place, its intermediate packed in the output
     // (DESIGN.md 9.1, experiment X60): each output row's n reals hold its h = n/2 complex
     // values after the complex axes, X_0 .. X_h-1 with the imaginary place of X_0 holding

@@ -331,11 +331,14 @@ struct machine_profile {
   bool c2r_paired_gather = false;
   // A c2r of two or more axes out of place builds its intermediate packed in the output
   // (core/plan_core.cpp, c2r_packed) where one transform's half spectrum exceeds this many
-  // bytes, and keeps it in the workspace block otherwise (X60): beyond the L2 on a private L2
-  // (EPYC 7763 1000^2 0.79, 64^3 0.86 of the block's time; within it the packed columns' power-
-  // of-two strides and column h cost more than the block: 32 x 30 1.10, 32^3 1.07), a quarter of
-  // a shared one (M5 Max: 1000^2-2048^2 0.93-0.94, 128^2-640 x 480 1.14-1.24).
-  std::size_t c2r_packed_bytes = 0;
+  // bytes, and keeps it in the workspace block otherwise (X60). The packed route wins where the
+  // block pushes input, block and output past a cache level and loses inside the caches, where
+  // the output's power-of-two row strides cost more than the block's odd ones. Set only for the
+  // classes measured (set_grid_sizes); the block everywhere else.
+  std::size_t c2r_packed_bytes = std::numeric_limits<std::size_t>::max();
+  // Whether c2r_packed_bytes applies only to plans for the avx512 target (the Xeon 6240's
+  // class was measured there; an avx2 machine of the same cache class keeps the block).
+  bool c2r_packed_avx512_only = false;
 };
 
 // The profile of a machine of topology t (its CPU count aside): the defaults above, which
