@@ -163,6 +163,19 @@ Arms are commits of branch `exp/x62-epyc-tail` on `main` 021c117 (the base, arm 
   - The Xeon and the Mac are not run: their default plans cannot change (no `avx2` double plan), and
     K's code is in an `avx2`-region unit that their plans do not call.
 
+*Amendment 2, written after run 1 and before any run of K2.* Run 1 found K's forced leaf of 64
+over 5 rows backward at 1.227 of `main`'s forced leaf, every other 64-point case faster, so K
+fails its rule as written. Counters (`fbench-fftn run --pmu`, K's build forced, Slurm 515515):
+the last row of an odd batch, run in the leaf's form, cost 650–750 cycles after two or more pairs
+backward (5, 7, 17 rows) against 280 after one pair (3 rows) and 310 forward, at the same
+instruction count and whatever the buffers' page offsets (0/0, 0/2048, 1024/64). Arm **K2**
+(6d9f92f, on C): that last row runs in both lanes through the pairs' accessors instead. Same
+arithmetic per lane. Rule, judged by run 6 (catalogue `x62`, filter `^c2c-64-`, arms 0, K2, FFTW,
+the rules' plans, `--serial`): K2 replaces K if no 64-point case of 2–1024 rows is slower than
+0 (the chain) beyond the band, 64 × 5 backward is faster than 0 beyond the band, and the geometric
+mean over those cases is at most 0.90. If it does, run 6 also stands for L's rule (a) and (b) on
+the moved cases (L with K2's leaf against 0), with run 3 for the exit check's.
+
 ## Results
 
 ## Verdict
