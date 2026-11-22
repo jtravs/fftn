@@ -293,9 +293,10 @@ TEST(BatchLeaves, ForcedOnlyWhereTheRowsCanTakeThem) {
   }
 }
 
-// The rules (target_profile::batch_rows, batch_max_rows, batch_narrower, batch_own_rows;
-// experiments X53, X62): a batch of at least the profile's rows of a length it lists, and at
-// most its batch_max_rows, takes batch leaves, the narrower target's where the profile says
+// The rules (target_profile::batch_rows, batch_max_rows, batch_ragged_rows, batch_narrower,
+// batch_own_rows; experiments X53, X62): a batch of at least the profile's rows of a length it
+// lists, at most its batch_max_rows and, where C does not divide it, at least its
+// batch_ragged_rows, takes batch leaves, the narrower target's where the profile says
 // so up to batch_own_rows, the target's own from there; a batch one row short of it, one row
 // past the limit, and single rows, do not. That every row of a batch gets the
 // same arithmetic is tests/api's (BatchRowsGetTheSameArithmeticAnywhere).
@@ -342,6 +343,19 @@ template <class T> void rules_choose(fftn::isa t) {
         most != 0) {
       EXPECT_NE(text(most).find("batch leaf"), std::string::npos);
       EXPECT_EQ(text(most + 1).find("batch leaf"), std::string::npos);
+    }
+    // Ragged batches (target_profile::batch_ragged_rows, X62): from their rows, not below.
+    if (const std::size_t ragged =
+            slot < profile.batch_ragged_rows.size() ? profile.batch_ragged_rows[slot] : 0;
+        ragged != 0) {
+      EXPECT_NE(text(ragged).find("batch leaf"), std::string::npos);
+      std::size_t below = ragged - 1;
+      while (below % lanes == 0) {
+        --below;
+      }
+      if (below >= rows && below >= 2) {
+        EXPECT_EQ(text(below).find("batch leaf"), std::string::npos);
+      }
     }
     EXPECT_EQ(text(1).find("batch leaf"), std::string::npos);
   }

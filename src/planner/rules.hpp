@@ -100,6 +100,11 @@ struct target_profile {
   // (0, or no entry: no limit). Experiment X62: avx2's leaf of 64 in double lost from some
   // thousands of rows.
   std::span<const std::uint16_t> batch_max_rows;
+  // A batch whose row count C does not divide takes batch leaves only from
+  // batch_ragged_rows[codelet_slot(n)] rows (0, or no entry: as any other batch). Experiment
+  // X62: avx2's leaf of 64 runs the last row of an odd batch as a whole pair, which three rows
+  // did not repay.
+  std::span<const std::uint16_t> batch_ragged_rows;
   // Lengths whose radices depend on whether a plan's rows fit the cache (fitting_radices;
   // experiment X57).
   std::span<const radix_override> fit_overrides;

@@ -693,12 +693,17 @@ namespace {
 // avx2's 64 in double (experiment X62, dev/experiments/X62-epyc-tail.md): once its leaf moved
 // each element of its two rows when the codelet asks for it, it took 0.69-0.88 of the chain's
 // time from 2 to 1024 rows on the EPYC 7763 (odd counts too: the last row runs alone), and
-// lost from 4096 rows; so 64 has an upper limit, batch_max_rows.
+// lost from 4096 rows; so 64 has an upper limit, batch_max_rows. Its last row of an odd batch
+// runs as a whole pair (one copy of the codelet; two copies thrashed the op cache), so 3 rows
+// took 1.01-1.05 of the chain's time and 5 rows 0.94-0.96: odd batches from 5
+// (batch_ragged_rows).
 // clang-format off
 constexpr std::array<std::uint16_t, gen::radix_count> batch_rows_avx2_f64 =
     {0, 0, 8, 0, 8, 8, 0, 4, 4, 4, 8, 4, 2, 2, 0, 4, 4, 0, 2, 2, 0, 2};
 constexpr std::array<std::uint16_t, gen::radix_count> batch_max_avx2_f64 =
     {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1024};
+constexpr std::array<std::uint16_t, gen::radix_count> batch_ragged_avx2_f64 =
+    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5};
 constexpr std::array<std::uint16_t, gen::radix_count> batch_rows_avx512_f64 =
     {1024, 0, 0, 64, 64, 8, 1024, 4, 4, 2, 8, 2, 2, 2, 0, 2, 2, 0, 2, 2, 0, 0};
 constexpr std::array<std::uint16_t, gen::radix_count> batch_own_avx512_f64 =
@@ -730,6 +735,13 @@ std::span<const std::uint16_t> batch_own_rows_of(target t, std::size_t lanes) {
 std::span<const std::uint16_t> batch_max_rows_of(target t, std::size_t lanes) {
   if (t == target::avx2 && lanes == 2) {
     return batch_max_avx2_f64;
+  }
+  return {};
+}
+
+std::span<const std::uint16_t> batch_ragged_rows_of(target t, std::size_t lanes) {
+  if (t == target::avx2 && lanes == 2) {
+    return batch_ragged_avx2_f64;
   }
   return {};
 }
@@ -772,6 +784,7 @@ target_profile profile_of(target t, std::size_t lanes) noexcept {
           .batch_narrower = batch_narrower_of(t, lanes),
           .batch_own_rows = batch_own_rows_of(t, lanes),
           .batch_max_rows = batch_max_rows_of(t, lanes),
+          .batch_ragged_rows = batch_ragged_rows_of(t, lanes),
           .fit_overrides = fit_overrides_of(t, lanes),
       };
     }
@@ -793,6 +806,7 @@ target_profile profile_of(target t, std::size_t lanes) noexcept {
       .batch_narrower = batch_narrower_of(t, lanes),
       .batch_own_rows = batch_own_rows_of(t, lanes),
       .batch_max_rows = batch_max_rows_of(t, lanes),
+      .batch_ragged_rows = batch_ragged_rows_of(t, lanes),
       .fit_overrides = fit_overrides_of(t, lanes),
   };
 }
@@ -1161,6 +1175,7 @@ constexpr target_profile reference_profile{
     .batch_narrower = false,
     .batch_own_rows = {},
     .batch_max_rows = {},
+    .batch_ragged_rows = {},
     .fit_overrides = {},
 };
 
