@@ -70,3 +70,18 @@ note = "Bluestein lengths whose convolution's power-of-two part a limit could mo
 kind = "c2c"
 dims = [509, 1013, 1019, 1021, 2027, 2039, 4093, 10403, 131071, 999983]
 batch = [1]
+
+[[group]]
+name = "x62-bluestein-f32"
+note = "single precision: C = 4 on avx2, so 2036 = 4 x 509 has as many copies as a register"
+kind = "c2c"
+dims = [1018, 1013, 2036, 2054]
+batch = [1]
+precision = "f32"
+
+[[group]]
+name = "x62-bluestein-real"
+note = "real rows whose half-length transform is a Bluestein line"
+kind = ["r2c", "c2r"]
+dims = [2036, 2026]
+batch = [1]
