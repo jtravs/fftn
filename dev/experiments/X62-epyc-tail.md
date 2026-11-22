@@ -176,6 +176,56 @@ the rules' plans, `--serial`): K2 replaces K if no 64-point case of 2–1024 row
 mean over those cases is at most 0.90. If it does, run 6 also stands for L's rule (a) and (b) on
 the moved cases (L with K2's leaf against 0), with run 3 for the exit check's.
 
+*Amendment 3, written after run 6 and before any run of K3.* Run 6 (below) rejects K2: 64 × 3 and
+64 × 5 backward stayed slower than the chain (1.09, 1.22). Op-cache counters on K2's build (Slurm
+515591: PMCx28F hits and misses) found 190–300 misses a call at 5, 7 and 17 rows backward and
+none at 3 or 4 rows or forward: the pairs' inlined copy of the 64-point codelet and the last
+row's second copy evict each other, as their addresses fall. Arm **K3** (dcaaeef, on K2): every
+group, the last row included (in both lanes), runs through one inlined copy. Same rule as K2's,
+judged by run 7 (catalogue `x62`, filter `^c2c-64-`, arms 0, K3, FFTW, `--serial`); if K3 passes,
+run 7 stands for L's rule (a) and (b) on the moved cases (L with K3's leaf against 0).
+
 ## Results
+
+EPYC 7763 (DMOG node16, shared, `-c 8`), GCC 16.2, `avx2`, one thread, `--serial`; every round
+under load. Ratios are fbench's median paired ratios with 95 % intervals.
+
+### Run 1: K forced (20261122-183544-2e14, Slurm 515490, 12 rounds, band ±1.00 %)
+
+K ÷ 0 with `BATCH_LEAVES=own` on both: **0.890 [0.886, 0.896]** over the 44 cases. 64 points:
+0.81–0.91 at every count from 2 to 4096 rows, in place 0.87–0.91, odd counts 0.81–0.97, except
+**64 × 5 backward 1.227 [1.222, 1.230]** (the screen's 1.09 again). 32 points 0.88–0.97. So K
+misses its rule on one case: amendment 2 and arm K2.
+
+### Run 2: L (20261122-183953-183e, Slurm 515493, 24 rounds, every one started overloaded,
+other processes 103 cores median, band ±1.00 %)
+
+L ÷ 0 at 64 points: even counts 2–1024 rows 0.76–0.96 (64 × 2 backward 0.765, 64 × 16 0.794),
+in place 0.82; 4096 rows unmoved 1.00. **Odd counts slower: 3 rows 1.34–1.42, 5 rows 1.21–1.39**,
+17 rows 0.90–0.91. The odd counts are the leaf's last row (amendment 2), much worse on this
+saturated node than in run 1. By L's rule (b) these cases go to the re-run, which amendment 2
+makes run 6 (K2's leaf).
+
+### Run 4: tracking tier, L and C (20261122-191204-85fb, Slurm 515505, 24 rounds, band ±1.16 %)
+
+- L ÷ 0: **0.996** (0 ÷ L 1.004 [1.002, 1.008]); one case moved, 64 × 256 at 0.876; every other
+  plan note agrees; no unmoved case past ±1.3 %.
+- C ÷ L: **1.002 [0.998, 1.006]**; no plan note differs (the tier has no Bluestein line); the
+  highest unmoved case 1.017 (65537), inside 1 + band + 2 %.
+
+### Run 5: C on the Bluestein lines (20261122-193757-2397, Slurm 515507, 24 rounds, every one
+started overloaded, band ±1.00 %)
+
+C ÷ L over the 12 moved cases (plan notes differ): **0.937**, every one faster, none slower:
+
+| case | L's M → C's M | C ÷ L | FFTN ÷ FFTW, L → C |
+|---|---|---|---|
+| 1018 (× 1, × 3, × 16) | 2048 → 2160 (whole line) | 0.929–0.936 | 1.044–1.047 → 0.971–0.980 |
+| 1013, 1019, 1021 | 2048 → 2160 | 0.927–0.937 | |
+| 131071 | 276480 → 268800 | 0.988 [0.983, 0.993] | 0.797 → 0.789 |
+| float 2036 (4 × 509, s = C = 4) | 4096 → 4320 | 0.922 | |
+| r2c and c2r 2036, 2026 (half lengths 1018, 1013) | 2048 → 2160 | 0.935–0.941 | |
+
+Unmoved and level: 509, 2027, 2039, 4093, 10403, 999983, float 1018 and 1013 (0.991–1.003).
 
 ## Verdict
