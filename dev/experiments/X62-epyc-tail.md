@@ -1,6 +1,6 @@
 # X62: the EPYC's remaining phase 1 exit cases
 
-- **Status:** running
+- **Status:** done (K3 with L adopted, odd batches from 5 rows; C adopted; K and K2 rejected)
 - **Owner:** x62 session, 2026-11-22
 - **Phase / task:** 1 (improvement after the exit: the tail of [X56](X56-exit-4.md)'s EPYC check);
   follows [X53](X53-two-row-leaves.md), [X54](X54-radix64-avx2.md), [X57](X57-epyc-1024.md)
@@ -253,4 +253,67 @@ K2 ÷ 0 (the rules' plans): 0.858 [0.855, 0.862] over the 32 cases; even counts 
 rows 0.74–0.97, in place 0.80–0.97, 17 rows 0.85–0.89, 3 and 5 rows forward 0.91–0.96, but
 **3 rows backward 1.092 and 5 rows backward 1.215**: K2 fails its rule (amendment 3).
 
+### Run 7: K3 (20261122-213538-371a, Slurm 515596, 24 rounds, every one started overloaded,
+other processes 114 cores median, band ±1.00 %)
+
+K3 ÷ 0 (the rules' plans): **0.848 [0.845, 0.851]** over the 32 cases. Even counts from 2 to
+1024 rows 0.76–0.93, in place 0.79–0.82, 17 rows 0.81–0.84, **5 rows 0.938 backward and 0.964
+forward**, 4096 rows unmoved (1.00). **3 rows 1.050 forward, 1.048 in place, 1.011 backward**: the
+last row is now a whole pair, which three rows do not repay. Op-cache counters on K3's build
+(Slurm 515598): no misses at any count (5 rows backward 1220 → 958 cycles a call, 7 rows 1638 →
+1268, 17 rows 3222 → 2922).
+
+FFTN ÷ FFTW in this run, 0 → K3 with L's rule: 64 × 2 backward 1.29 → 0.98, 64 × 16 1.16 → 0.92,
+64 × 256 1.07 → 0.91, 64 × 2 in place 1.28 → 1.01, 64 × 16 in place 1.26 → 1.03.
+
+### The limit move
+
+64 × 3 was slower than the chain in runs 2 (1.34–1.42 with K's leaf), 6 (1.09 backward with
+K2's) and 7 (1.05 forward, 1.05 in place with K3's). By L's rule (b) the limits move to exclude
+it: commit 427ce39 adds `target_profile::batch_ragged_rows`, from which a batch that C does not
+divide takes the leaves (avx2 double, 64: 5 rows), so 64 × 3 keeps the 4 × 16 chain, the plan of
+arm 0. No other case changes plan.
+
+### Confirmation on the branch head
+
+Run on 427ce39 (K3, L with the limits, C) against 0: see "Not done" if it is missing.
+
 ## Verdict
+
+- **K: rejected** (run 1): 64 × 5 backward 1.227 of `main`'s forced leaf. **K2: rejected** (run 6):
+  3 and 5 rows backward 1.09 and 1.22 of the chain. Both were steps to K3, kept in the history.
+- **K3 with L: adopted**, with the limits moved as L's rule (b) provides (odd batches from 5
+  rows). Over the cases the moved limits leave to the leaf (64 points, 2 and 4–1024 rows, odd from
+  5), run 7 gives none slower than the chain (the slowest 0.964), 64 × 5 backward 0.938 (faster
+  beyond the band) and a geometric mean of 0.820 over those 27 cases (0.848 over all 32, 64 × 3
+  and 4096 rows included): K3's rule (amendment 3) on those cases, and L's (a) and (b) with run 3
+  (64 × 2 backward 0.772, 64 × 16 0.792, 64 × 256 0.885). L's (c): only those plans move in runs 3
+  and 4. L's (d): tracking tier 0.996, the one moved case 0.876, no unmoved case past ±1.3 % (run
+  4). The case for the maintainer: K3's rule as written also covered 64 × 3, which it missed
+  (1.05); it is adopted on the cases L's limits keep, under L's clause, not on the letter of K3's
+  rule.
+- **C: adopted** (runs 3, 4, 5): over its 14 moved case results C ÷ L 0.92–0.99 (geometric mean
+  0.94), none slower; tracking tier 1.002 with no plan moved. 1018 ÷ FFTW 1.05 → 0.98.
+- **2048: kernel cost, not moved.** The same three-pass plan; FFTW's two-pass 32 → 64 plan has no
+  FFTN counterpart that wins (X54, X57). `LAYOUT=interleaved` gave no evidence (screen).
+- **72, 100, 120: code placement, left.** Same plans as since X38, ratios 1.07–1.09 that move
+  together and with the build (X57: the same functions aligned to 64 bytes took 72 and 120 to
+  0.88 and 0.93 of their time); no arm here touches their code, and run 3 shows them unchanged by
+  every arm (0.994–1.025).
+- **15 × 2 backward: not a loss** (0.89–0.90 of FFTW in the re-time and run 3).
+- **1024 backward** (1.06–1.09 of FFTW): the 16 × 64 plan of X57, unchanged; inside or near the
+  band in every run, not examined further.
+- The EPYC against FFTW over the exit check's 193 rows, run 3: L 4 cases beyond noise (2048,
+  1024 backward, 20000, 120) where `main` had 9 in the same run; with C, 1018 leaves the list too.
+- Lessons 4.14 (addendum) and 4.24 in `dev/LESSONS.md`; DESIGN sections 8.2, 8.5 and 11.2 and the
+  decision log updated.
+
+## Not done
+
+- The Xeon and the Mac were not run: no default plan there changes (K3's code is reached only
+  from `avx2` double plans of 32 or 64 points; L's and C's rules are keyed to `avx2` double and to
+  Zen 3's profile).
+- C reaches Zen 2 by its key, unmeasured; Zen 4 and 5 keep the L1's limit, unmeasured with half.
+- The batch leaf of 32 (K3's code too) stays untaken: forced, it ran 0.88–0.97 of `main`'s forced
+  leaf but 0.93–1.17 of the planner's plans in the screen.
+- Float's leaf of 64 on avx2 (C = 4) keeps the block transposes.

@@ -957,14 +957,15 @@ at R = 64 on AVX2's 16 registers that is a copy through the stack on each side. 
 input from its two rows when the codelet asks (a 128-bit load and an insert from memory,
 FFTW's form, written explicitly so that GCC does not turn it into broadcasts and shuffles)
 and storing each output's halves as they are produced took the leaf of 64 to about 0.85 of
-the block form's time and 0.74–0.97 of the 4 × 16 chain's from 2 to 1024 rows on the EPYC
-7763 (64 × 2 backward 1.29 → about 0.99 of FFTW). The second warning came from an odd batch:
+the block form's time and 0.76–0.93 of the 4 × 16 chain's at even counts from 2 to 1024 rows
+on the EPYC 7763 (64 × 2 backward 1.29 → 0.98 of FFTW, 64 × 16 1.16 → 0.92). The second warning came from an odd batch:
 the last row, run through a second inlined copy of the 1000-instruction codelet (in the
 leaf's form or with the same accessors), cost 570–750 cycles instead of 260–310 at 5, 7 and 17
 rows backward, because the two copies evicted each other from the op cache (190–300 misses a
 call, against none at 4 rows or forward, where the copies happened to fall apart). Running
 the last row through the pairs' copy, both lanes on the one row, ended the misses (5 rows
-backward 1220 → 960 cycles). Count op-cache misses (Zen 3 PMCx28F) before believing a path
+backward 1220 → 960 cycles), at the price of a whole pair for one row, which 3 rows did not
+repay (1.05 of the chain; excluded). Count op-cache misses (Zen 3 PMCx28F) before believing a path
 that is slow only for some counts or one direction. [X62](experiments/X62-epyc-tail.md).
 
 ## 5. Threading
