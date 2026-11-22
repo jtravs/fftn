@@ -293,10 +293,11 @@ TEST(BatchLeaves, ForcedOnlyWhereTheRowsCanTakeThem) {
   }
 }
 
-// The rules (target_profile::batch_rows, batch_narrower, batch_own_rows; experiment X53): a
-// batch of at least the profile's rows of a length it lists takes batch leaves, the narrower
-// target's where the profile says so up to batch_own_rows, the target's own from there; a
-// batch one row short of it, and single rows, do not. That every row of a batch gets the
+// The rules (target_profile::batch_rows, batch_max_rows, batch_narrower, batch_own_rows;
+// experiments X53, X62): a batch of at least the profile's rows of a length it lists, and at
+// most its batch_max_rows, takes batch leaves, the narrower target's where the profile says
+// so up to batch_own_rows, the target's own from there; a batch one row short of it, one row
+// past the limit, and single rows, do not. That every row of a batch gets the
 // same arithmetic is tests/api's (BatchRowsGetTheSameArithmeticAnywhere).
 template <class T> void rules_choose(fftn::isa t) {
   const auto target = target_of(t);
@@ -333,6 +334,14 @@ template <class T> void rules_choose(fftn::isa t) {
     }
     if (rows > 2) {
       EXPECT_EQ(text(rows - 1).find("batch leaf"), std::string::npos);
+    }
+    // The upper limit (target_profile::batch_max_rows, X62): its rows take them, one more
+    // does not.
+    if (const std::size_t most =
+            slot < profile.batch_max_rows.size() ? profile.batch_max_rows[slot] : 0;
+        most != 0) {
+      EXPECT_NE(text(most).find("batch leaf"), std::string::npos);
+      EXPECT_EQ(text(most + 1).find("batch leaf"), std::string::npos);
     }
     EXPECT_EQ(text(1).find("batch leaf"), std::string::npos);
   }
