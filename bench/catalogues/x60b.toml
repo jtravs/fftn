@@ -1,0 +1,20 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Experiment X60's held-out cases (dev/experiments/X60-c2r-two-arrays.md): out-of-place c2r
+# planes and volumes that no screen timed, for judging a threshold chosen on x60.toml's cases.
+# Half-spectrum sizes in MiB: 720^2 3.97, 80^3 4.0, 800^2 4.9, 640 x 1280 6.26, 1280 x 640 6.27,
+# 960^2 7.05, 112^3 10.9, 1200^2 11.0, 1536^2 18.0.
+
+[catalogue]
+name = "x60b"
+
+[[group]]
+name = "x60b-planes"
+kind = "c2r"
+dims = ["720x720", "800x800", "640x1280", "1280x640", "960x960", "1200x1200", "1536x1536"]
+
+[[group]]
+name = "x60b-volumes"
+kind = "c2r"
+dims = ["80x80x80", "112x112x112"]

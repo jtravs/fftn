@@ -296,14 +296,15 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
   // 0.69-0.97 of the block's time; within L2 2048 x 36 lost 1.08, 16^3 1.09). Zen 3's: packed
   // where the three arrays (in, block, out: three half spectra) pass two thirds of the CCX's L3
   // (1000^2 0.78, 100^3-2048^2 0.91-0.95); below, 512 x 1024 lost 1.10 and 96^3 1.04 at 4-7
-  // MiB. Apple's: a quarter of the cluster's L2 (768^2-128^3 0.84-1.02).
+  // MiB. Apple's: a third of the cluster's L2 (5.3 MiB on the M5 Max; 864^2-128^3 0.77-1.01 in
+  // arm R's judging run); from a quarter, 512 x 1024 lost 1.07 at 4 MiB.
   if (c.l2.size != 0 && x86_64 && private_l2 && !large_l2 && !large_l3) {
     p.c2r_packed_bytes = c.l2.size;
     p.c2r_packed_avx512_only = true;
   } else if (zen3_like) {
     p.c2r_packed_bytes = c.l3.size / 9 * 2;
   } else if (apple_like && c.l2.size != 0) {
-    p.c2r_packed_bytes = c.l2.size / 4;
+    p.c2r_packed_bytes = c.l2.size / 3;
   }
   // Experiment X36: long convolutions (machine_profile::long_convolution_bytes).
   if (p.pow2_chain_bytes != 0) {
