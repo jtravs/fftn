@@ -159,15 +159,7 @@ template <class T, std::size_t R, int Sign, edge_op InOp, edge_op OutOp, bool Fu
 FFTN_FORCE_INLINE void batch_group(const void* src, void* dst, std::ptrdiff_t src_dist,
                                    std::ptrdiff_t dst_dist, std::size_t u, std::size_t valid,
                                    const edge<T, InOp>& ein, const edge<T, OutOp>& eout) {
-  if constexpr (Full && batch_by_element<T, R>) {
-    // The codelet reads every input before it writes an output (each output depends on every
-    // input), so src may be dst (in place).
-    const pair_rows_in<T, InOp> x{
-        .r0 = line_at<T>(src, u, src_dist), .r1 = line_at<T>(src, u + 1, src_dist), .e = ein};
-    const pair_rows_out<T, OutOp> y{
-        .r0 = line_at<T>(dst, u, dst_dist), .r1 = line_at<T>(dst, u + 1, dst_dist), .e = eout};
-    cdft<R>::template plain<T, Sign>(x, y);
-  } else if constexpr (Full) {
+  if constexpr (Full) {
     const T* in[C<T>]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
     T* out[C<T>];      // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
     for (std::size_t l = 0; l < C<T>; ++l) {
@@ -200,23 +192,29 @@ void batch_leaf(const pass_args* a, const void* src, void* dst, std::ptrdiff_t s
                 "the factor edges keep leaf_lines");
   const edge<T, InOp> ein = make_edge<T, InOp>(a, nullptr, 0, 1);
   const edge<T, OutOp> eout = make_edge<T, OutOp>(a, nullptr, 0, 1);
+  if constexpr (batch_by_element<T, R>) {
+    // Rows u and u + 1 through one copy of the codelet, and a last row alone in both lanes
+    // (its halves loaded and stored twice) through the same copy. The codelet reads every input
+    // before it writes an output (each output depends on every input), so src may be dst.
+    // X62 arm K3: a second inlined copy for the last row, in the leaf's form (arm K) or with
+    // these accessors (arm K2), took 570-750 cycles for that row against 260-310 where it
+    // stayed out of the pairs' way: the two copies evicted each other from the op cache
+    // (190-300 misses a call on the EPYC 7763 at 5, 7 and 17 rows backward, none at 4).
+    for (std::size_t u = 0; u < count; u += 2) {
+      const std::size_t v = u + 1 < count ? u + 1 : u;
+      const pair_rows_in<T, InOp> x{
+          .r0 = line_at<T>(src, u, src_dist), .r1 = line_at<T>(src, v, src_dist), .e = ein};
+      const pair_rows_out<T, OutOp> y{
+          .r0 = line_at<T>(dst, u, dst_dist), .r1 = line_at<T>(dst, v, dst_dist), .e = eout};
+      cdft<R>::template plain<T, Sign>(x, y);
+    }
+    return;
+  }
   std::size_t u = 0;
   for (; u + C<T> <= count; u += C<T>) {
     batch_group<T, R, Sign, InOp, OutOp, true>(src, dst, src_dist, dst_dist, u, C<T>, ein, eout);
   }
-  if constexpr (batch_by_element<T, R>) {
-    if (count - u == 1) {
-      // X62 arm K2: one row left runs in both lanes through the accessors the pairs use (the
-      // same loads and stores, the row's halves twice). The leaf's form below, after two or
-      // more pairs, took 650-750 cycles for the row against 280 after one pair (counters on
-      // the EPYC 7763, backward); the arithmetic per lane is the same.
-      const pair_rows_in<T, InOp> x{
-          .r0 = line_at<T>(src, u, src_dist), .r1 = line_at<T>(src, u, src_dist), .e = ein};
-      const pair_rows_out<T, OutOp> y{
-          .r0 = line_at<T>(dst, u, dst_dist), .r1 = line_at<T>(dst, u, dst_dist), .e = eout};
-      cdft<R>::template plain<T, Sign>(x, y);
-    }
-  } else if (count - u == 1) {
+  if (count - u == 1) {
     // One row left: the leaf's own form, the row in every lane (one load and one store per
     // element), which costs a row what the leaf does; a partial group gathers and scatters
     // as a whole group does and cost about as much as two leaves (X53 arm B3).
