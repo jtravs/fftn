@@ -595,6 +595,144 @@ template <class T> void c2r_packed_matches_block(fftn::isa target) {
   }
 }
 
+// The packed route (X60) on the layouts the contiguous cases above leave out, taken by the rules
+// with the profile's fields set (no threshold, every target): a strided, negative or reordered
+// input, a padded, negative or transposed output, odd batch distances. The column h line starts
+// at h input elements along the last axis and the rows' loops move the block a value per row;
+// a strided last input axis or a reordered outer axis catches either offset going wrong. Same
+// checks as above: the block route's result to within twice the tolerance, the input kept, no
+// gap written, unrolled and walked programs equal.
+template <class T> void c2r_packed_strided(fftn::isa target) {
+  SCOPED_TRACE(std::string(fftn::isa_name(target)) + (sizeof(T) == 8 ? " double" : " float"));
+  struct strided_case {
+    const char* what;
+    std::vector<std::size_t> n;
+    std::vector<std::ptrdiff_t> in_stride;  // complex elements
+    std::vector<std::ptrdiff_t> out_stride; // reals
+    std::size_t count = 1;
+    std::ptrdiff_t in_dist = 0;
+    std::ptrdiff_t out_dist = 0;
+  };
+  const std::vector<strided_case> cases = {
+      {"input last axis strided", {8, 12}, {14, 2}, {12, 1}, 2, 113, 96},
+      {"input last axis strided, volume", {4, 3, 10}, {36, 12, 2}, {30, 10, 1}, 1},
+      {"input outer axis negative", {6, 16}, {-9, 1}, {16, 1}, 2, 55, 97},
+      {"input outer axes reordered", {5, 3, 8}, {5, 25, 1}, {24, 8, 1}, 2, 77, 120},
+      {"input transposed plane", {6, 8}, {1, 6}, {8, 1}, 1},
+      {"output padded, input strided", {7, 20}, {23, 2}, {22, 1}, 3, 163, 155},
+      {"output outer axis negative", {6, 10}, {6, 1}, {-10, 1}, 2, 37, 61},
+      {"output outer axes transposed", {4, 5, 6}, {35, 7, 1}, {8, 32, 1}, 2, 141, 161},
+      {"output transposed, input reordered, odd distances",
+       {3, 4, 12},
+       {7, 21, 1},
+       {14, 42, 1},
+       3,
+       85,
+       171},
+  };
+  for (const strided_case& sc : cases) {
+    SCOPED_TRACE(sc.what);
+    const std::size_t r = sc.n.size();
+    fftn::shape<std::complex<T>, T> sh;
+    for (std::size_t d = 0; d < r; ++d) {
+      sh.axes.push_back(
+          {.n = sc.n[d], .in_stride = sc.in_stride[d], .out_stride = sc.out_stride[d]});
+    }
+    sh.batches = {{.count = sc.count, .in_dist = sc.in_dist, .out_dist = sc.out_dist}};
+    build_settings rules;
+    rules.profile.c2r_packed_bytes = 0;
+    rules.profile.c2r_packed_avx512_only = false;
+    build_settings walked = rules;
+    walked.unroll_calls = false;
+    build_settings kept = rules;
+    kept.c2r_packed = 0;
+    std::vector<std::byte> input;
+    const auto run = [&](const build_settings& settings, std::string& text) {
+      const auto core =
+          fftn::detail::make_plan_core(fftn::detail::view_of(sh), {.force_isa = target}, settings);
+      text = fftn::detail::describe(*core);
+      const auto in_bytes = static_cast<std::size_t>(core->in_hi - core->in_lo);
+      const auto out_bytes = static_cast<std::size_t>(core->out_hi - core->out_lo);
+      if (input.empty()) {
+        fftn::test::input_source src(0x61ULL + in_bytes);
+        const auto v = src.reals<T>(in_bytes / sizeof(T));
+        input.resize(in_bytes);
+        std::memcpy(input.data(), v.data(), in_bytes);
+      }
+      std::vector<std::byte> in = input;
+      std::vector<std::byte> out(out_bytes, std::byte{0xa5});
+      const fftn::workspace ws(fftn::detail::workspace_bytes(*core, 1));
+      fftn::detail::execute_core(*core, 0, sc.count, in.data() - core->in_lo,
+                                 out.data() - core->out_lo, ws);
+      EXPECT_EQ(in, input) << "the input was not preserved";
+      std::vector<bool> described(out_bytes / sizeof(T), false);
+      std::vector<std::size_t> index(r, 0);
+      for (std::size_t b = 0; b < sc.count; ++b) {
+        for (bool more = true; more;) {
+          std::ptrdiff_t at = static_cast<std::ptrdiff_t>(b) * sc.out_dist;
+          for (std::size_t d = 0; d < r; ++d) {
+            at += static_cast<std::ptrdiff_t>(index[d]) * sc.out_stride[d];
+          }
+          const std::ptrdiff_t element = at - core->out_lo / static_cast<std::ptrdiff_t>(sizeof(T));
+          described.at(static_cast<std::size_t>(element)) = true;
+          more = false;
+          for (std::size_t d = r; d > 0; --d) {
+            if (++index[d - 1] < sc.n[d - 1]) {
+              more = true;
+              break;
+            }
+            index[d - 1] = 0;
+          }
+        }
+      }
+      for (std::size_t i = 0; i < described.size(); ++i) {
+        for (std::size_t k = 0; !described[i] && k < sizeof(T); ++k) {
+          EXPECT_EQ(out[i * sizeof(T) + k], std::byte{0xa5}) << "a gap was written at " << i;
+        }
+      }
+      return out;
+    };
+    std::string text;
+    std::string walked_text;
+    std::string kept_text;
+    const auto got = run(rules, text);
+    EXPECT_NE(text.find("packed"), std::string::npos) << text;
+    // describe() names each axis as the shape lists it, though the plan runs the outer axes
+    // widest output stride first (every case's lengths differ).
+    for (std::size_t d = 0; d < r; ++d) {
+      const std::string named = "axis " + std::to_string(d) + " (n = " + std::to_string(sc.n[d]);
+      EXPECT_NE(text.find(named), std::string::npos) << named << "\n" << text;
+    }
+    EXPECT_TRUE(run(walked, walked_text) == got) << "unrolled and walked differ";
+    const auto want = run(kept, kept_text);
+    EXPECT_EQ(kept_text.find("packed"), std::string::npos) << kept_text;
+    std::size_t points = 1;
+    for (const std::size_t n : sc.n) {
+      points *= n;
+    }
+    const double tolerance =
+        2 * 3 * std::numeric_limits<T>::epsilon() * std::max(1.0, std::log2(double(points)));
+    std::vector<T> x(got.size() / sizeof(T));
+    std::vector<T> y(x.size());
+    std::memcpy(x.data(), got.data(), x.size() * sizeof(T));
+    std::memcpy(y.data(), want.data(), y.size() * sizeof(T));
+    double most = 0;
+    double largest = 0;
+    for (std::size_t i = 0; i < x.size(); ++i) {
+      most = std::max(most, static_cast<double>(std::abs(x[i] - y[i])));
+      largest = std::max(largest, static_cast<double>(std::abs(y[i])));
+    }
+    EXPECT_LE(most, tolerance * largest) << text << kept_text;
+  }
+}
+
+TEST(Columns, C2rPackedStridedLayouts) {
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    c2r_packed_strided<double>(t);
+    c2r_packed_strided<float>(t);
+  }
+}
+
 // By the rules a c2r packs its intermediate where one transform's half spectrum exceeds the
 // profile's c2r_packed_bytes (X60): 64 x 64 doubles have 64 x 33 x 16 = 33792 bytes of it.
 TEST(Columns, C2rPacksBeyondTheProfilesBytes) {

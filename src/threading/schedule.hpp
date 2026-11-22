@@ -334,7 +334,7 @@ struct machine_profile {
   // bytes, and keeps it in the workspace block otherwise (X60). The packed route wins where the
   // block pushes input, block and output past a cache level and loses inside the caches, where
   // the output's power-of-two row strides cost more than the block's odd ones. Set only for the
-  // classes where X60 passed (set_grid_sizes); the block everywhere else.
+  // class where X60 passed (set_grid_sizes); the block everywhere else.
   std::size_t c2r_packed_bytes = std::numeric_limits<std::size_t>::max();
   // Whether c2r_packed_bytes applies only to plans for the avx512 target (the Xeon 6240's
   // class was measured there; an avx2 machine of the same cache class keeps the block).

@@ -1027,8 +1027,8 @@ bool r2c_pairs_in_grid(const build_settings& settings, target t) {
 // or more axes, out of place, an even real axis contiguous on the output and every other
 // output stride an even number of reals, so that each output row holds its h = n/2 complex
 // values (pass_args::packed); by the rules where one transform's half spectrum exceeds the
-// profile's c2r_packed_bytes, set only for the classes where X60 passed (the Xeon 6240's on
-// avx512 alone, c2r_packed_avx512_only). Otherwise the intermediate is that half spectrum in
+// profile's c2r_packed_bytes, set only for the class where X60 passed (the Xeon 6240's, on
+// avx512 alone: c2r_packed_avx512_only). Otherwise the intermediate is that half spectrum in
 // the workspace block. build_settings::c2r_packed 0 keeps the block, 1 packs wherever the layout
 // allows (tests).
 bool c2r_packed(const shape_view& s, const side& in, const side& out, bool in_place,
@@ -1663,9 +1663,9 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       const std::size_t cneed = chain.c2c_line(c.lengths[d], +1, at(src, d), at(packed, d),
                                                src.where == slot::out, line_edges(), cs);
       lines(d, columns, src, packed, cneed, std::move(cs));
-      c.axis_notes.push_back("axis " + std::to_string(d) + " (n = " + std::to_string(c.lengths[d]) +
-                             "): c2c backward into the output, packed, radices " +
-                             chain.radix_text(c.lengths[d]));
+      c.axis_notes.push_back(
+          "axis " + std::to_string(listed(d)) + " (n = " + std::to_string(c.lengths[d]) +
+          "): c2c backward into the output, packed, radices " + chain.radix_text(c.lengths[d]));
     }
     // Column h: one line of a loop that starts there on the input. It joins the last column
     // phase where that phase is one nest of lines (no narrower block of its own): its line
@@ -1735,7 +1735,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       }
       std::get<loop>(p.records[at_loop++]).step[2] = block_view.stride[e] * complex_bytes;
     }
-    c.axis_notes.push_back("axis " + std::to_string(r - 1) + " (n = " + std::to_string(n) +
+    c.axis_notes.push_back("axis " + std::to_string(listed(r - 1)) + " (n = " + std::to_string(n) +
                            "): in place on the packed rows, " + chain.real_text(n, false, false));
   } else {
     // c2r: the complex axes first, then the real one, which must come last because the

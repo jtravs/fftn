@@ -289,6 +289,17 @@ void add_cases(std::vector<team_case>& out, const fftn::detail::build_settings& 
   packed.c2r_packed = 1;
   out.push_back(make_case("c2r_volume_8x6x10x2" + suffix, c2r_volume, 2 * 8 * 6 * 6, 2 * 8 * 6 * 10,
                           false, packed, target));
+  // Packed on a strided layout (X60): every second input element along the real axis, padded
+  // input and output rows, the output's outer axes transposed, odd distances. The highest
+  // input index is 573 + 5 x 95 + 4 x 19 + 8 x 2 = 1140, the highest output one
+  // 541 + 5 x 18 + 4 x 108 + 15 = 1078.
+  fftn::shape<c, T> c2r_strided;
+  c2r_strided.axes = {{.n = 6, .in_stride = 95, .out_stride = 18},
+                      {.n = 5, .in_stride = 19, .out_stride = 108},
+                      {.n = 16, .in_stride = 2, .out_stride = 1}};
+  c2r_strided.batches = {{.count = 2, .in_dist = 573, .out_dist = 541}};
+  out.push_back(make_case("c2r_volume_strided_6x5x16x2" + suffix, c2r_strided, 1141, 1079, false,
+                          packed, target));
   fftn::shape<T, c> r2c_odd;
   r2c_odd.axes = {{.n = 64}, {.n = 100}};
   r2c_odd.batches = {{.count = 1}};
