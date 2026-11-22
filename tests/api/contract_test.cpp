@@ -821,7 +821,7 @@ TEST(Describe, NamesTheProgram) {
   for (const char* part : {
            "c2r",
            "float",
-           "block of 48 complex",
+           "block of 48 complex", // too small to pack its intermediate in the output (X60)
            "c2c backward",
            "a leaf of 3 with the pairing fused",
            "loop lines x3",
