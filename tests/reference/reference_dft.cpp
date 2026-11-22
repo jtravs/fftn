@@ -9,11 +9,14 @@
 // include-cleaner would instead name the internal headers it happens to use.
 #include <boost/multiprecision/cpp_bin_float.hpp> // NOLINT(misc-include-cleaner): as above
 
+#include <bit>
 #include <complex>
 #include <cstddef>
+#include <cstdint>
 #include <map>
 #include <mutex>
 #include <numeric>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <utility>
@@ -214,14 +217,84 @@ const std::vector<exact_complex>& unit_roots(int sign, std::size_t n) {
   return it->second;
 }
 
-std::vector<exact_complex> c2c(int sign, std::span<const std::complex<double>> x,
-                               std::span<const std::size_t> bins) {
-  std::vector<exact_complex> out;
-  if (x.empty()) {
-    return out;
+// Results are remembered for the life of the process, by the bits of the input and the list
+// of outputs asked for: the suites that force every instruction set, both precisions' plans
+// of one input, both directions and every edge variant ask for the same transform again and
+// again (the same rows on each target, with scales and output factors applied afterwards),
+// and at O(n^2) in 113-bit arithmetic those repeats were most of the sanitizer job's time.
+// A stored result is the one the first evaluation gave, so nothing changes but the time. Of
+// a full complex transform only the forward one is stored: bin k of the backward one is bin
+// (n - k) mod n of the forward one, bit for bit, since both sum the same twiddle (w+[m] is
+// the conjugate of w-[m] in the tables, and w-[n - m] is that conjugate exactly) in the same
+// order (ReferenceDft.BothSignsShareOneEvaluation holds this). Each store is bounded and
+// starts afresh when full.
+namespace {
+
+template <class V> class store {
+public:
+  explicit store(std::size_t limit_bytes) : limit_(limit_bytes) {}
+
+  std::optional<std::vector<V>> find(const std::vector<std::uint64_t>& key) {
+    const std::scoped_lock guard(lock_);
+    if (const auto it = map_.find(key); it != map_.end()) {
+      return it->second;
+    }
+    return std::nullopt;
   }
-  const auto& w = table(checked_sign(sign), x.size());
+
+  void put(std::vector<std::uint64_t> key, std::vector<V> value) {
+    const std::size_t size = key.size() * sizeof(std::uint64_t) + value.size() * sizeof(V);
+    const std::scoped_lock guard(lock_);
+    if (bytes_ + size > limit_) {
+      map_.clear();
+      bytes_ = 0;
+    }
+    if (size <= limit_ && map_.try_emplace(std::move(key), std::move(value)).second) {
+      bytes_ += size;
+    }
+  }
+
+private:
+  std::size_t limit_;
+  std::mutex lock_;
+  std::map<std::vector<std::uint64_t>, std::vector<V>> map_;
+  std::size_t bytes_ = 0;
+};
+
+store<exact_complex>& complex_store() {
+  static store<exact_complex> s(std::size_t{192} << 20U);
+  return s;
+}
+
+store<exact_real>& real_store() {
+  static store<exact_real> s(std::size_t{64} << 20U);
+  return s;
+}
+
+// What a result depends on: which function (kind) and its integer argument (the sign, or
+// c2r's length), the input's bits and the outputs asked for (none: all of them).
+std::vector<std::uint64_t> key_of(std::uint64_t kind, std::uint64_t arg,
+                                  std::span<const std::complex<double>> x,
+                                  std::span<const std::size_t> outputs) {
+  std::vector<std::uint64_t> key{kind, arg, x.size(), outputs.size()};
+  key.reserve(key.size() + 2 * x.size() + outputs.size());
+  for (const std::complex<double>& v : x) {
+    key.push_back(std::bit_cast<std::uint64_t>(v.real()));
+    key.push_back(std::bit_cast<std::uint64_t>(v.imag()));
+  }
+  key.insert(key.end(), outputs.begin(), outputs.end());
+  return key;
+}
+
+enum : std::uint64_t { full_kind = 1, bins_kind = 2, c2r_kind = 3 };
+
+std::uint64_t sign_arg(int sign) { return sign < 0 ? 0 : 1; }
+
+std::vector<exact_complex> evaluate_c2c(int sign, std::span<const std::complex<double>> x,
+                                        std::span<const std::size_t> bins) {
+  const auto& w = table(sign, x.size());
   const auto sx = nonzeros(x);
+  std::vector<exact_complex> out;
   out.reserve(bins.size());
   for (const std::size_t k : bins) {
     out.push_back(to_exact(dft_bin(sx, w, k)));
@@ -229,8 +302,73 @@ std::vector<exact_complex> c2c(int sign, std::span<const std::complex<double>> x
   return out;
 }
 
+// x_j = Re X_0 + [n even] Re X_{n/2} (-1)^j + 2 sum_{0 < k < n/2} Re(X_k exp(+2 pi i j k / n)).
+// Only real parts of bins 0 and n/2 enter, which is the convention that c2r ignores their
+// imaginary parts.
+std::vector<exact_real> evaluate_c2r(std::size_t n, std::span<const std::complex<double>> X,
+                                     std::span<const std::size_t> indices) {
+  const auto& w = table(+1, n);
+  const std::size_t paired_end = (n + 1) / 2; // bins 1 .. paired_end - 1 have a mirror
+  std::vector<exact_real> out;
+  out.reserve(indices.size());
+  for (const std::size_t j : indices) {
+    quad acc = quad(X[0].real());
+    if (n % 2 == 0) {
+      const quad nyquist = quad(X[n / 2].real());
+      acc += (j % 2 == 0) ? nyquist : quad(-nyquist);
+    }
+    quad pairs = 0;
+    for (std::size_t k = 1; k < paired_end; ++k) {
+      const qcomplex& t = w[(k * (j % n)) % n];
+      pairs += quad(X[k].real()) * t.re - quad(X[k].imag()) * t.im;
+    }
+    acc += 2 * pairs;
+    out.push_back(to_exact(acc));
+  }
+  return out;
+}
+
+std::vector<exact_complex> with_sign(int sign, std::vector<exact_complex> forward) {
+  if (sign < 0) {
+    return forward;
+  }
+  const std::size_t n = forward.size();
+  std::vector<exact_complex> out(n);
+  for (std::size_t k = 0; k < n; ++k) {
+    out[k] = forward[(n - k) % n];
+  }
+  return out;
+}
+
+} // namespace
+
+std::vector<exact_complex> c2c(int sign, std::span<const std::complex<double>> x,
+                               std::span<const std::size_t> bins) {
+  if (x.empty()) {
+    return {};
+  }
+  const int s = checked_sign(sign);
+  std::vector<std::uint64_t> key = key_of(bins_kind, sign_arg(s), x, bins);
+  if (auto found = complex_store().find(key)) {
+    return std::move(*found);
+  }
+  std::vector<exact_complex> out = evaluate_c2c(s, x, bins);
+  complex_store().put(std::move(key), out);
+  return out;
+}
+
 std::vector<exact_complex> c2c(int sign, std::span<const std::complex<double>> x) {
-  return c2c(sign, x, all_indices(x.size()));
+  if (x.empty()) {
+    return {};
+  }
+  const int s = checked_sign(sign);
+  std::vector<std::uint64_t> key = key_of(full_kind, sign_arg(-1), x, {});
+  if (auto found = complex_store().find(key)) {
+    return with_sign(s, std::move(*found));
+  }
+  std::vector<exact_complex> forward = evaluate_c2c(-1, x, all_indices(x.size()));
+  complex_store().put(std::move(key), forward);
+  return with_sign(s, std::move(forward));
 }
 
 std::vector<exact_complex> r2c(std::span<const double> x, std::span<const std::size_t> bins) {
@@ -247,35 +385,20 @@ std::vector<exact_complex> r2c(std::span<const double> x) {
   return r2c(x, all_indices(x.size() / 2 + 1));
 }
 
-// x_j = Re X_0 + [n even] Re X_{n/2} (-1)^j + 2 sum_{0 < k < n/2} Re(X_k exp(+2 pi i j k / n)).
-// Only real parts of bins 0 and n/2 enter, which is the convention that c2r ignores their
-// imaginary parts.
 std::vector<exact_real> c2r(std::size_t n, std::span<const std::complex<double>> X,
                             std::span<const std::size_t> indices) {
   if (X.size() != n / 2 + 1) {
     throw std::invalid_argument("reference::c2r: needs n/2 + 1 values");
   }
-  std::vector<exact_real> out;
   if (n == 0) {
-    return out;
+    return {};
   }
-  const auto& w = table(+1, n);
-  const std::size_t paired_end = (n + 1) / 2; // bins 1 .. paired_end - 1 have a mirror
-  out.reserve(indices.size());
-  for (const std::size_t j : indices) {
-    quad acc = quad(X[0].real());
-    if (n % 2 == 0) {
-      const quad nyquist = quad(X[n / 2].real());
-      acc += (j % 2 == 0) ? nyquist : quad(-nyquist);
-    }
-    quad pairs = 0;
-    for (std::size_t k = 1; k < paired_end; ++k) {
-      const qcomplex& t = w[(k * (j % n)) % n];
-      pairs += quad(X[k].real()) * t.re - quad(X[k].imag()) * t.im;
-    }
-    acc += 2 * pairs;
-    out.push_back(to_exact(acc));
+  std::vector<std::uint64_t> key = key_of(c2r_kind, n, X, indices);
+  if (auto found = real_store().find(key)) {
+    return std::move(*found);
   }
+  std::vector<exact_real> out = evaluate_c2r(n, X, indices);
+  real_store().put(std::move(key), out);
   return out;
 }
 

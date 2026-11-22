@@ -1194,3 +1194,16 @@ dispatch picks the scalar path by default. With it, FFTN's whole x86-64 suite (1
 emulated; that still needs SDE or the hardware. Build the test oracles for x86-64 too (an
 ExternalProject that ignores `CMAKE_OSX_ARCHITECTURES` links arm64 objects).
 [X23](experiments/X23-masked-tails.md).
+
+6.15 **Read a slow CI job's step timestamps before trimming its tests, and remember an
+expensive oracle's results.** The required ASan + UBSan job took 70-90 minutes on some runs
+and was blamed on three slow tests; its logs showed the tests at 24-27 minutes in every run,
+AVX2 and AVX-512 runners alike, and the long runs spent 41-66 minutes rebuilding the
+kernel units from a stale ccache (main saved its cache only after a successful job) or 90
+minutes in a stalled `apt-get update`. The tests themselves were dominated by the
+quadruple-precision O(n²) reference DFT (about 1 µs per complex multiply-add under ASan on
+the runners, 0.17 µs in Release on the Mac) evaluated again for the same rows on every
+instruction set, in both directions and in every edge variant. Remembering its results by
+the input's bits (and reading the backward transform from the forward one, bit for bit)
+changed no check and cut the job's tests from 26 to 12 minutes, GCC 16's from 17 to 10.
+PR 89.
