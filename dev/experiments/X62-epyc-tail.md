@@ -276,7 +276,12 @@ arm 0. No other case changes plan.
 
 ### Confirmation on the branch head
 
-Run on 427ce39 (K3, L with the limits, C) against 0: see "Not done" if it is missing.
+Run 20261122-221029-04d1 (Slurm 515704, not deciding, `--serial`, 16 rounds, every one started
+overloaded, band ±1.60 %), the head 427ce39 (K3, L with the limits, C) against 0, catalogue `x62`:
+64 × 3 keeps the chain (0.991–0.999); the other 64-point cases of 2–1024 rows 0.755–0.960
+(64 × 2 backward 0.755, 64 × 16 0.790), 4096 rows 1.00; 1013 and 1018 0.93, 131071 0.97, 509
+1.00; nothing slower. FFTN ÷ FFTW, 0 → head: 64 × 2 backward 1.30 → 0.99, 64 × 16 1.17 → 0.93,
+1018 1.11 → 1.03 (FFTW's 1018 moved between runs: 10.9–11.3 ns per point).
 
 ## Verdict
 
