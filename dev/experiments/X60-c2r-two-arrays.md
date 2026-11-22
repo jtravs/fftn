@@ -1,8 +1,8 @@
 # X60: out-of-place c2r without a third array
 
-- **Status:** paused (2026-11-19): diagnosis done, change built and screened, no judging run;
-  the change is a lead, not adopted
-- **Owner:** X60 agent, 2026-11-19 (night round 2)
+- **Status:** judging (2026-11-22): the gate per class screened (arm R), decision rule written
+  before the judging runs
+- **Owner:** X60 agent, 2026-11-19 (night round 2); X60 judge agent, 2026-11-22 (wave 1)
 - **Phase / task:** 4.1 (planes), task 2.1's c2r
 
 ## Question
@@ -92,6 +92,20 @@ All arms are on branch `exp/x60-c2r`.
   `machine_profile::c2r_packed_bytes`: the L2 where it is private, a quarter of a shared L2. On
   the EPYC that is 512 KiB, on the Xeon 1 MiB and on the M5 Max 4 MiB.
 
+- **Arm PA** (2ad53aa, screen only). Q on `main` 021c117 (merged at 2dececc) with
+  `c2r_packed_bytes` 0: packed wherever the layout allows.
+- **Arm R** (285b062). Q with the threshold set per class from the PA screen (below), and the
+  block wherever the class was not measured (`c2r_packed_bytes` SIZE_MAX by default):
+  - the Xeon 6240's class (x86-64, a private L2 under 2 MiB, under 2 MiB of L3 per CPU): the
+    L2 (1 MiB), and only for plans on `avx512` (`c2r_packed_avx512_only`: an `avx2` machine of
+    that cache class keeps the block, AGENTS section 6);
+  - Zen 3's class (the EPYC 7763: a private L2 under 1 MiB, a large L3 per CPU): two ninths of
+    the CCX's L3, 7.1 MiB, that is input, block and output (three half spectra) past two thirds
+    of the L3;
+  - Apple's class (a cluster-shared L2): a quarter of the L2, 4 MiB, as Q;
+  - Zen 4 and Zen 5, Granite and Sapphire Rapids, other AArch64 and unknown topologies: the
+    block.
+
 Bits differ from the block route in the last places, which `docs/conventions.md` allows
 ("between plans built with different options"). They are the same for every team size (tested).
 
@@ -104,6 +118,65 @@ Bits differ from the block route in the last places, which `docs/conventions.md`
   - EPYC 7763: GCC 16, `avx2`, DMOG through Slurm.
   - M5 Max: Homebrew Clang 23, `neon_fcma`, on AC power.
   - Xeon 6240: counters only. Its judging run was not reached.
+
+### The gate screen (2026-11-22)
+
+Arm PA against `main` 021c117, one thread unless noted, catalogue `bench/catalogues/x60.toml`
+(the standard c2r planes and volumes out of place plus sizes between them; its header lists
+each case's half spectrum in MiB).
+
+- EPYC 7763, run 20261122-175616-a479: GCC 16, `avx2`, a shared node with 87 other busy cores
+  (every round loaded), band ±1.24 %.
+- EPYC at 8 lanes, run 20261122-175616-dd47: 92 other busy cores, band ±4.08 %.
+- Xeon 6240, run 20261122-175805-b758: GCC 14.4, `avx512`, no round loaded, band ±2.29 %.
+- M5 Max, run 20261122-175334-69d1: Homebrew Clang 23, `neon_fcma`, AC power, every round
+  loaded by other agents' builds (load 13–21), band ±3.76 %.
+
+PA ÷ `main` by half spectrum (MiB):
+
+| case | MiB | EPYC | EPYC 8 lanes | Xeon | Mac |
+|---|---|---|---|---|---|
+| 128² | 0.13 | 0.987 | 0.869 | 0.929 | **1.216** |
+| 256² | 0.50 | 0.940 | **1.112** | 0.833 | **1.141** |
+| 36 × 2048 | 0.56 | 0.981 | 1.064 | 0.954 | 0.982 |
+| 2048 × 36 | 0.59 | 1.009 | 0.856 | **1.079** | 0.913 |
+| 320² | 0.79 | 1.006 | 0.743 | 0.886 | **1.126** |
+| 48³ | 0.84 | 0.920 | 0.961 | 0.926 | 0.908 |
+| 384² | 1.13 | **1.064** | 0.911 | 0.769 | **1.215** |
+| 512² | 2.01 | **1.097** | **1.307** | 0.968 | **1.140** |
+| 64³ | 2.06 | 0.866 | 1.144 | 0.825 | 1.007 |
+| 480 × 640 | 2.35 | **1.027** | 1.071 | 0.894 | **1.105** |
+| 640² | 3.13 | 1.041 | **1.189** | 0.822 | **1.119** |
+| 600 × 800 | 3.67 | 0.866 | 1.042 | 0.800 | 0.984 |
+| 512 × 1024 | 4.01 | **1.102** | **1.170** | 0.970 | 1.064 |
+| 1024 × 512 | 4.02 | 0.961 | **1.181** | 0.754 | 0.908 |
+| 768² | 4.51 | 1.002 | 1.082 | 0.816 | 0.941 |
+| 864² | 5.71 | 0.838 | **1.139** | 0.835 | 0.896 |
+| 96³ | 6.89 | **1.043** | 0.931 | 0.782 | 1.021 |
+| 1000² | 7.64 | 0.775 | **1.112** | 0.686 | 0.891 |
+| 100³ | 7.78 | 0.947 | 0.822 | 0.903 | 0.999 |
+| 1024² | 8.02 | 0.928 | **1.124** | 0.739 | 0.860 |
+| 128³ | 16.1 | 0.940 | 0.935 | 0.870 | 0.844 |
+| 2048² | 32.0 | 0.911 | 0.763 | 0.898 | 0.996 |
+
+Bold: slower beyond the run's band. Below 128² and 48³ PA lost or tied everywhere (16³ 1.07–1.23,
+32³ 1.01–1.47; 32², 64², 96², 100² 0.91–1.04).
+
+- **The Xeon gains almost everywhere** (geometric mean 0.883 over the 28 cases): 0.69–0.97 from
+  384² up, 0.83 at 256². Its losses are within its L2: 2048 × 36 1.08 and 16³ 1.09. Its L2 (1 MiB)
+  separates them, as Q had it; 256², 320², 48³ and 36 × 2048 gain too but lie on the losers' side.
+- **The EPYC's losses reach 6.9 MiB** (512 × 1024 1.10, 96³ 1.04) while 600 × 800, 864², 64³, 48³
+  and 256² gain. No threshold below 7 MiB separates them; from 7.6 MiB (1000²) up every case
+  gains at one thread (0.78–0.95). 7.1 MiB, three half spectra at two thirds of the CCX's
+  32 MiB L3, is the threshold. At 8 lanes on a node this loaded the run disagrees with the
+  quieter P3 run of 2026-11-19 (1000² 1.11 against 0.96, 1024² 1.12 against 0.87); the judging
+  run decides there.
+- **The M5 Max keeps Q's 4 MiB**: from 768² up 0.84–1.02, below it 1.11–1.22 except 600 × 800,
+  2048 × 36 and 48³.
+- **Neither candidate of the handoff separates the EPYC by itself.** The LLC share by core (4 MiB)
+  keeps 512 × 1024 and 96³, which lose. The pass count does not separate either: 256² gains
+  (0.94) with three packed passes against the block's two, and 480 × 640 loses with three
+  against three (the radix table under P3 below).
 
 ## Results: screens (not judging runs)
 
@@ -162,6 +235,31 @@ forced into the output took twice the time (local runs). There, even with the bl
 radices (8 × 8 × 8 at 512²), the packed columns were 13–15 % slower at 256²–512² whatever the
 block width (4–32 columns). The packed route's power-of-two output strides cost more inside the
 caches than the third array does.
+
+## Decision rule (written 2026-11-22, before the judging runs)
+
+Arms: M = `main` (021c117, the merge base of arm R's branch), R = arm R (285b062), each run with
+fbench's identical-arm control of M. Release toolchains: GCC on Linux (16 on the EPYC, 14.4 on
+the Xeon), Homebrew Clang 23 on the Mac.
+
+- **Judged cases, per target: only those R moves**, the cases of `bench/catalogues/x60.toml` whose
+  half spectrum exceeds the target's threshold (every other case keeps M's plan):
+  - Xeon 6240, one thread (`avx512`, threshold 1 MiB): 384², 512², 480 × 640, 640², 600 × 800,
+    512 × 1024, 1024 × 512, 768², 864², 1000², 1024², 2048², 64³, 96³, 100³, 128³ (16 cases).
+  - EPYC 7763 (`avx2`, 7.1 MiB), one thread and 8 lanes separately: 1000², 1024², 2048², 100³,
+    128³ (5 cases).
+  - M5 Max (`neon_fcma`, 4 MiB), one thread: 512 × 1024, 1024 × 512, 768², 864², 96³, 1000²,
+    1024², 2048², 100³, 128³ (10 cases).
+- **Adopt on a target** if, in each of its judged runs, (1) the weighted geometric mean of R ÷ M
+  over its judged cases is below 0.97, and (2) no judged case is slower beyond noise: none with
+  its whole 95 % interval above 1.02 × (1 + band). A case a hair past (2) on a loaded machine is
+  re-run before it decides.
+- **Collateral check:** the tracking tier (standard catalogue) R against M on each machine, one
+  thread. A case slower beyond 1.05 × (1 + band) outside the judged set blocks adoption unless
+  its plan is unchanged (describe() identical), in which case it is recorded as placement.
+- **Per target.** A target that fails keeps the block (its class's value goes back to SIZE_MAX);
+  a target that passes keeps R's threshold. If the EPYC passes one thread and fails 8 lanes it
+  keeps the block (a team must not lose what one thread gains).
 
 ## Verdict (provisional: no judging run)
 
