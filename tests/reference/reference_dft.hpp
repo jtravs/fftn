@@ -17,6 +17,11 @@
 // Cost: about 0.14 us per complex multiply-add, so a full 1024-point transform takes about
 // 0.15 s (measured on an Apple M5 Max). For large n, evaluate only some outputs with the
 // overloads that take a list of bins or indices.
+//
+// Results are remembered for the life of the process (in bounded stores), by the input's
+// bits and the outputs asked for: a repeated call returns at once, bit for bit what a new
+// evaluation would give. All n outputs of a complex transform in one direction give those
+// of the other direction too.
 
 #pragma once
 
@@ -37,9 +42,7 @@ exact_complex unit_root(int sign, std::size_t m, std::size_t n);
 // the life of the process (thread-safe), since the analytic checks look them up often.
 const std::vector<exact_complex>& unit_roots(int sign, std::size_t n);
 
-// The DFT of x (length n) with exponent sign: all n outputs, or the listed bins. All n
-// outputs of an input already transformed (in either direction) come from a bounded
-// per-process store, bit for bit what a new evaluation would give.
+// The DFT of x (length n) with exponent sign: all n outputs, or the listed bins.
 std::vector<exact_complex> c2c(int sign, std::span<const std::complex<double>> x);
 std::vector<exact_complex> c2c(int sign, std::span<const std::complex<double>> x,
                                std::span<const std::size_t> bins);
