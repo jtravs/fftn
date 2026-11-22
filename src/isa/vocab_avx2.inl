@@ -105,6 +105,17 @@ FFTN_FORCE_INLINE __m256d bcast(const double* p) {
   const __m128d x = _mm_loadu_pd(p);
   return _mm256_set_m128d(x, x);
 }
+// The complex double at lo in the low half and the one at hi in the high half: one 128-bit
+// load and one insert from memory. And its inverse, a low-half store and an extract to memory.
+// The batch leaves of radix 32 and 64 move their two rows this way (passes/batch_leaf.inl,
+// experiment X62).
+FFTN_FORCE_INLINE __m256d load_halves(const double* lo, const double* hi) {
+  return _mm256_insertf128_pd(_mm256_castpd128_pd256(_mm_loadu_pd(lo)), _mm_loadu_pd(hi), 1);
+}
+FFTN_FORCE_INLINE void store_halves(double* lo, double* hi, __m256d a) {
+  _mm_storeu_pd(lo, _mm256_castpd256_pd128(a));
+  _mm_storeu_pd(hi, _mm256_extractf128_pd(a, 1));
+}
 // Built from scalars rather than an 8-byte load through a cast pointer: std::complex<float>
 // is only 4-byte aligned. Clang 23 emits a single VBROADCASTSD for it.
 FFTN_FORCE_INLINE __m256 bcast(const float* p) {
