@@ -1,0 +1,26 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Experiment X60's screen (dev/experiments/X60-c2r-two-arrays.md): out-of-place c2r planes and
+# volumes, the standard catalogue's and sizes between them, so that a threshold on one
+# transform's half spectrum (rows x (n/2 + 1) complex doubles) can be placed. Half-spectrum
+# sizes in MiB: 256^2 0.50, 36 x 2048 0.56, 320^2 0.79, 48^3 0.84, 384^2 1.13, 512^2 2.01,
+# 64^3 2.06, 480 x 640 2.35, 640^2 3.13, 600 x 800 3.67, 1024 x 512 and 512 x 1024 4.0,
+# 768^2 4.51, 864^2 5.71, 96^3 6.89, 1000^2 7.64, 100^3 7.78, 1024^2 8.0, 128^3 16.1, 2048^2 32.
+
+[catalogue]
+name = "x60"
+
+[[group]]
+name = "x60-planes"
+kind = "c2r"
+dims = [
+  "32x32", "64x64", "128x128", "256x256", "320x320", "384x384", "512x512", "480x640",
+  "640x640", "600x800", "512x1024", "1024x512", "768x768", "864x864", "1000x1000",
+  "1024x1024", "2048x2048", "96x96", "100x100", "36x2048", "2048x36",
+]
+
+[[group]]
+name = "x60-volumes"
+kind = "c2r"
+dims = ["16x16x16", "32x32x32", "48x48x48", "64x64x64", "96x96x96", "100x100x100", "128x128x128"]
