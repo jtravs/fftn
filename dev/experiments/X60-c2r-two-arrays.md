@@ -278,6 +278,22 @@ chosen on arm R's judged cases, so R2 is judged also on held-out sizes that no s
   plan and are the collateral check with the tracking tier of arm R (Apple's change does not
   touch other classes).
 
+### The Xeon 6240 at 8 lanes (rule written 2026-11-22 after the second reader, before the run)
+
+Arm R's rule judged the Xeon at one thread only, but a plan runs serially or in a team as its
+caller chooses, so the Xeon class's threshold also reaches team executions.
+
+- Arms: M = `main` 021c117 and R = 285b062 (the Xeon class's threshold and code path are those
+  of the final commit), each at 8 threads (`THREADS=8`), with the identical-arm control of M;
+  GCC 14.4, `avx512`; `fbench_remote.py`'s job files in the `--serial` chain.
+- Pinning (the Xeon's Slurm binds no CPUs, X59): fbench runs under `numactl -m` and `taskset`
+  on eight idlest whole cores of the idlest socket and that socket's memory, one CPU of each
+  core, chosen once at the job's start, as X59's confined runs.
+- Judged cases: the Xeon's 16 of the one-thread rule (`x60.toml`, half spectrum above 1 MiB).
+- Criteria (1) and (2) of the rule above over those cases. A pass keeps the Xeon class packed.
+  A fail gives the Xeon class the block for every plan: a plan does not know whether a team will
+  run it (the team is chosen at execution), so team plans cannot be told apart in the planner.
+
 ## Results: judging runs (2026-11-22)
 
 R ÷ M (M = `main` 021c117) on the judged cases; band from fbench's identical-arm control of M.
