@@ -206,6 +206,24 @@ in place 0.82; 4096 rows unmoved 1.00. **Odd counts slower: 3 rows 1.34–1.42, 
 saturated node than in run 1. By L's rule (b) these cases go to the re-run, which amendment 2
 makes run 6 (K2's leaf).
 
+### Run 3: the exit check's cases, L, 0 and C (20261122-203524-faba, Slurm 515537, 15 rounds, every
+one started overloaded, other processes 91 cores median, band ±1.73 %)
+
+The first submission (Slurm 515496) was cancelled before it started, to add arm C; the second
+(515503) after its first round, to cap the run at 16 rounds.
+
+- L moves 64 × 2 backward (L ÷ 0 0.772), 64 × 16 (0.792), 64 × 256 (0.885); every other plan
+  note agrees. Geometric mean over the 201 cases, 0 ÷ L 1.002 [0.993, 1.008].
+- C moves 1018 (C ÷ L 0.933 [0.929, 0.942]) and 131071 (0.981 [0.965, 0.986]); every other plan
+  note agrees with L's. C ÷ L over the 201 cases 1.001 [0.995, 1.006].
+- Unmoved cases that differ between the three binaries are tiny or long rows whose ratios
+  scatter in this run: the row of 2 points is 0.84 of 0's time and of C's in L's binary
+  (intervals [1.005, 1.224] and [0.997, 1.206]), 65537 1.08 [0.85, 1.28] in C's.
+- Against FFTW (DESIGN 1.3, 193 c2c rows, band ±1.73 %): **L 0.77 with 4 beyond noise** (2048
+  1.11, 1024 backward 1.09, 20000 1.09, 120 1.08), against 9 for 0 and 4 for C in the same run
+  (medians; those two arms are not paired with FFTW by fbench): 64 × 2 backward 1.28 → 0.98, 64 ×
+  16 1.15 → 0.91, 1018 1.05 → 0.98 (C). Still beyond noise: 2048, 1024 backward, 120, 20000.
+
 ### Run 4: tracking tier, L and C (20261122-191204-85fb, Slurm 515505, 24 rounds, band ±1.16 %)
 
 - L ÷ 0: **0.996** (0 ÷ L 1.004 [1.002, 1.008]); one case moved, 64 × 256 at 0.876; every other
@@ -227,5 +245,12 @@ C ÷ L over the 12 moved cases (plan notes differ): **0.937**, every one faster,
 | r2c and c2r 2036, 2026 (half lengths 1018, 1013) | 2048 → 2160 | 0.935–0.941 | |
 
 Unmoved and level: 509, 2027, 2039, 4093, 10403, 999983, float 1018 and 1013 (0.991–1.003).
+
+### Run 6: K2 (20261122-200901-fd20, Slurm 515528, 24 rounds, every one started overloaded,
+band ±1.07 %)
+
+K2 ÷ 0 (the rules' plans): 0.858 [0.855, 0.862] over the 32 cases; even counts from 2 to 1024
+rows 0.74–0.97, in place 0.80–0.97, 17 rows 0.85–0.89, 3 and 5 rows forward 0.91–0.96, but
+**3 rows backward 1.092 and 5 rows backward 1.215**: K2 fails its rule (amendment 3).
 
 ## Verdict

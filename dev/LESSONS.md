@@ -811,7 +811,13 @@ the length's power-of-two part limited per machine, the Mac's large primes took 
 of their time (FFTN ÷ FFTW 1.4–2.6 → 0.70–0.90). Choose transform lengths inside other
 algorithms with the same memory rules as the user's lengths, and avoid power-of-two
 distances between buffers that are read together.
-[X36](experiments/X36-large-primes.md).
+[X36](experiments/X36-large-primes.md). On the EPYC 7763 the limit at the L1's size still let
+in M = 2048 (a power-of-two part of exactly 32 KiB): 2160 = 12 × 15 × 12 took 0.93 of its time at
+1013–1021, though longer and priced dearer by the cost table; half the L1 is the measured
+limit there. Changing such a limit can flip a neighbouring rule that compares lengths: 1018 =
+2 × 509 then preferred two copies at M = 1024 over the whole line at 2160 and took 1.37,
+because the copies' chains cost 1.6 times as much per point (X36b), which a length comparison
+does not see. [X62](experiments/X62-epyc-tail.md).
 4.15 **Read the competitor's printed plans for the radices you lack before tuning the ones
 you have.** On the EPYC (Zen 3, AVX2) FFTW planned 160–3600 points with radix-20 passes (240
 = 12 × 20, 2000 = 10 × 20 × 10) and FFTN, without a codelet of 20, needed a pass more;
@@ -943,6 +949,23 @@ in bytes (three quarters of the L3), applied to one-axis plans only, kept every 
 nothing; a per-length override had to give up 1024 altogether, because the plane's rows and
 the long batches lost. Count what the plan touches, not what one row needs.
 [X57](experiments/X57-epyc-1024.md).
+
+4.24 **Past the register file, a batch leaf should move each element when the codelet asks for
+it, and keep one inlined copy of the codelet.** X53's batch leaf transposes C × C blocks of C
+rows in registers before and after the codelet, which holds all R inputs and outputs at once;
+at R = 64 on AVX2's 16 registers that is a copy through the stack on each side. Loading each
+input from its two rows when the codelet asks (a 128-bit load and an insert from memory,
+FFTW's form, written explicitly so that GCC does not turn it into broadcasts and shuffles)
+and storing each output's halves as they are produced took the leaf of 64 to about 0.85 of
+the block form's time and 0.74–0.97 of the 4 × 16 chain's from 2 to 1024 rows on the EPYC
+7763 (64 × 2 backward 1.29 → about 0.99 of FFTW). The second warning came from an odd batch:
+the last row, run through a second inlined copy of the 1000-instruction codelet (in the
+leaf's form or with the same accessors), cost 570–750 cycles instead of 260–310 at 5, 7 and 17
+rows backward, because the two copies evicted each other from the op cache (190–300 misses a
+call, against none at 4 rows or forward, where the copies happened to fall apart). Running
+the last row through the pairs' copy, both lanes on the one row, ended the misses (5 rows
+backward 1220 → 960 cycles). Count op-cache misses (Zen 3 PMCx28F) before believing a path
+that is slow only for some counts or one direction. [X62](experiments/X62-epyc-tail.md).
 
 ## 5. Threading
 

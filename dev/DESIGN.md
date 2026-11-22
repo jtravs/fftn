@@ -1468,8 +1468,10 @@ power-of-two part of at most `machine_profile::bluestein_pow2_part_bytes` (exper
 a quarter of L1 where the L2 is shared, as on Apple, whose chains of a power of two from
 the L1's size up ran 1.4–1.7 times as long per point as 7-smooth lengths just above; the
 L1's size on Zen-like caches, where the convolution's two scratch lines a power of two
-apart made 4093–32749 take 1.4–5 times as long; unlimited on the Xeon 6240, where a limit
-gained nothing); when that excludes the power of two, the candidates run up to 2 (2Q − 1).
+apart made 4093–32749 take 1.4–5 times as long, and half of it on Zen 3's class (X62: M = 2048
+lost 7 % to 2160 at 1013–1021, 276480 2 % to 268800 at 131071); unlimited on the Xeon 6240,
+where a limit gained nothing); when that excludes the power of two, the candidates run up to
+2 (2Q − 1).
 A convolution's chain takes the rules' radices, except that one of a power of two takes
 X32's long-row radices beyond `grid_min_bytes` where X32's chains apply (Apple, Zen) and
 beyond four times the L2 elsewhere (`machine_profile::long_convolution_bytes`; Granite
@@ -1481,7 +1483,10 @@ run its length would as a line (`split_from`; x86). A Bluestein stage that would
 convolution is no longer than the copies' together, so its passes run whole units (X36:
 1018 = 2 · 509 on AVX-512 0.68, in float 0.40); so does one of s = C copies while the line
 is not longer than `long_convolution_bytes` (X36b: its chains over s = C copies have no
-grouped first pass; EPYC 1018 0.73). Running the copies one at a time, as FFTW does, needs a
+grouped first pass; EPYC 1018 0.73), on Zen 3's class whatever the two convolutions' lengths
+(`machine_profile::bluestein_whole_lanes`, X62: half the L1 as the limit makes 1018's whole
+convolution 2160 points against two copies of 1024, and the whole line still took 0.93 of the
+time where the copies took 1.37). Running the copies one at a time, as FFTW does, needs a
 loop over a scratch-resident line, and a grid convolution a second movable workspace slot:
 neither is expressible yet (X36b). A Bluestein stage of one copy (a c2c row of one axis
 whose chain is that stage, `chain_builder::bluestein_single`) instead runs its convolution
@@ -1903,7 +1908,8 @@ prices them) a cost per unit and a cost per tail, and a cost per pass. For a lin
    power-of-two part the machine profile admits (up to 2 (2Q − 1) when that excludes the
    power of two; experiment X36, section 8.5). A Bluestein stage with 1 < n / Q < C copies
    becomes one stage of n where M(n) ≤ (n / Q) M(Q) (X36), and so does one with
-   n / Q = C copies while n's line is not long (X36b). A stage of one copy runs its
+   n / Q = C copies while n's line is not long (X36b), on Zen 3's class whatever M(n)
+   (X62). A stage of one copy runs its
    convolution on two depth-first chains in double where a row of M would be a depth-first
    chain, M up to the profile's `depth_convolution_max_bytes` (X50, section 8.5).
 4. The codelet passes are the sequence of radices from 2 to 16 (and 32 and 64 where the
