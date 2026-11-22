@@ -623,18 +623,20 @@ chain lets every member take lines of each transform.
 [X61](experiments/X61-adjacent-transforms.md).
 
 3.30 **A third array costs only past a cache level, and removing it can bring power-of-two
-strides back; where the two cross depends on the machine.** A c2r plane out of place that keeps
-its intermediate in scratch (input + scratch + output) ran 1.62 times its in-place time on a Xeon
-6240 at 256² (1.55 MB against a 1 MiB L2, 16 times the L2 misses) and 2.03 at 1024² (25 MB against
-a 24.75 MiB L3, 7 times the LLC misses). Building the intermediate in the output instead removes
-the third array but lays the columns a power of two apart, where the scratch rows (n/2 + 1 complex
-values) were an odd multiple of 16 bytes. On the Xeon (small L3 per core) that won from its L2
-up, 0.82 of the time over 16 judged planes and volumes. On an EPYC 7763 (32 MiB of L3 per CCX) it
-lost inside the L3 (512 × 1024 1.10) and won only where the three arrays passed two thirds of it
-(0.91 over 5 cases). On an M5 Max wide planes (512 × 1024, 640 × 1280) lost 1.07–1.14 at sizes
-where their transposes won, so no byte threshold worked. Count the strides an intermediate's new
-home brings, not only its bytes; and judge a threshold chosen on a screen on sizes the screen did
-not time: the M5 Max's held-out 640 × 1280 caught a rule that passed the screen's cases.
+strides back; where the two cross depends on the machine and on the team.** A c2r plane out of
+place that keeps its intermediate in scratch (input + scratch + output) ran 1.62 times its
+in-place time on a Xeon 6240 at 256² (1.55 MB against a 1 MiB L2, 16 times the L2 misses) and
+2.03 at 1024² (25 MB against a 24.75 MiB L3, 7 times the LLC misses). Building the intermediate in
+the output instead removes the third array but lays the columns a power of two apart, where the
+scratch rows (n/2 + 1 complex values) were an odd multiple of 16 bytes. At one thread that won on
+the Xeon from its L2 up (0.82 over 16 planes and volumes) and on an EPYC 7763 only where the three
+arrays passed two thirds of its 32 MiB CCX L3 (0.91); on an M5 Max wide planes (512 × 1024,
+640 × 1280) lost 1.07–1.14 at sizes where their transposes won. At 8 lanes the Xeon's volumes,
+which its teams run plane at a time, lost 1.06–1.09 and the EPYC missed its bar (0.970), so the
+change was adopted nowhere. Count the strides an intermediate's new home brings, not only its
+bytes; judge a threshold chosen on a screen on sizes the screen did not time (the M5 Max's
+held-out 640 × 1280 caught a rule that passed the screen's cases); and judge a planner rule at the
+team sizes that will run its plans, since a plan cannot tell which will.
 [X60](experiments/X60-c2r-two-arrays.md).
 
 ## 4. Kernels and algorithms

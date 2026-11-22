@@ -1,7 +1,6 @@
 # X60: out-of-place c2r without a third array
 
-- **Status:** done (2026-11-22): adopted on the Xeon 6240's class (`avx512`) and Zen 3's
-  (EPYC 7763), rejected on Apple
+- **Status:** done (2026-11-22): not adopted on any machine: the Xeon 6240 class won at one thread (0.82) and lost on volumes at 8 lanes; Zen 3 missed its 8-lane bar (0.970); Apple lost on wide planes. The code is removed
 - **Owner:** X60 agent, 2026-11-19 (night round 2); X60 judge agent, 2026-11-22 (wave 1)
 - **Phase / task:** 4.1 (planes), task 2.1's c2r
 
@@ -316,13 +315,13 @@ R ÷ M (M = `main` 021c117) on the judged cases; band from fbench's identical-ar
   128³ 0.95, all beyond noise. The 23 cases left on the block: no evidence. Passes.
 - **EPYC 7763, 8 lanes**: the first run, on a node with 95 other busy cores in every round, gave
   2048² 0.83 and 100³ 0.85 but 1000² 1.12 and 1024² 1.13 (both without evidence against a ±4.4 %
-  band): 0.9702, a hair over the bar. It was re-run on the judged cases alone (the rule's re-run
-  of a hair-past case on a loaded machine): 30 rounds, 2048² 0.83 and 100³ 0.89 beyond noise,
-  128³ 0.93, 1000² 1.05 and 1024² 1.04 without evidence: 0.945, no case slower beyond noise.
-  Passes. The rule allowed a re-run for a hair-past case under criterion (2); this one applied
-  it to criterion (1), which the maintainer may want to review. 1000² and 1024² at 8 lanes are
-  the open question: 0.96 and 0.87 on a quieter node on 2026-11-19 (P3, load 6.6), 1.04–1.13 on
-  nodes with 95–103 other busy cores, where the team shares its CCX's L3 with other jobs.
+  band): 0.9702, which fails criterion (1). A re-run of the judged cases alone gave 0.945 (30
+  rounds; 2048² 0.83 and 100³ 0.89 beyond noise, 128³ 0.93, 1000² 1.05 and 1024² 1.04 without
+  evidence), but the rule's re-run clause covers a single case a hair past criterion (2), not the
+  geometric mean (AGENTS section 6 says "a case" too), so the re-run does not decide, and 1000²
+  and 1024² were above 1 in both runs. **Fails by the rule's letter.** (On a quieter node on
+  2026-11-19, P3 at load 6.6, 1000² and 1024² took 0.96 and 0.87; on these nodes, with 95–103
+  other busy cores, the team shared its CCX's L3 with other jobs.)
 - **Xeon 6240, 8 lanes** (confined to node 1, CPUs 23, 26–29, 31, 32, 35; Slurm 16804): run
   20261122-212441-d091, 20 rounds, 12 loaded, band ±2.17 %. Geometric mean 0.901 over the 16
   judged cases (planes 0.70–1.01: 1024² 0.70, 1000² 0.76, 1024 × 512 0.77), but the volumes went
@@ -330,6 +329,14 @@ R ÷ M (M = `main` 021c117) on the judged cases; band from fbench's identical-ar
   96³'s interval clears the limit of 1.02 × 1.0217 = 1.042 by 0.002: a case a hair past
   criterion (2) on a loaded machine, so by the rule it is re-run before it decides (the same 16
   cases, same pinning).
+- **Xeon 6240, 8 lanes, re-run** (node 1, CPUs 19, 22, 24, 26, 31, 32, 34, 35; Slurm 16807): run
+  20261122-213005-de32, 30 rounds, 13 loaded, band ±1.56 %. Geometric mean 0.896 (the 12 planes
+  0.850: 1024² 0.71, 1000² 0.73, 1024 × 512 0.78, the worst 512 × 1024 1.010), but the volumes
+  lost again: 64³ 0.956, 96³ 1.061 [1.021, 1.076], 100³ 1.093 [1.023, 1.118], **128³ 1.081
+  [1.056, 1.098]**, whose interval clears the limit of 1.02 × 1.0156 = 1.036. **Fails criterion
+  (2).** At 8 lanes the Xeon class's teams run volumes plane at a time (X43b,
+  `team_volume_planes`), and the packed volumes lose there in both runs (geometric mean of the
+  four 1.046 in the re-run).
 - **M5 Max** (Homebrew Clang 23, `neon_fcma`, AC power throughout, no sleep): arm R failed on
   512 × 1024 (1.068 against a limit of 1.033). Arm R2 (a third of the L2) passed the screen's
   cases but failed on a held-out one, 640 × 1280 at 1.142, while its transpose 1280 × 640 took
@@ -346,35 +353,47 @@ R ÷ M (M = `main` 021c117) on the judged cases; band from fbench's identical-ar
   20261122-181447-13f4 (±1.25 %) 2 faster (c2r 1024² 0.93; c2c 120 0.93, the same plan), 59 no
   evidence; Mac run 20261122-181642-dec5 (±1.06 %) 2 faster, 59 no evidence. Nothing slower.
 
-## Verdict (2026-11-22)
+## Verdict (2026-11-22, after the second reader)
 
-- **Adopted on the Xeon 6240's class (`avx512`)**: packed from the L2. Judged 0.824 over 16
-  cases, every held-out size faster, no collateral damage.
-- **Adopted on Zen 3's class (EPYC 7763, `avx2`)**: packed where the three arrays pass two
-  thirds of the CCX's L3. Judged 0.911 at one thread over 5 cases and 0.945 at 8 lanes (re-run;
-  the first 8-lane run 0.970), held-out 1200², 1536² and 112³ 0.92–0.98, no collateral damage.
-  At 8 lanes 1000² and 1024² tie or lose a little on a crowded node (1.04–1.13 without evidence).
+- **Not adopted on the Xeon 6240's class.** One thread passed (0.824 over 16 cases, every
+  held-out size faster, no collateral damage), but 8 lanes failed criterion (2) on 128³ (1.081
+  in the re-run that 96³'s hair-past 1.068 called for), with 96³ and 100³ above 1 in both runs.
+  A plan does not know whether a team will run it, so the planner cannot keep the block for team
+  executions alone, and by the rule written before the run the class keeps the block for every
+  plan. Open follow-up: the packed route for planes only on this class (8 lanes: the 12 planes
+  0.85, none slower beyond noise, in both runs; one thread 0.71–0.98), as a new arm with its own
+  rule judged at one thread and 8 lanes.
+- **Not adopted on Zen 3's class (EPYC 7763) by the rule's letter**: one thread gained (0.911
+  over the 5 cases past two thirds of the CCX's L3, held-out 1200², 1536², 112³ 0.92–0.98), but
+  the first 8-lane run gave 0.9702 against the bar of 0.97, with 1000² and 1024² above 1 in both
+  8-lane runs. The class keeps the block. Open follow-up: a gate that packs only plans that build
+  no team program, or by the team's share of the L3, as a new arm with its own rule (the
+  maintainer may instead override this verdict on the re-run's 0.945).
 - **Rejected on Apple**: the M5 Max keeps the block (wide planes 1.07–1.14 at every threshold
   tried).
-- **Elsewhere the block** (Zen 4 and Zen 5, Granite and Sapphire Rapids, Ice Lake VMs whose L3
-  per CPU files them as large, other AArch64, unknown topologies, and an `avx2` machine of the
-  Xeon's cache class): not measured, and the reach rule keeps their plans.
+- **Reach, for a follow-up keyed as arm R was.** The Xeon class's key (`set_grid_sizes`: x86-64,
+  a private L2 under 2 MiB, under 2 MiB of L3 per CPU) also takes Ice Lake-SP, Zen 4c (1 MiB of
+  L2, small L3 per core), Zen 4 VMs that report a small L3 per CPU, and Intel client parts with
+  AVX-512 (Ice Lake and Tiger Lake laptops, Rocket Lake), none of them measured. The reach rule
+  allows that (the same `avx512` target and register file; `c2r_packed_avx512_only` kept `avx2`
+  machines of that cache class, such as Alder Lake and Zen 2, on the block), but a follow-up
+  adopted on that key must say so and name these families for the next phase exit's screen.
 - **Why the turn differs by machine.** The Xeon's small L3 per core (1.4 MiB) and 1 MiB L2 make
   the third array cost from L2 up (its c2r out of place ran 1.6–2.0 times in place), so the
   packed route's power-of-two output strides cost less than the block. The EPYC's 32 MiB CCX L3
   holds the three arrays to two thirds of it, and inside that the strides cost more (512 × 1024
   1.10, 96³ 1.04 in the screen). On the M5 Max a 16 MiB shared L2 holds them, and wide planes
   lose to the strides even beyond it.
-- **Code.** The final commit is arm R with Apple's value removed (R2's third of the L2 too), so
-  Apple keeps the block. Arm R's mechanism stays (`pass_args::packed`, `c2r_nyquist`, column h
-  as a line of the last column phase); `machine_profile::c2r_packed_bytes` is SIZE_MAX by
-  default and set
-  for the classes adopted; `c2r_packed_avx512_only` keeps the Xeon class's value to `avx512`
-  plans. DESIGN 9.1 and the decision log describe it; `docs/conventions.md` promises only that
-  the input is not written.
+- **Code.** Removed (AGENTS section 6: a path that wins nowhere by its rule is deleted):
+  `src/`, `tests/`, `docs/conventions.md` and DESIGN 9.1 are `main`'s again; the branch's commits
+  up to a983841 keep the packed route for a follow-up.
 - **The X29 paired gather** for the Xeon's two-phase c2r grids stays a lead (no catalogue row).
-- Tests: `Columns.C2rPackedMatchesTheBlock` (every runnable target, both precisions, bits
-  against the block route), `C2rPacksBeyondTheProfilesBytes` (thresholds, the avx512-only flag
-  on every target), the team cases (packed volume, block plane, packed plane: bitwise equal for
-  every team size), `Schedule.GridSizesFromCaches` (the per-class values). Mac Homebrew Clang 23
-  Release, all 2547 tests after the merge of `main`; GCC 16 build with `-Werror`.
+- Tests, on the branch with the code (a983841): `Columns.C2rPackedMatchesTheBlock` (every
+  runnable target, both precisions, against the block route to within twice the tolerance),
+  `Columns.C2rPackedStridedLayouts` (strided, negative and reordered inputs, padded, negative and
+  transposed outputs, odd batch distances; it failed with `in.stride[r - 1]` dropped from column
+  h's start or the rows' block step zeroed, both checked by mutation),
+  `C2rPacksBeyondTheProfilesBytes` (thresholds, the avx512-only flag on every target), team cases (packed volume, packed strided
+  volume, block plane, packed plane: bitwise equal for every team size). Mac Homebrew Clang 23
+  Release, all 2565 tests; Mac GCC 16 build with `-Werror`. The second reader's stress test
+  (about 6,900 random planes and volumes against the block route, teams bitwise) passed.

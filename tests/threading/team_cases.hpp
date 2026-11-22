@@ -264,42 +264,16 @@ void add_cases(std::vector<team_case>& out, const fftn::detail::build_settings& 
   r2c_wide.batches = {{.count = 2}};
   out.push_back(make_case("r2c_planes_64x40x2" + suffix, r2c_wide, 2 * 64 * 40, 2 * 64 * 21, false,
                           settings, target));
-  // The same through the lanes on every target (C = 1 would take the chain): the c2r plane's
-  // 20 columns are a block and a narrower one into the output, packed (X60), its column 20 a
-  // phase of its own into the workspace block; the r2c plane's 51 columns are three blocks and
-  // a tail, whose phase goes in fair runs (X59). With coarse chunks a chunk holds lines of
-  // both nests.
+  // The same through the lanes on every target (C = 1 would take the chain): a c2r plane's
+  // narrower block writes the owner's workspace block; 51 columns are three blocks and a tail,
+  // whose phase goes in fair runs (X59). With coarse chunks a chunk holds lines of both nests.
   fftn::detail::build_settings blocks = settings;
   blocks.column_block = 16;
-  blocks.c2r_packed = 1; // packed whatever the size (X60)
   fftn::shape<c, T> c2r_wide;
   c2r_wide.axes = {{.n = 64}, {.n = 40}};
   c2r_wide.batches = {{.count = 2}};
   out.push_back(make_case("c2r_planes_b16_64x40x2" + suffix, c2r_wide, 2 * 64 * 21, 2 * 64 * 40,
                           false, blocks, target));
-  // The same with its intermediate in the workspace block (X60's other route).
-  fftn::detail::build_settings kept_block = blocks;
-  kept_block.c2r_packed = 0;
-  out.push_back(make_case("c2r_planes_block_64x40x2" + suffix, c2r_wide, 2 * 64 * 21, 2 * 64 * 40,
-                          false, kept_block, target));
-  fftn::shape<c, T> c2r_volume;
-  c2r_volume.axes = {{.n = 8}, {.n = 6}, {.n = 10}};
-  c2r_volume.batches = {{.count = 2}};
-  fftn::detail::build_settings packed = settings;
-  packed.c2r_packed = 1;
-  out.push_back(make_case("c2r_volume_8x6x10x2" + suffix, c2r_volume, 2 * 8 * 6 * 6, 2 * 8 * 6 * 10,
-                          false, packed, target));
-  // Packed on a strided layout (X60): every second input element along the real axis, padded
-  // input and output rows, the output's outer axes transposed, odd distances. The highest
-  // input index is 573 + 5 x 95 + 4 x 19 + 8 x 2 = 1140, the highest output one
-  // 541 + 5 x 18 + 4 x 108 + 15 = 1078.
-  fftn::shape<c, T> c2r_strided;
-  c2r_strided.axes = {{.n = 6, .in_stride = 95, .out_stride = 18},
-                      {.n = 5, .in_stride = 19, .out_stride = 108},
-                      {.n = 16, .in_stride = 2, .out_stride = 1}};
-  c2r_strided.batches = {{.count = 2, .in_dist = 573, .out_dist = 541}};
-  out.push_back(make_case("c2r_volume_strided_6x5x16x2" + suffix, c2r_strided, 1141, 1079, false,
-                          packed, target));
   fftn::shape<T, c> r2c_odd;
   r2c_odd.axes = {{.n = 64}, {.n = 100}};
   r2c_odd.batches = {{.count = 1}};

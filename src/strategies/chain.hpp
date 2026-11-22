@@ -201,14 +201,11 @@ public:
   // aliased: src and dst are the same memory for this line.
   std::size_t c2c_line(std::size_t n, int sign, endpoint src, endpoint dst, bool aliased,
                        const line_edges& edges, std::vector<stage>& stages);
-  // Real lines: scale is applied to the output (1 means none). c2r writes its source only
-  // when it is packed: then src may be dst. packed: the half spectrum is the packed line of
-  // pass_args::packed (h complex values, (Re X_0, Re X_h) first; even n, stride 1 on both
-  // sides; experiment X60).
+  // Real lines: scale is applied to the output (1 means none). c2r never writes its source.
   std::size_t r2c_line(std::size_t n, endpoint src, endpoint dst, bool aliased, double scale,
                        std::vector<stage>& stages);
   std::size_t c2r_line(std::size_t n, endpoint src, endpoint dst, double scale,
-                       std::vector<stage>& stages, bool packed = false);
+                       std::vector<stage>& stages);
   // strided: the line has a stride other than 1 on either side.
   [[nodiscard]] real_route route(std::size_t n, bool r2c, bool strided) const;
   // The route of a real line for describe().

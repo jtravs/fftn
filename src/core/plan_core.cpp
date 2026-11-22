@@ -1023,39 +1023,6 @@ bool r2c_pairs_in_grid(const build_settings& settings, target t) {
   return t != target::avx2;
 }
 
-// Whether a c2r plan builds its intermediate packed in the output (experiment X60): of two
-// or more axes, out of place, an even real axis contiguous on the output and every other
-// output stride an even number of reals, so that each output row holds its h = n/2 complex
-// values (pass_args::packed); by the rules where one transform's half spectrum exceeds the
-// profile's c2r_packed_bytes, set only for the class where X60 passed (the Xeon 6240's, on
-// avx512 alone: c2r_packed_avx512_only). Otherwise the intermediate is that half spectrum in
-// the workspace block. build_settings::c2r_packed 0 keeps the block, 1 packs wherever the layout
-// allows (tests).
-bool c2r_packed(const shape_view& s, const side& in, const side& out, bool in_place,
-                const build_settings& settings, target t) {
-  const std::size_t r = s.axes.size();
-  if (s.kind != transform_kind::c2r || r < 2 || in_place || settings.c2r_packed == 0 ||
-      s.axes[r - 1].n % 2 != 0 || out.stride[r - 1] != 1 ||
-      !std::all_of(
-          out.stride.begin(), out.stride.end() - 1, [](std::ptrdiff_t v) { return v % 2 == 0; })) {
-    return false;
-  }
-  if (settings.c2r_packed > 0) {
-    return true;
-  }
-  if (settings.profile.c2r_packed_avx512_only && t != target::avx512) {
-    return false;
-  }
-  std::size_t bytes = 2 * sizeof(double);
-  for (const std::size_t e : in.extent) {
-    bytes = e != 0 && bytes > SIZE_MAX / e ? SIZE_MAX : bytes * e;
-  }
-  if (s.prec == precision::f32) {
-    bytes /= 2;
-  }
-  return bytes > settings.profile.c2r_packed_bytes;
-}
-
 // Makes the records from `first` on read the output slot where they read the input: the
 // grid of a c2r row runs in place on the output, which the pairing pass has written (the
 // grid builder reads its input from the input slot, and with in_place set touches it only
@@ -1173,16 +1140,12 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   const auto listed = [&c](std::size_t d) { return c.axis_of.empty() ? d : c.axis_of[d]; };
   // A strided complex axis d as the lanes over blocks of adjacent columns where they fit
   // (column_block; DESIGN.md 9.3, experiments X40 and X41): returns whether it was built.
-  // `axis` names d in describe() when `extent` is not the plan's (a volume's plane). `real`:
-  // column_block's rule for the complex axes of a real plan (rows of n/2 + 1 columns), by
-  // default where the plan is real.
+  // `axis` names d in describe() when `extent` is not the plan's (a volume's plane).
   const auto complex_columns = [&](std::size_t d, const std::vector<std::size_t>& extent,
                                    const view& src, const view& dst, const line_edges& edges,
-                                   int dir, const char* what, std::size_t axis = SIZE_MAX,
-                                   int real_rule = -1) {
-    const bool real = real_rule < 0 ? s.kind != transform_kind::c2c : real_rule != 0;
-    const std::size_t block =
-        column_block<T>(d, extent, src, dst, edges, settings, chain, kernels.complex_lanes, real);
+                                   int dir, const char* what, std::size_t axis = SIZE_MAX) {
+    const std::size_t block = column_block<T>(d, extent, src, dst, edges, settings, chain,
+                                              kernels.complex_lanes, s.kind != transform_kind::c2c);
     if (block == 0) {
       return false;
     }
@@ -1193,7 +1156,8 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     alone.team_program = false;
     const bool chain_columns =
         settings.team_program &&
-        column_block<T>(d, extent, src, dst, edges, alone, chain, kernels.complex_lanes, real) == 0;
+        column_block<T>(d, extent, src, dst, edges, alone, chain, kernels.complex_lanes,
+                        s.kind != transform_kind::c2c) == 0;
     const std::vector<std::size_t> rad =
         chain_columns ? chain.radices(n)
                       : column_radices<T>(n, dst.stride[d] * dst.element_bytes, settings, profile,
@@ -1627,116 +1591,6 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       c.axis_notes.push_back("axis " + std::to_string(listed(d)) + " (n = " + std::to_string(n) +
                              "): c2c forward, radices " + chain.radix_text(n));
     }
-  } else if (c2r_packed(s, in, out, c.in_place, settings, c.isa_target)) {
-    // c2r of two or more axes out of place, its intermediate packed in the output
-    // (DESIGN.md 9.1, experiment X60): each output row's n reals hold its h = n/2 complex
-    // values after the complex axes, X_0 .. X_h-1 with the imaginary place of X_0 holding
-    // Re X_h (pass_args::packed), which is all the row's c2r reads. The complex axes run on
-    // columns 0 .. h-1 from the input into the output; column h, whose real part alone is
-    // needed, runs through the complex axes from the input into the block (one value per
-    // row), as one more line of the last column phase where that phase has no other tail;
-    // each row then takes its Re X_h from the block into the imaginary place of its column 0,
-    // which that column's own transform wrote, and runs its c2r in place.
-    const std::size_t n = c.lengths[r - 1];
-    const std::size_t h = n / 2;
-    view packed{.where = slot::out, .stride = out.stride, .element_bytes = complex_bytes};
-    for (std::size_t d = 0; d + 1 < r; ++d) {
-      packed.stride[d] = out.stride[d] / 2;
-    }
-    packed.stride[r - 1] = 1;
-    std::vector<std::size_t> columns = in.extent;
-    columns[r - 1] = h;
-    std::size_t last_phase = p.records.size();
-    for (std::size_t i = r - 1; i > 0; --i) {
-      const std::size_t d = i - 1;
-      const view& src = d + 2 == r ? in_view : packed;
-      last_phase = p.records.size();
-      // The output's rows are those of a c2c plane (n complex values, a power of two for
-      // most n): c2c columns' rule (column_block, column_radices), not that of the odd rows
-      // of n/2 + 1 columns. With the real rule the M5 Max ran these columns alone through
-      // the chain, their elements a power of two apart, and lost 1.6-2.6 from 128^2 up.
-      if (complex_columns(d, columns, src, packed, line_edges(), +1,
-                          "c2c backward into the output, packed", SIZE_MAX, 0)) {
-        continue;
-      }
-      std::vector<stage> cs;
-      const std::size_t cneed = chain.c2c_line(c.lengths[d], +1, at(src, d), at(packed, d),
-                                               src.where == slot::out, line_edges(), cs);
-      lines(d, columns, src, packed, cneed, std::move(cs));
-      c.axis_notes.push_back(
-          "axis " + std::to_string(listed(d)) + " (n = " + std::to_string(c.lengths[d]) +
-          "): c2c backward into the output, packed, radices " + chain.radix_text(c.lengths[d]));
-    }
-    // Column h: one line of a loop that starts there on the input. It joins the last column
-    // phase where that phase is one nest of lines (no narrower block of its own): its line
-    // reads only the input and writes only the block.
-    std::size_t nests = 0;
-    for (std::size_t i = last_phase; i < p.records.size(); ++nests) {
-      const loop* l = std::get_if<loop>(&p.records[i]);
-      if (l == nullptr) {
-        nests = 2;
-        break;
-      }
-      i = l->body_end;
-    }
-    view block_view{
-        .where = slot::block,
-        .stride = std::vector<std::ptrdiff_t>(r, 0),
-        .element_bytes = complex_bytes,
-    };
-    std::vector<std::size_t> edge = in.extent;
-    edge[r - 1] = 1;
-    std::ptrdiff_t span = 1;
-    for (std::size_t i = r - 1; i > 0; --i) {
-      block_view.stride[i - 1] = span;
-      span = checked_mul(span, to_signed(in.extent[i - 1], "shape"), "shape");
-    }
-    c.block_elements = static_cast<std::size_t>(span);
-    const std::size_t wrapper = p.records.size();
-    p.records.emplace_back(loop{
-        .kind = loop_kind::lines,
-        .count = 1,
-        .start = {to_signed(h, "shape") * in.stride[r - 1] * in.element_bytes, 0, 0, 0},
-        .joins = nests == 1,
-    });
-    for (std::size_t i = r - 1; i > 0; --i) {
-      const std::size_t d = i - 1;
-      const view& src = d + 2 == r ? in_view : block_view;
-      std::vector<stage> cs;
-      const std::size_t cneed = chain.c2c_line(c.lengths[d], +1, at(src, d), at(block_view, d),
-                                               src.where == slot::block, line_edges(), cs);
-      scratch = std::max(scratch, cneed);
-      add_phase(p, d, edge, src, block_view, std::move(cs));
-    }
-    std::get<loop>(p.records[wrapper]).body_end = static_cast<std::uint32_t>(p.records.size());
-    c.axis_notes.push_back("column " + std::to_string(h) + " through the complex axes into the " +
-                           "block" + (nests == 1 ? ", one more line of the column phase" : "") +
-                           "; each row takes its real part in place of its column 0's imaginary "
-                           "part");
-    std::vector<stage> st;
-    {
-      stage ny;
-      ny.run = kernels.passes.c2r_nyquist;
-      ny.src = slot::block;
-      ny.dst = slot::out;
-      ny.units = 1;
-      ny.name = "Re X_" + std::to_string(h) + " from the block into the packed row";
-      st.push_back(std::move(ny));
-    }
-    const std::size_t need =
-        chain.c2r_line(n, {slot::out, 1}, {slot::out, 1}, opts.scale, st, true);
-    const std::size_t rows_first = p.records.size();
-    lines(r - 1, out.extent, out_view, out_view, need, std::move(st));
-    // The rows' loops move the block too, a value per row (lines() moves only the out slot).
-    std::size_t at_loop = rows_first;
-    for (std::size_t e = 0; e + 1 < r; ++e) {
-      if (out.extent[e] == 1) {
-        continue;
-      }
-      std::get<loop>(p.records[at_loop++]).step[2] = block_view.stride[e] * complex_bytes;
-    }
-    c.axis_notes.push_back("axis " + std::to_string(listed(r - 1)) + " (n = " + std::to_string(n) +
-                           "): in place on the packed rows, " + chain.real_text(n, false, false));
   } else {
     // c2r: the complex axes first, then the real one, which must come last because the
     // real output cannot hold a complex intermediate. Out of place the input is preserved,

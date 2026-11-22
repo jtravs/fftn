@@ -683,16 +683,6 @@ TEST(Schedule, GridSizesFromCaches) {
   EXPECT_TRUE(m5.c2r_paired_gather);
   EXPECT_FALSE(epyc.c2r_paired_gather);
   EXPECT_FALSE(xeon.c2r_paired_gather);
-  // A multi-axis c2r packs its intermediate in the output only where X60 passed: beyond the
-  // Xeon 6240's L2 on avx512; the block on the EPYC (Zen 3), Apple, Zen 5 and elsewhere.
-  EXPECT_EQ(xeon86.c2r_packed_bytes, 1024 * kib);
-  EXPECT_TRUE(xeon86.c2r_packed_avx512_only);
-  EXPECT_EQ(epyc86.c2r_packed_bytes, std::numeric_limits<std::size_t>::max());
-  EXPECT_FALSE(epyc86.c2r_packed_avx512_only);
-  EXPECT_EQ(apple.c2r_packed_bytes, std::numeric_limits<std::size_t>::max());
-  EXPECT_EQ(x86("linux-gcp-c4d-zen5.sysfs").c2r_packed_bytes,
-            std::numeric_limits<std::size_t>::max());
-  EXPECT_EQ(machine_profile{}.c2r_packed_bytes, std::numeric_limits<std::size_t>::max());
   // Power-of-two rows stay chains to four times a shared L2, radix 8 up to an eighth of it;
   // to twice L3 with radix 8 on the EPYC; never on the Xeon (X32).
   EXPECT_EQ(m5.pow2_chain_bytes, std::size_t{64} * 1024 * kib);

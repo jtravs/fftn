@@ -146,11 +146,6 @@ struct build_settings { // NOLINT(clang-analyzer-optin.performance.Padding)
   // X33): -1 the rule (plan_core.cpp, r2c_pairs_in_grid), 0 never (a separate pass after
   // the grid), 1 wherever the last phase allows.
   int r2c_pair_last = -1;
-  // A c2r of two or more axes out of place: -1 the rule (plan_core.cpp, c2r_packed: its
-  // intermediate packed in the output where the layout allows and the half spectrum exceeds
-  // profile.c2r_packed_bytes; experiment X60), 0 the workspace block, 1 packed wherever the
-  // layout allows.
-  int c2r_packed = -1;
   // The machine the plan's team executions are scheduled for (schedule.hpp).
   machine_profile profile = default_machine_profile();
   // Measured planning (core/measure.cpp) asks this function for a candidate's seconds per
