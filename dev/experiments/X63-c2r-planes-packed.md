@@ -1,6 +1,6 @@
 # X63: out-of-place c2r planes with the intermediate packed in the output
 
-- **Status:** done (2026-11-22): adopted on the Xeon 6240 class (`avx512`) and Zen 3 (`avx2`)
+- **Status:** done (2026-11-23): adopted on the Xeon 6240 class (`avx512`) and Zen 3 (`avx2`), double and float planes
 - **Owner:** X63 agent, 2026-11-22 (wave 1; the maintainer approved the follow-up)
 - **Phase / task:** 4.1 (planes), task 2.1's c2r; follows [X60](X60-c2r-two-arrays.md)
 
@@ -140,6 +140,26 @@ control of M in the same run. No run needed the re-run clause.
 - **Collateral, tracking tier, A ÷ M, one thread**: EPYC run 20261122-222557-0c83 (Slurm 515717,
   ±1.98 %) 1 faster (c2r 1000, a row A does not change), 60 no evidence; Xeon run 20261122-225712-05cd (Slurm 16824, ±3.37 %, 15 of 16 rounds loaded) 2 faster (c2r 1024² 0.70 and 480 × 640 0.85, both judged planes), 59 no evidence. Nothing slower.
 
+### Amendment 1's runs: float planes (2026-11-23)
+
+A ÷ M over the float planes judged by amendment 1; no run needed the re-run clause.
+
+| run | machine, threads | load | band | judged | geometric mean | worst judged case | verdict |
+|---|---|---|---|---|---|---|---|
+| 20261123-081754-5385 | EPYC 7763, 1 | every round overloaded | ±1.78 % | 9 | **0.585** | 2560² 0.893 [0.859, 0.914] | passes |
+| 20261123-081802-08ee | EPYC 7763, 8 lanes | every round overloaded | ±4.85 % | 9 | **0.806** | 2048² 1.093 [1.007, 1.124] | passes |
+| 20261123-081818-7677 | Xeon 6240, 1 | 15 of 20 rounds loaded | ±3.18 % | 34 | **0.747** | 4096² 0.970 [0.950, 0.995] | passes |
+| 20261123-084730-5d3e | Xeon 6240, 8 lanes, pinned | 7 of 20 rounds loaded | ±2.04 % | 34 | **0.771** | 512² 0.994 [0.981, 1.023] | passes |
+
+- EPYC (Slurm 515902, 515903; builds cached): one thread 0.30–0.89, the tall planes most
+  (4096 × 2048 and 4096 × 1024); 8 lanes 0.61–0.96 except 2048² at 1.093, whose interval
+  [1.007, 1.124] stays below the limit of 1.02 × 1.0485 = 1.070 on a run whose every round
+  started overloaded. The unmoved float planes and volumes: nothing slower beyond
+  1.05 × (1 + band).
+- Xeon (Slurm 16926, 16927; the 8-lane run confined to node 1, CPUs 28–35): 0.35–0.97 at one
+  thread, 0.43–0.99 at 8 lanes; nothing outside the judged set slower.
+- **Both classes pass for float planes**; the route stays for both precisions.
+
 ## Verdict (2026-11-22)
 
 - **Adopted on the Xeon 6240's class (`avx512` plans)**: c2r planes out of place pack their
@@ -148,6 +168,8 @@ control of M in the same run. No run needed the re-run clause.
 - **Adopted on Zen 3's class (`avx2` plans)**: from a half spectrum above half the CCX's L3
   (16 MiB). Both judged runs pass (0.837 and 0.767 over 9 planes, all held out but 1536² and
   2048²).
+- **Float planes** pass on both classes too (amendment 1: EPYC 0.585 and 0.806, Xeon 0.747 and
+  0.771 at one thread and 8 lanes), so the route serves both precisions.
 - **Volumes keep the block** everywhere (X60's 8-lane losses on the Xeon), and so do Apple (X60's
   wide planes) and every unmeasured class.
 - **Reach** (corrected after the second reader, who ran `set_grid_sizes` on synthetic
