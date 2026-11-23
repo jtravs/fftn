@@ -1,6 +1,6 @@
 # X62: the EPYC's remaining phase 1 exit cases
 
-- **Status:** done (K3 with L adopted, odd batches from 5 rows; C adopted; K and K2 rejected)
+- **Status:** done (K3 with L adopted by the maintainer's decision, odd batches from 5 rows; C adopted; K and K2 rejected)
 - **Owner:** x62 session, 2026-11-22
 - **Phase / task:** 1 (improvement after the exit: the tail of [X56](X56-exit-4.md)'s EPYC check);
   follows [X53](X53-two-row-leaves.md), [X54](X54-radix64-avx2.md), [X57](X57-epyc-1024.md)
@@ -294,9 +294,11 @@ overloaded, band ±1.60 %), the head 427ce39 (K3, L with the limits, C) against 
   and 4096 rows included): K3's rule (amendment 3) on those cases, and L's (a) and (b) with run 3
   (64 × 2 backward 0.772, 64 × 16 0.792, 64 × 256 0.885). L's (c): only those plans move in runs 3
   and 4. L's (d): tracking tier 0.996, the one moved case 0.876, no unmoved case past ±1.3 % (run
-  4). The case for the maintainer: K3's rule as written also covered 64 × 3, which it missed
-  (1.05); it is adopted on the cases L's limits keep, under L's clause, not on the letter of K3's
-  rule.
+  4). K3's rule as written also covered 64 × 3, which it missed (1.05, and in every earlier arm);
+  L's limits then excluded it (64 × 3 keeps the chain, 0.991–0.999 in the confirmation run), but
+  without the `--serial` re-run L's clause asked for, and amendment 3 made run 7 count for L only
+  if K3 passed. **Adopted by the maintainer's decision (2026-11-23)** on the grounds of AGENTS
+  section 6: as shipped the change does not move 64 × 3, and no case it moves is slower.
 - **C: adopted** (runs 3, 4, 5): over its 14 moved case results C ÷ L 0.92–0.99 (geometric mean
   0.94), none slower; tracking tier 1.002 with no plan moved. 1018 ÷ FFTW 1.05 → 0.98.
 - **2048: kernel cost, not moved.** The same three-pass plan; FFTW's two-pass 32 → 64 plan has no
