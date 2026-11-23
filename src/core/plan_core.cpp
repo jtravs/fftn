@@ -1629,9 +1629,9 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
                              "): c2c forward, radices " + chain.radix_text(n));
     }
   } else if (c2r_packed(s, in, out, c.in_place, settings, c.isa_target)) {
-    // c2r of two or more axes out of place, its intermediate packed in the output
-    // (DESIGN.md 9.1, experiment X60): each output row's n reals hold its h = n/2 complex
-    // values after the complex axes, X_0 .. X_h-1 with the imaginary place of X_0 holding
+    // A c2r plane out of place, its intermediate packed in the output (DESIGN.md 9.1,
+    // experiments X60, X63): each output row's n reals hold its h = n/2 complex values after
+    // the column axis, X_0 .. X_h-1 with the imaginary place of X_0 holding
     // Re X_h (pass_args::packed), which is all the row's c2r reads. The complex axes run on
     // columns 0 .. h-1 from the input into the output; column h, whose real part alone is
     // needed, runs through the complex axes from the input into the block (one value per

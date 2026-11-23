@@ -595,13 +595,15 @@ template <class T> void c2r_packed_matches_block(fftn::isa target) {
   }
 }
 
-// The packed route (X60) on the layouts the contiguous cases above leave out, taken by the rules
-// with the profile's fields set (no threshold, every target): a strided, negative or reordered
-// input, a padded, negative or transposed output, odd batch distances. The column h line starts
-// at h input elements along the last axis and the rows' loops move the block a value per row;
-// a strided last input axis or a reordered outer axis catches either offset going wrong. Same
-// checks as above: the block route's result to within twice the tolerance, the input kept, no
-// gap written, unrolled and walked programs equal.
+// The packed route (X60, X63) on the plane layouts the contiguous cases above leave out, taken by
+// the rules with the profile's fields set (no threshold, every target): a strided, negative or
+// transposed input, a padded or negative output, batches interleaved with the rows, odd batch
+// distances. The column h line starts at h input elements along the last axis and the rows'
+// loops move the block a value per row; a strided last input axis catches the first offset
+// going wrong, any batch the second. Same checks as above: the block route's result to within
+// twice the tolerance, the input kept, no gap written, unrolled and walked programs equal. A
+// last output axis that is not contiguous, or an odd outer output stride, keeps the block, even
+// forced (the packed rows need n adjacent reals starting on a complex boundary).
 template <class T> void c2r_packed_strided(fftn::isa target) {
   SCOPED_TRACE(std::string(fftn::isa_name(target)) + (sizeof(T) == 8 ? " double" : " float"));
   struct strided_case {
@@ -612,6 +614,7 @@ template <class T> void c2r_packed_strided(fftn::isa target) {
     std::size_t count = 1;
     std::ptrdiff_t in_dist = 0;
     std::ptrdiff_t out_dist = 0;
+    bool packs = true;
   };
   const std::vector<strided_case> cases = {
       {"input last axis strided", {8, 12}, {14, 2}, {12, 1}, 2, 113, 96},
@@ -621,6 +624,8 @@ template <class T> void c2r_packed_strided(fftn::isa target) {
       {"output padded, input strided", {7, 20}, {23, 2}, {22, 1}, 3, 163, 155},
       {"output outer axis negative", {6, 10}, {6, 1}, {-10, 1}, 2, 37, 61},
       {"input strided and transposed, odd distances", {3, 12}, {1, 15}, {14, 1}, 3, 3, 43},
+      {"output last axis strided", {6, 8}, {5, 1}, {16, 2}, 2, 31, 97, false},
+      {"output outer stride odd", {6, 8}, {5, 1}, {9, 1}, 2, 31, 55, false},
   };
   for (const strided_case& sc : cases) {
     SCOPED_TRACE(sc.what);
@@ -688,9 +693,19 @@ template <class T> void c2r_packed_strided(fftn::isa target) {
     std::string walked_text;
     std::string kept_text;
     const auto got = run(rules, text);
+    if (!sc.packs) {
+      build_settings forced = rules;
+      forced.c2r_packed = 1;
+      std::string forced_text;
+      const auto forced_out = run(forced, forced_text);
+      const auto block_out = run(kept, kept_text);
+      EXPECT_EQ(text.find("packed"), std::string::npos) << text;
+      EXPECT_EQ(forced_text.find("packed"), std::string::npos) << forced_text;
+      EXPECT_TRUE(got == block_out && forced_out == block_out) << "the same plan, other bytes";
+      continue;
+    }
     EXPECT_NE(text.find("packed"), std::string::npos) << text;
-    // describe() names each axis as the shape lists it, though the plan runs the outer axes
-    // widest output stride first (every case's lengths differ).
+    // describe() names each axis by its place in the shape (every case's lengths differ).
     for (std::size_t d = 0; d < r; ++d) {
       const std::string named = "axis " + std::to_string(d) + " (n = " + std::to_string(sc.n[d]);
       EXPECT_NE(text.find(named), std::string::npos) << named << "\n" << text;

@@ -309,7 +309,8 @@ Points that matter:
 - **Every kind at every rank.** The general `shape` is accepted for one to three axes and
   all three kinds, not only through the shape functions: the same code serves them all
   (axis by axis, a transform at a time, section 9.3). A c2r of two or more axes out of place
-  keeps its intermediate in a workspace block, so its input is preserved (9.1). More than
+  keeps its intermediate in a workspace block or, a plane on some profiles, packed in the
+  output, so its input is preserved (9.1). More than
   three transformed axes is a later tier (5.6).
 - **Batch dimensions** are as many as the caller needs: a `Kokkos::View` of any rank, or a
   sub-array whose loops do not nest, maps onto one shape without a copy. Each becomes one
