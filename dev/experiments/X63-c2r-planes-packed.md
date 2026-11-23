@@ -88,6 +88,30 @@ Bits differ from the block route in the last places, which `docs/conventions.md`
   the block (its value back to SIZE_MAX). If no class passes, the packed route is deleted and
   only this file, its PLAN row and a LESSONS note remain.
 
+## Amendment 1: single-precision planes (written 2026-11-23, after the second reader, before their runs)
+
+The rule moves float planes too (`c2r_packed` counts a float half spectrum at half the bytes),
+but every judged case above is double precision. This amendment adds them; nothing above
+changes.
+
+- Arms: M = `main` c6ebf02 and A = 1f0b17b (the library of the PR's head; later commits change
+  tests, comments and documents only), each run with the identical-arm control of M.
+- Cases: `bench/catalogues/x63f.toml`, 39 float out-of-place c2r planes (`x63.toml`'s and five
+  larger) and two float volumes. Judged: the float planes whose half spectrum (rows × (n/2 + 1)
+  × 8 bytes) exceeds the class's threshold:
+  - Xeon 6240 (`avx512`, above 1 MiB): 34 planes, all but 256², 384², 448², 36 × 2048 and
+    2048 × 36;
+  - EPYC 7763 (`avx2`, above 16 MiB): 2048², 4096 × 1024, 1024 × 4096, 3000 × 2000, 2560²,
+    2048 × 4096, 4096 × 2048, 3200², 4096² (9 planes).
+- Four judged float runs: each class at one thread and at 8 lanes (the Xeon pinned as above).
+  Criteria (1) and (2), the 8-lane criterion and the re-run clause are those of the rule above,
+  word for word, applied to each float run on its own; the collateral check within each run
+  likewise (the planes at or below the threshold and the volumes).
+- Action: a class whose float runs both pass keeps the route for float planes. A class whose
+  float runs fail keeps it for double only: the planner then packs float planes on that class
+  never (a profile field that limits the route to double, with a test), and the double verdict
+  above stands.
+
 ## Results (2026-11-22)
 
 A ÷ M (M = `main` c6ebf02, A = 1f0b17b) over the judged cases; band from the identical-arm
