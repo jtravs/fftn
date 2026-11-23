@@ -127,6 +127,33 @@ FFTN_FORCE_INLINE void batch_run(const T* const* in, T* const* out, std::size_t 
   batch_scatter<T, R, Full, OutOp>(out, valid, eout, y);
 }
 
+// Experiment X62: on avx2 in double (two rows per register), the leaves of radix 32 and 64
+// take each input from its two rows when the codelet asks for it (load_halves: a 128-bit load
+// and an insert from memory, FFTW's form) and store each output's halves as the codelet
+// produces it. The block transposes above hold all R inputs and all R outputs at once, which
+// past 16 registers become a copy through the stack on each side; here the codelet's own
+// order decides its spills (X54). Same arithmetic per lane, so the same bits.
+template <class T, std::size_t R>
+inline constexpr bool batch_by_element = R >= 32 && C<T> == 2 && id == target::avx2;
+
+template <class T, edge_op InOp> struct pair_rows_in {
+  const T* r0;
+  const T* r1;
+  edge<T, InOp> e;
+  [[nodiscard]] FFTN_FORCE_INLINE cv<T> get(std::size_t j) const {
+    return on_one<T, InOp>(e, load_halves(r0 + at(j, 2), r1 + at(j, 2)), j);
+  }
+};
+
+template <class T, edge_op OutOp> struct pair_rows_out {
+  T* r0;
+  T* r1;
+  edge<T, OutOp> e;
+  FFTN_FORCE_INLINE void put(std::size_t k, cv<T> y) const {
+    store_halves(r0 + at(k, 2), r1 + at(k, 2), on_one<T, OutOp>(e, y, k));
+  }
+};
+
 // Rows u .. u + valid - 1 (Full: valid = C).
 template <class T, std::size_t R, int Sign, edge_op InOp, edge_op OutOp, bool Full>
 FFTN_FORCE_INLINE void batch_group(const void* src, void* dst, std::ptrdiff_t src_dist,
@@ -165,6 +192,24 @@ void batch_leaf(const pass_args* a, const void* src, void* dst, std::ptrdiff_t s
                 "the factor edges keep leaf_lines");
   const edge<T, InOp> ein = make_edge<T, InOp>(a, nullptr, 0, 1);
   const edge<T, OutOp> eout = make_edge<T, OutOp>(a, nullptr, 0, 1);
+  if constexpr (batch_by_element<T, R>) {
+    // Rows u and u + 1 through one copy of the codelet, and a last row alone in both lanes
+    // (its halves loaded and stored twice) through the same copy. The codelet reads every input
+    // before it writes an output (each output depends on every input), so src may be dst.
+    // X62 arm K3: a second inlined copy for the last row, in the leaf's form (arm K) or with
+    // these accessors (arm K2), took 570-750 cycles for that row against 260-310 where it
+    // stayed out of the pairs' way: the two copies evicted each other from the op cache
+    // (190-300 misses a call on the EPYC 7763 at 5, 7 and 17 rows backward, none at 4).
+    for (std::size_t u = 0; u < count; u += 2) {
+      const std::size_t v = u + 1 < count ? u + 1 : u;
+      const pair_rows_in<T, InOp> x{
+          .r0 = line_at<T>(src, u, src_dist), .r1 = line_at<T>(src, v, src_dist), .e = ein};
+      const pair_rows_out<T, OutOp> y{
+          .r0 = line_at<T>(dst, u, dst_dist), .r1 = line_at<T>(dst, v, dst_dist), .e = eout};
+      cdft<R>::template plain<T, Sign>(x, y);
+    }
+    return;
+  }
   std::size_t u = 0;
   for (; u + C<T> <= count; u += C<T>) {
     batch_group<T, R, Sign, InOp, OutOp, true>(src, dst, src_dist, dst_dist, u, C<T>, ein, eout);

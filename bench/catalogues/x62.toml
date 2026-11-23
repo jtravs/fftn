@@ -1,0 +1,87 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Experiment X62's cases (dev/experiments/X62-epyc-tail.md): the EPYC's remaining phase 1 exit
+# cases and the batches around them where a change could move them. Double precision, out of
+# place unless a group says otherwise.
+
+[catalogue]
+name = "x62"
+
+[[group]]
+name = "x62-64"
+note = "64-point rows: the batches around 64 x 2 and 64 x 16, both directions"
+kind = "c2c"
+dims = [64]
+batch = [2, 3, 4, 5, 8, 16, 17, 32, 64, 128, 256, 512, 1024, 4096]
+direction = ["fwd", "bwd"]
+
+[[group]]
+name = "x62-64-in-place"
+kind = "c2c"
+dims = [64]
+batch = [2, 3, 16, 256]
+place = "in"
+
+[[group]]
+name = "x62-32"
+note = "32-point rows, the other radix whose codelet overflows 16 registers"
+kind = "c2c"
+dims = [32]
+batch = [2, 3, 4, 16, 64, 256]
+direction = ["fwd", "bwd"]
+
+[[group]]
+name = "x62-bluestein"
+note = "1018 and other lengths whose Bluestein convolution is 2048 points"
+kind = "c2c"
+dims = [1018, 1021, 1019, 1013]
+batch = [1]
+
+[[group]]
+name = "x62-bluestein-batch"
+kind = "c2c"
+dims = [1018]
+batch = [3, 16]
+
+[[group]]
+name = "x62-2048"
+kind = "c2c"
+dims = [2048]
+batch = [1, 16]
+
+[[group]]
+name = "x62-short"
+note = "single rows of the exit check's placement-sensitive lengths"
+kind = "c2c"
+dims = [72, 100, 120, 15]
+batch = [1]
+
+[[group]]
+name = "x62-15"
+kind = "c2c"
+dims = [15]
+batch = [2, 3, 4]
+direction = ["bwd"]
+
+[[group]]
+name = "x62-bluestein-wide"
+note = "Bluestein lengths whose convolution's power-of-two part a limit could move"
+kind = "c2c"
+dims = [509, 1013, 1019, 1021, 2027, 2039, 4093, 10403, 131071, 999983]
+batch = [1]
+
+[[group]]
+name = "x62-bluestein-f32"
+note = "single precision: C = 4 on avx2, so 2036 = 4 x 509 has as many copies as a register"
+kind = "c2c"
+dims = [1018, 1013, 2036, 2054]
+batch = [1]
+precision = "f32"
+
+[[group]]
+name = "x62-bluestein-real"
+note = "real rows whose half-length transform is a Bluestein line"
+kind = ["r2c", "c2r"]
+dims = [2036, 2026]
+batch = [1]

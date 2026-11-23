@@ -616,8 +616,8 @@ std::vector<std::size_t> bluestein_tops_of(std::size_t n, const side& in, const 
 // X53; strategies/chain.hpp, use_batch_leaves), or null: only for one axis of contiguous
 // rows in one batch dimension of at least two rows, the driver's one call of the leaf over
 // the batch (driver.hpp, run_leaf_rows); a precision with one complex number per register
-// has none. By the rules, the profile's (target_profile::batch_rows, batch_narrower,
-// batch_own_rows).
+// has none. By the rules, the profile's (target_profile::batch_rows, batch_max_rows,
+// batch_ragged_rows, batch_narrower, batch_own_rows).
 template <class T>
 const batch_leaf_set<T>* batch_leaves_of(const shape_view& s, const side& in, const side& out,
                                          const build_settings& settings,
@@ -643,6 +643,10 @@ const batch_leaf_set<T>* batch_leaves_of(const shape_view& s, const side& in, co
     if (const std::size_t slot = codelet_slot(n);
         slot < profile.batch_rows.size() && profile.batch_rows[slot] != 0 &&
         s.batches[0].count >= profile.batch_rows[slot] &&
+        (slot >= profile.batch_max_rows.size() || profile.batch_max_rows[slot] == 0 ||
+         s.batches[0].count <= profile.batch_max_rows[slot]) &&
+        (s.batches[0].count % profile.lanes == 0 || slot >= profile.batch_ragged_rows.size() ||
+         s.batches[0].count >= profile.batch_ragged_rows[slot]) &&
         (n != 12 || t != target::avx512 || settings.profile.batch_leaf_12)) {
       const std::size_t rows = s.batches[0].count;
       const bool own = !profile.batch_narrower ||
@@ -1110,6 +1114,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
                                   ? settings.profile.pow2_radix8_bytes
                                   : std::numeric_limits<std::size_t>::max(),
                               settings.profile.bluestein_pow2_part_bytes);
+  chain.use_whole_lanes(settings.profile.bluestein_whole_lanes);
   chain.force_convolution_length(settings.bluestein_length);
   if (const narrow_leaf_table* narrow = find_narrow_leaves(c.isa_target)) {
     chain.use_narrow_leaves(&of<T>(*narrow));

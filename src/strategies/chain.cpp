@@ -115,8 +115,10 @@ template <class T> std::vector<std::size_t> chain_builder<T>::radices(std::size_
   const bool few = s_copies > 1 &&
                    (s_copies < kernels_.complex_lanes ||
                     (s_copies == kernels_.complex_lanes && n * 2 * sizeof(T) <= conv_from_bytes_));
+  // X62: with s = C, on the profiles that say so, whatever the lengths (whole_lanes_).
   if (few && !forces(n) && rader_root(q, profile_) == 0 &&
-      bluestein_m(n) <= s_copies * bluestein_m(q)) {
+      ((whole_lanes_ && s_copies == kernels_.complex_lanes) ||
+       bluestein_m(n) <= s_copies * bluestein_m(q))) {
     return {n};
   }
   if (q > 1) {

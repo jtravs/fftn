@@ -34,6 +34,7 @@
 #include <complex>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -892,7 +893,12 @@ TEST(Passes, ScratchOnlyWhenUsed) {
 // plain "2 x bluestein 509" where C = 1. Both are within tolerance (the oracle suites).
 template <class T> void few_copies_take_the_whole_line(fftn::isa t) {
   const auto shape = fftn::rows_c2c<T>(std::size_t{2} * 509, 1, fftn::direction::forward);
-  const auto core = make_plan_core(fftn::detail::view_of(shape), {.force_isa = t}, {});
+  // Not the host's profile: Zen 3's limit and whole-lane flag (X62) would decide here.
+  build_settings settings;
+  settings.profile.bluestein_pow2_part_bytes = std::numeric_limits<std::size_t>::max();
+  settings.profile.long_convolution_bytes = std::size_t{8} * 1024 * 1024;
+  settings.profile.bluestein_whole_lanes = false;
+  const auto core = make_plan_core(fftn::detail::view_of(shape), {.force_isa = t}, settings);
   const std::string listing = joined(stage_names(*core));
   if (lanes_of<T>(t) >= 2) {
     EXPECT_NE(listing.find("Q 1018, "), std::string::npos) << fftn::isa_name(t) << listing;
@@ -905,6 +911,33 @@ TEST(Passes, FewBluesteinCopiesTakeTheWholeLine) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
     few_copies_take_the_whole_line<double>(t);
     few_copies_take_the_whole_line<float>(t);
+  }
+}
+
+// Experiment X62: with a power-of-two limit of 1024 points, 1018's whole convolution is
+// longer than two of 509's (M = 1024), so a stage over C = 2 copies takes the whole line only
+// where the profile says so (machine_profile::bluestein_whole_lanes), the copies elsewhere.
+template <class T> void whole_lanes_take_the_whole_line(fftn::isa t) {
+  if (lanes_of<T>(t) != 2) {
+    return;
+  }
+  const auto shape = fftn::rows_c2c<T>(std::size_t{2} * 509, 1, fftn::direction::forward);
+  for (const bool whole : {false, true}) {
+    build_settings settings;
+    settings.profile.bluestein_pow2_part_bytes = 1024 * 2 * sizeof(T);
+    settings.profile.long_convolution_bytes = std::size_t{8} * 1024 * 1024;
+    settings.profile.bluestein_whole_lanes = whole;
+    const auto core = make_plan_core(fftn::detail::view_of(shape), {.force_isa = t}, settings);
+    const std::string listing = joined(stage_names(*core));
+    EXPECT_NE(listing.find(whole ? "Q 1018, " : "Q 509, "), std::string::npos)
+        << fftn::isa_name(t) << listing;
+  }
+}
+
+TEST(Passes, WholeLanesTakeTheWholeLine) {
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    whole_lanes_take_the_whole_line<double>(t);
+    whole_lanes_take_the_whole_line<float>(t);
   }
 }
 
