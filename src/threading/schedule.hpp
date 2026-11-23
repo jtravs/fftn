@@ -10,6 +10,7 @@
 // dozen arithmetic operations, allocates nothing, and every member gets the same one.
 #pragma once
 
+#include "fftn/isa.hpp"
 #include "fftn/team.hpp"
 #include "isa/arch.hpp"
 #include "threading/work_graph.hpp"
@@ -329,6 +330,16 @@ struct machine_profile {
   // rather than in a separate pass (X29): set where the L2 is shared (Apple: 0.92-0.94 of
   // the separate route); on the EPYC it took 1.11.
   bool c2r_paired_gather = false;
+  // A c2r plane out of place builds its intermediate packed in the output (core/plan_core.cpp,
+  // c2r_packed) where one transform's half spectrum exceeds this many bytes, and keeps it in the
+  // workspace block otherwise (X60, X63). The packed route wins where the block pushes input,
+  // block and output past a cache level and loses inside the caches, where the output's
+  // power-of-two row strides cost more than the block's odd ones. Set only for the classes
+  // where X63 passed (set_grid_sizes); the block everywhere else.
+  std::size_t c2r_packed_bytes = std::numeric_limits<std::size_t>::max();
+  // The one instruction set whose plans c2r_packed_bytes applies to, the one it was measured on
+  // (plans for another target keep the block); fftn::isa::best applies it to every target.
+  fftn::isa c2r_packed_isa = fftn::isa::best;
 };
 
 // The profile of a machine of topology t (its CPU count aside): the defaults above, which
