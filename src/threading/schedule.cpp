@@ -294,7 +294,9 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
   // lanes). The Xeon 6240's class (avx512): from its L2 (X60, planes from 384^2 0.70-1.01 at
   // one thread and at 8 lanes). Zen 3's (avx2): where one half spectrum passes half the CCX's
   // L3 (X60's 8 lanes lost at 8 MiB, 1000^2 and 1024^2 1.04-1.13, and gained at 32 MiB, 2048^2
-  // 0.76-0.83). Apple keeps the block: wide planes lost at every threshold tried (M5 Max
+  // 0.76-0.83; X63 judged 1536^2-4096 x 1024 from 16 MiB). The threshold follows the CCX's L3,
+  // which the three arrays and a team share, so Zen 2 (16 MiB per CCX, the same key) packs from
+  // 8 MiB, unmeasured. Apple keeps the block: wide planes lost at every threshold tried (M5 Max
   // 512 x 1024 1.07 at 4 MiB, 640 x 1280 1.14 at 6.3 MiB).
   if (c.l2.size != 0 && x86_64 && private_l2 && !large_l2 && !large_l3) {
     p.c2r_packed_bytes = c.l2.size;

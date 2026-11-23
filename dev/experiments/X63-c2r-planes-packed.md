@@ -150,13 +150,27 @@ control of M in the same run. No run needed the re-run clause.
   2048²).
 - **Volumes keep the block** everywhere (X60's 8-lane losses on the Xeon), and so do Apple (X60's
   wide planes) and every unmeasured class.
-- **Reach.** The Xeon class's key (x86-64, a private L2 under 2 MiB, under 2 MiB of L3 per CPU)
-  also takes, unmeasured, Ice Lake-SP, Zen 4c, Zen 4 VMs that report a small L3 per CPU and Intel
-  client parts with AVX-512 (Ice Lake and Tiger Lake laptops, Rocket Lake): the same `avx512`
-  target and register file, which the reach rule allows; `c2r_packed_isa` keeps `avx2` machines
-  of that cache class (Alder Lake, Zen 2) on the block. Zen 3's key (a private L2 under 1 MiB and
-  at least 2 MiB of L3 per CPU) takes Zen 3 parts only among current x86 (Zen 4 and Zen 5 have
-  1 MiB of L2 and `avx512`). The next phase exit should screen these families.
+- **Reach** (corrected after the second reader, who ran `set_grid_sizes` on synthetic
+  classes). Unmeasured classes that the keys take:
+  - **Zen 2** (server and desktop: 512 KiB of private L2, 16 MiB of L3 per 4-core CCX, at least
+    2 MiB per CPU) matches Zen 3's key and packs on `avx2` from L3/2 = 8 MiB. That the threshold
+    follows the CCX's L3 rather than a fixed byte count is the physical argument for it: the
+    packed route pays where input, block and output pass the L3 that one CCX's cores share (and
+    at 8 lanes the team shares one CCX's L3), so on a CCX half the size the turn should come at
+    half the bytes. Zen 2 has the same `avx2` target and 16 registers, so the reach rule allows
+    it, but it is unmeasured.
+  - **The Xeon 6240's key** (x86-64, a private L2 under 2 MiB, under 2 MiB of L3 per CPU) packs
+    on `avx512` from the L2 on Ice Lake-SP, Zen 4c with SMT on (1 MiB of L2; with SMT off its L3
+    per CPU reaches 2 MiB and it keeps the block), Zen 4 VMs that report a small L3 per CPU,
+    Intel client parts with AVX-512 (Ice Lake and Tiger Lake laptops, Rocket Lake), and any
+    class that reports no L3.
+  - Classes that keep the block: Zen 3 APUs such as Cezanne (they take the Xeon key, 1 MiB of L3
+    per CPU, but their target is `avx2`, which `c2r_packed_isa` refuses), Google Cloud's Ice Lake
+    N2 VMs (their large reported L3 per CPU files them with neither key), Zen 4 and Zen 5 with
+    their large L3, Granite and Sapphire Rapids (2 MiB of L2), Apple, other AArch64.
+  - **For the next phase exit's screen**: Zen 2 (`avx2`, 8 MiB), Ice Lake-SP, Zen 4c with SMT,
+    Zen 4 VMs with a small reported L3, Intel client AVX-512 parts and a machine that reports no
+    L3 (`avx512`, from the L2).
 - **Not measured**: whether a threshold below 16 MiB would also pass on Zen 3 (X60 timed nothing
   between 8 and 32 MiB at 8 lanes); the Mac (Apple keeps the block, by X60).
 - **Code.** `c2r_packed` (plan_core.cpp) takes planes only; `machine_profile::c2r_packed_bytes`
