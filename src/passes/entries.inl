@@ -470,6 +470,7 @@ inline constexpr pass_kernels<T> pass_table{
             &c2r_store<T, false>,
             &c2r_store<T, true>,
         },
+    .c2r_nyquist = &c2r_nyquist<T>,
     .r2c_pack_pairs = &r2c_pack_pairs<T>,
     .r2c_post_strided =
         {

@@ -309,7 +309,8 @@ Points that matter:
 - **Every kind at every rank.** The general `shape` is accepted for one to three axes and
   all three kinds, not only through the shape functions: the same code serves them all
   (axis by axis, a transform at a time, section 9.3). A c2r of two or more axes out of place
-  keeps its intermediate in a workspace block, so its input is preserved (9.1). More than
+  keeps its intermediate in a workspace block or, a plane on some profiles, packed in the
+  output, so its input is preserved (9.1). More than
   three transformed axes is a later tier (5.6).
 - **Batch dimensions** are as many as the caller needs: a `Kokkos::View` of any rank, or a
   sub-array whose loops do not nest, maps onto one shape without a copy. Each becomes one
@@ -1615,11 +1616,25 @@ beyond L1 (grid plus separate pairing) and 15–43 % within it (r2c 39–43 %, c
 the 20 % target within L1 needs X6's real-input codelets.
 
 c2r preserves its input by default; with permission to destroy it the planner may take a
-faster route. A multi-dimensional c2r that preserves its input needs scratch for the
-half-spectrum of one plane (or pencil block) per thread, because the real output cannot
-hold it; this is reported by `workspace_bytes`. In-place r2c and c2r use FFTW's padded
-layout: each row of the last axis holds n + 2 reals (n/2 + 1 complex), the last two
-being padding on the real side.
+faster route. A multi-dimensional c2r out of place cannot run its complex axes in its input,
+so its intermediate goes into the workspace block (one transform's half spectrum per thread,
+reported by `workspace_bytes`) or, for a plane on the profiles where experiments X60 and X63
+measured a gain, packed in the output. The c2r of a row reads only n reals of its half
+spectrum, X_1 … X_h−1 and the real parts of X_0 and X_h (h = n/2), so each output row can hold
+X_0 … X_h−1 with Re X_h in X_0's imaginary place: the columns 0 … h−1 run from the input into
+the output, column h runs into a block of one value per row (one more line of the column phase
+where that phase is a single nest of lines, otherwise a phase of its own), and each row takes
+its Re X_h from there and runs its c2r in place. That needs an even real axis contiguous on the
+output and an even outer output stride. It saves the third array, which costs where input,
+block and output pass a cache level that input and output fit (Xeon 6240 c2r 1024² out of place
+2.0 times its in-place time, seven times the LLC misses), but the output's rows of n reals put
+the packed columns a power of two apart where the block's n/2 + 1 complex values were an odd
+multiple of 16 bytes, which costs inside the caches. So a plane packs only where one
+transform's half spectrum exceeds `machine_profile::c2r_packed_bytes`, on the target it was
+measured on (`c2r_packed_isa`): the L2 on the Xeon 6240's class (`avx512`), half the CCX's L3 on Zen 3's (`avx2`); the block elsewhere (on Apple wide planes lost at every threshold X60 tried). Volumes keep the block
+(X60: the Xeon 6240's teams, which run them plane at a time, lost 1.05–1.09 at 8 lanes).
+In-place r2c and c2r use FFTW's padded layout: each row of the last axis holds n + 2 reals
+(n/2 + 1 complex), the last two being padding on the real side.
 
 ### 9.2 Any length
 
@@ -3226,8 +3241,9 @@ to change before a release.
 | 2026-11-19 | Provisional, for the maintainer's review: `fftn::kokkos::executor` (one `parallel_for` per transform on the caller's instance, then a fence), `team_of(member)`, and `view_plan` executing through the executor, serial inside a kernel, sharing large scaling passes among threads; Kokkos' tests build one threaded back end per configuration (`FFTN_KOKKOS_BACKEND`, Threads by default) | Task 3.5; experiment T3 for the costs; the adapter detects kernels per back end because Kokkos 5 removed `in_parallel` |
 | 2026-11-19 | A lanes column phase's narrower last block joins the whole blocks' phase of the work graph | X59 arm T: alone it was a phase of one chunk that one member ran while the others waited, on nearly every real plane; at 8 lanes 0.911 (Xeon 6240, real planes that split) and 0.978 (EPYC 7763), 0.998 on the M5 Max at 6 lanes; serial programs and bits unchanged |
 | 2026-11-19 | A column phase of a plane whose neighbouring lines write the same cache lines is claimed in runs of a member's fair share where that share holds at most 65 536 points, on the measured profiles, x86-64 with a private L2 under 1 MiB and a large L3 (Zen 3; Zen 4 and Zen 5, on `avx512`, not measured, keep the guided runs) or a cluster-shared L2 (`machine_profile::fair_line_runs`) | X59 arm R6: EPYC 7763 0.909 over the real planes that split at 8 lanes (512² 0.70), M5 Max 0.979 at 6 lanes; the Xeon 6240 lost (1.017, c2r 1000² 1.21) and keeps X52's guided runs; larger shares lost balance at the end (2048², 1.05–1.15) |
-| 2026-11-22 | `avx2` double's batch leaves of 32 and 64 points move each element of their two rows when the codelet asks for it, one inlined copy of the codelet for every group and a lone last row; the rules take the leaf of 64 from 2 to 1024 rows, odd counts from 5 (`target_profile::batch_max_rows`, `batch_ragged_rows`; section 8.2) | X62 (EPYC 7763): 0.848 of the 4 × 16 chain over 64-point batches (64 × 2 backward ÷ FFTW 1.29 → 0.98, 64 × 16 1.16 → 0.92), tracking tier 0.996; block transposes spilled all 64 values (about 1.18 of the per-element form); a second copy of the codelet for the last row thrashed the op cache; 3 rows and 4096 rows lost and are excluded |
+| 2026-11-22 | `avx2` double's batch leaves of 32 and 64 points move each element of their two rows when the codelet asks for it, one inlined copy of the codelet for every group and a lone last row; the rules take the leaf of 64 from 2 to 1024 rows, odd counts from 5 (`target_profile::batch_max_rows`, `batch_ragged_rows`; section 8.2) | X62 (EPYC 7763): 0.848 of the 4 × 16 chain over 64-point batches (64 × 2 backward ÷ FFTW 1.29 → 0.98, 64 × 16 1.16 → 0.92), tracking tier 0.996; block transposes spilled all 64 values (about 1.18 of the per-element form); a second copy of the codelet for the last row thrashed the op cache; 3 rows and 4096 rows lost and are excluded (adopted by the maintainer's decision, 2026-11-23: K3's rule as written covered 3 rows) |
 | 2026-11-22 | On Zen 3's class (x86-64, a private L2 under 1 MiB, a large L3) a Bluestein convolution's power-of-two part is at most half the L1, and a stage over C copies takes the whole line whatever the convolutions' lengths (`machine_profile::bluestein_whole_lanes`; section 8.5) | X62 (EPYC 7763): the 14 moved cases 0.92–0.99 of their time (1013–1021 with M = 2160 for 2048, 1018 ÷ FFTW 1.05 → 0.98, 131071 0.98), tracking tier 1.002; without the second part 1018 split into two copies and took 1.37 |
+| 2026-11-22 | A c2r plane out of place builds its intermediate packed in the output where one transform's half spectrum exceeds `machine_profile::c2r_packed_bytes` on the target measured (`c2r_packed_isa`): the L2 on the Xeon 6240's class (`avx512`), half the CCX's L3 on Zen 3's (`avx2`); the block elsewhere (on Apple wide planes lost at every threshold X60 tried). Volumes keep the block | X60 and X63: Xeon 6240 0.81 (one thread) and 0.82 (8 lanes) of the block's time over 31 planes from 1 MiB; EPYC 7763 0.84 and 0.77 over 9 planes from 16 MiB, held-out sizes included; inside the caches the output's power-of-two row strides lose (X60: EPYC 512 × 1024 1.10), the Xeon's teams lost on volumes (X60), and the M5 Max's wide planes lost (512 × 1024 1.07, 640 × 1280 1.14) |
 
 ---
 

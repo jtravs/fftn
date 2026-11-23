@@ -1588,7 +1588,7 @@ std::size_t chain_builder<T>::r2c_line(std::size_t n, endpoint src, endpoint dst
 
 template <class T>
 std::size_t chain_builder<T>::c2r_line(std::size_t n, endpoint src, endpoint dst, double scale,
-                                       std::vector<stage>& stages) {
+                                       std::vector<stage>& stages, bool packed) {
   line_scratch_ = 0;
   const pass_kernels<T>& k = kernels_.passes;
   const std::size_t scaled = scale != 1.0 ? 1 : 0;
@@ -1616,10 +1616,12 @@ std::size_t chain_builder<T>::c2r_line(std::size_t n, endpoint src, endpoint dst
   }
   case real_route::pairing_only:
     add_pairing(false, n, src, dst, scale, stages);
+    stages.back().args.packed = packed;
     return 0;
   case real_route::leaf: {
     stage st;
     st.run = k.codelet[codelet_slot(h)]->c2r_leaf[scaled];
+    st.args.packed = packed;
     st.args.radix = h;
     st.args.n = h;
     st.args.twiddles = leaf_pairing_twiddles(n);
@@ -1665,6 +1667,7 @@ std::size_t chain_builder<T>::c2r_line(std::size_t n, endpoint src, endpoint dst
     }
     stage st;
     st.run = k.codelet[codelet_slot(radix)]->c2r_first;
+    st.args.packed = packed;
     st.args.radix = radix;
     st.args.m = m;
     st.args.s = 1;
@@ -1685,8 +1688,9 @@ std::size_t chain_builder<T>::c2r_line(std::size_t n, endpoint src, endpoint dst
     break;
   }
   // The pairing writes Z to the output's memory (h complex values: the n reals), where the
-  // complex transform then runs in place; the input is preserved.
+  // complex transform then runs in place; the input is preserved (unless it is that memory).
   add_pairing(false, n, src, dst, 1.0, stages);
+  stages.back().args.packed = packed;
   return c2c_line(h, +1, dst, dst, true, edges, stages);
 }
 

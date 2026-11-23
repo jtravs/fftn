@@ -638,6 +638,10 @@ bytes; judge a threshold chosen on a screen on sizes the screen did not time (th
 held-out 640 × 1280 caught a rule that passed the screen's cases); and judge a planner rule at the
 team sizes that will run its plans, since a plan cannot tell which will.
 [X60](experiments/X60-c2r-two-arrays.md).
+X63 then adopted the route for planes alone, keyed to what X60 measured per class (the Xeon from
+its L2, the EPYC from half its L3, where its 8-lane team gained): 0.81–0.84 on the Xeon and
+0.77–0.84 on the EPYC at one thread and 8 lanes, held-out sizes included. A rule that fails as a
+whole can hold for the subset its losses did not touch. [X63](experiments/X63-c2r-planes-packed.md).
 
 ## 4. Kernels and algorithms
 

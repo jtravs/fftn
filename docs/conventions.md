@@ -237,7 +237,7 @@ Out of place, input and output must not overlap at all.
 ## What is preserved
 
 - The input of an out-of-place plan is never written, for every kind (c2r included: a
-  c2r of two or more axes keeps its intermediate in the workspace instead).
+  c2r of two or more axes builds its intermediate in the output or the workspace instead).
 - No memory outside the described output elements is written: not the gaps between
   strided elements or rows, not the padding of out-of-place rows.
 - An in-place plan overwrites the elements it describes, padding included.
