@@ -192,15 +192,27 @@ Further rules:
   loss that appears only on a compiler outside that set is a reason to gate the change by
   compiler (on for the toolchains where it wins, the old path elsewhere) and open a
   follow-up, not to reject it. Likewise a change that wins on one target and loses on
-  another is adopted per target. A case a hair past a rule's limit on a loaded machine is
-  re-run before it decides a verdict.
+  another is adopted per target.
+- **Near misses are re-run** (maintainer, 2026-11-23): any criterion of a decision rule,
+  one case or a mean, missed by less than the run's noise band gets one `--serial` re-run,
+  and the re-run decides, whatever the rule's own wording says.
+- **A change may be narrowed before adoption** (maintainer, 2026-11-23): when cases lose,
+  the change may be narrowed to exclude them (a planner limit, a machine key, a precision,
+  a rank) without a new experiment. One run on the final code, declared deciding in the
+  experiment file before it starts, must then show every excluded case on its old plan and
+  no case the change still moves slower beyond the band; the arm is adopted on the cases it
+  still moves, and the exclusion is recorded with its evidence.
+- **The lead adopts under these two rules without asking** (maintainer, 2026-11-23) and
+  lists each such adoption in the pull request and in `dev/PLAN.md` "Status", where the
+  maintainer may veto it. Any other miss of a rule's letter, and anything outside the reach
+  rule below, stays the maintainer's decision.
 - **A decision rule's target set names only the cases the change can move** (by its
   mechanism: the plans it changes, the code it touches), or judges those cases on their
   own; cases outside it belong to the collateral check. A case past a limit whose code the
   change provably leaves as it was (the same plan and byte-identical objects: only code
   placement moved) does not decide the verdict; record it with that evidence. X47 and X54
-  were adopted by the maintainer's decision (2026-11-18) on these grounds after missing
-  their rules' letter.
+  (2026-11-18) and X62 (2026-11-23) were adopted by the maintainer's decision on these
+  grounds after missing their rules' letter.
 - **Where a measured rule reaches** (maintainer, 2026-11-18): a planner rule measured on
   one machine extends by its cache key to unmeasured machines with the same instruction
   set target and register file (Sapphire Rapids takes Granite Rapids' rules, Ice Lake-SP
