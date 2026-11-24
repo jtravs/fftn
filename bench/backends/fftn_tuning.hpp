@@ -121,6 +121,10 @@ constexpr std::array size_fields{
         .member = &fftn::detail::machine_profile::depth_max_bytes,
     },
     size_field{
+        .key = "DEPTH_REAL_MAX_BYTES",
+        .member = &fftn::detail::machine_profile::depth_real_max_bytes,
+    },
+    size_field{
         .key = "POW2_GRID_BYTES",
         .member = &fftn::detail::machine_profile::pow2_grid_bytes,
     },

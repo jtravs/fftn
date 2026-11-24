@@ -1,0 +1,60 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Experiment X75's cases (dev/experiments/X75-xeon-real-rows.md): long real rows out of place
+# on the Xeon 6240's class, whose half lengths the c2c depth-first rule there (L2/4 to 64 L2)
+# may reach. The first groups are the client catalogue's real rows of 16384-163840 points
+# (lengths and batches as the client application runs them), then the standard catalogue's
+# real rows of that range and beyond, then the lengths between, in double and in single
+# precision.
+
+[catalogue]
+name = "x75"
+
+[[group]]
+name = "x75-client-single"
+kind = ["r2c", "c2r"]
+dims = [18432, 32768]
+
+[[group]]
+name = "x75-client-r2c-20480"
+kind = "r2c"
+dims = [20480]
+batch = [21]
+
+[[group]]
+name = "x75-client-c2r-20480"
+kind = "c2r"
+dims = [20480]
+batch = [3]
+
+[[group]]
+name = "x75-client-40960"
+kind = ["r2c", "c2r"]
+dims = [40960]
+batch = [6]
+
+[[group]]
+name = "x75-standard"
+note = "the standard catalogue's real rows of the range and beyond"
+kind = ["r2c", "c2r"]
+dims = [16384, 65536, 262144, 1048576]
+
+[[group]]
+name = "x75-between"
+note = "lengths whose half length lies in the Xeon's depth-first range (L2/4-64 L2: 16384-4194304 complex doubles)"
+kind = ["r2c", "c2r"]
+dims = [20480, 24576, 36864, 40960, 49152, 61440, 81920, 98304, 122880, 131072, 163840, 245760, 524288]
+
+[[group]]
+name = "x75-float"
+note = "single precision, whose depth-first range on the Xeon is L2/4-8 L2 in bytes (32768-1048576 complex floats)"
+kind = ["r2c", "c2r"]
+dims = [40960, 65536, 98304, 163840, 262144, 1048576]
+precision = "f32"
+
+[[group]]
+name = "x75-long"
+note = "beyond 2^20 points: half lengths of 8-64 MiB, the rest of the range"
+kind = ["r2c", "c2r"]
+dims = [2097152, 4194304, 8388608]
