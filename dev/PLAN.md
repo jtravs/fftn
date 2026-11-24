@@ -154,7 +154,8 @@ the EPYC's 64 × 2 backward (1.29; the radix-64 codelet spills over two rows), t
 in place.
 
 EPYC 1024 (X57, 2026-11-18): `avx2` double rows of 768 and 1024 take their two-pass plans only
-while the plan's rows and output fit three quarters of the L3 (`fit_row_bytes`). 1024 ÷ FFTW
+while the plan's rows and output fit three quarters of the L3 (`fit_row_bytes`; in place the
+rows to 17.2 MiB, measured in X57's amendment 2). 1024 ÷ FFTW
 1.19 → 0.99, backward 1.16 → 1.04, × 3 1.19 → 0.99, × 16 1.13 → 1.02, × 256 1.08 → 1.01; the
 cases the rule moves 0.88 of their time, tracking tier 0.989, planes and volumes unchanged. The
 EPYC's cases beyond noise against FFTW: 9 → 4 of 193 in the same run (limit 9); the exit check
@@ -500,7 +501,9 @@ AGENTS.md section 6 and DESIGN 15.5):
 - Rules reach unmeasured relatives by cache key (the maintainer's rule): X58's Ice Lake key also
   covers client Intel cores with 1–2 MiB of L2, and the 2 MiB key Emerald Rapids; X57's footprint
   rule covers other `avx2` cores with a large L3. None measured.
-- X57's in-place limit (1024 rows to 1536) is extrapolated from the footprint, not measured.
+- X57's in-place limit, measured (amendment 2, 2026-11-24): two-pass rows in place lost from
+  18–20 MiB on the EPYC 7763 (1024 × 1280 and 1536 1.07–1.16, 768 × 2048 1.14–1.19); capped at
+  17.2 MiB (1100 rows of 1024, `fit_in_place_bytes`), the largest footprint measured to win.
 - The CI's Clang ASan job takes about 70 of its 90 minutes; the Windows jobs install a pinned
   LLVM 23.1.5 (PR 81) because the runner image's LLVM is older than its Visual Studio needs.
 - Older and still open: X26's prefetch gate by target, X28's 128-bit leaves on `avx2`, X30's

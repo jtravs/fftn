@@ -1908,10 +1908,11 @@ prices them) a cost per unit and a cost per tail, and a cost per pass. For a lin
    2 % behind the measured winner in every case; 36 and 13 on AVX2, double's with radix
    20, 32 and 64 passes the costs cannot price: experiments X30 and X38). The rows of a
    one-axis c2c plan of contiguous rows of a length in the profile's `fit_overrides` (`avx2` double: 768 = 12 · 64,
-   1024 = 16 · 64; X57) instead take that sequence while the plan's rows and output (rows alone
-   in place) fit `machine_profile::fit_row_bytes`, three quarters of the L3 where a private L2
-   has a large L3 behind it, and rule 4's sequence beyond; rows of planes and volumes keep
-   this rule.
+   1024 = 16 · 64; X57) instead take that sequence while the plan's rows and output fit
+   `machine_profile::fit_row_bytes`, three quarters of the L3 where a private L2 has a large L3
+   behind it, and in place while the rows fit the smaller of it and `fit_in_place_bytes`
+   (275/512 of the L3 there: 1100 rows of 1024 on a 32 MiB L3, the largest footprint measured
+   to win), and rule 4's sequence beyond; rows of planes and volumes keep this rule.
 3. Otherwise write n = n_s q₁ q₂ … with n_s free of primes above 16 and q₁ ≤ q₂ ≤ … the
    prime factors above 16. Each qᵢ is one pass, in ascending order, after the codelet
    passes: a codelet pass for 17, 19 and 23 (experiment X27), otherwise a generic pass; if
@@ -3244,6 +3245,7 @@ to change before a release.
 | 2026-11-22 | `avx2` double's batch leaves of 32 and 64 points move each element of their two rows when the codelet asks for it, one inlined copy of the codelet for every group and a lone last row; the rules take the leaf of 64 from 2 to 1024 rows, odd counts from 5 (`target_profile::batch_max_rows`, `batch_ragged_rows`; section 8.2) | X62 (EPYC 7763): 0.848 of the 4 × 16 chain over 64-point batches (64 × 2 backward ÷ FFTW 1.29 → 0.98, 64 × 16 1.16 → 0.92), tracking tier 0.996; block transposes spilled all 64 values (about 1.18 of the per-element form); a second copy of the codelet for the last row thrashed the op cache; 3 rows and 4096 rows lost and are excluded (adopted by the maintainer's decision, 2026-11-23: K3's rule as written covered 3 rows) |
 | 2026-11-22 | On Zen 3's class (x86-64, a private L2 under 1 MiB, a large L3) a Bluestein convolution's power-of-two part is at most half the L1, and a stage over C copies takes the whole line whatever the convolutions' lengths (`machine_profile::bluestein_whole_lanes`; section 8.5) | X62 (EPYC 7763): the 14 moved cases 0.92–0.99 of their time (1013–1021 with M = 2160 for 2048, 1018 ÷ FFTW 1.05 → 0.98, 131071 0.98), tracking tier 1.002; without the second part 1018 split into two copies and took 1.37 |
 | 2026-11-22 | A c2r plane out of place builds its intermediate packed in the output where one transform's half spectrum exceeds `machine_profile::c2r_packed_bytes` on the target measured (`c2r_packed_isa`): the L2 on the Xeon 6240's class (`avx512`), half the CCX's L3 on Zen 3's (`avx2`); the block elsewhere (on Apple wide planes lost at every threshold X60 tried). Volumes keep the block | X60 and X63: Xeon 6240 0.81 (one thread) and 0.82 (8 lanes) of the block's time over 31 planes from 1 MiB; EPYC 7763 0.84 and 0.77 over 9 planes from 16 MiB, held-out sizes included; inside the caches the output's power-of-two row strides lose (X60: EPYC 512 × 1024 1.10), the Xeon's teams lost on volumes (X60), and the M5 Max's wide planes lost (512 × 1024 1.07, 640 × 1280 1.14) |
+| 2026-11-24 | In place, the EPYC class's data-size-aware rows of 768 and 1024 take their two-pass radices only while the rows fit `fit_in_place_bytes`, 275/512 of the L3 (17.2 MiB on the EPYC 7763), not three quarters of it (section 11.2, rule 2; X57 amendment 2) | The in-place limit had been extrapolated from the out-of-place footprint. Measured on the EPYC 7763 (maintainer's decision, 2026-11-24): 16 · 64 in place 0.973 / 0.998 of 4 · 16 · 16's time at 1100 rows of 1024 (17.2 MiB) but 1.07–1.16 at 1280 and 1536; 12 · 64 1.05 backward at 1536 rows of 768 (18 MiB), 1.14–1.19 at 2048 |
 
 ---
 
