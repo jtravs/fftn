@@ -217,9 +217,18 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
     // at about the out-of-place row count). Judged on Sapphire, Granite and Emerald Rapids:
     // 0.796, 0.780 and 0.800 of the time over the 32 cases it moves (1-64 rows of 1024, 1-256
     // of 160 and 240), none slower.
+    // Experiment X70: X69's arm W kept gaining past those
+    // limits for 1024 in place (2 and 4 MiB of rows: 0.82-0.94) and for 160 and 240 (5 and
+    // 7.5 MiB of rows and output: 0.83-0.90), shrinking with size; 1024 out of place tied past
+    // the L2 and lost at 32 MiB on Sapphire Rapids (1.29-1.36). So rows and output within four
+    // times the L2 (1638 rows of 160, 1092 of 240), in place rows within twice the L2 (256 rows
+    // of 1024, the largest win measured), and rows longer than a page (1024) out of place
+    // within the L2 (X69's 64 rows). Judged on Sapphire, Granite and Emerald Rapids: 0.858,
+    // 0.860 and 0.873 of the time over the 18 cases it moves, none slower.
     p.fit_large_l2 = true;
-    p.fit_row_bytes = c.l2.size;
-    p.fit_in_place_bytes = c.l2.size / 2;
+    p.fit_row_bytes = 4 * c.l2.size;
+    p.fit_in_place_bytes = 2 * c.l2.size;
+    p.fit_long_row_bytes = c.l2.size;
   } else if (private_l2 && large_l3) {
     p.chain_part_bytes = std::size_t{16} * 1024;
     p.chain_part_limit_bytes = c.l3.size / 2;
