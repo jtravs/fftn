@@ -199,6 +199,12 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
       p.depth_top = 16;
       p.depth_top_alt = 20;
       p.depth_top_last = 10;
+      // Experiment X64 (cloud screen of 2026-11-24): X50's Bluestein convolutions on that chain
+      // up to the Xeon 6240's limit (2^21 complex doubles, 32 MiB). Over the nine convolutions
+      // they move (4093-999983), 0.588 of the time on Sapphire Rapids (c3-standard-8), 0.564 on
+      // Granite Rapids and 0.615 on Emerald Rapids (c4-standard-16), none slower; FFTN's time
+      // over oneMKL's there: 131071 0.74-0.76, 999983 0.84-0.93.
+      p.depth_convolution_max_bytes = std::size_t{32} << 20U;
     }
   } else if (private_l2 && large_l3) {
     p.chain_part_bytes = std::size_t{16} * 1024;

@@ -774,7 +774,8 @@ TEST(Schedule, GridSizesFromCaches) {
 // also 2 MiB of private L2) keeps the profile it had: it lost with X35's. X36's two fields
 // follow: Granite Rapids takes the Xeon's rules (no Bluestein length limit, long
 // convolutions beyond 4 L2), the Axion VM the Zen ones; neither measured. X55: Granite Rapids
-// takes the Xeon's depth-first chain from L2/4 to 64 L2 in double.
+// takes the Xeon's depth-first chain from L2/4 to 64 L2 in double; X64, X50's convolutions on
+// that chain up to 32 MiB.
 struct planner_fields {
   std::size_t grid_min_bytes;
   std::size_t grid_three_bytes;
@@ -938,7 +939,7 @@ TEST(Schedule, ProfilesOfRecordedMachines) {
       .depth_top_last = 10,
       .depth_pow2_max_bytes = never,
       .depth_float_max_bytes = 0,
-      .depth_convolution_max_bytes = 0,
+      .depth_convolution_max_bytes = 32 * mib, // X50 on the key (X64)
   };
   EXPECT_EQ(fields("linux-gcp-c4-granite-rapids.sysfs", true), large_l2);
   // X58: a private L2 of 2 MiB leaves out the batch leaf of 12; the other machines keep it.
