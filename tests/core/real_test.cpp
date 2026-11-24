@@ -421,6 +421,12 @@ TEST(Real, RulesTakeTheDepthFirstHalfLengthWhereTheProfileSays) {
   s.profile.depth_pow2_max_bytes = 0;
   s.profile.depth_part_bytes = std::size_t{32} * 1024 / 4;
   s.profile.depth_top = 4;
+  // Every other depth-first field the rules read, set rather than taken from the host (a Zen 3
+  // class runner has depth_real_max_bytes on by default).
+  s.profile.depth_top_alt = 0;
+  s.profile.depth_top_last = 0;
+  s.profile.depth_float_max_bytes = 0;
+  s.profile.depth_real_max_bytes = 0;
   s.profile.grid_min_bytes = std::size_t{512} * 1024 / 2;
   // A top of 4 is taken on avx2 and on the 32-register targets; one of them runs anywhere the
   // suites run (the scalar target takes no depth-first chain by the rules).
