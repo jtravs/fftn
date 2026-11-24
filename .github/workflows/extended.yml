@@ -24,24 +24,37 @@ jobs:
   gate:
     uses: ./.github/workflows/gate.yml
     with:
-      # GCC ASan and the coverage builds ran past 90 minutes (runs 43872954642, 43916357065).
-      timeout: 240
+      # GCC ASan and the coverage builds ran past 90 minutes (runs 43872954642, 43916357065);
+      # GCC 16's ASan + UBSan took 234 minutes with an empty ccache (run 45204413822: 166 of
+      # them compiling), against 240. 330 leaves room under GitHub's 360.
+      timeout: 330
       # Linux x86-64. GCC 14 is the GCC floor (AGENTS.md section 4) with both sanitizers:
       # B1 found GCC-only failure modes, and GCC 14's TSan is the one that needs the
       # address-space fix. Clang 23 runs clang-tidy and coverage here, in jobs of their own,
       # so that a tidy finding (the gate stops at the first failing stage) does not hide the
       # coverage result, and the two builds run side by side.
+      # GCC 14's ASan + UBSan compiles two units at a time, without the old x86 targets: under
+      # GCC's ASan + UBSan the largest row units need 3-6 GB each (rows1_avx512 6.2 GB and
+      # 1420 s alone, GCC 14.4 and 16.2 alike, on an EPYC 7763), four of them at once can
+      # exceed the runner's 16 GB, and the runner shut down two hours into the build without
+      # a word (run 45204413822; its disk and time were not the cause). Every target would
+      # take some 5.5 hours of compiling at two at a time;
+      # GCC 16's ASan job below keeps the old targets under a GCC sanitizer.
       linux: >-
         [
           {"name": "gcc-14", "cxx": "g++-14", "stages": "build bench"},
-          {"name": "gcc-14 asan", "cxx": "g++-14", "stages": "sanitize"},
+          {"name": "gcc-14 asan", "cxx": "g++-14", "stages": "sanitize", "jobs": 2,
+           "old_x86": "OFF"},
           {"name": "gcc-14 tsan", "cxx": "g++-14", "stages": "tsan"},
           {"name": "clang-23 tidy", "llvm": "23", "cxx": "/usr/lib/llvm-23/bin/clang++",
            "stages": "tidy"},
           {"name": "clang-23 coverage", "llvm": "23", "cxx": "/usr/lib/llvm-23/bin/clang++",
            "stages": "coverage"}
         ]
-      # The current GCC's sanitizers.
+      # The current GCC's sanitizers. Its ASan + UBSan job compiles four units at a time with
+      # every target, as before: its units need as much memory as GCC 14's, and it passed
+      # run 45204413822 (two at a time would take too long); if it runs out of memory, the
+      # row units need splitting (isa/rows.inl), not a smaller job count.
       linux-gcc-current: >-
         [
           {"name": "gcc-16 asan", "stages": "sanitize"},

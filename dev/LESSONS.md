@@ -1237,3 +1237,15 @@ instruction set, in both directions and in every edge variant. Remembering its r
 the input's bits (and reading the backward transform from the forward one, bit for bit)
 changed no check and cut the job's tests from 26 to 12 minutes, GCC 16's from 17 to 10.
 PR 89.
+
+6.16 **Measure a sanitizer build's units before choosing a CI job's parallelism, and let a
+lint stage read every unit before it fails.** The first weekly extended run (2026-11-23)
+lost its GCC 14 ASan + UBSan job to a runner shutdown two hours into the build, with no
+message. The job had no time or disk problem (240 minutes allowed; the build tree is 58 GB of
+the 145 GB disk, 2 GB per linked test). With peak RSS recorded (variants side by side, one
+EPYC 7763 core each), GCC 14.4's largest row unit (radices 2-12 for AVX-512) took 1420 s and
+6.2 GB, GCC 16.2's 1511 s and 6.1 GB; in the whole build the next largest needed 3-4 GB, so
+four compiles at once can pass the runner's 16 GB. Turning off use-after-scope cut that unit to 820 s and 4.5 GB, and `-g0` to
+3.7 GB, so the line tables alone cost 2.5 GB. The same run's clang-tidy jobs reported three
+findings because the build stopped at the first failing units: `ninja -k 0` found about 150,
+nearly all in a week of merges. Measured on the DMOG cluster; PR 98.
