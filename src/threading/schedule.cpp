@@ -248,6 +248,10 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
       p.depth_pow2_max_bytes = 0;
       p.depth_part_bytes = c.l1d.size / 4;
       p.depth_top = 4;
+      // Experiment X72: an even real row out of place runs its half-length transform on the
+      // same depth-first chain, over the rows' whole range (half lengths of 8192-131072
+      // points), with the pairing as a separate pass.
+      p.depth_real_max_bytes = p.depth_max_bytes;
     }
   }
   // Experiment X34: where those chains do not apply (Xeon 6240, 0.7 MiB of L3 per CPU), a
