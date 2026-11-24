@@ -1146,6 +1146,16 @@ consequences:
   Xeon 6240 at 16384–262144 points, which deleted the stored form).
 - Values are computed with exact integer octant reduction and double-double evaluation,
   rounded once; no recurrences. Tables are shared between plans through the twiddle cache.
+- Planning time is almost all root evaluation (360 ns a root on the Mac, 0.8–0.9 µs on the
+  x86-64 machines), so a plan computes each value once (experiment X71), without changing a
+  bit: for n divisible by 8 a table evaluates each of its n/8 + 1 reduced angles once for the
+  up to four entries that share it (octant symmetry); entry m 2^k of the table of n 2^k is
+  entry m of the table of n bit for bit (every operation's operands scale by 2^k), so the
+  chain's root tables are sliced from, or take their even entries from, a table of another
+  length n 2^k already built (an r2c or c2r of n computes the roots of n once); the grid,
+  which builds no table of the n roots, takes its entries from a `root_cache` that keeps each
+  angle's series (33 bytes an angle). An entry is the same function of (m, n) however it is
+  reached, which the tests check against the per-entry computation.
 - As built (task 1.2), full mode, per plan (deduplicated within a plan, not yet shared
   through `table_cache`): the grouped pass reads R − 1 rows of w^(pk), each padded with
   ones to a multiple of C, in the per-lane storage of `load_tw`; lane and generic passes
@@ -3486,6 +3496,7 @@ to change before a release.
 | 2026-11-24 | The 2 MiB-L2 profile (x86-64, Sapphire, Emerald and Granite Rapids) runs Bluestein convolutions on its depth-first chain up to 32 MiB (`depth_convolution_max_bytes`), as the Xeon 6240's (section 8.5; experiment X64) | Over the nine convolutions moved (4093–999983): Sapphire 0.588, Granite 0.564, Emerald 0.615 of the time, none slower; FFTN ÷ oneMKL 131071 1.21–1.37 → 0.74–0.76, 999983 1.19–1.68 → 0.84–0.93 |
 | 2026-11-24 | On the 2 MiB-L2 key under `avx512` in double, one-axis c2c rows of 160, 240 and 1024 take two passes (8 · 20, 12 · 20, 32 · 32) while rows and output fit the L2 (in place: rows within half of it), through X57's fit mechanism with a key-selected table (`machine_profile::fit_large_l2`; section 11.2, rule 2; X69) | X69's judging runs: 0.796 (Sapphire), 0.780 (Granite), 0.800 (Emerald) of the time over the 32 moved cases, none slower; FFTN ÷ FFTW on them 0.99–1.05 → 0.79–0.82, ÷ oneMKL 1.05 → 0.82–0.84. X64's diagnosis on Sapphire and Granite Rapids: 32 · 32 took 0.73–0.82 of 8 · 8 · 16's time at 1–16 rows of 1024, out of place and in place, and tied at 256 rows (8 MiB); 8 · 20 and 12 · 20 0.79–0.84 of the rules' time for one row. These rows fail Emerald Rapids' exit check (1.14–1.25 of FFTW or oneMKL). A table under the target alone would have reached Zen 4, Zen 5 and Ice Lake-SP VMs, which get `fit_row_bytes` from the large-L3 key, unmeasured |
 | 2026-11-24 | On the 2 MiB-L2 key (X70: Sapphire 0.858, Granite 0.860, Emerald 0.873 over the 18 moved cases, none slower) the two-pass rows of 160, 240 and 1024 keep their radices while rows and output fit four times the L2 (in place: rows within twice the L2), and out of place rows longer than a 4 KiB page within the L2 (`machine_profile::fit_long_row_bytes`, no limit elsewhere): rows of 1024 in place to 256 rows, of 160 and 240 to 1638 and 1092 rows, of 1024 out of place still 64 (section 11.2, rule 2; X70) | X69's informative arm W (every row two-pass), W ÷ O past X69's limits on Sapphire, Granite and Emerald Rapids: 1024 in place 0.82–0.88 at 2 MiB and 0.89–0.94 at 4 MiB of rows; 160 and 240 at 1024 rows (5 and 7.5 MiB of rows and output) 0.83–0.90, the gain shrinking with size, so a limit rather than none; 1024 out of place 0.95–1.01 at 4 and 8 MiB and 1.29–1.36 at 32 MiB on Sapphire. The verdict comes from X70's judging runs |
+| 2026-11-24 | Twiddle tables evaluate each reduced angle once: octant symmetry where 8 divides n, root tables of lengths n 2^k shared (sliced, or even entries copied), the grid's roots through a `root_cache` (section 8.4; experiment X71). Every entry is unchanged bit for bit, so plans, results and transform times are unchanged | Plan construction over the client catalogue's 52 shapes 0.219 (Mac), 0.221 (EPYC), 0.230 (Xeon) of its time, the standard tracking tier 0.25–0.30; worst client shape 9.3 → 2.7, 20.9 → 5.1, 26.8 → 5.7 ms; plans identical in every case. Tests check every table against the per-entry computation; a development comparison with the old generator found no differing bit over every length to 16384 and long lengths to 4194304 |
 
 ---
 
