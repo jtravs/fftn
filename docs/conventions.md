@@ -151,8 +151,7 @@ backward.execute(data.data(), real, ws); // the real volumes again
 
 To transform some dimensions of an array and leave its other dimensions as batches, without
 moving the data, list one `axis` per dimension of the array and the dimensions to transform.
-`axes_c2c`, `axes_r2c` and `axes_c2r` (provisional: they may change before the first release)
-return the shape; every other dimension becomes a batch dimension:
+`axes_c2c`, `axes_r2c` and `axes_c2r` return the shape; every other dimension becomes a batch dimension:
 
 ```cpp file=examples/axes.cpp region=axes
 // An array of ny x nx x nw complex values, C-ordered: w varies fastest. The planes (y, x), one

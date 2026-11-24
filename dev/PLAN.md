@@ -329,7 +329,8 @@ Open, by phase:
   oneMKL on the Xeon); 4.3 (pull request 82: acceptance met, the property tests; left: real
   transforms along a strided halved axis without lanes, more than three axes, in-place real
   with a strided halved axis, the EPYC's leaf-length cases within L1, see below).
-- 5–7: not started (5: fusion and pipelines; 6: float tuning, convenience layer, DCT/DST,
+- 5–7: not started (5: fusion and pipelines, design agreed on 2026-11-24 in DESIGN section 12,
+  steps 5.1–5.5 rows first; 6: float tuning, convenience layer, DCT/DST,
   C API, cloud tuning, docs, packaging, first release; 7: on demand, FFTW3 shim, SVE,
   Python).
 
@@ -784,13 +785,34 @@ Exit: fbench planes and volumes catalogues meet the one-thread and threaded targ
 
 ### Phase 5: fusion
 
+The design is DESIGN.md section 12, agreed by the maintainer on 2026-11-24. Steps in order, rows
+first; sizes in agent sessions are estimates (15–24 in all, 4–6 more for a multi-axis pipeline).
+
 | ID | Task | Acceptance |
 |---|---|---|
-| 5.1 | Edge operations: scale, window, factor, valid, embed, accumulate | each matches "transform then separate pass" within the derived tolerance (fusing a multiply into an FMA changes last bits), and is faster |
-| 5.2 | `convolution` pipeline: fused, pruned, several kernels, one forward to several inverses | at or below 0.8 of three separate calls for L2-resident sizes |
-| 5.3 | `spectral_pair` and in-cache callbacks, including multi-dimensional pipelines with pinned axis order, prologue and epilogue | a volume pipeline sweeps memory three times (verified by counters) |
-| 5.4 | Experiment X9: scrambled intermediate order and `spectral_layout` | adopted or rejected with numbers |
-| 5.5 | Owner-computes row sharing with application kernels | example and test |
+| 5.1 | Plan edges (12.1): the vocabulary (scale, real and complex factors, accumulate) in every strategy the rules choose (today the factor reaches only c2c chains of one axis); stored runs in shapes (overlap check and default strides by stored extent, the optional runs argument of `axes_*`, pruning by restricted loops, then the generator's pruned codelets); `plan_edges`, `exec_args`; experiment X65. About 6–9 sessions | each operation matches "transform then separate pass" within the derived tolerance (fusing a multiply into an FMA changes last bits) and is faster where X65's rule says; canaries around stored runs; an edge that forces a slower strategy shows in `describe()` |
+| 5.2 | Row pipelines in convolution form (12.2): `<T, C, T>` and `<C, C, C>` forward first, the kernel factor, stored runs, fan-out, a lanes pair on strided lines; built from the Bluestein stage's convolution, with the loop over a scratch-resident line (X36b); experiment X67. About 3–5 sessions | at or below 0.8 of three separate calls for L2-resident sizes |
+| 5.3 | Block callbacks on edges and middles (12.3: modes, `callback_of`, per-member scratch, nested serial execution); spectral pairs (inverse first, `<C, T, C>`), `group`; the free-space stage as three objects (12.5); experiments X66 and X68. About 3–5 sessions | coverage, coordinate and bitwise serial/team/executor tests with pure callbacks; the free-space stage's time and DRAM traffic at 384² at full width against today's route (X68), which also decides whether a multi-axis pipeline is built |
+| 5.4 | Experiment X9: scrambled middle and `spectral_layout` for vocabulary middles. About 1–2 sessions | adopted or rejected with numbers |
+| 5.5 | Owner-computes with edges and pipelines (`pipeline::transforms_of`); `docs/fusion.md` with compiled examples, `fftn/kokkos.hpp`'s `array_of`, fbench pipeline cases with unfused baselines. About 2–3 sessions | example and test |
+
+Experiments (rows in the index; X65–X68 were the next free IDs on 2026-11-24 and are reserved
+there, but each is claimed with its file at implementation time and renumbered if another agent
+took the number first):
+
+- X65: do vocabulary edges pay, size by size, and what does an edge that forces a slower
+  strategy cost?
+- X66: the cost of user code outside the kernels: identity, cubic and `exp`-per-element
+  callbacks against the vocabulary with a precomputed factor array; block sizes; the scratch copy
+  of a modified input edge; callbacks built for the baseline and for AVX2.
+- X67: the row convolution against three separate calls and FFTW with a loop: rows of 2m = 18432
+  to 131072, valid halves, fan-out 1, 4 and 16.
+- X68: the free-space stage at 128² × 864, 192² × 384, 256² × 864 and 384² × 750, three objects
+  against today's route, with DRAM traffic (uncore counters on the Xeon, perf on the EPYC where
+  allowed, a bandwidth model on the Mac) and the sweeps an (x, ω) slab grouping would save.
+- X9: as above.
+
+All on the M5 Max, the Xeon 6240 and the EPYC 7763, at one thread and at full width.
 
 Exit: pipelines meet their acceptance numbers, and the client catalogue meets the
 DESIGN.md section 1.3 row for client catalogues.
@@ -837,7 +859,7 @@ running, done (with verdict).
 | [X6](experiments/X6-real-codelets.md) | Real-input codelets against half-length complex with fused post/pre, even and odd n | 2 | planned (needs the generator's pruned variants); the half-length route's fusion rule measured on the Mac (task 2.1) |
 | [X7](experiments/X7-lanes.md) | Lanes against in-row kernels for batches of short rows, by length, target and row count | 2 | done: re-decided after X20's batched leaves: lanes up to `lanes_up_to` in float on x86 only (AVX-512 100, AVX2 32; 0.32–0.55 of the chain at 8–16 points); 0 in double and on NEON |
 | [X8](experiments/X8-leaves.md) | Whole-transform leaves for n ≤ 64–256 against two- and three-stage chains | 1 | done: leaf limit 32 on NEON in double (16–22 % faster), 16 elsewhere; no leaf of 64 |
-| X9 | Scrambled intermediate order for transform pairs | 5 | planned |
+| X9 | Scrambled intermediate order for vocabulary middles of row pipelines (task 5.4) | 5 | planned |
 | [X10](experiments/X10-pass-loops.md) | Generated whole passes against templated pass loops; on x86 first: addressing, register budget and shuffles of the pass loops (after X18) | 1 | done: rejected (loop addressing cuts instructions, not time; the cost is port-5 shuffles, X19 next) |
 | X11 | SVE at 128 and 256 bits on Graviton 3/4 against NEON | 7 | planned |
 | [X12](experiments/X12-beyond-l2.md) | Beyond-L2 forms: DIF grid, DIT grid, in-place sandwich; block sizes by cache level; the in-place route (scratch of N, permutation pass, or palindromic swap) | 1 | running: DIF grid in two or three phases adopted for rows beyond L1 on the Mac (0.47–0.71 of the chain's time, run 20261114-110844-8b03); copies fused into end passes for small-radix phases within L2/4 (2^18: 1.03 → 0.92, run 20261114-132841-80e0); x86 runs pending |
@@ -896,6 +918,10 @@ running, done (with verdict).
 | [X61](experiments/X61-adjacent-transforms.md) | Strided axes of an array (a batch dimension one element apart, varying fastest) as lanes over blocks of adjacent transforms, instead of each transform through the chain | 4 | done: adopted, restricted to radices the chain shares with a team running the chain, on Apple's class (0.745 of the chain's time over 86 cases) and the Xeon 6240's (0.77); off on the EPYC's class (0.95 misses the bar) and unmeasured ones. Unrestricted: 0.29 / 0.37 at one thread, but up to 2.4 slower at 8 lanes. Follow-up: a team sharing a block's lines |
 | [X63](experiments/X63-c2r-planes-packed.md) | X60's follow-up: the packed c2r intermediate for planes only (volumes lost at 8 lanes on the Xeon), on the Xeon 6240 class (`avx512`, from its L2) and Zen 3 (`avx2`, from half its L3): does it pass at one thread and at 8 lanes? | 4 | done: adopted on the Xeon 6240 class (0.807 at one thread, 0.824 at 8 lanes, 31 planes from 1 MiB) and Zen 3 (0.837 and 0.767, 9 planes from 16 MiB); volumes, Apple and unmeasured classes keep the block; float planes pass too (0.59–0.81) |
 | [X64](experiments/X64-cloud-screen-1124.md) | Cloud screen: do the rules that reach Zen 2, Ice Lake-SP, Zen 4 and Emerald Rapids by cache key hold there, and do X50's depth-first convolutions win on recent Intel against oneMKL? | 1 | running |
+| X65 | Fusion: do vocabulary edges (scale, factors, accumulate, stored runs) pay against a separate pass, size by size, and what does an edge that forces a slower strategy cost? (task 5.1; ID reserved, claim with the file) | 5 | planned |
+| X66 | Fusion: block callbacks outside the kernels (identity, cubic, exp per element) against the vocabulary with a precomputed factor; block sizes per profile (task 5.3; ID reserved) | 5 | planned |
+| X67 | Fusion: row convolution pipeline against three separate calls (task 5.2; ID reserved) | 5 | planned |
+| X68 | Fusion: the free-space stage as three objects against today's route, time and DRAM traffic; does an (x, ω) slab grouping justify a multi-axis pipeline? (task 5.3; ID reserved) | 5 | planned |
 | [X56](experiments/X56-exit-4.md) | The phase 1 exit check on `main` after X49–X57: EPYC at fa155c9, Mac and Xeon at X53's code (71307e0), then the cloud cores | 1 | done: the phase 1 exit met on all nine machines (local: EPYC ÷ FFTW 6 of 193; cloud: Zen 5 5, Axion 1, Granite Rapids 7, Sapphire Rapids 7, Ice Lake 0 after X58; oneMKL at most 9) |
 | [X57](experiments/X57-epyc-1024.md) | The EPYC's last exit-check cases: are 72 and 120's 5–6 % since 8c18dd2 a regression, and can 1024's radix choice see the plan's data? | 1 | done: 72 and 120 are code placement; B adopted (768 and 1024 two-pass rows while rows and output fit 3/4 of L3: moved cases 0.88, tracking 0.989, EPYC beyond noise 9 → 4 of 193); C (64-byte `avx2` functions) rejected (0.999, 1024 × 3 1.04–1.06) |
 | [X58](experiments/X58-intel-keys.md) | Recent Intel keys from X56's screen: the depth-first chain on Ice Lake VMs (private L2 between 1 and 2 MiB), and no batch leaf of 12 on a private L2 of 2 MiB or more | 1 | done: both adopted. Ice Lake's changed rows 0.596 of their time (long rows ÷ FFTW 1.13–1.53 → 0.64–0.79), tracking 0.929; 12 × 64 and 12 × 1024 0.867 (Granite Rapids) and 0.892 (Sapphire Rapids) |
