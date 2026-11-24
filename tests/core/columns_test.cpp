@@ -317,6 +317,43 @@ TEST(Columns, WideBlocksInTheProgramOnly) {
   }
 }
 
+// A split run (DESIGN.md 6.3) forced on the column phase: its last pass is a split pass, so
+// the block's tile is scattered to the columns, element by element across the columns
+// (pass_args::columns_inner), which no target's rules choose. The same transform as the
+// chain's columns within twice the tolerance of either.
+template <class T> void split_column_phase(fftn::isa target, std::size_t& scattered) {
+  SCOPED_TRACE(std::string(fftn::isa_name(target)) + (sizeof(T) == 8 ? " double" : " float"));
+  for (const plane_case& pc :
+       {plane_case{.n = {256, 32}}, plane_case{.n = {256, 13}, .count = 2, .row_pad = 3}}) {
+    SCOPED_TRACE(label(pc, 0));
+    build_settings split;
+    split.layout = fftn::detail::layout_choice::split;
+    split.column_radices = {16, 4, 4};
+    build_settings chain = split;
+    chain.lanes_columns = false;
+    std::string split_text;
+    std::string chain_text;
+    const auto got = run<T>(pc, split, target, split_text);
+    const auto want = run<T>(pc, chain, target, chain_text);
+    if (split_text.find("split lane") != std::string::npos) {
+      EXPECT_NE(split_text.find("lanes scatter"), std::string::npos) << split_text;
+      ++scattered;
+    }
+    const double l = std::max(1.0, std::log2(static_cast<double>(pc.n[0] * pc.n[1])));
+    const double tolerance = 2 * 3 * std::numeric_limits<T>::epsilon() * l;
+    EXPECT_LE(relative_difference<T>(got, want), tolerance) << split_text << chain_text;
+  }
+}
+
+TEST(Columns, ForcedSplitRunScattersTheTile) {
+  std::size_t scattered = 0;
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    split_column_phase<double>(t, scattered);
+    split_column_phase<float>(t, scattered);
+  }
+  EXPECT_GT(scattered, 0U) << "no target took the split run";
+}
+
 // The strided complex axes of r2c and c2r planes and volumes take the same column phase
 // (X41): every output byte as with each column alone through the chain where the radices
 // agree, the same transform within twice the tolerance where they do not; in place and out

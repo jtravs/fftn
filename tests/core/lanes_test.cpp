@@ -502,6 +502,11 @@ TEST(Lanes, ForcedSplitRunEqualsTheChain) {
           .out = rows_with_gap(256, 1),
       };
       split_case<cx, cx>(t, c2c, 256, 256, "c2c", split);
+      // Adjacent rows (element j of row t at count j + t): the split run's last pass writes a
+      // tile, which is scattered a run of C rows per vector store.
+      const side_layout interleaved{.stride = static_cast<std::ptrdiff_t>(count), .dist = 1};
+      const batch_case adjacent{.n = 256, .count = count, .in = interleaved, .out = interleaved};
+      split_case<cx, cx>(t, adjacent, 256, 256, "c2c", split);
       // Real rows of 512 points: the half-length chain of 256 takes the forced radices.
       const batch_case r2c{
           .n = 512,

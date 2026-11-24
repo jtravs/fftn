@@ -67,6 +67,43 @@ TEST(link, every_compiled_target_has_its_own_table) {
                                                                       : 1);
 }
 
+// The leaf tables of every compiled SIMD target are linked and found, whether or not this
+// processor runs the target (AVX-512's are looked up on AVX2-only machines too: planning for
+// a forced or recorded target reads them), and AVX-512 borrows AVX2's narrower ones.
+TEST(link, every_compiled_simd_target_has_its_leaf_tables) {
+  using fftn::detail::find_batch_leaves;
+  using fftn::detail::find_more_pair_leaves;
+  using fftn::detail::find_narrow_leaves;
+  using fftn::detail::find_narrower_batch_leaves;
+  using fftn::detail::find_pair_leaves;
+  for (const target t : isa_test::all_targets) {
+    if (!compiled_in(t)) {
+      continue;
+    }
+    const bool simd =
+        t == target::avx2 || t == target::avx512 || t == target::neon || t == target::neon_fcma;
+    const bool x86 = t == target::avx2 || t == target::avx512;
+    EXPECT_EQ(find_pair_leaves(t) != nullptr, simd) << target_name(t);
+    EXPECT_EQ(find_narrow_leaves(t) != nullptr, x86) << target_name(t);
+    EXPECT_EQ(find_batch_leaves(t, 4) != nullptr, simd) << target_name(t);
+    EXPECT_EQ(find_batch_leaves(t, 64) != nullptr, simd) << target_name(t);
+    if (simd) {
+      // Radices 32 and 64 are in a unit of their own (isa/batch.inl).
+      EXPECT_NE(find_batch_leaves(t, 4), find_batch_leaves(t, 64)) << target_name(t);
+      EXPECT_EQ(find_batch_leaves(t, 32), find_batch_leaves(t, 64)) << target_name(t);
+      EXPECT_EQ(find_batch_leaves(t, 31), nullptr) << target_name(t); // no codelet of 31
+    }
+    if (t == target::avx512) {
+      EXPECT_EQ(find_narrower_batch_leaves(t, 64), find_batch_leaves(target::avx2, 64));
+      EXPECT_EQ(find_more_pair_leaves(t), find_pair_leaves(target::avx2));
+      EXPECT_EQ(find_narrow_leaves(t), find_narrow_leaves(target::avx2));
+    } else {
+      EXPECT_EQ(find_narrower_batch_leaves(t, 64), nullptr) << target_name(t);
+      EXPECT_EQ(find_more_pair_leaves(t), nullptr) << target_name(t);
+    }
+  }
+}
+
 TEST(link, lane_counts_and_fusion_match_each_target) {
   const kernel_table& s = *find_kernels(target::scalar);
   EXPECT_FALSE(s.fused);
