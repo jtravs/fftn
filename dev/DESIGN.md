@@ -1509,7 +1509,11 @@ its top pass writes into scratch a times the kernel spectrum (the top pass's fac
 the backward chain's first pass reads a into the block, its sub-rows run the same way (a is
 dead by then), and its top pass stores only the first Q outputs, times the chirp with the
 output edge's scale, to the output (the chirp pass out, fused). Scratch a holds M elements,
-the block M. On the Xeon 6240 the depth-first chain took 0.54 of the breadth-first chain's
+the block M. In a team (13.3) the handoff through a stays within one slot: the top pass and
+the backward first pass are stage phases, whose chunks all use the owner's slot, while the
+sub-row loops are line phases on each member's own a and b with the owner's block, and a
+phase starts only when the one before is done (tests/threading/bluestein_team_test.cpp).
+On the Xeon 6240 the depth-first chain took 0.54 of the breadth-first chain's
 time at 2¹⁸ points and 0.56 at 2073600; the stage took 131071 to 0.70 of its time and
 999983 to 0.79 before the chirp passes were fused (X50).
 Why a pass and not a strategy that wraps the chain: the program and stage design already
