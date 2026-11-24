@@ -525,7 +525,14 @@ Decided by the maintainer on 2026-11-24 (the earlier ones are in AGENTS.md secti
   1.14–1.19); capped at half the L3, 16 MiB (1024 rows of 1024, `fit_in_place_bytes`).
 - X28's 128-bit leaves on `avx2` ratified. X26's prefetch gate and X30's 512 override (and X62's
   64-point batch rule) become keyed to the vendor once the machine profile reads one: Intel
-  cores with `avx2` alone keep their old plans until measured.
+  cores with `avx2` alone keep their old plans until measured. Done (task/cpu-vendor, PR 97):
+  the profile reads the vendor (CPUID), and those rules and the other `avx2` rules
+  measured only on the EPYC and keyed by the target alone (X42's and X54's overrides, X53's batch
+  leaves) apply to AMD's cores only (DESIGN 13.5); X30's 256, a gain on the Xeon under `avx2`
+  too, stays for everyone; the EPYC's plans are unchanged. Cache-keyed
+  Zen 3 rules (X51 E, X59 R6, X62 C, X63) still reach any core the key matches, Intel's
+  four-core client parts and small VMs included. From X64's screen, X63's `avx512` branch (the
+  Xeon 6240's key) packs on Intel's cores only; AMD's Zen 4 keeps the block.
 
 Still open: the CI's Windows jobs install a pinned LLVM 23.1.5 (PR 81) because the runner
 image's LLVM is older than its Visual Studio needs.
@@ -548,8 +555,9 @@ rows with an odd part ≥ 15 in two grid phases where L3 per CPU is small (Xeon 
 recursive four-pass plan); 46080 (1.30, a two-phase grid within L2); Granite Rapids in an
 8-vCPU VM reports 63 MiB of L3 per CPU, so X29's chains apply there (100000 2.16 as a
 chain): a key that covers it needs a core field or a measured choice. (d) Rules by core on `avx2` (X26's prefetch, X30's 512
-override: Intel cores without AVX-512 want other choices than Zen): deferred by the
-maintainer (2026-11-16) until a wider set of machines shows how far cores of one ISA
+override: Intel cores without AVX-512 want other choices than Zen): keyed to the vendor since
+2026-11-24 (AMD only; Intel's `avx2` keeps its old plans until measured, DESIGN 13.5); rules
+of Intel's own for `avx2` wait until a wider set of machines shows how far cores of one ISA
 diverge; server chips and the Mac come first, fastest everywhere is the end goal. (e) Primes outside
 Rader's range (4093 1.32–1.41) and EPYC 65537 (1.63 here against X27's 1.09: check).
 (f) Short-row leftovers (Xeon 30 points 1.24; EPYC 60 and 120 1.05–1.09; batches of 16

@@ -9,6 +9,7 @@
 #pragma once
 
 #include "isa/target.hpp"
+#include "platform/cpu_features.hpp"
 
 #include <array>
 #include <cstddef>
@@ -114,7 +115,16 @@ struct target_profile {
 // for (t, lanes) if there is one, else AVX2's table of the nearest C. Only AVX2's tables
 // are measured (X2 on an EPYC 7763): C = 2 (double) and C = 4 (float); so every other
 // target takes the C = 2 table for C = 1 and the C = 4 table for C = 8 (unmeasured there).
-[[nodiscard]] target_profile profile_of(target t, std::size_t lanes) noexcept;
+// vendor: the processor's maker (machine_profile::vendor). On `avx2` the rules measured only
+// on AMD's cores (the EPYC 7763) apply only for amd; for any other vendor, unknown included,
+// `avx2` keeps the plans it had before them (DESIGN.md 13.5; the maintainer, 2026-11-24): the
+// radix overrides of X30 (512), X42 (500-25000) and X54 (768; float 512-4096) give way to
+// what was planned before, and there are no batch leaves (X53, X62). Every other target, and
+// every field the vendor does not change, is the same for all vendors. The default, unknown,
+// keeps those earlier plans, as profile_for's does: a caller planning for a machine passes its
+// vendor (machine_profile::vendor), and amd gives the tables as measured on the EPYC.
+[[nodiscard]] target_profile profile_of(target t, std::size_t lanes,
+                                        cpu_vendor vendor = cpu_vendor::unknown) noexcept;
 
 // The radices of a chain for n, in pass order: empty for n = 1, {n} for n <= 16 and for a
 // codelet radix n <= p.leaf_limit (a leaf).

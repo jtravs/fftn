@@ -311,6 +311,10 @@ Generator tests (55) and `gen --check` pass; Mac Release (Homebrew Clang; `neon_
   not the change), the other arms of the same run show it alike (1.038–1.039), and nothing
   A changes is slower on any of the three machines. Applying rule (c) before rule (b), so
   that 1024's override is dropped and 768's kept, is accepted.
+- **Reach, by vendor (2026-11-24; DESIGN 13.5):** B's 768 = 12 × 64 and C's float overrides,
+  from the EPYC alone, apply to `avx2` plans for AMD's cores only; other vendors plan 768 = 4 ×
+  16 × 12 and the float lengths by the costs, as before. A (the codelets' order) is for
+  everyone.
 
 ## Not done
 

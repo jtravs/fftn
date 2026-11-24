@@ -266,3 +266,6 @@ r2c 1000 0.82, c2r 1000 0.80; 58 no evidence, the highest r2c 65536 in place 1.0
   overrides reach Zen 5 and Granite Rapids (`avx512`) and every AVX2 machine unmeasured;
   float tables (the searches' float results suggest 1.1–1.2 gains with radix 25 on both
   machines, a follow-up).
+- **Reach, by vendor (2026-11-24; DESIGN 13.5):** the `avx2` overrides (500–25000), from the
+  EPYC alone, apply to AMD's cores only; other vendors' `avx2` plans take the costs' radices
+  there, as before. The radix-25 codelet and the `avx512` overrides are unchanged.

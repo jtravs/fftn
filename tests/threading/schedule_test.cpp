@@ -7,6 +7,7 @@
 
 #include "core/plan_core.hpp"
 #include "fftn/detail/core.hpp"
+#include "platform/cpu_features.hpp"
 #include "platform/topology.hpp"
 #include "threading/schedule.hpp"
 #include "threading/work_graph.hpp"
@@ -21,6 +22,7 @@
 #include <filesystem>
 #include <limits>
 #include <memory>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -656,13 +658,17 @@ TEST(Schedule, GridSizesFromCaches) {
   EXPECT_EQ(m5.grid_two_odd_part, 0U);
   // Team programs (X43, X43b), as an x86-64 build sets them: the EPYC's teams run narrower
   // column blocks, both machines' teams run volumes plane at a time; the M5 Max neither.
-  const auto x86 = [&](const char* file) {
+  // The recorded machines' vendors (DESIGN.md 13.5: X63's key on the Xeon 6240's class reads it).
+  const auto x86 = [&](const char* file,
+                       fftn::detail::cpu_vendor vendor = fftn::detail::cpu_vendor::unknown) {
     machine_profile p;
+    p.vendor = vendor;
     fftn::detail::set_grid_sizes(p, fftn::detail::load_topology(data / file).classes.at(0), true);
     return p;
   };
-  const machine_profile epyc86 = x86("linux-amd-epyc-7763.sysfs");
-  const machine_profile xeon86 = x86("linux-intel-xeon-gold-6240.sysfs");
+  const machine_profile epyc86 = x86("linux-amd-epyc-7763.sysfs", fftn::detail::cpu_vendor::amd);
+  const machine_profile xeon86 =
+      x86("linux-intel-xeon-gold-6240.sysfs", fftn::detail::cpu_vendor::intel);
   EXPECT_EQ(epyc86.column_team_bytes, 128U);
   EXPECT_TRUE(epyc86.team_volume_planes);
   EXPECT_EQ(xeon86.column_team_bytes, 0U);
@@ -700,6 +706,34 @@ TEST(Schedule, GridSizesFromCaches) {
   // Apple, Zen 5 and elsewhere.
   EXPECT_EQ(xeon86.c2r_packed_bytes, 1024 * kib);
   EXPECT_EQ(xeon86.c2r_packed_isa, fftn::isa::avx512);
+  // On Intel's cores only (X64): an AMD core the same key reaches (Zen 4c with SMT, a Zen 4 VM
+  // reporting a small L3 per CPU: 1 MiB of private L2, under 2 MiB of L3 per CPU) keeps the
+  // block, and so does an unknown vendor; Zen 3's avx2 branch does not read the vendor.
+  {
+    fftn::detail::core_class zen4c;
+    zen4c.l1d = {.size = 32 * kib, .line_size = 64, .ways = 8, .shared_by = 2};
+    zen4c.l2 = {.size = 1024 * kib, .line_size = 64, .ways = 8, .shared_by = 2};
+    zen4c.l3 = {.size = 16 * 1024 * kib, .line_size = 64, .ways = 16, .shared_by = 16};
+    const auto packed = [&](fftn::detail::cpu_vendor v) {
+      machine_profile p;
+      p.vendor = v;
+      fftn::detail::set_grid_sizes(p, zen4c, true);
+      return std::pair{p.c2r_packed_bytes, p.c2r_packed_isa};
+    };
+    EXPECT_EQ(packed(fftn::detail::cpu_vendor::intel),
+              (std::pair{std::size_t{1024} * kib, fftn::isa::avx512}));
+    for (const auto v : {fftn::detail::cpu_vendor::amd, fftn::detail::cpu_vendor::unknown}) {
+      EXPECT_EQ(packed(v), (std::pair{std::numeric_limits<std::size_t>::max(), fftn::isa::best}));
+    }
+    EXPECT_EQ(x86("linux-intel-xeon-gold-6240.sysfs").c2r_packed_bytes,
+              std::numeric_limits<std::size_t>::max());
+    EXPECT_EQ(x86("linux-amd-epyc-7763.sysfs").c2r_packed_bytes, std::size_t{16} * 1024 * kib);
+    EXPECT_EQ(fftn::detail::profile_for(
+                  fftn::detail::load_topology(data / "linux-intel-xeon-gold-6240.sysfs"), true,
+                  fftn::detail::cpu_vendor::intel)
+                  .c2r_packed_bytes,
+              1024 * kib);
+  }
   EXPECT_EQ(epyc86.c2r_packed_bytes, std::size_t{16} * 1024 * kib);
   EXPECT_EQ(epyc86.c2r_packed_isa, fftn::isa::avx2);
   EXPECT_EQ(apple.c2r_packed_bytes, std::numeric_limits<std::size_t>::max());

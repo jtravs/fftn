@@ -184,8 +184,10 @@ public:
     return detail::workspace_bytes(*core_, lanes);
   }
 
-  /// The plan in human-readable form: the transform, the instruction set, the strategy,
-  /// the radices and passes of every axis, the loops over the batch, and the workspace.
+  /// The plan in human-readable form: the transform, the instruction set, the processor
+  /// vendor the plan was made for (some rules apply to one vendor's processors only), the
+  /// strategy, the radices and passes of every axis, the loops over the batch, and the
+  /// workspace.
   /// For people, not for parsing: the format may change between versions.
   ///
   /// Throws `std::bad_alloc` when memory runs out.

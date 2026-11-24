@@ -1631,7 +1631,7 @@ block and output pass a cache level that input and output fit (Xeon 6240 c2r 102
 the packed columns a power of two apart where the block's n/2 + 1 complex values were an odd
 multiple of 16 bytes, which costs inside the caches. So a plane packs only where one
 transform's half spectrum exceeds `machine_profile::c2r_packed_bytes`, on the target it was
-measured on (`c2r_packed_isa`): the L2 on the Xeon 6240's class (`avx512`), half the CCX's L3 on Zen 3's (`avx2`); the block elsewhere (on Apple wide planes lost at every threshold X60 tried). Volumes keep the block
+measured on (`c2r_packed_isa`): the L2 on the Xeon 6240's class (`avx512`) for Intel's cores only (X64: Zen 4, which the key reaches, lost; section 13.5), half the CCX's L3 on Zen 3's (`avx2`); the block elsewhere (on Apple wide planes lost at every threshold X60 tried). Volumes keep the block
 (X60: the Xeon 6240's teams, which run them plane at a time, lost 1.05–1.09 at 8 lanes).
 In-place r2c and c2r use FFTW's padded layout: each row of the last axis holds n + 2 reals
 (n/2 + 1 complex), the last two being padding on the real side.
@@ -1661,9 +1661,11 @@ the machine-specific estimate for callers who want it.
   - a Rader or Bluestein stage, priced as its convolution's two transforms and two
     elementwise passes per copy.
 - **`relative_cost<T>(n, isa)`** is that cost per point over the cost per point of the power
-  of two at or above n, on the target's own table. It is 1 for a length the planner runs as
-  one codelet (`rule_radices(n) == {n}`; 20 is always a chain, X38, and is priced as one).
-  It does not price memory beyond L1, nor long rows' chain or grid (P3).
+  of two at or above n, on the target's own table as this machine's plans take it: on `avx2`
+  that depends on the host's vendor too (section 13.5; on the Mac, `relative_cost(n,
+  isa::avx2)` prices the table without the AMD-only overrides). It is 1 for a length the
+  planner runs as one codelet (`rule_radices(n) == {n}`; 20 is always a chain, X38, and is
+  priced as one). It does not price memory beyond L1, nor long rows' chain or grid (P3).
 - **A fast length** is one whose relative cost on the reference table is at most 1.25. The
   reference is a frozen copy of AVX2's double table (X2's measured one), kept apart from
   the planner's tuned table so that a refit changes plans, never the fast lengths. No
@@ -2484,7 +2486,8 @@ split and among how many members (rules 2 and 3: leftovers after whole rounds, o
 group's tasks when it has fewer than members; at most members / split, points / 1024 and
 the widest phase's chunks; only from the split threshold of the group's kind; only when the
 cost model says t/k plus a phase synchronisation per phase beats t). An oversubscribed team
-splits nothing. The machine profile (`profile_for`, from the topology) carries the values
+splits nothing. The machine profile (`profile_for`, from the topology, and the processor's
+vendor, section 13.5) carries the values
 experiments T1 and T5 measured (task 3.4; each field cites its runs): the split thresholds
 by group kind, a Zen 3 CCX's, an Apple cluster's (macOS's topology) and a mesh's (groups
 of more than 8 members), and on a CCX the phase hand-off cost and the claim runs T1 measured.
@@ -2517,6 +2520,29 @@ The process's topology is detected once, into a function-local constant. Unknown
 are zero, never guessed: macOS reports no associativity, and it does not say which logical
 CPU belongs to which performance level, so there CPUs are numbered in class order (fastest
 first) and the topology says the numbers are not the OS's.
+
+**The processor's vendor.** The machine profile (`machine_profile`, built by `profile_for`
+from the topology) also carries who made the processor (`machine_profile::vendor`): CPUID
+leaf 0's vendor string on x86 (Intel, AMD; any other string is unknown), Apple on AArch64
+macOS, "other Arm" on AArch64 elsewhere, detected once per process with the instruction-set
+features and shown by `plan::describe()`. A cache key cannot tell a Zen CCX from an Intel ring,
+and on `avx2` a rule measured only on AMD's cores would otherwise reach Intel cores that have
+`avx2` but no AVX-512 (older client parts, some cloud shapes, the Xeon forced to `avx2`). So
+the `avx2` rules measured only on the EPYC 7763 and keyed by the target alone apply only where
+the vendor is AMD; every other vendor, unknown included, keeps the plans `avx2` had before them
+until it is measured (the maintainer, 2026-11-24). They are X26's copies without prefetch, the
+radix overrides of X30 (512), X42 (500–25000) and X54 (768; float 512–4096), and the batch
+leaves of X53 and X62 (`planner/rules.cpp`, `profile_of`; `core/plan_core.cpp`,
+`copies_prefetch`). Rules keyed by a cache key keep reaching what the key matches (AGENTS.md
+section 6): X57's footprint rule (accepted for other `avx2` cores with a large L3) and the Zen 3
+class's rules (X51's tops of 4, X59's fair runs, X62's Bluestein limit, X63's packed c2r
+intermediate), which an Intel core with a private L2 under 1 MiB and at least 2 MiB of L3 per
+CPU (a four-core client part, a small VM) would also match. One cache key reads the vendor:
+X63's packed c2r planes on the Xeon 6240's class (`avx512`, from the L2) apply to Intel's cores
+only, since the key also reaches Zen 4 (Zen 4c with SMT, Zen 4 VMs reporting a small L3 per
+CPU), where X64's cloud screen measured them losing; AMD's `avx512` cores keep the block.
+Rules measured on the Xeon under `avx2` too (X30's 256 = 8 × 32, X2's and X38's overrides,
+X7, X23) stay for every vendor. Tests set the vendor explicitly, never the host's.
 
 ### 13.6 Integration models
 
@@ -3445,6 +3471,8 @@ to change before a release.
 | 2026-11-24 | Maintainer's decisions: the Kokkos adapter's two restrictions stay (`Kokkos::Threads` only at Kokkos 5.2.1; no threaded plan inside a `Kokkos::Serial` kernel); `axes_c2c/r2c/c2r` agreed, provisional until the fusion design; X61 per target as judged; X28's 128-bit leaves on `avx2` ratified; X57's in-place limit measured or capped at 1024 rows; `avx2` rules measured on the EPYC (X26, X30, X62's batch leaves) to be keyed to the vendor | The adapter's restrictions do not touch the OpenMP back end; the fusion stage needs strided plane axes and may reshape the `axes_*` functions; X28's miss was the rule's averaging, nothing slower; the profile cannot yet tell an Intel `avx2` core from a Zen CCX, and X26 would cost such a core up to 20 % on rows of 2²⁰–2²² |
 | 2026-11-24 | Fusion design agreed by the maintainer (section 12; PR 94). M1: phase 5 builds plan edges and row pipelines; the free-space stage is three objects (inverse planes with a prologue, a row pair on the ω pencils, forward planes with an epilogue); a multi-axis pipeline only if the free-space experiment shows its axis grouping wins; no general composition. M2: a fixed vocabulary (scale, real and complex factors, accumulate, stored runs) in the passes, block callbacks for the rest, no per-element functors. M3: factor arrays and callback data at each execution (`exec_args`). M4: stored runs are part of the shape, as a flat list of `stored_run` records (`valid` and `embed` merged); `axes_*` gain an optional runs argument with the implementation. M5: one `pipeline` type replaces the separate `convolution` and `spectral_pair` types, which become the helpers `convolution_rows` and `spectral_pair_rows`. M6: bitwise identity across execution forms for callbacks pure per element (edges) or per line (middle); callbacks correct for any block shape; reductions per line, not per member. M7: a callback may execute a plan serially with its own workspace. M8: resampling pipelines and real multi-axis pipelines out of phase 5. M9: the names of section 12. `axes_c2c/r2c/c2r` are no longer provisional. The lead's: rows first (L1); `group` in the first version (L2); FFTN chooses block layouts and reports strides (L3); fan-out into one array with a distance (L4); accumulate in the vocabulary, a consume callback for other targets (L5); `options::scale` kept, refused with a non-unit output scale (L6); `member` below the workspace's lanes (L7); an edge that forces a slower strategy is built and reported, never refused (L8); per-member callback scratch from the workspace (L9) | The client application's largest costs are data movement around its transforms (E9; its free-space stage makes 9 sweeps where 3–5 suffice). Hooks on plans alone could not fuse the middle of a pair; the three-object route needs only parts the convolutions and split-step need anyway, and costs two fork/joins (microseconds) against a stage of hundreds of milliseconds, while a multi-axis pipeline saves two sweeps only where an (x, ω) slab stays in cache. A general composition (FFTX-style) has no client and makes "which descriptions fuse" the hardest case of the no-silent-slowdown rule. Per-element functors cannot be compiled into this library's ISA regions (6.4, 14.1) and per-element function pointers cost more than the transform per element; a block callback keeps the memory saving with one indirect call per block. Data at construction would force a plan per stage or shared mutable state. Runs in the shape because the overlap check and default strides need stored extents; not a field of `axis`, which crosses into the library as a plain value. Team programs change block shapes (X43), so purity, not block boundaries, carries determinism. Independent critical read of the proposal before the decision |
 | 2026-11-24 | In place, the EPYC class's data-size-aware rows of 768 and 1024 take their two-pass radices only while the rows fit `fit_in_place_bytes`, half the L3 (16 MiB, 1024 rows of 1024 on the EPYC 7763), not three quarters of it (section 11.2, rule 2; X57 amendment 2) | The in-place limit had been extrapolated from the out-of-place footprint. Measured on the EPYC 7763 (maintainer's decision, 2026-11-24: if it loses, cap it at the 1024 rows measured): 16 · 64 in place 1.07–1.16 of 4 · 16 · 16's time at 1280 and 1536 rows of 1024; 12 · 64 1.05 backward at 1536 rows of 768 (18 MiB), 1.14–1.19 at 2048. 1100 rows (0.973 forward, backward within noise) gained too little to keep |
+| 2026-11-24 | The machine profile carries the processor's vendor (CPUID on x86; Apple, other Arm), shown by `describe()`; the `avx2` rules measured only on AMD's cores and keyed by the target alone (X26's copies without prefetch, the overrides of X30's 512, X42 and X54, the batch leaves of X53 and X62) apply only for AMD, every other vendor keeping the earlier plans (section 13.5); X30's 256 = 8 × 32 stays for every vendor | The maintainer's decision: a cache key cannot tell a Zen CCX from an Intel ring, and the Xeon 6240 forced to `avx2` lost with two of these rules (X26: 2²² 1.20 without the prefetch; X30's 512: r2c 1024² 1.057) and gained with X30's 256 (0.932); the others were never run on an Intel core under `avx2`. Not a performance change: the EPYC 7763's plans are identical over the standard catalogue (describe() of all 445 cases), and no other measured machine plans for `avx2` by default |
+| 2026-11-24 | X63's packed c2r planes on the Xeon 6240's class (`avx512`, from the L2) apply to Intel's processors only; AMD's (and unknown) cores that the key reaches keep the block (`set_grid_sizes`, section 13.5). Zen 3's `avx2` branch is unchanged | X64's cloud screen (EPYC 9B14 VM, threshold forced to 1 MiB, rule P against the block): one thread 512 × 1024 1.127, 512² 1.109 (run 20261124-105335-27eb); 8 lanes 600 × 800 1.286, 720² 1.246 (20261124-110003-6ca4); float 512 × 1024 1.162 (20261124-110552-66bf). Ice Lake-SP kept the gain (0.62–0.77); Zen 2 kept Zen 3's |
 
 ---
 

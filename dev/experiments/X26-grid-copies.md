@@ -206,6 +206,10 @@ not read yet (`profile_for` sees only the cache topology, and a Zen CCX and an I
 look alike there): that is a decision for the maintainer (keep the target gate, or revert
 until the profile can tell them apart).
 
+**Reach, by vendor (the maintainer, 2026-11-24; DESIGN 13.5):** the copies go without the
+prefetch only on `avx2` for AMD's cores (`copies_prefetch`); Intel's and unknown processors'
+`avx2` plans prefetch, as the Xeon under `avx2` wanted.
+
 Collateral: the tracking tier of arm C (5772cc4) against main on the EPYC (run
 20261115-211714-d316, 51 rounds, all on an overloaded node, band ±1.00 %): weighted
 geomean 0.982 [0.980, 0.983], 12 cases faster (every grid row: c2c 65536 0.931, in place

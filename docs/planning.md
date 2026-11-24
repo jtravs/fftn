@@ -3,7 +3,10 @@
 A plan chooses the program that computes its transform when it is constructed. By default
 (`fftn::planning::rules`) the planner's rules and cost tables decide, in microseconds to
 milliseconds, and the same shape, options, library version and processor model always give
-the same program. The declarations, preconditions and guarantees are in the public headers
+the same program. The rules depend on the processor as well as on the instruction set: on its
+caches, and on who made it, since some rules were measured on one vendor's processors only and
+apply only there (an `avx2` plan on an AMD processor can differ from one on an Intel
+processor). `plan::describe()` names the vendor the plan was made for. The declarations, preconditions and guarantees are in the public headers
 (`options::effort`, `options::measure_seconds`, `options::measure_scratch_bytes` and
 `options::use` in `include/fftn/options.hpp`, `fftn::wisdom` in `include/fftn/wisdom.hpp`);
 this page says how the pieces fit together.

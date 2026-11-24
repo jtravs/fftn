@@ -56,7 +56,11 @@ of 0, 1 or 2 it is 2.
 `relative_cost<T>(n)` is this machine's estimate of a complex row of n points of `T`, per
 point, relative to the power of two at or above n. It uses the cost tables of the
 instruction set a plan would use here (or of another instruction set, if one is named). It
-is about 1 for lengths as fast as a power of two, and several for large primes.
+is about 1 for lengths as fast as a power of two, and several for large primes. The tables
+are the ones this machine's plans would use, so the estimate also depends on who made the
+processor: some `avx2` sequences were measured on AMD's processors only and apply only there,
+and elsewhere (an Intel processor, or the Mac asked about `isa::avx2`) `relative_cost` prices
+the sequences the planner uses without them.
 
 It is the planner's estimate for rows in cache, not a measurement. It does not price memory
 beyond the first-level cache, nor the long-row choice between a chain and a blocked grid.

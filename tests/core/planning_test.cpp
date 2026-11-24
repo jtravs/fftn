@@ -233,6 +233,7 @@ TEST(FitRows, PlansFollowTheProfileField) {
     settings.profile.fit_row_bytes = fit_bytes;
     settings.profile.fit_in_place_bytes = in_place_bytes;
     settings.profile.depth_max_bytes = 0;
+    settings.profile.vendor = d::cpu_vendor::amd; // 768's override is AMD's (DESIGN.md 13.5)
     const fftn::shape<std::complex<double>, std::complex<double>> shape{
         .dir = fftn::direction::forward,
         .axes = {{.n = n}},
@@ -277,6 +278,7 @@ TEST(FitRows, PlansFollowTheProfileField) {
     build_settings fit;
     fit.profile.fit_row_bytes = 96 * kib;
     fit.profile.depth_max_bytes = 0;
+    fit.profile.vendor = d::cpu_vendor::amd;
     build_settings forced = fit;
     forced.radices = {16, 64};
     const fftn::shape<std::complex<double>, std::complex<double>> rows{

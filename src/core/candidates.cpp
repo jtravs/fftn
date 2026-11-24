@@ -247,8 +247,8 @@ std::vector<plan_choice> enumerate_candidates(const plan_core& rules_plan,
                                               std::size_t radix_choices) {
   std::vector<plan_choice> out{plan_choice{}};
   const machine_profile& m = settings.profile;
-  target_profile profile =
-      profile_of(rules_plan.isa_target, complex_lanes(rules_plan.isa_target, rules_plan.prec));
+  target_profile profile = profile_of(
+      rules_plan.isa_target, complex_lanes(rules_plan.isa_target, rules_plan.prec), m.vendor);
   if (settings.leaf_limit != 0) {
     profile.leaf_limit = settings.leaf_limit;
   }
