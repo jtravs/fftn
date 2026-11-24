@@ -230,10 +230,12 @@ TEST(FitRows, RadicesByLengthAndWhetherTheDataFit) {
 TEST(FitRows, PlansFollowTheProfileField) {
   const auto text = [](std::size_t rows, bool in_place, std::size_t fit_bytes, fftn::isa isa,
                        std::size_t n = 1024,
-                       std::size_t in_place_bytes = std::numeric_limits<std::size_t>::max()) {
+                       std::size_t in_place_bytes = std::numeric_limits<std::size_t>::max(),
+                       std::size_t long_row_bytes = std::numeric_limits<std::size_t>::max()) {
     build_settings settings;
     settings.profile.fit_row_bytes = fit_bytes;
     settings.profile.fit_in_place_bytes = in_place_bytes;
+    settings.profile.fit_long_row_bytes = long_row_bytes;
     settings.profile.fit_large_l2 = false; // X57's table, whatever the host (X69's key)
     settings.profile.depth_max_bytes = 0;
     settings.profile.vendor = d::cpu_vendor::amd; // 768's override is AMD's (DESIGN.md 13.5)
@@ -274,6 +276,12 @@ TEST(FitRows, PlansFollowTheProfileField) {
     EXPECT_TRUE(two_pass(text(4, true, 96 * kib, t, 1024, 64 * kib)));
     EXPECT_FALSE(two_pass(text(5, true, 96 * kib, t, 1024, 64 * kib)));
     EXPECT_TRUE(two_pass(text(3, false, 96 * kib, t, 1024, 16 * kib)));
+    // X70: out of place, rows longer than a page (1024: 16 KiB) also within fit_long_row_bytes;
+    // in place it changes nothing.
+    constexpr std::size_t never = std::numeric_limits<std::size_t>::max();
+    EXPECT_TRUE(two_pass(text(2, false, 96 * kib, t, 1024, never, 64 * kib)));
+    EXPECT_FALSE(two_pass(text(3, false, 96 * kib, t, 1024, never, 64 * kib)));
+    EXPECT_TRUE(two_pass(text(6, true, 96 * kib, t, 1024, never, 16 * kib)));
     // 768 leaves its override only where the rows do not fit.
     EXPECT_NE(text(1, false, 96 * kib, t, 768).find("radices 12 x 64"), std::string::npos);
     EXPECT_EQ(text(9, false, 96 * kib, t, 768).find("radices 12 x 64"), std::string::npos);
@@ -333,8 +341,10 @@ TEST(FitRows, LargeL2TableRadices) {
 
 // X69 by the profile fields alone (set here, not the host's): on the key, rows of 1024, 160 and
 // 240 take the two-pass radices while rows and output take at most fit_row_bytes (in place the
-// rows at most fit_in_place_bytes); without the key (Zen 4 and Zen 5 under `avx512` have
-// fit_row_bytes from the large-L3 branch) the plans stay as they were.
+// rows at most fit_in_place_bytes; out of place, rows longer than a page at most
+// fit_long_row_bytes); without the key (Zen 4 and Zen 5 under `avx512` have fit_row_bytes from
+// the large-L3 branch) the plans stay as they were. X70's limits: 1024 out of place to 64 rows,
+// in place to 256, 160 to 1638 rows and 240 to 1092 in either placement.
 TEST(FitRows, LargeL2PlansWithinTheLimit) {
   constexpr std::size_t kib = 1024;
   // The whole profile of a Granite Rapids VM (c4-standard-16: 48 KiB L1, 2 MiB private L2,
@@ -348,8 +358,9 @@ TEST(FitRows, LargeL2PlansWithinTheLimit) {
   d::set_grid_sizes(key.profile, granite, true);
   key.profile.vendor = d::cpu_vendor::intel;
   ASSERT_TRUE(key.profile.fit_large_l2);
-  ASSERT_EQ(key.profile.fit_row_bytes, 2048 * kib);
-  ASSERT_EQ(key.profile.fit_in_place_bytes, 1024 * kib);
+  ASSERT_EQ(key.profile.fit_row_bytes, 8192 * kib);
+  ASSERT_EQ(key.profile.fit_in_place_bytes, 4096 * kib);
+  ASSERT_EQ(key.profile.fit_long_row_bytes, 2048 * kib);
   build_settings off = key;
   off.profile.fit_row_bytes = 0;
   // Without the key but with X57's limits from the large-L3 branch, as Zen 4 and Zen 5 have.
@@ -357,6 +368,7 @@ TEST(FitRows, LargeL2PlansWithinTheLimit) {
   zen.profile.fit_large_l2 = false;
   zen.profile.fit_row_bytes = 24 * 1024 * kib;
   zen.profile.fit_in_place_bytes = 16 * 1024 * kib;
+  zen.profile.fit_long_row_bytes = std::numeric_limits<std::size_t>::max();
   const auto plan = [](std::size_t n, std::size_t rows, bool in_place, const build_settings& s,
                        fftn::isa isa) {
     const fftn::shape<std::complex<double>, std::complex<double>> shape{
@@ -380,20 +392,42 @@ TEST(FitRows, LargeL2PlansWithinTheLimit) {
       EXPECT_EQ(text(1024, 3, false, key, t), text(1024, 3, false, off, t));
       continue;
     }
-    // Out of place, rows and output: 64 rows of 1024 (2 MiB) fit, 65 do not.
+    // Out of place, rows of 1024 (16 KiB, longer than a page) with their output within the
+    // long-row limit, the L2: 64 rows fit, 65 do not.
     EXPECT_TRUE(has(text(1024, 1, false, key, t), "radices 32 x 32"));
     EXPECT_TRUE(has(text(1024, 64, false, key, t), "radices 32 x 32"));
     EXPECT_TRUE(has(text(1024, 65, false, key, t), "radices 8 x 8 x 16"));
     EXPECT_EQ(text(1024, 256, false, key, t), text(1024, 256, false, off, t));
-    // In place, rows at most half the L2: the same 64 rows.
+    // In place, rows within twice the L2: 256 rows.
     EXPECT_TRUE(has(text(1024, 64, true, key, t), "radices 32 x 32"));
-    EXPECT_TRUE(has(text(1024, 65, true, key, t), "radices 8 x 8 x 16"));
-    // 160 and 240 to 409 and 273 rows (2560 and 3840 bytes a row, on both sides).
-    EXPECT_TRUE(has(text(160, 409, false, key, t), "radices 8 x 20"));
-    EXPECT_TRUE(has(text(160, 410, false, key, t), "radices 4 x 4 x 10"));
-    EXPECT_TRUE(has(text(240, 273, false, key, t), "radices 12 x 20"));
-    EXPECT_TRUE(has(text(240, 274, false, key, t), "radices 4 x 4 x 15"));
-    EXPECT_TRUE(has(text(240, 1, true, key, t), "radices 12 x 20"));
+    EXPECT_TRUE(has(text(1024, 256, true, key, t), "radices 32 x 32"));
+    EXPECT_TRUE(has(text(1024, 257, true, key, t), "radices 8 x 8 x 16"));
+    EXPECT_EQ(text(1024, 2048, true, key, t), text(1024, 2048, true, off, t));
+    // 160 and 240 (2560 and 3840 bytes a row): rows and output within four times the L2, rows in
+    // place within twice the L2, the same 1638 and 1092 rows.
+    for (const bool in_place : {false, true}) {
+      SCOPED_TRACE(in_place ? "in place" : "out of place");
+      EXPECT_TRUE(has(text(160, 1, in_place, key, t), "radices 8 x 20"));
+      EXPECT_TRUE(has(text(160, 1638, in_place, key, t), "radices 8 x 20"));
+      EXPECT_TRUE(has(text(160, 1639, in_place, key, t), "radices 4 x 4 x 10"));
+      EXPECT_TRUE(has(text(240, 1, in_place, key, t), "radices 12 x 20"));
+      EXPECT_TRUE(has(text(240, 1092, in_place, key, t), "radices 12 x 20"));
+      EXPECT_TRUE(has(text(240, 1093, in_place, key, t), "radices 4 x 4 x 15"));
+      EXPECT_EQ(text(240, 65536, in_place, key, t), text(240, 65536, in_place, off, t));
+    }
+    // X69's limits (the fbench arm O of X70) give X69's plans: 409 rows of 160, 273 of 240, and
+    // 64 rows of 1024 in either placement.
+    build_settings x69 = key;
+    x69.profile.fit_row_bytes = 2048 * kib;
+    x69.profile.fit_in_place_bytes = 1024 * kib;
+    EXPECT_TRUE(has(text(160, 409, false, x69, t), "radices 8 x 20"));
+    EXPECT_TRUE(has(text(160, 410, true, x69, t), "radices 4 x 4 x 10"));
+    EXPECT_TRUE(has(text(240, 273, true, x69, t), "radices 12 x 20"));
+    EXPECT_TRUE(has(text(240, 274, false, x69, t), "radices 4 x 4 x 15"));
+    EXPECT_TRUE(has(text(1024, 64, true, x69, t), "radices 32 x 32"));
+    EXPECT_TRUE(has(text(1024, 65, true, x69, t), "radices 8 x 8 x 16"));
+    EXPECT_EQ(text(1024, 64, false, x69, t), text(1024, 64, false, key, t));
+    EXPECT_EQ(text(1024, 65, false, x69, t), text(1024, 65, false, key, t));
     // Off (fit_row_bytes = 0, fbench's FIT_ROW_BYTES=0) and without the key: the rules' plans.
     for (const std::size_t n : {160U, 240U, 1024U}) {
       EXPECT_EQ(text(n, 1, false, zen, t), text(n, 1, false, off, t));
