@@ -615,9 +615,17 @@ def cmd_selftest(ctx: argparse.Namespace) -> int:
             checked += 1
     refusals = [
         ("RADICES=2.8", [catalogue.Case("c2c", (32,), 1, "out", -1)], "multiplies to 16"),
-        ("RADICES=4.8", [catalogue.Case("r2c", (32,), 1, "out", -1)], "c2c rows only"),
-        ("RADICES=4.8", [catalogue.Case("c2c", (4, 8), 1, "out", -1)], "c2c rows only"),
+        ("RADICES=4.8", [catalogue.Case("r2c", (32,), 1, "out", -1)], "not the half length 16"),
+        ("RADICES=4.8", [catalogue.Case("c2r", (33,), 1, "out", 1)], "real rows of even length"),
+        ("RADICES=4.8", [catalogue.Case("c2c", (4, 8), 1, "out", -1)], "rows only"),
     ]
+    # A real row of even length takes radices of its half length (experiment X72).
+    for kind, sign in (("r2c", -1), ("c2r", 1)):
+        case = catalogue.Case(kind, (64,), 1, "out", sign)
+        results, error = harness_check(exe, [case], "RADICES=4.8")
+        ok = bool(results) and results[0].get("status") == "ok" and results[0]["check"]["pass"]
+        if error or not ok:
+            failures.append(f"RADICES=4.8 on {kind} 64 was not planned: {results or error}")
     for options, cases, expect in refusals:
         results, error = harness_check(exe, cases, options)
         message = results[0].get("message", "") if results else error

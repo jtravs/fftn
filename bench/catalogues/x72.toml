@@ -1,0 +1,69 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Experiment X72's cases (dev/experiments/X72-zen3-real-rows.md): real rows of 6144-20480 points
+# on Zen 3, double precision, out of place. The first groups are the client catalogue's shapes
+# (lengths and batches as the client application runs them); the half-length c2c rows are the
+# complex transforms inside them, for the diagnosis.
+
+[catalogue]
+name = "x72"
+
+[[group]]
+name = "x72-r2c-6144"
+kind = "r2c"
+dims = [6144]
+batch = [48, 66]
+
+[[group]]
+name = "x72-r2c-6400"
+kind = "r2c"
+dims = [6400]
+batch = [1, 7]
+
+[[group]]
+name = "x72-r2c-10240"
+kind = "r2c"
+dims = [10240]
+batch = [1, 28]
+
+[[group]]
+name = "x72-r2c-single"
+kind = "r2c"
+dims = [9216, 18432]
+
+[[group]]
+name = "x72-r2c-20480"
+kind = "r2c"
+dims = [20480]
+batch = [21]
+
+[[group]]
+name = "x72-c2r-6144"
+kind = "c2r"
+dims = [6144]
+batch = [48, 66]
+
+[[group]]
+name = "x72-c2r-10240"
+kind = "c2r"
+dims = [10240]
+batch = [1, 4]
+
+[[group]]
+name = "x72-c2r-single"
+kind = "c2r"
+dims = [6400, 9216, 18432]
+
+[[group]]
+name = "x72-c2r-20480"
+kind = "c2r"
+dims = [20480]
+batch = [3]
+
+[[group]]
+name = "x72-half"
+note = "the half-length complex rows, both directions (c2r runs the backward chain)"
+kind = "c2c"
+dims = [3072, 3200, 4608, 5120, 9216, 10240]
+direction = ["fwd", "bwd"]

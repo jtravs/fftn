@@ -136,7 +136,7 @@ one; its arms are written `fftn_omp`.
 | `CALL=executor\|team` | fftn_omp (with `THREADS`) | the executor overload (default), or a parallel region of N threads each calling the team overload with `fftn::omp::this_team()` |
 | `CHUNK_POINTS=P` | fftn, fftn_omp | points per chunk of a stage (the plan's chunking) |
 | `NS_PER_WORK`, `DISPATCH_NS`, `INLINE_MULTIPLE`, `SYNC_NS`, `MIN_POINTS_PER_MEMBER`, `SPLIT_MIN_POINTS`, `SPLIT_MIN_POINTS_MESH`, `MESH_GROUP_LANES`, `REMAINDER_SPLIT_MIN_POINTS`, `SPIN_NS`, `YIELD_NS`, `CLAIM_DIVISOR` | fftn, fftn_omp | the machine profile's field of that name (`src/threading/schedule.hpp`); a size threshold may be `never` |
-| `RADICES=r1.r2...` | fftn, fftn_omp | the chain's radices in pass order (`build_settings::radices`), for c2c rows whose length they multiply to (see below) |
+| `RADICES=r1.r2...` | fftn, fftn_omp | the chain's radices in pass order (`build_settings::radices`), for c2c rows whose length they multiply to, or real rows whose half length they do (see below) |
 | `LEAF_LIMIT=N` | fftn, fftn_omp | the planner's leaf limit (`build_settings::leaf_limit`): every length up to N with a codelet (2 to 16, 32, 64) is one whole-transform leaf; default the profile's, 32 on NEON in double and 16 elsewhere ([X8](../dev/experiments/X8-leaves.md)) |
 | `BLUESTEIN_ABOVE=N\|never` | fftn, fftn_omp | the Bluestein threshold (`build_settings::bluestein_above`): prime factors above N (at least 16) go through a Bluestein stage, and with `never` none do, so they stay in generic passes; default the profile's, 16 ([X17](../dev/experiments/X17-bluestein-threshold.md)) |
 | `STRATEGY=rules\|chain\|grid\|lanes\|depth` | fftn, fftn_omp | the strategy of rows (`build_settings::strategy`): the planner's choice (default), or the chain, the grid, the lanes or the depth-first chain ([DESIGN 8.5](../dev/DESIGN.md)) forced where the row can be one; every case's `note` says which was built (a lanes plan's axis line says "on the lanes' tile"). Experiments [X12](../dev/experiments/X12-beyond-l2.md), [X7](../dev/experiments/X7-lanes.md) and [X46](../dev/experiments/X46-depth-first.md) compare them |
@@ -180,7 +180,9 @@ option given.
 length 256, or `B=fftn+ISA=avx2+RADICES=4.8.8` for that sequence on one target: it sets
 `build_settings::radices` (an internal test knob in `src/core/plan_core.hpp`, not public
 API, so not in `dev/KNOBS.toml`). Every case of the run must be a c2c row (either
-precision) whose length the radices multiply to; any other case is an error, and so is a
+precision) whose length the radices multiply to, or a real row of even length whose half
+length they multiply to (its half-length complex chain; experiment X72); any other case is an
+error, and so is a
 radix that no pass of the target takes. `describe` (and the run record) shows the forced
 sequence; every FFTN case's `note` in the store (with or without `RADICES`)
 names the radices its plan used. Experiment X2 drives it with
