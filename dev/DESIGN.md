@@ -189,7 +189,7 @@ Repository layout (target; created as phases need it):
 
 ```
 include/fftn/            public headers only: fftn.hpp, plan.hpp, execution.hpp,
-                         pipeline.hpp, convenience.hpp, omp.hpp, kokkos.hpp, c_api.h
+                         edge.hpp, pipeline.hpp, convenience.hpp, omp.hpp, kokkos.hpp, c_api.h
 src/                     the library: platform/, planner/, engine/, strategies/, c_api.cpp
 src/isa/                 regions, vocabularies, the kernel units of each instruction set
 src/passes/              pass kernels (.inl, included per instruction set)
@@ -290,7 +290,7 @@ template <class T> shape<T, std::complex<T>>
     volumes_r2c(std::size_t nz, std::size_t ny, std::size_t nx, std::size_t count);
 template <class T> shape<std::complex<T>, T>
     volumes_c2r(std::size_t nz, std::size_t ny, std::size_t nx, std::size_t count);
-// Chosen dimensions of a strided array (provisional, task 4.3): one `axis` per dimension of
+// Chosen dimensions of a strided array (task 4.3): one `axis` per dimension of
 // the array, the dimensions to transform by index, the others becoming batch dimensions.
 template <class T> shape<std::complex<T>, std::complex<T>>
     axes_c2c(std::span<const axis> array, std::span<const std::size_t> axes, direction);
@@ -315,8 +315,8 @@ Points that matter:
 - **Batch dimensions** are as many as the caller needs: a `Kokkos::View` of any rank, or a
   sub-array whose loops do not nest, maps onto one shape without a copy. Each becomes one
   loop of the program (8.3).
-- **Chosen axes of an array** (`axes_c2c`, `axes_r2c`, `axes_c2r`; provisional until the
-  maintainer has reviewed them). The general `shape` already describes any selection and order
+- **Chosen axes of an array** (`axes_c2c`, `axes_r2c`, `axes_c2r`). The general `shape`
+  already describes any selection and order
   of the axes of a strided array, with the rest as batch dimensions; these functions write it
   from the array's description, working out the array's tight defaults and sorting the batch
   dimensions by input stride, widest first, merged where they nest (`fftn/kokkos.hpp`'s
@@ -362,7 +362,6 @@ struct options {
   // int max_lanes = 1;                   width hint: the most threads this plan will see
   // bool strict_layout = false;          ignore the width hint when choosing the program
   // bool may_destroy_input = false;
-  // edge_ops in_ops, out_ops;            fused pointwise work (section 12)
   // table_cache* tables = nullptr;       share twiddle tables between plans (optional)
 };
 
@@ -432,8 +431,9 @@ public:
   // (4) On an executor, anything that can run n tasks and return when done (13.6).
   void execute(const In* in, Out* out, executor_ref, workspace&) const;
 
-  // later: a trailing exec_args (arrays for the edge operations, section 12) on every
-  // overload, and twins taking In* for plans that may destroy their input.
+  // later: a third constructor argument, plan_edges<In, Out> (fused pointwise work), and a
+  // trailing exec_args (its data) on every overload (section 12); twins taking In* for plans
+  // that may destroy their input.
 
   std::size_t workspace_bytes(int lanes = 1) const noexcept;
   std::string describe() const;        // the program, human readable: strategy, radices,
@@ -615,7 +615,7 @@ The other interfaces are later work:
 
 | Tier | Contents | Phase |
 |---|---|---|
-| Core | c2c, r2c, c2r; 1-D rows, 2-D planes, 3-D volumes; strides and distances; in place and out of place; any length; double; serial, team and executor execution; edge ops; convolution and transform-pair pipelines | 1–5 |
+| Core | c2c, r2c, c2r; 1-D rows, 2-D planes, 3-D volumes; strides and distances; in place and out of place; any length; double; serial, team and executor execution; plan edges, row pipelines (convolution and spectral pair) and block callbacks | 1–5 |
 | General | float on every target, tuned where asked for; convenience layer; DCT/DST types I–IV and the discrete Hartley transform as composed plans; split-complex layout; C API; wisdom import and export | 6 |
 | Later, on demand | FFTW shim; more than three transformed axes; SVE; Python binding | 7 |
 
@@ -1705,7 +1705,7 @@ is the order in which memory is touched:
   never of the whole array.
 - **Real multi-dimensional transforms** halve the last axis, as FFTW does.
 
-Axis order within a plan is a planner choice unless a pipeline pins it (section 12.3). As
+Axis order within a plan is a planner choice (multi-dimensional stages: section 12.5). As
 built (task 4.3): whatever order the shape lists them in, the axes run widest output stride
 first as a C-ordered array lists them, so the contiguous axis is the one that runs as rows
 (`order_axes`, `plan_core::axis_of`); a real transform's halved axis stays last. Two listings of
@@ -2070,72 +2070,239 @@ planner.
 
 ## 12. Fusion and pipelines
 
-Fusion has three tiers, from cheapest to most general. All three keep data in cache
-between the pointwise work and the transform; they differ in who writes the pointwise
-code.
+Pointwise work runs while its data are in cache, through two mechanisms:
 
-### 12.1 Tier A: edge operations
+- **Linear, separable work** uses a small fixed vocabulary that FFTN compiles into its own
+  passes: scales, real and complex factors, zero-padding and cropping, and accumulation.
+- **Everything else** uses **block callbacks**: a nonlinear term, a factor computed on the fly,
+  a reduction. A block callback is a function compiled by the application, which FFTN calls on a
+  block that is still in cache, between two of FFTN's passes.
 
-Descriptor-driven pointwise work on a plan's input or output edge, compiled into the edge
-variants of the first and last passes (section 8.2):
+This work attaches in two places:
+
+- **Plan edges**: an input edge and an output edge on any plan.
+- **Row pipelines**: a transform, a middle and the inverse transform over one axis.
+
+Larger stages are sequences of these objects (12.5). User code never runs inside an ISA region,
+because it cannot be compiled there soundly (6.4); block granularity keeps the memory saving,
+which is where the gain is.
+
+Throughout, the plan or pipeline records at construction **which** operations and callback
+functions exist, which selects kernel variants and shapes the program. The **data** arrive with
+each execution: factor arrays, and the `void*` each callback receives. So one plan serves every
+stage of a time step, stays immutable, and can be executed concurrently.
+
+```cpp
+namespace fftn {
+enum class side : unsigned char { in, out };
+struct stored_run {            // in shape::runs: stored elements of one axis on one side
+  std::size_t axis = 0; side where = side::in;
+  std::size_t logical = 0, stored = 0, count = 0;   // stored [stored, +count) = logical [logical, +count)
+};
+enum class factor_kind : unsigned char { none, real, complex };
+struct factor {                // times an array read at execution, indexed by logical coordinates
+  factor_kind kind = factor_kind::none;
+  std::vector<std::ptrdiff_t> axis_strides, batch_strides;   // 0 broadcasts
+};
+template <class T> struct edge {
+  double scale = 1.0; factor mul; bool accumulate = false;    // accumulate: output edges only
+  callback<T> call;                                           // 12.3
+};
+template <class In, class Out> struct plan_edges { edge<In> in; edge<Out> out; };
+struct exec_args {             // the data of one execution
+  const void* in_factor = nullptr; const void* mid_factor = nullptr; const void* out_factor = nullptr;
+  void* in_user = nullptr; void* mid_user = nullptr; void* out_user = nullptr;
+};
+// plan(const shape<In, Out>&, const options& = {}, const plan_edges<In, Out>& = {});
+// every execute overload gains a twin with a trailing const exec_args&.
+}
+```
+
+### 12.1 Edges and the vocabulary
+
+An edge's operations apply in a fixed order:
+
+- **Input edge.** FFTN loads the block, or a callback produces it; then a modifying callback
+  runs; then the vocabulary is applied in the first pass.
+- **Output edge.** The vocabulary is applied in the last pass; then a modifying callback runs;
+  then FFTN stores the block, accumulates it, or a callback consumes it.
+
+The vocabulary:
 
 | Operation | Meaning |
 |---|---|
-| `scale` | multiply by a real constant (normalisation costs nothing) |
-| `window` | multiply element i of every row by a real factor w[i] |
-| `factor` | multiply element i by a complex factor f[i], per row or shared |
-| `valid` | on input: only a sub-range is non-zero, the rest is not read; on output: only a sub-range is wanted, the rest is not written |
-| `embed` | input or output elements sit at given positions of a longer logical row (crop maps, zero-filled gaps) |
-| `accumulate` | out += result instead of out = result |
+| `scale` | Multiply by a real constant (normalisation costs nothing). `options::scale` is a shortcut for the output edge's scale; construction refuses both together when the edge's is not 1 |
+| `factor` | Multiply by an array of real (a window) or complex values in the plan's precision. The array is indexed by logical coordinates through its own strides, one per axis and one per batch dimension; a stride of 0 broadcasts along that dimension. The array addresses coordinate 0 |
+| `accumulate` | `out += result` instead of `out = result` |
+| stored runs | Zero-padding and cropping, below |
 
-The plan records which operations are present (that selects kernel variants); the arrays
-themselves are passed at execute time, so they may change every call. Task 1.2 built
-`scale` (public: `options::scale`) and `factor` (internal, test-only, its arrays fixed at
-construction until `exec_args` arrives) as edge variants of every pass kind. Pruned edges use the
-generator's pruned codelets, confined to the edge passes.
+**Stored runs are part of the shape** (`shape::runs`), not of the options. An axis may be stored
+in part on either side: `count` elements from position `stored` of the axis's memory are logical
+positions `logical` onwards of the transformed line. On an axis with runs on a side:
 
-### 12.2 Tier B: transform pairs
+- input elements outside the runs are zero and are not read;
+- output elements outside the runs are not written;
+- the stored extent is the end of the last run.
 
-A **pipeline** owns two or more transforms and the work between them, and is free to
-choose everything in between:
+Examples are the band of `nω` stored bins inside an `nt`-point time line, the valid first half
+of a zero-padded convolution's row, and the crop bins of an output. They belong to the shape
+because construction's overlap check and the tight default strides depend on the stored extent.
+Measured by logical extent instead, a compact (y, x, ω) array whose x stride is `nω` would look
+as if its ω lines overlapped. A run whose stored and logical positions coincide is a valid
+sub-range of a full-length line.
 
-- **`convolution`**: forward, multiply by a kernel spectrum, inverse; real or complex;
-  with zero-padded input (`valid` range), partial output, several kernels selected per
-  row, and one forward feeding several inverses. Fully fused, the spectrum never reaches
-  memory: the forward transform's last pass, the multiply and the inverse's first pass
-  form one sweep.
-- **`spectral_pair`**: inverse, pointwise operation, forward (or the reverse), as in a
-  split-step method. The spectral multiplier is given in natural order by default.
-- **Scrambled order.** Because a pipeline owns both transforms, the intermediate order is
-  its own business. With in-place strategies that removes two permutation passes; in the
-  blocked grid it removes the forward's last transpose and the inverse's first. A
-  `spectral_layout` object exposes the order to callers who store their multipliers
-  permuted. This is experiment X9; the estimate from prior art (MKL's scrambled mode,
-  djbfft, PFFFT) is 10–25 % for L2-resident sizes and more beyond.
+`axes_*` will gain an optional trailing `std::span<const stored_run>` (axis indices into the
+array), so that default strides use the stored extents. Runs are a flat list of plain records,
+not a field of `axis`, because `axis` crosses into the library inside `shape_view` as a plain
+value (section 5). In multi-axis plans, pruning first restricts the other axes' loops to the
+stored runs, which skips zero sub-transforms. Within a line it then uses the generator's pruned
+codelets, confined to the edge passes.
 
-### 12.3 Tier C: in-cache callbacks
+As built (task 1.2), `scale` (public: `options::scale`) and `factor` are edge variants of every
+pass kind. `factor` is internal: complex only, with its arrays fixed at construction. It applies
+only to c2c chains of one axis: the lanes strategy refuses input edge operations, grid and
+depth-first chains are not built with a factor edge, and batch leaves fall back to the chain.
+Phase 5 brings the factor to every strategy the rules choose. An edge that still forces a slower
+strategy is built, not refused, and `describe()` says so (AGENTS.md section 1).
 
-For work the descriptors cannot express, a pipeline calls a user function on blocks of
-data while they are cache resident:
+### 12.2 Row pipelines
+
+A **pipeline** is a fixed form over one transformed axis, which may be strided, under any number
+of batch dimensions:
+
+> prologue → transform → middle → inverse transform → epilogue
+
+Its kinds follow from its element types (C = `std::complex<T>`):
+
+- `pipeline<C, C, C>`: two complex transforms, in either order;
+- `pipeline<T, C, T>`: r2c then c2r, a real convolution;
+- `pipeline<C, T, C>`: c2r then r2c, a spectral pair whose middle is real.
+
+Each line, or block of adjacent lines when the axis is strided, is loaded once, transformed,
+given the middle, transformed back, and stored once. The spectrum never reaches memory, so a
+pipeline is one sweep, and nothing stops its epilogue from accumulating.
 
 ```cpp
-// called for each block of each row (or pencil block), between the transforms
-using block_fn = void (*)(void* user, block_info where, std::complex<T>* data);
+namespace fftn {
+template <class In, class Mid, class Out> struct pipeline_desc {
+  direction first = direction::forward;  // c2c: the first transform's; the second is the opposite
+  axis line;                             // logical length; in stride (In side), out stride (Out side)
+  std::vector<batch> batches;
+  std::vector<stored_run> runs;          // axis 0
+  edge<In> prologue;
+  struct { double scale = 1.0; factor mul; callback<Mid> call; } middle;   // call: modify only
+  edge<Out> epilogue;
+  std::size_t fanout = 1;                // inverses per forward, each with its own middle factor
+  std::ptrdiff_t fanout_out_dist = 0, fanout_factor_dist = 0;
+  std::size_t group = no_group;          // a batch dimension the middle callback sees whole
+};
+template <class T> pipeline_desc<T, std::complex<T>, T> convolution_rows(std::size_t n, std::size_t count);
+template <class T> pipeline_desc<std::complex<T>, std::complex<T>, std::complex<T>>
+    spectral_pair_rows(std::size_t n, std::size_t count, direction first);
+
+template <class In, class Mid, class Out> class pipeline {
+public:
+  explicit pipeline(const pipeline_desc<In, Mid, Out>&, const options& = {});
+  // execute (serial, team, executor) and execute_transforms as plan's, each with an exec_args;
+  // transforms_of, workspace_bytes, describe, instruction_set.
+};
+}
 ```
 
-`block_info` gives the row, the element range, and the worker slot (for per-thread user
-scratch). The callback is an ordinary function compiled by the user's compiler with the
-user's flags, working on natural-order data in L1 or L2. This is deliberately **not** a
-per-element functor inlined into kernels: user code cannot be compiled into ISA regions
-soundly, and block granularity captures the memory saving, which is where the gain is.
+Points that matter:
 
-Multi-dimensional pipelines pin the axis order so the fused axis is the last one
-transformed backward and the first transformed forward: for a volume, "inverse on the two
-plane axes; then per pencil block: inverse along the pencil, callback, forward along the
-pencil; then forward on the plane axes" is three sweeps of memory instead of eight.
+- **One type for both forms.** `convolution_rows` and `spectral_pair_rows` are helpers that
+  return descriptions: a convolution runs the forward first and has a factor (a kernel spectrum)
+  in the middle; a spectral pair runs the inverse first.
+- **The middle** sees whole lines of the logical length, with the runs already applied in
+  scratch, in natural order. Its vocabulary fuses into the first transform's last pass or the
+  second's first.
+- **Fan-out.** The inverse runs `fanout` times on one middle spectrum. Copy k takes its factor
+  at `mid_factor + k fanout_factor_dist` and writes at `out + k fanout_out_dist`, or the epilogue
+  callback consumes it, receiving the copies of each line in copy order. A contraction over the
+  copies, or a kernel chosen per row (a batch dimension with its own factor stride), needs no
+  other mechanism.
+- **`group`** hands the middle callback every member of one batch dimension together, such as
+  coupled polarisation components.
+- **Shared tables.** The two transforms have the same length and opposite directions, so they
+  share their twiddle tables. That is the two-way plan of 18.2 (a), inside the pipeline.
+- **Reuse of the Bluestein stage.** A pipeline is built from the Bluestein stage's convolution
+  (8.5): a forward chain whose last pass multiplies by the kernel spectrum, a backward chain
+  whose first pass does so, pruned edges, and depth-first chains (X50). Fan-out and blocks of
+  copies need a loop over a scratch-resident line, the same extension the Bluestein copies need
+  (X36b).
+- **Scrambled order.** A middle made only of vocabulary may later run in the plan's own order
+  instead of the natural one. With in-place strategies that removes two permutation passes; in
+  the blocked grid, the forward's last transpose and the inverse's first. A `spectral_layout`
+  object would expose the order to callers who store their multipliers permuted. This is
+  experiment X9; the estimate from prior art (MKL's scrambled mode, djbfft, PFFFT) is 10–25 %
+  for L2-resident sizes and more beyond. Callbacks always see natural order, because their
+  coordinates must be affine in the block.
 
-Prologue and epilogue callbacks (fill a block of the input; consume a block of the output
-without storing it, for reductions) use the same mechanism on the outer edges.
+### 12.3 Block callbacks
+
+```cpp
+namespace fftn {
+struct block_info {
+  std::size_t transform;                // batch number of line 0's transform
+  std::span<const std::size_t> origin;  // logical index along each axis of element 0 of line 0
+  std::size_t element_axis, line_axis;  // what elements and lines advance along (along_transforms)
+  std::size_t length, lines;
+  std::ptrdiff_t element_stride, line_stride;   // within data, in elements
+  std::size_t group; std::ptrdiff_t group_stride;
+  std::size_t copy;                     // which inverse of a fan-out
+  int member;                           // 0 <= member < the workspace's lanes
+  std::span<std::byte> scratch;         // this member's callback scratch
+};
+template <class T> using block_fn = void (*)(void* user, const block_info&, T* data) noexcept;
+enum class callback_mode : unsigned char { modify, produce /* input only */, consume /* output only */ };
+template <class T> struct callback {
+  block_fn<T> fn = nullptr; callback_mode mode = callback_mode::modify;
+  std::size_t scratch_bytes = 0;        // per member, carved from the workspace
+};
+template <class F, class T> constexpr block_fn<T> callback_of() noexcept;   // calls (*(F*)user)(info, data)
+}
+```
+
+A callback is an ordinary function, compiled by the application with its own compiler and
+flags. It may vectorise as it likes, and it can be written in C, through Kokkos, or as a lambda
+via `callback_of`. FFTN calls it from its driver, outside every ISA region, on a block in L1 or
+L2.
+
+- **Block layout.** FFTN chooses the layout and reports it through the strides. A block is not
+  forced into contiguous lines, which would cost a transpose on strided axes.
+- **Coordinates.** Every element's coordinates follow from `origin`, the two axes and the
+  strides: logical positions on axes with stored runs, and the transform number in the
+  documented batch order.
+- **Modes.** `produce` fills an input block from the application's own sources, and FFTN reads
+  nothing from `in`. `consume` takes an output block, and FFTN stores nothing.
+
+The contract:
+
+- **Execution.** `noexcept` is part of the type, so a function that may throw does not convert.
+  FFTN's own code still neither allocates, locks nor does I/O; a callback that does is the
+  application's choice.
+- **What a callback must not do.** It must not use the workspace it runs under, except its
+  `scratch`. It must not write outside its block, except to the application's own memory. It
+  must not assume any order of blocks.
+- **Nested execution.** A callback may execute another plan or pipeline through a serial
+  overload. That execution needs its own workspace, taken from the callback's `scratch` (sized at
+  construction from the nested plan's `workspace_bytes()`) or from the application's per-member
+  memory, never the outer workspace. A convolution nested in a middle is the case.
+- **`member`.** It is 0 in serial execution, the rank in a team, and the task's index on an
+  executor: always below the lanes the workspace was sized for. `scratch` is that member's area,
+  counted in `workspace_bytes()`; the workspace stays plain bytes (18.2).
+- **Determinism.** Block shapes are FFTN's choice and differ between execution forms: team
+  programs give a team narrower lanes blocks than a serial run gets (13.2). So every callback
+  must be correct for any block shape. The output is bitwise identical for serial execution, any
+  team, any executor and any schedule when each edge callback is **pure per element** (its result
+  depends only on the element's value and coordinates) and each middle callback is **pure per
+  line**. A reduction keeps its partial sums per line, indexed by coordinates, never per member,
+  and the application combines them in a fixed order.
+- **Precision and accuracy.** Callbacks see the plan's precision. Vocabulary factors are in it
+  too, and a scale is converted to it once. A fused plan or pipeline may differ in the last bits
+  from the same work done by separate plans and loops, within the transform's bound plus one
+  rounding per vocabulary multiplication (15.5).
 
 ### 12.4 Owner-computes
 
@@ -2145,7 +2312,37 @@ one core's cache across the application's work and FFTN's, inside one parallel r
 this mode transforms are dealt statically and whole (member r does exactly
 `transforms_of(r)`: contiguous ranges in rank order differing by at most one transform, or,
 with fewer transforms than members, one each for the first members; nothing is claimed by
-others or split), which requires that every member of the team takes part.
+others or split), which requires that every member of the team takes part. Pipelines deal
+their transforms the same way (`pipeline::transforms_of`).
+
+
+### 12.5 Multi-dimensional stages
+
+A stage that transforms several axes around a pointwise term is a sequence of plans with edges
+and row pipelines. For the free-space stage of the client application, the field is stored as
+(y, x, ω) with ω contiguous: `nω` stored bins of an `nt`-point time line. The stage is three
+objects:
+
+1. **Inverse planes with a prologue.** The inverse (y, x) plan, with ω as a stride-1 batch (the
+   lanes over adjacent transforms of 9.3, where the class takes them), has a prologue callback
+   that multiplies by the propagator.
+2. **The ω pencils.** A row spectral pair runs on the ω pencils, using stored runs for the band,
+   a middle callback for the nonlinear term (`group` for coupled components), and a `<C, T, C>`
+   pair for a real time domain.
+3. **Forward planes with an epilogue.** The forward (y, x) plan, in place, has an epilogue
+   callback for the finish.
+
+Today's route makes 9 sweeps of the volume (about 18 V of traffic). The three objects make 3
+sweeps where a block of adjacent ω pencils over a whole plane fits a cache level. Otherwise y and
+x are separate sweeps on each side of the pencils, which gives 5; that is the case at 384² on x86,
+where a block of 4 pencils is 9.4 MB.
+
+A multi-axis pipeline would add one thing: grouping the axes differently. It would run y alone,
+then for each y an (x, ω) slab (x inverse, the ω pairs, x forward), then y. That is 3 DRAM sweeps
+wherever a slab stays in a member's cache. It is built only if the free-space experiment shows
+that this beats the three objects at the client's sizes and thread counts. Fusing three fork/joins
+into one is worth microseconds against a stage of hundreds of milliseconds, and the client's
+volumes (226 MB and up) never fit a cache, so neither is a reason to build it.
 
 ---
 
@@ -3244,6 +3441,8 @@ to change before a release.
 | 2026-11-22 | `avx2` double's batch leaves of 32 and 64 points move each element of their two rows when the codelet asks for it, one inlined copy of the codelet for every group and a lone last row; the rules take the leaf of 64 from 2 to 1024 rows, odd counts from 5 (`target_profile::batch_max_rows`, `batch_ragged_rows`; section 8.2) | X62 (EPYC 7763): 0.848 of the 4 × 16 chain over 64-point batches (64 × 2 backward ÷ FFTW 1.29 → 0.98, 64 × 16 1.16 → 0.92), tracking tier 0.996; block transposes spilled all 64 values (about 1.18 of the per-element form); a second copy of the codelet for the last row thrashed the op cache; 3 rows and 4096 rows lost and are excluded (adopted by the maintainer's decision, 2026-11-23: K3's rule as written covered 3 rows) |
 | 2026-11-22 | On Zen 3's class (x86-64, a private L2 under 1 MiB, a large L3) a Bluestein convolution's power-of-two part is at most half the L1, and a stage over C copies takes the whole line whatever the convolutions' lengths (`machine_profile::bluestein_whole_lanes`; section 8.5) | X62 (EPYC 7763): the 14 moved cases 0.92–0.99 of their time (1013–1021 with M = 2160 for 2048, 1018 ÷ FFTW 1.05 → 0.98, 131071 0.98), tracking tier 1.002; without the second part 1018 split into two copies and took 1.37 |
 | 2026-11-22 | A c2r plane out of place builds its intermediate packed in the output where one transform's half spectrum exceeds `machine_profile::c2r_packed_bytes` on the target measured (`c2r_packed_isa`): the L2 on the Xeon 6240's class (`avx512`), half the CCX's L3 on Zen 3's (`avx2`); the block elsewhere (on Apple wide planes lost at every threshold X60 tried). Volumes keep the block | X60 and X63: Xeon 6240 0.81 (one thread) and 0.82 (8 lanes) of the block's time over 31 planes from 1 MiB; EPYC 7763 0.84 and 0.77 over 9 planes from 16 MiB, held-out sizes included; inside the caches the output's power-of-two row strides lose (X60: EPYC 512 × 1024 1.10), the Xeon's teams lost on volumes (X60), and the M5 Max's wide planes lost (512 × 1024 1.07, 640 × 1280 1.14) |
+| 2026-11-24 | Maintainer's decisions: the Kokkos adapter's two restrictions stay (`Kokkos::Threads` only at Kokkos 5.2.1; no threaded plan inside a `Kokkos::Serial` kernel); `axes_c2c/r2c/c2r` agreed, provisional until the fusion design; X61 per target as judged; X28's 128-bit leaves on `avx2` ratified; X57's in-place limit measured or capped at 1024 rows; `avx2` rules measured on the EPYC (X26, X30, X62's batch leaves) to be keyed to the vendor | The adapter's restrictions do not touch the OpenMP back end; the fusion stage needs strided plane axes and may reshape the `axes_*` functions; X28's miss was the rule's averaging, nothing slower; the profile cannot yet tell an Intel `avx2` core from a Zen CCX, and X26 would cost such a core up to 20 % on rows of 2²⁰–2²² |
+| 2026-11-24 | Fusion design agreed by the maintainer (section 12; PR 94). M1: phase 5 builds plan edges and row pipelines; the free-space stage is three objects (inverse planes with a prologue, a row pair on the ω pencils, forward planes with an epilogue); a multi-axis pipeline only if the free-space experiment shows its axis grouping wins; no general composition. M2: a fixed vocabulary (scale, real and complex factors, accumulate, stored runs) in the passes, block callbacks for the rest, no per-element functors. M3: factor arrays and callback data at each execution (`exec_args`). M4: stored runs are part of the shape, as a flat list of `stored_run` records (`valid` and `embed` merged); `axes_*` gain an optional runs argument with the implementation. M5: one `pipeline` type replaces the separate `convolution` and `spectral_pair` types, which become the helpers `convolution_rows` and `spectral_pair_rows`. M6: bitwise identity across execution forms for callbacks pure per element (edges) or per line (middle); callbacks correct for any block shape; reductions per line, not per member. M7: a callback may execute a plan serially with its own workspace. M8: resampling pipelines and real multi-axis pipelines out of phase 5. M9: the names of section 12. `axes_c2c/r2c/c2r` are no longer provisional. The lead's: rows first (L1); `group` in the first version (L2); FFTN chooses block layouts and reports strides (L3); fan-out into one array with a distance (L4); accumulate in the vocabulary, a consume callback for other targets (L5); `options::scale` kept, refused with a non-unit output scale (L6); `member` below the workspace's lanes (L7); an edge that forces a slower strategy is built and reported, never refused (L8); per-member callback scratch from the workspace (L9) | The client application's largest costs are data movement around its transforms (E9; its free-space stage makes 9 sweeps where 3–5 suffice). Hooks on plans alone could not fuse the middle of a pair; the three-object route needs only parts the convolutions and split-step need anyway, and costs two fork/joins (microseconds) against a stage of hundreds of milliseconds, while a multi-axis pipeline saves two sweeps only where an (x, ω) slab stays in cache. A general composition (FFTX-style) has no client and makes "which descriptions fuse" the hardest case of the no-silent-slowdown rule. Per-element functors cannot be compiled into this library's ISA regions (6.4, 14.1) and per-element function pointers cost more than the transform per element; a block callback keeps the memory saving with one indirect call per block. Data at construction would force a plan per stage or shared mutable state. Runs in the shape because the overlap check and default strides need stored extents; not a field of `axis`, which crosses into the library as a plain value. Team programs change block shapes (X43), so purity, not block boundaries, carries determinism. Independent critical read of the proposal before the decision |
 
 ---
 

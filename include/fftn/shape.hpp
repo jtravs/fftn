@@ -344,8 +344,7 @@ shape<In, Out> shape_along_axes(std::span<const axis> array, std::span<const std
 
 } // namespace detail
 
-/// The complex transform along some dimensions of a strided array. Provisional: the
-/// interface may change before the first release (dev/DESIGN.md 5.2).
+/// The complex transform along some dimensions of a strided array.
 ///
 /// `array` describes the whole array: one `axis` per dimension, slowest first, with its
 /// length and its strides. A stride of 0 is the tight C-ordered default for that dimension of
@@ -377,8 +376,7 @@ axes_c2c(std::span<const axis> array, std::span<const std::size_t> axes, directi
   return detail::shape_along_axes<std::complex<T>, std::complex<T>>(array, axes, dir, n, n);
 }
 
-/// The real-to-complex transform along some dimensions of a strided array. Provisional, as
-/// axes_c2c.
+/// The real-to-complex transform along some dimensions of a strided array.
 ///
 /// As axes_c2c, for an array of real values: `array` holds the real side's lengths, and the
 /// last dimension listed in `axes` is the halved one, with n/2 + 1 complex values on the
@@ -403,7 +401,6 @@ axes_r2c(std::span<const axis> array, std::span<const std::size_t> axes, bool pa
 /// The complex-to-real transform along some dimensions of a strided array, the inverse layout
 /// of axes_r2c: `array` holds the real side's lengths, the last dimension listed in `axes` has
 /// n/2 + 1 complex values on the input side; `padded` as for axes_r2c, the output's real side.
-/// Provisional, as axes_c2c.
 ///
 /// Exceptions and guarantees: as for axes_c2c.
 template <class T>
