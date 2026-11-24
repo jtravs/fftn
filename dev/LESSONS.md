@@ -970,6 +970,11 @@ in bytes (three quarters of the L3), applied to one-axis plans only, kept every 
 nothing; a per-length override had to give up 1024 altogether, because the plane's rows and
 the long batches lost. Count what the plan touches, not what one row needs.
 [X57](experiments/X57-epyc-1024.md).
+In place, counting the rows once overstated what fits: the limit derived that way (24 MiB of
+rows) lost from 18–20 MiB (1024 × 1280 and 1536 in place 1.07–1.16, 768 × 2048 1.14–1.19), and
+the crossing lies between 17 and 18 MiB of rows, about half the L3 (where the limit now
+stands), against 24–32 MiB of rows and output out of place. Measure a limit for each placement rather than deriving one from the other.
+[X57 amendment 2](experiments/X57-epyc-1024.md).
 
 4.24 **Past the register file, a batch leaf should move each element when the codelet asks for
 it, and keep one inlined copy of the codelet.** X53's batch leaf transposes C × C blocks of C

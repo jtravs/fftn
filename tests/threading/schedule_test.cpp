@@ -687,6 +687,9 @@ TEST(Schedule, GridSizesFromCaches) {
   EXPECT_EQ(epyc86.fit_row_bytes, std::size_t{24} * 1024 * kib);
   EXPECT_EQ(xeon86.fit_row_bytes, 0U);
   EXPECT_EQ(m5.fit_row_bytes, 0U);
+  // In place only to the footprint measured (X57 amendment 2): 1024 rows of 1024, half the L3.
+  EXPECT_EQ(epyc86.fit_in_place_bytes, std::size_t{16} * 1024 * kib);
+  EXPECT_EQ(xeon86.fit_in_place_bytes, std::numeric_limits<std::size_t>::max());
   // A Bluestein stage over C copies keeps the whole line on Zen 3's class only (X62).
   EXPECT_TRUE(epyc86.bluestein_whole_lanes);
   EXPECT_FALSE(xeon86.bluestein_whole_lanes);

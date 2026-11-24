@@ -1150,13 +1150,17 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   }
   p.batch_loops = s.batches.size();
   // X57: a two-pass row plan reads 12-16 streams at once, which pays only while the batch's
-  // rows and their output stay in the cache (machine_profile::fit_row_bytes).
+  // rows and their output stay in the cache (machine_profile::fit_row_bytes; in place also
+  // fit_in_place_bytes, X57 amendment 2).
   if (s.kind == transform_kind::c2c && r == 1 && settings.profile.fit_row_bytes != 0 &&
       in.stride[0] == 1 && out.stride[0] == 1) {
     const std::size_t sides = c.in_place ? 1 : 2;
     const std::size_t touched =
         checked_product(std::array{c.lengths[0], std::size_t{2} * sizeof(T), p.transforms, sides});
-    chain.use_row_fit(c.lengths[0], touched != 0 && touched <= settings.profile.fit_row_bytes);
+    const std::size_t limit =
+        c.in_place ? std::min(settings.profile.fit_row_bytes, settings.profile.fit_in_place_bytes)
+                   : settings.profile.fit_row_bytes;
+    chain.use_row_fit(c.lengths[0], touched != 0 && touched <= limit);
   }
 
   const view in_view{.where = slot::in, .stride = in.stride, .element_bytes = in.element_bytes};
