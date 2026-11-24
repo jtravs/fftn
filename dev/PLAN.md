@@ -548,7 +548,7 @@ Left: 1024 in place at 3–16 rows still 1.03–1.05 of oneMKL on Emerald. X70 (
 of 240), in place within twice the L2 (256 rows of 1024), 1024 out of place kept at the L2 (0.858,
 0.860, 0.873 over the 18 moved cases, none slower). Its arm W (not judged) still gained in place
 at every size tried (1024 to 2048 rows 0.88–0.93; 160 and 240 to 65536 rows 0.82–0.94) and out of
-place to 16384 rows of 160 and 240 (0.84–0.94), tying or losing only at 65536 rows out of place on
+place to 16384 rows of 160 and 240 (0.85–0.94), tying or losing only at 65536 rows out of place on
 Granite and Emerald (1.00–1.03): a follow-up could drop the in-place limit for these lengths.
 
 Still open: the CI's Windows jobs install a pinned LLVM 23.1.5 (PR 81) because the runner
