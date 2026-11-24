@@ -858,6 +858,17 @@ std::span<const radix_override> fit_overrides_of(target t, std::size_t lanes) {
   return {};
 }
 
+// Two-pass plans of `avx512` double on the 2 MiB-L2 key (experiment X69: Sapphire and Granite
+// Rapids, X64's diagnosis): 32 x 32 took 0.73-0.82 of 8 x 8 x 16's time for 1024 at 1-16 rows,
+// out of place and in place, and tied at 256 rows; 8 x 20 0.80-0.84 of 4 x 4 x 10's for 160 and
+// 12 x 20 0.79-0.81 of 4 x 4 x 15's for 240 (one row). None has a plain override, so beyond the
+// limit the rules' sequence stays.
+constexpr std::array<radix_override, 3> avx512_double_large_l2_fit_overrides{
+    radix_override{.n = 160, .radices = {8, 20, 0, 0}},
+    radix_override{.n = 240, .radices = {12, 20, 0, 0}},
+    radix_override{.n = 1024, .radices = {32, 32, 0, 0}},
+};
+
 } // namespace
 
 namespace {
@@ -1063,6 +1074,13 @@ std::vector<std::size_t> rule_radices(std::size_t n, const target_profile& p, bo
   std::vector<std::size_t> out = cheapest(n, smooth, !big.empty(), p).radices;
   out.insert(out.end(), big.begin(), big.end());
   return out;
+}
+
+std::span<const radix_override> large_l2_fit_overrides(target t, std::size_t lanes) noexcept {
+  if (t == target::avx512 && lanes == 4) {
+    return avx512_double_large_l2_fit_overrides;
+  }
+  return {};
 }
 
 std::vector<std::size_t> fitting_radices(std::size_t n, const target_profile& p, bool fits) {

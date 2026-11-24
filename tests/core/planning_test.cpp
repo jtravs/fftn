@@ -301,6 +301,115 @@ TEST(FitRows, PlansFollowTheProfileField) {
   }
 }
 
+// X69: the 2 MiB-L2 key's table, `avx512` double only; beyond its limit the rules' sequence.
+TEST(FitRows, LargeL2TableRadices) {
+  using v = std::vector<std::size_t>;
+  d::target_profile p = d::profile_of(d::target::avx512, 4, d::cpu_vendor::intel);
+  EXPECT_TRUE(p.fit_overrides.empty()); // profile_of alone: no fit table on avx512
+  EXPECT_EQ(d::rule_radices(1024, p), (v{8, 8, 16}));
+  EXPECT_EQ(d::rule_radices(160, p), (v{4, 4, 10}));
+  EXPECT_EQ(d::rule_radices(240, p), (v{4, 4, 15}));
+  p.fit_overrides = d::large_l2_fit_overrides(d::target::avx512, 4);
+  EXPECT_EQ(d::fitting_radices(1024, p, true), (v{32, 32}));
+  EXPECT_EQ(d::fitting_radices(160, p, true), (v{8, 20}));
+  EXPECT_EQ(d::fitting_radices(240, p, true), (v{12, 20}));
+  for (const std::size_t n : {160U, 240U, 1024U}) {
+    EXPECT_EQ(d::fitting_radices(n, p, false), d::rule_radices(n, p)); // no plain override
+  }
+  EXPECT_TRUE(d::fitting_radices(768, p, true).empty());
+  for (const auto& [t, lanes] : std::vector<std::pair<d::target, std::size_t>>{
+           {d::target::avx512, 8},
+           {d::target::avx2, 2},
+           {d::target::avx2, 4},
+           {d::target::neon_fcma, 1},
+       }) {
+    EXPECT_TRUE(d::large_l2_fit_overrides(t, lanes).empty());
+  }
+}
+
+// X69 by the profile fields alone (set here, not the host's): on the key, rows of 1024, 160 and
+// 240 take the two-pass radices while rows and output take at most fit_row_bytes (in place the
+// rows at most fit_in_place_bytes); without the key (Zen 4 and Zen 5 under `avx512` have
+// fit_row_bytes from the large-L3 branch) the plans stay as they were.
+TEST(FitRows, LargeL2PlansWithinTheLimit) {
+  constexpr std::size_t kib = 1024;
+  const auto settings_of = [](bool key, std::size_t fit_bytes, std::size_t in_place_bytes) {
+    build_settings s;
+    s.profile.fit_large_l2 = key;
+    s.profile.fit_row_bytes = fit_bytes;
+    s.profile.fit_in_place_bytes = in_place_bytes;
+    s.profile.depth_max_bytes = 0;
+    s.profile.vendor = d::cpu_vendor::intel;
+    return s;
+  };
+  const build_settings key = settings_of(true, 2048 * kib, 1024 * kib); // Granite Rapids' L2
+  const build_settings off = settings_of(true, 0, 1024 * kib);
+  const build_settings zen = settings_of(false, 24 * 1024 * kib, 16 * 1024 * kib);
+  const auto plan = [](std::size_t n, std::size_t rows, bool in_place, const build_settings& s,
+                       fftn::isa isa) {
+    const fftn::shape<std::complex<double>, std::complex<double>> shape{
+        .dir = fftn::direction::forward,
+        .axes = {{.n = n}},
+        .batches = {{.count = rows,
+                     .in_dist = static_cast<std::ptrdiff_t>(n),
+                     .out_dist = static_cast<std::ptrdiff_t>(n)}},
+    };
+    return d::make_plan_core(d::view_of(shape), {.in_place = in_place, .force_isa = isa}, s);
+  };
+  const auto text = [&](std::size_t n, std::size_t rows, bool in_place, const build_settings& s,
+                        fftn::isa isa) { return d::describe(*plan(n, rows, in_place, s, isa)); };
+  const auto has = [](const std::string& t, const char* radices) {
+    return t.find(radices) != std::string::npos;
+  };
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    SCOPED_TRACE(fftn::isa_name(t));
+    if (std::string(fftn::isa_name(t)) != "avx512") {
+      // The key's table is empty here (avx2 included: X57's avx2 table is not used on the key).
+      EXPECT_EQ(text(1024, 3, false, key, t), text(1024, 3, false, off, t));
+      continue;
+    }
+    // Out of place, rows and output: 64 rows of 1024 (2 MiB) fit, 65 do not.
+    EXPECT_TRUE(has(text(1024, 1, false, key, t), "radices 32 x 32"));
+    EXPECT_TRUE(has(text(1024, 64, false, key, t), "radices 32 x 32"));
+    EXPECT_TRUE(has(text(1024, 65, false, key, t), "radices 8 x 8 x 16"));
+    EXPECT_EQ(text(1024, 256, false, key, t), text(1024, 256, false, off, t));
+    // In place, rows at most half the L2: the same 64 rows.
+    EXPECT_TRUE(has(text(1024, 64, true, key, t), "radices 32 x 32"));
+    EXPECT_TRUE(has(text(1024, 65, true, key, t), "radices 8 x 8 x 16"));
+    // 160 and 240 to 409 and 273 rows (2560 and 3840 bytes a row, on both sides).
+    EXPECT_TRUE(has(text(160, 409, false, key, t), "radices 8 x 20"));
+    EXPECT_TRUE(has(text(160, 410, false, key, t), "radices 4 x 4 x 10"));
+    EXPECT_TRUE(has(text(240, 273, false, key, t), "radices 12 x 20"));
+    EXPECT_TRUE(has(text(240, 274, false, key, t), "radices 4 x 4 x 15"));
+    EXPECT_TRUE(has(text(240, 1, true, key, t), "radices 12 x 20"));
+    // Off (fit_row_bytes = 0, fbench's FIT_ROW_BYTES=0) and without the key: the rules' plans.
+    for (const std::size_t n : {160U, 240U, 1024U}) {
+      EXPECT_EQ(text(n, 1, false, zen, t), text(n, 1, false, off, t));
+      EXPECT_EQ(text(n, 16, true, zen, t), text(n, 16, true, off, t));
+    }
+    EXPECT_TRUE(has(text(1024, 1, false, off, t), "radices 8 x 8 x 16"));
+    // The fitting plan is the forced sequence's plan, bit for bit.
+    build_settings forced = off;
+    forced.radices = {32, 32};
+    EXPECT_EQ(run(*plan(1024, 3, false, key, t)), run(*plan(1024, 3, false, forced, t)));
+    // A plane's rows and float keep their plans.
+    const fftn::shape<std::complex<double>, std::complex<double>> plane{
+        .dir = fftn::direction::forward,
+        .axes = {{.n = 160}, {.n = 1024}},
+        .batches = {},
+    };
+    EXPECT_EQ(d::describe(*d::make_plan_core(d::view_of(plane), {.force_isa = t}, key)),
+              d::describe(*d::make_plan_core(d::view_of(plane), {.force_isa = t}, off)));
+    const fftn::shape<std::complex<float>, std::complex<float>> single{
+        .dir = fftn::direction::forward,
+        .axes = {{.n = 1024}},
+        .batches = {},
+    };
+    EXPECT_EQ(d::describe(*d::make_plan_core(d::view_of(single), {.force_isa = t}, key)),
+              d::describe(*d::make_plan_core(d::view_of(single), {.force_isa = t}, off)));
+  }
+}
+
 // ---- Choices as text --------------------------------------------------------------------
 
 TEST(PlanChoice, TextRoundTrips) {

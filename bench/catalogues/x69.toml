@@ -1,0 +1,49 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Experiment X69 (dev/experiments/X69-intel-radices.md): the 2 MiB-L2 key's two-pass radices for
+# one-axis c2c rows of 1024 (32 x 32), 160 (8 x 20) and 240 (12 x 20) under avx512, while rows
+# and output take at most the L2 (in place: rows at most half of it). On a 2 MiB L2 the limit
+# falls between 64 and 128 rows of 1024 (out of place and in place), 256 and 1024 rows of 160
+# and 240: the cases past it keep their plans and only frame the moved ones. Double precision.
+
+[catalogue]
+name = "x69"
+
+[[group]]
+name = "x69-1024"
+note = "1024 out of place: 1-64 rows within the L2 (moved), 128-1024 rows past it"
+kind = "c2c"
+dims = [1024]
+batch = [1, 3, 16, 32, 64, 128, 256, 1024]
+direction = ["fwd", "bwd"]
+
+[[group]]
+name = "x69-1024-in-place"
+note = "1024 in place: 1-64 rows within half the L2 (moved), 128 and 256 rows past it"
+kind = "c2c"
+dims = [1024]
+batch = [1, 3, 16, 32, 64, 128, 256]
+place = "in"
+direction = ["fwd", "bwd"]
+
+[[group]]
+name = "x69-short"
+note = "160 and 240: 1-256 rows within the L2 (moved), 1024 rows past it"
+kind = "c2c"
+dims = [160, 240]
+batch = [1, 16, 256, 1024]
+
+[[group]]
+name = "x69-short-bwd"
+kind = "c2c"
+dims = [160, 240]
+batch = [1]
+direction = ["bwd"]
+
+[[group]]
+name = "x69-short-in-place"
+kind = "c2c"
+dims = [160, 240]
+batch = [1, 16]
+place = "in"

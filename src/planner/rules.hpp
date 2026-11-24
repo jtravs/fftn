@@ -143,6 +143,13 @@ struct target_profile {
 [[nodiscard]] std::vector<std::size_t> fitting_radices(std::size_t n, const target_profile& p,
                                                        bool fits);
 
+// The fit table of the 2 MiB-L2 key (machine_profile::fit_large_l2, experiment X69) for target
+// t with `lanes` complex lanes: on that key a plan's target_profile::fit_overrides is this
+// table instead of profile_of's (core/plan_core.cpp). `avx512` double lists 160, 240 and 1024;
+// every other target and precision has none.
+[[nodiscard]] std::span<const radix_override> large_l2_fit_overrides(target t,
+                                                                     std::size_t lanes) noexcept;
+
 // Up to k radix sequences for n, in pass order: rule_radices' first, then the cheapest
 // others by the profile's pass costs (cost, then lexicographic order), without repeats.
 // Measured planning (core/candidates.cpp) times them; a pure function like rule_radices.
