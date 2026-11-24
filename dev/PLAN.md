@@ -550,8 +550,13 @@ Emerald Rapids passes the exit check (5 rows beyond noise ÷ FFTW, 6 ÷ oneMKL, 
 `avx512` in double, one-axis c2c rows of 1024, 160 and 240 take 32 × 32, 8 × 20 and 12 × 20 while
 rows and output fit the L2 (0.796, 0.780 and 0.800 of the time over the 32 moved cases on
 Sapphire, Granite and Emerald Rapids, none slower; ÷ FFTW 0.79–0.82, ÷ oneMKL 0.82–0.84 there).
-Left: 1024 in place at 3–16 rows still 1.03–1.05 of oneMKL on Emerald; a higher limit for 1024 in
-place and for 160 and 240 gained 0.82–0.94 more (arm W, not judged).
+Left: 1024 in place at 3–16 rows still 1.03–1.05 of oneMKL on Emerald. X70 (USD 0.54; campaign
+15.55 of 20) raised the limits: rows and output within four times the L2 (1638 rows of 160, 1092
+of 240), in place within twice the L2 (256 rows of 1024), 1024 out of place kept at the L2 (0.858,
+0.860, 0.873 over the 18 moved cases, none slower). Its arm W (not judged) still gained in place
+at every size tried (1024 to 2048 rows 0.88–0.93; 160 and 240 to 65536 rows 0.82–0.94) and out of
+place to 16384 rows of 160 and 240 (0.85–0.94), tying or losing only at 65536 rows out of place on
+Granite and Emerald (1.00–1.03): a follow-up could drop the in-place limit for these lengths.
 
 Still open: the CI's Windows jobs install a pinned LLVM 23.1.5 (PR 81) because the runner
 image's LLVM is older than its Visual Studio needs.
@@ -969,7 +974,7 @@ running, done (with verdict).
 | X67 | Fusion: row convolution pipeline against three separate calls (task 5.2; ID reserved) | 5 | planned |
 | X68 | Fusion: the free-space stage as three objects against today's route, time and DRAM traffic; does an (x, ω) slab grouping justify a multi-axis pipeline? (task 5.3; ID reserved) | 5 | planned |
 | [X69](experiments/X69-intel-radices.md) | On the 2 MiB-L2 key under `avx512` (Sapphire, Emerald, Granite Rapids), one-axis c2c rows of 1024, 160 and 240 as two passes (32 × 32, 8 × 20, 12 × 20) while rows and output fit the L2 (X57's fit overrides on that key): do they pass X64's adopt rule on Sapphire and Granite and its reach rule on Emerald? | 1 | done: adopted (Sapphire 0.796, Granite 0.780, Emerald 0.800, none slower; ÷ FFTW 0.79–0.82 and ÷ oneMKL 0.82–0.84 on the moved cases) |
-| [X70](experiments/X70-large-l2-limits.md) | X69's follow-up on the 2 MiB-L2 key under `avx512`: rows of 1024 in place within twice the L2 and rows of 160 and 240 within four times the L2 (in place twice), 1024 out of place keeping the L2 (`fit_long_row_bytes`): do they pass X69's adopt rule on Sapphire and Granite and its reach rule on Emerald, and where do the gains stop? | 1 | planned |
+| [X70](experiments/X70-large-l2-limits.md) | X69's follow-up on the 2 MiB-L2 key under `avx512`: rows of 1024 in place within twice the L2 and rows of 160 and 240 within four times the L2 (in place twice), 1024 out of place keeping the L2 (`fit_long_row_bytes`): do they pass X69's adopt rule on Sapphire and Granite and its reach rule on Emerald, and where do the gains stop? | 1 | done: adopted (Sapphire 0.858, Granite 0.860, Emerald 0.873 over 18 moved cases, none slower); two-pass still won past the new limits in place (arm W) |
 | [X71](experiments/X71-twiddle-generation.md) | Planning time: twiddle tables by octant symmetry, root tables shared across lengths n 2^k, the grid's roots through a cache, all bit for bit the old tables: do the client catalogue's long real rows plan in under 10 ms on the Mac, the EPYC and the Xeon? | client (4) | done: adopted (client catalogue plan time 0.22–0.23 of before; worst shape Mac 2.7, EPYC 5.1, Xeon 5.7 ms; tables unchanged bit for bit) |
 | [X56](experiments/X56-exit-4.md) | The phase 1 exit check on `main` after X49–X57: EPYC at fa155c9, Mac and Xeon at X53's code (71307e0), then the cloud cores | 1 | done: the phase 1 exit met on all nine machines (local: EPYC ÷ FFTW 6 of 193; cloud: Zen 5 5, Axion 1, Granite Rapids 7, Sapphire Rapids 7, Ice Lake 0 after X58; oneMKL at most 9) |
 | [X57](experiments/X57-epyc-1024.md) | The EPYC's last exit-check cases: are 72 and 120's 5–6 % since 8c18dd2 a regression, and can 1024's radix choice see the plan's data? | 1 | done: 72 and 120 are code placement; B adopted (768 and 1024 two-pass rows while rows and output fit 3/4 of L3: moved cases 0.88, tracking 0.989, EPYC beyond noise 9 → 4 of 193); C (64-byte `avx2` functions) rejected (0.999, 1024 × 3 1.04–1.06); amendment 2: B's in-place limit measured, lost from 18 MiB, capped at half the L3 (16 MiB, 1024 rows of 1024) |
