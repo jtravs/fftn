@@ -258,8 +258,9 @@ struct machine_profile {
   // two; core/plan_core.cpp). X57's amendment 2 on the EPYC 7763: in place 16 x 64 took 0.97
   // (forward) and 1.00 (backward) of 4 x 16 x 16's time at 1100 rows of 1024 points (17.2 MiB),
   // 1.07-1.16 at 1280 and 1536 rows (20 and 24 MiB); 12 x 64 1.00 and 1.05 of 4 x 12 x 16's at
-  // 1536 rows of 768 (18 MiB), 1.14-1.19 at 2048 (24 MiB). set_grid_sizes sets 275/512 of the
-  // L3 on the EPYC class, 17.2 MiB there: the largest in-place footprint measured to win.
+  // 1536 rows of 768 (18 MiB), 1.14-1.19 at 2048 (24 MiB). set_grid_sizes sets half the L3 on
+  // the EPYC class, 16 MiB there: 1024 rows of 1024, the footprint X57's runs 1 and 2 measured
+  // (the maintainer's decision; 1100 rows gained too little to keep).
   std::size_t fit_in_place_bytes = std::numeric_limits<std::size_t>::max();
   // A lanes column phase whose column elements lie less than a page apart keeps its block's
   // two scratch tiles within this (core/plan_core.cpp, column_block; X40). set_grid_sizes
