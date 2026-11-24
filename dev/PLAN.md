@@ -36,6 +36,22 @@ under half the L1, a stage over C copies keeping the whole line: 1013–1021 and
 time (1018 ÷ FFTW 0.98). Left: 2048 (kernel cost), 1024 backward, 72/100/120 (placement); the EPYC
 had 4 cases beyond noise against FFTW in the judging run, where `main` had 9.
 
+Client catalogue check (2026-11-24, `main` d4b169f, branch `dev/client-check`): the client
+application's 52 tracking shapes with their measured weights, FFTN ÷ FFTW (MEASURE, its own
+threads), weighted geometric mean at one thread / at the client's per-shape widths on its full
+budget: Mac M5 Max 0.85 / 0.80 (6 cores), Xeon 6240 0.88 / 0.81 (8) and 0.74 (16), EPYC 7763
+1.00 / 0.905 (8) and 0.82 (16), against targets of 0.95 / 0.90. Every shape at the full width:
+0.66, 0.64 / 0.48, 0.65 / 0.55. No machine meets the tail limit (no shape above 1.02): real rows
+of 6144–20480 points on Zen 3 (1.05–1.14 at one thread; 40 % of the weight), real rows of
+32768–40960 points everywhere (1.19–1.44), c2c rows of 3072–5120 on Zen 3 (1.06–1.12),
+out-of-place c2c row batches at 16 threads on Zen 3 (1.27–1.49), 16384-point rows at 4–8
+threads on the Xeon (1.07–1.16), in-place 384² planes at 8 threads on Zen 3 (1.08–1.11). Plans
+take 1–2 ms per shape in the median, but real rows of 18432 points and more take 10–29 ms on
+x86, mostly building twiddle tables. Runs 20261124-102656-dadb, -110613-be23 (Mac),
+-103457-da59, -104940-3dec, -112531-9236 (Xeon), -102950-017c, -103014-bb67, -103024-3307
+(EPYC). Next, by weight × excess: real rows on Zen 3, long real rows, wide-team row batches,
+twiddle generation. The AArch64 Linux leg is pending (lead).
+
 ### Where FFTN stands
 
 Tracking tier, one thread, FFTN's time ÷ FFTW's (geometric mean; below 1 is faster), all
