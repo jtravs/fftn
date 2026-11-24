@@ -164,6 +164,17 @@ constexpr std::array size_fields{
         .key = "LONG_CONVOLUTION_BYTES",
         .member = &fftn::detail::machine_profile::long_convolution_bytes,
     },
+    // FFTN_X_SCREEN1124: campaign-only options of the cloud reach screen (branch
+    // exp/cloud-screen-1124, never merged; dev/KNOBS.toml): X50's convolution limit and X63's
+    // packed c2r threshold set per arm (C2R_PACKED_BYTES=never: the workspace block).
+    size_field{
+        .key = "DEPTH_CONVOLUTION_MAX_BYTES",
+        .member = &fftn::detail::machine_profile::depth_convolution_max_bytes,
+    },
+    size_field{
+        .key = "C2R_PACKED_BYTES",
+        .member = &fftn::detail::machine_profile::c2r_packed_bytes,
+    },
 };
 constexpr std::array int_fields{
     int_field{
@@ -202,6 +213,15 @@ inline bool apply_tuning(fftn::detail::build_settings& s, std::string_view key,
   if (key == "BLUESTEIN_WHOLE_LANES") {
     if (value == "0" || value == "1") {
       s.profile.bluestein_whole_lanes = value == "1";
+    } else {
+      error = bad + " (0 or 1)";
+    }
+    return true;
+  }
+  // FFTN_X_SCREEN1124: X58's batch leaf of 12 (machine_profile::batch_leaf_12) per arm.
+  if (key == "BATCH_LEAF_12") {
+    if (value == "0" || value == "1") {
+      s.profile.batch_leaf_12 = value == "1";
     } else {
       error = bad + " (0 or 1)";
     }

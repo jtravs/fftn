@@ -1,0 +1,65 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Cloud screen 2026-11-24, part A (campaign branch exp/cloud-screen-1124, never merged): recent
+# Intel against oneMKL. The Bluestein rows whose convolution X50's depth-first chains could take
+# on a private L2 of 2 MiB (convolutions of 32768 points (L2/4) to 2^21 points (32 MiB)), the
+# Rader and short controls, and the exit check's remaining recent-Intel cases (X56): 160, 240,
+# 384, the 1024 family, 32 x 16 and 32 x 256, 1000 in place. Double precision, out of place unless
+# a group says otherwise.
+
+[catalogue]
+name = "s1124a"
+
+[[group]]
+name = "a-bluestein"
+note = "X50 on Sapphire/Granite/Emerald Rapids: convolutions of 32768 points (16381) to 2^21 (999983)"
+kind = "c2c"
+dims = [4093, 8191, 16381, 16411, 32749, 65519, 131071, 196613, 262139, 400009, 524287, 999983]
+batch = [1]
+
+[[group]]
+name = "a-controls"
+note = "Rader (65537) and a short Bluestein copy line (1018): plans the convolution limit leaves"
+kind = "c2c"
+dims = [65537, 1018]
+batch = [1]
+
+[[group]]
+name = "a-short"
+kind = "c2c"
+dims = [160, 240, 384]
+batch = [1]
+
+[[group]]
+name = "a-1024"
+kind = "c2c"
+dims = [1024]
+batch = [1, 3, 16, 256, 1024]
+
+[[group]]
+name = "a-1024-bwd"
+kind = "c2c"
+dims = [1024]
+batch = [1, 3]
+direction = ["bwd"]
+
+[[group]]
+name = "a-1024-in-place"
+kind = "c2c"
+dims = [1024]
+batch = [1, 3, 16]
+place = "in"
+
+[[group]]
+name = "a-32"
+kind = "c2c"
+dims = [32]
+batch = [16, 256]
+
+[[group]]
+name = "a-1000-in-place"
+kind = "c2c"
+dims = [1000]
+batch = [1]
+place = "in"

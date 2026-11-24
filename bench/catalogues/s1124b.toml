@@ -1,0 +1,30 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Cloud screen 2026-11-24, part B (campaign branch exp/cloud-screen-1124, never merged): X58's
+# batch leaf of 12 on Emerald Rapids (2 MiB of private L2, so `batch_leaf_12` false by X58's
+# key). The leaf exists from 8 rows (X53, `avx512` double); 12 x 2-4 are controls the key does
+# not move.
+
+[catalogue]
+name = "s1124b"
+
+[[group]]
+name = "b-12"
+kind = "c2c"
+dims = [12]
+batch = [2, 4, 8, 16, 32, 64, 256, 1024]
+
+[[group]]
+name = "b-12-bwd"
+kind = "c2c"
+dims = [12]
+batch = [16, 64]
+direction = ["bwd"]
+
+[[group]]
+name = "b-12-in-place"
+kind = "c2c"
+dims = [12]
+batch = [16, 64]
+place = "in"

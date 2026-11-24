@@ -9,3 +9,11 @@
 # owner = "name"
 # experiment = "X1"
 # expires = "2026-12-01"
+
+# Campaign branch exp/cloud-screen-1124 only (never merged): the fbench options
+# DEPTH_CONVOLUTION_MAX_BYTES, C2R_PACKED_BYTES and BATCH_LEAF_12 of the cloud reach screen
+# (bench/backends/fftn_tuning.hpp). Not library switches; registered so that they expire.
+[FFTN_X_SCREEN1124]
+owner = "lead"
+experiment = "cloud reach screen 2026-11-24"
+expires = "2026-12-24"
