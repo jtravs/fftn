@@ -157,7 +157,16 @@ fi
 if stage tidy; then
   say "clang-tidy $CLANG_TIDY_VERSION"
   if have_preset check-tidy; then
-    FFTN_CLANG_TIDY="uvx;clang-tidy==$CLANG_TIDY_VERSION" preset check-tidy
+    FFTN_CLANG_TIDY="uvx;clang-tidy==$CLANG_TIDY_VERSION" configure check-tidy
+    # Every unit is read before the stage fails (ninja -k 0), so that one run lists every
+    # finding: the first weekly run stopped at the first failing units and showed three of
+    # some 150.
+    if ! cmake --build --preset check-tidy -j "$jobs" -- -k 0 >> build/check-tidy.log 2>&1; then
+      grep -E ": (error|warning): " build/check-tidy.log | sort -u | head -300 || true
+      echo "build of preset check-tidy failed: build/check-tidy.log"
+      exit 1
+    fi
+    ctest --preset check-tidy --output-on-failure
   else skip "no check-tidy preset"; fi
 fi
 
