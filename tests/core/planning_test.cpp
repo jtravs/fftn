@@ -234,6 +234,7 @@ TEST(FitRows, PlansFollowTheProfileField) {
     build_settings settings;
     settings.profile.fit_row_bytes = fit_bytes;
     settings.profile.fit_in_place_bytes = in_place_bytes;
+    settings.profile.fit_large_l2 = false; // X57's table, whatever the host (X69's key)
     settings.profile.depth_max_bytes = 0;
     settings.profile.vendor = d::cpu_vendor::amd; // 768's override is AMD's (DESIGN.md 13.5)
     const fftn::shape<std::complex<double>, std::complex<double>> shape{
@@ -279,6 +280,7 @@ TEST(FitRows, PlansFollowTheProfileField) {
     // The fitting plan is the forced sequence's plan, bit for bit.
     build_settings fit;
     fit.profile.fit_row_bytes = 96 * kib;
+    fit.profile.fit_large_l2 = false;
     fit.profile.depth_max_bytes = 0;
     fit.profile.vendor = d::cpu_vendor::amd;
     build_settings forced = fit;
