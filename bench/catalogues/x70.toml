@@ -1,0 +1,51 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Experiment X70 (dev/experiments/X70-large-l2-limits.md): higher limits for X69's two-pass rows
+# on the 2 MiB-L2 key under avx512 (1024 = 32 x 32, 160 = 8 x 20, 240 = 12 x 20). On a 2 MiB L2:
+# 1024 in place to 256 rows (X69: 64), 160 to 1638 rows and 240 to 1092 rows in either placement
+# (X69: 409 and 273); 1024 out of place keeps 64 rows. The cases between X69's limits and the new
+# ones move; the held-out cases past the new limits (8 to 320 MiB) keep their plans and place the
+# crossing with the informative all-two-pass arm. Double precision.
+
+[catalogue]
+name = "x70"
+
+[[group]]
+name = "x70-1024-in-place"
+note = "1024 in place: 128-256 rows within twice the L2 (moved), 512-2048 rows past it"
+kind = "c2c"
+dims = [1024]
+batch = [128, 192, 256, 512, 1024, 2048]
+place = "in"
+direction = ["fwd", "bwd"]
+
+[[group]]
+name = "x70-1024"
+note = "1024 out of place past the L2: keeps X69's limit (framing)"
+kind = "c2c"
+dims = [1024]
+batch = [128, 256]
+
+[[group]]
+name = "x70-160"
+note = "160: 512-1536 rows within four times the L2 (moved), 4096-65536 rows past it"
+kind = "c2c"
+dims = [160]
+batch = [512, 1024, 1536, 4096, 16384, 65536]
+place = ["out", "in"]
+
+[[group]]
+name = "x70-240"
+note = "240: 512 and 1024 rows within four times the L2 (moved), 4096-65536 rows past it"
+kind = "c2c"
+dims = [240]
+batch = [512, 1024, 4096, 16384, 65536]
+place = ["out", "in"]
+
+[[group]]
+name = "x70-short-bwd"
+kind = "c2c"
+dims = [160, 240]
+batch = [1024]
+direction = ["bwd"]
