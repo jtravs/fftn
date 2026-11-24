@@ -1363,7 +1363,10 @@ to 8, on `avx2`:
   (Zen 3; Zen 4 and Zen 5, 1 MiB and `avx512`, keep their plans: unmeasured), for lengths
   that are not powers of two, from L2/4 to 4 L2, power-of-two part above L1/4,
   one top of 4 (X51: 12288–122880 and 46080 0.63–0.79; tops of 16 lost 1.2–1.7 on `avx2`'s
-  16 registers; powers of two tied or lost against X32's chains).
+  16 registers; powers of two tied or lost against X32's chains). On this profile alone an even
+  real row out of place, contiguous, in double, runs its half-length transform on the same
+  chain where a c2c row of that length would be one (`machine_profile::depth_real_max_bytes`,
+  section 9.1; X72: real rows of 18432–245760, RESULT).
 - x86-64 with a private L2 of 2 MiB or more (X55, Granite Rapids): the Xeon 6240's fields,
   from L2/4 to 64 L2 with tops 16, 20 and 10, double only (32768–2^22 and 46080, 100000:
   0.44–0.82 of the grids' time, 0.688 over the rows it changes; 2^21 tied). Sapphire and
@@ -1608,6 +1611,13 @@ Routes, by `real_route`:
   not fused (radices ≤ 8 read the arrays directly and keep the separate pass), and not on
   `avx2` (the EPYC gained nothing; build_settings::r2c_pair_last forces it): Mac r2c rows
   0.94–0.98 of the separate route's time, Xeon `avx512` 262144 and 2²⁰ 0.94–0.97.
+- *Depth-first*: on Zen 3's class (`machine_profile::depth_real_max_bytes`, X72) an even real
+  row of one axis out of place, contiguous on both sides, whose half length the c2c rows'
+  depth-first rule takes (section 8.5) runs that half length as the depth-first chain: r2c
+  reads its reals as h complex values into the chain, whose blocks and result are in the
+  output, then pairs there in a separate pass; c2r pairs from the input into the workspace
+  block (h complex values), from which the chain's first pass reads the whole line before its
+  sub-rows run. Instead of the breadth-first chain or, from L2/2, the half-length grid.
 - *Strided*: a line with a stride other than 1 (allowed out of place) packs its reals into
   scratch and pairs at any stride, one element at a time, as before task 2.1.
 - *Full*: odd n through the full-length complex chain, as before (X6).
@@ -2538,12 +2548,12 @@ and on `avx2` a rule measured only on AMD's cores would otherwise reach Intel co
 the `avx2` rules measured only on the EPYC 7763 and keyed by the target alone apply only where
 the vendor is AMD; every other vendor, unknown included, keeps the plans `avx2` had before them
 until it is measured (the maintainer, 2026-11-24). They are X26's copies without prefetch, the
-radix overrides of X30 (512), X42 (500–25000) and X54 (768; float 512–4096), and the batch
-leaves of X53 and X62 (`planner/rules.cpp`, `profile_of`; `core/plan_core.cpp`,
+radix overrides of X30 (512), X42 (500–25000), X54 (768; float 512–4096) and X72 (3072,
+3200, 4608, 5120), and the batch leaves of X53 and X62 (`planner/rules.cpp`, `profile_of`; `core/plan_core.cpp`,
 `copies_prefetch`). Rules keyed by a cache key keep reaching what the key matches (AGENTS.md
 section 6): X57's footprint rule (accepted for other `avx2` cores with a large L3) and the Zen 3
 class's rules (X51's tops of 4, X59's fair runs, X62's Bluestein limit, X63's packed c2r
-intermediate), which an Intel core with a private L2 under 1 MiB and at least 2 MiB of L3 per
+intermediate, X72's depth-first half lengths), which an Intel core with a private L2 under 1 MiB and at least 2 MiB of L3 per
 CPU (a four-core client part, a small VM) would also match. One cache key reads the vendor:
 X63's packed c2r planes on the Xeon 6240's class (`avx512`, from the L2) apply to Intel's cores
 only, since the key also reaches Zen 4 (Zen 4c with SMT, Zen 4 VMs reporting a small L3 per
