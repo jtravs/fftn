@@ -655,8 +655,12 @@ TEST(Measure, BudgetDefaultsAndValidationDoNotDependOnTheEffort) {
   const auto shape = fftn::rows_c2c<double>(4096, 4, fftn::direction::forward);
   EXPECT_EQ(fftn::options{}.measure_seconds, 0.0);
   EXPECT_EQ(fftn::options{}.measure_scratch_bytes, 0U);
-  const auto core = d::make_plan_core(d::view_of(shape), {.effort = fftn::planning::quick});
-  EXPECT_GE(core->candidates_timed, 2U); // the default budget is room for more than one
+  // The default budget is the effort's own, room for more than one candidate. Measure's
+  // (10 s) leaves that room anywhere; quick's 0.1 s did not on a coverage build in CI (run
+  // 45379782870: 0 timed), where building the rules' plan took more than the half of the
+  // budget in which other candidates are admitted.
+  const auto core = d::make_plan_core(d::view_of(shape), {.effort = fftn::planning::measure});
+  EXPECT_GE(core->candidates_timed, 2U);
   EXPECT_THROW(static_cast<void>(fftn::c2c_plan<double>(shape, {.measure_seconds = -1})),
                std::invalid_argument);
 }
