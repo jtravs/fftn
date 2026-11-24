@@ -4,7 +4,9 @@
 // The claiming engine (DESIGN.md 13.3): what one member of a team does in one execution
 // with completion::all. Members claim work rather than wait for each other:
 //
-// 1. Whole tasks of its own cache group, in runs, from the group's counter.
+// 1. Whole tasks of its own cache group, in runs, from the group's counter; or, where the
+//    profile anchors them (machine_profile::anchored_runs, X73), from its own range of them
+//    first, then from the other members' ranges.
 // 2. The split tasks of its group: it joins one (at most `cap` members each) and claims
 //    its chunks in order, in runs within one phase (a share of the phase's chunks left,
 //    shrinking to single chunks; X52). A chunk of phase p runs once every chunk of phase

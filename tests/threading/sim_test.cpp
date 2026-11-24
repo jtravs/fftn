@@ -392,4 +392,37 @@ TEST(Pathologies, MemberThatNeverArrives) {
   EXPECT_FALSE(ours.deadlocked);
 }
 
+// Whole transforms anchored to members (machine_profile::anchored_runs, X73): the ranges of a
+// member that never arrives, and of one that arrives late, are taken by the others in runs, so
+// the batch finishes about as soon as the members present can share it, with serial bits.
+TEST(Pathologies, AnchoredRangesOfAbsentAndLateMembers) {
+  const sim::cost_model costs;
+  const team_case c = default_rows(1024, 96);
+  fftn::detail::machine_profile anchored = defaults();
+  anchored.anchored_runs = true;
+  std::vector<sim::member_spec> members(8);
+  members[5].arrives = false;
+  const double serial = serial_ns(c, costs);
+  members[2].arrive_ns = serial / 12; // half way through the others' share
+  const sim::sim_setup setup{
+      .lanes = 8,
+      .group_size = 4,
+      .how = sim::order::timed,
+      .seed = 0,
+      .costs = costs,
+      .members = members,
+      .executions = 2,
+      .profile = &anchored,
+  };
+  const sim::sim_result r = sim::simulate_engine(c, setup);
+  EXPECT_FALSE(r.deadlocked);
+  EXPECT_TRUE(r.problems.empty());
+  for (const auto& out : r.outputs) {
+    EXPECT_EQ(out, fftn::test::serial_result(c));
+  }
+  report("1024 x 96 anchored on 8 lanes, one absent, one late", 0, r.done_at, serial);
+  // Two executions back to back on one clock, each shared by the six members present.
+  EXPECT_LT(r.done_at, 2 * 1.3 * (serial / 6));
+}
+
 } // namespace

@@ -2426,7 +2426,13 @@ group, the other groups' rows are therefore still done, as whole rows.
 As built (`src/threading/engine.hpp`, task 3.1):
 
 - **Claiming.** A member claims its group's whole tasks in runs (a share of what is left,
-  shrinking to single tasks at the end), then joins its group's split tasks (at most `cap`
+  shrinking to single tasks at the end). On Zen 3's class the whole tasks are anchored
+  (`machine_profile::anchored_runs`, X73): the group's tasks are cut into one contiguous range
+  per member dealt, in order of rank, and a member claims its own range first, in runs of half
+  what is left of it, then runs of the others' ranges. A member then runs the same tasks in every
+  execution, so a batch beyond the caches stays in the caches of the cores that ran it, which
+  arrival-order runs defeat when threads are unpinned and the team's assumed cache groups are not
+  the real ones. Then it joins its group's split tasks (at most `cap`
   members each, members starting on different tasks) and claims their chunks in order,
   in runs within one phase (a share of the phase's chunks left, at most left / (2 × cap),
   shrinking to single chunks; X52), or, for a column phase of a plane whose neighbouring
