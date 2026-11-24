@@ -80,3 +80,40 @@ note = "the client catalogue's long real rows"
 kind = ["r2c", "c2r"]
 dims = [40960]
 batch = [6]
+
+[[group]]
+name = "x72-overrides-c2c"
+note = "c2c rows of the four lengths arm B gives overrides, batches and both directions"
+kind = "c2c"
+dims = [3072, 3200, 4608, 5120]
+batch = [1, 4, 64]
+direction = ["fwd", "bwd"]
+
+[[group]]
+name = "x72-overrides-c2c-in-place"
+kind = "c2c"
+dims = [3072, 3200, 4608, 5120]
+batch = [1, 16]
+place = "in"
+
+[[group]]
+name = "x72-overrides-depth"
+note = "depth-first chains whose sub-rows are those lengths (c2c 4 x m; real rows through arm A)"
+kind = "c2c"
+dims = [12288, 12800, 18432, 20480]
+
+[[group]]
+name = "x72-overrides-depth-real"
+kind = ["r2c", "c2r"]
+dims = [25600, 36864]
+
+[[group]]
+name = "x72-overrides-bluestein"
+note = "primes whose Bluestein convolution may take one of those lengths"
+kind = "c2c"
+dims = [1543, 1601, 2053, 2311, 2551]
+
+[[group]]
+name = "x72-overrides-planes"
+kind = "c2c"
+dims = ["8x3072", "3200x8"]
