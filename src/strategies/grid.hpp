@@ -49,11 +49,14 @@
 #pragma once
 
 #include "core/program.hpp"
+#include "core/twiddles.hpp"
 #include "isa/kernel_table.hpp"
 #include "strategies/chain.hpp"
 
 #include <array>
+#include <complex>
 #include <cstddef>
+#include <map>
 #include <string>
 #include <utility>
 #include <vector>
@@ -178,6 +181,9 @@ private:
   bool fused_;
   std::size_t phase_radix_;
   std::size_t prefetch_; // the first index of the copies' kernels
+  // Entry m of the root table of n (unit_root), from one cache per n.
+  std::complex<T> root(int sign, std::size_t m, std::size_t n);
+  std::map<std::size_t, root_cache<T>> roots_;
 };
 
 extern template class grid_builder<double>;

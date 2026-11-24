@@ -18,6 +18,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <tuple>
@@ -201,10 +202,29 @@ std::string chain_builder<T>::radix_text(std::size_t n, const std::vector<std::s
 
 template <class T> const std::vector<std::complex<T>>& chain_builder<T>::roots(std::size_t n) {
   auto it = roots_.find(n);
-  if (it == roots_.end()) {
-    it = roots_.emplace(n, unit_roots<T>(-1, n)).first;
+  if (it != roots_.end()) {
+    return it->second;
   }
-  return it->second;
+  // Entry m 2^k of the table of n 2^k is entry m of this one, bit for bit (core/twiddles.hpp),
+  // so a table already built for such a length is sliced (a real row's chain of n / 2 after
+  // its pairing twiddles of n), and one of n / 2 provides the even entries.
+  for (const auto& [len, w] : roots_) {
+    if (len > n && len % n == 0 && std::has_single_bit(len / n)) {
+      const std::size_t step = len / n;
+      std::vector<std::complex<T>> sliced(n);
+      for (std::size_t m = 0; m < n; ++m) {
+        sliced[m] = w[m * step];
+      }
+      return roots_.emplace(n, std::move(sliced)).first->second;
+    }
+  }
+  if (n % 2 == 0) {
+    if (const auto half = roots_.find(n / 2); half != roots_.end()) {
+      return roots_.emplace(n, unit_roots<T>(-1, n, std::span<const std::complex<T>>(half->second)))
+          .first->second;
+    }
+  }
+  return roots_.emplace(n, unit_roots<T>(-1, n)).first->second;
 }
 
 // Converts interleaved twiddles to the target's storage, per lane or broadcast, and keeps

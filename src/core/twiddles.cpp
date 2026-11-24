@@ -8,12 +8,14 @@
 
 #include "core/twiddles.hpp"
 
+#include <array>
 #include <cassert>
 #include <cmath>
 #include <complex>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <span>
 #include <vector>
 
 namespace fftn::inline v0::detail {
@@ -116,21 +118,14 @@ void sin_cos(dd t, dd& sine, dd& cosine) {
   cosine = sum;
 }
 
-// cos and sin of 2 pi m / n, for 2 m <= n < 2^60: the callers mirror the second half of the
-// circle onto the first, so the octant is at most 4.
-void root(std::uint64_t m, std::uint64_t n, dd& c, dd& s) {
-  assert(2 * m <= n);
-  // 2 pi m / n = (pi / 4)(o + r / n): octant o, remainder r < n, all in integers. In odd
-  // octants the angle is measured back from the octant's end, (pi / 4)(n - r) / n, so the
-  // series is always evaluated on [0, pi / 4] and the octant boundaries are exact.
-  const std::uint64_t eighths = 8 * m;
-  const std::uint64_t o = eighths / n;
-  const std::uint64_t r = eighths - o * n;
-  const bool odd = (o & 1U) != 0;
-  const dd t = quarter_pi * (from_integer(odd ? n - r : r) / from_integer(n));
-  dd st;
-  dd ct;
-  sin_cos(t, st, ct);
+// The angle (pi / 4) j / n, 0 <= j <= n, on which the series are evaluated.
+dd reduced_angle(std::uint64_t j, std::uint64_t n) {
+  return quarter_pi * (from_integer(j) / from_integer(n));
+}
+
+// cos and sin of an angle in octant o (0 to 4), from the sine st and cosine ct of its
+// reduced angle (root() below).
+void place(std::uint64_t o, dd st, dd ct, dd& c, dd& s) {
   switch (o) {
   case 0:
     c = ct;
@@ -155,6 +150,23 @@ void root(std::uint64_t m, std::uint64_t n, dd& c, dd& s) {
   }
 }
 
+// cos and sin of 2 pi m / n, for 2 m <= n < 2^60: the callers mirror the second half of the
+// circle onto the first, so the octant is at most 4.
+void root(std::uint64_t m, std::uint64_t n, dd& c, dd& s) {
+  assert(2 * m <= n);
+  // 2 pi m / n = (pi / 4)(o + r / n): octant o, remainder r < n, all in integers. In odd
+  // octants the angle is measured back from the octant's end, (pi / 4)(n - r) / n, so the
+  // series is always evaluated on [0, pi / 4] and the octant boundaries are exact.
+  const std::uint64_t eighths = 8 * m;
+  const std::uint64_t o = eighths / n;
+  const std::uint64_t r = eighths - o * n;
+  const bool odd = (o & 1U) != 0;
+  dd st;
+  dd ct;
+  sin_cos(reduced_angle(odd ? n - r : r, n), st, ct);
+  place(o, st, ct, c, s);
+}
+
 template <class T> T round_once(dd v);
 
 // hi + lo is normalised (|lo| <= half an ulp of hi), so hi is the nearest double.
@@ -177,25 +189,98 @@ template <> float round_once<float>(dd v) {
   return f;
 }
 
+// Entry m (2 m <= n) of the table from the cosine and sine of its angle, and its mirror
+// n - m: exp(-2 pi i (n - m) / n) is the exact conjugate of exp(-2 pi i m / n).
+template <class T>
+void set_entry(std::complex<T>* w, int sign, std::size_t n, std::size_t m, dd c, dd s) {
+  const T re = round_once<T>(c);
+  const T im = round_once<T>(sign < 0 ? -s : s);
+  w[m] = {re, im};
+  if (m != 0 && m != n - m) {
+    w[n - m] = {re, -im};
+  }
+}
+
+// Entry m (2 m <= n, m even) copied from the table of n / 2, and its mirror.
+template <class T>
+void copy_entry(std::complex<T>* w, std::size_t n, std::size_t m, const std::complex<T>* half) {
+  w[m] = half[m / 2];
+  if (m != 0 && m != n - m) {
+    w[n - m] = {w[m].real(), -w[m].imag()};
+  }
+}
+
+// The table: the first half computed, the second mirrored. Given `half`, the table of n / 2
+// (n even) of the same sign, the even entries are copied from it: root(2 m, n) is
+// root(m, n / 2) with every operand of every operation scaled by two, which changes no
+// rounding, so the two are equal bit for bit.
+//
+// For n divisible by 8 the first half's reduced angles lie on the grid (pi / 4)(8 i / n),
+// i = 0 .. p with p = n / 8, and four entries share each one (octant symmetry): m = i,
+// 2p - i, 2p + i and 4p - i, in octants m / p = 0, 1, 2 and 3 (at i = 0: m = 0, 2p, 4p; at
+// i = p: m = p, 3p). The sine and cosine of each grid angle are computed once, from the
+// same operands as root() would compute them for each of those m, and placed by root()'s
+// octant rule: the table is bit for bit the one root() gives entry by entry, for a quarter
+// of the series evaluations. The m of one i have the parity of i.
+template <class T>
+std::vector<std::complex<T>> build_table(int sign, std::size_t n, const std::complex<T>* half) {
+  std::vector<std::complex<T>> table(n);
+  std::complex<T>* w = table.data();
+  const auto nn = static_cast<std::uint64_t>(n);
+  if (n % 8 != 0) {
+    for (std::size_t m = 0; 2 * m <= n; ++m) {
+      if (half != nullptr && m % 2 == 0) {
+        copy_entry(w, n, m, half);
+        continue;
+      }
+      dd c;
+      dd s;
+      root(static_cast<std::uint64_t>(m), nn, c, s);
+      set_entry(w, sign, n, m, c, s);
+    }
+    return table;
+  }
+  const std::size_t p = n / 8;
+  for (std::size_t i = 0; i <= p; ++i) {
+    std::array<std::size_t, 4> ms{i, 2 * p - i, 2 * p + i, 4 * p - i};
+    std::size_t count = 4;
+    if (i == 0) {
+      ms = {0, 2 * p, 4 * p, 0};
+      count = 3;
+    } else if (i == p) {
+      ms = {p, 3 * p, 0, 0};
+      count = 2;
+    }
+    if (half != nullptr && i % 2 == 0) {
+      for (std::size_t k = 0; k < count; ++k) {
+        copy_entry(w, n, ms[k], half);
+      }
+      continue;
+    }
+    dd st;
+    dd ct;
+    sin_cos(reduced_angle(static_cast<std::uint64_t>(8 * i), nn), st, ct);
+    for (std::size_t k = 0; k < count; ++k) {
+      dd c;
+      dd s;
+      place(static_cast<std::uint64_t>(ms[k] / p), st, ct, c, s);
+      set_entry(w, sign, n, ms[k], c, s);
+    }
+  }
+  return table;
+}
+
 } // namespace
 
 template <class T> std::vector<std::complex<T>> unit_roots(int sign, std::size_t n) {
-  std::vector<std::complex<T>> w(n);
-  const auto nn = static_cast<std::uint64_t>(n);
-  // exp(-2 pi i (n - m) / n) is the exact conjugate of exp(-2 pi i m / n): compute the
-  // first half and mirror it.
-  for (std::size_t m = 0; 2 * m <= n; ++m) {
-    dd c;
-    dd s;
-    root(static_cast<std::uint64_t>(m), nn, c, s);
-    const T re = round_once<T>(c);
-    const T im = round_once<T>(sign < 0 ? -s : s);
-    w[m] = {re, im};
-    if (m != 0 && m != n - m) {
-      w[n - m] = {re, -im};
-    }
-  }
-  return w;
+  return build_table<T>(sign, n, nullptr);
+}
+
+template <class T>
+std::vector<std::complex<T>> unit_roots(int sign, std::size_t n,
+                                        std::span<const std::complex<T>> half) {
+  assert(n % 2 == 0 && half.size() == n / 2);
+  return build_table<T>(sign, n, half.data());
 }
 
 template <class T> std::complex<T> unit_root(int sign, std::size_t m, std::size_t n) {
@@ -209,8 +294,48 @@ template <class T> std::complex<T> unit_root(int sign, std::size_t m, std::size_
   return {re, mirrored ? -im : im};
 }
 
+template <class T>
+root_cache<T>::root_cache(std::size_t n)
+    : n_(n), angles_(n % 8 == 0 ? n / 8 + 1 : 0), known_(angles_.size(), 0) {}
+
+template <class T> std::complex<T> root_cache<T>::operator()(int sign, std::size_t m) {
+  if (angles_.empty()) {
+    return unit_root<T>(sign, m, n_);
+  }
+  // unit_root's computation, with the series of the reduced angle (pi / 4) 8 i / n kept:
+  // root() reduces m to octant o = m / p and j = 8 i, i = m mod p or p - m mod p.
+  const bool mirrored = 2 * m > n_;
+  const std::size_t mm = mirrored ? n_ - m : m;
+  const std::size_t p = n_ / 8;
+  const std::size_t o = mm / p;
+  const std::size_t i = (o & 1U) != 0 ? p - (mm - o * p) : mm - o * p;
+  std::array<double, 4>& a = angles_[i];
+  if (known_[i] == 0) {
+    dd st;
+    dd ct;
+    sin_cos(reduced_angle(static_cast<std::uint64_t>(8 * i), static_cast<std::uint64_t>(n_)), st,
+            ct);
+    a = {st.hi, st.lo, ct.hi, ct.lo};
+    known_[i] = 1;
+  }
+  dd c;
+  dd s;
+  place(static_cast<std::uint64_t>(o), dd{.hi = a[0], .lo = a[1]}, dd{.hi = a[2], .lo = a[3]}, c,
+        s);
+  const T re = round_once<T>(c);
+  const T im = round_once<T>(sign < 0 ? -s : s);
+  return {re, mirrored ? -im : im};
+}
+
+template class root_cache<double>;
+template class root_cache<float>;
+
 template std::vector<std::complex<double>> unit_roots<double>(int sign, std::size_t n);
 template std::vector<std::complex<float>> unit_roots<float>(int sign, std::size_t n);
+template std::vector<std::complex<double>>
+unit_roots<double>(int sign, std::size_t n, std::span<const std::complex<double>> half);
+template std::vector<std::complex<float>>
+unit_roots<float>(int sign, std::size_t n, std::span<const std::complex<float>> half);
 template std::complex<double> unit_root<double>(int sign, std::size_t m, std::size_t n);
 template std::complex<float> unit_root<float>(int sign, std::size_t m, std::size_t n);
 

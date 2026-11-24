@@ -25,6 +25,7 @@
 #include <exception>
 #include <fstream>
 #include <set>
+#include <span>
 #include <sstream>
 #include <string>
 #include <variant>
@@ -83,6 +84,99 @@ TEST(Twiddles, ExactAtOctantBoundaries) {
   EXPECT_EQ(w[6], std::complex<double>(0, 1));
   EXPECT_EQ(w[7], std::complex<double>(h, h));
 }
+
+template <class T> bool same_bits(const std::complex<T>& a, const std::complex<T>& b) {
+  return std::memcmp(&a, &b, sizeof(a)) == 0; // tells -0.0 from 0.0
+}
+
+// Lengths for the bit-for-bit checks below: every length to 400, and long ones of the
+// shapes planning time was measured on (experiment X71).
+std::vector<std::size_t> identity_lengths() {
+  std::vector<std::size_t> v;
+  for (std::size_t n = 1; n <= 400; ++n) {
+    v.push_back(n);
+  }
+  for (const std::size_t n : {3072U, 4469U, 6144U, 6400U, 9216U, 18432U, 20480U, 40960U}) {
+    v.push_back(n);
+  }
+  return v;
+}
+
+// Experiment X71: a table (built by octant symmetry where 8 divides n) holds, bit for bit,
+// the entries unit_root computes one at a time, as the tables did before X71.
+template <class T> void check_tables_are_entries() {
+  std::size_t failures = 0;
+  for (const std::size_t n : identity_lengths()) {
+    for (const int sign : {-1, +1}) {
+      const auto table = fftn::detail::unit_roots<T>(sign, n);
+      for (std::size_t m = 0; m < n; ++m) {
+        if (!same_bits(table[m], fftn::detail::unit_root<T>(sign, m, n)) && ++failures <= 4) {
+          ADD_FAILURE() << "n = " << n << ", sign " << sign << ", entry " << m;
+        }
+      }
+    }
+  }
+  EXPECT_EQ(failures, 0U);
+}
+
+TEST(Twiddles, TablesHoldTheEntriesComputedAloneInDouble) { check_tables_are_entries<double>(); }
+TEST(Twiddles, TablesHoldTheEntriesComputedAloneInFloat) { check_tables_are_entries<float>(); }
+
+// Entry m 2^k of the table of n 2^k is entry m of the table of n, bit for bit, so a table
+// built from the table of n / 2, or sliced from one of n 2^k (the chain's root tables), is
+// the table itself.
+template <class T> void check_tables_from_others() {
+  std::size_t failures = 0;
+  for (const std::size_t n : identity_lengths()) {
+    for (const int sign : {-1, +1}) {
+      const auto table = fftn::detail::unit_roots<T>(sign, n);
+      if (n % 2 == 0) {
+        const auto half = fftn::detail::unit_roots<T>(sign, n / 2);
+        const auto built =
+            fftn::detail::unit_roots<T>(sign, n, std::span<const std::complex<T>>(half));
+        for (std::size_t m = 0; m < n; ++m) {
+          if (!same_bits(built[m], table[m]) && ++failures <= 4) {
+            ADD_FAILURE() << "n = " << n << ", sign " << sign << ", built from n / 2, entry " << m;
+          }
+        }
+      }
+      for (const std::size_t step : {2U, 4U, 8U}) {
+        const auto longer = fftn::detail::unit_roots<T>(sign, n * step);
+        for (std::size_t m = 0; m < n; ++m) {
+          if (!same_bits(longer[m * step], table[m]) && ++failures <= 4) {
+            ADD_FAILURE() << "n = " << n << ", sign " << sign << ", entry " << m << " of " << step
+                          << " n";
+          }
+        }
+      }
+    }
+  }
+  EXPECT_EQ(failures, 0U);
+}
+
+TEST(Twiddles, TablesFromOtherTablesInDouble) { check_tables_from_others<double>(); }
+TEST(Twiddles, TablesFromOtherTablesInFloat) { check_tables_from_others<float>(); }
+
+// root_cache gives unit_root's entries bit for bit, in any order of access.
+template <class T> void check_root_cache() {
+  std::size_t failures = 0;
+  for (const std::size_t n : identity_lengths()) {
+    for (const int sign : {-1, +1}) {
+      fftn::detail::root_cache<T> cache(n);
+      for (std::size_t k = 0; k < n + n / 4; ++k) {
+        // Every entry (7919 is a prime dividing no length here), a quarter of them twice.
+        const std::size_t m = (k * 7919 + k / n) % n;
+        if (!same_bits(cache(sign, m), fftn::detail::unit_root<T>(sign, m, n)) && ++failures <= 4) {
+          ADD_FAILURE() << "n = " << n << ", sign " << sign << ", entry " << m;
+        }
+      }
+    }
+  }
+  EXPECT_EQ(failures, 0U);
+}
+
+TEST(Twiddles, RootCacheGivesTheEntriesInDouble) { check_root_cache<double>(); }
+TEST(Twiddles, RootCacheGivesTheEntriesInFloat) { check_root_cache<float>(); }
 
 bool is_prime(std::size_t n) {
   for (std::size_t d = 2; d <= n / d; ++d) {

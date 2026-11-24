@@ -274,7 +274,7 @@ the 0.95 target; the cost is 5–26 % more planning time on the rows arm A moves
 
 Recorded in DESIGN 8.5 (the depth-first chain's EPYC bullet), 9.1 (the *Depth-first* real
 route), 13.5 (the vendor-keyed and Zen 3-keyed lists) and the decision log; lesson in
-LESSONS 4.21 and 4.25. Reach: Zen 2 by both keys, unmeasured (for the next cloud screen).
+LESSONS 4.21 and 4.26. Reach: Zen 2 by both keys, unmeasured (for the next cloud screen).
 Follow-ups: the three shapes still above 1.02 (r2c 10240, c2r 10240 × 4, c2r 20480 × 3; the
 c2r rows pair in a separate pass where `main` fused the pairing into a leading radix-4 pass,
 so a c2r pairing fused into the depth-first chain's first pass, or a three-pass sequence that
