@@ -190,6 +190,10 @@ A ÷ M over the float planes judged by amendment 1; no run needed the re-run cla
     per CPU, but their target is `avx2`, which `c2r_packed_isa` refuses), Google Cloud's Ice Lake
     N2 VMs (their large reported L3 per CPU files them with neither key), Zen 4 and Zen 5 with
     their large L3, Granite and Sapphire Rapids (2 MiB of L2), Apple, other AArch64.
+  - **By vendor (2026-11-24, X64):** the Xeon 6240's key packs on Intel's cores only; Zen 4 (the
+    key's AMD members) lost with it in X64's cloud screen (EPYC 9B14: 512 × 1024 1.127 at one
+    thread, 600 × 800 1.286 at 8 lanes) and keeps the block. Ice Lake-SP kept the gain; Zen 2
+    kept Zen 3's `avx2` branch.
   - **For the next phase exit's screen**: Zen 2 (`avx2`, 8 MiB), Ice Lake-SP, Zen 4c with SMT,
     Zen 4 VMs with a small reported L3, Intel client AVX-512 parts and a machine that reports no
     L3 (`avx512`, from the L2).

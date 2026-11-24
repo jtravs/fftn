@@ -510,7 +510,8 @@ Decided by the maintainer on 2026-11-24 (the earlier ones are in AGENTS.md secti
   measured only on the EPYC and keyed by the target alone (X42's and X54's overrides, X53's batch
   leaves) apply to AMD's cores only (DESIGN 13.5); the EPYC's plans are unchanged. Cache-keyed
   Zen 3 rules (X51 E, X59 R6, X62 C, X63) still reach any core the key matches, Intel's
-  four-core client parts and small VMs included.
+  four-core client parts and small VMs included. From X64's screen, X63's `avx512` branch (the
+  Xeon 6240's key) packs on Intel's cores only; AMD's Zen 4 keeps the block.
 
 Still open: the CI's Windows jobs install a pinned LLVM 23.1.5 (PR 81) because the runner
 image's LLVM is older than its Visual Studio needs.

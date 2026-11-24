@@ -1631,7 +1631,7 @@ block and output pass a cache level that input and output fit (Xeon 6240 c2r 102
 the packed columns a power of two apart where the block's n/2 + 1 complex values were an odd
 multiple of 16 bytes, which costs inside the caches. So a plane packs only where one
 transform's half spectrum exceeds `machine_profile::c2r_packed_bytes`, on the target it was
-measured on (`c2r_packed_isa`): the L2 on the Xeon 6240's class (`avx512`), half the CCX's L3 on Zen 3's (`avx2`); the block elsewhere (on Apple wide planes lost at every threshold X60 tried). Volumes keep the block
+measured on (`c2r_packed_isa`): the L2 on the Xeon 6240's class (`avx512`) for Intel's cores only (X64: Zen 4, which the key reaches, lost; section 13.5), half the CCX's L3 on Zen 3's (`avx2`); the block elsewhere (on Apple wide planes lost at every threshold X60 tried). Volumes keep the block
 (X60: the Xeon 6240's teams, which run them plane at a time, lost 1.05–1.09 at 8 lanes).
 In-place r2c and c2r use FFTW's padded layout: each row of the last axis holds n + 2 reals
 (n/2 + 1 complex), the last two being padding on the real side.
@@ -2337,7 +2337,10 @@ leaves of X53 and X62 (`planner/rules.cpp`, `profile_of`; `core/plan_core.cpp`,
 section 6): X57's footprint rule (accepted for other `avx2` cores with a large L3) and the Zen 3
 class's rules (X51's tops of 4, X59's fair runs, X62's Bluestein limit, X63's packed c2r
 intermediate), which an Intel core with a private L2 under 1 MiB and at least 2 MiB of L3 per
-CPU (a four-core client part, a small VM) would also match. Rules measured on the Xeon under
+CPU (a four-core client part, a small VM) would also match. One cache key reads the vendor:
+X63's packed c2r planes on the Xeon 6240's class (`avx512`, from the L2) apply to Intel's cores
+only, since the key also reaches Zen 4 (Zen 4c with SMT, Zen 4 VMs reporting a small L3 per
+CPU), where X64's cloud screen measured them losing; AMD's `avx512` cores keep the block. Rules measured on the Xeon under
 `avx2` too (X2's and X38's overrides, X7, X23) stay for every vendor. Tests set the vendor
 explicitly, never the host's.
 
@@ -3267,6 +3270,7 @@ to change before a release.
 | 2026-11-22 | A c2r plane out of place builds its intermediate packed in the output where one transform's half spectrum exceeds `machine_profile::c2r_packed_bytes` on the target measured (`c2r_packed_isa`): the L2 on the Xeon 6240's class (`avx512`), half the CCX's L3 on Zen 3's (`avx2`); the block elsewhere (on Apple wide planes lost at every threshold X60 tried). Volumes keep the block | X60 and X63: Xeon 6240 0.81 (one thread) and 0.82 (8 lanes) of the block's time over 31 planes from 1 MiB; EPYC 7763 0.84 and 0.77 over 9 planes from 16 MiB, held-out sizes included; inside the caches the output's power-of-two row strides lose (X60: EPYC 512 × 1024 1.10), the Xeon's teams lost on volumes (X60), and the M5 Max's wide planes lost (512 × 1024 1.07, 640 × 1280 1.14) |
 | 2026-11-24 | Maintainer's decisions: the Kokkos adapter's two restrictions stay (`Kokkos::Threads` only at Kokkos 5.2.1; no threaded plan inside a `Kokkos::Serial` kernel); `axes_c2c/r2c/c2r` agreed, provisional until the fusion design; X61 per target as judged; X28's 128-bit leaves on `avx2` ratified; X57's in-place limit measured or capped at 1024 rows; `avx2` rules measured on the EPYC (X26, X30, X62's batch leaves) to be keyed to the vendor | The adapter's restrictions do not touch the OpenMP back end; the fusion stage needs strided plane axes and may reshape the `axes_*` functions; X28's miss was the rule's averaging, nothing slower; the profile cannot yet tell an Intel `avx2` core from a Zen CCX, and X26 would cost such a core up to 20 % on rows of 2²⁰–2²² |
 | 2026-11-24 | The machine profile carries the processor's vendor (CPUID on x86; Apple, other Arm), shown by `describe()`; the `avx2` rules measured only on AMD's cores and keyed by the target alone (X26's copies without prefetch, the overrides of X30, X42 and X54, the batch leaves of X53 and X62) apply only for AMD, every other vendor keeping the earlier plans (section 13.5) | The maintainer's decision: a cache key cannot tell a Zen CCX from an Intel ring, and the Xeon 6240 forced to `avx2` lost with two of these rules (X26: 2²² 1.20 without the prefetch; X30: r2c 1024² 1.057); the others were never run on an Intel core under `avx2`. Not a performance change: the EPYC 7763's plans are identical over the standard catalogue (describe() of all 445 cases), and no other measured machine plans for `avx2` by default |
+| 2026-11-24 | X63's packed c2r planes on the Xeon 6240's class (`avx512`, from the L2) apply to Intel's processors only; AMD's (and unknown) cores that the key reaches keep the block (`set_grid_sizes`, section 13.5). Zen 3's `avx2` branch is unchanged | X64's cloud screen (EPYC 9B14 VM, threshold forced to 1 MiB, rule P against the block): one thread 512 × 1024 1.127, 512² 1.109 (run 20261124-105335-27eb); 8 lanes 600 × 800 1.286, 720² 1.246 (20261124-110003-6ca4); float 512 × 1024 1.162 (20261124-110552-66bf). Ice Lake-SP kept the gain (0.62–0.77); Zen 2 kept Zen 3's |
 
 ---
 
