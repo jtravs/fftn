@@ -2286,7 +2286,8 @@ split and among how many members (rules 2 and 3: leftovers after whole rounds, o
 group's tasks when it has fewer than members; at most members / split, points / 1024 and
 the widest phase's chunks; only from the split threshold of the group's kind; only when the
 cost model says t/k plus a phase synchronisation per phase beats t). An oversubscribed team
-splits nothing. The machine profile (`profile_for`, from the topology) carries the values
+splits nothing. The machine profile (`profile_for`, from the topology, and the processor's
+vendor, section 13.5) carries the values
 experiments T1 and T5 measured (task 3.4; each field cites its runs): the split thresholds
 by group kind, a Zen 3 CCX's, an Apple cluster's (macOS's topology) and a mesh's (groups
 of more than 8 members), and on a CCX the phase hand-off cost and the claim runs T1 measured.
@@ -2319,6 +2320,26 @@ The process's topology is detected once, into a function-local constant. Unknown
 are zero, never guessed: macOS reports no associativity, and it does not say which logical
 CPU belongs to which performance level, so there CPUs are numbered in class order (fastest
 first) and the topology says the numbers are not the OS's.
+
+**The processor's vendor.** The machine profile (`machine_profile`, built by `profile_for`
+from the topology) also carries who made the processor (`machine_profile::vendor`): CPUID
+leaf 0's vendor string on x86 (Intel, AMD; any other string is unknown), Apple on AArch64
+macOS, "other Arm" on AArch64 elsewhere, detected once per process with the instruction-set
+features and shown by `plan::describe()`. A cache key cannot tell a Zen CCX from an Intel ring,
+and on `avx2` a rule measured only on AMD's cores would otherwise reach Intel cores that have
+`avx2` but no AVX-512 (older client parts, some cloud shapes, the Xeon forced to `avx2`). So
+the `avx2` rules measured only on the EPYC 7763 and keyed by the target alone apply only where
+the vendor is AMD; every other vendor, unknown included, keeps the plans `avx2` had before them
+until it is measured (the maintainer, 2026-11-24). They are X26's copies without prefetch, the
+radix overrides of X30 (256, 512), X42 (500–25000) and X54 (768; float 512–4096), and the batch
+leaves of X53 and X62 (`planner/rules.cpp`, `profile_of`; `core/plan_core.cpp`,
+`copies_prefetch`). Rules keyed by a cache key keep reaching what the key matches (AGENTS.md
+section 6): X57's footprint rule (accepted for other `avx2` cores with a large L3) and the Zen 3
+class's rules (X51's tops of 4, X59's fair runs, X62's Bluestein limit, X63's packed c2r
+intermediate), which an Intel core with a private L2 under 1 MiB and at least 2 MiB of L3 per
+CPU (a four-core client part, a small VM) would also match. Rules measured on the Xeon under
+`avx2` too (X2's and X38's overrides, X7, X23) stay for every vendor. Tests set the vendor
+explicitly, never the host's.
 
 ### 13.6 Integration models
 
@@ -3244,6 +3265,7 @@ to change before a release.
 | 2026-11-22 | `avx2` double's batch leaves of 32 and 64 points move each element of their two rows when the codelet asks for it, one inlined copy of the codelet for every group and a lone last row; the rules take the leaf of 64 from 2 to 1024 rows, odd counts from 5 (`target_profile::batch_max_rows`, `batch_ragged_rows`; section 8.2) | X62 (EPYC 7763): 0.848 of the 4 × 16 chain over 64-point batches (64 × 2 backward ÷ FFTW 1.29 → 0.98, 64 × 16 1.16 → 0.92), tracking tier 0.996; block transposes spilled all 64 values (about 1.18 of the per-element form); a second copy of the codelet for the last row thrashed the op cache; 3 rows and 4096 rows lost and are excluded (adopted by the maintainer's decision, 2026-11-23: K3's rule as written covered 3 rows) |
 | 2026-11-22 | On Zen 3's class (x86-64, a private L2 under 1 MiB, a large L3) a Bluestein convolution's power-of-two part is at most half the L1, and a stage over C copies takes the whole line whatever the convolutions' lengths (`machine_profile::bluestein_whole_lanes`; section 8.5) | X62 (EPYC 7763): the 14 moved cases 0.92–0.99 of their time (1013–1021 with M = 2160 for 2048, 1018 ÷ FFTW 1.05 → 0.98, 131071 0.98), tracking tier 1.002; without the second part 1018 split into two copies and took 1.37 |
 | 2026-11-22 | A c2r plane out of place builds its intermediate packed in the output where one transform's half spectrum exceeds `machine_profile::c2r_packed_bytes` on the target measured (`c2r_packed_isa`): the L2 on the Xeon 6240's class (`avx512`), half the CCX's L3 on Zen 3's (`avx2`); the block elsewhere (on Apple wide planes lost at every threshold X60 tried). Volumes keep the block | X60 and X63: Xeon 6240 0.81 (one thread) and 0.82 (8 lanes) of the block's time over 31 planes from 1 MiB; EPYC 7763 0.84 and 0.77 over 9 planes from 16 MiB, held-out sizes included; inside the caches the output's power-of-two row strides lose (X60: EPYC 512 × 1024 1.10), the Xeon's teams lost on volumes (X60), and the M5 Max's wide planes lost (512 × 1024 1.07, 640 × 1280 1.14) |
+| 2026-11-24 | The machine profile carries the processor's vendor (CPUID on x86; Apple, other Arm), shown by `describe()`; the `avx2` rules measured only on AMD's cores and keyed by the target alone (X26's copies without prefetch, the overrides of X30, X42 and X54, the batch leaves of X53 and X62) apply only for AMD, every other vendor keeping the earlier plans (section 13.5) | The maintainer's decision: a cache key cannot tell a Zen CCX from an Intel ring, and the Xeon 6240 forced to `avx2` lost with two of these rules (X26: 2²² 1.20 without the prefetch; X30: r2c 1024² 1.057); the others were never run on an Intel core under `avx2`. Not a performance change: the EPYC 7763's plans are identical over the standard catalogue (describe() of all 445 cases), and no other measured machine plans for `avx2` by default |
 
 ---
 

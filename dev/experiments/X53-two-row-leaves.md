@@ -284,3 +284,6 @@ no new arm was built.
   and batches of three of 2-4 points take no batch leaves; in these runs FFTN was 0.91 and
   0.83 of FFTW on them).
 - Library size: eight new kernel units (two per target with batch leaves).
+- **Reach, by vendor (2026-11-24; DESIGN 13.5):** the `avx2` table, measured on the EPYC alone
+  for that target, applies to AMD's cores only; other vendors' `avx2` plans take no batch leaves
+  (the Xeon ran `avx2`'s leaves only inside `avx512` plans, which keep them).

@@ -314,6 +314,9 @@ overloaded, band ±1.60 %), the head 427ce39 (K3, L with the limits, C) against 
   1024 backward, 20000, 120) where `main` had 9 in the same run; with C, 1018 leaves the list too.
 - Lessons 4.14 (addendum) and 4.24 in `dev/LESSONS.md`; DESIGN sections 8.2, 8.5 and 11.2 and the
   decision log updated.
+- **Reach, by vendor (the maintainer, 2026-11-24; DESIGN 13.5):** L's leaf of 64 (and X53's
+  `avx2` table it extends) applies to `avx2` plans for AMD's cores only; C stays on Zen 3's
+  cache key.
 
 ## Not done
 
