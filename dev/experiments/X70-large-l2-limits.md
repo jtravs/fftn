@@ -1,6 +1,7 @@
 # X70: higher limits for X69's two-pass rows (the 2 MiB-L2 key under `avx512`)
 
-- **Status:** planned
+- **Status:** done: adopted on the 2 MiB-L2 key (Sapphire 0.858, Granite 0.860, Emerald 0.873
+  over the 18 moved cases, none slower)
 - **Owner:** x70 session, 2026-11-24
 - **Phase / task:** 1 (follows X69)
 
@@ -181,4 +182,54 @@ Xeon (its own profile, and Granite Rapids' recorded topology) is made before the
 
 ## Results
 
+Google Cloud Spot VMs in us-central1-a, 2026-11-24, GCC 14.2 Release, campaign commit 9fc9ee1
+(library code identical to the implementation branch), `avx512`, double, one thread (taskset on
+CPU 2), hot cases, statistic median, 24 valid rounds per run. Each job checked the CPU model and
+that the L2 is 2 MiB before running. Scores over the moved cases (notes differ between N and O).
+
+**Run J, the rules:**
+
+| Family | VM | Run | Band | Moved | N ÷ O geomean [95 %] | Slower | Rule | Verdict |
+|---|---|---|---:|---:|---|---:|---|---|
+| Sapphire Rapids (8481C) | c3-standard-8 | 20261124-220554-0d7c | ±1.00 % | 18 of 38 | 0.858 [0.855, 0.860] | 0 | adopt | adopt |
+| Granite Rapids (6985P-C) | c4-standard-16 | 20261124-220134-10a7 | ±1.16 % | 18 of 38 | 0.860 [0.856, 0.863] | 0 | adopt | adopt |
+| Emerald Rapids (8581C) | c4-standard-16 | 20261124-222653-aa74 | ±1.39 % | 18 of 38 | 0.873 [0.866, 0.877] | 0 | reach | keep |
+
+Per group, N ÷ O over the three families: 1024 in place at 128 rows 0.81-0.90, at 192-256 rows
+0.89-0.92; 160 at 512-1536 rows 0.79-0.90; 240 at 512-1024 rows 0.78-0.86. The moved cases were
+exactly the 18 expected; the held-out cases and the rows of 1024 out of place kept O's plans in N.
+
+**Run C, the notes check** (tracking tier, 61 cases; runs 20261124-222236-ef94 Sapphire,
+20261124-221535-192f Granite, 20261124-224112-8f28 Emerald): no case moved. The tracking tier
+has none of the batches between X69's and X70's limits.
+
+**FFTN against the libraries on the 18 moved cases** (geometric means; O before, N after):
+
+| Family | ÷ FFTW, O → N | ÷ oneMKL, O → N |
+|---|---|---|
+| Sapphire Rapids | 0.886 → 0.759 | 0.981 → 0.841 |
+| Granite Rapids | 0.931 → 0.801 | 0.973 → 0.835 |
+| Emerald Rapids | 0.903 → 0.786 | 1.026 → 0.894 |
+
+**Arm W, informative** (every row of the three lengths two-pass), W ÷ O on the held-out cases:
+
+- 1024 in place at 512, 1024 and 2048 rows (8-32 MiB): 0.88-0.93 on all three families.
+- 160 and 240 at 4096 and 16384 rows, both placements: 0.82-0.94.
+- 160 and 240 at 65536 rows (in DRAM): in place 0.89-0.94; out of place 0.85-0.95 on Sapphire and
+  Emerald, but 1.02-1.03 on Granite and 1.00 for 240 on Emerald.
+- 1024 out of place at 128 and 256 rows: 0.94-1.00 (a tie on Granite, small gains elsewhere).
+
 ## Verdict
+
+- **Adopted on the 2 MiB-L2 key** as committed: `fit_row_bytes` = 4 L2, `fit_in_place_bytes` =
+  2 L2, `fit_long_row_bytes` = L2 in `set_grid_sizes`' `large_l2` branch. Sapphire and Granite
+  pass the adopt rule (0.858, 0.860), Emerald the reach rule (0.873), none of 54 moved cases
+  slower; nothing else moved. Neither the near-miss nor the narrowing clause was used.
+- On the moved cases FFTN goes from 0.89-0.93 to 0.76-0.80 of FFTW's time and from 0.97-1.03 to
+  0.84-0.89 of oneMKL's.
+- **Follow-up** (arm W, not judged): in place the two-pass radices won at every size tried (to
+  2048 rows of 1024 and 65536 rows of 160 and 240), and out of place to 16384 rows of 160 and 240;
+  only 65536 rows out of place tie or lose on Granite and Emerald. Dropping the in-place limit
+  for the key's table, and raising the out-of-place one for 160 and 240, needs its own rule.
+- Spend: USD 0.54 (three VMs); campaign USD 15.55 of 20
+  ([cloud-ledger-2026-11.md](cloud-ledger-2026-11.md)).

@@ -997,6 +997,10 @@ Emerald and Granite Rapids, `avx512`), 1024 = 32 · 32, 160 = 8 · 20 and 240 = 
 0.78–0.80 of the three-pass plans' time while rows and output fit the L2. 1024 out of place tied
 or lost beyond it (1.29–1.36 at 32 MiB on Sapphire), while 160, 240 and 1024 in place kept
 gaining a little past it (0.82–0.94). [X69](experiments/X69-intel-radices.md).
+Raising the limits to four times the L2 (in place twice) kept every gain (0.86–0.87 over the
+cases moved), and in place the two-pass radices still won at 32 MiB, while out of place only
+1024 (rows longer than a page) and DRAM-sized batches of 160 and 240 stopped gaining. The crossing
+follows the row's length and placement as much as the cache. [X70](experiments/X70-large-l2-limits.md).
 
 4.24 **Past the register file, a batch leaf should move each element when the codelet asks for
 it, and keep one inlined copy of the codelet.** X53's batch leaf transposes C × C blocks of C
