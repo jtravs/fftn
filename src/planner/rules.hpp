@@ -118,12 +118,13 @@ struct target_profile {
 // vendor: the processor's maker (machine_profile::vendor). On `avx2` the rules measured only
 // on AMD's cores (the EPYC 7763) apply only for amd; for any other vendor, unknown included,
 // `avx2` keeps the plans it had before them (DESIGN.md 13.5; the maintainer, 2026-11-24): the
-// radix overrides of X30 (256, 512), X42 (500-25000) and X54 (768; float 512-4096) give way to
+// radix overrides of X30 (512), X42 (500-25000) and X54 (768; float 512-4096) give way to
 // what was planned before, and there are no batch leaves (X53, X62). Every other target, and
-// every field the vendor does not change, is the same for all vendors. The default, amd, is the
-// tables as measured.
+// every field the vendor does not change, is the same for all vendors. The default, unknown,
+// keeps those earlier plans, as profile_for's does: a caller planning for a machine passes its
+// vendor (machine_profile::vendor), and amd gives the tables as measured on the EPYC.
 [[nodiscard]] target_profile profile_of(target t, std::size_t lanes,
-                                        cpu_vendor vendor = cpu_vendor::amd) noexcept;
+                                        cpu_vendor vendor = cpu_vendor::unknown) noexcept;
 
 // The radices of a chain for n, in pass order: empty for n = 1, {n} for n <= 16 and for a
 // codelet radix n <= p.leaf_limit (a leaf).

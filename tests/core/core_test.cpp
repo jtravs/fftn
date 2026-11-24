@@ -32,6 +32,10 @@
 
 namespace {
 
+// The planner's tables as measured, AMD's on avx2 (DESIGN.md 13.5); tests/core/vendor_test.cpp
+// has the other vendors'.
+constexpr auto amd = fftn::detail::cpu_vendor::amd;
+
 using fftn::detail::build_settings;
 using fftn::detail::make_plan_core;
 using fftn::detail::shape_view;
@@ -93,7 +97,7 @@ bool is_prime(std::size_t n) {
 // codelet's or a prime for the generic pass.
 TEST(Rules, RadicesMultiplyToTheLength) {
   for (const std::size_t lanes : {1U, 2U, 4U, 8U}) {
-    const auto profile = fftn::detail::profile_of(fftn::detail::target::avx2, lanes);
+    const auto profile = fftn::detail::profile_of(fftn::detail::target::avx2, lanes, amd);
     for (std::size_t n = 1; n <= 4096; ++n) {
       std::size_t product = 1;
       for (const std::size_t r : fftn::detail::rule_radices(n, profile)) {
@@ -116,7 +120,7 @@ TEST(Rules, RadicesMultiplyToTheLength) {
 TEST(Rules, LeafLimit) {
   using fftn::detail::rule_radices;
   for (const std::size_t lanes : {1U, 2U, 4U, 8U}) {
-    auto profile = fftn::detail::profile_of(fftn::detail::target::avx2, lanes);
+    auto profile = fftn::detail::profile_of(fftn::detail::target::avx2, lanes, amd);
     EXPECT_EQ(profile.leaf_limit, 16U);
     EXPECT_GT(rule_radices(32, profile).size(), 1U) << lanes;
     EXPECT_GT(rule_radices(64, profile).size(), 1U) << lanes;
@@ -149,7 +153,7 @@ TEST(Rules, LeafLimit) {
     for (const std::size_t lanes : {1U, 2U, 4U, 8U}) {
       const bool leaf32 =
           (t == target::neon || t == target::neon_fcma || t == target::x86_v2) && lanes == 1;
-      const auto p = fftn::detail::profile_of(t, lanes);
+      const auto p = fftn::detail::profile_of(t, lanes, amd);
       EXPECT_EQ(p.leaf_limit, leaf32 ? 32U : 16U);
       EXPECT_EQ(rule_radices(32, p).size() == 1, leaf32);
       EXPECT_GT(rule_radices(64, p).size(), 1U);
@@ -172,22 +176,22 @@ TEST(Rules, ProfilesOfEveryTarget) {
            target::neon_fcma,
        }) {
     for (const std::size_t lanes : {1U, 2U, 4U, 8U}) {
-      const auto p = fftn::detail::profile_of(t, lanes);
+      const auto p = fftn::detail::profile_of(t, lanes, amd);
       EXPECT_EQ(p.lanes, lanes);
       ASSERT_NE(p.costs, nullptr);
       const bool neon_own = (t == target::neon || t == target::neon_fcma) && lanes <= 2;
       if (neon_own) {
-        EXPECT_NE(p.costs, fftn::detail::profile_of(target::avx2, 2).costs);
-        EXPECT_EQ(p.costs, fftn::detail::profile_of(target::neon_fcma, lanes).costs);
+        EXPECT_NE(p.costs, fftn::detail::profile_of(target::avx2, 2, amd).costs);
+        EXPECT_EQ(p.costs, fftn::detail::profile_of(target::neon_fcma, lanes, amd).costs);
       } else if (t == target::avx512 && lanes >= 4) {
-        EXPECT_NE(p.costs, fftn::detail::profile_of(target::avx2, 4).costs);
+        EXPECT_NE(p.costs, fftn::detail::profile_of(target::avx2, 4, amd).costs);
       } else {
-        EXPECT_EQ(p.costs, fftn::detail::profile_of(target::avx2, lanes <= 2 ? 2 : 4).costs);
+        EXPECT_EQ(p.costs, fftn::detail::profile_of(target::avx2, lanes <= 2 ? 2 : 4, amd).costs);
       }
     }
   }
-  EXPECT_NE(fftn::detail::profile_of(target::avx2, 2).costs,
-            fftn::detail::profile_of(target::avx2, 4).costs);
+  EXPECT_NE(fftn::detail::profile_of(target::avx2, 2, amd).costs,
+            fftn::detail::profile_of(target::avx2, 4, amd).costs);
 }
 
 // The recorded radices of every 73-smooth length up to 20000 for 1, 2, 4 and 8 lanes
@@ -221,7 +225,7 @@ TEST(Rules, RecordedTable) {
         fields >> r;
         want.push_back(r);
       }
-      const auto profile = fftn::detail::profile_of(fftn::detail::target::avx2, c);
+      const auto profile = fftn::detail::profile_of(fftn::detail::target::avx2, c, amd);
       if (fftn::detail::rule_radices(n, profile) != want && ++failures <= 8) {
         ADD_FAILURE() << "n = " << n << ", " << c << " lanes: not as recorded";
       }
@@ -236,8 +240,8 @@ TEST(Rules, RecordedTable) {
 // overrides: double has two lanes, float four.
 TEST(Rules, MeasuredExamples) {
   using v = std::vector<std::size_t>;
-  const auto f64 = fftn::detail::profile_of(fftn::detail::target::avx2, 2);
-  const auto f32 = fftn::detail::profile_of(fftn::detail::target::avx2, 4);
+  const auto f64 = fftn::detail::profile_of(fftn::detail::target::avx2, 2, amd);
+  const auto f32 = fftn::detail::profile_of(fftn::detail::target::avx2, 4, amd);
   const auto r = [](std::size_t n, const fftn::detail::target_profile& p) {
     return fftn::detail::rule_radices(n, p);
   };
@@ -271,9 +275,9 @@ TEST(Rules, MeasuredExamples) {
 TEST(Rules, Avx512Tables) {
   using fftn::detail::target;
   using v = std::vector<std::size_t>;
-  const auto f64 = fftn::detail::profile_of(target::avx512, 4);
-  const auto f32 = fftn::detail::profile_of(target::avx512, 8);
-  const auto avx2 = fftn::detail::profile_of(target::avx2, 4);
+  const auto f64 = fftn::detail::profile_of(target::avx512, 4, amd);
+  const auto f32 = fftn::detail::profile_of(target::avx512, 8, amd);
+  const auto avx2 = fftn::detail::profile_of(target::avx2, 4, amd);
   EXPECT_NE(f64.costs, avx2.costs);
   EXPECT_NE(f32.costs, avx2.costs);
   for (std::size_t n = 1; n <= 20000; ++n) {
@@ -375,7 +379,7 @@ TEST(Rules, DescribeNamesTheRaderStage) {
 TEST(Rules, RaderRoot) {
   using fftn::detail::rader_root;
   using fftn::detail::target;
-  const auto neon = fftn::detail::profile_of(target::neon_fcma, 1);
+  const auto neon = fftn::detail::profile_of(target::neon_fcma, 1, amd);
   EXPECT_EQ(rader_root(29, neon), 2U);
   EXPECT_EQ(rader_root(31, neon), 3U);
   EXPECT_EQ(rader_root(41, neon), 6U);
@@ -388,10 +392,10 @@ TEST(Rules, RaderRoot) {
   EXPECT_EQ(rader_root(47, neon), 0U);    // 46 = 2 x 23
   EXPECT_EQ(rader_root(4093, neon), 0U);  // 4092 = 4 x 3 x 11 x 31
   EXPECT_EQ(rader_root(91, neon), 0U);    // 7 x 13
-  const auto avx2_double = fftn::detail::profile_of(target::avx2, 2);
+  const auto avx2_double = fftn::detail::profile_of(target::avx2, 2, amd);
   EXPECT_EQ(rader_root(29, avx2_double), 2U);
   EXPECT_EQ(rader_root(65537, avx2_double), 3U); // no limit below 2^24 on x86
-  const auto avx512_float = fftn::detail::profile_of(target::avx512, 8);
+  const auto avx512_float = fftn::detail::profile_of(target::avx512, 8, amd);
   EXPECT_EQ(rader_root(97, avx512_float), 0U); // from 16 C = 128 with C = 8
   EXPECT_EQ(rader_root(257, avx512_float), 3U);
 }
@@ -401,7 +405,7 @@ TEST(Rules, RaderRoot) {
 // power of two (131071: 2q - 1 = 262141, whose only 7-smooth length up to 2^18 is 2^18).
 TEST(Rules, BluesteinLength) {
   using fftn::detail::bluestein_length;
-  const auto neon = fftn::detail::profile_of(fftn::detail::target::neon_fcma, 1);
+  const auto neon = fftn::detail::profile_of(fftn::detail::target::neon_fcma, 1, amd);
   const auto power_part = [](std::size_t m) { return m & (~m + 1); };
   const auto smooth = [](std::size_t m) {
     for (const std::size_t f : {2U, 3U, 5U, 7U}) {

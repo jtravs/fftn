@@ -34,7 +34,7 @@ struct machine_profile {
   // only on AMD's cores (the EPYC 7763) apply only where it is amd (planner/rules.hpp,
   // profile_of; core/plan_core.cpp, copies_prefetch): an Intel core with `avx2` but no
   // AVX-512 keeps the plans it had before them until it is measured (the maintainer, 2026-11-24;
-  // the Xeon 6240 forced to `avx2` lost with two of them, X26 and X30). Unknown, the default
+  // the Xeon 6240 forced to `avx2` lost with two of them, X26 and X30's 512). Unknown, the default
   // here (unlike the other fields, not the CCX's), keeps those plans too. One cache key reads
   // it as well: X63's packed c2r planes on the Xeon 6240's class apply to Intel's cores only
   // (set_grid_sizes; X64: Zen 4, which the key reaches, lost with them). default_machine_profile

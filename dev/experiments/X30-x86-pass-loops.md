@@ -262,6 +262,7 @@ exception; like X26's prefetch, the effect belongs to the core (Intel cores with
 AVX-512), and joins the follow-up for per-core rules. The Xeon x30 run of arm T
 (20261116-064327-9cea: 0.981, seven cases slower up to 1.046) confirms T's rejection.
 
-**Reach, by vendor (the maintainer, 2026-11-24; DESIGN 13.5):** P's 256 = 8 × 32 and 512 = 16 ×
-32 apply to `avx2` plans for AMD's cores only; every other vendor plans 256 = 2 × 16 × 8 and 512
-by the costs, as before X30.
+**Reach, by vendor (the maintainer, 2026-11-24; DESIGN 13.5):** P's 512 = 16 × 32 applies to
+`avx2` plans for AMD's cores only (the Xeon under `avx2` lost with it, r2c 1024² 1.057); every
+other vendor plans 512 by the costs, as before X30. P's 256 = 8 × 32 stays for every vendor: the
+Xeon under `avx2` gained with it (0.932, run 20261116-041211-2a5e).

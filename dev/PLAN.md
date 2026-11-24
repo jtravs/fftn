@@ -507,9 +507,10 @@ Decided by the maintainer on 2026-11-24 (the earlier ones are in AGENTS.md secti
 - X28's 128-bit leaves on `avx2` ratified. X26's prefetch gate and X30's 512 override (and X62's
   64-point batch rule) become keyed to the vendor once the machine profile reads one: Intel
   cores with `avx2` alone keep their old plans until measured. Done (task/cpu-vendor, PR 97):
-  the profile reads the vendor (CPUID), and those rules, X30's 256 and the other `avx2` rules
+  the profile reads the vendor (CPUID), and those rules and the other `avx2` rules
   measured only on the EPYC and keyed by the target alone (X42's and X54's overrides, X53's batch
-  leaves) apply to AMD's cores only (DESIGN 13.5); the EPYC's plans are unchanged. Cache-keyed
+  leaves) apply to AMD's cores only (DESIGN 13.5); X30's 256, a gain on the Xeon under `avx2`
+  too, stays for everyone; the EPYC's plans are unchanged. Cache-keyed
   Zen 3 rules (X51 E, X59 R6, X62 C, X63) still reach any core the key matches, Intel's
   four-core client parts and small VMs included. From X64's screen, X63's `avx512` branch (the
   Xeon 6240's key) packs on Intel's cores only; AMD's Zen 4 keeps the block.

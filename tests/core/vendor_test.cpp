@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Rules measured on one vendor's processors only (DESIGN.md 13.5; the maintainer, 2026-11-24):
-// on `avx2` the radix overrides of X30, X42 and X54, the batch leaves of X53 and X62, and the
+// on `avx2` the radix overrides of X30 (512), X42 and X54, the batch leaves of X53 and X62, and the
 // copies without prefetch of X26 apply only where machine_profile::vendor is amd; every other
 // vendor, unknown included, keeps the plans `avx2` had before them. Every other target plans
 // alike for all vendors. Each test sets the vendor itself, never the host's.
@@ -54,7 +54,8 @@ TEST(VendorRules, ProfilesDifferOnlyOnAvx2) {
   };
   for (const auto& [t, lanes] : profiles) {
     const d::target_profile amd = d::profile_of(t, lanes, cpu_vendor::amd);
-    EXPECT_EQ(d::profile_of(t, lanes).costs, amd.costs); // the default is the measured tables
+    // The default is unknown's (the earlier plans), as profile_for's.
+    EXPECT_EQ(d::profile_of(t, lanes).costs, d::profile_of(t, lanes, cpu_vendor::unknown).costs);
     for (const cpu_vendor v : others) {
       SCOPED_TRACE(std::string(d::target_name(t)) + ", C " + std::to_string(lanes) + ", " +
                    d::cpu_vendor_name(v));
@@ -87,9 +88,10 @@ TEST(VendorRules, ProfilesDifferOnlyOnAvx2) {
   EXPECT_FALSE(d::profile_of(d::target::avx2, 2, cpu_vendor::amd).batch_rows.empty());
 }
 
-// For other vendors avx2's radices are those before X30 (256 = 2 x 16 x 8, 512 by the costs),
-// X42 (radix 25 for 500-25000) and X54 (768 = 4 x 16 x 12; float 512-4096 by the costs); every
-// other length, X38's and X2's overrides included, is the same for all vendors.
+// For other vendors avx2's radices are those before X30's 512 (by the costs), X42 (radix 25 for
+// 500-25000) and X54 (768 = 4 x 16 x 12; float 512-4096 by the costs); every other length, X30's
+// 256 = 8 x 32 and X38's and X2's overrides included (measured on the Xeon under avx2 too), is the
+// same for all vendors.
 TEST(VendorRules, Avx2RadicesBeforeTheAmdOnlyOverrides) {
   using v = std::vector<std::size_t>;
   const d::target_profile amd = d::profile_of(d::target::avx2, 2, cpu_vendor::amd);
@@ -105,12 +107,13 @@ TEST(VendorRules, Avx2RadicesBeforeTheAmdOnlyOverrides) {
     SCOPED_TRACE(d::cpu_vendor_name(vendor));
     const d::target_profile p = d::profile_of(d::target::avx2, 2, vendor);
     const d::target_profile pf = d::profile_of(d::target::avx2, 4, vendor);
-    EXPECT_EQ(d::rule_radices(256, p), (v{2, 16, 8}));
+    EXPECT_EQ(d::rule_radices(256, p), (v{8, 32}));  // X30's 256, the Xeon's gain too (0.932)
+    EXPECT_NE(d::rule_radices(512, p), (v{16, 32})); // X30's 512, lost on the Xeon
     EXPECT_EQ(d::rule_radices(768, p), (v{4, 16, 12}));
     EXPECT_EQ(d::rule_radices(384, p), (v{12, 32})); // X38's, measured on the Xeon too
     for (std::size_t n = 2; n <= 26000; ++n) {
       SCOPED_TRACE(n);
-      if (n == 256 || n == 768) {
+      if (n == 768) {
         continue;
       }
       EXPECT_EQ(d::rule_radices(n, p),
@@ -178,11 +181,13 @@ TEST(VendorRules, DescribeNamesTheVendor) {
                        "\nprocessor vendor: unknown\n"));
 }
 
-// On avx2 (where this machine runs it): AMD takes X30's 256 = 8 x 32, X62's batch leaf of 64,
-// X53's of 15, and copies without prefetch (X26); Intel and unknown take 2 x 16 x 8, no batch
-// leaves and prefetching copies. Elsewhere the plans are the same for every vendor.
+// On avx2 (where this machine runs it): AMD takes X30's 512 = 16 x 32, X62's batch leaf of 64,
+// X53's of 15, and copies without prefetch (X26); Intel and unknown take the costs' 512, no batch
+// leaves and prefetching copies, and 256 = 8 x 32 as AMD does. Elsewhere the plans are the same
+// for every vendor.
 TEST(VendorRules, PlansByVendor) {
   const auto r256 = fftn::rows_c2c<double>(256, 1, fftn::direction::forward);
+  const auto r512 = fftn::rows_c2c<double>(512, 1, fftn::direction::forward);
   const auto r64x16 = fftn::rows_c2c<double>(64, 16, fftn::direction::backward);
   const auto r15x2 = fftn::rows_c2c<double>(15, 2, fftn::direction::backward);
   // 65536 points (1 MiB) are a grid by machine_profile{}'s fields (from 64 KiB, no long chains).
@@ -193,6 +198,7 @@ TEST(VendorRules, PlansByVendor) {
     if (t != fftn::isa::avx2) {
       for (const cpu_vendor v : others) {
         EXPECT_EQ(plan_text(*plan(r256, t, v)), plan_text(*plan(r256, t, cpu_vendor::amd)));
+        EXPECT_EQ(plan_text(*plan(r512, t, v)), plan_text(*plan(r512, t, cpu_vendor::amd)));
         EXPECT_EQ(plan_text(*plan(r64x16, t, v)), plan_text(*plan(r64x16, t, cpu_vendor::amd)));
         EXPECT_EQ(plan_text(*plan(long_row, t, v)), plan_text(*plan(long_row, t, cpu_vendor::amd)));
         EXPECT_EQ(copy_runs(*plan(long_row, t, v)), copy_runs(*plan(long_row, t, cpu_vendor::amd)));
@@ -203,6 +209,8 @@ TEST(VendorRules, PlansByVendor) {
     const auto& kf = d::of<float>(*d::find_kernels(d::target::avx2)).passes;
     const std::string amd256 = plan_text(*plan(r256, t, cpu_vendor::amd));
     EXPECT_TRUE(contains(amd256, "radices 8 x 32")) << amd256;
+    const std::string amd512 = plan_text(*plan(r512, t, cpu_vendor::amd));
+    EXPECT_TRUE(contains(amd512, "radices 16 x 32")) << amd512;
     EXPECT_TRUE(contains(plan_text(*plan(r64x16, t, cpu_vendor::amd)), "batch leaf radix-64"));
     EXPECT_TRUE(contains(plan_text(*plan(r15x2, t, cpu_vendor::amd)), "batch leaf radix-15"));
     const std::vector<d::pass_fn> amd_copies = copy_runs(*plan(long_row, t, cpu_vendor::amd));
@@ -213,8 +221,9 @@ TEST(VendorRules, PlansByVendor) {
     }
     for (const cpu_vendor v : others) {
       SCOPED_TRACE(d::cpu_vendor_name(v));
-      const std::string text = plan_text(*plan(r256, t, v));
-      EXPECT_TRUE(contains(text, "radices 2 x 16 x 8")) << text;
+      EXPECT_EQ(plan_text(*plan(r256, t, v)), amd256);
+      const std::string text = plan_text(*plan(r512, t, v));
+      EXPECT_FALSE(contains(text, "radices 16 x 32")) << text;
       EXPECT_FALSE(contains(plan_text(*plan(r64x16, t, v)), "batch leaf"));
       EXPECT_FALSE(contains(plan_text(*plan(r15x2, t, v)), "batch leaf"));
       // The same program but for the copies' prefetch, which describe() does not show.

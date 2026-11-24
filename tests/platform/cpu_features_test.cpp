@@ -8,7 +8,9 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <fstream>
 #include <optional>
+#include <string>
 
 namespace {
 
@@ -268,6 +270,34 @@ TEST(CpuFeaturesLive, SelfConsistent) {
   EXPECT_TRUE(f.fcma);  // every Apple M-series core has FEAT_FCMA
   EXPECT_TRUE(f.pauth); // and FEAT_PAuth (macOS 12 and later name it)
 #endif
+#endif
+}
+
+// The live vendor against the operating system's own reading (DESIGN.md 13.5): on Linux x86-64,
+// /proc/cpuinfo's vendor_id (GenuineIntel: intel, AuthenticAMD: amd, any other: unknown). A
+// mistake in CPUID's register order would make every machine unknown, silently changing plans.
+TEST(CpuFeaturesLive, VendorMatchesTheOperatingSystem) {
+#if (defined(__x86_64__) || defined(_M_X64)) && defined(__linux__)
+  std::ifstream cpuinfo("/proc/cpuinfo");
+  std::string vendor_id;
+  for (std::string line; vendor_id.empty() && std::getline(cpuinfo, line);) {
+    if (line.starts_with("vendor_id")) {
+      const std::size_t colon = line.find(':');
+      const std::size_t first =
+          line.find_first_not_of(" \t", colon == std::string::npos ? line.size() : colon + 1);
+      vendor_id = first == std::string::npos ? std::string("?") : line.substr(first);
+      vendor_id.erase(vendor_id.find_last_not_of(" \t\r") + 1);
+    }
+  }
+  if (vendor_id.empty()) {
+    GTEST_SKIP() << "/proc/cpuinfo is unreadable or names no vendor_id";
+  }
+  const cpu_vendor expected = vendor_id == "GenuineIntel"   ? cpu_vendor::intel
+                              : vendor_id == "AuthenticAMD" ? cpu_vendor::amd
+                                                            : cpu_vendor::unknown;
+  EXPECT_EQ(fftn::detail::detect_cpu_features().vendor, expected) << vendor_id;
+#else
+  GTEST_SKIP() << "Linux x86-64 only";
 #endif
 }
 

@@ -169,12 +169,12 @@ constexpr pass_costs avx2_float{
 // unknown one, takes those (profile_of): an Intel core with `avx2` but no AVX-512 keeps its old
 // plans until it is measured. The Xeon 6240 forced to `avx2` lost with X30's 512 (r2c 1024 x
 // 1024 1.057, run 20261116-072340-b100); X42's and X54's sequences were never run on an Intel
-// core under `avx2`. X38's (80-3600, 20000) stay for every vendor: the Xeon under `avx2` ran
-// them too (0.913 with Clang, run 20261116-215901-e1c7), and so do X2's (filtered by the Xeon's
+// core under `avx2`. X30's 256 = 8 x 32 stays for every vendor: the Xeon under `avx2` gained
+// with it (0.932, run 20261116-041211-2a5e). So do X38's (80-3600, 20000: the Xeon under `avx2`
+// ran them too, 0.913 with Clang, run 20261116-215901-e1c7) and X2's (filtered by the Xeon's
 // `avx2` campaigns).
 // clang-format off
-constexpr std::array<radix_override, 9> avx2_double_amd_only{{
-    {.n = 256, .radices = {2, 16, 8, 0}},  // X30 arm P: 8 x 32
+constexpr std::array<radix_override, 8> avx2_double_amd_only{{
     {.n = 500, .radices = {0, 0, 0, 0}},   // X42 arm B2: 20 x 25
     {.n = 512, .radices = {0, 0, 0, 0}},   // X30 arm P: 16 x 32
     {.n = 768, .radices = {4, 16, 12, 0}}, // X54 arm B: 12 x 64
