@@ -293,10 +293,16 @@ template <class T, std::size_t I> struct radix_entries {
       .depth_first = {depth_first_entry<T, R, -1>(), depth_first_entry<T, R, +1>()},
       .depth_top =
           {
-              {depth_top_entry<T, R, -1, nop>(), depth_top_entry<T, R, -1, scl>(),
-               depth_top_entry<T, R, -1, fac>()},
-              {depth_top_entry<T, R, +1, nop>(), depth_top_entry<T, R, +1, scl>(),
-               depth_top_entry<T, R, +1, fac>()},
+              {
+                  depth_top_entry<T, R, -1, nop>(),
+                  depth_top_entry<T, R, -1, scl>(),
+                  depth_top_entry<T, R, -1, fac>(),
+              },
+              {
+                  depth_top_entry<T, R, +1, nop>(),
+                  depth_top_entry<T, R, +1, scl>(),
+                  depth_top_entry<T, R, +1, fac>(),
+              },
           },
       .depth_first_chirp = depth_first_chirp_entry<T, R>(),
       .depth_top_chirp = {depth_top_chirp_entry<T, R, nop>(), depth_top_chirp_entry<T, R, scl>()},
@@ -306,7 +312,8 @@ template <class T, std::size_t I> struct radix_entries {
 } // namespace
 
 // Row I's entries on this target: radix_entries<T, I>::value, or none (radix_on_target).
-template <class T, std::size_t I> consteval radix_passes row_entries() {
+// noexcept: it initialises a constinit table (rows.inl), which nothing can throw from.
+template <class T, std::size_t I> consteval radix_passes row_entries() noexcept {
   if constexpr (radix_on_target<gen::radices[I]>) {
     return radix_entries<T, I>::value;
   } else {

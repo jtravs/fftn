@@ -732,8 +732,9 @@ int main(int argc, char** argv) {
     // A fixed width for the threaded back end, whatever the machine has, unless the test names
     // one: FFTN_KOKKOS_TEST_THREADS.
     int threads = 4;
+    // NOLINTNEXTLINE(concurrency-mt-unsafe): read before any thread starts
     if (const char* const named = std::getenv("FFTN_KOKKOS_TEST_THREADS")) {
-      threads = std::atoi(named);
+      threads = static_cast<int>(std::strtol(named, nullptr, 10));
     }
     const Kokkos::ScopeGuard kokkos(
         Kokkos::InitializationSettings().set_num_threads(threads).set_disable_warnings(true));

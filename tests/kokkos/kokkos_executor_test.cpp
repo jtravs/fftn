@@ -19,7 +19,6 @@
 #include <array>
 #include <atomic>
 #include <chrono>
-#include <complex>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
@@ -31,7 +30,6 @@
 #include <set>
 #include <string>
 #include <thread>
-#include <type_traits>
 #include <vector>
 
 namespace {
@@ -171,8 +169,12 @@ TYPED_TEST(KokkosThreaded, ViewPlanGivesSerialBits) {
   const complex2<T> y("y", big_rows, big_n);
   const complex2<T> z("z", big_rows, big_n);
   fill(x, 31);
-  for (const normalization norm : {normalization::none, normalization::backward,
-                                   normalization::forward, normalization::ortho}) {
+  for (const normalization norm : {
+           normalization::none,
+           normalization::backward,
+           normalization::forward,
+           normalization::ortho,
+       }) {
     check_view_plan<space>(x, y, z, direction::backward, axis_type<1>{-1}, norm);
   }
   const real2<T> r("r", big_rows, big_n);
@@ -227,7 +229,7 @@ public:
   dispatch_counter(dispatch_counter&&) = delete;
   dispatch_counter& operator=(dispatch_counter&&) = delete;
   ~dispatch_counter() { Kokkos::Tools::Experimental::set_begin_parallel_for_callback(nullptr); }
-  [[nodiscard]] int count() const { return dispatches.load(); }
+  [[nodiscard]] static int count() { return dispatches.load(); }
 };
 
 TYPED_TEST(KokkosThreaded, OneParallelForPerTransform) {
@@ -283,7 +285,7 @@ TYPED_TEST(KokkosThreaded, ExecutionAllocatesOnlyWhatKokkosDoes) {
     news_per_dispatch = counter.allocations();
     deletes_per_dispatch = counter.deallocations();
   }
-#if !defined(KOKKOS_ENABLE_THREADS)
+#ifndef KOKKOS_ENABLE_THREADS
   EXPECT_EQ(news_per_dispatch, 0U);
 #endif
   // Each execution allocates exactly what its dispatches do inside Kokkos: nothing of FFTN's
@@ -354,6 +356,7 @@ TYPED_TEST(KokkosThreaded, ExecutorInsideAKernelRunsSerially) {
   }
   const fftn::kokkos::executor<space> ex(exec);
   std::vector<fftn::workspace> spaces;
+  spaces.reserve(count);
   for (std::size_t i = 0; i < count; ++i) {
     spaces.emplace_back(p.workspace_bytes());
   }
@@ -581,13 +584,16 @@ TYPED_TEST(KokkosThreaded, EachTeamOfALeagueHasItsOwnWorkspace) {
   const int league = 2;
   const complex2<T> x("x", big_rows, big_n);
   const complex2<T> y("y", big_rows, big_n);
-  std::array<complex2<T>, 2> z{complex2<T>("z0", big_rows, big_n),
-                               complex2<T>("z1", big_rows, big_n)};
+  std::array<complex2<T>, 2> z{
+      complex2<T>("z0", big_rows, big_n),
+      complex2<T>("z1", big_rows, big_n),
+  };
   fill(x, 92);
   const auto p = make_plan(x, y, direction::backward, axis_type<1>{-1});
   fftn::workspace serial(p);
   p.execute(data_of(x), data_of(y), serial);
   std::vector<fftn::workspace> spaces;
+  spaces.reserve(static_cast<std::size_t>(league));
   for (int l = 0; l < league; ++l) {
     spaces.emplace_back(p.workspace_bytes(team_size));
   }

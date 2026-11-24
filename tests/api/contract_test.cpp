@@ -99,8 +99,11 @@ TYPED_TEST(Contracts, ExecuteNeverAllocates) {
   // transforms, the batch's innermost dimension one element apart.
   // (Past every machine's L1, which the rule asks of them.)
   const fftn::shape<c, c> interleaved{
-      .axes = {{.n = 128, .in_stride = 64 * 32, .out_stride = 64 * 32},
-               {.n = 64, .in_stride = 32, .out_stride = 32}},
+      .axes =
+          {
+              {.n = 128, .in_stride = 64 * 32, .out_stride = 64 * 32},
+              {.n = 64, .in_stride = 32, .out_stride = 32},
+          },
       .batches = {{.count = 32, .in_dist = 1, .out_dist = 1}},
   };
   expect_no_allocation(interleaved, 128 * 64 * 32, 128 * 64 * 32);

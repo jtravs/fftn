@@ -25,6 +25,7 @@
 #include <cmath>
 #include <complex>
 #include <cstddef>
+#include <cstdint>
 #include <span>
 #include <string>
 #include <vector>
@@ -151,9 +152,11 @@ TEST(BluesteinDepth, EveryTargetPrecisionAndDirection) {
 // chirp backward), with the scale and in place.
 TEST(BluesteinDepth, GivenTops) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
-    for (const std::vector<std::size_t>& tops :
-         {std::vector<std::size_t>{16}, std::vector<std::size_t>{8, 4},
-          std::vector<std::size_t>{8, 8}}) {
+    for (const std::vector<std::size_t>& tops : {
+             std::vector<std::size_t>{16},
+             std::vector<std::size_t>{8, 4},
+             std::vector<std::size_t>{8, 8},
+         }) {
       EXPECT_TRUE(
           check_prime<double>(t, 2053, tops, fftn::direction::forward, 1.0, 1, 2053, false, 8192));
       EXPECT_TRUE(
@@ -263,8 +266,8 @@ TEST(BluesteinDepth, RulesTakeItWhereARowOfMWould) {
     settings.profile.depth_part_bytes = 0;
     settings.profile.depth_top = 16;
     settings.profile.depth_top_alt = 20;
-    settings.profile.depth_convolution_max_bytes =
-        !on ? 0 : (beyond ? SIZE_MAX : std::size_t{4} * 1024 * 1024);
+    const std::size_t convolutions = beyond ? SIZE_MAX : std::size_t{4} * 1024 * 1024;
+    settings.profile.depth_convolution_max_bytes = on ? convolutions : 0;
     settings.profile.bluestein_pow2_part_bytes = SIZE_MAX;
     const fftn::shape<std::complex<double>, std::complex<double>> shape{
         .dir = fftn::direction::forward,

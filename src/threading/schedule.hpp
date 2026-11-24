@@ -28,6 +28,7 @@ struct core_class; // platform/topology.hpp
 // thresholds) calibrated them on a Zen 3 CCX (EPYC 7763), an Apple performance cluster (M5
 // Max) and an 18-core Xeon mesh (task 3.4); each field cites its evidence. The defaults are
 // the CCX's; profile_for sets the other kinds' values. Nothing in the rules is a literal.
+// NOLINTNEXTLINE(clang-analyzer-optin.performance.Padding): fields grouped by meaning
 struct machine_profile {
   // The cost model: nanoseconds per point through a pass (work_graph.hpp). T1 measured 1.0
   // on the CCX (AVX2), 1.23 on the Xeon and 0.57 on the M5, but with that figure and a

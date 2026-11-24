@@ -4,6 +4,7 @@
 #include "threading/schedule.hpp"
 
 #include "core/program.hpp"
+#include "fftn/isa.hpp"
 #include "fftn/team.hpp"
 #include "platform/topology.hpp"
 #include "threading/cache_groups.hpp"

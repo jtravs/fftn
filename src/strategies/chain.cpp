@@ -1184,7 +1184,7 @@ std::string chain_builder<T>::depth_text(std::size_t n,
 // one (two tops) on each of F1 runs, the last from the work slot to the output. The sub-rows'
 // chains are the chain of M the line would get, so they take its split run.
 template <class T>
-typename chain_builder<T>::depth_stages
+chain_builder<T>::depth_stages
 chain_builder<T>::c2c_depth(std::size_t n, const std::vector<std::size_t>& tops, int sign,
                             double scale, slot work, slot src, slot dst, const T* out_factor) {
   depth_stages out;
@@ -1223,11 +1223,9 @@ chain_builder<T>::c2c_depth(std::size_t n, const std::vector<std::size_t>& tops,
   for (std::size_t i = 1; i < rad.size(); ++i) {
     const std::size_t left = rad.size() - i; // passes from this one to the end
     endpoint next{.where = slot::a, .stride = 1};
-    if (passes > 1 && left == 1) {
-      next = endpoint{.where = work, .stride = 1};
-    } else if (passes > 1 && passes % 2 == 1 && left == 2) {
+    if (passes > 1 && passes % 2 == 1 && left == 2) {
       next = endpoint{.where = slot::b, .stride = 1};
-    } else if (passes > 1 && at.where != work) {
+    } else if (passes > 1 && (left == 1 || at.where != work)) {
       next = endpoint{.where = work, .stride = 1};
     }
     add_pass(m, rad, i, s, sign, at, next, none, out.sub, 1, layout_of(i, split, rad.size()));
@@ -1293,7 +1291,7 @@ template <class T> std::size_t chain_builder<T>::bluestein_single(std::size_t n)
 // read scratch a, it is free for the sub-rows' passes (the forward sub-rows run before a is
 // written).
 template <class T>
-typename chain_builder<T>::bluestein_depth_stages
+chain_builder<T>::bluestein_depth_stages
 chain_builder<T>::bluestein_depth(std::size_t q, const std::vector<std::size_t>& tops, int sign,
                                   endpoint src, endpoint dst, const line_edges& edges) {
   const std::size_t m = bluestein_m(q);
@@ -1318,9 +1316,16 @@ chain_builder<T>::bluestein_depth(std::size_t q, const std::vector<std::size_t>&
   top.dst = dst.where;
   top.name += "; chirp " + std::string(direction_name(sign)) + " out, the first " +
               std::to_string(q) + " to the output" + (scaled ? "; out: scale" : "");
-  for (std::vector<stage>* part :
-       {&out.forward.first, &out.forward.sub, &out.forward.mid, &out.forward.top,
-        &out.backward.first, &out.backward.sub, &out.backward.mid, &out.backward.top}) {
+  for (std::vector<stage>* part : {
+           &out.forward.first,
+           &out.forward.sub,
+           &out.forward.mid,
+           &out.forward.top,
+           &out.backward.first,
+           &out.backward.sub,
+           &out.backward.mid,
+           &out.backward.top,
+       }) {
     for (stage& st : *part) {
       st.name = "bluestein convolution: " + st.name;
     }

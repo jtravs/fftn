@@ -19,6 +19,7 @@
 #include "gen/codelets.hpp"
 #include "isa/kernel_table.hpp"
 #include "isa/target.hpp"
+#include "passes/pass_args.hpp"
 #include "planner/rules.hpp"
 #include "reference/reference_dft.hpp"
 #include "support/exact.hpp"
@@ -29,7 +30,6 @@
 
 #include <gtest/gtest.h>
 
-#include <algorithm>
 #include <complex>
 #include <cstddef>
 #include <cstdint>
@@ -159,10 +159,42 @@ template <class T> void batch_leaves_match(fftn::isa t, batch_leaf_choice choice
     const std::size_t c = set->lanes;
     for (std::size_t count = 2; count <= 2 * c + 1; ++count) {
       for (const rows_case rc : {
-               rows_case{n, count, 3, false, 1.0, false, fftn::direction::forward},
-               rows_case{n, count, 0, true, 0.375, false, fftn::direction::backward},
-               rows_case{n, count, 1, false, 0.375, true, fftn::direction::forward},
-               rows_case{n, count, 2, true, 1.0, false, fftn::direction::forward},
+               rows_case{
+                   .n = n,
+                   .count = count,
+                   .gap = 3,
+                   .in_place = false,
+                   .scale = 1.0,
+                   .scale_on_input = false,
+                   .dir = fftn::direction::forward,
+               },
+               rows_case{
+                   .n = n,
+                   .count = count,
+                   .gap = 0,
+                   .in_place = true,
+                   .scale = 0.375,
+                   .scale_on_input = false,
+                   .dir = fftn::direction::backward,
+               },
+               rows_case{
+                   .n = n,
+                   .count = count,
+                   .gap = 1,
+                   .in_place = false,
+                   .scale = 0.375,
+                   .scale_on_input = true,
+                   .dir = fftn::direction::forward,
+               },
+               rows_case{
+                   .n = n,
+                   .count = count,
+                   .gap = 2,
+                   .in_place = true,
+                   .scale = 1.0,
+                   .scale_on_input = false,
+                   .dir = fftn::direction::forward,
+               },
            }) {
         const std::string what =
             std::string(fftn::isa_name(t)) + (sizeof(T) == 8 ? " double" : " float") +
@@ -235,7 +267,7 @@ TEST(BatchLeaves, TablesCoverTheCodelets) {
       }
       const std::size_t slot = fftn::detail::codelet_slot(r);
       const auto check = [&](const auto& set, const char* precision) {
-        const bool present = set.lanes > 1 && !(neon && r == 25);
+        const bool present = set.lanes > 1 && (!neon || r != 25);
         for (std::size_t d = 0; d < 2; ++d) {
           EXPECT_EQ(set.leaf[slot][d][0][0] != nullptr, present) << precision << " radix " << r;
           EXPECT_EQ(set.leaf[slot][d][0][1] != nullptr, present) << precision << " radix " << r;

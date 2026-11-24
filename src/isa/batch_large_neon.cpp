@@ -14,7 +14,6 @@
 #include "gen/codelets.hpp"     // IWYU pragma: keep (the codelets read the codelet table)
 #include "isa/kernel_table.hpp" // IWYU pragma: keep (defines a batch_leaf_table)
 #include "isa/region.hpp"
-#include "passes/pass_args.hpp"
 
 FFTN_ISA_BEGIN(neon)
 namespace batch {

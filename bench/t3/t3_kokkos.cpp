@@ -24,12 +24,12 @@
 
 #include <algorithm>
 #include <chrono>
-#include <complex>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
 #include <functional>
+#include <ratio>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -62,12 +62,12 @@ void spin_for_ns(double ns) {
 }
 
 double median(std::vector<double> v) {
-  std::sort(v.begin(), v.end());
+  std::ranges::sort(v);
   return v[v.size() / 2];
 }
 
 double quantile(std::vector<double> v, double q) {
-  std::sort(v.begin(), v.end());
+  std::ranges::sort(v);
   return v[static_cast<std::size_t>(q * static_cast<double>(v.size() - 1))];
 }
 
@@ -120,18 +120,27 @@ void empty_task(void* /*arg*/, int /*i*/) {}
 void probe_dispatch(const exec_space& exec) {
   const fftn::kokkos::executor<exec_space> ex(exec);
   std::vector<arm> arms;
-  arms.push_back({"kokkos", [&] { ex.bulk(threads, empty_task, nullptr); }});
-  arms.push_back({"kokkos2", [&] { ex.bulk(threads, empty_task, nullptr); }});
+  arms.push_back({.name = "kokkos", .run = [&] { ex.bulk(threads, empty_task, nullptr); }});
+  arms.push_back({.name = "kokkos2", .run = [&] { ex.bulk(threads, empty_task, nullptr); }});
   using policy =
       Kokkos::RangePolicy<exec_space, Kokkos::Schedule<Kokkos::Static>, Kokkos::IndexType<int>>;
-  arms.push_back({"parallel_for", [&] {
-                    Kokkos::parallel_for("fftn::bulk", policy(exec, 0, threads).set_chunk_size(1),
-                                         fftn::kokkos::detail::bulk_call{empty_task, nullptr});
-                  }});
-  arms.push_back({"team_region", [&] {
-                    Kokkos::parallel_for("fftn::bulk", team_policy(exec, 1, threads),
-                                         [](const team_member&) {});
-                  }});
+  arms.push_back({
+      .name = "parallel_for",
+      .run =
+          [&] {
+            Kokkos::parallel_for(
+                "fftn::bulk", policy(exec, 0, threads).set_chunk_size(1),
+                fftn::kokkos::detail::bulk_call{.task = empty_task, .arg = nullptr});
+          },
+  });
+  arms.push_back({
+      .name = "team_region",
+      .run =
+          [&] {
+            Kokkos::parallel_for("fftn::bulk", team_policy(exec, 1, threads),
+                                 [](const team_member&) {});
+          },
+  });
 #ifdef KOKKOS_ENABLE_OPENMP
   const fftn::omp::executor omp_ex(threads);
   arms.push_back({"omp", [&] { omp_ex.bulk(threads, empty_task, nullptr); }});
@@ -156,30 +165,35 @@ void transform_arms(const std::string& name, const exec_space& exec, const View&
   std::vector<arm> arms;
   arms.push_back({"kokkos", [&] { p.execute(in, out, ex, wk); }});
   arms.push_back({"kokkos2", [&] { p.execute(in, out, ex, wk2); }});
-  arms.push_back({"team_all", [&] {
-                    Kokkos::parallel_for("fftn team", team_policy(exec, 1, threads),
-                                         [&](const team_member& m) {
-                                           p.execute(in, out, fftn::kokkos::team_of(m), wall);
-                                         });
-                  }});
-  arms.push_back({"team_own_barrier", [&] {
-                    Kokkos::parallel_for(
-                        "fftn team", team_policy(exec, 1, threads), [&](const team_member& m) {
-                          p.execute(in, out, fftn::kokkos::team_of(m), wown, fftn::completion::own);
-                          m.team_barrier();
-                        });
-                  }});
-  arms.push_back({"team_four_in_a_region",
-                  [&] {
-                    Kokkos::parallel_for("fftn team", team_policy(exec, 1, threads),
-                                         [&](const team_member& m) {
-                                           const fftn::team t = fftn::kokkos::team_of(m);
-                                           for (int i = 0; i < 4; ++i) {
-                                             p.execute(in, out, t, wfour);
-                                           }
-                                         });
-                  },
-                  4});
+  arms.push_back({
+      "team_all",
+      [&] {
+        Kokkos::parallel_for("fftn team", team_policy(exec, 1, threads), [&](const team_member& m) {
+          p.execute(in, out, fftn::kokkos::team_of(m), wall);
+        });
+      },
+  });
+  arms.push_back({
+      "team_own_barrier",
+      [&] {
+        Kokkos::parallel_for("fftn team", team_policy(exec, 1, threads), [&](const team_member& m) {
+          p.execute(in, out, fftn::kokkos::team_of(m), wown, fftn::completion::own);
+          m.team_barrier();
+        });
+      },
+  });
+  arms.push_back({
+      "team_four_in_a_region",
+      [&] {
+        Kokkos::parallel_for("fftn team", team_policy(exec, 1, threads), [&](const team_member& m) {
+          const fftn::team t = fftn::kokkos::team_of(m);
+          for (int i = 0; i < 4; ++i) {
+            p.execute(in, out, t, wfour);
+          }
+        });
+      },
+      4,
+  });
 #ifdef KOKKOS_ENABLE_OPENMP
   const fftn::omp::executor omp_ex(threads);
   fftn::workspace wo(bytes);
@@ -243,8 +257,10 @@ void probe_scale(const exec_space& exec) {
     Kokkos::deep_copy(x, cplx(0.25, -0.5));
     const fftn::kokkos::view_plan p(exec, x, y, fftn::direction::backward, -1);
     std::vector<arm> arms;
-    arms.push_back({"none", [&] { p.execute(x, y, fftn::kokkos::normalization::none); }});
-    arms.push_back({"scaled", [&] { p.execute(x, y, fftn::kokkos::normalization::backward); }});
+    arms.push_back(
+        {.name = "none", .run = [&] { p.execute(x, y, fftn::kokkos::normalization::none); }});
+    arms.push_back(
+        {.name = "scaled", .run = [&] { p.execute(x, y, fftn::kokkos::normalization::backward); }});
     measure("scale", std::to_string(count * n) + " elements", std::move(arms));
   }
 }
@@ -255,19 +271,22 @@ void probe_barrier(const exec_space& exec) {
   for (const double delay_ns : {0.0, 10000.0, 100000.0}) {
     const int count = delay_ns > 0 ? 200 : 2000;
     std::vector<arm> arms;
-    arms.push_back({"team_barrier",
-                    [&, delay_ns, count] {
-                      Kokkos::parallel_for("fftn barrier", team_policy(exec, 1, threads),
-                                           [&, delay_ns, count](const team_member& m) {
-                                             for (int i = 0; i < count; ++i) {
-                                               if (m.team_rank() == 0 && delay_ns > 0) {
-                                                 spin_for_ns(delay_ns);
-                                               }
-                                               m.team_barrier();
-                                             }
-                                           });
-                    },
-                    static_cast<double>(count)});
+    arms.push_back({
+        .name = "team_barrier",
+        .run =
+            [&, delay_ns, count] {
+              Kokkos::parallel_for("fftn barrier", team_policy(exec, 1, threads),
+                                   [&, delay_ns, count](const team_member& m) {
+                                     for (int i = 0; i < count; ++i) {
+                                       if (m.team_rank() == 0 && delay_ns > 0) {
+                                         spin_for_ns(delay_ns);
+                                       }
+                                       m.team_barrier();
+                                     }
+                                   });
+            },
+        .divisor = static_cast<double>(count),
+    });
 #ifdef KOKKOS_ENABLE_OPENMP
     arms.push_back({"omp_barrier",
                     [&, delay_ns, count] {
@@ -290,7 +309,7 @@ void probe_barrier(const exec_space& exec) {
 
 } // namespace
 
-int main(int argc, char** argv) {
+int main(int argc, char* const* argv) {
   try {
     std::set<std::string> probes{"dispatch", "transform", "scale", "barrier"};
     for (int i = 1; i + 1 < argc; i += 2) {

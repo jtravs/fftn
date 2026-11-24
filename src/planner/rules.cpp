@@ -3,6 +3,7 @@
 
 #include "planner/rules.hpp"
 
+#include "gen/codelets.hpp"
 #include "isa/target.hpp"
 #include "passes/pass_args.hpp"
 
@@ -13,6 +14,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -753,10 +755,10 @@ bool batch_narrower_of(target t, std::size_t lanes) { return t == target::avx512
 // 1024 x 2048, and 12 x 64 at 768 x 2048 1.33 of 4 x 12 x 16's, once the rows and their
 // output no longer fit the L3 (experiment X57). 768's sequence is also its override, for the
 // rows of planes; 1024's is not (rules above, X54: planes lost).
-constexpr std::array<radix_override, 2> avx2_double_fit_overrides{{
-    {.n = 768, .radices = {12, 64, 0, 0}},
-    {.n = 1024, .radices = {16, 64, 0, 0}},
-}};
+constexpr std::array<radix_override, 2> avx2_double_fit_overrides{
+    radix_override{.n = 768, .radices = {12, 64, 0, 0}},
+    radix_override{.n = 1024, .radices = {16, 64, 0, 0}},
+};
 
 std::span<const radix_override> fit_overrides_of(target t, std::size_t lanes) {
   if (t == target::avx2 && lanes == 2) {

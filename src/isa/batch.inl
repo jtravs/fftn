@@ -15,7 +15,11 @@ inline constexpr edge_op batch_nop = edge_op::none;
 inline constexpr edge_op batch_scl = edge_op::scale;
 
 // Radix 25 has no passes on NEON (passes/entries.inl, radix_on_target), so no leaf either.
-template <class T, std::size_t R, int S, edge_op I, edge_op O> constexpr leaf_fn batch_entry() {
+// consteval, as passes/entries.inl's helpers: the table is built by the compiler, so no code
+// is emitted for this and the coverage gate does not count lines that only the compiler runs.
+// noexcept: it initialises a constinit table, which nothing can throw from.
+template <class T, std::size_t R, int S, edge_op I, edge_op O>
+consteval leaf_fn batch_entry() noexcept {
   if constexpr (C<T> == 1 || (R == 25 && (id == target::neon || id == target::neon_fcma))) {
     return nullptr;
   } else {

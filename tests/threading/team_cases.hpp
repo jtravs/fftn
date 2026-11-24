@@ -175,10 +175,16 @@ void add_cases(std::vector<team_case>& out, const fftn::detail::build_settings& 
   // (task 4.3).
   const fftn::shape<c, c> interleaved{
       .dir = bwd,
-      .axes = {{.n = 24, .in_stride = 20 * 11, .out_stride = 20 * 11},
-               {.n = 20, .in_stride = 11, .out_stride = 11}},
-      .batches = {{.count = 2, .in_dist = 24 * 20 * 11, .out_dist = 24 * 20 * 11},
-                  {.count = 11, .in_dist = 1, .out_dist = 1}},
+      .axes =
+          {
+              {.n = 24, .in_stride = 20 * 11, .out_stride = 20 * 11},
+              {.n = 20, .in_stride = 11, .out_stride = 11},
+          },
+      .batches =
+          {
+              {.count = 2, .in_dist = 24 * 20 * 11, .out_dist = 24 * 20 * 11},
+              {.count = 11, .in_dist = 1, .out_dist = 1},
+          },
   };
   fftn::detail::build_settings adjacent = settings;
   adjacent.profile.adjacent_min_bytes = 0;     // whatever this machine's L1
@@ -288,8 +294,10 @@ void add_cases(std::vector<team_case>& out, const fftn::detail::build_settings& 
   // padded input and output rows, odd distances. The highest input index is
   // 2 x 117 + 5 x 19 + 8 x 2 = 345, the highest output one 2 x 109 + 5 x 18 + 15 = 323.
   fftn::shape<c, T> c2r_strided;
-  c2r_strided.axes = {{.n = 6, .in_stride = 19, .out_stride = 18},
-                      {.n = 16, .in_stride = 2, .out_stride = 1}};
+  c2r_strided.axes = {
+      {.n = 6, .in_stride = 19, .out_stride = 18},
+      {.n = 16, .in_stride = 2, .out_stride = 1},
+  };
   c2r_strided.batches = {{.count = 3, .in_dist = 117, .out_dist = 109}};
   out.push_back(make_case("c2r_planes_strided_6x16x3" + suffix, c2r_strided, 346, 324, false,
                           packed, target));
@@ -465,9 +473,12 @@ void add_cases(std::vector<team_case>& out, const fftn::detail::build_settings& 
   // 17 rows padded to 18).
   const fftn::shape<c, c> padded_volumes{
       .dir = fwd,
-      .axes = {{.n = 10, .in_stride = 774, .out_stride = 774},
-               {.n = 17, .in_stride = 43, .out_stride = 43},
-               {.n = 30, .in_stride = 1, .out_stride = 1}},
+      .axes =
+          {
+              {.n = 10, .in_stride = 774, .out_stride = 774},
+              {.n = 17, .in_stride = 43, .out_stride = 43},
+              {.n = 30, .in_stride = 1, .out_stride = 1},
+          },
       .batches = {{.count = 3, .in_dist = 7745, .out_dist = 7745}},
   };
   out.push_back(make_case("c2c_volumes_team_padded_3x10x17x30" + suffix, padded_volumes, 3 * 7745,

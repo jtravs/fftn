@@ -924,7 +924,7 @@ template <class T> void whole_lanes_take_the_whole_line(fftn::isa t) {
   const auto shape = fftn::rows_c2c<T>(std::size_t{2} * 509, 1, fftn::direction::forward);
   for (const bool whole : {false, true}) {
     build_settings settings;
-    settings.profile.bluestein_pow2_part_bytes = 1024 * 2 * sizeof(T);
+    settings.profile.bluestein_pow2_part_bytes = std::size_t{1024} * 2 * sizeof(T);
     settings.profile.long_convolution_bytes = std::size_t{8} * 1024 * 1024;
     settings.profile.bluestein_whole_lanes = whole;
     const auto core = make_plan_core(fftn::detail::view_of(shape), {.force_isa = t}, settings);

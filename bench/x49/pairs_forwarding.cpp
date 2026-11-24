@@ -12,9 +12,12 @@
 //
 // One line per variant and repetition: rows, offset, variant, ns per call.
 
+#include <array>
 #include <chrono>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
+#include <ratio>
 
 namespace {
 
@@ -22,6 +25,7 @@ using kernel = void (*)(const void*, void*, long, long, unsigned long);
 
 // x0 src, x1 dst, x2 and x3 the bytes between rows, x4 the rows. The loads and stores are
 // written out because a compiler pairs adjacent single accesses itself.
+// NOLINTBEGIN(portability-no-assembler): the instructions are what the screen measures
 [[gnu::naked, gnu::noinline]] void ldp_stp(const void* /*src*/, void* /*dst*/, long /*src_step*/,
                                            long /*dst_step*/, unsigned long /*rows*/) {
   asm volatile("cbz x4, 2f\n"
@@ -85,10 +89,11 @@ using kernel = void (*)(const void*, void*, long, long, unsigned long);
                "b.ne 1b\n"
                "2: ret\n");
 }
+// NOLINTEND(portability-no-assembler)
 
 } // namespace
 
-int main(int argc, char** argv) {
+int main(int argc, char* const* argv) {
   const unsigned long rows = argc > 1 ? std::strtoul(argv[1], nullptr, 10) : 3;
   const long offset = argc > 2 ? std::strtol(argv[2], nullptr, 10) : 0;
   const long calls = argc > 3 ? std::strtol(argv[3], nullptr, 10) : 20000000;
@@ -96,13 +101,14 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "rows 1-64, offset 0-4096 in steps of 16, calls >= 1\n");
     return 2;
   }
-  alignas(4096) static double buffer[1024];
-  double* rows_at = buffer + offset / 8;
-  const kernel kernels[] = {ldp_stp, ldr_str, ldp_str, ldr_stp};
-  const char* names[] = {"ldp/stp", "ldr/str", "ldp/str", "ldr/stp"};
+  alignas(4096) static std::array<double, 1024> buffer;
+  double* rows_at = buffer.data() + offset / 8;
+  const std::array<kernel, 4> kernels{ldp_stp, ldr_str, ldp_str, ldr_stp};
+  const std::array<const char*, 4> names{"ldp/stp", "ldr/str", "ldp/str", "ldr/stp"};
   for (int rep = 0; rep < 3; ++rep) {
-    for (int k = 0; k < 4; ++k) {
+    for (std::size_t k = 0; k < kernels.size(); ++k) {
       for (unsigned long i = 0; i < 4 * rows; ++i) {
+        // NOLINTNEXTLINE(clang-analyzer-security.ArrayBound): rows and offset are checked above
         rows_at[i] = 1e-3 * static_cast<double>(i);
       }
       kernel volatile f = kernels[k]; // called through a pointer, as fbench calls a plan

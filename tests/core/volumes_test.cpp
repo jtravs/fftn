@@ -34,8 +34,11 @@ struct volume_case {
 
 const std::vector<volume_case>& volumes() {
   static const std::vector<volume_case> v{
-      {16, 16, 16},  {64, 64, 64},  {256, 256, 256}, {17, 15, 37}, {100, 100, 100},
-      {8, 256, 256}, {256, 256, 8}, {31, 2, 19},     {3, 1000, 7}, {128, 64, 1024},
+      {.n0 = 16, .n1 = 16, .n2 = 16},    {.n0 = 64, .n1 = 64, .n2 = 64},
+      {.n0 = 256, .n1 = 256, .n2 = 256}, {.n0 = 17, .n1 = 15, .n2 = 37},
+      {.n0 = 100, .n1 = 100, .n2 = 100}, {.n0 = 8, .n1 = 256, .n2 = 256},
+      {.n0 = 256, .n1 = 256, .n2 = 8},   {.n0 = 31, .n1 = 2, .n2 = 19},
+      {.n0 = 3, .n1 = 1000, .n2 = 7},    {.n0 = 128, .n1 = 64, .n2 = 1024},
   };
   return v;
 }
@@ -87,7 +90,8 @@ template <class T> void scratch_within_bound(fftn::isa target, bool planes) {
       // 128-byte lines; a team adds its synchronisation state, which is the plan's no more
       // than any other plan's. A team runs the team program where there is one (X43), whose
       // blocks are narrower, so the same bound holds for it.
-      const std::size_t lines = (2 * bound * 2 * sizeof(T) + 2 * 64 + 127) / 128 * 128;
+      const std::size_t lines =
+          (std::size_t{2} * bound * 2 * sizeof(T) + std::size_t{2} * 64 + 127) / 128 * 128;
       const fftn::detail::plan_core& team_core = fftn::detail::team_core(*core);
       EXPECT_LE(core->slot_bytes, lines);
       EXPECT_LE(team_core.slot_bytes, lines);
@@ -171,8 +175,10 @@ fftn::shape<std::complex<T>, std::complex<T>> padded_volumes(const volume_case& 
 
 template <class T> void planes_equal_axes(fftn::isa target) {
   using c = std::complex<T>;
-  const std::vector<volume_case> cases = {{9, 7, 11},  {17, 15, 37}, {12, 10, 64},
-                                          {31, 2, 19}, {16, 32, 24}, {5, 64, 3}};
+  const std::vector<volume_case> cases = {
+      {.n0 = 9, .n1 = 7, .n2 = 11},  {.n0 = 17, .n1 = 15, .n2 = 37}, {.n0 = 12, .n1 = 10, .n2 = 64},
+      {.n0 = 31, .n1 = 2, .n2 = 19}, {.n0 = 16, .n1 = 32, .n2 = 24}, {.n0 = 5, .n1 = 64, .n2 = 3},
+  };
   for (const volume_case& vc : cases) {
     for (const bool padded : {false, true}) {
       const auto shape = padded ? padded_volumes<T>(vc, 3) : shape_of<T>(vc);
@@ -217,8 +223,8 @@ TEST(Volumes, PlaneAtATimeEqualsTheAxesOneByOne) {
 // An executor of two lanes that runs its tasks in order and counts its dispatches.
 struct two_lanes {
   int calls = 0;
-  [[nodiscard]] int concurrency() const { return 2; }
-  [[nodiscard]] int group_size() const { return 0; }
+  [[nodiscard]] static int concurrency() { return 2; }
+  [[nodiscard]] static int group_size() { return 0; }
   void bulk(int n, fftn::task_function task, void* arg) {
     ++calls;
     for (int k = 0; k < n; ++k) {
@@ -278,7 +284,7 @@ TEST(TeamProgram, NarrowerBlocksTheSameRadices) {
     ASSERT_NE(core->team, nullptr);
     ASSERT_GT(core->bytes, core->team->slot_bytes);
     fftn::test::input_source src(256);
-    const auto x = src.complexes<double>(256 * 256);
+    const auto x = src.complexes<double>(std::size_t{256} * 256);
     std::vector<std::complex<double>> serial(x.size());
     std::vector<std::complex<double>> fallback(x.size());
     const fftn::workspace one(fftn::detail::workspace_bytes(*core, 1));
@@ -310,7 +316,8 @@ TEST(TeamProgram, NarrowerBlocksTheSameRadices) {
   order.profile.column_team_bytes = 0;
   order.profile.column_wide_bytes = 0;
   const auto ordered = fftn::detail::make_plan_core(
-      fftn::detail::view_of(shape_of<double>({24, 20, 36})), fftn::options(), order);
+      fftn::detail::view_of(shape_of<double>({.n0 = 24, .n1 = 20, .n2 = 36})), fftn::options(),
+      order);
   ASSERT_NE(ordered->team, nullptr);
   EXPECT_EQ(ordered->graph.phases[0].nest, 2U); // the rows of every plane
   EXPECT_EQ(ordered->team->graph.phases[0].nest, 1U);
@@ -321,11 +328,13 @@ TEST(TeamProgram, NarrowerBlocksTheSameRadices) {
       << fftn::detail::describe(*ordered);
   // Fewer planes than a team of 8 has members: the team program keeps the axes one by one.
   const auto few = fftn::detail::make_plan_core(
-      fftn::detail::view_of(shape_of<double>({4, 64, 64})), fftn::options(), order);
+      fftn::detail::view_of(shape_of<double>({.n0 = 4, .n1 = 64, .n2 = 64})), fftn::options(),
+      order);
   EXPECT_EQ(few->team, nullptr);
   // A volume: both the plane's columns and the outer axis's pencils.
   const auto volume = fftn::detail::make_plan_core(
-      fftn::detail::view_of(shape_of<double>({64, 64, 64})), fftn::options(), settings);
+      fftn::detail::view_of(shape_of<double>({.n0 = 64, .n1 = 64, .n2 = 64})), fftn::options(),
+      settings);
   ASSERT_NE(volume->team, nullptr);
   // No team program without the field, for rows, or where every block is already that narrow.
   settings.profile.column_team_bytes = 0;

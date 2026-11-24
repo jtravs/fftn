@@ -241,6 +241,7 @@ public:
 
 // The core a team of two or more members runs: the team program where there is one.
 [[nodiscard]] inline const plan_core& team_core(const plan_core& c) noexcept {
+  // NOLINTNEXTLINE(bugprone-return-const-ref-from-parameter): callers pass a plan's own core
   return c.team != nullptr ? *c.team : c;
 }
 

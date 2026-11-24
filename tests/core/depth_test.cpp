@@ -28,6 +28,7 @@
 #include <complex>
 #include <cstddef>
 #include <limits>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -36,7 +37,6 @@ namespace {
 
 using fftn::detail::build_settings;
 using fftn::detail::make_plan_core;
-using fftn::detail::plan_core;
 using fftn::detail::strategy_choice;
 
 template <class T> using cvec = std::vector<std::complex<T>>;
@@ -307,12 +307,18 @@ TEST(Depth, RulesTakeItByTheProfile) {
       const fftn::options opts{.force_isa = isa};
       if (single) {
         const fftn::shape<std::complex<float>, std::complex<float>> shape{
-            .dir = fftn::direction::forward, .axes = {{.n = n}}, .batches = {}};
+            .dir = fftn::direction::forward,
+            .axes = {{.n = n}},
+            .batches = {},
+        };
         return depth(
             fftn::detail::describe(*make_plan_core(fftn::detail::view_of(shape), opts, s)));
       }
       const fftn::shape<std::complex<double>, std::complex<double>> shape{
-          .dir = fftn::direction::forward, .axes = {{.n = n}}, .batches = {}};
+          .dir = fftn::direction::forward,
+          .axes = {{.n = n}},
+          .batches = {},
+      };
       return depth(fftn::detail::describe(*make_plan_core(fftn::detail::view_of(shape), opts, s)));
     };
     const auto taken = [&](std::size_t n, fftn::isa isa, bool single = false) {
@@ -455,14 +461,16 @@ TEST(Depth, PinnedChoiceCarriesTheTops) {
   build_settings forced;
   forced.strategy = strategy_choice::depth;
   forced.depth_tops = {8, 4};
-  const auto core = make_plan_core(fftn::detail::view_of(shape), {}, forced);
+  const auto core = make_plan_core(fftn::detail::view_of(shape), fftn::options(), forced);
   EXPECT_EQ(core->program_text, "strategy=depth tops=8.4");
   const std::optional<fftn::detail::plan_choice> back =
       fftn::detail::parse_choice(core->program_text);
-  ASSERT_TRUE(back.has_value());
+  if (!back.has_value()) {
+    FAIL() << "the record does not parse: " << core->program_text;
+  }
   build_settings replay;
   fftn::detail::apply_choice(*back, replay);
-  const auto again = make_plan_core(fftn::detail::view_of(shape), {}, replay);
+  const auto again = make_plan_core(fftn::detail::view_of(shape), fftn::options(), replay);
   EXPECT_EQ(fftn::detail::describe(*again), fftn::detail::describe(*core));
   // The rules' choice, recorded with its tops, and the given tops replacing the rules' own.
   for (const fftn::isa t : fftn::test::runnable_isas()) {
