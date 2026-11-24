@@ -1146,6 +1146,16 @@ consequences:
   Xeon 6240 at 16384–262144 points, which deleted the stored form).
 - Values are computed with exact integer octant reduction and double-double evaluation,
   rounded once; no recurrences. Tables are shared between plans through the twiddle cache.
+- Planning time is almost all root evaluation (360 ns a root on the Mac, 0.8–0.9 µs on the
+  x86-64 machines), so a plan computes each value once (experiment X71), without changing a
+  bit: for n divisible by 8 a table evaluates each of its n/8 + 1 reduced angles once for the
+  up to four entries that share it (octant symmetry); entry m 2^k of the table of n 2^k is
+  entry m of the table of n bit for bit (every operation's operands scale by 2^k), so the
+  chain's root tables are sliced from, or take their even entries from, a table of another
+  length n 2^k already built (an r2c or c2r of n computes the roots of n once); the grid,
+  which builds no table of the n roots, takes its entries from a `root_cache` that keeps each
+  angle's series (33 bytes an angle). An entry is the same function of (m, n) however it is
+  reached, which the tests check against the per-entry computation.
 - As built (task 1.2), full mode, per plan (deduplicated within a plan, not yet shared
   through `table_cache`): the grouped pass reads R − 1 rows of w^(pk), each padded with
   ones to a multiple of C, in the per-lane storage of `load_tw`; lane and generic passes
@@ -3482,6 +3492,7 @@ to change before a release.
 | 2026-11-24 | X63's packed c2r planes on the Xeon 6240's class (`avx512`, from the L2) apply to Intel's processors only; AMD's (and unknown) cores that the key reaches keep the block (`set_grid_sizes`, section 13.5). Zen 3's `avx2` branch is unchanged | X64's cloud screen (EPYC 9B14 VM, threshold forced to 1 MiB, rule P against the block): one thread 512 × 1024 1.127, 512² 1.109 (run 20261124-105335-27eb); 8 lanes 600 × 800 1.286, 720² 1.246 (20261124-110003-6ca4); float 512 × 1024 1.162 (20261124-110552-66bf). Ice Lake-SP kept the gain (0.62–0.77); Zen 2 kept Zen 3's |
 | 2026-11-24 | The 2 MiB-L2 profile (x86-64, Sapphire, Emerald and Granite Rapids) runs Bluestein convolutions on its depth-first chain up to 32 MiB (`depth_convolution_max_bytes`), as the Xeon 6240's (section 8.5; experiment X64) | Over the nine convolutions moved (4093–999983): Sapphire 0.588, Granite 0.564, Emerald 0.615 of the time, none slower; FFTN ÷ oneMKL 131071 1.21–1.37 → 0.74–0.76, 999983 1.19–1.68 → 0.84–0.93 |
 | 2026-11-24 | On the 2 MiB-L2 key under `avx512` in double, one-axis c2c rows of 160, 240 and 1024 take two passes (8 · 20, 12 · 20, 32 · 32) while rows and output fit the L2 (in place: rows within half of it), through X57's fit mechanism with a key-selected table (`machine_profile::fit_large_l2`; section 11.2, rule 2; X69) | X69's judging runs: 0.796 (Sapphire), 0.780 (Granite), 0.800 (Emerald) of the time over the 32 moved cases, none slower; FFTN ÷ FFTW on them 0.99–1.05 → 0.79–0.82, ÷ oneMKL 1.05 → 0.82–0.84. X64's diagnosis on Sapphire and Granite Rapids: 32 · 32 took 0.73–0.82 of 8 · 8 · 16's time at 1–16 rows of 1024, out of place and in place, and tied at 256 rows (8 MiB); 8 · 20 and 12 · 20 0.79–0.84 of the rules' time for one row. These rows fail Emerald Rapids' exit check (1.14–1.25 of FFTW or oneMKL). A table under the target alone would have reached Zen 4, Zen 5 and Ice Lake-SP VMs, which get `fit_row_bytes` from the large-L3 key, unmeasured |
+| 2026-11-24 | Twiddle tables evaluate each reduced angle once: octant symmetry where 8 divides n, root tables of lengths n 2^k shared (sliced, or even entries copied), the grid's roots through a `root_cache` (section 8.4; experiment X71). Every entry is unchanged bit for bit, so plans, results and transform times are unchanged | Plan construction over the client catalogue's 52 shapes 0.219 (Mac), 0.221 (EPYC), 0.230 (Xeon) of its time, the standard tracking tier 0.25–0.30; worst client shape 9.3 → 2.7, 20.9 → 5.1, 26.8 → 5.7 ms; plans identical in every case. Tests check every table against the per-entry computation; a development comparison with the old generator found no differing bit over every length to 16384 and long lengths to 4194304 |
 
 ---
 

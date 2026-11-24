@@ -1008,6 +1008,23 @@ backward 1220 → 960 cycles), at the price of a whole pair for one row, which 3
 repay (1.05 of the chain; excluded). Count op-cache misses (Zen 3 PMCx28F) before believing a path
 that is slow only for some counts or one direction. [X62](experiments/X62-epyc-tail.md).
 
+4.25 **Exactly rounded twiddles can be cheap to plan without changing a bit: evaluate each
+distinct angle once.** FFTN computes every root alone in double-double (a Taylor series per
+root, 360 ns on the M5 Max, 0.8–0.9 µs on the EPYC 7763 and the Xeon 6240), and that was
+almost all of its plan construction: an r2c of 32768 points took 9.3 ms on the Mac, 19.5 ms on
+the EPYC. Two exact identities removed three quarters or more of the evaluations. Octant symmetry:
+for n divisible by 8 the first half of the table has n/8 + 1 reduced angles, each shared by up
+to four entries, so a table computed angle by angle, placed by the same octant rule, is the
+same table for a quarter of the work. Scaling: the integer octant reduction makes root(2m, 2n)
+the computation of root(m, n) with every operand of every floating-point operation doubled,
+which changes no rounding, so tables of n and n 2^k share entries bit for bit and an r2c's
+half-length chain and pairing twiddles need the roots of n once. Plan construction fell to
+0.22–0.23 of its time over the client catalogue's 52 shapes on the Mac, the EPYC and the Xeon
+(worst shape 9.3 → 2.7, 20.8 → 5.1 and 26.8 → 5.7 ms) with every table entry unchanged, which tests check against
+the per-entry computation, so no transform needed re-timing. Check that a reformulated
+generator is the same function of its inputs before reaching for a cheaper but different one.
+[X71](experiments/X71-twiddle-generation.md).
+
 ## 5. Threading
 
 5.1 **Synchronisation costs set the smallest row worth splitting.** Spin barrier /

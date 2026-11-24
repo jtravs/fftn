@@ -1,6 +1,6 @@
 # X71: planning time, twiddle generation by octant symmetry and shared root tables
 
-- **Status:** running
+- **Status:** done
 - **Owner:** x71 session, 2026-11-24
 - **Phase / task:** client acceptance, criterion (4): plan construction under 10 ms
 
@@ -93,8 +93,51 @@ reports).
 
 ## Results
 
-(to be filled after the judging runs)
+Arm A 1b1d129, arm B cbfcc29 (the rule, 298fd4c, was committed and pushed before every run).
+8 rounds each, one thread, rules effort. Plan times are each case's median over the rounds
+(maximum in brackets). The A/A control's sum of medians was within 1.2 % of A's in every run.
+
+| Machine (run, catalogue) | Load | Notes identical | Sum of medians A → B (B ÷ A) | Slower cases (rule 3) | Worst case A → B | Over 10 ms A → B |
+|---|---|---|---|---|---|---|
+| Mac M5 Max, Clang 23 (20261124-221912-bb81, client) | 6.8–9.1, AC throughout | 52 of 52 | 97.1 → 21.3 ms (0.219) | 0 | r2c-32768 9.33 (9.71) → 1.59 (1.67); worst B r2c-40960 2.65 (3.06) | 0 → 0 |
+| Mac (20261124-222350-028f, standard) | 4.3–4.4, AC | 61 of 61 | 1850 → 467 ms (0.252) | 0 | c2c-4194304 804 → 213 | 13 → 6 |
+| EPYC 7763, GCC 16 (20261124-222427-ac05, client) | 41–48 (shared node) | 52 of 52 | 224.6 → 49.5 ms (0.221) | 0 | r2c-40960 20.85 (21.27) → 5.13 (5.54) | 8 → 0 |
+| EPYC (20261124-222427-e7b3, standard) | 42–48 | 61 of 61 | 3868 → 1022 ms (0.264) | 0 | c2c-4194304 1697 → 475 | 15 → 8 |
+| Xeon 6240, GCC 14 (20261124-222921-127d, client) | 2.3–14 | 52 of 52 | 252.2 → 58.1 ms (0.230) | 0 | r2c-40960 26.49 (26.98) → 5.68; worst B c2r-40960 5.65 (6.19) | 8 → 0 |
+| Xeon (20261124-224111-b0f2, standard) | 2.1–2.3 | 61 of 61 | 3568 → 1064 ms (0.298) | 0 | c2c-4194304 1873 → 482 | 14 → 8 |
+
+Client catalogue, the shapes that were over 10 ms on x86-64 (medians, ms; A → B):
+
+| Shape | Mac | EPYC | Xeon |
+|---|---|---|---|
+| r2c / c2r 40960 × 6 | 6.26 → 2.65 / 2.15 → 0.77 | 20.85 → 5.13 / 20.75 → 5.01 | 26.49 → 5.68 / 26.77 → 5.65 |
+| r2c / c2r 32768 | 9.33 → 1.59 / 9.19 → 1.60 | 19.49 → 3.73 / 19.47 → 3.53 | 20.79 → 3.99 / 21.20 → 4.19 |
+| r2c 20480 × 21 / c2r 20480 × 3 | 5.83 → 1.02 / 5.81 → 1.03 | 12.14 → 2.20 / 12.19 → 2.33 | 13.32 → 2.83 / 13.18 → 2.75 |
+| r2c / c2r 18432 | 5.28 → 0.93 / 5.25 → 0.92 | 10.98 → 2.03 / 11.02 → 2.10 | 12.07 → 2.52 / 11.85 → 2.34 |
+
+Over the standard tier the remaining long plans are the long rows themselves (4194304 and
+1048576 points, 262144, 100000) and the prime 65537 (Bluestein/Rader: its chirp and kernel roots
+are computed alone; 63.7 → 43.3 ms on the Mac): their tables hold n roots, so they stay linear in
+n at a quarter of the old cost.
+
+The Mac client run's checkout had an uncommitted documentation edit (fbench marks it dirty);
+both arms were built from their commits.
+
+CI on cbfcc29: the four required checks passed (lint, gcc-16, clang-23 ASan, macOS arm64), with
+the bit-identity tests.
 
 ## Verdict
 
-(to be filled)
+**Adopted.** Every criterion holds on all three machines: identical plans in every case, sums
+of median plan times 0.219–0.298 of A's (rule: at most 0.6), no case slower beyond 10 % +
+0.05 ms, and the bit-identity tests green in CI. The target is met: every client shape plans
+in under 10 ms on the Mac, the EPYC and the Xeon, by median and by maximum over the rounds
+(worst 2.65 / 5.13 / 5.68 ms, maxima 3.06 / 5.54 / 6.19 ms). Since the tables are unchanged bit
+for bit, transform times and results are unchanged by construction; no rule reach applies (no
+planner rule, every target takes the change). No near-miss re-run or narrowing was used.
+
+Follow-ups, not done: the Bluestein chirp and Rader kernels could take their roots through
+`root_cache` or the chain's tables (65537: 43 ms on the Mac); a cheaper exactly rounded
+generator (a table of angles and short series) would cut the long rows' tables further, but it
+is a different function of (m, n) and would need the bit-identity argument replaced by a
+correct-rounding one. DESIGN.md 8.4 and LESSONS.md 4.25 record the method.
