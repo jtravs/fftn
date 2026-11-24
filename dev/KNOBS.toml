@@ -9,3 +9,11 @@
 # owner = "name"
 # experiment = "X1"
 # expires = "2026-12-01"
+
+# Campaign branch exp/cloud-x70 only (never merged): the fbench options FIT_IN_PLACE_BYTES and
+# FIT_LONG_ROW_BYTES of experiment X70's cloud run (bench/backends/fftn_tuning.hpp). Not a
+# library switch; registered so that it expires.
+[FFTN_X_X70]
+owner = "lead"
+experiment = "X70"
+expires = "2026-12-24"

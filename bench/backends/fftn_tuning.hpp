@@ -198,6 +198,21 @@ inline bool apply_tuning(fftn::detail::build_settings& s, std::string_view key,
     }
     return true;
   }
+  // FFTN_X_X70: campaign-only options of experiment X70's cloud run (branch exp/cloud-x70,
+  // never merged; dev/KNOBS.toml): the in-place limit and the long-row limit of the fit rows.
+  // Arm O (X69's plans) sets FIT_ROW_BYTES and FIT_IN_PLACE_BYTES to X69's limits; arm W (every
+  // row on the two-pass radices) sets all three far beyond any case.
+  if (key == "FIT_IN_PLACE_BYTES" || key == "FIT_LONG_ROW_BYTES") {
+    const std::optional<std::size_t> v = parse_size(value, 1, true);
+    if (!v) {
+      error = bad + " (a whole number from 1, or never)";
+    } else if (key == "FIT_IN_PLACE_BYTES") {
+      s.profile.fit_in_place_bytes = *v;
+    } else {
+      s.profile.fit_long_row_bytes = *v;
+    }
+    return true;
+  }
   // X62's switch for a Bluestein stage over C copies (machine_profile::bluestein_whole_lanes).
   if (key == "BLUESTEIN_WHOLE_LANES") {
     if (value == "0" || value == "1") {
