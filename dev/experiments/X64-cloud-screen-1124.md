@@ -1,6 +1,7 @@
 # X64: cloud screen of 2026-11-24 (recent Intel against oneMKL; the families rules reach)
 
-- **Status:** running
+- **Status:** done: X50 adopted on the 2 MiB-L2 key; every reach screen kept except X63's Xeon
+  key on Zen 4 (own key: Intel's cores only, PR 97); Emerald's exit check passes
 - **Owner:** lead session, 2026-11-24
 - **Phase / task:** 1 (left from the exit: recent Intel against oneMKL) and the reach rule
   (AGENTS section 6: every family a rule reaches by cache key is screened)
@@ -76,8 +77,105 @@ turns one rule off or on through an option:
 
 ## Results
 
-(to come)
+Google Cloud Spot VMs in us-central1-a, 2026-11-24, GCC 14.2 Release, campaign binary c22a9f8,
+one thread per core, hot cases, statistic median. Each CPU model checked before the jobs (the
+job stops on the wrong family). Scores by the screen's scorer over the moved cases only (plan
+notes differ between the arms): the per-round geometric mean, its median and 95 % interval.
+"Slower" counts moved cases whose whole interval lies above 1 + max(band, 3 %).
+
+**X50 on the 2 MiB-L2 key** (D, X50 on, against N, `main`'s plans; 9 of 14 cases moved: 4093 …
+999983 and 65537; 1018 and the short rows do not reach the limit):
+
+| Family | VM | Run | Band | Moved geomean [95 %] | Slower | Rule | Verdict |
+|---|---|---|---:|---|---:|---|---|
+| Sapphire Rapids | c3-standard-8 | 20261124-110011-c061 | ±1.57 % | 0.588 [0.578, 0.590] | 0 | adopt | adopt |
+| Granite Rapids | c4-standard-16 | 20261124-122525-2325 | ±1.00 % | 0.564 [0.563, 0.565] | 0 | adopt | adopt |
+| Emerald Rapids | c4-standard-16 | 20261124-105320-d4a5 | ±7.69 % | 0.615 [0.584, 0.630] | 0 | reach | keep |
+
+The two rows the rule reports without judging, FFTN with X50 (D) against FFTW (MEASURE) and
+oneMKL on the same VM:
+
+| Family | 131071 ÷ FFTW | 131071 ÷ oneMKL | 999983 ÷ FFTW | 999983 ÷ oneMKL | N ÷ oneMKL (131071, 999983) |
+|---|---:|---:|---:|---:|---|
+| Sapphire Rapids | 0.70 | 0.76 | 0.57 | 0.87 | 1.25, 1.68 |
+| Granite Rapids | 0.72 | 0.74 | 0.71 | 0.93 | 1.37, 1.31 |
+| Emerald Rapids | 0.70 | 0.75 | 0.63 | 0.84 | 1.21, 1.19 |
+
+Emerald's band is wide (the VM's control arm, ±7.69 %), but the moved cases' interval lies far
+below it.
+
+**Reach screens** (rule: no moved case slower, moved geomean at most 1 + band):
+
+| Family | Rule | Run | Band | Moved | Moved geomean [95 %] | Slower | Verdict |
+|---|---|---|---:|---:|---|---:|---|
+| Zen 2 (n2d, Rome) | X57 fit rows | 20261124-105410-445c | ±1.65 % | 21 of 29 | 0.920 [0.917, 0.926] | 0 | keep |
+| Zen 2 | X62 batch leaf of 64 | 20261124-105615-71b8 | ±1.31 % | 27 of 53 | 0.819 [0.815, 0.824] | 0 | keep |
+| Zen 2 | X62 Bluestein cap C | 20261124-105615-71b8 | ±1.31 % | 12 of 53 | 0.931 [0.924, 0.939] | 0 | keep |
+| Zen 2 | X63 double, 1 thread | 20261124-110251-626f | ±2.49 % | 11 of 15 | 0.877 [0.864, 0.884] | 0 | keep |
+| Zen 2 | X63 double, 8 lanes | 20261124-110801-e1f6 | ±2.49 % | 11 of 15 | 0.901 [0.892, 0.907] | 0 | keep |
+| Zen 2 | X63 float, 1 thread | 20261124-111234-04ed | ±2.75 % | 14 of 17 | 0.662 [0.650, 0.669] | 0 | keep |
+| Zen 2 | X63 float, 8 lanes | 20261124-112055-29d2 | ±2.83 % | 14 of 17 | 0.775 [0.761, 0.782] | 0 | keep |
+| Ice Lake-SP (n2) | X63 double, 1 thread | 20261124-105432-c6cd | ±6.49 % | 30 of 36 | 0.737 [0.717, 0.744] | 0 | keep |
+| Ice Lake-SP | X63 double, 8 lanes | 20261124-105935-ef22 | ±2.76 % | 30 of 36 | 0.768 [0.766, 0.773] | 0 | keep |
+| Ice Lake-SP | X63 float, 1 thread | 20261124-110650-ca40 | ±2.49 % | 32 of 41 | 0.624 [0.618, 0.641] | 0 | keep |
+| Ice Lake-SP | X63 float, 8 lanes | 20261124-112129-831a | ±1.80 % | 32 of 41 | 0.617 [0.612, 0.622] | 0 | keep |
+| Zen 4 (c3d, EPYC 9B14) | X63 double, 1 thread | 20261124-105335-27eb | ±1.39 % | 31 of 36 | 0.902 [0.899, 0.905] | 3 | own key |
+| Zen 4 | X63 double, 8 lanes | 20261124-110003-6ca4 | ±1.98 % | 31 of 36 | 0.900 [0.894, 0.907] | 8 | own key |
+| Zen 4 | X63 float, 1 thread | 20261124-110552-66bf | ±1.00 % | 34 of 41 | 0.833 [0.832, 0.833] | 2 | own key |
+| Zen 4 | X63 float, 8 lanes | 20261124-111724-956d | ±1.92 % | 34 of 41 | 0.813 [0.795, 0.819] | 1 | own key |
+| Emerald Rapids | X58 leaf of 12 | 20261124-105251-1bf0 | ±3.72 % | 10 of 12 | 0.874 [0.837, 0.897] | 0 | keep |
+
+X61 on Zen 2 (Z1, run 20261124-105358-ea6d, the axes catalogue): no plan note "adjacent
+transforms", so the rule stays off there as intended. Zen 2's VM did not report its CCX; every arm
+read the corrected topology recording (the job's `--fix-zen2`).
+
+Zen 4's losses are mid-size planes with X63's threshold at the VM's L2 (1 MiB): 512 × 1024 1.127
+and 512² 1.109 at one thread, 600 × 800 1.286 and 720² 1.246 at 8 lanes, although the moved
+cases' mean gained. The rule's key was the Xeon 6240's (a private L2 under 2 MiB without Zen 3's
+large L3 per core), which Zen 4 parts and VMs match.
+
+**Emerald exit check** (E3, run 20261124-105849-3908, band ±3.71 %, 191 c2c rows of the standard
+catalogue without 2²³ and 2²⁴; X56's tail rule: at most 9 rows beyond noise):
+
+| Against | Geomean | Rows above 1.05 | Beyond noise | Those rows (point, interval's lower end) |
+|---|---:|---:|---:|---|
+| FFTW | 0.71 | 14 | 5 | 1024 b1 bwd 1.21 (1.15), 1024 b1 in place 1.18 (1.11), 131071 1.17 (1.14), 1024 b1 1.17 (1.14), 160 1.14 (1.13) |
+| oneMKL | 0.69 | 13 | 6 | 999983 1.27 (1.21), 1024 b3 in place 1.25 (1.22), 131071 1.22 (1.18), 1024 b16 1.17 (1.14), 1024 b1 in place 1.16 (1.12), 1024 b3 1.15 (1.11) |
+
+131071 and 999983 are the convolutions X50 now moves on this key (with X50 on Emerald, 131071 ÷
+oneMKL 0.75 and 999983 0.84).
+
+**Diagnosis** (A2, A3 on Sapphire and Granite; decide nothing). `main`'s plans for these rows on
+the 2 MiB-L2 key under `avx512`: 1024 = 8 × 8 × 16, split from pass 2. Forced radices against the
+rules' plans (runs 20261124-110848-9267, -110857-ce33, -110906-aff2 on Sapphire,
+20261124-123201-fbc0, -123210-005a, -123219-b8af on Granite; bands ±1.00-2.01 %):
+
+- 1024 as 32 × 32: 0.73-0.82 of the rules' time for 1-16 rows, out of place and in place, both
+  directions (Sapphire 0.730-0.819, Granite 0.743-0.820); 256 and 1024 rows tie or lose (0.99,
+  1.12 on Sapphire at 1024 rows).
+- 160 as 8 × 20: 0.84 (Sapphire), 0.80 (Granite). 240 as 12 × 20: 0.81, 0.79.
+- FFTN's time over the libraries' (A2, runs 20261124-110801-0f5b on Sapphire, 20261124-123103-0fc2
+  on Granite): ÷ FFTW, 160 1.06 and 1.23, 240 1.10 and 1.17, 1024 one row 1.18 and 1.12, but
+  32-point batches 0.67-0.83 and 256-1024 rows of 1024 0.84-0.87; ÷ oneMKL, 160-384 0.84-0.94,
+  1024 one row 0.92-0.96, 1024 in place 3-16 rows 1.06-1.21.
 
 ## Verdict
 
-(to come)
+- **X50 adopted on the 2 MiB-L2 key** (`machine_profile::depth_convolution_max_bytes` = 32 MiB in
+  `profile_for`'s large-L2 branch, with the depth-first chain): it passes the adopt rule on
+  Sapphire (0.588) and Granite Rapids (0.564), and Emerald keeps it by the reach rule (0.615);
+  none of 27 moved cases slower. 131071 against oneMKL goes from 1.21-1.37 to 0.74-0.76, 999983
+  from 1.19-1.68 to 0.84-0.93.
+- **Reach**: Zen 2 keeps X57, X62's two rules and X63 in all four runs; Ice Lake-SP keeps X63's
+  Xeon key in all four; Emerald keeps X58. X61 stays off on Zen 2.
+- **X63's Xeon key on Zen 4: own key.** All four runs lose (1-8 moved cases slower beyond 3 %).
+  The rule now applies to Intel's cores only (PR 97, `machine_profile::vendor`); AMD's cores with
+  `avx512` and unknown vendors keep the block. A narrower threshold for Zen 4 is unmeasured.
+- **Emerald exit check passes** (5 and 6 rows beyond noise against the bound of 9). Its failing
+  rows other than X50's convolutions (the 1024 family and 160) are the follow-up below.
+- **Follow-up** (not judged here): on recent Intel the rules' radices for 1024 (8 × 8 × 16), 160
+  and 240 lose to 32 × 32, 8 × 20 and 12 × 20 by 16-27 %; an override on the 2 MiB-L2 key
+  needs its own experiment with a deciding run and rules naming the 1024 family, 160 and 240.
+- Spend: USD 2.44 for the eight VMs, including the client catalogue check's Axion VM and a first
+  Granite VM whose package install hung for 55 minutes (deleted by ID, no results); campaign USD
+  14.63 of 20 ([cloud-ledger-2026-11.md](cloud-ledger-2026-11.md)).

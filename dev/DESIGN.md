@@ -1498,7 +1498,8 @@ whose chain is that stage, `chain_builder::bluestein_single`) instead runs its c
 as two depth-first chains (section 8.5's depth-first chain; experiment X50,
 `chain_builder::bluestein_depth`) in double where the profile's depth-first fields would make
 a row of M one, with `machine_profile::depth_convolution_max_bytes` as the upper limit in
-place of the rows' (the convolutions measured: the Xeon's 32 MiB, 2²¹ complex doubles, beyond
+place of the rows' (the convolutions measured: the Xeon's 32 MiB, 2²¹ complex doubles, also
+on the 2 MiB-L2 key since X64's screen of Sapphire, Emerald and Granite Rapids, beyond
 its rows' original 4 L2 since a convolution is never a grid and the alternative is the
 breadth-first chain; Apple's 2 L1); longer convolutions keep the breadth-first chain,
 unmeasured. The workspace block is the movable line: the forward chain's first pass reads the
@@ -3473,6 +3474,7 @@ to change before a release.
 | 2026-11-24 | In place, the EPYC class's data-size-aware rows of 768 and 1024 take their two-pass radices only while the rows fit `fit_in_place_bytes`, half the L3 (16 MiB, 1024 rows of 1024 on the EPYC 7763), not three quarters of it (section 11.2, rule 2; X57 amendment 2) | The in-place limit had been extrapolated from the out-of-place footprint. Measured on the EPYC 7763 (maintainer's decision, 2026-11-24: if it loses, cap it at the 1024 rows measured): 16 · 64 in place 1.07–1.16 of 4 · 16 · 16's time at 1280 and 1536 rows of 1024; 12 · 64 1.05 backward at 1536 rows of 768 (18 MiB), 1.14–1.19 at 2048. 1100 rows (0.973 forward, backward within noise) gained too little to keep |
 | 2026-11-24 | The machine profile carries the processor's vendor (CPUID on x86; Apple, other Arm), shown by `describe()`; the `avx2` rules measured only on AMD's cores and keyed by the target alone (X26's copies without prefetch, the overrides of X30's 512, X42 and X54, the batch leaves of X53 and X62) apply only for AMD, every other vendor keeping the earlier plans (section 13.5); X30's 256 = 8 × 32 stays for every vendor | The maintainer's decision: a cache key cannot tell a Zen CCX from an Intel ring, and the Xeon 6240 forced to `avx2` lost with two of these rules (X26: 2²² 1.20 without the prefetch; X30's 512: r2c 1024² 1.057) and gained with X30's 256 (0.932); the others were never run on an Intel core under `avx2`. Not a performance change: the EPYC 7763's plans are identical over the standard catalogue (describe() of all 445 cases), and no other measured machine plans for `avx2` by default |
 | 2026-11-24 | X63's packed c2r planes on the Xeon 6240's class (`avx512`, from the L2) apply to Intel's processors only; AMD's (and unknown) cores that the key reaches keep the block (`set_grid_sizes`, section 13.5). Zen 3's `avx2` branch is unchanged | X64's cloud screen (EPYC 9B14 VM, threshold forced to 1 MiB, rule P against the block): one thread 512 × 1024 1.127, 512² 1.109 (run 20261124-105335-27eb); 8 lanes 600 × 800 1.286, 720² 1.246 (20261124-110003-6ca4); float 512 × 1024 1.162 (20261124-110552-66bf). Ice Lake-SP kept the gain (0.62–0.77); Zen 2 kept Zen 3's |
+| 2026-11-24 | The 2 MiB-L2 profile (x86-64, Sapphire, Emerald and Granite Rapids) runs Bluestein convolutions on its depth-first chain up to 32 MiB (`depth_convolution_max_bytes`), as the Xeon 6240's (section 8.5; experiment X64) | Over the nine convolutions moved (4093–999983): Sapphire 0.588, Granite 0.564, Emerald 0.615 of the time, none slower; FFTN ÷ oneMKL 131071 1.21–1.37 → 0.74–0.76, 999983 1.19–1.68 → 0.84–0.93 |
 
 ---
 

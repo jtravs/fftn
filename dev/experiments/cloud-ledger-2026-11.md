@@ -218,3 +218,39 @@ cap. Teardown verified on 2026-11-19 at 04:15 UTC: every instance above deleted 
 loop after matching its ID, by its termination action, or on preemption), then the firewall
 rule, subnet and network after matching their IDs; the inventory lists no `fftn` instance, disk
 or firewall rule and only the `default` network; every watchdog stopped.
+
+## X64 and the client catalogue check, 2026-11-24
+
+Rentals for [X64](X64-cloud-screen-1124.md) (the reach screens and X50 on recent Intel) and
+for the AArch64 leg of the client catalogue check (one Axion VM). The maintainer approved
+USD 5 for these, within the campaign's USD 20. Same project and region, zone us-central1-a,
+Spot VMs with `--max-run-duration=150m` (termination action DELETE), boot-disk auto-delete,
+and a Mac-side watchdog per VM that deletes by name only after matching the recorded ID.
+Prices as before (Spot list prices read 2026-11-15). The n2d and c3d prices were not on
+that list and are estimates. Add about USD 0.017/h per VM for disk and IP. Creation times
+are those Compute Engine recorded. Deletion times are when the delete call returned.
+Shared resources (free): network `fftn-s1124-net` (155638627033470172), subnet
+`fftn-s1124-sub` (5706820330252194990), firewall rule `fftn-s1124-ssh`
+(6255819946428257445, SSH from the controller's address only).
+
+| Instance | Recorded ID | Type | Spot USD/h | Created (UTC) | Deleted (UTC) | Cost USD | Running total | Use |
+|---|---|---|---:|---|---|---:|---:|---|
+| fftn-s1124-n2d | 1373423097111696560 | n2d-standard-16, 1 thread per core | 0.400 (est.) | 2026-11-24 10:43:44 | 2026-11-24 11:33:16 | 0.35 | 0.35 | Zen 2 reach screens (X57, X61, X62, X63) |
+| fftn-s1124-c3d | 5993219272219350158 | c3d-standard-16, 1 thread per core | 0.330 (est.) | 2026-11-24 10:43:45 | 2026-11-24 11:34:15 | 0.30 | 0.65 | X63 reach screen (Zen 4) |
+| fftn-s1124-c4e | 2250537732003124366 | c4-standard-16, 1 thread per core | 0.473 | 2026-11-24 10:43:46 | 2026-11-24 11:20:22 | 0.30 | 0.95 | X58 and X50 reach, exit check (Emerald Rapids) |
+| fftn-s1124-c3 | 8964760711706760334 | c3-standard-8, 1 thread per core | 0.150 | 2026-11-24 10:43:47 | 2026-11-24 11:14:03 | 0.09 | 1.04 | X50 and diagnosis (Sapphire Rapids) |
+| fftn-s1124-n2 | 6700702670516704398 | n2-standard-16, 1 thread per core | 0.443 | 2026-11-24 10:43:48 | 2026-11-24 11:35:14 | 0.40 | 1.44 | X63 reach screen (Ice Lake) |
+| fftn-s1124-c4 | 2202191046088642026 | c4-standard-16, 1 thread per core | 0.473 | 2026-11-24 11:20:37 | 2026-11-24 12:18:14 | 0.48 | 1.92 | Granite Rapids: package install hung, no results |
+| fftn-s1124-c4a | 3936476630937551868 | c4a-standard-16 | 0.354 | 2026-11-24 12:03:31 | 2026-11-24 13:03:16 | 0.37 | 2.29 | client catalogue check (Axion) |
+| fftn-s1124-c4b | 3929449055123947132 | c4-standard-16, 1 thread per core | 0.473 | 2026-11-24 12:18:28 | 2026-11-24 12:36:11 | 0.15 | 2.44 | X50 and diagnosis (Granite Rapids) |
+
+The total is USD 2.44, an estimated gross figure. Granite Rapids' first VM was created only
+after the Emerald VM had been deleted, because the region's C4 quota is 24 vCPUs. Its
+package install then hung for 55 minutes on a mirror, so it was deleted by ID without
+results, and its replacement installed with retries. With the earlier experiments the
+campaign has spent USD 14.63 of its USD 20 cap. Teardown was verified on 2026-11-24 at
+13:04 UTC:
+- every instance above was deleted after its ID was matched;
+- the firewall rule, subnet and network were then deleted after their IDs were matched;
+- the project lists only the `default` network and its rules;
+- every watchdog was stopped.

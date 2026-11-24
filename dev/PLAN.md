@@ -534,6 +534,15 @@ Decided by the maintainer on 2026-11-24 (the earlier ones are in AGENTS.md secti
   four-core client parts and small VMs included. From X64's screen, X63's `avx512` branch (the
   Xeon 6240's key) packs on Intel's cores only; AMD's Zen 4 keeps the block.
 
+Cloud screen X64 (2026-11-24, Spot VMs, USD 2.44; campaign 14.63 of 20): X50's depth-first
+Bluestein convolutions adopted on the 2 MiB-L2 key (Sapphire Rapids 0.588 of the time over the
+moved convolutions, Granite 0.564, Emerald 0.615; FFTN ÷ oneMKL 131071 0.74–0.76, 999983
+0.84–0.93). Every reach screen kept the rule except X63's Xeon key on Zen 4 (now Intel only).
+Emerald Rapids passes the exit check (5 rows beyond noise ÷ FFTW, 6 ÷ oneMKL, bound 9). Lead
+for a next experiment: on the 2 MiB-L2 key under `avx512`, 1024 as 32 × 32 took 0.73–0.82 of
+the rules' 8 × 8 × 16 for 1–16 rows, 160 as 8 × 20 0.80–0.84 and 240 as 12 × 20 0.79–0.81 (X64's
+diagnosis, not judged).
+
 Still open: the CI's Windows jobs install a pinned LLVM 23.1.5 (PR 81) because the runner
 image's LLVM is older than its Visual Studio needs.
 
@@ -944,7 +953,7 @@ running, done (with verdict).
 | [X55](experiments/X55-gnr-depth.md) | Should the depth-first rule reach Granite Rapids (a 2 MiB private L2, outside X46's branch), and with what range and tops? (X48: its long rows over 1.05 of FFTW and MKL) | 1 | done: G adopted (0.688 over the rows it changes, tracking 0.940; long rows ÷ FFTW 0.70–0.83) |
 | [X61](experiments/X61-adjacent-transforms.md) | Strided axes of an array (a batch dimension one element apart, varying fastest) as lanes over blocks of adjacent transforms, instead of each transform through the chain | 4 | done: adopted, restricted to radices the chain shares with a team running the chain, on Apple's class (0.745 of the chain's time over 86 cases) and the Xeon 6240's (0.77); off on the EPYC's class (0.95 misses the bar) and unmeasured ones. Unrestricted: 0.29 / 0.37 at one thread, but up to 2.4 slower at 8 lanes. Follow-up: a team sharing a block's lines |
 | [X63](experiments/X63-c2r-planes-packed.md) | X60's follow-up: the packed c2r intermediate for planes only (volumes lost at 8 lanes on the Xeon), on the Xeon 6240 class (`avx512`, from its L2) and Zen 3 (`avx2`, from half its L3): does it pass at one thread and at 8 lanes? | 4 | done: adopted on the Xeon 6240 class (0.807 at one thread, 0.824 at 8 lanes, 31 planes from 1 MiB) and Zen 3 (0.837 and 0.767, 9 planes from 16 MiB); volumes, Apple and unmeasured classes keep the block; float planes pass too (0.59–0.81) |
-| [X64](experiments/X64-cloud-screen-1124.md) | Cloud screen: do the rules that reach Zen 2, Ice Lake-SP, Zen 4 and Emerald Rapids by cache key hold there, and do X50's depth-first convolutions win on recent Intel against oneMKL? | 1 | running |
+| [X64](experiments/X64-cloud-screen-1124.md) | Cloud screen: do the rules that reach Zen 2, Ice Lake-SP, Zen 4 and Emerald Rapids by cache key hold there, and do X50's depth-first convolutions win on recent Intel against oneMKL? | 1 | done: X50's convolutions adopted on the 2 MiB-L2 key (Sapphire 0.588, Granite 0.564, Emerald 0.615; 131071 ÷ oneMKL 1.21–1.37 → 0.74–0.76); Zen 2, Ice Lake-SP and Emerald keep the rules they reach; Zen 4 loses X63's Xeon key (Intel only, PR 97); Emerald's exit check passes |
 | X65 | Fusion: do vocabulary edges (scale, factors, accumulate, stored runs) pay against a separate pass, size by size, and what does an edge that forces a slower strategy cost? (task 5.1; ID reserved, claim with the file) | 5 | planned |
 | X66 | Fusion: block callbacks outside the kernels (identity, cubic, exp per element) against the vocabulary with a precomputed factor; block sizes per profile (task 5.3; ID reserved) | 5 | planned |
 | X67 | Fusion: row convolution pipeline against three separate calls (task 5.2; ID reserved) | 5 | planned |

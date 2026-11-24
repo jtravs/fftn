@@ -643,6 +643,15 @@ its L2, the EPYC from half its L3, where its 8-lane team gained): 0.81–0.84 on
 0.77–0.84 on the EPYC at one thread and 8 lanes, held-out sizes included. A rule that fails as a
 whole can hold for the subset its losses did not touch. [X63](experiments/X63-c2r-planes-packed.md).
 
+3.31 **A cache key is not a family: two vendors' cores can share one and disagree.** X63's packed
+c2r planes, keyed to the Xeon 6240's cache class (a private L2 under 2 MiB without a large L3 per
+core), held on an Ice Lake-SP VM of that class (0.62-0.77 in all four runs), but a Zen 4 VM matched
+the same key and lost: mid-size planes 1.11-1.13 at one thread and 1.25-1.29 at 8 lanes, though
+its moved cases' mean gained (0.81-0.90). Zen 2, screened on its CCX key, kept all six rules it
+reached, and the 2 MiB-L2 Intel parts (Sapphire, Emerald, Granite Rapids) kept every rule of their
+key and took X50's convolutions (0.56-0.62). Where a key spans vendors, screen each vendor, and
+read the worst moved case, not only the mean. [X64](experiments/X64-cloud-screen-1124.md).
+
 ## 4. Kernels and algorithms
 
 4.1 **A whole-transform codelet wins only where it fills the register.** One 32-point
