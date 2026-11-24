@@ -2072,7 +2072,9 @@ planner.
 
 Fusion has three tiers, from cheapest to most general. All three keep data in cache
 between the pointwise work and the transform; they differ in who writes the pointwise
-code.
+code. A proposal for this section's public API, not agreed, is in
+[proposals/fusion.md](proposals/fusion.md); until the maintainer accepts a version, this
+section is the design.
 
 ### 12.1 Tier A: edge operations
 

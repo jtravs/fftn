@@ -791,6 +791,11 @@ Exit: fbench planes and volumes catalogues meet the one-thread and threaded targ
 Exit: pipelines meet their acceptance numbers, and the client catalogue meets the
 DESIGN.md section 1.3 row for client catalogues.
 
+API proposal (2026-11-24, for the maintainer's review, not agreed):
+[proposals/fusion.md](proposals/fusion.md). It reorders these tasks (vocabulary edges,
+callbacks, row pipelines, multi-axis pipelines, X9) and names experiments F1–F5; nothing in
+this phase starts before a version of it is agreed.
+
 ---
 
 ### Phase 6: general coverage and release preparation
