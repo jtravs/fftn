@@ -17,6 +17,7 @@
 #include "fftn/options.hpp"
 #include "fftn/shape.hpp"
 #include "fftn/workspace.hpp"
+#include "gen/codelets.hpp"
 #include "isa/arch.hpp"
 #include "isa/kernel_table.hpp"
 #include "isa/target.hpp"
@@ -537,6 +538,7 @@ std::vector<std::size_t> depth_tops_for(std::size_t n, const build_settings& set
     // depth_convolution_max_bytes, the convolutions measured; rows by X46's and X51's fields.
     const bool pow2 = (n & (n - 1)) == 0;
     const std::size_t top = convolution ? m.depth_convolution_max_bytes : m.depth_max_bytes;
+    // NOLINTNEXTLINE(misc-const-correctness): float's branch below narrows it
     std::size_t most = pow2 ? std::min(top, m.depth_pow2_max_bytes) : top;
     if constexpr (!std::is_same_v<T, double>) {
       most = convolution ? 0 : std::min(most, m.depth_float_max_bytes);
@@ -986,7 +988,10 @@ void add_volume_planes(program& p, const std::vector<std::size_t>& extent, const
                        const view& dst, const Phases& phases) {
   const auto inner = [](const view& v) {
     return view{
-        .where = v.where, .stride = {v.stride[1], v.stride[2]}, .element_bytes = v.element_bytes};
+        .where = v.where,
+        .stride = {v.stride[1], v.stride[2]},
+        .element_bytes = v.element_bytes,
+    };
   };
   const std::size_t planes = p.records.size();
   p.records.emplace_back(loop{

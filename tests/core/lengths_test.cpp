@@ -213,6 +213,7 @@ TEST(RelativeCost, PowersOfTwoAreOneFastLengthsLowPrimesHighOnEveryTarget) {
 TEST(NextFastLength, ComplexIsTheDefaultAndOtherKindsAreRefused) {
   EXPECT_EQ(fftn::next_fast_length(1001, fftn::length_kind::complex), fftn::next_fast_length(1001));
   EXPECT_EQ(fftn::next_fast_length(41, real), 46U); // halves 21 and 22 are not fast, 23 is
+  // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange): invalid on purpose
   EXPECT_THROW(static_cast<void>(fftn::next_fast_length(64, static_cast<fftn::length_kind>(2))),
                std::invalid_argument);
 }

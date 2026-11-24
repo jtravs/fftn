@@ -171,7 +171,9 @@ FFTN_FORCE_INLINE void batch_group(const void* src, void* dst, std::ptrdiff_t sr
     // Initialised only here: GCC 14 reports a partial group's arrays maybe uninitialized, and
     // initialising a whole group's as well changed the code of most of its leaves.
     const T* in[C<T>] = {}; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
-    T* out[C<T>] = {};      // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
+    // Not const, whatever misc-const-correctness says: the loop below sets every element.
+    // NOLINTNEXTLINE(modernize-avoid-c-arrays, misc-const-correctness): see the line above
+    T* out[C<T>] = {};
     for (std::size_t l = 0; l < C<T>; ++l) {
       // Idle rows form no address: their pointers stay at the group's first row.
       const std::size_t r = l < valid ? u + l : u;
@@ -203,9 +205,15 @@ void batch_leaf(const pass_args* a, const void* src, void* dst, std::ptrdiff_t s
     for (std::size_t u = 0; u < count; u += 2) {
       const std::size_t v = u + 1 < count ? u + 1 : u;
       const pair_rows_in<T, InOp> x{
-          .r0 = line_at<T>(src, u, src_dist), .r1 = line_at<T>(src, v, src_dist), .e = ein};
+          .r0 = line_at<T>(src, u, src_dist),
+          .r1 = line_at<T>(src, v, src_dist),
+          .e = ein,
+      };
       const pair_rows_out<T, OutOp> y{
-          .r0 = line_at<T>(dst, u, dst_dist), .r1 = line_at<T>(dst, v, dst_dist), .e = eout};
+          .r0 = line_at<T>(dst, u, dst_dist),
+          .r1 = line_at<T>(dst, v, dst_dist),
+          .e = eout,
+      };
       cdft<R>::template plain<T, Sign>(x, y);
     }
     return;
@@ -218,8 +226,8 @@ void batch_leaf(const pass_args* a, const void* src, void* dst, std::ptrdiff_t s
     // One row left: the leaf's own form, the row in every lane (one load and one store per
     // element), which costs a row what the leaf does; a partial group gathers and scatters
     // as a whole group does and cost about as much as two leaves (X53 arm B3).
-    one_in<T, InOp> in{.p = line_at<T>(src, u, src_dist), .leg = 2, .op = ein};
-    one_out<T, OutOp> out{.p = line_at<T>(dst, u, dst_dist), .leg = 2, .op = eout};
+    const one_in<T, InOp> in{.p = line_at<T>(src, u, src_dist), .leg = 2, .op = ein};
+    const one_out<T, OutOp> out{.p = line_at<T>(dst, u, dst_dist), .leg = 2, .op = eout};
     cdft<R>::template plain<T, Sign>(in, out);
   } else if constexpr (C<T> > 2) {
     if (u < count) {

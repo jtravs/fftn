@@ -87,7 +87,12 @@ FFTN_FORCE_INLINE void depth_first_tails(const pass_args* a, const T* x, T* y, s
     const to_registers<T> out{v};
     lane_unit<T, R, Sign, true>(
         run_in<T, edge_op::none, false>{
-            .p = x + at(q0 + s * p, 2), .leg = in_leg, .step = 2, .valid = valid, .op = {}},
+            .p = x + at(q0 + s * p, 2),
+            .leg = in_leg,
+            .step = 2,
+            .valid = valid,
+            .op = {},
+        },
         out, table, p);
     T* yp = y + at(q0 * lane + R * p, 2);
     if constexpr (R % C<T> == 0) {
@@ -146,16 +151,23 @@ void depth_first_pass(const pass_args* a, const void* src, void* dst, std::size_
       if constexpr (Chirp) {
         const std::size_t i0 = q0 + s * p;
         lane_unit<T, R, Sign, true>(
-            run_in_chirp<T>{.p = x + at(i0, 2),
-                            .w = static_cast<const T*>(a->in_factor) + tw_reals<T> * i0,
-                            .i = i0,
-                            .leg = s * m,
-                            .data = a->src_cols},
+            run_in_chirp<T>{
+                .p = x + at(i0, 2),
+                .w = static_cast<const T*>(a->in_factor) + tw_reals<T> * i0,
+                .i = i0,
+                .leg = s * m,
+                .data = a->src_cols,
+            },
             out, table, p);
       } else {
         lane_unit<T, R, Sign, true>(
             run_in<T, edge_op::none, true>{
-                .p = x + at(q0 + s * p, 2), .leg = in_leg, .step = 2, .valid = C<T>, .op = {}},
+                .p = x + at(q0 + s * p, 2),
+                .leg = in_leg,
+                .step = 2,
+                .valid = C<T>,
+                .op = {},
+            },
             out, table, p);
       }
       T* yp = y + at(d1 * lane + d2 * sub + R * p, 2);
@@ -239,21 +251,25 @@ void depth_top_pass(const pass_args* a, const void* src, void* dst, std::size_t 
     if constexpr (Chirp) {
       cdft<R>::template dit<T, Sign>(
           run_in_twiddled<T, Sign>{.p = x + at(k0, 2), .leg = leg, .hi = hi},
-          run_out_chirp<T, OutOp>{.p = y + at(k0, 2),
-                                  .w = static_cast<const T*>(a->out_factor) + tw_reals<T> * k0,
-                                  .i = k0,
-                                  .leg = m,
-                                  .data = a->dst_cols,
-                                  .op = make_edge<T, OutOp>(a, nullptr, 0, 0)},
+          run_out_chirp<T, OutOp>{
+              .p = y + at(k0, 2),
+              .w = static_cast<const T*>(a->out_factor) + tw_reals<T> * k0,
+              .i = k0,
+              .leg = m,
+              .data = a->dst_cols,
+              .op = make_edge<T, OutOp>(a, nullptr, 0, 0),
+          },
           lane_twiddles<T>{.p = table + tw_reals<T> * k_lo, .row = row});
     } else {
       cdft<R>::template dit<T, Sign>(
           run_in_twiddled<T, Sign>{.p = x + at(k0, 2), .leg = leg, .hi = hi},
-          run_out<T, OutOp, true>{.p = y + at(k0, 2),
-                                  .leg = leg,
-                                  .step = 2,
-                                  .valid = C<T>,
-                                  .op = make_edge<T, OutOp>(a, a->out_factor, k0, m)},
+          run_out<T, OutOp, true>{
+              .p = y + at(k0, 2),
+              .leg = leg,
+              .step = 2,
+              .valid = C<T>,
+              .op = make_edge<T, OutOp>(a, a->out_factor, k0, m),
+          },
           lane_twiddles<T>{.p = table + tw_reals<T> * k_lo, .row = row});
     }
     k_lo += C<T>;

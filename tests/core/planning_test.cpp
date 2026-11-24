@@ -215,7 +215,10 @@ TEST(FitRows, RadicesByLengthAndWhetherTheDataFit) {
   EXPECT_NE(d::fitting_radices(768, p, false), d::rule_radices(768, p)); // 768's override
   EXPECT_TRUE(d::fitting_radices(512, p, true).empty());
   for (const auto& [t, lanes] : std::vector<std::pair<d::target, std::size_t>>{
-           {d::target::avx2, 4}, {d::target::avx512, 4}, {d::target::neon_fcma, 1}}) {
+           {d::target::avx2, 4},
+           {d::target::avx512, 4},
+           {d::target::neon_fcma, 1},
+       }) {
     EXPECT_TRUE(d::fitting_radices(1024, d::profile_of(t, lanes), true).empty());
   }
 }
@@ -231,9 +234,14 @@ TEST(FitRows, PlansFollowTheProfileField) {
     const fftn::shape<std::complex<double>, std::complex<double>> shape{
         .dir = fftn::direction::forward,
         .axes = {{.n = n}},
-        .batches = {{.count = rows,
-                     .in_dist = static_cast<std::ptrdiff_t>(n),
-                     .out_dist = static_cast<std::ptrdiff_t>(n)}},
+        .batches =
+            {
+                {
+                    .count = rows,
+                    .in_dist = static_cast<std::ptrdiff_t>(n),
+                    .out_dist = static_cast<std::ptrdiff_t>(n),
+                },
+            },
     };
     return d::describe(
         *d::make_plan_core(d::view_of(shape), {.in_place = in_place, .force_isa = isa}, settings));
@@ -274,7 +282,10 @@ TEST(FitRows, PlansFollowTheProfileField) {
               run(*d::make_plan_core(d::view_of(rows), {.force_isa = t}, forced)));
     // A plane's rows keep the rules whatever the field says.
     const fftn::shape<std::complex<double>, std::complex<double>> plane{
-        .dir = fftn::direction::forward, .axes = {{.n = 1024}, {.n = 1024}}, .batches = {}};
+        .dir = fftn::direction::forward,
+        .axes = {{.n = 1024}, {.n = 1024}},
+        .batches = {},
+    };
     build_settings off = fit;
     off.profile.fit_row_bytes = 0;
     EXPECT_EQ(d::describe(*d::make_plan_core(d::view_of(plane), {.force_isa = t}, fit)),

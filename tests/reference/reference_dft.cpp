@@ -242,14 +242,15 @@ public:
     return std::nullopt;
   }
 
-  void put(std::vector<std::uint64_t> key, std::vector<V> value) {
+  // The caller returns its result too, so the store keeps a copy, made only when it is kept.
+  void put(std::vector<std::uint64_t> key, const std::vector<V>& value) {
     const std::size_t size = key.size() * sizeof(std::uint64_t) + value.size() * sizeof(V);
     const std::scoped_lock guard(lock_);
     if (bytes_ + size > limit_) {
       map_.clear();
       bytes_ = 0;
     }
-    if (size <= limit_ && map_.try_emplace(std::move(key), std::move(value)).second) {
+    if (size <= limit_ && map_.try_emplace(std::move(key), value).second) {
       bytes_ += size;
     }
   }
@@ -286,7 +287,9 @@ std::vector<std::uint64_t> key_of(std::uint64_t kind, std::uint64_t arg,
   return key;
 }
 
-enum : std::uint64_t { full_kind = 1, bins_kind = 2, c2r_kind = 3 };
+constexpr std::uint64_t full_kind = 1;
+constexpr std::uint64_t bins_kind = 2;
+constexpr std::uint64_t c2r_kind = 3;
 
 std::uint64_t sign_arg(int sign) { return sign < 0 ? 0 : 1; }
 

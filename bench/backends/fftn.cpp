@@ -226,8 +226,8 @@ template <class In, class Out> fftn::shape<In, Out> shape_of(const fbench_case& 
   }
   // The interleaved layout (fbench_case::interleave): every element of a transform stands
   // `interleave` elements from the next.
-  std::ptrdiff_t in_stride = static_cast<std::ptrdiff_t>(c.interleave);
-  std::ptrdiff_t out_stride = static_cast<std::ptrdiff_t>(c.interleave);
+  auto in_stride = static_cast<std::ptrdiff_t>(c.interleave);
+  auto out_stride = static_cast<std::ptrdiff_t>(c.interleave);
   for (std::size_t i = rank; i > 0; --i) {
     const std::size_t d = i - 1;
     s.axes[d].in_stride = in_stride;
@@ -396,7 +396,7 @@ std::string omp_environment() {
 
 // The executes through an executor or a team, out of line so that the serial execute needs
 // no frame: with them inline GCC 14 saved three registers before testing the mode (X49).
-[[gnu::noinline]] void execute_threaded(const plan_record& r, void* in, void* out) {
+[[gnu::noinline]] void execute_threaded(const plan_record& r, const void* in, void* out) {
   const session& s = state();
   switch (r.mode) {
   case call::serial:

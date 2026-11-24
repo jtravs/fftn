@@ -246,15 +246,23 @@ std::int32_t fbench_create(const fbench_case* c, void* in, void* out, void** pla
     std::array<fftw_iodim64, 3> axes{};
     for (int d = 0; d < c->rank; ++d) {
       const auto i = static_cast<std::size_t>(d);
-      axes.at(i) = {c->dims[i], in_strides[i] * c->interleave, out_strides[i] * c->interleave};
+      axes.at(i) = {
+          .n = c->dims[i],
+          .is = in_strides[i] * c->interleave,
+          .os = out_strides[i] * c->interleave,
+      };
     }
     std::array<fftw_iodim64, 2> loops{};
     int loop_rank = 0;
     if (c->outer > 1) {
-      loops.at(0) = {c->outer, c->outer_in_dist, c->outer_out_dist};
+      loops.at(0) = {.n = c->outer, .is = c->outer_in_dist, .os = c->outer_out_dist};
       loop_rank = 1;
     }
-    loops.at(static_cast<std::size_t>(loop_rank)) = {c->batch, c->in_dist, c->out_dist};
+    loops.at(static_cast<std::size_t>(loop_rank)) = {
+        .n = c->batch,
+        .is = c->in_dist,
+        .os = c->out_dist,
+    };
     ++loop_rank;
     if (c->kind == fbench_c2c) {
       p = fftw_plan_guru64_dft(c->rank, axes.data(), loop_rank, loops.data(),

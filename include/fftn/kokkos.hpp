@@ -277,11 +277,10 @@ template <class ExecutionSpace> constexpr bool supported_space() {
   // The dispatching thread is the pool's last rank, and its state is Active only while it runs
   // its share of a kernel. No public interface says so: see FFTN_KOKKOS_THREADS_SUPPORTED.
   internal* const self = internal::get_thread(Kokkos::Threads::impl_thread_pool_size(0) - 1);
-  if (self->state().load(std::memory_order_relaxed) == Kokkos::Impl::ThreadState::Active) {
-    return true;
-  }
-#endif
+  return self->state().load(std::memory_order_relaxed) == Kokkos::Impl::ThreadState::Active;
+#else
   return false;
+#endif
 }
 
 // What parallel_for runs for the executor: the functor of one bulk call.
@@ -627,7 +626,7 @@ public:
                                        Kokkos::IndexType<int>>;
     // Chunks of one: with n up to the width, no thread takes two tasks while another idles.
     Kokkos::parallel_for(detail::bulk_label(), policy(exec_, 0, n).set_chunk_size(1),
-                         detail::bulk_call{task, arg});
+                         detail::bulk_call{.task = task, .arg = arg});
     // Kokkos lets parallel_for return before the work is done; bulk may not. The host back
     // ends tested here have finished by now, and this costs them next to nothing.
     exec_.fence(detail::bulk_label());
@@ -973,7 +972,7 @@ private:
     executor_.bulk(parts, &scale_part, &job);
   }
 
-  static constexpr std::size_t scale_share_elements = std::size_t{1} << 16;
+  static constexpr std::size_t scale_share_elements = std::size_t{1} << 16U;
 
   executor<ExecutionSpace> executor_;
   fftn::plan<in_element, out_element> plan_;

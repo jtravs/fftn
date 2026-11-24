@@ -7,6 +7,7 @@
 
 #include "isa/arch.hpp"
 #include "isa/kernel_table.hpp"
+#include "passes/pass_args.hpp"
 #include "platform/cpu_features.hpp"
 
 #include <array>

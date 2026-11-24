@@ -256,17 +256,17 @@ template <class T>
 namespace detail {
 
 // The stride of each dimension of an array on one side: the given one, or where it is 0 the
-// tight C-ordered default, in which dimension d spans the dimensions after it. `halved` is the
-// dimension shortened to `halved_n` elements on this side (SIZE_MAX for none).
+// tight C-ordered default, in which dimension d spans the dimensions after it. `halved_dim` is
+// the dimension shortened to `halved_count` elements on this side (SIZE_MAX for none).
 inline std::vector<std::ptrdiff_t> array_strides(std::span<const axis> array, bool input,
-                                                 std::size_t halved, std::size_t halved_n) {
+                                                 std::size_t halved_dim, std::size_t halved_count) {
   std::vector<std::ptrdiff_t> stride(array.size());
   std::size_t span = 1;
   for (std::size_t i = array.size(); i > 0; --i) {
     const std::size_t d = i - 1;
     const std::ptrdiff_t given = input ? array[d].in_stride : array[d].out_stride;
     stride[d] = given != 0 ? given : static_cast<std::ptrdiff_t>(span);
-    if (__builtin_mul_overflow(span, d == halved ? halved_n : array[d].n, &span) ||
+    if (__builtin_mul_overflow(span, d == halved_dim ? halved_count : array[d].n, &span) ||
         span > static_cast<std::size_t>(PTRDIFF_MAX)) {
       throw std::invalid_argument("fftn::axes: the array is too large to address");
     }
@@ -298,9 +298,9 @@ shape<In, Out> shape_along_axes(std::span<const axis> array, std::span<const std
     }
     transformed[d] = true;
   }
-  const std::size_t last = selected.empty() ? SIZE_MAX : selected.back();
-  const std::vector<std::ptrdiff_t> in = array_strides(array, true, last, halved_in);
-  const std::vector<std::ptrdiff_t> out = array_strides(array, false, last, halved_out);
+  const std::size_t halved_dim = selected.empty() ? SIZE_MAX : selected.back();
+  const std::vector<std::ptrdiff_t> in = array_strides(array, true, halved_dim, halved_in);
+  const std::vector<std::ptrdiff_t> out = array_strides(array, false, halved_dim, halved_out);
   shape<In, Out> s;
   s.dir = dir;
   for (const std::size_t d : selected) {

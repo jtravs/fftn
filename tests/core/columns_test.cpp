@@ -220,7 +220,7 @@ template <class T> void forced_column_radices(fftn::isa target) {
       listed += (i == 0 ? "" : " x ") + std::to_string(fc.radices[i]);
     }
     EXPECT_EQ(forced_text.find(listed + "\n") != std::string::npos, fc.applies) << forced_text;
-    std::size_t points = fc.pc.n[0] * fc.pc.n[1];
+    const std::size_t points = fc.pc.n[0] * fc.pc.n[1];
     const double l = std::max(1.0, std::log2(static_cast<double>(points)));
     const double tolerance = 2 * 3 * std::numeric_limits<T>::epsilon() * l;
     EXPECT_LE(relative_difference<T>(got, want), tolerance) << forced_text << chain_text;
@@ -717,8 +717,8 @@ template <class T> void c2r_packed_strided(fftn::isa target) {
     for (const std::size_t n : sc.n) {
       points *= n;
     }
-    const double tolerance =
-        2 * 3 * std::numeric_limits<T>::epsilon() * std::max(1.0, std::log2(double(points)));
+    const double tolerance = 2 * 3 * std::numeric_limits<T>::epsilon() *
+                             std::max(1.0, std::log2(static_cast<double>(points)));
     std::vector<T> x(got.size() / sizeof(T));
     std::vector<T> y(x.size());
     std::memcpy(x.data(), got.data(), x.size() * sizeof(T));
@@ -751,7 +751,7 @@ TEST(Columns, C2rPacksBeyondTheProfilesBytes) {
     settings.profile.c2r_packed_bytes = limit;
     settings.c2r_packed = forced;
     return fftn::detail::describe(
-        *fftn::detail::make_plan_core(fftn::detail::view_of(sh), {}, settings));
+        *fftn::detail::make_plan_core(fftn::detail::view_of(sh), fftn::options(), settings));
   };
   EXPECT_NE(text(33791, -1).find("packed"), std::string::npos);
   EXPECT_EQ(text(33792, -1).find("packed"), std::string::npos);
@@ -945,7 +945,7 @@ TEST(Columns, AdjacentTransformsOnlyWhereTheyFit) {
     settings.profile.adjacent_team_chain = false;
     settings.profile.adjacent_lanes = true;
     return fftn::detail::describe(
-        *fftn::detail::make_plan_core(fftn::detail::view_of(sh), {}, settings));
+        *fftn::detail::make_plan_core(fftn::detail::view_of(sh), fftn::options(), settings));
   };
   const auto strategy = [&](const fftn::shape<c, c>& sh) { return described(sh, 0); };
   fftn::shape<c, c> columns; // 32 columns of 16 points (a leaf length): 8192 bytes
@@ -961,8 +961,10 @@ TEST(Columns, AdjacentTransformsOnlyWhereTheyFit) {
     teams.profile.adjacent_team_chain = true;
     teams.profile.adjacent_lanes = true;
     fftn::shape<c, c> planes;
-    planes.axes = {{.n = 16, .in_stride = 16 * 7, .out_stride = 16 * 7},
-                   {.n = 16, .in_stride = 7, .out_stride = 7}};
+    planes.axes = {
+        {.n = 16, .in_stride = std::ptrdiff_t{16} * 7, .out_stride = std::ptrdiff_t{16} * 7},
+        {.n = 16, .in_stride = 7, .out_stride = 7},
+    };
     planes.batches = {{.count = 7, .in_dist = 1, .out_dist = 1}};
     for (const fftn::isa t : fftn::test::runnable_isas()) {
       const auto core =

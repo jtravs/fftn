@@ -31,6 +31,7 @@
 #include <cstring>
 #include <iostream>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -1124,7 +1125,7 @@ array_layouts layouts_of(const dims_t& array) {
 bool fills_tightly(std::vector<std::ptrdiff_t> offsets, std::size_t elements) {
   std::ranges::sort(offsets);
   for (std::size_t i = 0; i < elements; ++i) {
-    if (i >= offsets.size() || offsets[i] != static_cast<std::ptrdiff_t>(i)) {
+    if (i >= offsets.size() || std::cmp_not_equal(offsets[i], i)) {
       return false;
     }
   }
@@ -1254,7 +1255,11 @@ TYPED_TEST(MultiDim, AxisOrderOfAShapeChangesNoBit) {
   };
   for (const auto& [a, b] :
        std::vector<std::pair<std::vector<std::size_t>, std::vector<std::size_t>>>{
-           {{0, 1, 2}, {2, 1, 0}}, {{0, 2}, {2, 0}}, {{1, 2}, {2, 1}}, {{0, 1}, {1, 0}}}) {
+           {{0, 1, 2}, {2, 1, 0}},
+           {{0, 2}, {2, 0}},
+           {{1, 2}, {2, 1}},
+           {{0, 1}, {1, 0}},
+       }) {
     const auto ya = run(a);
     const auto yb = run(b);
     EXPECT_TRUE(std::ranges::equal(std::as_bytes(std::span<const c>(ya)),
@@ -1266,17 +1271,17 @@ TYPED_TEST(MultiDim, AxisOrderOfAShapeChangesNoBit) {
 // Neighbours whose merged span would overflow ptrdiff_t stay two batch dimensions (the product
 // is never formed), and a dimension of length 0 is refused by name.
 TEST(AxesShape, MergeNeverOverflows) {
+  const auto pow2 = [](unsigned k) { return static_cast<std::ptrdiff_t>(std::size_t{1} << k); };
   const std::vector<fftn::axis> array{
-      {.n = 2, .in_stride = std::ptrdiff_t{1} << 50, .out_stride = std::ptrdiff_t{1} << 50},
-      {.n = std::size_t{1} << 24,
-       .in_stride = std::ptrdiff_t{1} << 40,
-       .out_stride = std::ptrdiff_t{1} << 40},
-      {.n = 2}};
+      {.n = 2, .in_stride = pow2(50), .out_stride = pow2(50)},
+      {.n = std::size_t{1} << 24U, .in_stride = pow2(40), .out_stride = pow2(40)},
+      {.n = 2},
+  };
   const std::vector<std::size_t> last{2};
   const auto s = fftn::axes_c2c<double>(array, last, fftn::direction::forward);
   ASSERT_EQ(s.batches.size(), 2U);
   EXPECT_EQ(s.batches[0].count, 2U);
-  EXPECT_EQ(s.batches[1].count, std::size_t{1} << 24);
+  EXPECT_EQ(s.batches[1].count, std::size_t{1} << 24U);
   const std::vector<fftn::axis> empty{{.n = 4}, {.n = 0}};
   const std::vector<std::size_t> first{0};
   try {
