@@ -105,6 +105,7 @@ inline constexpr std::uint32_t count_mask = (1U << count_bits) - 1;
 //                  (tagged); members arrived (tagged)
 //   split tasks    per split task (at most one per lane), two lines: chunks claimed, members
 //                  joined, owner (tagged, one line); chunks done (tagged), members blocked
+//   anchored       per lane, one line: its range of its group's whole tasks claimed (tagged)
 struct team_layout {
   std::size_t lanes = 0;
 
@@ -138,8 +139,13 @@ struct team_layout {
   [[nodiscard]] std::size_t task_blocked(std::size_t task) const noexcept {
     return chunks_done(task) + sizeof(std::uint64_t);
   }
+  // A member's range of its group's whole tasks (machine_profile::anchored_runs): claimed
+  // (tagged), one line per lane.
+  [[nodiscard]] std::size_t anchored(std::size_t lane) const noexcept {
+    return (3 + calls_lines() + 4 * lanes + lane) * sync_line;
+  }
   [[nodiscard]] std::size_t bytes() const noexcept {
-    return (3 + calls_lines() + 4 * lanes) * sync_line;
+    return (3 + calls_lines() + 5 * lanes) * sync_line;
   }
 };
 

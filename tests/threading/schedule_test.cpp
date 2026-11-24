@@ -684,6 +684,11 @@ TEST(Schedule, GridSizesFromCaches) {
   fftn::detail::set_grid_sizes(
       apple, fftn::detail::load_topology(data / "macos-apple-m5-max.sysctl").classes.at(0), false);
   EXPECT_TRUE(apple.fair_line_runs);
+  // Whole transforms anchored to members only where measured (X73): Zen 3's class.
+  EXPECT_TRUE(epyc86.anchored_runs);
+  EXPECT_FALSE(xeon86.anchored_runs);
+  EXPECT_FALSE(apple.anchored_runs);
+  EXPECT_FALSE(x86("linux-gcp-c4d-zen5.sysfs").anchored_runs);
   // Rows' two-pass radices while the data fit three quarters of the CCX's L3 (X57).
   EXPECT_EQ(epyc86.fit_row_bytes, std::size_t{24} * 1024 * kib);
   EXPECT_EQ(xeon86.fit_row_bytes, 0U);
