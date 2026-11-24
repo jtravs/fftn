@@ -170,7 +170,8 @@ the EPYC's 64 × 2 backward (1.29; the radix-64 codelet spills over two rows), t
 in place.
 
 EPYC 1024 (X57, 2026-11-18): `avx2` double rows of 768 and 1024 take their two-pass plans only
-while the plan's rows and output fit three quarters of the L3 (`fit_row_bytes`). 1024 ÷ FFTW
+while the plan's rows and output fit three quarters of the L3 (`fit_row_bytes`; in place the
+rows to half the L3, 16 MiB, measured in X57's amendment 2). 1024 ÷ FFTW
 1.19 → 0.99, backward 1.16 → 1.04, × 3 1.19 → 0.99, × 16 1.13 → 1.02, × 256 1.08 → 1.01; the
 cases the rule moves 0.88 of their time, tracking tier 0.989, planes and volumes unchanged. The
 EPYC's cases beyond noise against FFTW: 9 → 4 of 193 in the same run (limit 9); the exit check
@@ -519,7 +520,9 @@ Decided by the maintainer on 2026-11-24 (the earlier ones are in AGENTS.md secti
 - Reach by cache key accepted for X58 (client Intel AVX-512 cores, Emerald Rapids) and X57
   (other `avx2` cores with a large L3); Emerald Rapids and Zen 2 go into the next cloud screen.
 - X57's in-place limit (1536 rows) is to be measured on the EPYC; until then, or if it loses,
-  it is capped at the 1024 rows measured.
+  it is capped at the 1024 rows measured. Measured (X57 amendment 2, 2026-11-24): two-pass rows
+  in place lost from 18–20 MiB on the EPYC 7763 (1024 × 1280 and 1536 1.07–1.16, 768 × 2048
+  1.14–1.19); capped at half the L3, 16 MiB (1024 rows of 1024, `fit_in_place_bytes`).
 - X28's 128-bit leaves on `avx2` ratified. X26's prefetch gate and X30's 512 override (and X62's
   64-point batch rule) become keyed to the vendor once the machine profile reads one: Intel
   cores with `avx2` alone keep their old plans until measured.
@@ -939,7 +942,7 @@ running, done (with verdict).
 | X67 | Fusion: row convolution pipeline against three separate calls (task 5.2; ID reserved) | 5 | planned |
 | X68 | Fusion: the free-space stage as three objects against today's route, time and DRAM traffic; does an (x, ω) slab grouping justify a multi-axis pipeline? (task 5.3; ID reserved) | 5 | planned |
 | [X56](experiments/X56-exit-4.md) | The phase 1 exit check on `main` after X49–X57: EPYC at fa155c9, Mac and Xeon at X53's code (71307e0), then the cloud cores | 1 | done: the phase 1 exit met on all nine machines (local: EPYC ÷ FFTW 6 of 193; cloud: Zen 5 5, Axion 1, Granite Rapids 7, Sapphire Rapids 7, Ice Lake 0 after X58; oneMKL at most 9) |
-| [X57](experiments/X57-epyc-1024.md) | The EPYC's last exit-check cases: are 72 and 120's 5–6 % since 8c18dd2 a regression, and can 1024's radix choice see the plan's data? | 1 | done: 72 and 120 are code placement; B adopted (768 and 1024 two-pass rows while rows and output fit 3/4 of L3: moved cases 0.88, tracking 0.989, EPYC beyond noise 9 → 4 of 193); C (64-byte `avx2` functions) rejected (0.999, 1024 × 3 1.04–1.06) |
+| [X57](experiments/X57-epyc-1024.md) | The EPYC's last exit-check cases: are 72 and 120's 5–6 % since 8c18dd2 a regression, and can 1024's radix choice see the plan's data? | 1 | done: 72 and 120 are code placement; B adopted (768 and 1024 two-pass rows while rows and output fit 3/4 of L3: moved cases 0.88, tracking 0.989, EPYC beyond noise 9 → 4 of 193); C (64-byte `avx2` functions) rejected (0.999, 1024 × 3 1.04–1.06); amendment 2: B's in-place limit measured, lost from 18 MiB, capped at half the L3 (16 MiB, 1024 rows of 1024) |
 | [X58](experiments/X58-intel-keys.md) | Recent Intel keys from X56's screen: the depth-first chain on Ice Lake VMs (private L2 between 1 and 2 MiB), and no batch leaf of 12 on a private L2 of 2 MiB or more | 1 | done: both adopted. Ice Lake's changed rows 0.596 of their time (long rows ÷ FFTW 1.13–1.53 → 0.64–0.79), tracking 0.929; 12 × 64 and 12 × 1024 0.867 (Granite Rapids) and 0.892 (Sapphire Rapids) |
 | [X62](experiments/X62-epyc-tail.md) | The EPYC's remaining exit cases after X56 (64 × 2 backward, 64 × 16, 1018, 2048, 120, 15 × 2 backward): which are real, and what moves them? | 1 | done: K3 (avx2 double batch leaves of 32/64 moving each element, one codelet copy) with L (the leaf of 64 from 2 to 1024 rows, odd from 5) adopted (maintainer's decision, 2026-11-23: K3's rule missed 64 × 3, which L's limits exclude): 64-point batches 0.85 of the chain, 64 × 2 backward ÷ FFTW 1.29 → 0.98, 64 × 16 1.16 → 0.92; C (Zen 3's Bluestein limit at half the L1, whole lines over C copies) adopted: 1018 1.05 → 0.98; 2048 kernel cost, 72/100/120 placement, 15 × 2 backward not a loss; EPYC beyond noise 9 → 4 in one run |
 | [P1](experiments/P1-rules-vs-measure.md) | How often is the rules' choice within 5 % of `planning::measure`'s per machine (task 2.4's acceptance: 90 % of catalogue cases), which rules miss, and does measurement recover a misfiring profile (Granite Rapids' fields forced on the Xeon)? | 2 | first pass done: rules within 5 % of measure on 96.7 % of the tracking tier on the EPYC, 77 % on the Xeon (about 85 % without noise), Mac inconclusive under load; measure never slower by fbench; Granite Rapids' fields forced on the Xeon recovered in 10 of 11 cases (the miss a budget defect, fixed); planes' radices the repeat miss. Second pass (73eb719, placements per round, median): Mac 93.4 %, EPYC 95.1 %, Xeon 86.9 % (long real rows, planes, 2²², 2431 repeat); misfire 9 of 9 after the budget fix; EPYC r2c 65536 measure 1.18 slower (power-of-two chains bimodal by page backing); EPYC 65537 Bluestein 1.75 faster than the rules' Rader |
