@@ -1,0 +1,44 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Experiment X57's amendment 2 (dev/experiments/X57-epyc-1024.md): the in-place limit of the
+# EPYC class's data-size-aware radices (machine_profile::fit_row_bytes, 24 MiB of rows in
+# place). The first two groups are the cases whose rows take 16-24 MiB in place, which the
+# limit moves; the others keep one plan in both arms and only frame them. Double precision.
+
+[catalogue]
+name = "x57l"
+
+[[group]]
+name = "x57l-1024-moved"
+note = "1024 points in place, 17-24 MiB of rows: two-pass to 1536 rows, three-pass past 1024"
+kind = "c2c"
+dims = [1024]
+batch = [1100, 1280, 1536]
+place = "in"
+direction = ["fwd", "bwd"]
+
+[[group]]
+name = "x57l-768-moved"
+note = "768 points in place, 18 and 24 MiB of rows: the same limit for the other listed length"
+kind = "c2c"
+dims = [768]
+batch = [1536, 2048]
+place = "in"
+direction = ["fwd", "bwd"]
+
+[[group]]
+name = "x57l-1024-in-place-frame"
+note = "16 MiB (two-pass in both arms) and 25-32 MiB (three-pass in both)"
+kind = "c2c"
+dims = [1024]
+batch = [1024, 1600, 2048]
+place = "in"
+direction = ["fwd", "bwd"]
+
+[[group]]
+name = "x57l-1024-out-of-place"
+note = "the same batches out of place: 32 MiB and more of rows and output, three-pass in both"
+kind = "c2c"
+dims = [1024]
+batch = [1024, 1100, 1280, 1536, 1600, 2048]
