@@ -61,13 +61,148 @@ directions. Arms: FFTN's rules (N), FFTW 3.3.11 MEASURE with `PLAN_NOTE=1` (F), 
 
 ### Screens (not deciding)
 
-To be filled from the screens' runs.
+EPYC 7763 nodes 17, 19 and 20 (Slurm, `-c 8`, shared; node16 and node18, at load 900–1250,
+excluded), GCC 16, one thread, builds 7ca7722 (the depth-first half-length route of commit
+7ca7722, off by default, so `main`'s plans) and 4847f67 (the same library). Ratios are forced
+arm ÷ the rules' plan; every run's band ±1.00 % unless given.
+
+- **Depth-first half lengths** (run 20261124-222341-7696, Slurm 518047, 14 rounds;
+  `STRATEGY=depth` with `DEPTH_TOPS=4` or 8; it forces c2c rows too): real rows of 18432 0.87
+  (r2c) and 0.91 (c2r), of 20480 0.86 (r2c × 21) and 0.93 (c2r × 3) with a top of 4; with 8,
+  18432 0.82–0.85 but 20480 0.90–0.94 and 10240 1.19–1.23. Below the rules' range (half
+  lengths of 3072–5120, under L2/4) a top of 4 gains nothing (0.97–1.14). Reach screen (run
+  20261124-222340-a9cf, Slurm 518052, 12 rounds, band ±2.99 %: the rules' grids of these rows
+  are bimodal between processes, as X29's were): real rows of 24576–245760 out of place, every
+  one whose half length the c2c rule would make a depth-first chain, 0.53–0.84 with a top of 4
+  (r2c 40960 × 6 0.72, c2r 0.66); FFTW took 0.65–0.87 of the rules' time there, so the
+  depth-first rows run 0.86–1.00 of FFTW's.
+- **Radices of the half lengths** (`RADICES`, now taken by real rows for their half length;
+  runs 20261124-222341-7292, -222346-0b55, -222346-e2eb, -222346-a7c3, Slurm 518048–518051,
+  12 rounds; refinement 20261124-222539-b79a, -222556-de95, -222556-6b3a, -222626-e5be, Slurm
+  518089–518092, 10–12 rounds; 15 sequences per length). The best three-pass sequence with a
+  radix of 20, 32 or 64 against the rules' four passes of at most 16:
+
+  | half length | rules | best | c2c | r2c | c2r |
+  |---|---|---|---|---|---|
+  | 3072 | 12 × 16 × 16 | 6 × 16 × 32 | 0.84 | 0.92 | 0.90 |
+  | 3200 | 2 × 10 × 10 × 16 | 10 × 20 × 16 | 0.80–0.82 | 0.85–0.88 | 0.95 |
+  | 4608 | 4 × 8 × 12 × 12 | 6 × 12 × 64 | 0.91–0.93 | 0.93 | 0.99 |
+  | 5120 | 4 × 8 × 10 × 16 | 10 × 32 × 16 | 0.91 | 0.93 | 0.94 (× 4: 1.02) |
+
+  Sequences that start with a radix of 3–5 lost (3 × 64 × 16 1.15, 4 × 20 × 64 1.17, 5 × 64 ×
+  16 1.05), as did 20 × 16 × 16 for 5120 (1.19); the next best of each length were within 0.02
+  of the best (6 × 32 × 16 and 12 × 32 × 8; 8 × 20 × 20 and 20 × 8 × 20; 12 × 12 × 32; 10 × 16
+  × 32). The c2r rows gain less because the rules' sequences lead with a radix of 4 or less
+  (3200, 4608, 5120), into which the pairing fuses, where the new ones pair in a separate pass.
+- **The pairing fused beyond L1 for r2c** was not screened: at these lengths FFTN's real
+  overhead already matches FFTW's (above).
 
 ## Hypothesis
 
+- A real row's half-length transform costs what a c2c row of that length costs, so it should
+  take the c2c row's depth-first chain where that chain wins (X51 measured 0.63–0.82 of the
+  chain's time for c2c rows of 12288–163840 on Zen 3), with the pairing as a separate pass:
+  r2c 18432 and 20480 then come to about FFTW's time, and the long real rows of 24576–245760
+  (the client check's gap 2 includes 40960 × 6) gain more, because there the rules' plan is a
+  grid.
+- The cost tables price radix-16 passes too low and radix-32/64 passes not at all (X3, X54) on
+  rows that exceed the 32 KiB L1 but fit L2: three passes beat four there, as in FFTW's plans
+  (3 → 64 → 16, 10 → 20 → 16, 12 → 32 → 12, 8 → 20 → 32).
+
 ## Change under test
 
+Two arms, each a commit on `exp/x72-zen3-real-rows`, cumulative:
+
+- **Arm A** (0a41f58): `machine_profile::depth_real_max_bytes` = `depth_max_bytes` (4 L2 =
+  2 MiB) in `set_grid_sizes`' Zen 3 branch (x86-64, private L2 under 1 MiB, at least 2 MiB of L3
+  per CPU: X51's key). An even real row of one axis, out of place, contiguous on both sides, in
+  double, whose half length h the c2c depth-first rule takes (h of 128 KiB–2 MiB, not a power
+  of two, power-of-two part above 512 points: h = 8192–131072, top 4), runs h as that chain:
+  r2c with the pairing pass after it in place in the output, c2r with the pairing from the
+  input into the workspace block (h complex values), from which the chain's first pass reads
+  (`real_depth_tops_of`, commit 7ca7722, which also lets `STRATEGY=depth` force it). Before:
+  the breadth-first chain (h below 16384) or the half-length grid (from L2/2), with its pairing.
+- **Arm B** (d24225a, on A): `avx2` double radix overrides on AMD's cores (other vendors keep
+  the costs' choice): 3072 = 6 × 16 × 32, 3200 = 10 × 20 × 16, 4608 = 6 × 12 × 64, 5120 = 10 ×
+  32 × 16 (`avx2_double_overrides`, `avx2_double_amd_only`).
+
+Reach (AGENTS section 6): arm A's key is X51's, `zen3_like` with its depth-first fields: Zen 3,
+and Zen 2 (512 KiB L2, 16 MiB per CCX), unmeasured; Zen 4 and Zen 5 (1 MiB, `avx512`), Ice
+Lake-SP, the Xeon 6240, Granite Rapids and Apple keep their plans (profile test). Arm B is keyed
+as X42's, X54's and X62's `avx2` rules: the `avx2` target on AMD's processors (Zen 2 and Zen 3
+run `avx2` plans; Zen 4 and 5 only when forced to `avx2`), unmeasured on Zen 2.
+
+What each arm can move, by its mechanism:
+
+- **A**: real rows as above, any batch, both kinds. In place, strided, single precision, rows
+  whose half length is a power of two or outside the range, and every c2c, plane and volume
+  plan keep their plans.
+- **B**: every `avx2` double chain of one of the four lengths: c2c rows of them (any batch,
+  direction, placement), the half lengths of real rows of 6144, 6400, 9216 and 10240, the
+  sub-rows of depth-first chains of four times them (c2c 12288, 12800, 18432, 20480; under A
+  real rows of 24576, 25600, 36864, 40960), planes' axes of them, and a Bluestein convolution
+  whose length is one of them. Grid phases (their own radix rule), lanes and float keep theirs.
+
 ## Method
+
+- Machine: EPYC 7763 (DMOG, Slurm `-c 8`, shared nodes, node16 and node18 excluded while at load
+  900–1250, `--hint=nomultithread`), GCC 16 Release, `avx2`, double, one thread (unpinned, as
+  the client application runs), hot cases, statistic median.
+- **Run J** (judging), catalogue `x72` (88 cases: the client catalogue's 17 real shapes of
+  6144–20480 points, the half-length c2c rows, the real rows arm A reaches with 40960 × 6, and
+  arm B's reach above: c2c rows of the four lengths at 1, 4 and 64 rows both directions and in
+  place at 1 and 16, the four depth-first lengths, real 25600 and 36864, five primes of
+  1543–2551 and two planes), `--tier full`, arms **O** = 7ca7722 (`main`'s plans; library as
+  `main` plus the route off), **A** = 0a41f58, **B** = d24225a, **F** = FFTW 3.3.11 MEASURE,
+  with the A/A control O~; 12–20 rounds, `--serial`.
+- **Run P** (plan check, before J, one round, no timing claims): arms O, A, B on catalogue
+  `x72` and on the standard catalogue's tracking tier. **A case moves under an arm when its
+  plan note differs from the arm before** (A against O, B against A); a case whose notes agree
+  runs the same plan and does not decide. Done before these rules were committed: runs
+  20261124-223706-f8c6 (`x72`, Slurm 518103) and 20261124-223708-de23 (tracking tier, Slurm
+  518104), every output checked against the reference and correct. On `x72` A moves 26 cases,
+  exactly arm A's family: r2c and c2r of 18432, 20480 × 21 (r2c) and × 3 (c2r), 24576, 36864,
+  40960 (× 1 and × 6), 49152, 61440, 81920, 98304, 122880, 163840, 245760 (not 25600, whose
+  half length's power-of-two part is 512 points). B moves 58: every c2c row of 3072, 3200,
+  4608, 5120 (both directions, 1–64 rows, in place), the real rows of 6144, 6400, 9216 and
+  10240, the depth-first c2c rows 12288, 18432, 20480 (not 12800, which is no depth-first
+  chain), the real rows 24576, 36864 and 40960 (sub-rows under A) and both planes; none of the
+  primes. On the tracking tier neither arm moves a case.
+- **Run K** (informative, decides nothing): the client catalogue's tracking tier (52 shapes),
+  arms `main`'s plans (7ca7722), B and FFTW, one thread, 12–16 rounds, scored as the client
+  check scored its one-thread mode (weighted geometric mean of FFTN ÷ FFTW).
+- Metric: arm ÷ the arm before, per moved case the median over valid rounds with its 95 %
+  interval; over the moved cases the geometric mean with its interval (fbench's analysis). The
+  band is run J's A/A control (O against O~).
+
+### Decision rules (written before run J)
+
+- **Arm A is adopted** on Zen 3's class if, over run J's cases whose notes differ between O and
+  A, the geometric mean of A ÷ O is below 1 − band with its interval's upper end below 1, and
+  no such case is slower than 1 + max(band, 3 %) (its whole interval above).
+- **Arm B is adopted** for `avx2` double on AMD if, over run J's cases whose notes differ
+  between A and B, the geometric mean of B ÷ A is below 1 − band with its interval's upper end
+  below 1, and no such case is slower than 1 + max(band, 3 %) (whole interval above). B is
+  judged against A, so it is adopted only with A; if A is rejected, B is re-judged against O in
+  a declared run on the code without A.
+- **Moves nothing else**: run P shows no note differing between O and A outside arm A's family,
+  nor between A and B outside arm B's (on the tracking tier: none expected). A failure is a bug
+  to fix before adoption, not a verdict.
+- **Near misses** (AGENTS section 6, 2026-11-23): a criterion missed by less than the run's band
+  gets one `--serial` re-run of run J, which decides.
+- **Narrowing** (AGENTS section 6, 2026-11-23): if moved cases lose, arm A may be narrowed by
+  `depth_real_max_bytes` (to the largest half length at which every moved case passes, or by
+  kind), and arm B by dropping lengths from its table, without a new experiment; a run on the
+  final code is then declared here before it starts, and must show the excluded cases on their
+  old plans and no remaining moved case slower than 1 + band.
+- Run K and FFTW's column in run J (FFTN ÷ FFTW before and after on the client's shapes) are
+  reported and decide nothing.
+
+### Not measured
+
+Threaded plans take the same routes (a team shares the depth-first chain's stages as for c2c
+rows; tests hold bitwise equality with the serial plan). Zen 2 is reached by both keys
+unmeasured (the next cloud screen's n2d family). Float keeps its plans.
 
 ## Results
 
