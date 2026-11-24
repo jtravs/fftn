@@ -380,6 +380,77 @@ TEST(Real, HalfLengthGrid) {
   }
 }
 
+// Real rows whose half-length transform is a depth-first chain (experiment X72), out of place:
+// r2c with the pairing pass after the chain in the output, c2r with the pairing into the
+// workspace block before it; one and two top factors, a sub-row of a power of two and of a
+// mixed length, scaled and not, batches with gaps (check). In place the row keeps its route.
+TEST(Real, HalfLengthDepthFirst) {
+  struct depth_real {
+    std::size_t n;
+    std::vector<std::size_t> tops;
+  };
+  const char* route = "half-length complex depth-first";
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    for (const depth_real& d : {
+             depth_real{.n = 4096, .tops = {4}},
+             depth_real{.n = 12288, .tops = {4}},
+             depth_real{.n = 10240, .tops = {8, 4}},
+             depth_real{.n = 3840, .tops = {16}},
+         }) {
+      build_settings s;
+      s.strategy = fftn::detail::strategy_choice::depth;
+      s.depth_tops = d.tops;
+      for (const bool r2c : {true, false}) {
+        check<double>(t, {.n = d.n, .settings = s, .route = route}, r2c, false, 0.5, 3);
+        check<double>(t, {.n = d.n, .settings = s, .route = route}, r2c, false, 1.0, 1);
+        check<float>(t, {.n = d.n, .settings = s, .route = route}, r2c, false, 1.0, 2);
+        check<double>(t, {.n = d.n, .settings = s, .route = "half-length complex"}, r2c, true, 1.0,
+                      2);
+      }
+    }
+  }
+}
+
+// The rules take the depth-first half-length chain only where the profile's
+// depth_real_max_bytes allows (experiment X72): a profile with the EPYC 7763's depth-first
+// fields (set here, not read from the host), with and without the limit.
+TEST(Real, RulesTakeTheDepthFirstHalfLengthWhereTheProfileSays) {
+  build_settings s;
+  s.profile.depth_min_bytes = std::size_t{512} * 1024 / 4;
+  s.profile.depth_max_bytes = std::size_t{4} * 512 * 1024;
+  s.profile.depth_pow2_max_bytes = 0;
+  s.profile.depth_part_bytes = std::size_t{32} * 1024 / 4;
+  s.profile.depth_top = 4;
+  s.profile.grid_min_bytes = std::size_t{512} * 1024 / 2;
+  // A top of 4 is taken on avx2 and on the 32-register targets; one of them runs anywhere the
+  // suites run (the scalar target takes no depth-first chain by the rules).
+  const std::vector<fftn::isa> runnable = fftn::test::runnable_isas();
+  const auto with = std::ranges::find_if(runnable, [](fftn::isa t) {
+    return t == fftn::isa::avx2 || t == fftn::isa::neon || t == fftn::isa::neon_fcma;
+  });
+  if (with == runnable.end()) {
+    GTEST_SKIP() << "no target here takes a depth-first top of 4";
+  }
+  const auto describe_r2c = [&](std::size_t n, bool in_place) {
+    const fftn::options opts{.in_place = in_place, .force_isa = *with};
+    const auto core = make_plan_core(fftn::detail::view_of(fftn::rows_r2c<double>(n, 1)), opts, s);
+    return fftn::detail::describe(*core);
+  };
+  // Without the limit: the chain (the half length 9216 is within the rows' range).
+  EXPECT_EQ(describe_r2c(18432, false).find("depth-first"), std::string::npos);
+  s.profile.depth_real_max_bytes = std::size_t{4} * 512 * 1024;
+  EXPECT_NE(describe_r2c(18432, false).find("half-length complex depth-first 4 x 2304"),
+            std::string::npos)
+      << describe_r2c(18432, false);
+  // Below the rows' range, a power of two and in place: no depth-first chain.
+  EXPECT_EQ(describe_r2c(6144, false).find("depth-first"), std::string::npos);
+  EXPECT_EQ(describe_r2c(32768, false).find("depth-first"), std::string::npos);
+  EXPECT_EQ(describe_r2c(18432, true).find("depth-first"), std::string::npos);
+  // Beyond depth_real_max_bytes: none.
+  s.profile.depth_real_max_bytes = std::size_t{9216} * 16 - 1;
+  EXPECT_EQ(describe_r2c(18432, false).find("depth-first"), std::string::npos);
+}
+
 // The r2c pairing in the grid's last phase (X33): pairs of mirror column sets of
 // hb = block / 2 columns (at least a register and a cache line), column 0 on its own; the last
 // factor even and odd (the middle bin in column 0, or in column L/2 paired with itself), two and

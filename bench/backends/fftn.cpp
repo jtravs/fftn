@@ -504,6 +504,14 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
         return fbench_error;
       }
       s.radices_text = value;
+    } else if (key == "FUSE_REAL_RADIX") {
+      const std::optional<std::size_t> v = fbench::fftn_tuning::parse_size(value, 1, false);
+      if (!v || *v > 64) {
+        say(message, message_size, "FUSE_REAL_RADIX is a whole number from 1 to 64");
+        return fbench_error;
+      }
+      s.settings.fuse_real_radix = *v;
+      overrides.str(key, value);
     } else if (key == "LEAF_LIMIT") {
       const std::optional<std::size_t> v = fbench::fftn_tuning::parse_size(value, 1, false);
       if (!v || *v > 4096) {
