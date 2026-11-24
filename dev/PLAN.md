@@ -490,21 +490,25 @@ pull request:
   `avx512` float 256 1.047, EPYC double 72 1.033).
 - X25 (the x86 gap's causes) is done; its verdicts are folded into the leads below.
 
-For the maintainer (decisions open for review; the ones the maintainer took on 2026-11-18 are in
-AGENTS.md section 6 and DESIGN 15.5):
+Decided by the maintainer on 2026-11-24 (the earlier ones are in AGENTS.md section 6 and DESIGN
+15.5); the decision log in DESIGN section 19 has each:
 
-- Kokkos (task 3.5, provisional API): `Kokkos::Threads` is accepted only at the pinned Kokkos
-  5.2.1, because kernel detection reads its internals; a plan on OpenMP or Threads must not run
-  inside a `Kokkos::Serial` kernel (undetectable; it would deadlock). The OpenMP back end the
-  client application uses is not affected by either.
-- Rules reach unmeasured relatives by cache key (the maintainer's rule): X58's Ice Lake key also
-  covers client Intel cores with 1–2 MiB of L2, and the 2 MiB key Emerald Rapids; X57's footprint
-  rule covers other `avx2` cores with a large L3. None measured.
-- X57's in-place limit (1024 rows to 1536) is extrapolated from the footprint, not measured.
-- The CI's Clang ASan job takes about 70 of its 90 minutes; the Windows jobs install a pinned
-  LLVM 23.1.5 (PR 81) because the runner image's LLVM is older than its Visual Studio needs.
-- Older and still open: X26's prefetch gate by target, X28's 128-bit leaves on `avx2`, X30's
-  512 override (rules by core on `avx2`, deferred by the maintainer on 2026-11-16).
+- Kokkos (task 3.5): both restrictions accepted as they are (`Kokkos::Threads` only at the
+  pinned Kokkos 5.2.1; no plan on OpenMP or Threads inside a `Kokkos::Serial` kernel). Revisit
+  if Kokkos gains an "inside a kernel" query.
+- Task 4.3's `axes_c2c/r2c/c2r` agreed (names, the `padded` flag, batch order by input stride),
+  kept provisional until the fusion design (phase 5) has been drafted against them. X61's per-
+  target outcome stands; the EPYC's float 8 × 64 at 1.045 is a recorded small loss.
+- Reach by cache key accepted for X58 (client Intel AVX-512 cores, Emerald Rapids) and X57
+  (other `avx2` cores with a large L3); Emerald Rapids and Zen 2 go into the next cloud screen.
+- X57's in-place limit (1536 rows) is to be measured on the EPYC; until then, or if it loses,
+  it is capped at the 1024 rows measured.
+- X28's 128-bit leaves on `avx2` ratified. X26's prefetch gate and X30's 512 override (and X62's
+  64-point batch rule) become keyed to the vendor once the machine profile reads one: Intel
+  cores with `avx2` alone keep their old plans until measured.
+
+Still open: the CI's Windows jobs install a pinned LLVM 23.1.5 (PR 81) because the runner
+image's LLVM is older than its Visual Studio needs.
 
 ### Leads, one-dimensional double first
 
