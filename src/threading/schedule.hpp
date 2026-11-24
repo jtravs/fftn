@@ -274,6 +274,15 @@ struct machine_profile {
   // the EPYC class, 16 MiB there: 1024 rows of 1024, the footprint X57's runs 1 and 2 measured
   // (the maintainer's decision; 1100 rows gained too little to keep).
   std::size_t fit_in_place_bytes = std::numeric_limits<std::size_t>::max();
+  // The two limits above apply to the 2 MiB-L2 key's fit table (planner/rules.hpp,
+  // large_l2_fit_overrides; core/plan_core.cpp) instead of the target's (X57's `avx2` table).
+  // Experiment X69: on Sapphire and Granite Rapids under `avx512` in double, 1024 = 32 x 32 took
+  // 0.73-0.82 of 8 x 8 x 16's time at 1-16 rows and tied at 256 rows (8 MiB of rows and output);
+  // 160 = 8 x 20 and 240 = 12 x 20 0.79-0.84 of the rules' time. set_grid_sizes sets it where
+  // x86-64 has a private L2 of 2 MiB or more, with fit_row_bytes the L2 and fit_in_place_bytes
+  // half of it. Zen 4 and Zen 5 (`avx512`, fit_row_bytes from the large-L3 branch) keep it false,
+  // so the key's `avx512` table does not reach them.
+  bool fit_large_l2 = false;
   // A lanes column phase whose column elements lie less than a page apart keeps its block's
   // two scratch tiles within this (core/plan_core.cpp, column_block; X40). set_grid_sizes
   // sets a quarter of L2.

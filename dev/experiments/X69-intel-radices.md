@@ -1,6 +1,7 @@
 # X69: radices for 1024, 160 and 240 on recent Intel (the 2 MiB-L2 key under `avx512`)
 
-- **Status:** planned (decision rules complete; the cloud run decides)
+- **Status:** done: adopted on the 2 MiB-L2 key (Sapphire 0.796, Granite 0.780, Emerald 0.800 over
+  the 32 moved cases, none slower)
 - **Owner:** x69 session, 2026-11-24
 - **Phase / task:** 1 (left from the exit: Emerald Rapids' failing rows); follows X64 and X57
 
@@ -134,4 +135,69 @@ not a member's share); float keeps its plans. The Xeon 6240 is not run: its prof
 
 ## Results
 
+Google Cloud Spot VMs in us-central1-a, 2026-11-24, GCC 14.2 Release, campaign commit 2188fe7
+(library code identical to the implementation branch), `avx512`, double, one thread (taskset on
+CPU 2), hot cases, statistic median, 30 valid rounds per run. Each job checked the CPU model and
+the 2 MiB-L2 key before running. Scores over the moved cases (notes differ between N and O).
+
+**Run J, the rules:**
+
+| Family | VM | Run | Band | Moved | N ÷ O geomean [95 %] | Slower | Rule | Verdict |
+|---|---|---|---:|---:|---|---:|---|---|
+| Sapphire Rapids (8481C) | c3-standard-8 | 20261124-163547-4c44 | ±1.00 % | 32 of 44 | 0.796 [0.793, 0.802] | 0 | adopt | adopt |
+| Granite Rapids (6985P-C) | c4-standard-16 | 20261124-162647-bc6f | ±1.00 % | 32 of 44 | 0.780 [0.780, 0.783] | 0 | adopt | adopt |
+| Emerald Rapids (8581C) | c4-standard-16 | 20261124-164415-35a1 | ±1.00 % | 32 of 44 | 0.800 [0.797, 0.804] | 0 | reach | keep |
+
+Per length, N ÷ O over the three families:
+
+- 1024 (32 × 32), 1-64 rows: 0.73-0.87. Out of place 1-32 rows 0.73-0.79, in place 1-64 rows
+  0.75-0.83, and 64 rows out of place gained least: 0.84-0.87 (2 MiB of rows and output, at the
+  limit).
+- 160 (8 × 20), 1-256 rows: 0.78-0.87 (Granite 0.78-0.80, Sapphire and Emerald 0.83-0.87).
+- 240 (12 × 20), 1-256 rows: 0.78-0.84.
+
+The moved cases were exactly the 32 the table expected. The 12 framing cases (128-1024 rows of
+1024, 1024 rows of 160 and 240) kept O's plans in N on every VM.
+
+**Run C, the notes check** (tracking tier, 61 cases; runs 20261124-164440-3e89 Sapphire,
+20261124-163429-ed02 Granite, 20261124-165207-708c Emerald): 3 cases moved on each, all
+one-axis c2c rows of 1024 within the limit (1024 b1 out of place, backward, and in place); no
+other case's notes differ. The rule "moves nothing else" holds.
+
+**FFTN against the libraries on the 32 moved cases** (geometric means; O before, N after):
+
+| Family | ÷ FFTW, O → N | ÷ oneMKL, O → N |
+|---|---|---|
+| Sapphire Rapids | 0.985 → 0.786 | 1.046 → 0.833 |
+| Granite Rapids | 1.050 → 0.819 | 1.045 → 0.815 |
+| Emerald Rapids | 0.998 → 0.800 | 1.053 → 0.844 |
+
+Emerald's exit-check rows (X64's failures), O → N: 1024 one row ÷ FFTW 1.19 → 0.90, one row in
+place 1.19 → 0.96, 160 one row 1.13 → 0.94; ÷ oneMKL, 1024 b3 and b16 out of place 1.13-1.14 →
+0.84-0.87, but 1024 b3 and b16 in place 1.31-1.34 → 1.03-1.05, still slower than oneMKL. On
+Granite, 160 one row out of place ties FFTW (0.994).
+
+**Arm W, informative** (every row of the three lengths two-pass), W ÷ O on the framing cases:
+
+- 1024 out of place past the limit: 128 and 256 rows tie on Granite and Emerald (0.97-1.01) and
+  gain a little on Sapphire (0.95-0.97); 1024 rows lose on Sapphire (1.29-1.36) and tie elsewhere.
+  The limit is right for 1024 out of place.
+- 1024 in place at 128 and 256 rows (2-4 MiB of rows): 0.82-0.94 on all three, so the in-place
+  limit could be higher.
+- 160 and 240 at 1024 rows (5 and 7.5 MiB): 0.83-0.90 on all three, so their limit could be
+  higher.
+
 ## Verdict
+
+- **Adopted on the 2 MiB-L2 key** as committed: `set_grid_sizes`' `large_l2` branch sets
+  `fit_large_l2`, `fit_row_bytes` = L2 and `fit_in_place_bytes` = L2/2, and the key's `avx512`
+  double table gives 160 = 8 × 20, 240 = 12 × 20 and 1024 = 32 × 32 within the limit. Sapphire and
+  Granite Rapids pass the adopt rule (0.796, 0.780, intervals far below 1 − band, none slower),
+  Emerald passes the reach rule (0.800), and run C shows nothing else moved. Neither the
+  near-miss nor the narrowing clause was used.
+- Against the libraries the moved cases go from ties or losses to 0.79-0.82 of FFTW's time and
+  0.82-0.84 of oneMKL's.
+- **Follow-up** (W, not judged): a higher limit for 1024 in place (to 4 MiB of rows) and for 160
+  and 240 (to 7.5 MiB) gained 0.82-0.94 more; it needs its own rule and a deciding run.
+- Spend: USD 0.38 (three VMs); campaign USD 15.01 of 20
+  ([cloud-ledger-2026-11.md](cloud-ledger-2026-11.md)).

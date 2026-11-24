@@ -1106,6 +1106,10 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   if (settings.layout != layout_choice::rules) {
     profile.split = settings.layout == layout_choice::split;
   }
+  // X69: on the 2 MiB-L2 key the fit limits serve that key's table, not the target's.
+  if (settings.profile.fit_large_l2) {
+    profile.fit_overrides = large_l2_fit_overrides(c.isa_target, kernels.complex_lanes);
+  }
   if (settings.rader == 0) {
     profile.rader_below = 0;
   } else if (settings.rader > 0) {
@@ -1156,7 +1160,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   p.batch_loops = s.batches.size();
   // X57: a two-pass row plan reads 12-16 streams at once, which pays only while the batch's
   // rows and their output stay in the cache (machine_profile::fit_row_bytes; in place also
-  // fit_in_place_bytes, X57 amendment 2).
+  // fit_in_place_bytes, X57 amendment 2). X69: on the 2 MiB-L2 key, 20-32 streams within L2.
   if (s.kind == transform_kind::c2c && r == 1 && settings.profile.fit_row_bytes != 0 &&
       in.stride[0] == 1 && out.stride[0] == 1) {
     const std::size_t sides = c.in_place ? 1 : 2;

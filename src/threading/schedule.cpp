@@ -206,6 +206,16 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
       // over oneMKL's there: 131071 0.74-0.76, 999983 0.84-0.93.
       p.depth_convolution_max_bytes = std::size_t{32} << 20U;
     }
+    // Experiment X69: the key's fit table (`avx512` double: 1024 = 32 x 32, 160 = 8 x 20,
+    // 240 = 12 x 20) while rows and output take at most the L2 (64 rows of 1024: 16 rows,
+    // 512 KiB, won 0.73-0.82 and 256 rows, 8 MiB, tied on Sapphire and Granite Rapids), in
+    // place rows at most half the L2 (the same rows: X57's in-place crossing on the EPYC fell
+    // at about the out-of-place row count). Judged on Sapphire, Granite and Emerald Rapids:
+    // 0.796, 0.780 and 0.800 of the time over the 32 cases it moves (1-64 rows of 1024, 1-256
+    // of 160 and 240), none slower.
+    p.fit_large_l2 = true;
+    p.fit_row_bytes = c.l2.size;
+    p.fit_in_place_bytes = c.l2.size / 2;
   } else if (private_l2 && large_l3) {
     p.chain_part_bytes = std::size_t{16} * 1024;
     p.chain_part_limit_bytes = c.l3.size / 2;

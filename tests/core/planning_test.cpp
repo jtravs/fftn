@@ -18,7 +18,9 @@
 #include "isa/target.hpp"
 #include "planner/rules.hpp"
 #include "platform/page_memory.hpp"
+#include "platform/topology.hpp"
 #include "support/fftn_subject.hpp"
+#include "threading/schedule.hpp"
 
 #include <gtest/gtest.h>
 
@@ -232,6 +234,7 @@ TEST(FitRows, PlansFollowTheProfileField) {
     build_settings settings;
     settings.profile.fit_row_bytes = fit_bytes;
     settings.profile.fit_in_place_bytes = in_place_bytes;
+    settings.profile.fit_large_l2 = false; // X57's table, whatever the host (X69's key)
     settings.profile.depth_max_bytes = 0;
     settings.profile.vendor = d::cpu_vendor::amd; // 768's override is AMD's (DESIGN.md 13.5)
     const fftn::shape<std::complex<double>, std::complex<double>> shape{
@@ -277,6 +280,7 @@ TEST(FitRows, PlansFollowTheProfileField) {
     // The fitting plan is the forced sequence's plan, bit for bit.
     build_settings fit;
     fit.profile.fit_row_bytes = 96 * kib;
+    fit.profile.fit_large_l2 = false;
     fit.profile.depth_max_bytes = 0;
     fit.profile.vendor = d::cpu_vendor::amd;
     build_settings forced = fit;
@@ -298,6 +302,123 @@ TEST(FitRows, PlansFollowTheProfileField) {
     off.profile.fit_row_bytes = 0;
     EXPECT_EQ(d::describe(*d::make_plan_core(d::view_of(plane), {.force_isa = t}, fit)),
               d::describe(*d::make_plan_core(d::view_of(plane), {.force_isa = t}, off)));
+  }
+}
+
+// X69: the 2 MiB-L2 key's table, `avx512` double only; beyond its limit the rules' sequence.
+TEST(FitRows, LargeL2TableRadices) {
+  using v = std::vector<std::size_t>;
+  d::target_profile p = d::profile_of(d::target::avx512, 4, d::cpu_vendor::intel);
+  EXPECT_TRUE(p.fit_overrides.empty()); // profile_of alone: no fit table on avx512
+  EXPECT_EQ(d::rule_radices(1024, p), (v{8, 8, 16}));
+  EXPECT_EQ(d::rule_radices(160, p), (v{4, 4, 10}));
+  EXPECT_EQ(d::rule_radices(240, p), (v{4, 4, 15}));
+  p.fit_overrides = d::large_l2_fit_overrides(d::target::avx512, 4);
+  EXPECT_EQ(d::fitting_radices(1024, p, true), (v{32, 32}));
+  EXPECT_EQ(d::fitting_radices(160, p, true), (v{8, 20}));
+  EXPECT_EQ(d::fitting_radices(240, p, true), (v{12, 20}));
+  for (const std::size_t n : {160U, 240U, 1024U}) {
+    EXPECT_EQ(d::fitting_radices(n, p, false), d::rule_radices(n, p)); // no plain override
+  }
+  EXPECT_TRUE(d::fitting_radices(768, p, true).empty());
+  for (const auto& [t, lanes] : std::vector<std::pair<d::target, std::size_t>>{
+           {d::target::avx512, 8},
+           {d::target::avx2, 2},
+           {d::target::avx2, 4},
+           {d::target::neon_fcma, 1},
+       }) {
+    EXPECT_TRUE(d::large_l2_fit_overrides(t, lanes).empty());
+  }
+}
+
+// X69 by the profile fields alone (set here, not the host's): on the key, rows of 1024, 160 and
+// 240 take the two-pass radices while rows and output take at most fit_row_bytes (in place the
+// rows at most fit_in_place_bytes); without the key (Zen 4 and Zen 5 under `avx512` have
+// fit_row_bytes from the large-L3 branch) the plans stay as they were.
+TEST(FitRows, LargeL2PlansWithinTheLimit) {
+  constexpr std::size_t kib = 1024;
+  // The whole profile of a Granite Rapids VM (c4-standard-16: 48 KiB L1, 2 MiB private L2,
+  // 504 MiB of L3 for 8 CPUs), as set_grid_sizes gives it, never the host's.
+  d::core_class granite;
+  granite.l1d = {.size = 48 * kib, .line_size = 64, .ways = 12, .shared_by = 1};
+  granite.l2 = {.size = 2048 * kib, .line_size = 64, .ways = 16, .shared_by = 1};
+  granite.l3 = {.size = 516096 * kib, .line_size = 64, .ways = 16, .shared_by = 8};
+  build_settings key;
+  key.profile = d::machine_profile{};
+  d::set_grid_sizes(key.profile, granite, true);
+  key.profile.vendor = d::cpu_vendor::intel;
+  ASSERT_TRUE(key.profile.fit_large_l2);
+  ASSERT_EQ(key.profile.fit_row_bytes, 2048 * kib);
+  ASSERT_EQ(key.profile.fit_in_place_bytes, 1024 * kib);
+  build_settings off = key;
+  off.profile.fit_row_bytes = 0;
+  // Without the key but with X57's limits from the large-L3 branch, as Zen 4 and Zen 5 have.
+  build_settings zen = key;
+  zen.profile.fit_large_l2 = false;
+  zen.profile.fit_row_bytes = 24 * 1024 * kib;
+  zen.profile.fit_in_place_bytes = 16 * 1024 * kib;
+  const auto plan = [](std::size_t n, std::size_t rows, bool in_place, const build_settings& s,
+                       fftn::isa isa) {
+    const fftn::shape<std::complex<double>, std::complex<double>> shape{
+        .dir = fftn::direction::forward,
+        .axes = {{.n = n}},
+        .batches = {{.count = rows,
+                     .in_dist = static_cast<std::ptrdiff_t>(n),
+                     .out_dist = static_cast<std::ptrdiff_t>(n)}},
+    };
+    return d::make_plan_core(d::view_of(shape), {.in_place = in_place, .force_isa = isa}, s);
+  };
+  const auto text = [&](std::size_t n, std::size_t rows, bool in_place, const build_settings& s,
+                        fftn::isa isa) { return d::describe(*plan(n, rows, in_place, s, isa)); };
+  const auto has = [](const std::string& t, const char* radices) {
+    return t.find(radices) != std::string::npos;
+  };
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    SCOPED_TRACE(fftn::isa_name(t));
+    if (std::string(fftn::isa_name(t)) != "avx512") {
+      // The key's table is empty here (avx2 included: X57's avx2 table is not used on the key).
+      EXPECT_EQ(text(1024, 3, false, key, t), text(1024, 3, false, off, t));
+      continue;
+    }
+    // Out of place, rows and output: 64 rows of 1024 (2 MiB) fit, 65 do not.
+    EXPECT_TRUE(has(text(1024, 1, false, key, t), "radices 32 x 32"));
+    EXPECT_TRUE(has(text(1024, 64, false, key, t), "radices 32 x 32"));
+    EXPECT_TRUE(has(text(1024, 65, false, key, t), "radices 8 x 8 x 16"));
+    EXPECT_EQ(text(1024, 256, false, key, t), text(1024, 256, false, off, t));
+    // In place, rows at most half the L2: the same 64 rows.
+    EXPECT_TRUE(has(text(1024, 64, true, key, t), "radices 32 x 32"));
+    EXPECT_TRUE(has(text(1024, 65, true, key, t), "radices 8 x 8 x 16"));
+    // 160 and 240 to 409 and 273 rows (2560 and 3840 bytes a row, on both sides).
+    EXPECT_TRUE(has(text(160, 409, false, key, t), "radices 8 x 20"));
+    EXPECT_TRUE(has(text(160, 410, false, key, t), "radices 4 x 4 x 10"));
+    EXPECT_TRUE(has(text(240, 273, false, key, t), "radices 12 x 20"));
+    EXPECT_TRUE(has(text(240, 274, false, key, t), "radices 4 x 4 x 15"));
+    EXPECT_TRUE(has(text(240, 1, true, key, t), "radices 12 x 20"));
+    // Off (fit_row_bytes = 0, fbench's FIT_ROW_BYTES=0) and without the key: the rules' plans.
+    for (const std::size_t n : {160U, 240U, 1024U}) {
+      EXPECT_EQ(text(n, 1, false, zen, t), text(n, 1, false, off, t));
+      EXPECT_EQ(text(n, 16, true, zen, t), text(n, 16, true, off, t));
+    }
+    EXPECT_TRUE(has(text(1024, 1, false, off, t), "radices 8 x 8 x 16"));
+    // The fitting plan is the forced sequence's plan, bit for bit.
+    build_settings forced = off;
+    forced.radices = {32, 32};
+    EXPECT_EQ(run(*plan(1024, 3, false, key, t)), run(*plan(1024, 3, false, forced, t)));
+    // A plane's rows and float keep their plans.
+    const fftn::shape<std::complex<double>, std::complex<double>> plane{
+        .dir = fftn::direction::forward,
+        .axes = {{.n = 160}, {.n = 1024}},
+        .batches = {},
+    };
+    EXPECT_EQ(d::describe(*d::make_plan_core(d::view_of(plane), {.force_isa = t}, key)),
+              d::describe(*d::make_plan_core(d::view_of(plane), {.force_isa = t}, off)));
+    const fftn::shape<std::complex<float>, std::complex<float>> single{
+        .dir = fftn::direction::forward,
+        .axes = {{.n = 1024}},
+        .batches = {},
+    };
+    EXPECT_EQ(d::describe(*d::make_plan_core(d::view_of(single), {.force_isa = t}, key)),
+              d::describe(*d::make_plan_core(d::view_of(single), {.force_isa = t}, off)));
   }
 }
 

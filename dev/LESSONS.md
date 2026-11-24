@@ -984,6 +984,11 @@ rows) lost from 18–20 MiB (1024 × 1280 and 1536 in place 1.07–1.16, 768 × 
 the crossing lies between 17 and 18 MiB of rows, about half the L3 (where the limit now
 stands), against 24–32 MiB of rows and output out of place. Measure a limit for each placement rather than deriving one from the other.
 [X57 amendment 2](experiments/X57-epyc-1024.md).
+The same holds one cache level down. On Intel's server cores with 2 MiB of private L2 (Sapphire,
+Emerald and Granite Rapids, `avx512`), 1024 = 32 · 32, 160 = 8 · 20 and 240 = 12 · 20 took
+0.78–0.80 of the three-pass plans' time while rows and output fit the L2. 1024 out of place tied
+or lost beyond it (1.29–1.36 at 32 MiB on Sapphire), while 160, 240 and 1024 in place kept
+gaining a little past it (0.82–0.94). [X69](experiments/X69-intel-radices.md).
 
 4.24 **Past the register file, a batch leaf should move each element when the codelet asks for
 it, and keep one inlined copy of the codelet.** X53's batch leaf transposes C × C blocks of C

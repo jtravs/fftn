@@ -538,10 +538,13 @@ Cloud screen X64 (2026-11-24, Spot VMs, USD 2.44; campaign 14.63 of 20): X50's d
 Bluestein convolutions adopted on the 2 MiB-L2 key (Sapphire Rapids 0.588 of the time over the
 moved convolutions, Granite 0.564, Emerald 0.615; FFTN ÷ oneMKL 131071 0.74–0.76, 999983
 0.84–0.93). Every reach screen kept the rule except X63's Xeon key on Zen 4 (now Intel only).
-Emerald Rapids passes the exit check (5 rows beyond noise ÷ FFTW, 6 ÷ oneMKL, bound 9). Lead
-for a next experiment: on the 2 MiB-L2 key under `avx512`, 1024 as 32 × 32 took 0.73–0.82 of
-the rules' 8 × 8 × 16 for 1–16 rows, 160 as 8 × 20 0.80–0.84 and 240 as 12 × 20 0.79–0.81 (X64's
-diagnosis, not judged).
+Emerald Rapids passes the exit check (5 rows beyond noise ÷ FFTW, 6 ÷ oneMKL, bound 9). X69
+(the same day, USD 0.38; campaign 15.01 of 20) followed X64's diagnosis: on the 2 MiB-L2 key under
+`avx512` in double, one-axis c2c rows of 1024, 160 and 240 take 32 × 32, 8 × 20 and 12 × 20 while
+rows and output fit the L2 (0.796, 0.780 and 0.800 of the time over the 32 moved cases on
+Sapphire, Granite and Emerald Rapids, none slower; ÷ FFTW 0.79–0.82, ÷ oneMKL 0.82–0.84 there).
+Left: 1024 in place at 3–16 rows still 1.03–1.05 of oneMKL on Emerald; a higher limit for 1024 in
+place and for 160 and 240 gained 0.82–0.94 more (arm W, not judged).
 
 Still open: the CI's Windows jobs install a pinned LLVM 23.1.5 (PR 81) because the runner
 image's LLVM is older than its Visual Studio needs.
@@ -958,7 +961,7 @@ running, done (with verdict).
 | X66 | Fusion: block callbacks outside the kernels (identity, cubic, exp per element) against the vocabulary with a precomputed factor; block sizes per profile (task 5.3; ID reserved) | 5 | planned |
 | X67 | Fusion: row convolution pipeline against three separate calls (task 5.2; ID reserved) | 5 | planned |
 | X68 | Fusion: the free-space stage as three objects against today's route, time and DRAM traffic; does an (x, ω) slab grouping justify a multi-axis pipeline? (task 5.3; ID reserved) | 5 | planned |
-| [X69](experiments/X69-intel-radices.md) | On the 2 MiB-L2 key under `avx512` (Sapphire, Emerald, Granite Rapids), one-axis c2c rows of 1024, 160 and 240 as two passes (32 × 32, 8 × 20, 12 × 20) while rows and output fit the L2 (X57's fit overrides on that key): do they pass X64's adopt rule on Sapphire and Granite and its reach rule on Emerald? | 1 | planned |
+| [X69](experiments/X69-intel-radices.md) | On the 2 MiB-L2 key under `avx512` (Sapphire, Emerald, Granite Rapids), one-axis c2c rows of 1024, 160 and 240 as two passes (32 × 32, 8 × 20, 12 × 20) while rows and output fit the L2 (X57's fit overrides on that key): do they pass X64's adopt rule on Sapphire and Granite and its reach rule on Emerald? | 1 | done: adopted (Sapphire 0.796, Granite 0.780, Emerald 0.800, none slower; ÷ FFTW 0.79–0.82 and ÷ oneMKL 0.82–0.84 on the moved cases) |
 | [X56](experiments/X56-exit-4.md) | The phase 1 exit check on `main` after X49–X57: EPYC at fa155c9, Mac and Xeon at X53's code (71307e0), then the cloud cores | 1 | done: the phase 1 exit met on all nine machines (local: EPYC ÷ FFTW 6 of 193; cloud: Zen 5 5, Axion 1, Granite Rapids 7, Sapphire Rapids 7, Ice Lake 0 after X58; oneMKL at most 9) |
 | [X57](experiments/X57-epyc-1024.md) | The EPYC's last exit-check cases: are 72 and 120's 5–6 % since 8c18dd2 a regression, and can 1024's radix choice see the plan's data? | 1 | done: 72 and 120 are code placement; B adopted (768 and 1024 two-pass rows while rows and output fit 3/4 of L3: moved cases 0.88, tracking 0.989, EPYC beyond noise 9 → 4 of 193); C (64-byte `avx2` functions) rejected (0.999, 1024 × 3 1.04–1.06); amendment 2: B's in-place limit measured, lost from 18 MiB, capped at half the L3 (16 MiB, 1024 rows of 1024) |
 | [X58](experiments/X58-intel-keys.md) | Recent Intel keys from X56's screen: the depth-first chain on Ice Lake VMs (private L2 between 1 and 2 MiB), and no batch leaf of 12 on a private L2 of 2 MiB or more | 1 | done: both adopted. Ice Lake's changed rows 0.596 of their time (long rows ÷ FFTW 1.13–1.53 → 0.64–0.79), tracking 0.929; 12 × 64 and 12 × 1024 0.867 (Granite Rapids) and 0.892 (Sapphire Rapids) |

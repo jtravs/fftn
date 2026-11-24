@@ -1915,7 +1915,13 @@ prices them) a cost per unit and a cost per tail, and a cost per pass. For a lin
    `machine_profile::fit_row_bytes`, three quarters of the L3 where a private L2 has a large L3
    behind it, and in place while the rows fit the smaller of it and `fit_in_place_bytes`
    (half the L3 there: 1024 rows of 1024 on a 32 MiB L3, the footprint measured), and rule 4's
-   sequence beyond; rows of planes and volumes keep this rule.
+   sequence beyond; rows of planes and volumes keep this rule. On the 2 MiB-L2 key (x86-64 with
+   a private L2 of 2 MiB or more: Sapphire, Emerald and Granite Rapids) the table is that key's
+   instead (`machine_profile::fit_large_l2`, `large_l2_fit_overrides`; `avx512` double: 160 =
+   8 · 20, 240 = 12 · 20, 1024 = 32 · 32; X69), with the L2 for
+   rows and output and half of it in place (64 rows of 1024 either way). Zen 4 and Zen 5 run
+   `avx512` with X57's limits from the large-L3 key but are not on this key, so their `avx512`
+   plans have no fit table.
 3. Otherwise write n = n_s q₁ q₂ … with n_s free of primes above 16 and q₁ ≤ q₂ ≤ … the
    prime factors above 16. Each qᵢ is one pass, in ascending order, after the codelet
    passes: a codelet pass for 17, 19 and 23 (experiment X27), otherwise a generic pass; if
@@ -3475,6 +3481,7 @@ to change before a release.
 | 2026-11-24 | The machine profile carries the processor's vendor (CPUID on x86; Apple, other Arm), shown by `describe()`; the `avx2` rules measured only on AMD's cores and keyed by the target alone (X26's copies without prefetch, the overrides of X30's 512, X42 and X54, the batch leaves of X53 and X62) apply only for AMD, every other vendor keeping the earlier plans (section 13.5); X30's 256 = 8 × 32 stays for every vendor | The maintainer's decision: a cache key cannot tell a Zen CCX from an Intel ring, and the Xeon 6240 forced to `avx2` lost with two of these rules (X26: 2²² 1.20 without the prefetch; X30's 512: r2c 1024² 1.057) and gained with X30's 256 (0.932); the others were never run on an Intel core under `avx2`. Not a performance change: the EPYC 7763's plans are identical over the standard catalogue (describe() of all 445 cases), and no other measured machine plans for `avx2` by default |
 | 2026-11-24 | X63's packed c2r planes on the Xeon 6240's class (`avx512`, from the L2) apply to Intel's processors only; AMD's (and unknown) cores that the key reaches keep the block (`set_grid_sizes`, section 13.5). Zen 3's `avx2` branch is unchanged | X64's cloud screen (EPYC 9B14 VM, threshold forced to 1 MiB, rule P against the block): one thread 512 × 1024 1.127, 512² 1.109 (run 20261124-105335-27eb); 8 lanes 600 × 800 1.286, 720² 1.246 (20261124-110003-6ca4); float 512 × 1024 1.162 (20261124-110552-66bf). Ice Lake-SP kept the gain (0.62–0.77); Zen 2 kept Zen 3's |
 | 2026-11-24 | The 2 MiB-L2 profile (x86-64, Sapphire, Emerald and Granite Rapids) runs Bluestein convolutions on its depth-first chain up to 32 MiB (`depth_convolution_max_bytes`), as the Xeon 6240's (section 8.5; experiment X64) | Over the nine convolutions moved (4093–999983): Sapphire 0.588, Granite 0.564, Emerald 0.615 of the time, none slower; FFTN ÷ oneMKL 131071 1.21–1.37 → 0.74–0.76, 999983 1.19–1.68 → 0.84–0.93 |
+| 2026-11-24 | On the 2 MiB-L2 key under `avx512` in double, one-axis c2c rows of 160, 240 and 1024 take two passes (8 · 20, 12 · 20, 32 · 32) while rows and output fit the L2 (in place: rows within half of it), through X57's fit mechanism with a key-selected table (`machine_profile::fit_large_l2`; section 11.2, rule 2; X69) | X69's judging runs: 0.796 (Sapphire), 0.780 (Granite), 0.800 (Emerald) of the time over the 32 moved cases, none slower; FFTN ÷ FFTW on them 0.99–1.05 → 0.79–0.82, ÷ oneMKL 1.05 → 0.82–0.84. X64's diagnosis on Sapphire and Granite Rapids: 32 · 32 took 0.73–0.82 of 8 · 8 · 16's time at 1–16 rows of 1024, out of place and in place, and tied at 256 rows (8 MiB); 8 · 20 and 12 · 20 0.79–0.84 of the rules' time for one row. These rows fail Emerald Rapids' exit check (1.14–1.25 of FFTW or oneMKL). A table under the target alone would have reached Zen 4, Zen 5 and Ice Lake-SP VMs, which get `fit_row_bytes` from the large-L3 key, unmeasured |
 
 ---
 

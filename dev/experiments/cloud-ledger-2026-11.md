@@ -254,3 +254,27 @@ campaign has spent USD 14.63 of its USD 20 cap. Teardown was verified on 2026-11
 - the firewall rule, subnet and network were then deleted after their IDs were matched;
 - the project lists only the `default` network and its rules;
 - every watchdog was stopped.
+
+## X69, 2026-11-24
+
+Rentals for [X69](X69-intel-radices.md) (two-pass rows of 1024, 160 and 240 on recent Intel). The
+maintainer approved USD 3. The run used the same project, region and zone, Spot VMs with
+`--max-run-duration=150m` (termination action DELETE), boot-disk auto-delete and a Mac-side
+watchdog per VM, prices as before plus about USD 0.017/h for disk and IP. Emerald Rapids was
+created after Granite Rapids was deleted (the region's C4 quota is 24 vCPUs). Shared resources
+(free): network `fftn-x69-net` (2186203687459227221), subnet `fftn-x69-sub`
+(1122734089496430117), firewall rule `fftn-x69-ssh` (4633249729418364476, SSH from the
+controller's address only).
+
+| Instance | Recorded ID | Type | Spot USD/h | Created (UTC) | Deleted (UTC) | Cost USD | Running total | Use |
+|---|---|---|---:|---|---|---:|---:|---|
+| fftn-x69-c4 | 1802874914238629383 | c4-standard-16, 1 thread per core | 0.473 | 2026-11-24 16:18:48 | 2026-11-24 16:36:43 | 0.15 | 0.15 | X69 judging (Granite Rapids) |
+| fftn-x69-c3 | 8859902903400793622 | c3-standard-8, 1 thread per core | 0.150 | 2026-11-24 16:19:05 | 2026-11-24 16:46:40 | 0.08 | 0.23 | X69 judging (Sapphire Rapids) |
+| fftn-x69-c4e | 3321296984683840497 | c4-standard-16, 1 thread per core | 0.473 | 2026-11-24 16:36:47 | 2026-11-24 16:54:18 | 0.15 | 0.38 | X69 judging (Emerald Rapids) |
+
+The total is USD 0.38, an estimated gross figure. With the earlier experiments the campaign has
+spent USD 15.01 of its USD 20 cap. Teardown was verified on 2026-11-24 at 16:55 UTC:
+- every instance above was deleted after its ID was matched;
+- the firewall rule, subnet and network were then deleted after their IDs were matched;
+- the project lists only the `default` network;
+- every watchdog was stopped.
