@@ -69,9 +69,10 @@ constexpr std::array<std::size_t, cost_radices> pass_radices{
 // 3072 = 6 x 16 x 32, 3200 = 10 x 20 x 16, 4608 = 6 x 12 x 64 and 5120 = 10 x 32 x 16 are
 // experiment X72's (EPYC 7763, AMD only): three passes with a radix of 20, 32 or 64 where the
 // costs chose four of at most 16 (or 12 x 16 x 16), on rows of 48-80 KiB, beyond the L1; the
-// half lengths of the real rows of 6144-10240 points. In the screens (runs
-// 20261124-222539-b79a, -222556-de95, -222556-6b3a, -222626-e5be) they took 0.80-0.93 of the
-// costs' time as c2c rows, 0.85-0.93 as r2c rows and 0.90-1.02 as c2r rows.
+// half lengths of the real rows of 6144-10240 points. Over the 58 cases they moved in X72's
+// judging run (c2c rows at 1-64 rows, in place, both directions; real rows; depth-first
+// sub-rows; planes) they took 0.906 of the time, 0.81-0.99, none slower (run
+// 20261124-223906-cac2).
 // clang-format off
 // NOLINTBEGIN(readability-trailing-comma): bench/x2/fit.py writes and parses this layout
 constexpr std::array<radix_override, 46> avx2_double_overrides{{

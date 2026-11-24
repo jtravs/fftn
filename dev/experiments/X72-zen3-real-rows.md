@@ -1,6 +1,6 @@
 # X72: mid-length real rows on Zen 3
 
-- **Status:** running
+- **Status:** done (arms A and B adopted)
 - **Owner:** x72 session, 2026-11-24 (overnight)
 - **Phase / task:** 1 (the client catalogue check's largest gap, PLAN "Status")
 
@@ -206,4 +206,66 @@ unmeasured (the next cloud screen's n2d family). Float keeps its plans.
 
 ## Results
 
+**Run J** 20261124-223906-cac2 (Slurm 518107, node21, `--serial`; 20 rounds, 5 under load, load
+average median 9.3, other processes 9.1 cores; band ±1.00 %).
+
+- **Arm A ÷ O** over the 26 cases whose notes differ (exactly run P's list): geometric mean
+  **0.761** [0.755, 0.766], none slower than 1.03. Per case 0.646–0.943: r2c 18432 0.874,
+  c2r 18432 0.937, r2c 20480 × 21 0.852, c2r 20480 × 3 0.943, r2c 40960 × 6 0.724, c2r 0.705,
+  24576 0.771 / 0.870, the longest rows 0.65–0.79 (122880 and 163840 0.65–0.67, 245760 0.79).
+- **Arm B ÷ A** over the 58 cases whose notes differ (run P's list): geometric mean **0.906**
+  [0.904, 0.909], none slower than 1.03. c2c rows of 3072 0.84–0.88, 3200 0.81–0.85, 4608
+  0.90–0.95, 5120 0.91–0.94 (the gain shrinks a little at 64 rows); real rows 0.85–0.99 (r2c
+  6400 0.850, c2r 6144 0.89, c2r 9216 0.990, c2r 10240 × 4 0.981 [0.970, 1.003]); the
+  depth-first sub-rows 0.94–0.97 (c2c 12288, 18432, 20480; real 24576, 36864, 40960); the planes
+  0.887 and 0.914.
+
+FFTN ÷ FFTW (MEASURE) in run J on the client catalogue's shapes, `main`'s plans (O) → A and B:
+
+| case | O ÷ F | B ÷ F |
+|---|---|---|
+| r2c 6144 × 48, × 66 | 1.021, 1.023 | 0.943, 0.943 |
+| c2r 6144 × 48, × 66 | 1.056, 1.060 | 0.946, 0.944 |
+| r2c 6400, × 7 | 1.085, 1.031 | 0.928, 0.900 |
+| c2r 6400 | 0.976 | 0.925 |
+| r2c 9216, c2r 9216 | 1.003, 0.927 | 0.931, 0.917 |
+| r2c 10240, × 28 | 1.105, 1.077 | **1.034**, 1.000 |
+| c2r 10240, × 4 | 1.066, 1.058 | 0.997, **1.043** |
+| r2c 18432, c2r 18432 | 1.150, 1.091 | 1.004, 1.019 |
+| r2c 20480 × 21, c2r 20480 × 3 | 1.176, 1.111 | 0.993, **1.046** |
+| r2c 40960 × 6, c2r 40960 × 6 | 1.271, 1.435 | 0.883, 0.987 |
+| c2c 3072 fwd, bwd | 1.033, 1.047 | 0.888, 0.885 |
+| c2c 3200 fwd, bwd | 1.113, 1.112 | 0.901, 0.904 |
+| c2c 5120 fwd, bwd | 1.090, 1.051 | 0.984, 0.960 |
+| c2c 4608 | 0.975 | 0.892 |
+
+Three of the client's shapes stay above 1.02 in this run: r2c 10240 (1.034), c2r 10240 × 4
+(1.043), c2r 20480 × 3 (1.046).
+
+**Informative screen, a depth-first top of 8 on B** (run 20261124-224617-abf6, Slurm 518111, 12
+rounds; `DEPTH_TOPS=8`): no clean key. r2c and c2r 18432 0.94, c2c 9216 0.92, some long rows
+0.89–0.93, but 24576, 36864, 122880 and c2c 12288–18432 1.05–1.13, 20480 1.00–1.04. Left as a
+lead.
+
+**Run K** (informative): to be added.
+
 ## Verdict
+
+**Both arms adopted** by their rules, no clause used (no near miss, no narrowing):
+
+- Arm A on Zen 3's class (`set_grid_sizes`, `depth_real_max_bytes = depth_max_bytes`): the
+  real rows' half-length depth-first chain, 0.761 over the 26 rows it moves, which include the
+  client's 18432, 20480 and 40960 × 6.
+- Arm B for `avx2` double on AMD: 3072 = 6 × 16 × 32, 3200 = 10 × 20 × 16, 4608 = 6 × 12 × 64,
+  5120 = 10 × 32 × 16, 0.906 over the 58 cases it moves.
+
+Recorded in DESIGN 8.5 (the depth-first chain's EPYC bullet), 9.1 (the *Depth-first* real
+route), 13.5 (the vendor-keyed and Zen 3-keyed lists) and the decision log; lesson in
+LESSONS 4.21 and 4.25. Reach: Zen 2 by both keys, unmeasured (for the next cloud screen).
+Follow-ups: the three shapes still above 1.02 (r2c 10240, c2r 10240 × 4, c2r 20480 × 3; the
+c2r rows pair in a separate pass where `main` fused the pairing into a leading radix-4 pass,
+so a c2r pairing fused into the depth-first chain's first pass, or a three-pass sequence that
+leads with 4, is the next lead); tops of 8 for some lengths (above); the same overrides on
+other lengths between L1 and L2/4 (X38 gave 3000 and 3600 radix-20 passes the same way; other
+lengths of 3000–6000 points may gain alike, which a search with radix 20, 32 and 64 candidates
+would show).
