@@ -18,7 +18,9 @@
 #include "isa/target.hpp"
 #include "planner/rules.hpp"
 #include "platform/page_memory.hpp"
+#include "platform/topology.hpp"
 #include "support/fftn_subject.hpp"
+#include "threading/schedule.hpp"
 
 #include <gtest/gtest.h>
 
@@ -333,18 +335,26 @@ TEST(FitRows, LargeL2TableRadices) {
 // fit_row_bytes from the large-L3 branch) the plans stay as they were.
 TEST(FitRows, LargeL2PlansWithinTheLimit) {
   constexpr std::size_t kib = 1024;
-  const auto settings_of = [](bool key, std::size_t fit_bytes, std::size_t in_place_bytes) {
-    build_settings s;
-    s.profile.fit_large_l2 = key;
-    s.profile.fit_row_bytes = fit_bytes;
-    s.profile.fit_in_place_bytes = in_place_bytes;
-    s.profile.depth_max_bytes = 0;
-    s.profile.vendor = d::cpu_vendor::intel;
-    return s;
-  };
-  const build_settings key = settings_of(true, 2048 * kib, 1024 * kib); // Granite Rapids' L2
-  const build_settings off = settings_of(true, 0, 1024 * kib);
-  const build_settings zen = settings_of(false, 24 * 1024 * kib, 16 * 1024 * kib);
+  // The whole profile of a Granite Rapids VM (c4-standard-16: 48 KiB L1, 2 MiB private L2,
+  // 504 MiB of L3 for 8 CPUs), as set_grid_sizes gives it, never the host's.
+  d::core_class granite;
+  granite.l1d = {.size = 48 * kib, .line_size = 64, .ways = 12, .shared_by = 1};
+  granite.l2 = {.size = 2048 * kib, .line_size = 64, .ways = 16, .shared_by = 1};
+  granite.l3 = {.size = 516096 * kib, .line_size = 64, .ways = 16, .shared_by = 8};
+  build_settings key;
+  key.profile = d::machine_profile{};
+  d::set_grid_sizes(key.profile, granite, true);
+  key.profile.vendor = d::cpu_vendor::intel;
+  ASSERT_TRUE(key.profile.fit_large_l2);
+  ASSERT_EQ(key.profile.fit_row_bytes, 2048 * kib);
+  ASSERT_EQ(key.profile.fit_in_place_bytes, 1024 * kib);
+  build_settings off = key;
+  off.profile.fit_row_bytes = 0;
+  // Without the key but with X57's limits from the large-L3 branch, as Zen 4 and Zen 5 have.
+  build_settings zen = key;
+  zen.profile.fit_large_l2 = false;
+  zen.profile.fit_row_bytes = 24 * 1024 * kib;
+  zen.profile.fit_in_place_bytes = 16 * 1024 * kib;
   const auto plan = [](std::size_t n, std::size_t rows, bool in_place, const build_settings& s,
                        fftn::isa isa) {
     const fftn::shape<std::complex<double>, std::complex<double>> shape{
