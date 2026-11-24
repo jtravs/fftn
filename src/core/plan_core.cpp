@@ -1161,14 +1161,19 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   // X57: a two-pass row plan reads 12-16 streams at once, which pays only while the batch's
   // rows and their output stay in the cache (machine_profile::fit_row_bytes; in place also
   // fit_in_place_bytes, X57 amendment 2). X69: on the 2 MiB-L2 key, 20-32 streams within L2.
+  // X70: out of place, rows longer than a page also within fit_long_row_bytes.
   if (s.kind == transform_kind::c2c && r == 1 && settings.profile.fit_row_bytes != 0 &&
       in.stride[0] == 1 && out.stride[0] == 1) {
     const std::size_t sides = c.in_place ? 1 : 2;
-    const std::size_t touched =
-        checked_product(std::array{c.lengths[0], std::size_t{2} * sizeof(T), p.transforms, sides});
+    const std::size_t row_bytes =
+        checked_product(std::array{c.lengths[0], std::size_t{2} * sizeof(T)});
+    const std::size_t touched = checked_product(std::array{row_bytes, p.transforms, sides});
+    constexpr std::size_t page_bytes = 4096;
     const std::size_t limit =
         c.in_place ? std::min(settings.profile.fit_row_bytes, settings.profile.fit_in_place_bytes)
-                   : settings.profile.fit_row_bytes;
+        : row_bytes > page_bytes
+            ? std::min(settings.profile.fit_row_bytes, settings.profile.fit_long_row_bytes)
+            : settings.profile.fit_row_bytes;
     chain.use_row_fit(c.lengths[0], touched != 0 && touched <= limit);
   }
 

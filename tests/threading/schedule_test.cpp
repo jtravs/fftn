@@ -972,10 +972,11 @@ TEST(Schedule, ProfilesOfRecordedMachines) {
             2 * std::size_t{516096} * kib);
 }
 
-// X69: the 2 MiB-L2 key's fit table (machine_profile::fit_large_l2) with its limits, the L2 for
-// rows and output and half of it in place, on that key alone. The other recorded classes keep
-// their fit fields as before: X57's on the EPYC's class (and, unmeasured, on Zen 4 and Zen 5,
-// whose `avx512` plans have no fit table without the key), none on the Xeon 6240's or Apple's.
+// X69: the 2 MiB-L2 key's fit table (machine_profile::fit_large_l2) with its limits, on that key
+// alone. X70: four times the L2 for rows and output, twice the L2 in place, the L2 for rows longer
+// than a page out of place. The other recorded classes keep their fit fields as before: X57's on
+// the EPYC's class (and, unmeasured, on Zen 4 and Zen 5, whose `avx512` plans have no fit table
+// without the key), none on the Xeon 6240's or Apple's, and no long-row limit on any of them.
 TEST(Schedule, FitTableKeys) {
   const std::filesystem::path data(FFTN_PLATFORM_DATA);
   constexpr std::size_t kib = 1024;
@@ -985,25 +986,29 @@ TEST(Schedule, FitTableKeys) {
     bool large_l2;
     std::size_t row_bytes;
     std::size_t in_place_bytes;
+    std::size_t long_row_bytes;
     bool operator==(const fit_fields&) const = default;
   };
   const auto of = [](const machine_profile& p) {
-    return fit_fields{p.fit_large_l2, p.fit_row_bytes, p.fit_in_place_bytes};
+    return fit_fields{p.fit_large_l2, p.fit_row_bytes, p.fit_in_place_bytes, p.fit_long_row_bytes};
   };
   const auto recorded = [&](const char* file, bool x86_64) {
     return of(fftn::detail::profile_for(fftn::detail::load_topology(data / file), x86_64));
   };
-  EXPECT_EQ(recorded("linux-gcp-c4-granite-rapids.sysfs", true), (fit_fields{true, 2 * mib, mib}));
-  EXPECT_EQ(recorded("linux-amd-epyc-7763.sysfs", true), (fit_fields{false, 24 * mib, 16 * mib}));
-  EXPECT_EQ(recorded("linux-intel-xeon-gold-6240.sysfs", true), (fit_fields{false, 0, never}));
-  EXPECT_EQ(recorded("macos-apple-m5-max.sysctl", false), (fit_fields{false, 0, never}));
+  EXPECT_EQ(recorded("linux-gcp-c4-granite-rapids.sysfs", true),
+            (fit_fields{true, 8 * mib, 4 * mib, 2 * mib}));
+  EXPECT_EQ(recorded("linux-amd-epyc-7763.sysfs", true),
+            (fit_fields{false, 24 * mib, 16 * mib, never}));
+  EXPECT_EQ(recorded("linux-intel-xeon-gold-6240.sysfs", true),
+            (fit_fields{false, 0, never, never}));
+  EXPECT_EQ(recorded("macos-apple-m5-max.sysctl", false), (fit_fields{false, 0, never, never}));
   // AArch64 with a 2 MiB private L2 (Axion) is not on the key.
   EXPECT_FALSE(recorded("linux-gcp-c4a-axion.sysfs", false).large_l2);
   // Zen 5 and Ice Lake VMs (a large L3 per CPU): X57's large-L3 fields, without the key.
   for (const char* file : {"linux-gcp-c4d-zen5.sysfs", "linux-gcp-n2-ice-lake.sysfs"}) {
     SCOPED_TRACE(file);
     const fftn::detail::core_class c = fftn::detail::load_topology(data / file).classes.at(0);
-    EXPECT_EQ(recorded(file, true), (fit_fields{false, c.l3.size / 4 * 3, c.l3.size / 2}));
+    EXPECT_EQ(recorded(file, true), (fit_fields{false, c.l3.size / 4 * 3, c.l3.size / 2, never}));
   }
   // Zen 4 (1 MiB of private L2) with a large L3 per CPU (a VM) and without (Zen 4c with SMT).
   fftn::detail::core_class zen4;
@@ -1012,13 +1017,13 @@ TEST(Schedule, FitTableKeys) {
   zen4.l3 = {.size = 32 * mib, .line_size = 64, .ways = 16, .shared_by = 8};
   machine_profile p;
   fftn::detail::set_grid_sizes(p, zen4, true);
-  EXPECT_EQ(of(p), (fit_fields{false, 24 * mib, 16 * mib}));
+  EXPECT_EQ(of(p), (fit_fields{false, 24 * mib, 16 * mib, never}));
   zen4.l1d.shared_by = 2;
   zen4.l2.shared_by = 2;
   zen4.l3 = {.size = 16 * mib, .line_size = 64, .ways = 16, .shared_by = 16};
   p = machine_profile{};
   fftn::detail::set_grid_sizes(p, zen4, true);
-  EXPECT_EQ(of(p), (fit_fields{false, 0, never}));
+  EXPECT_EQ(of(p), (fit_fields{false, 0, never, never}));
   // Bare-metal Granite Rapids with SMT (under 2 MiB of L3 per CPU): the key is the L2.
   fftn::detail::core_class metal;
   metal.l1d = {.size = 48 * kib, .line_size = 64, .ways = 12, .shared_by = 2};
@@ -1026,7 +1031,7 @@ TEST(Schedule, FitTableKeys) {
   metal.l3 = {.size = 504 * mib, .line_size = 64, .ways = 16, .shared_by = 256};
   p = machine_profile{};
   fftn::detail::set_grid_sizes(p, metal, true);
-  EXPECT_EQ(of(p), (fit_fields{true, 2 * mib, mib}));
+  EXPECT_EQ(of(p), (fit_fields{true, 8 * mib, 4 * mib, 2 * mib}));
 }
 
 } // namespace

@@ -281,8 +281,18 @@ struct machine_profile {
   // 160 = 8 x 20 and 240 = 12 x 20 0.79-0.84 of the rules' time. set_grid_sizes sets it where
   // x86-64 has a private L2 of 2 MiB or more, with fit_row_bytes the L2 and fit_in_place_bytes
   // half of it. Zen 4 and Zen 5 (`avx512`, fit_row_bytes from the large-L3 branch) keep it false,
-  // so the key's `avx512` table does not reach them.
+  // so the key's `avx512` table does not reach them. Experiment X70 raised the key's limits to
+  // four times the L2 (fit_row_bytes) and twice the L2 (fit_in_place_bytes), with 1024 out of
+  // place kept at the L2 by fit_long_row_bytes (0.858-0.873 over the cases it moves).
   bool fit_large_l2 = false;
+  // Out of place, a plan whose rows are longer than a 4 KiB page (one side) fits only while its
+  // rows and output also take at most this many bytes (the limit is the smaller of it and
+  // fit_row_bytes; core/plan_core.cpp). Experiment X70: on the 2 MiB-L2 key rows
+  // of 160 and 240 (2.5 and 3.75 KiB) kept gaining past the L2 out of place (X69's arm W: 0.83-0.90
+  // at 5 and 7.5 MiB), rows of 1024 (16 KiB) did not (0.95-1.01 at 4 and 8 MiB, 1.29-1.36 at
+  // 32 MiB on Sapphire Rapids). set_grid_sizes sets the L2 on that key; elsewhere no limit, so
+  // X57's EPYC limits are unchanged.
+  std::size_t fit_long_row_bytes = std::numeric_limits<std::size_t>::max();
   // A lanes column phase whose column elements lie less than a page apart keeps its block's
   // two scratch tiles within this (core/plan_core.cpp, column_block; X40). set_grid_sizes
   // sets a quarter of L2.

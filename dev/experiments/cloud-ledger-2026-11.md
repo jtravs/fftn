@@ -278,3 +278,24 @@ spent USD 15.01 of its USD 20 cap. Teardown was verified on 2026-11-24 at 16:55 
 - the firewall rule, subnet and network were then deleted after their IDs were matched;
 - the project lists only the `default` network;
 - every watchdog was stopped.
+
+## X70, 2026-11-24
+
+Rentals for [X70](X70-large-l2-limits.md) (higher limits for X69's two-pass rows). The
+maintainer approved USD 1 from X69's unspent approval. The setup was as for X69. Shared
+resources (free): network `fftn-x70-net` (3890847362241509504), subnet `fftn-x70-sub`
+(727753632642742417), firewall rule `fftn-x70-ssh` (2678341969610782825, SSH from the
+controller's address only).
+
+| Instance | Recorded ID | Type | Spot USD/h | Created (UTC) | Deleted (UTC) | Cost USD | Running total | Use |
+|---|---|---|---:|---|---|---:|---:|---|
+| fftn-x70-c4 | 1079210716280109182 | c4-standard-16, 1 thread per core | 0.473 | 2026-11-24 21:50:10 | 2026-11-24 22:18:10 | 0.23 | 0.23 | X70 judging (Granite Rapids) |
+| fftn-x70-c3 | 4291877439445645425 | c3-standard-8, 1 thread per core | 0.150 | 2026-11-24 21:50:22 | 2026-11-24 22:24:27 | 0.10 | 0.33 | X70 judging (Sapphire Rapids) |
+| fftn-x70-c4e | 7168095842189685705 | c4-standard-16, 1 thread per core | 0.473 | 2026-11-24 22:18:14 | 2026-11-24 22:43:26 | 0.21 | 0.54 | X70 judging (Emerald Rapids) |
+
+The total is USD 0.54, an estimated gross figure. With the earlier experiments the campaign has
+spent USD 15.55 of its USD 20 cap. Teardown was verified on 2026-11-24 at 22:44 UTC:
+- every instance above was deleted after its ID was matched;
+- the firewall rule, subnet and network were then deleted after their IDs were matched;
+- the project lists only the `default` network;
+- every watchdog was stopped.
