@@ -1,6 +1,6 @@
 # X73: whole transforms anchored to members (Zen 3's class, threaded batches)
 
-- **Status:** running
+- **Status:** done
 - **Owner:** x73 session, 2026-11-24
 - **Phase / task:** 3 (threading; gap 3 of the client catalogue's check of 2026-11-24)
 
@@ -127,4 +127,60 @@ until measured.
 
 ## Results
 
+Arms M = `fftn_omp:1b1d129`, A = `fftn_omp:84bc1cb` (the change, rules committed), F = FFTW;
+GCC 16.2 Release, `avx2`, double; Slurm allocations of 64 cores, threads unpinned. Main's runs
+vary two- to fivefold between processes when rows wander between core complexes (the diagnosis),
+so the A/A bands of M are wide.
+
+| Run | Store | Node, load | Rounds | Band | A ÷ M, client catalogue (weighted) |
+|---|---|---|---|---|---|
+| J16 | 20261124-223028-0605 (job 518094) | node20, load 47–58, 25 of 30 rounds loaded | 30 | ±18.80 % | 0.786 [0.700, 0.851] |
+| J8 | 20261124-223028-7f3c (job 518096) | node21, load 8–16 | 30 | ±13.74 % | 0.838 [0.762, 0.918] |
+| J16b | 20261124-230837-32f5 (job 518098) | node20, load 65–67, all rounds loaded | 30 | ±3.36 % | (standard batches) 0.687 |
+| J8b | 20261124-230837-066b (job 518100) | node21, load 21–28 | 30 | ±1.26 % | (standard batches) 0.731 |
+| I16 (informative) | 20261124-230018-b00b (job 518159) | node21, `-c 16` as the client check, load 12–38 | 24 | ±8.35 % | (19 cases) 0.853 |
+
+- **Targets (J16)**: A ÷ M 0.317–0.383 for the six out-of-place batches (each interval's upper end
+  at most 0.45, below 1 − band = 0.81), geometric mean 0.344 (rule: at most 0.90). At 8 threads the
+  same six took 0.290–0.342. The in-place twins: 0.60–0.69 at 16, 0.75–0.99 at 8.
+- **No loss at 16 (J16)**: no moved case slower than 1 + band; the slowest is the in-place plane
+  batch 192² × 384 backward at 0.987 [0.876, 1.029]. 22 of 33 moved cases faster beyond the band.
+- **No loss at 8 (J8)**: no moved case slower than 1 + band; the slowest are 10240 × 3 backward
+  1.061 [0.898, 1.186] and the in-place plane batches 384² × 750 1.025–1.030 (intervals from 0.998
+  and 1.001, inside the band). 14 of 33 faster beyond the band.
+- **Standard batches (J16b, J8b)**: 8 × 4096, 64 × 256, 128 × 4096, 1024 × 256 and 100 × 1024 took
+  0.47–0.93 at 16 threads (64 × 256 0.927 [0.902, 1.086], the rest faster beyond the band) and
+  0.62–0.88 at 8 (all faster beyond the band). None slower.
+- **Collateral**: the single transforms 0.82–1.01 at 16 and 0.88–1.08 at 8, none with its interval
+  above 1 + 3 % (r2c 32768 at 8: 1.077 [0.949, 1.331], the band's noise).
+- **I16** (informative, the client check's own allocation of 16 cores, `epyccc16`-like): main ÷
+  FFTW reproduced the gap on the six out-of-place batches (1.14–1.40), and A ÷ M 0.505–0.595 took
+  them to 0.64–0.71 of FFTW's time; in place 0.66–0.79 (÷ FFTW 0.51–0.77); the plane batches
+  384² × 750 and 192² × 384 0.994–0.999, the real 6144 × 66 batches 0.95–0.96.
+- FFTN ÷ FFTW (medians of the same runs): the six out-of-place targets 0.99–1.51 → 0.34–0.45 at
+  16 threads and 1.57–1.91 → 0.40–0.47 at 8; their in-place twins 0.72–0.97 → 0.45–0.56 and
+  0.57–0.70 → 0.51–0.64. Over the client catalogue with every shape at full width (FFTW at the
+  same width, `client_check.py`): 16 threads 0.546 → 0.421, 8 threads 0.626 → 0.541.
+
 ## Verdict
+
+**Adopted** on the `zen3_like` key, by the rules' letter: every criterion holds in J16, J16b, J8
+and J8b, with no re-run and no narrowing. `machine_profile::anchored_runs` stays on for the class
+as committed in 43c79da (judged as 84bc1cb, whose library code is the same); the threading tests
+gained anchored cases (team, executor, OpenMP and interleaving suites) and a simulation with an
+absent and a late member (78c9eeb). DESIGN 13.3 and the decision log describe it; LESSONS 5.18.
+
+Gap 3 of the client check (out-of-place c2c batches at 16 threads, 1.27–1.49 of FFTW) is closed on
+the EPYC 7763: 0.64–0.71 of FFTW in the check's own allocation, 0.34–0.45 in a socket-sized one.
+
+Open, for later experiments:
+
+- Other classes keep arrival-order runs: the Xeon 6240 (one mesh L3 per socket: rows cannot move
+  between L3s within a socket, but unpinned teams spanning sockets could), Zen 4 and Zen 5, the
+  2 MiB-L2 key and Apple are unmeasured. The mechanism is not specific to Zen 3; a screen on each
+  class decides whether the key widens.
+- `fftn::thread_pool` gives task indices to whichever thread claims first, so its ranks do not
+  stay on threads and anchoring cannot help it as it helps OpenMP; binding its ranks to its
+  threads is a follow-up.
+- Batches with fewer whole transforms than members dealt get ranges of zero or one transform;
+  they complete correctly, and the runs judged lost nothing, but a member may scan empty ranges.
