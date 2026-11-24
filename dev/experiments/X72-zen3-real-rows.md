@@ -247,7 +247,17 @@ rounds; `DEPTH_TOPS=8`): no clean key. r2c and c2r 18432 0.94, c2c 9216 0.92, so
 0.89–0.93, but 24576, 36864, 122880 and c2c 12288–18432 1.05–1.13, 20480 1.00–1.04. Left as a
 lead.
 
-**Run K** (informative): to be added.
+**Run K** (informative) 20261124-223708-ded8 (Slurm 518105, node21, 16 rounds, 3 under load,
+band ±1.26 %): the client catalogue's tracking tier (52 shapes) at one thread, scored as the
+client check scored it. Weighted geometric mean of FFTN ÷ FFTW **0.990** [0.986, 0.996] with
+`main`'s plans → **0.933** [0.928, 0.938] with arms A and B (unweighted 0.989 → 0.935), against
+the target of 0.95. Shapes above 1.02: 24 → 7, of which three are this experiment's (r2c 10240
+1.04, c2r 10240 × 4 1.05, c2r 20480 × 3 1.04) and four the out-of-place c2c batches of 384 ×
+7372–7373 (1.03–1.06, not moved here).
+
+Planning time rises on the rows arm A moves (the depth-first chain's tables): c2r and r2c
+40960 × 6 20.8 → 26.2 ms (median over rounds), r2c 18432 11.0 → 11.8 ms, c2r 20480 × 3 12.2 →
+13.1 ms; these rows were already over criterion (4)'s 10 ms (X71's subject).
 
 ## Verdict
 
@@ -258,6 +268,9 @@ lead.
   client's 18432, 20480 and 40960 × 6.
 - Arm B for `avx2` double on AMD: 3072 = 6 × 16 × 32, 3200 = 10 × 20 × 16, 4608 = 6 × 12 × 64,
   5120 = 10 × 32 × 16, 0.906 over the 58 cases it moves.
+
+With both, the EPYC's one-thread client score (run K) goes from 0.990 to 0.933 of FFTW, past
+the 0.95 target; the cost is 5–26 % more planning time on the rows arm A moves.
 
 Recorded in DESIGN 8.5 (the depth-first chain's EPYC bullet), 9.1 (the *Depth-first* real
 route), 13.5 (the vendor-keyed and Zen 3-keyed lists) and the decision log; lesson in
