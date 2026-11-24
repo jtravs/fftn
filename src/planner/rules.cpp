@@ -163,6 +163,97 @@ constexpr pass_costs avx2_float{
 // NOLINTEND(readability-trailing-comma)
 // clang-format on
 
+// The overrides above measured only on AMD's cores, the EPYC 7763 (DESIGN.md 13.5; the
+// maintainer, 2026-11-24), each with the radices the planner took for that length before it
+// (all 0: none, the costs' choice). An `avx2` plan for a processor of another vendor, or of an
+// unknown one, takes those (profile_of): an Intel core with `avx2` but no AVX-512 keeps its old
+// plans until it is measured. The Xeon 6240 forced to `avx2` lost with X30's 512 (r2c 1024 x
+// 1024 1.057, run 20261116-072340-b100); X42's and X54's sequences were never run on an Intel
+// core under `avx2`. X38's (80-3600, 20000) stay for every vendor: the Xeon under `avx2` ran
+// them too (0.913 with Clang, run 20261116-215901-e1c7), and so do X2's (filtered by the Xeon's
+// `avx2` campaigns).
+// clang-format off
+constexpr std::array<radix_override, 9> avx2_double_amd_only{{
+    {.n = 256, .radices = {2, 16, 8, 0}},  // X30 arm P: 8 x 32
+    {.n = 500, .radices = {0, 0, 0, 0}},   // X42 arm B2: 20 x 25
+    {.n = 512, .radices = {0, 0, 0, 0}},   // X30 arm P: 16 x 32
+    {.n = 768, .radices = {4, 16, 12, 0}}, // X54 arm B: 12 x 64
+    {.n = 3125, .radices = {0, 0, 0, 0}},  // X42 arm B2
+    {.n = 5000, .radices = {0, 0, 0, 0}},  // X42 arm B3
+    {.n = 10000, .radices = {0, 0, 0, 0}}, // X42 arm B2
+    {.n = 15625, .radices = {0, 0, 0, 0}}, // X42 arm B2
+    {.n = 25000, .radices = {0, 0, 0, 0}}, // X42 arm B3
+}};
+// X54 arm C (campaign x54-big-epyc): every one new there.
+constexpr std::array<radix_override, 5> avx2_float_amd_only{{
+    {.n = 512, .radices = {0, 0, 0, 0}},
+    {.n = 640, .radices = {0, 0, 0, 0}},
+    {.n = 768, .radices = {0, 0, 0, 0}},
+    {.n = 2048, .radices = {0, 0, 0, 0}},
+    {.n = 4096, .radices = {0, 0, 0, 0}},
+}};
+// clang-format on
+
+// Whether every length of `amd_only` has an entry in `all` (a length missing there would be a
+// typo, silently changing nothing).
+template <std::size_t N, std::size_t K>
+constexpr bool all_listed(const std::array<radix_override, N>& all,
+                          const std::array<radix_override, K>& amd_only) {
+  return std::ranges::all_of(amd_only, [&](const radix_override& a) {
+    return std::ranges::any_of(all, [&](const radix_override& o) { return o.n == a.n; });
+  });
+}
+
+// The entries of `all` that other vendors keep: `all` with each of `amd_only`'s lengths
+// replaced by its earlier radices, or dropped where it had none.
+template <std::size_t N, std::size_t K>
+constexpr std::size_t other_count(const std::array<radix_override, N>& /*all*/,
+                                  const std::array<radix_override, K>& amd_only) {
+  return N - static_cast<std::size_t>(std::ranges::count_if(
+                 amd_only, [](const radix_override& a) { return a.radices[0] == 0; }));
+}
+
+template <std::size_t M, std::size_t N, std::size_t K>
+constexpr std::array<radix_override, M>
+other_vendors(const std::array<radix_override, N>& all,
+              const std::array<radix_override, K>& amd_only) {
+  std::array<radix_override, M> out{};
+  std::size_t at = 0;
+  for (const radix_override& o : all) {
+    const auto before =
+        std::ranges::find_if(amd_only, [&](const radix_override& a) { return a.n == o.n; });
+    if (before == amd_only.end()) {
+      out.at(at++) = o;
+    } else if (before->radices[0] != 0) {
+      out.at(at++) = *before;
+    }
+  }
+  return out;
+}
+
+static_assert(all_listed(avx2_double_overrides, avx2_double_amd_only));
+static_assert(all_listed(avx2_float_overrides, avx2_float_amd_only));
+constexpr auto avx2_double_overrides_other =
+    other_vendors<other_count(avx2_double_overrides, avx2_double_amd_only)>(avx2_double_overrides,
+                                                                            avx2_double_amd_only);
+constexpr auto avx2_float_overrides_other =
+    other_vendors<other_count(avx2_float_overrides, avx2_float_amd_only)>(avx2_float_overrides,
+                                                                          avx2_float_amd_only);
+
+// avx2's tables for other vendors: the same costs, those overrides.
+constexpr pass_costs avx2_double_other{
+    .unit = avx2_double.unit,
+    .tail = avx2_double.tail,
+    .pass = avx2_double.pass,
+    .overrides = avx2_double_overrides_other,
+};
+constexpr pass_costs avx2_float_other{
+    .unit = avx2_float.unit,
+    .tail = avx2_float.tail,
+    .pass = avx2_float.pass,
+    .overrides = avx2_float_overrides_other,
+};
+
 // The planner refresh (dev/experiments/X2-radix-sets.md, "Refit after X1, X3, X18 and X19"),
 // Xeon Gold 6240, AVX-512, GCC 14, one thread, split runs on (X1).
 // Double (C = 4): avx2_float's costs (the nearest C, as before) with the overrides where its
@@ -767,7 +858,10 @@ std::span<const radix_override> fit_overrides_of(target t, std::size_t lanes) {
 
 } // namespace
 
-target_profile profile_of(target t, std::size_t lanes) noexcept {
+namespace {
+
+// The measured profile of target t (profile_of for amd).
+target_profile measured_profile_of(target t, std::size_t lanes) noexcept {
   const measured_table* nearest = &measured_tables.front();
   for (const measured_table& m : measured_tables) {
     if (m.t == t && m.lanes == lanes) {
@@ -809,6 +903,27 @@ target_profile profile_of(target t, std::size_t lanes) noexcept {
       .batch_ragged_rows = batch_ragged_rows_of(t, lanes),
       .fit_overrides = fit_overrides_of(t, lanes),
   };
+}
+
+} // namespace
+
+target_profile profile_of(target t, std::size_t lanes, cpu_vendor vendor) noexcept {
+  target_profile p = measured_profile_of(t, lanes);
+  // DESIGN.md 13.5: on `avx2`, what was measured only on AMD's cores applies only to them.
+  // X57's fit_overrides stay: they follow the cache key (fit_row_bytes), whose reach to other
+  // `avx2` cores with a large L3 the maintainer accepted (2026-11-24).
+  if (t == target::avx2 && vendor != cpu_vendor::amd) {
+    if (p.costs == &avx2_double) {
+      p.costs = &avx2_double_other;
+    } else if (p.costs == &avx2_float) {
+      p.costs = &avx2_float_other;
+    }
+    // X53's and X62's batch leaves (batch_rows_avx2_f64): the EPYC alone ran them on `avx2`.
+    p.batch_rows = {};
+    p.batch_max_rows = {};
+    p.batch_ragged_rows = {};
+  }
+  return p;
 }
 
 namespace {

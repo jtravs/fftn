@@ -18,16 +18,19 @@ namespace {
 // (experiment X12).
 inline constexpr std::size_t rows_ahead = 8;
 
-// Whether the copies prefetch at all. Not on avx2 (experiment X26, EPYC 7763): a block's rows
-// lie a multiple of 4 KiB apart, so all its lines share one or two of L1's 8-way sets, and
-// eight rows asked for ahead evict the scratch block the lane passes read next. Without the
-// prefetch the long rows took 0.83-0.97 of the time (rows of 2^16 to 2^20, mixed 46080 and
-// 100000, r2c and c2r). The Xeon's avx512 rows (1.16-1.22 slower at 2^20 and 2^22 without
-// it) and the Mac's (1.07-1.19) keep it. The effect belongs to the core, not the target:
-// the Xeon under avx2 also lost without it (1.14-1.20 at 2^20 and 2^22), so this follows the
-// measured release machine of each target. Keying it to the core instead (X26b, arm 2) was
-// rejected: on the Xeon under avx2 the prefetch took 2^22 to 0.84 but float rows of 100000
-// points (blocks of one 32-byte row) to 1.27; a rule by core and row width is open.
+// Whether the copies prefetch at all (a plan-time choice, core/plan_core.cpp copies_prefetch;
+// block_copy's and twiddle_scatter's Prefetch). Not on avx2 on AMD's cores (experiment X26,
+// EPYC 7763): a block's rows lie a multiple of 4 KiB apart, so all its lines share one or two
+// of L1's 8-way sets, and eight rows asked for ahead evict the scratch block the lane passes
+// read next. Without the prefetch the long rows took 0.83-0.97 of the time (rows of 2^16 to
+// 2^20, mixed 46080 and 100000, r2c and c2r). The Xeon's avx512 rows (1.16-1.22 slower at 2^20
+// and 2^22 without it) and the Mac's (1.07-1.19) keep it. The effect belongs to the core, not
+// the target: the Xeon under avx2 also lost without it (1.14-1.20 at 2^20 and 2^22), so every
+// other vendor's avx2 plans keep it too (DESIGN.md 13.5; the maintainer, 2026-11-24). Keying
+// it to the core and the row width is open (X26b, arm 2: on the Xeon under avx2 the prefetch
+// took 2^22 to 0.84 but float rows of 100000 points, blocks of one 32-byte row, to 1.27).
+// The r2c pairing kernels of a grid's last phase (real.inl), which the rules never take on avx2
+// (X33), keep the target's choice: copies_prefetch.
 inline constexpr bool copies_prefetch = id != target::avx2;
 
 // Asks for the `bytes` bytes at p, to read (Write = 0) or to write (1).
@@ -44,7 +47,7 @@ template <int Write> FFTN_FORCE_INLINE void prefetch_bytes(const void* p, std::s
 // column block's rows, which lie a power of two apart for most long lengths, from evicting
 // each other while a pass works on them (experiment X12). Reads src, dst, src_stride,
 // dst_stride, s, scale.
-template <class T, edge_op OutOp>
+template <class T, edge_op OutOp, bool Prefetch>
 void block_copy(const pass_args* a, const void* src, void* dst, std::size_t first,
                 std::size_t last) {
   const T* x = static_cast<const T*>(src);
@@ -57,7 +60,7 @@ void block_copy(const pass_args* a, const void* src, void* dst, std::size_t firs
   for (std::size_t r = first; r < last; ++r) {
     const T* xr = x + at(r, xs);
     T* yr = y + at(r, ys);
-    if (copies_prefetch && r + rows_ahead < last) {
+    if (Prefetch && r + rows_ahead < last) {
       prefetch_bytes<0>(xr + at(rows_ahead, xs), bytes);
       prefetch_bytes<1>(yr + at(rows_ahead, ys), bytes);
     }
@@ -127,7 +130,7 @@ void twiddle_transpose(const pass_args* a, const void* src, void* dst, std::size
 // block_copy, row r times twiddles[r] (one plain interleaved value per row, the conjugate
 // for Sign = +1); the stage advances the twiddles per column c (stage::moving_twiddles).
 // Reads src, dst, src_stride, dst_stride, s, twiddles.
-template <class T, int Sign>
+template <class T, int Sign, bool Prefetch>
 void twiddle_scatter(const pass_args* a, const void* src, void* dst, std::size_t first,
                      std::size_t last) {
   const T* x = static_cast<const T*>(src);
@@ -140,7 +143,7 @@ void twiddle_scatter(const pass_args* a, const void* src, void* dst, std::size_t
   for (std::size_t r = first; r < last; ++r) {
     const T* xr = x + at(r, xs);
     T* yr = y + at(r, ys);
-    if (copies_prefetch && r + rows_ahead < last) {
+    if (Prefetch && r + rows_ahead < last) {
       prefetch_bytes<1>(yr + at(rows_ahead, ys), bytes);
     }
     cv<T> f = bcast(w + 2 * r); // NOLINT(misc-const-correctness): set under if constexpr

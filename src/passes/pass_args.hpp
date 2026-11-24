@@ -239,11 +239,11 @@ template <class T> struct pass_kernels {
   pass_fn c2r_pre_strided;
   pass_fn c2r_unpack_pairs[2];
   // The grid's passes (src/passes/grid.inl): a block of columns copied row by row,
-  // [scaled]; by direction, the twiddled transpose of the first phase and the twiddled
-  // row copy of the later ones.
-  pass_fn block_copy[2];
+  // [prefetching rows ahead][scaled]; by direction, the twiddled transpose of the first phase
+  // and the twiddled row copy of the later ones ([prefetching][direction]).
+  pass_fn block_copy[2][2];
   pass_fn twiddle_transpose[2];
-  pass_fn twiddle_scatter[2];
+  pass_fn twiddle_scatter[2][2];
   // The gather of a c2r grid's first phase with the pairing in it (src/passes/real.inl).
   pass_fn c2r_pair_gather;
   // The r2c pairing in a grid's last phase (src/passes/real.inl): the gather of a pair of

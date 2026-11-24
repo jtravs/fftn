@@ -72,7 +72,9 @@ namespace detail {
 /// It is the estimate the planner's tables give for rows in cache, not a measurement. Memory
 /// beyond the first-level cache and the choice between a chain and a grid for long rows
 /// are not priced, and the estimate is coarser for tables that were not measured on their
-/// target. For a real row of n points, ask for its half length, n / 2.
+/// target. The tables are the ones this machine's plans use: on `avx2` some sequences were
+/// measured on one vendor's processors only and apply only there. For a real row of n points,
+/// ask for its half length, n / 2.
 ///
 /// Throws `std::invalid_argument` naming `target` for a value that is not an `isa`
 /// enumerator, and naming the limit for n above 2^40. Returns 1 for n <= 2 and for lengths

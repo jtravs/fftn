@@ -303,7 +303,10 @@ TEST(BatchLeaves, ForcedOnlyWhereTheRowsCanTakeThem) {
 template <class T> void rules_choose(fftn::isa t) {
   const auto target = target_of(t);
   const std::size_t lanes = fftn::detail::of<T>(*fftn::detail::find_kernels(target)).complex_lanes;
-  const fftn::detail::target_profile profile = fftn::detail::profile_of(target, lanes);
+  // The batch leaves of avx2 were measured on AMD's cores and are theirs (DESIGN.md 13.5):
+  // the rules are checked for AMD here (tests/core/vendor_test.cpp has the others).
+  const fftn::detail::target_profile profile =
+      fftn::detail::profile_of(target, lanes, fftn::detail::cpu_vendor::amd);
   for (std::size_t slot = 0; slot < profile.batch_rows.size(); ++slot) {
     const std::size_t rows = profile.batch_rows[slot];
     if (rows == 0) {
@@ -315,6 +318,7 @@ template <class T> void rules_choose(fftn::isa t) {
     // Not the host's profile: a private L2 of 2 MiB leaves out the leaf of 12 (X58).
     build_settings settings;
     settings.profile.batch_leaf_12 = true;
+    settings.profile.vendor = fftn::detail::cpu_vendor::amd;
     const auto text = [&](std::size_t count) {
       return described(*make_plan_core(
           fftn::detail::view_of(fftn::rows_c2c<T>(n, count, fftn::direction::backward)),

@@ -17,7 +17,11 @@ namespace fftn::inline v0::detail {
 
 // The CPUID and XGETBV words the x86 decoder reads. A leaf above max_leaf reads as zero.
 struct x86_cpuid_words {
-  std::uint32_t max_leaf = 0;  // CPUID.0:EAX
+  std::uint32_t max_leaf = 0; // CPUID.0:EAX
+  // CPUID.0:EBX, EDX, ECX: the vendor string's twelve bytes in that order, little-endian.
+  std::uint32_t vendor_ebx = 0;
+  std::uint32_t vendor_edx = 0;
+  std::uint32_t vendor_ecx = 0;
   std::uint32_t leaf1_ecx = 0; // CPUID.1:ECX
   std::uint32_t leaf1_edx = 0; // CPUID.1:EDX
   std::uint32_t leaf7_ebx = 0; // CPUID.(7,0):EBX
@@ -25,6 +29,9 @@ struct x86_cpuid_words {
 };
 
 [[nodiscard]] cpu_features decode_x86_cpuid(const x86_cpuid_words& words) noexcept;
+
+// The vendor named by CPUID leaf 0's string (unknown for any string but Intel's and AMD's).
+[[nodiscard]] cpu_vendor decode_x86_vendor(const x86_cpuid_words& words) noexcept;
 
 // AArch64 Linux: getauxval(AT_HWCAP) and the SVE vector length in bytes (prctl
 // PR_SVE_GET_VL; 0 without SVE).

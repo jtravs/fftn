@@ -5,6 +5,7 @@
 
 #include "core/program.hpp"
 #include "fftn/team.hpp"
+#include "platform/cpu_features.hpp"
 #include "platform/topology.hpp"
 #include "threading/cache_groups.hpp"
 #include "threading/work_graph.hpp"
@@ -67,6 +68,7 @@ machine_profile default_machine_profile() noexcept {
   }
   const unsigned cpus = std::thread::hardware_concurrency();
   p.cpus = static_cast<int>(std::min<unsigned>(cpus, std::numeric_limits<int>::max()));
+  p.vendor = detect_cpu_features().vendor;
   return p;
 }
 

@@ -485,8 +485,14 @@ inline constexpr pass_kernels<T> pass_table{
         },
     .block_copy =
         {
-            &block_copy<T, nop>,
-            &block_copy<T, scl>,
+            {
+                &block_copy<T, nop, false>,
+                &block_copy<T, scl, false>,
+            },
+            {
+                &block_copy<T, nop, true>,
+                &block_copy<T, scl, true>,
+            },
         },
     .twiddle_transpose =
         {
@@ -495,8 +501,14 @@ inline constexpr pass_kernels<T> pass_table{
         },
     .twiddle_scatter =
         {
-            &twiddle_scatter<T, -1>,
-            &twiddle_scatter<T, +1>,
+            {
+                &twiddle_scatter<T, -1, false>,
+                &twiddle_scatter<T, +1, false>,
+            },
+            {
+                &twiddle_scatter<T, -1, true>,
+                &twiddle_scatter<T, +1, true>,
+            },
         },
     .c2r_pair_gather = &c2r_pair_gather<T>,
     .r2c_pair_gather = &r2c_pair_gather<T>,

@@ -51,10 +51,50 @@ bool sysctl_flag(const sysctl_values& values, std::string_view name) noexcept {
   return value.has_value() && *value != 0;
 }
 
+// The vendor string's three words as CPUID returns them (EBX, EDX, ECX), little-endian.
+constexpr std::uint32_t le32(const char* s) noexcept {
+  return static_cast<std::uint32_t>(static_cast<unsigned char>(s[0])) |
+         static_cast<std::uint32_t>(static_cast<unsigned char>(s[1])) << 8U |
+         static_cast<std::uint32_t>(static_cast<unsigned char>(s[2])) << 16U |
+         static_cast<std::uint32_t>(static_cast<unsigned char>(s[3])) << 24U;
+}
+
+constexpr bool vendor_is(const x86_cpuid_words& w, const char* twelve) noexcept {
+  return w.vendor_ebx == le32(twelve) && w.vendor_edx == le32(twelve + 4) &&
+         w.vendor_ecx == le32(twelve + 8);
+}
+
 } // namespace
+
+const char* cpu_vendor_name(cpu_vendor v) noexcept {
+  switch (v) {
+  case cpu_vendor::unknown:
+    break;
+  case cpu_vendor::intel:
+    return "intel";
+  case cpu_vendor::amd:
+    return "amd";
+  case cpu_vendor::apple:
+    return "apple";
+  case cpu_vendor::arm_other:
+    return "arm_other";
+  }
+  return "unknown";
+}
+
+cpu_vendor decode_x86_vendor(const x86_cpuid_words& words) noexcept {
+  if (vendor_is(words, "GenuineIntel")) {
+    return cpu_vendor::intel;
+  }
+  if (vendor_is(words, "AuthenticAMD")) {
+    return cpu_vendor::amd;
+  }
+  return cpu_vendor::unknown;
+}
 
 cpu_features decode_x86_cpuid(const x86_cpuid_words& words) noexcept {
   cpu_features f;
+  f.vendor = decode_x86_vendor(words);
   if (words.max_leaf < 1) {
     return f;
   }
@@ -91,6 +131,7 @@ cpu_features decode_linux_hwcap(std::uint64_t hwcap, unsigned sve_vector_bytes) 
   constexpr unsigned sve = 22;
   constexpr unsigned paca = 30;
   cpu_features f;
+  f.vendor = cpu_vendor::arm_other;
   f.neon = bit(hwcap, asimd);
   f.fcma = f.neon && bit(hwcap, fcma);
   f.pauth = bit(hwcap, paca);
@@ -100,6 +141,7 @@ cpu_features decode_linux_hwcap(std::uint64_t hwcap, unsigned sve_vector_bytes) 
 
 cpu_features decode_macos_sysctl(const sysctl_values& values) noexcept {
   cpu_features f;
+  f.vendor = cpu_vendor::apple; // AArch64 macOS runs only on Apple's processors
   // macOS 12 and later name the features hw.optional.arm.FEAT_*; macOS 11 had only the
   // older names, which current releases still provide.
   f.neon = sysctl_flag(values, "hw.optional.arm.AdvSIMD") ||
@@ -122,6 +164,7 @@ cpu_features decode_windows_arm64(bool neon, std::optional<std::uint64_t> isar1,
     return reg.has_value() ? (*reg >> lsb) & 0xFU : 0U;
   };
   cpu_features f;
+  f.vendor = cpu_vendor::arm_other;
   f.neon = neon;
   f.fcma = neon && field(isar1, 16) != 0;
   f.pauth = field(isar1, 4) != 0 || field(isar1, 8) != 0 || field(isar2, 12) != 0;
@@ -159,7 +202,11 @@ std::uint64_t xgetbv0() noexcept {
 
 cpu_features compute_features() noexcept {
   x86_cpuid_words words;
-  words.max_leaf = cpuid(0, 0)[0];
+  const auto leaf0 = cpuid(0, 0);
+  words.max_leaf = leaf0[0];
+  words.vendor_ebx = leaf0[1];
+  words.vendor_ecx = leaf0[2];
+  words.vendor_edx = leaf0[3];
   if (words.max_leaf >= 1) {
     const auto leaf1 = cpuid(1, 0);
     words.leaf1_ecx = leaf1[2];
@@ -241,6 +288,7 @@ cpu_features compute_features() noexcept {
 cpu_features compute_features() noexcept {
   // Another AArch64 operating system: only the base architecture is assumed.
   cpu_features f;
+  f.vendor = cpu_vendor::arm_other;
   f.neon = true;
   return f;
 }

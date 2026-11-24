@@ -13,10 +13,12 @@
 namespace {
 
 using fftn::detail::cpu_features;
+using fftn::detail::cpu_vendor;
 using fftn::detail::decode_linux_hwcap;
 using fftn::detail::decode_macos_sysctl;
 using fftn::detail::decode_windows_arm64;
 using fftn::detail::decode_x86_cpuid;
+using fftn::detail::decode_x86_vendor;
 using fftn::detail::parse_sysctl_text;
 using fftn::detail::x86_cpuid_words;
 
@@ -103,6 +105,47 @@ TEST(CpuFeaturesX86, SandyBridgeHasAvxOnly) {
   EXPECT_FALSE(f.fma || f.avx2);
 }
 
+// CPUID leaf 0's vendor string, in EBX, EDX, ECX (DESIGN.md 13.5): Intel's and AMD's; any other
+// (Hygon's Zen-based parts, a hypervisor's, none) is unknown. The features do not depend on it.
+x86_cpuid_words with_vendor(x86_cpuid_words w, std::uint32_t ebx, std::uint32_t edx,
+                            std::uint32_t ecx) {
+  w.vendor_ebx = ebx;
+  w.vendor_edx = edx;
+  w.vendor_ecx = ecx;
+  return w;
+}
+
+TEST(CpuFeaturesX86, DecodesTheVendor) {
+  // "Genu" "ineI" "ntel" and "Auth" "enti" "cAMD", little-endian, as CPUID returns them.
+  const x86_cpuid_words intel = with_vendor(skylake_sp(), 0x756E6547, 0x49656E69, 0x6C65746E);
+  const x86_cpuid_words amd = with_vendor(skylake_sp(), 0x68747541, 0x69746E65, 0x444D4163);
+  const x86_cpuid_words hygon = with_vendor(skylake_sp(), 0x6F677948, 0x6E65476E, 0x656E6975);
+  EXPECT_EQ(decode_x86_vendor(intel), cpu_vendor::intel);
+  EXPECT_EQ(decode_x86_vendor(amd), cpu_vendor::amd);
+  EXPECT_EQ(decode_x86_vendor(hygon), cpu_vendor::unknown);
+  EXPECT_EQ(decode_x86_vendor(skylake_sp()), cpu_vendor::unknown);
+  // EDX and ECX swapped ("GenuntelineI") is not Intel's string.
+  EXPECT_EQ(decode_x86_vendor(with_vendor(skylake_sp(), 0x756E6547, 0x6C65746E, 0x49656E69)),
+            cpu_vendor::unknown);
+  cpu_features f = decode_x86_cpuid(amd);
+  EXPECT_EQ(f.vendor, cpu_vendor::amd);
+  f.vendor = cpu_vendor::unknown;
+  EXPECT_EQ(f, decode_x86_cpuid(skylake_sp()));
+  // The vendor without any feature leaf.
+  x86_cpuid_words bare = intel;
+  bare.max_leaf = 0;
+  EXPECT_EQ(decode_x86_cpuid(bare), cpu_features{.vendor = cpu_vendor::intel});
+}
+
+TEST(CpuFeatures, VendorNames) {
+  EXPECT_STREQ(fftn::detail::cpu_vendor_name(cpu_vendor::unknown), "unknown");
+  EXPECT_STREQ(fftn::detail::cpu_vendor_name(cpu_vendor::intel), "intel");
+  EXPECT_STREQ(fftn::detail::cpu_vendor_name(cpu_vendor::amd), "amd");
+  EXPECT_STREQ(fftn::detail::cpu_vendor_name(cpu_vendor::apple), "apple");
+  EXPECT_STREQ(fftn::detail::cpu_vendor_name(cpu_vendor::arm_other), "arm_other");
+  EXPECT_STREQ(fftn::detail::cpu_vendor_name(static_cast<cpu_vendor>(200)), "unknown");
+}
+
 TEST(CpuFeaturesLinuxArm, DecodesHwcap) {
   constexpr std::uint64_t asimd = 1U << 1U;
   constexpr std::uint64_t fcma = 1U << 14U;
@@ -110,7 +153,8 @@ TEST(CpuFeaturesLinuxArm, DecodesHwcap) {
   constexpr std::uint64_t paca = 1U << 30U;
   cpu_features f = decode_linux_hwcap(asimd | fcma | sve | paca, 32);
   EXPECT_TRUE(f.neon && f.fcma && f.pauth);
-  EXPECT_EQ(f.sve_bits, 256U);      // Graviton 3
+  EXPECT_EQ(f.sve_bits, 256U); // Graviton 3
+  EXPECT_EQ(f.vendor, cpu_vendor::arm_other);
   f = decode_linux_hwcap(asimd, 0); // Neoverse N1
   EXPECT_TRUE(f.neon);
   EXPECT_FALSE(f.fcma || f.pauth);
@@ -127,7 +171,7 @@ TEST(CpuFeaturesLinuxArm, DecodesHwcap) {
 }
 
 TEST(CpuFeaturesMacos, DecodesSysctl) {
-  EXPECT_EQ(decode_macos_sysctl(parse_sysctl_text("")), cpu_features{});
+  EXPECT_EQ(decode_macos_sysctl(parse_sysctl_text("")), cpu_features{.vendor = cpu_vendor::apple});
   cpu_features f = decode_macos_sysctl(parse_sysctl_text(
       "hw.optional.arm.AdvSIMD: 1\nhw.optional.arm.FEAT_FCMA: 1\nhw.optional.arm.FEAT_PAuth: 1\n"));
   EXPECT_TRUE(f.neon && f.fcma && f.pauth);
@@ -152,6 +196,7 @@ hw.optional.arm.caps: -4612108402691149825
   const cpu_features f = decode_macos_sysctl(values);
   EXPECT_TRUE(f.neon && f.fcma && f.pauth);
   EXPECT_EQ(f.sve_bits, 0U);
+  EXPECT_EQ(f.vendor, cpu_vendor::apple);
 }
 
 TEST(CpuFeaturesWindowsArm, DecodesTheRecordedCobalt100) {
@@ -160,6 +205,7 @@ TEST(CpuFeaturesWindowsArm, DecodesTheRecordedCobalt100) {
   const cpu_features f = decode_windows_arm64(true, 0x0010111101211052U, std::nullopt);
   EXPECT_TRUE(f.neon && f.fcma && f.pauth);
   EXPECT_EQ(f.sve_bits, 0U);
+  EXPECT_EQ(f.vendor, cpu_vendor::arm_other);
 }
 
 TEST(CpuFeaturesWindowsArm, DecodesEachField) {
@@ -210,12 +256,15 @@ TEST(CpuFeaturesLive, SelfConsistent) {
   }
   EXPECT_EQ(f.sve_bits % 128, 0U);
 #if defined(__x86_64__) || defined(_M_X64)
+  EXPECT_NE(f.vendor, cpu_vendor::apple);
+  EXPECT_NE(f.vendor, cpu_vendor::arm_other);
   EXPECT_TRUE(f.sse2); // part of x86-64
   EXPECT_FALSE(f.neon);
 #elif defined(__aarch64__) || defined(_M_ARM64)
   EXPECT_TRUE(f.neon); // part of AArch64
   EXPECT_FALSE(f.sse2);
 #ifdef __APPLE__
+  EXPECT_EQ(f.vendor, cpu_vendor::apple);
   EXPECT_TRUE(f.fcma);  // every Apple M-series core has FEAT_FCMA
   EXPECT_TRUE(f.pauth); // and FEAT_PAuth (macOS 12 and later name it)
 #endif

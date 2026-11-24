@@ -299,9 +299,11 @@ std::size_t grid_pad(const grid_split& g, std::size_t element_bytes, std::size_t
 
 template <class T>
 grid_builder<T>::grid_builder(const kernels_of<T>& kernels, chain_builder<T>& chain,
-                              plan_tables<T>& tables, bool fused, std::size_t phase_radix)
+                              plan_tables<T>& tables, bool fused, std::size_t phase_radix,
+                              bool prefetch)
     : kernels_(kernels), chain_(chain), tables_(tables), fused_(fused),
-      phase_radix_(phase_radix != 0 ? phase_radix : default_grid_phase_radix) {}
+      phase_radix_(phase_radix != 0 ? phase_radix : default_grid_phase_radix),
+      prefetch_(prefetch ? 1 : 0) {}
 
 template <class T>
 void grid_builder<T>::add_copy(const char* what, pass_fn run, std::size_t rows, std::size_t cols,
@@ -636,8 +638,8 @@ std::size_t grid_builder<T>::c2c_row(const grid_split& g, int sign, bool in_plac
     st.args.n = c2r_n;
     st.name += "; c2r pairing";
   } else if (!fuse1) {
-    add_copy("gather", kernels_.passes.block_copy[in_scale != 1.0 ? 1 : 0], n1, b, buf[0],
-             static_cast<std::ptrdiff_t>(m1), slot::a, blk, in_scale, nullptr, p);
+    add_copy("gather", kernels_.passes.block_copy[prefetch_][in_scale != 1.0 ? 1 : 0], n1, b,
+             buf[0], static_cast<std::ptrdiff_t>(m1), slot::a, blk, in_scale, nullptr, p);
   }
   const slot z1 = phase_chain(
       n1, rad1, b, sign,
@@ -698,8 +700,8 @@ std::size_t grid_builder<T>::c2c_row(const grid_split& g, int sign, bool in_plac
     const bool fuse_out = fuse_in;
     const T* row_tw = m > 1 ? row_twiddles(ni, m) : nullptr;
     if (!fuse_in) {
-      add_copy("gather", kernels_.passes.block_copy[0], ni, b, src, src_row, slot::a, blk, 1.0,
-               nullptr, p);
+      add_copy("gather", kernels_.passes.block_copy[prefetch_][0], ni, b, src, src_row, slot::a,
+               blk, 1.0, nullptr, p);
     }
     const slot z = phase_chain(
         ni, rad, b, sign,
@@ -707,11 +709,11 @@ std::size_t grid_builder<T>::c2c_row(const grid_split& g, int sign, bool in_plac
         fuse_out ? side_of{.where = dst, .big = true, .row = big_l} : side_of{.where = slot::a},
         1.0, fuse_out ? out_scale : 1.0, fuse_out ? row_tw : nullptr, p);
     if (!fuse_out && m > 1) {
-      add_copy("twiddled scatter", kernels_.passes.twiddle_scatter[d], ni, b, z, blk, dst, big_l,
-               1.0, row_tw, p);
+      add_copy("twiddled scatter", kernels_.passes.twiddle_scatter[prefetch_][d], ni, b, z, blk,
+               dst, big_l, 1.0, row_tw, p);
     } else if (!fuse_out) {
-      add_copy("scatter", kernels_.passes.block_copy[out_scale != 1.0 ? 1 : 0], ni, b, z, blk, dst,
-               big_l, out_scale, nullptr, p);
+      add_copy("scatter", kernels_.passes.block_copy[prefetch_][out_scale != 1.0 ? 1 : 0], ni, b, z,
+               blk, dst, big_l, out_scale, nullptr, p);
     }
     const auto end = static_cast<std::uint32_t>(p.records.size());
     std::get<loop>(p.records[inner]).body_end = end;
@@ -744,7 +746,7 @@ std::size_t grid_builder<T>::paired_last_phase(std::size_t ni, std::size_t l, sl
     return s == slot::out ? 1 : 2;
   };
 
-  add_copy("gather", kernels_.passes.block_copy[0], ni, hb, src, src_row, slot::a,
+  add_copy("gather", kernels_.passes.block_copy[prefetch_][0], ni, hb, src, src_row, slot::a,
            static_cast<std::ptrdiff_t>(hb), 1.0, nullptr, p);
   const slot z0 = phase_chain(ni, rad, hb, -1, side_of{.where = slot::a}, side_of{.where = slot::a},
                               1.0, 1.0, nullptr, p);

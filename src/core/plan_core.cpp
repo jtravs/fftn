@@ -1017,6 +1017,14 @@ real_fusion fusion_of(const build_settings& settings, target t) {
   };
 }
 
+// Whether a grid's gathers and scatters prefetch the rows they copy next (passes/grid.inl,
+// experiment X26): not on avx2 on AMD's cores, where the EPYC 7763 gained without it (long rows
+// 0.920); everywhere else, the Xeon 6240 under avx2 included (it lost 1.14-1.20 without it at
+// 2^20 and 2^22), so every other vendor's avx2 plans keep it (DESIGN.md 13.5).
+bool copies_prefetch(const build_settings& settings, target t) {
+  return t != target::avx2 || settings.profile.vendor != cpu_vendor::amd;
+}
+
 // Whether an r2c grid pairs its bins in its last phase where the phase allows (X33): not on
 // avx2, where the EPYC 7763 gained nothing from it (0.98-1.02), the separate pass after the
 // grid elsewhere. A forced setting applies alone (tests).
@@ -1086,7 +1094,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
            const build_settings& settings) {
   c.isa_target = plan_target_of(opts);
   const kernels_of<T>& kernels = of<T>(*find_kernels(c.isa_target));
-  target_profile profile = profile_of(c.isa_target, kernels.complex_lanes);
+  target_profile profile = profile_of(c.isa_target, kernels.complex_lanes, settings.profile.vendor);
   if (settings.leaf_limit != 0) {
     profile.leaf_limit = settings.leaf_limit;
   }
@@ -1424,7 +1432,8 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
                          settings.grid_fused &&
                              (n / 2) * 2 * sizeof(T) <= settings.profile.grid_fuse_bytes,
                          settings.grid_phase_radix != 0 ? settings.grid_phase_radix
-                                                        : settings.profile.grid_phase_radix);
+                                                        : settings.profile.grid_phase_radix,
+                         copies_prefetch(settings, c.isa_target));
     const bool in_place = real_in_place;
     if (grid_builder<T>::uses_block(real_grid, in_place)) {
       c.block_elements = grid_builder<T>::block_elements(real_grid);
@@ -1558,7 +1567,8 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
                          settings.grid_fused &&
                              c.lengths[0] * 2 * sizeof(T) <= settings.profile.grid_fuse_bytes,
                          settings.grid_phase_radix != 0 ? settings.grid_phase_radix
-                                                        : settings.profile.grid_phase_radix);
+                                                        : settings.profile.grid_phase_radix,
+                         copies_prefetch(settings, c.isa_target));
     if (grid_builder<T>::uses_block(grid_plan, c.in_place)) {
       c.block_elements = grid_builder<T>::block_elements(grid_plan);
     }
@@ -2124,6 +2134,8 @@ std::string describe(const plan_core& core) {
   o << ", " << core.prog.transforms << (core.prog.transforms == 1 ? " transform" : " transforms")
     << (core.in_place ? ", in place" : ", out of place") << "\n";
   o << "instruction set: " << isa_name(instruction_set(core)) << "\n";
+  // Some avx2 rules apply to one vendor's processors only (DESIGN.md 13.5).
+  o << "processor vendor: " << cpu_vendor_name(core.profile.vendor) << "\n";
   // How the program was chosen, when not by the rules alone (measured planning, wisdom).
   if (!core.planning_note.empty()) {
     o << "planning: " << core.planning_note << "\n";

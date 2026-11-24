@@ -13,6 +13,7 @@
 #include "fftn/isa.hpp"
 #include "fftn/team.hpp"
 #include "isa/arch.hpp"
+#include "platform/cpu_features.hpp"
 #include "threading/work_graph.hpp"
 
 #include <cstddef>
@@ -29,6 +30,15 @@ struct core_class; // platform/topology.hpp
 // Max) and an 18-core Xeon mesh (task 3.4); each field cites its evidence. The defaults are
 // the CCX's; profile_for sets the other kinds' values. Nothing in the rules is a literal.
 struct machine_profile {
+  // Who made the processor (DESIGN.md 13.5). The planner's rules for `avx2` that were measured
+  // only on AMD's cores (the EPYC 7763) apply only where it is amd (planner/rules.hpp,
+  // profile_of; core/plan_core.cpp, copies_prefetch): an Intel core with `avx2` but no
+  // AVX-512 keeps the plans it had before them until it is measured (the maintainer, 2026-11-24;
+  // the Xeon 6240 forced to `avx2` lost with two of them, X26 and X30). Unknown, the default
+  // here (unlike the other fields, not the CCX's), keeps those plans too.
+  // default_machine_profile reads it from CPUID (detect_cpu_features); the cache keys below
+  // never read it.
+  cpu_vendor vendor = cpu_vendor::unknown;
   // The cost model: nanoseconds per point through a pass (work_graph.hpp). T1 measured 1.0
   // on the CCX (AVX2), 1.23 on the Xeon and 0.57 on the M5, but with that figure and a
   // dispatch cost that ignores the team's width the scheduler shared small batches over a
@@ -363,7 +373,8 @@ struct machine_profile {
 [[nodiscard]] machine_profile profile_for(const topology& t,
                                           bool x86_64 = FFTN_ARCH_X86_64 != 0) noexcept;
 
-// The profile of the running machine: profile_for its topology, with its CPU count.
+// The profile of the running machine: profile_for its topology, with its CPU count and
+// its processor's vendor.
 [[nodiscard]] machine_profile default_machine_profile() noexcept;
 
 // Sets the grid's size fields from the caches of one core class, the fastest (sizes of 0:
