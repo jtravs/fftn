@@ -254,6 +254,13 @@ struct machine_profile {
   // set_grid_sizes sets three quarters of the L3 where a private L2 has a large L3 behind it
   // (x86-64, the EPYC class).
   std::size_t fit_row_bytes = 0;
+  // In place, the rows must also take at most this many bytes (the limit is the smaller of the
+  // two; core/plan_core.cpp). X57's amendment 2 on the EPYC 7763: in place 16 x 64 took 0.97
+  // (forward) and 1.00 (backward) of 4 x 16 x 16's time at 1100 rows of 1024 points (17.2 MiB),
+  // 1.07-1.16 at 1280 and 1536 rows (20 and 24 MiB); 12 x 64 1.00 and 1.05 of 4 x 12 x 16's at
+  // 1536 rows of 768 (18 MiB), 1.14-1.19 at 2048 (24 MiB). set_grid_sizes sets 275/512 of the
+  // L3 on the EPYC class, 17.2 MiB there: the largest in-place footprint measured to win.
+  std::size_t fit_in_place_bytes = std::numeric_limits<std::size_t>::max();
   // A lanes column phase whose column elements lie less than a page apart keeps its block's
   // two scratch tiles within this (core/plan_core.cpp, column_block; X40). set_grid_sizes
   // sets a quarter of L2.

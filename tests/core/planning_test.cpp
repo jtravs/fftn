@@ -224,9 +224,11 @@ TEST(FitRows, RadicesByLengthAndWhetherTheDataFit) {
 // where the listed length's rows and output fit, a plane's rows never.
 TEST(FitRows, PlansFollowTheProfileField) {
   const auto text = [](std::size_t rows, bool in_place, std::size_t fit_bytes, fftn::isa isa,
-                       std::size_t n = 1024) {
+                       std::size_t n = 1024,
+                       std::size_t in_place_bytes = std::numeric_limits<std::size_t>::max()) {
     build_settings settings;
     settings.profile.fit_row_bytes = fit_bytes;
+    settings.profile.fit_in_place_bytes = in_place_bytes;
     settings.profile.depth_max_bytes = 0;
     const fftn::shape<std::complex<double>, std::complex<double>> shape{
         .dir = fftn::direction::forward,
@@ -256,6 +258,10 @@ TEST(FitRows, PlansFollowTheProfileField) {
     EXPECT_TRUE(two_pass(text(6, true, 96 * kib, t)));
     EXPECT_FALSE(two_pass(text(7, true, 96 * kib, t)));
     EXPECT_FALSE(two_pass(text(3, false, 0, t))); // off
+    // In place the smaller of the two limits; out of place fit_in_place_bytes changes nothing.
+    EXPECT_TRUE(two_pass(text(4, true, 96 * kib, t, 1024, 64 * kib)));
+    EXPECT_FALSE(two_pass(text(5, true, 96 * kib, t, 1024, 64 * kib)));
+    EXPECT_TRUE(two_pass(text(3, false, 96 * kib, t, 1024, 16 * kib)));
     // 768 leaves its override only where the rows do not fit.
     EXPECT_NE(text(1, false, 96 * kib, t, 768).find("radices 12 x 64"), std::string::npos);
     EXPECT_EQ(text(9, false, 96 * kib, t, 768).find("radices 12 x 64"), std::string::npos);
