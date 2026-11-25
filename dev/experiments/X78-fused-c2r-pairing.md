@@ -100,6 +100,34 @@ Per class (Zen 3's on the EPYC, the Xeon 6240's on the Xeon); X77's drafted rule
 Correctness, not a decision rule: the accuracy tests and the determinism tests (a team's result
 bitwise equal to the serial result) hold on B; bit identity with O is not required.
 
+### Amendment 1: arm B4n (written after arm B's runs and diagnosis D1, D2; before runs J4, W4n, C4, E)
+
+Arm B failed rule 1 on both classes (Results below: EPYC 1.151, Xeon 1.064 over the moved cases),
+so it is rejected by its rule. Diagnosis (runs D1, D2, informative) found a variant that wins on
+the Xeon: **B4** (d92558d) reads the pairing twiddle of e = i + leg j as v_i times a broadcast
+root w_n^(leg j), one table stream of h / R entries instead of R streams over a table of h; on
+the Xeon it took 0.887 of O's time over the 33 moved cases, losing only at half lengths of 32 and
+64 MiB (1.27–1.30) and in single precision below L2/4 (1.06–1.07). On the EPYC every variant lost
+(B 1.12, B2 1.17, B3 1.20, B4 1.15).
+
+- **Arm B4n** (a02183d): B4 on the Xeon 6240's class only, for half lengths from L2/4 to 16 L2
+  (`machine_profile::depth_c2r_fused_min_bytes`, `_max_bytes`, set in `set_grid_sizes`' branch of
+  that class; default 0: never). Against O (65f4fe4) as before.
+- What B4n can move: on the Xeon 6240's class, c2r rows on the depth-first real route whose half
+  length is from 256 KiB to 16 MiB (double 32768–2^21 points, single 65536–2^20); the client's
+  c2r 32768 and 40960 × 6, not 18432 or 20480 × 3. Nothing on Zen 3's class or any other.
+- **Run J4** (judging, Xeon, one thread): catalogue `x78`, arms O and B4n with O~, 12–16 rounds,
+  `--serial`, as run J. **Run W4n** (judging, Xeon): widths 4 and 6 as run W (FFTW informative).
+  **Run C4** (Xeon): run C with B4n. **Run E** (declared deciding for Zen 3's class under the
+  narrowing clause, EPYC): catalogue `x78`, arms O and B4n, 6 rounds: every case on its old plan.
+- **Rules**, unchanged from those above: B4n is adopted on the Xeon 6240's class if, at one thread
+  (run J4), the geometric mean of B4n ÷ O over the cases whose notes differ is below 1 − band with
+  its interval's upper end below 1 and no such case is slower than 1 + max(band, 3 %) (whole
+  interval above), and at the client's widths (run W4n) the geometric mean over the moved cases
+  has its upper end at most 1 + band and no case is slower than 1 + max(band, 3 %). Runs J4, W4n
+  and C4 show no note differing outside the moved family; run E shows no note differing at all.
+  The near-miss and narrowing clauses apply as above.
+
 ## Results
 
 (to come)
