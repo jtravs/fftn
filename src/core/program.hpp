@@ -40,6 +40,12 @@ enum class slot : std::uint8_t { in, out, a, b, block };
 // (stage::moving_twiddles): the grid's per-block tables (src/strategies/grid.hpp).
 inline constexpr std::size_t moving_slots = 4; // in, out, block, twiddles
 
+// stage::moving_factors: which of a stage's factor pointers (pass_args::in_factor,
+// out_factor) are the cursors of a plan's edges' factor arrays (core/edge_driver.hpp) rather
+// than fixed tables.
+inline constexpr std::uint8_t moving_in_factor = 1;
+inline constexpr std::uint8_t moving_out_factor = 2;
+
 struct stage {
   pass_fn run = nullptr; // the kernel, or for a leaf null and `leaf` set
   pass_args args;        // the kernel's src and dst come from the slots, at execution
@@ -49,6 +55,11 @@ struct stage {
                             // elements (src/strategies/chain.hpp); only their count matters here
   std::uint32_t chunks = 1; // independent ranges [units c / chunks, units (c+1) / chunks)
   bool moving_twiddles = false; // args.twiddles is offset by the loops' twiddle cursor
+  // moving_in_factor, moving_out_factor: args.in_factor or out_factor is the cursor of that
+  // edge's factor array (a plan's edges, fftn/edges.hpp), set at execution by the edge driver
+  // (core/edge_driver.hpp); `run` and `leaf` are then guards and the kernels are in the plan's
+  // edge_record. In the padding after moving_twiddles; the driver of other plans never reads it.
+  std::uint8_t moving_factors = 0;
   // A leaf's kernel (pass_args.hpp), with units 1, the line. When the stage is a program's
   // whole body the driver runs a batch of rows in one call (driver.cpp, run_flat).
   leaf_fn leaf = nullptr;

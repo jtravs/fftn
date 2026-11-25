@@ -7,6 +7,7 @@
 
 #include "fftn/config.hpp"
 #include "fftn/detail/core.hpp"
+#include "fftn/edges.hpp"
 #include "fftn/executor.hpp"
 #include "fftn/isa.hpp"
 #include "fftn/options.hpp"
@@ -56,6 +57,26 @@ public:
   explicit plan(const shape<In, Out>& s, const options& opts = {})
       : core_(detail::make_plan_core(detail::view_of(s), opts)) {}
 
+  /// Builds the plan of `s` with options `opts` and edges `edges` (fftn/edges.hpp): pointwise
+  /// work on the input before the transform and on the output after it, fused into the
+  /// plan's passes where the plan can.
+  ///
+  /// Provisional (task 5.1): see fftn/edges.hpp. An edge whose factor the plan's usual
+  /// strategy cannot apply makes the plan take another strategy or a separate pass rather
+  /// than fail; `describe()` says which.
+  ///
+  /// Throws `std::invalid_argument` as the constructor above does, and also when an edge is
+  /// not valid (the message names it, for example `edges.out.mul.batch_strides`): a scale
+  /// that is not finite or not representable in the plan's precision (alone, or the
+  /// product of the edges' scales and `options::scale`), both `options::scale` and
+  /// `edges.out.scale` other than 1, `accumulate` on the input edge or on an in-place plan,
+  /// a factor whose strides do not match the shape or whose span overflows, a complex factor on a
+  /// real side, or a factor or accumulation on a plan that does not take them yet (anything but c2c
+  /// rows). Throws `std::bad_alloc` when memory runs out.
+  plan(const shape<In, Out>& s, const options& opts, const plan_edges<In, Out>& edges)
+      : core_(detail::make_plan_core_with_edges(detail::view_of(s), opts, detail::view_of(edges))) {
+  }
+
   /// Makes a plan that shares `other`'s immutable tables: it transforms exactly as `other`
   /// does. Also used for moves (the class declares no move operations), so the source of
   /// a move is left unchanged and valid.
@@ -84,6 +105,17 @@ public:
     detail::execute_all(*core_, in, out, ws);
   }
 
+  /// `execute` with the data of this execution (fftn/edges.hpp): the factor arrays of the
+  /// plan's edges. The overloads without `exec_args` execute as if given `exec_args{}`, so a
+  /// plan whose edges have factors must be executed through a twin that takes one; without
+  /// the arrays it needs, it ends the program (`exec_args`).
+  ///
+  /// Provisional (task 5.1). Preconditions: those of `execute` and of `exec_args`.
+  /// Guarantees: those of `execute`; the factor arrays are only read.
+  void execute(const In* in, Out* out, workspace& ws, const exec_args& args) const noexcept {
+    detail::execute_all(*core_, in, out, ws, args);
+  }
+
   /// Transforms `count` transforms of the batch, starting with transform `first`, serially
   /// on the calling thread: for callers that share a batch out themselves.
   ///
@@ -100,6 +132,16 @@ public:
   void execute_transforms(std::size_t first, std::size_t count, const In* in, Out* out,
                           workspace& ws) const noexcept {
     detail::execute_core(*core_, first, count, in, out, ws);
+  }
+
+  /// `execute_transforms` with the data of this execution (fftn/edges.hpp). The factors'
+  /// batch strides count from transform 0, as `in` and `out` do.
+  ///
+  /// Provisional (task 5.1). Preconditions and guarantees: those of `execute_transforms` and
+  /// of `exec_args`.
+  void execute_transforms(std::size_t first, std::size_t count, const In* in, Out* out,
+                          workspace& ws, const exec_args& args) const noexcept {
+    detail::execute_core(*core_, first, count, in, out, ws, args);
   }
 
   /// Transforms every transform of the batch, shared among the members of a team: every
@@ -138,6 +180,30 @@ public:
     detail::execute_team(*core_, in, out, t, ws, done);
   }
 
+  /// The team `execute` with the data of this execution (fftn/edges.hpp) and an explicit
+  /// `completion`.
+  ///
+  /// Provisional (task 5.1). Preconditions: those of the team `execute` and of `exec_args`;
+  /// every member passes the same `args` values. Guarantees: those of the team `execute`.
+  void execute(const In* in, Out* out, const team& t, workspace& ws, completion done,
+               const exec_args& args) const noexcept {
+    detail::execute_team(*core_, in, out, t, ws, done, args);
+  }
+
+  /// The team `execute` with the data of this execution (fftn/edges.hpp), with
+  /// `completion::all`.
+  ///
+  /// Provisional (task 5.1). Preconditions and guarantees: those of the overload above.
+  void execute(const In* in, Out* out, const team& t, workspace& ws,
+               const exec_args& args) const noexcept {
+    detail::execute_team(*core_, in, out, t, ws, completion::all, args);
+  }
+
+  /// Deleted: it makes `execute(in, out, t, ws, {})` ambiguous, so that it fails to compile
+  /// instead of meaning `completion{}` without the execution's data. Write `exec_args{}`, or
+  /// name the `completion`.
+  void execute(const In* in, Out* out, const team& t, workspace& ws, std::nullptr_t) const = delete;
+
   /// Transforms every transform of the batch on executor `ex`: anything that can run n
   /// tasks and return when they are done (`fftn::executor`), such as `fftn::thread_pool`,
   /// `fftn::omp::executor` or an adapter over another pool. The call returns when the whole
@@ -163,6 +229,15 @@ public:
   /// workspace is left ready for its next execution.
   void execute(const In* in, Out* out, executor_ref ex, workspace& ws) const {
     detail::execute_on(*core_, in, out, ex, ws);
+  }
+
+  /// The executor `execute` with the data of this execution (fftn/edges.hpp).
+  ///
+  /// Provisional (task 5.1). Preconditions, exceptions and guarantees: those of the executor
+  /// `execute` and of `exec_args`.
+  void execute(const In* in, Out* out, executor_ref ex, workspace& ws,
+               const exec_args& args) const {
+    detail::execute_on(*core_, in, out, ex, ws, args);
   }
 
   /// The transforms a member of team `t` owns: those it transforms with `completion::own`.

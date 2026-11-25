@@ -62,6 +62,9 @@ struct options {
   /// Guarantees: each output equals the unscaled plan's output multiplied by `scale`
   /// (converted once to the plan's precision), bit for bit; 1 (the default) changes
   /// nothing.
+  ///
+  /// It is a shortcut for the output edge's scale (`edge::scale`, fftn/edges.hpp): plan
+  /// construction refuses a plan that gives both other than 1, naming `edges.out.scale`.
   double scale = 1.0;
 
   /// The instruction set the plan must use, for tests and benchmarks: `isa::best` (the

@@ -219,6 +219,60 @@ For any other arrangement, or to choose the batch order yourself, write the `sha
 its axes and batch dimensions take any strides and distances of either sign, nested in any
 order, as "Shapes and layouts" above describes.
 
+## Edges
+
+Provisional (task 5.1, `fftn/edges.hpp`). A plan may take an input edge and an output edge
+(`plan_edges`) of linear pointwise work, applied in its own passes:
+
+- **Input edge**: each input element times the edge's factor and its `scale`, then the
+  transform.
+- **Output edge**: each output element times the edge's factor and its `scale`, then stored,
+  or added to the output's value with `accumulate` (output edge only, and refused on an
+  in-place plan).
+
+A factor (`factor`) is an array of real or complex values of the plan's precision, indexed
+by logical coordinates through its own strides: one per axis and one per batch dimension, in
+its own elements, any sign, 0 broadcasting along that dimension (no batch strides at all
+broadcast along every batch dimension). The plan records the
+factor's kind and strides; each execution passes the array's address in `exec_args`,
+through the overloads of `execute` and `execute_transforms` that take one, so one plan serves
+every array of that layout. Executing such a plan without an array it needs (through an
+overload without `exec_args`, or with a null pointer) ends the program. A complex factor is refused on a real side (the input of r2c,
+the output of c2r). `options::scale` is a shortcut for the output edge's scale.
+
+```cpp file=examples/edges.cpp region=edges
+// A Hann window, one row of it for every row of the batch (batch stride 0).
+std::vector<double> window(n);
+for (std::size_t j = 0; j < n; ++j) {
+  const double phase = 2 * std::numbers::pi * static_cast<double>(j) / static_cast<double>(n);
+  window[j] = 0.5 - 0.5 * std::cos(phase);
+}
+
+// Rows times the window, transformed, scaled by 1/n and added to the accumulator. The plan
+// records the edges' kinds and strides; the window's address comes with each execution.
+const fftn::c2c_plan<double> plan(
+    fftn::rows_c2c<double>(n, count, fftn::direction::forward), {},
+    {.in = {.mul = {.kind = fftn::factor_kind::real, .axis_strides = {1}, .batch_strides = {0}}},
+     .out = {.scale = 1.0 / static_cast<double>(n), .accumulate = true}});
+fftn::workspace ws(plan);
+
+std::vector<std::complex<double>> sum(n * count); // the accumulator, zero to start with
+plan.execute(x.data(), sum.data(), ws, {.in_factor = window.data()});
+plan.execute(x.data(), sum.data(), ws, {.in_factor = window.data()}); // adds it again
+```
+
+Results equal the same work done by separate loops within the transform's error bound plus
+one rounding per multiplication and addition, not bit for bit: the scales are applied as
+one product, which differs from separate multiplications only in rounding, and a factor may
+be fused into a pass's arithmetic. The guarantees of
+"Determinism" below hold for plans with edges too.
+
+Scales are taken by every plan. Factors and accumulation are built, so far, for c2c plans of
+one axis, which then run as a chain of passes (a complex factor of stride 1 along the row in
+the first or last pass, the rest in a separate pass through the workspace) and are planned by
+the rules whatever `options::effort` asks; `plan::describe()` says so. Other plans refuse
+them for now.
+
 ## In place
 
 A plan built with `options::in_place` is executed with the same address as input and
