@@ -131,7 +131,7 @@ template <class In, class Out> struct shape {
   /// and side without runs is stored whole. Runs of one axis and side may not overlap, neither
   /// in their logical nor in their stored positions. Provisional (task 5.1d): not taken by
   /// in-place plans, nor together with an edge's factor (`plan_edges`).
-  std::vector<stored_run> runs;
+  std::vector<stored_run> runs{};
 };
 
 /// A batch of `count` complex rows of length `n`, stored one after another.

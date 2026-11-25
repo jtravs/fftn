@@ -1383,7 +1383,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       logical_offset *= logical.element_bytes;
       const std::vector<std::size_t> open = open_loops(q, row, row, sub, from, to);
       std::vector<stage> line;
-      const run_line at{
+      const run_line line_at{
           .src = from.where,
           .src_stride = from.stride[row],
           .src_offset = output ? logical_offset : stored_offset,
@@ -1392,9 +1392,9 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
           .dst_offset = output ? stored_offset : logical_offset,
       };
       if (gap) {
-        run_zero_line(s.prec, extent[row], at, settings.chunk_points, real, line);
+        run_zero_line(s.prec, extent[row], line_at, settings.chunk_points, real, line);
       } else {
-        run_line_stages(s.prec, e, output, extent[row], e.runs.of(listed(row)), at,
+        run_line_stages(s.prec, e, output, extent[row], e.runs.of(listed(row)), line_at,
                         settings.chunk_points, real, line);
       }
       for (stage& st : line) {
