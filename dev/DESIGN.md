@@ -1639,6 +1639,10 @@ Routes, by `real_route`:
   output, then pairs there in a separate pass; c2r pairs from the input into the workspace
   block (h complex values), from which the chain's first pass reads the whole line before its
   sub-rows run. Instead of the breadth-first chain or, from L2/2, the half-length grid.
+  In teams at the client catalogue's widths (X77) r2c rows and batches keep the gain (0.65–0.94
+  at 4–16 threads); c2r rows at 4 threads keep less (0.79–1.03; the Xeon's c2r 18432 and 32768
+  and the EPYC's c2r 20480 × 3 lose their gain), because the breadth-first chain they leave fuses
+  the pairing into its first pass and scales better.
 - *Strided*: a line with a stride other than 1 (allowed out of place) packs its reals into
   scratch and pairs at any stride, one element at a time, as before task 2.1.
 - *Full*: odd n through the full-length complex chain, as before (X6).
