@@ -12,7 +12,7 @@
 #include "isa/kernel_table.hpp"
 #include "isa/target.hpp"
 #include "planner/rules.hpp"
-#include "platform/cpu_features.hpp"
+#include "platform/topology.hpp"
 
 #include <cstddef>
 #include <stdexcept>
@@ -71,9 +71,8 @@ double relative_cost(std::size_t n, bool single, isa which) {
   }
   const target t = which == isa::best ? plan_target_of(options{})
                                       : static_cast<target>(static_cast<unsigned char>(which));
-  // This machine's estimate: its processor's vendor, as its plans take it (DESIGN.md 13.5).
-  return relative_row_cost(n,
-                           profile_of(t, complex_lanes(t, single), detect_cpu_features().vendor));
+  // This machine's estimate: its planning vendor, as its plans take it (DESIGN.md 13.5).
+  return relative_row_cost(n, profile_of(t, complex_lanes(t, single), system_cpu_vendor()));
 }
 
 } // namespace detail

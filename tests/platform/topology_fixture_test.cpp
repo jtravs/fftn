@@ -10,6 +10,7 @@
 
 #include "platform/topology.hpp"
 
+#include "platform/cpu_features.hpp"
 #include "platform/cpu_list.hpp"
 #include "platform/file_source.hpp"
 #include "platform/platform_text.hpp"
@@ -22,6 +23,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -487,12 +489,36 @@ TEST(TopologyFixtureDetail, IntelMacPairsSmtThreads) {
   EXPECT_EQ(t.l3_groups[0].cpus.size(), 16U);
 }
 
+// The recordings of real machines state their vendor; the synthetic ones do not.
+TEST(TopologyFixtureDetail, RecordingsStateTheirVendor) {
+  using fftn::detail::cpu_vendor;
+  const std::vector<std::pair<const char*, std::optional<cpu_vendor>>> expected = {
+      {"linux-intel-xeon-gold-6240.sysfs", cpu_vendor::intel},
+      {"linux-gcp-n2-ice-lake.sysfs", cpu_vendor::intel},
+      {"linux-gcp-c3-sapphire-rapids.sysfs", cpu_vendor::intel},
+      {"linux-gcp-c4-emerald-rapids.sysfs", cpu_vendor::intel},
+      {"linux-gcp-c4-granite-rapids.sysfs", cpu_vendor::intel},
+      {"linux-amd-epyc-7763.sysfs", cpu_vendor::amd},
+      {"linux-gcp-c4d-zen5.sysfs", cpu_vendor::amd},
+      {"linux-gcp-c4a-axion.sysfs", cpu_vendor::arm_other},
+      {"macos-apple-m5-max.sysctl", cpu_vendor::apple},
+      {"linux-synthetic-2socket-smt.sysfs", std::nullopt},
+      {"macos-synthetic-intel.sysctl", std::nullopt},
+  };
+  for (const auto& [name, vendor] : expected) {
+    EXPECT_EQ(fftn::detail::load_topology(std::filesystem::path(FFTN_PLATFORM_DATA) / name).vendor,
+              vendor)
+        << name;
+  }
+}
+
 // The dump's text form is what gets recorded per machine; it must not drift silently.
 TEST(TopologyFixtureDetail, TextFormIsStable) {
   const topology t = load("linux-synthetic-cgroup-v1.sysfs", 4096);
   EXPECT_EQ(fftn::test::topology_text(t), R"(source linux-sysfs
 os_cpu_ids 1
 page_size 4096
+vendor none
 logical_cpus 2: 0-1
 allowed_cpus 0
 cpu_quota 1.5

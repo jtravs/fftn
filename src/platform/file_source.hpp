@@ -15,6 +15,11 @@
 //   - A path appears once. Directories are implied by the paths. A carriage return ending
 //     a line is ignored (a checkout with CRLF line ends); other control characters in
 //     content are refused by the writer.
+//   - Optionally, the entry "fftn/cpu_vendor" names the recorded processor's vendor as
+//     cpu_vendor_name writes it ("intel", "amd", "apple", "arm_other" or "unknown"), which
+//     sysfs does not hold (topology::vendor). Being an ordinary entry, it leaves the format's
+//     version at 1: readers that predate it ignore it, and a snapshot without it replays with
+//     the host's vendor.
 #pragma once
 
 #include <filesystem>

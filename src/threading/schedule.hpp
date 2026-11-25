@@ -41,8 +41,8 @@ struct machine_profile {
   // is keyed to that vendor): the Xeon 6240's class and the 2 MiB-L2 key, measured on Intel's
   // cores only, apply to intel alone (X64: Zen 4, which the Xeon key reaches, lost with X63's
   // packed c2r planes); other vendors, unknown included, keep those fields' defaults.
-  // default_machine_profile reads it from CPUID (detect_cpu_features); profile_for takes it as an
-  // argument.
+  // default_machine_profile reads it from a replayed recording that states it, else from CPUID
+  // (system_cpu_vendor, platform/topology.hpp); profile_for takes it as an argument.
   cpu_vendor vendor = cpu_vendor::unknown;
   // The cost model: nanoseconds per point through a pass (work_graph.hpp). T1 measured 1.0
   // on the CCX (AVX2), 1.23 on the Xeon and 0.57 on the M5, but with that figure and a
@@ -450,13 +450,14 @@ struct machine_profile {
 // the fixtures test it on any machine.
 // x86_64 says whether the machine is an x86-64 one (the build's architecture by default):
 // X35's rule for a private L2 of 2 MiB or more was adopted there only. vendor: the
-// processor's maker, the profile's vendor (unknown by default: a recorded topology does not
-// say), which set_grid_sizes reads for the Intel-only keys (the Xeon 6240's class, 2 MiB of L2).
+// processor's maker, the profile's vendor (unknown by default; t.vendor is not read, so a
+// caller replaying a recording passes planning_vendor(t, ...)), which set_grid_sizes reads for
+// the Intel-only keys (the Xeon 6240's class, 2 MiB of L2).
 [[nodiscard]] machine_profile profile_for(const topology& t, bool x86_64 = FFTN_ARCH_X86_64 != 0,
                                           cpu_vendor vendor = cpu_vendor::unknown) noexcept;
 
 // The profile of the running machine: profile_for its topology, with its CPU count and
-// its processor's vendor.
+// system_cpu_vendor() (a replayed recording's vendor, else the processor's).
 [[nodiscard]] machine_profile default_machine_profile() noexcept;
 
 // Sets the grid's size fields from the caches of one core class, the fastest (sizes of 0:

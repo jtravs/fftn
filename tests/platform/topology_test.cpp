@@ -3,6 +3,8 @@
 
 #include "platform/topology.hpp"
 
+#include "platform/cpu_features.hpp"
+#include "platform/file_source.hpp"
 #include "platform/sysctl_values.hpp"
 #include "platform/topology_checks.hpp"
 #include "platform/topology_sources.hpp"
@@ -10,7 +12,9 @@
 #include <gtest/gtest.h>
 
 #include <cstddef>
+#include <optional>
 #include <stdexcept>
+#include <string>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -19,6 +23,7 @@ namespace {
 
 using fftn::detail::assemble_topology;
 using fftn::detail::cpu_record;
+using fftn::detail::cpu_vendor;
 using fftn::detail::no_index;
 using fftn::detail::topology;
 using fftn::detail::topology_parts;
@@ -106,6 +111,45 @@ TEST(SysctlTopology, IntelMacWithoutCacheConfig) {
   EXPECT_TRUE(t.l2_groups.empty()); // the sharing is unknown
   EXPECT_EQ(t.classes[0].l2.size, 262144U);
   EXPECT_EQ(t.classes[0].l2.shared_by, 0U);
+}
+
+// A recording may state its processor's vendor (file_source.hpp); without it, none is known
+// and the host's stands (planning_vendor).
+TEST(RecordedVendor, ReadFromASnapshotEntry) {
+  const auto snapshot = [](const std::string& entry) {
+    return fftn::detail::topology_from_sysfs(
+        fftn::detail::snapshot_files("# fftn-sysfs-snapshot 1\n" + entry +
+                                     "sys/devices/system/cpu/online\t0\n"),
+        4096);
+  };
+  EXPECT_EQ(snapshot("").vendor, std::nullopt);
+  EXPECT_EQ(snapshot("fftn/cpu_vendor\tintel\n").vendor, cpu_vendor::intel);
+  EXPECT_EQ(snapshot("fftn/cpu_vendor\tamd\\n\n").vendor, cpu_vendor::amd); // a final newline
+  EXPECT_EQ(snapshot("fftn/cpu_vendor\tarm_other\n").vendor, cpu_vendor::arm_other);
+  EXPECT_EQ(snapshot("fftn/cpu_vendor\tunknown\n").vendor, cpu_vendor::unknown);
+  EXPECT_THROW((void)snapshot("fftn/cpu_vendor\tGenuineIntel\n"), std::runtime_error);
+  EXPECT_THROW((void)snapshot("fftn/cpu_vendor\t\n"), std::runtime_error);
+}
+
+TEST(RecordedVendor, ReadFromASysctlKey) {
+  const auto sysctl = [](const std::string& text) {
+    return fftn::detail::topology_from_sysctl(
+        fftn::detail::parse_sysctl_text(text + "hw.logicalcpu: 2\nhw.physicalcpu: 2\n"));
+  };
+  EXPECT_EQ(sysctl("").vendor, std::nullopt);
+  EXPECT_EQ(sysctl("fftn.cpu_vendor: apple\n").vendor, cpu_vendor::apple);
+  EXPECT_THROW((void)sysctl("fftn.cpu_vendor: arm\n"), std::runtime_error);
+}
+
+TEST(RecordedVendor, OverridesTheHostsOnly) {
+  topology recorded;
+  recorded.vendor = cpu_vendor::intel;
+  const topology unrecorded;
+  for (const cpu_vendor host : {cpu_vendor::unknown, cpu_vendor::intel, cpu_vendor::amd,
+                                cpu_vendor::apple, cpu_vendor::arm_other}) {
+    EXPECT_EQ(fftn::detail::planning_vendor(recorded, host), cpu_vendor::intel);
+    EXPECT_EQ(fftn::detail::planning_vendor(unrecorded, host), host);
+  }
 }
 
 TEST(Topology, PageSizeIsAPowerOfTwo) {

@@ -1,4 +1,5 @@
 # fftn-sysfs-snapshot 1
+fftn/cpu_vendor	amd
 proc/self/cgroup	0::/c1/c2/c3/c4/c5/c6
 proc/self/status	Cpus_allowed_list:\t15,31
 sys/devices/system/cpu/cpu0/cache/index0/coherency_line_size	64

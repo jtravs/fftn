@@ -108,6 +108,9 @@ topology topology_from_sysctl(const sysctl_values& values) {
   parts.source = "macos-sysctl";
   parts.os_cpu_ids = false;
   parts.page_size = size(values, "hw.pagesize");
+  if (const auto vendor = values.find("fftn.cpu_vendor"); vendor != values.end()) {
+    parts.vendor = recorded_vendor(vendor->second, "fftn.cpu_vendor");
+  }
   const std::size_t line = size(values, "hw.cachelinesize");
 
   const unsigned levels = integer(values, "hw.nperflevels");

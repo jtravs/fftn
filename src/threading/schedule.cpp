@@ -61,7 +61,7 @@ machine_profile profile_for(const topology& t, bool x86_64, cpu_vendor vendor) n
 
 machine_profile default_machine_profile() noexcept {
   machine_profile p;
-  const cpu_vendor vendor = detect_cpu_features().vendor;
+  const cpu_vendor vendor = system_cpu_vendor();
   try {
     p = profile_for(system_topology(), FFTN_ARCH_X86_64 != 0, vendor);
   } catch (...) {
