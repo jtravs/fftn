@@ -2248,14 +2248,24 @@ transform can then run in place (c2c without accumulation), else the workspace b
 accumulation the transform ends in the block and the output edge's phase adds it to the
 output. The block then holds one transform, both sides in an in-place transform's layout (real
 rows padded to 2(n/2 + 1)), so one block serves both edges. A team core (`plan_core::team`)
-is built with the plan's edges. Such plans are built by the rules whatever the effort: a c2c
-row is a chain (the lanes refuse input edge operations, grid and depth-first chains take no
-factor edge, batch leaves fall back to the chain), a multi-axis plan takes no lanes over
-adjacent transforms (the edge driver runs no lanes program), a real row no grid, lanes or
-depth-first chain; `describe()` says so. The other strategies, measured planning and wisdom
-follow in 5.1b's later steps, and X65 decides which separate passes become fused variants. An
-edge that still forces a slower strategy is built, not refused, and `describe()` says so
-(AGENTS.md section 1).
+is built with the plan's edges. A row (5.1b-2) takes the strategy the rules choose with every
+factor a separate pass around it: the lanes over rows (the passes inside each block, over its
+rows, which the edge driver now runs with the cursors), the grid, the depth-first chain,
+Bluestein's depth-first convolution and a real row's half-length grid or depth-first chain.
+The input edge's pass writes the output, where the strategy is then built in place (c2c out of
+place), the input's own memory (in place), or the workspace block (a real row out of place,
+read there by the strategy). Accumulation saves the output's prior values in the block past
+the strategy's own region before the strategy writes the output, and its pass adds the
+result to them (`edge_mode::add_prior`), so no strategy needs a second destination. Where the
+rules' strategy is the chain and a complex factor can be fused, the plan is built again as
+the chain with the fused factor (5.1a), which saves the pass. A multi-axis c2c plan takes the
+lanes over adjacent transforms, its edge phases inside each block of transforms, except with
+accumulation. Still not taken, and said by `describe()`: those lanes with accumulation; a real
+row's grid whose block the input would need, and a c2r row's grid and depth-first chain with
+an input edge out of place (they read the input in the pairing's gathers); batch leaves run
+one row at a time between the edge passes. Measured planning and wisdom follow in 5.1b-3, and
+X65 decides which separate passes become fused variants. An edge that still forces a slower
+strategy is built, not refused, and `describe()` says so (AGENTS.md section 1).
 
 ### 12.2 Row pipelines
 
@@ -3650,6 +3660,7 @@ to change before a release.
 | 2026-11-25 | Section 1.3's client-catalogue row judges each case by the standard catalogues' per-case test at 1.05 beyond noise (a case fails when the whole bootstrap interval of its time ÷ the provider's lies above 1.05 × (1 + the run's A/A band)); it read "no case above 1.02", a plain ratio with no allowance for noise | The maintainer, 2026-11-25: "That tail check seems overly strict (I thought it was 1.05 and accounted for noise)." The 2026-11-24 client check judged by 1.02 is to be re-scored under this rule |
 | 2026-11-25 | Plan edges public and provisional (task 5.1a, section 12.1): the API block of section 12 without callbacks and stored runs; scales on every plan as one product; factors and accumulation on c2c rows, a complex factor of stride 1 fused into the row's first or last pass through an execution-time factor cursor, everything else a separate edge pass through the workspace block; such plans are chains planned by the rules | Correctness and API shape first, as the maintainer's agreed design orders (5.1); which separate passes pay as fused variants, and the cost of forcing the chain, are X65's (5.1f). A separate pass needs no new kernel variants on any target, so every combination of the vocabulary is built at once |
 | 2026-11-25 | Plan edges' API points (task 5.1a, PR 128): the team `execute` with `exec_args` also without a `completion` (`completion::all`), and `execute(in, out, team, ws, {})` refused at compile time; accumulation refused on in-place plans; an empty `batch_strides` broadcasts along every batch dimension; an execution without a factor array the plan needs aborts in every build; plans with factor edges run on a driver of their own, so that the others run exactly as before (a regression check on the EPYC 7763 found plans without edges 2–6 % slower when one driver moved the cursors for every plan); default member initialisers kept; the scales applied as one product, which differs from separate multiplications only in rounding | The maintainer, on the six questions of PR 128: "Yes, as recommended". A second reader found that `execute(in, out, team, ws, {})` bound silently to `completion{}`, and that a Release execution without the factor array read address 0 (or, with a large stride, mapped memory) |
+| 2026-11-25 | Edges in the rows' strategies (task 5.1b-2, section 12.1): a row with edges takes the rules' strategy with separate passes around it (the input's into the output for an in-place build, or into the block for a real row; accumulation by saving the output's prior values in the block and adding the result to them); the fused chain only where the rules choose the chain; the lanes over adjacent transforms with edge phases in each block, not with accumulation | "Plans with edges stop being forced to the chain" (PLAN 5.1b): a separate pass costs one pass over the row, the forced chain could cost the strategy's whole gain. Saving the prior values needs no second destination in any strategy, so accumulation reaches every strategy at once. X65 (5.1f) prices fusing |
 | 2026-11-25 | Edges on multi-axis and real plans (task 5.1b-1, section 12.1): every factor and accumulation an edge phase of its own over the edge side's rows, before or after the transform, through the output (c2c input edge without accumulation) or one transform in the workspace block (in an in-place transform's layout, shared by both edges); team cores built with the edges | Correctness first (5.1): a phase of rows needs no kernel and no change to any strategy's phases, reaches every axis order, layout and kind, and teams share it by lines. Fusing into the first and last phases' passes (natural for the input edge on the rows) is X65's to price (5.1f) |
 
 ---

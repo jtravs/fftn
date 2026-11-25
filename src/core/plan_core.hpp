@@ -247,6 +247,7 @@ public:
   bool needs_args = false;
   std::uint8_t factor_args = 0; // which arrays: moving_in_factor, moving_out_factor
   std::vector<edge_record> edge_records;
+  std::vector<edge_record> edge_tail_records; // a lanes program's, one per program::lane_tail
   std::string edges_note; // describe()'s line for edges with factors or accumulation
 };
 

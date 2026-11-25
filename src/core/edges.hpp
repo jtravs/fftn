@@ -61,8 +61,15 @@ struct resolved_edges {
 
 // Validates `e` against the shape and options, throwing std::invalid_argument naming the
 // offending field (edges.in.scale, edges.out.mul.axis_strides, ...), and places each operation.
+// fuse: a c2c row's complex factors of stride 1 fuse into its chain's passes (the plan is then
+// a chain); otherwise every factor is a separate pass, which any strategy takes.
 [[nodiscard]] resolved_edges resolve_edges(const shape_view& s, const options& opts,
-                                           const edges_view& e);
+                                           const edges_view& e, bool fuse = true);
+
+// Whether either edge's factor is fused into the passes (fuse above).
+[[nodiscard]] inline bool any_fused(const edge_plan& p) noexcept {
+  return p.in.fused || p.out.fused;
+}
 
 // The separate edge pass of one side over a line of n complex values (or, `real`, n real
 // values: the real side of a real transform) of precision `prec`: read at src (stride
@@ -75,9 +82,46 @@ struct resolved_edges {
                                     std::ptrdiff_t dst_stride, std::size_t chunk_points, bool real,
                                     std::ptrdiff_t factor_stride);
 
-// describe()'s line for a plan with edges; `rows`: a c2c plan of one axis (rows), whose
-// factors may be fused into the row's passes, else a multi-axis or real plan (edge phases).
-[[nodiscard]] std::string edges_text(const edge_plan& p, bool rows);
+// How an edge pass writes: stores its value, adds it to the destination's (the output edge's
+// accumulation), or adds it to a prior value read at the source, the value itself being read
+// at the destination (accumulation into a strategy that writes the output: the output's prior
+// values saved in the workspace block before the transform, edge_copy_stage).
+enum class edge_mode : std::uint8_t { store, accumulate, add_prior };
+
+// The geometry of an edge pass beyond one line: a lanes block's lines (pass_args::rows, set by
+// the driver per block) src_dist and dst_dist elements apart and their factors factor_step
+// bytes apart; and bytes added to the source and the destination (a region of the workspace
+// block past the strategy's own).
+struct edge_rows {
+  std::ptrdiff_t src_dist = 0;
+  std::ptrdiff_t dst_dist = 0;
+  std::ptrdiff_t factor_step = 0;
+  std::size_t src_offset = 0;
+  std::size_t dst_offset = 0;
+};
+
+// edge_pass_stage with a mode and a geometry.
+[[nodiscard]] stage edge_pass_stage(precision prec, const edge_side& side, bool output,
+                                    std::size_t n, slot src, std::ptrdiff_t src_stride, slot dst,
+                                    std::ptrdiff_t dst_stride, std::size_t chunk_points, bool real,
+                                    std::ptrdiff_t factor_stride, edge_mode mode,
+                                    const edge_rows& rows);
+
+// A copy of a line of n elements (real or complex), with the geometry of edge_rows: the
+// output's prior values saved before a transform that writes the output, for accumulation.
+[[nodiscard]] stage edge_copy_stage(precision prec, std::size_t n, slot src,
+                                    std::ptrdiff_t src_stride, slot dst, std::ptrdiff_t dst_stride,
+                                    std::size_t chunk_points, bool real, const edge_rows& rows);
+
+// Where a plan's edges went: a c2c row's chain (fused, or separate passes through the workspace
+// block), passes around a row's other strategy, or edge phases (multi-axis plans, real rows'
+// chains).
+enum class edge_layout : std::uint8_t { row_chain, row_strategy, phases };
+
+// describe()'s line for a plan with edges; `fallback`: why an edge keeps the plan from the
+// strategy the rules would choose (empty: it does not).
+[[nodiscard]] std::string edges_text(const edge_plan& p, edge_layout layout,
+                                     const std::string& fallback);
 
 // The edges and options::scale as a wisdom key adds them (core/wisdom.cpp, shape_key): empty
 // for scales only.
