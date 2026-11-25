@@ -950,6 +950,14 @@ another 0.86–0.93: 131071 0.61 and 999983 0.71 of their time in all, FFTN ÷ M
 and 1.44 → 1.05, the M5 Max's primes of 4813–5119 0.86. One top factor of 16 beat two even
 at 2²¹ points (32 MiB).
 [X50](experiments/X50-primes.md).
+The same held for real transforms: their half-length complex transform kept the breadth-first
+chain (or the grid) after the c2c rows of those lengths had moved to the depth-first chain on
+Zen 3, so r2c 18432 took 37 µs where a c2c row of 9216 took 26. Giving the half length the
+c2c row's route (the pairing a separate pass; c2r's paired values in the workspace block,
+which the chain's first pass reads whole) took the 26 real rows it reaches (18432–245760) to
+0.76 of their time on the EPYC 7763, r2c 20480 × 21 from 1.18 to 0.99 of FFTW and 40960 × 6
+from 1.27–1.44 to 0.88–0.99. Whenever a route is added for c2c rows, check the transforms that
+contain a c2c transform of that length. [X72](experiments/X72-zen3-real-rows.md).
 
 4.22 **To run short rows side by side in the lanes, transpose blocks in registers; gather
 per element only where registers run out, and keep the last row out of a padded group.** A
@@ -1011,6 +1019,36 @@ the last row through the pairs' copy, both lanes on the one row, ended the misse
 backward 1220 → 960 cycles), at the price of a whole pair for one row, which 3 rows did not
 repay (1.05 of the chain; excluded). Count op-cache misses (Zen 3 PMCx28F) before believing a path
 that is slow only for some counts or one direction. [X62](experiments/X62-epyc-tail.md).
+
+4.25 **Exactly rounded twiddles can be cheap to plan without changing a bit: evaluate each
+distinct angle once.** FFTN computes every root alone in double-double (a Taylor series per
+root, 360 ns on the M5 Max, 0.8–0.9 µs on the EPYC 7763 and the Xeon 6240), and that was
+almost all of its plan construction: an r2c of 32768 points took 9.3 ms on the Mac, 19.5 ms on
+the EPYC. Two exact identities removed three quarters or more of the evaluations. Octant symmetry:
+for n divisible by 8 the first half of the table has n/8 + 1 reduced angles, each shared by up
+to four entries, so a table computed angle by angle, placed by the same octant rule, is the
+same table for a quarter of the work. Scaling: the integer octant reduction makes root(2m, 2n)
+the computation of root(m, n) with every operand of every floating-point operation doubled,
+which changes no rounding, so tables of n and n 2^k share entries bit for bit and an r2c's
+half-length chain and pairing twiddles need the roots of n once. Plan construction fell to
+0.22–0.23 of its time over the client catalogue's 52 shapes on the Mac, the EPYC and the Xeon
+(worst shape 9.3 → 2.7, 20.8 → 5.1 and 26.8 → 5.7 ms) with every table entry unchanged, which tests check against
+the per-entry computation, so no transform needed re-timing. Check that a reformulated
+generator is the same function of its inputs before reaching for a cheaper but different one.
+[X71](experiments/X71-twiddle-generation.md).
+
+4.26 **Between L1 and L2, three passes with one big radix beat four small ones on 16 registers,
+and the cost tables did not see it.** On the EPYC 7763 (`avx2` double, 32 KiB L1) rows of
+3072–5120 points (48–80 KiB) ran faster as 6 · 16 · 32, 10 · 20 · 16, 6 · 12 · 64 and
+10 · 32 · 16 than as the costs' 12 · 16 · 16 and four-pass sequences of radices up to 16:
+0.81–0.95 of the time over rows of 1–64 transforms, in place and inside real rows and depth-first
+sub-rows (FFTN ÷ FFTW 1.03–1.11 → 0.89–0.98); FFTW's MEASURE plans also take three passes there,
+not always with the same radices. The first radix matters: most sequences that open with 3, 4
+or 5 lost, by up to 17 % (FFTW's own 3 · 64 · 16 15 %), and 20 · 16 · 16 lost 19 % where
+10 · 32 · 16 won 9 %. A table fitted on short rows prices radix-16 passes
+for rows in L1; beyond it a pass over the row costs a sweep through L2, so the number of
+passes counts more than the table says. Search lengths past L1 with big-radix candidates
+rather than trusting the fitted costs. [X72](experiments/X72-zen3-real-rows.md).
 
 ## 5. Threading
 
