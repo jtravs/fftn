@@ -6,24 +6,46 @@ session; update a phase when its tasks or findings change.
 
 ## Status
 
-**As of 2026-11-19, early morning (lead).** **Phase 1's exit is met.** The exit check (X56)
-passes the geometric-mean targets and the tail rule beyond noise on all nine machines checked:
-Mac M5 Max (÷ FFTW 0.74, ÷ FFTL 0.52), Xeon 6240 (÷ FFTW 0.66, ÷ oneMKL 0.69), EPYC 7763 (÷ FFTW
-0.79, ÷ FFTL 0.46), and on Spot VMs Zen 5, Axion, Granite Rapids, Sapphire Rapids and Ice Lake
-(÷ FFTW 0.67–0.72; ÷ oneMKL 0.69–0.71). The details are in the exit-check paragraphs below and in
-X56. Since 2026-11-16: depth-first chains for rows between L2/4 and 64 L2 (X46, X51, X55, X58),
-Bluestein convolutions on them (X50), two-line chains (X47), radix-32/64 codelets ordered for 16
-registers (X54), data-size-aware radices for the EPYC's 768 and 1024 (X57), batch leaves for
-tiny batches (X53), the fixed benchmark backend (X49), threaded planes and volumes with team
-programs (task 4.2, X43, X52), and the threaded Kokkos integration (task 3.5, T3; provisional
-API), task 4.3 (axis subsets of strided arrays, axes in memory order; X61's lanes over adjacent
-transforms on the Xeon 6240 class and Apple; provisional `axes_*` API) and X59 (threaded real
-planes: phase joins everywhere, fair line runs on Zen 3 and Apple). X60 (out-of-place
-c2r intermediate packed in the output; PR 86) judged: not adopted, won at one thread, lost at 8
-lanes; its planes-only follow-up X63 (PR 91) adopted on the Xeon 6240 class and Zen 3. This
-section is also the handoff.
-Lessons that generalise are in [LESSONS.md](LESSONS.md), decisions in DESIGN.md section 19,
-open questions in DESIGN.md section 18.2.
+**As of 2026-11-25 (lead).** Phase 1's exit is met; phases 2–4 are built, with their exits not
+yet checked; phase 5 (fusion) has started with step 5.1, plan edges. **Priority (the maintainer,
+2026-11-25): features first, phase 5 and then phase 6, then refine the remaining performance.**
+The performance follow-ups are parked in "Tasks" below until then. This section is also the
+handoff. Lessons that generalise are in [LESSONS.md](LESSONS.md), decisions in DESIGN.md section
+19, open questions in DESIGN.md section 18.2.
+
+| Phase | State |
+|---|---|
+| 0 | Done. |
+| 1 | Exit met (X56, 2026-11-19): the Mac M5 Max, the Xeon 6240, the EPYC 7763 and, on Spot VMs, Zen 5, Axion, Granite Rapids, Sapphire Rapids and Ice Lake; Emerald Rapids since (X64). Recent Intel's 160, 240 and 1024 improved since (X69, X70, X80). Open but optional: X2 above 1024 on the Mac, X4, X5. |
+| 2 | Built: real transforms, any length, `planning::measure`, wisdom, `next_fast_length`. Open: 2.2's double c2c batch acceptance on AVX-512; X6; X13; the cost model's second pass. Exit not checked. The client catalogue's real-row gap mostly closed (X72, X75, X78; Ice Lake X82, Zen 2 X81). |
+| 3 | Built: the engine, scheduler, OpenMP adapter, `thread_pool`, Kokkos (provisional API). Scheduling improved: anchored whole transforms (X73 Zen 3, X74 Apple, X79 the Xeon 6240's class), the team state on pages of its own on the Xeon 6240's class (X79, after X76's diagnosis), real rows split by complex points there (X83). Open: T2, T4, T6; 3.6 against its acceptance. Exit not checked. |
+| 4 | 4.3 done. 4.1 and 4.2 built; acceptance not met case by case (large threaded planes against oneMKL, some volumes). |
+| 5 | Started 2026-11-25: 5.1 in progress (task Q). |
+| 6, 7 | Not started. |
+
+**Client catalogue** (the check of 2026-11-24, `main` d4b169f): weighted geometric mean of FFTN ÷
+FFTW at one thread / at the client's per-shape widths, against targets of 0.95 / 0.90. Since then
+only experiment runs have touched it; the catalogue has not been re-measured as a whole.
+
+| Machine | 2026-11-24 | Since |
+|---|---|---|
+| Mac M5 Max | 0.85 / 0.80 | anchoring at 6 threads (X74): the catalogue 0.996 of its time |
+| Xeon 6240 | 0.88 / 0.81 | one thread 0.896 → 0.863 of FFTW after X75 (informative run); X78's fused c2r rows, X79's anchoring (catalogue 0.942 of its time at 16 threads, 0.961 at 8) and X83's splits since |
+| EPYC 7763 | 1.00 / 0.905 | one thread 0.990 → 0.933 of FFTW after X72, so it meets 0.95; X73's anchoring at 16 threads 0.786 of its time |
+
+The tail rule for client catalogues changed on 2026-11-25 (DESIGN 1.3, decision log): a shape
+fails when the whole interval of its ratio lies above 1.05 × (1 + the run's band), as in the
+standard catalogues, no longer at a plain 1.02. Under 1.02 no machine met it on 2026-11-24; the
+re-check under the new rule is open. Planning time, the client's criterion (4), under 10 ms on
+every shape: worst Mac 2.7 ms and Xeon 5.7 ms (X71), EPYC 4.39 ms after X72 (PR 110). The
+AArch64 Linux leg of the check is pending.
+
+The cloud campaign stands at USD 16.54 of 20 (after X80; ledger `experiments/cloud-ledger-2026-11.md`).
+
+Adoptions under the 2026-11-23 clauses, open to the maintainer's veto: X75 arm B narrowed to half
+lengths above L2/8; X78's B4n defined from a diagnosis after B's judging runs (amendment 1).
+
+### Recent experiments (newest last)
 
 EPYC tail (X62, 2026-11-22, branch `exp/x62-epyc-tail`, PR 90): re-timed on `main` 021c117, 15 ×
 2 backward is not a loss (0.89 of FFTW) and 64 × 2 backward 1.29, 64 × 16 1.18, 1018 1.13, 2048
@@ -41,16 +63,17 @@ application's 52 tracking shapes with their measured weights, FFTN ÷ FFTW (MEAS
 threads), weighted geometric mean at one thread / at the client's per-shape widths on its full
 budget: Mac M5 Max 0.85 / 0.80 (6 cores), Xeon 6240 0.88 / 0.81 (8) and 0.74 (16), EPYC 7763
 1.00 / 0.905 (8) and 0.82 (16), against targets of 0.95 / 0.90. Every shape at the full width:
-0.66, 0.64 / 0.48, 0.65 / 0.55. No machine meets the tail limit (no shape above 1.02): real rows
-of 6144–20480 points on Zen 3 (1.05–1.14 at one thread; 40 % of the weight), real rows of
-32768–40960 points everywhere (1.19–1.44), c2c rows of 3072–5120 on Zen 3 (1.06–1.12),
-out-of-place c2c row batches at 16 threads on Zen 3 (1.27–1.49), 16384-point rows at 4–8
-threads on the Xeon (1.07–1.16), in-place 384² planes at 8 threads on Zen 3 (1.08–1.11). Plans
-take 1–2 ms per shape in the median, but real rows of 18432 points and more take 10–29 ms on
-x86, mostly building twiddle tables. Runs 20261124-102656-dadb, -110613-be23 (Mac),
--103457-da59, -104940-3dec, -112531-9236 (Xeon), -102950-017c, -103014-bb67, -103024-3307
-(EPYC). Next, by weight × excess: real rows on Zen 3, long real rows, wide-team row batches,
-twiddle generation. The AArch64 Linux leg is pending (lead).
+0.66, 0.64 / 0.48, 0.65 / 0.55. No machine met the tail limit as it then read (no shape above
+1.02; since 2026-11-25 DESIGN 1.3 judges client shapes at 1.05 beyond noise, not yet re-scored):
+real rows of 6144–20480 points on Zen 3 (1.05–1.14 at one thread; 40 % of the weight), real rows
+of 32768–40960 points everywhere (1.19–1.44), c2c rows of 3072–5120 on Zen 3 (1.06–1.12),
+out-of-place c2c row batches at 16 threads on Zen 3 (1.27–1.49), 16384-point rows at 4–8 threads
+on the Xeon (1.07–1.16), in-place 384² planes at 8 threads on Zen 3 (1.08–1.11). Plans take 1–2
+ms per shape in the median, but real rows of 18432 points and more take 10–29 ms on x86, mostly
+building twiddle tables. Runs 20261124-102656-dadb, -110613-be23 (Mac), -103457-da59,
+-104940-3dec, -112531-9236 (Xeon), -102950-017c, -103014-bb67, -103024-3307 (EPYC). Next, by
+weight × excess: real rows on Zen 3, long real rows, wide-team row batches, twiddle generation.
+The AArch64 Linux leg is pending (lead).
 
 Planning time (X71, 2026-11-24, branch `exp/x71-twiddles`): twiddle tables by octant symmetry,
 root tables shared across lengths n 2^k and the grid's roots through a `root_cache`, every
@@ -59,19 +82,17 @@ EPYC) and 0.23 (Xeon) of its time; worst shape 2.7 / 5.1 / 5.7 ms (was 9.3 / 20.
 client's criterion (4), planning under 10 ms, now holds on all three machines. Runs
 20261124-221912-bb81, -222350-028f (Mac), -222427-ac05, -222427-e7b3 (EPYC), -222921-127d, -224111-b0f2 (Xeon).
 
-X72 (2026-11-24 night, branch `exp/x72-zen3-real-rows`): the client check's largest gap, real rows of 6144–20480 points on Zen 3. Arm A: on Zen 3's class a real row's half-length transform takes the depth-first chain where a c2c row of that length would (0.761 over the 26 real rows it moves, 18432–245760); arm B: `avx2` double overrides on AMD for 3072, 3200, 4608 and 5120 (0.906 over 58 cases). Both adopted by their rules (run 20261124-223906-cac2, EPYC 7763, band ±1.00 %), no clause used. FFTN ÷ FFTW on the client's shapes in that run: 6144–9216 0.90–0.95, 10240 1.00–1.04, 18432 1.00–1.02, 20480 0.99 (r2c) and 1.05 (c2r × 3), 40960 × 6 0.88–0.99, c2c 3072–5120 0.88–0.98. Still above 1.02: r2c 10240, c2r 10240 × 4, c2r 20480 × 3 (the c2r rows lost their fused pairing). The client catalogue's one-thread score on the EPYC (run 20261124-223708-ded8): 0.990 → 0.933 of FFTW (target 0.95), shapes above 1.02 24 → 7; planning time of the rows arm A moves +5–26 % (40960 × 6 20.8 → 26.2 ms). Zen 2 is reached by both keys unmeasured.
+X72 (2026-11-24 night, branch `exp/x72-zen3-real-rows`): the client check's largest gap, real rows of 6144–20480 points on Zen 3. Arm A: on Zen 3's class a real row's half-length transform takes the depth-first chain where a c2c row of that length would (0.761 over the 26 real rows it moves, 18432–245760); arm B: `avx2` double overrides on AMD for 3072, 3200, 4608 and 5120 (0.906 over 58 cases). Both adopted by their rules (run 20261124-223906-cac2, EPYC 7763, band ±1.00 %), no clause used. FFTN ÷ FFTW on the client's shapes in that run: 6144–9216 0.90–0.95, 10240 1.00–1.04, 18432 1.00–1.02, 20480 0.99 (r2c) and 1.05 (c2r × 3), 40960 × 6 0.88–0.99, c2c 3072–5120 0.88–0.98. Still above 1.02 (the client limit then): r2c 10240, c2r 10240 × 4, c2r 20480 × 3 (the c2r rows lost their fused pairing). The client catalogue's one-thread score on the EPYC (run 20261124-223708-ded8): 0.990 → 0.933 of FFTW (target 0.95), shapes above 1.02 24 → 7; planning time of the rows arm A moves +5–26 % (40960 × 6 20.8 → 26.2 ms). Zen 2 is reached by both keys unmeasured.
+
+X74 (2026-11-25 night, branch `exp/x74-anchored-other`): X73's anchored whole transforms on the other measured classes. Apple (M5 Max, 6 threads): adopted, the five standard batches 0.87–0.97 of their time, the client catalogue 0.996 (one near-miss re-run, which passed; runs 20261124-233956-4feb, -233921-232b). The Xeon 6240's class: not adopted, by one case: at 16 threads the c2c batch 864 × 384 backward took 1.16 in the deciding re-run (bimodal between processes). Everything else on the Xeon gained: 8 threads, catalogue 0.951 and standard batches 0.695 with nothing slower; 16 threads 0.949 and 0.581 (8 × 4096 from 2.54 to 0.97 of FFTW); over both sockets (informative) 0.880, the out-of-place batches 0.67–0.80. The batch was diagnosed by X76 and fixed by X79, which then adopted anchoring on the class.
 
 X75 (2026-11-25 night, branch `exp/x75-xeon-real-rows`): the client check's second gap, long real rows on the Xeon 6240. Arm A: on the Xeon 6240's class a real row's half-length transform takes the c2c depth-first chain over its range, L2/4 to 64 L2 (0.748 over the 50 real rows it moves, 32768–2^23 points and float 65536–2^20, none slower; run 20261125-023550-8fee, band ±3.87 %). Arm B: real rows alone from half lengths above L2/8 (`depth_real_min_bytes`), adopted **narrowed** under the 2026-11-23 clause: it passed its rule (0.796 over 18), but an informative re-run found float r2c 32768 (half length L2/8 itself) 1.095, so L2/8 is excluded; the declared deciding run 20261125-041502-3d25 gives 0.821 over the 14 it still moves, none slower. The Xeon's one-thread client score (run 20261125-032026-36ec, informative): 0.896 → 0.863 of FFTW; c2r 32768 1.53 → 1.07, c2r 40960 × 6 1.38 → 1.13, r2c 32768, r2c 40960 × 6 and c2r 20480 × 3 below 1.02. Ice Lake-SP keeps its plans (unmeasured). For the maintainer's veto: the narrowing.
-
-X74 (2026-11-25 night, branch `exp/x74-anchored-other`): X73's anchored whole transforms on the other measured classes. Apple (M5 Max, 6 threads): adopted, the five standard batches 0.87–0.97 of their time, the client catalogue 0.996 (one near-miss re-run, which passed; runs 20261124-233956-4feb, -233921-232b). The Xeon 6240's class: not adopted, by one case: at 16 threads the c2c batch 864 × 384 backward took 1.16 in the deciding re-run (bimodal between processes). Everything else on the Xeon gained: 8 threads, catalogue 0.951 and standard batches 0.695 with nothing slower; 16 threads 0.949 and 0.581 (8 × 4096 from 2.54 to 0.97 of FFTW); over both sockets (informative) 0.880, the out-of-place batches 0.67–0.80. For the maintainer: adopt on the class for teams of up to 8 lanes, or after diagnosing that batch; each needs a declared deciding run.
 
 X77 (2026-11-25 night, branch `exp/x77-real-rows-threaded`, informative): X72's and X75's real rows at the client catalogue's widths, the route against `DEPTH_REAL_MAX_BYTES=1` (the plans it replaced) and FFTW. No case is slower beyond the band. EPYC 7763 (node18 idle, bands ±1.00 %): r2c and c2r 18432 at 4 threads 0.68 / 0.80, 40960 × 6 at 6 0.66, r2c 20480 × 21 at 8 / 16 0.84 / 0.65, c2r 20480 × 3 at 4 1.015 (re-run, within the band). Xeon 6240: r2c 18432 and 32768 at 4 0.74 / 0.87, 40960 × 6 at 6 0.88–0.90, r2c 20480 × 21 at 8 / 16 0.94 / 0.88, c2r 20480 × 3 0.92, c2r 18432 1.019 and c2r 32768 1.031 (re-run; past the band, under 1.03). The c2r route pairs in a phase of its own and scales worse over a team than the breadth-first chain with its fused pairing. FFTN ÷ FFTW at those widths 0.44–0.95 on every moved row except the Xeon's r2c 40960 × 6 at 6 (1.042). Proposed: no narrowing (a plan cannot narrow by team size without breaking the serial bits); a follow-up fusing the c2r pairing into the depth-first chain's first pass, rules drafted. Also tests for X75's shipped lower limit L2/8 + 1 and single precision (the second reader's nit on PR 111). Runs 20261125-044813-2a90, -045446-be3f, -044930-3bd3, -045000-54f9, -045030-1117 (EPYC), -045511-181a, -044856-f373, -044934-2b6b, -045638-64ec (Xeon).
 
 X76 (2026-11-25 night, branch `exp/x76-bimodal-864`, informative): X74's bimodal batch, c2c 864 × 384 backward at 16 threads on the Xeon 6240. The slow mode is the heap's: after earlier cases in an fbench process the plan's workspace is allocated from the heap right after the plan's twiddle table, and the twiddles on the team state's 4 KiB page are then loaded from other cores' modified lines on every execution (`perf c2c`); alone, the case was fast in all 144 probe processes whatever the placement, page colours, offsets or siblings. A workspace that starts a page (fbench option `WORKSPACE=page`) removes the slow mode in both arms (after one earlier case: anchored 119 → 52 µs, arrival order 104 → 70). Proposed, not adopted: the team state on pages of its own (a threading-layout change, second reader and experiment), then X74's rules for anchoring on the Xeon class again; rules drafted in the file.
 
 X78 (2026-11-25 night, branch `exp/x78-fused-c2r`): X77's follow-up, the c2r pairing fused into the depth-first real route's first pass. Arm B (a pairing-twiddle table of h entries read at every leg, both classes) rejected by its rule: one thread EPYC 1.151, Xeon 1.064 (runs 20261125-053120-822c, -053529-aac6). Arm B4n (the twiddles factored, v_i · w_n^(leg j), on the Xeon 6240's class for half lengths from L2/4 to 16 L2: `depth_c2r_fused_min_bytes`, `_max_bytes`) adopted under amendment 1, committed before its runs: one thread 0.853 over the 23 rows it moves, none slower (run 20261125-062612-079d, band ±4.22 %, loaded); c2r 32768 at 4 threads 0.740, 40960 × 6 at 6 threads 0.886 (÷ FFTW 0.50 and 0.70). Zen 3 keeps the separate pass: every variant lost there (1.12–1.20); declared run 20261125-062442-ddf9 shows no plan moved. For the maintainer's review: B4n was defined from a diagnosis after B's judging runs (as X75's arm B); the r2c arm was not tried.
-
-X83 (2026-11-25, branch `exp/x83-xeon-single-width`): single transforms of 4096–65536 points on the Xeon 6240's mesh at team widths 1–16. Diagnosis (run 20261125-104559-e6f5): teams of 2 lose almost everywhere below 32768 points while 4 and 8 gain from about 15625 (so no member cap per point count); X77's real rows of 18432 already run on one member (depth-first, below `split_min_points_lines`) and 32768–36864 gain from 4 (0.63–0.93); real rows of 6144–12287 on a chain lost 1.32–2.69 because the split threshold counted n real points. Adopted on the Xeon 6240 class, Intel only: such rows are split by their complex points (`split_complex_rows`); 31 moved cases at 4, 6, 8 and 16 threads 0.570, none slower beyond the band, nothing moved at one thread (runs 20261125-112330-e202, -113445-9856, -114133-f403, -114820-78dd). Left: c2c rows of 6144–16384 points (radices 8–16 lose 1.07–1.22 at 4, odd radices gain; no size threshold separates them) and r2c 16384 (1.17 at 4).
 
 Vendor keys (2026-11-25, branch `task/vendor-keyed-intel`; the maintainer's policy: "a rule
 measured on only one vendor is keyed to that vendor"): the Xeon 6240's class (X34, X39, X46, X50,
@@ -82,8 +103,11 @@ vendors keep the fields' defaults. Not a performance change: every Intel recordi
 Ice Lake N2, Sapphire, Emerald, Granite Rapids) keeps its whole profile, field for field (DESIGN
 13.5).
 
+X83 (2026-11-25, branch `exp/x83-xeon-single-width`): single transforms of 4096–65536 points on the Xeon 6240's mesh at team widths 1–16. Diagnosis (run 20261125-104559-e6f5): teams of 2 lose almost everywhere below 32768 points while 4 and 8 gain from about 15625 (so no member cap per point count); X77's real rows of 18432 already run on one member (depth-first, below `split_min_points_lines`) and 32768–36864 gain from 4 (0.63–0.93); real rows of 6144–12287 on a chain lost 1.32–2.69 because the split threshold counted n real points. Adopted on the Xeon 6240 class, Intel only: such rows are split by their complex points (`split_complex_rows`); 31 moved cases at 4, 6, 8 and 16 threads 0.570, none slower beyond the band, nothing moved at one thread (runs 20261125-112330-e202, -113445-9856, -114133-f403, -114820-78dd). Left: c2c rows of 6144–16384 points (radices 8–16 lose 1.07–1.22 at 4, odd radices gain; no size threshold separates them) and r2c 16384 (1.17 at 4).
+
 X81 and X82 (2026-11-25, cloud screen `screen-1125`, branch `exp/x81-x82-results`; rules pushed in c2f11e4 before the VMs started, PR 120 merged 09:53 UTC, after they started, without waiting for its ASan check): Google Cloud Spot, GCC 14.2. **Zen 2** (n2d-standard-16, EPYC 7B12, its own topology, `avx2`) keeps every rule Zen 3's key gives it: X72 arm A KEEP (0.745 over the 26 real rows it moves, band ±1.20 %), arm B KEEP (0.914 over 58), X73 TIE (8 unpinned threads: the client catalogue's batches 0.926 against a band of ±8.02 %, the standard batches 0.906 KEEP), none slower; no code change, and the verdicts reach other Zen 2 parts by their 16 MiB of L3 per complex (runs 20261125-095426-d1f0, -100331-a9cd, -101611-2ba1). **Ice Lake-SP** (n2-standard-16, X58's branch, `avx512`, run 20261125-095241-aafe, band ±2.73 %): X75 adopted (0.745 over 40 real rows, 24576–2^21 points) and X78 adopted (0.772 over 16 c2r rows), none slower: X58's branch now sets `depth_real_max_bytes` = 64 L2, `depth_real_min_bytes` = L2/8 + 1 and the fused c2r range L2/4 to 16 L2, the Xeon 6240's values; the rows of 2^22 and 2^23 points take the route unmeasured on Ice Lake. Plan notes moved exactly the expected cases in every run. No near-miss re-run or narrowing. Spend USD 0.40; campaign USD 15.95 of 20 before X80.
-X79 (2026-11-25, branch `exp/x79-team-state-pages`, PR 115; draft PR 116): X76's proposal, the team state on pages of its own in the workspace. It passed its rules on the Xeon 6240 (X16: c2c 864 × 384 backward at 16 threads unimodal at its alone time, 0.739 of its median; client catalogue 0.996, X16b 0.983, X8 0.992, X8b 0.988, nothing slower) and was neutral on the M5 Max (C6r 0.999, C6b 0.998), but cost the EPYC 7763's shortest 16-thread batch (c2c 8 × 4096 1.079, E16b; two cases past the band in E16r), wherever the state's words sat in its page. Adopted on the Xeon 6240's class only, by the maintainer's narrowing ("Yes, Xeon only", 2026-11-25): `machine_profile::team_state_page` = 4096 there, every other profile keeps `main`'s layout; the Xeon's code is what its runs judged, so no new run. Anchoring on the fix (X74's rules again): not adopted, the deciding X16r2 (20261125-100316-666c) keeps the in-place 750 × 4469 pair at 1.020 (X74's 864 × 384 loss is gone: 0.740); X8r (deciding, 0.961), X8b (0.688) and X16b (0.563) pass. The flag waits in draft PR 116 for the maintainer, with two ways to take it (teams of at most 8 lanes, or the whole class with the 2 % pair). Slurm 17083–17092 (Xeon), 518349–518383 (DMOG); nothing left running.
+
+X79 (2026-11-25, branch `exp/x79-team-state-pages`, PR 115; PR 116): X76's proposal, the team state on pages of its own in the workspace. It passed its rules on the Xeon 6240 (X16: c2c 864 × 384 backward at 16 threads unimodal at its alone time, 0.739 of its median; client catalogue 0.996, X16b 0.983, X8 0.992, X8b 0.988, nothing slower) and was neutral on the M5 Max (C6r 0.999, C6b 0.998), but cost the EPYC 7763's shortest 16-thread batch (c2c 8 × 4096 1.079, E16b; two cases past the band in E16r), wherever the state's words sat in its page. Adopted on the Xeon 6240's class only, by the maintainer's narrowing ("Yes, Xeon only", 2026-11-25): `machine_profile::team_state_page` = 4096 there, every other profile keeps `main`'s layout; the Xeon's code is what its runs judged, so no new run. Anchoring on the fix (X74's rules again): not adopted by its rules, the deciding X16r2 (20261125-100316-666c) keeps the in-place 750 × 4469 pair at 1.020 (X74's 864 × 384 loss is gone: 0.740); X8r (deciding, 0.961), X8b (0.688) and X16b (0.563) pass. The maintainer then took it for the whole class, the 2 % pair accepted ("Whole class", PR 116). Slurm 17083–17092 (Xeon), 518349–518383 (DMOG); nothing left running.
 
 ### Where FFTN stands
 
@@ -348,198 +372,74 @@ trail MKL's already); the column edge kernels' per-call set-up (counters: X44).
 
 ### Tasks
 
-As of 2026-11-17 midday.
+As of 2026-11-25. Features come first (the maintainer, 2026-11-25): phase 5, then phase 6. The
+acceptance gaps and performance follow-ups below wait until then unless the maintainer says
+otherwise.
 
-Done: phase 0 (0.1–0.10, 0.5b, B1, B2, X15); phase 1 tasks 1.1, 1.2, 1.5 (X1), 1.6 (X3),
-1.7 and 1.7b (X12, X12b), 1.3 (`x86_v2` and `avx`, X14; merging as pull request 48), with
-X8, X10, X18–X39 (the 1-D double push and the tail round); phase 2 tasks 2.1, 2.3 and 2.3b
-(X17), 2.4 (`planning::measure`, wisdom, P1 acceptance met on all three machines; the cost
-model P3 rejected on a first pass), 2.5 (`next_fast_length`, `relative_cost`; API agreed by
-the maintainer, `length_kind` in pull request 50); phase 3 tasks 3.1–3.3 with T1 and T5, 3.5 (Kokkos adapter, provisional API) with T3; phase 4 task 4.1's first part (X40:
-one-thread c2c planes 0.80–0.94 of FFTW). CI: a short required set on pull requests (no
-up-to-date rule), the full per-change set on main after each merge, weekly extended jobs.
+Done:
+- Phase 0: 0.1–0.10, 0.5b, B1, B2, X15; the client-catalogue baselines on the Mac, the Xeon 6240
+  and the EPYC 7763 (the check of 2026-11-24, PR 99).
+- Phase 1: tasks 1.1, 1.2, 1.3 (X14), 1.5 (X1), 1.6 (X3), 1.7 and 1.7b (X12, X12b); the exit
+  (X56, 2026-11-19) on eight machines and Emerald Rapids (X64); the 1-D push and the tail rounds
+  (X8, X10, X18–X39, X42, X46–X51, X53–X58, X62), recent Intel's two-pass rows (X69, X70, X80).
+- Phase 2: tasks 2.1, 2.3 and 2.3b (X17), 2.4 (`planning::measure`, wisdom; P1's acceptance met;
+  the cost model P3 rejected on a first pass), 2.5 (`next_fast_length`, `relative_cost`, P4); the
+  client's real rows (X72, X75, X77, X78, X81, X82); planning time (X71).
+- Phase 3: tasks 3.1–3.3 with T1 and T5, 3.5 (Kokkos, provisional API) with T3; anchored whole
+  transforms (X73, X74, X79), the team state's pages (X76, X79), single transforms on the Xeon's
+  mesh (X83).
+- Phase 4: 4.1 and 4.2 built (X40, X41, X43, X43b, X44, X52, X59, X63; X60 not adopted); 4.3
+  (PR 82, X61; `axes_*` agreed, provisional until the fusion design has been drafted against them).
+- Phase 5: the design agreed (DESIGN section 12, PR 94).
+- Machine profiles: the processor's vendor (PR 97), rules measured on one vendor keyed to it
+  (PR 121), topology recordings that carry it (PR 126).
+- CI: a short required set on pull requests (no up-to-date rule), the full per-change set on main
+  after each merge, weekly extended and emulation jobs.
 
-Open, by phase:
+Open, features first:
+- 5: plan edges, then row pipelines, callbacks and spectral pairs, X9, owner-computes and the
+  documents: steps 5.1–5.5 of the phase 5 table, in that order. **5.1 is in progress** (task Q,
+  2026-11-25, branches `task/5.1-edges-*`; its breakdown into PR-sized steps goes into the phase 5
+  table). Experiments X65–X68 are reserved.
+- 6: float tuning, the convenience layer, DCT/DST and DHT, split-complex layout, the C API,
+  Windows, AArch64 Linux and cloud tuning, the documents, the benchmark report, packaging, the
+  first release.
+- 7: on demand (FFTW3 shim, SVE, Python, more axes).
 
-- 0: the Xeon client-catalogue baseline.
-- 1: the exit: every mean target met on the local machines, and the tail rule (beyond noise)
-  too: Mac (FFTW 1.6 %, FFTL 2.1 %) and Xeon (FFTW 0.5 %, MKL 1.0 %) at X53's code, EPYC (FFTW
-  3.1 %: 64 × 2 and 15 × 2 backward, 64 × 16, 1018, 2048, 120; FFTL 0.5 %) at fa155c9 (X56), and
-  on six cloud cores (X56; Ice Lake after X58): **the phase 1 exit is met**. Left beyond noise:
-  131071 and 999983 against oneMKL on recent Intel, 160 and 240 there, the EPYC's six. Then X2 on the Mac above 1024; X4 on x86 and
-  for edge passes; X5 (twiddle modes); float radix-25 overrides.
-- 2: 2.2's acceptance in double c2c on AVX-512 (re-check after X37's batches of 16);
-  X6 (real-input codelets), X13; the cost model's second pass and `fbench calibrate`.
-- 3: T2, T4, T6; 3.6 to be checked against its acceptance;
-  threaded planes (4.1: large planes scale worse than FFTW's and oneMKL's threads, X41).
-- 4: 4.1's rest after X41, X43 and X44 (the Xeon's c2c planes from 64² and real planes against
-  MKL; the Mac's 32²–64², which needs a faster radix-64 codelet; the threaded gap to oneMKL on
-  the Xeon); 4.2 (volumes, X43b, pull request 55: built, scratch bound tested; acceptance not
-  met case by case: the 16-point outer leaf, 512 × 64 × 64 and 64 × 64 × 512 against FFTW,
-  oneMKL on the Xeon); 4.3 (pull request 82: acceptance met, the property tests; left: real
-  transforms along a strided halved axis without lanes, more than three axes, in-place real
-  with a strided halved axis, the EPYC's leaf-length cases within L1, see below).
-- 5–7: not started (5: fusion and pipelines, design agreed on 2026-11-24 in DESIGN section 12,
-  steps 5.1–5.5 rows first; 6: float tuning, convenience layer, DCT/DST,
-  C API, cloud tuning, docs, packaging, first release; 7: on demand, FFTW3 shim, SVE,
-  Python).
+Open, acceptance and exit checks (after the features):
+- 1 (optional): X2 above 1024 on the Mac; X4 on x86 and for edge passes; X5 (twiddle modes);
+  float radix-25 overrides. Left beyond noise against FFTW: the EPYC's 2048, 1024 backward and
+  72/100/120 (X62).
+- 2: 2.2's acceptance in double c2c on AVX-512; X6 (real-input codelets), X13; the cost model's second pass and `fbench
+  calibrate`; the exit check.
+- 3: T2, T4, T6; 3.6 against its acceptance; the exit check.
+- 4: 4.1's and 4.2's acceptance case by case (the Xeon's c2c planes from 64² and real planes
+  against oneMKL, threaded real planes against oneMKL, the EPYC's 2048 × 36 at 8 lanes, the Mac's
+  32²–64², 512 × 64 × 64, 64 × 64 × 512 and 128³); 4.3's leftovers (real transforms along a
+  strided halved axis without lanes, more than three axes, in-place real with a strided halved
+  axis); the planes and volumes exit.
+- The client catalogue's AArch64 Linux leg (lead).
+- CI: the Windows jobs install a pinned LLVM 23.1.5 (PR 81) because the runner image's LLVM is
+  older than its Visual Studio needs.
 
-X46 (x46 session, 2026-11-17, pull request 59): a depth-first chain (DESIGN 8.5) for the
-Xeon's rows of L2/4 to 4 L2 and the Mac's 8192–16384; see the experiment index.
+Performance follow-ups, parked for later:
+- the Xeon 6240's c2c rows of 6144–16384 points at 4 threads (radices 8–16 lose 1.07–1.22, odd
+  radices gain; a radix-aware split cost, X83);
+- r2c 16384 at 4–8 threads on the Xeon (1.17 at 4, X83; 1.07–1.16 in the client check);
+- the EPYC's r2c 10240 and c2r 10240 × 4 (1.00–1.04 of FFTW after X72), and c2r 20480 × 3 (1.05
+  at one thread in X72's run);
+- the Xeon's r2c 40960 × 6 at 6 threads (1.042 of FFTW, X77);
+- the Mac's real rows of 32768–40960 points (1.19–1.44 in the client check; X72 and X75 moved
+  only Zen 3 and the Xeon);
+- in-place 384² planes at 8 threads on Zen 3 (1.08–1.11 in the client check);
+- X80's out-of-place crossing on Granite Rapids, between 180 and 320 MiB;
+- why anchoring costs the in-place 750 × 4469 batch 2 % at 16 threads on the Xeon (1.020, X79);
+- why a state page of its own costs Zen 3's c2c 8 × 4096 at 16 threads (1.079, X79);
+- the phase 2 and phase 3 exit checks;
+- a client-catalogue re-check under the 1.05 rule (DESIGN 1.3), with the Xeon and the EPYC after
+  X72–X83.
 
-X51 (x51 session, 2026-11-18, pull request 66): X46's loose ends, adopted per profile (see the
-experiment index): Xeon 25000 (1.35 → 1.00 of FFTW), rows to 2²² and float; Mac and EPYC
-rows of a small odd part times a large power of two (0.73 of their time). Left: 100000 at
-FFTW's time (no split beat 20 × 5000), Granite Rapids (the cloud run was not made: its
-profile keeps its plans), float on the Mac (mixed rows gain, 24576 and 196608 do not) and the
-EPYC, 2²³–2²⁴ on the Xeon (float above 2²⁰), Zen 4 and Zen 5 (rule E is keyed to an L2
-under 1 MiB).
-
-X50 (x50 session, 2026-11-18, pull request 65): Bluestein convolutions of one copy on the
-depth-first chain with fused chirp passes (DESIGN 8.5); Xeon 131071 ÷ MKL 1.34 → 0.84,
-999983 1.44 → 1.05. Left: float, several copies, the EPYC, 999983 against MKL.
-
-In flight (lead session, 2026-11-17): task 1.3
-(`x86_v2` and `avx` targets, X14); task 4.1's next part (X41, task/4.1-planes-2, pull request 51, awaiting merge); a tidy fix. Task 2.4's acceptance is met (P1:
-rules within 5 % of measure on 93–100 % of cases on all three machines); its cost model (P3)
-was rejected on the first pass, so the long-row thresholds stay. Then the exit check again. Done, each merged with its
-pull request:
-- X42 (pull request 52): a radix-25 pass codelet with
-  `avx2` and `avx512` double overrides (EPYC 500–25000 0.87–0.89 of main, FFTN ÷ FFTW 3125
-  0.77 → 0.65; Xeon 100–25000 0.84–0.86, 3125 0.81 → 0.53, 25000 1.23 → 1.18); two-level
-  radix-25/32/64 codelets for 16 registers rejected (no gain with GCC: the two-pass plans at
-  512–2048 lose on IPC, not on spills); EPYC 512–2048 stay 1.13–1.22 of FFTW.
-- Task 2.5 (pull requests 41, 50): `next_fast_length(n, kind)` and `relative_cost<T>(n, isa)`
-  in `fftn/lengths.hpp`, a frozen reference table, the fast set to 2²⁰ pinned; API agreed
-  by the maintainer (2026-11-17), with `length_kind` for the proposed `bool`; P4: picks 0.11–0.96 of the awkward lengths
-  they replace; within 1.3 of the power of two above on 96 % (Mac), 78 % (x86).
-- Task 4.1, second part (X41, pull request 51, not merged yet): unrolled kernel calls for
-  multi-axis programs (S1, all targets), real planes' columns through the lanes on x86 (R3),
-  narrower column blocks on Apple for columns four to a page (L2); T1 (the narrower block's
-  phase joined) rejected at 0.96; fbench `THREADS` for FFTW and `mkl_omp`. Left: threaded
-  large planes, EPYC 32², the Xeon against MKL, real planes against MKL.
-- Task 4.1, first part (X40, pull request 43): columns of planes and volumes in blocks of
-  adjacent columns, column radices counted against the L1's ways, leaf loops as one call: 37
-  c2c planes ÷ FFTW Mac 1.44 → 0.88, EPYC 2.07 → 0.94, Xeon 1.49 → 0.80 (÷ MKL 1.87 → 1.00);
-  64³ 0.09–0.46 of main. Left: small planes in batches, EPYC 32², columns beyond L2, Xeon ÷
-  MKL at 16²–1000², real planes' complex axes, threaded planes; volumes' pencil blocks (4.2).
-- X39 (pull request 31): the Xeon's long rows: block widths, grids for powers of two beyond
-  L2/4, radix-20 passes in `avx512` double sequences and grid phases: Xeon ÷ FFTW 5000 1.04 →
-  0.89, 10000 0.96 → 0.84, 32768 1.51 → 1.29, 2²² 0.86 → 0.75, 25000 1.50 → 1.34, 100000
-  1.36 → 1.24; left: 16384 (needs a depth-first chain), 20000/25000/100000 (a radix-25
-  codelet). The `avx512` overrides also reach Zen 5 and Granite Rapids, unmeasured.
-- X39 (causes (5) and (6), pull request 31): on the Xeon profile (x86-64, private L2, small L3
-  per CPU) three-phase grids in blocks of at most 16, two-phase blocks within twice L1 and c2c
-  powers of two as grids beyond L2/4; FFTN ÷ FFTW 32768 1.51 → 1.29, 131072 1.20 → 1.09,
-  46080 1.33 → 1.26, 65536 in place 1.13 → 1.09 (run 20261116-220608-84fe); radix-64 grid
-  phases rejected. Arm D (after X38): radix-20 first passes in `avx512` double (300–25000),
-  radix-20 grid phases, r2c 65536 as a grid and c2c powers of two ≥ 2²⁰ out of place in two
-  phases (P1's Xeon misses): 0.905 over 26 changed cases (run 20261117-033154-673d); 5000
-  1.04 → 0.89 of FFTW, 10000 0.96 → 0.84, 25000 1.50 → 1.34, 100000 1.36 → 1.24. Still open:
-  25000, 20000, 100000 (1.24–1.34; a radix-25 pass), 16384 (1.23; a depth-first chain).
-- X37 (pull request 28): pair leaves for 18–30 points on every target (`avx512` borrowing
-  `avx2`'s), pair leaves for 8–16 on x86, a lighter leaf path on AArch64, fbench's single
-  library call: Xeon 18–30 points 1.24–1.32 → 0.64–0.71 of FFTW, batches of 16 ÷ MKL 1.57–1.71
-  → 0.94–1.01, Mac 20 points 1.55 → 1.01; exit cases over 1.05: Xeon 30 → 23, EPYC 36 → 30,
-  Mac 24 → 19. Left: EPYC 15 × 2 and 64 × 2 backward, 64 × 16; Mac 2 × 3 in place.
-- X38 (pull request 27): a radix-20 codelet and re-fitted `avx2` double sequences (EPYC 0.868
-  on nine lengths; exit cases over 1.05: 32 → 27); 512–2048 left (radix-32/64 codelets spill).
-- X36b (pull request 36): a Bluestein stage of C copies covers the whole line (EPYC 1018 1.53 →
-  1.12 of FFTW).
-- X37 (causes 2 and 3 of the exit check, pull request 28): pair leaves where none applied
-  (`avx2` 18, 22, 26, taken also by `avx512` plans for 18–30; NEON 18–30 points, C = 1) and
-  for 8–16 points on x86 (whole registers instead of the 128-bit leaf): Xeon 18–30 points
-  0.40–0.54 of their time, 16 × 16–256 0.59 (÷ MKL 1.57–1.71 → 0.94–1.01); EPYC 18–26
-  0.49–0.54, 16 × 16–4096 ÷ FFTW 1.16–1.26 → 0.89–0.93; Mac 20 points 1.55 → 1.01 of FFTW.
-  fbench's backend now calls what `plan::execute` calls (2–6 points 0.80–0.96). A lighter
-  leaf path (byte distances, the general path out of line) only on AArch64 (Mac 2–6 points
-  0.83–0.89; on the EPYC it lost). Left: EPYC 15 × 2 and 64 × 2 backward and 64 × 16 (FFTW
-  runs two rows per `ymm` with whole codelets), Xeon 2 and 4 points (1.10), Mac 2 × 3 in
-  place (1.39, a latency chain between executions). Found on the way: `main` 1fe3fe7 runs
-  single rows of 2–8 points 1.14–1.16 times as long as e8c2639 on the EPYC (X37's run
-  20261117-014755-1442; the execute path did not change: probably code placement).
-- X36 (pull request 30): Bluestein convolutions take the long-row radices beyond a profile
-  threshold and a capped power-of-two part; small copy counts become one stage; split layout
-  for single convolutions on x86; the EPYC's 65537 was a radix-16 Rader convolution: exit-
-  check primes now below FFTW on the Mac and the EPYC (131071 0.87–0.88, 999983 0.75–0.86,
-  4093 0.90–0.94, 65537 0.80); still over: EPYC 1018 (1.51), Xeon 131071 (1.28) and 999983
-  (1.10).
-- X35 (cloud, USD 1.64; campaign USD 3.51 of 20; pull request 25): on x86-64 a private L2 of
-  ≥ 2 MiB (Granite Rapids) gets its own profile, whatever its L3 per CPU: no X29/X32/X33
-  chains, grids and three phases beyond L2/2, two phases for power-of-two parts ≤ 2048
-  (`grid_two_part_bytes`). Granite Rapids: 30 changed cases 0.59–1.007 of main (262144
-  1.71 → 1.26 of FFTW, 100000 2.03 → 1.36, 0.97 of MKL); 1-D double ÷ FFTW 0.87 → 0.83.
-  Axion (Neoverse V2, also 2 MiB of L2) lost with it and keeps main's plans; the Mac, EPYC,
-  Zen 5 and Xeon 6240 unchanged. The 512 KiB–1 MiB rows (46080 1.62 of FFTW) still want a
-  measured choice (task 2.4).
-- Task 2.4, first milestone (pull request 26): `planning::rules`/`quick`/`measure`, the
-  budgets, `fftn::wisdom` (keyed by a build identifier), candidates from the rules'
-  thresholds; the API agreed by the maintainer; P1 first pass: rules within 5 % of measure
-  on 96.7 % (EPYC), 93.4 % (Mac, second pass), about 85 % (Xeon, re-runs queued); measure
-  never lost. Also the extended-CI fix (pull requests 23, 29).
-- X38 (cause (4), pull request 27, not merged: the verdict is the lead's): FFTW runs two
-  passes at 160–2048 with radix 20, 32 or 64 and radix-20 passes above; FFTN had no codelet
-  of 20. Arm R (a radix-20 codelet, a pass radix only, and `avx2` double overrides from X2's
-  search driver re-run on the EPYC with radix 20/32/64 candidates) takes the nine changed
-  lengths to 0.868 of main (240 0.82, 2000 0.82, 3600 0.81, 384 0.85), EPYC exit cases over
-  1.05 of FFTW 32 → 27 of 193; tracking 1.000; Xeon `avx2` 1.001; library +5.6 %. Rule (b)
-  fails by the letter on two cases whose plans do not change (60 × 3 1.036, 323 1.049 on the
-  re-run; code placement likely). 1024, 768, 2048, 512 unchanged: FFTN's best sequences are
-  the planner's; its radix-32/64 codelets spill (35 and 67 live values), so FFTW's two-pass
-  plans lose in FFTN (a generator follow-up).
-- X31b (cloud, USD 1.12; campaign USD 1.87 of 20): X32 holds on Zen 5 (long powers of two
-  0.73 of the grid; 65536 1.50 → 0.92 of FFTW). Granite Rapids reports a large shared L3,
-  gets the Zen profile and loses: X32's chains 1.06–1.69 of the grid (262144 1.31 → 1.75
-  of FFTW); where X29 makes chains, two-phase grids win (100000 0.66: 1.39 of FFTW, 0.97 of
-  MKL); where main makes three phases, X34's two lose (1.03–1.46). A third profile; a
-  measured choice (task 2.4) is the lasting answer.
-- X33 (lead (b), pull request 19): a real row's half-length power of two follows X32's chain
-  rule on Apple and Zen (EPYC long real rows 0.58–0.76 of main, FFTN ÷ FFTW 1.14–1.41 →
-  0.82–0.93, ÷ FFTL at 2²⁰ 1.76 → 1.03; Mac 0.69–0.97); the r2c pairing in the grid's last
-  phase on `avx512` and NEON (Xeon r2c 2¹⁸–2²⁰ 0.95–0.96; none on `avx2`). The pairing pass
-  was cheap: removing it saves 0–5 % (LESSONS 3.17).
-- X34 (lead (c), pull request 21): rows with an odd part ≥ 15 stay two-phase grids where a
-  private L2 has < 2 MiB of L3 per CPU behind it (`grid_two_odd_part`): Xeon 100000 2.03 →
-  1.44 of FFTW (MKL 1.34 → 0.95), 10⁶ 1.01 → 0.73, mixed rows 0.861 of main; chains rejected
-  there (1.05–1.45); Granite Rapids not covered (its VM's L3 gives it X29's chains).
-- X32 (lead (a), pull request 22): long power-of-two c2c rows stay chains
-  with FFTL.jl's radix sequences on Apple and on Zen-like caches (Mac long powers of two
-  0.57–0.94 of main, FFTN ÷ FFTW 1.16 → 0.87, ÷ FFTL.jl 1.34 → 1.00; EPYC 0.53–0.85, tracking
-  0.965); the Xeon keeps the grid (chains 1.06–1.50). X29's bimodal chains were the rules'
-  radix-16 passes on transparent huge pages. A scratch placement against 4K aliasing
-  (15–30 % for malloc'd buffers in a diagnostic) was neutral in fbench and not adopted.
-- X31 (cloud, USD 0.75): the push holds on Zen 5, Granite Rapids and Axion (above).
-- X30b (lead 3): plan tables on 64-byte boundaries (EPYC 0.986 double, 0.971 float on its
-  cases; nothing slower anywhere); compact (wr, wi) twiddles rejected again (single cases
-  up to 1.04–1.07, apparently the FMADDSUB arithmetic, not the storage); three passes at
-  4096 rejected (1.30–1.88).
-- The GCC 14/15 ASan crash in `avx512` code on the Xeon: a GCC code-generation bug on
-  ASan's fake stack (16.2 and Clang correct); sanitizer builds with GCC before 16 leave out
-  use-after-return instrumentation (pull request 18, LESSONS 6.4).
-- X28b (lead 4): pair leaves on x86 (two passes in registers), unit-stride leaves, 128-bit
-  leaves of 17–23: single c2c rows FFTN ÷ FFTW Xeon `avx512` 0.98 → 0.65, EPYC 0.94 →
-  0.73, Mac 0.80 → 0.76; tracking tier 0.95–0.99, nothing slower; library +2 %.
-- X29 (lead 5): Apple keeps lengths that are not powers of two as chains (Mac 46080 and
-  100000 0.62–0.65 of main, 0.74–0.76 of FFTW); Zen-like L3s keep rows whose power-of-two
-  part is ≤ 1024 points as chains (EPYC 46080 0.75, 100000 0.66: 1.52 → 1.14 and 1.00 of
-  FFTW); the c2r pairing in the grid's first gather on Apple (0.92–0.94); the real
-  footprint in the rule and all-chains up to half of L3 rejected (power-of-two chains of
-  1–2 MiB bimodal on the EPYC).
-- X30 (lead 3): two-pass `avx2` double plans at 256 and 512 (radix 32): EPYC 0.975 of main
-  on its cases, 256 0.905; twiddle storage (wr, wi) and 1024 = 16 × 64 rejected.
-- X28 (lead 4): 128-bit leaves on x86, a one-call entry, a flat path, kernels taking their
-  addresses as arguments: single rows 0.79–0.88 of main; tracking tier 0.95–0.96 on all
-  three machines, nothing slower.
-- X27 (lead 2): codelets of 17, 19, 23 and a Rader stage: those cases 0.24–0.31 of main;
-  library text +25 % (B3, for the maintainer).
-- X26 and X26b (lead 1): no copy prefetch on `avx2` (EPYC long rows 0.920); a padded grid
-  intermediate where the L2 is shared by a cluster (Mac long rows 0.976), nothing on x86;
-  cheaper copy loops and the prefetch by core rejected.
-- X23 amendment 4: masked partial runs for GCC builds (`FFTN_MASKED_TAILS`, `AUTO`: on
-  with GCC): float 0.53 of main on the Xeon's `avx512`, 0.72 on the EPYC, double
-  0.78–0.89; two whole-unit cases just past the limit kept as recorded exceptions (Xeon
-  `avx512` float 256 1.047, EPYC double 72 1.033).
-- X25 (the x86 gap's causes) is done; its verdicts are folded into the leads below.
+Notes kept from earlier sessions:
 
 Decided by the maintainer on 2026-11-24 (the earlier ones are in AGENTS.md section 6 and DESIGN
 15.5); the decision log in DESIGN section 19 has each:
@@ -591,9 +491,6 @@ place; none slower by the rules, though Granite's in-place gain fades at 320–5
 131072 1.016, 1024 × 32768 0.996). On the moved cases FFTN ÷ FFTW 0.91–0.93 → 0.81–0.84, ÷ oneMKL
 0.94–1.04 → 0.85–0.93; on Emerald three in-place batches stay at 1.03 of oneMKL. Arm W puts
 Granite's out-of-place crossing between 180 and 320 MiB (a low-priority follow-up).
-
-Still open: the CI's Windows jobs install a pinned LLVM 23.1.5 (PR 81) because the runner
-image's LLVM is older than its Visual Studio needs.
 
 ### Leads, one-dimensional double first
 
