@@ -1,4 +1,5 @@
 # fftn-sysfs-snapshot 1
+fftn/cpu_vendor	intel
 proc/self/status	Cpus_allowed_list:\t0-7
 sys/devices/system/cpu/cpu0/cache/index0/coherency_line_size	64
 sys/devices/system/cpu/cpu0/cache/index0/level	1

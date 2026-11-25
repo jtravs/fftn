@@ -10,13 +10,16 @@ Linux: <output> is a sysfs snapshot file (format in src/platform/file_source.hpp
 the files the sysfs reader reads (src/platform/topology_linux.cpp), for the online CPUs.
 /proc/self/status is reduced to its Cpus_allowed_list line, and the cgroup path in
 /proc/self/cgroup is renamed level by level (c1/c2/...) so that no job, user or service name
-is recorded; the cpu.max (or v1 cpu.cfs_*) files along that path are kept to match.
+is recorded; the cpu.max (or v1 cpu.cfs_*) files along that path are kept to match. The
+processor's vendor, which sysfs does not hold, is recorded as the entry fftn/cpu_vendor
+(from /proc/cpuinfo's vendor_id on x86; arm_other on AArch64), as FFTN names it.
 
 --from-tree converts a directory tree of such files (an older capture, or a hand-made
 synthetic machine) into a snapshot, taking every regular file in it.
 
 macOS: <output> is a file of the `sysctl` keys the macOS readers use (features and
-topology), in `sysctl` output form.
+topology), in `sysctl` output form, with the vendor as the key fftn.cpu_vendor (apple on
+Apple silicon; from machdep.cpu.vendor on an Intel Mac).
 
 The CPU model is printed on stdout, to name the fixture (by model, never by host name).
 Run it the way FFTN would run: inside the batch job or container whose limits should be
@@ -63,6 +66,7 @@ SYSCTL_PREFIXES = (
     "hw.optional.",
     "machdep.cpu.brand_string",
 )
+X86_VENDORS = {"GenuineIntel": "intel", "AuthenticAMD": "amd"}
 
 
 def parse_cpu_list(text: str) -> list[int]:
@@ -163,7 +167,13 @@ def capture_linux(root: Path) -> tuple[dict[str, str], str]:
         files["proc/self/status"] = "".join(f"{line}\n" for line in allowed)
     if (root / "proc/self/cgroup").is_file():
         capture_cgroup(root, files)
-    for line in (read(root, "proc/cpuinfo") or "").splitlines():
+    cpuinfo = (read(root, "proc/cpuinfo") or "").splitlines()
+    vendor_id = [line.split(":", 1)[1].strip() for line in cpuinfo if line.startswith("vendor_id")]
+    if vendor_id:
+        files["fftn/cpu_vendor"] = X86_VENDORS.get(vendor_id[0], "unknown")
+    elif platform.machine() in ("aarch64", "arm64"):
+        files["fftn/cpu_vendor"] = "arm_other"
+    for line in cpuinfo:
         if line.startswith("model name"):
             return files, line.split(":", 1)[1].strip()
     return files, ""
@@ -184,6 +194,14 @@ def capture_macos(out: Path) -> str:
         ["sysctl", "hw", "machdep.cpu.brand_string"], check=True, capture_output=True, text=True
     ).stdout
     kept = sorted(line for line in text.splitlines() if line.startswith(SYSCTL_PREFIXES))
+    if platform.machine() == "arm64":
+        vendor = "apple"
+    else:
+        found = subprocess.run(
+            ["sysctl", "-n", "machdep.cpu.vendor"], capture_output=True, text=True
+        ).stdout.strip()
+        vendor = X86_VENDORS.get(found, "unknown")
+    kept.insert(0, f"fftn.cpu_vendor: {vendor}")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text("".join(f"{line}\n" for line in kept))
     model = [line for line in kept if line.startswith("machdep.cpu.brand_string: ")]

@@ -347,6 +347,7 @@ topology topology_from_sysfs(const file_source& files, std::size_t page_size) {
   parts.page_size = page_size;
   parts.allowed_cpus = read_allowed(files);
   parts.cpu_quota = read_cpu_quota(files);
+  parts.vendor = recorded_vendor(files.read("fftn/cpu_vendor"), "fftn/cpu_vendor");
   std::map<unsigned, unsigned> class_of;
   parts.classes = read_classes(files, cpu_root, online, class_of);
   const std::map<unsigned, unsigned> node_of = read_nodes(files);

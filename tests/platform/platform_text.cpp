@@ -73,6 +73,7 @@ std::string topology_text(const fftn::detail::topology& t) {
   out << "source " << t.source << '\n';
   out << "os_cpu_ids " << (t.os_cpu_ids ? 1 : 0) << '\n';
   out << "page_size " << t.page_size << '\n';
+  out << "vendor " << (t.vendor ? fftn::detail::cpu_vendor_name(*t.vendor) : "none") << '\n';
   std::vector<unsigned> ids;
   ids.reserve(t.cpus.size());
   for (const auto& cpu : t.cpus) {

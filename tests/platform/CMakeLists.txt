@@ -40,12 +40,18 @@ set_tests_properties(platform.dump.system PROPERTIES
 add_test(NAME platform.dump.override_sysfs COMMAND fftn_platform_dump)
 set_tests_properties(platform.dump.override_sysfs PROPERTIES
   ENVIRONMENT "FFTN_TOPOLOGY=${platform_data}/linux-synthetic-2socket-smt.sysfs"
-  PASS_REGULAR_EXPRESSION "source linux-sysfs\n.*logical_cpus 8: 0-7\n")
+  PASS_REGULAR_EXPRESSION "source linux-sysfs\n.*vendor none\nlogical_cpus 8: 0-7\n")
+
+# A recording that states its vendor plans with it whatever the host's (DESIGN.md 13.5).
+add_test(NAME platform.dump.override_vendor COMMAND fftn_platform_dump)
+set_tests_properties(platform.dump.override_vendor PROPERTIES
+  ENVIRONMENT "FFTN_TOPOLOGY=${platform_data}/linux-intel-xeon-gold-6240.sysfs"
+  PASS_REGULAR_EXPRESSION "vendor intel\n.*\nplanning_vendor intel\n")
 
 add_test(NAME platform.dump.override_sysctl COMMAND fftn_platform_dump)
 set_tests_properties(platform.dump.override_sysctl PROPERTIES
   ENVIRONMENT "FFTN_TOPOLOGY=${platform_data}/macos-apple-m5-max.sysctl"
-  PASS_REGULAR_EXPRESSION "source macos-sysctl\n.*logical_cpus 18: 0-17\n")
+  PASS_REGULAR_EXPRESSION "source macos-sysctl\n.*vendor apple\nlogical_cpus 18: 0-17\n.*planning_vendor apple\n")
 
 add_test(NAME platform.dump.override_missing COMMAND fftn_platform_dump)
 set_tests_properties(platform.dump.override_missing PROPERTIES
