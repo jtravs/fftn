@@ -503,7 +503,7 @@ TEST(Real, RulesTakeTheDepthFirstHalfLengthWithTheXeonsFields) {
         << describe_real(40960, r2c, *with);
   }
   // Below L2/4 (20480's half length, 160 KiB): none, unless the real rows' own lower limit
-  // (X75 arm B, L2/8) reaches it; 16384's half length is L2/8 itself, 12288's below.
+  // reaches it (X75 arm B; L2/8 here: 16384's half length is L2/8 itself, 12288's below).
   EXPECT_EQ(describe_real(20480, true, *with).find("depth-first"), std::string::npos);
   s.profile.depth_real_min_bytes = l2 / 8;
   for (const bool r2c : {true, false}) {

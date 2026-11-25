@@ -250,7 +250,7 @@ struct machine_profile {
   std::size_t depth_real_max_bytes = 0;
   // Such a real row's half length takes the chain from the smaller of depth_min_bytes and this
   // (the largest value: no lower limit of its own; experiment X75): on the Xeon 6240 real rows
-  // whose half length is from L2/8 gained (18432-24576 points, 0.73-0.92 of the time) where
+  // whose half length is above L2/8 gained (18432-24576 points, 0.73-0.95 of the time) where
   // c2c rows of that length had not (X46: 8192 points, L2/8, gained nothing).
   std::size_t depth_real_min_bytes = std::numeric_limits<std::size_t>::max();
   // The L1 data cache's line in bytes: a lanes column phase's block holds at least a line of
