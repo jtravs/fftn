@@ -1,6 +1,7 @@
 # X80: no in-place limit, and a higher out-of-place one, for the 2 MiB-L2 key's two-pass rows
 
-- **Status:** planned (decision rules below; the judging run follows their merge)
+- **Status:** done: adopted (Sapphire 0.899, Granite 0.903, Emerald 0.894 over the 22 moved
+  cases, none slower by the rules; no clause used)
 - **Owner:** x80 session, 2026-11-25
 - **Phase / task:** 1 (follows X69 and X70)
 
@@ -194,8 +195,109 @@ before the run.
 
 ## Results
 
-Pending.
+Google Cloud Spot VMs in us-central1-a, 2026-11-25, GCC 14.2 Release, campaign commit 52b19ea
+(branch `exp/cloud-x80`: the implementation branch's e03c602 plus the campaign-only fbench
+options; library code identical), `avx512`, double, one thread (taskset on CPU 2), hot cases,
+statistic median. The rules were pushed (11cdb03, PR 118) before any VM was created. Each job
+checked the CPU model and that the VM's caches give the 2 MiB-L2 key with an L2 of exactly
+2 MiB before running. Run J stopped on its 15-minute budget after 11–14 valid rounds; one round
+per run was under load (load average max 4.2–5.9 against a median of 1.0, other processes at most
+0.04 cores). Scores over the moved cases (notes differ between N and O), by `screen_score.py`;
+`fbench show` gives the same ratios and verdicts (intervals differ in the third decimal).
+
+**Run J, the rules:**
+
+| Family | CPU | VM | Run | Rounds | Band | Moved | N ÷ O geomean [95 %] | Slower | Rule | Verdict |
+|---|---|---|---|---:|---:|---:|---|---:|---|---|
+| Sapphire Rapids | Xeon Platinum 8481C, model 143 | c3-standard-8 (4 CPUs) | 20261125-101417-00f2 | 11 | ±1.43 % | 22 of 27 | 0.899 [0.889, 0.907] | 0 | adopt | adopt |
+| Granite Rapids | Xeon 6985P-C, model 173 | c4-standard-16 (8 CPUs) | 20261125-100534-5254 | 14 | ±1.64 % | 22 of 27 | 0.903 [0.895, 0.905] | 0 | adopt | adopt |
+| Emerald Rapids | Xeon Platinum 8581C, model 207 | c4-standard-16 (8 CPUs) | 20261125-103830-9f42 | 13 | ±1.42 % | 22 of 27 | 0.894 [0.889, 0.902] | 0 | reach | keep |
+
+N ÷ O per moved case (footprint: rows in place, rows and output out of place):
+
+| Case | Footprint | Sapphire | Granite | Emerald |
+|---|---:|---:|---:|---:|
+| 1024 in place, 512 rows | 8 MiB | 0.901 | 0.907 | 0.912 |
+| 1024 in place, 2048 rows | 32 MiB | 0.895 | 0.920 | 0.900 |
+| 1024 in place, 2048 rows, backward | 32 MiB | 0.913 | 0.957 | 0.915 |
+| 1024 in place, 8192 rows | 128 MiB | 0.962 | 0.871 | 0.880 |
+| 1024 in place, 32768 rows | 512 MiB | 0.955 | 0.996 (tie) | 0.965 |
+| 160 out of place, 2048 rows | 10 MiB | 0.882 | 0.897 | 0.879 |
+| 160 out of place, 4096 rows | 20 MiB | 0.882 | 0.897 | 0.884 |
+| 160 out of place, 16384 rows | 80 MiB | 0.870 | 0.905 | 0.877 |
+| 160 out of place, 16384 rows, backward | 80 MiB | 0.895 | 0.888 | 0.887 |
+| 160 out of place, 24576 rows | 120 MiB | 0.905 | 0.870 | 0.903 |
+| 240 out of place, 2048 rows | 15 MiB | 0.841 | 0.870 | 0.848 |
+| 240 out of place, 4096 rows | 30 MiB | 0.844 | 0.872 | 0.846 |
+| 240 out of place, 16384 rows | 120 MiB | 0.964 | 0.888 | 0.884 |
+| 240 out of place, 16384 rows, backward | 120 MiB | 0.951 | 0.881 | 0.885 |
+| 160 in place, 4096 rows | 10 MiB | 0.870 | 0.891 | 0.895 |
+| 160 in place, 16384 rows | 40 MiB | 0.865 | 0.892 | 0.894 |
+| 160 in place, 65536 rows | 160 MiB | 0.901 | 0.940 | 0.912 |
+| 160 in place, 131072 rows | 320 MiB | 0.903 | 1.016 [1.003, 1.039] | 0.909 |
+| 240 in place, 4096 rows | 15 MiB | 0.873 | 0.843 | 0.878 |
+| 240 in place, 16384 rows | 60 MiB | 0.909 | 0.828 | 0.870 |
+| 240 in place, 65536 rows | 240 MiB | 0.900 | 0.906 | 0.944 |
+| 240 in place, 131072 rows | 480 MiB | 0.912 | 0.930 | 0.946 |
+
+Every interval lies below 1 except two on Granite: 1024 × 32768 in place (0.996 [0.963, 1.021],
+a tie) and 160 × 131072 in place (1.016 [1.003, 1.039]: above 1 but within the band and far from
+the rules' 1 + max(band, 3 %) = 1.03 for the whole interval). So no moved case is slower by the
+rules on any family, and neither the near-miss nor the narrowing clause applies. On Granite the
+in-place gain fades at the two largest batches of 1024 and 160 (512 and 320 MiB) but not of 240
+(480 MiB, 0.930).
+
+**Moves nothing else.** Run C (tracking tier, 61 cases; runs 20261125-102948-6195 Sapphire,
+20261125-102119-a6c9 Granite, 20261125-105349-bbbd Emerald): no case's notes differ between O and
+N. Run J: exactly the 22 expected cases moved on each VM (1024 in place to 32 × 32, 160 to 8 × 20,
+240 to 12 × 20); the four held-out cases and 1024 out of place at 128 rows kept O's radices
+(`x80_extra.py notes`: no unexpected case). 1024 out of place at 128 rows, N ÷ O: 0.996, 0.998,
+1.001.
+
+**Arm W, informative: the out-of-place crossing** (every row of the three lengths two-pass;
+W ÷ O on the held-out cases, which N runs on O's plans):
+
+| Case | Rows and output | Sapphire | Granite | Emerald |
+|---|---:|---:|---:|---:|
+| 160 out of place, 32768 rows | 160 MiB | 0.912 | 0.890 | 0.878 |
+| 240 out of place, 24576 rows | 180 MiB | 0.952 | 0.925 | 0.952 |
+| 160 out of place, 65536 rows | 320 MiB | 0.908 | 1.051 [1.045, 1.063] | 0.850 |
+| 240 out of place, 65536 rows | 480 MiB | 0.947 | 1.044 [1.032, 1.051] | 0.999 (tie) |
+
+The two-pass radices out of place still win at 160 and 180 MiB on all three families, so the
+crossing lies past the new limit (128 MiB): on Granite between 180 and 320 MiB, as X70's arm W had
+it (1.02–1.03 at 320 and 480 MiB); on Sapphire none to 480 MiB; on Emerald at about 480 MiB for
+240. 1024 out of place at 128 rows (4 MiB, past the L2): W ÷ O 0.982, 0.982, 0.951, intervals
+touching 1 on Sapphire and Granite.
+
+**FFTN against the libraries on the 22 moved cases** (geometric means, `x80_extra.py refs`; O
+before, N after; FFTW 3.3.11 MEASURE with all its SIMD, oneMKL 2026.0.2):
+
+| Family | ÷ FFTW, O → N | ÷ oneMKL, O → N | worst moved case after, ÷ FFTW / ÷ oneMKL |
+|---|---|---|---|
+| Sapphire Rapids | 0.909 → 0.814 | 0.982 → 0.878 | 0.915 / 0.958 |
+| Granite Rapids | 0.934 → 0.842 | 0.937 → 0.848 | 0.903 / 0.950 |
+| Emerald Rapids | 0.922 → 0.827 | 1.036 → 0.926 | 0.953 / 1.033 |
+
+On Emerald three moved cases stay slightly behind oneMKL (1024 × 8192 in place 1.033, 240 ×
+65536 and × 131072 in place 1.032 and 1.028; before 1.09–1.16); every other moved case is now
+faster than both libraries on all three families.
 
 ## Verdict
 
-Pending.
+- **Adopted on the 2 MiB-L2 key** as committed: in `set_grid_sizes`' `large_l2` branch
+  `fit_row_bytes` and `fit_in_place_bytes` no limit, `fit_out_of_place_bytes` (new) 64 times the
+  L2, `fit_long_row_bytes` the L2. Sapphire and Granite pass the adopt rule (0.899, 0.903), Emerald
+  the reach rule (0.894); none of the 66 moved cases is slower by the rules; nothing else moved.
+  Neither the near-miss nor the narrowing clause was used.
+- On the moved cases FFTN goes from 0.91–0.93 to 0.81–0.84 of FFTW's time and from 0.94–1.04 to
+  0.85–0.93 of oneMKL's.
+- In place the two-pass radices won to 512 MiB of rows on Sapphire and Emerald and to 480 MiB
+  for 240 on Granite, but faded on Granite at 320 MiB of 160 and 512 MiB of 1024 (1.016, 0.996).
+  No in-place limit is kept: the rule judges the moved cases together and none failed it.
+- **Follow-up, not judged:** out of place the crossing lies between 180 and 320 MiB on Granite
+  (W ÷ O 0.93 at 180 MiB, 1.04–1.05 at 320 and 480 MiB), past the new 128 MiB limit. 128 times the
+  L2 (256 MiB) would take the 180 MiB win but needs a rule and a case between 180 and 320 MiB; the
+  gain is confined to batches of 128–256 MiB, so it is low priority.
+- Spend: USD 0.59 (three VMs); campaign USD 16.54 of 20
+  ([cloud-ledger-2026-11.md](cloud-ledger-2026-11.md)).
