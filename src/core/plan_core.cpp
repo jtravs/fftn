@@ -9,6 +9,7 @@
 #include "core/plan_core.hpp"
 
 #include "core/candidates.hpp"
+#include "core/drive.hpp"
 #include "core/driver.hpp"
 #include "core/edge_driver.hpp"
 #include "core/edges.hpp"
@@ -2226,6 +2227,12 @@ std::shared_ptr<plan_core> build_plan_core(const shape_view& s, const options& o
                   settings.profile.column_wide_bytes != 0)) ||
        c->adjacent_team_chain) &&
       !settings.team_program) {
+    // A team core of a plan with edges would be built from the tagged settings without the
+    // edges: real kernels reading the tags, and no edge records for the edge driver. Plans with
+    // edges are rows of the chain (5.1a), which take none; 5.1b must pass the edges here first.
+    if (with_edges) {
+      throw std::logic_error("fftn: internal: a team core of a plan with edges (task 5.1b)");
+    }
     build_settings team = settings;
     team.team_program = true;
     std::shared_ptr<const plan_core> t = build_plan_core(s, opts, team);
@@ -2276,18 +2283,32 @@ make_plan_core_with_edges(const shape_view& shape, const options& opts, const ed
 
 namespace {
 
-// execute_core's path for every program but leaf rows (X37): out of line on AArch64, where
-// a frame shared with the path of leaf rows cost single rows of 2-6 points 6-9 % on the
-// M5 Max; inline elsewhere, since out of line it slowed single rows of 31-300 points by
-// 3-13 % on the EPYC 7763 (GCC 16) while its gain on leaf rows did not survive without the
-// leaves' byte distances (passes/access.inl).
+// A serial execution leaves the workspace ready for the next team execution to set its
+// state up afresh (team_state.hpp): the scratch below overlaps that state, and a team
+// that skipped an execution must not carry its state into the next one
+// (TeamExecute.ResetAfterASkippedExecution, which a plan of leaf rows failed until X28b).
+[[gnu::always_inline]] inline void reset_team_state(const workspace& ws) noexcept {
+  const sync_word team = workspace_access::team_word(ws);
+  if (team.load(std::memory_order_relaxed) != 0) {
+    team.store(0, std::memory_order_relaxed);
+  }
+}
+
+// execute_core's path for every program but leaf rows (X37), on a driver (core/drive.hpp):
+// out of line on AArch64, where a frame shared with the path of leaf rows cost single rows of
+// 2-6 points 6-9 % on the M5 Max; inline elsewhere, since out of line it slowed single rows of
+// 31-300 points by 3-13 % on the EPYC 7763 (GCC 16) while its gain on leaf rows did not
+// survive without the leaves' byte distances (passes/access.inl).
+// State: the driver's state (edge_drive: the factor cursors), none for plain_drive, so that
+// its instantiation takes main's parameters.
+template <class Drive, class... State>
 #if FFTN_ARCH_AARCH64
 [[gnu::noinline]]
 #else
 [[gnu::always_inline]] inline
 #endif
 void execute_program(const plan_core& core, std::size_t first, std::size_t count, const void* in,
-                     void* out, const workspace& ws) noexcept {
+                     void* out, const workspace& ws, const State&... state) noexcept {
   assert(first <= core.prog.transforms && count <= core.prog.transforms - first &&
          "fftn: execute_transforms beyond the batch");
   assert((!core.in_place || in == out) && "fftn: in-place plan executed with in != out");
@@ -2308,10 +2329,12 @@ void execute_program(const plan_core& core, std::size_t first, std::size_t count
     b = base + core.offset_b;
     block = core.block_elements != 0 ? base + core.offset_block : nullptr;
   }
-  if (core.prog.flat && first == 0 && count == 1) {
-    // One transform, the whole batch or its first (X28): no slot_addresses.
-    run_flat_first(core.prog, in, out, a, b, block);
-    return;
+  if constexpr (Drive::flat_shortcut) {
+    if (core.prog.flat && first == 0 && count == 1) {
+      // One transform, the whole batch or its first (X28): no slot_addresses.
+      run_flat_first(core.prog, in, out, a, b, block);
+      return;
+    }
   }
   const slot_addresses at{
       .in = static_cast<const std::byte*>(in),
@@ -2320,7 +2343,7 @@ void execute_program(const plan_core& core, std::size_t first, std::size_t count
       .a = a,
       .b = b,
   };
-  run_transforms(core.prog, first, count, at);
+  Drive::run(core, first, count, at, state...);
 }
 
 } // namespace
@@ -2328,14 +2351,7 @@ void execute_program(const plan_core& core, std::size_t first, std::size_t count
 void execute_core(const plan_core& core, std::size_t first, std::size_t count, const void* in,
                   void* out, const workspace& ws) noexcept {
   assert(ws.size() >= core.bytes && "fftn: workspace smaller than plan::workspace_bytes()");
-  // A serial execution leaves the workspace ready for the next team execution to set its
-  // state up afresh (team_state.hpp): the scratch below overlaps that state, and a team
-  // that skipped an execution must not carry its state into the next one
-  // (TeamExecute.ResetAfterASkippedExecution, which a plan of leaf rows failed until X28b).
-  const sync_word team = workspace_access::team_word(ws);
-  if (team.load(std::memory_order_relaxed) != 0) {
-    team.store(0, std::memory_order_relaxed);
-  }
+  reset_team_state(ws);
   if (core.prog.leaf_rows) {
     // Rows of leaves use no scratch and need no slot_addresses (driver.hpp).
     assert(first <= core.prog.transforms && count <= core.prog.transforms - first &&
@@ -2347,7 +2363,7 @@ void execute_core(const plan_core& core, std::size_t first, std::size_t count, c
     }
     return;
   }
-  execute_program(core, first, count, in, out, ws);
+  execute_program<plain_drive>(core, first, count, in, out, ws);
 }
 
 void execute_all(const plan_core& core, const void* in, void* out, const workspace& ws) noexcept {
@@ -2360,35 +2376,18 @@ void execute_core(const plan_core& core, std::size_t first, std::size_t count, c
     execute_core(core, first, count, in, out, ws);
     return;
   }
-  // A plan whose edges have factors runs on the edge driver (core/edge_driver.hpp), with the
-  // factor cursors starting at the arrays. The entry path of other plans above is left as it
-  // was (X28, X37).
+  // A plan whose edges have factors runs on the edge driver (core/drive.hpp, edge_drive), with
+  // the factor cursors starting at the arrays: execute_core's path above without its shortcuts
+  // (programs with factor edges are walked).
+  execute_core_cursors(core, first, count, in, out, ws, cursors_of(args, core.factor_args));
+}
+
+void execute_core_cursors(const plan_core& core, std::size_t first, std::size_t count,
+                          const void* in, void* out, const workspace& ws,
+                          const factor_cursors& f) noexcept {
   assert(ws.size() >= core.bytes && "fftn: workspace smaller than plan::workspace_bytes()");
-  assert(first <= core.prog.transforms && count <= core.prog.transforms - first &&
-         "fftn: execute_transforms beyond the batch");
-  assert((!core.in_place || in == out) && "fftn: in-place plan executed with in != out");
-  assert((core.in_place || in != out) && "fftn: out-of-place plan executed with in == out");
-  const sync_word team = workspace_access::team_word(ws);
-  if (team.load(std::memory_order_relaxed) != 0) {
-    team.store(0, std::memory_order_relaxed);
-  }
-  if (count == 0) {
-    return;
-  }
-  const factor_cursors cursors = cursors_of(args, core.factor_args);
-  slot_addresses at{
-      .in = static_cast<const std::byte*>(in),
-      .out = static_cast<std::byte*>(out),
-  };
-  if (core.bytes != 0) {
-    std::byte* raw = ws.memory().data();
-    const auto address = reinterpret_cast<std::uintptr_t>(raw);
-    std::byte* base = raw + (64 - address % 64) % 64;
-    at.a = base;
-    at.b = base + core.offset_b;
-    at.block = core.block_elements != 0 ? base + core.offset_block : nullptr;
-  }
-  run_edge_transforms(core.prog, core.edge_records, first, count, at, cursors);
+  reset_team_state(ws);
+  execute_program<edge_drive>(core, first, count, in, out, ws, f);
 }
 
 void execute_all(const plan_core& core, const void* in, void* out, const workspace& ws,

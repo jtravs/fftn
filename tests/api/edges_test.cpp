@@ -630,6 +630,108 @@ TEST(EdgesDeathTest, MissingFactorArraysAbort) {
   const cvec<double> f(32);
   EXPECT_DEATH(p.execute(x.data(), y.data(), ws, {.in_factor = f.data()}),
                "without the factor arrays");
+
+  // Teams of two (one member present does everything) and an executor, on rows long enough
+  // to be shared out, through the plain overloads and through the twins with no array.
+  const fftn::plan<C, C> rows(fftn::rows_c2c<double>(16384, 4, fftn::direction::forward), {},
+                              {.in = {.mul = {.kind = cplx, .axis_strides = {1}}}});
+  cvec<double> lx(16384 * 4);
+  cvec<double> ly(16384 * 4);
+  fftn::workspace wide(rows, 4);
+  for (const fftn::completion done : {fftn::completion::all, fftn::completion::own}) {
+    EXPECT_DEATH(rows.execute(lx.data(), ly.data(), fftn::team{.rank = 0, .size = 2}, wide, done),
+                 "without the factor arrays");
+    EXPECT_DEATH(rows.execute(lx.data(), ly.data(), fftn::team{.rank = 0, .size = 2}, wide, done,
+                              fftn::exec_args{}),
+                 "without the factor arrays");
+  }
+  EXPECT_DEATH(
+      {
+        const fftn::thread_pool pool(4);
+        rows.execute(lx.data(), ly.data(), pool, wide);
+      },
+      "without the factor arrays");
+  EXPECT_DEATH(
+      {
+        const fftn::thread_pool pool(4);
+        rows.execute(lx.data(), ly.data(), pool, wide, {});
+      },
+      "without the factor arrays");
+}
+
+// Several batch dimensions with factor strides of both signs, against the reference: a fused
+// input factor and a separate, accumulated output factor, serial and by a team of three.
+TEST(Edges, SeveralBatchDimensions) {
+  using C = std::complex<double>;
+  const std::size_t n = 20;
+  fftn::shape<C, C> s;
+  s.axes = {{.n = n}};
+  s.batches = {{.count = 3}, {.count = 3}};
+  // Input factor: rows of n along the axis, batch strides -3n and n (zero at the middle).
+  const std::ptrdiff_t ni = static_cast<std::ptrdiff_t>(n);
+  const std::vector<std::ptrdiff_t> in_batch{-3 * ni, ni};
+  // Output factor (real): stride -1 along the axis, batch strides 2 and -7.
+  const std::vector<std::ptrdiff_t> out_batch{2, -7};
+  const fftn::plan<C, C> p(
+      s, {},
+      {.in = {.mul = {.kind = cplx, .axis_strides = {1}, .batch_strides = in_batch}},
+       .out = {.scale = 0.5,
+               .mul = {.kind = real, .axis_strides = {-1}, .batch_strides = out_batch},
+               .accumulate = true}});
+  fftn::test::input_source src(0x3B47CULL);
+  const cvec<double> x = src.complexes<double>(9 * n);
+  const cvec<double> init = src.complexes<double>(9 * n);
+  // Spans: input offsets from -6n to 2n + n - 1, output from -(n - 1) - 14 to 4.
+  const cvec<double> fin = src.complexes<double>(9 * n);
+  const std::ptrdiff_t fin_zero = 6 * ni;
+  const std::vector<double> fout = src.reals<double>(n + 20);
+  const std::ptrdiff_t fout_zero = ni - 1 + 14;
+  const fftn::exec_args args{.in_factor = fin.data() + fin_zero,
+                             .out_factor = fout.data() + fout_zero};
+  fftn::workspace ws(p, 3);
+  cvec<double> y = init;
+  p.execute(x.data(), y.data(), ws, args);
+  fftn::test::outcome o;
+  for (std::size_t b0 = 0; b0 < 3; ++b0) {
+    for (std::size_t b1 = 0; b1 < 3; ++b1) {
+      const std::size_t t = b0 * 3 + b1;
+      const auto i0 = static_cast<std::ptrdiff_t>(b0);
+      const auto i1 = static_cast<std::ptrdiff_t>(b1);
+      std::vector<C> xin(n);
+      for (std::size_t j = 0; j < n; ++j) {
+        const std::ptrdiff_t at =
+            fin_zero + static_cast<std::ptrdiff_t>(j) + in_batch[0] * i0 + in_batch[1] * i1;
+        xin[j] = x[t * n + j] * fin[static_cast<std::size_t>(at)];
+      }
+      const auto exact = fftn::test::reference::c2c(-1, xin);
+      std::vector<fftn::test::exact_complex> want(n);
+      cvec<double> got(n);
+      for (std::size_t k = 0; k < n; ++k) {
+        const std::ptrdiff_t at =
+            fout_zero - static_cast<std::ptrdiff_t>(k) + out_batch[0] * i0 + out_batch[1] * i1;
+        const C e(exact[k].re.hi, exact[k].im.hi);
+        want[k] =
+            fftn::test::exact_from(init[t * n + k] + e * fout[static_cast<std::size_t>(at)] * 0.5);
+        got[k] = y[t * n + k];
+      }
+      o.within(fftn::test::compare<double>(std::span<const C>(got), want),
+               fftn::test::derived_tolerance<double>(n, fftn::test::fftn_bound(n)) +
+                   fftn::test::input_rounding<double>() * 4,
+               "transform " + std::to_string(t));
+    }
+  }
+  EXPECT_TRUE(o.passed()) << o.detail() << p.describe();
+  cvec<double> teamed = init;
+  std::vector<std::thread> members;
+  for (int r = 1; r < 3; ++r) {
+    members.emplace_back(
+        [&, r] { p.execute(x.data(), teamed.data(), fftn::team{.rank = r, .size = 3}, ws, args); });
+  }
+  p.execute(x.data(), teamed.data(), fftn::team{.rank = 0, .size = 3}, ws, args);
+  for (std::thread& m : members) {
+    m.join();
+  }
+  EXPECT_TRUE(same_bits(teamed, y));
 }
 
 // Factor strides on dimensions of one point are ignored, as the shape's are.
