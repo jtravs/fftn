@@ -141,9 +141,9 @@ X74's rules unchanged, with A = BA and M = B, judged on X8, X8b, X16 and X16b:
 Builds: M = 63c2737 (rules), B = 9b9875a (fix). Stores in `bench-out/runs/` of the submitting
 worktree.
 
-**Declared during the runs, before the runs they name started:**
+**Near-miss re-runs** (the rules' clause, committed in 63c2737):
 - C6 (Mac) missed the means criterion by less than its band (weighted B ÷ M 1.001 against 1.00,
-  band ±1.11 %): one Mac re-run, C6r, decides.
+  band ±1.11 %): one Mac re-run, C6r, decides (started at once, 06:38Z; recorded here after).
 - E16 (EPYC, node20 at load 60–72, band ±6.56 %) missed the means criterion by less than its band
   (weighted 1.001): one `--serial` re-run, E16r, decides; it runs on node18 (idle at
   submission). E16b had started on the loaded node20 and was cancelled after 26 s (Slurm 518352,
