@@ -68,10 +68,6 @@ struct machine_profile {
   // 20261114-182645-10c9: 512 and 1024 within the band over the rows worth splitting,
   // 2048 1.03, 4096 1.14; the largest within the band).
   std::size_t min_points_per_member = 1024;
-  // Rule 3 where a group has fewer transforms than members, so that it splits every one (a
-  // single transform above all): at least this many points per member (0: min_points_per_member).
-  // set_grid_sizes sets it on the Xeon 6240's class (experiment X83).
-  std::size_t few_points_per_member = 0;
   // Rule 3: split a transform only from this size, by cache-group type (T5, S1): 6144 on a
   // CCX (runs 20261114-175237-ee55 at 8 lanes and 20261114-180642-f917 at 64: a lone
   // 4096-point row split lost 1.33 against whole behind a 64-thread OpenMP executor, an r2c
@@ -93,6 +89,13 @@ struct machine_profile {
   // set_grid_sizes sets it where each core has its own L2: on the M5 Max, whose cluster
   // shares L2, the real 96^2 and 100^2 planes it would leave whole took 1.3 times as long.
   bool split_complex_points = false;
+  // A real row whose work graph is a chain's stages (no phase of lines: not a depth-first or
+  // grid plan) is split by its complex points too, n / 2 + 1 (core/plan_core.cpp; experiment
+  // X83). Its phases share a half-length complex chain and a pairing, the work of n / 2 complex
+  // points, and on the Xeon 6240 (`omp::executor`, single rows) teams of 4 and 8 ran the real
+  // rows of 6400-10240 points 1.32-2.69 times slower than one thread. set_grid_sizes sets it on
+  // the Xeon 6240's class (Intel only), where it was measured.
+  bool split_complex_rows = false;
   int mesh_group_lanes = 8;
   // Rule 2: leftover transforms after the whole ones are split only from this size (T5,
   // S3, run 20261114-182042-1f0c: at 8 lanes leftovers of 4096 points gained 0.85-0.98 and

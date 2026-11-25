@@ -39,8 +39,8 @@
 //                    no other data shares the page of the team state (experiment X76)
 //   CHUNK_POINTS=P   points per chunk of a stage (build_settings::chunk_points)
 //   NS_PER_WORK, DISPATCH_NS, INLINE_MULTIPLE, SYNC_NS, MIN_POINTS_PER_MEMBER,
-//   FEW_POINTS_PER_MEMBER, SPLIT_MIN_POINTS, SPLIT_MIN_POINTS_MESH, MESH_GROUP_LANES,
-//   REMAINDER_SPLIT_MIN_POINTS, SPIN_NS, YIELD_NS, CLAIM_DIVISOR
+//   SPLIT_MIN_POINTS, SPLIT_MIN_POINTS_MESH, MESH_GROUP_LANES, REMAINDER_SPLIT_MIN_POINTS,
+//   SPIN_NS, YIELD_NS, CLAIM_DIVISOR
 //                    the machine profile's fields (src/threading/schedule.hpp); a size
 //                    threshold may be `never`
 //   RADICES=r1.r2... the chain's radices in pass order (build_settings::radices, an internal

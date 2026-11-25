@@ -296,6 +296,11 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
     if (x86_64) {
       p.grid_three_block = 16;
       p.grid_phase_radix = 20;
+      // Experiment X83 (machine_profile::split_complex_rows): real rows on a chain's stages are
+      // split by their complex points, so those of 6144-12286 points stay whole in a group of
+      // up to 8 members (8192-16382 in a mesh group): teams of 4 and 8 had run them 1.32-2.69
+      // times slower than one thread (6400-10240 points, run 20261125-104559-e6f5).
+      p.split_complex_rows = true;
       if (c.l1d.size != 0 && c.l2.size != 0) {
         p.grid_two_block_bytes = 2 * c.l1d.size;
         p.pow2_grid_bytes = c.l2.size / 4;
@@ -475,10 +480,7 @@ group_share share_of(const schedule& s, const lane_map& lanes, int group) noexce
   } else {
     split = share.count;
   }
-  const std::size_t per_member = share.count < members && p.few_points_per_member != 0
-                                     ? p.few_points_per_member
-                                     : p.min_points_per_member;
-  const std::size_t by_points = s.points / std::max<std::size_t>(per_member, 1);
+  const std::size_t by_points = s.points / std::max<std::size_t>(p.min_points_per_member, 1);
   const std::size_t cap = std::min({members / split, by_points, std::size_t{s.widest}});
   if (cap < 2) {
     return share;
