@@ -53,13 +53,19 @@ r2c, c2r 4096 and 65536 in place).
 
 ### Diagnosis (informative, before the rule)
 
-One run on `main` a696bfd, arms:
+One run on 8b0a300 (`main` a696bfd plus the profile field `few_points_per_member`, unset, and
+fbench's `FEW_POINTS_PER_MEMBER` option that sets it), arms:
 
 - **S**: serial (`fftn_omp`, no executor), the baseline;
-- **T2**, **T4**, **T8**: `THREADS=2`, `4`, `8`;
+- **T2**, **T4**, **T8**: `THREADS=2`, `4`, `8` (today's schedules);
 - **G2**: `THREADS=4+GROUP_SIZE=2`: an executor of 4 lanes reporting groups of 2, so a single
   transform goes to one group and is split between 2 members while the other 2 are not
-  dispatched (DESIGN 13.4, rule 4): a team of 4 that uses 2.
+  dispatched (DESIGN 13.4, rule 4): a team of 4 that uses 2;
+- **P4a**, **P4b**, **P4c**: `THREADS=4+FEW_POINTS_PER_MEMBER=4096`, `8192`, `16384`: a single
+  transform split among at most points / 4096 (8192, 16384) members, all 4 dispatched (the others
+  wait); against G2 on the cases P4b splits between 2 (16384-24575 points), what the waiting
+  members cost;
+- **P8b**, **P8c**: `THREADS=8+FEW_POINTS_PER_MEMBER=8192`, `16384`.
 
 Metric: each arm's time ÷ S per case. A case's crossover is the smallest team width that is not
 faster than a narrower one beyond the band.
