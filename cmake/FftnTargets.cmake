@@ -76,3 +76,22 @@ function(fftn_always_optimise)
   set_property(SOURCE ${ARGN} APPEND PROPERTY COMPILE_OPTIONS
     "$<$<NOT:$<CONFIG:Release,RelWithDebInfo,MinSizeRel>>:${opt}>")
 endfunction()
+
+# fftn_kernel_sanitizer_checks(<target> <units>...): in a build with both ASan and UBSan, the
+# kernel units (those that compile the kernel text, isa/kernel_text.inl) leave out UBSan's
+# pointer-overflow and object-size checks, which ASan already makes there: ASan checks every
+# load and store against its object's exact bounds, which subsumes object-size's check of
+# accesses against __builtin_object_size, and an address that wrapped or left its object is
+# reported where it is used. The kernels' every access and index computation multiplied these
+# two checks: Clang 23, one unit alone on an EPYC 7763, ASan + UBSan took 131 s
+# (rows8_avx2) and 281 s (rows6_avx512), ASan alone 42 and 85 s, ASan + UBSan without the two
+# 42 and 113 s; every other check together cost little. A whole cold build of the kernel units
+# took 64 of the CI job's 78 minutes (PR 114). Every other UBSan check stays, and the other
+# units keep all of them. <target> is the target the units belong to (a source property set
+# in another directory is not seen there).
+function(fftn_kernel_sanitizer_checks target)
+  if(FFTN_SANITIZE MATCHES "address" AND FFTN_SANITIZE MATCHES "undefined")
+    set_property(SOURCE ${ARGN} TARGET_DIRECTORY ${target} APPEND PROPERTY COMPILE_OPTIONS
+      -fno-sanitize=pointer-overflow,object-size)
+  endif()
+endfunction()
