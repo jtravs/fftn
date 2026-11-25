@@ -299,3 +299,27 @@ spent USD 15.55 of its USD 20 cap. Teardown was verified on 2026-11-24 at 22:44 
 - the firewall rule, subnet and network were then deleted after their IDs were matched;
 - the project lists only the `default` network;
 - every watchdog was stopped.
+
+## X81 and X82 (screen-1125), 2026-11-25
+
+Rentals for [X81](X81-zen2-screen.md) (Zen 2 screen of X72 and X73) and
+[X82](X82-icelake-real-rows.md) (X75 and X78 on Ice Lake-SP), the cloud screen `screen-1125`,
+within the round's USD 1.5 under the campaign's USD 20. Same project and region, zone
+us-central1-a, Spot VMs with `--max-run-duration=150m` (termination action DELETE), a 50 GB
+pd-balanced boot disk with auto-delete, and a Mac-side watchdog per VM (9300 s) that deletes by
+name only after matching the recorded ID. Prices as for X64 (the n2d price an estimate), plus
+about USD 0.017/h per VM for disk and IP. Creation times are those Compute Engine recorded;
+deletion times are when the delete call returned. Both VMs ran at once. Shared resources (free):
+network `fftn-s1125-net` (3470672537034888050), subnet `fftn-s1125-sub` (9105818368399315780),
+firewall rule `fftn-s1125-ssh` (4125728214442775384, SSH from the controller's address only).
+
+| Instance | Recorded ID | Type | Spot USD/h | Created (UTC) | Deleted (UTC) | Cost USD | Running total | Use |
+|---|---|---|---:|---|---|---:|---:|---|
+| fftn-s1125-n2 | 6475811611598328631 | n2-standard-16, 1 thread per core, minimum platform Ice Lake | 0.443 | 2026-11-25 09:43:52 | 2026-11-25 10:03:07 | 0.15 | 0.15 | X82 judging and plan check (Ice Lake-SP) |
+| fftn-s1125-n2d | 3913590906290901796 | n2d-standard-16, 1 thread per core, minimum platform AMD Rome | 0.400 (est.) | 2026-11-25 09:43:39 | 2026-11-25 10:19:18 | 0.25 | 0.40 | X81 judging and plan check (Zen 2) |
+
+The total is USD 0.40, an estimated gross figure; neither VM was preempted. With the earlier
+experiments the campaign has spent USD 15.95 of its USD 20 cap, not counting X80's rentals of the
+same day (recorded separately). Teardown was verified on 2026-11-25 at 10:20 UTC:
+- each instance above was deleted after its ID was matched, and its watchdog stopped;
+- the firewall rule, subnet and network were then deleted after their IDs were matched.
