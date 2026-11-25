@@ -19,6 +19,7 @@
 #include <complex>
 #include <cstddef>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <string>
 #include <type_traits>
@@ -352,6 +353,8 @@ void add_cases(std::vector<team_case>& out, const fftn::detail::build_settings& 
   // where C divides the sub-rows (every target with 16; 4 but on avx512 in single precision),
   // and with one top of 5 (C = 1 only) into the workspace block first.
   depth.depth_tops = {4};
+  depth.profile.depth_c2r_fused_min_bytes = 0;
+  depth.profile.depth_c2r_fused_max_bytes = std::numeric_limits<std::size_t>::max();
   out.push_back(make_case("r2c_depth_4096x3" + suffix, fftn::rows_r2c<T>(4096, 3), 3 * 4096,
                           3 * 2049, false, depth, target));
   out.push_back(make_case("c2r_depth_4096x3" + suffix, fftn::rows_c2r<T>(4096, 3), 3 * 2049,

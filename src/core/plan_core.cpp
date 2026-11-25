@@ -1569,13 +1569,17 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     // (experiment X72). r2c: the chain reads the reals as h complex values and leaves its
     // blocks and its result in the output, then the pairing runs there in place. c2r: the
     // chain's first pass forms the h complex values from the input's bins as it loads them
-    // (experiment X78) where every run of it is whole (c2r_depth_fits); otherwise the pairing
-    // writes them into the workspace block (the owner's in a team, which no other transform's
-    // lines touch), and the chain reads them from there into the output.
+    // (experiment X78) where the profile's depth_c2r_fused range holds the half length and every
+    // run of the pass is whole (c2r_depth_fits); otherwise the pairing writes them into the
+    // workspace block (the owner's in a team, which no other transform's lines touch), and the
+    // chain reads them from there into the output.
     const std::size_t n = c.lengths[0];
     const std::size_t h = n / 2;
     const bool r2c = s.kind == transform_kind::r2c;
-    const bool fused = !r2c && chain.c2r_depth_fits(h, real_depth_tops);
+    const std::size_t half_bytes = h * 2 * sizeof(T);
+    const bool fused = !r2c && half_bytes >= settings.profile.depth_c2r_fused_min_bytes &&
+                       half_bytes <= settings.profile.depth_c2r_fused_max_bytes &&
+                       chain.c2r_depth_fits(h, real_depth_tops);
     const std::size_t subs = checked_product(real_depth_tops);
     const std::size_t m = h / subs;
     c.built = strategy_choice::depth;

@@ -404,20 +404,30 @@ TEST(Real, HalfLengthDepthFirst) {
       build_settings s;
       s.strategy = fftn::detail::strategy_choice::depth;
       s.depth_tops = d.tops;
-      for (const bool r2c : {true, false}) {
-        check<double>(t, {.n = d.n, .settings = s, .route = route}, r2c, false, 0.5, 3);
-        check<double>(t, {.n = d.n, .settings = s, .route = route}, r2c, false, 1.0, 1);
-        check<float>(t, {.n = d.n, .settings = s, .route = route}, r2c, false, 1.0, 2);
-        check<double>(t, {.n = d.n, .settings = s, .route = "half-length complex"}, r2c, true, 1.0,
-                      2);
+      // c2r with the pairing fused where the profile allows (X78; set here, not read from the
+      // host) and with the separate pass where it does not.
+      for (const std::size_t fused : {std::size_t{0}, std::numeric_limits<std::size_t>::max()}) {
+        s.profile.depth_c2r_fused_min_bytes = 0;
+        s.profile.depth_c2r_fused_max_bytes = fused;
+        for (const bool r2c : {true, false}) {
+          if (r2c && fused != 0) {
+            continue;
+          }
+          check<double>(t, {.n = d.n, .settings = s, .route = route}, r2c, false, 0.5, 3);
+          check<double>(t, {.n = d.n, .settings = s, .route = route}, r2c, false, 1.0, 1);
+          check<float>(t, {.n = d.n, .settings = s, .route = route}, r2c, false, 1.0, 2);
+          check<double>(t, {.n = d.n, .settings = s, .route = "half-length complex"}, r2c, true,
+                        1.0, 2);
+        }
       }
     }
   }
 }
 
 // A c2r row on the depth-first half-length chain pairs its bins in the chain's first pass, from
-// the input, where the target's lanes C divide the sub-row count (experiment X78), and needs no
-// workspace block then; otherwise it keeps the separate pairing pass into the block.
+// the input, where the profile's depth_c2r_fused range holds its half length and the target's
+// lanes C divide the sub-row count (experiment X78), and needs no workspace block then;
+// otherwise it keeps the separate pairing pass into the block.
 template <class T> void check_c2r_depth_pairing(fftn::isa target) {
   struct depth_real {
     std::size_t n;
@@ -432,6 +442,8 @@ template <class T> void check_c2r_depth_pairing(fftn::isa target) {
     build_settings s;
     s.strategy = fftn::detail::strategy_choice::depth;
     s.depth_tops = d.tops;
+    s.profile.depth_c2r_fused_min_bytes = 0;
+    s.profile.depth_c2r_fused_max_bytes = std::numeric_limits<std::size_t>::max();
     const fftn::options opts{.force_isa = target};
     const auto core =
         make_plan_core(fftn::detail::view_of(fftn::rows_c2r<T>(d.n, 1)), opts, s);
@@ -452,6 +464,26 @@ template <class T> void check_c2r_depth_pairing(fftn::isa target) {
     } else {
       EXPECT_NE(text.find("after a pairing pass into the workspace block"), std::string::npos);
       EXPECT_EQ(core->block_elements, d.n / 2);
+    }
+    // Outside the profile's range (its half length's bytes from min to max), the separate pass.
+    const std::size_t bytes = d.n / 2 * 2 * sizeof(T);
+    for (const auto& [lo, hi] : {std::pair<std::size_t, std::size_t>{0, 0},
+                                 std::pair<std::size_t, std::size_t>{0, bytes - 1},
+                                 std::pair<std::size_t, std::size_t>{bytes + 1, 2 * bytes}}) {
+      s.profile.depth_c2r_fused_min_bytes = lo;
+      s.profile.depth_c2r_fused_max_bytes = hi;
+      const auto off = make_plan_core(fftn::detail::view_of(fftn::rows_c2r<T>(d.n, 1)), opts, s);
+      EXPECT_NE(fftn::detail::describe(*off).find("after a pairing pass into the workspace block"),
+                std::string::npos)
+          << lo << " .. " << hi;
+    }
+    // At both ends of the range: fused where the lanes allow.
+    if (subs % lanes == 0) {
+      s.profile.depth_c2r_fused_min_bytes = bytes;
+      s.profile.depth_c2r_fused_max_bytes = bytes;
+      const auto at = make_plan_core(fftn::detail::view_of(fftn::rows_c2r<T>(d.n, 1)), opts, s);
+      EXPECT_NE(fftn::detail::describe(*at).find("the pairing fused into its first pass"),
+                std::string::npos);
     }
   }
 }
