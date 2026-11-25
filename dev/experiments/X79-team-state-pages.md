@@ -215,6 +215,7 @@ the client catalogue, 20–24 rounds), decides the X16 criteria.
 | X16r (deciding) | 20261125-083326-9da1 (17090; node 1, 16 cores, load 4.4, none loaded; 24 rounds, ±1.00 %) | catalogue 0.940 [0.938, 0.942]; 14 faster | in-place 750 × 4469 pair 1.020 [1.017, 1.025], 1.019 [1.015, 1.023] (missed by 0.5–0.7 %, less than the band: re-run X16r2 decides) |
 | X16b | 20261125-073659-69cb | batches 0.563 [all five faster: 0.380 (8 × 4096) – 0.755 (1024 × 256)] | none |
 | X8 | 20261125-073802-b259 | catalogue 0.952; 15 faster | c2r 10240 × 4 1.026 [1.018, 1.032] (missed by 0.5 %, less than the band: re-run X8r decides) |
+| X8r (deciding) | 20261125-091612-31a5 (17091; node 1, 8 cores; load median 10.3, max 41.9: 12 of 24 rounds loaded; ±1.27 %) | catalogue 0.961 [0.945, 0.987]; 12 faster | none (c2r 10240 × 4 1.016 [0.996, 1.043]; no single transform slower) |
 | X8b | 20261125-083225-c000 | batches 0.688 [all five faster: 0.497 (8 × 4096) – 0.943 (128 × 4096)] | none |
 
 In X16 the anchored arm took c2c 864 × 384 backward to 0.730 of B and its real twins to
