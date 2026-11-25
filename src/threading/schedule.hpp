@@ -245,7 +245,8 @@ struct machine_profile {
   // complex transform as a depth-first chain where a c2c row of that length would be one in
   // double, by the fields above, up to this many bytes of the half length (0: never;
   // core/plan_core.cpp, real_depth_tops_of; experiment X72), with the separate pairing pass
-  // after it (r2c) or before it (c2r, into scratch).
+  // after it (r2c) or before it (c2r, into scratch). set_grid_sizes sets the rows' whole range
+  // on Zen 3's class (X72) and on the Xeon 6240's (X75).
   std::size_t depth_real_max_bytes = 0;
   // The L1 data cache's line in bytes: a lanes column phase's block holds at least a line of
   // adjacent columns (core/plan_core.cpp, column_block; experiment X40). set_grid_sizes reads

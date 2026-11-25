@@ -297,6 +297,12 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
         // measured range): tops of 16 (20 at 100000) took 0.61-0.80 of the rules' time
         // there; every split lost below L2/4 (8192-20000 points, 1.14-2.0).
         p.depth_float_max_bytes = 8 * c.l2.size;
+        // Experiment X75: an even real row out of place runs its half-length transform on
+        // the same chain over the rows' whole range (half lengths of 16384-2^22 complex
+        // doubles), as X72 on Zen 3: every real row it moved gained, 32768-2^23 points, r2c
+        // and c2r, double and single (0.59-0.89 of the time in the diagnosis, run
+        // 20261125-004940-024f; 2^21-2^23 0.66-0.89, run 20261125-010730-90ff).
+        p.depth_real_max_bytes = p.depth_max_bytes;
       }
     }
   }
