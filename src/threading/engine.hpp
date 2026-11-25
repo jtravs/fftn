@@ -46,6 +46,7 @@ struct team_job {
   std::byte* state = nullptr; // 128-byte or page aligned, team_layout{lanes}.bytes() long
   sync_word flag{nullptr};    // the workspace's word (team_state.hpp)
   int rank = 0;
+  std::size_t unit = sync_line; // team_state_unit of the plan's profile: part of the flag
 };
 
 template <class Env> class team_engine {
@@ -82,8 +83,8 @@ private:
   // Makes the state valid for this lane count: the first member to find it otherwise
   // constructs its words, all zero, while the others wait.
   void prepare() noexcept {
-    const std::uint64_t ready = layout_.lanes * 4 + team_ready;
-    const std::uint64_t preparing = layout_.lanes * 4 + team_preparing;
+    const std::uint64_t ready = team_flag(layout_.lanes, job_.unit, team_ready);
+    const std::uint64_t preparing = team_flag(layout_.lanes, job_.unit, team_preparing);
     for (;;) {
       env_.point();
       std::uint64_t seen = job_.flag.load(std::memory_order_acquire);

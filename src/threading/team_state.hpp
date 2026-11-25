@@ -31,6 +31,7 @@
 #include "fftn/workspace.hpp"
 
 #include <atomic>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 
@@ -104,7 +105,8 @@ inline constexpr std::uint32_t count_mask = (1U << count_bits) - 1;
 }
 
 // Where each word lives, in bytes from the (128-byte or page aligned) start of the state. The
-// layout depends on the lane count alone, so a workspace serves any plan.
+// layout depends on the lane count alone; where the state starts depends on its unit too, which
+// the workspace's flag records (team_flag), so a workspace serves any plan.
 //
 //   line 0         tasks done (tagged)
 //   line 1         members blocked waiting for it
@@ -172,10 +174,23 @@ struct team_layout {
   return memory + (unit - address % unit) % unit;
 }
 
-// The workspace's word saying whether its memory holds valid state: 0, or lanes x 4 plus
-// one of these.
+// The workspace's word saying whether its memory holds valid state: 0, or team_flag(lanes,
+// unit, status) with one of these statuses.
 inline constexpr std::uint64_t team_preparing = 1;
 inline constexpr std::uint64_t team_ready = 2;
+
+// The flag's value for a state of `lanes` lanes on units of `unit` bytes (team_state_unit: a
+// power of two) with `status` in its low two bits. The state's place in the workspace depends
+// on both, so a plan whose profile lays it out on other units (machine_profile::team_state_page)
+// finds the flag not ready and prepares its own state, rather than reading another plan's
+// words at another address as its own (X79's second read).
+[[nodiscard]] constexpr std::uint64_t team_flag(std::size_t lanes, std::size_t unit,
+                                                std::uint64_t status) noexcept {
+  return ((static_cast<std::uint64_t>(lanes) * 64 +
+           static_cast<std::uint64_t>(std::countr_zero(unit)))
+          << 2U) |
+         status;
+}
 
 struct workspace_access {
   [[nodiscard]] static sync_word team_word(const workspace& ws) noexcept {
