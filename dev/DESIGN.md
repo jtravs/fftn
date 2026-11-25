@@ -466,8 +466,9 @@ Points that matter:
   any alignment works. Callers who do not want to manage workspaces will use the
   convenience layer (later, 5.4), which caches them.
 - **Teams.** A team's members share one workspace of `workspace_bytes(lanes)`: a serial
-  scratch slot per member and the team's synchronisation state (13.3), 128 bytes of slack
-  for its alignment. The state persists between team executions; the workspace object
+  scratch slot per member and the team's synchronisation state (13.3), which starts a page
+  and fills whole pages (4 KiB; 16 KiB on Apple's AArch64 systems), with a page of slack for
+  that alignment. The state persists between team executions; the workspace object
   holds one word besides its memory saying whether the memory holds valid state, so the
   first member of a first execution sets it up and the memory never needs initialising.
   Serial executions clear that word, and so does an execution with `completion::own` by a
@@ -2487,7 +2488,12 @@ As built (`src/threading/engine.hpp`, task 3.1):
   when the task is done. A member whose group is exhausted takes other groups' whole tasks,
   and runs whole the split tasks of groups none of whose members has arrived (so a group
   that never turns up cannot strand them); then it waits for the execution's done count.
-- **State.** Counters live in the workspace (5.3), every hot word on its own 128-byte line.
+- **State.** Counters live in the workspace (5.3), every hot word on its own 128-byte line,
+  and the state on pages of its own: it starts a page of the workspace and the members' slots
+  start on the page after its last, so that nothing a member reads shares a page with words
+  every member writes (X76: on the Xeon 6240 a plan's twiddle table ending on the state's
+  4 KiB page was loaded from other cores' modified lines on every execution, 1.5–2.3 times as
+  long; X79). 16 KiB on Apple, the page of its systems.
   Executions are numbered by each member's own 64-bit count of its calls on the workspace;
   every counter carries the low 40 bits of the number of the execution that last wrote it
   above a 24-bit count, so it reads as zero in another one (nothing is reset between
