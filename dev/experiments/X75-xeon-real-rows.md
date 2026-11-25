@@ -153,3 +153,61 @@ Run J's band was ±3.87 %, wide for this machine, with the shortest single rows 
 between arms that run identical code (r2c 32768 in single precision: A, which keeps O's plan
 there, 1.084 of O). So arm B's 18 cases are timed once more, arms O, A and B, `--serial`, 16–20
 rounds, to report B against O and A where the noise is lower. It changes no verdict.
+
+## Results
+
+The catalogue has 68 cases, not the 69 the method says (a miscount); every one moves under one
+arm.
+
+**Run P** (plan check, Slurm 17030–17032, one round each, every output checked and correct):
+`x75` 20261125-013000-88f2, A moves exactly arm A's family (50 cases: the double rows of
+32768–8388608 with the batches of 40960 × 6 and 65536 × 4, single precision 65536–2^20), B
+exactly arm B's (18: double 16384, 18432, 20480, 20480 × 21 and × 3, 24576, 24576 × 4; single
+32768, 40960, 49152); the standard catalogue's 197 real cases 20261125-013000-05fe, A moves the
+real rows of 65536 (× 1, × 2), 262144 and 2^20, B those of 16384, and no plane, volume or
+in-place row; the client catalogue's tracking tier 20261125-013000-1da5, A moves r2c and c2r
+32768 and 40960 × 6, B r2c and c2r 18432, r2c 20480 × 21 and c2r 20480 × 3. Nothing outside the
+families moves.
+
+**Run J** 20261125-023550-8fee (Slurm 17033, `--serial`, pinned as in the method; 16 rounds,
+none under load, load average median 4.8; band ±3.87 %, wide for this machine: the shortest
+rows differ by up to 17 % between arms running the same plan and code).
+
+- **Arm A ÷ O** over the 50 cases whose notes differ: geometric mean **0.748** [0.735, 0.765],
+  none slower than 1.0387 (the worst interval's lower end 0.873, r2c 122880). Per case
+  0.515–0.900: r2c 32768 0.634, c2r 32768 0.745, r2c 40960 × 6 0.784, c2r 40960 × 6 0.836,
+  36864–61440 0.58–0.64 (r2c) and 0.70–0.83 (c2r), 2^20 0.694 / 0.862, 2^21–2^23 0.52–0.67
+  (r2c) and 0.80–0.88 (c2r), single precision 0.68–0.83, batches 65536 × 4 0.874–0.900.
+- **Arm B ÷ A** over the 18 cases whose notes differ: geometric mean **0.796** [0.718, 0.835],
+  none slower than 1.0387 (worst lower end 0.793, c2r 20480 × 3). Per case 0.61–0.93, with
+  16384 0.847–0.871 and single precision r2c 32768 0.852 [0.756, 1.053], both inflated by A's
+  slow processes there: against O, which runs the same plans as A on these cases, B took 0.94–0.95
+  on 16384 and 1.089 [0.877, 1.110] on single precision r2c 32768.
+
+By the rules both arms pass.
+
+**Run R** 20261125-040403-2740 (Slurm 17035, informative as declared; 20 rounds, none under
+load, band ±2.41 %): B ÷ A over arm B's 18 cases 0.838 [0.832, 0.841], but single precision
+r2c 32768 **1.095** [1.069, 1.111] (B ÷ O 1.108), past 1 + max(band, 3 %); 16384 0.996 and 0.966;
+the rest 0.61–0.95 (r2c and c2r 18432 0.917 / 0.947, r2c 20480 × 21 0.917, c2r 20480 × 3 0.838,
+24576 0.73–0.74, single precision c2r 32768 0.670, 40960 0.949 / 0.644, 49152 0.823 / 0.611).
+
+### Narrowing of arm B (AGENTS section 6; declared before run N starts)
+
+The half lengths of exactly L2/8 (128 KiB: double 16384, single 32768) either tie or lose
+(single r2c 32768 1.095 in run R) while every longer one gains, so arm B is narrowed to half
+lengths above L2/8: `depth_real_min_bytes = L2/8 + 1` (commit 36e53f1, arm B′). **Run N, the
+deciding run of the narrowed arm**: catalogue `x75` filtered to arm B's 18 cases, arms A =
+c6c85d3 and B′ = 36e53f1 with the A/A control A~, `--serial`, 16–20 rounds, pinned as in the
+method. B′ is adopted if run N shows the four excluded cases (r2c and c2r 16384, single r2c and
+c2r 32768) with A's plan notes, and none of the 14 cases B′ still moves slower than 1 + band
+(its whole interval above).
+
+**Run K** 20261125-032026-36ec (Slurm 17034, informative; 16 rounds, none under load, band
+±1.24 %): the client catalogue's tracking tier at one thread, scored as the client check
+scored it. Weighted geometric mean of FFTN ÷ FFTW **0.896** [0.891, 0.902] with O → **0.863**
+[0.859, 0.866] with B (unweighted 0.908 → 0.878). Shapes beyond the noise of 1.02: 8 → 5; c2r
+32768 1.530 → 1.067, r2c 32768 1.400 → under 1.02, c2r 40960 × 6 1.382 → 1.129, r2c 40960 × 6
+1.288 → under 1.02, c2r 20480 × 3 1.171 → under 1.02. Left: c2r 40960 × 6 1.129, c2r 864 × 384
+1.124 (not moved), c2r 32768 1.067. Planning time of the moved shapes is unchanged (32768 21 ms,
+40960 × 6 27 ms; this build has the twiddle tables X71 replaced on `main`).
