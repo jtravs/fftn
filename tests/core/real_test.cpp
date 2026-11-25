@@ -18,6 +18,7 @@
 #include "core/plan_core.hpp"
 #include "fftn/detail/core.hpp"
 #include "fftn/fftn.hpp"
+#include "isa/kernel_table.hpp"
 #include "reference/reference_dft.hpp"
 #include "support/exact.hpp"
 #include "support/fftn_subject.hpp"
@@ -381,9 +382,11 @@ TEST(Real, HalfLengthGrid) {
 }
 
 // Real rows whose half-length transform is a depth-first chain (experiment X72), out of place:
-// r2c with the pairing pass after the chain in the output, c2r with the pairing into the
-// workspace block before it; one and two top factors, a sub-row of a power of two and of a
-// mixed length, scaled and not, batches with gaps (check). In place the row keeps its route.
+// r2c with the pairing pass after the chain in the output, c2r with the pairing in the chain's
+// first pass (X78) or, where the target's lanes do not divide the sub-row count (one top of 5;
+// 4 in single precision on avx512), into the workspace block before it; one and two top
+// factors, a sub-row of a power of two and of a mixed length, scaled and not, batches with gaps
+// (check). In place the row keeps its route.
 TEST(Real, HalfLengthDepthFirst) {
   struct depth_real {
     std::size_t n;
@@ -396,6 +399,7 @@ TEST(Real, HalfLengthDepthFirst) {
              depth_real{.n = 12288, .tops = {4}},
              depth_real{.n = 10240, .tops = {8, 4}},
              depth_real{.n = 3840, .tops = {16}},
+             depth_real{.n = 2560, .tops = {5}},
          }) {
       build_settings s;
       s.strategy = fftn::detail::strategy_choice::depth;
@@ -408,6 +412,54 @@ TEST(Real, HalfLengthDepthFirst) {
                       2);
       }
     }
+  }
+}
+
+// A c2r row on the depth-first half-length chain pairs its bins in the chain's first pass, from
+// the input, where the target's lanes C divide the sub-row count (experiment X78), and needs no
+// workspace block then; otherwise it keeps the separate pairing pass into the block.
+template <class T> void check_c2r_depth_pairing(fftn::isa target) {
+  struct depth_real {
+    std::size_t n;
+    std::vector<std::size_t> tops;
+  };
+  for (const depth_real& d : {
+           depth_real{.n = 4096, .tops = {4}},
+           depth_real{.n = 10240, .tops = {8, 4}},
+           depth_real{.n = 8192, .tops = {16}},
+           depth_real{.n = 2560, .tops = {5}},
+       }) {
+    build_settings s;
+    s.strategy = fftn::detail::strategy_choice::depth;
+    s.depth_tops = d.tops;
+    const fftn::options opts{.force_isa = target};
+    const auto core =
+        make_plan_core(fftn::detail::view_of(fftn::rows_c2r<T>(d.n, 1)), opts, s);
+    const std::string text = fftn::detail::describe(*core);
+    const std::size_t lanes =
+        fftn::detail::of<T>(*fftn::detail::find_kernels(core->isa_target)).complex_lanes;
+    std::size_t subs = 1;
+    for (const std::size_t f : d.tops) {
+      subs *= f;
+    }
+    SCOPED_TRACE(std::string(fftn::isa_name(target)) + " n = " + std::to_string(d.n) + "\n" +
+                 text);
+    ASSERT_NE(text.find("half-length complex depth-first"), std::string::npos);
+    if (subs % lanes == 0) {
+      EXPECT_NE(text.find("the pairing fused into its first pass"), std::string::npos);
+      EXPECT_EQ(text.find("  c2r pairing"), std::string::npos); // no stage of its own
+      EXPECT_EQ(core->block_elements, 0U);
+    } else {
+      EXPECT_NE(text.find("after a pairing pass into the workspace block"), std::string::npos);
+      EXPECT_EQ(core->block_elements, d.n / 2);
+    }
+  }
+}
+
+TEST(Real, C2rDepthFirstPairsInItsFirstPassWhereTheLanesDivideTheSubRows) {
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    check_c2r_depth_pairing<double>(t);
+    check_c2r_depth_pairing<float>(t);
   }
 }
 

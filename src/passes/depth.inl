@@ -65,6 +65,38 @@ template <class T, edge_op Op> struct run_out_chirp {
   }
 };
 
+// Leg j of a run of a c2r row's half-length chain with the pairing fused in (experiment X78):
+// the C elements from i + leg j of the line, Z_e = A + conj(v_e) B with A = X_e + conj X_(h-e),
+// B = X_e - conj X_(h-e) and v_e = -i w_n^e (real.inl's c2r pairing, which for e above h/2 is the
+// same expression, since v_(h-e) = conj v_e), from the h + 1 bins X of the input: X_e upwards,
+// X_(h-e) downwards. Z_0 takes only the real parts of X_0 and X_h, as the separate pass does.
+// w: v in per-element storage, at element i.
+template <class T> struct run_in_c2r {
+  const T* x;
+  const T* w;
+  std::size_t i;
+  std::size_t leg;
+  std::size_t h;
+  [[nodiscard]] FFTN_FORCE_INLINE cv<T> get(std::size_t j) const {
+    const std::size_t e = i + j * leg;
+    const cv<T> xk = load(x + at(e, 2));
+    const cv<T> xc = conj(load_down<T, true>(x + at(h - e, 2), C<T>));
+    const cv<T> z = add(add(xk, xc), mulc(sub(xk, xc), load_tw(w + tw_reals<T> * (j * leg))));
+    if (j == 0 && i == 0) {
+      T tile[2 * C<T>]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
+      store(tile, z);
+      tile[0] = x[0] + x[at(h, 2)];
+      tile[1] = x[0] - x[at(h, 2)];
+      return load(tile);
+    }
+    return z;
+  }
+};
+
+// What the first pass below reads: the line itself, a Bluestein convolution's input times the
+// chirp (experiment X50 arm C), or a c2r row's bins paired on loading (experiment X78).
+enum class first_input { plain, chirp, c2r };
+
 // The partial blocks among the first pass's units first .. last - 1 (below): with one top
 // factor that C does not divide (cols = s), the last block of each group p, unit p blocks +
 // blocks - 1, copies q0 .. s - 1 (experiment X51: 25000 = 10 x 2500 on 4 lanes). The pass
@@ -119,12 +151,15 @@ FFTN_FORCE_INLINE void depth_first_tails(const pass_args* a, const T* x, T* y, s
 // that each store writes C legs of one copy. twiddles: broadcast storage, as the lane pass's
 // (chain_builder::shared_twiddles). src and dst: stride 1, distinct. Reads m, s, dst_cols,
 // dst_qstride, twiddles (n holds the line's length, for the work graph's cost,
-// work_graph.cpp; M = R m). Chirp (a Bluestein stage's chirp pass fused in, experiment X50
+// work_graph.cpp; M = R m). In chirp (a Bluestein stage's chirp pass fused in, experiment X50
 // arm C): element i of the line is src[i] w[i] for i < Q and zero from Q on, w the chirp in
 // per-element storage (in_factor, chain_builder::bluestein_tables_of) and Q = src_cols; src
 // then holds only Q elements. C divides s then (chain_builder::bluestein_depth_fits), so
-// every block is whole and a run's chirp entries are one aligned block of the table.
-template <class T, std::size_t R, int Sign, bool Chirp = false>
+// every block is whole and a run's chirp entries are one aligned block of the table. In c2r (a
+// c2r row's pairing fused in, experiment X78): the line of h = n (the pass's n) elements is Z
+// of run_in_c2r, from the h + 1 bins of src, with v in per-element storage (in_factor,
+// chain_builder::depth_c2r_twiddles); C divides s then too (chain_builder::c2r_depth_fits).
+template <class T, std::size_t R, int Sign, first_input In = first_input::plain>
 void depth_first_pass(const pass_args* a, const void* src, void* dst, std::size_t first,
                       std::size_t last) {
   const T* x = static_cast<const T*>(src);
@@ -148,7 +183,7 @@ void depth_first_pass(const pass_args* a, const void* src, void* dst, std::size_
     if (b < whole) {
       cv<T> v[R]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
       const to_registers<T> out{v};
-      if constexpr (Chirp) {
+      if constexpr (In == first_input::chirp) {
         const std::size_t i0 = q0 + s * p;
         lane_unit<T, R, Sign, true>(
             run_in_chirp<T>{
@@ -157,6 +192,17 @@ void depth_first_pass(const pass_args* a, const void* src, void* dst, std::size_
                 .i = i0,
                 .leg = s * m,
                 .data = a->src_cols,
+            },
+            out, table, p);
+      } else if constexpr (In == first_input::c2r) {
+        const std::size_t i0 = q0 + s * p;
+        lane_unit<T, R, Sign, true>(
+            run_in_c2r<T>{
+                .x = x,
+                .w = static_cast<const T*>(a->in_factor) + tw_reals<T> * i0,
+                .i = i0,
+                .leg = s * m,
+                .h = a->n,
             },
             out, table, p);
       } else {

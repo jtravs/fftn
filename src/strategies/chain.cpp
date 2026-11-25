@@ -1299,6 +1299,29 @@ bool chain_builder<T>::bluestein_depth_fits(std::size_t m,
   return depth_fits(m, tops) && checked_product(tops) % kernels_.complex_lanes == 0;
 }
 
+template <class T>
+bool chain_builder<T>::c2r_depth_fits(std::size_t h, const std::vector<std::size_t>& tops) const {
+  if (!depth_fits(h, tops) || checked_product(tops) % kernels_.complex_lanes != 0) {
+    return false;
+  }
+  const std::size_t r2 = radices(h / checked_product(tops))[0];
+  return kernels_.passes.codelet[codelet_slot(r2)]->depth_first_c2r != nullptr;
+}
+
+// Experiment X78: the c2r pairing in the first pass's loads saves the separate pass's write of h
+// values to the workspace block and their second read, and in a team the phase between them.
+template <class T>
+chain_builder<T>::depth_stages
+chain_builder<T>::c2r_depth(std::size_t n, const std::vector<std::size_t>& tops, double scale) {
+  const std::size_t h = n / 2;
+  depth_stages out = c2c_depth(h, tops, +1, scale, slot::out, slot::in, slot::out);
+  stage& first = out.first.front();
+  first.run = kernels_.passes.codelet[codelet_slot(first.args.radix)]->depth_first_c2r;
+  first.args.in_factor = depth_c2r_twiddles(n);
+  first.name += "; the c2r pairing fused in, from the input's " + std::to_string(h + 1) + " bins";
+  return out;
+}
+
 template <class T> std::size_t chain_builder<T>::bluestein_single(std::size_t n) const {
   const std::vector<std::size_t> rad = radices(n);
   return rad.size() == 1 && bluestein_last(n) && rader_root(n, profile_) == 0 ? n : 0;
@@ -1499,6 +1522,17 @@ template <class T> const T* chain_builder<T>::leaf_pairing_twiddles(std::size_t 
     t[k] = pairing_root(n, k);
   }
   return pack(t, true);
+}
+
+// The pairing twiddles v_e = w_n^(e + n/4) of every element e = 0 .. n/2 - 1 of a c2r row's half
+// length, per-element storage: the depth-first first pass's with the pairing (depth.inl,
+// run_in_c2r), whose loads cover every e, the upper half with the same expression.
+template <class T> const T* chain_builder<T>::depth_c2r_twiddles(std::size_t n) {
+  std::vector<std::complex<T>> t(n / 2);
+  for (std::size_t e = 0; e < t.size(); ++e) {
+    t[e] = pairing_root(n, e);
+  }
+  return pack(t, false);
 }
 
 template <class T>

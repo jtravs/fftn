@@ -1568,24 +1568,28 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     // An even real row out of place whose half-length transform is a depth-first chain
     // (experiment X72). r2c: the chain reads the reals as h complex values and leaves its
     // blocks and its result in the output, then the pairing runs there in place. c2r: the
-    // pairing writes the h complex values into the workspace block (the owner's in a team, which
-    // no other transform's lines touch), the chain reads them from there into the output.
+    // chain's first pass forms the h complex values from the input's bins as it loads them
+    // (experiment X78) where every run of it is whole (c2r_depth_fits); otherwise the pairing
+    // writes them into the workspace block (the owner's in a team, which no other transform's
+    // lines touch), and the chain reads them from there into the output.
     const std::size_t n = c.lengths[0];
     const std::size_t h = n / 2;
     const bool r2c = s.kind == transform_kind::r2c;
+    const bool fused = !r2c && chain.c2r_depth_fits(h, real_depth_tops);
     const std::size_t subs = checked_product(real_depth_tops);
     const std::size_t m = h / subs;
     c.built = strategy_choice::depth;
     c.depth_tops = real_depth_tops;
     std::vector<stage> pairing;
-    if (!r2c) {
+    if (!r2c && !fused) {
       c.block_elements = h;
       chain.add_pairing(false, n, {slot::in, 1}, {slot::block, 1}, 1.0, pairing);
       p.records.emplace_back(std::move(pairing.front()));
     }
     typename chain_builder<T>::depth_stages parts =
-        chain.c2c_depth(h, real_depth_tops, r2c ? -1 : +1, r2c ? 1.0 : opts.scale, slot::out,
-                        r2c ? slot::in : slot::block, slot::out);
+        fused ? chain.c2r_depth(n, real_depth_tops, opts.scale)
+              : chain.c2c_depth(h, real_depth_tops, r2c ? -1 : +1, r2c ? 1.0 : opts.scale,
+                                slot::out, r2c ? slot::in : slot::block, slot::out);
     const auto looped = [&](std::size_t count, std::size_t step, std::vector<stage>& body) {
       const std::size_t first = p.records.size();
       loop l{.kind = loop_kind::lines, .count = count};
@@ -1614,7 +1618,9 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     c.axis_notes.push_back(
         "axis 0 (n = " + std::to_string(n) + "): " + (r2c ? "r2c" : "c2r") +
         " through a half-length complex " + chain.depth_text(h, real_depth_tops) +
-        (r2c ? ", then a pairing pass" : ", after a pairing pass into the workspace block"));
+        (r2c     ? ", then a pairing pass"
+         : fused ? ", the pairing fused into its first pass"
+                 : ", after a pairing pass into the workspace block"));
     c.strategy_note = "depth-first chain for the half-length complex transform (the sub-rows' "
                       "first pass over the row, each sub-row's chain finished on its block, "
                       "decimation-in-time top passes in place), each transform finished before "
