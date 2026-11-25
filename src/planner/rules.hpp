@@ -150,6 +150,11 @@ struct target_profile {
 [[nodiscard]] std::span<const radix_override> large_l2_fit_overrides(target t,
                                                                      std::size_t lanes) noexcept;
 
+// FFTN_X_SCREEN1125 (campaign branch exp/cloud-screen-1125 only, never merged): `costs`, or for
+// the AMD `avx2` double table that table without X72 arm B's overrides of 3072, 3200, 4608 and
+// 5120 (build_settings::x72_amd_radices).
+[[nodiscard]] const pass_costs* without_x72_overrides(const pass_costs* costs) noexcept;
+
 // Up to k radix sequences for n, in pass order: rule_radices' first, then the cheapest
 // others by the profile's pass costs (cost, then lexicographic order), without repeats.
 // Measured planning (core/candidates.cpp) times them; a pure function like rule_radices.

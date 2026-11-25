@@ -271,6 +271,34 @@ constexpr pass_costs avx2_float_other{
     .overrides = avx2_float_overrides_other,
 };
 
+// FFTN_X_SCREEN1125 (campaign branch exp/cloud-screen-1125 only, never merged): the AMD
+// `avx2` double table without X72 arm B's four overrides, whose earlier radices were none
+// (the costs' choice), for the Zen 2 screen's off arm (build_settings::x72_amd_radices).
+constexpr std::array<std::size_t, 4> x72_arm_b_lengths{3072, 3200, 4608, 5120};
+static_assert(std::ranges::all_of(x72_arm_b_lengths, [](std::size_t n) {
+  return std::ranges::count_if(avx2_double_overrides,
+                               [n](const radix_override& o) { return o.n == n; }) == 1 &&
+         std::ranges::count_if(avx2_double_amd_only, [n](const radix_override& o) {
+           return o.n == n && o.radices[0] == 0;
+         }) == 1;
+}));
+constexpr auto avx2_double_overrides_pre_x72 = [] {
+  std::array<radix_override, avx2_double_overrides.size() - x72_arm_b_lengths.size()> out{};
+  std::size_t at = 0;
+  for (const radix_override& o : avx2_double_overrides) {
+    if (std::ranges::find(x72_arm_b_lengths, o.n) == x72_arm_b_lengths.end()) {
+      out.at(at++) = o;
+    }
+  }
+  return out;
+}();
+constexpr pass_costs avx2_double_pre_x72{
+    .unit = avx2_double.unit,
+    .tail = avx2_double.tail,
+    .pass = avx2_double.pass,
+    .overrides = avx2_double_overrides_pre_x72,
+};
+
 // The planner refresh (dev/experiments/X2-radix-sets.md, "Refit after X1, X3, X18 and X19"),
 // Xeon Gold 6240, AVX-512, GCC 14, one thread, split runs on (X1).
 // Double (C = 4): avx2_float's costs (the nearest C, as before) with the overrides where its
@@ -1089,6 +1117,10 @@ std::vector<std::size_t> rule_radices(std::size_t n, const target_profile& p, bo
   std::vector<std::size_t> out = cheapest(n, smooth, !big.empty(), p).radices;
   out.insert(out.end(), big.begin(), big.end());
   return out;
+}
+
+const pass_costs* without_x72_overrides(const pass_costs* costs) noexcept {
+  return costs == &avx2_double ? &avx2_double_pre_x72 : costs;
 }
 
 std::span<const radix_override> large_l2_fit_overrides(target t, std::size_t lanes) noexcept {

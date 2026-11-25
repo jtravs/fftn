@@ -232,6 +232,17 @@ inline bool apply_tuning(fftn::detail::build_settings& s, std::string_view key,
     }
     return true;
   }
+  // FFTN_X_SCREEN1125 (campaign branch exp/cloud-screen-1125 only, never merged;
+  // dev/KNOBS.toml): 0 drops X72 arm B's AMD `avx2` double overrides (3072, 3200, 4608, 5120;
+  // build_settings::x72_amd_radices), the Zen 2 screen X81's off arm.
+  if (key == "X72_AMD_RADICES") {
+    if (value == "0" || value == "1") {
+      s.x72_amd_radices = value == "1";
+    } else {
+      error = bad + " (0 or 1)";
+    }
+    return true;
+  }
   for (const size_field& f : size_fields) {
     if (key == f.key) {
       const std::optional<std::size_t> v = parse_size(value, 1, true);

@@ -1124,6 +1124,9 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   c.isa_target = plan_target_of(opts);
   const kernels_of<T>& kernels = of<T>(*find_kernels(c.isa_target));
   target_profile profile = profile_of(c.isa_target, kernels.complex_lanes, settings.profile.vendor);
+  if (!settings.x72_amd_radices) { // FFTN_X_SCREEN1125, campaign only
+    profile.costs = without_x72_overrides(profile.costs);
+  }
   if (settings.leaf_limit != 0) {
     profile.leaf_limit = settings.leaf_limit;
   }

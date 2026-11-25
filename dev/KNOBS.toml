@@ -9,3 +9,11 @@
 # owner = "name"
 # experiment = "X1"
 # expires = "2026-12-01"
+
+# Campaign branch exp/cloud-screen-1125 only (never merged): the fbench option X72_AMD_RADICES
+# of the cloud screens X81 and X82 (bench/backends/fftn_tuning.hpp, build_settings::
+# x72_amd_radices). Not a library switch; registered so that it expires.
+[FFTN_X_SCREEN1125]
+owner = "lead"
+experiment = "X81"
+expires = "2026-12-25"

@@ -151,6 +151,11 @@ struct build_settings { // NOLINT(clang-analyzer-optin.performance.Padding)
   // profile.c2r_packed_bytes on profile.c2r_packed_isa; experiments X60, X63), 0 the workspace
   // block, 1 packed wherever the layout allows. Volumes keep the block either way.
   int c2r_packed = -1;
+  // FFTN_X_SCREEN1125 (campaign branch exp/cloud-screen-1125 only, never merged; dev/KNOBS.toml):
+  // false drops X72 arm B's `avx2` double overrides (3072, 3200, 4608, 5120) from the AMD table,
+  // so those lengths take the costs' sequences as before X72 (planner/rules.cpp,
+  // without_x72_overrides). For the Zen 2 screen X81's off arm (fbench X72_AMD_RADICES=0).
+  bool x72_amd_radices = true;
   // The machine the plan's team executions are scheduled for (schedule.hpp).
   machine_profile profile = default_machine_profile();
   // Measured planning (core/measure.cpp) asks this function for a candidate's seconds per
