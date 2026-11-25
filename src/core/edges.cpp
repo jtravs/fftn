@@ -227,6 +227,10 @@ void edge_pass(const pass_args* a, const void* src, void* dst, std::size_t first
 
 template <class T, bool Output, edge_mode Mode> pass_fn edge_pass_of(factor_kind kind, bool real) {
   if (real) {
+    if (kind == factor_kind::complex) {
+      // side_of refuses a complex factor on a real side first.
+      throw std::logic_error("fftn: internal: a complex factor on a real side");
+    }
     return kind == factor_kind::real ? &edge_pass<T, factor_kind::real, Output, Mode, true>
                                      : &edge_pass<T, factor_kind::none, Output, Mode, true>;
   }

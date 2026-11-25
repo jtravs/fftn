@@ -66,8 +66,10 @@ struct factor_spec {
 struct shape_case {
   const char* name = "";
   transform_kind kind = transform_kind::c2c;
-  dims_t dims;                       // the logical lengths in C order (the last contiguous)
-  std::vector<std::size_t> listed{}; // c2c: shape.axes[i] is C axis listed[i]; empty: C order
+  dims_t dims; // the logical lengths in C order (the last contiguous)
+  // shape.axes[i] is C axis listed[i] (a real transform's halved axis stays last); empty: C
+  // order.
+  std::vector<std::size_t> listed{};
   std::size_t count = 1;
   fftn::direction dir = fftn::direction::forward; // c2c only
   double options_scale = 1.0;
@@ -82,7 +84,15 @@ struct shape_case {
   // c2c: the transforms one element apart, each axis's stride the C-ordered one times the
   // count (the lanes over adjacent transforms, DESIGN.md 9.3).
   bool adjacent = false;
+  // A second, outer batch dimension of `outer` transforms of the inner `count`, outer_gap
+  // elements past the inner ones; and (out of place) every stride and distance times `stride`,
+  // the last (halved) axis included.
+  std::size_t outer = 1;
+  std::ptrdiff_t outer_gap = 0;
+  std::ptrdiff_t stride = 1;
 };
+
+std::size_t transforms(const shape_case& c) { return c.count * c.outer; }
 
 bool real_in(const shape_case& c) { return c.kind == transform_kind::r2c; }
 bool real_out(const shape_case& c) { return c.kind == transform_kind::c2r; }
@@ -102,10 +112,13 @@ dims_t side_dims(const shape_case& c, bool output) {
 struct layout {
   strides_t stride;
   std::ptrdiff_t dist = 0;
-  std::size_t span = 0; // elements from element 0 of transform 0 to one past the last
+  std::size_t span = 0;  // elements from element 0 of transform 0 to one past the last
+  std::size_t inner = 1; // transforms of the inner batch dimension (b = o inner + i)
+  std::ptrdiff_t outer_dist = 0;
 
   [[nodiscard]] std::size_t at(const dims_t& j, std::size_t b) const {
-    std::ptrdiff_t i = static_cast<std::ptrdiff_t>(b) * dist;
+    std::ptrdiff_t i = static_cast<std::ptrdiff_t>(b % inner) * dist +
+                       static_cast<std::ptrdiff_t>(b / inner) * outer_dist;
     for (std::size_t d = 0; d < j.size(); ++d) {
       i += static_cast<std::ptrdiff_t>(j[d]) * stride[d];
     }
@@ -145,12 +158,15 @@ template <class T> struct factor_array {
   factor_kind kind = factor_kind::none;
   strides_t stride;
   std::ptrdiff_t batch = 0;
-  std::vector<T> reals; // complex values as pairs
+  std::size_t inner = 1;          // the inner batch dimension's transforms
+  std::size_t outer = 1;          // the outer's (1: one batch dimension)
+  std::ptrdiff_t outer_batch = 0; // the outer dimension's stride: the inner's times inner
+  std::vector<T> reals;           // complex values as pairs
   std::ptrdiff_t zero = 0;
 
   factor_array(const factor_spec& f, const dims_t& d, std::size_t count,
-               fftn::test::input_source& src)
-      : kind(f.kind) {
+               fftn::test::input_source& src, std::size_t outer_count = 1)
+      : kind(f.kind), inner(count), outer(outer_count) {
     if (kind == factor_kind::none) {
       return;
     }
@@ -163,6 +179,7 @@ template <class T> struct factor_array {
       mag *= static_cast<std::ptrdiff_t>(d[a - 1]);
     }
     batch = f.batch * mag;
+    outer_batch = batch * static_cast<std::ptrdiff_t>(count);
     std::ptrdiff_t lo = 0;
     std::ptrdiff_t hi = 0;
     const auto reach = [&](std::ptrdiff_t s, std::size_t extent) {
@@ -174,6 +191,7 @@ template <class T> struct factor_array {
       reach(stride[a], d[a]);
     }
     reach(batch, count);
+    reach(outer_batch, outer);
     zero = -lo;
     const auto size = static_cast<std::size_t>(hi - lo + 1);
     reals = src.reals<T>(kind == cplx ? 2 * size : size);
@@ -184,6 +202,9 @@ template <class T> struct factor_array {
       return {};
     }
     fftn::factor f{.kind = kind, .axis_strides = {}, .batch_strides = {batch}};
+    if (outer > 1) {
+      f.batch_strides = {outer_batch, batch};
+    }
     for (const std::size_t a : listed) {
       f.axis_strides.push_back(stride[a]);
     }
@@ -201,7 +222,8 @@ template <class T> struct factor_array {
     if (kind == factor_kind::none) {
       return {1.0, 0.0};
     }
-    std::ptrdiff_t i = zero + static_cast<std::ptrdiff_t>(b) * batch;
+    std::ptrdiff_t i = zero + static_cast<std::ptrdiff_t>(b % inner) * batch +
+                       static_cast<std::ptrdiff_t>(b / inner) * outer_batch;
     for (std::size_t a = 0; a < j.size(); ++a) {
       i += static_cast<std::ptrdiff_t>(j[a]) * stride[a];
     }
@@ -310,7 +332,8 @@ template <class T> struct shape_run {
 
   shape_run(const shape_case& sc, fftn::isa target, fftn::test::input_source& src)
       : c(sc), in_dims(side_dims(sc, false)), out_dims(side_dims(sc, true)),
-        fin(sc.in, in_dims, sc.count, src), fout(sc.out, out_dims, sc.count, src) {
+        fin(sc.in, in_dims, sc.count, src, sc.outer),
+        fout(sc.out, out_dims, sc.count, src, sc.outer) {
     const std::size_t r = c.dims.size();
     listed = c.listed;
     if (listed.empty()) {
@@ -340,6 +363,25 @@ template <class T> struct shape_run {
     } else {
       lin = tight_layout(in_dims, c.count, c.in_place ? 0 : c.gap);
       lout = c.in_place ? lin : tight_layout(out_dims, c.count, c.gap);
+      if (!c.in_place) {
+        for (layout* l : {&lin, &lout}) {
+          for (std::ptrdiff_t& st : l->stride) {
+            st *= c.stride;
+          }
+          l->dist *= c.stride;
+          l->span *= static_cast<std::size_t>(c.stride);
+        }
+      }
+    }
+    // The outer batch dimension: whole inner batches, outer_gap apart (scaled as the rest;
+    // in place both sides alike, the real side's gap twice the complex side's).
+    for (layout* l : {&lin, &lout}) {
+      const bool doubled = c.in_place && c.kind != transform_kind::c2c &&
+                           ((l == &lin) == (c.kind == transform_kind::r2c));
+      const std::ptrdiff_t gap = (doubled ? 2 : 1) * c.outer_gap * (c.in_place ? 1 : c.stride);
+      l->inner = c.count;
+      l->outer_dist = static_cast<std::ptrdiff_t>(l->span) + gap;
+      l->span = static_cast<std::size_t>(l->outer_dist) * c.outer;
     }
     opts = {.in_place = c.in_place, .scale = c.options_scale, .force_isa = target};
     x = src.reals<T>(lin.span * (real_in(c) ? 1 : 2));
@@ -358,6 +400,11 @@ template <class T> struct shape_run {
       s.axes.push_back({.n = c.dims[a], .in_stride = lin.stride[a], .out_stride = lout.stride[a]});
     }
     s.batches = {{.count = c.count, .in_dist = lin.dist, .out_dist = lout.dist}};
+    if (c.outer > 1) {
+      s.batches.insert(
+          s.batches.begin(),
+          fftn::batch{.count = c.outer, .in_dist = lin.outer_dist, .out_dist = lout.outer_dist});
+    }
     return s;
   }
 
@@ -390,7 +437,7 @@ template <class T> struct shape_run {
     const double scale = c.options_scale * c.in_scale * c.out_scale;
     fftn::test::outcome o;
     std::vector<bool> described(y.size(), false);
-    for (std::size_t b = 0; b < c.count; ++b) {
+    for (std::size_t b = 0; b < transforms(c); ++b) {
       std::vector<cd> xin(product(in_dims));
       each(in_dims, [&](const dims_t& j) {
         const std::size_t i = lin.at(j, b);
@@ -544,9 +591,9 @@ void run_plan(const shape_case& sc, const shape_run<T>& run, const Plan& p, fftn
       << what << ": factor written";
 
   std::vector<T> pieces = fresh();
-  const std::size_t half = sc.count / 2;
+  const std::size_t half = transforms(sc) / 2;
   p.execute_transforms(0, half, in_of(pieces), out_of(pieces), ws, args);
-  p.execute_transforms(half, sc.count - half, in_of(pieces), out_of(pieces), ws, args);
+  p.execute_transforms(half, transforms(sc) - half, in_of(pieces), out_of(pieces), ws, args);
   EXPECT_TRUE(same_bits(pieces, serial)) << what << ": pieces of the batch differ";
   if (!threads) {
     return;
@@ -655,6 +702,19 @@ std::vector<shape_case> c2c_cases() {
        .in = {real, {}, 1},
        .out = {cplx, {-1, 1}, 1},
        .expect = "edges:"},
+      {.name = "c2c volume listed out of order, two batch dimensions",
+       .kind = c2c,
+       .dims = {3, 4, 5},
+       .listed = {2, 0, 1},
+       .count = 2,
+       .in = {cplx, {1, -1, 1}, 1},
+       .out = {real, {}, -1},
+       .accumulate = true,
+       .gap = 1,
+       .expect = after,
+       .outer = 2,
+       .outer_gap = 2,
+       .stride = 2},
       {.name = "plane, lanes over columns",
        .kind = c2c,
        .dims = {32, 64},
@@ -717,6 +777,55 @@ std::vector<shape_case> r2c_cases() {
        .out = {cplx, {-1, 1}, 1},
        .in_place = true,
        .expect = before},
+      {.name = "r2c volume, axes listed out of order",
+       .kind = r2c,
+       .dims = {4, 6, 8},
+       .listed = {1, 0, 2},
+       .count = 2,
+       .in = {real, {1, -1, 1}, 1},
+       .out = {cplx, {-1, 1, 1}, -1},
+       .accumulate = true,
+       .expect = after},
+      {.name = "r2c plane, strided rows",
+       .kind = r2c,
+       .dims = {6, 16},
+       .count = 2,
+       .in = {real, {}, 1},
+       .out = {cplx, {1, -1}, 1},
+       .gap = 1,
+       .expect = before,
+       .stride = 2},
+      {.name = "r2c plane, two batch dimensions",
+       .kind = r2c,
+       .dims = {5, 12},
+       .count = 2,
+       .in = {real, {1, -1}, 1},
+       .out = {cplx, {}, -1},
+       .accumulate = true,
+       .gap = 2,
+       .expect = after,
+       .outer = 3,
+       .outer_gap = 4},
+      {.name = "r2c rows, two batch dimensions, strided",
+       .kind = r2c,
+       .dims = {18},
+       .count = 3,
+       .in = {real, {-1}, 1},
+       .out = {cplx, {}, 1},
+       .expect = before,
+       .outer = 2,
+       .outer_gap = 1,
+       .stride = 3},
+      {.name = "r2c volume in place, two batch dimensions",
+       .kind = r2c,
+       .dims = {4, 4, 8},
+       .count = 2,
+       .in = {real, {}, -1},
+       .out = {cplx, {1, 1, -1}, 1},
+       .in_place = true,
+       .expect = before,
+       .outer = 2,
+       .outer_gap = 3},
       {.name = "r2c rows of two",
        .kind = r2c,
        .dims = {2},
@@ -779,6 +888,44 @@ std::vector<shape_case> c2r_cases() {
        .out = {real, {}, 1},
        .in_place = true,
        .expect = after},
+      {.name = "c2r volume, axes listed out of order",
+       .kind = c2r,
+       .dims = {4, 6, 10},
+       .listed = {1, 0, 2},
+       .count = 2,
+       .in = {cplx, {-1, 1, 1}, 1},
+       .out = {real, {1, -1, 1}, -1},
+       .accumulate = true,
+       .expect = after},
+      {.name = "c2r plane, strided rows",
+       .kind = c2r,
+       .dims = {6, 16},
+       .count = 2,
+       .in = {cplx, {}, 1},
+       .out = {real, {1, -1}, 1},
+       .expect = before,
+       .stride = 3},
+      {.name = "c2r plane, two batch dimensions",
+       .kind = c2r,
+       .dims = {6, 10},
+       .count = 2,
+       .in = {cplx, {1, -1}, -1},
+       .out = {real, {}, 1},
+       .accumulate = true,
+       .gap = 1,
+       .expect = after,
+       .outer = 2,
+       .outer_gap = 5},
+      {.name = "c2r volume in place, two batch dimensions",
+       .kind = c2r,
+       .dims = {4, 4, 6},
+       .count = 2,
+       .in = {cplx, {}, 1},
+       .out = {real, {1, -1, 1}, -1},
+       .in_place = true,
+       .expect = after,
+       .outer = 2,
+       .outer_gap = 3},
       {.name = "c2r plane, accumulation alone",
        .kind = c2r,
        .dims = {5, 12},
@@ -1132,6 +1279,28 @@ template <class T> void forced_strategies(fftn::isa t, bool threads) {
        // time.
        &leaves,
        nullptr},
+      // Rows one element apart along the batch (column-major rows): the lanes over adjacent
+      // transforms on a plan of one axis, whose input edge's phase must write the output that
+      // the lanes then read.
+      {{.name = "rows as adjacent transforms, input factor",
+        .kind = c2c,
+        .dims = {64},
+        .count = 32,
+        .in = {real, {}, 1},
+        .expect = before,
+        .adjacent = true},
+       &adjacent,
+       "adjacent transforms"},
+      {{.name = "rows as adjacent transforms, both factors",
+        .kind = c2c,
+        .dims = {48},
+        .count = 16,
+        .in = {cplx, {-1}, -1},
+        .out = {cplx, {}, 1},
+        .expect = after,
+        .adjacent = true},
+       &adjacent,
+       "adjacent transforms"},
       {{.name = "lanes over adjacent transforms, both factors",
         .kind = c2c,
         .dims = {8, 12},

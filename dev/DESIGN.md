@@ -2258,7 +2258,7 @@ read there by the strategy). Accumulation saves the output's prior values in the
 the strategy's own region before the strategy writes the output, and its pass adds the
 result to them (`edge_mode::add_prior`), so no strategy needs a second destination. Where the
 rules' strategy is the chain and a complex factor can be fused, the plan is built again as
-the chain with the fused factor (5.1a), which saves the pass. A multi-axis c2c plan takes the
+the chain with the fused factor (5.1a), which saves the pass. A c2c plan (of rows too) takes the
 lanes over adjacent transforms, its edge phases inside each block of transforms, except with
 accumulation. Still not taken, and said by `describe()`: those lanes with accumulation; a real
 row's grid whose block the input would need, and a c2r row's grid and depth-first chain with
