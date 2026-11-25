@@ -227,9 +227,17 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
     // of 1024, the largest win measured), and rows longer than a page (1024) out of place
     // within the L2 (X69's 64 rows). Judged on Sapphire, Granite and Emerald Rapids: 0.858,
     // 0.860 and 0.873 of the time over the 18 cases it moves, none slower.
+    // Experiment X80 (provisional until its verdict): X70's arm W kept gaining past those limits,
+    // in place at every size tried (rows of 1024 to 32 MiB 0.88-0.93, of 160 and 240 to 240 MiB,
+    // in DRAM, 0.82-0.94: two passes over memory instead of three) and out of place for 160 and
+    // 240 to 120 MiB of rows and output (0.85-0.94), but not at 320 and 480 MiB on Granite
+    // Rapids (1.02-1.03). So in place no limit (fit_row_bytes no limit either; it turns the fit
+    // rows on), out of place rows and output within 64 times the L2 (26214 rows of 160, 17476 of
+    // 240), and rows longer than a page (1024) out of place within the L2 as before.
     p.fit_large_l2 = true;
-    p.fit_row_bytes = 4 * c.l2.size;
-    p.fit_in_place_bytes = 2 * c.l2.size;
+    p.fit_row_bytes = std::numeric_limits<std::size_t>::max();
+    p.fit_in_place_bytes = std::numeric_limits<std::size_t>::max();
+    p.fit_out_of_place_bytes = 64 * c.l2.size;
     p.fit_long_row_bytes = c.l2.size;
   } else if (private_l2 && large_l3) {
     p.chain_part_bytes = std::size_t{16} * 1024;
