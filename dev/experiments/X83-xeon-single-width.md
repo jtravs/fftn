@@ -1,6 +1,6 @@
 # X83: single transforms on the Xeon 6240's mesh, team width
 
-- **Status:** running
+- **Status:** done
 - **Owner:** x83 session, 2026-11-25
 - **Phase / task:** 3 (scheduling rules, DESIGN 13.4; follow-up of [X77](X77-real-rows-threaded.md))
 
@@ -169,4 +169,58 @@ Written before the judging runs, committed with the rule.
 
 ## Results
 
+Four runs on the Xeon 6240, `--serial`, socket 1 idle (load 3-6, other processes 1-2 cores, no
+round loaded), 20 valid rounds each, every output correct:
+
+| run | width | Slurm | pinned cores | band |
+|---|---|---|---|---|
+| J4 20261125-112330-e202 | 4 (and O1, B1 serial) | 17111 | 18-25 | ±1.00 % |
+| J6 20261125-113445-9856 | 6 | 17112 | 18-23, 26, 27 | ±1.00 % |
+| J8 20261125-114133-f403 | 8 | 17113 | 19-24, 26, 27 | ±1.45 % |
+| J16 20261125-114820-78dd | 16 | 17114 | 18-33 | ±1.00 % |
+
+B ÷ O on the moved cases, medians with 95 % intervals:
+
+| case | 4 | 6 | 8 | 16 |
+|---|---|---|---|---|
+| r2c 6400 | 0.419 [0.416, 0.424] | 0.403 [0.396, 0.406] | 0.384 [0.380, 0.387] | (not split in O) |
+| r2c 9216 | 0.546 [0.544, 0.555] | 0.540 [0.537, 0.543] | 0.517 [0.503, 0.523] | 0.404 [0.399, 0.411] |
+| r2c 10000 | 0.571 [0.569, 0.577] | 0.563 [0.557, 0.565] | 0.544 [0.525, 0.546] | 0.423 [0.420, 0.426] |
+| r2c 10240 | 0.588 [0.583, 0.595] | 0.596 [0.589, 0.600] | 0.563 [0.548, 0.570] | 0.446 [0.444, 0.456] |
+| c2r 6400 | 0.561 [0.557, 0.571] | 0.527 [0.522, 0.529] | 0.505 [0.502, 0.518] | (not split in O) |
+| c2r 9216 | 0.713 [0.707, 0.720] | 0.690 [0.686, 0.696] | 0.643 [0.630, 0.654] | 0.489 [0.478, 0.497] |
+| c2r 10000 | 0.757 [0.754, 0.762] | 0.728 [0.723, 0.732] | 0.708 [0.692, 0.712] | 0.522 [0.515, 0.534] |
+| c2r 10240 | 0.776 [0.770, 0.779] | 0.741 [0.737, 0.746] | 0.715 [0.713, 0.722] | 0.534 [0.529, 0.567] |
+| r2c 16384 (cap 9 → 8) | | | | 1.012 [1.007, 1.020] |
+
+- **Moved pairs (31): geometric mean 0.570**, against the bar of 1 − 0.0145 = 0.9855. No pair's
+  whole interval lies above 1 + max(band, 3 %); the one pair above 1 is r2c 16384 at 16 members
+  (1.012, its interval reaching 1.007, inside 1.03; one member fewer on a 9-chunk phase).
+- **One thread** (J4, O1 and B1): geometric mean of B1 ÷ O1 over the 52 cases 1.001, the highest
+  lower interval end 1.003 (c2c 4608 backward, 1.005): nothing moved.
+- **Collateral** (the unmoved cases, same plans and schedules): geometric means 1.000, 1.002,
+  1.002 and 1.002 at 4, 6, 8 and 16, every case within 0.988-1.020.
+
 ## Verdict
+
+**Adopted** on the Xeon 6240's class, Intel's cores only (`split_complex_rows`, commit
+41279ce): every criterion of the rule is met, so no near-miss re-run or narrowing was used.
+Single real rows of 6144-12286 points on a chain now run on one member in a group of up to 8
+(8192-16382 in a mesh group), 0.38-0.78 of their team time at 4-8 members and 0.40-0.53 at 16.
+
+What this does not change, for follow-up:
+
+- **c2c rows of 6144-16384 points** still lose in teams of 4 where their radices are 8, 10, 12
+  and 16 (7200 1.22, 8192 1.10, 8191 1.11, 10000 1.13, 12000 1.07) and gain where they are odd
+  (6561 0.93, 15625 0.84, 16807 0.69). No threshold on points separates them; a split rule that
+  counts each pass's work by its radix (the work graph counts points times passes) might.
+- **r2c 16384** (a chain of 8192 complex points, 4 chunks per phase plus a 9-chunk pairing)
+  loses 1.17 at 4 and 1.23 at 8, while c2r 16384 (the pairing fused) gains 0.90-0.93.
+- **X77's rows** need nothing more: the real rows of 18432 are depth-first chains (lines in the
+  work graph) and already run on one member below `split_min_points_lines` (32768), and those of
+  32768-36864 gain from 4 members (0.63-0.93) and more from 8 (0.45-0.67) since X78.
+- **Teams of 2** lose below 32768 points on this machine (diagnosis): a caller choosing a width
+  for a single transform of that size gains nothing from 2 threads there.
+
+Recorded in DESIGN 13.4 (rule 3) and 13.5 (the Intel-keyed list), the decision log, and LESSONS
+5.21.
