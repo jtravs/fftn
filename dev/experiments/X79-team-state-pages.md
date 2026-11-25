@@ -213,26 +213,41 @@ the client catalogue, 20–24 rounds), decides the X16 criteria.
 |---|---|---|---|
 | X16 (reported) | 20261125-064345-8d9a | catalogue 0.939; 14 faster | in-place 750 × 4469 pair 1.018 [1.012, 1.038], 1.022 [1.012, 1.027] |
 | X16r (deciding) | 20261125-083326-9da1 (17090; node 1, 16 cores, load 4.4, none loaded; 24 rounds, ±1.00 %) | catalogue 0.940 [0.938, 0.942]; 14 faster | in-place 750 × 4469 pair 1.020 [1.017, 1.025], 1.019 [1.015, 1.023] (missed by 0.5–0.7 %, less than the band: re-run X16r2 decides) |
+| X16r2 (deciding) | 20261125-100316-666c (17092; node 1, 16 cores, load 4.6, none loaded; 24 rounds, ±1.00 %) | catalogue 0.942 [0.938, 0.944]; 13 faster | in-place 750 × 4469 pair 1.020 [1.017, 1.021], 1.020 [1.017, 1.024] |
 | X16b | 20261125-073659-69cb | batches 0.563 [all five faster: 0.380 (8 × 4096) – 0.755 (1024 × 256)] | none |
 | X8 | 20261125-073802-b259 | catalogue 0.952; 15 faster | c2r 10240 × 4 1.026 [1.018, 1.032] (missed by 0.5 %, less than the band: re-run X8r decides) |
 | X8r (deciding) | 20261125-091612-31a5 (17091; node 1, 8 cores; load median 10.3, max 41.9: 12 of 24 rounds loaded; ±1.27 %) | catalogue 0.961 [0.945, 0.987]; 12 faster | none (c2r 10240 × 4 1.016 [0.996, 1.043]; no single transform slower) |
 | X8b | 20261125-083225-c000 | batches 0.688 [all five faster: 0.497 (8 × 4096) – 0.943 (128 × 4096)] | none |
 
 In X16 the anchored arm took c2c 864 × 384 backward to 0.730 of B and its real twins to
-0.607–0.717; the in-place 750 × 4469 pair is X74's again (1.019–1.021 there).
+0.607–0.717; the in-place 750 × 4469 pair is X74's again (1.019–1.021 there). In X16r and X16r2
+the same: 864 × 384 backward 0.739–0.740, c2r 0.719–0.728, r2c 0.610–0.617, and the pair
+1.019–1.020 in all three 16-thread runs, while no run had it at 8 threads beyond the band. X8r
+shared the Xeon with another job for its second half (load up to 41.9, other processes up to 51
+cores); its band (±1.27 %) and intervals are that run's own.
 
 ## Verdict
 
-**The fix: not adopted, by its rules' letter.** It passes on the Xeon 6240 (X16: the 864 × 384
+**The fix: adopted on the Xeon 6240's class by the maintainer's narrowing; not adopted by its
+rules' letter.** It passes on the Xeon 6240 (X16: the 864 × 384
 batch unimodal at its alone time, 0.739 of its old median, catalogue 0.996, nothing slower; X16b
 0.983; X8 0.992; X8b 0.988) and is neutral on the M5 Max (C6r 0.999, C6b 0.998, after C6's
 near miss), but on the EPYC 7763 the deciding re-run E16r has two cases past the band (r2c
 10240 × 1 1.028, c2r 864 × 384 1.027) and a weighted mean of 1.002, and E16b has c2c 8 × 4096
-1.079. The rules excluded the narrowing clause, so the fix's code is reverted on this branch
-(4a2c6cf); it stays in history at 9b9875a and, with the anchoring flag, in draft PR 116. DESIGN 5.3
-and 13.3 are unchanged.
+1.079. The rules excluded the narrowing clause, so the fix's code was reverted on this branch
+(4a2c6cf); it stays in history at 9b9875a.
 
-**For the maintainer: the fix keyed to the Xeon 6240's class.** The EPYC's loss comes with the
+The maintainer then took the proposal below, in answer to "Apply X79's team-state page fix to
+the Xeon 6240 class only?": "Yes, Xeon only" (2026-11-25). The fix is back as
+`machine_profile::team_state_page`, 4096 in the Intel-keyed branch of `set_grid_sizes` for the
+Xeon 6240's class and 0 everywhere else, where the state keeps `main`'s layout and workspace size
+byte for byte (the EPYC 7763, the M5 Max, Granite Rapids and every other profile). On the Xeon
+class the code is what X16, X16b, X8 and X8b judged (9b9875a's layout at 4 KiB), so no new run
+was made; the drafted deciding run below was not needed for that reason. The 16 KiB unit
+9b9875a used on Apple went with Apple's page layout. DESIGN 5.3, 13.3 and 13.5 and the decision
+log record it as a narrowing by the maintainer.
+
+**The proposal the maintainer took: the fix keyed to the Xeon 6240's class.** The EPYC's loss comes with the
 state on a page of its own wherever its words sit in it, and the benchmark's `WORKSPACE=page`
 on `main` shows it too, so the layout is a per-machine choice, like the anchoring itself. A
 narrowed fix, a profile field (`machine_profile::team_state_page`, the 128-byte line where 0) set
@@ -241,10 +256,26 @@ not Ice Lake-SP VMs, Zen, the 2 MiB-L2 key or Apple), would take the Xeon's gain
 EPYC's and the Mac's layout as on `main`. Drafted rules, for a deciding run declared before it
 starts: on the final code, the EPYC (E16, E16b) shows no case slower than 1 + band against
 `main`; the Xeon at 16 threads (X16, X16b) shows the unimodal criterion and no case slower;
-nothing else. Adopting it needs the maintainer's word: these rules ruled the narrowing out.
+nothing else. Adopting it needed the maintainer's word: these rules ruled the narrowing out.
 
-**Anchoring on the Xeon 6240's class on the fix (X74's rules):** ANCHOR_VERDICT
+**Anchoring on the Xeon 6240's class on the fix (X74's rules): not adopted, by the deciding
+16-thread run.** X16r2, the near-miss re-run of X16r (itself X16's declared deciding run), has
+one criterion failed: the in-place batch 750 × 4469, both directions, 1.020 [1.017, 1.021] and
+1.020 [1.017, 1.024] against 1 + band = 1.010, in a run with no round loaded. Everything else
+passes: the client catalogue 0.942 at 16 threads (X16r2), the standard batches 0.563 (X16b), and
+at 8 threads every criterion (X8r, deciding: catalogue 0.961, nothing slower; X8b 0.688). X74's
+one loss, c2c 864 × 384 backward at 16 threads (1.156 there), is gone: with the state on its own
+pages the anchored arm takes it to 0.740 of B. Neither declared narrowing helps: anchoring only at
+16 threads keeps the loss, and only for whole transforms of at least 64 KiB excludes the pair
+(12 KiB rows) but also most of the batches that gained (the real and complex rows of 864–6400
+points, 0.61–0.83 of their time). The class keeps arrival-order runs; the flag stays in draft PR 116 for the maintainer.
+
+For the maintainer: two ways the rules as written do not provide, each needing a deciding run
+declared before it starts. Anchoring on the class for teams of at most 8 lanes (X8r and X8b pass
+as they stand); or the whole class, accepting a 2 % loss on the in-place 750 × 4469 pair (seen in
+X74 and in every 16-thread run here, 1.018–1.022) against 0.94 on the client catalogue and 0.56
+on the standard batches.
 
 Open: why a state page of its own costs Zen 3's shortest batch (not investigated: perf on DMOG
-is not set up); whether 16 KiB is right on Apple (neutral at 6 threads; the 4 KiB unit was not
-run there).
+is not set up); why anchoring costs the in-place 750 × 4469 batch 2 % at 16 threads on the Xeon
+(not investigated).
