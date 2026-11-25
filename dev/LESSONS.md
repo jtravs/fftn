@@ -1057,6 +1057,17 @@ for rows in L1; beyond it a pass over the row costs a sweep through L2, so the n
 passes counts more than the table says. Search lengths past L1 with big-radix candidates
 rather than trusting the fitted costs. [X72](experiments/X72-zen3-real-rows.md).
 
+4.27 **Fusing a pointwise pass into a strided pass trades one sequential sweep for streams at
+every leg; count the streams, and factor tables that would add one per leg.** Fusing the c2r
+pairing into the depth-first chain's first pass (R legs per unit) with a table of h twiddles read
+at each leg made the Xeon 6240's c2r rows 1.06 of the separate pass's time (long rows 1.3–1.6);
+the same pass with each twiddle taken as v_i times one of R − 1 broadcast roots (one table stream
+of h / R entries, one more complex product per leg) took 0.85–0.89, and 0.74 at 4 threads where
+the separate pass also cost a phase. On the EPYC 7763 every variant lost (1.12–1.20): there the
+separate pass's sweep and the block's round trip stay in L2 and L3 and cost less than the first
+pass's extra arithmetic and reversed mirror loads. A fusion that saves a sweep is not free when
+the pass it joins is already busy; measure it per machine. [X78](experiments/X78-fused-c2r-pairing.md).
+
 ## 5. Threading
 
 5.1 **Synchronisation costs set the smallest row worth splitting.** Spin barrier /

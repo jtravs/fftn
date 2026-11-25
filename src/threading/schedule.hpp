@@ -261,6 +261,14 @@ struct machine_profile {
   // whose half length is above L2/8 gained (18432-24576 points, 0.73-0.95 of the time) where
   // c2c rows of that length had not (X46: 8192 points, L2/8, gained nothing).
   std::size_t depth_real_min_bytes = std::numeric_limits<std::size_t>::max();
+  // A c2r row on that chain pairs its bins in the chain's first pass, from the input, instead of
+  // a separate pass into the workspace block, where its half length's bytes lie from
+  // depth_c2r_fused_min_bytes to depth_c2r_fused_max_bytes (0: never; core/plan_core.cpp,
+  // chain_builder::c2r_depth; experiment X78). set_grid_sizes sets L2/4 to 16 L2 on the Xeon
+  // 6240's class; Zen 3's keeps the separate pass, which the fused first pass lost to at every
+  // length there (1.08-1.30 of its time).
+  std::size_t depth_c2r_fused_min_bytes = 0;
+  std::size_t depth_c2r_fused_max_bytes = 0;
   // The L1 data cache's line in bytes: a lanes column phase's block holds at least a line of
   // adjacent columns (core/plan_core.cpp, column_block; experiment X40). set_grid_sizes reads
   // it from the topology (128 on Apple's cores).

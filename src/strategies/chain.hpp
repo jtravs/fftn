@@ -275,6 +275,14 @@ public:
                          double scale, slot work, slot src = slot::in, slot dst = slot::out,
                          const T* out_factor = nullptr);
 
+  // The depth-first chain of the half length h = n / 2 of an even c2r row of n (experiment X78):
+  // c2c_depth's stages for h, backward, from the in slot (the row's h + 1 bins) to the out slot,
+  // its blocks there, with the pairing fused into the first pass (depth.inl, run_in_c2r)
+  // instead of a separate pass. scale: on the output. c2r_depth_fits: depth_fits(h, tops) with
+  // C dividing the tops' product, so that every run of the first pass is whole.
+  [[nodiscard]] bool c2r_depth_fits(std::size_t h, const std::vector<std::size_t>& tops) const;
+  depth_stages c2r_depth(std::size_t n, const std::vector<std::size_t>& tops, double scale);
+
   // A Bluestein stage whose convolution runs as two depth-first chains (experiment X50), for
   // a c2c line of one prime q above the Bluestein threshold with no Rader root (one copy):
   // bluestein_single(n) is q when n's chain is that one stage, else 0; bluestein_length_of(q)
@@ -336,6 +344,7 @@ private:
   std::complex<T> pairing_root(std::size_t n, std::size_t k);
   const T* pairing_twiddles(std::size_t n);
   const T* leaf_pairing_twiddles(std::size_t n);
+  std::pair<const T*, const T*> depth_c2r_twiddles(std::size_t n, std::size_t r);
   [[nodiscard]] std::uint32_t chunks_of(std::size_t units, std::size_t points_per_unit) const;
   [[nodiscard]] std::size_t blocks(std::size_t count) const;
   // The passes of a chain of n from scratch slot `from` into scratch; returns the slot

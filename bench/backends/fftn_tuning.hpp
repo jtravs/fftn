@@ -129,6 +129,14 @@ constexpr std::array size_fields{
         .member = &fftn::detail::machine_profile::depth_real_min_bytes,
     },
     size_field{
+        .key = "DEPTH_C2R_FUSED_MIN_BYTES",
+        .member = &fftn::detail::machine_profile::depth_c2r_fused_min_bytes,
+    },
+    size_field{
+        .key = "DEPTH_C2R_FUSED_MAX_BYTES",
+        .member = &fftn::detail::machine_profile::depth_c2r_fused_max_bytes,
+    },
+    size_field{
         .key = "POW2_GRID_BYTES",
         .member = &fftn::detail::machine_profile::pow2_grid_bytes,
     },
