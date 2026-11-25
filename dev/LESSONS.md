@@ -1240,6 +1240,16 @@ page's other lines for ownership. Separately: when a benchmark is bimodal betwee
 run the case alone and then after each other case before suspecting the hardware.
 [X76](experiments/X76-bimodal-864.md).
 
+5.19 **A plan judged at one thread can lose its gain in a team; count the phases it adds.**
+Real rows' half lengths on the depth-first chain won 0.61–0.96 at one thread on the EPYC 7763
+and the Xeon 6240 (X72, X75). At 4 threads r2c rows kept most of it (0.67–0.87), but three of the five
+c2r cases came to 1.015–1.031 and a fourth to 0.92: the breadth-first chain they replaced fuses the pairing into its first
+pass, while the depth-first route pairs in a phase of its own into a block every member then
+reads. Xeon c2r 32768: the old plan ran 1.93 times faster at 4 threads than at one, the route
+1.32 times. A per-transform phase costs a hand-off (5.1) and a round trip of the data through
+other cores' caches, which one thread never pays. Judge a route at the widths it will run.
+[X77](experiments/X77-real-rows-threaded.md).
+
 ## 6. Toolchain and testing pitfalls
 
 6.1 **Build with GCC as well as Clang before a remote round trip.** GCC warns where Clang
