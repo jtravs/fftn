@@ -355,8 +355,8 @@ TEST(FitRows, LargeL2PlansWithinTheLimit) {
   granite.l3 = {.size = 516096 * kib, .line_size = 64, .ways = 16, .shared_by = 8};
   build_settings key;
   key.profile = d::machine_profile{};
+  key.profile.vendor = d::cpu_vendor::intel; // the key is Intel's only (DESIGN.md 13.5)
   d::set_grid_sizes(key.profile, granite, true);
-  key.profile.vendor = d::cpu_vendor::intel;
   ASSERT_TRUE(key.profile.fit_large_l2);
   ASSERT_EQ(key.profile.fit_row_bytes, 8192 * kib);
   ASSERT_EQ(key.profile.fit_in_place_bytes, 4096 * kib);

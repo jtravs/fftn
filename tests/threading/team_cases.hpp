@@ -167,6 +167,15 @@ void add_cases(std::vector<team_case>& out, const fftn::detail::build_settings& 
                           6464, 6464, false, anchored, target));
   out.push_back(make_case("c2c_planes_anchored_inplace_8x6x13" + suffix,
                           fftn::planes_c2c<T>(8, 6, 13, bwd), 624, 624, true, anchored, target));
+  // The team state on 4 KiB pages of its own (machine_profile::team_state_page, X79), as on the
+  // Xeon 6240's class: a batch, and an anchored plane batch in place.
+  fftn::detail::build_settings paged = settings;
+  paged.profile.team_state_page = 4096;
+  out.push_back(make_case("c2c_many_paged_64x100" + suffix, fftn::rows_c2c<T>(64, 100, fwd), 6400,
+                          6400, false, paged, target));
+  paged.profile.anchored_runs = true;
+  out.push_back(make_case("c2c_planes_paged_inplace_8x6x13" + suffix,
+                          fftn::planes_c2c<T>(8, 6, 13, bwd), 624, 624, true, paged, target));
   const fftn::shape<T, c> batches{
       .axes = {{.n = 10}},
       .batches = {{.count = 2}, {.count = 3}, {.count = 1}, {.count = 2}},

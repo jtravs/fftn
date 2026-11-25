@@ -41,18 +41,14 @@ namespace fftn::inline v0::detail {
 // swings between runs).
 inline constexpr std::size_t sync_line = 128;
 
-// The state starts a page of the workspace and fills whole pages, so that nothing else shares
-// its pages: neither what the heap put before the workspace nor the first member's slot after
-// it. X76: on the Xeon 6240 a plan's twiddle table ending on the state's 4 KiB page was loaded
-// from other cores' modified lines on every execution (c2c 864 x 384 at 16 threads 1.5-2.3
-// times as long; Intel's L2 streamer tracks streams per 4 KiB page and is triggered by the
-// state's atomic writes). 16 KiB on Apple, whose pages are 16 KiB: a prefetcher bounded by a
-// physical page can reach that far there (X79). Other AArch64 systems keep 4 KiB.
-#if defined(__APPLE__) && defined(__aarch64__)
-inline constexpr std::size_t team_page = 16384;
-#else
-inline constexpr std::size_t team_page = 4096;
-#endif
+// Where the state sits in a team's workspace: from its first boundary of team_state_unit(page)
+// bytes, filling whole units, where page is machine_profile::team_state_page. 0 keeps the state
+// on its 128-byte lines, right before the members' slots; a page size gives the state pages of
+// its own, which nothing else shares: neither what the heap put before the workspace nor the
+// first member's slot after it (X76, X79).
+[[nodiscard]] constexpr std::size_t team_state_unit(std::size_t page) noexcept {
+  return page != 0 ? page : sync_line;
+}
 
 class sync_word {
 public:
@@ -107,7 +103,7 @@ inline constexpr std::uint32_t count_mask = (1U << count_bits) - 1;
   return tag_of(word) == tag ? static_cast<std::uint32_t>(word & count_mask) : 0;
 }
 
-// Where each word lives, in bytes from the (page-aligned) start of the state. The
+// Where each word lives, in bytes from the (128-byte or page aligned) start of the state. The
 // layout depends on the lane count alone, so a workspace serves any plan.
 //
 //   line 0         tasks done (tagged)
@@ -160,17 +156,20 @@ struct team_layout {
   [[nodiscard]] std::size_t bytes() const noexcept {
     return (3 + calls_lines() + 5 * lanes) * sync_line;
   }
-  // The state's whole pages: the members' slots start after them.
-  [[nodiscard]] std::size_t page_bytes() const noexcept {
-    return (bytes() + team_page - 1) / team_page * team_page;
+  // The state's whole units of team_state_unit(page) bytes: the members' slots start after
+  // them. bytes() for page 0, whose unit is the state's own line.
+  [[nodiscard]] std::size_t span(std::size_t page) const noexcept {
+    const std::size_t unit = team_state_unit(page);
+    return (bytes() + unit - 1) / unit * unit;
   }
 };
 
-// Where a team's state starts in a workspace's memory: at its first page boundary.
-// workspace_bytes(lanes) leaves team_page - 1 bytes of slack for this.
-[[nodiscard]] inline std::byte* team_state_in(std::byte* memory) noexcept {
+// Where a team's state starts in a workspace's memory: at its first boundary of
+// team_state_unit(page) bytes. workspace_bytes(lanes) leaves the slack for this.
+[[nodiscard]] inline std::byte* team_state_in(std::byte* memory, std::size_t page) noexcept {
+  const std::size_t unit = team_state_unit(page);
   const auto address = reinterpret_cast<std::uintptr_t>(memory);
-  return memory + (team_page - address % team_page) % team_page;
+  return memory + (unit - address % unit) % unit;
 }
 
 // The workspace's word saying whether its memory holds valid state: 0, or lanes x 4 plus
