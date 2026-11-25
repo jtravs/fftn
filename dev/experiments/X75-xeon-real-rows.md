@@ -146,3 +146,10 @@ What each arm can move, by its mechanism:
 Threaded plans take the same routes (a team shares the depth-first chain's stages, as for X72;
 tests hold bitwise equality with the serial plan); the client runs 32768 at 4 threads and 40960
 × 6 at 6. Ice Lake-SP and the other machines above keep their plans or are reached unmeasured.
+
+### Run R (declared after run J, before it starts; informative, decides nothing)
+
+Run J's band was ±3.87 %, wide for this machine, with the shortest single rows far apart
+between arms that run identical code (r2c 32768 in single precision: A, which keeps O's plan
+there, 1.084 of O). So arm B's 18 cases are timed once more, arms O, A and B, `--serial`, 16–20
+rounds, to report B against O and A where the noise is lower. It changes no verdict.
