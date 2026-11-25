@@ -1083,6 +1083,17 @@ separate pass's sweep and the block's round trip stay in L2 and L3 and cost less
 pass's extra arithmetic and reversed mirror loads. A fusion that saves a sweep is not free when
 the pass it joins is already busy; measure it per machine. [X78](experiments/X78-fused-c2r-pairing.md).
 
+4.28 **A pointwise pass inside a library costs what its structure costs, not its arithmetic;
+judge it against the user's own loop.** FFTN's plan edges (a window, a factor, accumulation)
+were timed against the plain plan plus a plain C++ loop over the whole batch. The loop cost 10–25
+% of the transform. The library's edges cost 1.5–6 times the plain plan on batched rows of 16–256
+points on the EPYC 7763 and the Xeon 6240, even where the factor was fused into the last pass,
+because a plan with an edge ran each row through its general program instead of the batched
+forms that plain small rows use; on long rows they cost 1.1–1.3. Vectorising the scalar edge
+pass changed its cases by 0.99 on the EPYC. Before fusing a pointwise operation into a kernel,
+check what the operation's presence does to the call structure around it.
+[X65](experiments/X65-edges.md).
+
 ## 5. Threading
 
 5.1 **Synchronisation costs set the smallest row worth splitting.** Spin barrier /
