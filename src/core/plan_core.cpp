@@ -1151,6 +1151,9 @@ void retarget_input(std::vector<record>& records, std::size_t first, slot to) {
       l.step[0] = 0;
     }
     if (l.start[0] != 0) {
+      if (l.start[k] != 0 && l.start[k] != l.start[0]) {
+        throw std::logic_error("fftn: internal: a loop starts the input and its new slot apart");
+      }
       l.start[k] = l.start[0];
       l.start[0] = 0;
     }
@@ -1581,6 +1584,10 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   std::size_t save_record = SIZE_MAX;
   const bool real_in = s.kind == transform_kind::r2c;
   const bool real_out = s.kind == transform_kind::c2r;
+  // The block's complex elements that hold `count` elements of a side (real values in pairs).
+  const auto block_units = [](std::size_t count, bool real) {
+    return real ? (count + 1) / 2 : count;
+  };
   // The input edge's pass of a row strategy (rows: a lanes block's).
   const auto row_input_pass = [&](const edge_rows& rows_of) {
     const slot to = c.in_place ? slot::out : input_slot;
@@ -1623,7 +1630,8 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     // block past the input's region (accumulation), the input edge's pass, the lanes' stages
     // from where it wrote (in_view_eff), then the output edge's pass (on the output in place,
     // or adding the result to the saved values). Their lines are the block's rows.
-    const std::size_t region_in = input_slot == slot::block ? lanes * n_in : 0;
+    const std::size_t region_in =
+        input_slot == slot::block ? block_units(lanes * n_in, real_in) : 0;
     const std::size_t save_offset = region_in * static_cast<std::size_t>(complex_bytes);
     const auto lane_stages = [&](std::size_t block, std::vector<stage>& st) {
       switch (s.kind) {
@@ -1686,7 +1694,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     std::vector<stage> tail;
     scratch = std::max(block_stages(lanes, body), block_stages(unit, tail));
     if (row_strategy) {
-      c.block_elements = region_in + (accumulate ? lanes * n_out : 0);
+      c.block_elements = region_in + (accumulate ? block_units(lanes * n_out, real_out) : 0);
     }
     for (stage& st : body) {
       p.records.emplace_back(std::move(st));
@@ -1715,17 +1723,21 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     // With edges (no accumulation here: the adjacent lambda), the edge phases inside each
     // block's records, their lines the block's transforms: the input edge's into the output
     // (src0), where the axes then run in place, the output edge's in place on the output.
+    // The input edge's phase writes the output (c2c, no accumulation: in place too), where the
+    // first axis then reads; src0 is the output only for edge phases (r > 1), not for rows.
+    const bool adjacent_input = edge_ops != nullptr && edge_ops->in.separate;
+    const view& first_src = adjacent_input ? out_view : in_view;
     const auto phases = [&](program& q, std::size_t block) {
       std::vector<edge_loop>& loops = &q == &p ? edge_loops : tail_loops;
-      if (edge_ops != nullptr && edge_ops->in.separate) {
-        edge_phase(q, loops, false, in.extent, in_view, src0,
+      if (adjacent_input) {
+        edge_phase(q, loops, false, in.extent, in_view, first_src,
                    {.src_dist = in.dist.back(),
                     .dst_dist = out.dist.back(),
                     .factor_step = edge_ops->in.batch_steps.back()});
       }
       for (std::size_t i = 0; i < active.size(); ++i) {
         const std::size_t d = active[i];
-        const view& src = i == 0 ? src0 : out_view;
+        const view& src = i == 0 ? first_src : out_view;
         std::vector<stage> st;
         scratch = std::max(
             scratch, chain.c2c_lanes(c.lengths[d], sign, at(src, d), 1, at(out_view, d), 1,
@@ -2048,7 +2060,8 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     std::vector<stage> st;
     const std::size_t need =
         chain.r2c_line(c.lengths[r - 1], at(src0, r - 1), at(dst0, r - 1),
-                       c.in_place || src0.where == dst0.where, r == 1 ? opts.scale : 1.0, st);
+                       src0.where == slot::in ? c.in_place : src0.where == dst0.where,
+                       r == 1 ? opts.scale : 1.0, st);
     lines(r - 1, in.extent, src0, dst0, need, std::move(st));
     c.axis_notes.push_back("axis " + std::to_string(listed(r - 1)) +
                            " (n = " + std::to_string(c.lengths[r - 1]) + "): " +
@@ -2252,7 +2265,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     }
     // The input's region of the block (a real row out of place) is the strategy's whole block:
     // a strategy that uses the block takes no input there (the conflicts above).
-    const std::size_t region_in = input_slot == slot::block ? n_in : 0;
+    const std::size_t region_in = input_slot == slot::block ? block_units(n_in, real_in) : 0;
     const std::size_t own = std::max(c.block_elements, region_in);
     const edge_side& e = edge_ops->out;
     const std::ptrdiff_t fs = e.kind != factor_kind::none ? e.axis_strides.at(0) : 0;
@@ -2262,7 +2275,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       p.records.emplace_back(edge_pass_stage(s.prec, e, true, n_out, slot::block, 1, slot::out,
                                              out.stride[0], settings.chunk_points, real_out, fs,
                                              edge_mode::add_prior, {.src_offset = offset}));
-      c.block_elements = own + n_out;
+      c.block_elements = own + block_units(n_out, real_out);
     } else {
       if (e.separate) {
         p.records.emplace_back(edge_pass_stage(s.prec, e, true, n_out, slot::out, out.stride[0],
@@ -2273,8 +2286,9 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     }
   }
   if (edge_ops != nullptr) {
+    // The lanes over adjacent transforms take edge phases whatever the rank.
     const edge_layout layout =
-        s.kind == transform_kind::c2c && r == 1 && !row_strategy
+        s.kind == transform_kind::c2c && r == 1 && !row_strategy && adjacent == 0
             ? edge_layout::row_chain
             : (row_strategy ? edge_layout::row_strategy : edge_layout::phases);
     c.edges_note = edges_text(*edge_ops, layout, edge_fallback);
