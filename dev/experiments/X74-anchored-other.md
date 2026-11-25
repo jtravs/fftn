@@ -185,4 +185,10 @@ them (and every claim contends for one counter's line). These runs do not separa
   of at most 8 lanes (X8 and X8b pass as they stand), or the whole class after a diagnosis of the
   bimodal 864 × 384 backward batch (its fast mode is faster anchored).
 
-X16s (informative, both sockets): see below if it finished before the report.
+**X16s** (informative, decides nothing; run 20261125-015820-c820, Slurm 17028; 16 threads on the 8
+idlest cores of each socket, memory by first touch; load 5.3, none loaded; 20 rounds, ±2.91 %):
+client catalogue 0.880 [0.875, 0.891], 21 moved cases faster beyond the band, none slower. Across
+sockets X73's mechanism appears: the six out-of-place c2c batches 0.67–0.80 (FFTN ÷ FFTW 0.86–0.97
+→ 0.61–0.70), their in-place twins 0.87–0.93. The c2c batch 864 × 384 backward again took more,
+1.131 (inside this run's band). So a team that spans sockets, as an unpinned one on the Xeon can,
+gains most from anchoring; that batch is the one case against it in every 16-thread run.
