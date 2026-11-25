@@ -689,9 +689,9 @@ TEST(Schedule, GridSizesFromCaches) {
   EXPECT_TRUE(epyc86.anchored_runs);
   EXPECT_FALSE(xeon86.anchored_runs);
   EXPECT_TRUE(apple.anchored_runs);
-  for (const auto& [file, x86_64] :
-       {std::pair{"linux-gcp-c4a-axion.sysfs", false}, std::pair{"linux-gcp-n2-ice-lake.sysfs", true},
-        std::pair{"linux-gcp-c4-granite-rapids.sysfs", true}}) {
+  for (const auto& [file, x86_64] : {std::pair{"linux-gcp-c4a-axion.sysfs", false},
+                                     std::pair{"linux-gcp-n2-ice-lake.sysfs", true},
+                                     std::pair{"linux-gcp-c4-granite-rapids.sysfs", true}}) {
     SCOPED_TRACE(file);
     EXPECT_FALSE(
         fftn::detail::profile_for(fftn::detail::load_topology(data / file), x86_64).anchored_runs);
