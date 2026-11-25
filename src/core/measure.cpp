@@ -13,6 +13,7 @@
 #include "core/measure.hpp"
 
 #include "core/candidates.hpp"
+#include "core/edges.hpp"
 #include "core/plan_core.hpp"
 #include "core/wisdom_entry.hpp"
 #include "fftn/detail/core.hpp"
@@ -32,6 +33,7 @@
 #include <cstdint>
 #include <cstring>
 #include <exception>
+#include <functional>
 #include <ios>
 #include <limits>
 #include <memory>
@@ -311,15 +313,67 @@ struct candidate {
   bool live = true;
 };
 
-// Times `reps` executions; seconds per execution.
-double time_once(const plan_core& c, scratch_data& d, std::size_t reps) {
+// Scratch factor arrays for timing plans with edges (fftn/edges.hpp): each edge's array over
+// its span (factor_span) on the timing shape, filled with 1/2 (real parts) and 1/4 (imaginary
+// parts), so that accumulation over many repetitions grows the output by a bounded amount per
+// execution.
+class factor_scratch {
+public:
+  factor_scratch(const shape_view& s, const edges_view& e) {
+    args_.in_factor = fill(s, e.in, false, in_);
+    args_.out_factor = fill(s, e.out, true, out_);
+  }
+  [[nodiscard]] const exec_args& args() const { return args_; }
+
+private:
+  static const void* fill(const shape_view& s, const edge_view& e, bool output,
+                          aligned_buffer<std::byte>& buffer) {
+    if (e.kind == factor_kind::none) {
+      return nullptr;
+    }
+    const auto [lo, hi] = factor_span(s, e, output);
+    const std::size_t real = s.prec == precision::f64 ? sizeof(double) : sizeof(float);
+    const std::size_t width = e.kind == factor_kind::complex ? 2 : 1;
+    const auto elements = static_cast<std::size_t>(hi - lo + 1);
+    buffer = aligned_buffer<std::byte>(elements * width * real);
+    for (std::size_t i = 0; i < elements * width; ++i) {
+      const double v = i % width == 0 ? 0.5 : 0.25;
+      if (s.prec == precision::f64) {
+        std::memcpy(buffer.data() + i * real, &v, sizeof v);
+      } else {
+        const auto f = static_cast<float>(v);
+        std::memcpy(buffer.data() + i * real, &f, sizeof f);
+      }
+    }
+    return buffer.data() + static_cast<std::size_t>(-lo) * width * real;
+  }
+
+  aligned_buffer<std::byte> in_;
+  aligned_buffer<std::byte> out_;
+  exec_args args_;
+};
+
+// Times `reps` executions; seconds per execution. `f`: the scratch factor arrays of a plan with
+// edges, or null.
+double time_once(const plan_core& c, scratch_data& d, std::size_t reps, const factor_scratch* f) {
   d.restore();
   const auto start = planning_clock::now();
+  if (f != nullptr) {
+    for (std::size_t i = 0; i < reps; ++i) {
+      execute_core(c, 0, c.prog.transforms, d.in(), d.out(), d.ws(), f->args());
+    }
+    return seconds_since(start) / static_cast<double>(reps);
+  }
   for (std::size_t i = 0; i < reps; ++i) {
     execute_core(c, 0, c.prog.transforms, d.in(), d.out(), d.ws());
   }
   return seconds_since(start) / static_cast<double>(reps);
 }
+
+// Builds a candidate's plan for a shape and settings: build_plan_core, or build_with_edges for
+// a plan with edges.
+using plan_builder =
+    std::function<std::shared_ptr<plan_core>(const shape_view&, const build_settings&)>;
 
 std::string fixed(double v, int digits) {
   std::ostringstream o;
@@ -339,9 +393,9 @@ struct measure_limits {
 };
 
 std::shared_ptr<const plan_core>
-measure(const shape_view& s, const options& base, const build_settings& settings,
-        std::shared_ptr<plan_core> rules, const budget& b, const measure_limits& limits,
-        const std::string& wisdom_note, planning_clock::time_point start) {
+measure(const shape_view& s, const build_settings& settings, std::shared_ptr<plan_core> rules,
+        const budget& b, const measure_limits& limits, const std::string& wisdom_note,
+        planning_clock::time_point start, const plan_builder& build, const edges_view* edges) {
   const std::vector<plan_choice> choices = enumerate_candidates(*rules, settings, b.radix_choices);
 
   // The candidates are timed on fewer transforms when the data, the workspace and the rules'
@@ -381,7 +435,7 @@ measure(const shape_view& s, const options& base, const build_settings& settings
     apply_choice(choice, cs);
     std::shared_ptr<plan_core> core;
     try {
-      core = same_shape && !forced && cands.empty() ? rules : build_plan_core(timing, base, cs);
+      core = same_shape && !forced && cands.empty() ? rules : build(timing, cs);
     } catch (const std::exception&) {
       continue; // a candidate the shape cannot take; the rules' plan always builds
     }
@@ -412,13 +466,17 @@ measure(const shape_view& s, const options& base, const build_settings& settings
     // The real clock times executions on scratch data; a test's stand-in clock
     // (build_settings::measure_time) gives each sample instead, through the same rounds.
     std::unique_ptr<scratch_data> scratch;
+    std::unique_ptr<factor_scratch> factors;
     if (real_clock) {
       const plan_core& first = *cands.front().core;
       scratch = std::make_unique<scratch_data>(first, ws_bytes, page_kinds_for(first, ws_bytes));
       kinds_timed = scratch->kinds();
+      if (edges != nullptr) {
+        factors = std::make_unique<factor_scratch>(timing, *edges);
+      }
     }
     const auto sample = [&](const candidate& c) {
-      return real_clock ? time_once(*c.core, *scratch, c.reps)
+      return real_clock ? time_once(*c.core, *scratch, c.reps, factors.get())
                         : settings.measure_time(choice_text(c.choice), settings.measure_context);
     };
     // A warm-up execution sets each candidate's repetitions per sample; a candidate reached
@@ -429,7 +487,7 @@ measure(const shape_view& s, const options& base, const build_settings& settings
         continue;
       }
       if (real_clock) {
-        const double once = time_once(*c.core, *scratch, 1);
+        const double once = time_once(*c.core, *scratch, 1, factors.get());
         const double want = b.sample_seconds / std::max(once, 1e-9);
         c.reps = std::clamp<std::size_t>(static_cast<std::size_t>(std::ceil(want)), 1,
                                          std::min<std::size_t>(reps_cap(*c.core), 1U << 20U));
@@ -499,7 +557,7 @@ measure(const shape_view& s, const options& base, const build_settings& settings
   if (!same_shape) {
     build_settings cs = settings;
     apply_choice(w.choice, cs);
-    final_core = build_plan_core(s, base, cs);
+    final_core = build(s, cs);
   }
   final_core->program_text = choice_text(pinned_choice(w.choice, *final_core));
   final_core->planning_seconds = seconds_since(start);
@@ -521,11 +579,16 @@ measure(const shape_view& s, const options& base, const build_settings& settings
 } // namespace
 
 std::shared_ptr<const plan_core> plan_with_effort(const shape_view& s, const options& opts,
-                                                  const build_settings& settings) {
+                                                  const build_settings& settings,
+                                                  const edges_view* edges) {
   options base = opts;
   base.use = nullptr;
   base.effort = planning::rules;
   const auto start = planning_clock::now(); // the budget covers the rules' plan too
+  const plan_builder build = [&](const shape_view& shape, const build_settings& cs) {
+    return edges != nullptr ? build_with_edges(shape, base, *edges, cs)
+                            : build_plan_core(shape, base, cs);
+  };
 
   std::string wisdom_note;
   if (opts.use != nullptr) {
@@ -533,13 +596,13 @@ std::shared_ptr<const plan_core> plan_with_effort(const shape_view& s, const opt
     // the build, without building the rules' plan; its program is then built and checked.
     const std::string place =
         wisdom_place(isa_name(static_cast<isa>(static_cast<unsigned char>(plan_target_of(base)))),
-                     shape_key(s, base));
+                     edges != nullptr ? shape_key_with_edges(s, base, *edges) : shape_key(s, base));
     if (const std::optional<wisdom_record> e = find_entry(*opts.use, place)) {
       try {
         if (const std::optional<plan_choice> choice = parse_choice(e->program)) {
           build_settings cs = settings;
           apply_choice(*choice, cs);
-          std::shared_ptr<plan_core> core = build_plan_core(s, base, cs);
+          std::shared_ptr<plan_core> core = build(s, cs);
           // The same program, and the entry names it as this build would.
           if (program_fingerprint(*core) == e->check && core->program_text == e->program) {
             core->program_text = e->program;
@@ -554,7 +617,7 @@ std::shared_ptr<const plan_core> plan_with_effort(const shape_view& s, const opt
       wisdom_note = "a wisdom entry for this shape does not rebuild its program here (ignored); ";
     }
   }
-  std::shared_ptr<plan_core> rules = build_plan_core(s, base, settings);
+  std::shared_ptr<plan_core> rules = build(s, settings);
   if (opts.effort == planning::rules) {
     rules->planning_note = wisdom_note.empty() ? "" : wisdom_note + "the rules' choice";
     return rules;
@@ -565,7 +628,7 @@ std::shared_ptr<const plan_core> plan_with_effort(const shape_view& s, const opt
       .scratch =
           opts.measure_scratch_bytes != 0 ? opts.measure_scratch_bytes : default_scratch_bytes,
   };
-  return measure(s, base, settings, std::move(rules), b, limits, wisdom_note, start);
+  return measure(s, settings, std::move(rules), b, limits, wisdom_note, start, build, edges);
 }
 
 } // namespace fftn::inline v0::detail

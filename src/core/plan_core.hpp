@@ -247,6 +247,7 @@ public:
   bool needs_args = false;
   std::uint8_t factor_args = 0; // which arrays: moving_in_factor, moving_out_factor
   std::vector<edge_record> edge_records;
+  std::vector<edge_record> edge_tail_records; // a lanes program's, one per program::lane_tail
   std::string edges_note; // describe()'s line for edges with factors or accumulation
 };
 
@@ -279,8 +280,25 @@ make_plan_core(const shape_view& shape, const options& opts, const build_setting
 make_plan_core_with_edges(const shape_view& shape, const options& opts, const edges_view& edges,
                           const build_settings& settings);
 
-// Measured planning and wisdom (core/measure.cpp): options::use, then options::effort.
-[[nodiscard]] std::shared_ptr<const plan_core>
-plan_with_effort(const shape_view& shape, const options& opts, const build_settings& settings);
+// The plan of `shape` with `edges` (validated by resolve_edges), as the settings describe,
+// ignoring options::effort and options::use: the strategy with separate passes, or the chain
+// with a fused factor where that strategy is the chain (core/edges.hpp); keyed for wisdom by
+// shape_key_with_edges.
+[[nodiscard]] std::shared_ptr<plan_core> build_with_edges(const shape_view& shape,
+                                                          const options& opts,
+                                                          const edges_view& edges,
+                                                          const build_settings& settings);
+
+// The wisdom key of a plan with edges whose factors or accumulation are not scales only.
+[[nodiscard]] std::string shape_key_with_edges(const shape_view& shape, const options& opts,
+                                               const edges_view& edges);
+
+// Measured planning and wisdom (core/measure.cpp): options::use, then options::effort. With
+// `edges` (factors or accumulation), every candidate is built with them (build_with_edges) and
+// timed on scratch factor arrays.
+[[nodiscard]] std::shared_ptr<const plan_core> plan_with_effort(const shape_view& shape,
+                                                                const options& opts,
+                                                                const build_settings& settings,
+                                                                const edges_view* edges = nullptr);
 
 } // namespace fftn::inline v0::detail

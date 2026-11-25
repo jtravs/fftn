@@ -147,91 +147,117 @@ edge_side side_of(const shape_view& s, const edge_view& e, bool output) {
   return side;
 }
 
-// The edge pass (edges.hpp, edge_pass_stage) over elements [first, last) of a line of complex
-// values (or, Real, of real values: the real side of a real transform): x times the factor,
-// times the scale, stored or added. Baseline code, outside every ISA region; X65 is to say
-// where a vectorised or fused form pays. Written out rather than with std::complex's
+// The edge pass (edges.hpp, edge_pass_stage) over elements [first, last) of each of the
+// stage's lines of complex values (or, Real, of real values: the real side of a real
+// transform): x times the factor, times the scale, stored, added to the destination
+// (edge_mode::accumulate) or added to a prior value (edge_mode::add_prior: x is read at the
+// destination, the prior value at the source). Baseline code, outside every ISA region; X65 is
+// to say where a vectorised or fused form pays. Written out rather than with std::complex's
 // operator*, whose NaN recovery (C Annex G) is not the passes' arithmetic.
-template <class T, factor_kind Kind, bool Output, bool Accumulate, bool Real>
+//
+// The stage's lines (pass_args::rows, set by the driver for each block of a lanes program;
+// 0 elsewhere, meaning one) are src_dist and dst_dist elements apart, the factor's
+// dst_qstride bytes apart; src_cols and dst_cols are bytes added to the source and the
+// destination (a region of the workspace block past the strategy's own).
+template <class T, factor_kind Kind, bool Output, edge_mode Mode, bool Real>
 void edge_pass(const pass_args* a, const void* src, void* dst, std::size_t first,
                std::size_t last) {
-  const auto* x = static_cast<const T*>(src);
-  auto* y = static_cast<T*>(dst);
+  constexpr std::ptrdiff_t width = Real ? 1 : 2; // reals per element
+  const std::size_t rows = a->rows == 0 ? 1 : a->rows;
   const auto scale = static_cast<T>(a->scale);
-  const auto* f = static_cast<const T*>(Output ? a->out_factor : a->in_factor);
   // pass_args::src_qstride: the factor's stride along the line, in its elements.
   const std::ptrdiff_t fs = a->src_qstride;
-  if constexpr (Real) {
-    // A real side takes a real factor only (side_of refuses a complex one).
-    static_assert(Kind != factor_kind::complex);
+  for (std::size_t row = 0; row < rows; ++row) {
+    const auto q = static_cast<std::ptrdiff_t>(row);
+    const T* x = reinterpret_cast<const T*>(static_cast<const std::byte*>(src) + a->src_cols) +
+                 q * a->src_dist * width;
+    T* y =
+        reinterpret_cast<T*>(static_cast<std::byte*>(dst) + a->dst_cols) + q * a->dst_dist * width;
+    const T* f = nullptr;
+    if constexpr (Kind != factor_kind::none) {
+      f = reinterpret_cast<const T*>(
+          static_cast<const std::byte*>(Output ? a->out_factor : a->in_factor) +
+          q * a->dst_qstride);
+    }
     for (std::size_t k = first; k < last; ++k) {
       const auto i = static_cast<std::ptrdiff_t>(k);
-      T v = x[i * a->src_stride];
+      // add_prior reads the value to multiply at the destination.
+      const T* xi = Mode == edge_mode::add_prior ? y + width * i * a->dst_stride
+                                                 : x + width * i * a->src_stride;
+      T re = xi[0];
+      T im{};
+      if constexpr (!Real) {
+        im = xi[1];
+      }
       if constexpr (Kind == factor_kind::real) {
-        v = v * f[i * fs];
+        const T w = f[i * fs];
+        re = re * w;
+        im = im * w;
+      } else if constexpr (Kind == factor_kind::complex) {
+        // A real side takes a real factor only (side_of refuses a complex one).
+        static_assert(!Real);
+        const T wr = f[2 * i * fs];
+        const T wi = f[2 * i * fs + 1];
+        const T r = re * wr - im * wi;
+        im = re * wi + im * wr;
+        re = r;
       }
-      v = v * scale;
-      T* yi = y + i * a->dst_stride;
-      if constexpr (Accumulate) {
-        *yi = *yi + v;
-      } else {
-        *yi = v;
+      re = re * scale;
+      im = im * scale;
+      T* yi = y + width * i * a->dst_stride;
+      if constexpr (Mode == edge_mode::accumulate) {
+        re = yi[0] + re;
+        if constexpr (!Real) {
+          im = yi[1] + im;
+        }
+      } else if constexpr (Mode == edge_mode::add_prior) {
+        const T* pi = x + width * i * a->src_stride;
+        re = pi[0] + re;
+        if constexpr (!Real) {
+          im = pi[1] + im;
+        }
       }
-    }
-    return;
-  }
-  for (std::size_t k = first; k < last; ++k) {
-    const auto i = static_cast<std::ptrdiff_t>(k);
-    const T* xi = x + 2 * i * a->src_stride;
-    T re = xi[0];
-    T im = xi[1];
-    if constexpr (Kind == factor_kind::real) {
-      const T w = f[i * fs];
-      re = re * w;
-      im = im * w;
-    } else if constexpr (Kind == factor_kind::complex) {
-      const T wr = f[2 * i * fs];
-      const T wi = f[2 * i * fs + 1];
-      const T r = re * wr - im * wi;
-      im = re * wi + im * wr;
-      re = r;
-    }
-    re = re * scale;
-    im = im * scale;
-    T* yi = y + 2 * i * a->dst_stride;
-    if constexpr (Accumulate) {
-      yi[0] = yi[0] + re;
-      yi[1] = yi[1] + im;
-    } else {
       yi[0] = re;
-      yi[1] = im;
+      if constexpr (!Real) {
+        yi[1] = im;
+      }
     }
   }
 }
 
-template <class T, bool Output, bool Accumulate> pass_fn edge_pass_of(factor_kind kind, bool real) {
+template <class T, bool Output, edge_mode Mode> pass_fn edge_pass_of(factor_kind kind, bool real) {
   if (real) {
-    return kind == factor_kind::real ? &edge_pass<T, factor_kind::real, Output, Accumulate, true>
-                                     : &edge_pass<T, factor_kind::none, Output, Accumulate, true>;
+    if (kind == factor_kind::complex) {
+      // side_of refuses a complex factor on a real side first.
+      throw std::logic_error("fftn: internal: a complex factor on a real side");
+    }
+    return kind == factor_kind::real ? &edge_pass<T, factor_kind::real, Output, Mode, true>
+                                     : &edge_pass<T, factor_kind::none, Output, Mode, true>;
   }
   switch (kind) {
   case factor_kind::real:
-    return &edge_pass<T, factor_kind::real, Output, Accumulate, false>;
+    return &edge_pass<T, factor_kind::real, Output, Mode, false>;
   case factor_kind::complex:
-    return &edge_pass<T, factor_kind::complex, Output, Accumulate, false>;
+    return &edge_pass<T, factor_kind::complex, Output, Mode, false>;
   case factor_kind::none:
     break;
   }
-  return &edge_pass<T, factor_kind::none, Output, Accumulate, false>;
+  return &edge_pass<T, factor_kind::none, Output, Mode, false>;
 }
 
-template <class T>
-pass_fn edge_pass_for(factor_kind kind, bool output, bool accumulate, bool real) {
+template <class T> pass_fn edge_pass_for(factor_kind kind, bool output, edge_mode mode, bool real) {
   if (!output) {
-    return edge_pass_of<T, false, false>(kind, real);
+    return edge_pass_of<T, false, edge_mode::store>(kind, real);
   }
-  return accumulate ? edge_pass_of<T, true, true>(kind, real)
-                    : edge_pass_of<T, true, false>(kind, real);
+  switch (mode) {
+  case edge_mode::accumulate:
+    return edge_pass_of<T, true, edge_mode::accumulate>(kind, real);
+  case edge_mode::add_prior:
+    return edge_pass_of<T, true, edge_mode::add_prior>(kind, real);
+  case edge_mode::store:
+    break;
+  }
+  return edge_pass_of<T, true, edge_mode::store>(kind, real);
 }
 
 const char* kind_word(factor_kind k) {
@@ -254,7 +280,8 @@ std::string exact(double v) {
 
 } // namespace
 
-resolved_edges resolve_edges(const shape_view& s, const options& opts, const edges_view& e) {
+resolved_edges resolve_edges(const shape_view& s, const options& opts, const edges_view& e,
+                             bool fuse) {
   resolved_edges r{.opts = opts, .plan = {}};
   edge_plan& p = r.plan;
   // options::scale first, as a plan without edges judges it: the product below may move it
@@ -285,7 +312,7 @@ resolved_edges resolve_edges(const shape_view& s, const options& opts, const edg
   // On c2c rows a complex factor of stride 1 along the line fuses into the line's edge pass;
   // anything else, and every factor of a multi-axis or real plan, goes through a separate pass
   // (an edge phase, plan_core.cpp), as accumulation does.
-  const bool rows = s.kind == transform_kind::c2c && s.axes.size() == 1;
+  const bool rows = fuse && s.kind == transform_kind::c2c && s.axes.size() == 1;
   const auto fusable = [rows](const edge_side& side) {
     return rows && side.kind == factor_kind::complex &&
            (side.axis_stride == 1 || side.axis_stride == 0);
@@ -324,13 +351,36 @@ resolved_edges resolve_edges(const shape_view& s, const options& opts, const edg
 stage edge_pass_stage(precision prec, const edge_side& side, bool output, std::size_t n, slot src,
                       std::ptrdiff_t src_stride, slot dst, std::ptrdiff_t dst_stride,
                       std::size_t chunk_points, bool real, std::ptrdiff_t factor_stride) {
+  return edge_pass_stage(prec, side, output, n, src, src_stride, dst, dst_stride, chunk_points,
+                         real, factor_stride,
+                         side.accumulate ? edge_mode::accumulate : edge_mode::store, edge_rows{});
+}
+
+stage edge_copy_stage(precision prec, std::size_t n, slot src, std::ptrdiff_t src_stride, slot dst,
+                      std::ptrdiff_t dst_stride, std::size_t chunk_points, bool real,
+                      const edge_rows& rows) {
+  stage st = edge_pass_stage(prec, edge_side{}, true, n, src, src_stride, dst, dst_stride,
+                             chunk_points, real, 0, edge_mode::store, rows);
+  st.name = "edge out: the output's prior values saved";
+  return st;
+}
+
+stage edge_pass_stage(precision prec, const edge_side& side, bool output, std::size_t n, slot src,
+                      std::ptrdiff_t src_stride, slot dst, std::ptrdiff_t dst_stride,
+                      std::size_t chunk_points, bool real, std::ptrdiff_t factor_stride,
+                      edge_mode mode, const edge_rows& rows) {
   stage st;
-  st.run = prec == precision::f64 ? edge_pass_for<double>(side.kind, output, side.accumulate, real)
-                                  : edge_pass_for<float>(side.kind, output, side.accumulate, real);
+  st.run = prec == precision::f64 ? edge_pass_for<double>(side.kind, output, mode, real)
+                                  : edge_pass_for<float>(side.kind, output, mode, real);
   st.args.src_stride = src_stride;
   st.args.dst_stride = dst_stride;
   st.args.scale = side.scale;
   st.args.src_qstride = factor_stride;
+  st.args.src_dist = rows.src_dist;
+  st.args.dst_dist = rows.dst_dist;
+  st.args.dst_qstride = rows.factor_step;
+  st.args.src_cols = rows.src_offset;
+  st.args.dst_cols = rows.dst_offset;
   st.src = src;
   st.dst = dst;
   st.units = n;
@@ -348,8 +398,10 @@ stage edge_pass_stage(precision prec, const edge_side& side, bool output, std::s
   if (side.scale != 1.0) {
     name += ", scaled";
   }
-  if (side.accumulate) {
+  if (mode == edge_mode::accumulate) {
     name += ", accumulated";
+  } else if (mode == edge_mode::add_prior) {
+    name += ", added to the saved prior values";
   }
   st.name = name;
   return st;
@@ -361,8 +413,8 @@ void contract_failure(const char* what) noexcept {
   std::abort();
 }
 
-std::string edges_text(const edge_plan& p, bool rows) {
-  const auto describe_side = [rows](const edge_side& side, bool output) {
+std::string edges_text(const edge_plan& p, edge_layout layout, const std::string& fallback) {
+  const auto describe_side = [layout](const edge_side& side, bool output) {
     std::string t;
     if (side.kind != factor_kind::none) {
       t += std::string("times a ") + kind_word(side.kind) + " factor";
@@ -375,9 +427,12 @@ std::string edges_text(const edge_plan& p, bool rows) {
     }
     if (side.fused) {
       t += output ? " in the last pass" : " in the first pass";
-    } else if (side.separate && rows) {
+    } else if (side.separate && layout == edge_layout::row_chain) {
       t += output ? " in a separate pass from the workspace block"
                   : " in a separate pass into the workspace block";
+    } else if (side.separate && layout == edge_layout::row_strategy) {
+      t += output ? " in a separate pass after the row's strategy"
+                  : " in a separate pass before the row's strategy";
     } else if (side.separate) {
       t += output ? " in a separate phase after the transform"
                   : " in a separate phase before the transform";
@@ -387,15 +442,35 @@ std::string edges_text(const edge_plan& p, bool rows) {
   std::string in = describe_side(p.in, false);
   std::string out = describe_side(p.out, true);
   std::string both = in.empty() ? out : (out.empty() ? in : in + "; " + out);
-  if (rows) {
-    return "edges: " + both +
-           "; the chain, by the rules, whatever the strategy and effort would otherwise be "
-           "(factors and accumulation reach no other strategy, nor measured planning, yet)";
+  std::string text = "edges: " + both;
+  if (!fallback.empty()) {
+    text += "; not the strategy the rules would choose: " + fallback;
   }
-  return "edges: " + both +
-         "; by the rules whatever the effort, without the lanes over adjacent transforms or "
-         "a real row's grid, lanes or depth-first chain (not built with factors or accumulation "
-         "yet)";
+  return text;
+}
+
+std::pair<std::ptrdiff_t, std::ptrdiff_t> factor_span(const shape_view& s, const edge_view& e,
+                                                      bool output) {
+  if (e.kind == factor_kind::none) {
+    return {0, 0};
+  }
+  std::ptrdiff_t lo = 0;
+  std::ptrdiff_t hi = 0;
+  // resolve_edges has bounded the span, so nothing here overflows.
+  const auto reach = [&](std::ptrdiff_t stride, std::size_t extent) {
+    if (extent > 1) {
+      const std::ptrdiff_t last = stride * static_cast<std::ptrdiff_t>(extent - 1);
+      lo += std::min<std::ptrdiff_t>(last, 0);
+      hi += std::max<std::ptrdiff_t>(last, 0);
+    }
+  };
+  for (std::size_t d = 0; d < s.axes.size(); ++d) {
+    reach(e.axis_strides[d], side_length(s, d, output));
+  }
+  for (std::size_t b = 0; b < s.batches.size() && !e.batch_strides.empty(); ++b) {
+    reach(e.batch_strides[b], s.batches[b].count);
+  }
+  return {lo, hi};
 }
 
 std::string edges_key(const edges_view& e, double options_scale) {

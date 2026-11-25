@@ -11,7 +11,9 @@
 // batch, teams and an executor bitwise alike, a team program (plan_core::team) included; and
 // the executions without a factor array ending the program.
 
+#include "core/candidates.hpp"
 #include "core/plan_core.hpp"
+#include "core/wisdom_entry.hpp"
 #include "fftn/detail/core.hpp"
 #include "reference/reference_dft.hpp"
 #include "support/exact.hpp"
@@ -64,8 +66,10 @@ struct factor_spec {
 struct shape_case {
   const char* name = "";
   transform_kind kind = transform_kind::c2c;
-  dims_t dims;                       // the logical lengths in C order (the last contiguous)
-  std::vector<std::size_t> listed{}; // c2c: shape.axes[i] is C axis listed[i]; empty: C order
+  dims_t dims; // the logical lengths in C order (the last contiguous)
+  // shape.axes[i] is C axis listed[i] (a real transform's halved axis stays last); empty: C
+  // order.
+  std::vector<std::size_t> listed{};
   std::size_t count = 1;
   fftn::direction dir = fftn::direction::forward; // c2c only
   double options_scale = 1.0;
@@ -77,7 +81,18 @@ struct shape_case {
   bool in_place = false;
   std::ptrdiff_t gap = 0; // out of place: elements after each row and each transform
   const char* expect = "";
+  // c2c: the transforms one element apart, each axis's stride the C-ordered one times the
+  // count (the lanes over adjacent transforms, DESIGN.md 9.3).
+  bool adjacent = false;
+  // A second, outer batch dimension of `outer` transforms of the inner `count`, outer_gap
+  // elements past the inner ones; and (out of place) every stride and distance times `stride`,
+  // the last (halved) axis included.
+  std::size_t outer = 1;
+  std::ptrdiff_t outer_gap = 0;
+  std::ptrdiff_t stride = 1;
 };
+
+std::size_t transforms(const shape_case& c) { return c.count * c.outer; }
 
 bool real_in(const shape_case& c) { return c.kind == transform_kind::r2c; }
 bool real_out(const shape_case& c) { return c.kind == transform_kind::c2r; }
@@ -97,10 +112,13 @@ dims_t side_dims(const shape_case& c, bool output) {
 struct layout {
   strides_t stride;
   std::ptrdiff_t dist = 0;
-  std::size_t span = 0; // elements from element 0 of transform 0 to one past the last
+  std::size_t span = 0;  // elements from element 0 of transform 0 to one past the last
+  std::size_t inner = 1; // transforms of the inner batch dimension (b = o inner + i)
+  std::ptrdiff_t outer_dist = 0;
 
   [[nodiscard]] std::size_t at(const dims_t& j, std::size_t b) const {
-    std::ptrdiff_t i = static_cast<std::ptrdiff_t>(b) * dist;
+    std::ptrdiff_t i = static_cast<std::ptrdiff_t>(b % inner) * dist +
+                       static_cast<std::ptrdiff_t>(b / inner) * outer_dist;
     for (std::size_t d = 0; d < j.size(); ++d) {
       i += static_cast<std::ptrdiff_t>(j[d]) * stride[d];
     }
@@ -140,12 +158,15 @@ template <class T> struct factor_array {
   factor_kind kind = factor_kind::none;
   strides_t stride;
   std::ptrdiff_t batch = 0;
-  std::vector<T> reals; // complex values as pairs
+  std::size_t inner = 1;          // the inner batch dimension's transforms
+  std::size_t outer = 1;          // the outer's (1: one batch dimension)
+  std::ptrdiff_t outer_batch = 0; // the outer dimension's stride: the inner's times inner
+  std::vector<T> reals;           // complex values as pairs
   std::ptrdiff_t zero = 0;
 
   factor_array(const factor_spec& f, const dims_t& d, std::size_t count,
-               fftn::test::input_source& src)
-      : kind(f.kind) {
+               fftn::test::input_source& src, std::size_t outer_count = 1)
+      : kind(f.kind), inner(count), outer(outer_count) {
     if (kind == factor_kind::none) {
       return;
     }
@@ -158,6 +179,7 @@ template <class T> struct factor_array {
       mag *= static_cast<std::ptrdiff_t>(d[a - 1]);
     }
     batch = f.batch * mag;
+    outer_batch = batch * static_cast<std::ptrdiff_t>(count);
     std::ptrdiff_t lo = 0;
     std::ptrdiff_t hi = 0;
     const auto reach = [&](std::ptrdiff_t s, std::size_t extent) {
@@ -169,6 +191,7 @@ template <class T> struct factor_array {
       reach(stride[a], d[a]);
     }
     reach(batch, count);
+    reach(outer_batch, outer);
     zero = -lo;
     const auto size = static_cast<std::size_t>(hi - lo + 1);
     reals = src.reals<T>(kind == cplx ? 2 * size : size);
@@ -179,6 +202,9 @@ template <class T> struct factor_array {
       return {};
     }
     fftn::factor f{.kind = kind, .axis_strides = {}, .batch_strides = {batch}};
+    if (outer > 1) {
+      f.batch_strides = {outer_batch, batch};
+    }
     for (const std::size_t a : listed) {
       f.axis_strides.push_back(stride[a]);
     }
@@ -196,7 +222,8 @@ template <class T> struct factor_array {
     if (kind == factor_kind::none) {
       return {1.0, 0.0};
     }
-    std::ptrdiff_t i = zero + static_cast<std::ptrdiff_t>(b) * batch;
+    std::ptrdiff_t i = zero + static_cast<std::ptrdiff_t>(b % inner) * batch +
+                       static_cast<std::ptrdiff_t>(b / inner) * outer_batch;
     for (std::size_t a = 0; a < j.size(); ++a) {
       i += static_cast<std::ptrdiff_t>(j[a]) * stride[a];
     }
@@ -305,7 +332,8 @@ template <class T> struct shape_run {
 
   shape_run(const shape_case& sc, fftn::isa target, fftn::test::input_source& src)
       : c(sc), in_dims(side_dims(sc, false)), out_dims(side_dims(sc, true)),
-        fin(sc.in, in_dims, sc.count, src), fout(sc.out, out_dims, sc.count, src) {
+        fin(sc.in, in_dims, sc.count, src, sc.outer),
+        fout(sc.out, out_dims, sc.count, src, sc.outer) {
     const std::size_t r = c.dims.size();
     listed = c.listed;
     if (listed.empty()) {
@@ -324,9 +352,36 @@ template <class T> struct shape_run {
       padded.span *= 2;
       lin = r2c ? padded : complex;
       lout = r2c ? complex : padded;
+    } else if (c.adjacent) {
+      lin = tight_layout(in_dims, 1, 0);
+      for (std::ptrdiff_t& st : lin.stride) {
+        st *= static_cast<std::ptrdiff_t>(c.count);
+      }
+      lin.dist = 1;
+      lin.span = product(in_dims) * c.count;
+      lout = lin;
     } else {
       lin = tight_layout(in_dims, c.count, c.in_place ? 0 : c.gap);
       lout = c.in_place ? lin : tight_layout(out_dims, c.count, c.gap);
+      if (!c.in_place) {
+        for (layout* l : {&lin, &lout}) {
+          for (std::ptrdiff_t& st : l->stride) {
+            st *= c.stride;
+          }
+          l->dist *= c.stride;
+          l->span *= static_cast<std::size_t>(c.stride);
+        }
+      }
+    }
+    // The outer batch dimension: whole inner batches, outer_gap apart (scaled as the rest;
+    // in place both sides alike, the real side's gap twice the complex side's).
+    for (layout* l : {&lin, &lout}) {
+      const bool doubled = c.in_place && c.kind != transform_kind::c2c &&
+                           ((l == &lin) == (c.kind == transform_kind::r2c));
+      const std::ptrdiff_t gap = (doubled ? 2 : 1) * c.outer_gap * (c.in_place ? 1 : c.stride);
+      l->inner = c.count;
+      l->outer_dist = static_cast<std::ptrdiff_t>(l->span) + gap;
+      l->span = static_cast<std::size_t>(l->outer_dist) * c.outer;
     }
     opts = {.in_place = c.in_place, .scale = c.options_scale, .force_isa = target};
     x = src.reals<T>(lin.span * (real_in(c) ? 1 : 2));
@@ -345,6 +400,11 @@ template <class T> struct shape_run {
       s.axes.push_back({.n = c.dims[a], .in_stride = lin.stride[a], .out_stride = lout.stride[a]});
     }
     s.batches = {{.count = c.count, .in_dist = lin.dist, .out_dist = lout.dist}};
+    if (c.outer > 1) {
+      s.batches.insert(
+          s.batches.begin(),
+          fftn::batch{.count = c.outer, .in_dist = lin.outer_dist, .out_dist = lout.outer_dist});
+    }
     return s;
   }
 
@@ -377,7 +437,7 @@ template <class T> struct shape_run {
     const double scale = c.options_scale * c.in_scale * c.out_scale;
     fftn::test::outcome o;
     std::vector<bool> described(y.size(), false);
-    for (std::size_t b = 0; b < c.count; ++b) {
+    for (std::size_t b = 0; b < transforms(c); ++b) {
       std::vector<cd> xin(product(in_dims));
       each(in_dims, [&](const dims_t& j) {
         const std::size_t i = lin.at(j, b);
@@ -431,25 +491,93 @@ template <class T> bool same_bits(const std::vector<T>& a, const std::vector<T>&
          std::ranges::equal(std::as_bytes(std::span(a)), std::as_bytes(std::span(b)));
 }
 
+// A plan built through the internal entry with construction knobs (build_settings), executed
+// through the internal entries: the strategies forced in turn (AGENTS.md section 5).
+struct core_plan {
+  std::shared_ptr<const fftn::detail::plan_core> core;
+
+  [[nodiscard]] std::string describe() const { return fftn::detail::describe(*core); }
+  [[nodiscard]] std::size_t workspace_bytes(int lanes) const {
+    return fftn::detail::workspace_bytes(*core, lanes);
+  }
+  void execute(const void* in, void* out, const fftn::workspace& ws,
+               const fftn::exec_args& a) const {
+    fftn::detail::execute_all(*core, in, out, ws, a);
+  }
+  void execute_transforms(std::size_t first, std::size_t count, const void* in, void* out,
+                          const fftn::workspace& ws, const fftn::exec_args& a) const {
+    fftn::detail::execute_core(*core, first, count, in, out, ws, a);
+  }
+  void execute(const void* in, void* out, const fftn::team& t, const fftn::workspace& ws,
+               fftn::completion done, const fftn::exec_args& a) const {
+    fftn::detail::execute_team(*core, in, out, t, ws, done, a);
+  }
+  void execute(const void* in, void* out, const fftn::thread_pool& pool, const fftn::workspace& ws,
+               const fftn::exec_args& a) const {
+    fftn::detail::execute_on(*core, in, out, pool, ws, a);
+  }
+};
+
+template <class T, transform_kind K, class Plan>
+void run_plan(const shape_case& sc, const shape_run<T>& run, const Plan& p, fftn::isa target,
+              bool threads, bool reference, const char* strategy);
+
 // The plan of a case, executed serially, in two pieces of the batch, by teams of three threads
 // and on a pool of three, each from the same buffers: all bitwise alike, the serial result
-// against the reference where `reference` is set.
+// against the reference where `reference` is set. With `settings` the plan is built with
+// those knobs and must name `strategy` in describe().
 template <class T, transform_kind K>
-void run_case(const shape_case& sc, fftn::isa target, bool threads, bool reference = true) {
+void run_case(const shape_case& sc, fftn::isa target, bool threads, bool reference = true,
+              const fftn::detail::build_settings* settings = nullptr,
+              const char* strategy = nullptr) {
   using C = std::complex<T>;
   using In = std::conditional_t<K == transform_kind::r2c, T, C>;
   using Out = std::conditional_t<K == transform_kind::c2r, T, C>;
   ASSERT_EQ(sc.kind, K);
   fftn::test::input_source src(0x5A9E5ULL + product(sc.dims) * 7 + sc.count);
   const shape_run<T> run(sc, target, src);
+  if (settings != nullptr) {
+    const core_plan p{fftn::detail::make_plan_core_with_edges(
+        fftn::detail::view_of(run.template shape<In, Out>()), run.opts,
+        fftn::detail::view_of(run.template edges<In, Out>()), *settings)};
+    run_plan<T, K>(sc, run, p, target, threads, reference, strategy);
+    return;
+  }
   const fftn::plan<In, Out> p(run.template shape<In, Out>(), run.opts,
                               run.template edges<In, Out>());
+  run_plan<T, K>(sc, run, p, target, threads, reference, strategy);
+}
+
+template <class T, transform_kind K, class Plan>
+void run_plan(const shape_case& sc, const shape_run<T>& run, const Plan& p, fftn::isa target,
+              bool threads, bool reference, const char* strategy) {
+  using C = std::complex<T>;
+  using In = std::conditional_t<K == transform_kind::r2c, T, C>;
+  using Out = std::conditional_t<K == transform_kind::c2r, T, C>;
   const std::string describe = p.describe();
   const std::string what = std::string(sc.name) + ", " + fftn::isa_name(target) +
                            (sizeof(T) == 8 ? " double" : " float");
-  EXPECT_NE(describe.find(sc.expect), std::string::npos)
-      << what << ": no '" << sc.expect << "' in\n"
-      << describe;
+  // A row's edge phases (the chain's) become separate passes where the rules take another
+  // strategy for the row on this target (a real row's grid, or the lanes for short float rows
+  // on x86): the case's wording for the phase, said of the row's strategy.
+  std::string expect = sc.expect;
+  if (describe.find("the row's strategy") != std::string::npos) {
+    for (const auto& [phase, pass] : {std::pair{"in a separate phase before the transform",
+                                                "in a separate pass before the row's strategy"},
+                                      std::pair{"in a separate phase after the transform",
+                                                "in a separate pass after the row's strategy"}}) {
+      if (const std::size_t at = expect.find(phase); at != std::string::npos) {
+        expect.replace(at, std::string(phase).size(), pass);
+      }
+    }
+  }
+  EXPECT_NE(describe.find(expect), std::string::npos) << what << ": no '" << expect << "' in\n"
+                                                      << describe;
+  if (strategy != nullptr) {
+    EXPECT_NE(describe.find(strategy), std::string::npos)
+        << what << ": not the strategy '" << strategy << "':\n"
+        << describe;
+  }
   const fftn::exec_args args = run.args();
   const std::vector<T> fin = run.fin.reals;
   const std::vector<T> fout = run.fout.reals;
@@ -463,7 +591,7 @@ void run_case(const shape_case& sc, fftn::isa target, bool threads, bool referen
   };
   const auto out_of = [](std::vector<T>& y) { return reinterpret_cast<Out*>(y.data()); };
 
-  fftn::workspace ws(p, 3);
+  fftn::workspace ws(p.workspace_bytes(3));
   std::vector<T> serial = fresh();
   p.execute(in_of(serial), out_of(serial), ws, args);
   if (reference) {
@@ -476,9 +604,9 @@ void run_case(const shape_case& sc, fftn::isa target, bool threads, bool referen
       << what << ": factor written";
 
   std::vector<T> pieces = fresh();
-  const std::size_t half = sc.count / 2;
+  const std::size_t half = transforms(sc) / 2;
   p.execute_transforms(0, half, in_of(pieces), out_of(pieces), ws, args);
-  p.execute_transforms(half, sc.count - half, in_of(pieces), out_of(pieces), ws, args);
+  p.execute_transforms(half, transforms(sc) - half, in_of(pieces), out_of(pieces), ws, args);
   EXPECT_TRUE(same_bits(pieces, serial)) << what << ": pieces of the batch differ";
   if (!threads) {
     return;
@@ -587,6 +715,19 @@ std::vector<shape_case> c2c_cases() {
        .in = {real, {}, 1},
        .out = {cplx, {-1, 1}, 1},
        .expect = "edges:"},
+      {.name = "c2c volume listed out of order, two batch dimensions",
+       .kind = c2c,
+       .dims = {3, 4, 5},
+       .listed = {2, 0, 1},
+       .count = 2,
+       .in = {cplx, {1, -1, 1}, 1},
+       .out = {real, {}, -1},
+       .accumulate = true,
+       .gap = 1,
+       .expect = after,
+       .outer = 2,
+       .outer_gap = 2,
+       .stride = 2},
       {.name = "plane, lanes over columns",
        .kind = c2c,
        .dims = {32, 64},
@@ -649,6 +790,55 @@ std::vector<shape_case> r2c_cases() {
        .out = {cplx, {-1, 1}, 1},
        .in_place = true,
        .expect = before},
+      {.name = "r2c volume, axes listed out of order",
+       .kind = r2c,
+       .dims = {4, 6, 8},
+       .listed = {1, 0, 2},
+       .count = 2,
+       .in = {real, {1, -1, 1}, 1},
+       .out = {cplx, {-1, 1, 1}, -1},
+       .accumulate = true,
+       .expect = after},
+      {.name = "r2c plane, strided rows",
+       .kind = r2c,
+       .dims = {6, 16},
+       .count = 2,
+       .in = {real, {}, 1},
+       .out = {cplx, {1, -1}, 1},
+       .gap = 1,
+       .expect = before,
+       .stride = 2},
+      {.name = "r2c plane, two batch dimensions",
+       .kind = r2c,
+       .dims = {5, 12},
+       .count = 2,
+       .in = {real, {1, -1}, 1},
+       .out = {cplx, {}, -1},
+       .accumulate = true,
+       .gap = 2,
+       .expect = after,
+       .outer = 3,
+       .outer_gap = 4},
+      {.name = "r2c rows, two batch dimensions, strided",
+       .kind = r2c,
+       .dims = {18},
+       .count = 3,
+       .in = {real, {-1}, 1},
+       .out = {cplx, {}, 1},
+       .expect = before,
+       .outer = 2,
+       .outer_gap = 1,
+       .stride = 3},
+      {.name = "r2c volume in place, two batch dimensions",
+       .kind = r2c,
+       .dims = {4, 4, 8},
+       .count = 2,
+       .in = {real, {}, -1},
+       .out = {cplx, {1, 1, -1}, 1},
+       .in_place = true,
+       .expect = before,
+       .outer = 2,
+       .outer_gap = 3},
       {.name = "r2c rows of two",
        .kind = r2c,
        .dims = {2},
@@ -711,6 +901,44 @@ std::vector<shape_case> c2r_cases() {
        .out = {real, {}, 1},
        .in_place = true,
        .expect = after},
+      {.name = "c2r volume, axes listed out of order",
+       .kind = c2r,
+       .dims = {4, 6, 10},
+       .listed = {1, 0, 2},
+       .count = 2,
+       .in = {cplx, {-1, 1, 1}, 1},
+       .out = {real, {1, -1, 1}, -1},
+       .accumulate = true,
+       .expect = after},
+      {.name = "c2r plane, strided rows",
+       .kind = c2r,
+       .dims = {6, 16},
+       .count = 2,
+       .in = {cplx, {}, 1},
+       .out = {real, {1, -1}, 1},
+       .expect = before,
+       .stride = 3},
+      {.name = "c2r plane, two batch dimensions",
+       .kind = c2r,
+       .dims = {6, 10},
+       .count = 2,
+       .in = {cplx, {1, -1}, -1},
+       .out = {real, {}, 1},
+       .accumulate = true,
+       .gap = 1,
+       .expect = after,
+       .outer = 2,
+       .outer_gap = 5},
+      {.name = "c2r volume in place, two batch dimensions",
+       .kind = c2r,
+       .dims = {4, 4, 6},
+       .count = 2,
+       .in = {cplx, {}, 1},
+       .out = {real, {1, -1, 1}, -1},
+       .in_place = true,
+       .expect = after,
+       .outer = 2,
+       .outer_gap = 3},
       {.name = "c2r plane, accumulation alone",
        .kind = c2r,
        .dims = {5, 12},
@@ -869,6 +1097,364 @@ TEST(EdgeShapes, TeamProgramsCarryTheEdges) {
              "team program against the plain plan");
     EXPECT_TRUE(o.passed()) << o.detail();
   }
+}
+
+// Every row strategy, and the lanes over adjacent transforms, forced with edges (5.1b-2): the
+// lanes over rows (c2c, r2c, c2r), the grid (c2c and a real row's half-length transform), the
+// depth-first chain (c2c and real), Bluestein's depth-first convolution and batch leaves, with
+// separate passes around them (the input edge's into the output, in place, or a real row's
+// into the block; accumulation through the output's saved prior values).
+template <class T> void forced_strategies(fftn::isa t, bool threads) {
+  using enum transform_kind;
+  using fftn::detail::build_settings;
+  using fftn::detail::strategy_choice;
+  build_settings lanes;
+  lanes.strategy = strategy_choice::lanes;
+  build_settings grid;
+  grid.strategy = strategy_choice::grid;
+  build_settings depth;
+  depth.strategy = strategy_choice::depth;
+  build_settings bluestein = depth;
+  bluestein.rader = 0;
+  bluestein.bluestein_length = 4096;
+  build_settings leaves;
+  leaves.batch_leaves = fftn::detail::batch_leaf_choice::own;
+  build_settings adjacent;
+  adjacent.profile.adjacent_lanes = true;
+  adjacent.profile.adjacent_min_bytes = 0;
+  adjacent.profile.adjacent_team_chain = false;
+  adjacent.profile.column_team_bytes = 0;
+  adjacent.profile.column_wide_bytes = 0;
+  struct forced {
+    shape_case c;
+    const build_settings* settings;
+    const char* strategy;
+  };
+  const char* row_lanes = "lanes (blocks of";
+  const char* c2c_grid = "grid (Cooley-Tukey";
+  const char* c2c_depth = "depth-first chain (the sub-rows";
+  const char* half_grid = "grid for the half-length";
+  const char* half_depth = "depth-first chain for the half-length";
+  const std::vector<forced> cases{
+      {{.name = "c2c lanes, both factors",
+        .kind = c2c,
+        .dims = {16},
+        .count = 7,
+        .in = {cplx, {}, 1},
+        .out = {real, {1}, -1},
+        .expect = "before the row's strategy"},
+       &lanes,
+       row_lanes},
+      {{.name = "c2c lanes, accumulated",
+        .kind = c2c,
+        .dims = {12},
+        .count = 9,
+        .out_scale = 0.5,
+        .in = {real, {-1}, 1},
+        .accumulate = true,
+        .gap = 1,
+        .expect = "added to the saved prior values"},
+       &lanes,
+       row_lanes},
+      {{.name = "c2c lanes in place",
+        .kind = c2c,
+        .dims = {20},
+        .count = 6,
+        .in = {cplx, {}, 0},
+        .out = {cplx, {}, 1},
+        .in_place = true,
+        .expect = "after the row's strategy"},
+       &lanes,
+       row_lanes},
+      {{.name = "r2c lanes, accumulated",
+        .kind = r2c,
+        .dims = {32},
+        .count = 6,
+        .in = {real, {}, 1},
+        .out = {cplx, {-1}, 1},
+        .accumulate = true,
+        .expect = "before the row's strategy"},
+       &lanes,
+       row_lanes},
+      {{.name = "c2r lanes, accumulated",
+        .kind = c2r,
+        .dims = {24},
+        .count = 5,
+        .in = {cplx, {}, -1},
+        .out = {real, {}, 0},
+        .accumulate = true,
+        .expect = "before the row's strategy"},
+       &lanes,
+       row_lanes},
+      {{.name = "c2c grid, accumulated",
+        .kind = c2c,
+        .dims = {1024},
+        .count = 2,
+        .in = {cplx, {}, 1},
+        .out = {cplx, {-1}, 1},
+        .accumulate = true,
+        .expect = "added to the saved prior values"},
+       &grid,
+       c2c_grid},
+      {{.name = "c2c grid in place",
+        .kind = c2c,
+        .dims = {2048},
+        .count = 1,
+        .options_scale = 0.25,
+        .in = {real, {}, 1},
+        .out = {cplx, {}, 1},
+        .in_place = true,
+        .expect = "after the row's strategy"},
+       &grid,
+       c2c_grid},
+      {{.name = "c2c depth-first, both factors",
+        .kind = c2c,
+        .dims = {1024},
+        .count = 2,
+        .in = {cplx, {-1}, 1},
+        .out = {real, {}, 1},
+        .expect = "before the row's strategy"},
+       &depth,
+       c2c_depth},
+      {{.name = "c2c depth-first, accumulated",
+        .kind = c2c,
+        .dims = {2048},
+        .count = 1,
+        .out = {cplx, {}, 1},
+        .accumulate = true,
+        .expect = "added to the saved prior values"},
+       &depth,
+       c2c_depth},
+      {{.name = "Bluestein depth-first, accumulated",
+        .kind = c2c,
+        .dims = {1031},
+        .count = 2,
+        .in = {cplx, {}, 1},
+        .out = {real, {}, 0},
+        .accumulate = true,
+        .expect = "added to the saved prior values"},
+       &bluestein,
+       "two depth-first chains"},
+      {{.name = "r2c half-length grid, accumulated",
+        .kind = r2c,
+        .dims = {2048},
+        .count = 2,
+        .out = {cplx, {}, 1},
+        .accumulate = true,
+        .expect = "added to the saved prior values"},
+       &grid,
+       half_grid},
+      {{.name = "r2c half-length grid, input factor",
+        .kind = r2c,
+        .dims = {2048},
+        .count = 1,
+        .in = {real, {}, 1},
+        .expect = "before the row's strategy"},
+       &grid,
+       half_grid},
+      {{.name = "c2r half-length grid, output factor",
+        .kind = c2r,
+        .dims = {2048},
+        .count = 2,
+        .out = {real, {}, 1},
+        .accumulate = true,
+        .expect = "added to the saved prior values"},
+       &grid,
+       half_grid},
+      {{.name = "r2c half-length depth-first, both factors",
+        .kind = r2c,
+        .dims = {2048},
+        .count = 2,
+        .in = {real, {-1}, 1},
+        .out = {cplx, {}, 1},
+        .accumulate = true,
+        .expect = "before the row's strategy"},
+       &depth,
+       half_depth},
+      {{.name = "c2r half-length depth-first, output factor",
+        .kind = c2r,
+        .dims = {2048},
+        .count = 1,
+        .out = {real, {}, 1},
+        .expect = "after the row's strategy"},
+       &depth,
+       half_depth},
+      {{.name = "batch leaves, real factors",
+        .kind = c2c,
+        .dims = {8},
+        .count = 16,
+        .in = {real, {}, 1},
+        .out = {real, {}, 0},
+        .accumulate = true,
+        .expect = "accumulated"},
+       // A target whose precision has one complex value per register has no batch leaves
+       // (scalar, double on NEON); where it has them, describe() says they run one row at a
+       // time.
+       &leaves,
+       nullptr},
+      // Rows one element apart along the batch (column-major rows): the lanes over adjacent
+      // transforms on a plan of one axis, whose input edge's phase must write the output that
+      // the lanes then read.
+      // The rows are longer than any target's lanes over rows take (lanes_up_to: 100 on
+      // avx512 in float), which would otherwise win.
+      {{.name = "rows as adjacent transforms, input factor",
+        .kind = c2c,
+        .dims = {128},
+        .count = 32,
+        .in = {real, {}, 1},
+        .expect = before,
+        .adjacent = true},
+       &adjacent,
+       "adjacent transforms"},
+      {{.name = "rows as adjacent transforms, both factors",
+        .kind = c2c,
+        .dims = {112},
+        .count = 16,
+        .in = {cplx, {-1}, -1},
+        .out = {cplx, {}, 1},
+        .expect = after,
+        .adjacent = true},
+       &adjacent,
+       "adjacent transforms"},
+      {{.name = "lanes over adjacent transforms, both factors",
+        .kind = c2c,
+        .dims = {8, 12},
+        .count = 8,
+        .in = {cplx, {}, 1},
+        .out = {real, {-1, 1}, 1},
+        .expect = before,
+        .adjacent = true},
+       &adjacent,
+       "adjacent transforms"},
+      {{.name = "lanes over adjacent transforms in place",
+        .kind = c2c,
+        .dims = {6, 10},
+        .count = 6,
+        .in = {cplx, {1, -1}, 0},
+        .out = {cplx, {}, 1},
+        .in_place = true,
+        .expect = after,
+        .adjacent = true},
+       &adjacent,
+       "adjacent transforms"},
+  };
+  for (const forced& f : cases) {
+    switch (f.c.kind) {
+    case c2c:
+      run_case<T, c2c>(f.c, t, threads, true, f.settings, f.strategy);
+      break;
+    case r2c:
+      run_case<T, r2c>(f.c, t, threads, true, f.settings, f.strategy);
+      break;
+    case c2r:
+      run_case<T, c2r>(f.c, t, threads, true, f.settings, f.strategy);
+      break;
+    }
+  }
+}
+
+TYPED_TEST(EdgeShapes, EveryStrategyForced) {
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    forced_strategies<TypeParam>(t, false);
+  }
+  forced_strategies<TypeParam>(fftn::isa::best, true);
+}
+
+// A stand-in for measured planning's clock (build_settings::measure_time): the first candidate
+// asked for after the rules' choice is twice as fast as every other.
+struct first_wins {
+  std::string winner;
+  std::vector<std::string> asked;
+};
+
+double first_wins_time(const std::string& choice, void* context) {
+  auto& f = *static_cast<first_wins*>(context);
+  f.asked.push_back(choice);
+  if (f.winner.empty() && choice != "rules") {
+    f.winner = choice;
+  }
+  return choice == f.winner ? 0.5 : 1.0;
+}
+
+// Measured planning and wisdom with edges (task 5.1b-3): the candidates are built with the edges
+// (a strategy forced by a candidate takes them as separate passes), the plan kept carries them
+// and computes the transform, and its wisdom entry rebuilds the same program, bit for bit,
+// for the same edges only.
+TEST(EdgeShapes, MeasuredPlanningAndWisdom) {
+  using C = std::complex<double>;
+  namespace d = fftn::detail;
+  const std::size_t n = 4096;
+  const auto shape = fftn::rows_c2c<double>(n, 2, fftn::direction::forward);
+  const auto ni = static_cast<std::ptrdiff_t>(n);
+  const fftn::plan_edges<C, C> edges{
+      .in = {.mul = {.kind = real, .axis_strides = {1}, .batch_strides = {ni}}},
+      .out = {.scale = 0.5, .mul = {.kind = cplx, .axis_strides = {-1}}, .accumulate = true}};
+  first_wins clock;
+  d::build_settings settings;
+  settings.measure_time = &first_wins_time;
+  settings.measure_context = &clock;
+  const auto core = d::make_plan_core_with_edges(
+      d::view_of(shape), {.effort = fftn::planning::measure}, d::view_of(edges), settings);
+  const std::string text = d::describe(*core);
+  ASSERT_FALSE(clock.winner.empty()) << text;
+  EXPECT_EQ(clock.asked.front(), "rules");
+  // The winner, not the rules' choice (its text pinned to the program built: a grid's phases
+  // as its factors, say, so not necessarily the text the clock was asked about).
+  EXPECT_NE(core->chosen_rank, 0U) << text;
+  EXPECT_DOUBLE_EQ(core->rules_over_chosen, 2.0) << text;
+  EXPECT_NE(text.find("planning: measured"), std::string::npos) << text;
+  EXPECT_NE(text.find("edges: the input times a real factor"), std::string::npos) << text;
+  EXPECT_TRUE(core->needs_args);
+
+  // The transform: against the rules' plan of the same edges.
+  fftn::test::input_source src(0x3EA5ULL);
+  const auto x = src.complexes<double>(2 * n);
+  const auto fin = src.reals<double>(2 * n);
+  const auto fout_storage = src.complexes<double>(n);
+  const C* fout = fout_storage.data() + (n - 1);
+  const auto init = src.complexes<double>(2 * n);
+  const fftn::exec_args args{.in_factor = fin.data(), .out_factor = fout};
+  const auto rules =
+      d::make_plan_core_with_edges(d::view_of(shape), {}, d::view_of(edges), d::build_settings{});
+  const auto run = [&](const d::plan_core& c) {
+    std::vector<C> y = init;
+    const fftn::workspace ws(d::workspace_bytes(c, 1));
+    d::execute_core(c, 0, 2, x.data(), y.data(), ws, args);
+    return y;
+  };
+  const std::vector<C> measured = run(*core);
+  std::vector<fftn::test::exact_complex> want;
+  for (const C& v : run(*rules)) {
+    want.push_back(fftn::test::exact_from(v));
+  }
+  fftn::test::outcome o;
+  o.within(fftn::test::compare<double>(std::span<const C>(measured), want),
+           fftn::test::derived_tolerance<double>(n, fftn::test::fftn_bound(n)) * 2,
+           "measured against the rules' plan");
+  EXPECT_TRUE(o.passed()) << o.detail() << text;
+
+  // Wisdom: the entry rebuilds the program with the same edges, nothing timed, bit for bit.
+  const fftn::wisdom w(d::record_text(d::record_of(*core)) + "\n");
+  first_wins unused;
+  d::build_settings again = settings;
+  again.measure_context = &unused;
+  for (const fftn::planning effort : {fftn::planning::rules, fftn::planning::measure}) {
+    const auto rebuilt = d::make_plan_core_with_edges(
+        d::view_of(shape), {.effort = effort, .use = &w}, d::view_of(edges), again);
+    EXPECT_TRUE(unused.asked.empty());
+    EXPECT_EQ(d::program_fingerprint(*rebuilt), d::program_fingerprint(*core));
+    EXPECT_NE(d::describe(*rebuilt).find("planning: from wisdom"), std::string::npos)
+        << d::describe(*rebuilt);
+    EXPECT_TRUE(run(*rebuilt) == measured);
+  }
+  // Not for the plan without edges, nor for other edges.
+  const auto plain = d::make_plan_core(d::view_of(shape), {.use = &w}, again);
+  EXPECT_EQ(d::describe(*plain).find("from wisdom"), std::string::npos);
+  fftn::plan_edges<C, C> other = edges;
+  other.in.mul.kind = cplx;
+  const auto different =
+      d::make_plan_core_with_edges(d::view_of(shape), {.use = &w}, d::view_of(other), again);
+  EXPECT_EQ(d::describe(*different).find("from wisdom"), std::string::npos);
 }
 
 // Executions without a factor array a real or multi-axis plan needs end the program, in every

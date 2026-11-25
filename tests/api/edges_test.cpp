@@ -232,9 +232,18 @@ void run_case(const edge_case& ec, fftn::isa t, bool threads, bool reference = t
   const edge_run<T> run(ec, t, src);
   const fftn::plan<std::complex<T>, std::complex<T>> p(run.shape, run.opts, run.edges);
   const std::string describe = p.describe();
-  EXPECT_NE(describe.find(ec.expect), std::string::npos)
-      << ec.name << ": no '" << ec.expect << "' in\n"
-      << describe;
+  // The placement the case names is the chain's (fused, or separate passes through the
+  // workspace block). Where the rules take another strategy for the row on this target (the
+  // lanes for short float rows on x86, say), every factor is a separate pass around it.
+  const bool other_strategy = describe.find("the row's strategy") != std::string::npos;
+  const char* expect = other_strategy ? "the row's strategy" : ec.expect;
+  EXPECT_NE(describe.find(expect), std::string::npos) << ec.name << ": no '" << expect << "' in\n"
+                                                      << describe;
+  if (other_strategy) {
+    EXPECT_EQ(describe.find("strategy: chain (Stockham"), std::string::npos)
+        << ec.name << ": separate passes around the chain\n"
+        << describe;
+  }
   const fftn::exec_args args = run.args();
   const cvec<T> x0 = run.x;
   const std::vector<T> fin_reals = run.fin.reals;
@@ -495,13 +504,39 @@ TEST(Edges, ScalesAloneAreTheShortcut) {
   expect_scale_only_same(plane, 120, 120);
 }
 
-// Edges with factors plan by the rules whatever the effort, and say so.
-TEST(Edges, MeasuredPlanningTakesTheRules) {
+// Edges with factors take measured planning (task 5.1b-3): the candidates are timed with the
+// edges, and the plan kept computes what the rules' plan computes.
+TEST(Edges, MeasuredPlanningTakesTheEdges) {
+  using C = std::complex<double>;
   const auto shape = fftn::rows_c2c<double>(256, 4, fftn::direction::forward);
-  const fftn::plan<std::complex<double>, std::complex<double>> p(
-      shape, {.effort = fftn::planning::quick},
-      {.in = {.mul = {.kind = cplx, .axis_strides = {1}, .batch_strides = {0}}}});
-  EXPECT_NE(p.describe().find("by the rules"), std::string::npos) << p.describe();
+  const fftn::plan_edges<C, C> edges{
+      .in = {.mul = {.kind = cplx, .axis_strides = {1}, .batch_strides = {0}}},
+      .out = {.mul = {.kind = real, .axis_strides = {1}, .batch_strides = {256}},
+              .accumulate = true}};
+  const fftn::plan<C, C> measured(shape, {.effort = fftn::planning::quick}, edges);
+  const fftn::plan<C, C> rules(shape, {}, edges);
+  EXPECT_NE(measured.describe().find("planning: measured"), std::string::npos)
+      << measured.describe();
+  fftn::test::input_source src(0x3EA5ULL);
+  const cvec<double> x = src.complexes<double>(1024);
+  const cvec<double> fin = src.complexes<double>(256);
+  const std::vector<double> fout = src.reals<double>(1024);
+  const cvec<double> init = src.complexes<double>(1024);
+  const fftn::exec_args args{.in_factor = fin.data(), .out_factor = fout.data()};
+  fftn::workspace ws(std::max(measured.workspace_bytes(), rules.workspace_bytes()));
+  cvec<double> a = init;
+  cvec<double> b = init;
+  measured.execute(x.data(), a.data(), ws, args);
+  rules.execute(x.data(), b.data(), ws, args);
+  std::vector<fftn::test::exact_complex> want;
+  for (const C& v : b) {
+    want.push_back(fftn::test::exact_from(v));
+  }
+  fftn::test::outcome o;
+  o.within(fftn::test::compare<double>(std::span<const C>(a), want),
+           fftn::test::derived_tolerance<double>(256, fftn::test::fftn_bound(256)) * 2,
+           "measured against the rules' plan");
+  EXPECT_TRUE(o.passed()) << o.detail() << measured.describe();
 }
 
 template <class In, class Out>

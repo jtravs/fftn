@@ -60,9 +60,11 @@ void factor_guard_leaf(const pass_args* args, const void* src, void* dst, std::p
 
 // As run_transforms, run_stage_chunks and run_lines (driver.hpp), with the cursors: base's
 // slots and f's cursors are those of transform 0 (run_edge_transforms) or of the transform the
-// piece belongs to (the others).
-void run_edge_transforms(const program& p, const std::vector<edge_record>& e, std::size_t first,
-                         std::size_t count, const slot_addresses& base, factor_cursors f) noexcept;
+// piece belongs to (the others). `tail`: the records of a lanes program's tail
+// (program::lane_tail), one per record.
+void run_edge_transforms(const program& p, const std::vector<edge_record>& e,
+                         const std::vector<edge_record>& tail, std::size_t first, std::size_t count,
+                         const slot_addresses& base, factor_cursors f) noexcept;
 void run_edge_stage_chunks(const program& p, const std::vector<edge_record>& e, std::size_t index,
                            const slot_addresses& at, factor_cursors f, std::size_t first,
                            std::size_t last) noexcept;
