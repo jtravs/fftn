@@ -7,7 +7,7 @@
 ## Question
 
 The reach rule gives Ice Lake-SP the Xeon 6240's rules, but Google Cloud's N2 Ice Lake VM reports
-a large L3 per CPU (54 MiB for 8 CPUs, 6.9 MiB each), so it plans in X58's branch of
+a large L3 per CPU (54 MiB for 8 CPUs, 6.75 MiB each), so it plans in X58's branch of
 `set_grid_sizes` (x86-64, a private L2 above 1 MiB and below 2 MiB, a large L3 per CPU), which
 has the Xeon 6240's c2c depth-first chain (L2/4 to 64 L2, tops 16, 20, 10) but sets neither X75
 (real rows' half length on that chain, `depth_real_max_bytes` and `depth_real_min_bytes`) nor X78
@@ -42,14 +42,14 @@ What each can move, by its mechanism:
 
 - **X75 (R)**: even real rows of one axis, out of place, contiguous on both sides, in double,
   whose half length is above L2/8 and within the c2c depth-first range (160 KiB to 80 MiB on N2;
-  in catalogue `x75` the double rows of 18432–2^21 points, with the batches 20480 × 21, × 3,
-  24576 × 4, 40960 × 6 and 65536 × 4; the notes decide which, since the chain's own limits
-  apply). Single precision cannot move: X58's branch gives float no depth-first chain
+  in catalogue `x75` the double rows of 24576–2^21 points with the batches 24576 × 4, 40960 × 6
+  and 65536 × 4: 18432 and 20480, whose half lengths are 144 and 160 KiB, are not above L2/8 + 1
+  on a 1.25 MiB L2; the notes decide). Single precision cannot move: X58's branch gives float no depth-first chain
   (`depth_float_max_bytes` = 0). In place, strided, odd lengths, planes, volumes and every c2c
   plan keep theirs.
 - **X78 (RF against R)**: the c2r rows among those whose half length is from L2/4 to 16 L2 (320
-  KiB to 20 MiB) and whose sub-row count is a multiple of the target's complex lanes. Nothing
-  else.
+  KiB to 20 MiB) and whose sub-row count is a multiple of the target's complex lanes: in `x75`
+  the c2r rows of 40960–2^21 points with 40960 × 6 and 65536 × 4. Nothing else.
 
 ## Method
 
@@ -67,6 +67,15 @@ What each can move, by its mechanism:
   length is above L2/8.
 - **Moved cases**: X75, the cases of I1 whose plan notes differ between B and R; X78, between R
   and RF. A case whose notes agree runs the same plan in the same binary and does not decide.
+- Plan check before these rules (no timing claims): cece1c5 on the Xeon 6240 (Slurm 17102 and
+  17103, GCC 14.4, `avx512`) planning for the topology the N2 VM recorded in X64's screen
+  (`FFTN_TOPOLOGY`), one round. On `x75` without 2^22 and 2^23 (run 20261125-093714-695a, 64
+  cases with float) R differs from B in 40 cases, exactly the double rows of 24576–2^21 points,
+  r2c and c2r, with the three batches; RF differs from R in 16, exactly the c2r rows of
+  40960–2^21 with 40960 × 6 and 65536 × 4; no float case moves. So I1 has 40 X75 cases and 16
+  X78 cases of 48. On the standard catalogue's 197 real cases (run 20261125-093719-e6a2) R moves
+  the rows of 65536 (× 1, × 2), 262144 and 2^20, r2c and c2r, and RF their c2r rows; nothing
+  else. Every output was checked against the reference.
 - Metric: R ÷ B and RF ÷ R per moved case, the median over valid rounds with its 95 % interval;
   over the moved cases the geometric mean with its interval. The band is I1's A/A control.
 
