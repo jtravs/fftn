@@ -1256,7 +1256,7 @@ at a page's start, whether the library or the benchmark put it there. A memory l
 core's prefetcher is a per-machine rule like any planner rule.
 [X76](experiments/X76-bimodal-864.md), [X79](experiments/X79-team-state-pages.md).
 
-5.19 **A plan judged at one thread can lose its gain in a team; count the phases it adds.**
+5.20 **A plan judged at one thread can lose its gain in a team; count the phases it adds.**
 Real rows' half lengths on the depth-first chain won 0.61–0.96 at one thread on the EPYC 7763
 and the Xeon 6240 (X72, X75). At 4 threads r2c rows kept most of it (0.67–0.87), but three of the five
 c2r cases came to 1.015–1.031 and a fourth to 0.92: the breadth-first chain they replaced fuses the pairing into its first
