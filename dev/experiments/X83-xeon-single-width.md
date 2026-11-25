@@ -70,9 +70,102 @@ fbench's `FEW_POINTS_PER_MEMBER` option that sets it), arms:
 Metric: each arm's time ÷ S per case. A case's crossover is the smallest team width that is not
 faster than a narrower one beyond the band.
 
+## Diagnosis results
+
+Run 20261125-104559-e6f5 (Slurm 17105, Xeon socket 1 cores 18-25, `xeoncc8`, 20 rounds, none
+loaded, load 3-4, band ±1.00 %; A/A median deviation 0.3 %). Every output correct. Time ÷ S
+(one thread), medians over rounds:
+
+| case | S µs | T2 | T4 | G2 | P4b | T8 |
+|---|---|---|---|---|---|---|
+| r2c 6400 | 6.9 | 1.02 | 2.46 | 1.02 | 1.02 | 2.69 |
+| c2r 6400 | 6.5 | 1.67 | 1.82 | 1.72 | 1.02 | 2.02 |
+| r2c 9216 | 10.0 | 1.93 | 1.86 | 1.98 | 1.01 | 1.94 |
+| c2r 9216 | 9.4 | 1.59 | 1.43 | 1.62 | 1.02 | 1.55 |
+| r2c 10000 | 11.2 | 1.83 | 1.76 | 1.87 | 1.02 | 1.89 |
+| c2r 10000 | 12.1 | 1.50 | 1.35 | 1.52 | 1.02 | 1.47 |
+| r2c 10240 | 11.5 | 1.86 | 1.72 | 1.91 | 1.01 | 1.76 |
+| c2r 10240 | 10.9 | 1.54 | 1.32 | 1.56 | 1.02 | 1.44 |
+| r2c 16384 | 19.9 | 1.54 | 1.17 | 1.58 | 1.61 | 1.23 |
+| c2r 16384 | 21.9 | 1.21 | 0.90 | 1.24 | 1.25 | 0.93 |
+| c2c 6561 | 19.4 | 1.24 | 0.93 | 1.25 | 1.01 | 0.94 |
+| c2c 7200 | 12.5 | 1.66 | 1.22 | 1.69 | 1.00 | 1.32 |
+| c2c 8192 | 15.7 | 1.50 | 1.10 | 1.51 | 1.01 | 1.20 |
+| c2c 8191 | 74.4 | 1.24 | 1.11 | 1.26 | 1.00 | 1.14 |
+| c2c 10000 | 17.8 | 1.33 | 1.13 | 1.38 | 1.01 | 1.00 |
+| c2c 12000 | 24.5 | 1.33 | 1.07 | 1.33 | 1.00 | 0.82 |
+| c2c 15625 | 62.6 | 1.06 | 0.84 | 1.09 | 1.01 | 0.57 |
+| c2c 16807 | 72.9 | 0.92 | 0.69 | 0.92 | 0.96 | 0.51 |
+| r2c 32768 | 41.2 | 1.22 | 0.93 | 1.26 | 0.93 | 0.67 |
+| c2r 32768 | 46.3 | 0.88 | 0.63 | 0.92 | 0.63 | 0.45 |
+| c2r 36864 | 49.2 | 0.93 | 0.69 | 0.97 | 0.68 | 0.52 |
+| c2c 32768 | 84.8 | 0.81 | 0.60 | 0.85 | 0.60 | 0.40 |
+| c2c 65536 | 217 | 0.61 | 0.41 | 0.63 | 0.41 | 0.29 |
+
+The cases not listed are not split by today's schedule at any width (each team arm 0.99-1.02 of
+S): rows below 6144 points, and the rows whose plan is a depth-first chain (lines in the work
+graph, so `split_min_points_lines`, 32768 on the Xeon, applies): c2c 16384-25000 and the real
+rows of 18432. So X77's single real rows of 18432 already run on one member, and those of
+32768-36864 now gain from 4 members (0.63-0.93) and more from 8 (0.45-0.67).
+
+- **A team of 2 loses almost everywhere below 32768 points**, also where 4 and 8 gain (r2c
+  32768 1.22; c2c 15625 1.06), and G2 (2 of 4 dispatched) is no better than T2 (2 of 2), nor P4b
+  (2 of 4 working, 2 waiting) than G2: the waiting members cost nothing measurable. So capping
+  members per point count (P4a-P4c, P8b-P8c) only loses: P4c and P8c run 32768-46080 on 2-4
+  members at 0.82-1.41 of S against T4's 0.53-0.93.
+- **Real rows of 6144-12287 points on a chain lose 1.32-2.69 at 4 and 8 members**, the c2r
+  rows and r2c rows alike. Their chain is a half-length complex chain plus a pairing: the work of
+  n / 2 complex points in 2-3 chunks per phase (work graph read on the Xeon with the library's own
+  scheduler), which the split thresholds compare as n points.
+- **c2c rows of 6144-16384 points have no size threshold**: 7200, 8191, 8192, 10000 and 12000
+  lose at 4 (1.07-1.22), but 6561 (0.93), 15625 (0.84) and 16807 (0.69) gain at 4, and 10000 and
+  12000 gain at 8. The rows that gain have odd radices (9, 5 and 25, 7) and more work per
+  point than the work graph counts. No threshold on points passes the "none slower" criterion
+  (6561 at 4 would take 1.08, 15625 at 8 1.74), so this experiment does not change them.
+
+## The rule (arm B)
+
+`machine_profile::split_complex_rows`, set in the Xeon 6240 class's branch of `set_grid_sizes`
+(Intel's cores only: `intel && private_l2 && !large_l2 && !large_l3`, `x86_64`): a real row (r2c
+or c2r, rank 1) whose work graph has no phase of lines is split by its complex points, n / 2 + 1,
+as real planes already are (`split_complex_points`, X52). The plan and its work are unchanged;
+only the split thresholds read the points. Rows on the depth-first chain or a grid keep their
+real points (`split_min_points_lines` was set on them, and X75's 32768 gains at 4).
+
+Cases it moves (their split or cap differs, computed on the Xeon with the library's scheduler on
+both arms' work graphs):
+
+- widths 4, 6 and 8 (a group of at most 8: threshold 6144): r2c and c2r 6400, 9216, 10000 and
+  10240 become whole (8 cases per width);
+- width 16 (a mesh group: threshold 8192): r2c and c2r 9216, 10000 and 10240 become whole, and
+  r2c 16384's cap goes from 9 to 8 members (7 cases).
+
+Nothing else in catalogue `x83` moves at any width, and at one thread nothing can (the scheduler
+runs only for teams).
+
 ## Decision rules
 
-(Written after the diagnosis, before the judging runs; see below.)
+Written before the judging runs, committed with the rule.
+
+- Arms: **O** = `main` 8fdcb06, **B** = O plus the rule (this branch's rule commit), both
+  `fftn_omp+THREADS=k`; A/A control O~. Four runs, `--serial`, catalogue `x83` full, 16-20
+  rounds: **J4**, **J6**, **J8** (`xeoncc8`, k = 4, 6, 8) and **J16** (`xeoncc16`, k = 16). J4
+  also has the one-thread arms **O1** and **B1** (`fftn_omp`, serial).
+- Metric: B ÷ O per case, median over valid rounds with its 95 % paired interval; band = the
+  run's A/A band (`--min-band 0.01`).
+- **Adopt B** on the Xeon 6240's class if, over the 31 moved (case, width) pairs above, the
+  geometric mean of B ÷ O is below 1 − band (the largest band of the four runs) and no moved
+  pair's whole interval lies above 1 + max(band of its run, 3 %).
+- **One thread**: no case of B1 ÷ O1 in J4 may have its whole interval above 1 + max(band, 3 %)
+  (both run the same plans by construction; a failure would mean a build or placement artefact,
+  investigated before adoption).
+- Cases outside the moved set run the same plan and the same schedule in both arms; they are
+  reported as the collateral check and do not decide.
+- The near-miss re-run and the narrowing clauses of AGENTS section 6 apply (narrowing by length
+  or width).
+- Reach: the Xeon 6240's class on Intel's cores (Ice Lake-SP by the cache key, per AGENTS
+  section 6); AMD's cores the key reaches and unknown vendors keep the real points (the
+  maintainer's policy of 2026-11-25, task L).
 
 ## Results
 
