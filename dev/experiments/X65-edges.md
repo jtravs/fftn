@@ -76,8 +76,13 @@ Edge configurations (one fbench run each):
 - **Machines:** the Mac M5 Max (Homebrew Clang 23, neon_fcma; on AC power, one fbench at a time,
   `pmset -g batt` before and after each run); the EPYC 7763 (DMOG, GCC 16, avx2, Slurm shared
   `-c 8`); the Xeon 6240 (GCC 14.4, avx512, `--serial`, shared `-c 8`).
+- **Mac timing, amended before any result was read** (the maintainer, 2026-11-25 night: Mac
+  timing only when necessary, since heavy loads run the fans): the Mac's queue was stopped
+  during its first run (E1, never analysed), and the Mac times only if the EPYC and the Xeon
+  disagree on a Q2 verdict, as one short run of that kind's cases. Q2's "two of the three
+  machines" then reads "both x86 machines, or one of them and the Mac's short run".
 - **Thread modes:** one thread for E1–E6 on every machine; `THREADS=4` (a client width) for E2
-  and E3 on tier `quick` on the Mac and the EPYC (the Xeon's Slurm binds no CPUs).
+  and E3 on tier `quick` on the EPYC (the Xeon's Slurm binds no CPUs).
 - **fbench:** interleaved arms U, L, P and the control U~, process rounds (6 to 20), hot mode,
   median statistic. The noise band is the U~/U control's.
 - **Metrics,** per case: L/U (Q1), P/U, and the edge's overhead over the plain plan
