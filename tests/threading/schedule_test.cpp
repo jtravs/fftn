@@ -732,7 +732,17 @@ TEST(Schedule, GridSizesFromCaches) {
   EXPECT_EQ(m5.depth_c2r_fused_max_bytes, 0U);
   EXPECT_EQ(m5.depth_real_max_bytes, 0U);
   EXPECT_EQ(x86("linux-gcp-c4d-zen5.sysfs").depth_real_max_bytes, 0U);
+  // X82: X58's Ice Lake branch (Intel) takes X75's and X78's fields from its 1.25 MiB L2, the
+  // values the screen's arm RF ran (83886080, 163841, 327680, 20971520); another vendor's cores
+  // with those caches keep the defaults.
+  const machine_profile ice86 = x86("linux-gcp-n2-ice-lake.sysfs", fftn::detail::cpu_vendor::intel);
+  EXPECT_EQ(ice86.depth_real_max_bytes, ice86.depth_max_bytes);
+  EXPECT_EQ(ice86.depth_real_max_bytes, std::size_t{83886080});
+  EXPECT_EQ(ice86.depth_real_min_bytes, std::size_t{163841});
+  EXPECT_EQ(ice86.depth_c2r_fused_min_bytes, std::size_t{327680});
+  EXPECT_EQ(ice86.depth_c2r_fused_max_bytes, std::size_t{20971520});
   EXPECT_EQ(x86("linux-gcp-n2-ice-lake.sysfs").depth_real_max_bytes, 0U);
+  EXPECT_EQ(x86("linux-gcp-n2-ice-lake.sysfs").depth_c2r_fused_max_bytes, 0U);
   EXPECT_EQ(x86("linux-gcp-c4-granite-rapids.sysfs").depth_real_max_bytes, 0U);
   // The c2r grid pairs in its first gather only where the L2 is shared (X29).
   EXPECT_TRUE(m5.c2r_paired_gather);
@@ -1097,8 +1107,9 @@ TEST(Schedule, FitTableKeys) {
 // 2026-11-25; DESIGN.md 13.5). The Xeon 6240's class (X34, X39, X46, X50, X51, X58, X61's x86
 // half, X63, X75, X78) and the 2 MiB-L2 key (X35, X55, X58, X64, X69, X70) were measured on
 // Intel's cores only, so they read the vendor: every Intel recording keeps the profile it had
-// (the literals here and in the tests above are main's values before the vendor was read), and
-// AMD's cores with the same caches, or an unknown vendor, keep the fields' defaults there.
+// (the literals here and in the tests above are main's values before the vendor was read, plus
+// X82's real-row fields on the Ice Lake VM since), and AMD's cores with the same caches, or an
+// unknown vendor, keep the fields' defaults there.
 struct intel_keyed {
   std::size_t grid_two_odd_part;
   std::size_t grid_three_block;
@@ -1204,12 +1215,16 @@ TEST(Schedule, IntelOnlyKeys) {
       .c2r_packed_isa = fftn::isa::avx512,
   };
   EXPECT_EQ(keyed_of(recorded("linux-intel-xeon-gold-6240.sysfs", cpu_vendor::intel)), xeon);
-  intel_keyed ice_lake = defaults; // X58's depth-first chain only
+  intel_keyed ice_lake = defaults; // X58's depth-first chain, with X75's and X78's real rows (X82)
   ice_lake.depth_min_bytes = 320 * kib;
   ice_lake.depth_max_bytes = 80 * mib;
   ice_lake.depth_top = 16;
   ice_lake.depth_top_alt = 20;
   ice_lake.depth_top_last = 10;
+  ice_lake.depth_real_max_bytes = 80 * mib;
+  ice_lake.depth_real_min_bytes = 160 * kib + 1;
+  ice_lake.depth_c2r_fused_min_bytes = 320 * kib;
+  ice_lake.depth_c2r_fused_max_bytes = 20 * mib;
   EXPECT_EQ(keyed_of(recorded("linux-gcp-n2-ice-lake.sysfs", cpu_vendor::intel)), ice_lake);
   intel_keyed large_l2 = defaults; // X35, X55, X58, X64, X69 and X70
   large_l2.grid_two_part_bytes = 32 * kib;

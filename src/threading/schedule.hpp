@@ -257,7 +257,7 @@ struct machine_profile {
   // double, by the fields above, up to this many bytes of the half length (0: never;
   // core/plan_core.cpp, real_depth_tops_of; experiment X72), with the separate pairing pass
   // after it (r2c) or before it (c2r, into scratch). set_grid_sizes sets the rows' whole range
-  // on Zen 3's class (X72) and on the Xeon 6240's (X75).
+  // on Zen 3's class (X72), on the Xeon 6240's (X75) and on X58's Ice Lake branch (X82).
   std::size_t depth_real_max_bytes = 0;
   // Such a real row's half length takes the chain from the smaller of depth_min_bytes and this
   // (the largest value: no lower limit of its own; experiment X75): on the Xeon 6240 real rows
@@ -268,8 +268,8 @@ struct machine_profile {
   // a separate pass into the workspace block, where its half length's bytes lie from
   // depth_c2r_fused_min_bytes to depth_c2r_fused_max_bytes (0: never; core/plan_core.cpp,
   // chain_builder::c2r_depth; experiment X78). set_grid_sizes sets L2/4 to 16 L2 on the Xeon
-  // 6240's class; Zen 3's keeps the separate pass, which the fused first pass lost to at every
-  // length there (1.08-1.30 of its time).
+  // 6240's class and on X58's Ice Lake branch (X82); Zen 3's keeps the separate pass, which the
+  // fused first pass lost to at every length there (1.08-1.30 of its time).
   std::size_t depth_c2r_fused_min_bytes = 0;
   std::size_t depth_c2r_fused_max_bytes = 0;
   // The L1 data cache's line in bytes: a lanes column phase's block holds at least a line of
