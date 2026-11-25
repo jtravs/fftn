@@ -881,6 +881,34 @@ planner_fields fields_of(const machine_profile& p) {
   };
 }
 
+// A replayed recording plans with the vendor it states, whatever the host's (DESIGN.md 13.5):
+// the Xeon 6240's keeps its Intel-only fields on an AMD or Arm host, and Zen 5's does not gain
+// them on an Intel one. A recording without a vendor takes the host's, as before.
+TEST(Schedule, ReplayedRecordingsPlanWithTheirVendor) {
+  const std::filesystem::path data(FFTN_PLATFORM_DATA);
+  using fftn::detail::cpu_vendor;
+  const auto replayed = [&](const char* file, cpu_vendor host) {
+    const fftn::detail::topology t = fftn::detail::load_topology(data / file);
+    return fields_of(fftn::detail::profile_for(t, true, fftn::detail::planning_vendor(t, host)));
+  };
+  const auto with = [&](const char* file, cpu_vendor vendor) {
+    return fields_of(
+        fftn::detail::profile_for(fftn::detail::load_topology(data / file), true, vendor));
+  };
+  const char* xeon = "linux-intel-xeon-gold-6240.sysfs";
+  const char* zen5 = "linux-gcp-c4d-zen5.sysfs";
+  ASSERT_NE(with(xeon, cpu_vendor::intel), with(xeon, cpu_vendor::amd)); // Intel-keyed fields
+  for (const cpu_vendor host : {cpu_vendor::unknown, cpu_vendor::intel, cpu_vendor::amd,
+                                cpu_vendor::apple, cpu_vendor::arm_other}) {
+    EXPECT_EQ(replayed(xeon, host), with(xeon, cpu_vendor::intel));
+    EXPECT_EQ(replayed(zen5, host), with(zen5, cpu_vendor::amd));
+  }
+  const fftn::detail::topology synthetic =
+      fftn::detail::load_topology(data / "linux-synthetic-2socket-smt.sysfs");
+  EXPECT_EQ(fftn::detail::planning_vendor(synthetic, cpu_vendor::amd), cpu_vendor::amd);
+  EXPECT_EQ(fftn::detail::planning_vendor(synthetic, cpu_vendor::intel), cpu_vendor::intel);
+}
+
 TEST(Schedule, ProfilesOfRecordedMachines) {
   const std::filesystem::path data(FFTN_PLATFORM_DATA);
   using fftn::detail::cpu_vendor;

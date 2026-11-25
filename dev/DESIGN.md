@@ -1709,7 +1709,7 @@ the machine-specific estimate for callers who want it.
     elementwise passes per copy.
 - **`relative_cost<T>(n, isa)`** is that cost per point over the cost per point of the power
   of two at or above n, on the target's own table as this machine's plans take it: on `avx2`
-  that depends on the host's vendor too (section 13.5; on the Mac, `relative_cost(n,
+  that depends on the planning vendor too (section 13.5; on the Mac, `relative_cost(n,
   isa::avx2)` prices the table without the AMD-only overrides). It is 1 for a length the
   planner runs as one codelet (`rule_radices(n) == {n}`; 20 is always a chain, X38, and is
   priced as one). It does not price memory beyond L1, nor long rows' chain or grid (P3).
@@ -2582,6 +2582,14 @@ live root, or a sysfs snapshot: one text file per machine, format in
 machine against fixtures recorded with `tools/capture_platform.py` (named by CPU model) and
 synthetic ones. The environment override `FFTN_TOPOLOGY` names such a recording (a sysfs
 snapshot, told apart by its header line, or a sysctl file); the programmatic override is that everything consuming a topology takes it as an argument.
+A recording may also state the processor's vendor, which sysfs and the topology keys do not
+hold: the snapshot entry `fftn/cpu_vendor` or the sysctl key `fftn.cpu_vendor`, naming it as
+`describe()` does (`intel`, `amd`, `apple`, `arm_other`, `unknown`; any other name is an error).
+An ordinary entry, it leaves the format's version unchanged, so older snapshots stay valid and
+older readers ignore it. Replayed through `FFTN_TOPOLOGY`, a recording that states its vendor
+plans with that vendor (`system_cpu_vendor`, `planning_vendor`); one that does not plans with the
+host's, as live detection does. `tools/capture_platform.py` records the vendor, and the
+repository's recordings of real machines carry it; the synthetic ones do not.
 The process's topology is detected once, into a function-local constant. Unknown values
 are zero, never guessed: macOS reports no associativity, and it does not say which logical
 CPU belongs to which performance level, so there CPUs are numbered in class order (fastest
@@ -2591,7 +2599,9 @@ first) and the topology says the numbers are not the OS's.
 from the topology) also carries who made the processor (`machine_profile::vendor`): CPUID
 leaf 0's vendor string on x86 (Intel, AMD; any other string is unknown), Apple on AArch64
 macOS, "other Arm" on AArch64 elsewhere, detected once per process with the instruction-set
-features and shown by `plan::describe()`. A cache key cannot tell a Zen CCX from an Intel ring,
+features and shown by `plan::describe()`; a replayed recording that states a vendor gives its
+own instead (above), so that replaying the Xeon's recording on an AMD or Arm host keeps the
+Intel-only fields, and a Zen recording on an Intel host does not gain them. A cache key cannot tell a Zen CCX from an Intel ring,
 and on `avx2` a rule measured only on AMD's cores would otherwise reach Intel cores that have
 `avx2` but no AVX-512 (older client parts, some cloud shapes, the Xeon forced to `avx2`). So
 the `avx2` rules measured only on the EPYC 7763 and keyed by the target alone apply only where
@@ -3585,6 +3595,7 @@ to change before a release.
 | 2026-11-25 | On the Xeon 6240's class a c2r row on the depth-first real route with a half length from L2/4 to 16 L2 pairs its bins in the chain's first pass (`depth_c2r_fused_min_bytes`, `depth_c2r_fused_max_bytes`, new, default never; pairing twiddles factored over the pass's legs); elsewhere the separate pass stays; section 9.1 | X78 (arm B4n, rules of amendment 1 committed before its runs): Xeon 6240 one thread 0.853 over the 23 rows it moves (run 20261125-062612-079d, band ±4.22 %), none slower; c2r 32768 at 4 threads 0.740, 40960 × 6 at 6 threads 0.886 (runs 20261125-063649-3e6d, -063741-028a). Arm B (a table of h entries, both classes) rejected by its rule: EPYC 1.151, Xeon 1.064; on Zen 3 every variant lost (1.12–1.20), so Zen 3 keeps the separate pass (declared run 20261125-062442-ddf9: no plan moved). Reach: the Xeon 6240's key, as X75's |
 | 2026-11-25 | The Xeon 6240's class (X34, X39, X46, X50, X51, X75, X78, X61's x86 half, X63) and the 2 MiB-L2 key (X35, X55, X58, X64, X69, X70), with X58's Ice Lake chain, apply to Intel's processors only (`set_grid_sizes`, section 13.5); AMD's and unknown vendors' cores those keys reach keep the fields' defaults. Not a performance change: every Intel recording keeps its whole profile | The maintainer's policy, accepted on 2026-11-25 ("I agree with all recommendations"): "a rule measured on only one vendor is keyed to that vendor". The keys read only cache shape, so Zen 4c and Zen 5c (1 MiB of L2 and of L3 per CPU) fall into the Xeon 6240's, and X64 measured X63 losing on Zen 4 there. Unknown behaves as off: no CI runner or recording reports an unknown x86 vendor, and the tests set the vendor explicitly |
 | 2026-11-25 | Under ASan + UBSan the kernel units (the library's `src/isa` units and the codelet test units) are compiled without UBSan's pointer-overflow and object-size checks (section 15.4) | The required Clang ASan + UBSan job took 78 minutes on PR 114, 64 of them a cold build of the kernel units, which every change to the kernel text, and every pull request started before main saved its cache, pays. Clang 23 on an EPYC 7763: the kernel units took 9306 s of compile time with every check, 2663 s without these two; ASan bounds-checks every access those units make, which subsumes both. GCC 16: 0.59 and 0.73 of the time on two units; the ASan + UBSan tests pass (2219, DMOG) in the same time |
+| 2026-11-25 | A topology recording may state the processor's vendor (snapshot entry `fftn/cpu_vendor`, sysctl key `fftn.cpu_vendor`); an `FFTN_TOPOLOGY` replay plans with it, and a recording without it with the host's vendor, as before (section 13.5). The repository's recordings of real machines and `tools/capture_platform.py` carry it | Since the Intel-only keys, a replay took the host's vendor: the Xeon's recording replayed on an AMD or Arm host silently lost about 30 fields, and a Zen 4c-like recording on an Intel host gained them. An ordinary entry keeps old snapshots valid and old readers working |
 
 ---
 

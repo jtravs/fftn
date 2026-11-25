@@ -8,6 +8,9 @@
 //
 //   fftn_platform_dump            the system topology (honours FFTN_TOPOLOGY)
 //   fftn_platform_dump <path>     a recorded topology (a sysfs root or a sysctl file)
+//
+// The last lines give the host's vendor (CPUID) and the vendor plans take, which is a replayed
+// recording's own when $FFTN_TOPOLOGY names one that states it (system_cpu_vendor).
 
 #include "isa/target.hpp"
 #include "platform/cpu_features.hpp"
@@ -36,6 +39,11 @@ int main(int argc, char** argv) {
             std::to_string(fftn::detail::measured_clock_resolution().count()) + '\n';
     text += fftn::test::topology_text(args.size() == 2 ? fftn::detail::load_topology(args[1])
                                                        : fftn::detail::system_topology());
+    text += "host_vendor ";
+    text += fftn::detail::cpu_vendor_name(features.vendor);
+    text += "\nplanning_vendor ";
+    text += fftn::detail::cpu_vendor_name(fftn::detail::system_cpu_vendor());
+    text += '\n';
     std::fputs(text.c_str(), stdout);
     return 0;
   } catch (const std::exception& e) {

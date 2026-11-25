@@ -1,3 +1,4 @@
+fftn.cpu_vendor: apple
 hw.cacheconfig: 18 1 6 0 0 0 0 0 0 0
 hw.cachelinesize: 128
 hw.l1dcachesize: 65536
