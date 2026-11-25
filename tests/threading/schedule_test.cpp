@@ -440,17 +440,17 @@ TEST(Schedule, RealRowsSplitByComplexPoints) {
   EXPECT_EQ(share_of(make_schedule(longer->graph, four, longer->profile), four, 0).split, 1U);
   // A real row on a grid (phases of lines) keeps its real points.
   const auto grid = real_row(65536, strategy_choice::grid, true);
-  ASSERT_TRUE(std::ranges::any_of(grid->graph.phases,
-                                  [](const fftn::detail::graph_phase& ph) { return ph.nest != 0; }));
+  ASSERT_TRUE(std::ranges::any_of(
+      grid->graph.phases, [](const fftn::detail::graph_phase& ph) { return ph.nest != 0; }));
   EXPECT_EQ(grid->graph.points, 65536U);
   // c2c rows are unchanged.
   fftn::detail::build_settings c2c;
   c2c.strategy = strategy_choice::chain;
   c2c.profile = profile();
   c2c.profile.split_complex_rows = true;
-  EXPECT_EQ(fftn::detail::make_plan_core(fftn::detail::view_of(fftn::rows_c2c<double>(
-                                             10240, 1, fftn::direction::forward)),
-                                         fftn::options(), c2c)
+  EXPECT_EQ(fftn::detail::make_plan_core(
+                fftn::detail::view_of(fftn::rows_c2c<double>(10240, 1, fftn::direction::forward)),
+                fftn::options(), c2c)
                 ->graph.points,
             10240U);
 }
