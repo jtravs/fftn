@@ -195,14 +195,28 @@ void depth_first_pass(const pass_args* a, const void* src, void* dst, std::size_
             },
             out, table, p);
       } else if constexpr (In == first_input::c2r) {
+        // The unit's R runs paired into a tile first, then the codelet from the tile: paired
+        // inside the codelet's loads, the pairing's temporaries spilled its legs on avx2's 16
+        // registers (X78 arm B: 1.07-1.30 of the separate pass's time on the EPYC).
         const std::size_t i0 = q0 + s * p;
+        const run_in_c2r<T> pairs{
+            .x = x,
+            .w = static_cast<const T*>(a->in_factor) + tw_reals<T> * i0,
+            .i = i0,
+            .leg = s * m,
+            .h = a->n,
+        };
+        T tile[R * 2 * C<T>]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
+        for (std::size_t j = 0; j < R; ++j) {
+          store(tile + at(j * C<T>, 2), pairs.get(j));
+        }
         lane_unit<T, R, Sign, true>(
-            run_in_c2r<T>{
-                .x = x,
-                .w = static_cast<const T*>(a->in_factor) + tw_reals<T> * i0,
-                .i = i0,
-                .leg = s * m,
-                .h = a->n,
+            run_in<T, edge_op::none, true>{
+                .p = tile,
+                .leg = at(C<T>, 2),
+                .step = 2,
+                .valid = C<T>,
+                .op = {},
             },
             out, table, p);
       } else {
