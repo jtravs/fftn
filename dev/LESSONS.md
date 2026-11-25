@@ -1378,3 +1378,16 @@ four compiles at once can pass the runner's 16 GB. Turning off use-after-scope c
 3.7 GB, so the line tables alone cost 2.5 GB. The same run's clang-tidy jobs reported three
 findings because the build stopped at the first failing units: `ninja -k 0` found about 150,
 nearly all in a week of merges. Measured on the DMOG cluster; PR 98.
+
+6.17 **In vector kernels under ASan + UBSan, UBSan costs more than ASan, and two of its checks
+are nearly all of it.** The required Clang ASan + UBSan job took 78 minutes on PR 114, 64 of
+them rebuilding the kernel units, which any change to the kernel text (or a stale cache)
+forces; PR 114's own code added 8 % to that build. One unit alone (Clang 23, EPYC 7763):
+rows8_avx2 131 s with ASan + UBSan, 42 s with ASan alone, 98 s with UBSan alone, 20 s with
+neither; leaving out only pointer-overflow and object-size gave 42 s, and rows6_avx512 281,
+85 and 113 s. Every kernel load, store and index computation gets both checks, and ASan's
+exact bounds check of every access already subsumes them, so the kernel units leave them out:
+their whole build fell from 9306 to 2663 s of compile time, the other UBSan checks and the
+other units unchanged. Traps instead of handler calls (`-fsanitize-trap`) saved less (rows8_avx2 74 s),
+and dropping ASan's stack instrumentation or use-after-return nothing. GCC 16 gains less (one
+unit 230 to 167 s). Time each sanitizer, and each check, before splitting units further.
