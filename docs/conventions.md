@@ -277,6 +277,27 @@ transform; the workspace may then hold one transform (or row) more: an input edg
 cannot be applied in the output, and accumulation, which keeps the result or the output's
 prior values there.
 
+## Stored runs
+
+Provisional (task 5.1d, `fftn::stored_run` in `fftn/shape.hpp`). An axis may be stored in
+part on either side: `shape::runs` lists runs, each `count` elements stored from position
+`stored` of the axis's memory that are the logical positions `logical` onwards of the
+transformed line. On an axis with runs on a side, input elements outside the runs are zero and
+are never read, output elements outside the runs are never written, and the default stride of
+the next axis out spans the axis's stored extent (the end of its last run), not its length; the
+overlap check measures the same extent. Examples: the band of bins of a long time line that an
+application keeps, the valid half of a zero-padded convolution's row, the bins an output crops.
+`axes_c2c`, `axes_r2c` and `axes_c2r` take runs too (their axes index the array), so that a
+compact array of stored bins gets its strides by default.
+
+Runs of one axis and side may not overlap in their logical or their stored positions; they may
+be listed in any order. A plan with runs reads the runs into the whole line with zeros elsewhere,
+computes the whole transform (skipping the lines of a multi-axis transform that are known to be
+zero or are not wanted) and stores only the runs, on the chain whatever the rules would choose,
+planned by the rules whatever `options::effort` says; `plan::describe()` says so and counts the
+passes. Not built yet, and refused at construction: runs on an in-place plan, and runs beside an
+edge's factor (accumulation and scales are taken).
+
 ## In place
 
 A plan built with `options::in_place` is executed with the same address as input and

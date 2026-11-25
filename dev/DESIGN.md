@@ -2224,7 +2224,7 @@ stored runs, which skips zero sub-transforms. Within a line it then uses the gen
 codelets, confined to the edge passes.
 
 As built (tasks 5.1a, 5.1b): `edge`, `factor`, `plan_edges` and `exec_args` are public, provisional,
-in `fftn/edges.hpp`, without `edge::call` (5.3) and stored runs (5.1d); the plan constructor
+in `fftn/edges.hpp`, without `edge::call` (5.3); the plan constructor
 takes the edges and every execute overload has its `exec_args` twin (the team one twice: with
 `completion::all` and with an explicit `completion`; `execute(in, out, team, ws, {})` does not
 compile). Scales are taken by every plan: both edges' and `options::scale` are one product,
@@ -2277,6 +2277,24 @@ names differ a line "not the strategy the rules would choose" gives both and the
 measured plan, the chosen candidate's knobs stand for the rules). The edges' line counts the
 separate passes they cost (the stages of the program that are edge passes, accumulation's
 saving of the output's prior values included).
+
+Stored runs as built (task 5.1d): `side`, `stored_run` and `shape::runs` are public and
+provisional in `fftn/shape.hpp`, and `axes_*` take the trailing runs. Runs of one axis and side
+may be listed in any order and may overlap neither in logical nor in stored positions. The stored
+extent sets the default strides and the reach and overlap checks (`side::reach`,
+`core/runs.hpp`). A plan with runs is built as a plan with edges whose sides with runs are
+separate (`build_with_runs`), on the chain. The input's pass (an edge phase, or a c2c row's pass
+into the workspace block) reads each run to its logical place and writes zeros between them:
+along the last axis as stages of the line (`run_line_stages`), along the others as a nest per
+combination of runs and gaps, the gaps' lines zeros (`run_phase`). The output's runs make the
+transform end in the block, as accumulation does, and its pass stores (or accumulates) only the
+runs. Pruning by restricted loops: the phase of an axis runs over the input's runs of the axes
+not yet transformed when it works in place, and over the output's runs of the axes already
+transformed, each combination inside a loop of one iteration whose start moves the slots
+(`pruned`). Not yet built: runs on in-place plans and beside a factor (both refused, naming the
+field), runs in the lanes, grid and depth-first strategies (`describe()` names the strategy the
+plan without runs takes), and measured planning and wisdom for runs (planned by the rules; the
+wisdom key carries the runs). 5.1e adds pruned codelets within the line.
 
 ### 12.2 Row pipelines
 
@@ -3673,6 +3691,7 @@ to change before a release.
 | 2026-11-25 | Plan edges' API points (task 5.1a, PR 128): the team `execute` with `exec_args` also without a `completion` (`completion::all`), and `execute(in, out, team, ws, {})` refused at compile time; accumulation refused on in-place plans; an empty `batch_strides` broadcasts along every batch dimension; an execution without a factor array the plan needs aborts in every build; plans with factor edges run on a driver of their own, so that the others run exactly as before (a regression check on the EPYC 7763 found plans without edges 2–6 % slower when one driver moved the cursors for every plan); default member initialisers kept; the scales applied as one product, which differs from separate multiplications only in rounding | The maintainer, on the six questions of PR 128: "Yes, as recommended". A second reader found that `execute(in, out, team, ws, {})` bound silently to `completion{}`, and that a Release execution without the factor array read address 0 (or, with a large stride, mapped memory) |
 | 2026-11-25 | Measured planning and wisdom with edges (task 5.1b-3, section 12.1): candidates built and timed with the edges on scratch factor arrays; the wisdom key of a plan with edges is the caller's shape and options plus the edges (not the scale a placement fuses, so the key does not depend on whether the fused chain was kept) | A plan with edges was planned by the rules whatever the effort; the effort is the caller's to choose, and an edge changes which strategy wins (a separate pass costs more in some than in others) |
 | 2026-11-25 | Edges in the rows' strategies (task 5.1b-2, section 12.1): a row with edges takes the rules' strategy with separate passes around it (the input's into the output for an in-place build, or into the block for a real row; accumulation by saving the output's prior values in the block and adding the result to them); the fused chain only where the rules choose the chain; the lanes over adjacent transforms with edge phases in each block, not with accumulation | "Plans with edges stop being forced to the chain" (PLAN 5.1b): a separate pass costs one pass over the row, the forced chain could cost the strategy's whole gain. Saving the prior values needs no second destination in any strategy, so accumulation reaches every strategy at once. X65 (5.1f) prices fusing |
+| 2026-11-25 | Stored runs (task 5.1d, section 12.1): provisional public `side`, `stored_run`, `shape::runs` and the runs argument of `axes_*`; runs in any order, disjoint in logical and stored positions; built as separate edge passes through the workspace block or the output, on the chain, with pruning by restricted loops in multi-axis transforms; refused on in-place plans and beside a factor; planned by the rules | Correctness first, as the brief orders ("a line with runs may read into scratch with zeros, compute the full line, then store only the runs"); the edge phases' block and loops carry runs with no new kernel beyond a zero fill. The refusals and the rules-only planning are the parts not built yet, listed for the maintainer's review with the API choices |
 | 2026-11-25 | Edges on multi-axis and real plans (task 5.1b-1, section 12.1): every factor and accumulation an edge phase of its own over the edge side's rows, before or after the transform, through the output (c2c input edge without accumulation) or one transform in the workspace block (in an in-place transform's layout, shared by both edges); team cores built with the edges | Correctness first (5.1): a phase of rows needs no kernel and no change to any strategy's phases, reaches every axis order, layout and kind, and teams share it by lines. Fusing into the first and last phases' passes (natural for the input edge on the rows) is X65's to price (5.1f) |
 
 ---
