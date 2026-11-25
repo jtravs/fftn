@@ -8,6 +8,7 @@
 
 fftn_add_test(fftn_threading_tests
   SOURCES
+    bluestein_team_test.cpp
     executor_test.cpp
     pool_test.cpp
     schedule_test.cpp

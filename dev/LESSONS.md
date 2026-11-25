@@ -1027,7 +1027,24 @@ backward 1220 → 960 cycles), at the price of a whole pair for one row, which 3
 repay (1.05 of the chain; excluded). Count op-cache misses (Zen 3 PMCx28F) before believing a path
 that is slow only for some counts or one direction. [X62](experiments/X62-epyc-tail.md).
 
-4.25 **Between L1 and L2, three passes with one big radix beat four small ones on 16 registers,
+4.25 **Exactly rounded twiddles can be cheap to plan without changing a bit: evaluate each
+distinct angle once.** FFTN computes every root alone in double-double (a Taylor series per
+root, 360 ns on the M5 Max, 0.8–0.9 µs on the EPYC 7763 and the Xeon 6240), and that was
+almost all of its plan construction: an r2c of 32768 points took 9.3 ms on the Mac, 19.5 ms on
+the EPYC. Two exact identities removed three quarters or more of the evaluations. Octant symmetry:
+for n divisible by 8 the first half of the table has n/8 + 1 reduced angles, each shared by up
+to four entries, so a table computed angle by angle, placed by the same octant rule, is the
+same table for a quarter of the work. Scaling: the integer octant reduction makes root(2m, 2n)
+the computation of root(m, n) with every operand of every floating-point operation doubled,
+which changes no rounding, so tables of n and n 2^k share entries bit for bit and an r2c's
+half-length chain and pairing twiddles need the roots of n once. Plan construction fell to
+0.22–0.23 of its time over the client catalogue's 52 shapes on the Mac, the EPYC and the Xeon
+(worst shape 9.3 → 2.7, 20.8 → 5.1 and 26.8 → 5.7 ms) with every table entry unchanged, which tests check against
+the per-entry computation, so no transform needed re-timing. Check that a reformulated
+generator is the same function of its inputs before reaching for a cheaper but different one.
+[X71](experiments/X71-twiddle-generation.md).
+
+4.26 **Between L1 and L2, three passes with one big radix beat four small ones on 16 registers,
 and the cost tables did not see it.** On the EPYC 7763 (`avx2` double, 32 KiB L1) rows of
 3072–5120 points (48–80 KiB) ran faster as 6 · 16 · 32, 10 · 20 · 16, 6 · 12 · 64 and
 10 · 32 · 16 than as the costs' 12 · 16 · 16 and four-pass sequences of radices up to 16:
@@ -1182,6 +1199,26 @@ share cut the borders between members and won where shares were small (EPYC 7763
 one member working alone: 1.05–1.15 on the EPYC and the M5 Max, capped at 4 chunks a run or
 not. Guided runs, which shrink to single chunks, keep that end balanced.
 [X59](experiments/X59-real-planes-mkl.md).
+
+5.18 **Dynamic claiming forgets where the data is; give each member the same work every call.**
+A batch claimed in arrival order lands on different threads in every execution. With unpinned
+threads the team's assumed cache groups are not the real core complexes either, so each row
+moves between L3s from one call to the next and the next execution fetches lines another
+complex holds dirty. On the EPYC 7763 (NPS4, 16 unpinned OpenMP threads) a 384 × 7373 c2c batch
+out of place (45 MiB each way) took 2.3 ms that way, against 1.2 ms with the same work dealt
+by rank, pinned or not, and FFTW's static split 1.2 ms; it was not NUMA placement or write
+streams (all pages local; interleaving or first touch changed nothing). Anchoring each member to
+its own contiguous range first, then stealing others' ranges in halving runs, kept the balance and
+took the client catalogue's batches at 16 threads to 0.32–0.38 of their time out of place and
+0.60–0.69 in place, 0.79 over the whole catalogue, nothing slower at 8 threads. Work stealing
+should start from an affinity, not from a shared counter. It holds within one shared cache too,
+for short executions: on the Xeon 6240 (one mesh L3 per socket) anchoring took the standard
+batches of 8 × 4096, 64 × 256 and 100 × 1024 c2c points to 0.38–0.57 of their time at 16 threads
+(8 × 4096 from 2.54 to 0.97 of FFTW's), and on the M5 Max (one L2 per cluster) to 0.87–0.93 at 6:
+each member's rows stay in its own L1 and L2 instead of coming over the interconnect from the core
+that ran them last. It is not free everywhere: one Xeon batch (c2c 864 × 384 backward, bimodal
+between processes) lost 1.16 at 16 threads.
+[X73](experiments/X73-anchored-runs.md), [X74](experiments/X74-anchored-other.md).
 
 ## 6. Toolchain and testing pitfalls
 

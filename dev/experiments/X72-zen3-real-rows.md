@@ -259,6 +259,24 @@ Planning time rises on the rows arm A moves (the depth-first chain's tables): c2
 40960 × 6 20.8 → 26.2 ms (median over rounds), r2c 18432 11.0 → 11.8 ms, c2r 20480 × 3 12.2 →
 13.1 ms; these rows were already over criterion (4)'s 10 ms (X71's subject).
 
+**Planning time after X71** (informative, decides nothing). Those numbers were measured before X71
+(PR 105) reached `main`. Re-measured by X71's method (fbench `plan_s`, one thread, rules
+effort, short timing batches, 8 fixed rounds, with the A/A control) on the EPYC 7763 (Slurm
+518295 and 518297, node21, shared 8-core allocation, GCC 16, `avx2`; load 55–67 on a shared
+node). Arm A is `main` just before this experiment's merge, 7d8ae4b (X71 in). Arm B is `main`
+87c52eb (this experiment plus X73, which changes only the threading engine). Client catalogue,
+tracking tier, run 20261125-025002-b543: the plans differ in 26 of 52 shapes, exactly this
+experiment's rows. The sum of median plan times goes from 49.1 to 47.2 ms (B ÷ A **0.960**;
+the control's sum is 0.998 of A's). No shape's median rose by more than 10 % + 0.05 ms. The moved
+rows plan in 0.87–0.98 of A's time. r2c and c2r 40960 × 6 go from 5.07 / 4.98 to 4.39 / 4.32 ms:
+on A their half length was a grid whose twiddles come one entry at a time from `root_cache`; on
+B the depth-first chain's table of 20480 is built by X71's octant rule, and the pairing's table of
+40960 is built from it. r2c 18432 goes 2.04 → 2.00 ms and c2r 20480 × 3 2.39 → 2.22 ms. The
+worst shape on B is r2c 40960 × 6, median 4.39 ms (maximum over the rounds 5.52 ms).
+Criterion (4) holds: every client shape plans in under 10 ms on the EPYC, by median and by
+maximum. The standard catalogue's tracking tier (run 20261125-025002-047d) has the same plans in
+all 61 cases, sum 0.996 of A's, and no case rose beyond the margin.
+
 ## Verdict
 
 **Both arms adopted** by their rules, no clause used (no near miss, no narrowing):
@@ -270,11 +288,13 @@ Planning time rises on the rows arm A moves (the depth-first chain's tables): c2
   5120 = 10 × 32 × 16, 0.906 over the 58 cases it moves.
 
 With both, the EPYC's one-thread client score (run K) goes from 0.990 to 0.933 of FFTW, past
-the 0.95 target; the cost is 5–26 % more planning time on the rows arm A moves.
+the 0.95 target. Before X71 the cost was 5–26 % more planning time on the rows arm A moves.
+With X71 in, those rows plan in 0.87–0.98 of the time they took before, and all are under 10 ms
+("Planning time after X71").
 
 Recorded in DESIGN 8.5 (the depth-first chain's EPYC bullet), 9.1 (the *Depth-first* real
 route), 13.5 (the vendor-keyed and Zen 3-keyed lists) and the decision log; lesson in
-LESSONS 4.21 and 4.25. Reach: Zen 2 by both keys, unmeasured (for the next cloud screen).
+LESSONS 4.21 and 4.26. Reach: Zen 2 by both keys, unmeasured (for the next cloud screen).
 Follow-ups: the three shapes still above 1.02 (r2c 10240, c2r 10240 × 4, c2r 20480 × 3; the
 c2r rows pair in a separate pass where `main` fused the pairing into a leading radix-4 pass,
 so a c2r pairing fused into the depth-first chain's first pass, or a three-pass sequence that

@@ -157,6 +157,15 @@ void add_cases(std::vector<team_case>& out, const fftn::detail::build_settings& 
       make_case("c2c_volume_8x6x10x2" + suffix, volume, 960, 960, false, settings, target));
   out.push_back(make_case("c2c_many_64x100" + suffix, fftn::rows_c2c<T>(64, 100, fwd), 6400, 6400,
                           false, settings, target));
+  // Whole transforms anchored to members (machine_profile::anchored_runs, X73): every member
+  // claims its own range first, then the others'; a batch whose ranges are uneven and a plane
+  // batch whose whole planes share out alike.
+  fftn::detail::build_settings anchored = settings;
+  anchored.profile.anchored_runs = true;
+  out.push_back(make_case("c2c_many_anchored_64x101" + suffix, fftn::rows_c2c<T>(64, 101, fwd),
+                          6464, 6464, false, anchored, target));
+  out.push_back(make_case("c2c_planes_anchored_inplace_8x6x13" + suffix,
+                          fftn::planes_c2c<T>(8, 6, 13, bwd), 624, 624, true, anchored, target));
   const fftn::shape<T, c> batches{
       .axes = {{.n = 10}},
       .batches = {{.count = 2}, {.count = 3}, {.count = 1}, {.count = 2}},
