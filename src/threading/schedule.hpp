@@ -36,10 +36,13 @@ struct machine_profile {
   // profile_of; core/plan_core.cpp, copies_prefetch): an Intel core with `avx2` but no
   // AVX-512 keeps the plans it had before them until it is measured (the maintainer, 2026-11-24;
   // the Xeon 6240 forced to `avx2` lost with two of them, X26 and X30's 512). Unknown, the default
-  // here (unlike the other fields, not the CCX's), keeps those plans too. One cache key reads
-  // it as well: X63's packed c2r planes on the Xeon 6240's class apply to Intel's cores only
-  // (set_grid_sizes; X64: Zen 4, which the key reaches, lost with them). default_machine_profile
-  // reads it from CPUID (detect_cpu_features); profile_for takes it as an argument.
+  // here (unlike the other fields, not the CCX's), keeps those plans too. Two cache keys read
+  // it as well (set_grid_sizes; the maintainer, 2026-11-25: a rule measured on one vendor only
+  // is keyed to that vendor): the Xeon 6240's class and the 2 MiB-L2 key, measured on Intel's
+  // cores only, apply to intel alone (X64: Zen 4, which the Xeon key reaches, lost with X63's
+  // packed c2r planes); other vendors, unknown included, keep those fields' defaults.
+  // default_machine_profile reads it from CPUID (detect_cpu_features); profile_for takes it as an
+  // argument.
   cpu_vendor vendor = cpu_vendor::unknown;
   // The cost model: nanoseconds per point through a pass (work_graph.hpp). T1 measured 1.0
   // on the CCX (AVX2), 1.23 on the Xeon and 0.57 on the M5, but with that figure and a
@@ -432,7 +435,7 @@ struct machine_profile {
 // x86_64 says whether the machine is an x86-64 one (the build's architecture by default):
 // X35's rule for a private L2 of 2 MiB or more was adopted there only. vendor: the
 // processor's maker, the profile's vendor (unknown by default: a recorded topology does not
-// say), which set_grid_sizes reads for X63's Intel-only key.
+// say), which set_grid_sizes reads for the Intel-only keys (the Xeon 6240's class, 2 MiB of L2).
 [[nodiscard]] machine_profile profile_for(const topology& t, bool x86_64 = FFTN_ARCH_X86_64 != 0,
                                           cpu_vendor vendor = cpu_vendor::unknown) noexcept;
 
@@ -441,8 +444,8 @@ struct machine_profile {
 [[nodiscard]] machine_profile default_machine_profile() noexcept;
 
 // Sets the grid's size fields from the caches of one core class, the fastest (sizes of 0:
-// unknown, which keeps the fields' defaults), and p.vendor (X63's key on the Xeon 6240's
-// class is Intel's only).
+// unknown, which keeps the fields' defaults), and p.vendor (the Xeon 6240's class and the
+// 2 MiB-L2 key are Intel's only; DESIGN.md 13.5).
 void set_grid_sizes(machine_profile& p, const core_class& c,
                     bool x86_64 = FFTN_ARCH_X86_64 != 0) noexcept;
 

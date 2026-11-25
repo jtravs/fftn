@@ -220,4 +220,4 @@ Informative; nothing is adopted or changed.
   could; a spinning team on cores that other processes share collapses to scheduler ticks
   (void run 20261125-044951-f271), as fbench's pinning to idle cores assumes.
 
-Recorded in DESIGN 9.1 (the *Depth-first* real route) and LESSONS 5.19.
+Recorded in DESIGN 9.1 (the *Depth-first* real route) and LESSONS 5.20.

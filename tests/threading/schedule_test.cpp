@@ -640,19 +640,24 @@ TEST(Schedule, OwnedTasksPartition) {
 TEST(Schedule, GridSizesFromCaches) {
   const std::filesystem::path data(FFTN_PLATFORM_DATA);
   // The architecture is the recorded machine's, never the host's (X62: the Bluestein limit of
-  // Zen 3's class is set on x86-64 only).
-  const auto sizes = [&](const char* file, bool x86_64) {
+  // Zen 3's class is set on x86-64 only), and so is the vendor (the Xeon 6240's class is Intel's
+  // only, DESIGN.md 13.5).
+  const auto sizes = [&](const char* file, bool x86_64,
+                         fftn::detail::cpu_vendor vendor = fftn::detail::cpu_vendor::unknown) {
     machine_profile p;
+    p.vendor = vendor;
     fftn::detail::set_grid_sizes(p, fftn::detail::load_topology(data / file).classes.at(0), x86_64);
     return p;
   };
   constexpr std::size_t kib = 1024;
-  const machine_profile xeon = sizes("linux-intel-xeon-gold-6240.sysfs", true); // 32 KiB, 1 MiB
+  const machine_profile xeon = sizes("linux-intel-xeon-gold-6240.sysfs", true,
+                                     fftn::detail::cpu_vendor::intel); // 32 KiB, 1 MiB
   EXPECT_EQ(xeon.grid_min_bytes, 512 * kib);
   EXPECT_EQ(xeon.grid_three_bytes, 1024 * kib);
   EXPECT_EQ(xeon.grid_block_bytes, 32 * kib);
   EXPECT_EQ(xeon.grid_fuse_bytes, 256 * kib);
-  const machine_profile epyc = sizes("linux-amd-epyc-7763.sysfs", true); // 32 KiB, 512 KiB
+  const machine_profile epyc =
+      sizes("linux-amd-epyc-7763.sysfs", true, fftn::detail::cpu_vendor::amd); // 32 KiB, 512 KiB
   EXPECT_EQ(epyc.grid_min_bytes, 256 * kib);
   EXPECT_EQ(epyc.grid_three_bytes, 512 * kib);
   EXPECT_EQ(epyc.grid_block_bytes, 32 * kib);
@@ -904,32 +909,35 @@ planner_fields fields_of(const machine_profile& p) {
 
 TEST(Schedule, ProfilesOfRecordedMachines) {
   const std::filesystem::path data(FFTN_PLATFORM_DATA);
-  const auto fields = [&](const char* file, bool x86_64) {
-    return fields_of(fftn::detail::profile_for(fftn::detail::load_topology(data / file), x86_64));
+  using fftn::detail::cpu_vendor;
+  // Each recording with its processor's vendor (the Intel-only keys read it, DESIGN.md 13.5).
+  const auto fields = [&](const char* file, bool x86_64, cpu_vendor vendor) {
+    return fields_of(
+        fftn::detail::profile_for(fftn::detail::load_topology(data / file), x86_64, vendor));
   };
   constexpr std::size_t kib = 1024;
   constexpr std::size_t mib = 1024 * kib;
   constexpr std::size_t never = std::numeric_limits<std::size_t>::max();
   // The values before X35 (main at 2eea943).
   EXPECT_EQ(
-      fields("macos-apple-m5-max.sysctl", false),
+      fields("macos-apple-m5-max.sysctl", false, cpu_vendor::apple),
       (planner_fields{128 * kib, 2 * mib,  128 * kib, 4 * mib, 4 * kib,  0, 0, 16 * kib, 256 * kib,
                       never,     64 * mib, 2 * mib,   true,    0,        0, 0, 32 * kib, 128 * kib,
                       0,         0,        128 * kib, 2 * mib, 16 * kib, 4, 0, 0,        256 * kib,
                       0,         256 * kib}));
   // X62: the EPYC 7763's Bluestein power-of-two limit is half its L1.
-  EXPECT_EQ(fields("linux-amd-epyc-7763.sysfs", true),
+  EXPECT_EQ(fields("linux-amd-epyc-7763.sysfs", true, cpu_vendor::amd),
             (planner_fields{256 * kib, 512 * kib, 32 * kib,  128 * kib, never,    0,
                             0,         16 * kib,  0,         16 * mib,  64 * mib, never,
                             false,     0,         0,         0,         16 * kib, 256 * kib,
                             0,         0,         128 * kib, 2 * mib,   8 * kib,  4,
                             0,         0,         0,         0,         0}));
-  EXPECT_EQ(fields("linux-gcp-c4d-zen5.sysfs", true),
+  EXPECT_EQ(fields("linux-gcp-c4d-zen5.sysfs", true, cpu_vendor::amd),
             (planner_fields{512 * kib, 1 * mib,   48 * kib, 256 * kib, never, 0, 0, 16 * kib,
                             0,         16 * mib,  64 * mib, never,     false, 0, 0, 0,
                             48 * kib,  512 * kib, 0,        0,         0,     0, 0, 0,
                             0,         0,         never,    0,         0}));
-  EXPECT_EQ(fields("linux-intel-xeon-gold-6240.sysfs", true),
+  EXPECT_EQ(fields("linux-intel-xeon-gold-6240.sysfs", true, cpu_vendor::intel),
             (planner_fields{512 * kib, 1 * mib,     32 * kib,  256 * kib, never,   15,
                             0,         0,           0,         never,     0,       0,
                             false,     16,          64 * kib,  256 * kib, never,   4 * mib,
@@ -966,7 +974,7 @@ TEST(Schedule, ProfilesOfRecordedMachines) {
       .depth_float_max_bytes = 0,
       .depth_convolution_max_bytes = 0,
   };
-  EXPECT_EQ(fields("linux-gcp-c4a-axion.sysfs", false), axion);
+  EXPECT_EQ(fields("linux-gcp-c4a-axion.sysfs", false, cpu_vendor::arm_other), axion);
   // A private L2 of 2 MiB on x86-64.
   const planner_fields large_l2{
       .grid_min_bytes = 1 * mib,
@@ -999,23 +1007,30 @@ TEST(Schedule, ProfilesOfRecordedMachines) {
       .depth_float_max_bytes = 0,
       .depth_convolution_max_bytes = 32 * mib, // X50 on the key (X64)
   };
-  EXPECT_EQ(fields("linux-gcp-c4-granite-rapids.sysfs", true), large_l2);
+  EXPECT_EQ(fields("linux-gcp-c4-granite-rapids.sysfs", true, cpu_vendor::intel), large_l2);
+  // Sapphire Rapids (c3-standard-8) and Emerald Rapids (c4-standard-16) VMs: the same L1 and L2,
+  // so the same fields (X64, X69, X70 were judged there).
+  EXPECT_EQ(fields("linux-gcp-c3-sapphire-rapids.sysfs", true, cpu_vendor::intel), large_l2);
+  EXPECT_EQ(fields("linux-gcp-c4-emerald-rapids.sysfs", true, cpu_vendor::intel), large_l2);
   // X58: a private L2 of 2 MiB leaves out the batch leaf of 12; the other machines keep it.
-  const auto batch_leaf_12 = [&](const char* file) {
-    return fftn::detail::profile_for(fftn::detail::load_topology(data / file), true).batch_leaf_12;
+  const auto batch_leaf_12 = [&](const char* file, cpu_vendor vendor) {
+    return fftn::detail::profile_for(fftn::detail::load_topology(data / file), true, vendor)
+        .batch_leaf_12;
   };
-  EXPECT_FALSE(batch_leaf_12("linux-gcp-c4-granite-rapids.sysfs"));
-  EXPECT_TRUE(batch_leaf_12("linux-intel-xeon-gold-6240.sysfs"));
-  EXPECT_TRUE(batch_leaf_12("linux-gcp-c4d-zen5.sysfs"));
+  EXPECT_FALSE(batch_leaf_12("linux-gcp-c4-granite-rapids.sysfs", cpu_vendor::intel));
+  EXPECT_FALSE(batch_leaf_12("linux-gcp-c3-sapphire-rapids.sysfs", cpu_vendor::intel));
+  EXPECT_FALSE(batch_leaf_12("linux-gcp-c4-emerald-rapids.sysfs", cpu_vendor::intel));
+  EXPECT_TRUE(batch_leaf_12("linux-intel-xeon-gold-6240.sysfs", cpu_vendor::intel));
+  EXPECT_TRUE(batch_leaf_12("linux-gcp-c4d-zen5.sysfs", cpu_vendor::amd));
   // X58: an Ice Lake VM (1.25 MiB of private L2, much L3 per CPU) takes the depth-first chain.
-  const planner_fields ice_lake = fields("linux-gcp-n2-ice-lake.sysfs", true);
+  const planner_fields ice_lake = fields("linux-gcp-n2-ice-lake.sysfs", true, cpu_vendor::intel);
   EXPECT_EQ(ice_lake.depth_min_bytes, 320 * kib);
   EXPECT_EQ(ice_lake.depth_max_bytes, 80 * mib);
   EXPECT_EQ(ice_lake.depth_top, 16U);
   EXPECT_EQ(ice_lake.depth_top_alt, 20U);
   EXPECT_EQ(ice_lake.depth_top_last, 10U);
   EXPECT_EQ(ice_lake.depth_float_max_bytes, 0U);
-  EXPECT_TRUE(batch_leaf_12("linux-gcp-n2-ice-lake.sysfs"));
+  EXPECT_TRUE(batch_leaf_12("linux-gcp-n2-ice-lake.sysfs", cpu_vendor::intel));
   // The same on bare metal with SMT, where Granite Rapids' L3 per CPU is under 2 MiB
   // (504 MiB for 128 cores, 256 CPUs): the key is the L2, not the L3 per CPU.
   fftn::detail::core_class metal;
@@ -1023,11 +1038,13 @@ TEST(Schedule, ProfilesOfRecordedMachines) {
   metal.l2 = {.size = 2 * mib, .line_size = 64, .ways = 16, .shared_by = 2};
   metal.l3 = {.size = 504 * mib, .line_size = 64, .ways = 16, .shared_by = 256};
   machine_profile p;
+  p.vendor = cpu_vendor::intel;
   fftn::detail::set_grid_sizes(p, metal, true);
   EXPECT_EQ(fields_of(p), large_l2);
   // Off x86-64 the rule does not apply: those caches take the large-L3 profile (X29, X32).
-  EXPECT_EQ(fields("linux-gcp-c4-granite-rapids.sysfs", false).pow2_chain_bytes,
-            2 * std::size_t{516096} * kib);
+  EXPECT_EQ(
+      fields("linux-gcp-c4-granite-rapids.sysfs", false, cpu_vendor::arm_other).pow2_chain_bytes,
+      2 * std::size_t{516096} * kib);
 }
 
 // X69: the 2 MiB-L2 key's fit table (machine_profile::fit_large_l2) with its limits, on that key
@@ -1050,23 +1067,32 @@ TEST(Schedule, FitTableKeys) {
   const auto of = [](const machine_profile& p) {
     return fit_fields{p.fit_large_l2, p.fit_row_bytes, p.fit_in_place_bytes, p.fit_long_row_bytes};
   };
-  const auto recorded = [&](const char* file, bool x86_64) {
-    return of(fftn::detail::profile_for(fftn::detail::load_topology(data / file), x86_64));
+  using fftn::detail::cpu_vendor;
+  const auto recorded = [&](const char* file, bool x86_64, cpu_vendor vendor) {
+    return of(fftn::detail::profile_for(fftn::detail::load_topology(data / file), x86_64, vendor));
   };
-  EXPECT_EQ(recorded("linux-gcp-c4-granite-rapids.sysfs", true),
-            (fit_fields{true, 8 * mib, 4 * mib, 2 * mib}));
-  EXPECT_EQ(recorded("linux-amd-epyc-7763.sysfs", true),
+  for (const char* file :
+       {"linux-gcp-c4-granite-rapids.sysfs", "linux-gcp-c3-sapphire-rapids.sysfs",
+        "linux-gcp-c4-emerald-rapids.sysfs"}) {
+    SCOPED_TRACE(file);
+    EXPECT_EQ(recorded(file, true, cpu_vendor::intel),
+              (fit_fields{true, 8 * mib, 4 * mib, 2 * mib}));
+  }
+  EXPECT_EQ(recorded("linux-amd-epyc-7763.sysfs", true, cpu_vendor::amd),
             (fit_fields{false, 24 * mib, 16 * mib, never}));
-  EXPECT_EQ(recorded("linux-intel-xeon-gold-6240.sysfs", true),
+  EXPECT_EQ(recorded("linux-intel-xeon-gold-6240.sysfs", true, cpu_vendor::intel),
             (fit_fields{false, 0, never, never}));
-  EXPECT_EQ(recorded("macos-apple-m5-max.sysctl", false), (fit_fields{false, 0, never, never}));
+  EXPECT_EQ(recorded("macos-apple-m5-max.sysctl", false, cpu_vendor::apple),
+            (fit_fields{false, 0, never, never}));
   // AArch64 with a 2 MiB private L2 (Axion) is not on the key.
-  EXPECT_FALSE(recorded("linux-gcp-c4a-axion.sysfs", false).large_l2);
+  EXPECT_FALSE(recorded("linux-gcp-c4a-axion.sysfs", false, cpu_vendor::arm_other).large_l2);
   // Zen 5 and Ice Lake VMs (a large L3 per CPU): X57's large-L3 fields, without the key.
-  for (const char* file : {"linux-gcp-c4d-zen5.sysfs", "linux-gcp-n2-ice-lake.sysfs"}) {
+  for (const auto& [file, vendor] : {std::pair{"linux-gcp-c4d-zen5.sysfs", cpu_vendor::amd},
+                                     std::pair{"linux-gcp-n2-ice-lake.sysfs", cpu_vendor::intel}}) {
     SCOPED_TRACE(file);
     const fftn::detail::core_class c = fftn::detail::load_topology(data / file).classes.at(0);
-    EXPECT_EQ(recorded(file, true), (fit_fields{false, c.l3.size / 4 * 3, c.l3.size / 2, never}));
+    EXPECT_EQ(recorded(file, true, vendor),
+              (fit_fields{false, c.l3.size / 4 * 3, c.l3.size / 2, never}));
   }
   // Zen 4 (1 MiB of private L2) with a large L3 per CPU (a VM) and without (Zen 4c with SMT).
   fftn::detail::core_class zen4;
@@ -1088,8 +1114,193 @@ TEST(Schedule, FitTableKeys) {
   metal.l2 = {.size = 2 * mib, .line_size = 64, .ways = 16, .shared_by = 2};
   metal.l3 = {.size = 504 * mib, .line_size = 64, .ways = 16, .shared_by = 256};
   p = machine_profile{};
+  p.vendor = cpu_vendor::intel;
   fftn::detail::set_grid_sizes(p, metal, true);
   EXPECT_EQ(of(p), (fit_fields{true, 8 * mib, 4 * mib, 2 * mib}));
+}
+
+// A rule measured on one vendor's processors only is keyed to that vendor (the maintainer,
+// 2026-11-25; DESIGN.md 13.5). The Xeon 6240's class (X34, X39, X46, X50, X51, X58, X61's x86
+// half, X63, X75, X78) and the 2 MiB-L2 key (X35, X55, X58, X64, X69, X70) were measured on
+// Intel's cores only, so they read the vendor: every Intel recording keeps the profile it had
+// (the literals here and in the tests above are main's values before the vendor was read), and
+// AMD's cores with the same caches, or an unknown vendor, keep the fields' defaults there.
+struct intel_keyed {
+  std::size_t grid_two_odd_part;
+  std::size_t grid_three_block;
+  std::size_t grid_phase_radix;
+  std::size_t grid_two_block_bytes;
+  std::size_t pow2_grid_bytes;
+  std::size_t grid_two_pow2_bytes;
+  std::size_t grid_two_part_bytes;
+  std::size_t depth_min_bytes;
+  std::size_t depth_max_bytes;
+  std::size_t depth_top;
+  std::size_t depth_top_alt;
+  std::size_t depth_top_last;
+  std::size_t depth_float_max_bytes;
+  std::size_t depth_convolution_max_bytes;
+  std::size_t depth_real_max_bytes;
+  std::size_t depth_real_min_bytes;
+  std::size_t depth_c2r_fused_min_bytes;
+  std::size_t depth_c2r_fused_max_bytes;
+  bool adjacent_lanes;
+  bool adjacent_team_chain;
+  bool batch_leaf_12;
+  bool fit_large_l2;
+  std::size_t fit_long_row_bytes;
+  std::size_t c2r_packed_bytes;
+  fftn::isa c2r_packed_isa;
+
+  bool operator==(const intel_keyed&) const = default;
+};
+
+intel_keyed keyed_of(const machine_profile& p) {
+  return {
+      .grid_two_odd_part = p.grid_two_odd_part,
+      .grid_three_block = p.grid_three_block,
+      .grid_phase_radix = p.grid_phase_radix,
+      .grid_two_block_bytes = p.grid_two_block_bytes,
+      .pow2_grid_bytes = p.pow2_grid_bytes,
+      .grid_two_pow2_bytes = p.grid_two_pow2_bytes,
+      .grid_two_part_bytes = p.grid_two_part_bytes,
+      .depth_min_bytes = p.depth_min_bytes,
+      .depth_max_bytes = p.depth_max_bytes,
+      .depth_top = p.depth_top,
+      .depth_top_alt = p.depth_top_alt,
+      .depth_top_last = p.depth_top_last,
+      .depth_float_max_bytes = p.depth_float_max_bytes,
+      .depth_convolution_max_bytes = p.depth_convolution_max_bytes,
+      .depth_real_max_bytes = p.depth_real_max_bytes,
+      .depth_real_min_bytes = p.depth_real_min_bytes,
+      .depth_c2r_fused_min_bytes = p.depth_c2r_fused_min_bytes,
+      .depth_c2r_fused_max_bytes = p.depth_c2r_fused_max_bytes,
+      .adjacent_lanes = p.adjacent_lanes,
+      .adjacent_team_chain = p.adjacent_team_chain,
+      .batch_leaf_12 = p.batch_leaf_12,
+      .fit_large_l2 = p.fit_large_l2,
+      .fit_long_row_bytes = p.fit_long_row_bytes,
+      .c2r_packed_bytes = p.c2r_packed_bytes,
+      .c2r_packed_isa = p.c2r_packed_isa,
+  };
+}
+
+TEST(Schedule, IntelOnlyKeys) {
+  const std::filesystem::path data(FFTN_PLATFORM_DATA);
+  using fftn::detail::cpu_vendor;
+  constexpr std::size_t kib = 1024;
+  constexpr std::size_t mib = 1024 * kib;
+  constexpr std::size_t never = std::numeric_limits<std::size_t>::max();
+  const auto recorded = [&](const char* file, cpu_vendor vendor) {
+    return fftn::detail::profile_for(fftn::detail::load_topology(data / file), true, vendor);
+  };
+  const auto with_caches = [](const fftn::detail::core_class& c, cpu_vendor vendor) {
+    machine_profile p;
+    p.vendor = vendor;
+    fftn::detail::set_grid_sizes(p, c, true);
+    return p;
+  };
+  const intel_keyed defaults = keyed_of(machine_profile{});
+  // Every Intel recording keeps its profile.
+  const intel_keyed xeon{
+      .grid_two_odd_part = 15,
+      .grid_three_block = 16,
+      .grid_phase_radix = 20,
+      .grid_two_block_bytes = 64 * kib,
+      .pow2_grid_bytes = 256 * kib,
+      .grid_two_pow2_bytes = 12672 * kib,
+      .grid_two_part_bytes = 0,
+      .depth_min_bytes = 256 * kib,
+      .depth_max_bytes = 64 * mib,
+      .depth_top = 16,
+      .depth_top_alt = 20,
+      .depth_top_last = 10,
+      .depth_float_max_bytes = 8 * mib,
+      .depth_convolution_max_bytes = 32 * mib,
+      .depth_real_max_bytes = 64 * mib,
+      .depth_real_min_bytes = 128 * kib + 1,
+      .depth_c2r_fused_min_bytes = 256 * kib,
+      .depth_c2r_fused_max_bytes = 16 * mib,
+      .adjacent_lanes = true,
+      .adjacent_team_chain = true,
+      .batch_leaf_12 = true,
+      .fit_large_l2 = false,
+      .fit_long_row_bytes = never,
+      .c2r_packed_bytes = 1 * mib,
+      .c2r_packed_isa = fftn::isa::avx512,
+  };
+  EXPECT_EQ(keyed_of(recorded("linux-intel-xeon-gold-6240.sysfs", cpu_vendor::intel)), xeon);
+  intel_keyed ice_lake = defaults; // X58's depth-first chain only
+  ice_lake.depth_min_bytes = 320 * kib;
+  ice_lake.depth_max_bytes = 80 * mib;
+  ice_lake.depth_top = 16;
+  ice_lake.depth_top_alt = 20;
+  ice_lake.depth_top_last = 10;
+  EXPECT_EQ(keyed_of(recorded("linux-gcp-n2-ice-lake.sysfs", cpu_vendor::intel)), ice_lake);
+  intel_keyed large_l2 = defaults; // X35, X55, X58, X64, X69 and X70
+  large_l2.grid_two_part_bytes = 32 * kib;
+  large_l2.depth_min_bytes = 512 * kib;
+  large_l2.depth_max_bytes = 128 * mib;
+  large_l2.depth_top = 16;
+  large_l2.depth_top_alt = 20;
+  large_l2.depth_top_last = 10;
+  large_l2.depth_convolution_max_bytes = 32 * mib;
+  large_l2.batch_leaf_12 = false;
+  large_l2.fit_large_l2 = true;
+  large_l2.fit_long_row_bytes = 2 * mib;
+  const std::vector<const char*> large_l2_files{"linux-gcp-c4-granite-rapids.sysfs",
+                                                "linux-gcp-c3-sapphire-rapids.sysfs",
+                                                "linux-gcp-c4-emerald-rapids.sysfs"};
+  for (const char* file : large_l2_files) {
+    SCOPED_TRACE(file);
+    const machine_profile p = recorded(file, cpu_vendor::intel);
+    EXPECT_EQ(keyed_of(p), large_l2);
+    EXPECT_EQ(p.grid_three_bytes, 1 * mib); // L2/2 on the key (X35)
+  }
+  // Unknown behaves as AMD: off. Zen 4c-like caches (1 MiB of private L2 shared by two SMT
+  // threads, 16 MiB of L3 for 16 CPUs) fall into the Xeon 6240's key and keep the defaults.
+  fftn::detail::core_class zen4c;
+  zen4c.l1d = {.size = 32 * kib, .line_size = 64, .ways = 8, .shared_by = 2};
+  zen4c.l2 = {.size = 1 * mib, .line_size = 64, .ways = 8, .shared_by = 2};
+  zen4c.l3 = {.size = 16 * mib, .line_size = 64, .ways = 16, .shared_by = 16};
+  // The Zen 5 recording with its L3 cut to 1 MiB per CPU (Zen 5c's): the same key.
+  fftn::detail::core_class zen5c =
+      fftn::detail::load_topology(data / "linux-gcp-c4d-zen5.sysfs").classes.at(0);
+  zen5c.l3.size = zen5c.l3.shared_by * mib;
+  for (const cpu_vendor vendor : {cpu_vendor::amd, cpu_vendor::unknown}) {
+    SCOPED_TRACE(fftn::detail::cpu_vendor_name(vendor));
+    for (const fftn::detail::core_class& c : {zen4c, zen5c}) {
+      const machine_profile p = with_caches(c, vendor);
+      EXPECT_EQ(keyed_of(p), defaults);
+      EXPECT_TRUE(p.team_volume_planes); // X43b: measured on AMD's cores and Intel's
+      // On Intel's cores the same caches take the Xeon 6240's fields.
+      EXPECT_EQ(with_caches(c, cpu_vendor::intel).depth_top, 16U);
+      EXPECT_TRUE(with_caches(c, cpu_vendor::intel).adjacent_lanes);
+    }
+    // The Intel recordings' caches with another vendor: the defaults on those keys too.
+    EXPECT_EQ(keyed_of(recorded("linux-intel-xeon-gold-6240.sysfs", vendor)), defaults);
+    EXPECT_EQ(keyed_of(recorded("linux-gcp-n2-ice-lake.sysfs", vendor)), defaults);
+    for (const char* file : large_l2_files) {
+      SCOPED_TRACE(file);
+      const machine_profile p = recorded(file, vendor);
+      EXPECT_EQ(keyed_of(p), defaults);
+      // A 2 MiB L2 off the key takes neither the large-L3 branch (X29, X32, X57) nor the key's
+      // L2/2: the sizes every key starts from.
+      EXPECT_EQ(p.grid_three_bytes, 2 * mib);
+      EXPECT_EQ(p.chain_part_bytes, 0U);
+      EXPECT_EQ(p.pow2_chain_bytes, 0U);
+      EXPECT_EQ(p.fit_row_bytes, 0U);
+      EXPECT_EQ(p.fit_in_place_bytes, never);
+    }
+  }
+  // The AMD recordings do not read the vendor (Zen 3's and the large-L3 branch's rules).
+  for (const char* file : {"linux-amd-epyc-7763.sysfs", "linux-gcp-c4d-zen5.sysfs"}) {
+    SCOPED_TRACE(file);
+    EXPECT_EQ(fields_of(recorded(file, cpu_vendor::amd)),
+              fields_of(recorded(file, cpu_vendor::intel)));
+    EXPECT_EQ(keyed_of(recorded(file, cpu_vendor::amd)),
+              keyed_of(recorded(file, cpu_vendor::unknown)));
+  }
 }
 
 } // namespace
