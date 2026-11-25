@@ -1016,6 +1016,13 @@ Raising the limits to four times the L2 (in place twice) kept every gain (0.86�
 cases moved), and in place the two-pass radices still won at 32 MiB, while out of place only
 1024 (rows longer than a page) and DRAM-sized batches of 160 and 240 stopped gaining. The crossing
 follows the row's length and placement as much as the cache. [X70](experiments/X70-large-l2-limits.md).
+In place no crossing appeared at all: dropping the limit kept the gain to 512 MiB of rows, in
+DRAM (0.89–0.90 over the 22 cases moved on the three families), as two passes over memory move
+two thirds of three passes' data. Out of place, with twice the data streamed, Granite Rapids
+stopped gaining between 180 and 320 MiB of rows and output while Sapphire did not to 480 MiB,
+and at 320–512 MiB in place Granite only tied. Past the caches the limit is the machine's
+memory system, not its L2: measure it on each family the key reaches.
+[X80](experiments/X80-large-l2-limits-3.md).
 
 4.24 **Past the register file, a batch leaf should move each element when the codelet asks for
 it, and keep one inlined copy of the codelet.** X53's batch leaf transposes C × C blocks of C

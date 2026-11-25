@@ -1,0 +1,65 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Experiment X80 (dev/experiments/X80-large-l2-limits-3.md): X70's follow-up on the 2 MiB-L2 key
+# under avx512 (1024 = 32 x 32, 160 = 8 x 20, 240 = 12 x 20). On a 2 MiB L2: in place no limit
+# (X70: 256 rows of 1024, 1638 of 160, 1092 of 240); out of place 160 to 26214 rows and 240 to
+# 17476 rows, rows and output within 64 times the L2 (X70: 1638 and 1092); 1024 out of place keeps
+# 64 rows. The cases past X70's limits move; the held-out cases past the new out-of-place limit
+# (160 to 480 MiB) keep their plans and place the crossing with the informative all-two-pass arm.
+# Double precision.
+
+[catalogue]
+name = "x80"
+
+[[group]]
+name = "x80-1024-in-place"
+note = "1024 in place past X70's 256 rows (moved: no limit), 8-512 MiB"
+kind = "c2c"
+dims = [1024]
+batch = [512, 2048, 8192, 32768]
+place = "in"
+
+[[group]]
+name = "x80-1024-in-place-bwd"
+kind = "c2c"
+dims = [1024]
+batch = [2048]
+place = "in"
+direction = ["bwd"]
+
+[[group]]
+name = "x80-1024"
+note = "1024 out of place past the L2: keeps X70's limit (framing)"
+kind = "c2c"
+dims = [1024]
+batch = [128]
+
+[[group]]
+name = "x80-160"
+note = "160 out of place: 2048-24576 rows within 64 times the L2 (moved), 32768 and 65536 past it"
+kind = "c2c"
+dims = [160]
+batch = [2048, 4096, 16384, 24576, 32768, 65536]
+
+[[group]]
+name = "x80-240"
+note = "240 out of place: 2048-16384 rows within 64 times the L2 (moved), 24576 and 65536 past it"
+kind = "c2c"
+dims = [240]
+batch = [2048, 4096, 16384, 24576, 65536]
+
+[[group]]
+name = "x80-short-bwd"
+kind = "c2c"
+dims = [160, 240]
+batch = [16384]
+direction = ["bwd"]
+
+[[group]]
+name = "x80-short-in-place"
+note = "160 and 240 in place past X70's limit (moved: no limit), 10-480 MiB"
+kind = "c2c"
+dims = [160, 240]
+batch = [4096, 16384, 65536, 131072]
+place = "in"

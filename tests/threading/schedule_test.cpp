@@ -1032,10 +1032,11 @@ TEST(Schedule, ProfilesOfRecordedMachines) {
 }
 
 // X69: the 2 MiB-L2 key's fit table (machine_profile::fit_large_l2) with its limits, on that key
-// alone. X70: four times the L2 for rows and output, twice the L2 in place, the L2 for rows longer
-// than a page out of place. The other recorded classes keep their fit fields as before: X57's on
-// the EPYC's class (and, unmeasured, on Zen 4 and Zen 5, whose `avx512` plans have no fit table
-// without the key), none on the Xeon 6240's or Apple's, and no long-row limit on any of them.
+// alone. X80: no limit in place, 64 times the L2 for rows and output out of place, the L2 for rows
+// longer than a page out of place (X70). The other recorded classes keep their fit fields as
+// before: X57's on the EPYC's class (and, unmeasured, on Zen 4 and Zen 5, whose `avx512` plans
+// have no fit table without the key), none on the Xeon 6240's or Apple's, and no out-of-place or
+// long-row limit on any of them.
 TEST(Schedule, FitTableKeys) {
   const std::filesystem::path data(FFTN_PLATFORM_DATA);
   constexpr std::size_t kib = 1024;
@@ -1046,10 +1047,12 @@ TEST(Schedule, FitTableKeys) {
     std::size_t row_bytes;
     std::size_t in_place_bytes;
     std::size_t long_row_bytes;
+    std::size_t out_of_place_bytes;
     bool operator==(const fit_fields&) const = default;
   };
   const auto of = [](const machine_profile& p) {
-    return fit_fields{p.fit_large_l2, p.fit_row_bytes, p.fit_in_place_bytes, p.fit_long_row_bytes};
+    return fit_fields{p.fit_large_l2, p.fit_row_bytes, p.fit_in_place_bytes, p.fit_long_row_bytes,
+                      p.fit_out_of_place_bytes};
   };
   using fftn::detail::cpu_vendor;
   const auto recorded = [&](const char* file, bool x86_64, cpu_vendor vendor) {
@@ -1060,14 +1063,14 @@ TEST(Schedule, FitTableKeys) {
         "linux-gcp-c4-emerald-rapids.sysfs"}) {
     SCOPED_TRACE(file);
     EXPECT_EQ(recorded(file, true, cpu_vendor::intel),
-              (fit_fields{true, 8 * mib, 4 * mib, 2 * mib}));
+              (fit_fields{true, never, never, 2 * mib, 128 * mib}));
   }
   EXPECT_EQ(recorded("linux-amd-epyc-7763.sysfs", true, cpu_vendor::amd),
-            (fit_fields{false, 24 * mib, 16 * mib, never}));
+            (fit_fields{false, 24 * mib, 16 * mib, never, never}));
   EXPECT_EQ(recorded("linux-intel-xeon-gold-6240.sysfs", true, cpu_vendor::intel),
-            (fit_fields{false, 0, never, never}));
+            (fit_fields{false, 0, never, never, never}));
   EXPECT_EQ(recorded("macos-apple-m5-max.sysctl", false, cpu_vendor::apple),
-            (fit_fields{false, 0, never, never}));
+            (fit_fields{false, 0, never, never, never}));
   // AArch64 with a 2 MiB private L2 (Axion) is not on the key.
   EXPECT_FALSE(recorded("linux-gcp-c4a-axion.sysfs", false, cpu_vendor::arm_other).large_l2);
   // Zen 5 and Ice Lake VMs (a large L3 per CPU): X57's large-L3 fields, without the key.
@@ -1076,7 +1079,7 @@ TEST(Schedule, FitTableKeys) {
     SCOPED_TRACE(file);
     const fftn::detail::core_class c = fftn::detail::load_topology(data / file).classes.at(0);
     EXPECT_EQ(recorded(file, true, vendor),
-              (fit_fields{false, c.l3.size / 4 * 3, c.l3.size / 2, never}));
+              (fit_fields{false, c.l3.size / 4 * 3, c.l3.size / 2, never, never}));
   }
   // Zen 4 (1 MiB of private L2) with a large L3 per CPU (a VM) and without (Zen 4c with SMT).
   fftn::detail::core_class zen4;
@@ -1085,13 +1088,13 @@ TEST(Schedule, FitTableKeys) {
   zen4.l3 = {.size = 32 * mib, .line_size = 64, .ways = 16, .shared_by = 8};
   machine_profile p;
   fftn::detail::set_grid_sizes(p, zen4, true);
-  EXPECT_EQ(of(p), (fit_fields{false, 24 * mib, 16 * mib, never}));
+  EXPECT_EQ(of(p), (fit_fields{false, 24 * mib, 16 * mib, never, never}));
   zen4.l1d.shared_by = 2;
   zen4.l2.shared_by = 2;
   zen4.l3 = {.size = 16 * mib, .line_size = 64, .ways = 16, .shared_by = 16};
   p = machine_profile{};
   fftn::detail::set_grid_sizes(p, zen4, true);
-  EXPECT_EQ(of(p), (fit_fields{false, 0, never, never}));
+  EXPECT_EQ(of(p), (fit_fields{false, 0, never, never, never}));
   // Bare-metal Granite Rapids with SMT (under 2 MiB of L3 per CPU): the key is the L2.
   fftn::detail::core_class metal;
   metal.l1d = {.size = 48 * kib, .line_size = 64, .ways = 12, .shared_by = 2};
@@ -1100,16 +1103,16 @@ TEST(Schedule, FitTableKeys) {
   p = machine_profile{};
   p.vendor = cpu_vendor::intel;
   fftn::detail::set_grid_sizes(p, metal, true);
-  EXPECT_EQ(of(p), (fit_fields{true, 8 * mib, 4 * mib, 2 * mib}));
+  EXPECT_EQ(of(p), (fit_fields{true, never, never, 2 * mib, 128 * mib}));
 }
 
 // A rule measured on one vendor's processors only is keyed to that vendor (the maintainer,
 // 2026-11-25; DESIGN.md 13.5). The Xeon 6240's class (X34, X39, X46, X50, X51, X58, X61's x86
-// half, X63, X75, X78) and the 2 MiB-L2 key (X35, X55, X58, X64, X69, X70) were measured on
-// Intel's cores only, so they read the vendor: every Intel recording keeps the profile it had
-// (the literals here and in the tests above are main's values before the vendor was read, plus
-// X82's real-row fields on the Ice Lake VM since), and AMD's cores with the same caches, or an
-// unknown vendor, keep the fields' defaults there.
+// half, X63, X75, X78) and the 2 MiB-L2 key (X35, X55, X58, X64, X69, X70, X80) were measured
+// on Intel's cores only, so they read the vendor: every Intel recording keeps the profile it had
+// (the literals here and in the tests above are main's values before the vendor was read, with
+// X80's limits and X82's real-row fields on the Ice Lake VM since), and AMD's cores with the same
+// caches, or an unknown vendor, keep the fields' defaults there.
 struct intel_keyed {
   std::size_t grid_two_odd_part;
   std::size_t grid_three_block;
@@ -1134,6 +1137,7 @@ struct intel_keyed {
   bool batch_leaf_12;
   bool fit_large_l2;
   std::size_t fit_long_row_bytes;
+  std::size_t fit_out_of_place_bytes;
   std::size_t c2r_packed_bytes;
   fftn::isa c2r_packed_isa;
 
@@ -1165,6 +1169,7 @@ intel_keyed keyed_of(const machine_profile& p) {
       .batch_leaf_12 = p.batch_leaf_12,
       .fit_large_l2 = p.fit_large_l2,
       .fit_long_row_bytes = p.fit_long_row_bytes,
+      .fit_out_of_place_bytes = p.fit_out_of_place_bytes,
       .c2r_packed_bytes = p.c2r_packed_bytes,
       .c2r_packed_isa = p.c2r_packed_isa,
   };
@@ -1211,6 +1216,7 @@ TEST(Schedule, IntelOnlyKeys) {
       .batch_leaf_12 = true,
       .fit_large_l2 = false,
       .fit_long_row_bytes = never,
+      .fit_out_of_place_bytes = never,
       .c2r_packed_bytes = 1 * mib,
       .c2r_packed_isa = fftn::isa::avx512,
   };
@@ -1226,7 +1232,7 @@ TEST(Schedule, IntelOnlyKeys) {
   ice_lake.depth_c2r_fused_min_bytes = 320 * kib;
   ice_lake.depth_c2r_fused_max_bytes = 20 * mib;
   EXPECT_EQ(keyed_of(recorded("linux-gcp-n2-ice-lake.sysfs", cpu_vendor::intel)), ice_lake);
-  intel_keyed large_l2 = defaults; // X35, X55, X58, X64, X69 and X70
+  intel_keyed large_l2 = defaults; // X35, X55, X58, X64, X69, X70 and X80
   large_l2.grid_two_part_bytes = 32 * kib;
   large_l2.depth_min_bytes = 512 * kib;
   large_l2.depth_max_bytes = 128 * mib;
@@ -1237,6 +1243,7 @@ TEST(Schedule, IntelOnlyKeys) {
   large_l2.batch_leaf_12 = false;
   large_l2.fit_large_l2 = true;
   large_l2.fit_long_row_bytes = 2 * mib;
+  large_l2.fit_out_of_place_bytes = 128 * mib; // X80
   const std::vector<const char*> large_l2_files{"linux-gcp-c4-granite-rapids.sysfs",
                                                 "linux-gcp-c3-sapphire-rapids.sysfs",
                                                 "linux-gcp-c4-emerald-rapids.sysfs"};
