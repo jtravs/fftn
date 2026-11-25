@@ -394,12 +394,14 @@ std::vector<edge_case> cases() {
        .in = {real, 1, 0},
        .accumulate = true,
        .expect = "bluestein"},
-      {.name = "Rader row, fused and separate",
+      {.name = "Prime row (Rader or Bluestein by target), fused and separate",
        .n = 53,
        .count = 2,
        .in = {cplx, 1, 53},
        .out = {real, 1, 0},
-       .expect = "rader"},
+       // The rules take Rader for 53 on some targets and Bluestein on others (avx512):
+       // the edges are what this case checks.
+       .expect = "edges:"},
       {.name = "rows of one point",
        .n = 1,
        .count = 4,
