@@ -1185,19 +1185,21 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   // X57: a two-pass row plan reads 12-16 streams at once, which pays only while the batch's
   // rows and their output stay in the cache (machine_profile::fit_row_bytes; in place also
   // fit_in_place_bytes, X57 amendment 2). X69: on the 2 MiB-L2 key, 20-32 streams within L2.
-  // X70: out of place, rows longer than a page also within fit_long_row_bytes.
+  // X70: out of place, rows longer than a page also within fit_long_row_bytes. X80: out of
+  // place, rows and output also within fit_out_of_place_bytes.
   if (s.kind == transform_kind::c2c && r == 1 && settings.profile.fit_row_bytes != 0 &&
       in.stride[0] == 1 && out.stride[0] == 1) {
+    const machine_profile& m = settings.profile;
     const std::size_t sides = c.in_place ? 1 : 2;
     const std::size_t row_bytes =
         checked_product(std::array{c.lengths[0], std::size_t{2} * sizeof(T)});
     const std::size_t touched = checked_product(std::array{row_bytes, p.transforms, sides});
     constexpr std::size_t page_bytes = 4096;
     const std::size_t limit =
-        c.in_place ? std::min(settings.profile.fit_row_bytes, settings.profile.fit_in_place_bytes)
-        : row_bytes > page_bytes
-            ? std::min(settings.profile.fit_row_bytes, settings.profile.fit_long_row_bytes)
-            : settings.profile.fit_row_bytes;
+        c.in_place ? std::min(m.fit_row_bytes, m.fit_in_place_bytes)
+                   : std::min({m.fit_row_bytes, m.fit_out_of_place_bytes,
+                               row_bytes > page_bytes ? m.fit_long_row_bytes
+                                                      : std::numeric_limits<std::size_t>::max()});
     chain.use_row_fit(c.lengths[0], touched != 0 && touched <= limit);
   }
 
@@ -2095,6 +2097,14 @@ std::shared_ptr<plan_core> build_plan_core(const shape_view& s, const options& o
   // otherwise change its execution path, which nothing measured.
   mark_flat(c->prog, settings.unroll_calls && r > 1);
   c->graph = build_work_graph(c->prog, points, settings.chunk_points);
+  // A real row on a chain's stages likewise, where the profile says (X83: on the Xeon 6240 teams
+  // of 4 and 8 ran real rows of 6400-10240 points 1.32-2.69 times slower than one thread). Not a
+  // row whose graph has phases of lines (the depth-first chain, the grid): their own threshold,
+  // split_min_points_lines, was set on real points (X75's 32768 gains at 4 lanes).
+  if (r == 1 && s.kind != transform_kind::c2c && settings.profile.split_complex_rows &&
+      std::ranges::none_of(c->graph.phases, [](const graph_phase& ph) { return ph.nest != 0; })) {
+    c->graph.points = c->lengths.back() / 2 + 1;
+  }
   c->profile = settings.profile;
   c->runs_inline = runs_inline(c->graph, c->profile);
   c->radices_forced = !settings.radices.empty();

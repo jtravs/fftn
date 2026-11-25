@@ -401,6 +401,60 @@ TEST(Schedule, PlaneSplitThresholds) {
   EXPECT_FALSE(m5.split_complex_points);
 }
 
+// X83 (machine_profile::split_complex_rows): a real row on a chain's stages is split by its
+// complex points, n / 2 + 1; c2c rows and real rows whose graph has phases of lines (a grid
+// here; the depth-first chain on the Xeon 6240's class) keep their points.
+TEST(Schedule, RealRowsSplitByComplexPoints) {
+  const auto real_row = [](std::size_t n, fftn::detail::strategy_choice strategy, bool complex) {
+    fftn::detail::build_settings settings;
+    settings.strategy = strategy;
+    settings.profile = profile();
+    settings.profile.split_complex_rows = complex;
+    return fftn::detail::make_plan_core(fftn::detail::view_of(fftn::rows_r2c<double>(n, 1)),
+                                        fftn::options(), settings);
+  };
+  const auto c2r_row = [](std::size_t n, bool complex) {
+    fftn::detail::build_settings settings;
+    settings.strategy = fftn::detail::strategy_choice::chain;
+    settings.profile = profile();
+    settings.profile.split_complex_rows = complex;
+    return fftn::detail::make_plan_core(fftn::detail::view_of(fftn::rows_c2r<double>(n, 1)),
+                                        fftn::options(), settings);
+  };
+  using fftn::detail::strategy_choice;
+  EXPECT_EQ(real_row(10240, strategy_choice::chain, false)->graph.points, 10240U);
+  const auto halved = real_row(10240, strategy_choice::chain, true);
+  EXPECT_EQ(halved->graph.points, 5121U);
+  EXPECT_EQ(c2r_row(10240, true)->graph.points, 5121U);
+  EXPECT_EQ(c2r_row(10240, false)->graph.points, 10240U);
+  // The work is the same: only the split thresholds read the points. In a group of 4 the row
+  // that was split now stays whole, under the thresholds of a small group (6144).
+  const lane_map four{.lanes = 4};
+  const auto whole = real_row(10240, strategy_choice::chain, false);
+  EXPECT_EQ(halved->graph.work, whole->graph.work);
+  EXPECT_EQ(share_of(make_schedule(whole->graph, four, whole->profile), four, 0).split, 1U);
+  EXPECT_EQ(share_of(make_schedule(halved->graph, four, halved->profile), four, 0).split, 0U);
+  // From 12288 points (6145 complex) a real row is split again.
+  const auto longer = real_row(16384, strategy_choice::chain, true);
+  EXPECT_EQ(longer->graph.points, 8193U);
+  EXPECT_EQ(share_of(make_schedule(longer->graph, four, longer->profile), four, 0).split, 1U);
+  // A real row on a grid (phases of lines) keeps its real points.
+  const auto grid = real_row(65536, strategy_choice::grid, true);
+  ASSERT_TRUE(std::ranges::any_of(
+      grid->graph.phases, [](const fftn::detail::graph_phase& ph) { return ph.nest != 0; }));
+  EXPECT_EQ(grid->graph.points, 65536U);
+  // c2c rows are unchanged.
+  fftn::detail::build_settings c2c;
+  c2c.strategy = strategy_choice::chain;
+  c2c.profile = profile();
+  c2c.profile.split_complex_rows = true;
+  EXPECT_EQ(fftn::detail::make_plan_core(
+                fftn::detail::view_of(fftn::rows_c2c<double>(10240, 1, fftn::direction::forward)),
+                fftn::options(), c2c)
+                ->graph.points,
+            10240U);
+}
+
 // Rules 4 and 5: rows are dealt to groups in proportion to their members; a batch smaller
 // than a group stays in one group.
 TEST(Schedule, DealsToGroups) {
@@ -1042,10 +1096,11 @@ TEST(Schedule, ProfilesOfRecordedMachines) {
 }
 
 // X69: the 2 MiB-L2 key's fit table (machine_profile::fit_large_l2) with its limits, on that key
-// alone. X70: four times the L2 for rows and output, twice the L2 in place, the L2 for rows longer
-// than a page out of place. The other recorded classes keep their fit fields as before: X57's on
-// the EPYC's class (and, unmeasured, on Zen 4 and Zen 5, whose `avx512` plans have no fit table
-// without the key), none on the Xeon 6240's or Apple's, and no long-row limit on any of them.
+// alone. X80: no limit in place, 64 times the L2 for rows and output out of place, the L2 for rows
+// longer than a page out of place (X70). The other recorded classes keep their fit fields as
+// before: X57's on the EPYC's class (and, unmeasured, on Zen 4 and Zen 5, whose `avx512` plans
+// have no fit table without the key), none on the Xeon 6240's or Apple's, and no out-of-place or
+// long-row limit on any of them.
 TEST(Schedule, FitTableKeys) {
   const std::filesystem::path data(FFTN_PLATFORM_DATA);
   constexpr std::size_t kib = 1024;
@@ -1056,10 +1111,12 @@ TEST(Schedule, FitTableKeys) {
     std::size_t row_bytes;
     std::size_t in_place_bytes;
     std::size_t long_row_bytes;
+    std::size_t out_of_place_bytes;
     bool operator==(const fit_fields&) const = default;
   };
   const auto of = [](const machine_profile& p) {
-    return fit_fields{p.fit_large_l2, p.fit_row_bytes, p.fit_in_place_bytes, p.fit_long_row_bytes};
+    return fit_fields{p.fit_large_l2, p.fit_row_bytes, p.fit_in_place_bytes, p.fit_long_row_bytes,
+                      p.fit_out_of_place_bytes};
   };
   using fftn::detail::cpu_vendor;
   const auto recorded = [&](const char* file, bool x86_64, cpu_vendor vendor) {
@@ -1070,14 +1127,14 @@ TEST(Schedule, FitTableKeys) {
         "linux-gcp-c4-emerald-rapids.sysfs"}) {
     SCOPED_TRACE(file);
     EXPECT_EQ(recorded(file, true, cpu_vendor::intel),
-              (fit_fields{true, 8 * mib, 4 * mib, 2 * mib}));
+              (fit_fields{true, never, never, 2 * mib, 128 * mib}));
   }
   EXPECT_EQ(recorded("linux-amd-epyc-7763.sysfs", true, cpu_vendor::amd),
-            (fit_fields{false, 24 * mib, 16 * mib, never}));
+            (fit_fields{false, 24 * mib, 16 * mib, never, never}));
   EXPECT_EQ(recorded("linux-intel-xeon-gold-6240.sysfs", true, cpu_vendor::intel),
-            (fit_fields{false, 0, never, never}));
+            (fit_fields{false, 0, never, never, never}));
   EXPECT_EQ(recorded("macos-apple-m5-max.sysctl", false, cpu_vendor::apple),
-            (fit_fields{false, 0, never, never}));
+            (fit_fields{false, 0, never, never, never}));
   // AArch64 with a 2 MiB private L2 (Axion) is not on the key.
   EXPECT_FALSE(recorded("linux-gcp-c4a-axion.sysfs", false, cpu_vendor::arm_other).large_l2);
   // Zen 5 and Ice Lake VMs (a large L3 per CPU): X57's large-L3 fields, without the key.
@@ -1086,7 +1143,7 @@ TEST(Schedule, FitTableKeys) {
     SCOPED_TRACE(file);
     const fftn::detail::core_class c = fftn::detail::load_topology(data / file).classes.at(0);
     EXPECT_EQ(recorded(file, true, vendor),
-              (fit_fields{false, c.l3.size / 4 * 3, c.l3.size / 2, never}));
+              (fit_fields{false, c.l3.size / 4 * 3, c.l3.size / 2, never, never}));
   }
   // Zen 4 (1 MiB of private L2) with a large L3 per CPU (a VM) and without (Zen 4c with SMT).
   fftn::detail::core_class zen4;
@@ -1095,13 +1152,13 @@ TEST(Schedule, FitTableKeys) {
   zen4.l3 = {.size = 32 * mib, .line_size = 64, .ways = 16, .shared_by = 8};
   machine_profile p;
   fftn::detail::set_grid_sizes(p, zen4, true);
-  EXPECT_EQ(of(p), (fit_fields{false, 24 * mib, 16 * mib, never}));
+  EXPECT_EQ(of(p), (fit_fields{false, 24 * mib, 16 * mib, never, never}));
   zen4.l1d.shared_by = 2;
   zen4.l2.shared_by = 2;
   zen4.l3 = {.size = 16 * mib, .line_size = 64, .ways = 16, .shared_by = 16};
   p = machine_profile{};
   fftn::detail::set_grid_sizes(p, zen4, true);
-  EXPECT_EQ(of(p), (fit_fields{false, 0, never, never}));
+  EXPECT_EQ(of(p), (fit_fields{false, 0, never, never, never}));
   // Bare-metal Granite Rapids with SMT (under 2 MiB of L3 per CPU): the key is the L2.
   fftn::detail::core_class metal;
   metal.l1d = {.size = 48 * kib, .line_size = 64, .ways = 12, .shared_by = 2};
@@ -1110,15 +1167,16 @@ TEST(Schedule, FitTableKeys) {
   p = machine_profile{};
   p.vendor = cpu_vendor::intel;
   fftn::detail::set_grid_sizes(p, metal, true);
-  EXPECT_EQ(of(p), (fit_fields{true, 8 * mib, 4 * mib, 2 * mib}));
+  EXPECT_EQ(of(p), (fit_fields{true, never, never, 2 * mib, 128 * mib}));
 }
 
 // A rule measured on one vendor's processors only is keyed to that vendor (the maintainer,
 // 2026-11-25; DESIGN.md 13.5). The Xeon 6240's class (X34, X39, X46, X50, X51, X58, X61's x86
-// half, X63, X75, X78, X79) and the 2 MiB-L2 key (X35, X55, X58, X64, X69, X70) were measured on
-// Intel's cores only, so they read the vendor: every Intel recording keeps the profile it had
-// (the literals here and in the tests above are main's values before the vendor was read), and
-// AMD's cores with the same caches, or an unknown vendor, keep the fields' defaults there.
+// half, X63, X75, X78, X79) and the 2 MiB-L2 key (X35, X55, X58, X64, X69, X70, X80) were
+// measured on Intel's cores only, so they read the vendor: every Intel recording keeps the profile
+// it had (the literals here and in the tests above are main's values before the vendor was read,
+// with X79's and X80's fields since), and AMD's cores with the same caches, or an unknown vendor,
+// keep the fields' defaults there.
 struct intel_keyed {
   std::size_t grid_two_odd_part;
   std::size_t grid_three_block;
@@ -1143,8 +1201,10 @@ struct intel_keyed {
   bool batch_leaf_12;
   bool fit_large_l2;
   std::size_t fit_long_row_bytes;
+  std::size_t fit_out_of_place_bytes;
   std::size_t c2r_packed_bytes;
   fftn::isa c2r_packed_isa;
+  bool split_complex_rows;
   std::size_t team_state_page;
 
   bool operator==(const intel_keyed&) const = default;
@@ -1175,8 +1235,10 @@ intel_keyed keyed_of(const machine_profile& p) {
       .batch_leaf_12 = p.batch_leaf_12,
       .fit_large_l2 = p.fit_large_l2,
       .fit_long_row_bytes = p.fit_long_row_bytes,
+      .fit_out_of_place_bytes = p.fit_out_of_place_bytes,
       .c2r_packed_bytes = p.c2r_packed_bytes,
       .c2r_packed_isa = p.c2r_packed_isa,
+      .split_complex_rows = p.split_complex_rows,
       .team_state_page = p.team_state_page,
   };
 }
@@ -1222,8 +1284,10 @@ TEST(Schedule, IntelOnlyKeys) {
       .batch_leaf_12 = true,
       .fit_large_l2 = false,
       .fit_long_row_bytes = never,
+      .fit_out_of_place_bytes = never,
       .c2r_packed_bytes = 1 * mib,
       .c2r_packed_isa = fftn::isa::avx512,
+      .split_complex_rows = true, // X83
       .team_state_page = 4096, // X79 (not main's value before the vendor was read: added after)
   };
   EXPECT_EQ(keyed_of(recorded("linux-intel-xeon-gold-6240.sysfs", cpu_vendor::intel)), xeon);
@@ -1234,7 +1298,7 @@ TEST(Schedule, IntelOnlyKeys) {
   ice_lake.depth_top_alt = 20;
   ice_lake.depth_top_last = 10;
   EXPECT_EQ(keyed_of(recorded("linux-gcp-n2-ice-lake.sysfs", cpu_vendor::intel)), ice_lake);
-  intel_keyed large_l2 = defaults; // X35, X55, X58, X64, X69 and X70
+  intel_keyed large_l2 = defaults; // X35, X55, X58, X64, X69, X70 and X80
   large_l2.grid_two_part_bytes = 32 * kib;
   large_l2.depth_min_bytes = 512 * kib;
   large_l2.depth_max_bytes = 128 * mib;
@@ -1245,6 +1309,7 @@ TEST(Schedule, IntelOnlyKeys) {
   large_l2.batch_leaf_12 = false;
   large_l2.fit_large_l2 = true;
   large_l2.fit_long_row_bytes = 2 * mib;
+  large_l2.fit_out_of_place_bytes = 128 * mib; // X80
   const std::vector<const char*> large_l2_files{"linux-gcp-c4-granite-rapids.sysfs",
                                                 "linux-gcp-c3-sapphire-rapids.sysfs",
                                                 "linux-gcp-c4-emerald-rapids.sysfs"};

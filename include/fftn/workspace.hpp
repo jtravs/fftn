@@ -32,8 +32,9 @@ struct workspace_access;
 /// sized for the team with `plan::workspace_bytes(lanes)`: it then also holds the team's
 /// synchronisation state, which persists from one team execution to the next. The
 /// workspace sets that state up itself on the first team execution, and again after any
-/// serial execution, a change of team size, or a `completion::own` execution by a smaller
-/// team, so its memory never needs initialising.
+/// serial execution, a change of team size, a `completion::own` execution by a smaller
+/// team, or a team execution of a plan that lays the state out differently, so its memory
+/// never needs initialising.
 ///
 /// Guarantees: memory is allocated, if at all, only when the workspace is constructed;
 /// executing a plan never allocates. The contents are scratch: they need no

@@ -536,6 +536,45 @@ TEST(TeamExecute, StateHasPagesOfItsOwn) {
   }
 }
 
+// Plans whose profiles lay the team state out on different units share one workspace: each
+// finds the other's state not ready and prepares its own, so neither reads the other's words at
+// another address as its own (X79's second read: the paged plan returned without writing its
+// output when the ready flag recorded the lane count alone).
+TEST(TeamExecute, PlansWithOtherStateUnitsShareAWorkspace) {
+  const auto& cases = TeamBits::cases();
+  const auto plain = std::ranges::find_if(
+      cases, [](const team_case& t) { return t.name.starts_with("c2c_many_64x100"); });
+  const auto paged = std::ranges::find_if(
+      cases, [](const team_case& t) { return t.name.starts_with("c2c_many_paged_64x100"); });
+  ASSERT_NE(plain, cases.end());
+  ASSERT_NE(paged, cases.end());
+  ASSERT_EQ(fftn::detail::team_core(*plain->core).profile.team_state_page, 0U);
+  const std::size_t page = fftn::detail::team_core(*paged->core).profile.team_state_page;
+  ASSERT_EQ(page, 4096U);
+  const std::vector<std::byte> plain_serial = fftn::test::serial_result(*plain);
+  const std::vector<std::byte> paged_serial = fftn::test::serial_result(*paged);
+  for (const bool paged_first : {false, true}) {
+    for (const int size : {2, 4, 16}) {
+      const std::size_t bytes = std::max(fftn::detail::workspace_bytes(*plain->core, size),
+                                         fftn::detail::workspace_bytes(*paged->core, size));
+      // All ones, as stale words can be: a zeroed state is a valid fresh one, which would hide
+      // a state never prepared, while a "finished" word at its largest ends every execution
+      // before it starts.
+      std::vector<std::byte> memory(bytes + 2 * page, std::byte{0xff});
+      std::byte* const at = fftn::detail::team_state_in(memory.data(), page) + 7;
+      fftn::workspace ws(std::span<std::byte>(at, bytes));
+      for (int round = 0; round < 3; ++round) {
+        for (const bool which : {paged_first, !paged_first}) {
+          const team_case& c = which ? *paged : *plain;
+          EXPECT_EQ(run_team(c, size, 0, ws), which ? paged_serial : plain_serial)
+              << (which ? "paged" : "plain") << ", " << size << " lanes, round " << round
+              << (paged_first ? ", paged first" : ", plain first");
+        }
+      }
+    }
+  }
+}
+
 // A member that skips an execution may not go on to the next on the same workspace without
 // a reset; after a serial execution of no transforms, every member returns from the next
 // execution only once its output is written.

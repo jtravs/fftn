@@ -1008,6 +1008,13 @@ Raising the limits to four times the L2 (in place twice) kept every gain (0.86�
 cases moved), and in place the two-pass radices still won at 32 MiB, while out of place only
 1024 (rows longer than a page) and DRAM-sized batches of 160 and 240 stopped gaining. The crossing
 follows the row's length and placement as much as the cache. [X70](experiments/X70-large-l2-limits.md).
+In place no crossing appeared at all: dropping the limit kept the gain to 512 MiB of rows, in
+DRAM (0.89–0.90 over the 22 cases moved on the three families), as two passes over memory move
+two thirds of three passes' data. Out of place, with twice the data streamed, Granite Rapids
+stopped gaining between 180 and 320 MiB of rows and output while Sapphire did not to 480 MiB,
+and at 320–512 MiB in place Granite only tied. Past the caches the limit is the machine's
+memory system, not its L2: measure it on each family the key reaches.
+[X80](experiments/X80-large-l2-limits-3.md).
 
 4.24 **Past the register file, a batch leaf should move each element when the codelet asks for
 it, and keep one inlined copy of the codelet.** X53's batch leaf transposes C × C blocks of C
@@ -1265,6 +1272,21 @@ reads. Xeon c2r 32768: the old plan ran 1.93 times faster at 4 threads than at o
 1.32 times. A per-transform phase costs a hand-off (5.1) and a round trip of the data through
 other cores' caches, which one thread never pays. Judge a route at the widths it will run.
 [X77](experiments/X77-real-rows-threaded.md).
+
+5.21 **A split threshold must count the work, and a narrower team is not a safer one.** On the
+Xeon 6240 (single rows, OpenMP executor, cores of one socket) a team of 2 ran almost every row
+below 32768 points slower than one thread (r2c 32768 1.22, c2c 15625 1.06) where teams of 4 and
+8 gained (0.93 and 0.67; 0.84 and 0.57): halving the team halves the work per member but keeps
+every phase's hand-off and its trip through other cores' caches, so capping members per point
+count only lost (32768-46080 points on 2 members 0.82-1.41 of one thread, against 0.53-0.93 on
+4). Two members dispatched out of 4 and 2 out of 2 ran alike: the idle members cost nothing.
+Real rows of 6400-10240 points lost 1.32-2.69 in teams of 4 and 8 because the threshold compared
+n real points while the work is that of n / 2 complex ones; counting n / 2 + 1 kept them whole
+and took them to 0.38-0.78 of their team time at 4-8 members, 0.40-0.53 at 16. Among c2c rows no
+size separates winners from losers (7200-12000 lost 1.07-1.22 at 4; 6561, 15625, 16807 gained
+0.69-0.93): rows with odd radices do more work per point than a points-times-passes estimate
+counts. 5.2's "a time, not a size" holds per kind and per radix too.
+[X83](experiments/X83-xeon-single-width.md).
 
 ## 6. Toolchain and testing pitfalls
 

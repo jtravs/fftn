@@ -89,6 +89,13 @@ struct machine_profile {
   // set_grid_sizes sets it where each core has its own L2: on the M5 Max, whose cluster
   // shares L2, the real 96^2 and 100^2 planes it would leave whole took 1.3 times as long.
   bool split_complex_points = false;
+  // A real row whose work graph is a chain's stages (no phase of lines: not a depth-first or
+  // grid plan) is split by its complex points too, n / 2 + 1 (core/plan_core.cpp; experiment
+  // X83). Its phases share a half-length complex chain and a pairing, the work of n / 2 complex
+  // points, and on the Xeon 6240 (`omp::executor`, single rows) teams of 4 and 8 ran the real
+  // rows of 6400-10240 points 1.32-2.69 times slower than one thread. set_grid_sizes sets it on
+  // the Xeon 6240's class (Intel only), where it was measured.
+  bool split_complex_rows = false;
   int mesh_group_lanes = 8;
   // Rule 2: leftover transforms after the whole ones are split only from this size (T5,
   // S3, run 20261114-182042-1f0c: at 8 lanes leftovers of 4096 points gained 0.85-0.98 and
@@ -323,7 +330,9 @@ struct machine_profile {
   // half of it. Zen 4 and Zen 5 (`avx512`, fit_row_bytes from the large-L3 branch) keep it false,
   // so the key's `avx512` table does not reach them. Experiment X70 raised the key's limits to
   // four times the L2 (fit_row_bytes) and twice the L2 (fit_in_place_bytes), with 1024 out of
-  // place kept at the L2 by fit_long_row_bytes (0.858-0.873 over the cases it moves).
+  // place kept at the L2 by fit_long_row_bytes (0.858-0.873 over the cases it moves). Experiment
+  // X80: on the key fit_row_bytes and fit_in_place_bytes no limit, out of place
+  // fit_out_of_place_bytes 64 times the L2 (0.894-0.903 over the cases it moves).
   bool fit_large_l2 = false;
   // Out of place, a plan whose rows are longer than a 4 KiB page (one side) fits only while its
   // rows and output also take at most this many bytes (the limit is the smaller of it and
@@ -333,6 +342,17 @@ struct machine_profile {
   // 32 MiB on Sapphire Rapids). set_grid_sizes sets the L2 on that key; elsewhere no limit, so
   // X57's EPYC limits are unchanged.
   std::size_t fit_long_row_bytes = std::numeric_limits<std::size_t>::max();
+  // Out of place, the rows and output must also take at most this many bytes (the limit is the
+  // smaller of it, fit_row_bytes and, for rows longer than a page, fit_long_row_bytes;
+  // core/plan_core.cpp): fit_in_place_bytes' counterpart, so that in place may go further than
+  // out of place. Experiment X80: on the 2 MiB-L2 key X70's arm W
+  // gained in place at every size tried (rows of 1024 to 32 MiB 0.88-0.93, of 160 and 240 to
+  // 240 MiB 0.82-0.94), out of place for 160 and 240 to 120 MiB of rows and output (0.85-0.94)
+  // and not at 320-480 MiB on Granite Rapids (1.02-1.03). set_grid_sizes sets 64 times the L2 on
+  // that key (with fit_row_bytes and fit_in_place_bytes no limit; judged on Sapphire, Granite
+  // and Emerald Rapids, 0.894-0.903 over the 22 cases it moves); elsewhere no limit, so X57's
+  // limits are unchanged.
+  std::size_t fit_out_of_place_bytes = std::numeric_limits<std::size_t>::max();
   // A lanes column phase whose column elements lie less than a page apart keeps its block's
   // two scratch tiles within this (core/plan_core.cpp, column_block; X40). set_grid_sizes
   // sets a quarter of L2.

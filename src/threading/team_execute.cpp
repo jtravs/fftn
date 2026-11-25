@@ -150,7 +150,7 @@ void execute_member(const plan_core& plan, const void* in, void* out, const team
     // workspace then no longer holds valid state for any other size.
     const sync_word flag = workspace_access::team_word(ws);
     const std::uint64_t seen = flag.load(std::memory_order_relaxed);
-    if (seen != 0 && seen != layout.lanes * 4 + team_ready) {
+    if (seen != 0 && seen != team_flag(layout.lanes, team_state_unit(page), team_ready)) {
       flag.store(0, std::memory_order_relaxed);
     }
     const transform_range mine = owned_tasks(core.prog.transforms, t.size, t.rank);
@@ -167,6 +167,7 @@ void execute_member(const plan_core& plan, const void* in, void* out, const team
       .state = state,
       .flag = workspace_access::team_word(ws),
       .rank = t.rank,
+      .unit = team_state_unit(page),
   };
   team_env env(core, in, out, slots, budget_of(job.plan));
   team_engine<team_env>(job, env).run();
