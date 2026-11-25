@@ -71,6 +71,15 @@ X76 (2026-11-25 night, branch `exp/x76-bimodal-864`, informative): X74's bimodal
 
 X78 (2026-11-25 night, branch `exp/x78-fused-c2r`): X77's follow-up, the c2r pairing fused into the depth-first real route's first pass. Arm B (a pairing-twiddle table of h entries read at every leg, both classes) rejected by its rule: one thread EPYC 1.151, Xeon 1.064 (runs 20261125-053120-822c, -053529-aac6). Arm B4n (the twiddles factored, v_i · w_n^(leg j), on the Xeon 6240's class for half lengths from L2/4 to 16 L2: `depth_c2r_fused_min_bytes`, `_max_bytes`) adopted under amendment 1, committed before its runs: one thread 0.853 over the 23 rows it moves, none slower (run 20261125-062612-079d, band ±4.22 %, loaded); c2r 32768 at 4 threads 0.740, 40960 × 6 at 6 threads 0.886 (÷ FFTW 0.50 and 0.70). Zen 3 keeps the separate pass: every variant lost there (1.12–1.20); declared run 20261125-062442-ddf9 shows no plan moved. For the maintainer's review: B4n was defined from a diagnosis after B's judging runs (as X75's arm B); the r2c arm was not tried.
 
+Vendor keys (2026-11-25, branch `task/vendor-keyed-intel`; the maintainer's policy: "a rule
+measured on only one vendor is keyed to that vendor"): the Xeon 6240's class (X34, X39, X46, X50,
+X51, X75, X78, X61's x86 half, X63), X58's Ice Lake chain and the 2 MiB-L2 key (X35, X55, X58,
+X64, X69, X70) were measured on Intel's cores only and now read `machine_profile::vendor`; AMD's
+cores those keys reach (Zen 4c, Zen 5c, Zen 4 VMs reporting a small L3 per CPU) and unknown
+vendors keep the fields' defaults. Not a performance change: every Intel recording (Xeon 6240,
+Ice Lake N2, Sapphire, Emerald, Granite Rapids) keeps its whole profile, field for field (DESIGN
+13.5).
+
 ### Where FFTN stands
 
 Tracking tier, one thread, FFTN's time ÷ FFTW's (geometric mean; below 1 is faster), all
@@ -551,7 +560,8 @@ Decided by the maintainer on 2026-11-24 (the earlier ones are in AGENTS.md secti
   too, stays for everyone; the EPYC's plans are unchanged. Cache-keyed
   Zen 3 rules (X51 E, X59 R6, X62 C, X63) still reach any core the key matches, Intel's
   four-core client parts and small VMs included. From X64's screen, X63's `avx512` branch (the
-  Xeon 6240's key) packs on Intel's cores only; AMD's Zen 4 keeps the block.
+  Xeon 6240's key) packs on Intel's cores only; AMD's Zen 4 keeps the block. Since 2026-11-25
+  (task/vendor-keyed-intel) the whole Xeon 6240 class and the 2 MiB-L2 key are Intel's only.
 
 Cloud screen X64 (2026-11-24, Spot VMs, USD 2.44; campaign 14.63 of 20): X50's depth-first
 Bluestein convolutions adopted on the 2 MiB-L2 key (Sapphire Rapids 0.588 of the time over the
@@ -569,6 +579,13 @@ of 240), in place within twice the L2 (256 rows of 1024), 1024 out of place kept
 at every size tried (1024 to 2048 rows 0.88–0.93; 160 and 240 to 65536 rows 0.82–0.94) and out of
 place to 16384 rows of 160 and 240 (0.85–0.94), tying or losing only at 65536 rows out of place on
 Granite and Emerald (1.00–1.03): a follow-up could drop the in-place limit for these lengths.
+X80 (2026-11-25, USD 0.59; campaign 16.54 of 20) did: on the key no in-place limit, and rows and
+output of 160 and 240 out of place within 64 times the L2 (128 MiB), 1024 out of place still the
+L2 (Sapphire 0.899, Granite 0.903, Emerald 0.894 over the 22 moved cases, to 512 MiB of rows in
+place; none slower by the rules, though Granite's in-place gain fades at 320–512 MiB: 160 ×
+131072 1.016, 1024 × 32768 0.996). On the moved cases FFTN ÷ FFTW 0.91–0.93 → 0.81–0.84, ÷ oneMKL
+0.94–1.04 → 0.85–0.93; on Emerald three in-place batches stay at 1.03 of oneMKL. Arm W puts
+Granite's out-of-place crossing between 180 and 320 MiB (a low-priority follow-up).
 
 Still open: the CI's Windows jobs install a pinned LLVM 23.1.5 (PR 81) because the runner
 image's LLVM is older than its Visual Studio needs.
@@ -995,7 +1012,9 @@ running, done (with verdict).
 | [X76](experiments/X76-bimodal-864.md) | The Xeon 6240 at 16 threads: what makes c2c 864 × 384 backward bimodal between fbench processes in both claiming rules (X74's deciding case)? Placement, page colours, offsets, frequency, siblings, the plan, the heap? | 3 | done (informative): the heap; after earlier cases the workspace follows the plan's twiddle table, whose lines on the team state's page are then loaded from other cores' modified lines (`perf c2c`); a page-aligned workspace removes it in both arms (A 119 → 52 µs, M 104 → 70); fix and anchoring rules drafted |
 | [X77](experiments/X77-real-rows-threaded.md) | X72's and X75's real rows (the half-length transform on the c2c depth-first chain) at the client catalogue's thread widths (4, 6, 8, 16) on the EPYC 7763 and the Xeon 6240: is the route still faster than the plans it replaced, and how do the rows stand against FFTW? Informative | 1 | done: no case slower beyond the band; r2c rows and batches keep the gain at 4–16 threads (0.65–0.94), c2r rows at 4 threads keep less (0.79–1.03; three of five lose it, at most 1.031); no narrowing proposed, a fused c2r pairing in the depth-first first pass proposed as a follow-up |
 | [X78](experiments/X78-fused-c2r-pairing.md) | X77's follow-up on Zen 3's and the Xeon 6240's classes: the c2r pairing fused into the depth-first real route's first pass (no separate pass, no workspace block): faster at one thread and at the client's widths? | 1 | done: B (a twiddle table of h entries) rejected (EPYC 1.151, Xeon 1.064); B4n (twiddles factored over the legs, Xeon 6240 class, half lengths L2/4–16 L2) adopted by amendment 1 (one thread 0.853 over 23 rows, c2r 32768 at 4 threads 0.740, 40960 × 6 at 6 0.886); Zen 3 keeps the separate pass (every variant 1.12–1.20) |
-| [X80](experiments/X80-large-l2-limits-3.md) | X70's follow-up on the 2 MiB-L2 key under `avx512`: no in-place limit for the key's two-pass rows (1024, 160, 240) and rows and output of 160 and 240 out of place within 64 times the L2 (`fit_out_of_place_bytes`), 1024 out of place keeping the L2: do they pass X70's adopt rule on Sapphire and Granite and its reach rule on Emerald, and where does the out-of-place gain stop? | 1 | planned (rules merged before the cloud run) |
+| [X80](experiments/X80-large-l2-limits-3.md) | X70's follow-up on the 2 MiB-L2 key under `avx512`: no in-place limit for the key's two-pass rows (1024, 160, 240) and rows and output of 160 and 240 out of place within 64 times the L2 (`fit_out_of_place_bytes`), 1024 out of place keeping the L2: do they pass X70's adopt rule on Sapphire and Granite and its reach rule on Emerald, and where does the out-of-place gain stop? | 1 | done: adopted (Sapphire 0.899, Granite 0.903, Emerald 0.894 over 22 moved cases to 512 MiB in place, none slower); arm W puts Granite's out-of-place crossing between 180 and 320 MiB; ÷ FFTW 0.81–0.84, ÷ oneMKL 0.85–0.93 on the moved cases |
+| [X81](experiments/X81-zen2-screen.md) | Zen 2 (Google Cloud n2d, Rome), which Zen 3's key reaches unmeasured: does it keep X72's real rows on the depth-first chain (arm A), X72's AMD `avx2` overrides for 3072, 3200, 4608 and 5120 (arm B) and X73's anchored runs at 8 threads, or lose and get its own key (16 MiB of L3 per complex)? | 1, 3 | planned: rules only (cloud screen `screen-1125`) |
+| [X82](experiments/X82-icelake-real-rows.md) | Ice Lake-SP as Google Cloud's N2 reports it (X58's branch: large L3 per CPU), which has the Xeon 6240's c2c depth-first chain but not its real-row rules: should it take X75 (real rows' half length on the chain, above L2/8 to 64 L2) and X78 (the fused c2r pairing, L2/4 to 16 L2)? | 1 | planned: rules only (cloud screen `screen-1125`) |
 | [X56](experiments/X56-exit-4.md) | The phase 1 exit check on `main` after X49–X57: EPYC at fa155c9, Mac and Xeon at X53's code (71307e0), then the cloud cores | 1 | done: the phase 1 exit met on all nine machines (local: EPYC ÷ FFTW 6 of 193; cloud: Zen 5 5, Axion 1, Granite Rapids 7, Sapphire Rapids 7, Ice Lake 0 after X58; oneMKL at most 9) |
 | [X57](experiments/X57-epyc-1024.md) | The EPYC's last exit-check cases: are 72 and 120's 5–6 % since 8c18dd2 a regression, and can 1024's radix choice see the plan's data? | 1 | done: 72 and 120 are code placement; B adopted (768 and 1024 two-pass rows while rows and output fit 3/4 of L3: moved cases 0.88, tracking 0.989, EPYC beyond noise 9 → 4 of 193); C (64-byte `avx2` functions) rejected (0.999, 1024 × 3 1.04–1.06); amendment 2: B's in-place limit measured, lost from 18 MiB, capped at half the L3 (16 MiB, 1024 rows of 1024) |
 | [X58](experiments/X58-intel-keys.md) | Recent Intel keys from X56's screen: the depth-first chain on Ice Lake VMs (private L2 between 1 and 2 MiB), and no batch leaf of 12 on a private L2 of 2 MiB or more | 1 | done: both adopted. Ice Lake's changed rows 0.596 of their time (long rows ÷ FFTW 1.13–1.53 → 0.64–0.79), tracking 0.929; 12 × 64 and 12 × 1024 0.867 (Granite Rapids) and 0.892 (Sapphire Rapids) |

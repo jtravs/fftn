@@ -2602,10 +2602,38 @@ radix overrides of X30 (512), X42 (500–25000), X54 (768; float 512–4096) and
 section 6): X57's footprint rule (accepted for other `avx2` cores with a large L3) and the Zen 3
 class's rules (X51's tops of 4, X59's fair runs, X62's Bluestein limit, X63's packed c2r
 intermediate, X72's depth-first half lengths), which an Intel core with a private L2 under 1 MiB and at least 2 MiB of L3 per
-CPU (a four-core client part, a small VM) would also match. One cache key reads the vendor:
-X63's packed c2r planes on the Xeon 6240's class (`avx512`, from the L2) apply to Intel's cores
-only, since the key also reaches Zen 4 (Zen 4c with SMT, Zen 4 VMs reporting a small L3 per
-CPU), where X64's cloud screen measured them losing; AMD's `avx512` cores keep the block.
+CPU (a four-core client part, a small VM) would also match.
+
+A rule measured on only one vendor's processors is keyed to that vendor (the maintainer,
+2026-11-25). Two cache keys of `set_grid_sizes` were measured on Intel's cores alone and read the
+vendor, since AMD's cores can match them: the Xeon 6240's class (x86-64, a private L2 under
+2 MiB, under 2 MiB of L3 per CPU) also matches Zen 4c and Zen 5c (1 MiB of L2 and 1 MiB of L3
+per CPU with SMT) and Zen 4 VMs reporting a small L3 per CPU, and the 2 MiB-L2 key would match
+any future AMD core with that L2. On Intel's cores they hold as measured (every Intel recording,
+the Xeon 6240, Ice Lake N2, Sapphire, Emerald and Granite Rapids, keeps its profile field for
+field); every other vendor, unknown included, keeps those fields' defaults there, the plans
+FFTN had before the rules. The fields, with the experiments that measured them:
+
+| Key | Fields | Experiments (machines) |
+|---|---|---|
+| Xeon 6240's class | `grid_two_odd_part` | X34 (Xeon 6240) |
+| | `grid_three_block`, `grid_phase_radix`, `grid_two_block_bytes`, `pow2_grid_bytes`, `grid_two_pow2_bytes` | X39 (Xeon 6240) |
+| | `depth_min_bytes`, `depth_max_bytes`, `depth_top`, `depth_top_alt`, `depth_top_last`, `depth_float_max_bytes` | X46, X51 (Xeon 6240) |
+| | `depth_convolution_max_bytes` | X50 (Xeon 6240) |
+| | `depth_real_max_bytes`, `depth_real_min_bytes` | X75 (Xeon 6240) |
+| | `depth_c2r_fused_min_bytes`, `depth_c2r_fused_max_bytes` | X78 (Xeon 6240) |
+| | `adjacent_lanes`, `adjacent_team_chain` (the x86 half; Apple's half stands) | X61 (Xeon 6240; M5 Max) |
+| | `c2r_packed_bytes`, `c2r_packed_isa` (`avx512`) | X63 (Xeon 6240); X64 (Ice Lake-SP kept, Zen 4 lost) |
+| Its L2 above 1 MiB (Ice Lake) | the depth-first chain's fields as on the Xeon | X58 (Ice Lake N2) |
+| 2 MiB of private L2 | `grid_three_bytes` (L2/2), `grid_two_part_bytes` | X35 (Granite Rapids) |
+| | `batch_leaf_12` | X58 (Granite, Emerald Rapids) |
+| | the depth-first chain's fields; `depth_convolution_max_bytes` | X55 (Granite Rapids); X64 (Sapphire, Granite, Emerald) |
+| | `fit_large_l2`, `fit_row_bytes`, `fit_in_place_bytes`, `fit_long_row_bytes` | X69, X70 (Sapphire, Granite, Emerald) |
+
+Another vendor's core with a 2 MiB private L2 takes neither the key nor the large-L3 branch: it
+keeps the sizes every key starts from. X34's odd-part rule, which also reached AArch64 cores with
+a private L2 and a small L3 per CPU (none measured or recorded), is Intel's only too. X43b's volumes plane at a time (`team_volume_planes`) stay
+on the whole private-L2 key: they were measured on the EPYC 7763 and the Xeon 6240.
 Rules measured on the Xeon under `avx2` too (X30's 256 = 8 × 32, X2's and X38's overrides,
 X7, X23) stay for every vendor. Tests set the vendor explicitly, never the host's.
 
@@ -2952,6 +2980,11 @@ and Sandy Bridge models, QEMU's Neoverse N1), which checks detection and dispatc
 them as well as the kernels: a stray newer instruction anywhere faults. Emulation runs the
 test programs that contain kernels or detection, not the long oracle suites (those run
 natively), weekly and on demand.
+
+Under ASan with UBSan, the units that compile the kernel text leave out UBSan's
+pointer-overflow and object-size checks, which ASan makes there at every access; the other
+units keep every check (`fftn_kernel_sanitizer_checks`, `cmake/FftnTargets.cmake`). The two
+checks were 70 % of a cold build of the kernel units with Clang.
 
 The workflows in [`.github/workflows/`](../.github/workflows/) are the matrix: which gate
 stages run on which compiler and why, the emulated models with the target each must
@@ -3549,6 +3582,8 @@ to change before a release.
 | 2026-11-25 | Whole transforms anchored to members on Apple too; not on the Xeon 6240's class (`machine_profile::anchored_runs`, section 13.3; X74) | M5 Max at 6 threads: the standard batches 0.87–0.97 of their time, the client catalogue 0.996, nothing slower in the deciding run (20261124-233956-4feb). Xeon 6240: 8 threads passed (catalogue 0.951, standard batches 0.695), but at 16 the c2c batch 864 × 384 backward took 1.16 in the deciding re-run (20261125-011737-dee1), so the class keeps arrival-order runs pending the maintainer's decision |
 | 2026-11-25 | On the Xeon 6240's class an even real row of one axis out of place, contiguous, runs its half-length transform on the c2c rows' depth-first chain over their range (L2/4 to 64 L2; `depth_real_max_bytes`, X75 arm A) and, for real rows alone, from half lengths above L2/8 (`depth_real_min_bytes`, new; arm B, narrowed to exclude L2/8 itself); `avx512` only (its tops of 16, 20, 10); sections 8.5, 9.1 | X75's judging run (Xeon 6240, run 20261125-023550-8fee, band ±3.87 %): A 0.748 over the 50 real rows it moves (32768–2²³, float 65536–2²⁰), none slower; B narrowed after run R (float r2c 32768, half length L2/8, 1.095): 0.821 over the 14 it moves (18432–24576, float 40960–49152) in its deciding run 20261125-041502-3d25, none slower; the client catalogue's r2c and c2r 32768 1.28–1.44 → 0.83–1.04 of FFTW, 40960 × 6 1.20–1.38 → 0.99–1.18, c2r 20480 × 3 1.14 → 1.00 (run D1). Ice Lake-SP (X58's branch) keeps its plans, unmeasured |
 | 2026-11-25 | On the Xeon 6240's class a c2r row on the depth-first real route with a half length from L2/4 to 16 L2 pairs its bins in the chain's first pass (`depth_c2r_fused_min_bytes`, `depth_c2r_fused_max_bytes`, new, default never; pairing twiddles factored over the pass's legs); elsewhere the separate pass stays; section 9.1 | X78 (arm B4n, rules of amendment 1 committed before its runs): Xeon 6240 one thread 0.853 over the 23 rows it moves (run 20261125-062612-079d, band ±4.22 %), none slower; c2r 32768 at 4 threads 0.740, 40960 × 6 at 6 threads 0.886 (runs 20261125-063649-3e6d, -063741-028a). Arm B (a table of h entries, both classes) rejected by its rule: EPYC 1.151, Xeon 1.064; on Zen 3 every variant lost (1.12–1.20), so Zen 3 keeps the separate pass (declared run 20261125-062442-ddf9: no plan moved). Reach: the Xeon 6240's key, as X75's |
+| 2026-11-25 | The Xeon 6240's class (X34, X39, X46, X50, X51, X75, X78, X61's x86 half, X63) and the 2 MiB-L2 key (X35, X55, X58, X64, X69, X70), with X58's Ice Lake chain, apply to Intel's processors only (`set_grid_sizes`, section 13.5); AMD's and unknown vendors' cores those keys reach keep the fields' defaults. Not a performance change: every Intel recording keeps its whole profile | The maintainer's policy, accepted on 2026-11-25 ("I agree with all recommendations"): "a rule measured on only one vendor is keyed to that vendor". The keys read only cache shape, so Zen 4c and Zen 5c (1 MiB of L2 and of L3 per CPU) fall into the Xeon 6240's, and X64 measured X63 losing on Zen 4 there. Unknown behaves as off: no CI runner or recording reports an unknown x86 vendor, and the tests set the vendor explicitly |
+| 2026-11-25 | Under ASan + UBSan the kernel units (the library's `src/isa` units and the codelet test units) are compiled without UBSan's pointer-overflow and object-size checks (section 15.4) | The required Clang ASan + UBSan job took 78 minutes on PR 114, 64 of them a cold build of the kernel units, which every change to the kernel text, and every pull request started before main saved its cache, pays. Clang 23 on an EPYC 7763: the kernel units took 9306 s of compile time with every check, 2663 s without these two; ASan bounds-checks every access those units make, which subsumes both. GCC 16: 0.59 and 0.73 of the time on two units; the ASan + UBSan tests pass (2219, DMOG) in the same time |
 
 ---
 

@@ -82,6 +82,13 @@ machine_profile default_machine_profile() noexcept {
 // phases paid from an eighth of L2 (X12).
 void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexcept {
   const bool private_l2 = c.l2.shared_by != 0 && c.l2.shared_by <= std::max(c.l1d.shared_by, 1U);
+  // A rule measured on one vendor's processors only is keyed to that vendor (the maintainer,
+  // 2026-11-25; DESIGN.md 13.5): a cache key cannot tell an Intel core from an AMD one with the
+  // same caches (Zen 4c and Zen 5c, 1 MiB of L2 and of L3 per CPU with SMT, match the Xeon 6240's
+  // key). The Xeon 6240's class (X34, X39, X46, X50, X51, X58, X61, X63, X75, X78) and the
+  // 2 MiB-L2 key (X35, X55, X58, X64, X69, X70) were measured on Intel's cores only; every other
+  // vendor, unknown included, keeps those fields' defaults there.
+  const bool intel = p.vendor == cpu_vendor::intel;
   if (c.l1d.size != 0) {
     p.grid_min_bytes = c.l1d.size;
     p.grid_block_bytes = c.l1d.size;
@@ -132,6 +139,8 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
   // part is at most 2048 complex doubles (100000 0.67, 10^6 0.58; 71680 lost 1.10 in three;
   // X34's odd-part rule lost 1.03-1.46). Not on AArch64: an Axion VM (Neoverse V2, 2 MiB of
   // private L2) lost 1.28 over the rows this profile changed, and keeps X29's and X32's chains.
+  // Measured on Intel's cores only (Granite, Sapphire and Emerald Rapids): the branch below reads
+  // the vendor, and another vendor's 2 MiB L2 keeps the defaults (no large-L3 or Xeon rules).
   const bool large_l2 = x86_64 && private_l2 && c.l2.size >= std::size_t{2} * 1024 * 1024;
   // X43 arms B1 and B2, on a private L2 with a large L3 behind it (the EPYC 7763; Zen-like): at
   // 8 lanes the team program's blocks of 8 columns (128 bytes of complex doubles) took 0.887 of
@@ -158,9 +167,10 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
   // 6240's class (x86-64, a private L2 below 2 MiB without Zen 3's large L3 per core) and Apple
   // (a cluster-shared L2), both with a team running the chain, which Apple's unmeasured 8 lanes
   // need as much as the x86 machines did. Off on the EPYC 7763's class (0.946 against the bar of
-  // 0.85), on Granite and Sapphire Rapids, other AArch64 and unknown topologies.
+  // 0.85), on Granite and Sapphire Rapids, other AArch64 and unknown topologies, and on x86 cores
+  // of other vendors than Intel (the x86 half was measured on the Xeon 6240 alone).
   const bool apple_like = !x86_64 && c.l2.shared_by != 0 && !private_l2;
-  if ((x86_64 && private_l2 && !large_l2 && !large_l3) || apple_like) {
+  if ((intel && x86_64 && private_l2 && !large_l2 && !large_l3) || apple_like) {
     p.adjacent_lanes = true;
     p.adjacent_team_chain = true;
   }
@@ -183,7 +193,7 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
   // CPU, so the large-L3 branch below): the depth-first chain as on the Xeon 6240. One top of
   // 16 took 0.50-0.68 of the time from 32768 to 2^22 points, 20 took 0.49 at 100000. Zen 4
   // and Zen 5 (exactly 1 MiB of L2) stay out: unmeasured there.
-  if (x86_64 && private_l2 && !large_l2 && c.l1d.size != 0 &&
+  if (intel && x86_64 && private_l2 && !large_l2 && c.l1d.size != 0 &&
       c.l2.size > std::size_t{1024} * 1024) {
     p.depth_min_bytes = c.l2.size / 4;
     p.depth_max_bytes = 64 * c.l2.size;
@@ -191,7 +201,7 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
     p.depth_top_alt = 20;
     p.depth_top_last = 10;
   }
-  if (large_l2) {
+  if (large_l2 && intel) {
     p.batch_leaf_12 = false; // X58
     p.grid_three_bytes = c.l2.size / 2;
     p.grid_two_part_bytes = std::size_t{32} * 1024;
@@ -239,7 +249,7 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
     p.fit_in_place_bytes = std::numeric_limits<std::size_t>::max();
     p.fit_out_of_place_bytes = 64 * c.l2.size;
     p.fit_long_row_bytes = c.l2.size;
-  } else if (private_l2 && large_l3) {
+  } else if (private_l2 && large_l3 && !large_l2) {
     p.chain_part_bytes = std::size_t{16} * 1024;
     p.chain_part_limit_bytes = c.l3.size / 2;
     // Experiment X32, EPYC 7763: power-of-two rows as chains of FFTL.jl's radix-8 sequence
@@ -286,7 +296,10 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
   // grids in blocks of at most 16 columns, grid phases with radix-20 passes, two-phase blocks
   // within twice L1, c2c and r2c powers of two as grids beyond a quarter of L2 (32768 complex
   // points), and c2c powers of two out of place in two phases beyond half of L3 (2^20 points).
-  if (private_l2 && !large_l2 && !large_l3) {
+  // Every field of this branch was measured on the Xeon 6240 alone, so it is Intel's only: AMD's
+  // cores the key reaches (Zen 4c, Zen 5c; Zen 4 VMs reporting a small L3 per CPU) keep the
+  // defaults.
+  if (intel && private_l2 && !large_l2 && !large_l3) {
     p.grid_two_odd_part = 15;
     if (x86_64) {
       p.grid_three_block = 16;
@@ -377,8 +390,7 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
   // threshold at 1 MiB the packed planes lost at one thread (512 x 1024 1.127, 512^2 1.109) and at
   // 8 lanes (600 x 800 1.286, 720^2 1.246), while Ice Lake-SP kept the gain (0.62-0.77). AMD's
   // cores with avx512, and unknown ones, keep the block.
-  if (c.l2.size != 0 && x86_64 && private_l2 && !large_l2 && !large_l3 &&
-      p.vendor == cpu_vendor::intel) {
+  if (intel && c.l2.size != 0 && x86_64 && private_l2 && !large_l2 && !large_l3) {
     p.c2r_packed_bytes = c.l2.size;
     p.c2r_packed_isa = fftn::isa::avx512;
   } else if (zen3_like) {
