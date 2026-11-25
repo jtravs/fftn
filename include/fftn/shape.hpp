@@ -340,7 +340,7 @@ inline std::vector<std::ptrdiff_t> array_strides(std::span<const axis> array, bo
 template <class In, class Out>
 shape<In, Out> shape_along_axes(std::span<const axis> array, std::span<const std::size_t> selected,
                                 direction dir, std::size_t halved_in, std::size_t halved_out,
-                                std::span<const stored_run> runs) {
+                                std::span<const stored_run> runs = {}) {
   for (std::size_t d = 0; d < array.size(); ++d) {
     if (array[d].n == 0) {
       throw std::invalid_argument("fftn::axes: array dimension " + std::to_string(d) +
