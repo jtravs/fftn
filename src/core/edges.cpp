@@ -147,99 +147,13 @@ edge_side side_of(const shape_view& s, const edge_view& e, bool output) {
   return side;
 }
 
-// One element of the edge pass: the value at xi (complex, or Real one real value) times the
-// factor at fi and, Scaled, the scale; then stored at yi, added to yi's value
-// (edge_mode::accumulate) or added to the prior value at pi (edge_mode::add_prior). Written out
-// rather than with std::complex's operator*, whose NaN recovery (C Annex G) is not the passes'
-// arithmetic.
-template <class T, factor_kind Kind, edge_mode Mode, bool Real, bool Scaled>
-[[gnu::always_inline]] inline void edge_element(const T* xi, const T* pi, T* yi, const T* fi,
-                                                T scale) {
-  T re = xi[0];
-  T im{};
-  if constexpr (!Real) {
-    im = xi[1];
-  }
-  if constexpr (Kind == factor_kind::real) {
-    re = re * fi[0];
-    im = im * fi[0];
-  } else if constexpr (Kind == factor_kind::complex) {
-    // A real side takes a real factor only (side_of refuses a complex one).
-    static_assert(!Real);
-    const T r = re * fi[0] - im * fi[1];
-    im = re * fi[1] + im * fi[0];
-    re = r;
-  }
-  if constexpr (Scaled) {
-    re = re * scale;
-    im = im * scale;
-  }
-  if constexpr (Mode == edge_mode::accumulate) {
-    re = yi[0] + re;
-    if constexpr (!Real) {
-      im = yi[1] + im;
-    }
-  } else if constexpr (Mode == edge_mode::add_prior) {
-    re = pi[0] + re;
-    if constexpr (!Real) {
-      im = pi[1] + im;
-    }
-  }
-  yi[0] = re;
-  if constexpr (!Real) {
-    yi[1] = im;
-  }
-}
-
-// Elements [first, last) of one line of the edge pass. Unit: source and destination of stride
-// 1; FactorStride 0 or 1 when the factor's stride is known (-1 when not). With unit strides
-// the compiler vectorises the loop (with a run-time check where source and destination may
-// overlap): the baseline pass of runtime strides ran 1.1-2.5 times the user's own loop on the
-// EPYC (X65), most of a c2c row's edge cost.
-template <class T, factor_kind Kind, edge_mode Mode, bool Real, bool Scaled, int FactorStride,
-          bool Unit>
-void edge_line(const T* x, T* y, const T* f, std::ptrdiff_t src_stride, std::ptrdiff_t dst_stride,
-               std::ptrdiff_t fs, std::size_t first, std::size_t last, T scale) {
-  constexpr std::ptrdiff_t width = Real ? 1 : 2; // reals per element
-  constexpr std::ptrdiff_t fwidth = Kind == factor_kind::complex ? 2 : 1;
-  for (std::size_t k = first; k < last; ++k) {
-    const auto i = static_cast<std::ptrdiff_t>(k);
-    const std::ptrdiff_t si = Unit ? width * i : width * i * src_stride;
-    const std::ptrdiff_t di = Unit ? width * i : width * i * dst_stride;
-    std::ptrdiff_t fi = 0;
-    if constexpr (FactorStride == 1) {
-      fi = fwidth * i;
-    } else if constexpr (FactorStride == -1) {
-      fi = fwidth * i * fs;
-    }
-    // add_prior reads the value to multiply at the destination, the prior value at the source.
-    const T* value = Mode == edge_mode::add_prior ? y + di : x + si;
-    edge_element<T, Kind, Mode, Real, Scaled>(value, x + si, y + di,
-                                              Kind == factor_kind::none ? nullptr : f + fi, scale);
-  }
-}
-
-template <class T, factor_kind Kind, edge_mode Mode, bool Real, bool Scaled>
-void edge_line_of(const T* x, T* y, const T* f, std::ptrdiff_t src_stride,
-                  std::ptrdiff_t dst_stride, std::ptrdiff_t fs, std::size_t first,
-                  std::size_t last, T scale) {
-  if (src_stride != 1 || dst_stride != 1) {
-    edge_line<T, Kind, Mode, Real, Scaled, -1, false>(x, y, f, src_stride, dst_stride, fs, first,
-                                                      last, scale);
-  } else if (Kind == factor_kind::none || fs == 0) {
-    edge_line<T, Kind, Mode, Real, Scaled, 0, true>(x, y, f, 1, 1, 0, first, last, scale);
-  } else if (fs == 1) {
-    edge_line<T, Kind, Mode, Real, Scaled, 1, true>(x, y, f, 1, 1, 1, first, last, scale);
-  } else {
-    edge_line<T, Kind, Mode, Real, Scaled, -1, true>(x, y, f, 1, 1, fs, first, last, scale);
-  }
-}
-
 // The edge pass (edges.hpp, edge_pass_stage) over elements [first, last) of each of the
 // stage's lines of complex values (or, Real, of real values: the real side of a real
 // transform): x times the factor, times the scale, stored, added to the destination
 // (edge_mode::accumulate) or added to a prior value (edge_mode::add_prior: x is read at the
-// destination, the prior value at the source). Baseline code, outside every ISA region.
+// destination, the prior value at the source). Baseline code, outside every ISA region; X65 is
+// to say where a vectorised or fused form pays. Written out rather than with std::complex's
+// operator*, whose NaN recovery (C Annex G) is not the passes' arithmetic.
 //
 // The stage's lines (pass_args::rows, set by the driver for each block of a lanes program;
 // 0 elsewhere, meaning one) are src_dist and dst_dist elements apart, the factor's
@@ -251,7 +165,6 @@ void edge_pass(const pass_args* a, const void* src, void* dst, std::size_t first
   constexpr std::ptrdiff_t width = Real ? 1 : 2; // reals per element
   const std::size_t rows = a->rows == 0 ? 1 : a->rows;
   const auto scale = static_cast<T>(a->scale);
-  const bool scaled = a->scale != 1.0;
   // pass_args::src_qstride: the factor's stride along the line, in its elements.
   const std::ptrdiff_t fs = a->src_qstride;
   for (std::size_t row = 0; row < rows; ++row) {
@@ -266,12 +179,48 @@ void edge_pass(const pass_args* a, const void* src, void* dst, std::size_t first
           static_cast<const std::byte*>(Output ? a->out_factor : a->in_factor) +
           q * a->dst_qstride);
     }
-    if (scaled) {
-      edge_line_of<T, Kind, Mode, Real, true>(x, y, f, a->src_stride, a->dst_stride, fs, first,
-                                              last, scale);
-    } else {
-      edge_line_of<T, Kind, Mode, Real, false>(x, y, f, a->src_stride, a->dst_stride, fs, first,
-                                               last, scale);
+    for (std::size_t k = first; k < last; ++k) {
+      const auto i = static_cast<std::ptrdiff_t>(k);
+      // add_prior reads the value to multiply at the destination.
+      const T* xi = Mode == edge_mode::add_prior ? y + width * i * a->dst_stride
+                                                 : x + width * i * a->src_stride;
+      T re = xi[0];
+      T im{};
+      if constexpr (!Real) {
+        im = xi[1];
+      }
+      if constexpr (Kind == factor_kind::real) {
+        const T w = f[i * fs];
+        re = re * w;
+        im = im * w;
+      } else if constexpr (Kind == factor_kind::complex) {
+        // A real side takes a real factor only (side_of refuses a complex one).
+        static_assert(!Real);
+        const T wr = f[2 * i * fs];
+        const T wi = f[2 * i * fs + 1];
+        const T r = re * wr - im * wi;
+        im = re * wi + im * wr;
+        re = r;
+      }
+      re = re * scale;
+      im = im * scale;
+      T* yi = y + width * i * a->dst_stride;
+      if constexpr (Mode == edge_mode::accumulate) {
+        re = yi[0] + re;
+        if constexpr (!Real) {
+          im = yi[1] + im;
+        }
+      } else if constexpr (Mode == edge_mode::add_prior) {
+        const T* pi = x + width * i * a->src_stride;
+        re = pi[0] + re;
+        if constexpr (!Real) {
+          im = pi[1] + im;
+        }
+      }
+      yi[0] = re;
+      if constexpr (!Real) {
+        yi[1] = im;
+      }
     }
   }
 }
