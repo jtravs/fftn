@@ -71,6 +71,15 @@ X76 (2026-11-25 night, branch `exp/x76-bimodal-864`, informative): X74's bimodal
 
 X78 (2026-11-25 night, branch `exp/x78-fused-c2r`): X77's follow-up, the c2r pairing fused into the depth-first real route's first pass. Arm B (a pairing-twiddle table of h entries read at every leg, both classes) rejected by its rule: one thread EPYC 1.151, Xeon 1.064 (runs 20261125-053120-822c, -053529-aac6). Arm B4n (the twiddles factored, v_i · w_n^(leg j), on the Xeon 6240's class for half lengths from L2/4 to 16 L2: `depth_c2r_fused_min_bytes`, `_max_bytes`) adopted under amendment 1, committed before its runs: one thread 0.853 over the 23 rows it moves, none slower (run 20261125-062612-079d, band ±4.22 %, loaded); c2r 32768 at 4 threads 0.740, 40960 × 6 at 6 threads 0.886 (÷ FFTW 0.50 and 0.70). Zen 3 keeps the separate pass: every variant lost there (1.12–1.20); declared run 20261125-062442-ddf9 shows no plan moved. For the maintainer's review: B4n was defined from a diagnosis after B's judging runs (as X75's arm B); the r2c arm was not tried.
 
+Vendor keys (2026-11-25, branch `task/vendor-keyed-intel`; the maintainer's policy: "a rule
+measured on only one vendor is keyed to that vendor"): the Xeon 6240's class (X34, X39, X46, X50,
+X51, X75, X78, X61's x86 half, X63), X58's Ice Lake chain and the 2 MiB-L2 key (X35, X55, X58,
+X64, X69, X70) were measured on Intel's cores only and now read `machine_profile::vendor`; AMD's
+cores those keys reach (Zen 4c, Zen 5c, Zen 4 VMs reporting a small L3 per CPU) and unknown
+vendors keep the fields' defaults. Not a performance change: every Intel recording (Xeon 6240,
+Ice Lake N2, Sapphire, Emerald, Granite Rapids) keeps its whole profile, field for field (DESIGN
+13.5).
+
 ### Where FFTN stands
 
 Tracking tier, one thread, FFTN's time ÷ FFTW's (geometric mean; below 1 is faster), all
@@ -551,7 +560,8 @@ Decided by the maintainer on 2026-11-24 (the earlier ones are in AGENTS.md secti
   too, stays for everyone; the EPYC's plans are unchanged. Cache-keyed
   Zen 3 rules (X51 E, X59 R6, X62 C, X63) still reach any core the key matches, Intel's
   four-core client parts and small VMs included. From X64's screen, X63's `avx512` branch (the
-  Xeon 6240's key) packs on Intel's cores only; AMD's Zen 4 keeps the block.
+  Xeon 6240's key) packs on Intel's cores only; AMD's Zen 4 keeps the block. Since 2026-11-25
+  (task/vendor-keyed-intel) the whole Xeon 6240 class and the 2 MiB-L2 key are Intel's only.
 
 Cloud screen X64 (2026-11-24, Spot VMs, USD 2.44; campaign 14.63 of 20): X50's depth-first
 Bluestein convolutions adopted on the 2 MiB-L2 key (Sapphire Rapids 0.588 of the time over the
