@@ -168,9 +168,12 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
     p.fair_line_runs = true;
   }
   // X73 (machine_profile::anchored_runs), where it was measured: Zen 3's class (16 unpinned
-  // threads: out-of-place batches 0.32-0.38 of their time) and, X74, Apple (6 threads on the
-  // M5 Max: the standard batches 0.87-0.97, the client catalogue 0.996, none slower).
-  if (zen3_like || apple_like) {
+  // threads: out-of-place batches 0.32-0.38 of their time), X74, Apple (6 threads on the M5
+  // Max: the standard batches 0.87-0.97, the client catalogue 0.996, none slower) and, X79,
+  // the Xeon 6240's class (X61's key) once the team state had pages of its own: X74's one loss,
+  // c2c 864 x 384 at 16 threads, was the state's page shared with the plan's twiddles (X76).
+  const bool xeon6240_like = x86_64 && private_l2 && !large_l2 && !large_l3;
+  if (zen3_like || apple_like || xeon6240_like) {
     p.anchored_runs = true;
   }
   if (x86_64 && private_l2 && large_l3 && !large_l2) {
