@@ -162,8 +162,8 @@ worktree.
 | X16a | 20261125-064327-ae34 (17084) | Xeon, node 1, 16 cores, load 2.2 | 16 | ±1.00 % | the case alone: M 69.3, B 68.85 (= R), BA 51.2 µs | — |
 | X16 | 20261125-064345-8d9a (17086) | Xeon, node 1, 16 cores, load 4.1, none loaded | 24 | ±1.00 % | catalogue 0.996 [0.988, 1.003] | none; 8 faster |
 | X16b | 20261125-073659-69cb (17087) | Xeon, node 1, 16 cores, load 8.0, none loaded | 30 | ±1.00 % | batches 0.983 [0.976, 1.001] | none |
-| X8 | X8_ROW |
-| X8b | X8B_ROW |
+| X8 | 20261125-073802-b259 (17088) | Xeon, node 1, 8 cores, load 3.7, none loaded | 24 | ±1.26 % | catalogue 0.992 [0.989, 0.996] | none; 8 faster |
+| X8b | 20261125-083225-c000 (17089) | Xeon, node 1, 8 cores, load 5.4, none loaded | 30 | ±1.00 % | batches 0.988 [0.979, 0.999] | none |
 
 The Mac stayed on AC power throughout ("AC attached; not charging", 80 %, checked every 15 s
 by the run wrapper; no sampling gap). Xeon: GCC 14.4, `avx512`, threads unpinned in `numactl -m 1
@@ -197,6 +197,10 @@ KiB in their page): 8 × 4096 O ÷ M 1.077 [1.048, 1.093], B ÷ M 1.066, the fiv
 1.025 and 1.024. So it is not the offset within the page: on Zen 3 the state's page of its own
 costs the shortest batch, wherever its words sit in it. The mechanism is not known.
 
+**Declared before it started:** X8 missed the anchoring no-loss criterion by less than its band
+(c2r 10240 × 4, lower end 1.018 against 1 + band = 1.0126): one `--serial` re-run, X8r (Slurm
+17091; arms B, BA, F, B first with its own control), decides it.
+
 **Anchoring on the fix, BA ÷ B** (X74's rules; band of each run):
 
 | Run | Store | BA ÷ B | Moved cases slower beyond the band |
@@ -204,8 +208,8 @@ costs the shortest batch, wherever its words sit in it. The mechanism is not kno
 | X16 (reported) | 20261125-064345-8d9a | catalogue 0.939; 14 faster | in-place 750 × 4469 pair 1.018 [1.012, 1.038], 1.022 [1.012, 1.027] |
 | X16r (deciding) | X16R_ROW |
 | X16b | 20261125-073659-69cb | batches 0.563 [all five faster: 0.380 (8 × 4096) – 0.755 (1024 × 256)] | none |
-| X8 | X8A_ROW |
-| X8b | X8BA_ROW |
+| X8 | 20261125-073802-b259 | catalogue 0.952; 15 faster | c2r 10240 × 4 1.026 [1.018, 1.032] (missed by 0.5 %, less than the band: re-run X8r decides) |
+| X8b | 20261125-083225-c000 | batches 0.688 [all five faster: 0.497 (8 × 4096) – 0.943 (128 × 4096)] | none |
 
 In X16 the anchored arm took c2c 864 × 384 backward to 0.730 of B and its real twins to
 0.607–0.717; the in-place 750 × 4469 pair is X74's again (1.019–1.021 there).
