@@ -1398,7 +1398,10 @@ TEST(EdgeShapes, MeasuredPlanningAndWisdom) {
   const std::string text = d::describe(*core);
   ASSERT_FALSE(clock.winner.empty()) << text;
   EXPECT_EQ(clock.asked.front(), "rules");
-  EXPECT_EQ(core->program_text.substr(0, clock.winner.size()), clock.winner) << text;
+  // The winner, not the rules' choice (its text pinned to the program built: a grid's phases
+  // as its factors, say, so not necessarily the text the clock was asked about).
+  EXPECT_NE(core->chosen_rank, 0U) << text;
+  EXPECT_DOUBLE_EQ(core->rules_over_chosen, 2.0) << text;
   EXPECT_NE(text.find("planning: measured"), std::string::npos) << text;
   EXPECT_NE(text.find("edges: the input times a real factor"), std::string::npos) << text;
   EXPECT_TRUE(core->needs_args);
