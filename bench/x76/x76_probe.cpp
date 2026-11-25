@@ -13,6 +13,11 @@
 //   huge=0|1                           1: buffers 2 MiB aligned with madvise(MADV_HUGEPAGE)
 //   prelude=BYTES                      first allocate, touch and free a block of BYTES, as an
 //                                      earlier case of an fbench process does (0: none)
+//   before=KIND:N:BATCH                first plan and execute rows of another case (c2c, r2c or
+//                                      c2r) through the same executor for before_seconds=0.05,
+//                                      then free them, as an earlier case of an fbench process
+//   idle=SECONDS                       after the checking execute, keep the team idle this long
+//                                      (fbench checks the result on its main thread meanwhile)
 //   seconds=1 batch_time=0.002 warmup=0.02   timing: fbench's batches, for `seconds` in all
 //   sample_every=10                    batches between samples of each lane's CPU
 //   pmu=EVENTS                         per-lane counters, as fbench's --pmu (empty: none)
@@ -64,6 +69,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <type_traits>
 #include <vector>
 
 namespace {
@@ -82,6 +88,9 @@ struct settings {
   std::size_t offset_out = 0;
   bool huge = false;
   std::size_t prelude = 0;
+  std::string before;
+  double before_seconds = 0.05;
+  double idle = 0;
   double seconds = 1.0;
   double batch_time = 2e-3;
   double warmup = 0.02;
@@ -139,6 +148,12 @@ settings parse(int argc, char** argv) {
       s.offset_in = number<std::size_t>(value, key);
     } else if (key == "offset_out") {
       s.offset_out = number<std::size_t>(value, key);
+    } else if (key == "before") {
+      s.before = value;
+    } else if (key == "before_seconds") {
+      s.before_seconds = real_number(value, key);
+    } else if (key == "idle") {
+      s.idle = real_number(value, key);
     } else if (key == "prelude") {
       s.prelude = number<std::size_t>(value, key);
     } else if (key == "huge") {
@@ -473,7 +488,62 @@ std::string int_list(const std::vector<int>& v) {
 
 // ---- The run -----------------------------------------------------------------------------
 
+// Plans rows of KIND:N:BATCH (out of place), executes them through `exec` for `seconds`, and
+// frees everything, as fbench's process does with a case before the next.
+template <class In, class Out>
+void run_before(std::size_t n, std::size_t batch, double seconds, const fftn::omp::executor& exec,
+                int threads) {
+  constexpr bool real_in = std::is_same_v<In, double>;
+  constexpr bool real_out = std::is_same_v<Out, double>;
+  const std::size_t half = n / 2 + 1;
+  const std::size_t in_n = real_out ? half : n;
+  const std::size_t out_n = real_in ? half : n;
+  fftn::shape<In, Out> shape;
+  shape.dir = real_out ? fftn::direction::backward : fftn::direction::forward;
+  shape.axes.push_back({.n = n, .in_stride = 1, .out_stride = 1});
+  shape.batches.push_back({.count = batch,
+                           .in_dist = static_cast<std::ptrdiff_t>(in_n),
+                           .out_dist = static_cast<std::ptrdiff_t>(out_n)});
+  const std::shared_ptr<const detail::plan_core> core =
+      detail::make_plan_core(detail::view_of(shape), fftn::options{}, detail::build_settings{});
+  const fftn::workspace ws(detail::workspace_bytes(*core, threads));
+  std::vector<In> x(in_n * batch);
+  std::vector<Out> y(out_n * batch);
+  for (std::size_t i = 0; i < x.size(); ++i) {
+    x[i] = In(static_cast<double>(i % 7) - 3.0);
+  }
+  const steady::time_point start = steady::now();
+  while (std::chrono::duration<double>(steady::now() - start).count() < seconds) {
+    detail::execute_on(*core, x.data(), y.data(), exec, ws);
+  }
+}
+
+void run_before(const std::string& spec, double seconds, const fftn::omp::executor& exec,
+                int threads) {
+  const std::size_t a = spec.find(':');
+  const std::size_t b = spec.find(':', a + 1);
+  if (a == std::string::npos || b == std::string::npos) {
+    throw std::invalid_argument("before is KIND:N:BATCH, not " + spec);
+  }
+  const std::string kind = spec.substr(0, a);
+  const auto n = number<std::size_t>(std::string_view(spec).substr(a + 1, b - a - 1), "before");
+  const auto batch = number<std::size_t>(std::string_view(spec).substr(b + 1), "before");
+  if (kind == "c2c") {
+    run_before<cplx, cplx>(n, batch, seconds, exec, threads);
+  } else if (kind == "r2c") {
+    run_before<double, cplx>(n, batch, seconds, exec, threads);
+  } else if (kind == "c2r") {
+    run_before<cplx, double>(n, batch, seconds, exec, threads);
+  } else {
+    throw std::invalid_argument("before's kind is c2c, r2c or c2r, not " + kind);
+  }
+}
+
 int run(const settings& s) {
+  const fftn::omp::executor exec(s.threads);
+  if (!s.before.empty()) {
+    run_before(s.before, s.before_seconds, exec, s.threads);
+  }
   const auto rows = static_cast<std::ptrdiff_t>(s.n);
   fftn::shape<cplx, cplx> shape;
   shape.dir = s.sign < 0 ? fftn::direction::forward : fftn::direction::backward;
@@ -483,7 +553,6 @@ int run(const settings& s) {
   const std::shared_ptr<const detail::plan_core> core =
       detail::make_plan_core(detail::view_of(shape), opts, s.build);
   const fftn::workspace ws(detail::workspace_bytes(*core, s.threads));
-  const fftn::omp::executor exec(s.threads);
 
   if (s.prelude != 0) {
     // glibc serves a large block by mmap and, when such a block is freed, raises its mmap
@@ -519,6 +588,11 @@ int run(const settings& s) {
 
   const auto execute = [&] { detail::execute_on(*core, in.data(), out_data, exec, ws); };
   execute(); // fbench's checking execute
+  if (s.idle > 0) {
+    const steady::time_point idle_start = steady::now();
+    while (std::chrono::duration<double>(steady::now() - idle_start).count() < s.idle) {
+    }
+  }
   const auto time_calls = [&](std::int64_t calls) {
     const steady::time_point t0 = steady::now();
     for (std::int64_t i = 0; i < calls; ++i) {
