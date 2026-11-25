@@ -1619,12 +1619,12 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       p.records.emplace_back(std::move(pairing.front()));
     }
     scratch = parts.scratch;
-    c.axis_notes.push_back(
-        "axis 0 (n = " + std::to_string(n) + "): " + (r2c ? "r2c" : "c2r") +
-        " through a half-length complex " + chain.depth_text(h, real_depth_tops) +
-        (r2c     ? ", then a pairing pass"
-         : fused ? ", the pairing fused into its first pass"
-                 : ", after a pairing pass into the workspace block"));
+    c.axis_notes.push_back("axis 0 (n = " + std::to_string(n) + "): " + (r2c ? "r2c" : "c2r") +
+                           " through a half-length complex " +
+                           chain.depth_text(h, real_depth_tops) +
+                           (r2c     ? ", then a pairing pass"
+                            : fused ? ", the pairing fused into its first pass"
+                                    : ", after a pairing pass into the workspace block"));
     c.strategy_note = "depth-first chain for the half-length complex transform (the sub-rows' "
                       "first pass over the row, each sub-row's chain finished on its block, "
                       "decimation-in-time top passes in place), each transform finished before "

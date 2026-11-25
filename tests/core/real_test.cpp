@@ -445,8 +445,7 @@ template <class T> void check_c2r_depth_pairing(fftn::isa target) {
     s.profile.depth_c2r_fused_min_bytes = 0;
     s.profile.depth_c2r_fused_max_bytes = std::numeric_limits<std::size_t>::max();
     const fftn::options opts{.force_isa = target};
-    const auto core =
-        make_plan_core(fftn::detail::view_of(fftn::rows_c2r<T>(d.n, 1)), opts, s);
+    const auto core = make_plan_core(fftn::detail::view_of(fftn::rows_c2r<T>(d.n, 1)), opts, s);
     const std::string text = fftn::detail::describe(*core);
     const std::size_t lanes =
         fftn::detail::of<T>(*fftn::detail::find_kernels(core->isa_target)).complex_lanes;
@@ -454,8 +453,7 @@ template <class T> void check_c2r_depth_pairing(fftn::isa target) {
     for (const std::size_t f : d.tops) {
       subs *= f;
     }
-    SCOPED_TRACE(std::string(fftn::isa_name(target)) + " n = " + std::to_string(d.n) + "\n" +
-                 text);
+    SCOPED_TRACE(std::string(fftn::isa_name(target)) + " n = " + std::to_string(d.n) + "\n" + text);
     ASSERT_NE(text.find("half-length complex depth-first"), std::string::npos);
     if (subs % lanes == 0) {
       EXPECT_NE(text.find("the pairing fused into its first pass"), std::string::npos);

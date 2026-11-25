@@ -363,8 +363,8 @@ void add_cases(std::vector<team_case>& out, const fftn::detail::build_settings& 
   out.push_back(make_case("c2r_depth16_8192x2" + suffix, fftn::rows_c2r<T>(8192, 2), 2 * 4097,
                           2 * 8192, false, depth, target));
   depth.depth_tops = {5};
-  out.push_back(make_case("c2r_depth_partial_2560x2" + suffix, fftn::rows_c2r<T>(2560, 2),
-                          2 * 1281, 2 * 2560, false, depth, target));
+  out.push_back(make_case("c2r_depth_partial_2560x2" + suffix, fftn::rows_c2r<T>(2560, 2), 2 * 1281,
+                          2 * 2560, false, depth, target));
   // One top that C does not divide (X51): the first pass's partial blocks of sub-rows, the
   // units a team shares among the whole ones (5 on every x86 target, 10 on avx512's 4 lanes
   // and 8-lane float).
