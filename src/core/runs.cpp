@@ -113,10 +113,10 @@ run_plan resolve_runs(const shape_view& s, const options& opts) {
       };
       overlapping([&](std::size_t i) { return s.runs[i].stored; }, ".stored");
       overlapping([&](std::size_t i) { return s.runs[i].logical; }, ".logical");
-      side_runs& side = output ? p.out : p.in;
-      side.axes.resize(r);
+      side_runs& held = output ? p.out : p.in;
+      held.axes.resize(r);
       for (const std::size_t i : ids) {
-        side.axes[d].push_back(
+        held.axes[d].push_back(
             {.logical = s.runs[i].logical, .stored = s.runs[i].stored, .count = s.runs[i].count});
       }
     }
@@ -141,16 +141,16 @@ std::string runs_key(const shape_view& s) {
 
 std::string runs_text(const run_plan& runs, bool accumulate, const char* in_to,
                       std::size_t passes) {
-  const auto axes_text = [](const side_runs& side) {
+  const auto axes_text = [](const side_runs& held) {
     std::string t;
-    for (std::size_t d = 0; d < side.axes.size(); ++d) {
-      if (side.axes[d].empty()) {
+    for (std::size_t d = 0; d < held.axes.size(); ++d) {
+      if (held.axes[d].empty()) {
         continue;
       }
-      const std::size_t n = side.axes[d].size();
+      const std::size_t n = held.axes[d].size();
       t += (t.empty() ? "axis " : ", axis ") + std::to_string(d) + " in " + std::to_string(n) +
-           (n == 1 ? " run of " : " runs of ") + std::to_string(side.positions(d)) +
-           (side.positions(d) == 1 ? " position" : " positions");
+           (n == 1 ? " run of " : " runs of ") + std::to_string(held.positions(d)) +
+           (held.positions(d) == 1 ? " position" : " positions");
     }
     return t;
   };

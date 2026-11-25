@@ -1452,9 +1452,9 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       if (e == d || extent[e] == 1) {
         continue;
       }
-      const side_runs& side = done[e] ? edge_ops->out.runs : edge_ops->in.runs;
-      if (side.any() && !side.of(listed(e)).empty() && (done[e] || in_place_phase)) {
-        pieces[e] = side.of(listed(e));
+      const side_runs& held = done[e] ? edge_ops->out.runs : edge_ops->in.runs;
+      if (held.any() && !held.of(listed(e)).empty() && (done[e] || in_place_phase)) {
+        pieces[e] = held.of(listed(e));
         restricted = true;
       }
     }
@@ -2955,13 +2955,19 @@ std::shared_ptr<const plan_core> build_with_runs(const shape_view& shape, const 
   chain.volume_planes = false;
   chain.profile.team_volume_planes = false;
   const std::shared_ptr<plan_core> c = build_plan_core(shape, r.opts, chain, &p);
-  // The plan without the runs, where its layout is valid by logical extents: its strategy.
+  // The plan without the runs but with the same edges, where its layout is valid by logical
+  // extents: its strategy, so that what the edges alone change (accumulation's, named by
+  // build_with_edges) is not put down to the runs. Scales alone are options::scale's product, as
+  // in any plan of scales only. Neither plan needs its team core here.
   shape_view whole = shape;
   whole.runs = {};
   options whole_opts = opts;
   whole_opts.scale = opts.scale * edges.in.scale * edges.out.scale;
+  const bool edges_alone = resolve_edges(whole, opts, edges).plan.any;
   try {
-    const std::shared_ptr<const plan_core> plain = build_plan_core(whole, whole_opts, settings);
+    const std::shared_ptr<const plan_core> plain =
+        edges_alone ? build_with_edges(whole, opts, edges, settings, false)
+                    : build_core(whole, whole_opts, settings, nullptr, false);
     if (plain->strategy_name != c->strategy_name) {
       c->edges_note +=
           "\n" + forced_text(plain->strategy_name, c->strategy_name,
@@ -2973,7 +2979,10 @@ std::shared_ptr<const plan_core> build_with_runs(const shape_view& shape, const 
   if (opts.effort != planning::rules || opts.use != nullptr) {
     c->planning_note = "by the rules: measured planning and wisdom take no stored runs yet";
   }
-  c->shape_key = shape_key(shape, opts) + edges_key(edges, opts.scale);
+  // Complete although a plan with runs looks no wisdom up: scales alone (no edges_key) as
+  // options::scale's product, otherwise the edges' key, which carries every scale.
+  c->shape_key =
+      edges_alone ? shape_key_with_edges(shape, opts, edges) : shape_key(shape, whole_opts);
   return c;
 }
 

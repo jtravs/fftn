@@ -2294,7 +2294,9 @@ transform end in the block, as accumulation does, and its pass stores (or accumu
 runs. Pruning by restricted loops: the phase of an axis runs over the input's runs of the axes
 not yet transformed when it works in place, and over the output's runs of the axes already
 transformed, each combination inside a loop of one iteration whose start moves the slots
-(`pruned`). Not yet built: runs on in-place plans and beside a factor (both refused, naming the
+(`pruned`). A phase between two layouts of one slot is not cut, since one start cannot move
+both: the c2r rows from the half spectrum to the real rows, both in the workspace block when
+the output has runs, run over every line. Not yet built: runs on in-place plans and beside a factor (both refused, naming the
 field), runs in the lanes, grid and depth-first strategies (`describe()` names the strategy the
 plan without runs takes), and measured planning and wisdom for runs (planned by the rules; the
 wisdom key carries the runs). 5.1e adds pruned codelets within the line.

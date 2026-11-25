@@ -1753,7 +1753,8 @@ TEST(EdgeShapesDeathTest, MissingFactorArraysAbort) {
 // Stored runs (shape::runs, DESIGN.md 12.1; task 5.1d). A case: a kind, the logical lengths
 // in C order, the runs (their axes C-ordered indices), and the layout's gap after each
 // transform; the shape lists the axes in C order with default strides, which span each axis's
-// stored extent on a side with runs there.
+// stored extent on a side with runs there, or (`listed` not empty) C axis listed[i] as its axis
+// i, with those strides given, so that the plan orders the axes back (order_axes).
 struct runs_case {
   const char* name = "";
   transform_kind kind = transform_kind::c2c;
@@ -1764,6 +1765,7 @@ struct runs_case {
   double scale = 1.0;
   bool accumulate = false;
   std::ptrdiff_t gap = 0;
+  std::vector<std::size_t> listed{};
 };
 
 // One side of a run case: its logical lengths, stored extents and tight strides by them, and
@@ -1855,13 +1857,24 @@ template <class T, transform_kind K> void run_runs_case(const runs_case& c, fftn
 
   fftn::shape<In, Out> s;
   s.dir = c.dir;
-  for (const std::size_t n : c.dims) {
-    s.axes.push_back({.n = n});
+  if (c.listed.empty()) {
+    for (const std::size_t n : c.dims) {
+      s.axes.push_back({.n = n});
+    }
+    s.batches = {{.count = c.count,
+                  .in_dist = c.gap != 0 ? in.dist : 0,
+                  .out_dist = c.gap != 0 ? out.dist : 0}};
+    s.runs = c.runs;
+  } else {
+    for (const std::size_t a : c.listed) {
+      s.axes.push_back({.n = c.dims[a], .in_stride = in.stride[a], .out_stride = out.stride[a]});
+    }
+    s.batches = {{.count = c.count, .in_dist = in.dist, .out_dist = out.dist}};
+    for (fftn::stored_run run : c.runs) {
+      run.axis = static_cast<std::size_t>(std::ranges::find(c.listed, run.axis) - c.listed.begin());
+      s.runs.push_back(run);
+    }
   }
-  s.batches = {{.count = c.count,
-                .in_dist = c.gap != 0 ? in.dist : 0,
-                .out_dist = c.gap != 0 ? out.dist : 0}};
-  s.runs = c.runs;
   fftn::plan_edges<In, Out> edges;
   edges.out.accumulate = c.accumulate;
   const fftn::plan<In, Out> p(s, {.scale = c.scale, .force_isa = target}, edges);
@@ -1972,7 +1985,9 @@ std::vector<fftn::stored_run> two_runs(std::size_t axis, fftn::side where, std::
 std::vector<runs_case> runs_cases() {
   using enum transform_kind;
   std::vector<runs_case> cases;
-  const std::vector<std::pair<dims_t, std::size_t>> shapes{{{16}, 3}, {{6, 10}, 2}, {{4, 6, 8}, 2}};
+  // {3, 1, 8}: a run stored past the start of an axis of length 1, which has no loop.
+  const std::vector<std::pair<dims_t, std::size_t>> shapes{
+      {{16}, 3}, {{6, 10}, 2}, {{4, 6, 8}, 2}, {{3, 1, 8}, 2}};
   for (const transform_kind k : {c2c, r2c, c2r}) {
     for (const auto& [dims, count] : shapes) {
       for (std::size_t a = 0; a < dims.size(); ++a) {
@@ -2005,6 +2020,16 @@ std::vector<runs_case> runs_cases() {
         }
       }
       cases.push_back(all);
+      // The same, the shape listing the axes out of C order (the halved axis of a real
+      // transform staying last), which the plan orders back: runs and pruning by the plan's
+      // order of the axes (plan_core.cpp, listed).
+      if (dims.size() == 3 || (dims.size() == 2 && k == c2c)) {
+        all.name = "runs on every axis and side, accumulated, axes listed out of order";
+        all.listed = dims.size() == 2 ? std::vector<std::size_t>{1, 0}
+                     : k == c2c       ? std::vector<std::size_t>{2, 0, 1}
+                                      : std::vector<std::size_t>{1, 0, 2};
+        cases.push_back(all);
+      }
     }
     // Larger, so that teams share the phases out rather than run them inline: a band of bins
     // in the middle of a long row's input; runs on two axes of a plane and of a volume.
@@ -2246,6 +2271,42 @@ TEST(EdgeShapes, StoredRunsPlanning) {
                   "runs take the chain (task 5.1d)"),
               std::string::npos)
         << d::describe(*forced);
+  }
+  // Scales alone are in the key, as options::scale's product.
+  const fftn::plan_edges<C, C> half{.out = {.scale = 0.5}};
+  EXPECT_NE(d::make_plan_core_with_edges(d::view_of(s), {}, d::view_of(half))->shape_key,
+            core->shape_key);
+  EXPECT_EQ(d::make_plan_core_with_edges(d::view_of(s), {}, d::view_of(half))->shape_key,
+            d::make_plan_core(d::view_of(s), {.scale = 0.5})->shape_key);
+  // Rows as adjacent transforms take the lanes over them without edges, but not with
+  // accumulation: what the runs keep the plan from is the accumulated plan's strategy, never
+  // the lanes, which accumulation alone rules out.
+  d::build_settings adjacent;
+  adjacent.profile.adjacent_lanes = true;
+  adjacent.profile.adjacent_min_bytes = 0;
+  adjacent.profile.adjacent_team_chain = false;
+  adjacent.profile.column_team_bytes = 0;
+  adjacent.profile.column_wide_bytes = 0;
+  fftn::shape<C, C> adj;
+  adj.axes = {{.n = 64, .in_stride = 16, .out_stride = 16}};
+  adj.batches = {{.count = 16, .in_dist = 1, .out_dist = 1}};
+  const fftn::plan_edges<C, C> accumulate{.out = {.accumulate = true}};
+  const auto adj_plain = d::make_plan_core(d::view_of(adj), {}, adjacent);
+  ASSERT_EQ(adj_plain->strategy_name, "the lanes over adjacent transforms");
+  const auto adj_accumulated =
+      d::make_plan_core_with_edges(d::view_of(adj), {}, d::view_of(accumulate), adjacent);
+  adj.runs = {{.where = fftn::side::in, .logical = 0, .stored = 0, .count = 8}};
+  const auto adj_runs =
+      d::make_plan_core_with_edges(d::view_of(adj), {}, d::view_of(accumulate), adjacent);
+  const std::string adj_text = d::describe(*adj_runs);
+  EXPECT_EQ(adj_text.find("the lanes over adjacent transforms without the stored runs"),
+            std::string::npos)
+      << adj_text;
+  if (adj_accumulated->strategy_name != adj_runs->strategy_name) {
+    EXPECT_NE(adj_text.find("not the strategy the rules would choose: " +
+                            adj_accumulated->strategy_name + " without the stored runs"),
+              std::string::npos)
+        << adj_text;
   }
 }
 
