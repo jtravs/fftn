@@ -2107,6 +2107,58 @@ TEST(EdgeShapes, StoredRunsInAxes) {
                std::invalid_argument);
 }
 
+// Stored runs along a reversed axis (a negative stride): the passes' offsets from element 0 are
+// negative.
+TEST(EdgeShapes, StoredRunsAlongAReversedAxis) {
+  using C = std::complex<double>;
+  using fftn::side;
+  const std::size_t n = 16;
+  fftn::shape<C, C> s;
+  s.axes = {{.n = n, .in_stride = -1, .out_stride = -2}};
+  s.batches = {{.count = 2, .in_dist = 8, .out_dist = 20}};
+  s.runs = {{.where = side::in, .logical = 0, .stored = 0, .count = 4},
+            {.where = side::in, .logical = 12, .stored = 4, .count = 4},
+            {.where = side::out, .logical = 3, .stored = 1, .count = 5}};
+  const fftn::plan<C, C> p(s);
+  fftn::test::input_source src(0x4EFULL);
+  std::vector<C> x = src.complexes<double>(16);
+  std::vector<C> y = src.complexes<double>(40);
+  const std::vector<C> init = y;
+  fftn::workspace ws(p);
+  // Element 0 of transform 0 is the last of its stored elements on each side.
+  p.execute(x.data() + 7, y.data() + 11, ws);
+  fftn::test::outcome o;
+  std::vector<bool> written(y.size(), false);
+  for (std::size_t b = 0; b < 2; ++b) {
+    std::vector<C> line(n);
+    for (std::size_t j = 0; j < n; ++j) {
+      const std::ptrdiff_t stored = j < 4 ? static_cast<std::ptrdiff_t>(j)
+                                          : (j >= 12 ? static_cast<std::ptrdiff_t>(j - 8) : -1);
+      if (stored >= 0) {
+        line[j] = x[static_cast<std::size_t>(7 + 8 * static_cast<std::ptrdiff_t>(b) - stored)];
+      }
+    }
+    const auto exact = fftn::test::reference::c2c(-1, line);
+    std::vector<fftn::test::exact_complex> want;
+    std::vector<C> got;
+    for (std::size_t k = 3; k < 8; ++k) {
+      const auto i = static_cast<std::size_t>(11 + 20 * static_cast<std::ptrdiff_t>(b) -
+                                              2 * static_cast<std::ptrdiff_t>(k - 2));
+      want.push_back(exact[k]);
+      got.push_back(y[i]);
+      written[i] = true;
+    }
+    o.within(fftn::test::compare<double>(std::span<const C>(got), want),
+             fftn::test::derived_tolerance<double>(n, fftn::test::fftn_bound(n)), "reversed");
+  }
+  EXPECT_TRUE(o.passed()) << o.detail() << p.describe();
+  for (std::size_t i = 0; i < y.size(); ++i) {
+    if (!written[i]) {
+      EXPECT_EQ(y[i], init[i]) << "element " << i << " outside the runs written";
+    }
+  }
+}
+
 // A wisdom entry of a plan with stored runs serves the same runs only; such plans are planned by
 // the rules whatever the effort, and describe() says so; a strategy the runs keep the plan from
 // is named.
