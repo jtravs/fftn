@@ -65,6 +65,10 @@ struct machine_profile {
   // 20261114-182645-10c9: 512 and 1024 within the band over the rows worth splitting,
   // 2048 1.03, 4096 1.14; the largest within the band).
   std::size_t min_points_per_member = 1024;
+  // Rule 3 where a group has fewer transforms than members, so that it splits every one (a
+  // single transform above all): at least this many points per member (0: min_points_per_member).
+  // set_grid_sizes sets it on the Xeon 6240's class (experiment X83).
+  std::size_t few_points_per_member = 0;
   // Rule 3: split a transform only from this size, by cache-group type (T5, S1): 6144 on a
   // CCX (runs 20261114-175237-ee55 at 8 lanes and 20261114-180642-f917 at 64: a lone
   // 4096-point row split lost 1.33 against whole behind a 64-thread OpenMP executor, an r2c

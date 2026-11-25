@@ -463,7 +463,10 @@ group_share share_of(const schedule& s, const lane_map& lanes, int group) noexce
   } else {
     split = share.count;
   }
-  const std::size_t by_points = s.points / std::max<std::size_t>(p.min_points_per_member, 1);
+  const std::size_t per_member = share.count < members && p.few_points_per_member != 0
+                                     ? p.few_points_per_member
+                                     : p.min_points_per_member;
+  const std::size_t by_points = s.points / std::max<std::size_t>(per_member, 1);
   const std::size_t cap = std::min({members / split, by_points, std::size_t{s.widest}});
   if (cap < 2) {
     return share;

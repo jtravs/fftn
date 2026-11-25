@@ -71,6 +71,10 @@ constexpr std::array size_fields{
         .member = &fftn::detail::machine_profile::min_points_per_member,
     },
     size_field{
+        .key = "FEW_POINTS_PER_MEMBER",
+        .member = &fftn::detail::machine_profile::few_points_per_member,
+    },
+    size_field{
         .key = "SPLIT_MIN_POINTS",
         .member = &fftn::detail::machine_profile::split_min_points,
     },
