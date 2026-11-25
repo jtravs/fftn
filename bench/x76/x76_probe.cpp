@@ -11,8 +11,8 @@
 //   threads=16                         lanes of fftn::omp::executor
 //   offset_in=0 offset_out=0           bytes into a page where the data start (fbench's offsets)
 //   huge=0|1                           1: buffers 2 MiB aligned with madvise(MADV_HUGEPAGE)
-//   prelude=BYTES                      first allocate, touch and free a block of BYTES, as an
-//                                      earlier case of an fbench process does (0: none)
+//   prelude=BYTES                      before anything, allocate, touch and free a block of
+//                                      BYTES, as an earlier case of an fbench process does
 //   before=KIND:N:BATCH                first plan and execute rows of another case (c2c, r2c or
 //                                      c2r) through the same executor for before_seconds=0.05,
 //                                      then free them, as an earlier case of an fbench process
@@ -540,6 +540,15 @@ void run_before(const std::string& spec, double seconds, const fftn::omp::execut
 }
 
 int run(const settings& s) {
+  if (s.prelude != 0) {
+    // glibc serves a large block by mmap and, when such a block is freed, raises its mmap
+    // threshold to that size (up to 32 MiB): later blocks below it come from the heap.
+    const std::unique_ptr<void, free_deleter> block(std::malloc(s.prelude)); // NOLINT
+    if (block == nullptr) {
+      throw std::bad_alloc();
+    }
+    std::memset(block.get(), 1, s.prelude);
+  }
   const fftn::omp::executor exec(s.threads);
   if (!s.before.empty()) {
     run_before(s.before, s.before_seconds, exec, s.threads);
@@ -554,15 +563,6 @@ int run(const settings& s) {
       detail::make_plan_core(detail::view_of(shape), opts, s.build);
   const fftn::workspace ws(detail::workspace_bytes(*core, s.threads));
 
-  if (s.prelude != 0) {
-    // glibc serves a large block by mmap and, when such a block is freed, raises its mmap
-    // threshold to that size (up to 32 MiB): later blocks below it come from the heap.
-    const std::unique_ptr<void, free_deleter> block(std::malloc(s.prelude)); // NOLINT
-    if (block == nullptr) {
-      throw std::bad_alloc();
-    }
-    std::memset(block.get(), 1, s.prelude);
-  }
   const std::size_t bytes = s.n * s.batch * sizeof(cplx);
   const buffer in(bytes, s.offset_in, s.huge);
   const std::unique_ptr<buffer> out =
@@ -749,6 +749,8 @@ int run(const settings& s) {
       .raw("tuning", s.tuning)
       .integer("threads", s.threads)
       .boolean("huge", s.huge)
+      .str("ws_at", hex(ws.memory().data()))
+      .integer("ws_mod_4k", mod(ws.memory().data(), 4096))
       .str("in_at", hex(in.data()))
       .str("out_at", hex(out_data))
       .integer("in_mod_4k", mod(in.data(), 4096))
