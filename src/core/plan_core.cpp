@@ -2335,11 +2335,13 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       if (c.strategy_note == volume_note) {
         return "each plane of the volume, then the outer axis";
       }
-      return !edge_phases && packed_plane ? "each axis in turn, the intermediate packed in the output"
-                                          : "each axis in turn";
+      return !edge_phases && packed_plane
+                 ? "each axis in turn, the intermediate packed in the output"
+                 : "each axis in turn";
     }
     if (batch != nullptr && s.kind == transform_kind::c2c) {
-      return row_edges ? "the chain, its batch leaves one row at a time" : "the chain on batch leaves";
+      return row_edges ? "the chain, its batch leaves one row at a time"
+                       : "the chain on batch leaves";
     }
     return "the chain";
   }();

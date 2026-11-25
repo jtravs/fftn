@@ -1386,14 +1386,15 @@ template <class T, transform_kind K> bool forced_line_holds(const forced_line& f
   if (!plain->strategy_name.starts_with(f.plain)) {
     return false;
   }
-  const auto core = d::make_plan_core_with_edges(d::view_of(s), run.opts, d::view_of(e), f.settings);
+  const auto core =
+      d::make_plan_core_with_edges(d::view_of(s), run.opts, d::view_of(e), f.settings);
   const std::string text = d::describe(*core);
-  const std::string what = std::string(f.c.name) + ", " + fftn::isa_name(t) +
-                           (sizeof(T) == 8 ? " double" : " float");
+  const std::string what =
+      std::string(f.c.name) + ", " + fftn::isa_name(t) + (sizeof(T) == 8 ? " double" : " float");
   EXPECT_NE(core->strategy_name, plain->strategy_name) << what << "\n" << text;
   const std::string line = "\nnot the strategy the rules would choose: " + plain->strategy_name +
-                           " without the edges, " + core->strategy_name + " with them: " +
-                           f.reason + "\n";
+                           " without the edges, " + core->strategy_name +
+                           " with them: " + f.reason + "\n";
   EXPECT_NE(text.find(line), std::string::npos) << what << ": no '" << line << "' in\n" << text;
   run_case<T, K>(f.c, t, false, true, &f.settings, f.reason);
   return true;
