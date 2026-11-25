@@ -119,6 +119,15 @@ struct machine_profile {
   // left it (the member's L2 and, with unpinned threads that the team's cache groups do not
   // match, its core complex's L3). Off: runs from the group's one counter, in arrival order.
   bool anchored_runs = false;
+  // The team state's place in a team's workspace (team_state.hpp; experiment X79): where
+  // nonzero, the state starts a boundary of this many bytes and fills whole such pages, so
+  // that nothing else shares its pages; 0 keeps it on its 128-byte lines, the members' slots
+  // right after it. X76: on the Xeon 6240 a plan's twiddle table ending on the state's 4 KiB
+  // page was loaded from other cores' modified lines on every execution (c2c 864 x 384 at 16
+  // threads 1.5-2.3 times as long). Set on the Xeon 6240's class only (set_grid_sizes): on the
+  // EPYC 7763 a state page of its own cost the 16-thread batch of 8 x 4096 1.05-1.08, wherever
+  // the state's words sat in it, and the M5 Max was neutral.
+  std::size_t team_state_page = 0;
   // The planner's (not the scheduler's), experiment X12: a c2c row whose bytes exceed
   // grid_min_bytes is a grid rather than a chain (strategies/grid.hpp), in three phases
   // rather than two beyond grid_three_bytes; the grid widens its column blocks while one

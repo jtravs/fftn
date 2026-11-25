@@ -294,6 +294,11 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
   if (intel && private_l2 && !large_l2 && !large_l3) {
     p.grid_two_odd_part = 15;
     if (x86_64) {
+      // X79, narrowed to this class by the maintainer (2026-11-25): the team state on 4 KiB
+      // pages of its own. X16: c2c 864 x 384 backward at 16 threads unimodal at its alone time
+      // (0.739 of its median), the client catalogue 0.996 and the standard batches 0.983 (8
+      // threads 0.992, 0.988), nothing slower.
+      p.team_state_page = 4096;
       p.grid_three_block = 16;
       p.grid_phase_radix = 20;
       if (c.l1d.size != 0 && c.l2.size != 0) {

@@ -451,10 +451,8 @@ TEST(TeamExecute, StateAgesWithoutLimit) {
   constexpr int size = 4;
   fftn::workspace ws(std::max(fftn::detail::workspace_bytes(*a.core, size),
                               fftn::detail::workspace_bytes(*b.core, size)));
-  const auto address = reinterpret_cast<std::uintptr_t>(ws.memory().data());
-  std::byte* state =
-      ws.memory().data() +
-      (fftn::detail::sync_line - address % fftn::detail::sync_line) % fftn::detail::sync_line;
+  std::byte* state = fftn::detail::team_state_in(
+      ws.memory().data(), fftn::detail::team_core(*a.core).profile.team_state_page);
   // Each member's count of executions jumps to `calls`. Three executions first (epochs 1 to
   // 3) leave every word plan a uses tagged 3; plan b's are never written. A jump that made
   // the next tag 3 again would be the documented limit (a word reused exactly a multiple of
@@ -484,6 +482,57 @@ TEST(TeamExecute, StateAgesWithoutLimit) {
               fftn::test::serial_result(b))
         << calls;
     EXPECT_EQ(early, 0) << calls;
+  }
+}
+
+// Where the profile gives the team state pages of its own (machine_profile::team_state_page,
+// the Xeon 6240's class), the state starts a page at any workspace address and fills whole
+// pages, so that nothing else shares its pages (X76, X79): over memory of any alignment, a team
+// writes neither the slack before the state nor the rest of its last page nor past the
+// workspace, and its words are where team_state_in says.
+TEST(TeamExecute, StateHasPagesOfItsOwn) {
+  const auto& cases = TeamBits::cases();
+  const auto found = std::ranges::find_if(
+      cases, [](const team_case& t) { return t.name.starts_with("c2c_many_paged_64x100"); });
+  ASSERT_NE(found, cases.end());
+  const team_case& c = *found; // many rows, whole
+  const std::vector<std::byte> serial = fftn::test::serial_result(c);
+  const std::size_t page = fftn::detail::team_core(*c.core).profile.team_state_page;
+  ASSERT_EQ(page, 4096U);
+  constexpr auto canary = std::byte{0xa5};
+  for (const int size : {2, 5, 16}) {
+    const fftn::detail::team_layout layout{static_cast<std::size_t>(size)};
+    const std::size_t bytes = fftn::detail::workspace_bytes(*c.core, size);
+    std::vector<std::byte> memory(bytes + 3 * page);
+    std::byte* const base = fftn::detail::team_state_in(memory.data(), page);
+    for (const std::size_t offset :
+         {std::size_t{0}, std::size_t{1}, std::size_t{8}, std::size_t{64}, std::size_t{128},
+          std::size_t{1000}, page / 2, page - 128, page - 8, page - 1}) {
+      std::ranges::fill(memory, canary);
+      std::byte* const at = base + offset;
+      fftn::workspace ws(std::span<std::byte>(at, bytes));
+      std::byte* const state = fftn::detail::team_state_in(at, page);
+      ASSERT_EQ(reinterpret_cast<std::uintptr_t>(state) % page, 0U);
+      ASSERT_LT(static_cast<std::size_t>(state - at), page);
+      ASSERT_EQ(layout.span(page) % page, 0U);
+      ASSERT_GE(layout.span(page), layout.bytes());
+      for (int round = 0; round < 2; ++round) {
+        EXPECT_EQ(run_team(c, size, 0, ws), serial) << size << " lanes, offset " << offset;
+      }
+      const auto untouched = [&](const std::byte* from, const std::byte* to) {
+        return std::all_of(from, to, [&](std::byte v) { return v == canary; });
+      };
+      EXPECT_TRUE(untouched(memory.data(), state)) << size << " lanes, offset " << offset;
+      EXPECT_TRUE(untouched(state + layout.bytes(), state + layout.span(page)))
+          << size << " lanes, offset " << offset;
+      EXPECT_TRUE(untouched(at + bytes, memory.data() + memory.size()))
+          << size << " lanes, offset " << offset;
+      for (int r = 0; r < size; ++r) {
+        const auto* word = std::launder(reinterpret_cast<const std::atomic<std::uint64_t>*>(
+            state + fftn::detail::team_layout::calls(static_cast<std::size_t>(r))));
+        EXPECT_EQ(word->load(), 2U) << size << " lanes, offset " << offset << ", rank " << r;
+      }
+    }
   }
 }
 
@@ -544,7 +593,18 @@ TEST(TeamExecute, WorkspaceBytesSaturate) {
   EXPECT_EQ(fftn::detail::workspace_bytes(*core, 4), std::numeric_limits<std::size_t>::max());
   mutable_core.slot_bytes = 1024;
   // Not saturated; never below a serial execution's bytes, which an executor's fallback uses.
-  EXPECT_LT(fftn::detail::workspace_bytes(*core, 4), std::max<std::size_t>(8192U, core->bytes + 1));
+  // The state on its lines: the slots after it and 128 bytes of slack for its alignment.
+  const std::size_t state_bytes = fftn::detail::team_layout{4}.bytes();
+  mutable_core.profile.team_state_page = 0;
+  EXPECT_EQ(fftn::detail::workspace_bytes(*core, 4),
+            std::max<std::size_t>(fftn::detail::sync_line + state_bytes + 4 * 1024, core->bytes));
+  EXPECT_GE(fftn::detail::workspace_bytes(*core, 4), core->bytes);
+  // On pages of its own (X79): the slots after its whole pages, and the slack that puts it on a
+  // page.
+  mutable_core.profile.team_state_page = 4096;
+  EXPECT_EQ(
+      fftn::detail::workspace_bytes(*core, 4),
+      std::max<std::size_t>(4095 + (state_bytes + 4095) / 4096 * 4096 + 4 * 1024, core->bytes));
   EXPECT_GE(fftn::detail::workspace_bytes(*core, 4), core->bytes);
 }
 

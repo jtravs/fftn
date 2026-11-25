@@ -467,7 +467,8 @@ Points that matter:
   convenience layer (later, 5.4), which caches them.
 - **Teams.** A team's members share one workspace of `workspace_bytes(lanes)`: a serial
   scratch slot per member and the team's synchronisation state (13.3), 128 bytes of slack
-  for its alignment. The state persists between team executions; the workspace object
+  for its alignment; on the Xeon 6240's class the state starts a 4 KiB page and fills whole
+  pages, with a page of slack for that (`machine_profile::team_state_page`, 13.3). The state persists between team executions; the workspace object
   holds one word besides its memory saying whether the memory holds valid state, so the
   first member of a first execution sets it up and the memory never needs initialising.
   Serial executions clear that word, and so does an execution with `completion::own` by a
@@ -2499,6 +2500,14 @@ As built (`src/threading/engine.hpp`, task 3.1):
   and runs whole the split tasks of groups none of whose members has arrived (so a group
   that never turns up cannot strand them); then it waits for the execution's done count.
 - **State.** Counters live in the workspace (5.3), every hot word on its own 128-byte line.
+  On the Xeon 6240's class (`machine_profile::team_state_page`) the state also has pages of
+  its own: it starts a 4 KiB page of the workspace and the members' slots start on the page
+  after its last, so that nothing a member reads shares a page with words every member writes
+  (X76: there a plan's twiddle table ending on the state's page was loaded from other cores'
+  modified lines on every execution, 1.5–2.3 times as long; X79). Elsewhere the state stays on
+  its lines with the slots right after it: on the EPYC 7763 a state page of its own cost the
+  16-thread batch of 8 × 4096 1.05–1.08 wherever its words sat in the page, and the M5 Max was
+  neutral.
   Executions are numbered by each member's own 64-bit count of its calls on the workspace;
   every counter carries the low 40 bits of the number of the execution that last wrote it
   above a 24-bit count, so it reads as zero in another one (nothing is reset between
@@ -2623,6 +2632,7 @@ FFTN had before the rules. The fields, with the experiments that measured them:
 | | `depth_c2r_fused_min_bytes`, `depth_c2r_fused_max_bytes` | X78 (Xeon 6240) |
 | | `adjacent_lanes`, `adjacent_team_chain` (the x86 half; Apple's half stands) | X61 (Xeon 6240; M5 Max) |
 | | `c2r_packed_bytes`, `c2r_packed_isa` (`avx512`) | X63 (Xeon 6240); X64 (Ice Lake-SP kept, Zen 4 lost) |
+| | `team_state_page` (4 KiB; the maintainer's narrowing) | X79 (Xeon 6240; lost on the EPYC 7763) |
 | Its L2 above 1 MiB (Ice Lake) | the depth-first chain's fields as on the Xeon | X58 (Ice Lake N2) |
 | 2 MiB of private L2 | `grid_three_bytes` (L2/2), `grid_two_part_bytes` | X35 (Granite Rapids) |
 | | `batch_leaf_12` | X58 (Granite, Emerald Rapids) |
@@ -3576,6 +3586,7 @@ to change before a release.
 | 2026-11-25 | On the Xeon 6240's class an even real row of one axis out of place, contiguous, runs its half-length transform on the c2c rows' depth-first chain over their range (L2/4 to 64 L2; `depth_real_max_bytes`, X75 arm A) and, for real rows alone, from half lengths above L2/8 (`depth_real_min_bytes`, new; arm B, narrowed to exclude L2/8 itself); `avx512` only (its tops of 16, 20, 10); sections 8.5, 9.1 | X75's judging run (Xeon 6240, run 20261125-023550-8fee, band ±3.87 %): A 0.748 over the 50 real rows it moves (32768–2²³, float 65536–2²⁰), none slower; B narrowed after run R (float r2c 32768, half length L2/8, 1.095): 0.821 over the 14 it moves (18432–24576, float 40960–49152) in its deciding run 20261125-041502-3d25, none slower; the client catalogue's r2c and c2r 32768 1.28–1.44 → 0.83–1.04 of FFTW, 40960 × 6 1.20–1.38 → 0.99–1.18, c2r 20480 × 3 1.14 → 1.00 (run D1). Ice Lake-SP (X58's branch) keeps its plans, unmeasured |
 | 2026-11-25 | On the Xeon 6240's class a c2r row on the depth-first real route with a half length from L2/4 to 16 L2 pairs its bins in the chain's first pass (`depth_c2r_fused_min_bytes`, `depth_c2r_fused_max_bytes`, new, default never; pairing twiddles factored over the pass's legs); elsewhere the separate pass stays; section 9.1 | X78 (arm B4n, rules of amendment 1 committed before its runs): Xeon 6240 one thread 0.853 over the 23 rows it moves (run 20261125-062612-079d, band ±4.22 %), none slower; c2r 32768 at 4 threads 0.740, 40960 × 6 at 6 threads 0.886 (runs 20261125-063649-3e6d, -063741-028a). Arm B (a table of h entries, both classes) rejected by its rule: EPYC 1.151, Xeon 1.064; on Zen 3 every variant lost (1.12–1.20), so Zen 3 keeps the separate pass (declared run 20261125-062442-ddf9: no plan moved). Reach: the Xeon 6240's key, as X75's |
 | 2026-11-25 | The Xeon 6240's class (X34, X39, X46, X50, X51, X75, X78, X61's x86 half, X63) and the 2 MiB-L2 key (X35, X55, X58, X64, X69, X70), with X58's Ice Lake chain, apply to Intel's processors only (`set_grid_sizes`, section 13.5); AMD's and unknown vendors' cores those keys reach keep the fields' defaults. Not a performance change: every Intel recording keeps its whole profile | The maintainer's policy, accepted on 2026-11-25 ("I agree with all recommendations"): "a rule measured on only one vendor is keyed to that vendor". The keys read only cache shape, so Zen 4c and Zen 5c (1 MiB of L2 and of L3 per CPU) fall into the Xeon 6240's, and X64 measured X63 losing on Zen 4 there. Unknown behaves as off: no CI runner or recording reports an unknown x86 vendor, and the tests set the vendor explicitly |
+| 2026-11-25 | On the Xeon 6240's class (Intel's cores, X61's key) the team state starts a 4 KiB page of the workspace and fills whole pages, the members' slots after them (`machine_profile::team_state_page`, new, default 0: the state on its 128-byte lines as before; sections 5.3, 13.3; X79). Every other profile keeps the old layout | X79's fix passed its rules on the Xeon 6240 (X16: c2c 864 × 384 backward at 16 threads unimodal at its alone time, 0.739 of its median; client catalogue 0.996, X16b 0.983, X8 0.992, X8b 0.988, nothing slower) and was neutral on the M5 Max, but lost on the EPYC 7763 (c2c 8 × 4096 at 16 threads 1.079), and its rules excluded narrowing. A narrowing by the maintainer (2026-11-25, "Yes, Xeon only"): on the Xeon class the code is what X16, X16b, X8 and X8b judged, so no new run was made |
 
 ---
 
