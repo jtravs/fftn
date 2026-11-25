@@ -1643,7 +1643,18 @@ Routes, by `real_route`:
   In teams at the client catalogue's widths (X77) r2c rows and batches keep the gain (0.65–0.94
   at 4–16 threads); c2r rows at 4 threads keep less (0.79–1.03; the Xeon's c2r 18432 and 32768
   and the EPYC's c2r 20480 × 3 lose their gain), because the breadth-first chain they leave fuses
-  the pairing into its first pass and scales better.
+  the pairing into its first pass and scales better. On the Xeon 6240's class, for half lengths
+  from L2/4 to 16 L2 (`depth_c2r_fused_min_bytes`, `depth_c2r_fused_max_bytes`; X78), the c2r
+  pairing is fused into the chain's first pass instead (`run_in_c2r`, passes/depth.inl): each
+  run of C sub-rows' elements e reads X_e upwards and X_(h−e) downwards from the input and forms
+  Z_e = A + conj(v_e) B, the same expression on both halves since v_(h−e) = conj v_e, with
+  v_(i + leg j) = v_i w_n^(leg j) from a table of h / R entries and R − 1 broadcast roots (one
+  table stream; a table of all h entries, read at every leg, lost on the long rows); Z_0 from
+  the real parts of X_0 and X_h. No separate pass, no workspace block, one phase less in a team:
+  0.853 of the separate route's time over 23 rows at one thread, c2r 32768 at 4 threads 0.740,
+  40960 × 6 at 6 threads 0.886. Half lengths of 32 and 64 MiB lost (1.27–1.30), and single
+  precision below L2/4; on Zen 3 the fused pass lost at every length (1.12–1.20), its extra
+  arithmetic costing more than the separate pass's sweep, which stays in its L2 and L3.
 - *Strided*: a line with a stride other than 1 (allowed out of place) packs its reals into
   scratch and pairs at any stride, one element at a time, as before task 2.1.
 - *Full*: odd n through the full-length complex chain, as before (X6).
@@ -3541,6 +3552,7 @@ to change before a release.
 | 2026-11-24 | On Zen 3's class a team's whole transforms are anchored to members: one contiguous range per member dealt, claimed by its owner first, then stolen in halving runs (`machine_profile::anchored_runs`, section 13.3; X73) | 16 unpinned OpenMP threads on the EPYC 7763: the client catalogue's out-of-place c2c batches 0.32–0.38 of their time (FFTN ÷ FFTW 0.99–1.51 → 0.34–0.45), in place 0.60–0.69, the catalogue 0.786; at 8 threads 0.838, nothing slower beyond the band (runs 20261124-223028-0605, -7f3c). Arrival-order runs moved each row between core complexes in every execution when the threads were unpinned (diagnosis: 2.3 ms against 1.2 ms for the same rows dealt by rank) |
 | 2026-11-25 | Whole transforms anchored to members on Apple too; not on the Xeon 6240's class (`machine_profile::anchored_runs`, section 13.3; X74) | M5 Max at 6 threads: the standard batches 0.87–0.97 of their time, the client catalogue 0.996, nothing slower in the deciding run (20261124-233956-4feb). Xeon 6240: 8 threads passed (catalogue 0.951, standard batches 0.695), but at 16 the c2c batch 864 × 384 backward took 1.16 in the deciding re-run (20261125-011737-dee1), so the class keeps arrival-order runs pending the maintainer's decision |
 | 2026-11-25 | On the Xeon 6240's class an even real row of one axis out of place, contiguous, runs its half-length transform on the c2c rows' depth-first chain over their range (L2/4 to 64 L2; `depth_real_max_bytes`, X75 arm A) and, for real rows alone, from half lengths above L2/8 (`depth_real_min_bytes`, new; arm B, narrowed to exclude L2/8 itself); `avx512` only (its tops of 16, 20, 10); sections 8.5, 9.1 | X75's judging run (Xeon 6240, run 20261125-023550-8fee, band ±3.87 %): A 0.748 over the 50 real rows it moves (32768–2²³, float 65536–2²⁰), none slower; B narrowed after run R (float r2c 32768, half length L2/8, 1.095): 0.821 over the 14 it moves (18432–24576, float 40960–49152) in its deciding run 20261125-041502-3d25, none slower; the client catalogue's r2c and c2r 32768 1.28–1.44 → 0.83–1.04 of FFTW, 40960 × 6 1.20–1.38 → 0.99–1.18, c2r 20480 × 3 1.14 → 1.00 (run D1). Ice Lake-SP (X58's branch) keeps its plans, unmeasured |
+| 2026-11-25 | On the Xeon 6240's class a c2r row on the depth-first real route with a half length from L2/4 to 16 L2 pairs its bins in the chain's first pass (`depth_c2r_fused_min_bytes`, `depth_c2r_fused_max_bytes`, new, default never; pairing twiddles factored over the pass's legs); elsewhere the separate pass stays; section 9.1 | X78 (arm B4n, rules of amendment 1 committed before its runs): Xeon 6240 one thread 0.853 over the 23 rows it moves (run 20261125-062612-079d, band ±4.22 %), none slower; c2r 32768 at 4 threads 0.740, 40960 × 6 at 6 threads 0.886 (runs 20261125-063649-3e6d, -063741-028a). Arm B (a table of h entries, both classes) rejected by its rule: EPYC 1.151, Xeon 1.064; on Zen 3 every variant lost (1.12–1.20), so Zen 3 keeps the separate pass (declared run 20261125-062442-ddf9: no plan moved). Reach: the Xeon 6240's key, as X75's |
 
 ---
 

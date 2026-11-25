@@ -55,22 +55,6 @@ template <class T, bool Scaled> FFTN_FORCE_INLINE cv<T> scaled(cv<T> v, T s) {
   }
 }
 
-// Lane l holds the complex number at p - 2 l (the first `valid` lanes; the others zero):
-// C consecutive elements read downwards.
-template <class T, bool Full> FFTN_FORCE_INLINE cv<T> load_down(const T* p, std::size_t valid) {
-  if constexpr (C<T> == 1) {
-    return load(p);
-  } else {
-    T tile[2 * C<T>]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
-    for (std::size_t l = 0; l < C<T>; ++l) {
-      const bool live = Full || l < valid;
-      tile[2 * l] = live ? p[-at(l, 2)] : T(0);
-      tile[2 * l + 1] = live ? p[1 - at(l, 2)] : T(0);
-    }
-    return load(tile);
-  }
-}
-
 // Lane l of v to p - 2 l, for the first `valid` lanes.
 template <class T, bool Full> FFTN_FORCE_INLINE void store_down(T* p, std::size_t valid, cv<T> v) {
   if constexpr (C<T> == 1) {

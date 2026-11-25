@@ -317,6 +317,13 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
         // 20261125-023550-8fee, 20261125-040403-2740). Narrowed to exclude L2/8 itself, where
         // 16384 tied and single precision r2c 32768 lost (1.095 in run 20261125-040403-2740).
         p.depth_real_min_bytes = c.l2.size / 8 + 1;
+        // Experiment X78: c2r rows on that chain pair their bins in its first pass, with the
+        // pairing twiddles factored over the pass's legs, from L2/4 to 16 L2 of half length
+        // (0.69-0.97 of the separate pass's time at one thread, run 20261125-060137-dd4d).
+        // Half lengths of 32 and 64 MiB lost (1.27-1.30), and single-precision ones below L2/4
+        // (1.06-1.07).
+        p.depth_c2r_fused_min_bytes = c.l2.size / 4;
+        p.depth_c2r_fused_max_bytes = 16 * c.l2.size;
       }
     }
   }
