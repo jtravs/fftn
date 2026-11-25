@@ -1,6 +1,6 @@
 # X79: the team state on pages of its own
 
-- **Status:** running
+- **Status:** done
 - **Owner:** x79 session, 2026-11-25
 - **Phase / task:** 3 (threading; X76's proposal)
 
@@ -216,4 +216,28 @@ In X16 the anchored arm took c2c 864 × 384 backward to 0.730 of B and its real 
 
 ## Verdict
 
-(to come)
+**The fix: not adopted, by its rules' letter.** It passes on the Xeon 6240 (X16: the 864 × 384
+batch unimodal at its alone time, 0.739 of its old median, catalogue 0.996, nothing slower; X16b
+0.983; X8 0.992; X8b 0.988) and is neutral on the M5 Max (C6r 0.999, C6b 0.998, after C6's
+near miss), but on the EPYC 7763 the deciding re-run E16r has two cases past the band (r2c
+10240 × 1 1.028, c2r 864 × 384 1.027) and a weighted mean of 1.002, and E16b has c2c 8 × 4096
+1.079. The rules excluded the narrowing clause, so the fix's code is reverted on this branch
+(4a2c6cf); it stays in history at 9b9875a and, with the anchoring flag, in draft PR 116. DESIGN 5.3
+and 13.3 are unchanged.
+
+**For the maintainer: the fix keyed to the Xeon 6240's class.** The EPYC's loss comes with the
+state on a page of its own wherever its words sit in it, and the benchmark's `WORKSPACE=page`
+on `main` shows it too, so the layout is a per-machine choice, like the anchoring itself. A
+narrowed fix, a profile field (`machine_profile::team_state_page`, the 128-byte line where 0) set
+on X61's key (x86-64, a private L2 below 2 MiB, no large L3 per CPU: Cascade Lake and Skylake-SP;
+not Ice Lake-SP VMs, Zen, the 2 MiB-L2 key or Apple), would take the Xeon's gain and leave the
+EPYC's and the Mac's layout as on `main`. Drafted rules, for a deciding run declared before it
+starts: on the final code, the EPYC (E16, E16b) shows no case slower than 1 + band against
+`main`; the Xeon at 16 threads (X16, X16b) shows the unimodal criterion and no case slower;
+nothing else. Adopting it needs the maintainer's word: these rules ruled the narrowing out.
+
+**Anchoring on the Xeon 6240's class on the fix (X74's rules):** ANCHOR_VERDICT
+
+Open: why a state page of its own costs Zen 3's shortest batch (not investigated: perf on DMOG
+is not set up); whether 16 KiB is right on Apple (neutral at 6 threads; the 4 KiB unit was not
+run there).
