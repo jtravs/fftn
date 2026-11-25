@@ -275,7 +275,6 @@ std::optional<fftn::isa> isa_from_name(std::string_view name) {
   return std::nullopt;
 }
 
-
 // FFTW's many-interface layout: row-major arrays whose last dimension is embedded in
 // `last` elements, transforms `dist` elements apart.
 template <class In, class Out> fftn::shape<In, Out> shape_of(const fbench_case& c) {
@@ -548,17 +547,16 @@ template <class T, bool Complex, int Kind, int FactorStride, bool Acc>
       off += idx * g.stride[d];
       foff += idx * g.factor_stride[d];
     }
-    edge_line<T, Complex, Kind, FactorStride, Acc>(data + off * width,
-                                                   Acc ? src + off * width : nullptr,
-                                                   Kind != 0 ? factor + foff * fw : nullptr,
-                                                   g.factor_stride[g.rank - 1], n);
+    edge_line<T, Complex, Kind, FactorStride, Acc>(
+        data + off * width, Acc ? src + off * width : nullptr,
+        Kind != 0 ? factor + foff * fw : nullptr, g.factor_stride[g.rank - 1], n);
   }
 }
 
 template <class T, bool Complex, int Kind, bool Acc>
-[[gnu::always_inline]] inline void edge_lines_stride(const side_geometry& g, T* data,
-                                                     const T* src, const T* factor,
-                                                     std::size_t first, std::size_t count) {
+[[gnu::always_inline]] inline void edge_lines_stride(const side_geometry& g, T* data, const T* src,
+                                                     const T* factor, std::size_t first,
+                                                     std::size_t count) {
   const std::ptrdiff_t fs = g.factor_stride[g.rank - 1];
   if (fs == 0) {
     edge_lines_as<T, Complex, Kind, 0, Acc>(g, data, src, factor, first, count);
@@ -609,8 +607,7 @@ template <class T, bool Complex>
 #endif
 
 FBENCH_EDGE_CLONES void edge_lines_f64(const side_geometry& g, double* data, const double* src,
-                                       const double* factor, std::size_t first,
-                                       std::size_t count) {
+                                       const double* factor, std::size_t first, std::size_t count) {
   if (g.complex_data) {
     edge_lines_kind<double, true>(g, data, src, factor, first, count);
   } else {
@@ -619,8 +616,7 @@ FBENCH_EDGE_CLONES void edge_lines_f64(const side_geometry& g, double* data, con
 }
 
 FBENCH_EDGE_CLONES void edge_lines_f32(const side_geometry& g, float* data, const float* src,
-                                       const float* factor, std::size_t first,
-                                       std::size_t count) {
+                                       const float* factor, std::size_t first, std::size_t count) {
   if (g.complex_data) {
     edge_lines_kind<float, true>(g, data, src, factor, first, count);
   } else {
@@ -710,8 +706,8 @@ std::shared_ptr<const detail::plan_core> make_edge_core(const fbench_case& c,
   }
   if (r.loop) {
     if (r.out_side.accumulate) {
-      const std::size_t bytes = static_cast<std::size_t>(c.batch) *
-                                static_cast<std::size_t>(c.out_dist) * sizeof(Out);
+      const std::size_t bytes =
+          static_cast<std::size_t>(c.batch) * static_cast<std::size_t>(c.out_dist) * sizeof(Out);
       r.temp.assign(bytes / sizeof(double) + 1, 0.0);
     }
     return detail::make_plan_core(detail::view_of(sh), o, s.settings);
