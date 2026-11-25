@@ -49,6 +49,8 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64" AND CMAKE_CXX_COMPILER_ID STREQ
 endif()
 # For the disassembly test's second compilation (tests/isa).
 list(TRANSFORM fftn_isa_units PREPEND ${CMAKE_CURRENT_SOURCE_DIR}/)
+# After the padding above, which replaces the avx512 units' options rather than appending.
+fftn_kernel_sanitizer_checks(fftn ${fftn_isa_units})
 set_property(GLOBAL PROPERTY FFTN_ISA_UNITS ${fftn_isa_units})
 
 # Experiment B1: GCC accepts a 256-bit vector passed by value from an AVX2 region into a
