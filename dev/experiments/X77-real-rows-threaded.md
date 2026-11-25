@@ -94,8 +94,12 @@ overlapped the X76 session's build (other processes 9–10 cores), and the first
 to 6–9 ms per execution (scheduler ticks while a spinning member waits), FFTW was unaffected, so
 that run is void and was repeated on an idle socket.
 
+Departures from the method: the repeated EPYC runs ran one after another (`--serial`) on
+node18, named with `--nodelist` (the client check's profiles with that one line added), and every
+repeated or re-run job took 16–24 rounds instead of 12–20.
+
 **Plans.** Every case the table names moves at its width (its notes differ between A and O),
-with the same plans as at one thread (EPYC: depth-first 4 × 2304, 4 × 2560, 4 × 5120; Xeon:
+with the route's depth-first chains (EPYC: depth-first 4 × 2304, 4 × 2560, 4 × 5120; Xeon:
 16 × 576, 16 × 640, 16 × 1024, 16 × 1280), except the EPYC's r2c and c2r 32768, as expected
 (both arms: the breadth-first chain 8 × 16 × 16 × 8).
 
