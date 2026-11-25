@@ -1389,5 +1389,5 @@ neither; leaving out only pointer-overflow and object-size gave 42 s, and rows6_
 exact bounds check of every access already subsumes them, so the kernel units leave them out:
 their whole build fell from 9306 to 2663 s of compile time, the other UBSan checks and the
 other units unchanged. Traps instead of handler calls (`-fsanitize-trap`) saved less (rows8_avx2 74 s),
-and dropping ASan's stack instrumentation or use-after-return nothing. GCC 16 gains less (one
-unit 230 to 167 s). Time each sanitizer, and each check, before splitting units further.
+and dropping ASan's stack instrumentation or use-after-return nothing. GCC 16 gains less (two units
+230 to 167 s and 521 to 308 s). Time each sanitizer, and each check, before splitting units further.
