@@ -149,7 +149,63 @@ worktree.
   submission). E16b had started on the loaded node20 and was cancelled after 26 s (Slurm 518352,
   no round recorded); it runs as E16b on node18 behind E16r.
 
-(table to come)
+**The fix, B ÷ M.**
+
+| Run | Store (Slurm) | Machine, placement, load | Rounds | Band | B ÷ M | Slower beyond the band |
+|---|---|---|---|---|---|---|
+| C6 | 20261125-062634-36e3 | M5 Max, AC, load 6.0 (max 9.6) | 24 | ±1.11 % | catalogue 1.001 [0.999, 1.004] | none (mean missed by 0.1 %) |
+| C6r (deciding) | 20261125-063803-394a | M5 Max, AC, load 4.7 | 24 | ±1.19 % | catalogue 0.999 [0.996, 1.003] | none |
+| C6b | 20261125-063705-5a4f | M5 Max, AC, load 5.3 | 30 | ±1.00 % | batches 0.998 [0.990, 1.006] | none |
+| E16 | 20261125-063226-7c0d (518350) | EPYC, node20, load 60 (max 72), all rounds loaded | 24 | ±6.56 % | catalogue 1.001 [0.984, 1.028] | none (mean missed by 0.1 %) |
+| E16r (deciding) | 20261125-065709-cdb5 (518353) | EPYC, node18, load 5.6, none loaded | 24 | ±1.19 % | catalogue 1.002 [0.998, 1.005] | r2c 10240 × 1 1.028 [1.014, 1.043], c2r 864 × 384 1.027 [1.013, 1.041] |
+| E16b | 20261125-071839-c3f7 (518355) | EPYC, node18, load 7.6, none loaded | 30 | ±1.00 % | batches 1.021 [1.015, 1.029] | c2c 8 × 4096 1.079 [1.070, 1.089] |
+| X16a | 20261125-064327-ae34 (17084) | Xeon, node 1, 16 cores, load 2.2 | 16 | ±1.00 % | the case alone: M 69.3, B 68.85 (= R), BA 51.2 µs | — |
+| X16 | 20261125-064345-8d9a (17086) | Xeon, node 1, 16 cores, load 4.1, none loaded | 24 | ±1.00 % | catalogue 0.996 [0.988, 1.003] | none; 8 faster |
+| X16b | 20261125-073659-69cb (17087) | Xeon, node 1, 16 cores, load 8.0, none loaded | 30 | ±1.00 % | batches 0.983 [0.976, 1.001] | none |
+| X8 | X8_ROW |
+| X8b | X8B_ROW |
+
+The Mac stayed on AC power throughout ("AC attached; not charging", 80 %, checked every 15 s
+by the run wrapper; no sampling gap). Xeon: GCC 14.4, `avx512`, threads unpinned in `numactl -m 1
+-C <16 or 8 idlest whole cores>`. EPYC: GCC 16, `avx2`.
+
+- **Xeon 6240, 16 threads: the slow mode is gone.** c2c 864 × 384 backward in X16, arm B, every
+  process 65.9–70.7 µs (1.15 × R = 79.2 µs), none in the third mode; arm M in the same
+  processes 65.8–105.5 µs plus one at 6000 µs, M~ 67–105.4. B ÷ M 0.739 [0.710, 0.957], its
+  real twins c2r 0.823, r2c 0.965 (B: c2r 63.5–66.4 µs with one process at 5772 µs, the third
+  mode; r2c 60.9–64.1; M 62–137). Anchored on the fix (BA) the case is 48.4–52.0 µs in every
+  process. The unimodal criterion holds.
+- **Mac M5 Max, 6 threads:** nothing moves (C6r 0.999, C6b 0.998), as expected where the slot
+  sizes are already large and nothing was measured slow.
+- **EPYC 7763, 16 threads: the fix costs on the shortest batch.** c2c 8 × 4096 out of place
+  1.079 in E16b, and in E16r two cases past the band by 0.2–0.3 % (r2c 10240 × 1, c2r 864 × 384)
+  with the weighted mean 1.002. The informative run below says the cost comes from the state's
+  place at the start of a page, not from the padding.
+
+**Informative, EPYC (decides nothing):** run 20261125-072055-b650 (Slurm 518374, node19, load
+2.3, band ±1.00 %, 40 rounds), the five standard batches, arms M, MP = M with the bench option
+`WORKSPACE=page` (the old library; the workspace, and so the state, at the start of a page of the
+backend's own memory; the slots right after the state's words), B, BP = B with `WORKSPACE=page`:
+c2c 8 × 4096 MP ÷ M 1.049 [1.018, 1.068], B ÷ M 1.077 [1.052, 1.088], BP ÷ M 1.060; 64 × 256
+1.013, 1.030, 1.009; the other three within 1.013. So on Zen 3 a team state at the start of a
+page, put there by the library or by the benchmark, makes the 16-thread batch of 8 × 4096 (about
+21 µs per execution, every member's claims and counters on the state's lines) 5–8 % slower; on
+the Xeon 6240 the same placement removed a × 1.4–2.3 slow mode. The mechanism on Zen 3 is not
+known (the set index of the state's lines is then fixed at 0, 128, …; X76's offsets left the
+state's offset in a page random).
+
+**Anchoring on the fix, BA ÷ B** (X74's rules; band of each run):
+
+| Run | Store | BA ÷ B | Moved cases slower beyond the band |
+|---|---|---|---|
+| X16 (reported) | 20261125-064345-8d9a | catalogue 0.939; 14 faster | in-place 750 × 4469 pair 1.018 [1.012, 1.038], 1.022 [1.012, 1.027] |
+| X16r (deciding) | X16R_ROW |
+| X16b | 20261125-073659-69cb | batches 0.563 [all five faster: 0.380 (8 × 4096) – 0.755 (1024 × 256)] | none |
+| X8 | X8A_ROW |
+| X8b | X8BA_ROW |
+
+In X16 the anchored arm took c2c 864 × 384 backward to 0.730 of B and its real twins to
+0.607–0.717; the in-place 750 × 4469 pair is X74's again (1.019–1.021 there).
 
 ## Verdict
 
