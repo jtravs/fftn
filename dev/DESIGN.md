@@ -1390,8 +1390,10 @@ to 8, on `avx2`:
   Emerald Rapids share the branch, unmeasured.
 - x86-64 with a private L2 between 1 and 2 MiB (X58, an Ice Lake VM, whose large L3 per CPU
   otherwise puts it with the EPYC): the same fields, from L2/4 to 64 L2 (0.596 of the time over
-  the rows it changes; long rows ÷ FFTW 1.13–1.53 → 0.64–0.79). Zen 4 and Zen 5 (exactly 1 MiB)
-  stay out, unmeasured.
+  the rows it changes; long rows ÷ FFTW 1.13–1.53 → 0.64–0.79), and the Xeon 6240's real rows
+  on them, from half lengths above L2/8 to 64 L2 (X82: 0.745 over the 40 real rows it moved on
+  the N2 VM, 24576–2²¹ points; 2²² and 2²³ reached unmeasured there). Zen 4 and Zen 5 (exactly
+  1 MiB) stay out, unmeasured.
 Not built: three or more top factors, edge factors; float on the Apple and
 EPYC profiles (X51's Apple float screen: mixed rows 0.69–0.84, but 24576 and 196608 did
 not gain). In place, the blocks live in the workspace block: n complex elements per team
@@ -1632,10 +1634,10 @@ Routes, by `real_route`:
   not fused (radices ≤ 8 read the arrays directly and keep the separate pass), and not on
   `avx2` (the EPYC gained nothing; build_settings::r2c_pair_last forces it): Mac r2c rows
   0.94–0.98 of the separate route's time, Xeon `avx512` 262144 and 2²⁰ 0.94–0.97.
-- *Depth-first*: on Zen 3's class (`machine_profile::depth_real_max_bytes`, X72) and the Xeon
-  6240's (X75) an even real row of one axis out of place, contiguous on both sides, whose half
-  length the c2c rows' depth-first rule takes (section 8.5; on the Xeon 6240's class from above
-  L2/8, `depth_real_min_bytes`, where the c2c rows start at L2/4) runs that half length as the depth-first chain: r2c
+- *Depth-first*: on Zen 3's class (`machine_profile::depth_real_max_bytes`, X72), the Xeon
+  6240's (X75) and X58's Ice Lake branch (X82) an even real row of one axis out of place, contiguous on both sides, whose half
+  length the c2c rows' depth-first rule takes (section 8.5; on the Xeon 6240's class and X58's
+  branch from above L2/8, `depth_real_min_bytes`, where the c2c rows start at L2/4) runs that half length as the depth-first chain: r2c
   reads its reals as h complex values into the chain, whose blocks and result are in the
   output, then pairs there in a separate pass; c2r pairs from the input into the workspace
   block (h complex values), from which the chain's first pass reads the whole line before its
@@ -1643,7 +1645,8 @@ Routes, by `real_route`:
   In teams at the client catalogue's widths (X77) r2c rows and batches keep the gain (0.65–0.94
   at 4–16 threads); c2r rows at 4 threads keep less (0.79–1.03; the Xeon's c2r 18432 and 32768
   and the EPYC's c2r 20480 × 3 lose their gain), because the breadth-first chain they leave fuses
-  the pairing into its first pass and scales better. On the Xeon 6240's class, for half lengths
+  the pairing into its first pass and scales better. On the Xeon 6240's class and X58's branch
+  (X82: 0.772 over the 16 c2r rows it moved on the N2 VM), for half lengths
   from L2/4 to 16 L2 (`depth_c2r_fused_min_bytes`, `depth_c2r_fused_max_bytes`; X78), the c2r
   pairing is fused into the chain's first pass instead (`run_in_c2r`, passes/depth.inl): each
   run of C sub-rows' elements e reads X_e upwards and X_(h−e) downwards from the input and forms
@@ -3600,6 +3603,7 @@ to change before a release.
 | 2026-11-25 | The Xeon 6240's class (X34, X39, X46, X50, X51, X75, X78, X61's x86 half, X63) and the 2 MiB-L2 key (X35, X55, X58, X64, X69, X70), with X58's Ice Lake chain, apply to Intel's processors only (`set_grid_sizes`, section 13.5); AMD's and unknown vendors' cores those keys reach keep the fields' defaults. Not a performance change: every Intel recording keeps its whole profile | The maintainer's policy, accepted on 2026-11-25 ("I agree with all recommendations"): "a rule measured on only one vendor is keyed to that vendor". The keys read only cache shape, so Zen 4c and Zen 5c (1 MiB of L2 and of L3 per CPU) fall into the Xeon 6240's, and X64 measured X63 losing on Zen 4 there. Unknown behaves as off: no CI runner or recording reports an unknown x86 vendor, and the tests set the vendor explicitly |
 | 2026-11-25 | On the Xeon 6240's class (Intel's cores only) a real row on a chain's stages is split by its complex points, n / 2 + 1 (`split_complex_rows`); rows on the depth-first chain or a grid keep their real points | X83: on the Xeon 6240 teams of 4 and 8 ran single real rows of 6400-10240 points 1.32-2.69 times slower than one thread, because the split threshold compared n real points with the work of n / 2 complex ones. Judged at 4, 6, 8 and 16 threads: 0.570 over the 31 moved cases (0.38-0.78 at 4-8, 0.40-0.53 at 16), none slower beyond the band, nothing moved at one thread. A member cap per point count was rejected by the diagnosis (teams of 2 lost almost everywhere below 32768 points), and c2c rows have no size threshold (radix-dependent) |
 | 2026-11-25 | Under ASan + UBSan the kernel units (the library's `src/isa` units and the codelet test units) are compiled without UBSan's pointer-overflow and object-size checks (section 15.4) | The required Clang ASan + UBSan job took 78 minutes on PR 114, 64 of them a cold build of the kernel units, which every change to the kernel text, and every pull request started before main saved its cache, pays. Clang 23 on an EPYC 7763: the kernel units took 9306 s of compile time with every check, 2663 s without these two; ASan bounds-checks every access those units make, which subsumes both. GCC 16: 0.59 and 0.73 of the time on two units; the ASan + UBSan tests pass (2219, DMOG) in the same time |
+| 2026-11-25 | X58's Ice Lake branch (Intel, x86-64, a private L2 above 1 MiB and below 2 MiB; Ice Lake-SP as Google Cloud's N2 reports it, with a large L3 per CPU) takes the Xeon 6240's real rows on its depth-first chain: X75's `depth_real_max_bytes` = 64 L2 (its `depth_max_bytes`) and `depth_real_min_bytes` = L2/8 + 1, X78's `depth_c2r_fused_min_bytes` = L2/4 and `_max_bytes` = 16 L2; sections 8.5, 9.1. Zen 2 keeps X72's two rules and X73 (no change) | X82 (cloud screen of 2026-11-25, n2-standard-16, run 20261125-095241-aafe, band ±2.73 %, GCC 14.2, `avx512`): X75 0.745 over the 40 real rows it moves (24576–2²¹), X78 0.772 over the 16 c2r rows it moves, none slower; the fields' values are arm RF's (83886080, 163841, 327680, 20971520 on the 1.25 MiB L2). The rows of 2²² and 2²³ points are reached unmeasured on Ice Lake (X75 timed them on the Xeon 6240: 0.66–0.89). X81 (n2d-standard-16, Zen 2, runs 20261125-095426-d1f0, -100331-a9cd, -101611-2ba1): X72 arm A KEEP 0.745, arm B KEEP 0.914, X73 TIE (0.926 against a band of ±8.02 %; 0.906 KEEP on the standard batches); the verdicts reach other Zen 2 parts by the 16 MiB of L3 per complex |
 | 2026-11-25 | On the Xeon 6240's class (Intel's cores, X61's key) the team state starts a 4 KiB page of the workspace and fills whole pages, the members' slots after them (`machine_profile::team_state_page`, new, default 0: the state on its 128-byte lines as before; sections 5.3, 13.3; X79). Every other profile keeps the old layout | X79's fix passed its rules on the Xeon 6240 (X16: c2c 864 × 384 backward at 16 threads unimodal at its alone time, 0.739 of its median; client catalogue 0.996, X16b 0.983, X8 0.992, X8b 0.988, nothing slower) and was neutral on the M5 Max, but lost on the EPYC 7763 (c2c 8 × 4096 at 16 threads 1.079), and its rules excluded narrowing. A narrowing by the maintainer (2026-11-25, "Yes, Xeon only"): on the Xeon class the code is what X16, X16b, X8 and X8b judged, so no new run was made |
 
 ---
