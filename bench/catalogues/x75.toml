@@ -58,3 +58,17 @@ name = "x75-long"
 note = "beyond 2^20 points: half lengths of 8-64 MiB, the rest of the range"
 kind = ["r2c", "c2r"]
 dims = [2097152, 4194304, 8388608]
+
+[[group]]
+name = "x75-float-from-l2-8"
+note = "single precision whose half length is from L2/8 to L2/4 (128-256 KiB): arm B's reach"
+kind = ["r2c", "c2r"]
+dims = [32768, 49152]
+precision = "f32"
+
+[[group]]
+name = "x75-batches"
+note = "batches of rows in each arm's reach"
+kind = ["r2c", "c2r"]
+dims = [24576, 65536]
+batch = [4]
