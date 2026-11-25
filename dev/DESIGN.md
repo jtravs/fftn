@@ -2483,8 +2483,10 @@ As built (`src/threading/engine.hpp`, task 3.1):
   execution, so a batch beyond the caches stays in the caches of the cores that ran it, which
   arrival-order runs defeat when threads are unpinned and the team's assumed cache groups are not
   the real ones; within one shared cache it keeps short batches in each member's L1 and L2 (Apple's
-  standard batches 0.87–0.97 of their time, X74). The Xeon 6240's class keeps arrival-order runs:
-  it gained as much or more (8 × 4096 at 16 threads 0.39), but one batch lost at 16 threads. Then it joins its group's split tasks (at most `cap`
+  standard batches 0.87–0.97 of their time, X74). The Xeon 6240's class (Intel's cores) is anchored
+  too since X79, with the team state on pages of its own: the client catalogue 0.94 and the standard
+  batches 0.56 at 16 threads, the in-place batch 750 × 4469 2 % slower (the maintainer's decision).
+  Then it joins its group's split tasks (at most `cap`
   members each, members starting on different tasks) and claims their chunks in order,
   in runs within one phase (a share of the phase's chunks left, at most left / (2 × cap),
   shrinking to single chunks; X52), or, for a column phase of a plane whose neighbouring
@@ -2633,6 +2635,7 @@ FFTN had before the rules. The fields, with the experiments that measured them:
 | | `adjacent_lanes`, `adjacent_team_chain` (the x86 half; Apple's half stands) | X61 (Xeon 6240; M5 Max) |
 | | `c2r_packed_bytes`, `c2r_packed_isa` (`avx512`) | X63 (Xeon 6240); X64 (Ice Lake-SP kept, Zen 4 lost) |
 | | `team_state_page` (4 KiB; the maintainer's narrowing) | X79 (Xeon 6240; lost on the EPYC 7763) |
+| | `anchored_runs` (also on Zen 3's class and Apple) | X79 on X74's rules (Xeon 6240; the maintainer accepted one 2 % loss) |
 | Its L2 above 1 MiB (Ice Lake) | the depth-first chain's fields as on the Xeon | X58 (Ice Lake N2) |
 | 2 MiB of private L2 | `grid_three_bytes` (L2/2), `grid_two_part_bytes` | X35 (Granite Rapids) |
 | | `batch_leaf_12` | X58 (Granite, Emerald Rapids) |
@@ -3593,6 +3596,7 @@ to change before a release.
 | 2026-11-25 | The Xeon 6240's class (X34, X39, X46, X50, X51, X75, X78, X61's x86 half, X63) and the 2 MiB-L2 key (X35, X55, X58, X64, X69, X70), with X58's Ice Lake chain, apply to Intel's processors only (`set_grid_sizes`, section 13.5); AMD's and unknown vendors' cores those keys reach keep the fields' defaults. Not a performance change: every Intel recording keeps its whole profile | The maintainer's policy, accepted on 2026-11-25 ("I agree with all recommendations"): "a rule measured on only one vendor is keyed to that vendor". The keys read only cache shape, so Zen 4c and Zen 5c (1 MiB of L2 and of L3 per CPU) fall into the Xeon 6240's, and X64 measured X63 losing on Zen 4 there. Unknown behaves as off: no CI runner or recording reports an unknown x86 vendor, and the tests set the vendor explicitly |
 | 2026-11-25 | Under ASan + UBSan the kernel units (the library's `src/isa` units and the codelet test units) are compiled without UBSan's pointer-overflow and object-size checks (section 15.4) | The required Clang ASan + UBSan job took 78 minutes on PR 114, 64 of them a cold build of the kernel units, which every change to the kernel text, and every pull request started before main saved its cache, pays. Clang 23 on an EPYC 7763: the kernel units took 9306 s of compile time with every check, 2663 s without these two; ASan bounds-checks every access those units make, which subsumes both. GCC 16: 0.59 and 0.73 of the time on two units; the ASan + UBSan tests pass (2219, DMOG) in the same time |
 | 2026-11-25 | On the Xeon 6240's class (Intel's cores, X61's key) the team state starts a 4 KiB page of the workspace and fills whole pages, the members' slots after them (`machine_profile::team_state_page`, new, default 0: the state on its 128-byte lines as before; sections 5.3, 13.3; X79). Every other profile keeps the old layout | X79's fix passed its rules on the Xeon 6240 (X16: c2c 864 × 384 backward at 16 threads unimodal at its alone time, 0.739 of its median; client catalogue 0.996, X16b 0.983, X8 0.992, X8b 0.988, nothing slower) and was neutral on the M5 Max, but lost on the EPYC 7763 (c2c 8 × 4096 at 16 threads 1.079), and its rules excluded narrowing. A narrowing by the maintainer (2026-11-25, "Yes, Xeon only"): on the Xeon class the code is what X16, X16b, X8 and X8b judged, so no new run was made |
+| 2026-11-25 | Whole transforms anchored to members on the Xeon 6240's class too (Intel's cores, X61's key; `machine_profile::anchored_runs`, section 13.3; X79 on X74's rules) | The maintainer's decision ("Whole class"), offered teams of at most 8 lanes or the whole class: on the fixed layout the client catalogue 0.942 at 16 threads (deciding run 20261125-100316-666c) and 0.961 at 8 (20261125-091612-31a5), the standard batches 0.563 and 0.688; X74's 864 × 384 loss gone (0.740); the in-place batch 750 × 4469 1.020 at 16 threads, past the band of ±1 %, accepted |
 
 ---
 
