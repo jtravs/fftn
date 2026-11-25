@@ -12,6 +12,11 @@ fftn_add_test(fftn_contract_tests
   SOURCES contract_test.cpp multidim_test.cpp
   LIBRARIES fftn_test_support fftn_test_alloc_hook)
 
+# Plan edges (task 5.1a) against the quadruple-precision reference, which is heavy, so the
+# test is optimised in every build type.
+fftn_add_test(fftn_edges_tests SOURCES edges_test.cpp LIBRARIES fftn_test_support)
+fftn_always_optimise(edges_test.cpp)
+
 # One translation unit per public header, including only that header, all linked into one
 # executable (which also proves the headers define nothing twice across units).
 file(GLOB public_headers CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/include/fftn/*.hpp)

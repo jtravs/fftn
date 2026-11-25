@@ -2223,12 +2223,22 @@ value (section 5). In multi-axis plans, pruning first restricts the other axes' 
 stored runs, which skips zero sub-transforms. Within a line it then uses the generator's pruned
 codelets, confined to the edge passes.
 
-As built (task 1.2), `scale` (public: `options::scale`) and `factor` are edge variants of every
-pass kind. `factor` is internal: complex only, with its arrays fixed at construction. It applies
-only to c2c chains of one axis: the lanes strategy refuses input edge operations, grid and
-depth-first chains are not built with a factor edge, and batch leaves fall back to the chain.
-Phase 5 brings the factor to every strategy the rules choose. An edge that still forces a slower
-strategy is built, not refused, and `describe()` says so (AGENTS.md section 1).
+As built (task 5.1a): `edge`, `factor`, `plan_edges` and `exec_args` are public, provisional,
+in `fftn/edges.hpp`, without `edge::call` (5.3) and stored runs (5.1d); the plan constructor
+takes the edges and every execute overload has its `exec_args` twin (the team twin's
+`completion` has no default, since it precedes the arguments). Scales are taken by every plan:
+both edges' and `options::scale` are one product, applied once. Factors and accumulation are
+built for c2c rows only and refused elsewhere. A complex factor of stride 1 along the row is the
+`factor` edge variant of the row's first or last pass (task 1.2 built them for every pass kind),
+reading the execution's array through a factor cursor that the batch loops move by the factor's
+batch strides (`stage::moving_factors`); a real factor, any other stride, accumulation, and a
+scale beside two fused factors are a separate edge pass through the workspace block, before or
+after the row's chain. Such a plan is a chain built by the rules whatever the strategy and the
+effort would otherwise be (the lanes refuse input edge operations, grid and depth-first chains
+take no factor edge, batch leaves fall back to the chain), and `describe()` says so. 5.1b brings
+the factor to every strategy the rules choose, and X65 decides which separate passes become
+fused variants. An edge that still forces a slower strategy is built, not refused, and
+`describe()` says so (AGENTS.md section 1).
 
 ### 12.2 Row pipelines
 
@@ -3620,6 +3630,7 @@ to change before a release.
 | 2026-11-25 | A topology recording may state the processor's vendor (snapshot entry `fftn/cpu_vendor`, sysctl key `fftn.cpu_vendor`); an `FFTN_TOPOLOGY` replay plans with it, and a recording without it with the host's vendor, as before (section 13.5). The repository's recordings of real machines and `tools/capture_platform.py` carry it | Since the Intel-only keys, a replay took the host's vendor: the Xeon's recording replayed on an AMD or Arm host silently lost about 30 fields, and a Zen 4c-like recording on an Intel host gained them. An ordinary entry keeps old snapshots valid and old readers working |
 | 2026-11-25 | On the Xeon 6240's class (Intel's cores, X61's key) the team state starts a 4 KiB page of the workspace and fills whole pages, the members' slots after them (`machine_profile::team_state_page`, new, default 0: the state on its 128-byte lines as before; sections 5.3, 13.3; X79). Every other profile keeps the old layout | X79's fix passed its rules on the Xeon 6240 (X16: c2c 864 × 384 backward at 16 threads unimodal at its alone time, 0.739 of its median; client catalogue 0.996, X16b 0.983, X8 0.992, X8b 0.988, nothing slower) and was neutral on the M5 Max, but lost on the EPYC 7763 (c2c 8 × 4096 at 16 threads 1.079), and its rules excluded narrowing. A narrowing by the maintainer (2026-11-25, "Yes, Xeon only"): on the Xeon class the code is what X16, X16b, X8 and X8b judged, so no new run was made |
 | 2026-11-25 | Whole transforms anchored to members on the Xeon 6240's class too (Intel's cores, X61's key; `machine_profile::anchored_runs`, section 13.3; X79 on X74's rules) | The maintainer's decision ("Whole class"), offered teams of at most 8 lanes or the whole class: on the fixed layout the client catalogue 0.942 at 16 threads (deciding run 20261125-100316-666c) and 0.961 at 8 (20261125-091612-31a5), the standard batches 0.563 and 0.688; X74's 864 × 384 loss gone (0.740); the in-place batch 750 × 4469 1.020 at 16 threads, past the band of ±1 %, accepted |
+| 2026-11-25 | Plan edges public and provisional (task 5.1a, section 12.1): the API block of section 12 without callbacks and stored runs; scales on every plan as one product; factors and accumulation on c2c rows, a complex factor of stride 1 fused into the row's first or last pass through an execution-time factor cursor, everything else a separate edge pass through the workspace block; such plans are chains planned by the rules. Accumulation in place adds to the output's prior values, which are the input's. The team twin of `execute` takes `completion` without a default | Correctness and API shape first, as the maintainer's agreed design orders (5.1); which separate passes pay as fused variants, and the cost of forcing the chain, are X65's (5.1f). A separate pass needs no new kernel variants on any target, so every combination of the vocabulary is built at once. In-place accumulation is the literal reading of `out += result`; the `completion` default cannot precede a parameter without one |
 
 ---
 

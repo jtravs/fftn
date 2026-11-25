@@ -13,6 +13,7 @@
 #include "core/program.hpp"
 #include "core/wisdom_entry.hpp"
 #include "fftn/detail/core.hpp"
+#include "fftn/edges.hpp"
 #include "fftn/isa.hpp"
 #include "fftn/options.hpp"
 #include "fftn/shape.hpp"
@@ -1120,7 +1121,7 @@ void read_output_for_input(program& p, std::size_t first) {
 
 template <class T>
 void build(plan_core& c, const shape_view& s, const side& in, const side& out, const options& opts,
-           const build_settings& settings) {
+           const build_settings& settings, const edge_plan* edge_ops) {
   c.isa_target = plan_target_of(opts);
   const kernels_of<T>& kernels = of<T>(*find_kernels(c.isa_target));
   target_profile profile = profile_of(c.isa_target, kernels.complex_lanes, settings.profile.vendor);
@@ -1701,13 +1702,35 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     const auto c2c_axis = [&](std::size_t d, std::size_t e, const std::vector<std::size_t>& extent,
                               const view& src, const view& dst) {
       const bool aliased = src.where == slot::out || c.in_place;
-      const line_edges edges = c2c_edges(opts, settings, d + 1 == r, d == 0);
-      if (complex_columns(e, extent, src, dst, edges, sign, "", d)) {
-        return;
-      }
+      const line_edges line = c2c_edges(opts, settings, d + 1 == r, d == 0);
       std::vector<stage> st;
-      const std::size_t need =
-          chain.c2c_line(c.lengths[d], sign, at(src, e), at(dst, e), aliased, edges, st);
+      std::size_t need = 0;
+      if (edge_ops != nullptr && r == 1 && (edge_ops->in.separate || edge_ops->out.separate)) {
+        // The edges' separate passes (core/edges.hpp) through the workspace block: the input's
+        // into it before the line's chain, which then starts there; the output's out of it
+        // after the chain, which then ends there.
+        const std::size_t n = c.lengths[0];
+        const endpoint block{.where = slot::block, .stride = 1};
+        endpoint from = at(src, e);
+        const endpoint to = at(dst, e);
+        if (edge_ops->in.separate) {
+          st.push_back(edge_pass_stage(s.prec, edge_ops->in, false, n, from.where, from.stride,
+                                       slot::block, 1, settings.chunk_points));
+          from = block;
+        }
+        const endpoint line_to = edge_ops->out.separate ? block : to;
+        need = chain.c2c_line(n, sign, from, line_to, from.where == line_to.where, line, st);
+        if (edge_ops->out.separate) {
+          st.push_back(edge_pass_stage(s.prec, edge_ops->out, true, n, slot::block, 1, to.where,
+                                       to.stride, settings.chunk_points));
+        }
+        c.block_elements = std::max(c.block_elements, n);
+      } else {
+        if (complex_columns(e, extent, src, dst, line, sign, "", d)) {
+          return;
+        }
+        need = chain.c2c_line(c.lengths[d], sign, at(src, e), at(dst, e), aliased, line, st);
+      }
       lines(e, extent, src, dst, need, std::move(st));
       c.axis_notes.push_back("axis " + std::to_string(listed(d)) +
                              " (n = " + std::to_string(c.lengths[d]) + "): radices " +
@@ -1943,6 +1966,70 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   c.slot_bytes = (used + sync_line - 1) / sync_line * sync_line;
 }
 
+// The shape's counts and direction, which everything else depends on (std::invalid_argument
+// naming the field).
+void check_counts(const shape_view& s) {
+  const std::size_t r = s.axes.size();
+  if (r == 0) {
+    reject("shape.axes", "must hold at least one axis");
+  }
+  if (r > max_axes) {
+    reject("shape.axes", "holds " + std::to_string(r) + " axes; at most " +
+                             std::to_string(max_axes) + " are transformed");
+  }
+  for (std::size_t d = 0; d < r; ++d) {
+    if (s.axes[d].n == 0) {
+      reject(axis_name(d) + ".n", "is 0; every axis needs its length (`.axes{2}` makes two "
+                                  "axes of length 0; write `.axes = {{2}}`)");
+    }
+  }
+  for (std::size_t b = 0; b < s.batches.size(); ++b) {
+    if (s.batches[b].count == 0) {
+      reject(batch_name(b) + ".count",
+             "is 0; every batch dimension needs its count (`.batches{8}` makes eight empty "
+             "batch dimensions; write `.batches = {{8}}`)");
+    }
+  }
+  if (s.kind == transform_kind::c2c && s.dir != direction::forward &&
+      s.dir != direction::backward) {
+    reject("shape.dir", "must be direction::forward or direction::backward");
+  }
+}
+
+// The tags build_plan_core puts in build_settings::in_factor and out_factor for the edges'
+// fused factors: their addresses only, which nothing reads (one array, so that the two are
+// distinct however the toolchain merges constants).
+const std::array<unsigned char, 2> factor_tags{};
+const void* const in_factor_tag = factor_tags.data();
+const void* const out_factor_tag = factor_tags.data() + 1;
+
+// The stages of a plan with edges that read a factor through its cursor: those built with a
+// tag (build_plan_core) and the separate edge passes (which edge_pass_stage marks). The batch
+// loops move the cursors by the factors' batch strides.
+void mark_cursors(program& p, const edge_plan& edges) {
+  for (record& r : p.records) {
+    if (stage* st = std::get_if<stage>(&r)) {
+      if (st->args.in_factor == in_factor_tag) {
+        st->args.in_factor = nullptr;
+        st->moving_factors |= moving_in_factor;
+      }
+      if (st->args.out_factor == out_factor_tag) {
+        st->args.out_factor = nullptr;
+        st->moving_factors |= moving_out_factor;
+      }
+    }
+  }
+  for (std::size_t b = 0; b < p.batch_loops; ++b) {
+    loop& l = std::get<loop>(p.records[b]);
+    if (edges.in.kind != factor_kind::none) {
+      l.step[4] = edges.in.batch_steps.at(b);
+    }
+    if (edges.out.kind != factor_kind::none) {
+      l.step[5] = edges.out.batch_steps.at(b);
+    }
+  }
+}
+
 const char* kind_name(transform_kind k) {
   switch (k) {
   case transform_kind::c2c:
@@ -1974,32 +2061,24 @@ const char* slot_name(slot s) {
 } // namespace
 
 std::shared_ptr<plan_core> build_plan_core(const shape_view& s, const options& opts,
-                                           const build_settings& settings) {
+                                           const build_settings& given, const edge_plan* edges) {
+  // A plan with edges with factors or accumulation (core/edges.hpp) is a chain whatever the
+  // rules or a test would choose: the factor reaches no other strategy yet (task 5.1b). A fused
+  // factor goes through the settings' factor fields, which every strategy's rule already
+  // refuses, as a tag that the stages built from it are found by afterwards (mark_cursors).
+  build_settings tagged;
+  const bool with_edges = edges != nullptr && edges->any;
+  if (with_edges) {
+    tagged = given;
+    tagged.strategy = strategy_choice::chain;
+    tagged.batch_leaves = batch_leaf_choice::never;
+    tagged.in_factor = edges->in.fused ? in_factor_tag : nullptr;
+    tagged.out_factor = edges->out.fused ? out_factor_tag : nullptr;
+    tagged.scale_on_input = edges->scale_on_input;
+  }
+  const build_settings& settings = with_edges ? tagged : given;
+  check_counts(s);
   const std::size_t r = s.axes.size();
-  if (r == 0) {
-    reject("shape.axes", "must hold at least one axis");
-  }
-  if (r > max_axes) {
-    reject("shape.axes", "holds " + std::to_string(r) + " axes; at most " +
-                             std::to_string(max_axes) + " are transformed");
-  }
-  for (std::size_t d = 0; d < r; ++d) {
-    if (s.axes[d].n == 0) {
-      reject(axis_name(d) + ".n", "is 0; every axis needs its length (`.axes{2}` makes two "
-                                  "axes of length 0; write `.axes = {{2}}`)");
-    }
-  }
-  for (std::size_t b = 0; b < s.batches.size(); ++b) {
-    if (s.batches[b].count == 0) {
-      reject(batch_name(b) + ".count",
-             "is 0; every batch dimension needs its count (`.batches{8}` makes eight empty "
-             "batch dimensions; write `.batches = {{8}}`)");
-    }
-  }
-  if (s.kind == transform_kind::c2c && s.dir != direction::forward &&
-      s.dir != direction::backward) {
-    reject("shape.dir", "must be direction::forward or direction::backward");
-  }
 
   auto c = std::make_shared<plan_core>();
   c->kind = s.kind;
@@ -2078,9 +2157,14 @@ std::shared_ptr<plan_core> build_plan_core(const shape_view& s, const options& o
   }
 
   if (s.prec == precision::f64) {
-    build<double>(*c, s, in, out, opts, settings);
+    build<double>(*c, s, in, out, opts, settings, with_edges ? edges : nullptr);
   } else {
-    build<float>(*c, s, in, out, opts, settings);
+    build<float>(*c, s, in, out, opts, settings, with_edges ? edges : nullptr);
+  }
+  if (with_edges) {
+    mark_cursors(c->prog, *edges);
+    c->needs_args = edges->in.kind != factor_kind::none || edges->out.kind != factor_kind::none;
+    c->edges_note = edges_text(*edges);
   }
   std::size_t points = 1;
   for (const std::size_t n : c->lengths) {
@@ -2154,6 +2238,27 @@ std::shared_ptr<const plan_core> make_plan_core(const shape_view& shape, const o
   return make_plan_core(shape, opts, build_settings{});
 }
 
+std::shared_ptr<const plan_core>
+make_plan_core_with_edges(const shape_view& shape, const options& opts, const edges_view& edges) {
+  check_counts(shape);
+  const resolved_edges r = resolve_edges(shape, opts, edges);
+  if (!r.plan.any) {
+    // Scales only: one product in options::scale, planned as any plan.
+    return make_plan_core(shape, r.opts, build_settings{});
+  }
+  if (!std::isfinite(opts.measure_seconds) || opts.measure_seconds < 0) {
+    reject("options.measure_seconds", "must be finite and not negative");
+  }
+  std::shared_ptr<plan_core> c = build_plan_core(shape, r.opts, build_settings{}, &r.plan);
+  // Wisdom records the plan under its edges, so that no plan without them matches its entry.
+  c->shape_key += edges_key(edges);
+  if (opts.effort != planning::rules || opts.use != nullptr) {
+    c->planning_note = "by the rules: measured planning and wisdom do not take factors or "
+                       "accumulation yet (task 5.1)";
+  }
+  return c;
+}
+
 namespace {
 
 // execute_core's path for every program but leaf rows (X37): out of line on AArch64, where
@@ -2208,6 +2313,7 @@ void execute_program(const plan_core& core, std::size_t first, std::size_t count
 void execute_core(const plan_core& core, std::size_t first, std::size_t count, const void* in,
                   void* out, const workspace& ws) noexcept {
   assert(ws.size() >= core.bytes && "fftn: workspace smaller than plan::workspace_bytes()");
+  assert(!core.needs_args && "fftn: a plan whose edges have factors executes with exec_args");
   // A serial execution leaves the workspace ready for the next team execution to set its
   // state up afresh (team_state.hpp): the scratch below overlaps that state, and a team
   // that skipped an execution must not carry its state into the next one
@@ -2232,6 +2338,49 @@ void execute_core(const plan_core& core, std::size_t first, std::size_t count, c
 
 void execute_all(const plan_core& core, const void* in, void* out, const workspace& ws) noexcept {
   execute_core(core, 0, core.prog.transforms, in, out, ws);
+}
+
+void execute_core(const plan_core& core, std::size_t first, std::size_t count, const void* in,
+                  void* out, const workspace& ws, const exec_args& args) noexcept {
+  if (!core.needs_args) {
+    execute_core(core, first, count, in, out, ws);
+    return;
+  }
+  // A plan whose edges have factors: its program is neither flat nor leaf rows (mark_flat),
+  // so it runs through run_transforms, with the factor cursors starting at the arrays. The
+  // entry path of other plans above is left as it was (X28, X37).
+  assert(ws.size() >= core.bytes && "fftn: workspace smaller than plan::workspace_bytes()");
+  assert(first <= core.prog.transforms && count <= core.prog.transforms - first &&
+         "fftn: execute_transforms beyond the batch");
+  assert((!core.in_place || in == out) && "fftn: in-place plan executed with in != out");
+  assert((core.in_place || in != out) && "fftn: out-of-place plan executed with in == out");
+  const sync_word team = workspace_access::team_word(ws);
+  if (team.load(std::memory_order_relaxed) != 0) {
+    team.store(0, std::memory_order_relaxed);
+  }
+  if (count == 0) {
+    return;
+  }
+  slot_addresses at{
+      .in = static_cast<const std::byte*>(in),
+      .out = static_cast<std::byte*>(out),
+      .in_factor = reinterpret_cast<std::uintptr_t>(args.in_factor),
+      .out_factor = reinterpret_cast<std::uintptr_t>(args.out_factor),
+  };
+  if (core.bytes != 0) {
+    std::byte* raw = ws.memory().data();
+    const auto address = reinterpret_cast<std::uintptr_t>(raw);
+    std::byte* base = raw + (64 - address % 64) % 64;
+    at.a = base;
+    at.b = base + core.offset_b;
+    at.block = core.block_elements != 0 ? base + core.offset_block : nullptr;
+  }
+  run_transforms(core.prog, first, count, at);
+}
+
+void execute_all(const plan_core& core, const void* in, void* out, const workspace& ws,
+                 const exec_args& args) noexcept {
+  execute_core(core, 0, core.prog.transforms, in, out, ws, args);
 }
 
 std::size_t transform_count(const plan_core& core) noexcept { return core.prog.transforms; }
@@ -2281,6 +2430,9 @@ std::string describe(const plan_core& core) {
   for (const std::string& note : core.axis_notes) {
     o << note << "\n";
   }
+  if (!core.edges_note.empty()) {
+    o << core.edges_note << "\n";
+  }
   if (core.team != nullptr) {
     if (core.team->strategy_note != core.strategy_note) {
       o << "with a team of two or more: " << core.team->strategy_note << "\n";
@@ -2305,7 +2457,9 @@ std::string describe(const plan_core& core) {
         o << indent << "loop " << (l->kind == loop_kind::batch ? "batch" : "lines") << " x"
           << l->count << " (steps in bytes: in " << l->step[0] << ", out " << l->step[1]
           << ", block " << l->step[2]
-          << (l->step[3] != 0 ? ", twiddles " + std::to_string(l->step[3]) : "") << ")";
+          << (l->step[3] != 0 ? ", twiddles " + std::to_string(l->step[3]) : "")
+          << (l->step[4] != 0 ? ", input factor " + std::to_string(l->step[4]) : "")
+          << (l->step[5] != 0 ? ", output factor " + std::to_string(l->step[5]) : "") << ")";
         if (l->start != std::array<std::ptrdiff_t, moving_slots>{}) {
           o << " from (in " << l->start[0] << ", out " << l->start[1] << ", block " << l->start[2]
             << ")";

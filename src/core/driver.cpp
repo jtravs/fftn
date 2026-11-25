@@ -64,7 +64,25 @@ slot_addresses moved(const slot_addresses& at, const std::array<std::ptrdiff_t, 
     next.block += step[2] * k;
   }
   next.tw += step[3] * k;
+  next.in_factor += static_cast<std::uintptr_t>(step[4] * k);
+  next.out_factor += static_cast<std::uintptr_t>(step[5] * k);
   return next;
+}
+
+// A stage's arguments with the loops' cursors in the pointers it takes from them
+// (stage::moving_twiddles, moving_factors): a copy, made only for such stages.
+pass_args moved_args(const stage& st, const slot_addresses& at) noexcept {
+  pass_args args = st.args;
+  if (st.moving_twiddles) {
+    args.twiddles = static_cast<const std::byte*>(args.twiddles) + at.tw;
+  }
+  if ((st.moving_factors & moving_in_factor) != 0) {
+    args.in_factor = reinterpret_cast<const void*>(at.in_factor);
+  }
+  if ((st.moving_factors & moving_out_factor) != 0) {
+    args.out_factor = reinterpret_cast<const void*>(at.out_factor);
+  }
+  return args;
 }
 
 // The bytes a loop moves slot s per iteration (0 for the scratch lines, which never move).
@@ -98,8 +116,8 @@ void run_records(const program& p, std::size_t begin, std::size_t end,
     // (X20); the leaf computes each line as it would alone (experiment X40).
     if (l.body_end == i + 2) {
       const stage* only = std::get_if<stage>(&p.records[i + 1]);
-      if (only != nullptr && only->leaf != nullptr && step_of(l, only->src) != 0 &&
-          step_of(l, only->dst) != 0) {
+      if (only != nullptr && only->leaf != nullptr && only->moving_factors == 0 &&
+          step_of(l, only->src) != 0 && step_of(l, only->dst) != 0) {
         only->leaf(&only->args, source_of(only->src, from), destination_of(only->dst, from),
                    step_of(l, only->src), step_of(l, only->dst), l.count);
         i = l.body_end - 1;
@@ -205,6 +223,11 @@ void run_lane_blocks(const program& p, std::size_t first, std::size_t count,
 
 // Runs leaf stage s, its one line, on the slots at.
 void run_leaf(const stage& s, const slot_addresses& at) noexcept {
+  if (s.moving_factors != 0) {
+    const pass_args args = moved_args(s, at);
+    s.leaf(&args, source_of(s.src, at), destination_of(s.dst, at), 0, 0, 1);
+    return;
+  }
   s.leaf(&s.args, source_of(s.src, at), destination_of(s.dst, at), 0, 0, 1);
 }
 
@@ -320,7 +343,7 @@ bool unroll_records(const program& p, std::size_t begin, std::size_t end, const 
   for (std::size_t i = begin; i < end; ++i) {
     const record& r = p.records[i];
     if (const stage* st = std::get_if<stage>(&r)) {
-      if (st->moving_twiddles || out.size() == calls_max) {
+      if (st->moving_twiddles || st->moving_factors != 0 || out.size() == calls_max) {
         return false;
       }
       if (st->leaf == nullptr && st->units == 0) {
@@ -342,8 +365,8 @@ bool unroll_records(const program& p, std::size_t begin, std::size_t end, const 
     const offsets from = {off[0] + l.start[0], off[1] + l.start[1], off[2] + l.start[2]};
     if (l.body_end == i + 2) {
       const stage* only = std::get_if<stage>(&p.records[i + 1]);
-      if (only != nullptr && only->leaf != nullptr && step_of(l, only->src) != 0 &&
-          step_of(l, only->dst) != 0) {
+      if (only != nullptr && only->leaf != nullptr && only->moving_factors == 0 &&
+          step_of(l, only->src) != 0 && step_of(l, only->dst) != 0) {
         if (out.size() == calls_max) {
           return false;
         }
@@ -417,9 +440,10 @@ void mark_flat(program& p, bool unroll) {
   const std::size_t stages = p.records.size() - p.batch_loops;
   p.flat = stages <= flat_stages_max;
   for (std::size_t i = p.batch_loops; i < p.records.size(); ++i) {
-    // Only the lines loops of a grid move twiddles (program.hpp); run_flat does not.
+    // Only the lines loops of a grid move twiddles (program.hpp), and only the stages of plans
+    // with edges read factor cursors; run_flat moves neither.
     const stage* st = std::get_if<stage>(&p.records[i]);
-    p.flat = p.flat && st != nullptr && !st->moving_twiddles;
+    p.flat = p.flat && st != nullptr && !st->moving_twiddles && st->moving_factors == 0;
   }
   p.flat_body.clear();
   if (p.flat) {
@@ -474,9 +498,8 @@ void run_stage_chunks(const stage& st, const slot_addresses& at, std::size_t fir
   }
   const void* src = source_of(st.src, at);
   void* dst = destination_of(st.dst, at);
-  if (st.moving_twiddles) {
-    pass_args args = st.args;
-    args.twiddles = static_cast<const std::byte*>(args.twiddles) + at.tw;
+  if (st.moving_twiddles || st.moving_factors != 0) {
+    const pass_args args = moved_args(st, at);
     st.run(&args, src, dst, begin, end);
     return;
   }

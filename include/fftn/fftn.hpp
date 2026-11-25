@@ -6,6 +6,7 @@
 #pragma once
 
 #include "fftn/config.hpp"      // IWYU pragma: export
+#include "fftn/edges.hpp"       // IWYU pragma: export
 #include "fftn/executor.hpp"    // IWYU pragma: export
 #include "fftn/isa.hpp"         // IWYU pragma: export
 #include "fftn/lengths.hpp"     // IWYU pragma: export

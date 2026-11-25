@@ -5,6 +5,7 @@
 // layout, the program, the tables it points into, and the workspace layout.
 #pragma once
 
+#include "core/edges.hpp"
 #include "core/program.hpp"
 #include "fftn/detail/core.hpp"
 #include "fftn/options.hpp"
@@ -130,10 +131,11 @@ struct build_settings { // NOLINT(clang-analyzer-optin.performance.Padding)
   // bluestein_length), where it is at least 2Q - 1 and 7-smooth; 0: the rule's. For tests
   // that need a length with given splits (the depth-first convolution's, experiment X50).
   std::size_t bluestein_length = 0;
-  // The factor edge operation (DESIGN.md 12.1), which the public API does not offer yet:
+  // The factor edge operation (DESIGN.md 12.1) with fixed arrays, for tests of the passes:
   // n complex values of the plan's precision multiplying the input (before the transform)
   // or the output (after it) of every row of a c2c plan of one axis. The arrays must
-  // outlive the plan.
+  // outlive the plan. The public edges (fftn/edges.hpp) pass theirs at execution instead
+  // (core/edges.hpp).
   const void* in_factor = nullptr;
   const void* out_factor = nullptr;
   // Puts options::scale on the input edge instead of the output edge (c2c only).
@@ -193,6 +195,10 @@ public:
   std::vector<std::string> axis_notes; // one line per axis for describe()
   bool radices_forced = false;         // build_settings.radices was given (describe says so)
   std::string strategy_note;           // describe()'s strategy line
+  // The plan's edges have factors (core/edges.hpp): their arrays come from each execution's
+  // exec_args, through the factor cursors (program.hpp, stage::moving_factors).
+  bool needs_args = false;
+  std::string edges_note; // describe()'s line for edges with factors or accumulation
   // What the rows were built as (one axis only; multi-axis plans are chains): measured
   // planning enumerates the alternatives (core/candidates.cpp).
   strategy_choice built = strategy_choice::chain;
@@ -255,9 +261,13 @@ make_plan_core(const shape_view& shape, const options& opts, const build_setting
 // options.force_isa for a target that cannot be used.
 [[nodiscard]] target plan_target_of(const options& opts);
 
-// The plan the settings describe, ignoring options::effort and options::use.
-[[nodiscard]] std::shared_ptr<plan_core>
-build_plan_core(const shape_view& shape, const options& opts, const build_settings& settings);
+// The plan the settings describe, ignoring options::effort and options::use. edges: where a
+// plan's edges with factors or accumulation go (resolve_edges, core/edges.hpp), or null for
+// none; options::scale is then the scale the plan fuses.
+[[nodiscard]] std::shared_ptr<plan_core> build_plan_core(const shape_view& shape,
+                                                         const options& opts,
+                                                         const build_settings& settings,
+                                                         const edge_plan* edges = nullptr);
 
 // Measured planning and wisdom (core/measure.cpp): options::use, then options::effort.
 [[nodiscard]] std::shared_ptr<const plan_core>

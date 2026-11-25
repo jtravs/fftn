@@ -35,10 +35,17 @@ namespace fftn::inline v0::detail {
 
 enum class slot : std::uint8_t { in, out, a, b, block };
 
-// What a loop moves, as indices into loop::step: the in, out and block slots, and the
+// What a loop moves, as indices into loop::step: the in, out and block slots, the
 // twiddle cursor, a byte offset added to the twiddles of every stage that asks for it
-// (stage::moving_twiddles): the grid's per-block tables (src/strategies/grid.hpp).
-inline constexpr std::size_t moving_slots = 4; // in, out, block, twiddles
+// (stage::moving_twiddles): the grid's per-block tables (src/strategies/grid.hpp), and the
+// cursors of the edges' factor arrays, which arrive with each execution (exec_args) and
+// replace the factor pointers of the stages that ask for them (stage::moving_factors).
+inline constexpr std::size_t moving_slots = 6; // in, out, block, twiddles, in and out factors
+
+// stage::moving_factors: which of a stage's factor pointers (pass_args::in_factor,
+// out_factor) are the loops' factor cursors rather than fixed tables.
+inline constexpr std::uint8_t moving_in_factor = 1;
+inline constexpr std::uint8_t moving_out_factor = 2;
 
 struct stage {
   pass_fn run = nullptr; // the kernel, or for a leaf null and `leaf` set
@@ -49,6 +56,9 @@ struct stage {
                             // elements (src/strategies/chain.hpp); only their count matters here
   std::uint32_t chunks = 1; // independent ranges [units c / chunks, units (c+1) / chunks)
   bool moving_twiddles = false; // args.twiddles is offset by the loops' twiddle cursor
+  // moving_in_factor, moving_out_factor: args.in_factor or out_factor is the cursor of that
+  // edge's factor array (a plan's edges, fftn/edges.hpp), set at execution.
+  std::uint8_t moving_factors = 0;
   // A leaf's kernel (pass_args.hpp), with units 1, the line. When the stage is a program's
   // whole body the driver runs a batch of rows in one call (driver.cpp, run_flat).
   leaf_fn leaf = nullptr;
@@ -63,7 +73,8 @@ enum class loop_kind : std::uint8_t {
 struct loop {
   loop_kind kind = loop_kind::batch;
   std::size_t count = 1;
-  std::array<std::ptrdiff_t, moving_slots> step{}; // bytes per iteration: in, out, block, tw
+  // Bytes per iteration: in, out, block, twiddles, in factor, out factor.
+  std::array<std::ptrdiff_t, moving_slots> step{};
   // Bytes added once, before the first iteration: a lines loop that starts part-way along
   // an axis (the last, narrower blocks of a lanes column phase, plan_core.cpp). Batch loops
   // never have one (transform_addresses ignores it).

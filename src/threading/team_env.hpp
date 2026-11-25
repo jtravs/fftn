@@ -28,8 +28,9 @@ namespace fftn::inline v0::detail {
 
 class team_env {
 public:
+  // args: the execution's data (exec_args: the factor cursors start at its arrays), or null.
   team_env(const plan_core& core, const void* in, void* out, std::byte* slots,
-           const wait_budget& budget) noexcept;
+           const wait_budget& budget, const exec_args* args = nullptr) noexcept;
 
   void point() const noexcept {}
 

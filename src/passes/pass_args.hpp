@@ -36,13 +36,16 @@ struct pass_args {
   std::size_t n = 1;
   // Edge operations (DESIGN.md 12.1), read by the variants that have them: the real scale,
   // rounded once to the kernel's precision, and the complex factor arrays of the line's
-  // input and output (one value per element of the line, tight). The arrays are fixed at
-  // plan construction for now; phase 5 passes them at execution (exec_args).
+  // input and output (one value per element of the line, tight). Fixed tables, or for a
+  // plan's edges the execution's arrays, which the driver sets from the factor cursors
+  // (core/program.hpp, stage::moving_factors).
   double scale = 1.0;
   const void* in_factor = nullptr;
   const void* out_factor = nullptr;
   // A grid phase's pass (src/passes/grid.inl, phase_pass): copy q of s is (q % cols, q / cols)
-  // on each side, at (q % cols) + qstride (q / cols) + stride idx; 0 for cols means s.
+  // on each side, at (q % cols) + qstride (q / cols) + stride idx; 0 for cols means s. The
+  // edge pass (core/edges.cpp) reads its factor's stride along the line, in the factor's
+  // elements, from src_qstride.
   std::size_t src_cols = 0;
   std::size_t dst_cols = 0;
   std::ptrdiff_t src_qstride = 0;
