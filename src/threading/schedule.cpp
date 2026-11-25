@@ -303,6 +303,9 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
         // and c2r, double and single (0.59-0.89 of the time in the diagnosis, run
         // 20261125-004940-024f; 2^21-2^23 0.66-0.89, run 20261125-010730-90ff).
         p.depth_real_max_bytes = p.depth_max_bytes;
+        // X75 arm B: real rows from L2/8 (half lengths of 8192 complex doubles; 18432-24576
+        // points took 0.73-0.92 of the time, 16384 tied, run 20261125-004940-024f).
+        p.depth_real_min_bytes = c.l2.size / 8;
       }
     }
   }

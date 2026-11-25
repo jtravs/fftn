@@ -703,6 +703,10 @@ TEST(Schedule, GridSizesFromCaches) {
   // And on the Xeon 6240's class, over its rows' range (X75).
   EXPECT_EQ(xeon86.depth_real_max_bytes, xeon86.depth_max_bytes);
   EXPECT_EQ(xeon86.depth_real_max_bytes, std::size_t{64} * 1024 * kib);
+  // From L2/8 there, the c2c rows' L2/4 elsewhere (X75 arm B).
+  EXPECT_EQ(xeon86.depth_real_min_bytes, std::size_t{128} * kib);
+  EXPECT_EQ(epyc86.depth_real_min_bytes, std::numeric_limits<std::size_t>::max());
+  EXPECT_EQ(m5.depth_real_min_bytes, std::numeric_limits<std::size_t>::max());
   EXPECT_EQ(m5.depth_real_max_bytes, 0U);
   EXPECT_EQ(x86("linux-gcp-c4d-zen5.sysfs").depth_real_max_bytes, 0U);
   EXPECT_EQ(x86("linux-gcp-n2-ice-lake.sysfs").depth_real_max_bytes, 0U);

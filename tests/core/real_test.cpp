@@ -427,6 +427,7 @@ TEST(Real, RulesTakeTheDepthFirstHalfLengthWhereTheProfileSays) {
   s.profile.depth_top_last = 0;
   s.profile.depth_float_max_bytes = 0;
   s.profile.depth_real_max_bytes = 0;
+  s.profile.depth_real_min_bytes = std::numeric_limits<std::size_t>::max();
   s.profile.grid_min_bytes = std::size_t{512} * 1024 / 2;
   // A top of 4 is taken on avx2 and on the 32-register targets; one of them runs anywhere the
   // suites run (the scalar target takes no depth-first chain by the rules).
@@ -459,7 +460,8 @@ TEST(Real, RulesTakeTheDepthFirstHalfLengthWhereTheProfileSays) {
 
 // The same with the Xeon 6240's depth-first fields (experiment X75; set here, not read from the
 // host): tops of 16, 20 and 10 on a target with 32 vector registers, powers of two included,
-// from L2/4, and the real rows' own limit. avx2 takes none of those tops.
+// from L2/4 or the real rows' own lower limit, to their own upper one. avx2 takes none of those
+// tops.
 TEST(Real, RulesTakeTheDepthFirstHalfLengthWithTheXeonsFields) {
   const std::size_t l2 = std::size_t{1024} * 1024;
   build_settings s;
@@ -472,6 +474,7 @@ TEST(Real, RulesTakeTheDepthFirstHalfLengthWithTheXeonsFields) {
   s.profile.depth_top_last = 10;
   s.profile.depth_float_max_bytes = 8 * l2;
   s.profile.depth_real_max_bytes = 0;
+  s.profile.depth_real_min_bytes = std::numeric_limits<std::size_t>::max();
   s.profile.grid_min_bytes = l2 / 2;
   const std::vector<fftn::isa> runnable = fftn::test::runnable_isas();
   const auto with = std::ranges::find_if(runnable, [](fftn::isa t) {
@@ -499,8 +502,19 @@ TEST(Real, RulesTakeTheDepthFirstHalfLengthWithTheXeonsFields) {
               std::string::npos)
         << describe_real(40960, r2c, *with);
   }
-  // Below L2/4 (20480's half length, 160 KiB): none.
+  // Below L2/4 (20480's half length, 160 KiB): none, unless the real rows' own lower limit
+  // (X75 arm B, L2/8) reaches it; 16384's half length is L2/8 itself, 12288's below.
   EXPECT_EQ(describe_real(20480, true, *with).find("depth-first"), std::string::npos);
+  s.profile.depth_real_min_bytes = l2 / 8;
+  for (const bool r2c : {true, false}) {
+    EXPECT_NE(describe_real(20480, r2c, *with).find("half-length complex depth-first 16 x 640"),
+              std::string::npos)
+        << describe_real(20480, r2c, *with);
+    EXPECT_NE(describe_real(16384, r2c, *with).find("half-length complex depth-first 16 x 512"),
+              std::string::npos)
+        << describe_real(16384, r2c, *with);
+    EXPECT_EQ(describe_real(12288, r2c, *with).find("depth-first"), std::string::npos);
+  }
   // avx2 takes no top of 16, 20 or 10.
   if (std::ranges::find(runnable, fftn::isa::avx2) != runnable.end()) {
     EXPECT_EQ(describe_real(40960, true, fftn::isa::avx2).find("depth-first"), std::string::npos);
