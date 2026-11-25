@@ -1,6 +1,7 @@
 # X81: Zen 2 screen of X72 and X73 (cloud screen of 2026-11-25)
 
-- **Status:** planned (rules only; the cloud run `screen-1125` has not started)
+- **Status:** done: Zen 2 keeps all three rules (X72 arm A KEEP, arm B KEEP, X73 TIE); no code
+  change
 - **Owner:** lead session, 2026-11-25 (prepared by a sub-agent)
 - **Phase / task:** 1 and 3 (the reach rule, AGENTS section 6: every family a rule reaches by
   cache key is screened)
@@ -128,4 +129,97 @@ compare FFTN's arms only.
 
 ## Results
 
+**When the rules were fixed.** The rules above were committed and pushed in c2f11e4
+(2026-11-25 09:39:49 UTC; PR 120 opened 09:40:27) before either VM was created (09:43:39 and
+09:43:52). PR 120 was **not yet merged** when the VMs started: the lead started them without
+waiting for its ASan CI check, expected to take about 80 minutes (it took 13 on that
+documents-only change). PR 120 merged at 09:53:29 with the rules' text unchanged from c2f11e4,
+before this VM's first timed run (Z1 started 09:54:26) and before any run was scored.
+
+Google Cloud Spot VM `fftn-s1125-n2d` (ID 3913590906290901796, n2d-standard-16 with one
+thread per core, us-central1-a, 09:43:39–10:19:18 UTC): AMD EPYC 7B12 (Zen 2, family 23 model
+49), 8 CPUs, two core complexes of 4 with 16 MiB of L3 each, 512 KiB of L2 and 32 KiB of L1
+per core. The VM reported the complexes itself (`zen3_like`, 16 MiB of L3 per 4 CPUs), so
+every arm planned from its own topology, no `FFTN_TOPOLOGY` recording. Ubuntu 24.04, Linux
+7.0.0-1017-gcp, GCC 14.2.0 Release, `avx2`, double, campaign binary cece1c5, hot cases,
+statistic median. Scores re-computed from the run stores by the screen's scorer (`--rule keep`;
+`--all-moved` for X73) and checked against `fbench show` of the same stores: per moved case the
+ratio rule-on ÷ rule-off with its 95 % interval; over the moved cases the per-round geometric
+mean, its median and 95 % interval. "Slower" counts moved cases whose whole interval lies above
+1 + max(band, 3 %).
+
+| Run | ID | Threads | Rounds valid | Band (A/A) | Load average median, max | Rounds under load |
+|---|---|---|---:|---:|---|---:|
+| Z0 notes | 20261125-095359-d617 | 1, pinned | 1 | (no timing) | 3.76, 4.33 | 1 of 1 |
+| Z1 x72 | 20261125-095426-d1f0 | 1, pinned | 16 | ±1.20 % (N~) | 1.06, 3.19 | 0 of 16 |
+| Z2 client batches | 20261125-100331-a9cd | 8, unpinned | 15 | ±8.02 % (M~) | 2.49, 3.52 | 0 of 15 |
+| Z3 standard batches | 20261125-101611-2ba1 | 8, unpinned | 30 | ±5.30 % (M~) | 2.11, 2.75 | 0 of 30 |
+
+**Plan checks.** Z0 (the standard catalogue's tracking tier, 61 cases): no note differs between
+N and A0 or between N and B0. Z1: A0 differs from N in exactly arm A's 26 expected cases and B0
+from N in exactly arm B's 58; no other note differs. So the rules move on Zen 2 exactly what
+they move on Zen 3 with Zen 2's topology (the plan check before the rules).
+
+**X72 arm A** (N ÷ A0, Z1; 26 moved: even real rows out of place on the half-length depth-first
+chain against the breadth-first chain or the half-length grid):
+
+| Moved cases | Count | Ratio range | Worst case [95 %] |
+|---|---:|---|---|
+| r2c rows of 18432–245760 | 11 | 0.656–0.874 | 18432: 0.874 [0.854, 0.895] |
+| c2r rows of 18432–245760 | 11 | 0.658–0.914 | 18432: 0.914 [0.901, 0.919] |
+| r2c 20480 × 21, 40960 × 6 | 2 | 0.698–0.829 | 20480 × 21: 0.829 [0.790, 0.862] |
+| c2r 20480 × 3, 40960 × 6 | 2 | 0.695–0.924 | 20480 × 3: 0.924 [0.868, 0.948] |
+| **all moved** | **26** | **geomean 0.745 [0.738, 0.751]** | slower: 0; every case faster beyond the band |
+
+**X72 arm B** (N ÷ B0, Z1; 58 moved: the four AMD `avx2` double overrides against the costs'
+sequences):
+
+| Moved cases | Count | Ratio range | Worst case [95 %] |
+|---|---:|---|---|
+| c2c 3072 (1, 4, 64 rows both directions; in place 1, 16) | 8 | 0.849–0.914 | 64 rows: 0.914 [0.896, 0.930] |
+| c2c 3200 (the same) | 8 | 0.828–0.902 | 64 rows bwd: 0.902 [0.894, 0.919] |
+| c2c 4608 (the same) | 8 | 0.899–0.974 | 64 rows bwd: 0.974 [0.928, 0.983] |
+| c2c 5120 (the same) | 8 | 0.896–0.959 | 4 rows: 0.959 [0.938, 0.968] |
+| c2c 12288, 18432, 20480, 8 × 3072, 3200 × 8 | 5 | 0.899–0.951 | 20480: 0.951 [0.940, 0.969] |
+| real 6144 × 48, × 66 (r2c, c2r) | 4 | 0.895–0.938 | r2c × 66: 0.938 [0.918, 0.949] |
+| real 6400 (× 1, r2c × 7), 9216 | 5 | 0.865–0.991 | c2r 6400: 0.991 [0.959, 1.003] |
+| real 10240 (× 1, r2c × 28, c2r × 4) | 4 | 0.921–0.977 | c2r × 4: 0.977 [0.961, 0.989] |
+| real 24576, 36864, 40960 (× 1, × 6) | 8 | 0.923–0.971 | c2r 40960 × 6: 0.971 [0.925, 0.998] |
+| **all moved** | **58** | **geomean 0.914 [0.904, 0.922]** | slower: 0; four within the band (c2r 6400, 9216, 10240 × 4, 40960 × 6), none above 1.004 at its interval's top |
+
+**X73** (A ÷ M, every case moved: anchored whole transforms against arrival-order runs):
+
+| Run | Moved cases | Count | Ratio range | Worst case [95 %] |
+|---|---|---:|---|---|
+| Z2 | c2c rows of 384 × 7372 and × 7373 (in and out of place, both directions) | 8 | 0.766–0.984 | in place bwd × 7372: 0.984 [0.835, 1.027] |
+| Z2 | c2c 750 × 4469 (the same four) | 4 | 0.787–1.004 | in place bwd: 1.004 [0.895, 1.027] |
+| Z2 | c2c 1728 × 128, 864 × 384, 10240 × 3 (bwd) | 3 | 0.907–0.978 | 10240 × 3: 0.978 [0.971, 1.032] |
+| Z2 | c2c planes 192² × 384, 384² × 750 (in place, both directions) | 4 | 0.910–0.973 | 384² × 750 bwd: 0.973 [0.894, 1.007] |
+| Z2 | real batches (864–40960 points, 3–384 rows) | 14 | 0.854–1.014 | c2r 40960 × 6: 1.014 [0.921, 1.116] |
+| Z2 | **all 33** | 33 | **geomean 0.926 [0.875, 0.958]** | slower than 1.080: 0 |
+| Z3 | c2c 8 × 4096, 64 × 256, 128 × 4096, 1024 × 256, 100 × 1024 (out of place) | 5 | 0.874–0.943 | 64 × 256: 0.943 [0.891, 0.978] |
+| Z3 | **all 5** | 5 | **geomean 0.906 [0.876, 0.939]** | slower than 1.053: 0 |
+
+Z2's band is wide (±8.02 %: eight unpinned threads on a VM); the moved cases' geometric mean
+lies below 1 by more than half of it, and no case's interval starts above 1.
+
 ## Verdict
+
+- **X72 arm A: KEEP** (Z1, 0.745 [0.738, 0.751] over the 26 real rows it moves against a
+  band of ±1.20 %, none slower). Zen 2 gains as Zen 3 did (X72: 0.761).
+- **X72 arm B: KEEP** (Z1, 0.914 [0.904, 0.922] over 58, none slower; X72 on Zen 3: 0.906).
+- **X73: TIE, stays on.** Z2: 0.926 [0.875, 0.958] against a band of ±8.02 %, a mean that misses
+  KEEP's 1 − band (0.920) by 0.006, with no case slower: TIE. Z3: 0.906 [0.876, 0.939] against
+  ±5.30 %, none slower: KEEP. By the rule (KEEP only if both give KEEP, OFF if either gives OFF)
+  X73 is TIE, and the rule stays on Zen 2 as "does not hurt". The KEEP criterion missed into TIE
+  changes nothing, so by the near-miss clause it is reported and not re-run.
+- **Moves nothing else**: Z0 and Z1's notes as expected (above). No near-miss re-run and no
+  narrowing were used.
+- **No code change.** Zen 2 keeps every rule it reaches by Zen 3's key: X72's
+  `depth_real_max_bytes`, X72's AMD `avx2` double overrides and X73's `anchored_runs`. No key for
+  Zen 2 (16 MiB of L3 per complex) is added.
+- **Reach**: by the reach rule above, the verdicts extend to other Zen 2 parts with the same
+  signal (a `zen3_like` topology with 16 MiB of L3 per core complex), within `avx2` and 16
+  registers. Not measured: single precision, 16 or more threads, pinned threads (above).
+- Spend: USD 0.25 for this VM (35.7 minutes at USD 0.417/h with disk and IP); the screen's two
+  VMs USD 0.40 ([cloud-ledger-2026-11.md](cloud-ledger-2026-11.md)).

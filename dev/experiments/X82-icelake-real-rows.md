@@ -1,6 +1,7 @@
 # X82: X75's and X78's real rows on Ice Lake-SP (cloud screen of 2026-11-25)
 
-- **Status:** planned (rules only; the cloud run `screen-1125` has not started)
+- **Status:** done: X75 and X78 adopted on X58's branch (Intel, a private L2 above 1 MiB and
+  below 2 MiB with a large L3 per CPU)
 - **Owner:** lead session, 2026-11-25 (prepared by a sub-agent)
 - **Phase / task:** 1 (the reach rule, AGENTS section 6)
 
@@ -117,4 +118,88 @@ arms only).
 
 ## Results
 
+**When the rules were fixed.** The rules above were committed and pushed in c2f11e4
+(2026-11-25 09:39:49 UTC; PR 120 opened 09:40:27) before either VM was created (09:43:39 and
+09:43:52). PR 120 was **not yet merged** when the VMs started: the lead started them without
+waiting for its ASan CI check, expected to take about 80 minutes (it took 13 on that
+documents-only change). It merged at 09:53:29 with the rules' text unchanged from c2f11e4, 48
+seconds after I1 started (09:52:41) and before any run was scored.
+
+Google Cloud Spot VM `fftn-s1125-n2` (ID 6475811611598328631, n2-standard-16 with one thread
+per core, us-central1-a, 09:43:52–10:03:07 UTC): Intel Xeon @ 2.60GHz, model 106 (Ice Lake-SP),
+8 CPUs, 48 KiB of L1, a private L2 of 1.25 MiB (1310720 bytes), 54 MiB of L3 shared by the 8
+CPUs, so X58's branch (the job checked it: `x58_branch`, `depth_max_bytes` 83886080 = 64 L2,
+neither rule set). Ubuntu 24.04, Linux 7.0.0-1017-gcp, GCC 14.2.0 Release, `avx512`, double,
+one thread pinned to CPU 2, campaign binary cece1c5, hot cases, statistic median. The arms' values
+from that L2: R `DEPTH_REAL_MAX_BYTES=83886080` (64 L2) and `DEPTH_REAL_MIN_BYTES=163841`
+(L2/8 + 1); RF adds `DEPTH_C2R_FUSED_MIN_BYTES=327680` (L2/4) and
+`DEPTH_C2R_FUSED_MAX_BYTES=20971520` (16 L2). Scores re-computed from the run store by the
+screen's scorer (`--rule adopt-mean`) and checked against `fbench show` of the same store: per
+moved case the ratio with its 95 % interval; over the moved cases the per-round geometric mean,
+its median and 95 % interval. "Slower" counts moved cases whose whole interval lies above
+1 + max(band, 3 %).
+
+| Run | ID | Cases | Rounds valid | Band (A/A) | Load average median, max | Rounds under load |
+|---|---|---:|---:|---:|---|---:|
+| I1 x75 | 20261125-095241-aafe | 48 | 12 | ±2.73 % (B~) | 1.15, 5.21 | 1 of 12 |
+| I0 notes | 20261125-100000-ffce | 197 | 1 | (no timing) | 1.00, 1.00 | 0 of 1 |
+
+**Plan checks.** I1: R differs from B in exactly the 40 expected cases (the double rows of
+24576–2^21 points, r2c and c2r, with 24576 × 4, 40960 × 6 and 65536 × 4); RF differs from R in
+exactly the 16 expected (the c2r rows of 40960–2^21 with 40960 × 6 and 65536 × 4). 16384,
+18432 and 20480 (× 1, r2c × 21, c2r × 3) keep their plans: their half lengths are not above
+L2/8 + 1. I0: B and RF differ in 8 of the standard catalogue's 197 real cases, exactly the
+expected r2c and c2r 65536 (× 1, × 2), 262144 and 2^20; nothing else.
+
+**X75** (R ÷ B; 40 moved: the half-length transform on X58's c2c depth-first chain against the
+breadth-first chain or the half-length grid):
+
+| Moved cases | Count | Ratio range | Worst case [95 %] |
+|---|---:|---|---|
+| r2c rows of 24576–2^21 | 17 | 0.560–0.889 | 24576: 0.889 [0.871, 0.905] |
+| c2r rows of 24576–2^21 | 17 | 0.683–0.958 | 65536: 0.958 [0.930, 1.010] |
+| r2c 24576 × 4, 40960 × 6, 65536 × 4 | 3 | 0.825–1.026 | 24576 × 4: 1.026 [1.005, 1.042] |
+| c2r 24576 × 4, 40960 × 6, 65536 × 4 | 3 | 0.861–0.960 | 65536 × 4: 0.960 [0.923, 0.988] |
+| **all moved** | **40** | **geomean 0.745 [0.737, 0.760]** | slower than 1.030: 0 |
+
+r2c 24576 × 4 is the one moved case above 1: 1.026 [1.005, 1.042] (fbench: "no evidence",
+within the band), not slower by the rule, whose limit its interval does not clear. c2r 65536
+(0.958) and c2r 65536 × 4 (0.960) gain least among the rows; X78 below takes them further.
+
+**X78** (RF ÷ R; 16 moved: the c2r pairing fused into the chain's first pass against the
+separate pairing pass):
+
+| Moved cases | Count | Ratio range | Worst case [95 %] |
+|---|---:|---|---|
+| c2r rows of 40960–2^21 | 14 | 0.719–0.812 | 40960: 0.812 [0.793, 0.818] |
+| c2r 40960 × 6, 65536 × 4 | 2 | 0.824–0.833 | 65536 × 4: 0.833 [0.816, 0.858] |
+| **all moved** | **16** | **geomean 0.772 [0.762, 0.782]** | slower than 1.030: 0; every case faster beyond the band |
+
+The 8 cases neither arm moves ran the same plan in the same binary and do not decide; they read
+0.977–1.013 in R ÷ B, all within the band. Both together (RF ÷ B, `fbench show`, informative):
+c2r 65536 0.724 (0.958 with X75 alone); RF's r2c rows run R's plans.
+
 ## Verdict
+
+- **X75 adopted** on X58's branch: 0.745 [0.737, 0.760] over the 40 real rows it moves, below
+  1 − band (0.973), none slower (the Xeon 6240 in X75: 0.748 over 50).
+- **X78 adopted** there (X75 being adopted): 0.772 [0.762, 0.782] over the 16 c2r rows it
+  moves, none slower (the Xeon 6240 in X78: 0.853 over 23).
+- **Moves nothing else**: I0's and I1's notes as expected (above). No near-miss re-run and no
+  narrowing were used.
+- **Code**: `set_grid_sizes`' X58 branch (`src/threading/schedule.cpp`) sets
+  `depth_real_max_bytes` = its `depth_max_bytes` (64 L2), `depth_real_min_bytes` = L2/8 + 1,
+  `depth_c2r_fused_min_bytes` = L2/4 and `depth_c2r_fused_max_bytes` = 16 L2, derived from the
+  L2: on the N2's 1.25 MiB exactly arm RF's 83886080, 163841, 327680 and 20971520, so its plans
+  are RF's here. Intel only, as the branch (DESIGN 13.5).
+- **Reached unmeasured**: the real rows of 2^22 and 2^23 points (half lengths of 32 and 64 MiB,
+  within 64 L2 = 80 MiB) take X75's route on this branch without having been timed on Ice Lake;
+  X75's run D2 measured them on the Xeon 6240 (0.66–0.89). Their c2r rows keep the separate
+  pairing pass (above 16 L2 = 20 MiB), as on the Xeon 6240. Single precision keeps its plans (no
+  depth-first chain on the branch), and threaded plans are unmeasured here (X77 measured the
+  route at the client's widths on the Xeon 6240 and Zen 3 only).
+- **Reach**: X58's branch, i.e. Intel x86-64 cores with a private L2 above 1 MiB and below 2 MiB
+  (Ice Lake-SP as N2 reports it, with a large L3 per CPU), within `avx512` and 32 registers.
+  Bare-metal Ice Lake-SP with SMT is in the Xeon 6240's class, which had both rules already.
+- Spend: USD 0.15 for this VM (19.3 minutes at USD 0.460/h with disk and IP); the screen's two
+  VMs USD 0.40 ([cloud-ledger-2026-11.md](cloud-ledger-2026-11.md)).
