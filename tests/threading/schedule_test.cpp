@@ -693,6 +693,9 @@ TEST(Schedule, GridSizesFromCaches) {
   // and the Xeon 6240's class (X79).
   EXPECT_TRUE(epyc86.anchored_runs);
   EXPECT_TRUE(xeon86.anchored_runs);
+  // Intel's cores only: an AMD core with the Xeon's caches keeps arrival order.
+  EXPECT_FALSE(
+      x86("linux-intel-xeon-gold-6240.sysfs", fftn::detail::cpu_vendor::amd).anchored_runs);
   EXPECT_TRUE(apple.anchored_runs);
   for (const auto& [file, x86_64] : {std::pair{"linux-gcp-c4a-axion.sysfs", false},
                                      std::pair{"linux-gcp-n2-ice-lake.sysfs", true},
