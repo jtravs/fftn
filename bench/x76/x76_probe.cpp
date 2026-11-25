@@ -281,20 +281,28 @@ struct lane_counters {
       ioctl(fds.front(), request, PERF_IOC_FLAG_GROUP);
     }
   }
-  [[nodiscard]] std::string per_call(std::int64_t calls) const {
-    fbench::json out;
+  // The group's enabled and running times and counts so far; empty without counters.
+  [[nodiscard]] std::vector<std::uint64_t> values() const {
     if (fds.empty()) {
-      return out.str("error", error).object();
+      return {};
     }
     std::vector<std::uint64_t> buf(3 + fds.size());
     const auto bytes = static_cast<ssize_t>(buf.size() * sizeof(std::uint64_t));
     if (read(fds.front(), buf.data(), buf.size() * sizeof(std::uint64_t)) != bytes) {
-      return out.str("error", "short read").object();
+      return {};
     }
-    const auto enabled = static_cast<double>(buf[1]);
-    out.num("running", enabled > 0 ? static_cast<double>(buf[2]) / enabled : 0.0);
+    buf.erase(buf.begin()); // the number of events
+    return buf;
+  }
+  // Counts per call from summed deltas of values() over `calls` executes.
+  [[nodiscard]] std::string per_call(const std::vector<double>& sum, double calls) const {
+    fbench::json out;
+    if (fds.empty() || sum.size() != names.size() + 2 || calls <= 0) {
+      return out.str("error", error.empty() ? "no counts" : error).object();
+    }
+    out.num("running", sum[0] > 0 ? sum[1] / sum[0] : 0.0);
     for (std::size_t i = 0; i < names.size(); ++i) {
-      out.num(names[i], static_cast<double>(buf[3 + i]) / static_cast<double>(calls));
+      out.num(names[i], sum[2 + i] / calls);
     }
     return out.object();
   }
@@ -320,7 +328,11 @@ struct lane_state {
   long nivcsw_start = 0;
   long nvcsw_end = 0;
   long nivcsw_end = 0;
+  long minflt_start = 0;
+  long minflt_end = 0;
   lane_counters pmu;
+  std::vector<std::uint64_t> last;          // pmu.values() after the previous batch
+  std::vector<std::vector<double>> batches; // per batch, the deltas of pmu.values()
 };
 
 struct lanes_job {
@@ -349,10 +361,12 @@ void lane_task(void* arg, int index) {
     l.migrations_start = nr_migrations();
     l.nvcsw_start = ru.ru_nvcsw;
     l.nivcsw_start = ru.ru_nivcsw;
+    l.minflt_start = ru.ru_minflt;
   } else if (job.what == 2) {
     l.migrations_end = nr_migrations();
     l.nvcsw_end = ru.ru_nvcsw;
     l.nivcsw_end = ru.ru_nivcsw;
+    l.minflt_end = ru.ru_minflt;
   } else if (job.what == 3) {
     l.pmu.open(*job.pmu);
   }
@@ -365,9 +379,9 @@ std::vector<int> allowed_cpus() {
   CPU_ZERO(&set);
   sched_getaffinity(0, sizeof(set), &set);
   std::vector<int> out;
-  for (int c = 0; c < CPU_SETSIZE; ++c) {
+  for (std::size_t c = 0; c < static_cast<std::size_t>(CPU_SETSIZE); ++c) {
     if (CPU_ISSET(c, &set)) {
-      out.push_back(c);
+      out.push_back(static_cast<int>(c));
     }
   }
   return out;
@@ -505,7 +519,10 @@ int run(const settings& s) {
     time_calls(calls);
   }
 
-  const std::vector<int> mine = allowed_cpus();
+  // The job's CPU set as the job script gives it: with OMP_PROC_BIND the runtime has already
+  // narrowed this thread's own mask to one CPU.
+  const char* const given = std::getenv("X76_CPUS");
+  const std::vector<int> mine = given != nullptr ? cpu_list(given) : allowed_cpus();
   std::vector<int> siblings;
   std::vector<int> socket_rest;
   {
@@ -556,6 +573,15 @@ int run(const settings& s) {
       l.pmu.control(PERF_EVENT_IOC_DISABLE);
     }
     counted += calls;
+    for (lane_state& l : lanes) {
+      std::vector<std::uint64_t> now = l.pmu.values();
+      std::vector<double> delta(now.size());
+      for (std::size_t e = 0; e < now.size(); ++e) {
+        delta[e] = static_cast<double>(now[e] - (e < l.last.size() ? l.last[e] : 0));
+      }
+      l.batches.push_back(std::move(delta));
+      l.last = std::move(now);
+    }
     ns.push_back(std::round(t / static_cast<double>(calls) * 1e10) / 10); // 0.1 ns
     if (b % s.sample_every == 0) {
       job.what = 0;
@@ -581,6 +607,9 @@ int run(const settings& s) {
   std::vector<double> first(ns.begin(), ns.begin() + std::min<std::ptrdiff_t>(7, std::ssize(ns)));
   std::ranges::sort(first);
   const double fbench_ns = first.empty() ? 0 : first[first.size() / 2];
+  std::vector<double> sorted_ns = ns;
+  std::ranges::sort(sorted_ns);
+  const double median_ns = sorted_ns.empty() ? 0 : sorted_ns[sorted_ns.size() / 2];
 
   std::string lanes_text(1, '[');
   for (const lane_state& l : lanes) {
@@ -590,9 +619,28 @@ int run(const settings& s) {
         .raw("cpus", int_list(std::vector<int>(l.cpus.begin(), l.cpus.end())))
         .integer("migrations", l.migrations_end - l.migrations_start)
         .integer("nvcsw", l.nvcsw_end - l.nvcsw_start)
-        .integer("nivcsw", l.nivcsw_end - l.nivcsw_start);
+        .integer("nivcsw", l.nivcsw_end - l.nivcsw_start)
+        .integer("minflt", l.minflt_end - l.minflt_start);
     if (!s.pmu.empty()) {
-      j.raw("pmu", l.pmu.per_call(counted));
+      // Over the typical batches (within 10 % of the median batch) and over all, so that a
+      // stall of a few batches does not hide what the usual execution counts.
+      std::vector<double> all;
+      std::vector<double> usual;
+      std::size_t usual_batches = 0;
+      for (std::size_t b = 0; b < l.batches.size(); ++b) {
+        const std::vector<double>& d = l.batches[b];
+        all.resize(d.size());
+        usual.resize(d.size());
+        const bool typical = std::abs(ns[b] - median_ns) <= 0.1 * median_ns;
+        usual_batches += typical ? 1 : 0;
+        for (std::size_t e = 0; e < d.size(); ++e) {
+          all[e] += d[e];
+          usual[e] += typical ? d[e] : 0.0;
+        }
+      }
+      j.raw("pmu",
+            l.pmu.per_call(usual, static_cast<double>(usual_batches) * static_cast<double>(calls)))
+          .raw("pmu_all", l.pmu.per_call(all, static_cast<double>(counted)));
     }
     lanes_text += (lanes_text.size() > 1 ? "," : "") + j.object();
   }
@@ -623,6 +671,7 @@ int run(const settings& s) {
       .str("load_end", load_end)
       .integer("calls", calls)
       .num("fbench_ns", fbench_ns)
+      .num("median_ns", median_ns)
       .numbers("batches_ns", ns)
       .raw("stacked", int_list(stacked))
       .raw("lanes", lanes_text);
