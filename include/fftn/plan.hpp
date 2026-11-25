@@ -69,10 +69,10 @@ public:
   /// not valid (the message names it, for example `edges.out.mul.batch_strides`): a scale
   /// that is not finite or not representable in the plan's precision (alone, or the
   /// product of the edges' scales and `options::scale`), both `options::scale` and
-  /// `edges.out.scale` other than 1, `accumulate` on the input edge, a factor whose strides
-  /// do not match the shape or whose span overflows, a complex factor on a real side, or a
-  /// factor or accumulation on a plan that does not take them yet (anything but c2c rows).
-  /// Throws `std::bad_alloc` when memory runs out.
+  /// `edges.out.scale` other than 1, `accumulate` on the input edge or on an in-place plan,
+  /// a factor whose strides do not match the shape or whose span overflows, a complex factor on a
+  /// real side, or a factor or accumulation on a plan that does not take them yet (anything but c2c
+  /// rows). Throws `std::bad_alloc` when memory runs out.
   plan(const shape<In, Out>& s, const options& opts, const plan_edges<In, Out>& edges)
       : core_(detail::make_plan_core_with_edges(detail::view_of(s), opts, detail::view_of(edges))) {
   }
@@ -107,7 +107,8 @@ public:
 
   /// `execute` with the data of this execution (fftn/edges.hpp): the factor arrays of the
   /// plan's edges. The overloads without `exec_args` execute as if given `exec_args{}`, so a
-  /// plan whose edges have factors must be executed through a twin that takes one.
+  /// plan whose edges have factors must be executed through a twin that takes one; without
+  /// the arrays it needs, it ends the program (`exec_args`).
   ///
   /// Provisional (task 5.1). Preconditions: those of `execute` and of `exec_args`.
   /// Guarantees: those of `execute`; the factor arrays are only read.
@@ -179,8 +180,8 @@ public:
     detail::execute_team(*core_, in, out, t, ws, done);
   }
 
-  /// The team `execute` with the data of this execution (fftn/edges.hpp); `done` has no
-  /// default here, since it comes before `args`.
+  /// The team `execute` with the data of this execution (fftn/edges.hpp) and an explicit
+  /// `completion`.
   ///
   /// Provisional (task 5.1). Preconditions: those of the team `execute` and of `exec_args`;
   /// every member passes the same `args` values. Guarantees: those of the team `execute`.
@@ -188,6 +189,20 @@ public:
                const exec_args& args) const noexcept {
     detail::execute_team(*core_, in, out, t, ws, done, args);
   }
+
+  /// The team `execute` with the data of this execution (fftn/edges.hpp), with
+  /// `completion::all`.
+  ///
+  /// Provisional (task 5.1). Preconditions and guarantees: those of the overload above.
+  void execute(const In* in, Out* out, const team& t, workspace& ws,
+               const exec_args& args) const noexcept {
+    detail::execute_team(*core_, in, out, t, ws, completion::all, args);
+  }
+
+  /// Deleted: it makes `execute(in, out, t, ws, {})` ambiguous, so that it fails to compile
+  /// instead of meaning `completion{}` without the execution's data. Write `exec_args{}`, or
+  /// name the `completion`.
+  void execute(const In* in, Out* out, const team& t, workspace& ws, std::nullptr_t) const = delete;
 
   /// Transforms every transform of the batch on executor `ex`: anything that can run n
   /// tasks and return when they are done (`fftn::executor`), such as `fftn::thread_pool`,

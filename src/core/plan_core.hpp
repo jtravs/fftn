@@ -198,7 +198,8 @@ public:
   // The plan's edges have factors (core/edges.hpp): their arrays come from each execution's
   // exec_args, through the factor cursors (program.hpp, stage::moving_factors).
   bool needs_args = false;
-  std::string edges_note; // describe()'s line for edges with factors or accumulation
+  std::uint8_t factor_args = 0; // which arrays: moving_in_factor, moving_out_factor
+  std::string edges_note;       // describe()'s line for edges with factors or accumulation
   // What the rows were built as (one axis only; multi-axis plans are chains): measured
   // planning enumerates the alternatives (core/candidates.cpp).
   strategy_choice built = strategy_choice::chain;

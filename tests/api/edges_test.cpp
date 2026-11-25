@@ -350,13 +350,12 @@ std::vector<edge_case> cases() {
        .out = {cplx, -1, -24},
        .accumulate = true,
        .expect = "accumulated"},
-      {.name = "in place, fused input factor, accumulated",
+      {.name = "in place, separate input factor",
        .n = 36,
        .count = 2,
-       .in = {cplx, 1, 36},
-       .accumulate = true,
+       .in = {real, 1, 36},
        .in_place = true,
-       .expect = "accumulated"},
+       .expect = "the input times a real factor in a separate pass"},
       {.name = "in place, both fused",
        .n = 128,
        .count = 2,
@@ -534,8 +533,12 @@ TEST(Edges, RefusalsNameTheField) {
   expect_refused<C, C>(rows, {}, {.in = {.accumulate = true}}, "edges.in.accumulate");
   expect_refused<C, C>(rows, {}, {.in = {.mul = {.kind = cplx, .batch_strides = {0}}}},
                        "edges.in.mul.axis_strides");
-  expect_refused<C, C>(rows, {}, {.out = {.mul = {.kind = real, .axis_strides = {1}}}},
-                       "edges.out.mul.batch_strides");
+  expect_refused<C, C>(
+      rows, {}, {.out = {.mul = {.kind = real, .axis_strides = {1}, .batch_strides = {1, 2}}}},
+      "edges.out.mul.batch_strides");
+  // Accumulation in place would add to the input (the maintainer, 2026-11-25).
+  expect_refused<C, C>(rows, {.in_place = true}, {.out = {.accumulate = true}},
+                       "edges.out.accumulate");
   expect_refused<C, C>(rows, {},
                        {.out = {.mul = {.kind = static_cast<fftn::factor_kind>(7),
                                         .axis_strides = {1},
@@ -567,6 +570,66 @@ TEST(Edges, RefusalsNameTheField) {
   // The shape's own errors come first.
   fftn::shape<C, C> empty;
   expect_refused<C, C>(empty, {}, {.in = {.mul = good}}, "shape.axes");
+}
+
+// No batch strides broadcast along every batch dimension, as strides of 0 do: the same plan
+// and the same bits.
+TEST(Edges, NoBatchStridesBroadcast) {
+  using C = std::complex<double>;
+  fftn::shape<C, C> s;
+  s.axes = {{.n = 24}};
+  s.batches = {{.count = 3}, {.count = 2}};
+  const fftn::plan<C, C> zeros(
+      s, {}, {.in = {.mul = {.kind = cplx, .axis_strides = {1}, .batch_strides = {0, 0}}}});
+  const fftn::plan<C, C> none(s, {}, {.in = {.mul = {.kind = cplx, .axis_strides = {1}}}});
+  EXPECT_EQ(zeros.describe(), none.describe());
+  fftn::test::input_source src(0xB40ADULL);
+  const cvec<double> x = src.complexes<double>(24 * 6);
+  const cvec<double> f = src.complexes<double>(24);
+  cvec<double> a(x.size());
+  cvec<double> b(x.size());
+  fftn::workspace ws(zeros);
+  zeros.execute(x.data(), a.data(), ws, {.in_factor = f.data()});
+  none.execute(x.data(), b.data(), ws, {.in_factor = f.data()});
+  EXPECT_TRUE(same_bits(a, b));
+}
+
+// `execute(in, out, team, ws, {})` must not bind: before the exec_args overload of the team
+// execute it meant `completion{}` without the execution's data, silently.
+template <class In, class Out>
+concept braces_bind_team =
+    requires(const fftn::plan<In, Out>& p, const In* in, Out* out, fftn::workspace& ws) {
+      p.execute(in, out, fftn::team{}, ws, {});
+    };
+template <class In, class Out>
+concept args_bind_team =
+    requires(const fftn::plan<In, Out>& p, const In* in, Out* out, fftn::workspace& ws) {
+      p.execute(in, out, fftn::team{}, ws, fftn::exec_args{});
+    };
+static_assert(!braces_bind_team<std::complex<double>, std::complex<double>>);
+static_assert(!braces_bind_team<float, std::complex<float>>);
+static_assert(args_bind_team<std::complex<double>, std::complex<double>>);
+
+// Executions that do not pass a factor array the plan needs end the program, in every build.
+TEST(EdgesDeathTest, MissingFactorArraysAbort) {
+  GTEST_FLAG_SET(death_test_style, "threadsafe");
+  using C = std::complex<double>;
+  const fftn::plan<C, C> p(fftn::rows_c2c<double>(32, 2, fftn::direction::forward), {},
+                           {.out = {.mul = {.kind = cplx, .axis_strides = {1}}}});
+  const fftn::plan<C, C> separate(fftn::rows_c2c<double>(32, 2, fftn::direction::forward), {},
+                                  {.in = {.mul = {.kind = real, .axis_strides = {1}}}});
+  cvec<double> x(64);
+  cvec<double> y(64);
+  fftn::workspace ws(p, 2);
+  EXPECT_DEATH(p.execute(x.data(), y.data(), ws), "without the factor arrays");
+  EXPECT_DEATH(p.execute(x.data(), y.data(), ws, {}), "without the factor arrays");
+  EXPECT_DEATH(p.execute_transforms(1, 1, x.data(), y.data(), ws), "without the factor arrays");
+  EXPECT_DEATH(separate.execute(x.data(), y.data(), ws), "without the factor arrays");
+  EXPECT_DEATH(p.execute(x.data(), y.data(), fftn::team{}, ws), "without the factor arrays");
+  // The wrong array: the input's given, the output's needed.
+  const cvec<double> f(32);
+  EXPECT_DEATH(p.execute(x.data(), y.data(), ws, {.in_factor = f.data()}),
+               "without the factor arrays");
 }
 
 // Factor strides on dimensions of one point are ignored, as the shape's are.

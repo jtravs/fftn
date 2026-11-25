@@ -22,8 +22,9 @@ struct slot_addresses {
   std::byte* b = nullptr;
   std::ptrdiff_t tw = 0; // the twiddle cursor (program.hpp), in bytes
   // The cursors of the edges' factor arrays (program.hpp): the addresses of the execution's
-  // exec_args, moved by the loops; 0 where the plan has none. Integers, so that moving one that
-  // is 0 by 0 needs no test (a null pointer takes no offset): the loops move every plan's.
+  // exec_args plus 1 (core/edges.hpp, factor_cursor), moved by the loops; 0 where the plan has
+  // none or the execution passed none. Integers, so that moving one that is 0 by 0 needs no
+  // test (a null pointer takes no offset): the loops move every plan's.
   std::uintptr_t in_factor = 0;
   std::uintptr_t out_factor = 0;
 };

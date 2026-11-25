@@ -3,6 +3,7 @@
 
 #include "core/driver.hpp"
 
+#include "core/edges.hpp"
 #include "core/program.hpp"
 #include "passes/pass_args.hpp"
 
@@ -77,10 +78,10 @@ pass_args moved_args(const stage& st, const slot_addresses& at) noexcept {
     args.twiddles = static_cast<const std::byte*>(args.twiddles) + at.tw;
   }
   if ((st.moving_factors & moving_in_factor) != 0) {
-    args.in_factor = reinterpret_cast<const void*>(at.in_factor);
+    args.in_factor = factor_address(at.in_factor);
   }
   if ((st.moving_factors & moving_out_factor) != 0) {
-    args.out_factor = reinterpret_cast<const void*>(at.out_factor);
+    args.out_factor = factor_address(at.out_factor);
   }
   return args;
 }

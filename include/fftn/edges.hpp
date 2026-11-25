@@ -34,14 +34,14 @@ enum class factor_kind : unsigned char {
 /// negative: the element for transformed coordinates (j_0, ..., j_{r-1}) of transform
 /// (b_0, ..., b_{m-1}) of the batch is at
 /// `sum_d axis_strides[d] j_d + sum_e batch_strides[e] b_e` from the address passed. A stride
-/// of 0 broadcasts the array along that dimension: `batch_strides` all 0 applies one line of
-/// factors to every transform. The strides of an axis of length 1 or a batch dimension of
-/// count 1 are ignored. The coordinates are those of the edge's side: input positions for
-/// the input edge, output bins for the output edge (for c2c, the same range).
+/// of 0 broadcasts the array along that dimension: `batch_strides` all 0, or empty, applies
+/// one line of factors to every transform. The strides of an axis of length 1 or a batch dimension
+/// of count 1 are ignored. The coordinates are those of the edge's side: input positions for the
+/// input edge, output bins for the output edge (for c2c, the same range).
 ///
 /// Preconditions, checked at plan construction (`std::invalid_argument` naming the field):
 /// with a factor, `axis_strides` has one stride per axis of the shape and `batch_strides`
-/// one per batch dimension, and the array's span in bytes fits `std::ptrdiff_t`; a complex
+/// one per batch dimension or none, and the array's span in bytes fits `std::ptrdiff_t`; a complex
 /// factor is not allowed on a real side (the input of r2c, the output of c2r).
 struct factor {
   /// The kind of the array; `factor_kind::none` (the default) means no factor, and the
@@ -49,7 +49,8 @@ struct factor {
   factor_kind kind = factor_kind::none;
   /// The array's stride along each transformed axis, in the order of `shape::axes`.
   std::vector<std::ptrdiff_t> axis_strides{};
-  /// The array's stride along each batch dimension, in the order of `shape::batches`.
+  /// The array's stride along each batch dimension, in the order of `shape::batches`; empty
+  /// broadcasts along every batch dimension, as strides of 0 do.
   std::vector<std::ptrdiff_t> batch_strides{};
 };
 
@@ -64,8 +65,9 @@ struct factor {
 /// Guarantees: the result equals the transform of the multiplied input, multiplied and
 /// added as above, within the transform's error bound plus one rounding per multiplication
 /// and addition (dev/DESIGN.md 15.5); it is not necessarily bitwise equal to the same work
-/// done by separate loops. A plan's results stay bitwise identical between serial, team
-/// and executor executions.
+/// done by separate loops. The scales of both edges and `options::scale` are applied as one
+/// product, which differs from separate multiplications only in rounding. A plan's results stay
+/// bitwise identical between serial, team and executor executions.
 template <class T> struct edge {
   /// A real factor; finite, and for `float` plans 0 or of a magnitude from the smallest
   /// positive `float` to the largest. The scales of the two edges and `options::scale` may be
@@ -73,8 +75,9 @@ template <class T> struct edge {
   double scale = 1.0;
   /// The factor array's kind and strides; its address arrives with each execution.
   factor mul{};
-  /// Output edges only (construction refuses it on the input edge): `out += result`
-  /// instead of `out = result`. In place, the output's prior values are the input's.
+  /// Output edges only: `out += result` instead of `out = result`. Construction refuses it
+  /// on the input edge and on an in-place plan (`options::in_place`), whose output's prior
+  /// values are its input.
   bool accumulate = false;
 };
 
@@ -98,7 +101,9 @@ template <class In, class Out> struct plan_edges {
 /// Preconditions at execution: a plan whose input or output edge has a factor needs that
 /// edge's array, addressing coordinate 0 (with negative strides not the lowest address),
 /// valid for every element the factor's strides reach, with any alignment of at least its
-/// element type's, and not written during the execution. The plan only reads it.
+/// element type's, and not written during the execution. The plan only reads it. An
+/// execution without an array the plan needs (null, or through an overload of `execute`
+/// that takes no `exec_args`) ends the program (`std::abort`, with a message on stderr).
 struct exec_args {
   /// The input edge's factor array (`edge::mul` of `plan_edges::in`).
   const void* in_factor = nullptr;

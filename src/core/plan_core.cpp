@@ -2163,7 +2163,10 @@ std::shared_ptr<plan_core> build_plan_core(const shape_view& s, const options& o
   }
   if (with_edges) {
     mark_cursors(c->prog, *edges);
-    c->needs_args = edges->in.kind != factor_kind::none || edges->out.kind != factor_kind::none;
+    c->factor_args =
+        static_cast<std::uint8_t>((edges->in.kind != factor_kind::none ? moving_in_factor : 0) |
+                                  (edges->out.kind != factor_kind::none ? moving_out_factor : 0));
+    c->needs_args = c->factor_args != 0;
     c->edges_note = edges_text(*edges);
   }
   std::size_t points = 1;
@@ -2251,7 +2254,7 @@ make_plan_core_with_edges(const shape_view& shape, const options& opts, const ed
   }
   std::shared_ptr<plan_core> c = build_plan_core(shape, r.opts, build_settings{}, &r.plan);
   // Wisdom records the plan under its edges, so that no plan without them matches its entry.
-  c->shape_key += edges_key(edges);
+  c->shape_key += edges_key(edges, opts.scale);
   if (opts.effort != planning::rules || opts.use != nullptr) {
     c->planning_note = "by the rules: measured planning and wisdom do not take factors or "
                        "accumulation yet (task 5.1)";
@@ -2313,7 +2316,6 @@ void execute_program(const plan_core& core, std::size_t first, std::size_t count
 void execute_core(const plan_core& core, std::size_t first, std::size_t count, const void* in,
                   void* out, const workspace& ws) noexcept {
   assert(ws.size() >= core.bytes && "fftn: workspace smaller than plan::workspace_bytes()");
-  assert(!core.needs_args && "fftn: a plan whose edges have factors executes with exec_args");
   // A serial execution leaves the workspace ready for the next team execution to set its
   // state up afresh (team_state.hpp): the scratch below overlaps that state, and a team
   // that skipped an execution must not carry its state into the next one
@@ -2364,8 +2366,8 @@ void execute_core(const plan_core& core, std::size_t first, std::size_t count, c
   slot_addresses at{
       .in = static_cast<const std::byte*>(in),
       .out = static_cast<std::byte*>(out),
-      .in_factor = reinterpret_cast<std::uintptr_t>(args.in_factor),
-      .out_factor = reinterpret_cast<std::uintptr_t>(args.out_factor),
+      .in_factor = factor_cursor(args.in_factor, (core.factor_args & moving_in_factor) != 0),
+      .out_factor = factor_cursor(args.out_factor, (core.factor_args & moving_out_factor) != 0),
   };
   if (core.bytes != 0) {
     std::byte* raw = ws.memory().data();

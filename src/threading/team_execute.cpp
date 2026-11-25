@@ -7,6 +7,7 @@
 
 #include "threading/team_execute.hpp"
 #include "core/driver.hpp"
+#include "core/edges.hpp"
 #include "core/plan_core.hpp"
 #include "core/program.hpp"
 #include "fftn/detail/core.hpp"
@@ -50,8 +51,8 @@ team_env::team_env(const plan_core& core, const void* in, void* out, std::byte* 
       io_{.in = static_cast<const std::byte*>(in), .out = static_cast<std::byte*>(out)},
       slots_(slots), budget_(budget) {
   if (args != nullptr) {
-    io_.in_factor = reinterpret_cast<std::uintptr_t>(args->in_factor);
-    io_.out_factor = reinterpret_cast<std::uintptr_t>(args->out_factor);
+    io_.in_factor = factor_cursor(args->in_factor, (core.factor_args & moving_in_factor) != 0);
+    io_.out_factor = factor_cursor(args->out_factor, (core.factor_args & moving_out_factor) != 0);
   }
 }
 
@@ -141,8 +142,6 @@ void execute_member(const plan_core& plan, const void* in, void* out, const team
                     const exec_args* args) noexcept {
   assert(t.size >= 1 && t.rank >= 0 && t.rank < t.size && t.group_size >= 0 &&
          "fftn: invalid team");
-  assert((args != nullptr || !plan.needs_args) &&
-         "fftn: a plan whose edges have factors executes with exec_args");
   if (t.size == 1) {
     if (args != nullptr) {
       execute_core(plan, 0, plan.prog.transforms, in, out, ws, *args);

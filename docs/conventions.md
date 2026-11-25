@@ -227,15 +227,17 @@ Provisional (task 5.1, `fftn/edges.hpp`). A plan may take an input edge and an o
 - **Input edge**: each input element times the edge's factor and its `scale`, then the
   transform.
 - **Output edge**: each output element times the edge's factor and its `scale`, then stored,
-  or added to the output's value with `accumulate` (output edge only; in place, the
-  output's prior values are the input's).
+  or added to the output's value with `accumulate` (output edge only, and refused on an
+  in-place plan).
 
 A factor (`factor`) is an array of real or complex values of the plan's precision, indexed
 by logical coordinates through its own strides: one per axis and one per batch dimension, in
-its own elements, any sign, 0 broadcasting along that dimension. The plan records the
+its own elements, any sign, 0 broadcasting along that dimension (no batch strides at all
+broadcast along every batch dimension). The plan records the
 factor's kind and strides; each execution passes the array's address in `exec_args`,
 through the overloads of `execute` and `execute_transforms` that take one, so one plan serves
-every array of that layout. A complex factor is refused on a real side (the input of r2c,
+every array of that layout. Executing such a plan without an array it needs (through an
+overload without `exec_args`, or with a null pointer) ends the program. A complex factor is refused on a real side (the input of r2c,
 the output of c2r). `options::scale` is a shortcut for the output edge's scale.
 
 ```cpp file=examples/edges.cpp region=edges
@@ -261,7 +263,8 @@ plan.execute(x.data(), sum.data(), ws, {.in_factor = window.data()}); // adds it
 
 Results equal the same work done by separate loops within the transform's error bound plus
 one rounding per multiplication and addition, not bit for bit: the scales are applied as
-one product, and a factor may be fused into a pass's arithmetic. The guarantees of
+one product, which differs from separate multiplications only in rounding, and a factor may
+be fused into a pass's arithmetic. The guarantees of
 "Determinism" below hold for plans with edges too.
 
 Scales are taken by every plan. Factors and accumulation are built, so far, for c2c plans of

@@ -16,6 +16,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <limits>
 #include <sstream>
 #include <stdexcept>
@@ -95,11 +96,17 @@ edge_side side_of(const shape_view& s, const edge_view& e, bool output) {
                                            " strides; the shape has " +
                                            std::to_string(s.axes.size()) + " axes");
   }
-  if (e.batch_strides.size() != s.batches.size()) {
-    reject(name + ".mul.batch_strides", "has " + std::to_string(e.batch_strides.size()) +
-                                            " strides; the shape has " +
-                                            std::to_string(s.batches.size()) + " batch dimensions");
+  // No batch strides broadcast along every batch dimension, as strides of 0 do.
+  const bool broadcast = e.batch_strides.empty();
+  if (!broadcast && e.batch_strides.size() != s.batches.size()) {
+    reject(name + ".mul.batch_strides",
+           "has " + std::to_string(e.batch_strides.size()) + " strides; the shape has " +
+               std::to_string(s.batches.size()) +
+               " batch dimensions (give one stride for each, or none to broadcast)");
   }
+  const auto batch_stride = [&](std::size_t b) -> std::ptrdiff_t {
+    return broadcast ? 0 : e.batch_strides[b];
+  };
   const std::size_t real_bytes = s.prec == precision::f64 ? sizeof(double) : sizeof(float);
   side.factor_bytes = e.kind == factor_kind::complex ? 2 * real_bytes : real_bytes;
   // The array's span in bytes, sum |stride| (extent - 1) element bytes, must fit ptrdiff_t, so
@@ -125,14 +132,14 @@ edge_side side_of(const shape_view& s, const edge_view& e, bool output) {
               name + ".mul.axis_strides[" + std::to_string(d) + "]");
   }
   for (std::size_t b = 0; b < s.batches.size(); ++b) {
-    add_reach(e.batch_strides[b], s.batches[b].count,
+    add_reach(batch_stride(b), s.batches[b].count,
               name + ".mul.batch_strides[" + std::to_string(b) + "]");
   }
   // One axis (task 5.1a): the line's stride, 0 where the line has one point.
   side.axis_stride = s.axes.size() == 1 && s.axes[0].n > 1 ? e.axis_strides[0] : 0;
   const auto bytes = static_cast<std::ptrdiff_t>(side.factor_bytes);
   for (std::size_t b = 0; b < s.batches.size(); ++b) {
-    side.batch_steps.push_back(s.batches[b].count > 1 ? e.batch_strides[b] * bytes : 0);
+    side.batch_steps.push_back(s.batches[b].count > 1 ? batch_stride(b) * bytes : 0);
   }
   return side;
 }
@@ -242,6 +249,10 @@ resolved_edges resolve_edges(const shape_view& s, const options& opts, const edg
   if (!p.any) {
     return r;
   }
+  if (p.out.accumulate && opts.in_place) {
+    reject("edges.out.accumulate", "is refused on an in-place plan, whose output's prior values "
+                                   "are its input (the maintainer, 2026-11-25)");
+  }
   if (s.kind != transform_kind::c2c || s.axes.size() != 1) {
     reject(p.out.accumulate && p.in.kind == factor_kind::none && p.out.kind == factor_kind::none
                ? "edges.out.accumulate"
@@ -319,6 +330,31 @@ stage edge_pass_stage(precision prec, const edge_side& side, bool output, std::s
   return st;
 }
 
+void contract_failure(const char* what) noexcept {
+  std::fputs(what, stderr);
+  std::fputs("\n", stderr);
+  std::abort();
+}
+
+std::uintptr_t factor_cursor(const void* array, bool needed) noexcept {
+  if (!needed) {
+    return 0;
+  }
+  if (array == nullptr) {
+    contract_failure("fftn: a plan whose edges have factors was executed without the factor "
+                     "arrays it needs (exec_args)");
+  }
+  return reinterpret_cast<std::uintptr_t>(array) + 1;
+}
+
+const void* factor_address(std::uintptr_t cursor) noexcept {
+  if ((cursor & 1U) == 0) {
+    contract_failure("fftn: a plan whose edges have factors was executed without the factor "
+                     "arrays it needs (exec_args)");
+  }
+  return reinterpret_cast<const void*>(cursor - 1);
+}
+
 std::string edges_text(const edge_plan& p) {
   const auto describe_side = [](const edge_side& side, bool output) {
     std::string t;
@@ -347,7 +383,7 @@ std::string edges_text(const edge_plan& p) {
          "and accumulation reach no other strategy, nor measured planning, yet)";
 }
 
-std::string edges_key(const edges_view& e) {
+std::string edges_key(const edges_view& e, double options_scale) {
   const auto any = [](const edge_view& v) { return v.kind != factor_kind::none || v.accumulate; };
   if (!any(e.in) && !any(e.out)) {
     return {};
@@ -366,7 +402,9 @@ std::string edges_key(const edges_view& e) {
     }
     o << (v.accumulate ? " accumulate" : "");
   };
-  o << " edges";
+  // options::scale too: the key's own scale is the part the plan fuses, which a separate pass
+  // can leave at 1 whatever options::scale is.
+  o << " edges options scale " << exact(options_scale);
   side("in", e.in);
   side("out", e.out);
   return o.str();

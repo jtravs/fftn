@@ -20,6 +20,7 @@
 #include "fftn/options.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -70,7 +71,23 @@ struct resolved_edges {
 // describe()'s line for a plan with edges.
 [[nodiscard]] std::string edges_text(const edge_plan& p);
 
-// The edges as a wisdom key adds them (core/wisdom.cpp, shape_key): empty for scales only.
-[[nodiscard]] std::string edges_key(const edges_view& e);
+// The edges and options::scale as a wisdom key adds them (core/wisdom.cpp, shape_key): empty
+// for scales only.
+[[nodiscard]] std::string edges_key(const edges_view& e, double options_scale);
+
+// The factor cursors' starting values for an execution of a plan whose edges have factors
+// (plan_core::factor_args, moving_in_factor and moving_out_factor): each array's address plus
+// 1, which the factor arrays' alignment (at least 4 bytes) leaves free, so that a cursor whose
+// low bit is clear marks an execution that did not pass the array (an overload without
+// exec_args). A needed array that is null aborts here (contract_failure).
+[[nodiscard]] std::uintptr_t factor_cursor(const void* array, bool needed) noexcept;
+
+// The address a factor cursor stands for; aborts (contract_failure) when the cursor did not
+// start from an array (factor_cursor).
+[[nodiscard]] const void* factor_address(std::uintptr_t cursor) noexcept;
+
+// Ends the program with `what` on stderr: a broken precondition that execution, which cannot
+// throw, detects.
+[[noreturn]] void contract_failure(const char* what) noexcept;
 
 } // namespace fftn::inline v0::detail
