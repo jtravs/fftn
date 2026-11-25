@@ -66,9 +66,16 @@ constexpr std::array<std::size_t, cost_radices> pass_radices{
 // cannot see the batch (X54; avx2_double_fit_overrides sees it, X57). In float
 // (avx2_float_overrides) the same campaign and rule chose 512 = 8 x 64, 640 = 32 x 20, 768 = 12 x
 // 64, 2048 = 32 x 64 and 4096 = 8 x 32 x 16 (X54 arm C).
+// 3072 = 6 x 16 x 32, 3200 = 10 x 20 x 16, 4608 = 6 x 12 x 64 and 5120 = 10 x 32 x 16 are
+// experiment X72's (EPYC 7763, AMD only): three passes with a radix of 20, 32 or 64 where the
+// costs chose four of at most 16 (or 12 x 16 x 16), on rows of 48-80 KiB, beyond the L1; the
+// half lengths of the real rows of 6144-10240 points. Over the 58 cases they moved in X72's
+// judging run (c2c rows at 1-64 rows, in place, both directions; real rows; depth-first
+// sub-rows; planes) they took 0.906 of the time, 0.81-0.99, none slower (run
+// 20261124-223906-cac2).
 // clang-format off
 // NOLINTBEGIN(readability-trailing-comma): bench/x2/fit.py writes and parses this layout
-constexpr std::array<radix_override, 42> avx2_double_overrides{{
+constexpr std::array<radix_override, 46> avx2_double_overrides{{
     {.n = 27, .radices = {3, 9, 0, 0}},
     {.n = 42, .radices = {2, 3, 7, 0}},
     {.n = 54, .radices = {2, 3, 9, 0}},
@@ -98,11 +105,15 @@ constexpr std::array<radix_override, 42> avx2_double_overrides{{
     {.n = 2000, .radices = {10, 10, 20, 0}},
     {.n = 2400, .radices = {10, 15, 16, 0}},
     {.n = 3000, .radices = {10, 15, 20, 0}},
+    {.n = 3072, .radices = {6, 16, 32, 0}},
     {.n = 3125, .radices = {5, 25, 25, 0}},
+    {.n = 3200, .radices = {10, 20, 16, 0}},
     {.n = 3600, .radices = {12, 15, 20, 0}},
     {.n = 4096, .radices = {8, 8, 8, 8}},
+    {.n = 4608, .radices = {6, 12, 64, 0}},
     {.n = 4800, .radices = {8, 12, 5, 10}},
     {.n = 5000, .radices = {10, 20, 25, 0}},
+    {.n = 5120, .radices = {10, 32, 16, 0}},
     {.n = 6000, .radices = {8, 10, 5, 15}},
     {.n = 8192, .radices = {8, 8, 16, 8}},
     {.n = 10000, .radices = {20, 20, 25, 0}},
@@ -176,11 +187,15 @@ constexpr pass_costs avx2_float{
 // ran them too, 0.913 with Clang, run 20261116-215901-e1c7) and X2's (filtered by the Xeon's
 // `avx2` campaigns).
 // clang-format off
-constexpr std::array<radix_override, 8> avx2_double_amd_only{{
+constexpr std::array<radix_override, 12> avx2_double_amd_only{{
     {.n = 500, .radices = {0, 0, 0, 0}},   // X42 arm B2: 20 x 25
     {.n = 512, .radices = {0, 0, 0, 0}},   // X30 arm P: 16 x 32
     {.n = 768, .radices = {4, 16, 12, 0}}, // X54 arm B: 12 x 64
+    {.n = 3072, .radices = {0, 0, 0, 0}},  // X72 arm B: 6 x 16 x 32
     {.n = 3125, .radices = {0, 0, 0, 0}},  // X42 arm B2
+    {.n = 3200, .radices = {0, 0, 0, 0}},  // X72 arm B: 10 x 20 x 16
+    {.n = 4608, .radices = {0, 0, 0, 0}},  // X72 arm B: 6 x 12 x 64
+    {.n = 5120, .radices = {0, 0, 0, 0}},  // X72 arm B: 10 x 32 x 16
     {.n = 5000, .radices = {0, 0, 0, 0}},  // X42 arm B3
     {.n = 10000, .radices = {0, 0, 0, 0}}, // X42 arm B2
     {.n = 15625, .radices = {0, 0, 0, 0}}, // X42 arm B2

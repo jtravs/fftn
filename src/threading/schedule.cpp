@@ -257,6 +257,12 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
       p.depth_pow2_max_bytes = 0;
       p.depth_part_bytes = c.l1d.size / 4;
       p.depth_top = 4;
+      // Experiment X72: an even real row out of place runs its half-length transform on the
+      // same depth-first chain, over the rows' whole range (half lengths of 8192-131072
+      // points), with the pairing as a separate pass: the 26 real rows it moved (18432-245760,
+      // r2c and c2r) took 0.761 of the time of the breadth-first chains and half-length grids
+      // (0.65-0.94; run 20261124-223906-cac2).
+      p.depth_real_max_bytes = p.depth_max_bytes;
     }
   }
   // Experiment X34: where those chains do not apply (Xeon 6240, 0.7 MiB of L3 per CPU), a

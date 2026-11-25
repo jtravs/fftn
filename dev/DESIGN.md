@@ -1373,7 +1373,11 @@ to 8, on `avx2`:
   (Zen 3; Zen 4 and Zen 5, 1 MiB and `avx512`, keep their plans: unmeasured), for lengths
   that are not powers of two, from L2/4 to 4 L2, power-of-two part above L1/4,
   one top of 4 (X51: 12288–122880 and 46080 0.63–0.79; tops of 16 lost 1.2–1.7 on `avx2`'s
-  16 registers; powers of two tied or lost against X32's chains).
+  16 registers; powers of two tied or lost against X32's chains). On this profile alone an even
+  real row out of place, contiguous, in double, runs its half-length transform on the same
+  chain where a c2c row of that length would be one (`machine_profile::depth_real_max_bytes`,
+  section 9.1; X72: the 26 real rows it moved, 18432–245760, took 0.761 of the chains' and
+  half-length grids' time, 0.65–0.94).
 - x86-64 with a private L2 of 2 MiB or more (X55, Granite Rapids): the Xeon 6240's fields,
   from L2/4 to 64 L2 with tops 16, 20 and 10, double only (32768–2^22 and 46080, 100000:
   0.44–0.82 of the grids' time, 0.688 over the rows it changes; 2^21 tied). Sapphire and
@@ -1622,6 +1626,13 @@ Routes, by `real_route`:
   not fused (radices ≤ 8 read the arrays directly and keep the separate pass), and not on
   `avx2` (the EPYC gained nothing; build_settings::r2c_pair_last forces it): Mac r2c rows
   0.94–0.98 of the separate route's time, Xeon `avx512` 262144 and 2²⁰ 0.94–0.97.
+- *Depth-first*: on Zen 3's class (`machine_profile::depth_real_max_bytes`, X72) an even real
+  row of one axis out of place, contiguous on both sides, whose half length the c2c rows'
+  depth-first rule takes (section 8.5) runs that half length as the depth-first chain: r2c
+  reads its reals as h complex values into the chain, whose blocks and result are in the
+  output, then pairs there in a separate pass; c2r pairs from the input into the workspace
+  block (h complex values), from which the chain's first pass reads the whole line before its
+  sub-rows run. Instead of the breadth-first chain or, from L2/2, the half-length grid.
 - *Strided*: a line with a stride other than 1 (allowed out of place) packs its reals into
   scratch and pairs at any stride, one element at a time, as before task 2.1.
 - *Full*: odd n through the full-length complex chain, as before (X6).
@@ -2555,12 +2566,12 @@ and on `avx2` a rule measured only on AMD's cores would otherwise reach Intel co
 the `avx2` rules measured only on the EPYC 7763 and keyed by the target alone apply only where
 the vendor is AMD; every other vendor, unknown included, keeps the plans `avx2` had before them
 until it is measured (the maintainer, 2026-11-24). They are X26's copies without prefetch, the
-radix overrides of X30 (512), X42 (500–25000) and X54 (768; float 512–4096), and the batch
-leaves of X53 and X62 (`planner/rules.cpp`, `profile_of`; `core/plan_core.cpp`,
+radix overrides of X30 (512), X42 (500–25000), X54 (768; float 512–4096) and X72 (3072,
+3200, 4608, 5120), and the batch leaves of X53 and X62 (`planner/rules.cpp`, `profile_of`; `core/plan_core.cpp`,
 `copies_prefetch`). Rules keyed by a cache key keep reaching what the key matches (AGENTS.md
 section 6): X57's footprint rule (accepted for other `avx2` cores with a large L3) and the Zen 3
 class's rules (X51's tops of 4, X59's fair runs, X62's Bluestein limit, X63's packed c2r
-intermediate), which an Intel core with a private L2 under 1 MiB and at least 2 MiB of L3 per
+intermediate, X72's depth-first half lengths), which an Intel core with a private L2 under 1 MiB and at least 2 MiB of L3 per
 CPU (a four-core client part, a small VM) would also match. One cache key reads the vendor:
 X63's packed c2r planes on the Xeon 6240's class (`avx512`, from the L2) apply to Intel's cores
 only, since the key also reaches Zen 4 (Zen 4c with SMT, Zen 4 VMs reporting a small L3 per
@@ -3501,6 +3512,8 @@ to change before a release.
 | 2026-11-24 | On the 2 MiB-L2 key under `avx512` in double, one-axis c2c rows of 160, 240 and 1024 take two passes (8 · 20, 12 · 20, 32 · 32) while rows and output fit the L2 (in place: rows within half of it), through X57's fit mechanism with a key-selected table (`machine_profile::fit_large_l2`; section 11.2, rule 2; X69) | X69's judging runs: 0.796 (Sapphire), 0.780 (Granite), 0.800 (Emerald) of the time over the 32 moved cases, none slower; FFTN ÷ FFTW on them 0.99–1.05 → 0.79–0.82, ÷ oneMKL 1.05 → 0.82–0.84. X64's diagnosis on Sapphire and Granite Rapids: 32 · 32 took 0.73–0.82 of 8 · 8 · 16's time at 1–16 rows of 1024, out of place and in place, and tied at 256 rows (8 MiB); 8 · 20 and 12 · 20 0.79–0.84 of the rules' time for one row. These rows fail Emerald Rapids' exit check (1.14–1.25 of FFTW or oneMKL). A table under the target alone would have reached Zen 4, Zen 5 and Ice Lake-SP VMs, which get `fit_row_bytes` from the large-L3 key, unmeasured |
 | 2026-11-24 | On the 2 MiB-L2 key (X70: Sapphire 0.858, Granite 0.860, Emerald 0.873 over the 18 moved cases, none slower) the two-pass rows of 160, 240 and 1024 keep their radices while rows and output fit four times the L2 (in place: rows within twice the L2), and out of place rows longer than a 4 KiB page within the L2 (`machine_profile::fit_long_row_bytes`, no limit elsewhere): rows of 1024 in place to 256 rows, of 160 and 240 to 1638 and 1092 rows, of 1024 out of place still 64 (section 11.2, rule 2; X70) | X69's informative arm W (every row two-pass), W ÷ O past X69's limits on Sapphire, Granite and Emerald Rapids: 1024 in place 0.82–0.88 at 2 MiB and 0.89–0.94 at 4 MiB of rows; 160 and 240 at 1024 rows (5 and 7.5 MiB of rows and output) 0.83–0.90, the gain shrinking with size, so a limit rather than none; 1024 out of place 0.95–1.01 at 4 and 8 MiB and 1.29–1.36 at 32 MiB on Sapphire. The verdict comes from X70's judging runs |
 | 2026-11-24 | Twiddle tables evaluate each reduced angle once: octant symmetry where 8 divides n, root tables of lengths n 2^k shared (sliced, or even entries copied), the grid's roots through a `root_cache` (section 8.4; experiment X71). Every entry is unchanged bit for bit, so plans, results and transform times are unchanged | Plan construction over the client catalogue's 52 shapes 0.219 (Mac), 0.221 (EPYC), 0.230 (Xeon) of its time, the standard tracking tier 0.25–0.30; worst client shape 9.3 → 2.7, 20.9 → 5.1, 26.8 → 5.7 ms; plans identical in every case. Tests check every table against the per-entry computation; a development comparison with the old generator found no differing bit over every length to 16384 and long lengths to 4194304 |
+| 2026-11-24 | On Zen 3's class (X51's key) an even real row of one axis out of place, contiguous, in double, runs its half-length transform as the depth-first chain where a c2c row of that length would be one (`machine_profile::depth_real_max_bytes`; r2c pairs after it in the output, c2r pairs into the workspace block first; sections 8.5, 9.1; X72 arm A) | X72's judging run (EPYC 7763, run 20261124-223906-cac2, band ±1.00 %): 0.761 over the 26 real rows it moves (18432–245760, r2c and c2r), none slower; the client catalogue's r2c 18432 and 20480 × 21 1.15–1.18 → 0.99–1.00 of FFTW, 40960 × 6 1.27–1.44 → 0.88–0.99. Zen 2 reached unmeasured |
+| 2026-11-24 | `avx2` double on AMD plans 3072 as 6 · 16 · 32, 3200 as 10 · 20 · 16, 4608 as 6 · 12 · 64 and 5120 as 10 · 32 · 16 (overrides; other vendors keep the costs' choice; section 13.5; X72 arm B) | X72's judging run: 0.906 over the 58 cases they move (c2c rows of those lengths at 1–64 rows, in place, both directions; the real rows of 6144–10240; depth-first sub-rows; planes), none slower; c2c 3072 and 3200 1.03–1.11 → 0.89–0.90 of FFTW, real rows of 6144 and 6400 1.02–1.09 → 0.90–0.95 |
 
 ---
 

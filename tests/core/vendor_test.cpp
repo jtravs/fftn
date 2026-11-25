@@ -101,7 +101,12 @@ TEST(VendorRules, Avx2RadicesBeforeTheAmdOnlyOverrides) {
   EXPECT_EQ(d::rule_radices(768, amd), (v{12, 64}));
   EXPECT_EQ(d::rule_radices(500, amd), (v{20, 25}));
   EXPECT_EQ(d::rule_radices(512, amd_f), (v{8, 64}));
-  const std::set<std::size_t> by_costs{500, 512, 3125, 5000, 10000, 15625, 25000};
+  EXPECT_EQ(d::rule_radices(3072, amd), (v{6, 16, 32})); // X72
+  EXPECT_EQ(d::rule_radices(3200, amd), (v{10, 20, 16}));
+  EXPECT_EQ(d::rule_radices(4608, amd), (v{6, 12, 64}));
+  EXPECT_EQ(d::rule_radices(5120, amd), (v{10, 32, 16}));
+  const std::set<std::size_t> by_costs{500,  512,  3072,  3125,  3200, 4608,
+                                       5000, 5120, 10000, 15625, 25000};
   const std::set<std::size_t> by_costs_f{512, 640, 768, 2048, 4096};
   for (const cpu_vendor vendor : others) {
     SCOPED_TRACE(d::cpu_vendor_name(vendor));
