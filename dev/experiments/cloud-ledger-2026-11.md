@@ -299,3 +299,29 @@ spent USD 15.55 of its USD 20 cap. Teardown was verified on 2026-11-24 at 22:44 
 - the firewall rule, subnet and network were then deleted after their IDs were matched;
 - the project lists only the `default` network;
 - every watchdog was stopped.
+
+## X80, 2026-11-25
+
+Rentals for [X80](X80-large-l2-limits-3.md) (no in-place limit and a higher out-of-place one for
+X69's two-pass rows), within the round's USD 1.5 (shared with the cloud screen `screen-1125`,
+X81 and X82, recorded in their own section) under the campaign's USD 20. Same project and region,
+zone us-central1-a, Spot VMs with `--max-run-duration=150m` (termination action DELETE), boot-disk
+auto-delete, and a Mac-side watchdog per VM (9300 s) that deletes by name only after matching the
+recorded ID. Prices as before, plus about USD 0.017/h per VM for disk and IP. Creation times are
+those Compute Engine recorded; deletion times are when the delete call returned. Emerald Rapids
+was created after Granite Rapids was deleted (the region's C4 quota is 24 vCPUs). Shared
+resources (free): network `fftn-x80-net` (3870384286912417297), subnet `fftn-x80-sub`
+(9222311822930677753), firewall rule `fftn-x80-ssh` (586933663735418865, SSH from the
+controller's address only).
+
+| Instance | Recorded ID | Type | Spot USD/h | Created (UTC) | Deleted (UTC) | Cost USD | Running total | Use |
+|---|---|---|---:|---|---|---:|---:|---|
+| fftn-x80-c4 | 4884124820786843591 | c4-standard-16, 1 thread per core, minimum platform Granite Rapids | 0.473 | 2026-11-25 09:58:01 | 2026-11-25 10:23:44 | 0.22 | 0.22 | X80 judging (Granite Rapids) |
+| fftn-x80-c3 | 7397978121257553882 | c3-standard-8, 1 thread per core | 0.150 | 2026-11-25 09:58:14 | 2026-11-25 10:31:47 | 0.10 | 0.32 | X80 judging (Sapphire Rapids) |
+| fftn-x80-c4e | 5901400851480250844 | c4-standard-16, 1 thread per core, minimum platform Emerald Rapids | 0.473 | 2026-11-25 10:23:47 | 2026-11-25 10:55:51 | 0.27 | 0.59 | X80 judging (Emerald Rapids) |
+
+The total is USD 0.59, an estimated gross figure; no VM was preempted and no re-run was needed.
+With the earlier experiments (USD 15.95 after `screen-1125`) the campaign has spent USD 16.54 of
+its USD 20 cap. Teardown was verified on 2026-11-25 at 10:57 UTC:
+- every instance above was deleted after its ID was matched, and its watchdog stopped;
+- the firewall rule, subnet and network were then deleted after their IDs were matched.
