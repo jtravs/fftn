@@ -11,7 +11,9 @@
 // batch, teams and an executor bitwise alike, a team program (plan_core::team) included; and
 // the executions without a factor array ending the program.
 
+#include "core/candidates.hpp"
 #include "core/plan_core.hpp"
+#include "core/wisdom_entry.hpp"
 #include "fftn/detail/core.hpp"
 #include "reference/reference_dft.hpp"
 #include "support/exact.hpp"
@@ -1172,6 +1174,100 @@ TYPED_TEST(EdgeShapes, EveryStrategyForced) {
     forced_strategies<TypeParam>(t, false);
   }
   forced_strategies<TypeParam>(fftn::isa::best, true);
+}
+
+// A stand-in for measured planning's clock (build_settings::measure_time): the first candidate
+// asked for after the rules' choice is twice as fast as every other.
+struct first_wins {
+  std::string winner;
+  std::vector<std::string> asked;
+};
+
+double first_wins_time(const std::string& choice, void* context) {
+  auto& f = *static_cast<first_wins*>(context);
+  f.asked.push_back(choice);
+  if (f.winner.empty() && choice != "rules") {
+    f.winner = choice;
+  }
+  return choice == f.winner ? 0.5 : 1.0;
+}
+
+// Measured planning and wisdom with edges (task 5.1b-3): the candidates are built with the edges
+// (a strategy forced by a candidate takes them as separate passes), the plan kept carries them
+// and computes the transform, and its wisdom entry rebuilds the same program, bit for bit,
+// for the same edges only.
+TEST(EdgeShapes, MeasuredPlanningAndWisdom) {
+  using C = std::complex<double>;
+  namespace d = fftn::detail;
+  const std::size_t n = 4096;
+  const auto shape = fftn::rows_c2c<double>(n, 2, fftn::direction::forward);
+  const auto ni = static_cast<std::ptrdiff_t>(n);
+  const fftn::plan_edges<C, C> edges{
+      .in = {.mul = {.kind = real, .axis_strides = {1}, .batch_strides = {ni}}},
+      .out = {.scale = 0.5, .mul = {.kind = cplx, .axis_strides = {-1}}, .accumulate = true}};
+  first_wins clock;
+  d::build_settings settings;
+  settings.measure_time = &first_wins_time;
+  settings.measure_context = &clock;
+  const auto core = d::make_plan_core_with_edges(
+      d::view_of(shape), {.effort = fftn::planning::measure}, d::view_of(edges), settings);
+  const std::string text = d::describe(*core);
+  ASSERT_FALSE(clock.winner.empty()) << text;
+  EXPECT_EQ(clock.asked.front(), "rules");
+  EXPECT_EQ(core->program_text.substr(0, clock.winner.size()), clock.winner) << text;
+  EXPECT_NE(text.find("planning: measured"), std::string::npos) << text;
+  EXPECT_NE(text.find("edges: the input times a real factor"), std::string::npos) << text;
+  EXPECT_TRUE(core->needs_args);
+
+  // The transform: against the rules' plan of the same edges.
+  fftn::test::input_source src(0x3EA5ULL);
+  const auto x = src.complexes<double>(2 * n);
+  const auto fin = src.reals<double>(2 * n);
+  const auto fout_storage = src.complexes<double>(n);
+  const C* fout = fout_storage.data() + (n - 1);
+  const auto init = src.complexes<double>(2 * n);
+  const fftn::exec_args args{.in_factor = fin.data(), .out_factor = fout};
+  const auto rules =
+      d::make_plan_core_with_edges(d::view_of(shape), {}, d::view_of(edges), d::build_settings{});
+  const auto run = [&](const d::plan_core& c) {
+    std::vector<C> y = init;
+    const fftn::workspace ws(d::workspace_bytes(c, 1));
+    d::execute_core(c, 0, 2, x.data(), y.data(), ws, args);
+    return y;
+  };
+  const std::vector<C> measured = run(*core);
+  std::vector<fftn::test::exact_complex> want;
+  for (const C& v : run(*rules)) {
+    want.push_back(fftn::test::exact_from(v));
+  }
+  fftn::test::outcome o;
+  o.within(fftn::test::compare<double>(std::span<const C>(measured), want),
+           fftn::test::derived_tolerance<double>(n, fftn::test::fftn_bound(n)) * 2,
+           "measured against the rules' plan");
+  EXPECT_TRUE(o.passed()) << o.detail() << text;
+
+  // Wisdom: the entry rebuilds the program with the same edges, nothing timed, bit for bit.
+  const fftn::wisdom w(d::record_text(d::record_of(*core)) + "\n");
+  first_wins unused;
+  d::build_settings again = settings;
+  again.measure_context = &unused;
+  for (const fftn::planning effort : {fftn::planning::rules, fftn::planning::measure}) {
+    const auto rebuilt = d::make_plan_core_with_edges(
+        d::view_of(shape), {.effort = effort, .use = &w}, d::view_of(edges), again);
+    EXPECT_TRUE(unused.asked.empty());
+    EXPECT_EQ(d::program_fingerprint(*rebuilt), d::program_fingerprint(*core));
+    EXPECT_NE(d::describe(*rebuilt).find("planning: from wisdom"), std::string::npos)
+        << d::describe(*rebuilt);
+    EXPECT_TRUE(run(*rebuilt) == measured);
+  }
+  // Not for the plan without edges, nor for other edges.
+  const auto plain = d::make_plan_core(d::view_of(shape), {.use = &w}, again);
+  EXPECT_EQ(d::describe(*plain).find("from wisdom"), std::string::npos);
+  fftn::plan_edges<C, C> other = edges;
+  other.in.mul.kind = cplx;
+  const auto different =
+      d::make_plan_core_with_edges(d::view_of(shape), {.use = &w}, d::view_of(other), again);
+  EXPECT_EQ(d::describe(*different).find("from wisdom"), std::string::npos);
 }
 
 // Executions without a factor array a real or multi-axis plan needs end the program, in every

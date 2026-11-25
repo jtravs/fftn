@@ -2608,6 +2608,34 @@ std::shared_ptr<const plan_core> make_plan_core(const shape_view& shape, const o
   return make_plan_core(shape, opts, build_settings{});
 }
 
+std::string shape_key_with_edges(const shape_view& shape, const options& opts,
+                                 const edges_view& edges) {
+  return shape_key(shape, opts) + edges_key(edges, opts.scale);
+}
+
+std::shared_ptr<plan_core> build_with_edges(const shape_view& shape, const options& opts,
+                                            const edges_view& edges,
+                                            const build_settings& settings) {
+  const resolved_edges r = resolve_edges(shape, opts, edges);
+  if (!r.plan.any) {
+    return build_plan_core(shape, r.opts, settings);
+  }
+  // The strategy the rules (or the settings) choose with every factor a separate pass; where
+  // that is the chain and a c2c row's factor can be fused into its passes, the chain with the
+  // fused factor (5.1a), which saves the separate pass. X65 (task 5.1f) is to weigh a fused
+  // chain against another strategy with separate passes.
+  const resolved_edges separate = resolve_edges(shape, opts, edges, false);
+  std::shared_ptr<plan_core> c = build_plan_core(shape, separate.opts, settings, &separate.plan);
+  if (any_fused(r.plan) && c->built == strategy_choice::chain) {
+    c = build_plan_core(shape, r.opts, settings, &r.plan);
+  }
+  // Wisdom records the plan under its edges, so that no plan without them matches its entry,
+  // with the caller's options (not the scale a placement fuses), so that the key does not
+  // depend on which of the two builds above was kept.
+  c->shape_key = shape_key_with_edges(shape, opts, edges);
+  return c;
+}
+
 std::shared_ptr<const plan_core> make_plan_core_with_edges(const shape_view& shape,
                                                            const options& opts,
                                                            const edges_view& edges,
@@ -2621,22 +2649,12 @@ std::shared_ptr<const plan_core> make_plan_core_with_edges(const shape_view& sha
   if (!std::isfinite(opts.measure_seconds) || opts.measure_seconds < 0) {
     reject("options.measure_seconds", "must be finite and not negative");
   }
-  // The strategy the rules choose with every factor a separate pass; where that is the chain
-  // and a c2c row's factor can be fused into its passes, the chain with the fused factor
-  // (5.1a), which saves the separate pass. X65 (task 5.1f) is to weigh a fused chain against
-  // another strategy with separate passes.
-  const resolved_edges separate = resolve_edges(shape, opts, edges, false);
-  std::shared_ptr<plan_core> c = build_plan_core(shape, separate.opts, settings, &separate.plan);
-  if (any_fused(r.plan) && c->built == strategy_choice::chain) {
-    c = build_plan_core(shape, r.opts, settings, &r.plan);
+  if (opts.use == nullptr && opts.effort == planning::rules) {
+    return build_with_edges(shape, opts, edges, settings);
   }
-  // Wisdom records the plan under its edges, so that no plan without them matches its entry.
-  c->shape_key += edges_key(edges, opts.scale);
-  if (opts.effort != planning::rules || opts.use != nullptr) {
-    c->planning_note = "by the rules: measured planning and wisdom do not take factors or "
-                       "accumulation yet (task 5.1)";
-  }
-  return c;
+  // Measured planning and wisdom with the edges: every candidate is built and timed with them
+  // (core/measure.cpp).
+  return plan_with_effort(shape, opts, settings, &edges);
 }
 
 std::shared_ptr<const plan_core>

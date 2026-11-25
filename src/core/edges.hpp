@@ -22,6 +22,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace fftn::inline v0::detail {
@@ -122,6 +123,12 @@ enum class edge_layout : std::uint8_t { row_chain, row_strategy, phases };
 // strategy the rules would choose (empty: it does not).
 [[nodiscard]] std::string edges_text(const edge_plan& p, edge_layout layout,
                                      const std::string& fallback);
+
+// The elements of a valid edge's factor array its strides reach over the shape, relative to
+// the address passed (exec_args): [lo, hi], in the array's elements; {0, 0} without a factor.
+// Measured planning times candidates on scratch arrays of this span (core/measure.cpp).
+[[nodiscard]] std::pair<std::ptrdiff_t, std::ptrdiff_t>
+factor_span(const shape_view& s, const edge_view& e, bool output);
 
 // The edges and options::scale as a wisdom key adds them (core/wisdom.cpp, shape_key): empty
 // for scales only.

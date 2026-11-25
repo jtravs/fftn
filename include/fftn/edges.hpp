@@ -83,11 +83,12 @@ template <class T> struct edge {
 
 /// The two edges of a plan (`plan::plan`): `in` for the input, `out` for the output.
 ///
-/// Implemented so far (task 5.1): scales, factors and accumulation on every plan. A plan with
-/// a factor or accumulation is built by the rules whatever `options::effort` asks, in the
-/// strategy the rules choose with a few exceptions that `plan::describe()` names. A factor
-/// is fused into a c2c row's chain where it can be; elsewhere each factor and accumulation is
-/// a pass of its own over the data, and the workspace may hold one transform (or row) more.
+/// Implemented so far (task 5.1): scales, factors and accumulation on every plan, in the
+/// strategy the rules or measured planning choose with a few exceptions that
+/// `plan::describe()` names. A factor is fused into a c2c row's chain where it can be;
+/// elsewhere each factor and accumulation is a pass of its own over the data, and the
+/// workspace may hold one transform (or row) more. A wisdom entry of a plan with edges serves
+/// plans with the same edges only.
 template <class In, class Out> struct plan_edges {
   /// The input edge.
   edge<In> in{};

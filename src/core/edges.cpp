@@ -445,6 +445,30 @@ std::string edges_text(const edge_plan& p, edge_layout layout, const std::string
   return text;
 }
 
+std::pair<std::ptrdiff_t, std::ptrdiff_t> factor_span(const shape_view& s, const edge_view& e,
+                                                      bool output) {
+  if (e.kind == factor_kind::none) {
+    return {0, 0};
+  }
+  std::ptrdiff_t lo = 0;
+  std::ptrdiff_t hi = 0;
+  // resolve_edges has bounded the span, so nothing here overflows.
+  const auto reach = [&](std::ptrdiff_t stride, std::size_t extent) {
+    if (extent > 1) {
+      const std::ptrdiff_t last = stride * static_cast<std::ptrdiff_t>(extent - 1);
+      lo += std::min<std::ptrdiff_t>(last, 0);
+      hi += std::max<std::ptrdiff_t>(last, 0);
+    }
+  };
+  for (std::size_t d = 0; d < s.axes.size(); ++d) {
+    reach(e.axis_strides[d], side_length(s, d, output));
+  }
+  for (std::size_t b = 0; b < s.batches.size() && !e.batch_strides.empty(); ++b) {
+    reach(e.batch_strides[b], s.batches[b].count);
+  }
+  return {lo, hi};
+}
+
 std::string edges_key(const edges_view& e, double options_scale) {
   const auto any = [](const edge_view& v) { return v.kind != factor_kind::none || v.accumulate; };
   if (!any(e.in) && !any(e.out)) {
