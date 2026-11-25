@@ -8,7 +8,7 @@
 // linear, so where it applies changes only the rounding). A complex factor of stride 1 along
 // the line is fused into the line's first pass (input) or last pass (output): the edge
 // variants of every pass kind (passes/pass_args.hpp, edge_op::factor), reading the array
-// through the factor cursor (program.hpp, stage::moving_factors). Everything else (a real
+// through the factor cursor (core/edge_driver.hpp, stage::moving_factors). Everything else (a real
 // factor, a complex factor of another stride, accumulation, and a scale when both factors are
 // fused) is a separate edge pass: the input's from the input into the workspace block before
 // the line's chain, the output's from the block into the output after it. Experiment X65
@@ -74,17 +74,6 @@ struct resolved_edges {
 // The edges and options::scale as a wisdom key adds them (core/wisdom.cpp, shape_key): empty
 // for scales only.
 [[nodiscard]] std::string edges_key(const edges_view& e, double options_scale);
-
-// The factor cursors' starting values for an execution of a plan whose edges have factors
-// (plan_core::factor_args, moving_in_factor and moving_out_factor): each array's address plus
-// 1, which the factor arrays' alignment (at least 4 bytes) leaves free, so that a cursor whose
-// low bit is clear marks an execution that did not pass the array (an overload without
-// exec_args). A needed array that is null aborts here (contract_failure).
-[[nodiscard]] std::uintptr_t factor_cursor(const void* array, bool needed) noexcept;
-
-// The address a factor cursor stands for; aborts (contract_failure) when the cursor did not
-// start from an array (factor_cursor).
-[[nodiscard]] const void* factor_address(std::uintptr_t cursor) noexcept;
 
 // Ends the program with `what` on stderr: a broken precondition that execution, which cannot
 // throw, detects.

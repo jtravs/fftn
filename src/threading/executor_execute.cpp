@@ -42,20 +42,20 @@ struct dispatched_team {
   const workspace* ws = nullptr;
   int size = 0;
   int group_size = 0;
-  int threads = 0;                 // the executor's width
-  const exec_args* args = nullptr; // the execution's data, or null
+  int threads = 0; // the executor's width
 };
 
 // NOLINTNEXTLINE(misc-const-correctness): the signature is fftn_task's
 void run_member(void* arg, int rank) {
   const auto& t = *static_cast<const dispatched_team*>(arg);
   execute_member(*t.core, t.in, t.out, {.rank = rank, .size = t.size, .group_size = t.group_size},
-                 *t.ws, completion::all, t.threads, t.args);
+                 *t.ws, completion::all, t.threads);
 }
 
-// Both overloads of plan::execute on an executor; args may be null.
-void execute_on_with(const plan_core& core, const void* in, void* out, const executor_ref& ex,
-                     const workspace& ws, const exec_args* args) {
+} // namespace
+
+void execute_on(const plan_core& core, const void* in, void* out, const executor_ref& ex,
+                const workspace& ws) {
   // Rule 1, decided at plan construction: a small job never asks the executor anything.
   const int width = core.runs_inline ? 1 : ex.concurrency();
   if (width > 1) {
@@ -75,7 +75,6 @@ void execute_on_with(const plan_core& core, const void* in, void* out, const exe
           .size = plan.dispatch,
           .group_size = lanes.group_size,
           .threads = width,
-          .args = args,
       };
       try {
         ex.bulk(team.size, &run_member, &team);
@@ -89,23 +88,7 @@ void execute_on_with(const plan_core& core, const void* in, void* out, const exe
       return;
     }
   }
-  if (args != nullptr) {
-    execute_core(core, 0, core.prog.transforms, in, out, ws, *args);
-  } else {
-    execute_core(core, 0, core.prog.transforms, in, out, ws);
-  }
-}
-
-} // namespace
-
-void execute_on(const plan_core& core, const void* in, void* out, const executor_ref& ex,
-                const workspace& ws) {
-  execute_on_with(core, in, out, ex, ws, nullptr);
-}
-
-void execute_on(const plan_core& core, const void* in, void* out, const executor_ref& ex,
-                const workspace& ws, const exec_args& args) {
-  execute_on_with(core, in, out, ex, ws, &args);
+  execute_core(core, 0, core.prog.transforms, in, out, ws);
 }
 
 } // namespace fftn::inline v0::detail

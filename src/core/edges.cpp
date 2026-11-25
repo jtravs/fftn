@@ -336,25 +336,6 @@ void contract_failure(const char* what) noexcept {
   std::abort();
 }
 
-std::uintptr_t factor_cursor(const void* array, bool needed) noexcept {
-  if (!needed) {
-    return 0;
-  }
-  if (array == nullptr) {
-    contract_failure("fftn: a plan whose edges have factors was executed without the factor "
-                     "arrays it needs (exec_args)");
-  }
-  return reinterpret_cast<std::uintptr_t>(array) + 1;
-}
-
-const void* factor_address(std::uintptr_t cursor) noexcept {
-  if ((cursor & 1U) == 0) {
-    contract_failure("fftn: a plan whose edges have factors was executed without the factor "
-                     "arrays it needs (exec_args)");
-  }
-  return reinterpret_cast<const void*>(cursor - 1);
-}
-
 std::string edges_text(const edge_plan& p) {
   const auto describe_side = [](const edge_side& side, bool output) {
     std::string t;

@@ -37,7 +37,7 @@ struct pass_args {
   // Edge operations (DESIGN.md 12.1), read by the variants that have them: the real scale,
   // rounded once to the kernel's precision, and the complex factor arrays of the line's
   // input and output (one value per element of the line, tight). Fixed tables, or for a
-  // plan's edges the execution's arrays, which the driver sets from the factor cursors
+  // plan's edges the execution's arrays, which the edge driver sets from the factor cursors
   // (core/program.hpp, stage::moving_factors).
   double scale = 1.0;
   const void* in_factor = nullptr;

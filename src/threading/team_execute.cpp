@@ -7,7 +7,6 @@
 
 #include "threading/team_execute.hpp"
 #include "core/driver.hpp"
-#include "core/edges.hpp"
 #include "core/plan_core.hpp"
 #include "core/program.hpp"
 #include "fftn/detail/core.hpp"
@@ -46,15 +45,10 @@ wait_budget budget_of(const schedule& s) noexcept {
 } // namespace
 
 team_env::team_env(const plan_core& core, const void* in, void* out, std::byte* slots,
-                   const wait_budget& budget, const exec_args* args) noexcept
+                   const wait_budget& budget) noexcept
     : core_(core),
       io_{.in = static_cast<const std::byte*>(in), .out = static_cast<std::byte*>(out)},
-      slots_(slots), budget_(budget) {
-  if (args != nullptr) {
-    io_.in_factor = factor_cursor(args->in_factor, (core.factor_args & moving_in_factor) != 0);
-    io_.out_factor = factor_cursor(args->out_factor, (core.factor_args & moving_out_factor) != 0);
-  }
-}
+      slots_(slots), budget_(budget) {}
 
 slot_addresses team_env::scratch(int lane) const noexcept {
   slot_addresses at = io_;
@@ -132,22 +126,12 @@ void execute_team(const plan_core& core, const void* in, void* out, const team& 
   execute_member(core, in, out, t, ws, done, 0);
 }
 
-void execute_team(const plan_core& core, const void* in, void* out, const team& t,
-                  const workspace& ws, completion done, const exec_args& args) noexcept {
-  execute_member(core, in, out, t, ws, done, 0, &args);
-}
-
 void execute_member(const plan_core& plan, const void* in, void* out, const team& t,
-                    const workspace& ws, completion done, int threads,
-                    const exec_args* args) noexcept {
+                    const workspace& ws, completion done, int threads) noexcept {
   assert(t.size >= 1 && t.rank >= 0 && t.rank < t.size && t.group_size >= 0 &&
          "fftn: invalid team");
   if (t.size == 1) {
-    if (args != nullptr) {
-      execute_core(plan, 0, plan.prog.transforms, in, out, ws, *args);
-    } else {
-      execute_core(plan, 0, plan.prog.transforms, in, out, ws);
-    }
+    execute_core(plan, 0, plan.prog.transforms, in, out, ws);
     return;
   }
   assert(ws.size() >= workspace_bytes(plan, t.size) &&
@@ -171,7 +155,7 @@ void execute_member(const plan_core& plan, const void* in, void* out, const team
     }
     const transform_range mine = owned_tasks(core.prog.transforms, t.size, t.rank);
     if (mine.count != 0) {
-      team_env(core, in, out, slots, {}, args).run_whole(mine.first, mine.count, t.rank);
+      team_env(core, in, out, slots, {}).run_whole(mine.first, mine.count, t.rank);
     }
     return;
   }
@@ -185,7 +169,7 @@ void execute_member(const plan_core& plan, const void* in, void* out, const team
       .rank = t.rank,
       .unit = team_state_unit(page),
   };
-  team_env env(core, in, out, slots, budget_of(job.plan), args);
+  team_env env(core, in, out, slots, budget_of(job.plan));
   team_engine<team_env>(job, env).run();
 }
 

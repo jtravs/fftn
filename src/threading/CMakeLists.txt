@@ -7,6 +7,7 @@
 
 target_sources(fftn PRIVATE
   cache_groups.cpp
+  edge_execute.cpp
   executor_execute.cpp
   schedule.cpp
   team_execute.cpp

@@ -10,6 +10,8 @@
 
 #include "core/candidates.hpp"
 #include "core/driver.hpp"
+#include "core/edge_driver.hpp"
+#include "core/edges.hpp"
 #include "core/program.hpp"
 #include "core/wisdom_entry.hpp"
 #include "fftn/detail/core.hpp"
@@ -2003,31 +2005,41 @@ const std::array<unsigned char, 2> factor_tags{};
 const void* const in_factor_tag = factor_tags.data();
 const void* const out_factor_tag = factor_tags.data() + 1;
 
-// The stages of a plan with edges that read a factor through its cursor: those built with a
-// tag (build_plan_core) and the separate edge passes (which edge_pass_stage marks). The batch
+// The edge driver's records of a plan with edges (core/edge_driver.hpp): the stages that read a
+// factor through its cursor, those built with a tag (build_plan_core) and the separate edge
+// passes (which edge_pass_stage marks), keep their kernels there and carry guards; the batch
 // loops move the cursors by the factors' batch strides.
-void mark_cursors(program& p, const edge_plan& edges) {
-  for (record& r : p.records) {
-    if (stage* st = std::get_if<stage>(&r)) {
-      if (st->args.in_factor == in_factor_tag) {
-        st->args.in_factor = nullptr;
-        st->moving_factors |= moving_in_factor;
-      }
-      if (st->args.out_factor == out_factor_tag) {
-        st->args.out_factor = nullptr;
-        st->moving_factors |= moving_out_factor;
-      }
+std::vector<edge_record> mark_cursors(program& p, const edge_plan& edges) {
+  std::vector<edge_record> e(p.records.size());
+  for (std::size_t i = 0; i < p.records.size(); ++i) {
+    stage* st = std::get_if<stage>(&p.records[i]);
+    if (st == nullptr) {
+      continue;
+    }
+    if (st->args.in_factor == in_factor_tag) {
+      st->args.in_factor = nullptr;
+      st->moving_factors |= moving_in_factor;
+    }
+    if (st->args.out_factor == out_factor_tag) {
+      st->args.out_factor = nullptr;
+      st->moving_factors |= moving_out_factor;
+    }
+    if (st->moving_factors != 0) {
+      e[i].run = st->run;
+      e[i].leaf = st->leaf;
+      st->run = st->run != nullptr ? &factor_guard_pass : nullptr;
+      st->leaf = st->leaf != nullptr ? &factor_guard_leaf : nullptr;
     }
   }
   for (std::size_t b = 0; b < p.batch_loops; ++b) {
-    loop& l = std::get<loop>(p.records[b]);
     if (edges.in.kind != factor_kind::none) {
-      l.step[4] = edges.in.batch_steps.at(b);
+      e[b].factor_step[0] = edges.in.batch_steps.at(b);
     }
     if (edges.out.kind != factor_kind::none) {
-      l.step[5] = edges.out.batch_steps.at(b);
+      e[b].factor_step[1] = edges.out.batch_steps.at(b);
     }
   }
+  return e;
 }
 
 const char* kind_name(transform_kind k) {
@@ -2162,7 +2174,7 @@ std::shared_ptr<plan_core> build_plan_core(const shape_view& s, const options& o
     build<float>(*c, s, in, out, opts, settings, with_edges ? edges : nullptr);
   }
   if (with_edges) {
-    mark_cursors(c->prog, *edges);
+    c->edge_records = mark_cursors(c->prog, *edges);
     c->factor_args =
         static_cast<std::uint8_t>((edges->in.kind != factor_kind::none ? moving_in_factor : 0) |
                                   (edges->out.kind != factor_kind::none ? moving_out_factor : 0));
@@ -2348,9 +2360,9 @@ void execute_core(const plan_core& core, std::size_t first, std::size_t count, c
     execute_core(core, first, count, in, out, ws);
     return;
   }
-  // A plan whose edges have factors: its program is neither flat nor leaf rows (mark_flat),
-  // so it runs through run_transforms, with the factor cursors starting at the arrays. The
-  // entry path of other plans above is left as it was (X28, X37).
+  // A plan whose edges have factors runs on the edge driver (core/edge_driver.hpp), with the
+  // factor cursors starting at the arrays. The entry path of other plans above is left as it
+  // was (X28, X37).
   assert(ws.size() >= core.bytes && "fftn: workspace smaller than plan::workspace_bytes()");
   assert(first <= core.prog.transforms && count <= core.prog.transforms - first &&
          "fftn: execute_transforms beyond the batch");
@@ -2363,11 +2375,10 @@ void execute_core(const plan_core& core, std::size_t first, std::size_t count, c
   if (count == 0) {
     return;
   }
+  const factor_cursors cursors = cursors_of(args, core.factor_args);
   slot_addresses at{
       .in = static_cast<const std::byte*>(in),
       .out = static_cast<std::byte*>(out),
-      .in_factor = factor_cursor(args.in_factor, (core.factor_args & moving_in_factor) != 0),
-      .out_factor = factor_cursor(args.out_factor, (core.factor_args & moving_out_factor) != 0),
   };
   if (core.bytes != 0) {
     std::byte* raw = ws.memory().data();
@@ -2377,7 +2388,7 @@ void execute_core(const plan_core& core, std::size_t first, std::size_t count, c
     at.b = base + core.offset_b;
     at.block = core.block_elements != 0 ? base + core.offset_block : nullptr;
   }
-  run_transforms(core.prog, first, count, at);
+  run_edge_transforms(core.prog, core.edge_records, first, count, at, cursors);
 }
 
 void execute_all(const plan_core& core, const void* in, void* out, const workspace& ws,
@@ -2459,9 +2470,7 @@ std::string describe(const plan_core& core) {
         o << indent << "loop " << (l->kind == loop_kind::batch ? "batch" : "lines") << " x"
           << l->count << " (steps in bytes: in " << l->step[0] << ", out " << l->step[1]
           << ", block " << l->step[2]
-          << (l->step[3] != 0 ? ", twiddles " + std::to_string(l->step[3]) : "")
-          << (l->step[4] != 0 ? ", input factor " + std::to_string(l->step[4]) : "")
-          << (l->step[5] != 0 ? ", output factor " + std::to_string(l->step[5]) : "") << ")";
+          << (l->step[3] != 0 ? ", twiddles " + std::to_string(l->step[3]) : "") << ")";
         if (l->start != std::array<std::ptrdiff_t, moving_slots>{}) {
           o << " from (in " << l->start[0] << ", out " << l->start[1] << ", block " << l->start[2]
             << ")";

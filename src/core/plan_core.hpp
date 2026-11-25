@@ -5,6 +5,7 @@
 // layout, the program, the tables it points into, and the workspace layout.
 #pragma once
 
+#include "core/edge_driver.hpp"
 #include "core/edges.hpp"
 #include "core/program.hpp"
 #include "fftn/detail/core.hpp"
@@ -195,11 +196,6 @@ public:
   std::vector<std::string> axis_notes; // one line per axis for describe()
   bool radices_forced = false;         // build_settings.radices was given (describe says so)
   std::string strategy_note;           // describe()'s strategy line
-  // The plan's edges have factors (core/edges.hpp): their arrays come from each execution's
-  // exec_args, through the factor cursors (program.hpp, stage::moving_factors).
-  bool needs_args = false;
-  std::uint8_t factor_args = 0; // which arrays: moving_in_factor, moving_out_factor
-  std::string edges_note;       // describe()'s line for edges with factors or accumulation
   // What the rows were built as (one axis only; multi-axis plans are chains): measured
   // planning enumerates the alternatives (core/candidates.cpp).
   strategy_choice built = strategy_choice::chain;
@@ -244,6 +240,14 @@ public:
   // (each column is a lane computing its own chain), so serial and team executions give the
   // same bits. A whole core, with its own program, work graph, tables and scratch layout.
   std::shared_ptr<const plan_core> team;
+
+  // Plans with edges (core/edges.hpp), last so that every member above keeps its place: when
+  // the edges have factors, their arrays come from each execution's exec_args and the plan
+  // runs on the edge driver (core/edge_driver.hpp) with these records, one per program record.
+  bool needs_args = false;
+  std::uint8_t factor_args = 0; // which arrays: moving_in_factor, moving_out_factor
+  std::vector<edge_record> edge_records;
+  std::string edges_note; // describe()'s line for edges with factors or accumulation
 };
 
 // The core a team of two or more members runs: the team program where there is one.

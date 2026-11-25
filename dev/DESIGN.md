@@ -2230,13 +2230,16 @@ takes the edges and every execute overload has its `exec_args` twin (the team on
 compile). Scales are taken by every plan: both edges' and `options::scale` are one product,
 applied once, which differs from separate multiplications only in rounding. An empty
 `batch_strides` broadcasts along every batch dimension; accumulation is refused in place; an
-execution without a factor array the plan needs aborts in every build (the cursors start at
-the array's address plus 1, so the driver's factor stages see a missing one at no cost to plans
-without edges). Factors and accumulation are
+execution without a factor array the plan needs aborts in every build. A plan whose edges have
+factors runs on a driver of its own (`core/edge_driver.hpp`), which moves the factor cursors;
+its factor stages carry guards for the ordinary driver, so that an overload without
+`exec_args` aborts, and every other plan runs on the ordinary driver compiled exactly as before
+(one driver for both cost plans without edges 2–6 % on the EPYC 7763). Factors and accumulation
+are
 built for c2c rows only and refused elsewhere. A complex factor of stride 1 along the row is the
 `factor` edge variant of the row's first or last pass (task 1.2 built them for every pass kind),
 reading the execution's array through a factor cursor that the batch loops move by the factor's
-batch strides (`stage::moving_factors`); a real factor, any other stride, accumulation, and a
+batch strides (`stage::moving_factors`, the edge driver's records); a real factor, any other stride, accumulation, and a
 scale beside two fused factors are a separate edge pass through the workspace block, before or
 after the row's chain. Such a plan is a chain built by the rules whatever the strategy and the
 effort would otherwise be (the lanes refuse input edge operations, grid and depth-first chains
@@ -3637,7 +3640,7 @@ to change before a release.
 | 2026-11-25 | Whole transforms anchored to members on the Xeon 6240's class too (Intel's cores, X61's key; `machine_profile::anchored_runs`, section 13.3; X79 on X74's rules) | The maintainer's decision ("Whole class"), offered teams of at most 8 lanes or the whole class: on the fixed layout the client catalogue 0.942 at 16 threads (deciding run 20261125-100316-666c) and 0.961 at 8 (20261125-091612-31a5), the standard batches 0.563 and 0.688; X74's 864 × 384 loss gone (0.740); the in-place batch 750 × 4469 1.020 at 16 threads, past the band of ±1 %, accepted |
 | 2026-11-25 | Section 1.3's client-catalogue row judges each case by the standard catalogues' per-case test at 1.05 beyond noise (a case fails when the whole bootstrap interval of its time ÷ the provider's lies above 1.05 × (1 + the run's A/A band)); it read "no case above 1.02", a plain ratio with no allowance for noise | The maintainer, 2026-11-25: "That tail check seems overly strict (I thought it was 1.05 and accounted for noise)." The 2026-11-24 client check judged by 1.02 is to be re-scored under this rule |
 | 2026-11-25 | Plan edges public and provisional (task 5.1a, section 12.1): the API block of section 12 without callbacks and stored runs; scales on every plan as one product; factors and accumulation on c2c rows, a complex factor of stride 1 fused into the row's first or last pass through an execution-time factor cursor, everything else a separate edge pass through the workspace block; such plans are chains planned by the rules | Correctness and API shape first, as the maintainer's agreed design orders (5.1); which separate passes pay as fused variants, and the cost of forcing the chain, are X65's (5.1f). A separate pass needs no new kernel variants on any target, so every combination of the vocabulary is built at once |
-| 2026-11-25 | Plan edges' API points (task 5.1a, PR 128): the team `execute` with `exec_args` also without a `completion` (`completion::all`), and `execute(in, out, team, ws, {})` refused at compile time; accumulation refused on in-place plans; an empty `batch_strides` broadcasts along every batch dimension; an execution without a factor array the plan needs aborts in every build, at no cost to plans without edges; default member initialisers kept; the scales applied as one product, which differs from separate multiplications only in rounding | The maintainer, on the six questions of PR 128: "Yes, as recommended". A second reader found that `execute(in, out, team, ws, {})` bound silently to `completion{}`, and that a Release execution without the factor array read address 0 (or, with a large stride, mapped memory) |
+| 2026-11-25 | Plan edges' API points (task 5.1a, PR 128): the team `execute` with `exec_args` also without a `completion` (`completion::all`), and `execute(in, out, team, ws, {})` refused at compile time; accumulation refused on in-place plans; an empty `batch_strides` broadcasts along every batch dimension; an execution without a factor array the plan needs aborts in every build; plans with factor edges run on a driver of their own, so that the others run exactly as before (a regression check on the EPYC 7763 found plans without edges 2–6 % slower when one driver moved the cursors for every plan); default member initialisers kept; the scales applied as one product, which differs from separate multiplications only in rounding | The maintainer, on the six questions of PR 128: "Yes, as recommended". A second reader found that `execute(in, out, team, ws, {})` bound silently to `completion{}`, and that a Release execution without the factor array read address 0 (or, with a large stride, mapped memory) |
 
 ---
 

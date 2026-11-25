@@ -14,9 +14,7 @@ namespace fftn::inline v0::detail {
 
 // The team overload of plan::execute, with the threads of the runtime the team runs on
 // (lane_map::threads; 0: as many as the team has members).
-// args: the execution's data (exec_args), or null for none.
 void execute_member(const plan_core& plan, const void* in, void* out, const team& t,
-                    const workspace& ws, completion done, int threads,
-                    const exec_args* args = nullptr) noexcept;
+                    const workspace& ws, completion done, int threads) noexcept;
 
 } // namespace fftn::inline v0::detail
