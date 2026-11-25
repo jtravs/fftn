@@ -15,6 +15,8 @@
 #include "core/plan_core.hpp"
 #include "core/wisdom_entry.hpp"
 #include "fftn/detail/core.hpp"
+#include "isa/kernel_table.hpp"
+#include "planner/rules.hpp"
 #include "reference/reference_dft.hpp"
 #include "support/exact.hpp"
 #include "support/fftn_subject.hpp"
@@ -90,6 +92,9 @@ struct shape_case {
   std::size_t outer = 1;
   std::ptrdiff_t outer_gap = 0;
   std::ptrdiff_t stride = 1;
+  // Out of place, the input's strides and distances times in_stride as well (only the input
+  // strided).
+  std::ptrdiff_t in_stride = 1;
 };
 
 std::size_t transforms(const shape_case& c) { return c.count * c.outer; }
@@ -365,11 +370,12 @@ template <class T> struct shape_run {
       lout = c.in_place ? lin : tight_layout(out_dims, c.count, c.gap);
       if (!c.in_place) {
         for (layout* l : {&lin, &lout}) {
+          const std::ptrdiff_t times = c.stride * (l == &lin ? c.in_stride : 1);
           for (std::ptrdiff_t& st : l->stride) {
-            st *= c.stride;
+            st *= times;
           }
-          l->dist *= c.stride;
-          l->span *= static_cast<std::size_t>(c.stride);
+          l->dist *= times;
+          l->span *= static_cast<std::size_t>(times);
         }
       }
     }
@@ -1469,23 +1475,61 @@ TYPED_TEST(EdgeShapes, DescribeNamesTheStrategyAnEdgeForces) {
        "each axis in turn, the intermediate packed in the output",
        "an edge phase takes no intermediate packed in the output"},
   };
-  const std::vector<forced_line> some_targets{
-      {{.name = "batch leaves, real factor",
-        .kind = c2c,
-        .dims = {8},
-        .count = 16,
-        .in = {real, {}, 1}},
-       leaves,
-       "the chain on batch leaves",
-       "batch leaves, one row at a time between the edge passes"},
-      {{.name = "batch leaves, fused complex factor",
-        .kind = c2c,
-        .dims = {16},
-        .count = 16,
-        .out = {cplx, {}, 1}},
-       leaves,
-       "the chain on batch leaves",
-       "the chain with a fused factor takes no batch leaves"},
+  // These take batch leaves, which only some targets' precisions have (and the last one also
+  // the rules' lanes over rows, x86 in float): each must hold on every target whose tables say
+  // it can, so that none goes untested where it applies.
+  d::build_settings chain_leaves = leaves;
+  chain_leaves.strategy = d::strategy_choice::chain;
+  struct batch_line {
+    forced_line f;
+    bool rules_lanes; // the plain plan is the rules' lanes over rows
+  };
+  const std::vector<batch_line> batch_targets{
+      {{{.name = "batch leaves, real factor",
+         .kind = c2c,
+         .dims = {8},
+         .count = 16,
+         .in = {real, {}, 1}},
+        leaves,
+        "the chain on batch leaves",
+        "batch leaves, one row at a time between the edge passes"},
+       false},
+      {{{.name = "batch leaves, fused complex factor",
+         .kind = c2c,
+         .dims = {16},
+         .count = 16,
+         .out = {cplx, {}, 1}},
+        leaves,
+        "the chain on batch leaves",
+        "the chain with a fused factor takes no batch leaves"},
+       false},
+      // The input strided, the output not: the input edge's pass moves the rows into the
+      // output, where batch leaves are found that the plain plan's strided rows cannot take.
+      // The move is the cause, not batch leaves (which the plain plan does not have).
+      {{{.name = "strided input, batch leaves after the input edge's pass",
+         .kind = c2c,
+         .dims = {8},
+         .count = 16,
+         .in = {real, {}, 1},
+         .in_stride = 2},
+        chain_leaves,
+        "the chain",
+        "the input edge's pass leaves the rows in the output, where the strategy is chosen in "
+        "place"},
+       false},
+      // Likewise with a fused input factor: the separate passes' plan is then the chain on
+      // batch leaves, so the plan is the fused chain, which has no input pass.
+      {{{.name = "strided input, lanes, fused input factor",
+         .kind = c2c,
+         .dims = {16},
+         .count = 16,
+         .in = {cplx, {}, 1},
+         .in_stride = 2},
+        leaves,
+        "the lanes over rows",
+        "the strategy is chosen for the rows where an input edge's pass would leave them, the "
+        "chain, which takes the factor fused instead"},
+       true},
   };
   const auto holds = [](const forced_line& f, fftn::isa t) {
     switch (f.c.kind) {
@@ -1503,8 +1547,18 @@ TYPED_TEST(EdgeShapes, DescribeNamesTheStrategyAnEdgeForces) {
       EXPECT_TRUE(holds(f, t)) << f.c.name << ", " << fftn::isa_name(t)
                                << ": the plain plan takes another strategy";
     }
-    for (const forced_line& f : some_targets) {
-      static_cast<void>(holds(f, t));
+    const auto target = static_cast<d::target>(static_cast<unsigned char>(t));
+    for (const batch_line& b : batch_targets) {
+      // The target's own batch leaves of the row's length in this precision (batch_leaves_of).
+      const std::size_t n = b.f.c.dims[0];
+      const d::batch_leaf_table* table = d::find_batch_leaves(target, n);
+      const std::size_t lanes = table != nullptr ? d::of<T>(*table).lanes : 1;
+      const bool applies =
+          lanes > 1 && (!b.rules_lanes || n <= d::profile_of(target, lanes).lanes_up_to);
+      if (applies) {
+        EXPECT_TRUE(holds(b.f, t))
+            << b.f.c.name << ", " << fftn::isa_name(t) << ": the plain plan takes another strategy";
+      }
     }
   }
 }

@@ -289,11 +289,17 @@ make_plan_core_with_edges(const shape_view& shape, const options& opts, const ed
 // The plan of `shape` with `edges` (validated by resolve_edges), as the settings describe,
 // ignoring options::effort and options::use: the strategy with separate passes, or the chain
 // with a fused factor where that strategy is the chain (core/edges.hpp); keyed for wisdom by
-// shape_key_with_edges.
-[[nodiscard]] std::shared_ptr<plan_core> build_with_edges(const shape_view& shape,
-                                                          const options& opts,
-                                                          const edges_view& edges,
-                                                          const build_settings& settings);
+// shape_key_with_edges. name_forced: name_forced_strategy too (measured planning names only
+// the plan it keeps, so that each candidate costs one build).
+[[nodiscard]] std::shared_ptr<plan_core>
+build_with_edges(const shape_view& shape, const options& opts, const edges_view& edges,
+                 const build_settings& settings, bool name_forced = true);
+
+// Adds describe()'s line naming the strategy the plan without `edges` takes, where `c`, built
+// by build_with_edges with the same arguments, takes another, and why (task 5.1c). It builds
+// that plan, without a team core.
+void name_forced_strategy(plan_core& c, const shape_view& shape, const options& opts,
+                          const edges_view& edges, const build_settings& settings);
 
 // The wisdom key of a plan with edges whose factors or accumulation are not scales only.
 [[nodiscard]] std::string shape_key_with_edges(const shape_view& shape, const options& opts,

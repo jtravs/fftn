@@ -51,6 +51,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <type_traits>
 #include <utility>
@@ -1160,6 +1161,20 @@ void retarget_input(std::vector<record>& records, std::size_t first, slot to) {
   }
 }
 
+// The strategies (plan_core::strategy_name) and reasons (plan_core::edge_fallback) that
+// build_with_edges and name_forced_strategy compare across builds (task 5.1c).
+constexpr std::string_view batch_leaves_name = "the chain on batch leaves";
+constexpr std::string_view batch_one_row_name = "the chain, its batch leaves one row at a time";
+constexpr std::string_view c2c_input_pass_reason =
+    "the input edge's pass leaves the rows in the output, where the strategy is chosen in place";
+// A fused chain's in place of c2c_input_pass_reason: the separate passes' plan chose the chain
+// for the rows in the output, and the fused chain, which has no input pass, takes over.
+constexpr std::string_view c2c_fused_input_reason =
+    "the strategy is chosen for the rows where an input edge's pass would leave them, the "
+    "chain, which takes the factor fused instead";
+constexpr std::string_view batch_one_row_reason =
+    "batch leaves, one row at a time between the edge passes";
+
 template <class T>
 void build(plan_core& c, const shape_view& s, const side& in, const side& out, const options& opts,
            const build_settings& settings, const edge_plan* edge_ops,
@@ -1406,8 +1421,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     // Said only where the strategy then differs from the plan's without the edges, and
     // replaced by a reason below that names a strategy the input edge rules out.
     edge_fallback = s.kind == transform_kind::c2c
-                        ? "the input edge's pass leaves the rows in the output, where the "
-                          "strategy is chosen in place"
+                        ? std::string(c2c_input_pass_reason)
                         : "the input edge's pass leaves the rows in the workspace block, where "
                           "the strategy is chosen for contiguous rows";
     if (s.kind == transform_kind::c2c) {
@@ -1580,9 +1594,13 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
                     !bluestein_tops.empty() || real_grid.phases != 0 || !real_depth_tops.empty());
   const bool use_edge_phases = edge_phases && !row_strategy && adjacent == 0;
   // Batch leaves take a batch of rows in one call of the leaf (driver.hpp, run_leaf_rows),
-  // which separate edge passes between the rows break up: each row's leaf runs alone.
-  if (row_edges && !row_strategy && batch != nullptr && s.kind == transform_kind::c2c) {
-    edge_fallback = "batch leaves, one row at a time between the edge passes";
+  // which separate edge passes between the rows break up: each row's leaf runs alone. Not
+  // over a reason already given: where the input edge's pass has moved the rows (above), the
+  // plan without the edges may have no batch leaves at all, and the move is the cause;
+  // name_forced_strategy gives this reason where that plan has them.
+  if (row_edges && !row_strategy && batch != nullptr && s.kind == transform_kind::c2c &&
+      edge_fallback.empty()) {
+    edge_fallback = batch_one_row_reason;
   }
   const bool accumulate = edge_ops != nullptr && edge_ops->out.accumulate;
   // The output's prior values for accumulation into a row's strategy, which writes the output:
@@ -2340,8 +2358,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
                  : "each axis in turn";
     }
     if (batch != nullptr && s.kind == transform_kind::c2c) {
-      return row_edges ? "the chain, its batch leaves one row at a time"
-                       : "the chain on batch leaves";
+      return std::string(row_edges ? batch_one_row_name : batch_leaves_name);
     }
     return "the chain";
   }();
@@ -2482,10 +2499,11 @@ const char* slot_name(slot s) {
   return "block";
 }
 
-} // namespace
-
-std::shared_ptr<plan_core> build_plan_core(const shape_view& s, const options& opts,
-                                           const build_settings& given, const edge_plan* edges) {
+// build_plan_core, with its team core where `team_core`: name_forced_strategy's plan without
+// the edges goes without, its strategy being all it is built for.
+std::shared_ptr<plan_core> build_core(const shape_view& s, const options& opts,
+                                      const build_settings& given, const edge_plan* edges,
+                                      bool team_core) {
   // A plan whose edges have a factor fused into a c2c row's passes (core/edges.hpp,
   // resolve_edges) is a chain whatever the rules or a test would choose: the fused factor goes
   // through the settings' factor fields, which every other strategy's rule refuses, as a tag
@@ -2639,7 +2657,7 @@ std::shared_ptr<plan_core> build_plan_core(const shape_view& s, const options& o
   // blocks or (X43b arm VT) a volume's order.
   // X43b arm VT: a team core also where only a volume's order would differ.
   const bool team_order = r == 3 && settings.profile.team_volume_planes;
-  if (s.kind == transform_kind::c2c &&
+  if (team_core && s.kind == transform_kind::c2c &&
       ((r > 1 && (settings.profile.column_team_bytes != 0 || team_order ||
                   settings.profile.column_wide_bytes != 0)) ||
        c->adjacent_team_chain) &&
@@ -2655,6 +2673,13 @@ std::shared_ptr<plan_core> build_plan_core(const shape_view& s, const options& o
     }
   }
   return c;
+}
+
+} // namespace
+
+std::shared_ptr<plan_core> build_plan_core(const shape_view& s, const options& opts,
+                                           const build_settings& given, const edge_plan* edges) {
+  return build_core(s, opts, given, edges, true);
 }
 
 std::shared_ptr<const plan_core> make_plan_core(const shape_view& shape, const options& opts,
@@ -2680,8 +2705,8 @@ std::string shape_key_with_edges(const shape_view& shape, const options& opts,
 }
 
 std::shared_ptr<plan_core> build_with_edges(const shape_view& shape, const options& opts,
-                                            const edges_view& edges,
-                                            const build_settings& settings) {
+                                            const edges_view& edges, const build_settings& settings,
+                                            bool name_forced) {
   const resolved_edges r = resolve_edges(shape, opts, edges);
   if (!r.plan.any) {
     return build_plan_core(shape, r.opts, settings);
@@ -2692,29 +2717,52 @@ std::shared_ptr<plan_core> build_with_edges(const shape_view& shape, const optio
   // chain against another strategy with separate passes.
   const resolved_edges separate = resolve_edges(shape, opts, edges, false);
   std::shared_ptr<plan_core> c = build_plan_core(shape, separate.opts, settings, &separate.plan);
-  std::string fallback = c->edge_fallback;
-  // The plan without the edges (their scales folded into options::scale, as a plan of scales
-  // alone has them): the strategy the rules (or the settings) choose, which describe() names
-  // where the edges keep the plan from it (task 5.1c).
-  options plain_opts = opts;
-  plain_opts.scale = opts.scale * edges.in.scale * edges.out.scale;
-  const std::shared_ptr<const plan_core> plain = build_plan_core(shape, plain_opts, settings);
   if (any_fused(r.plan) && c->built == strategy_choice::chain) {
+    const std::string fallback = c->edge_fallback;
     c = build_plan_core(shape, r.opts, settings, &r.plan);
-    // The chain with a fused factor takes no batch leaves (build_plan_core's tags); otherwise
-    // what kept the separate passes' plan from the plain plan's strategy keeps this one too.
-    if (plain->strategy_name == "the chain on batch leaves") {
-      fallback = "the chain with a fused factor takes no batch leaves";
-    }
+    // What kept the separate passes' plan from the plain plan's strategy keeps this one too,
+    // but the fused chain has no input pass: the strategy is the one chosen for the rows where
+    // that pass would have left them (name_forced_strategy adds batch leaves' reason).
+    c->edge_fallback =
+        fallback == c2c_input_pass_reason ? std::string(c2c_fused_input_reason) : fallback;
   }
-  if (c->strategy_name != plain->strategy_name) {
-    c->edges_note += "\n" + forced_text(plain->strategy_name, c->strategy_name, fallback);
+  if (name_forced) {
+    name_forced_strategy(*c, shape, opts, edges, settings);
   }
   // Wisdom records the plan under its edges, so that no plan without them matches its entry,
   // with the caller's options (not the scale a placement fuses), so that the key does not
   // depend on which of the two builds above was kept.
   c->shape_key = shape_key_with_edges(shape, opts, edges);
   return c;
+}
+
+void name_forced_strategy(plan_core& c, const shape_view& shape, const options& opts,
+                          const edges_view& edges, const build_settings& settings) {
+  if (!resolve_edges(shape, opts, edges).plan.any) {
+    return;
+  }
+  // The plan without the edges (their scales folded into options::scale, as a plan of scales
+  // alone has them), without its team core: the strategy the rules (or the settings) choose,
+  // which describe() names where the edges keep the plan from it (task 5.1c).
+  options plain_opts = opts;
+  plain_opts.scale = opts.scale * edges.in.scale * edges.out.scale;
+  const std::shared_ptr<const plan_core> plain =
+      build_core(shape, plain_opts, settings, nullptr, false);
+  if (c.strategy_name == plain->strategy_name) {
+    return;
+  }
+  std::string fallback = c.edge_fallback;
+  // Where the plan without the edges is on batch leaves, the edges' separate passes take a
+  // row at a time, and a fused factor (the chain the edges keep, the only other plan they
+  // build there) takes none, whatever else build() noted.
+  if (plain->strategy_name == batch_leaves_name) {
+    if (c.strategy_name == batch_one_row_name) {
+      fallback = batch_one_row_reason;
+    } else if (c.strategy_name == "the chain") {
+      fallback = "the chain with a fused factor takes no batch leaves";
+    }
+  }
+  c.edges_note += "\n" + forced_text(plain->strategy_name, c.strategy_name, fallback);
 }
 
 std::shared_ptr<const plan_core> make_plan_core_with_edges(const shape_view& shape,

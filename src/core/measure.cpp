@@ -371,7 +371,7 @@ double time_once(const plan_core& c, scratch_data& d, std::size_t reps, const fa
 }
 
 // Builds a candidate's plan for a shape and settings: build_plan_core, or build_with_edges for
-// a plan with edges.
+// a plan with edges (without name_forced_strategy, which only the plan kept needs).
 using plan_builder =
     std::function<std::shared_ptr<plan_core>(const shape_view&, const build_settings&)>;
 
@@ -395,7 +395,8 @@ struct measure_limits {
 std::shared_ptr<const plan_core>
 measure(const shape_view& s, const build_settings& settings, std::shared_ptr<plan_core> rules,
         const budget& b, const measure_limits& limits, const std::string& wisdom_note,
-        planning_clock::time_point start, const plan_builder& build, const edges_view* edges) {
+        planning_clock::time_point start, const plan_builder& build, const edges_view* edges,
+        const options& opts) {
   const std::vector<plan_choice> choices = enumerate_candidates(*rules, settings, b.radix_choices);
 
   // The candidates are timed on fewer transforms when the data, the workspace and the rules'
@@ -554,10 +555,14 @@ measure(const shape_view& s, const build_settings& settings, std::shared_ptr<pla
   std::shared_ptr<plan_core> final_core = w.core;
   const std::size_t timing_transforms =
       cands.front().core ? cands.front().core->prog.transforms : final_core->prog.transforms;
+  build_settings cs = settings;
+  apply_choice(w.choice, cs);
   if (!same_shape) {
-    build_settings cs = settings;
-    apply_choice(w.choice, cs);
     final_core = build(s, cs);
+  }
+  // For a measured plan, the kept candidate's settings stand for the rules.
+  if (edges != nullptr) {
+    name_forced_strategy(*final_core, s, opts, *edges, cs);
   }
   final_core->program_text = choice_text(pinned_choice(w.choice, *final_core));
   final_core->planning_seconds = seconds_since(start);
@@ -586,7 +591,7 @@ std::shared_ptr<const plan_core> plan_with_effort(const shape_view& s, const opt
   base.effort = planning::rules;
   const auto start = planning_clock::now(); // the budget covers the rules' plan too
   const plan_builder build = [&](const shape_view& shape, const build_settings& cs) {
-    return edges != nullptr ? build_with_edges(shape, base, *edges, cs)
+    return edges != nullptr ? build_with_edges(shape, base, *edges, cs, false)
                             : build_plan_core(shape, base, cs);
   };
 
@@ -605,6 +610,9 @@ std::shared_ptr<const plan_core> plan_with_effort(const shape_view& s, const opt
           std::shared_ptr<plan_core> core = build(s, cs);
           // The same program, and the entry names it as this build would.
           if (program_fingerprint(*core) == e->check && core->program_text == e->program) {
+            if (edges != nullptr) {
+              name_forced_strategy(*core, s, base, *edges, cs);
+            }
             core->program_text = e->program;
             core->planning_note = "from wisdom: " + e->program;
             return core;
@@ -619,6 +627,9 @@ std::shared_ptr<const plan_core> plan_with_effort(const shape_view& s, const opt
   }
   std::shared_ptr<plan_core> rules = build(s, settings);
   if (opts.effort == planning::rules) {
+    if (edges != nullptr) {
+      name_forced_strategy(*rules, s, base, *edges, settings);
+    }
     rules->planning_note = wisdom_note.empty() ? "" : wisdom_note + "the rules' choice";
     return rules;
   }
@@ -628,7 +639,7 @@ std::shared_ptr<const plan_core> plan_with_effort(const shape_view& s, const opt
       .scratch =
           opts.measure_scratch_bytes != 0 ? opts.measure_scratch_bytes : default_scratch_bytes,
   };
-  return measure(s, settings, std::move(rules), b, limits, wisdom_note, start, build, edges);
+  return measure(s, settings, std::move(rules), b, limits, wisdom_note, start, build, edges, base);
 }
 
 } // namespace fftn::inline v0::detail

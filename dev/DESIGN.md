@@ -2274,9 +2274,12 @@ strategy is built, not refused, and `describe()` says so (AGENTS.md section 1; t
 every build names its strategy in a few words (`plan_core::strategy_name`), the plan with
 edges is compared with the same shape, options and knobs built without them, and where the
 names differ a line "not the strategy the rules would choose" gives both and the reason (for a
-measured plan, the chosen candidate's knobs stand for the rules). The edges' line counts the
-separate passes they cost (the stages of the program that are edge passes, accumulation's
-saving of the output's prior values included).
+measured plan, the chosen candidate's knobs stand for the rules). The plan without the edges
+is built once, without its team core, for the plan kept only, not for each measured candidate.
+Where an input edge's pass moves the rows into another layout, the move is the reason given,
+unless the plan without the edges takes the same strategy on its own layout. The edges' line
+counts the separate passes they cost (the stages of the program that are edge passes,
+accumulation's saving of the output's prior values included).
 
 ### 12.2 Row pipelines
 
