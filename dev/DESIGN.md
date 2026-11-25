@@ -2454,13 +2454,15 @@ group, the other groups' rows are therefore still done, as whole rows.
 As built (`src/threading/engine.hpp`, task 3.1):
 
 - **Claiming.** A member claims its group's whole tasks in runs (a share of what is left,
-  shrinking to single tasks at the end). On Zen 3's class the whole tasks are anchored
-  (`machine_profile::anchored_runs`, X73): the group's tasks are cut into one contiguous range
+  shrinking to single tasks at the end). On Zen 3's class and Apple the whole tasks are anchored
+  (`machine_profile::anchored_runs`, X73, X74): the group's tasks are cut into one contiguous range
   per member dealt, in order of rank, and a member claims its own range first, in runs of half
   what is left of it, then runs of the others' ranges. A member then runs the same tasks in every
   execution, so a batch beyond the caches stays in the caches of the cores that ran it, which
   arrival-order runs defeat when threads are unpinned and the team's assumed cache groups are not
-  the real ones. Then it joins its group's split tasks (at most `cap`
+  the real ones; within one shared cache it keeps short batches in each member's L1 and L2 (Apple's
+  standard batches 0.87–0.97 of their time, X74). The Xeon 6240's class keeps arrival-order runs:
+  it gained as much or more (8 × 4096 at 16 threads 0.39), but one batch lost at 16 threads. Then it joins its group's split tasks (at most `cap`
   members each, members starting on different tasks) and claims their chunks in order,
   in runs within one phase (a share of the phase's chunks left, at most left / (2 × cap),
   shrinking to single chunks; X52), or, for a column phase of a plane whose neighbouring
@@ -3521,6 +3523,7 @@ to change before a release.
 | 2026-11-24 | On Zen 3's class (X51's key) an even real row of one axis out of place, contiguous, in double, runs its half-length transform as the depth-first chain where a c2c row of that length would be one (`machine_profile::depth_real_max_bytes`; r2c pairs after it in the output, c2r pairs into the workspace block first; sections 8.5, 9.1; X72 arm A) | X72's judging run (EPYC 7763, run 20261124-223906-cac2, band ±1.00 %): 0.761 over the 26 real rows it moves (18432–245760, r2c and c2r), none slower; the client catalogue's r2c 18432 and 20480 × 21 1.15–1.18 → 0.99–1.00 of FFTW, 40960 × 6 1.27–1.44 → 0.88–0.99. Zen 2 reached unmeasured |
 | 2026-11-24 | `avx2` double on AMD plans 3072 as 6 · 16 · 32, 3200 as 10 · 20 · 16, 4608 as 6 · 12 · 64 and 5120 as 10 · 32 · 16 (overrides; other vendors keep the costs' choice; section 13.5; X72 arm B) | X72's judging run: 0.906 over the 58 cases they move (c2c rows of those lengths at 1–64 rows, in place, both directions; the real rows of 6144–10240; depth-first sub-rows; planes), none slower; c2c 3072 and 3200 1.03–1.11 → 0.89–0.90 of FFTW, real rows of 6144 and 6400 1.02–1.09 → 0.90–0.95 |
 | 2026-11-24 | On Zen 3's class a team's whole transforms are anchored to members: one contiguous range per member dealt, claimed by its owner first, then stolen in halving runs (`machine_profile::anchored_runs`, section 13.3; X73) | 16 unpinned OpenMP threads on the EPYC 7763: the client catalogue's out-of-place c2c batches 0.32–0.38 of their time (FFTN ÷ FFTW 0.99–1.51 → 0.34–0.45), in place 0.60–0.69, the catalogue 0.786; at 8 threads 0.838, nothing slower beyond the band (runs 20261124-223028-0605, -7f3c). Arrival-order runs moved each row between core complexes in every execution when the threads were unpinned (diagnosis: 2.3 ms against 1.2 ms for the same rows dealt by rank) |
+| 2026-11-25 | Whole transforms anchored to members on Apple too; not on the Xeon 6240's class (`machine_profile::anchored_runs`, section 13.3; X74) | M5 Max at 6 threads: the standard batches 0.87–0.97 of their time, the client catalogue 0.996, nothing slower in the deciding run (20261124-233956-4feb). Xeon 6240: 8 threads passed (catalogue 0.951, standard batches 0.695), but at 16 the c2c batch 864 × 384 backward took 1.16 in the deciding re-run (20261125-011737-dee1), so the class keeps arrival-order runs pending the maintainer's decision |
 
 ---
 

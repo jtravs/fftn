@@ -1,6 +1,6 @@
 # X74: whole transforms anchored to members on the Xeon 6240's class and Apple
 
-- **Status:** running
+- **Status:** done
 - **Owner:** x74 session, 2026-11-25
 - **Phase / task:** 3 (threading; X73's follow-up)
 
@@ -114,4 +114,75 @@ Judged per class: the Xeon 6240's class on X8, X8b, X16 and X16b; Apple on C6 an
 
 ## Results
 
+One build, d78f543 (the rules' commit; library code that of X73's head), arms M
+(`ANCHORED_RUNS=0`), A (`ANCHORED_RUNS=1`) and F (FFTW, not judged), with the A/A control M~.
+Stores in `bench-out/runs/` of the submitting worktree.
+
+| Run | Store | Machine, placement, load | Rounds | Band | A ÷ M |
+|---|---|---|---|---|---|
+| C6 | 20261124-232852-22a0 | M5 Max, AC, load 4.0 (max 9.0), 2 rounds loaded | 24 | ±1.07 % | client catalogue 0.996 [0.993, 0.999] |
+| C6 re-run (deciding) | 20261124-233956-4feb | M5 Max, AC, load 3.2, none loaded | 24 | ±1.36 % | client catalogue 0.996 [0.994, 0.999] |
+| C6b | 20261124-233921-232b | M5 Max, AC, load 3.0, none loaded | 16 | ±1.00 % | standard batches 0.929 [0.925, 0.934] |
+| X8 | 20261124-233329-4c73 (Slurm 17007) | Xeon, node 1, 8 cores; load 21 (max 36), 5 rounds loaded | 20 | ±3.56 % | client catalogue 0.951 [0.937, 0.960] |
+| X8b | 20261125-004755-33c1 (17011) | Xeon, 8 cores; load 4.2, none loaded | 30 | ±1.00 % | standard batches 0.695 [0.689, 0.721] |
+| X16 | 20261125-001105-3d4f (17009) | Xeon, node 1, 16 cores; load 5.2, 7 rounds loaded | 20 | ±1.00 % | client catalogue 0.954 [0.950, 0.971] |
+| X16 re-run (deciding) | 20261125-011737-dee1 (17027) | Xeon, node 1, 16 cores; load 4.0 (another job's build: max 66), 3 rounds loaded | 20 | ±1.01 % | client catalogue 0.949 [0.943, 0.961] |
+| X16b | 20261125-004848-5947 (17013) | Xeon, 16 cores; load 5.7, none loaded | 29 | ±2.08 % | standard batches 0.581 [0.561, 0.584] |
+
+The Mac stayed on AC power through every run (checked each minute; 80 %, "AC attached; not
+charging"), no sleep. Xeon: GCC 14.4, `avx512`; threads unpinned within `numactl -m 1 -C <cpus>`.
+
+**Apple (M5 Max, 6 threads).**
+- C6: one moved case past the band, the in-place batch 750 × 4469 backward, 1.017 [1.014, 1.028]
+  against 1 + band = 1.0107: missed by 0.3 %, less than the band, so the run was re-run (near-miss
+  clause). The re-run decides: no moved case slower beyond the band (750 × 4469 in place backward
+  1.022 [1.013, 1.028], forward 1.014 [1.007, 1.029], inside 1 + band = 1.0136), weighted mean
+  0.996. Faster beyond the band: the real batches 6144 × 66 and 6144 × 48 (0.97–0.98).
+- C6b: all five standard batches faster beyond the band, 0.870 (8 × 4096) to 0.969 (128 × 4096);
+  FFTN ÷ FFTW 8 × 4096 1.67 → 1.48, 64 × 256 1.53 → 1.43, 100 × 1024 1.13 → 1.05.
+- Collateral: the single transforms 0.98–1.01, none beyond the band.
+- In both C6 runs the in-place 750 × 4469 pair sat 1.4–2.2 % above M, inside the deciding run's
+  band: a possible small cost, below what the runs resolve.
+
+**Xeon 6240's class (8 and 16 threads).**
+- X8: no moved case slower beyond the band; 8 faster: the real batches 6144 × 48 and × 66, 6400 × 7,
+  10240 × 28, 864 × 384 r2c, 1728 × 128 c2c backward (0.60–0.89). FFTN ÷ FFTW r2c 864 × 384
+  1.11 → 0.63 (gap 8 of the client check), r2c 6144 × 48 0.96 → 0.70. Singles 0.98–1.01.
+- X8b: all five standard batches faster beyond the band, 0.496 (8 × 4096) to 0.952 (128 × 4096);
+  FFTN ÷ FFTW 8 × 4096 1.72 → 0.85, 100 × 1024 1.00 → 0.64.
+- X16: two moved cases past the band, the in-place 750 × 4469 pair, 1.019–1.021 with lower ends
+  1.013 against 1 + band = 1.010: missed by 0.3 %, so the run was re-run (near-miss clause).
+- X16 re-run, deciding: the 750 × 4469 pair passes (1.009 [1.003, 1.025], 1.014 [1.006, 1.020]),
+  but the c2c batch 864 × 384 backward is slower beyond the band, **1.156 [1.077, 1.240]** (in the
+  first X16 1.099 [0.773, 1.191], at 8 threads 0.983 [0.942, 1.049]). Its times are bimodal from
+  process to process in both arms (M about 67 or 100 µs, A about 49 or 110–130 µs): A is faster in
+  the fast mode and slower in the slow mode, which dominated the re-run. Weighted mean 0.949, 8
+  moved cases faster (as at 8 threads, 0.73–0.94).
+- X16b: all five standard batches faster beyond the band, 0.385 (8 × 4096) to 0.919 (1024 × 256);
+  FFTN ÷ FFTW 8 × 4096 2.54 → 0.97, 64 × 256 1.64 → 0.79, 100 × 1024 1.49 → 0.85.
+- Collateral: the single transforms 0.98–1.02, none beyond 1 + 3 %.
+
+The gains are largest on the shortest executions (standard batches of 8 and 64 points, 0.4–0.6 of
+the time), where each member's rows fit its own L1 or L2: with arrival-order runs each row lands on
+another core in every execution and its lines come over the mesh from the core that last wrote
+them (and every claim contends for one counter's line). These runs do not separate the two causes.
+
 ## Verdict
+
+- **Apple: adopted**, by the rule's letter after one near-miss re-run (C6, deciding re-run
+  20261124-233956-4feb) and C6b. `anchored_runs` is set on the `apple_like` key (3d74695); the
+  schedule test checks the recorded M5 Max, and that Axion, the Ice Lake VM and Granite Rapids stay
+  off. It helps: the standard batches 0.87–0.97, the client catalogue 0.996.
+- **Xeon 6240's class: not adopted.** The deciding re-run of X16 has one moved case slower beyond
+  the band (c2c 864 × 384 backward 1.156 [1.077, 1.240]). Neither declared narrowing removes it
+  and keeps the change: anchoring only at 16 threads keeps the loss, and only whole transforms of
+  at least 64 KiB excludes almost every case that gained (all five standard batches, the real
+  batches of 864–6400 points). The class keeps arrival-order runs.
+- **For the maintainer:** everything else on the Xeon gained, much: X8 and X8b pass every
+  criterion (client catalogue 0.951, standard batches 0.695, nothing slower), X16b 0.581, X16 0.949;
+  8 × 4096 at 16 threads goes from 2.54 to 0.97 of FFTW's time. Two ways to take it that the rules
+  as written did not provide, each needing a declared deciding run: anchoring on the class for teams
+  of at most 8 lanes (X8 and X8b pass as they stand), or the whole class after a diagnosis of the
+  bimodal 864 × 384 backward batch (its fast mode is faster anchored).
+
+X16s (informative, both sockets): see below if it finished before the report.
