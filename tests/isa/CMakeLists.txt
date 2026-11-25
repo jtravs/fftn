@@ -18,6 +18,7 @@ endif()
 add_library(fftn_isa_probes OBJECT ${fftn_probe_units} probe_tables.cpp
                                    ${fftn_codelet_units} codelet_tables.cpp)
 fftn_always_optimise(${fftn_codelet_units})
+fftn_kernel_sanitizer_checks(fftn_isa_probes ${fftn_codelet_units})
 fftn_configure_target(fftn_isa_probes)
 # Only fftn's headers: the test executable links the library itself.
 target_include_directories(fftn_isa_probes PRIVATE ${PROJECT_SOURCE_DIR}/include
