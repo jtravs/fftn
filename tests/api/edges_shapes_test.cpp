@@ -555,9 +555,22 @@ void run_plan(const shape_case& sc, const shape_run<T>& run, const Plan& p, fftn
   const std::string describe = p.describe();
   const std::string what = std::string(sc.name) + ", " + fftn::isa_name(target) +
                            (sizeof(T) == 8 ? " double" : " float");
-  EXPECT_NE(describe.find(sc.expect), std::string::npos)
-      << what << ": no '" << sc.expect << "' in\n"
-      << describe;
+  // A row's edge phases (the chain's) become separate passes where the rules take another
+  // strategy for the row on this target (a real row's grid, or the lanes for short float rows
+  // on x86): the case's wording for the phase, said of the row's strategy.
+  std::string expect = sc.expect;
+  if (describe.find("the row's strategy") != std::string::npos) {
+    for (const auto& [phase, pass] : {std::pair{"in a separate phase before the transform",
+                                                "in a separate pass before the row's strategy"},
+                                      std::pair{"in a separate phase after the transform",
+                                                "in a separate pass after the row's strategy"}}) {
+      if (const std::size_t at = expect.find(phase); at != std::string::npos) {
+        expect.replace(at, std::string(phase).size(), pass);
+      }
+    }
+  }
+  EXPECT_NE(describe.find(expect), std::string::npos) << what << ": no '" << expect << "' in\n"
+                                                      << describe;
   if (strategy != nullptr) {
     EXPECT_NE(describe.find(strategy), std::string::npos)
         << what << ": not the strategy '" << strategy << "':\n"
@@ -1280,9 +1293,11 @@ template <class T> void forced_strategies(fftn::isa t, bool threads) {
       // Rows one element apart along the batch (column-major rows): the lanes over adjacent
       // transforms on a plan of one axis, whose input edge's phase must write the output that
       // the lanes then read.
+      // The rows are longer than any target's lanes over rows take (lanes_up_to: 100 on
+      // avx512 in float), which would otherwise win.
       {{.name = "rows as adjacent transforms, input factor",
         .kind = c2c,
-        .dims = {64},
+        .dims = {128},
         .count = 32,
         .in = {real, {}, 1},
         .expect = before,
@@ -1291,7 +1306,7 @@ template <class T> void forced_strategies(fftn::isa t, bool threads) {
        "adjacent transforms"},
       {{.name = "rows as adjacent transforms, both factors",
         .kind = c2c,
-        .dims = {48},
+        .dims = {112},
         .count = 16,
         .in = {cplx, {-1}, -1},
         .out = {cplx, {}, 1},
