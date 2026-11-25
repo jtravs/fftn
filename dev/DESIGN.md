@@ -1365,10 +1365,10 @@ to 8, on `avx2`:
   measured range) with one top of 16, else 20, else 10
   (X46: 16384–262144 0.67 of their time; X51: 25000 0.75, 524288–2²² 0.68–0.75, float
   0.61–0.78; FFTN ÷ FFTW 1.06–1.35 → 0.50–1.00, ÷ MKL 0.33–0.90). Even real rows out of
-  place run their half length on the same chain over that range and, for them alone, from L2/8
-  (`depth_real_max_bytes`, `depth_real_min_bytes`; section 9.1; X75: the 68 real rows it moved,
-  16384–2²³ points in double and 32768–2²⁰ in float, took 0.75 (from L2/4) and 0.80 (L2/8 to
-  L2/4) of their time);
+  place run their half length on the same chain over that range and, for them alone, from
+  above L2/8 (`depth_real_max_bytes`, `depth_real_min_bytes`; section 9.1; X75: from L2/4 the 50
+  real rows it moved, 32768–2²³ points and float 65536–2²⁰, took 0.75 of their time; above L2/8
+  the 14, 18432–24576 and float 40960–49152, 0.82; half lengths of L2/8 itself tied or lost);
 - the Apple profile (a cluster shares L2) from L1 when the length's power-of-two part is
   above L1/8, with one top of 4, to 2 L1 for powers of two and to 16 L1 for the rest (X46:
   8192 0.73, 16384 0.84; X51: 20480–122880 0.69–0.86; from L1/2, batches of 4096 lost
@@ -1633,8 +1633,8 @@ Routes, by `real_route`:
   0.94–0.98 of the separate route's time, Xeon `avx512` 262144 and 2²⁰ 0.94–0.97.
 - *Depth-first*: on Zen 3's class (`machine_profile::depth_real_max_bytes`, X72) and the Xeon
   6240's (X75) an even real row of one axis out of place, contiguous on both sides, whose half
-  length the c2c rows' depth-first rule takes (section 8.5; on the Xeon 6240's class from L2/8,
-  `depth_real_min_bytes`, where the c2c rows start at L2/4) runs that half length as the depth-first chain: r2c
+  length the c2c rows' depth-first rule takes (section 8.5; on the Xeon 6240's class from above
+  L2/8, `depth_real_min_bytes`, where the c2c rows start at L2/4) runs that half length as the depth-first chain: r2c
   reads its reals as h complex values into the chain, whose blocks and result are in the
   output, then pairs there in a separate pass; c2r pairs from the input into the workspace
   block (h complex values), from which the chain's first pass reads the whole line before its
@@ -3530,7 +3530,7 @@ to change before a release.
 | 2026-11-24 | `avx2` double on AMD plans 3072 as 6 · 16 · 32, 3200 as 10 · 20 · 16, 4608 as 6 · 12 · 64 and 5120 as 10 · 32 · 16 (overrides; other vendors keep the costs' choice; section 13.5; X72 arm B) | X72's judging run: 0.906 over the 58 cases they move (c2c rows of those lengths at 1–64 rows, in place, both directions; the real rows of 6144–10240; depth-first sub-rows; planes), none slower; c2c 3072 and 3200 1.03–1.11 → 0.89–0.90 of FFTW, real rows of 6144 and 6400 1.02–1.09 → 0.90–0.95 |
 | 2026-11-24 | On Zen 3's class a team's whole transforms are anchored to members: one contiguous range per member dealt, claimed by its owner first, then stolen in halving runs (`machine_profile::anchored_runs`, section 13.3; X73) | 16 unpinned OpenMP threads on the EPYC 7763: the client catalogue's out-of-place c2c batches 0.32–0.38 of their time (FFTN ÷ FFTW 0.99–1.51 → 0.34–0.45), in place 0.60–0.69, the catalogue 0.786; at 8 threads 0.838, nothing slower beyond the band (runs 20261124-223028-0605, -7f3c). Arrival-order runs moved each row between core complexes in every execution when the threads were unpinned (diagnosis: 2.3 ms against 1.2 ms for the same rows dealt by rank) |
 | 2026-11-25 | Whole transforms anchored to members on Apple too; not on the Xeon 6240's class (`machine_profile::anchored_runs`, section 13.3; X74) | M5 Max at 6 threads: the standard batches 0.87–0.97 of their time, the client catalogue 0.996, nothing slower in the deciding run (20261124-233956-4feb). Xeon 6240: 8 threads passed (catalogue 0.951, standard batches 0.695), but at 16 the c2c batch 864 × 384 backward took 1.16 in the deciding re-run (20261125-011737-dee1), so the class keeps arrival-order runs pending the maintainer's decision |
-| 2026-11-25 | On the Xeon 6240's class an even real row of one axis out of place, contiguous, runs its half-length transform on the c2c rows' depth-first chain over their range (L2/4 to 64 L2; `depth_real_max_bytes`, X75 arm A) and from L2/8 for real rows alone (`depth_real_min_bytes`, new; arm B); `avx512` only (its tops of 16, 20, 10); sections 8.5, 9.1 | X75's judging run (Xeon 6240, run 20261125-023550-8fee, band ±3.87 %): A 0.748 over the 50 real rows it moves (32768–2²³, float 65536–2²⁰), B 0.796 over the 18 it moves (16384–24576, float 32768–49152), none slower; the client catalogue's r2c and c2r 32768 1.28–1.44 → 0.83–1.04 of FFTW, 40960 × 6 1.20–1.38 → 0.99–1.18, c2r 20480 × 3 1.14 → 1.00 (run D1). Ice Lake-SP (X58's branch) keeps its plans, unmeasured |
+| 2026-11-25 | On the Xeon 6240's class an even real row of one axis out of place, contiguous, runs its half-length transform on the c2c rows' depth-first chain over their range (L2/4 to 64 L2; `depth_real_max_bytes`, X75 arm A) and, for real rows alone, from half lengths above L2/8 (`depth_real_min_bytes`, new; arm B, narrowed to exclude L2/8 itself); `avx512` only (its tops of 16, 20, 10); sections 8.5, 9.1 | X75's judging run (Xeon 6240, run 20261125-023550-8fee, band ±3.87 %): A 0.748 over the 50 real rows it moves (32768–2²³, float 65536–2²⁰), none slower; B narrowed after run R (float r2c 32768, half length L2/8, 1.095): 0.821 over the 14 it moves (18432–24576, float 40960–49152) in its deciding run 20261125-041502-3d25, none slower; the client catalogue's r2c and c2r 32768 1.28–1.44 → 0.83–1.04 of FFTW, 40960 × 6 1.20–1.38 → 0.99–1.18, c2r 20480 × 3 1.14 → 1.00 (run D1). Ice Lake-SP (X58's branch) keeps its plans, unmeasured |
 
 ---
 

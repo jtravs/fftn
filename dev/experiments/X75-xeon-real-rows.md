@@ -1,6 +1,6 @@
 # X75: long real rows on the depth-first chain on the Xeon 6240's class
 
-- **Status:** running (diagnosis)
+- **Status:** done (arm A adopted; arm B adopted narrowed)
 - **Owner:** x75 session, 2026-11-25 (overnight)
 - **Phase / task:** 1 (the client catalogue check's second gap, PLAN "Status")
 
@@ -206,8 +206,39 @@ c2r 32768) with A's plan notes, and none of the 14 cases B′ still moves slower
 **Run K** 20261125-032026-36ec (Slurm 17034, informative; 16 rounds, none under load, band
 ±1.24 %): the client catalogue's tracking tier at one thread, scored as the client check
 scored it. Weighted geometric mean of FFTN ÷ FFTW **0.896** [0.891, 0.902] with O → **0.863**
-[0.859, 0.866] with B (unweighted 0.908 → 0.878). Shapes beyond the noise of 1.02: 8 → 5; c2r
-32768 1.530 → 1.067, r2c 32768 1.400 → under 1.02, c2r 40960 × 6 1.382 → 1.129, r2c 40960 × 6
-1.288 → under 1.02, c2r 20480 × 3 1.171 → under 1.02. Left: c2r 40960 × 6 1.129, c2r 864 × 384
+[0.859, 0.866] with B (unweighted 0.908 → 0.878). Shapes above 1.02: 8 → 5; c2r
+32768 1.530 → 1.067, r2c 32768 1.400 → below 1.02, c2r 40960 × 6 1.382 → 1.129, r2c 40960 × 6
+1.288 → below 1.02, c2r 20480 × 3 1.171 → below 1.02. Left: c2r 40960 × 6 1.129, c2r 864 × 384
 1.124 (not moved), c2r 32768 1.067. Planning time of the moved shapes is unchanged (32768 21 ms,
 40960 × 6 27 ms; this build has the twiddle tables X71 replaced on `main`).
+
+**Run N** 20261125-041502-3d25 (Slurm 17037, the declared deciding run of B′; 20 rounds, none
+under load, band ±2.53 %): the four excluded cases have A's plan notes (r2c and c2r 16384, single
+precision r2c and c2r 32768); B′ ÷ A over the 14 cases it still moves **0.821** [0.815, 0.826],
+none slower (worst: single precision r2c 40960 0.955 [0.930, 0.986]); r2c and c2r 18432 0.929 /
+0.949, r2c 20480 × 21 0.917, c2r 20480 × 3 0.846, 20480 0.877 / 0.858, 24576 0.766 / 0.735,
+24576 × 4 0.885 / 0.809, single precision c2r 40960 0.635, 49152 0.825 / 0.608.
+
+## Verdict
+
+- **Arm A adopted** by its rule, no clause used: on the Xeon 6240's class an even real row out of
+  place runs its half length on the c2c depth-first chain over that chain's range
+  (`depth_real_max_bytes = depth_max_bytes`, 64 L2): 0.748 over the 50 rows it moves
+  (32768–2^23 points, single precision 65536–2^20), none slower.
+- **Arm B adopted narrowed** (the narrowing clause of 2026-11-23): arm B passed its rule in run J
+  (0.796 over 18 cases), but the informative run R found single precision r2c 32768, whose half
+  length is L2/8 itself, 1.095 of A; so real rows take the chain from half lengths above L2/8
+  (`depth_real_min_bytes = L2/8 + 1`), and run N, declared before it ran, shows the excluded
+  rows on their old plans and the 14 still moved at 0.821, none slower.
+
+The client catalogue at one thread on the Xeon (run K, with the arm as judged in run J, which
+also moved 16384, not in that catalogue): 0.896 → 0.863 of FFTW; c2r 32768 1.53 → 1.07, c2r 40960
+× 6 1.38 → 1.13 are left above 1.02 among the shapes moved.
+
+Recorded in DESIGN 8.5 (the Xeon profile's depth-first bullet), 9.1 (the *Depth-first* real
+route) and the decision log; lesson in LESSONS 4.21. Reach: the Xeon 6240's branch on `avx512`
+only (its tops); Ice Lake-SP (X58's branch) keeps its plans, unmeasured, and AMD `avx512` cores
+that match the key (X63's Zen 4 finding) are reached unmeasured, as by its c2c chains.
+Follow-ups: c2r 40960 × 6 (1.13 of FFTW; FFTW's plan pairs in a radix-2 hc2c pass and then runs
+8 → 16 → 20 → 16) and c2r 32768 (1.07); threaded long real rows (the client runs 32768 at 4
+threads), not judged here; Ice Lake-SP in the next cloud screen.
