@@ -520,11 +520,13 @@ grid_split plan_grid(std::size_t n, const side& in, const side& out, const build
 // of 4 won from 3072 to 16384 points where the power-of-two part had 2048 points or more and
 // lost (1.05-1.09) on 10000, 12000 and 16000.
 // The tops for a contiguous line of n with neither edge factor (depth_tops_of's choice
-// after its conditions on the row; also a Bluestein convolution's, bluestein_tops_of).
+// after its conditions on the row; also a Bluestein convolution's, bluestein_tops_of). By the
+// rules from `least` where that is below depth_min_bytes (a real row's half length, X75).
 template <class T>
-std::vector<std::size_t> depth_tops_for(std::size_t n, const build_settings& settings,
-                                        const chain_builder<T>& chain, target isa,
-                                        bool convolution = false) {
+std::vector<std::size_t>
+depth_tops_for(std::size_t n, const build_settings& settings, const chain_builder<T>& chain,
+               target isa, bool convolution = false,
+               std::size_t least = std::numeric_limits<std::size_t>::max()) {
   // A convolution's fused chirp passes need whole blocks of C copies in the first pass
   // (chain_builder::bluestein_depth_fits; X51 lets a row's top leave a partial block).
   const auto fits = [&](const std::vector<std::size_t>& tops) {
@@ -543,8 +545,9 @@ std::vector<std::size_t> depth_tops_for(std::size_t n, const build_settings& set
     if constexpr (!std::is_same_v<T, double>) {
       most = convolution ? 0 : std::min(most, m.depth_float_max_bytes);
     }
-    if ((convolution && !wide) || top == 0 || most == 0 || bytes < m.depth_min_bytes ||
-        bytes > most || (n & (~n + 1)) * 2 * sizeof(T) <= m.depth_part_bytes) {
+    if ((convolution && !wide) || top == 0 || most == 0 ||
+        bytes < std::min(m.depth_min_bytes, least) || bytes > most ||
+        (n & (~n + 1)) * 2 * sizeof(T) <= m.depth_part_bytes) {
       return {};
     }
     if (!settings.depth_tops.empty()) {
@@ -591,8 +594,8 @@ std::vector<std::size_t> depth_tops_of(std::size_t n, const side& in, const side
 // The depth-first chain's top factors for the half-length complex transform of an even real
 // row of n of one axis (experiment X72), or none: out of place, contiguous on both sides,
 // without forced radices for the half length, by depth_tops_for for h = n / 2 where h's bytes
-// are within the profile's depth_real_max_bytes (or wherever the split fits when the strategy
-// is forced to depth).
+// are within the profile's depth_real_max_bytes, from the smaller of depth_min_bytes and
+// depth_real_min_bytes (or wherever the split fits when the strategy is forced to depth).
 template <class T>
 std::vector<std::size_t> real_depth_tops_of(std::size_t n, const side& in, const side& out,
                                             bool in_place, const build_settings& settings,
@@ -606,7 +609,7 @@ std::vector<std::size_t> real_depth_tops_of(std::size_t n, const side& in, const
        h * 2 * sizeof(T) > settings.profile.depth_real_max_bytes)) {
     return {};
   }
-  return depth_tops_for<T>(h, settings, chain, isa);
+  return depth_tops_for<T>(h, settings, chain, isa, false, settings.profile.depth_real_min_bytes);
 }
 
 // The top factors of the depth-first convolution of a Bluestein stage (chain_builder::

@@ -710,10 +710,16 @@ TEST(Schedule, GridSizesFromCaches) {
   EXPECT_FALSE(m5.bluestein_whole_lanes);
   EXPECT_FALSE(x86("linux-gcp-c4d-zen5.sysfs").bluestein_whole_lanes);
   EXPECT_EQ(x86("linux-gcp-c4d-zen5.sysfs").bluestein_pow2_part_bytes, 48 * kib);
-  // Real rows' half-length depth-first chain on Zen 3's class only (X72): the rows' range.
+  // Real rows' half-length depth-first chain on Zen 3's class (X72): the rows' range.
   EXPECT_EQ(epyc86.depth_real_max_bytes, epyc86.depth_max_bytes);
   EXPECT_EQ(epyc86.depth_real_max_bytes, std::size_t{2048} * kib);
-  EXPECT_EQ(xeon86.depth_real_max_bytes, 0U);
+  // And on the Xeon 6240's class, over its rows' range (X75).
+  EXPECT_EQ(xeon86.depth_real_max_bytes, xeon86.depth_max_bytes);
+  EXPECT_EQ(xeon86.depth_real_max_bytes, std::size_t{64} * 1024 * kib);
+  // Above L2/8 there, the c2c rows' L2/4 elsewhere (X75 arm B, narrowed).
+  EXPECT_EQ(xeon86.depth_real_min_bytes, std::size_t{128} * kib + 1);
+  EXPECT_EQ(epyc86.depth_real_min_bytes, std::numeric_limits<std::size_t>::max());
+  EXPECT_EQ(m5.depth_real_min_bytes, std::numeric_limits<std::size_t>::max());
   EXPECT_EQ(m5.depth_real_max_bytes, 0U);
   EXPECT_EQ(x86("linux-gcp-c4d-zen5.sysfs").depth_real_max_bytes, 0U);
   EXPECT_EQ(x86("linux-gcp-n2-ice-lake.sysfs").depth_real_max_bytes, 0U);

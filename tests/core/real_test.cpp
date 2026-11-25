@@ -427,6 +427,7 @@ TEST(Real, RulesTakeTheDepthFirstHalfLengthWhereTheProfileSays) {
   s.profile.depth_top_last = 0;
   s.profile.depth_float_max_bytes = 0;
   s.profile.depth_real_max_bytes = 0;
+  s.profile.depth_real_min_bytes = std::numeric_limits<std::size_t>::max();
   s.profile.grid_min_bytes = std::size_t{512} * 1024 / 2;
   // A top of 4 is taken on avx2 and on the 32-register targets; one of them runs anywhere the
   // suites run (the scalar target takes no depth-first chain by the rules).
@@ -455,6 +456,69 @@ TEST(Real, RulesTakeTheDepthFirstHalfLengthWhereTheProfileSays) {
   // Beyond depth_real_max_bytes: none.
   s.profile.depth_real_max_bytes = std::size_t{9216} * 16 - 1;
   EXPECT_EQ(describe_r2c(18432, false).find("depth-first"), std::string::npos);
+}
+
+// The same with the Xeon 6240's depth-first fields (experiment X75; set here, not read from the
+// host): tops of 16, 20 and 10 on a target with 32 vector registers, powers of two included,
+// from L2/4 or the real rows' own lower limit, to their own upper one. avx2 takes none of those
+// tops.
+TEST(Real, RulesTakeTheDepthFirstHalfLengthWithTheXeonsFields) {
+  const std::size_t l2 = std::size_t{1024} * 1024;
+  build_settings s;
+  s.profile.depth_min_bytes = l2 / 4;
+  s.profile.depth_max_bytes = 64 * l2;
+  s.profile.depth_pow2_max_bytes = std::numeric_limits<std::size_t>::max();
+  s.profile.depth_part_bytes = 0;
+  s.profile.depth_top = 16;
+  s.profile.depth_top_alt = 20;
+  s.profile.depth_top_last = 10;
+  s.profile.depth_float_max_bytes = 8 * l2;
+  s.profile.depth_real_max_bytes = 0;
+  s.profile.depth_real_min_bytes = std::numeric_limits<std::size_t>::max();
+  s.profile.grid_min_bytes = l2 / 2;
+  const std::vector<fftn::isa> runnable = fftn::test::runnable_isas();
+  const auto with = std::ranges::find_if(runnable, [](fftn::isa t) {
+    return t == fftn::isa::avx512 || t == fftn::isa::neon || t == fftn::isa::neon_fcma;
+  });
+  if (with == runnable.end()) {
+    GTEST_SKIP() << "no target here takes a depth-first top of 16";
+  }
+  const auto describe_real = [&](std::size_t n, bool r2c, fftn::isa isa) {
+    const fftn::options opts{.force_isa = isa};
+    const auto core =
+        r2c ? make_plan_core(fftn::detail::view_of(fftn::rows_r2c<double>(n, 1)), opts, s)
+            : make_plan_core(fftn::detail::view_of(fftn::rows_c2r<double>(n, 1)), opts, s);
+    return fftn::detail::describe(*core);
+  };
+  // Off by default (the field at 0): 32768's half length 16384 stays as it was.
+  EXPECT_EQ(describe_real(32768, true, *with).find("depth-first"), std::string::npos);
+  s.profile.depth_real_max_bytes = 64 * l2;
+  // A power of two at L2/4 and a mixed length, both kinds, with a top of 16.
+  for (const bool r2c : {true, false}) {
+    EXPECT_NE(describe_real(32768, r2c, *with).find("half-length complex depth-first 16 x 1024"),
+              std::string::npos)
+        << describe_real(32768, r2c, *with);
+    EXPECT_NE(describe_real(40960, r2c, *with).find("half-length complex depth-first 16 x 1280"),
+              std::string::npos)
+        << describe_real(40960, r2c, *with);
+  }
+  // Below L2/4 (20480's half length, 160 KiB): none, unless the real rows' own lower limit
+  // reaches it (X75 arm B; L2/8 here: 16384's half length is L2/8 itself, 12288's below).
+  EXPECT_EQ(describe_real(20480, true, *with).find("depth-first"), std::string::npos);
+  s.profile.depth_real_min_bytes = l2 / 8;
+  for (const bool r2c : {true, false}) {
+    EXPECT_NE(describe_real(20480, r2c, *with).find("half-length complex depth-first 16 x 640"),
+              std::string::npos)
+        << describe_real(20480, r2c, *with);
+    EXPECT_NE(describe_real(16384, r2c, *with).find("half-length complex depth-first 16 x 512"),
+              std::string::npos)
+        << describe_real(16384, r2c, *with);
+    EXPECT_EQ(describe_real(12288, r2c, *with).find("depth-first"), std::string::npos);
+  }
+  // avx2 takes no top of 16, 20 or 10.
+  if (std::ranges::find(runnable, fftn::isa::avx2) != runnable.end()) {
+    EXPECT_EQ(describe_real(40960, true, fftn::isa::avx2).find("depth-first"), std::string::npos);
+  }
 }
 
 // The r2c pairing in the grid's last phase (X33): pairs of mirror column sets of
