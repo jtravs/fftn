@@ -1,0 +1,119 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Experiment X72's cases (dev/experiments/X72-zen3-real-rows.md): real rows of 6144-20480 points
+# on Zen 3, double precision, out of place. The first groups are the client catalogue's shapes
+# (lengths and batches as the client application runs them); the half-length c2c rows are the
+# complex transforms inside them, for the diagnosis.
+
+[catalogue]
+name = "x72"
+
+[[group]]
+name = "x72-r2c-6144"
+kind = "r2c"
+dims = [6144]
+batch = [48, 66]
+
+[[group]]
+name = "x72-r2c-6400"
+kind = "r2c"
+dims = [6400]
+batch = [1, 7]
+
+[[group]]
+name = "x72-r2c-10240"
+kind = "r2c"
+dims = [10240]
+batch = [1, 28]
+
+[[group]]
+name = "x72-r2c-single"
+kind = "r2c"
+dims = [9216, 18432]
+
+[[group]]
+name = "x72-r2c-20480"
+kind = "r2c"
+dims = [20480]
+batch = [21]
+
+[[group]]
+name = "x72-c2r-6144"
+kind = "c2r"
+dims = [6144]
+batch = [48, 66]
+
+[[group]]
+name = "x72-c2r-10240"
+kind = "c2r"
+dims = [10240]
+batch = [1, 4]
+
+[[group]]
+name = "x72-c2r-single"
+kind = "c2r"
+dims = [6400, 9216, 18432]
+
+[[group]]
+name = "x72-c2r-20480"
+kind = "c2r"
+dims = [20480]
+batch = [3]
+
+[[group]]
+name = "x72-half"
+note = "the half-length complex rows, both directions (c2r runs the backward chain)"
+kind = "c2c"
+dims = [3072, 3200, 4608, 5120, 9216, 10240]
+direction = ["fwd", "bwd"]
+
+[[group]]
+name = "x72-depth-reach"
+note = "real rows whose half length the Zen 3 depth-first rule reaches (not a power of two, power-of-two part above 512 points, 128 KiB to 2 MiB)"
+kind = ["r2c", "c2r"]
+dims = [24576, 40960, 49152, 61440, 81920, 98304, 122880, 163840, 245760]
+
+[[group]]
+name = "x72-depth-reach-40960"
+note = "the client catalogue's long real rows"
+kind = ["r2c", "c2r"]
+dims = [40960]
+batch = [6]
+
+[[group]]
+name = "x72-overrides-c2c"
+note = "c2c rows of the four lengths arm B gives overrides, batches and both directions"
+kind = "c2c"
+dims = [3072, 3200, 4608, 5120]
+batch = [1, 4, 64]
+direction = ["fwd", "bwd"]
+
+[[group]]
+name = "x72-overrides-c2c-in-place"
+kind = "c2c"
+dims = [3072, 3200, 4608, 5120]
+batch = [1, 16]
+place = "in"
+
+[[group]]
+name = "x72-overrides-depth"
+note = "depth-first chains whose sub-rows are those lengths (c2c 4 x m; real rows through arm A)"
+kind = "c2c"
+dims = [12288, 12800, 18432, 20480]
+
+[[group]]
+name = "x72-overrides-depth-real"
+kind = ["r2c", "c2r"]
+dims = [25600, 36864]
+
+[[group]]
+name = "x72-overrides-bluestein"
+note = "primes whose Bluestein convolution may take one of those lengths"
+kind = "c2c"
+dims = [1543, 1601, 2053, 2311, 2551]
+
+[[group]]
+name = "x72-overrides-planes"
+kind = "c2c"
+dims = ["8x3072", "3200x8"]

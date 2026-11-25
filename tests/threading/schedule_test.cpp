@@ -710,6 +710,14 @@ TEST(Schedule, GridSizesFromCaches) {
   EXPECT_FALSE(m5.bluestein_whole_lanes);
   EXPECT_FALSE(x86("linux-gcp-c4d-zen5.sysfs").bluestein_whole_lanes);
   EXPECT_EQ(x86("linux-gcp-c4d-zen5.sysfs").bluestein_pow2_part_bytes, 48 * kib);
+  // Real rows' half-length depth-first chain on Zen 3's class only (X72): the rows' range.
+  EXPECT_EQ(epyc86.depth_real_max_bytes, epyc86.depth_max_bytes);
+  EXPECT_EQ(epyc86.depth_real_max_bytes, std::size_t{2048} * kib);
+  EXPECT_EQ(xeon86.depth_real_max_bytes, 0U);
+  EXPECT_EQ(m5.depth_real_max_bytes, 0U);
+  EXPECT_EQ(x86("linux-gcp-c4d-zen5.sysfs").depth_real_max_bytes, 0U);
+  EXPECT_EQ(x86("linux-gcp-n2-ice-lake.sysfs").depth_real_max_bytes, 0U);
+  EXPECT_EQ(x86("linux-gcp-c4-granite-rapids.sysfs").depth_real_max_bytes, 0U);
   // The c2r grid pairs in its first gather only where the L2 is shared (X29).
   EXPECT_TRUE(m5.c2r_paired_gather);
   EXPECT_FALSE(epyc.c2r_paired_gather);

@@ -347,6 +347,13 @@ void add_cases(std::vector<team_case>& out, const fftn::detail::build_settings& 
                           false, depth, target));
   out.push_back(make_case("c2c_depth2_inplace_4096x2" + suffix, fftn::rows_c2c<T>(4096, 2, fwd),
                           8192, 8192, true, depth, target));
+  // A real row's half-length transform as a depth-first chain (experiment X72): r2c with the
+  // pairing pass after it in the output, c2r with the pairing into the workspace block first.
+  depth.depth_tops = {4};
+  out.push_back(make_case("r2c_depth_4096x3" + suffix, fftn::rows_r2c<T>(4096, 3), 3 * 4096,
+                          3 * 2049, false, depth, target));
+  out.push_back(make_case("c2r_depth_4096x3" + suffix, fftn::rows_c2r<T>(4096, 3), 3 * 2049,
+                          3 * 4096, false, depth, target));
   // One top that C does not divide (X51): the first pass's partial blocks of sub-rows, the
   // units a team shares among the whole ones (5 on every x86 target, 10 on avx512's 4 lanes
   // and 8-lane float).

@@ -421,8 +421,17 @@ slot grid_builder<T>::phase_chain(std::size_t n, const std::vector<std::size_t>&
   return at;
 }
 
+template <class T> std::complex<T> grid_builder<T>::root(int sign, std::size_t m, std::size_t n) {
+  auto it = roots_.find(n);
+  if (it == roots_.end()) {
+    it = roots_.emplace(n, root_cache<T>(n)).first;
+  }
+  return it->second(sign, m);
+}
+
 // Phase 1's twiddles w_n^(c k1), c = c0 + q, as two factors, each root computed alone
-// (no table of the n roots) (twiddle_transpose): w_n^(q k1)
+// (no table of the n roots; root_cache shares one angle's series among its entries)
+// (twiddle_transpose): w_n^(q k1)
 // for q < block, in the order of a block's tiles (per tile of C columns, per tile of C rows,
 // C rows of C columns), and w_n^(c0 k1) per block, its N1 rows; plain interleaved.
 template <class T>
@@ -437,7 +446,7 @@ std::pair<const T*, const T*> grid_builder<T>::first_twiddles(const grid_split& 
     for (std::size_t k0 = 0; k0 < n1; k0 += lanes) {
       for (std::size_t i = 0; i < lanes; ++i) {
         for (std::size_t l = 0; l < lanes; ++l) {
-          const std::complex<T> v = unit_root<T>(-1, (q0 + l) * (k0 + i) % n, n);
+          const std::complex<T> v = root(-1, (q0 + l) * (k0 + i) % n, n);
           local[e++] = v.real();
           local[e++] = v.imag();
         }
@@ -451,7 +460,7 @@ std::pair<const T*, const T*> grid_builder<T>::first_twiddles(const grid_split& 
   e = 0;
   for (std::size_t c0 = 0; c0 < m; c0 += g.block) {
     for (std::size_t k = 0; k < n1; ++k) {
-      const std::complex<T> v = unit_root<T>(-1, c0 * k % n, n);
+      const std::complex<T> v = root(-1, c0 * k % n, n);
       rows[e++] = v.real();
       rows[e++] = v.imag();
     }
@@ -465,7 +474,7 @@ template <class T> const T* grid_builder<T>::row_twiddles(std::size_t ni, std::s
   std::size_t e = 0;
   for (std::size_t c = 0; c < m; ++c) {
     for (std::size_t k = 0; k < ni; ++k) {
-      const std::complex<T> v = unit_root<T>(-1, c * k, ni * m);
+      const std::complex<T> v = root(-1, c * k, ni * m);
       t[e++] = v.real();
       t[e++] = v.imag();
     }
@@ -480,7 +489,7 @@ std::pair<const T*, const T*> grid_builder<T>::c2r_pair_factors(std::size_t n1, 
                                                                 std::size_t n) {
   auto& columns = tables_.emplace_back(2 * m1);
   for (std::size_t q = 0; q < m1; ++q) {
-    const std::complex<T> v = unit_root<T>(+1, q, n);
+    const std::complex<T> v = root(+1, q, n);
     columns[2 * q] = -v.imag();
     columns[2 * q + 1] = v.real();
   }
@@ -488,7 +497,7 @@ std::pair<const T*, const T*> grid_builder<T>::c2r_pair_factors(std::size_t n1, 
   const T* columns_data = columns.data();
   auto& rows = tables_.emplace_back(2 * n1);
   for (std::size_t r = 0; r < n1; ++r) {
-    const std::complex<T> v = unit_root<T>(+1, m1 * r, n);
+    const std::complex<T> v = root(+1, m1 * r, n);
     rows[2 * r] = v.real();
     rows[2 * r + 1] = v.imag();
   }
@@ -538,7 +547,7 @@ std::pair<const T*, const T*> grid_builder<T>::r2c_pair_tables(std::size_t l, st
   for (std::size_t c = 0; c < l / (2 * hb); ++c) {
     for (std::size_t k = 0; k < nk; ++k) {
       for (std::size_t j = 0; j < hb; ++j) {
-        const std::complex<T> w = unit_root<T>(-1, c * hb + 1 + j + l * k, n);
+        const std::complex<T> w = root(-1, c * hb + 1 + j + l * k, n);
         plain[e++] = w.imag();
         plain[e++] = -w.real();
       }
@@ -550,7 +559,7 @@ std::pair<const T*, const T*> grid_builder<T>::r2c_pair_tables(std::size_t l, st
   const T* stored_data = stored.data();
   auto& column = tables_.emplace_back(2 * std::max<std::size_t>(1, (nk - 1) / 2));
   for (std::size_t k = 1; 2 * k < nk; ++k) {
-    const std::complex<T> w = unit_root<T>(-1, l * k, n);
+    const std::complex<T> w = root(-1, l * k, n);
     column[2 * (k - 1)] = w.imag();
     column[2 * (k - 1) + 1] = -w.real();
   }
