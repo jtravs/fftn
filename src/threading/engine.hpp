@@ -43,7 +43,7 @@ struct team_job {
   const work_graph* graph = nullptr;
   schedule plan;
   lane_map lanes;
-  std::byte* state = nullptr; // page-aligned, team_layout{lanes}.bytes() long
+  std::byte* state = nullptr; // 128-byte aligned, team_layout{lanes}.bytes() long
   sync_word flag{nullptr};    // the workspace's word (team_state.hpp)
   int rank = 0;
 };
@@ -75,7 +75,7 @@ private:
   };
 
   [[nodiscard]] sync_word word(std::size_t offset) const noexcept {
-    // prepare() constructed an atomic at every multiple of 8 of the page-aligned state.
+    // prepare() constructed an atomic at every multiple of 8 of the 128-byte aligned state.
     return sync_word(std::launder(reinterpret_cast<team_word_t*>(job_.state + offset)));
   }
 

@@ -108,8 +108,10 @@ private:
 struct team_space {
   team_space(const fftn::detail::plan_core& core, int lanes)
       : memory(fftn::detail::workspace_bytes(core, lanes)) {
-    state = fftn::detail::team_state_in(memory.memory().data());
-    slots = state + fftn::detail::team_layout{static_cast<std::size_t>(lanes)}.page_bytes();
+    const auto address = reinterpret_cast<std::uintptr_t>(memory.memory().data());
+    const std::size_t line = fftn::detail::sync_line;
+    state = memory.memory().data() + (line - address % line) % line;
+    slots = state + fftn::detail::team_layout{static_cast<std::size_t>(lanes)}.bytes();
   }
   fftn::workspace memory;
   std::byte* state = nullptr;
