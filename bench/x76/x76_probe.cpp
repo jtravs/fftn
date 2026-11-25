@@ -11,6 +11,8 @@
 //   threads=16                         lanes of fftn::omp::executor
 //   offset_in=0 offset_out=0           bytes into a page where the data start (fbench's offsets)
 //   huge=0|1                           1: buffers 2 MiB aligned with madvise(MADV_HUGEPAGE)
+//   prelude=BYTES                      first allocate, touch and free a block of BYTES, as an
+//                                      earlier case of an fbench process does (0: none)
 //   seconds=1 batch_time=0.002 warmup=0.02   timing: fbench's batches, for `seconds` in all
 //   sample_every=10                    batches between samples of each lane's CPU
 //   pmu=EVENTS                         per-lane counters, as fbench's --pmu (empty: none)
@@ -79,6 +81,7 @@ struct settings {
   std::size_t offset_in = 0;
   std::size_t offset_out = 0;
   bool huge = false;
+  std::size_t prelude = 0;
   double seconds = 1.0;
   double batch_time = 2e-3;
   double warmup = 0.02;
@@ -136,6 +139,8 @@ settings parse(int argc, char** argv) {
       s.offset_in = number<std::size_t>(value, key);
     } else if (key == "offset_out") {
       s.offset_out = number<std::size_t>(value, key);
+    } else if (key == "prelude") {
+      s.prelude = number<std::size_t>(value, key);
     } else if (key == "huge") {
       s.huge = number<int>(value, key) != 0;
     } else if (key == "seconds") {
@@ -452,6 +457,12 @@ double busy_of(const std::vector<int>& cpus,
   return busy; // in CPUs
 }
 
+std::string hex(const void* p) {
+  std::ostringstream ss;
+  ss << std::hex << reinterpret_cast<std::uintptr_t>(p);
+  return ss.str();
+}
+
 std::string int_list(const std::vector<int>& v) {
   std::string out(1, '[');
   for (const int x : v) {
@@ -474,6 +485,15 @@ int run(const settings& s) {
   const fftn::workspace ws(detail::workspace_bytes(*core, s.threads));
   const fftn::omp::executor exec(s.threads);
 
+  if (s.prelude != 0) {
+    // glibc serves a large block by mmap and, when such a block is freed, raises its mmap
+    // threshold to that size (up to 32 MiB): later blocks below it come from the heap.
+    const std::unique_ptr<void, free_deleter> block(std::malloc(s.prelude)); // NOLINT
+    if (block == nullptr) {
+      throw std::bad_alloc();
+    }
+    std::memset(block.get(), 1, s.prelude);
+  }
   const std::size_t bytes = s.n * s.batch * sizeof(cplx);
   const buffer in(bytes, s.offset_in, s.huge);
   const std::unique_ptr<buffer> out =
@@ -655,6 +675,8 @@ int run(const settings& s) {
       .raw("tuning", s.tuning)
       .integer("threads", s.threads)
       .boolean("huge", s.huge)
+      .str("in_at", hex(in.data()))
+      .str("out_at", hex(out_data))
       .integer("in_mod_4k", mod(in.data(), 4096))
       .integer("out_mod_4k", mod(out_data, 4096))
       .integer("in_mod_2m", mod(in.data(), std::uintptr_t{2} << 20U))
