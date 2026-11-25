@@ -16,6 +16,9 @@
 //   before=KIND:N:BATCH                first plan and execute rows of another case (c2c, r2c or
 //                                      c2r) through the same executor for before_seconds=0.05,
 //                                      then free them, as an earlier case of an fbench process
+//   ws_offset=BYTES                    the workspace in memory of the probe's own, this many
+//                                      bytes (a multiple of 16) into a page (default: the
+//                                      library's own allocation)
 //   idle=SECONDS                       after the checking execute, keep the team idle this long
 //                                      (fbench checks the result on its main thread meanwhile)
 //   seconds=1 batch_time=0.002 warmup=0.02   timing: fbench's batches, for `seconds` in all
@@ -64,6 +67,7 @@
 #include <memory>
 #include <random>
 #include <set>
+#include <span>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -91,6 +95,7 @@ struct settings {
   std::string before;
   double before_seconds = 0.05;
   double idle = 0;
+  std::ptrdiff_t ws_offset = -1;
   double seconds = 1.0;
   double batch_time = 2e-3;
   double warmup = 0.02;
@@ -152,6 +157,11 @@ settings parse(int argc, char** argv) {
       s.before = value;
     } else if (key == "before_seconds") {
       s.before_seconds = real_number(value, key);
+    } else if (key == "ws_offset") {
+      s.ws_offset = number<std::ptrdiff_t>(value, key);
+      if (s.ws_offset < 0 || s.ws_offset >= 4096 || s.ws_offset % 16 != 0) {
+        throw std::invalid_argument("ws_offset is a multiple of 16 below 4096");
+      }
     } else if (key == "idle") {
       s.idle = real_number(value, key);
     } else if (key == "prelude") {
@@ -561,7 +571,14 @@ int run(const settings& s) {
   const fftn::options opts{.in_place = s.in_place};
   const std::shared_ptr<const detail::plan_core> core =
       detail::make_plan_core(detail::view_of(shape), opts, s.build);
-  const fftn::workspace ws(detail::workspace_bytes(*core, s.threads));
+  const std::size_t ws_bytes = detail::workspace_bytes(*core, s.threads);
+  std::unique_ptr<buffer> ws_memory;
+  if (s.ws_offset >= 0) {
+    ws_memory = std::make_unique<buffer>(ws_bytes, static_cast<std::size_t>(s.ws_offset), false);
+  }
+  const fftn::workspace ws =
+      ws_memory ? fftn::workspace(std::span<std::byte>(ws_memory->data(), ws_bytes))
+                : fftn::workspace(ws_bytes);
 
   const std::size_t bytes = s.n * s.batch * sizeof(cplx);
   const buffer in(bytes, s.offset_in, s.huge);
