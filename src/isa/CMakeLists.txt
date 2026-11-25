@@ -28,7 +28,7 @@ foreach(target IN ITEMS avx2 avx512 neon neon_fcma)
   list(APPEND fftn_isa_units batch_${target}.cpp batch_large_${target}.cpp)
 endforeach()
 target_sources(fftn PRIVATE ${fftn_isa_units} target.cpp)
-fftn_always_optimise(${fftn_isa_units})
+fftn_always_optimise(${fftn_isa_units} TARGET fftn)
 # The avx512 units' branches are padded so that none crosses or ends on a 32-byte boundary.
 # Skylake-derived cores (the Xeon 6240) fetch such a branch from the slow decoders once the
 # JCC erratum's microcode update is installed, and which kernel lands where is luck: the merge
