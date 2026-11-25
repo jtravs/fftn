@@ -70,9 +70,8 @@ public:
   /// that is not finite or not representable in the plan's precision (alone, or the
   /// product of the edges' scales and `options::scale`), both `options::scale` and
   /// `edges.out.scale` other than 1, `accumulate` on the input edge or on an in-place plan,
-  /// a factor whose strides do not match the shape or whose span overflows, a complex factor on a
-  /// real side, or a factor or accumulation on a plan that does not take them yet (anything but c2c
-  /// rows). Throws `std::bad_alloc` when memory runs out.
+  /// a factor whose strides do not match the shape or whose span overflows, or a complex factor
+  /// on a real side. Throws `std::bad_alloc` when memory runs out.
   plan(const shape<In, Out>& s, const options& opts, const plan_edges<In, Out>& edges)
       : core_(detail::make_plan_core_with_edges(detail::view_of(s), opts, detail::view_of(edges))) {
   }

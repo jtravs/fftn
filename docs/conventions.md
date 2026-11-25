@@ -267,11 +267,15 @@ one product, which differs from separate multiplications only in rounding, and a
 be fused into a pass's arithmetic. The guarantees of
 "Determinism" below hold for plans with edges too.
 
-Scales are taken by every plan. Factors and accumulation are built, so far, for c2c plans of
-one axis, which then run as a chain of passes (a complex factor of stride 1 along the row in
-the first or last pass, the rest in a separate pass through the workspace) and are planned by
-the rules whatever `options::effort` asks; `plan::describe()` says so. Other plans refuse
-them for now.
+Scales are taken by every plan; so are factors and accumulation, which are planned by the
+rules whatever `options::effort` asks, so far, and not yet in every strategy. A c2c plan of
+one axis then runs as a chain of passes: a complex factor of stride 1 along the row in the
+first or last pass, the rest in a separate pass through the workspace. On a multi-axis or real
+plan each factor and accumulation is a pass of its own over the edge's side, before or after
+the transform, which takes no lanes over adjacent transforms (multi-axis c2c) and no grid,
+lanes or depth-first chain (real rows); the workspace then holds one transform more where
+the input edge cannot be applied in the output (real plans, and accumulation) or the output
+accumulates. `plan::describe()` says what was built.
 
 ## In place
 

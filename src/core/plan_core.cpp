@@ -325,6 +325,14 @@ struct view {
   std::ptrdiff_t element_bytes = 0;
 };
 
+// The bytes a lines loop of an edge phase (build, edge_phase) moves the input's and the
+// output's factor cursors per iteration: the edge driver's records of a plan with edges
+// (mark_cursors, edge_record::factor_step). Batch loops take theirs from the batch strides.
+struct edge_loop {
+  std::size_t record = 0;
+  std::array<std::ptrdiff_t, 2> step{};
+};
+
 // The bytes `elements` steps along axis e move each of the views' slots, as a loop's step
 // or start holds them (in, out, block, twiddles).
 std::array<std::ptrdiff_t, moving_slots> slot_bytes_along(std::size_t e, std::ptrdiff_t elements,
@@ -1124,7 +1132,8 @@ void read_output_for_input(program& p, std::size_t first) {
 
 template <class T>
 void build(plan_core& c, const shape_view& s, const side& in, const side& out, const options& opts,
-           const build_settings& settings, const edge_plan* edge_ops) {
+           const build_settings& settings, const edge_plan* edge_ops,
+           std::vector<edge_loop>& edge_loops) {
   c.isa_target = plan_target_of(opts);
   const kernels_of<T>& kernels = of<T>(*find_kernels(c.isa_target));
   target_profile profile = profile_of(c.isa_target, kernels.complex_lanes, settings.profile.vendor);
@@ -1233,6 +1242,75 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   const int sign = static_cast<int>(s.dir);
   // Axis d of the plan as the shape lists it (plan_core::axis_of), for describe().
   const auto listed = [&c](std::size_t d) { return c.axis_of.empty() ? d : c.axis_of[d]; };
+
+  // The edges of a multi-axis or real plan (core/edges.hpp; c2c rows place theirs in the row's
+  // chain, c2c_axis below): every factor and accumulation is an edge phase, a phase of its own
+  // over the rows of the edge's side (the last axis), the input's before the transform and the
+  // output's after it, whose loops move the factor cursors by the factor's strides along the
+  // other axes (edge_loops). The input edge's phase writes the output where the transform can
+  // run in place there (c2c without accumulation), else the workspace block, which then holds
+  // one transform: the input side's elements, real rows padded to 2(n/2 + 1) values as an
+  // in-place real transform's are. With accumulation the transform ends in the block (the
+  // output side's elements, in the same layout), and the output edge's phase adds it to the
+  // output; else the output edge's phase runs in place on the output. One block serves both,
+  // as an in-place transform's array does.
+  const bool edge_phases = edge_ops != nullptr && (r > 1 || s.kind != transform_kind::c2c);
+  view src0 = in_view;  // where the transform's first phase reads
+  view dst0 = out_view; // where its phases write
+  view block_complex{.where = slot::block, .stride = {}, .element_bytes = complex_bytes};
+  view block_real{
+      .where = slot::block, .stride = {}, .element_bytes = static_cast<std::ptrdiff_t>(sizeof(T))};
+  std::size_t edge_block = 0;
+  if (edge_phases) {
+    const std::size_t last_n =
+        s.kind == transform_kind::c2c ? c.lengths[r - 1] : c.lengths[r - 1] / 2 + 1;
+    block_complex.stride.assign(r, 0);
+    block_real.stride.assign(r, 0);
+    std::ptrdiff_t span = 1;
+    for (std::size_t i = r; i > 0; --i) {
+      block_complex.stride[i - 1] = span;
+      block_real.stride[i - 1] = i == r ? 1 : 2 * span;
+      span = checked_mul(span, to_signed(i == r ? last_n : c.lengths[i - 1], "shape"), "shape");
+    }
+    static_cast<void>(checked_mul(span, complex_bytes, "shape"));
+    const bool accumulate = edge_ops->out.accumulate;
+    if (edge_ops->in.separate) {
+      src0 = s.kind == transform_kind::c2c && !accumulate
+                 ? out_view
+                 : (s.kind == transform_kind::r2c ? block_real : block_complex);
+    }
+    if (accumulate) {
+      dst0 = s.kind == transform_kind::c2r ? block_real : block_complex;
+    }
+    if (src0.where == slot::block || dst0.where == slot::block) {
+      edge_block = static_cast<std::size_t>(span);
+    }
+  }
+  // An edge phase from `from` to `to` over lines of `extent` along the last axis.
+  const auto edge_phase = [&](bool output, const std::vector<std::size_t>& extent, const view& from,
+                              const view& to) {
+    const edge_side& e = output ? edge_ops->out : edge_ops->in;
+    const bool real = output ? s.kind == transform_kind::c2r : s.kind == transform_kind::r2c;
+    const std::size_t row = r - 1;
+    const std::vector<std::size_t> open = open_loops(p, row, row, extent, from, to);
+    p.records.emplace_back(
+        edge_pass_stage(s.prec, e, output, extent[row], from.where, from.stride[row], to.where,
+                        to.stride[row], settings.chunk_points, real,
+                        e.kind != factor_kind::none ? e.axis_strides.at(listed(row)) : 0));
+    close_loops(p, open);
+    std::size_t k = 0;
+    for (std::size_t d = 0; d < extent.size(); ++d) {
+      if (d == row || extent[d] == 1) {
+        continue; // open_loops opens no loop for these
+      }
+      edge_loop l{.record = open.at(k++)};
+      if (e.kind != factor_kind::none) {
+        l.step[output ? 1 : 0] =
+            e.axis_strides.at(listed(d)) * static_cast<std::ptrdiff_t>(e.factor_bytes);
+      }
+      edge_loops.push_back(l);
+    }
+  };
   // A strided complex axis d as the lanes over blocks of adjacent columns where they fit
   // (column_block; DESIGN.md 9.3, experiments X40 and X41): returns whether it was built.
   // `axis` names d in describe() when `extent` is not the plan's (a volume's plane). `real`:
@@ -1401,6 +1479,18 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   }
   if (lanes == 0 && grid_plan.phases == 0 && depth_tops.empty()) {
     chain.use_batch_leaves(batch);
+  }
+  if (edge_phases) {
+    // Plans with edges are built by the chain's rules (build_plan_core): none of the
+    // strategies below but the axes' own lines.
+    if (lanes != 0 || adjacent != 0 || real_grid.phases != 0 || !real_depth_tops.empty() ||
+        grid_plan.phases != 0 || !depth_tops.empty() || !bluestein_tops.empty()) {
+      throw std::logic_error("fftn: internal: an edge phase with a strategy that takes none");
+    }
+    c.block_elements = edge_block;
+    if (edge_ops->in.separate) {
+      edge_phase(false, in.extent, in_view, src0);
+    }
   }
   if (lanes != 0) {
     // The lanes strategy (DESIGN.md 8.5): blocks of `lanes` rows of the innermost batch
@@ -1704,7 +1794,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     // Axis d of the plan as axis e of `extent`: the whole transform's, or a volume's plane.
     const auto c2c_axis = [&](std::size_t d, std::size_t e, const std::vector<std::size_t>& extent,
                               const view& src, const view& dst) {
-      const bool aliased = src.where == slot::out || c.in_place;
+      const bool aliased = src.where == dst.where || c.in_place;
       const line_edges line = c2c_edges(opts, settings, d + 1 == r, d == 0);
       std::vector<stage> st;
       std::size_t need = 0;
@@ -1718,14 +1808,16 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
         const endpoint to = at(dst, e);
         if (edge_ops->in.separate) {
           st.push_back(edge_pass_stage(s.prec, edge_ops->in, false, n, from.where, from.stride,
-                                       slot::block, 1, settings.chunk_points));
+                                       slot::block, 1, settings.chunk_points, false,
+                                       edge_ops->in.axis_stride));
           from = block;
         }
         const endpoint line_to = edge_ops->out.separate ? block : to;
         need = chain.c2c_line(n, sign, from, line_to, from.where == line_to.where, line, st);
         if (edge_ops->out.separate) {
           st.push_back(edge_pass_stage(s.prec, edge_ops->out, true, n, slot::block, 1, to.where,
-                                       to.stride, settings.chunk_points));
+                                       to.stride, settings.chunk_points, false,
+                                       edge_ops->out.axis_stride));
         }
         c.block_elements = std::max(c.block_elements, n);
       } else {
@@ -1748,44 +1840,45 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
         (settings.volume_planes || (settings.team_program && settings.profile.team_volume_planes &&
                                     in.extent[0] >= team_min_planes))) {
       add_volume_planes(
-          p, in.extent, in_view, out_view,
+          p, in.extent, src0, dst0,
           [&](const std::vector<std::size_t>& plane, const view& src, const view& dst) {
             c2c_axis(2, 1, plane, src, dst);
             c2c_axis(1, 0, plane, dst, dst);
           });
-      c2c_axis(0, 0, in.extent, out_view, out_view);
+      c2c_axis(0, 0, in.extent, dst0, dst0);
       c.strategy_note = volume_note;
     } else {
       for (std::size_t i = r; i > 0; --i) {
         const std::size_t d = i - 1;
-        c2c_axis(d, d, in.extent, d + 1 == r ? in_view : out_view, out_view);
+        c2c_axis(d, d, in.extent, d + 1 == r ? src0 : dst0, dst0);
       }
     }
   } else if (s.kind == transform_kind::r2c) {
+    // src0 and dst0: the caller's arrays, or with edge phases the workspace block (where the
+    // rows then run in place when both are, as an in-place plan's do).
     std::vector<stage> st;
     const std::size_t need =
-        chain.r2c_line(c.lengths[r - 1], at(in_view, r - 1), at(out_view, r - 1), c.in_place,
-                       r == 1 ? opts.scale : 1.0, st);
-    lines(r - 1, in.extent, in_view, out_view, need, std::move(st));
-    c.axis_notes.push_back(
-        "axis " + std::to_string(listed(r - 1)) + " (n = " + std::to_string(c.lengths[r - 1]) +
-        "): " +
-        chain.real_text(c.lengths[r - 1], true, in.stride[r - 1] != 1 || out.stride[r - 1] != 1));
+        chain.r2c_line(c.lengths[r - 1], at(src0, r - 1), at(dst0, r - 1),
+                       c.in_place || src0.where == dst0.where, r == 1 ? opts.scale : 1.0, st);
+    lines(r - 1, in.extent, src0, dst0, need, std::move(st));
+    c.axis_notes.push_back("axis " + std::to_string(listed(r - 1)) +
+                           " (n = " + std::to_string(c.lengths[r - 1]) + "): " +
+                           chain.real_text(c.lengths[r - 1], true,
+                                           src0.stride[r - 1] != 1 || dst0.stride[r - 1] != 1));
     for (std::size_t i = r - 1; i > 0; --i) {
       const std::size_t d = i - 1;
       const std::size_t n = c.lengths[d];
       const line_edges edges = c2c_edges(opts, settings, false, d == 0);
-      if (complex_columns(d, out.extent, out_view, out_view, edges, -1, "c2c forward")) {
+      if (complex_columns(d, out.extent, dst0, dst0, edges, -1, "c2c forward")) {
         continue;
       }
       std::vector<stage> cs;
-      const std::size_t cneed =
-          chain.c2c_line(n, -1, at(out_view, d), at(out_view, d), true, edges, cs);
-      lines(d, out.extent, out_view, out_view, cneed, std::move(cs));
+      const std::size_t cneed = chain.c2c_line(n, -1, at(dst0, d), at(dst0, d), true, edges, cs);
+      lines(d, out.extent, dst0, dst0, cneed, std::move(cs));
       c.axis_notes.push_back("axis " + std::to_string(listed(d)) + " (n = " + std::to_string(n) +
                              "): c2c forward, radices " + chain.radix_text(n));
     }
-  } else if (c2r_packed(s, in, out, c.in_place, settings, c.isa_target)) {
+  } else if (!edge_phases && c2r_packed(s, in, out, c.in_place, settings, c.isa_target)) {
     // A c2r plane out of place, its intermediate packed in the output (DESIGN.md 9.1,
     // experiments X60, X63): each output row's n reals hold its h = n/2 complex values after
     // the column axis, X_0 .. X_h-1 with the imaginary place of X_0 holding
@@ -1914,16 +2007,23 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
         span = checked_mul(span, to_signed(in.extent[i - 1], "shape"), "shape");
       }
       static_cast<void>(checked_mul(span, complex_bytes, "shape"));
-      c.block_elements = static_cast<std::size_t>(span);
+      c.block_elements = std::max(c.block_elements, static_cast<std::size_t>(span));
+    }
+    // An input edge phase has written the half spectrum into the block, in its layout
+    // (block_complex is block_view's): the transform runs there, out of place or in place.
+    const bool in_block = edge_phases && edge_ops->in.separate;
+    if (in_block) {
+      block_view = block_complex;
     }
     // In place the complex phases work on the output slot, which is the input's memory,
     // through the input's (complex) strides.
     const view work =
-        c.in_place ? view{.where = slot::out, .stride = in.stride, .element_bytes = complex_bytes}
-                   : block_view;
+        c.in_place && !in_block
+            ? view{.where = slot::out, .stride = in.stride, .element_bytes = complex_bytes}
+            : block_view;
     for (std::size_t i = r - 1; i > 0; --i) {
       const std::size_t d = i - 1;
-      const view& src = d + 2 == r && !c.in_place ? in_view : work;
+      const view& src = d + 2 == r ? (in_block ? block_view : (c.in_place ? work : in_view)) : work;
       if (complex_columns(d, in.extent, src, work, line_edges(), +1, "c2c backward")) {
         continue;
       }
@@ -1935,15 +2035,23 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       c.axis_notes.push_back("axis " + std::to_string(listed(d)) + " (n = " + std::to_string(n) +
                              "): c2c backward, radices " + chain.radix_text(n));
     }
-    const view& src = r > 1 && !c.in_place ? block_view : in_view;
+    // The rows from the half spectrum to dst0: the output, or with accumulation the block, in
+    // place there when the half spectrum is in it (c2r never writes its source before reading
+    // it, as an in-place plan's rows show).
+    const view& src = in_block || (r > 1 && !c.in_place) ? block_view : in_view;
     std::vector<stage> st;
     const std::size_t need =
-        chain.c2r_line(c.lengths[r - 1], at(src, r - 1), at(out_view, r - 1), opts.scale, st);
-    lines(r - 1, out.extent, src, out_view, need, std::move(st));
-    c.axis_notes.push_back(
-        "axis " + std::to_string(listed(r - 1)) + " (n = " + std::to_string(c.lengths[r - 1]) +
-        "): " +
-        chain.real_text(c.lengths[r - 1], false, src.stride[r - 1] != 1 || out.stride[r - 1] != 1));
+        chain.c2r_line(c.lengths[r - 1], at(src, r - 1), at(dst0, r - 1), opts.scale, st);
+    lines(r - 1, out.extent, src, dst0, need, std::move(st));
+    c.axis_notes.push_back("axis " + std::to_string(listed(r - 1)) +
+                           " (n = " + std::to_string(c.lengths[r - 1]) + "): " +
+                           chain.real_text(c.lengths[r - 1], false,
+                                           src.stride[r - 1] != 1 || dst0.stride[r - 1] != 1));
+  }
+  if (edge_phases && edge_ops->out.separate) {
+    // The output edge's phase: from dst0 (the output itself, in place, or the block) to the
+    // output.
+    edge_phase(true, out.extent, dst0, out_view);
   }
   for (std::size_t b = 0; b < p.batch_loops; ++b) {
     std::get<loop>(p.records[b]).body_end = static_cast<std::uint32_t>(p.records.size());
@@ -2009,8 +2117,12 @@ const void* const out_factor_tag = factor_tags.data() + 1;
 // The edge driver's records of a plan with edges (core/edge_driver.hpp): the stages that read a
 // factor through its cursor, those built with a tag (build_plan_core) and the separate edge
 // passes (which edge_pass_stage marks), keep their kernels there and carry guards; the batch
-// loops move the cursors by the factors' batch strides.
-std::vector<edge_record> mark_cursors(program& p, const edge_plan& edges) {
+// loops move the cursors by the factors' batch strides (build makes one batch loop per batch
+// dimension, in the shape's order, so loop b is dimension b), and the lines loops of the edge
+// phases by the factors' axis strides (`loops`, from build). Other lines loops enclose no stage
+// that reads a cursor, so they need not move it.
+std::vector<edge_record> mark_cursors(program& p, const edge_plan& edges,
+                                      const std::vector<edge_loop>& loops) {
   std::vector<edge_record> e(p.records.size());
   for (std::size_t i = 0; i < p.records.size(); ++i) {
     stage* st = std::get_if<stage>(&p.records[i]);
@@ -2039,6 +2151,12 @@ std::vector<edge_record> mark_cursors(program& p, const edge_plan& edges) {
     if (edges.out.kind != factor_kind::none) {
       e[b].factor_step[1] = edges.out.batch_steps.at(b);
     }
+  }
+  for (const edge_loop& l : loops) {
+    if (!std::holds_alternative<loop>(p.records.at(l.record))) {
+      throw std::logic_error("fftn: internal: an edge phase's loop is not a loop");
+    }
+    e[l.record].factor_step = l.step;
   }
   return e;
 }
@@ -2169,18 +2287,19 @@ std::shared_ptr<plan_core> build_plan_core(const shape_view& s, const options& o
     reject("build_settings", "puts a scale and a factor on the input edge");
   }
 
+  std::vector<edge_loop> edge_loops;
   if (s.prec == precision::f64) {
-    build<double>(*c, s, in, out, opts, settings, with_edges ? edges : nullptr);
+    build<double>(*c, s, in, out, opts, settings, with_edges ? edges : nullptr, edge_loops);
   } else {
-    build<float>(*c, s, in, out, opts, settings, with_edges ? edges : nullptr);
+    build<float>(*c, s, in, out, opts, settings, with_edges ? edges : nullptr, edge_loops);
   }
   if (with_edges) {
-    c->edge_records = mark_cursors(c->prog, *edges);
+    c->edge_records = mark_cursors(c->prog, *edges, edge_loops);
     c->factor_args =
         static_cast<std::uint8_t>((edges->in.kind != factor_kind::none ? moving_in_factor : 0) |
                                   (edges->out.kind != factor_kind::none ? moving_out_factor : 0));
     c->needs_args = c->factor_args != 0;
-    c->edges_note = edges_text(*edges);
+    c->edges_note = edges_text(*edges, s.kind == transform_kind::c2c && r == 1);
   }
   std::size_t points = 1;
   for (const std::size_t n : c->lengths) {
@@ -2227,15 +2346,12 @@ std::shared_ptr<plan_core> build_plan_core(const shape_view& s, const options& o
                   settings.profile.column_wide_bytes != 0)) ||
        c->adjacent_team_chain) &&
       !settings.team_program) {
-    // A team core of a plan with edges would be built from the tagged settings without the
-    // edges: real kernels reading the tags, and no edge records for the edge driver. Plans with
-    // edges are rows of the chain (5.1a), which take none; 5.1b must pass the edges here first.
-    if (with_edges) {
-      throw std::logic_error("fftn: internal: a team core of a plan with edges (task 5.1b)");
-    }
+    // A plan with edges passes them on: its team core has its own edge phases, tags and edge
+    // records (mark_cursors), and is built from the settings the edges tagged.
     build_settings team = settings;
     team.team_program = true;
-    std::shared_ptr<const plan_core> t = build_plan_core(s, opts, team);
+    std::shared_ptr<const plan_core> t =
+        build_plan_core(s, opts, team, with_edges ? edges : nullptr);
     if (t->axis_notes != c->axis_notes || t->strategy_note != c->strategy_note) {
       c->team = std::move(t);
     }
@@ -2260,18 +2376,20 @@ std::shared_ptr<const plan_core> make_plan_core(const shape_view& shape, const o
   return make_plan_core(shape, opts, build_settings{});
 }
 
-std::shared_ptr<const plan_core>
-make_plan_core_with_edges(const shape_view& shape, const options& opts, const edges_view& edges) {
+std::shared_ptr<const plan_core> make_plan_core_with_edges(const shape_view& shape,
+                                                           const options& opts,
+                                                           const edges_view& edges,
+                                                           const build_settings& settings) {
   check_counts(shape);
   const resolved_edges r = resolve_edges(shape, opts, edges);
   if (!r.plan.any) {
     // Scales only: one product in options::scale, planned as any plan.
-    return make_plan_core(shape, r.opts, build_settings{});
+    return make_plan_core(shape, r.opts, settings);
   }
   if (!std::isfinite(opts.measure_seconds) || opts.measure_seconds < 0) {
     reject("options.measure_seconds", "must be finite and not negative");
   }
-  std::shared_ptr<plan_core> c = build_plan_core(shape, r.opts, build_settings{}, &r.plan);
+  std::shared_ptr<plan_core> c = build_plan_core(shape, r.opts, settings, &r.plan);
   // Wisdom records the plan under its edges, so that no plan without them matches its entry.
   c->shape_key += edges_key(edges, opts.scale);
   if (opts.effort != planning::rules || opts.use != nullptr) {
@@ -2279,6 +2397,11 @@ make_plan_core_with_edges(const shape_view& shape, const options& opts, const ed
                        "accumulation yet (task 5.1)";
   }
   return c;
+}
+
+std::shared_ptr<const plan_core>
+make_plan_core_with_edges(const shape_view& shape, const options& opts, const edges_view& edges) {
+  return make_plan_core_with_edges(shape, opts, edges, build_settings{});
 }
 
 namespace {

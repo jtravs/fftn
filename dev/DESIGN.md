@@ -2223,7 +2223,7 @@ value (section 5). In multi-axis plans, pruning first restricts the other axes' 
 stored runs, which skips zero sub-transforms. Within a line it then uses the generator's pruned
 codelets, confined to the edge passes.
 
-As built (task 5.1a): `edge`, `factor`, `plan_edges` and `exec_args` are public, provisional,
+As built (tasks 5.1a, 5.1b): `edge`, `factor`, `plan_edges` and `exec_args` are public, provisional,
 in `fftn/edges.hpp`, without `edge::call` (5.3) and stored runs (5.1d); the plan constructor
 takes the edges and every execute overload has its `exec_args` twin (the team one twice: with
 `completion::all` and with an explicit `completion`; `execute(in, out, team, ws, {})` does not
@@ -2234,19 +2234,28 @@ execution without a factor array the plan needs aborts in every build. A plan wh
 factors runs on a driver of its own (`core/edge_driver.hpp`), which moves the factor cursors;
 its factor stages carry guards for the ordinary driver, so that an overload without
 `exec_args` aborts, and every other plan runs on the ordinary driver compiled exactly as before
-(one driver for both cost plans without edges 2–6 % on the EPYC 7763). Factors and accumulation
-are
-built for c2c rows only and refused elsewhere. A complex factor of stride 1 along the row is the
-`factor` edge variant of the row's first or last pass (task 1.2 built them for every pass kind),
-reading the execution's array through a factor cursor that the batch loops move by the factor's
-batch strides (`stage::moving_factors`, the edge driver's records); a real factor, any other stride, accumulation, and a
-scale beside two fused factors are a separate edge pass through the workspace block, before or
-after the row's chain. Such a plan is a chain built by the rules whatever the strategy and the
-effort would otherwise be (the lanes refuse input edge operations, grid and depth-first chains
-take no factor edge, batch leaves fall back to the chain), and `describe()` says so. 5.1b brings
-the factor to every strategy the rules choose, and X65 decides which separate passes become
-fused variants. An edge that still forces a slower strategy is built, not refused, and
-`describe()` says so (AGENTS.md section 1).
+(one driver for both cost plans without edges 2–6 % on the EPYC 7763). On c2c rows a complex
+factor of stride 1 along the row is the `factor` edge variant of the row's first or last pass
+(task 1.2 built them for every pass kind), reading the execution's array through a factor
+cursor that the batch loops move by the factor's batch strides (`stage::moving_factors`, the
+edge driver's records); a real factor, any other stride, accumulation, and a scale beside two
+fused factors are a separate edge pass through the workspace block, before or after the row's
+chain. On multi-axis and real plans (5.1b) every factor and accumulation is an **edge phase**:
+a phase of its own over the rows of the edge's side, before the transform (input) or after it
+(output), whose lines loops move the cursors by the factor's axis strides and which teams
+share out by lines like any phase. The input edge's phase writes the output where the
+transform can then run in place (c2c without accumulation), else the workspace block; with
+accumulation the transform ends in the block and the output edge's phase adds it to the
+output. The block then holds one transform, both sides in an in-place transform's layout (real
+rows padded to 2(n/2 + 1)), so one block serves both edges. A team core (`plan_core::team`)
+is built with the plan's edges. Such plans are built by the rules whatever the effort: a c2c
+row is a chain (the lanes refuse input edge operations, grid and depth-first chains take no
+factor edge, batch leaves fall back to the chain), a multi-axis plan takes no lanes over
+adjacent transforms (the edge driver runs no lanes program), a real row no grid, lanes or
+depth-first chain; `describe()` says so. The other strategies, measured planning and wisdom
+follow in 5.1b's later steps, and X65 decides which separate passes become fused variants. An
+edge that still forces a slower strategy is built, not refused, and `describe()` says so
+(AGENTS.md section 1).
 
 ### 12.2 Row pipelines
 
@@ -3641,6 +3650,7 @@ to change before a release.
 | 2026-11-25 | Section 1.3's client-catalogue row judges each case by the standard catalogues' per-case test at 1.05 beyond noise (a case fails when the whole bootstrap interval of its time ÷ the provider's lies above 1.05 × (1 + the run's A/A band)); it read "no case above 1.02", a plain ratio with no allowance for noise | The maintainer, 2026-11-25: "That tail check seems overly strict (I thought it was 1.05 and accounted for noise)." The 2026-11-24 client check judged by 1.02 is to be re-scored under this rule |
 | 2026-11-25 | Plan edges public and provisional (task 5.1a, section 12.1): the API block of section 12 without callbacks and stored runs; scales on every plan as one product; factors and accumulation on c2c rows, a complex factor of stride 1 fused into the row's first or last pass through an execution-time factor cursor, everything else a separate edge pass through the workspace block; such plans are chains planned by the rules | Correctness and API shape first, as the maintainer's agreed design orders (5.1); which separate passes pay as fused variants, and the cost of forcing the chain, are X65's (5.1f). A separate pass needs no new kernel variants on any target, so every combination of the vocabulary is built at once |
 | 2026-11-25 | Plan edges' API points (task 5.1a, PR 128): the team `execute` with `exec_args` also without a `completion` (`completion::all`), and `execute(in, out, team, ws, {})` refused at compile time; accumulation refused on in-place plans; an empty `batch_strides` broadcasts along every batch dimension; an execution without a factor array the plan needs aborts in every build; plans with factor edges run on a driver of their own, so that the others run exactly as before (a regression check on the EPYC 7763 found plans without edges 2–6 % slower when one driver moved the cursors for every plan); default member initialisers kept; the scales applied as one product, which differs from separate multiplications only in rounding | The maintainer, on the six questions of PR 128: "Yes, as recommended". A second reader found that `execute(in, out, team, ws, {})` bound silently to `completion{}`, and that a Release execution without the factor array read address 0 (or, with a large stride, mapped memory) |
+| 2026-11-25 | Edges on multi-axis and real plans (task 5.1b-1, section 12.1): every factor and accumulation an edge phase of its own over the edge side's rows, before or after the transform, through the output (c2c input edge without accumulation) or one transform in the workspace block (in an in-place transform's layout, shared by both edges); team cores built with the edges | Correctness first (5.1): a phase of rows needs no kernel and no change to any strategy's phases, reaches every axis order, layout and kind, and teams share it by lines. Fusing into the first and last phases' passes (natural for the input edge on the rows) is X65's to price (5.1f) |
 
 ---
 

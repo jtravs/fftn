@@ -29,8 +29,12 @@ namespace fftn::inline v0::detail {
 // One edge as the plan applies it.
 struct edge_side {
   factor_kind kind = factor_kind::none;
-  std::size_t factor_bytes = 0;            // of one element of the array
-  std::ptrdiff_t axis_stride = 0;          // in the array's elements, along the line (one axis)
+  std::size_t factor_bytes = 0;   // of one element of the array
+  std::ptrdiff_t axis_stride = 0; // in the array's elements, along the line (one axis)
+  // In the array's elements, per axis of the shape (in the shape's order): 0 along an axis of
+  // one point on the edge's side. Multi-axis and real plans read the factor through these
+  // (the edge phases, plan_core.cpp).
+  std::vector<std::ptrdiff_t> axis_strides;
   std::vector<std::ptrdiff_t> batch_steps; // bytes per batch dimension, in the shape's order
   bool fused = false;                      // the factor in the line's first or last pass
   bool separate = false;                   // a separate edge pass through the workspace block
@@ -60,16 +64,20 @@ struct resolved_edges {
 [[nodiscard]] resolved_edges resolve_edges(const shape_view& s, const options& opts,
                                            const edges_view& e);
 
-// The separate edge pass of one side over a line of n complex values of precision `prec`:
-// read at src (stride src_stride), multiplied by the side's factor (through the factor cursor
-// of that side) and scale, and stored or added at dst (stride dst_stride). Its units are the
-// line's elements, in chunks of about chunk_points.
+// The separate edge pass of one side over a line of n complex values (or, `real`, n real
+// values: the real side of a real transform) of precision `prec`: read at src (stride
+// src_stride), multiplied by the side's factor (through the factor cursor of that side, with
+// factor_stride elements of the array between the line's elements) and scale, and stored or
+// added at dst (stride dst_stride). Its units are the line's elements, in chunks of about
+// chunk_points.
 [[nodiscard]] stage edge_pass_stage(precision prec, const edge_side& side, bool output,
                                     std::size_t n, slot src, std::ptrdiff_t src_stride, slot dst,
-                                    std::ptrdiff_t dst_stride, std::size_t chunk_points);
+                                    std::ptrdiff_t dst_stride, std::size_t chunk_points, bool real,
+                                    std::ptrdiff_t factor_stride);
 
-// describe()'s line for a plan with edges.
-[[nodiscard]] std::string edges_text(const edge_plan& p);
+// describe()'s line for a plan with edges; `rows`: a c2c plan of one axis (rows), whose
+// factors may be fused into the row's passes, else a multi-axis or real plan (edge phases).
+[[nodiscard]] std::string edges_text(const edge_plan& p, bool rows);
 
 // The edges and options::scale as a wisdom key adds them (core/wisdom.cpp, shape_key): empty
 // for scales only.

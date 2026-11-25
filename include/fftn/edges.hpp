@@ -83,10 +83,12 @@ template <class T> struct edge {
 
 /// The two edges of a plan (`plan::plan`): `in` for the input, `out` for the output.
 ///
-/// Implemented so far (task 5.1): scales on any plan; factors and accumulation on c2c plans
-/// of one axis (rows), which construction refuses on other plans for now. Such a plan is
-/// built as a chain of passes whatever the rules would choose, and by the rules whatever
-/// `options::effort` asks; `plan::describe()` says so.
+/// Implemented so far (task 5.1): scales, factors and accumulation on every plan. A plan with
+/// a factor or accumulation is built by the rules whatever `options::effort` asks, with some
+/// strategies not taken yet (a c2c plan of one axis is a chain of passes; a multi-axis plan
+/// takes no lanes over adjacent transforms; a real row no grid, lanes or depth-first chain);
+/// `plan::describe()` says so. On a multi-axis or real plan each factor and accumulation is a
+/// pass of its own over the data, and the workspace may hold one transform more.
 template <class In, class Out> struct plan_edges {
   /// The input edge.
   edge<In> in{};

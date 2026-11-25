@@ -274,6 +274,11 @@ make_plan_core(const shape_view& shape, const options& opts, const build_setting
                                                          const build_settings& settings,
                                                          const edge_plan* edges = nullptr);
 
+// make_plan_core_with_edges (fftn/detail/core.hpp) with construction knobs (tests).
+[[nodiscard]] std::shared_ptr<const plan_core>
+make_plan_core_with_edges(const shape_view& shape, const options& opts, const edges_view& edges,
+                          const build_settings& settings);
+
 // Measured planning and wisdom (core/measure.cpp): options::use, then options::effort.
 [[nodiscard]] std::shared_ptr<const plan_core>
 plan_with_effort(const shape_view& shape, const options& opts, const build_settings& settings);

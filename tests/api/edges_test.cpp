@@ -562,13 +562,13 @@ TEST(Edges, RefusalsNameTheField) {
   expect_refused<double, C>(r2c, {}, {.in = {.mul = good}}, "edges.in.mul.kind");
   const auto c2r = fftn::rows_c2r<double>(16, 2);
   expect_refused<C, double>(c2r, {}, {.out = {.mul = good}}, "edges.out.mul.kind");
-  // Not built yet beyond c2c rows (task 5.1b).
-  expect_refused<double, C>(
-      r2c, {}, {.in = {.mul = {.kind = real, .axis_strides = {1}, .batch_strides = {16}}}},
-      "edges.in.mul");
+  // A plane's factor gives a stride per axis.
   fftn::shape<C, C> plane;
   plane.axes = {{.n = 8}, {.n = 8}};
-  expect_refused<C, C>(plane, {}, {.out = {.accumulate = true}}, "edges.out.accumulate");
+  expect_refused<C, C>(plane, {}, {.out = {.mul = {.kind = real, .axis_strides = {1}}}},
+                       "edges.out.mul.axis_strides");
+  expect_refused<C, C>(plane, {.in_place = true}, {.out = {.accumulate = true}},
+                       "edges.out.accumulate");
   // The shape's own errors come first.
   fftn::shape<C, C> empty;
   expect_refused<C, C>(empty, {}, {.in = {.mul = good}}, "shape.axes");
