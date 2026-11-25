@@ -1268,6 +1268,21 @@ reads. Xeon c2r 32768: the old plan ran 1.93 times faster at 4 threads than at o
 other cores' caches, which one thread never pays. Judge a route at the widths it will run.
 [X77](experiments/X77-real-rows-threaded.md).
 
+5.21 **A split threshold must count the work, and a narrower team is not a safer one.** On the
+Xeon 6240 (single rows, OpenMP executor, cores of one socket) a team of 2 ran almost every row
+below 32768 points slower than one thread (r2c 32768 1.22, c2c 15625 1.06) where teams of 4 and
+8 gained (0.93 and 0.67; 0.84 and 0.57): halving the team halves the work per member but keeps
+every phase's hand-off and its trip through other cores' caches, so capping members per point
+count only lost (32768-46080 points on 2 members 0.82-1.41 of one thread, against 0.53-0.93 on
+4). Two members dispatched out of 4 and 2 out of 2 ran alike: the idle members cost nothing.
+Real rows of 6400-10240 points lost 1.32-2.69 in teams of 4 and 8 because the threshold compared
+n real points while the work is that of n / 2 complex ones; counting n / 2 + 1 kept them whole
+and took them to 0.38-0.78 of their team time at 4-8 members, 0.40-0.53 at 16. Among c2c rows no
+size separates winners from losers (7200-12000 lost 1.07-1.22 at 4; 6561, 15625, 16807 gained
+0.69-0.93): rows with odd radices do more work per point than a points-times-passes estimate
+counts. 5.2's "a time, not a size" holds per kind and per radix too.
+[X83](experiments/X83-xeon-single-width.md).
+
 ## 6. Toolchain and testing pitfalls
 
 6.1 **Build with GCC as well as Clang before a remote round trip.** GCC warns where Clang

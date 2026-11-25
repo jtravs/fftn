@@ -2097,6 +2097,14 @@ std::shared_ptr<plan_core> build_plan_core(const shape_view& s, const options& o
   // otherwise change its execution path, which nothing measured.
   mark_flat(c->prog, settings.unroll_calls && r > 1);
   c->graph = build_work_graph(c->prog, points, settings.chunk_points);
+  // A real row on a chain's stages likewise, where the profile says (X83: on the Xeon 6240 teams
+  // of 4 and 8 ran real rows of 6400-10240 points 1.32-2.69 times slower than one thread). Not a
+  // row whose graph has phases of lines (the depth-first chain, the grid): their own threshold,
+  // split_min_points_lines, was set on real points (X75's 32768 gains at 4 lanes).
+  if (r == 1 && s.kind != transform_kind::c2c && settings.profile.split_complex_rows &&
+      std::ranges::none_of(c->graph.phases, [](const graph_phase& ph) { return ph.nest != 0; })) {
+    c->graph.points = c->lengths.back() / 2 + 1;
+  }
   c->profile = settings.profile;
   c->runs_inline = runs_inline(c->graph, c->profile);
   c->radices_forced = !settings.radices.empty();
