@@ -201,12 +201,18 @@ costs the shortest batch, wherever its words sit in it. The mechanism is not kno
 (c2r 10240 × 4, lower end 1.018 against 1 + band = 1.0126): one `--serial` re-run, X8r (Slurm
 17091; arms B, BA, F, B first with its own control), decides it.
 
+**Declared before it started:** X16r, the deciding X16 run, missed the anchoring no-loss
+criterion by less than its band (the in-place 750 × 4469 pair, lower ends 1.017 and 1.015
+against 1 + band = 1.010), and the rules apply the near-miss clause once more to X16r: one
+`--serial` re-run, X16r2 (X16r's setup: arms B, BA, F, B first with its own control, 16 threads,
+the client catalogue, 20–24 rounds), decides the X16 criteria.
+
 **Anchoring on the fix, BA ÷ B** (X74's rules; band of each run):
 
 | Run | Store | BA ÷ B | Moved cases slower beyond the band |
 |---|---|---|---|
 | X16 (reported) | 20261125-064345-8d9a | catalogue 0.939; 14 faster | in-place 750 × 4469 pair 1.018 [1.012, 1.038], 1.022 [1.012, 1.027] |
-| X16r (deciding) | X16R_ROW |
+| X16r (deciding) | 20261125-083326-9da1 (17090; node 1, 16 cores, load 4.4, none loaded; 24 rounds, ±1.00 %) | catalogue 0.940 [0.938, 0.942]; 14 faster | in-place 750 × 4469 pair 1.020 [1.017, 1.025], 1.019 [1.015, 1.023] (missed by 0.5–0.7 %, less than the band: re-run X16r2 decides) |
 | X16b | 20261125-073659-69cb | batches 0.563 [all five faster: 0.380 (8 × 4096) – 0.755 (1024 × 256)] | none |
 | X8 | 20261125-073802-b259 | catalogue 0.952; 15 faster | c2r 10240 × 4 1.026 [1.018, 1.032] (missed by 0.5 %, less than the band: re-run X8r decides) |
 | X8b | 20261125-083225-c000 | batches 0.688 [all five faster: 0.497 (8 × 4096) – 0.943 (128 × 4096)] | none |
