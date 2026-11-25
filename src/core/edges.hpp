@@ -16,6 +16,7 @@
 #pragma once
 
 #include "core/program.hpp"
+#include "core/runs.hpp"
 #include "fftn/detail/core.hpp"
 #include "fftn/options.hpp"
 
@@ -41,6 +42,10 @@ struct edge_side {
   bool separate = false;                   // a separate edge pass through the workspace block
   bool accumulate = false;                 // output only, always in the separate pass
   double scale = 1.0;                      // applied by the separate pass
+  // The side's stored runs (core/runs.hpp; task 5.1d): its pass reads the runs into the whole
+  // logical line with zeros elsewhere (input) or stores only the runs (output). Never with a
+  // factor (build_with_runs refuses one).
+  side_runs runs;
 };
 
 struct edge_plan {
@@ -108,6 +113,32 @@ struct edge_rows {
                                     std::ptrdiff_t factor_stride, edge_mode mode,
                                     const edge_rows& rows);
 
+// Where one line of a run pass reads and writes: slots, strides in elements and offsets in
+// bytes (which may be negative) of the line's element 0 on each side.
+struct run_line {
+  slot src = slot::in;
+  std::ptrdiff_t src_stride = 1;
+  std::ptrdiff_t src_offset = 0;
+  slot dst = slot::block;
+  std::ptrdiff_t dst_stride = 1;
+  std::ptrdiff_t dst_offset = 0;
+};
+
+// The stages of one line of `length` logical elements of a side with stored runs along it
+// (`runs`, sorted by logical position; empty: the line stored whole): the input's copy each run
+// from its stored place to its logical one, with zeros between them; the output's copy (or
+// accumulate, side.accumulate) each run from its logical place to its stored one and write
+// nothing else; the side's scale on each copy. Appended to `stages`. Baseline code: 5.1e adds
+// pruned codelets.
+void run_line_stages(precision prec, const edge_side& side, bool output, std::size_t length,
+                     const std::vector<line_run>& runs, const run_line& line,
+                     std::size_t chunk_points, bool real, std::vector<stage>& stages);
+
+// One stage of zeros over a line of `length` elements at line.dst (the input's lines outside
+// the stored runs of another axis), appended to `stages`.
+void run_zero_line(precision prec, std::size_t length, const run_line& line,
+                   std::size_t chunk_points, bool real, std::vector<stage>& stages);
+
 // A copy of a line of n elements (real or complex), with the geometry of edge_rows: the
 // output's prior values saved before a transform that writes the output, for accumulation.
 [[nodiscard]] stage edge_copy_stage(precision prec, std::size_t n, slot src,
@@ -127,11 +158,11 @@ enum class edge_layout : std::uint8_t { row_chain, row_strategy, phases };
 // (edge_passes) they cost.
 [[nodiscard]] std::string edges_text(const edge_plan& p, edge_layout layout, std::size_t passes);
 
-// describe()'s line for a plan whose edges keep it from the strategy the plan without them
-// takes (`plain`, as plan_core::strategy_name has them), `built` being the one it takes and
-// `fallback` why (task 5.1c).
+// describe()'s line for a plan whose edges (or stored runs: `what`) keep it from the strategy
+// the plan without them takes (`plain`, as plan_core::strategy_name has them), `built` being the
+// one it takes and `fallback` why (task 5.1c).
 [[nodiscard]] std::string forced_text(const std::string& plain, const std::string& built,
-                                      const std::string& fallback);
+                                      const std::string& fallback, const char* what = "the edges");
 
 // The elements of a valid edge's factor array its strides reach over the shape, relative to
 // the address passed (exec_args): [lo, hi], in the array's elements; {0, 0} without a factor.
