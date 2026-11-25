@@ -1,0 +1,62 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Experiment X83's cases (dev/experiments/X83-xeon-single-width.md): single transforms of
+# 4096-65536 points, which a team splits (DESIGN 13.4, rule 3). The first groups are the client
+# catalogue's single transforms of that range (lengths and directions as the client application
+# runs them, out of place), then the standard catalogue's single rows of the range.
+
+[catalogue]
+name = "x83"
+
+[[group]]
+name = "x83-client-c2c"
+kind = "c2c"
+dims = [16384]
+place = "out"
+
+[[group]]
+name = "x83-client-c2c-bwd"
+kind = "c2c"
+dims = [4608, 5120, 16384, 18432]
+place = "out"
+direction = "bwd"
+
+[[group]]
+name = "x83-client-real"
+kind = ["r2c", "c2r"]
+dims = [6400, 9216, 10240, 18432, 32768]
+place = "out"
+
+[[group]]
+name = "x83-client-c2r"
+kind = "c2r"
+dims = [36864]
+place = "out"
+
+[[group]]
+name = "x83-standard-c2c"
+note = "the standard catalogue's single c2c rows of 4096-65536 points, out of place"
+kind = "c2c"
+dims = [4096, 4097, 4800, 5000, 6000, 6561, 7200, 8191, 8192, 10000, 10403, 12000, 15625, 16381,
+        16807, 20000, 25000, 32768, 46080, 65535, 65536]
+place = "out"
+
+[[group]]
+name = "x83-standard-c2c-bwd"
+kind = "c2c"
+dims = [65536]
+place = "out"
+direction = "bwd"
+
+[[group]]
+name = "x83-standard-real"
+kind = ["r2c", "c2r"]
+dims = [4096, 10000, 16384, 65536]
+place = "out"
+
+[[group]]
+name = "x83-standard-in-place"
+kind = ["c2c", "r2c", "c2r"]
+dims = [4096, 65536]
+place = "in"

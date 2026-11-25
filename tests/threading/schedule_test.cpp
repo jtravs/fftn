@@ -401,6 +401,60 @@ TEST(Schedule, PlaneSplitThresholds) {
   EXPECT_FALSE(m5.split_complex_points);
 }
 
+// X83 (machine_profile::split_complex_rows): a real row on a chain's stages is split by its
+// complex points, n / 2 + 1; c2c rows and real rows whose graph has phases of lines (a grid
+// here; the depth-first chain on the Xeon 6240's class) keep their points.
+TEST(Schedule, RealRowsSplitByComplexPoints) {
+  const auto real_row = [](std::size_t n, fftn::detail::strategy_choice strategy, bool complex) {
+    fftn::detail::build_settings settings;
+    settings.strategy = strategy;
+    settings.profile = profile();
+    settings.profile.split_complex_rows = complex;
+    return fftn::detail::make_plan_core(fftn::detail::view_of(fftn::rows_r2c<double>(n, 1)),
+                                        fftn::options(), settings);
+  };
+  const auto c2r_row = [](std::size_t n, bool complex) {
+    fftn::detail::build_settings settings;
+    settings.strategy = fftn::detail::strategy_choice::chain;
+    settings.profile = profile();
+    settings.profile.split_complex_rows = complex;
+    return fftn::detail::make_plan_core(fftn::detail::view_of(fftn::rows_c2r<double>(n, 1)),
+                                        fftn::options(), settings);
+  };
+  using fftn::detail::strategy_choice;
+  EXPECT_EQ(real_row(10240, strategy_choice::chain, false)->graph.points, 10240U);
+  const auto halved = real_row(10240, strategy_choice::chain, true);
+  EXPECT_EQ(halved->graph.points, 5121U);
+  EXPECT_EQ(c2r_row(10240, true)->graph.points, 5121U);
+  EXPECT_EQ(c2r_row(10240, false)->graph.points, 10240U);
+  // The work is the same: only the split thresholds read the points. In a group of 4 the row
+  // that was split now stays whole, under the thresholds of a small group (6144).
+  const lane_map four{.lanes = 4};
+  const auto whole = real_row(10240, strategy_choice::chain, false);
+  EXPECT_EQ(halved->graph.work, whole->graph.work);
+  EXPECT_EQ(share_of(make_schedule(whole->graph, four, whole->profile), four, 0).split, 1U);
+  EXPECT_EQ(share_of(make_schedule(halved->graph, four, halved->profile), four, 0).split, 0U);
+  // From 12288 points (6145 complex) a real row is split again.
+  const auto longer = real_row(16384, strategy_choice::chain, true);
+  EXPECT_EQ(longer->graph.points, 8193U);
+  EXPECT_EQ(share_of(make_schedule(longer->graph, four, longer->profile), four, 0).split, 1U);
+  // A real row on a grid (phases of lines) keeps its real points.
+  const auto grid = real_row(65536, strategy_choice::grid, true);
+  ASSERT_TRUE(std::ranges::any_of(
+      grid->graph.phases, [](const fftn::detail::graph_phase& ph) { return ph.nest != 0; }));
+  EXPECT_EQ(grid->graph.points, 65536U);
+  // c2c rows are unchanged.
+  fftn::detail::build_settings c2c;
+  c2c.strategy = strategy_choice::chain;
+  c2c.profile = profile();
+  c2c.profile.split_complex_rows = true;
+  EXPECT_EQ(fftn::detail::make_plan_core(
+                fftn::detail::view_of(fftn::rows_c2c<double>(10240, 1, fftn::direction::forward)),
+                fftn::options(), c2c)
+                ->graph.points,
+            10240U);
+}
+
 // Rules 4 and 5: rows are dealt to groups in proportion to their members; a batch smaller
 // than a group stays in one group.
 TEST(Schedule, DealsToGroups) {
@@ -1147,6 +1201,7 @@ struct intel_keyed {
   std::size_t fit_out_of_place_bytes;
   std::size_t c2r_packed_bytes;
   fftn::isa c2r_packed_isa;
+  bool split_complex_rows;
   std::size_t team_state_page;
 
   bool operator==(const intel_keyed&) const = default;
@@ -1180,6 +1235,7 @@ intel_keyed keyed_of(const machine_profile& p) {
       .fit_out_of_place_bytes = p.fit_out_of_place_bytes,
       .c2r_packed_bytes = p.c2r_packed_bytes,
       .c2r_packed_isa = p.c2r_packed_isa,
+      .split_complex_rows = p.split_complex_rows,
       .team_state_page = p.team_state_page,
   };
 }
@@ -1228,6 +1284,7 @@ TEST(Schedule, IntelOnlyKeys) {
       .fit_out_of_place_bytes = never,
       .c2r_packed_bytes = 1 * mib,
       .c2r_packed_isa = fftn::isa::avx512,
+      .split_complex_rows = true, // X83
       .team_state_page = 4096, // X79 (not main's value before the vendor was read: added after)
   };
   EXPECT_EQ(keyed_of(recorded("linux-intel-xeon-gold-6240.sysfs", cpu_vendor::intel)), xeon);

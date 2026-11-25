@@ -311,6 +311,11 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
       p.team_state_page = 4096;
       p.grid_three_block = 16;
       p.grid_phase_radix = 20;
+      // Experiment X83 (machine_profile::split_complex_rows): real rows on a chain's stages are
+      // split by their complex points, so those of 6144-12286 points stay whole in a group of
+      // up to 8 members (8192-16382 in a mesh group): teams of 4 and 8 had run them 1.32-2.69
+      // times slower than one thread (6400-10240 points, run 20261125-104559-e6f5).
+      p.split_complex_rows = true;
       if (c.l1d.size != 0 && c.l2.size != 0) {
         p.grid_two_block_bytes = 2 * c.l1d.size;
         p.pow2_grid_bytes = c.l2.size / 4;
