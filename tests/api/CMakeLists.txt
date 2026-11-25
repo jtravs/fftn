@@ -16,6 +16,8 @@ fftn_add_test(fftn_contract_tests
 # test is optimised in every build type.
 fftn_add_test(fftn_edges_tests SOURCES edges_test.cpp LIBRARIES fftn_test_support)
 fftn_always_optimise(edges_test.cpp)
+fftn_add_test(fftn_edges_shapes_tests SOURCES edges_shapes_test.cpp LIBRARIES fftn_test_support)
+fftn_always_optimise(edges_shapes_test.cpp)
 
 # One translation unit per public header, including only that header, all linked into one
 # executable (which also proves the headers define nothing twice across units).

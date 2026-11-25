@@ -135,8 +135,11 @@ edge_side side_of(const shape_view& s, const edge_view& e, bool output) {
     add_reach(batch_stride(b), s.batches[b].count,
               name + ".mul.batch_strides[" + std::to_string(b) + "]");
   }
-  // One axis (task 5.1a): the line's stride, 0 where the line has one point.
+  // One axis: the line's stride, 0 where the line has one point (the fused rows, 5.1a).
   side.axis_stride = s.axes.size() == 1 && s.axes[0].n > 1 ? e.axis_strides[0] : 0;
+  for (std::size_t d = 0; d < s.axes.size(); ++d) {
+    side.axis_strides.push_back(side_length(s, d, output) > 1 ? e.axis_strides[d] : 0);
+  }
   const auto bytes = static_cast<std::ptrdiff_t>(side.factor_bytes);
   for (std::size_t b = 0; b < s.batches.size(); ++b) {
     side.batch_steps.push_back(s.batches[b].count > 1 ? batch_stride(b) * bytes : 0);
@@ -145,10 +148,11 @@ edge_side side_of(const shape_view& s, const edge_view& e, bool output) {
 }
 
 // The edge pass (edges.hpp, edge_pass_stage) over elements [first, last) of a line of complex
-// values: x times the factor, times the scale, stored or added. Baseline code, outside every
-// ISA region; X65 is to say where a vectorised or fused form pays. Written out rather than with
-// std::complex's operator*, whose NaN recovery (C Annex G) is not the passes' arithmetic.
-template <class T, factor_kind Kind, bool Output, bool Accumulate>
+// values (or, Real, of real values: the real side of a real transform): x times the factor,
+// times the scale, stored or added. Baseline code, outside every ISA region; X65 is to say
+// where a vectorised or fused form pays. Written out rather than with std::complex's
+// operator*, whose NaN recovery (C Annex G) is not the passes' arithmetic.
+template <class T, factor_kind Kind, bool Output, bool Accumulate, bool Real>
 void edge_pass(const pass_args* a, const void* src, void* dst, std::size_t first,
                std::size_t last) {
   const auto* x = static_cast<const T*>(src);
@@ -157,6 +161,25 @@ void edge_pass(const pass_args* a, const void* src, void* dst, std::size_t first
   const auto* f = static_cast<const T*>(Output ? a->out_factor : a->in_factor);
   // pass_args::src_qstride: the factor's stride along the line, in its elements.
   const std::ptrdiff_t fs = a->src_qstride;
+  if constexpr (Real) {
+    // A real side takes a real factor only (side_of refuses a complex one).
+    static_assert(Kind != factor_kind::complex);
+    for (std::size_t k = first; k < last; ++k) {
+      const auto i = static_cast<std::ptrdiff_t>(k);
+      T v = x[i * a->src_stride];
+      if constexpr (Kind == factor_kind::real) {
+        v = v * f[i * fs];
+      }
+      v = v * scale;
+      T* yi = y + i * a->dst_stride;
+      if constexpr (Accumulate) {
+        *yi = *yi + v;
+      } else {
+        *yi = v;
+      }
+    }
+    return;
+  }
   for (std::size_t k = first; k < last; ++k) {
     const auto i = static_cast<std::ptrdiff_t>(k);
     const T* xi = x + 2 * i * a->src_stride;
@@ -186,23 +209,29 @@ void edge_pass(const pass_args* a, const void* src, void* dst, std::size_t first
   }
 }
 
-template <class T, bool Output, bool Accumulate> pass_fn edge_pass_of(factor_kind kind) {
+template <class T, bool Output, bool Accumulate> pass_fn edge_pass_of(factor_kind kind, bool real) {
+  if (real) {
+    return kind == factor_kind::real ? &edge_pass<T, factor_kind::real, Output, Accumulate, true>
+                                     : &edge_pass<T, factor_kind::none, Output, Accumulate, true>;
+  }
   switch (kind) {
   case factor_kind::real:
-    return &edge_pass<T, factor_kind::real, Output, Accumulate>;
+    return &edge_pass<T, factor_kind::real, Output, Accumulate, false>;
   case factor_kind::complex:
-    return &edge_pass<T, factor_kind::complex, Output, Accumulate>;
+    return &edge_pass<T, factor_kind::complex, Output, Accumulate, false>;
   case factor_kind::none:
     break;
   }
-  return &edge_pass<T, factor_kind::none, Output, Accumulate>;
+  return &edge_pass<T, factor_kind::none, Output, Accumulate, false>;
 }
 
-template <class T> pass_fn edge_pass_for(factor_kind kind, bool output, bool accumulate) {
+template <class T>
+pass_fn edge_pass_for(factor_kind kind, bool output, bool accumulate, bool real) {
   if (!output) {
-    return edge_pass_of<T, false, false>(kind);
+    return edge_pass_of<T, false, false>(kind, real);
   }
-  return accumulate ? edge_pass_of<T, true, true>(kind) : edge_pass_of<T, true, false>(kind);
+  return accumulate ? edge_pass_of<T, true, true>(kind, real)
+                    : edge_pass_of<T, true, false>(kind, real);
 }
 
 const char* kind_word(factor_kind k) {
@@ -253,17 +282,13 @@ resolved_edges resolve_edges(const shape_view& s, const options& opts, const edg
     reject("edges.out.accumulate", "is refused on an in-place plan, whose output's prior values "
                                    "are its input (the maintainer, 2026-11-25)");
   }
-  if (s.kind != transform_kind::c2c || s.axes.size() != 1) {
-    reject(p.out.accumulate && p.in.kind == factor_kind::none && p.out.kind == factor_kind::none
-               ? "edges.out.accumulate"
-               : (p.in.kind != factor_kind::none ? "edges.in.mul" : "edges.out.mul"),
-           "is built for c2c plans of one axis so far (task 5.1b brings factors and "
-           "accumulation to real and multi-axis plans)");
-  }
-  // A complex factor of stride 1 along the line fuses into the line's edge pass; anything
-  // else goes through a separate pass, as accumulation does.
-  const auto fusable = [](const edge_side& side) {
-    return side.kind == factor_kind::complex && (side.axis_stride == 1 || side.axis_stride == 0);
+  // On c2c rows a complex factor of stride 1 along the line fuses into the line's edge pass;
+  // anything else, and every factor of a multi-axis or real plan, goes through a separate pass
+  // (an edge phase, plan_core.cpp), as accumulation does.
+  const bool rows = s.kind == transform_kind::c2c && s.axes.size() == 1;
+  const auto fusable = [rows](const edge_side& side) {
+    return rows && side.kind == factor_kind::complex &&
+           (side.axis_stride == 1 || side.axis_stride == 0);
   };
   // A factor whose stride along a line of more than one point is 0 broadcasts one value along
   // it, which the fused passes (one value per element) cannot read: a separate pass.
@@ -298,14 +323,14 @@ resolved_edges resolve_edges(const shape_view& s, const options& opts, const edg
 
 stage edge_pass_stage(precision prec, const edge_side& side, bool output, std::size_t n, slot src,
                       std::ptrdiff_t src_stride, slot dst, std::ptrdiff_t dst_stride,
-                      std::size_t chunk_points) {
+                      std::size_t chunk_points, bool real, std::ptrdiff_t factor_stride) {
   stage st;
-  st.run = prec == precision::f64 ? edge_pass_for<double>(side.kind, output, side.accumulate)
-                                  : edge_pass_for<float>(side.kind, output, side.accumulate);
+  st.run = prec == precision::f64 ? edge_pass_for<double>(side.kind, output, side.accumulate, real)
+                                  : edge_pass_for<float>(side.kind, output, side.accumulate, real);
   st.args.src_stride = src_stride;
   st.args.dst_stride = dst_stride;
   st.args.scale = side.scale;
-  st.args.src_qstride = side.axis_stride;
+  st.args.src_qstride = factor_stride;
   st.src = src;
   st.dst = dst;
   st.units = n;
@@ -318,7 +343,7 @@ stage edge_pass_stage(precision prec, const edge_side& side, bool output, std::s
   std::string name = output ? "edge out" : "edge in";
   if (side.kind != factor_kind::none) {
     name += std::string(" times a ") + kind_word(side.kind) + " factor (stride " +
-            std::to_string(side.axis_stride) + ")";
+            std::to_string(factor_stride) + ")";
   }
   if (side.scale != 1.0) {
     name += ", scaled";
@@ -336,8 +361,8 @@ void contract_failure(const char* what) noexcept {
   std::abort();
 }
 
-std::string edges_text(const edge_plan& p) {
-  const auto describe_side = [](const edge_side& side, bool output) {
+std::string edges_text(const edge_plan& p, bool rows) {
+  const auto describe_side = [rows](const edge_side& side, bool output) {
     std::string t;
     if (side.kind != factor_kind::none) {
       t += std::string("times a ") + kind_word(side.kind) + " factor";
@@ -350,18 +375,27 @@ std::string edges_text(const edge_plan& p) {
     }
     if (side.fused) {
       t += output ? " in the last pass" : " in the first pass";
-    } else if (side.separate) {
+    } else if (side.separate && rows) {
       t += output ? " in a separate pass from the workspace block"
                   : " in a separate pass into the workspace block";
+    } else if (side.separate) {
+      t += output ? " in a separate phase after the transform"
+                  : " in a separate phase before the transform";
     }
     return std::string(output ? "the output " : "the input ") + t;
   };
   std::string in = describe_side(p.in, false);
   std::string out = describe_side(p.out, true);
   std::string both = in.empty() ? out : (out.empty() ? in : in + "; " + out);
+  if (rows) {
+    return "edges: " + both +
+           "; the chain, by the rules, whatever the strategy and effort would otherwise be "
+           "(factors and accumulation reach no other strategy, nor measured planning, yet)";
+  }
   return "edges: " + both +
-         "; the chain, by the rules, whatever the strategy and effort would otherwise be (factors "
-         "and accumulation reach no other strategy, nor measured planning, yet)";
+         "; by the rules whatever the effort, without the lanes over adjacent transforms or "
+         "a real row's grid, lanes or depth-first chain (not built with factors or accumulation "
+         "yet)";
 }
 
 std::string edges_key(const edges_view& e, double options_scale) {
