@@ -67,13 +67,21 @@ endfunction()
 
 # Kernel translation units are optimised whatever the build type: unoptimised kernels run
 # 30-60 times slower (DESIGN.md 14.1), which would make debug builds of applications useless.
+# fftn_always_optimise(<units>... [TARGET <target>]): TARGET names the target the units belong
+# to when it was created in another directory, since a source property set here is otherwise
+# not seen there (the library's kernel units: target fftn, created in src/).
 function(fftn_always_optimise)
+  cmake_parse_arguments(PARSE_ARGV 0 arg "" "TARGET" "")
   if(CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
     set(opt /O2)
   else()
     set(opt -O2)
   endif()
-  set_property(SOURCE ${ARGN} APPEND PROPERTY COMPILE_OPTIONS
+  set(where)
+  if(arg_TARGET)
+    set(where TARGET_DIRECTORY ${arg_TARGET})
+  endif()
+  set_property(SOURCE ${arg_UNPARSED_ARGUMENTS} ${where} APPEND PROPERTY COMPILE_OPTIONS
     "$<$<NOT:$<CONFIG:Release,RelWithDebInfo,MinSizeRel>>:${opt}>")
 endfunction()
 
