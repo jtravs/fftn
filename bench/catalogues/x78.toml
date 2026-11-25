@@ -1,0 +1,61 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Experiment X78's cases (dev/experiments/X78-fused-c2r-pairing.md): every c2r case of catalogues
+# x72 and x75, the rows the depth-first real route may take on Zen 3's class and the Xeon 6240's.
+# The first groups are the client catalogue's c2r rows (lengths and batches as the client
+# application runs them).
+
+[catalogue]
+name = "x78"
+
+[[group]]
+name = "x78-client-single"
+kind = "c2r"
+dims = [18432, 32768]
+
+[[group]]
+name = "x78-client-20480"
+kind = "c2r"
+dims = [20480]
+batch = [3]
+
+[[group]]
+name = "x78-client-40960"
+kind = "c2r"
+dims = [40960]
+batch = [6]
+
+[[group]]
+name = "x78-x72-6144"
+note = "x72's c2r batches"
+kind = "c2r"
+dims = [6144]
+batch = [48, 66]
+
+[[group]]
+name = "x78-x72-10240"
+kind = "c2r"
+dims = [10240]
+batch = [4]
+
+[[group]]
+name = "x78-rows"
+note = "x72's and x75's single c2r rows in double precision"
+kind = "c2r"
+dims = [6400, 9216, 10240, 16384, 20480, 24576, 25600, 36864, 40960, 49152, 61440, 65536, 81920,
+        98304, 122880, 131072, 163840, 245760, 262144, 524288, 1048576, 2097152, 4194304, 8388608]
+
+[[group]]
+name = "x78-float"
+note = "x75's c2r rows in single precision"
+kind = "c2r"
+dims = [32768, 40960, 49152, 65536, 98304, 163840, 262144, 1048576]
+precision = "f32"
+
+[[group]]
+name = "x78-batches"
+note = "x75's c2r batches"
+kind = "c2r"
+dims = [24576, 65536]
+batch = [4]

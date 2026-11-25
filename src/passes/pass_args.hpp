@@ -199,6 +199,9 @@ struct radix_passes {
   // scale] with the stage's chirp passes fused in (experiment X50 arm C).
   pass_fn depth_first_chirp;
   pass_fn depth_top_chirp[2];
+  // A c2r row's half-length chain's first pass (backward) with the pairing fused in, from the
+  // row's h + 1 bins (experiment X78).
+  pass_fn depth_first_c2r;
 };
 
 template <class T> struct pass_kernels {

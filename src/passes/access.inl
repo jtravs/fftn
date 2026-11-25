@@ -113,6 +113,23 @@ FFTN_FORCE_INLINE void store_run(T* p, std::ptrdiff_t step, std::size_t valid, c
   }
 }
 
+// Lane l holds the complex number at p - 2 l (the first `valid` lanes; the others zero):
+// C consecutive elements read downwards (the real passes' mirror bins, real.inl, and the
+// depth-first first pass with the c2r pairing, depth.inl).
+template <class T, bool Full> FFTN_FORCE_INLINE cv<T> load_down(const T* p, std::size_t valid) {
+  if constexpr (C<T> == 1) {
+    return load(p);
+  } else {
+    T tile[2 * C<T>]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
+    for (std::size_t l = 0; l < C<T>; ++l) {
+      const bool live = Full || l < valid;
+      tile[2 * l] = live ? p[-at(l, 2)] : T(0);
+      tile[2 * l + 1] = live ? p[1 - at(l, 2)] : T(0);
+    }
+    return load(tile);
+  }
+}
+
 // Lane 0 of v to p.
 template <class T> FFTN_FORCE_INLINE void store_first(T* p, cv<T> v) {
   if constexpr (C<T> == 1) {

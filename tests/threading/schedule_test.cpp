@@ -720,6 +720,11 @@ TEST(Schedule, GridSizesFromCaches) {
   EXPECT_EQ(xeon86.depth_real_min_bytes, std::size_t{128} * kib + 1);
   EXPECT_EQ(epyc86.depth_real_min_bytes, std::numeric_limits<std::size_t>::max());
   EXPECT_EQ(m5.depth_real_min_bytes, std::numeric_limits<std::size_t>::max());
+  // X78: the fused c2r pairing on the Xeon 6240's class only, L2/4 to 16 L2.
+  EXPECT_EQ(xeon86.depth_c2r_fused_min_bytes, std::size_t{256} * kib);
+  EXPECT_EQ(xeon86.depth_c2r_fused_max_bytes, std::size_t{16} * 1024 * kib);
+  EXPECT_EQ(epyc86.depth_c2r_fused_max_bytes, 0U);
+  EXPECT_EQ(m5.depth_c2r_fused_max_bytes, 0U);
   EXPECT_EQ(m5.depth_real_max_bytes, 0U);
   EXPECT_EQ(x86("linux-gcp-c4d-zen5.sysfs").depth_real_max_bytes, 0U);
   EXPECT_EQ(x86("linux-gcp-n2-ice-lake.sysfs").depth_real_max_bytes, 0U);
