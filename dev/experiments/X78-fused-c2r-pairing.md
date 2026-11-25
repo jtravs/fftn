@@ -234,5 +234,5 @@ the route (65536 × 1 and × 2, 262144, 2^20; 2^20 1.52); nothing else moves.
 - Tests: Mac (Clang 23, `neon_fcma`, `neon`, scalar) Release ctest 2665 of 2665 on a02183d; DMOG
   (GCC 16, `avx2`, `avx`, `x86_v2`, scalar) Release ctest 3240 of 3240 on B and on the final code;
   the Mac's GCC 16 `-Werror` build clean. `avx512` ran only through fbench's correctness checks on
-  the Xeon (every case of every run) and CI; an ASan build on DMOG ran out of memory and was
-  not repeated, so ASan rests on CI.
+  the Xeon (every case of every run) and CI; an ASan build on DMOG ran out of memory, and a
+  second, slower one was cancelled unfinished, so ASan rests on CI.
