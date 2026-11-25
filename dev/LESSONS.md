@@ -1204,8 +1204,14 @@ streams (all pages local; interleaving or first touch changed nothing). Anchorin
 its own contiguous range first, then stealing others' ranges in halving runs, kept the balance and
 took the client catalogue's batches at 16 threads to 0.32–0.38 of their time out of place and
 0.60–0.69 in place, 0.79 over the whole catalogue, nothing slower at 8 threads. Work stealing
-should start from an affinity, not from a shared counter.
-[X73](experiments/X73-anchored-runs.md).
+should start from an affinity, not from a shared counter. It holds within one shared cache too,
+for short executions: on the Xeon 6240 (one mesh L3 per socket) anchoring took the standard
+batches of 8 × 4096, 64 × 256 and 100 × 1024 c2c points to 0.38–0.57 of their time at 16 threads
+(8 × 4096 from 2.54 to 0.97 of FFTW's), and on the M5 Max (one L2 per cluster) to 0.87–0.93 at 6:
+each member's rows stay in its own L1 and L2 instead of coming over the interconnect from the core
+that ran them last. It is not free everywhere: one Xeon batch (c2c 864 × 384 backward, bimodal
+between processes) lost 1.16 at 16 threads.
+[X73](experiments/X73-anchored-runs.md), [X74](experiments/X74-anchored-other.md).
 
 ## 6. Toolchain and testing pitfalls
 
