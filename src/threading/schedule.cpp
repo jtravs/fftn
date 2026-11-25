@@ -167,8 +167,10 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
   if (zen3_like || (c.l2.shared_by != 0 && !private_l2)) {
     p.fair_line_runs = true;
   }
-  // X73 (machine_profile::anchored_runs), only where it was measured: Zen 3's class.
-  if (zen3_like) {
+  // X73 (machine_profile::anchored_runs), where it was measured: Zen 3's class (16 unpinned
+  // threads: out-of-place batches 0.32-0.38 of their time) and, X74, Apple (6 threads on the
+  // M5 Max: the standard batches 0.87-0.97, the client catalogue 0.996, none slower).
+  if (zen3_like || apple_like) {
     p.anchored_runs = true;
   }
   if (x86_64 && private_l2 && large_l3 && !large_l2) {
