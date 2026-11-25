@@ -116,6 +116,15 @@ if(_fbench_fftn_omp)
   target_compile_definitions(t1_costs_omp PRIVATE T1_WITH_OPENMP)
   fbench_link_openmp(t1_costs_omp)
 endif()
+# The probe of experiment X76 (bench/x76/): a threaded batch timed as fbench times it, with its
+# lanes' CPUs, counters and buffer placement beside the time. Linux only (/proc, perf).
+if(_fbench_fftn_omp AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  add_executable(x76_probe x76/x76_probe.cpp)
+  fftn_configure_target(x76_probe)
+  target_include_directories(x76_probe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/src)
+  target_link_libraries(x76_probe PRIVATE fftn::fftn)
+  fbench_link_openmp(x76_probe)
+endif()
 
 # FFTW only from an explicit installation: never a default search path, so that a
 # handicapped build (Homebrew's FFTW has no SIMD on arm64) cannot be picked up by accident

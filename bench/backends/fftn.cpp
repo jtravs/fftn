@@ -34,6 +34,9 @@
 //                    fftn::cache_group_size(N)); 0 puts every lane in one group
 //   CALL=executor|team   fbench-fftn_omp only: the executor overload (default), or every
 //                    thread of a parallel region of N threads calling the team overload
+//   WORKSPACE=library|page   each plan's workspace from fftn::workspace(bytes), on the heap
+//                    (default), or in memory of the backend's own that starts a page, so that
+//                    no other data shares the page of the team state (experiment X76)
 //   CHUNK_POINTS=P   points per chunk of a stage (build_settings::chunk_points)
 //   NS_PER_WORK, DISPATCH_NS, INLINE_MULTIPLE, SYNC_NS, MIN_POINTS_PER_MEMBER,
 //   SPLIT_MIN_POINTS, SPLIT_MIN_POINTS_MESH, MESH_GROUP_LANES, REMAINDER_SPLIT_MIN_POINTS,
@@ -130,6 +133,7 @@
 #include <exception>
 #include <memory>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -185,6 +189,7 @@ struct session {
   std::string depth_tops_text;        // DEPTH_TOPS as given
   std::string rader = "rules";        // RADER as given
   std::string batch_leaves = "rules"; // BATCH_LEAVES as given
+  bool workspace_page = false;        // WORKSPACE=page
   std::string description;
 };
 
@@ -207,6 +212,7 @@ std::optional<fftn::isa> isa_from_name(std::string_view name) {
 
 struct plan_record {
   std::shared_ptr<const detail::plan_core> core;
+  std::unique_ptr<std::byte[]> ws_memory; // WORKSPACE=page: the memory ws borrows
   fftn::workspace ws;
   // The session's mode when the plan was made (it does not change while plans exist), so that
   // a serial execute reads nothing else: reaching it through state() cost a guard check, a
@@ -496,6 +502,12 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
       }
       s.mode = value == "team" ? call::team : call::executor;
 #endif
+    } else if (key == "WORKSPACE") {
+      if (value != "library" && value != "page") {
+        say(message, message_size, "WORKSPACE is library or page");
+        return fbench_error;
+      }
+      s.workspace_page = value == "page";
     } else if (key == "RADICES") {
       try {
         s.settings.radices = parse_radices(value);
@@ -681,6 +693,9 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
         .str("rader", s.rader)
         .str("strategy", s.strategy)
         .str("layout", s.layout);
+    if (s.workspace_page) {
+      d.str("workspace", "page");
+    }
     if (s.measure_seconds != 0) {
       d.str("measure_seconds", std::to_string(s.measure_seconds));
     }
@@ -780,7 +795,18 @@ std::int32_t fbench_create(const fbench_case* c, void* /*in*/, void* /*out*/, vo
         described.find(used + ", ") == std::string::npos) {
       throw std::logic_error("the plan does not use RADICES=" + s.radices_text + ":\n" + described);
     }
-    record->ws = fftn::workspace(detail::workspace_bytes(*record->core, s.threads));
+    const std::size_t ws_bytes = detail::workspace_bytes(*record->core, s.threads);
+    if (s.workspace_page && ws_bytes != 0) {
+      // X76: the team state, at the start of the workspace, then shares its page with no
+      // allocation before it (on the heap: the plan's own twiddles, read by every member).
+      constexpr std::size_t page = 4096;
+      record->ws_memory = std::make_unique<std::byte[]>(ws_bytes + page);
+      const auto at = reinterpret_cast<std::uintptr_t>(record->ws_memory.get());
+      std::byte* start = record->ws_memory.get() + (page - at % page) % page;
+      record->ws = fftn::workspace(std::span<std::byte>(start, ws_bytes));
+    } else {
+      record->ws = fftn::workspace(ws_bytes);
+    }
     std::string note = axis_lines(described);
     if (s.effort != fftn::planning::rules) {
       // The chosen program first, then the account: P1 reads rules/chosen, P2 the count.

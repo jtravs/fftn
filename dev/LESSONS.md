@@ -1227,9 +1227,29 @@ for short executions: on the Xeon 6240 (one mesh L3 per socket) anchoring took t
 batches of 8 × 4096, 64 × 256 and 100 × 1024 c2c points to 0.38–0.57 of their time at 16 threads
 (8 × 4096 from 2.54 to 0.97 of FFTW's), and on the M5 Max (one L2 per cluster) to 0.87–0.93 at 6:
 each member's rows stay in its own L1 and L2 instead of coming over the interconnect from the core
-that ran them last. It is not free everywhere: one Xeon batch (c2c 864 × 384 backward, bimodal
-between processes) lost 1.16 at 16 threads.
-[X73](experiments/X73-anchored-runs.md), [X74](experiments/X74-anchored-other.md).
+that ran them last. One Xeon batch (c2c 864 × 384 backward, bimodal between processes) lost
+1.16 at 16 threads, but not to anchoring: X76 traced its slow mode to the page sharing of 5.19,
+which slows both claiming rules, and with it removed the batch took 0.74 of its arrival-order
+time anchored.
+[X73](experiments/X73-anchored-runs.md), [X74](experiments/X74-anchored-other.md),
+[X76](experiments/X76-bimodal-864.md).
+
+5.19 **Give hot synchronisation words pages of their own, not only cache lines.** Padding each
+counter to 128 bytes keeps other data off its lines, but on the Xeon 6240 data on the same
+4 KiB page still paid. A team's counters sat at the start of a heap-allocated workspace, right
+after the plan's twiddle table, so the table's last lines shared the counters' page; the
+twiddles on that page (and only those: the table's other pages, loaded as often, had none)
+came back from other cores' modified lines on every execution (`perf c2c`: 892 of 1157 HITM
+samples on that page in one case, 7619 of 8223 in another), and a batch of 384 rows of 864
+points at 16 threads took 1.2–2.3 times as long (49 → 60 µs with 13 lines of the table on the
+page, 52 → 119 µs with 56), in both claiming rules. Whether the workspace followed the table
+depended on what the process had allocated and freed before (glibc's mmap threshold rises when
+a block is freed), so the slowdown looked like bimodal noise between processes of one
+benchmark. A workspace starting a page removed it. The likely mechanism, not verified: the L2
+streamer prefetches within a page, RFOs included, so the core doing the atomics takes the
+page's other lines for ownership. Separately: when a benchmark is bimodal between processes,
+run the case alone and then after each other case before suspecting the hardware.
+[X76](experiments/X76-bimodal-864.md).
 
 5.19 **A plan judged at one thread can lose its gain in a team; count the phases it adds.**
 Real rows' half lengths on the depth-first chain won 0.61–0.96 at one thread on the EPYC 7763

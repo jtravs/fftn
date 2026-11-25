@@ -134,6 +134,7 @@ one; its arms are written `fftn_omp`.
 | `THREADS=N` | fftn, fftn_omp | execute through an executor of N lanes: `fftn::thread_pool` (fftn) or `fftn::omp::executor` (fftn_omp), created once per process |
 | `GROUP_SIZE=G` | fftn, fftn_omp (with `THREADS`) | lanes per cache group the executor reports; default its own, `fftn::cache_group_size(N)`; 0 for one group |
 | `CALL=executor\|team` | fftn_omp (with `THREADS`) | the executor overload (default), or a parallel region of N threads each calling the team overload with `fftn::omp::this_team()` |
+| `WORKSPACE=library\|page` | fftn, fftn_omp | each plan's workspace from `fftn::workspace(bytes)`, on the heap (default), or in memory of the backend's own that starts a page, so that the team state at its start shares that page with no other allocation ([X76](../dev/experiments/X76-bimodal-864.md)) |
 | `CHUNK_POINTS=P` | fftn, fftn_omp | points per chunk of a stage (the plan's chunking) |
 | `NS_PER_WORK`, `DISPATCH_NS`, `INLINE_MULTIPLE`, `SYNC_NS`, `MIN_POINTS_PER_MEMBER`, `SPLIT_MIN_POINTS`, `SPLIT_MIN_POINTS_MESH`, `MESH_GROUP_LANES`, `REMAINDER_SPLIT_MIN_POINTS`, `SPIN_NS`, `YIELD_NS`, `CLAIM_DIVISOR` | fftn, fftn_omp | the machine profile's field of that name (`src/threading/schedule.hpp`); a size threshold may be `never` |
 | `RADICES=r1.r2...` | fftn, fftn_omp | the chain's radices in pass order (`build_settings::radices`), for c2c rows whose length they multiply to, or real rows whose half length they do (see below) |
