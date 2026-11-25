@@ -485,9 +485,8 @@ TEST(Real, RulesTakeTheDepthFirstHalfLengthWithTheXeonsFields) {
   }
   const auto describe_real_as = [&]<class T>(std::size_t n, bool r2c, fftn::isa isa) {
     const fftn::options opts{.force_isa = isa};
-    const auto core =
-        r2c ? make_plan_core(fftn::detail::view_of(fftn::rows_r2c<T>(n, 1)), opts, s)
-            : make_plan_core(fftn::detail::view_of(fftn::rows_c2r<T>(n, 1)), opts, s);
+    const auto core = r2c ? make_plan_core(fftn::detail::view_of(fftn::rows_r2c<T>(n, 1)), opts, s)
+                          : make_plan_core(fftn::detail::view_of(fftn::rows_c2r<T>(n, 1)), opts, s);
     return fftn::detail::describe(*core);
   };
   const auto describe_real = [&](std::size_t n, bool r2c, fftn::isa isa) {
