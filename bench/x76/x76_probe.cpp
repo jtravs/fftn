@@ -13,6 +13,10 @@
 //   huge=0|1                           1: buffers 2 MiB aligned with madvise(MADV_HUGEPAGE)
 //   prelude=BYTES                      before anything, allocate, touch and free a block of
 //                                      BYTES, as an earlier case of an fbench process does
+//   fragment=BYTES                     before anything, map and touch BYTES, then give back a
+//                                      random half of its pages and keep the rest, so that the
+//                                      kernel's free pages, which the buffers then get, lie
+//                                      scattered in physical memory (0: none)
 //   before=KIND:N:BATCH                first plan and execute rows of another case (c2c, r2c or
 //                                      c2r) through the same executor for before_seconds=0.05,
 //                                      then free them, as an earlier case of an fbench process
@@ -92,6 +96,7 @@ struct settings {
   std::size_t offset_out = 0;
   bool huge = false;
   std::size_t prelude = 0;
+  std::size_t fragment = 0;
   std::string before;
   double before_seconds = 0.05;
   double idle = 0;
@@ -164,6 +169,8 @@ settings parse(int argc, char** argv) {
       }
     } else if (key == "idle") {
       s.idle = real_number(value, key);
+    } else if (key == "fragment") {
+      s.fragment = number<std::size_t>(value, key);
     } else if (key == "prelude") {
       s.prelude = number<std::size_t>(value, key);
     } else if (key == "huge") {
@@ -549,7 +556,46 @@ void run_before(const std::string& spec, double seconds, const fftn::omp::execut
   }
 }
 
+// Maps and touches `bytes`, then gives back a random half of its pages (madvise DONTNEED)
+// and keeps the other half mapped until the process ends: the pages given back cannot merge
+// with their kept neighbours into larger free blocks, so the page faults that follow are
+// served scattered physical pages, as in a process that has allocated and freed much before.
+class fragmenter {
+public:
+  explicit fragmenter(std::size_t bytes) : bytes_(bytes) {
+    if (bytes_ == 0) {
+      return;
+    }
+    void* p = mmap(nullptr, bytes_, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (p == MAP_FAILED) {
+      throw std::system_error(errno, std::system_category(), "mmap");
+    }
+    base_ = static_cast<std::byte*>(p);
+    std::memset(base_, 1, bytes_);
+    std::mt19937_64 rng(7);
+    for (std::size_t at = 0; at + 4096 <= bytes_; at += 4096) {
+      if ((rng() & 1U) != 0 && madvise(base_ + at, 4096, MADV_DONTNEED) != 0) {
+        throw std::system_error(errno, std::system_category(), "madvise");
+      }
+    }
+  }
+  fragmenter(const fragmenter&) = delete;
+  fragmenter& operator=(const fragmenter&) = delete;
+  fragmenter(fragmenter&&) = delete;
+  fragmenter& operator=(fragmenter&&) = delete;
+  ~fragmenter() {
+    if (base_ != nullptr) {
+      munmap(base_, bytes_);
+    }
+  }
+
+private:
+  std::size_t bytes_;
+  std::byte* base_ = nullptr;
+};
+
 int run(const settings& s) {
+  const fragmenter fragments(s.fragment);
   if (s.prelude != 0) {
     // glibc serves a large block by mmap and, when such a block is freed, raises its mmap
     // threshold to that size (up to 32 MiB): later blocks below it come from the heap.
