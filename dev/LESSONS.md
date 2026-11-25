@@ -958,6 +958,13 @@ which the chain's first pass reads whole) took the 26 real rows it reaches (1843
 0.76 of their time on the EPYC 7763, r2c 20480 × 21 from 1.18 to 0.99 of FFTW and 40960 × 6
 from 1.27–1.44 to 0.88–0.99. Whenever a route is added for c2c rows, check the transforms that
 contain a c2c transform of that length. [X72](experiments/X72-zen3-real-rows.md).
+The Xeon 6240 had the same gap beside its c2c depth-first chains (X46, X51): real rows of
+32768–2^23 points took 0.75 of their time on the half length's chain, and the client's r2c and
+c2r 32768 went from 1.28–1.44 to 0.83–1.04 of FFTW. The real rows also gained below the c2c
+rows' own lower limit (half lengths of L2/8 to L2/4, 18432–24576 points: 0.80), where c2c rows
+of those lengths had not (X46), because the breadth-first plan a real row leaves is a split run
+with its pairing, not the c2c row's chain: a container's crossover need not be its part's.
+[X75](experiments/X75-xeon-real-rows.md).
 
 4.22 **To run short rows side by side in the lanes, transpose blocks in registers; gather
 per element only where registers run out, and keep the last row out of a padded group.** A

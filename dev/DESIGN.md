@@ -1354,7 +1354,11 @@ to 8, on `avx2`:
   (16384–2²² complex doubles) and in float from L2/4 to 8 L2 (32768–2²⁰ complex floats, the
   measured range) with one top of 16, else 20, else 10
   (X46: 16384–262144 0.67 of their time; X51: 25000 0.75, 524288–2²² 0.68–0.75, float
-  0.61–0.78; FFTN ÷ FFTW 1.06–1.35 → 0.50–1.00, ÷ MKL 0.33–0.90);
+  0.61–0.78; FFTN ÷ FFTW 1.06–1.35 → 0.50–1.00, ÷ MKL 0.33–0.90). Even real rows out of
+  place run their half length on the same chain over that range and, for them alone, from L2/8
+  (`depth_real_max_bytes`, `depth_real_min_bytes`; section 9.1; X75: the 68 real rows it moved,
+  16384–2²³ points in double and 32768–2²⁰ in float, took 0.75 (from L2/4) and 0.80 (L2/8 to
+  L2/4) of their time);
 - the Apple profile (a cluster shares L2) from L1 when the length's power-of-two part is
   above L1/8, with one top of 4, to 2 L1 for powers of two and to 16 L1 for the rest (X46:
   8192 0.73, 16384 0.84; X51: 20480–122880 0.69–0.86; from L1/2, batches of 4096 lost
@@ -1363,8 +1367,9 @@ to 8, on `avx2`:
   (Zen 3; Zen 4 and Zen 5, 1 MiB and `avx512`, keep their plans: unmeasured), for lengths
   that are not powers of two, from L2/4 to 4 L2, power-of-two part above L1/4,
   one top of 4 (X51: 12288–122880 and 46080 0.63–0.79; tops of 16 lost 1.2–1.7 on `avx2`'s
-  16 registers; powers of two tied or lost against X32's chains). On this profile alone an even
-  real row out of place, contiguous, in double, runs its half-length transform on the same
+  16 registers; powers of two tied or lost against X32's chains). On this profile (and the
+  Xeon 6240's, X75) an even real row out of place, contiguous (in double here: Zen 3 takes no
+  float chain), runs its half-length transform on the same
   chain where a c2c row of that length would be one (`machine_profile::depth_real_max_bytes`,
   section 9.1; X72: the 26 real rows it moved, 18432–245760, took 0.761 of the chains' and
   half-length grids' time, 0.65–0.94).
@@ -1612,9 +1617,10 @@ Routes, by `real_route`:
   not fused (radices ≤ 8 read the arrays directly and keep the separate pass), and not on
   `avx2` (the EPYC gained nothing; build_settings::r2c_pair_last forces it): Mac r2c rows
   0.94–0.98 of the separate route's time, Xeon `avx512` 262144 and 2²⁰ 0.94–0.97.
-- *Depth-first*: on Zen 3's class (`machine_profile::depth_real_max_bytes`, X72) an even real
-  row of one axis out of place, contiguous on both sides, whose half length the c2c rows'
-  depth-first rule takes (section 8.5) runs that half length as the depth-first chain: r2c
+- *Depth-first*: on Zen 3's class (`machine_profile::depth_real_max_bytes`, X72) and the Xeon
+  6240's (X75) an even real row of one axis out of place, contiguous on both sides, whose half
+  length the c2c rows' depth-first rule takes (section 8.5; on the Xeon 6240's class from L2/8,
+  `depth_real_min_bytes`, where the c2c rows start at L2/4) runs that half length as the depth-first chain: r2c
   reads its reals as h complex values into the chain, whose blocks and result are in the
   output, then pairs there in a separate pass; c2r pairs from the input into the workspace
   block (h complex values), from which the chain's first pass reads the whole line before its
@@ -3499,6 +3505,7 @@ to change before a release.
 | 2026-11-24 | On the 2 MiB-L2 key (X70: Sapphire 0.858, Granite 0.860, Emerald 0.873 over the 18 moved cases, none slower) the two-pass rows of 160, 240 and 1024 keep their radices while rows and output fit four times the L2 (in place: rows within twice the L2), and out of place rows longer than a 4 KiB page within the L2 (`machine_profile::fit_long_row_bytes`, no limit elsewhere): rows of 1024 in place to 256 rows, of 160 and 240 to 1638 and 1092 rows, of 1024 out of place still 64 (section 11.2, rule 2; X70) | X69's informative arm W (every row two-pass), W ÷ O past X69's limits on Sapphire, Granite and Emerald Rapids: 1024 in place 0.82–0.88 at 2 MiB and 0.89–0.94 at 4 MiB of rows; 160 and 240 at 1024 rows (5 and 7.5 MiB of rows and output) 0.83–0.90, the gain shrinking with size, so a limit rather than none; 1024 out of place 0.95–1.01 at 4 and 8 MiB and 1.29–1.36 at 32 MiB on Sapphire. The verdict comes from X70's judging runs |
 | 2026-11-24 | On Zen 3's class (X51's key) an even real row of one axis out of place, contiguous, in double, runs its half-length transform as the depth-first chain where a c2c row of that length would be one (`machine_profile::depth_real_max_bytes`; r2c pairs after it in the output, c2r pairs into the workspace block first; sections 8.5, 9.1; X72 arm A) | X72's judging run (EPYC 7763, run 20261124-223906-cac2, band ±1.00 %): 0.761 over the 26 real rows it moves (18432–245760, r2c and c2r), none slower; the client catalogue's r2c 18432 and 20480 × 21 1.15–1.18 → 0.99–1.00 of FFTW, 40960 × 6 1.27–1.44 → 0.88–0.99. Zen 2 reached unmeasured |
 | 2026-11-24 | `avx2` double on AMD plans 3072 as 6 · 16 · 32, 3200 as 10 · 20 · 16, 4608 as 6 · 12 · 64 and 5120 as 10 · 32 · 16 (overrides; other vendors keep the costs' choice; section 13.5; X72 arm B) | X72's judging run: 0.906 over the 58 cases they move (c2c rows of those lengths at 1–64 rows, in place, both directions; the real rows of 6144–10240; depth-first sub-rows; planes), none slower; c2c 3072 and 3200 1.03–1.11 → 0.89–0.90 of FFTW, real rows of 6144 and 6400 1.02–1.09 → 0.90–0.95 |
+| 2026-11-25 | On the Xeon 6240's class an even real row of one axis out of place, contiguous, runs its half-length transform on the c2c rows' depth-first chain over their range (L2/4 to 64 L2; `depth_real_max_bytes`, X75 arm A) and from L2/8 for real rows alone (`depth_real_min_bytes`, new; arm B); `avx512` only (its tops of 16, 20, 10); sections 8.5, 9.1 | X75's judging run (Xeon 6240, run 20261125-023550-8fee, band ±3.87 %): A 0.748 over the 50 real rows it moves (32768–2²³, float 65536–2²⁰), B 0.796 over the 18 it moves (16384–24576, float 32768–49152), none slower; the client catalogue's r2c and c2r 32768 1.28–1.44 → 0.83–1.04 of FFTW, 40960 × 6 1.20–1.38 → 0.99–1.18, c2r 20480 × 3 1.14 → 1.00 (run D1). Ice Lake-SP (X58's branch) keeps its plans, unmeasured |
 
 ---
 
