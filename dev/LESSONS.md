@@ -651,6 +651,14 @@ its moved cases' mean gained (0.81-0.90). Zen 2, screened on its CCX key, kept a
 reached, and the 2 MiB-L2 Intel parts (Sapphire, Emerald, Granite Rapids) kept every rule of their
 key and took X50's convolutions (0.56-0.62). Where a key spans vendors, screen each vendor, and
 read the worst moved case, not only the mean. [X64](experiments/X64-cloud-screen-1124.md).
+Within one vendor the nearest relative has carried what it was screened for since: Zen 2 kept
+Zen 3's three newer rules (X72's real rows 0.745 and AMD radices 0.914, X73's anchored runs 0.906
+on the standard batches), and the Ice Lake VM, on a branch of its own, took the Xeon 6240's real
+rows at the Xeon's gains (X75's route 0.745 against the Xeon's 0.748, X78's fused pairing 0.772).
+A threaded A/A band on such a VM can be too wide to decide a gain of this size: eight unpinned
+threads gave ±8.0 % over 15 rounds of 33 batches (a mean of 0.926 read as a tie) and ±5.3 %
+over 30 rounds of 5. [X81](experiments/X81-zen2-screen.md),
+[X82](experiments/X82-icelake-real-rows.md).
 
 ## 4. Kernels and algorithms
 

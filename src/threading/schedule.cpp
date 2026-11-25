@@ -204,6 +204,16 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
     p.depth_top = 16;
     p.depth_top_alt = 20;
     p.depth_top_last = 10;
+    // Experiment X82 (cloud screen of 2026-11-25, the N2 VM): the Xeon 6240's real rows on that
+    // chain. X75: an even real row out of place runs its half-length transform there from half
+    // lengths above L2/8 to the chain's 64 L2 (0.745 over the 40 rows it moved, 24576-2^21
+    // points, none slower; run 20261125-095241-aafe). X78: c2r rows pair in the chain's first
+    // pass from L2/4 to 16 L2 (0.772 over the 16 it moved). Rows of 2^22 and 2^23 points are
+    // reached unmeasured on Ice Lake (X75 timed them on the Xeon 6240: 0.66-0.89).
+    p.depth_real_max_bytes = p.depth_max_bytes;
+    p.depth_real_min_bytes = c.l2.size / 8 + 1;
+    p.depth_c2r_fused_min_bytes = c.l2.size / 4;
+    p.depth_c2r_fused_max_bytes = 16 * c.l2.size;
   }
   if (large_l2 && intel) {
     p.batch_leaf_12 = false; // X58
