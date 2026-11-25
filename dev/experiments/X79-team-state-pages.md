@@ -190,9 +190,12 @@ c2c 8 × 4096 MP ÷ M 1.049 [1.018, 1.068], B ÷ M 1.077 [1.052, 1.088], BP ÷ M
 1.013, 1.030, 1.009; the other three within 1.013. So on Zen 3 a team state at the start of a
 page, put there by the library or by the benchmark, makes the 16-thread batch of 8 × 4096 (about
 21 µs per execution, every member's claims and counters on the state's lines) 5–8 % slower; on
-the Xeon 6240 the same placement removed a × 1.4–2.3 slow mode. The mechanism on Zen 3 is not
-known (the set index of the state's lines is then fixed at 0, 128, …; X76's offsets left the
-state's offset in a page random).
+the Xeon 6240 the same placement removed a × 1.4–2.3 slow mode. Run 20261125-075639-0bf8 (Slurm
+518383, node19, load 3.4, band ±1.00 %, 40 rounds) tried the state 2 KiB into a page of its own
+(arm O, a local diagnosis commit a50d5fa, not pushed: the fix with the state's words moved by 2
+KiB in their page): 8 × 4096 O ÷ M 1.077 [1.048, 1.093], B ÷ M 1.066, the five batches' mean
+1.025 and 1.024. So it is not the offset within the page: on Zen 3 the state's page of its own
+costs the shortest batch, wherever its words sit in it. The mechanism is not known.
 
 **Anchoring on the fix, BA ÷ B** (X74's rules; band of each run):
 
