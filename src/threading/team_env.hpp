@@ -30,6 +30,14 @@
 
 namespace fftn::inline v0::detail {
 
+// [[no_unique_address]] for an empty driver state: MSVC and clang-cl ignore the standard
+// spelling (an unknown-attribute warning, an error under /WX) and take their own.
+#if defined(_MSC_VER)
+#define FFTN_NO_UNIQUE_ADDRESS [[msvc::no_unique_address]]
+#else
+#define FFTN_NO_UNIQUE_ADDRESS [[no_unique_address]]
+#endif
+
 // Drive: the driver (core/drive.hpp), plain_drive for every plan but those whose edges have
 // factors (edge_drive); both share this code.
 template <class Drive> class basic_team_env {
@@ -63,7 +71,7 @@ private:
   slot_addresses io_;
   std::byte* slots_;
   wait_budget budget_;
-  [[no_unique_address]] typename Drive::state state_{};
+  FFTN_NO_UNIQUE_ADDRESS typename Drive::state state_{};
 };
 
 using team_env = basic_team_env<plain_drive>;
