@@ -483,12 +483,18 @@ TEST(Real, RulesTakeTheDepthFirstHalfLengthWithTheXeonsFields) {
   if (with == runnable.end()) {
     GTEST_SKIP() << "no target here takes a depth-first top of 16";
   }
-  const auto describe_real = [&](std::size_t n, bool r2c, fftn::isa isa) {
+  const auto describe_real_as = [&]<class T>(std::size_t n, bool r2c, fftn::isa isa) {
     const fftn::options opts{.force_isa = isa};
     const auto core =
-        r2c ? make_plan_core(fftn::detail::view_of(fftn::rows_r2c<double>(n, 1)), opts, s)
-            : make_plan_core(fftn::detail::view_of(fftn::rows_c2r<double>(n, 1)), opts, s);
+        r2c ? make_plan_core(fftn::detail::view_of(fftn::rows_r2c<T>(n, 1)), opts, s)
+            : make_plan_core(fftn::detail::view_of(fftn::rows_c2r<T>(n, 1)), opts, s);
     return fftn::detail::describe(*core);
+  };
+  const auto describe_real = [&](std::size_t n, bool r2c, fftn::isa isa) {
+    return describe_real_as.template operator()<double>(n, r2c, isa);
+  };
+  const auto describe_real_float = [&](std::size_t n, bool r2c, fftn::isa isa) {
+    return describe_real_as.template operator()<float>(n, r2c, isa);
   };
   // Off by default (the field at 0): 32768's half length 16384 stays as it was.
   EXPECT_EQ(describe_real(32768, true, *with).find("depth-first"), std::string::npos);
@@ -514,6 +520,28 @@ TEST(Real, RulesTakeTheDepthFirstHalfLengthWithTheXeonsFields) {
               std::string::npos)
         << describe_real(16384, r2c, *with);
     EXPECT_EQ(describe_real(12288, r2c, *with).find("depth-first"), std::string::npos);
+    // Single precision by bytes: 32768's half length is 128 KiB of complex floats.
+    EXPECT_NE(
+        describe_real_float(32768, r2c, *with).find("half-length complex depth-first 16 x 1024"),
+        std::string::npos)
+        << describe_real_float(32768, r2c, *with);
+  }
+  // The shipped limit, L2/8 + 1 (X75's narrowing): a half length of exactly L2/8 (16384 in
+  // double, 32768 in single precision: 128 KiB) stays off the chain, one above it (20480 and
+  // 40960: 160 KiB) takes it, in both precisions and both kinds.
+  s.profile.depth_real_min_bytes = l2 / 8 + 1;
+  for (const bool r2c : {true, false}) {
+    EXPECT_EQ(describe_real(16384, r2c, *with).find("depth-first"), std::string::npos)
+        << describe_real(16384, r2c, *with);
+    EXPECT_NE(describe_real(20480, r2c, *with).find("half-length complex depth-first 16 x 640"),
+              std::string::npos)
+        << describe_real(20480, r2c, *with);
+    EXPECT_EQ(describe_real_float(32768, r2c, *with).find("depth-first"), std::string::npos)
+        << describe_real_float(32768, r2c, *with);
+    EXPECT_NE(
+        describe_real_float(40960, r2c, *with).find("half-length complex depth-first 16 x 1280"),
+        std::string::npos)
+        << describe_real_float(40960, r2c, *with);
   }
   // avx2 takes no top of 16, 20 or 10.
   if (std::ranges::find(runnable, fftn::isa::avx2) != runnable.end()) {
