@@ -467,7 +467,8 @@ Points that matter:
   convenience layer (later, 5.4), which caches them.
 - **Teams.** A team's members share one workspace of `workspace_bytes(lanes)`: a serial
   scratch slot per member and the team's synchronisation state (13.3), 128 bytes of slack
-  for its alignment. The state persists between team executions; the workspace object
+  for its alignment; on the Xeon 6240's class the state starts a 4 KiB page and fills whole
+  pages, with a page of slack for that (`machine_profile::team_state_page`, 13.3). The state persists between team executions; the workspace object
   holds one word besides its memory saying whether the memory holds valid state, so the
   first member of a first execution sets it up and the memory never needs initialising.
   Serial executions clear that word, and so does an execution with `completion::own` by a
@@ -2504,6 +2505,14 @@ As built (`src/threading/engine.hpp`, task 3.1):
   and runs whole the split tasks of groups none of whose members has arrived (so a group
   that never turns up cannot strand them); then it waits for the execution's done count.
 - **State.** Counters live in the workspace (5.3), every hot word on its own 128-byte line.
+  On the Xeon 6240's class (`machine_profile::team_state_page`) the state also has pages of
+  its own: it starts a 4 KiB page of the workspace and the members' slots start on the page
+  after its last, so that nothing a member reads shares a page with words every member writes
+  (X76: there a plan's twiddle table ending on the state's page was loaded from other cores'
+  modified lines on every execution, 1.5–2.3 times as long; X79). Elsewhere the state stays on
+  its lines with the slots right after it: on the EPYC 7763 a state page of its own cost the
+  16-thread batch of 8 × 4096 1.05–1.08 wherever its words sat in the page, and the M5 Max was
+  neutral.
   Executions are numbered by each member's own 64-bit count of its calls on the workspace;
   every counter carries the low 40 bits of the number of the execution that last wrote it
   above a 24-bit count, so it reads as zero in another one (nothing is reset between
@@ -2642,6 +2651,7 @@ FFTN had before the rules. The fields, with the experiments that measured them:
 | | `adjacent_lanes`, `adjacent_team_chain` (the x86 half; Apple's half stands) | X61 (Xeon 6240; M5 Max) |
 | | `c2r_packed_bytes`, `c2r_packed_isa` (`avx512`) | X63 (Xeon 6240); X64 (Ice Lake-SP kept, Zen 4 lost) |
 | | `split_complex_rows` (the scheduler's points of real rows on a chain) | X83 (Xeon 6240) |
+| | `team_state_page` (4 KiB; the maintainer's narrowing) | X79 (Xeon 6240; lost on the EPYC 7763) |
 | Its L2 above 1 MiB (Ice Lake) | the depth-first chain's fields as on the Xeon | X58 (Ice Lake N2) |
 | 2 MiB of private L2 | `grid_three_bytes` (L2/2), `grid_two_part_bytes` | X35 (Granite Rapids) |
 | | `batch_leaf_12` | X58 (Granite, Emerald Rapids) |
@@ -3605,6 +3615,7 @@ to change before a release.
 | 2026-11-25 | Under ASan + UBSan the kernel units (the library's `src/isa` units and the codelet test units) are compiled without UBSan's pointer-overflow and object-size checks (section 15.4) | The required Clang ASan + UBSan job took 78 minutes on PR 114, 64 of them a cold build of the kernel units, which every change to the kernel text, and every pull request started before main saved its cache, pays. Clang 23 on an EPYC 7763: the kernel units took 9306 s of compile time with every check, 2663 s without these two; ASan bounds-checks every access those units make, which subsumes both. GCC 16: 0.59 and 0.73 of the time on two units; the ASan + UBSan tests pass (2219, DMOG) in the same time |
 | 2026-11-25 | X58's Ice Lake branch (Intel, x86-64, a private L2 above 1 MiB and below 2 MiB; Ice Lake-SP as Google Cloud's N2 reports it, with a large L3 per CPU) takes the Xeon 6240's real rows on its depth-first chain: X75's `depth_real_max_bytes` = 64 L2 (its `depth_max_bytes`) and `depth_real_min_bytes` = L2/8 + 1, X78's `depth_c2r_fused_min_bytes` = L2/4 and `_max_bytes` = 16 L2; sections 8.5, 9.1. Zen 2 keeps X72's two rules and X73 (no change) | X82 (cloud screen of 2026-11-25, n2-standard-16, run 20261125-095241-aafe, band ±2.73 %, GCC 14.2, `avx512`): X75 0.745 over the 40 real rows it moves (24576–2²¹), X78 0.772 over the 16 c2r rows it moves, none slower; the fields' values are arm RF's (83886080, 163841, 327680, 20971520 on the 1.25 MiB L2). The rows of 2²² and 2²³ points are reached unmeasured on Ice Lake (X75 timed them on the Xeon 6240: 0.66–0.89). X81 (n2d-standard-16, Zen 2, runs 20261125-095426-d1f0, -100331-a9cd, -101611-2ba1): X72 arm A KEEP 0.745, arm B KEEP 0.914, X73 TIE (0.926 against a band of ±8.02 %; 0.906 KEEP on the standard batches); the verdicts reach other Zen 2 parts by the 16 MiB of L3 per complex |
 | 2026-11-25 | A topology recording may state the processor's vendor (snapshot entry `fftn/cpu_vendor`, sysctl key `fftn.cpu_vendor`); an `FFTN_TOPOLOGY` replay plans with it, and a recording without it with the host's vendor, as before (section 13.5). The repository's recordings of real machines and `tools/capture_platform.py` carry it | Since the Intel-only keys, a replay took the host's vendor: the Xeon's recording replayed on an AMD or Arm host silently lost about 30 fields, and a Zen 4c-like recording on an Intel host gained them. An ordinary entry keeps old snapshots valid and old readers working |
+| 2026-11-25 | On the Xeon 6240's class (Intel's cores, X61's key) the team state starts a 4 KiB page of the workspace and fills whole pages, the members' slots after them (`machine_profile::team_state_page`, new, default 0: the state on its 128-byte lines as before; sections 5.3, 13.3; X79). Every other profile keeps the old layout | X79's fix passed its rules on the Xeon 6240 (X16: c2c 864 × 384 backward at 16 threads unimodal at its alone time, 0.739 of its median; client catalogue 0.996, X16b 0.983, X8 0.992, X8b 0.988, nothing slower) and was neutral on the M5 Max, but lost on the EPYC 7763 (c2c 8 × 4096 at 16 threads 1.079), and its rules excluded narrowing. A narrowing by the maintainer (2026-11-25, "Yes, Xeon only"): on the Xeon class the code is what X16, X16b, X8 and X8b judged, so no new run was made |
 
 ---
 

@@ -31,11 +31,6 @@
 namespace fftn::inline v0::detail {
 namespace {
 
-std::byte* align_up(std::byte* p, std::size_t to) noexcept {
-  const auto address = reinterpret_cast<std::uintptr_t>(p);
-  return p + (to - address % to) % to;
-}
-
 wait_budget budget_of(const schedule& s) noexcept {
   const auto ns = [](double v) {
     return std::chrono::nanoseconds(static_cast<std::chrono::nanoseconds::rep>(v));
@@ -103,16 +98,20 @@ std::size_t workspace_bytes(const plan_core& core, int lanes) noexcept {
     return core.bytes;
   }
   const auto l = static_cast<std::size_t>(lanes);
-  // The slack aligns the state to its 128-byte lines at any workspace address. A size that
-  // does not fit saturates, so that allocating it fails rather than wrapping to a small one.
+  // The slack aligns the state to its 128-byte lines at any workspace address or, where the
+  // profile gives it pages of its own, puts it on a page boundary, the state then filling whole
+  // pages (team_state.hpp, machine_profile::team_state_page; X76, X79). A size that does not
+  // fit saturates, so that allocating it fails rather than wrapping to a small one.
   // A team runs the team program where there is one (execute_member), whose slots may be
   // smaller than the program's scratch; but an executor that hands back one lane and a
   // schedule that dispatches only one member run the program serially on the same workspace
   // (executor_execute.cpp), so the bytes are never fewer than a serial execution's.
+  const std::size_t page = team_core(core).profile.team_state_page;
+  const std::size_t slack = page != 0 ? page - 1 : sync_line;
   std::size_t slots = 0;
   std::size_t total = 0;
   if (__builtin_mul_overflow(l, team_core(core).slot_bytes, &slots) ||
-      __builtin_add_overflow(slots, sync_line + team_layout{l}.bytes(), &total)) {
+      __builtin_add_overflow(slots, slack + team_layout{l}.span(page), &total)) {
     return std::numeric_limits<std::size_t>::max();
   }
   return std::max(total, core.bytes);
@@ -142,15 +141,16 @@ void execute_member(const plan_core& plan, const void* in, void* out, const team
   const plan_core& core = team_core(plan);
   assert((!core.in_place || in == out) && "fftn: in-place plan executed with in != out");
   const team_layout layout{static_cast<std::size_t>(t.size)};
-  std::byte* state = align_up(ws.memory().data(), sync_line);
-  std::byte* slots = state + layout.bytes();
+  const std::size_t page = core.profile.team_state_page;
+  std::byte* state = team_state_in(ws.memory().data(), page);
+  std::byte* slots = state + layout.span(page);
   if (done == completion::own) {
     // A static deal: nothing is shared. The members' slots lie beyond the state of a team of
     // this size, but inside that of a larger one, which this execution may overwrite: the
     // workspace then no longer holds valid state for any other size.
     const sync_word flag = workspace_access::team_word(ws);
     const std::uint64_t seen = flag.load(std::memory_order_relaxed);
-    if (seen != 0 && seen != layout.lanes * 4 + team_ready) {
+    if (seen != 0 && seen != team_flag(layout.lanes, team_state_unit(page), team_ready)) {
       flag.store(0, std::memory_order_relaxed);
     }
     const transform_range mine = owned_tasks(core.prog.transforms, t.size, t.rank);
@@ -167,6 +167,7 @@ void execute_member(const plan_core& plan, const void* in, void* out, const team
       .state = state,
       .flag = workspace_access::team_word(ws),
       .rank = t.rank,
+      .unit = team_state_unit(page),
   };
   team_env env(core, in, out, slots, budget_of(job.plan));
   team_engine<team_env>(job, env).run();

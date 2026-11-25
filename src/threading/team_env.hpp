@@ -5,9 +5,10 @@
 // chunks through the program driver on the workspace's scratch slots, and waits with the
 // spin, yield and block policy of wait.hpp.
 //
-// The workspace of a team of L lanes, from its first 128-byte boundary:
+// The workspace of a team of L lanes, from its first 128-byte boundary, or page boundary where
+// the profile gives the state pages of its own (machine_profile::team_state_page):
 //
-//   team state (team_state.hpp) | slot 0 | slot 1 | ... | slot L - 1
+//   team state (team_state.hpp), whole lines or pages | slot 0 | slot 1 | ... | slot L - 1
 //
 // Each slot is one serial execution's scratch (lines a and b, then the block), rounded up to
 // whole 128-byte lines. A member runs whole tasks in its own slot. A split task's chunks use

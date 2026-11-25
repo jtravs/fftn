@@ -108,13 +108,14 @@ private:
 struct team_space {
   team_space(const fftn::detail::plan_core& core, int lanes)
       : memory(fftn::detail::workspace_bytes(core, lanes)) {
-    const auto address = reinterpret_cast<std::uintptr_t>(memory.memory().data());
-    const std::size_t line = fftn::detail::sync_line;
-    state = memory.memory().data() + (line - address % line) % line;
-    slots = state + fftn::detail::team_layout{static_cast<std::size_t>(lanes)}.bytes();
+    const std::size_t page = fftn::detail::team_core(core).profile.team_state_page;
+    state = fftn::detail::team_state_in(memory.memory().data(), page);
+    unit = fftn::detail::team_state_unit(page);
+    slots = state + fftn::detail::team_layout{static_cast<std::size_t>(lanes)}.span(page);
   }
   fftn::workspace memory;
   std::byte* state = nullptr;
+  std::size_t unit = fftn::detail::sync_line;
   std::byte* slots = nullptr;
 };
 
@@ -276,6 +277,7 @@ inline sim_result simulate_engine(const team_case& c, const sim_setup& setup) {
           .state = space.state,
           .flag = fftn::detail::sync_word(&flag),
           .rank = m,
+          .unit = space.unit,
       };
       sim_env env(ctl, m, records[i], real[i], core.graph);
       fftn::detail::team_engine<sim_env>(job, env).run();

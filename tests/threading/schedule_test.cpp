@@ -756,6 +756,23 @@ TEST(Schedule, GridSizesFromCaches) {
         fftn::detail::profile_for(fftn::detail::load_topology(data / file), x86_64).anchored_runs);
   }
   EXPECT_FALSE(x86("linux-gcp-c4d-zen5.sysfs").anchored_runs);
+  // The team state on pages of its own on the Xeon 6240's class only (X79, narrowed to it by the
+  // maintainer): the EPYC 7763, the M5 Max, Granite Rapids, the Ice Lake VM, Zen 5 and Axion keep
+  // it on its 128-byte lines.
+  EXPECT_EQ(xeon86.team_state_page, 4096U);
+  EXPECT_EQ(epyc86.team_state_page, 0U);
+  EXPECT_EQ(apple.team_state_page, 0U);
+  EXPECT_EQ(
+      x86("linux-gcp-c4-granite-rapids.sysfs", fftn::detail::cpu_vendor::intel).team_state_page,
+      0U);
+  EXPECT_EQ(x86("linux-gcp-n2-ice-lake.sysfs", fftn::detail::cpu_vendor::intel).team_state_page,
+            0U);
+  EXPECT_EQ(x86("linux-gcp-c4d-zen5.sysfs", fftn::detail::cpu_vendor::amd).team_state_page, 0U);
+  EXPECT_EQ(
+      fftn::detail::profile_for(fftn::detail::load_topology(data / "linux-gcp-c4a-axion.sysfs"),
+                                false, fftn::detail::cpu_vendor::arm_other)
+          .team_state_page,
+      0U);
   // Rows' two-pass radices while the data fit three quarters of the CCX's L3 (X57).
   EXPECT_EQ(epyc86.fit_row_bytes, std::size_t{24} * 1024 * kib);
   EXPECT_EQ(xeon86.fit_row_bytes, 0U);
@@ -1190,11 +1207,12 @@ TEST(Schedule, FitTableKeys) {
 
 // A rule measured on one vendor's processors only is keyed to that vendor (the maintainer,
 // 2026-11-25; DESIGN.md 13.5). The Xeon 6240's class (X34, X39, X46, X50, X51, X58, X61's x86
-// half, X63, X75, X78) and the 2 MiB-L2 key (X35, X55, X58, X64, X69, X70, X80) were measured
-// on Intel's cores only, so they read the vendor: every Intel recording keeps the profile it had
-// (the literals here and in the tests above are main's values before the vendor was read, with
-// X80's limits and X82's real-row fields on the Ice Lake VM since), and AMD's cores with the same
-// caches, or an unknown vendor, keep the fields' defaults there.
+// half, X63, X75, X78, X79, X83) and the 2 MiB-L2 key (X35, X55, X58, X64, X69, X70, X80)
+// were measured on Intel's cores only, so they read the vendor: every Intel recording keeps the
+// profile it had (the literals here and in the tests above are main's values before the vendor
+// was read, with X79's, X80's and X83's fields and X82's real-row fields on the Ice Lake VM
+// since), and AMD's cores with the same caches, or an unknown vendor, keep the fields' defaults
+// there.
 struct intel_keyed {
   std::size_t grid_two_odd_part;
   std::size_t grid_three_block;
@@ -1223,6 +1241,7 @@ struct intel_keyed {
   std::size_t c2r_packed_bytes;
   fftn::isa c2r_packed_isa;
   bool split_complex_rows;
+  std::size_t team_state_page;
 
   bool operator==(const intel_keyed&) const = default;
 };
@@ -1256,6 +1275,7 @@ intel_keyed keyed_of(const machine_profile& p) {
       .c2r_packed_bytes = p.c2r_packed_bytes,
       .c2r_packed_isa = p.c2r_packed_isa,
       .split_complex_rows = p.split_complex_rows,
+      .team_state_page = p.team_state_page,
   };
 }
 
@@ -1304,6 +1324,7 @@ TEST(Schedule, IntelOnlyKeys) {
       .c2r_packed_bytes = 1 * mib,
       .c2r_packed_isa = fftn::isa::avx512,
       .split_complex_rows = true, // X83
+      .team_state_page = 4096,    // X79 (not main's value before the vendor was read: added after)
   };
   EXPECT_EQ(keyed_of(recorded("linux-intel-xeon-gold-6240.sysfs", cpu_vendor::intel)), xeon);
   intel_keyed ice_lake = defaults; // X58's depth-first chain, with X75's and X78's real rows (X82)

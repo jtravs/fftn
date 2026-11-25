@@ -1264,7 +1264,12 @@ benchmark. A workspace starting a page removed it. The likely mechanism, not ver
 streamer prefetches within a page, RFOs included, so the core doing the atomics takes the
 page's other lines for ownership. Separately: when a benchmark is bimodal between processes,
 run the case alone and then after each other case before suspecting the hardware.
-[X76](experiments/X76-bimodal-864.md).
+The fix does not travel unmeasured: with the state at the start of a page of its own (X79) the
+Xeon 6240's batch became unimodal at its alone time (0.74 of its old median at 16 threads), but
+on the EPYC 7763 the 16-thread batch of 8 × 4096 points took 1.05–1.08 of its time with the state
+at a page's start, whether the library or the benchmark put it there. A memory layout for one
+core's prefetcher is a per-machine rule like any planner rule.
+[X76](experiments/X76-bimodal-864.md), [X79](experiments/X79-team-state-pages.md).
 
 5.20 **A plan judged at one thread can lose its gain in a team; count the phases it adds.**
 Real rows' half lengths on the depth-first chain won 0.61–0.96 at one thread on the EPYC 7763
