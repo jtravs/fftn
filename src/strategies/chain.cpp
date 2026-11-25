@@ -1317,7 +1317,9 @@ chain_builder<T>::c2r_depth(std::size_t n, const std::vector<std::size_t>& tops,
   depth_stages out = c2c_depth(h, tops, +1, scale, slot::out, slot::in, slot::out);
   stage& first = out.first.front();
   first.run = kernels_.passes.codelet[codelet_slot(first.args.radix)]->depth_first_c2r;
-  first.args.in_factor = depth_c2r_twiddles(n);
+  const auto [w, om] = depth_c2r_twiddles(n, first.args.radix);
+  first.args.in_factor = w;
+  first.args.roots = om;
   first.name += "; the c2r pairing fused in, from the input's " + std::to_string(h + 1) + " bins";
   return out;
 }
@@ -1524,15 +1526,25 @@ template <class T> const T* chain_builder<T>::leaf_pairing_twiddles(std::size_t 
   return pack(t, true);
 }
 
-// The pairing twiddles v_e = w_n^(e + n/4) of every element e = 0 .. n/2 - 1 of a c2r row's half
-// length, per-element storage: the depth-first first pass's with the pairing (depth.inl,
-// run_in_c2r), whose loads cover every e, the upper half with the same expression.
-template <class T> const T* chain_builder<T>::depth_c2r_twiddles(std::size_t n) {
-  std::vector<std::complex<T>> t(n / 2);
-  for (std::size_t e = 0; e < t.size(); ++e) {
-    t[e] = pairing_root(n, e);
+// The tables of the depth-first first pass with the c2r pairing (depth.inl, run_in_c2r) of a row
+// of n whose half length's first pass has radix r: the pairing twiddles v_e = w_n^(e + n/4) of
+// e = 0 .. n/(2r) - 1, per-element storage, and the roots w_n^(n/(2r) j) for j = 1 .. r - 1,
+// broadcast storage; v_e w_n^(n/(2r) j) is the pairing twiddle of e + n/(2r) j, so the pair
+// covers every element of the half length, the upper half with the same expression.
+template <class T>
+std::pair<const T*, const T*> chain_builder<T>::depth_c2r_twiddles(std::size_t n, std::size_t r) {
+  const std::size_t leg = n / 2 / r;
+  std::vector<std::complex<T>> v(leg);
+  for (std::size_t e = 0; e < leg; ++e) {
+    v[e] = pairing_root(n, e);
   }
-  return pack(t, false);
+  const auto& w = roots(n);
+  std::vector<std::complex<T>> om(r - 1);
+  for (std::size_t j = 1; j < r; ++j) {
+    om[j - 1] = w[leg * j];
+  }
+  const T* v_stored = pack(v, false);
+  return {v_stored, pack(om, true)};
 }
 
 template <class T>

@@ -344,7 +344,7 @@ private:
   std::complex<T> pairing_root(std::size_t n, std::size_t k);
   const T* pairing_twiddles(std::size_t n);
   const T* leaf_pairing_twiddles(std::size_t n);
-  const T* depth_c2r_twiddles(std::size_t n);
+  std::pair<const T*, const T*> depth_c2r_twiddles(std::size_t n, std::size_t r);
   [[nodiscard]] std::uint32_t chunks_of(std::size_t units, std::size_t points_per_unit) const;
   [[nodiscard]] std::size_t blocks(std::size_t count) const;
   // The passes of a chain of n from scratch slot `from` into scratch; returns the slot

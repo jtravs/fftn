@@ -70,10 +70,13 @@ template <class T, edge_op Op> struct run_out_chirp {
 // B = X_e - conj X_(h-e) and v_e = -i w_n^e (real.inl's c2r pairing, which for e above h/2 is the
 // same expression, since v_(h-e) = conj v_e), from the h + 1 bins X of the input: X_e upwards,
 // X_(h-e) downwards. Z_0 takes only the real parts of X_0 and X_h, as the separate pass does.
-// w: v in per-element storage, at element i.
+// The twiddle of e = i + leg j is v_i w_n^(leg j), applied as two products: w holds v at element
+// i (per-element storage, leg entries in all), om the R - 1 roots w_n^(leg j), j >= 1 (broadcast
+// storage), so that the pass reads one table stream of leg entries rather than R of them.
 template <class T> struct run_in_c2r {
   const T* x;
   const T* w;
+  const T* om;
   std::size_t i;
   std::size_t leg;
   std::size_t h;
@@ -81,7 +84,11 @@ template <class T> struct run_in_c2r {
     const std::size_t e = i + j * leg;
     const cv<T> xk = load(x + at(e, 2));
     const cv<T> xc = conj(load_down<T, true>(x + at(h - e, 2), C<T>));
-    const cv<T> z = add(add(xk, xc), mulc(sub(xk, xc), load_tw(w + tw_reals<T> * (j * leg))));
+    cv<T> b = mulc(sub(xk, xc), load_tw(w));
+    if (j != 0) {
+      b = mulc(b, bcast_tw(om + tw_reals<T> * (j - 1)));
+    }
+    const cv<T> z = add(add(xk, xc), b);
     if (j == 0 && i == 0) {
       T tile[2 * C<T>]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
       store(tile, z);
@@ -157,8 +164,8 @@ FFTN_FORCE_INLINE void depth_first_tails(const pass_args* a, const T* x, T* y, s
 // then holds only Q elements. C divides s then (chain_builder::bluestein_depth_fits), so
 // every block is whole and a run's chirp entries are one aligned block of the table. In c2r (a
 // c2r row's pairing fused in, experiment X78): the line of h = n (the pass's n) elements is Z
-// of run_in_c2r, from the h + 1 bins of src, with v in per-element storage (in_factor,
-// chain_builder::depth_c2r_twiddles); C divides s then too (chain_builder::c2r_depth_fits).
+// of run_in_c2r, from the h + 1 bins of src, with its tables in in_factor and roots
+// (chain_builder::depth_c2r_twiddles); C divides s then too (chain_builder::c2r_depth_fits).
 template <class T, std::size_t R, int Sign, first_input In = first_input::plain>
 void depth_first_pass(const pass_args* a, const void* src, void* dst, std::size_t first,
                       std::size_t last) {
@@ -202,6 +209,7 @@ void depth_first_pass(const pass_args* a, const void* src, void* dst, std::size_
         const run_in_c2r<T> pairs{
             .x = x,
             .w = static_cast<const T*>(a->in_factor) + tw_reals<T> * i0,
+            .om = static_cast<const T*>(a->roots),
             .i = i0,
             .leg = s * m,
             .h = a->n,
