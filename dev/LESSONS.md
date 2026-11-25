@@ -1193,6 +1193,20 @@ one member working alone: 1.05–1.15 on the EPYC and the M5 Max, capped at 4 ch
 not. Guided runs, which shrink to single chunks, keep that end balanced.
 [X59](experiments/X59-real-planes-mkl.md).
 
+5.18 **Dynamic claiming forgets where the data is; give each member the same work every call.**
+A batch claimed in arrival order lands on different threads in every execution. With unpinned
+threads the team's assumed cache groups are not the real core complexes either, so each row
+moves between L3s from one call to the next and the next execution fetches lines another
+complex holds dirty. On the EPYC 7763 (NPS4, 16 unpinned OpenMP threads) a 384 × 7373 c2c batch
+out of place (45 MiB each way) took 2.3 ms that way, against 1.2 ms with the same work dealt
+by rank, pinned or not, and FFTW's static split 1.2 ms; it was not NUMA placement or write
+streams (all pages local; interleaving or first touch changed nothing). Anchoring each member to
+its own contiguous range first, then stealing others' ranges in halving runs, kept the balance and
+took the client catalogue's batches at 16 threads to 0.32–0.38 of their time out of place and
+0.60–0.69 in place, 0.79 over the whole catalogue, nothing slower at 8 threads. Work stealing
+should start from an affinity, not from a shared counter.
+[X73](experiments/X73-anchored-runs.md).
+
 ## 6. Toolchain and testing pitfalls
 
 6.1 **Build with GCC as well as Clang before a remote round trip.** GCC warns where Clang

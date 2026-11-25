@@ -4,7 +4,9 @@
 // The claiming engine (DESIGN.md 13.3): what one member of a team does in one execution
 // with completion::all. Members claim work rather than wait for each other:
 //
-// 1. Whole tasks of its own cache group, in runs, from the group's counter.
+// 1. Whole tasks of its own cache group, in runs, from the group's counter; or, where the
+//    profile anchors them (machine_profile::anchored_runs, X73), from its own range of them
+//    first, then from the other members' ranges.
 // 2. The split tasks of its group: it joins one (at most `cap` members each) and claims
 //    its chunks in order, in runs within one phase (a share of the phase's chunks left,
 //    shrinking to single chunks; X52). A chunk of phase p runs once every chunk of phase
@@ -195,6 +197,9 @@ private:
     // Units of `grain` consecutive tasks, claimed in runs.
     const std::size_t grain = job_.plan.grain;
     const auto limit = static_cast<std::uint32_t>(whole_units(job_.plan, share));
+    if (job_.plan.profile.anchored_runs) {
+      return anchored_tasks(group, share, limit);
+    }
     const auto runs = static_cast<std::uint32_t>(std::max(job_.plan.profile.claim_divisor, 1) *
                                                  job_.lanes.size_of(group));
     for (;;) {
@@ -208,6 +213,45 @@ private:
       env_.run_whole(share.first + from, to - from, job_.rank);
       finish(c.count);
     }
+  }
+
+  // Whole tasks anchored to members (machine_profile::anchored_runs; X73): the group's
+  // `units` units cut into one contiguous range per member dealt, in order of rank. A member
+  // of the group starts with its own range, anyone else at the range of its rank, and each
+  // then goes round the ranges in turn, claiming runs of half what is left of the range (at
+  // least one unit) until none is left. With every member present each runs the same tasks
+  // in every execution (X73: at 16 unpinned lanes on the EPYC 7763 the arrival-order runs put
+  // each row of a batch beyond L3 on a different core complex in each execution: out of place
+  // 2.3 ms against 1.2 ms for the same rows dealt by rank); a member that is late or absent
+  // has its range taken by the others, so no task waits for it.
+  bool anchored_tasks(int group, const group_share& share, std::uint32_t units) noexcept {
+    const std::size_t grain = job_.plan.grain;
+    const int base = job_.lanes.base(group);
+    const auto dealt = static_cast<std::size_t>(
+        std::max(std::min(base + job_.lanes.size_of(group), job_.plan.lanes_dealt) - base, 1));
+    const auto start =
+        static_cast<std::size_t>(group == group_ ? job_.rank - base : job_.rank) % dealt;
+    for (std::size_t k = 0; k < dealt; ++k) {
+      const std::size_t j = (start + k) % dealt;
+      const std::size_t from = chunk_start(units, dealt, j);
+      const auto length = static_cast<std::uint32_t>(chunk_start(units, dealt, j + 1) - from);
+      const sync_word w = word(layout_.anchored(static_cast<std::size_t>(base) + j));
+      for (;;) {
+        const claimed c =
+            claim(w, length, [](std::uint32_t left) { return std::max(left / 2, 1U); });
+        if (c.count == 0) {
+          if (c.stale) {
+            return false;
+          }
+          break;
+        }
+        const std::size_t first = (from + c.at) * grain;
+        const std::size_t last = std::min((from + c.at + c.count) * grain, share.whole);
+        env_.run_whole(share.first + first, last - first, job_.rank);
+        finish(c.count);
+      }
+    }
+    return true;
   }
 
   bool split_tasks() noexcept {

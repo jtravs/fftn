@@ -108,6 +108,14 @@ struct machine_profile {
   // batches of 1024 short rows 0.70-0.83, nothing slower beyond the band; 4 lost 1.20-1.39
   // there); profile_for keeps 2 on the other kinds.
   int claim_divisor = 1;
+  // Whole transforms anchored to members (engine.hpp, whole_tasks; experiment X73): a group's
+  // whole transforms are cut into one contiguous range per member dealt, in order of rank,
+  // and each member claims its own range first, in runs of half what is left of it, before
+  // taking runs of the others'. A member then runs the same transforms in every execution,
+  // whoever arrives first, so a batch beyond the caches stays where the previous execution
+  // left it (the member's L2 and, with unpinned threads that the team's cache groups do not
+  // match, its core complex's L3). Off: runs from the group's one counter, in arrival order.
+  bool anchored_runs = false;
   // The planner's (not the scheduler's), experiment X12: a c2c row whose bytes exceed
   // grid_min_bytes is a grid rather than a chain (strategies/grid.hpp), in three phases
   // rather than two beyond grid_three_bytes; the grid widens its column blocks while one

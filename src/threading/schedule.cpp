@@ -167,6 +167,10 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
   if (zen3_like || (c.l2.shared_by != 0 && !private_l2)) {
     p.fair_line_runs = true;
   }
+  // X73 (machine_profile::anchored_runs), only where it was measured: Zen 3's class.
+  if (zen3_like) {
+    p.anchored_runs = true;
+  }
   if (x86_64 && private_l2 && large_l3 && !large_l2) {
     p.column_wide_bytes = 1024;
     p.fit_row_bytes = c.l3.size / 4 * 3; // X57: three quarters of the CCX's L3
