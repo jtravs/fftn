@@ -268,8 +268,9 @@ be fused into a pass's arithmetic. The guarantees of
 "Determinism" below hold for plans with edges too.
 
 Scales are taken by every plan; so are factors and accumulation, in the strategy the rules
-or measured planning choose (`options::effort`), with a few exceptions that
-`plan::describe()` names; a wisdom entry of a plan with edges serves the same edges only. Where that strategy is the chain of a c2c row, a
+or measured planning choose (`options::effort`), with a few exceptions: there
+`plan::describe()` names the strategy the same plan without the edges takes, the one it takes
+instead and why. Its line for the edges also counts the separate passes they cost. A wisdom entry of a plan with edges serves the same edges only. Where that strategy is the chain of a c2c row, a
 complex factor of stride 1 along the row is applied in its first or last pass. Every other
 factor, and accumulation, is a pass of its own over the edge's side, before or after the
 transform; the workspace may then hold one transform (or row) more: an input edge that

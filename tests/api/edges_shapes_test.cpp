@@ -1360,6 +1360,220 @@ TYPED_TEST(EdgeShapes, EveryStrategyForced) {
   forced_strategies<TypeParam>(fftn::isa::best, true);
 }
 
+// A plan whose edges keep it from the strategy of the plan without them (task 5.1c): the case,
+// the knobs that make the plain plan take that strategy, the start of its name
+// (plan_core::strategy_name) and the reason describe() must give.
+struct forced_line {
+  shape_case c;
+  fftn::detail::build_settings settings;
+  const char* plain;
+  const char* reason;
+};
+
+// Whether the plain plan of `f` takes the strategy f.plain on target t; if so, describe() of the
+// plan with the edges names it, the strategy taken instead and the reason, and the plan computes
+// the transform (run_case).
+template <class T, transform_kind K> bool forced_line_holds(const forced_line& f, fftn::isa t) {
+  namespace d = fftn::detail;
+  using C = std::complex<T>;
+  using In = std::conditional_t<K == transform_kind::r2c, T, C>;
+  using Out = std::conditional_t<K == transform_kind::c2r, T, C>;
+  fftn::test::input_source src(0x5C1ULL);
+  const shape_run<T> run(f.c, t, src);
+  const fftn::shape<In, Out> s = run.template shape<In, Out>();
+  const fftn::plan_edges<In, Out> e = run.template edges<In, Out>();
+  const auto plain = d::build_plan_core(d::view_of(s), run.opts, f.settings);
+  if (!plain->strategy_name.starts_with(f.plain)) {
+    return false;
+  }
+  const auto core = d::make_plan_core_with_edges(d::view_of(s), run.opts, d::view_of(e), f.settings);
+  const std::string text = d::describe(*core);
+  const std::string what = std::string(f.c.name) + ", " + fftn::isa_name(t) +
+                           (sizeof(T) == 8 ? " double" : " float");
+  EXPECT_NE(core->strategy_name, plain->strategy_name) << what << "\n" << text;
+  const std::string line = "\nnot the strategy the rules would choose: " + plain->strategy_name +
+                           " without the edges, " + core->strategy_name + " with them: " +
+                           f.reason + "\n";
+  EXPECT_NE(text.find(line), std::string::npos) << what << ": no '" << line << "' in\n" << text;
+  run_case<T, K>(f.c, t, false, true, &f.settings, f.reason);
+  return true;
+}
+
+// Each case in which an edge keeps a plan from the strategy the rules (or a test's knobs) give
+// the same plan without edges: describe() says which, which it takes instead and why (task
+// 5.1c). The strategies come from knobs and explicit profile fields, so the cases hold on every
+// target, except batch leaves, which only some targets' precisions have.
+TYPED_TEST(EdgeShapes, DescribeNamesTheStrategyAnEdgeForces) {
+  using T = TypeParam;
+  using enum transform_kind;
+  namespace d = fftn::detail;
+  d::build_settings adjacent;
+  adjacent.profile.adjacent_lanes = true;
+  adjacent.profile.adjacent_min_bytes = 0;
+  adjacent.profile.adjacent_team_chain = false;
+  adjacent.profile.column_team_bytes = 0;
+  adjacent.profile.column_wide_bytes = 0;
+  d::build_settings grid;
+  grid.strategy = d::strategy_choice::grid;
+  d::build_settings depth;
+  depth.strategy = d::strategy_choice::depth;
+  d::build_settings leaves;
+  leaves.batch_leaves = d::batch_leaf_choice::own;
+  d::build_settings packed;
+  packed.c2r_packed = 1;
+  const std::vector<forced_line> every_target{
+      {{.name = "rows as adjacent transforms, accumulated",
+        .kind = c2c,
+        .dims = {128},
+        .count = 32,
+        .in = {real, {}, 1},
+        .accumulate = true,
+        .adjacent = true},
+       adjacent,
+       "the lanes over adjacent transforms",
+       "accumulation takes no lanes over adjacent transforms"},
+      {{.name = "planes as adjacent transforms, accumulated",
+        .kind = c2c,
+        .dims = {8, 12},
+        .count = 8,
+        .out = {cplx, {}, 1},
+        .accumulate = true,
+        .adjacent = true},
+       adjacent,
+       "the lanes over adjacent transforms",
+       "accumulation takes no lanes over adjacent transforms"},
+      {{.name = "c2r half-length grid, input factor",
+        .kind = c2r,
+        .dims = {2048},
+        .count = 2,
+        .in = {cplx, {}, 1}},
+       grid,
+       "the half-length grid",
+       "a real row's input edge takes no grid here"},
+      {{.name = "c2r half-length depth-first, input factor",
+        .kind = c2r,
+        .dims = {2048},
+        .count = 1,
+        .in = {real, {-1}, 1},
+        .out = {real, {}, 1}},
+       depth,
+       "the half-length depth-first chain",
+       "a c2r row's input edge takes no depth-first chain"},
+      {{.name = "c2r plane packed, output factor",
+        .kind = c2r,
+        .dims = {16, 32},
+        .count = 2,
+        .out = {real, {1, -1}, 1}},
+       packed,
+       "each axis in turn, the intermediate packed in the output",
+       "an edge phase takes no intermediate packed in the output"},
+  };
+  const std::vector<forced_line> some_targets{
+      {{.name = "batch leaves, real factor",
+        .kind = c2c,
+        .dims = {8},
+        .count = 16,
+        .in = {real, {}, 1}},
+       leaves,
+       "the chain on batch leaves",
+       "batch leaves, one row at a time between the edge passes"},
+      {{.name = "batch leaves, fused complex factor",
+        .kind = c2c,
+        .dims = {16},
+        .count = 16,
+        .out = {cplx, {}, 1}},
+       leaves,
+       "the chain on batch leaves",
+       "the chain with a fused factor takes no batch leaves"},
+  };
+  const auto holds = [](const forced_line& f, fftn::isa t) {
+    switch (f.c.kind) {
+    case c2c:
+      return forced_line_holds<T, c2c>(f, t);
+    case r2c:
+      return forced_line_holds<T, r2c>(f, t);
+    case c2r:
+      break;
+    }
+    return forced_line_holds<T, c2r>(f, t);
+  };
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    for (const forced_line& f : every_target) {
+      EXPECT_TRUE(holds(f, t)) << f.c.name << ", " << fftn::isa_name(t)
+                               << ": the plain plan takes another strategy";
+    }
+    for (const forced_line& f : some_targets) {
+      static_cast<void>(holds(f, t));
+    }
+  }
+}
+
+// The separate passes an edge costs, as describe() counts them (task 5.1c): none for a fused
+// factor, one per separate factor or accumulation, and one more where accumulation saves the
+// output's prior values before a strategy that writes the output.
+TYPED_TEST(EdgeShapes, DescribeCountsTheSeparatePasses) {
+  using T = TypeParam;
+  using enum transform_kind;
+  namespace d = fftn::detail;
+  d::build_settings chain;
+  chain.strategy = d::strategy_choice::chain;
+  d::build_settings lanes;
+  lanes.strategy = d::strategy_choice::lanes;
+  struct counted {
+    shape_case c;
+    const d::build_settings* settings;
+    const char* cost;
+  };
+  const std::vector<counted> cases{
+      {{.name = "c2c chain, fused factors",
+        .kind = c2c,
+        .dims = {64},
+        .count = 4,
+        .in = {cplx, {}, 1},
+        .out = {cplx, {}, 0}},
+       &chain,
+       "; they cost no separate pass\n"},
+      {{.name = "c2c chain, real input factor",
+        .kind = c2c,
+        .dims = {64},
+        .count = 4,
+        .in = {real, {}, 1}},
+       &chain,
+       "; they cost 1 separate pass\n"},
+      {{.name = "c2c lanes, both factors",
+        .kind = c2c,
+        .dims = {16},
+        .count = 7,
+        .in = {cplx, {}, 1},
+        .out = {real, {1}, -1}},
+       &lanes,
+       "; they cost 2 separate passes\n"},
+      {{.name = "c2c lanes, input factor, accumulated",
+        .kind = c2c,
+        .dims = {12},
+        .count = 9,
+        .in = {real, {-1}, 1},
+        .accumulate = true},
+       &lanes,
+       "the output's prior values saved in a pass before it; they cost 3 separate passes\n"},
+      {{.name = "plane, both factors, accumulated",
+        .kind = c2c,
+        .dims = {12, 10},
+        .count = 3,
+        .in = {cplx, {}, 1},
+        .out = {real, {1, -1}, 0},
+        .accumulate = true},
+       nullptr,
+       "; they cost 2 separate passes\n"},
+  };
+  d::build_settings rules;
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    for (const counted& c : cases) {
+      run_case<T, c2c>(c.c, t, false, true, c.settings != nullptr ? c.settings : &rules, c.cost);
+    }
+  }
+}
+
 // A stand-in for measured planning's clock (build_settings::measure_time): the first candidate
 // asked for after the rules' choice is twice as fast as every other.
 struct first_wins {

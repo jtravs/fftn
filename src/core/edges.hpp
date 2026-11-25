@@ -119,10 +119,19 @@ struct edge_rows {
 // chains).
 enum class edge_layout : std::uint8_t { row_chain, row_strategy, phases };
 
-// describe()'s line for a plan with edges; `fallback`: why an edge keeps the plan from the
-// strategy the rules would choose (empty: it does not).
-[[nodiscard]] std::string edges_text(const edge_plan& p, edge_layout layout,
-                                     const std::string& fallback);
+// The separate passes of a program's edges: its stages that edge_pass_stage and
+// edge_copy_stage made, each counted once however many lines or blocks it runs on.
+[[nodiscard]] std::size_t edge_passes(const program& p) noexcept;
+
+// describe()'s line for a plan with edges: where each operation goes, and the `passes`
+// (edge_passes) they cost.
+[[nodiscard]] std::string edges_text(const edge_plan& p, edge_layout layout, std::size_t passes);
+
+// describe()'s line for a plan whose edges keep it from the strategy the plan without them
+// takes (`plain`, as plan_core::strategy_name has them), `built` being the one it takes and
+// `fallback` why (task 5.1c).
+[[nodiscard]] std::string forced_text(const std::string& plain, const std::string& built,
+                                      const std::string& fallback);
 
 // The elements of a valid edge's factor array its strides reach over the shape, relative to
 // the address passed (exec_args): [lo, hi], in the array's elements; {0, 0} without a factor.

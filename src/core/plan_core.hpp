@@ -248,7 +248,13 @@ public:
   std::uint8_t factor_args = 0; // which arrays: moving_in_factor, moving_out_factor
   std::vector<edge_record> edge_records;
   std::vector<edge_record> edge_tail_records; // a lanes program's, one per program::lane_tail
-  std::string edges_note; // describe()'s line for edges with factors or accumulation
+  std::string edges_note; // describe()'s lines for edges with factors or accumulation
+  // The strategy the plan was built as, in a few words ("the grid in 2 phases"), and, for a
+  // plan with edges, why they keep it from another (empty: nothing does): build_with_edges
+  // compares the first with the plan built without the edges, and describe() names both
+  // where they differ (task 5.1c).
+  std::string strategy_name;
+  std::string edge_fallback;
 };
 
 // The core a team of two or more members runs: the team program where there is one.

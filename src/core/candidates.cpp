@@ -325,7 +325,10 @@ std::uint64_t program_fingerprint(const plan_core& c) {
     const std::size_t end = std::min(text.find('\n', at), text.size());
     const std::string_view line = std::string_view(text).substr(at, end - at);
     at = end + 1;
-    if (line.starts_with("planning:") || line.starts_with("strategy:")) {
+    // The strategy a plan with edges would take without them (build_with_edges) is not its
+    // program: candidates whose settings differ there may build the same one.
+    if (line.starts_with("planning:") || line.starts_with("strategy:") ||
+        line.starts_with("not the strategy the rules would choose:")) {
       continue;
     }
     for (const char ch : line) {

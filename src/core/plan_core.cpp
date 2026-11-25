@@ -1403,6 +1403,13 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   const std::size_t n_in = s.kind == transform_kind::c2r ? c.lengths[0] / 2 + 1 : c.lengths[0];
   const std::size_t n_out = s.kind == transform_kind::r2c ? c.lengths[0] / 2 + 1 : c.lengths[0];
   if (row_input && !c.in_place) {
+    // Said only where the strategy then differs from the plan's without the edges, and
+    // replaced by a reason below that names a strategy the input edge rules out.
+    edge_fallback = s.kind == transform_kind::c2c
+                        ? "the input edge's pass leaves the rows in the output, where the "
+                          "strategy is chosen in place"
+                        : "the input edge's pass leaves the rows in the workspace block, where "
+                          "the strategy is chosen for contiguous rows";
     if (s.kind == transform_kind::c2c) {
       in_eff = out;
       in_place_build = true;
@@ -1620,6 +1627,12 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     }
   }
   const std::size_t strategy_first = p.records.size();
+  // A c2r plane out of place may keep its intermediate packed in the output (below), but not
+  // with edge phases, whose transform ends where the output edge's phase reads it.
+  const bool packed_plane = c2r_packed(s, in, out, c.in_place, settings, c.isa_target);
+  if (packed_plane && edge_phases) {
+    edge_fallback = "an edge phase takes no intermediate packed in the output";
+  }
   if (lanes != 0) {
     // The lanes strategy (DESIGN.md 8.5): blocks of `lanes` rows of the innermost batch
     // dimension through the body, the rest in blocks of C through the tail.
@@ -2080,7 +2093,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       c.axis_notes.push_back("axis " + std::to_string(listed(d)) + " (n = " + std::to_string(n) +
                              "): c2c forward, radices " + chain.radix_text(n));
     }
-  } else if (!edge_phases && c2r_packed(s, in, out, c.in_place, settings, c.isa_target)) {
+  } else if (!edge_phases && packed_plane) {
     // A c2r plane out of place, its intermediate packed in the output (DESIGN.md 9.1,
     // experiments X60, X63): each output row's n reals hold its h = n/2 complex values after
     // the column axis, X_0 .. X_h-1 with the imaginary place of X_0 holding
@@ -2291,8 +2304,45 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
         s.kind == transform_kind::c2c && r == 1 && !row_strategy && adjacent == 0
             ? edge_layout::row_chain
             : (row_strategy ? edge_layout::row_strategy : edge_layout::phases);
-    c.edges_note = edges_text(*edge_ops, layout, edge_fallback);
+    c.edges_note = edges_text(*edge_ops, layout, edge_passes(p));
+    c.edge_fallback = edge_fallback;
   }
+  // The strategy in a few words, in the order of the branches above, for build_with_edges'
+  // comparison with the plan without edges.
+  c.strategy_name = [&]() -> std::string {
+    if (lanes != 0) {
+      return "the lanes over rows";
+    }
+    if (adjacent != 0) {
+      return "the lanes over adjacent transforms";
+    }
+    if (real_grid.phases != 0) {
+      return "the half-length grid in " + std::to_string(real_grid.phases) + " phases";
+    }
+    if (!depth_tops.empty()) {
+      return "the depth-first chain";
+    }
+    if (!real_depth_tops.empty()) {
+      return "the half-length depth-first chain";
+    }
+    if (!bluestein_tops.empty()) {
+      return "Bluestein's depth-first convolution";
+    }
+    if (grid_plan.phases != 0) {
+      return "the grid in " + std::to_string(grid_plan.phases) + " phases";
+    }
+    if (r > 1) {
+      if (c.strategy_note == volume_note) {
+        return "each plane of the volume, then the outer axis";
+      }
+      return !edge_phases && packed_plane ? "each axis in turn, the intermediate packed in the output"
+                                          : "each axis in turn";
+    }
+    if (batch != nullptr && s.kind == transform_kind::c2c) {
+      return row_edges ? "the chain, its batch leaves one row at a time" : "the chain on batch leaves";
+    }
+    return "the chain";
+  }();
   for (std::size_t b = 0; b < p.batch_loops; ++b) {
     std::get<loop>(p.records[b]).body_end = static_cast<std::uint32_t>(p.records.size());
   }
@@ -2640,8 +2690,23 @@ std::shared_ptr<plan_core> build_with_edges(const shape_view& shape, const optio
   // chain against another strategy with separate passes.
   const resolved_edges separate = resolve_edges(shape, opts, edges, false);
   std::shared_ptr<plan_core> c = build_plan_core(shape, separate.opts, settings, &separate.plan);
+  std::string fallback = c->edge_fallback;
+  // The plan without the edges (their scales folded into options::scale, as a plan of scales
+  // alone has them): the strategy the rules (or the settings) choose, which describe() names
+  // where the edges keep the plan from it (task 5.1c).
+  options plain_opts = opts;
+  plain_opts.scale = opts.scale * edges.in.scale * edges.out.scale;
+  const std::shared_ptr<const plan_core> plain = build_plan_core(shape, plain_opts, settings);
   if (any_fused(r.plan) && c->built == strategy_choice::chain) {
     c = build_plan_core(shape, r.opts, settings, &r.plan);
+    // The chain with a fused factor takes no batch leaves (build_plan_core's tags); otherwise
+    // what kept the separate passes' plan from the plain plan's strategy keeps this one too.
+    if (plain->strategy_name == "the chain on batch leaves") {
+      fallback = "the chain with a fused factor takes no batch leaves";
+    }
+  }
+  if (c->strategy_name != plain->strategy_name) {
+    c->edges_note += "\n" + forced_text(plain->strategy_name, c->strategy_name, fallback);
   }
   // Wisdom records the plan under its edges, so that no plan without them matches its entry,
   // with the caller's options (not the scale a placement fuses), so that the key does not

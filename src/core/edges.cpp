@@ -413,7 +413,24 @@ void contract_failure(const char* what) noexcept {
   std::abort();
 }
 
-std::string edges_text(const edge_plan& p, edge_layout layout, const std::string& fallback) {
+std::size_t edge_passes(const program& p) noexcept {
+  std::size_t passes = 0;
+  for (const record& r : p.records) {
+    if (const stage* st = std::get_if<stage>(&r);
+        st != nullptr && (st->name.starts_with("edge in") || st->name.starts_with("edge out"))) {
+      ++passes;
+    }
+  }
+  return passes;
+}
+
+std::string forced_text(const std::string& plain, const std::string& built,
+                        const std::string& fallback) {
+  return "not the strategy the rules would choose: " + plain + " without the edges, " + built +
+         " with them" + (fallback.empty() ? "" : ": " + fallback);
+}
+
+std::string edges_text(const edge_plan& p, edge_layout layout, std::size_t passes) {
   const auto describe_side = [layout](const edge_side& side, bool output) {
     std::string t;
     if (side.kind != factor_kind::none) {
@@ -433,6 +450,10 @@ std::string edges_text(const edge_plan& p, edge_layout layout, const std::string
     } else if (side.separate && layout == edge_layout::row_strategy) {
       t += output ? " in a separate pass after the row's strategy"
                   : " in a separate pass before the row's strategy";
+      // Accumulation into a strategy that writes the output (edge_mode::add_prior).
+      if (output && side.accumulate) {
+        t += ", the output's prior values saved in a pass before it";
+      }
     } else if (side.separate) {
       t += output ? " in a separate phase after the transform"
                   : " in a separate phase before the transform";
@@ -442,11 +463,11 @@ std::string edges_text(const edge_plan& p, edge_layout layout, const std::string
   std::string in = describe_side(p.in, false);
   std::string out = describe_side(p.out, true);
   std::string both = in.empty() ? out : (out.empty() ? in : in + "; " + out);
-  std::string text = "edges: " + both;
-  if (!fallback.empty()) {
-    text += "; not the strategy the rules would choose: " + fallback;
-  }
-  return text;
+  // The scales alone cost nothing; a fused factor costs no pass of its own.
+  const std::string cost =
+      passes == 0 ? "no separate pass"
+                  : std::to_string(passes) + (passes == 1 ? " separate pass" : " separate passes");
+  return "edges: " + both + "; they cost " + cost;
 }
 
 std::pair<std::ptrdiff_t, std::ptrdiff_t> factor_span(const shape_view& s, const edge_view& e,

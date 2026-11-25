@@ -2263,13 +2263,20 @@ lanes over adjacent transforms, its edge phases inside each block of transforms,
 accumulation. Still not taken, and said by `describe()`: those lanes with accumulation; a real
 row's grid whose block the input would need, and a c2r row's grid and depth-first chain with
 an input edge out of place (they read the input in the pairing's gathers); batch leaves run
-one row at a time between the edge passes. Measured planning and wisdom take edges (5.1b-3):
+one row at a time between the edge passes; a c2r plane's intermediate packed in the output
+(edge phases keep it in the workspace block). Measured planning and wisdom take edges (5.1b-3):
 every candidate is built with them (a candidate's forced strategy takes them as separate
 passes, a chain candidate the fused factor where it can) and timed on scratch factor arrays
 over the factors' span on the timing shape; a plan's wisdom key is its shape and options plus
 its edges' kinds, strides, scales and accumulation, so an entry serves those edges only. X65
-decides which separate passes become fused variants. An edge that still forces a slower
-strategy is built, not refused, and `describe()` says so (AGENTS.md section 1).
+decides which separate passes become fused variants. An edge that still forces another
+strategy is built, not refused, and `describe()` says so (AGENTS.md section 1; task 5.1c):
+every build names its strategy in a few words (`plan_core::strategy_name`), the plan with
+edges is compared with the same shape, options and knobs built without them, and where the
+names differ a line "not the strategy the rules would choose" gives both and the reason (for a
+measured plan, the chosen candidate's knobs stand for the rules). The edges' line counts the
+separate passes they cost (the stages of the program that are edge passes, accumulation's
+saving of the output's prior values included).
 
 ### 12.2 Row pipelines
 
