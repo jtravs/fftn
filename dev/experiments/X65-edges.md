@@ -128,6 +128,21 @@ gets one `--serial` re-run that decides (AGENTS.md section 6). Known and parked:
 transforms (c2c 8, 16, 64 × 1) at 1.06–1.08 on the EPYC and the Xeon since PR 128, with
 unchanged plans and call chains.
 
+### Arm V: the separate pass vectorised (declared before its run)
+
+The EPYC's first run (E1) showed the library's separate pass slower than the user's loop on
+almost every c2c row (a defect by Q1's rule). The edge pass was baseline scalar code with
+run-time strides. Commit 7bbed5b specialises lines of unit stride (factor stride 0 or 1),
+which the compiler vectorises, and skips a scale of 1 (bitwise the same results). It touches
+only `src/core/edges.cpp`, code that plans without edges never run.
+
+Deciding runs, on the EPYC and the Xeon, one thread, catalogue `x65` tier `full`: arms
+`A=fftn:a88a6e3+EDGE` (before) and `V=fftn:7bbed5b+EDGE` (after) plus the control, for E1, E3
+and E5 (the configurations whose separate passes it changes everywhere). V is adopted on a
+machine when the geometric mean of V/A over the cases whose edge is a separate pass or phase
+is at most 0.97 beyond band and no case is slower than 1 + band; Q1 and Q2 are then judged on
+V's code, with E1–E6 re-run on V where V is adopted.
+
 ## Results
 
 Pending.
