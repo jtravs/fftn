@@ -1288,7 +1288,7 @@ TEST(Schedule, IntelOnlyKeys) {
       .c2r_packed_bytes = 1 * mib,
       .c2r_packed_isa = fftn::isa::avx512,
       .split_complex_rows = true, // X83
-      .team_state_page = 4096, // X79 (not main's value before the vendor was read: added after)
+      .team_state_page = 4096,    // X79 (not main's value before the vendor was read: added after)
   };
   EXPECT_EQ(keyed_of(recorded("linux-intel-xeon-gold-6240.sysfs", cpu_vendor::intel)), xeon);
   intel_keyed ice_lake = defaults; // X58's depth-first chain only
