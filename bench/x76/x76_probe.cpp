@@ -39,6 +39,7 @@
 
 #include "backends/fftn_tuning.hpp"
 #include "core/plan_core.hpp"
+#include "core/program.hpp"
 #include "harness/json.hpp"
 
 #include <fftn/detail/core.hpp>
@@ -78,6 +79,7 @@
 #include <string_view>
 #include <system_error>
 #include <type_traits>
+#include <variant>
 #include <vector>
 
 namespace {
@@ -594,6 +596,31 @@ private:
   std::byte* base_ = nullptr;
 };
 
+// Where the team program's stages keep their twiddles and arguments: a stage that reads
+// another core's modified lines can be told apart from one that reads only its own.
+std::string stage_addresses(const detail::plan_core& plan) {
+  const detail::plan_core& core = detail::team_core(plan);
+  std::string out(1, '[');
+  const auto add = [&out](const std::string& name, const detail::pass_args& a) {
+    fbench::json j;
+    j.str("stage", name).str("twiddles", hex(a.twiddles)).str("roots", hex(a.roots));
+    j.str("args", hex(&a));
+    out += (out.size() > 1 ? "," : "") + j.object();
+  };
+  for (const detail::record& r : core.prog.records) {
+    if (const auto* st = std::get_if<detail::stage>(&r)) {
+      add(st->name, st->args);
+    }
+  }
+  for (const detail::flat_stage& f : core.prog.flat_body) {
+    add("flat", f.args);
+  }
+  for (const detail::pass_args& a : core.prog.call_args) {
+    add("call", a);
+  }
+  return out + ']';
+}
+
 int run(const settings& s) {
   const fragmenter fragments(s.fragment);
   if (s.prelude != 0) {
@@ -809,6 +836,7 @@ int run(const settings& s) {
   fbench::json o;
   o.str("type", "x76")
       .str("plan", detail::describe(*core))
+      .raw("stages", stage_addresses(*core))
       .raw("tuning", s.tuning)
       .integer("threads", s.threads)
       .boolean("huge", s.huge)
