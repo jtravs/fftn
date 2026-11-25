@@ -90,6 +90,15 @@
 //   GRID_TWO_PART_BYTES, BLUESTEIN_POW2_PART_BYTES, LONG_CONVOLUTION_BYTES,
 //   BLUESTEIN_WHOLE_LANES (0 or 1), ANCHORED_RUNS (0 or 1)
 //                    the planner's grid fields of the machine profile (schedule.hpp)
+//   EDGE_IN=KIND.LAYOUT, EDGE_OUT=KIND.LAYOUT[.acc] or acc   plan edges (experiment X65): a
+//                    real or complex factor laid out as line (one line for every transform),
+//                    full (as large as the side), s2 (twice the tight strides) or row (one
+//                    value per transform), every value one so that the check holds, and
+//                    accumulation on the output (which is zeroed for the check); a case the
+//                    edges do not apply to is unsupported
+//   EDGE_ARM=library|loop   the plan with the edges (default), or the plain plan and the
+//                    user's own separate loops (the input's in place before it, the output's
+//                    after it, accumulation from a buffer of the transform's own)
 // ISA is a public option; the others reach the library only through the private build
 // settings, as a test's do: the library has no switch for them, so dev/KNOBS.toml does not
 // list them.
@@ -125,11 +134,13 @@
 #endif
 
 #include <algorithm>
+#include <array>
 #include <charconv>
 #include <complex>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <exception>
 #include <memory>
 #include <optional>
@@ -167,7 +178,58 @@ private:
   int group_;
 };
 
-enum class call : unsigned char { serial, executor, team };
+// An edge as the arm gives it: a factor's kind and layout, and accumulation (output only).
+// The layouts index the factor by the side's logical coordinates (fftn/edges.hpp):
+//   line  one line of factors for every transform (tight strides, batch stride 0): a window
+//   full  an array as large as the side (tight strides, one block per transform)
+//   s2    a line read with twice the tight strides (every other element of a wider array)
+//   row   one value per transform (axis strides 0, batch stride 1)
+enum class factor_layout : unsigned char { none, line, full, s2, row };
+
+struct edge_spec {
+  fftn::factor_kind kind = fftn::factor_kind::none;
+  factor_layout layout = factor_layout::none;
+  bool accumulate = false;
+  std::string text; // as given
+  [[nodiscard]] bool any() const { return kind != fftn::factor_kind::none || accumulate; }
+};
+
+// Parses KIND.LAYOUT[.acc] or acc (KIND real or complex; acc on the output only).
+std::optional<edge_spec> parse_edge(std::string_view text, bool output) {
+  edge_spec e;
+  e.text = text;
+  std::size_t at = 0;
+  while (at <= text.size()) {
+    const std::size_t end = std::min(text.find('.', at), text.size());
+    const std::string_view token = text.substr(at, end - at);
+    at = end + 1;
+    if (token == "real" && e.kind == fftn::factor_kind::none) {
+      e.kind = fftn::factor_kind::real;
+    } else if (token == "complex" && e.kind == fftn::factor_kind::none) {
+      e.kind = fftn::factor_kind::complex;
+    } else if (token == "line" && e.layout == factor_layout::none) {
+      e.layout = factor_layout::line;
+    } else if (token == "full" && e.layout == factor_layout::none) {
+      e.layout = factor_layout::full;
+    } else if (token == "s2" && e.layout == factor_layout::none) {
+      e.layout = factor_layout::s2;
+    } else if (token == "row" && e.layout == factor_layout::none) {
+      e.layout = factor_layout::row;
+    } else if (token == "acc" && output && !e.accumulate) {
+      e.accumulate = true;
+    } else {
+      return std::nullopt;
+    }
+  }
+  if ((e.kind == fftn::factor_kind::none) != (e.layout == factor_layout::none) || !e.any()) {
+    return std::nullopt;
+  }
+  return e;
+}
+
+// edges: a plan with EDGE_IN or EDGE_OUT, executed out of line (plan_record::edge_mode says
+// how), so that a plain serial plan's execute stays one test and one call (X49).
+enum class call : unsigned char { serial, executor, team, edges };
 
 struct session {
   detail::build_settings settings;
@@ -190,6 +252,9 @@ struct session {
   std::string rader = "rules";        // RADER as given
   std::string batch_leaves = "rules"; // BATCH_LEAVES as given
   bool workspace_page = false;        // WORKSPACE=page
+  edge_spec edge_in;                  // EDGE_IN
+  edge_spec edge_out;                 // EDGE_OUT
+  bool edge_loop = false;             // EDGE_ARM=loop: a plain plan and the user's own loops
   std::string description;
 };
 
@@ -210,16 +275,6 @@ std::optional<fftn::isa> isa_from_name(std::string_view name) {
   return std::nullopt;
 }
 
-struct plan_record {
-  std::shared_ptr<const detail::plan_core> core;
-  std::unique_ptr<std::byte[]> ws_memory; // WORKSPACE=page: the memory ws borrows
-  fftn::workspace ws;
-  // The session's mode when the plan was made (it does not change while plans exist), so that
-  // a serial execute reads nothing else: reaching it through state() cost a guard check, a
-  // call and three saved registers per execute, about 16 instructions that FFTW's backend
-  // does not run (X49).
-  call mode = call::serial;
-};
 
 // FFTW's many-interface layout: row-major arrays whose last dimension is embedded in
 // `last` elements, transforms `dist` elements apart.
@@ -344,6 +399,357 @@ std::string axis_lines(const std::string& describe) {
   return out;
 }
 
+// ---- EDGE_IN, EDGE_OUT, EDGE_ARM (experiment X65) ----------------------------------------
+
+// One side of a case as the edge loops see it: `rank` axes of the side's logical extents
+// (n/2 + 1 on a real transform's complex side), the data's strides and distance in the side's
+// elements, and the factor array's strides in its own elements.
+struct side_geometry {
+  bool complex_data = true;
+  std::size_t rank = 1;
+  std::size_t batch = 1;
+  std::array<std::size_t, 3> extent{1, 1, 1};
+  std::array<std::ptrdiff_t, 3> stride{0, 0, 0};
+  std::ptrdiff_t dist = 0;
+  fftn::factor_kind kind = fftn::factor_kind::none;
+  std::array<std::ptrdiff_t, 3> factor_stride{0, 0, 0};
+  std::ptrdiff_t factor_batch = 0;
+  std::size_t factor_elements = 0; // the array's length in its own elements
+  bool accumulate = false;
+  [[nodiscard]] std::size_t lines() const {
+    std::size_t l = batch;
+    for (std::size_t d = 0; d + 1 < rank; ++d) {
+      l *= extent[d];
+    }
+    return l;
+  }
+};
+
+template <class In, class Out>
+side_geometry side_of(const fftn::shape<In, Out>& s, const fbench_case& c, const edge_spec& e,
+                      bool output) {
+  side_geometry g;
+  const bool real_side = c.kind == (output ? fbench_c2r : fbench_r2c);
+  const bool half_side = c.kind == (output ? fbench_r2c : fbench_c2r);
+  g.complex_data = !real_side;
+  g.rank = s.axes.size();
+  g.batch = s.batches.back().count;
+  g.dist = output ? s.batches.back().out_dist : s.batches.back().in_dist;
+  std::size_t tight = 1;
+  for (std::size_t i = g.rank; i > 0; --i) {
+    const std::size_t d = i - 1;
+    g.extent[d] = s.axes[d].n;
+    if (half_side && d + 1 == g.rank) {
+      g.extent[d] = s.axes[d].n / 2 + 1;
+    }
+    g.stride[d] = output ? s.axes[d].out_stride : s.axes[d].in_stride;
+    const auto t = static_cast<std::ptrdiff_t>(tight);
+    g.factor_stride[d] = e.layout == factor_layout::row  ? 0
+                         : e.layout == factor_layout::s2 ? 2 * t
+                                                         : t;
+    tight *= g.extent[d];
+  }
+  g.kind = e.kind;
+  g.accumulate = e.accumulate;
+  switch (e.layout) {
+  case factor_layout::none:
+    break;
+  case factor_layout::line:
+    g.factor_elements = tight;
+    break;
+  case factor_layout::s2:
+    g.factor_elements = 2 * tight;
+    break;
+  case factor_layout::full:
+    g.factor_batch = static_cast<std::ptrdiff_t>(tight);
+    g.factor_elements = tight * g.batch;
+    break;
+  case factor_layout::row:
+    g.factor_batch = 1;
+    g.factor_elements = g.batch;
+    break;
+  }
+  return g;
+}
+
+// The user's separate loop over lines [first, first + count) of a side (side_geometry::lines,
+// each the last axis of one transform), as a user who cares would write it: explicit real
+// arithmetic on contiguous lines, which the compiler vectorises. Without accumulation it
+// multiplies the data by the factor in place; with it, data += factor * src (src the
+// transform's result in a buffer of the data's layout), or data += src without a factor.
+// Element j's factor index along a line of factor stride fs (FactorStride 0 or 1 when known).
+template <int FactorStride>
+[[gnu::always_inline]] inline std::size_t factor_at(std::size_t j, std::ptrdiff_t fs) {
+  if constexpr (FactorStride == 0) {
+    return 0;
+  } else if constexpr (FactorStride == 1) {
+    return j;
+  } else {
+    return static_cast<std::size_t>(static_cast<std::ptrdiff_t>(j) * fs);
+  }
+}
+
+template <class T, bool Complex, int Kind, int FactorStride, bool Acc>
+[[gnu::always_inline]] inline void edge_line(T* __restrict d, const T* __restrict src,
+                                             const T* __restrict f, std::ptrdiff_t fs,
+                                             std::size_t n) {
+  for (std::size_t j = 0; j < n; ++j) {
+    if constexpr (Complex) {
+      T vr = Acc ? src[2 * j] : d[2 * j];
+      T vi = Acc ? src[2 * j + 1] : d[2 * j + 1];
+      if constexpr (Kind == 1) {
+        const T w = f[factor_at<FactorStride>(j, fs)];
+        vr *= w;
+        vi *= w;
+      } else if constexpr (Kind == 2) {
+        const T fr = f[2 * factor_at<FactorStride>(j, fs)];
+        const T fi = f[2 * factor_at<FactorStride>(j, fs) + 1];
+        const T r = vr * fr - vi * fi;
+        vi = vr * fi + vi * fr;
+        vr = r;
+      }
+      if constexpr (Acc) {
+        d[2 * j] += vr;
+        d[2 * j + 1] += vi;
+      } else {
+        d[2 * j] = vr;
+        d[2 * j + 1] = vi;
+      }
+    } else {
+      T v = Acc ? src[j] : d[j];
+      if constexpr (Kind == 1) {
+        v *= f[factor_at<FactorStride>(j, fs)];
+      }
+      if constexpr (Acc) {
+        d[j] += v;
+      } else {
+        d[j] = v;
+      }
+    }
+  }
+}
+
+template <class T, bool Complex, int Kind, int FactorStride, bool Acc>
+[[gnu::always_inline]] inline void edge_lines_as(const side_geometry& g, T* data, const T* src,
+                                                 const T* factor, std::size_t first,
+                                                 std::size_t count) {
+  const std::size_t inner = g.lines() / g.batch;
+  const std::size_t n = g.extent[g.rank - 1];
+  const std::ptrdiff_t width = Complex ? 2 : 1;
+  const std::ptrdiff_t fw = g.kind == fftn::factor_kind::complex ? 2 : 1;
+  for (std::size_t l = first; l < first + count; ++l) {
+    std::size_t rest = l % inner;
+    std::ptrdiff_t off = static_cast<std::ptrdiff_t>(l / inner) * g.dist;
+    std::ptrdiff_t foff = static_cast<std::ptrdiff_t>(l / inner) * g.factor_batch;
+    for (std::size_t i = g.rank - 1; i > 0; --i) {
+      const std::size_t d = i - 1;
+      const auto idx = static_cast<std::ptrdiff_t>(rest % g.extent[d]);
+      rest /= g.extent[d];
+      off += idx * g.stride[d];
+      foff += idx * g.factor_stride[d];
+    }
+    edge_line<T, Complex, Kind, FactorStride, Acc>(data + off * width,
+                                                   Acc ? src + off * width : nullptr,
+                                                   Kind != 0 ? factor + foff * fw : nullptr,
+                                                   g.factor_stride[g.rank - 1], n);
+  }
+}
+
+template <class T, bool Complex, int Kind, bool Acc>
+[[gnu::always_inline]] inline void edge_lines_stride(const side_geometry& g, T* data,
+                                                     const T* src, const T* factor,
+                                                     std::size_t first, std::size_t count) {
+  const std::ptrdiff_t fs = g.factor_stride[g.rank - 1];
+  if (fs == 0) {
+    edge_lines_as<T, Complex, Kind, 0, Acc>(g, data, src, factor, first, count);
+  } else if (fs == 1) {
+    edge_lines_as<T, Complex, Kind, 1, Acc>(g, data, src, factor, first, count);
+  } else {
+    edge_lines_as<T, Complex, Kind, -1, Acc>(g, data, src, factor, first, count);
+  }
+}
+
+template <class T, bool Complex>
+[[gnu::always_inline]] inline void edge_lines_kind(const side_geometry& g, T* data, const T* src,
+                                                   const T* factor, std::size_t first,
+                                                   std::size_t count) {
+  const bool acc = src != nullptr;
+  switch (g.kind) {
+  case fftn::factor_kind::none:
+    if (acc) {
+      edge_lines_as<T, Complex, 0, 0, true>(g, data, src, factor, first, count);
+    }
+    return;
+  case fftn::factor_kind::real:
+    if (acc) {
+      edge_lines_stride<T, Complex, 1, true>(g, data, src, factor, first, count);
+    } else {
+      edge_lines_stride<T, Complex, 1, false>(g, data, src, factor, first, count);
+    }
+    return;
+  case fftn::factor_kind::complex:
+    if constexpr (Complex) {
+      if (acc) {
+        edge_lines_stride<T, true, 2, true>(g, data, src, factor, first, count);
+      } else {
+        edge_lines_stride<T, true, 2, false>(g, data, src, factor, first, count);
+      }
+    }
+    return;
+  }
+}
+
+// On x86-64 Linux the loops are cloned for AVX2 and AVX-512, as a user building for their own
+// machine would get them (the bench is compiled for the baseline target, SSE2); elsewhere the
+// baseline is already the machine's vector set (NEON).
+#if defined(__x86_64__) && defined(__linux__)
+#define FBENCH_EDGE_CLONES [[gnu::target_clones("default", "avx2", "avx512f")]]
+#else
+#define FBENCH_EDGE_CLONES
+#endif
+
+FBENCH_EDGE_CLONES void edge_lines_f64(const side_geometry& g, double* data, const double* src,
+                                       const double* factor, std::size_t first,
+                                       std::size_t count) {
+  if (g.complex_data) {
+    edge_lines_kind<double, true>(g, data, src, factor, first, count);
+  } else {
+    edge_lines_kind<double, false>(g, data, src, factor, first, count);
+  }
+}
+
+FBENCH_EDGE_CLONES void edge_lines_f32(const side_geometry& g, float* data, const float* src,
+                                       const float* factor, std::size_t first,
+                                       std::size_t count) {
+  if (g.complex_data) {
+    edge_lines_kind<float, true>(g, data, src, factor, first, count);
+  } else {
+    edge_lines_kind<float, false>(g, data, src, factor, first, count);
+  }
+}
+
+struct plan_record {
+  std::shared_ptr<const detail::plan_core> core;
+  std::unique_ptr<std::byte[]> ws_memory; // WORKSPACE=page: the memory ws borrows
+  fftn::workspace ws;
+  // The session's mode when the plan was made (it does not change while plans exist), so that
+  // a serial execute reads nothing else: reaching it through state() cost a guard check, a
+  // call and three saved registers per execute, about 16 instructions that FFTW's backend
+  // does not run (X49).
+  call mode = call::serial;
+  // A plan with edges (mode call::edges): how it executes (serial, executor or team), its
+  // factor arrays (all ones, so that fbench's check of the transform holds) and, for
+  // EDGE_ARM=loop, the sides the user's loops walk and the buffer an accumulating loop
+  // transforms into.
+  call edge_mode = call::serial;
+  bool single = false;
+  bool loop = false;
+  side_geometry in_side, out_side;
+  std::vector<double> in_factor, out_factor; // f64 storage of either precision's values
+  mutable std::vector<double> temp;          // EDGE_ARM=loop with acc: the transform's result
+  fftn::exec_args args{};
+};
+
+// Factor storage of `elements` values of `kind` in the plan's precision, every value one.
+std::vector<double> ones(fftn::factor_kind kind, std::size_t elements, bool single) {
+  const std::size_t reals = elements * (kind == fftn::factor_kind::complex ? 2 : 1);
+  const std::size_t words = single ? (reals + 1) / 2 : reals;
+  std::vector<double> v(std::max<std::size_t>(words, 1), 0.0);
+  for (std::size_t i = 0; i < reals; i += kind == fftn::factor_kind::complex ? 2 : 1) {
+    if (single) {
+      reinterpret_cast<float*>(v.data())[i] = 1.0F;
+    } else {
+      v[i] = 1.0;
+    }
+  }
+  return v;
+}
+
+detail::edge_view edge_view_of(const side_geometry& g, std::vector<std::ptrdiff_t>& axis,
+                               std::vector<std::ptrdiff_t>& batch) {
+  detail::edge_view v;
+  v.kind = g.kind;
+  v.accumulate = g.accumulate;
+  if (g.kind != fftn::factor_kind::none) {
+    axis.assign(g.factor_stride.begin(),
+                g.factor_stride.begin() + static_cast<std::ptrdiff_t>(g.rank));
+    batch.assign(1, g.factor_batch);
+    v.axis_strides = axis;
+    v.batch_strides = batch;
+  }
+  return v;
+}
+
+// A case's plan with the session's edges: their sides and factor arrays in `r`, and the plan
+// with the edges (the library's arm) or without (the loop arm). nullptr when the edges do
+// not apply to the case (a complex factor on a real side, accumulation in place, a layout
+// with more than one batch dimension), which the case reports as unsupported.
+template <class In, class Out>
+std::shared_ptr<const detail::plan_core> make_edge_core(const fbench_case& c,
+                                                        const fftn::options& o, plan_record& r) {
+  const session& s = state();
+  const fftn::shape<In, Out> sh = shape_of<In, Out>(c);
+  if (c.outer > 1 || c.interleave > 1 || (s.edge_out.accumulate && o.in_place)) {
+    return nullptr;
+  }
+  r.in_side = side_of(sh, c, s.edge_in, false);
+  r.out_side = side_of(sh, c, s.edge_out, true);
+  if ((!r.in_side.complex_data && r.in_side.kind == fftn::factor_kind::complex) ||
+      (!r.out_side.complex_data && r.out_side.kind == fftn::factor_kind::complex)) {
+    return nullptr;
+  }
+  r.single = c.precision == fbench_f32;
+  r.loop = s.edge_loop;
+  if (r.in_side.kind != fftn::factor_kind::none) {
+    r.in_factor = ones(r.in_side.kind, r.in_side.factor_elements, r.single);
+    r.args.in_factor = r.in_factor.data();
+  }
+  if (r.out_side.kind != fftn::factor_kind::none) {
+    r.out_factor = ones(r.out_side.kind, r.out_side.factor_elements, r.single);
+    r.args.out_factor = r.out_factor.data();
+  }
+  if (r.loop) {
+    if (r.out_side.accumulate) {
+      const std::size_t bytes = static_cast<std::size_t>(c.batch) *
+                                static_cast<std::size_t>(c.out_dist) * sizeof(Out);
+      r.temp.assign(bytes / sizeof(double) + 1, 0.0);
+    }
+    return detail::make_plan_core(detail::view_of(sh), o, s.settings);
+  }
+  std::vector<std::ptrdiff_t> in_axis, in_batch, out_axis, out_batch;
+  const detail::edges_view e{.in = edge_view_of(r.in_side, in_axis, in_batch),
+                             .out = edge_view_of(r.out_side, out_axis, out_batch)};
+  return detail::make_plan_core_with_edges(detail::view_of(sh), o, e, s.settings);
+}
+
+template <class T>
+std::shared_ptr<const detail::plan_core> make_edge_core(const fbench_case& c,
+                                                        const fftn::options& o, plan_record& r) {
+  using cplx = std::complex<T>;
+  if (c.kind == fbench_c2c) {
+    return make_edge_core<cplx, cplx>(c, o, r);
+  }
+  if (c.kind == fbench_r2c) {
+    return make_edge_core<T, cplx>(c, o, r);
+  }
+  return make_edge_core<cplx, T>(c, o, r);
+}
+
+// The plan's lines of its describe that say where its edges went ("edges: ...").
+std::string edge_lines_of(const std::string& describe) {
+  std::string out;
+  std::size_t at = 0;
+  while (at < describe.size()) {
+    const std::size_t end = std::min(describe.find('\n', at), describe.size());
+    const std::string_view line = std::string_view(describe).substr(at, end - at);
+    if (line.find("edges: ") != std::string_view::npos) {
+      out += (out.empty() ? "" : "; ") + std::string(line);
+    }
+    at = end + 1;
+  }
+  return out;
+}
+
 // ---- Executors -------------------------------------------------------------------------
 
 #ifdef __APPLE__
@@ -406,11 +812,118 @@ std::string omp_environment() {
 }
 #endif
 
+// The plan of a record with edges, executed as its edge_mode says, with the factor arrays
+// (args) or without (the loop arm's plain plan).
+void run_core(const plan_record& r, const void* in, void* out, const fftn::exec_args* args) {
+  const session& s = state();
+  switch (r.edge_mode) {
+  case call::serial:
+  case call::edges:
+    if (args != nullptr) {
+      detail::execute_all(*r.core, in, out, r.ws, *args);
+    } else {
+      detail::execute_all(*r.core, in, out, r.ws);
+    }
+    return;
+  case call::executor:
+    if (args != nullptr) {
+      detail::execute_on(*r.core, in, out, regrouped(*s.exec, s.group_size), r.ws, *args);
+    } else {
+      detail::execute_on(*r.core, in, out, regrouped(*s.exec, s.group_size), r.ws);
+    }
+    return;
+  case call::team:
+#ifdef FBENCH_FFTN_OMP
+  {
+    const int group = s.group_size;
+#pragma omp parallel num_threads(s.threads)
+    {
+      fftn::team me = fftn::omp::this_team();
+      if (group >= 0) {
+        me.group_size = group;
+      }
+      if (args != nullptr) {
+        detail::execute_team(*r.core, in, out, me, r.ws, fftn::completion::all, *args);
+      } else {
+        detail::execute_team(*r.core, in, out, me, r.ws, fftn::completion::all);
+      }
+    }
+  }
+#endif
+    return;
+  }
+}
+
+// The user's loop over one side, on the executor's lanes when the arm is threaded (a user
+// with threads shares their loop out too): each task takes a run of whole lines.
+struct loop_job {
+  const plan_record* r;
+  const side_geometry* g;
+  void* data;
+  const void* src;
+  const void* factor;
+  std::size_t lines;
+  int tasks;
+};
+
+void loop_lines(const loop_job& j, std::size_t first, std::size_t count) {
+  if (j.r->single) {
+    edge_lines_f32(*j.g, static_cast<float*>(j.data), static_cast<const float*>(j.src),
+                   static_cast<const float*>(j.factor), first, count);
+  } else {
+    edge_lines_f64(*j.g, static_cast<double*>(j.data), static_cast<const double*>(j.src),
+                   static_cast<const double*>(j.factor), first, count);
+  }
+}
+
+void loop_task(void* arg, int index) {
+  const auto& j = *static_cast<const loop_job*>(arg);
+  const auto t = static_cast<std::size_t>(j.tasks);
+  const auto i = static_cast<std::size_t>(index);
+  const std::size_t first = j.lines * i / t;
+  loop_lines(j, first, j.lines * (i + 1) / t - first);
+}
+
+void run_loop(const plan_record& r, const side_geometry& g, void* data, const void* src,
+              const void* factor) {
+  const session& s = state();
+  loop_job j{&r, &g, data, src, factor, g.lines(), 1};
+  if (r.edge_mode == call::serial || j.lines < 2) {
+    loop_lines(j, 0, j.lines);
+    return;
+  }
+  j.tasks = static_cast<int>(std::min<std::size_t>(j.lines, static_cast<std::size_t>(s.threads)));
+  s.exec->bulk(j.tasks, &loop_task, &j);
+}
+
+// A plan with edges: the library's (the plan with the edges and the factor arrays), or the
+// user's (EDGE_ARM=loop: the input's loop in place, the plain plan, then the output's loop,
+// which with accumulation adds the transform's result, made in a buffer of its own).
+[[gnu::noinline]] void execute_edges(const plan_record& r, const void* in, void* out) {
+  if (!r.loop) {
+    run_core(r, in, out, &r.args);
+    return;
+  }
+  if (r.in_side.kind != fftn::factor_kind::none) {
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-const-cast): the user's loop scales its input
+    run_loop(r, r.in_side, const_cast<void*>(in), nullptr, r.args.in_factor);
+  }
+  const bool acc = r.out_side.accumulate;
+  void* dst = acc ? static_cast<void*>(r.temp.data()) : out;
+  run_core(r, in, dst, nullptr);
+  if (acc || r.out_side.kind != fftn::factor_kind::none) {
+    run_loop(r, r.out_side, out, acc ? dst : nullptr, r.args.out_factor);
+  }
+}
+
 // The executes through an executor or a team, out of line so that the serial execute needs
 // no frame: with them inline GCC 14 saved three registers before testing the mode (X49).
 [[gnu::noinline]] void execute_threaded(const plan_record& r, const void* in, void* out) {
   const session& s = state();
   switch (r.mode) {
+  case call::edges:
+    execute_edges(r, in, out);
+    return;
   case call::serial:
     return;
   case call::executor:
@@ -508,6 +1021,22 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
         return fbench_error;
       }
       s.workspace_page = value == "page";
+    } else if (key == "EDGE_IN" || key == "EDGE_OUT") {
+      const bool output = key == "EDGE_OUT";
+      const std::optional<edge_spec> e = parse_edge(value, output);
+      if (!e) {
+        say(message, message_size,
+            key + " is KIND.LAYOUT" + (output ? "[.acc] or acc" : "") +
+                ", KIND real or complex, LAYOUT line, full, s2 or row (got " + value + ")");
+        return fbench_error;
+      }
+      (output ? s.edge_out : s.edge_in) = *e;
+    } else if (key == "EDGE_ARM") {
+      if (value != "library" && value != "loop") {
+        say(message, message_size, "EDGE_ARM is library or loop");
+        return fbench_error;
+      }
+      s.edge_loop = value == "loop";
     } else if (key == "RADICES") {
       try {
         s.settings.radices = parse_radices(value);
@@ -669,6 +1198,10 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
     say(message, message_size, "GROUP_SIZE and CALL need THREADS");
     return fbench_error;
   }
+  if (s.edge_loop && !s.edge_in.any() && !s.edge_out.any()) {
+    say(message, message_size, "EDGE_ARM needs EDGE_IN or EDGE_OUT");
+    return fbench_error;
+  }
   try {
     if (threaded) {
       if (s.mode == call::serial) {
@@ -695,6 +1228,15 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
         .str("layout", s.layout);
     if (s.workspace_page) {
       d.str("workspace", "page");
+    }
+    if (s.edge_in.any()) {
+      d.str("edge_in", s.edge_in.text);
+    }
+    if (s.edge_out.any()) {
+      d.str("edge_out", s.edge_out.text);
+    }
+    if (s.edge_in.any() || s.edge_out.any()) {
+      d.str("edge_arm", s.edge_loop ? "loop" : "library");
     }
     if (s.measure_seconds != 0) {
       d.str("measure_seconds", std::to_string(s.measure_seconds));
@@ -767,7 +1309,7 @@ void fbench_end() { state() = session{}; }
 
 const char* fbench_describe() { return state().description.c_str(); }
 
-std::int32_t fbench_create(const fbench_case* c, void* /*in*/, void* /*out*/, void** plan,
+std::int32_t fbench_create(const fbench_case* c, void* /*in*/, void* out, void** plan,
                            char* message, std::size_t message_size) {
   *plan = nullptr;
   try {
@@ -785,8 +1327,30 @@ std::int32_t fbench_create(const fbench_case* c, void* /*in*/, void* /*out*/, vo
         .measure_seconds = s.measure_seconds,
         .measure_scratch_bytes = s.measure_scratch,
     };
-    record->core =
-        c->precision == fbench_f32 ? make_core<float>(*c, opts) : make_core<double>(*c, opts);
+    const bool edges = s.edge_in.any() || s.edge_out.any();
+    if (edges) {
+      record->edge_mode = s.mode;
+      record->mode = call::edges;
+      record->core = c->precision == fbench_f32 ? make_edge_core<float>(*c, opts, *record)
+                                                : make_edge_core<double>(*c, opts, *record);
+      if (!record->core) {
+        say(message, message_size,
+            "the edges do not apply (a complex factor on a real side, accumulation in place, or "
+            "more than one batch dimension)");
+        return fbench_unsupported;
+      }
+      if (record->out_side.accumulate && out != nullptr) {
+        // Accumulation adds to the output: fbench's check of the transform holds on zeros.
+        const std::size_t element =
+            (record->single ? sizeof(float) : sizeof(double)) * (c->kind == fbench_c2r ? 1 : 2);
+        std::memset(out, 0,
+                    static_cast<std::size_t>(c->batch) * static_cast<std::size_t>(c->out_dist) *
+                        element);
+      }
+    } else {
+      record->core =
+          c->precision == fbench_f32 ? make_core<float>(*c, opts) : make_core<double>(*c, opts);
+    }
     const std::string described = detail::describe(*record->core);
     // The axis line ends after the radices, or goes on after a comma (a split run's ", split
     // from pass k", a real row's pairing).
@@ -808,6 +1372,10 @@ std::int32_t fbench_create(const fbench_case* c, void* /*in*/, void* /*out*/, vo
       record->ws = fftn::workspace(ws_bytes);
     }
     std::string note = axis_lines(described);
+    if (edges) {
+      const std::string edge_text = edge_lines_of(described);
+      note += (edge_text.empty() ? "" : "; ") + edge_text;
+    }
     if (s.effort != fftn::planning::rules) {
       // The chosen program first, then the account: P1 reads rules/chosen, P2 the count.
       const detail::plan_core& k = *record->core;

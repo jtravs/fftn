@@ -1,0 +1,156 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Experiment X65's cases (dev/experiments/X65-edges.md): plan edges against a plain plan plus
+# the user's own loop, for the FFTN backend's EDGE_IN, EDGE_OUT and EDGE_ARM options. Rows of
+# 64 to 2^20 points, a few planes and volumes, both precisions, and the client catalogue's
+# shapes where an edge applies (lengths and batches as the client application runs them; its
+# 384 x 384 and 192 x 192 batches are cut to 8 and 32 planes). Out of place unless named, since
+# accumulation is refused in place. Tier "quick" is the threaded subset.
+
+[catalogue]
+name = "x65"
+
+# ---- c2c rows ---------------------------------------------------------------------------------
+
+[[group]]
+name = "x65-rows"
+note = "batched rows: the chain, the lanes and batch leaves by the rules"
+kind = "c2c"
+dims = [64, 256, 1024, 4096]
+batch = 64
+
+[[group]]
+name = "x65-rows-long"
+note = "single long rows: the chain, depth-first chain and grid by the rules"
+kind = "c2c"
+dims = [16384, 65536, 262144, 1048576]
+tiers = ["quick"]
+
+[[group]]
+name = "x65-leaves"
+note = "a codelet length in many rows: batch leaves by the rules"
+kind = "c2c"
+dims = [16]
+batch = 1024
+
+[[group]]
+name = "x65-client-c2c"
+note = "the client's single c2c rows"
+kind = "c2c"
+dims = [3072]
+tiers = ["quick"]
+
+[[group]]
+name = "x65-mixed"
+note = "a mixed radix and a Bluestein length (4099: 4098 is not 13-smooth)"
+kind = "c2c"
+dims = [10240, 4099]
+batch = 4
+
+[[group]]
+name = "x65-rows-f32"
+kind = "c2c"
+dims = [256, 4096]
+batch = 64
+precision = "f32"
+
+[[group]]
+name = "x65-rows-long-f32"
+kind = "c2c"
+dims = [65536, 1048576]
+precision = "f32"
+
+# ---- real rows --------------------------------------------------------------------------------
+
+[[group]]
+name = "x65-real"
+kind = ["r2c", "c2r"]
+dims = [256, 4096]
+batch = 16
+
+[[group]]
+name = "x65-real-long"
+kind = ["r2c", "c2r"]
+dims = [65536, 1048576]
+
+[[group]]
+name = "x65-client-real-6144"
+note = "the client's general modal route"
+kind = ["r2c", "c2r"]
+dims = [6144]
+batch = 66
+tiers = ["quick"]
+
+[[group]]
+name = "x65-client-real-32768"
+note = "the client's Raman drive and convolution rows"
+kind = ["r2c", "c2r"]
+dims = [32768]
+tiers = ["quick"]
+
+[[group]]
+name = "x65-client-r2c"
+note = "the client's forward real rows"
+kind = "r2c"
+dims = [6400, 10240]
+tiers = ["quick"]
+
+[[group]]
+name = "x65-client-r2c-pack"
+note = "the client's stacked forward pack"
+kind = "r2c"
+dims = [10240]
+batch = 28
+tiers = ["quick"]
+
+[[group]]
+name = "x65-real-f32"
+kind = ["r2c", "c2r"]
+dims = [4096]
+batch = 16
+precision = "f32"
+
+[[group]]
+name = "x65-real-long-f32"
+kind = ["r2c", "c2r"]
+dims = [65536]
+precision = "f32"
+
+# ---- planes and volumes -----------------------------------------------------------------------
+
+[[group]]
+name = "x65-planes"
+kind = "c2c"
+dims = ["64x64"]
+batch = 16
+
+[[group]]
+name = "x65-client-planes-192"
+note = "the client's transverse planes, 32 of its 384"
+kind = "c2c"
+dims = ["192x192"]
+batch = 32
+place = ["out", "in"]
+tiers = ["quick"]
+
+[[group]]
+name = "x65-client-planes-384"
+note = "the client's transverse planes, 8 of its 750"
+kind = "c2c"
+dims = ["384x384"]
+batch = 8
+place = ["out", "in"]
+tiers = ["quick"]
+
+[[group]]
+name = "x65-real-planes"
+kind = ["r2c", "c2r"]
+dims = ["256x256"]
+batch = 8
+
+[[group]]
+name = "x65-volumes"
+kind = ["c2c", "r2c", "c2r"]
+dims = ["64x64x64"]
+tiers = ["quick"]
