@@ -2488,8 +2488,10 @@ As built (`src/threading/engine.hpp`, task 3.1):
   execution, so a batch beyond the caches stays in the caches of the cores that ran it, which
   arrival-order runs defeat when threads are unpinned and the team's assumed cache groups are not
   the real ones; within one shared cache it keeps short batches in each member's L1 and L2 (Apple's
-  standard batches 0.87–0.97 of their time, X74). The Xeon 6240's class keeps arrival-order runs:
-  it gained as much or more (8 × 4096 at 16 threads 0.39), but one batch lost at 16 threads. Then it joins its group's split tasks (at most `cap`
+  standard batches 0.87–0.97 of their time, X74). The Xeon 6240's class (Intel's cores) is anchored
+  too since X79, with the team state on pages of its own: the client catalogue 0.94 and the standard
+  batches 0.56 at 16 threads, the in-place batch 750 × 4469 2 % slower (the maintainer's decision).
+  Then it joins its group's split tasks (at most `cap`
   members each, members starting on different tasks) and claims their chunks in order,
   in runs within one phase (a share of the phase's chunks left, at most left / (2 × cap),
   shrinking to single chunks; X52), or, for a column phase of a plane whose neighbouring
@@ -2652,6 +2654,7 @@ FFTN had before the rules. The fields, with the experiments that measured them:
 | | `c2r_packed_bytes`, `c2r_packed_isa` (`avx512`) | X63 (Xeon 6240); X64 (Ice Lake-SP kept, Zen 4 lost) |
 | | `split_complex_rows` (the scheduler's points of real rows on a chain) | X83 (Xeon 6240) |
 | | `team_state_page` (4 KiB; the maintainer's narrowing) | X79 (Xeon 6240; lost on the EPYC 7763) |
+| | `anchored_runs` (also on Zen 3's class and Apple) | X79 on X74's rules (Xeon 6240; the maintainer accepted one 2 % loss) |
 | Its L2 above 1 MiB (Ice Lake) | the depth-first chain's fields as on the Xeon | X58 (Ice Lake N2) |
 | 2 MiB of private L2 | `grid_three_bytes` (L2/2), `grid_two_part_bytes` | X35 (Granite Rapids) |
 | | `batch_leaf_12` | X58 (Granite, Emerald Rapids) |
@@ -3616,6 +3619,7 @@ to change before a release.
 | 2026-11-25 | X58's Ice Lake branch (Intel, x86-64, a private L2 above 1 MiB and below 2 MiB; Ice Lake-SP as Google Cloud's N2 reports it, with a large L3 per CPU) takes the Xeon 6240's real rows on its depth-first chain: X75's `depth_real_max_bytes` = 64 L2 (its `depth_max_bytes`) and `depth_real_min_bytes` = L2/8 + 1, X78's `depth_c2r_fused_min_bytes` = L2/4 and `_max_bytes` = 16 L2; sections 8.5, 9.1. Zen 2 keeps X72's two rules and X73 (no change) | X82 (cloud screen of 2026-11-25, n2-standard-16, run 20261125-095241-aafe, band ±2.73 %, GCC 14.2, `avx512`): X75 0.745 over the 40 real rows it moves (24576–2²¹), X78 0.772 over the 16 c2r rows it moves, none slower; the fields' values are arm RF's (83886080, 163841, 327680, 20971520 on the 1.25 MiB L2). The rows of 2²² and 2²³ points are reached unmeasured on Ice Lake (X75 timed them on the Xeon 6240: 0.66–0.89). X81 (n2d-standard-16, Zen 2, runs 20261125-095426-d1f0, -100331-a9cd, -101611-2ba1): X72 arm A KEEP 0.745, arm B KEEP 0.914, X73 TIE (0.926 against a band of ±8.02 %; 0.906 KEEP on the standard batches); the verdicts reach other Zen 2 parts by the 16 MiB of L3 per complex |
 | 2026-11-25 | A topology recording may state the processor's vendor (snapshot entry `fftn/cpu_vendor`, sysctl key `fftn.cpu_vendor`); an `FFTN_TOPOLOGY` replay plans with it, and a recording without it with the host's vendor, as before (section 13.5). The repository's recordings of real machines and `tools/capture_platform.py` carry it | Since the Intel-only keys, a replay took the host's vendor: the Xeon's recording replayed on an AMD or Arm host silently lost about 30 fields, and a Zen 4c-like recording on an Intel host gained them. An ordinary entry keeps old snapshots valid and old readers working |
 | 2026-11-25 | On the Xeon 6240's class (Intel's cores, X61's key) the team state starts a 4 KiB page of the workspace and fills whole pages, the members' slots after them (`machine_profile::team_state_page`, new, default 0: the state on its 128-byte lines as before; sections 5.3, 13.3; X79). Every other profile keeps the old layout | X79's fix passed its rules on the Xeon 6240 (X16: c2c 864 × 384 backward at 16 threads unimodal at its alone time, 0.739 of its median; client catalogue 0.996, X16b 0.983, X8 0.992, X8b 0.988, nothing slower) and was neutral on the M5 Max, but lost on the EPYC 7763 (c2c 8 × 4096 at 16 threads 1.079), and its rules excluded narrowing. A narrowing by the maintainer (2026-11-25, "Yes, Xeon only"): on the Xeon class the code is what X16, X16b, X8 and X8b judged, so no new run was made |
+| 2026-11-25 | Whole transforms anchored to members on the Xeon 6240's class too (Intel's cores, X61's key; `machine_profile::anchored_runs`, section 13.3; X79 on X74's rules) | The maintainer's decision ("Whole class"), offered teams of at most 8 lanes or the whole class: on the fixed layout the client catalogue 0.942 at 16 threads (deciding run 20261125-100316-666c) and 0.961 at 8 (20261125-091612-31a5), the standard batches 0.563 and 0.688; X74's 864 × 384 loss gone (0.740); the in-place batch 750 × 4469 1.020 at 16 threads, past the band of ±1 %, accepted |
 
 ---
 

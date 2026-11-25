@@ -743,10 +743,13 @@ TEST(Schedule, GridSizesFromCaches) {
   fftn::detail::set_grid_sizes(
       apple, fftn::detail::load_topology(data / "macos-apple-m5-max.sysctl").classes.at(0), false);
   EXPECT_TRUE(apple.fair_line_runs);
-  // Whole transforms anchored to members only where measured: Zen 3's class (X73) and Apple
-  // (X74).
+  // Whole transforms anchored to members only where measured: Zen 3's class (X73), Apple (X74)
+  // and the Xeon 6240's class (X79).
   EXPECT_TRUE(epyc86.anchored_runs);
-  EXPECT_FALSE(xeon86.anchored_runs);
+  EXPECT_TRUE(xeon86.anchored_runs);
+  // Intel's cores only: an AMD core with the Xeon's caches keeps arrival order.
+  EXPECT_FALSE(
+      x86("linux-intel-xeon-gold-6240.sysfs", fftn::detail::cpu_vendor::amd).anchored_runs);
   EXPECT_TRUE(apple.anchored_runs);
   for (const auto& [file, x86_64] : {std::pair{"linux-gcp-c4a-axion.sysfs", false},
                                      std::pair{"linux-gcp-n2-ice-lake.sysfs", true},

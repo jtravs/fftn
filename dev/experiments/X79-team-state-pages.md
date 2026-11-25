@@ -268,9 +268,11 @@ one loss, c2c 864 × 384 backward at 16 threads (1.156 there), is gone: with the
 pages the anchored arm takes it to 0.740 of B. Neither declared narrowing helps: anchoring only at
 16 threads keeps the loss, and only for whole transforms of at least 64 KiB excludes the pair
 (12 KiB rows) but also most of the batches that gained (the real and complex rows of 864–6400
-points, 0.61–0.83 of their time). The class keeps arrival-order runs; the flag stays in draft PR 116 for the maintainer.
+points, 0.61–0.83 of their time). By the rules the class kept arrival-order runs, with the flag in draft PR 116 for the maintainer.
 
-For the maintainer: two ways the rules as written do not provide, each needing a deciding run
+**The maintainer's decision (2026-11-25): adopted on the whole class.** Offered anchoring for teams of at most 8 lanes or the whole class accepting the in-place 750 × 4469 pair's 2 % at 16 threads, the maintainer chose the whole class ("Whole class"). `anchored_runs` is set on the Xeon 6240's key (Intel's cores, X61's key) from PR 116. No new run: the code is the BA arm these runs judged (X8r, X8b, X16r2, X16b). Recorded as the maintainer's override of the no-loss criterion for that pair, which costs 1.018–1.022 at 16 threads (and 1.4–2.2 % on the M5 Max, X74) against the client catalogue's 0.94 and the standard batches' 0.56.
+
+Before that decision, for the maintainer: two ways the rules as written do not provide, each needing a deciding run
 declared before it starts. Anchoring on the class for teams of at most 8 lanes (X8r and X8b pass
 as they stand); or the whole class, accepting a 2 % loss on the in-place 750 × 4469 pair (seen in
 X74 and in every 16-thread run here, 1.018–1.022) against 0.94 on the client catalogue and 0.56
