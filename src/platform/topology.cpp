@@ -3,8 +3,10 @@
 
 #include "platform/topology.hpp"
 
+#include "platform/cpu_features.hpp"
 #include "platform/environment.hpp"
 #include "platform/file_source.hpp"
+#include "platform/parse_text.hpp"
 #include "platform/sysctl_values.hpp"
 #include "platform/topology_sources.hpp"
 
@@ -14,9 +16,11 @@
 #include <fstream>
 #include <iterator>
 #include <map>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <thread>
 #include <utility>
@@ -91,6 +95,22 @@ std::vector<cpu_group> group_by_number(const std::vector<std::pair<unsigned, uns
 
 } // namespace
 
+std::optional<cpu_vendor> recorded_vendor(const std::optional<std::string>& name,
+                                          std::string_view where) {
+  if (!name.has_value()) {
+    return std::nullopt;
+  }
+  const std::string_view text = trim(*name);
+  for (const cpu_vendor v : {cpu_vendor::unknown, cpu_vendor::intel, cpu_vendor::amd,
+                             cpu_vendor::apple, cpu_vendor::arm_other}) {
+    if (text == cpu_vendor_name(v)) {
+      return v;
+    }
+  }
+  throw std::runtime_error("fftn: " + std::string(where) + " names no processor vendor: \"" +
+                           std::string(text) + "\"");
+}
+
 topology assemble_topology(topology_parts parts) {
   std::ranges::sort(parts.cpus, {}, &cpu_record::id);
   const auto same_id = std::ranges::unique(parts.cpus, {}, &cpu_record::id);
@@ -107,6 +127,7 @@ topology assemble_topology(topology_parts parts) {
   t.allowed_cpus = std::move(parts.allowed_cpus);
   t.cpu_quota = parts.cpu_quota;
   t.page_size = parts.page_size;
+  t.vendor = parts.vendor;
   t.classes = std::move(parts.classes);
 
   group_builder cores;
@@ -240,6 +261,15 @@ const topology& system_topology() {
     return detect_topology();
   }();
   return t;
+}
+
+cpu_vendor system_cpu_vendor() noexcept {
+  const cpu_vendor host = detect_cpu_features().vendor;
+  try {
+    return planning_vendor(system_topology(), host);
+  } catch (...) {
+    return host;
+  }
 }
 
 } // namespace fftn::inline v0::detail

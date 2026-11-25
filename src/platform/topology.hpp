@@ -9,9 +9,12 @@
 // public shape is decided at the API review (task 0.9).
 #pragma once
 
+#include "platform/cpu_features.hpp"
+
 #include <cstddef>
 #include <filesystem>
 #include <limits>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -81,6 +84,11 @@ struct topology {
   std::vector<unsigned> allowed_cpus;
   double cpu_quota = 0; // cgroup CPU bandwidth limit in CPUs (quota / period); 0: none
   std::size_t page_size = 0;
+  // The processor's vendor as a recording states it (file_source.hpp: the snapshot's
+  // fftn/cpu_vendor entry; a sysctl file's fftn.cpu_vendor key), so that a replayed machine
+  // plans with its own vendor rather than the host's (DESIGN.md 13.5). nullopt: not recorded,
+  // as for every live detection, whose vendor is the instruction-set detection's.
+  std::optional<cpu_vendor> vendor;
 
   bool operator==(const topology&) const = default;
 };
@@ -92,14 +100,25 @@ struct topology {
 
 // Reads a recorded topology: a directory is a Linux root (holding sys/ and proc/); a file is
 // a sysfs snapshot if it starts with the snapshot header (file_source.hpp), else `sysctl`
-// text from macOS. Throws std::runtime_error if the path cannot be read or a snapshot is
-// malformed.
+// text from macOS. Throws std::runtime_error if the path cannot be read, a snapshot is
+// malformed or a recorded vendor is not one of cpu_vendor_name's names.
 [[nodiscard]] topology load_topology(const std::filesystem::path& path);
 
 // The process's topology: load_topology($FFTN_TOPOLOGY) when that variable is set and not
 // empty (for tests), else detect_topology(). Computed on first use and immutable afterwards
 // (a function-local constant; FFTN keeps no mutable global state).
 [[nodiscard]] const topology& system_topology();
+
+// The vendor a machine of topology `t` plans for when its processor reports `host`
+// (detect_cpu_features): the recorded vendor if `t` has one, else `host`.
+[[nodiscard]] constexpr cpu_vendor planning_vendor(const topology& t, cpu_vendor host) noexcept {
+  return t.vendor.value_or(host);
+}
+
+// The process's planning vendor: planning_vendor(system_topology(), the host's vendor), and the
+// host's vendor when system_topology() throws (an unreadable FFTN_TOPOLOGY recording). A
+// recording without a vendor therefore plans with the host's vendor.
+[[nodiscard]] cpu_vendor system_cpu_vendor() noexcept;
 
 // The size of a memory page of the running process.
 [[nodiscard]] std::size_t system_page_size() noexcept;

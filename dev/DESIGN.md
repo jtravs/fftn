@@ -1713,7 +1713,7 @@ the machine-specific estimate for callers who want it.
     elementwise passes per copy.
 - **`relative_cost<T>(n, isa)`** is that cost per point over the cost per point of the power
   of two at or above n, on the target's own table as this machine's plans take it: on `avx2`
-  that depends on the host's vendor too (section 13.5; on the Mac, `relative_cost(n,
+  that depends on the planning vendor too (section 13.5; on the Mac, `relative_cost(n,
   isa::avx2)` prices the table without the AMD-only overrides). It is 1 for a length the
   planner runs as one codelet (`rule_radices(n) == {n}`; 20 is always a chain, X38, and is
   priced as one). It does not price memory beyond L1, nor long rows' chain or grid (P3).
@@ -2599,6 +2599,14 @@ live root, or a sysfs snapshot: one text file per machine, format in
 machine against fixtures recorded with `tools/capture_platform.py` (named by CPU model) and
 synthetic ones. The environment override `FFTN_TOPOLOGY` names such a recording (a sysfs
 snapshot, told apart by its header line, or a sysctl file); the programmatic override is that everything consuming a topology takes it as an argument.
+A recording may also state the processor's vendor, which sysfs and the topology keys do not
+hold: the snapshot entry `fftn/cpu_vendor` or the sysctl key `fftn.cpu_vendor`, naming it as
+`describe()` does (`intel`, `amd`, `apple`, `arm_other`, `unknown`; any other name is an error).
+An ordinary entry, it leaves the format's version unchanged, so older snapshots stay valid and
+older readers ignore it. Replayed through `FFTN_TOPOLOGY`, a recording that states its vendor
+plans with that vendor (`system_cpu_vendor`, `planning_vendor`); one that does not plans with the
+host's, as live detection does. `tools/capture_platform.py` records the vendor, and the
+repository's recordings of real machines carry it; the synthetic ones do not.
 The process's topology is detected once, into a function-local constant. Unknown values
 are zero, never guessed: macOS reports no associativity, and it does not say which logical
 CPU belongs to which performance level, so there CPUs are numbered in class order (fastest
@@ -2608,7 +2616,9 @@ first) and the topology says the numbers are not the OS's.
 from the topology) also carries who made the processor (`machine_profile::vendor`): CPUID
 leaf 0's vendor string on x86 (Intel, AMD; any other string is unknown), Apple on AArch64
 macOS, "other Arm" on AArch64 elsewhere, detected once per process with the instruction-set
-features and shown by `plan::describe()`. A cache key cannot tell a Zen CCX from an Intel ring,
+features and shown by `plan::describe()`; a replayed recording that states a vendor gives its
+own instead (above), so that replaying the Xeon's recording on an AMD or Arm host keeps the
+Intel-only fields, and a Zen recording on an Intel host does not gain them. A cache key cannot tell a Zen CCX from an Intel ring,
 and on `avx2` a rule measured only on AMD's cores would otherwise reach Intel cores that have
 `avx2` but no AVX-512 (older client parts, some cloud shapes, the Xeon forced to `avx2`). So
 the `avx2` rules measured only on the EPYC 7763 and keyed by the target alone apply only where
@@ -3607,6 +3617,7 @@ to change before a release.
 | 2026-11-25 | On the Xeon 6240's class (Intel's cores only) a real row on a chain's stages is split by its complex points, n / 2 + 1 (`split_complex_rows`); rows on the depth-first chain or a grid keep their real points | X83: on the Xeon 6240 teams of 4 and 8 ran single real rows of 6400-10240 points 1.32-2.69 times slower than one thread, because the split threshold compared n real points with the work of n / 2 complex ones. Judged at 4, 6, 8 and 16 threads: 0.570 over the 31 moved cases (0.38-0.78 at 4-8, 0.40-0.53 at 16), none slower beyond the band, nothing moved at one thread. A member cap per point count was rejected by the diagnosis (teams of 2 lost almost everywhere below 32768 points), and c2c rows have no size threshold (radix-dependent) |
 | 2026-11-25 | Under ASan + UBSan the kernel units (the library's `src/isa` units and the codelet test units) are compiled without UBSan's pointer-overflow and object-size checks (section 15.4) | The required Clang ASan + UBSan job took 78 minutes on PR 114, 64 of them a cold build of the kernel units, which every change to the kernel text, and every pull request started before main saved its cache, pays. Clang 23 on an EPYC 7763: the kernel units took 9306 s of compile time with every check, 2663 s without these two; ASan bounds-checks every access those units make, which subsumes both. GCC 16: 0.59 and 0.73 of the time on two units; the ASan + UBSan tests pass (2219, DMOG) in the same time |
 | 2026-11-25 | X58's Ice Lake branch (Intel, x86-64, a private L2 above 1 MiB and below 2 MiB; Ice Lake-SP as Google Cloud's N2 reports it, with a large L3 per CPU) takes the Xeon 6240's real rows on its depth-first chain: X75's `depth_real_max_bytes` = 64 L2 (its `depth_max_bytes`) and `depth_real_min_bytes` = L2/8 + 1, X78's `depth_c2r_fused_min_bytes` = L2/4 and `_max_bytes` = 16 L2; sections 8.5, 9.1. Zen 2 keeps X72's two rules and X73 (no change) | X82 (cloud screen of 2026-11-25, n2-standard-16, run 20261125-095241-aafe, band ±2.73 %, GCC 14.2, `avx512`): X75 0.745 over the 40 real rows it moves (24576–2²¹), X78 0.772 over the 16 c2r rows it moves, none slower; the fields' values are arm RF's (83886080, 163841, 327680, 20971520 on the 1.25 MiB L2). The rows of 2²² and 2²³ points are reached unmeasured on Ice Lake (X75 timed them on the Xeon 6240: 0.66–0.89). X81 (n2d-standard-16, Zen 2, runs 20261125-095426-d1f0, -100331-a9cd, -101611-2ba1): X72 arm A KEEP 0.745, arm B KEEP 0.914, X73 TIE (0.926 against a band of ±8.02 %; 0.906 KEEP on the standard batches); the verdicts reach other Zen 2 parts by the 16 MiB of L3 per complex |
+| 2026-11-25 | A topology recording may state the processor's vendor (snapshot entry `fftn/cpu_vendor`, sysctl key `fftn.cpu_vendor`); an `FFTN_TOPOLOGY` replay plans with it, and a recording without it with the host's vendor, as before (section 13.5). The repository's recordings of real machines and `tools/capture_platform.py` carry it | Since the Intel-only keys, a replay took the host's vendor: the Xeon's recording replayed on an AMD or Arm host silently lost about 30 fields, and a Zen 4c-like recording on an Intel host gained them. An ordinary entry keeps old snapshots valid and old readers working |
 | 2026-11-25 | On the Xeon 6240's class (Intel's cores, X61's key) the team state starts a 4 KiB page of the workspace and fills whole pages, the members' slots after them (`machine_profile::team_state_page`, new, default 0: the state on its 128-byte lines as before; sections 5.3, 13.3; X79). Every other profile keeps the old layout | X79's fix passed its rules on the Xeon 6240 (X16: c2c 864 × 384 backward at 16 threads unimodal at its alone time, 0.739 of its median; client catalogue 0.996, X16b 0.983, X8 0.992, X8b 0.988, nothing slower) and was neutral on the M5 Max, but lost on the EPYC 7763 (c2c 8 × 4096 at 16 threads 1.079), and its rules excluded narrowing. A narrowing by the maintainer (2026-11-25, "Yes, Xeon only"): on the Xeon class the code is what X16, X16b, X8 and X8b judged, so no new run was made |
 | 2026-11-25 | Whole transforms anchored to members on the Xeon 6240's class too (Intel's cores, X61's key; `machine_profile::anchored_runs`, section 13.3; X79 on X74's rules) | The maintainer's decision ("Whole class"), offered teams of at most 8 lanes or the whole class: on the fixed layout the client catalogue 0.942 at 16 threads (deciding run 20261125-100316-666c) and 0.961 at 8 (20261125-091612-31a5), the standard batches 0.563 and 0.688; X74's 864 × 384 loss gone (0.740); the in-place batch 750 × 4469 1.020 at 16 threads, past the band of ±1 %, accepted |
 
