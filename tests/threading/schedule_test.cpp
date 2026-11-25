@@ -353,6 +353,32 @@ TEST(Schedule, SplitThresholds) {
   EXPECT_EQ(share_of(tiny, {.lanes = 8}, 0).split, 0U);
 }
 
+// few_points_per_member (X83): where a group has fewer transforms than members, so that it
+// splits every one, each member gets at least that many points; leftovers after whole rounds
+// keep min_points_per_member.
+TEST(Schedule, FewPointsPerMember) {
+  machine_profile p = profile();
+  const lane_map four{.lanes = 4};
+  const auto cap = [](const std::shared_ptr<const fftn::detail::plan_core>& r, const lane_map& l,
+                      const machine_profile& q) {
+    const schedule s = make_schedule(r->graph, l, q);
+    const group_share sh = share_of(s, l, 0);
+    return sh.split == 0 ? 0 : sh.cap;
+  };
+  EXPECT_EQ(cap(rows(16384, 1), four, p), 4); // unset: points / min_points_per_member
+  p.few_points_per_member = 8192;
+  EXPECT_EQ(cap(rows(8192, 1), four, p), 0);  // one member's worth: whole
+  EXPECT_EQ(cap(rows(16384, 1), four, p), 2); // two
+  EXPECT_EQ(cap(rows(32768, 1), four, p), 4);
+  const lane_map eight{.lanes = 8};
+  EXPECT_EQ(cap(rows(16384, 2), eight, p), 2);  // fewer transforms than members
+  EXPECT_EQ(cap(rows(65536, 9), eight, p), 8);  // a leftover after a whole round
+  EXPECT_EQ(cap(rows(65536, 1), eight, p), 8);
+  // The team an executor dispatches for these gets the same decisions (rule 4).
+  const schedule s = make_schedule(rows(16384, 1)->graph, four, p);
+  EXPECT_EQ(s.dispatch, 4);
+}
+
 // Planes and volumes (X52 arm S): a real plane is split by its complex points where the
 // profile says (a private L2), and on a mesh a plane is split only from
 // split_min_points_lines points.
