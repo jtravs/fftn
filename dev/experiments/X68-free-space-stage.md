@@ -84,9 +84,9 @@ The callbacks and loops do the same arithmetic in every arm:
   GCC 16 on Linux and Clang on macOS. Thread counts:
   - one thread;
   - the client's widths;
-  - the machine's full width. On DMOG that needs a node's cores: the agent asks the maintainer
-    for an exclusive node (AGENTS.md section 6 allows one for a threading experiment that needs
-    every core). Without one, the client's widths stand in, and the file says so.
+  - the machine's full width, in a whole-socket-sized but shared allocation, never `--exclusive`
+    (the maintainer's standing instruction: no exclusive nodes; add rounds instead), with the
+    node's load recorded in every round.
 - **DRAM traffic** per stage, around each arm's executions:
   - on the Xeon, the uncore memory controllers' CAS counts (`perf stat` with the IMC uncore
     events, or VTune);
