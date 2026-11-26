@@ -107,13 +107,13 @@ template <class T, class Elem> struct runs_run {
   std::size_t out_base = 0;
   double mid_scale = 1.0;
   desc_t desc;
-  std::vector<Elem> x;           // the input buffer: NaN outside the runs
-  std::vector<Elem> init;        // the output buffer before execution (canaries, accumulation)
-  std::vector<T> kreal;          // the kernel's storage, real or complex
+  std::vector<Elem> x;    // the input buffer: NaN outside the runs
+  std::vector<Elem> init; // the output buffer before execution (canaries, accumulation)
+  std::vector<T> kreal;   // the kernel's storage, real or complex
   std::vector<C> kcomplex;
-  std::ptrdiff_t kzero = 0;      // the kernel's coordinate 0 in its storage
-  std::vector<bool> in_listed;   // input elements in a run (or a line stored whole)
-  std::vector<bool> out_listed;  // output elements in a run
+  std::ptrdiff_t kzero = 0;     // the kernel's coordinate 0 in its storage
+  std::vector<bool> in_listed;  // input elements in a run (or a line stored whole)
+  std::vector<bool> out_listed; // output elements in a run
   // The prologue's and the epilogue's factors (n values), real or complex.
   std::vector<T> rpro;
   std::vector<C> cpro;
@@ -149,7 +149,8 @@ template <class T, class Elem> struct runs_run {
                            .stored = r.stored,
                            .count = r.count});
     }
-    const std::ptrdiff_t kbatch = c.per_row ? std::abs(c.mid_axis) * static_cast<std::ptrdiff_t>(bins) : 0;
+    const std::ptrdiff_t kbatch =
+        c.per_row ? std::abs(c.mid_axis) * static_cast<std::ptrdiff_t>(bins) : 0;
     desc.middle.scale = mid_scale;
     desc.middle.mul = {.kind = c.mid, .axis_strides = {c.mid_axis}, .batch_strides = {kbatch}};
     desc.epilogue.scale = c.epi_scale;
@@ -261,9 +262,9 @@ template <class T, class Elem> struct runs_run {
   [[nodiscard]] std::complex<double> kernel_at(std::size_t k, std::size_t r) const {
     const std::ptrdiff_t kbatch =
         c.per_row ? std::abs(c.mid_axis) * static_cast<std::ptrdiff_t>(bins) : 0;
-    const auto i = static_cast<std::size_t>(kzero +
-                                            (bins > 1 ? c.mid_axis * static_cast<std::ptrdiff_t>(k) : 0) +
-                                            (c.count > 1 ? kbatch * static_cast<std::ptrdiff_t>(r) : 0));
+    const auto i = static_cast<std::size_t>(
+        kzero + (bins > 1 ? c.mid_axis * static_cast<std::ptrdiff_t>(k) : 0) +
+        (c.count > 1 ? kbatch * static_cast<std::ptrdiff_t>(r) : 0));
     return c.mid == real ? std::complex<double>(kreal[i], 0.0) : std::complex<double>(kcomplex[i]);
   }
 
@@ -368,8 +369,8 @@ template <class T, class Elem> struct runs_run {
         for (std::size_t j = 0; j < c.n; ++j) {
           if (const std::ptrdiff_t at = stored_of(c.out, j); at >= 0) {
             const std::size_t i = out_at(static_cast<std::size_t>(at), r);
-            std::complex<double> v = std::complex<double>(back[j].re.hi, back[j].im.hi) *
-                                     side_at(repi, cepi, j) * scale;
+            std::complex<double> v =
+                std::complex<double>(back[j].re.hi, back[j].im.hi) * side_at(repi, cepi, j) * scale;
             if (c.accumulate) {
               v += std::complex<double>(init[i]);
             }
@@ -424,7 +425,8 @@ std::string run_core(const Run& run, const d::build_settings& settings, bool thr
     *result = serial;
   }
   EXPECT_TRUE(same_bits(xs, x0)) << rc.name << ": input written";
-  EXPECT_TRUE(same_bits(run.kreal, kr) && same_bits(run.kcomplex, kc)) << rc.name << ": kernel written";
+  EXPECT_TRUE(same_bits(run.kreal, kr) && same_bits(run.kcomplex, kc))
+      << rc.name << ": kernel written";
 
   auto pieces = run.init;
   const std::size_t half = rc.count / 2;
@@ -443,8 +445,8 @@ std::string run_core(const Run& run, const d::build_settings& settings, bool thr
                         ws, done, args);
       });
     }
-    d::execute_team(*core, in(), teamed.data() + run.out_base, fftn::team{.rank = 0, .size = 3},
-                    ws, done, args);
+    d::execute_team(*core, in(), teamed.data() + run.out_base, fftn::team{.rank = 0, .size = 3}, ws,
+                    done, args);
     for (std::thread& m : members) {
       m.join();
     }
@@ -473,7 +475,11 @@ std::vector<runs_case> run_sets(std::size_t n) {
   const std::size_t h = n / 2;
   const std::size_t q = n / 4;
   return {
-      {.name = "valid half", .n = n, .in = {{0, 0, h}}, .out = {{0, 0, h}}, .expect = "stored runs:"},
+      {.name = "valid half",
+       .n = n,
+       .in = {{0, 0, h}},
+       .out = {{0, 0, h}},
+       .expect = "stored runs:"},
       {.name = "valid half at offsets", .n = n, .in = {{0, 3, h}}, .out = {{0, 5, h}}},
       {.name = "centred valid half",
        .n = n,
@@ -499,7 +505,10 @@ std::vector<runs_case> run_sets(std::size_t n) {
        .mid = real,
        .mid_axis = -1,
        .epi_scale = 3.0},
-      {.name = "valid half, a kernel per line", .n = n, .in = {{0, 0, h}}, .out = {{0, 0, h}},
+      {.name = "valid half, a kernel per line",
+       .n = n,
+       .in = {{0, 0, h}},
+       .out = {{0, 0, h}},
        .per_row = true},
       {.name = "strided valid half",
        .n = n,
@@ -595,8 +604,12 @@ TYPED_TEST(PipelineRuns, PrunedPassesWithForcedRadices) {
                               .expect = "read where they are stored by the first pass, pruned"},
                              t, false, s);
       std::string text = run_case<TypeParam, C>(
-          {.name = "valid half, pruned, scaled", .n = n, .in = {{0, 0, h}}, .out = {{0, 0, h}},
-           .epi_scale = 2.0, .expect = "written where they are stored by the last pass, pruned"},
+          {.name = "valid half, pruned, scaled",
+           .n = n,
+           .in = {{0, 0, h}},
+           .out = {{0, 0, h}},
+           .epi_scale = 2.0,
+           .expect = "written where they are stored by the last pass, pruned"},
           t, false, s);
       EXPECT_NE(text.find("they cost 0 separate passes"), std::string::npos) << text;
       run_case<TypeParam, C>({.name = "bands within the half",
@@ -702,9 +715,7 @@ struct depth_forced {
   std::vector<std::size_t> tops;
 };
 
-std::vector<depth_forced> forced_depths() {
-  return {{1024, {4}}, {1536, {8}}, {2048, {8, 2}}};
-}
+std::vector<depth_forced> forced_depths() { return {{1024, {4}}, {1536, {8}}, {2048, {8, 2}}}; }
 
 std::vector<runs_case> depth_sets(std::size_t n) {
   const std::size_t h = n / 2;
@@ -842,8 +853,7 @@ TEST(PipelineRuns, DepthFirstPairByTheRules) {
     const fftn::shape<C, C> row{
         .dir = fftn::direction::forward, .axes = {{.n = 16411}}, .batches = {}};
     const auto plan = d::make_plan_core(d::view_of(row), {.force_isa = t}, rules);
-    const bool convolution =
-        d::describe(*plan).find("two depth-first chains") != std::string::npos;
+    const bool convolution = d::describe(*plan).find("two depth-first chains") != std::string::npos;
     // X50's rule: in double on 32 vector registers.
     const std::string name = fftn::isa_name(t);
     EXPECT_EQ(convolution, name == "avx512" || name == "neon" || name == "neon_fcma") << name;

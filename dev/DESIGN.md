@@ -2704,7 +2704,7 @@ Points that matter:
   for L2-resident sizes and more beyond. Callbacks always see natural order, because their
   coordinates must be affine in the block.
 
-**Plan for task 5.2** (designed 2026-11-25; 5.2a–5.2c built, "As built" below; steps 5.2a–5.2g in PLAN phase 5,
+**Plan for task 5.2** (designed 2026-11-25; 5.2a–5.2d built, "As built" below; steps 5.2a–5.2g in PLAN phase 5,
 experiment X67; the API points the maintainer has to settle are listed in 18.2, "Pipelines").
 
 - **API** (provisional, `fftn/pipeline.hpp`), the block above built in parts:
@@ -2871,6 +2871,40 @@ middle pass as an edge pass whose factor moves by the middle cursor's step (PR 1
 finding; pipelines build no row blocks yet, a white-box test builds them). Plans, plans with edges
 and `<C, C, C>` pipelines are unchanged (`describe()`, `workspace_bytes()` and output bits of
 2832 of them; the plain driver functions disassemble the same).
+
+**As built (task 5.2d, 2026-11-26).** Stored runs on the line (`pipeline_desc::runs`, axis 0) and
+the depth-first pair. Runs are validated as a shape's (`resolve_runs` on the line's c2c shape, so
+on n logical positions for `<T, C, T>` too), set each side's default distances and reach by its
+stored extent, and are refused in place and beside a prologue or epilogue factor (18.2, proposal
+8). On the chain pairs the input's runs are PR 134's run stages into the workspace block (zeros
+elsewhere), from which the forward chain runs in place, and the output's runs make the inverse
+chain end in the block, from which the store stage writes (or accumulates) only the runs; on
+`<C, C, C>` the chain's pruned first and last passes (5.1e) take runs within the line's first
+half exactly as on a plan's c2c row (one run of the half stored with stride 1 read or written
+where it is stored, with no stage; otherwise the stage moves only the half). Real lines take no
+pruned passes yet. The depth-first pair is `chain_builder::depth_pair`, which X50's convolution
+now goes through (`bluestein_depth` passes its chirp, an input run of Q and an output run of the
+first Q; programs, names and bits unchanged): the forward depth-first chain from the input (or
+scratch b) with its blocks in the workspace block and its top pass into scratch a times the
+kernel (a table, or the middle cursor through `moving_mid_out_factor`), then the backward chain
+from a with its last top pass to the output (or in place). One input run from logical 0 is read
+by the forward first pass (`depth_first_head`, zeros beyond) and one output run from a logical
+start that C divides by the last top pass (`depth_top_part`, none or the scale), each at the run's
+stored offset; the chirp variants take the same offsets (0 for Bluestein). Other runs, prologue
+and epilogue factors and accumulation are read and store stages through scratch b and the block,
+which sweep the line once more each (`describe()` says so); a middle that cannot fuse is an edge
+pass on scratch a. The pair is taken by `<C, C, C>` lines contiguous on both sides where X50's
+rule would make a Bluestein convolution of the line's length depth-first
+(`convolution_depth_tops`: double on 32 registers within `depth_convolution_max_bytes`, C
+dividing the tops' product), or forced (`build_settings::strategy` depth); `<T, C, T>` keeps the
+real chain pair. Within a line a team shares the stages by chunks and the sub-row loops by lines
+on each member's scratch, the owner's block shared, as in Bluestein's case. Plans, plans with
+edges and runs, Bluestein plans and the pipelines the pair does not take are unchanged
+(`describe()`, `workspace_bytes()` and output bits of 3048 probes against `main` on the Mac, the
+36 that differ being `<C, C, C>` lines of 8192–16384 points in double that now take the pair; the
+plain and edge driver functions disassemble the same with Clang on arm64 and x86-64).
+`make_edge_forms` still takes one `element_bytes` (PR 144's latent note): pipelines build no row
+blocks, so it waits for the first that does.
 
 ### 12.3 Block callbacks
 
@@ -4639,6 +4673,7 @@ to change before a release.
 | 2026-11-26 | Phase 6 broken into steps 6.1–6.20 (PLAN), with proposed APIs for the convenience layer (5.4), the real-to-real kinds (5.7), the split-complex layout (5.8) and the C API (5.9), and their open points in 18.2, "Phase 6". Proposals, not decisions: steps marked P are built provisional with a second reader, as phase 5's were | The maintainer's priority (2026-11-25): features fully built, then the remaining performance |
 | 2026-11-26 | Block callbacks on c2c rows (task 5.3a, section 12.3): provisional `fftn/callback.hpp` (`block_info`, `block_fn`, `callback_mode`, `callback`, `callback_of`, `along_transforms`) and `edge::call`, with 18.2's proposals ("Callbacks"); the callback stage on the chain only until 5.3b, planned by the rules; blocks are stage chunks; per-member scratch at the end of each slot; the drive policies' per-task entries take the lane and slots, the plain instantiations unchanged; a plan with callbacks needs the `exec_args` overloads. Awaits the maintainer's review of the API. |
 | 2026-11-26 | Packaging (task 6.1, section 14.3): an installed CMake package (`fftn::fftn`; the adapters as components `omp` and `kokkos`), a relocatable `fftn.pc`, install rules on by default only for a top-level build, version compatibility `SameMinorVersion`, the thread library in the link interface; third-party subdirectories `EXCLUDE_FROM_ALL`; a path-filtered CI workflow builds a downstream project three ways (Windows not on pull requests) | DESIGN 18.2 Q25's proposal; a minor version may still change the API before 1.0; FetchContent users decide what they install; the check builds the library twice, so it runs where packaging can change rather than on every pull request |
+| 2026-11-26 | Stored runs on pipelines and the depth-first pair (task 5.2d, section 12.2): runs on the line as PR 134's run stages around the chain pairs, the pruned passes on `<C, C, C>`; `chain_builder::depth_pair` generalises X50's convolution (optional chirp, one input run from 0, one output run, a table or the middle cursor), Bluestein built through it; two kernel variants per radix (`depth_first_head`, `depth_top_part`); `<C, C, C>` lines take the pair where X50's rule would make a convolution of their length depth-first | The plan for 5.2 (section 12.2) read as written; the pair's rule waits for X67 (5.2g), as the chain pair's does; one fused run per side saves a sweep of the line each way, as the chirp passes did in X50 arm C |
 
 ---
 

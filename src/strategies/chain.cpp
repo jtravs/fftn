@@ -1378,8 +1378,8 @@ chain_builder<T>::depth_pair(std::size_t m, const std::vector<std::size_t>& tops
   const bool scaled = form.out == edge_op::scale;
   const bool out_run = form.out_count != 0;
   out.forward = c2c_depth(m, tops, -1, 1.0, slot::block, src, slot::a, form.kernel);
-  out.backward = c2c_depth(m, tops, +1, out_run || !scaled ? 1.0 : form.scale, slot::block,
-                           slot::a, out_run ? slot::block : dst);
+  out.backward = c2c_depth(m, tops, +1, out_run || !scaled ? 1.0 : form.scale, slot::block, slot::a,
+                           out_run ? slot::block : dst);
   const bool chirp = form.chirp != nullptr;
   const std::string chirp_name = std::string(direction_name(form.chirp_sign));
   if (form.in_count != 0) {
@@ -1396,18 +1396,19 @@ chain_builder<T>::depth_pair(std::size_t m, const std::vector<std::size_t>& tops
   if (out_run) {
     stage& top = out.backward.top.back();
     const radix_passes& passes = *kernels_.passes.codelet[codelet_slot(top.args.radix)];
-    top.run = chirp ? passes.depth_top_chirp[scaled ? 1 : 0] : passes.depth_top_part[scaled ? 1 : 0];
+    top.run =
+        chirp ? passes.depth_top_chirp[scaled ? 1 : 0] : passes.depth_top_part[scaled ? 1 : 0];
     top.args.out_factor = form.chirp;
     top.args.src_cols = form.out_logical;
     top.args.dst_cols = form.out_logical + form.out_count;
     top.args.dst_qstride = static_cast<std::ptrdiff_t>(form.out_offset);
     top.args.scale = form.scale;
     top.dst = dst;
-    top.name += chirp ? "; chirp " + chirp_name + " out, the first " +
-                            std::to_string(form.out_count) + " to the output"
-                      : "; the output's run of logical " + std::to_string(form.out_logical) +
-                            " to " + std::to_string(form.out_logical + form.out_count) +
-                            " to the output";
+    top.name += chirp
+                    ? "; chirp " + chirp_name + " out, the first " +
+                          std::to_string(form.out_count) + " to the output"
+                    : "; the output's run of logical " + std::to_string(form.out_logical) + " to " +
+                          std::to_string(form.out_logical + form.out_count) + " to the output";
     top.name += scaled ? "; out: scale" : "";
   }
   out.scratch = std::max({m, out.forward.scratch, out.backward.scratch});

@@ -201,8 +201,8 @@ std::string operation_text(const char* name, const edge_side& s, const char* fus
 // block (or, the depth-first pair's, in scratch a), its factor through the middle's cursor.
 stage middle_stage(precision prec, const edge_side& mid, std::size_t bins, std::size_t chunk,
                    slot where = slot::block) {
-  stage m = edge_pass_stage(prec, mid, true, bins, where, 1, where, 1, chunk, false,
-                            mid.axis_stride);
+  stage m =
+      edge_pass_stage(prec, mid, true, bins, where, 1, where, 1, chunk, false, mid.axis_stride);
   m.moving_factors = moving_mid_out_factor;
   m.name.replace(0, std::string_view("edge out").size(), "edge middle");
   return m;
@@ -243,8 +243,7 @@ struct run_prunings {
 // Whether a side's runs lie within the line's first half (n/2 elements), where the chain's
 // pruned first or last pass (task 5.1e) reads or writes them.
 bool within_half(const std::vector<line_run>& runs, std::size_t n) {
-  return std::ranges::all_of(runs,
-                             [n](const line_run& r) { return r.logical + r.count <= n / 2; });
+  return std::ranges::all_of(runs, [n](const line_run& r) { return r.logical + r.count <= n / 2; });
 }
 
 // Whether the side is one run of exactly the line's first half, stored with stride 1: the pruned
@@ -442,8 +441,7 @@ bool build_pair(plan_core& c, const pipeline_view& d, const row_layout& l, const
     if (pl.at == scale_at::inverse_out) {
       inverse.out = edge_op::scale;
     }
-    inverse.out_head =
-        inverse.out != edge_op::factor && within_half(runs, n) && chain.head_last(n);
+    inverse.out_head = inverse.out != edge_op::factor && within_half(runs, n) && chain.head_last(n);
     if (inverse.out_head && !pl.epi.accumulate && half_stored(runs, n, stored_out)) {
       inverse.out_offset = runs[0].stored * 2 * sizeof(T);
       scratch = std::max(scratch, chain.c2c_line(n, +1, home, stored_out, false, inverse, line));
@@ -560,8 +558,8 @@ std::string depth_runs_text(const run_plan& runs, bool accumulate, const run_pru
                             std::size_t passes) {
   const auto count = [](const side_runs& r) {
     const std::size_t k = r.of(0).size();
-    return std::to_string(k) + (k == 1 ? " run of " : " runs of ") + std::to_string(r.positions(0)) +
-           (r.positions(0) == 1 ? " position" : " positions");
+    return std::to_string(k) + (k == 1 ? " run of " : " runs of ") +
+           std::to_string(r.positions(0)) + (r.positions(0) == 1 ? " position" : " positions");
   };
   std::string text = "stored runs:";
   if (runs.in.any()) {
@@ -684,7 +682,9 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
       refuse("desc.epilogue.accumulate", "is refused on an in-place pipeline, whose output's "
                                          "prior values are its input");
     }
-    return vocab{.pro = std::move(pro), .mid = std::move(mid), .epi = std::move(epi),
+    return vocab{.pro = std::move(pro),
+                 .mid = std::move(mid),
+                 .epi = std::move(epi),
                  .scale = scale,
                  .runs = runs};
   });
@@ -739,7 +739,9 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
   c->profile = settings.profile;
   c->runs_inline = runs_inline(c->graph, c->profile);
   c->built = depth ? strategy_choice::depth : strategy_choice::chain;
-  c->strategy_name = real ? "the real chain pair" : depth ? "the depth-first pair" : "the chain pair";
+  c->strategy_name = real    ? "the real chain pair"
+                     : depth ? "the depth-first pair"
+                             : "the chain pair";
 
   // describe().
   const std::size_t lines = c->prog.transforms;
@@ -784,7 +786,7 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
       operation_text("middle", pl.mid,
                      depth ? "in the forward chain's last top pass"
                            : "in the forward chain's last pass",
-                     real    ? "in a separate pass on the line's n/2 + 1 bins in the workspace block"
+                     real ? "in a separate pass on the line's n/2 + 1 bins in the workspace block"
                      : depth ? "in a separate pass on the line in scratch"
                              : "in a separate pass on the line in the workspace block") +
       "\n" +
@@ -809,21 +811,19 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
     ops += std::string("\nscales: one product, applied once in ") + where;
   }
   // The depth-first pair's line is beyond the cache its sub-rows run in: a separate pass sweeps it.
-  const char* sweep = depth ? " over the line, each a sweep of it" : " on the line in cache, no sweep of memory";
+  const char* sweep =
+      depth ? " over the line, each a sweep of it" : " on the line in cache, no sweep of memory";
   ops += "\nthe vocabulary costs " +
-         (passes == 0
-              ? std::string("no separate pass")
-              : std::to_string(passes) + (passes == 1 ? " separate pass" : " separate passes") +
-                    sweep);
+         (passes == 0 ? std::string("no separate pass")
+                      : std::to_string(passes) +
+                            (passes == 1 ? " separate pass" : " separate passes") + sweep);
   if (runs.any()) {
-    const std::size_t run_passes =
-        (runs.in.any() && pr.in != run_pruning::direct ? 1U : 0U) +
-        (runs.out.any() && pr.out != run_pruning::direct ? 1U : 0U);
-    ops += "\n" +
-           (depth ? depth_runs_text(runs, pl.epi.accumulate, pr, run_passes)
-                  : runs_text(runs, pl.epi.accumulate, "the workspace block", run_passes, pr.in,
-                              pr.out) +
-                        " on the line in cache");
+    const std::size_t run_passes = (runs.in.any() && pr.in != run_pruning::direct ? 1U : 0U) +
+                                   (runs.out.any() && pr.out != run_pruning::direct ? 1U : 0U);
+    ops += "\n" + (depth ? depth_runs_text(runs, pl.epi.accumulate, pr, run_passes)
+                         : runs_text(runs, pl.epi.accumulate, "the workspace block", run_passes,
+                                     pr.in, pr.out) +
+                               " on the line in cache");
   }
   c->edges_note = ops;
   if (opts.effort != planning::rules || opts.use != nullptr) {

@@ -75,10 +75,9 @@ template <class T>
 // pass's blocks are whole); forced (build_settings::strategy depth), wherever such a split
 // fits; never with forced radices for n or another strategy forced.
 template <class T>
-[[nodiscard]] std::vector<std::size_t> convolution_depth_tops(std::size_t n,
-                                                              const build_settings& settings,
-                                                              const chain_builder<T>& chain,
-                                                              target isa);
+[[nodiscard]] std::vector<std::size_t>
+convolution_depth_tops(std::size_t n, const build_settings& settings, const chain_builder<T>& chain,
+                       target isa);
 
 // c's workspace layout from its scratch lines of `scratch` complex values of complex_bytes each
 // and its block (c.block_elements); stagger_b: scratch line b starts seven 64-byte lines further
