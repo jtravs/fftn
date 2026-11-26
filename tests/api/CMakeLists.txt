@@ -105,3 +105,15 @@ if(NOT CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
   set_tests_properties(api.fast_math_refused PROPERTIES
     PASS_REGULAR_EXPRESSION "FFTN must not be compiled with fast-math")
 endif()
+
+# The convenience layer (step 6.6) against the reference evaluated numpy's way, with the
+# allocation hook for its cache. Optimised in every build type, as the reference is heavy.
+fftn_add_test(fftn_easy_tests SOURCES easy_test.cpp
+  LIBRARIES fftn_test_support fftn_test_alloc_hook)
+fftn_always_optimise(easy_test.cpp)
+# Its conversion from std::mdspan, in a C++23 unit where the compiler has the standard; the test
+# skips itself where the standard library lacks std::mdspan.
+if(cxx_std_23 IN_LIST CMAKE_CXX_COMPILE_FEATURES)
+  fftn_add_test(fftn_easy_mdspan_tests SOURCES easy_mdspan_test.cpp)
+  set_target_properties(fftn_easy_mdspan_tests PROPERTIES CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON)
+endif()

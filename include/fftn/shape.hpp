@@ -100,7 +100,8 @@ struct stored_run {
 /// definitions, unnormalised (docs/conventions.md, "Real-to-real transforms", gives each sum).
 ///
 /// Provisional (task 6.3, dev/DESIGN.md 5.7): the names may change before the first release.
-/// Built so far: `dht`; a plan refuses the other kinds until tasks 6.4 and 6.5 build them.
+/// Built so far: `dht`, `dct2`, `dct3`, `dst2` and `dst3` (tasks 6.3 and 6.4); a plan refuses
+/// `dct1`, `dct4`, `dst1` and `dst4` until task 6.5 builds them.
 enum class r2r_kind : unsigned char {
   dct1, ///< DCT-I, FFTW's REDFT00 (n at least 2); its own inverse up to a factor 2(n - 1)
   dct2, ///< DCT-II, REDFT10; inverse `dct3`, up to a factor 2n

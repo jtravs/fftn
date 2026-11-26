@@ -72,4 +72,21 @@ std::vector<exact_complex> c2c_plane(int sign, std::size_t ny, std::size_t nx,
 // repeat an input keep the result.
 std::vector<exact_real> dht(std::span<const std::size_t> extents, std::span<const double> x);
 
+// The real-to-real kinds (DESIGN.md 5.7: FFTW's definitions, unnormalised), in the order of
+// fftn::r2r_kind, so that a test converts one to the other with a static_cast.
+enum class r2r_type : unsigned char { dct1, dct2, dct3, dct4, dst1, dst2, dst3, dst4, dht };
+
+// The real-to-real transform of a C-ordered array of reals of the given extents (one or more),
+// kinds[d] along axis d: the separable product of the 1-D transforms, each a direct sum over its
+// line with the kernel of DESIGN.md 5.7's table, evaluated in 113-bit arithmetic throughout (the
+// intermediate axes are not rounded). Every angle is 2 pi m / P for the kind's period P (n for
+// the DHT, 2(n - 1) for dct1, 2(n + 1) for dst1, 4n for the kinds II and III, 8n for IV), with the
+// index product reduced modulo P in integers. dht() is this with every kind dht. Not remembered.
+std::vector<exact_real> r2r(std::span<const r2r_type> kinds, std::span<const std::size_t> extents,
+                            std::span<const double> x);
+
+// The listed outputs of the 1-D transform of `kind` of x, for long lines.
+std::vector<exact_real> r2r(r2r_type kind, std::span<const double> x,
+                            std::span<const std::size_t> outputs);
+
 } // namespace fftn::test::reference

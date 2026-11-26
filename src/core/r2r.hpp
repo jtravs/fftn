@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: 2026 John C. Travers and contributors
 // SPDX-License-Identifier: Apache-2.0
 //
-// Real-to-real plans (DESIGN.md 5.7, fftn/shape.hpp r2r_kind; task 6.3): a program (8.3) of one
-// phase per axis over the axis's lines, each line computed in scratch by a read stage, a complex
-// transform the plan already has, and a store stage. Built so far: the DHT.
+// Real-to-real plans (DESIGN.md 5.7, fftn/shape.hpp r2r_kind; tasks 6.3 and 6.4): a program (8.3)
+// of one phase per axis over the axis's lines, each line computed in scratch by a read stage, a
+// complex transform the plan already has, and a store stage. Built so far: the DHT, DCT-II,
+// DCT-III, DST-II and DST-III, the kind chosen per axis.
 //
 // The DHT of a line of n reals is the r2c of n followed by H_k = Re X_k - Im X_k and
 // H_(n-k) = Re X_k + Im X_k. The line never leaves the scratch lines of the member running it:
@@ -26,6 +27,18 @@
 // members' scratch lines, which is why the block is not the line's home here as it is in a
 // pipeline (12.2): the lines of one phase run on several members at once, and the block is shared
 // by the task.
+//
+// DCT-II (J. Makhoul, IEEE Trans. ASSP 28, 1980) of n reals: the read stage packs v in Makhoul's
+// order (v_m = x_2m, then the odd-indexed reals descending) as the r2c packs a line; the forward
+// chain of n/2 (n odd: of n) runs in scratch; the store stage does the r2c's pairing of bins k and
+// n/2 - k without its halving and one complex multiply by t_k = exp(-i pi k / (2n)):
+// Y_k = Re(t_k 2V_k), Y_(n-k) = -Im(t_k 2V_k). DCT-III inverts it: the read stage twiddles the line
+// into the Hermitian W_k = conj(t_k) (x_k - i x_(n-k)) and pairs it for the c2r's half-length
+// transform (n odd: writes all n bins), the backward chain runs, and the store stage writes v back
+// from Makhoul's order. DST-II and DST-III are the same stages with exact sign flips and
+// reversals: DST-II reads (-1)^j x_j and writes Y_k at n - 1 - k, DST-III reads the line reversed
+// and negates the odd-indexed outputs. An axis of one point needs no phase: its transform is the
+// identity, or for DCT-II and DST-II a factor 2 that joins the scales' product.
 #pragma once
 
 #include "core/plan_core.hpp"
