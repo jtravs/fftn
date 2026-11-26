@@ -140,12 +140,15 @@ template <class T> struct cb_context {
     }
   }
   // Checks common to every block, counts its elements, and checks and moves the member's mark.
+  // A block may hold several rows (the edge driver's row blocks, task 5.3b): line k is transform
+  // `transform + k`, line_stride elements on.
   bool check(const fftn::block_info& info, const std::complex<T>* data) {
-    const bool ok = info.lines == 1 && info.line_axis == fftn::along_transforms &&
+    const bool ok = info.lines >= 1 && info.line_axis == fftn::along_transforms &&
                     info.element_axis == 0 && info.origin.size() == 1 && info.length > 0 &&
                     info.origin[0] + info.length <= n && info.transform < count &&
-                    info.member >= 0 && info.member < lanes && info.copy == 0 && info.group == 1 &&
-                    info.scratch.size() == scratch;
+                    info.lines <= count - info.transform && info.member >= 0 &&
+                    info.member < lanes && info.copy == 0 && info.group == 1 &&
+                    info.scratch.size() == scratch && (info.lines > 1 || info.line_stride == 0);
     if (!ok) {
       fail(__LINE__);
       return false;
@@ -153,14 +156,18 @@ template <class T> struct cb_context {
     if (scratch != 0 && reinterpret_cast<std::uintptr_t>(info.scratch.data()) % 128 != 0) {
       fail(__LINE__);
     }
-    // The stride of an axis of one point is the shape's to ignore.
-    if (base != nullptr && (data != base + static_cast<std::ptrdiff_t>(info.transform) * dist +
-                                        static_cast<std::ptrdiff_t>(info.origin[0]) * stride ||
-                            (n > 1 && info.element_stride != stride))) {
-      fail(__LINE__);
-    }
-    for (std::size_t i = 0; i < info.length; ++i) {
-      hits[info.transform * n + info.origin[0] + i].fetch_add(1, std::memory_order_relaxed);
+    for (std::size_t k = 0; k < info.lines; ++k) {
+      const std::size_t t = info.transform + k;
+      // The stride of an axis of one point is the shape's to ignore.
+      const std::complex<T>* line = data + static_cast<std::ptrdiff_t>(k) * info.line_stride;
+      if (base != nullptr && (line != base + static_cast<std::ptrdiff_t>(t) * dist +
+                                          static_cast<std::ptrdiff_t>(info.origin[0]) * stride ||
+                              (n > 1 && info.element_stride != stride))) {
+        fail(__LINE__);
+      }
+      for (std::size_t i = 0; i < info.length; ++i) {
+        hits[t * n + info.origin[0] + i].fetch_add(1, std::memory_order_relaxed);
+      }
     }
     // The member's scratch is its own: the mark it left on its last call is still there (FFTN
     // never writes the area and no other member uses it), then a new one, the whole area written.
@@ -178,54 +185,47 @@ template <class T> struct cb_context {
     }
     return true;
   }
+  // f(element, j, t) on each element of the block, after check().
+  template <class F> void each(const fftn::block_info& info, std::complex<T>* data, F f) {
+    if (!check(info, data)) {
+      return;
+    }
+    for (std::size_t k = 0; k < info.lines; ++k) {
+      for (std::size_t i = 0; i < info.length; ++i) {
+        f(data[static_cast<std::ptrdiff_t>(i) * info.element_stride +
+               static_cast<std::ptrdiff_t>(k) * info.line_stride],
+          info.origin[0] + i, info.transform + k);
+      }
+    }
+  }
 };
 
 template <class T>
 void modify_in(void* user, const fftn::block_info& info, std::complex<T>* data) noexcept {
-  auto& ctx = *static_cast<cb_context<T>*>(user);
-  if (!ctx.check(info, data)) {
-    return;
-  }
-  for (std::size_t i = 0; i < info.length; ++i) {
-    std::complex<T>& x = data[static_cast<std::ptrdiff_t>(i) * info.element_stride];
-    x = cubic_in(x, info.origin[0] + i, info.transform);
-  }
+  static_cast<cb_context<T>*>(user)->each(
+      info, data, [](std::complex<T>& x, std::size_t j, std::size_t t) { x = cubic_in(x, j, t); });
 }
 
 template <class T>
 void produce_in(void* user, const fftn::block_info& info, std::complex<T>* data) noexcept {
-  auto& ctx = *static_cast<cb_context<T>*>(user);
-  if (!ctx.check(info, data)) {
-    return;
-  }
-  for (std::size_t i = 0; i < info.length; ++i) {
-    data[static_cast<std::ptrdiff_t>(i) * info.element_stride] =
-        produced<T>(info.origin[0] + i, info.transform);
-  }
+  static_cast<cb_context<T>*>(user)->each(
+      info, data, [](std::complex<T>& x, std::size_t j, std::size_t t) { x = produced<T>(j, t); });
 }
 
 template <class T>
 void modify_out(void* user, const fftn::block_info& info, std::complex<T>* data) noexcept {
   auto& ctx = *static_cast<cb_context<T>*>(user);
-  if (!ctx.check(info, data)) {
-    return;
-  }
-  for (std::size_t i = 0; i < info.length; ++i) {
-    std::complex<T>& y = data[static_cast<std::ptrdiff_t>(i) * info.element_stride];
-    y = cubic_out(y, info.origin[0] + i, info.transform, ctx.n);
-  }
+  const std::size_t n = ctx.n;
+  ctx.each(info, data,
+           [n](std::complex<T>& y, std::size_t k, std::size_t t) { y = cubic_out(y, k, t, n); });
 }
 
 template <class T>
 void consume_out(void* user, const fftn::block_info& info, std::complex<T>* data) noexcept {
   auto& ctx = *static_cast<cb_context<T>*>(user);
-  if (!ctx.check(info, data)) {
-    return;
-  }
-  for (std::size_t i = 0; i < info.length; ++i) {
-    ctx.captured[info.transform * ctx.n + info.origin[0] + i] =
-        data[static_cast<std::ptrdiff_t>(i) * info.element_stride];
-  }
+  ctx.each(info, data, [&ctx](std::complex<T>& y, std::size_t k, std::size_t t) {
+    ctx.captured[t * ctx.n + k] = y;
+  });
 }
 
 // The stored extent of a side along the row: the end of its last run, or n.
@@ -500,8 +500,8 @@ template <class T> struct cb_run {
     }
   }
 
-  // The same work as the user's loops would do it, bitwise: the plain plan on the chain (the
-  // strategy callbacks take in 5.3a) over the logical input after the input callback's loop,
+  // The same work as the user's loops would do it, bitwise: the plain plan on the chain (for the
+  // plans the rules put on the chain) over the logical input after the input callback's loop,
   // then the output callback's loop and the store, accumulation or capture. The plain plan reads
   // and writes the layouts the plan's chain does (the workspace block's contiguous row where the
   // plan copies or ends there, else the caller's strided rows, in place for in place), since
@@ -625,7 +625,12 @@ void run_case(const cb_case& cc, fftn::isa t, bool threads, bool reference = tru
     EXPECT_TRUE(same_bits(xs, x0)) << what << ": input written";
   }
   EXPECT_TRUE(same_bits(run.fin, fin0) && run.fin_r == fin_r0) << what << ": factor written";
-  if (cc.in_factor == fftn::factor_kind::none && cc.out_factor == fftn::factor_kind::none) {
+  // The separate loops run the plain plan on the chain: comparable bitwise only where the plan
+  // with callbacks is on the chain too (the rules may choose another strategy, task 5.3b).
+  const bool on_chain = describe.find("\nstrategy: chain (") != std::string::npos &&
+                        describe.find("batch leaves") == std::string::npos;
+  if (on_chain && cc.in_factor == fftn::factor_kind::none &&
+      cc.out_factor == fftn::factor_kind::none) {
     cvec<T> consumed(cc.n * cc.count);
     const cvec<T> loops = run.separate_loops(consumed);
     if (cc.out == out_kind::consume) {
@@ -884,9 +889,12 @@ void nested_out(void* user, const fftn::block_info& info, std::complex<double>* 
     return;
   }
   fftn::workspace ws{info.scratch};
-  for (std::size_t i = 0; i < info.length; ++i) {
-    std::complex<double>& y = data[static_cast<std::ptrdiff_t>(i) * info.element_stride];
-    y = nested_value(y, *ctx.inner, ws);
+  for (std::size_t k = 0; k < info.lines; ++k) {
+    for (std::size_t i = 0; i < info.length; ++i) {
+      std::complex<double>& y = data[static_cast<std::ptrdiff_t>(i) * info.element_stride +
+                                     static_cast<std::ptrdiff_t>(k) * info.line_stride];
+      y = nested_value(y, *ctx.inner, ws);
+    }
   }
 }
 
@@ -951,8 +959,11 @@ TEST(Callbacks, CallbackOfALambda) {
   using C = std::complex<float>;
   const std::size_t n = 32;
   const auto twice = [](const fftn::block_info& info, C* data) noexcept {
-    for (std::size_t i = 0; i < info.length; ++i) {
-      data[static_cast<std::ptrdiff_t>(i) * info.element_stride] *= 2.0F;
+    for (std::size_t k = 0; k < info.lines; ++k) {
+      for (std::size_t i = 0; i < info.length; ++i) {
+        data[static_cast<std::ptrdiff_t>(i) * info.element_stride +
+             static_cast<std::ptrdiff_t>(k) * info.line_stride] *= 2.0F;
+      }
     }
   };
   const auto shape = fftn::rows_c2c<float>(n, 2, fftn::direction::forward);
@@ -1032,19 +1043,22 @@ TEST(Callbacks, RefusalsNameTheField) {
                        "edges.out.call.scratch_bytes");
   expect_refused<C, C>(rows, {}, {.out = {.call = {.fn = &some_fn, .scratch_bytes = SIZE_MAX / 2}}},
                        "edges.out.call.scratch_bytes");
-  // Not built yet on real and multi-axis plans (tasks 5.3b and 5.3c).
-  expect_refused<double, C>(fftn::rows_r2c<double>(16, 2), {},
-                            {.in = {.call = {.fn = &some_real_fn}}}, "edges.in.call.fn");
-  expect_refused<C, double>(fftn::rows_c2r<double>(16, 2), {}, {.in = {.call = {.fn = &some_fn}}},
-                            "edges.in.call.fn");
+  // Real rows take callbacks (task 5.3b); a consumed real output in place is refused.
+  expect_refused<C, double>(
+      fftn::rows_c2r<double>(16, 2), {.in_place = true},
+      {.out = {.call = {.fn = &some_real_fn, .mode = callback_mode::consume}}},
+      "edges.out.call.mode");
+  // Not built yet on real-to-real plans, nor on multi-axis plans (task 5.3c).
+  expect_refused<double, double>(fftn::rows_r2r<double>(16, 2, fftn::r2r_kind::dht), {},
+                                 {.in = {.call = {.fn = &some_real_fn}}}, "edges.in.call.fn");
   fftn::shape<C, C> plane;
   plane.axes = {{.n = 8}, {.n = 8}};
   expect_refused<C, C>(plane, {}, {.out = {.call = {.fn = &some_fn}}}, "edges.out.call.fn");
 }
 
-// describe() says where each callback runs, and the plan is on the chain whatever the rules
-// would choose for the rows (the lanes, batch leaves or the grid on some targets), saying why
-// where they differ. Measured planning is not used.
+// describe() says where each callback runs and its blocks, the plan taking the strategy the
+// rules choose (task 5.3b; each strategy's line: callbacks_strategies_test.cpp), measured
+// planning included.
 TEST(Callbacks, DescribeNamesTheCallbacks) {
   using C = cd;
   for (const std::size_t n : {std::size_t{8}, std::size_t{64}, std::size_t{1} << 16U}) {
@@ -1054,17 +1068,13 @@ TEST(Callbacks, DescribeNamesTheCallbacks) {
         {.in = {.call = {.fn = &some_fn}},
          .out = {.call = {.fn = &some_fn, .mode = fftn::callback_mode::consume}}});
     const std::string d = p.describe();
-    EXPECT_NE(d.find("callbacks: the input's (modify) on each row in the workspace block, after "
-                     "a copy of the input; the output's (consume) on each row in the workspace "
-                     "block"),
+    EXPECT_NE(d.find("callbacks: the input's (modify) on each row in the "), std::string::npos)
+        << d;
+    EXPECT_NE(d.find("the output's (consume) on each row in the workspace block"),
               std::string::npos)
         << d;
-    EXPECT_NE(d.find("measured planning and wisdom take no callbacks yet"), std::string::npos) << d;
-    const fftn::plan<C, C> plain(rows);
-    if (plain.describe().find("strategy: chain") == std::string::npos ||
-        plain.describe().find("batch leaves") != std::string::npos) {
-      EXPECT_NE(d.find("callbacks take the chain until task 5.3b"), std::string::npos) << d;
-    }
+    EXPECT_NE(d.find("planning: "), std::string::npos) << d;
+    EXPECT_EQ(d.find("callbacks take the chain"), std::string::npos) << d;
   }
 }
 

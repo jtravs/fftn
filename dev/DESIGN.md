@@ -707,10 +707,10 @@ The other interfaces are later work:
 
 ### 5.7 Real-to-real transforms: DCT, DST and DHT
 
-*Proposed* (phase 6, steps 6.3 to 6.5 and 6.12; the open points are in 18.2, "Phase 6"). The
-kind plumbing and the DHT (step 6.3) and the DCT and DST of types II and III (step 6.4) are built,
-provisional ("As built" below); types I and IV are refused until 6.5. They are composed plans: no
-new codelets, only read and store stages around transforms the plan already has.
+*Proposed* (phase 6, steps 6.3 to 6.5 and 6.12; the open points are in 18.2, "Phase 6"). Every
+kind is built, provisional ("As built" below): the kind plumbing and the DHT (step 6.3), the DCT
+and DST of types II and III (step 6.4) and of types I and IV (step 6.5). They are composed plans:
+no new codelets, only read and store stages around transforms the plan already has.
 
 ```cpp
 namespace fftn {
@@ -818,12 +818,32 @@ Points that matter:
   same stages with exact negations and reversals (the identities above). Each kind's twiddles,
   e^(−2πik/n) for the pairing and e^(−iπk/(2n)), are one table per phase. An axis of one point has
   no phase: the identity for `dht`, `dct3` and `dst3`, an exact factor 2 for `dct2` and `dst2`,
-  which joins the scales' product in the last store stage (6.5's `dct4` and `dst4`, whose factor
-  is √2, will need a phase or a rounding of their own). Measured on no machine: speed is step
+  which joins the scales' product in the last store stage. Measured on no machine: speed is step
   6.12's.
+- **As built (step 6.5, DCT-IV, DST-IV, DCT-I, DST-I; src/core/r2r.cpp).** The same phase
+  builder, a read stage, forward chain and store stage per kind, with the routes of the table
+  above. Even `dct4`: the read stage packs (x_(2j) + i x_(n−1−2j)) e^(−iπj/n), the chain is a c2c
+  of n/2, and the store stage writes Y_(2k) = 2 Re(q_k U_k) and Y_(n−1−2k) = −2 Im(q_k U_k),
+  q_k = e^(−iπ(4k+1)/(4n)) (the twiddles split so, both per index in one table). Odd `dct4`: the
+  table's c2c of 2n, the read stage writing the n twiddled values and n zeros into scratch, the
+  store stage reading the first n bins; 5.1d's stored runs and 5.1e's pruned codelets were not
+  used, because the scratch-line chain (`chain_builder::scratch_transform`) takes no runs, and
+  pruning, or a cheaper odd route over a transform of n, is left to step 6.12 (`describe()` says
+  the odd route costs about four times the even one). `dct1` and `dst1`: the extensions packed as
+  the r2c packs a line of 2(n ∓ 1), the c2c of n ∓ 1, and a store stage doing the r2c's pairing
+  (with its exact halving) only for the bins it needs, one output per unit. The sine kinds by
+  reversal and exact negations, as 6.4's. An axis of one point has no phase: the factor 2 of
+  `dst1` joins `dct2`'s and `dst2`'s, and the factor √2 of `dct4` and `dst4` too, the axes'
+  product being a power of two times one correctly rounded √2 when their count is odd, so the
+  scales' one multiply rounds it once, as a phase of the axis would round its product with √2;
+  the scales times that product must fit the precision, else the plan refuses `options.scale`.
+  The edges note follows the scales times that product, and the strategy note names only the
+  chain directions the phases run. Tested at every n ≤ 512 by the kind twice and against the
+  quadruple-precision reference at every n ≤ 128 and two residues mod 15 above (the direct sum
+  is O(n²) in 113-bit arithmetic), sampled at longer lengths.
 - **Phase 5 underneath.** The scratch-line programs of 5.2b, the edge phases and cursors of
-  5.1b (multi-axis lines, real factors), the stored runs of 5.1d and the pruned codelets of
-  5.1e (the odd `dct4`). Fusing the read stage into the first pass and the store stage into the
+  5.1b (multi-axis lines, real factors). The odd `dct4` zero-pads into the scratch line and
+  does not use 5.1d's stored runs or 5.1e's pruned codelets (see the as-built note above). Fusing the read stage into the first pass and the store stage into the
   last, as the r2c pairing is fused (9.1), is step 6.12.
 
 ### 5.8 Split-complex layout
@@ -3241,6 +3261,56 @@ block, the middle's between the two chains, the epilogue's before the store); it
 callback area's size to `lay_out_workspace` (0 for pipelines until then) and keeps a pipeline
 with callbacks off the batched forms that pipelines otherwise always take.
 
+As built (task 5.3b): rows of every kind (c2c, r2c, c2r) take callbacks on the strategy the rules,
+measured planning or a test choose; `core/edges.cpp` refuses them on planes and volumes only
+(5.3c). Where each strategy runs them (all in `build()`, `core/plan_core.cpp`, from two helpers,
+`callback_input_stages` and `callback_output_stages`: the copy, the callback, the vocabulary in
+place; the vocabulary, the callback, then the store, accumulation or addition to the saved prior
+values):
+- **Chain** (c2c): as 5.3a, the copy into the workspace block by default, into the output with
+  `build_settings::callback_copy_out` (X66's arm), the chain then in place there. The edge
+  driver's batched forms (5.2a) take callback stages as they take separate edge passes, under the
+  same reach (`machine_profile::edge_batched_forms`; `leaf_rows`: rows whose transform is one
+  leaf): the flat form runs a callback stage's blocks per transform, the row-block form (batch
+  leaves and short rows) passes a block's rows to the callback as many whole rows a call as fit
+  `callback_block_bytes` (line j transform `t + j`; a row longer than that in element ranges,
+  one a call), and the unrolled calls leave a program with callbacks walked. Teams run the
+  walked form, one row a block, with the same chunks (the first group's; describe() says so).
+- **Grid, depth-first chain, Bluestein's depth-first convolution and the real rows' half-length
+  grid and depth-first chain**: 5.1b-2's separate-pass places, a callback stage over the row
+  before the strategy (out of place on the input's copy in the output, c2c, or in the workspace
+  block, real; in place on the input) and after it on the output, accumulation through the saved
+  prior values (vocabulary, callback, then their addition).
+- **Lanes over rows**: in each block's records, the callback over the block's rows (one call for
+  all, `block_info::lines` the block's valid rows, line k transform `transform + k`), before the
+  lanes' gathering pass on the rows where the input edge's stages left them (the output, c2c out
+  of place; the block, real; the input in place) and after the scattering pass on the output, not
+  on the tile itself: the rows are short and in L1 there, and the tile would need the lanes' first
+  and last passes split, which X66 can price. A consumed output: the lanes write the block's
+  rows into the workspace block (in place over the input's rows there, c2c).
+- **Lanes over adjacent transforms** (rows one element apart): the edge phases inside each block,
+  `lines` the block's transforms, `line_stride` 1.
+- **Real rows on the chain**: the edge phases (12.1) with the callback inside the phase: the real
+  side as `T`, the complex side as its h + 1 bins; stored runs as on c2c rows (blocks per run).
+- **A consumed output** may be null, so no strategy writes it. The grid and the depth-first chains
+  use the output as working memory and give way to the chain (describe() names the reason), as do
+  the lanes over adjacent transforms and a real row's lanes whose input is in the block too (the
+  lanes' stages have no slot offsets for two regions). These are the only strategies a callback
+  forces; a test holds that modify callbacks force none.
+- **Blocks**: `machine_profile::callback_block_bytes` (32 bits, in the struct's tail padding, so
+  that the profile's size and the plain drivers' code are unchanged), half the L1 data cache from
+  the topology (16 KiB unknown); `callback_cuts` cuts a stage of several lines (a lanes block,
+  the adjacent transforms, a row block) by lines: as many whole lines a call as fit that many
+  bytes, and only a line longer than that into element ranges, one line a call (the contract's
+  "a line whole up to a size"). describe() gives, per side, where, the block shape, and "one more
+  sweep" only where a row exceeds a block and is cut.
+- **Planning**: `callback_env::stand_in` (from `edge_state`, set by `measure.cpp`'s `time_once`)
+  makes every callback stage call a function that does nothing, at the same place with its
+  copies; the kept candidate is the plan built with the real callbacks. The wisdom key (5.3a's
+  `edges_key`) has each side's mode and scratch, not the function.
+- **Produced input in place** may be null: the strategy then reads the output's slot (the same
+  bytes; `retarget_input`).
+
 ### 12.4 Owner-computes
 
 With `completion::own` and `plan::transforms_of(team)`, an application's own pointwise
@@ -4730,8 +4800,10 @@ to change before a release.
 | 2026-11-26 | Pruned codelets (task 5.1e, section 12.1): `dif_head` and `plain_head`, halves of the even codelet radices only, for the first and last passes of c2c rows whose stored runs lie in the line's first half; one run of the half stored with stride 1 is read or written in place with no separate pass | Counted from the generator (gen/README.md): halves cost 0.77–0.89 of `dif`'s and 0.86–0.94 of `plain`'s vector operations at radices 8–64 and three quarters of the memory accesses; the gain is the separate pass that disappears. A half of an even radix is the line's first half whatever the radix, so one variant pair per radix covers the valid half of a zero-padded row and any band or crop inside it. Quarters and odd radices were counted and left out (smaller or no gains; `plain_head` of 9 and 25 would cost more than `plain`) |
 | 2026-11-26 | Phase 6 broken into steps 6.1–6.20 (PLAN), with proposed APIs for the convenience layer (5.4), the real-to-real kinds (5.7), the split-complex layout (5.8) and the C API (5.9), and their open points in 18.2, "Phase 6". Proposals, not decisions: steps marked P are built provisional with a second reader, as phase 5's were | The maintainer's priority (2026-11-25): features fully built, then the remaining performance |
 | 2026-11-26 | Block callbacks on c2c rows (task 5.3a, section 12.3): provisional `fftn/callback.hpp` (`block_info`, `block_fn`, `callback_mode`, `callback`, `callback_of`, `along_transforms`) and `edge::call`, with 18.2's proposals ("Callbacks"); the callback stage on the chain only until 5.3b, planned by the rules; blocks are stage chunks; per-member scratch at the end of each slot; the drive policies' per-task entries take the lane and slots, the plain instantiations unchanged; a plan with callbacks needs the `exec_args` overloads. Awaits the maintainer's review of the API. |
+| 2026-11-26 | Block callbacks in every row strategy (task 5.3b, section 12.3): c2c, r2c and c2r rows on the strategy chosen; the lanes' callbacks on the block's rows before the gathering and after the scattering pass rather than on the tile; the grid's and depth-first chains' input copy in the output (5.1b-1's place) and the chain's in the block, the output behind `callback_copy_out` for X66; a consumed output keeps a row off the strategies that write the output; `machine_profile::callback_block_bytes`; measured planning with stand-ins; the batched forms (row blocks for batch leaves and short rows, the flat form) take callback stages under the profile's reach | The design's table with the separate passes' places 5.1b built, which already work on every strategy; the tile is a performance refinement for X66 (5.3g) to price. A consumed output may be null, which the strategies that use the output as working memory cannot take without a retargeting of their own |
 | 2026-11-26 | Packaging (task 6.1, section 14.3): an installed CMake package (`fftn::fftn`; the adapters as components `omp` and `kokkos`), a relocatable `fftn.pc`, install rules on by default only for a top-level build, version compatibility `SameMinorVersion`, the thread library in the link interface; third-party subdirectories `EXCLUDE_FROM_ALL`; a path-filtered CI workflow builds a downstream project three ways (Windows not on pull requests) | DESIGN 18.2 Q25's proposal; a minor version may still change the API before 1.0; FetchContent users decide what they install; the check builds the library twice, so it runs where packaging can change rather than on every pull request |
 | 2026-11-26 | Stored runs on pipelines and the depth-first pair (task 5.2d, section 12.2): runs on the line as PR 134's run stages around the chain pairs, the pruned passes on `<C, C, C>`; `chain_builder::depth_pair` generalises X50's convolution (optional chirp, one input run from 0, one output run, a table or the middle cursor), Bluestein built through it; two kernel variants per radix (`depth_first_head`, `depth_top_part`); the pair taken only where forced, every pipeline by the rules keeping the chain pair until X67 (5.2g) decides when the rules take it | The plan for 5.2 (section 12.2) read as written, except that the pair's rule is a planner rule, which needs an experiment (AGENTS.md section 6, the lead's ruling): X50's rule is X67's candidate; one fused run per side saves a sweep of the line each way, as the chirp passes did in X50 arm C |
+| 2026-11-26 | Step 6.5 (provisional, second reader to come): `dct4`, `dst4`, `dct1` and `dst1` built in 5.7's routes on the phase builder (the even `dct4` by a twiddled c2c of n/2, the odd by a zero-padded c2c of 2n without stored runs or pruned codelets, `dct1` and `dst1` by the extensions); an axis of one point of `dst1` folds its factor 2, of `dct4` or `dst4` its √2, into the scales' product | 5.7's routes as proposed and Q14's extensions; the scratch-line chain takes no stored runs, so pruning the odd `dct4` (or a cheaper route over a transform of n) is step 6.12's, with speed; a correctly rounded √2 in the scales' product rounds as a phase's own multiply would |
 | 2026-11-26 | Step 6.4 (provisional, second reader to come): `dct2`, `dct3`, `dst2` and `dst3` built in 5.7's routes on 6.3's phase builder (Makhoul's read stage and twiddled store over the r2c's half-length chain, the inverse over the c2r's; the sine kinds by exact signs and reversals), any n, kinds mixed across axes; an axis of one point of `dct2` or `dst2` folds its exact factor 2 into the scales' product instead of a phase | 5.7's routes as proposed; the factor 2 needs no phase and no rounding of its own |
 | 2026-11-26 | Step 6.3 (provisional, second reader to come): `r2r_kind`, `shape<T, T>` with `shape::kinds`, `rows_r2r`, `planes_r2r`, `volumes_r2r`, `axes_r2r`, `r2r_plan`, and the DHT as built in 5.7: a read stage, the r2c's complex chain in the member's scratch and a store stage fusing the r2c's pairing with the Hartley combination; the DCT and DST kinds refused until 6.4 and 6.5; real-to-real plans by the rules only | The 18.2 "Phase 6" proposals 9–13 taken as written; scratch rather than the block, because a phase's lines run on several members at once and the block is the task's |
 | 2026-11-26 | Convenience layer for complex and real transforms (step 6.6, section 5.4): provisional `fftn/easy.hpp` with 18.2's proposals Q4–Q8 (`fftn::easy`, numpy's semantics, a `thread_local` `context` of 64 plans dropped least recently used, rules planning, `view` with an `mdspan` conversion, both value forms); one compiled unit over the public API only; per-precision overloads for the span forms; `axis_list` for braced axes; sizes must agree (numpy's cropping and padding by `n` and `s` not offered); the executor's width left out of the key; `cached_plans()` and `max_plans()` added for inspection. Awaits the maintainer's review of the API | The maintainer's priority (2026-11-25): features fully built; numpy users' call sites translate one to one, and the core API stays the way to every other feature |

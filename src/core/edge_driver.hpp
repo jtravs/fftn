@@ -61,6 +61,7 @@ struct factor_cursors {
 struct edge_state {
   factor_cursors f;
   std::array<void*, 2> user{};
+  bool stand_in = false; // measured planning's (callback_env::stand_in)
 };
 
 // The edge driver's per-task entry: the task's cursors, and what its callback stages need (the
@@ -73,14 +74,18 @@ struct edge_task {
 // A stage of a flat program (program::flat) as the edge driver's batched forms run it: its
 // kernels (the edge_record's where it reads a cursor), slots and arguments, and which cursors it
 // reads. In the row-block form a stage either runs once over a block's rows (`block_call`: an
-// edge pass, its arguments' rows and distances set for the block, or a leaf over the rows
-// src_dist and dst_dist bytes apart) or once per row.
+// edge pass, its arguments' rows and distances set for the block, a leaf over the rows
+// src_dist and dst_dist bytes apart, or a callback stage over the rows dst_dist elements apart)
+// or once per row. A callback stage (task 5.3b) runs through `call`, its stage (whose chunks are
+// the blocks) at `callback`, which the plan owns.
 struct edge_flat_stage {
   flat_stage s;
   std::uint8_t moving = 0;
   bool block_call = false;
   std::ptrdiff_t src_dist = 0;
   std::ptrdiff_t dst_dist = 0;
+  const callback_site* call = nullptr;
+  const stage* callback = nullptr;
 };
 
 // One kernel call of an unrolled program (program.hpp, call) on the edge driver: its kernel the
@@ -140,8 +145,8 @@ void factor_guard_leaf(const pass_args* args, const void* src, void* dst, std::p
 // piece belongs to (the others). `tail`: the records of a lanes program's tail
 // (program::lane_tail), one per record.
 // forms: the plan's batched forms (make_edge_forms), which it runs where it has them.
-// env: the callback stages' (run_edge_transforms sets its transform for each transform it runs;
-// the others take the piece's). A plan with callback stages has no batched forms and no lanes.
+// env: the callback stages' (run_edge_transforms sets its transform for each transform it runs,
+// or each block's first; the others take the piece's).
 void run_edge_transforms(const program& p, const std::vector<edge_record>& e,
                          const std::vector<edge_record>& tail, const edge_forms& forms,
                          std::size_t first, std::size_t count, const slot_addresses& base,

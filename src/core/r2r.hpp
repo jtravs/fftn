@@ -1,10 +1,9 @@
 // SPDX-FileCopyrightText: 2026 John C. Travers and contributors
 // SPDX-License-Identifier: Apache-2.0
 //
-// Real-to-real plans (DESIGN.md 5.7, fftn/shape.hpp r2r_kind; tasks 6.3 and 6.4): a program (8.3)
+// Real-to-real plans (DESIGN.md 5.7, fftn/shape.hpp r2r_kind; tasks 6.3 to 6.5): a program (8.3)
 // of one phase per axis over the axis's lines, each line computed in scratch by a read stage, a
-// complex transform the plan already has, and a store stage. Built so far: the DHT, DCT-II,
-// DCT-III, DST-II and DST-III, the kind chosen per axis.
+// complex transform the plan already has, and a store stage. Every kind, chosen per axis.
 //
 // The DHT of a line of n reals is the r2c of n followed by H_k = Re X_k - Im X_k and
 // H_(n-k) = Re X_k + Im X_k. The line never leaves the scratch lines of the member running it:
@@ -37,8 +36,20 @@
 // transform (n odd: writes all n bins), the backward chain runs, and the store stage writes v back
 // from Makhoul's order. DST-II and DST-III are the same stages with exact sign flips and
 // reversals: DST-II reads (-1)^j x_j and writes Y_k at n - 1 - k, DST-III reads the line reversed
-// and negates the odd-indexed outputs. An axis of one point needs no phase: its transform is the
-// identity, or for DCT-II and DST-II a factor 2 that joins the scales' product.
+// and negates the odd-indexed outputs.
+//
+// DCT-IV of even n = 2h: the read stage packs u_j = (x_2j + i x_(n-1-2j)) exp(-i pi j / n), the
+// forward chain of h runs, and the store stage writes Y_2k = 2 Re(q_k U_k) and
+// Y_(n-1-2k) = -2 Im(q_k U_k), q_k = exp(-i pi (4k + 1) / (4n)). Odd n: the read stage writes
+// x_j exp(-i pi j / (2n)) and n zeros, the forward chain of 2n runs, and the store stage writes
+// Y_k = 2 Re(exp(-i pi (2k + 1) / (4n)) Z_k) for k < n (DESIGN.md 5.7's route, about four times
+// the even route's work; pruning the zeros and the unused half is step 6.12's). DST-IV reads the
+// line reversed and negates the odd-indexed outputs. DCT-I and DST-I: the read stage packs the
+// even extension of 2(n - 1) reals (the odd extension of 2(n + 1)) as the r2c packs a line, the
+// forward chain of half that runs, and the store stage does the r2c's pairing of the bins it
+// needs, writing Y_k = Re X_k (DST-I: -Im X_(k+1)). An axis of one point needs no phase: its
+// transform is the identity, a factor 2 (DCT-II, DST-II, DST-I) or sqrt 2 (DCT-IV, DST-IV), and the
+// factors join the scales' product.
 #pragma once
 
 #include "core/plan_core.hpp"

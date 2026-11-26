@@ -47,15 +47,16 @@ struct edge_side {
   // logical line with zeros elsewhere (input) or stores only the runs (output). Never with a
   // factor (build_with_runs refuses one).
   side_runs runs;
-  // The side's block callback (task 5.3a; core/callbacks.hpp): c2c rows only, on the chain.
+  // The side's block callback (core/callbacks.hpp; tasks 5.3a, 5.3b): rows only, on every
+  // strategy.
   side_callback call;
 };
 
 struct edge_plan {
   edge_side in;
   edge_side out;
-  // A factor, accumulation or callback: the plan is built with these edges (the chain, by the
-  // rules). Otherwise the edges are scales only, folded into options::scale.
+  // A factor, accumulation or callback: the plan is built with these edges. Otherwise the edges
+  // are scales only, folded into options::scale.
   bool any = false;
   // The fused scale (options::scale of the resolved options) applies on the input edge
   // (build_settings::scale_on_input): when the output edge's factor is fused and the input

@@ -281,7 +281,7 @@ prior values there.
 
 ## Block callbacks
 
-Provisional (task 5.3a, `fftn/callback.hpp`). An edge may also take a block callback
+Provisional (tasks 5.3a and 5.3b, `fftn/callback.hpp`). An edge may also take a block callback
 (`edge::call`): a function the application compiles, which the plan calls on blocks of the
 edge's side while they are in cache. Its type is `block_fn<T>`, `noexcept`, with `T` the side's
 element type; `callback_of<F, T>()` makes one that calls a callable object (a `noexcept` lambda)
@@ -290,16 +290,24 @@ callback `modify`s the block in place, `produce`s the input (the input is then n
 be null) or `consume`s the output (nothing is stored; the output may be null). Each call gets a
 `block_info`: the transform, the logical coordinates of the block's first element, its length,
 lines and strides, the member running it and that member's scratch (`callback::scratch_bytes`
-of it, counted by `workspace_bytes()`).
+of it, counted by `workspace_bytes()`). A block holds a row whole up to a size the plan's machine
+profile sets (half the L1 data cache by default), longer rows in element ranges; where the plan
+holds several short rows together (the lanes) one call takes them all, line k being transform
+`transform + k`. On a real side the elements are real values (`T`); on the complex side of a
+real transform they are the n/2 + 1 bins.
 
 ```cpp file=examples/callbacks.cpp region=callbacks
 // Each output bin k of transform t times exp(i g |y|^2), a phase that depends on the bin's
 // own value: pure per element, so any team or executor gives the same bits.
 const double g = 0.01;
+// A block holds info.lines rows (consecutive transforms), info.length elements of each.
 auto kerr = [g](const fftn::block_info& info, std::complex<double>* y) noexcept {
-  for (std::size_t i = 0; i < info.length; ++i) {
-    std::complex<double>& v = y[static_cast<std::ptrdiff_t>(i) * info.element_stride];
-    v *= std::polar(1.0, g * std::norm(v));
+  for (std::size_t k = 0; k < info.lines; ++k) {
+    for (std::size_t i = 0; i < info.length; ++i) {
+      std::complex<double>& v = y[static_cast<std::ptrdiff_t>(i) * info.element_stride +
+                                  static_cast<std::ptrdiff_t>(k) * info.line_stride];
+      v *= std::polar(1.0, g * std::norm(v));
+    }
   }
 };
 const fftn::c2c_plan<double> plan(
@@ -321,9 +329,13 @@ is pure per element (its result depends only on the element's value and coordina
 guarantees of "Determinism" below hold. A callback may execute another plan through a serial
 overload with a workspace of its own, such as `fftn::workspace{info.scratch}`. A plan with a
 callback is executed through the overloads that take `exec_args`; the others end the program.
-So far callbacks are taken by c2c rows only, on the chain whatever strategy the rules would
-choose and by the rules whatever `options::effort` says (`plan::describe()` says so); other
-plans refuse them at construction.
+So far callbacks are taken by rows (c2c, r2c and c2r plans of one axis) on the strategy the rules
+or measured planning choose; measured planning times its candidates with stand-ins that do
+nothing in place of the callbacks, so construction never calls one. Only a consumed output keeps
+a row from a strategy that writes the output as its working memory (the grid, the depth-first
+chains, the lanes over adjacent transforms, and a real row's lanes whose input is in the
+workspace block too), which then runs as the chain, as `plan::describe()` says. Planes and volumes refuse
+callbacks at construction (task 5.3c).
 
 ## Stored runs
 
@@ -511,22 +523,40 @@ dct2.execute(x.data(), y.data(), ws);
 dct3.execute(y.data(), back.data(), ws); // back == x, to rounding
 ```
 
-Built so far: `dht`, `dct2`, `dct3`, `dst2` and `dst3`, any n and mixed across axes; `dct1`,
-`dct4`, `dst1` and `dst4` are refused at construction, naming `shape.kinds[i]`, until task 6.5.
-Refused too: `kinds` without one kind per axis, `kinds` on a shape of another kind, `dct1` on an
-axis of one point, and stored runs. A real-to-real plan takes edges with scales, real factors
-and accumulation (a complex factor is refused on either side), in place as c2c does, teams,
-executors and `execute_transforms`; it is planned by the rules whatever `options::effort` says
+```cpp file=examples/r2r.cpp region=dct4
+// Y_k = 2 sum_j x_j cos(pi (j + 1/2)(k + 1/2) / n) of every row.
+const fftn::r2r_plan<double> dct4(fftn::rows_r2r<double>(n, count, fftn::r2r_kind::dct4));
+// The same kind scaled by 1/(2n) undoes it.
+const fftn::r2r_plan<double> inverse(fftn::rows_r2r<double>(n, count, fftn::r2r_kind::dct4),
+                                     {.scale = 1.0 / (2.0 * static_cast<double>(n))});
+fftn::workspace ws(dct4);
+
+std::vector<double> y(n * count);
+std::vector<double> back(n * count);
+dct4.execute(x.data(), y.data(), ws);
+inverse.execute(y.data(), back.data(), ws); // back == x, to rounding
+```
+
+Every kind is built, any n (`dct1`: n ≥ 2) and mixed across axes. Refused: `kinds` without one
+kind per axis, `kinds` on a shape of another kind, `dct1` on an axis of one point, and stored
+runs. A real-to-real plan takes edges with scales, real factors and accumulation (a complex
+factor is refused on either side), in place as c2c does, teams, executors and
+`execute_transforms`; it is planned by the rules whatever `options::effort` says
 (`plan::describe()` says so). Each axis is a phase over its lines; a line is read into the
-workspace by a read stage, transformed there by a complex transform of half its length (n even)
-or of its length (n odd), and written out by a store stage, which applies the output edge's
-factor, the scales and accumulation. The DHT combines the bins of an r2c; DCT-II reorders the
-line (Makhoul's order) for an r2c and twiddles its bins; DCT-III twiddles the line into the
-spectrum of a c2r and reads the result back from Makhoul's order; the sine kinds are the cosine
-ones with alternating signs and reversals. An axis of one point is the identity for `dht`,
-`dct3` and `dst3` and doubles for `dct2` and `dst2` (Y_0 = 2 x_0). The results are within the
-underlying transform's error bound plus a rounding per stage operation; the guarantees of
-"Determinism" below hold.
+workspace by a read stage, transformed there by a complex transform, and written out by a store
+stage, which applies the output edge's factor, the scales and accumulation. The DHT combines the
+bins of an r2c (a complex transform of n/2, or of n for odd n); DCT-II reorders the line
+(Makhoul's order) for an r2c and twiddles its bins; DCT-III twiddles the line into the spectrum
+of a c2r and reads the result back from Makhoul's order; DCT-IV pairs and twiddles the line for
+a complex transform of n/2 (odd n: a zero-padded complex transform of 2n, about four times the
+work); DCT-I and DST-I take the r2c of the line's even or odd extension, of 2(n − 1) or 2(n + 1)
+reals (about twice the work of the kinds II and III); the sine kinds are the cosine ones with
+alternating signs and reversals. `plan::describe()` names each axis's route. An axis of one point
+is the identity for `dht`, `dct3` and `dst3`, doubles for `dct2`, `dst2` and `dst1`
+(Y_0 = 2 x_0), and multiplies by √2 for `dct4` and `dst4`; these factors join the scales, so the
+scales times them must lie within the precision's range. The results are within the underlying
+transform's error bound plus a rounding per stage operation; the guarantees of "Determinism"
+below hold.
 
 ## In place
 

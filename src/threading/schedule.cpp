@@ -93,6 +93,8 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
     p.grid_min_bytes = c.l1d.size;
     p.grid_block_bytes = c.l1d.size;
     p.adjacent_min_bytes = c.l1d.size;
+    p.callback_block_bytes = static_cast<std::uint32_t>(
+        std::min<std::size_t>(c.l1d.size / 2, std::numeric_limits<std::uint32_t>::max()));
   }
   if (c.l1d.line_size != 0) {
     p.line_bytes = c.l1d.line_size;
