@@ -261,6 +261,9 @@ public:
   // block.
   edge_forms edge_batched;
   std::size_t edge_row_block = 0;
+  // A pipeline's core (core/pipeline.cpp, DESIGN.md 12.2): describe()'s first line, which names
+  // it a pipeline (empty for plans).
+  std::string pipeline_title;
 };
 
 // The core a team of two or more members runs: the team program where there is one.

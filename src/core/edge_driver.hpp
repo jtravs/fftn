@@ -30,20 +30,26 @@
 
 namespace fftn::inline v0::detail {
 
+// Bytes per cursor, in factor_cursors' order: the input's, the output's and a pipeline's
+// middle's (DESIGN.md 12.2).
+using factor_steps = std::array<std::ptrdiff_t, 3>;
+
 // What the edge driver keeps per record of a plan whose edges have factors.
 struct edge_record {
   // A stage that reads a factor cursor: its kernel (the stage's own are guards).
   pass_fn run = nullptr;
   leaf_fn leaf = nullptr;
-  // A loop: the bytes it moves the input's and the output's factor cursors per iteration.
-  std::array<std::ptrdiff_t, 2> factor_step{};
+  // A loop: the bytes it moves the input's, the output's and the middle's factor cursors per
+  // iteration.
+  factor_steps factor_step{};
 };
 
-// The cursors of the edges' factor arrays: addresses as integers, so that moving one that is 0
-// (an edge without a factor) needs no test.
+// The cursors of the edges' factor arrays, and of a pipeline's middle factor (task 5.2b):
+// addresses as integers, so that moving one that is 0 (an edge without a factor) needs no test.
 struct factor_cursors {
   std::uintptr_t in = 0;
   std::uintptr_t out = 0;
+  std::uintptr_t mid = 0;
 };
 
 // A stage of a flat program (program::flat) as the edge driver's batched forms run it: its
@@ -63,7 +69,7 @@ struct edge_flat_stage {
 // edge_record's where it reads a cursor, and the bytes the loops have moved the cursors.
 struct edge_call {
   call c;
-  std::array<std::ptrdiff_t, 2> factor_off{};
+  factor_steps factor_off{};
   std::uint8_t moving = 0;
 };
 
@@ -98,8 +104,9 @@ void factor_guard_pass(const pass_args* args, const void* src, void* dst, std::s
 void factor_guard_leaf(const pass_args* args, const void* src, void* dst, std::ptrdiff_t src_dist,
                        std::ptrdiff_t dst_dist, std::size_t count);
 
-// The cursors' starting values from an execution's data: `needed` holds moving_in_factor and
-// moving_out_factor for the arrays the plan reads; a needed array that is null ends the program.
+// The cursors' starting values from an execution's data: `needed` holds moving_in_factor,
+// moving_out_factor and moving_mid_factor's bits for the arrays the plan reads (exec_args'
+// in_factor, out_factor and mid_factor); a needed array that is null ends the program.
 [[nodiscard]] factor_cursors cursors_of(const exec_args& args, std::uint8_t needed) noexcept;
 
 // The cursors of transform t: f moved by the batch loops.

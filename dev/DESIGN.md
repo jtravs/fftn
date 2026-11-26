@@ -2431,7 +2431,7 @@ Points that matter:
   for L2-resident sizes and more beyond. Callbacks always see natural order, because their
   coordinates must be affine in the block.
 
-**Plan for task 5.2** (designed 2026-11-25, nothing built yet; steps 5.2a–5.2g in PLAN phase 5,
+**Plan for task 5.2** (designed 2026-11-25; 5.2a and 5.2b built, "As built" below; steps 5.2a–5.2g in PLAN phase 5,
 experiment X67; the API points the maintainer has to settle are listed in 18.2, "Pipelines").
 
 - **API** (provisional, `fftn/pipeline.hpp`), the block above built in parts:
@@ -2550,6 +2550,35 @@ experiment X67; the API points the maintainer has to settle are listed in 18.2, 
   - the lanes pair where the lanes rules would take the row (`lanes_up_to`, 9.3's block).
 
   5.2g adds measured candidates and wisdom keyed by the description.
+
+**As built (task 5.2b, 2026-11-26).** `fftn/pipeline.hpp` holds `pipeline_desc`, `pipeline`,
+`complex_convolution_rows` and `spectral_pair_rows` (each helper with the optional trailing runs
+of 18.2's proposal 2), and `workspace` takes a pipeline; all provisional, with 18.2's proposals
+as written. `pipeline_desc` follows the API block without `middle.call` and `group`; `middle` is
+an unnamed struct of `scale` and `mul`, and `fanout`, its distances and `runs` are present and
+refused until their steps, as are `first` inverse and the kinds `<T, C, T>` (5.2c) and
+`<C, T, C>` (5.3). The pipeline holds a `plan_core` built by `core/pipeline.cpp` and runs on the
+plan's entry points; its errors name the description's fields (the plan's own layout and edge
+checks run on the line's c2c shape, their messages renamed). The `<C, C, C>` chain pair is
+`chain_builder::c2c_line` twice, not a generalised `add_convolution`: the forward line from the
+input to the workspace block (the scratch-resident line, which batch loops never move) and the
+inverse from the block to the output, scratch lines a and b in between, the two chains sharing
+their twiddle tables. A complex factor of stride 1 along the line fuses (the prologue's into the
+forward's first pass, the middle's into its last, the epilogue's into the inverse's last); any
+other factor and accumulation is `edge_pass_stage` on the line in the block (the middle's in
+place there), so no bracketed stage sweeps memory. The scales' product goes to a separate pass if
+there is one, else the inverse's last pass, else the forward's first, else the inverse's first.
+The edge driver's cursors gain the middle's (`factor_cursors::mid`, the third
+`edge_record::factor_step`, read from `exec_args::mid_factor`), and a stage names which pointer
+takes it (`moving_mid_in_factor`, `moving_mid_out_factor`; only the out form is used yet). A
+pipeline with factors builds the edge driver's forms whatever `edge_batched_forms` says
+(`make_edge_forms`, without row blocks): leaf-sized lines are a flat body of two leaves, and
+longer lines run their calls unrolled where they number at most `calls_max`; `describe()` names
+the form. `add_convolution`'s generalisation (a middle cursor inside a Bluestein-style
+convolution, the inverse's first pass for a fan-out's kernel) and the byte offset into the block
+wait for 5.2d and 5.2e, their first readers. Plans and plans with edges are unchanged
+(`describe()` and `workspace_bytes()` probes against `main`; the plain driver functions
+disassemble the same).
 
 ### 12.3 Block callbacks
 
@@ -3727,6 +3756,10 @@ do not depend on the direction, and a workspace is plain bytes sized by
 9. **When `transforms_of` arrives.** It is in the class from 5.2b, ahead of 5.5's
    owner-computes work, since it is the plan's function on the same core.
 
+Task 5.2b (2026-11-26) built the API with proposals 1–9 as written, with one gap: proposal 7
+names `max_lanes` and `strict_layout`, which `options` does not have; a pipeline takes `scale`,
+`force_isa` and `in_place`, validates `measure_seconds` as a plan does, and ignores `effort` and
+`use`.
 **Callbacks (task 5.3 design, 2026-11-26; for the maintainer).** These questions are open in
 12.3's API block. Each has a proposal, which is used until the maintainer settles it:
 
@@ -4147,6 +4180,7 @@ to change before a release.
 | 2026-11-25 | Edges on multi-axis and real plans (task 5.1b-1, section 12.1): every factor and accumulation an edge phase of its own over the edge side's rows, before or after the transform, through the output (c2c input edge without accumulation) or one transform in the workspace block (in an in-place transform's layout, shared by both edges); team cores built with the edges | Correctness first (5.1): a phase of rows needs no kernel and no change to any strategy's phases, reaches every axis order, layout and kind, and teams share it by lines. Fusing into the first and last phases' passes (natural for the input edge on the rows) is X65's to price (5.1f) |
 | 2026-11-25 | X65 (task 5.1f, section 12.1): no fused edge variant is built yet; the separate edge pass stays baseline code; batched forms for plans with edges come first (proposal, the maintainer's decision) | Edges cost 1.5–6 times the plain plan on batched rows of 16–256 points whether fused or separate, more than the user's own loop, because such plans lose the batched program forms; a vectorised separate pass moved its cases by 0.99 on the EPYC (arm V, rejected) |
 | 2026-11-26 | The edge driver's batched forms (task 5.2a, section 12.1; X65's P1) built behind `machine_profile::edge_batched_forms`, off: the flat form, rows of one leaf and the unrolled calls with the factor cursors, and row blocks for c2c rows with separate edge passes; the middle cursor and the block offset left to 5.2b, which first reads them | P1's rule was missed on the EPYC 7763 by both arms (0.868 and 0.854 against 0.80): batch leaves with a separate factor gained a factor of two, fused leaves and chains barely moved. The forms are bitwise the walked form's, and pipelines need them from 5.2b, so the code stays, tested with the flag on |
+| 2026-11-26 | Row pipelines' API and the `<C, C, C>` chain pair (task 5.2b, section 12.2): provisional `fftn/pipeline.hpp` with 18.2's proposals; the chain pair as two `c2c_line` chains through the workspace block, factors of stride 1 fused, others edge passes on the line in cache; the middle cursor; the edge driver's batched forms always on for pipelines | The design's API block and plan, read literally; `c2c_line` already places fused factors, strides and Bluestein for both chains, so the convolution builder's generalisation waits for fan-out and the depth-first pair, which need it. X65 measured what losing the batched forms costs, so pipelines take them from the start |
 | 2026-11-26 | Pruned codelets (task 5.1e, section 12.1): `dif_head` and `plain_head`, halves of the even codelet radices only, for the first and last passes of c2c rows whose stored runs lie in the line's first half; one run of the half stored with stride 1 is read or written in place with no separate pass | Counted from the generator (gen/README.md): halves cost 0.77–0.89 of `dif`'s and 0.86–0.94 of `plain`'s vector operations at radices 8–64 and three quarters of the memory accesses; the gain is the separate pass that disappears. A half of an even radix is the line's first half whatever the radix, so one variant pair per radix covers the valid half of a zero-padded row and any band or crop inside it. Quarters and odd radices were counted and left out (smaller or no gains; `plain_head` of 9 and 25 would cost more than `plain`) |
 
 ---
