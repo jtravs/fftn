@@ -191,4 +191,4 @@ The full lists (FFTN ÷ FFTW, median), from the runs above with the re-runs' dec
 Cases are out of place and one transform unless marked (`ip` in place, `-bN` a batch of N,
 `bwd` backward). The lists are where FFTN loses most, not a measure of the double tuning's reach:
 rules measured in double (cache-footprint limits, batch-leaf tables) apply to float unchanged.
-Lesson in [LESSONS.md](../LESSONS.md) ("A deciding re-run needs enough rounds").
+Lesson 1.14 in [LESSONS.md](../LESSONS.md).
