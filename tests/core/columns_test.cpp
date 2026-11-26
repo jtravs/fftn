@@ -984,7 +984,12 @@ TYPED_TEST(Columns, AdjacentTransformsOnlyWhereTheyFit) {
   columns.axes = {{.n = 16, .in_stride = 32, .out_stride = 32}};
   columns.batches = {{.count = 32, .in_dist = 1, .out_dist = 1}};
   const std::size_t bytes = std::size_t{32} * 16 * sizeof(c);
-  EXPECT_NE(described(columns, bytes - 1).find("adjacent transforms"), std::string::npos);
+  // Where the rules make such a batch the lanes strategy (target_profile::lanes_up_to: float on
+  // some targets, X7) the route does not apply.
+  if (const std::string below = described(columns, bytes - 1);
+      below.find("strategy: lanes") == std::string::npos) {
+    EXPECT_NE(below.find("adjacent transforms"), std::string::npos) << below;
+  }
   EXPECT_EQ(described(columns, bytes).find("adjacent transforms"), std::string::npos);
   {
     // With adjacent_team_chain, a plan whose lanes take the chain's radices keeps the route for
