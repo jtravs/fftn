@@ -21,16 +21,19 @@
 
 namespace fftn::test {
 
-// Counts of allocation and deallocation calls since construction, from all threads.
+// Counts of allocation and deallocation calls since construction, and the bytes the
+// allocations asked for, from all threads.
 class allocation_counter {
 public:
   allocation_counter();
   [[nodiscard]] std::size_t allocations() const;
   [[nodiscard]] std::size_t deallocations() const;
+  [[nodiscard]] std::size_t bytes_allocated() const;
 
 private:
   std::size_t new_at_start_;
   std::size_t delete_at_start_;
+  std::size_t bytes_at_start_;
 };
 
 } // namespace fftn::test
