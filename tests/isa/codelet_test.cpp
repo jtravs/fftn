@@ -220,8 +220,7 @@ protected:
       const std::size_t seed = gen::codelet_count + i;
       check_codelet<T>(gen::pruned_codelets[i], runs_of<T>(*table).pruned[i], *kernels, seed,
                        false);
-      check_codelet<T>(gen::pruned_codelets[i], runs_of<T>(*table).pruned[i], *kernels, seed,
-                       true);
+      check_codelet<T>(gen::pruned_codelets[i], runs_of<T>(*table).pruned[i], *kernels, seed, true);
     }
   }
 };

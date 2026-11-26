@@ -532,9 +532,8 @@ void chain_builder<T>::add_pass(std::size_t n, const std::vector<std::size_t>& r
   } else if (last) {
     const radix_passes& rp = *k.codelet[codelet_slot(radix)];
     st.run = edges.out_head ? rp.last_head[d][out == edge_op::scale ? 1 : 0]
-             : out == edge_op::factor && edges.out_factor_copies > 1
-                 ? rp.last_shared_out
-                 : rp.last[d][edge_index(out)];
+             : out == edge_op::factor && edges.out_factor_copies > 1 ? rp.last_shared_out
+                                                                     : rp.last[d][edge_index(out)];
     st.args.dst_cols = edges.out_head ? edges.out_offset : 0;
     st.args.factor_copies = edges.out_factor_copies;
     st.units = blocks(s);
@@ -1027,15 +1026,14 @@ slot chain_builder<T>::scratch_chain(std::size_t n, int sign, slot from,
 template <class T> bool chain_builder<T>::head_first(std::size_t n) const {
   const std::vector<std::size_t> rad = radices(n);
   return rad.size() >= 2 && (batch_ == nullptr || !has_codelet(n)) &&
-         pair_for(n, {}, {}, line_edges()).entry == nullptr &&
-         has_pruned_codelet(rad.front());
+         pair_for(n, {}, {}, line_edges()).entry == nullptr && has_pruned_codelet(rad.front());
 }
 
 template <class T> bool chain_builder<T>::head_last(std::size_t n) const {
   const std::vector<std::size_t> rad = radices(n);
   return rad.size() >= 2 && (batch_ == nullptr || !has_codelet(n)) &&
-         pair_for(n, {}, {}, line_edges()).entry == nullptr &&
-         has_pruned_codelet(rad.back()) && !bluestein_last(n);
+         pair_for(n, {}, {}, line_edges()).entry == nullptr && has_pruned_codelet(rad.back()) &&
+         !bluestein_last(n);
 }
 
 template <class T>
@@ -1045,10 +1043,9 @@ std::size_t chain_builder<T>::c2c_line(std::size_t n, int sign, endpoint src, en
   // The pruned edge passes are the caller's choice from head_first and head_last, on lines of
   // stride 1, which then take neither leaves nor pair leaves.
   const bool heads = edges.in_head || edges.out_head;
-  if (heads && ((edges.in_head && (!head_first(n) || src.stride != 1 ||
-                                   edges.in != edge_op::none)) ||
-                (edges.out_head && (!head_last(n) || dst.stride != 1 ||
-                                    edges.out == edge_op::factor)))) {
+  if (heads &&
+      ((edges.in_head && (!head_first(n) || src.stride != 1 || edges.in != edge_op::none)) ||
+       (edges.out_head && (!head_last(n) || dst.stride != 1 || edges.out == edge_op::factor)))) {
     throw std::logic_error("fftn: internal: a pruned edge pass where c2c_line builds none");
   }
   line_scratch_ = 0;
@@ -1105,9 +1102,8 @@ std::size_t chain_builder<T>::c2c_line(std::size_t n, int sign, endpoint src, en
   // the interleaved line (layout_of), if the passes before it make a run.
   const std::size_t split_end = rad.size() - (edges.out_head ? 1 : 0);
   const std::size_t split =
-      edges.out_head
-          ? split_from(std::vector<std::size_t>(rad.begin(), rad.end() - 1), false, 1)
-          : split_from(rad, bluestein, copy_out ? 1 : dst.stride);
+      edges.out_head ? split_from(std::vector<std::size_t>(rad.begin(), rad.end() - 1), false, 1)
+                     : split_from(rad, bluestein, copy_out ? 1 : dst.stride);
   std::size_t s = 1;
   for (std::size_t i = 0; i < rad.size(); ++i) {
     const bool last = i + 1 == rad.size();

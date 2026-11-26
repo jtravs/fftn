@@ -139,8 +139,8 @@ std::string runs_key(const shape_view& s) {
   return o.str();
 }
 
-std::string runs_text(const run_plan& runs, bool accumulate, const char* in_to,
-                      std::size_t passes, run_pruning in, run_pruning out) {
+std::string runs_text(const run_plan& runs, bool accumulate, const char* in_to, std::size_t passes,
+                      run_pruning in, run_pruning out) {
   const auto axes_text = [](const side_runs& held) {
     std::string t;
     for (std::size_t d = 0; d < held.axes.size(); ++d) {

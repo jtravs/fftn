@@ -2241,15 +2241,14 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
         // output's stores only the runs.
         if (edge_ops->in.runs.any()) {
           const std::vector<line_run>& runs = edge_ops->in.runs.of(0);
-          line.in_head =
-              line.in == edge_op::none && within_half(runs) && chain.head_first(n);
+          line.in_head = line.in == edge_op::none && within_half(runs) && chain.head_first(n);
           if (line.in_head && direct(runs, from)) {
             line.in_offset = runs[0].stored * cb;
             in_pruning = run_pruning::direct;
           } else {
             run_line_stages(s.prec, edge_ops->in, false, line.in_head ? n / 2 : n, runs,
-                            {.src = from.where, .src_stride = from.stride},
-                            settings.chunk_points, false, st);
+                            {.src = from.where, .src_stride = from.stride}, settings.chunk_points,
+                            false, st);
             from = block;
             in_pruning = line.in_head ? run_pruning::half : run_pruning::none;
           }
@@ -2263,8 +2262,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
         bool out_pass = edge_ops->out.separate;
         if (edge_ops->out.runs.any()) {
           const std::vector<line_run>& runs = edge_ops->out.runs.of(0);
-          line.out_head =
-              line.out != edge_op::factor && within_half(runs) && chain.head_last(n);
+          line.out_head = line.out != edge_op::factor && within_half(runs) && chain.head_last(n);
           if (line.out_head && !edge_ops->out.accumulate && direct(runs, to)) {
             line.out_offset = runs[0].stored * cb;
             line_to = to;
@@ -2585,13 +2583,12 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       // last pass reads or writes where they are stored (task 5.1e).
       const bool to_out = use_edge_phases && src0.where == slot::out;
       const bool in_pass = edge_ops->in.runs.any() && in_pruning != run_pruning::direct;
-      const bool out_pass = edge_ops->out.runs.any() ? out_pruning != run_pruning::direct
-                                                     : edge_ops->out.accumulate;
+      const bool out_pass =
+          edge_ops->out.runs.any() ? out_pruning != run_pruning::direct : edge_ops->out.accumulate;
       const std::size_t passes = (in_pass ? 1U : 0U) + (out_pass ? 1U : 0U);
       c.edges_note =
           runs_text({.in = edge_ops->in.runs, .out = edge_ops->out.runs}, edge_ops->out.accumulate,
-                    to_out ? "the output" : "the workspace block", passes, in_pruning,
-                    out_pruning);
+                    to_out ? "the output" : "the workspace block", passes, in_pruning, out_pruning);
     } else {
       c.edges_note = edges_text(*edge_ops, layout, edge_passes(p));
     }

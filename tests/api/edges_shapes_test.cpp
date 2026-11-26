@@ -2047,12 +2047,13 @@ std::vector<runs_case> runs_cases() {
     // half; and runs reaching the second half, which no pass prunes. Real rows take them as
     // in 5.1d.
     const std::size_t half = row / 2;
-    cases.push_back({.name = "the valid half of a zero-padded row, read and written in place",
-                     .kind = k,
-                     .dims = {row},
-                     .count = 3,
-                     .runs = {{.where = fftn::side::in, .logical = 0, .stored = 3, .count = half},
-                              {.where = fftn::side::out, .logical = 0, .stored = 5, .count = half}}});
+    cases.push_back(
+        {.name = "the valid half of a zero-padded row, read and written in place",
+         .kind = k,
+         .dims = {row},
+         .count = 3,
+         .runs = {{.where = fftn::side::in, .logical = 0, .stored = 3, .count = half},
+                  {.where = fftn::side::out, .logical = 0, .stored = 5, .count = half}}});
     cases.push_back({.name = "half a row in, a crop of the output accumulated and scaled",
                      .kind = k,
                      .dims = {row},
@@ -2071,12 +2072,13 @@ std::vector<runs_case> runs_cases() {
                               {.where = fftn::side::in, .logical = 300, .stored = 50, .count = 1},
                               {.where = fftn::side::out, .logical = 0, .stored = 0, .count = half}},
                      .scale = 3.0});
-    cases.push_back({.name = "runs reaching a row's second half",
-                     .kind = k,
-                     .dims = {row},
-                     .count = 2,
-                     .runs = {{.where = fftn::side::in, .logical = 0, .stored = 0, .count = half + 1},
-                              {.where = fftn::side::out, .logical = half - 1, .stored = 0, .count = 2}}});
+    cases.push_back(
+        {.name = "runs reaching a row's second half",
+         .kind = k,
+         .dims = {row},
+         .count = 2,
+         .runs = {{.where = fftn::side::in, .logical = 0, .stored = 0, .count = half + 1},
+                  {.where = fftn::side::out, .logical = half - 1, .stored = 0, .count = 2}}});
     cases.push_back(
         {.name = "a plane, runs on both axes",
          .kind = k,
