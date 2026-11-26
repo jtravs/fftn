@@ -29,6 +29,7 @@
 #pragma once
 
 #include "core/plan_core.hpp"
+#include "core/runs.hpp"
 #include "fftn/detail/core.hpp"
 #include "fftn/options.hpp"
 #include "planner/rules.hpp"
@@ -40,11 +41,12 @@
 
 namespace fftn::inline v0::detail {
 
-// The layout of a c2c shape of one axis without runs (a pipeline's line under its batch), with
-// every default resolved and checked as a plan checks it (std::invalid_argument naming the
-// shape's fields): strides and distances in elements, and the bytes each side spans [lo, hi).
-// real: the elements are reals, not complex values (a <T, C, T> pipeline's input and output,
-// whose sides have the same logical extents and, in place, the same layout).
+// The layout of a c2c shape of one axis (a pipeline's line under its batch), with every default
+// resolved and checked as a plan checks it (std::invalid_argument naming the shape's fields):
+// strides and distances in elements, and the bytes each side spans [lo, hi). real: the elements
+// are reals, not complex values (a <T, C, T> pipeline's input and output, whose sides have the
+// same logical extents and, in place, the same layout). runs: the line's stored runs
+// (resolve_runs; task 5.2d), whose stored extents set the defaults and the reach, as a plan's.
 struct row_layout {
   std::ptrdiff_t in_stride = 0;
   std::ptrdiff_t out_stride = 0;
@@ -55,7 +57,8 @@ struct row_layout {
   std::ptrdiff_t out_lo = 0;
   std::ptrdiff_t out_hi = 0;
 };
-[[nodiscard]] row_layout resolve_row_layout(const shape_view& s, bool in_place, bool real = false);
+[[nodiscard]] row_layout resolve_row_layout(const shape_view& s, bool in_place, bool real = false,
+                                            const run_plan& runs = {});
 
 // The target profile of c's instruction set (c.isa_target, set by the caller) with the settings'
 // overrides, and the chain builder on it with the settings' rules, its tables in c's: what

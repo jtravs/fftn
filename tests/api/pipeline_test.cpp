@@ -723,8 +723,10 @@ TEST(Pipelines, RefusalsNameTheField) {
   d.fanout = 0;
   expect_refused(d, {}, "desc.fanout");
   d = good;
-  d.runs = {{.axis = 0, .where = fftn::side::in, .logical = 0, .stored = 0, .count = 8}};
-  expect_refused(d, {}, "desc.runs");
+  // Stored runs (task 5.2d; their own refusals in pipeline_runs_test.cpp): past the line.
+  d.runs = {{.axis = 0, .where = fftn::side::in, .logical = 10, .stored = 0, .count = 8}};
+  expect_refused(d, {}, "desc.runs[0].logical");
+  d = good;
   fftn::pipeline_desc<C, double, C> real_middle;
   real_middle.line = {.n = 16};
   expect_refused(real_middle, {}, "desc");
@@ -1294,8 +1296,10 @@ TEST(RealPipelines, RefusalsNameTheField) {
   d.fanout = 2;
   expect_refused(d, {}, "desc.fanout");
   d = good;
-  d.runs = {{.axis = 0, .where = fftn::side::in, .logical = 0, .stored = 0, .count = 8}};
-  expect_refused(d, {}, "desc.runs");
+  // Stored runs (task 5.2d; their own refusals in pipeline_runs_test.cpp): past the line.
+  d.runs = {{.axis = 0, .where = fftn::side::in, .logical = 10, .stored = 0, .count = 8}};
+  expect_refused(d, {}, "desc.runs[0].logical");
+  d = good;
   d = good;
   d.line.n = 0;
   expect_refused(d, {}, "desc.line.n");

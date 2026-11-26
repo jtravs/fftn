@@ -22,6 +22,9 @@ fftn_always_optimise(edges_shapes_test.cpp)
 # Row pipelines (tasks 5.2b, 5.2c) against the quadruple-precision reference, optimised likewise.
 fftn_add_test(fftn_pipeline_tests SOURCES pipeline_test.cpp LIBRARIES fftn_test_support)
 fftn_always_optimise(pipeline_test.cpp)
+# Stored runs and the depth-first pair on row pipelines (task 5.2d), likewise.
+fftn_add_test(fftn_pipeline_runs_tests SOURCES pipeline_runs_test.cpp LIBRARIES fftn_test_support)
+fftn_always_optimise(pipeline_runs_test.cpp)
 
 # One translation unit per public header, including only that header, all linked into one
 # executable (which also proves the headers define nothing twice across units).
