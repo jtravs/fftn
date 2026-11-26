@@ -1718,12 +1718,15 @@ template <class T, transform_kind K> bool forced_line_holds(const forced_line& f
   const shape_run<T> run(f.c, t, src);
   const fftn::shape<In, Out> s = run.template shape<In, Out>();
   const fftn::plan_edges<In, Out> e = run.template edges<In, Out>();
-  const auto plain = d::build_plan_core(d::view_of(s), run.opts, f.settings);
+  // The walked form's reasons: in the batched forms, batch leaves take separate passes a block
+  // of rows at a time (BatchedFormsTakeBatchLeaves).
+  d::build_settings settings = f.settings;
+  settings.profile.edge_batched_forms = false;
+  const auto plain = d::build_plan_core(d::view_of(s), run.opts, settings);
   if (!plain->strategy_name.starts_with(f.plain)) {
     return false;
   }
-  const auto core =
-      d::make_plan_core_with_edges(d::view_of(s), run.opts, d::view_of(e), f.settings);
+  const auto core = d::make_plan_core_with_edges(d::view_of(s), run.opts, d::view_of(e), settings);
   const std::string text = d::describe(*core);
   const std::string what =
       std::string(f.c.name) + ", " + fftn::isa_name(t) + (sizeof(T) == 8 ? " double" : " float");
@@ -1732,7 +1735,7 @@ template <class T, transform_kind K> bool forced_line_holds(const forced_line& f
                            " without the edges, " + core->strategy_name +
                            " with them: " + f.reason + "\n";
   EXPECT_NE(text.find(line), std::string::npos) << what << ": no '" << line << "' in\n" << text;
-  run_case<T, K>(f.c, t, false, true, &f.settings, f.reason);
+  run_case<T, K>(f.c, t, false, true, &settings, f.reason);
   return true;
 }
 
@@ -1756,11 +1759,6 @@ TYPED_TEST(EdgeShapes, DescribeNamesTheStrategyAnEdgeForces) {
   depth.strategy = d::strategy_choice::depth;
   d::build_settings leaves;
   leaves.batch_leaves = d::batch_leaf_choice::own;
-  // Separate edge passes keep batch leaves to a row at a time, and a fusable factor takes the
-  // fused chain, in the walked form only: the batched forms run batch leaves a block of rows at a
-  // time with every factor a separate pass (BatchedFormsTakeBatchLeaves).
-  d::build_settings walked_leaves = leaves;
-  walked_leaves.profile.edge_batched_forms = false;
   d::build_settings packed;
   packed.c2r_packed = 1;
   const std::vector<forced_line> every_target{
@@ -1825,7 +1823,7 @@ TYPED_TEST(EdgeShapes, DescribeNamesTheStrategyAnEdgeForces) {
          .dims = {8},
          .count = 16,
          .in = {real, {}, 1}},
-        walked_leaves,
+        leaves,
         "the chain on batch leaves",
         "batch leaves, one row at a time between the edge passes"},
        false},
@@ -1834,7 +1832,7 @@ TYPED_TEST(EdgeShapes, DescribeNamesTheStrategyAnEdgeForces) {
          .dims = {16},
          .count = 16,
          .out = {cplx, {}, 1}},
-        walked_leaves,
+        leaves,
         "the chain on batch leaves",
         "the chain with a fused factor takes no batch leaves"},
        false},
@@ -1905,10 +1903,14 @@ TYPED_TEST(EdgeShapes, DescribeCountsTheSeparatePasses) {
   using T = TypeParam;
   using enum transform_kind;
   namespace d = fftn::detail;
+  // The walked form's placements: in the batched forms, batch leaves (avx2's rules for 64-point
+  // rows) take a fusable factor as a separate pass (BatchedFormsTakeBatchLeaves).
   d::build_settings chain;
   chain.strategy = d::strategy_choice::chain;
+  chain.profile.edge_batched_forms = false;
   d::build_settings lanes;
   lanes.strategy = d::strategy_choice::lanes;
+  lanes.profile.edge_batched_forms = false;
   struct counted {
     shape_case c;
     const d::build_settings* settings;
