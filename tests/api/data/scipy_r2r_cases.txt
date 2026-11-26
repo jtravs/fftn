@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 John C. Travers and contributors
 # SPDX-License-Identifier: Apache-2.0
-# scipy 1.18.1, numpy 2.5.5: written by scipy_r2r_cases.py; do not edit
+# scipy 1.18.1: written by scipy_r2r_cases.py; do not edit
 case dct 2 backward 1 1 0
 in -0.859375
 out -1.71875

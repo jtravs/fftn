@@ -609,14 +609,20 @@ Points that matter:
   inverse kind (5.7's table), so `idct` of type 2 is the `dct3` plan with the inverse norm; N is
   the product of the axes' logical sizes (5.7's N column); `norm::ortho` implies scipy's default
   `orthogonalize=True` and the flag itself is not offered; one type along every axis of the N-D
-  forms (mixed kinds stay the core's `axes_r2r`); in place as c2c. The weights are real factors
-  (12.1) on the sides that have any, an array of the transformed axes' points in C order over
-  them in the order listed, broadcast along the batch, each point's weight 2^(m/2) for m weighted
-  coordinates, rounded once; the arrays live in the cache entry beside the plan, and only a plan
-  with weights executes through the `exec_args` overloads, so every other call runs as before.
-  `dht` is a forward transform for the norms (scipy has no DHT) and has no N-D form. Tested
-  against 795 scipy results recorded by `tests/api/data/scipy_r2r_cases.py` (both precisions) and
-  bitwise against the core plan with the edges built by hand.
+  forms (mixed kinds stay the core's `axes_r2r`); in place as c2c. Along one axis the weights are
+  real factors (12.1) on the sides that have any, an array of the axis's n points broadcast along
+  the batch, kept in the cache entry beside the plan; only such a plan executes through the
+  `exec_args` overloads, so every other call runs as before. Over several axes a full array would
+  be as large as the data (1 GiB per plan for 512³ in double), so the weights, a product of
+  per-axis weights differing from 1 only on the first or last hyperplane, are passes on the
+  calling thread: the output's after the transform; the input's (DCT types 1 and 3, DST type 3)
+  after copying the input into the output, where the plan, built in place on the output's layout,
+  then runs, so the input is never written. No memory beyond the plan; N/n points per weighted
+  hyperplane, plus the copy. `dht` is a forward transform for the norms (scipy has no DHT) and
+  has no N-D form. Tested against 795 scipy results recorded by
+  `tests/api/data/scipy_r2r_cases.py` (both precisions), bitwise against the core plan with the
+  edges built by hand along one axis, against the quadruple-precision reference over several,
+  and for the allocation of no weight array beyond one axis.
 - **Kokkos.** The one-shot functions of `fftn::kokkos::compat` (Kokkos-FFT's `fft`, `ifft`,
   `rfft` and the rest, 5.5) would be built over the same context (step 6.7).
 
@@ -4790,7 +4796,7 @@ to change before a release.
 | 2026-11-26 | Step 6.4 (provisional, second reader to come): `dct2`, `dct3`, `dst2` and `dst3` built in 5.7's routes on 6.3's phase builder (Makhoul's read stage and twiddled store over the r2c's half-length chain, the inverse over the c2r's; the sine kinds by exact signs and reversals), any n, kinds mixed across axes; an axis of one point of `dct2` or `dst2` folds its exact factor 2 into the scales' product instead of a phase | 5.7's routes as proposed; the factor 2 needs no phase and no rounding of its own |
 | 2026-11-26 | Step 6.3 (provisional, second reader to come): `r2r_kind`, `shape<T, T>` with `shape::kinds`, `rows_r2r`, `planes_r2r`, `volumes_r2r`, `axes_r2r`, `r2r_plan`, and the DHT as built in 5.7: a read stage, the r2c's complex chain in the member's scratch and a store stage fusing the r2c's pairing with the Hartley combination; the DCT and DST kinds refused until 6.4 and 6.5; real-to-real plans by the rules only | The 18.2 "Phase 6" proposals 9–13 taken as written; scratch rather than the block, because a phase's lines run on several members at once and the block is the task's |
 | 2026-11-26 | Convenience layer for complex and real transforms (step 6.6, section 5.4): provisional `fftn/easy.hpp` with 18.2's proposals Q4–Q8 (`fftn::easy`, numpy's semantics, a `thread_local` `context` of 64 plans dropped least recently used, rules planning, `view` with an `mdspan` conversion, both value forms); one compiled unit over the public API only; per-precision overloads for the span forms; `axis_list` for braced axes; sizes must agree (numpy's cropping and padding by `n` and `s` not offered); the executor's width left out of the key; `cached_plans()` and `max_plans()` added for inspection. Awaits the maintainer's review of the API | The maintainer's priority (2026-11-25): features fully built; numpy users' call sites translate one to one, and the core API stays the way to every other feature |
-| 2026-11-26 | Convenience layer for real-to-real transforms (step 6.7, section 5.4, "As built"): provisional `dct`, `idct`, `dst`, `idst` (spans, both forms), `dctn`, `idctn`, `dstn`, `idstn` (views) and `dht` in `fftn::easy`, with scipy's `int` type and norms; `norm::ortho` implies scipy's `orthogonalize=True`, the flag not offered; one type on every axis; the orthogonalising weights as cached real edge factors; `dht` scaled as a forward transform, 1-D only. Awaits the maintainer's review of the API | scipy users' call sites translate one to one; the weights are what 12.1's real factors are for, so the layer adds no stage of its own |
+| 2026-11-26 | Convenience layer for real-to-real transforms (step 6.7, section 5.4, "As built"): provisional `dct`, `idct`, `dst`, `idst` (spans, both forms), `dctn`, `idctn`, `dstn`, `idstn` (views) and `dht` in `fftn::easy`, with scipy's `int` type and norms; `norm::ortho` implies scipy's `orthogonalize=True`, the flag not offered; one type on every axis; the orthogonalising weights as cached real edge factors along one axis and as hyperplane passes over several (a full array would be as large as the data); `dht` scaled as a forward transform, 1-D only. Awaits the maintainer's review of the API | scipy users' call sites translate one to one; the weights are what 12.1's real factors are for, so the layer adds no stage of its own |
 
 ---
 

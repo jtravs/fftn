@@ -68,8 +68,9 @@ def main():
     out = [
         "# SPDX-FileCopyrightText: 2026 John C. Travers and contributors",
         "# SPDX-License-Identifier: Apache-2.0",
-        f"# scipy {scipy.__version__}, numpy {np.__version__}: written by scipy_r2r_cases.py; "
-        "do not edit",
+        # The results are scipy's, so its version is recorded; numpy only draws the inputs, and a
+        # numpy whose random stream differs gives other inputs, equally valid.
+        f"# scipy {scipy.__version__}: written by scipy_r2r_cases.py; do not edit",
     ]
     for n in LENGTHS:
         x = values((n,))
