@@ -2776,6 +2776,32 @@ pipelines.
     `describe()` gives a line per callback: where it runs, the block shape, any copy, and any
     sweep beyond the cache level.
 
+As built (task 5.3a): `fftn/callback.hpp` and `edge::call` are public and provisional, with 18.2's
+twelve proposals ("Callbacks") as listed there; `block_info::group` is 1 and `group_stride` 0
+without a group, `line_stride` 0 for one line. Callbacks are taken by c2c plans of one axis only
+(construction refuses them elsewhere, naming `edges.in.call.fn` or `edges.out.call.fn`), on the
+chain without batch leaves whatever the rules choose (`describe()` names the plain plan's
+strategy and "callbacks take the chain until task 5.3b"), planned by the rules whatever
+`options::effort` or `options::use` says, and run on the edge driver's walked form only (no
+batched forms, which are off anyway, X65 P1). A callback stage (`core/callbacks.cpp`) is a stage
+whose `moving_factors` has `moving_callback`, its kernel a guard for `driver.hpp` and its
+`callback_site` (the function, converted back to its own `block_fn` type before the call, the
+user pointer it takes, the logical start) in its edge record; a block is one of the stage's
+chunks (about `chunk_points` elements, a row whole up to twice that), so a team shares blocks as
+it shares any stage's chunks. On the row's chain: input `modify` out of place on the workspace
+block after a copy (or after the run read stage), in place on the array itself; `produce` into
+the block (zeros between runs) or in place into the array; output `modify` without accumulation
+or runs on the output itself, otherwise (and `consume`) on the block, the side's factor and scale
+in a pass of their own before it and the store, run store or accumulation after it. The batch
+loops do not move an input that is produced or an output that is consumed, so either may be
+null. `edge_state` carries the user pointers beside the cursors; `edge_task` the transform, the
+lane and its callback area, from the per-task entries' new lane and slots arguments
+(`plain_drive` ignores them; its instantiations disassemble identically to `main`'s, Clang 23
+arm64 and x86-64). Each slot ends with the callback area (`plan_core::offset_callback`) of the
+largest `scratch_bytes` plus 64 bytes of alignment slack (a serial slot starts on a 64-byte
+boundary). A plan with callbacks executed through an overload without `exec_args` ends the
+program, as one with factors does.
+
 ### 12.4 Owner-computes
 
 With `completion::own` and `plan::transforms_of(team)`, an application's own pointwise
@@ -4125,6 +4151,7 @@ to change before a release.
 | 2026-11-25 | Edges on multi-axis and real plans (task 5.1b-1, section 12.1): every factor and accumulation an edge phase of its own over the edge side's rows, before or after the transform, through the output (c2c input edge without accumulation) or one transform in the workspace block (in an in-place transform's layout, shared by both edges); team cores built with the edges | Correctness first (5.1): a phase of rows needs no kernel and no change to any strategy's phases, reaches every axis order, layout and kind, and teams share it by lines. Fusing into the first and last phases' passes (natural for the input edge on the rows) is X65's to price (5.1f) |
 | 2026-11-25 | X65 (task 5.1f, section 12.1): no fused edge variant is built yet; the separate edge pass stays baseline code; batched forms for plans with edges come first (proposal, the maintainer's decision) | Edges cost 1.5–6 times the plain plan on batched rows of 16–256 points whether fused or separate, more than the user's own loop, because such plans lose the batched program forms; a vectorised separate pass moved its cases by 0.99 on the EPYC (arm V, rejected) |
 | 2026-11-26 | The edge driver's batched forms (task 5.2a, section 12.1; X65's P1) built behind `machine_profile::edge_batched_forms`, off: the flat form, rows of one leaf and the unrolled calls with the factor cursors, and row blocks for c2c rows with separate edge passes; the middle cursor and the block offset left to 5.2b, which first reads them | P1's rule was missed on the EPYC 7763 by both arms (0.868 and 0.854 against 0.80): batch leaves with a separate factor gained a factor of two, fused leaves and chains barely moved. The forms are bitwise the walked form's, and pipelines need them from 5.2b, so the code stays, tested with the flag on |
+| 2026-11-26 | Block callbacks on c2c rows (task 5.3a, section 12.3): provisional `fftn/callback.hpp` (`block_info`, `block_fn`, `callback_mode`, `callback`, `callback_of`, `along_transforms`) and `edge::call`, with 18.2's proposals ("Callbacks"); the callback stage on the chain only until 5.3b, planned by the rules; blocks are stage chunks; per-member scratch at the end of each slot; the drive policies' per-task entries take the lane and slots, the plain instantiations unchanged; a plan with callbacks needs the `exec_args` overloads. Awaits the maintainer's review of the API. |
 
 ---
 

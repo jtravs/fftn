@@ -20,7 +20,7 @@ handoff. Lessons that generalise are in [LESSONS.md](LESSONS.md), decisions in D
 | 2 | Built: real transforms, any length, `planning::measure`, wisdom, `next_fast_length`. Open: 2.2's double c2c batch acceptance on AVX-512; X6; X13; the cost model's second pass. Exit not checked. The client catalogue's real-row gap mostly closed (X72, X75, X78; Ice Lake X82, Zen 2 X81). |
 | 3 | Built: the engine, scheduler, OpenMP adapter, `thread_pool`, Kokkos (provisional API). Scheduling improved: anchored whole transforms (X73 Zen 3, X74 Apple, X79 the Xeon 6240's class), the team state on pages of its own on the Xeon 6240's class (X79, after X76's diagnosis), real rows split by complex points there (X83). Open: T2, T4, T6; 3.6 against its acceptance. Exit not checked. |
 | 4 | 4.3 done. 4.1 and 4.2 built; acceptance not met case by case (large threaded planes against oneMKL, some volumes). |
-| 5 | Started 2026-11-25: 5.1 in progress (task Q); 5.2 designed (steps 5.2a–5.2g, DESIGN 12.2), its API questions open (DESIGN 18.2); 5.2a built 2026-11-26, its batched forms off by X65's P1 rule (task T); 5.3 designed (steps 5.3a–5.3h, DESIGN 12.3, experiments X66 and X68), its API questions open (DESIGN 18.2, "Callbacks"). |
+| 5 | Started 2026-11-25: 5.1 in progress (task Q); 5.2 designed (steps 5.2a–5.2g, DESIGN 12.2), its API questions open (DESIGN 18.2); 5.2a built 2026-11-26, its batched forms off by X65's P1 rule (task T); 5.3 designed (steps 5.3a–5.3h, DESIGN 12.3, experiments X66 and X68), its API questions open (DESIGN 18.2, "Callbacks"); 5.3a built 2026-11-26 (callbacks on c2c rows' chains, provisional; DESIGN 12.3 "As built"). |
 | 6, 7 | Not started. |
 
 **Client catalogue** (the check of 2026-11-24, `main` d4b169f): weighted geometric mean of FFTN ÷
