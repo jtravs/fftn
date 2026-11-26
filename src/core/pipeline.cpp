@@ -279,7 +279,7 @@ void build_pair(plan_core& c, const pipeline_view& d, const row_layout& l, const
   }
   end_program(p, line);
   c.block_elements = n;
-  lay_out_workspace(c, scratch, 2 * sizeof(T), false);
+  lay_out_workspace(c, scratch, 2 * sizeof(T), false, 0);
   const std::string radices = chain.radix_text(n);
   c.axis_notes.push_back("line (n = " + std::to_string(n) + "): forward " + radices +
                          ", then backward " + radices + " (shared twiddle tables)");
@@ -336,7 +336,7 @@ void build_real_pair(plan_core& c, const pipeline_view& d, const row_layout& l, 
   }
   end_program(p, line);
   c.block_elements = bins;
-  lay_out_workspace(c, scratch, 2 * sizeof(T), false);
+  lay_out_workspace(c, scratch, 2 * sizeof(T), false, 0);
   const bool strided_in = !pl.pro.separate && l.in_stride != 1;
   const bool strided_out = !pl.epi.separate && l.out_stride != 1;
   c.axis_notes.push_back("line (n = " + std::to_string(n) + "): forward " +
@@ -392,6 +392,16 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
   // bins.
   if (d.prologue.accumulate) {
     refuse("desc.prologue.accumulate", "is for the epilogue only");
+  }
+  // Block callbacks (fftn/callback.hpp) reach pipelines in task 5.3d, with the middle's; until
+  // then an edge's callback is refused rather than dropped.
+  if (d.prologue.call != nullptr) {
+    refuse("desc.prologue.call.fn",
+           "is a block callback: a pipeline's edges take none yet (task 5.3d)");
+  }
+  if (d.epilogue.call != nullptr) {
+    refuse("desc.epilogue.call.fn",
+           "is a block callback: a pipeline's edges take none yet (task 5.3d)");
   }
   shape_view r2c_line = line;
   r2c_line.kind = transform_kind::r2c;

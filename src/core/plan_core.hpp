@@ -5,6 +5,7 @@
 // layout, the program, the tables it points into, and the workspace layout.
 #pragma once
 
+#include "core/callbacks.hpp"
 #include "core/edge_driver.hpp"
 #include "core/edges.hpp"
 #include "core/program.hpp"
@@ -264,10 +265,36 @@ public:
   edge_forms edge_batched;
   std::size_t edge_row_block = 0;
   bool edge_batched_on = false;
+  // Block callbacks (core/callbacks.hpp, task 5.3a): the sites their stages call, which the
+  // edge records point to; and the offset in each scratch slot of its callback area and the
+  // area's bytes (0: none), the largest scratch_bytes of the plan's callbacks, one member never
+  // running two at once.
+  std::vector<std::unique_ptr<callback_site>> callback_sites;
+  std::size_t offset_callback = 0;
+  std::size_t callback_bytes = 0;
+  std::string callbacks_note; // describe()'s line for them (callbacks_text)
+  // An input a callback produces and an output one consumes, which the execution may pass as
+  // null (fftn/callback.hpp): only the debug builds' assertions on the pointers read these
+  // (pointers_valid).
+  bool in_unread = false;
+  bool out_unwritten = false;
   // A pipeline's core (core/pipeline.cpp, DESIGN.md 12.2): describe()'s first line, which names
   // it a pipeline (empty for plans).
   std::string pipeline_title;
 };
+
+// The debug builds' check of an execution's pointers: in place, in == out; out of place,
+// in != out. Except that an input a callback produces may be null (in place too), so that an
+// out-of-place plan whose input is produced and output consumed may take both null (task 5.3a).
+// For a plan without callbacks the conditions are the plain ones, as the flags are false.
+[[nodiscard]] inline bool in_place_pointers(const plan_core& c, const void* in,
+                                            const void* out) noexcept {
+  return !c.in_place || in == out || (c.in_unread && in == nullptr);
+}
+[[nodiscard]] inline bool out_of_place_pointers(const plan_core& c, const void* in,
+                                                const void* out) noexcept {
+  return c.in_place || in != out || (in == nullptr && c.in_unread && c.out_unwritten);
+}
 
 // The core a team of two or more members runs: the team program where there is one.
 [[nodiscard]] inline const plan_core& team_core(const plan_core& c) noexcept {

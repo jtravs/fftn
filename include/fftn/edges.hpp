@@ -10,6 +10,7 @@
 /// docs/conventions.md ("Edges") states what an edge computes.
 #pragma once
 
+#include "fftn/callback.hpp" // IWYU pragma: export
 #include "fftn/config.hpp"
 
 #include <cstddef>
@@ -62,6 +63,12 @@ struct factor {
 /// `scale` after it, then stores it, or adds it to the output's value when `accumulate` is
 /// set. A default edge does nothing.
 ///
+/// With a callback (`call`, fftn/callback.hpp) the operations apply in this order: on the input
+/// edge, the input is read (or `produce`d by the callback), a `modify` callback runs, then the
+/// factor and scale; on the output edge, the factor and scale, then a `modify` callback, then
+/// the store, the accumulation or the callback's `consume`. The scales of both edges and
+/// `options::scale` are then applied after the input's callback and before the output's.
+///
 /// Guarantees: the result equals the transform of the multiplied input, multiplied and
 /// added as above, within the transform's error bound plus one rounding per multiplication
 /// and addition (dev/DESIGN.md 15.5); it is not necessarily bitwise equal to the same work
@@ -79,6 +86,14 @@ template <class T> struct edge {
   /// on the input edge and on an in-place plan (`options::in_place`), whose output's prior
   /// values are its input.
   bool accumulate = false;
+  /// A block callback (fftn/callback.hpp), none by default; its argument arrives with each
+  /// execution (`exec_args::in_user`, `out_user`). Provisional (task 5.3a): c2c plans of one
+  /// axis only, on the chain whatever strategy the rules would choose (`plan::describe()` says
+  /// so); measured planning and wisdom are not used for such plans (the rules plan them). A
+  /// plan with a callback must be executed through an overload that takes `exec_args`: the
+  /// others end the program (`std::abort`, with a message on stderr). A pipeline's prologue and
+  /// epilogue refuse one until task 5.3d.
+  callback<T> call{};
 };
 
 /// The two edges of a plan (`plan::plan`): `in` for the input, `out` for the output.
@@ -98,9 +113,9 @@ template <class In, class Out> struct plan_edges {
   edge<Out> out{};
 };
 
-/// The data of one execution (dev/DESIGN.md 12): the factor arrays of the edges and, for
-/// block callbacks (not built yet), the pointers each receives. Every pointer may be null
-/// where the plan has nothing that reads it.
+/// The data of one execution (dev/DESIGN.md 12): the factor arrays of the edges and the
+/// pointers their block callbacks receive. Every pointer may be null where the plan has nothing
+/// that reads it; a callback's pointer is passed to it as given, null included.
 ///
 /// Preconditions at execution: a plan whose input or output edge has a factor needs that
 /// edge's array (a pipeline likewise its prologue's, middle's and epilogue's, fftn/pipeline.hpp),
@@ -117,11 +132,12 @@ struct exec_args {
   const void* mid_factor = nullptr;
   /// The output edge's factor array (`edge::mul` of `plan_edges::out`).
   const void* out_factor = nullptr;
-  /// The input edge's callback argument (callbacks are not built yet; ignored).
+  /// The input edge's callback argument (`edge::call` of `plan_edges::in`), its `user`.
   void* in_user = nullptr;
-  /// A pipeline middle's callback argument (not built yet; ignored).
+  /// A pipeline middle's callback argument (`pipeline_desc::middle.call`, task 5.3d; until then,
+  /// and for plans, ignored).
   void* mid_user = nullptr;
-  /// The output edge's callback argument (not built yet; ignored).
+  /// The output edge's callback argument (`edge::call` of `plan_edges::out`), its `user`.
   void* out_user = nullptr;
 };
 
