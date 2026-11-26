@@ -245,7 +245,8 @@ double middle_callback_error() {
       y = gain(y);
     }
   };
-  fftn::pipeline_desc desc = fftn::spectral_pair_rows<double>(n, count, fftn::direction::forward);
+  fftn::pipeline_desc desc = fftn::complex_convolution_rows<double>(n, count);
+  desc.middle.mul = {}; // no kernel: the callback is the whole middle
   desc.middle.scale = 1.0 / static_cast<double>(n);
   desc.middle.call = {.fn = fftn::callback_of<decltype(saturate), std::complex<double>>()};
   const fftn::pipeline pipe(desc);

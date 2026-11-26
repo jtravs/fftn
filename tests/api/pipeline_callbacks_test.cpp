@@ -43,6 +43,7 @@
 #include <limits>
 #include <memory>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <type_traits>
@@ -93,6 +94,11 @@ struct pcb_case {
   std::vector<run_spec> in{};
   std::vector<run_spec> out{};
   std::size_t scratch = 0;
+  bool per_row = false; // a kernel per line (the middle's batch stride)
+  // With a consumed fan-out: fanout_out_dist this value, which a store would refuse (0, or copies
+  // overlapping lines), where `odd_copies` is set (DESIGN.md 18.2, "Callbacks" 14).
+  bool odd_copies = false;
+  std::ptrdiff_t consumed_out_dist = 0;
 };
 
 // The callbacks' functions, in the precision they run in: pure per element (the middle's per
@@ -306,6 +312,7 @@ template <class T, class E> struct pcb_run {
   std::ptrdiff_t out_dist = 0;
   std::ptrdiff_t copy_dist = 0;
   std::ptrdiff_t factor_dist = 0;
+  std::ptrdiff_t kbatch = 0; // the kernel's batch stride (per_row)
   double mid_scale = 1.0;
   desc_t desc;
   std::vector<E> x;
@@ -384,12 +391,18 @@ template <class T, class E> struct pcb_run {
           .fn = &consume_out<E>, .mode = fftn::callback_mode::consume, .scratch_bytes = sb};
     }
     // The kernels: copy k's factor_dist k elements after copy 0's, along the bins mid_axis apart.
-    const std::ptrdiff_t one = c.mid_axis * static_cast<std::ptrdiff_t>(bins - 1) + 1;
+    // With per_row, line r's kernel kbatch r elements after line 0's.
+    kbatch = c.per_row ? c.mid_axis * static_cast<std::ptrdiff_t>(bins) : 0;
+    const std::ptrdiff_t one = c.mid_axis * static_cast<std::ptrdiff_t>(bins - 1) + 1 +
+                               kbatch * static_cast<std::ptrdiff_t>(c.count - 1);
     factor_dist = one + 1;
     const auto ksize =
         static_cast<std::size_t>(one + factor_dist * static_cast<std::ptrdiff_t>(c.fanout - 1));
     if (c.mid_f != none) {
       desc.middle.mul = {.kind = c.mid_f, .axis_strides = {c.mid_axis}, .batch_strides = {}};
+      if (c.per_row) {
+        desc.middle.mul.batch_strides = {kbatch};
+      }
       if (c.mid_f == real) {
         kreal = src.reals<T>(ksize);
       } else {
@@ -400,6 +413,9 @@ template <class T, class E> struct pcb_run {
     if (c.fanout > 1) {
       desc.fanout_out_dist = copy_dist;
       desc.fanout_factor_dist = factor_dist;
+      if (c.odd_copies) {
+        desc.fanout_out_dist = c.consumed_out_dist;
+      }
     }
 
     x = values(src, static_cast<std::size_t>(in_dist) * c.count);
@@ -531,11 +547,12 @@ template <class T, class E> struct pcb_run {
     }
     return z.empty() ? std::complex<double>(1.0, 0.0) : std::complex<double>(z[j]);
   }
-  [[nodiscard]] std::complex<double> kernel_at(std::size_t b, std::size_t k) const {
+  [[nodiscard]] std::complex<double> kernel_at(std::size_t b, std::size_t r, std::size_t k) const {
     if (c.mid_f == none) {
       return {1.0, 0.0};
     }
     const auto i = static_cast<std::size_t>(c.mid_axis * static_cast<std::ptrdiff_t>(b) +
+                                            kbatch * static_cast<std::ptrdiff_t>(r) +
                                             factor_dist * static_cast<std::ptrdiff_t>(k));
     return c.mid_f == real ? std::complex<double>(kreal[i], 0.0)
                            : std::complex<double>(kcomplex[i]);
@@ -544,13 +561,15 @@ template <class T, class E> struct pcb_run {
     double peak = 0.0;
     double sum = 0.0;
     for (std::size_t k = 0; k < c.fanout; ++k) {
-      for (std::size_t b = 0; b < bins; ++b) {
-        const double m = std::abs(kernel_at(b, k));
-        peak = std::max(peak, m);
-        sum += m * m;
+      for (std::size_t r = 0; r < c.count; ++r) {
+        for (std::size_t b = 0; b < bins; ++b) {
+          const double m = std::abs(kernel_at(b, r, k));
+          peak = std::max(peak, m);
+          sum += m * m;
+        }
       }
     }
-    const auto count = static_cast<double>(c.fanout * bins);
+    const auto count = static_cast<double>(c.fanout * c.count * bins);
     return sum == 0.0 ? 1.0 : peak / std::sqrt(sum / count);
   }
 
@@ -627,7 +646,7 @@ template <class T, class E> struct pcb_run {
       for (std::size_t k = 0; k < c.fanout; ++k) {
         std::vector<std::complex<double>> z(bins);
         for (std::size_t b = 0; b < bins; ++b) {
-          z[b] = spectrum[b] * kernel_at(b, k) * post;
+          z[b] = spectrum[b] * kernel_at(b, r, k) * post;
         }
         std::vector<std::complex<double>> back(c.n);
         if constexpr (real_kind) {
@@ -911,6 +930,24 @@ std::vector<pcb_case> sets(std::size_t n, bool real_kind) {
        .epi = epi_cb::modify,
        .mid_axis = 2,
        .epi_f = side},
+      {.name = "fan-out: consumed, fanout_out_dist 0 (a store would refuse it)",
+       .n = n,
+       .fanout = 3,
+       .epi = epi_cb::consume,
+       .odd_copies = true,
+       .consumed_out_dist = 0},
+      {.name = "fan-out: consumed, copies overlapping lines (a store would refuse them)",
+       .n = n,
+       .count = 4,
+       .fanout = 2,
+       .epi = epi_cb::consume,
+       .odd_copies = true,
+       .consumed_out_dist = 1},
+      {.name = "a kernel per line after the middle's (the inverse's first pass)",
+       .n = n,
+       .pro_scale = 2.0,
+       .per_row = true},
+      {.name = "a strided kernel per line, scaled", .n = n, .mid_axis = 2, .per_row = true},
       {.name = "fan-out: no middle callback",
        .n = n,
        .fanout = 2,
@@ -1078,6 +1115,23 @@ TYPED_TEST(PipelineCallbacks, DepthFirstPairForced) {
                           .epi = epi_cb::modify,
                           .pro_scale = 2.0},
                          fftn::isa::best, true, s, false, "the depth-first pair");
+}
+
+// A consumed fan-out's copies are not placed (DESIGN.md 18.2, "Callbacks" 14): a fanout_out_dist
+// that a store refuses is taken with consume (the cases "fan-out: consumed, ..." above check its
+// results).
+TYPED_TEST(PipelineCallbacks, ConsumedCopiesAreNotPlaced) {
+  using C = std::complex<TypeParam>;
+  using pipe_t = fftn::pipeline<C, C, C>;
+  for (const std::ptrdiff_t dist : {0, 1}) {
+    fftn::pipeline_desc<C, C, C> desc = fftn::complex_convolution_rows<TypeParam>(16, 2);
+    desc.fanout = 3;
+    desc.fanout_out_dist = dist;
+    desc.epilogue.call = {.fn = &modify_out<C>};
+    EXPECT_THROW((void)pipe_t(desc), std::invalid_argument) << dist;
+    desc.epilogue.call = {.fn = &consume_out<C>, .mode = fftn::callback_mode::consume};
+    EXPECT_NO_THROW((void)pipe_t(desc)) << dist;
+  }
 }
 
 // describe() says where each callback runs, and the two products of the scales.
