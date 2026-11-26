@@ -1187,10 +1187,10 @@ void forms_agree(const shape_case& sc, fftn::isa target, forms_seen& seen) {
   EXPECT_GE(b->bytes, w->bytes) << what;
   if (b->needs_args) {
     const d::edge_forms& f = b->edge_batched;
-    seen.flat += f.flat.empty() ? 0 : 1;
-    seen.leaf_rows += f.leaf_rows ? 1 : 0;
-    seen.calls += f.calls.empty() ? 0 : 1;
-    seen.row_blocks += f.row_block != 0 ? 1 : 0;
+    seen.flat += f.flat.empty() ? 0U : 1U;
+    seen.leaf_rows += f.leaf_rows ? 1U : 0U;
+    seen.calls += f.calls.empty() ? 0U : 1U;
+    seen.row_blocks += f.row_block != 0 ? 1U : 0U;
     // A c2c row's chain with separate passes and one batch dimension takes the row-block form.
     const std::string text = d::describe(*b);
     if (K == transform_kind::c2c && sc.dims.size() == 1 && sc.outer == 1 && sc.count >= 2 &&
