@@ -3284,10 +3284,17 @@ volumes of every kind take callbacks, the API unchanged. In `build()` (`core/pla
 - **The input's** runs in the first phase (c2c and r2c: the last axis' rows; c2r: the first
   complex axis' columns, lines alone or lanes column blocks): out of place a `modify` callback's
   line is copied first into the phase's destination (c2c: the output, or the block for a consumed
-  output; c2r: the half spectrum's block), where the line's transform then runs in place, or for
-  r2c into the real rows' copy in the workspace block (a third view the loops move,
-  `slot_bytes_along`); `produce` writes there; in place the callback runs on the input itself.
-  The copy is a stage of the line ("callback in: the input copied"), not an edge pass.
+  output; c2r: the half spectrum's block), where the line's transform then runs in place. An
+  r2c's real row goes into its own complex row of the output where the output's rows are
+  contiguous, the r2c then in place there as an in-place plan's rows are, else into the
+  member's scratch line b, which the row's r2c reads once in its first stage (`build()` checks
+  this), and into the workspace block only beside a consumed output, which is there anyway; so
+  such a plan's `workspace_bytes()` is the plan's without the callback, or a strided output's
+  larger by at most a row per scratch line and lane (test
+  `RealInputCallbacksCostNoTransformOfWorkspace`; a whole transform in the block cost about the
+  half spectrum's bytes, the second reader's finding). `produce` writes where the copy would go;
+  in place the callback runs on the input itself. The copy is a stage of the line ("callback
+  in: the input copied"), not an edge pass.
 - **The output's** runs in the last phase (c2c and r2c: axis 0's columns, lines alone or lanes
   column blocks; c2r: the real rows), after its last pass, on the output, or for `consume` on the
   workspace block, where a c2r's real rows are written in place over the half spectrum (as an

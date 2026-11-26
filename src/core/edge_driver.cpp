@@ -230,27 +230,24 @@ void run_records(const program& p, const std::vector<edge_record>& e, std::size_
 }
 
 // Iteration `index` of the loops [begin, begin + depth), the last varying fastest; with the
-// coordinates each loop moves added to env's (task 5.3c; their starts are run_edge_lines').
-struct nest_position {
-  slot_addresses at;
-  factor_cursors f;
-  callback_env env;
-};
-nest_position moved_in_nest(const program& p, const std::vector<edge_record>& e, std::size_t begin,
-                            std::size_t depth, std::size_t index, const slot_addresses& at,
-                            factor_cursors f, const callback_env& env) noexcept {
-  nest_position here{.at = at, .f = f, .env = env};
+// coordinates each loop moves added to `origin` where given (task 5.3c; their starts are
+// run_edge_lines').
+std::pair<slot_addresses, factor_cursors>
+moved_in_nest(const program& p, const std::vector<edge_record>& e, std::size_t begin,
+              std::size_t depth, std::size_t index, const slot_addresses& at, factor_cursors f,
+              std::array<std::size_t, 3>* origin = nullptr) noexcept {
+  slot_addresses here = at;
   std::size_t rest = index;
   for (std::size_t i = begin + depth; i > begin && rest != 0; --i) {
     const loop& l = *std::get_if<loop>(&p.records[i - 1]);
-    here.at = moved(here.at, l.step, rest % l.count);
-    here.f = moved(here.f, e[i - 1].factor_step, rest % l.count);
-    if (e[i - 1].moves_origin) {
-      here.env.origin[e[i - 1].origin_axis] += rest % l.count * e[i - 1].origin_step;
+    here = moved(here, l.step, rest % l.count);
+    f = moved(f, e[i - 1].factor_step, rest % l.count);
+    if (origin != nullptr && e[i - 1].moves_origin) {
+      (*origin)[e[i - 1].origin_axis] += rest % l.count * e[i - 1].origin_step;
     }
     rest /= l.count;
   }
-  return here;
+  return {here, f};
 }
 
 // A stage of a lanes block (driver.cpp's run_lane_stage), with the cursors in the arguments of
@@ -847,16 +844,29 @@ void run_edge_lines(const program& p, const std::vector<edge_record>& e, std::si
                     std::size_t nest, std::size_t body_end, std::size_t first, std::size_t last,
                     const slot_addresses& at, factor_cursors f, const callback_env& env) noexcept {
   slot_addresses from = at;
-  callback_env start = env;
+  bool moves = false;
   for (std::size_t i = begin; i < begin + nest; ++i) {
     from = moved(from, std::get_if<loop>(&p.records[i])->start, 1);
+    moves = moves || e[i].moves_origin;
+  }
+  if (!moves) {
+    // No callback's coordinates move (every plan but a multi-axis one with callbacks): no copy.
+    for (std::size_t line = first; line < last; ++line) {
+      const auto [here, cursors] = moved_in_nest(p, e, begin, nest, line, from, f);
+      run_records(p, e, begin + nest, body_end, here, cursors, env);
+    }
+    return;
+  }
+  callback_env start = env;
+  for (std::size_t i = begin; i < begin + nest; ++i) {
     if (e[i].moves_origin) {
       start = at_iteration(start, e[i], 0);
     }
   }
   for (std::size_t line = first; line < last; ++line) {
-    const nest_position here = moved_in_nest(p, e, begin, nest, line, from, f, start);
-    run_records(p, e, begin + nest, body_end, here.at, here.f, here.env);
+    callback_env here = start;
+    const auto [at_line, cursors] = moved_in_nest(p, e, begin, nest, line, from, f, &here.origin);
+    run_records(p, e, begin + nest, body_end, at_line, cursors, here);
   }
 }
 

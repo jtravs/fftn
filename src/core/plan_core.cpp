@@ -1772,6 +1772,10 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   view block_real{
       .where = slot::block, .stride = {}, .element_bytes = static_cast<std::ptrdiff_t>(sizeof(T))};
   std::size_t edge_block = 0;
+  // An r2c plane's or volume's input callback out of place (task 5.3c) on a real row that is not
+  // in the workspace block: its copy or produced row in a scratch line of the member running it
+  // (slot b, which the row's r2c reads first, below), where the output's rows are strided.
+  bool r2c_scratch_row = false;
   if (edge_phases) {
     const std::size_t last_n =
         s.kind == transform_kind::c2c ? c.lengths[r - 1] : c.lengths[r - 1] / 2 + 1;
@@ -1793,7 +1797,23 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     // c2c or c2r first phase reads the input to copy it into its destination (in_copy), the
     // phase then in place there, so src0 stays the input; a produced input is written there.
     const bool copy_in_phase = in_copy && s.kind != transform_kind::r2c;
-    if (edge_ops->in.separate || (edge_ops->in.call.any() && !c.in_place && !copy_in_phase)) {
+    // An r2c's real rows go to the block only for a consumed output, which is there anyway: where
+    // the output's rows are contiguous each real row is copied (or produced) into its own complex
+    // row of the output and the r2c runs there in place, as an in-place plan's rows do; otherwise
+    // into a scratch line. A copy in the block would make it one whole transform for rows that
+    // are used one at a time (about the half spectrum's bytes more workspace).
+    const bool r2c_rows = in_inside && !c.in_place && s.kind == transform_kind::r2c && !to_block;
+    if (r2c_rows && out.stride[r - 1] == 1) {
+      src0 = view{.where = slot::out,
+                  .stride = out.stride,
+                  .element_bytes = static_cast<std::ptrdiff_t>(sizeof(T))};
+      for (std::size_t d = 0; d + 1 < r; ++d) {
+        src0.stride[d] = 2 * out.stride[d];
+      }
+    } else if (r2c_rows) {
+      r2c_scratch_row = true;
+    } else if (edge_ops->in.separate ||
+               (edge_ops->in.call.any() && !c.in_place && !copy_in_phase)) {
       src0 = s.kind == transform_kind::c2c && !to_block
                  ? out_view
                  : (s.kind == transform_kind::r2c ? block_real : block_complex);
@@ -2210,6 +2230,8 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       std::string place;
       if (where.where == slot::block) {
         place = "in the workspace block";
+      } else if (where.where == slot::b) {
+        place = "in a scratch line of the member running it";
       } else {
         place = c.in_place ? "in the input's memory, in place" : "in the output";
       }
@@ -3316,18 +3338,39 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     // it: its copy (in_copy) or the produced row in the workspace block (src0), or the input
     // itself in place (through the output slot, which the loops move by the same bytes).
     std::vector<edge_loop> rows_origin;
+    const endpoint scratch_row{.where = slot::b, .stride = 1};
+    const endpoint row_src = r2c_scratch_row ? scratch_row : at(src0, r - 1);
     if (in_inside) {
       const endpoint where =
-          c.in_place ? endpoint{.where = slot::out, .stride = in.stride[r - 1]} : at(src0, r - 1);
+          c.in_place ? endpoint{.where = slot::out, .stride = in.stride[r - 1]} : row_src;
       axes_callback(false, r - 1, c.lengths[r - 1], at(in_view, r - 1), 0, where, true, 1, 0,
                     no_origin, 1, st);
     }
-    const std::size_t need =
-        chain.r2c_line(c.lengths[r - 1], at(src0, r - 1), at(dst0, r - 1),
-                       src0.where == slot::in ? c.in_place : src0.where == dst0.where,
-                       r == 1 ? opts.scale : 1.0, st);
-    lines(r - 1, in.extent, in_copy ? in_view : src0, dst0, need, std::move(st),
-          in_inside ? &rows_origin : nullptr, in_copy ? &src0 : nullptr);
+    const std::size_t row_first = st.size();
+    std::size_t need = chain.r2c_line(
+        c.lengths[r - 1], row_src, at(dst0, r - 1),
+        r2c_scratch_row ? false : (src0.where == slot::in ? c.in_place : src0.where == dst0.where),
+        r == 1 ? opts.scale : 1.0, st);
+    if (r2c_scratch_row) {
+      // A strided output's r2c reads its source once, in its first stage, into scratch line a;
+      // a stage after it that touches b first writes it (the chain's own use of b).
+      bool sound =
+          st.size() > row_first && st[row_first].src == slot::b && st[row_first].dst != slot::b;
+      for (std::size_t k = row_first + 1; sound && k < st.size(); ++k) {
+        if (st[k].src == slot::b || st[k].dst == slot::b) {
+          sound = st[k].dst == slot::b && st[k].src != slot::b;
+          break;
+        }
+      }
+      if (!sound) {
+        throw std::logic_error("fftn: internal: an r2c row that reads a scratch line twice");
+      }
+      need = std::max(need, (c.lengths[r - 1] + 1) / 2); // the n reals in complex elements
+    }
+    // The loops move the input for the copy, and the output; with a produced row only the output.
+    lines(r - 1, in.extent, in_copy ? in_view : (r2c_scratch_row ? dst0 : src0), dst0, need,
+          std::move(st), in_inside ? &rows_origin : nullptr,
+          in_copy && !r2c_scratch_row ? &src0 : nullptr);
     adopt(rows_origin, 0, edge_loops);
     c.axis_notes.push_back("axis " + std::to_string(listed(r - 1)) +
                            " (n = " + std::to_string(c.lengths[r - 1]) + "): " +

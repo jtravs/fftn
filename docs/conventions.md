@@ -332,8 +332,9 @@ guarantees of "Determinism" below hold. A callback may execute another plan thro
 overload with a workspace of its own, such as `fftn::workspace{info.scratch}`. A plan with a
 callback is executed through the overloads that take `exec_args`; the others end the program.
 Callbacks are taken by c2c, r2c and c2r plans of every rank on the strategy the rules or measured
-planning choose; on a plane or volume the input's runs inside the first axis's lines and the
-output's inside the last's, so a callback costs no pass over the array of its own; measured planning times its candidates with stand-ins that do
+planning choose; on a plane or volume the input's runs inside the lines of the transform's first
+phase and the output's inside those of its last, so a callback costs no pass over the array of
+its own, and a side with a factor or accumulation runs its callback in that side's own pass; measured planning times its candidates with stand-ins that do
 nothing in place of the callbacks, so construction never calls one. Only a consumed output keeps
 a row from a strategy that writes the output as its working memory (the grid, the depth-first
 chains, the lanes over adjacent transforms, and a real row's lanes whose input is in the

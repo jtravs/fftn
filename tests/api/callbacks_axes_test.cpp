@@ -981,6 +981,14 @@ std::vector<axes_case> cases() {
        .out = out_kind::modify,
        .gap = 2,
        .stride = 3},
+      {.name = "r2c plane, odd rows, strided, produce",
+       .kind = r2c,
+       .dims = {6, 9},
+       .count = 2,
+       .in = in_kind::produce,
+       .out = out_kind::modify,
+       .gap = 1,
+       .stride = 2},
       {.name = "r2c plane of wide columns",
        .kind = r2c,
        .dims = {64, 64},
@@ -1089,6 +1097,46 @@ TEST(CallbackAxes, CallbacksAddOnlyTheirStages) {
       const std::size_t added = in_place ? 2 : 3; // the callbacks, and out of place the copy
       EXPECT_EQ(with->prog.records.size(), plain->prog.records.size() + added)
           << d::describe(*with);
+    }
+  }
+}
+
+void none_real(void*, const fftn::block_info&, double*) noexcept {}
+
+// An r2c plane's or volume's input callback out of place costs no workspace for its copies: each
+// real row goes to its own complex row of the output (rows contiguous there) or to a scratch line
+// of the member running it (rows strided), never to a whole transform in the workspace block
+// (DESIGN.md 12.3, "As built (task 5.3c)"). A strided output's scratch lines may grow to hold a
+// row: by at most one row each, per lane.
+TEST(CallbackAxes, RealInputCallbacksCostNoTransformOfWorkspace) {
+  for (const dims_t& dims : {dims_t{64, 48}, dims_t{16, 12, 20}, dims_t{30, 99}}) {
+    for (const std::ptrdiff_t out_stride : {std::ptrdiff_t{1}, std::ptrdiff_t{3}}) {
+      fftn::shape<double, cd> s;
+      const std::size_t r = dims.size();
+      std::ptrdiff_t in_span = 1;
+      std::ptrdiff_t out_span = out_stride;
+      s.axes.resize(r);
+      for (std::size_t a = r; a > 0; --a) {
+        const std::size_t n_out = a == r ? dims[a - 1] / 2 + 1 : dims[a - 1];
+        s.axes[a - 1] = {.n = dims[a - 1], .in_stride = in_span, .out_stride = out_span};
+        in_span *= static_cast<std::ptrdiff_t>(dims[a - 1]);
+        out_span *= static_cast<std::ptrdiff_t>(n_out);
+      }
+      s.batches = {{.count = 2, .in_dist = in_span, .out_dist = out_span}};
+      const fftn::plan<double, cd> plain(s, {});
+      for (const fftn::callback_mode mode :
+           {fftn::callback_mode::modify, fftn::callback_mode::produce}) {
+        const fftn::plan<double, cd> with(s, {},
+                                          {.in = {.call = {.fn = &none_real, .mode = mode}}});
+        const std::size_t row = 2 * (dims.back() * sizeof(double) + 256);
+        for (const int lanes : {1, 4}) {
+          const std::size_t limit = plain.workspace_bytes(lanes) +
+                                    (out_stride == 1 ? 0 : static_cast<std::size_t>(lanes) * row);
+          EXPECT_LE(with.workspace_bytes(lanes), limit)
+              << dims.size() << " axes, output stride " << out_stride << ", " << lanes << " lanes\n"
+              << with.describe();
+        }
+      }
     }
   }
 }
