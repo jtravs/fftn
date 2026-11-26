@@ -5,9 +5,10 @@
 // kernel, the forward transform, the kernel's spectrum and the inverse transform in one sweep,
 // with the kernel passed at execution; for complex rows, and for real rows (r2c, the spectrum's
 // n/2 + 1 bins, c2r); the valid half of a zero-padded (linear) convolution through stored runs;
-// a fan-out, several kernels on one forward transform; and a block callback between the transforms
-// (task 5.3d). The examples quoted in docs/conventions.md ("Pipelines"). Exits with 0 when the
-// results match the same work done by two plain plans and a loop, and by the direct convolution.
+// a fan-out, several kernels on one forward transform; a block callback between the transforms
+// (task 5.3d); and a group, two coupled components mixed between the transforms (task 5.3f). The
+// examples quoted in docs/conventions.md ("Pipelines"). Exits with 0 when the results match the
+// same work done by two plain plans and a loop, and by the direct convolution.
 
 #include <fftn/fftn.hpp>
 
@@ -277,6 +278,76 @@ double middle_callback_error() {
   return error / largest;
 }
 
+// The largest difference between a pipeline whose middle callback couples the two components of
+// each row pair (a group: the polarisations of a field, rotated by an angle per bin) and two plain
+// plans with the same rotation between them, relative to the largest output.
+double group_error() {
+  const std::size_t n = 64;
+  const std::size_t rows = 3;
+  std::vector<std::complex<double>> x(2 * rows * n); // component 0's rows, then component 1's
+  for (std::size_t i = 0; i < x.size(); ++i) {
+    x[i] = {std::cos(0.3 * static_cast<double>(i)), std::sin(0.7 * static_cast<double>(i))};
+  }
+  const auto angle = [](std::size_t bin) { return 0.01 * static_cast<double>(bin); };
+
+  // snippet-begin: group
+  // Batch dimension 0 is the component (2), dimension 1 the row: with group 0 the middle
+  // callback receives both components' spectra of one row in one call, component 1 group_stride
+  // elements after component 0, and rotates each bin's pair.
+  auto rotate = [&angle](const fftn::block_info& info, std::complex<double>* bins) noexcept {
+    for (std::size_t b = 0; b < info.length; ++b) {
+      std::complex<double>& u = bins[static_cast<std::ptrdiff_t>(b) * info.element_stride];
+      std::complex<double>& v = (&u)[info.group_stride];
+      const double c = std::cos(angle(b));
+      const double s = std::sin(angle(b));
+      const std::complex<double> u0 = u;
+      u = c * u0 - s * v;
+      v = s * u0 + c * v;
+    }
+  };
+  fftn::pipeline_desc desc = fftn::complex_convolution_rows<double>(n, rows);
+  desc.batches.insert(desc.batches.begin(), fftn::batch{.count = 2});
+  desc.group = 0;
+  desc.middle.mul = {};
+  desc.middle.scale = 1.0 / static_cast<double>(n);
+  desc.middle.call = {.fn = fftn::callback_of<decltype(rotate), std::complex<double>>()};
+  const fftn::pipeline pipe(desc);
+  fftn::workspace ws(pipe);
+
+  std::vector<std::complex<double>> y(x.size());
+  pipe.execute(x.data(), y.data(), ws, {.mid_user = &rotate});
+  // snippet-end: group
+
+  // The same work by two plain plans and the rotation between them.
+  const fftn::c2c_plan<double> forward(
+      fftn::rows_c2c<double>(n, 2 * rows, fftn::direction::forward));
+  const fftn::c2c_plan<double> backward(
+      fftn::rows_c2c<double>(n, 2 * rows, fftn::direction::backward));
+  fftn::workspace plain_ws(std::max(forward.workspace_bytes(), backward.workspace_bytes()));
+  std::vector<std::complex<double>> spectrum(x.size());
+  std::vector<std::complex<double>> want(x.size());
+  forward.execute(x.data(), spectrum.data(), plain_ws);
+  for (std::size_t r = 0; r < rows; ++r) {
+    for (std::size_t b = 0; b < n; ++b) {
+      std::complex<double>& u = spectrum[r * n + b];
+      std::complex<double>& v = spectrum[(rows + r) * n + b];
+      const double c = std::cos(angle(b));
+      const double s = std::sin(angle(b));
+      const std::complex<double> u0 = u;
+      u = (c * u0 - s * v) / static_cast<double>(n);
+      v = (s * u0 + c * v) / static_cast<double>(n);
+    }
+  }
+  backward.execute(spectrum.data(), want.data(), plain_ws);
+  double largest = 0;
+  double error = 0;
+  for (std::size_t i = 0; i < y.size(); ++i) {
+    largest = std::max(largest, std::abs(want[i]));
+    error = std::max(error, std::abs(y[i] - want[i]));
+  }
+  return error / largest;
+}
+
 } // namespace
 
 int main() {
@@ -293,8 +364,10 @@ int main() {
     const double callback_error = middle_callback_error();
     std::printf("middle callback against plain plans and a loop: largest error %.3g\n",
                 callback_error);
+    const double coupled_error = group_error();
+    std::printf("group against plain plans and the coupling: largest error %.3g\n", coupled_error);
     return error < 1e-13 && real_error < 1e-13 && half_error < 1e-13 && fan_error < 1e-13 &&
-                   callback_error < 1e-13
+                   callback_error < 1e-13 && coupled_error < 1e-13
                ? 0
                : 1;
   } catch (const std::exception& e) {

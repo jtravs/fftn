@@ -41,6 +41,9 @@
 namespace fftn::inline v0::detail {
 namespace {
 
+// pipeline_view::group without a group (fftn::no_group).
+constexpr std::size_t ungrouped = static_cast<std::size_t>(-1);
+
 [[noreturn]] void refuse(const std::string& field, const std::string& why) {
   throw std::invalid_argument("fftn::pipeline: " + field + " " + why);
 }
@@ -309,8 +312,10 @@ std::ptrdiff_t second_region_bytes(std::size_t elements, std::ptrdiff_t bytes) {
 // the description's order).
 // `records`: a program's, whose first batch_loops records are its batch loops, or a lanes
 // program's tail (program::lane_tail, batch_loops 0; task 5.2f).
+// group: the description's group (task 5.3f), whose dimension has no batch loop, or ungrouped.
 std::vector<edge_record> mark_cursors(std::vector<record>& records, std::size_t batch_loops,
-                                      const placed& pl, const fanout_marks& fan) {
+                                      const placed& pl, const fanout_marks& fan,
+                                      std::size_t group = ungrouped) {
   std::vector<edge_record> e(records.size());
   for (std::size_t i = 0; i < records.size(); ++i) {
     stage* st = std::get_if<stage>(&records[i]);
@@ -349,7 +354,8 @@ std::vector<edge_record> mark_cursors(std::vector<record>& records, std::size_t 
     return s.kind != factor_kind::none ? s.batch_steps.at(b) : 0;
   };
   for (std::size_t b = 0; b < batch_loops; ++b) {
-    e[b].factor_step = {step(pl.pro, b), step(pl.epi, b), step(pl.mid, b)};
+    const std::size_t dim = group != ungrouped && b >= group ? b + 1 : b;
+    e[b].factor_step = {step(pl.pro, dim), step(pl.epi, dim), step(pl.mid, dim)};
   }
   // The copies loop moves the middle cursor only: the epilogue's factor is every copy's. Its
   // iteration is the copy an epilogue callback is passed (task 5.3d).
@@ -451,6 +457,9 @@ void add_batch_loops(program& p, const pipeline_view& d, const row_layout& l,
   const bool in_unread = produced(pl.pro);
   const bool out_unwritten = consumed(pl.epi);
   for (std::size_t b = 0; b < d.batches.size(); ++b) {
+    if (b == d.group) {
+      continue; // a group is one task: its lines are the members loops' (group_lines, task 5.3f)
+    }
     p.records.emplace_back(loop{
         .kind = loop_kind::batch,
         .count = d.batches[b].count,
@@ -459,7 +468,7 @@ void add_batch_loops(program& p, const pipeline_view& d, const row_layout& l,
     });
     p.transforms *= d.batches[b].count;
   }
-  p.batch_loops = d.batches.size();
+  p.batch_loops = p.records.size();
 }
 
 // The line's stages after the batch loops, which then end with them.
@@ -810,6 +819,9 @@ std::string lanes_pair_refusal(const pipeline_view& d, const vocab& v) {
   if (d.batches.empty()) {
     return "a single line";
   }
+  if (d.group != ungrouped) {
+    return "a group";
+  }
   return "";
 }
 
@@ -926,6 +938,7 @@ void build_lanes_pair(plan_core& c, const pipeline_view& d, const row_layout& l,
 struct lanes_outcome {
   lanes_pair_block block;
   std::string refusal;
+  std::string depth_refusal; // why a forced depth-first pair was not taken (task 5.3f)
 };
 template <class T>
 strategy_choice build_pair(plan_core& c, const pipeline_view& d, const row_layout& l,
@@ -956,7 +969,12 @@ strategy_choice build_pair(plan_core& c, const pipeline_view& d, const row_layou
                                              : "a line whose chain does not fit the lanes";
     }
   }
-  if (l.in_stride == 1 && l.out_stride == 1) {
+  // A group (task 5.3f) takes the chain pair: the depth-first pair's sub-row loops are not yet
+  // inside its members loops.
+  if (settings.strategy == strategy_choice::depth && d.group != ungrouped) {
+    lanes.depth_refusal = "a group";
+  }
+  if (l.in_stride == 1 && l.out_stride == 1 && d.group == ungrouped) {
     if (const std::vector<std::size_t> tops =
             convolution_depth_tops<T>(n, settings, chain, c.isa_target);
         !tops.empty()) {
@@ -1403,6 +1421,73 @@ std::string depth_runs_text(const run_plan& runs, bool accumulate, const run_pru
          (passes == 1 ? " separate pass" : " separate passes") + " over the line";
 }
 
+// A group (DESIGN.md 12.3, task 5.3f): the line's stages, built for one line under the batch loops
+// of the other dimensions (add_batch_loops), become
+//
+//   members loop (G) { the stages before the middle callback } -> the middle callback, once on
+//   the G spectra -> members loop (G) { the stages after it }
+//
+// each members loop moving the input, the output and the cursors by the group dimension's
+// distances and steps, and the workspace block by one line's block (rounded up to 64 bytes), so
+// that member k's line works in the block's k-th region. A task is one group; a team shares the
+// members loops' lines on each member's own scratch, the owner's block shared, as the depth-first
+// pair's sub-row loops (DESIGN.md 12.2, "Execution"). Returns the two loops' records. The body
+// must be stages only (no fan-out, the lanes or the depth-first pair).
+struct group_marks {
+  std::array<std::size_t, 2> loops{};
+  std::ptrdiff_t member_bytes = 0;
+};
+group_marks group_lines(plan_core& c, const pipeline_view& d, const row_layout& l,
+                        std::ptrdiff_t side_bytes, const placed& pl) {
+  program& p = c.prog;
+  const std::size_t g = d.group;
+  const std::size_t members = d.batches[g].count;
+  const auto complex_bytes = static_cast<std::ptrdiff_t>(
+      d.prec == precision::f64 ? 2 * sizeof(double) : 2 * sizeof(float));
+  std::vector<stage> before;
+  std::vector<stage> after;
+  std::size_t middle = SIZE_MAX;
+  for (std::size_t i = p.batch_loops; i < p.records.size(); ++i) {
+    stage* st = std::get_if<stage>(&p.records[i]);
+    if (st == nullptr) {
+      throw std::logic_error("fftn: internal: a group's line with loops of its own");
+    }
+    if (middle == SIZE_MAX && (st->moving_factors & moving_callback) != 0 &&
+        static_cast<const callback_site*>(st->args.roots)->user == 2) {
+      middle = i;
+      continue;
+    }
+    (middle == SIZE_MAX ? before : after).push_back(std::move(*st));
+  }
+  if (middle == SIZE_MAX || before.empty() || after.empty()) {
+    throw std::logic_error("fftn: internal: a group's line without its middle callback");
+  }
+  stage callback = std::move(*std::get_if<stage>(&p.records[middle]));
+  p.records.resize(p.batch_loops);
+  group_marks marks;
+  marks.member_bytes = second_region_bytes(c.block_elements, complex_bytes);
+  const auto members_loop = [&](std::size_t k, std::vector<stage>& body) {
+    marks.loops.at(k) = p.records.size();
+    loop lp{.kind = loop_kind::lines, .count = members};
+    lp.step = {produced(pl.pro) ? 0 : l.in_dist[g] * side_bytes,
+               consumed(pl.epi) ? 0 : l.out_dist[g] * side_bytes, marks.member_bytes, 0};
+    p.records.emplace_back(lp);
+    for (stage& st : body) {
+      p.records.emplace_back(std::move(st));
+    }
+    std::get<loop>(p.records[marks.loops.at(k)]).body_end =
+        static_cast<std::uint32_t>(p.records.size());
+  };
+  members_loop(0, before);
+  p.records.emplace_back(std::move(callback));
+  members_loop(1, after);
+  for (std::size_t b = 0; b < p.batch_loops; ++b) {
+    std::get<loop>(p.records[b]).body_end = static_cast<std::uint32_t>(p.records.size());
+  }
+  c.block_elements = members * static_cast<std::size_t>(marks.member_bytes / complex_bytes);
+  return marks;
+}
+
 } // namespace
 
 std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, const options& opts,
@@ -1425,6 +1510,21 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
   }
   if (!std::isfinite(opts.measure_seconds) || opts.measure_seconds < 0) {
     refuse("options.measure_seconds", "must be finite and not negative");
+  }
+  // A group (task 5.3f): a batch dimension the middle callback sees whole.
+  const bool grouped = d.group != ungrouped;
+  if (grouped) {
+    if (d.group >= d.batches.size()) {
+      refuse("desc.group", "is " + std::to_string(d.group) + ", not a dimension of desc.batches (" +
+                               std::to_string(d.batches.size()) + " of them)");
+    }
+    if (d.middle.call == nullptr) {
+      refuse("desc.group", "is given without desc.middle.call, the callback that sees the group");
+    }
+    if (d.fanout > 1) {
+      refuse("desc.group", "is not taken with desc.fanout above 1 yet (task 5.3f builds groups of "
+                           "one inverse per line)");
+    }
   }
   const shape_view line{
       .kind = transform_kind::c2c,
@@ -1575,7 +1675,36 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
   }
   const bool depth = pair == strategy_choice::depth;
   const bool lanes = pair == strategy_choice::lanes;
-  c->edge_records = mark_cursors(c->prog.records, c->prog.batch_loops, pl, fan);
+  const std::size_t real_bytes = d.prec == precision::f64 ? sizeof(double) : sizeof(float);
+  group_marks group;
+  if (grouped) {
+    group = group_lines(*c, d, layout,
+                        static_cast<std::ptrdiff_t>(real ? real_bytes : 2 * real_bytes), pl);
+    lay_out_workspace(*c, c->scratch_line, 2 * real_bytes, false, callback_scratch(pl));
+  }
+  c->edge_records = mark_cursors(c->prog.records, c->prog.batch_loops, pl, fan, d.group);
+  if (grouped) {
+    // The members loops move the cursors by the group dimension's steps; their iteration is the
+    // member every callback stage inside them is passed (callback_env::group_member).
+    const auto step = [&](const edge_side& s) {
+      return s.kind != factor_kind::none ? s.batch_steps.at(d.group) : 0;
+    };
+    for (const std::size_t r : group.loops) {
+      c->edge_records[r].factor_step = {step(pl.pro), step(pl.epi), step(pl.mid)};
+      c->edge_records[r].group_members = true;
+    }
+    std::size_t inner = 1;
+    for (std::size_t b = d.group + 1; b < d.batches.size(); ++b) {
+      inner *= d.batches[b].count;
+    }
+    for (const std::unique_ptr<callback_site>& site : c->callback_sites) {
+      site->group_lines = d.batches[d.group].count;
+      site->group_inner = inner;
+      if (site->user == 2) {
+        site->group_stride = group.member_bytes / static_cast<std::ptrdiff_t>(site->element_bytes);
+      }
+    }
+  }
   if (lanes) {
     c->edge_tail_records = mark_cursors(c->prog.lane_tail, 0, pl, fanout_marks{});
   }
@@ -1608,16 +1737,17 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
                                       : "the chain pair";
 
   // describe().
-  const std::size_t lines = c->prog.transforms;
-  c->pipeline_title = std::string("fftn pipeline: ") +
-                      (real                             ? "<t, c, t> r2c then c2r, "
-                       : real_mid                       ? "<c, t, c> c2r then r2c, "
-                       : d.first == direction::backward ? "<c, c, c> backward then forward, "
-                                                        : "<c, c, c> forward then backward, ") +
-                      (d.prec == precision::f64 ? "double" : "float") +
-                      ", n = " + std::to_string(d.line.n) + ", " + std::to_string(lines) +
-                      (lines == 1 ? " line" : " lines") +
-                      (opts.in_place ? ", in place" : ", out of place");
+  const std::size_t lines = c->prog.transforms * (grouped ? d.batches[d.group].count : 1);
+  c->pipeline_title =
+      std::string("fftn pipeline: ") +
+      (real                             ? "<t, c, t> r2c then c2r, "
+       : real_mid                       ? "<c, t, c> c2r then r2c, "
+       : d.first == direction::backward ? "<c, c, c> backward then forward, "
+                                        : "<c, c, c> forward then backward, ") +
+      (d.prec == precision::f64 ? "double" : "float") + ", n = " + std::to_string(d.line.n) + ", " +
+      std::to_string(lines) + (lines == 1 ? " line" : " lines") +
+      (grouped ? " in groups of " + std::to_string(d.batches[d.group].count) : std::string()) +
+      (opts.in_place ? ", in place" : ", out of place");
   c->strategy_note =
       real ? "the real chain pair: each line through the r2c chain into the workspace block (its "
              "scratch-resident home, which the batch loops never move), the middle there on its "
@@ -1730,6 +1860,10 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
     ops += "\nthe lanes pair (forced) does not take " + lanes_built.refusal + ": " +
            c->strategy_name + " instead";
   }
+  if (!lanes_built.depth_refusal.empty()) {
+    ops += "\nthe depth-first pair (forced) does not take " + lanes_built.depth_refusal + ": " +
+           c->strategy_name + " instead";
+  }
   // The depth-first pair's line is beyond the cache its sub-rows run in: a separate pass sweeps it.
   const char* sweep =
       depth ? " over the line, each a sweep of it" : " on the line in cache, no sweep of memory";
@@ -1764,7 +1898,6 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
   if (pl.pro.call.any() || mc || pl.epi.call.any()) {
     // Task 5.3d: where each callback runs and its blocks (core/callbacks.hpp).
     const std::size_t block_bytes = settings.profile.callback_block_bytes;
-    const std::size_t real_bytes = d.prec == precision::f64 ? sizeof(double) : sizeof(float);
     const std::size_t side_bytes = real ? real_bytes : 2 * real_bytes;
     const char* home = depth ? "in scratch" : "in the workspace block";
     std::string text = "callbacks:";
@@ -1800,9 +1933,12 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
             (lanes              ? "on the lanes' tile (element_stride the block's lines)"
              : depth && !fanned ? "in scratch"
                                 : "in the workspace block") +
-            ", once per line before " + (fanned ? "the copies and " : "") +
-            "the middle's factor and scale",
-        lanes ? "the block's whole lines in one call" : "the whole line in one block");
+            (grouped ? ", once per group" : ", once per line") + " before " +
+            (fanned ? "the copies and " : "") + "the middle's factor and scale",
+        lanes     ? "the block's whole lines in one call"
+        : grouped ? "the group's " + std::to_string(d.batches[d.group].count) +
+                        " whole lines in one call (block_info::group)"
+                  : "the whole line in one block");
     const bool epi_direct = epilogue_direct(pl.epi);
     add("epilogue", pl.epi,
         std::string("on each line") + (fanned ? "'s copies" : "") +
@@ -1814,6 +1950,14 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
             (fanned ? ", once per copy (block_info::copy)" : ""),
         edge_blocks());
     ops += "\n" + text;
+  }
+  if (grouped) {
+    // Task 5.3f: a group is one task.
+    ops += "\ngroup: batch dimension " + std::to_string(d.group) + " (desc.group), " +
+           std::to_string(d.batches[d.group].count) +
+           " lines a task: each line's first chain into its own region of the workspace block, the "
+           "middle callback once on the group's spectra, then each line's second chain; a team "
+           "shares a group's lines";
   }
   c->edges_note = ops;
   // A spectral pair inverse first (task 5.3e): its first chain is the backward one, so the chains'

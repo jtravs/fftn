@@ -62,6 +62,14 @@ struct callback_site {
   // block's columns; 1 elsewhere, where a lanes program passes its block's rows instead).
   std::size_t line_axis = along_transforms;
   std::size_t lines = 1;
+  // A grouped pipeline's (task 5.3f): its tasks are groups of group_lines lines, so a block's
+  // transform is the line of the task's group member (callback_env::group_member), task t's
+  // member k being line (t / I) G I + k I + t % I, I = group_inner (the lines of the dimensions
+  // after the group's), G = group_lines; 0: tasks are lines. group_stride: the middle callback's,
+  // which passes the whole group (block_info::group, group_stride; 0 elsewhere).
+  std::size_t group_lines = 0;
+  std::size_t group_inner = 1;
+  std::ptrdiff_t group_stride = 0;
 };
 
 // What a callback stage needs of the execution and of the task it runs in.
@@ -77,6 +85,9 @@ struct callback_env {
   // A pipeline's fan-out (task 5.3d): the copy the enclosing copies loop has reached
   // (edge_record::copies), block_info::copy; 0 elsewhere.
   std::size_t copy = 0;
+  // A grouped pipeline (task 5.3f): the member of the task's group the enclosing members loop has
+  // reached (edge_record::group_members); 0 elsewhere.
+  std::size_t group_member = 0;
   // Measured planning's stand-ins (DESIGN.md 12.3, "Planning"; task 5.3b): every callback
   // stage runs, with its copies and boundaries, but calls a function that does nothing, so
   // that planning never calls the application's code.
