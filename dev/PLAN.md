@@ -22,6 +22,8 @@ handoff. Lessons that generalise are in [LESSONS.md](LESSONS.md), decisions in D
 | 4 | 4.3 done. 4.1 and 4.2 built; acceptance not met case by case (large threaded planes against oneMKL, some volumes). |
 | 5 | Started 2026-11-25: 5.1 built (5.1a–5.1e; X65 judged); 5.2 designed (steps 5.2a–5.2g, DESIGN 12.2), its API questions open (DESIGN 18.2); 5.2a built 2026-11-26 (batched forms adopted narrowed for c2c rows on one leaf on the EPYC 7763's and the Xeon 6240's classes, X65's P1); 5.2b built 2026-11-26 (the pipeline API, provisional, and the `<C, C, C>` chain pair); 5.2c built 2026-11-26 (`<T, C, T>` and `convolution_rows`); the API awaits the maintainer's answers to DESIGN 18.2; 5.3 designed (steps 5.3a–5.3h, DESIGN 12.3, experiments X66 and X68), its API questions open (DESIGN 18.2, "Callbacks"). |
 | 6, 7 | Not started. |
+| 6 | Not started; broken into steps 6.1–6.20 on 2026-11-26 (phase 6 table), with API proposals in DESIGN 5.4, 5.7–5.9 and questions for the maintainer in DESIGN 18.2, "Phase 6". |
+| 7 | Not started. |
 
 **Client catalogue** (the check of 2026-11-24, `main` d4b169f): weighted geometric mean of FFTN ÷
 FFTW at one thread / at the client's per-shape widths, against targets of 0.95 / 0.90. Since then
@@ -403,9 +405,10 @@ Open, features first:
   documents: steps 5.1–5.5 of the phase 5 table, in that order. **5.1 is in progress** (task Q,
   2026-11-25, branches `task/5.1-edges-*`; its breakdown into PR-sized steps goes into the phase 5
   table). Experiments X65–X68 are reserved.
-- 6: float tuning, the convenience layer, DCT/DST and DHT, split-complex layout, the C API,
-  Windows, AArch64 Linux and cloud tuning, the documents, the benchmark report, packaging, the
-  first release.
+- 6: steps 6.1–6.20 of the phase 6 table (2026-11-26). Packaging (6.1), the size report (6.2),
+  the real-to-real kind (6.3) and the convenience layer (6.6) can start now; the API steps are
+  built provisional on DESIGN's proposals until the maintainer answers DESIGN 18.2, "Phase 6";
+  scope, spending and the release criteria wait for those answers.
 - 7: on demand (FFTW3 shim, SVE, Python, more axes).
 
 Open, acceptance and exit checks (after the features):
@@ -784,6 +787,7 @@ first; sizes in agent sessions are estimates (15–24 in all, 4–6 more for a m
 | 5.2 | Row pipelines in convolution form (12.2): `<T, C, T>` and `<C, C, C>` forward first, the kernel factor, stored runs, fan-out, a lanes pair on strided lines; built from the Bluestein stage's convolution, with the loop over a scratch-resident line (X36b); experiment X67. About 5–7 sessions, in steps 5.2a–5.2g; the design is DESIGN 12.2, "Plan for task 5.2" | at or below 0.8 of three separate calls for L2-resident sizes |
 | 5.2a | **The edge driver's batched forms and a third cursor.** Built 2026-11-26 (task T) without the third cursor and the block offset, which go to 5.2b with their first reader; the forms' reach is `machine_profile::edge_batched_forms` (`all` for tests): X65's P1 missed its rule, then was adopted narrowed, `leaf_rows` (c2c rows whose transform is one leaf) on Zen 3's and the Xeon 6240's classes, `none` elsewhere (DESIGN 12.1). No public API. The flat form and the unrolled calls (8.3) with the factor cursors moved per transform. `factor_cursors` and `edge_record::factor_step` gain the middle cursor, read from `exec_args::mid_factor`; a stage records which factor pointer takes it. Edge-driver records gain a byte offset into the workspace block. A build setting forces a plan with edges onto these forms for tests. Whether plans with edges take them by default is X65's P1, the maintainer's decision; pipelines take them from 5.2b | Plans without edges compile to exactly `main`'s code: `describe()` and `workspace_bytes()` probes, and disassembly of the plain driver functions with Clang on arm64 and x86-64. The flat and unrolled forms with cursors are bitwise equal to the walked form, with cursors moved by batch loops of strides of every sign. Plans with edges are unchanged unless P1 is adopted |
 | 5.2b | **The API and the `<C, C, C>` chain pair.** Built 2026-11-26 (DESIGN 12.2, "As built"): the chain pair is two `c2c_line` chains through the workspace block; `add_convolution`'s generalisation goes to 5.2d–e with its first reader. `fftn/pipeline.hpp`, provisional and with a second reader: `pipeline_desc`, `pipeline`, `spectral_pair_rows` (forward first) and `workspace(const pipeline&, lanes)`. No callbacks or `group` (5.3), `fanout` 1 and no runs yet. Rows with a contiguous or strided line run as the chain pair over a scratch-resident line, built by `add_convolution` generalised to endpoints and the middle cursor. The prologue fuses into the forward's first pass, a complex middle factor of stride 1 into its last pass, and the epilogue into the inverse's last pass; everything else runs as edge stages on the scratch line. Scales are one product. Leaf-sized rows are a flat body of two leaves. Serial, team, executor and `execute_transforms` are built, with `transforms_of`, `describe()`, `workspace_bytes()` and `instruction_set()`, and refusals that name the field | Checked against forward plan, then the user's multiply loop, then inverse plan, computed in quadruple precision, with the tolerance derived for two transforms plus a rounding per vocabulary operation; on every instruction set, in both precisions. Lengths: 2 to the leaf limit, then codelet, mixed, generic and Bluestein lengths. Kernel strides of every sign, broadcast and per row. Also tested: canaries; serial, pieces, teams (split lines, `completion::all` and `own`) and executors bitwise alike; `describe()` names the flat form for leaf-sized rows |
+| 5.2c | **`<T, C, T>` and `convolution_rows`.** The real chain pair: the r2c pairing fused into the forward's last pass, the c2r pairing into the inverse's first, and odd n by the full-length route. The middle over the n/2 + 1 bins is an edge stage in scratch; a fused middle in the pairing passes is an X67 arm. Real prologue and epilogue factors | 5.2b's tests on real rows, even and odd, with real and complex kernels |
 | 5.2c | **`<T, C, T>` and `convolution_rows`.** Built 2026-11-26 (DESIGN 12.2, "As built"): every factor is an edge pass on the line in cache, the scales on such a pass or the c2r chain's output; plus the edge driver's row-block step for a middle pass (PR 140's latent finding). The real chain pair: the r2c pairing fused into the forward's last pass, the c2r pairing into the inverse's first, and odd n by the full-length route. The middle over the n/2 + 1 bins is an edge stage in scratch; a fused middle in the pairing passes is an X67 arm. Real prologue and epilogue factors | 5.2b's tests on real rows, even and odd, with real and complex kernels |
 | 5.2d | **Stored runs and the depth-first pair.** After PR 134. Runs on the line (`stored_run`, axis 0): the input's runs are read into the scratch line with zeros elsewhere, and only the output's runs are stored from it. The depth-first pair serves long lines, from `bluestein_depth` generalised: optional chirp, one input run from logical 0, one output run, a kernel table or the middle cursor. Bluestein's stage is built through the general form | 5.1d's canaries and property tests on the line's runs (valid halves, bands, runs in any order). Bluestein plans' programs and bits are unchanged (probes). The depth-first pair is tested forced and by the rules, and team-shared within a line |
 | 5.2e | **Fan-out.** The forward spectrum stays in the workspace block. A lines loop over the copies moves the output by `fanout_out_dist` and the middle cursor by `fanout_factor_dist`. Copy k's kernel applies in the inverse's first pass, on the member's own scratch. On a depth-first pair the spectrum sits in the block's second region (5.2a's offset). Overlapping copy outputs are refused | Copies are checked against F separate inverses. Teams share the copies, bitwise alike. Canaries between copies |
@@ -829,23 +833,78 @@ DESIGN.md section 1.3 row for client catalogues.
 
 ### Phase 6: general coverage and release preparation
 
-Float on every target and tuned where wanted (it is correct and tested from phase 1 on);
-convenience layer; DCT/DST I–IV and DHT as composed plans; split-complex
-layout; C API; Windows tuning; AArch64 Linux tuning on Neoverse N1, V1 and V2 (cloud);
-Zen 4/5 and recent Intel (cloud); the documents of DESIGN.md section 17 complete and
-reviewed as a whole (each phase adds its own part as it lands); the per-release public benchmark
-report (one command, fixed cases and machines); packaging (CMake package,
-pkg-config, a generated amalgamation if wanted); an informational library size report, never a gate
-(the maintainer, 2026-11-17: speed takes precedence, and the present size, X27's +25 %
-included, is accepted): CI prints the library's text size per target on each pull request,
-experiment files record size changes, and build options (`FFTN_OLD_X86_TARGETS`,
-instantiating only the kernels that win) remain the levers if size ever matters; first
-tagged release.
+The general tier of DESIGN.md section 5.6: float on every target, tuned where wanted (it is
+correct and tested from phase 1 on); the convenience layer; DCT/DST I–IV and the DHT as
+composed plans; the split-complex layout; the C API; Windows tuning; AArch64 Linux tuning on
+Neoverse N1, V1 and V2 (cloud); Zen 4/5 and recent Intel (cloud); the documents of DESIGN.md
+section 17, complete and reviewed as a whole (each phase adds its own part as it lands); the
+per-release public benchmark report (one command, fixed cases and machines); packaging (CMake
+package, pkg-config, an amalgamation if wanted); an informational library size report, never
+a gate (the maintainer, 2026-11-17: speed takes precedence, and the present size, X27's +25 %
+included, is accepted; build options such as `FFTN_OLD_X86_TARGETS`, and instantiating only
+the kernels that win, remain the levers if size ever matters); the first tagged release.
+
+Broken into steps on 2026-11-26 (features first, the maintainer's priority of 2026-11-25). The
+proposed APIs are DESIGN 5.4 (convenience layer), 5.7 (real-to-real), 5.8 (split complex) and
+5.9 (C API); the open points, each with a proposal, are DESIGN 18.2, "Phase 6", cited below as
+Q1–Q27. Sizes in agent sessions are estimates: about 20–28 sessions for the features and documents,
+plus the measurement campaigns.
+
+**Who** decides or builds:
+
+- **A**: agents, autonomously, under AGENTS.md (experiments by section 6, kernels with a
+  second reader).
+- **P**: agents build it on the DESIGN proposal, provisional in the headers and the docs and
+  with a second reader, as phase 5's APIs were; the maintainer settles the API at review.
+- **M**: the maintainer decides before the work starts (scope, names that freeze, money,
+  release criteria); agents prepare the material.
+
+| ID | Task | Acceptance | Who |
+|---|---|---|---|
+| 6.1 | **Packaging.** Install rules for the headers and `libfftn`, an exported `fftn::fftn` with `fftnConfig.cmake` and a version file, `fftn.pc` for pkg-config; test dependencies never installed (Kokkos's install rules excluded); `docs/building.md` (DESIGN 17.1) written with it. No API change. About 1 session | A CI job on Linux, macOS and Windows builds a compiled example as a separate project three ways: `find_package` against the install tree, pkg-config (not Windows), `FetchContent`; the installed tree holds no test or third-party files | A |
+| 6.2 | **Size report.** `tools/size_report.py` (standard library only) reads the text size of the library's objects per instruction-set unit, and the pull-request jobs on Linux (GCC), macOS and Windows write its table to the job summary; experiment files cite it for size changes. About half a session | the table appears on a pull request; a unit test on recorded tool output; no job's status depends on it | A |
+| 6.3 | **The real-to-real kind and the DHT** (DESIGN 5.7): `r2r_kind`, `shape::kinds`, `rows_r2r`, `planes_r2r`, `volumes_r2r`, `axes_r2r`, `r2r_plan`; the read and store stages as internal edge stages over 5.2b's scratch-resident line; the DHT by an r2c of n and its store stage; several axes as one phase per axis (5.1b's machinery); edges (scale, real factor, accumulate). Uses 5.1b and 5.2b. About 2 sessions | against a quadruple-precision direct evaluation of each definition, with the tolerance derived for the underlying transform plus a rounding per stage operation, on every instruction set in both precisions, every n ≤ 512 and sampled larger, smooth, prime and Bluestein lengths; DHT twice gives n times the input; several axes against the separable reference; strides of every sign, in place, canaries; serial, pieces, teams and executors bitwise alike; refusals name the field (Q9–Q13) | P |
+| 6.4 | **DCT-II/III and DST-II/III**: Makhoul's read stage and the twiddled store over an r2c of n (any n), the inverse route over a c2r; the sine kinds by signs and reversals in the same stages. After 6.3. About 2 sessions | 6.3's tests for each kind; `dct3` after `dct2` and `dst3` after `dst2` give 2n times the input; mixed kinds across axes | P |
+| 6.5 | **DCT-IV/DST-IV and DCT-I/DST-I**: the even DCT-IV by a c2c of n/2 with twiddles; the odd one by a c2c of 2n with stored runs (5.1d) on pruned codelets (5.1e); DCT-I and DST-I by the even and odd extensions; `describe()` names these routes. After 6.4. About 2 sessions | 6.3's tests for each kind; each kind twice gives N times the input; `dct1` with n = 1 refused; Q14 | P |
+| 6.6 | **Convenience layer, complex and real** (DESIGN 5.4): `fftn/easy.hpp`, `context` and `thread_context()`, `fft`, `ifft`, `rfft`, `irfft` over spans (both forms), `fft2`, `ifft2`, `fftn`, `ifftn`, `rfft2`, `irfft2`, `rfftn`, `irfftn` over views, the three norms, `fftfreq`, `rfftfreq`, `fftshift`, `ifftshift`; `docs/easy.md` with a compiled example. Needs the core only, so it can run beside 6.3–6.5. About 2–3 sessions | numpy's results and shapes on recorded cases (axes defaults, negative axes, odd and even `irfft` lengths, each norm, round trips); bitwise equal to the core plan it uses; a cache hit allocates nothing (the allocation hook); two threads on their own contexts under TSan; size and axis errors name the argument (Q4–Q8) | P |
+| 6.7 | **Convenience layer, real-to-real and Kokkos**: scipy.fft's `dct`, `idct`, `dst`, `idst`, `dctn`, `idctn`, `dstn`, `idstn` (types 1–4, norms, the orthonormal weights by a cached real edge factor) and `dht`; `fftn::kokkos::compat`'s one-shot functions as Kokkos-FFT's, over the calling thread's context. After 6.5 and 6.6. About 1–2 sessions | scipy's results on recorded cases for every type and norm; the one-shot functions against `view_plan` on the Kokkos test back ends (Q3) | P (Kokkos part: M) |
+| 6.8 | **C API, plans** (DESIGN 5.9): `fftn/c_api.h`, `src/c_api/`; shapes of every kind built so far, options, plans, workspaces, the serial, transforms, team and executor forms, wisdom, lengths, errors; `docs/c_api.md` with a C example. The tests' build enables C. After 6.1 (the installed header); the r2r kind once 6.3 has landed. About 2 sessions | a C test compiled as C99 with the strict warnings, `-pedantic` included, gives results bitwise equal to the C++ plan of the same shape for every kind and precision; the C executor contract drives a C pool; every constructing error fills `fftn_error` with the C++ message and no exception escapes; the downstream job of 6.1 links a C program; exported symbols start `fftn_` (Q17–Q22) | P |
+| 6.9 | **C API, fusion**: edges and `exec_args`, then block callbacks and pipelines in C. After 5.3 and the maintainer's review of DESIGN 12's provisional APIs. About 1–2 sessions | C results bitwise equal to the C++ objects for each edge operation, callback mode and pipeline kind built in C++ | P |
+| 6.10 | **Split complex, conversion form** (DESIGN 5.8): `split_complex<T>`, `split_ptr<T>`, the c2c, r2c and c2r kinds; conversion edge phases (5.1b) into and out of the interleaved form; `describe()` names the two passes. About 2 sessions | every kind and rank against the quadruple-precision reference, and bitwise equal to the interleaved plan's result where both run the same program; arrays at any relative position, strides of every sign, in place, canaries around both arrays; teams and executors bitwise alike (Q16) | M (scope, Q2), then P |
+| 6.11 | **Float: coverage and standing.** Every forcing parameter of the parameterised suites (instruction set, strategy, layout, pass kind, edges, pipelines) checked to run in float, and the gaps filled; an experiment (ID at claim time) measures float's standard catalogue at one thread on the M5 Max, the Xeon 6240 and the EPYC 7763 against FFTW's float build. About 1 session plus the runs | the suite listing shows each parameter in both precisions; the verdict lists the cases above 1.10 of FFTW, which the maintainer may name for tuning (Q23) | A (tuning: M) |
+| 6.12 | **Real-to-real speed.** fbench backends for FFTW's r2r and pocketfft's DCT and DST, an `r2r` catalogue; an experiment on the read and store stages fused into the first and last passes against separate stages, the lanes over adjacent lines for strided r2r axes, and a cheaper DCT-I/DST-I route judged on accuracy too. After 6.5. About 2 sessions | the experiment's verdict; Q15's target, once settled | A |
+| 6.13 | **Split complex, fused**: the `SP` load and store in the first and last passes (lanes, leaves, chain ends, the grid's gather and scatter); on `avx2` and `avx512` a split run storing `SP` directly; an experiment against 6.10. Kernel work: second reader. Only if the maintainer keeps it in phase 6 | 6.10's tests on each forced strategy; the experiment's verdict | M (Q2), then A |
+| 6.14 | **AArch64 Linux on Neoverse N1, V1 and V2** (cloud Spot VMs): the standard, planes and volumes and threads catalogues against FFTW's NEON build and Arm Performance Libraries (the fbench backend added if missing); machine keys where a family needs its own; the client catalogue's AArch64 leg (pending since 2026-11-24). Spending: Q24 | DESIGN 1.3's AArch64 row (≤ 0.90 of FFTW, ≤ 1.00 of Arm PL) on each core, or the misses recorded with their experiments | A (spending: M) |
+| 6.15 | **Zen 4/5 and recent Intel** (cloud): the same catalogues, with MKL on Intel; the reach-rule screens of AGENTS section 6 for every family a rule reaches; the planes and volumes gap first (X31 measured Zen 5 at 1.63 and Granite Rapids at 1.48 of FFTW, before phase 4). Spending: Q24 | DESIGN 1.3's Zen 4/5 and Intel rows, or the misses recorded | A (spending: M) |
+| 6.16 | **Windows.** fbench on Windows (timers, process rounds, the backends that build there); the standard and threads catalogues on Windows x64 with clang-cl against Linux on the same instance type; Windows on Arm correctness in CI, timing when a machine exists. The machine: Q24 | Windows ÷ Linux within the run's band as a geometric mean at one thread, no case beyond 1.05 of Linux beyond noise; no threads-catalogue case slower than serial | A (machine: M) |
+| 6.17 | **Documents complete** (DESIGN 17): `docs/guide.md`; the real-to-real formulas and the split layout in `docs/conventions.md`; `docs/fusion.md` (from 5.5); README from "planned" to what exists; every example compiled; read as a whole by a second reader, then the maintainer. After the features | the snippet check and the Doxygen lint pass; no public declaration undocumented; the maintainer's review | A (review: M) |
+| 6.18 | **The release report** (DESIGN 16.4): `fbench report --release <version>` writes `bench/reports/<version>.md` from stored runs of a fixed `release` catalogue on fixed machines, with every competitor's build and the run IDs; the case set and machines are Q26 | the same run IDs regenerate the same file; `bench/README.md` documents the set | A (set and machines: M) |
+| 6.19 | **Amalgamation**: proposed against for the first release (Q25; DESIGN 14.3) | the maintainer's decision recorded | M |
+| 6.20 | **First tagged release**: the checklist from Q27; every provisional API confirmed or listed in the release notes; `CHANGELOG.md`; the version in `config.hpp` and CMake; the report of 6.18 committed; tag. Last | the maintainer's go | M |
+
+Order and parallelism: 6.1, 6.2, 6.3, 6.6 and 6.11 can start at once; 6.3 → 6.4 → 6.5 → 6.12;
+6.5 and 6.6 → 6.7; 6.1 → 6.8; 5.3 → 6.9; 6.10 and 6.13 wait for Q2. The campaigns 6.14–6.16
+follow the features under the maintainer's priority, but need no feature: they can run whenever
+the maintainer releases the spending. 6.17 and 6.18 come after the features; 6.20 is last.
+
+Phase 5 underneath: the real-to-real routes use 5.2b's scratch-line programs, 5.1b's edge
+phases and cursors, and 5.1d's runs with 5.1e's pruned codelets (the odd DCT-IV); the
+convenience layer's orthonormal DCT uses 5.1b's real factors; split complex's conversion form
+is two edge phases (5.1b); the C API's fusion step waits for 5.3 and for the review of DESIGN
+12's provisional APIs; 6.17 takes `docs/fusion.md` from 5.5.
+
+Exit: the steps above done or moved by the maintainer's decision; DESIGN 1.3's targets on the
+AArch64 Linux, Zen 4/5 and Intel rows measured, met or with their misses recorded; Windows
+within the band of Linux on the same hardware; the release criteria of Q27 met and the first
+version tagged.
 
 ### Phase 7: on demand
 
 FFTW3-compatible shim; SVE (experiment X11); Python binding; more than three transformed
 axes; Rader; SME on Apple M4 and later for batches of short transforms (speculative).
+Proposed for here by phase 6's plan (DESIGN 18.2, "Phase 6"): real-to-real pipelines (Q13), a
+Fortran module over the C API (Q22), package-manager recipes (Q25), and the fused split-complex
+form (6.13) if the maintainer moves it (Q2).
 
 ---
 
