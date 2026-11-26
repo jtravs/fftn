@@ -7,7 +7,6 @@
 
 #include <fftn/c_api.h>
 
-#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -65,7 +64,7 @@ static int round_trip(void) {
   double x[2 * N * COUNT];
   double y[2 * N * COUNT];
   for (int i = 0; i < 2 * N * COUNT; ++i) {
-    x[i] = sin(0.37 * i);
+    x[i] = (double)(i % 7) - 3.0;
   }
 
   // snippet-begin: execute
@@ -83,7 +82,8 @@ static int round_trip(void) {
 
   double largest = 0;
   for (int i = 0; i < 2 * N * COUNT; ++i) {
-    largest = fmax(largest, fabs(y[i] - x[i]));
+    const double diff = y[i] > x[i] ? y[i] - x[i] : x[i] - y[i];
+    largest = diff > largest ? diff : largest;
   }
   printf("largest round-trip error: %.3g\n", largest);
   return largest < 1e-14 ? 0 : 1;

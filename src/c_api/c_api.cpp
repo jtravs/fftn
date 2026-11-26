@@ -95,7 +95,9 @@ void set_error(fftn_error* error, int code, std::string_view message) noexcept {
   }
   error->code = code;
   const std::size_t n = std::min(message.size(), sizeof(error->message) - 1);
-  std::memcpy(static_cast<char*>(error->message), message.data(), n);
+  if (n != 0) { // an empty view's data() may be null, which memcpy may not be given
+    std::memcpy(static_cast<char*>(error->message), message.data(), n);
+  }
   error->message[n] = '\0';
 }
 
