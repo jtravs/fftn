@@ -1290,8 +1290,9 @@ template chain_builder<float> plan_chain<float>(plan_core& c, const target_profi
 template <class T>
 std::vector<std::size_t> convolution_depth_tops(std::size_t n, const build_settings& settings,
                                                 const chain_builder<T>& chain, target isa) {
-  if ((settings.strategy != strategy_choice::depth &&
-       settings.strategy != strategy_choice::rules) ||
+  // Forced only: when the rules take the pair is experiment X67's to decide (task 5.2g; AGENTS.md
+  // section 6), so a pipeline by the rules keeps the chain pair.
+  if (settings.strategy != strategy_choice::depth ||
       (!settings.radices.empty() && checked_product(settings.radices) == n)) {
     return {};
   }

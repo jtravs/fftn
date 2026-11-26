@@ -2836,8 +2836,8 @@ experiment X67; the API points the maintainer has to settle are listed in 18.2, 
 - **Planning.** Until X67 the rules decide, and `describe()` says that `options::effort` is
   ignored (as for PR 134's runs):
   - the chain pair by default;
-  - the depth-first pair where X50's rule would make a row of the line's length a depth-first
-    convolution;
+  - the depth-first pair where X67 says (5.2d builds it forced only; X50's rule for a convolution
+    of the line's length is the candidate rule);
   - the lanes pair where the lanes rules would take the row (`lanes_up_to`, 9.3's block).
 
   5.2g adds measured candidates and wisdom keyed by the description.
@@ -2911,15 +2911,14 @@ start that C divides by the last top pass (`depth_top_part`, none or the scale),
 stored offset; the chirp variants take the same offsets (0 for Bluestein). Other runs, prologue
 and epilogue factors and accumulation are read and store stages through scratch b and the block,
 which sweep the line once more each (`describe()` says so); a middle that cannot fuse is an edge
-pass on scratch a. The pair is taken by `<C, C, C>` lines contiguous on both sides where X50's
-rule would make a Bluestein convolution of the line's length depth-first
-(`convolution_depth_tops`: double on 32 registers within `depth_convolution_max_bytes`, C
-dividing the tops' product), or forced (`build_settings::strategy` depth); `<T, C, T>` keeps the
-real chain pair. Within a line a team shares the stages by chunks and the sub-row loops by lines
+pass on scratch a. The pair is taken only where forced (`build_settings::strategy` depth;
+`convolution_depth_tops`, for `<C, C, C>` lines contiguous on both sides, with tops whose product
+C divides): when the rules take it is experiment X67's to decide (5.2g; AGENTS.md section 6), with
+X50's rule for a convolution of the line's length as the candidate, so every pipeline by the rules
+keeps the chain pair. `<T, C, T>` keeps the real chain pair. Within a line a team shares the stages by chunks and the sub-row loops by lines
 on each member's scratch, the owner's block shared, as in Bluestein's case. Plans, plans with
-edges and runs, Bluestein plans and the pipelines the pair does not take are unchanged
-(`describe()`, `workspace_bytes()` and output bits of 3048 probes against `main` on the Mac, the
-36 that differ being `<C, C, C>` lines of 8192–16384 points in double that now take the pair; the
+edges and runs, Bluestein plans and every pipeline are unchanged (`describe()`,
+`workspace_bytes()` and output bits of probes against `main` on the Mac and the EPYC 7763; the
 plain and edge driver functions disassemble the same with Clang on arm64 and x86-64).
 `make_edge_forms` still takes one `element_bytes` (PR 144's latent note): pipelines build no row
 blocks, so it waits for the first that does.
@@ -4691,7 +4690,7 @@ to change before a release.
 | 2026-11-26 | Phase 6 broken into steps 6.1–6.20 (PLAN), with proposed APIs for the convenience layer (5.4), the real-to-real kinds (5.7), the split-complex layout (5.8) and the C API (5.9), and their open points in 18.2, "Phase 6". Proposals, not decisions: steps marked P are built provisional with a second reader, as phase 5's were | The maintainer's priority (2026-11-25): features fully built, then the remaining performance |
 | 2026-11-26 | Block callbacks on c2c rows (task 5.3a, section 12.3): provisional `fftn/callback.hpp` (`block_info`, `block_fn`, `callback_mode`, `callback`, `callback_of`, `along_transforms`) and `edge::call`, with 18.2's proposals ("Callbacks"); the callback stage on the chain only until 5.3b, planned by the rules; blocks are stage chunks; per-member scratch at the end of each slot; the drive policies' per-task entries take the lane and slots, the plain instantiations unchanged; a plan with callbacks needs the `exec_args` overloads. Awaits the maintainer's review of the API. |
 | 2026-11-26 | Packaging (task 6.1, section 14.3): an installed CMake package (`fftn::fftn`; the adapters as components `omp` and `kokkos`), a relocatable `fftn.pc`, install rules on by default only for a top-level build, version compatibility `SameMinorVersion`, the thread library in the link interface; third-party subdirectories `EXCLUDE_FROM_ALL`; a path-filtered CI workflow builds a downstream project three ways (Windows not on pull requests) | DESIGN 18.2 Q25's proposal; a minor version may still change the API before 1.0; FetchContent users decide what they install; the check builds the library twice, so it runs where packaging can change rather than on every pull request |
-| 2026-11-26 | Stored runs on pipelines and the depth-first pair (task 5.2d, section 12.2): runs on the line as PR 134's run stages around the chain pairs, the pruned passes on `<C, C, C>`; `chain_builder::depth_pair` generalises X50's convolution (optional chirp, one input run from 0, one output run, a table or the middle cursor), Bluestein built through it; two kernel variants per radix (`depth_first_head`, `depth_top_part`); `<C, C, C>` lines take the pair where X50's rule would make a convolution of their length depth-first | The plan for 5.2 (section 12.2) read as written; the pair's rule waits for X67 (5.2g), as the chain pair's does; one fused run per side saves a sweep of the line each way, as the chirp passes did in X50 arm C |
+| 2026-11-26 | Stored runs on pipelines and the depth-first pair (task 5.2d, section 12.2): runs on the line as PR 134's run stages around the chain pairs, the pruned passes on `<C, C, C>`; `chain_builder::depth_pair` generalises X50's convolution (optional chirp, one input run from 0, one output run, a table or the middle cursor), Bluestein built through it; two kernel variants per radix (`depth_first_head`, `depth_top_part`); the pair taken only where forced, every pipeline by the rules keeping the chain pair until X67 (5.2g) decides when the rules take it | The plan for 5.2 (section 12.2) read as written, except that the pair's rule is a planner rule, which needs an experiment (AGENTS.md section 6, the lead's ruling): X50's rule is X67's candidate; one fused run per side saves a sweep of the line each way, as the chirp passes did in X50 arm C |
 | 2026-11-26 | Step 6.3 (provisional, second reader to come): `r2r_kind`, `shape<T, T>` with `shape::kinds`, `rows_r2r`, `planes_r2r`, `volumes_r2r`, `axes_r2r`, `r2r_plan`, and the DHT as built in 5.7: a read stage, the r2c's complex chain in the member's scratch and a store stage fusing the r2c's pairing with the Hartley combination; the DCT and DST kinds refused until 6.4 and 6.5; real-to-real plans by the rules only | The 18.2 "Phase 6" proposals 9–13 taken as written; scratch rather than the block, because a phase's lines run on several members at once and the block is the task's |
 
 ---

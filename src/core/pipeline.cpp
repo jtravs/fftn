@@ -358,9 +358,10 @@ void build_depth_pair(plan_core& c, const pipeline_view& d, const row_layout& l,
   c.axis_notes.push_back("line (n = " + std::to_string(n) + "): " + chain.depth_pair_text(n, tops));
 }
 
-// The pair a <C, C, C> line takes and its stages: the depth-first pair where its rules say
-// (convolution_depth_tops, for contiguous lines only: its passes read and write stride 1),
-// otherwise the chain pair (below). Returns whether it is the depth-first pair.
+// The pair a <C, C, C> line takes and its stages: the depth-first pair where it is forced
+// (convolution_depth_tops, for contiguous lines only: its passes read and write stride 1; the
+// rules' choice waits for X67), otherwise the chain pair (below). Returns whether it is the
+// depth-first pair.
 template <class T>
 bool build_pair(plan_core& c, const pipeline_view& d, const row_layout& l, const vocab& v,
                 const build_settings& settings, placed& pl, run_prunings& pr) {

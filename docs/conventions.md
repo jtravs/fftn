@@ -441,11 +441,9 @@ or epilogue factor. On `<C, C, C>`, a complex factor of stride 1 along the line 
 neighbouring transform's pass; any other factor, every factor of `<T, C, T>`, accumulation and
 the runs' reading and storing, in a pass of its own over the line while it is in the workspace
 (`describe()` counts them), except that runs within the line's first half are read or written by
-the transform's first or last pass where its passes allow, as for a plan. A long contiguous
-`<C, C, C>` line in double may take the depth-first pair instead of the chain pair (its
-transforms depth-first, as a long Bluestein stage's convolution; `describe()` names it): one input
-run from position 0 and one output run are then read and written by its outer passes, and other
-work passes over the line once more. Results equal the transform, the multiplications and the
+the transform's first or last pass where its passes allow, as for a plan. Every pipeline is
+built as the chain pair: the depth-first pair for long lines is built (task 5.2d) but taken by
+no plan until experiment X67 gives the rules their choice. Results equal the transform, the multiplications and the
 inverse done separately within two transforms' error bound plus one rounding per
 multiplication and addition, not bit for bit; the guarantees of "Determinism" below hold for
 pipelines too. `pipeline::transforms_of` deals lines among a team's members as

@@ -834,9 +834,10 @@ TYPED_TEST(PipelineRuns, DepthFirstPairSharedByATeam) {
   }
 }
 
-// By the rules: a <C, C, C> line takes the depth-first pair exactly where a Bluestein stage whose
+// By the rules a <C, C, C> line keeps the chain pair even where a Bluestein stage whose
 // convolution had the line's length would take the depth-first convolution (X50's rule), with a
-// profile the test sets; never on a strided line, nor in float.
+// profile the test sets: when the rules take the pair is experiment X67's to decide (task 5.2g).
+// Forced there, the pair agrees with the chain pair; a strided line never takes it.
 TEST(PipelineRuns, DepthFirstPairByTheRules) {
   using C = std::complex<double>;
   constexpr std::size_t n = 34560; // 2^8 3^3 5: a top of 16 and every complex count split it
@@ -865,26 +866,22 @@ TEST(PipelineRuns, DepthFirstPairByTheRules) {
                  .count = 1,
                  .in = {{0, 0, n / 2}},
                  .out = {{0, 0, n / 2}}};
-    rc.expect = convolution ? "the depth-first pair" : "the chain pair";
+    rc.expect = "the chain pair";
     std::vector<C> by_rules;
     run_core(runs_run<double, C>(rc, t, src), rules, false, false, &by_rules);
-    if (convolution) {
-      d::build_settings chain = rules;
-      chain.strategy = d::strategy_choice::chain;
-      runs_case as_chain = rc;
-      as_chain.expect = "the chain pair";
-      fftn::test::input_source again(0x2D1EULL);
-      std::vector<C> by_chain;
-      run_core(runs_run<double, C>(as_chain, t, again), chain, false, false, &by_chain);
-      expect_close<double>(by_rules, by_chain, n, fftn::isa_name(t));
-    }
+    d::build_settings forced = rules;
+    forced.strategy = d::strategy_choice::depth;
+    runs_case as_depth = rc;
+    as_depth.expect = "the depth-first pair";
+    fftn::test::input_source again(0x2D1EULL);
+    std::vector<C> by_depth;
+    run_core(runs_run<double, C>(as_depth, t, again), forced, false, false, &by_depth);
+    expect_close<double>(by_depth, by_rules, n, fftn::isa_name(t));
     runs_case strided = rc;
     strided.in_stride = 2;
-    strided.expect = "the chain pair";
     fftn::test::input_source more(0x2D1FULL);
-    run_core(runs_run<double, C>(strided, t, more), rules, false, false);
+    run_core(runs_run<double, C>(strided, t, more), forced, false, false);
   }
-  // Float takes the chain pair by the rules (X50's convolutions were measured in double).
   fftn::test::input_source src(0x2D20ULL);
   run_core(runs_run<float, std::complex<float>>(
                {.name = "float by the rules", .n = n, .count = 1, .expect = "the chain pair"},

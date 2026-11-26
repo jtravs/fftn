@@ -625,9 +625,7 @@ TYPED_TEST(Pipelines, TeamsAndExecutorsAgreeWithSerial) {
                        .mid = {cplx, 1, 0},
                        .epi = {real, 1, 0},
                        .accumulate = true,
-                       // The chain pair or, where X50's rule reaches 2^17 points in double (the
-                       // Xeon 6240's avx512, task 5.2d), the depth-first pair.
-                       .expect = " pair: each line through the"},
+                       .expect = "the chain pair"},
                       fftn::isa::best, true, false);
 }
 
