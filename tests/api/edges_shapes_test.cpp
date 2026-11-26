@@ -1211,32 +1211,8 @@ void forms_agree(const shape_case& sc, fftn::isa target, forms_seen& seen) {
   d::execute_all(*w, in_of(one), out_of(one), ws, args);
   std::vector<T> other = fresh();
   d::execute_all(*b, in_of(other), out_of(other), ws, args);
-  // The same program in both (describe() apart from the row blocks and the workspace they
-  // enlarge): the same bits. Otherwise batch leaves in row blocks took a factor the walked form
-  // fuses into the chain as a separate pass, a different program checked against the reference
-  // (BatchedFormsAgainstTheReference).
-  const auto program_of = [](const std::string& text) {
-    std::string kept;
-    std::size_t at = 0;
-    while (at < text.size()) {
-      const std::size_t end = std::min(text.find('\n', at), text.size());
-      const std::string line = text.substr(at, end - at);
-      if (!line.starts_with("edge row blocks:") && !line.starts_with("workspace:")) {
-        kept += line + "\n";
-      }
-      at = end + 1;
-    }
-    return kept;
-  };
-  if (program_of(d::describe(*w)) == program_of(d::describe(*b))) {
-    EXPECT_TRUE(same_bits(one, other))
-        << what << ": the batched forms differ from the walked form\n"
-        << d::describe(*b);
-  } else {
-    EXPECT_NE(d::describe(*b).find("\nedge row blocks:"), std::string::npos)
-        << what << ": the plans differ\n"
-        << d::describe(*w) << d::describe(*b);
-  }
+  EXPECT_TRUE(same_bits(one, other)) << what << ": the batched forms differ from the walked form\n"
+                                     << d::describe(*b);
   // Pieces of the batch that start and end inside a block of rows.
   if (transforms(sc) > 3) {
     std::vector<T> pieces = fresh();
@@ -1313,13 +1289,6 @@ TYPED_TEST(EdgeShapes, BatchedFormsTakeBatchLeaves) {
        .in = {real, {}, 1},
        .out = {real, {-1}, -1},
        .expect = "edge row blocks: the rows in blocks of"},
-      // A factor the walked form would fuse into the chain's leaf.
-      {.name = "batch leaves, fusable complex factor",
-       .kind = transform_kind::c2c,
-       .dims = {8},
-       .count = 24,
-       .out = {cplx, {}, 1},
-       .expect = "the output times a complex factor in a separate pass from the workspace block"},
   };
   for (const fftn::isa t : fftn::test::runnable_isas()) {
     for (const shape_case& c : cases) {

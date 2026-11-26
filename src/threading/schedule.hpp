@@ -455,9 +455,12 @@ struct machine_profile {
   // batched forms (core/edge_driver.hpp, task 5.2a; experiment X65's P1): the flat form, the
   // unrolled calls and rows of one leaf with the factor cursors, and a c2c plan of rows with
   // separate edge passes in blocks of rows (edge passes and leaves once per block). Otherwise
-  // such a plan walks its program one transform at a time. Last, so that every field above
-  // keeps its place.
-  bool edge_batched_forms = true;
+  // such a plan walks its program one transform at a time. Off: X65's P1 rule (a geometric mean
+  // of 0.80 of the walked form over c2c and real rows below 4096 points) was missed on the EPYC
+  // 7763 (0.868), though rows on batch leaves with a separate factor took 0.39-0.56 of their
+  // time; tests turn it on. Pipelines take these forms from task 5.2b. Last, so that every
+  // field above keeps its place.
+  bool edge_batched_forms = false;
 };
 
 // The profile of a machine of topology t (its CPU count aside): the defaults above, which
