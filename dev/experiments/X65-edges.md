@@ -303,6 +303,26 @@ P1's drafted rule, made precise before any judging run:
   the verdict is recorded. A criterion missed by less than the band gets one `--serial` re-run
   that decides (AGENTS.md section 6).
 
+**Run 1, arm N** (`O` = e4f21b2, `N` = fe71f5e; EPYC jobs 519208, 519212–519214, Xeon 17254;
+Xeon E2–E5 cancelled once arm N2 below replaced N). Geometric mean of N/O over the target cases:
+
+| Machine | E1 | E2 | E4 | E5 | All four |
+|---|---|---|---|---|---|
+| EPYC, runs 20261126-003733-4d84, -004009-0644, -004026-2e99, -004034-29a8 (bands 1.8, 1.0, 1.7, 1.7 %) | 0.798 | 0.953 | 0.970 | 0.792 | 0.868 |
+| Xeon, run 20261126-003842-c062 (band 1.6 %) | 0.814 | | | | |
+
+Separate real factors on batch leaves moved most (c2c 16 × 1024: 0.39–0.44, 64 × 64: 0.54–0.73);
+fused complex factors little (16 × 1024: 0.83–0.86; 64 × 64: 0.94–1.01), since the fused chain
+takes no batch leaves: in N its rows took 1.1–2.0 times the time of the separate-factor rows
+in row blocks. Chains of 256 and 1024 points: 0.98–1.01 in every run. No case's interval lay
+wholly above 1 + band. By the rule, N is **not adopted** on the EPYC (0.868 > 0.80).
+
+**Arm N2, declared before its runs:** N plus (a) a plan whose separate-pass build is batch
+leaves in row blocks keeps it, rather than the fused chain, and (b) the flat and row-block forms
+copy a cursor-reading stage's arguments once per execution, not per transform (19571b83). Judged
+exactly as N above: `O` = e4f21b2 against `N2` = 19571b83, runs E1, E2, E4 and E5 on the EPYC
+and the Xeon (`--serial`), the same target set and criteria. These runs decide P1.
+
 A real row's grid with an input edge did not occur in the catalogue's rows on these
 machines, and the lanes over adjacent transforms with accumulation were not measured
 (fbench's edge options refuse the interleaved layout). Both go into the re-run with P1.
