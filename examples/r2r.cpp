@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: 2026 John C. Travers and contributors
 // SPDX-License-Identifier: Apache-2.0
 
-// Real-to-real plans (provisional, task 6.3): the discrete Hartley transform of rows and of
-// planes, each its own inverse up to the number of points. The example quoted in
-// docs/conventions.md ("Real-to-real transforms"). Exits with 0 when the DHT matches its direct
-// sum and the scaled transform undoes the first.
+// Real-to-real plans (provisional, tasks 6.3 and 6.4): the discrete Hartley transform of rows and
+// of planes, each its own inverse up to the number of points, and the DCT-II of rows undone by the
+// DCT-III. The example quoted in docs/conventions.md ("Real-to-real transforms"). Exits with 0
+// when each transform matches its direct sum and the scaled inverse undoes the first.
 
 #include <fftn/fftn.hpp>
 
@@ -100,14 +100,59 @@ double planes_error() {
   return error / largest;
 }
 
+// The DCT-II of rows (FFTW's REDFT10) and the DCT-III scaled by 1/(2n) that undoes it.
+double dct_error() {
+  const std::size_t n = 30;
+  const std::size_t count = 2;
+  std::vector<double> x(n * count);
+  for (std::size_t i = 0; i < x.size(); ++i) {
+    x[i] = std::sin(0.4 * static_cast<double>(i)) - 0.5 * std::cos(2.3 * static_cast<double>(i));
+  }
+
+  // snippet-begin: dct
+  // Y_k = 2 sum_j x_j cos(pi (j + 1/2) k / n) of every row.
+  const fftn::r2r_plan<double> dct2(fftn::rows_r2r<double>(n, count, fftn::r2r_kind::dct2));
+  // The DCT-III undoes it up to 2n.
+  const fftn::r2r_plan<double> dct3(fftn::rows_r2r<double>(n, count, fftn::r2r_kind::dct3),
+                                    {.scale = 1.0 / (2.0 * static_cast<double>(n))});
+  fftn::workspace ws(dct2);
+
+  std::vector<double> y(n * count);
+  std::vector<double> back(n * count);
+  dct2.execute(x.data(), y.data(), ws);
+  dct3.execute(y.data(), back.data(), ws); // back == x, to rounding
+  // snippet-end: dct
+
+  double error = 0;
+  double largest = 0;
+  for (std::size_t r = 0; r < count; ++r) {
+    for (std::size_t k = 0; k < n; ++k) {
+      double sum = 0;
+      for (std::size_t j = 0; j < n; ++j) {
+        sum += 2 * x[r * n + j] *
+               std::cos(std::numbers::pi * (static_cast<double>(j) + 0.5) * static_cast<double>(k) /
+                        static_cast<double>(n));
+      }
+      error = std::max(error, std::abs(y[r * n + k] - sum));
+      largest = std::max(largest, std::abs(sum));
+    }
+  }
+  double round_trip = 0;
+  for (std::size_t i = 0; i < x.size(); ++i) {
+    round_trip = std::max(round_trip, std::abs(back[i] - x[i]));
+  }
+  return std::max(error / largest, round_trip);
+}
+
 } // namespace
 
 int main() {
   try {
     const double rows = dht_error();
     const double planes = planes_error();
-    std::printf("dht rows: %.2e, planes: %.2e\n", rows, planes);
-    return rows < 1e-13 && planes < 1e-13 ? 0 : 1;
+    const double dct = dct_error();
+    std::printf("dht rows: %.2e, planes: %.2e; dct2 and dct3 rows: %.2e\n", rows, planes, dct);
+    return rows < 1e-13 && planes < 1e-13 && dct < 1e-13 ? 0 : 1;
   } catch (const std::exception& e) {
     std::fprintf(stderr, "%s\n", e.what());
     return 1;

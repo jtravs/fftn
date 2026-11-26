@@ -473,17 +473,36 @@ std::vector<double> h(ny * nx);
 planes.execute(x.data(), h.data(), ws);
 ```
 
-Built so far: `dht`; the other kinds are refused at construction, naming `shape.kinds[i]`,
-until tasks 6.4 and 6.5. Refused too: `kinds` without one kind per axis, `kinds` on a shape of
-another kind, `dct1` on an axis of one point, and stored runs. A real-to-real plan takes edges
-with scales, real factors and accumulation (a complex factor is refused on either side), in
-place as c2c does, teams, executors and `execute_transforms`; it is planned by the rules whatever
-`options::effort` says (`plan::describe()` says so). Each axis is a phase over its lines; a
-line is read into the workspace, transformed there by the complex transform of half its length
-(an r2c's) or of its length (n odd), and written out by a store stage that combines the bins
-into the DHT, with the output edge's factor, the scales and accumulation. The results are
-within the underlying transform's error bound plus a rounding per stage operation; the
-guarantees of "Determinism" below hold.
+```cpp file=examples/r2r.cpp region=dct
+// Y_k = 2 sum_j x_j cos(pi (j + 1/2) k / n) of every row.
+const fftn::r2r_plan<double> dct2(fftn::rows_r2r<double>(n, count, fftn::r2r_kind::dct2));
+// The DCT-III undoes it up to 2n.
+const fftn::r2r_plan<double> dct3(fftn::rows_r2r<double>(n, count, fftn::r2r_kind::dct3),
+                                  {.scale = 1.0 / (2.0 * static_cast<double>(n))});
+fftn::workspace ws(dct2);
+
+std::vector<double> y(n * count);
+std::vector<double> back(n * count);
+dct2.execute(x.data(), y.data(), ws);
+dct3.execute(y.data(), back.data(), ws); // back == x, to rounding
+```
+
+Built so far: `dht`, `dct2`, `dct3`, `dst2` and `dst3`, any n and mixed across axes; `dct1`,
+`dct4`, `dst1` and `dst4` are refused at construction, naming `shape.kinds[i]`, until task 6.5.
+Refused too: `kinds` without one kind per axis, `kinds` on a shape of another kind, `dct1` on an
+axis of one point, and stored runs. A real-to-real plan takes edges with scales, real factors
+and accumulation (a complex factor is refused on either side), in place as c2c does, teams,
+executors and `execute_transforms`; it is planned by the rules whatever `options::effort` says
+(`plan::describe()` says so). Each axis is a phase over its lines; a line is read into the
+workspace by a read stage, transformed there by a complex transform of half its length (n even)
+or of its length (n odd), and written out by a store stage, which applies the output edge's
+factor, the scales and accumulation. The DHT combines the bins of an r2c; DCT-II reorders the
+line (Makhoul's order) for an r2c and twiddles its bins; DCT-III twiddles the line into the
+spectrum of a c2r and reads the result back from Makhoul's order; the sine kinds are the cosine
+ones with alternating signs and reversals. An axis of one point is the identity for `dht`,
+`dct3` and `dst3` and doubles for `dct2` and `dst2` (Y_0 = 2 x_0). The results are within the
+underlying transform's error bound plus a rounding per stage operation; the guarantees of
+"Determinism" below hold.
 
 ## In place
 
