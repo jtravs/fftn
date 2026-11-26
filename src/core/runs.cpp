@@ -140,7 +140,7 @@ std::string runs_key(const shape_view& s) {
 }
 
 std::string runs_text(const run_plan& runs, bool accumulate, const char* in_to,
-                      std::size_t passes) {
+                      std::size_t passes, run_pruning in, run_pruning out) {
   const auto axes_text = [](const side_runs& held) {
     std::string t;
     for (std::size_t d = 0; d < held.axes.size(); ++d) {
@@ -156,18 +156,43 @@ std::string runs_text(const run_plan& runs, bool accumulate, const char* in_to,
   };
   std::string text = "stored runs:";
   if (runs.in.any()) {
-    text += std::string(" the input's ") + axes_text(runs.in) +
-            ", read with zeros elsewhere into " + in_to + " in a separate pass";
+    text += std::string(" the input's ") + axes_text(runs.in);
+    switch (in) {
+    case run_pruning::direct:
+      text += ", read where they are stored by the first pass, pruned to the line's first half";
+      break;
+    case run_pruning::half:
+      text += std::string(", read with zeros elsewhere in the line's first half into ") + in_to +
+              " in a separate pass, the first pass pruned to that half";
+      break;
+    case run_pruning::none:
+      text += std::string(", read with zeros elsewhere into ") + in_to + " in a separate pass";
+      break;
+    }
   }
   if (runs.out.any()) {
     text += std::string(runs.in.any() ? ";" : "") + " the output's " + axes_text(runs.out) +
-            ", the rest not written, " + (accumulate ? "accumulated" : "stored") +
-            " from the workspace block in a separate pass";
+            ", the rest not written, ";
+    switch (out) {
+    case run_pruning::direct:
+      text += "written where they are stored by the last pass, pruned to the line's first half";
+      break;
+    case run_pruning::half:
+      text += std::string(accumulate ? "accumulated" : "stored") +
+              " from the workspace block in a separate pass, the last pass pruned to the line's "
+              "first half";
+      break;
+    case run_pruning::none:
+      text += std::string(accumulate ? "accumulated" : "stored") +
+              " from the workspace block in a separate pass";
+      break;
+    }
   } else if (accumulate) {
     text += "; the output accumulated from the workspace block in a separate pass";
   }
-  text += "; the whole transform computed between them; they cost " + std::to_string(passes) +
-          (passes == 1 ? " separate pass" : " separate passes");
+  const bool whole = in == run_pruning::none && out == run_pruning::none;
+  text += std::string(whole ? "; the whole transform computed between them" : "") + "; they cost " +
+          std::to_string(passes) + (passes == 1 ? " separate pass" : " separate passes");
   return text;
 }
 

@@ -91,6 +91,16 @@ struct line_edges {
   // When above 1, out_factor holds one entry per run of this many consecutive elements, a
   // multiple of C (a Bluestein convolution's kernel spectrum over its interleaved copies).
   std::size_t out_factor_copies = 1;
+  // A line with stored runs (task 5.1e; chain_builder::head_first, head_last): its first pass
+  // reads only the line's first n/2 elements, legs 0 .. R/2 - 1 of its radix R (the dif_head
+  // codelet; the rest are known zero), from in_offset bytes past its source; its last pass
+  // writes only the first n/2, legs 0 .. R/2 - 1 (plain_head), from out_offset bytes past its
+  // destination, and nothing else of the line goes there. No input edge operation with
+  // in_head; out_head takes the output's scale at most.
+  bool in_head = false;
+  bool out_head = false;
+  std::size_t in_offset = 0;
+  std::size_t out_offset = 0;
 };
 
 // When the pairing of an even real line fuses into a pass of its half-length chain
@@ -198,6 +208,14 @@ public:
   [[nodiscard]] std::string radix_text(std::size_t n, const std::vector<std::size_t>& rad) const;
   // The radices of the complex transform of h of an even real line (r2c or c2r).
   [[nodiscard]] std::vector<std::size_t> real_radices(std::size_t h, bool r2c) const;
+
+  // The edge passes of a c2c line of n with stored runs (task 5.1e, line_edges::in_head and
+  // out_head): whether c2c_line, given lines of stride 1, builds its first pass (head_first)
+  // or its last pass (head_last) as a codelet pass of a radix R with pruned codelets
+  // (has_pruned_codelet), which then reads or writes only the line's first n/2 elements, legs
+  // 0 .. R/2 - 1. Not where the line is one leaf or pair leaf, nor a last pass of Bluestein's.
+  [[nodiscard]] bool head_first(std::size_t n) const;
+  [[nodiscard]] bool head_last(std::size_t n) const;
 
   // Each appends the stages of one line to `stages` and returns the complex elements of
   // scratch the line needs in each of a and b (0 when it needs none).
