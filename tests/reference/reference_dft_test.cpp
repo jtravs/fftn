@@ -396,6 +396,38 @@ TEST(ReferenceR2r, DefinitionsIdentitiesAndInverses) {
       EXPECT_NEAR(d3s[k], d3[n - 1 - k], 1e-15 * nd) << n << " " << k;
       EXPECT_NEAR(s3r[k], sk * d3[k], 1e-15 * nd) << n << " " << k;
     }
+    // The kinds IV and I (task 6.5): DCT-IV against its sum in double, and dst4(R x)_k =
+    // (-1)^k dct4(x)_k, dst4(S x)_k = dct4(x)_(n-1-k), dct4(S R x)_k = (-1)^(n-1-k)
+    // dct4(x)_(n-1-k), dct1(R x)_k = (-1)^k dct1(x)_k and dst1(R x)_k = (-1)^k dst1(x)_k.
+    std::vector<double> sr(n);
+    for (std::size_t j = 0; j < n; ++j) {
+      sr[j] = (j % 2 == 0 ? 1.0 : -1.0) * x[n - 1 - j];
+    }
+    const std::vector<double> d4 = line(r2r_type::dct4, x);
+    const std::vector<double> s1 = line(r2r_type::dst1, x);
+    const std::vector<double> s4r = line(r2r_type::dst4, r);
+    const std::vector<double> s4s = line(r2r_type::dst4, sx);
+    const std::vector<double> d4sr = line(r2r_type::dct4, sr);
+    const std::vector<double> s1r = line(r2r_type::dst1, r);
+    const std::vector<double> d1 = n >= 2 ? line(r2r_type::dct1, x) : std::vector<double>{};
+    const std::vector<double> d1r = n >= 2 ? line(r2r_type::dct1, r) : std::vector<double>{};
+    for (std::size_t k = 0; k < n; ++k) {
+      const double kd = static_cast<double>(k);
+      const double sk = k % 2 == 0 ? 1.0 : -1.0;
+      const std::size_t m = n - 1 - k;
+      double want_d4 = 0.0;
+      for (std::size_t j = 0; j < n; ++j) {
+        want_d4 += 2.0 * x[j] * std::cos(pi * (static_cast<double>(j) + 0.5) * (kd + 0.5) / nd);
+      }
+      EXPECT_NEAR(d4[k], want_d4, 1e-14 * nd) << n << " " << k;
+      EXPECT_NEAR(s4r[k], sk * d4[k], 1e-15 * nd) << n << " " << k;
+      EXPECT_NEAR(s4s[k], d4[m], 1e-15 * nd) << n << " " << k;
+      EXPECT_NEAR(d4sr[k], (m % 2 == 0 ? 1.0 : -1.0) * d4[m], 1e-15 * nd) << n << " " << k;
+      EXPECT_NEAR(s1r[k], sk * s1[k], 1e-15 * nd) << n << " " << k;
+      if (n >= 2) {
+        EXPECT_NEAR(d1r[k], sk * d1[k], 1e-15 * nd) << n << " " << k;
+      }
+    }
     // Each kind then its inverse: N times the input.
     const struct {
       r2r_type kind;
