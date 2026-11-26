@@ -618,7 +618,15 @@ Points that matter:
   against 795 scipy results recorded by `tests/api/data/scipy_r2r_cases.py` (both precisions) and
   bitwise against the core plan with the edges built by hand.
 - **Kokkos.** The one-shot functions of `fftn::kokkos::compat` (Kokkos-FFT's `fft`, `ifft`,
-  `rfft` and the rest, 5.5) would be built over the same context (step 6.7).
+  `rfft` and the rest, 5.5) are built over the same context. *As built (step 6.7;
+  provisional):* the header-only adapter reaches it through one internal entry,
+  `easy::detail::run_shape` (declared in `fftn/easy.hpp`, a friend of `context`): the plan of
+  exactly the Views' `shape_of` with `options::in_place`, keyed by every field of the shape,
+  found or built in `thread_context()` and executed on the caller's Kokkos executor with the
+  context's workspace. The normalisation stays the adapter's separate pass (`view_plan`'s,
+  now a shared helper), so each one-shot is bitwise the `view_plan` of the same Views. The
+  shape's vectors are built on every call, so a one-shot allocates even when it finds its
+  plan.
 
 ### 5.5 Other interfaces
 
@@ -688,8 +696,15 @@ the header and the docs until it happens.
   the host checks and then fence inside its own kernels; Threads needs Kokkos 5.2.1, 13.6). An
   application that builds for devices selects the provider per build. Errors are `std::invalid_argument` with the prefix
   `fftn::kokkos:` and the argument's name (Kokkos-FFT throws `std::runtime_error`).
-- *Not provided yet:* the one-shot functions (`KokkosFFT::fft` and the rest, which would make
-  a plan per call and belong with the convenience layer of 5.4, step 6.7); `DynPlan`.
+- *The one-shot functions* (`KokkosFFT::fft`, `ifft`, `rfft`, `irfft`, `hfft`, `ihfft`, the
+  `2` and `n` forms; step 6.7, provisional) take Kokkos-FFT's signatures and compute what a
+  plan of the same Views computes, keeping the plan in the calling thread's convenience
+  context (5.4, "Kokkos"). As Kokkos-FFT: a real input to `fft`, `fft2` and `fftn` goes through
+  a complex temporary, `hfft` is `irfft` of the conjugate with the normalisation's direction
+  swapped, and `ihfft` is `rfft` so swapped, then conjugated. One deliberate difference: `hfft`
+  conjugates into a temporary and never modifies its input, which Kokkos-FFT does to a
+  non-const one.
+- *Not provided yet:* the helpers (`fftfreq`, `rfftfreq`, `fftshift`, `ifftshift`); `DynPlan`.
 
 **`fftn/omp.hpp`** (optional, header-only, compiled in the user's translation units against
 the user's OpenMP runtime, so the process has one OpenMP runtime; the library links none):
@@ -4791,6 +4806,7 @@ to change before a release.
 | 2026-11-26 | Step 6.3 (provisional, second reader to come): `r2r_kind`, `shape<T, T>` with `shape::kinds`, `rows_r2r`, `planes_r2r`, `volumes_r2r`, `axes_r2r`, `r2r_plan`, and the DHT as built in 5.7: a read stage, the r2c's complex chain in the member's scratch and a store stage fusing the r2c's pairing with the Hartley combination; the DCT and DST kinds refused until 6.4 and 6.5; real-to-real plans by the rules only | The 18.2 "Phase 6" proposals 9–13 taken as written; scratch rather than the block, because a phase's lines run on several members at once and the block is the task's |
 | 2026-11-26 | Convenience layer for complex and real transforms (step 6.6, section 5.4): provisional `fftn/easy.hpp` with 18.2's proposals Q4–Q8 (`fftn::easy`, numpy's semantics, a `thread_local` `context` of 64 plans dropped least recently used, rules planning, `view` with an `mdspan` conversion, both value forms); one compiled unit over the public API only; per-precision overloads for the span forms; `axis_list` for braced axes; sizes must agree (numpy's cropping and padding by `n` and `s` not offered); the executor's width left out of the key; `cached_plans()` and `max_plans()` added for inspection. Awaits the maintainer's review of the API | The maintainer's priority (2026-11-25): features fully built; numpy users' call sites translate one to one, and the core API stays the way to every other feature |
 | 2026-11-26 | Convenience layer for real-to-real transforms (step 6.7, section 5.4, "As built"): provisional `dct`, `idct`, `dst`, `idst` (spans, both forms), `dctn`, `idctn`, `dstn`, `idstn` (views) and `dht` in `fftn::easy`, with scipy's `int` type and norms; `norm::ortho` implies scipy's `orthogonalize=True`, the flag not offered; one type on every axis; the orthogonalising weights as cached real edge factors; `dht` scaled as a forward transform, 1-D only. Awaits the maintainer's review of the API | scipy users' call sites translate one to one; the weights are what 12.1's real factors are for, so the layer adds no stage of its own |
+| 2026-11-26 | Kokkos-FFT's one-shot functions (step 6.7, sections 5.4 and 5.5): provisional, in `fftn::kokkos::compat` with Kokkos-FFT 2.0's signatures (`fft`, `ifft`, `rfft`, `irfft`, `hfft`, `ihfft`, `fft2`, `ifft2`, `rfft2`, `irfft2`, `fftn`, `ifftn`, `rfftn`, `irfftn`); plans in the calling thread's convenience context through the internal `easy::detail::run_shape`; the normalisation as `view_plan`'s separate pass, so each one-shot is bitwise its `view_plan`; real input to `fft` and `hfft` through temporaries as Kokkos-FFT does, but `hfft` leaves its input unchanged; the helpers left out. Awaits the maintainer's review (PLAN marks the Kokkos part M) | 18.2 Q3's proposal: a Kokkos-FFT call site compiles unchanged, and repeated calls build no plan |
 
 ---
 
