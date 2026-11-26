@@ -24,6 +24,8 @@
 #include "support/inputs.hpp"
 #include "support/outcome.hpp"
 #include "support/tolerance.hpp"
+#include "threading/schedule.hpp"
+#include "threading/work_graph.hpp"
 
 #include <fftn/fftn.hpp>
 
@@ -68,6 +70,7 @@ struct fan_case {
   std::size_t count = 3;
   std::size_t fanout = 3;
   bool backwards = false;        // copies at negative distances
+  bool between = false;          // copies between lines, inside the batch's span (not backwards)
   std::ptrdiff_t factor_gap = 1; // elements between copies' kernels; -1: one kernel for all copies
   std::vector<run_spec> in{};    // empty: the input line stored whole
   std::vector<run_spec> out{};   // empty: the output line stored whole
@@ -133,9 +136,14 @@ template <class T, class Elem> struct fan_run {
     };
     in_dist = span(ein, c.in_stride);
     out_dist = span(eout, c.out_stride);
-    // The copies' batches 3 elements apart: canaries between them.
+    // The copies' batches 3 elements apart: canaries between them. Between lines: copy k of line
+    // r right after copy k - 1 of it (a gap of 2), the lines fanout copies apart.
     const std::ptrdiff_t batch_span = out_dist * static_cast<std::ptrdiff_t>(c.count);
     copy_dist = (batch_span + 3) * (c.backwards ? -1 : 1);
+    if (c.between) {
+      copy_dist = out_dist;
+      out_dist *= static_cast<std::ptrdiff_t>(c.fanout);
+    }
     const std::ptrdiff_t copies = static_cast<std::ptrdiff_t>(c.fanout) - 1;
     in_base = c.in_stride < 0 ? static_cast<std::size_t>(-c.in_stride) * (ein - 1) : 0;
     std::size_t line_base =
@@ -198,7 +206,9 @@ template <class T, class Elem> struct fan_run {
     desc.fanout_factor_dist = factor_dist;
 
     x = values(src, static_cast<std::size_t>(in_dist) * c.count);
-    init = values(src, line_base + static_cast<std::size_t>(std::abs(copy_dist)) * c.fanout);
+    init = values(src, line_base +
+                           (c.between ? static_cast<std::size_t>(out_dist) * c.count
+                                      : static_cast<std::size_t>(std::abs(copy_dist)) * c.fanout));
     std::vector<bool> in_listed(x.size(), false);
     out_listed.assign(init.size(), false);
     for (std::size_t r = 0; r < c.count; ++r) {
@@ -503,6 +513,13 @@ constexpr const char* serial = "a team runs a line's copies one after another";
 std::vector<fan_case> fan_sets(std::size_t n, bool real_kind) {
   std::vector<fan_case> sets = {
       {.name = "a kernel per copy", .n = n, .expect = shared},
+      {.name = "copies between lines", .n = n, .count = 4, .between = true, .expect = shared},
+      {.name = "copies between strided lines, accumulated",
+       .n = n,
+       .between = true,
+       .out_stride = -2,
+       .accumulate = true,
+       .expect = serial},
       {.name = "a kernel per copy and line", .n = n, .fanout = 2, .per_row = true},
       {.name = "one kernel for every copy", .n = n, .factor_gap = -1, .expect = shared},
       {.name = "a real kernel, copies backwards", .n = n, .backwards = true, .mid = real},
@@ -637,6 +654,41 @@ TYPED_TEST(PipelineFanout, TeamsAndExecutorsAgreeWithSerial) {
        }) {
     run_case<TypeParam, C>(fc, fftn::isa::best, true, {}, false);
     run_case<TypeParam, TypeParam>(fc, fftn::isa::best, true, {}, false);
+  }
+}
+
+// A short line whose copies a team splits among its members (the schedule forced to split one
+// line: every threshold at its least, a copy per chunk), each copy on a member's own scratch,
+// bitwise as serial execution; and the copies in the second region, one chunk.
+TYPED_TEST(PipelineFanout, CopiesSplitAmongATeam) {
+  using C = std::complex<TypeParam>;
+  d::build_settings s;
+  s.chunk_points = 1;
+  s.profile.inline_multiple = 0;
+  s.profile.split_min_points = 1;
+  s.profile.split_min_points_mesh = 1;
+  s.profile.split_min_points_lines = 1;
+  s.profile.remainder_split_min_points = 1;
+  s.profile.min_points_per_member = 1;
+  s.profile.sync_ns = 0;
+  for (const bool accumulate : {false, true}) {
+    const fan_case fc{.name = accumulate ? "split copies, accumulated" : "split copies",
+                      .n = 64,
+                      .count = 1,
+                      .fanout = 6,
+                      .accumulate = accumulate,
+                      .expect = accumulate ? serial : shared};
+    fftn::test::input_source src(0x5E2FULL);
+    const fan_run<TypeParam, C> run(fc, fftn::isa::best, src);
+    const auto core = d::make_pipeline_core(run.view(), {.force_isa = run.target}, s);
+    const auto copies = std::ranges::find_if(core->graph.phases,
+                                             [](const d::graph_phase& ph) { return ph.nest != 0; });
+    ASSERT_NE(copies, core->graph.phases.end()) << d::describe(*core);
+    EXPECT_EQ(copies->chunks, accumulate ? 1U : 6U) << d::describe(*core);
+    const d::lane_map lanes{.lanes = 3};
+    const d::schedule plan = d::make_schedule(core->graph, lanes, core->profile);
+    EXPECT_NE(d::share_of(plan, lanes, 0).split, 0U) << "the team does not split the line";
+    run_core(run, s, true);
   }
 }
 

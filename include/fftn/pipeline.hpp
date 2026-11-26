@@ -125,8 +125,10 @@ template <class In, class Mid, class Out> struct pipeline_desc {
   /// an in-place pipeline (dev/DESIGN.md 18.2, proposal 6). Provisional (task 5.2e).
   std::size_t fanout = 1;
   /// With `fanout` above 1, the distance between copies' outputs, in `Out` elements, of either
-  /// sign: no output element of one copy may be one of another copy's or another line's (each
-  /// side's reach by its stored extent with runs), so 0 is refused.
+  /// sign: no output element of one copy may be one of another copy's or another line's, so 0 is
+  /// refused. The rule is a plan's overlap rule with the copies as one more output dimension (the
+  /// output's reach by its stored extent with runs): sufficient, not exact, so it refuses some
+  /// disjoint interleavings, such as copies 1 element apart on lines of `out_stride` 2.
   std::ptrdiff_t fanout_out_dist = 0;
   /// With `fanout` above 1, the distance between copies' middle factors, in the array's elements,
   /// of either sign; 0 gives every copy the same factor. Ignored without a middle factor.

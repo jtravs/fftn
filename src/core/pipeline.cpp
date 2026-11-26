@@ -177,6 +177,15 @@ struct fanout_marks {
   std::vector<offset> offsets;
 };
 
+// The start of the workspace block's second region (task 5.2e) after a first of `elements` values
+// of `bytes` each: rounded up to 64 bytes, as the block and the scratch lines are aligned
+// (lay_out_workspace), so that a region of an odd count of values is not misaligned.
+std::ptrdiff_t second_region_bytes(std::size_t elements, std::ptrdiff_t bytes) {
+  constexpr std::ptrdiff_t alignment = 64;
+  const std::ptrdiff_t first = static_cast<std::ptrdiff_t>(elements) * bytes;
+  return (first + alignment - 1) / alignment * alignment;
+}
+
 // The edge driver's records (core/edge_driver.hpp): the stages built with a tag, and the edge
 // passes (which edge_pass_stage marks), keep their kernels there and carry guards; the batch
 // loops move the three cursors by the factors' batch strides (one loop per batch dimension, in
@@ -442,7 +451,7 @@ void build_depth_pair(plan_core& c, const pipeline_view& d, const row_layout& l,
     std::get<loop>(p.records[first]).body_end = static_cast<std::uint32_t>(p.records.size());
   };
   stages(read);
-  const auto second = static_cast<std::ptrdiff_t>(n) * complex_bytes;
+  const std::ptrdiff_t second = second_region_bytes(n, complex_bytes);
   for (typename chain_builder<T>::depth_stages* half : {&parts.forward, &parts.backward}) {
     if (half == &parts.backward && fanned) {
       // The copies loop, opened here (add_copies' loop, its body the records up to the store
@@ -478,7 +487,7 @@ void build_depth_pair(plan_core& c, const pipeline_view& d, const row_layout& l,
   for (std::size_t b = 0; b < p.batch_loops; ++b) {
     std::get<loop>(p.records[b]).body_end = static_cast<std::uint32_t>(p.records.size());
   }
-  c.block_elements = fanned ? 2 * n : n;
+  c.block_elements = fanned ? static_cast<std::size_t>(second / complex_bytes) + n : n;
   c.depth_tops = tops;
   lay_out_workspace(c, parts.scratch, 2 * sizeof(T), false, 0);
   c.axis_notes.push_back("line (n = " + std::to_string(n) + "): " + chain.depth_pair_text(n, tops));
@@ -570,9 +579,9 @@ void build_complex_copies(plan_core& c, const pipeline_view& d, const row_layout
       body.push_back(edge_pass_stage(c.prec, pl.epi, true, n, slot::block, 1, slot::out,
                                      l.out_stride, chunk, false, pl.epi.axis_stride));
     }
-    end_with_copies(p, d, pl.mid, complex_bytes, static_cast<std::ptrdiff_t>(n) * complex_bytes,
-                    line, body, fan);
-    c.block_elements = 2 * n;
+    const std::ptrdiff_t second = second_region_bytes(n, complex_bytes);
+    end_with_copies(p, d, pl.mid, complex_bytes, second, line, body, fan);
+    c.block_elements = static_cast<std::size_t>(second / complex_bytes) + n;
   }
   lay_out_workspace(c, scratch, 2 * sizeof(T), false, 0);
   const std::string radices = chain.radix_text(n);
@@ -792,9 +801,9 @@ void build_real_pair(plan_core& c, const pipeline_view& d, const row_layout& l, 
       body.push_back(edge_pass_stage(c.prec, pl.epi, true, n, slot::block, 1, slot::out,
                                      l.out_stride, chunk, true, pl.epi.axis_stride));
     }
-    end_with_copies(p, d, pl.mid, real_bytes, static_cast<std::ptrdiff_t>(bins) * complex_bytes,
-                    line, body, fan);
-    c.block_elements = 2 * bins;
+    const std::ptrdiff_t second = second_region_bytes(bins, complex_bytes);
+    end_with_copies(p, d, pl.mid, real_bytes, second, line, body, fan);
+    c.block_elements = static_cast<std::size_t>(second / complex_bytes) + bins;
   }
   if (fanned) {
     lay_out_workspace(c, scratch, 2 * sizeof(T), false, 0);
@@ -843,7 +852,7 @@ void build_real_pair(plan_core& c, const pipeline_view& d, const row_layout& l, 
 // each side.
 std::pair<std::ptrdiff_t, std::ptrdiff_t> check_copies(const pipeline_view& d, const row_layout& l,
                                                        const run_plan& runs, std::size_t out_bytes,
-                                                       std::size_t factor_bytes) {
+                                                       const edge_side& mid) {
   constexpr auto limit = static_cast<std::size_t>(PTRDIFF_MAX);
   const std::size_t copies = d.fanout - 1;
   const auto magnitude = [](std::ptrdiff_t v) {
@@ -857,9 +866,19 @@ std::pair<std::ptrdiff_t, std::ptrdiff_t> check_copies(const pipeline_view& d, c
       copies * out_dist * out_bytes > limit - static_cast<std::size_t>(l.out_hi - l.out_lo)) {
     refuse("desc.fanout_out_dist", "times desc.fanout - 1 makes the output's span overflow");
   }
-  if (factor_bytes != 0 && !fits(magnitude(d.fanout_factor_dist), factor_bytes)) {
-    refuse("desc.fanout_factor_dist",
-           "times desc.fanout - 1 makes the middle factor's span overflow");
+  if (mid.kind != factor_kind::none) {
+    // The factor's own span (along the bins and the batch, validated to fit) plus the copies'.
+    const std::size_t bins =
+        d.kind == pipeline_kind::real_convolution ? d.line.n / 2 + 1 : d.line.n;
+    std::size_t own = magnitude(mid.axis_stride) * (bins - 1) * mid.factor_bytes;
+    for (std::size_t b = 0; b < d.batches.size(); ++b) {
+      own += magnitude(mid.batch_steps.at(b)) * (d.batches[b].count - 1);
+    }
+    const std::size_t dist = magnitude(d.fanout_factor_dist);
+    if (!fits(dist, mid.factor_bytes) || copies * dist * mid.factor_bytes > limit - own) {
+      refuse("desc.fanout_factor_dist",
+             "times desc.fanout - 1 makes the middle factor's span overflow");
+    }
   }
   std::vector<std::pair<std::size_t, std::size_t>> dims; // |distance|, extent
   std::size_t reach = d.line.n;
@@ -1048,8 +1067,7 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
   const bool fanned = d.fanout > 1;
   if (fanned) {
     const std::size_t real_bytes = d.prec == precision::f64 ? sizeof(double) : sizeof(float);
-    const auto [lo, hi] = check_copies(d, layout, runs, real ? real_bytes : 2 * real_bytes,
-                                       v.mid.kind != factor_kind::none ? v.mid.factor_bytes : 0);
+    const auto [lo, hi] = check_copies(d, layout, runs, real ? real_bytes : 2 * real_bytes, v.mid);
     c->out_lo += lo;
     c->out_hi += hi;
   }

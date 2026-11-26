@@ -474,20 +474,20 @@ pipe.execute(x.data(), y.data(), ws, {.mid_factor = kernels.data()});
 
 Built so far: `pipeline<C, C, C>` with the forward transform first and `pipeline<T, C, T>`, with
 stored runs on either side and fan-out, planned by the rules (`options::effort` is ignored, and
-`pipeline::describe()` says so). Refused at construction, naming the field, until their steps:
-the inverse transform first (`spectral_pair_rows` with `direction::backward`), the kind
-`<C, T, C>`, `fanout` above 1 in place, and stored runs on an in-place pipeline or beside a
-prologue or epilogue factor. On `<C, C, C>`, a complex factor of stride 1 along the line is applied in the
-neighbouring transform's pass; any other factor, every factor of `<T, C, T>`, accumulation and
-the runs' reading and storing, in a pass of its own over the line while it is in the workspace
-(`describe()` counts them), except that runs within the line's first half are read or written by
-the transform's first or last pass where its passes allow, as for a plan. Every pipeline is
-built as the chain pair: the depth-first pair for long lines is built (task 5.2d) but taken by
-no pipeline unless forced, until experiment X67 gives the rules their choice. Results equal the
-transform, the multiplications and the inverse done separately within two transforms' error bound plus one rounding per
-multiplication and addition, not bit for bit; the guarantees of "Determinism" below hold for
-pipelines too. `pipeline::transforms_of` deals lines among a team's members as
-`plan::transforms_of` deals transforms.
+`pipeline::describe()` says so). Refused at construction, naming the field, until their steps: the
+inverse transform first (`spectral_pair_rows` with `direction::backward`), the kind `<C, T, C>`,
+`fanout` above 1 in place, and stored runs on an in-place pipeline or beside a prologue or epilogue
+factor. On `<C, C, C>`, a complex factor of stride 1 along the line is applied in the neighbouring
+transform's pass; any other factor, every factor of `<T, C, T>`, accumulation and the runs' reading
+and storing, in a pass of its own over the line while it is in the workspace (`describe()` counts
+them), except that runs within the line's first half are read or written by the transform's first or
+last pass where its passes allow, as for a plan. Every pipeline is built as the chain pair: the
+depth-first pair for long lines is built (task 5.2d) but taken by no pipeline unless forced, until
+experiment X67 gives the rules their choice. Results equal the transform, the multiplications and
+the inverse done separately within two transforms' error bound plus one rounding per multiplication
+and addition, not bit for bit; the guarantees of "Determinism" below hold for pipelines too.
+`pipeline::transforms_of` deals lines among a team's members as `plan::transforms_of` deals
+transforms.
 
 ## Real-to-real transforms
 
