@@ -451,6 +451,13 @@ struct machine_profile {
   // The one instruction set whose plans c2r_packed_bytes applies to, the one it was measured on
   // (plans for another target keep the block); fftn::isa::best applies it to every target.
   fftn::isa c2r_packed_isa = fftn::isa::best;
+  // Whether a plan whose edges have factors runs its whole executions in the edge driver's
+  // batched forms (core/edge_driver.hpp, task 5.2a; experiment X65's P1): the flat form, the
+  // unrolled calls and rows of one leaf with the factor cursors, and a c2c plan of rows with
+  // separate edge passes in blocks of rows (edge passes and leaves once per block). Otherwise
+  // such a plan walks its program one transform at a time. Last, so that every field above
+  // keeps its place.
+  bool edge_batched_forms = false;
 };
 
 // The profile of a machine of topology t (its CPU count aside): the defaults above, which
