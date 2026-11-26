@@ -4,5 +4,5 @@
 # The plan core: validation and layouts, programs and their driver, twiddle generation and
 # the out-of-line public API (task 0.5).
 
-target_sources(fftn PRIVATE api.cpp candidates.cpp driver.cpp edge_driver.cpp edges.cpp lengths.cpp measure.cpp plan_core.cpp runs.cpp
+target_sources(fftn PRIVATE api.cpp candidates.cpp driver.cpp edge_driver.cpp edges.cpp lengths.cpp measure.cpp pipeline.cpp plan_core.cpp runs.cpp
   twiddles.cpp wisdom.cpp)

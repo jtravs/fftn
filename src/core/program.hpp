@@ -42,9 +42,15 @@ inline constexpr std::size_t moving_slots = 4; // in, out, block, twiddles
 
 // stage::moving_factors: which of a stage's factor pointers (pass_args::in_factor,
 // out_factor) are the cursors of a plan's edges' factor arrays (core/edge_driver.hpp) rather
-// than fixed tables.
+// than fixed tables: the input edge's cursor in in_factor, the output edge's in out_factor, or a
+// pipeline's middle cursor (DESIGN.md 12.2, core/pipeline.cpp) in either: in out_factor for the
+// forward transform's last pass or a separate pass on the scratch-resident line, in in_factor
+// for a pass that reads the middle's factor on its input.
 inline constexpr std::uint8_t moving_in_factor = 1;
 inline constexpr std::uint8_t moving_out_factor = 2;
+inline constexpr std::uint8_t moving_mid_in_factor = 4;
+inline constexpr std::uint8_t moving_mid_out_factor = 8;
+inline constexpr std::uint8_t moving_mid_factor = moving_mid_in_factor | moving_mid_out_factor;
 
 struct stage {
   pass_fn run = nullptr; // the kernel, or for a leaf null and `leaf` set
@@ -55,8 +61,9 @@ struct stage {
                             // elements (src/strategies/chain.hpp); only their count matters here
   std::uint32_t chunks = 1; // independent ranges [units c / chunks, units (c+1) / chunks)
   bool moving_twiddles = false; // args.twiddles is offset by the loops' twiddle cursor
-  // moving_in_factor, moving_out_factor: args.in_factor or out_factor is the cursor of that
-  // edge's factor array (a plan's edges, fftn/edges.hpp), set at execution by the edge driver
+  // moving_in_factor, moving_out_factor, moving_mid_in_factor, moving_mid_out_factor:
+  // args.in_factor or out_factor is the cursor of that edge's factor array (a plan's edges,
+  // fftn/edges.hpp, or a pipeline's middle), set at execution by the edge driver
   // (core/edge_driver.hpp); `run` and `leaf` are then guards and the kernels are in the plan's
   // edge_record. In the padding after moving_twiddles; the driver of other plans never reads it.
   std::uint8_t moving_factors = 0;
