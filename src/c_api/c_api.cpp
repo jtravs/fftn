@@ -326,6 +326,7 @@ static_assert(FFTN_CALLBACK_MODIFY == static_cast<int>(fftn::callback_mode::modi
 static_assert(FFTN_CALLBACK_PRODUCE == static_cast<int>(fftn::callback_mode::produce));
 static_assert(FFTN_CALLBACK_CONSUME == static_cast<int>(fftn::callback_mode::consume));
 static_assert(FFTN_ALONG_TRANSFORMS == fftn::along_transforms);
+static_assert(FFTN_NO_GROUP == fftn::no_group);
 
 // What the core passes a C callback as its user pointer: the C function and the caller's own
 // pointer, built by each execution on its caller's stack (c_exec_args). A team member's
@@ -507,6 +508,7 @@ struct converted_pipeline {
     view.fanout = d->fanout;
     view.fanout_out_dist = d->fanout_out_dist;
     view.fanout_factor_dist = d->fanout_factor_dist;
+    view.group = d->group;
   }
 };
 
@@ -848,6 +850,7 @@ fftn_pipeline_desc fftn_pipeline_desc_default(void) noexcept {
   c.middle.scale = d.middle.scale;
   c.epilogue = fftn_edge_default();
   c.fanout = d.fanout;
+  c.group = d.group;
   return c;
 }
 

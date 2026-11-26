@@ -2,7 +2,8 @@
 
 `fftn/c_api.h` gives C programs, and any language that can call C, the plans of the C++ API:
 every kind and precision, workspaces, the four forms of execution, wisdom and the length
-queries. It is provisional (step 6.8): it follows the proposals of DESIGN 5.9 and of 18.2
+queries, and the fusion objects: edges, block callbacks and row pipelines ("Fusion" below). It
+is provisional (steps 6.8 and 6.9): it follows the proposals of DESIGN 5.9 and of 18.2
 ("Phase 6", Q17–Q22), which the maintainer has not yet settled, so names and types may change
 before the first release. The declarations, preconditions and guarantees are in
 [include/fftn/c_api.h](../include/fftn/c_api.h); this page says how the pieces fit.
@@ -179,10 +180,158 @@ members of `fftn::wisdom`; a plan reads a wisdom through `fftn_options::use` dur
 construction only. `fftn_next_fast_length` and `fftn_relative_cost` are the length queries; they
 return 0 with the error filled where the C++ functions throw.
 
+## Fusion
+
+Edges, block callbacks and row pipelines ([fusion.md](fusion.md)) have a C form too
+(provisional, step 6.9): the same objects, computing the same bits as the C++ ones (the tests
+compare them for every edge operation, callback mode and pipeline kind, in every form of
+execution).
+
+| C | C++ |
+|---|---|
+| `fftn_factor`, `fftn_factor_kind` (strides as a pointer and a count) | `fftn::factor`, `fftn::factor_kind` |
+| `fftn_edge`, `fftn_plan_edges` | `fftn::edge<T>`, `fftn::plan_edges<In, Out>` |
+| `fftn_exec_args` | `fftn::exec_args` |
+| `fftn_callback`, `fftn_callback_mode`, `fftn_block_fn`, `fftn_block_info` | `fftn::callback<T>`, `fftn::callback_mode`, `fftn::block_fn<T>`, `fftn::block_info` |
+| `fftn_pipeline_desc` with `fftn_pipeline_kind` (`FFTN_PIPELINE_CCC`, `_TCT`, `_CTC`), `fftn_middle` | `fftn::pipeline_desc<In, Mid, Out>` and its `middle` |
+| `fftn_pipeline` (opaque, reference counted) | `fftn::pipeline<In, Mid, Out>` |
+
+- **Start from the defaults.** `fftn_edge_default()` and `fftn_pipeline_desc_default()` give the
+  C++ defaults: a zeroed struct would have scales of 0, which are valid scales, a fan-out of 0
+  and a group of batch dimension 0. Stride arrays, batches and runs are borrowed for the call
+  that builds the object only.
+- **Plans with edges** come from `fftn_plan_create_edges` and run through the `_args` forms of
+  the executions (`fftn_execute_args`, `fftn_execute_transforms_args`, `fftn_execute_team_args`,
+  `fftn_execute_on_args`), which take the execution's `fftn_exec_args` (NULL for none). A plan
+  with factors or callbacks executed without them ends the program, as in C++.
+- **Pipelines** (`fftn_pipeline_create`) have the queries and the four executions of a plan
+  under `fftn_pipeline_`; the executions always take an `fftn_exec_args`.
+
+```c file=examples/c_api_fusion.c region=edges
+// Real rows times a window (the input edge's real factor, one line for every row), r2c, and
+// added to the output (the output edge's accumulation).
+const fftn_axis axis = {N, 0, 0};
+const fftn_batch batch = {COUNT, 0, 0};
+const ptrdiff_t along_row = 1;
+const ptrdiff_t across_rows = 0; // the same window for every row
+fftn_shape shape = {0};
+fftn_plan_edges edges;
+fftn_exec_args args = {0};
+fftn_error error;
+fftn_plan* plan;
+fftn_workspace* ws;
+shape.kind = FFTN_R2C;
+shape.precision = FFTN_DOUBLE;
+shape.rank = 1;
+shape.axes = &axis;
+shape.batch_rank = 1;
+shape.batches = &batch;
+edges.in = fftn_edge_default(); // not {0}: a scale of 1
+edges.in.mul.kind = FFTN_FACTOR_REAL;
+edges.in.mul.axis_stride_count = 1;
+edges.in.mul.axis_strides = &along_row;
+edges.in.mul.batch_stride_count = 1;
+edges.in.mul.batch_strides = &across_rows;
+edges.out = fftn_edge_default();
+edges.out.accumulate = 1;
+
+plan = fftn_plan_create_edges(&shape, NULL, &edges, &error);
+if (plan == NULL) {
+  fprintf(stderr, "fftn: %s\n", error.message);
+  return 1;
+}
+ws = fftn_workspace_create(fftn_plan_workspace_bytes(plan, 1), &error);
+args.in_factor = window; // the window's address comes with each execution
+fftn_execute_args(plan, rows, sum, ws, &args);
+fftn_execute_args(plan, rows, sum, ws, &args); // sum holds twice the windowed spectra
+fftn_workspace_destroy(ws);
+fftn_plan_release(plan);
+```
+
+### Callbacks in C
+
+A callback is an ordinary C function. It receives the user pointer of the execution's
+`fftn_exec_args` as given and the block's place in an `fftn_block_info`, which holds what C++'s
+`block_info` holds, with the origin and the scratch as a pointer and a count:
+
+```c file=examples/c_api_fusion.c region=callback
+// What the epilogue's callback is given: the largest magnitude each member has seen.
+typedef struct peaks {
+  double largest[8]; // one slot per member: members run blocks at the same time
+} peaks;
+
+// A block callback in C: it reads the block where the plan holds it, between the pipeline's
+// last pass and the store, and writes only its member's slot of the application's memory.
+static void record_peak(void* user, const fftn_block_info* info, void* data) {
+  peaks* p = (peaks*)user;
+  const double* x = (const double*)data; // the epilogue of real rows: doubles
+  size_t k;
+  size_t i;
+  for (k = 0; k < info->lines; ++k) {
+    for (i = 0; i < info->length; ++i) {
+      const double v =
+          fabs(x[(ptrdiff_t)i * info->element_stride + (ptrdiff_t)k * info->line_stride]);
+      if (v > p->largest[info->member]) {
+        p->largest[info->member] = v;
+      }
+    }
+  }
+}
+```
+
+```c file=examples/c_api_fusion.c region=pipeline
+// Real rows convolved with one kernel: r2c, times the kernel's spectrum (the middle's
+// factor, one line for every row), c2r, scaled by 1/n; then the C callback on each block.
+const fftn_batch batch = {COUNT, 0, 0};
+const ptrdiff_t along_bins = 1;
+peaks seen = {{0}};
+fftn_pipeline_desc desc = fftn_pipeline_desc_default(); // not {0}: scales of 1, fan-out 1
+fftn_exec_args args = {0};
+fftn_pipeline* conv;
+fftn_workspace* ws;
+desc.kind = FFTN_PIPELINE_TCT;
+desc.line.n = N;
+desc.batch_rank = 1;
+desc.batches = &batch;
+desc.middle.scale = 1.0 / N;
+desc.middle.mul.kind = FFTN_FACTOR_COMPLEX;
+desc.middle.mul.axis_stride_count = 1;
+desc.middle.mul.axis_strides = &along_bins; // no batch strides: shared by every row
+desc.epilogue.call.fn = record_peak;        // FFTN_CALLBACK_MODIFY, the default mode
+
+conv = fftn_pipeline_create(&desc, NULL, &error);
+if (conv == NULL) {
+  fprintf(stderr, "fftn: %s\n", error.message);
+  return 1;
+}
+ws = fftn_workspace_create(fftn_pipeline_workspace_bytes(conv, 1), &error);
+
+// The data of this execution: the kernel's spectrum and the callback's argument.
+args.mid_factor = spectrum;
+args.out_user = &seen;
+fftn_pipeline_execute(conv, rows, out, ws, &args);
+printf("largest output value: %g\n", seen.largest[0]); // serial: member 0 only
+
+fftn_workspace_destroy(ws);
+fftn_pipeline_release(conv);
+```
+
+The contract is [fusion.md](fusion.md)'s and `fftn/callback.hpp`'s: each element once per
+execution, in blocks of the plan's choosing, on several threads at once and in any order; a
+pure callback gives bitwise-identical results in every form of execution. Two points are C's
+own:
+
+- **A callback cannot fail the execution.** It returns nothing: one that fails records it in
+  the application's memory (through its user pointer: an atomic flag, or a slot per
+  `info->member`) and returns, and the caller checks the record after the execution and
+  discards the output.
+- **Nothing may leave a callback but its return.** `longjmp` out of a callback is undefined (a
+  team's members would wait for ever), and a C++ exception thrown by a callback written in C++
+  ends the program (`std::terminate`) at the boundary: no exception crosses FFTN.
+
 ## Not yet in C
 
-Edges, `exec_args`, block callbacks and pipelines come to C in step 6.9, once their C++ API is
-confirmed; the split-complex layout with 5.8. The structs carry no size or version fields
+The split-complex layout comes with 5.8. The structs carry no size or version fields
 until 1.0 (Q21): `FFTN_VERSION_MAJOR`, `FFTN_VERSION_MINOR` and `FFTN_VERSION_PATCH`
 (`fftn/version.h`, included by `fftn/c_api.h`) are the check, and `fftn_version()` gives the
 linked library's version.

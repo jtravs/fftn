@@ -601,10 +601,14 @@ typedef struct fftn_middle {
   fftn_callback call; /**< a callback on each whole line of the spectrum (modify only) */
 } fftn_middle;
 
+/** fftn::no_group: fftn_pipeline_desc::group without a group. */
+#define FFTN_NO_GROUP ((size_t)-1)
+
 /**
  * A row pipeline's description, fftn::pipeline_desc, field by field; the arrays (batches,
  * runs, the factors' strides) are borrowed for the call of fftn_pipeline_create only. Start
- * from fftn_pipeline_desc_default(): a zeroed struct has scales of 0 and a fan-out of 0.
+ * from fftn_pipeline_desc_default(): a zeroed struct has scales of 0, a fan-out of 0 and a
+ * group of batch dimension 0.
  */
 typedef struct fftn_pipeline_desc {
   fftn_pipeline_kind kind;      /**< the kind; FFTN_PIPELINE_CCC */
@@ -621,6 +625,7 @@ typedef struct fftn_pipeline_desc {
   size_t fanout;                /**< inverse transforms (copies) per line; 1 */
   ptrdiff_t fanout_out_dist;    /**< the distance between copies' outputs, in Out elements */
   ptrdiff_t fanout_factor_dist; /**< the distance between copies' middle factors */
+  size_t group; /**< a batch dimension the middle callback sees whole; FFTN_NO_GROUP */
 } fftn_pipeline_desc;
 
 /** An opaque row pipeline of any kind and precision, fftn::pipeline: reference counted. */
@@ -628,7 +633,8 @@ typedef struct fftn_pipeline fftn_pipeline;
 
 /**
  * fftn::pipeline_desc{} in C: FFTN_PIPELINE_CCC, FFTN_DOUBLE, first FFTN_FORWARD, scales 1,
- * no factors, callbacks, batches or runs, a fan-out of 1. The line's length is left 0, to set.
+ * no factors, callbacks, batches or runs, a fan-out of 1, FFTN_NO_GROUP. The line's length is
+ * left 0, to set.
  */
 FFTN_C_API fftn_pipeline_desc fftn_pipeline_desc_default(void) FFTN_C_NOEXCEPT;
 
@@ -665,7 +671,7 @@ FFTN_C_API int fftn_pipeline_instruction_set(const fftn_pipeline* pipeline) FFTN
 
 /**
  * The transforms of the batch as fftn_pipeline_execute_transforms and fftn_pipeline_transforms_of
- * count them: the lines.
+ * count them, fftn::pipeline::transform_count(): the lines, or with a group the groups.
  */
 FFTN_C_API size_t fftn_pipeline_transform_count(const fftn_pipeline* pipeline) FFTN_C_NOEXCEPT;
 

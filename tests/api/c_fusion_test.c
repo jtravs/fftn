@@ -382,7 +382,8 @@ int cfuse_refusals(void) {
   if (dg.kind != FFTN_PIPELINE_CCC || dg.precision != FFTN_DOUBLE || dg.first != FFTN_FORWARD ||
       dg.fanout != 1 || dg.middle.scale != 1.0 || dg.prologue.scale != 1.0 ||
       dg.epilogue.scale != 1.0 || dg.line.n != 0 || dg.batches != NULL || dg.runs != NULL ||
-      dg.middle.mul.kind != FFTN_FACTOR_NONE || dg.middle.call.fn != NULL) {
+      dg.middle.mul.kind != FFTN_FACTOR_NONE || dg.middle.call.fn != NULL ||
+      dg.group != FFTN_NO_GROUP) {
     return 2;
   }
 
@@ -552,5 +553,26 @@ int cfuse_refusals(void) {
   if (!cfuse_pipeline_refused(&d, "accumulate")) {
     return 27;
   }
+  /* A group needs a batch dimension that exists and a middle callback (the C++ refusals). */
+  d = dg;
+  d.line.n = 16;
+  d.batch_rank = 1;
+  d.batches = &batch;
+  d.group = 0;
+  if (!cfuse_pipeline_refused(&d, "desc.group")) {
+    return 28;
+  }
+  d.middle.call.fn = cfuse_nothing;
+  d.group = 1;
+  if (!cfuse_pipeline_refused(&d, "desc.group")) {
+    return 29;
+  }
+  d.group = 0;
+  pipeline = fftn_pipeline_create(&d, NULL, &error);
+  if (pipeline == NULL || fftn_pipeline_transform_count(pipeline) != 1) {
+    fftn_pipeline_release(pipeline);
+    return 30;
+  }
+  fftn_pipeline_release(pipeline);
   return 0;
 }

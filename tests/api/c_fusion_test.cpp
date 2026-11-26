@@ -518,6 +518,7 @@ struct pipe_case {
   edge_spec epi;
   std::size_t fanout = 1;
   std::vector<fftn_stored_run> runs;
+  std::size_t group = FFTN_NO_GROUP; // a batch dimension the middle callback sees whole
 };
 
 std::size_t end_length(const pipe_case& c) {
@@ -581,6 +582,10 @@ template <class In, class Mid, class Out, class R> struct pipe_arrays {
     epi_factor = factor(c.epi.mul, end_length(c), 0, 33U);
     pro_user.type = type_of<In>();
     mid_user.type = type_of<Mid>();
+    if (c.group != FFTN_NO_GROUP) { // the lines between members: the counts after the group's
+      mid_user.group_step = product(std::vector<std::size_t>(
+          c.counts.begin() + static_cast<std::ptrdiff_t>(c.group) + 1, c.counts.end()));
+    }
     epi_user.type = type_of<Out>();
     if (c.epi.call == cb::consume) {
       sink.assign(c.fanout * lines * end_length(c) * ends, untouched<R>);
@@ -639,6 +644,7 @@ template <class In, class Mid, class Out, class R> void check_pipeline(const pip
   d.middle.call = cpp_callback<Mid>(c.mid.call, c.mid.scratch);
   d.epilogue = cpp_edge<Out>(c.epi);
   d.fanout = c.fanout;
+  d.group = c.group;
   if (c.fanout > 1) {
     d.fanout_out_dist = out_dist;
     d.fanout_factor_dist = factor_dist;
@@ -674,6 +680,7 @@ template <class In, class Mid, class Out, class R> void check_pipeline(const pip
   desc.middle.call = c_callback(c.mid.call, c.mid.scratch);
   desc.epilogue = c_edge(c.epi);
   desc.fanout = c.fanout;
+  desc.group = c.group;
   if (c.fanout > 1) {
     desc.fanout_out_dist = out_dist;
     desc.fanout_factor_dist = factor_dist;
@@ -689,7 +696,8 @@ template <class In, class Mid, class Out, class R> void check_pipeline(const pip
             p.describe());
   EXPECT_EQ(fftn_pipeline_workspace_bytes(pipeline, 3), p.workspace_bytes(3));
   EXPECT_EQ(fftn_pipeline_instruction_set(pipeline), static_cast<int>(p.instruction_set()));
-  EXPECT_EQ(fftn_pipeline_transform_count(pipeline), lines);
+  EXPECT_EQ(fftn_pipeline_transform_count(pipeline), p.transform_count());
+  EXPECT_EQ(p.transform_count(), c.group == FFTN_NO_GROUP ? lines : lines / c.counts[c.group]);
   for (int rank = 0; rank < 3; ++rank) {
     const fftn_transform_range r =
         fftn_pipeline_transforms_of(pipeline, {.rank = rank, .size = 3, .group_size = 0});
@@ -808,6 +816,34 @@ TEST(CFusion, FanOutAndRunsMatchCpp) {
                 {.axis = 0, .where = FFTN_OUT, .logical = 8, .stored = 0, .count = 32}}});
 }
 
+TEST(CFusion, GroupsMatchCpp) {
+  check_pipeline_case({.name = "<C, C, C> grouped along the inner batch dimension: a coupled "
+                               "middle callback",
+                       .kind = FFTN_PIPELINE_CCC,
+                       .precision = FFTN_DOUBLE,
+                       .n = 16,
+                       .counts = {3, 2},
+                       .mid = {.mul = kernel, .call = cb::modify},
+                       .epi = {.call = cb::modify},
+                       .group = 1});
+  check_pipeline_case({.name = "<T, C, T> in float grouped along the outer batch dimension",
+                       .kind = FFTN_PIPELINE_TCT,
+                       .precision = FFTN_FLOAT,
+                       .n = 24,
+                       .counts = {2, 4},
+                       .pro = {.call = cb::produce},
+                       .mid = {.call = cb::modify, .scratch = 16},
+                       .group = 0});
+  check_pipeline_case({.name = "<C, T, C> grouped in threes, consumed",
+                       .kind = FFTN_PIPELINE_CTC,
+                       .precision = FFTN_DOUBLE,
+                       .n = 18,
+                       .counts = {3, 2},
+                       .mid = {.call = cb::modify},
+                       .epi = {.call = cb::consume},
+                       .group = 0});
+}
+
 TEST(CFusion, RefusalsAndDefaultsFromC) {
   EXPECT_EQ(cfuse_refusals(), 0) << "the check of that number failed";
 }
@@ -824,6 +860,7 @@ TEST(CFusion, DefaultsAreCppDefaults) {
   EXPECT_EQ(d.fanout, cd.fanout);
   EXPECT_EQ(d.fanout_out_dist, cd.fanout_out_dist);
   EXPECT_EQ(d.fanout_factor_dist, cd.fanout_factor_dist);
+  EXPECT_EQ(d.group, cd.group);
 }
 
 // ---- The boundary ----
