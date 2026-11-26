@@ -649,6 +649,10 @@ struct knobs {
   d::build_settings chain;
   d::build_settings small_blocks; // the rules, blocks of 1 KiB: rows of several blocks
   d::build_settings copy_out;     // the chain's copy into the output (callback_copy_out)
+  // The edge driver's batched forms (5.2a) with callbacks: batch leaves in row blocks, and the
+  // flat form of short rows on the chain.
+  d::build_settings leaf_blocks;
+  d::build_settings flat;
   knobs() {
     lanes.strategy = d::strategy_choice::lanes;
     grid.strategy = d::strategy_choice::grid;
@@ -668,6 +672,10 @@ struct knobs {
     copy_out.strategy = d::strategy_choice::chain;
     copy_out.batch_leaves = d::batch_leaf_choice::never;
     copy_out.callback_copy_out = true;
+    leaf_blocks = leaves;
+    leaf_blocks.profile.edge_batched_forms = d::edge_forms_reach::all;
+    flat = chain;
+    flat.profile.edge_batched_forms = d::edge_forms_reach::all;
   }
 };
 
@@ -867,6 +875,50 @@ std::vector<cb_case> strategy_cases() {
        .count = 1,
        .out = out_kind::consume,
        .settings = &k.grid,
+       .strategy = chain},
+      // Row blocks (the batched forms): a block's rows in one call, leaves once per block.
+      {.name = "row blocks, both modify",
+       .n = 16,
+       .count = 21,
+       .in = in_kind::modify,
+       .out = out_kind::modify,
+       .scratch = 16,
+       .settings = &k.leaf_blocks},
+      {.name = "row blocks, produce and consume, input factor",
+       .n = 8,
+       .count = 300,
+       .in = in_kind::produce,
+       .out = out_kind::consume,
+       .in_factor = cplx,
+       .settings = &k.leaf_blocks},
+      {.name = "row blocks in place, strided",
+       .n = 32,
+       .count = 70,
+       .in = in_kind::modify,
+       .out = out_kind::modify,
+       .in_place = true,
+       .in_stride = 2,
+       .settings = &k.leaf_blocks},
+      {.name = "row blocks, accumulate",
+       .n = 12,
+       .count = 9,
+       .in = in_kind::modify,
+       .out = out_kind::modify,
+       .accumulate = true,
+       .settings = &k.leaf_blocks},
+      {.name = "the flat form, both modify",
+       .n = 16,
+       .count = 1,
+       .in = in_kind::modify,
+       .out = out_kind::modify,
+       .settings = &k.flat,
+       .strategy = chain},
+      {.name = "the flat form, produce, consume",
+       .n = 64,
+       .count = 1,
+       .in = in_kind::produce,
+       .out = out_kind::consume,
+       .settings = &k.flat,
        .strategy = chain},
       // Batch leaves (where the target's precision has them), one row at a time.
       {.name = "batch leaves, both modify",
@@ -1166,6 +1218,12 @@ TEST(CallbackStrategies, DescribeNamesWhereAndTheBlocks) {
        k.copy_out,
        {"the input's (modify) on each row in the output, which the chain then transforms in "
         "place, after a copy of the input"}},
+      {fftn::rows_c2c<double>(16, 21, fftn::direction::forward),
+       k.leaf_blocks,
+       {"edge row blocks: the rows in blocks of", "blocks of up to", "rows together"}},
+      {fftn::rows_c2c<double>(64, 1, fftn::direction::forward),
+       k.flat,
+       {"edge forms: the flat form"}},
   };
   for (const expect& e : cases) {
     const auto core =

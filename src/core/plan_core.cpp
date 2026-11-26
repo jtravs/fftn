@@ -2302,16 +2302,17 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   // with edges where the profile's reach is all; where it is leaf_rows, a plan of c2c rows whose
   // line's transform is one leaf, which c2c_axis decides (X65's P1, narrowed).
   const edge_forms_reach forms_reach = settings.profile.edge_batched_forms;
-  // Callbacks (task 5.3a) keep the walked form: their stages run from the edge records only.
-  c.edge_batched_on =
-      edge_ops != nullptr && forms_reach == edge_forms_reach::all && !any_callback(*edge_ops);
+  // Callbacks take them as separate edge passes do (task 5.3b): a callback stage of a flat body
+  // runs whole per transform, and in the row-block form over a block's rows in one call.
+  c.edge_batched_on = edge_ops != nullptr && forms_reach == edge_forms_reach::all;
   // The row-block form: a c2c plan of rows of one batch dimension whose separate edge passes
-  // include a factor (so that it runs on the edge driver) takes its rows in blocks of about
-  // edge_row_block_points points, each row with a line of its own in the workspace block
-  // (c2c_axis), the edge passes and the leaves once per block.
+  // include a factor or a callback (so that it runs on the edge driver) takes its rows in blocks
+  // of about edge_row_block_points points, each row with a line of its own in the workspace
+  // block (c2c_axis), the edge passes, the callbacks and the leaves once per block.
   if (row_edges && !row_strategy && adjacent == 0 && s.kind == transform_kind::c2c &&
-      s.batches.size() == 1 && forms_reach != edge_forms_reach::none && !any_callback(*edge_ops) &&
-      (edge_ops->in.kind != factor_kind::none || edge_ops->out.kind != factor_kind::none) &&
+      s.batches.size() == 1 && forms_reach != edge_forms_reach::none &&
+      (edge_ops->in.kind != factor_kind::none || edge_ops->out.kind != factor_kind::none ||
+       calls) &&
       !edge_ops->in.runs.any() && !edge_ops->out.runs.any()) {
     const std::size_t rows =
         std::min(s.batches[0].count, std::max<std::size_t>(edge_row_block_points / n_in, 1));
@@ -2858,9 +2859,11 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
         endpoint from = at(src, e);
         const endpoint to = at(dst, e);
         bool uses_block = false;
-        // Whether the line's transform is one leaf (the leaf_rows reach below); a line with
-        // callbacks leaves it false, so that it keeps the walked form (core/callbacks.cpp).
+        // Whether the line's transform is one leaf (the leaf_rows reach below).
         bool one_leaf = false;
+        // Where the callbacks run, for describe() (callbacks_text).
+        std::string cb_in_where;
+        std::string cb_out_where;
         if (any_callback(*edge_ops)) {
           // Block callbacks (task 5.3a) in DESIGN.md 12.3's order: read or produce, modify,
           // then the vocabulary; the vocabulary, modify, then store, accumulate or consume.
@@ -2880,7 +2883,11 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
           const bool one_array =
               from.where == line_to.where ||
               (c.in_place && from.where != slot::block && line_to.where != slot::block);
+          const std::size_t line_first = st.size();
           need = chain.c2c_line(n, sign, from, line_to, one_array, line, st);
+          // The transform itself one leaf (the leaf_rows reach below), the callback stages
+          // around it being separate passes as the edges' are.
+          one_leaf = st.size() == line_first + 1 && st[line_first].leaf != nullptr;
           if (edge_ops->out.call.any()) {
             row_output_with_callback(s.prec, edge_ops->out, n, to, direct, settings.chunk_points,
                                      block_bytes, c.callback_sites, st);
@@ -2895,14 +2902,9 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
           }
           uses_block = std::ranges::any_of(
               st, [](const stage& x) { return x.src == slot::block || x.dst == slot::block; });
-          const std::size_t cb_bytes = 2 * sizeof(T);
-          c.callbacks_note = callbacks_text(
-              edge_ops->in.call, edge_ops->out.call,
-              callback_blocks(row_input_where(edge_ops->in, c.in_place, target.where), n, 1,
-                              cb_bytes, block_bytes, "rows"),
-              callback_blocks(line_to.where == slot::block ? "on each row in the workspace block"
-                                                           : "on each row in the output",
-                              n, 1, cb_bytes, block_bytes, "rows"));
+          cb_in_where = row_input_where(edge_ops->in, c.in_place, target.where);
+          cb_out_where = line_to.where == slot::block ? "on each row in the workspace block"
+                                                      : "on each row in the output";
         } else {
           // Pruning by the edge passes (task 5.1e): where a side's runs lie in the line's first
           // half and the chain's first (input) or last (output) pass has a radix with pruned
@@ -2981,6 +2983,22 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
           if (!one_leaf) {
             c.edge_row_block = 0;
           }
+        }
+        if (any_callback(*edge_ops)) {
+          // The row-block form passes a block's rows to a callback in one call (edge_driver.cpp):
+          // its stages' chunks hold that many rows' elements within callback_block_bytes. The
+          // walked form, which teams run, takes the same chunks of one row.
+          const std::size_t rows = std::max<std::size_t>(c.edge_row_block, 1);
+          for (stage& x : st) {
+            if ((x.moving_factors & moving_callback) != 0) {
+              x.chunks = static_cast<std::uint32_t>(
+                  callback_chunks(x.units, rows, 2 * sizeof(T), block_bytes));
+            }
+          }
+          c.callbacks_note = callbacks_text(
+              edge_ops->in.call, edge_ops->out.call,
+              callback_blocks(cb_in_where, n, rows, 2 * sizeof(T), block_bytes, "rows"),
+              callback_blocks(cb_out_where, n, rows, 2 * sizeof(T), block_bytes, "rows"));
         }
         // Only where the line starts or ends in the block: a side whose runs the chain's pruned
         // first or last pass reads or writes where they are stored needs none (task 5.1e).
