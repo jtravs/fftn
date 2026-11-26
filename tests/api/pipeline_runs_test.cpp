@@ -72,6 +72,10 @@ struct runs_case {
   double mid_scale = 0.0;      // 0: 1/n
   double epi_scale = 1.0;
   bool accumulate = false;
+  // A prologue or epilogue factor (stride 1 along the line, one for every line), with no runs;
+  // the real kind takes real ones only.
+  factor_kind pro = factor_kind::none;
+  factor_kind epi = factor_kind::none;
   const char* expect = ""; // in describe()
 };
 
@@ -110,6 +114,11 @@ template <class T, class Elem> struct runs_run {
   std::ptrdiff_t kzero = 0;      // the kernel's coordinate 0 in its storage
   std::vector<bool> in_listed;   // input elements in a run (or a line stored whole)
   std::vector<bool> out_listed;  // output elements in a run
+  // The prologue's and the epilogue's factors (n values), real or complex.
+  std::vector<T> rpro;
+  std::vector<C> cpro;
+  std::vector<T> repi;
+  std::vector<C> cepi;
 
   runs_run(const runs_case& rc, fftn::isa t, fftn::test::input_source& src)
       : c(rc), target(t), bins(real_kind ? rc.n / 2 + 1 : rc.n) {
@@ -145,6 +154,20 @@ template <class T, class Elem> struct runs_run {
     desc.middle.mul = {.kind = c.mid, .axis_strides = {c.mid_axis}, .batch_strides = {kbatch}};
     desc.epilogue.scale = c.epi_scale;
     desc.epilogue.accumulate = c.accumulate;
+    const auto side_factor = [&](factor_kind k, std::vector<T>& r,
+                                 std::vector<C>& z) -> fftn::factor {
+      if (k == factor_kind::none) {
+        return {};
+      }
+      if (k == real) {
+        r = src.reals<T>(c.n);
+      } else {
+        z = src.complexes<T>(c.n);
+      }
+      return {.kind = k, .axis_strides = {1}, .batch_strides = {}};
+    };
+    desc.prologue.mul = side_factor(c.pro, rpro, cpro);
+    desc.epilogue.mul = side_factor(c.epi, repi, cepi);
 
     const std::ptrdiff_t along = c.mid_axis * static_cast<std::ptrdiff_t>(bins - 1);
     const std::ptrdiff_t across = kbatch * static_cast<std::ptrdiff_t>(c.count - 1);
@@ -211,6 +234,25 @@ template <class T, class Elem> struct runs_run {
                                     static_cast<std::ptrdiff_t>(p) * c.out_stride);
   }
 
+  [[nodiscard]] fftn::exec_args args() const {
+    const auto address = [](const std::vector<T>& r, const std::vector<C>& z) -> const void* {
+      return !r.empty() ? static_cast<const void*>(r.data())
+                        : (!z.empty() ? static_cast<const void*>(z.data()) : nullptr);
+    };
+    return {.in_factor = address(rpro, cpro),
+            .mid_factor = kernel(),
+            .out_factor = address(repi, cepi)};
+  }
+
+  // A side's factor at logical position j (1 without one).
+  [[nodiscard]] static std::complex<double> side_at(const std::vector<T>& r,
+                                                    const std::vector<C>& z, std::size_t j) {
+    if (!r.empty()) {
+      return {static_cast<double>(r[j]), 0.0};
+    }
+    return z.empty() ? std::complex<double>(1.0, 0.0) : std::complex<double>(z[j]);
+  }
+
   [[nodiscard]] const void* kernel() const {
     return c.mid == real ? static_cast<const void*>(kreal.data() + kzero)
                          : static_cast<const void*>(kcomplex.data() + kzero);
@@ -272,7 +314,8 @@ template <class T, class Elem> struct runs_run {
     SCOPED_TRACE(what);
     const double scale = mid_scale * c.epi_scale;
     const fftn::test::tolerance tol =
-        fftn::test::derived_tolerance<T>(c.n, fftn::test::fftn_bound(c.n)) * (1.0 + spread()) +
+        fftn::test::derived_tolerance<T>(c.n, fftn::test::fftn_bound(c.n)) * (1.0 + spread()) *
+            (c.epi != factor_kind::none ? 1.8 : 1.0) +
         fftn::test::input_rounding<T>() * 6;
     fftn::test::outcome o;
     for (std::size_t r = 0; r < c.count; ++r) {
@@ -281,7 +324,8 @@ template <class T, class Elem> struct runs_run {
         std::vector<double> line(c.n, 0.0);
         for (std::size_t j = 0; j < c.n; ++j) {
           if (const std::ptrdiff_t at = stored_of(c.in, j); at >= 0) {
-            line[j] = static_cast<double>(x[in_at(static_cast<std::size_t>(at), r)]);
+            line[j] = static_cast<double>(x[in_at(static_cast<std::size_t>(at), r)]) *
+                      side_at(rpro, cpro, j).real();
           }
         }
         const auto s = fftn::test::reference::r2c(line);
@@ -292,7 +336,8 @@ template <class T, class Elem> struct runs_run {
         std::vector<std::complex<double>> line(c.n, 0.0);
         for (std::size_t j = 0; j < c.n; ++j) {
           if (const std::ptrdiff_t at = stored_of(c.in, j); at >= 0) {
-            line[j] = std::complex<double>(x[in_at(static_cast<std::size_t>(at), r)]);
+            line[j] = std::complex<double>(x[in_at(static_cast<std::size_t>(at), r)]) *
+                      side_at(rpro, cpro, j);
           }
         }
         const auto s = fftn::test::reference::c2c(-1, line);
@@ -307,7 +352,7 @@ template <class T, class Elem> struct runs_run {
         for (std::size_t j = 0; j < c.n; ++j) {
           if (const std::ptrdiff_t at = stored_of(c.out, j); at >= 0) {
             const std::size_t i = out_at(static_cast<std::size_t>(at), r);
-            double v = back[j].hi * scale;
+            double v = back[j].hi * side_at(repi, cepi, j).real() * scale;
             if (c.accumulate) {
               v += static_cast<double>(init[i]);
             }
@@ -323,7 +368,8 @@ template <class T, class Elem> struct runs_run {
         for (std::size_t j = 0; j < c.n; ++j) {
           if (const std::ptrdiff_t at = stored_of(c.out, j); at >= 0) {
             const std::size_t i = out_at(static_cast<std::size_t>(at), r);
-            std::complex<double> v = std::complex<double>(back[j].re.hi, back[j].im.hi) * scale;
+            std::complex<double> v = std::complex<double>(back[j].re.hi, back[j].im.hi) *
+                                     side_at(repi, cepi, j) * scale;
             if (c.accumulate) {
               v += std::complex<double>(init[i]);
             }
@@ -353,7 +399,7 @@ template <class T, class Elem> struct runs_run {
 // describe().
 template <class Run>
 std::string run_core(const Run& run, const d::build_settings& settings, bool threads,
-                     bool reference = true) {
+                     bool reference = true, decltype(Run::x)* result = nullptr) {
   const runs_case& rc = run.c;
   const std::shared_ptr<const d::plan_core> core =
       d::make_pipeline_core(run.view(), {.force_isa = run.target}, settings);
@@ -361,7 +407,7 @@ std::string run_core(const Run& run, const d::build_settings& settings, bool thr
   EXPECT_NE(describe.find(rc.expect), std::string::npos)
       << rc.name << ": no '" << rc.expect << "' in\n"
       << describe;
-  const fftn::exec_args args{.mid_factor = run.kernel()};
+  const fftn::exec_args args = run.args();
   fftn::workspace ws(d::workspace_bytes(*core, 3));
   const auto x0 = run.x;
   const auto kr = run.kreal;
@@ -373,6 +419,9 @@ std::string run_core(const Run& run, const d::build_settings& settings, bool thr
   d::execute_all(*core, in(), serial.data() + run.out_base, ws, args);
   if (reference) {
     run.check(serial, describe);
+  }
+  if (result != nullptr) {
+    *result = serial;
   }
   EXPECT_TRUE(same_bits(xs, x0)) << rc.name << ": input written";
   EXPECT_TRUE(same_bits(run.kreal, kr) && same_bits(run.kcomplex, kc)) << rc.name << ": kernel written";
@@ -641,6 +690,194 @@ TYPED_TEST(PipelineRuns, ValidHalfOfAZeroPaddedConvolution) {
           << p.describe();
     }
   }
+}
+
+// The depth-first pair (task 5.2d), forced with tops every complex count C (at most 8) divides:
+// one input run from logical 0 and one output run from a logical start C divides fused into the
+// forward first pass and the last top pass; other runs, a prologue or epilogue factor and
+// accumulation through the read and store stages; a separate middle on scratch; a kernel per line;
+// on every instruction set in both precisions, against the reference.
+struct depth_forced {
+  std::size_t n;
+  std::vector<std::size_t> tops;
+};
+
+std::vector<depth_forced> forced_depths() {
+  return {{1024, {4}}, {1536, {8}}, {2048, {8, 2}}};
+}
+
+std::vector<runs_case> depth_sets(std::size_t n) {
+  const std::size_t h = n / 2;
+  const std::size_t q = n / 4;
+  return {
+      {.name = "depth: the kernel", .n = n, .expect = "the depth-first pair"},
+      {.name = "depth: valid half",
+       .n = n,
+       .in = {{0, 0, h}},
+       .out = {{0, 0, h}},
+       .expect = "read where it is stored by the forward chain's first pass, zeros beyond"},
+      {.name = "depth: centred valid half at offsets, scaled",
+       .n = n,
+       .in = {{0, 3, h}},
+       .out = {{q, 5, h}},
+       .epi_scale = 2.0,
+       .expect = "written where it is stored by the backward chain's last top pass"},
+      {.name = "depth: an output run off the lanes",
+       .n = n,
+       .in = {{0, 0, h + 1}},
+       .out = {{3, 0, h}},
+       .expect = "the depth-first pair"},
+      {.name = "depth: bands in any order",
+       .n = n,
+       .in = {{n - 3, 0, 2}, {1, 4, 2}, {q + 1, 9, q - 1}},
+       .out = {{h + 1, 1, 2}, {0, 6, 1}, {q, 3, 2}},
+       .expect = "read with zeros elsewhere into scratch in a separate pass"},
+      {.name = "depth: an accumulated run",
+       .n = n,
+       .out = {{q, 0, h}},
+       .epi_scale = 0.5,
+       .accumulate = true,
+       .expect = "accumulated from the workspace block in a separate pass"},
+      {.name = "depth: a real kernel on scratch, a kernel per line",
+       .n = n,
+       .in = {{0, 0, h}},
+       .out = {{0, 0, h}},
+       .mid = real,
+       .per_row = true,
+       .expect = "in a separate pass on the line in scratch"},
+      {.name = "depth: prologue and epilogue factors, accumulated",
+       .n = n,
+       .accumulate = true,
+       .pro = cplx,
+       .epi = real,
+       .expect = "2 separate passes over the line"},
+  };
+}
+
+TYPED_TEST(PipelineRuns, DepthFirstPairForced) {
+  using C = std::complex<TypeParam>;
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    for (const depth_forced& f : forced_depths()) {
+      d::build_settings s;
+      s.strategy = d::strategy_choice::depth;
+      s.depth_tops = f.tops;
+      for (runs_case rc : depth_sets(f.n)) {
+        rc.count = 2;
+        run_case<TypeParam, C>(rc, t, false, s);
+      }
+    }
+  }
+}
+
+// The depth-first pair's results against the chain pair's, on a line too long for the reference:
+// both within two transforms' tolerance of each other.
+template <class T>
+void expect_close(const std::vector<std::complex<T>>& got, const std::vector<std::complex<T>>& want,
+                  std::size_t n, const std::string& what) {
+  double diff = 0;
+  double norm = 0;
+  for (std::size_t i = 0; i < got.size(); ++i) {
+    diff += std::norm(std::complex<double>(got[i]) - std::complex<double>(want[i]));
+    norm += std::norm(std::complex<double>(want[i]));
+  }
+  const auto tol = fftn::test::derived_tolerance<T>(n, fftn::test::fftn_bound(n)) * 4.0;
+  EXPECT_LE(std::sqrt(diff / norm), tol.rms) << what;
+}
+
+// Within a line, a team shares the depth-first pair's stages (their chunks) and its sub-row loops
+// (lines on each member's own scratch, the owner's block shared), bitwise as serial execution.
+TYPED_TEST(PipelineRuns, DepthFirstPairSharedByATeam) {
+  using C = std::complex<TypeParam>;
+  constexpr std::size_t n = 65536;
+  d::build_settings depth;
+  depth.strategy = d::strategy_choice::depth;
+  depth.depth_tops = {16};
+  d::build_settings chain;
+  chain.strategy = d::strategy_choice::chain;
+  for (const runs_case& rc : {
+           runs_case{.name = "depth, long: valid half",
+                     .n = n,
+                     .count = 2,
+                     .in = {{0, 0, n / 2}},
+                     .out = {{n / 4, 0, n / 2}},
+                     .expect = "the depth-first pair"},
+           runs_case{.name = "depth, long: bands, a real kernel",
+                     .n = n,
+                     .count = 2,
+                     .in = {{n / 2, 0, 100}, {7, 100, n / 3}},
+                     .out = {{1, 0, n / 2}, {n - 9, n / 2, 9}},
+                     .mid = real,
+                     .expect = "the depth-first pair"},
+       }) {
+    std::vector<C> by_depth;
+    std::vector<C> by_chain;
+    fftn::test::input_source a(0xD3E9ULL);
+    fftn::test::input_source b(0xD3E9ULL);
+    run_core(runs_run<TypeParam, C>(rc, fftn::isa::best, a), depth, true, false, &by_depth);
+    runs_case as_chain = rc;
+    as_chain.expect = "the chain pair";
+    run_core(runs_run<TypeParam, C>(as_chain, fftn::isa::best, b), chain, false, false, &by_chain);
+    expect_close<TypeParam>(by_depth, by_chain, n, rc.name);
+  }
+}
+
+// By the rules: a <C, C, C> line takes the depth-first pair exactly where a Bluestein stage whose
+// convolution had the line's length would take the depth-first convolution (X50's rule), with a
+// profile the test sets; never on a strided line, nor in float.
+TEST(PipelineRuns, DepthFirstPairByTheRules) {
+  using C = std::complex<double>;
+  constexpr std::size_t n = 34560; // 2^8 3^3 5: a top of 16 and every complex count split it
+  d::build_settings rules;
+  rules.rader = 0;
+  rules.profile.depth_min_bytes = std::size_t{256} * 1024;
+  rules.profile.depth_max_bytes = std::size_t{4} * 1024 * 1024;
+  rules.profile.depth_part_bytes = 0;
+  rules.profile.depth_top = 16;
+  rules.profile.depth_top_alt = 20;
+  rules.profile.depth_convolution_max_bytes = std::size_t{4} * 1024 * 1024;
+  rules.profile.bluestein_pow2_part_bytes = SIZE_MAX;
+  rules.bluestein_length = n;
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    // A Bluestein prime whose convolution is n points long.
+    const fftn::shape<C, C> row{
+        .dir = fftn::direction::forward, .axes = {{.n = 16411}}, .batches = {}};
+    const auto plan = d::make_plan_core(d::view_of(row), {.force_isa = t}, rules);
+    const bool convolution =
+        d::describe(*plan).find("two depth-first chains") != std::string::npos;
+    // X50's rule: in double on 32 vector registers.
+    const std::string name = fftn::isa_name(t);
+    EXPECT_EQ(convolution, name == "avx512" || name == "neon" || name == "neon_fcma") << name;
+    fftn::test::input_source src(0x2D1EULL);
+    runs_case rc{.name = "depth by the rules",
+                 .n = n,
+                 .count = 1,
+                 .in = {{0, 0, n / 2}},
+                 .out = {{0, 0, n / 2}}};
+    rc.expect = convolution ? "the depth-first pair" : "the chain pair";
+    std::vector<C> by_rules;
+    run_core(runs_run<double, C>(rc, t, src), rules, false, false, &by_rules);
+    if (convolution) {
+      d::build_settings chain = rules;
+      chain.strategy = d::strategy_choice::chain;
+      runs_case as_chain = rc;
+      as_chain.expect = "the chain pair";
+      fftn::test::input_source again(0x2D1EULL);
+      std::vector<C> by_chain;
+      run_core(runs_run<double, C>(as_chain, t, again), chain, false, false, &by_chain);
+      expect_close<double>(by_rules, by_chain, n, fftn::isa_name(t));
+    }
+    runs_case strided = rc;
+    strided.in_stride = 2;
+    strided.expect = "the chain pair";
+    fftn::test::input_source more(0x2D1FULL);
+    run_core(runs_run<double, C>(strided, t, more), rules, false, false);
+  }
+  // Float takes the chain pair by the rules (X50's convolutions were measured in double).
+  fftn::test::input_source src(0x2D20ULL);
+  run_core(runs_run<float, std::complex<float>>(
+               {.name = "float by the rules", .n = n, .count = 1, .expect = "the chain pair"},
+               fftn::isa::best, src),
+           rules, false, false);
 }
 
 template <class In, class Mid, class Out>

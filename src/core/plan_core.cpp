@@ -1274,6 +1274,26 @@ template chain_builder<double> plan_chain<double>(plan_core& c, const target_pro
 template chain_builder<float> plan_chain<float>(plan_core& c, const target_profile& profile,
                                                 const build_settings& settings);
 
+template <class T>
+std::vector<std::size_t> convolution_depth_tops(std::size_t n, const build_settings& settings,
+                                                const chain_builder<T>& chain, target isa) {
+  if ((settings.strategy != strategy_choice::depth &&
+       settings.strategy != strategy_choice::rules) ||
+      (!settings.radices.empty() && checked_product(settings.radices) == n)) {
+    return {};
+  }
+  return depth_tops_for<T>(n, settings, chain, isa, true);
+}
+
+template std::vector<std::size_t> convolution_depth_tops<double>(std::size_t n,
+                                                                 const build_settings& settings,
+                                                                 const chain_builder<double>& chain,
+                                                                 target isa);
+template std::vector<std::size_t> convolution_depth_tops<float>(std::size_t n,
+                                                                const build_settings& settings,
+                                                                const chain_builder<float>& chain,
+                                                                target isa);
+
 namespace {
 
 template <class T>

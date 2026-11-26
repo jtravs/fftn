@@ -290,11 +290,12 @@ public:
   };
   // src: where the first pass reads (stride 1); dst: where the last top pass writes (stride
   // 1; `work` itself for a top pass in place); out_factor: when not null, the last top pass
-  // multiplies its output element i by entry i (n complex values; then scale is 1).
+  // multiplies its output element i by entry i (n complex values; then scale is 1): a table, or
+  // a pointer a pipeline marks for its middle cursor (core/pipeline.cpp).
   [[nodiscard]] bool depth_fits(std::size_t n, const std::vector<std::size_t>& tops) const;
   depth_stages c2c_depth(std::size_t n, const std::vector<std::size_t>& tops, int sign,
                          double scale, slot work, slot src = slot::in, slot dst = slot::out,
-                         const T* out_factor = nullptr);
+                         const void* out_factor = nullptr);
 
   // The depth-first chain of the half length h = n / 2 of an even c2r row of n (experiment X78):
   // c2c_depth's stages for h, backward, from the in slot (the row's h + 1 bins) to the out slot,
@@ -303,6 +304,38 @@ public:
   // C dividing the tops' product, so that every run of the first pass is whole.
   [[nodiscard]] bool c2r_depth_fits(std::size_t h, const std::vector<std::size_t>& tops) const;
   depth_stages c2r_depth(std::size_t n, const std::vector<std::size_t>& tops, double scale);
+
+  // The depth-first pair (DESIGN.md 12.2, task 5.2d; X50's convolution generalised): a line of
+  // m through two depth-first chains (c2c_depth), the forward one from src (stride 1) with its
+  // blocks in the workspace block and its top pass into scratch a times `kernel` (when not null:
+  // m complex values of stride 1), the backward one from a with its blocks in the block, its
+  // inner top pass in place there and its last to dst (stride 1). The input is the line, or one
+  // stored run from logical 0 (in_count elements, in_offset elements into src; zeros beyond),
+  // read by the forward first pass; the output the line, or one stored run (out_count elements
+  // from logical out_logical, a multiple of C, out_offset elements into dst; nothing else of the
+  // line goes there), written by the last top pass. chirp: Bluestein's chirp in per-element
+  // storage (chirp_sign its direction, for describe()), times which both runs are read and
+  // written. out: the last top pass's output edge (none, or the scale). Both chains' sub-rows use
+  // scratch a (dead once the backward first pass has read it) and b. Preconditions:
+  // bluestein_depth_fits(m, tops) with an input run; dst not the block with an output run.
+  struct depth_pair_form {
+    const T* chirp = nullptr;
+    int chirp_sign = -1;
+    std::size_t in_count = 0; // 0: the input is the line
+    std::size_t in_offset = 0;
+    std::size_t out_logical = 0;
+    std::size_t out_count = 0; // 0: the output is the line
+    std::size_t out_offset = 0;
+    const void* kernel = nullptr;
+    edge_op out = edge_op::none;
+    double scale = 1.0;
+  };
+  struct bluestein_depth_stages;
+  bluestein_depth_stages depth_pair(std::size_t m, const std::vector<std::size_t>& tops, slot src,
+                                    slot dst, const depth_pair_form& form);
+  // "forward depth-first 16 x 2048 (sub-rows ...), then backward ..." for describe().
+  [[nodiscard]] std::string depth_pair_text(std::size_t m,
+                                            const std::vector<std::size_t>& tops) const;
 
   // A Bluestein stage whose convolution runs as two depth-first chains (experiment X50), for
   // a c2c line of one prime q above the Bluestein threshold with no Rader root (one copy):
@@ -315,7 +348,8 @@ public:
   // outputs to dst (stride 1) times the chirp with the output edge's operation (the chirp
   // pass out, fused). Both chains' sub-rows use scratch a (dead by then) and b. scratch: the
   // complex elements it needs in each of a and b. Preconditions: depth_fits(M, tops); no
-  // input edge operation; the output's none or the scale.
+  // input edge operation; the output's none or the scale. Built as the depth-first pair
+  // (depth_pair) with the chirp, an input run of Q and an output run of the first Q.
   struct bluestein_depth_stages {
     depth_stages forward;
     depth_stages backward;
