@@ -3359,8 +3359,9 @@ epilogue, naming `desc.prologue.call.fn` or `desc.epilogue.call.fn`, until 5.3d,
 the same callback stages on the pipeline's scratch-resident line where `core/pipeline.cpp`
 places its edges' separate passes (the prologue's after the line's read into the workspace
 block, the middle's between the two chains, the epilogue's before the store); it passes the
-callback area's size to `lay_out_workspace` (0 for pipelines until then) and keeps a pipeline
-with callbacks off the batched forms that pipelines otherwise always take.
+callback area's size to `lay_out_workspace` (0 for pipelines until then). As built, 5.3d keeps
+a pipeline with callbacks on the flat form where its stages are flat (the flat form calls callback
+stages, as on rows since 5.3b) and walked otherwise: the unrolled calls carry no callback sites.
 
 As built (task 5.3b): rows of every kind (c2c, r2c, c2r) take callbacks on the strategy the rules,
 measured planning or a test choose (planes and volumes from 5.3c, below). Where each strategy runs them (all in `build()`, `core/plan_core.cpp`, from two helpers,
@@ -3476,8 +3477,9 @@ and the vocabulary go, and build a pipeline's edges as they build a c2c row's:
   pass, else the forward chain's last pass, else (the depth-first pair) a pass on the spectrum
   before the callback; the middle's, the epilogue's and `options::scale` in a pass after the
   callback that exists anyway (the epilogue's or the middle's; the middle's per copy with
-  fan-out, always present on the depth-first pair's copies), else the inverse chain's last or
-  first pass, else a pass of the scale alone after the callback, once per line. Without a middle
+  fan-out, always present on the depth-first pair's copies), else the inverse chain's last pass
+  (the depth-first pair's last top pass) or the chain pair's inverse first pass, else a pass of the
+  scale alone after the callback, once per line. Without a middle
   callback the one product is placed as before, which is sound because the prologue's pass runs
   after its callback and the epilogue's before its callback.
 - **The epilogue's**: a `modify` callback without accumulation or runs on the output itself after
@@ -4521,6 +4523,16 @@ names `max_lanes` and `strict_layout`, which `options` does not have; a pipeline
 12. **The scratch area.** Proposal: exactly `scratch_bytes`, from a 128-byte boundary, not kept
     between calls. A slot's area is the largest of the object's callbacks' (one member never
     runs two at once), so callbacks of one object share it.
+13. **A middle callback's block** (task 5.3d, provisional). Proposal, as built: the whole line of
+    the spectrum in one call, whatever `machine_profile::callback_block_bytes` says, so that a
+    middle may be pure per line (12.3, "Determinism") and may run a nested plan or pipeline on the
+    line. The alternative is the edges' blocks (element ranges of a long line), which would make
+    "pure per line" impossible to honour.
+14. **`fanout_out_dist` with a consumed output** (task 5.3d, provisional). Proposal, as built:
+    nothing is stored, so the copies' places are neither checked nor used, and any value is
+    taken (0 and overlapping copies included); `consume` receives each line's copies in copy
+    order. The alternative is to check them as for a store, which would refuse the contraction
+    over copies that `consume` exists for (18.2, "Pipelines" 5).
 `use`. Task 5.2c added `convolution_rows` under proposals 1–3 (the name of 12.2's API block, the
 optional trailing runs, `middle.scale` 1).
 

@@ -217,8 +217,8 @@ placed place_fanout(const vocab& v, std::size_t n, bool sides, bool middle) {
 // pair, to a pass of its own before the callback. The rest (scale) goes to a pass after the
 // callback that exists anyway (the epilogue's or the middle's, without fan-out; the middle's per
 // copy with it, always there on the depth-first pair's copies), else to a free edge of the
-// inverse chain (its last, then its first pass), else to a pass of its own after the callback,
-// once per line.
+// inverse chain (its last, then, on the chain pair, its first pass), else to a pass of its own
+// after the callback, once per line.
 placed place_middle_callback(const vocab& v, std::size_t n, bool sides, bool middle, bool fanned,
                              bool depth) {
   vocab unscaled = v;
@@ -235,13 +235,15 @@ placed place_middle_callback(const vocab& v, std::size_t n, bool sides, bool mid
     }
   }
   if (v.scale != 1.0) {
-    if (!fanned && !depth && p.epi.separate) {
+    // The depth-first pair without fan-out takes it in its last top pass (form.out), which never
+    // takes a factor, rather than in one more sweep of the line.
+    if (!fanned && p.epi.separate) {
       p.epi.scale = v.scale;
       p.at = scale_at::pass;
     } else if (p.mid.separate || (depth && fanned)) {
       p.mid.scale = v.scale;
       p.at = scale_at::pass;
-    } else if (!fanned && !depth && !p.epi.fused) {
+    } else if (!fanned && !p.epi.fused) {
       p.at = scale_at::inverse_out;
     } else if (!fanned && !depth && !p.mid.fused) {
       p.at = scale_at::inverse_in;
@@ -349,7 +351,8 @@ std::vector<edge_record> mark_cursors(program& p, const placed& pl, const fanout
   // iteration is the copy an epilogue callback is passed (task 5.3d).
   if (fan.loop != SIZE_MAX) {
     e[fan.loop].factor_step = {0, 0, fan.mid_step};
-    e[fan.loop].copies = true;
+    // Only an epilogue callback reads the copy: without one the copies loop runs as before 5.3d.
+    e[fan.loop].copies = pl.epi.call.any();
   }
   for (const fanout_marks::offset& o : fan.offsets) {
     e[o.record].block_src = o.src;
