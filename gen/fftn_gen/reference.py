@@ -153,3 +153,37 @@ def table(codelets: list[Codelet], plain: dict[int, Reference] = PLAIN) -> str:
             f"| {plain[c.radix].source} | {k.vector_ops} | {k.fma_ops} | {c.live} |"
         )
     return "\n".join(lines)
+
+
+FULL_OF = {"dif_head": "dif", "plain_head": "plain"}
+
+
+def memory_accesses(c: Codelet) -> int:
+    """Input loads and output stores (twiddle loads apart)."""
+    return sum(op.kind in ("load", "store") for op in c.ops)
+
+
+def pruned_table(codelets: list[Codelet], pruned: list[Codelet]) -> str:
+    """Markdown table of the forward pruned codelets against their full codelets (task 5.1e):
+    vector operations, unfused real flops, and memory accesses (input loads and stores), each
+    as pruned / full and the ratio."""
+    full = {(c.radix, c.variant, c.sign): c for c in codelets}
+    lines = [
+        "| R | variant | vector ops | ratio | real flops | ratio | loads + stores | ratio |",
+        "|---|---|---|---|---|---|---|---|",
+    ]
+    for c in pruned:
+        if c.sign > 0:
+            continue
+        f = full[(c.radix, FULL_OF[c.variant], c.sign)]
+        pairs = (
+            (c.counts.vector_ops, f.counts.vector_ops),
+            (
+                c.counts.flops_adds + c.counts.flops_muls,
+                f.counts.flops_adds + f.counts.flops_muls,
+            ),
+            (memory_accesses(c), memory_accesses(f)),
+        )
+        cells = " | ".join(f"{a} / {b} | {a / b:.2f}" for a, b in pairs)
+        lines.append(f"| {c.radix} | {c.variant} | {cells} |")
+    return "\n".join(lines)

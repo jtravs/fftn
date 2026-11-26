@@ -1594,6 +1594,9 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   const bool row_edges = edge_ops != nullptr && r == 1 && !any_fused(*edge_ops);
   // Why an edge keeps the plan from the strategy the rules would choose, for describe().
   std::string edge_fallback;
+  // How a c2c row's chain takes each side's stored runs (task 5.1e), for describe().
+  run_pruning in_pruning = run_pruning::none;
+  run_pruning out_pruning = run_pruning::none;
   const bool row_input = row_edges && edge_ops->in.separate;
   side in_eff = in;
   bool in_place_build = c.in_place;
@@ -2225,7 +2228,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     const auto c2c_axis = [&](std::size_t d, std::size_t e, const std::vector<std::size_t>& extent,
                               const view& src, const view& dst) {
       const bool aliased = src.where == dst.where || c.in_place;
-      const line_edges line = c2c_edges(opts, settings, d + 1 == r, d == 0);
+      line_edges line = c2c_edges(opts, settings, d + 1 == r, d == 0);
       std::vector<stage> st;
       std::size_t need = 0;
       if (edge_ops != nullptr && r == 1 && (edge_ops->in.separate || edge_ops->out.separate)) {
@@ -2236,26 +2239,62 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
         const endpoint block{.where = slot::block, .stride = 1};
         endpoint from = at(src, e);
         const endpoint to = at(dst, e);
+        // Pruning by the edge passes (task 5.1e): where a side's runs lie in the line's first
+        // half and the chain's first (input) or last (output) pass has a radix with pruned
+        // codelets, that pass reads or writes the first half only. One run of exactly that
+        // half, stored with stride 1, is read or written where it is stored, with no separate
+        // pass (run_pruning::direct, unless the output accumulates); otherwise the separate
+        // pass moves the runs through the half in the workspace block (run_pruning::half).
+        const auto within_half = [n](const std::vector<line_run>& runs) {
+          return std::ranges::all_of(
+              runs, [n](const line_run& run) { return run.logical + run.count <= n / 2; });
+        };
+        const auto direct = [n](const std::vector<line_run>& runs, const endpoint& stored) {
+          return runs.size() == 1 && runs[0].logical == 0 && 2 * runs[0].count == n &&
+                 stored.stride == 1;
+        };
+        const std::size_t cb = 2 * (s.prec == precision::f64 ? sizeof(double) : sizeof(float));
         // Stored runs (task 5.1d): the input's pass reads the runs with zeros elsewhere, the
         // output's stores only the runs.
         if (edge_ops->in.runs.any()) {
-          run_line_stages(s.prec, edge_ops->in, false, n, edge_ops->in.runs.of(0),
-                          {.src = from.where, .src_stride = from.stride}, settings.chunk_points,
-                          false, st);
-          from = block;
+          const std::vector<line_run>& runs = edge_ops->in.runs.of(0);
+          line.in_head = line.in == edge_op::none && within_half(runs) && chain.head_first(n);
+          if (line.in_head && direct(runs, from)) {
+            line.in_offset = runs[0].stored * cb;
+            in_pruning = run_pruning::direct;
+          } else {
+            run_line_stages(s.prec, edge_ops->in, false, line.in_head ? n / 2 : n, runs,
+                            {.src = from.where, .src_stride = from.stride}, settings.chunk_points,
+                            false, st);
+            from = block;
+            in_pruning = line.in_head ? run_pruning::half : run_pruning::none;
+          }
         } else if (edge_ops->in.separate) {
           st.push_back(edge_pass_stage(s.prec, edge_ops->in, false, n, from.where, from.stride,
                                        slot::block, 1, settings.chunk_points, false,
                                        edge_ops->in.axis_stride));
           from = block;
         }
-        const endpoint line_to = edge_ops->out.separate ? block : to;
-        need = chain.c2c_line(n, sign, from, line_to, from.where == line_to.where, line, st);
+        endpoint line_to = edge_ops->out.separate ? block : to;
+        bool out_pass = edge_ops->out.separate;
         if (edge_ops->out.runs.any()) {
+          const std::vector<line_run>& runs = edge_ops->out.runs.of(0);
+          line.out_head = line.out != edge_op::factor && within_half(runs) && chain.head_last(n);
+          if (line.out_head && !edge_ops->out.accumulate && direct(runs, to)) {
+            line.out_offset = runs[0].stored * cb;
+            line_to = to;
+            out_pass = false;
+            out_pruning = run_pruning::direct;
+          } else {
+            out_pruning = line.out_head ? run_pruning::half : run_pruning::none;
+          }
+        }
+        need = chain.c2c_line(n, sign, from, line_to, from.where == line_to.where, line, st);
+        if (edge_ops->out.runs.any() && out_pass) {
           run_line_stages(s.prec, edge_ops->out, true, n, edge_ops->out.runs.of(0),
                           {.src = slot::block, .dst = to.where, .dst_stride = to.stride},
                           settings.chunk_points, false, st);
-        } else if (edge_ops->out.separate) {
+        } else if (out_pass) {
           st.push_back(edge_pass_stage(s.prec, edge_ops->out, true, n, slot::block, 1, to.where,
                                        to.stride, settings.chunk_points, false,
                                        edge_ops->out.axis_stride));
@@ -2266,8 +2305,12 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
             std::ranges::any_of(st, [](const stage& x) { return x.moving_twiddles; })) {
           c.edge_row_block = 0;
         }
-        c.block_elements =
-            std::max(c.block_elements, n * std::max<std::size_t>(c.edge_row_block, 1));
+        // Only where the line starts or ends in the block: a side whose runs the chain's pruned
+        // first or last pass reads or writes where they are stored needs none (task 5.1e).
+        if (from.where == slot::block || line_to.where == slot::block) {
+          c.block_elements =
+              std::max(c.block_elements, n * std::max<std::size_t>(c.edge_row_block, 1));
+        }
       } else {
         if (complex_columns(e, extent, src, dst, line, sign, "", d)) {
           return;
@@ -2562,13 +2605,16 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
             : (row_strategy ? edge_layout::row_strategy : edge_layout::phases);
     if (edge_ops->in.runs.any() || edge_ops->out.runs.any()) {
       // Stored runs (task 5.1d), with at most accumulation and scales beside them: one pass per
-      // side that has runs or accumulates.
+      // side that has runs or accumulates, except a side whose runs the chain's pruned first or
+      // last pass reads or writes where they are stored (task 5.1e).
       const bool to_out = use_edge_phases && src0.where == slot::out;
-      const std::size_t passes = (edge_ops->in.runs.any() ? 1U : 0U) +
-                                 (edge_ops->out.runs.any() || edge_ops->out.accumulate ? 1U : 0U);
+      const bool in_pass = edge_ops->in.runs.any() && in_pruning != run_pruning::direct;
+      const bool out_pass =
+          edge_ops->out.runs.any() ? out_pruning != run_pruning::direct : edge_ops->out.accumulate;
+      const std::size_t passes = (in_pass ? 1U : 0U) + (out_pass ? 1U : 0U);
       c.edges_note =
           runs_text({.in = edge_ops->in.runs, .out = edge_ops->out.runs}, edge_ops->out.accumulate,
-                    to_out ? "the output" : "the workspace block", passes);
+                    to_out ? "the output" : "the workspace block", passes, in_pruning, out_pruning);
     } else {
       c.edges_note = edges_text(*edge_ops, layout, edge_passes(p));
       if (c.edge_row_block != 0) {
