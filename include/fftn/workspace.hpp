@@ -17,6 +17,7 @@
 namespace fftn::inline v0 {
 
 template <class In, class Out> class plan;
+template <class In, class Mid, class Out> class pipeline;
 
 namespace detail {
 struct workspace_access;
@@ -56,6 +57,15 @@ public:
   /// Throws `std::bad_alloc` when the memory cannot be allocated.
   template <class In, class Out>
   explicit workspace(const plan<In, Out>& p, int lanes = 1) : workspace(p.workspace_bytes(lanes)) {}
+
+  /// A workspace sized for executions of pipeline `p` (fftn/pipeline.hpp) by teams of up to
+  /// `lanes` members (1: serial execution only): it owns `p.workspace_bytes(lanes)` bytes.
+  /// Provisional (task 5.2b).
+  ///
+  /// Throws `std::bad_alloc` when the memory cannot be allocated.
+  template <class In, class Mid, class Out>
+  explicit workspace(const pipeline<In, Mid, Out>& p, int lanes = 1)
+      : workspace(p.workspace_bytes(lanes)) {}
 
   /// A workspace over memory that the caller owns, of any alignment. The memory must stay
   /// valid while the workspace is in use; the workspace never frees it.

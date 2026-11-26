@@ -13,6 +13,7 @@
 #include "core/driver.hpp"
 #include "core/edge_driver.hpp"
 #include "core/edges.hpp"
+#include "core/pipeline.hpp"
 #include "core/program.hpp"
 #include "core/runs.hpp"
 #include "core/wisdom_entry.hpp"
@@ -340,7 +341,7 @@ struct view {
 // (mark_cursors, edge_record::factor_step). Batch loops take theirs from the batch strides.
 struct edge_loop {
   std::size_t record = 0;
-  std::array<std::ptrdiff_t, 2> step{};
+  factor_steps step{};
 };
 
 // The bytes `elements` steps along axis e move each of the views' slots, as a loop's step
@@ -1188,13 +1189,32 @@ constexpr std::string_view batch_one_row_reason =
 // rows' transforms; chunk_points' 2048, unmeasured otherwise.
 constexpr std::size_t edge_row_block_points = 2048;
 
-template <class T>
-void build(plan_core& c, const shape_view& s, const side& in, const side& out, const options& opts,
-           const build_settings& settings, const edge_plan* edge_ops,
-           std::vector<edge_loop>& edge_loops, std::vector<edge_loop>& tail_loops) {
-  c.isa_target = plan_target_of(opts);
-  const kernels_of<T>& kernels = of<T>(*find_kernels(c.isa_target));
-  target_profile profile = profile_of(c.isa_target, kernels.complex_lanes, settings.profile.vendor);
+} // namespace
+
+void lay_out_workspace(plan_core& c, std::size_t scratch, std::size_t complex_bytes,
+                       bool stagger_b) {
+  constexpr std::size_t line_alignment = 64;
+  const auto round_up = [](std::size_t v) {
+    return (v + line_alignment - 1) / line_alignment * line_alignment;
+  };
+  c.scratch_line = scratch;
+  const std::size_t line_bytes = round_up(scratch * complex_bytes);
+  // A grid's scratch line b starts an odd number of 64-byte lines (seven) after a whole
+  // multiple of a's size, so that the passes ping-ponging between them do not read and
+  // write the same cache sets (DESIGN.md 10, rule 4): a grid's scratch lines are a block of
+  // a power-of-two size for most lengths. Experiment X4 measured 8-9 % at 2^22 on the Mac
+  // and no case slower; the chain's lines were not part of it.
+  const std::size_t stagger = stagger_b ? 7 * 64 : 0;
+  c.offset_b = line_bytes + stagger;
+  c.offset_block = 2 * line_bytes + stagger;
+  const std::size_t used = c.offset_block + c.block_elements * complex_bytes;
+  c.bytes = used == 0 ? 0 : used + line_alignment;
+  c.slot_bytes = (used + sync_line - 1) / sync_line * sync_line;
+}
+
+target_profile plan_profile(const plan_core& c, std::size_t complex_lanes,
+                            const build_settings& settings) {
+  target_profile profile = profile_of(c.isa_target, complex_lanes, settings.profile.vendor);
   if (settings.leaf_limit != 0) {
     profile.leaf_limit = settings.leaf_limit;
   }
@@ -1203,7 +1223,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   }
   // X69: on the 2 MiB-L2 key the fit limits serve that key's table, not the target's.
   if (settings.profile.fit_large_l2) {
-    profile.fit_overrides = large_l2_fit_overrides(c.isa_target, kernels.complex_lanes);
+    profile.fit_overrides = large_l2_fit_overrides(c.isa_target, complex_lanes);
   }
   if (settings.rader == 0) {
     profile.rader_below = 0;
@@ -1211,6 +1231,13 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     profile.rader_from = 0;
     profile.rader_below = std::numeric_limits<std::size_t>::max();
   }
+  return profile;
+}
+
+template <class T>
+chain_builder<T> plan_chain(plan_core& c, const target_profile& profile,
+                            const build_settings& settings) {
+  const kernels_of<T>& kernels = of<T>(*find_kernels(c.isa_target));
   chain_builder<T> chain(kernels, profile, tables_of<T>(c), settings.chunk_points, settings.radices,
                          settings.bluestein_above, fusion_of(settings, c.isa_target));
   // X32: only on the machines whose profile keeps long powers of two as chains, the ones
@@ -1239,6 +1266,24 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
         std::is_same_v<T, double> ? find_more_pair_leaves(c.isa_target) : nullptr;
     chain.use_pair_leaves(&of<T>(*pairs), more != nullptr ? &of<T>(*more) : nullptr);
   }
+  return chain;
+}
+
+template chain_builder<double> plan_chain<double>(plan_core& c, const target_profile& profile,
+                                                  const build_settings& settings);
+template chain_builder<float> plan_chain<float>(plan_core& c, const target_profile& profile,
+                                                const build_settings& settings);
+
+namespace {
+
+template <class T>
+void build(plan_core& c, const shape_view& s, const side& in, const side& out, const options& opts,
+           const build_settings& settings, const edge_plan* edge_ops,
+           std::vector<edge_loop>& edge_loops, std::vector<edge_loop>& tail_loops) {
+  c.isa_target = plan_target_of(opts);
+  const kernels_of<T>& kernels = of<T>(*find_kernels(c.isa_target));
+  const target_profile profile = plan_profile(c, kernels.complex_lanes, settings);
+  chain_builder<T> chain = plan_chain<T>(c, profile, settings);
   program& p = c.prog;
   const std::size_t r = s.axes.size();
   const auto complex_bytes = static_cast<std::ptrdiff_t>(2 * sizeof(T));
@@ -2621,24 +2666,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     std::get<loop>(p.records[b]).body_end = static_cast<std::uint32_t>(p.records.size());
   }
 
-  // Workspace layout.
-  constexpr std::size_t line_alignment = 64;
-  const auto round_up = [](std::size_t v) {
-    return (v + line_alignment - 1) / line_alignment * line_alignment;
-  };
-  c.scratch_line = scratch;
-  const std::size_t line_bytes = round_up(scratch * 2 * sizeof(T));
-  // A grid's scratch line b starts an odd number of 64-byte lines (seven) after a whole
-  // multiple of a's size, so that the passes ping-ponging between them do not read and
-  // write the same cache sets (DESIGN.md 10, rule 4): a grid's scratch lines are a block of
-  // a power-of-two size for most lengths. Experiment X4 measured 8-9 % at 2^22 on the Mac
-  // and no case slower; the chain's lines were not part of it.
-  const std::size_t stagger = grid_plan.phases != 0 ? 7 * 64 : 0;
-  c.offset_b = line_bytes + stagger;
-  c.offset_block = 2 * line_bytes + stagger;
-  const std::size_t used = c.offset_block + c.block_elements * 2 * sizeof(T);
-  c.bytes = used == 0 ? 0 : used + line_alignment;
-  c.slot_bytes = (used + sync_line - 1) / sync_line * sync_line;
+  lay_out_workspace(c, scratch, 2 * sizeof(T), grid_plan.phases != 0);
 }
 
 // The shape's counts and direction, which everything else depends on (std::invalid_argument
@@ -2958,6 +2986,34 @@ std::shared_ptr<plan_core> build_plan_core(const shape_view& s, const options& o
   return build_core(s, opts, given, edges, true);
 }
 
+row_layout resolve_row_layout(const shape_view& s, bool in_place) {
+  check_counts(s);
+  if (s.kind != transform_kind::c2c || s.axes.size() != 1 || !s.runs.empty()) {
+    throw std::logic_error("fftn: internal: resolve_row_layout takes c2c rows without runs");
+  }
+  const std::size_t real_bytes = s.prec == precision::f64 ? sizeof(double) : sizeof(float);
+  const auto cb = static_cast<std::ptrdiff_t>(2 * real_bytes);
+  const std::vector<std::size_t> full{s.axes[0].n};
+  const side_runs none;
+  const side in = resolve(s, full, full[0], true, true, cb, none);
+  const side out = resolve(s, full, full[0], false, true, cb, none);
+  check_reach(s, in, true);
+  check_reach(s, out, false);
+  check_no_overlap(s, out);
+  if (in_place) {
+    check_in_place(s, in, out);
+  }
+  row_layout l{
+      .in_stride = in.stride[0],
+      .out_stride = out.stride[0],
+      .in_dist = in.dist,
+      .out_dist = out.dist,
+  };
+  std::tie(l.in_lo, l.in_hi) = span_of(s, in);
+  std::tie(l.out_lo, l.out_hi) = span_of(s, out);
+  return l;
+}
+
 namespace {
 
 // A plan whose shape has stored runs (task 5.1d), with its edges (null: none): built as a plan
@@ -3267,21 +3323,25 @@ isa instruction_set(const plan_core& core) noexcept {
 
 std::string describe(const plan_core& core) {
   std::ostringstream o;
-  o << "fftn plan: " << kind_name(core.kind);
-  if (core.kind == transform_kind::c2c) {
-    o << (core.dir == direction::forward ? " forward" : " backward");
+  if (!core.pipeline_title.empty()) {
+    o << core.pipeline_title << "\n";
+  } else {
+    o << "fftn plan: " << kind_name(core.kind);
+    if (core.kind == transform_kind::c2c) {
+      o << (core.dir == direction::forward ? " forward" : " backward");
+    }
+    o << ", " << (core.prec == precision::f64 ? "double" : "float") << ", n = ";
+    // The lengths as the shape lists its axes (plan_core::axis_of).
+    std::vector<std::size_t> listed = core.lengths;
+    for (std::size_t d = 0; d < core.axis_of.size(); ++d) {
+      listed[core.axis_of[d]] = core.lengths[d];
+    }
+    for (std::size_t d = 0; d < listed.size(); ++d) {
+      o << (d == 0 ? "" : " x ") << listed[d];
+    }
+    o << ", " << core.prog.transforms << (core.prog.transforms == 1 ? " transform" : " transforms")
+      << (core.in_place ? ", in place" : ", out of place") << "\n";
   }
-  o << ", " << (core.prec == precision::f64 ? "double" : "float") << ", n = ";
-  // The lengths as the shape lists its axes (plan_core::axis_of).
-  std::vector<std::size_t> listed = core.lengths;
-  for (std::size_t d = 0; d < core.axis_of.size(); ++d) {
-    listed[core.axis_of[d]] = core.lengths[d];
-  }
-  for (std::size_t d = 0; d < listed.size(); ++d) {
-    o << (d == 0 ? "" : " x ") << listed[d];
-  }
-  o << ", " << core.prog.transforms << (core.prog.transforms == 1 ? " transform" : " transforms")
-    << (core.in_place ? ", in place" : ", out of place") << "\n";
   o << "instruction set: " << isa_name(instruction_set(core)) << "\n";
   // Some avx2 rules apply to one vendor's processors only (DESIGN.md 13.5).
   o << "processor vendor: " << cpu_vendor_name(core.profile.vendor) << "\n";
