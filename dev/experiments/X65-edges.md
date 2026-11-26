@@ -360,3 +360,47 @@ The Xeon's standard-tier run was not made (the x65 run covers rows, planes and v
 both precisions; the known 1.06–1.08 on single tiny transforms is parked).
 
 Lesson 4.28 in `dev/LESSONS.md`. DESIGN 12.1 and the decision log record the outcome.
+
+### P1 narrowed to rows on one leaf (AGENTS.md section 6; declared before its run)
+
+P1's runs moved one group of cases far and the rest barely: c2c rows whose transform is a single
+leaf (16 × 1024 and 64 × 64: a leaf of radix n, a pair leaf or batch leaves) took 0.39–0.94 of
+the walked form's time in every edge configuration on both machines (geometric means over the 8
+such cases: EPYC 0.62 in run 1, Xeon 0.63 in run 2), while chains of 256 to 1024 points, real rows,
+planes and volumes stayed at 0.90–1.01, with the one case slower beyond band among them (Xeon E5,
+c2c 1024 × 64, 1.029). Under the narrowing clause (maintainer, 2026-11-23) P1 is narrowed to the
+first group, which is where its mechanism (one leaf call over many rows instead of a walk per row)
+acts:
+
+- **The narrowed change.** `machine_profile::edge_batched_forms` becomes a reach (`none`,
+  `leaf_rows`, `all`) instead of a switch. With `leaf_rows`, a plan whose edges have factors takes
+  the batched forms (the flat form, rows of one leaf, the row blocks) only when it is a plan of
+  c2c rows (one axis) whose line's transform, between any separate edge passes, is one stage and a
+  leaf. This is decided at plan construction, in build(): the stages that the chain adds for the
+  line (`chain.c2c_line`) are counted, so the plan with the separate passes and the fused chain
+  are judged alike; every other plan (chains of two or more passes, Bluestein lines, real rows,
+  planes, volumes, the lanes, grids and depth-first chains) keeps the walked form, and its
+  `edge_row_block` stays 0. `all` is P1 as built (the tests' setting). `describe()` names the
+  batched forms a plan takes (a line "edge forms: …" or the row blocks' line), so that a run's
+  notes show which cases took them.
+- **Where it is on.** `leaf_rows` on the two classes measured, by their keys in set_grid_sizes:
+  Zen 3's class (the EPYC 7763; `avx2`) and the Xeon 6240's class (Intel, `avx512`; the reach rule
+  extends it to Ice Lake-SP). `none` everywhere else (Apple and other AArch64, Zen 4 and 5, Granite
+  and Sapphire Rapids, unknown topologies) until measured.
+- **The deciding run,** on the final code (after origin/main is merged): arms `O` = the `main`
+  this branch merges (the walked form for every plan with edges) and `N` = this branch's head
+  (the narrowed change, on by the machine's profile), plus fbench's control `O~`; runs E1, E2, E4
+  and E5, catalogue `x65` tier `full`, one thread, on the EPYC (DMOG, shared `-c 8`) and the Xeon
+  (`--serial`), as P1's runs.
+- **Included cases** (by the criterion above, which on both machines' rules selects them): c2c
+  16 × 1024 and 64 × 64 in each of the four runs, 8 per machine. **Excluded:** every other case of
+  the four runs.
+- **Adopt** (`leaf_rows` on those two classes) when, on both machines: (1) every excluded case is
+  on its walked form: its note in `N` names no batched form ("edge forms:", "edge row blocks") and
+  is identical to its note in `O`; (2) no case of any of the eight runs, included or excluded, is
+  slower than 1 + band (its interval wholly above); (3) the change still moves its cases: the
+  geometric mean of N/O over the included cases is below 1 − band (for the record, P1's bar of 0.80
+  is reported beside it); and (4) plans without edges compile to exactly `main`'s code
+  (`describe()` and `workspace_bytes()` probes over many plans, and the plain driver's disassembly
+  under Clang on arm64 and x86-64). A criterion missed by less than the band gets one `--serial`
+  re-run that decides. Otherwise the reach stays `none` everywhere and the verdict is recorded.
