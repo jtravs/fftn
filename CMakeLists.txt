@@ -13,7 +13,15 @@ option(FFTN_INSTALL "Install the library, its headers and its CMake and pkg-conf
        ${PROJECT_IS_TOP_LEVEL})
 # The C API as a shared library as well (src/c_api/CMakeLists.txt, docs/c_api.md): libfftn_c,
 # which exports the fftn_ functions of fftn/c_api.h and nothing else. Provisional (step 6.8).
-option(FFTN_BUILD_C_SHARED "Also build fftn_c, a shared library of the C API (fftn/c_api.h)" OFF)
+# The default may come from the environment variable of the same name (CI's GCC job turns it on
+# that way, .github/workflows/ci.yml, so that its tests run on every pull request); an empty
+# value counts as unset.
+set(_fftn_c_shared_default OFF)
+if(NOT "$ENV{FFTN_BUILD_C_SHARED}" STREQUAL "")
+  set(_fftn_c_shared_default "$ENV{FFTN_BUILD_C_SHARED}")
+endif()
+option(FFTN_BUILD_C_SHARED "Also build fftn_c, a shared library of the C API (fftn/c_api.h)"
+       ${_fftn_c_shared_default})
 option(FFTN_WARNINGS_AS_ERRORS "Treat compiler and clang-tidy warnings as errors" OFF)
 option(FFTN_COVERAGE "Instrument FFTN's own targets for line coverage" OFF)
 set(FFTN_SANITIZE "" CACHE STRING "Sanitizers for every target, e.g. address,undefined or thread")

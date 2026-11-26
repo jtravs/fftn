@@ -60,6 +60,13 @@
 #endif
 
 #ifdef __cplusplus
+#define FFTN_C_NOEXCEPT noexcept
+#else
+/** Marks the functions of the C API, which never throw: `noexcept` in C++, nothing in C. */
+#define FFTN_C_NOEXCEPT
+#endif
+
+#ifdef __cplusplus
 extern "C" {
 #endif
 
@@ -105,8 +112,7 @@ enum {
 
 /**
  * The kind of one axis of a real-to-real transform, fftn::r2r_kind: FFTW's definitions,
- * unnormalised (docs/conventions.md, "Real-to-real transforms"). A plan refuses the kinds that
- * the C++ API has not built yet, with the C++ message.
+ * unnormalised (docs/conventions.md, "Real-to-real transforms"). Every kind is built.
  */
 typedef enum fftn_r2r_kind {
   FFTN_DCT1, /**< DCT-I, FFTW's REDFT00 */
@@ -236,7 +242,7 @@ typedef struct fftn_plan fftn_plan;
 typedef struct fftn_workspace fftn_workspace;
 
 /** The options fftn::options{} gives: no in place, scale 1, the best ISA, the rules. */
-FFTN_C_API fftn_options fftn_options_default(void);
+FFTN_C_API fftn_options fftn_options_default(void) FFTN_C_NOEXCEPT;
 
 /**
  * Builds the plan of `shape` with `options` (NULL: fftn_options_default()), as the
@@ -250,39 +256,40 @@ FFTN_C_API fftn_options fftn_options_default(void);
  * Fails with FFTN_ERROR_OUT_OF_MEMORY when memory runs out. `error` may be NULL.
  */
 FFTN_C_API fftn_plan* fftn_plan_create(const fftn_shape* shape, const fftn_options* options,
-                                       fftn_error* error);
+                                       fftn_error* error) FFTN_C_NOEXCEPT;
 
 /**
  * Adds a reference to `plan` and returns it, as a C++ copy shares the plan's tables; NULL for
  * NULL. Never fails. Safe to call from several threads at once.
  */
-FFTN_C_API fftn_plan* fftn_plan_ref(fftn_plan* plan);
+FFTN_C_API fftn_plan* fftn_plan_ref(fftn_plan* plan) FFTN_C_NOEXCEPT;
 
 /**
  * Drops a reference to `plan`; the last frees it. Nothing for NULL. Safe to call from several
  * threads at once. Precondition: no execution of the plan is running on its last reference.
  */
-FFTN_C_API void fftn_plan_release(fftn_plan* plan);
+FFTN_C_API void fftn_plan_release(fftn_plan* plan) FFTN_C_NOEXCEPT;
 
 /** fftn::plan::workspace_bytes(lanes): the bytes of workspace for teams of up to `lanes`. */
-FFTN_C_API size_t fftn_plan_workspace_bytes(const fftn_plan* plan, int lanes);
+FFTN_C_API size_t fftn_plan_workspace_bytes(const fftn_plan* plan, int lanes) FFTN_C_NOEXCEPT;
 
 /**
  * fftn::plan::describe() copied into `buffer` as snprintf does (`buffer` may be NULL when
  * `size` is 0); returns the description's full length. Returns 0, with an empty string in a
  * buffer of at least one byte, when memory runs out.
  */
-FFTN_C_API size_t fftn_plan_describe(const fftn_plan* plan, char* buffer, size_t size);
+FFTN_C_API size_t fftn_plan_describe(const fftn_plan* plan, char* buffer,
+                                     size_t size) FFTN_C_NOEXCEPT;
 
 /** fftn::plan::instruction_set(): the fftn_isa the plan's kernels use, never FFTN_ISA_BEST. */
-FFTN_C_API int fftn_plan_instruction_set(const fftn_plan* plan);
+FFTN_C_API int fftn_plan_instruction_set(const fftn_plan* plan) FFTN_C_NOEXCEPT;
 
 /**
  * A workspace that owns `bytes` bytes of uninitialised memory (0: none), fftn::workspace(bytes);
  * NULL with FFTN_ERROR_OUT_OF_MEMORY when memory runs out. The handle and the memory are
  * allocated here, never during an execution.
  */
-FFTN_C_API fftn_workspace* fftn_workspace_create(size_t bytes, fftn_error* error);
+FFTN_C_API fftn_workspace* fftn_workspace_create(size_t bytes, fftn_error* error) FFTN_C_NOEXCEPT;
 
 /**
  * A workspace over the caller's `bytes` bytes at `memory`, of any alignment, which must stay
@@ -290,27 +297,29 @@ FFTN_C_API fftn_workspace* fftn_workspace_create(size_t bytes, fftn_error* error
  * Allocates the handle only. NULL with FFTN_ERROR_INVALID_ARGUMENT when `memory` is NULL and
  * `bytes` is not 0, and with FFTN_ERROR_OUT_OF_MEMORY when memory runs out.
  */
-FFTN_C_API fftn_workspace* fftn_workspace_borrow(void* memory, size_t bytes, fftn_error* error);
+FFTN_C_API fftn_workspace* fftn_workspace_borrow(void* memory, size_t bytes,
+                                                 fftn_error* error) FFTN_C_NOEXCEPT;
 
 /**
  * Frees the workspace, and its memory if it owns it. Nothing for NULL. Precondition: no
  * execution is using it.
  */
-FFTN_C_API void fftn_workspace_destroy(fftn_workspace* workspace);
+FFTN_C_API void fftn_workspace_destroy(fftn_workspace* workspace) FFTN_C_NOEXCEPT;
 
 /**
  * fftn::plan::execute(in, out, ws): every transform of the batch, serially on the calling
  * thread. Precondition: `workspace` is not NULL and holds fftn_plan_workspace_bytes(plan, 1).
  */
 FFTN_C_API void fftn_execute(const fftn_plan* plan, const void* in, void* out,
-                             fftn_workspace* workspace);
+                             fftn_workspace* workspace) FFTN_C_NOEXCEPT;
 
 /**
  * fftn::plan::execute_transforms(first, count, in, out, ws): `count` transforms from
  * transform `first`, serially; `in` and `out` address transform 0, as for fftn_execute.
  */
 FFTN_C_API void fftn_execute_transforms(const fftn_plan* plan, size_t first, size_t count,
-                                        const void* in, void* out, fftn_workspace* workspace);
+                                        const void* in, void* out,
+                                        fftn_workspace* workspace) FFTN_C_NOEXCEPT;
 
 /**
  * The team overload of fftn::plan::execute: every member of team `team` calls it with its own
@@ -318,10 +327,11 @@ FFTN_C_API void fftn_execute_transforms(const fftn_plan* plan, size_t first, siz
  * Precondition: `workspace` holds fftn_plan_workspace_bytes(plan, team.size).
  */
 FFTN_C_API void fftn_execute_team(const fftn_plan* plan, const void* in, void* out, fftn_team team,
-                                  fftn_workspace* workspace, fftn_completion done);
+                                  fftn_workspace* workspace, fftn_completion done) FFTN_C_NOEXCEPT;
 
 /** fftn::plan::transforms_of(team): the transforms `team`'s member owns. */
-FFTN_C_API fftn_transform_range fftn_transforms_of(const fftn_plan* plan, fftn_team team);
+FFTN_C_API fftn_transform_range fftn_transforms_of(const fftn_plan* plan,
+                                                   fftn_team team) FFTN_C_NOEXCEPT;
 
 /**
  * The executor overload of fftn::plan::execute: every transform of the batch, on the pool that
@@ -333,56 +343,61 @@ FFTN_C_API fftn_transform_range fftn_transforms_of(const fftn_plan* plan, fftn_t
  * fftn_plan_workspace_bytes(plan, concurrency).
  */
 FFTN_C_API int fftn_execute_on(const fftn_plan* plan, const void* in, void* out,
-                               const fftn_executor* executor, fftn_workspace* workspace);
+                               const fftn_executor* executor,
+                               fftn_workspace* workspace) FFTN_C_NOEXCEPT;
 
 /** A wisdom with no entries, fftn::wisdom(); NULL with FFTN_ERROR_OUT_OF_MEMORY on failure. */
-FFTN_C_API fftn_wisdom* fftn_wisdom_create(fftn_error* error);
+FFTN_C_API fftn_wisdom* fftn_wisdom_create(fftn_error* error) FFTN_C_NOEXCEPT;
 
 /**
  * The entries in the NUL-terminated `text`, fftn::wisdom(text); NULL on failure, with
  * FFTN_ERROR_INVALID_ARGUMENT and the C++ message naming the first bad line, or for a NULL
  * `text`.
  */
-FFTN_C_API fftn_wisdom* fftn_wisdom_from_text(const char* text, fftn_error* error);
+FFTN_C_API fftn_wisdom* fftn_wisdom_from_text(const char* text, fftn_error* error) FFTN_C_NOEXCEPT;
 
 /**
  * The entries of the file at `path` (a NUL-terminated path in the platform's narrow
  * encoding), fftn::wisdom::load; NULL on failure, with FFTN_ERROR_FILE when the file cannot be
  * read and FFTN_ERROR_INVALID_ARGUMENT when a line is not an entry or `path` is NULL.
  */
-FFTN_C_API fftn_wisdom* fftn_wisdom_load(const char* path, fftn_error* error);
+FFTN_C_API fftn_wisdom* fftn_wisdom_load(const char* path, fftn_error* error) FFTN_C_NOEXCEPT;
 
 /**
  * Writes the wisdom's text to the file at `path`, replacing it, fftn::wisdom::save. Returns
  * FFTN_OK, or FFTN_ERROR_FILE when the file cannot be written and FFTN_ERROR_INVALID_ARGUMENT
  * for a NULL `path`, with `error` filled.
  */
-FFTN_C_API int fftn_wisdom_save(const fftn_wisdom* wisdom, const char* path, fftn_error* error);
+FFTN_C_API int fftn_wisdom_save(const fftn_wisdom* wisdom, const char* path,
+                                fftn_error* error) FFTN_C_NOEXCEPT;
 
 /**
  * fftn::wisdom::text() copied into `buffer` as snprintf does; returns the text's full length,
  * or 0 when memory runs out (a wisdom's text is never empty).
  */
-FFTN_C_API size_t fftn_wisdom_text(const fftn_wisdom* wisdom, char* buffer, size_t size);
+FFTN_C_API size_t fftn_wisdom_text(const fftn_wisdom* wisdom, char* buffer,
+                                   size_t size) FFTN_C_NOEXCEPT;
 
 /**
  * Records the program of `plan`, fftn::wisdom::add(plan). Returns FFTN_OK, or
  * FFTN_ERROR_OUT_OF_MEMORY with `error` filled.
  */
-FFTN_C_API int fftn_wisdom_add(fftn_wisdom* wisdom, const fftn_plan* plan, fftn_error* error);
+FFTN_C_API int fftn_wisdom_add(fftn_wisdom* wisdom, const fftn_plan* plan,
+                               fftn_error* error) FFTN_C_NOEXCEPT;
 
 /** fftn::wisdom::size(): the number of entries. */
-FFTN_C_API size_t fftn_wisdom_size(const fftn_wisdom* wisdom);
+FFTN_C_API size_t fftn_wisdom_size(const fftn_wisdom* wisdom) FFTN_C_NOEXCEPT;
 
 /** Frees the wisdom. Nothing for NULL. Plans built from it do not keep it. */
-FFTN_C_API void fftn_wisdom_destroy(fftn_wisdom* wisdom);
+FFTN_C_API void fftn_wisdom_destroy(fftn_wisdom* wisdom) FFTN_C_NOEXCEPT;
 
 /**
  * fftn::next_fast_length(n, kind): the smallest length at or above `n` that FFTN transforms
  * fast (docs/lengths.md). Returns 0, with FFTN_ERROR_INVALID_ARGUMENT, where the C++ function
  * throws (n above 2^40, or `kind` not an fftn_length_kind).
  */
-FFTN_C_API size_t fftn_next_fast_length(size_t n, fftn_length_kind kind, fftn_error* error);
+FFTN_C_API size_t fftn_next_fast_length(size_t n, fftn_length_kind kind,
+                                        fftn_error* error) FFTN_C_NOEXCEPT;
 
 /**
  * fftn::relative_cost<T>(n, target), with T given by `precision` and `target` an fftn_isa:
@@ -391,13 +406,13 @@ FFTN_C_API size_t fftn_next_fast_length(size_t n, fftn_length_kind kind, fftn_er
  * for a `precision` that is not an fftn_precision.
  */
 FFTN_C_API double fftn_relative_cost(size_t n, fftn_precision precision, int target,
-                                     fftn_error* error);
+                                     fftn_error* error) FFTN_C_NOEXCEPT;
 
 /** fftn::isa_name: the instruction set's name ("avx2", "best", "unknown" for others). */
-FFTN_C_API const char* fftn_isa_name(int target);
+FFTN_C_API const char* fftn_isa_name(int target) FFTN_C_NOEXCEPT;
 
 /** fftn::version(): the linked library's version as "major.minor.patch". */
-FFTN_C_API const char* fftn_version(void);
+FFTN_C_API const char* fftn_version(void) FFTN_C_NOEXCEPT;
 
 #ifdef __cplusplus
 } /* extern "C" */

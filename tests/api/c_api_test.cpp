@@ -261,9 +261,8 @@ TEST(CApi, RealPlansMatchCpp) {
   }
 }
 
-// Every real-to-real kind, the ones the C++ API has not built yet included: those must be
-// refused from C with the C++ message (the check compares), and are tested as soon as they are
-// built.
+// Every real-to-real kind. A shape a kind refuses (a DCT-I of one point, say) is refused from C
+// with the C++ message: the check compares either way.
 TEST(CApi, RealToRealPlansMatchCpp) {
   constexpr std::array kinds = {
       FFTN_DCT1, FFTN_DCT2, FFTN_DCT3, FFTN_DCT4, FFTN_DST1,
@@ -501,12 +500,12 @@ TEST(CApi, OutOfMemoryIsAnError) {
 #ifdef FFTN_TEST_SANITIZED
   GTEST_SKIP() << "the sanitizer's allocator does not fail allocations";
 #else
-  fftn_error e{};
+  fftn_error error{};
   fftn_workspace* ws = nullptr;
-  EXPECT_NO_THROW(ws = fftn_workspace_create(std::numeric_limits<std::size_t>::max() / 2, &e));
+  EXPECT_NO_THROW(ws = fftn_workspace_create(std::numeric_limits<std::size_t>::max() / 2, &error));
   EXPECT_EQ(ws, nullptr);
-  EXPECT_EQ(e.code, FFTN_ERROR_OUT_OF_MEMORY);
-  EXPECT_NE(e.message[0], '\0');
+  EXPECT_EQ(error.code, FFTN_ERROR_OUT_OF_MEMORY);
+  EXPECT_NE(error.message[0], '\0');
 #endif
 }
 

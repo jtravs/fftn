@@ -61,10 +61,18 @@ namespace detail = fftn::detail;
 
 // The C enumerations mirror the C++ ones value for value, so they convert with a cast.
 static_assert(FFTN_DCT1 == static_cast<int>(fftn::r2r_kind::dct1));
+static_assert(FFTN_DCT2 == static_cast<int>(fftn::r2r_kind::dct2));
+static_assert(FFTN_DCT3 == static_cast<int>(fftn::r2r_kind::dct3));
 static_assert(FFTN_DCT4 == static_cast<int>(fftn::r2r_kind::dct4));
 static_assert(FFTN_DST1 == static_cast<int>(fftn::r2r_kind::dst1));
+static_assert(FFTN_DST2 == static_cast<int>(fftn::r2r_kind::dst2));
+static_assert(FFTN_DST3 == static_cast<int>(fftn::r2r_kind::dst3));
 static_assert(FFTN_DST4 == static_cast<int>(fftn::r2r_kind::dst4));
 static_assert(FFTN_DHT == static_cast<int>(fftn::r2r_kind::dht));
+static_assert(FFTN_LENGTH_COMPLEX == static_cast<int>(fftn::length_kind::complex));
+static_assert(FFTN_LENGTH_REAL == static_cast<int>(fftn::length_kind::real));
+static_assert(FFTN_COMPLETION_ALL == static_cast<int>(fftn::completion::all));
+static_assert(FFTN_COMPLETION_OWN == static_cast<int>(fftn::completion::own));
 static_assert(FFTN_ISA_SCALAR == static_cast<int>(fftn::isa::scalar));
 static_assert(FFTN_ISA_X86_V2 == static_cast<int>(fftn::isa::x86_v2));
 static_assert(FFTN_ISA_AVX == static_cast<int>(fftn::isa::avx));
@@ -272,7 +280,7 @@ template <class T> void destroy(T* handle) noexcept { const std::unique_ptr<T> o
 
 extern "C" {
 
-fftn_options fftn_options_default(void) {
+fftn_options fftn_options_default(void) noexcept {
   const fftn::options d{};
   return {
       .in_place = d.in_place ? 1 : 0,
@@ -286,7 +294,7 @@ fftn_options fftn_options_default(void) {
 }
 
 fftn_plan* fftn_plan_create(const fftn_shape* shape, const fftn_options* options,
-                            fftn_error* error) {
+                            fftn_error* error) noexcept {
   try {
     const converted_shape s(shape);
     auto plan = std::make_unique<fftn_plan>();
@@ -299,25 +307,25 @@ fftn_plan* fftn_plan_create(const fftn_shape* shape, const fftn_options* options
   }
 }
 
-fftn_plan* fftn_plan_ref(fftn_plan* plan) {
+fftn_plan* fftn_plan_ref(fftn_plan* plan) noexcept {
   if (plan != nullptr) {
     plan->references.fetch_add(1, std::memory_order_relaxed);
   }
   return plan;
 }
 
-void fftn_plan_release(fftn_plan* plan) {
+void fftn_plan_release(fftn_plan* plan) noexcept {
   // The last release frees the plan: every earlier release happens before it.
   if (plan != nullptr && plan->references.fetch_sub(1, std::memory_order_acq_rel) == 1) {
     destroy(plan);
   }
 }
 
-size_t fftn_plan_workspace_bytes(const fftn_plan* plan, int lanes) {
+size_t fftn_plan_workspace_bytes(const fftn_plan* plan, int lanes) noexcept {
   return detail::workspace_bytes(*plan->core, lanes);
 }
 
-size_t fftn_plan_describe(const fftn_plan* plan, char* buffer, size_t size) {
+size_t fftn_plan_describe(const fftn_plan* plan, char* buffer, size_t size) noexcept {
   try {
     return copy_out(detail::describe(*plan->core), buffer, size);
   } catch (...) {
@@ -325,11 +333,11 @@ size_t fftn_plan_describe(const fftn_plan* plan, char* buffer, size_t size) {
   }
 }
 
-int fftn_plan_instruction_set(const fftn_plan* plan) {
+int fftn_plan_instruction_set(const fftn_plan* plan) noexcept {
   return static_cast<int>(detail::instruction_set(*plan->core));
 }
 
-fftn_workspace* fftn_workspace_create(size_t bytes, fftn_error* error) {
+fftn_workspace* fftn_workspace_create(size_t bytes, fftn_error* error) noexcept {
   try {
     auto ws = std::make_unique<fftn_workspace>(bytes);
     set_error(error, FFTN_OK, {});
@@ -340,7 +348,7 @@ fftn_workspace* fftn_workspace_create(size_t bytes, fftn_error* error) {
   }
 }
 
-fftn_workspace* fftn_workspace_borrow(void* memory, size_t bytes, fftn_error* error) {
+fftn_workspace* fftn_workspace_borrow(void* memory, size_t bytes, fftn_error* error) noexcept {
   try {
     if (memory == nullptr && bytes != 0) {
       refuse("fftn_workspace_borrow: memory", "is NULL but bytes is " + std::to_string(bytes));
@@ -357,33 +365,35 @@ fftn_workspace* fftn_workspace_borrow(void* memory, size_t bytes, fftn_error* er
   }
 }
 
-void fftn_workspace_destroy(fftn_workspace* workspace) { destroy(workspace); }
+void fftn_workspace_destroy(fftn_workspace* workspace) noexcept { destroy(workspace); }
 
 // The workspace arguments stay non-const, as the header declares them (DESIGN.md 5.9): an
 // execution writes the workspace's memory and its team word.
 // NOLINTBEGIN(misc-const-correctness)
-void fftn_execute(const fftn_plan* plan, const void* in, void* out, fftn_workspace* workspace) {
+void fftn_execute(const fftn_plan* plan, const void* in, void* out,
+                  fftn_workspace* workspace) noexcept {
   detail::execute_all(*plan->core, in, out, workspace->ws);
 }
 
 void fftn_execute_transforms(const fftn_plan* plan, size_t first, size_t count, const void* in,
-                             void* out, fftn_workspace* workspace) {
+                             void* out, fftn_workspace* workspace) noexcept {
   detail::execute_core(*plan->core, first, count, in, out, workspace->ws);
 }
 
 void fftn_execute_team(const fftn_plan* plan, const void* in, void* out, fftn_team team,
-                       fftn_workspace* workspace, fftn_completion done) {
+                       fftn_workspace* workspace, fftn_completion done) noexcept {
   detail::execute_team(*plan->core, in, out, team_of(team), workspace->ws,
-                       done == FFTN_COMPLETION_OWN ? fftn::completion::own : fftn::completion::all);
+                       raw_value(done) == FFTN_COMPLETION_OWN ? fftn::completion::own
+                                                              : fftn::completion::all);
 }
 
-fftn_transform_range fftn_transforms_of(const fftn_plan* plan, fftn_team team) {
+fftn_transform_range fftn_transforms_of(const fftn_plan* plan, fftn_team team) noexcept {
   const fftn::transform_range r = detail::transforms_of(*plan->core, team_of(team));
   return {.first = r.first, .count = r.count};
 }
 
 int fftn_execute_on(const fftn_plan* plan, const void* in, void* out, const fftn_executor* executor,
-                    fftn_workspace* workspace) {
+                    fftn_workspace* workspace) noexcept {
   if (executor == nullptr || executor->concurrency == nullptr || executor->bulk == nullptr ||
       workspace == nullptr) {
     return FFTN_ERROR_INVALID_ARGUMENT;
@@ -399,7 +409,7 @@ int fftn_execute_on(const fftn_plan* plan, const void* in, void* out, const fftn
 }
 // NOLINTEND(misc-const-correctness)
 
-fftn_wisdom* fftn_wisdom_create(fftn_error* error) {
+fftn_wisdom* fftn_wisdom_create(fftn_error* error) noexcept {
   try {
     auto w = std::make_unique<fftn_wisdom>();
     set_error(error, FFTN_OK, {});
@@ -410,7 +420,7 @@ fftn_wisdom* fftn_wisdom_create(fftn_error* error) {
   }
 }
 
-fftn_wisdom* fftn_wisdom_from_text(const char* text, fftn_error* error) {
+fftn_wisdom* fftn_wisdom_from_text(const char* text, fftn_error* error) noexcept {
   try {
     if (text == nullptr) {
       refuse("fftn_wisdom_from_text: text", "is NULL");
@@ -424,7 +434,7 @@ fftn_wisdom* fftn_wisdom_from_text(const char* text, fftn_error* error) {
   }
 }
 
-fftn_wisdom* fftn_wisdom_load(const char* path, fftn_error* error) {
+fftn_wisdom* fftn_wisdom_load(const char* path, fftn_error* error) noexcept {
   try {
     if (path == nullptr) {
       refuse("fftn_wisdom_load: path", "is NULL");
@@ -438,7 +448,7 @@ fftn_wisdom* fftn_wisdom_load(const char* path, fftn_error* error) {
   }
 }
 
-int fftn_wisdom_save(const fftn_wisdom* wisdom, const char* path, fftn_error* error) {
+int fftn_wisdom_save(const fftn_wisdom* wisdom, const char* path, fftn_error* error) noexcept {
   try {
     if (path == nullptr) {
       refuse("fftn_wisdom_save: path", "is NULL");
@@ -451,7 +461,7 @@ int fftn_wisdom_save(const fftn_wisdom* wisdom, const char* path, fftn_error* er
   }
 }
 
-size_t fftn_wisdom_text(const fftn_wisdom* wisdom, char* buffer, size_t size) {
+size_t fftn_wisdom_text(const fftn_wisdom* wisdom, char* buffer, size_t size) noexcept {
   try {
     return copy_out(wisdom->w.text(), buffer, size);
   } catch (...) {
@@ -459,7 +469,7 @@ size_t fftn_wisdom_text(const fftn_wisdom* wisdom, char* buffer, size_t size) {
   }
 }
 
-int fftn_wisdom_add(fftn_wisdom* wisdom, const fftn_plan* plan, fftn_error* error) {
+int fftn_wisdom_add(fftn_wisdom* wisdom, const fftn_plan* plan, fftn_error* error) noexcept {
   try {
     detail::wisdom_access::add(wisdom->w, *plan->core);
     set_error(error, FFTN_OK, {});
@@ -469,11 +479,11 @@ int fftn_wisdom_add(fftn_wisdom* wisdom, const fftn_plan* plan, fftn_error* erro
   }
 }
 
-size_t fftn_wisdom_size(const fftn_wisdom* wisdom) { return wisdom->w.size(); }
+size_t fftn_wisdom_size(const fftn_wisdom* wisdom) noexcept { return wisdom->w.size(); }
 
-void fftn_wisdom_destroy(fftn_wisdom* wisdom) { destroy(wisdom); }
+void fftn_wisdom_destroy(fftn_wisdom* wisdom) noexcept { destroy(wisdom); }
 
-size_t fftn_next_fast_length(size_t n, fftn_length_kind kind, fftn_error* error) {
+size_t fftn_next_fast_length(size_t n, fftn_length_kind kind, fftn_error* error) noexcept {
   try {
     const int k = raw_value(kind);
     if (k != FFTN_LENGTH_COMPLEX && k != FFTN_LENGTH_REAL) {
@@ -489,7 +499,8 @@ size_t fftn_next_fast_length(size_t n, fftn_length_kind kind, fftn_error* error)
   }
 }
 
-double fftn_relative_cost(size_t n, fftn_precision precision, int target, fftn_error* error) {
+double fftn_relative_cost(size_t n, fftn_precision precision, int target,
+                          fftn_error* error) noexcept {
   try {
     const int p = raw_value(precision);
     if (p != FFTN_DOUBLE && p != FFTN_FLOAT) {
@@ -510,12 +521,12 @@ double fftn_relative_cost(size_t n, fftn_precision precision, int target, fftn_e
   }
 }
 
-const char* fftn_isa_name(int target) {
+const char* fftn_isa_name(int target) noexcept {
   return target < FFTN_ISA_SCALAR || target > FFTN_ISA_BEST
              ? "unknown"
              : fftn::isa_name(static_cast<fftn::isa>(target));
 }
 
-const char* fftn_version(void) { return fftn::version(); }
+const char* fftn_version(void) noexcept { return fftn::version(); }
 
 } // extern "C"

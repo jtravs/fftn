@@ -610,42 +610,50 @@ static fftn_plan* ctest_rows_plan(const fftn_wisdom* use) {
 }
 
 int ctest_wisdom(const char* path, char* text, size_t size) {
+  /* Every handle is released at `done`, whichever check fails (the destroys take NULL). */
   fftn_error e;
   fftn_wisdom* w = fftn_wisdom_create(&e);
-  fftn_wisdom* again;
-  fftn_wisdom* loaded;
-  fftn_plan* p;
-  fftn_plan* q;
+  fftn_wisdom* again = NULL;
+  fftn_wisdom* loaded = NULL;
+  fftn_plan* p = NULL;
+  fftn_plan* q = NULL;
   char buffer[4096];
   size_t length;
   int failed = 0;
   if (w == NULL || e.code != FFTN_OK || fftn_wisdom_size(w) != 0) {
-    return 1;
+    failed = 1;
+    goto done;
   }
   p = ctest_rows_plan(NULL);
   if (p == NULL || fftn_wisdom_add(w, p, &e) != FFTN_OK || fftn_wisdom_size(w) != 1) {
-    return 2;
+    failed = 2;
+    goto done;
   }
   /* Adding the same plan again replaces its entry. */
   if (fftn_wisdom_add(w, p, NULL) != FFTN_OK || fftn_wisdom_size(w) != 1) {
-    return 3;
+    failed = 3;
+    goto done;
   }
   length = fftn_wisdom_text(w, NULL, 0);
   if (length == 0 || length >= sizeof buffer ||
       fftn_wisdom_text(w, buffer, sizeof buffer) != length || strlen(buffer) != length) {
-    return 4;
+    failed = 4;
+    goto done;
   }
   fftn_wisdom_text(w, text, size);
   again = fftn_wisdom_from_text(buffer, &e);
   if (again == NULL || fftn_wisdom_size(again) != 1) {
-    return 5;
+    failed = 5;
+    goto done;
   }
   if (fftn_wisdom_save(again, path, &e) != FFTN_OK || e.code != FFTN_OK) {
-    return 6;
+    failed = 6;
+    goto done;
   }
   loaded = fftn_wisdom_load(path, &e);
   if (loaded == NULL || fftn_wisdom_size(loaded) != 1) {
-    return 7;
+    failed = 7;
+    goto done;
   }
   /* A plan from the loaded wisdom transforms as the recorded one did. */
   q = ctest_rows_plan(loaded);
@@ -674,7 +682,6 @@ int ctest_wisdom(const char* path, char* text, size_t size) {
       }
       fftn_workspace_destroy(ws);
     }
-    fftn_plan_release(q);
   }
   /* Refusals: a line that is not an entry, a NULL text or path, a file that does not exist,
    * and a file that cannot be written. */
@@ -700,6 +707,8 @@ int ctest_wisdom(const char* path, char* text, size_t size) {
   if (!failed && (fftn_wisdom_save(w, NULL, &e) != FFTN_ERROR_INVALID_ARGUMENT)) {
     failed = 16;
   }
+done:
+  fftn_plan_release(q);
   fftn_plan_release(p);
   fftn_wisdom_destroy(loaded);
   fftn_wisdom_destroy(again);
