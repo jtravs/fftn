@@ -90,7 +90,9 @@ template <class T> struct edge {
 /// elsewhere each factor and accumulation is a pass of its own over the data (describe()
 /// counts them), and the
 /// workspace may hold one transform (or row) more. A wisdom entry of a plan with edges serves
-/// plans with the same edges only.
+/// plans with the same edges only. A real-to-real plan (`shape<T, T>`, task 6.3) applies the
+/// input's real factor as it reads its first axis's lines and the output's real factor, the
+/// scales and accumulation as it writes its last axis's, with no separate pass.
 template <class In, class Out> struct plan_edges {
   /// The input edge.
   edge<In> in{};

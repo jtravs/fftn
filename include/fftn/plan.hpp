@@ -53,8 +53,12 @@ public:
   /// count of zero, no axis or more than three axes, overlapping output elements, sizes
   /// that overflow, in-place layouts that do not agree, stored runs (`shape::runs`) that are
   /// not valid or are given to an in-place plan, or a negative or non-finite
-  /// `options::measure_seconds`. Throws `std::bad_alloc` when memory runs out, including
-  /// the scratch memory of measured planning (`options::effort`).
+  /// `options::measure_seconds`; for a real-to-real shape (`shape<T, T>`, provisional, task
+  /// 6.3), `shape::kinds` without one kind per axis, a kind not built yet (only
+  /// `r2r_kind::dht` is), or stored runs; for any other shape, `shape::kinds` not empty.
+  /// Throws `std::bad_alloc` when memory runs out, including the scratch memory of measured
+  /// planning (`options::effort`). Real-to-real plans are built by the rules whatever
+  /// `options::effort` and `options::use` say (describe() says so).
   explicit plan(const shape<In, Out>& s, const options& opts = {})
       : core_(detail::make_plan_core(detail::view_of(s), opts)) {}
 
@@ -286,5 +290,9 @@ template <class T> using r2c_plan = plan<T, std::complex<T>>;
 
 /// A complex-to-real plan in precision `T` (`double` or `float`).
 template <class T> using c2r_plan = plan<std::complex<T>, T>;
+
+/// A real-to-real plan in precision `T` (`double` or `float`): the transforms of
+/// `shape::kinds`, one per axis. Provisional (task 6.3).
+template <class T> using r2r_plan = plan<T, T>;
 
 } // namespace fftn::inline v0

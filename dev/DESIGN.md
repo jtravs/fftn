@@ -685,9 +685,10 @@ The other interfaces are later work:
 
 ### 5.7 Real-to-real transforms: DCT, DST and DHT
 
-*Proposed* (phase 6, steps 6.3 to 6.5 and 6.12; not built; the open points are in 18.2, "Phase
-6"). They are composed plans: no new codelets, only read and store stages around transforms the
-plan already has.
+*Proposed* (phase 6, steps 6.3 to 6.5 and 6.12; the open points are in 18.2, "Phase 6"). The
+kind plumbing and the DHT are built (step 6.3, provisional, "As built" below); the DCT and DST
+kinds are refused until 6.4 and 6.5. They are composed plans: no new codelets, only read and
+store stages around transforms the plan already has.
 
 ```cpp
 namespace fftn {
@@ -742,7 +743,7 @@ Points that matter:
 
   | Kind | Read stage | Transform | Store stage |
   |---|---|---|---|
-  | `dht` | — | r2c of n | H_k = Re X_k − Im X_k and H_(n−k) = Re X_k + Im X_k |
+  | `dht` | the r2c's packing (n even: x_(2j) + i x_(2j+1); n odd: x_j + 0i) | the r2c's complex chain of n/2 (n odd: of n) | the r2c's pairing, then H_k = Re X_k − Im X_k and H_(n−k) = Re X_k + Im X_k |
   | `dct2` | v_j = x_(2j), v_(n−1−j) = x_(2j+1) (Makhoul) | r2c of n, any n | Y_k and Y_(n−k) from V_k: one complex multiply by e^(−iπk/(2n)) per pair |
   | `dct3` | the `dct2` store, inverted | c2r of n | the `dct2` read, inverted |
   | `dct4`, even n | x_(2j) + i x_(n−1−2j), times a twiddle | c2c of n/2 | a twiddle, then Y_(2k) and Y_(n−1−2k) |
@@ -765,6 +766,23 @@ Points that matter:
 - **What else applies.** Edges (12.1) with scales, real factors and accumulation on both sides;
   complex factors and stored runs are refused. Teams, executors, `execute_transforms`,
   `planning::measure` and wisdom work as for every plan.
+- **As built (step 6.3, the DHT; src/core/r2r.cpp).** Every phase computes its lines in the
+  member's scratch lines a and b, not in the workspace block as a pipeline does (12.2): the lines
+  of one phase run on several members at once (13.2), while the block belongs to the task. The
+  read stage packs the line (any stride, the input edge's real factor) into scratch line a as
+  the r2c packs it; the forward complex chain of n/2 (or n) runs there
+  (`chain_builder::scratch_transform`); the store stage does the r2c's pairing of bins k and
+  n/2 − k and the Hartley combination in one pass, so the half spectrum never exists, and
+  applies the output edge's real factor, the scales' one product and accumulation. Each stage's
+  units are independent, so a team shares a single row's stages as it shares a c2c row's.
+  Several axes are a phase each, narrowest stride first, from the input into the output and then
+  in place on the output; with accumulation the phases before the last go through the block, a
+  whole transform of reals, so that the output's prior values last until the last phase adds to
+  them. The read and store stages are baseline code, like the edge passes; plans are built by
+  the rules whatever `options::effort` says (measured planning and wisdom: step 6.12), and
+  `describe()` names every phase's chain. The plumbing for 6.4 and 6.5: `r2r_kind`,
+  `shape::kinds`, `shape_view::kinds`, the kind checks, the wisdom key's kinds and the phase
+  builder, to which each kind adds its read stage, transform and store stage.
 - **Phase 5 underneath.** The scratch-line programs of 5.2b, the edge phases and cursors of
   5.1b (multi-axis lines, real factors), the stored runs of 5.1d and the pruned codelets of
   5.1e (the odd `dct4`). Fusing the read stage into the first pass and the store stage into the
@@ -4593,6 +4611,7 @@ to change before a release.
 | 2026-11-26 | The `<T, C, T>` real chain pair and `convolution_rows` (task 5.2c, section 12.2): `r2c_line` into the workspace block, the middle on the n/2 + 1 bins and `c2r_line` out of it, every factor an edge pass on the line in cache; the edge driver's row-block form gives a middle pass the middle cursor's step | The real lines' routes are the plans' (fused pairings, leaves, odd n, strides) with no new code; a middle fused into the pairing passes waits for X67, as the PLAN row says. The row-block fix is latent for pipelines (no row blocks yet) but was wrong for the first that would build them |
 | 2026-11-26 | Pruned codelets (task 5.1e, section 12.1): `dif_head` and `plain_head`, halves of the even codelet radices only, for the first and last passes of c2c rows whose stored runs lie in the line's first half; one run of the half stored with stride 1 is read or written in place with no separate pass | Counted from the generator (gen/README.md): halves cost 0.77–0.89 of `dif`'s and 0.86–0.94 of `plain`'s vector operations at radices 8–64 and three quarters of the memory accesses; the gain is the separate pass that disappears. A half of an even radix is the line's first half whatever the radix, so one variant pair per radix covers the valid half of a zero-padded row and any band or crop inside it. Quarters and odd radices were counted and left out (smaller or no gains; `plain_head` of 9 and 25 would cost more than `plain`) |
 | 2026-11-26 | Phase 6 broken into steps 6.1–6.20 (PLAN), with proposed APIs for the convenience layer (5.4), the real-to-real kinds (5.7), the split-complex layout (5.8) and the C API (5.9), and their open points in 18.2, "Phase 6". Proposals, not decisions: steps marked P are built provisional with a second reader, as phase 5's were | The maintainer's priority (2026-11-25): features fully built, then the remaining performance |
+| 2026-11-26 | Step 6.3 (provisional, second reader to come): `r2r_kind`, `shape<T, T>` with `shape::kinds`, `rows_r2r`, `planes_r2r`, `volumes_r2r`, `axes_r2r`, `r2r_plan`, and the DHT as built in 5.7: a read stage, the r2c's complex chain in the member's scratch and a store stage fusing the r2c's pairing with the Hartley combination; the DCT and DST kinds refused until 6.4 and 6.5; real-to-real plans by the rules only | The 18.2 "Phase 6" proposals 9–13 taken as written; scratch rather than the block, because a phase's lines run on several members at once and the block is the task's |
 
 ---
 

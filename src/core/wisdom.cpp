@@ -11,6 +11,7 @@
 #include "fftn/detail/core.hpp"
 #include "fftn/fftn.hpp"
 #include "fftn/isa.hpp"
+#include "fftn/shape.hpp"
 #include "platform/cpu_model.hpp"
 
 #include <algorithm>
@@ -181,6 +182,8 @@ const char* kind_word(transform_kind k) {
     return "r2c";
   case transform_kind::c2r:
     return "c2r";
+  case transform_kind::r2r:
+    return "r2r";
   }
   return "c2c";
 }
@@ -206,6 +209,13 @@ std::string shape_key(const shape_view& s, const options& opts) {
     o << ' ' << b.count << '/' << b.in_dist << '/' << b.out_dist;
   }
   o << runs_key(s);
+  // A real-to-real shape's kinds (r2r_kind's values), one per axis; other kinds have none.
+  if (s.kind == transform_kind::r2r) {
+    o << " kinds";
+    for (const r2r_kind k : s.kinds) {
+      o << ' ' << static_cast<unsigned>(k);
+    }
+  }
   return o.str();
 }
 

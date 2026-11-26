@@ -24,7 +24,9 @@
 
 namespace fftn::inline v0::detail {
 
-enum class transform_kind : unsigned char { c2c, r2c, c2r };
+// r2r: a real-to-real shape (shape<T, T>), whose shape_view::kinds give each axis's transform
+// (DESIGN.md 5.7, src/core/r2r.cpp).
+enum class transform_kind : unsigned char { c2c, r2c, c2r, r2r };
 enum class precision : unsigned char { f64, f32 };
 
 // The kind and precision of a plan<In, Out>, from its element types.
@@ -37,6 +39,12 @@ template <class T> struct kind_of<T, std::complex<T>> {
 };
 template <class T> struct kind_of<std::complex<T>, T> {
   static constexpr transform_kind value = transform_kind::c2r;
+};
+template <> struct kind_of<double, double> {
+  static constexpr transform_kind value = transform_kind::r2r;
+};
+template <> struct kind_of<float, float> {
+  static constexpr transform_kind value = transform_kind::r2r;
 };
 
 template <class In, class Out>
@@ -55,6 +63,7 @@ struct shape_view {
   std::span<const axis> axes;
   std::span<const batch> batches;
   std::span<const stored_run> runs{};
+  std::span<const r2r_kind> kinds{}; // shape::kinds: one per axis for r2r, empty otherwise
 };
 
 template <class In, class Out> shape_view view_of(const shape<In, Out>& s) noexcept {
@@ -65,6 +74,7 @@ template <class In, class Out> shape_view view_of(const shape<In, Out>& s) noexc
       .axes = s.axes,
       .batches = s.batches,
       .runs = s.runs,
+      .kinds = s.kinds,
   };
 }
 
