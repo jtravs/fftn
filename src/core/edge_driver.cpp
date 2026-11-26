@@ -10,6 +10,7 @@
 #include "fftn/edges.hpp"
 #include "passes/pass_args.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -170,7 +171,8 @@ const pass_args* with_cursors(const pass_args& a, std::uint8_t moving, factor_cu
 // stage through its site (core/callbacks.hpp).
 void run_stage(const stage& st, const edge_record& e, const slot_addresses& at, factor_cursors f,
                const callback_env& env, std::size_t first, std::size_t last) noexcept {
-  if (st.moving_factors == 0) {
+  const bool offset = e.block_src != 0 || e.block_dst != 0;
+  if (st.moving_factors == 0 && !offset) {
     run_stage_chunks(st, at, first, last);
     return;
   }
@@ -187,16 +189,26 @@ void run_stage(const stage& st, const edge_record& e, const slot_addresses& at, 
   set_cursors(args, st.moving_factors, f);
   const void* src = source_of(st.src, at);
   void* dst = destination_of(st.dst, at);
-  if (e.leaf != nullptr) {
+  // The regions of the block a stage reads and writes (edge_record::block_src, block_dst).
+  if (st.src == slot::block && e.block_src != 0) {
+    src = static_cast<const std::byte*>(src) + e.block_src;
+  }
+  if (st.dst == slot::block && e.block_dst != 0) {
+    dst = static_cast<std::byte*>(dst) + e.block_dst;
+  }
+  // A stage that reads no cursor keeps its own kernels (only one that reads them has guards).
+  const pass_fn run = st.moving_factors != 0 ? e.run : st.run;
+  const leaf_fn leaf = st.moving_factors != 0 ? e.leaf : st.leaf;
+  if (leaf != nullptr) {
     if (first == 0 && last != 0) {
-      e.leaf(&args, src, dst, 0, 0, 1);
+      leaf(&args, src, dst, 0, 0, 1);
     }
     return;
   }
   const std::size_t begin = chunk_start(st.units, st.chunks, first);
   const std::size_t end = chunk_start(st.units, st.chunks, last);
   if (begin < end) {
-    e.run(&args, src, dst, begin, end);
+    run(&args, src, dst, begin, end);
   }
 }
 
@@ -546,6 +558,12 @@ std::ptrdiff_t offset_of(slot s, const offsets& off) noexcept {
   return 0;
 }
 
+// A stage's offset into the block where it reads or writes slot s (edge_record::block_src,
+// block_dst), 0 for the other slots.
+std::ptrdiff_t block_offset(slot s, std::ptrdiff_t bytes) noexcept {
+  return s == slot::block ? bytes : 0;
+}
+
 // driver.cpp's unroll_records with the cursors: a loop of one leaf is one call over its lines
 // unless the leaf reads cursors the loop moves, when each line is a call of its own (a leaf
 // reads one set of factors per call). False where the program has moving twiddles or more
@@ -572,8 +590,8 @@ bool unroll_edge_records(const program& p, const std::vector<edge_record>& e, st
                   .run = reads ? e[i].run : st->run,
                   .leaf = reads ? e[i].leaf : st->leaf,
                   .units = st->leaf != nullptr ? 1 : st->units,
-                  .src_off = offset_of(st->src, off),
-                  .dst_off = offset_of(st->dst, off),
+                  .src_off = offset_of(st->src, off) + block_offset(st->src, e[i].block_src),
+                  .dst_off = offset_of(st->dst, off) + block_offset(st->dst, e[i].block_dst),
                   .args = static_cast<std::uint32_t>(arg_of[i]),
                   .src = st->src,
                   .dst = st->dst,
@@ -598,8 +616,10 @@ bool unroll_edge_records(const program& p, const std::vector<edge_record>& e, st
                 {
                     .leaf = reads ? e[i + 1].leaf : only->leaf,
                     .units = l.count,
-                    .src_off = offset_of(only->src, from),
-                    .dst_off = offset_of(only->dst, from),
+                    .src_off =
+                        offset_of(only->src, from) + block_offset(only->src, e[i + 1].block_src),
+                    .dst_off =
+                        offset_of(only->dst, from) + block_offset(only->dst, e[i + 1].block_dst),
                     .src_step = step_of(l, only->src),
                     .dst_step = step_of(l, only->dst),
                     .args = static_cast<std::uint32_t>(arg_of[i + 1]),
@@ -638,6 +658,13 @@ edge_forms make_edge_forms(const program& p, const std::vector<edge_record>& e, 
                            std::size_t row_block, std::ptrdiff_t block_row_bytes,
                            std::ptrdiff_t element_bytes) {
   edge_forms forms;
+  // Offsets into the block are read by the walked form and the unrolled calls only; the programs
+  // that have them (a fan-out's) hold loops, so they are neither flat nor lanes programs.
+  if ((p.flat || p.lanes != 0) && std::ranges::any_of(e, [](const edge_record& r) {
+        return r.block_src != 0 || r.block_dst != 0;
+      })) {
+    throw std::logic_error("fftn: internal: offsets into the block on a flat or lanes program");
+  }
   if (p.lanes != 0) {
     return forms; // already in blocks of transforms (run_lane_blocks)
   }

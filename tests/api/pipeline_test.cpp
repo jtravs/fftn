@@ -719,8 +719,9 @@ TEST(Pipelines, RefusalsNameTheField) {
   d.first = static_cast<fftn::direction>(3);
   expect_refused(d, {}, "desc.first");
   d = good;
+  // Fan-out (task 5.2e; its own refusals in pipeline_fanout_test.cpp): copies on one another.
   d.fanout = 2;
-  expect_refused(d, {}, "desc.fanout");
+  expect_refused(d, {}, "desc.fanout_out_dist");
   d.fanout = 0;
   expect_refused(d, {}, "desc.fanout");
   d = good;
@@ -1307,7 +1308,7 @@ TEST(RealPipelines, RefusalsNameTheField) {
   expect_refused(d, {}, "desc.middle.mul.kind");
   d = good;
   d.fanout = 2;
-  expect_refused(d, {}, "desc.fanout");
+  expect_refused(d, {}, "desc.fanout_out_dist");
   d = good;
   // Stored runs (task 5.2d; their own refusals in pipeline_runs_test.cpp): past the line.
   d.runs = {{.axis = 0, .where = fftn::side::in, .logical = 10, .stored = 0, .count = 8}};

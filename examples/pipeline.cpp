@@ -4,9 +4,10 @@
 // Row pipelines (fftn/pipeline.hpp, provisional): a circular convolution of every row with one
 // kernel, the forward transform, the kernel's spectrum and the inverse transform in one sweep,
 // with the kernel passed at execution; for complex rows, and for real rows (r2c, the spectrum's
-// n/2 + 1 bins, c2r); and the valid half of a zero-padded (linear) convolution through stored
-// runs. The examples quoted in docs/conventions.md ("Pipelines"). Exits with 0 when the results
-// match the same work done by two plain plans and a loop, and by the direct convolution.
+// n/2 + 1 bins, c2r); the valid half of a zero-padded (linear) convolution through stored runs;
+// and a fan-out, several kernels on one forward transform. The examples quoted in
+// docs/conventions.md ("Pipelines"). Exits with 0 when the results match the same work done by two
+// plain plans and a loop, and by the direct convolution.
 
 #include <fftn/fftn.hpp>
 
@@ -170,6 +171,58 @@ double valid_half_error() {
   return error / largest;
 }
 
+// The largest difference between a fan-out (one forward transform per row, three kernels, three
+// outputs) and three pipelines of one kernel each, relative to the largest output.
+double fanout_error() {
+  const std::size_t n = 128;
+  const std::size_t count = 4;
+  const std::size_t copies = 3;
+  std::vector<std::complex<double>> x(n * count);
+  for (std::size_t i = 0; i < x.size(); ++i) {
+    x[i] = {std::sin(0.2 * static_cast<double>(i)), std::cos(0.9 * static_cast<double>(i))};
+  }
+  // Three kernels' spectra, one after another.
+  std::vector<std::complex<double>> kernels(n * copies);
+  for (std::size_t i = 0; i < kernels.size(); ++i) {
+    kernels[i] =
+        std::polar(1.0 / (1.0 + 0.02 * static_cast<double>(i % n)), 0.05 * static_cast<double>(i));
+  }
+
+  // snippet-begin: fanout
+  // Every row transformed once, then convolved with three kernels: copy k multiplies the
+  // row's spectrum by kernel k (n bins on) and writes a whole batch of rows (n * count
+  // elements on).
+  fftn::pipeline_desc desc = fftn::complex_convolution_rows<double>(n, count);
+  desc.middle.scale = 1.0 / static_cast<double>(n);
+  desc.fanout = copies;
+  desc.fanout_factor_dist = static_cast<std::ptrdiff_t>(n);
+  desc.fanout_out_dist = static_cast<std::ptrdiff_t>(n * count);
+  const fftn::pipeline pipe(desc);
+  fftn::workspace ws(pipe);
+
+  std::vector<std::complex<double>> y(n * count * copies);
+  pipe.execute(x.data(), y.data(), ws, {.mid_factor = kernels.data()});
+  // snippet-end: fanout
+
+  // The same by one pipeline per kernel.
+  fftn::pipeline_desc one = fftn::complex_convolution_rows<double>(n, count);
+  one.middle.scale = 1.0 / static_cast<double>(n);
+  const fftn::pipeline single(one);
+  fftn::workspace single_ws(single);
+  std::vector<std::complex<double>> want(n * count * copies);
+  for (std::size_t k = 0; k < copies; ++k) {
+    single.execute(x.data(), want.data() + k * n * count, single_ws,
+                   {.mid_factor = kernels.data() + k * n});
+  }
+  double largest = 0;
+  double error = 0;
+  for (std::size_t i = 0; i < y.size(); ++i) {
+    largest = std::max(largest, std::abs(want[i]));
+    error = std::max(error, std::abs(y[i] - want[i]));
+  }
+  return error / largest;
+}
+
 } // namespace
 
 int main() {
@@ -181,7 +234,9 @@ int main() {
     const double half_error = valid_half_error();
     std::printf("valid half against the direct linear convolution: largest error %.3g\n",
                 half_error);
-    return error < 1e-13 && real_error < 1e-13 && half_error < 1e-13 ? 0 : 1;
+    const double fan_error = fanout_error();
+    std::printf("fan-out against one pipeline per kernel: largest error %.3g\n", fan_error);
+    return error < 1e-13 && real_error < 1e-13 && half_error < 1e-13 && fan_error < 1e-13 ? 0 : 1;
   } catch (const std::exception& e) {
     std::printf("failed: %s\n", e.what());
     return 1;

@@ -2841,7 +2841,7 @@ Points that matter:
   for L2-resident sizes and more beyond. Callbacks always see natural order, because their
   coordinates must be affine in the block.
 
-**Plan for task 5.2** (designed 2026-11-25; 5.2a–5.2d built, "As built" below; steps 5.2a–5.2g in PLAN phase 5,
+**Plan for task 5.2** (designed 2026-11-25; 5.2a–5.2e built, "As built" below; steps 5.2a–5.2g in PLAN phase 5,
 experiment X67; the API points the maintainer has to settle are listed in 18.2, "Pipelines").
 
 - **API** (provisional, `fftn/pipeline.hpp`), the block above built in parts:
@@ -2913,10 +2913,14 @@ experiment X67; the API points the maintainer has to settle are listed in 18.2, 
   - The copies are a lines loop with a block step of 0. Each iteration moves the output by
     `fanout_out_dist`, and the middle cursor by `fanout_factor_dist`. Its body applies copy k's
     kernel in the inverse's first pass and runs the inverse on the member's own scratch lines
-    a and b.
-  - On a depth-first pair the sub-rows use a and b, so the spectrum needs a second region.
-    Edge-driver records gain a byte offset into the block, which only the edge driver reads
-    (with the first step that reads it: 5.2a left it out).
+    a and b, so a team shares a line's copies; this holds where the copy writes its output
+    itself.
+  - A copy that needs a whole line of its own in memory (the chain pair's epilogue pass,
+    accumulation or output runs, and every copy of the depth-first pair, whose sub-rows have
+    their blocks in the block) works in the block: the spectrum and the copy's line then take
+    two regions of it. Edge-driver records gain byte offsets into the block, which only the
+    edge driver reads. The members share the block, so such copies run one after another
+    (`loop::serial_lines`).
   - This is the "loop over a scratch-resident line" that X36b asked for. Bluestein's copies one
     at a time (a loop moving the block by a copy's M) could later use it; that is not part of
     5.2.
@@ -3041,6 +3045,42 @@ edges and runs, Bluestein plans and every pipeline are unchanged (`describe()`,
 plain and edge driver functions disassemble the same with Clang on arm64 and x86-64).
 `make_edge_forms` still takes one `element_bytes` (PR 144's latent note): pipelines build no row
 blocks, so it waits for the first that does.
+
+**As built (task 5.2e, 2026-11-26).** Fan-out (`fanout`, `fanout_out_dist`, `fanout_factor_dist`)
+on both chain pairs and the depth-first pair, with 18.2's proposals 5 and 6 as written: an
+in-place pipeline refuses `fanout` above 1, and copies whose outputs overlap each other or other
+lines' are refused naming `desc.fanout_out_dist` (a plan's overlap rule with the copies as one
+more output dimension, each side's reach by its stored extent), as are spans that overflow; 0 is
+therefore refused for `fanout_out_dist` and means one factor for every copy for
+`fanout_factor_dist`. The forward chain runs once per line into the workspace block, where the
+spectrum stays; the scales' product goes to the prologue's pass or the forward chain's last pass
+(once per line, not per copy). Then a lines loop over the copies (block step 0) moves the output
+by `fanout_out_dist` and, through its edge record, the middle cursor by `fanout_factor_dist`; the
+epilogue's factor is every copy's. Two forms of a copy:
+
+- **Writing its output itself** (on `<C, C, C>` an epilogue that fuses, or none, no accumulation,
+  and the output whole or one run of the line's first half that the pruned last pass writes where
+  it is stored; on `<T, C, T>` no epilogue factor, accumulation or output runs): the inverse chain
+  runs from the block to copy k's output, copy k's kernel fused into its first pass on
+  `<C, C, C>` (`moving_mid_in_factor`, the vocabulary's input factor) or, where it cannot fuse
+  (and on `<T, C, T>`), the middle's pass from the block into scratch b, from which the inverse
+  runs. The copies only read the block, so a team shares them as lines on each member's scratch.
+- **In the block's second region** (otherwise): the copy's first stage (the middle's pass or the
+  inverse chain's first pass) reads the spectrum from the block's first region and every later
+  reference to the block is to its second (`edge_record::block_src`, `block_dst`), where 5.2b–5.2d's
+  inverse, store stages and runs work unchanged. The block doubles; the copies are one chunk
+  (`loop::serial_lines`), since a team's members share the block.
+
+On the depth-first pair the forward top pass writes the spectrum to the block's second region and
+each copy is the middle's pass from there into scratch a (copy k's factor, or a copy: the
+depth-first first pass takes no input factor, so the kernel does not fuse; a variant that reads
+one is a kernel change for later) and 5.2d's backward chain from a, its sub-rows on the block's
+first region, so its copies too run one after another in a team, which shares the forward chain's
+phases. A fan-out always runs on the edge driver (its copies loop and offsets are edge records),
+with the unrolled calls where a line has at most `calls_max` calls. Plans, plans with edges and
+every pipeline of one copy are unchanged (`describe()`, `workspace_bytes()` and output bits,
+serial and team, of 1,000 probes against `main` on the Mac and the EPYC 7763; the plain
+driver's functions disassemble the same with Clang on arm64).
 
 ### 12.3 Block callbacks
 
@@ -4911,6 +4951,8 @@ to change before a release.
 | 2026-11-26 | Step 6.3 (provisional, second reader to come): `r2r_kind`, `shape<T, T>` with `shape::kinds`, `rows_r2r`, `planes_r2r`, `volumes_r2r`, `axes_r2r`, `r2r_plan`, and the DHT as built in 5.7: a read stage, the r2c's complex chain in the member's scratch and a store stage fusing the r2c's pairing with the Hartley combination; the DCT and DST kinds refused until 6.4 and 6.5; real-to-real plans by the rules only | The 18.2 "Phase 6" proposals 9–13 taken as written; scratch rather than the block, because a phase's lines run on several members at once and the block is the task's |
 | 2026-11-26 | Convenience layer for complex and real transforms (step 6.6, section 5.4): provisional `fftn/easy.hpp` with 18.2's proposals Q4–Q8 (`fftn::easy`, numpy's semantics, a `thread_local` `context` of 64 plans dropped least recently used, rules planning, `view` with an `mdspan` conversion, both value forms); one compiled unit over the public API only; per-precision overloads for the span forms; `axis_list` for braced axes; sizes must agree (numpy's cropping and padding by `n` and `s` not offered); the executor's width left out of the key; `cached_plans()` and `max_plans()` added for inspection. Awaits the maintainer's review of the API | The maintainer's priority (2026-11-25): features fully built; numpy users' call sites translate one to one, and the core API stays the way to every other feature |
 | 2026-11-26 | Convenience layer for real-to-real transforms (step 6.7, section 5.4, "As built"): provisional `dct`, `idct`, `dst`, `idst` (spans, both forms), `dctn`, `idctn`, `dstn`, `idstn` (views) and `dht` in `fftn::easy`, with scipy's `int` type and norms; `norm::ortho` implies scipy's `orthogonalize=True`, the flag not offered; one type on every axis; the orthogonalising weights as cached real edge factors along one axis and as hyperplane passes over several (a full array would be as large as the data); `dht` scaled as a forward transform, 1-D only. Awaits the maintainer's review of the API | scipy users' call sites translate one to one; the weights are what 12.1's real factors are for, so the layer adds no stage of its own |
+| 2026-11-26 | Convenience layer for real-to-real transforms (step 6.7, section 5.4, "As built"): provisional `dct`, `idct`, `dst`, `idst` (spans, both forms), `dctn`, `idctn`, `dstn`, `idstn` (views) and `dht` in `fftn::easy`, with scipy's `int` type and norms; `norm::ortho` implies scipy's `orthogonalize=True`, the flag not offered; one type on every axis; the orthogonalising weights as cached real edge factors; `dht` scaled as a forward transform, 1-D only. Awaits the maintainer's review of the API | scipy users' call sites translate one to one; the weights are what 12.1's real factors are for, so the layer adds no stage of its own |
+| 2026-11-26 | Fan-out on pipelines (task 5.2e, section 12.2, "As built"): the spectrum stays in the workspace block, a lines loop over the copies; a copy that writes its output itself is shared by a team's members, one that needs a line in memory (epilogue pass, accumulation, output runs, the depth-first pair) works in the block's second region through edge-record offsets and the copies run one after another; 18.2's proposals 5 and 6 as written | The design's copies loop on each member's scratch cannot hold a copy's line in memory: the block is shared by the team, so copies that work there are serial rather than given per-member regions (memory of a line per member for a rarer case). The depth-first first pass has no input-factor variant; a pass per copy into scratch costs one more sweep per copy there, and the pair is forced only until X67 |
 | 2026-11-26 | Block callbacks on planes and volumes (task 5.3c, section 12.3): the input's inside the first phase's line bodies (a modify callback's line copied first into the phase's destination, or for r2c into the real rows' copy in the workspace block), the output's inside the last phase's, on the line, the lanes column block's columns (lines along the last axis) or the block of adjacent transforms; a side with an edge phase of its own (a factor, accumulation) takes its callback there; the edge driver moves the coordinates with the enclosing loops; a consumed c2r output's rows in the workspace block over the half spectrum; no packed c2r intermediate with callbacks; refused beside stored runs on planes and volumes | DESIGN 12.3's table: a callback phase of its own would be the extra sweep that 12.5's stage exists to save. The edge phase a factor already has costs nothing more to carry the callback. Runs' edge phases are nests per run, left for a follow-up rather than refusing the whole feature |
 | 2026-11-26 | The C API for plans (step 6.8, section 5.9; provisional, second reader to come): `fftn/c_api.h` and `src/c_api/` with 18.2's proposals Q17–Q22 taken as written (the header in `fftn::fftn`, one plan type and `void*` data, NULL or a status plus an optional caller-owned `fftn_error`, the opt-in shared library `fftn_c` exporting `fftn_` only, plain structs without size or version fields, plans of every built kind with workspaces, the four execution forms, wisdom and lengths); the choices where 5.9 was silent are listed in its "As built" | The maintainer's priority (2026-11-25): features fully built; the C interface serves C, Fortran, Python and Julia callers and older toolchains (decision of 2026-11-16) |
 
