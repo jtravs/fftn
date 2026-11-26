@@ -162,10 +162,10 @@ where each operation goes. What is refused until built is listed in
 
 Some work cannot ride inside FFTN: it needs a whole row at once (a peak, a norm), reads
 several of your arrays, or is simply your existing parallel code. Owner-computes keeps it on
-the same core as the transform anyway. With `completion::own`, member r of a team runs
-exactly the transforms `transforms_of(r)` deals it, whole: contiguous ranges in rank order,
-differing by at most one transform, and with fewer transforms than members one each for the
-first members. Nothing is claimed by another member or split, so each member returns once its
+the same core as the transform anyway. With `completion::own`, the member whose `fftn::team`
+is `me` runs exactly the transforms `transforms_of(me)` deals it, whole: contiguous ranges in
+rank order, differing by at most one transform, and with fewer transforms than members one
+each for the first members. Nothing is claimed by another member or split, so each member returns once its
 own transforms are written, and goes straight on to work on them. Plans (with or without
 edges and callbacks) and pipelines deal the same way, so objects with the same number of
 transforms give every member the same rows in every step, inside one parallel region and

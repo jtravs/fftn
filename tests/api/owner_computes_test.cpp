@@ -13,8 +13,11 @@
 // - The members run at once, each on its own thread: the output is bitwise the serial result,
 //   and a block callback records the member that ran each transform (`block_info::member`; the
 //   pipeline's middle callback per line, its epilogue's per line and copy), which must be the
-//   owner `transforms_of` names. The deal's ranges are contiguous, in rank order, cover the
-//   batch once and differ in length by at most one.
+//   owner `transforms_of` names, and the elements it was passed for each transform, which must
+//   be the serial execution's (a transform run twice shows there whatever `member` says).
+//
+// The deal itself is the documented one (with fewer transforms than members, one each for the
+// first members), and a plan and a pipeline with as many transforms deal them alike.
 //
 // Lengths, counts and team sizes are chosen so that some members own nothing and long rows
 // that `completion::all` splits run whole. Expectations hold on every target: none assumes a
@@ -22,6 +25,7 @@
 
 #include <fftn/fftn.hpp>
 
+#include <gtest/gtest-spi.h>
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -30,7 +34,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
-#include <memory>
 #include <span>
 #include <string>
 #include <thread>
@@ -68,18 +71,28 @@ private:
   std::uint64_t state_;
 };
 
-// Who ran what: one slot per transform (or per transform and copy), the member that ran it, and
-// whether any slot was run by two members.
+// Who ran what: one slot per transform (or per transform and copy), the member that ran it,
+// whether any slot was run by two members, and the elements passed for each slot. Two members
+// running one transform show as a conflict only because `block_info::member` names the member;
+// the element counts catch a transform run twice (or in part) whatever `member` says, against the
+// counts of a serial execution (`expected`).
 struct member_log {
-  explicit member_log(std::size_t slots) : who(slots) { reset(); }
+  explicit member_log(std::size_t slots) : who(slots), elements(slots), expected(slots) { reset(); }
   void reset() {
-    for (std::atomic<int>& w : who) {
-      w.store(-1);
+    for (std::size_t s = 0; s < who.size(); ++s) {
+      who[s].store(-1);
+      elements[s].store(0);
     }
     conflict.store(false);
     calls.store(0);
   }
-  void record(std::size_t slot, int member) noexcept {
+  // The serial execution's counts become the expected ones.
+  void keep_counts() {
+    for (std::size_t s = 0; s < who.size(); ++s) {
+      expected[s] = elements[s].load();
+    }
+  }
+  void record(std::size_t slot, int member, std::size_t count) noexcept {
     if (slot >= who.size()) {
       conflict.store(true);
       return;
@@ -88,47 +101,64 @@ struct member_log {
     if (!who[slot].compare_exchange_strong(seen, member) && seen != member) {
       conflict.store(true);
     }
+    elements[slot].fetch_add(count);
     calls.fetch_add(1);
   }
   std::vector<std::atomic<int>> who;
+  std::vector<std::atomic<std::size_t>> elements;
+  std::vector<std::size_t> expected;
   std::atomic<bool> conflict{false};
   std::atomic<std::size_t> calls{0};
 };
 
 // A `modify` callback that leaves its block alone and records the member running it: for every
 // line of the block its transform (consecutive transforms when the lines are along transforms,
-// else the block's one transform), times `copies` slots with the copy (an epilogue's fan-out).
+// else the block's one transform), times `copies` slots with the copy (an epilogue's fan-out),
+// and the line's elements.
 struct recorder {
   member_log* log = nullptr;
   std::size_t transforms = 0;
   template <class T> void operator()(const fftn::block_info& info, T* /*data*/) const noexcept {
-    const std::size_t lines = info.line_axis == fftn::along_transforms ? info.lines : 1;
+    const bool along = info.line_axis == fftn::along_transforms;
+    const std::size_t lines = along ? info.lines : 1;
+    const std::size_t per_line = along ? info.length : info.length * info.lines;
     for (std::size_t k = 0; k < lines; ++k) {
-      log->record((info.copy * transforms) + info.transform + k, info.member);
+      log->record((info.copy * transforms) + info.transform + k, info.member, per_line);
     }
   }
 };
 
-// The deal's own properties: contiguous ranges in rank order covering the batch once, differing
-// by at most one transform.
+// The documented deal (`plan::transforms_of`): with at least as many transforms as members,
+// contiguous non-empty ranges in rank order covering the batch once and differing by at most
+// one; with fewer, one transform each for the first members, in rank order, and none for the
+// rest.
 void expect_deal_shape(const std::function<fftn::transform_range(const fftn::team&)>& of,
                        std::size_t transforms, int size, const std::string& what) {
   std::size_t next = 0;
   std::size_t shortest = transforms;
   std::size_t longest = 0;
+  const bool few = std::cmp_less(transforms, size);
   for (int r = 0; r < size; ++r) {
     const fftn::transform_range mine = of(fftn::team{.rank = r, .size = size});
-    if (mine.count != 0) {
-      EXPECT_EQ(mine.first, next) << what << ": rank " << r << " of " << size;
+    const std::string who = what + ": rank " + std::to_string(r) + " of " + std::to_string(size);
+    if (few) {
+      const bool owns = std::cmp_less(r, transforms);
+      EXPECT_EQ(mine.count, owns ? 1U : 0U) << who;
+      if (owns) {
+        EXPECT_EQ(mine.first, static_cast<std::size_t>(r)) << who;
+      }
+      continue;
     }
+    EXPECT_GE(mine.count, 1U) << who;
+    EXPECT_EQ(mine.first, next) << who;
     next += mine.count;
-    if (std::cmp_less(r, transforms)) {
-      shortest = std::min(shortest, mine.count);
-    }
+    shortest = std::min(shortest, mine.count);
     longest = std::max(longest, mine.count);
   }
-  EXPECT_EQ(next, transforms) << what << ": the deal of " << size << " members";
-  EXPECT_LE(longest - std::min(shortest, longest), 1U) << what << ": the deal of " << size;
+  if (!few) {
+    EXPECT_EQ(next, transforms) << what << ": the deal of " << size << " members";
+    EXPECT_LE(longest - std::min(shortest, longest), 1U) << what << ": the deal of " << size;
+  }
 }
 
 // One object (a plan or a pipeline) under the deal: `owner_of(i)` is the transform output element
@@ -171,6 +201,7 @@ template <class Obj, class In, class Out> void expect_deal(deal_case<Obj, In, Ou
   }
   for (member_log* log : c.logs) {
     EXPECT_GT(log->calls.load(), 0U) << c.name << ": a callback never ran";
+    log->keep_counts();
   }
 
   for (const int size : {2, 3, 5, static_cast<int>(c.transforms) + 2}) {
@@ -213,6 +244,9 @@ template <class Obj, class In, class Out> void expect_deal(deal_case<Obj, In, Ou
           }
           EXPECT_EQ(log->who[slot].load(), owner)
               << what << ", " << how << ": transform " << t << " (slot " << slot << ")";
+          // Independent of `member`: each slot's elements passed exactly as often as serially.
+          EXPECT_EQ(log->elements[slot].load(), log->expected[slot])
+              << what << ", " << how << ": elements of slot " << slot;
         }
       }
     };
@@ -515,6 +549,74 @@ TYPED_TEST(OwnerComputes, Pipelines) {
     };
     src.fill(dc.init);
     expect_deal(dc);
+  }
+}
+
+// A plan and a pipeline with as many transforms deal them alike, member by member, for teams
+// larger and smaller than the batch: the example and docs/fusion.md rely on it.
+TEST(OwnerComputesDeal, PlansAndPipelinesDealAlike) {
+  for (const std::size_t count : {1U, 2U, 5U, 7U, 24U}) {
+    const fftn::c2c_plan<double> rows(fftn::rows_c2c<double>(16, count, fftn::direction::forward));
+    const fftn::r2c_plan<float> real_rows(fftn::rows_r2c<float>(30, count));
+    const fftn::pipeline ccc(fftn::complex_convolution_rows<double>(16, count));
+    const fftn::pipeline tct(fftn::convolution_rows<float>(30, count));
+    for (int size = 1; size <= 10; ++size) {
+      for (int r = 0; r < size; ++r) {
+        const fftn::team t{.rank = r, .size = size};
+        const fftn::transform_range want = rows.transforms_of(t);
+        for (const fftn::transform_range got :
+             {real_rows.transforms_of(t), ccc.transforms_of(t), tct.transforms_of(t)}) {
+          EXPECT_TRUE(got.first == want.first && got.count == want.count)
+              << count << " transforms, rank " << r << " of " << size;
+        }
+      }
+    }
+  }
+}
+
+// Deals the check must refuse (expect_deal_shape against made-up deals).
+fftn::transform_range last_members_own(const fftn::team& t) { // 2 transforms over 3: {0, 1, 1}
+  return t.rank == 0
+             ? fftn::transform_range{.first = 0, .count = 0}
+             : fftn::transform_range{.first = static_cast<std::size_t>(t.rank - 1), .count = 1};
+}
+fftn::transform_range uneven(const fftn::team& t) { // 5 transforms over 2: {1, 4}
+  return t.rank == 0 ? fftn::transform_range{.first = 0, .count = 1}
+                     : fftn::transform_range{.first = 1, .count = 4};
+}
+fftn::transform_range idle_member(const fftn::team& t) { // 5 transforms over 3: {2, 3, 0}
+  return t.rank == 0   ? fftn::transform_range{.first = 0, .count = 2}
+         : t.rank == 1 ? fftn::transform_range{.first = 2, .count = 3}
+                       : fftn::transform_range{.first = 5, .count = 0};
+}
+fftn::transform_range gap(const fftn::team& t) { // 4 transforms over 2: {0+2, 3+1}
+  return t.rank == 0 ? fftn::transform_range{.first = 0, .count = 2}
+                     : fftn::transform_range{.first = 3, .count = 1};
+}
+
+// The failures expect_deal_shape reports for a deal of `transforms` over `size` members,
+// intercepted so that they do not fail this test.
+std::size_t refusals(fftn::transform_range (*of)(const fftn::team&), std::size_t transforms,
+                     int size) {
+  ::testing::TestPartResultArray results;
+  {
+    const ::testing::ScopedFakeTestPartResultReporter reporter(
+        ::testing::ScopedFakeTestPartResultReporter::INTERCEPT_ONLY_CURRENT_THREAD, &results);
+    expect_deal_shape(of, transforms, size, "made up");
+  }
+  return static_cast<std::size_t>(results.size());
+}
+
+TEST(OwnerComputesDeal, TheShapeCheckRefusesOtherDeals) {
+  EXPECT_GT(refusals(&last_members_own, 2, 3), 0U) << "{0, 1, 1}";
+  EXPECT_GT(refusals(&uneven, 5, 2), 0U) << "{1, 4}";
+  EXPECT_GT(refusals(&idle_member, 5, 3), 0U) << "{2, 3, 0}";
+  EXPECT_GT(refusals(&gap, 4, 2), 0U) << "a gap";
+  // The library's own deal passes, the check's control.
+  const fftn::c2c_plan<double> rows(fftn::rows_c2c<double>(16, 5, fftn::direction::forward));
+  for (const int size : {2, 3, 5, 8}) {
+    expect_deal_shape([&](const fftn::team& t) { return rows.transforms_of(t); }, 5, size,
+                      "the library's");
   }
 }
 

@@ -21,6 +21,7 @@
 #include <complex>
 #include <cstddef>
 #include <cstdio>
+#include <cstring>
 #include <exception>
 #include <numbers>
 #include <vector>
@@ -116,7 +117,9 @@ bool owner_computes_matches_serial() {
   normalise_rows(y_serial.data(), n, 0, count);
   spectra.execute(y_serial.data(), s_serial.data(), serial_ws, {.in_factor = window.data()});
 
-  return std::ranges::equal(y, y_serial) && std::ranges::equal(s, s_serial);
+  // Bit for bit: the bytes, not the values (which would equate -0 and +0).
+  return std::memcmp(y.data(), y_serial.data(), y.size() * sizeof(double)) == 0 &&
+         std::memcmp(s.data(), s_serial.data(), s.size() * sizeof(std::complex<double>)) == 0;
 }
 
 } // namespace

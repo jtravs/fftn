@@ -4491,13 +4491,22 @@ do not depend on the direction, and a workspace is plain bytes sized by
 10. **`fftn/kokkos.hpp`'s `array_of`** (task 5.5; not built, no design yet). PLAN's 5.5 names
     it, but neither 5.5 nor 12 describes it; the fusion proposal of 2026-11-24 had one line
     ("`array_of(view)`, which returns the `std::vector<axis>` that `shape_of` already
-    computes"). Proposal: `array_of(in, out)`, two host Views of equal rank forming one of
-    FFTN's kinds, returns one `axis` per dimension in the Views' order: `n` the extent (the
-    real side's for a real kind), `in_stride` and `out_stride` the Views' strides in elements,
-    with `shape_of`'s checks and errors (`fftn::kokkos:` and the argument's name; a 0 stride
-    refused except at extent 1). It feeds `axes_c2c`, `axes_r2c`, `axes_c2r` and `axes_r2r`
-    (their `array` argument, the selected axes then chosen by index, stored runs included),
-    and a pipeline's line and batches are written from its entries. `docs/kokkos.md` would
+    computes"). Proposal: `array_of(in, out, halved = -1)`, two host Views of equal rank
+    forming one of FFTN's kinds, returns one `axis` per dimension in the Views' order: `n` the
+    extent (the real side's on the halved dimension), `in_stride` and `out_stride` the Views'
+    strides in elements. A real kind names its `halved` dimension (negative counts from the
+    end; refused for c2c), because the extents alone cannot say which it is (n/2 + 1 equals n
+    for n of 1 and 2), and it must be the dimension the `axes_*` call lists last. It keeps
+    `shape_of`'s checks that a list of axes can carry: the Views' types, ranks and host access
+    (at compile time), extents not 0, a 0 stride only at extent 1, and the extents against the
+    kind (equal, but n/2 + 1 against n on `halved`), with `shape_of`'s errors (`fftn::kokkos:`
+    and the argument's name). It drops the checks that need the Views' addresses: whether they
+    overlap and whether they are one array in place, so the caller sets `options::in_place`,
+    and plan or pipeline construction then checks the in-place strides (FFTW's padding on the
+    halved dimension) and the output's overlap from the axes, as for any shape. It feeds
+    `axes_c2c`, `axes_r2c`, `axes_c2r` and `axes_r2r` (their `array` argument, the selected
+    axes then chosen by index, stored runs included), and a pipeline's line and batches are
+    written from its entries. `docs/kokkos.md` would
     show it with a plan with edges and `callback_of` with a host functor; `compat` gains
     nothing (Kokkos-FFT has no fusion).
 
