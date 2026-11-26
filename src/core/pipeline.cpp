@@ -117,6 +117,11 @@ struct placed {
   scale_at pre_at = scale_at::none;
 };
 
+// The sign of a <C, C, C> pipeline's first transform (-1 forward, +1 backward: a spectral pair
+// inverse first, task 5.3e); the second has the other. "forward" or "backward" for describe().
+int first_sign(const pipeline_view& d) { return d.first == direction::backward ? +1 : -1; }
+const char* direction_text(int sign) { return sign < 0 ? "forward" : "backward"; }
+
 // A side's callback produces its input (the input is not read, and may be null) or consumes its
 // output (the output is not written, and may be null).
 bool produced(const edge_side& s) { return s.call.any() && s.call.mode == callback_mode::produce; }
@@ -249,23 +254,24 @@ placed place_middle_callback(const vocab& v, std::size_t n, bool sides, bool mid
 
 // The middle's callback stage (task 5.3d) on the spectrum's `bins` values at `where`, stride 1:
 // the whole line in one call (a middle callback may be pure per line, DESIGN.md 12.3), its
-// argument exec_args::mid_user.
-stage middle_callback_stage(plan_core& c, const edge_side& mid, std::size_t bins, slot where) {
-  stage st = callback_stage(c.prec, false, mid.call, false, bins, 0, where, 1, 0,
+// argument exec_args::mid_user. real: the middle's values are reals (<C, T, C>, task 5.3e).
+stage middle_callback_stage(plan_core& c, const edge_side& mid, std::size_t bins, slot where,
+                            bool real = false) {
+  stage st = callback_stage(c.prec, real, mid.call, false, bins, 0, where, 1, 0,
                             std::numeric_limits<std::size_t>::max(), c.callback_sites);
   c.callback_sites.back()->user = 2;
-  st.name = "callback middle: " + std::string(mode_name(mid.call.mode)) + " on bins 0 to " +
-            std::to_string(bins);
+  st.name = "callback middle: " + std::string(mode_name(mid.call.mode)) + " on " +
+            (real ? "logical " : "bins ") + "0 to " + std::to_string(bins);
   return st;
 }
 
 // A pass of the scale alone, in place on `count` complex values at `where` (task 5.3d): a product
 // of scales on the spectrum before or after a middle callback.
 stage spectrum_scale_stage(precision prec, double scale, std::size_t count, slot where,
-                           std::size_t chunk, bool after) {
+                           std::size_t chunk, bool after, bool real = false) {
   edge_side s;
   s.scale = scale;
-  stage st = edge_pass_stage(prec, s, true, count, where, 1, where, 1, chunk, false, 0);
+  stage st = edge_pass_stage(prec, s, true, count, where, 1, where, 1, chunk, real, 0);
   st.name = after ? "edge middle: the scales after the middle's callback"
                   : "edge middle: the prologue's scale before the middle's callback";
   return st;
@@ -373,10 +379,10 @@ std::string operation_text(const char* name, const edge_side& s, const char* fus
 // The middle's separate pass, in place on the spectrum of `bins` complex values in the workspace
 // block (or, the depth-first pair's, in scratch a), its factor through the middle's cursor; or,
 // with fan-out, from the spectrum (`where`) to where copy k's inverse starts (`to`), a copy where
-// the middle has no factor.
+// the middle has no factor. real: on `bins` reals, <C, T, C>'s middle (task 5.3e).
 stage middle_stage(precision prec, const edge_side& mid, std::size_t bins, std::size_t chunk,
-                   slot where = slot::block, slot to = slot::block) {
-  stage m = edge_pass_stage(prec, mid, true, bins, where, 1, to, 1, chunk, false, mid.axis_stride);
+                   slot where = slot::block, slot to = slot::block, bool real = false) {
+  stage m = edge_pass_stage(prec, mid, true, bins, where, 1, to, 1, chunk, real, mid.axis_stride);
   if (mid.kind != factor_kind::none) {
     m.moving_factors = moving_mid_out_factor;
   }
@@ -512,6 +518,7 @@ void build_depth_pair(plan_core& c, const pipeline_view& d, const row_layout& l,
   add_batch_loops(p, d, l, complex_bytes, pl);
   typename chain_builder<T>::depth_pair_form form;
   form.kernel = pl.mid.fused ? middle_tag : nullptr;
+  form.first_sign = first_sign(d);
   form.out = pl.at == scale_at::inverse_out ? edge_op::scale : edge_op::none;
   form.scale = pl.scale;
   std::vector<stage> read;
@@ -527,7 +534,9 @@ void build_depth_pair(plan_core& c, const pipeline_view& d, const row_layout& l,
               .where;
   } else if (pl.pro.runs.any()) {
     const std::vector<line_run>& runs = pl.pro.runs.of(0);
-    if (runs.size() == 1 && runs[0].logical == 0) {
+    // The run-reading first pass exists forward only (pass_args.hpp, depth_first_head): inverse
+    // first (task 5.3e), the read stage.
+    if (runs.size() == 1 && runs[0].logical == 0 && form.first_sign < 0) {
       form.in_count = runs[0].count;
       form.in_offset = runs[0].stored;
       pr.in = run_pruning::direct;
@@ -551,7 +560,9 @@ void build_depth_pair(plan_core& c, const pipeline_view& d, const row_layout& l,
                              chunk, block_bytes, c.callback_sites, store);
   } else if (pl.epi.runs.any()) {
     const std::vector<line_run>& runs = pl.epi.runs.of(0);
-    if (runs.size() == 1 && runs[0].logical % lanes == 0 && !pl.epi.accumulate) {
+    // Likewise the run-writing top pass exists backward only (depth_top_part).
+    if (runs.size() == 1 && runs[0].logical % lanes == 0 && !pl.epi.accumulate &&
+        form.first_sign < 0) {
       form.out_logical = runs[0].logical;
       form.out_count = runs[0].count;
       form.out_offset = runs[0].stored;
@@ -650,7 +661,8 @@ void build_depth_pair(plan_core& c, const pipeline_view& d, const row_layout& l,
   c.block_elements = fanned ? static_cast<std::size_t>(second / complex_bytes) + n : n;
   c.depth_tops = tops;
   lay_out_workspace(c, parts.scratch, 2 * sizeof(T), false, callback_scratch(pl));
-  c.axis_notes.push_back("line (n = " + std::to_string(n) + "): " + chain.depth_pair_text(n, tops));
+  c.axis_notes.push_back("line (n = " + std::to_string(n) +
+                         "): " + chain.depth_pair_text(n, tops, form.first_sign));
 }
 
 // The line's stages (the forward chain's) after the batch loops, then the copies loop over `body`
@@ -688,6 +700,7 @@ void build_complex_copies(plan_core& c, const pipeline_view& d, const row_layout
                           fanout_marks& fan) {
   program& p = c.prog;
   const std::size_t n = d.line.n;
+  const int s1 = first_sign(d);
   const std::size_t chunk = settings.chunk_points;
   const auto complex_bytes = static_cast<std::ptrdiff_t>(2 * sizeof(T));
   const endpoint home{.where = slot::block, .stride = 1};
@@ -722,7 +735,7 @@ void build_complex_copies(plan_core& c, const pipeline_view& d, const row_layout
       inverse.out = edge_op::factor;
       inverse.out_factor = epilogue_tag;
     }
-    scratch = std::max(scratch, chain.c2c_line(n, +1, from, stored_out, false, inverse, body));
+    scratch = std::max(scratch, chain.c2c_line(n, -s1, from, stored_out, false, inverse, body));
     if (ec) {
       row_output_with_callback(c.prec, false, pl.epi, n, stored_out, true, chunk, block_bytes,
                                c.callback_sites, body);
@@ -738,7 +751,7 @@ void build_complex_copies(plan_core& c, const pipeline_view& d, const row_layout
         inverse.out = edge_op::factor;
         inverse.out_factor = epilogue_tag;
       }
-      scratch = std::max(scratch, chain.c2c_line(n, +1, home, home, true, inverse, body));
+      scratch = std::max(scratch, chain.c2c_line(n, -s1, home, home, true, inverse, body));
       row_output_with_callback(c.prec, false, pl.epi, n, stored_out, epilogue_direct(pl.epi), chunk,
                                block_bytes, c.callback_sites, body);
     } else if (pl.epi.runs.any()) {
@@ -746,13 +759,13 @@ void build_complex_copies(plan_core& c, const pipeline_view& d, const row_layout
       const std::vector<line_run>& runs = pl.epi.runs.of(0);
       inverse.out_head =
           inverse.out != edge_op::factor && within_half(runs, n) && chain.head_last(n);
-      scratch = std::max(scratch, chain.c2c_line(n, +1, home, home, true, inverse, body));
+      scratch = std::max(scratch, chain.c2c_line(n, -s1, home, home, true, inverse, body));
       run_line_stages(c.prec, pl.epi, true, n, runs,
                       {.src = slot::block, .dst = slot::out, .dst_stride = l.out_stride}, chunk,
                       false, body);
       pr.out = inverse.out_head ? run_pruning::half : run_pruning::none;
     } else {
-      scratch = std::max(scratch, chain.c2c_line(n, +1, home, home, true, inverse, body));
+      scratch = std::max(scratch, chain.c2c_line(n, -s1, home, home, true, inverse, body));
       body.push_back(edge_pass_stage(c.prec, pl.epi, true, n, slot::block, 1, slot::out,
                                      l.out_stride, chunk, false, pl.epi.axis_stride));
     }
@@ -762,8 +775,9 @@ void build_complex_copies(plan_core& c, const pipeline_view& d, const row_layout
   }
   lay_out_workspace(c, scratch, 2 * sizeof(T), false, callback_scratch(pl));
   const std::string radices = chain.radix_text(n);
-  c.axis_notes.push_back("line (n = " + std::to_string(n) + "): forward " + radices +
-                         ", then backward " + radices + " per copy (shared twiddle tables)");
+  c.axis_notes.push_back("line (n = " + std::to_string(n) + "): " + direction_text(s1) + " " +
+                         radices + ", then " + direction_text(-s1) + " " + radices +
+                         " per copy (shared twiddle tables)");
 }
 
 // The pair a <C, C, C> line takes and its stages: the depth-first pair where it is forced
@@ -778,6 +792,7 @@ bool build_pair(plan_core& c, const pipeline_view& d, const row_layout& l, const
   chain_builder<T> chain = plan_chain<T>(c, profile, settings);
   program& p = c.prog;
   const std::size_t n = d.line.n;
+  const int s1 = first_sign(d);
   if (l.in_stride == 1 && l.out_stride == 1) {
     if (const std::vector<std::size_t> tops =
             convolution_depth_tops<T>(n, settings, chain, c.isa_target);
@@ -852,7 +867,7 @@ bool build_pair(plan_core& c, const pipeline_view& d, const row_layout& l, const
     forward_aliased = true;
   }
   scratch =
-      std::max(scratch, chain.c2c_line(n, -1, forward_src, home, forward_aliased, forward, line));
+      std::max(scratch, chain.c2c_line(n, s1, forward_src, home, forward_aliased, forward, line));
   if (mc) {
     // The middle callback (task 5.3d) on the spectrum in the block, once per line (before every
     // copy), then the scales after it where no pass or free edge takes them.
@@ -890,7 +905,7 @@ bool build_pair(plan_core& c, const pipeline_view& d, const row_layout& l, const
     }
     const bool to_out = direct && !pl.epi.separate;
     scratch = std::max(
-        scratch, chain.c2c_line(n, +1, home, to_out ? stored_out : home, !to_out, inverse, line));
+        scratch, chain.c2c_line(n, -s1, home, to_out ? stored_out : home, !to_out, inverse, line));
     row_output_with_callback(c.prec, false, pl.epi, n, stored_out, direct, chunk, block_bytes,
                              c.callback_sites, line);
   } else if (pl.epi.runs.any()) {
@@ -904,17 +919,17 @@ bool build_pair(plan_core& c, const pipeline_view& d, const row_layout& l, const
     inverse.out_head = inverse.out != edge_op::factor && within_half(runs, n) && chain.head_last(n);
     if (inverse.out_head && !pl.epi.accumulate && half_stored(runs, n, stored_out)) {
       inverse.out_offset = runs[0].stored * 2 * sizeof(T);
-      scratch = std::max(scratch, chain.c2c_line(n, +1, home, stored_out, false, inverse, line));
+      scratch = std::max(scratch, chain.c2c_line(n, -s1, home, stored_out, false, inverse, line));
       pr.out = run_pruning::direct;
     } else {
-      scratch = std::max(scratch, chain.c2c_line(n, +1, home, home, true, inverse, line));
+      scratch = std::max(scratch, chain.c2c_line(n, -s1, home, home, true, inverse, line));
       run_line_stages(c.prec, pl.epi, true, n, runs,
                       {.src = slot::block, .dst = slot::out, .dst_stride = l.out_stride}, chunk,
                       false, line);
       pr.out = inverse.out_head ? run_pruning::half : run_pruning::none;
     }
   } else if (pl.epi.separate) {
-    scratch = std::max(scratch, chain.c2c_line(n, +1, home, home, true, inverse, line));
+    scratch = std::max(scratch, chain.c2c_line(n, -s1, home, home, true, inverse, line));
     line.push_back(edge_pass_stage(c.prec, pl.epi, true, n, slot::block, 1, slot::out, l.out_stride,
                                    chunk, false, pl.epi.axis_stride));
   } else {
@@ -925,41 +940,48 @@ bool build_pair(plan_core& c, const pipeline_view& d, const row_layout& l, const
       inverse.out = edge_op::scale;
     }
     scratch =
-        std::max(scratch, chain.c2c_line(n, +1, home, {.where = slot::out, .stride = l.out_stride},
+        std::max(scratch, chain.c2c_line(n, -s1, home, {.where = slot::out, .stride = l.out_stride},
                                          false, inverse, line));
   }
   end_program(p, line);
   c.block_elements = n;
   lay_out_workspace(c, scratch, 2 * sizeof(T), false, callback_scratch(pl));
   const std::string radices = chain.radix_text(n);
-  c.axis_notes.push_back("line (n = " + std::to_string(n) + "): forward " + radices +
-                         ", then backward " + radices + " (shared twiddle tables)");
+  c.axis_notes.push_back("line (n = " + std::to_string(n) + "): " + direction_text(s1) + " " +
+                         radices + ", then " + direction_text(-s1) + " " + radices +
+                         " (shared twiddle tables)");
   return false;
 }
 
-// The real chain pair (<T, C, T>, task 5.2c): batch loops, then the stages of one line,
+// The real chain pairs: <T, C, T> (task 5.2c) and, `reversed`, <C, T, C> (task 5.3e). Batch
+// loops, then the stages of one line,
 //
-//   [prologue pass into the block] -> r2c chain into the block -> [middle pass on its n/2 + 1
-//   bins] -> c2r chain out of the block (or back into it) -> [epilogue pass from the block]
+//   [prologue pass into the block] -> the first chain into the block -> [middle pass on the
+//   middle's values] -> the second chain out of the block (or back into it) -> [epilogue pass
+//   from the block]
 //
 // built by chain_builder::r2c_line and c2r_line, which take each line's real route (the pairing
 // fused into the half-length chain's last or first pass, a leaf, a separate pairing pass, odd n by
-// the full-length chain, a strided line through scratch). The block holds the n reals the
-// prologue's pass writes (n/2 complex values at most) and then the spectrum in place; the c2r
-// chain reads it there, writing it only on its way to an epilogue pass. Every factor is a separate
-// pass on the line in cache (place, fuse false); the scales' product goes to such a pass, else to
-// the c2r chain's output.
+// the full-length chain, a strided line through scratch). <T, C, T> is r2c then c2r: real sides of
+// n values, the middle on the spectrum's n/2 + 1 bins. <C, T, C> is the pair reversed, c2r then
+// r2c: complex sides of n/2 + 1 bins (the c2r pairing in the first chain's first pass, the r2c
+// pairing in the second's last), the middle a real line of n points. Either way the block holds
+// n/2 + 1 complex values: the sides' or the middle's n reals fit there. The second chain reads the
+// middle there, writing it only on its way to an epilogue pass. Every factor is a separate pass on
+// the line in cache (place, fuse false); the scales' product goes to such a pass, else to the
+// second chain's output.
 //
-// With fan-out (task 5.2e) the spectrum stays in the block and the scales' product goes to the
-// prologue's pass or the r2c chain's output (place_fanout). Where each copy writes its output
+// With fan-out (task 5.2e) the middle stays in the block and the scales' product goes to the
+// prologue's pass or the first chain's output (place_fanout). Where each copy writes its output
 // itself (no epilogue factor, accumulation or output runs), copy k is the middle's pass from the
-// block into scratch b (copy k's factor) and the c2r chain from there to copy k's output (or the
-// c2r chain from the block, without a middle factor), which only read the block: a team shares the
-// copies. Otherwise copy k's line goes to the block's second region, as for the <C, C, C> pair
-// (second_region), and a team runs a line's copies one after another.
+// block into scratch b (copy k's factor) and the second chain from there to copy k's output (or
+// the second chain from the block, without a middle factor), which only read the block: a team
+// shares the copies. Otherwise copy k's line goes to the block's second region, as for the
+// <C, C, C> pair (second_region), and a team runs a line's copies one after another.
 template <class T>
 void build_real_pair(plan_core& c, const pipeline_view& d, const row_layout& l, const vocab& v,
                      const build_settings& settings, placed& pl, fanout_marks& fan) {
+  const bool reversed = d.kind == pipeline_kind::real_middle;
   const bool fanned = d.fanout > 1;
   const bool mc = v.mid.call.any();
   pl = mc       ? place_middle_callback(v, d.line.n, false, false, fanned, false)
@@ -971,37 +993,55 @@ void build_real_pair(plan_core& c, const pipeline_view& d, const row_layout& l, 
   program& p = c.prog;
   const std::size_t n = d.line.n;
   const std::size_t bins = n / 2 + 1;
-  add_batch_loops(p, d, l, static_cast<std::ptrdiff_t>(sizeof(T)), pl);
+  // The sides' and the middle's values per line, and whether each is real.
+  const bool side_real = !reversed;
+  const bool mid_real = reversed;
+  const std::size_t side_n = reversed ? bins : n;
+  const std::size_t mid_n = reversed ? n : bins;
+  const auto real_bytes = static_cast<std::ptrdiff_t>(sizeof(T));
+  const auto complex_bytes = static_cast<std::ptrdiff_t>(2 * sizeof(T));
+  const std::ptrdiff_t side_bytes = side_real ? real_bytes : complex_bytes;
+  add_batch_loops(p, d, l, side_bytes, pl);
+  // The first chain (r2c, or c2r reversed) and the second (the other) of the line.
+  const auto first_chain = [&](endpoint src, endpoint dst, bool aliased, double scale,
+                               std::vector<stage>& st) {
+    return reversed ? chain.c2r_line(n, src, dst, scale, st)
+                    : chain.r2c_line(n, src, dst, aliased, scale, st);
+  };
+  const auto second_chain = [&](endpoint src, endpoint dst, double scale, std::vector<stage>& st) {
+    return reversed ? chain.r2c_line(n, src, dst, src.where == dst.where, scale, st)
+                    : chain.c2r_line(n, src, dst, scale, st);
+  };
 
   std::vector<stage> line;
   std::size_t scratch = 0;
   const std::size_t chunk = settings.chunk_points;
   const std::size_t block_bytes = settings.profile.callback_block_bytes;
   const bool ec = pl.epi.call.any();
-  // Whether the c2r chain writes the output itself: no epilogue pass, runs or callback that needs
-  // the line in the block (task 5.3d).
-  const bool c2r_to_out =
+  // Whether the second chain writes the output itself: no epilogue pass, runs or callback that
+  // needs the line in the block (task 5.3d).
+  const bool second_to_out =
       !pl.epi.separate && !pl.epi.runs.any() && (!ec || epilogue_direct(pl.epi));
   endpoint forward_src{.where = slot::in, .stride = l.in_stride};
   bool forward_aliased = false;
   if (pl.pro.call.any()) {
-    // A prologue callback (task 5.3d) on the real line in the workspace block (after a copy of the
-    // input or its runs, or produced there), then the prologue's pass there; the r2c chain then
+    // A prologue callback (task 5.3d) on the line in the workspace block (after a copy of the
+    // input or its runs, or produced there), then the prologue's pass there; the first chain then
     // runs in place.
-    forward_src = row_input_with_callback(c.prec, true, pl.pro, n, forward_src, false,
+    forward_src = row_input_with_callback(c.prec, side_real, pl.pro, side_n, forward_src, false,
                                           {.where = slot::block, .stride = 1}, slot::block, chunk,
                                           block_bytes, c.callback_sites, line);
     forward_aliased = true;
   } else if (pl.pro.runs.any()) {
-    // The input's runs (task 5.2d), read into the block with zeros elsewhere: real lines take no
-    // pruned passes yet (DESIGN.md 12.1).
-    run_line_stages(c.prec, pl.pro, false, n, pl.pro.runs.of(0),
-                    {.src = slot::in, .src_stride = l.in_stride}, chunk, true, line);
+    // The input's runs (task 5.2d; on the half spectrum reversed, task 5.3e), read into the block
+    // with zeros elsewhere: real lines take no pruned passes yet (DESIGN.md 12.1).
+    run_line_stages(c.prec, pl.pro, false, side_n, pl.pro.runs.of(0),
+                    {.src = slot::in, .src_stride = l.in_stride}, chunk, side_real, line);
     forward_src = {.where = slot::block, .stride = 1};
     forward_aliased = true;
   } else if (pl.pro.separate) {
-    line.push_back(edge_pass_stage(c.prec, pl.pro, false, n, slot::in, l.in_stride, slot::block, 1,
-                                   chunk, true, pl.pro.axis_stride));
+    line.push_back(edge_pass_stage(c.prec, pl.pro, false, side_n, slot::in, l.in_stride,
+                                   slot::block, 1, chunk, side_real, pl.pro.axis_stride));
     forward_src = {.where = slot::block, .stride = 1};
     forward_aliased = true;
   }
@@ -1009,104 +1049,100 @@ void build_real_pair(plan_core& c, const pipeline_view& d, const row_layout& l, 
   const double forward_scale = pl.at == scale_at::forward_out       ? pl.scale
                                : pl.pre_at == scale_at::forward_out ? pl.pre_scale
                                                                     : 1.0;
-  scratch =
-      std::max(scratch, chain.r2c_line(n, forward_src, home, forward_aliased, forward_scale, line));
+  scratch = std::max(scratch, first_chain(forward_src, home, forward_aliased, forward_scale, line));
   if (mc) {
-    // The middle callback (task 5.3d) on the n/2 + 1 bins in the block, once per line, then the
+    // The middle callback (task 5.3d) on the middle's values in the block, once per line, then the
     // scales after it where no pass or free edge takes them.
-    line.push_back(middle_callback_stage(c, pl.mid, bins, slot::block));
+    line.push_back(middle_callback_stage(c, pl.mid, mid_n, slot::block, mid_real));
     if (pl.at == scale_at::after_middle) {
-      line.push_back(spectrum_scale_stage(c.prec, pl.scale, bins, slot::block, chunk, true));
+      line.push_back(
+          spectrum_scale_stage(c.prec, pl.scale, mid_n, slot::block, chunk, true, mid_real));
     }
   }
-  const auto real_bytes = static_cast<std::ptrdiff_t>(sizeof(T));
-  const auto complex_bytes = static_cast<std::ptrdiff_t>(2 * sizeof(T));
   const endpoint stored_out{.where = slot::out, .stride = l.out_stride};
-  if (fanned && c2r_to_out) {
+  if (fanned && second_to_out) {
     std::vector<stage> body;
     endpoint from = home;
     if (pl.mid.separate) {
-      body.push_back(middle_stage(c.prec, pl.mid, bins, chunk, slot::block, slot::b));
+      body.push_back(
+          middle_stage(c.prec, pl.mid, mid_n, chunk, slot::block, slot::b, mid_real));
       from = {.where = slot::b, .stride = 1};
       scratch = std::max(scratch, bins);
     }
-    scratch = std::max(scratch, chain.c2r_line(n, from, stored_out, 1.0, body));
+    scratch = std::max(scratch, second_chain(from, stored_out, 1.0, body));
     if (ec) {
-      row_output_with_callback(c.prec, true, pl.epi, n, stored_out, true, chunk, block_bytes,
-                               c.callback_sites, body);
+      row_output_with_callback(c.prec, side_real, pl.epi, side_n, stored_out, true, chunk,
+                               block_bytes, c.callback_sites, body);
     }
-    end_with_copies(p, d, pl.mid, real_bytes, 0, line, body, fan);
+    end_with_copies(p, d, pl.mid, side_bytes, 0, line, body, fan);
     c.block_elements = bins;
   } else if (fanned) {
     std::vector<stage> body;
     if (pl.mid.separate) {
-      body.push_back(middle_stage(c.prec, pl.mid, bins, chunk));
+      body.push_back(
+          middle_stage(c.prec, pl.mid, mid_n, chunk, slot::block, slot::block, mid_real));
     }
-    scratch = std::max(scratch, chain.c2r_line(n, home, home, 1.0, body));
+    scratch = std::max(scratch, second_chain(home, home, 1.0, body));
     if (ec) {
-      row_output_with_callback(c.prec, true, pl.epi, n, stored_out, epilogue_direct(pl.epi), chunk,
-                               block_bytes, c.callback_sites, body);
+      row_output_with_callback(c.prec, side_real, pl.epi, side_n, stored_out,
+                               epilogue_direct(pl.epi), chunk, block_bytes, c.callback_sites, body);
     } else if (pl.epi.runs.any()) {
-      run_line_stages(c.prec, pl.epi, true, n, pl.epi.runs.of(0),
+      run_line_stages(c.prec, pl.epi, true, side_n, pl.epi.runs.of(0),
                       {.src = slot::block, .dst = slot::out, .dst_stride = l.out_stride}, chunk,
-                      true, body);
+                      side_real, body);
     } else {
-      body.push_back(edge_pass_stage(c.prec, pl.epi, true, n, slot::block, 1, slot::out,
-                                     l.out_stride, chunk, true, pl.epi.axis_stride));
+      body.push_back(edge_pass_stage(c.prec, pl.epi, true, side_n, slot::block, 1, slot::out,
+                                     l.out_stride, chunk, side_real, pl.epi.axis_stride));
     }
     const std::ptrdiff_t second = second_region_bytes(bins, complex_bytes);
-    end_with_copies(p, d, pl.mid, real_bytes, second, line, body, fan);
+    end_with_copies(p, d, pl.mid, side_bytes, second, line, body, fan);
     c.block_elements = static_cast<std::size_t>(second / complex_bytes) + bins;
   }
+  const bool strided_in =
+      !pl.pro.separate && !pl.pro.runs.any() && !pl.pro.call.any() && l.in_stride != 1;
+  const bool strided_out = second_to_out && l.out_stride != 1;
+  // describe()'s words for the two chains.
+  const std::string chains =
+      "line (n = " + std::to_string(n) + "): " + (reversed ? "backward " : "forward ") +
+      chain.real_text(n, !reversed, strided_in) + ", then " + (reversed ? "forward " : "backward ") +
+      chain.real_text(n, reversed, strided_out);
   if (fanned) {
     lay_out_workspace(c, scratch, 2 * sizeof(T), false, callback_scratch(pl));
-    const bool strided_out = c2r_to_out && l.out_stride != 1;
-    c.axis_notes.push_back("line (n = " + std::to_string(n) + "): forward " +
-                           chain.real_text(n, true,
-                                           !pl.pro.separate && !pl.pro.runs.any() &&
-                                               !pl.pro.call.any() && l.in_stride != 1) +
-                           ", then backward " + chain.real_text(n, false, strided_out) +
-                           " per copy");
+    c.axis_notes.push_back(chains + " per copy");
     return;
   }
   if (pl.mid.separate) {
-    line.push_back(middle_stage(c.prec, pl.mid, bins, chunk));
+    line.push_back(
+        middle_stage(c.prec, pl.mid, mid_n, chunk, slot::block, slot::block, mid_real));
   }
   if (ec) {
-    // An epilogue callback (task 5.3d): on the output the c2r chain (or the epilogue's pass from
-    // the block) writes, or on the line the c2r chain leaves in the block, then the store, the
-    // store of the runs, the accumulation or nothing (consume).
+    // An epilogue callback (task 5.3d): on the output the second chain (or the epilogue's pass
+    // from the block) writes, or on the line the second chain leaves in the block, then the
+    // store, the store of the runs, the accumulation or nothing (consume).
     const double scale = pl.at == scale_at::inverse_out ? pl.scale : 1.0;
     const bool to_out = epilogue_direct(pl.epi) && !pl.epi.separate;
-    scratch = std::max(scratch, chain.c2r_line(n, home, to_out ? stored_out : home, scale, line));
-    row_output_with_callback(c.prec, true, pl.epi, n, stored_out, epilogue_direct(pl.epi), chunk,
-                             block_bytes, c.callback_sites, line);
+    scratch = std::max(scratch, second_chain(home, to_out ? stored_out : home, scale, line));
+    row_output_with_callback(c.prec, side_real, pl.epi, side_n, stored_out,
+                             epilogue_direct(pl.epi), chunk, block_bytes, c.callback_sites, line);
   } else if (pl.epi.runs.any()) {
-    // The output's runs: the c2r chain ends in the block, the store stage writes the runs.
+    // The output's runs: the second chain ends in the block, the store stage writes the runs.
     const double scale = pl.at == scale_at::inverse_out ? pl.scale : 1.0;
-    scratch = std::max(scratch, chain.c2r_line(n, home, home, scale, line));
-    run_line_stages(c.prec, pl.epi, true, n, pl.epi.runs.of(0),
-                    {.src = slot::block, .dst = slot::out, .dst_stride = l.out_stride}, chunk, true,
-                    line);
+    scratch = std::max(scratch, second_chain(home, home, scale, line));
+    run_line_stages(c.prec, pl.epi, true, side_n, pl.epi.runs.of(0),
+                    {.src = slot::block, .dst = slot::out, .dst_stride = l.out_stride}, chunk,
+                    side_real, line);
   } else if (pl.epi.separate) {
-    scratch = std::max(scratch, chain.c2r_line(n, home, home, 1.0, line));
-    line.push_back(edge_pass_stage(c.prec, pl.epi, true, n, slot::block, 1, slot::out, l.out_stride,
-                                   chunk, true, pl.epi.axis_stride));
+    scratch = std::max(scratch, second_chain(home, home, 1.0, line));
+    line.push_back(edge_pass_stage(c.prec, pl.epi, true, side_n, slot::block, 1, slot::out,
+                                   l.out_stride, chunk, side_real, pl.epi.axis_stride));
   } else {
     const double scale = pl.at == scale_at::inverse_out ? pl.scale : 1.0;
-    scratch =
-        std::max(scratch, chain.c2r_line(n, home, {.where = slot::out, .stride = l.out_stride},
-                                         scale, line));
+    scratch = std::max(scratch, second_chain(home, stored_out, scale, line));
   }
   end_program(p, line);
   c.block_elements = bins;
   lay_out_workspace(c, scratch, 2 * sizeof(T), false, callback_scratch(pl));
-  const bool strided_in =
-      !pl.pro.separate && !pl.pro.runs.any() && !pl.pro.call.any() && l.in_stride != 1;
-  const bool strided_out = c2r_to_out && l.out_stride != 1;
-  c.axis_notes.push_back("line (n = " + std::to_string(n) + "): forward " +
-                         chain.real_text(n, true, strided_in) + ", then backward " +
-                         chain.real_text(n, false, strided_out));
+  c.axis_notes.push_back(chains);
 }
 
 // A fan-out's copies (task 5.2e; DESIGN.md 18.2, proposal 5): copy k writes at fanout_out_dist k
@@ -1117,7 +1153,7 @@ void build_real_pair(plan_core& c, const pipeline_view& d, const row_layout& l, 
 // each side.
 std::pair<std::ptrdiff_t, std::ptrdiff_t> check_copies(const pipeline_view& d, const row_layout& l,
                                                        const run_plan& runs, std::size_t out_bytes,
-                                                       const edge_side& mid) {
+                                                       const edge_side& mid, std::size_t side_n) {
   constexpr auto limit = static_cast<std::size_t>(PTRDIFF_MAX);
   const std::size_t copies = d.fanout - 1;
   const auto magnitude = [](std::ptrdiff_t v) {
@@ -1146,7 +1182,7 @@ std::pair<std::ptrdiff_t, std::ptrdiff_t> check_copies(const pipeline_view& d, c
     }
   }
   std::vector<std::pair<std::size_t, std::size_t>> dims; // |distance|, extent
-  std::size_t reach = d.line.n;
+  std::size_t reach = side_n;
   if (runs.out.any()) {
     reach = 0;
     for (const line_run& r : runs.out.of(0)) {
@@ -1210,21 +1246,13 @@ std::string depth_runs_text(const run_plan& runs, bool accumulate, const run_pru
 
 std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, const options& opts,
                                                     const build_settings& settings) {
-  switch (d.kind) {
-  case pipeline_kind::complex_pair:
-  case pipeline_kind::real_convolution:
-    break;
-  case pipeline_kind::real_middle:
-    refuse("desc", "is a <C, T, C> pipeline, which is not built yet (task 5.3)");
-  }
-  // <T, C, T>: an r2c then a c2r transform, whatever `first` says (pipeline_desc).
+  // <T, C, T>: an r2c then a c2r transform, and <C, T, C> (task 5.3e) a c2r then an r2c
+  // transform, whatever `first` says (pipeline_desc). <C, C, C> runs its first transform in
+  // `first`'s direction: direction::backward is a spectral pair inverse first (task 5.3e).
   const bool real = d.kind == pipeline_kind::real_convolution;
-  if (!real && d.first != direction::forward && d.first != direction::backward) {
+  const bool real_mid = d.kind == pipeline_kind::real_middle;
+  if (!real && !real_mid && d.first != direction::forward && d.first != direction::backward) {
     refuse("desc.first", "must be direction::forward or direction::backward");
-  }
-  if (!real && d.first == direction::backward) {
-    refuse("desc.first", "is direction::backward: a pipeline whose inverse transform runs first "
-                         "(a spectral pair) is not built yet (task 5.3)");
   }
   if (d.fanout == 0) {
     refuse("desc.fanout", "is 0; one inverse transform per forward is 1");
@@ -1243,16 +1271,25 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
       .axes = std::span<const axis>(&d.line, 1),
       .batches = d.batches,
   };
-  // Stored runs of the line (task 5.2d), validated as a plan's (core/runs.hpp) on the line's c2c
-  // shape (n logical positions on each side, for <T, C, T> too): their stored extents set the
-  // default distances and the reach.
+  // The sides' layout and runs: the line's c2c shape, or for <C, T, C> (task 5.3e), whose sides
+  // are the half spectrum, that of a c2c line of its n/2 + 1 bins.
+  const axis half_axis{
+      .n = d.line.n / 2 + 1, .in_stride = d.line.in_stride, .out_stride = d.line.out_stride};
+  shape_view sides = line;
+  if (real_mid) {
+    sides.axes = std::span<const axis>(&half_axis, 1);
+  }
+  // Stored runs of the line (task 5.2d), validated as a plan's (core/runs.hpp) on the sides' c2c
+  // shape (n logical positions on each side, for <T, C, T> too; the n/2 + 1 bins of the half
+  // spectrum for <C, T, C>, a band): their stored extents set the default distances and the
+  // reach.
   run_plan runs;
   if (!d.runs.empty()) {
     if (opts.in_place) {
       refuse("desc.runs", "are not taken by an in-place pipeline yet (task 5.2d builds them out "
                           "of place)");
     }
-    shape_view with_runs = line;
+    shape_view with_runs = sides;
     with_runs.runs = d.runs;
     runs = renaming([&] { return resolve_runs(with_runs, options{}); });
     // DESIGN.md 18.2, proposal 8: as plans refuse runs beside an edge's factor (task 5.1d).
@@ -1265,12 +1302,13 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
     }
   }
   const row_layout layout =
-      renaming([&] { return resolve_row_layout(line, opts.in_place, real, runs); });
+      renaming([&] { return resolve_row_layout(sides, opts.in_place, real, runs); });
 
   // The vocabulary, judged as a plan's edges are: on the line's c2c shape, or for <T, C, T> the
   // prologue on the input of its r2c shape and the epilogue on the output of its c2r shape (real
   // sides, which take real factors only), and the middle on the r2c shape's output, the n/2 + 1
-  // bins.
+  // bins; for <C, T, C> the prologue on its c2r shape's input and the epilogue on its r2c shape's
+  // output (the half spectrum), the middle on the c2r shape's output (n reals, real factors).
   if (d.prologue.accumulate) {
     refuse("desc.prologue.accumulate", "is for the epilogue only");
   }
@@ -1295,9 +1333,12 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
     check_edge_scale(opts.scale, d.prec, "options.scale");
     edge_view middle = d.middle;
     middle.accumulate = false;
-    edge_side pro = resolve_edge_side(real ? r2c_line : line, d.prologue, false, "desc.prologue");
-    edge_side mid = resolve_edge_side(real ? r2c_line : line, middle, true, "desc.middle");
-    edge_side epi = resolve_edge_side(real ? c2r_line : line, d.epilogue, true, "desc.epilogue");
+    edge_side pro = resolve_edge_side(real ? r2c_line : (real_mid ? c2r_line : line), d.prologue,
+                                      false, "desc.prologue");
+    edge_side mid = resolve_edge_side(real ? r2c_line : (real_mid ? c2r_line : line), middle, true,
+                                      "desc.middle");
+    edge_side epi = resolve_edge_side(real ? c2r_line : (real_mid ? r2c_line : line), d.epilogue,
+                                      true, "desc.epilogue");
     if (opts.scale != 1.0 && d.epilogue.scale != 1.0) {
       refuse("desc.epilogue.scale", "and options.scale are both given; options.scale is a "
                                     "shortcut for desc.epilogue.scale, so give one of them");
@@ -1345,7 +1386,8 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
   // consume receives each line's copies in copy order instead.
   if (fanned && !consumed(v.epi)) {
     const std::size_t real_bytes = d.prec == precision::f64 ? sizeof(double) : sizeof(float);
-    const auto [lo, hi] = check_copies(d, layout, runs, real ? real_bytes : 2 * real_bytes, v.mid);
+    const auto [lo, hi] = check_copies(d, layout, runs, real ? real_bytes : 2 * real_bytes, v.mid,
+                                       sides.axes[0].n);
     c->out_lo += lo;
     c->out_hi += hi;
   }
@@ -1357,7 +1399,7 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
   run_prunings pr;
   fanout_marks fan;
   bool depth = false;
-  if (real) {
+  if (real || real_mid) {
     if (d.prec == precision::f64) {
       build_real_pair<double>(*c, d, layout, v, settings, pl, fan);
     } else {
@@ -1392,14 +1434,17 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
   c->profile = settings.profile;
   c->runs_inline = runs_inline(c->graph, c->profile);
   c->built = depth ? strategy_choice::depth : strategy_choice::chain;
-  c->strategy_name = real    ? "the real chain pair"
-                     : depth ? "the depth-first pair"
-                             : "the chain pair";
+  c->strategy_name = real || real_mid ? "the real chain pair"
+                     : depth             ? "the depth-first pair"
+                                         : "the chain pair";
 
   // describe().
   const std::size_t lines = c->prog.transforms;
   c->pipeline_title = std::string("fftn pipeline: ") +
-                      (real ? "<t, c, t> r2c then c2r, " : "<c, c, c> forward then backward, ") +
+                      (real       ? "<t, c, t> r2c then c2r, "
+                       : real_mid ? "<c, t, c> c2r then r2c, "
+                       : d.first == direction::backward ? "<c, c, c> backward then forward, "
+                                                        : "<c, c, c> forward then backward, ") +
                       (d.prec == precision::f64 ? "double" : "float") +
                       ", n = " + std::to_string(d.line.n) + ", " + std::to_string(lines) +
                       (lines == 1 ? " line" : " lines") +
@@ -1408,6 +1453,10 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
       real ? "the real chain pair: each line through the r2c chain into the workspace block (its "
              "scratch-resident home, which the batch loops never move), the middle there on its "
              "n/2 + 1 bins, then the c2r chain out of it (DESIGN.md 12.2)"
+      : real_mid
+          ? "the real chain pair reversed: each line's half spectrum through the c2r chain into "
+            "the workspace block (its scratch-resident home, which the batch loops never move), "
+            "the middle there on its n reals, then the r2c chain out of it (DESIGN.md 12.2, 12.3)"
       : depth
           ? "the depth-first pair: each line through the forward depth-first chain (its sub-rows "
             "finished one at a time on their blocks of the workspace block), its top pass into "
@@ -1452,6 +1501,7 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
                      fanned && depth ? "in a separate pass per copy into scratch"
                      : fanned        ? fan_middle
                      : real ? "in a separate pass on the line's n/2 + 1 bins in the workspace block"
+                     : real_mid ? "in a separate pass on the line's n reals in the workspace block"
                      : depth ? "in a separate pass on the line in scratch"
                              : "in a separate pass on the line in the workspace block") +
       "\n" +
@@ -1545,7 +1595,7 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
       }
     };
     const auto edge_blocks = [&] {
-      return callback_blocks("", d.line.n, 1, side_bytes, block_bytes, "lines").block;
+      return callback_blocks("", real_mid ? d.line.n / 2 + 1 : d.line.n, 1, side_bytes, block_bytes, "lines").block;
     };
     add("prologue", pl.pro,
         std::string("on each line ") + home +
@@ -1573,6 +1623,15 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
     ops += "\n" + text;
   }
   c->edges_note = ops;
+  // A spectral pair inverse first (task 5.3e): its first chain is the backward one, so the words
+  // above, written for the forward chain first, swap (the forward-first texts unchanged).
+  if (!real && (real_mid || d.first == direction::backward)) {
+    for (std::string* text : {&c->edges_note, &c->strategy_note}) {
+      replace_all(*text, "forward", "\x01");
+      replace_all(*text, "backward", "forward");
+      replace_all(*text, "\x01", "backward");
+    }
+  }
   if (opts.effort != planning::rules || opts.use != nullptr) {
     c->planning_note = "by the rules: options.effort and options.use are ignored for pipelines "
                        "until task 5.2g";

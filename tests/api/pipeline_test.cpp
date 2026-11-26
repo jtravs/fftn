@@ -712,10 +712,6 @@ TEST(Pipelines, RefusalsNameTheField) {
   const fftn::pipeline_desc<C, C, C> good = fftn::complex_convolution_rows<double>(16, 2);
   const double nan = std::numeric_limits<double>::quiet_NaN();
   auto d = good;
-  // Not built yet.
-  d.first = fftn::direction::backward;
-  expect_refused(d, {}, "desc.first");
-  d = good;
   d.first = static_cast<fftn::direction>(3);
   expect_refused(d, {}, "desc.first");
   d = good;
@@ -729,9 +725,15 @@ TEST(Pipelines, RefusalsNameTheField) {
   d.runs = {{.axis = 0, .where = fftn::side::in, .logical = 10, .stored = 0, .count = 8}};
   expect_refused(d, {}, "desc.runs[0].logical");
   d = good;
+  // <C, T, C> (task 5.3e): a real middle takes real factors only; its sides' runs are bins.
   fftn::pipeline_desc<C, double, C> real_middle;
   real_middle.line = {.n = 16};
-  expect_refused(real_middle, {}, "desc");
+  real_middle.batches = {{.count = 2}};
+  real_middle.middle.mul = {.kind = cplx, .axis_strides = {1}};
+  expect_refused(real_middle, {}, "desc.middle.mul.kind");
+  real_middle.middle.mul = {};
+  real_middle.runs = {{.axis = 0, .where = fftn::side::in, .logical = 8, .stored = 0, .count = 2}};
+  expect_refused(real_middle, {}, "desc.runs[0].logical");
   // The layout.
   d = good;
   d.line.n = 0;

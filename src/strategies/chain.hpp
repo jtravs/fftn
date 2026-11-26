@@ -340,13 +340,15 @@ public:
     const void* kernel = nullptr;
     edge_op out = edge_op::none;
     double scale = 1.0;
+    // The first chain's sign, the second's the other (task 5.3e: a spectral pair inverse first).
+    int first_sign = -1;
   };
   struct bluestein_depth_stages;
   bluestein_depth_stages depth_pair(std::size_t m, const std::vector<std::size_t>& tops, slot src,
                                     slot dst, const depth_pair_form& form);
   // "forward depth-first 16 x 2048 (sub-rows ...), then backward ..." for describe().
-  [[nodiscard]] std::string depth_pair_text(std::size_t m,
-                                            const std::vector<std::size_t>& tops) const;
+  [[nodiscard]] std::string depth_pair_text(std::size_t m, const std::vector<std::size_t>& tops,
+                                            int first_sign = -1) const;
 
   // A Bluestein stage whose convolution runs as two depth-first chains (experiment X50), for
   // a c2c line of one prime q above the Bluestein threshold with no Rader root (one copy):

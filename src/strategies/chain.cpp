@@ -1387,9 +1387,11 @@ chain_builder<T>::depth_pair(std::size_t m, const std::vector<std::size_t>& tops
   if (out_run && dst == slot::block) {
     throw std::logic_error("fftn: a depth-first pair's output run stored to the workspace block");
   }
-  out.forward = c2c_depth(m, tops, -1, 1.0, slot::block, src, slot::a, form.kernel);
-  out.backward = c2c_depth(m, tops, +1, out_run || !scaled ? 1.0 : form.scale, slot::block, slot::a,
-                           out_run ? slot::block : dst);
+  // `forward` and `backward` are the first and the second chain: directions -1 then +1, or the
+  // other way round for a spectral pair inverse first (form.first_sign, task 5.3e).
+  out.forward = c2c_depth(m, tops, form.first_sign, 1.0, slot::block, src, slot::a, form.kernel);
+  out.backward = c2c_depth(m, tops, -form.first_sign, out_run || !scaled ? 1.0 : form.scale,
+                           slot::block, slot::a, out_run ? slot::block : dst);
   const bool chirp = form.chirp != nullptr;
   const std::string chirp_name = std::string(direction_name(form.chirp_sign));
   if (form.in_count != 0) {
@@ -1426,10 +1428,12 @@ chain_builder<T>::depth_pair(std::size_t m, const std::vector<std::size_t>& tops
 }
 
 template <class T>
-std::string chain_builder<T>::depth_pair_text(std::size_t m,
-                                              const std::vector<std::size_t>& tops) const {
+std::string chain_builder<T>::depth_pair_text(std::size_t m, const std::vector<std::size_t>& tops,
+                                              int first_sign) const {
   const std::string chain = depth_text(m, tops);
-  return "forward " + chain + ", then backward " + chain + " (shared twiddle tables)";
+  return first_sign < 0
+             ? "forward " + chain + ", then backward " + chain + " (shared twiddle tables)"
+             : "backward " + chain + ", then forward " + chain + " (shared twiddle tables)";
 }
 
 template <class T>
