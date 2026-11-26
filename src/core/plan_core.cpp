@@ -3365,7 +3365,10 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       if (!sound) {
         throw std::logic_error("fftn: internal: an r2c row that reads a scratch line twice");
       }
-      need = std::max(need, (c.lengths[r - 1] + 1) / 2); // the n reals in complex elements
+      // The row's own scratch chain (h or n complex values) already makes the lines hold n reals.
+      if (need < (c.lengths[r - 1] + 1) / 2) {
+        throw std::logic_error("fftn: internal: a scratch line shorter than the r2c row it holds");
+      }
     }
     // The loops move the input for the copy, and the output; with a produced row only the output.
     lines(r - 1, in.extent, in_copy ? in_view : (r2c_scratch_row ? dst0 : src0), dst0, need,

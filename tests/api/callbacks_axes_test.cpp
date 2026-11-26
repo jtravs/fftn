@@ -660,6 +660,12 @@ template <class T, transform_kind K> void run_case(const axes_case& cc, fftn::is
                         ") in the first phase"),
               std::string::npos);
   }
+  // An r2c's input row out of place: in the output's own row where the output's rows are
+  // contiguous, else in a scratch line; in the workspace block only beside a consumed output.
+  if (K == transform_kind::r2c && in_alone && !cc.in_place && cc.out != out_kind::consume) {
+    EXPECT_NE(text.find(cc.stride == 1 ? "lines, in the output" : "lines, in a scratch line"),
+              std::string::npos);
+  }
   if (out_alone) {
     EXPECT_NE(text.find("the output's (" +
                         std::string(cc.out == out_kind::modify ? "modify" : "consume") +
@@ -981,6 +987,47 @@ std::vector<axes_case> cases() {
        .out = out_kind::modify,
        .gap = 2,
        .stride = 3},
+      // The input callback's row in the output's own complex row (contiguous there): produce,
+      // odd n, a volume, rows with gaps between them; and the scratch line where it is strided.
+      {.name = "r2c plane, produced into the output's rows",
+       .kind = r2c,
+       .dims = {8, 12},
+       .count = 2,
+       .in = in_kind::produce,
+       .out = out_kind::modify},
+      {.name = "r2c plane, odd n, modified in the output's rows",
+       .kind = r2c,
+       .dims = {6, 9},
+       .count = 2,
+       .in = in_kind::modify,
+       .out = out_kind::modify},
+      {.name = "r2c volume, modified in the output's rows",
+       .kind = r2c,
+       .dims = {4, 6, 10},
+       .count = 2,
+       .in = in_kind::modify,
+       .out = out_kind::modify,
+       .scratch = 16},
+      {.name = "r2c plane, produced into output rows with gaps, odd n",
+       .kind = r2c,
+       .dims = {6, 11},
+       .count = 3,
+       .in = in_kind::produce,
+       .gap = 3},
+      {.name = "r2c plane, modified in output rows with gaps",
+       .kind = r2c,
+       .dims = {5, 8},
+       .count = 2,
+       .in = in_kind::modify,
+       .out = out_kind::modify,
+       .gap = 2},
+      {.name = "r2c volume, strided output, modified in a scratch line",
+       .kind = r2c,
+       .dims = {4, 5, 8},
+       .count = 2,
+       .in = in_kind::modify,
+       .out = out_kind::modify,
+       .stride = 2},
       {.name = "r2c plane, odd rows, strided, produce",
        .kind = r2c,
        .dims = {6, 9},
