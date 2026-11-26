@@ -9,6 +9,7 @@ is written from it (DESIGN.md 7.2, step 7). Adding a radix: gen/README.md.
 from __future__ import annotations
 
 from .codelet import (
+    PRUNED_VARIANTS,
     SIGNS,
     SPLIT_VARIANTS,
     VARIANTS,
@@ -34,9 +35,23 @@ RADICES = (*range(2, 18), 19, 20, 23, 25, 32, 64)
 # heavily.
 SPLIT_RADICES = tuple(range(2, 17))
 
+# The pruned codelets' radices (DESIGN.md 12.1, task 5.1e): the even codelet radices, whose
+# halves h = R/2 a stored run of half a line fills exactly (the valid half of a zero-padded
+# convolution's row). The edge passes of a line with stored runs take them: the chain's first
+# pass reads only legs 0 .. h - 1 (dif_head) when the input's runs lie in the first h m
+# elements of the line's n = R m, and its last pass writes only legs 0 .. h - 1 (plain_head)
+# when the output's lie in the first h s, n = R s. Halves only: `--table` prints the counts of
+# both variants against their full codelets, which is how the set was chosen (gen/README.md,
+# "Pruned codelets").
+PRUNED_RADICES = tuple(r for r in RADICES if r % 2 == 0)
+
 
 def all_codelets() -> list[Codelet]:
     return [build(r, v, s) for r in RADICES for v in VARIANTS for s in SIGNS]
+
+
+def all_pruned_codelets() -> list[Codelet]:
+    return [build(r, v, s) for r in PRUNED_RADICES for v in PRUNED_VARIANTS for s in SIGNS]
 
 
 def all_split_codelets() -> list[SplitCodelet]:
@@ -44,15 +59,19 @@ def all_split_codelets() -> list[SplitCodelet]:
 
 
 def generate(
-    codelets: list[Codelet] | None = None, split: list[SplitCodelet] | None = None
+    codelets: list[Codelet] | None = None,
+    split: list[SplitCodelet] | None = None,
+    pruned: list[Codelet] | None = None,
 ) -> dict[str, str]:
     """File name (under src/gen/) to contents."""
     if codelets is None:
         codelets = all_codelets()
     if split is None:
         split = all_split_codelets()
+    if pruned is None:
+        pruned = all_pruned_codelets()
     return {
-        "complex_codelets.inl": codelet_inl(codelets),
+        "complex_codelets.inl": codelet_inl(codelets + pruned),
         "split_codelets.inl": split_codelet_inl(split),
-        "codelets.hpp": metadata_hpp(codelets, split),
+        "codelets.hpp": metadata_hpp(codelets, split, pruned),
     }

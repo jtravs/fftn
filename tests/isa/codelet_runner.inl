@@ -43,6 +43,21 @@ void run_codelet(const T* x, std::size_t xs, T* y, std::size_t ys, const T* w) {
   }
 }
 
+template <class T, std::size_t I>
+void run_pruned(const T* x, std::size_t xs, T* y, std::size_t ys, const T* w) {
+  constexpr gen::codelet_info info = gen::pruned_codelets[I];
+  using codelet = cdft<info.radix>;
+  const runner_in<T> in{x, 2 * xs};
+  const runner_out<T> out{y, 2 * ys};
+  const runner_twiddles<T> twid{w};
+  if constexpr (info.kind == gen::variant::dif_head) {
+    codelet::template dif_head<T, info.sign>(in, out, twid);
+  } else {
+    static_assert(info.kind == gen::variant::plain_head);
+    codelet::template plain_head<T, info.sign>(in, out);
+  }
+}
+
 template <class T, std::size_t I> constexpr void fill_runs(codelet_runs<T>& runs) noexcept {
   runs.run[I] = &run_codelet<T, I>;
   if constexpr (I + 1 < gen::codelet_count) {
@@ -50,10 +65,18 @@ template <class T, std::size_t I> constexpr void fill_runs(codelet_runs<T>& runs
   }
 }
 
+template <class T, std::size_t I> constexpr void fill_pruned(codelet_runs<T>& runs) noexcept {
+  runs.pruned[I] = &run_pruned<T, I>;
+  if constexpr (I + 1 < gen::pruned_codelet_count) {
+    fill_pruned<T, I + 1>(runs);
+  }
+}
+
 // The entry points of every codelet in precision T; the unit's table holds both precisions.
 template <class T> constexpr codelet_runs<T> make_runs() noexcept {
   codelet_runs<T> runs{};
   fill_runs<T, 0>(runs);
+  fill_pruned<T, 0>(runs);
   return runs;
 }
 

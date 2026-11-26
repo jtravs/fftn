@@ -19,6 +19,25 @@
 
 namespace {
 
+// The address `bytes` after p (a stored run's offset in the line, pass_args::src_cols and
+// dst_cols of the pruned edge passes).
+template <class T> FFTN_FORCE_INLINE const T* offset_by(const void* p, std::size_t bytes) {
+  return reinterpret_cast<const T*>(static_cast<const unsigned char*>(p) + bytes);
+}
+template <class T> FFTN_FORCE_INLINE T* offset_by(void* p, std::size_t bytes) {
+  return reinterpret_cast<T*>(static_cast<unsigned char*>(p) + bytes);
+}
+
+// A chain's first pass's codelet: dif, or (Head) dif_head, which reads legs 0 .. R/2 - 1 only.
+template <class T, std::size_t R, int Sign, bool Head, class In, class Out, class Tw>
+FFTN_FORCE_INLINE void first_codelet(const In& in, const Out& out, const Tw& twid) {
+  if constexpr (Head) {
+    cdft<R>::template dif_head<T, Sign>(in, out, twid);
+  } else {
+    cdft<R>::template dif<T, Sign>(in, out, twid);
+  }
+}
+
 // The R outputs of a grouped pass's first `valid` butterflies p0 .. p0 + valid - 1 (of
 // C), v[k] holding leg k of every lane, to y[R (p0 + l) + k] (tight). C x C blocks of legs
 // are transposed in registers, so that each store writes C legs of one butterfly; a unit
@@ -86,9 +105,9 @@ FFTN_FORCE_INLINE void store_padded(T* y, const cv<T>* v, std::size_t valid, std
 // pass's set-up and took registers from the whole units' loop, which made whole units
 // slower with GCC and Clang at lengths with no partial unit at all
 // (dev/experiments/X23-masked-tails.md, amendment).
-template <class T, std::size_t R, int Sign, edge_op InOp>
+template <class T, std::size_t R, int Sign, edge_op InOp, bool Head>
 FFTN_FORCE_INLINE void grouped_tail(const pass_args* a, const void* src, void* dst, std::size_t u) {
-  const T* x = static_cast<const T*>(src);
+  const T* x = Head ? offset_by<T>(src, a->src_cols) : static_cast<const T*>(src);
   const std::ptrdiff_t xs = 2 * a->src_stride;
   const std::size_t m = a->m;
   const std::size_t mpad = (m + C<T> - 1) / C<T> * C<T>;
@@ -108,7 +127,7 @@ FFTN_FORCE_INLINE void grouped_tail(const pass_args* a, const void* src, void* d
   };
   cv<T> v[R]; // NOLINT(modernize-avoid-c-arrays): no standard containers in a region
   const to_registers<T> out{v};
-  cdft<R>::template dif<T, Sign>(in, out, twid);
+  first_codelet<T, R, Sign, Head>(in, out, twid);
   T* yp = static_cast<T*>(dst) + 2 * R * p0;
   if constexpr (R % C<T> == 0) {
     store_transposed<T, R>(yp, v, valid);
@@ -123,11 +142,13 @@ FFTN_FORCE_INLINE void grouped_tail(const pass_args* a, const void* src, void* d
 // storage (pack_twiddles), R - 1 rows of mpad = m rounded up to a multiple of C entries,
 // row k - 1 holding w^(p k) and padded with ones. The input edge's operation applies to
 // what is loaded. src: any stride when C == 1, else 1; dst: scratch, stride 1. Reads src,
-// src_stride, m, twiddles, scale, in_factor.
-template <class T, std::size_t R, int Sign, edge_op InOp>
+// src_stride, m, twiddles, scale, in_factor. Head (an edge pass of a line with stored runs,
+// task 5.1e): legs j >= R/2 are known zero and not read (the dif_head codelet), and the line
+// starts src_cols bytes after src.
+template <class T, std::size_t R, int Sign, edge_op InOp, bool Head = false>
 void grouped_pass(const pass_args* a, const void* src, void* dst, std::size_t first,
                   std::size_t last) {
-  const T* x = static_cast<const T*>(src);
+  const T* x = Head ? offset_by<T>(src, a->src_cols) : static_cast<const T*>(src);
   T* y = static_cast<T*>(dst);
   const std::ptrdiff_t xs = 2 * a->src_stride;
   const std::size_t m = a->m;
@@ -152,7 +173,7 @@ void grouped_pass(const pass_args* a, const void* src, void* dst, std::size_t fi
     T* yp = y + 2 * R * p0;
     if (valid == C<T>) {
       const run_in<T, InOp, true> in{.p = xp, .leg = leg, .step = xs, .valid = valid, .op = op};
-      cdft<R>::template dif<T, Sign>(in, out, twid);
+      first_codelet<T, R, Sign, Head>(in, out, twid);
       if constexpr (R % C<T> == 0) {
         store_transposed<T, R>(yp, v, C<T>);
       } else if constexpr (masked) {
@@ -162,21 +183,25 @@ void grouped_pass(const pass_args* a, const void* src, void* dst, std::size_t fi
       }
     } else {
       const run_in<T, InOp, false> in{.p = xp, .leg = leg, .step = xs, .valid = valid, .op = op};
-      cdft<R>::template dif<T, Sign>(in, out, twid);
+      first_codelet<T, R, Sign, Head>(in, out, twid);
       store_tiled<T, R>(yp, v, valid);
     }
   }
   if constexpr (masked) {
     if (whole < last) {
-      grouped_tail<T, R, Sign, InOp>(a, src, dst, whole);
+      grouped_tail<T, R, Sign, InOp, Head>(a, src, dst, whole);
     }
   }
 }
 
-// The butterflies of one unit of a lane pass, from accessors in and out.
-template <class T, std::size_t R, int Sign, bool Twiddled, class In, class Out>
+// The butterflies of one unit of a lane pass, from accessors in and out. Head: a last pass
+// (not Twiddled) storing legs 0 .. R/2 - 1 only (plain_head).
+template <class T, std::size_t R, int Sign, bool Twiddled, bool Head = false, class In, class Out>
 FFTN_FORCE_INLINE void lane_unit(const In& in, const Out& out, const T* table, std::size_t p) {
-  if constexpr (Twiddled) {
+  static_assert(!(Head && Twiddled), "only a last pass stores half its legs");
+  if constexpr (Head) {
+    cdft<R>::template plain_head<T, Sign>(in, out);
+  } else if constexpr (Twiddled) {
     const shared_twiddles<T> twid{table + tw_reals<T> * (R - 1) * p};
     cdft<R>::template dif<T, Sign>(in, out, twid);
   } else {
@@ -242,11 +267,12 @@ FFTN_FORCE_INLINE auto lane_output(const pass_args* a, T* yp, std::ptrdiff_t leg
 // with masked partial runs: the last block of each group p, unit p blocks + blocks - 1,
 // copies q0 .. s - 1. The pass runs them after its loop over the other units, for the
 // reason given at grouped_tail; units are independent, so the order changes no bit.
-template <class T, std::size_t R, int Sign, bool Twiddled, edge_op OutOp, factor_sharing Share>
+template <class T, std::size_t R, int Sign, bool Twiddled, edge_op OutOp, factor_sharing Share,
+          bool Head>
 FFTN_FORCE_INLINE void lane_tails(const pass_args* a, const void* src, void* dst, std::size_t first,
                                   std::size_t last, std::size_t blocks) {
   const T* x = static_cast<const T*>(src);
-  T* y = static_cast<T*>(dst);
+  T* y = Head ? offset_by<T>(dst, a->dst_cols) : static_cast<T*>(dst);
   const std::ptrdiff_t ys = 2 * a->dst_stride;
   const std::size_t s = a->s;
   const T* table = static_cast<const T*>(a->twiddles);
@@ -267,7 +293,7 @@ FFTN_FORCE_INLINE void lane_tails(const pass_args* a, const void* src, void* dst
       g = (p * blocks + blocks - 1) / per_entry;
     }
     const std::size_t e0 = q0 + s * R * p;
-    lane_unit<T, R, Sign, Twiddled>(
+    lane_unit<T, R, Sign, Twiddled, Head>(
         lane_input<T, false, Share>(a, x + at(q0 + s * p, 2), in_leg, valid, p),
         lane_output<T, false, OutOp, Share>(a, y + at(e0, ys), out_leg, ys, valid, e0, f_leg, g),
         table, p);
@@ -286,13 +312,15 @@ FFTN_FORCE_INLINE void lane_tails(const pass_args* a, const void* src, void* dst
 // whose lanes are the copies), or output element e times out_factor's entry
 // e / factor_copies (output, the forward chain's last pass; C divides factor_copies).
 // src: scratch, stride 1; dst: any stride when C == 1, else 1. Reads src, dst_stride, m,
-// s, twiddles, scale, out_factor, and in_factor or factor_copies when sharing.
+// s, twiddles, scale, out_factor, and in_factor or factor_copies when sharing. Head (the last
+// pass of a line with stored runs, task 5.1e): only legs k < R/2 are stored (the plain_head
+// codelet), the line starting dst_cols bytes after dst.
 template <class T, std::size_t R, int Sign, bool Twiddled, edge_op OutOp,
-          factor_sharing Share = factor_sharing::none>
+          factor_sharing Share = factor_sharing::none, bool Head = false>
 void lane_pass(const pass_args* a, const void* src, void* dst, std::size_t first,
                std::size_t last) {
   const T* x = static_cast<const T*>(src);
-  T* y = static_cast<T*>(dst);
+  T* y = Head ? offset_by<T>(dst, a->dst_cols) : static_cast<T*>(dst);
   const std::ptrdiff_t ys = 2 * a->dst_stride;
   const std::size_t m = a->m;
   const std::size_t s = a->s;
@@ -325,11 +353,11 @@ void lane_pass(const pass_args* a, const void* src, void* dst, std::size_t first
     const std::size_t e0 = q0 + s * R * p;
     T* yp = y + at(e0, ys);
     if (valid == C<T>) {
-      lane_unit<T, R, Sign, Twiddled>(
+      lane_unit<T, R, Sign, Twiddled, Head>(
           lane_input<T, true, Share>(a, xp, in_leg, valid, p),
           lane_output<T, true, OutOp, Share>(a, yp, out_leg, ys, valid, e0, f_leg, g), table, p);
     } else if constexpr (!masked) {
-      lane_unit<T, R, Sign, Twiddled>(
+      lane_unit<T, R, Sign, Twiddled, Head>(
           lane_input<T, false, Share>(a, xp, in_leg, valid, p),
           lane_output<T, false, OutOp, Share>(a, yp, out_leg, ys, valid, e0, f_leg, g), table, p);
     }
@@ -347,7 +375,7 @@ void lane_pass(const pass_args* a, const void* src, void* dst, std::size_t first
   // The partial blocks, which the loop skipped on the targets with masked partial runs.
   if constexpr (masked) {
     if (s % C<T> != 0) {
-      lane_tails<T, R, Sign, Twiddled, OutOp, Share>(a, src, dst, first, last, blocks);
+      lane_tails<T, R, Sign, Twiddled, OutOp, Share, Head>(a, src, dst, first, last, blocks);
     }
   }
 }

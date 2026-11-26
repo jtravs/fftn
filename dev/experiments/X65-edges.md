@@ -388,7 +388,8 @@ acts:
   keys of `anchored_runs`). `none` everywhere else (Apple and other AArch64, Zen 4 and 5, the Ice
   Lake VM's large-L3 key, Granite and Sapphire Rapids, unknown topologies) until measured.
 - **The deciding run,** on the final code (after origin/main is merged): arms `O` = the `main`
-  this branch merges (the walked form for every plan with edges) and `N` = this branch's head
+  this branch merges (the walked form for every plan with edges; while PR 137, task 5.1e, is
+  merging, its head, which `main` becomes and which this branch merges) and `N` = this branch's head
   (the narrowed change, on by the machine's profile), plus fbench's control `O~`; runs E1, E2, E4
   and E5, catalogue `x65` tier `full`, one thread, on the EPYC (DMOG, shared `-c 8`) and the Xeon
   (`--serial`), as P1's runs.
