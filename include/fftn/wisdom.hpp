@@ -7,6 +7,7 @@
 #pragma once
 
 #include "fftn/config.hpp"
+#include "fftn/pipeline.hpp"
 #include "fftn/plan.hpp"
 
 #include <cstddef>
@@ -79,6 +80,18 @@ public:
   /// instruction set. A plan built with `options::use = &w` from the result rebuilds the
   /// same program on this machine, with bitwise identical results.
   template <class In, class Out> void add(const plan<In, Out>& p) { add_entry(entry_of(*p.core_)); }
+
+  /// Records the program of the pipeline `p` (fftn/pipeline.hpp), as `add` does for a plan: the
+  /// entry applies to the same description and options (the vocabulary's strides and scales,
+  /// a callback by its mode and scratch, not its function), library version, processor model
+  /// and instruction set. A pipeline built with `options::use = &w` from the result rebuilds the
+  /// same program on this machine, with bitwise identical results.
+  ///
+  /// Provisional (task 5.2g, dev/DESIGN.md 12.2): the overload may change before the first
+  /// release.
+  template <class In, class Mid, class Out> void add(const pipeline<In, Mid, Out>& p) {
+    add_entry(entry_of(*p.core_));
+  }
 
   /// The entries of `other` added one by one, as `add` does.
   void add(const wisdom& other);

@@ -8,7 +8,8 @@
 // other offsets in every round (placement_of) and, where the kernel offers transparent huge
 // pages, on 4 KiB pages and on huge pages in alternate rounds (page_memory.hpp); the
 // statistic is each candidate's median sample on the kind of memory it runs slower on. The budgets
-// are first guesses that experiment P2 (dev/experiments/P2-*.md) sets.
+// are first guesses that experiment P2 (dev/experiments/P2-*.md) sets. Pipelines (task 5.2g)
+// go through the same timing with their own candidates, the pairs (plan_pipeline_with_effort).
 
 #include "core/measure.hpp"
 
@@ -16,6 +17,7 @@
 #include "core/drive.hpp"
 #include "core/edge_driver.hpp"
 #include "core/edges.hpp"
+#include "core/pipeline.hpp"
 #include "core/plan_core.hpp"
 #include "core/wisdom_entry.hpp"
 #include "fftn/detail/core.hpp"
@@ -315,43 +317,60 @@ struct candidate {
   bool live = true;
 };
 
-// Scratch factor arrays for timing plans with edges (fftn/edges.hpp): each edge's array over
-// its span (factor_span) on the timing shape, filled with 1/2 (real parts) and 1/4 (imaginary
+// One factor array the timings need: its kind and the span [lo, hi] of elements its strides
+// reach from the address passed (none: no array), and the value of its real parts.
+struct factor_need {
+  factor_kind kind = factor_kind::none;
+  std::ptrdiff_t lo = 0;
+  std::ptrdiff_t hi = 0;
+  double value = 0.5;
+};
+
+// Scratch factor arrays for timing plans with edges (fftn/edges.hpp) and pipelines: each array
+// over its span on the timing shape, filled with `value` (real parts) and half of it (imaginary
 // parts), so that accumulation over many repetitions grows the output by a bounded amount per
 // execution.
 class factor_scratch {
 public:
-  factor_scratch(const shape_view& s, const edges_view& e) {
-    args_.in_factor = fill(s, e.in, false, in_);
-    args_.out_factor = fill(s, e.out, true, out_);
+  factor_scratch(precision p, const factor_need& in, const factor_need& out,
+                 const factor_need& mid) {
+    args_.in_factor = fill(p, in, in_);
+    args_.out_factor = fill(p, out, out_);
+    args_.mid_factor = fill(p, mid, mid_);
   }
+  factor_scratch(const shape_view& s, const edges_view& e)
+      : factor_scratch(s.prec, need(s, e.in, false), need(s, e.out, true), {}) {}
   [[nodiscard]] const exec_args& args() const { return args_; }
 
 private:
-  static const void* fill(const shape_view& s, const edge_view& e, bool output,
-                          aligned_buffer<std::byte>& buffer) {
-    if (e.kind == factor_kind::none) {
+  static factor_need need(const shape_view& s, const edge_view& e, bool output) {
+    const auto [lo, hi] = factor_span(s, e, output);
+    return {.kind = e.kind, .lo = lo, .hi = hi};
+  }
+
+  static const void* fill(precision p, const factor_need& f, aligned_buffer<std::byte>& buffer) {
+    if (f.kind == factor_kind::none) {
       return nullptr;
     }
-    const auto [lo, hi] = factor_span(s, e, output);
-    const std::size_t real = s.prec == precision::f64 ? sizeof(double) : sizeof(float);
-    const std::size_t width = e.kind == factor_kind::complex ? 2 : 1;
-    const auto elements = static_cast<std::size_t>(hi - lo + 1);
+    const std::size_t real = p == precision::f64 ? sizeof(double) : sizeof(float);
+    const std::size_t width = f.kind == factor_kind::complex ? 2 : 1;
+    const auto elements = static_cast<std::size_t>(f.hi - f.lo + 1);
     buffer = aligned_buffer<std::byte>(elements * width * real);
     for (std::size_t i = 0; i < elements * width; ++i) {
-      const double v = i % width == 0 ? 0.5 : 0.25;
-      if (s.prec == precision::f64) {
+      const double v = i % width == 0 ? f.value : f.value / 2;
+      if (p == precision::f64) {
         std::memcpy(buffer.data() + i * real, &v, sizeof v);
       } else {
-        const auto f = static_cast<float>(v);
-        std::memcpy(buffer.data() + i * real, &f, sizeof f);
+        const auto x = static_cast<float>(v);
+        std::memcpy(buffer.data() + i * real, &x, sizeof x);
       }
     }
-    return buffer.data() + static_cast<std::size_t>(-lo) * width * real;
+    return buffer.data() + static_cast<std::size_t>(-f.lo) * width * real;
   }
 
   aligned_buffer<std::byte> in_;
   aligned_buffer<std::byte> out_;
+  aligned_buffer<std::byte> mid_;
   exec_args args_;
 };
 
@@ -386,6 +405,30 @@ double time_once(const plan_core& c, scratch_data& d, std::size_t reps, const fa
 using plan_builder =
     std::function<std::shared_ptr<plan_core>(const shape_view&, const build_settings&)>;
 
+// What measure() times, apart from the budget: the candidates' choices in order (the rules'
+// first), a candidate built on the timing shape (`build_timing`, which may throw for a choice
+// the shape cannot take) and on the whole one (`build_full`, used when the timing shape is
+// reduced), the scratch factor arrays (`factors`; empty: none) and what the plan kept needs
+// once built (`finish`; empty: nothing).
+struct measure_job {
+  std::vector<plan_choice> choices;
+  bool same_shape = true;
+  std::function<std::shared_ptr<plan_core>(const build_settings&)> build_timing;
+  std::function<std::shared_ptr<plan_core>(const build_settings&)> build_full;
+  std::function<std::unique_ptr<factor_scratch>()> factors;
+  std::function<void(plan_core&, const build_settings&)> finish;
+};
+
+// The batch counts of the timing shape for the rules' plan (reduced_counts): its data, workspace
+// and tables within the scratch limit.
+std::vector<std::size_t> timing_counts(const plan_core& rules, std::size_t scratch_limit) {
+  const std::size_t rules_tables = table_bytes(rules);
+  const std::size_t rules_ws = workspace_bytes(rules, 1);
+  const std::size_t rules_kinds = page_kinds_for(rules, rules_ws);
+  return reduced_counts(rules.counts, rules_kinds * data_bytes(rules),
+                        rules_kinds * rules_ws + rules_tables, scratch_limit);
+}
+
 std::string fixed(double v, int digits) {
   std::ostringstream o;
   o.setf(std::ios::fixed);
@@ -403,28 +446,21 @@ struct measure_limits {
   std::size_t scratch;
 };
 
-std::shared_ptr<const plan_core>
-measure(const shape_view& s, const build_settings& settings, std::shared_ptr<plan_core> rules,
-        const budget& b, const measure_limits& limits, const std::string& wisdom_note,
-        planning_clock::time_point start, const plan_builder& build, const edges_view* edges,
-        const options& opts) {
-  const std::vector<plan_choice> choices = enumerate_candidates(*rules, settings, b.radix_choices);
+measure_limits limits_of(const options& opts, const budget& b) {
+  return {
+      .seconds = opts.measure_seconds > 0 ? opts.measure_seconds : b.seconds,
+      .scratch =
+          opts.measure_scratch_bytes != 0 ? opts.measure_scratch_bytes : default_scratch_bytes,
+  };
+}
 
-  // The candidates are timed on fewer transforms when the data, the workspace and the rules'
-  // tables would not fit the scratch limit.
-  const std::size_t rules_tables = table_bytes(*rules);
-  const std::size_t rules_ws = workspace_bytes(*rules, 1);
-  const std::size_t rules_kinds = page_kinds_for(*rules, rules_ws);
-  const std::vector<std::size_t> counts =
-      reduced_counts(rules->counts, rules_kinds * data_bytes(*rules),
-                     rules_kinds * rules_ws + rules_tables, limits.scratch);
-  const bool same_shape = counts == rules->counts;
-  std::vector<batch> reduced(s.batches.begin(), s.batches.end());
-  for (std::size_t i = 0; i < reduced.size(); ++i) {
-    reduced[i].count = counts[i];
-  }
-  shape_view timing = s;
-  timing.batches = reduced;
+std::shared_ptr<const plan_core> measure(const measure_job& job, const build_settings& settings,
+                                         std::shared_ptr<plan_core> rules, const budget& b,
+                                         const measure_limits& limits,
+                                         const std::string& wisdom_note,
+                                         planning_clock::time_point start) {
+  const std::vector<plan_choice>& choices = job.choices;
+  const bool same_shape = job.same_shape;
   const bool forced = settings.strategy != strategy_choice::rules || !settings.radices.empty() ||
                       !settings.grid_factors.empty() || settings.grid_phases != 0 ||
                       settings.rader >= 0;
@@ -447,7 +483,7 @@ measure(const shape_view& s, const build_settings& settings, std::shared_ptr<pla
     apply_choice(choice, cs);
     std::shared_ptr<plan_core> core;
     try {
-      core = same_shape && !forced && cands.empty() ? rules : build(timing, cs);
+      core = same_shape && !forced && cands.empty() ? rules : job.build_timing(cs);
     } catch (const std::exception&) {
       continue; // a candidate the shape cannot take; the rules' plan always builds
     }
@@ -483,8 +519,8 @@ measure(const shape_view& s, const build_settings& settings, std::shared_ptr<pla
       const plan_core& first = *cands.front().core;
       scratch = std::make_unique<scratch_data>(first, ws_bytes, page_kinds_for(first, ws_bytes));
       kinds_timed = scratch->kinds();
-      if (edges != nullptr) {
-        factors = std::make_unique<factor_scratch>(timing, *edges);
+      if (job.factors) {
+        factors = job.factors();
       }
     }
     const auto sample = [&](const candidate& c) {
@@ -569,11 +605,11 @@ measure(const shape_view& s, const build_settings& settings, std::shared_ptr<pla
   build_settings cs = settings;
   apply_choice(w.choice, cs);
   if (!same_shape) {
-    final_core = build(s, cs);
+    final_core = job.build_full(cs);
   }
   // For a measured plan, the kept candidate's settings stand for the rules.
-  if (edges != nullptr) {
-    name_forced_strategy(*final_core, s, opts, *edges, cs);
+  if (job.finish) {
+    job.finish(*final_core, cs);
   }
   final_core->program_text = choice_text(pinned_choice(w.choice, *final_core));
   final_core->planning_seconds = seconds_since(start);
@@ -645,12 +681,152 @@ std::shared_ptr<const plan_core> plan_with_effort(const shape_view& s, const opt
     return rules;
   }
   const budget& b = opts.effort == planning::quick ? quick_budget : measure_budget;
-  const measure_limits limits{
-      .seconds = opts.measure_seconds > 0 ? opts.measure_seconds : b.seconds,
-      .scratch =
-          opts.measure_scratch_bytes != 0 ? opts.measure_scratch_bytes : default_scratch_bytes,
+  const measure_limits limits = limits_of(opts, b);
+  // The candidates are timed on fewer transforms when the data, the workspace and the rules'
+  // tables would not fit the scratch limit.
+  const std::vector<std::size_t> counts = timing_counts(*rules, limits.scratch);
+  std::vector<batch> reduced(s.batches.begin(), s.batches.end());
+  for (std::size_t i = 0; i < reduced.size(); ++i) {
+    reduced[i].count = counts[i];
+  }
+  shape_view timing = s;
+  timing.batches = reduced;
+  measure_job job{
+      .choices = enumerate_candidates(*rules, settings, b.radix_choices),
+      .same_shape = counts == rules->counts,
+      .build_timing = [&](const build_settings& cs) { return build(timing, cs); },
+      .build_full = [&](const build_settings& cs) { return build(s, cs); },
+      .factors = {},
+      .finish = {},
   };
-  return measure(s, settings, std::move(rules), b, limits, wisdom_note, start, build, edges, base);
+  if (edges != nullptr) {
+    job.factors = [&] { return std::make_unique<factor_scratch>(timing, *edges); };
+    job.finish = [&](plan_core& c, const build_settings& cs) {
+      name_forced_strategy(c, s, base, *edges, cs);
+    };
+  }
+  return measure(job, settings, std::move(rules), b, limits, wisdom_note, start);
+}
+
+namespace {
+
+// The factor array of one of a pipeline's edges on its timing description: the span its strides
+// reach over the side's `length` points along the line, the batch dimensions and, for the
+// middle (`middle`), the fan-out copies. The middle's values are scaled by 1/n, so that an
+// execution in place (two unnormalised transforms) grows the line no more than a plan's one
+// transform does (reps_cap).
+factor_need pipeline_need(const pipeline_view& d, const edge_view& e, std::size_t length,
+                          bool middle) {
+  if (e.kind == factor_kind::none) {
+    return {};
+  }
+  std::ptrdiff_t lo = 0;
+  std::ptrdiff_t hi = 0;
+  const auto reach = [&](std::ptrdiff_t stride, std::size_t extent) {
+    if (extent > 1) {
+      const std::ptrdiff_t last = stride * static_cast<std::ptrdiff_t>(extent - 1);
+      lo += std::min<std::ptrdiff_t>(last, 0);
+      hi += std::max<std::ptrdiff_t>(last, 0);
+    }
+  };
+  reach(e.axis_strides.empty() ? 0 : e.axis_strides[0], length);
+  for (std::size_t b = 0; b < d.batches.size() && b < e.batch_strides.size(); ++b) {
+    reach(e.batch_strides[b], d.batches[b].count);
+  }
+  if (middle) {
+    reach(d.fanout_factor_dist, d.fanout);
+  }
+  return {.kind = e.kind,
+          .lo = lo,
+          .hi = hi,
+          .value = middle ? 0.5 / static_cast<double>(std::max<std::size_t>(d.line.n, 1)) : 0.5};
+}
+
+// The candidates of a pipeline (task 5.2g, X67): the rules' pair, then the chain, depth-first
+// and lanes pairs, each forced (a pair the description cannot take is not a candidate).
+std::vector<plan_choice> pipeline_choices() {
+  return {plan_choice{}, plan_choice{.strategy = strategy_choice::chain},
+          plan_choice{.strategy = strategy_choice::depth},
+          plan_choice{.strategy = strategy_choice::lanes}};
+}
+
+} // namespace
+
+std::shared_ptr<const plan_core> plan_pipeline_with_effort(const pipeline_view& d,
+                                                           const options& opts,
+                                                           const build_settings& settings,
+                                                           const pipeline_builder& build) {
+  options base = opts;
+  base.use = nullptr;
+  base.effort = planning::rules;
+  const auto start = planning_clock::now();
+  std::string wisdom_note;
+  if (opts.use != nullptr) {
+    // As a plan's entry (plan_with_effort): found without building the rules' pipeline, then
+    // its program built and checked.
+    const std::string place =
+        wisdom_place(isa_name(static_cast<isa>(static_cast<unsigned char>(plan_target_of(base)))),
+                     pipeline_key(d, base));
+    if (const std::optional<wisdom_record> e = find_entry(*opts.use, place)) {
+      try {
+        if (const std::optional<plan_choice> choice = parse_choice(e->program)) {
+          build_settings cs = settings;
+          apply_choice(*choice, cs);
+          std::shared_ptr<plan_core> core = build(d, base, cs);
+          if (program_fingerprint(*core) == e->check && core->program_text == e->program) {
+            core->planning_note = "from wisdom: " + e->program;
+            return core;
+          }
+        }
+      } catch (const std::exception&) { // NOLINT(bugprone-empty-catch): noted just below
+        // A program this build cannot make: stale, ignored, as for plans.
+      }
+      wisdom_note =
+          "a wisdom entry for this pipeline does not rebuild its program here (ignored); ";
+    }
+  }
+  std::shared_ptr<plan_core> rules = build(d, base, settings);
+  if (opts.effort == planning::rules) {
+    rules->planning_note = wisdom_note.empty() ? "" : wisdom_note + "the rules' choice";
+    return rules;
+  }
+  const budget& b = opts.effort == planning::quick ? quick_budget : measure_budget;
+  const measure_limits limits = limits_of(opts, b);
+  const std::vector<std::size_t> counts = timing_counts(*rules, limits.scratch);
+  std::vector<batch> reduced(d.batches.begin(), d.batches.end());
+  for (std::size_t i = 0; i < reduced.size(); ++i) {
+    reduced[i].count = counts[i];
+  }
+  pipeline_view timing = d;
+  timing.batches = reduced;
+  // A forced pair the description cannot take builds another pair: not a candidate of its own.
+  const auto build_pair = [&](const pipeline_view& desc, const build_settings& cs) {
+    std::shared_ptr<plan_core> core = build(desc, base, cs);
+    if (cs.strategy != strategy_choice::rules && core->built != cs.strategy) {
+      throw std::invalid_argument("fftn: internal: the pair is not built for this pipeline");
+    }
+    return core;
+  };
+  // The sides' lengths along the line: n, or the half spectrum's n/2 + 1 bins.
+  const std::size_t n = d.line.n;
+  const std::size_t half = n / 2 + 1;
+  const bool r2c_first = d.kind == pipeline_kind::real_convolution;
+  const bool c2r_first = d.kind == pipeline_kind::real_middle;
+  const measure_job job{
+      .choices = pipeline_choices(),
+      .same_shape = counts == rules->counts,
+      .build_timing = [&](const build_settings& cs) { return build_pair(timing, cs); },
+      .build_full = [&](const build_settings& cs) { return build(d, base, cs); },
+      .factors =
+          [&] {
+            return std::make_unique<factor_scratch>(
+                d.prec, pipeline_need(timing, d.prologue, c2r_first ? half : n, false),
+                pipeline_need(timing, d.epilogue, c2r_first ? half : n, false),
+                pipeline_need(timing, d.middle, r2c_first ? half : n, true));
+          },
+      .finish = {},
+  };
+  return measure(job, settings, std::move(rules), b, limits, wisdom_note, start);
 }
 
 } // namespace fftn::inline v0::detail

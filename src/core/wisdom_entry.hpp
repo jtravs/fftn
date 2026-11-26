@@ -63,4 +63,10 @@ struct wisdom_record {
 // (0 for a default). The instruction set is a field of its own.
 [[nodiscard]] std::string shape_key(const shape_view& s, const options& opts);
 
+// A pipeline description and its options as one line of text (task 5.2g): "pipeline", the kind,
+// then the line's shape_key (its first direction, line, batches and runs), the fan-out and the
+// group, and the prologue's, epilogue's and middle's vocabulary as a plan's edges are keyed (a
+// callback by its mode and scratch, not its function).
+[[nodiscard]] std::string pipeline_key(const pipeline_view& d, const options& opts);
+
 } // namespace fftn::inline v0::detail

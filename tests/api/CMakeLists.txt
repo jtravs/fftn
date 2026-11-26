@@ -43,6 +43,9 @@ fftn_always_optimise(pipeline_fanout_test.cpp)
 fftn_add_test(fftn_pipeline_lanes_tests SOURCES pipeline_lanes_test.cpp
               LIBRARIES fftn_test_support)
 fftn_always_optimise(pipeline_lanes_test.cpp)
+# Measured planning and wisdom for row pipelines (task 5.2g).
+fftn_add_test(fftn_pipeline_planning_tests SOURCES pipeline_planning_test.cpp
+              LIBRARIES fftn_test_support)
 # Groups on row pipelines (task 5.3f), likewise.
 fftn_add_test(fftn_pipeline_group_tests SOURCES pipeline_group_test.cpp
               LIBRARIES fftn_test_support)

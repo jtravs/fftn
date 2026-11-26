@@ -298,8 +298,12 @@ spectral_pair_rows(std::size_t n, std::size_t count, direction first,
 ///
 /// Options: `scale` (a shortcut for `epilogue.scale`, refused when both are other than 1),
 /// `force_isa` and `in_place` (allowed without accumulation: each line lives in the workspace
-/// between its read and its store). `effort` and `use` are ignored: pipelines are planned by
-/// the rules until task 5.2g, and `describe()` says so.
+/// between its read and its store), and `effort`, `use`, `measure_seconds` and
+/// `measure_scratch_bytes` as for a plan (task 5.2g, provisional): with `planning::quick` or
+/// `planning::measure` construction times the pairs the description can take (the rules' pair,
+/// the chain, depth-first and lanes pairs) on scratch data and scratch factor arrays, the
+/// callbacks as stand-ins that do nothing, and keeps the fastest; `use` rebuilds a pipeline's
+/// program recorded by `wisdom::add` for the same description and options, untimed.
 ///
 /// With fan-out (`pipeline_desc::fanout`) each line's spectrum stays in the workspace while its
 /// copies run; a team shares a line's copies where each copy writes its output itself, and runs
@@ -454,6 +458,7 @@ private:
   }
 
   std::shared_ptr<const detail::plan_core> core_;
+  friend class wisdom; // wisdom::add reads the program
 };
 
 } // namespace fftn::inline v0

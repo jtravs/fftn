@@ -43,6 +43,7 @@
 #include "strategies/chain.hpp"
 
 #include <cstddef>
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -143,7 +144,23 @@ void row_output_with_callback(precision prec, bool real, const edge_side& out, s
 
 // make_pipeline_core (fftn/detail/core.hpp) with construction knobs (tests): the settings' chain
 // rules (radices, leaf limit, layout, Bluestein and Rader) and profile apply to both chains.
+// options::use and options::effort as for plans (task 5.2g): a wisdom entry for the description,
+// else the rules' pipeline, or with quick or measure the fastest of the candidates
+// (plan_pipeline_with_effort).
 [[nodiscard]] std::shared_ptr<const plan_core>
 make_pipeline_core(const pipeline_view& desc, const options& opts, const build_settings& settings);
+
+// Builds a pipeline as the settings describe, ignoring options::effort and options::use.
+using pipeline_builder = std::function<std::shared_ptr<plan_core>(
+    const pipeline_view&, const options&, const build_settings&)>;
+
+// Measured planning and wisdom for pipelines (core/measure.cpp; task 5.2g, DESIGN.md 12.2):
+// options::use, then options::effort, as plan_with_effort does for plans. The candidates are the
+// rules' pair and the chain, depth-first and lanes pairs forced (each where the description can
+// take it), timed on scratch data and scratch factor arrays (the kernel's among them; callbacks
+// as stand-ins); a wisdom entry is keyed by the description (pipeline_key).
+[[nodiscard]] std::shared_ptr<const plan_core>
+plan_pipeline_with_effort(const pipeline_view& desc, const options& opts,
+                          const build_settings& settings, const pipeline_builder& build);
 
 } // namespace fftn::inline v0::detail
