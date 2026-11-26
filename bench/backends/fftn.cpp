@@ -296,7 +296,7 @@ struct session {
   edge_spec edge_in;                  // EDGE_IN
   edge_spec edge_out;                 // EDGE_OUT
   bool edge_loop = false;             // EDGE_ARM=loop: a plain plan and the user's own loops
-  call_work call = call_work::none;   // EDGE_CALL
+  call_work work = call_work::none;   // EDGE_CALL
   bool call_out = true;               // CALL_SIDE=out (default) or in
   fftn::callback_mode call_mode = fftn::callback_mode::modify; // CALL_MODE
   call_build build = call_build::clones;                       // CALL_BUILD
@@ -1372,7 +1372,7 @@ std::shared_ptr<const detail::plan_core> make_call_core(const fbench_case& c,
   }
   r.single = c.precision == fbench_f32;
   r.loop = s.edge_loop;
-  r.user.work = s.call;
+  r.user.work = s.work;
   r.user.mode = s.call_mode;
   r.user.side = side_of(sh, c, edge_spec{}, s.call_out);
   for (std::size_t d = 0; d < r.user.side.rank; ++d) {
@@ -1777,7 +1777,7 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
         say(message, message_size, "EDGE_CALL is identity, cubic or exp");
         return fbench_error;
       }
-      s.call = value == "identity" ? call_work::identity
+      s.work = value == "identity" ? call_work::identity
                : value == "cubic"  ? call_work::cubic
                                    : call_work::exp;
       s.call_text = value;
@@ -1991,7 +1991,7 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
     say(message, message_size, "GROUP_SIZE and CALL need THREADS");
     return fbench_error;
   }
-  const bool calls = s.call != call_work::none;
+  const bool calls = s.work != call_work::none;
   if (s.edge_loop && !s.edge_in.any() && !s.edge_out.any() && !calls) {
     say(message, message_size, "EDGE_ARM needs EDGE_IN, EDGE_OUT or EDGE_CALL");
     return fbench_error;
@@ -2173,7 +2173,7 @@ std::int32_t fbench_create(const fbench_case* c, void* /*in*/, void* out, void**
       *plan = record.release();
       return fbench_ok;
     }
-    const bool calls = s.call != call_work::none;
+    const bool calls = s.work != call_work::none;
     const bool edges = s.edge_in.any() || s.edge_out.any() || calls;
     if (calls) {
       record->edge_mode = s.mode;
