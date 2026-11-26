@@ -15,6 +15,8 @@
 #include "core/plan_core.hpp"
 #include "core/wisdom_entry.hpp"
 #include "fftn/detail/core.hpp"
+#include "isa/kernel_table.hpp"
+#include "planner/rules.hpp"
 #include "reference/reference_dft.hpp"
 #include "support/exact.hpp"
 #include "support/fftn_subject.hpp"
@@ -32,8 +34,10 @@
 #include <cstddef>
 #include <cstring>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <numeric>
+#include <optional>
 #include <span>
 #include <string>
 #include <thread>
@@ -90,6 +94,9 @@ struct shape_case {
   std::size_t outer = 1;
   std::ptrdiff_t outer_gap = 0;
   std::ptrdiff_t stride = 1;
+  // Out of place, the input's strides and distances times in_stride as well (only the input
+  // strided).
+  std::ptrdiff_t in_stride = 1;
 };
 
 std::size_t transforms(const shape_case& c) { return c.count * c.outer; }
@@ -365,11 +372,12 @@ template <class T> struct shape_run {
       lout = c.in_place ? lin : tight_layout(out_dims, c.count, c.gap);
       if (!c.in_place) {
         for (layout* l : {&lin, &lout}) {
+          const std::ptrdiff_t times = c.stride * (l == &lin ? c.in_stride : 1);
           for (std::ptrdiff_t& st : l->stride) {
-            st *= c.stride;
+            st *= times;
           }
-          l->dist *= c.stride;
-          l->span *= static_cast<std::size_t>(c.stride);
+          l->dist *= times;
+          l->span *= static_cast<std::size_t>(times);
         }
       }
     }
@@ -1360,6 +1368,269 @@ TYPED_TEST(EdgeShapes, EveryStrategyForced) {
   forced_strategies<TypeParam>(fftn::isa::best, true);
 }
 
+// A plan whose edges keep it from the strategy of the plan without them (task 5.1c): the case,
+// the knobs that make the plain plan take that strategy, the start of its name
+// (plan_core::strategy_name) and the reason describe() must give.
+struct forced_line {
+  shape_case c;
+  fftn::detail::build_settings settings;
+  const char* plain;
+  const char* reason;
+};
+
+// Whether the plain plan of `f` takes the strategy f.plain on target t; if so, describe() of the
+// plan with the edges names it, the strategy taken instead and the reason, and the plan computes
+// the transform (run_case).
+template <class T, transform_kind K> bool forced_line_holds(const forced_line& f, fftn::isa t) {
+  namespace d = fftn::detail;
+  using C = std::complex<T>;
+  using In = std::conditional_t<K == transform_kind::r2c, T, C>;
+  using Out = std::conditional_t<K == transform_kind::c2r, T, C>;
+  fftn::test::input_source src(0x5C1ULL);
+  const shape_run<T> run(f.c, t, src);
+  const fftn::shape<In, Out> s = run.template shape<In, Out>();
+  const fftn::plan_edges<In, Out> e = run.template edges<In, Out>();
+  const auto plain = d::build_plan_core(d::view_of(s), run.opts, f.settings);
+  if (!plain->strategy_name.starts_with(f.plain)) {
+    return false;
+  }
+  const auto core =
+      d::make_plan_core_with_edges(d::view_of(s), run.opts, d::view_of(e), f.settings);
+  const std::string text = d::describe(*core);
+  const std::string what =
+      std::string(f.c.name) + ", " + fftn::isa_name(t) + (sizeof(T) == 8 ? " double" : " float");
+  EXPECT_NE(core->strategy_name, plain->strategy_name) << what << "\n" << text;
+  const std::string line = "\nnot the strategy the rules would choose: " + plain->strategy_name +
+                           " without the edges, " + core->strategy_name +
+                           " with them: " + f.reason + "\n";
+  EXPECT_NE(text.find(line), std::string::npos) << what << ": no '" << line << "' in\n" << text;
+  run_case<T, K>(f.c, t, false, true, &f.settings, f.reason);
+  return true;
+}
+
+// Each case in which an edge keeps a plan from the strategy the rules (or a test's knobs) give
+// the same plan without edges: describe() says which, which it takes instead and why (task
+// 5.1c). The strategies come from knobs and explicit profile fields, so the cases hold on every
+// target, except batch leaves, which only some targets' precisions have.
+TYPED_TEST(EdgeShapes, DescribeNamesTheStrategyAnEdgeForces) {
+  using T = TypeParam;
+  using enum transform_kind;
+  namespace d = fftn::detail;
+  d::build_settings adjacent;
+  adjacent.profile.adjacent_lanes = true;
+  adjacent.profile.adjacent_min_bytes = 0;
+  adjacent.profile.adjacent_team_chain = false;
+  adjacent.profile.column_team_bytes = 0;
+  adjacent.profile.column_wide_bytes = 0;
+  d::build_settings grid;
+  grid.strategy = d::strategy_choice::grid;
+  d::build_settings depth;
+  depth.strategy = d::strategy_choice::depth;
+  d::build_settings leaves;
+  leaves.batch_leaves = d::batch_leaf_choice::own;
+  d::build_settings packed;
+  packed.c2r_packed = 1;
+  const std::vector<forced_line> every_target{
+      {{.name = "rows as adjacent transforms, accumulated",
+        .kind = c2c,
+        .dims = {128},
+        .count = 32,
+        .in = {real, {}, 1},
+        .accumulate = true,
+        .adjacent = true},
+       adjacent,
+       "the lanes over adjacent transforms",
+       "accumulation takes no lanes over adjacent transforms"},
+      {{.name = "planes as adjacent transforms, accumulated",
+        .kind = c2c,
+        .dims = {8, 12},
+        .count = 8,
+        .out = {cplx, {}, 1},
+        .accumulate = true,
+        .adjacent = true},
+       adjacent,
+       "the lanes over adjacent transforms",
+       "accumulation takes no lanes over adjacent transforms"},
+      {{.name = "c2r half-length grid, input factor",
+        .kind = c2r,
+        .dims = {2048},
+        .count = 2,
+        .in = {cplx, {}, 1}},
+       grid,
+       "the half-length grid",
+       "a real row's input edge takes no grid here"},
+      {{.name = "c2r half-length depth-first, input factor",
+        .kind = c2r,
+        .dims = {2048},
+        .count = 1,
+        .in = {real, {-1}, 1},
+        .out = {real, {}, 1}},
+       depth,
+       "the half-length depth-first chain",
+       "a c2r row's input edge takes no depth-first chain"},
+      {{.name = "c2r plane packed, output factor",
+        .kind = c2r,
+        .dims = {16, 32},
+        .count = 2,
+        .out = {real, {1, -1}, 1}},
+       packed,
+       "each axis in turn, the intermediate packed in the output",
+       "an edge phase takes no intermediate packed in the output"},
+  };
+  // These take batch leaves, which only some targets' precisions have (and the last one also
+  // the rules' lanes over rows, x86 in float): each must hold on every target whose tables say
+  // it can, so that none goes untested where it applies.
+  d::build_settings chain_leaves = leaves;
+  chain_leaves.strategy = d::strategy_choice::chain;
+  struct batch_line {
+    forced_line f;
+    bool rules_lanes; // the plain plan is the rules' lanes over rows
+  };
+  const std::vector<batch_line> batch_targets{
+      {{{.name = "batch leaves, real factor",
+         .kind = c2c,
+         .dims = {8},
+         .count = 16,
+         .in = {real, {}, 1}},
+        leaves,
+        "the chain on batch leaves",
+        "batch leaves, one row at a time between the edge passes"},
+       false},
+      {{{.name = "batch leaves, fused complex factor",
+         .kind = c2c,
+         .dims = {16},
+         .count = 16,
+         .out = {cplx, {}, 1}},
+        leaves,
+        "the chain on batch leaves",
+        "the chain with a fused factor takes no batch leaves"},
+       false},
+      // The input strided, the output not: the input edge's pass moves the rows into the
+      // output, where batch leaves are found that the plain plan's strided rows cannot take.
+      // The move is the cause, not batch leaves (which the plain plan does not have).
+      {{{.name = "strided input, batch leaves after the input edge's pass",
+         .kind = c2c,
+         .dims = {8},
+         .count = 16,
+         .in = {real, {}, 1},
+         .in_stride = 2},
+        chain_leaves,
+        "the chain",
+        "the input edge's pass leaves the rows in the output, where the strategy is chosen in "
+        "place"},
+       false},
+      // Likewise with a fused input factor: the separate passes' plan is then the chain on
+      // batch leaves, so the plan is the fused chain, which has no input pass.
+      {{{.name = "strided input, lanes, fused input factor",
+         .kind = c2c,
+         .dims = {16},
+         .count = 16,
+         .in = {cplx, {}, 1},
+         .in_stride = 2},
+        leaves,
+        "the lanes over rows",
+        "the strategy is chosen for the rows where an input edge's pass would leave them, the "
+        "chain, which takes the factor fused instead"},
+       true},
+  };
+  const auto holds = [](const forced_line& f, fftn::isa t) {
+    switch (f.c.kind) {
+    case c2c:
+      return forced_line_holds<T, c2c>(f, t);
+    case r2c:
+      return forced_line_holds<T, r2c>(f, t);
+    case c2r:
+      break;
+    }
+    return forced_line_holds<T, c2r>(f, t);
+  };
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    for (const forced_line& f : every_target) {
+      EXPECT_TRUE(holds(f, t)) << f.c.name << ", " << fftn::isa_name(t)
+                               << ": the plain plan takes another strategy";
+    }
+    const auto target = static_cast<d::target>(static_cast<unsigned char>(t));
+    for (const batch_line& b : batch_targets) {
+      // The target's own batch leaves of the row's length in this precision (batch_leaves_of).
+      const std::size_t n = b.f.c.dims[0];
+      const d::batch_leaf_table* table = d::find_batch_leaves(target, n);
+      const std::size_t lanes = table != nullptr ? d::of<T>(*table).lanes : 1;
+      const bool applies =
+          lanes > 1 && (!b.rules_lanes || n <= d::profile_of(target, lanes).lanes_up_to);
+      if (applies) {
+        EXPECT_TRUE(holds(b.f, t))
+            << b.f.c.name << ", " << fftn::isa_name(t) << ": the plain plan takes another strategy";
+      }
+    }
+  }
+}
+
+// The separate passes an edge costs, as describe() counts them (task 5.1c): none for a fused
+// factor, one per separate factor or accumulation, and one more where accumulation saves the
+// output's prior values before a strategy that writes the output.
+TYPED_TEST(EdgeShapes, DescribeCountsTheSeparatePasses) {
+  using T = TypeParam;
+  using enum transform_kind;
+  namespace d = fftn::detail;
+  d::build_settings chain;
+  chain.strategy = d::strategy_choice::chain;
+  d::build_settings lanes;
+  lanes.strategy = d::strategy_choice::lanes;
+  struct counted {
+    shape_case c;
+    const d::build_settings* settings;
+    const char* cost;
+  };
+  const std::vector<counted> cases{
+      {{.name = "c2c chain, fused factors",
+        .kind = c2c,
+        .dims = {64},
+        .count = 4,
+        .in = {cplx, {}, 1},
+        .out = {cplx, {}, 0}},
+       &chain,
+       "; they cost no separate pass\n"},
+      {{.name = "c2c chain, real input factor",
+        .kind = c2c,
+        .dims = {64},
+        .count = 4,
+        .in = {real, {}, 1}},
+       &chain,
+       "; they cost 1 separate pass\n"},
+      {{.name = "c2c lanes, both factors",
+        .kind = c2c,
+        .dims = {16},
+        .count = 7,
+        .in = {cplx, {}, 1},
+        .out = {real, {1}, -1}},
+       &lanes,
+       "; they cost 2 separate passes\n"},
+      {{.name = "c2c lanes, input factor, accumulated",
+        .kind = c2c,
+        .dims = {12},
+        .count = 9,
+        .in = {real, {-1}, 1},
+        .accumulate = true},
+       &lanes,
+       "the output's prior values saved in a pass before it; they cost 3 separate passes\n"},
+      {{.name = "plane, both factors, accumulated",
+        .kind = c2c,
+        .dims = {12, 10},
+        .count = 3,
+        .in = {cplx, {}, 1},
+        .out = {real, {1, -1}, 0},
+        .accumulate = true},
+       nullptr,
+       "; they cost 2 separate passes\n"},
+  };
+  d::build_settings rules;
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    for (const counted& c : cases) {
+      run_case<T, c2c>(c.c, t, false, true, c.settings != nullptr ? c.settings : &rules, c.cost);
+    }
+  }
+}
+
 // A stand-in for measured planning's clock (build_settings::measure_time): the first candidate
 // asked for after the rules' choice is twice as fast as every other.
 struct first_wins {
@@ -1477,6 +1748,586 @@ TEST(EdgeShapesDeathTest, MissingFactorArraysAbort) {
   const std::vector<double> f(32);
   EXPECT_DEATH(r.execute(xr.data(), y.data(), ws, {.out_factor = f.data()}),
                "without the factor arrays");
+}
+
+// Stored runs (shape::runs, DESIGN.md 12.1; task 5.1d). A case: a kind, the logical lengths
+// in C order, the runs (their axes C-ordered indices), and the layout's gap after each
+// transform; the shape lists the axes in C order with default strides, which span each axis's
+// stored extent on a side with runs there, or (`listed` not empty) C axis listed[i] as its axis
+// i, with those strides given, so that the plan orders the axes back (order_axes).
+struct runs_case {
+  const char* name = "";
+  transform_kind kind = transform_kind::c2c;
+  dims_t dims{};
+  std::size_t count = 1;
+  std::vector<fftn::stored_run> runs{};
+  fftn::direction dir = fftn::direction::forward;
+  double scale = 1.0;
+  bool accumulate = false;
+  std::ptrdiff_t gap = 0;
+  std::vector<std::size_t> listed{};
+};
+
+// One side of a run case: its logical lengths, stored extents and tight strides by them, and
+// which logical positions its runs hold.
+struct run_side {
+  dims_t logical;
+  dims_t stored;
+  strides_t stride;
+  std::ptrdiff_t dist = 0;
+  std::size_t span = 0;
+  std::vector<std::vector<fftn::stored_run>> runs; // per axis
+
+  run_side(const runs_case& c, bool output)
+      : logical(side_dims(shape_case{.kind = c.kind, .dims = c.dims}, output)) {
+    const std::size_t r = logical.size();
+    runs.resize(r);
+    stored = logical;
+    for (const fftn::stored_run& run : c.runs) {
+      if ((run.where == fftn::side::out) == output) {
+        runs[run.axis].push_back(run);
+      }
+    }
+    for (std::size_t a = 0; a < r; ++a) {
+      if (!runs[a].empty()) {
+        stored[a] = 0;
+        for (const fftn::stored_run& run : runs[a]) {
+          stored[a] = std::max(stored[a], run.stored + run.count);
+        }
+      }
+    }
+    stride.assign(r, 1);
+    for (std::size_t a = r - 1; a > 0; --a) {
+      stride[a - 1] = stride[a] * static_cast<std::ptrdiff_t>(stored[a]);
+    }
+    dist = stride[0] * static_cast<std::ptrdiff_t>(stored[0]) + c.gap;
+    span = static_cast<std::size_t>(dist) * c.count;
+  }
+
+  // The stored index of logical position j of transform b, or none when a run does not hold it.
+  [[nodiscard]] std::optional<std::size_t> at(const dims_t& j, std::size_t b) const {
+    std::ptrdiff_t i = static_cast<std::ptrdiff_t>(b) * dist;
+    for (std::size_t a = 0; a < j.size(); ++a) {
+      std::size_t pos = j[a];
+      if (!runs[a].empty()) {
+        const auto it = std::ranges::find_if(runs[a], [&](const fftn::stored_run& run) {
+          return j[a] >= run.logical && j[a] < run.logical + run.count;
+        });
+        if (it == runs[a].end()) {
+          return std::nullopt;
+        }
+        pos = it->stored + (j[a] - it->logical);
+      }
+      i += static_cast<std::ptrdiff_t>(pos) * stride[a];
+    }
+    return static_cast<std::size_t>(i);
+  }
+};
+
+// The plan of a run case, executed serially, in two pieces, by teams of three (completion all
+// and own) and on a pool of three, from the same buffers: all bitwise alike; the serial result
+// against the reference of the logical input (zeros outside the input's runs) at the output's
+// runs; every input element outside the runs a NaN that must not be read; no output element
+// outside the runs written; the input unwritten.
+template <class T, transform_kind K> void run_runs_case(const runs_case& c, fftn::isa target) {
+  using C = std::complex<T>;
+  using In = std::conditional_t<K == transform_kind::r2c, T, C>;
+  using Out = std::conditional_t<K == transform_kind::c2r, T, C>;
+  ASSERT_EQ(c.kind, K);
+  const std::string what =
+      std::string(c.name) + ", " + fftn::isa_name(target) + (sizeof(T) == 8 ? " double" : " float");
+  SCOPED_TRACE(what);
+  const run_side in(c, false);
+  const run_side out(c, true);
+  const std::size_t win = c.kind == transform_kind::r2c ? 1 : 2;
+  const std::size_t wout = c.kind == transform_kind::c2r ? 1 : 2;
+  fftn::test::input_source src(0x9A5ULL + product(c.dims) * 3 + c.runs.size());
+  // The input: NaN where no run holds a stored element (never to be read).
+  std::vector<T> x(in.span * win, std::numeric_limits<T>::quiet_NaN());
+  for (std::size_t b = 0; b < c.count; ++b) {
+    each(in.logical, [&](const dims_t& j) {
+      if (const auto i = in.at(j, b)) {
+        for (std::size_t k = 0; k < win; ++k) {
+          x[*i * win + k] = static_cast<T>(src.uniform());
+        }
+      }
+    });
+  }
+  std::vector<T> init = src.reals<T>(out.span * wout);
+
+  fftn::shape<In, Out> s;
+  s.dir = c.dir;
+  if (c.listed.empty()) {
+    for (const std::size_t n : c.dims) {
+      s.axes.push_back({.n = n});
+    }
+    s.batches = {{.count = c.count,
+                  .in_dist = c.gap != 0 ? in.dist : 0,
+                  .out_dist = c.gap != 0 ? out.dist : 0}};
+    s.runs = c.runs;
+  } else {
+    for (const std::size_t a : c.listed) {
+      s.axes.push_back({.n = c.dims[a], .in_stride = in.stride[a], .out_stride = out.stride[a]});
+    }
+    s.batches = {{.count = c.count, .in_dist = in.dist, .out_dist = out.dist}};
+    for (fftn::stored_run run : c.runs) {
+      run.axis = static_cast<std::size_t>(std::ranges::find(c.listed, run.axis) - c.listed.begin());
+      s.runs.push_back(run);
+    }
+  }
+  fftn::plan_edges<In, Out> edges;
+  edges.out.accumulate = c.accumulate;
+  const fftn::plan<In, Out> p(s, {.scale = c.scale, .force_isa = target}, edges);
+  const std::string text = p.describe();
+  EXPECT_NE(text.find("stored runs:"), std::string::npos) << text;
+
+  const std::vector<T> x0 = x;
+  fftn::workspace ws(p.workspace_bytes(3));
+  std::vector<T> serial = init;
+  p.execute(reinterpret_cast<const In*>(x.data()), reinterpret_cast<Out*>(serial.data()), ws);
+  // NaN never equals itself, so the input is compared bit for bit.
+  EXPECT_TRUE(same_bits(x, x0)) << "input written";
+
+  fftn::test::outcome o;
+  std::vector<bool> described(serial.size(), false);
+  const std::size_t points = product(c.dims);
+  const shape_case as_case{.kind = c.kind, .dims = c.dims, .dir = c.dir};
+  for (std::size_t b = 0; b < c.count; ++b) {
+    std::vector<cd> xin(product(in.logical));
+    each(in.logical, [&](const dims_t& j) {
+      if (const auto i = in.at(j, b)) {
+        xin[flat(in.logical, j)] =
+            win == 1 ? cd(static_cast<double>(x[*i]), 0.0)
+                     : cd(static_cast<double>(x[2 * *i]), static_cast<double>(x[2 * *i + 1]));
+      }
+    });
+    const std::vector<cd> exact = reference(as_case, xin);
+    std::vector<fftn::test::exact_complex> want;
+    std::vector<C> got;
+    each(out.logical, [&](const dims_t& j) {
+      const auto i = out.at(j, b);
+      if (!i) {
+        return;
+      }
+      cd v = exact[flat(out.logical, j)] * c.scale;
+      const cd prior =
+          wout == 1 ? cd(static_cast<double>(init[*i]), 0.0)
+                    : cd(static_cast<double>(init[2 * *i]), static_cast<double>(init[2 * *i + 1]));
+      if (c.accumulate) {
+        v += prior;
+      }
+      want.push_back(fftn::test::exact_from(v));
+      const cd g = wout == 1 ? cd(static_cast<double>(serial[*i]), 0.0)
+                             : cd(static_cast<double>(serial[2 * *i]),
+                                  static_cast<double>(serial[2 * *i + 1]));
+      got.emplace_back(static_cast<T>(g.real()), static_cast<T>(g.imag()));
+      for (std::size_t k = 0; k < wout; ++k) {
+        described[*i * wout + k] = true;
+      }
+    });
+    const auto tol = fftn::test::derived_tolerance<T>(points, fftn::test::fftn_bound(points)) +
+                     fftn::test::input_rounding<double>() * static_cast<double>(c.dims.size()) +
+                     fftn::test::input_rounding<T>() * 4;
+    o.within(fftn::test::compare<T>(std::span<const C>(got), want), tol,
+             what + ", transform " + std::to_string(b));
+  }
+  EXPECT_TRUE(o.passed()) << o.detail() << text;
+  std::size_t touched = 0;
+  for (std::size_t i = 0; i < serial.size(); ++i) {
+    if (!described[i] && std::memcmp(&serial[i], &init[i], sizeof(T)) != 0) {
+      ++touched;
+    }
+  }
+  EXPECT_EQ(touched, 0U) << "elements outside the runs written\n" << text;
+
+  const auto in_ptr = reinterpret_cast<const In*>(x.data());
+  std::vector<T> pieces = init;
+  const std::size_t half = c.count / 2;
+  p.execute_transforms(0, half, in_ptr, reinterpret_cast<Out*>(pieces.data()), ws);
+  p.execute_transforms(half, c.count - half, in_ptr, reinterpret_cast<Out*>(pieces.data()), ws);
+  EXPECT_TRUE(same_bits(pieces, serial)) << "pieces of the batch differ";
+  for (const fftn::completion done : {fftn::completion::all, fftn::completion::own}) {
+    std::vector<T> teamed = init;
+    std::vector<std::thread> members;
+    for (int rank = 1; rank < 3; ++rank) {
+      members.emplace_back([&, rank] {
+        p.execute(in_ptr, reinterpret_cast<Out*>(teamed.data()),
+                  fftn::team{.rank = rank, .size = 3}, ws, done);
+      });
+    }
+    p.execute(in_ptr, reinterpret_cast<Out*>(teamed.data()), fftn::team{.rank = 0, .size = 3}, ws,
+              done);
+    for (std::thread& m : members) {
+      m.join();
+    }
+    EXPECT_TRUE(same_bits(teamed, serial)) << "a team differs";
+  }
+  const fftn::thread_pool pool(3);
+  std::vector<T> pooled = init;
+  p.execute(in_ptr, reinterpret_cast<Out*>(pooled.data()), pool, ws);
+  EXPECT_TRUE(same_bits(pooled, serial)) << "the executor differs";
+}
+
+// Two runs on one axis and side of a line of `length` on that side: the second logical run
+// stored first, a gap between them in both orders.
+std::vector<fftn::stored_run> two_runs(std::size_t axis, fftn::side where, std::size_t length) {
+  if (length == 1) {
+    return {{.axis = axis, .where = where, .logical = 0, .stored = 1, .count = 1}};
+  }
+  if (length < 6) {
+    return {{.axis = axis, .where = where, .logical = 0, .stored = 1, .count = 1},
+            {.axis = axis, .where = where, .logical = length - 1, .stored = 0, .count = 1}};
+  }
+  return {{.axis = axis, .where = where, .logical = 1, .stored = 3, .count = 2},
+          {.axis = axis, .where = where, .logical = length - 2, .stored = 0, .count = 2}};
+}
+
+std::vector<runs_case> runs_cases() {
+  using enum transform_kind;
+  std::vector<runs_case> cases;
+  // {3, 1, 8}: a run stored past the start of an axis of length 1, which has no loop.
+  const std::vector<std::pair<dims_t, std::size_t>> shapes{
+      {{16}, 3}, {{6, 10}, 2}, {{4, 6, 8}, 2}, {{3, 1, 8}, 2}};
+  for (const transform_kind k : {c2c, r2c, c2r}) {
+    for (const auto& [dims, count] : shapes) {
+      for (std::size_t a = 0; a < dims.size(); ++a) {
+        for (const fftn::side where : {fftn::side::in, fftn::side::out}) {
+          const bool output = where == fftn::side::out;
+          const std::size_t length = side_dims(shape_case{.kind = k, .dims = dims}, output)[a];
+          cases.push_back({.name = "runs on one axis and side",
+                           .kind = k,
+                           .dims = dims,
+                           .count = count,
+                           .runs = two_runs(a, where, length)});
+        }
+      }
+      // Runs on every axis of both sides, accumulated, scaled, with gaps between transforms.
+      runs_case all{.name = "runs on every axis and side, accumulated",
+                    .kind = k,
+                    .dims = dims,
+                    .count = count,
+                    .dir = fftn::direction::backward,
+                    .scale = 0.5,
+                    .accumulate = true,
+                    .gap = 3};
+      for (std::size_t a = 0; a < dims.size(); ++a) {
+        for (const fftn::side where : {fftn::side::in, fftn::side::out}) {
+          const std::size_t length =
+              side_dims(shape_case{.kind = k, .dims = dims}, where == fftn::side::out)[a];
+          for (const fftn::stored_run& run : two_runs(a, where, length)) {
+            all.runs.push_back(run);
+          }
+        }
+      }
+      cases.push_back(all);
+      // The same, the shape listing the axes out of C order (the halved axis of a real
+      // transform staying last), which the plan orders back: runs and pruning by the plan's
+      // order of the axes (plan_core.cpp, listed).
+      if (dims.size() == 3 || (dims.size() == 2 && k == c2c)) {
+        all.name = "runs on every axis and side, accumulated, axes listed out of order";
+        all.listed = dims.size() == 2 ? std::vector<std::size_t>{1, 0}
+                     : k == c2c       ? std::vector<std::size_t>{2, 0, 1}
+                                      : std::vector<std::size_t>{1, 0, 2};
+        cases.push_back(all);
+      }
+    }
+    // Larger, so that teams share the phases out rather than run them inline: a band of bins
+    // in the middle of a long row's input; runs on two axes of a plane and of a volume.
+    const std::size_t row = 2048;
+    const std::size_t row_in = k == c2r ? row / 2 + 1 : row;
+    cases.push_back({.name = "a band of a long row's input",
+                     .kind = k,
+                     .dims = {row},
+                     .count = 6,
+                     .runs = {{.where = fftn::side::in, .logical = 100, .stored = 0, .count = 300},
+                              {.where = fftn::side::out, .logical = 0, .stored = 7, .count = 9}}});
+    cases.push_back(
+        {.name = "a plane, runs on both axes",
+         .kind = k,
+         .dims = {96, 64},
+         .count = 3,
+         .runs = {{.axis = 0, .where = fftn::side::in, .logical = 10, .stored = 0, .count = 30},
+                  {.axis = 0, .where = fftn::side::in, .logical = 70, .stored = 30, .count = 20},
+                  {.axis = 1, .where = fftn::side::out, .logical = 3, .stored = 0, .count = 20}}});
+    cases.push_back(
+        {.name = "a volume, runs on two axes",
+         .kind = k,
+         .dims = {20, 12, 16},
+         .count = 2,
+         .runs = {{.axis = 1, .where = fftn::side::in, .logical = 2, .stored = 5, .count = 5},
+                  {.axis = 0, .where = fftn::side::out, .logical = 4, .stored = 0, .count = 9},
+                  {.axis = 2,
+                   .where = fftn::side::in,
+                   .logical = 0,
+                   .stored = 0,
+                   .count = std::min<std::size_t>(row_in, 16) / 2}}});
+  }
+  return cases;
+}
+
+// Construction refuses stored runs that are not valid, naming the run and its field, and those
+// not built yet (in place, beside a factor).
+TEST(EdgeShapes, StoredRunsRefused) {
+  using C = std::complex<double>;
+  using fftn::side;
+  const auto refused = [](const std::vector<fftn::stored_run>& runs, const char* field,
+                          bool in_place = false) {
+    fftn::shape<C, C> s = fftn::planes_c2c<double>(8, 6, 2, fftn::direction::forward);
+    s.runs = runs;
+    try {
+      const fftn::plan<C, C> p(s, {.in_place = in_place});
+      ADD_FAILURE() << "not refused: " << field;
+    } catch (const std::invalid_argument& e) {
+      EXPECT_NE(std::string(e.what()).find(field), std::string::npos) << e.what();
+    }
+  };
+  refused({{.axis = 2, .count = 1}}, "shape.runs[0].axis");
+  refused({{.axis = 0}}, "shape.runs[0].count");
+  refused({{.axis = 1, .logical = 4, .count = 3}}, "shape.runs[0].logical");
+  refused({{.axis = 0, .logical = 0, .stored = 0, .count = 3},
+           {.axis = 0, .logical = 3, .stored = 2, .count = 2}},
+          "shape.runs[1].stored");
+  refused({{.axis = 0, .logical = 0, .stored = 0, .count = 3},
+           {.axis = 0, .logical = 2, .stored = 5, .count = 2}},
+          "shape.runs[1].logical");
+  refused({{.axis = 0, .where = side::out, .stored = PTRDIFF_MAX, .count = 1}},
+          "shape.runs[0].stored");
+  refused({{.axis = 0, .count = 2}}, "shape.runs", true);
+  // Runs of different sides or axes may share positions.
+  fftn::shape<C, C> ok = fftn::planes_c2c<double>(8, 6, 2, fftn::direction::forward);
+  ok.runs = {{.axis = 0, .count = 3},
+             {.axis = 0, .where = side::out, .count = 3},
+             {.axis = 1, .count = 3}};
+  EXPECT_NO_THROW((fftn::plan<C, C>(ok, {})));
+  // A factor beside runs is not built yet.
+  try {
+    const fftn::plan<C, C> p(ok, {}, {.in = {.mul = {.kind = real, .axis_strides = {6, 1}}}});
+    ADD_FAILURE() << "a factor beside runs not refused";
+  } catch (const std::invalid_argument& e) {
+    EXPECT_NE(std::string(e.what()).find("edges.in.mul.kind"), std::string::npos) << e.what();
+  }
+}
+
+// axes_c2c and axes_r2c with stored runs: the default strides span a dimension's stored extent
+// on each side, and the runs come back with their axes as indices into shape::axes. A compact
+// (y, x, w) array of nw stored bins of an nt-point line along w (DESIGN.md 12.1) then plans as
+// it is, with x's stride nw: by logical extents its lines would overlap.
+TEST(EdgeShapes, StoredRunsInAxes) {
+  using C = std::complex<double>;
+  using fftn::side;
+  const std::size_t ny = 3;
+  const std::size_t nx = 4;
+  const std::size_t nt = 32;
+  const std::size_t nw = 10;
+  const std::vector<fftn::axis> array{{.n = ny}, {.n = nx}, {.n = nt}};
+  const std::vector<std::size_t> along{2};
+  // The band: bins 0-5 and the last 4, stored contiguously on both sides.
+  const std::vector<fftn::stored_run> band{
+      {.axis = 2, .where = side::in, .logical = 0, .stored = 0, .count = 6},
+      {.axis = 2, .where = side::in, .logical = nt - 4, .stored = 6, .count = 4},
+      {.axis = 2, .where = side::out, .logical = 0, .stored = 0, .count = 6},
+      {.axis = 2, .where = side::out, .logical = nt - 4, .stored = 6, .count = 4}};
+  const auto s = fftn::axes_c2c<double>(array, along, fftn::direction::backward, band);
+  ASSERT_EQ(s.axes.size(), 1U);
+  EXPECT_EQ(s.axes[0].in_stride, 1);
+  ASSERT_EQ(s.batches.size(), 1U); // y and x nest exactly: one batch dimension
+  EXPECT_EQ(s.batches[0].count, ny * nx);
+  EXPECT_EQ(s.batches[0].in_dist, static_cast<std::ptrdiff_t>(nw));
+  EXPECT_EQ(s.batches[0].out_dist, static_cast<std::ptrdiff_t>(nw));
+  ASSERT_EQ(s.runs.size(), band.size());
+  for (const fftn::stored_run& r : s.runs) {
+    EXPECT_EQ(r.axis, 0U);
+  }
+  const fftn::plan<C, C> p(s);
+  // The transform: each pencil's band, against the logical line by the reference.
+  fftn::test::input_source src(0xBA4DULL);
+  const auto x = src.complexes<double>(ny * nx * nw);
+  std::vector<C> y(ny * nx * nw);
+  fftn::workspace ws(p);
+  p.execute(x.data(), y.data(), ws);
+  fftn::test::outcome o;
+  for (std::size_t q = 0; q < ny * nx; ++q) {
+    std::vector<C> line(nt);
+    for (std::size_t k = 0; k < 6; ++k) {
+      line[k] = x[q * nw + k];
+    }
+    for (std::size_t k = 0; k < 4; ++k) {
+      line[nt - 4 + k] = x[q * nw + 6 + k];
+    }
+    const auto exact = fftn::test::reference::c2c(+1, line);
+    std::vector<fftn::test::exact_complex> want;
+    std::vector<C> got;
+    for (std::size_t k = 0; k < 6; ++k) {
+      want.push_back(exact[k]);
+      got.push_back(y[q * nw + k]);
+    }
+    for (std::size_t k = 0; k < 4; ++k) {
+      want.push_back(exact[nt - 4 + k]);
+      got.push_back(y[q * nw + 6 + k]);
+    }
+    o.within(fftn::test::compare<double>(std::span<const C>(got), want),
+             fftn::test::derived_tolerance<double>(nt, fftn::test::fftn_bound(nt)), "band");
+  }
+  EXPECT_TRUE(o.passed()) << o.detail() << p.describe();
+
+  // r2c of a real (y, t) array into nw stored bins: the complex side's default strides by them.
+  const std::vector<fftn::axis> plane{{.n = ny}, {.n = nt}};
+  const std::vector<std::size_t> rows{1};
+  const std::vector<fftn::stored_run> bins{
+      {.axis = 1, .where = side::out, .logical = 2, .stored = 0, .count = nw}};
+  const auto r = fftn::axes_r2c<double>(plane, rows, false, bins);
+  ASSERT_EQ(r.batches.size(), 1U);
+  EXPECT_EQ(r.batches[0].in_dist, static_cast<std::ptrdiff_t>(nt));
+  EXPECT_EQ(r.batches[0].out_dist, static_cast<std::ptrdiff_t>(nw));
+  EXPECT_NO_THROW((fftn::plan<double, C>(r, {})));
+  // A run on a dimension that is not transformed is refused.
+  const std::vector<fftn::stored_run> batch_run{{.axis = 0, .count = 1}};
+  EXPECT_THROW(static_cast<void>(fftn::axes_r2c<double>(plane, rows, false, batch_run)),
+               std::invalid_argument);
+}
+
+// Stored runs along a reversed axis (a negative stride): the passes' offsets from element 0 are
+// negative.
+TEST(EdgeShapes, StoredRunsAlongAReversedAxis) {
+  using C = std::complex<double>;
+  using fftn::side;
+  const std::size_t n = 16;
+  fftn::shape<C, C> s;
+  s.axes = {{.n = n, .in_stride = -1, .out_stride = -2}};
+  s.batches = {{.count = 2, .in_dist = 8, .out_dist = 20}};
+  s.runs = {{.where = side::in, .logical = 0, .stored = 0, .count = 4},
+            {.where = side::in, .logical = 12, .stored = 4, .count = 4},
+            {.where = side::out, .logical = 3, .stored = 1, .count = 5}};
+  const fftn::plan<C, C> p(s);
+  fftn::test::input_source src(0x4EFULL);
+  std::vector<C> x = src.complexes<double>(16);
+  std::vector<C> y = src.complexes<double>(40);
+  const std::vector<C> init = y;
+  fftn::workspace ws(p);
+  // Element 0 of transform 0 is the last of its stored elements on each side.
+  p.execute(x.data() + 7, y.data() + 11, ws);
+  fftn::test::outcome o;
+  std::vector<bool> written(y.size(), false);
+  for (std::size_t b = 0; b < 2; ++b) {
+    std::vector<C> line(n);
+    for (std::size_t j = 0; j < n; ++j) {
+      const std::ptrdiff_t stored = j < 4 ? static_cast<std::ptrdiff_t>(j)
+                                          : (j >= 12 ? static_cast<std::ptrdiff_t>(j - 8) : -1);
+      if (stored >= 0) {
+        line[j] = x[static_cast<std::size_t>(7 + 8 * static_cast<std::ptrdiff_t>(b) - stored)];
+      }
+    }
+    const auto exact = fftn::test::reference::c2c(-1, line);
+    std::vector<fftn::test::exact_complex> want;
+    std::vector<C> got;
+    for (std::size_t k = 3; k < 8; ++k) {
+      const auto i = static_cast<std::size_t>(11 + 20 * static_cast<std::ptrdiff_t>(b) -
+                                              2 * static_cast<std::ptrdiff_t>(k - 2));
+      want.push_back(exact[k]);
+      got.push_back(y[i]);
+      written[i] = true;
+    }
+    o.within(fftn::test::compare<double>(std::span<const C>(got), want),
+             fftn::test::derived_tolerance<double>(n, fftn::test::fftn_bound(n)), "reversed");
+  }
+  EXPECT_TRUE(o.passed()) << o.detail() << p.describe();
+  for (std::size_t i = 0; i < y.size(); ++i) {
+    if (!written[i]) {
+      EXPECT_EQ(y[i], init[i]) << "element " << i << " outside the runs written";
+    }
+  }
+}
+
+// A wisdom entry of a plan with stored runs serves the same runs only; such plans are planned by
+// the rules whatever the effort, and describe() says so; a strategy the runs keep the plan from
+// is named.
+TEST(EdgeShapes, StoredRunsPlanning) {
+  using C = std::complex<double>;
+  namespace d = fftn::detail;
+  fftn::shape<C, C> s = fftn::rows_c2c<double>(64, 4, fftn::direction::forward);
+  s.runs = {{.where = fftn::side::in, .logical = 0, .stored = 0, .count = 8}};
+  const fftn::plan<C, C> measured(s, {.effort = fftn::planning::measure});
+  EXPECT_NE(measured.describe().find("planning: by the rules: measured planning and wisdom take "
+                                     "no stored runs yet"),
+            std::string::npos)
+      << measured.describe();
+  const auto core = d::make_plan_core(d::view_of(s), {});
+  const auto plain =
+      d::make_plan_core(d::view_of(fftn::rows_c2c<double>(64, 4, fftn::direction::forward)), {});
+  EXPECT_NE(core->shape_key, plain->shape_key);
+  fftn::shape<C, C> other = s;
+  other.runs[0].count = 9;
+  EXPECT_NE(d::make_plan_core(d::view_of(other), {})->shape_key, core->shape_key);
+  // The lanes the knobs force on these rows, which runs keep the plan from.
+  d::build_settings lanes;
+  lanes.strategy = d::strategy_choice::lanes;
+  const auto forced = d::make_plan_core(d::view_of(s), {}, lanes);
+  const auto unforced = d::make_plan_core(
+      d::view_of(fftn::rows_c2c<double>(64, 4, fftn::direction::forward)), {}, lanes);
+  if (unforced->strategy_name != forced->strategy_name) {
+    EXPECT_NE(d::describe(*forced).find(
+                  "not the strategy the rules would choose: " + unforced->strategy_name +
+                  " without the stored runs, the chain with them: stored "
+                  "runs take the chain (task 5.1d)"),
+              std::string::npos)
+        << d::describe(*forced);
+  }
+  // Scales alone are in the key, as options::scale's product.
+  const fftn::plan_edges<C, C> half{.out = {.scale = 0.5}};
+  EXPECT_NE(d::make_plan_core_with_edges(d::view_of(s), {}, d::view_of(half))->shape_key,
+            core->shape_key);
+  EXPECT_EQ(d::make_plan_core_with_edges(d::view_of(s), {}, d::view_of(half))->shape_key,
+            d::make_plan_core(d::view_of(s), {.scale = 0.5})->shape_key);
+  // Rows as adjacent transforms take the lanes over them without edges, but not with
+  // accumulation: what the runs keep the plan from is the accumulated plan's strategy, never
+  // the lanes, which accumulation alone rules out.
+  d::build_settings adjacent;
+  adjacent.profile.adjacent_lanes = true;
+  adjacent.profile.adjacent_min_bytes = 0;
+  adjacent.profile.adjacent_team_chain = false;
+  adjacent.profile.column_team_bytes = 0;
+  adjacent.profile.column_wide_bytes = 0;
+  fftn::shape<C, C> adj;
+  adj.axes = {{.n = 64, .in_stride = 16, .out_stride = 16}};
+  adj.batches = {{.count = 16, .in_dist = 1, .out_dist = 1}};
+  const fftn::plan_edges<C, C> accumulate{.out = {.accumulate = true}};
+  const auto adj_plain = d::make_plan_core(d::view_of(adj), {}, adjacent);
+  ASSERT_EQ(adj_plain->strategy_name, "the lanes over adjacent transforms");
+  const auto adj_accumulated =
+      d::make_plan_core_with_edges(d::view_of(adj), {}, d::view_of(accumulate), adjacent);
+  adj.runs = {{.where = fftn::side::in, .logical = 0, .stored = 0, .count = 8}};
+  const auto adj_runs =
+      d::make_plan_core_with_edges(d::view_of(adj), {}, d::view_of(accumulate), adjacent);
+  const std::string adj_text = d::describe(*adj_runs);
+  EXPECT_EQ(adj_text.find("the lanes over adjacent transforms without the stored runs"),
+            std::string::npos)
+      << adj_text;
+  if (adj_accumulated->strategy_name != adj_runs->strategy_name) {
+    EXPECT_NE(adj_text.find("not the strategy the rules would choose: " +
+                            adj_accumulated->strategy_name + " without the stored runs"),
+              std::string::npos)
+        << adj_text;
+  }
+}
+
+TYPED_TEST(EdgeShapes, StoredRunsOnEveryAxisAndSide) {
+  using T = TypeParam;
+  using enum transform_kind;
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    for (const runs_case& c : runs_cases()) {
+      switch (c.kind) {
+      case c2c:
+        run_runs_case<T, c2c>(c, t);
+        break;
+      case r2c:
+        run_runs_case<T, r2c>(c, t);
+        break;
+      case c2r:
+        run_runs_case<T, c2r>(c, t);
+        break;
+      }
+    }
+  }
 }
 
 } // namespace

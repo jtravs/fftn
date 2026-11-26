@@ -51,7 +51,8 @@ public:
   /// Throws `std::invalid_argument` when the shape or the options are not valid (the
   /// message names the argument; the rules are in docs/conventions.md): an axis or batch
   /// count of zero, no axis or more than three axes, overlapping output elements, sizes
-  /// that overflow, in-place layouts that do not agree, or a negative or non-finite
+  /// that overflow, in-place layouts that do not agree, stored runs (`shape::runs`) that are
+  /// not valid or are given to an in-place plan, or a negative or non-finite
   /// `options::measure_seconds`. Throws `std::bad_alloc` when memory runs out, including
   /// the scratch memory of measured planning (`options::effort`).
   explicit plan(const shape<In, Out>& s, const options& opts = {})
@@ -70,8 +71,9 @@ public:
   /// that is not finite or not representable in the plan's precision (alone, or the
   /// product of the edges' scales and `options::scale`), both `options::scale` and
   /// `edges.out.scale` other than 1, `accumulate` on the input edge or on an in-place plan,
-  /// a factor whose strides do not match the shape or whose span overflows, or a complex factor
-  /// on a real side. Throws `std::bad_alloc` when memory runs out.
+  /// a factor whose strides do not match the shape or whose span overflows, a complex factor
+  /// on a real side, or a factor on a shape with stored runs (not built yet). Throws
+  /// `std::bad_alloc` when memory runs out.
   plan(const shape<In, Out>& s, const options& opts, const plan_edges<In, Out>& edges)
       : core_(detail::make_plan_core_with_edges(detail::view_of(s), opts, detail::view_of(edges))) {
   }

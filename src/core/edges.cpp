@@ -169,10 +169,14 @@ void edge_pass(const pass_args* a, const void* src, void* dst, std::size_t first
   const std::ptrdiff_t fs = a->src_qstride;
   for (std::size_t row = 0; row < rows; ++row) {
     const auto q = static_cast<std::ptrdiff_t>(row);
-    const T* x = reinterpret_cast<const T*>(static_cast<const std::byte*>(src) + a->src_cols) +
+    // The offsets may be negative (a stored run along a reversed axis, run_line_stages): their
+    // two's complement in the unsigned fields.
+    const T* x = reinterpret_cast<const T*>(static_cast<const std::byte*>(src) +
+                                            static_cast<std::ptrdiff_t>(a->src_cols)) +
                  q * a->src_dist * width;
-    T* y =
-        reinterpret_cast<T*>(static_cast<std::byte*>(dst) + a->dst_cols) + q * a->dst_dist * width;
+    T* y = reinterpret_cast<T*>(static_cast<std::byte*>(dst) +
+                                static_cast<std::ptrdiff_t>(a->dst_cols)) +
+           q * a->dst_dist * width;
     const T* f = nullptr;
     if constexpr (Kind != factor_kind::none) {
       f = reinterpret_cast<const T*>(
@@ -221,6 +225,23 @@ void edge_pass(const pass_args* a, const void* src, void* dst, std::size_t first
       if constexpr (!Real) {
         yi[1] = im;
       }
+    }
+  }
+}
+
+// Zeros over elements [first, last) of a line at dst plus dst_cols bytes (signed, as above),
+// dst_stride elements apart: the logical positions outside an input's stored runs.
+template <class T, bool Real>
+void zero_pass(const pass_args* a, const void* /*src*/, void* dst, std::size_t first,
+               std::size_t last) {
+  constexpr std::ptrdiff_t width = Real ? 1 : 2;
+  T* y =
+      reinterpret_cast<T*>(static_cast<std::byte*>(dst) + static_cast<std::ptrdiff_t>(a->dst_cols));
+  for (std::size_t k = first; k < last; ++k) {
+    T* yi = y + width * static_cast<std::ptrdiff_t>(k) * a->dst_stride;
+    yi[0] = T{};
+    if constexpr (!Real) {
+      yi[1] = T{};
     }
   }
 }
@@ -365,6 +386,65 @@ stage edge_copy_stage(precision prec, std::size_t n, slot src, std::ptrdiff_t sr
   return st;
 }
 
+void run_zero_line(precision prec, std::size_t length, const run_line& line,
+                   std::size_t chunk_points, bool real, std::vector<stage>& stages) {
+  stage st = edge_pass_stage(prec, edge_side{}, false, length, line.src, line.src_stride, line.dst,
+                             line.dst_stride, chunk_points, real, 0, edge_mode::store, edge_rows{});
+  st.run = prec == precision::f64 ? (real ? &zero_pass<double, true> : &zero_pass<double, false>)
+                                  : (real ? &zero_pass<float, true> : &zero_pass<float, false>);
+  st.args.dst_cols = static_cast<std::size_t>(line.dst_offset);
+  st.name = "runs in: zeros (no stored run on another axis)";
+  stages.push_back(std::move(st));
+}
+
+void run_line_stages(precision prec, const edge_side& side, bool output, std::size_t length,
+                     const std::vector<line_run>& runs, const run_line& line,
+                     std::size_t chunk_points, bool real, std::vector<stage>& stages) {
+  const std::size_t real_bytes = prec == precision::f64 ? sizeof(double) : sizeof(float);
+  const auto bytes = static_cast<std::ptrdiff_t>(real ? real_bytes : 2 * real_bytes);
+  const auto at = [&](std::size_t pos, std::ptrdiff_t stride, std::ptrdiff_t offset) {
+    return static_cast<std::size_t>(offset + static_cast<std::ptrdiff_t>(pos) * stride * bytes);
+  };
+  // A piece of the line: count elements from logical position `logical`, stored at `stored`
+  // (the stored side being the input's source or the output's destination).
+  const auto copy = [&](std::size_t logical, std::size_t stored, std::size_t count) {
+    stage st = edge_pass_stage(prec, side, output, count, line.src, line.src_stride, line.dst,
+                               line.dst_stride, chunk_points, real, 0,
+                               output && side.accumulate ? edge_mode::accumulate : edge_mode::store,
+                               edge_rows{});
+    st.args.src_cols = at(output ? logical : stored, line.src_stride, line.src_offset);
+    st.args.dst_cols = at(output ? stored : logical, line.dst_stride, line.dst_offset);
+    st.name = std::string(output ? "runs out" : "runs in") + ": logical " +
+              std::to_string(logical) + " to " + std::to_string(logical + count) + " at stored " +
+              std::to_string(stored) + (output && side.accumulate ? ", accumulated" : "");
+    stages.push_back(std::move(st));
+  };
+  const auto zeros = [&](std::size_t logical, std::size_t count) {
+    run_line piece = line;
+    piece.dst_offset = static_cast<std::ptrdiff_t>(at(logical, line.dst_stride, line.dst_offset));
+    run_zero_line(prec, count, piece, chunk_points, real, stages);
+    stages.back().name = "runs in: zeros at logical " + std::to_string(logical) + " to " +
+                         std::to_string(logical + count);
+  };
+  if (runs.empty()) {
+    copy(0, 0, length);
+    return;
+  }
+  // The runs are sorted by logical position (resolve_runs); the input's gaps are zeros, the
+  // output's are not written.
+  std::size_t next = 0;
+  for (const line_run& r : runs) {
+    if (!output && r.logical > next) {
+      zeros(next, r.logical - next);
+    }
+    copy(r.logical, r.stored, r.count);
+    next = r.logical + r.count;
+  }
+  if (!output && next < length) {
+    zeros(next, length - next);
+  }
+}
+
 stage edge_pass_stage(precision prec, const edge_side& side, bool output, std::size_t n, slot src,
                       std::ptrdiff_t src_stride, slot dst, std::ptrdiff_t dst_stride,
                       std::size_t chunk_points, bool real, std::ptrdiff_t factor_stride,
@@ -413,7 +493,24 @@ void contract_failure(const char* what) noexcept {
   std::abort();
 }
 
-std::string edges_text(const edge_plan& p, edge_layout layout, const std::string& fallback) {
+std::size_t edge_passes(const program& p) noexcept {
+  std::size_t passes = 0;
+  for (const record& r : p.records) {
+    if (const stage* st = std::get_if<stage>(&r);
+        st != nullptr && (st->name.starts_with("edge in") || st->name.starts_with("edge out"))) {
+      ++passes;
+    }
+  }
+  return passes;
+}
+
+std::string forced_text(const std::string& plain, const std::string& built,
+                        const std::string& fallback, const char* what) {
+  return "not the strategy the rules would choose: " + plain + " without " + what + ", " + built +
+         " with them" + (fallback.empty() ? "" : ": " + fallback);
+}
+
+std::string edges_text(const edge_plan& p, edge_layout layout, std::size_t passes) {
   const auto describe_side = [layout](const edge_side& side, bool output) {
     std::string t;
     if (side.kind != factor_kind::none) {
@@ -433,6 +530,10 @@ std::string edges_text(const edge_plan& p, edge_layout layout, const std::string
     } else if (side.separate && layout == edge_layout::row_strategy) {
       t += output ? " in a separate pass after the row's strategy"
                   : " in a separate pass before the row's strategy";
+      // Accumulation into a strategy that writes the output (edge_mode::add_prior).
+      if (output && side.accumulate) {
+        t += ", the output's prior values saved in a pass before it";
+      }
     } else if (side.separate) {
       t += output ? " in a separate phase after the transform"
                   : " in a separate phase before the transform";
@@ -442,11 +543,11 @@ std::string edges_text(const edge_plan& p, edge_layout layout, const std::string
   std::string in = describe_side(p.in, false);
   std::string out = describe_side(p.out, true);
   std::string both = in.empty() ? out : (out.empty() ? in : in + "; " + out);
-  std::string text = "edges: " + both;
-  if (!fallback.empty()) {
-    text += "; not the strategy the rules would choose: " + fallback;
-  }
-  return text;
+  // The scales alone cost nothing; a fused factor costs no pass of its own.
+  const std::string cost =
+      passes == 0 ? "no separate pass"
+                  : std::to_string(passes) + (passes == 1 ? " separate pass" : " separate passes");
+  return "edges: " + both + "; they cost " + cost;
 }
 
 std::pair<std::ptrdiff_t, std::ptrdiff_t> factor_span(const shape_view& s, const edge_view& e,

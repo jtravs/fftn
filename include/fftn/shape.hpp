@@ -64,6 +64,37 @@ struct batch {
   std::ptrdiff_t out_dist = 0;
 };
 
+/// A side of a transform: its input or its output.
+enum class side : unsigned char {
+  in,  ///< the input
+  out, ///< the output
+};
+
+/// A stored run (`shape::runs`, dev/DESIGN.md 12.1): part of one axis stored on one side.
+///
+/// `count` elements stored from position `stored` of the axis's memory are the logical
+/// positions `logical` onwards of the transformed line: stored position `stored + i` holds
+/// logical position `logical + i`, for 0 <= i < `count`. On an axis with runs on a side, input
+/// elements outside the runs are zero and are not read, output elements outside the runs are
+/// not written, and the axis's stored extent on that side (the elements its default stride
+/// spans) is the end of its last stored run, the largest `stored + count`.
+///
+/// Provisional (task 5.1d).
+struct stored_run {
+  /// The axis, as an index into `shape::axes` (into the array, for the `runs` argument of
+  /// `axes_c2c`, `axes_r2c` and `axes_c2r`).
+  std::size_t axis = 0;
+  /// The side whose memory holds the run.
+  side where = side::in;
+  /// The first logical position of the run: an index into the transformed line, below its
+  /// length on that side (n, or n/2 + 1 for the halved axis on the complex side).
+  std::size_t logical = 0;
+  /// The first stored position of the run, in elements along the axis.
+  std::size_t stored = 0;
+  /// The number of elements in the run. At least 1.
+  std::size_t count = 0;
+};
+
 /// A transform shape, typed by its input and output elements.
 ///
 /// The element types select the kind: `shape<std::complex<T>, std::complex<T>>` is a
@@ -96,6 +127,11 @@ template <class In, class Out> struct shape {
   std::vector<axis> axes;
   /// The batch dimensions, slowest first; none means a single transform.
   std::vector<batch> batches;
+  /// The stored runs (`stored_run`): axes stored in part on a side, in any order. An axis
+  /// and side without runs is stored whole. Runs of one axis and side may not overlap, neither
+  /// in their logical nor in their stored positions. Provisional (task 5.1d): not taken by
+  /// in-place plans, nor together with an edge's factor (`plan_edges`).
+  std::vector<stored_run> runs{};
 };
 
 /// A batch of `count` complex rows of length `n`, stored one after another.
@@ -255,18 +291,42 @@ template <class T>
 
 namespace detail {
 
+// The stored extent of dimension d of an array on one side: the end of its last stored run
+// there (the largest stored + count), or `whole` when it has none.
+inline std::size_t stored_extent(std::span<const stored_run> runs, std::size_t d, bool input,
+                                 std::size_t whole) {
+  std::size_t extent = 0;
+  bool any = false;
+  for (const stored_run& run : runs) {
+    if (run.axis != d || (run.where == side::in) != input) {
+      continue;
+    }
+    std::size_t end = 0;
+    if (__builtin_add_overflow(run.stored, run.count, &end)) {
+      throw std::invalid_argument("fftn::axes: a stored run ends beyond the addressable range");
+    }
+    extent = std::max(extent, end);
+    any = true;
+  }
+  return any ? extent : whole;
+}
+
 // The stride of each dimension of an array on one side: the given one, or where it is 0 the
 // tight C-ordered default, in which dimension d spans the dimensions after it. `halved_dim` is
-// the dimension shortened to `halved_count` elements on this side (SIZE_MAX for none).
+// the dimension shortened to `halved_count` elements on this side (SIZE_MAX for none); a
+// dimension with stored runs on this side spans its stored extent instead.
 inline std::vector<std::ptrdiff_t> array_strides(std::span<const axis> array, bool input,
-                                                 std::size_t halved_dim, std::size_t halved_count) {
+                                                 std::size_t halved_dim, std::size_t halved_count,
+                                                 std::span<const stored_run> runs) {
   std::vector<std::ptrdiff_t> stride(array.size());
   std::size_t span = 1;
   for (std::size_t i = array.size(); i > 0; --i) {
     const std::size_t d = i - 1;
     const std::ptrdiff_t given = input ? array[d].in_stride : array[d].out_stride;
     stride[d] = given != 0 ? given : static_cast<std::ptrdiff_t>(span);
-    if (__builtin_mul_overflow(span, d == halved_dim ? halved_count : array[d].n, &span) ||
+    const std::size_t extent =
+        stored_extent(runs, d, input, d == halved_dim ? halved_count : array[d].n);
+    if (__builtin_mul_overflow(span, extent, &span) ||
         span > static_cast<std::size_t>(PTRDIFF_MAX)) {
       throw std::invalid_argument("fftn::axes: the array is too large to address");
     }
@@ -279,7 +339,8 @@ inline std::vector<std::ptrdiff_t> array_strides(std::span<const axis> array, bo
 // halved). See axes_c2c.
 template <class In, class Out>
 shape<In, Out> shape_along_axes(std::span<const axis> array, std::span<const std::size_t> selected,
-                                direction dir, std::size_t halved_in, std::size_t halved_out) {
+                                direction dir, std::size_t halved_in, std::size_t halved_out,
+                                std::span<const stored_run> runs = {}) {
   for (std::size_t d = 0; d < array.size(); ++d) {
     if (array[d].n == 0) {
       throw std::invalid_argument("fftn::axes: array dimension " + std::to_string(d) +
@@ -298,13 +359,26 @@ shape<In, Out> shape_along_axes(std::span<const axis> array, std::span<const std
     }
     transformed[d] = true;
   }
+  // Runs belong to transformed dimensions; the plan validates the rest of each run.
+  for (const stored_run& run : runs) {
+    if (run.axis >= array.size() || !transformed[run.axis]) {
+      throw std::invalid_argument("fftn::axes: a stored run names dimension " +
+                                  std::to_string(run.axis) +
+                                  ", which axes does not list; runs belong to transformed axes");
+    }
+  }
   const std::size_t halved_dim = selected.empty() ? SIZE_MAX : selected.back();
-  const std::vector<std::ptrdiff_t> in = array_strides(array, true, halved_dim, halved_in);
-  const std::vector<std::ptrdiff_t> out = array_strides(array, false, halved_dim, halved_out);
+  const std::vector<std::ptrdiff_t> in = array_strides(array, true, halved_dim, halved_in, runs);
+  const std::vector<std::ptrdiff_t> out = array_strides(array, false, halved_dim, halved_out, runs);
   shape<In, Out> s;
   s.dir = dir;
   for (const std::size_t d : selected) {
     s.axes.push_back(axis{.n = array[d].n, .in_stride = in[d], .out_stride = out[d]});
+  }
+  // The runs with their axes as indices into shape::axes.
+  for (stored_run run : runs) {
+    run.axis = static_cast<std::size_t>(std::ranges::find(selected, run.axis) - selected.begin());
+    s.runs.push_back(run);
   }
   // The other dimensions, widest input stride first, ties in the array's order; a dimension
   // of extent 1 never steps. Neighbours that nest exactly on both sides become one.
@@ -362,8 +436,14 @@ shape<In, Out> shape_along_axes(std::span<const axis> array, std::span<const std
 /// `nz` planes; dimensions {0, 1} are `nx` planes `nx` elements apart in memory, transformed
 /// without moving the data.
 ///
+/// `runs` (provisional, task 5.1d) are stored runs (`stored_run`) of the transformed
+/// dimensions, their `axis` an index into `array`: a dimension with runs on a side spans its
+/// stored extent there in the default strides, and the result's `shape::runs` holds the runs
+/// with their axes as indices into `shape::axes`.
+///
 /// Throws `std::invalid_argument` when a dimension of `array` has length 0, when `axes` names a
-/// dimension outside `array` or names one twice, or when the default strides do not fit
+/// dimension outside `array` or names one twice, when a run names a dimension that `axes` does
+/// not list or ends beyond the addressable range, or when the default strides do not fit
 /// `std::ptrdiff_t`; `std::bad_alloc` when memory runs out.
 ///
 /// Guarantees: every stride and distance of the result is explicit (nonzero), the strides of a
@@ -371,9 +451,10 @@ shape<In, Out> shape_along_axes(std::span<const axis> array, std::span<const std
 /// validated until a plan is built from it.
 template <class T>
 [[nodiscard]] shape<std::complex<T>, std::complex<T>>
-axes_c2c(std::span<const axis> array, std::span<const std::size_t> axes, direction dir) {
+axes_c2c(std::span<const axis> array, std::span<const std::size_t> axes, direction dir,
+         std::span<const stored_run> runs = {}) {
   const std::size_t n = axes.empty() || axes.back() >= array.size() ? 0 : array[axes.back()].n;
-  return detail::shape_along_axes<std::complex<T>, std::complex<T>>(array, axes, dir, n, n);
+  return detail::shape_along_axes<std::complex<T>, std::complex<T>>(array, axes, dir, n, n, runs);
 }
 
 /// The real-to-complex transform along some dimensions of a strided array.
@@ -389,26 +470,33 @@ axes_c2c(std::span<const axis> array, std::span<const std::size_t> axes, directi
 /// an out-of-place plan is a valid layout too: the plan then reads (or writes) the padded real
 /// rows, leaving the padding alone. Pass the same value as options::in_place unless you mean that.
 ///
+/// `runs` as for axes_c2c; on the real side a run of the halved dimension replaces the padded
+/// row in its default strides.
+///
 /// Exceptions and guarantees: as for axes_c2c.
 template <class T>
 [[nodiscard]] shape<T, std::complex<T>>
-axes_r2c(std::span<const axis> array, std::span<const std::size_t> axes, bool padded = false) {
+axes_r2c(std::span<const axis> array, std::span<const std::size_t> axes, bool padded = false,
+         std::span<const stored_run> runs = {}) {
   const std::size_t n = axes.empty() || axes.back() >= array.size() ? 0 : array[axes.back()].n;
-  return detail::shape_along_axes<T, std::complex<T>>(array, axes, direction::forward,
-                                                      padded ? 2 * (n / 2 + 1) : n, n / 2 + 1);
+  return detail::shape_along_axes<T, std::complex<T>>(
+      array, axes, direction::forward, padded ? 2 * (n / 2 + 1) : n, n / 2 + 1, runs);
 }
 
 /// The complex-to-real transform along some dimensions of a strided array, the inverse layout
 /// of axes_r2c: `array` holds the real side's lengths, the last dimension listed in `axes` has
 /// n/2 + 1 complex values on the input side; `padded` as for axes_r2c, the output's real side.
 ///
+/// `runs` as for axes_r2c.
+///
 /// Exceptions and guarantees: as for axes_c2c.
 template <class T>
 [[nodiscard]] shape<std::complex<T>, T>
-axes_c2r(std::span<const axis> array, std::span<const std::size_t> axes, bool padded = false) {
+axes_c2r(std::span<const axis> array, std::span<const std::size_t> axes, bool padded = false,
+         std::span<const stored_run> runs = {}) {
   const std::size_t n = axes.empty() || axes.back() >= array.size() ? 0 : array[axes.back()].n;
   return detail::shape_along_axes<std::complex<T>, T>(array, axes, direction::backward, n / 2 + 1,
-                                                      padded ? 2 * (n / 2 + 1) : n);
+                                                      padded ? 2 * (n / 2 + 1) : n, runs);
 }
 
 } // namespace fftn::inline v0

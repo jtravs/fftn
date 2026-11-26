@@ -54,6 +54,7 @@ struct shape_view {
   direction dir = direction::forward;
   std::span<const axis> axes;
   std::span<const batch> batches;
+  std::span<const stored_run> runs{};
 };
 
 template <class In, class Out> shape_view view_of(const shape<In, Out>& s) noexcept {
@@ -63,6 +64,7 @@ template <class In, class Out> shape_view view_of(const shape<In, Out>& s) noexc
       .dir = s.dir,
       .axes = s.axes,
       .batches = s.batches,
+      .runs = s.runs,
   };
 }
 

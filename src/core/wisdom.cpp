@@ -6,6 +6,7 @@
 #include "core/build_id.hpp"
 #include "core/candidates.hpp"
 #include "core/plan_core.hpp"
+#include "core/runs.hpp"
 #include "core/wisdom_entry.hpp"
 #include "fftn/detail/core.hpp"
 #include "fftn/fftn.hpp"
@@ -204,6 +205,7 @@ std::string shape_key(const shape_view& s, const options& opts) {
   for (const batch& b : s.batches) {
     o << ' ' << b.count << '/' << b.in_dist << '/' << b.out_dist;
   }
+  o << runs_key(s);
   return o.str();
 }
 

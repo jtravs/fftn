@@ -14,6 +14,7 @@
 #include "core/edge_driver.hpp"
 #include "core/edges.hpp"
 #include "core/program.hpp"
+#include "core/runs.hpp"
 #include "core/wisdom_entry.hpp"
 #include "fftn/detail/core.hpp"
 #include "fftn/edges.hpp"
@@ -51,6 +52,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <type_traits>
 #include <utility>
@@ -108,7 +110,10 @@ std::ptrdiff_t given_step(std::ptrdiff_t v, const std::string& what) {
 
 // One side of a transform with every default resolved, in elements of the side's type.
 struct side {
-  std::vector<std::size_t> extent;    // per axis (the halved one included)
+  std::vector<std::size_t> extent; // per axis (the halved one included)
+  // Per axis, in the shape's order: the elements the layout spans along it, the extent or, on an
+  // axis with stored runs on this side, its stored extent (task 5.1d). The layout checks use it.
+  std::vector<std::size_t> reach;
   std::vector<std::ptrdiff_t> stride; // per axis
   std::vector<std::ptrdiff_t> dist;   // per batch dimension
   std::ptrdiff_t element_bytes = 0;
@@ -122,25 +127,30 @@ struct side {
 // An axis of extent 1 and a batch dimension of count 1 never step, so whatever stride or
 // distance was given for them is replaced by 0: check_reach does not see them (they add
 // (1 - 1) x stride to the reach), so nothing computed from them could be proven in range.
+//
+// An axis with stored runs on the side (`runs`, task 5.1d) spans its stored extent instead, in the
+// defaults and in the reach.
 side resolve(const shape_view& s, const std::vector<std::size_t>& extent, std::size_t last_physical,
-             bool input, bool complex, std::ptrdiff_t element_bytes) {
+             bool input, bool complex, std::ptrdiff_t element_bytes, const side_runs& runs) {
   const std::size_t r = extent.size();
   side out;
   out.extent = extent;
   out.complex = complex;
   out.element_bytes = element_bytes;
   out.stride.assign(r, 0);
+  out.reach.assign(r, 0);
   std::ptrdiff_t span = 1;
   for (std::size_t i = r; i > 0; --i) {
     const std::size_t d = i - 1;
+    out.reach[d] = runs.stored_extent(d, extent[d]);
     const std::ptrdiff_t given = input ? s.axes[d].in_stride : s.axes[d].out_stride;
-    if (extent[d] > 1) {
+    if (extent[d] > 1 || out.reach[d] > 1) {
       out.stride[d] = given != 0
                           ? given_step(given, axis_name(d) + (input ? ".in_stride" : ".out_stride"))
                           : span;
     }
-    span = checked_mul(span, to_signed(d + 1 == r ? last_physical : extent[d], axis_name(d) + ".n"),
-                       axis_name(d) + ".n");
+    const std::size_t physical = runs.stored_extent(d, d + 1 == r ? last_physical : extent[d]);
+    span = checked_mul(span, to_signed(physical, axis_name(d) + ".n"), axis_name(d) + ".n");
   }
   out.dist.assign(s.batches.size(), 0);
   for (std::size_t i = s.batches.size(); i > 0; --i) {
@@ -160,9 +170,9 @@ side resolve(const shape_view& s, const std::vector<std::size_t>& extent, std::s
 void check_reach(const shape_view& s, const side& v, bool input) {
   const std::string what = input ? "shape (input layout)" : "shape (output layout)";
   std::ptrdiff_t reach = 0;
-  for (std::size_t d = 0; d < v.extent.size(); ++d) {
+  for (std::size_t d = 0; d < v.reach.size(); ++d) {
     reach = checked_add(
-        reach, checked_mul(to_signed(v.extent[d] - 1, what), magnitude(v.stride[d]), what), what);
+        reach, checked_mul(to_signed(v.reach[d] - 1, what), magnitude(v.stride[d]), what), what);
   }
   for (std::size_t b = 0; b < v.dist.size(); ++b) {
     reach = checked_add(
@@ -180,8 +190,8 @@ std::pair<std::ptrdiff_t, std::ptrdiff_t> span_of(const shape_view& s, const sid
     const std::ptrdiff_t reach = static_cast<std::ptrdiff_t>(count - 1) * stride;
     (reach < 0 ? lo : hi) += reach;
   };
-  for (std::size_t d = 0; d < v.extent.size(); ++d) {
-    step(v.extent[d], v.stride[d]);
+  for (std::size_t d = 0; d < v.reach.size(); ++d) {
+    step(v.reach[d], v.stride[d]);
   }
   for (std::size_t b = 0; b < v.dist.size(); ++b) {
     step(s.batches[b].count, v.dist[b]);
@@ -194,9 +204,9 @@ std::pair<std::ptrdiff_t, std::ptrdiff_t> span_of(const shape_view& s, const sid
 // every nested layout (rows, columns, planes, padding, reversed strides).
 void check_no_overlap(const shape_view& s, const side& v) {
   std::vector<std::pair<std::ptrdiff_t, std::size_t>> dims; // |stride|, extent
-  for (std::size_t d = 0; d < v.extent.size(); ++d) {
-    if (v.extent[d] > 1) {
-      dims.emplace_back(magnitude(v.stride[d]), v.extent[d]);
+  for (std::size_t d = 0; d < v.reach.size(); ++d) {
+    if (v.reach[d] > 1) {
+      dims.emplace_back(magnitude(v.stride[d]), v.reach[d]);
     }
   }
   for (std::size_t b = 0; b < v.dist.size(); ++b) {
@@ -1160,6 +1170,20 @@ void retarget_input(std::vector<record>& records, std::size_t first, slot to) {
   }
 }
 
+// The strategies (plan_core::strategy_name) and reasons (plan_core::edge_fallback) that
+// build_with_edges and name_forced_strategy compare across builds (task 5.1c).
+constexpr std::string_view batch_leaves_name = "the chain on batch leaves";
+constexpr std::string_view batch_one_row_name = "the chain, its batch leaves one row at a time";
+constexpr std::string_view c2c_input_pass_reason =
+    "the input edge's pass leaves the rows in the output, where the strategy is chosen in place";
+// A fused chain's in place of c2c_input_pass_reason: the separate passes' plan chose the chain
+// for the rows in the output, and the fused chain, which has no input pass, takes over.
+constexpr std::string_view c2c_fused_input_reason =
+    "the strategy is chosen for the rows where an input edge's pass would leave them, the "
+    "chain, which takes the factor fused instead";
+constexpr std::string_view batch_one_row_reason =
+    "batch leaves, one row at a time between the edge passes";
+
 template <class T>
 void build(plan_core& c, const shape_view& s, const side& in, const side& out, const options& opts,
            const build_settings& settings, const edge_plan* edge_ops,
@@ -1303,19 +1327,187 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       span = checked_mul(span, to_signed(i == r ? last_n : c.lengths[i - 1], "shape"), "shape");
     }
     static_cast<void>(checked_mul(span, complex_bytes, "shape"));
-    const bool accumulate = edge_ops->out.accumulate;
+    // Stored runs on the output (task 5.1d) leave the output short of the whole transform: it
+    // ends in the block, as with accumulation, and the output's phase stores the runs.
+    const bool to_block = edge_ops->out.accumulate || edge_ops->out.runs.any();
     if (edge_ops->in.separate) {
-      src0 = s.kind == transform_kind::c2c && !accumulate
+      src0 = s.kind == transform_kind::c2c && !to_block
                  ? out_view
                  : (s.kind == transform_kind::r2c ? block_real : block_complex);
     }
-    if (accumulate) {
+    if (to_block) {
       dst0 = s.kind == transform_kind::c2r ? block_real : block_complex;
     }
     if (src0.where == slot::block || dst0.where == slot::block) {
       edge_block = static_cast<std::size_t>(span);
     }
   }
+  // The edge phase of a side with stored runs (task 5.1d), from `from` to `to` over lines of
+  // `extent` along the last axis: the input's reads the stored runs into the whole transform with
+  // zeros elsewhere, the output's stores (or accumulates) only the runs. Each axis but the last is
+  // cut into pieces, its runs and (input only) the gaps between them, and every combination of
+  // pieces is a nest of its own over the pieces' extents, its lines' stages offset to the
+  // pieces' first elements: a gap's lines are zeros, the others' lines run_line_stages. The
+  // factor is none (build_with_runs), so no cursor moves.
+  const auto run_phase = [&](program& q, bool output, const std::vector<std::size_t>& extent,
+                             const view& from, const view& to, bool real) {
+    const edge_side& e = output ? edge_ops->out : edge_ops->in;
+    const std::size_t row = r - 1;
+    const view& stored = output ? to : from;
+    const view& logical = output ? from : to;
+    struct piece {
+      std::size_t logical = 0;
+      std::size_t stored = 0;
+      std::size_t count = 0;
+      bool gap = false;
+    };
+    std::vector<std::vector<piece>> pieces(r);
+    for (std::size_t d = 0; d + 1 < r; ++d) {
+      const std::vector<line_run>& runs = e.runs.of(listed(d));
+      if (runs.empty()) {
+        pieces[d].push_back({.count = extent[d]});
+        continue;
+      }
+      std::size_t next = 0;
+      for (const line_run& run : runs) {
+        if (!output && run.logical > next) {
+          pieces[d].push_back({.logical = next, .count = run.logical - next, .gap = true});
+        }
+        pieces[d].push_back({.logical = run.logical, .stored = run.stored, .count = run.count});
+        next = run.logical + run.count;
+      }
+      if (!output && next < extent[d]) {
+        pieces[d].push_back({.logical = next, .count = extent[d] - next, .gap = true});
+      }
+    }
+    pieces[row].push_back({.count = extent[row]});
+    std::vector<std::size_t> choice(r, 0);
+    for (;;) {
+      std::vector<std::size_t> sub = extent;
+      std::ptrdiff_t stored_offset = 0;
+      std::ptrdiff_t logical_offset = 0;
+      bool gap = false;
+      for (std::size_t d = 0; d + 1 < r; ++d) {
+        const piece& pc = pieces[d][choice[d]];
+        sub[d] = pc.count;
+        gap = gap || pc.gap;
+        stored_offset += static_cast<std::ptrdiff_t>(pc.stored) * stored.stride[d];
+        logical_offset += static_cast<std::ptrdiff_t>(pc.logical) * logical.stride[d];
+      }
+      stored_offset *= stored.element_bytes;
+      logical_offset *= logical.element_bytes;
+      const std::vector<std::size_t> open = open_loops(q, row, row, sub, from, to);
+      std::vector<stage> line;
+      const run_line line_at{
+          .src = from.where,
+          .src_stride = from.stride[row],
+          .src_offset = output ? logical_offset : stored_offset,
+          .dst = to.where,
+          .dst_stride = to.stride[row],
+          .dst_offset = output ? stored_offset : logical_offset,
+      };
+      if (gap) {
+        run_zero_line(s.prec, extent[row], line_at, settings.chunk_points, real, line);
+      } else {
+        run_line_stages(s.prec, e, output, extent[row], e.runs.of(listed(row)), line_at,
+                        settings.chunk_points, real, line);
+      }
+      for (stage& st : line) {
+        q.records.emplace_back(std::move(st));
+      }
+      close_loops(q, open);
+      // The next combination of pieces, the last axis' pieces fastest.
+      std::size_t d = r - 1;
+      while (d > 0) {
+        --d;
+        if (++choice[d] < pieces[d].size()) {
+          break;
+        }
+        choice[d] = 0;
+        if (d == 0) {
+          return;
+        }
+      }
+      if (r == 1) {
+        return;
+      }
+    }
+  };
+  // Pruning by restricted loops (DESIGN.md 12.1; task 5.1d): the phase of axis d, which
+  // `build` emits over a given extent from src to dst, run only over the lines it needs. Along an
+  // axis e not transformed yet (done[e] false) whose input has stored runs, the lines outside them
+  // are zeros, and stay zeros, in a phase that works in place (the input's phase wrote zeros
+  // there and every phase before kept them); along an axis already transformed whose output has
+  // stored runs, the lines outside them are not wanted. Each combination of the pieces that
+  // remain is the phase over the pieces' extents inside a loop of one iteration whose start moves
+  // the slots to the pieces' first elements. Without runs, or with nothing to restrict, `build`
+  // runs once over the whole extent.
+  const auto pruned = [&](std::size_t d, const std::vector<std::size_t>& extent, const view& src,
+                          const view& dst, const std::vector<bool>& done, const auto& build) {
+    const bool runs = edge_ops != nullptr && (edge_ops->in.runs.any() || edge_ops->out.runs.any());
+    const bool in_place_phase = src.where == dst.where && src.stride == dst.stride;
+    std::vector<std::vector<line_run>> pieces(r);
+    bool restricted = false;
+    for (std::size_t e = 0; runs && e < r; ++e) {
+      if (e == d || extent[e] == 1) {
+        continue;
+      }
+      const side_runs& held = done[e] ? edge_ops->out.runs : edge_ops->in.runs;
+      if (held.any() && !held.of(listed(e)).empty() && (done[e] || in_place_phase)) {
+        pieces[e] = held.of(listed(e));
+        restricted = true;
+      }
+    }
+    // The same slot moved by both views by different amounts cannot be one start.
+    if (restricted && src.where == dst.where && !in_place_phase) {
+      restricted = false;
+    }
+    if (!restricted) {
+      build(extent);
+      return;
+    }
+    for (std::size_t e = 0; e < r; ++e) {
+      if (pieces[e].empty()) {
+        pieces[e].push_back({.logical = 0, .stored = 0, .count = extent[e]});
+      }
+    }
+    std::size_t kept_notes = SIZE_MAX;
+    std::vector<std::size_t> choice(r, 0);
+    for (;;) {
+      std::vector<std::size_t> sub = extent;
+      std::array<std::ptrdiff_t, moving_slots> start{};
+      for (std::size_t e = 0; e < r; ++e) {
+        const line_run& pc = pieces[e][choice[e]];
+        sub[e] = pc.count;
+        const auto moved_by =
+            slot_bytes_along(e, static_cast<std::ptrdiff_t>(pc.logical), src, dst);
+        for (std::size_t k = 0; k < moving_slots; ++k) {
+          start[k] += moved_by[k];
+        }
+      }
+      const std::size_t wrapper = p.records.size();
+      p.records.emplace_back(loop{.kind = loop_kind::lines, .count = 1, .start = start});
+      build(sub);
+      std::get<loop>(p.records[wrapper]).body_end = static_cast<std::uint32_t>(p.records.size());
+      // One combination's notes describe the axis.
+      if (kept_notes == SIZE_MAX) {
+        kept_notes = c.axis_notes.size();
+      } else {
+        c.axis_notes.resize(kept_notes);
+      }
+      std::size_t e = r;
+      while (e > 0) {
+        --e;
+        if (++choice[e] < pieces[e].size()) {
+          break;
+        }
+        choice[e] = 0;
+        if (e == 0) {
+          return;
+        }
+      }
+    }
+  };
   // An edge phase of program q from `from` to `to` over lines of `extent` along the last axis,
   // its loops' factor steps into `loops`; `rows`: a lanes block's lines (the lanes over adjacent
   // transforms).
@@ -1325,6 +1517,10 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     const edge_side& e = output ? edge_ops->out : edge_ops->in;
     const bool real = output ? s.kind == transform_kind::c2r : s.kind == transform_kind::r2c;
     const std::size_t row = r - 1;
+    if (e.runs.any()) {
+      run_phase(q, output, extent, from, to, real);
+      return;
+    }
     const std::vector<std::size_t> open = open_loops(q, row, row, extent, from, to);
     q.records.emplace_back(
         edge_pass_stage(s.prec, e, output, extent[row], from.where, from.stride[row], to.where,
@@ -1403,6 +1599,12 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   const std::size_t n_in = s.kind == transform_kind::c2r ? c.lengths[0] / 2 + 1 : c.lengths[0];
   const std::size_t n_out = s.kind == transform_kind::r2c ? c.lengths[0] / 2 + 1 : c.lengths[0];
   if (row_input && !c.in_place) {
+    // Said only where the strategy then differs from the plan's without the edges, and
+    // replaced by a reason below that names a strategy the input edge rules out.
+    edge_fallback = s.kind == transform_kind::c2c
+                        ? std::string(c2c_input_pass_reason)
+                        : "the input edge's pass leaves the rows in the workspace block, where "
+                          "the strategy is chosen for contiguous rows";
     if (s.kind == transform_kind::c2c) {
       in_eff = out;
       in_place_build = true;
@@ -1573,9 +1775,13 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
                     !bluestein_tops.empty() || real_grid.phases != 0 || !real_depth_tops.empty());
   const bool use_edge_phases = edge_phases && !row_strategy && adjacent == 0;
   // Batch leaves take a batch of rows in one call of the leaf (driver.hpp, run_leaf_rows),
-  // which separate edge passes between the rows break up: each row's leaf runs alone.
-  if (row_edges && !row_strategy && batch != nullptr && s.kind == transform_kind::c2c) {
-    edge_fallback = "batch leaves, one row at a time between the edge passes";
+  // which separate edge passes between the rows break up: each row's leaf runs alone. Not
+  // over a reason already given: where the input edge's pass has moved the rows (above), the
+  // plan without the edges may have no batch leaves at all, and the move is the cause;
+  // name_forced_strategy gives this reason where that plan has them.
+  if (row_edges && !row_strategy && batch != nullptr && s.kind == transform_kind::c2c &&
+      edge_fallback.empty()) {
+    edge_fallback = batch_one_row_reason;
   }
   const bool accumulate = edge_ops != nullptr && edge_ops->out.accumulate;
   // The output's prior values for accumulation into a row's strategy, which writes the output:
@@ -1620,6 +1826,12 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     }
   }
   const std::size_t strategy_first = p.records.size();
+  // A c2r plane out of place may keep its intermediate packed in the output (below), but not
+  // with edge phases, whose transform ends where the output edge's phase reads it.
+  const bool packed_plane = c2r_packed(s, in, out, c.in_place, settings, c.isa_target);
+  if (packed_plane && edge_phases) {
+    edge_fallback = "an edge phase takes no intermediate packed in the output";
+  }
   if (lanes != 0) {
     // The lanes strategy (DESIGN.md 8.5): blocks of `lanes` rows of the innermost batch
     // dimension through the body, the rest in blocks of C through the tail.
@@ -2007,7 +2219,14 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
         const endpoint block{.where = slot::block, .stride = 1};
         endpoint from = at(src, e);
         const endpoint to = at(dst, e);
-        if (edge_ops->in.separate) {
+        // Stored runs (task 5.1d): the input's pass reads the runs with zeros elsewhere, the
+        // output's stores only the runs.
+        if (edge_ops->in.runs.any()) {
+          run_line_stages(s.prec, edge_ops->in, false, n, edge_ops->in.runs.of(0),
+                          {.src = from.where, .src_stride = from.stride}, settings.chunk_points,
+                          false, st);
+          from = block;
+        } else if (edge_ops->in.separate) {
           st.push_back(edge_pass_stage(s.prec, edge_ops->in, false, n, from.where, from.stride,
                                        slot::block, 1, settings.chunk_points, false,
                                        edge_ops->in.axis_stride));
@@ -2015,7 +2234,11 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
         }
         const endpoint line_to = edge_ops->out.separate ? block : to;
         need = chain.c2c_line(n, sign, from, line_to, from.where == line_to.where, line, st);
-        if (edge_ops->out.separate) {
+        if (edge_ops->out.runs.any()) {
+          run_line_stages(s.prec, edge_ops->out, true, n, edge_ops->out.runs.of(0),
+                          {.src = slot::block, .dst = to.where, .dst_stride = to.stride},
+                          settings.chunk_points, false, st);
+        } else if (edge_ops->out.separate) {
           st.push_back(edge_pass_stage(s.prec, edge_ops->out, true, n, slot::block, 1, to.where,
                                        to.stride, settings.chunk_points, false,
                                        edge_ops->out.axis_stride));
@@ -2051,7 +2274,13 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     } else {
       for (std::size_t i = r; i > 0; --i) {
         const std::size_t d = i - 1;
-        c2c_axis(d, d, in.extent, d + 1 == r ? src0 : dst0, dst0);
+        const view& src = d + 1 == r ? src0 : dst0;
+        std::vector<bool> done(r, false);
+        for (std::size_t e = d + 1; e < r; ++e) {
+          done[e] = true;
+        }
+        pruned(d, in.extent, src, dst0, done,
+               [&](const std::vector<std::size_t>& extent) { c2c_axis(d, d, extent, src, dst0); });
       }
     }
   } else if (s.kind == transform_kind::r2c) {
@@ -2071,16 +2300,22 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       const std::size_t d = i - 1;
       const std::size_t n = c.lengths[d];
       const line_edges edges = c2c_edges(opts, settings, false, d == 0);
-      if (complex_columns(d, out.extent, dst0, dst0, edges, -1, "c2c forward")) {
-        continue;
+      std::vector<bool> done(r, false);
+      for (std::size_t e = d + 1; e < r; ++e) {
+        done[e] = true;
       }
-      std::vector<stage> cs;
-      const std::size_t cneed = chain.c2c_line(n, -1, at(dst0, d), at(dst0, d), true, edges, cs);
-      lines(d, out.extent, dst0, dst0, cneed, std::move(cs));
-      c.axis_notes.push_back("axis " + std::to_string(listed(d)) + " (n = " + std::to_string(n) +
-                             "): c2c forward, radices " + chain.radix_text(n));
+      pruned(d, out.extent, dst0, dst0, done, [&](const std::vector<std::size_t>& extent) {
+        if (complex_columns(d, extent, dst0, dst0, edges, -1, "c2c forward")) {
+          return;
+        }
+        std::vector<stage> cs;
+        const std::size_t cneed = chain.c2c_line(n, -1, at(dst0, d), at(dst0, d), true, edges, cs);
+        lines(d, extent, dst0, dst0, cneed, std::move(cs));
+        c.axis_notes.push_back("axis " + std::to_string(listed(d)) + " (n = " + std::to_string(n) +
+                               "): c2c forward, radices " + chain.radix_text(n));
+      });
     }
-  } else if (!edge_phases && c2r_packed(s, in, out, c.in_place, settings, c.isa_target)) {
+  } else if (!edge_phases && packed_plane) {
     // A c2r plane out of place, its intermediate packed in the output (DESIGN.md 9.1,
     // experiments X60, X63): each output row's n reals hold its h = n/2 complex values after
     // the column axis, X_0 .. X_h-1 with the imaginary place of X_0 holding
@@ -2226,29 +2461,39 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     for (std::size_t i = r - 1; i > 0; --i) {
       const std::size_t d = i - 1;
       const view& src = d + 2 == r ? (in_block ? block_view : (c.in_place ? work : in_view)) : work;
-      if (complex_columns(d, in.extent, src, work, line_edges(), +1, "c2c backward")) {
-        continue;
+      std::vector<bool> done(r, false);
+      for (std::size_t e = d + 1; e + 1 < r; ++e) {
+        done[e] = true;
       }
-      std::vector<stage> cs;
-      const std::size_t n = c.lengths[d];
-      const std::size_t cneed =
-          chain.c2c_line(n, +1, at(src, d), at(work, d), src.where == work.where, line_edges(), cs);
-      lines(d, in.extent, src, work, cneed, std::move(cs));
-      c.axis_notes.push_back("axis " + std::to_string(listed(d)) + " (n = " + std::to_string(n) +
-                             "): c2c backward, radices " + chain.radix_text(n));
+      pruned(d, in.extent, src, work, done, [&](const std::vector<std::size_t>& extent) {
+        if (complex_columns(d, extent, src, work, line_edges(), +1, "c2c backward")) {
+          return;
+        }
+        std::vector<stage> cs;
+        const std::size_t n = c.lengths[d];
+        const std::size_t cneed = chain.c2c_line(n, +1, at(src, d), at(work, d),
+                                                 src.where == work.where, line_edges(), cs);
+        lines(d, extent, src, work, cneed, std::move(cs));
+        c.axis_notes.push_back("axis " + std::to_string(listed(d)) + " (n = " + std::to_string(n) +
+                               "): c2c backward, radices " + chain.radix_text(n));
+      });
     }
     // The rows from the half spectrum to dst0: the output, or with accumulation the block, in
     // place there when the half spectrum is in it (c2r never writes its source before reading
     // it, as an in-place plan's rows show).
     const view& src = in_block || (r > 1 && !c.in_place) ? block_view : in_view;
-    std::vector<stage> st;
-    const std::size_t need =
-        chain.c2r_line(c.lengths[r - 1], at(src, r - 1), at(dst0, r - 1), opts.scale, st);
-    lines(r - 1, out.extent, src, dst0, need, std::move(st));
-    c.axis_notes.push_back("axis " + std::to_string(listed(r - 1)) +
-                           " (n = " + std::to_string(c.lengths[r - 1]) + "): " +
-                           chain.real_text(c.lengths[r - 1], false,
-                                           src.stride[r - 1] != 1 || dst0.stride[r - 1] != 1));
+    std::vector<bool> done(r, true);
+    done[r - 1] = false;
+    pruned(r - 1, out.extent, src, dst0, done, [&](const std::vector<std::size_t>& extent) {
+      std::vector<stage> st;
+      const std::size_t need =
+          chain.c2r_line(c.lengths[r - 1], at(src, r - 1), at(dst0, r - 1), opts.scale, st);
+      lines(r - 1, extent, src, dst0, need, std::move(st));
+      c.axis_notes.push_back("axis " + std::to_string(listed(r - 1)) +
+                             " (n = " + std::to_string(c.lengths[r - 1]) + "): " +
+                             chain.real_text(c.lengths[r - 1], false,
+                                             src.stride[r - 1] != 1 || dst0.stride[r - 1] != 1));
+    });
   }
   if (use_edge_phases && edge_ops->out.separate) {
     // The output edge's phase: from dst0 (the output itself, in place, or the block) to the
@@ -2291,8 +2536,57 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
         s.kind == transform_kind::c2c && r == 1 && !row_strategy && adjacent == 0
             ? edge_layout::row_chain
             : (row_strategy ? edge_layout::row_strategy : edge_layout::phases);
-    c.edges_note = edges_text(*edge_ops, layout, edge_fallback);
+    if (edge_ops->in.runs.any() || edge_ops->out.runs.any()) {
+      // Stored runs (task 5.1d), with at most accumulation and scales beside them: one pass per
+      // side that has runs or accumulates.
+      const bool to_out = use_edge_phases && src0.where == slot::out;
+      const std::size_t passes = (edge_ops->in.runs.any() ? 1U : 0U) +
+                                 (edge_ops->out.runs.any() || edge_ops->out.accumulate ? 1U : 0U);
+      c.edges_note =
+          runs_text({.in = edge_ops->in.runs, .out = edge_ops->out.runs}, edge_ops->out.accumulate,
+                    to_out ? "the output" : "the workspace block", passes);
+    } else {
+      c.edges_note = edges_text(*edge_ops, layout, edge_passes(p));
+    }
+    c.edge_fallback = edge_fallback;
   }
+  // The strategy in a few words, in the order of the branches above, for build_with_edges'
+  // comparison with the plan without edges.
+  c.strategy_name = [&]() -> std::string {
+    if (lanes != 0) {
+      return "the lanes over rows";
+    }
+    if (adjacent != 0) {
+      return "the lanes over adjacent transforms";
+    }
+    if (real_grid.phases != 0) {
+      return "the half-length grid in " + std::to_string(real_grid.phases) + " phases";
+    }
+    if (!depth_tops.empty()) {
+      return "the depth-first chain";
+    }
+    if (!real_depth_tops.empty()) {
+      return "the half-length depth-first chain";
+    }
+    if (!bluestein_tops.empty()) {
+      return "Bluestein's depth-first convolution";
+    }
+    if (grid_plan.phases != 0) {
+      return "the grid in " + std::to_string(grid_plan.phases) + " phases";
+    }
+    if (r > 1) {
+      if (c.strategy_note == volume_note) {
+        return "each plane of the volume, then the outer axis";
+      }
+      return !edge_phases && packed_plane
+                 ? "each axis in turn, the intermediate packed in the output"
+                 : "each axis in turn";
+    }
+    if (batch != nullptr && s.kind == transform_kind::c2c) {
+      return std::string(row_edges ? batch_one_row_name : batch_leaves_name);
+    }
+    return "the chain";
+  }();
   for (std::size_t b = 0; b < p.batch_loops; ++b) {
     std::get<loop>(p.records[b]).body_end = static_cast<std::uint32_t>(p.records.size());
   }
@@ -2430,10 +2724,11 @@ const char* slot_name(slot s) {
   return "block";
 }
 
-} // namespace
-
-std::shared_ptr<plan_core> build_plan_core(const shape_view& s, const options& opts,
-                                           const build_settings& given, const edge_plan* edges) {
+// build_plan_core, with its team core where `team_core`: name_forced_strategy's plan without
+// the edges goes without, its strategy being all it is built for.
+std::shared_ptr<plan_core> build_core(const shape_view& s, const options& opts,
+                                      const build_settings& given, const edge_plan* edges,
+                                      bool team_core) {
   // A plan whose edges have a factor fused into a c2c row's passes (core/edges.hpp,
   // resolve_edges) is a chain whatever the rules or a test would choose: the fused factor goes
   // through the settings' factor fields, which every other strategy's rule refuses, as a tag
@@ -2469,6 +2764,15 @@ std::shared_ptr<plan_core> build_plan_core(const shape_view& s, const options& o
     c->counts.push_back(b.count);
   }
 
+  // Stored runs (task 5.1d) come as the edges' (build_with_runs): each side's, in the shape's
+  // order, which the layout's defaults and checks take.
+  const side_runs no_runs;
+  const side_runs& in_runs = with_edges ? edges->in.runs : no_runs;
+  const side_runs& out_runs = with_edges ? edges->out.runs : no_runs;
+  if (!s.runs.empty() && !in_runs.any() && !out_runs.any()) {
+    throw std::logic_error("fftn: internal: a shape with stored runs built without them");
+  }
+
   const std::size_t real_bytes = s.prec == precision::f64 ? sizeof(double) : sizeof(float);
   const std::size_t half = s.axes[r - 1].n / 2 + 1;
   std::vector<std::size_t> full = c->lengths;
@@ -2483,16 +2787,16 @@ std::shared_ptr<plan_core> build_plan_core(const shape_view& s, const options& o
   side out;
   switch (s.kind) {
   case transform_kind::c2c:
-    in = resolve(s, full, full[r - 1], true, true, cb);
-    out = resolve(s, full, full[r - 1], false, true, cb);
+    in = resolve(s, full, full[r - 1], true, true, cb, in_runs);
+    out = resolve(s, full, full[r - 1], false, true, cb, out_runs);
     break;
   case transform_kind::r2c:
-    in = resolve(s, full, padded, true, false, rb);
-    out = resolve(s, halved, half, false, true, cb);
+    in = resolve(s, full, padded, true, false, rb, in_runs);
+    out = resolve(s, halved, half, false, true, cb, out_runs);
     break;
   case transform_kind::c2r:
-    in = resolve(s, halved, half, true, true, cb);
-    out = resolve(s, full, padded, false, false, rb);
+    in = resolve(s, halved, half, true, true, cb, in_runs);
+    out = resolve(s, full, padded, false, false, rb, out_runs);
     break;
   }
   check_reach(s, in, true);
@@ -2587,7 +2891,7 @@ std::shared_ptr<plan_core> build_plan_core(const shape_view& s, const options& o
   // blocks or (X43b arm VT) a volume's order.
   // X43b arm VT: a team core also where only a volume's order would differ.
   const bool team_order = r == 3 && settings.profile.team_volume_planes;
-  if (s.kind == transform_kind::c2c &&
+  if (team_core && s.kind == transform_kind::c2c &&
       ((r > 1 && (settings.profile.column_team_bytes != 0 || team_order ||
                   settings.profile.column_wide_bytes != 0)) ||
        c->adjacent_team_chain) &&
@@ -2605,8 +2909,90 @@ std::shared_ptr<plan_core> build_plan_core(const shape_view& s, const options& o
   return c;
 }
 
+} // namespace
+
+std::shared_ptr<plan_core> build_plan_core(const shape_view& s, const options& opts,
+                                           const build_settings& given, const edge_plan* edges) {
+  return build_core(s, opts, given, edges, true);
+}
+
+namespace {
+
+// A plan whose shape has stored runs (task 5.1d), with its edges (null: none): built as a plan
+// with edges whose sides with runs are separate passes (core/runs.hpp), on the chain, by the
+// rules whatever options::effort and options::use say; describe() names the strategy the plan
+// without the runs would take where it differs, and says how it was planned.
+std::shared_ptr<const plan_core> build_with_runs(const shape_view& shape, const options& opts,
+                                                 const edges_view* given,
+                                                 const build_settings& settings) {
+  check_counts(shape);
+  if (!std::isfinite(opts.measure_seconds) || opts.measure_seconds < 0) {
+    reject("options.measure_seconds", "must be finite and not negative");
+  }
+  const run_plan runs = resolve_runs(shape, opts);
+  const edges_view none{};
+  const edges_view& edges = given != nullptr ? *given : none;
+  for (const auto& [e, name] :
+       {std::pair{&edges.in, "edges.in.mul.kind"}, std::pair{&edges.out, "edges.out.mul.kind"}}) {
+    if (e->kind != factor_kind::none) {
+      reject(name, "is a factor, which a shape with stored runs does not take yet (task 5.1d)");
+    }
+  }
+  resolved_edges r = resolve_edges(shape, opts, edges, false);
+  edge_plan& p = r.plan;
+  p.any = true;
+  p.in.runs = runs.in;
+  p.out.runs = runs.out;
+  p.in.separate = p.in.separate || runs.in.any();
+  p.out.separate = p.out.separate || runs.out.any();
+  // The chain: the strategies that read or write the caller's arrays themselves (the lanes,
+  // the grid, depth-first chains, batch leaves) take no runs yet.
+  build_settings chain = settings;
+  chain.strategy = strategy_choice::chain;
+  chain.batch_leaves = batch_leaf_choice::never;
+  // A volume a plane at a time nests its planes' phases in a loop over the planes, which the
+  // pruning by restricted loops does not cut (pruned, build_plan_core).
+  chain.volume_planes = false;
+  chain.profile.team_volume_planes = false;
+  const std::shared_ptr<plan_core> c = build_plan_core(shape, r.opts, chain, &p);
+  // The plan without the runs but with the same edges, where its layout is valid by logical
+  // extents: its strategy, so that what the edges alone change (accumulation's, named by
+  // build_with_edges) is not put down to the runs. Scales alone are options::scale's product, as
+  // in any plan of scales only. Neither plan needs its team core here.
+  shape_view whole = shape;
+  whole.runs = {};
+  options whole_opts = opts;
+  whole_opts.scale = opts.scale * edges.in.scale * edges.out.scale;
+  const bool edges_alone = resolve_edges(whole, opts, edges).plan.any;
+  try {
+    const std::shared_ptr<const plan_core> plain =
+        edges_alone ? build_with_edges(whole, opts, edges, settings, false)
+                    : build_core(whole, whole_opts, settings, nullptr, false);
+    if (plain->strategy_name != c->strategy_name) {
+      c->edges_note +=
+          "\n" + forced_text(plain->strategy_name, c->strategy_name,
+                             "stored runs take the chain (task 5.1d)", "the stored runs");
+    }
+  } catch (const std::invalid_argument&) {
+    // Overlapping or unaddressable without the runs: no plan to compare with.
+  }
+  if (opts.effort != planning::rules || opts.use != nullptr) {
+    c->planning_note = "by the rules: measured planning and wisdom take no stored runs yet";
+  }
+  // Complete although a plan with runs looks no wisdom up: scales alone (no edges_key) as
+  // options::scale's product, otherwise the edges' key, which carries every scale.
+  c->shape_key =
+      edges_alone ? shape_key_with_edges(shape, opts, edges) : shape_key(shape, whole_opts);
+  return c;
+}
+
+} // namespace
+
 std::shared_ptr<const plan_core> make_plan_core(const shape_view& shape, const options& opts,
                                                 const build_settings& settings) {
+  if (!shape.runs.empty()) {
+    return build_with_runs(shape, opts, nullptr, settings);
+  }
   // Refused whatever the effort, so that an option that takes effect only with measured
   // planning is not valid or invalid depending on another option.
   if (!std::isfinite(opts.measure_seconds) || opts.measure_seconds < 0) {
@@ -2628,8 +3014,8 @@ std::string shape_key_with_edges(const shape_view& shape, const options& opts,
 }
 
 std::shared_ptr<plan_core> build_with_edges(const shape_view& shape, const options& opts,
-                                            const edges_view& edges,
-                                            const build_settings& settings) {
+                                            const edges_view& edges, const build_settings& settings,
+                                            bool name_forced) {
   const resolved_edges r = resolve_edges(shape, opts, edges);
   if (!r.plan.any) {
     return build_plan_core(shape, r.opts, settings);
@@ -2641,7 +3027,16 @@ std::shared_ptr<plan_core> build_with_edges(const shape_view& shape, const optio
   const resolved_edges separate = resolve_edges(shape, opts, edges, false);
   std::shared_ptr<plan_core> c = build_plan_core(shape, separate.opts, settings, &separate.plan);
   if (any_fused(r.plan) && c->built == strategy_choice::chain) {
+    const std::string fallback = c->edge_fallback;
     c = build_plan_core(shape, r.opts, settings, &r.plan);
+    // What kept the separate passes' plan from the plain plan's strategy keeps this one too,
+    // but the fused chain has no input pass: the strategy is the one chosen for the rows where
+    // that pass would have left them (name_forced_strategy adds batch leaves' reason).
+    c->edge_fallback =
+        fallback == c2c_input_pass_reason ? std::string(c2c_fused_input_reason) : fallback;
+  }
+  if (name_forced) {
+    name_forced_strategy(*c, shape, opts, edges, settings);
   }
   // Wisdom records the plan under its edges, so that no plan without them matches its entry,
   // with the caller's options (not the scale a placement fuses), so that the key does not
@@ -2650,10 +3045,42 @@ std::shared_ptr<plan_core> build_with_edges(const shape_view& shape, const optio
   return c;
 }
 
+void name_forced_strategy(plan_core& c, const shape_view& shape, const options& opts,
+                          const edges_view& edges, const build_settings& settings) {
+  if (!resolve_edges(shape, opts, edges).plan.any) {
+    return;
+  }
+  // The plan without the edges (their scales folded into options::scale, as a plan of scales
+  // alone has them), without its team core: the strategy the rules (or the settings) choose,
+  // which describe() names where the edges keep the plan from it (task 5.1c).
+  options plain_opts = opts;
+  plain_opts.scale = opts.scale * edges.in.scale * edges.out.scale;
+  const std::shared_ptr<const plan_core> plain =
+      build_core(shape, plain_opts, settings, nullptr, false);
+  if (c.strategy_name == plain->strategy_name) {
+    return;
+  }
+  std::string fallback = c.edge_fallback;
+  // Where the plan without the edges is on batch leaves, the edges' separate passes take a
+  // row at a time, and a fused factor (the chain the edges keep, the only other plan they
+  // build there) takes none, whatever else build() noted.
+  if (plain->strategy_name == batch_leaves_name) {
+    if (c.strategy_name == batch_one_row_name) {
+      fallback = batch_one_row_reason;
+    } else if (c.strategy_name == "the chain") {
+      fallback = "the chain with a fused factor takes no batch leaves";
+    }
+  }
+  c.edges_note += "\n" + forced_text(plain->strategy_name, c.strategy_name, fallback);
+}
+
 std::shared_ptr<const plan_core> make_plan_core_with_edges(const shape_view& shape,
                                                            const options& opts,
                                                            const edges_view& edges,
                                                            const build_settings& settings) {
+  if (!shape.runs.empty()) {
+    return build_with_runs(shape, opts, &edges, settings);
+  }
   check_counts(shape);
   const resolved_edges r = resolve_edges(shape, opts, edges);
   if (!r.plan.any) {

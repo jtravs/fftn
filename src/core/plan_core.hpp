@@ -248,7 +248,13 @@ public:
   std::uint8_t factor_args = 0; // which arrays: moving_in_factor, moving_out_factor
   std::vector<edge_record> edge_records;
   std::vector<edge_record> edge_tail_records; // a lanes program's, one per program::lane_tail
-  std::string edges_note; // describe()'s line for edges with factors or accumulation
+  std::string edges_note; // describe()'s lines for edges with factors or accumulation
+  // The strategy the plan was built as, in a few words ("the grid in 2 phases"), and, for a
+  // plan with edges, why they keep it from another (empty: nothing does): build_with_edges
+  // compares the first with the plan built without the edges, and describe() names both
+  // where they differ (task 5.1c).
+  std::string strategy_name;
+  std::string edge_fallback;
 };
 
 // The core a team of two or more members runs: the team program where there is one.
@@ -283,11 +289,17 @@ make_plan_core_with_edges(const shape_view& shape, const options& opts, const ed
 // The plan of `shape` with `edges` (validated by resolve_edges), as the settings describe,
 // ignoring options::effort and options::use: the strategy with separate passes, or the chain
 // with a fused factor where that strategy is the chain (core/edges.hpp); keyed for wisdom by
-// shape_key_with_edges.
-[[nodiscard]] std::shared_ptr<plan_core> build_with_edges(const shape_view& shape,
-                                                          const options& opts,
-                                                          const edges_view& edges,
-                                                          const build_settings& settings);
+// shape_key_with_edges. name_forced: name_forced_strategy too (measured planning names only
+// the plan it keeps, so that each candidate costs one build).
+[[nodiscard]] std::shared_ptr<plan_core>
+build_with_edges(const shape_view& shape, const options& opts, const edges_view& edges,
+                 const build_settings& settings, bool name_forced = true);
+
+// Adds describe()'s line naming the strategy the plan without `edges` takes, where `c`, built
+// by build_with_edges with the same arguments, takes another, and why (task 5.1c). It builds
+// that plan, without a team core.
+void name_forced_strategy(plan_core& c, const shape_view& shape, const options& opts,
+                          const edges_view& edges, const build_settings& settings);
 
 // The wisdom key of a plan with edges whose factors or accumulation are not scales only.
 [[nodiscard]] std::string shape_key_with_edges(const shape_view& shape, const options& opts,

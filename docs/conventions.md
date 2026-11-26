@@ -268,13 +268,35 @@ be fused into a pass's arithmetic. The guarantees of
 "Determinism" below hold for plans with edges too.
 
 Scales are taken by every plan; so are factors and accumulation, in the strategy the rules
-or measured planning choose (`options::effort`), with a few exceptions that
-`plan::describe()` names; a wisdom entry of a plan with edges serves the same edges only. Where that strategy is the chain of a c2c row, a
+or measured planning choose (`options::effort`), with a few exceptions: there
+`plan::describe()` names the strategy the same plan without the edges takes, the one it takes
+instead and why. Its line for the edges also counts the separate passes they cost. A wisdom entry of a plan with edges serves the same edges only. Where that strategy is the chain of a c2c row, a
 complex factor of stride 1 along the row is applied in its first or last pass. Every other
 factor, and accumulation, is a pass of its own over the edge's side, before or after the
 transform; the workspace may then hold one transform (or row) more: an input edge that
 cannot be applied in the output, and accumulation, which keeps the result or the output's
 prior values there.
+
+## Stored runs
+
+Provisional (task 5.1d, `fftn::stored_run` in `fftn/shape.hpp`). An axis may be stored in
+part on either side: `shape::runs` lists runs, each `count` elements stored from position
+`stored` of the axis's memory that are the logical positions `logical` onwards of the
+transformed line. On an axis with runs on a side, input elements outside the runs are zero and
+are never read, output elements outside the runs are never written, and the default stride of
+the next axis out spans the axis's stored extent (the end of its last run), not its length; the
+overlap check measures the same extent. Examples: the band of bins of a long time line that an
+application keeps, the valid half of a zero-padded convolution's row, the bins an output crops.
+`axes_c2c`, `axes_r2c` and `axes_c2r` take runs too (their axes index the array), so that a
+compact array of stored bins gets its strides by default.
+
+Runs of one axis and side may not overlap in their logical or their stored positions; they may
+be listed in any order. A plan with runs reads the runs into the whole line with zeros elsewhere,
+computes the whole transform (skipping the lines of a multi-axis transform that are known to be
+zero or are not wanted) and stores only the runs, on the chain whatever the rules would choose,
+planned by the rules whatever `options::effort` says; `plan::describe()` says so and counts the
+passes. Not built yet, and refused at construction: runs on an in-place plan, and runs beside an
+edge's factor (accumulation and scales are taken).
 
 ## In place
 
