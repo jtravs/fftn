@@ -889,9 +889,12 @@ void nested_out(void* user, const fftn::block_info& info, std::complex<double>* 
     return;
   }
   fftn::workspace ws{info.scratch};
-  for (std::size_t i = 0; i < info.length; ++i) {
-    std::complex<double>& y = data[static_cast<std::ptrdiff_t>(i) * info.element_stride];
-    y = nested_value(y, *ctx.inner, ws);
+  for (std::size_t k = 0; k < info.lines; ++k) {
+    for (std::size_t i = 0; i < info.length; ++i) {
+      std::complex<double>& y = data[static_cast<std::ptrdiff_t>(i) * info.element_stride +
+                                     static_cast<std::ptrdiff_t>(k) * info.line_stride];
+      y = nested_value(y, *ctx.inner, ws);
+    }
   }
 }
 
@@ -956,8 +959,11 @@ TEST(Callbacks, CallbackOfALambda) {
   using C = std::complex<float>;
   const std::size_t n = 32;
   const auto twice = [](const fftn::block_info& info, C* data) noexcept {
-    for (std::size_t i = 0; i < info.length; ++i) {
-      data[static_cast<std::ptrdiff_t>(i) * info.element_stride] *= 2.0F;
+    for (std::size_t k = 0; k < info.lines; ++k) {
+      for (std::size_t i = 0; i < info.length; ++i) {
+        data[static_cast<std::ptrdiff_t>(i) * info.element_stride +
+             static_cast<std::ptrdiff_t>(k) * info.line_stride] *= 2.0F;
+      }
     }
   };
   const auto shape = fftn::rows_c2c<float>(n, 2, fftn::direction::forward);

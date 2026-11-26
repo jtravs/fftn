@@ -32,10 +32,14 @@ double callbacks_error() {
   // Each output bin k of transform t times exp(i g |y|^2), a phase that depends on the bin's
   // own value: pure per element, so any team or executor gives the same bits.
   const double g = 0.01;
+  // A block holds info.lines rows (consecutive transforms), info.length elements of each.
   auto kerr = [g](const fftn::block_info& info, std::complex<double>* y) noexcept {
-    for (std::size_t i = 0; i < info.length; ++i) {
-      std::complex<double>& v = y[static_cast<std::ptrdiff_t>(i) * info.element_stride];
-      v *= std::polar(1.0, g * std::norm(v));
+    for (std::size_t k = 0; k < info.lines; ++k) {
+      for (std::size_t i = 0; i < info.length; ++i) {
+        std::complex<double>& v = y[static_cast<std::ptrdiff_t>(i) * info.element_stride +
+                                    static_cast<std::ptrdiff_t>(k) * info.line_stride];
+        v *= std::polar(1.0, g * std::norm(v));
+      }
     }
   };
   const fftn::c2c_plan<double> plan(
