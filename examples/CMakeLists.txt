@@ -15,6 +15,22 @@ foreach(example IN ITEMS axes callbacks easy edges executor_rows lengths pipelin
   add_test(NAME example.${example} COMMAND fftn_example_${example})
 endforeach()
 
+# The C API's example: a C99 program that links the C++ static library (CMake links it with
+# the C++ compiler, which brings the C++ standard library).
+add_executable(fftn_example_c_api c_api.c)
+fftn_configure_target(fftn_example_c_api)
+set_target_properties(fftn_example_c_api PROPERTIES C_STANDARD 99 C_EXTENSIONS OFF)
+target_link_libraries(fftn_example_c_api PRIVATE fftn::fftn)
+add_test(NAME example.c_api COMMAND fftn_example_c_api)
+# The same program on the C API's shared library, when it is built (FFTN_BUILD_C_SHARED).
+if(TARGET fftn_c)
+  add_executable(fftn_example_c_api_shared c_api.c)
+  fftn_configure_target(fftn_example_c_api_shared)
+  set_target_properties(fftn_example_c_api_shared PROPERTIES C_STANDARD 99 C_EXTENSIONS OFF)
+  target_link_libraries(fftn_example_c_api_shared PRIVATE fftn::fftn_c)
+  add_test(NAME example.c_api_shared COMMAND fftn_example_c_api_shared)
+endif()
+
 # The Kokkos adapter's example needs Kokkos, which the test dependencies provide unless
 # FFTN_TEST_WITH_KOKKOS is off (cmake/FftnTestDeps.cmake).
 if(TARGET Kokkos::kokkos)

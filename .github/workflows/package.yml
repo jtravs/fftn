@@ -21,6 +21,8 @@ on:
       - "include/**"
       - "examples/package/**"
       - examples/rows_c2c.cpp
+      - examples/c_api.c
+      - "src/c_api/**"
       - examples/omp_rows.cpp
       - .github/scripts/package-test.sh
       - .github/workflows/package.yml
