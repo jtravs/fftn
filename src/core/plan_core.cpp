@@ -3000,12 +3000,13 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
           }
           // Several rows a call only in the row-block form: not where a team runs the walked form.
           const auto blocks = [&](const std::string& where) {
-            callback_place p = callback_blocks(where, n, rows, 2 * sizeof(T), block_bytes, "rows");
+            callback_place place =
+                callback_blocks(where, n, rows, 2 * sizeof(T), block_bytes, "rows");
             if (callback_cuts(n, rows, 2 * sizeof(T), block_bytes).per_call > 1) {
-              p.block += " in the row blocks (fewer in a short batch; one row a call where a team "
-                         "runs the walked form)";
+              place.block += " in the row blocks (fewer in a short batch; one row a call where a "
+                             "team runs the walked form)";
             }
-            return p;
+            return place;
           };
           c.callbacks_note = callbacks_text(edge_ops->in.call, edge_ops->out.call,
                                             blocks(cb_in_where), blocks(cb_out_where));
