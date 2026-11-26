@@ -405,3 +405,16 @@ acts:
   (`describe()` and `workspace_bytes()` probes over many plans, and the plain driver's disassembly
   under Clang on arm64 and x86-64). A criterion missed by less than the band gets one `--serial`
   re-run that decides. Otherwise the reach stays `none` everywhere and the verdict is recorded.
+
+**Amendment, before the deciding run (2026-11-26 ~02:30Z).** The first run of the narrowed change
+(`O` = 7cb9bd4b, `N` = 15e58879; EPYC runs 20261126-021057-895e, -c41c, -b554, -7e0b, jobs
+519299–519305; the Xeon's E1 cancelled, 17278–17284) cannot show criterion (1): fbench's FFTN
+backend keeps only the describe() lines that contain "edges: ", so the "edge forms" and "edge row
+blocks" lines never reached the notes. It is informative only. The backend now keeps those lines
+too (`bench/backends/fftn.cpp`, `edge_lines_of`; the library is unchanged), and the deciding run is
+the same run again with `N` = the commit that adds this: arms `O` = 7cb9bd4b (PR 137's head, the
+walked form; its backend's notes lack those lines, which no plan of `O` has) and `N` = that commit,
+E1, E2, E4 and E5 on the EPYC and the Xeon (`--serial`), with the rule above unchanged. The included
+cases are those whose note in `N` names a batched form; on the EPYC the fused complex factor makes
+64 × 64 a chain of two passes (radices 4 × 16), so E2 and E4 include only 16 × 1024 there, as the
+criterion says.
