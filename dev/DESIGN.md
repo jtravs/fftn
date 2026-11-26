@@ -871,8 +871,8 @@ Points that matter:
 
 ### 5.8 Split-complex layout
 
-*Proposed* (phase 6, steps 6.10 and 6.13; whether to build it is the maintainer's question in
-18.2, "Phase 6").
+*Proposed* (phase 6, step 6.10; the fused form, 6.13, moved to phase 7 when the maintainer settled
+18.2's Q2 on 2026-11-26); step 6.10 is built on the proposal, provisional ("As built" below).
 
 ```cpp
 namespace fftn {
@@ -4546,6 +4546,10 @@ do not depend on the direction, and a workspace is plain bytes sized by
 **Pipelines (task 5.2 design, 2026-11-25; for the maintainer).** These questions are open in
 12.2's API block. Each has a proposal, which is used until the maintainer settles it:
 
+*Settled 2026-11-26 (the maintainer): every proposal below is accepted as built (tasks 5.2b to
+5.2f and 5.3d to 5.3f), so step 6.9 can carry the API into C. Item 10 (`array_of`, not built)
+stays open. The headers keep "provisional" until step 6.20 confirms the APIs for the release.*
+
 1. **Names of the helpers.** A forward-first `<C, C, C>` convolution is made by
    `spectral_pair_rows(n, count, direction::forward)`, which reads oddly. Proposal: add
    `complex_convolution_rows<T>(n, count)`, and keep `spectral_pair_rows` for inverse first
@@ -4598,6 +4602,10 @@ names `max_lanes` and `strict_layout`, which `options` does not have; a pipeline
 `use`.
 **Callbacks (task 5.3 design, 2026-11-26; for the maintainer).** These questions are open in
 12.3's API block. Each has a proposal, which is used until the maintainer settles it:
+
+*Settled 2026-11-26 (the maintainer): every proposal below is accepted as built (tasks 5.3a to
+5.3f), including the later items (groups counting as tasks, `pipeline::transform_count()`). The
+headers keep "provisional" until step 6.20 confirms the APIs for the release.*
 
 1. **Header.** Proposal: `fftn/callback.hpp` (one concept per header), included by
    `fftn/edges.hpp` and `fftn/pipeline.hpp`.
@@ -4674,9 +4682,11 @@ table are built on the proposal, provisional and with a second reader, until it 
 2. **Split-complex layout** has no user asking for it (1.4: no feature without a motivating
    use). Proposal: build the conversion form (6.10, about two sessions), since FFTW users
    expect it and it costs no kernel work; the fused form (6.13) moves to phase 7, on demand.
+   *Settled 2026-11-26 (the maintainer): as proposed.*
 3. **Kokkos one-shot functions** (Kokkos-FFT's `fft`, `ifft`, …). The client application uses
    plans only. Proposal: build them in 6.7 over the convenience cache, last among the API
-   steps, so a Kokkos-FFT user's every call site compiles.
+   steps, so a Kokkos-FFT user's every call site compiles. *Settled 2026-11-26 (the
+   maintainer): as proposed; PR 160 merged, provisional.*
 
 *Convenience layer (5.4)*
 
@@ -4751,6 +4761,8 @@ table are built on the proposal, provisional and with a second reader, until it 
     6.16 (Windows). The November campaign stands at USD 16.54 of 20. Proposal: a phase 6 budget
     of USD 40 on Spot VMs, the ledger as before; Windows on one x64 VM of an instance type
     already screened under Linux, so the two systems are compared on the same hardware.
+    *Settled 2026-11-26 (the maintainer): USD 40 approved, to be spent only once the features
+    are built.*
 25. **Packaging.** Proposal: a CMake package, pkg-config and FetchContent (6.1); no
     amalgamation for the first release (14.3: it would take the user's floating-point flags,
     and `-ffp-contract=fast` cannot be detected); recipes for package managers (vcpkg, Conan,
@@ -5166,6 +5178,7 @@ to change before a release.
 | 2026-11-26 | Groups on pipelines (task 5.3f, section 12.3, "As built"): `pipeline_desc::group`, provisional; the group's dimension a task, two members loops around one middle callback over the G spectra, which `block_info::group` and `group_stride` describe; `execute_transforms` and `transforms_of` count groups; refused without a middle callback, with fan-out and for no such dimension; 18.2's "Callbacks" proposals 15 and 16. Awaits the maintainer's review of the API | A coupled middle (polarisations) needs every member's spectrum at once, and one task per group keeps the callback whole under teams and executors |
 | 2026-11-26 | The C API for plans (step 6.8, section 5.9; provisional, second reader to come): `fftn/c_api.h` and `src/c_api/` with 18.2's proposals Q17–Q22 taken as written (the header in `fftn::fftn`, one plan type and `void*` data, NULL or a status plus an optional caller-owned `fftn_error`, the opt-in shared library `fftn_c` exporting `fftn_` only, plain structs without size or version fields, plans of every built kind with workspaces, the four execution forms, wisdom and lengths); the choices where 5.9 was silent are listed in its "As built" | The maintainer's priority (2026-11-25): features fully built; the C interface serves C, Fortran, Python and Julia callers and older toolchains (decision of 2026-11-16) |
 | 2026-11-26 | Owner-computes and the fusion documents (task 5.5, section 12.4, "As built"): no library change; a test of the deal for plans with edges and callbacks and for pipelines, an OpenMP example, `docs/fusion.md`. fbench's pipeline arms (`PIPELINE=fused` and the unfused `separate`) convolve rows with a kernel that delays each row by one element, and the harness checks such backends against the delayed input (`"output":"delay"` in `describe`) instead of the DFT. `fftn/kokkos.hpp`'s `array_of` not built: section 5.5 gives it no design (the fusion proposal's one line did not reach the agreed section 12) | A pipeline computes no DFT, so the harness's check needs another reference; a delay is exact, analytic and moves every bin's phase, so a copying or wrong arm fails it. The API waits for the maintainer (AGENTS.md section 7) |
+| 2026-11-26 | The maintainer settled four questions (18.2): the "Pipelines" and "Callbacks" proposals are accepted as built (item 10, `array_of`, stays open; the headers stay provisional until 6.20); split complex is the conversion form (6.10) in phase 6, the fused form (6.13) moves to phase 7 (Q2); the Kokkos one-shot functions are built as proposed (Q3, PR 160); phase 6's cloud budget is USD 40, spent only once the features are built (Q24) | Unblocks 6.9 and 6.10; keeps phase 6 to features users ask for |
 | 2026-11-26 | Split complex, the conversion form (step 6.10, section 5.8, "As built"; provisional, second reader to come): `split_complex<T>` and `split_ptr<T>` in `fftn/split.hpp`, the c2c, r2c and c2r kinds on split data in every rank, each split side a separate edge pass or phase through the workspace block whose cursor is the imaginary array; split rows on the chain; r2c and c2r refused in place; no edges, stored runs, measured planning, wisdom or C API yet | The maintainer kept only the conversion form in phase 6 (18.2 Q2, 2026-11-26). An edge pass needs no kernel and reaches every rank and kind through 5.1b's phases, and the factor cursors already move by a side's own strides, so the second array costs no new driver state and plans without split data keep their programs. The rows' other strategies read or write the caller's arrays or use the block themselves; building them on the block is left to the fused form (6.13, phase 7) |
 
 ---
