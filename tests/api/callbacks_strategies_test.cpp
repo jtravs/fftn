@@ -671,6 +671,9 @@ struct knobs {
     copy_out.strategy = d::strategy_choice::chain;
     copy_out.batch_leaves = d::batch_leaf_choice::never;
     copy_out.callback_copy_out = true;
+    // The walked form, whose blocks are single rows (no row blocks on any profile).
+    chain.profile.edge_batched_forms = d::edge_forms_reach::none;
+    copy_out.profile.edge_batched_forms = d::edge_forms_reach::none;
   }
 };
 
@@ -905,7 +908,7 @@ std::vector<cb_case> strategy_cases() {
        .settings = &k.adjacent,
        .strategy = adjacent},
       {.name = "rows as adjacent transforms in place",
-       .n = 96,
+       .n = 120,
        .count = 12,
        .in = in_kind::modify,
        .out = out_kind::modify,
