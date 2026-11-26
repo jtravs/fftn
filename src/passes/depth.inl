@@ -206,7 +206,9 @@ void depth_first_pass(const pass_args* a, const void* src, void* dst, std::size_
         lane_unit<T, R, Sign, true>(
             run_in_head<T, In == first_input::chirp>{
                 .p = x + at(static_cast<std::size_t>(a->src_qstride) + i0, 2),
-                .w = static_cast<const T*>(a->in_factor) + tw_reals<T> * i0,
+                .w = In == first_input::chirp
+                         ? static_cast<const T*>(a->in_factor) + tw_reals<T> * i0
+                         : nullptr,
                 .i = i0,
                 .leg = s * m,
                 .data = a->src_cols,
