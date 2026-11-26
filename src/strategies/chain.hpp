@@ -266,7 +266,11 @@ public:
   // plane's adjacent columns (the strided axis of a multi-axis plan, experiment X40), so the
   // first and last passes run each array row's columns at once (pass_args::columns_inner);
   // given: the radices of the chain instead of the row's (codelet radices with lane passes,
-  // multiplying to n; core/plan_core.cpp, column_radices).
+  // multiplying to n; core/plan_core.cpp, column_radices). c2c_lanes: a source or destination
+  // in scratch (a or b) is a tile, the block's rows at stride B (the lanes pair of a pipeline,
+  // core/pipeline.cpp, task 5.2f: its forward chain ends in a tile, which its inverse reads);
+  // the chain is then chosen as c2c_line chooses it for that endpoint at stride 1, and the
+  // caller reads the destination tile's slot from the last stage.
   [[nodiscard]] bool lanes_fit(std::size_t n, bool real) const;
   std::size_t c2c_lanes(std::size_t n, int sign, endpoint src, std::ptrdiff_t src_dist,
                         endpoint dst, std::ptrdiff_t dst_dist, const line_edges& edges,
