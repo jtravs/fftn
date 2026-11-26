@@ -271,6 +271,38 @@ than the user's loop, so each gets a drafted rule:
   depth-first chain's pairing reads the block. Drafted rule: E4 and E5 re-run on the Xeon; adopt
   when every such case's L/U is at most 1 + band and plans without edges are unchanged.
 
+### P1 as built and judged (task 5.2a; amendment written before its runs)
+
+Built (PR for task 5.2a): `machine_profile::edge_batched_forms` runs a plan whose edges have
+factors through the edge driver's batched forms: the flat form, rows of one leaf and the
+unrolled calls with the cursors moved per transform, and a c2c plan of rows of one batch
+dimension with separate edge passes in blocks of about 2048 points (edge passes and leaves,
+batch leaves included, once per block). Not built: a fused factor inside batch leaves (it needs
+batch-leaf kernels with a factor edge, a generator change; such rows take the fused leaf's rows
+form instead), and accumulation without a factor, which runs on the plain driver and keeps its
+forms (its batch leaves a row at a time).
+
+P1's drafted rule, made precise before any judging run:
+
+- **Arms:** `O` = the branch with the flag off (today's edge plans: the code is the same as
+  `main`'s for plans with edges apart from the empty-forms test), `N` = the same code with the
+  flag on (one commit apart), both with the run's edge option, plus fbench's control `O~`. The
+  plain plan's code is the same in both arms, so N/O over the plans with edges is the change of
+  L/P that the drafted rule names.
+- **Runs:** E1, E2, E4 and E5 (the factor configurations, which run on the edge driver), catalogue
+  `x65` tier `full`, one thread, on the EPYC (DMOG, shared `-c 8`) and the Xeon (`--serial`).
+  E3 (accumulation alone) is not run: its plans are on the plain driver and their code is the
+  same in both arms.
+- **Target set:** the cases of a run whose plan has edges with a factor and that are c2c rows or
+  real rows of fewer than 4096 points (c2c 16 × 1024, 64, 256 and 1024 × 64, 256 × 64 float; r2c
+  and c2r 256 × 16 where the run's edge applies).
+- **Adopt** (the flag on by default) when, on both machines, the geometric mean of N/O over the
+  target cases of the four runs together is at most 0.80, no case of any run (targets and the
+  rest of the catalogue) is slower than 1 + band, and plans without edges compile to exactly
+  `main`'s code (the probes and the disassembly in the PR). Otherwise the flag stays off and
+  the verdict is recorded. A criterion missed by less than the band gets one `--serial` re-run
+  that decides (AGENTS.md section 6).
+
 A real row's grid with an input edge did not occur in the catalogue's rows on these
 machines, and the lanes over adjacent transforms with accumulation were not measured
 (fbench's edge options refuse the interleaved layout). Both go into the re-run with P1.
