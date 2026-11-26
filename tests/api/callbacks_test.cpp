@@ -502,44 +502,74 @@ template <class T> struct cb_run {
 
   // The same work as the user's loops would do it, bitwise: the plain plan on the chain (the
   // strategy callbacks take in 5.3a) over the logical input after the input callback's loop,
-  // then the output callback's loop and the store, accumulation or capture. Valid where no
-  // factor is fused beside a callback (none in the cases it is used for).
+  // then the output callback's loop and the store, accumulation or capture. The plain plan reads
+  // and writes the layouts the plan's chain does (the workspace block's contiguous row where the
+  // plan copies or ends there, else the caller's strided rows, in place for in place), since
+  // the chain's radices depend on them. Valid where no factor is beside a callback.
   [[nodiscard]] cvec<T> separate_loops(cvec<T>& consumed) const {
+    const bool direct = c.out == out_kind::modify && !c.accumulate && c.out_runs.empty();
+    const bool in_block = (c.in != in_kind::none && !c.in_place) || !c.in_runs.empty();
+    const bool out_block = c.out == out_kind::none ? c.accumulate || !c.out_runs.empty() : !direct;
+    const auto n = static_cast<std::ptrdiff_t>(c.n);
     fftn::shape<C, C> plain;
     plain.dir = c.dir;
-    plain.axes = {{.n = c.n}};
-    plain.batches = {{.count = c.count}};
-    const double scale = c.options_scale * c.in_scale * c.out_scale;
+    fftn::options plain_opts{.scale = c.options_scale * c.in_scale * c.out_scale,
+                             .force_isa = target};
+    if (c.in_place) {
+      plain.axes = {{.n = c.n, .in_stride = c.in_stride, .out_stride = c.in_stride}};
+      plain.batches = {{.count = c.count, .in_dist = in_dist, .out_dist = in_dist}};
+      plain_opts.in_place = true;
+    } else {
+      plain.axes = {{.n = c.n,
+                     .in_stride = in_block ? 1 : c.in_stride,
+                     .out_stride = out_block ? 1 : c.out_stride}};
+      plain.batches = {{.count = c.count,
+                        .in_dist = in_block ? n : in_dist,
+                        .out_dist = out_block ? n : out_dist}};
+      plain_opts.in_place = in_block && out_block;
+    }
     fftn::detail::build_settings chain;
     chain.strategy = fftn::detail::strategy_choice::chain;
     chain.batch_leaves = fftn::detail::batch_leaf_choice::never;
-    const auto core = fftn::detail::make_plan_core(fftn::detail::view_of(plain),
-                                                   {.scale = scale, .force_isa = target}, chain);
-    cvec<T> xin(c.n * c.count);
+    const auto core = fftn::detail::make_plan_core(fftn::detail::view_of(plain), plain_opts, chain);
+    fftn::workspace ws(fftn::detail::workspace_bytes(*core, 1));
+    // The transform's input where the plain plan reads it.
+    cvec<T> xin = c.in_place ? x : (in_block ? cvec<T>(c.n * c.count) : x);
     for (std::size_t r = 0; r < c.count; ++r) {
       const cvec<T> row = logical_input(r);
-      std::ranges::copy(row, xin.begin() + static_cast<std::ptrdiff_t>(r * c.n));
+      for (std::size_t j = 0; j < c.n; ++j) {
+        xin[in_block ? r * c.n + j : in_at(j, r)] = row[j];
+      }
     }
-    cvec<T> yt(c.n * c.count);
-    fftn::workspace ws(fftn::detail::workspace_bytes(*core, 1));
-    fftn::detail::execute_all(*core, xin.data(), yt.data(), ws);
     cvec<T> y = init;
+    if (c.in_place) {
+      fftn::detail::execute_all(*core, xin.data(), xin.data(), ws);
+      y = xin;
+    } else if (plain_opts.in_place) {
+      fftn::detail::execute_all(*core, xin.data(), xin.data(), ws);
+    } else if (out_block) {
+      cvec<T> yt(c.n * c.count);
+      fftn::detail::execute_all(*core, xin.data(), yt.data(), ws);
+      xin = yt;
+    } else {
+      fftn::detail::execute_all(*core, xin.data(), y.data(), ws);
+    }
     for (std::size_t r = 0; r < c.count; ++r) {
       for (std::size_t k = 0; k < c.n; ++k) {
-        std::complex<T> v = yt[r * c.n + k];
-        if (c.out == out_kind::modify) {
-          v = cubic_out(v, k, r, c.n);
-        }
         std::size_t at = 0;
         if (!stored_at(c.out_runs, k, at)) {
           continue;
+        }
+        std::complex<T> v = out_block ? xin[r * c.n + k] : y[out_at(at, r)];
+        if (c.out == out_kind::modify) {
+          v = cubic_out(v, k, r, c.n);
         }
         if (c.out == out_kind::consume) {
           consumed[r * c.n + k] = v;
           continue;
         }
         if (c.accumulate) {
-          v = y[out_at(at, r)] + v;
+          v = init[out_at(at, r)] + v;
         }
         y[out_at(at, r)] = v;
       }
