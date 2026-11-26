@@ -20,6 +20,7 @@
 #include "platform/aligned_allocator.hpp"
 #include "strategies/chain.hpp"
 #include "support/fftn_subject.hpp"
+#include "support/precisions.hpp"
 
 #include <gtest/gtest.h>
 
@@ -226,10 +227,12 @@ template <class T> void narrow_leaves(fftn::isa t) {
   EXPECT_TRUE(stages[0].leaf == own.leaf_unit[0][0][0] || stages[0].leaf == own.leaf[0][0][0]);
 }
 
-TEST(Chain, NarrowLeavesReplaceTheTargetsLeaves) {
+template <class T> class Chain : public ::testing::Test {};
+TYPED_TEST_SUITE(Chain, fftn::test::precisions, fftn::test::precision_names);
+
+TYPED_TEST(Chain, NarrowLeavesReplaceTheTargetsLeaves) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
-    narrow_leaves<double>(t);
-    narrow_leaves<float>(t);
+    narrow_leaves<TypeParam>(t);
   }
 }
 
@@ -315,10 +318,9 @@ template <class T> void pair_leaves(fftn::isa t) {
   }
 }
 
-TEST(Chain, PairLeavesTakeTheirLengths) {
+TYPED_TEST(Chain, PairLeavesTakeTheirLengths) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
-    pair_leaves<double>(t);
-    pair_leaves<float>(t);
+    pair_leaves<TypeParam>(t);
   }
 }
 
@@ -361,10 +363,9 @@ template <class T> void more_pair_leaves(fftn::isa t) {
   }
 }
 
-TEST(Chain, MorePairLeavesKeepTheirTwiddleStorage) {
+TYPED_TEST(Chain, MorePairLeavesKeepTheirTwiddleStorage) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
-    more_pair_leaves<double>(t);
-    more_pair_leaves<float>(t);
+    more_pair_leaves<TypeParam>(t);
   }
 }
 
@@ -408,10 +409,9 @@ template <class T> void pair_lanes(fftn::isa t) {
   EXPECT_NE(names(with).find("lanes first radix-16"), std::string::npos) << names(with);
 }
 
-TEST(Chain, LanesTakeAPairLeafsRadices) {
+TYPED_TEST(Chain, LanesTakeAPairLeafsRadices) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
-    pair_lanes<double>(t);
-    pair_lanes<float>(t);
+    pair_lanes<TypeParam>(t);
   }
 }
 

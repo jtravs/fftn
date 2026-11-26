@@ -17,6 +17,7 @@
 #include "fftn/fftn.hpp"
 #include "support/fftn_subject.hpp"
 #include "support/inputs.hpp"
+#include "support/precisions.hpp"
 
 #include <gtest/gtest.h>
 
@@ -181,10 +182,12 @@ template <class T> void columns_equal_chain(fftn::isa target) {
   }
 }
 
-TEST(Columns, LanesEqualTheChainBitForBit) {
+template <class T> class Columns : public ::testing::Test {};
+TYPED_TEST_SUITE(Columns, fftn::test::precisions, fftn::test::precision_names);
+
+TYPED_TEST(Columns, LanesEqualTheChainBitForBit) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
-    columns_equal_chain<double>(t);
-    columns_equal_chain<float>(t);
+    columns_equal_chain<TypeParam>(t);
   }
 }
 
@@ -227,10 +230,9 @@ template <class T> void forced_column_radices(fftn::isa target) {
   }
 }
 
-TEST(Columns, ForcedColumnRadices) {
+TYPED_TEST(Columns, ForcedColumnRadices) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
-    forced_column_radices<double>(t);
-    forced_column_radices<float>(t);
+    forced_column_radices<TypeParam>(t);
   }
 }
 
@@ -275,10 +277,9 @@ template <class T> void crowded_leaf_columns(fftn::isa target) {
   }
 }
 
-TEST(Columns, CrowdedLeafColumnsTakeTwoPasses) {
+TYPED_TEST(Columns, CrowdedLeafColumnsTakeTwoPasses) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
-    crowded_leaf_columns<double>(t);
-    crowded_leaf_columns<float>(t);
+    crowded_leaf_columns<TypeParam>(t);
   }
 }
 
@@ -310,10 +311,9 @@ template <class T> void wide_blocks_program_only(fftn::isa target) {
   }
 }
 
-TEST(Columns, WideBlocksInTheProgramOnly) {
+TYPED_TEST(Columns, WideBlocksInTheProgramOnly) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
-    wide_blocks_program_only<double>(t);
-    wide_blocks_program_only<float>(t);
+    wide_blocks_program_only<TypeParam>(t);
   }
 }
 
@@ -345,11 +345,10 @@ template <class T> void split_column_phase(fftn::isa target, std::size_t& scatte
   }
 }
 
-TEST(Columns, ForcedSplitRunScattersTheTile) {
+TYPED_TEST(Columns, ForcedSplitRunScattersTheTile) {
   std::size_t scattered = 0;
   for (const fftn::isa t : fftn::test::runnable_isas()) {
-    split_column_phase<double>(t, scattered);
-    split_column_phase<float>(t, scattered);
+    split_column_phase<TypeParam>(t, scattered);
   }
   EXPECT_GT(scattered, 0U) << "no target took the split run";
 }
@@ -466,11 +465,10 @@ template <class T> void real_columns_equal_chain(fftn::isa target, bool r2c) {
   }
 }
 
-TEST(Columns, RealPlanesLanesEqualTheChain) {
+TYPED_TEST(Columns, RealPlanesLanesEqualTheChain) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
     for (const bool r2c : {true, false}) {
-      real_columns_equal_chain<double>(t, r2c);
-      real_columns_equal_chain<float>(t, r2c);
+      real_columns_equal_chain<TypeParam>(t, r2c);
     }
   }
 }
@@ -770,10 +768,9 @@ template <class T> void c2r_packed_strided(fftn::isa target) {
   }
 }
 
-TEST(Columns, C2rPackedStridedLayouts) {
+TYPED_TEST(Columns, C2rPackedStridedLayouts) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
-    c2r_packed_strided<double>(t);
-    c2r_packed_strided<float>(t);
+    c2r_packed_strided<TypeParam>(t);
   }
 }
 
@@ -831,10 +828,9 @@ TEST(Columns, C2rPacksBeyondTheProfilesBytes) {
   }
 }
 
-TEST(Columns, C2rPackedMatchesTheBlock) {
+TYPED_TEST(Columns, C2rPackedMatchesTheBlock) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
-    c2r_packed_matches_block<double>(t);
-    c2r_packed_matches_block<float>(t);
+    c2r_packed_matches_block<TypeParam>(t);
   }
 }
 
@@ -965,17 +961,16 @@ template <class T> void adjacent_transforms(fftn::isa target) {
   }
 }
 
-TEST(Columns, AdjacentTransformsRunAsLanes) {
+TYPED_TEST(Columns, AdjacentTransformsRunAsLanes) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
-    adjacent_transforms<double>(t);
-    adjacent_transforms<float>(t);
+    adjacent_transforms<TypeParam>(t);
   }
 }
 
 // Not where the transforms are not one element apart, an axis is contiguous, a length has no
 // lane passes, or the transforms together fit adjacent_min_bytes: those stay on the chain.
-TEST(Columns, AdjacentTransformsOnlyWhereTheyFit) {
-  using c = std::complex<double>;
+TYPED_TEST(Columns, AdjacentTransformsOnlyWhereTheyFit) {
+  using c = std::complex<TypeParam>;
   const auto described = [](const fftn::shape<c, c>& sh, std::size_t min_bytes) {
     build_settings settings;
     settings.profile.adjacent_min_bytes = min_bytes;
@@ -985,11 +980,17 @@ TEST(Columns, AdjacentTransformsOnlyWhereTheyFit) {
         *fftn::detail::make_plan_core(fftn::detail::view_of(sh), fftn::options(), settings));
   };
   const auto strategy = [&](const fftn::shape<c, c>& sh) { return described(sh, 0); };
-  fftn::shape<c, c> columns; // 32 columns of 16 points (a leaf length): 8192 bytes
+  fftn::shape<c, c> columns; // 32 columns of 16 points (a leaf length): 8192 bytes in double
   columns.axes = {{.n = 16, .in_stride = 32, .out_stride = 32}};
   columns.batches = {{.count = 32, .in_dist = 1, .out_dist = 1}};
-  EXPECT_NE(described(columns, 8191).find("adjacent transforms"), std::string::npos);
-  EXPECT_EQ(described(columns, 8192).find("adjacent transforms"), std::string::npos);
+  const std::size_t bytes = std::size_t{32} * 16 * sizeof(c);
+  // Where the rules make such a batch the lanes strategy (target_profile::lanes_up_to: float on
+  // some targets, X7) the route does not apply.
+  if (const std::string below = described(columns, bytes - 1);
+      below.find("strategy: lanes") == std::string::npos) {
+    EXPECT_NE(below.find("adjacent transforms"), std::string::npos) << below;
+  }
+  EXPECT_EQ(described(columns, bytes).find("adjacent transforms"), std::string::npos);
   {
     // With adjacent_team_chain, a plan whose lanes take the chain's radices keeps the route for
     // one thread and holds a team program that is the chain (the team tests run 16 x 16 x 7).

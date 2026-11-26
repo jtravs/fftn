@@ -21,6 +21,7 @@
 #include "support/fftn_subject.hpp"
 #include "support/inputs.hpp"
 #include "support/outcome.hpp"
+#include "support/precisions.hpp"
 #include "support/tolerance.hpp"
 
 #include <gtest/gtest.h>
@@ -200,20 +201,22 @@ template <class T> void every_case(fftn::isa target) {
   }
 }
 
-TEST(Grid, EveryTargetPrecisionDirectionAndPlacement) {
+template <class T> class Grid : public ::testing::Test {};
+TYPED_TEST_SUITE(Grid, fftn::test::precisions, fftn::test::precision_names);
+
+TYPED_TEST(Grid, EveryTargetDirectionAndPlacement) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
-    every_case<double>(t);
-    every_case<float>(t);
+    every_case<TypeParam>(t);
   }
 }
 
 // The scale costs no pass of its own: the last phase's scatter applies it.
-TEST(Grid, ScaleIsFusedIntoTheLastPhase) {
+TYPED_TEST(Grid, ScaleIsFusedIntoTheLastPhase) {
   build_settings settings;
   settings.strategy = strategy_choice::grid;
   const auto plan = [&](double scale) {
     return make_plan_core(
-        fftn::detail::view_of(fftn::rows_c2c<double>(1024, 1, fftn::direction::forward)),
+        fftn::detail::view_of(fftn::rows_c2c<TypeParam>(1024, 1, fftn::direction::forward)),
         {.scale = scale}, settings);
   };
   const auto count = [](const plan_core& core, const char* part) {
@@ -474,7 +477,7 @@ TEST(Grid, PowersOfTwoBecomeGridsBeyondTheProfilesLimit) {
 
 // build_settings::scale_on_input puts the scale on phase 1's input: its first pass, or its
 // gather when the phases copy their blocks.
-TEST(Grid, ScaleOnInputIsPhaseOnesInput) {
+TYPED_TEST(Grid, ScaleOnInputIsPhaseOnesInput) {
   for (const bool fused : {true, false}) {
     build_settings settings;
     settings.strategy = strategy_choice::grid;
@@ -482,7 +485,7 @@ TEST(Grid, ScaleOnInputIsPhaseOnesInput) {
     settings.grid_fused = fused;
     settings.grid_factors = {8, 128}; // phase 1 a single radix-8 pass, which reads the rows
     const auto core = make_plan_core(
-        fftn::detail::view_of(fftn::rows_c2c<double>(1024, 1, fftn::direction::forward)),
+        fftn::detail::view_of(fftn::rows_c2c<TypeParam>(1024, 1, fftn::direction::forward)),
         {.scale = 0.5}, settings);
     std::size_t in = 0;
     std::size_t out = 0;
@@ -544,14 +547,13 @@ void grid_agrees_with_chain(std::size_t n, bool three, std::size_t phase_radix =
   EXPECT_LE(std::sqrt(diff / norm), tol.rms);
 }
 
-TEST(Grid, AgreesWithTheChainAtLengthsTheRulesTake) {
+TYPED_TEST(Grid, AgreesWithTheChainAtLengthsTheRulesTake) {
   for (const auto& [n, three] : {
            std::pair{std::size_t{32768}, false},
            std::pair{std::size_t{131072}, false},
            std::pair{std::size_t{262144}, true},
        }) {
-    grid_agrees_with_chain<double>(n, three);
-    grid_agrees_with_chain<float>(n, three);
+    grid_agrees_with_chain<TypeParam>(n, three);
   }
   // Radix-32 and radix-64 phases (X3, X39's arm B) and the Xeon profile's three-phase blocks
   // of 16 (X39).
@@ -560,8 +562,7 @@ TEST(Grid, AgreesWithTheChainAtLengthsTheRulesTake) {
            std::pair{std::size_t{262144}, true},
            std::pair{std::size_t{131072}, false},
        }) {
-    grid_agrees_with_chain<double>(n, three, 64, 16);
-    grid_agrees_with_chain<float>(n, three, 64, 16);
+    grid_agrees_with_chain<TypeParam>(n, three, 64, 16);
   }
 }
 
@@ -643,10 +644,9 @@ template <class T> void fused_equals_unfused(fftn::isa target) {
                 });
 }
 
-TEST(Grid, FusedEqualsUnfused) {
+TYPED_TEST(Grid, FusedEqualsUnfused) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
-    fused_equals_unfused<double>(t);
-    fused_equals_unfused<float>(t);
+    fused_equals_unfused<TypeParam>(t);
   }
 }
 
@@ -679,10 +679,9 @@ template <class T> void padding_keeps_bits(fftn::isa target) {
   }
 }
 
-TEST(Grid, PaddingKeepsBits) {
+TYPED_TEST(Grid, PaddingKeepsBits) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
-    padding_keeps_bits<double>(t);
-    padding_keeps_bits<float>(t);
+    padding_keeps_bits<TypeParam>(t);
   }
 }
 

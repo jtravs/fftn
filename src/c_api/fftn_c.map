@@ -1,0 +1,7 @@
+/* SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+ * SPDX-License-Identifier: Apache-2.0
+ * The symbols libfftn_c exports on ELF systems (src/c_api/CMakeLists.txt): the C API only. */
+{
+  global: fftn_*;
+  local: *;
+};

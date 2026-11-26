@@ -223,6 +223,9 @@ order, as "Shapes and layouts" above describes.
 
 ## Edges
 
+[Fusion](fusion.md) says which of edges, block callbacks, stored runs, pipelines and
+owner-computes fits which work; this section and the next three state their rules.
+
 Provisional (task 5.1, `fftn/edges.hpp`). A plan may take an input edge and an output edge
 (`plan_edges`) of linear pointwise work, applied in its own passes:
 
@@ -281,7 +284,7 @@ prior values there.
 
 ## Block callbacks
 
-Provisional (tasks 5.3a and 5.3b, `fftn/callback.hpp`). An edge may also take a block callback
+Provisional (tasks 5.3a to 5.3c, `fftn/callback.hpp`). An edge may also take a block callback
 (`edge::call`): a function the application compiles, which the plan calls on blocks of the
 edge's side while they are in cache. Its type is `block_fn<T>`, `noexcept`, with `T` the side's
 element type; `callback_of<F, T>()` makes one that calls a callable object (a `noexcept` lambda)
@@ -293,7 +296,9 @@ lines and strides, the member running it and that member's scratch (`callback::s
 of it, counted by `workspace_bytes()`). A block holds a row whole up to a size the plan's machine
 profile sets (half the L1 data cache by default), longer rows in element ranges; where the plan
 holds several short rows together (the lanes) one call takes them all, line k being transform
-`transform + k`. On a real side the elements are real values (`T`); on the complex side of a
+`transform + k`. On a plane or volume a block is lines along one axis (`element_axis`), and where
+the plan holds several together, adjacent lines along another axis (`line_axis`: a block of
+adjacent columns) or consecutive transforms (`along_transforms`). On a real side the elements are real values (`T`); on the complex side of a
 real transform they are the n/2 + 1 bins.
 
 ```cpp file=examples/callbacks.cpp region=callbacks
@@ -329,13 +334,15 @@ is pure per element (its result depends only on the element's value and coordina
 guarantees of "Determinism" below hold. A callback may execute another plan through a serial
 overload with a workspace of its own, such as `fftn::workspace{info.scratch}`. A plan with a
 callback is executed through the overloads that take `exec_args`; the others end the program.
-So far callbacks are taken by rows (c2c, r2c and c2r plans of one axis) on the strategy the rules
-or measured planning choose; measured planning times its candidates with stand-ins that do
+Callbacks are taken by c2c, r2c and c2r plans of every rank on the strategy the rules or measured
+planning choose; on a plane or volume the input's runs inside the lines of the transform's first
+phase and the output's inside those of its last, so a callback costs no pass over the array of
+its own, and a side with a factor or accumulation runs its callback in that side's own pass; measured planning times its candidates with stand-ins that do
 nothing in place of the callbacks, so construction never calls one. Only a consumed output keeps
 a row from a strategy that writes the output as its working memory (the grid, the depth-first
 chains, the lanes over adjacent transforms, and a real row's lanes whose input is in the
-workspace block too), which then runs as the chain, as `plan::describe()` says. Planes and volumes refuse
-callbacks at construction (task 5.3c).
+workspace block too), which then runs as the chain, as `plan::describe()` says. Real-to-real
+plans, and planes and volumes with stored runs, refuse callbacks at construction.
 
 ## Stored runs
 
@@ -363,7 +370,7 @@ edge's factor (accumulation and scales are taken).
 
 ## Pipelines
 
-Provisional (tasks 5.2b to 5.2d, `fftn/pipeline.hpp`). A row pipeline takes each line of one axis
+Provisional (tasks 5.2b to 5.2e, 5.3d and 5.3e, `fftn/pipeline.hpp`). A row pipeline takes each line of one axis
 through a transform, a pointwise middle and the inverse transform, reading the line once and
 storing it once: the spectrum stays in the workspace, so the work is one sweep of memory
 instead of three. A `pipeline_desc<In, Mid, Out>` describes it: the `line` (its length and the
@@ -444,22 +451,89 @@ std::vector<double> y(m * count);
 pipe.execute(x.data(), y.data(), ws, {.mid_factor = kernel.data()});
 ```
 
-Built so far: `pipeline<C, C, C>` with the forward transform first and `pipeline<T, C, T>`, with
-stored runs on either side, one inverse per forward, planned by the rules (`options::effort` is
-ignored, and `pipeline::describe()` says so). Refused at construction, naming the field, until
-their steps: the inverse transform first (`spectral_pair_rows` with `direction::backward`), the
-kind `<C, T, C>`, `fanout` above 1, and stored runs on an in-place pipeline or beside a prologue
-or epilogue factor. On `<C, C, C>`, a complex factor of stride 1 along the line is applied in the
-neighbouring transform's pass; any other factor, every factor of `<T, C, T>`, accumulation and
-the runs' reading and storing, in a pass of its own over the line while it is in the workspace
-(`describe()` counts them), except that runs within the line's first half are read or written by
-the transform's first or last pass where its passes allow, as for a plan. Every pipeline is
-built as the chain pair: the depth-first pair for long lines is built (task 5.2d) but taken by
-no pipeline unless forced, until experiment X67 gives the rules their choice. Results equal the
-transform, the multiplications and the inverse done separately within two transforms' error bound plus one rounding per
-multiplication and addition, not bit for bit; the guarantees of "Determinism" below hold for
-pipelines too. `pipeline::transforms_of` deals lines among a team's members as
-`plan::transforms_of` deals transforms.
+A **fan-out** runs several inverse transforms (copies) on each line's spectrum: the forward
+transform and the prologue once per line, then for each copy k the middle with its own factor,
+`fanout_factor_dist` k elements past copy 0's (0: one factor for every copy), the inverse
+transform and the epilogue (whose factor is every copy's), written `fanout_out_dist` k `Out`
+elements past copy 0's output. The copies' outputs must overlap neither one another nor other
+lines' (refused, naming `desc.fanout_out_dist`), and an in-place pipeline has one copy. The
+spectrum stays in the workspace while the copies run:
+
+```cpp file=examples/pipeline.cpp region=fanout
+// Every row transformed once, then convolved with three kernels: copy k multiplies the
+// row's spectrum by kernel k (n bins on) and writes a whole batch of rows (n * count
+// elements on).
+fftn::pipeline_desc desc = fftn::complex_convolution_rows<double>(n, count);
+desc.middle.scale = 1.0 / static_cast<double>(n);
+desc.fanout = copies;
+desc.fanout_factor_dist = static_cast<std::ptrdiff_t>(n);
+desc.fanout_out_dist = static_cast<std::ptrdiff_t>(n * count);
+const fftn::pipeline pipe(desc);
+fftn::workspace ws(pipe);
+
+std::vector<std::complex<double>> y(n * count * copies);
+pipe.execute(x.data(), y.data(), ws, {.mid_factor = kernels.data()});
+```
+
+Block callbacks ("Block callbacks" above) take three places in a pipeline: the prologue's
+(`prologue.call`, `modify` or `produce`) on each input line before the prologue's factor and
+scale, the middle's (`middle.call`, `modify` only) on each line's spectrum before the middle's
+factor and scale, and the epilogue's (`epilogue.call`, `modify` or `consume`) on each output line
+after the epilogue's factor and scale and before the store or accumulation. Their arguments are
+`exec_args::in_user`, `mid_user` and `out_user`. The middle's callback is passed the whole
+spectrum of a line in one call, once per line, so it may depend on the whole line (it is then
+pure per line, as "Determinism" below needs): it may run another plan or pipeline on the line
+through a serial overload. With fan-out the middle's runs once per line, before every copy, and
+the epilogue's once per copy (`block_info::copy`); a consumed output receives each line's copies
+in copy order, and its copies' places (`fanout_out_dist`) are not checked, since nothing is
+stored. The scales never cross a middle callback: the prologue's applies before it, and the
+middle's, the epilogue's and `options::scale` after it, as a second product.
+
+```cpp file=examples/pipeline.cpp region=middle-callback
+// Between the transforms, a callback on each row's spectrum (the whole row in one call, in
+// natural order), then the scale 1/n. The lambda's address arrives with each execution as
+// the callback's `user` pointer.
+auto saturate = [&gain](const fftn::block_info& info, std::complex<double>* bins) noexcept {
+  for (std::size_t b = 0; b < info.length; ++b) {
+    std::complex<double>& y = bins[static_cast<std::ptrdiff_t>(b) * info.element_stride];
+    y = gain(y);
+  }
+};
+fftn::pipeline_desc desc = fftn::complex_convolution_rows<double>(n, count);
+desc.middle.mul = {}; // no kernel: the callback is the whole middle
+desc.middle.scale = 1.0 / static_cast<double>(n);
+desc.middle.call = {.fn = fftn::callback_of<decltype(saturate), std::complex<double>>()};
+const fftn::pipeline pipe(desc);
+fftn::workspace ws(pipe);
+
+std::vector<std::complex<double>> y(n * count);
+pipe.execute(x.data(), y.data(), ws, {.mid_user = &saturate});
+```
+
+A **spectral pair** runs the inverse transform first: `spectral_pair_rows(n, count,
+direction::backward)` (or `pipeline_desc::first`) for complex lines, and `pipeline<C, T, C>`, whose
+input and output lines are half spectra of n/2 + 1 bins (the c2r transform, ignoring the
+imaginary parts of bin 0 and, for even n, of bin n/2, then the middle on a real line of n points,
+which takes real factors only, then the r2c transform). A `<C, T, C>` pipeline's stored runs are
+bands of the half spectrum's bins.
+
+Built so far: `pipeline<C, C, C>` with either transform first, `pipeline<T, C, T>` and
+`pipeline<C, T, C>`, with stored runs on either side, fan-out and block callbacks, planned by the
+rules (`options::effort` is ignored, and
+`pipeline::describe()` says so). Refused at construction, naming the field, until their steps:
+`fanout` above 1 in place, and stored runs on an in-place pipeline or beside a prologue or epilogue
+factor; a middle callback in another mode than `modify`, and `consume` in place, are refused too.
+On `<C, C, C>`, a complex factor of stride 1 along the line is applied in the neighbouring
+transform's pass; any other factor, every factor of `<T, C, T>`, accumulation and the runs' reading
+and storing, in a pass of its own over the line while it is in the workspace (`describe()` counts
+them), except that runs within the line's first half are read or written by the transform's first or
+last pass where its passes allow, as for a plan. Every pipeline is built as the chain pair: the
+depth-first pair for long lines is built (task 5.2d) but taken by no pipeline unless forced, until
+experiment X67 gives the rules their choice. Results equal the transform, the multiplications and
+the inverse done separately within two transforms' error bound plus one rounding per multiplication
+and addition, not bit for bit; the guarantees of "Determinism" below hold for pipelines too.
+`pipeline::transforms_of` deals lines among a team's members as `plan::transforms_of` deals
+transforms.
 
 ## Real-to-real transforms
 

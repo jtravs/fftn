@@ -1,0 +1,35 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Convolution rows for the FFTN backend's PIPELINE option (task 5.5): each case is a batch of rows
+# that the pipeline arm (PIPELINE=fused, `pipeline<C, C, C>` for c2c, `pipeline<T, C, T>` for r2c)
+# and the unfused arm (PIPELINE=separate: the forward plan, a multiply loop, the inverse plan)
+# convolve with one kernel; fbench checks the rows against their input delayed by one element.
+# Out of place, forward, as PIPELINE requires. A smoke set that shows the arms run; experiment
+# X67 (task 5.2g) writes its own catalogue for judging. Tier "quick" is a handful of cases.
+
+[catalogue]
+name = "pipelines"
+
+[[group]]
+name = "pipelines-rows"
+note = "short rows in batches: the chain pair or a flat body of two leaves"
+kind = ["c2c", "r2c"]
+dims = [64, 256, 1024, 4096]
+batch = 64
+precision = ["f64", "f32"]
+
+[[group]]
+name = "pipelines-rows-quick"
+note = "one short and one longer batch of each kind"
+kind = ["c2c", "r2c"]
+dims = [256, 4096]
+batch = 16
+tiers = ["quick"]
+
+[[group]]
+name = "pipelines-long"
+note = "long lines, one and several"
+kind = ["c2c", "r2c"]
+dims = [18432, 32768, 65536]
+batch = [1, 8]

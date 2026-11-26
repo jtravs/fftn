@@ -159,6 +159,10 @@ work_graph build_work_graph(const program& p, std::size_t points, std::size_t ch
       ph.chunk_points = per_chunk * line_points(p, ph.record + ph.nest, ph.body_end);
       ph.chunks = static_cast<std::uint32_t>(
           std::min<std::size_t>(chunks, std::numeric_limits<std::uint32_t>::max()));
+      // Lines that share the task's block for their work run as one chunk (loop::serial_lines).
+      if (std::get<loop>(p.records[ph.record]).serial_lines) {
+        ph.chunks = 1;
+      }
     }
     g.chunks += ph.chunks;
     g.widest = std::max(g.widest, ph.chunks);

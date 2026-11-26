@@ -138,6 +138,23 @@ work run through another route, and four executions in one region (three of them
 threaded run) measured 0.98. Time serial references in a pair of their own, or discard the
 threaded run after them. [T3](experiments/T3-kokkos-dispatch.md).
 
+1.14 **A deciding re-run of short cases needs enough rounds, on a quiet machine.** A near-miss
+re-run filtered to a handful of short cases finishes fbench's default minimum of rounds in
+seconds, and its intervals are then useless: on the EPYC 7763, seven float cases took six rounds
+in 18 s and every interval spanned 0.33–0.97. Repeated with `--min-rounds 24` it ran 36 rounds
+with intervals 1–5 % wide, but 33 of them under load (load average about 50 on the shared node),
+so it decided nothing either. Filtered tiny cases also time differently alone than inside the
+full catalogue (Mac, r2c 32 × 30 × 2 float: 1.12 of FFTW in the catalogue, 1.37 alone), so a
+re-run judges the case in another context. Set `--min-rounds` (24 or more) on re-runs of short
+cases, check the run's loaded rounds before letting it decide, and say in the rule which context
+decides. [X84](experiments/X84-float-standing.md).
+
+1.15 **"AC attached" is not enough on a laptop: check that the battery is flat too.** During
+X84's Mac run pmset read "AC Power" and "AC attached; not charging" throughout, yet the battery
+fell from 99 % to 90 % in 21 minutes: net discharge under the machine's load, so the run is
+provisional. Record the battery percentage before and after every timing run and treat a fall as
+running on the battery. [X84](experiments/X84-float-standing.md).
+
 ## 2. The instruction set and the machine
 
 2.1 **The data layout that wins depends on the ISA.** Interleaved complex numbers suit

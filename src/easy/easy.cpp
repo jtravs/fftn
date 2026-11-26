@@ -77,6 +77,13 @@ struct prepared {
   bool empty = false; // a looped dimension has extent 0: nothing to compute
   double scale = 1.0;
   r2r_kind r2r = r2r_kind::dht; // a real-to-real call: every transformed axis's kind
+  // A real-to-real call with norm::ortho over several axes whose kind has weights: they are
+  // applied by passes over the weighted hyperplanes, not by edge factors (one array of every
+  // transformed point would be as large as the data).
+  bool passes = false;
+  // Those passes weight the input: the input is copied into the output first and the plan,
+  // in place on the output's layout, runs there (in_place is then set too).
+  bool copy_in = false;
 };
 
 // The kind of a real-to-real call: scipy's type of the DCT or DST, or the DHT. The inverse
@@ -288,6 +295,12 @@ prepared prepare(const detail::easy_call& c) {
     }
     p.in_place = true;
   }
+  if (c.kind == detail::easy_kind::r2r && c.scaling == norm::ortho && p.count > 1 &&
+      (has_input_weights(p.r2r) || has_output_weights(p.r2r))) {
+    p.passes = true;
+    p.copy_in = has_input_weights(p.r2r) && !p.in_place;
+    p.in_place = p.in_place || p.copy_in;
+  }
   const bool forward = c.kind == detail::easy_kind::r2c ||
                        (c.kind != detail::easy_kind::c2r && c.dir == direction::forward);
   switch (c.scaling) {
@@ -331,51 +344,78 @@ template <class F> void visit_key(const detail::easy_call& c, const prepared& p,
 constexpr std::uint64_t hash_start = 0xcbf29ce484222325ULL;
 constexpr std::uint64_t mix(std::uint64_t h, std::uint64_t w) { return (h ^ w) * 0x100000001b3ULL; }
 
-// 2^(m/2) for m points at a weighted position: the input's sqrt 2 each for m > 0, the output's
-// 1/sqrt 2 each for m < 0. A power of two times sqrt 2 correctly rounded, at most once, so a
-// point's weight does not depend on the order of its axes.
-double weight(int m) {
-  if (m % 2 == 0) {
-    return std::ldexp(1.0, m / 2);
-  }
-  // m odd: 2^(m/2) = sqrt 2 * 2^((m - 1)/2), an integer exponent for either sign.
-  return std::ldexp(std::sqrt(2.0), (m - 1) / 2);
-}
-
-// The array of one side's weights over the transformed axes, in the order of shape::axes: C
-// order over the transformed axes when the kind has weights on this side, broadcast (strides 0
-// in `strides` and the batch) otherwise, when the array is empty.
+// The array of one side's weights along the one transformed axis of a real-to-real call with
+// norm::ortho (scipy's orthogonalize), its n points, broadcast along the batch: the real factor of
+// that side's edge. Empty when the side has no weights, or when the call transforms several axes
+// (prepared::passes).
 template <class T>
 std::vector<T> side_weights(const detail::easy_call& c, const prepared& p, bool input,
                             std::vector<std::ptrdiff_t>& strides) {
   strides.assign(p.count, 0);
-  if (c.scaling != norm::ortho || !(input ? has_input_weights(p.r2r) : has_output_weights(p.r2r))) {
+  if (c.scaling != norm::ortho || p.count != 1 ||
+      !(input ? has_input_weights(p.r2r) : has_output_weights(p.r2r))) {
     return {};
   }
-  std::size_t total = 1;
-  for (std::size_t i = p.count; i > 0; --i) {
-    strides[i - 1] = static_cast<std::ptrdiff_t>(total);
-    total *= c.in_extents[p.axes[i - 1]];
-  }
-  std::vector<T> w(total);
-  std::array<std::size_t, 3> j{};
-  for (std::size_t e = 0; e < total; ++e) {
-    int m = 0;
-    for (std::size_t i = 0; i < p.count; ++i) {
-      const std::size_t n = c.in_extents[p.axes[i]];
-      if (input ? weighted_input(p.r2r, n, j[i]) : weighted_output(p.r2r, n, j[i])) {
-        ++m;
-      }
-    }
-    w[e] = static_cast<T>(weight(input ? m : -m));
-    for (std::size_t i = p.count; i > 0; --i) {
-      if (++j[i - 1] < c.in_extents[p.axes[i - 1]]) {
-        break;
-      }
-      j[i - 1] = 0;
+  strides[0] = 1;
+  const std::size_t n = c.in_extents[p.axes[0]];
+  const double root2 = std::sqrt(2.0);
+  std::vector<T> w(n, T{1});
+  for (std::size_t j = 0; j < n; ++j) {
+    if (input ? weighted_input(p.r2r, n, j) : weighted_output(p.r2r, n, j)) {
+      w[j] = static_cast<T>(input ? root2 : root2 / 2);
     }
   }
   return w;
+}
+
+// The offset of flat C-order position e of an array of `extents` with `strides` as a view gives
+// them (`given`; else tight C order), skipping dimension `skip` (whose index is 0 there; SIZE_MAX
+// skips none). Divisions rather than an odometer, so that any rank needs no storage.
+std::ptrdiff_t offset_of(std::size_t e, std::span<const std::size_t> extents,
+                         std::span<const std::ptrdiff_t> strides, bool given, std::size_t skip) {
+  std::ptrdiff_t at = 0;
+  std::ptrdiff_t span = 1;
+  for (std::size_t d = extents.size(); d > 0; --d) {
+    const std::size_t n = extents[d - 1];
+    const std::ptrdiff_t stride = given ? strides[d - 1] : span;
+    span *= static_cast<std::ptrdiff_t>(n);
+    if (d - 1 == skip) {
+      continue;
+    }
+    at += static_cast<std::ptrdiff_t>(e % n) * stride;
+    e /= n;
+  }
+  return at;
+}
+
+// scipy's orthogonalising weights of a real-to-real call over several axes (prepared::passes),
+// on `data` (the output's layout): along each transformed axis, the hyperplanes of the weighted
+// positions multiplied by sqrt 2 (the input's) or 1/sqrt 2 (the output's). The weight of a
+// point is the product over its axes, so the passes, one per axis, give it; each touches N/n
+// points.
+template <class T>
+void weight_hyperplanes(const detail::easy_call& c, const prepared& p, T* data, bool input) {
+  const std::span<const std::size_t> ext = c.out_extents;
+  const bool given = any_given(c.out_strides);
+  std::size_t total = 1;
+  for (const std::size_t e : ext) {
+    total *= e;
+  }
+  const double root2 = std::sqrt(2.0);
+  const auto w = static_cast<T>(input ? root2 : root2 / 2);
+  for (std::size_t i = 0; i < p.count; ++i) {
+    const std::size_t a = p.axes[i];
+    const std::size_t n = ext[a];
+    for (std::size_t k = 0; k < n; ++k) {
+      if (!(input ? weighted_input(p.r2r, n, k) : weighted_output(p.r2r, n, k))) {
+        continue;
+      }
+      T* plane = data + static_cast<std::ptrdiff_t>(k) * stride_at(ext, c.out_strides, given, a);
+      for (std::size_t e = 0; e < total / n; ++e) {
+        plane[offset_of(e, ext, c.out_strides, given, a)] *= w;
+      }
+    }
+  }
 }
 
 template <class In, class Out>
@@ -386,10 +426,12 @@ any_plan build(const detail::easy_call& c, const prepared& p, weights& factors) 
   const bool real_out = c.kind == detail::easy_kind::c2r;
   std::vector<axis> array(rank);
   for (std::size_t d = 0; d < rank; ++d) {
+    const std::ptrdiff_t os = stride_at(c.out_extents, c.out_strides, go, d);
     array[d] = axis{
         .n = real_out ? c.out_extents[d] : c.in_extents[d],
-        .in_stride = stride_at(c.in_extents, c.in_strides, gi, d),
-        .out_stride = stride_at(c.out_extents, c.out_strides, go, d),
+        // A weighted input is copied into the output, where the plan runs in place.
+        .in_stride = p.copy_in ? os : stride_at(c.in_extents, c.in_strides, gi, d),
+        .out_stride = os,
     };
   }
   const std::vector<std::size_t> selected(p.axes.begin(),
@@ -687,9 +729,42 @@ void context::run(const detail::easy_call& c) {
                         });
                       },
                       lanes);
-  dispatch(c.kind, c.single, [&]<class In, class Out> {
-    execute_with<In, Out>(found, c.in, c.out, s.ws, executor_);
-  });
+  if (!p.passes) {
+    dispatch(c.kind, c.single, [&]<class In, class Out> {
+      execute_with<In, Out>(found, c.in, c.out, s.ws, executor_);
+    });
+    return;
+  }
+  // Weights over several axes, by passes on the calling thread (prepared::passes).
+  const auto weighted = [&]<class T>() {
+    auto* out = static_cast<T*>(c.out);
+    const auto* in = static_cast<const T*>(c.in);
+    if (has_input_weights(p.r2r)) {
+      if (p.copy_in) {
+        std::size_t total = 1;
+        for (const std::size_t e : c.out_extents) {
+          total *= e;
+        }
+        const bool gi = any_given(c.in_strides);
+        const bool go = any_given(c.out_strides);
+        for (std::size_t e = 0; e < total; ++e) {
+          out[offset_of(e, c.out_extents, c.out_strides, go, SIZE_MAX)] =
+              in[offset_of(e, c.in_extents, c.in_strides, gi, SIZE_MAX)];
+        }
+      }
+      weight_hyperplanes<T>(c, p, out, true);
+      in = out;
+    }
+    execute_with<T, T>(found, in, out, s.ws, executor_);
+    if (has_output_weights(p.r2r)) {
+      weight_hyperplanes<T>(c, p, out, false);
+    }
+  };
+  if (c.single) {
+    weighted.template operator()<float>();
+  } else {
+    weighted.template operator()<double>();
+  }
 }
 
 void detail::run_shape(context& ctx, const shape_call& c) {

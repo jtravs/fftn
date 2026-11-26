@@ -6,6 +6,8 @@
 # FFTN from a build that has the tests and their dependencies (Kokkos, GoogleTest), checks that
 # the install tree holds only FFTN's own files, then builds and runs the separate project in
 # examples/package three ways: find_package against the install tree, pkg-config, FetchContent.
+# The install has the C API's shared library too (FFTN_BUILD_C_SHARED), and each way builds a C
+# program on the C API.
 #
 #   .github/scripts/package-test.sh [--omp] [--no-pkg-config]
 #
@@ -34,14 +36,15 @@ run_tests() { ctest --test-dir "$1" --output-on-failure --no-tests=error; }
 say "install from a build with the tests (their dependencies must stay out of the tree)"
 rm -rf "$prefix"
 cmake -S . -B build/package -G Ninja -DCMAKE_BUILD_TYPE=Release -DFFTN_BUILD_TESTS=ON \
-  -DFFTN_BUILD_BENCH=OFF -DFFTN_TEST_WITH_FFTW=OFF
-cmake --build build/package --target fftn -j "$jobs"
+  -DFFTN_BUILD_BENCH=OFF -DFFTN_TEST_WITH_FFTW=OFF -DFFTN_BUILD_C_SHARED=ON
+cmake --build build/package --target fftn fftn_c -j "$jobs"
 cmake --install build/package --prefix "$prefix"
 
 say "installed files"
 (cd "$prefix" && find . -type f | sed 's|^\./||' | sort) > build/package-files.txt
 cat build/package-files.txt
 allowed='^(include/fftn/([a-z0-9_]+/)*[a-z0-9_]+\.(h|hpp)|lib(64)?/(libfftn\.a|fftn\.lib)'
+allowed+='|lib(64)?/(libfftn_c\.(so|dylib)|fftn_c\.lib)|bin/fftn_c\.dll'
 allowed+='|lib(64)?/cmake/fftn/fftn(Config|ConfigVersion|Targets|Targets-[a-z]+)\.cmake'
 allowed+='|lib(64)?/pkgconfig/fftn\.pc|share/doc/fftn/LICENSE)$'
 unexpected=$(grep -vE "$allowed" build/package-files.txt || true)
@@ -64,6 +67,12 @@ if ((pc)); then
   # shellcheck disable=SC2086 # the flags are words
   "$CXX" -std=c++20 -O2 examples/rows_c2c.cpp $flags -o build/package-rows_c2c
   build/package-rows_c2c
+  # The C program: compiled by the C compiler, linked by the C++ one (the C++ standard library).
+  # shellcheck disable=SC2086
+  "$CC" -std=c99 -O2 -c examples/c_api.c $flags -o build/package-c_api.o
+  # shellcheck disable=SC2086
+  "$CXX" build/package-c_api.o $flags -o build/package-c_api
+  build/package-c_api
 fi
 
 say "FetchContent"

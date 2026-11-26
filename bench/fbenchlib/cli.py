@@ -41,8 +41,9 @@ SMOKE_OPTIONS = {
     "fftn": [{}, {"THREADS": "3"}, FFTN_EAGER],
     "fftn_omp": [{"THREADS": "3"}, FFTN_EAGER, {**FFTN_EAGER, "CALL": "team"}],
 }
-# The relative output error the guard's self-check injects.
-SMOKE_PERTURB = "1e-6"
+# The relative output error the guard's self-check injects, by the case's precision: well above
+# the check's tolerance of 10 eps (1 + log2 n) at smoke lengths.
+SMOKE_PERTURB = {"f64": "1e-6", "f32": "1e-3"}
 
 
 def log(message: str) -> None:
@@ -125,7 +126,7 @@ def wisdom_options(arm: arms.Arm, binary: arms.Binary, work: Path) -> dict[str, 
 
 def cmd_run(args: argparse.Namespace) -> int:
     cat = catalogue.load(args.catalogue)
-    cases = cat.select(args.tier, args.filter)
+    cases = cat.select(args.tier, args.filter, args.precision)
     if not cases:
         log("no cases selected")
         return 2
@@ -202,6 +203,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             "catalogue": {"name": cat.name, "path": str(cat.path), "sha256": cat.sha256},
             "tier": args.tier,
             "filter": args.filter,
+            "precision": args.precision,
             "settings": {
                 "mode": args.mode,
                 "stat": args.stat,
@@ -574,7 +576,7 @@ def cmd_show(args: argparse.Namespace) -> int:
 
 def cmd_list(args: argparse.Namespace) -> int:
     cat = catalogue.load(args.catalogue)
-    cases = cat.select(args.tier, args.filter)
+    cases = cat.select(args.tier, args.filter, args.precision)
     print(f"# {cat.name} ({cat.path.name}), tier {args.tier or 'full'}: {len(cases)} cases")
     for c in cases:
         tiers = ",".join(t for t in catalogue.TIERS if t in c.tiers) or "full"
@@ -652,9 +654,11 @@ def smoke_one(
     if first_ok:
         # The guard's self-check: the same case with a perturbed output must fail.
         one = work / f"guard-{library}.txt"
-        one.write_text(next(c.line() for c in cases if c.id == first_ok) + "\n")
+        case = next(c for c in cases if c.id == first_ok)
+        one.write_text(case.line() + "\n")
         guard = ["--cases", str(one), "--options", options, "--check-only"]
-        _, res, error, _ = run_process(exe, [*guard, "--perturb", SMOKE_PERTURB], 60)
+        perturb = SMOKE_PERTURB[case.precision]
+        _, res, error, _ = run_process(exe, [*guard, "--perturb", perturb], 60)
         flagged = bool(res) and res[0].get("status") == "ok" and not res[0]["check"]["pass"]
         print(f"smoke {name}: guard {'flags' if flagged else 'MISSES'} a perturbed output")
         if not flagged:
@@ -672,7 +676,7 @@ def cmd_smoke(args: argparse.Namespace) -> int:
     if not any(e.stem == "fbench-fftw" for e in exes):
         print("smoke: FFTW backend not built (FFTN_BENCH_FFTW_ROOT unset at configure); skipped")
     cat = catalogue.load(args.catalogue)
-    cases = cat.select(args.tier, args.filter)
+    cases = cat.select(args.tier, args.filter, args.precision)
     work = Path(args.out_dir) / "smoke"
     work.mkdir(parents=True, exist_ok=True)
     cases_file = work / "cases.txt"
@@ -730,6 +734,11 @@ def main(argv: list[str] | None = None) -> int:
         sp.add_argument("--catalogue", default="standard", help="name or path of a catalogue")
         sp.add_argument("--tier", default=tier, choices=catalogue.TIERS)
         sp.add_argument("--filter", help="regex on case ids")
+        sp.add_argument(
+            "--precision",
+            choices=catalogue.PRECISIONS,
+            help="take every case in this precision (default: the catalogue's)",
+        )
 
     r = sub.add_parser("run", help="A/B run: process rounds, paired intervals, A/A control")
     r.add_argument("arms", nargs="+", help="label=library[:build][+OPTION=value...]; first is A")

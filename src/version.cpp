@@ -11,7 +11,7 @@ namespace fftn::inline v0 {
 namespace {
 
 // "major.minor.patch" built from the version macros at compile time, so the version is
-// stated once (include/fftn/config.hpp).
+// stated once (include/fftn/version.h).
 constexpr std::array<char, 32> version_text = [] {
   std::array<char, 32> text{};
   std::size_t at = 0;

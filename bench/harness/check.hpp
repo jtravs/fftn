@@ -103,6 +103,15 @@ struct check_result {
 check_result check_output(const layout& l, const void* in, const void* out, std::int64_t budget,
                           std::uint64_t seed);
 
+// The check of a backend whose output is each transform's input delayed by one element,
+// y_j = x_((j - 1) mod n): the convolution a backend times when its describe says
+// "output":"delay" (backend.hpp). Rows only (rank 1, not interleaved, out of place): complex rows
+// for a c2c case, and for an r2c case real rows of n values, each at the start of its output row
+// of n/2 + 1 complex values (FFTW's padded layout of the real side). Every output of the first
+// and the last transform is compared, and their energies; the tolerance is twice the
+// transform's. Any other layout never passes.
+check_result check_delay(const layout& l, const void* in, const void* out);
+
 // Self-test of the reference and the check (the `selftest` command); returns an empty
 // string on success, else what failed.
 std::string selftest();

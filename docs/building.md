@@ -2,7 +2,8 @@
 
 FFTN is a static library, `libfftn` (`fftn.lib` on Windows), with headers in
 `include/fftn/`. It has no dependencies beyond the C++ standard library and the platform's
-thread library. Its users compile as C++20 or later.
+thread library. Its users compile as C++20 or later, or call its C API from C99 or later
+([c_api.md](c_api.md)).
 
 ## Requirements
 
@@ -104,5 +105,8 @@ The build options are the cache variables at the top of
 - `FFTN_OLD_X86_TARGETS` (on): the `x86_v2` and `avx` targets for x86-64 processors from
   before 2013, about half of an x86-64 library's text. Off leaves them out, and such
   processors run the scalar kernels; keep the default for a distributed build.
+- `FFTN_BUILD_C_SHARED` (off): also build `libfftn_c` (`fftn_c.dll` on Windows), a shared
+  library of the C API that exports its `fftn_` functions and nothing else, installed and
+  exported as `fftn::fftn_c` ([c_api.md](c_api.md)). Provisional.
 - `FFTN_MASKED_TAILS` (`AUTO`): masked partial vector runs on x86, on with GCC by default.
   Results are bitwise the same either way.

@@ -96,7 +96,7 @@ template <class T> struct edge {
   /// (`plan::describe()` says so); measured planning times candidates with stand-ins that
   /// do nothing, never calling the callback. A plan with a callback must be executed through an
   /// overload that takes `exec_args`: the others end the program (`std::abort`, with a message
-  /// on stderr). A pipeline's prologue and epilogue refuse one until task 5.3d.
+  /// on stderr). A pipeline's prologue and epilogue take one too (task 5.3d, fftn/pipeline.hpp).
   callback<T> call{};
 };
 
@@ -138,12 +138,14 @@ struct exec_args {
   const void* mid_factor = nullptr;
   /// The output edge's factor array (`edge::mul` of `plan_edges::out`).
   const void* out_factor = nullptr;
-  /// The input edge's callback argument (`edge::call` of `plan_edges::in`), its `user`.
+  /// The input edge's callback argument (`edge::call` of `plan_edges::in`, or a pipeline's
+  /// `prologue.call`), its `user`.
   void* in_user = nullptr;
-  /// A pipeline middle's callback argument (`pipeline_desc::middle.call`, task 5.3d; until then,
-  /// and for plans, ignored).
+  /// A pipeline middle's callback argument (`pipeline_desc::middle.call`, task 5.3d); plans
+  /// ignore it.
   void* mid_user = nullptr;
-  /// The output edge's callback argument (`edge::call` of `plan_edges::out`), its `user`.
+  /// The output edge's callback argument (`edge::call` of `plan_edges::out`, or a pipeline's
+  /// `epilogue.call`), its `user`.
   void* out_user = nullptr;
 };
 

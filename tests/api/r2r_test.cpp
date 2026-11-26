@@ -18,6 +18,7 @@
 #include "support/fftn_subject.hpp"
 #include "support/inputs.hpp"
 #include "support/outcome.hpp"
+#include "support/precisions.hpp"
 #include "support/tolerance.hpp"
 
 #include <fftn/fftn.hpp>
@@ -150,8 +151,7 @@ template <class T> void check_row(std::size_t n, fftn::isa t, fftn::test::outcom
 }
 
 template <class T> class R2r : public ::testing::Test {};
-using precisions = ::testing::Types<double, float>;
-TYPED_TEST_SUITE(R2r, precisions);
+TYPED_TEST_SUITE(R2r, fftn::test::precisions, fftn::test::precision_names);
 
 TYPED_TEST(R2r, DhtOfEveryLengthUpTo512OnEveryInstructionSet) {
   fftn::test::outcome o;
@@ -1538,37 +1538,38 @@ TYPED_TEST(R2r, TeamsAndExecutorsAgreeWithSerial) {
 
 // axes_r2r: dimensions of a strided array, the others a batch, against the same transforms as
 // a plan of tight planes.
-TEST(R2r, AxesOfAStridedArray) {
+TYPED_TEST(R2r, AxesOfAStridedArray) {
+  using T = TypeParam;
   const std::array<fftn::axis, 3> array{{{.n = 6}, {.n = 5}, {.n = 4}}};
   const std::array<std::size_t, 2> dims{0, 2};
   const std::array<r2r_kind, 2> kinds{r2r_kind::dct2, r2r_kind::dst3};
-  const auto s = fftn::axes_r2r<double>(array, dims, kinds);
+  const auto s = fftn::axes_r2r<T>(array, dims, kinds);
   ASSERT_EQ(s.kinds.size(), 2U);
-  const fftn::r2r_plan<double> p(s);
+  const fftn::r2r_plan<T> p(s);
   fftn::test::input_source src(0xA2E5ULL);
-  const std::vector<double> x = src.reals<double>(120);
-  std::vector<double> y(120);
+  const std::vector<T> x = src.reals<T>(120);
+  std::vector<T> y(120);
   fftn::workspace ws(p);
   p.execute(x.data(), y.data(), ws);
   fftn::test::outcome o;
   for (std::size_t m = 0; m < 5; ++m) {
     std::vector<double> plane(24);
-    std::vector<double> got(24);
+    std::vector<T> got(24);
     for (std::size_t a = 0; a < 6; ++a) {
       for (std::size_t b = 0; b < 4; ++b) {
-        plane[a * 4 + b] = x[a * 20 + m * 4 + b];
+        plane[a * 4 + b] = static_cast<double>(x[a * 20 + m * 4 + b]);
         got[a * 4 + b] = y[a * 20 + m * 4 + b];
       }
     }
     const std::array<std::size_t, 2> extents{6, 4};
     const std::array<fftn::test::reference::r2r_type, 2> types{ref_type(kinds[0]),
                                                                ref_type(kinds[1])};
-    o.within(fftn::test::compare<double>(std::span<const double>(got),
-                                         fftn::test::reference::r2r(types, extents, plane)),
-             dht_tolerance<double>(24, 2, 1.0, 1.0, dct_ops), "plane " + std::to_string(m));
+    o.within(fftn::test::compare<T>(std::span<const T>(got),
+                                    fftn::test::reference::r2r(types, extents, plane)),
+             dht_tolerance<T>(24, 2, 1.0, 1.0, dct_ops), "plane " + std::to_string(m));
   }
   EXPECT_TRUE(o.passed()) << o.detail();
-  EXPECT_THROW(static_cast<void>(fftn::axes_r2r<double>(array, dims, std::span(kinds).first(1))),
+  EXPECT_THROW(static_cast<void>(fftn::axes_r2r<T>(array, dims, std::span(kinds).first(1))),
                std::invalid_argument);
 }
 

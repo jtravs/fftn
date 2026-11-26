@@ -21,6 +21,7 @@
 #include "support/fftn_subject.hpp"
 #include "support/inputs.hpp"
 #include "support/outcome.hpp"
+#include "support/precisions.hpp"
 #include "support/tolerance.hpp"
 
 #include <fftn/fftn.hpp>
@@ -824,8 +825,7 @@ std::vector<cb_case> cases() {
 }
 
 template <class T> class Callbacks : public ::testing::Test {};
-using precisions = ::testing::Types<double, float>;
-TYPED_TEST_SUITE(Callbacks, precisions);
+TYPED_TEST_SUITE(Callbacks, fftn::test::precisions, fftn::test::precision_names);
 
 TYPED_TEST(Callbacks, EveryModeOnEveryInstructionSet) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
@@ -1048,11 +1048,13 @@ TEST(Callbacks, RefusalsNameTheField) {
       fftn::rows_c2r<double>(16, 2), {.in_place = true},
       {.out = {.call = {.fn = &some_real_fn, .mode = callback_mode::consume}}},
       "edges.out.call.mode");
-  // Not built yet on real-to-real plans, nor on multi-axis plans (task 5.3c).
+  // Not built yet on real-to-real plans, nor beside stored runs on multi-axis plans (planes and
+  // volumes take callbacks from task 5.3c: callbacks_axes_test.cpp).
   expect_refused<double, double>(fftn::rows_r2r<double>(16, 2, fftn::r2r_kind::dht), {},
                                  {.in = {.call = {.fn = &some_real_fn}}}, "edges.in.call.fn");
   fftn::shape<C, C> plane;
   plane.axes = {{.n = 8}, {.n = 8}};
+  plane.runs = {{.axis = 0, .where = fftn::side::out, .logical = 0, .stored = 0, .count = 4}};
   expect_refused<C, C>(plane, {}, {.out = {.call = {.fn = &some_fn}}}, "edges.out.call.fn");
 }
 

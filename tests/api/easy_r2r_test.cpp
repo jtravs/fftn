@@ -3,14 +3,18 @@
 
 // The convenience layer's real-to-real functions (fftn/easy.hpp, step 6.7) against scipy.fft:
 // recorded scipy results for every function, type and norm (data/scipy_r2r_cases.txt, from
-// data/scipy_r2r_cases.py), the value forms bitwise equal to the span forms, every call bitwise
-// equal to the core plan with the norm's scale and scipy's orthogonalising weights as real edge
-// factors, round trips, in place and strided views, an executor, the cache (a hit allocates
-// nothing; the weights are kept with the plan) and refusals that name the argument.
+// data/scipy_r2r_cases.py), the value forms bitwise equal to the span forms, calls along one axis
+// (and calls without weights) bitwise equal to the core plan with the norm's scale and scipy's
+// orthogonalising weights as real edge factors, orthonormal calls over several axes (whose
+// weights are passes over hyperplanes) against the quadruple-precision reference, round trips,
+// in place and strided views, the input preserved, an executor, the cache (a hit allocates
+// nothing; no weight array beyond one axis) and refusals that name the argument.
 
+#include "reference/reference_dft.hpp"
 #include "support/alloc_hook.hpp"
 #include "support/exact.hpp"
 #include "support/outcome.hpp"
+#include "support/precisions.hpp"
 #include "support/tolerance.hpp"
 
 #include <fftn/easy.hpp>
@@ -26,12 +30,10 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
-#include <functional>
 #include <span>
 #include <sstream>
 #include <stdexcept>
 #include <string>
-#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -259,6 +261,10 @@ double logical(r2r_kind k, std::size_t n) {
   }
 }
 
+bool has_input_weights(r2r_kind k) {
+  return k == r2r_kind::dct1 || k == r2r_kind::dct3 || k == r2r_kind::dst3;
+}
+
 // scipy's orthogonalising weights of a line of n for kind k, as the input's multipliers and the
 // output's (DESIGN.md 5.4; scipy.fft.dct's notes).
 std::pair<std::vector<double>, std::vector<double>> line_weights(r2r_kind k, std::size_t n) {
@@ -288,11 +294,11 @@ std::pair<std::vector<double>, std::vector<double>> line_weights(r2r_kind k, std
   return {wi, wo};
 }
 
-// The core plan a call must equal bit for bit, built by hand from the definitions: axes_r2r of
-// the kind, options::scale the norm's factor, and the weights (under norm::ortho, on the sides
-// that have them) as real factors on the edges, C-ordered over the transformed axes in the order
-// listed, broadcast along the batch. The weight of a point is 2^(m/2), m the number of axes on
-// which it is weighted, rounded once.
+// The core plan a call along one axis (or without weights) must equal bit for bit, built by hand
+// from the definitions: axes_r2r of the kind, options::scale the norm's factor, and the weights
+// (under norm::ortho, on the sides that have them) as real factors on the edges, along the axis,
+// broadcast along the batch. (Over several axes the layer applies the weights by passes, which
+// round differently; the reference checks those calls.)
 template <class T>
 std::vector<T> core_result(const dims_t& ext, const std::vector<std::size_t>& dims, r2r_kind k,
                            bool inverse, easy::norm nm, const std::vector<T>& in) {
@@ -372,8 +378,7 @@ std::vector<T> core_result(const dims_t& ext, const std::vector<std::size_t>& di
 }
 
 template <class T> class easy_r2r_test : public ::testing::Test {};
-using precisions = ::testing::Types<double, float>;
-TYPED_TEST_SUITE(easy_r2r_test, precisions);
+TYPED_TEST_SUITE(easy_r2r_test, fftn::test::precisions, fftn::test::precision_names);
 
 // Every recorded case: scipy's result within the derived tolerance, the value form bitwise equal
 // to the span form, and the call bitwise equal to the core plan with the weights as edge factors.
@@ -403,8 +408,14 @@ TYPED_TEST(easy_r2r_test, recorded_scipy_results) {
     if (c.extents.size() == 1) {
       EXPECT_TRUE(same_bits(out, value_form<T>(c, nm, in))) << at;
     }
-    EXPECT_TRUE(same_bits(out, core_result<T>(c.extents, dims, k, c.function[0] == 'i', nm, in)))
-        << at;
+    const auto [wi, wo] = line_weights(k, 2);
+    const auto not_one = [](double w) { return w != 1.0; };
+    const bool weighted = nm == easy::norm::ortho &&
+                          (std::ranges::any_of(wi, not_one) || std::ranges::any_of(wo, not_one));
+    if (dims.size() == 1 || !weighted) {
+      EXPECT_TRUE(same_bits(out, core_result<T>(c.extents, dims, k, c.function[0] == 'i', nm, in)))
+          << at;
+    }
     ++checked;
   }
   EXPECT_EQ(checked, cases.size());
@@ -526,6 +537,130 @@ TYPED_TEST(easy_r2r_test, in_place_and_strided_views) {
   const std::vector<T> want = easy::dct(std::span<const T>(x), 1, easy::norm::ortho);
   easy::dct(y, y, 1, easy::norm::ortho);
   expect_close<T>(y, {want.begin(), want.end()}, tolerance_for<T>(4 * 72, 1) * 2.0, "dct in place");
+}
+
+// Orthonormal calls over two and three axes, whose weights are passes over the weighted
+// hyperplanes, against the quadruple-precision reference of the weighted input, weighted and
+// scaled as scipy's; out of place the input is preserved, in place too.
+TYPED_TEST(easy_r2r_test, orthonormal_over_several_axes_against_the_reference) {
+  using T = TypeParam;
+  namespace ref = fftn::test::reference;
+  for (const dims_t& ext : {dims_t{6, 5}, dims_t{4, 7, 3}}) {
+    const std::size_t total = product(ext);
+    const std::vector<T> x = values_of<T>(total, static_cast<std::uint32_t>(total));
+    for (const char* const function : {"dctn", "idctn", "dstn", "idstn"}) {
+      for (int type = 1; type <= 4; ++type) {
+        const r2r_kind k = kind_of(function, type);
+        // The weighted input, the reference, then the output weights and scipy's scale.
+        std::vector<double> xw(x.begin(), x.end());
+        std::vector<std::vector<double>> win;
+        std::vector<std::vector<double>> wout;
+        double points = 1;
+        for (const std::size_t n : ext) {
+          const auto [wi, wo] = line_weights(k, n);
+          win.push_back(wi);
+          wout.push_back(wo);
+          points *= logical(k, n);
+        }
+        const auto weight_of = [&](const std::vector<std::vector<double>>& w, std::size_t e) {
+          double v = 1;
+          for (std::size_t d = ext.size(); d > 0; --d) {
+            v *= w[d - 1][e % ext[d - 1]];
+            e /= ext[d - 1];
+          }
+          return v;
+        };
+        for (std::size_t e = 0; e < total; ++e) {
+          xw[e] *= weight_of(win, e);
+        }
+        const std::vector<ref::r2r_type> kinds(ext.size(), static_cast<ref::r2r_type>(k));
+        const std::vector<fftn::test::exact_real> exact = ref::r2r(kinds, ext, xw);
+        std::vector<double> want(total);
+        for (std::size_t e = 0; e < total; ++e) {
+          want[e] = exact[e].hi * weight_of(wout, e) / std::sqrt(points);
+        }
+        std::size_t route = 1;
+        for (const std::size_t n : ext) {
+          route *= 4 * n;
+        }
+        const auto tol = tolerance_for<T>(route, ext.size());
+        const std::string at = std::string(function) + " type " + std::to_string(type) + ", " +
+                               std::to_string(ext.size()) + "-D";
+        easy::context ctx;
+        std::vector<T> y(total);
+        const std::vector<T> before = x;
+        if (ext.size() == 2) {
+          call_n<T, 2>(ctx, function, type, ext, {}, easy::norm::ortho, x.data(), y.data());
+        } else {
+          call_n<T, 3>(ctx, function, type, ext, {}, easy::norm::ortho, x.data(), y.data());
+        }
+        expect_close<T>(y, want, tol, at);
+        EXPECT_TRUE(same_bits(x, before)) << "input changed, " << at;
+        std::vector<T> z = x;
+        if (ext.size() == 2) {
+          call_n<T, 2>(ctx, function, type, ext, {}, easy::norm::ortho, z.data(), z.data());
+        } else {
+          call_n<T, 3>(ctx, function, type, ext, {}, easy::norm::ortho, z.data(), z.data());
+        }
+        expect_close<T>(z, want, tol, "in place, " + at);
+      }
+    }
+  }
+}
+
+// The weights over several axes cost no array: an orthonormal call's miss allocates no more than
+// building the core plan it uses and that plan's workspace (the same shape and options:
+// options::scale and, when the input is weighted out of place, in place on the output's layout),
+// beyond one axis of weights and the cache's own bookkeeping, for every kind, in place and out of
+// place. The same shape and options give the same plan on every target, so the bound does not
+// depend on the strategy a target chooses. (An array of every transformed point would be
+// 64 x 32 x 48 values.)
+TEST(easy_r2r, several_axes_keep_no_weight_array) {
+  const dims_t ext{64, 32, 48};
+  const std::size_t total = product(ext);
+  const std::vector<double> x = values_of<double>(total, 21);
+  std::vector<double> y(total);
+  const std::size_t one_axis = 2 * 64 * sizeof(double);
+  const std::size_t bookkeeping = 4096; // the key's words and the cache's vector of entries
+  std::vector<fftn::axis> array;
+  for (const std::size_t e : ext) {
+    array.push_back(fftn::axis{.n = e});
+  }
+  const std::vector<std::size_t> all{0, 1, 2};
+  for (const char* const function : {"dctn", "idctn", "dstn", "idstn"}) {
+    for (int type = 1; type <= 4; ++type) {
+      for (const bool in_place : {false, true}) {
+        const r2r_kind k = kind_of(function, type);
+        double points = 1;
+        for (const std::size_t n : ext) {
+          points *= logical(k, n);
+        }
+        const bool copied = !in_place && has_input_weights(k);
+        const fftn::options opts{.in_place = in_place || copied, .scale = 1.0 / std::sqrt(points)};
+        const std::vector<r2r_kind> kinds(3, k);
+        const fftn::shape<double, double> s = fftn::axes_r2r<double>(array, all, kinds);
+        const auto core_bytes = [&] {
+          const fftn::test::allocation_counter count;
+          const fftn::plan<double, double> p(s, opts);
+          const fftn::workspace ws(p);
+          return count.bytes_allocated();
+        };
+        static_cast<void>(core_bytes()); // any one-time state of the process first
+        const std::size_t core = core_bytes();
+        easy::context ctx;
+        std::vector<double> z = x;
+        std::size_t ortho = 0;
+        {
+          const fftn::test::allocation_counter count;
+          call_n<double, 3>(ctx, function, type, ext, {}, easy::norm::ortho,
+                            in_place ? z.data() : x.data(), in_place ? z.data() : y.data());
+          ortho = count.bytes_allocated();
+        }
+        EXPECT_LE(ortho, core + one_axis + bookkeeping)
+            << function << " type " << type << (in_place ? " in place" : "");
+      }
+    }
+  }
 }
 
 // A context on an executor gives the serial context's results, bit for bit, weights included.

@@ -46,6 +46,21 @@ struct edge_record {
   // A callback stage (stage::moving_factors' moving_callback; task 5.3a): what it calls, owned
   // by the plan (plan_core::callback_sites).
   const callback_site* call = nullptr;
+  // A stage: the bytes added to the block slot's address where the stage reads it (src) and
+  // where it writes it (dst), so that one stage may move a line between two regions of the block
+  // (a pipeline's fan-out, DESIGN.md 12.2, task 5.2e). The edge driver alone reads them.
+  std::ptrdiff_t block_src = 0;
+  std::ptrdiff_t block_dst = 0;
+  // A lines loop of a multi-axis plan with callbacks (task 5.3c): the logical coordinates it
+  // moves (callback_env::origin, per axis of shape::axes), origin_start once before its first
+  // iteration and origin_step along origin_axis per iteration. moves_origin: either is set.
+  bool moves_origin = false;
+  std::uint8_t origin_axis = 0;
+  std::size_t origin_step = 0;
+  std::array<std::size_t, 3> origin_start{};
+  // A pipeline's copies loop (task 5.3d): its iteration is the copy its callback stages are
+  // passed (callback_env::copy).
+  bool copies = false;
 };
 
 // The cursors of the edges' factor arrays, and of a pipeline's middle factor (task 5.2b):
@@ -60,7 +75,7 @@ struct factor_cursors {
 // values and the callbacks' user pointers (exec_args).
 struct edge_state {
   factor_cursors f;
-  std::array<void*, 2> user{};
+  std::array<void*, 3> user{};
   bool stand_in = false; // measured planning's (callback_env::stand_in)
 };
 

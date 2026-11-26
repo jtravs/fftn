@@ -124,21 +124,24 @@ void run_callback_stage(const stage& st, const callback_site& site, std::byte* d
   std::byte* line = data + static_cast<std::ptrdiff_t>(st.args.dst_cols);
   const std::ptrdiff_t stride = st.args.dst_stride;
   const auto element = static_cast<std::ptrdiff_t>(site.element_bytes);
-  // Rows of at most three axes (shape.hpp); origin's entries other than the element axis are 0
-  // for a row of one axis, the only plans with callbacks so far.
-  std::array<std::size_t, 3> origin{};
+  // At most three axes (shape.hpp): the enclosing loops' coordinates (a multi-axis plan's lines,
+  // task 5.3c), then the block's own along its element and line axes.
+  std::array<std::size_t, 3> origin = env.origin;
+  const std::size_t base = origin[site.axis];
+  const bool along = site.line_axis == along_transforms;
+  const std::size_t line_base = along ? 0 : origin[site.line_axis];
   block_info info{
       .transform = env.transform,
       .origin = std::span<const std::size_t>(origin.data(), site.rank),
       .element_axis = site.axis,
-      .line_axis = along_transforms,
+      .line_axis = site.line_axis,
       .length = 0,
       .lines = lines,
       .element_stride = stride,
       .line_stride = lines > 1 ? line_stride : 0,
       .group = 1,
       .group_stride = 0,
-      .copy = 0,
+      .copy = env.copy,
       .member = env.member,
       .scratch = env.scratch != nullptr ? std::span<std::byte>(env.scratch, site.scratch_bytes)
                                         : std::span<std::byte>(),
@@ -160,8 +163,12 @@ void run_callback_stage(const stage& st, const callback_site& site, std::byte* d
     if (begin == end) {
       continue;
     }
-    origin[site.axis] = site.logical + begin;
-    info.transform = env.transform + first_line;
+    origin[site.axis] = base + site.logical + begin;
+    if (along) {
+      info.transform = env.transform + first_line;
+    } else {
+      origin[site.line_axis] = line_base + first_line;
+    }
     info.length = end - begin;
     info.lines = std::min(per_call, lines - first_line);
     info.line_stride = info.lines > 1 ? line_stride : 0;

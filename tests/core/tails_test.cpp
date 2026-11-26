@@ -27,6 +27,7 @@
 #include "support/harness.hpp"
 #include "support/inputs.hpp"
 #include "support/outcome.hpp"
+#include "support/precisions.hpp"
 #include "support/tolerance.hpp"
 #include "support/transform_under_test.hpp"
 
@@ -234,11 +235,13 @@ template <class T> void check_case(const tail_case& tc, fftn::direction dir) {
   }
 }
 
-TEST(Tails, EveryPartialRunShapeAgainstTheReference) {
+template <class T> class Tails : public ::testing::Test {};
+TYPED_TEST_SUITE(Tails, fftn::test::precisions, fftn::test::precision_names);
+
+TYPED_TEST(Tails, EveryPartialRunShapeAgainstTheReference) {
   for (const tail_case& tc : cases()) {
     for (const auto dir : {fftn::direction::forward, fftn::direction::backward}) {
-      check_case<double>(tc, dir);
-      check_case<float>(tc, dir);
+      check_case<TypeParam>(tc, dir);
     }
   }
 }

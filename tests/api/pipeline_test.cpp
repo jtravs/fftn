@@ -26,6 +26,7 @@
 #include "support/fftn_subject.hpp"
 #include "support/inputs.hpp"
 #include "support/outcome.hpp"
+#include "support/precisions.hpp"
 #include "support/tolerance.hpp"
 
 #include <fftn/fftn.hpp>
@@ -42,6 +43,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -565,8 +567,7 @@ std::vector<pipe_case> cases() {
 }
 
 template <class T> class Pipelines : public ::testing::Test {};
-using precisions = ::testing::Types<double, float>;
-TYPED_TEST_SUITE(Pipelines, precisions);
+TYPED_TEST_SUITE(Pipelines, fftn::test::precisions, fftn::test::precision_names);
 
 TYPED_TEST(Pipelines, EveryLengthOnEveryInstructionSet) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
@@ -631,15 +632,15 @@ TYPED_TEST(Pipelines, TeamsAndExecutorsAgreeWithSerial) {
 
 // Leaf-sized lines are a flat body (the forward leaf with the kernel, then the inverse leaf)
 // batched by the slots' steps, on every instruction set, with factors or without.
-TEST(Pipelines, LeafSizedLinesAreFlat) {
-  using C = std::complex<double>;
+TYPED_TEST(Pipelines, LeafSizedLinesAreFlat) {
+  using C = std::complex<TypeParam>;
   for (const fftn::isa t : fftn::test::runnable_isas()) {
     for (const std::size_t n : {2U, 4U, 8U, 16U}) {
-      fftn::pipeline_desc<C, C, C> with = fftn::complex_convolution_rows<double>(n, 7);
+      fftn::pipeline_desc<C, C, C> with = fftn::complex_convolution_rows<TypeParam>(n, 7);
       const fftn::pipeline<C, C, C> kernel(with, {.force_isa = t});
       EXPECT_NE(kernel.describe().find("form: flat"), std::string::npos) << kernel.describe();
       const fftn::pipeline<C, C, C> plain(
-          fftn::spectral_pair_rows<double>(n, 7, fftn::direction::forward), {.force_isa = t});
+          fftn::spectral_pair_rows<TypeParam>(n, 7, fftn::direction::forward), {.force_isa = t});
       EXPECT_NE(plain.describe().find("form: flat"), std::string::npos) << plain.describe();
     }
   }
@@ -711,15 +712,12 @@ TEST(Pipelines, RefusalsNameTheField) {
   const fftn::pipeline_desc<C, C, C> good = fftn::complex_convolution_rows<double>(16, 2);
   const double nan = std::numeric_limits<double>::quiet_NaN();
   auto d = good;
-  // Not built yet.
-  d.first = fftn::direction::backward;
-  expect_refused(d, {}, "desc.first");
-  d = good;
   d.first = static_cast<fftn::direction>(3);
   expect_refused(d, {}, "desc.first");
   d = good;
+  // Fan-out (task 5.2e; its own refusals in pipeline_fanout_test.cpp): copies on one another.
   d.fanout = 2;
-  expect_refused(d, {}, "desc.fanout");
+  expect_refused(d, {}, "desc.fanout_out_dist");
   d.fanout = 0;
   expect_refused(d, {}, "desc.fanout");
   d = good;
@@ -727,9 +725,22 @@ TEST(Pipelines, RefusalsNameTheField) {
   d.runs = {{.axis = 0, .where = fftn::side::in, .logical = 10, .stored = 0, .count = 8}};
   expect_refused(d, {}, "desc.runs[0].logical");
   d = good;
+  // <C, T, C> (task 5.3e): a real middle takes real factors only; its sides' runs are bins.
   fftn::pipeline_desc<C, double, C> real_middle;
   real_middle.line = {.n = 16};
-  expect_refused(real_middle, {}, "desc");
+  real_middle.batches = {{.count = 2}};
+  real_middle.middle.mul = {.kind = cplx, .axis_strides = {1}};
+  expect_refused(real_middle, {}, "desc.middle.mul.kind");
+  real_middle.middle.mul = {};
+  real_middle.runs = {{.axis = 0, .where = fftn::side::in, .logical = 8, .stored = 0, .count = 2}};
+  expect_refused(real_middle, {}, "desc.runs[0].logical");
+  // A `first` that is neither direction is refused for the real kinds too, which ignore it.
+  real_middle.runs = {};
+  real_middle.first = static_cast<fftn::direction>(3);
+  expect_refused(real_middle, {}, "desc.first");
+  fftn::pipeline_desc<double, C, double> real_first = fftn::convolution_rows<double>(16, 2);
+  real_first.first = static_cast<fftn::direction>(3);
+  expect_refused(real_first, {}, "desc.first");
   // The layout.
   d = good;
   d.line.n = 0;
@@ -783,17 +794,43 @@ TEST(Pipelines, RefusalsNameTheField) {
   expect_refused(f, {}, "desc.prologue.scale");
   f.prologue.scale = 1e300;
   expect_refused(f, {}, "desc.prologue.scale");
-  // Block callbacks on a pipeline's edges wait for task 5.3d; refused, not dropped.
+  // Block callbacks (task 5.3d): modes by position, the middle's modify only, no consume in
+  // place, and a null fn's other fields at their defaults.
   const fftn::block_fn<C> identity = [](void*, const fftn::block_info&, C*) noexcept {};
   d = good;
-  d.prologue.call = {.fn = identity};
-  expect_refused(d, {}, "desc.prologue.call.fn");
+  d.prologue.call = {.fn = identity, .mode = fftn::callback_mode::consume};
+  expect_refused(d, {}, "desc.prologue.call.mode");
+  d = good;
+  d.epilogue.call = {.fn = identity, .mode = fftn::callback_mode::produce};
+  expect_refused(d, {}, "desc.epilogue.call.mode");
   d = good;
   d.epilogue.call = {.fn = identity, .mode = fftn::callback_mode::consume};
-  expect_refused(d, {}, "desc.epilogue.call.fn");
+  expect_refused(d, {.in_place = true}, "desc.epilogue.call.mode");
+  d.epilogue.accumulate = true;
+  expect_refused(d, {}, "desc.epilogue.call.mode");
+  for (const fftn::callback_mode m : {fftn::callback_mode::produce, fftn::callback_mode::consume}) {
+    d = good;
+    d.middle.call = {.fn = identity, .mode = m};
+    expect_refused(d, {}, "desc.middle.call.mode");
+  }
+  d = good;
+  d.middle.call = {.scratch_bytes = 64};
+  expect_refused(d, {}, "desc.middle.call.scratch_bytes");
+  d = good;
+  d.prologue.call = {.mode = fftn::callback_mode::produce};
+  expect_refused(d, {}, "desc.prologue.call.mode");
   fftn::pipeline_desc<double, C, double> real_rows = fftn::convolution_rows<double>(16, 2);
-  real_rows.prologue.call = {.fn = [](void*, const fftn::block_info&, double*) noexcept {}};
-  expect_refused(real_rows, {}, "desc.prologue.call.fn");
+  real_rows.epilogue.call = {.fn = [](void*, const fftn::block_info&, double*) noexcept {},
+                             .mode = fftn::callback_mode::produce};
+  expect_refused(real_rows, {}, "desc.epilogue.call.mode");
+  // With a middle callback the scales are two products, each checked.
+  f = fftn::complex_convolution_rows<float>(16, 2);
+  f.middle.call = {.fn = [](void*, const fftn::block_info&, F*) noexcept {}};
+  f.prologue.scale = 1e30;
+  f.middle.scale = 1e30;
+  EXPECT_NO_THROW(fftn::pipeline(f, {}));
+  f.epilogue.scale = 1e30;
+  expect_refused(f, {}, "desc.middle.scale");
 }
 
 // `execute(in, out, team, ws, {})` is the team form with completion::all.
@@ -1086,7 +1123,7 @@ std::vector<pipe_case> real_cases() {
 }
 
 template <class T> class RealPipelines : public ::testing::Test {};
-TYPED_TEST_SUITE(RealPipelines, precisions);
+TYPED_TEST_SUITE(RealPipelines, fftn::test::precisions, fftn::test::precision_names);
 
 TYPED_TEST(RealPipelines, EveryLengthOnEveryInstructionSet) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
@@ -1232,14 +1269,15 @@ TYPED_TEST(RealPipelines, ConvolutionRowsAgainstTheDirectConvolution) {
 }
 
 // Leaf-sized real lines are a flat body batched by the slots' steps, with the kernel or without.
-TEST(RealPipelines, LeafSizedLinesAreFlat) {
+TYPED_TEST(RealPipelines, LeafSizedLinesAreFlat) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
     for (const std::size_t n : {2U, 4U, 8U, 16U, 32U}) {
-      const real_pipe_of<double> kernel(fftn::convolution_rows<double>(n, 7), {.force_isa = t});
+      const real_pipe_of<TypeParam> kernel(fftn::convolution_rows<TypeParam>(n, 7),
+                                           {.force_isa = t});
       EXPECT_NE(kernel.describe().find("form: flat"), std::string::npos) << kernel.describe();
-      real_desc_of<float> plain_desc = fftn::convolution_rows<float>(n, 7);
+      real_desc_of<TypeParam> plain_desc = fftn::convolution_rows<TypeParam>(n, 7);
       plain_desc.middle.mul = {};
-      const real_pipe_of<float> plain(plain_desc, {.force_isa = t});
+      const real_pipe_of<TypeParam> plain(plain_desc, {.force_isa = t});
       EXPECT_NE(plain.describe().find("form: flat"), std::string::npos) << plain.describe();
     }
   }
@@ -1305,7 +1343,7 @@ TEST(RealPipelines, RefusalsNameTheField) {
   expect_refused(d, {}, "desc.middle.mul.kind");
   d = good;
   d.fanout = 2;
-  expect_refused(d, {}, "desc.fanout");
+  expect_refused(d, {}, "desc.fanout_out_dist");
   d = good;
   // Stored runs (task 5.2d; their own refusals in pipeline_runs_test.cpp): past the line.
   d.runs = {{.axis = 0, .where = fftn::side::in, .logical = 10, .stored = 0, .count = 8}};
@@ -1366,20 +1404,20 @@ TEST(RealPipelinesDeathTest, MissingFactorArraysAbort) {
 // them against the flat form, bitwise, with a kernel per line. Without the fix the middle pass ran
 // row by row (its name was not an edge pass's), and with the name alone its factor moved by the
 // prologue's step.
-TEST(Pipelines, RowBlocksMoveTheMiddlesFactor) {
+TYPED_TEST(Pipelines, RowBlocksMoveTheMiddlesFactor) {
   namespace d = fftn::detail;
-  using C = std::complex<double>;
+  using C = std::complex<TypeParam>;
   constexpr std::size_t n = 8;
   constexpr std::size_t count = 7;
   constexpr std::size_t rows = 3;
   for (const fftn::isa t : fftn::test::runnable_isas()) {
     for (const factor_kind kind : {real, cplx}) {
-      desc_of<double> desc = fftn::complex_convolution_rows<double>(n, count);
+      desc_of<TypeParam> desc = fftn::complex_convolution_rows<TypeParam>(n, count);
       // Stride 2 along the line: a separate middle pass.
       desc.middle.mul = {.kind = kind, .axis_strides = {2}, .batch_strides = {2 * n}};
       const d::pipeline_view view{
           .kind = d::pipeline_kind::complex_pair,
-          .prec = d::precision::f64,
+          .prec = std::is_same_v<TypeParam, double> ? d::precision::f64 : d::precision::f32,
           .line = desc.line,
           .batches = desc.batches,
           .runs = desc.runs,
@@ -1397,12 +1435,12 @@ TEST(Pipelines, RowBlocksMoveTheMiddlesFactor) {
       ASSERT_EQ(core->edge_batched.row_block, 0U) << text;
 
       fftn::test::input_source src(0x2B10CULL + n);
-      const cvec<double> x = src.complexes<double>(n * count);
-      const std::vector<double> kr = src.reals<double>(2 * n * count);
-      const cvec<double> kc = src.complexes<double>(2 * n * count);
+      const cvec<TypeParam> x = src.complexes<TypeParam>(n * count);
+      const std::vector<TypeParam> kr = src.reals<TypeParam>(2 * n * count);
+      const cvec<TypeParam> kc = src.complexes<TypeParam>(2 * n * count);
       const fftn::exec_args args{.mid_factor = kind == real ? static_cast<const void*>(kr.data())
                                                             : static_cast<const void*>(kc.data())};
-      cvec<double> one(n * count);
+      cvec<TypeParam> one(n * count);
       {
         fftn::workspace ws(core->bytes);
         d::execute_all(*core, x.data(), one.data(), ws, args);
@@ -1419,7 +1457,7 @@ TEST(Pipelines, RowBlocksMoveTheMiddlesFactor) {
       blocked.block_elements = n * rows;
       d::lay_out_workspace(blocked, blocked.scratch_line, sizeof(C), false, 0);
       ASSERT_EQ(blocked.edge_batched.row_block, rows) << text;
-      const std::size_t factor_bytes = kind == real ? sizeof(double) : sizeof(C);
+      const std::size_t factor_bytes = kind == real ? sizeof(TypeParam) : sizeof(C);
       std::size_t middles = 0;
       for (const d::edge_flat_stage& st : blocked.edge_batched.flat) {
         if ((st.moving & d::moving_mid_factor) != 0) {
@@ -1431,12 +1469,12 @@ TEST(Pipelines, RowBlocksMoveTheMiddlesFactor) {
       }
       EXPECT_EQ(middles, 1U) << text;
       fftn::workspace ws(blocked.bytes);
-      cvec<double> other(n * count);
+      cvec<TypeParam> other(n * count);
       d::execute_all(blocked, x.data(), other.data(), ws, args);
       EXPECT_TRUE(same_bits(one, other)) << fftn::isa_name(t) << ": the row blocks differ\n"
                                          << text;
       // Pieces that start and end inside a block of rows.
-      cvec<double> pieces(n * count);
+      cvec<TypeParam> pieces(n * count);
       for (const auto& [first, size] :
            {std::pair<std::size_t, std::size_t>{0, 1}, std::pair<std::size_t, std::size_t>{1, 4},
             std::pair<std::size_t, std::size_t>{5, 2}}) {

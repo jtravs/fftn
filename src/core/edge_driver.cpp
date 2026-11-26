@@ -10,6 +10,7 @@
 #include "fftn/edges.hpp"
 #include "passes/pass_args.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -90,6 +91,17 @@ factor_cursors moved_by(factor_cursors f, const factor_steps& bytes) noexcept {
   return f;
 }
 
+// The callback environment of iteration `c` of a loop whose record is e (task 5.3c): the
+// coordinates the loop has reached added to env's.
+callback_env at_iteration(const callback_env& env, const edge_record& e, std::size_t c) noexcept {
+  callback_env here = env;
+  for (std::size_t a = 0; a < here.origin.size(); ++a) {
+    here.origin[a] += e.origin_start[a];
+  }
+  here.origin[e.origin_axis] += c * e.origin_step;
+  return here;
+}
+
 // Sets the factor pointers of `a` that read cursors (`moving`, stage::moving_factors) from f:
 // in_factor from the input's cursor or the middle's, out_factor from the output's or the
 // middle's.
@@ -159,13 +171,19 @@ const pass_args* with_cursors(const pass_args& a, std::uint8_t moving, factor_cu
 // stage through its site (core/callbacks.hpp).
 void run_stage(const stage& st, const edge_record& e, const slot_addresses& at, factor_cursors f,
                const callback_env& env, std::size_t first, std::size_t last) noexcept {
-  if (st.moving_factors == 0) {
+  const bool offset = e.block_src != 0 || e.block_dst != 0;
+  if (st.moving_factors == 0 && !offset) {
     run_stage_chunks(st, at, first, last);
     return;
   }
   if ((st.moving_factors & moving_callback) != 0) {
-    run_callback_stage(st, *e.call, static_cast<std::byte*>(destination_of(st.dst, at)), env, 1, 0,
-                       first, last);
+    // The walked form's lines: one, or a lanes column block's columns (task 5.3c); on a region
+    // of the block past the first (a fan-out's copy, task 5.3d) at its offset.
+    std::byte* data = static_cast<std::byte*>(destination_of(st.dst, at));
+    if (st.dst == slot::block && e.block_dst != 0) {
+      data += e.block_dst;
+    }
+    run_callback_stage(st, *e.call, data, env, e.call->lines, st.args.dst_dist, first, last);
     return;
   }
   pass_args args = st.args;
@@ -175,16 +193,26 @@ void run_stage(const stage& st, const edge_record& e, const slot_addresses& at, 
   set_cursors(args, st.moving_factors, f);
   const void* src = source_of(st.src, at);
   void* dst = destination_of(st.dst, at);
-  if (e.leaf != nullptr) {
+  // The regions of the block a stage reads and writes (edge_record::block_src, block_dst).
+  if (st.src == slot::block && e.block_src != 0) {
+    src = static_cast<const std::byte*>(src) + e.block_src;
+  }
+  if (st.dst == slot::block && e.block_dst != 0) {
+    dst = static_cast<std::byte*>(dst) + e.block_dst;
+  }
+  // A stage that reads no cursor keeps its own kernels (only one that reads them has guards).
+  const pass_fn run = st.moving_factors != 0 ? e.run : st.run;
+  const leaf_fn leaf = st.moving_factors != 0 ? e.leaf : st.leaf;
+  if (leaf != nullptr) {
     if (first == 0 && last != 0) {
-      e.leaf(&args, src, dst, 0, 0, 1);
+      leaf(&args, src, dst, 0, 0, 1);
     }
     return;
   }
   const std::size_t begin = chunk_start(st.units, st.chunks, first);
   const std::size_t end = chunk_start(st.units, st.chunks, last);
   if (begin < end) {
-    e.run(&args, src, dst, begin, end);
+    run(&args, src, dst, begin, end);
   }
 }
 
@@ -201,26 +229,49 @@ void run_records(const program& p, const std::vector<edge_record>& e, std::size_
     // driver.cpp makes of it (experiment X40).
     const loop& l = *std::get_if<loop>(&r);
     const slot_addresses from = moved(at, l.start, 1);
-    for (std::size_t c = 0; c < l.count; ++c) {
-      run_records(p, e, i + 1, l.body_end, moved(from, l.step, c), moved(f, e[i].factor_step, c),
-                  env);
+    // Only a multi-axis plan's loops around callbacks move the coordinates, and only a
+    // pipeline's copies loop the copy (no copy of env otherwise).
+    if (e[i].moves_origin) {
+      for (std::size_t c = 0; c < l.count; ++c) {
+        run_records(p, e, i + 1, l.body_end, moved(from, l.step, c), moved(f, e[i].factor_step, c),
+                    at_iteration(env, e[i], c));
+      }
+    } else if (e[i].copies) {
+      callback_env copy = env;
+      for (std::size_t c = 0; c < l.count; ++c) {
+        copy.copy = c;
+        run_records(p, e, i + 1, l.body_end, moved(from, l.step, c), moved(f, e[i].factor_step, c),
+                    copy);
+      }
+    } else {
+      for (std::size_t c = 0; c < l.count; ++c) {
+        run_records(p, e, i + 1, l.body_end, moved(from, l.step, c), moved(f, e[i].factor_step, c),
+                    env);
+      }
     }
     i = l.body_end - 1;
   }
 }
 
-// Iteration `index` of the loops [begin, begin + depth), the last varying fastest.
-std::pair<slot_addresses, factor_cursors> moved_in_nest(const program& p,
-                                                        const std::vector<edge_record>& e,
-                                                        std::size_t begin, std::size_t depth,
-                                                        std::size_t index, const slot_addresses& at,
-                                                        factor_cursors f) noexcept {
+// Iteration `index` of the loops [begin, begin + depth), the last varying fastest; with the
+// coordinates each loop moves added to env's origin, and a copies loop's iteration in its copy,
+// where env is given (tasks 5.3c, 5.3d; the origin's starts are run_edge_lines').
+std::pair<slot_addresses, factor_cursors>
+moved_in_nest(const program& p, const std::vector<edge_record>& e, std::size_t begin,
+              std::size_t depth, std::size_t index, const slot_addresses& at, factor_cursors f,
+              callback_env* env = nullptr) noexcept {
   slot_addresses here = at;
   std::size_t rest = index;
   for (std::size_t i = begin + depth; i > begin && rest != 0; --i) {
     const loop& l = *std::get_if<loop>(&p.records[i - 1]);
     here = moved(here, l.step, rest % l.count);
     f = moved(f, e[i - 1].factor_step, rest % l.count);
+    if (env != nullptr && e[i - 1].moves_origin) {
+      env->origin[e[i - 1].origin_axis] += rest % l.count * e[i - 1].origin_step;
+    }
+    if (env != nullptr && e[i - 1].copies) {
+      env->copy = rest % l.count;
+    }
     rest /= l.count;
   }
   return {here, f};
@@ -259,9 +310,16 @@ void run_lane_records(const std::vector<record>& records, const std::vector<edge
     }
     const loop& l = *std::get_if<loop>(&r);
     const slot_addresses from = moved(at, l.start, 1);
-    for (std::size_t c = 0; c < l.count; ++c) {
-      run_lane_records(records, e, i + 1, l.body_end, moved(from, l.step, c),
-                       moved(f, e[i].factor_step, c), env, rows);
+    if (e[i].moves_origin) {
+      for (std::size_t c = 0; c < l.count; ++c) {
+        run_lane_records(records, e, i + 1, l.body_end, moved(from, l.step, c),
+                         moved(f, e[i].factor_step, c), at_iteration(env, e[i], c), rows);
+      }
+    } else {
+      for (std::size_t c = 0; c < l.count; ++c) {
+        run_lane_records(records, e, i + 1, l.body_end, moved(from, l.step, c),
+                         moved(f, e[i].factor_step, c), env, rows);
+      }
     }
     i = l.body_end - 1;
   }
@@ -515,6 +573,12 @@ std::ptrdiff_t offset_of(slot s, const offsets& off) noexcept {
   return 0;
 }
 
+// A stage's offset into the block where it reads or writes slot s (edge_record::block_src,
+// block_dst), 0 for the other slots.
+std::ptrdiff_t block_offset(slot s, std::ptrdiff_t bytes) noexcept {
+  return s == slot::block ? bytes : 0;
+}
+
 // driver.cpp's unroll_records with the cursors: a loop of one leaf is one call over its lines
 // unless the leaf reads cursors the loop moves, when each line is a call of its own (a leaf
 // reads one set of factors per call). False where the program has moving twiddles or more
@@ -541,8 +605,8 @@ bool unroll_edge_records(const program& p, const std::vector<edge_record>& e, st
                   .run = reads ? e[i].run : st->run,
                   .leaf = reads ? e[i].leaf : st->leaf,
                   .units = st->leaf != nullptr ? 1 : st->units,
-                  .src_off = offset_of(st->src, off),
-                  .dst_off = offset_of(st->dst, off),
+                  .src_off = offset_of(st->src, off) + block_offset(st->src, e[i].block_src),
+                  .dst_off = offset_of(st->dst, off) + block_offset(st->dst, e[i].block_dst),
                   .args = static_cast<std::uint32_t>(arg_of[i]),
                   .src = st->src,
                   .dst = st->dst,
@@ -567,8 +631,10 @@ bool unroll_edge_records(const program& p, const std::vector<edge_record>& e, st
                 {
                     .leaf = reads ? e[i + 1].leaf : only->leaf,
                     .units = l.count,
-                    .src_off = offset_of(only->src, from),
-                    .dst_off = offset_of(only->dst, from),
+                    .src_off =
+                        offset_of(only->src, from) + block_offset(only->src, e[i + 1].block_src),
+                    .dst_off =
+                        offset_of(only->dst, from) + block_offset(only->dst, e[i + 1].block_dst),
                     .src_step = step_of(l, only->src),
                     .dst_step = step_of(l, only->dst),
                     .args = static_cast<std::uint32_t>(arg_of[i + 1]),
@@ -607,6 +673,13 @@ edge_forms make_edge_forms(const program& p, const std::vector<edge_record>& e, 
                            std::size_t row_block, std::ptrdiff_t block_row_bytes,
                            std::ptrdiff_t element_bytes) {
   edge_forms forms;
+  // Offsets into the block are read by the walked form and the unrolled calls only; the programs
+  // that have them (a fan-out's) hold loops, so they are neither flat nor lanes programs.
+  if ((p.flat || p.lanes != 0) && std::ranges::any_of(e, [](const edge_record& r) {
+        return r.block_src != 0 || r.block_dst != 0;
+      })) {
+    throw std::logic_error("fftn: internal: offsets into the block on a flat or lanes program");
+  }
   if (p.lanes != 0) {
     return forms; // already in blocks of transforms (run_lane_blocks)
   }
@@ -754,7 +827,9 @@ factor_cursors cursors_of(const exec_args& args, std::uint8_t needed) noexcept {
 }
 
 edge_state edge_state_of(const exec_args& args, std::uint8_t needed) noexcept {
-  return {.f = cursors_of(args, needed), .user = {args.in_user, args.out_user}, .stand_in = false};
+  return {.f = cursors_of(args, needed),
+          .user = {args.in_user, args.out_user, args.mid_user},
+          .stand_in = false};
 }
 
 factor_cursors edge_transform_cursors(const program& p, const std::vector<edge_record>& e,
@@ -813,12 +888,30 @@ void run_edge_lines(const program& p, const std::vector<edge_record>& e, std::si
                     std::size_t nest, std::size_t body_end, std::size_t first, std::size_t last,
                     const slot_addresses& at, factor_cursors f, const callback_env& env) noexcept {
   slot_addresses from = at;
+  bool moves = false;
   for (std::size_t i = begin; i < begin + nest; ++i) {
     from = moved(from, std::get_if<loop>(&p.records[i])->start, 1);
+    moves = moves || e[i].moves_origin || e[i].copies;
+  }
+  if (!moves) {
+    // No callback's coordinates or copy move (every plan but a multi-axis one with callbacks, and
+    // every lines loop but a pipeline's copies): no copy of env.
+    for (std::size_t line = first; line < last; ++line) {
+      const auto [here, cursors] = moved_in_nest(p, e, begin, nest, line, from, f);
+      run_records(p, e, begin + nest, body_end, here, cursors, env);
+    }
+    return;
+  }
+  callback_env start = env;
+  for (std::size_t i = begin; i < begin + nest; ++i) {
+    if (e[i].moves_origin) {
+      start = at_iteration(start, e[i], 0);
+    }
   }
   for (std::size_t line = first; line < last; ++line) {
-    const auto [here, cursors] = moved_in_nest(p, e, begin, nest, line, from, f);
-    run_records(p, e, begin + nest, body_end, here, cursors, env);
+    callback_env here = start;
+    const auto [at_line, cursors] = moved_in_nest(p, e, begin, nest, line, from, f, &here);
+    run_records(p, e, begin + nest, body_end, at_line, cursors, here);
   }
 }
 
