@@ -51,6 +51,13 @@ struct edge_record {
   // (a pipeline's fan-out, DESIGN.md 12.2, task 5.2e). The edge driver alone reads them.
   std::ptrdiff_t block_src = 0;
   std::ptrdiff_t block_dst = 0;
+  // A lines loop of a multi-axis plan with callbacks (task 5.3c): the logical coordinates it
+  // moves (callback_env::origin, per axis of shape::axes), origin_start once before its first
+  // iteration and origin_step along origin_axis per iteration. moves_origin: either is set.
+  bool moves_origin = false;
+  std::uint8_t origin_axis = 0;
+  std::size_t origin_step = 0;
+  std::array<std::size_t, 3> origin_start{};
 };
 
 // The cursors of the edges' factor arrays, and of a pipeline's middle factor (task 5.2b):

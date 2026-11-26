@@ -47,8 +47,8 @@ struct edge_side {
   // logical line with zeros elsewhere (input) or stores only the runs (output). Never with a
   // factor (build_with_runs refuses one).
   side_runs runs;
-  // The side's block callback (core/callbacks.hpp; tasks 5.3a, 5.3b): rows only, on every
-  // strategy.
+  // The side's block callback (core/callbacks.hpp; tasks 5.3a to 5.3c): rows on every strategy,
+  // planes and volumes inside their first or last phase (or the side's edge phase).
   side_callback call;
 };
 
