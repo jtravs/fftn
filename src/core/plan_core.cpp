@@ -16,6 +16,7 @@
 #include "core/edges.hpp"
 #include "core/pipeline.hpp"
 #include "core/program.hpp"
+#include "core/r2r.hpp"
 #include "core/runs.hpp"
 #include "core/wisdom_entry.hpp"
 #include "fftn/detail/core.hpp"
@@ -227,11 +228,11 @@ void check_no_overlap(const shape_view& s, const side& v) {
 }
 
 // In place, every transform must read and write the same memory: identical layouts for
-// c2c; for the real kinds FFTW's padded layout, the last axis contiguous on both sides and
+// c2c and r2r; for r2c and c2r FFTW's padded layout, the last axis contiguous on both sides and
 // every other stride and distance on the real side twice the complex side's.
 void check_in_place(const shape_view& s, const side& in, const side& out) {
   const std::size_t r = in.extent.size();
-  if (s.kind == transform_kind::c2c) {
+  if (s.kind == transform_kind::c2c || s.kind == transform_kind::r2r) {
     for (std::size_t d = 0; d < r; ++d) {
       if (in.extent[d] > 1 && in.stride[d] != out.stride[d]) {
         reject("options.in_place", "needs " + axis_name(d) + ".in_stride == out_stride");
@@ -2452,6 +2453,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
         return chain.r2c_lanes(n, at(in_view_eff, 0), in_eff.dist[b], lane_out, lane_out_dist,
                                opts.scale, block, st);
       case transform_kind::c2r:
+      case transform_kind::r2r: // core/r2r.cpp builds real-to-real plans
         break;
       }
       return chain.c2r_lanes(n, at(in_view_eff, 0), in_eff.dist[b], lane_out, lane_out_dist,
@@ -3416,6 +3418,10 @@ void check_counts(const shape_view& s) {
       s.dir != direction::backward) {
     reject("shape.dir", "must be direction::forward or direction::backward");
   }
+  if (s.kind != transform_kind::r2r && !s.kinds.empty()) {
+    reject("shape.kinds", "must be empty: it gives the kind of each axis of a real-to-real shape "
+                          "(shape<T, T>), and this shape is not one");
+  }
 }
 
 // The tags build_plan_core puts in build_settings::in_factor and out_factor for the edges'
@@ -3486,6 +3492,8 @@ const char* kind_name(transform_kind k) {
     return "r2c";
   case transform_kind::c2r:
     return "c2r";
+  case transform_kind::r2r:
+    return "r2r";
   }
   return "c2c";
 }
@@ -3581,6 +3589,8 @@ std::shared_ptr<plan_core> build_core(const shape_view& s, const options& opts,
     in = resolve(s, halved, half, true, true, cb, in_runs);
     out = resolve(s, full, padded, false, false, rb, out_runs);
     break;
+  case transform_kind::r2r:
+    throw std::logic_error("fftn: internal: a real-to-real shape reached build_core");
   }
   check_reach(s, in, true);
   check_reach(s, out, false);
@@ -3749,6 +3759,37 @@ row_layout resolve_row_layout(const shape_view& s, bool in_place, bool real) {
   return l;
 }
 
+r2r_layout resolve_r2r_layout(const shape_view& s, bool in_place) {
+  check_counts(s);
+  if (s.kind != transform_kind::r2r || !s.runs.empty()) {
+    throw std::logic_error("fftn: internal: resolve_r2r_layout takes r2r shapes without runs");
+  }
+  const std::size_t real_bytes = s.prec == precision::f64 ? sizeof(double) : sizeof(float);
+  const auto rb = static_cast<std::ptrdiff_t>(real_bytes);
+  std::vector<std::size_t> full;
+  for (const axis& a : s.axes) {
+    full.push_back(a.n);
+  }
+  const side_runs none;
+  const side in = resolve(s, full, full.back(), true, false, rb, none);
+  const side out = resolve(s, full, full.back(), false, false, rb, none);
+  check_reach(s, in, true);
+  check_reach(s, out, false);
+  check_no_overlap(s, out);
+  if (in_place) {
+    check_in_place(s, in, out);
+  }
+  r2r_layout l{
+      .in_stride = in.stride,
+      .out_stride = out.stride,
+      .in_dist = in.dist,
+      .out_dist = out.dist,
+  };
+  std::tie(l.in_lo, l.in_hi) = span_of(s, in);
+  std::tie(l.out_lo, l.out_hi) = span_of(s, out);
+  return l;
+}
+
 namespace {
 
 // A plan whose shape has stored runs (task 5.1d), with its edges (null: none): built as a plan
@@ -3823,6 +3864,9 @@ std::shared_ptr<const plan_core> build_with_runs(const shape_view& shape, const 
 
 std::shared_ptr<const plan_core> make_plan_core(const shape_view& shape, const options& opts,
                                                 const build_settings& settings) {
+  if (shape.kind == transform_kind::r2r) {
+    return make_r2r_core(shape, opts, nullptr, settings);
+  }
   if (!shape.runs.empty()) {
     return build_with_runs(shape, opts, nullptr, settings);
   }
@@ -3911,6 +3955,9 @@ std::shared_ptr<const plan_core> make_plan_core_with_edges(const shape_view& sha
                                                            const options& opts,
                                                            const edges_view& edges,
                                                            const build_settings& settings) {
+  if (shape.kind == transform_kind::r2r) {
+    return make_r2r_core(shape, opts, &edges, settings);
+  }
   if (!shape.runs.empty()) {
     return build_with_runs(shape, opts, &edges, settings);
   }

@@ -462,4 +462,58 @@ std::vector<exact_complex> c2c_plane(int sign, std::size_t ny, std::size_t nx,
   return c2c_plane(sign, ny, nx, x, points);
 }
 
+std::vector<exact_real> dht(std::span<const std::size_t> extents, std::span<const double> x) {
+  std::size_t total = 1;
+  for (const std::size_t n : extents) {
+    check_length(n);
+    total *= n;
+  }
+  if (extents.empty() || x.size() != total) {
+    throw std::invalid_argument("reference::dht: size is not the product of the extents");
+  }
+  std::vector<quad> v(x.begin(), x.end());
+  std::vector<quad> line;
+  std::vector<quad> done;
+  // Axis d's lines: `inner` elements apart along it, `outer` blocks of n * inner.
+  std::size_t inner = total;
+  for (const std::size_t n : extents) {
+    inner /= n;
+    const std::size_t outer = total / (n * inner);
+    // cas(2 pi m / n) = Re w - Im w for w = exp(-2 pi i m / n).
+    const std::vector<qcomplex>& w = table(-1, n);
+    std::vector<quad> cas(n);
+    for (std::size_t m = 0; m < n; ++m) {
+      cas[m] = w[m].re - w[m].im;
+    }
+    line.resize(n);
+    done.resize(n);
+    for (std::size_t o = 0; o < outer; ++o) {
+      for (std::size_t i = 0; i < inner; ++i) {
+        const std::size_t base = o * n * inner + i;
+        for (std::size_t j = 0; j < n; ++j) {
+          line[j] = v[base + j * inner];
+        }
+        for (std::size_t k = 0; k < n; ++k) {
+          quad acc = 0;
+          for (std::size_t j = 0; j < n; ++j) {
+            if (line[j] != 0) {
+              acc += line[j] * cas[(k * j) % n];
+            }
+          }
+          done[k] = acc;
+        }
+        for (std::size_t k = 0; k < n; ++k) {
+          v[base + k * inner] = done[k];
+        }
+      }
+    }
+  }
+  std::vector<exact_real> out;
+  out.reserve(total);
+  for (const quad& q : v) {
+    out.push_back(to_exact(q));
+  }
+  return out;
+}
+
 } // namespace fftn::test::reference
