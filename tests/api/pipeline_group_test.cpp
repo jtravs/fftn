@@ -14,10 +14,15 @@
 // serial, pieces of the batch (groups), teams (completion::all and own, which deal groups) and an
 // executor bitwise alike, on every instruction set in both precisions. Refusals name desc.group.
 
+#include "core/pipeline.hpp"
+#include "core/plan_core.hpp"
+#include "fftn/detail/core.hpp"
 #include "reference/reference_dft.hpp"
 #include "support/fftn_subject.hpp"
 #include "support/inputs.hpp"
 #include "support/tolerance.hpp"
+#include "threading/schedule.hpp"
+#include "threading/work_graph.hpp"
 
 #include <fftn/fftn.hpp>
 
@@ -29,6 +34,7 @@
 #include <complex>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -57,7 +63,11 @@ struct group_case {
   factor_kind mid = factor_kind::none; // the kernel: complex of stride 1 (fused) or real
   bool per_line = false;
   bool prologue_factor = false;
+  // Side factors per line (stepping along the group's dimension inside the members loops): the
+  // prologue's and the epilogue's, real on a real side.
+  bool side_factors_per_line = false;
   double pro_scale = 1.0;
+  double options_scale = 1.0;
   std::ptrdiff_t stride = 1;
   bool in_place = false;
   bool epilogue_callback = false;
@@ -219,6 +229,9 @@ template <class T, kind K> struct group_run {
   std::vector<std::complex<T>> kcomplex;
   std::vector<std::ptrdiff_t> kbatch;
   std::vector<std::complex<T>> pfactor;
+  std::vector<T> rpfactor;
+  std::vector<std::complex<T>> efactor;
+  std::vector<T> refactor;
 
   group_run(const group_case& gc, fftn::isa t, fftn::test::input_source& src) : c(gc), target(t) {
     side = K == kind::ctc ? c.n / 2 + 1 : c.n;
@@ -267,6 +280,32 @@ template <class T, kind K> struct group_run {
       pfactor = src.complexes<T>(side);
       desc.prologue.mul = {.kind = factor_kind::complex, .axis_strides = {1}, .batch_strides = {}};
     }
+    if (c.side_factors_per_line) {
+      // Line l's factors at l * side.
+      std::vector<std::ptrdiff_t> fb(c.counts.size(), 0);
+      std::ptrdiff_t fstep = s;
+      for (std::size_t b = c.counts.size(); b-- > 0;) {
+        fb[b] = fstep;
+        fstep *= static_cast<std::ptrdiff_t>(c.counts[b]);
+      }
+      const auto fk = [](bool real_side) {
+        return real_side ? factor_kind::real : factor_kind::complex;
+      };
+      if constexpr (std::is_floating_point_v<In>) {
+        rpfactor = src.reals<T>(side * lines);
+      } else {
+        pfactor = src.complexes<T>(side * lines);
+      }
+      if constexpr (std::is_floating_point_v<Out>) {
+        refactor = src.reals<T>(side * lines);
+      } else {
+        efactor = src.complexes<T>(side * lines);
+      }
+      desc.prologue.mul = {
+          .kind = fk(std::is_floating_point_v<In>), .axis_strides = {1}, .batch_strides = fb};
+      desc.epilogue.mul = {
+          .kind = fk(std::is_floating_point_v<Out>), .axis_strides = {1}, .batch_strides = fb};
+    }
     const std::size_t size = static_cast<std::size_t>(step) + 3;
     if constexpr (std::is_floating_point_v<In>) {
       x = src.reals<T>(size);
@@ -302,10 +341,29 @@ template <class T, kind K> struct group_run {
     } else if (!kcomplex.empty()) {
       k = kcomplex.data();
     }
-    return {.in_factor = pfactor.empty() ? nullptr : pfactor.data(),
-            .mid_factor = k,
-            .mid_user = mid,
-            .out_user = epi};
+    const void* in_f = !rpfactor.empty()  ? static_cast<const void*>(rpfactor.data())
+                       : !pfactor.empty() ? static_cast<const void*>(pfactor.data())
+                                          : nullptr;
+    const void* out_f = !refactor.empty()  ? static_cast<const void*>(refactor.data())
+                        : !efactor.empty() ? static_cast<const void*>(efactor.data())
+                                           : nullptr;
+    return {
+        .in_factor = in_f, .mid_factor = k, .out_factor = out_f, .mid_user = mid, .out_user = epi};
+  }
+
+  // The side factors at element j of line `line` (1 without one).
+  [[nodiscard]] std::complex<double> side_factor(bool input, std::size_t j,
+                                                 std::size_t line) const {
+    const std::size_t i = c.side_factors_per_line ? line * side + j : j;
+    const std::vector<T>& r = input ? rpfactor : refactor;
+    const std::vector<std::complex<T>>& z = input ? pfactor : efactor;
+    if (!r.empty()) {
+      return {static_cast<double>(r[i]), 0.0};
+    }
+    if (!z.empty()) {
+      return std::complex<double>(z[i]);
+    }
+    return {1.0, 0.0};
   }
 
   [[nodiscard]] std::complex<double> kernel(std::size_t j, std::size_t line) const {
@@ -332,9 +390,7 @@ template <class T, kind K> struct group_run {
         } else {
           e = std::complex<double>(x[at(j, line)]);
         }
-        if (!pfactor.empty()) {
-          e *= std::complex<double>(pfactor[j]);
-        }
+        e *= side_factor(true, j, line);
         v[j] = e * c.pro_scale;
       }
       if constexpr (K == kind::ccc) {
@@ -382,6 +438,9 @@ template <class T, kind K> struct group_run {
         full.resize(side);
         out[line] = full;
       }
+      for (std::size_t j = 0; j < side; ++j) {
+        out[line][j] *= side_factor(false, j, line) * c.options_scale;
+      }
     }
     return out;
   }
@@ -397,12 +456,14 @@ template <class T, kind K> void run_case(const group_case& gc, fftn::isa t) {
   SCOPED_TRACE(what);
   fftn::test::input_source src(0x6E0B5ULL + gc.n * 13 + gc.group);
   Run run(gc, t, src);
-  const fftn::pipeline<In, Mid, Out> p(run.desc, {.in_place = gc.in_place, .force_isa = t});
+  const fftn::pipeline<In, Mid, Out> p(
+      run.desc, {.in_place = gc.in_place, .scale = gc.options_scale, .force_isa = t});
   const std::string describe = p.describe();
   EXPECT_NE(describe.find("group: batch dimension " + std::to_string(gc.group)), std::string::npos)
       << describe;
   const std::size_t groups = run.lines / run.members;
   EXPECT_EQ(p.transforms_of(fftn::team{.rank = 0, .size = 1}).count, groups);
+  EXPECT_EQ(p.transform_count(), groups);
 
   callback_state st;
   st.members = run.members;
@@ -507,6 +568,100 @@ template <class T, kind K> void run_case(const group_case& gc, fftn::isa t) {
   EXPECT_TRUE(st.ok);
 }
 
+namespace d = fftn::detail;
+
+// The view the public class builds of a <C, C, C> description, for the construction knobs.
+template <class T>
+d::pipeline_view
+ccc_view(const fftn::pipeline_desc<std::complex<T>, std::complex<T>, std::complex<T>>& desc) {
+  return {
+      .kind = d::pipeline_kind::complex_pair,
+      .prec = sizeof(T) == 8 ? d::precision::f64 : d::precision::f32,
+      .first = desc.first,
+      .line = desc.line,
+      .batches = desc.batches,
+      .runs = desc.runs,
+      .prologue = d::view_of(desc.prologue),
+      .middle = {.scale = desc.middle.scale,
+                 .kind = desc.middle.mul.kind,
+                 .axis_strides = desc.middle.mul.axis_strides,
+                 .batch_strides = desc.middle.mul.batch_strides,
+                 .call = reinterpret_cast<d::erased_block_fn>(desc.middle.call.fn),
+                 .call_mode = desc.middle.call.mode,
+                 .call_scratch = desc.middle.call.scratch_bytes},
+      .epilogue = d::view_of(desc.epilogue),
+      .fanout = desc.fanout,
+      .fanout_out_dist = desc.fanout_out_dist,
+      .fanout_factor_dist = desc.fanout_factor_dist,
+      .group = desc.group,
+  };
+}
+
+// A group's members loops shared by a team: the schedule forced to split one task (every
+// threshold at its least, a line per chunk, as pipeline_fanout_test.cpp's split copies), each
+// member's line on a team member's own scratch with the owner's block, bitwise as serial
+// execution, by teams (completion::all and own) and an executor.
+template <class T> void run_split(const group_case& gc, bool one_task) {
+  using Run = group_run<T, kind::ccc>;
+  using C = std::complex<T>;
+  SCOPED_TRACE(gc.name);
+  d::build_settings s;
+  s.chunk_points = 1;
+  s.profile.inline_multiple = 0;
+  s.profile.split_min_points = 1;
+  s.profile.split_min_points_mesh = 1;
+  s.profile.split_min_points_lines = 1;
+  s.profile.remainder_split_min_points = 1;
+  s.profile.min_points_per_member = 1;
+  s.profile.sync_ns = 0;
+  fftn::test::input_source src(0x6E0C0ULL + gc.n);
+  Run run(gc, fftn::isa::best, src);
+  const d::pipeline_view view = ccc_view<T>(run.desc);
+  const auto core = d::make_pipeline_core(view, {.force_isa = run.target}, s);
+  const std::string describe = d::describe(*core);
+  const auto members = std::ranges::find_if(core->graph.phases,
+                                            [](const d::graph_phase& ph) { return ph.nest != 0; });
+  ASSERT_NE(members, core->graph.phases.end()) << describe;
+  EXPECT_EQ(members->chunks, run.members) << describe;
+  const d::lane_map lanes{.lanes = 3};
+  const d::schedule plan = d::make_schedule(core->graph, lanes, core->profile);
+  // One task (one group) for three members: the team must split it to share it at all.
+  EXPECT_TRUE(!one_task || d::share_of(plan, lanes, 0).split != 0U)
+      << "the team does not split the group\n"
+      << describe;
+  callback_state st;
+  st.members = run.members;
+  st.bins = run.bins;
+  st.lines = run.lines;
+  st.inner = run.inner;
+  const fftn::exec_args args = run.args(&st, nullptr);
+  fftn::workspace ws(d::workspace_bytes(*core, 3));
+  std::vector<C> xs = run.x;
+  std::vector<C> serial = run.init;
+  d::execute_all(*core, xs.data(), serial.data(), ws, args);
+  for (const fftn::completion done : {fftn::completion::all, fftn::completion::own}) {
+    std::vector<C> teamed = run.init;
+    std::vector<std::thread> threads;
+    for (int r = 1; r < 3; ++r) {
+      threads.emplace_back([&, r] {
+        d::execute_team(*core, xs.data(), teamed.data(), fftn::team{.rank = r, .size = 3}, ws, done,
+                        args);
+      });
+    }
+    d::execute_team(*core, xs.data(), teamed.data(), fftn::team{.rank = 0, .size = 3}, ws, done,
+                    args);
+    for (std::thread& m : threads) {
+      m.join();
+    }
+    EXPECT_TRUE(same_bits(teamed, serial)) << "a team differs\n" << describe;
+  }
+  const fftn::thread_pool pool(3);
+  std::vector<C> pooled = run.init;
+  d::execute_on(*core, xs.data(), pooled.data(), pool, ws, args);
+  EXPECT_TRUE(same_bits(pooled, serial)) << "the executor differs\n" << describe;
+  EXPECT_TRUE(st.ok);
+}
+
 std::vector<group_case> complex_cases(std::size_t n) {
   return {
       {.name = "polarisation outermost", .n = n, .threads = true},
@@ -537,6 +692,18 @@ std::vector<group_case> complex_cases(std::size_t n) {
        .mid = factor_kind::complex,
        .stride = 2},
       {.name = "in place", .n = n, .counts = {2, 4}, .in_place = true},
+      {.name = "only the group: one field, two polarisations",
+       .n = n,
+       .counts = {2},
+       .threads = true},
+      {.name = "side factors per line, options.scale",
+       .n = n,
+       .counts = {3, 2},
+       .group = 1,
+       .mid = factor_kind::real,
+       .side_factors_per_line = true,
+       .options_scale = 0.5,
+       .threads = true},
   };
 }
 
@@ -551,6 +718,11 @@ std::vector<group_case> real_cases(std::size_t n) {
        .per_line = true,
        .epilogue_callback = true,
        .threads = true},
+      {.name = "only the group, side factors per line, options.scale",
+       .n = n,
+       .counts = {2},
+       .side_factors_per_line = true,
+       .options_scale = 2.0},
   };
 }
 
@@ -576,6 +748,23 @@ TYPED_TEST(PipelineGroups, RealPairs) {
         run_case<TypeParam, kind::ctc>(gc, t);
       }
     }
+  }
+}
+
+TYPED_TEST(PipelineGroups, MembersSplitAmongATeam) {
+  for (const std::size_t n : {16U, 64U}) {
+    run_split<TypeParam>({.name = "one group of six split",
+                          .n = n,
+                          .counts = {6},
+                          .mid = factor_kind::complex,
+                          .per_line = true},
+                         true);
+    run_split<TypeParam>({.name = "two groups of three, side factors",
+                          .n = n,
+                          .counts = {3, 2},
+                          .group = 0,
+                          .side_factors_per_line = true},
+                         false);
   }
 }
 
@@ -609,6 +798,18 @@ TEST(PipelineGroups, RefusalsNameTheField) {
   const fftn::pipeline<std::complex<double>, std::complex<double>, std::complex<double>> ok(desc);
   EXPECT_EQ(ok.transforms_of(fftn::team{.rank = 0, .size = 1}).count, 1U);
   EXPECT_NE(ok.describe().find("in groups of 4"), std::string::npos) << ok.describe();
+  // The forced lanes and depth-first pairs give way to the chain pair, as describe() says.
+  for (const d::strategy_choice forced : {d::strategy_choice::lanes, d::strategy_choice::depth}) {
+    d::build_settings s;
+    s.strategy = forced;
+    s.depth_tops = {2};
+    const std::string text = d::describe(*d::make_pipeline_core(ccc_view<double>(desc), {}, s));
+    EXPECT_NE(text.find(std::string(forced == d::strategy_choice::lanes ? "the lanes pair"
+                                                                        : "the depth-first pair") +
+                        " (forced) does not take a group: the chain pair instead"),
+              std::string::npos)
+        << text;
+  }
 }
 
 } // namespace

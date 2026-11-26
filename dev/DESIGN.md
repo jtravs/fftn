@@ -3574,9 +3574,10 @@ sub-row loops. The middle callback gets `block_info::group` G and `group_stride`
 block in its elements), `lines` 1; every callback stage of a grouped pipeline numbers its block's
 line from the task and the members loop's iteration (`callback_site::group_lines`,
 `group_inner`, `callback_env::group_member`, `edge_record::group_members`), member 0's for the
-middle's. `execute_transforms` and `transforms_of` count groups. Refused naming `desc.group`: no such
+middle's. `execute_transforms` and `transforms_of` count groups, as many as the provisional
+`pipeline::transform_count()`. Refused naming `desc.group`: no such
 dimension, no `middle.call`, `fanout` above 1. The lanes and the depth-first pairs, forced, give way
-to the chain pair with a group. 18.2's "Callbacks" proposals 15 and 16 as written. Pipelines without
+to the chain pair with a group, which `describe()` says. 18.2's "Callbacks" proposals 15 and 16 as written. Pipelines without
 a group keep their programs (the probes of 5.2f).
 
 ### 12.4 Owner-computes
@@ -4589,8 +4590,10 @@ names `max_lanes` and `strict_layout`, which `options` does not have; a pipeline
     over copies that `consume` exists for (18.2, "Pipelines" 5).
 15. **What a task is with a group** (task 5.3f, provisional). Proposal, as built: one group, so
     `execute_transforms` and `transforms_of` count groups (the lines with the group's dimension
-    left out, in batch order), and a team shares a group's lines within its task. The alternative,
-    tasks of lines, would let pieces split a group, which the one callback per group cannot run.
+    left out, in batch order), as many as `pipeline::transform_count()` (added for this, since
+    `transforms_of(team{0, 1}).count` was the only other way), and a team shares a group's lines
+    within its task. The alternative, tasks of lines, would let pieces split a group, which the
+    one callback per group cannot run.
 16. **A group's middle block** (task 5.3f, provisional). Proposal, as built: member 0's line at the
     data, member k's `k * group_stride` elements further (the members' blocks in the workspace,
     64-byte aligned), `block_info::transform` member 0's line number; a group needs `middle.call`

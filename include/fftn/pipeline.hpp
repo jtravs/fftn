@@ -174,10 +174,12 @@ template <class In, class Mid, class Out> struct pipeline_desc {
   /// dimensions after the group's), then the lines take the middle's factor and scale, the second
   /// transform and the epilogue one by one. A group is one task: `execute_transforms`'s `first` and
   /// `count` and `transforms_of` count groups (the lines with the group's dimension left out, in
-  /// batch order), and a team shares a group's lines. Results are bitwise identical however the
-  /// work is shared when the middle callback is pure per group (its result depends only on the
-  /// group's values and coordinates). Refused, naming `desc.group`: a dimension that does not
-  /// exist, no `middle.call`, and with `fanout` above 1 (not built yet). Provisional (task 5.3f).
+  /// batch order; `transform_count()`), and a team shares a group's lines. Each workspace slot
+  /// holds the group's G lines, so the workspace's block grows G times. Results are bitwise
+  /// identical however the work is shared when the middle callback is pure per group (its result
+  /// depends only on the group's values and coordinates). Refused, naming `desc.group`: a dimension
+  /// that does not exist, no `middle.call`, and with `fanout` above 1 (not built yet). Provisional
+  /// (task 5.3f).
   std::size_t group = no_group;
 };
 
@@ -350,11 +352,12 @@ public:
     detail::execute_all(*core_, in, out, ws, args);
   }
 
-  /// Runs `count` lines of the batch, starting with line `first`, serially on the calling
-  /// thread: for callers that share a batch out themselves. `in`, `out` and the factor
-  /// arrays address line 0, as for `execute`.
+  /// Runs `count` transforms of the batch, starting with transform `first`, serially on the
+  /// calling thread: for callers that share a batch out themselves. A transform is a line, or
+  /// with `pipeline_desc::group` a group of lines (the lines with the group's dimension left
+  /// out, in batch order). `in`, `out` and the factor arrays address line 0, as for `execute`.
   ///
-  /// Preconditions: as for `execute`, and `first + count` is at most the number of lines.
+  /// Preconditions: as for `execute`, and `first + count` is at most `transform_count()`.
   /// Guarantees: as for `execute`; each line's result is bitwise identical to what `execute`
   /// gives it.
   void execute_transforms(std::size_t first, std::size_t count, const In* in, Out* out,
@@ -372,8 +375,8 @@ public:
   }
 
   /// The team `execute` with an explicit `completion`: with `completion::own` each member runs
-  /// exactly the lines `transforms_of(t)`, whole. Preconditions and guarantees: those of the
-  /// team `plan::execute`.
+  /// exactly the transforms `transforms_of(t)` (lines, or groups), whole. Preconditions and
+  /// guarantees: those of the team `plan::execute`.
   void execute(const In* in, Out* out, const team& t, workspace& ws, completion done,
                const exec_args& args) const noexcept {
     detail::execute_team(*core_, in, out, t, ws, done, args);
@@ -387,12 +390,21 @@ public:
     detail::execute_on(*core_, in, out, ex, ws, args);
   }
 
-  /// The lines a member of team `t` owns: those it runs with `completion::own`, contiguous
-  /// ranges in rank order covering the batch once, as `plan::transforms_of` deals transforms.
+  /// The transforms a member of team `t` owns: those it runs with `completion::own`, contiguous
+  /// ranges in rank order covering the `transform_count()` transforms once, as
+  /// `plan::transforms_of` deals transforms. A transform is a line, or with
+  /// `pipeline_desc::group` a group of lines (`execute_transforms`).
   ///
   /// Preconditions: those of `fftn::team`.
   [[nodiscard]] transform_range transforms_of(const team& t) const noexcept {
     return detail::transforms_of(*core_, t);
+  }
+
+  /// The transforms of the batch, as `execute_transforms` and `transforms_of` count them: the
+  /// lines, or with `pipeline_desc::group` the groups (the lines divided by the group's count).
+  /// Provisional (task 5.3f).
+  [[nodiscard]] std::size_t transform_count() const noexcept {
+    return detail::transform_count(*core_);
   }
 
   /// The bytes of workspace an execution needs when run by teams of up to `lanes` members (1:

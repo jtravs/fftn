@@ -512,9 +512,11 @@ dimension together, such as the two polarisation components of a field: each lin
 takes the first transform, then the callback runs once on the group's G spectra
 (`block_info::group` G, member k's line `k * group_stride` elements after member 0's, whose line
 number is `block_info::transform`), then each line takes the middle's factor and scale and the
-second transform. A group is one task: `execute_transforms` and `transforms_of` count groups, and
-the results are the same however the work is shared when the callback is pure per group. A group
-needs a middle callback, and is refused with fan-out (not built yet).
+second transform. A group is one task: `execute_transforms` and `transforms_of` count groups, as
+many as `pipeline::transform_count()`, and the results are the same however the work is shared
+when the callback is pure per group. Each workspace slot holds the group's G lines, so the
+workspace grows with G. A group needs a middle callback, and is refused with fan-out (not built
+yet).
 
 ```cpp file=examples/pipeline.cpp region=group
 // Batch dimension 0 is the component (2), dimension 1 the row: with group 0 the middle

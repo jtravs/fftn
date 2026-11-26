@@ -938,6 +938,7 @@ void build_lanes_pair(plan_core& c, const pipeline_view& d, const row_layout& l,
 struct lanes_outcome {
   lanes_pair_block block;
   std::string refusal;
+  std::string depth_refusal; // why a forced depth-first pair was not taken (task 5.3f)
 };
 template <class T>
 strategy_choice build_pair(plan_core& c, const pipeline_view& d, const row_layout& l,
@@ -970,6 +971,9 @@ strategy_choice build_pair(plan_core& c, const pipeline_view& d, const row_layou
   }
   // A group (task 5.3f) takes the chain pair: the depth-first pair's sub-row loops are not yet
   // inside its members loops.
+  if (settings.strategy == strategy_choice::depth && d.group != ungrouped) {
+    lanes.depth_refusal = "a group";
+  }
   if (l.in_stride == 1 && l.out_stride == 1 && d.group == ungrouped) {
     if (const std::vector<std::size_t> tops =
             convolution_depth_tops<T>(n, settings, chain, c.isa_target);
@@ -1854,6 +1858,10 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
   if (!lanes_built.refusal.empty()) {
     // Task 5.2f: the lanes pair forced, and what it does not take yet.
     ops += "\nthe lanes pair (forced) does not take " + lanes_built.refusal + ": " +
+           c->strategy_name + " instead";
+  }
+  if (!lanes_built.depth_refusal.empty()) {
+    ops += "\nthe depth-first pair (forced) does not take " + lanes_built.depth_refusal + ": " +
            c->strategy_name + " instead";
   }
   // The depth-first pair's line is beyond the cache its sub-rows run in: a separate pass sweeps it.
