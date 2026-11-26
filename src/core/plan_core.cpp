@@ -2989,19 +2989,26 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
         }
         if (any_callback(*edge_ops)) {
           // The row-block form passes a block's rows to a callback in one call (edge_driver.cpp):
-          // its stages' chunks hold that many rows' elements within callback_block_bytes. The
-          // walked form, which teams run, takes the same chunks of one row.
+          // its stages' blocks hold as many of the block's whole rows as fit callback_block_bytes
+          // (a longer row in element ranges, one a call). The walked form, which teams run, takes
+          // the same chunks with one row: the first group's, the others empty.
           const std::size_t rows = std::max<std::size_t>(c.edge_row_block, 1);
           for (stage& x : st) {
             if ((x.moving_factors & moving_callback) != 0) {
-              x.chunks = static_cast<std::uint32_t>(
-                  callback_chunks(x.units, rows, 2 * sizeof(T), block_bytes));
+              set_callback_blocks(x, rows, 2 * sizeof(T), block_bytes);
             }
           }
-          c.callbacks_note = callbacks_text(
-              edge_ops->in.call, edge_ops->out.call,
-              callback_blocks(cb_in_where, n, rows, 2 * sizeof(T), block_bytes, "rows"),
-              callback_blocks(cb_out_where, n, rows, 2 * sizeof(T), block_bytes, "rows"));
+          // Several rows a call only in the row-block form: not where a team runs the walked form.
+          const auto blocks = [&](const std::string& where) {
+            callback_place p = callback_blocks(where, n, rows, 2 * sizeof(T), block_bytes, "rows");
+            if (callback_cuts(n, rows, 2 * sizeof(T), block_bytes).per_call > 1) {
+              p.block += " in the row blocks (fewer in a short batch; one row a call where a team "
+                         "runs the walked form)";
+            }
+            return p;
+          };
+          c.callbacks_note = callbacks_text(edge_ops->in.call, edge_ops->out.call,
+                                            blocks(cb_in_where), blocks(cb_out_where));
         }
         // Only where the line starts or ends in the block: a side whose runs the chain's pruned
         // first or last pass reads or writes where they are stored needs none (task 5.1e).

@@ -91,7 +91,9 @@ template <class T> struct edge {
   /// execution (`exec_args::in_user`, `out_user`). Provisional (tasks 5.3a, 5.3b): plans of one
   /// axis only (c2c, r2c, c2r), on the strategy the rules or measured planning choose, except
   /// that a consumed output keeps a row off the strategies that write the output as working
-  /// memory (`plan::describe()` says so); measured planning times candidates with stand-ins that
+  /// memory (the grid, the depth-first chains, the lanes over adjacent transforms, and a real
+  /// row's lanes whose input is in the workspace block too), which then run as the chain
+  /// (`plan::describe()` says so); measured planning times candidates with stand-ins that
   /// do nothing, never calling the callback. A plan with a callback must be executed through an
   /// overload that takes `exec_args`: the others end the program (`std::abort`, with a message
   /// on stderr). A pipeline's prologue and epilogue refuse one until task 5.3d.

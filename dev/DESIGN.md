@@ -3181,9 +3181,10 @@ values):
   driver's batched forms (5.2a) take callback stages as they take separate edge passes, under the
   same reach (`machine_profile::edge_batched_forms`; `leaf_rows`: rows whose transform is one
   leaf): the flat form runs a callback stage's blocks per transform, the row-block form (batch
-  leaves and short rows) passes a block's rows to the callback in one call per chunk (line j
-  transform `t + j`, its chunks cut for that many rows), and the unrolled calls leave a program
-  with callbacks walked. Teams run the walked form, one row a block, with the same chunks.
+  leaves and short rows) passes a block's rows to the callback as many whole rows a call as fit
+  `callback_block_bytes` (line j transform `t + j`; a row longer than that in element ranges,
+  one a call), and the unrolled calls leave a program with callbacks walked. Teams run the
+  walked form, one row a block, with the same chunks (the first group's; describe() says so).
 - **Grid, depth-first chain, Bluestein's depth-first convolution and the real rows' half-length
   grid and depth-first chain**: 5.1b-2's separate-pass places, a callback stage over the row
   before the strategy (out of place on the input's copy in the output, c2c, or in the workspace
@@ -3207,9 +3208,11 @@ values):
   forces; a test holds that modify callbacks force none.
 - **Blocks**: `machine_profile::callback_block_bytes` (32 bits, in the struct's tail padding, so
   that the profile's size and the plain drivers' code are unchanged), half the L1 data cache from
-  the topology (16 KiB unknown); `callback_chunks` cuts a stage into chunks of at most that many
-  bytes over all its lines. describe() gives, per side, where, the block shape, and "one more
-  sweep" where a row exceeds a block.
+  the topology (16 KiB unknown); `callback_cuts` cuts a stage of several lines (a lanes block,
+  the adjacent transforms, a row block) by lines: as many whole lines a call as fit that many
+  bytes, and only a line longer than that into element ranges, one line a call (the contract's
+  "a line whole up to a size"). describe() gives, per side, where, the block shape, and "one more
+  sweep" only where a row exceeds a block and is cut.
 - **Planning**: `callback_env::stand_in` (from `edge_state`, set by `measure.cpp`'s `time_once`)
   makes every callback stage call a function that does nothing, at the same place with its
   copies; the kept candidate is the plan built with the real callbacks. The wisdom key (5.3a's
