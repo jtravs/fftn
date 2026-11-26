@@ -141,7 +141,7 @@ void run_callback_stage(const stage& st, const callback_site& site, std::byte* d
       .line_stride = lines > 1 ? line_stride : 0,
       .group = 1,
       .group_stride = 0,
-      .copy = 0,
+      .copy = env.copy,
       .member = env.member,
       .scratch = env.scratch != nullptr ? std::span<std::byte>(env.scratch, site.scratch_bytes)
                                         : std::span<std::byte>(),

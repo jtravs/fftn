@@ -5,9 +5,9 @@
 // kernel, the forward transform, the kernel's spectrum and the inverse transform in one sweep,
 // with the kernel passed at execution; for complex rows, and for real rows (r2c, the spectrum's
 // n/2 + 1 bins, c2r); the valid half of a zero-padded (linear) convolution through stored runs;
-// and a fan-out, several kernels on one forward transform. The examples quoted in
-// docs/conventions.md ("Pipelines"). Exits with 0 when the results match the same work done by two
-// plain plans and a loop, and by the direct convolution.
+// a fan-out, several kernels on one forward transform; and a block callback between the transforms
+// (task 5.3d). The examples quoted in docs/conventions.md ("Pipelines"). Exits with 0 when the
+// results match the same work done by two plain plans and a loop, and by the direct convolution.
 
 #include <fftn/fftn.hpp>
 
@@ -223,6 +223,60 @@ double fanout_error() {
   return error / largest;
 }
 
+// The largest difference between a pipeline whose middle is a block callback (a gain that saturates
+// with each bin's power, which no factor can express) and two plain plans with the same loop
+// between them, relative to the largest output.
+double middle_callback_error() {
+  const std::size_t n = 128;
+  const std::size_t count = 4;
+  std::vector<std::complex<double>> x(n * count);
+  for (std::size_t i = 0; i < x.size(); ++i) {
+    x[i] = {std::cos(0.4 * static_cast<double>(i)), std::sin(0.1 * static_cast<double>(i))};
+  }
+  const auto gain = [](std::complex<double> y) { return y / (1.0 + std::norm(y) / 1000.0); };
+
+  // snippet-begin: middle-callback
+  // Between the transforms, a callback on each row's spectrum (the whole row in one call, in
+  // natural order), then the scale 1/n. The lambda's address arrives with each execution as
+  // the callback's `user` pointer.
+  auto saturate = [&gain](const fftn::block_info& info, std::complex<double>* bins) noexcept {
+    for (std::size_t b = 0; b < info.length; ++b) {
+      std::complex<double>& y = bins[static_cast<std::ptrdiff_t>(b) * info.element_stride];
+      y = gain(y);
+    }
+  };
+  fftn::pipeline_desc desc = fftn::complex_convolution_rows<double>(n, count);
+  desc.middle.mul = {}; // no kernel: the callback is the whole middle
+  desc.middle.scale = 1.0 / static_cast<double>(n);
+  desc.middle.call = {.fn = fftn::callback_of<decltype(saturate), std::complex<double>>()};
+  const fftn::pipeline pipe(desc);
+  fftn::workspace ws(pipe);
+
+  std::vector<std::complex<double>> y(n * count);
+  pipe.execute(x.data(), y.data(), ws, {.mid_user = &saturate});
+  // snippet-end: middle-callback
+
+  // The same work by two plain plans and a loop.
+  const fftn::c2c_plan<double> forward(fftn::rows_c2c<double>(n, count, fftn::direction::forward));
+  const fftn::c2c_plan<double> backward(
+      fftn::rows_c2c<double>(n, count, fftn::direction::backward));
+  fftn::workspace plain_ws(std::max(forward.workspace_bytes(), backward.workspace_bytes()));
+  std::vector<std::complex<double>> spectrum(n * count);
+  std::vector<std::complex<double>> want(n * count);
+  forward.execute(x.data(), spectrum.data(), plain_ws);
+  for (std::complex<double>& v : spectrum) {
+    v = gain(v) / static_cast<double>(n);
+  }
+  backward.execute(spectrum.data(), want.data(), plain_ws);
+  double largest = 0;
+  double error = 0;
+  for (std::size_t i = 0; i < y.size(); ++i) {
+    largest = std::max(largest, std::abs(want[i]));
+    error = std::max(error, std::abs(y[i] - want[i]));
+  }
+  return error / largest;
+}
+
 } // namespace
 
 int main() {
@@ -236,7 +290,13 @@ int main() {
                 half_error);
     const double fan_error = fanout_error();
     std::printf("fan-out against one pipeline per kernel: largest error %.3g\n", fan_error);
-    return error < 1e-13 && real_error < 1e-13 && half_error < 1e-13 && fan_error < 1e-13 ? 0 : 1;
+    const double callback_error = middle_callback_error();
+    std::printf("middle callback against plain plans and a loop: largest error %.3g\n",
+                callback_error);
+    return error < 1e-13 && real_error < 1e-13 && half_error < 1e-13 && fan_error < 1e-13 &&
+                   callback_error < 1e-13
+               ? 0
+               : 1;
   } catch (const std::exception& e) {
     std::printf("failed: %s\n", e.what());
     return 1;

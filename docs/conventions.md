@@ -367,7 +367,7 @@ edge's factor (accumulation and scales are taken).
 
 ## Pipelines
 
-Provisional (tasks 5.2b to 5.2e, `fftn/pipeline.hpp`). A row pipeline takes each line of one axis
+Provisional (tasks 5.2b to 5.2e and 5.3d, `fftn/pipeline.hpp`). A row pipeline takes each line of one axis
 through a transform, a pointwise middle and the inverse transform, reading the line once and
 storing it once: the spectrum stays in the workspace, so the work is one sweep of memory
 instead of three. A `pipeline_desc<In, Mid, Out>` describes it: the `line` (its length and the
@@ -472,12 +472,48 @@ std::vector<std::complex<double>> y(n * count * copies);
 pipe.execute(x.data(), y.data(), ws, {.mid_factor = kernels.data()});
 ```
 
+Block callbacks ("Block callbacks" above) take three places in a pipeline: the prologue's
+(`prologue.call`, `modify` or `produce`) on each input line before the prologue's factor and
+scale, the middle's (`middle.call`, `modify` only) on each line's spectrum before the middle's
+factor and scale, and the epilogue's (`epilogue.call`, `modify` or `consume`) on each output line
+after the epilogue's factor and scale and before the store or accumulation. Their arguments are
+`exec_args::in_user`, `mid_user` and `out_user`. The middle's callback is passed the whole
+spectrum of a line in one call, once per line, so it may depend on the whole line (it is then
+pure per line, as "Determinism" below needs): it may run another plan or pipeline on the line
+through a serial overload. With fan-out the middle's runs once per line, before every copy, and
+the epilogue's once per copy (`block_info::copy`); a consumed output receives each line's copies
+in copy order, and its copies' places (`fanout_out_dist`) are not checked, since nothing is
+stored. The scales never cross a middle callback: the prologue's applies before it, and the
+middle's, the epilogue's and `options::scale` after it, as a second product.
+
+```cpp file=examples/pipeline.cpp region=middle-callback
+// Between the transforms, a callback on each row's spectrum (the whole row in one call, in
+// natural order), then the scale 1/n. The lambda's address arrives with each execution as
+// the callback's `user` pointer.
+auto saturate = [&gain](const fftn::block_info& info, std::complex<double>* bins) noexcept {
+  for (std::size_t b = 0; b < info.length; ++b) {
+    std::complex<double>& y = bins[static_cast<std::ptrdiff_t>(b) * info.element_stride];
+    y = gain(y);
+  }
+};
+fftn::pipeline_desc desc = fftn::complex_convolution_rows<double>(n, count);
+desc.middle.mul = {}; // no kernel: the callback is the whole middle
+desc.middle.scale = 1.0 / static_cast<double>(n);
+desc.middle.call = {.fn = fftn::callback_of<decltype(saturate), std::complex<double>>()};
+const fftn::pipeline pipe(desc);
+fftn::workspace ws(pipe);
+
+std::vector<std::complex<double>> y(n * count);
+pipe.execute(x.data(), y.data(), ws, {.mid_user = &saturate});
+```
+
 Built so far: `pipeline<C, C, C>` with the forward transform first and `pipeline<T, C, T>`, with
-stored runs on either side and fan-out, planned by the rules (`options::effort` is ignored, and
+stored runs on either side, fan-out and block callbacks, planned by the rules (`options::effort` is ignored, and
 `pipeline::describe()` says so). Refused at construction, naming the field, until their steps: the
 inverse transform first (`spectral_pair_rows` with `direction::backward`), the kind `<C, T, C>`,
 `fanout` above 1 in place, and stored runs on an in-place pipeline or beside a prologue or epilogue
-factor. On `<C, C, C>`, a complex factor of stride 1 along the line is applied in the neighbouring
+factor; a middle callback in another mode than `modify`, and `consume` in place, are refused too.
+On `<C, C, C>`, a complex factor of stride 1 along the line is applied in the neighbouring
 transform's pass; any other factor, every factor of `<T, C, T>`, accumulation and the runs' reading
 and storing, in a pass of its own over the line while it is in the workspace (`describe()` counts
 them), except that runs within the line's first half are read or written by the transform's first or

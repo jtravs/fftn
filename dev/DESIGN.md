@@ -3359,8 +3359,9 @@ epilogue, naming `desc.prologue.call.fn` or `desc.epilogue.call.fn`, until 5.3d,
 the same callback stages on the pipeline's scratch-resident line where `core/pipeline.cpp`
 places its edges' separate passes (the prologue's after the line's read into the workspace
 block, the middle's between the two chains, the epilogue's before the store); it passes the
-callback area's size to `lay_out_workspace` (0 for pipelines until then) and keeps a pipeline
-with callbacks off the batched forms that pipelines otherwise always take.
+callback area's size to `lay_out_workspace` (0 for pipelines until then). As built, 5.3d keeps
+a pipeline with callbacks on the flat form where its stages are flat (the flat form calls callback
+stages, as on rows since 5.3b) and walked otherwise: the unrolled calls carry no callback sites.
 
 As built (task 5.3b): rows of every kind (c2c, r2c, c2r) take callbacks on the strategy the rules,
 measured planning or a test choose (planes and volumes from 5.3c, below). Where each strategy runs them (all in `build()`, `core/plan_core.cpp`, from two helpers,
@@ -3453,6 +3454,52 @@ volumes of every kind take callbacks, the API unchanged. In `build()` (`core/pla
   and its multi-axis program runs walked (the unrolled calls carry no callback sites).
 - Not built: callbacks beside stored runs on planes and volumes (refused, naming
   `edges.in.call.fn` or `edges.out.call.fn`), whose edge phases are nests per run (`run_phase`).
+
+As built (task 5.3d; provisional with the rest of the API, second reader pending):
+`pipeline_desc::middle.call` (`callback<Mid>`, `modify` only, refused otherwise naming
+`desc.middle.call.mode`), and the prologue's and epilogue's `call`, judged as a plan's input and
+output edges' (`consume` refused in place, naming `desc.epilogue.call.mode`), on every pair
+(`core/pipeline.cpp`): the <C, C, C> and real chain pairs, their fan-outs and the depth-first pair
+(forced). The plans' row helpers `row_input_with_callback` and `row_output_with_callback`
+(`core/plan_core.cpp`, declared in `core/pipeline.hpp`) now take a real side and the slot where runs
+and the vocabulary go, and build a pipeline's edges as they build a c2c row's:
+- **The prologue's** runs on the line in the workspace block (the depth-first pair: scratch b),
+  after a copy of the input or its runs (zeros elsewhere), or produced there, before the
+  prologue's vocabulary not fused (a pass in place there); the forward chain then runs from there.
+- **The middle's** is a callback stage on the spectrum where the forward chain leaves it (the
+  block; the depth-first pair's scratch a, or with fan-out the block's second region), the whole
+  line in one block whatever `callback_block_bytes` says (a middle may be pure per line, and a
+  nested pipeline needs the line), `user` the third pointer (`exec_args::mid_user`,
+  `callback_site::user` 2), once per line before the copies loop. The middle's factor never takes
+  the forward chain's last pass: it fuses into the inverse chain's first (`moving_mid_in_factor`,
+  as a fan-out's copy k does) or is a pass after the callback.
+- **Two products of the scales** (`place_middle_callback`): the prologue's in the prologue's
+  pass, else the forward chain's last pass, else (the depth-first pair) a pass on the spectrum
+  before the callback; the middle's, the epilogue's and `options::scale` in a pass after the
+  callback that exists anyway (the epilogue's or the middle's; the middle's per copy with
+  fan-out, always present on the depth-first pair's copies), else the inverse chain's last pass
+  (the depth-first pair's last top pass) or the chain pair's inverse first pass, else a pass of the
+  scale alone after the callback, once per line. Without a middle
+  callback the one product is placed as before, which is sound because the prologue's pass runs
+  after its callback and the epilogue's before its callback.
+- **The epilogue's**: a `modify` callback without accumulation or runs on the output itself after
+  the inverse chain (or the epilogue's pass from the block) writes it; otherwise on the block,
+  after the vocabulary's pass there, then the store, the runs' store, the accumulation or
+  nothing. With fan-out it runs per copy: the copies loop's edge record has `copies` and the edge
+  driver passes its iteration as `block_info::copy` (walked form and a team's lines); a copy that
+  writes its output itself keeps doing so (a modify callback on its output), any other works in
+  the block's second region, where the edge driver now adds a callback stage's block offset, and
+  the copies run one after another, so a consumed output receives each line's copies in copy
+  order. A consumed output is never addressed (no loop moves it) and its copies' places are not
+  checked against overlap; a produced input likewise.
+- Each slot's callback area is the largest of the three `scratch_bytes`. A pipeline with
+  callbacks runs on the edge driver (`needs_args`), in its flat form where the line's stages are
+  flat (the flat form calls callback stages as on rows) and walked otherwise (the unrolled calls
+  carry no callback sites); `describe()` gives a "callbacks:" line and the two products.
+
+Pipelines and plans without callbacks keep their programs: `describe()`, `workspace_bytes()` and
+output bits of 1,560 probes (pipelines of every kind, fan-outs, runs, strides, in place, the
+depth-first pair forced, and c2c rows with callbacks) against `main` on the Mac.
 
 ### 12.4 Owner-computes
 
@@ -4452,6 +4499,16 @@ names `max_lanes` and `strict_layout`, which `options` does not have; a pipeline
 12. **The scratch area.** Proposal: exactly `scratch_bytes`, from a 128-byte boundary, not kept
     between calls. A slot's area is the largest of the object's callbacks' (one member never
     runs two at once), so callbacks of one object share it.
+13. **A middle callback's block** (task 5.3d, provisional). Proposal, as built: the whole line of
+    the spectrum in one call, whatever `machine_profile::callback_block_bytes` says, so that a
+    middle may be pure per line (12.3, "Determinism") and may run a nested plan or pipeline on the
+    line. The alternative is the edges' blocks (element ranges of a long line), which would make
+    "pure per line" impossible to honour.
+14. **`fanout_out_dist` with a consumed output** (task 5.3d, provisional). Proposal, as built:
+    nothing is stored, so the copies' places are neither checked nor used, and any value is
+    taken (0 and overlapping copies included); `consume` receives each line's copies in copy
+    order. The alternative is to check them as for a store, which would refuse the contraction
+    over copies that `consume` exists for (18.2, "Pipelines" 5).
 `use`. Task 5.2c added `convolution_rows` under proposals 1–3 (the name of 12.2's API block, the
 optional trailing runs, `middle.scale` 1).
 
@@ -4954,6 +5011,7 @@ to change before a release.
 | 2026-11-26 | Convenience layer for real-to-real transforms (step 6.7, section 5.4, "As built"): provisional `dct`, `idct`, `dst`, `idst` (spans, both forms), `dctn`, `idctn`, `dstn`, `idstn` (views) and `dht` in `fftn::easy`, with scipy's `int` type and norms; `norm::ortho` implies scipy's `orthogonalize=True`, the flag not offered; one type on every axis; the orthogonalising weights as cached real edge factors; `dht` scaled as a forward transform, 1-D only. Awaits the maintainer's review of the API | scipy users' call sites translate one to one; the weights are what 12.1's real factors are for, so the layer adds no stage of its own |
 | 2026-11-26 | Fan-out on pipelines (task 5.2e, section 12.2, "As built"): the spectrum stays in the workspace block, a lines loop over the copies; a copy that writes its output itself is shared by a team's members, one that needs a line in memory (epilogue pass, accumulation, output runs, the depth-first pair) works in the block's second region through edge-record offsets and the copies run one after another; 18.2's proposals 5 and 6 as written | The design's copies loop on each member's scratch cannot hold a copy's line in memory: the block is shared by the team, so copies that work there are serial rather than given per-member regions (memory of a line per member for a rarer case). The depth-first first pass has no input-factor variant; a pass per copy into scratch costs one more sweep per copy there, and the pair is forced only until X67 |
 | 2026-11-26 | Block callbacks on planes and volumes (task 5.3c, section 12.3): the input's inside the first phase's line bodies (a modify callback's line copied first into the phase's destination, or for r2c into the real rows' copy in the workspace block), the output's inside the last phase's, on the line, the lanes column block's columns (lines along the last axis) or the block of adjacent transforms; a side with an edge phase of its own (a factor, accumulation) takes its callback there; the edge driver moves the coordinates with the enclosing loops; a consumed c2r output's rows in the workspace block over the half spectrum; no packed c2r intermediate with callbacks; refused beside stored runs on planes and volumes | DESIGN 12.3's table: a callback phase of its own would be the extra sweep that 12.5's stage exists to save. The edge phase a factor already has costs nothing more to carry the callback. Runs' edge phases are nests per run, left for a follow-up rather than refusing the whole feature |
+| 2026-11-26 | Block callbacks on pipelines (task 5.3d, section 12.3, "As built"): `middle.call` (modify only) and the prologue's and epilogue's callbacks on every pair, with 18.2's "Callbacks" proposals 6 and 7 as written (the middle callback first, then its vocabulary in the inverse's first pass; two scale products around it); the middle callback passed the whole line in one call; the epilogue's per copy with the copy in `block_info::copy`; a consumed fan-out's `fanout_out_dist` not checked; the plans' row callback helpers shared. Awaits the maintainer's review of the API | A middle callback may be pure per line, which a block of part of a line cannot serve; a nested pipeline in a middle needs the whole line. Nothing is stored for a consumed output, so the overlap refusal (18.2, "Pipelines" 5) has nothing to protect |
 | 2026-11-26 | The C API for plans (step 6.8, section 5.9; provisional, second reader to come): `fftn/c_api.h` and `src/c_api/` with 18.2's proposals Q17–Q22 taken as written (the header in `fftn::fftn`, one plan type and `void*` data, NULL or a status plus an optional caller-owned `fftn_error`, the opt-in shared library `fftn_c` exporting `fftn_` only, plain structs without size or version fields, plans of every built kind with workspaces, the four execution forms, wisdom and lengths); the choices where 5.9 was silent are listed in its "As built" | The maintainer's priority (2026-11-25): features fully built; the C interface serves C, Fortran, Python and Julia callers and older toolchains (decision of 2026-11-16) |
 
 ---

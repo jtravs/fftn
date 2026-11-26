@@ -6,23 +6,27 @@
 /// edge's data while they are in cache (dev/DESIGN.md 12.3). An edge takes one through
 /// `edge::call` (fftn/edges.hpp); its argument arrives with each execution (`exec_args`).
 ///
-/// Provisional (tasks 5.3a to 5.3c, 2026-11-26): this API follows dev/DESIGN.md 12.3 with the
+/// Provisional (tasks 5.3a to 5.3d, 2026-11-26): this API follows dev/DESIGN.md 12.3 with the
 /// proposals of 18.2 ("Callbacks"), which the maintainer has yet to settle, and may change before
-/// the first release. A callback is taken by c2c, r2c and c2r plans of every rank; construction
-/// refuses one on real-to-real plans and on planes and volumes with stored runs, naming the field.
+/// the first release. A callback is taken by c2c, r2c and c2r plans of every rank and by row
+/// pipelines (fftn/pipeline.hpp: the prologue, the middle and the epilogue); construction refuses
+/// one on real-to-real plans and on planes and volumes with stored runs, naming the field.
 ///
 /// The contract, for every callback:
 ///
 /// - **Coverage.** Each element of the edge's side (each stored element, with stored runs) is
-///   passed exactly once per execution, in blocks whose shape the plan chooses: a line whole up
-///   to a size set per machine (half the L1 data cache by default), a longer one in element
-///   ranges, and several short lines in one call where the plan holds them together (consecutive
-///   transforms, or on a plane or volume adjacent lines along another axis). Blocks of one
-///   execution may run concurrently on different members of a team or executor, and in any
-///   order; block shapes may differ between execution forms (serial, team, executor).
+///   passed exactly once per execution (a pipeline's middle: each bin once per line; its
+///   epilogue: each element once per copy of a fan-out), in blocks whose shape the plan chooses: a
+///   line whole up to a size set per machine (half the L1 data cache by default), a longer one in
+///   element ranges, and several short lines in one call where the plan holds them together
+///   (consecutive transforms, or on a plane or volume adjacent lines along another axis). Blocks of
+///   one execution may run concurrently on different members of a team or executor, and in any
+///   order; block shapes may differ between execution forms (serial, team, executor). A
+///   pipeline's middle callback is passed each line's whole spectrum in one call.
 /// - **Purity and determinism.** When the callback is pure per element (its result depends only
-///   on the element's value and coordinates), the plan's output is bitwise identical for serial
-///   execution, pieces of the batch, any team, any executor and `completion::own`. Shared state
+///   on the element's value and coordinates; a pipeline's middle callback: pure per line), the
+///   plan's output is bitwise identical for serial execution, pieces of the batch, any team, any
+///   executor and `completion::own`. Shared state
 ///   the callback writes must be indexed by coordinates or by `block_info::member`.
 /// - **What a callback must not do.** Throw (`noexcept` is part of `block_fn`); use the
 ///   workspace it runs under, except its `block_info::scratch`; write outside its block, except
@@ -82,7 +86,8 @@ struct block_info {
   std::size_t group = 1;
   /// The distance between consecutive members of a group, in elements (0 without a group).
   std::ptrdiff_t group_stride = 0;
-  /// Which inverse of a pipeline's fan-out the block belongs to (not built yet): 0 otherwise.
+  /// Which inverse of a pipeline's fan-out the block belongs to (an epilogue's block; task
+  /// 5.3d): 0 otherwise, the middle's included.
   std::size_t copy = 0;
   /// The member running the call: 0 in serial execution, the rank in a team, the task's index
   /// under an executor; always below the lanes the workspace was sized for.
@@ -93,8 +98,9 @@ struct block_info {
 };
 
 /// A block callback on data of type `T` (the edge's element type: `std::complex<R>` on a complex
-/// side, `R` on a real side). `user` is the edge's pointer in `exec_args` (`in_user`,
-/// `out_user`), passed as given, null included. `data` addresses element 0 of line 0.
+/// side, `R` on a real side; a pipeline middle's `Mid`). `user` is the edge's pointer in
+/// `exec_args` (`in_user`, `mid_user`, `out_user`), passed as given, null included. `data`
+/// addresses element 0 of line 0.
 template <class T> using block_fn = void (*)(void* user, const block_info& info, T* data) noexcept;
 
 /// What a callback does with its block.

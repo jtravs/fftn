@@ -177,9 +177,13 @@ void run_stage(const stage& st, const edge_record& e, const slot_addresses& at, 
     return;
   }
   if ((st.moving_factors & moving_callback) != 0) {
-    // The walked form's lines: one, or a lanes column block's columns (task 5.3c).
-    run_callback_stage(st, *e.call, static_cast<std::byte*>(destination_of(st.dst, at)), env,
-                       e.call->lines, st.args.dst_dist, first, last);
+    // The walked form's lines: one, or a lanes column block's columns (task 5.3c); on a region
+    // of the block past the first (a fan-out's copy, task 5.3d) at its offset.
+    std::byte* data = static_cast<std::byte*>(destination_of(st.dst, at));
+    if (st.dst == slot::block && e.block_dst != 0) {
+      data += e.block_dst;
+    }
+    run_callback_stage(st, *e.call, data, env, e.call->lines, st.args.dst_dist, first, last);
     return;
   }
   pass_args args = st.args;
@@ -225,11 +229,19 @@ void run_records(const program& p, const std::vector<edge_record>& e, std::size_
     // driver.cpp makes of it (experiment X40).
     const loop& l = *std::get_if<loop>(&r);
     const slot_addresses from = moved(at, l.start, 1);
-    // Only a multi-axis plan's loops around callbacks move the coordinates (no copy otherwise).
+    // Only a multi-axis plan's loops around callbacks move the coordinates, and only a
+    // pipeline's copies loop the copy (no copy of env otherwise).
     if (e[i].moves_origin) {
       for (std::size_t c = 0; c < l.count; ++c) {
         run_records(p, e, i + 1, l.body_end, moved(from, l.step, c), moved(f, e[i].factor_step, c),
                     at_iteration(env, e[i], c));
+      }
+    } else if (e[i].copies) {
+      callback_env copy = env;
+      for (std::size_t c = 0; c < l.count; ++c) {
+        copy.copy = c;
+        run_records(p, e, i + 1, l.body_end, moved(from, l.step, c), moved(f, e[i].factor_step, c),
+                    copy);
       }
     } else {
       for (std::size_t c = 0; c < l.count; ++c) {
@@ -242,20 +254,23 @@ void run_records(const program& p, const std::vector<edge_record>& e, std::size_
 }
 
 // Iteration `index` of the loops [begin, begin + depth), the last varying fastest; with the
-// coordinates each loop moves added to `origin` where given (task 5.3c; their starts are
-// run_edge_lines').
+// coordinates each loop moves added to env's origin, and a copies loop's iteration in its copy,
+// where env is given (tasks 5.3c, 5.3d; the origin's starts are run_edge_lines').
 std::pair<slot_addresses, factor_cursors>
 moved_in_nest(const program& p, const std::vector<edge_record>& e, std::size_t begin,
               std::size_t depth, std::size_t index, const slot_addresses& at, factor_cursors f,
-              std::array<std::size_t, 3>* origin = nullptr) noexcept {
+              callback_env* env = nullptr) noexcept {
   slot_addresses here = at;
   std::size_t rest = index;
   for (std::size_t i = begin + depth; i > begin && rest != 0; --i) {
     const loop& l = *std::get_if<loop>(&p.records[i - 1]);
     here = moved(here, l.step, rest % l.count);
     f = moved(f, e[i - 1].factor_step, rest % l.count);
-    if (origin != nullptr && e[i - 1].moves_origin) {
-      (*origin)[e[i - 1].origin_axis] += rest % l.count * e[i - 1].origin_step;
+    if (env != nullptr && e[i - 1].moves_origin) {
+      env->origin[e[i - 1].origin_axis] += rest % l.count * e[i - 1].origin_step;
+    }
+    if (env != nullptr && e[i - 1].copies) {
+      env->copy = rest % l.count;
     }
     rest /= l.count;
   }
@@ -812,7 +827,9 @@ factor_cursors cursors_of(const exec_args& args, std::uint8_t needed) noexcept {
 }
 
 edge_state edge_state_of(const exec_args& args, std::uint8_t needed) noexcept {
-  return {.f = cursors_of(args, needed), .user = {args.in_user, args.out_user}, .stand_in = false};
+  return {.f = cursors_of(args, needed),
+          .user = {args.in_user, args.out_user, args.mid_user},
+          .stand_in = false};
 }
 
 factor_cursors edge_transform_cursors(const program& p, const std::vector<edge_record>& e,
@@ -874,10 +891,11 @@ void run_edge_lines(const program& p, const std::vector<edge_record>& e, std::si
   bool moves = false;
   for (std::size_t i = begin; i < begin + nest; ++i) {
     from = moved(from, std::get_if<loop>(&p.records[i])->start, 1);
-    moves = moves || e[i].moves_origin;
+    moves = moves || e[i].moves_origin || e[i].copies;
   }
   if (!moves) {
-    // No callback's coordinates move (every plan but a multi-axis one with callbacks): no copy.
+    // No callback's coordinates or copy move (every plan but a multi-axis one with callbacks, and
+    // every lines loop but a pipeline's copies): no copy of env.
     for (std::size_t line = first; line < last; ++line) {
       const auto [here, cursors] = moved_in_nest(p, e, begin, nest, line, from, f);
       run_records(p, e, begin + nest, body_end, here, cursors, env);
@@ -892,7 +910,7 @@ void run_edge_lines(const program& p, const std::vector<edge_record>& e, std::si
   }
   for (std::size_t line = first; line < last; ++line) {
     callback_env here = start;
-    const auto [at_line, cursors] = moved_in_nest(p, e, begin, nest, line, from, f, &here.origin);
+    const auto [at_line, cursors] = moved_in_nest(p, e, begin, nest, line, from, f, &here);
     run_records(p, e, begin + nest, body_end, at_line, cursors, here);
   }
 }

@@ -5,15 +5,17 @@
 /// Row pipelines: a transform, a pointwise middle and the inverse transform over one axis, in
 /// one sweep, the spectrum never reaching memory (dev/DESIGN.md 12.2).
 ///
-/// Provisional (tasks 5.2b to 5.2e, 2026-11-26): this API follows dev/DESIGN.md section 12.2's
-/// API block with the proposals of its section 18.2 ("Pipelines"), which the maintainer has yet to
-/// settle; it may change before the first release. Built so far: `pipeline<C, C, C>` with the
-/// forward transform first and `pipeline<T, C, T>` (r2c, then c2r), with their prologue, middle
-/// and epilogue vocabulary (scales, real and complex factors, accumulation), stored runs, and
-/// fan-out (several inverses per forward, each with its own middle factor and output).
+/// Provisional (tasks 5.2b to 5.2e and 5.3d, 2026-11-26): this API follows dev/DESIGN.md sections
+/// 12.2 and 12.3's API blocks with the proposals of its section 18.2 ("Pipelines", "Callbacks"),
+/// which the maintainer has yet to settle; it may change before the first release. Built so far:
+/// `pipeline<C, C, C>` with the forward transform first and `pipeline<T, C, T>` (r2c, then c2r),
+/// with their prologue, middle and epilogue vocabulary (scales, real and complex factors,
+/// accumulation), block callbacks on all three (fftn/callback.hpp), stored runs, and fan-out
+/// (several inverses per forward, each with its own middle factor and output).
 /// docs/conventions.md ("Pipelines") states what a pipeline computes.
 #pragma once
 
+#include "fftn/callback.hpp"
 #include "fftn/config.hpp"
 #include "fftn/detail/core.hpp"
 #include "fftn/edges.hpp"
@@ -56,11 +58,25 @@ namespace fftn::inline v0 {
 /// imaginary parts of bin 0 and, for even n, of bin n/2, as a c2r plan does.
 /// Nothing is normalised: a round trip multiplies by n unless a scale or the kernel says
 /// otherwise. The scales of the prologue, the middle, the epilogue and `options::scale` are
-/// applied as one product.
+/// applied as one product; with a middle callback, as two (`middle.call`).
 ///
-/// Provisional (tasks 5.2b to 5.2e). A pipeline refuses, naming the field, what is not built yet:
-/// the inverse transform first (task 5.3), the kind `<C, T, C>` (task 5.3), stored runs on an
-/// in-place pipeline or beside a prologue or epilogue factor, and `fanout` above 1 in place.
+/// Block callbacks (fftn/callback.hpp, task 5.3d): the prologue's (`prologue.call`, `modify` or
+/// `produce`) runs on each input line where the line is read, before the prologue's factor and
+/// scale; the epilogue's (`epilogue.call`, `modify` or `consume`) on each output line after the
+/// epilogue's factor and scale, before the store or accumulation, once per copy with fan-out
+/// (`block_info::copy`); the middle's (`middle.call`, `modify` only) on each whole line of the
+/// spectrum between the transforms, once per line (copy 0, before every copy), before the
+/// middle's factor and scale. Their blocks give coordinates along the line (axis 0; the bin, for
+/// the middle) and the line's number as `block_info::transform`; their `user` pointers are
+/// `exec_args::in_user`, `mid_user` and `out_user`. A middle callback is passed the whole line in
+/// one call, so it may be pure per line (dev/DESIGN.md 12.3, "Determinism"): it may, for example,
+/// execute another plan or pipeline on the line through a serial overload, with its workspace in
+/// `block_info::scratch`.
+///
+/// Provisional (tasks 5.2b to 5.2e and 5.3d). A pipeline refuses, naming the field, what is not
+/// built yet: the inverse transform first (task 5.3), the kind `<C, T, C>` (task 5.3), stored runs
+/// on an in-place pipeline or beside a prologue or epilogue factor, and `fanout` above 1 in place;
+/// and a middle callback in a mode other than `modify`, and `consume` on an in-place pipeline.
 template <class In, class Mid, class Out> struct pipeline_desc {
   static_assert(
       (std::is_same_v<In, std::complex<double>> && std::is_same_v<Mid, std::complex<double>> &&
@@ -98,13 +114,14 @@ template <class In, class Mid, class Out> struct pipeline_desc {
   /// The logical positions are those of the line's n elements on both sides, for `<T, C, T>` too.
   /// Refused on an in-place pipeline and beside a prologue or epilogue factor (task 5.2d).
   std::vector<stored_run> runs{};
-  /// The input edge: a scale and a factor applied to each input element before the first
-  /// transform (`accumulate` is refused here; a block callback, `call`, until task 5.3d).
+  /// The input edge: a block callback (`call`: `modify` or `produce`), then a scale and a factor
+  /// applied to each input element before the first transform (`accumulate` is refused here).
   edge<In> prologue{};
   /// The middle: what multiplies each bin of the spectrum between the two transforms.
   struct {
     /// A real factor; finite, and for `float` pipelines 0 or of a magnitude from the smallest
-    /// positive `float` to the largest. Applied as one product with the other scales.
+    /// positive `float` to the largest. Applied as one product with the other scales (with
+    /// `call`, with the epilogue's and `options::scale`, after the callback).
     double scale = 1.0;
     /// The middle's factor indexed by bin: `Mid` values with `factor_kind::complex`, or real `T`
     /// values with `factor_kind::real`. `axis_strides` holds one stride (the stride between
@@ -112,10 +129,16 @@ template <class In, class Mid, class Out> struct pipeline_desc {
     /// for a kernel shared along it) or none (one kernel for every line). Its array arrives with
     /// each execution (`exec_args::mid_factor`).
     factor mul{};
+    /// A block callback on the spectrum (`modify` only; fftn/callback.hpp), run on each whole
+    /// line of the spectrum before `scale` and `mul`, once per line whatever `fanout` is; its
+    /// argument is `exec_args::mid_user`. With it the scales apply as two products: the
+    /// prologue's before the callback, and the middle's, the epilogue's and `options::scale`
+    /// after it. Provisional (task 5.3d).
+    callback<Mid> call{};
   } middle{}; ///< The middle: what multiplies each bin of the spectrum between the transforms.
   /// The output edge: a scale and a factor applied to each output element after the second
-  /// transform, then stored, or added to the output's value with `accumulate` (a block
-  /// callback, `call`, is refused until task 5.3d).
+  /// transform, then a block callback (`call`: `modify` or `consume`, once per copy with
+  /// fan-out), then stored, or added to the output's value with `accumulate`.
   edge<Out> epilogue{};
   /// How many inverse transforms (copies) run on each line's spectrum, at least 1. Copy k
   /// (0 <= k < fanout) multiplies the spectrum by the middle's factor read `k *
@@ -244,6 +267,10 @@ spectral_pair_rows(std::size_t n, std::size_t count, direction first,
 ///   bitwise equal to the same work done by separate plans and loops. Results are bitwise
 ///   identical between serial, `execute_transforms` pieces, team and executor executions.
 ///
+/// With block callbacks the execute calls are those above, with the callbacks' `user` pointers in
+/// `exec_args` (`in_user`, `mid_user`, `out_user`); a produced input (`prologue.call` in `produce`
+/// mode) may then be null, and a consumed output (`epilogue.call` in `consume` mode) too.
+///
 /// Options: `scale` (a shortcut for `epilogue.scale`, refused when both are other than 1),
 /// `force_isa` and `in_place` (allowed without accumulation: each line lives in the workspace
 /// between its read and its store). `effort` and `use` are ignored: pipelines are planned by
@@ -254,12 +281,14 @@ spectral_pair_rows(std::size_t n, std::size_t count, direction first,
 /// them one after another where a copy's line needs the workspace for an epilogue pass,
 /// accumulation or output runs (`describe()` says which).
 ///
-/// Provisional (tasks 5.2b to 5.2e): see `pipeline_desc`.
+/// Provisional (tasks 5.2b to 5.2e and 5.3d): see `pipeline_desc`.
 template <class In, class Mid, class Out> class pipeline {
 public:
   /// Builds the pipeline `desc` with options `opts`.
   ///
-  /// Throws `std::invalid_argument` naming the field: a length or count of 0, overlapping
+  /// Throws `std::invalid_argument` naming the field (callbacks too, as `plan` judges an edge's:
+  /// `desc.middle.call.mode` for a middle callback that does not `modify`): a length or count of
+  /// 0, overlapping
   /// output elements, sizes that overflow, in-place layouts that do not agree, an edge or
   /// middle that is not valid (as `plan`'s edges are judged, with names such as
   /// `desc.epilogue.mul.batch_strides`; a complex factor on the real input or output of a
@@ -376,6 +405,10 @@ private:
                 .kind = d.middle.mul.kind,
                 .axis_strides = d.middle.mul.axis_strides,
                 .batch_strides = d.middle.mul.batch_strides,
+                // converted back before any call, as an edge's (detail::view_of)
+                .call = reinterpret_cast<detail::erased_block_fn>(d.middle.call.fn),
+                .call_mode = d.middle.call.mode,
+                .call_scratch = d.middle.call.scratch_bytes,
             },
         .epilogue = detail::view_of(d.epilogue),
         .fanout = d.fanout,

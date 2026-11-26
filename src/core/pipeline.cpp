@@ -3,6 +3,7 @@
 
 #include "core/pipeline.hpp"
 
+#include "core/callbacks.hpp"
 #include "core/driver.hpp"
 #include "core/edge_driver.hpp"
 #include "core/edges.hpp"
@@ -26,6 +27,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
+#include <limits>
 #include <memory>
 #include <span>
 #include <stdexcept>
@@ -75,16 +77,32 @@ const void* const middle_tag = pipeline_tags.data() + 1;
 const void* const epilogue_tag = pipeline_tags.data() + 2;
 
 // Where the one product of the scales goes: a separate pass, or a free edge of a chain (a
-// fan-out's on the forward chain's last pass, forward_out: once per line, not per copy).
-enum class scale_at : std::uint8_t { none, pass, forward_in, forward_out, inverse_in, inverse_out };
+// fan-out's on the forward chain's last pass, forward_out: once per line, not per copy). With a
+// middle callback (task 5.3d) the product before it may also go to a pass of its own on the
+// spectrum before the callback (before_middle: the depth-first pair, whose forward chain takes no
+// edge operation), and the product after it to one after the callback (after_middle: once per
+// line, where no pass or free edge of the inverse chain takes it).
+enum class scale_at : std::uint8_t {
+  none,
+  pass,
+  forward_in,
+  forward_out,
+  inverse_in,
+  inverse_out,
+  before_middle,
+  after_middle,
+};
 
 // The vocabulary as validated (resolve_edge_side), before its placement: the three operations,
-// the one product of the scales, and the line's runs.
+// the one product of the scales, and the line's runs. With a middle callback (task 5.3d) the
+// scales are two products (DESIGN.md 12.3): pre_scale, the prologue's, before the callback, and
+// scale, the middle's, the epilogue's and options::scale, after it.
 struct vocab {
   edge_side pro;
   edge_side mid;
   edge_side epi;
   double scale = 1.0;
+  double pre_scale = 1.0;
   run_plan runs;
 };
 
@@ -94,7 +112,31 @@ struct placed {
   edge_side epi;
   double scale = 1.0;
   scale_at at = scale_at::none;
+  // With a middle callback: the product before it and its place (pass: the prologue's pass).
+  double pre_scale = 1.0;
+  scale_at pre_at = scale_at::none;
 };
+
+// A side's callback produces its input (the input is not read, and may be null) or consumes its
+// output (the output is not written, and may be null).
+bool produced(const edge_side& s) { return s.call.any() && s.call.mode == callback_mode::produce; }
+bool consumed(const edge_side& s) { return s.call.any() && s.call.mode == callback_mode::consume; }
+
+// The bytes of each scratch slot's callback area: the largest of the callbacks' scratch, one
+// member never running two at once (DESIGN.md 12.3; 0 without callbacks: the layout unchanged).
+std::size_t callback_scratch(const placed& pl) {
+  return std::max({pl.pro.call.any() ? pl.pro.call.scratch_bytes : 0,
+                   pl.mid.call.any() ? pl.mid.call.scratch_bytes : 0,
+                   pl.epi.call.any() ? pl.epi.call.scratch_bytes : 0});
+}
+
+// Whether an epilogue callback runs on the output itself after the inverse chain (or after the
+// epilogue's pass from the workspace block) has written it: a modify callback without
+// accumulation or runs (row_output_with_callback's direct).
+bool epilogue_direct(const edge_side& epi) {
+  return epi.call.any() && epi.call.mode == callback_mode::modify && !epi.accumulate &&
+         !epi.runs.any();
+}
 
 // Each operation's place: a complex factor of stride 1 along the line (or on a line of one point)
 // fuses into its chain's pass where the pair has such a pass (`sides`: the prologue's and the
@@ -163,6 +205,74 @@ placed place_fanout(const vocab& v, std::size_t n, bool sides, bool middle) {
   return p;
 }
 
+// A placement with a middle callback (task 5.3d; DESIGN.md 12.3): the middle's factor never takes
+// the forward chain's last pass, and fuses (middle) into the inverse chain's first instead, once
+// per copy with fan-out; the scales are two products. The prologue's (pre_scale) goes to the
+// prologue's pass, else to the forward chain's last pass (free here), else, on the depth-first
+// pair, to a pass of its own before the callback. The rest (scale) goes to a pass after the
+// callback that exists anyway (the epilogue's or the middle's, without fan-out; the middle's per
+// copy with it, always there on the depth-first pair's copies), else to a free edge of the
+// inverse chain (its last, then, on the chain pair, its first pass), else to a pass of its own
+// after the callback, once per line.
+placed place_middle_callback(const vocab& v, std::size_t n, bool sides, bool middle, bool fanned,
+                             bool depth) {
+  vocab unscaled = v;
+  unscaled.scale = 1.0;
+  placed p = place(unscaled, n, sides, middle);
+  p.scale = v.scale;
+  p.pre_scale = v.pre_scale;
+  if (v.pre_scale != 1.0) {
+    if (p.pro.separate) {
+      p.pro.scale = v.pre_scale;
+      p.pre_at = scale_at::pass;
+    } else {
+      p.pre_at = depth ? scale_at::before_middle : scale_at::forward_out;
+    }
+  }
+  if (v.scale != 1.0) {
+    // The depth-first pair without fan-out takes it in its last top pass (form.out), which never
+    // takes a factor, rather than in one more sweep of the line.
+    if (!fanned && p.epi.separate) {
+      p.epi.scale = v.scale;
+      p.at = scale_at::pass;
+    } else if (p.mid.separate || (depth && fanned)) {
+      p.mid.scale = v.scale;
+      p.at = scale_at::pass;
+    } else if (!fanned && !p.epi.fused) {
+      p.at = scale_at::inverse_out;
+    } else if (!fanned && !depth && !p.mid.fused) {
+      p.at = scale_at::inverse_in;
+    } else {
+      p.at = scale_at::after_middle;
+    }
+  }
+  return p;
+}
+
+// The middle's callback stage (task 5.3d) on the spectrum's `bins` values at `where`, stride 1:
+// the whole line in one call (a middle callback may be pure per line, DESIGN.md 12.3), its
+// argument exec_args::mid_user.
+stage middle_callback_stage(plan_core& c, const edge_side& mid, std::size_t bins, slot where) {
+  stage st = callback_stage(c.prec, false, mid.call, false, bins, 0, where, 1, 0,
+                            std::numeric_limits<std::size_t>::max(), c.callback_sites);
+  c.callback_sites.back()->user = 2;
+  st.name = "callback middle: " + std::string(mode_name(mid.call.mode)) + " on bins 0 to " +
+            std::to_string(bins);
+  return st;
+}
+
+// A pass of the scale alone, in place on `count` complex values at `where` (task 5.3d): a product
+// of scales on the spectrum before or after a middle callback.
+stage spectrum_scale_stage(precision prec, double scale, std::size_t count, slot where,
+                           std::size_t chunk, bool after) {
+  edge_side s;
+  s.scale = scale;
+  stage st = edge_pass_stage(prec, s, true, count, where, 1, where, 1, chunk, false, 0);
+  st.name = after ? "edge middle: the scales after the middle's callback"
+                  : "edge middle: the prologue's scale before the middle's callback";
+  return st;
+}
+
 // What a fan-out adds to the edge driver's records (task 5.2e): the copies loop's record and the
 // bytes it moves the middle cursor per copy, and the stages' offsets into the block
 // (edge_record::block_src, block_dst).
@@ -197,6 +307,12 @@ std::vector<edge_record> mark_cursors(program& p, const placed& pl, const fanout
     if (st == nullptr) {
       continue;
     }
+    if ((st->moving_factors & moving_callback) != 0) {
+      // A callback stage (core/callbacks.cpp, task 5.3d): its kernel is already a guard, its site
+      // in roots.
+      e[i].call = static_cast<const callback_site*>(st->args.roots);
+      continue;
+    }
     if (st->args.in_factor == prologue_tag) {
       st->args.in_factor = nullptr;
       st->moving_factors |= moving_in_factor;
@@ -225,9 +341,12 @@ std::vector<edge_record> mark_cursors(program& p, const placed& pl, const fanout
   for (std::size_t b = 0; b < p.batch_loops; ++b) {
     e[b].factor_step = {step(pl.pro, b), step(pl.epi, b), step(pl.mid, b)};
   }
-  // The copies loop moves the middle cursor only: the epilogue's factor is every copy's.
+  // The copies loop moves the middle cursor only: the epilogue's factor is every copy's. Its
+  // iteration is the copy an epilogue callback is passed (task 5.3d).
   if (fan.loop != SIZE_MAX) {
     e[fan.loop].factor_step = {0, 0, fan.mid_step};
+    // Only an epilogue callback reads the copy: without one the copies loop runs as before 5.3d.
+    e[fan.loop].copies = pl.epi.call.any();
   }
   for (const fanout_marks::offset& o : fan.offsets) {
     e[o.record].block_src = o.src;
@@ -277,7 +396,10 @@ void add_copies(program& p, const pipeline_view& d, const edge_side& mid, std::p
                 bool serial, std::vector<stage>& body, fanout_marks& fan) {
   fan.loop = p.records.size();
   loop lp{.kind = loop_kind::lines, .count = d.fanout};
-  lp.step[1] = d.fanout_out_dist * out_bytes;
+  // A consumed output is never addressed, and may be null (task 5.3d).
+  lp.step[1] = d.epilogue.call != nullptr && d.epilogue.call_mode == callback_mode::consume
+                   ? 0
+                   : d.fanout_out_dist * out_bytes;
   lp.serial_lines = serial;
   p.records.emplace_back(lp);
   for (stage& st : body) {
@@ -310,15 +432,20 @@ void second_region(const program& p, const fanout_marks& fan, std::ptrdiff_t sec
 }
 
 // The batch loops of a pipeline's program, the slots in and out moved by the layout's distances
-// (elements of elem_bytes each); the block never moves.
+// (elements of elem_bytes each); the block never moves. An input a prologue callback produces and
+// an output an epilogue callback consumes are never addressed, and may be null (task 5.3d): no
+// loop moves them.
 void add_batch_loops(program& p, const pipeline_view& d, const row_layout& l,
-                     std::ptrdiff_t elem_bytes) {
+                     std::ptrdiff_t elem_bytes, const placed& pl) {
   p.transforms = 1;
+  const bool in_unread = produced(pl.pro);
+  const bool out_unwritten = consumed(pl.epi);
   for (std::size_t b = 0; b < d.batches.size(); ++b) {
     p.records.emplace_back(loop{
         .kind = loop_kind::batch,
         .count = d.batches[b].count,
-        .step = {l.in_dist[b] * elem_bytes, l.out_dist[b] * elem_bytes, 0},
+        .step = {in_unread ? 0 : l.in_dist[b] * elem_bytes,
+                 out_unwritten ? 0 : l.out_dist[b] * elem_bytes, 0},
     });
     p.transforms *= d.batches[b].count;
   }
@@ -383,7 +510,9 @@ void build_depth_pair(plan_core& c, const pipeline_view& d, const row_layout& l,
   const std::size_t lanes = of<T>(*find_kernels(c.isa_target)).complex_lanes;
   const std::size_t chunk = settings.chunk_points;
   const auto complex_bytes = static_cast<std::ptrdiff_t>(2 * sizeof(T));
-  add_batch_loops(p, d, l, complex_bytes);
+  const std::size_t block_bytes = settings.profile.callback_block_bytes;
+  const bool mc = pl.mid.call.any();
+  add_batch_loops(p, d, l, complex_bytes, pl);
   typename chain_builder<T>::depth_pair_form form;
   form.kernel = pl.mid.fused ? middle_tag : nullptr;
   form.out = pl.at == scale_at::inverse_out ? edge_op::scale : edge_op::none;
@@ -392,7 +521,14 @@ void build_depth_pair(plan_core& c, const pipeline_view& d, const row_layout& l,
   std::vector<stage> store;
   slot src = slot::in;
   slot dst = slot::out;
-  if (pl.pro.runs.any()) {
+  if (pl.pro.call.any()) {
+    // A prologue callback (task 5.3d) on the line in scratch b (its runs read there, zeros
+    // elsewhere), then its vocabulary there; the forward first pass reads b.
+    src = row_input_with_callback(c.prec, false, pl.pro, n, {.where = slot::in, .stride = 1}, false,
+                                  {.where = slot::b, .stride = 1}, slot::b, chunk, block_bytes,
+                                  c.callback_sites, read)
+              .where;
+  } else if (pl.pro.runs.any()) {
     const std::vector<line_run>& runs = pl.pro.runs.of(0);
     if (runs.size() == 1 && runs[0].logical == 0) {
       form.in_count = runs[0].count;
@@ -408,7 +544,15 @@ void build_depth_pair(plan_core& c, const pipeline_view& d, const row_layout& l,
                                    pl.pro.axis_stride));
     src = slot::b;
   }
-  if (pl.epi.runs.any()) {
+  if (pl.epi.call.any()) {
+    // An epilogue callback (task 5.3d): on the output the last top pass (or the epilogue's pass)
+    // writes, or on the line the last top pass leaves in the workspace block, then the store,
+    // the accumulation or nothing (consume).
+    const bool direct = epilogue_direct(pl.epi);
+    dst = direct && !pl.epi.separate ? slot::out : slot::block;
+    row_output_with_callback(c.prec, false, pl.epi, n, {.where = slot::out, .stride = 1}, direct,
+                             chunk, block_bytes, c.callback_sites, store);
+  } else if (pl.epi.runs.any()) {
     const std::vector<line_run>& runs = pl.epi.runs.of(0);
     if (runs.size() == 1 && runs[0].logical % lanes == 0 && !pl.epi.accumulate) {
       form.out_logical = runs[0].logical;
@@ -458,7 +602,8 @@ void build_depth_pair(plan_core& c, const pipeline_view& d, const row_layout& l,
       // stages' end): copy k's middle from the spectrum into scratch a, then the backward chain.
       fan.loop = p.records.size();
       loop lp{.kind = loop_kind::lines, .count = d.fanout};
-      lp.step[1] = d.fanout_out_dist * complex_bytes;
+      // A consumed output is never addressed, and may be null (task 5.3d).
+      lp.step[1] = consumed(pl.epi) ? 0 : d.fanout_out_dist * complex_bytes;
       lp.serial_lines = true;
       p.records.emplace_back(lp);
       fan.mid_step = pl.mid.kind != factor_kind::none
@@ -476,6 +621,25 @@ void build_depth_pair(plan_core& c, const pipeline_view& d, const row_layout& l,
       fan.offsets.push_back({.record = p.records.size(), .dst = second});
     }
     stages(half->top);
+    if (half == &parts.forward && mc) {
+      // The middle callback (task 5.3d) once per line on the spectrum, in scratch a, or with
+      // fan-out in the block's second region before the copies; the prologue's scale before it,
+      // the others' after it where no pass takes them.
+      const slot at = fanned ? slot::block : slot::a;
+      const auto add = [&](stage st) {
+        if (fanned) {
+          fan.offsets.push_back({.record = p.records.size(), .src = second, .dst = second});
+        }
+        p.records.emplace_back(std::move(st));
+      };
+      if (pl.pre_at == scale_at::before_middle) {
+        add(spectrum_scale_stage(c.prec, pl.pre_scale, n, at, chunk, false));
+      }
+      add(middle_callback_stage(c, pl.mid, n, at));
+      if (pl.at == scale_at::after_middle) {
+        add(spectrum_scale_stage(c.prec, pl.scale, n, at, chunk, true));
+      }
+    }
     if (half == &parts.forward && pl.mid.separate && !fanned) {
       p.records.emplace_back(middle_stage(c.prec, pl.mid, n, chunk, slot::a, slot::a));
     }
@@ -489,7 +653,7 @@ void build_depth_pair(plan_core& c, const pipeline_view& d, const row_layout& l,
   }
   c.block_elements = fanned ? static_cast<std::size_t>(second / complex_bytes) + n : n;
   c.depth_tops = tops;
-  lay_out_workspace(c, parts.scratch, 2 * sizeof(T), false, 0);
+  lay_out_workspace(c, parts.scratch, 2 * sizeof(T), false, callback_scratch(pl));
   c.axis_notes.push_back("line (n = " + std::to_string(n) + "): " + chain.depth_pair_text(n, tops));
 }
 
@@ -538,8 +702,13 @@ void build_complex_copies(plan_core& c, const pipeline_view& d, const row_layout
     inverse.in = edge_op::factor;
     inverse.in_factor = middle_tag;
   }
+  const std::size_t block_bytes = settings.profile.callback_block_bytes;
+  // An epilogue callback (task 5.3d) keeps a copy writing its output itself where it modifies the
+  // output there (epilogue_direct), the callback then on the copy's output; otherwise the copy
+  // works in the block's second region, where the callback runs before the store.
+  const bool ec = pl.epi.call.any();
   const bool direct =
-      !pl.epi.accumulate && !pl.epi.separate &&
+      !pl.epi.accumulate && !pl.epi.separate && (!ec || epilogue_direct(pl.epi)) &&
       (!pl.epi.runs.any() || (within_half(pl.epi.runs.of(0), n) && chain.head_last(n) &&
                               half_stored(pl.epi.runs.of(0), n, stored_out)));
   if (direct) {
@@ -558,13 +727,25 @@ void build_complex_copies(plan_core& c, const pipeline_view& d, const row_layout
       inverse.out_factor = epilogue_tag;
     }
     scratch = std::max(scratch, chain.c2c_line(n, +1, from, stored_out, false, inverse, body));
+    if (ec) {
+      row_output_with_callback(c.prec, false, pl.epi, n, stored_out, true, chunk, block_bytes,
+                               c.callback_sites, body);
+    }
     end_with_copies(p, d, pl.mid, complex_bytes, 0, line, body, fan);
     c.block_elements = n;
   } else {
     if (pl.mid.separate) {
       body.push_back(middle_stage(c.prec, pl.mid, n, chunk));
     }
-    if (pl.epi.runs.any()) {
+    if (ec) {
+      if (pl.epi.fused) {
+        inverse.out = edge_op::factor;
+        inverse.out_factor = epilogue_tag;
+      }
+      scratch = std::max(scratch, chain.c2c_line(n, +1, home, home, true, inverse, body));
+      row_output_with_callback(c.prec, false, pl.epi, n, stored_out, epilogue_direct(pl.epi), chunk,
+                               block_bytes, c.callback_sites, body);
+    } else if (pl.epi.runs.any()) {
       // As build_pair's output runs, from the second region (a pruned last pass writes its half).
       const std::vector<line_run>& runs = pl.epi.runs.of(0);
       inverse.out_head =
@@ -583,7 +764,7 @@ void build_complex_copies(plan_core& c, const pipeline_view& d, const row_layout
     end_with_copies(p, d, pl.mid, complex_bytes, second, line, body, fan);
     c.block_elements = static_cast<std::size_t>(second / complex_bytes) + n;
   }
-  lay_out_workspace(c, scratch, 2 * sizeof(T), false, 0);
+  lay_out_workspace(c, scratch, 2 * sizeof(T), false, callback_scratch(pl));
   const std::string radices = chain.radix_text(n);
   c.axis_notes.push_back("line (n = " + std::to_string(n) + "): forward " + radices +
                          ", then backward " + radices + " per copy (shared twiddle tables)");
@@ -605,32 +786,39 @@ bool build_pair(plan_core& c, const pipeline_view& d, const row_layout& l, const
     if (const std::vector<std::size_t> tops =
             convolution_depth_tops<T>(n, settings, chain, c.isa_target);
         !tops.empty()) {
-      // With fan-out the middle is a pass per copy (build_depth_pair).
-      pl = place(v, n, false, d.fanout == 1);
+      // With fan-out the middle is a pass per copy (build_depth_pair); with a middle callback the
+      // kernel never fuses into the forward top pass (task 5.3d).
+      pl = v.mid.call.any() ? place_middle_callback(v, n, false, false, d.fanout > 1, true)
+                            : place(v, n, false, d.fanout == 1);
       build_depth_pair<T>(c, d, l, pl, settings, chain, tops, pr, fan);
       return true;
     }
   }
   const bool fanned = d.fanout > 1;
-  pl = fanned ? place_fanout(v, n, true, true) : place(v, n, true, true);
-  add_batch_loops(p, d, l, static_cast<std::ptrdiff_t>(2 * sizeof(T)));
+  const bool mc = v.mid.call.any();
+  pl = mc       ? place_middle_callback(v, n, true, true, fanned, false)
+       : fanned ? place_fanout(v, n, true, true)
+                : place(v, n, true, true);
+  add_batch_loops(p, d, l, static_cast<std::ptrdiff_t>(2 * sizeof(T)), pl);
 
   std::vector<stage> line;
   std::size_t scratch = 0;
   const std::size_t chunk = settings.chunk_points;
+  const std::size_t block_bytes = settings.profile.callback_block_bytes;
   const endpoint home{.where = slot::block, .stride = 1};
   line_edges forward;
-  forward.scale = pl.scale;
+  // With a middle callback the forward chain takes only the product before it (task 5.3d).
+  forward.scale = mc ? pl.pre_scale : pl.scale;
   if (pl.pro.fused) {
     forward.in = edge_op::factor;
     forward.in_factor = prologue_tag;
   } else if (pl.at == scale_at::forward_in) {
     forward.in = edge_op::scale;
   }
-  if (pl.mid.fused && !fanned) {
+  if (pl.mid.fused && !fanned && !mc) {
     forward.out = edge_op::factor;
     forward.out_factor = middle_tag;
-  } else if (pl.at == scale_at::forward_out) {
+  } else if (pl.at == scale_at::forward_out || pl.pre_at == scale_at::forward_out) {
     forward.out = edge_op::scale;
   }
   // The forward transform reads the input, or the prologue's pass (or the input's runs, with
@@ -638,7 +826,14 @@ bool build_pair(plan_core& c, const pipeline_view& d, const row_layout& l, const
   endpoint forward_src{.where = slot::in, .stride = l.in_stride};
   bool forward_aliased = false;
   const endpoint stored_out{.where = slot::out, .stride = l.out_stride};
-  if (pl.pro.runs.any()) {
+  if (pl.pro.call.any()) {
+    // A prologue callback (task 5.3d) on the line in the workspace block (after a copy of the
+    // input or its runs, or produced there), then the prologue's vocabulary not fused; the
+    // forward chain then runs in place there.
+    forward_src = row_input_with_callback(c.prec, false, pl.pro, n, forward_src, false, home,
+                                          slot::block, chunk, block_bytes, c.callback_sites, line);
+    forward_aliased = true;
+  } else if (pl.pro.runs.any()) {
     // Pruning as a plan's c2c row (task 5.1e): runs within the line's first half and a first
     // pass of an even codelet radix read the half only, where the one run of the half is
     // stored (stride 1: no read stage), else through the block's half.
@@ -662,6 +857,14 @@ bool build_pair(plan_core& c, const pipeline_view& d, const row_layout& l, const
   }
   scratch =
       std::max(scratch, chain.c2c_line(n, -1, forward_src, home, forward_aliased, forward, line));
+  if (mc) {
+    // The middle callback (task 5.3d) on the spectrum in the block, once per line (before every
+    // copy), then the scales after it where no pass or free edge takes them.
+    line.push_back(middle_callback_stage(c, pl.mid, n, slot::block));
+    if (pl.at == scale_at::after_middle) {
+      line.push_back(spectrum_scale_stage(c.prec, pl.scale, n, slot::block, chunk, true));
+    }
+  }
   if (fanned) {
     build_complex_copies<T>(c, d, l, settings, chain, pl, pr, line, scratch, fan);
     return false;
@@ -671,10 +874,30 @@ bool build_pair(plan_core& c, const pipeline_view& d, const row_layout& l, const
   }
   line_edges inverse;
   inverse.scale = pl.scale;
-  if (pl.at == scale_at::inverse_in) {
+  if (mc && pl.mid.fused) {
+    // The middle's factor after its callback, in the inverse chain's first pass (DESIGN.md 12.3).
+    inverse.in = edge_op::factor;
+    inverse.in_factor = middle_tag;
+  } else if (pl.at == scale_at::inverse_in) {
     inverse.in = edge_op::scale;
   }
-  if (pl.epi.runs.any()) {
+  if (pl.epi.call.any()) {
+    // An epilogue callback (task 5.3d): on the output the inverse chain (or the epilogue's pass
+    // from the block) writes, or on the line the inverse chain leaves in the block, then the
+    // store, the store of the runs, the accumulation or nothing (consume).
+    const bool direct = epilogue_direct(pl.epi);
+    if (pl.epi.fused) {
+      inverse.out = edge_op::factor;
+      inverse.out_factor = epilogue_tag;
+    } else if (pl.at == scale_at::inverse_out) {
+      inverse.out = edge_op::scale;
+    }
+    const bool to_out = direct && !pl.epi.separate;
+    scratch = std::max(
+        scratch, chain.c2c_line(n, +1, home, to_out ? stored_out : home, !to_out, inverse, line));
+    row_output_with_callback(c.prec, false, pl.epi, n, stored_out, direct, chunk, block_bytes,
+                             c.callback_sites, line);
+  } else if (pl.epi.runs.any()) {
     // The output's runs: the inverse chain ends in the block, then the store stage writes (or
     // accumulates) only the runs; or its pruned last pass writes the one run of the line's
     // first half where it is stored (no store stage), as a plan's c2c row.
@@ -711,7 +934,7 @@ bool build_pair(plan_core& c, const pipeline_view& d, const row_layout& l, const
   }
   end_program(p, line);
   c.block_elements = n;
-  lay_out_workspace(c, scratch, 2 * sizeof(T), false, 0);
+  lay_out_workspace(c, scratch, 2 * sizeof(T), false, callback_scratch(pl));
   const std::string radices = chain.radix_text(n);
   c.axis_notes.push_back("line (n = " + std::to_string(n) + "): forward " + radices +
                          ", then backward " + radices + " (shared twiddle tables)");
@@ -742,21 +965,38 @@ template <class T>
 void build_real_pair(plan_core& c, const pipeline_view& d, const row_layout& l, const vocab& v,
                      const build_settings& settings, placed& pl, fanout_marks& fan) {
   const bool fanned = d.fanout > 1;
-  pl = fanned ? place_fanout(v, d.line.n, false, false) : place(v, d.line.n, false, false);
+  const bool mc = v.mid.call.any();
+  pl = mc       ? place_middle_callback(v, d.line.n, false, false, fanned, false)
+       : fanned ? place_fanout(v, d.line.n, false, false)
+                : place(v, d.line.n, false, false);
   const target_profile profile =
       plan_profile(c, of<T>(*find_kernels(c.isa_target)).complex_lanes, settings);
   chain_builder<T> chain = plan_chain<T>(c, profile, settings);
   program& p = c.prog;
   const std::size_t n = d.line.n;
   const std::size_t bins = n / 2 + 1;
-  add_batch_loops(p, d, l, static_cast<std::ptrdiff_t>(sizeof(T)));
+  add_batch_loops(p, d, l, static_cast<std::ptrdiff_t>(sizeof(T)), pl);
 
   std::vector<stage> line;
   std::size_t scratch = 0;
   const std::size_t chunk = settings.chunk_points;
+  const std::size_t block_bytes = settings.profile.callback_block_bytes;
+  const bool ec = pl.epi.call.any();
+  // Whether the c2r chain writes the output itself: no epilogue pass, runs or callback that needs
+  // the line in the block (task 5.3d).
+  const bool c2r_to_out =
+      !pl.epi.separate && !pl.epi.runs.any() && (!ec || epilogue_direct(pl.epi));
   endpoint forward_src{.where = slot::in, .stride = l.in_stride};
   bool forward_aliased = false;
-  if (pl.pro.runs.any()) {
+  if (pl.pro.call.any()) {
+    // A prologue callback (task 5.3d) on the real line in the workspace block (after a copy of the
+    // input or its runs, or produced there), then the prologue's pass there; the r2c chain then
+    // runs in place.
+    forward_src = row_input_with_callback(c.prec, true, pl.pro, n, forward_src, false,
+                                          {.where = slot::block, .stride = 1}, slot::block, chunk,
+                                          block_bytes, c.callback_sites, line);
+    forward_aliased = true;
+  } else if (pl.pro.runs.any()) {
     // The input's runs (task 5.2d), read into the block with zeros elsewhere: real lines take no
     // pruned passes yet (DESIGN.md 12.1).
     run_line_stages(c.prec, pl.pro, false, n, pl.pro.runs.of(0),
@@ -770,12 +1010,23 @@ void build_real_pair(plan_core& c, const pipeline_view& d, const row_layout& l, 
     forward_aliased = true;
   }
   const endpoint home{.where = slot::block, .stride = 1};
+  const double forward_scale = pl.at == scale_at::forward_out       ? pl.scale
+                               : pl.pre_at == scale_at::forward_out ? pl.pre_scale
+                                                                    : 1.0;
   scratch =
-      std::max(scratch, chain.r2c_line(n, forward_src, home, forward_aliased,
-                                       pl.at == scale_at::forward_out ? pl.scale : 1.0, line));
+      std::max(scratch, chain.r2c_line(n, forward_src, home, forward_aliased, forward_scale, line));
+  if (mc) {
+    // The middle callback (task 5.3d) on the n/2 + 1 bins in the block, once per line, then the
+    // scales after it where no pass or free edge takes them.
+    line.push_back(middle_callback_stage(c, pl.mid, bins, slot::block));
+    if (pl.at == scale_at::after_middle) {
+      line.push_back(spectrum_scale_stage(c.prec, pl.scale, bins, slot::block, chunk, true));
+    }
+  }
   const auto real_bytes = static_cast<std::ptrdiff_t>(sizeof(T));
   const auto complex_bytes = static_cast<std::ptrdiff_t>(2 * sizeof(T));
-  if (fanned && !pl.epi.separate && !pl.epi.runs.any()) {
+  const endpoint stored_out{.where = slot::out, .stride = l.out_stride};
+  if (fanned && c2r_to_out) {
     std::vector<stage> body;
     endpoint from = home;
     if (pl.mid.separate) {
@@ -783,8 +1034,11 @@ void build_real_pair(plan_core& c, const pipeline_view& d, const row_layout& l, 
       from = {.where = slot::b, .stride = 1};
       scratch = std::max(scratch, bins);
     }
-    scratch = std::max(
-        scratch, chain.c2r_line(n, from, {.where = slot::out, .stride = l.out_stride}, 1.0, body));
+    scratch = std::max(scratch, chain.c2r_line(n, from, stored_out, 1.0, body));
+    if (ec) {
+      row_output_with_callback(c.prec, true, pl.epi, n, stored_out, true, chunk, block_bytes,
+                               c.callback_sites, body);
+    }
     end_with_copies(p, d, pl.mid, real_bytes, 0, line, body, fan);
     c.block_elements = bins;
   } else if (fanned) {
@@ -793,7 +1047,10 @@ void build_real_pair(plan_core& c, const pipeline_view& d, const row_layout& l, 
       body.push_back(middle_stage(c.prec, pl.mid, bins, chunk));
     }
     scratch = std::max(scratch, chain.c2r_line(n, home, home, 1.0, body));
-    if (pl.epi.runs.any()) {
+    if (ec) {
+      row_output_with_callback(c.prec, true, pl.epi, n, stored_out, epilogue_direct(pl.epi), chunk,
+                               block_bytes, c.callback_sites, body);
+    } else if (pl.epi.runs.any()) {
       run_line_stages(c.prec, pl.epi, true, n, pl.epi.runs.of(0),
                       {.src = slot::block, .dst = slot::out, .dst_stride = l.out_stride}, chunk,
                       true, body);
@@ -806,18 +1063,29 @@ void build_real_pair(plan_core& c, const pipeline_view& d, const row_layout& l, 
     c.block_elements = static_cast<std::size_t>(second / complex_bytes) + bins;
   }
   if (fanned) {
-    lay_out_workspace(c, scratch, 2 * sizeof(T), false, 0);
-    const bool strided_out = !pl.epi.separate && !pl.epi.runs.any() && l.out_stride != 1;
-    c.axis_notes.push_back(
-        "line (n = " + std::to_string(n) + "): forward " +
-        chain.real_text(n, true, !pl.pro.separate && !pl.pro.runs.any() && l.in_stride != 1) +
-        ", then backward " + chain.real_text(n, false, strided_out) + " per copy");
+    lay_out_workspace(c, scratch, 2 * sizeof(T), false, callback_scratch(pl));
+    const bool strided_out = c2r_to_out && l.out_stride != 1;
+    c.axis_notes.push_back("line (n = " + std::to_string(n) + "): forward " +
+                           chain.real_text(n, true,
+                                           !pl.pro.separate && !pl.pro.runs.any() &&
+                                               !pl.pro.call.any() && l.in_stride != 1) +
+                           ", then backward " + chain.real_text(n, false, strided_out) +
+                           " per copy");
     return;
   }
   if (pl.mid.separate) {
     line.push_back(middle_stage(c.prec, pl.mid, bins, chunk));
   }
-  if (pl.epi.runs.any()) {
+  if (ec) {
+    // An epilogue callback (task 5.3d): on the output the c2r chain (or the epilogue's pass from
+    // the block) writes, or on the line the c2r chain leaves in the block, then the store, the
+    // store of the runs, the accumulation or nothing (consume).
+    const double scale = pl.at == scale_at::inverse_out ? pl.scale : 1.0;
+    const bool to_out = epilogue_direct(pl.epi) && !pl.epi.separate;
+    scratch = std::max(scratch, chain.c2r_line(n, home, to_out ? stored_out : home, scale, line));
+    row_output_with_callback(c.prec, true, pl.epi, n, stored_out, epilogue_direct(pl.epi), chunk,
+                             block_bytes, c.callback_sites, line);
+  } else if (pl.epi.runs.any()) {
     // The output's runs: the c2r chain ends in the block, the store stage writes the runs.
     const double scale = pl.at == scale_at::inverse_out ? pl.scale : 1.0;
     scratch = std::max(scratch, chain.c2r_line(n, home, home, scale, line));
@@ -836,9 +1104,10 @@ void build_real_pair(plan_core& c, const pipeline_view& d, const row_layout& l, 
   }
   end_program(p, line);
   c.block_elements = bins;
-  lay_out_workspace(c, scratch, 2 * sizeof(T), false, 0);
-  const bool strided_in = !pl.pro.separate && !pl.pro.runs.any() && l.in_stride != 1;
-  const bool strided_out = !pl.epi.separate && !pl.epi.runs.any() && l.out_stride != 1;
+  lay_out_workspace(c, scratch, 2 * sizeof(T), false, callback_scratch(pl));
+  const bool strided_in =
+      !pl.pro.separate && !pl.pro.runs.any() && !pl.pro.call.any() && l.in_stride != 1;
+  const bool strided_out = c2r_to_out && l.out_stride != 1;
   c.axis_notes.push_back("line (n = " + std::to_string(n) + "): forward " +
                          chain.real_text(n, true, strided_in) + ", then backward " +
                          chain.real_text(n, false, strided_out));
@@ -1009,16 +1278,19 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
   if (d.prologue.accumulate) {
     refuse("desc.prologue.accumulate", "is for the epilogue only");
   }
-  // Block callbacks (fftn/callback.hpp) reach pipelines in task 5.3d, with the middle's; until
-  // then an edge's callback is refused rather than dropped.
-  if (d.prologue.call != nullptr) {
-    refuse("desc.prologue.call.fn",
-           "is a block callback: a pipeline's edges take none yet (task 5.3d)");
+  // Block callbacks (fftn/callback.hpp, task 5.3d): the prologue's and the epilogue's are judged
+  // as a plan's input and output edges' (resolve_edge_side), the middle's takes modify only
+  // (DESIGN.md 12.3), and a consumed output is refused in place, as on plans.
+  if (d.middle.call != nullptr && d.middle.call_mode != callback_mode::modify) {
+    refuse("desc.middle.call.mode", std::string("is ") + mode_name(d.middle.call_mode) +
+                                        "; a middle callback takes modify only");
   }
-  if (d.epilogue.call != nullptr) {
-    refuse("desc.epilogue.call.fn",
-           "is a block callback: a pipeline's edges take none yet (task 5.3d)");
+  if (d.epilogue.call != nullptr && d.epilogue.call_mode == callback_mode::consume &&
+      opts.in_place) {
+    refuse("desc.epilogue.call.mode", "is consume on an in-place pipeline, whose output is its "
+                                      "input's memory");
   }
+  const bool middle_call = d.middle.call != nullptr;
   shape_view r2c_line = line;
   r2c_line.kind = transform_kind::r2c;
   shape_view c2r_line = line;
@@ -1034,11 +1306,18 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
       refuse("desc.epilogue.scale", "and options.scale are both given; options.scale is a "
                                     "shortcut for desc.epilogue.scale, so give one of them");
     }
-    const double scale = opts.scale * d.prologue.scale * d.middle.scale * d.epilogue.scale;
+    // With a middle callback the scales are two products around it (DESIGN.md 12.3): the
+    // prologue's (checked as its own scale), and the others'.
+    const double pre_scale = middle_call ? d.prologue.scale : 1.0;
+    const double scale =
+        opts.scale * (middle_call ? 1.0 : d.prologue.scale) * d.middle.scale * d.epilogue.scale;
     if (!scale_fits_precision(scale, d.prec)) {
-      refuse("desc.prologue.scale", "times desc.middle.scale, desc.epilogue.scale and "
-                                    "options.scale is not finite or outside the range of the "
-                                    "pipeline's precision");
+      refuse(middle_call ? "desc.middle.scale" : "desc.prologue.scale",
+             middle_call ? "times desc.epilogue.scale and options.scale (the product after the "
+                           "middle's callback) is not finite or outside the range of the "
+                           "pipeline's precision"
+                         : "times desc.middle.scale, desc.epilogue.scale and options.scale is not "
+                           "finite or outside the range of the pipeline's precision");
     }
     if (epi.accumulate && opts.in_place) {
       refuse("desc.epilogue.accumulate", "is refused on an in-place pipeline, whose output's "
@@ -1048,6 +1327,7 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
                  .mid = std::move(mid),
                  .epi = std::move(epi),
                  .scale = scale,
+                 .pre_scale = pre_scale,
                  .runs = runs};
   });
 
@@ -1065,7 +1345,9 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
   c->out_lo = layout.out_lo;
   c->out_hi = layout.out_hi;
   const bool fanned = d.fanout > 1;
-  if (fanned) {
+  // A consumed output is not written (task 5.3d), so its copies' places are not checked:
+  // consume receives each line's copies in copy order instead.
+  if (fanned && !consumed(v.epi)) {
     const std::size_t real_bytes = d.prec == precision::f64 ? sizeof(double) : sizeof(float);
     const auto [lo, hi] = check_copies(d, layout, runs, real ? real_bytes : 2 * real_bytes, v.mid);
     c->out_lo += lo;
@@ -1096,8 +1378,10 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
                                 (pl.epi.kind != factor_kind::none ? moving_out_factor : 0) |
                                 (pl.mid.kind != factor_kind::none ? moving_mid_out_factor : 0));
   // A fan-out runs on the edge driver even without factors: its copies loop and its offsets into
-  // the block are the edge driver's records (task 5.2e).
-  c->needs_args = c->factor_args != 0 || fanned;
+  // the block are the edge driver's records (task 5.2e); so do callbacks (task 5.3d).
+  c->needs_args = c->factor_args != 0 || fanned || !c->callback_sites.empty();
+  c->in_unread = produced(pl.pro);
+  c->out_unwritten = consumed(pl.epi);
   const bool fan_serial = fanned && std::get<loop>(c->prog.records[fan.loop]).serial_lines;
   // Batched forms from the start (X65): the flat body, or the calls of a longer line unrolled, on
   // either driver.
@@ -1148,9 +1432,12 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
     c->axis_notes.push_back("form: walked, the program's records per line");
   }
   // A side with runs has their read or store stage instead (runs_text below counts them).
+  const bool mc = pl.mid.call.any();
   const std::size_t passes = (pl.pro.separate && !runs.in.any() ? 1U : 0U) +
                              (pl.mid.separate ? 1U : 0U) +
-                             (pl.epi.separate && !runs.out.any() ? 1U : 0U);
+                             (pl.epi.separate && !runs.out.any() ? 1U : 0U) +
+                             (pl.pre_at == scale_at::before_middle ? 1U : 0U) +
+                             (pl.at == scale_at::after_middle ? 1U : 0U);
   // With fan-out the middle and the epilogue are once per copy, the middle's pass from the
   // spectrum to where the copy's inverse starts.
   const char* fan_middle = fan_serial ? "in a separate pass per copy into the workspace block's "
@@ -1164,6 +1451,7 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
       operation_text("middle", pl.mid,
                      fanned  ? "in the backward chain's first pass, copy k's factor"
                      : depth ? "in the forward chain's last top pass"
+                     : mc    ? "in the backward chain's first pass, after the middle's callback"
                              : "in the forward chain's last pass",
                      fanned && depth ? "in a separate pass per copy into scratch"
                      : fanned        ? fan_middle
@@ -1178,26 +1466,35 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
                          ? "in a separate pass per copy from the workspace block's second region"
                      : fanned ? "in a separate pass per copy from the workspace block"
                               : "in a separate pass from the workspace block");
-  if (pl.scale != 1.0) {
-    const char* where = "a separate pass";
-    switch (pl.at) {
+  const auto scale_where = [depth](scale_at at) {
+    switch (at) {
     case scale_at::forward_in:
-      where = "the forward chain's first pass";
-      break;
+      return "the forward chain's first pass";
     case scale_at::forward_out:
-      where = "the forward chain's last pass";
-      break;
+      return "the forward chain's last pass";
     case scale_at::inverse_in:
-      where = "the backward chain's first pass";
-      break;
+      return "the backward chain's first pass";
     case scale_at::inverse_out:
-      where = depth ? "the backward chain's last top pass" : "the backward chain's last pass";
-      break;
+      return depth ? "the backward chain's last top pass" : "the backward chain's last pass";
+    case scale_at::before_middle:
+      return "a separate pass on the spectrum before the middle's callback";
+    case scale_at::after_middle:
+      return "a separate pass on the spectrum after the middle's callback";
     case scale_at::none:
     case scale_at::pass:
       break;
     }
-    ops += std::string("\nscales: one product, applied once in ") + where;
+    return "a separate pass";
+  };
+  if (mc && (pl.scale != 1.0 || pl.pre_scale != 1.0)) {
+    // Task 5.3d: the scales do not cross a middle callback (DESIGN.md 12.3).
+    ops += "\nscales: two products around the middle's callback, the prologue's before it" +
+           std::string(pl.pre_scale != 1.0 ? std::string(" in ") + scale_where(pl.pre_at)
+                                           : std::string(" (1)")) +
+           ", the middle's, the epilogue's and options.scale after it" +
+           (pl.scale != 1.0 ? std::string(" in ") + scale_where(pl.at) : std::string(" (1)"));
+  } else if (pl.scale != 1.0) {
+    ops += std::string("\nscales: one product, applied once in ") + scale_where(pl.at);
   }
   // The depth-first pair's line is beyond the cache its sub-rows run in: a separate pass sweeps it.
   const char* sweep =
@@ -1229,6 +1526,55 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
                              (depth ? "'s first region" : "'s second region") +
                              ", so a team runs a line's copies one after another"
                        : "; a team shares a line's copies, each on a member's own scratch");
+  }
+  if (pl.pro.call.any() || mc || pl.epi.call.any()) {
+    // Task 5.3d: where each callback runs and its blocks (core/callbacks.hpp).
+    const std::size_t block_bytes = settings.profile.callback_block_bytes;
+    const std::size_t real_bytes = d.prec == precision::f64 ? sizeof(double) : sizeof(float);
+    const std::size_t side_bytes = real ? real_bytes : 2 * real_bytes;
+    const char* home = depth ? "in scratch" : "in the workspace block";
+    std::string text = "callbacks:";
+    const auto add = [&](const char* name, const edge_side& s, const std::string& where,
+                         const std::string& blocks) {
+      if (!s.call.any()) {
+        return;
+      }
+      if (text.back() != ':') {
+        text += ";";
+      }
+      text += std::string(" the ") + name + "'s (" + mode_name(s.call.mode) + ") " + where + ", " +
+              blocks;
+      if (s.call.scratch_bytes != 0) {
+        text += ", " + std::to_string(s.call.scratch_bytes) + " bytes of scratch per member";
+      }
+    };
+    const auto edge_blocks = [&] {
+      return callback_blocks("", d.line.n, 1, side_bytes, block_bytes, "lines").block;
+    };
+    add("prologue", pl.pro,
+        std::string("on each line ") + home +
+            (produced(pl.pro) ? (runs.in.any() ? ", zeros between its runs" : "")
+             : runs.in.any()  ? ", its runs read there first"
+                              : ", after a copy of the input") +
+            ", before the prologue's factor and scale",
+        edge_blocks());
+    add("middle", pl.mid,
+        std::string("on each line's spectrum ") +
+            (depth && !fanned ? "in scratch" : "in the workspace block") +
+            ", once per line before " + (fanned ? "the copies and " : "") +
+            "the middle's factor and scale",
+        "the whole line in one block");
+    const bool epi_direct = epilogue_direct(pl.epi);
+    add("epilogue", pl.epi,
+        std::string("on each line") + (fanned ? "'s copies" : "") +
+            (epi_direct ? " in the output" : " in the workspace block") +
+            ", after the epilogue's factor and scale" +
+            (consumed(pl.epi) ? ", the output not written"
+             : epi_direct     ? ""
+                              : ", before the store") +
+            (fanned ? ", once per copy (block_info::copy)" : ""),
+        edge_blocks());
+    ops += "\n" + text;
   }
   c->edges_note = ops;
   if (opts.effort != planning::rules || opts.use != nullptr) {

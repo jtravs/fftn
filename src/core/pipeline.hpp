@@ -28,7 +28,10 @@
 // (pipeline.cpp, build_real_pair).
 #pragma once
 
+#include "core/callbacks.hpp"
+#include "core/edges.hpp"
 #include "core/plan_core.hpp"
+#include "core/program.hpp"
 #include "core/runs.hpp"
 #include "fftn/detail/core.hpp"
 #include "fftn/options.hpp"
@@ -85,6 +88,34 @@ convolution_depth_tops(std::size_t n, const build_settings& settings, const chai
 // as for pipelines until 5.3d).
 void lay_out_workspace(plan_core& c, std::size_t scratch, std::size_t complex_bytes, bool stagger_b,
                        std::size_t callback_scratch);
+
+// A row's input edge with a block callback (DESIGN.md 12.3; plans' rows since task 5.3a, a
+// pipeline's prologue from task 5.3d), its stages appended to `st`: for `modify`, the line copied
+// from `from` (or its stored runs read, zeros elsewhere, into `home`) to `target`, unless it is in
+// place there; nothing read for `produce` (zeros between the runs, written into `home`); the
+// callback on the line, a block never crossing a gap between runs; then the side's vocabulary (a
+// factor in a separate pass, a scale placed on this side) in a pass into `home` (or in place in
+// the output, for a plan that copies there). Returns where the line then is. real: a line of real
+// values (a real side), else complex.
+[[nodiscard]] endpoint row_input_with_callback(precision prec, bool real, const edge_side& in,
+                                               std::size_t n, endpoint from, bool in_place,
+                                               endpoint target, slot home, std::size_t chunk_points,
+                                               std::size_t block_bytes,
+                                               std::vector<std::unique_ptr<callback_site>>& sites,
+                                               std::vector<stage>& st);
+
+// A row's output edge with a block callback after the transform (plans' rows since task 5.3a, a
+// pipeline's epilogue from task 5.3d), its stages appended to `st`. direct: a modify callback
+// without accumulation or runs, on the output `to` itself, which the transform (or, where the
+// side's factor is in a separate pass, that pass from the workspace block) has written.
+// Otherwise the transform has ended in the workspace block: the side's factor and scale there in
+// a pass of their own, the callback (on each run), then (unless it consumes the line) the store
+// of the line or its runs, or the accumulation, into `to`, with nothing else applied.
+void row_output_with_callback(precision prec, bool real, const edge_side& out, std::size_t n,
+                              endpoint to, bool direct, std::size_t chunk_points,
+                              std::size_t block_bytes,
+                              std::vector<std::unique_ptr<callback_site>>& sites,
+                              std::vector<stage>& st);
 
 // make_pipeline_core (fftn/detail/core.hpp) with construction knobs (tests): the settings' chain
 // rules (radices, leaf limit, layout, Bluestein and Rader) and profile apply to both chains.

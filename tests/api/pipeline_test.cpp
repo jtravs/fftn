@@ -785,17 +785,43 @@ TEST(Pipelines, RefusalsNameTheField) {
   expect_refused(f, {}, "desc.prologue.scale");
   f.prologue.scale = 1e300;
   expect_refused(f, {}, "desc.prologue.scale");
-  // Block callbacks on a pipeline's edges wait for task 5.3d; refused, not dropped.
+  // Block callbacks (task 5.3d): modes by position, the middle's modify only, no consume in
+  // place, and a null fn's other fields at their defaults.
   const fftn::block_fn<C> identity = [](void*, const fftn::block_info&, C*) noexcept {};
   d = good;
-  d.prologue.call = {.fn = identity};
-  expect_refused(d, {}, "desc.prologue.call.fn");
+  d.prologue.call = {.fn = identity, .mode = fftn::callback_mode::consume};
+  expect_refused(d, {}, "desc.prologue.call.mode");
+  d = good;
+  d.epilogue.call = {.fn = identity, .mode = fftn::callback_mode::produce};
+  expect_refused(d, {}, "desc.epilogue.call.mode");
   d = good;
   d.epilogue.call = {.fn = identity, .mode = fftn::callback_mode::consume};
-  expect_refused(d, {}, "desc.epilogue.call.fn");
+  expect_refused(d, {.in_place = true}, "desc.epilogue.call.mode");
+  d.epilogue.accumulate = true;
+  expect_refused(d, {}, "desc.epilogue.call.mode");
+  for (const fftn::callback_mode m : {fftn::callback_mode::produce, fftn::callback_mode::consume}) {
+    d = good;
+    d.middle.call = {.fn = identity, .mode = m};
+    expect_refused(d, {}, "desc.middle.call.mode");
+  }
+  d = good;
+  d.middle.call = {.scratch_bytes = 64};
+  expect_refused(d, {}, "desc.middle.call.scratch_bytes");
+  d = good;
+  d.prologue.call = {.mode = fftn::callback_mode::produce};
+  expect_refused(d, {}, "desc.prologue.call.mode");
   fftn::pipeline_desc<double, C, double> real_rows = fftn::convolution_rows<double>(16, 2);
-  real_rows.prologue.call = {.fn = [](void*, const fftn::block_info&, double*) noexcept {}};
-  expect_refused(real_rows, {}, "desc.prologue.call.fn");
+  real_rows.epilogue.call = {.fn = [](void*, const fftn::block_info&, double*) noexcept {},
+                             .mode = fftn::callback_mode::produce};
+  expect_refused(real_rows, {}, "desc.epilogue.call.mode");
+  // With a middle callback the scales are two products, each checked.
+  f = fftn::complex_convolution_rows<float>(16, 2);
+  f.middle.call = {.fn = [](void*, const fftn::block_info&, F*) noexcept {}};
+  f.prologue.scale = 1e30;
+  f.middle.scale = 1e30;
+  EXPECT_NO_THROW(fftn::pipeline(f, {}));
+  f.epilogue.scale = 1e30;
+  expect_refused(f, {}, "desc.middle.scale");
 }
 
 // `execute(in, out, team, ws, {})` is the team form with completion::all.

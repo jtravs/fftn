@@ -1500,22 +1500,26 @@ void callback_output_stages(precision prec, bool real, const edge_side& out, std
   st.push_back(std::move(s));
 }
 
-// The stages of a c2c row's input edge with a callback on the chain (task 5.3a), appended to
-// `st`, read from `from`: where the chain then reads. The callback runs where the row is in the
-// side's natural order: in place on the input itself, else at `target` (the workspace block, or
-// the output with build_settings::callback_copy_out), which the callback fills (produce: with
-// zeros between the stored runs) or which a copy of the input fills first (modify: the run read
-// stage, or a copy, so that the plan's input is not changed). The side's factor and scale
-// follow in a separate pass, unless the factor is fused into the chain's first pass, so that the
-// callback sees the values before any vocabulary (DESIGN.md 12.3).
-endpoint row_input_with_callback(precision prec, const edge_side& in, std::size_t n, endpoint from,
-                                 bool in_place, endpoint target, std::size_t chunk_points,
-                                 std::size_t block_bytes,
+} // namespace
+
+// The stages of a row's input edge with a callback (task 5.3a; declared in core/pipeline.hpp, which
+// shares it with pipelines, task 5.3d), appended to `st`, read from `from`: where the transform
+// then reads. real: the line holds real values (a real side). home: where stored runs are read
+// (zeros elsewhere) and where the vocabulary's pass goes, the workspace block for plans. The
+// callback runs where the row is in the side's natural order: in place on the input itself, else at
+// `target` (the workspace block, or the output with build_settings::callback_copy_out), which the
+// callback fills (produce: with zeros between the stored runs) or which a copy of the input fills
+// first (modify: the run read stage, or a copy, so that the plan's input is not changed). The
+// side's factor and scale follow in a separate pass, unless the factor is fused into the chain's
+// first pass, so that the callback sees the values before any vocabulary (DESIGN.md 12.3).
+endpoint row_input_with_callback(precision prec, bool real, const edge_side& in, std::size_t n,
+                                 endpoint from, bool in_place, endpoint target, slot home,
+                                 std::size_t chunk_points, std::size_t block_bytes,
                                  std::vector<std::unique_ptr<callback_site>>& sites,
                                  std::vector<stage>& st) {
-  const endpoint block{.where = slot::block, .stride = 1};
-  const std::ptrdiff_t bytes =
-      static_cast<std::ptrdiff_t>(2 * (prec == precision::f64 ? sizeof(double) : sizeof(float)));
+  const endpoint block{.where = home, .stride = 1};
+  const std::ptrdiff_t bytes = static_cast<std::ptrdiff_t>(
+      (real ? 1 : 2) * (prec == precision::f64 ? sizeof(double) : sizeof(float)));
   const std::vector<line_run>& runs = row_runs(in.runs);
   if (in.call.any()) {
     // An in-place plan's input is its output's memory, which the plan may write (runs are
@@ -1527,17 +1531,16 @@ endpoint row_input_with_callback(precision prec, const edge_side& in, std::size_
       std::size_t next = 0;
       for (const line_run& run : runs) {
         if (run.logical > next) {
-          run_zero_line(
-              prec, run.logical - next,
-              {.dst = slot::block, .dst_offset = static_cast<std::ptrdiff_t>(next) * bytes},
-              chunk_points, false, st);
+          run_zero_line(prec, run.logical - next,
+                        {.dst = home, .dst_offset = static_cast<std::ptrdiff_t>(next) * bytes},
+                        chunk_points, real, st);
         }
         next = run.logical + run.count;
       }
       if (!runs.empty() && next < n) {
         run_zero_line(prec, n - next,
-                      {.dst = slot::block, .dst_offset = static_cast<std::ptrdiff_t>(next) * bytes},
-                      chunk_points, false, st);
+                      {.dst = home, .dst_offset = static_cast<std::ptrdiff_t>(next) * bytes},
+                      chunk_points, real, st);
       }
     } else if (!in_place) {
       if (!runs.empty()) {
@@ -1545,31 +1548,33 @@ endpoint row_input_with_callback(precision prec, const edge_side& in, std::size_
         // callback.
         edge_side read;
         read.runs = in.runs;
-        run_line_stages(prec, read, false, n, runs, {.src = from.where, .src_stride = from.stride},
-                        chunk_points, false, st);
+        run_line_stages(prec, read, false, n, runs,
+                        {.src = from.where, .src_stride = from.stride, .dst = home}, chunk_points,
+                        real, st);
       } else {
         stage copy = edge_copy_stage(prec, n, from.where, from.stride, target.where, target.stride,
-                                     chunk_points, false, edge_rows{});
+                                     chunk_points, real, edge_rows{});
         copy.name = "edge in: the input copied for its callback";
         st.push_back(std::move(copy));
       }
     }
     if (runs.empty()) {
-      st.push_back(callback_stage(prec, false, in.call, false, n, 0, target.where, target.stride, 0,
+      st.push_back(callback_stage(prec, real, in.call, false, n, 0, target.where, target.stride, 0,
                                   block_bytes, sites));
     } else {
       // A block never crosses a gap between runs; coordinates are logical.
       for (const line_run& run : runs) {
-        st.push_back(
-            callback_stage(prec, false, in.call, false, run.count, run.logical, slot::block, 1,
-                           static_cast<std::ptrdiff_t>(run.logical) * bytes, block_bytes, sites));
+        st.push_back(callback_stage(prec, real, in.call, false, run.count, run.logical, home, 1,
+                                    static_cast<std::ptrdiff_t>(run.logical) * bytes, block_bytes,
+                                    sites));
       }
       target = block;
     }
     from = target;
   } else if (!runs.empty()) {
-    run_line_stages(prec, in, false, n, runs, {.src = from.where, .src_stride = from.stride},
-                    chunk_points, false, st);
+    run_line_stages(prec, in, false, n, runs,
+                    {.src = from.where, .src_stride = from.stride, .dst = home}, chunk_points, real,
+                    st);
     return block;
   }
   // The vocabulary: a factor that is not fused, or the scale where resolve_edges put it on this
@@ -1578,11 +1583,68 @@ endpoint row_input_with_callback(precision prec, const edge_side& in, std::size_
   if (has_vocabulary(in)) {
     const endpoint to = from.where == slot::out && !in_place ? from : block;
     st.push_back(edge_pass_stage(prec, vocabulary_of(in), false, n, from.where, from.stride,
-                                 to.where, to.stride, chunk_points, false, in.axis_stride));
+                                 to.where, to.stride, chunk_points, real, in.axis_stride));
     return to;
   }
   return from;
 }
+
+// The stages of a row's output edge with a callback after the transform (task 5.3a; shared with
+// pipelines, task 5.3d, as row_input_with_callback is), appended to `st`; real: a real side.
+// direct: a modify callback without accumulation or runs, on the output itself, which the chain (or
+// the side's separate pass from the block) has written. Otherwise the chain has ended in the
+// workspace block: the side's factor and scale there in a pass of their own, the callback, then
+// (unless it consumes the row) the store of the row or its runs, or the accumulation, with nothing
+// else applied (DESIGN.md 12.3).
+void row_output_with_callback(precision prec, bool real, const edge_side& out, std::size_t n,
+                              endpoint to, bool direct, std::size_t chunk_points,
+                              std::size_t block_bytes,
+                              std::vector<std::unique_ptr<callback_site>>& sites,
+                              std::vector<stage>& st) {
+  const std::ptrdiff_t bytes = static_cast<std::ptrdiff_t>(
+      (real ? 1 : 2) * (prec == precision::f64 ? sizeof(double) : sizeof(float)));
+  const std::vector<line_run>& runs = row_runs(out.runs);
+  const edge_side vocabulary = vocabulary_of(out);
+  if (direct) {
+    if (out.separate) {
+      st.push_back(edge_pass_stage(prec, vocabulary, true, n, slot::block, 1, to.where, to.stride,
+                                   chunk_points, real, out.axis_stride));
+    }
+    st.push_back(callback_stage(prec, real, out.call, true, n, 0, to.where, to.stride, 0,
+                                block_bytes, sites));
+    return;
+  }
+  if (has_vocabulary(out)) {
+    st.push_back(edge_pass_stage(prec, vocabulary, true, n, slot::block, 1, slot::block, 1,
+                                 chunk_points, real, out.axis_stride));
+  }
+  if (runs.empty()) {
+    st.push_back(
+        callback_stage(prec, real, out.call, true, n, 0, slot::block, 1, 0, block_bytes, sites));
+  } else {
+    for (const line_run& run : runs) {
+      st.push_back(callback_stage(prec, real, out.call, true, run.count, run.logical, slot::block,
+                                  1, static_cast<std::ptrdiff_t>(run.logical) * bytes, block_bytes,
+                                  sites));
+    }
+  }
+  if (out.call.mode == callback_mode::consume) {
+    return;
+  }
+  edge_side store;
+  store.accumulate = out.accumulate;
+  store.runs = out.runs;
+  if (!runs.empty()) {
+    run_line_stages(prec, store, true, n, runs,
+                    {.src = slot::block, .dst = to.where, .dst_stride = to.stride}, chunk_points,
+                    real, st);
+  } else {
+    st.push_back(edge_pass_stage(prec, store, true, n, slot::block, 1, to.where, to.stride,
+                                 chunk_points, real, 0));
+  }
+}
+
+namespace {
 
 // Where row_input_with_callback runs the input's callback, for describe().
 std::string row_input_where(const edge_side& in, bool in_place, slot target) {
@@ -1598,59 +1660,6 @@ std::string row_input_where(const edge_side& in, bool in_place, slot target) {
   }
   return "on each row " + where +
          (in.runs.any() ? ", the runs read there first" : ", after a copy of the input");
-}
-
-// The stages of a c2c row's output edge with a callback after the chain (task 5.3a), appended to
-// `st`. direct: a modify callback without accumulation or runs, on the output itself, which the
-// chain (or the side's separate pass from the block) has written. Otherwise the chain has ended
-// in the workspace block: the side's factor and scale there in a pass of their own, the callback,
-// then (unless it consumes the row) the store of the row or its runs, or the accumulation, with
-// nothing else applied (DESIGN.md 12.3).
-void row_output_with_callback(precision prec, const edge_side& out, std::size_t n, endpoint to,
-                              bool direct, std::size_t chunk_points, std::size_t block_bytes,
-                              std::vector<std::unique_ptr<callback_site>>& sites,
-                              std::vector<stage>& st) {
-  const std::ptrdiff_t bytes =
-      static_cast<std::ptrdiff_t>(2 * (prec == precision::f64 ? sizeof(double) : sizeof(float)));
-  const std::vector<line_run>& runs = row_runs(out.runs);
-  const edge_side vocabulary = vocabulary_of(out);
-  if (direct) {
-    if (out.separate) {
-      st.push_back(edge_pass_stage(prec, vocabulary, true, n, slot::block, 1, to.where, to.stride,
-                                   chunk_points, false, out.axis_stride));
-    }
-    st.push_back(callback_stage(prec, false, out.call, true, n, 0, to.where, to.stride, 0,
-                                block_bytes, sites));
-    return;
-  }
-  if (has_vocabulary(out)) {
-    st.push_back(edge_pass_stage(prec, vocabulary, true, n, slot::block, 1, slot::block, 1,
-                                 chunk_points, false, out.axis_stride));
-  }
-  if (runs.empty()) {
-    st.push_back(
-        callback_stage(prec, false, out.call, true, n, 0, slot::block, 1, 0, block_bytes, sites));
-  } else {
-    for (const line_run& run : runs) {
-      st.push_back(callback_stage(prec, false, out.call, true, run.count, run.logical, slot::block,
-                                  1, static_cast<std::ptrdiff_t>(run.logical) * bytes, block_bytes,
-                                  sites));
-    }
-  }
-  if (out.call.mode == callback_mode::consume) {
-    return;
-  }
-  edge_side store;
-  store.accumulate = out.accumulate;
-  store.runs = out.runs;
-  if (!runs.empty()) {
-    run_line_stages(prec, store, true, n, runs,
-                    {.src = slot::block, .dst = to.where, .dst_stride = to.stride}, chunk_points,
-                    false, st);
-  } else {
-    st.push_back(edge_pass_stage(prec, store, true, n, slot::block, 1, to.where, to.stride,
-                                 chunk_points, false, 0));
-  }
 }
 
 template <class T>
@@ -3138,8 +3147,9 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
           // place; never to a consumed output, which may be null.
           const endpoint target =
               settings.callback_copy_out && !edge_ops->in.runs.any() && !consumed ? to : block;
-          from = row_input_with_callback(s.prec, edge_ops->in, n, from, c.in_place, target,
-                                         settings.chunk_points, block_bytes, c.callback_sites, st);
+          from = row_input_with_callback(s.prec, false, edge_ops->in, n, from, c.in_place, target,
+                                         slot::block, settings.chunk_points, block_bytes,
+                                         c.callback_sites, st);
           const bool direct = edge_ops->out.call.mode == callback_mode::modify &&
                               !edge_ops->out.accumulate && !edge_ops->out.runs.any();
           const endpoint line_to = edge_ops->out.call.any()
@@ -3155,8 +3165,8 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
           // around it being separate passes as the edges' are.
           one_leaf = st.size() == line_first + 1 && st[line_first].leaf != nullptr;
           if (edge_ops->out.call.any()) {
-            row_output_with_callback(s.prec, edge_ops->out, n, to, direct, settings.chunk_points,
-                                     block_bytes, c.callback_sites, st);
+            row_output_with_callback(s.prec, false, edge_ops->out, n, to, direct,
+                                     settings.chunk_points, block_bytes, c.callback_sites, st);
           } else if (edge_ops->out.runs.any()) {
             run_line_stages(s.prec, edge_ops->out, true, n, edge_ops->out.runs.of(0),
                             {.src = slot::block, .dst = to.where, .dst_stride = to.stride},

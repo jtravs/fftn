@@ -50,7 +50,7 @@ struct callback_site {
   erased_block_fn fn = nullptr;
   void (*invoke)(erased_block_fn fn, void* user, const block_info& info,
                  std::byte* data) noexcept = nullptr;
-  std::uint8_t user = 0;   // 0: exec_args::in_user, 1: out_user
+  std::uint8_t user = 0;   // 0: exec_args::in_user, 1: out_user, 2: mid_user (task 5.3d)
   std::size_t rank = 1;    // the transformed axes, origin's entries
   std::size_t axis = 0;    // element_axis (an index into shape::axes)
   std::size_t logical = 0; // the logical position along `axis` of the stage's element 0
@@ -66,7 +66,7 @@ struct callback_site {
 
 // What a callback stage needs of the execution and of the task it runs in.
 struct callback_env {
-  std::array<void*, 2> user{};  // exec_args::in_user, out_user
+  std::array<void*, 3> user{};  // exec_args::in_user, out_user, mid_user
   std::size_t transform = 0;    // the task's transform, numbered from the batch's first
   int member = 0;               // the lane running the stage
   std::byte* scratch = nullptr; // that lane's callback area (128-byte aligned), or null
@@ -74,6 +74,9 @@ struct callback_env {
   // (task 5.3c: the edge driver adds each loop's, edge_record::origin_axis): a block's origin
   // is these plus its stage's own along its element and line axes.
   std::array<std::size_t, 3> origin{};
+  // A pipeline's fan-out (task 5.3d): the copy the enclosing copies loop has reached
+  // (edge_record::copies), block_info::copy; 0 elsewhere.
+  std::size_t copy = 0;
   // Measured planning's stand-ins (DESIGN.md 12.3, "Planning"; task 5.3b): every callback
   // stage runs, with its copies and boundaries, but calls a function that does nothing, so
   // that planning never calls the application's code.
