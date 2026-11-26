@@ -687,7 +687,11 @@ TYPED_TEST(PipelineFanout, CopiesSplitAmongATeam) {
     EXPECT_EQ(copies->chunks, accumulate ? 1U : 6U) << d::describe(*core);
     const d::lane_map lanes{.lanes = 3};
     const d::schedule plan = d::make_schedule(core->graph, lanes, core->profile);
-    EXPECT_NE(d::share_of(plan, lanes, 0).split, 0U) << "the team does not split the line";
+    // The shared copies give the line a phase of 6 chunks to split; serial ones may leave it none
+    // (a line of one leaf and a copies phase of one chunk).
+    if (!accumulate) {
+      EXPECT_NE(d::share_of(plan, lanes, 0).split, 0U) << "the team does not split the line";
+    }
     run_core(run, s, true);
   }
 }
