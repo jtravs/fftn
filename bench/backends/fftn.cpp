@@ -99,6 +99,18 @@
 //   EDGE_ARM=library|loop   the plan with the edges (default), or the plain plan and the
 //                    user's own separate loops (the input's in place before it, the output's
 //                    after it, accumulation from a buffer of the transform's own)
+//   PIPELINE=fused|separate   a convolution instead of the transform (task 5.5): every row
+//                    of a c2c forward case (`pipeline<C, C, C>`) or of an r2c case
+//                    (`pipeline<T, C, T>`, the output rows real, each at the start of its row
+//                    of n/2 + 1 complex values) convolved with a kernel whose spectrum, one for
+//                    every row, delays the row by one element (1/n folded in); fused is the
+//                    row pipeline (fftn/pipeline.hpp, by the rules), separate the same work as a
+//                    user writes it with plans: the forward plan into a spectrum buffer, a
+//                    multiply loop (plain C++, cloned like the edge loops), the inverse plan.
+//                    describe says "output":"delay", so fbench checks the delayed rows instead
+//                    of the DFT. Rows only, out of place; other cases are unsupported. Serial or
+//                    on the executor (THREADS); not with CALL=team, EDGE_* or RADICES, and the
+//                    other build settings do not reach the pipeline (X67, task 5.2g, adds them)
 // ISA is a public option; the others reach the library only through the private build
 // settings, as a test's do: the library has no switch for them, so dev/KNOBS.toml does not
 // list them.
@@ -143,12 +155,14 @@
 #include <cstring>
 #include <exception>
 #include <memory>
+#include <numbers>
 #include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -228,8 +242,12 @@ std::optional<edge_spec> parse_edge(std::string_view text, bool output) {
 }
 
 // edges: a plan with EDGE_IN or EDGE_OUT, executed out of line (plan_record::edge_mode says
-// how), so that a plain serial plan's execute stays one test and one call (X49).
-enum class call : unsigned char { serial, executor, team, edges };
+// how), so that a plain serial plan's execute stays one test and one call (X49); pipeline: a
+// PIPELINE arm (plan_record::pipe), likewise.
+enum class call : unsigned char { serial, executor, team, edges, pipeline };
+
+// PIPELINE: none, the row pipeline, or separate plans and a loop.
+enum class pipe_arm : unsigned char { none, fused, separate };
 
 struct session {
   detail::build_settings settings;
@@ -255,6 +273,7 @@ struct session {
   edge_spec edge_in;                  // EDGE_IN
   edge_spec edge_out;                 // EDGE_OUT
   bool edge_loop = false;             // EDGE_ARM=loop: a plain plan and the user's own loops
+  pipe_arm pipeline = pipe_arm::none; // PIPELINE
   std::string description;
 };
 
@@ -624,7 +643,256 @@ FBENCH_EDGE_CLONES void edge_lines_f32(const side_geometry& g, float* data, cons
   }
 }
 
+// ---- PIPELINE (task 5.5) ----------------------------------------------------------------
+
+// The separate arm's multiply loop over rows [first, first + count) of the spectrum: each bin
+// times the kernel's (one for every row), the complex arithmetic written out so that the
+// compiler vectorises it, as edge_line's.
+template <class T>
+[[gnu::always_inline]] inline void multiply_rows_as(T* __restrict spectrum, const T* __restrict k,
+                                                    std::size_t bins, std::size_t first,
+                                                    std::size_t count) {
+  for (std::size_t r = first; r < first + count; ++r) {
+    T* __restrict row = spectrum + 2 * r * bins;
+    for (std::size_t j = 0; j < bins; ++j) {
+      const T vr = row[2 * j];
+      const T vi = row[2 * j + 1];
+      row[2 * j] = vr * k[2 * j] - vi * k[2 * j + 1];
+      row[2 * j + 1] = vr * k[2 * j + 1] + vi * k[2 * j];
+    }
+  }
+}
+
+FBENCH_EDGE_CLONES void multiply_rows_f64(double* spectrum, const double* k, std::size_t bins,
+                                          std::size_t first, std::size_t count) {
+  multiply_rows_as(spectrum, k, bins, first, count);
+}
+
+FBENCH_EDGE_CLONES void multiply_rows_f32(float* spectrum, const float* k, std::size_t bins,
+                                          std::size_t first, std::size_t count) {
+  multiply_rows_as(spectrum, k, bins, first, count);
+}
+
+template <class T>
+void multiply_rows(std::complex<T>* spectrum, const std::complex<T>* k, std::size_t bins,
+                   std::size_t first, std::size_t count) {
+  if constexpr (std::is_same_v<T, float>) {
+    multiply_rows_f32(reinterpret_cast<float*>(spectrum), reinterpret_cast<const float*>(k), bins,
+                      first, count);
+  } else {
+    multiply_rows_f64(reinterpret_cast<double*>(spectrum), reinterpret_cast<const double*>(k), bins,
+                      first, count);
+  }
+}
+
+// One PIPELINE arm of a case, executed serially or on the session's executor.
+class pipeline_arm {
+public:
+  pipeline_arm() = default;
+  pipeline_arm(const pipeline_arm&) = delete;
+  pipeline_arm& operator=(const pipeline_arm&) = delete;
+  pipeline_arm(pipeline_arm&&) = delete;
+  pipeline_arm& operator=(pipeline_arm&&) = delete;
+  virtual ~pipeline_arm() = default;
+  virtual void run(const void* in, void* out) const = 0;
+  [[nodiscard]] virtual std::string note() const = 0;
+};
+
+// The kernel's spectrum over `bins` bins of a row of n: a delay by one element, times 1/n
+// (what fbench's delayed check expects, harness/check.hpp).
+template <class T> std::vector<std::complex<T>> delay_kernel(std::size_t n, std::size_t bins) {
+  std::vector<std::complex<T>> k(bins);
+  for (std::size_t j = 0; j < bins; ++j) {
+    const double angle =
+        -2.0 * std::numbers::pi * static_cast<double>(j % n) / static_cast<double>(n);
+    k[j] = std::complex<T>(std::polar(1.0 / static_cast<double>(n), angle));
+  }
+  return k;
+}
+
+// A describe's lines joined by "; ".
+std::string one_line(const std::string& text) {
+  std::string out;
+  for (const char ch : text) {
+    if (ch == '\n') {
+      out += "; ";
+    } else {
+      out += ch;
+    }
+  }
+  return out;
+}
+
+// The rows of a case as a pipeline, <C, C, C> (Real false) or <T, C, T> (Real true), by the
+// rules: the kernel one spectrum for every row, the rows `in_dist` and `out_dist` elements apart.
+template <class T, bool Real> class fused_arm final : public pipeline_arm {
+  using C = std::complex<T>;
+  using In = std::conditional_t<Real, T, C>;
+
+public:
+  fused_arm(std::size_t n, std::size_t count, std::ptrdiff_t in_dist, std::ptrdiff_t out_dist,
+            const fftn::options& o)
+      : pipe_(desc(n, count, in_dist, out_dist), o),
+        kernel_(delay_kernel<T>(n, Real ? n / 2 + 1 : n)), ws_(pipe_, state().threads) {}
+
+  void run(const void* in, void* out) const override {
+    const session& s = state();
+    const fftn::exec_args args{.mid_factor = kernel_.data()};
+    const auto* x = static_cast<const In*>(in);
+    auto* y = static_cast<In*>(out);
+    if (s.mode == call::executor) {
+      pipe_.execute(x, y, regrouped(*s.exec, s.group_size), ws_, args);
+    } else {
+      pipe_.execute(x, y, ws_, args);
+    }
+  }
+
+  [[nodiscard]] std::string note() const override { return one_line(pipe_.describe()); }
+
+private:
+  static fftn::pipeline_desc<In, C, In> desc(std::size_t n, std::size_t count,
+                                             std::ptrdiff_t in_dist, std::ptrdiff_t out_dist) {
+    fftn::pipeline_desc<In, C, In> d;
+    if constexpr (Real) {
+      d = fftn::convolution_rows<T>(n, count);
+    } else {
+      d = fftn::complex_convolution_rows<T>(n, count);
+    }
+    d.batches.at(0).in_dist = in_dist;
+    d.batches.at(0).out_dist = out_dist;
+    return d;
+  }
+
+  fftn::pipeline<In, C, In> pipe_;
+  std::vector<C> kernel_;
+  mutable fftn::workspace ws_;
+};
+
+// The same rows as a user writes them with plans: the forward plan into a spectrum buffer of
+// the arm's own, the multiply loop, the inverse plan.
+template <class T, bool Real> class separate_arm final : public pipeline_arm {
+  using C = std::complex<T>;
+  using In = std::conditional_t<Real, T, C>;
+  using forward_plan = std::conditional_t<Real, fftn::r2c_plan<T>, fftn::c2c_plan<T>>;
+  using inverse_plan = std::conditional_t<Real, fftn::c2r_plan<T>, fftn::c2c_plan<T>>;
+
+public:
+  separate_arm(std::size_t n, std::size_t count, std::ptrdiff_t in_dist, std::ptrdiff_t out_dist,
+               const fftn::options& o)
+      : bins_(Real ? n / 2 + 1 : n), count_(count), forward_(forward_shape(n, count, in_dist), o),
+        inverse_(inverse_shape(n, count, out_dist), o), kernel_(delay_kernel<T>(n, bins_)),
+        spectrum_(bins_ * count), ws_(std::max(forward_.workspace_bytes(state().threads),
+                                               inverse_.workspace_bytes(state().threads))) {}
+
+  void run(const void* in, void* out) const override {
+    const session& s = state();
+    const auto* x = static_cast<const In*>(in);
+    auto* y = static_cast<In*>(out);
+    if (s.mode == call::executor) {
+      const regrouped e(*s.exec, s.group_size);
+      forward_.execute(x, spectrum_.data(), e, ws_);
+      multiply_on(*s.exec, s.threads);
+      inverse_.execute(spectrum_.data(), y, e, ws_);
+    } else {
+      forward_.execute(x, spectrum_.data(), ws_);
+      multiply_rows(spectrum_.data(), kernel_.data(), bins_, 0, count_);
+      inverse_.execute(spectrum_.data(), y, ws_);
+    }
+  }
+
+  [[nodiscard]] std::string note() const override {
+    return "forward: " + axis_lines(forward_.describe()) +
+           "; inverse: " + axis_lines(inverse_.describe());
+  }
+
+private:
+  static fftn::shape<In, C> forward_shape(std::size_t n, std::size_t count,
+                                          std::ptrdiff_t in_dist) {
+    fftn::shape<In, C> sh;
+    if constexpr (Real) {
+      sh = fftn::rows_r2c<T>(n, count);
+    } else {
+      sh = fftn::rows_c2c<T>(n, count, fftn::direction::forward);
+    }
+    sh.batches.at(0).in_dist = in_dist;
+    return sh;
+  }
+
+  static fftn::shape<C, In> inverse_shape(std::size_t n, std::size_t count,
+                                          std::ptrdiff_t out_dist) {
+    fftn::shape<C, In> sh;
+    if constexpr (Real) {
+      sh = fftn::rows_c2r<T>(n, count);
+    } else {
+      sh = fftn::rows_c2c<T>(n, count, fftn::direction::backward);
+    }
+    sh.batches.at(0).out_dist = out_dist;
+    return sh;
+  }
+
+  // The loop on the executor's lanes, each a run of whole rows (a user with threads shares
+  // their loop out too).
+  struct job {
+    const separate_arm* arm;
+    int tasks;
+  };
+
+  static void task(void* arg, int index) {
+    const auto& j = *static_cast<const job*>(arg);
+    const std::size_t rows = j.arm->count_;
+    const auto t = static_cast<std::size_t>(j.tasks);
+    const auto i = static_cast<std::size_t>(index);
+    const std::size_t first = rows * i / t;
+    multiply_rows(j.arm->spectrum_.data(), j.arm->kernel_.data(), j.arm->bins_, first,
+                  rows * (i + 1) / t - first);
+  }
+
+  void multiply_on(const executor_type& e, int threads) const {
+    job j{this, static_cast<int>(std::min<std::size_t>(count_, static_cast<std::size_t>(threads)))};
+    if (j.tasks < 2) {
+      multiply_rows(spectrum_.data(), kernel_.data(), bins_, 0, count_);
+      return;
+    }
+    e.bulk(j.tasks, &task, &j);
+  }
+
+  std::size_t bins_;
+  std::size_t count_;
+  forward_plan forward_;
+  inverse_plan inverse_;
+  std::vector<C> kernel_;
+  mutable std::vector<C> spectrum_;
+  mutable fftn::workspace ws_;
+};
+
+// The arm of a case, or nullptr when PIPELINE does not apply to it.
+template <class T>
+std::unique_ptr<pipeline_arm> make_pipeline_arm(const fbench_case& c, const fftn::options& o) {
+  const bool rows = c.rank == 1 && c.interleave == 1 && c.outer == 1 && c.in_place == 0;
+  const bool cplx = c.kind == fbench_c2c && c.sign < 0;
+  if (!rows || (!cplx && c.kind != fbench_r2c)) {
+    return nullptr;
+  }
+  const auto n = static_cast<std::size_t>(c.dims[0]);
+  const auto count = static_cast<std::size_t>(c.batch);
+  const auto in_dist = static_cast<std::ptrdiff_t>(c.in_dist);
+  // An r2c case's output rows of n/2 + 1 complex values hold the n reals.
+  const auto out_dist = static_cast<std::ptrdiff_t>(cplx ? c.out_dist : 2 * c.out_dist);
+  const bool fused = state().pipeline == pipe_arm::fused;
+  if (cplx) {
+    if (fused) {
+      return std::make_unique<fused_arm<T, false>>(n, count, in_dist, out_dist, o);
+    }
+    return std::make_unique<separate_arm<T, false>>(n, count, in_dist, out_dist, o);
+  }
+  if (fused) {
+    return std::make_unique<fused_arm<T, true>>(n, count, in_dist, out_dist, o);
+  }
+  return std::make_unique<separate_arm<T, true>>(n, count, in_dist, out_dist, o);
+}
+
 struct plan_record {
+  std::unique_ptr<pipeline_arm> pipe; // PIPELINE (mode call::pipeline): the case's arm
   std::shared_ptr<const detail::plan_core> core;
   std::unique_ptr<std::byte[]> ws_memory; // WORKSPACE=page: the memory ws borrows
   fftn::workspace ws;
@@ -818,6 +1086,7 @@ void run_core(const plan_record& r, const void* in, void* out, const fftn::exec_
   switch (r.edge_mode) {
   case call::serial:
   case call::edges:
+  case call::pipeline: // never an edge mode
     if (args != nullptr) {
       detail::execute_all(*r.core, in, out, r.ws, *args);
     } else {
@@ -922,6 +1191,9 @@ void run_loop(const plan_record& r, const side_geometry& g, void* data, const vo
   switch (r.mode) {
   case call::edges:
     execute_edges(r, in, out);
+    return;
+  case call::pipeline:
+    r.pipe->run(in, out);
     return;
   case call::serial:
     return;
@@ -1036,6 +1308,12 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
         return fbench_error;
       }
       s.edge_loop = value == "loop";
+    } else if (key == "PIPELINE") {
+      if (value != "fused" && value != "separate") {
+        say(message, message_size, "PIPELINE is fused or separate");
+        return fbench_error;
+      }
+      s.pipeline = value == "fused" ? pipe_arm::fused : pipe_arm::separate;
     } else if (key == "RADICES") {
       try {
         s.settings.radices = parse_radices(value);
@@ -1201,6 +1479,12 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
     say(message, message_size, "EDGE_ARM needs EDGE_IN or EDGE_OUT");
     return fbench_error;
   }
+  if (s.pipeline != pipe_arm::none && (s.edge_in.any() || s.edge_out.any() ||
+                                       s.mode == call::team || !s.settings.radices.empty())) {
+    say(message, message_size,
+        "PIPELINE does not combine with EDGE_IN, EDGE_OUT, CALL=team or RADICES");
+    return fbench_error;
+  }
   try {
     if (threaded) {
       if (s.mode == call::serial) {
@@ -1219,7 +1503,8 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
         .str("version", fftn::version())
         .str("isa", fftn::isa_name(probe.instruction_set()))
         .boolean("isa_forced", s.isa != fftn::isa::best)
-        .raw("supports", R"(["c2c","r2c","c2r"])")
+        .raw("supports",
+             s.pipeline != pipe_arm::none ? R"(["c2c","r2c"])" : R"(["c2c","r2c","c2r"])")
         .raw("precisions", R"(["f64","f32"])")
         .str("planning", s.planning)
         .str("rader", s.rader)
@@ -1236,6 +1521,11 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
     }
     if (s.edge_in.any() || s.edge_out.any()) {
       d.str("edge_arm", s.edge_loop ? "loop" : "library");
+    }
+    if (s.pipeline != pipe_arm::none) {
+      // The harness then checks each row against its input delayed by one (backend.hpp).
+      d.str("pipeline", s.pipeline == pipe_arm::fused ? "fused" : "separate")
+          .str("output", "delay");
     }
     if (s.measure_seconds != 0) {
       d.str("measure_seconds", std::to_string(s.measure_seconds));
@@ -1326,6 +1616,19 @@ std::int32_t fbench_create(const fbench_case* c, void* /*in*/, void* out, void**
         .measure_seconds = s.measure_seconds,
         .measure_scratch_bytes = s.measure_scratch,
     };
+    if (s.pipeline != pipe_arm::none) {
+      record->mode = call::pipeline;
+      record->pipe = c->precision == fbench_f32 ? make_pipeline_arm<float>(*c, opts)
+                                                : make_pipeline_arm<double>(*c, opts);
+      if (!record->pipe) {
+        say(message, message_size,
+            "PIPELINE takes rows of c2c forward and r2c cases, out of place, only");
+        return fbench_unsupported;
+      }
+      say(message, message_size, record->pipe->note());
+      *plan = record.release();
+      return fbench_ok;
+    }
     const bool edges = s.edge_in.any() || s.edge_out.any();
     if (edges) {
       record->edge_mode = s.mode;
