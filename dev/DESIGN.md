@@ -686,9 +686,9 @@ The other interfaces are later work:
 ### 5.7 Real-to-real transforms: DCT, DST and DHT
 
 *Proposed* (phase 6, steps 6.3 to 6.5 and 6.12; the open points are in 18.2, "Phase 6"). The
-kind plumbing and the DHT are built (step 6.3, provisional, "As built" below); the DCT and DST
-kinds are refused until 6.4 and 6.5. They are composed plans: no new codelets, only read and
-store stages around transforms the plan already has.
+kind plumbing and the DHT (step 6.3) and the DCT and DST of types II and III (step 6.4) are built,
+provisional ("As built" below); types I and IV are refused until 6.5. They are composed plans: no
+new codelets, only read and store stages around transforms the plan already has.
 
 ```cpp
 namespace fftn {
@@ -783,6 +783,22 @@ Points that matter:
   `describe()` names every phase's chain. The plumbing for 6.4 and 6.5: `r2r_kind`,
   `shape::kinds`, `shape_view::kinds`, the kind checks, the wisdom key's kinds and the phase
   builder, to which each kind adds its read stage, transform and store stage.
+- **As built (step 6.4, DCT-II, DCT-III, DST-II, DST-III; src/core/r2r.cpp).** Each axis's kind
+  picks its read stage, chain direction and store stage in 6.3's phase builder; nothing else
+  changed, so the kinds mix freely across axes and take the same edges, layouts, teams and
+  executors. DCT-II: the read stage packs Makhoul's order as the r2c packs a line (n even: n/2
+  complex pairs; odd: n values), the forward chain runs in scratch, and the store stage does the
+  r2c's pairing of bins k and n/2 − k without its halving and the one complex multiply by
+  e^(−iπk/(2n)), writing Y_k and Y_(n−k). DCT-III: the read stage forms the Hermitian
+  W_k = e^(iπk/(2n)) (x_k − i x_(n−k)) and, n even, pairs W_k with W_(n/2−k) into the c2r's
+  half-length input (the c2r's own factor 2, so no halving), n odd writes all n bins; the backward
+  chain runs; the store stage writes the result back from Makhoul's order. The sine kinds are the
+  same stages with exact negations and reversals (the identities above). Each kind's twiddles,
+  e^(−2πik/n) for the pairing and e^(−iπk/(2n)), are one table per phase. An axis of one point has
+  no phase: the identity for `dht`, `dct3` and `dst3`, an exact factor 2 for `dct2` and `dst2`,
+  which joins the scales' product in the last store stage (6.5's `dct4` and `dst4`, whose factor
+  is √2, will need a phase or a rounding of their own). Measured on no machine: speed is step
+  6.12's.
 - **Phase 5 underneath.** The scratch-line programs of 5.2b, the edge phases and cursors of
   5.1b (multi-axis lines, real factors), the stored runs of 5.1d and the pruned codelets of
   5.1e (the odd `dct4`). Fusing the read stage into the first pass and the store stage into the
@@ -4657,6 +4673,7 @@ to change before a release.
 | 2026-11-26 | Phase 6 broken into steps 6.1–6.20 (PLAN), with proposed APIs for the convenience layer (5.4), the real-to-real kinds (5.7), the split-complex layout (5.8) and the C API (5.9), and their open points in 18.2, "Phase 6". Proposals, not decisions: steps marked P are built provisional with a second reader, as phase 5's were | The maintainer's priority (2026-11-25): features fully built, then the remaining performance |
 | 2026-11-26 | Block callbacks on c2c rows (task 5.3a, section 12.3): provisional `fftn/callback.hpp` (`block_info`, `block_fn`, `callback_mode`, `callback`, `callback_of`, `along_transforms`) and `edge::call`, with 18.2's proposals ("Callbacks"); the callback stage on the chain only until 5.3b, planned by the rules; blocks are stage chunks; per-member scratch at the end of each slot; the drive policies' per-task entries take the lane and slots, the plain instantiations unchanged; a plan with callbacks needs the `exec_args` overloads. Awaits the maintainer's review of the API. |
 | 2026-11-26 | Packaging (task 6.1, section 14.3): an installed CMake package (`fftn::fftn`; the adapters as components `omp` and `kokkos`), a relocatable `fftn.pc`, install rules on by default only for a top-level build, version compatibility `SameMinorVersion`, the thread library in the link interface; third-party subdirectories `EXCLUDE_FROM_ALL`; a path-filtered CI workflow builds a downstream project three ways (Windows not on pull requests) | DESIGN 18.2 Q25's proposal; a minor version may still change the API before 1.0; FetchContent users decide what they install; the check builds the library twice, so it runs where packaging can change rather than on every pull request |
+| 2026-11-26 | Step 6.4 (provisional, second reader to come): `dct2`, `dct3`, `dst2` and `dst3` built in 5.7's routes on 6.3's phase builder (Makhoul's read stage and twiddled store over the r2c's half-length chain, the inverse over the c2r's; the sine kinds by exact signs and reversals), any n, kinds mixed across axes; an axis of one point of `dct2` or `dst2` folds its exact factor 2 into the scales' product instead of a phase | 5.7's routes as proposed; the factor 2 needs no phase and no rounding of its own |
 | 2026-11-26 | Step 6.3 (provisional, second reader to come): `r2r_kind`, `shape<T, T>` with `shape::kinds`, `rows_r2r`, `planes_r2r`, `volumes_r2r`, `axes_r2r`, `r2r_plan`, and the DHT as built in 5.7: a read stage, the r2c's complex chain in the member's scratch and a store stage fusing the r2c's pairing with the Hartley combination; the DCT and DST kinds refused until 6.4 and 6.5; real-to-real plans by the rules only | The 18.2 "Phase 6" proposals 9–13 taken as written; scratch rather than the block, because a phase's lines run on several members at once and the block is the task's |
 
 ---
@@ -4683,6 +4700,8 @@ literature. The public sources the design draws on most:
 - M. Tasche and H. Zeuner, "Improved roundoff error analysis for precomputed twiddle
   factors", J. Comput. Anal. Appl. 4 (2002).
 - F. Giesen, "Notes on FFTs: for implementers" (2023).
+- J. Makhoul, "A fast cosine transform in one and multiple dimensions", IEEE Trans.
+  Acoustics, Speech and Signal Processing 28 (1980): the DCT-II and DCT-III routes of 5.7.
 - J. Chen and J. Revels, "Robust benchmarking in noisy environments" (2016).
 - Documentation of cuFFT callbacks, Intel MKL DFTI (scrambled ordering), FFTX
   (plan composition), Kokkos and Kokkos-FFT, KFR, zldsp::fft, ducc0 and RustFFT.
