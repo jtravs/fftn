@@ -24,10 +24,6 @@ handoff. Lessons that generalise are in [LESSONS.md](LESSONS.md), decisions in D
 | 5 | Started 2026-11-25: 5.1 in progress (task Q); 5.2 designed (steps 5.2a–5.2g, DESIGN 12.2), its API questions open (DESIGN 18.2); 5.2a built 2026-11-26 (task T); its batched forms, off by X65's P1 rule, adopted narrowed for c2c rows on one leaf on the EPYC 7763's and the Xeon 6240's classes (below). |
 | 6, 7 | Not started. |
 
-Phase 6, 2026-11-26: step 6.2 built, the informational size report (`tools/size_report.py`;
-DESIGN 14.3): CI's Release jobs write the library's text per instruction-set target to their
-job summaries, never failing.
-
 **Client catalogue** (the check of 2026-11-24, `main` d4b169f): weighted geometric mean of FFTN ÷
 FFTW at one thread / at the client's per-shape widths, against targets of 0.95 / 0.90. Since then
 only experiment runs have touched it; the catalogue has not been re-measured as a whole.
