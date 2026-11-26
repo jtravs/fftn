@@ -848,7 +848,7 @@ template <class T> struct r2r_run {
     std::size_t phases = 0;
     std::size_t route = 1; // the points of the transforms the routes run (route_points)
     for (std::size_t d = 0; d < c.n.size(); ++d) {
-      phases += c.n[d] > 1 ? 1 : 0;
+      phases += c.n[d] > 1 ? std::size_t{1} : std::size_t{0};
       route *= route_points(shape.kinds[d], c.n[d]);
     }
     const double scale = c.options_scale * c.in_scale * c.out_scale;
