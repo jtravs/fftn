@@ -198,6 +198,21 @@ where an item below makes them precise or narrows them.
    `src/`) or rule 4 adopts or deletes the copy into the output (`callback_copy_out`, read only for
    plans with an input callback). Plans without callbacks therefore keep their programs; an
    adopted change is checked with `describe()` and `workspace_bytes()` probes against `main`.
+10. **Added after the first runs were stopped, before any was analysed for a verdict**
+    (2026-11-26, 23:55). The first sessions (fbench options at 7af57e23; EPYC runs
+    20261126-233227-b1ed and the two beside it, on a node at load 88 with a band of ±15 %, and
+    Xeon run 20261126-233149-5693, nine rounds) were stopped, their times kept as recorded. Their
+    callback walked every block line by line, whatever the strides; on planes and volumes the
+    last phase passes columns (`element_stride` the row's length, `line_stride` 1), so it
+    walked memory at the row's stride, and on the Xeon's partial run K/U was 1.62–1.65 on the
+    planes in place and 1.46 on the c2c volume while the identity callback cost the plain plan
+    only 1.03–1.13 there. That measured fbench's callback, not FFTN's stage: a user who reads
+    `block_info` walks the block in memory order. The callback now does (`CALL_LOOP=memory`, the
+    default: along the lines in the inner loop where they lie closer together than the
+    elements), and the out session adds an arm **Kn** (`CALL_LOOP=lines`, the line-by-line walk)
+    for `docs/fusion.md`'s advice; Kn decides nothing. The EPYC sessions run on idle nodes
+    (node20, node21, still shared allocations of 8 cores) instead of the loaded one. The rules
+    are unchanged.
 
 ## Results
 
