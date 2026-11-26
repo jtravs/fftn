@@ -2704,7 +2704,7 @@ Points that matter:
   for L2-resident sizes and more beyond. Callbacks always see natural order, because their
   coordinates must be affine in the block.
 
-**Plan for task 5.2** (designed 2026-11-25; 5.2a and 5.2b built, "As built" below; steps 5.2a–5.2g in PLAN phase 5,
+**Plan for task 5.2** (designed 2026-11-25; 5.2a–5.2c built, "As built" below; steps 5.2a–5.2g in PLAN phase 5,
 experiment X67; the API points the maintainer has to settle are listed in 18.2, "Pipelines").
 
 - **API** (provisional, `fftn/pipeline.hpp`), the block above built in parts:
@@ -2829,8 +2829,8 @@ experiment X67; the API points the maintainer has to settle are listed in 18.2, 
 of 18.2's proposal 2), and `workspace` takes a pipeline; all provisional, with 18.2's proposals
 as written. `pipeline_desc` follows the API block without `middle.call` and `group`; `middle` is
 an unnamed struct of `scale` and `mul`, and `fanout`, its distances and `runs` are present and
-refused until their steps, as are `first` inverse and the kinds `<T, C, T>` (5.2c) and
-`<C, T, C>` (5.3). The pipeline holds a `plan_core` built by `core/pipeline.cpp` and runs on the
+refused until their steps, as are `first` inverse and the kind `<C, T, C>` (5.3; `<T, C, T>`
+is 5.2c's, below). The pipeline holds a `plan_core` built by `core/pipeline.cpp` and runs on the
 plan's entry points; its errors name the description's fields (the plan's own layout and edge
 checks run on the line's c2c shape, their messages renamed). The `<C, C, C>` chain pair is
 `chain_builder::c2c_line` twice, not a generalised `add_convolution`: the forward line from the
@@ -2852,6 +2852,25 @@ convolution, the inverse's first pass for a fan-out's kernel) and the byte offse
 wait for 5.2d and 5.2e, their first readers. Plans and plans with edges are unchanged
 (`describe()` and `workspace_bytes()` probes against `main`; the plain driver functions
 disassemble the same).
+
+**As built (task 5.2c, 2026-11-26).** `pipeline<T, C, T>` and `convolution_rows<T>(n, count,
+runs = {})` (the complex helper's shape: a shared complex kernel of stride 1 over the n/2 + 1
+bins, `middle.scale` 1, the optional trailing runs). The real chain pair is
+`chain_builder::r2c_line` from the input into the workspace block and `c2r_line` from the block
+to the output, so each line takes the real routes of plans (the pairing fused into the half-length
+chain's last or first pass, a leaf, a separate pairing pass, odd n by the full-length chain, a
+strided line through scratch). Every factor is an edge pass on the line in the block: the
+prologue's into the block (the r2c chain then runs in place there), the middle's on the n/2 + 1
+bins in place, the epilogue's from the block (the c2r chain then writes into the block). The
+scales' product goes to such a pass, else to the c2r chain's output. The sides are judged as a
+plan's real sides (real factors only, naming `desc.prologue.mul.kind` or
+`desc.epilogue.mul.kind`), the middle as an r2c plan's output edge (its reach over n/2 + 1 bins),
+and the layout as the line's c2c layout in real elements; `first` is ignored. A middle fused into
+the pairing passes is an arm of X67. The edge driver's row-block form now treats a pipeline's
+middle pass as an edge pass whose factor moves by the middle cursor's step (PR 140's latent
+finding; pipelines build no row blocks yet, a white-box test builds them). Plans, plans with edges
+and `<C, C, C>` pipelines are unchanged (`describe()`, `workspace_bytes()` and output bits of
+2832 of them; the plain driver functions disassemble the same).
 
 ### 12.3 Block callbacks
 
@@ -4087,6 +4106,8 @@ names `max_lanes` and `strict_layout`, which `options` does not have; a pipeline
 12. **The scratch area.** Proposal: exactly `scratch_bytes`, from a 128-byte boundary, not kept
     between calls. A slot's area is the largest of the object's callbacks' (one member never
     runs two at once), so callbacks of one object share it.
+`use`. Task 5.2c added `convolution_rows` under proposals 1–3 (the name of 12.2's API block, the
+optional trailing runs, `middle.scale` 1).
 
 **Phase 6 (2026-11-26; for the maintainer).** The steps are in PLAN's phase 6 table and the
 proposed APIs in 5.4, 5.7, 5.8 and 5.9. Each question has a proposal; steps marked P in the
@@ -4569,6 +4590,7 @@ to change before a release.
 | 2026-11-26 | X65's P1 adopted narrowed (section 12.1, AGENTS.md section 6): `machine_profile::edge_batched_forms` becomes a reach, `leaf_rows` on Zen 3's class and the Xeon 6240's, so c2c rows whose transform is one leaf take the batched forms; every other plan with edges, and every other machine, keeps the walked form | The deciding run (declared before it, E1, E2, E4, E5 on both machines): such rows 0.39–0.76 of their time (geometric means EPYC 0.549, Xeon 0.584), every excluded case on its walked form, none slower beyond the band; the excluded chains, real rows and planes had moved 0.90–1.01 in P1's runs, with Xeon c2c 1024 × 64 at 1.029 |
 | 2026-11-26 | The edge driver's batched forms (task 5.2a, section 12.1; X65's P1) built behind `machine_profile::edge_batched_forms`, off: the flat form, rows of one leaf and the unrolled calls with the factor cursors, and row blocks for c2c rows with separate edge passes; the middle cursor and the block offset left to 5.2b, which first reads them | P1's rule was missed on the EPYC 7763 by both arms (0.868 and 0.854 against 0.80): batch leaves with a separate factor gained a factor of two, fused leaves and chains barely moved. The forms are bitwise the walked form's, and pipelines need them from 5.2b, so the code stays, tested with the flag on |
 | 2026-11-26 | Row pipelines' API and the `<C, C, C>` chain pair (task 5.2b, section 12.2): provisional `fftn/pipeline.hpp` with 18.2's proposals; the chain pair as two `c2c_line` chains through the workspace block, factors of stride 1 fused, others edge passes on the line in cache; the middle cursor; the edge driver's batched forms always on for pipelines | The design's API block and plan, read literally; `c2c_line` already places fused factors, strides and Bluestein for both chains, so the convolution builder's generalisation waits for fan-out and the depth-first pair, which need it. X65 measured what losing the batched forms costs, so pipelines take them from the start |
+| 2026-11-26 | The `<T, C, T>` real chain pair and `convolution_rows` (task 5.2c, section 12.2): `r2c_line` into the workspace block, the middle on the n/2 + 1 bins and `c2r_line` out of it, every factor an edge pass on the line in cache; the edge driver's row-block form gives a middle pass the middle cursor's step | The real lines' routes are the plans' (fused pairings, leaves, odd n, strides) with no new code; a middle fused into the pairing passes waits for X67, as the PLAN row says. The row-block fix is latent for pipelines (no row blocks yet) but was wrong for the first that would build them |
 | 2026-11-26 | Pruned codelets (task 5.1e, section 12.1): `dif_head` and `plain_head`, halves of the even codelet radices only, for the first and last passes of c2c rows whose stored runs lie in the line's first half; one run of the half stored with stride 1 is read or written in place with no separate pass | Counted from the generator (gen/README.md): halves cost 0.77–0.89 of `dif`'s and 0.86–0.94 of `plain`'s vector operations at radices 8–64 and three quarters of the memory accesses; the gain is the separate pass that disappears. A half of an even radix is the line's first half whatever the radix, so one variant pair per radix covers the valid half of a zero-padded row and any band or crop inside it. Quarters and odd radices were counted and left out (smaller or no gains; `plain_head` of 9 and 25 would cost more than `plain`) |
 | 2026-11-26 | Phase 6 broken into steps 6.1–6.20 (PLAN), with proposed APIs for the convenience layer (5.4), the real-to-real kinds (5.7), the split-complex layout (5.8) and the C API (5.9), and their open points in 18.2, "Phase 6". Proposals, not decisions: steps marked P are built provisional with a second reader, as phase 5's were | The maintainer's priority (2026-11-25): features fully built, then the remaining performance |
 

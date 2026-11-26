@@ -129,6 +129,18 @@ bool cursors_fixed(std::uint8_t moving, const factor_steps& step) noexcept {
          ((moving & moving_mid_factor) == 0 || step[2] == 0);
 }
 
+// The bytes the factor of an edge pass reading the cursor `moving` (one of them: the input's, the
+// output's or the middle's) moves per iteration of a loop moving the cursors by `step`.
+std::ptrdiff_t block_factor_step(std::uint8_t moving, const factor_steps& step) noexcept {
+  if ((moving & moving_out_factor) != 0) {
+    return step[1];
+  }
+  if ((moving & moving_mid_factor) != 0) {
+    return step[2];
+  }
+  return step[0];
+}
+
 // `a` with the cursors in the factors a stage reads (`moving`), copied into `local`; `a` itself
 // where it reads none.
 const pass_args* with_cursors(const pass_args& a, std::uint8_t moving, factor_cursors f,
@@ -625,9 +637,10 @@ edge_forms make_edge_forms(const program& p, const std::vector<edge_record>& e, 
       }
       continue;
     }
-    // A separate edge pass (edge_pass_stage): its rows src_dist and dst_dist elements apart, its
-    // factor the batch loop's factor step apart.
-    const bool edge_pass = st.name.starts_with("edge in") || st.name.starts_with("edge out");
+    // A separate edge pass (edge_pass_stage, or a pipeline's middle pass): its rows src_dist and
+    // dst_dist elements apart, its factor the batch loop's step of the cursor it reads apart.
+    const bool edge_pass = st.name.starts_with("edge in") || st.name.starts_with("edge out") ||
+                           st.name.starts_with("edge middle");
     if (!edge_pass || st.args.rows != 0 || st.args.src_dist != 0 || st.args.dst_dist != 0 ||
         src_dist % element_bytes != 0 || dst_dist % element_bytes != 0) {
       continue;
@@ -635,8 +648,7 @@ edge_forms make_edge_forms(const program& p, const std::vector<edge_record>& e, 
     x.block_call = true;
     x.s.args.src_dist = src_dist / element_bytes;
     x.s.args.dst_dist = dst_dist / element_bytes;
-    x.s.args.dst_qstride =
-        (st.moving_factors & moving_out_factor) != 0 ? e[0].factor_step[1] : e[0].factor_step[0];
+    x.s.args.dst_qstride = block_factor_step(st.moving_factors, e[0].factor_step);
   }
   // run_edge_row_blocks runs the stages between two block calls row by row through the scratch
   // lines a and b, which hold one row's line: a stage may read a scratch line only where a stage

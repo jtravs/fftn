@@ -82,16 +82,20 @@ struct placed {
   scale_at at = scale_at::none;
 };
 
-// Each operation's place: a complex factor of stride 1 along the line (or on a line of one point)
-// fuses into its chain's pass; anything else, and accumulation, is an edge pass on the line in the
-// workspace block. The scale goes to a separate pass where there is one (it costs nothing
-// there), else to the inverse chain's output, else (the epilogue's factor fused) to its input.
-placed place(edge_side pro, edge_side mid, edge_side epi, double scale, std::size_t n) {
+// Each operation's place: with `fuse` (the <C, C, C> chain pair), a complex factor of stride 1
+// along the line (or on a line of one point) fuses into its chain's pass; anything else, and
+// accumulation, is an edge pass on the line in the workspace block. The real chain pair (`fuse`
+// false) fuses nothing: its sides take real factors, which no pass fuses, and a middle fused into
+// the pairing passes is an arm of experiment X67 (PLAN 5.2c). The scale goes to a separate pass
+// where there is one (it costs nothing there), else to the inverse chain's output, else (the
+// epilogue's factor fused) to its input.
+placed place(edge_side pro, edge_side mid, edge_side epi, double scale, std::size_t n, bool fuse) {
   // A stride of 0 along a line of more than one point broadcasts one value, which the fused
   // passes (one value per element) cannot read (side_of gives 0 for a line of one point, where
   // the stride reads nothing more).
-  const auto fusable = [n](const edge_side& s) {
-    return s.kind == factor_kind::complex && (s.axis_stride == 1 || (s.axis_stride == 0 && n == 1));
+  const auto fusable = [n, fuse](const edge_side& s) {
+    return fuse && s.kind == factor_kind::complex &&
+           (s.axis_stride == 1 || (s.axis_stride == 0 && n == 1));
   };
   placed p{.pro = std::move(pro), .mid = std::move(mid), .epi = std::move(epi), .scale = scale};
   for (edge_side* s : {&p.pro, &p.mid, &p.epi}) {
@@ -177,6 +181,42 @@ std::string operation_text(const char* name, const edge_side& s, const char* fus
   return std::string(name) + ": " + t + " " + (s.fused ? fused_where : separate_where);
 }
 
+// The middle's separate pass, in place on the spectrum of `bins` complex values in the workspace
+// block, its factor through the middle's cursor.
+stage middle_stage(precision prec, const edge_side& mid, std::size_t bins, std::size_t chunk) {
+  stage m = edge_pass_stage(prec, mid, true, bins, slot::block, 1, slot::block, 1, chunk, false,
+                            mid.axis_stride);
+  m.moving_factors = moving_mid_out_factor;
+  m.name.replace(0, std::string_view("edge out").size(), "edge middle");
+  return m;
+}
+
+// The batch loops of a pipeline's program, the slots in and out moved by the layout's distances
+// (elements of elem_bytes each); the block never moves.
+void add_batch_loops(program& p, const pipeline_view& d, const row_layout& l,
+                     std::ptrdiff_t elem_bytes) {
+  p.transforms = 1;
+  for (std::size_t b = 0; b < d.batches.size(); ++b) {
+    p.records.emplace_back(loop{
+        .kind = loop_kind::batch,
+        .count = d.batches[b].count,
+        .step = {l.in_dist[b] * elem_bytes, l.out_dist[b] * elem_bytes, 0},
+    });
+    p.transforms *= d.batches[b].count;
+  }
+  p.batch_loops = d.batches.size();
+}
+
+// The line's stages after the batch loops, which then end with them.
+void end_program(program& p, std::vector<stage>& line) {
+  for (stage& st : line) {
+    p.records.emplace_back(std::move(st));
+  }
+  for (std::size_t b = 0; b < p.batch_loops; ++b) {
+    std::get<loop>(p.records[b]).body_end = static_cast<std::uint32_t>(p.records.size());
+  }
+}
+
 template <class T>
 void build_pair(plan_core& c, const pipeline_view& d, const row_layout& l, const placed& pl,
                 const build_settings& settings) {
@@ -185,17 +225,7 @@ void build_pair(plan_core& c, const pipeline_view& d, const row_layout& l, const
   chain_builder<T> chain = plan_chain<T>(c, profile, settings);
   program& p = c.prog;
   const std::size_t n = d.line.n;
-  const auto cb = static_cast<std::ptrdiff_t>(2 * sizeof(T));
-  p.transforms = 1;
-  for (std::size_t b = 0; b < d.batches.size(); ++b) {
-    p.records.emplace_back(loop{
-        .kind = loop_kind::batch,
-        .count = d.batches[b].count,
-        .step = {l.in_dist[b] * cb, l.out_dist[b] * cb, 0},
-    });
-    p.transforms *= d.batches[b].count;
-  }
-  p.batch_loops = d.batches.size();
+  add_batch_loops(p, d, l, static_cast<std::ptrdiff_t>(2 * sizeof(T)));
 
   std::vector<stage> line;
   std::size_t scratch = 0;
@@ -225,11 +255,7 @@ void build_pair(plan_core& c, const pipeline_view& d, const row_layout& l, const
   scratch =
       std::max(scratch, chain.c2c_line(n, -1, forward_src, home, forward_aliased, forward, line));
   if (pl.mid.separate) {
-    stage m = edge_pass_stage(c.prec, pl.mid, true, n, slot::block, 1, slot::block, 1, chunk, false,
-                              pl.mid.axis_stride);
-    m.moving_factors = moving_mid_out_factor;
-    m.name.replace(0, std::string_view("edge out").size(), "edge middle");
-    line.push_back(std::move(m));
+    line.push_back(middle_stage(c.prec, pl.mid, n, chunk));
   }
   line_edges inverse;
   inverse.scale = pl.scale;
@@ -251,17 +277,71 @@ void build_pair(plan_core& c, const pipeline_view& d, const row_layout& l, const
         std::max(scratch, chain.c2c_line(n, +1, home, {.where = slot::out, .stride = l.out_stride},
                                          false, inverse, line));
   }
-  for (stage& st : line) {
-    p.records.emplace_back(std::move(st));
-  }
-  for (std::size_t b = 0; b < p.batch_loops; ++b) {
-    std::get<loop>(p.records[b]).body_end = static_cast<std::uint32_t>(p.records.size());
-  }
+  end_program(p, line);
   c.block_elements = n;
   lay_out_workspace(c, scratch, 2 * sizeof(T), false);
   const std::string radices = chain.radix_text(n);
   c.axis_notes.push_back("line (n = " + std::to_string(n) + "): forward " + radices +
                          ", then backward " + radices + " (shared twiddle tables)");
+}
+
+// The real chain pair (<T, C, T>, task 5.2c): batch loops, then the stages of one line,
+//
+//   [prologue pass into the block] -> r2c chain into the block -> [middle pass on its n/2 + 1
+//   bins] -> c2r chain out of the block (or back into it) -> [epilogue pass from the block]
+//
+// built by chain_builder::r2c_line and c2r_line, which take each line's real route (the pairing
+// fused into the half-length chain's last or first pass, a leaf, a separate pairing pass, odd n by
+// the full-length chain, a strided line through scratch). The block holds the n reals the
+// prologue's pass writes (n/2 complex values at most) and then the spectrum in place; the c2r
+// chain reads it there, writing it only on its way to an epilogue pass. Every factor is a separate
+// pass on the line in cache (place, fuse false); the scales' product goes to such a pass, else to
+// the c2r chain's output.
+template <class T>
+void build_real_pair(plan_core& c, const pipeline_view& d, const row_layout& l, const placed& pl,
+                     const build_settings& settings) {
+  const target_profile profile =
+      plan_profile(c, of<T>(*find_kernels(c.isa_target)).complex_lanes, settings);
+  chain_builder<T> chain = plan_chain<T>(c, profile, settings);
+  program& p = c.prog;
+  const std::size_t n = d.line.n;
+  const std::size_t bins = n / 2 + 1;
+  add_batch_loops(p, d, l, static_cast<std::ptrdiff_t>(sizeof(T)));
+
+  std::vector<stage> line;
+  std::size_t scratch = 0;
+  const std::size_t chunk = settings.chunk_points;
+  endpoint forward_src{.where = slot::in, .stride = l.in_stride};
+  bool forward_aliased = false;
+  if (pl.pro.separate) {
+    line.push_back(edge_pass_stage(c.prec, pl.pro, false, n, slot::in, l.in_stride, slot::block, 1,
+                                   chunk, true, pl.pro.axis_stride));
+    forward_src = {.where = slot::block, .stride = 1};
+    forward_aliased = true;
+  }
+  const endpoint home{.where = slot::block, .stride = 1};
+  scratch = std::max(scratch, chain.r2c_line(n, forward_src, home, forward_aliased, 1.0, line));
+  if (pl.mid.separate) {
+    line.push_back(middle_stage(c.prec, pl.mid, bins, chunk));
+  }
+  if (pl.epi.separate) {
+    scratch = std::max(scratch, chain.c2r_line(n, home, home, 1.0, line));
+    line.push_back(edge_pass_stage(c.prec, pl.epi, true, n, slot::block, 1, slot::out, l.out_stride,
+                                   chunk, true, pl.epi.axis_stride));
+  } else {
+    const double scale = pl.at == scale_at::inverse_out ? pl.scale : 1.0;
+    scratch =
+        std::max(scratch, chain.c2r_line(n, home, {.where = slot::out, .stride = l.out_stride},
+                                         scale, line));
+  }
+  end_program(p, line);
+  c.block_elements = bins;
+  lay_out_workspace(c, scratch, 2 * sizeof(T), false);
+  const bool strided_in = !pl.pro.separate && l.in_stride != 1;
+  const bool strided_out = !pl.epi.separate && l.out_stride != 1;
+  c.axis_notes.push_back("line (n = " + std::to_string(n) + "): forward " +
+                         chain.real_text(n, true, strided_in) + ", then backward " +
+                         chain.real_text(n, false, strided_out));
 }
 
 } // namespace
@@ -270,17 +350,17 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
                                                     const build_settings& settings) {
   switch (d.kind) {
   case pipeline_kind::complex_pair:
-    break;
   case pipeline_kind::real_convolution:
-    refuse("desc", "is a <T, C, T> pipeline (a real convolution), which is not built yet "
-                   "(task 5.2c)");
+    break;
   case pipeline_kind::real_middle:
     refuse("desc", "is a <C, T, C> pipeline, which is not built yet (task 5.3)");
   }
-  if (d.first != direction::forward && d.first != direction::backward) {
+  // <T, C, T>: an r2c then a c2r transform, whatever `first` says (pipeline_desc).
+  const bool real = d.kind == pipeline_kind::real_convolution;
+  if (!real && d.first != direction::forward && d.first != direction::backward) {
     refuse("desc.first", "must be direction::forward or direction::backward");
   }
-  if (d.first == direction::backward) {
+  if (!real && d.first == direction::backward) {
     refuse("desc.first", "is direction::backward: a pipeline whose inverse transform runs first "
                          "(a spectral pair) is not built yet (task 5.3)");
   }
@@ -304,19 +384,26 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
       .axes = std::span<const axis>(&d.line, 1),
       .batches = d.batches,
   };
-  const row_layout layout = renaming([&] { return resolve_row_layout(line, opts.in_place); });
+  const row_layout layout = renaming([&] { return resolve_row_layout(line, opts.in_place, real); });
 
-  // The vocabulary, judged as a plan's edges are, on the line's c2c shape.
+  // The vocabulary, judged as a plan's edges are: on the line's c2c shape, or for <T, C, T> the
+  // prologue on the input of its r2c shape and the epilogue on the output of its c2r shape (real
+  // sides, which take real factors only), and the middle on the r2c shape's output, the n/2 + 1
+  // bins.
   if (d.prologue.accumulate) {
     refuse("desc.prologue.accumulate", "is for the epilogue only");
   }
+  shape_view r2c_line = line;
+  r2c_line.kind = transform_kind::r2c;
+  shape_view c2r_line = line;
+  c2r_line.kind = transform_kind::c2r;
   const placed pl = renaming([&] {
     check_edge_scale(opts.scale, d.prec, "options.scale");
     edge_view middle = d.middle;
     middle.accumulate = false;
-    edge_side pro = resolve_edge_side(line, d.prologue, false, "desc.prologue");
-    edge_side mid = resolve_edge_side(line, middle, true, "desc.middle");
-    edge_side epi = resolve_edge_side(line, d.epilogue, true, "desc.epilogue");
+    edge_side pro = resolve_edge_side(real ? r2c_line : line, d.prologue, false, "desc.prologue");
+    edge_side mid = resolve_edge_side(real ? r2c_line : line, middle, true, "desc.middle");
+    edge_side epi = resolve_edge_side(real ? c2r_line : line, d.epilogue, true, "desc.epilogue");
     if (opts.scale != 1.0 && d.epilogue.scale != 1.0) {
       refuse("desc.epilogue.scale", "and options.scale are both given; options.scale is a "
                                     "shortcut for desc.epilogue.scale, so give one of them");
@@ -331,7 +418,7 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
       refuse("desc.epilogue.accumulate", "is refused on an in-place pipeline, whose output's "
                                          "prior values are its input");
     }
-    return place(std::move(pro), std::move(mid), std::move(epi), scale, d.line.n);
+    return place(std::move(pro), std::move(mid), std::move(epi), scale, d.line.n, !real);
   });
 
   auto c = std::make_shared<plan_core>();
@@ -351,7 +438,13 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
     c->isa_target = plan_target_of(opts);
     return 0;
   });
-  if (d.prec == precision::f64) {
+  if (real) {
+    if (d.prec == precision::f64) {
+      build_real_pair<double>(*c, d, layout, pl, settings);
+    } else {
+      build_real_pair<float>(*c, d, layout, pl, settings);
+    }
+  } else if (d.prec == precision::f64) {
     build_pair<double>(*c, d, layout, pl, settings);
   } else {
     build_pair<float>(*c, d, layout, pl, settings);
@@ -375,18 +468,23 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
   c->profile = settings.profile;
   c->runs_inline = runs_inline(c->graph, c->profile);
   c->built = strategy_choice::chain;
-  c->strategy_name = "the chain pair";
+  c->strategy_name = real ? "the real chain pair" : "the chain pair";
 
   // describe().
   const std::size_t lines = c->prog.transforms;
-  c->pipeline_title = std::string("fftn pipeline: <c, c, c> forward then backward, ") +
+  c->pipeline_title = std::string("fftn pipeline: ") +
+                      (real ? "<t, c, t> r2c then c2r, " : "<c, c, c> forward then backward, ") +
                       (d.prec == precision::f64 ? "double" : "float") +
                       ", n = " + std::to_string(d.line.n) + ", " + std::to_string(lines) +
                       (lines == 1 ? " line" : " lines") +
                       (opts.in_place ? ", in place" : ", out of place");
-  c->strategy_note = "the chain pair: each line through the forward chain into the workspace "
-                     "block (its scratch-resident home, which the batch loops never move), the "
-                     "middle there, then the backward chain out of it (DESIGN.md 12.2)";
+  c->strategy_note =
+      real ? "the real chain pair: each line through the r2c chain into the workspace block (its "
+             "scratch-resident home, which the batch loops never move), the middle there on its "
+             "n/2 + 1 bins, then the c2r chain out of it (DESIGN.md 12.2)"
+           : "the chain pair: each line through the forward chain into the workspace block (its "
+             "scratch-resident home, which the batch loops never move), the middle there, then "
+             "the backward chain out of it (DESIGN.md 12.2)";
   const auto stages = std::ranges::count_if(
       c->prog.records, [](const record& r) { return std::holds_alternative<stage>(r); });
   const std::size_t calls = c->needs_args ? c->edge_batched.calls.size() : c->prog.calls.size();
@@ -404,7 +502,9 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
                                    "in a separate pass into the workspace block") +
                     "\n" +
                     operation_text("middle", pl.mid, "in the forward chain's last pass",
-                                   "in a separate pass on the line in the workspace block") +
+                                   real ? "in a separate pass on the line's n/2 + 1 bins in the "
+                                          "workspace block"
+                                        : "in a separate pass on the line in the workspace block") +
                     "\n" +
                     operation_text("epilogue", pl.epi, "in the backward chain's last pass",
                                    "in a separate pass from the workspace block");

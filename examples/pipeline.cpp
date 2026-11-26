@@ -3,8 +3,10 @@
 
 // Row pipelines (fftn/pipeline.hpp, provisional): a circular convolution of every row with one
 // kernel, the forward transform, the kernel's spectrum and the inverse transform in one sweep,
-// with the kernel passed at execution. The example quoted in docs/conventions.md ("Pipelines").
-// Exits with 0 when the result matches the same work done by two plain plans and a loop.
+// with the kernel passed at execution; for complex rows, and for real rows (r2c, the spectrum's
+// n/2 + 1 bins, c2r). The examples quoted in docs/conventions.md ("Pipelines"). Exits with 0
+// when the results match the same work done by two plain plans and a loop, and by the direct
+// convolution.
 
 #include <fftn/fftn.hpp>
 
@@ -68,13 +70,62 @@ double pipeline_error() {
   return error / largest;
 }
 
+// The largest difference between a real pipeline smoothing every row and the direct circular
+// convolution, relative to the largest output.
+double real_pipeline_error() {
+  const std::size_t n = 200;
+  const std::size_t count = 6;
+  std::vector<double> x(n * count);
+  for (std::size_t i = 0; i < x.size(); ++i) {
+    x[i] = std::cos(0.05 * static_cast<double>(i)) + 0.3 * std::sin(1.9 * static_cast<double>(i));
+  }
+  // A 5-point moving average, padded with zeros to the row's length.
+  const std::size_t taps = 5;
+  std::vector<double> filter(n, 0.0);
+  std::fill_n(filter.begin(), taps, 1.0 / static_cast<double>(taps));
+
+  // snippet-begin: real-pipeline
+  // The filter's spectrum: its r2c transform, n/2 + 1 bins.
+  const fftn::r2c_plan<double> r2c(fftn::rows_r2c<double>(n, 1));
+  fftn::workspace r2c_ws(r2c);
+  std::vector<std::complex<double>> kernel(n / 2 + 1);
+  r2c.execute(filter.data(), kernel.data(), r2c_ws);
+
+  // Every real row circularly convolved with the filter: r2c, times the spectrum, c2r,
+  // normalised by 1/n, in one sweep.
+  fftn::pipeline_desc desc = fftn::convolution_rows<double>(n, count);
+  desc.middle.scale = 1.0 / static_cast<double>(n);
+  const fftn::pipeline pipe(desc);
+  fftn::workspace ws(pipe);
+
+  std::vector<double> y(n * count);
+  pipe.execute(x.data(), y.data(), ws, {.mid_factor = kernel.data()});
+  // snippet-end: real-pipeline
+
+  double largest = 0;
+  double error = 0;
+  for (std::size_t r = 0; r < count; ++r) {
+    for (std::size_t j = 0; j < n; ++j) {
+      double want = 0;
+      for (std::size_t i = 0; i < taps; ++i) {
+        want += filter[i] * x[r * n + (j + n - i) % n];
+      }
+      largest = std::max(largest, std::abs(want));
+      error = std::max(error, std::abs(y[r * n + j] - want));
+    }
+  }
+  return error / largest;
+}
+
 } // namespace
 
 int main() {
   try {
     const double error = pipeline_error();
     std::printf("pipeline against plain plans and a loop: largest error %.3g\n", error);
-    return error < 1e-13 ? 0 : 1;
+    const double real_error = real_pipeline_error();
+    std::printf("real pipeline against the direct convolution: largest error %.3g\n", real_error);
+    return error < 1e-13 && real_error < 1e-13 ? 0 : 1;
   } catch (const std::exception& e) {
     std::printf("failed: %s\n", e.what());
     return 1;

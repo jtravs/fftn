@@ -5,11 +5,12 @@
 /// Row pipelines: a transform, a pointwise middle and the inverse transform over one axis, in
 /// one sweep, the spectrum never reaching memory (dev/DESIGN.md 12.2).
 ///
-/// Provisional (task 5.2b, 2026-11-26): this API follows dev/DESIGN.md section 12.2's API block
-/// with the proposals of its section 18.2 ("Pipelines"), which the maintainer has yet to settle;
-/// it may change before the first release. Built so far: `pipeline<C, C, C>` with the forward
-/// transform first, its prologue, middle and epilogue vocabulary (scales, real and complex
-/// factors, accumulation), one inverse per forward, and every line stored whole.
+/// Provisional (tasks 5.2b and 5.2c, 2026-11-26): this API follows dev/DESIGN.md section 12.2's
+/// API block with the proposals of its section 18.2 ("Pipelines"), which the maintainer has yet to
+/// settle; it may change before the first release. Built so far: `pipeline<C, C, C>` with the
+/// forward transform first and `pipeline<T, C, T>` (r2c, then c2r), with their prologue, middle
+/// and epilogue vocabulary (scales, real and complex factors, accumulation), one inverse per
+/// forward, and every line stored whole.
 /// docs/conventions.md ("Pipelines") states what a pipeline computes.
 #pragma once
 
@@ -46,16 +47,20 @@ namespace fftn::inline v0 {
 ///
 /// The prologue and the epilogue are edges (fftn/edges.hpp) on the input and the output, indexed
 /// by the line's logical position and the batch: their factors' `axis_strides` hold one stride,
-/// along the line, and their `batch_strides` one per batch dimension or none. The middle
-/// multiplies the spectrum between the transforms by its `scale` and its factor, indexed by the
-/// bin along the line and the batch in the same way: the kernel of a convolution, whose array
-/// each execution passes in `exec_args::mid_factor`. Nothing is normalised: a round trip
-/// multiplies by n unless a scale or the kernel says otherwise. The scales of the prologue, the
-/// middle, the epilogue and `options::scale` are applied as one product.
+/// along the line, and their `batch_strides` one per batch dimension or none. On the real input
+/// and output of a `<T, C, T>` pipeline they take real factors only. The middle multiplies the
+/// spectrum between the transforms by its `scale` and its factor, indexed by the bin along the
+/// line and the batch in the same way: the kernel of a convolution, whose array each execution
+/// passes in `exec_args::mid_factor`. The spectrum has n bins for `<C, C, C>` and the n/2 + 1
+/// bins of the r2c transform for `<T, C, T>` (bins 0 to n/2), whose c2r transform ignores the
+/// imaginary parts of bin 0 and, for even n, of bin n/2, as a c2r plan does.
+/// Nothing is normalised: a round trip multiplies by n unless a scale or the kernel says
+/// otherwise. The scales of the prologue, the middle, the epilogue and `options::scale` are
+/// applied as one product.
 ///
-/// Provisional (task 5.2b). A pipeline refuses, naming the field, what is not built yet: the
-/// inverse transform first (task 5.3), `fanout` above 1 (task 5.2e), stored runs (task 5.2d) and
-/// the kinds other than `<C, C, C>` (task 5.2c).
+/// Provisional (tasks 5.2b, 5.2c). A pipeline refuses, naming the field, what is not built yet:
+/// the inverse transform first (task 5.3), `fanout` above 1 (task 5.2e), stored runs (task 5.2d)
+/// and the kind `<C, T, C>` (task 5.3).
 template <class In, class Mid, class Out> struct pipeline_desc {
   static_assert(
       (std::is_same_v<In, std::complex<double>> && std::is_same_v<Mid, std::complex<double>> &&
@@ -96,10 +101,11 @@ template <class In, class Mid, class Out> struct pipeline_desc {
     /// A real factor; finite, and for `float` pipelines 0 or of a magnitude from the smallest
     /// positive `float` to the largest. Applied as one product with the other scales.
     double scale = 1.0;
-    /// The middle's factor, `Mid` values indexed by bin: `axis_strides` holds one stride (the
-    /// stride between consecutive bins, in the array's elements), `batch_strides` one per batch
-    /// dimension (0 for a kernel shared along it) or none (one kernel for every line). Its array
-    /// arrives with each execution (`exec_args::mid_factor`).
+    /// The middle's factor indexed by bin: `Mid` values with `factor_kind::complex`, or real `T`
+    /// values with `factor_kind::real`. `axis_strides` holds one stride (the stride between
+    /// consecutive bins, in the array's elements), `batch_strides` one per batch dimension (0
+    /// for a kernel shared along it) or none (one kernel for every line). Its array arrives with
+    /// each execution (`exec_args::mid_factor`).
     factor mul{};
   } middle{}; ///< The middle: what multiplies each bin of the spectrum between the transforms.
   /// The output edge: a scale and a factor applied to each output element after the second
@@ -114,6 +120,29 @@ template <class In, class Mid, class Out> struct pipeline_desc {
   /// (task 5.2e).
   std::ptrdiff_t fanout_factor_dist = 0;
 };
+
+namespace detail {
+// The helpers' batch dimension: `count` rows one after another, tight (distances 0, the
+// defaults) or, with runs, their stored extents on each side (the end of the side's last run, or
+// the whole line where the side has none).
+[[nodiscard]] inline batch rows_batch(std::size_t n, std::size_t count,
+                                      std::span<const stored_run> runs) {
+  std::size_t in_extent = 0;
+  std::size_t out_extent = 0;
+  for (const stored_run& r : runs) {
+    std::size_t& e = r.where == side::in ? in_extent : out_extent;
+    e = std::max(e, r.stored + r.count);
+  }
+  const auto dist = [n](std::size_t extent) {
+    return static_cast<std::ptrdiff_t>(extent != 0 ? extent : n);
+  };
+  return batch{
+      .count = count,
+      .in_dist = runs.empty() ? 0 : dist(in_extent),
+      .out_dist = runs.empty() ? 0 : dist(out_extent),
+  };
+}
+} // namespace detail
 
 /// A batch of `count` complex rows of length `n`, stored one after another, convolved: the
 /// forward transform, a complex middle factor (one kernel spectrum of `n` bins, stride 1,
@@ -132,21 +161,29 @@ complex_convolution_rows(std::size_t n, std::size_t count, std::span<const store
   d.first = direction::forward;
   d.line = axis{.n = n};
   d.runs.assign(runs.begin(), runs.end());
-  // The stored extent of each side: the end of its last run, or the whole line.
-  std::size_t in_extent = 0;
-  std::size_t out_extent = 0;
-  for (const stored_run& r : runs) {
-    std::size_t& e = r.where == side::in ? in_extent : out_extent;
-    e = std::max(e, r.stored + r.count);
-  }
-  const auto dist = [n](std::size_t extent) {
-    return static_cast<std::ptrdiff_t>(extent != 0 ? extent : n);
-  };
-  d.batches.push_back(batch{
-      .count = count,
-      .in_dist = runs.empty() ? 0 : dist(in_extent),
-      .out_dist = runs.empty() ? 0 : dist(out_extent),
-  });
+  d.batches.push_back(detail::rows_batch(n, count, runs));
+  d.middle.mul = factor{.kind = factor_kind::complex, .axis_strides = {1}, .batch_strides = {}};
+  return d;
+}
+
+/// A batch of `count` real rows of length `n`, stored one after another, convolved: the r2c
+/// transform, a complex middle factor (one kernel spectrum of the n/2 + 1 bins, stride 1, shared
+/// by every row: `middle.mul.batch_strides` empty), and the c2r transform. Each row is replaced by
+/// its circular convolution with the kernel whose r2c transform the spectrum is, times n: fold
+/// 1/n into the kernel or `middle.scale`. A linear (zero-padded) convolution of a row of m values
+/// with a kernel of L taps is the circular one of a length n of at least m + L - 1, the row and
+/// the kernel padded with zeros; until stored runs are built (task 5.2d), the caller stores those
+/// zeros.
+///
+/// `runs`: as for `complex_convolution_rows`. Exceptions, guarantees and status: as for
+/// `complex_convolution_rows` (task 5.2c).
+template <class T>
+[[nodiscard]] pipeline_desc<T, std::complex<T>, T>
+convolution_rows(std::size_t n, std::size_t count, std::span<const stored_run> runs = {}) {
+  pipeline_desc<T, std::complex<T>, T> d;
+  d.line = axis{.n = n};
+  d.runs.assign(runs.begin(), runs.end());
+  d.batches.push_back(detail::rows_batch(n, count, runs));
   d.middle.mul = factor{.kind = factor_kind::complex, .axis_strides = {1}, .batch_strides = {}};
   return d;
 }
@@ -206,11 +243,12 @@ public:
   /// Throws `std::invalid_argument` naming the field: a length or count of 0, overlapping
   /// output elements, sizes that overflow, in-place layouts that do not agree, an edge or
   /// middle that is not valid (as `plan`'s edges are judged, with names such as
-  /// `desc.epilogue.mul.batch_strides`), `accumulate` on the prologue or on an in-place
-  /// pipeline, both `options::scale` and `desc.epilogue.scale` other than 1, a product of
-  /// scales not representable in the precision, a negative or non-finite
-  /// `options::measure_seconds`, or what is not built yet (`pipeline_desc`). Throws
-  /// `std::bad_alloc` when memory runs out.
+  /// `desc.epilogue.mul.batch_strides`; a complex factor on the real input or output of a
+  /// `<T, C, T>` pipeline names `desc.prologue.mul.kind` or `desc.epilogue.mul.kind`),
+  /// `accumulate` on the prologue or on an in-place pipeline, both `options::scale` and
+  /// `desc.epilogue.scale` other than 1, a product of scales not representable in the
+  /// precision, a negative or non-finite `options::measure_seconds`, or what is not built yet
+  /// (`pipeline_desc`). Throws `std::bad_alloc` when memory runs out.
   explicit pipeline(const pipeline_desc<In, Mid, Out>& desc, const options& opts = {})
       : core_(detail::make_pipeline_core(view_of(desc), opts)) {}
 
