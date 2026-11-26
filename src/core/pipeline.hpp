@@ -26,6 +26,10 @@
 // The <T, C, T> real chain pair (task 5.2c) has the same shape with chain_builder::r2c_line and
 // c2r_line, the middle on the spectrum's n/2 + 1 bins, and every factor in a separate pass
 // (pipeline.cpp, build_real_pair).
+//
+// The lanes pair (task 5.2f), forced only until experiment X67: a <C, C, C> line's blocks of lines
+// as a lanes program, chain_builder::c2c_lanes from the input to a tile and from the tile to the
+// output, the middle on the tile between (pipeline.cpp, build_lanes_pair).
 #pragma once
 
 #include "core/callbacks.hpp"
@@ -81,6 +85,26 @@ template <class T>
 [[nodiscard]] std::vector<std::size_t>
 convolution_depth_tops(std::size_t n, const build_settings& settings, const chain_builder<T>& chain,
                        target isa);
+
+// The lanes pair (DESIGN.md 12.2, task 5.2f) for a <C, C, C> line of n whose innermost batch
+// dimension has `rows` lines, in_dist and out_dist elements apart, the line's elements in_stride
+// and out_stride apart: `block` lines per lanes block (a multiple of the complex count c), or 0
+// where the pair is not taken. Forced only (build_settings::strategy lanes), wherever the line's
+// chain fits the lanes (chain_builder::lanes_fit) and the batch has at least two lines; never by
+// the rules until experiment X67 (task 5.2g) gives them a rule. Adjacent lines (in_dist and
+// out_dist 1: a strided axis of a plane) take a lanes column phase's block (9.3's rule,
+// column_block) and run as columns (`columns`); other lines, and adjacent ones that rule leaves
+// alone, the lanes over rows' block (lanes_block).
+struct lanes_pair_block {
+  std::size_t block = 0;
+  bool columns = false;
+};
+template <class T>
+[[nodiscard]] lanes_pair_block
+convolution_lanes_block(std::size_t n, std::size_t rows, std::ptrdiff_t in_stride,
+                        std::ptrdiff_t out_stride, std::ptrdiff_t in_dist, std::ptrdiff_t out_dist,
+                        const build_settings& settings, const target_profile& profile,
+                        const chain_builder<T>& chain, std::size_t c);
 
 // c's workspace layout from its scratch lines of `scratch` complex values of complex_bytes each
 // and its block (c.block_elements); stagger_b: scratch line b starts seven 64-byte lines further

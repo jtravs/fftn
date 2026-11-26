@@ -2841,7 +2841,7 @@ Points that matter:
   for L2-resident sizes and more beyond. Callbacks always see natural order, because their
   coordinates must be affine in the block.
 
-**Plan for task 5.2** (designed 2026-11-25; 5.2a–5.2e built, "As built" below; steps 5.2a–5.2g in PLAN phase 5,
+**Plan for task 5.2** (designed 2026-11-25; 5.2a–5.2f built, "As built" below; steps 5.2a–5.2g in PLAN phase 5,
 experiment X67; the API points the maintainer has to settle are listed in 18.2, "Pipelines").
 
 - **API** (provisional, `fftn/pipeline.hpp`), the block above built in parts:
@@ -3081,6 +3081,34 @@ with the unrolled calls where a line has at most `calls_max` calls. Plans, plans
 every pipeline of one copy are unchanged (`describe()`, `workspace_bytes()` and output bits,
 serial and team, of 1,000 probes against `main` on the Mac and the EPYC 7763; the plain
 driver's functions disassemble the same with Clang on arm64).
+
+**As built (task 5.2f, 2026-11-26).** The lanes pair for `<C, C, C>`, forced only
+(`build_settings::strategy` lanes; experiment X67, 5.2g, decides when the rules take it, so every
+pipeline by the rules keeps its pair, and `describe()` says "forced only"). The program is a lanes
+program (8.5): blocks of B lines of the innermost batch dimension, the rest in blocks of C through
+its tail, each block `chain_builder::c2c_lanes` from the input to a tile in scratch (the forward
+chain, one gather where a run of C lines is no vector access), the middle on the tile, then
+`c2c_lanes` from that tile to the output (the backward chain, one scatter likewise); a source in
+scratch is a tile, which `c2c_lanes` now takes. Each line's chain is the one `c2c_line` gives the
+chain pair's endpoints (the block at stride 1 on the middle's side), so a line's bits are the chain
+pair's with the same placement of the vocabulary. No lanes pass takes a factor: the middle's
+(any kind and stride, one for every line or one per line through the innermost dimension's batch
+step) is the edge pass on the tile, element i of line r at i B + r, `pass_args::rows` lines; the
+scales' product goes to it, else to the backward chain's last pass. So a line agrees bitwise with
+the chain pair wherever the chain pair's middle is a separate pass too, and within one rounding per
+bin where it fuses a complex kernel of stride 1 into its forward last pass (an FMA the edge pass
+does not make); a tile pass in the vocabulary is an arm for X67. The middle callback runs on the
+tile (the block's whole lines in one call, `element_stride` B, `line_stride` 1, line k transform
+`transform + k`), with 12.3's two products (the prologue's scale on the forward chain's last pass);
+`first = direction::backward` swaps the chains' signs. Blocks: lines one element apart on both
+sides (a strided axis of a plane, 9.3) take a lanes column phase's block (`column_block`) and
+`columns_inner`, other lines the lanes over rows' (`lanes_block`; `convolution_lanes_block`). The
+workspace block is unused. Not taken yet, the chain pair built instead with a line in `describe()`
+naming why: prologue and epilogue factors and callbacks, accumulation, stored runs, fan-out, a
+single line, and the real kinds (`<T, C, T>` short rows would need the real lanes' pairing to end
+in and start from a tile). Teams and executors share the blocks as tasks, as for plans on the
+lanes. Pipelines and plans without the forced pair keep their programs and bits (`describe()`,
+`workspace_bytes()` and output bits of 1,824 probes against `main`, the lanes plans among them).
 
 ### 12.3 Block callbacks
 
@@ -3522,7 +3550,7 @@ As built (task 5.3e; provisional, second reader pending): spectral pairs inverse
   in their order: inverse first, only the chains' names swap.
 - `spectral_pair_rows(n, count, direction::backward)` describes the first; no helper describes
   `<C, T, C>` (12.2's API block names none).
-- Not built: the lanes pair for `<C, C, C>` (5.2f has not started), in either order.
+- The lanes pair for `<C, C, C>` came with 5.2f (12.2, "As built (task 5.2f)"), in either order.
 
 Forward-first pipelines keep their programs and bits: `describe()`, `workspace_bytes()` and output
 bits of the 1,560 probes above, against `main`, unchanged by 5.3e too.
@@ -5039,6 +5067,7 @@ to change before a release.
 | 2026-11-26 | Block callbacks on planes and volumes (task 5.3c, section 12.3): the input's inside the first phase's line bodies (a modify callback's line copied first into the phase's destination, or for r2c into the real rows' copy in the workspace block), the output's inside the last phase's, on the line, the lanes column block's columns (lines along the last axis) or the block of adjacent transforms; a side with an edge phase of its own (a factor, accumulation) takes its callback there; the edge driver moves the coordinates with the enclosing loops; a consumed c2r output's rows in the workspace block over the half spectrum; no packed c2r intermediate with callbacks; refused beside stored runs on planes and volumes | DESIGN 12.3's table: a callback phase of its own would be the extra sweep that 12.5's stage exists to save. The edge phase a factor already has costs nothing more to carry the callback. Runs' edge phases are nests per run, left for a follow-up rather than refusing the whole feature |
 | 2026-11-26 | Spectral pairs inverse first (task 5.3e, section 12.3, "As built"): `<C, C, C>` with `first = direction::backward` (the chain pair and the forced depth-first pair with their directions swapped) and the kind `<C, T, C>` (the real chain pair reversed, its sides' layout and runs those of the n/2 + 1 bins, its middle real factors only); the lanes pair left to 5.2f. Awaits the maintainer's review of the API | 12.2's three kinds complete with the existing chains; the depth-first pair's run passes exist in one direction each, so inverse first takes its read and store stages rather than new kernels |
 | 2026-11-26 | Block callbacks on pipelines (task 5.3d, section 12.3, "As built"): `middle.call` (modify only) and the prologue's and epilogue's callbacks on every pair, with 18.2's "Callbacks" proposals 6 and 7 as written (the middle callback first, then its vocabulary in the inverse's first pass; two scale products around it); the middle callback passed the whole line in one call; the epilogue's per copy with the copy in `block_info::copy`; a consumed fan-out's `fanout_out_dist` not checked; the plans' row callback helpers shared. Awaits the maintainer's review of the API | A middle callback may be pure per line, which a block of part of a line cannot serve; a nested pipeline in a middle needs the whole line. Nothing is stored for a consumed output, so the overlap refusal (18.2, "Pipelines" 5) has nothing to protect |
+| 2026-11-26 | The lanes pair (task 5.2f, section 12.2, "As built"): `<C, C, C>` rows of a batch and adjacent strided lines as a lanes program, forced only until X67; the middle as the edge pass on the tile (no lanes pass takes a factor), the middle callback on the tile, either direction first; what it does not take builds the chain pair, named in `describe()`. No public API | Fusing the kernel into the lanes' last pass needs per-lane factor reads, a kernel change X67 can price; the separate pass keeps every line's bits equal to the chain pair's with the same placement |
 | 2026-11-26 | The C API for plans (step 6.8, section 5.9; provisional, second reader to come): `fftn/c_api.h` and `src/c_api/` with 18.2's proposals Q17–Q22 taken as written (the header in `fftn::fftn`, one plan type and `void*` data, NULL or a status plus an optional caller-owned `fftn_error`, the opt-in shared library `fftn_c` exporting `fftn_` only, plain structs without size or version fields, plans of every built kind with workspaces, the four execution forms, wisdom and lengths); the choices where 5.9 was silent are listed in its "As built" | The maintainer's priority (2026-11-25): features fully built; the C interface serves C, Fortran, Python and Julia callers and older toolchains (decision of 2026-11-16) |
 
 ---
