@@ -462,29 +462,93 @@ std::vector<exact_complex> c2c_plane(int sign, std::size_t ny, std::size_t nx,
   return c2c_plane(sign, ny, nx, x, points);
 }
 
-std::vector<exact_real> dht(std::span<const std::size_t> extents, std::span<const double> x) {
+namespace {
+
+// The period of the angles of a kind's kernel on a line of n: every angle is 2 pi m / period
+// for an integer m, so the kernel is read from the table of that period, with the index
+// product reduced modulo it in integers.
+std::size_t period(r2r_type t, std::size_t n) {
+  switch (t) {
+  case r2r_type::dct1:
+    if (n < 2) {
+      throw std::invalid_argument("reference::r2r: dct1 needs n >= 2");
+    }
+    return 2 * (n - 1);
+  case r2r_type::dst1:
+    return 2 * (n + 1);
+  case r2r_type::dct4:
+  case r2r_type::dst4:
+    return 8 * n;
+  case r2r_type::dht:
+    return n;
+  default:
+    break;
+  }
+  return 4 * n;
+}
+
+// The coefficient of input j in output k of a line of n (DESIGN.md 5.7's table), from the table
+// w of exp(-2 pi i m / period): cos is Re w, sin is -Im w.
+quad coefficient(r2r_type t, std::size_t n, const std::vector<qcomplex>& w, std::size_t j,
+                 std::size_t k) {
+  const std::size_t p = w.size();
+  const auto c = [&](std::size_t m) { return w[m % p].re; };
+  const auto s = [&](std::size_t m) { return -w[m % p].im; };
+  const quad two(2);
+  switch (t) {
+  case r2r_type::dct1:
+    return (j == 0 || j == n - 1 ? quad(1) : two) * c(j * k);
+  case r2r_type::dct2:
+    return two * c(((2 * j) + 1) * k);
+  case r2r_type::dct3:
+    return (j == 0 ? quad(1) : two) * c(j * ((2 * k) + 1));
+  case r2r_type::dct4:
+    return two * c(((2 * j) + 1) * ((2 * k) + 1));
+  case r2r_type::dst1:
+    return two * s((j + 1) * (k + 1));
+  case r2r_type::dst2:
+    return two * s(((2 * j) + 1) * (k + 1));
+  case r2r_type::dst3:
+    return (j == n - 1 ? quad(1) : two) * s((j + 1) * ((2 * k) + 1));
+  case r2r_type::dst4:
+    return two * s(((2 * j) + 1) * ((2 * k) + 1));
+  case r2r_type::dht:
+    break;
+  }
+  return c(j * k) + s(j * k);
+}
+
+void check_type(r2r_type t) {
+  if (static_cast<unsigned char>(t) > static_cast<unsigned char>(r2r_type::dht)) {
+    throw std::invalid_argument("reference::r2r: not a kind");
+  }
+}
+
+} // namespace
+
+std::vector<exact_real> r2r(std::span<const r2r_type> kinds, std::span<const std::size_t> extents,
+                            std::span<const double> x) {
   std::size_t total = 1;
   for (const std::size_t n : extents) {
     check_length(n);
     total *= n;
   }
-  if (extents.empty() || x.size() != total) {
-    throw std::invalid_argument("reference::dht: size is not the product of the extents");
+  if (extents.empty() || x.size() != total || kinds.size() != extents.size()) {
+    throw std::invalid_argument(
+        "reference::r2r: size is not the product of the extents, or not one kind per axis");
   }
   std::vector<quad> v(x.begin(), x.end());
   std::vector<quad> line;
   std::vector<quad> done;
   // Axis d's lines: `inner` elements apart along it, `outer` blocks of n * inner.
   std::size_t inner = total;
-  for (const std::size_t n : extents) {
+  for (std::size_t d = 0; d < extents.size(); ++d) {
+    const std::size_t n = extents[d];
+    const r2r_type t = kinds[d];
+    check_type(t);
     inner /= n;
     const std::size_t outer = total / (n * inner);
-    // cas(2 pi m / n) = Re w - Im w for w = exp(-2 pi i m / n).
-    const std::vector<qcomplex>& w = table(-1, n);
-    std::vector<quad> cas(n);
-    for (std::size_t m = 0; m < n; ++m) {
-      cas[m] = w[m].re - w[m].im;
-    }
+    const std::vector<qcomplex>& w = table(-1, period(t, n));
     line.resize(n);
     done.resize(n);
     for (std::size_t o = 0; o < outer; ++o) {
@@ -497,7 +561,7 @@ std::vector<exact_real> dht(std::span<const std::size_t> extents, std::span<cons
           quad acc = 0;
           for (std::size_t j = 0; j < n; ++j) {
             if (line[j] != 0) {
-              acc += line[j] * cas[(k * j) % n];
+              acc += line[j] * coefficient(t, n, w, j, k);
             }
           }
           done[k] = acc;
@@ -514,6 +578,34 @@ std::vector<exact_real> dht(std::span<const std::size_t> extents, std::span<cons
     out.push_back(to_exact(q));
   }
   return out;
+}
+
+std::vector<exact_real> r2r(r2r_type kind, std::span<const double> x,
+                            std::span<const std::size_t> outputs) {
+  const std::size_t n = x.size();
+  check_length(n);
+  check_type(kind);
+  const std::vector<qcomplex>& w = table(-1, period(kind, n));
+  std::vector<exact_real> out;
+  out.reserve(outputs.size());
+  for (const std::size_t k : outputs) {
+    if (k >= n) {
+      throw std::invalid_argument("reference::r2r: output index out of range");
+    }
+    quad acc = 0;
+    for (std::size_t j = 0; j < n; ++j) {
+      if (x[j] != 0) {
+        acc += quad(x[j]) * coefficient(kind, n, w, j, k);
+      }
+    }
+    out.push_back(to_exact(acc));
+  }
+  return out;
+}
+
+std::vector<exact_real> dht(std::span<const std::size_t> extents, std::span<const double> x) {
+  const std::vector<r2r_type> kinds(extents.size(), r2r_type::dht);
+  return r2r(kinds, extents, x);
 }
 
 } // namespace fftn::test::reference

@@ -342,5 +342,116 @@ TEST(ReferenceDht, AgreesWithTheRealTransformAndIsSeparable) {
                std::invalid_argument);
 }
 
+// The real-to-real kinds (DESIGN.md 5.7): DCT-II and DST-III against their sums in double, the
+// identities of signs and reversals the r2r suites build their references with, each kind's
+// inverse up to its N, the listed outputs, and the separable product.
+TEST(ReferenceR2r, DefinitionsIdentitiesAndInverses) {
+  using reference::r2r_type;
+  input_source src(0x2D2);
+  const auto line = [](r2r_type t, const std::vector<double>& x) {
+    const std::vector<std::size_t> extents{x.size()};
+    const std::vector<r2r_type> kinds{t};
+    std::vector<double> y;
+    for (const exact_real& v : reference::r2r(kinds, extents, x)) {
+      y.push_back(v.hi);
+    }
+    return y;
+  };
+  const double pi = std::numbers::pi;
+  for (const std::size_t n : {1U, 2U, 3U, 8U, 15U, 16U}) {
+    const double nd = static_cast<double>(n);
+    const std::vector<double> x = src.reals<double>(n);
+    const std::vector<double> d2 = line(r2r_type::dct2, x);
+    const std::vector<double> d3 = line(r2r_type::dct3, x);
+    const std::vector<double> s3 = line(r2r_type::dst3, x);
+    for (std::size_t k = 0; k < n; ++k) {
+      const double kd = static_cast<double>(k);
+      double want_d2 = 0.0;
+      double want_s3 = (k % 2 == 0 ? 1.0 : -1.0) * x[n - 1];
+      for (std::size_t j = 0; j < n; ++j) {
+        const double jd = static_cast<double>(j);
+        want_d2 += 2.0 * x[j] * std::cos(pi * (jd + 0.5) * kd / nd);
+        if (j + 1 < n) {
+          want_s3 += 2.0 * x[j] * std::sin(pi * (jd + 1.0) * (kd + 0.5) / nd);
+        }
+      }
+      EXPECT_NEAR(d2[k], want_d2, 1e-14 * nd) << n << " " << k;
+      EXPECT_NEAR(s3[k], want_s3, 1e-14 * nd) << n << " " << k;
+    }
+    // R: x reversed; S: (-1)^j x_j.
+    std::vector<double> r(n);
+    std::vector<double> sx(n);
+    for (std::size_t j = 0; j < n; ++j) {
+      r[j] = x[n - 1 - j];
+      sx[j] = (j % 2 == 0 ? 1.0 : -1.0) * x[j];
+    }
+    const std::vector<double> d2r = line(r2r_type::dct2, r);
+    const std::vector<double> s2s = line(r2r_type::dst2, sx);
+    const std::vector<double> d3s = line(r2r_type::dct3, sx);
+    const std::vector<double> s3r = line(r2r_type::dst3, r);
+    for (std::size_t k = 0; k < n; ++k) {
+      const double sk = k % 2 == 0 ? 1.0 : -1.0;
+      EXPECT_NEAR(d2r[k], sk * d2[k], 1e-15 * nd) << n << " " << k;
+      EXPECT_NEAR(s2s[k], d2[n - 1 - k], 1e-15 * nd) << n << " " << k;
+      EXPECT_NEAR(d3s[k], d3[n - 1 - k], 1e-15 * nd) << n << " " << k;
+      EXPECT_NEAR(s3r[k], sk * d3[k], 1e-15 * nd) << n << " " << k;
+    }
+    // Each kind then its inverse: N times the input.
+    const struct {
+      r2r_type kind;
+      r2r_type inverse;
+      double factor;
+    } pairs[] = {
+        {r2r_type::dct2, r2r_type::dct3, 2 * nd},
+        {r2r_type::dct3, r2r_type::dct2, 2 * nd},
+        {r2r_type::dst2, r2r_type::dst3, 2 * nd},
+        {r2r_type::dst3, r2r_type::dst2, 2 * nd},
+        {r2r_type::dct4, r2r_type::dct4, 2 * nd},
+        {r2r_type::dst4, r2r_type::dst4, 2 * nd},
+        {r2r_type::dst1, r2r_type::dst1, 2 * (nd + 1)},
+        {r2r_type::dct1, r2r_type::dct1, 2 * (nd - 1)},
+        {r2r_type::dht, r2r_type::dht, nd},
+    };
+    for (const auto& p : pairs) {
+      if (p.kind == r2r_type::dct1 && n == 1) {
+        continue;
+      }
+      const std::vector<double> back = line(p.inverse, line(p.kind, x));
+      for (std::size_t j = 0; j < n; ++j) {
+        EXPECT_NEAR(back[j], p.factor * x[j], 1e-14 * p.factor)
+            << n << " " << static_cast<int>(p.kind) << " " << j;
+      }
+      // The listed outputs are the whole transform's, bit for bit.
+      const std::vector<std::size_t> ks{0, n - 1, n / 2};
+      const std::vector<double> whole = line(p.kind, x);
+      const std::vector<exact_real> some = reference::r2r(p.kind, x, ks);
+      for (std::size_t i = 0; i < ks.size(); ++i) {
+        EXPECT_EQ(some[i].hi, whole[ks[i]]) << n << " " << static_cast<int>(p.kind);
+      }
+    }
+  }
+  // Two axes: an impulse's transform is the product of the two kinds' kernels.
+  const std::vector<std::size_t> extents{5, 6};
+  const std::vector<r2r_type> kinds{r2r_type::dst3, r2r_type::dct2};
+  std::vector<double> impulse(30, 0.0);
+  impulse[(1 * 6) + 2] = 1.0;
+  const std::vector<exact_real> g = reference::r2r(kinds, extents, impulse);
+  for (std::size_t ky = 0; ky < 5; ++ky) {
+    for (std::size_t kx = 0; kx < 6; ++kx) {
+      const double s3 = 2.0 * std::sin(pi * 2.0 * (static_cast<double>(ky) + 0.5) / 5.0);
+      const double c2 = 2.0 * std::cos(pi * 2.5 * static_cast<double>(kx) / 6.0);
+      EXPECT_NEAR(g[(ky * 6) + kx].hi, s3 * c2, 1e-14) << ky << " " << kx;
+    }
+  }
+  const std::vector<double> one{1.0};
+  EXPECT_THROW(static_cast<void>(reference::r2r(r2r_type::dct1, one, std::vector<std::size_t>{0})),
+               std::invalid_argument);
+  EXPECT_THROW(static_cast<void>(reference::r2r(r2r_type::dct2, one, std::vector<std::size_t>{1})),
+               std::invalid_argument);
+  EXPECT_THROW(static_cast<void>(reference::r2r(std::vector<r2r_type>{r2r_type::dct2}, extents,
+                                                std::vector<double>(30))),
+               std::invalid_argument);
+}
+
 } // namespace
 } // namespace fftn::test
