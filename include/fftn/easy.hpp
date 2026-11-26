@@ -424,6 +424,29 @@ void frequencies(const char* function, std::size_t n, std::span<T> out, double d
 
 } // namespace detail
 
+class context;
+
+namespace detail {
+
+// What fftn/kokkos.hpp's one-shot functions (step 6.7) ask of a context: the unnormalised plan
+// of exactly `shape` (a fftn::shape of `kind` in double or, with `single`, float), built with
+// options::in_place = in_place, found among the context's plans or built and kept, and executed
+// on `ex` (null: serially) with the context's workspace. The plan is the one plan(shape,
+// {.in_place = in_place}) builds, so its results are that plan's bit for bit. Throws what the
+// plan's construction throws, before anything is written.
+struct shape_call {
+  easy_kind kind = easy_kind::c2c;
+  bool single = false;
+  const void* shape = nullptr;
+  bool in_place = false;
+  const void* in = nullptr;
+  void* out = nullptr;
+  const executor_ref* ex = nullptr;
+};
+void run_shape(context& ctx, const shape_call& call);
+
+} // namespace detail
+
 /// Cached plans and scratch for the convenience functions, and the functions themselves as
 /// members.
 ///
@@ -965,6 +988,8 @@ private:
   static std::size_t irfft_length(std::size_t in_size, std::size_t n);
   void run(const detail::easy_call& call);
   state& own();
+
+  friend void detail::run_shape(context& ctx, const detail::shape_call& call);
 
   std::unique_ptr<state> state_;
   std::optional<executor_ref> executor_;

@@ -15,6 +15,8 @@ The header offers three levels:
   out, norm)` is its free `KokkosFFT::execute`. The namespace `fftn::kokkos::compat` spells
   them as Kokkos-FFT does (`Plan`, `Direction`, `Normalization`, `axis_type`, `shape_type`,
   `execute`), so code written for Kokkos-FFT changes only its include and its namespace.
+  It also has Kokkos-FFT's one-shot functions (`fft`, `rfft2`, `irfftn` and the rest), whose
+  plans are kept per thread ([One-shot functions](#one-shot-functions)).
 - **View-based construction for the core API.** `shape_of(in, out, dir, axes)` gives the
   `fftn::shape` of a pair of Views, `make_plan` the ordinary `fftn::plan`, and `data_of(view)`
   the pointer to execute it with. Use this level for concurrent executions of one plan (a
@@ -146,6 +148,49 @@ one when other work shares the kernel, and the executor otherwise. `completion::
 splits a transform, so a batch of few transforms runs on few threads, and the barrier itself
 costs more than an OpenMP one (1.5 to 3 µs against 0.6 to 1.3 at 8 to 16 threads).
 
+## One-shot functions
+
+`fftn::kokkos::compat` also has Kokkos-FFT's one-shot functions, with its signatures: `fft`,
+`ifft`, `rfft`, `irfft`, `hfft` and `ihfft` along one axis, `fft2`, `ifft2`, `rfft2` and
+`irfft2`, and `fftn`, `ifftn`, `rfftn` and `irfftn`. They are **provisional** (step 6.7).
+
+```cpp file=examples/kokkos_rows_planes.cpp region=one-shot
+namespace kfft = fftn::kokkos::compat;
+const Kokkos::View<double**, Kokkos::HostSpace> a("a", ny, nx);
+const Kokkos::View<complex**, Kokkos::HostSpace> spectrum("spectrum", ny, nx / 2 + 1);
+const Kokkos::View<double**, Kokkos::HostSpace> back("back", ny, nx);
+for (std::size_t i = 0; i < ny; ++i) {
+  for (std::size_t j = 0; j < nx; ++j) {
+    a(i, j) = std::sin(0.3 * static_cast<double>(i * nx + j));
+  }
+}
+// A plan per layout is built on the first call and kept in this thread's convenience context
+// (fftn/easy.hpp); the second round trip finds both.
+for (int round = 0; round < 2; ++round) {
+  kfft::rfft2(exec, a, spectrum);
+  kfft::irfft2(exec, spectrum, back); // backward scaled by 1/(ny nx), as Kokkos-FFT
+}
+```
+
+Each computes what a `Plan` of the same Views computes with the same normalisation, bit for
+bit, with the same fence, Kokkos Tools region (named after the function), threads, checks and
+messages. Kokkos-FFT builds a plan on every call. Here the plan and its workspace are kept in
+the calling thread's convenience context, `fftn::easy::thread_context()`
+([easy.md](easy.md#the-cache)), so a call that repeats a layout builds no plan. The first call
+of a layout allocates, and so does each call that needs a temporary. That context is per
+thread and holds at most `max_plans()` plans (64 by default); `clear()` releases them.
+
+As in Kokkos-FFT:
+
+- `fft`, `fft2` and `fftn` of a real View copy it into a complex temporary first.
+- `hfft` runs `irfft` on the conjugated input with the normalisation's direction swapped.
+  The conjugate is a temporary, so the input is left unchanged; Kokkos-FFT conjugates a
+  non-const input in place.
+- `ihfft` runs `rfft` with the swapped normalisation and conjugates its output.
+- `fftn` and the rest take their axes before `norm`, and by default transform every
+  dimension of the Views (at most three). A braced `{}` there means three zeros, not the
+  default.
+
 ## Moving a Kokkos-FFT call site
 
 For host Views, the include and the namespace change and nothing else:
@@ -245,5 +290,7 @@ planned layout may be transformed.
   backward).
 - The plan executes through `execute` (the member, or the free `execute`); Kokkos-FFT's
   public member `execute_impl(in, out, norm)` is not provided.
-- Not provided: the one-shot functions (`KokkosFFT::fft`, `rfft`, `fft2` and the rest),
-  `DynPlan`, and device Views.
+- The one-shot functions keep their plans in the calling thread's convenience context
+  rather than building one per call, and `hfft` does not modify its input (above).
+- Not provided: the helpers (`fftfreq`, `rfftfreq`, `fftshift`, `ifftshift`), `DynPlan`, and
+  device Views.
