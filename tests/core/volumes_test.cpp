@@ -13,6 +13,7 @@
 #include "fftn/fftn.hpp"
 #include "support/fftn_subject.hpp"
 #include "support/inputs.hpp"
+#include "support/precisions.hpp"
 
 #include <gtest/gtest.h>
 
@@ -114,12 +115,14 @@ template <class T> void scratch_within_bound(fftn::isa target, bool planes) {
   }
 }
 
-TEST(Volumes, ScratchStaysWithinAPlaneOrABlockOfPencils) {
+template <class T> class Volumes : public ::testing::Test {};
+TYPED_TEST_SUITE(Volumes, fftn::test::precisions, fftn::test::precision_names);
+
+TYPED_TEST(Volumes, ScratchStaysWithinAPlaneOrABlockOfPencils) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
     SCOPED_TRACE(fftn::isa_name(t));
     for (const bool planes : {true, false}) {
-      scratch_within_bound<double>(t, planes);
-      scratch_within_bound<float>(t, planes);
+      scratch_within_bound<TypeParam>(t, planes);
     }
   }
 }
@@ -128,12 +131,12 @@ TEST(Volumes, ScratchStaysWithinAPlaneOrABlockOfPencils) {
 // shape: after the batch loops, one loop over the planes of axis 0 whose body holds the plane's two
 // phases, then the outer axis's phase, whose loops never step along axis 0 (its pencils'
 // elements are a whole plane apart).
-TEST(Volumes, InnerAxesPlaneAtATime) {
+TYPED_TEST(Volumes, InnerAxesPlaneAtATime) {
   fftn::detail::build_settings settings;
   settings.volume_planes = true;
   for (const volume_case& vc : volumes()) {
     SCOPED_TRACE(label(vc, false));
-    const auto core = fftn::detail::make_plan_core(fftn::detail::view_of(shape_of<double>(vc)),
+    const auto core = fftn::detail::make_plan_core(fftn::detail::view_of(shape_of<TypeParam>(vc)),
                                                    fftn::options(), settings);
     const auto& records = core->prog.records;
     const std::size_t first = core->prog.batch_loops;
@@ -141,7 +144,8 @@ TEST(Volumes, InnerAxesPlaneAtATime) {
     const auto* planes = std::get_if<fftn::detail::loop>(&records[first]);
     ASSERT_NE(planes, nullptr);
     EXPECT_EQ(planes->count, vc.n0);
-    const auto plane_bytes = static_cast<std::ptrdiff_t>(vc.n1 * vc.n2 * 16);
+    const auto plane_bytes =
+        static_cast<std::ptrdiff_t>(vc.n1 * vc.n2 * sizeof(std::complex<TypeParam>));
     EXPECT_EQ(planes->step[0], plane_bytes);
     EXPECT_EQ(planes->step[1], plane_bytes);
     ASSERT_LT(planes->body_end, records.size()) << "the outer axis follows the planes";
@@ -212,11 +216,10 @@ template <class T> void planes_equal_axes(fftn::isa target) {
   }
 }
 
-TEST(Volumes, PlaneAtATimeEqualsTheAxesOneByOne) {
+TYPED_TEST(Volumes, PlaneAtATimeEqualsTheAxesOneByOne) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
     SCOPED_TRACE(fftn::isa_name(t));
-    planes_equal_axes<double>(t);
-    planes_equal_axes<float>(t);
+    planes_equal_axes<TypeParam>(t);
   }
 }
 

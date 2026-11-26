@@ -13,6 +13,7 @@
 #include "support/alloc_hook.hpp"
 #include "support/exact.hpp"
 #include "support/outcome.hpp"
+#include "support/precisions.hpp"
 #include "support/tolerance.hpp"
 
 #include <fftn/easy.hpp>
@@ -268,8 +269,7 @@ std::vector<fftn::axis> array_of(const dims_t& ext) {
 }
 
 template <class T> class easy_test : public ::testing::Test {};
-using precisions = ::testing::Types<double, float>;
-TYPED_TEST_SUITE(easy_test, precisions);
+TYPED_TEST_SUITE(easy_test, fftn::test::precisions, fftn::test::precision_names);
 
 const std::vector<std::size_t> lengths_1d = {1,  2,  3,  4,  5,  6,  7,   8,   9,   12,  15,
                                              16, 17, 31, 32, 64, 97, 100, 128, 243, 256, 1000};

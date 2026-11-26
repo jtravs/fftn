@@ -26,6 +26,7 @@
 #include "support/fftn_subject.hpp"
 #include "support/inputs.hpp"
 #include "support/outcome.hpp"
+#include "support/precisions.hpp"
 #include "support/tolerance.hpp"
 
 #include <gtest/gtest.h>
@@ -235,15 +236,17 @@ template <class T> void batch_leaves_match(fftn::isa t, batch_leaf_choice choice
   }
 }
 
-TEST(BatchLeaves, EqualTheLeafRowByRow) {
+template <class T> class BatchLeaves : public ::testing::Test {};
+TYPED_TEST_SUITE(BatchLeaves, fftn::test::precisions, fftn::test::precision_names);
+
+TYPED_TEST(BatchLeaves, EqualTheLeafRowByRow) {
   int sets = 0;
   for (const fftn::isa t : fftn::test::runnable_isas()) {
     for (const batch_leaf_choice choice : {batch_leaf_choice::own, batch_leaf_choice::narrower}) {
-      if (set_for<double>(t, 8, choice) != nullptr || set_for<float>(t, 8, choice) != nullptr) {
+      if (set_for<TypeParam>(t, 8, choice) != nullptr) {
         ++sets;
       }
-      batch_leaves_match<double>(t, choice);
-      batch_leaves_match<float>(t, choice);
+      batch_leaves_match<TypeParam>(t, choice);
     }
   }
   if (sets == 0) {
@@ -285,9 +288,9 @@ TEST(BatchLeaves, TablesCoverTheCodelets) {
 // Forced, the batch leaves stay off where the rows cannot take one: a single row, a strided
 // row, a factor edge, forced radices, a length without a codelet, two batch dimensions,
 // planes, real rows.
-TEST(BatchLeaves, ForcedOnlyWhereTheRowsCanTakeThem) {
+TYPED_TEST(BatchLeaves, ForcedOnlyWhereTheRowsCanTakeThem) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
-    if (set_for<double>(t, 16, batch_leaf_choice::own) == nullptr) {
+    if (set_for<TypeParam>(t, 16, batch_leaf_choice::own) == nullptr) {
       continue;
     }
     SCOPED_TRACE(fftn::isa_name(t));
@@ -298,27 +301,27 @@ TEST(BatchLeaves, ForcedOnlyWhereTheRowsCanTakeThem) {
                  .find("batch leaf") != std::string::npos;
     };
     constexpr auto fwd = fftn::direction::forward;
-    EXPECT_TRUE(has(fftn::rows_c2c<double>(16, 2, fwd), batch));
-    EXPECT_TRUE(has(fftn::rows_c2c<double>(64, 3, fwd), batch));
-    EXPECT_FALSE(has(fftn::rows_c2c<double>(16, 1, fwd), batch));
-    EXPECT_FALSE(has(fftn::rows_c2c<double>(18, 4, fwd), batch));
-    EXPECT_FALSE(has(fftn::planes_c2c<double>(16, 16, 2, fwd), batch));
-    EXPECT_FALSE(has(fftn::rows_r2c<double>(16, 4), batch));
+    EXPECT_TRUE(has(fftn::rows_c2c<TypeParam>(16, 2, fwd), batch));
+    EXPECT_TRUE(has(fftn::rows_c2c<TypeParam>(64, 3, fwd), batch));
+    EXPECT_FALSE(has(fftn::rows_c2c<TypeParam>(16, 1, fwd), batch));
+    EXPECT_FALSE(has(fftn::rows_c2c<TypeParam>(18, 4, fwd), batch));
+    EXPECT_FALSE(has(fftn::planes_c2c<TypeParam>(16, 16, 2, fwd), batch));
+    EXPECT_FALSE(has(fftn::rows_r2c<TypeParam>(16, 4), batch));
     build_settings never;
     never.batch_leaves = batch_leaf_choice::never;
-    EXPECT_FALSE(has(fftn::rows_c2c<double>(16, 4, fwd), never));
+    EXPECT_FALSE(has(fftn::rows_c2c<TypeParam>(16, 4, fwd), never));
     build_settings forced = batch;
     forced.radices = {4, 4};
-    EXPECT_FALSE(has(fftn::rows_c2c<double>(16, 4, fwd), forced));
-    const std::vector<std::complex<double>> factor(16, {1.0, 0.0});
+    EXPECT_FALSE(has(fftn::rows_c2c<TypeParam>(16, 4, fwd), forced));
+    const std::vector<std::complex<TypeParam>> factor(16, {1.0, 0.0});
     build_settings with_factor = batch;
     with_factor.out_factor = factor.data();
-    EXPECT_FALSE(has(fftn::rows_c2c<double>(16, 4, fwd), with_factor));
-    fftn::shape<std::complex<double>, std::complex<double>> strided;
+    EXPECT_FALSE(has(fftn::rows_c2c<TypeParam>(16, 4, fwd), with_factor));
+    fftn::shape<std::complex<TypeParam>, std::complex<TypeParam>> strided;
     strided.axes = {{.n = 16, .in_stride = 2}};
     strided.batches = {{.count = 4, .in_dist = 1}};
     EXPECT_FALSE(has(strided, batch));
-    fftn::shape<std::complex<double>, std::complex<double>> two;
+    fftn::shape<std::complex<TypeParam>, std::complex<TypeParam>> two;
     two.axes = {{.n = 16}};
     two.batches = {{.count = 2}, {.count = 3}};
     EXPECT_FALSE(has(two, batch));
@@ -397,10 +400,9 @@ template <class T> void rules_choose(fftn::isa t) {
   }
 }
 
-TEST(BatchLeaves, RulesChoose) {
+TYPED_TEST(BatchLeaves, RulesChoose) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
-    rules_choose<double>(t);
-    rules_choose<float>(t);
+    rules_choose<TypeParam>(t);
   }
 }
 

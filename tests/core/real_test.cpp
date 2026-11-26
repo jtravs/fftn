@@ -24,6 +24,7 @@
 #include "support/fftn_subject.hpp"
 #include "support/inputs.hpp"
 #include "support/outcome.hpp"
+#include "support/precisions.hpp"
 #include "support/tolerance.hpp"
 
 #include <gtest/gtest.h>
@@ -276,12 +277,15 @@ build_settings forced(std::size_t fuse_radix, std::vector<std::size_t> radices =
   return s;
 }
 
+template <class T> class Real : public ::testing::Test {};
+TYPED_TEST_SUITE(Real, fftn::test::precisions, fftn::test::precision_names);
+
 // The pairing fused into a pass of every codelet radix R: the r2c chain's last (radices
 // ..., R) and the c2r chain's first (R, ...), with s (or m) = 6 (even: the copy s/2), 7
 // (odd) and 64 (several registers of copies, a partial one on wide targets). The r2c rows
 // force interleaved passes: where the chain has a split run (x86 by default) an r2c row
 // takes the separate route instead.
-TEST(Real, FusedIntoEveryRadix) {
+TYPED_TEST(Real, FusedIntoEveryRadix) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
     for (std::size_t r = 2; r <= 16; ++r) {
       for (const std::vector<std::size_t>& rest : {
@@ -299,14 +303,9 @@ TEST(Real, FusedIntoEveryRadix) {
         first.insert(first.end(), rest.rbegin(), rest.rend());
         build_settings r2c = forced(16, last);
         r2c.layout = fftn::detail::layout_choice::interleaved;
-        check_all<double>(t, {.n = 2 * h, .settings = r2c, .route = "fused into its last pass"},
-                          true);
-        check_all<float>(t, {.n = 2 * h, .settings = r2c, .route = "fused into its last pass"},
-                         true);
-        check_all<double>(
-            t, {.n = 2 * h, .settings = forced(16, first), .route = "fused into its first pass"},
-            false);
-        check_all<float>(
+        check_all<TypeParam>(t, {.n = 2 * h, .settings = r2c, .route = "fused into its last pass"},
+                             true);
+        check_all<TypeParam>(
             t, {.n = 2 * h, .settings = forced(16, first), .route = "fused into its first pass"},
             false);
       }
@@ -318,7 +317,7 @@ TEST(Real, FusedIntoEveryRadix) {
 // composites, and lengths whose half has a prime factor above 16: a codelet (17), a
 // Rader stage (37, 257) or a Bluestein stage (47, 89) last, where the r2c pairing then runs
 // separately and the c2r one still in the first pass.
-TEST(Real, EveryRoute) {
+TYPED_TEST(Real, EveryRoute) {
   const std::vector<std::size_t> lengths{
       2,  4,  6,  8,  10, 12, 14,  16,  18,  20,  22,  24,  26,  28,  30,   32,   34,
       36, 40, 48, 64, 94, 96, 100, 128, 178, 222, 256, 384, 500, 514, 1000, 4096,
@@ -326,15 +325,12 @@ TEST(Real, EveryRoute) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
     for (const std::size_t n : lengths) {
       for (const bool r2c : {true, false}) {
-        check_all<double>(t, {.n = n, .settings = forced(0), .route = r2c ? "r2c" : "c2r"}, r2c);
-        check_all<float>(t, {.n = n, .settings = forced(0), .route = r2c ? "r2c" : "c2r"}, r2c);
+        check_all<TypeParam>(t, {.n = n, .settings = forced(0), .route = r2c ? "r2c" : "c2r"}, r2c);
         const char* separate = n == 2 ? "the pairing pass alone" : "pairing pass";
-        check_all<double>(t, {.n = n, .settings = forced(1), .route = separate}, r2c);
-        check_all<float>(t, {.n = n, .settings = forced(1), .route = separate}, r2c);
+        check_all<TypeParam>(t, {.n = n, .settings = forced(1), .route = separate}, r2c);
         if (n > 2) {
           const char* fused = n <= 32 ? "a leaf of" : "r";
-          check_all<double>(t, {.n = n, .settings = forced(16), .route = fused}, r2c);
-          check_all<float>(t, {.n = n, .settings = forced(16), .route = fused}, r2c);
+          check_all<TypeParam>(t, {.n = n, .settings = forced(16), .route = fused}, r2c);
         }
       }
     }
@@ -345,7 +341,7 @@ TEST(Real, EveryRoute) {
 // place in the output) or before it: out of place in two phases in phase 1's gather (c2r,
 // from the input, which stays intact), otherwise as a pass into the output, where the grid
 // then runs in place; two and three phases.
-TEST(Real, HalfLengthGrid) {
+TYPED_TEST(Real, HalfLengthGrid) {
   struct grid_real {
     std::size_t n;
     std::vector<std::size_t> factors;
@@ -366,15 +362,13 @@ TEST(Real, HalfLengthGrid) {
         s.strategy = fftn::detail::strategy_choice::grid;
         s.grid_factors = g.factors;
         s.profile.grid_pad_period = period;
-        check_all<double>(t, {.n = g.n, .settings = s, .route = "half-length complex grid"}, true);
-        check_all<float>(t, {.n = g.n, .settings = s, .route = "half-length complex grid"}, true);
+        check_all<TypeParam>(t, {.n = g.n, .settings = s, .route = "half-length complex grid"},
+                             true);
         // c2r with the pairing in a pass and, out of place in two phases, in the gather.
         for (const bool paired : {false, true}) {
           s.profile.c2r_paired_gather = paired;
-          check_all<double>(t, {.n = g.n, .settings = s, .route = "half-length complex grid"},
-                            false);
-          check_all<float>(t, {.n = g.n, .settings = s, .route = "half-length complex grid"},
-                           false);
+          check_all<TypeParam>(t, {.n = g.n, .settings = s, .route = "half-length complex grid"},
+                               false);
         }
       }
     }
@@ -387,7 +381,7 @@ TEST(Real, HalfLengthGrid) {
 // 4 in single precision on avx512), into the workspace block before it; one and two top
 // factors, a sub-row of a power of two and of a mixed length, scaled and not, batches with gaps
 // (check). In place the row keeps its route.
-TEST(Real, HalfLengthDepthFirst) {
+TYPED_TEST(Real, HalfLengthDepthFirst) {
   struct depth_real {
     std::size_t n;
     std::vector<std::size_t> tops;
@@ -413,11 +407,11 @@ TEST(Real, HalfLengthDepthFirst) {
           if (r2c && fused != 0) {
             continue;
           }
-          check<double>(t, {.n = d.n, .settings = s, .route = route}, r2c, false, 0.5, 3);
-          check<double>(t, {.n = d.n, .settings = s, .route = route}, r2c, false, 1.0, 1);
-          check<float>(t, {.n = d.n, .settings = s, .route = route}, r2c, false, 1.0, 2);
-          check<double>(t, {.n = d.n, .settings = s, .route = "half-length complex"}, r2c, true,
-                        1.0, 2);
+          check<TypeParam>(t, {.n = d.n, .settings = s, .route = route}, r2c, false, 0.5, 3);
+          check<TypeParam>(t, {.n = d.n, .settings = s, .route = route}, r2c, false, 1.0, 1);
+          check<TypeParam>(t, {.n = d.n, .settings = s, .route = route}, r2c, false, 1.0, 2);
+          check<TypeParam>(t, {.n = d.n, .settings = s, .route = "half-length complex"}, r2c, true,
+                           1.0, 2);
         }
       }
     }
@@ -486,10 +480,9 @@ template <class T> void check_c2r_depth_pairing(fftn::isa target) {
   }
 }
 
-TEST(Real, C2rDepthFirstPairsInItsFirstPassWhereTheLanesDivideTheSubRows) {
+TYPED_TEST(Real, C2rDepthFirstPairsInItsFirstPassWhereTheLanesDivideTheSubRows) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
-    check_c2r_depth_pairing<double>(t);
-    check_c2r_depth_pairing<float>(t);
+    check_c2r_depth_pairing<TypeParam>(t);
   }
 }
 
@@ -635,7 +628,7 @@ TEST(Real, RulesTakeTheDepthFirstHalfLengthWithTheXeonsFields) {
 // factor even and odd (the middle bin in column 0, or in column L/2 paired with itself), two and
 // three phases, in and out of place, scaled and not (check_all); L of 24 splits into pairs of sets
 // of 4 (double; float's sets of 4 are narrower than a line and keep a pass after the grid).
-TEST(Real, PairingInTheGridsLastPhase) {
+TYPED_TEST(Real, PairingInTheGridsLastPhase) {
   struct grid_real {
     std::size_t n;
     std::vector<std::size_t> factors;
@@ -662,8 +655,7 @@ TEST(Real, PairingInTheGridsLastPhase) {
       s.profile.grid_block = g.block;
       s.grid_fused = false; // a fused last phase (radices <= 8) keeps the separate pass
       s.r2c_pair_last = 1;  // every target (the rule leaves avx2 out)
-      check_all<double>(t, {.n = g.n, .settings = s, .route = g.route}, true);
-      check_all<float>(t, {.n = g.n, .settings = s, .route = g.route}, true);
+      check_all<TypeParam>(t, {.n = g.n, .settings = s, .route = g.route}, true);
     }
   }
 }
@@ -808,13 +800,12 @@ void check_volume(fftn::isa target, const std::vector<std::size_t>& dims,
                           << fftn::detail::describe(*c2r);
 }
 
-TEST(Real, PlanesAndVolumes) {
+TYPED_TEST(Real, PlanesAndVolumes) {
   const std::vector<std::vector<std::size_t>> shapes{{6, 128}, {3, 5, 200}, {5, 68}, {2, 4100}};
   for (const fftn::isa t : fftn::test::runnable_isas()) {
     for (const auto& dims : shapes) {
       for (const std::size_t fuse : {std::size_t{0}, std::size_t{1}, std::size_t{16}}) {
-        check_volume<double>(t, dims, forced(fuse));
-        check_volume<float>(t, dims, forced(fuse));
+        check_volume<TypeParam>(t, dims, forced(fuse));
       }
     }
   }

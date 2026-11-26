@@ -14,6 +14,7 @@
 #include "support/alloc_hook.hpp"
 #include "support/exact.hpp"
 #include "support/outcome.hpp"
+#include "support/precisions.hpp"
 #include "support/tolerance.hpp"
 
 #include <fftn/easy.hpp>
@@ -377,8 +378,7 @@ std::vector<T> core_result(const dims_t& ext, const std::vector<std::size_t>& di
 }
 
 template <class T> class easy_r2r_test : public ::testing::Test {};
-using precisions = ::testing::Types<double, float>;
-TYPED_TEST_SUITE(easy_r2r_test, precisions);
+TYPED_TEST_SUITE(easy_r2r_test, fftn::test::precisions, fftn::test::precision_names);
 
 // Every recorded case: scipy's result within the derived tolerance, the value form bitwise equal
 // to the span form, and the call bitwise equal to the core plan with the weights as edge factors.
