@@ -765,8 +765,9 @@ TEST(Schedule, GridSizesFromCaches) {
   EXPECT_EQ(machine_profile{}.edge_batched_forms, edge_forms_reach::none);
   EXPECT_EQ(epyc86.edge_batched_forms, edge_forms_reach::leaf_rows);
   EXPECT_EQ(xeon86.edge_batched_forms, edge_forms_reach::leaf_rows);
-  EXPECT_EQ(x86("linux-intel-xeon-gold-6240.sysfs", fftn::detail::cpu_vendor::amd).edge_batched_forms,
-            edge_forms_reach::none);
+  EXPECT_EQ(
+      x86("linux-intel-xeon-gold-6240.sysfs", fftn::detail::cpu_vendor::amd).edge_batched_forms,
+      edge_forms_reach::none);
   EXPECT_EQ(apple.edge_batched_forms, edge_forms_reach::none);
   EXPECT_EQ(x86("linux-gcp-c4d-zen5.sysfs").edge_batched_forms, edge_forms_reach::none);
   for (const auto& [file, x86_64] : {std::pair{"linux-gcp-c4a-axion.sysfs", false},
