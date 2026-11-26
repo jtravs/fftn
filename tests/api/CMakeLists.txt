@@ -40,6 +40,35 @@ fftn_always_optimise(pipeline_runs_test.cpp)
 fftn_add_test(fftn_r2r_tests SOURCES r2r_test.cpp LIBRARIES fftn_test_support)
 fftn_always_optimise(r2r_test.cpp)
 
+# The C API (step 6.8): its C half compiled as C99 with the strict warnings (-Wpedantic among
+# them, from fftn_configure_target), checked against the C++ plans of the same shapes; threads
+# for the team members and the C thread pool.
+find_package(Threads REQUIRED)
+fftn_add_test(fftn_c_api_tests SOURCES c_api_test.cpp c_api_test.c LIBRARIES Threads::Threads)
+set_target_properties(fftn_c_api_tests PROPERTIES C_STANDARD 99 C_EXTENSIONS OFF)
+if(NOT CMAKE_C_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+  target_compile_options(fftn_c_api_tests PRIVATE
+    $<$<COMPILE_LANGUAGE:C>:-Wstrict-prototypes -Wmissing-prototypes>)
+endif()
+
+# Every C symbol of the library starts with fftn_, and the shared library of the C API exports
+# nothing else (cmake/FftnCheckSymbols.cmake). Where CMake finds no nm, and with clang-cl, whose
+# objects are COFF with their own decoration, the check is left out.
+if(CMAKE_NM AND NOT CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+  set(fftn_symbols ${CMAKE_COMMAND} -DNM=${CMAKE_NM})
+  if(APPLE)
+    list(APPEND fftn_symbols -DUNDERSCORE=ON)
+  endif()
+  add_test(NAME api.c_symbols
+           COMMAND ${fftn_symbols} -DLIBRARY=$<TARGET_FILE:fftn> -DMODE=static
+                   -P ${PROJECT_SOURCE_DIR}/cmake/FftnCheckSymbols.cmake)
+  if(TARGET fftn_c)
+    add_test(NAME api.c_symbols_shared
+             COMMAND ${fftn_symbols} -DLIBRARY=$<TARGET_FILE:fftn_c> -DMODE=shared
+                     -P ${PROJECT_SOURCE_DIR}/cmake/FftnCheckSymbols.cmake)
+  endif()
+endif()
+
 # One translation unit per public header, including only that header, all linked into one
 # executable (which also proves the headers define nothing twice across units).
 file(GLOB public_headers CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/include/fftn/*.hpp)

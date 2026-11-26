@@ -701,14 +701,14 @@ without it. Neither changes a runtime setting.
 `fftn_executor` of the pool's pointer and three functions, `concurrency(self)`,
 `bulk(self, n, task, arg)` and `group_size(self)` (which may be null), with
 `fftn_task = void (*)(void* arg, int index)`. The C++ `executor_ref` holds exactly this
-struct, filled with thunks for a C++ executor or copied from a C pool's, so the C API of
-phase 6 will include the header and take the struct unchanged.
+struct, filled with thunks for a C++ executor or copied from a C pool's, so the C API (5.9)
+includes the header and takes the struct unchanged.
 
 The other interfaces are later work:
 
 - **C API** (`fftn/c_api.h`): opaque plans, the same shapes, and the three-function
-  executor contract for foreign thread pools, which exists already (above). Proposed in
-  5.9.
+  executor contract for foreign thread pools (above). Proposed in 5.9; plans built (step
+  6.8), fusion to come (6.9).
 - **FFTW3-compatible shim** (separate opt-in library and header, never installed as
   `fftw3.h`): the `fftw_plan_many_dft`, guru and execute subset, so C and Fortran users
   and existing benchmark tools can link FFTN. It is opt-in because a header that
@@ -903,7 +903,8 @@ Points that matter:
 
 ### 5.9 C API
 
-*Proposed* (phase 6, steps 6.8 and 6.9; the open points are in 18.2, "Phase 6"). `fftn/c_api.h`
+*Proposed* (phase 6, steps 6.8 and 6.9; the open points are in 18.2, "Phase 6"); step 6.8 is
+built on the proposals, provisional ("As built" below). `fftn/c_api.h`
 is valid C99 and C++, wraps the same type-erased core, and is compiled into `fftn::fftn`
 (`src/c_api/`). It includes `fftn/executor.h` (5.5) unchanged.
 
@@ -976,6 +977,43 @@ Points that matter:
   `fftn_exec_args`, `fftn_plan_create_edges` and execute forms with arguments) once 12.1's API
   is confirmed; block callbacks (12.3) and pipelines (12.2) once theirs is (step 6.9);
   split-complex kinds with 5.8.
+- **As built (step 6.8; `include/fftn/c_api.h`, `src/c_api/c_api.cpp`, `docs/c_api.md`).** The
+  block above, with Q17–Q22's proposals taken as written, and these choices where it was silent
+  (each provisional, for the maintainer's review):
+  - *Names of the enumerations it left as "mirror the C++ types"*: `fftn_r2r_kind`
+    (`FFTN_DCT1` … `FFTN_DST4`, `FFTN_DHT`, in `r2r_kind`'s order), `fftn_side` (`FFTN_IN`,
+    `FFTN_OUT`), `fftn_isa` (`FFTN_ISA_SCALAR` … `FFTN_ISA_BEST`), `fftn_planning`
+    (`FFTN_PLANNING_RULES`, `_QUICK`, `_MEASURE`), `fftn_completion` (`FFTN_COMPLETION_ALL`,
+    `_OWN`), `fftn_length_kind` (`FFTN_LENGTH_COMPLEX`, `_REAL`); the struct fields keep the
+    block's types (`int force_isa`, `int effort`, enumeration-typed elsewhere). Values outside
+    an enumeration are refused, not cast.
+  - *Codes*: `fftn_status` with `FFTN_OK` (0), `FFTN_ERROR_INVALID_ARGUMENT`, `_OUT_OF_MEMORY`,
+    `_INTERNAL`, and two the block did not name: `FFTN_ERROR_FILE` (wisdom's load and save,
+    the C++ `std::runtime_error`) and `FFTN_ERROR_EXECUTOR` (a C++ executor behind the struct
+    threw). A successful constructing call sets the caller's `fftn_error` to `FFTN_OK` and an
+    empty message.
+  - *Signatures the block left open*: `fftn_wisdom_create`, `_from_text` (NUL-terminated),
+    `_load` and `_save` (narrow paths), `_text` (snprintf-like, 0 only when memory runs out),
+    `_add` (a status), `_size` (as `wisdom::size`), `_destroy`; `fftn_next_fast_length(n, kind,
+    error)` and `fftn_relative_cost(n, precision, isa, error)` return 0 with the error filled
+    where C++ throws; added `fftn_isa_name` and `fftn_version`.
+  - *Shapes*: `direction` is read for `FFTN_C2C` only (r2c forward, c2r backward, as the C++
+    helpers set); `r2r_kinds` must be NULL for the other kinds; NULL arrays only with a count
+    of 0.
+  - *Plans and workspaces*: `fftn_plan_ref` returns its argument (one handle, an atomic
+    count; `fftn_plan_release` frees on the last); the serial and team executions require a
+    workspace (no NULL for an empty one: `fftn_workspace_create(0)` makes it);
+    `fftn_execute_on` also refuses a NULL executor, function or workspace with
+    `FFTN_ERROR_INVALID_ARGUMENT`, executing nothing.
+  - *Version*: the version macros moved to `fftn/version.h`, valid C, included by
+    `config.hpp` and `c_api.h`, so Q21's check works from C.
+  - *Q20's shared library*: `FFTN_BUILD_C_SHARED` (off) builds `libfftn_c` from `c_api.cpp`
+    with the static library inside, exporting `fftn_` only (`FFTN_C_API`, an export list on
+    macOS and a version script on ELF); installed and exported as `fftn::fftn_c`, with no
+    SOVERSION (Q21). A test checks that every C symbol of both libraries starts `fftn_`.
+  - *Building*: the tests and examples enable C, with the C++ compiler's sibling when `CC` is
+    unset (`cmake/FftnCCompiler.cmake`), so that sanitizer runtimes do not mix; a C program
+    links the static library with the C++ driver.
 
 ---
 
@@ -4868,6 +4906,7 @@ to change before a release.
 | 2026-11-26 | Convenience layer for complex and real transforms (step 6.6, section 5.4): provisional `fftn/easy.hpp` with 18.2's proposals Q4–Q8 (`fftn::easy`, numpy's semantics, a `thread_local` `context` of 64 plans dropped least recently used, rules planning, `view` with an `mdspan` conversion, both value forms); one compiled unit over the public API only; per-precision overloads for the span forms; `axis_list` for braced axes; sizes must agree (numpy's cropping and padding by `n` and `s` not offered); the executor's width left out of the key; `cached_plans()` and `max_plans()` added for inspection. Awaits the maintainer's review of the API | The maintainer's priority (2026-11-25): features fully built; numpy users' call sites translate one to one, and the core API stays the way to every other feature |
 | 2026-11-26 | Convenience layer for real-to-real transforms (step 6.7, section 5.4, "As built"): provisional `dct`, `idct`, `dst`, `idst` (spans, both forms), `dctn`, `idctn`, `dstn`, `idstn` (views) and `dht` in `fftn::easy`, with scipy's `int` type and norms; `norm::ortho` implies scipy's `orthogonalize=True`, the flag not offered; one type on every axis; the orthogonalising weights as cached real edge factors; `dht` scaled as a forward transform, 1-D only. Awaits the maintainer's review of the API | scipy users' call sites translate one to one; the weights are what 12.1's real factors are for, so the layer adds no stage of its own |
 | 2026-11-26 | Block callbacks on planes and volumes (task 5.3c, section 12.3): the input's inside the first phase's line bodies (a modify callback's line copied first into the phase's destination, or for r2c into the real rows' copy in the workspace block), the output's inside the last phase's, on the line, the lanes column block's columns (lines along the last axis) or the block of adjacent transforms; a side with an edge phase of its own (a factor, accumulation) takes its callback there; the edge driver moves the coordinates with the enclosing loops; a consumed c2r output's rows in the workspace block over the half spectrum; no packed c2r intermediate with callbacks; refused beside stored runs on planes and volumes | DESIGN 12.3's table: a callback phase of its own would be the extra sweep that 12.5's stage exists to save. The edge phase a factor already has costs nothing more to carry the callback. Runs' edge phases are nests per run, left for a follow-up rather than refusing the whole feature |
+| 2026-11-26 | The C API for plans (step 6.8, section 5.9; provisional, second reader to come): `fftn/c_api.h` and `src/c_api/` with 18.2's proposals Q17–Q22 taken as written (the header in `fftn::fftn`, one plan type and `void*` data, NULL or a status plus an optional caller-owned `fftn_error`, the opt-in shared library `fftn_c` exporting `fftn_` only, plain structs without size or version fields, plans of every built kind with workspaces, the four execution forms, wisdom and lengths); the choices where 5.9 was silent are listed in its "As built" | The maintainer's priority (2026-11-25): features fully built; the C interface serves C, Fortran, Python and Julia callers and older toolchains (decision of 2026-11-16) |
 
 ---
 
