@@ -61,8 +61,8 @@ template <class V> bool same_bits(const V& a, const V& b) {
          std::ranges::equal(std::as_bytes(std::span(a)), std::as_bytes(std::span(b)));
 }
 
-enum class pro_cb : unsigned char { none, modify, produce };
-enum class epi_cb : unsigned char { none, modify, consume };
+enum class pro_cb : unsigned char { off, modify, produce };
+enum class epi_cb : unsigned char { off, modify, consume };
 
 struct run_spec {
   std::size_t logical = 0;
@@ -75,9 +75,9 @@ struct pcb_case {
   std::size_t n = 16;
   std::size_t count = 3;
   std::size_t fanout = 1;
-  pro_cb pro = pro_cb::none;
+  pro_cb pro = pro_cb::off;
   bool mid = true; // a modify callback on the middle
-  epi_cb epi = epi_cb::none;
+  epi_cb epi = epi_cb::off;
   double pro_scale = 1.0;
   double mid_scale = 0.0; // 0: 1/n
   double epi_scale = 1.0;
@@ -537,9 +537,9 @@ template <class T, class E, class M = std::complex<T>> struct pcb_run {
       EXPECT_EQ(wrong, 0U) << what << ": the " << name
                            << "'s elements not passed exactly once each";
     };
-    side(pro_ctx, c.pro != pro_cb::none, c.in, 1, "prologue");
+    side(pro_ctx, c.pro != pro_cb::off, c.in, 1, "prologue");
     side(mid_ctx, c.mid, {}, 1, "middle");
-    side(epi_ctx, c.epi != epi_cb::none, c.out, c.fanout, "epilogue");
+    side(epi_ctx, c.epi != epi_cb::off, c.out, c.fanout, "epilogue");
   }
 
   [[nodiscard]] std::complex<double> side_at(const std::vector<T>& r, const std::vector<C>& z,
