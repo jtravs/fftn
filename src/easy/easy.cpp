@@ -167,11 +167,13 @@ prepared prepare(const detail::easy_call& c) {
       points *= static_cast<double>(n);
     }
   }
-  check_strides(c, "in", c.in_extents, c.in_strides);
-  check_strides(c, "out", c.out_extents, c.out_strides);
+  // An empty array is checked no further: std::layout_right gives the dimensions in front of an
+  // extent of 0 a stride of 0, which the check below would refuse.
   if (p.empty) {
     return p;
   }
+  check_strides(c, "in", c.in_extents, c.in_strides);
+  check_strides(c, "out", c.out_extents, c.out_strides);
   if (c.in == c.out) {
     if (c.kind != detail::easy_kind::c2c) {
       refuse(c, "out is in's memory; the real transforms have no in-place form");

@@ -590,6 +590,13 @@ TEST(easy, an_empty_loop_does_nothing) {
   std::vector<cd> y(1, cd{6});
   easy::fftn(easy::view<const cd, 2>(x.data(), {0, 8}), easy::view<cd, 2>(y.data(), {0, 8}), {1});
   EXPECT_EQ(y[0], cd{6});
+  // The strides std::layout_right gives extents {3, 0}: {0, 1}, a 0 in front of the empty
+  // dimension. The array is empty, so they are not refused.
+  easy::fftn(easy::view<const cd, 2>(x.data(), {3, 0}, {0, 1}),
+             easy::view<cd, 2>(y.data(), {3, 0}, {0, 1}), {0});
+  easy::fftshift(easy::view<const cd, 2>(x.data(), {3, 0}, {0, 1}),
+                 easy::view<cd, 2>(y.data(), {3, 0}, {0, 1}));
+  EXPECT_EQ(y[0], cd{6});
 }
 
 // Every refusal is std::invalid_argument naming the argument.
@@ -684,6 +691,10 @@ TEST(easy, refusals_name_the_argument) {
       },
       "out.extents");
   refuses([&] { easy::fftshift(in, out, {5}); }, "axes lists 5");
+  refuses([&] { easy::fftshift(in, easy::view<cd, 2>(b.data(), {4, 6}, {0, 1})); },
+          "out.strides[0] is 0");
+  refuses([&] { easy::ifftshift(easy::view<const cd, 2>(a.data(), {4, 6}, {6, 0}), out); },
+          "in.strides[1] is 0");
   easy::context ctx;
   refuses([&] { ctx.set_max_plans(0); }, "max_plans");
 }

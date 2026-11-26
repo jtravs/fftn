@@ -93,7 +93,9 @@ template <class T, std::size_t Rank> struct view {
 #ifdef __cpp_lib_mdspan
   /// The array of a `std::mdspan` with the default accessor and a strided layout
   /// (`std::layout_right`, `std::layout_left` or `std::layout_stride`), where the standard
-  /// library has `std::mdspan` (C++23). Its strides are copied as given.
+  /// library has `std::mdspan` (C++23). Its strides are copied as given. The functions
+  /// below deduce their element types from views, so an mdspan is passed through this
+  /// conversion explicitly: `fftn::easy::fftn(fftn::easy::view(in), fftn::easy::view(out))`.
   template <class U, class E, class L>
     requires(E::rank() == Rank &&
              (std::is_same_v<U, T> || (!std::is_const_v<U> && std::is_same_v<T, const U>)) &&
@@ -251,6 +253,22 @@ template <class T, std::size_t R> std::array<std::ptrdiff_t, R> strides_of(const
   return s;
 }
 
+// Strides given with a 0 on a dimension that steps would make every element of it one.
+template <class T, std::size_t R>
+void check_strides(const char* function, const char* side, const view<T, R>& v) {
+  if (std::ranges::none_of(v.strides, [](std::ptrdiff_t s) { return s != 0; })) {
+    return;
+  }
+  for (std::size_t d = 0; d < R; ++d) {
+    if (v.strides[d] == 0 && v.extents[d] > 1) {
+      throw std::invalid_argument(std::string("fftn::easy::") + function + ": " + side +
+                                  ".strides[" + std::to_string(d) +
+                                  "] is 0 among nonzero strides; give every stride, or all 0 "
+                                  "for tight C order");
+    }
+  }
+}
+
 // The dimensions listed by `axes` (all when it is empty), validated: true in `chosen` for
 // each.
 template <std::size_t R>
@@ -297,6 +315,8 @@ void shift(const char* function, const view<In, R>& in, const view<Out, R>& out,
   if (total == 0) {
     return;
   }
+  check_strides(function, "in", in);
+  check_strides(function, "out", out);
   const std::array<std::ptrdiff_t, R> is = strides_of(in);
   const std::array<std::ptrdiff_t, R> os = strides_of(out);
   // Element i goes to (i + k) mod n along each shifted dimension: k = n/2 for fftshift and
@@ -406,7 +426,8 @@ void frequencies(const char* function, std::size_t n, std::span<T> out, double d
 /// The free functions below use the calling thread's own context (`thread_context()`).
 ///
 /// Preconditions: one thread at a time uses a context (the free functions satisfy this by
-/// using each thread's own).
+/// using each thread's own). A call must not re-enter the context it runs on, as a task on
+/// the context's executor calling the free functions on the calling thread would.
 ///
 /// Guarantees: a call that finds its plan allocates nothing (unless an executor's
 /// concurrency has grown, which grows the workspace), and computes bit for bit what the core
@@ -702,6 +723,9 @@ private:
 /// state FFTN keeps behind the caller's back (docs/easy.md); `clear()` releases its memory,
 /// and `set_max_plans` bounds it.
 ///
+/// Preconditions: not called once the thread's `thread_local` objects are being destroyed
+/// (from another `thread_local`'s destructor, say): the behaviour is then undefined.
+///
 /// Guarantees: each thread gets a different context, so the free functions take no lock and
 /// share nothing between threads.
 [[nodiscard]] context& thread_context() noexcept;
@@ -895,9 +919,10 @@ inline void rfftfreq(std::size_t n, std::span<float> out, double d = 1.0) {
 /// strides (in place). Any element type that can be copied (in place: swapped).
 ///
 /// Throws `std::invalid_argument` when `out.extents` differ from `in.extents` (naming
-/// `out.extents`) or `axes` is not valid (naming `axes`; an `axis_list` may list up to eight
-/// dimensions here). Preconditions: otherwise `in` and `out` do not overlap. Never allocates
-/// unless it throws.
+/// `out.extents`), `axes` is not valid (naming `axes`; an `axis_list` may list up to eight
+/// dimensions here), or a view gives a stride of 0 among nonzero strides on a dimension longer
+/// than 1 (naming `in.strides` or `out.strides`); an empty array is left alone. Preconditions:
+/// otherwise `in` and `out` do not overlap. Never allocates unless it throws.
 template <class In, class Out, std::size_t R>
   requires std::is_same_v<std::remove_const_t<In>, Out>
 void fftshift(view<In, R> in, view<Out, R> out, axis_list axes = {}) {

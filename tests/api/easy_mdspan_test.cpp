@@ -65,6 +65,28 @@ TEST(easy_mdspan, views_convert_from_mdspan) {
       x.data(), strided(std::dextents<std::size_t, 2>(3, 8), std::array<std::size_t, 2>{16, 1}));
   const easy::view<const cd, 2> vr = rows;
   EXPECT_EQ(vr.strides, (std::array<std::ptrdiff_t, 2>{16, 1}));
+  std::vector<cd> tight(3 * 8);
+  for (std::size_t i = 0; i < 3; ++i) {
+    for (std::size_t j = 0; j < 8; ++j) {
+      tight[i * 8 + j] = x[i * 16 + j];
+    }
+  }
+  std::vector<cd> got_r(tight.size());
+  std::vector<cd> want_r(tight.size());
+  easy::fftn(easy::view(rows), easy::view<cd, 2>(got_r.data(), {3, 8}));
+  easy::fftn(easy::view<const cd, 2>(tight.data(), {3, 8}),
+             easy::view<cd, 2>(want_r.data(), {3, 8}));
+  for (std::size_t i = 0; i < tight.size(); ++i) {
+    EXPECT_LT(std::abs(got_r[i] - want_r[i]), 1e-12) << i;
+  }
+
+  // An empty layout_right array: extents {3, 0} give strides {0, 1}; looping over dimension 0
+  // of an empty array does nothing, and is not refused for its stride of 0.
+  const std::mdspan<const cd, std::dextents<std::size_t, 2>> empty(x.data(), 3, 0);
+  std::vector<cd> untouched(1, cd{4});
+  const std::mdspan<cd, std::dextents<std::size_t, 2>> empty_out(untouched.data(), 3, 0);
+  easy::fftn(easy::view(empty), easy::view(empty_out), {0});
+  EXPECT_EQ(untouched[0], cd{4});
 #endif
 }
 

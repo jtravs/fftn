@@ -48,7 +48,9 @@ is not offered: the sizes must agree, and a mismatch is refused.
 The N-D functions take `fftn::easy::view<T, Rank>`: a pointer, the extents slowest first,
 and the strides in elements (all 0, the default, for tight C order; negative strides
 allowed). A `view` of `T` converts to a `view` of `const T`, and where the standard library
-has `std::mdspan` (C++23) a strided `mdspan` converts too.
+has `std::mdspan` (C++23) a strided `mdspan` converts too. The functions deduce their element
+types from views, so an `mdspan` is passed as `fftn::easy::view(m)`: the conversion is not
+applied during deduction.
 
 ```cpp file=examples/easy.cpp region=views
 // A batch of 4 real images of 32 x 48, C-ordered: rfft2 transforms the last two dimensions.
@@ -136,6 +138,10 @@ ctx.fft(a, b);  // builds and keeps the plan of 1000 points
 ctx.ifft(b, a); // another plan: the inverse
 ctx.fft(a, b);  // finds the first plan: allocates nothing
 ```
+
+A call must not re-enter the context it runs on (a task on a context's executor calling the
+free functions on the same thread, say), and the free functions must not be called from
+another `thread_local`'s destructor once the thread is exiting.
 
 A context built from an executor (`fftn::easy::context ctx(pool)`) executes every call on
 it, with the core's guarantee that the results are those of serial execution bit for bit
