@@ -1191,10 +1191,11 @@ void forms_agree(const shape_case& sc, fftn::isa target, forms_seen& seen) {
     seen.leaf_rows += f.leaf_rows ? 1U : 0U;
     seen.calls += f.calls.empty() ? 0U : 1U;
     seen.row_blocks += f.row_block != 0 ? 1U : 0U;
-    // A c2c row's chain with separate passes and one batch dimension takes the row-block form.
+    // A c2c row's chain with separate passes, one batch dimension and a flat program (at most
+    // flat_stages_max stages: not a Bluestein length's line) takes the row-block form.
     const std::string text = d::describe(*b);
     if (K == transform_kind::c2c && sc.dims.size() == 1 && sc.outer == 1 && sc.count >= 2 &&
-        text.find("separate pass into the workspace block") != std::string::npos) {
+        b->prog.flat && text.find("separate pass into the workspace block") != std::string::npos) {
       EXPECT_NE(f.row_block, 0U) << what << ":\n" << text;
       EXPECT_NE(text.find("the rows in blocks of"), std::string::npos) << what << ":\n" << text;
     }
