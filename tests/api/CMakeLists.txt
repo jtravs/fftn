@@ -115,6 +115,13 @@ endif()
 fftn_add_test(fftn_easy_tests SOURCES easy_test.cpp
   LIBRARIES fftn_test_support fftn_test_alloc_hook)
 fftn_always_optimise(easy_test.cpp)
+# Its real-to-real functions (step 6.7) against scipy's results recorded in data/ (written by
+# data/scipy_r2r_cases.py, run by hand outside the build).
+fftn_add_test(fftn_easy_r2r_tests SOURCES easy_r2r_test.cpp
+  LIBRARIES fftn_test_support fftn_test_alloc_hook)
+fftn_always_optimise(easy_r2r_test.cpp)
+target_compile_definitions(fftn_easy_r2r_tests PRIVATE
+  FFTN_EASY_DATA="${CMAKE_CURRENT_SOURCE_DIR}/data")
 # Its conversion from std::mdspan, in a C++23 unit where the compiler has the standard; the test
 # skips itself where the standard library lacks std::mdspan.
 if(cxx_std_23 IN_LIST CMAKE_CXX_COMPILE_FEATURES)

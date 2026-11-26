@@ -2,12 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// @file
-/// The convenience layer: numpy.fft's functions in one call each, over spans and strided
-/// views, with the plans and scratch they need kept in a per-thread cache (`context`).
+/// The convenience layer: numpy.fft's functions and scipy.fft's real-to-real ones (`dct`,
+/// `dst` and their inverses and N-D forms) in one call each, plus the DHT, over spans and
+/// strided views, with the plans and scratch they need kept in a per-thread cache (`context`).
 ///
-/// Provisional (step 6.6, dev/DESIGN.md 5.4): the names, the semantics and the cache follow
-/// the design's proposals, which await the maintainer's review. docs/easy.md says how the
-/// pieces fit together.
+/// Provisional (steps 6.6 and 6.7, dev/DESIGN.md 5.4): the names, the semantics and the cache
+/// follow the design's proposals, which await the maintainer's review. docs/easy.md says how
+/// the pieces fit together.
 #pragma once
 
 #include "fftn/config.hpp"
@@ -36,11 +37,14 @@
 namespace fftn::inline v0::easy {
 
 /// Where a transform pair puts its factor of 1/N (N the number of points transformed), as
-/// numpy.fft's `norm` argument.
+/// numpy.fft's and scipy.fft's `norm` argument.
 ///
-/// The forward transforms are `fft`, `rfft` and their 2-D and N-D forms; the inverse ones are
-/// `ifft`, `irfft` and theirs. Whatever the norm, a forward transform followed by its inverse
-/// returns the input (within rounding).
+/// The forward transforms are `fft`, `rfft`, `dct`, `dst`, `dht` and their 2-D and N-D forms;
+/// the inverse ones are `ifft`, `irfft`, `idct`, `idst` and theirs. Whatever the norm, a
+/// forward transform followed by its inverse returns the input (within rounding). For the
+/// real-to-real kinds N is scipy's "logical" size, the product over the transformed axes of
+/// 2(n - 1) for type 1 of the DCT, 2(n + 1) for type 1 of the DST, 2n for types 2 to 4 and n
+/// for the DHT; and `ortho` also applies scipy's orthogonalising weights (`context::dct`).
 enum class norm : unsigned char {
   /// The forward transform unscaled, the inverse scaled by 1/N: numpy's default, and the
   /// core's convention (fftn::plan) with the inverse normalised.
@@ -170,7 +174,10 @@ private:
 
 namespace detail {
 
-enum class easy_kind : unsigned char { c2c, r2c, c2r };
+enum class easy_kind : unsigned char { c2c, r2c, c2r, r2r };
+
+// The family of a real-to-real call: scipy's dct and idct, dst and idst, or the DHT.
+enum class easy_r2r : unsigned char { none, cosine, sine, hartley };
 
 // One call of the layer, as the compiled part (src/easy/easy.cpp) receives it: the arrays'
 // descriptions borrowed from the caller's arguments for the duration of the call.
@@ -189,6 +196,8 @@ struct easy_call {
   bool spans = false;           // the one-dimensional forms: messages say size()
   const void* in = nullptr;
   void* out = nullptr;
+  easy_r2r family = easy_r2r::none; // r2r: which transform
+  int type = 0;                     // r2r cosine and sine: scipy's type, 1 to 4
 };
 
 template <class T> struct is_precision : std::false_type {};
@@ -208,6 +217,8 @@ concept r2c_elements = is_precision<std::remove_const_t<In>>::value &&
 template <class In, class Out>
 concept c2r_elements =
     is_precision<Out>::value && std::is_same_v<std::remove_const_t<In>, std::complex<Out>>;
+template <class In, class Out>
+concept r2r_elements = is_precision<Out>::value && std::is_same_v<std::remove_const_t<In>, Out>;
 
 template <class T> constexpr bool is_single() {
   if constexpr (complex_of_precision<std::remove_const_t<T>>::value) {
@@ -220,7 +231,7 @@ template <class T> constexpr bool is_single() {
 template <class In, class Out, std::size_t R>
 easy_call call_of(const char* function, easy_kind kind, direction dir, norm scaling,
                   const view<In, R>& in, const view<Out, R>& out, const axis_list& axes,
-                  std::size_t default_axes) {
+                  std::size_t default_axes, easy_r2r family = easy_r2r::none, int type = 0) {
   return {
       .function = function,
       .kind = kind,
@@ -236,6 +247,8 @@ easy_call call_of(const char* function, easy_kind kind, direction dir, norm scal
       .spans = false,
       .in = in.data,
       .out = out.data,
+      .family = family,
+      .type = type,
   };
 }
 
@@ -420,7 +433,8 @@ void frequencies(const char* function, std::size_t n, std::span<T> out, double d
 /// context's one workspace, grown on a miss to what the plan needs. At most `max_plans()`
 /// plans are kept (64 unless set); when a new plan would exceed that, the least recently
 /// used one is dropped. The memory a context holds is therefore its plans (each a plan's
-/// tables) and one workspace of the largest size any of its calls has needed since
+/// tables and, for a real-to-real call with `norm::ortho` and weights, the arrays of its
+/// weights) and one workspace of the largest size any of its calls has needed since
 /// construction or `clear()`.
 ///
 /// The free functions below use the calling thread's own context (`thread_context()`).
@@ -431,9 +445,11 @@ void frequencies(const char* function, std::size_t n, std::span<T> out, double d
 ///
 /// Guarantees: a call that finds its plan allocates nothing (unless an executor's
 /// concurrency has grown, which grows the workspace), and computes bit for bit what the core
-/// plan of that shape and `options::scale` computes. Errors are `std::invalid_argument`
-/// naming the argument, thrown before anything is written; `std::bad_alloc` when memory runs
-/// out, after which the context is unchanged. Provisional (step 6.6).
+/// plan of that shape and `options::scale` computes; a real-to-real call with orthogonalising
+/// weights is the core plan with those weights as real factors on its edges (fftn/edges.hpp),
+/// and their arrays are cached with the plan. Errors are `std::invalid_argument` naming the
+/// argument, thrown before anything is written; `std::bad_alloc` when memory runs out, after
+/// which the context is unchanged. Provisional (steps 6.6 and 6.7).
 class context {
 public:
   /// The default number of plans a context keeps.
@@ -705,11 +721,247 @@ public:
                         2));
   }
 
+  /// The discrete cosine transform of type `type` of `in` into `out` (scipy.fft.dct, whose
+  /// `type` is 1 to 4), n = in.size() points, scaled as `nm` says. With `norm::backward` it is
+  /// FFTW's unnormalised REDFT00, REDFT10, REDFT01 or REDFT11 (`fftn::r2r_kind::dct1` to
+  /// `dct4`, docs/conventions.md), as scipy's. `norm::ortho` also applies scipy's
+  /// orthogonalising weights (its default `orthogonalize=True`): type 1 multiplies in[0] and
+  /// in[n - 1] by sqrt 2 and divides out[0] and out[n - 1] by it, type 2 divides out[0] by
+  /// sqrt 2, type 3 multiplies in[0] by sqrt 2, and type 4 has none. `in` and `out` may be the
+  /// same memory (in place).
+  ///
+  /// Throws `std::invalid_argument` when `type` is not 1 to 4 (naming `type`), `in` is empty or,
+  /// for type 1, of one point (naming `in`), or `out.size()` differs from `in.size()` (naming
+  /// `out`). Preconditions: otherwise `in` and `out` do not overlap.
+  void dct(std::span<const double> in, std::span<double> out, int type = 2,
+           norm nm = norm::backward) {
+    run_1d("dct", detail::easy_kind::r2r, false, direction::forward, nm, in.data(), in.size(),
+           out.data(), out.size(), detail::easy_r2r::cosine, type);
+  }
+
+  /// `dct` in float.
+  void dct(std::span<const float> in, std::span<float> out, int type = 2,
+           norm nm = norm::backward) {
+    run_1d("dct", detail::easy_kind::r2r, true, direction::forward, nm, in.data(), in.size(),
+           out.data(), out.size(), detail::easy_r2r::cosine, type);
+  }
+
+  /// The inverse of `dct` of type `type` (scipy.fft.idct): the DCT of the inverse type (types
+  /// 1 and 4 are their own, 2 and 3 each other's) with that type's weights under `norm::ortho`,
+  /// scaled as `nm` says (by 1/N by default, N = 2(n - 1) for type 1 and 2n otherwise), so that
+  /// `idct` of `dct` with the same type and norm returns the input. Arguments, exceptions and
+  /// preconditions as for `dct`.
+  void idct(std::span<const double> in, std::span<double> out, int type = 2,
+            norm nm = norm::backward) {
+    run_1d("idct", detail::easy_kind::r2r, false, direction::backward, nm, in.data(), in.size(),
+           out.data(), out.size(), detail::easy_r2r::cosine, type);
+  }
+
+  /// `idct` in float.
+  void idct(std::span<const float> in, std::span<float> out, int type = 2,
+            norm nm = norm::backward) {
+    run_1d("idct", detail::easy_kind::r2r, true, direction::backward, nm, in.data(), in.size(),
+           out.data(), out.size(), detail::easy_r2r::cosine, type);
+  }
+
+  /// The discrete sine transform of type `type` of `in` into `out` (scipy.fft.dst), n =
+  /// in.size() points, scaled as `nm` says: FFTW's RODFT00, RODFT10, RODFT01 or RODFT11
+  /// (`fftn::r2r_kind::dst1` to `dst4`) with `norm::backward`. `norm::ortho` also applies
+  /// scipy's orthogonalising weights: type 2 divides out[n - 1] by sqrt 2, type 3 multiplies
+  /// in[n - 1] by sqrt 2, and types 1 and 4 have none. `in` and `out` may be the same memory
+  /// (in place).
+  ///
+  /// Throws `std::invalid_argument` when `type` is not 1 to 4 (naming `type`), `in` is empty
+  /// (naming `in`), or `out.size()` differs from `in.size()` (naming `out`). Preconditions:
+  /// otherwise `in` and `out` do not overlap.
+  void dst(std::span<const double> in, std::span<double> out, int type = 2,
+           norm nm = norm::backward) {
+    run_1d("dst", detail::easy_kind::r2r, false, direction::forward, nm, in.data(), in.size(),
+           out.data(), out.size(), detail::easy_r2r::sine, type);
+  }
+
+  /// `dst` in float.
+  void dst(std::span<const float> in, std::span<float> out, int type = 2,
+           norm nm = norm::backward) {
+    run_1d("dst", detail::easy_kind::r2r, true, direction::forward, nm, in.data(), in.size(),
+           out.data(), out.size(), detail::easy_r2r::sine, type);
+  }
+
+  /// The inverse of `dst` of type `type` (scipy.fft.idst): the DST of the inverse type with
+  /// that type's weights under `norm::ortho`, scaled as `nm` says (by 1/N by default, N =
+  /// 2(n + 1) for type 1 and 2n otherwise). Arguments, exceptions and preconditions as for
+  /// `dst`.
+  void idst(std::span<const double> in, std::span<double> out, int type = 2,
+            norm nm = norm::backward) {
+    run_1d("idst", detail::easy_kind::r2r, false, direction::backward, nm, in.data(), in.size(),
+           out.data(), out.size(), detail::easy_r2r::sine, type);
+  }
+
+  /// `idst` in float.
+  void idst(std::span<const float> in, std::span<float> out, int type = 2,
+            norm nm = norm::backward) {
+    run_1d("idst", detail::easy_kind::r2r, true, direction::backward, nm, in.data(), in.size(),
+           out.data(), out.size(), detail::easy_r2r::sine, type);
+  }
+
+  /// The discrete Hartley transform of `in` into `out`: out[k] = sum_j in[j] cas(2 pi jk / n)
+  /// with cas = cos + sin and n = in.size() (`fftn::r2r_kind::dht`), scaled as `nm` says as a
+  /// forward transform: unscaled by default, by 1/sqrt(n) with `norm::ortho` and by 1/n with
+  /// `norm::forward`. The DHT is its own inverse up to the factor n, so `dht` with
+  /// `norm::forward` undoes `dht` with `norm::backward`, and with `norm::ortho` it undoes
+  /// itself. (scipy.fft has no DHT.) `in` and `out` may be the same memory (in place).
+  ///
+  /// Throws `std::invalid_argument` when `in` is empty (naming `in`) or `out.size()` differs
+  /// from `in.size()` (naming `out`). Preconditions: otherwise `in` and `out` do not overlap.
+  void dht(std::span<const double> in, std::span<double> out, norm nm = norm::backward) {
+    run_1d("dht", detail::easy_kind::r2r, false, direction::forward, nm, in.data(), in.size(),
+           out.data(), out.size(), detail::easy_r2r::hartley);
+  }
+
+  /// `dht` in float.
+  void dht(std::span<const float> in, std::span<float> out, norm nm = norm::backward) {
+    run_1d("dht", detail::easy_kind::r2r, true, direction::forward, nm, in.data(), in.size(),
+           out.data(), out.size(), detail::easy_r2r::hartley);
+  }
+
+  /// `dct` into a new vector of in.size() values, which this form allocates on every call.
+  [[nodiscard]] std::vector<double> dct(std::span<const double> in, int type = 2,
+                                        norm nm = norm::backward) {
+    std::vector<double> out(in.size());
+    dct(in, out, type, nm);
+    return out;
+  }
+
+  /// `dct` into a new vector, in float.
+  [[nodiscard]] std::vector<float> dct(std::span<const float> in, int type = 2,
+                                       norm nm = norm::backward) {
+    std::vector<float> out(in.size());
+    dct(in, out, type, nm);
+    return out;
+  }
+
+  /// `idct` into a new vector of in.size() values, which this form allocates on every call.
+  [[nodiscard]] std::vector<double> idct(std::span<const double> in, int type = 2,
+                                         norm nm = norm::backward) {
+    std::vector<double> out(in.size());
+    idct(in, out, type, nm);
+    return out;
+  }
+
+  /// `idct` into a new vector, in float.
+  [[nodiscard]] std::vector<float> idct(std::span<const float> in, int type = 2,
+                                        norm nm = norm::backward) {
+    std::vector<float> out(in.size());
+    idct(in, out, type, nm);
+    return out;
+  }
+
+  /// `dst` into a new vector of in.size() values, which this form allocates on every call.
+  [[nodiscard]] std::vector<double> dst(std::span<const double> in, int type = 2,
+                                        norm nm = norm::backward) {
+    std::vector<double> out(in.size());
+    dst(in, out, type, nm);
+    return out;
+  }
+
+  /// `dst` into a new vector, in float.
+  [[nodiscard]] std::vector<float> dst(std::span<const float> in, int type = 2,
+                                       norm nm = norm::backward) {
+    std::vector<float> out(in.size());
+    dst(in, out, type, nm);
+    return out;
+  }
+
+  /// `idst` into a new vector of in.size() values, which this form allocates on every call.
+  [[nodiscard]] std::vector<double> idst(std::span<const double> in, int type = 2,
+                                         norm nm = norm::backward) {
+    std::vector<double> out(in.size());
+    idst(in, out, type, nm);
+    return out;
+  }
+
+  /// `idst` into a new vector, in float.
+  [[nodiscard]] std::vector<float> idst(std::span<const float> in, int type = 2,
+                                        norm nm = norm::backward) {
+    std::vector<float> out(in.size());
+    idst(in, out, type, nm);
+    return out;
+  }
+
+  /// `dht` into a new vector of in.size() values, which this form allocates on every call.
+  [[nodiscard]] std::vector<double> dht(std::span<const double> in, norm nm = norm::backward) {
+    std::vector<double> out(in.size());
+    dht(in, out, nm);
+    return out;
+  }
+
+  /// `dht` into a new vector, in float.
+  [[nodiscard]] std::vector<float> dht(std::span<const float> in, norm nm = norm::backward) {
+    std::vector<float> out(in.size());
+    dht(in, out, nm);
+    return out;
+  }
+
+  /// The DCT of type `type` along dimensions `axes` of real array `in` into `out`
+  /// (scipy.fft.dctn), the other dimensions looped over: all dimensions by default (at most
+  /// three). It is the separable product of `dct` along each listed dimension, with the same
+  /// type along each: N is the product of each dimension's logical size, and under
+  /// `norm::ortho` each dimension's weights apply. `out` has `in`'s extents; it may be the same
+  /// memory with the same strides (in place). Elements are `double` or `float`, the input's
+  /// possibly const.
+  ///
+  /// Throws `std::invalid_argument` naming the argument: `type` when it is not 1 to 4; `axes`
+  /// with an index outside the array, an index twice, none or more than three dimensions to
+  /// transform; `out.extents` unlike `in.extents`; a transformed dimension of extent 0, or of
+  /// extent 1 for type 1; a stride of 0 among nonzero strides on a dimension longer than 1;
+  /// `out` over `in`'s memory with other strides. A dimension of extent 0 that is not
+  /// transformed makes the call do nothing. Preconditions: otherwise `in` and `out` do not
+  /// overlap, and `out`'s elements do not overlap each other.
+  template <class In, class Out, std::size_t R>
+    requires detail::r2r_elements<In, Out>
+  void dctn(view<In, R> in, view<Out, R> out, int type = 2, axis_list axes = {},
+            norm nm = norm::backward) {
+    run(detail::call_of("dctn", detail::easy_kind::r2r, direction::forward, nm, in, out, axes, 0,
+                        detail::easy_r2r::cosine, type));
+  }
+
+  /// The inverse of `dctn` (scipy.fft.idctn): `idct` of type `type` along each listed
+  /// dimension, scaled as `nm` says (by 1/N by default). As `dctn` otherwise.
+  template <class In, class Out, std::size_t R>
+    requires detail::r2r_elements<In, Out>
+  void idctn(view<In, R> in, view<Out, R> out, int type = 2, axis_list axes = {},
+             norm nm = norm::backward) {
+    run(detail::call_of("idctn", detail::easy_kind::r2r, direction::backward, nm, in, out, axes, 0,
+                        detail::easy_r2r::cosine, type));
+  }
+
+  /// The DST of type `type` along dimensions `axes` (scipy.fft.dstn): `dst` along each listed
+  /// dimension, the weights of `dst` under `norm::ortho`. As `dctn` otherwise (a type 1 axis
+  /// of one point is allowed).
+  template <class In, class Out, std::size_t R>
+    requires detail::r2r_elements<In, Out>
+  void dstn(view<In, R> in, view<Out, R> out, int type = 2, axis_list axes = {},
+            norm nm = norm::backward) {
+    run(detail::call_of("dstn", detail::easy_kind::r2r, direction::forward, nm, in, out, axes, 0,
+                        detail::easy_r2r::sine, type));
+  }
+
+  /// The inverse of `dstn` (scipy.fft.idstn): `idst` of type `type` along each listed
+  /// dimension, scaled as `nm` says (by 1/N by default). As `dstn` otherwise.
+  template <class In, class Out, std::size_t R>
+    requires detail::r2r_elements<In, Out>
+  void idstn(view<In, R> in, view<Out, R> out, int type = 2, axis_list axes = {},
+             norm nm = norm::backward) {
+    run(detail::call_of("idstn", detail::easy_kind::r2r, direction::backward, nm, in, out, axes, 0,
+                        detail::easy_r2r::sine, type));
+  }
+
 private:
   struct state;
 
   void run_1d(const char* function, detail::easy_kind kind, bool single, direction dir, norm nm,
-              const void* in, std::size_t in_size, void* out, std::size_t out_size);
+              const void* in, std::size_t in_size, void* out, std::size_t out_size,
+              detail::easy_r2r family = detail::easy_r2r::none, int type = 0);
   static std::size_t irfft_length(std::size_t in_size, std::size_t n);
   void run(const detail::easy_call& call);
   state& own();
@@ -881,6 +1133,154 @@ template <class In, class Out, std::size_t R>
   requires detail::c2r_elements<In, Out>
 void irfft2(view<In, R> in, view<Out, R> out, axis_list axes = {}, norm nm = norm::backward) {
   thread_context().irfft2(in, out, axes, nm);
+}
+
+/// `context::dct` on the calling thread's context.
+inline void dct(std::span<const double> in, std::span<double> out, int type = 2,
+                norm nm = norm::backward) {
+  thread_context().dct(in, out, type, nm);
+}
+
+/// `context::dct` in float on the calling thread's context.
+inline void dct(std::span<const float> in, std::span<float> out, int type = 2,
+                norm nm = norm::backward) {
+  thread_context().dct(in, out, type, nm);
+}
+
+/// `context::idct` on the calling thread's context.
+inline void idct(std::span<const double> in, std::span<double> out, int type = 2,
+                 norm nm = norm::backward) {
+  thread_context().idct(in, out, type, nm);
+}
+
+/// `context::idct` in float on the calling thread's context.
+inline void idct(std::span<const float> in, std::span<float> out, int type = 2,
+                 norm nm = norm::backward) {
+  thread_context().idct(in, out, type, nm);
+}
+
+/// `context::dst` on the calling thread's context.
+inline void dst(std::span<const double> in, std::span<double> out, int type = 2,
+                norm nm = norm::backward) {
+  thread_context().dst(in, out, type, nm);
+}
+
+/// `context::dst` in float on the calling thread's context.
+inline void dst(std::span<const float> in, std::span<float> out, int type = 2,
+                norm nm = norm::backward) {
+  thread_context().dst(in, out, type, nm);
+}
+
+/// `context::idst` on the calling thread's context.
+inline void idst(std::span<const double> in, std::span<double> out, int type = 2,
+                 norm nm = norm::backward) {
+  thread_context().idst(in, out, type, nm);
+}
+
+/// `context::idst` in float on the calling thread's context.
+inline void idst(std::span<const float> in, std::span<float> out, int type = 2,
+                 norm nm = norm::backward) {
+  thread_context().idst(in, out, type, nm);
+}
+
+/// `context::dht` on the calling thread's context.
+inline void dht(std::span<const double> in, std::span<double> out, norm nm = norm::backward) {
+  thread_context().dht(in, out, nm);
+}
+
+/// `context::dht` in float on the calling thread's context.
+inline void dht(std::span<const float> in, std::span<float> out, norm nm = norm::backward) {
+  thread_context().dht(in, out, nm);
+}
+
+/// `context::dct` into a new vector on the calling thread's context.
+[[nodiscard]] inline std::vector<double> dct(std::span<const double> in, int type = 2,
+                                             norm nm = norm::backward) {
+  return thread_context().dct(in, type, nm);
+}
+
+/// `context::dct` into a new vector, in float, on the calling thread's context.
+[[nodiscard]] inline std::vector<float> dct(std::span<const float> in, int type = 2,
+                                            norm nm = norm::backward) {
+  return thread_context().dct(in, type, nm);
+}
+
+/// `context::idct` into a new vector on the calling thread's context.
+[[nodiscard]] inline std::vector<double> idct(std::span<const double> in, int type = 2,
+                                              norm nm = norm::backward) {
+  return thread_context().idct(in, type, nm);
+}
+
+/// `context::idct` into a new vector, in float, on the calling thread's context.
+[[nodiscard]] inline std::vector<float> idct(std::span<const float> in, int type = 2,
+                                             norm nm = norm::backward) {
+  return thread_context().idct(in, type, nm);
+}
+
+/// `context::dst` into a new vector on the calling thread's context.
+[[nodiscard]] inline std::vector<double> dst(std::span<const double> in, int type = 2,
+                                             norm nm = norm::backward) {
+  return thread_context().dst(in, type, nm);
+}
+
+/// `context::dst` into a new vector, in float, on the calling thread's context.
+[[nodiscard]] inline std::vector<float> dst(std::span<const float> in, int type = 2,
+                                            norm nm = norm::backward) {
+  return thread_context().dst(in, type, nm);
+}
+
+/// `context::idst` into a new vector on the calling thread's context.
+[[nodiscard]] inline std::vector<double> idst(std::span<const double> in, int type = 2,
+                                              norm nm = norm::backward) {
+  return thread_context().idst(in, type, nm);
+}
+
+/// `context::idst` into a new vector, in float, on the calling thread's context.
+[[nodiscard]] inline std::vector<float> idst(std::span<const float> in, int type = 2,
+                                             norm nm = norm::backward) {
+  return thread_context().idst(in, type, nm);
+}
+
+/// `context::dht` into a new vector on the calling thread's context.
+[[nodiscard]] inline std::vector<double> dht(std::span<const double> in, norm nm = norm::backward) {
+  return thread_context().dht(in, nm);
+}
+
+/// `context::dht` into a new vector, in float, on the calling thread's context.
+[[nodiscard]] inline std::vector<float> dht(std::span<const float> in, norm nm = norm::backward) {
+  return thread_context().dht(in, nm);
+}
+
+/// `context::dctn` on the calling thread's context.
+template <class In, class Out, std::size_t R>
+  requires detail::r2r_elements<In, Out>
+void dctn(view<In, R> in, view<Out, R> out, int type = 2, axis_list axes = {},
+          norm nm = norm::backward) {
+  thread_context().dctn(in, out, type, axes, nm);
+}
+
+/// `context::idctn` on the calling thread's context.
+template <class In, class Out, std::size_t R>
+  requires detail::r2r_elements<In, Out>
+void idctn(view<In, R> in, view<Out, R> out, int type = 2, axis_list axes = {},
+           norm nm = norm::backward) {
+  thread_context().idctn(in, out, type, axes, nm);
+}
+
+/// `context::dstn` on the calling thread's context.
+template <class In, class Out, std::size_t R>
+  requires detail::r2r_elements<In, Out>
+void dstn(view<In, R> in, view<Out, R> out, int type = 2, axis_list axes = {},
+          norm nm = norm::backward) {
+  thread_context().dstn(in, out, type, axes, nm);
+}
+
+/// `context::idstn` on the calling thread's context.
+template <class In, class Out, std::size_t R>
+  requires detail::r2r_elements<In, Out>
+void idstn(view<In, R> in, view<Out, R> out, int type = 2, axis_list axes = {},
+           norm nm = norm::backward) {
+  thread_context().idstn(in, out, type, axes, nm);
 }
 
 /// The sample frequencies of an `fft` of `n` points spaced `d` apart (numpy.fft.fftfreq),

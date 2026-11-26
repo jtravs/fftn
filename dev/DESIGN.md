@@ -512,7 +512,7 @@ Points that matter:
 ### 5.4 Convenience layer
 
 *Provisional* (phase 6: step 6.6 built the complex and real functions on the proposals of 18.2,
-"Phase 6", Q4–Q8; step 6.7 adds the real-to-real ones). A header, `fftn/easy.hpp`, for callers
+"Phase 6", Q4–Q8; step 6.7 the real-to-real ones, "As built" below). A header, `fftn/easy.hpp`, for callers
 who want numpy's interface and accept that FFTN keeps plans and scratch for them, and its one
 compiled unit, `src/easy/easy.cpp`, which includes public headers only. It adds no kernels and
 no planning of its own: every call finds or builds a core plan (5.3) and executes it.
@@ -560,8 +560,12 @@ void fftn(view<In, R> in, view<Out, R> out, axis_list axes = {}, norm = norm::ba
 
 // Helpers: fftfreq(n, span out, d = 1) and rfftfreq(n, span out, d = 1); fftshift and
 // ifftshift from view to view along axis_list axes (all by default), in place allowed.
-// Real-to-real (step 6.7, over 5.7): scipy.fft's dct, idct, dst, idst, dctn, idctn, dstn and
-// idstn (type 1 to 4, norm), and dht.
+// Real-to-real (step 6.7, over 5.7): scipy.fft's dct, idct, dst and idst over spans (both
+// forms, scipy's int type, 2 by default), dctn, idctn, dstn and idstn over views, and dht:
+void dct(std::span<const double> in, std::span<double> out, int type = 2, norm = norm::backward);
+template <class In, class Out, std::size_t R>
+void dctn(view<In, R> in, view<Out, R> out, int type = 2, axis_list axes = {}, norm = norm::backward);
+void dht(std::span<const double> in, std::span<double> out, norm = norm::backward);
 }
 ```
 
@@ -600,6 +604,19 @@ Points that matter:
 - **Not offered:** team execution (it needs every member's call on one workspace, which the core
   API serves), plan edges and pipelines (`docs/fusion.md` uses the core API), measured planning
   and wisdom, more than three transformed axes (5.6).
+- **As built (step 6.7, the real-to-real functions; provisional).** scipy.fft's semantics
+  (scipy 1.18): `type` as scipy's `int`, refused outside 1–4; the inverse functions compute the
+  inverse kind (5.7's table), so `idct` of type 2 is the `dct3` plan with the inverse norm; N is
+  the product of the axes' logical sizes (5.7's N column); `norm::ortho` implies scipy's default
+  `orthogonalize=True` and the flag itself is not offered; one type along every axis of the N-D
+  forms (mixed kinds stay the core's `axes_r2r`); in place as c2c. The weights are real factors
+  (12.1) on the sides that have any, an array of the transformed axes' points in C order over
+  them in the order listed, broadcast along the batch, each point's weight 2^(m/2) for m weighted
+  coordinates, rounded once; the arrays live in the cache entry beside the plan, and only a plan
+  with weights executes through the `exec_args` overloads, so every other call runs as before.
+  `dht` is a forward transform for the norms (scipy has no DHT) and has no N-D form. Tested
+  against 795 scipy results recorded by `tests/api/data/scipy_r2r_cases.py` (both precisions) and
+  bitwise against the core plan with the edges built by hand.
 - **Kokkos.** The one-shot functions of `fftn::kokkos::compat` (Kokkos-FFT's `fft`, `ifft`,
   `rfft` and the rest, 5.5) would be built over the same context (step 6.7).
 
@@ -4815,6 +4832,7 @@ to change before a release.
 | 2026-11-26 | Step 6.4 (provisional, second reader to come): `dct2`, `dct3`, `dst2` and `dst3` built in 5.7's routes on 6.3's phase builder (Makhoul's read stage and twiddled store over the r2c's half-length chain, the inverse over the c2r's; the sine kinds by exact signs and reversals), any n, kinds mixed across axes; an axis of one point of `dct2` or `dst2` folds its exact factor 2 into the scales' product instead of a phase | 5.7's routes as proposed; the factor 2 needs no phase and no rounding of its own |
 | 2026-11-26 | Step 6.3 (provisional, second reader to come): `r2r_kind`, `shape<T, T>` with `shape::kinds`, `rows_r2r`, `planes_r2r`, `volumes_r2r`, `axes_r2r`, `r2r_plan`, and the DHT as built in 5.7: a read stage, the r2c's complex chain in the member's scratch and a store stage fusing the r2c's pairing with the Hartley combination; the DCT and DST kinds refused until 6.4 and 6.5; real-to-real plans by the rules only | The 18.2 "Phase 6" proposals 9–13 taken as written; scratch rather than the block, because a phase's lines run on several members at once and the block is the task's |
 | 2026-11-26 | Convenience layer for complex and real transforms (step 6.6, section 5.4): provisional `fftn/easy.hpp` with 18.2's proposals Q4–Q8 (`fftn::easy`, numpy's semantics, a `thread_local` `context` of 64 plans dropped least recently used, rules planning, `view` with an `mdspan` conversion, both value forms); one compiled unit over the public API only; per-precision overloads for the span forms; `axis_list` for braced axes; sizes must agree (numpy's cropping and padding by `n` and `s` not offered); the executor's width left out of the key; `cached_plans()` and `max_plans()` added for inspection. Awaits the maintainer's review of the API | The maintainer's priority (2026-11-25): features fully built; numpy users' call sites translate one to one, and the core API stays the way to every other feature |
+| 2026-11-26 | Convenience layer for real-to-real transforms (step 6.7, section 5.4, "As built"): provisional `dct`, `idct`, `dst`, `idst` (spans, both forms), `dctn`, `idctn`, `dstn`, `idstn` (views) and `dht` in `fftn::easy`, with scipy's `int` type and norms; `norm::ortho` implies scipy's `orthogonalize=True`, the flag not offered; one type on every axis; the orthogonalising weights as cached real edge factors; `dht` scaled as a forward transform, 1-D only. Awaits the maintainer's review of the API | scipy users' call sites translate one to one; the weights are what 12.1's real factors are for, so the layer adds no stage of its own |
 | 2026-11-26 | Block callbacks on planes and volumes (task 5.3c, section 12.3): the input's inside the first phase's line bodies (a modify callback's line copied first into the phase's destination, or for r2c into the real rows' copy in the workspace block), the output's inside the last phase's, on the line, the lanes column block's columns (lines along the last axis) or the block of adjacent transforms; a side with an edge phase of its own (a factor, accumulation) takes its callback there; the edge driver moves the coordinates with the enclosing loops; a consumed c2r output's rows in the workspace block over the half spectrum; no packed c2r intermediate with callbacks; refused beside stored runs on planes and volumes | DESIGN 12.3's table: a callback phase of its own would be the extra sweep that 12.5's stage exists to save. The edge phase a factor already has costs nothing more to carry the callback. Runs' edge phases are nests per run, left for a follow-up rather than refusing the whole feature |
 
 ---
