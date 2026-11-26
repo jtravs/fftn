@@ -213,7 +213,10 @@ public:
   // out_head): whether c2c_line, given lines of stride 1, builds its first pass (head_first)
   // or its last pass (head_last) as a codelet pass of a radix R with pruned codelets
   // (has_pruned_codelet), which then reads or writes only the line's first n/2 elements, legs
-  // 0 .. R/2 - 1. Not where the line is one leaf or pair leaf, nor a last pass of Bluestein's.
+  // 0 .. R/2 - 1. Not where the line is one leaf or pair leaf, nor a last pass of Bluestein's;
+  // nor a last pass in split arithmetic (split_from): a split run ends in the chain's last pass,
+  // whose split kernel is untwiddled, and the line without it lost more than the pruned last
+  // pass saved (EPYC 7513, 16384-point rows with half the output: 1.27 of the unpruned time).
   [[nodiscard]] bool head_first(std::size_t n) const;
   [[nodiscard]] bool head_last(std::size_t n) const;
 

@@ -1033,7 +1033,7 @@ template <class T> bool chain_builder<T>::head_last(std::size_t n) const {
   const std::vector<std::size_t> rad = radices(n);
   return rad.size() >= 2 && (batch_ == nullptr || !has_codelet(n)) &&
          pair_for(n, {}, {}, line_edges()).entry == nullptr && has_pruned_codelet(rad.back()) &&
-         !bluestein_last(n);
+         !bluestein_last(n) && split_from(rad, false, 1) == rad.size();
 }
 
 template <class T>
@@ -1098,10 +1098,7 @@ std::size_t chain_builder<T>::c2c_line(std::size_t n, int sign, endpoint src, en
   // the EPYC a 512-point row refilled L1 517 times with three lines against FFTW's 181
   // (dev/experiments/X47-epyc-mid-2.md). Not after a generic pass, which may store as it goes.
   const bool two_lines = via_dst && rad.size() == 2 && has_codelet(rad.back());
-  // A pruned last pass is interleaved, and a split run ends only in a chain's last pass (its
-  // last kernel is untwiddled, m = 1): such a line takes no split run.
-  const std::size_t split =
-      edges.out_head ? rad.size() : split_from(rad, bluestein, copy_out ? 1 : dst.stride);
+  const std::size_t split = split_from(rad, bluestein, copy_out ? 1 : dst.stride);
   std::size_t s = 1;
   for (std::size_t i = 0; i < rad.size(); ++i) {
     const bool last = i + 1 == rad.size();

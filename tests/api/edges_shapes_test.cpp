@@ -2349,9 +2349,10 @@ TEST(EdgeShapes, StoredRunsPlanning) {
 }
 
 // describe() of c2c rows whose runs lie in the line's first half (task 5.1e): a row of a power of
-// two, every radix even, takes the pruned first and last passes on every target, with no
-// separate pass where one run of the half is stored with stride 1; a row whose radices are all
-// odd computes the whole line between its separate passes, as in 5.1d.
+// two, every radix even, takes the pruned first pass on every target, and the pruned last pass
+// unless its chain ends in split arithmetic (chain_builder::head_last), with no separate pass
+// where one run of the half is stored with stride 1; a row whose radices are all odd computes
+// the whole line between its separate passes, as in 5.1d.
 TEST(EdgeShapes, StoredRunsPrunedPasses) {
   using C = std::complex<double>;
   using fftn::side;
@@ -2369,11 +2370,15 @@ TEST(EdgeShapes, StoredRunsPrunedPasses) {
                                    {.where = side::out, .logical = 0, .stored = 0, .count = 1024}},
                                   t);
     EXPECT_NE(both.find("read where they are stored by the first pass"), std::string::npos) << both;
-    EXPECT_NE(both.find("written where they are stored by the last pass"), std::string::npos)
-        << both;
-    EXPECT_NE(both.find("they cost 0 separate passes"), std::string::npos) << both;
     EXPECT_NE(both.find("pruned: reads legs 0-"), std::string::npos) << both;
-    EXPECT_NE(both.find("pruned: writes legs 0-"), std::string::npos) << both;
+    const bool split = both.find("split lane") != std::string::npos;
+    EXPECT_EQ(both.find("written where they are stored by the last pass") != std::string::npos,
+              !split)
+        << both;
+    EXPECT_EQ(both.find("pruned: writes legs 0-") != std::string::npos, !split) << both;
+    EXPECT_NE(both.find(split ? "they cost 1 separate pass" : "they cost 0 separate passes"),
+              std::string::npos)
+        << both;
     const std::string band = text(2048,
                                   {{.where = side::in, .logical = 4, .stored = 0, .count = 10},
                                    {.where = side::out, .logical = 1, .stored = 0, .count = 3}},
@@ -2396,8 +2401,8 @@ TEST(EdgeShapes, StoredRunsPrunedPasses) {
   }
 }
 
-// The pruned passes with the radices and the layout forced (task 5.1e): split layouts, which a
-// pruned last pass turns off, an interleaved chain, radix 2 at either end; the half read
+// The pruned passes with the radices and the layout forced (task 5.1e): split layouts (a split
+// run keeps its last pass unpruned), an interleaved chain, radix 2 at either end; the half read
 // and written in place, and a band in and a crop out through the block. Against the plan
 // without runs on the zero-padded line, cropped; nothing outside the output's runs written;
 // serial, team and executor alike.
@@ -2443,7 +2448,10 @@ TYPED_TEST(EdgeShapes, StoredRunsPrunedPassesForced) {
               d::view_of(s), opts, d::view_of(fftn::plan_edges<C, C>{}), settings)};
           const std::string text = p.describe();
           EXPECT_NE(text.find("pruned: reads legs"), std::string::npos) << text;
-          EXPECT_NE(text.find("pruned: writes legs"), std::string::npos) << text;
+          // The last pass is pruned unless the chain ends in split arithmetic.
+          EXPECT_EQ(text.find("pruned: writes legs") != std::string::npos,
+                    text.find("split lane") == std::string::npos)
+              << text;
           std::vector<C> x = src.complexes<T>(in_dist * count);
           const std::vector<C> init = src.complexes<T>(out_dist * count + 4);
           std::vector<C> y = init;

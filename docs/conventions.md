@@ -295,7 +295,7 @@ be listed in any order. A plan with runs reads the runs into the whole line with
 computes the whole transform (skipping the lines of a multi-axis transform that are known to be
 zero or are not wanted) and stores only the runs, on the chain whatever the rules would choose,
 except that a one-axis c2c plan whose runs on a side lie in the line's first half reads or writes
-only that half in the chain's first or last pass where the chain's radices allow (one run of
+only that half in the chain's first or last pass where the chain's passes allow (one run of
 exactly the half, contiguous, is then read or written in place, with no separate pass),
 planned by the rules whatever `options::effort` says; `plan::describe()` says so and counts the
 passes. Not built yet, and refused at construction: runs on an in-place plan, and runs beside an

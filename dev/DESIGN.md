@@ -2315,13 +2315,15 @@ even R; the last pass's first R/2 legs write it. A c2c row (one axis) whose inpu
 first half and whose chain starts with a grouped pass of an even codelet radix takes the pruned
 first pass; one whose output runs lie in the first half and whose chain ends in a codelet lane
 pass of an even radix takes the pruned last pass (`chain_builder::head_first`, `head_last`; not
-for lines that are one leaf or pair leaf, nor a last Bluestein stage). Where the side has one run
+for lines that are one leaf or pair leaf, nor a last Bluestein stage, nor a chain that ends in
+split arithmetic: a split run ends in an untwiddled last kernel, and turning it off cost more than
+the pruning saved, 1.27 of the unpruned time on 16384-point rows of the EPYC 7513, informative
+run). Where the side has one run
 of exactly n/2 from logical 0, stored with stride 1 (and, for the output, not accumulated), the
 pass reads or writes it where it is stored and the side has no separate pass; otherwise the
 separate pass moves the runs through the block's first half only, zeros there alone. A pruned
-last pass is interleaved, so its line takes no split run (a split run ends in an untwiddled last
-pass), and its destination is not used as a scratch line. `describe()` says which
-(`run_pruning`) and counts the separate passes left.
+last pass's destination is not used as a scratch line. `describe()` says which (`run_pruning`)
+and counts the separate passes left.
 The codelets save a tenth to a quarter of the pass's arithmetic and a quarter of its memory
 accesses; the separate pass that no longer runs is the larger gain. Not yet: pruned passes on
 real rows and on the lines of multi-axis plans (edge phases, as 5.1d built them), and runs
