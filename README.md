@@ -43,6 +43,8 @@ is why results do not depend on the thread count.
 
 ## Documents
 
+- [docs/building.md](docs/building.md): building, installing and using FFTN from CMake,
+  pkg-config or FetchContent.
 - [dev/DESIGN.md](dev/DESIGN.md): goals, evidence, architecture and design decisions.
 - [dev/PLAN.md](dev/PLAN.md): the phased implementation and experiment plan, with current
   status.

@@ -6,6 +6,7 @@
 // public API; the definitions are in src/core/.
 #pragma once
 
+#include "fftn/callback.hpp"
 #include "fftn/config.hpp"
 #include "fftn/edges.hpp"
 #include "fftn/executor.hpp"
@@ -78,6 +79,11 @@ template <class In, class Out> shape_view view_of(const shape<In, Out>& s) noexc
   };
 }
 
+// A block callback (fftn/callback.hpp) with its data type erased: the library converts it back
+// to the block_fn of the edge's element type before calling it (core/callbacks.cpp), so that it
+// is never called through another type.
+using erased_block_fn = void (*)(void* user, const block_info& info, void* data) noexcept;
+
 // One edge of plan_edges<In, Out> (fftn/edges.hpp) as plain values; the strides are borrowed
 // from the edge's vectors, as shape_view borrows the axes.
 struct edge_view {
@@ -86,6 +92,9 @@ struct edge_view {
   std::span<const std::ptrdiff_t> axis_strides;
   std::span<const std::ptrdiff_t> batch_strides;
   bool accumulate = false;
+  erased_block_fn call = nullptr;
+  callback_mode call_mode = callback_mode::modify;
+  std::size_t call_scratch = 0;
 };
 
 struct edges_view {
@@ -100,6 +109,9 @@ template <class T> edge_view view_of(const edge<T>& e) noexcept {
       .axis_strides = e.mul.axis_strides,
       .batch_strides = e.mul.batch_strides,
       .accumulate = e.accumulate,
+      .call = reinterpret_cast<erased_block_fn>(e.call.fn), // converted back before any call
+      .call_mode = e.call.mode,
+      .call_scratch = e.call.scratch_bytes,
   };
 }
 

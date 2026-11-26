@@ -31,8 +31,9 @@ void execute_team(const plan_core& core, const void* in, void* out, const team& 
     execute_team(core, in, out, t, ws, done);
     return;
   }
-  // A missing array ends the program here (cursors_of).
-  execute_member_as<edge_drive>(core, in, out, t, ws, done, 0, cursors_of(args, core.factor_args));
+  // A missing array ends the program here (edge_state_of).
+  execute_member_as<edge_drive>(core, in, out, t, ws, done, 0,
+                                edge_state_of(args, core.factor_args));
 }
 
 void execute_on(const plan_core& core, const void* in, void* out, const executor_ref& ex,
@@ -42,7 +43,7 @@ void execute_on(const plan_core& core, const void* in, void* out, const executor
     return;
   }
   // On the caller, before any member runs.
-  execute_on_as<edge_drive>(core, in, out, ex, ws, cursors_of(args, core.factor_args));
+  execute_on_as<edge_drive>(core, in, out, ex, ws, edge_state_of(args, core.factor_args));
 }
 
 } // namespace fftn::inline v0::detail

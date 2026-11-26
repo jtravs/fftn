@@ -105,7 +105,7 @@ template <class Drive> slot_addresses basic_team_env<Drive>::scratch(int lane) c
 template <class Drive>
 void basic_team_env<Drive>::run_whole(std::size_t first, std::size_t count,
                                       int lane) const noexcept {
-  Drive::run(core_, first, count, scratch(lane), state_);
+  Drive::run(core_, first, count, scratch(lane), state_, lane);
 }
 
 template <class Drive>
@@ -113,7 +113,7 @@ void basic_team_env<Drive>::run_chunk(std::size_t task, std::size_t phase, std::
                                       int owner, int lane) const noexcept {
   const graph_phase& ph = core_.graph.phases[phase];
   slot_addresses at = transform_addresses(core_.prog, task, scratch(owner));
-  const typename Drive::task_cursors f = Drive::at_task(core_, task, state_);
+  const typename Drive::task_cursors f = Drive::at_task(core_, task, state_, lane, slots_);
   if (ph.nest == 0) {
     Drive::stage(core_, f, ph.record, at, chunk, chunk + 1);
     return;

@@ -1,0 +1,51 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# The installed package configuration of FFTN (written by cmake/FftnPackage.cmake; usage in
+# docs/building.md):
+#
+#   find_package(fftn [<version>] [REQUIRED] [COMPONENTS omp kokkos])
+#
+# fftn::fftn is the static library. The components are the header-only adapters, each a target
+# that adds its runtime to fftn::fftn: fftn::omp (fftn/omp.hpp, the compiler's OpenMP) and
+# fftn::kokkos (fftn/kokkos.hpp, the user's Kokkos, found here unless Kokkos::kokkos exists).
+
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+find_dependency(Threads)
+include(${CMAKE_CURRENT_LIST_DIR}/fftnTargets.cmake)
+
+# An adapter whose runtime is missing is a missing component, not a missing package:
+# check_required_components fails only when it was required.
+foreach(_fftn_component IN LISTS fftn_FIND_COMPONENTS)
+  set(fftn_${_fftn_component}_FOUND FALSE)
+  if(_fftn_component STREQUAL "omp")
+    if(NOT TARGET OpenMP::OpenMP_CXX)
+      find_package(OpenMP QUIET COMPONENTS CXX)
+    endif()
+    if(TARGET OpenMP::OpenMP_CXX)
+      if(NOT TARGET fftn::omp)
+        add_library(fftn::omp INTERFACE IMPORTED)
+        set_target_properties(fftn::omp PROPERTIES
+          INTERFACE_LINK_LIBRARIES "fftn::fftn;OpenMP::OpenMP_CXX")
+      endif()
+      set(fftn_omp_FOUND TRUE)
+    endif()
+  elseif(_fftn_component STREQUAL "kokkos")
+    if(NOT TARGET Kokkos::kokkos)
+      find_package(Kokkos QUIET)
+    endif()
+    if(TARGET Kokkos::kokkos)
+      if(NOT TARGET fftn::kokkos)
+        add_library(fftn::kokkos INTERFACE IMPORTED)
+        set_target_properties(fftn::kokkos PROPERTIES
+          INTERFACE_LINK_LIBRARIES "fftn::fftn;Kokkos::kokkos")
+      endif()
+      set(fftn_kokkos_FOUND TRUE)
+    endif()
+  endif()
+endforeach()
+unset(_fftn_component)
+
+check_required_components(fftn)

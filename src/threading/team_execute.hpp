@@ -59,7 +59,7 @@ template <class Drive, class... State>
   // Every member of a team of two or more runs the team program where there is one (X43),
   // whatever the schedule: its results are the program's, bit for bit.
   const plan_core& core = team_core(plan);
-  assert((!core.in_place || in == out) && "fftn: in-place plan executed with in != out");
+  assert(in_place_pointers(core, in, out) && "fftn: in-place plan executed with in != out");
   const team_layout layout{static_cast<std::size_t>(t.size)};
   const std::size_t page = core.profile.team_state_page;
   std::byte* state = team_state_in(ws.memory().data(), page);

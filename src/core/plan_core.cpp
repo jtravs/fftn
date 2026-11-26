@@ -8,6 +8,7 @@
 
 #include "core/plan_core.hpp"
 
+#include "core/callbacks.hpp"
 #include "core/candidates.hpp"
 #include "core/drive.hpp"
 #include "core/driver.hpp"
@@ -1192,8 +1193,8 @@ constexpr std::size_t edge_row_block_points = 2048;
 
 } // namespace
 
-void lay_out_workspace(plan_core& c, std::size_t scratch, std::size_t complex_bytes,
-                       bool stagger_b) {
+void lay_out_workspace(plan_core& c, std::size_t scratch, std::size_t complex_bytes, bool stagger_b,
+                       std::size_t callback_scratch) {
   constexpr std::size_t line_alignment = 64;
   const auto round_up = [](std::size_t v) {
     return (v + line_alignment - 1) / line_alignment * line_alignment;
@@ -1208,7 +1209,18 @@ void lay_out_workspace(plan_core& c, std::size_t scratch, std::size_t complex_by
   const std::size_t stagger = stagger_b ? 7 * 64 : 0;
   c.offset_b = line_bytes + stagger;
   c.offset_block = 2 * line_bytes + stagger;
-  const std::size_t used = c.offset_block + c.block_elements * complex_bytes;
+  std::size_t used = c.offset_block + c.block_elements * complex_bytes;
+  // Each slot ends with the callback area (task 5.3a), from a 128-byte boundary: the largest of
+  // the callbacks' scratch, one member never running two at once, plus the 64 bytes that align
+  // it where the slot starts on a 64-byte boundary only (serial execution; core/callbacks.cpp,
+  // callback_area). Plans without callback scratch keep their layout.
+  if (callback_scratch != 0) {
+    constexpr std::size_t area_alignment = 128;
+    c.offset_callback = (used + area_alignment - 1) / area_alignment * area_alignment;
+    c.callback_bytes = callback_scratch;
+    // scratch_bytes is bounded at validation (core/edges.cpp), so nothing here overflows.
+    used = c.offset_callback + line_alignment + callback_scratch;
+  }
   c.bytes = used == 0 ? 0 : used + line_alignment;
   c.slot_bytes = (used + sync_line - 1) / sync_line * sync_line;
 }
@@ -1277,6 +1289,165 @@ template chain_builder<float> plan_chain<float>(plan_core& c, const target_profi
 
 namespace {
 
+// A row's stored runs (none where the side has none).
+const std::vector<line_run>& row_runs(const side_runs& runs) {
+  static const std::vector<line_run> none;
+  return runs.any() ? runs.of(0) : none;
+}
+
+// The longest block a callback stage over a row of n elements passes (core/callbacks.cpp: one
+// chunk of about chunk_points elements, the row whole up to twice that).
+std::size_t callback_block_elements(std::size_t n, std::size_t chunk_points) {
+  const std::size_t chunks = std::max<std::size_t>(n / std::max<std::size_t>(chunk_points, 1), 1);
+  return (n + chunks - 1) / chunks;
+}
+
+// The stages of a c2c row's input edge with a callback (task 5.3a), appended to `st`, read from
+// `from`: where the chain then reads. The callback runs where the row is in the side's natural
+// order: in place on the input itself, else in the workspace block, which the callback fills
+// (produce: with zeros between the stored runs) or which a copy of the input fills first (modify:
+// the run read stage, or a copy, so that the plan's input is not changed). The side's factor and
+// scale follow in a separate pass, unless the factor is fused into the chain's first pass, so
+// that the callback sees the values before any vocabulary (DESIGN.md 12.3).
+endpoint row_input_with_callback(precision prec, const edge_side& in, std::size_t n, endpoint from,
+                                 bool in_place, std::size_t chunk_points,
+                                 std::vector<std::unique_ptr<callback_site>>& sites,
+                                 std::vector<stage>& st) {
+  const endpoint block{.where = slot::block, .stride = 1};
+  const std::ptrdiff_t bytes =
+      static_cast<std::ptrdiff_t>(2 * (prec == precision::f64 ? sizeof(double) : sizeof(float)));
+  const std::vector<line_run>& runs = row_runs(in.runs);
+  if (in.call.any()) {
+    // An in-place plan's input is its output's memory, which the plan may write (runs are
+    // refused in place, core/runs.cpp).
+    const endpoint target = in_place ? endpoint{.where = slot::out, .stride = from.stride} : block;
+    if (in.call.mode == callback_mode::produce) {
+      std::size_t next = 0;
+      for (const line_run& run : runs) {
+        if (run.logical > next) {
+          run_zero_line(
+              prec, run.logical - next,
+              {.dst = slot::block, .dst_offset = static_cast<std::ptrdiff_t>(next) * bytes},
+              chunk_points, false, st);
+        }
+        next = run.logical + run.count;
+      }
+      if (!runs.empty() && next < n) {
+        run_zero_line(prec, n - next,
+                      {.dst = slot::block, .dst_offset = static_cast<std::ptrdiff_t>(next) * bytes},
+                      chunk_points, false, st);
+      }
+    } else if (!in_place) {
+      if (!runs.empty()) {
+        // The runs read without the scale, which the vocabulary's pass applies after the
+        // callback.
+        edge_side read;
+        read.runs = in.runs;
+        run_line_stages(prec, read, false, n, runs, {.src = from.where, .src_stride = from.stride},
+                        chunk_points, false, st);
+      } else {
+        stage copy = edge_copy_stage(prec, n, from.where, from.stride, slot::block, 1, chunk_points,
+                                     false, edge_rows{});
+        copy.name = "edge in: the input copied for its callback";
+        st.push_back(std::move(copy));
+      }
+    }
+    if (runs.empty()) {
+      st.push_back(callback_stage(prec, false, in.call, false, n, 0, target.where, target.stride, 0,
+                                  chunk_points, sites));
+    } else {
+      // A block never crosses a gap between runs; coordinates are logical.
+      for (const line_run& run : runs) {
+        st.push_back(
+            callback_stage(prec, false, in.call, false, run.count, run.logical, slot::block, 1,
+                           static_cast<std::ptrdiff_t>(run.logical) * bytes, chunk_points, sites));
+      }
+    }
+    from = target;
+  } else if (!runs.empty()) {
+    run_line_stages(prec, in, false, n, runs, {.src = from.where, .src_stride = from.stride},
+                    chunk_points, false, st);
+    return block;
+  }
+  // The vocabulary: a factor that is not fused, or the scale where resolve_edges put it on this
+  // side (with the edges' separate passes).
+  if ((in.separate && in.kind != factor_kind::none) || in.scale != 1.0) {
+    edge_side vocabulary = in;
+    vocabulary.runs = {};
+    st.push_back(edge_pass_stage(prec, vocabulary, false, n, from.where, from.stride, slot::block,
+                                 1, chunk_points, false, in.axis_stride));
+    return block;
+  }
+  return from;
+}
+
+// Where row_input_with_callback runs the input's callback, for describe().
+std::string row_input_where(const edge_side& in, bool in_place) {
+  if (in_place) {
+    return "in the input, in place";
+  }
+  if (in.call.mode == callback_mode::produce) {
+    return "in the workspace block";
+  }
+  return in.runs.any() ? "in the workspace block, the runs read there first"
+                       : "in the workspace block, after a copy of the input";
+}
+
+// The stages of a c2c row's output edge with a callback after the chain (task 5.3a), appended to
+// `st`. direct: a modify callback without accumulation or runs, on the output itself, which the
+// chain (or the side's separate pass from the block) has written. Otherwise the chain has ended
+// in the workspace block: the side's factor and scale there in a pass of their own, the callback,
+// then (unless it consumes the row) the store of the row or its runs, or the accumulation, with
+// nothing else applied (DESIGN.md 12.3).
+void row_output_with_callback(precision prec, const edge_side& out, std::size_t n, endpoint to,
+                              bool direct, std::size_t chunk_points,
+                              std::vector<std::unique_ptr<callback_site>>& sites,
+                              std::vector<stage>& st) {
+  const std::ptrdiff_t bytes =
+      static_cast<std::ptrdiff_t>(2 * (prec == precision::f64 ? sizeof(double) : sizeof(float)));
+  const std::vector<line_run>& runs = row_runs(out.runs);
+  edge_side vocabulary = out;
+  vocabulary.runs = {};
+  vocabulary.accumulate = false;
+  if (direct) {
+    if (out.separate) {
+      st.push_back(edge_pass_stage(prec, vocabulary, true, n, slot::block, 1, to.where, to.stride,
+                                   chunk_points, false, out.axis_stride));
+    }
+    st.push_back(callback_stage(prec, false, out.call, true, n, 0, to.where, to.stride, 0,
+                                chunk_points, sites));
+    return;
+  }
+  if ((out.separate && out.kind != factor_kind::none) || out.scale != 1.0) {
+    st.push_back(edge_pass_stage(prec, vocabulary, true, n, slot::block, 1, slot::block, 1,
+                                 chunk_points, false, out.axis_stride));
+  }
+  if (runs.empty()) {
+    st.push_back(
+        callback_stage(prec, false, out.call, true, n, 0, slot::block, 1, 0, chunk_points, sites));
+  } else {
+    for (const line_run& run : runs) {
+      st.push_back(callback_stage(prec, false, out.call, true, run.count, run.logical, slot::block,
+                                  1, static_cast<std::ptrdiff_t>(run.logical) * bytes, chunk_points,
+                                  sites));
+    }
+  }
+  if (out.call.mode == callback_mode::consume) {
+    return;
+  }
+  edge_side store;
+  store.accumulate = out.accumulate;
+  store.runs = out.runs;
+  if (!runs.empty()) {
+    run_line_stages(prec, store, true, n, runs,
+                    {.src = slot::block, .dst = to.where, .dst_stride = to.stride}, chunk_points,
+                    false, st);
+  } else {
+    st.push_back(edge_pass_stage(prec, store, true, n, slot::block, 1, to.where, to.stride,
+                                 chunk_points, false, 0));
+  }
+}
+
 template <class T>
 void build(plan_core& c, const shape_view& s, const side& in, const side& out, const options& opts,
            const build_settings& settings, const edge_plan* edge_ops,
@@ -1290,11 +1461,18 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   const auto complex_bytes = static_cast<std::ptrdiff_t>(2 * sizeof(T));
 
   p.transforms = 1;
+  // An input a callback produces and an output a callback consumes are never addressed, and may
+  // be null (task 5.3a): no loop moves them, so no offset is applied to a null pointer.
+  const bool in_unread = edge_ops != nullptr && edge_ops->in.call.any() &&
+                         edge_ops->in.call.mode == callback_mode::produce;
+  const bool out_unwritten = edge_ops != nullptr && edge_ops->out.call.any() &&
+                             edge_ops->out.call.mode == callback_mode::consume;
   for (std::size_t b = 0; b < s.batches.size(); ++b) {
     p.records.emplace_back(loop{
         .kind = loop_kind::batch,
         .count = s.batches[b].count,
-        .step = {in.dist[b] * in.element_bytes, out.dist[b] * out.element_bytes, 0},
+        .step = {in_unread ? 0 : in.dist[b] * in.element_bytes,
+                 out_unwritten ? 0 : out.dist[b] * out.element_bytes, 0},
     });
     p.transforms *= s.batches[b].count;
   }
@@ -1831,13 +2009,15 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   // with edges where the profile's reach is all; where it is leaf_rows, a plan of c2c rows whose
   // line's transform is one leaf, which c2c_axis decides (X65's P1, narrowed).
   const edge_forms_reach forms_reach = settings.profile.edge_batched_forms;
-  c.edge_batched_on = edge_ops != nullptr && forms_reach == edge_forms_reach::all;
+  // Callbacks (task 5.3a) keep the walked form: their stages run from the edge records only.
+  c.edge_batched_on =
+      edge_ops != nullptr && forms_reach == edge_forms_reach::all && !any_callback(*edge_ops);
   // The row-block form: a c2c plan of rows of one batch dimension whose separate edge passes
   // include a factor (so that it runs on the edge driver) takes its rows in blocks of about
   // edge_row_block_points points, each row with a line of its own in the workspace block
   // (c2c_axis), the edge passes and the leaves once per block.
   if (row_edges && !row_strategy && adjacent == 0 && s.kind == transform_kind::c2c &&
-      s.batches.size() == 1 && forms_reach != edge_forms_reach::none &&
+      s.batches.size() == 1 && forms_reach != edge_forms_reach::none && !any_callback(*edge_ops) &&
       (edge_ops->in.kind != factor_kind::none || edge_ops->out.kind != factor_kind::none) &&
       !edge_ops->in.runs.any() && !edge_ops->out.runs.any()) {
     const std::size_t rows =
@@ -2273,7 +2453,8 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       line_edges line = c2c_edges(opts, settings, d + 1 == r, d == 0);
       std::vector<stage> st;
       std::size_t need = 0;
-      if (edge_ops != nullptr && r == 1 && (edge_ops->in.separate || edge_ops->out.separate)) {
+      if (edge_ops != nullptr && r == 1 &&
+          (edge_ops->in.separate || edge_ops->out.separate || any_callback(*edge_ops))) {
         // The edges' separate passes (core/edges.hpp) through the workspace block: the input's
         // into it before the line's chain, which then starts there; the output's out of it
         // after the chain, which then ends there.
@@ -2281,67 +2462,107 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
         const endpoint block{.where = slot::block, .stride = 1};
         endpoint from = at(src, e);
         const endpoint to = at(dst, e);
-        // Pruning by the edge passes (task 5.1e): where a side's runs lie in the line's first
-        // half and the chain's first (input) or last (output) pass has a radix with pruned
-        // codelets, that pass reads or writes the first half only. One run of exactly that
-        // half, stored with stride 1, is read or written where it is stored, with no separate
-        // pass (run_pruning::direct, unless the output accumulates); otherwise the separate
-        // pass moves the runs through the half in the workspace block (run_pruning::half).
-        const auto within_half = [n](const std::vector<line_run>& runs) {
-          return std::ranges::all_of(
-              runs, [n](const line_run& run) { return run.logical + run.count <= n / 2; });
-        };
-        const auto direct = [n](const std::vector<line_run>& runs, const endpoint& stored) {
-          return runs.size() == 1 && runs[0].logical == 0 && 2 * runs[0].count == n &&
-                 stored.stride == 1;
-        };
-        const std::size_t cb = 2 * (s.prec == precision::f64 ? sizeof(double) : sizeof(float));
-        // Stored runs (task 5.1d): the input's pass reads the runs with zeros elsewhere, the
-        // output's stores only the runs.
-        if (edge_ops->in.runs.any()) {
-          const std::vector<line_run>& runs = edge_ops->in.runs.of(0);
-          line.in_head = line.in == edge_op::none && within_half(runs) && chain.head_first(n);
-          if (line.in_head && direct(runs, from)) {
-            line.in_offset = runs[0].stored * cb;
-            in_pruning = run_pruning::direct;
-          } else {
-            run_line_stages(s.prec, edge_ops->in, false, line.in_head ? n / 2 : n, runs,
-                            {.src = from.where, .src_stride = from.stride}, settings.chunk_points,
-                            false, st);
+        bool uses_block = false;
+        // Whether the line's transform is one leaf (the leaf_rows reach below); a line with
+        // callbacks leaves it false, so that it keeps the walked form (core/callbacks.cpp).
+        bool one_leaf = false;
+        if (any_callback(*edge_ops)) {
+          // Block callbacks (task 5.3a) in DESIGN.md 12.3's order: read or produce, modify,
+          // then the vocabulary; the vocabulary, modify, then store, accumulate or consume.
+          from = row_input_with_callback(s.prec, edge_ops->in, n, from, c.in_place,
+                                         settings.chunk_points, c.callback_sites, st);
+          const bool direct = edge_ops->out.call.mode == callback_mode::modify &&
+                              !edge_ops->out.accumulate && !edge_ops->out.runs.any();
+          const endpoint line_to = edge_ops->out.call.any()
+                                       ? (direct && !edge_ops->out.separate ? to : block)
+                                       : (edge_ops->out.separate ? block : to);
+          // In place, the input and output slots are one array.
+          const bool one_array =
+              from.where == line_to.where ||
+              (c.in_place && from.where != slot::block && line_to.where != slot::block);
+          need = chain.c2c_line(n, sign, from, line_to, one_array, line, st);
+          if (edge_ops->out.call.any()) {
+            row_output_with_callback(s.prec, edge_ops->out, n, to, direct, settings.chunk_points,
+                                     c.callback_sites, st);
+          } else if (edge_ops->out.runs.any()) {
+            run_line_stages(s.prec, edge_ops->out, true, n, edge_ops->out.runs.of(0),
+                            {.src = slot::block, .dst = to.where, .dst_stride = to.stride},
+                            settings.chunk_points, false, st);
+          } else if (edge_ops->out.separate) {
+            st.push_back(edge_pass_stage(s.prec, edge_ops->out, true, n, slot::block, 1, to.where,
+                                         to.stride, settings.chunk_points, false,
+                                         edge_ops->out.axis_stride));
+          }
+          uses_block = std::ranges::any_of(
+              st, [](const stage& x) { return x.src == slot::block || x.dst == slot::block; });
+          c.callbacks_note = callbacks_text(
+              edge_ops->in.call, edge_ops->out.call, row_input_where(edge_ops->in, c.in_place),
+              line_to.where == slot::block ? "in the workspace block" : "in the output",
+              callback_block_elements(n, settings.chunk_points));
+        } else {
+          // Pruning by the edge passes (task 5.1e): where a side's runs lie in the line's first
+          // half and the chain's first (input) or last (output) pass has a radix with pruned
+          // codelets, that pass reads or writes the first half only. One run of exactly that
+          // half, stored with stride 1, is read or written where it is stored, with no separate
+          // pass (run_pruning::direct, unless the output accumulates); otherwise the separate
+          // pass moves the runs through the half in the workspace block (run_pruning::half).
+          const auto within_half = [n](const std::vector<line_run>& runs) {
+            return std::ranges::all_of(
+                runs, [n](const line_run& run) { return run.logical + run.count <= n / 2; });
+          };
+          const auto direct = [n](const std::vector<line_run>& runs, const endpoint& stored) {
+            return runs.size() == 1 && runs[0].logical == 0 && 2 * runs[0].count == n &&
+                   stored.stride == 1;
+          };
+          const std::size_t cb = 2 * (s.prec == precision::f64 ? sizeof(double) : sizeof(float));
+          // Stored runs (task 5.1d): the input's pass reads the runs with zeros elsewhere, the
+          // output's stores only the runs.
+          if (edge_ops->in.runs.any()) {
+            const std::vector<line_run>& runs = edge_ops->in.runs.of(0);
+            line.in_head = line.in == edge_op::none && within_half(runs) && chain.head_first(n);
+            if (line.in_head && direct(runs, from)) {
+              line.in_offset = runs[0].stored * cb;
+              in_pruning = run_pruning::direct;
+            } else {
+              run_line_stages(s.prec, edge_ops->in, false, line.in_head ? n / 2 : n, runs,
+                              {.src = from.where, .src_stride = from.stride}, settings.chunk_points,
+                              false, st);
+              from = block;
+              in_pruning = line.in_head ? run_pruning::half : run_pruning::none;
+            }
+          } else if (edge_ops->in.separate) {
+            st.push_back(edge_pass_stage(s.prec, edge_ops->in, false, n, from.where, from.stride,
+                                         slot::block, 1, settings.chunk_points, false,
+                                         edge_ops->in.axis_stride));
             from = block;
-            in_pruning = line.in_head ? run_pruning::half : run_pruning::none;
           }
-        } else if (edge_ops->in.separate) {
-          st.push_back(edge_pass_stage(s.prec, edge_ops->in, false, n, from.where, from.stride,
-                                       slot::block, 1, settings.chunk_points, false,
-                                       edge_ops->in.axis_stride));
-          from = block;
-        }
-        endpoint line_to = edge_ops->out.separate ? block : to;
-        bool out_pass = edge_ops->out.separate;
-        if (edge_ops->out.runs.any()) {
-          const std::vector<line_run>& runs = edge_ops->out.runs.of(0);
-          line.out_head = line.out != edge_op::factor && within_half(runs) && chain.head_last(n);
-          if (line.out_head && !edge_ops->out.accumulate && direct(runs, to)) {
-            line.out_offset = runs[0].stored * cb;
-            line_to = to;
-            out_pass = false;
-            out_pruning = run_pruning::direct;
-          } else {
-            out_pruning = line.out_head ? run_pruning::half : run_pruning::none;
+          endpoint line_to = edge_ops->out.separate ? block : to;
+          bool out_pass = edge_ops->out.separate;
+          if (edge_ops->out.runs.any()) {
+            const std::vector<line_run>& runs = edge_ops->out.runs.of(0);
+            line.out_head = line.out != edge_op::factor && within_half(runs) && chain.head_last(n);
+            if (line.out_head && !edge_ops->out.accumulate && direct(runs, to)) {
+              line.out_offset = runs[0].stored * cb;
+              line_to = to;
+              out_pass = false;
+              out_pruning = run_pruning::direct;
+            } else {
+              out_pruning = line.out_head ? run_pruning::half : run_pruning::none;
+            }
           }
-        }
-        const std::size_t line_first = st.size();
-        need = chain.c2c_line(n, sign, from, line_to, from.where == line_to.where, line, st);
-        const bool one_leaf = st.size() == line_first + 1 && st[line_first].leaf != nullptr;
-        if (edge_ops->out.runs.any() && out_pass) {
-          run_line_stages(s.prec, edge_ops->out, true, n, edge_ops->out.runs.of(0),
-                          {.src = slot::block, .dst = to.where, .dst_stride = to.stride},
-                          settings.chunk_points, false, st);
-        } else if (out_pass) {
-          st.push_back(edge_pass_stage(s.prec, edge_ops->out, true, n, slot::block, 1, to.where,
-                                       to.stride, settings.chunk_points, false,
-                                       edge_ops->out.axis_stride));
+          const std::size_t line_first = st.size();
+          need = chain.c2c_line(n, sign, from, line_to, from.where == line_to.where, line, st);
+          one_leaf = st.size() == line_first + 1 && st[line_first].leaf != nullptr;
+          if (edge_ops->out.runs.any() && out_pass) {
+            run_line_stages(s.prec, edge_ops->out, true, n, edge_ops->out.runs.of(0),
+                            {.src = slot::block, .dst = to.where, .dst_stride = to.stride},
+                            settings.chunk_points, false, st);
+          } else if (out_pass) {
+            st.push_back(edge_pass_stage(s.prec, edge_ops->out, true, n, slot::block, 1, to.where,
+                                         to.stride, settings.chunk_points, false,
+                                         edge_ops->out.axis_stride));
+          }
+          uses_block = from.where == slot::block || line_to.where == slot::block;
         }
         // The row-block form runs flat programs only (make_edge_forms): a line of more stages
         // (a Bluestein length) runs a transform at a time, unrolled.
@@ -2359,7 +2580,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
         }
         // Only where the line starts or ends in the block: a side whose runs the chain's pruned
         // first or last pass reads or writes where they are stored needs none (task 5.1e).
-        if (from.where == slot::block || line_to.where == slot::block) {
+        if (uses_block) {
           c.block_elements =
               std::max(c.block_elements, n * std::max<std::size_t>(c.edge_row_block, 1));
         }
@@ -2691,6 +2912,12 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       edge_fallback = batch_one_row_reason;
     }
     c.edge_fallback = edge_fallback;
+    if (any_callback(*edge_ops)) {
+      // Task 5.3a: callbacks on the chain only (core/edges.cpp refuses them elsewhere); the
+      // other strategies take them in 5.3b.
+      c.edge_fallback = "callbacks take the chain until task 5.3b";
+      c.edges_note += "\n" + c.callbacks_note;
+    }
   }
   // The strategy in a few words, in the order of the branches above, for build_with_edges'
   // comparison with the plan without edges.
@@ -2734,7 +2961,12 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     std::get<loop>(p.records[b]).body_end = static_cast<std::uint32_t>(p.records.size());
   }
 
-  lay_out_workspace(c, scratch, 2 * sizeof(T), grid_plan.phases != 0);
+  const std::size_t callback_scratch =
+      edge_ops != nullptr
+          ? std::max(edge_ops->in.call.any() ? edge_ops->in.call.scratch_bytes : 0,
+                     edge_ops->out.call.any() ? edge_ops->out.call.scratch_bytes : 0)
+          : 0;
+  lay_out_workspace(c, scratch, 2 * sizeof(T), grid_plan.phases != 0, callback_scratch);
 }
 
 // The shape's counts and direction, which everything else depends on (std::invalid_argument
@@ -2802,6 +3034,11 @@ std::vector<edge_record> mark_cursors(std::vector<record>& records, std::size_t 
       st->args.out_factor = nullptr;
       st->moving_factors |= moving_out_factor;
     }
+    if ((st->moving_factors & moving_callback) != 0) {
+      // A callback stage (core/callbacks.cpp): its kernel is already a guard, its site in roots.
+      e[i].call = static_cast<const callback_site*>(st->args.roots);
+      continue;
+    }
     if (st->moving_factors != 0) {
       e[i].run = st->run;
       e[i].leaf = st->leaf;
@@ -2866,18 +3103,22 @@ std::shared_ptr<plan_core> build_core(const shape_view& s, const options& opts,
   // through the settings' factor fields, which every other strategy's rule refuses, as a tag
   // that the stages built from it are found by afterwards (mark_cursors). Edges whose factors
   // are all separate passes take the strategy the rules (or a test) choose.
+  // Callbacks (task 5.3a) likewise take the chain, without batch leaves, until 5.3b.
   build_settings tagged;
   const bool with_edges = edges != nullptr && edges->any;
   const bool fused = with_edges && any_fused(*edges);
-  if (fused) {
+  const bool calls = with_edges && any_callback(*edges);
+  if (fused || calls) {
     tagged = given;
     tagged.strategy = strategy_choice::chain;
     tagged.batch_leaves = batch_leaf_choice::never;
+  }
+  if (fused) {
     tagged.in_factor = edges->in.fused ? in_factor_tag : nullptr;
     tagged.out_factor = edges->out.fused ? out_factor_tag : nullptr;
     tagged.scale_on_input = edges->scale_on_input;
   }
-  const build_settings& settings = fused ? tagged : given;
+  const build_settings& settings = fused || calls ? tagged : given;
   check_counts(s);
   const std::size_t r = s.axes.size();
 
@@ -2983,7 +3224,12 @@ std::shared_ptr<plan_core> build_core(const shape_view& s, const options& opts,
     c->factor_args =
         static_cast<std::uint8_t>((edges->in.kind != factor_kind::none ? moving_in_factor : 0) |
                                   (edges->out.kind != factor_kind::none ? moving_out_factor : 0));
-    c->needs_args = c->factor_args != 0;
+    c->needs_args = c->factor_args != 0 || !c->callback_sites.empty();
+    c->in_unread = edges->in.call.any() && edges->in.call.mode == callback_mode::produce;
+    c->out_unwritten = edges->out.call.any() && edges->out.call.mode == callback_mode::consume;
+    if (!c->callback_sites.empty() && c->prog.lanes != 0) {
+      throw std::logic_error("fftn: internal: a callback stage in a lanes program");
+    }
   }
   std::size_t points = 1;
   for (const std::size_t n : c->lengths) {
@@ -3279,8 +3525,8 @@ void name_forced_strategy(plan_core& c, const shape_view& shape, const options& 
   std::string fallback = c.edge_fallback;
   // Where the plan without the edges is on batch leaves, the edges' separate passes take a
   // row at a time, and a fused factor (the chain the edges keep, the only other plan they
-  // build there) takes none, whatever else build() noted.
-  if (plain->strategy_name == batch_leaves_name) {
+  // build there) takes none, whatever else build() noted. Callbacks give their own reason.
+  if (plain->strategy_name == batch_leaves_name && c.callback_sites.empty()) {
     if (c.strategy_name == batch_one_row_name) {
       fallback = batch_one_row_reason;
     } else if (c.strategy_name == "the chain") {
@@ -3311,6 +3557,13 @@ std::shared_ptr<const plan_core> make_plan_core_with_edges(const shape_view& sha
   }
   if (opts.use == nullptr && opts.effort == planning::rules) {
     return build_with_edges(shape, opts, edges, settings);
+  }
+  if (any_callback(edges)) {
+    // Task 5.3a: measured planning's stand-ins for callbacks come with 5.3b.
+    const std::shared_ptr<plan_core> c = build_with_edges(shape, opts, edges, settings);
+    c->planning_note = "by the rules: measured planning and wisdom take no callbacks yet (task "
+                       "5.3b)";
+    return c;
   }
   // Measured planning and wisdom with the edges: every candidate is built and timed with them
   // (core/measure.cpp).
@@ -3352,8 +3605,8 @@ void execute_program(const plan_core& core, std::size_t first, std::size_t count
                      void* out, const workspace& ws, const State&... state) noexcept {
   assert(first <= core.prog.transforms && count <= core.prog.transforms - first &&
          "fftn: execute_transforms beyond the batch");
-  assert((!core.in_place || in == out) && "fftn: in-place plan executed with in != out");
-  assert((core.in_place || in != out) && "fftn: out-of-place plan executed with in == out");
+  assert(in_place_pointers(core, in, out) && "fftn: in-place plan executed with in != out");
+  assert(out_of_place_pointers(core, in, out) && "fftn: out-of-place plan executed with in == out");
   if (count == 0) {
     return;
   }
@@ -3420,12 +3673,12 @@ void execute_core(const plan_core& core, std::size_t first, std::size_t count, c
   // A plan whose edges have factors runs on the edge driver (core/drive.hpp, edge_drive), with
   // the factor cursors starting at the arrays: execute_core's path above without its shortcuts
   // (programs with factor edges are walked).
-  execute_core_cursors(core, first, count, in, out, ws, cursors_of(args, core.factor_args));
+  execute_core_cursors(core, first, count, in, out, ws, edge_state_of(args, core.factor_args));
 }
 
 void execute_core_cursors(const plan_core& core, std::size_t first, std::size_t count,
                           const void* in, void* out, const workspace& ws,
-                          const factor_cursors& f) noexcept {
+                          const edge_state& f) noexcept {
   assert(ws.size() >= core.bytes && "fftn: workspace smaller than plan::workspace_bytes()");
   reset_team_state(ws);
   execute_program<edge_drive>(core, first, count, in, out, ws, f);

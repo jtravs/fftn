@@ -51,6 +51,9 @@ inline constexpr std::uint8_t moving_out_factor = 2;
 inline constexpr std::uint8_t moving_mid_in_factor = 4;
 inline constexpr std::uint8_t moving_mid_out_factor = 8;
 inline constexpr std::uint8_t moving_mid_factor = moving_mid_in_factor | moving_mid_out_factor;
+// stage::moving_factors: the stage is a block callback stage (core/callbacks.hpp), which only the
+// edge driver runs, from its edge_record's site.
+inline constexpr std::uint8_t moving_callback = 16;
 
 struct stage {
   pass_fn run = nullptr; // the kernel, or for a leaf null and `leaf` set
