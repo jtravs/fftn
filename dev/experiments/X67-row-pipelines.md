@@ -174,6 +174,9 @@ where the two disagree, these hold.
    - R3 (eight threads, the final code): A = P, then S, on the cases of 32 lines and the fan-out
      cases, for rule 2 at full width (the client's width on both machines, PLAN "Status").
      fbench's ratios are arm ÷ A; P/S is the inverse of S/P, its interval inverted.
+   - The runs and fan-out are arm options, so each of R1–R3 is one fbench run per option set,
+     on the catalogue's groups as its header names them (valid halves; fan-out 4; fan-out 16;
+     whole lines with the collateral cases), one after another in the same Slurm chain.
 9. **Rule 3 (depth-first pair)** is judged on the `<C, C, C>` valid-half cases of fan-out 1,
    both line counts: D/C below 1 beyond the band at a length means for both. The limit is a
    machine-profile field in bytes of the complex line (n times the complex value's size), one
