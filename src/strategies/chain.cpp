@@ -17,6 +17,7 @@
 #include <complex>
 #include <cstddef>
 #include <cstdint>
+#include <initializer_list>
 #include <limits>
 #include <span>
 #include <stdexcept>
@@ -1236,7 +1237,7 @@ std::string chain_builder<T>::depth_text(std::size_t n,
 template <class T>
 chain_builder<T>::depth_stages
 chain_builder<T>::c2c_depth(std::size_t n, const std::vector<std::size_t>& tops, int sign,
-                            double scale, slot work, slot src, slot dst, const T* out_factor) {
+                            double scale, slot work, slot src, slot dst, const void* out_factor) {
   depth_stages out;
   const std::size_t f1 = tops[0];
   const std::size_t f2 = tops.size() > 1 ? tops[1] : 1;
@@ -1365,32 +1366,91 @@ template <class T> std::size_t chain_builder<T>::bluestein_single(std::size_t n)
 // with a loop moving the block, as a row of M would (X46). Once the backward first pass has
 // read scratch a, it is free for the sub-rows' passes (the forward sub-rows run before a is
 // written).
+// The pipelines' depth-first pair (task 5.2d), of which X50's Bluestein convolution is the case
+// with the chirp, an input run of Q and an output run of the first Q. Fusing one run per side into
+// the first and the last top pass saves a pass over the line each way (X50 arm C, where the
+// chirp passes were those passes). A run's last top pass is built in place, then pointed at dst,
+// as the convolution's always was (its name and arguments unchanged).
+template <class T>
+chain_builder<T>::bluestein_depth_stages
+chain_builder<T>::depth_pair(std::size_t m, const std::vector<std::size_t>& tops, slot src,
+                             slot dst, const depth_pair_form& form) {
+  bluestein_depth_stages out;
+  const bool scaled = form.out == edge_op::scale;
+  const bool out_run = form.out_count != 0;
+  // The head first pass reads whole blocks only (depth_first_tails ignores the run's offset and
+  // count), and a run's last top pass is built in place, then pointed at dst.
+  if (form.in_count != 0 && !bluestein_depth_fits(m, tops)) {
+    throw std::logic_error("fftn: a depth-first pair of " + std::to_string(m) +
+                           " with an input run on tops that leave a partial block");
+  }
+  if (out_run && dst == slot::block) {
+    throw std::logic_error("fftn: a depth-first pair's output run stored to the workspace block");
+  }
+  out.forward = c2c_depth(m, tops, -1, 1.0, slot::block, src, slot::a, form.kernel);
+  out.backward = c2c_depth(m, tops, +1, out_run || !scaled ? 1.0 : form.scale, slot::block, slot::a,
+                           out_run ? slot::block : dst);
+  const bool chirp = form.chirp != nullptr;
+  const std::string chirp_name = std::string(direction_name(form.chirp_sign));
+  if (form.in_count != 0) {
+    stage& first = out.forward.first.front();
+    const radix_passes& passes = *kernels_.passes.codelet[codelet_slot(first.args.radix)];
+    first.run = chirp ? passes.depth_first_chirp : passes.depth_first_head;
+    first.args.in_factor = form.chirp;
+    first.args.src_cols = form.in_count;
+    first.args.src_qstride = static_cast<std::ptrdiff_t>(form.in_offset);
+    first.name += chirp ? "; chirp " + chirp_name + " in, from the input"
+                        : "; the input's run of " + std::to_string(form.in_count) +
+                              " from logical 0, zeros beyond";
+  }
+  if (out_run) {
+    stage& top = out.backward.top.back();
+    const radix_passes& passes = *kernels_.passes.codelet[codelet_slot(top.args.radix)];
+    top.run =
+        chirp ? passes.depth_top_chirp[scaled ? 1 : 0] : passes.depth_top_part[scaled ? 1 : 0];
+    top.args.out_factor = form.chirp;
+    top.args.src_cols = form.out_logical;
+    top.args.dst_cols = form.out_logical + form.out_count;
+    top.args.dst_qstride = static_cast<std::ptrdiff_t>(form.out_offset);
+    top.args.scale = form.scale;
+    top.dst = dst;
+    top.name += chirp
+                    ? "; chirp " + chirp_name + " out, the first " +
+                          std::to_string(form.out_count) + " to the output"
+                    : "; the output's run of logical " + std::to_string(form.out_logical) + " to " +
+                          std::to_string(form.out_logical + form.out_count) + " to the output";
+    top.name += scaled ? "; out: scale" : "";
+  }
+  out.scratch = std::max({m, out.forward.scratch, out.backward.scratch});
+  return out;
+}
+
+template <class T>
+std::string chain_builder<T>::depth_pair_text(std::size_t m,
+                                              const std::vector<std::size_t>& tops) const {
+  const std::string chain = depth_text(m, tops);
+  return "forward " + chain + ", then backward " + chain + " (shared twiddle tables)";
+}
+
 template <class T>
 chain_builder<T>::bluestein_depth_stages
 chain_builder<T>::bluestein_depth(std::size_t q, const std::vector<std::size_t>& tops, int sign,
                                   endpoint src, endpoint dst, const line_edges& edges) {
   const std::size_t m = bluestein_m(q);
   const bluestein_tables tab = bluestein_tables_of(q, sign, 1);
-  bluestein_depth_stages out;
-  out.forward = c2c_depth(m, tops, -1, 1.0, slot::block, src.where, slot::a, tab.kernel);
-  out.backward = c2c_depth(m, tops, +1, 1.0, slot::block, slot::a, slot::block);
   // Arm C: the chirp passes fused into the forward chain's first pass (reading the input) and
   // the backward chain's last top pass (writing the first Q outputs), which saves a pass over
   // M elements each way.
-  stage& first = out.forward.first.front();
-  first.run = kernels_.passes.codelet[codelet_slot(first.args.radix)]->depth_first_chirp;
-  first.args.in_factor = tab.chirp;
-  first.args.src_cols = q;
-  first.name += "; chirp " + std::string(direction_name(sign)) + " in, from the input";
-  stage& top = out.backward.top.back();
-  const bool scaled = edges.out == edge_op::scale;
-  top.run = kernels_.passes.codelet[codelet_slot(top.args.radix)]->depth_top_chirp[scaled ? 1 : 0];
-  top.args.out_factor = tab.chirp;
-  top.args.dst_cols = q;
-  top.args.scale = edges.scale;
-  top.dst = dst.where;
-  top.name += "; chirp " + std::string(direction_name(sign)) + " out, the first " +
-              std::to_string(q) + " to the output" + (scaled ? "; out: scale" : "");
+  bluestein_depth_stages out = depth_pair(m, tops, src.where, dst.where,
+                                          {
+                                              .chirp = tab.chirp,
+                                              .chirp_sign = sign,
+                                              .in_count = q,
+                                              .out_count = q,
+                                              .kernel = tab.kernel,
+                                              .out = edges.out,
+                                              .scale = edges.scale,
+                                          });
   for (std::vector<stage>* part : {
            &out.forward.first,
            &out.forward.sub,
@@ -1405,7 +1465,6 @@ chain_builder<T>::bluestein_depth(std::size_t q, const std::vector<std::size_t>&
       st.name = "bluestein convolution: " + st.name;
     }
   }
-  out.scratch = std::max({m, out.forward.scratch, out.backward.scratch});
   return out;
 }
 
