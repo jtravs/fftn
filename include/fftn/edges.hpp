@@ -91,7 +91,8 @@ template <class T> struct edge {
   /// axis only, on the chain whatever strategy the rules would choose (`plan::describe()` says
   /// so); measured planning and wisdom are not used for such plans (the rules plan them). A
   /// plan with a callback must be executed through an overload that takes `exec_args`: the
-  /// others end the program (`std::abort`, with a message on stderr).
+  /// others end the program (`std::abort`, with a message on stderr). A pipeline's prologue and
+  /// epilogue refuse one until task 5.3d.
   callback<T> call{};
 };
 
@@ -133,7 +134,8 @@ struct exec_args {
   const void* out_factor = nullptr;
   /// The input edge's callback argument (`edge::call` of `plan_edges::in`), its `user`.
   void* in_user = nullptr;
-  /// A pipeline middle's callback argument (pipelines are not built yet; plans ignore it).
+  /// A pipeline middle's callback argument (`pipeline_desc::middle.call`, task 5.3d; until then,
+  /// and for plans, ignored).
   void* mid_user = nullptr;
   /// The output edge's callback argument (`edge::call` of `plan_edges::out`), its `user`.
   void* out_user = nullptr;
