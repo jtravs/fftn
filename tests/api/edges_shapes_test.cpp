@@ -1271,6 +1271,41 @@ TYPED_TEST(EdgeShapes, BatchedFormsAgainstTheReference) {
   }
 }
 
+// Batch leaves with separate edge passes, which the walked form runs a row at a time
+// (DescribeNamesTheStrategyAnEdgeForces): in the batched forms the plan keeps the strategy of the
+// plan without the edges, and describe() names the row blocks and no forced strategy.
+TYPED_TEST(EdgeShapes, BatchedFormsTakeBatchLeaves) {
+  namespace d = fftn::detail;
+  using C = std::complex<TypeParam>;
+  d::build_settings leaves;
+  leaves.batch_leaves = d::batch_leaf_choice::own;
+  leaves.strategy = d::strategy_choice::chain;
+  leaves.profile.edge_batched_forms = true;
+  const shape_case c{.name = "batch leaves, real factors",
+                     .kind = transform_kind::c2c,
+                     .dims = {8},
+                     .count = 40,
+                     .in = {real, {}, 1},
+                     .out = {real, {-1}, -1},
+                     .expect = "edge row blocks: the rows in blocks of"};
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    fftn::test::input_source src(0x5C2ULL);
+    const shape_run<TypeParam> run(c, t, src);
+    const fftn::shape<C, C> s = run.template shape<C, C>();
+    const auto plain = d::build_plan_core(d::view_of(s), run.opts, leaves);
+    if (plain->strategy_name != "the chain on batch leaves") {
+      continue; // a target without batch leaves in this precision
+    }
+    const auto core = d::make_plan_core_with_edges(d::view_of(s), run.opts,
+                                                   d::view_of(run.template edges<C, C>()), leaves);
+    const std::string text = d::describe(*core);
+    EXPECT_EQ(core->strategy_name, plain->strategy_name) << text;
+    EXPECT_EQ(text.find("not the strategy"), std::string::npos) << text;
+    EXPECT_NE(core->edge_row_block, 0U) << text;
+    run_case<TypeParam, transform_kind::c2c>(c, t, true, true, &leaves, "batch leaf radix-8");
+  }
+}
+
 TEST(EdgeShapesDeathTest, BatchedFormsMissingFactorArraysAbort) {
   GTEST_FLAG_SET(death_test_style, "threadsafe");
   using C = std::complex<double>;
@@ -1686,6 +1721,10 @@ TYPED_TEST(EdgeShapes, DescribeNamesTheStrategyAnEdgeForces) {
   depth.strategy = d::strategy_choice::depth;
   d::build_settings leaves;
   leaves.batch_leaves = d::batch_leaf_choice::own;
+  // Separate edge passes keep batch leaves to a row at a time in the walked form only: the
+  // batched forms run them a block of rows at a time (BatchedFormsTakeBatchLeaves).
+  d::build_settings walked_leaves = leaves;
+  walked_leaves.profile.edge_batched_forms = false;
   d::build_settings packed;
   packed.c2r_packed = 1;
   const std::vector<forced_line> every_target{
@@ -1750,7 +1789,7 @@ TYPED_TEST(EdgeShapes, DescribeNamesTheStrategyAnEdgeForces) {
          .dims = {8},
          .count = 16,
          .in = {real, {}, 1}},
-        leaves,
+        walked_leaves,
         "the chain on batch leaves",
         "batch leaves, one row at a time between the edge passes"},
        false},

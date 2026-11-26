@@ -2566,8 +2566,9 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     } else {
       c.edges_note = edges_text(*edge_ops, layout, edge_passes(p));
       if (c.edge_row_block != 0) {
-        c.edges_note += "; the rows in blocks of " + std::to_string(c.edge_row_block) +
-                        ", each separate pass (and a leaf) once per block";
+        c.edges_note += "\nedge row blocks: the rows in blocks of " +
+                        std::to_string(c.edge_row_block) +
+                        ", each separate pass, and a leaf, once per block";
       }
     }
     c.edge_fallback = edge_fallback;
