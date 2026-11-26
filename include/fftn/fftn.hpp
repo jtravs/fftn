@@ -15,6 +15,7 @@
 #include "fftn/pipeline.hpp"    // IWYU pragma: export
 #include "fftn/plan.hpp"        // IWYU pragma: export
 #include "fftn/shape.hpp"       // IWYU pragma: export
+#include "fftn/split.hpp"       // IWYU pragma: export
 #include "fftn/team.hpp"        // IWYU pragma: export
 #include "fftn/thread_pool.hpp" // IWYU pragma: export
 #include "fftn/wisdom.hpp"      // IWYU pragma: export

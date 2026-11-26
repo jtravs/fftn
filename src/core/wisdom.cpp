@@ -203,6 +203,10 @@ std::string shape_key(const shape_view& s, const options& opts) {
     o << ' ' << b.count << '/' << b.in_dist << '/' << b.out_dist;
   }
   o << runs_key(s);
+  // Split-complex data (task 6.10): another program from the same strides.
+  if (s.split) {
+    o << " split";
+  }
   // A real-to-real shape's kinds (r2r_kind's values), one per axis; other kinds have none.
   if (s.kind == transform_kind::r2r) {
     o << " kinds";

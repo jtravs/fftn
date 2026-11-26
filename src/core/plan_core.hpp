@@ -287,6 +287,9 @@ public:
   // A pipeline's core (core/pipeline.cpp, DESIGN.md 12.2): describe()'s first line, which names
   // it a pipeline (empty for plans).
   std::string pipeline_title;
+  // A plan of split-complex data (fftn/split.hpp, task 6.10): its edges are the conversion
+  // passes (core/edges.hpp, edge_side::split); describe() names the layout.
+  bool split = false;
 };
 
 // The debug builds' check of an execution's pointers: in place, in == out; out of place,
