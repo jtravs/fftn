@@ -216,13 +216,13 @@ void run_records(const program& p, const std::vector<edge_record>& e, std::size_
     // Only a multi-axis plan's loops around callbacks move the coordinates (no copy otherwise).
     if (e[i].moves_origin) {
       for (std::size_t c = 0; c < l.count; ++c) {
-        run_records(p, e, i + 1, l.body_end, moved(from, l.step, c),
-                    moved(f, e[i].factor_step, c), at_iteration(env, e[i], c));
+        run_records(p, e, i + 1, l.body_end, moved(from, l.step, c), moved(f, e[i].factor_step, c),
+                    at_iteration(env, e[i], c));
       }
     } else {
       for (std::size_t c = 0; c < l.count; ++c) {
-        run_records(p, e, i + 1, l.body_end, moved(from, l.step, c),
-                    moved(f, e[i].factor_step, c), env);
+        run_records(p, e, i + 1, l.body_end, moved(from, l.step, c), moved(f, e[i].factor_step, c),
+                    env);
       }
     }
     i = l.body_end - 1;

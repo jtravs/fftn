@@ -1793,8 +1793,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     // c2c or c2r first phase reads the input to copy it into its destination (in_copy), the
     // phase then in place there, so src0 stays the input; a produced input is written there.
     const bool copy_in_phase = in_copy && s.kind != transform_kind::r2c;
-    if (edge_ops->in.separate ||
-        (edge_ops->in.call.any() && !c.in_place && !copy_in_phase)) {
+    if (edge_ops->in.separate || (edge_ops->in.call.any() && !c.in_place && !copy_in_phase)) {
       src0 = s.kind == transform_kind::c2c && !to_block
                  ? out_view
                  : (s.kind == transform_kind::r2c ? block_real : block_complex);
@@ -2221,8 +2220,9 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       const char* lines_of = line_d != no_origin
                                  ? " (blocks of adjacent columns)"
                                  : (lines_n > 1 ? " (blocks of adjacent transforms)" : "");
-      note = callback_blocks(std::string(output ? "in the last phase, axis " : "in the first phase, "
-                                                                               "axis ") +
+      note = callback_blocks(std::string(output ? "in the last phase, axis "
+                                                : "in the first phase, "
+                                                  "axis ") +
                                  std::to_string(listed(d)) + "'s lines" + lines_of + ", " + place +
                                  (output ? ", after their last pass" : ", before their first pass"),
                              n, lines_n, real ? sizeof(T) : 2 * sizeof(T), block_bytes, what);
@@ -2761,8 +2761,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     // on the block's transforms: the input's on each line copied (in_copy) or produced into the
     // output, or in place, the first phase then in place there.
     const bool adjacent_input =
-        edge_ops != nullptr &&
-        (edge_ops->in.separate || (edge_ops->in.call.any() && !in_inside));
+        edge_ops != nullptr && (edge_ops->in.separate || (edge_ops->in.call.any() && !in_inside));
     const view& first_src = adjacent_input || (in_inside && !in_copy) ? out_view : in_view;
     const auto steps_back = [](const edge_side& e) {
       return e.kind != factor_kind::none ? e.batch_steps.back() : 0;
@@ -2787,8 +2786,8 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
                         false, block, out.dist.back(), no_origin, 1, st);
         }
         scratch = std::max(
-            scratch, chain.c2c_lanes(c.lengths[d], sign, first_cb ? at(out_view, d) : at(src, d),
-                                     1, at(out_view, d), 1,
+            scratch, chain.c2c_lanes(c.lengths[d], sign, first_cb ? at(out_view, d) : at(src, d), 1,
+                                     at(out_view, d), 1,
                                      c2c_edges(opts, settings, i == 0, i + 1 == active.size()),
                                      block, st, true, rad[d]));
         if (last_cb) {
@@ -3318,8 +3317,8 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     // itself in place (through the output slot, which the loops move by the same bytes).
     std::vector<edge_loop> rows_origin;
     if (in_inside) {
-      const endpoint where = c.in_place ? endpoint{.where = slot::out, .stride = in.stride[r - 1]}
-                                        : at(src0, r - 1);
+      const endpoint where =
+          c.in_place ? endpoint{.where = slot::out, .stride = in.stride[r - 1]} : at(src0, r - 1);
       axes_callback(false, r - 1, c.lengths[r - 1], at(in_view, r - 1), 0, where, true, 1, 0,
                     no_origin, 1, st);
     }
@@ -3346,8 +3345,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
         // The output callback (task 5.3c) in the last phase, the columns of axis 0.
         const bool last_cb = out_inside && d == 0;
         std::vector<edge_loop> cols_origin;
-        const column_hooks hooks =
-            column_callbacks(true, d, d, r - 1, n, dst0, dst0, cols_origin);
+        const column_hooks hooks = column_callbacks(true, d, d, r - 1, n, dst0, dst0, cols_origin);
         if (complex_columns(d, extent, dst0, dst0, edges, -1, "c2c forward", SIZE_MAX, -1,
                             last_cb ? &hooks : nullptr)) {
           adopt(cols_origin, 0, edge_loops);
@@ -3532,9 +3530,8 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
           axes_callback(false, d, n, from, 0, at(work, d), false, 1, 0, no_origin, 1, cs);
           from = at(work, d);
         }
-        const std::size_t cneed =
-            chain.c2c_line(n, +1, from, at(work, d), first_cb || src.where == work.where,
-                           line_edges(), cs);
+        const std::size_t cneed = chain.c2c_line(
+            n, +1, from, at(work, d), first_cb || src.where == work.where, line_edges(), cs);
         lines(d, extent, src, work, cneed, std::move(cs), first_cb ? &cols_origin : nullptr);
         adopt(cols_origin, 0, edge_loops);
         c.axis_notes.push_back("axis " + std::to_string(listed(d)) + " (n = " + std::to_string(n) +
@@ -3672,8 +3669,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
             std::string(output ? "in the output edge's phase (its factor's or accumulation's), on "
                                  "each row of axis "
                                : "in the input edge's phase (its factor's), on each row of axis ") +
-                std::to_string(listed(r - 1)) +
-                (lines_n > 1 ? " of the block's transforms" : "") +
+                std::to_string(listed(r - 1)) + (lines_n > 1 ? " of the block's transforms" : "") +
                 (output ? ", before the store" : ", before the factor"),
             n, lines_n, output ? out_element : in_element, block_bytes,
             lines_n > 1 ? "transforms" : "rows");

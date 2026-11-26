@@ -655,7 +655,8 @@ template <class T, transform_kind K> void run_case(const axes_case& cc, fftn::is
   const bool out_alone =
       cc.out != out_kind::none && cc.out_factor == factor_kind::none && !cc.accumulate;
   if (in_alone) {
-    EXPECT_NE(text.find("the input's (" + std::string(cc.in == in_kind::modify ? "modify" : "produce") +
+    EXPECT_NE(text.find("the input's (" +
+                        std::string(cc.in == in_kind::modify ? "modify" : "produce") +
                         ") in the first phase"),
               std::string::npos);
   }
@@ -665,8 +666,8 @@ template <class T, transform_kind K> void run_case(const axes_case& cc, fftn::is
                         ") in the last phase"),
               std::string::npos);
   }
-  const bool phases = cc.in_factor != factor_kind::none || cc.out_factor != factor_kind::none ||
-                      cc.accumulate;
+  const bool phases =
+      cc.in_factor != factor_kind::none || cc.out_factor != factor_kind::none || cc.accumulate;
   if (!phases) {
     EXPECT_NE(text.find("edges: block callbacks only; they cost no separate pass"),
               std::string::npos);
@@ -1105,8 +1106,9 @@ TEST(CallbackAxes, MeasuredPlanningCallsNoCallback) {
   fftn::shape<cd, cd> plane;
   plane.axes = {{.n = 64}, {.n = 48}};
   plane.batches = {{.count = 2}};
-  const fftn::plan<cd, cd> p(plane, {.effort = fftn::planning::measure},
-                             {.in = {.call = {.fn = &counting}}, .out = {.call = {.fn = &counting}}});
+  const fftn::plan<cd, cd> p(
+      plane, {.effort = fftn::planning::measure},
+      {.in = {.call = {.fn = &counting}}, .out = {.call = {.fn = &counting}}});
   fftn::shape<double, cd> volume;
   volume.axes = {{.n = 8}, {.n = 12}, {.n = 20}};
   const fftn::plan<double, cd> real_volume(
