@@ -17,6 +17,7 @@
 #include <complex>
 #include <cstddef>
 #include <cstdint>
+#include <initializer_list>
 #include <limits>
 #include <span>
 #include <stdexcept>

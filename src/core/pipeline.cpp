@@ -25,6 +25,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <initializer_list>
 #include <memory>
 #include <span>
 #include <stdexcept>
