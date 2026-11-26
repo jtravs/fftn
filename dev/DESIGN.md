@@ -842,8 +842,8 @@ Points that matter:
   quadruple-precision reference at every n ≤ 128 and two residues mod 15 above (the direct sum
   is O(n²) in 113-bit arithmetic), sampled at longer lengths.
 - **Phase 5 underneath.** The scratch-line programs of 5.2b, the edge phases and cursors of
-  5.1b (multi-axis lines, real factors), the stored runs of 5.1d and the pruned codelets of
-  5.1e (the odd `dct4`). Fusing the read stage into the first pass and the store stage into the
+  5.1b (multi-axis lines, real factors). The odd `dct4` zero-pads into the scratch line and
+  does not use 5.1d's stored runs or 5.1e's pruned codelets (see the as-built note above). Fusing the read stage into the first pass and the store stage into the
   last, as the r2c pairing is fused (9.1), is step 6.12.
 
 ### 5.8 Split-complex layout
