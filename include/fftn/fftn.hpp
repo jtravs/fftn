@@ -5,6 +5,7 @@
 /// The main FFTN header: includes the whole core API.
 #pragma once
 
+#include "fftn/callback.hpp"    // IWYU pragma: export
 #include "fftn/config.hpp"      // IWYU pragma: export
 #include "fftn/edges.hpp"       // IWYU pragma: export
 #include "fftn/executor.hpp"    // IWYU pragma: export

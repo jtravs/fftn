@@ -3,6 +3,7 @@
 
 #include "core/edge_driver.hpp"
 
+#include "core/callbacks.hpp"
 #include "core/driver.hpp"
 #include "core/edges.hpp"
 #include "core/program.hpp"
@@ -128,11 +129,17 @@ const pass_args* with_cursors(const pass_args& a, std::uint8_t moving, factor_cu
 }
 
 // Chunks [first, last) of stage st (record e), as driver.cpp's run_stage_chunks runs them, with
-// the cursors in the arguments of a stage that reads them and its kernels from e.
+// the cursors in the arguments of a stage that reads them and its kernels from e; a callback
+// stage through its site (core/callbacks.hpp).
 void run_stage(const stage& st, const edge_record& e, const slot_addresses& at, factor_cursors f,
-               std::size_t first, std::size_t last) noexcept {
+               const callback_env& env, std::size_t first, std::size_t last) noexcept {
   if (st.moving_factors == 0) {
     run_stage_chunks(st, at, first, last);
+    return;
+  }
+  if ((st.moving_factors & moving_callback) != 0) {
+    run_callback_stage(st, *e.call, static_cast<std::byte*>(destination_of(st.dst, at)), env, first,
+                       last);
     return;
   }
   pass_args args = st.args;
@@ -161,11 +168,12 @@ void run_stage(const stage& st, const edge_record& e, const slot_addresses& at, 
 }
 
 void run_records(const program& p, const std::vector<edge_record>& e, std::size_t begin,
-                 std::size_t end, const slot_addresses& at, factor_cursors f) noexcept {
+                 std::size_t end, const slot_addresses& at, factor_cursors f,
+                 const callback_env& env) noexcept {
   for (std::size_t i = begin; i < end; ++i) {
     const record& r = p.records[i];
     if (const stage* st = std::get_if<stage>(&r)) {
-      run_stage(*st, e[i], at, f, 0, st->chunks);
+      run_stage(*st, e[i], at, f, env, 0, st->chunks);
       continue;
     }
     // Every line on its own: a loop of one leaf gives each line the bits of the one call
@@ -173,7 +181,8 @@ void run_records(const program& p, const std::vector<edge_record>& e, std::size_
     const loop& l = *std::get_if<loop>(&r);
     const slot_addresses from = moved(at, l.start, 1);
     for (std::size_t c = 0; c < l.count; ++c) {
-      run_records(p, e, i + 1, l.body_end, moved(from, l.step, c), moved(f, e[i].factor_step, c));
+      run_records(p, e, i + 1, l.body_end, moved(from, l.step, c), moved(f, e[i].factor_step, c),
+                  env);
     }
     i = l.body_end - 1;
   }
@@ -666,6 +675,10 @@ factor_cursors cursors_of(const exec_args& args, std::uint8_t needed) noexcept {
   };
 }
 
+edge_state edge_state_of(const exec_args& args, std::uint8_t needed) noexcept {
+  return {.f = cursors_of(args, needed), .user = {args.in_user, args.out_user}};
+}
+
 factor_cursors edge_transform_cursors(const program& p, const std::vector<edge_record>& e,
                                       std::size_t t, factor_cursors f) noexcept {
   std::size_t rest = t;
@@ -680,7 +693,7 @@ factor_cursors edge_transform_cursors(const program& p, const std::vector<edge_r
 void run_edge_transforms(const program& p, const std::vector<edge_record>& e,
                          const std::vector<edge_record>& tail, const edge_forms& forms,
                          std::size_t first, std::size_t count, const slot_addresses& base,
-                         factor_cursors f) noexcept {
+                         factor_cursors f, const callback_env& env) noexcept {
   if (p.lanes != 0) {
     if (count != 0) {
       run_lane_blocks(p, e, tail, first, count, base, f);
@@ -704,28 +717,30 @@ void run_edge_transforms(const program& p, const std::vector<edge_record>& e,
     }
     return;
   }
+  callback_env task = env;
   for (std::size_t t = first; t < first + count; ++t) {
+    task.transform = t;
     run_records(p, e, p.batch_loops, p.records.size(), transform_addresses(p, t, base),
-                edge_transform_cursors(p, e, t, f));
+                edge_transform_cursors(p, e, t, f), task);
   }
 }
 
 void run_edge_stage_chunks(const program& p, const std::vector<edge_record>& e, std::size_t index,
-                           const slot_addresses& at, factor_cursors f, std::size_t first,
-                           std::size_t last) noexcept {
-  run_stage(*std::get_if<stage>(&p.records[index]), e[index], at, f, first, last);
+                           const slot_addresses& at, factor_cursors f, const callback_env& env,
+                           std::size_t first, std::size_t last) noexcept {
+  run_stage(*std::get_if<stage>(&p.records[index]), e[index], at, f, env, first, last);
 }
 
 void run_edge_lines(const program& p, const std::vector<edge_record>& e, std::size_t begin,
                     std::size_t nest, std::size_t body_end, std::size_t first, std::size_t last,
-                    const slot_addresses& at, factor_cursors f) noexcept {
+                    const slot_addresses& at, factor_cursors f, const callback_env& env) noexcept {
   slot_addresses from = at;
   for (std::size_t i = begin; i < begin + nest; ++i) {
     from = moved(from, std::get_if<loop>(&p.records[i])->start, 1);
   }
   for (std::size_t line = first; line < last; ++line) {
     const auto [here, cursors] = moved_in_nest(p, e, begin, nest, line, from, f);
-    run_records(p, e, begin + nest, body_end, here, cursors);
+    run_records(p, e, begin + nest, body_end, here, cursors, env);
   }
 }
 

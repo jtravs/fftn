@@ -5,6 +5,7 @@
 // layout, the program, the tables it points into, and the workspace layout.
 #pragma once
 
+#include "core/callbacks.hpp"
 #include "core/edge_driver.hpp"
 #include "core/edges.hpp"
 #include "core/program.hpp"
@@ -261,6 +262,12 @@ public:
   // block.
   edge_forms edge_batched;
   std::size_t edge_row_block = 0;
+  // Block callbacks (core/callbacks.hpp, task 5.3a): the sites their stages call, which the
+  // edge records point to; and the offset in each scratch slot of its callback area (0: none),
+  // the largest scratch_bytes of the plan's callbacks, one member never running two at once.
+  std::vector<std::unique_ptr<callback_site>> callback_sites;
+  std::size_t offset_callback = 0;
+  std::string callbacks_note; // describe()'s line for them (callbacks_text)
 };
 
 // The core a team of two or more members runs: the team program where there is one.

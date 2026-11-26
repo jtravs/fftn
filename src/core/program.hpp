@@ -45,6 +45,9 @@ inline constexpr std::size_t moving_slots = 4; // in, out, block, twiddles
 // than fixed tables.
 inline constexpr std::uint8_t moving_in_factor = 1;
 inline constexpr std::uint8_t moving_out_factor = 2;
+// stage::moving_factors: the stage is a block callback stage (core/callbacks.hpp), which only the
+// edge driver runs, from its edge_record's site.
+inline constexpr std::uint8_t moving_callback = 4;
 
 struct stage {
   pass_fn run = nullptr; // the kernel, or for a leaf null and `leaf` set

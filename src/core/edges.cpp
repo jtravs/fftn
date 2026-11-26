@@ -78,6 +78,47 @@ edge_side side_of(const shape_view& s, const edge_view& e, bool output) {
   }
   edge_side side;
   side.accumulate = e.accumulate;
+  // The callback (fftn/callback.hpp, task 5.3a). A null fn is no callback, whose other fields
+  // keep their defaults (DESIGN.md 18.2, "Callbacks" 4).
+  const std::string call = name + ".call";
+  if (e.call == nullptr) {
+    if (e.call_mode != callback_mode::modify) {
+      reject(call + ".mode", "is set without " + call +
+                                 ".fn; a null fn is no callback, and its other fields keep "
+                                 "their defaults");
+    }
+    if (e.call_scratch != 0) {
+      reject(call + ".scratch_bytes", "is set without " + call +
+                                          ".fn; a null fn is no callback, and its other fields "
+                                          "keep their defaults");
+    }
+  } else {
+    if (e.call_mode != callback_mode::modify && e.call_mode != callback_mode::produce &&
+        e.call_mode != callback_mode::consume) {
+      reject(call + ".mode", "is not a callback_mode");
+    }
+    if (!output && e.call_mode == callback_mode::consume) {
+      reject(call + ".mode", "is consume on the input edge, which takes modify or produce");
+    }
+    if (output && e.call_mode == callback_mode::produce) {
+      reject(call + ".mode", "is produce on the output edge, which takes modify or consume");
+    }
+    if (output && e.call_mode == callback_mode::consume && e.accumulate) {
+      reject(call + ".mode", "is consume beside " + name +
+                                 ".accumulate: a consumed block is not stored, so nothing "
+                                 "could be accumulated");
+    }
+    // Bounded so that a workspace's size, with this much per lane, is computed without overflow.
+    if (e.call_scratch > static_cast<std::size_t>(std::numeric_limits<std::ptrdiff_t>::max()) / 4) {
+      reject(call + ".scratch_bytes", "is too large to address");
+    }
+    if (s.kind != transform_kind::c2c || s.axes.size() != 1) {
+      reject(call + ".fn", "is a callback on a real or multi-axis plan, which takes none yet "
+                           "(task 5.3a built them for c2c rows; tasks 5.3b and 5.3c add the "
+                           "others)");
+    }
+    side.call = {.fn = e.call, .mode = e.call_mode, .scratch_bytes = e.call_scratch};
+  }
   if (e.kind != factor_kind::none && e.kind != factor_kind::real &&
       e.kind != factor_kind::complex) {
     reject(name + ".mul.kind", "is not a factor_kind");
@@ -322,7 +363,12 @@ resolved_edges resolve_edges(const shape_view& s, const options& opts, const edg
                              "the range of the plan's precision");
   }
   r.opts.scale = scale;
-  p.any = p.in.kind != factor_kind::none || p.out.kind != factor_kind::none || p.out.accumulate;
+  if (p.out.call.mode == callback_mode::consume && p.out.call.any() && opts.in_place) {
+    reject("edges.out.call.mode", "is consume on an in-place plan, whose output is its input's "
+                                  "memory; give the plan out of place");
+  }
+  p.any = p.in.kind != factor_kind::none || p.out.kind != factor_kind::none || p.out.accumulate ||
+          any_callback(p);
   if (!p.any) {
     return r;
   }
@@ -543,6 +589,9 @@ std::string edges_text(const edge_plan& p, edge_layout layout, std::size_t passe
   std::string in = describe_side(p.in, false);
   std::string out = describe_side(p.out, true);
   std::string both = in.empty() ? out : (out.empty() ? in : in + "; " + out);
+  if (both.empty()) {
+    both = "block callbacks only"; // their own line follows (callbacks_text)
+  }
   // The scales alone cost nothing; a fused factor costs no pass of its own.
   const std::string cost =
       passes == 0 ? "no separate pass"
@@ -575,7 +624,9 @@ std::pair<std::ptrdiff_t, std::ptrdiff_t> factor_span(const shape_view& s, const
 }
 
 std::string edges_key(const edges_view& e, double options_scale) {
-  const auto any = [](const edge_view& v) { return v.kind != factor_kind::none || v.accumulate; };
+  const auto any = [](const edge_view& v) {
+    return v.kind != factor_kind::none || v.accumulate || v.call != nullptr;
+  };
   if (!any(e.in) && !any(e.out)) {
     return {};
   }
@@ -592,6 +643,10 @@ std::string edges_key(const edges_view& e, double options_scale) {
       }
     }
     o << (v.accumulate ? " accumulate" : "");
+    // A callback by its mode and scratch, not its function (DESIGN.md 12.3, "Planning").
+    if (v.call != nullptr) {
+      o << " call " << mode_name(v.call_mode) << ' ' << v.call_scratch;
+    }
   };
   // options::scale too: the key's own scale is the part the plan fuses, which a separate pass
   // can leave at 1 whatever options::scale is.
