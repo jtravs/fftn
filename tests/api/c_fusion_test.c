@@ -19,6 +19,8 @@ static int cfuse_complex(cfuse_type t) { return t == CFUSE_CDOUBLE || t == CFUSE
 
 /* The value at element `index` (in elements of the type) of `data`. */
 static void cfuse_load(cfuse_type t, const void* data, ptrdiff_t index, double* re, double* im) {
+  *re = 0;
+  *im = 0;
   switch (t) {
   case CFUSE_DOUBLE:
     *re = ((const double*)data)[index];
