@@ -484,7 +484,7 @@ void build(plan_core& c, const shape_view& s, const r2r_layout& l, const r2r_edg
   }
 
   c.block_elements = through_block ? (transform_reals + 1) / 2 : 0;
-  lay_out_workspace(c, scratch, 2 * sizeof(T), false);
+  lay_out_workspace(c, scratch, 2 * sizeof(T), false, 0); // no callbacks on r2r (refused)
 }
 
 std::string edges_text(const r2r_edges& e, bool through_block) {
