@@ -1311,7 +1311,6 @@ TEST(RealPipelines, RefusalsNameTheField) {
   d.runs = {{.axis = 0, .where = fftn::side::in, .logical = 10, .stored = 0, .count = 8}};
   expect_refused(d, {}, "desc.runs[0].logical");
   d = good;
-  d = good;
   d.line.n = 0;
   expect_refused(d, {}, "desc.line.n");
   d = good;

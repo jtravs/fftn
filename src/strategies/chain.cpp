@@ -1378,6 +1378,15 @@ chain_builder<T>::depth_pair(std::size_t m, const std::vector<std::size_t>& tops
   bluestein_depth_stages out;
   const bool scaled = form.out == edge_op::scale;
   const bool out_run = form.out_count != 0;
+  // The head first pass reads whole blocks only (depth_first_tails ignores the run's offset and
+  // count), and a run's last top pass is built in place, then pointed at dst.
+  if (form.in_count != 0 && !bluestein_depth_fits(m, tops)) {
+    throw std::logic_error("fftn: a depth-first pair of " + std::to_string(m) +
+                           " with an input run on tops that leave a partial block");
+  }
+  if (out_run && dst == slot::block) {
+    throw std::logic_error("fftn: a depth-first pair's output run stored to the workspace block");
+  }
   out.forward = c2c_depth(m, tops, -1, 1.0, slot::block, src, slot::a, form.kernel);
   out.backward = c2c_depth(m, tops, +1, out_run || !scaled ? 1.0 : form.scale, slot::block, slot::a,
                            out_run ? slot::block : dst);
