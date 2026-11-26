@@ -114,13 +114,13 @@ template <class T> constexpr bool is_complex = !std::is_floating_point_v<T>;
 
 struct factor_spec {
   fftn_factor_kind kind = FFTN_FACTOR_NONE;
-  std::vector<std::ptrdiff_t> axis;
-  std::vector<std::ptrdiff_t> batch;
+  std::vector<std::ptrdiff_t> axis{};
+  std::vector<std::ptrdiff_t> batch{};
 };
 
 struct edge_spec {
   double scale = 1.0;
-  factor_spec mul;
+  factor_spec mul{};
   bool accumulate = false;
   cb call = cb::none;
   std::size_t scratch = 0;
@@ -224,13 +224,13 @@ std::string c_text(std::size_t (*describe)(const void*, char*, std::size_t), con
 // ---- Plans with edges ----
 
 struct plan_case {
-  const char* name;
-  fftn_kind kind;
-  fftn_precision precision;
-  std::vector<std::size_t> n;
-  std::size_t count;
-  edge_spec in;
-  edge_spec out;
+  const char* name{};
+  fftn_kind kind{};
+  fftn_precision precision{};
+  std::vector<std::size_t> n{};
+  std::size_t count{};
+  edge_spec in{};
+  edge_spec out{};
 };
 
 int direction_of(fftn_kind k) { return k == FFTN_C2R ? FFTN_BACKWARD : FFTN_FORWARD; }
@@ -501,23 +501,23 @@ TEST(CFusion, CallbackModesMatchCpp) {
 
 struct middle_spec {
   double scale = 1.0;
-  factor_spec mul;
+  factor_spec mul{};
   cb call = cb::none;
   std::size_t scratch = 0;
 };
 
 struct pipe_case {
-  const char* name;
-  fftn_pipeline_kind kind;
-  fftn_precision precision;
+  const char* name{};
+  fftn_pipeline_kind kind{};
+  fftn_precision precision{};
   int first = FFTN_FORWARD;
-  std::size_t n;
-  std::vector<std::size_t> counts;
-  edge_spec pro;
-  middle_spec mid;
-  edge_spec epi;
+  std::size_t n{};
+  std::vector<std::size_t> counts{};
+  edge_spec pro{};
+  middle_spec mid{};
+  edge_spec epi{};
   std::size_t fanout = 1;
-  std::vector<fftn_stored_run> runs;
+  std::vector<fftn_stored_run> runs{};
   std::size_t group = FFTN_NO_GROUP; // a batch dimension the middle callback sees whole
 };
 

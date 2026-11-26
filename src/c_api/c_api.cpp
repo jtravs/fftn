@@ -234,10 +234,15 @@ struct converted_shape {
     default:
       refuse(where + ".precision", "is " + std::to_string(precision) + ", not an fftn_precision");
     }
-    for (const fftn_axis& a : array_of(s->axes, s->rank, where + ".axes")) {
+    // The spans are named: built in the range statement from a temporary name, they would look
+    // dangling to GCC's -Wdangling-reference.
+    const std::span<const fftn_axis> c_axes = array_of(s->axes, s->rank, where + ".axes");
+    for (const fftn_axis& a : c_axes) {
       axes.push_back({.n = a.n, .in_stride = a.in_stride, .out_stride = a.out_stride});
     }
-    for (const fftn_batch& b : array_of(s->batches, s->batch_rank, where + ".batches")) {
+    const std::span<const fftn_batch> c_batches =
+        array_of(s->batches, s->batch_rank, where + ".batches");
+    for (const fftn_batch& b : c_batches) {
       batches.push_back({.count = b.count, .in_dist = b.in_dist, .out_dist = b.out_dist});
     }
     runs = runs_of(s->runs, s->run_count, where + ".runs");
@@ -491,7 +496,9 @@ struct converted_pipeline {
     }
     view.prec = precision == FFTN_DOUBLE ? detail::precision::f64 : detail::precision::f32;
     view.line = {.n = d->line.n, .in_stride = d->line.in_stride, .out_stride = d->line.out_stride};
-    for (const fftn_batch& b : array_of(d->batches, d->batch_rank, where + ".batches")) {
+    const std::span<const fftn_batch> c_batches =
+        array_of(d->batches, d->batch_rank, where + ".batches");
+    for (const fftn_batch& b : c_batches) {
       batches.push_back({.count = b.count, .in_dist = b.in_dist, .out_dist = b.out_dist});
     }
     runs = runs_of(d->runs, d->run_count, where + ".runs");
