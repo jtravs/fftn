@@ -1,0 +1,173 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Experiment X66's cases (dev/experiments/X66-block-callbacks.md): block callbacks (the FFTN
+# backend's EDGE_CALL options) against the plain plan plus the user's own loop, the vocabulary with
+# a precomputed factor, and the plain plan alone. c2c rows of 64 to 2^20 points (batched below
+# 16384, single above), batch leaves and a Bluestein length, real rows of 256 to 2^20 points, the
+# client catalogue's rows (lengths and batches as the client application runs them), planes of
+# 192 x 192 and 384 x 384 in place, alone and with a stride-1 batch of 8 (the free-space layout),
+# volumes of 64^3, double precision and a float subset. The copy arms (input callbacks) take the
+# c2c groups, whose out-of-place cases are the copy rule's candidates. Tier "quick" (the client's
+# shapes, the long rows and the planes) is the threaded subset.
+
+[catalogue]
+name = "x66"
+
+# ---- c2c rows ---------------------------------------------------------------------------------
+
+[[group]]
+name = "x66-rows-64"
+note = "short rows, many: the lanes or row blocks by the rules"
+kind = "c2c"
+dims = [64]
+batch = 1024
+
+[[group]]
+name = "x66-rows-256"
+kind = "c2c"
+dims = [256]
+batch = 256
+
+[[group]]
+name = "x66-rows-1024"
+kind = "c2c"
+dims = [1024]
+batch = 64
+
+[[group]]
+name = "x66-rows-4096"
+kind = "c2c"
+dims = [4096]
+batch = 16
+
+[[group]]
+name = "x66-rows-long"
+note = "single long rows: the chain, depth-first chain and grid by the rules"
+kind = "c2c"
+dims = [16384, 65536, 262144, 1048576]
+tiers = ["quick"]
+
+[[group]]
+name = "x66-leaves"
+note = "a codelet length in many rows: batch leaves by the rules"
+kind = "c2c"
+dims = [16]
+batch = 1024
+
+[[group]]
+name = "x66-bluestein"
+note = "a Bluestein length (4098 is not 13-smooth)"
+kind = "c2c"
+dims = [4099]
+batch = 4
+
+[[group]]
+name = "x66-client-c2c"
+note = "the client's single c2c rows"
+kind = "c2c"
+dims = [3072]
+tiers = ["quick"]
+
+# ---- real rows --------------------------------------------------------------------------------
+
+[[group]]
+name = "x66-real-256"
+kind = ["r2c", "c2r"]
+dims = [256]
+batch = 64
+
+[[group]]
+name = "x66-real-4096"
+kind = ["r2c", "c2r"]
+dims = [4096]
+batch = 16
+
+[[group]]
+name = "x66-real-long"
+kind = ["r2c", "c2r"]
+dims = [65536, 1048576]
+
+[[group]]
+name = "x66-client-real-6144"
+note = "the client's general modal route"
+kind = ["r2c", "c2r"]
+dims = [6144]
+batch = 66
+tiers = ["quick"]
+
+[[group]]
+name = "x66-client-real-32768"
+note = "the client's Raman drive and convolution rows"
+kind = ["r2c", "c2r"]
+dims = [32768]
+tiers = ["quick"]
+
+[[group]]
+name = "x66-client-r2c"
+note = "the client's forward real rows"
+kind = "r2c"
+dims = [6400]
+tiers = ["quick"]
+
+[[group]]
+name = "x66-client-r2c-pack"
+note = "the client's stacked forward pack"
+kind = "r2c"
+dims = [10240]
+batch = 28
+tiers = ["quick"]
+
+# ---- planes and volumes -----------------------------------------------------------------------
+
+[[group]]
+name = "x66-client-planes"
+note = "the client's transverse planes, in place, alone"
+kind = "c2c"
+dims = ["192x192", "384x384"]
+place = "in"
+tiers = ["quick"]
+
+[[group]]
+name = "x66-client-planes-free"
+note = "the free-space layout: a stride-1 batch of 8 planes (5.3c), in place"
+kind = "c2c"
+layout = "interleaved"
+dims = ["192x192", "384x384"]
+batch = 8
+place = "in"
+tiers = ["quick"]
+
+[[group]]
+name = "x66-volumes"
+kind = ["c2c", "r2c", "c2r"]
+dims = ["64x64x64"]
+
+# ---- the float subset -------------------------------------------------------------------------
+
+[[group]]
+name = "x66-f32-rows"
+kind = "c2c"
+dims = [1024]
+batch = 64
+precision = "f32"
+
+[[group]]
+name = "x66-f32-long"
+kind = "c2c"
+dims = [65536]
+precision = "f32"
+
+[[group]]
+name = "x66-f32-planes"
+kind = "c2c"
+dims = ["384x384"]
+place = "in"
+precision = "f32"
+
+[[group]]
+name = "x66-f32-real"
+kind = "r2c"
+dims = [6144]
+batch = 66
+precision = "f32"

@@ -99,6 +99,14 @@
 //   EDGE_ARM=library|loop   the plan with the edges (default), or the plain plan and the
 //                    user's own separate loops (the input's in place before it, the output's
 //                    after it, accumulation from a buffer of the transform's own)
+//   EDGE_CALL=identity|cubic|exp   a block callback on one edge (experiment X66): its work, pure
+//                    per element, the identity in exact arithmetic so that the check holds
+//                    (call_user); with EDGE_ARM=loop the plain plan and the user's loop instead
+//   CALL_SIDE=out|in, CALL_MODE=modify|produce|consume, CALL_BUILD=clones|base|avx2   its edge,
+//                    mode and build (target_clones as the edge loops, the baseline target, or
+//                    avx2 and fma; the last two on x86-64 Linux)
+//   CALLBACK_BLOCK_BYTES=B, CALLBACK_COPY=block|out   the profile's callback_block_bytes, and
+//                    build_settings::callback_copy_out
 //   PIPELINE=fused|separate   a convolution instead of the transform (task 5.5): every row
 //                    of a c2c forward case (`pipeline<C, C, C>`) or of an r2c case
 //                    (`pipeline<T, C, T>`, the output rows real, each at the start of its row
@@ -150,12 +158,14 @@
 #include <algorithm>
 #include <array>
 #include <charconv>
+#include <cmath>
 #include <complex>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <limits>
 #include <memory>
 #include <numbers>
 #include <optional>
@@ -248,6 +258,17 @@ std::optional<edge_spec> parse_edge(std::string_view text, bool output) {
 // PIPELINE arm (plan_record::pipe), likewise.
 enum class call : unsigned char { serial, executor, team, edges, pipeline };
 
+// EDGE_CALL (experiment X66):
+// The work of a block callback (fftn/callback.hpp), pure per element: none (no callback),
+// identity (returns at once), cubic (v (a + b |v|^2), a Kerr-like term) or exp (v exp(i phi),
+// phi a quadratic in the element's coordinates: a propagator computed per element).
+enum class call_work : unsigned char { none, identity, cubic, exp };
+
+// How the callback is compiled: as the user's loops are (clones: target_clones for AVX2 and
+// AVX-512 on x86-64 Linux, the plain build elsewhere), for the baseline target only (base), or
+// for avx2 and fma (avx2); the last two on x86-64 Linux only.
+enum class call_build : unsigned char { clones, base, avx2 };
+
 // PIPELINE: none, the row pipeline, or separate plans and a loop.
 enum class pipe_arm : unsigned char { none, fused, separate };
 
@@ -275,6 +296,11 @@ struct session {
   edge_spec edge_in;                  // EDGE_IN
   edge_spec edge_out;                 // EDGE_OUT
   bool edge_loop = false;             // EDGE_ARM=loop: a plain plan and the user's own loops
+  call_work call = call_work::none;   // EDGE_CALL
+  bool call_out = true;               // CALL_SIDE=out (default) or in
+  fftn::callback_mode call_mode = fftn::callback_mode::modify; // CALL_MODE
+  call_build build = call_build::clones;                       // CALL_BUILD
+  std::string call_text, mode_text = "modify", build_text = "clones";
   pipe_arm pipeline = pipe_arm::none; // PIPELINE
   std::string description;
 };
@@ -645,6 +671,319 @@ FBENCH_EDGE_CLONES void edge_lines_f32(const side_geometry& g, float* data, cons
   }
 }
 
+// ---- EDGE_CALL, CALL_SIDE, CALL_MODE, CALL_BUILD (experiment X66) -------------------------
+
+// The callback's argument (exec_args::in_user or out_user), and the user's loop's. The constants
+// are read at run time, so that the compiler folds none of them, and make every work the
+// identity in exact arithmetic, so that fbench's check of the transform holds while each element
+// still pays its arithmetic: cubic with a = 1 and b = 0; exp multiplies by
+// w (cos^2 phi + sin^2 phi) + i z sin phi with w = 1 and z = 0 (one rounding from 1), after
+// computing cos phi and sin phi, phi = alpha sum_d u_d^2 + beta t, u_d = (x_d - n_d / 2) / n_d
+// over the side's logical coordinates x_d (n_d its extents) and t the transform: up to about
+// 50 radians, so that cos and sin take their ordinary paths.
+struct call_user {
+  call_work work = call_work::none;
+  fftn::callback_mode mode = fftn::callback_mode::modify;
+  double a = 1.0;
+  double b = 0.0;
+  double alpha = 100.0;
+  double beta = 1e-3;
+  double w = 1.0;
+  double z = 0.0;
+  side_geometry side;            // the edge's side: logical extents, the array's strides
+  std::array<double, 3> inv_n{}; // 1 / extent per axis
+  void* array = nullptr;         // produce: the case's input; consume: its output
+};
+
+template <class T> struct line_phase {
+  T base = 0; // the phase of element 0 but for the element axis' term
+  T alpha = 0;
+  T u0 = 0; // u of element 0 along the element axis
+  T du = 0; // its step
+  T bt = 0; // the step of beta t when elements advance along the batch
+};
+
+// One line of `n` elements `es` apart (complex: pairs of T), the work applied in place.
+template <class T, bool Complex, call_work W, bool Unit>
+[[gnu::always_inline]] inline void work_line(T* __restrict d, std::ptrdiff_t es, std::size_t n,
+                                             const call_user& u, const line_phase<T>& p) {
+  const T a = static_cast<T>(u.a);
+  const T b = static_cast<T>(u.b);
+  const T w = static_cast<T>(u.w);
+  const T z = static_cast<T>(u.z);
+  const std::ptrdiff_t width = Complex ? 2 : 1;
+  for (std::size_t i = 0; i < n; ++i) {
+    T* __restrict e =
+        d + (Unit ? static_cast<std::ptrdiff_t>(i) : static_cast<std::ptrdiff_t>(i) * es) * width;
+    if constexpr (W == call_work::cubic) {
+      if constexpr (Complex) {
+        const T vr = e[0];
+        const T vi = e[1];
+        const T m = a + b * (vr * vr + vi * vi);
+        e[0] = vr * m;
+        e[1] = vi * m;
+      } else {
+        const T v = e[0];
+        e[0] = v * (a + b * v * v);
+      }
+    } else if constexpr (W == call_work::exp) {
+      const T x = p.u0 + static_cast<T>(i) * p.du;
+      const T phi = p.base + p.alpha * x * x + p.bt * static_cast<T>(i);
+      const T c = std::cos(phi);
+      const T s = std::sin(phi);
+      const T fr = w * (c * c + s * s);
+      if constexpr (Complex) {
+        const T fi = z * s;
+        const T vr = e[0];
+        const T vi = e[1];
+        e[0] = vr * fr - vi * fi;
+        e[1] = vr * fi + vi * fr;
+      } else {
+        e[0] *= fr;
+      }
+    }
+  }
+}
+
+template <class T, bool Complex>
+[[gnu::always_inline]] inline void work_dispatch(const call_user& u, T* d, std::ptrdiff_t es,
+                                                 std::size_t n, const line_phase<T>& p) {
+  switch (u.work) {
+  case call_work::none:
+  case call_work::identity:
+    return;
+  case call_work::cubic:
+    if (es == 1) {
+      work_line<T, Complex, call_work::cubic, true>(d, 1, n, u, p);
+    } else {
+      work_line<T, Complex, call_work::cubic, false>(d, es, n, u, p);
+    }
+    return;
+  case call_work::exp:
+    if (es == 1) {
+      work_line<T, Complex, call_work::exp, true>(d, 1, n, u, p);
+    } else {
+      work_line<T, Complex, call_work::exp, false>(d, es, n, u, p);
+    }
+    return;
+  }
+}
+
+// The phase of a line whose element 0 has coordinates x (rank of them) in transform t; elements
+// advance along axis e, or along the batch (transforms t, t + 1, ...) when `along_batch`.
+template <class T>
+[[gnu::always_inline]] inline line_phase<T>
+phase_of(const call_user& u, const std::size_t* x, std::size_t t, std::size_t e, bool along_batch) {
+  line_phase<T> p;
+  if (u.work != call_work::exp) {
+    return p;
+  }
+  const side_geometry& g = u.side;
+  double base = u.beta * static_cast<double>(t);
+  double u0 = 0;
+  for (std::size_t d = 0; d < g.rank; ++d) {
+    const double ud =
+        (static_cast<double>(x[d]) - 0.5 * static_cast<double>(g.extent[d])) * u.inv_n[d];
+    if (d == e && !along_batch) {
+      u0 = ud;
+    } else {
+      base += u.alpha * ud * ud;
+    }
+  }
+  p.base = static_cast<T>(base);
+  p.alpha = static_cast<T>(u.alpha);
+  if (along_batch) {
+    p.bt = static_cast<T>(u.beta);
+  } else {
+    p.u0 = static_cast<T>(u0);
+    p.du = static_cast<T>(u.inv_n[e]);
+  }
+  return p;
+}
+
+// The case's array element (complex: pairs of T) at coordinates x of transform t.
+template <class T, bool Complex>
+[[gnu::always_inline]] inline T* element_at(const call_user& u, const std::size_t* x,
+                                            std::size_t t) {
+  const side_geometry& g = u.side;
+  std::ptrdiff_t off = static_cast<std::ptrdiff_t>(t) * g.dist;
+  for (std::size_t d = 0; d < g.rank; ++d) {
+    off += static_cast<std::ptrdiff_t>(x[d]) * g.stride[d];
+  }
+  return static_cast<T*>(u.array) + off * (Complex ? 2 : 1);
+}
+
+// The block callback: per line, produce (read the case's input at the element's coordinates),
+// the work, consume (write the case's output there), as fftn/callback.hpp describes the block.
+template <class T, bool Complex>
+[[gnu::always_inline]] inline void callback_body(void* user, const fftn::block_info& info,
+                                                 T* data) {
+  const auto& u = *static_cast<const call_user*>(user);
+  if (u.work == call_work::identity && u.mode == fftn::callback_mode::modify) {
+    return;
+  }
+  const std::ptrdiff_t width = Complex ? 2 : 1;
+  const std::size_t e = info.element_axis;
+  const std::ptrdiff_t es = info.element_stride;
+  for (std::size_t k = 0; k < info.lines; ++k) {
+    std::array<std::size_t, 3> x{};
+    for (std::size_t d = 0; d < info.origin.size() && d < x.size(); ++d) {
+      x[d] = info.origin[d];
+    }
+    std::size_t t = info.transform;
+    if (info.line_axis == fftn::along_transforms) {
+      t += k;
+    } else {
+      x[info.line_axis] += k;
+    }
+    T* line = data + static_cast<std::ptrdiff_t>(k) * info.line_stride * width;
+    const std::ptrdiff_t as = u.side.stride[e] * width;
+    if (u.mode == fftn::callback_mode::produce) {
+      const T* src = element_at<T, Complex>(u, x.data(), t);
+      for (std::size_t i = 0; i < info.length; ++i) {
+        for (std::ptrdiff_t c = 0; c < width; ++c) {
+          line[static_cast<std::ptrdiff_t>(i) * es * width + c] =
+              src[static_cast<std::ptrdiff_t>(i) * as + c];
+        }
+      }
+    }
+    work_dispatch<T, Complex>(u, line, es, info.length, phase_of<T>(u, x.data(), t, e, false));
+    if (u.mode == fftn::callback_mode::consume) {
+      T* dst = element_at<T, Complex>(u, x.data(), t);
+      for (std::size_t i = 0; i < info.length; ++i) {
+        for (std::ptrdiff_t c = 0; c < width; ++c) {
+          dst[static_cast<std::ptrdiff_t>(i) * as + c] =
+              line[static_cast<std::ptrdiff_t>(i) * es * width + c];
+        }
+      }
+    }
+  }
+}
+
+// The callbacks of one build, one per element type, compiled in this unit as the user would
+// compile theirs.
+#define FBENCH_CALLBACKS(NAME, ATTRIBUTES)                                                         \
+  ATTRIBUTES void NAME##_c64(void* user, const fftn::block_info& info,                             \
+                             std::complex<double>* data) noexcept {                                \
+    callback_body<double, true>(user, info, reinterpret_cast<double*>(data));                      \
+  }                                                                                                \
+  ATTRIBUTES void NAME##_r64(void* user, const fftn::block_info& info, double* data) noexcept {    \
+    callback_body<double, false>(user, info, data);                                                \
+  }                                                                                                \
+  ATTRIBUTES void NAME##_c32(void* user, const fftn::block_info& info,                             \
+                             std::complex<float>* data) noexcept {                                 \
+    callback_body<float, true>(user, info, reinterpret_cast<float*>(data));                        \
+  }                                                                                                \
+  ATTRIBUTES void NAME##_r32(void* user, const fftn::block_info& info, float* data) noexcept {     \
+    callback_body<float, false>(user, info, data);                                                 \
+  }
+
+FBENCH_CALLBACKS(callback_clones, FBENCH_EDGE_CLONES)
+#if defined(__x86_64__) && defined(__linux__)
+#define FBENCH_CALL_BUILDS 1
+FBENCH_CALLBACKS(callback_base, )
+FBENCH_CALLBACKS(callback_avx2, [[gnu::target("avx2,fma")]])
+#else
+#define FBENCH_CALL_BUILDS 0
+#endif
+#undef FBENCH_CALLBACKS
+
+// The callback of a build for the side's element type, its type erased as the library erases
+// edge::call's (fftn/detail/core.hpp, view_of).
+detail::erased_block_fn callback_for(call_build build, bool single, bool complex_side) {
+  auto erase = [](auto fn) { return reinterpret_cast<detail::erased_block_fn>(fn); };
+  auto pick = [&](auto c64, auto r64, auto c32, auto r32) {
+    if (single) {
+      return complex_side ? erase(c32) : erase(r32);
+    }
+    return complex_side ? erase(c64) : erase(r64);
+  };
+  switch (build) {
+  case call_build::clones:
+    break;
+#if FBENCH_CALL_BUILDS
+  case call_build::base:
+    return pick(&callback_base_c64, &callback_base_r64, &callback_base_c32, &callback_base_r32);
+  case call_build::avx2:
+    return pick(&callback_avx2_c64, &callback_avx2_r64, &callback_avx2_c32, &callback_avx2_r32);
+#else
+  case call_build::base:
+  case call_build::avx2:
+    break;
+#endif
+  }
+  return pick(&callback_clones_c64, &callback_clones_r64, &callback_clones_c32,
+              &callback_clones_r32);
+}
+
+// The user's loop (EDGE_ARM=loop with EDGE_CALL): the same work on lines [first, first + count)
+// of the side in the case's own array, in memory order as a user writes it: along the last axis
+// where its elements are adjacent, else along the batch where the transforms are (the
+// interleaved layout), else along the last axis at its stride. call_lines counts the lines.
+struct call_walk {
+  bool along_batch = false;
+  std::size_t lines = 0;
+  std::size_t length = 0;
+  std::ptrdiff_t es = 1;
+};
+
+call_walk walk_of(const side_geometry& g) {
+  call_walk k;
+  const std::size_t last = g.rank - 1;
+  std::size_t axes = 1;
+  for (std::size_t d = 0; d < g.rank; ++d) {
+    axes *= g.extent[d];
+  }
+  if (g.stride[last] != 1 && g.dist == 1 && g.batch > 1) {
+    k.along_batch = true;
+    k.lines = axes;
+    k.length = g.batch;
+  } else {
+    k.lines = g.lines();
+    k.length = g.extent[last];
+    k.es = g.stride[last];
+  }
+  return k;
+}
+
+template <class T, bool Complex>
+[[gnu::always_inline]] inline void user_lines(const call_user& u, std::size_t first,
+                                              std::size_t count) {
+  const side_geometry& g = u.side;
+  const call_walk k = walk_of(g);
+  const std::size_t last = g.rank - 1;
+  const std::size_t inner = k.along_batch ? k.lines : g.lines() / g.batch;
+  for (std::size_t l = first; l < first + count; ++l) {
+    std::array<std::size_t, 3> x{};
+    std::size_t rest = l % inner;
+    const std::size_t t = k.along_batch ? 0 : l / inner;
+    for (std::size_t i = k.along_batch ? g.rank : last; i > 0; --i) {
+      const std::size_t d = i - 1;
+      x[d] = rest % g.extent[d];
+      rest /= g.extent[d];
+    }
+    T* line = element_at<T, Complex>(u, x.data(), t);
+    work_dispatch<T, Complex>(u, line, k.along_batch ? std::ptrdiff_t{1} : k.es, k.length,
+                              phase_of<T>(u, x.data(), t, last, k.along_batch));
+  }
+}
+
+FBENCH_EDGE_CLONES void user_lines_f64(const call_user& u, std::size_t first, std::size_t count) {
+  if (u.side.complex_data) {
+    user_lines<double, true>(u, first, count);
+  } else {
+    user_lines<double, false>(u, first, count);
+  }
+}
+
+FBENCH_EDGE_CLONES void user_lines_f32(const call_user& u, std::size_t first, std::size_t count) {
+  if (u.side.complex_data) {
+    user_lines<float, true>(u, first, count);
+  } else {
+    user_lines<float, false>(u, first, count);
+  }
+}
+
 // ---- PIPELINE (task 5.5) ----------------------------------------------------------------
 
 // The separate arm's multiply loop over rows [first, first + count) of the spectrum, rows `dist`
@@ -930,6 +1269,8 @@ struct plan_record {
   side_geometry in_side, out_side;
   std::vector<double> in_factor, out_factor; // f64 storage of either precision's values
   mutable std::vector<double> temp;          // EDGE_ARM=loop with acc: the transform's result
+  // EDGE_CALL: the callback's (or the user's loop's) argument, whose array an execute sets.
+  mutable call_user user;
   fftn::exec_args args{};
 };
 
@@ -1018,6 +1359,49 @@ std::shared_ptr<const detail::plan_core> make_edge_core(const fbench_case& c,
   return make_edge_core<cplx, T>(c, o, r);
 }
 
+// A case's plan with the session's callback (EDGE_CALL): the side and the argument in `r`, and the
+// plan with the callback on that side (the library's arm) or the plain plan (the loop arm).
+// nullptr when the callback does not apply (more than one batch dimension, or consume in place).
+template <class In, class Out>
+std::shared_ptr<const detail::plan_core> make_call_core(const fbench_case& c,
+                                                        const fftn::options& o, plan_record& r) {
+  const session& s = state();
+  const fftn::shape<In, Out> sh = shape_of<In, Out>(c);
+  if (c.outer > 1 || (s.call_mode == fftn::callback_mode::consume && o.in_place)) {
+    return nullptr;
+  }
+  r.single = c.precision == fbench_f32;
+  r.loop = s.edge_loop;
+  r.user.work = s.call;
+  r.user.mode = s.call_mode;
+  r.user.side = side_of(sh, c, edge_spec{}, s.call_out);
+  for (std::size_t d = 0; d < r.user.side.rank; ++d) {
+    r.user.inv_n[d] = 1.0 / static_cast<double>(r.user.side.extent[d]);
+  }
+  (s.call_out ? r.args.out_user : r.args.in_user) = &r.user;
+  if (r.loop) {
+    return detail::make_plan_core(detail::view_of(sh), o, s.settings);
+  }
+  detail::edges_view e;
+  detail::edge_view& side = s.call_out ? e.out : e.in;
+  side.call = callback_for(s.build, r.single, r.user.side.complex_data);
+  side.call_mode = s.call_mode;
+  return detail::make_plan_core_with_edges(detail::view_of(sh), o, e, s.settings);
+}
+
+template <class T>
+std::shared_ptr<const detail::plan_core> make_call_core(const fbench_case& c,
+                                                        const fftn::options& o, plan_record& r) {
+  using cplx = std::complex<T>;
+  if (c.kind == fbench_c2c) {
+    return make_call_core<cplx, cplx>(c, o, r);
+  }
+  if (c.kind == fbench_r2c) {
+    return make_call_core<T, cplx>(c, o, r);
+  }
+  return make_call_core<cplx, T>(c, o, r);
+}
+
 // The plan's lines of its describe that say where its edges went ("edges: ...") and which of
 // the edge driver's batched forms it takes ("edge forms: ...", "edge row blocks: ..."), so that a
 // run's notes show the plans that take them (X65's P1).
@@ -1028,7 +1412,7 @@ std::string edge_lines_of(const std::string& describe) {
     const std::size_t end = std::min(describe.find('\n', at), describe.size());
     const std::string_view line = std::string_view(describe).substr(at, end - at);
     if (line.find("edges: ") != std::string_view::npos || line.starts_with("edge forms: ") ||
-        line.starts_with("edge row blocks: ")) {
+        line.starts_with("edge row blocks: ") || line.find("callback") != std::string_view::npos) {
       out += (out.empty() ? "" : "; ") + std::string(line);
     }
     at = end + 1;
@@ -1186,7 +1570,68 @@ void run_loop(const plan_record& r, const side_geometry& g, void* data, const vo
 // A plan with edges: the library's (the plan with the edges and the factor arrays), or the
 // user's (EDGE_ARM=loop: the input's loop in place, the plain plan, then the output's loop,
 // which with accumulation adds the transform's result, made in a buffer of its own).
+// The user's loop of EDGE_CALL over the side in the array r.user names, shared over the
+// executor's lanes as run_loop shares the edges' loops.
+void call_lines(const plan_record& r, std::size_t first, std::size_t count) {
+  if (r.single) {
+    user_lines_f32(r.user, first, count);
+  } else {
+    user_lines_f64(r.user, first, count);
+  }
+}
+
+struct call_job {
+  const plan_record* r;
+  std::size_t lines;
+  int tasks;
+};
+
+void call_task(void* arg, int index) {
+  const auto& j = *static_cast<const call_job*>(arg);
+  const auto t = static_cast<std::size_t>(j.tasks);
+  const auto i = static_cast<std::size_t>(index);
+  const std::size_t first = j.lines * i / t;
+  call_lines(*j.r, first, j.lines * (i + 1) / t - first);
+}
+
+void run_call_loop(const plan_record& r, void* data) {
+  const session& s = state();
+  r.user.array = data;
+  call_job j{&r, walk_of(r.user.side).lines, 1};
+  if (r.edge_mode == call::serial || j.lines < 2) {
+    call_lines(r, 0, j.lines);
+    return;
+  }
+  j.tasks = static_cast<int>(std::min<std::size_t>(j.lines, static_cast<std::size_t>(s.threads)));
+  s.exec->bulk(j.tasks, &call_task, &j);
+}
+
+// A plan with a callback (EDGE_CALL): the library's, with the callback's argument pointing at the
+// array produce reads or consume writes; or the user's (EDGE_ARM=loop: their loop on the input in
+// place before the plain plan, or on the output after it).
+void execute_call(const plan_record& r, const void* in, void* out) {
+  const bool output = r.args.out_user != nullptr;
+  if (!r.loop) {
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-const-cast): produce only reads it
+    r.user.array = output ? out : const_cast<void*>(in);
+    run_core(r, in, out, &r.args);
+    return;
+  }
+  if (!output) {
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-const-cast): the user's loop changes its input
+    run_call_loop(r, const_cast<void*>(in));
+  }
+  run_core(r, in, out, nullptr);
+  if (output) {
+    run_call_loop(r, out);
+  }
+}
+
 [[gnu::noinline]] void execute_edges(const plan_record& r, const void* in, void* out) {
+  if (r.user.work != call_work::none) {
+    execute_call(r, in, out);
+    return;
+  }
   if (!r.loop) {
     run_core(r, in, out, &r.args);
     return;
@@ -1327,6 +1772,58 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
         return fbench_error;
       }
       s.edge_loop = value == "loop";
+    } else if (key == "EDGE_CALL") {
+      if (value != "identity" && value != "cubic" && value != "exp") {
+        say(message, message_size, "EDGE_CALL is identity, cubic or exp");
+        return fbench_error;
+      }
+      s.call = value == "identity" ? call_work::identity
+               : value == "cubic"  ? call_work::cubic
+                                   : call_work::exp;
+      s.call_text = value;
+    } else if (key == "CALL_SIDE") {
+      if (value != "out" && value != "in") {
+        say(message, message_size, "CALL_SIDE is out or in");
+        return fbench_error;
+      }
+      s.call_out = value == "out";
+    } else if (key == "CALL_MODE") {
+      if (value != "modify" && value != "produce" && value != "consume") {
+        say(message, message_size, "CALL_MODE is modify, produce or consume");
+        return fbench_error;
+      }
+      s.call_mode = value == "modify"    ? fftn::callback_mode::modify
+                    : value == "produce" ? fftn::callback_mode::produce
+                                         : fftn::callback_mode::consume;
+      s.mode_text = value;
+    } else if (key == "CALL_BUILD") {
+      if (value != "clones" && value != "base" && value != "avx2") {
+        say(message, message_size, "CALL_BUILD is clones, base or avx2");
+        return fbench_error;
+      }
+      if (value != "clones" && FBENCH_CALL_BUILDS == 0) {
+        say(message, message_size, "CALL_BUILD=base and avx2 are built on x86-64 Linux only");
+        return fbench_error;
+      }
+      s.build = value == "clones" ? call_build::clones
+                : value == "base" ? call_build::base
+                                  : call_build::avx2;
+      s.build_text = value;
+    } else if (key == "CALLBACK_BLOCK_BYTES") {
+      const std::optional<std::size_t> v = fbench::fftn_tuning::parse_size(value, 1, false);
+      if (!v || *v > std::numeric_limits<std::uint32_t>::max()) {
+        say(message, message_size, "CALLBACK_BLOCK_BYTES is a whole number of bytes from 1");
+        return fbench_error;
+      }
+      s.settings.profile.callback_block_bytes = static_cast<std::uint32_t>(*v);
+      overrides.str(key, value);
+    } else if (key == "CALLBACK_COPY") {
+      if (value != "block" && value != "out") {
+        say(message, message_size, "CALLBACK_COPY is block or out");
+        return fbench_error;
+      }
+      s.settings.callback_copy_out = value == "out";
+      overrides.str(key, value);
     } else if (key == "PIPELINE") {
       if (value != "fused" && value != "separate") {
         say(message, message_size, "PIPELINE is fused or separate");
@@ -1494,8 +1991,29 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
     say(message, message_size, "GROUP_SIZE and CALL need THREADS");
     return fbench_error;
   }
-  if (s.edge_loop && !s.edge_in.any() && !s.edge_out.any()) {
-    say(message, message_size, "EDGE_ARM needs EDGE_IN or EDGE_OUT");
+  const bool calls = s.call != call_work::none;
+  if (s.edge_loop && !s.edge_in.any() && !s.edge_out.any() && !calls) {
+    say(message, message_size, "EDGE_ARM needs EDGE_IN, EDGE_OUT or EDGE_CALL");
+    return fbench_error;
+  }
+  if (calls && (s.edge_in.any() || s.edge_out.any() || s.pipeline != pipe_arm::none)) {
+    say(message, message_size, "EDGE_CALL does not combine with EDGE_IN, EDGE_OUT or PIPELINE");
+    return fbench_error;
+  }
+  if (!calls && (s.call_mode != fftn::callback_mode::modify || !s.call_out ||
+                 s.build != call_build::clones)) {
+    say(message, message_size, "CALL_SIDE, CALL_MODE and CALL_BUILD need EDGE_CALL");
+    return fbench_error;
+  }
+  if ((s.call_mode == fftn::callback_mode::produce && s.call_out) ||
+      (s.call_mode == fftn::callback_mode::consume && !s.call_out)) {
+    say(message, message_size, "CALL_MODE=produce is for CALL_SIDE=in, consume for out");
+    return fbench_error;
+  }
+  if (s.edge_loop &&
+      (s.call_mode != fftn::callback_mode::modify || s.build != call_build::clones)) {
+    say(message, message_size,
+        "EDGE_ARM=loop with EDGE_CALL is the user's loop: it takes no CALL_MODE or CALL_BUILD");
     return fbench_error;
   }
   if (s.pipeline != pipe_arm::none && (s.edge_in.any() || s.edge_out.any() ||
@@ -1538,8 +2056,14 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
     if (s.edge_out.any()) {
       d.str("edge_out", s.edge_out.text);
     }
-    if (s.edge_in.any() || s.edge_out.any()) {
+    if (s.edge_in.any() || s.edge_out.any() || calls) {
       d.str("edge_arm", s.edge_loop ? "loop" : "library");
+    }
+    if (calls) {
+      d.str("edge_call", s.call_text)
+          .str("call_side", s.call_out ? "out" : "in")
+          .str("call_mode", s.mode_text)
+          .str("call_build", s.build_text);
     }
     if (s.pipeline != pipe_arm::none) {
       d.raw("partial", R"(["c2c","r2c"])");
@@ -1649,8 +2173,19 @@ std::int32_t fbench_create(const fbench_case* c, void* /*in*/, void* out, void**
       *plan = record.release();
       return fbench_ok;
     }
-    const bool edges = s.edge_in.any() || s.edge_out.any();
-    if (edges) {
+    const bool calls = s.call != call_work::none;
+    const bool edges = s.edge_in.any() || s.edge_out.any() || calls;
+    if (calls) {
+      record->edge_mode = s.mode;
+      record->mode = call::edges;
+      record->core = c->precision == fbench_f32 ? make_call_core<float>(*c, opts, *record)
+                                                : make_call_core<double>(*c, opts, *record);
+      if (!record->core) {
+        say(message, message_size,
+            "the callback does not apply (more than one batch dimension, or consume in place)");
+        return fbench_unsupported;
+      }
+    } else if (edges) {
       record->edge_mode = s.mode;
       record->mode = call::edges;
       record->core = c->precision == fbench_f32 ? make_edge_core<float>(*c, opts, *record)
