@@ -1,13 +1,14 @@
 // SPDX-FileCopyrightText: 2026 John C. Travers and contributors
 // SPDX-License-Identifier: Apache-2.0
 
-// Real-to-real plans (fftn/shape.hpp r2r_kind, DESIGN.md 5.7; tasks 6.3 and 6.4), the DHT and
-// DCT-II, DCT-III, DST-II and DST-III: against a quadruple-precision direct evaluation of each
-// definition (the separable product of the 1-D transforms for several axes, the kinds mixed) within
-// the derived tolerance of the underlying transform plus a rounding per stage operation, on every
-// instruction set in both precisions, every n up to 512 and sampled longer smooth, prime and
-// Bluestein lengths; the DHT twice gives n times the input, DCT-III after DCT-II and DST-III after
-// DST-II 2n times; planes and volumes, strides of every sign, in place, canaries in the gaps; the
+// Real-to-real plans (fftn/shape.hpp r2r_kind, DESIGN.md 5.7; tasks 6.3 to 6.5), every kind:
+// against a quadruple-precision direct evaluation of each definition (the separable product of the
+// 1-D transforms for several axes, the kinds mixed) within the derived tolerance of the underlying
+// transform plus a rounding per stage operation, on every instruction set in both precisions,
+// every n up to 512 (the kinds I and IV: at the lengths reference_length lists, and every n by the
+// kind twice) and sampled longer smooth, prime and Bluestein lengths; the DHT twice gives n times
+// the input, DCT-III after DCT-II and DST-III after DST-II 2n times, the kinds I and IV twice their
+// N times; planes and volumes, strides of every sign, in place, canaries in the gaps; the
 // edges (scales, real factors, accumulation); serial, pieces of the batch, teams and an executor
 // bitwise alike; refusals naming the field. Expectations hold on every target: none assumes a
 // target's radices or strategy.
@@ -226,18 +227,45 @@ r2r_kind inverse_of(r2r_kind k) {
 
 std::string kind_name(r2r_kind k) {
   switch (k) {
+  case r2r_kind::dct1:
+    return "dct1";
   case r2r_kind::dct2:
     return "dct2";
   case r2r_kind::dct3:
     return "dct3";
+  case r2r_kind::dct4:
+    return "dct4";
+  case r2r_kind::dst1:
+    return "dst1";
   case r2r_kind::dst2:
     return "dst2";
   case r2r_kind::dst3:
     return "dst3";
-  default:
+  case r2r_kind::dst4:
+    return "dst4";
+  case r2r_kind::dht:
     break;
   }
   return "dht";
+}
+
+// The real length of the transform a kind's route runs on a line of n (DESIGN.md 5.7), which sets
+// its tolerance's length and whether a Bluestein or Rader stage is in it: n for the DHT and the
+// kinds II and III; for the kinds IV n even, and n odd 4n (the zero-padded complex transform of
+// 2n); the extensions' 2(n - 1) and 2(n + 1) for DCT-I and DST-I.
+std::size_t route_points(r2r_kind k, std::size_t n) {
+  switch (k) {
+  case r2r_kind::dct4:
+  case r2r_kind::dst4:
+    return n % 2 == 0 ? n : 4 * n;
+  case r2r_kind::dct1:
+    return std::max<std::size_t>(2 * (n - 1), 1);
+  case r2r_kind::dst1:
+    return 2 * (n + 1);
+  default:
+    break;
+  }
+  return n;
 }
 
 constexpr std::array<r2r_kind, 4> dct_kinds{r2r_kind::dct2, r2r_kind::dct3, r2r_kind::dst2,
@@ -407,6 +435,215 @@ TYPED_TEST(R2r, LongerDctAndDstLinesOnEveryInstructionSet) {
         }
         o.within(fftn::test::compare<T>(std::span<const T>(back), scaled), tol * 2.0,
                  what + ", then " + kind_name(inverse_of(kind)));
+      }
+    }
+  }
+  EXPECT_TRUE(o.passed()) << o.detail();
+}
+
+// --- DCT-IV, DST-IV, DCT-I and DST-I rows, on every instruction set (task 6.5) -----------------
+
+constexpr std::array<r2r_kind, 4> own_inverse_kinds{r2r_kind::dct4, r2r_kind::dst4, r2r_kind::dct1,
+                                                    r2r_kind::dst1};
+
+// N of a kind that is its own inverse: the kind twice multiplies by N (DESIGN.md 5.7).
+double own_inverse_factor(r2r_kind k, std::size_t n) {
+  const auto nd = static_cast<double>(n);
+  switch (k) {
+  case r2r_kind::dct1:
+    return 2.0 * (nd - 1.0);
+  case r2r_kind::dst1:
+    return 2.0 * (nd + 1.0);
+  default:
+    break;
+  }
+  return 2.0 * nd;
+}
+
+// The lengths up to 512 checked against the quadruple-precision reference: every n up to 128 (every
+// parity and residue the routes branch on, and transforms with Bluestein and Rader stages: the odd
+// DCT-IV's 2n, DCT-I's n - 1 and DST-I's n + 1 at primes above 23) and, above, the multiples of 15
+// and the n = 7 (mod 15), whose parity and residue mod 4 alternate. The direct evaluation is
+// O(n^2) in 113-bit arithmetic, so all 512 would add seconds per kind; every n up to 512 is still
+// checked by the kind twice.
+bool reference_length(std::size_t n) { return n <= 128 || n % 15 == 0 || n % 15 == 7; }
+
+// An input of n reals and the direct evaluations of its DCT-IV, DCT-I (n >= 2) and DST-I, once per
+// n for every kind, target and precision.
+struct own_inverse_reference {
+  std::vector<double> x;
+  std::vector<fftn::test::exact_real> d4;
+  std::vector<fftn::test::exact_real> d1;
+  std::vector<fftn::test::exact_real> s1;
+};
+
+const own_inverse_reference& own_inverse_reference_of(std::size_t n) {
+  static std::map<std::size_t, own_inverse_reference> cache;
+  if (const auto it = cache.find(n); it != cache.end()) {
+    return it->second;
+  }
+  fftn::test::input_source src(0xD41ULL + n);
+  own_inverse_reference r{.x = src.reals<double>(n), .d4 = {}, .d1 = {}, .s1 = {}};
+  const std::array<std::size_t, 1> extents{n};
+  const auto eval = [&](r2r_kind k) {
+    const std::array<fftn::test::reference::r2r_type, 1> t{ref_type(k)};
+    return fftn::test::reference::r2r(t, extents, r.x);
+  };
+  r.d4 = eval(r2r_kind::dct4);
+  if (n >= 2) {
+    r.d1 = eval(r2r_kind::dct1);
+  }
+  r.s1 = eval(r2r_kind::dst1);
+  return cache.emplace(n, std::move(r)).first->second;
+}
+
+// The two rows a test gives each kind and their expected outputs, by exact identities of the
+// definitions (ReferenceR2r checks them against direct evaluations): with R the reversal and S the
+// signs (-1)^j x_j, dst4(R x)_k = (-1)^k dct4(x)_k, dst4(S x)_k = dct4(x)_(n-1-k),
+// dct4(S R x)_k = (-1)^(n-1-k) dct4(x)_(n-1-k), dct1(R x)_k = (-1)^k dct1(x)_k and
+// dst1(R x)_k = (-1)^k dst1(x)_k.
+kind_rows own_inverse_rows_of(r2r_kind kind, const own_inverse_reference& r) {
+  const std::size_t n = r.x.size();
+  const auto rev = [n](std::size_t j) { return n - 1 - j; };
+  const auto sgn = [](std::size_t j) { return j % 2 == 0 ? 1.0 : -1.0; };
+  const auto neg = [&](fftn::test::exact_real v, std::size_t k) {
+    return sgn(k) > 0 ? v : fftn::test::exact_real{.hi = -v.hi, .lo = -v.lo};
+  };
+  kind_rows k{.in = std::vector<double>(2 * n), .want = std::vector<fftn::test::exact_real>(2 * n)};
+  for (std::size_t j = 0; j < n; ++j) {
+    switch (kind) {
+    case r2r_kind::dct4:
+      k.in[j] = r.x[j];
+      k.want[j] = r.d4[j];
+      k.in[n + j] = sgn(j) * r.x[rev(j)];
+      k.want[n + j] = neg(r.d4[rev(j)], rev(j));
+      break;
+    case r2r_kind::dst4:
+      k.in[j] = r.x[rev(j)];
+      k.want[j] = neg(r.d4[j], j);
+      k.in[n + j] = sgn(j) * r.x[j];
+      k.want[n + j] = r.d4[rev(j)];
+      break;
+    case r2r_kind::dct1:
+      k.in[j] = r.x[j];
+      k.want[j] = r.d1[j];
+      k.in[n + j] = r.x[rev(j)];
+      k.want[n + j] = neg(r.d1[j], j);
+      break;
+    default: // dst1
+      k.in[j] = r.x[j];
+      k.want[j] = r.s1[j];
+      k.in[n + j] = r.x[rev(j)];
+      k.want[n + j] = neg(r.s1[j], j);
+      break;
+    }
+  }
+  return k;
+}
+
+// The kind's plan on two rows: against the reference where `reference`, and twice (N times the
+// input, within two transforms) at every length.
+template <class T>
+void check_own_inverse_row(r2r_kind kind, std::size_t n, fftn::isa t, bool reference,
+                           fftn::test::outcome& o) {
+  const std::string what = kind_name(kind) + ", n = " + std::to_string(n) + ", " +
+                           fftn::isa_name(t) + (sizeof(T) == 8 ? " double" : " float");
+  const fftn::r2r_plan<T> p(fftn::rows_r2r<T>(n, 2, kind), {.force_isa = t});
+  fftn::workspace ws(p);
+  const fftn::test::tolerance tol = dht_tolerance<T>(route_points(kind, n), 1, 1.0, 1.0, dct_ops);
+  std::vector<double> in(2 * n);
+  if (reference) {
+    const kind_rows rows = own_inverse_rows_of(kind, own_inverse_reference_of(n));
+    in = rows.in;
+    const std::vector<T> x(in.begin(), in.end());
+    std::vector<T> y(2 * n);
+    p.execute(x.data(), y.data(), ws);
+    for (std::size_t r = 0; r < 2; ++r) {
+      o.within(fftn::test::compare<T>(std::span<const T>(y.data() + r * n, n),
+                                      std::span(rows.want).subspan(r * n, n)),
+               tol, what + ", row " + std::to_string(r));
+    }
+  } else {
+    fftn::test::input_source src(0xD42ULL + n);
+    in = src.reals<double>(2 * n);
+  }
+  const std::vector<T> x(in.begin(), in.end());
+  std::vector<T> y(2 * n);
+  std::vector<T> back(2 * n);
+  p.execute(x.data(), y.data(), ws);
+  p.execute(y.data(), back.data(), ws);
+  const double factor = own_inverse_factor(kind, n);
+  std::vector<fftn::test::exact_real> scaled(2 * n);
+  for (std::size_t j = 0; j < 2 * n; ++j) {
+    scaled[j] = fftn::test::exact_from(in[j] * factor);
+  }
+  o.within(fftn::test::compare<T>(std::span<const T>(back), scaled), tol * 2.0, what + ", twice");
+}
+
+TYPED_TEST(R2r, KindsFourAndOneOfEveryLengthUpTo512OnEveryInstructionSet) {
+  fftn::test::outcome o;
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    for (const r2r_kind k : own_inverse_kinds) {
+      for (std::size_t n = k == r2r_kind::dct1 ? 2 : 1; n <= 512; ++n) {
+        check_own_inverse_row<TypeParam>(k, n, t, reference_length(n), o);
+      }
+    }
+  }
+  EXPECT_TRUE(o.passed()) << o.detail();
+}
+
+// Longer lines: sampled outputs against the direct evaluation, and whole by the kind twice. The
+// lengths give the odd DCT-IV's transforms of 2n (Bluestein or Rader at 4099 and 10007) and the
+// extensions' transforms of n - 1 and n + 1 (powers of two at 1025, 16383 and 16385; a prime at
+// 4099 + 1 for DCT-I). DST-IV reads the reversed line, so it shares DCT-IV's reference.
+TYPED_TEST(R2r, LongerKindsFourAndOneOnEveryInstructionSet) {
+  using T = TypeParam;
+  fftn::test::outcome o;
+  for (const std::size_t n : {1000U, 1025U, 4099U, 4100U, 10007U, 16383U, 16385U}) {
+    fftn::test::input_source src(0x1D41ULL + n);
+    const std::vector<double> xd = src.reals<double>(n);
+    std::vector<double> rd(xd.rbegin(), xd.rend());
+    std::vector<std::size_t> ks{0, 1, 2, n / 2, n - 1, n - 2};
+    for (std::size_t k = 3; k < n; k += n / 17) {
+      ks.push_back(k);
+    }
+    for (const r2r_kind kind : own_inverse_kinds) {
+      const bool sine4 = kind == r2r_kind::dst4;
+      const std::vector<double>& in = sine4 ? rd : xd;
+      std::vector<fftn::test::exact_real> want =
+          sampled_reference(sine4 ? r2r_kind::dct4 : kind, xd, ks);
+      if (sine4) {
+        for (std::size_t i = 0; i < ks.size(); ++i) {
+          if (ks[i] % 2 != 0) {
+            want[i] = {.hi = -want[i].hi, .lo = -want[i].lo};
+          }
+        }
+      }
+      const std::vector<T> x(in.begin(), in.end());
+      const double factor = own_inverse_factor(kind, n);
+      std::vector<fftn::test::exact_real> scaled(n);
+      for (std::size_t j = 0; j < n; ++j) {
+        scaled[j] = fftn::test::exact_from(in[j] * factor);
+      }
+      for (const fftn::isa t : fftn::test::runnable_isas()) {
+        const std::string what = kind_name(kind) + ", n = " + std::to_string(n) + ", " +
+                                 fftn::isa_name(t) + (sizeof(T) == 8 ? " double" : " float");
+        const fftn::r2r_plan<T> p(fftn::rows_r2r<T>(n, 1, kind), {.force_isa = t});
+        fftn::workspace ws(p);
+        std::vector<T> y(n);
+        p.execute(x.data(), y.data(), ws);
+        std::vector<T> got;
+        for (const std::size_t k : ks) {
+          got.push_back(y[k]);
+        }
+        const fftn::test::tolerance tol =
+            dht_tolerance<T>(route_points(kind, n), 1, 1.0, 1.0, dct_ops);
+        o.within(fftn::test::compare<T>(std::span<const T>(got), want), tol,
+                 what + ", sampled outputs");
+        std::vector<T> back(n);
+        p.execute(y.data(), back.data(), ws);
+        o.within(fftn::test::compare<T>(std::span<const T>(back), scaled), tol * 2.0,
+                 what + ", twice");
       }
     }
   }
@@ -609,14 +846,16 @@ template <class T> struct r2r_run {
     const std::size_t points =
         std::accumulate(c.n.begin(), c.n.end(), std::size_t{1}, std::multiplies<>());
     std::size_t phases = 0;
-    for (const std::size_t n : c.n) {
-      phases += n > 1 ? 1 : 0;
+    std::size_t route = 1; // the points of the transforms the routes run (route_points)
+    for (std::size_t d = 0; d < c.n.size(); ++d) {
+      phases += c.n[d] > 1 ? std::size_t{1} : std::size_t{0};
+      route *= route_points(shape.kinds[d], c.n[d]);
     }
     const double scale = c.options_scale * c.in_scale * c.out_scale;
     const bool dht_only =
         std::ranges::all_of(shape.kinds, [](r2r_kind k) { return k == r2r_kind::dht; });
     const fftn::test::tolerance tol = dht_tolerance<T>(
-        points, std::max<std::size_t>(phases, 1), fout.spread(), 5.0, dht_only ? 6.0 : dct_ops);
+        route, std::max<std::size_t>(phases, 1), fout.spread(), 5.0, dht_only ? 6.0 : dct_ops);
     std::vector<fftn::test::reference::r2r_type> types;
     for (const r2r_kind k : shape.kinds) {
       types.push_back(ref_type(k));
@@ -928,7 +1167,7 @@ std::vector<r2r_case> cases() {
        .in_place = true,
        .expect = "phase 2",
        .kinds = {r2r_kind::dht, r2r_kind::dct3}},
-      {.name = "volumes of four kinds",
+      {.name = "volumes of three kinds",
        .n = {4, 6, 5},
        .count = 2,
        .expect = "phase 3",
@@ -999,6 +1238,215 @@ std::vector<r2r_case> cases() {
        .accumulate = true,
        .expect = "phase 3",
        .kinds = {r2r_kind::dst3, r2r_kind::dht, r2r_kind::dct2}},
+      // DCT-IV, DST-IV, DCT-I and DST-I (task 6.5).
+      {.name = "dct4 rows with gaps",
+       .n = {24},
+       .count = 3,
+       .in = {.gap = 2},
+       .out = {.gap = 3},
+       .expect = "r2r read: dct4 line, x_2j + i x_(n-1-2j) twiddled into scratch as 12",
+       .kinds = {r2r_kind::dct4}},
+      {.name = "odd dct4 rows reversed on both sides",
+       .n = {15},
+       .count = 2,
+       .in = {.sign = {-1}, .gap = 1},
+       .out = {.sign = {-1}},
+       .expect = "the forward complex chain of 30 there",
+       .kinds = {r2r_kind::dct4}},
+      {.name = "dst4 rows",
+       .n = {16},
+       .count = 3,
+       .out = {.gap = 1},
+       .expect = "r2r store: the dst4 twiddle, Y_2k and Y_(n-1-2k) from bin k, with alternating",
+       .kinds = {r2r_kind::dst4}},
+      {.name = "odd dst4 rows reversed",
+       .n = {9},
+       .count = 2,
+       .in = {.sign = {-1}},
+       .expect = "zero-padded complex transform of 2n",
+       .kinds = {r2r_kind::dst4}},
+      {.name = "dct1 rows with gaps",
+       .n = {17},
+       .count = 3,
+       .in = {.gap = 1},
+       .out = {.gap = 2},
+       .expect = "r2r read: dct1 line's even extension of 32 reals",
+       .kinds = {r2r_kind::dct1}},
+      {.name = "even dct1 rows reversed",
+       .n = {12},
+       .count = 2,
+       .in = {.sign = {-1}},
+       .out = {.sign = {-1}, .gap = 1},
+       .expect = "the forward complex chain of 11 there",
+       .kinds = {r2r_kind::dct1}},
+      {.name = "dst1 rows",
+       .n = {15},
+       .count = 3,
+       .out = {.gap = 1},
+       .expect = "r2r store: the r2c pairing's imaginary parts of bins 1 .. n, negated",
+       .kinds = {r2r_kind::dst1}},
+      {.name = "even dst1 rows reversed",
+       .n = {10},
+       .count = 2,
+       .in = {.sign = {-1}, .gap = 2},
+       .out = {.sign = {-1}},
+       .expect = "the odd extension",
+       .kinds = {r2r_kind::dst1}},
+      {.name = "dct4 rows in place",
+       .n = {32},
+       .count = 3,
+       .in_place = true,
+       .expect = "in place",
+       .kinds = {r2r_kind::dct4}},
+      {.name = "odd dst4 rows in place",
+       .n = {13},
+       .count = 2,
+       .in_place = true,
+       .expect = "in place",
+       .kinds = {r2r_kind::dst4}},
+      {.name = "dct1 rows in place",
+       .n = {9},
+       .count = 2,
+       .in_place = true,
+       .expect = "in place",
+       .kinds = {r2r_kind::dct1}},
+      {.name = "dst1 rows in place",
+       .n = {20},
+       .count = 2,
+       .in_place = true,
+       .expect = "in place",
+       .kinds = {r2r_kind::dst1}},
+      {.name = "dct4 rows of one point",
+       .n = {1},
+       .count = 4,
+       .out = {.gap = 1},
+       .expect = "n = 1",
+       .kinds = {r2r_kind::dct4}},
+      {.name = "dst1 rows of one point",
+       .n = {1},
+       .count = 3,
+       .expect = "n = 1",
+       .kinds = {r2r_kind::dst1}},
+      {.name = "dct1 rows of two points",
+       .n = {2},
+       .count = 3,
+       .expect = "the forward complex chain of 1",
+       .kinds = {r2r_kind::dct1}},
+      {.name = "dst4 rows of two points",
+       .n = {2},
+       .count = 3,
+       .expect = "n = 2",
+       .kinds = {r2r_kind::dst4}},
+      {.name = "a Bluestein odd dct4 row",
+       .n = {47},
+       .count = 2,
+       .expect = "n = 47",
+       .kinds = {r2r_kind::dct4}},
+      {.name = "a Bluestein dct1 row",
+       .n = {48},
+       .count = 2,
+       .expect = "chain of 47",
+       .kinds = {r2r_kind::dct1}},
+      {.name = "a Bluestein dst1 row",
+       .n = {46},
+       .count = 2,
+       .expect = "chain of 47",
+       .kinds = {r2r_kind::dst1}},
+      {.name = "planes of the kinds IV",
+       .n = {7, 8},
+       .count = 2,
+       .in = {.sign = {-1, 1}, .gap = 1},
+       .out = {.sign = {1, -1}, .gap = 2},
+       .expect = "fftn plan: r2r dst4 x dct4",
+       .kinds = {r2r_kind::dst4, r2r_kind::dct4}},
+      {.name = "planes of the kinds I in place",
+       .n = {6, 9},
+       .count = 2,
+       .in_place = true,
+       .expect = "phase 2",
+       .kinds = {r2r_kind::dct1, r2r_kind::dst1}},
+      {.name = "volumes of three of the kinds I and IV",
+       .n = {4, 5, 3},
+       .count = 2,
+       .expect = "phase 3",
+       .kinds = {r2r_kind::dst1, r2r_kind::dct4, r2r_kind::dct1}},
+      {.name = "a volume with dct4 and dst1 axes of one point",
+       .n = {1, 6, 1},
+       .count = 2,
+       .expect = "axes of one point: shape.axes[0] dct4 (sqrt 2), shape.axes[2] dst1 (2)",
+       .kinds = {r2r_kind::dct4, r2r_kind::dst4, r2r_kind::dst1}},
+      {.name = "dst4 and dct4 axes of one point",
+       .n = {1, 1, 5},
+       .count = 2,
+       .options_scale = 0.75,
+       .expect = "scales: one product with the factor of the axes of one point",
+       .kinds = {r2r_kind::dst4, r2r_kind::dct4, r2r_kind::dct1}},
+      {.name = "a dst1 axis of one point and a scale that cancels it",
+       .n = {1, 6},
+       .count = 2,
+       .options_scale = 0.5,
+       .expect = "scales: their product cancels the factor of the axes of one point",
+       .kinds = {r2r_kind::dst1, r2r_kind::dct2}},
+      {.name = "a dct3 axis of one point runs no backward chain",
+       .n = {1, 8},
+       .count = 2,
+       .expect = "through the forward complex chain there",
+       .kinds = {r2r_kind::dct3, r2r_kind::dct2}},
+      {.name = "dct4 and dst4 axes of one point, every axis",
+       .n = {1, 1},
+       .count = 3,
+       .options_scale = 3.0,
+       .expect = "axes of one point: shape.axes[0] dst4 (sqrt 2)",
+       .kinds = {r2r_kind::dst4, r2r_kind::dct4}},
+      {.name = "dct4 real factors on both sides",
+       .n = {18},
+       .count = 3,
+       .in_scale = 0.25,
+       .fin = {.kind = real},
+       .fout = {.kind = real, .reversed = true},
+       .expect = "times the input edge's real factor",
+       .kinds = {r2r_kind::dct4}},
+      {.name = "odd dst4 real factors on both sides",
+       .n = {15},
+       .count = 2,
+       .fin = {.kind = real, .reversed = true},
+       .fout = {.kind = real},
+       .expect = "times the output edge's real factor",
+       .kinds = {r2r_kind::dst4}},
+      {.name = "a dct1 output factor shared by the batch, accumulated",
+       .n = {21},
+       .count = 3,
+       .out = {.gap = 1},
+       .fin = {.kind = real},
+       .fout = {.kind = real, .broadcast = true},
+       .accumulate = true,
+       .expect = "output edge: times a real factor, accumulated",
+       .kinds = {r2r_kind::dct1}},
+      {.name = "dst1 real factors and scales",
+       .n = {14},
+       .count = 2,
+       .options_scale = 0.5,
+       .in_scale = 3.0,
+       .fin = {.kind = real, .reversed = true},
+       .fout = {.kind = real},
+       .expect = "scales: one product, applied once in the last phase's store stage",
+       .kinds = {r2r_kind::dst1}},
+      {.name = "planes of the kinds I and IV accumulated through the block",
+       .n = {5, 6},
+       .count = 2,
+       .out = {.gap = 1},
+       .options_scale = 2.0,
+       .accumulate = true,
+       .expect = "the phases before the last go through the workspace block",
+       .kinds = {r2r_kind::dct1, r2r_kind::dst4}},
+      {.name = "volumes of the kinds I and IV with factors, accumulated",
+       .n = {3, 4, 5},
+       .count = 2,
+       .fin = {.kind = real, .broadcast = true},
+       .fout = {.kind = real},
+       .accumulate = true,
+       .expect = "phase 3",
+       .kinds = {r2r_kind::dst1, r2r_kind::dct4, r2r_kind::dst4}},
   };
 }
 
@@ -1050,6 +1498,27 @@ TYPED_TEST(R2r, TeamsAndExecutorsAgreeWithSerial) {
                          .kinds = {k}},
                         fftn::isa::best, true, false);
   }
+  // And for the kinds IV and I (task 6.5): an even long row, odd rows (the odd DCT-IV's route).
+  for (const r2r_kind k : own_inverse_kinds) {
+    run_case<TypeParam>(
+        {.name = "a long row", .n = {65536}, .count = 1, .expect = "65536", .kinds = {k}},
+        fftn::isa::best, true, false);
+    run_case<TypeParam>({.name = "long odd rows with factors",
+                         .n = {8193},
+                         .count = 2,
+                         .fin = {.kind = real},
+                         .fout = {.kind = real},
+                         .accumulate = true,
+                         .expect = "8193",
+                         .kinds = {k}},
+                        fftn::isa::best, true, false);
+  }
+  run_case<TypeParam>({.name = "a large plane of the kinds IV and I",
+                       .n = {97, 128},
+                       .count = 1,
+                       .expect = "phase 2",
+                       .kinds = {r2r_kind::dct4, r2r_kind::dst1}},
+                      fftn::isa::best, true);
   run_case<TypeParam>({.name = "a large mixed plane",
                        .n = {96, 128},
                        .count = 1,
@@ -1171,9 +1640,30 @@ TEST(R2r, RefusalsNameTheField) {
     s.kinds.pop_back();
     expect(refusal([&] { const fftn::r2r_plan<double> p(s); }), "shape.kinds", "1 kinds for 2");
   }
-  for (const r2r_kind k : {r2r_kind::dct1, r2r_kind::dct4, r2r_kind::dst1, r2r_kind::dst4}) {
-    expect(refusal([&] { const fftn::r2r_plan<double> p(fftn::rows_r2r<double>(8, 1, k)); }),
-           "shape.kinds[0]", "not built yet (task 6.5)");
+  expect(refusal(
+             [&] { const fftn::r2r_plan<double> p(fftn::rows_r2r<double>(1, 2, r2r_kind::dct1)); }),
+         "shape.kinds[0]", "DCT-I needs n >= 2");
+  // The scales' product times the factor of the axes of one point (2 for dct2, dst2 and dst1,
+  // sqrt 2 for dct4 and dst4) must fit the precision too, though each scale alone fits.
+  for (const r2r_kind k : {r2r_kind::dct2, r2r_kind::dst2, r2r_kind::dst1}) {
+    S s = fftn::planes_r2r<double>(1, 8, 1, r2r_kind::dht);
+    s.kinds[0] = k;
+    expect(refusal([&] { const fftn::r2r_plan<double> p(s, {.scale = 1e308}); }), "options.scale",
+           "times the factor of the axes of one point");
+    const fftn::r2r_plan<double> fits(s, {.scale = 8e307});
+    EXPECT_NE(fits.describe().find("axes of one point"), std::string::npos) << fits.describe();
+  }
+  {
+    auto s = fftn::planes_r2r<float>(1, 8, 1, r2r_kind::dht);
+    s.kinds[0] = r2r_kind::dct4;
+    expect(refusal([&] { const fftn::r2r_plan<float> p(s, {.scale = 3e38}); }), "options.scale",
+           "times the factor of the axes of one point");
+    fftn::plan_edges<float, float> e;
+    e.in.scale = 2.5e38F;
+    expect(refusal([&] { const fftn::r2r_plan<float> p(s, {}, e); }), "options.scale",
+           "times the factor of the axes of one point");
+    const fftn::r2r_plan<float> fits(s, {.scale = 2e38});
+    EXPECT_NE(fits.describe().find("axes of one point"), std::string::npos) << fits.describe();
   }
   {
     S s = fftn::planes_r2r<double>(4, 1, 1, r2r_kind::dct2);

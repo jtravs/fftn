@@ -54,8 +54,10 @@ public:
   /// that overflow, in-place layouts that do not agree, stored runs (`shape::runs`) that are
   /// not valid or are given to an in-place plan, or a negative or non-finite
   /// `options::measure_seconds`; for a real-to-real shape (`shape<T, T>`, provisional, task
-  /// 6.3), `shape::kinds` without one kind per axis, a kind not built yet (only
-  /// `r2r_kind::dht` is), or stored runs; for any other shape, `shape::kinds` not empty.
+  /// 6.3), `shape::kinds` without one kind per axis, `r2r_kind::dct1` on an axis of one point,
+  /// scales whose product with the factor of the axes of one point (2 for each `dct2`, `dst2`
+  /// or `dst1`, sqrt 2 for each `dct4` or `dst4`) is outside the precision's range, or stored
+  /// runs; for any other shape, `shape::kinds` not empty.
   /// Throws `std::bad_alloc` when memory runs out, including the scratch memory of measured
   /// planning (`options::effort`). Real-to-real plans are built by the rules whatever
   /// `options::effort` and `options::use` say (describe() says so).
