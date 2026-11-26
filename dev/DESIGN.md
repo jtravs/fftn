@@ -2276,9 +2276,6 @@ plain plan's batched forms, and batch leaves one row at a time), and on c2c chai
 passes; accumulation costs about what the user's loop does. Making the pass's arithmetic
 vectorise changed nothing measurable, so fused variants (a real factor, accumulation) wait
 until such plans keep the batched forms (X65's proposals). An edge that still forces a slower
-strategy is built, not refused, and `describe()` says so (AGENTS.md section 1).
-its edges' kinds, strides, scales and accumulation, so an entry serves those edges only. X65
-decides which separate passes become fused variants. An edge that still forces another
 strategy is built, not refused, and `describe()` says so (AGENTS.md section 1; task 5.1c):
 every build names its strategy in a few words (`plan_core::strategy_name`), the plan with
 edges is compared with the same shape, options and knobs built without them, and where the
