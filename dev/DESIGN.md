@@ -3094,10 +3094,17 @@ chain pair's endpoints (the block at stride 1 on the middle's side), so a line's
 pair's with the same placement of the vocabulary. No lanes pass takes a factor: the middle's
 (any kind and stride, one for every line or one per line through the innermost dimension's batch
 step) is the edge pass on the tile, element i of line r at i B + r, `pass_args::rows` lines; the
-scales' product goes to it, else to the backward chain's last pass. So a line agrees bitwise with
-the chain pair wherever the chain pair's middle is a separate pass too, and within one rounding per
-bin where it fuses a complex kernel of stride 1 into its forward last pass (an FMA the edge pass
-does not make); a tile pass in the vocabulary is an arm for X67. The middle callback runs on the
+scales' product goes to it, else to the backward chain's last pass. A line agrees bitwise with the
+chain pair wherever the chain pair's middle is a separate pass too (no complex kernel of stride 1
+along the line): the two then place the scale alike and choose the same chains. Where the chain
+pair fuses that kernel (into its forward chain's last pass, or with a middle callback into its
+backward chain's first), they agree only within the derived tolerance, for three reasons: the fused
+multiply is the vocabulary's `cmul`, an FMA on the SIMD targets, which the baseline edge pass does
+not make; a chain with a factor edge takes no pair leaf (`pair_for`), so the chain pair's fused
+chain may decompose n otherwise than the lanes' (radices(n) against the pair leaf's r1 x m); and
+the chain pair's scale goes on the backward chain's last pass, the lanes' on the tile's pass, which
+differ in rounding unless the scale is a power of two (1/n for n = 2^k). A tile pass in the
+vocabulary with per-lane factor reads is an arm for X67. The middle callback runs on the
 tile (the block's whole lines in one call, `element_stride` B, `line_stride` 1, line k transform
 `transform + k`), with 12.3's two products (the prologue's scale on the forward chain's last pass);
 `first = direction::backward` swaps the chains' signs. Blocks: lines one element apart on both
