@@ -8,8 +8,9 @@
 // against the quadruple-precision reference of "the input callback's loop, the transform, the
 // output callback's loop". The callbacks are nonlinear (cubic) and depend on the coordinates; they
 // check every block's geometry (lines along transforms, within the side and the batch, never an
-// idle lane), `member` and their scratch size, and count every element they are passed (each
-// exactly once). Every mode, beside factors, scales, accumulation and stored runs, in and out of
+// idle lane, whole rows up to the block size and as many as fit it, a longer row one a call),
+// `member` and their scratch size, and count every element they are passed (each exactly
+// once). Every mode, beside factors, scales, accumulation and stored runs, in and out of
 // place, strided rows with canaries in their gaps, the input left as it was; serial, pieces of the
 // batch, teams (all and own) and an executor bitwise alike; describe() per strategy (where, the
 // block shape, the sweep beyond a block); measured planning with stand-ins that never call the
@@ -80,6 +81,9 @@ struct cb_case {
   std::size_t scratch = 0;
   const d::build_settings* settings = nullptr; // null: the rules
   const char* strategy = nullptr;              // in describe()'s strategy line, where given
+  // Where given, the input callback's calls take at least this many rows at once on the strategy
+  // named (a block of several rows cut by rows, not by elements).
+  std::size_t min_lines = 0;
 };
 
 // The functions the callbacks apply, pure per element: nonlinear, and dependent on the
@@ -136,6 +140,10 @@ template <class E> struct cb_context {
   std::atomic<int> errors{0};
   std::atomic<int> first_error_line{0};
   std::atomic<std::size_t> widest{0}; // the most lines a call took
+  // The plan's callback_block_bytes, where the side has no stored runs (0: blocks unchecked): a
+  // row that fits is passed whole, as many rows a call as fit; a longer one in element ranges
+  // of at most that size, one row a call (fftn/callback.hpp, "Coverage").
+  std::size_t block_bytes = 0;
 
   void reset() {
     hits = std::make_unique<std::atomic<int>[]>(length * count);
@@ -158,6 +166,16 @@ template <class E> struct cb_context {
     if (!ok) {
       fail(__LINE__);
       return false;
+    }
+    if (block_bytes != 0) {
+      const std::size_t row_bytes = length * sizeof(E);
+      const bool cut_right = row_bytes <= block_bytes
+                                 ? info.origin[0] == 0 && info.length == length &&
+                                       info.lines * row_bytes <= block_bytes
+                                 : info.lines == 1 && info.length * sizeof(E) <= block_bytes;
+      if (!cut_right) {
+        fail(__LINE__);
+      }
     }
     if (scratch != 0 && reinterpret_cast<std::uintptr_t>(info.scratch.data()) % 128 != 0) {
       fail(__LINE__);
@@ -365,6 +383,11 @@ template <class T, transform_kind K> struct cb_run {
     in_ctx.count = out_ctx.count = c.count;
     in_ctx.n = out_ctx.n = c.n;
     in_ctx.scratch = out_ctx.scratch = c.scratch;
+    const std::size_t block = c.settings != nullptr
+                                  ? c.settings->profile.callback_block_bytes
+                                  : d::build_settings{}.profile.callback_block_bytes;
+    in_ctx.block_bytes = c.in_runs.empty() ? block : 0;
+    out_ctx.block_bytes = c.out_runs.empty() ? block : 0;
   }
 
   [[nodiscard]] std::size_t in_at(std::size_t j, std::size_t r) const {
@@ -566,6 +589,10 @@ template <class T, transform_kind K> void run_case(const cb_case& cc, fftn::isa 
   run.prepare(1);
   d::execute_core(*core, 0, cc.count, in_of(serial, xs, false), serial.data(), ws, args);
   run.expect_clean("serial");
+  if (cc.min_lines != 0 && cc.strategy != nullptr &&
+      text.find(cc.strategy, text.find("\nstrategy: ")) != std::string::npos) {
+    EXPECT_GE(run.in_ctx.widest.load(), cc.min_lines) << "blocks of several rows not passed";
+  }
   // Rows too long for the quadruple-precision reference are checked by coverage and bitwise
   // agreement of the execution forms only.
   if (cc.n <= 2100) {
@@ -650,8 +677,10 @@ struct knobs {
   d::build_settings leaves;
   d::build_settings adjacent;
   d::build_settings chain;
-  d::build_settings small_blocks; // the rules, blocks of 1 KiB: rows of several blocks
-  d::build_settings copy_out;     // the chain's copy into the output (callback_copy_out)
+  d::build_settings small_blocks;   // the rules, blocks of 1 KiB: rows of several blocks
+  d::build_settings lanes_small;    // the lanes, blocks of 1 KiB: a lanes block in several calls
+  d::build_settings adjacent_small; // the adjacent transforms, blocks of 4 KiB
+  d::build_settings copy_out;       // the chain's copy into the output (callback_copy_out)
   knobs() {
     lanes.strategy = d::strategy_choice::lanes;
     grid.strategy = d::strategy_choice::grid;
@@ -668,6 +697,10 @@ struct knobs {
     chain.strategy = d::strategy_choice::chain;
     chain.batch_leaves = d::batch_leaf_choice::never;
     small_blocks.profile.callback_block_bytes = 1024;
+    lanes_small = lanes;
+    lanes_small.profile.callback_block_bytes = 1024;
+    adjacent_small = adjacent;
+    adjacent_small.profile.callback_block_bytes = 4096;
     copy_out.strategy = d::strategy_choice::chain;
     copy_out.batch_leaves = d::batch_leaf_choice::never;
     copy_out.callback_copy_out = true;
@@ -916,6 +949,33 @@ std::vector<cb_case> strategy_cases() {
        .adjacent = true,
        .settings = &k.adjacent,
        .strategy = adjacent},
+      // Blocks of several lines over the block size: whole rows, fewer a call, never element
+      // ranges of each (rows of 256 or 128 bytes, a block of 1 KiB; 2 KiB or 1 KiB, 4 KiB).
+      {.name = "c2c lanes, a block's rows in several calls",
+       .n = 16,
+       .count = 37,
+       .in = in_kind::modify,
+       .out = out_kind::modify,
+       .settings = &k.lanes_small,
+       .strategy = row_lanes,
+       .min_lines = 2},
+      {.name = "c2c lanes, produce and consume, a block's rows in several calls",
+       .n = 8,
+       .count = 21,
+       .in = in_kind::produce,
+       .out = out_kind::consume,
+       .settings = &k.lanes_small,
+       .strategy = row_lanes,
+       .min_lines = 2},
+      {.name = "rows as adjacent transforms, a block's transforms in several calls",
+       .n = 128,
+       .count = 32,
+       .in = in_kind::modify,
+       .out = out_kind::modify,
+       .adjacent = true,
+       .settings = &k.adjacent_small,
+       .strategy = adjacent,
+       .min_lines = 2},
       // Real rows on the chain: the edge phases.
       {.name = "r2c chain, both modify, even",
        .kind = r2c,
@@ -1193,6 +1253,18 @@ TEST(CallbackStrategies, DescribeNamesWhereAndTheBlocks) {
       EXPECT_NE(text.find(w), std::string::npos) << "no '" << w << "' in\n" << text;
     }
   }
+  // A lanes block over the block size is cut by rows (rows of 256 bytes, a block of 1 KiB): up
+  // to 4 whole rows a call, and no sweep, which only a row longer than a block takes.
+  const auto lanes_rows = fftn::rows_c2c<double>(16, 64, fftn::direction::forward);
+  const auto core =
+      d::make_plan_core_with_edges(d::view_of(lanes_rows), {}, d::view_of(both), k.lanes_small);
+  const std::string text = d::describe(*core);
+  if (text.find(row_lanes, text.find("\nstrategy: ")) != std::string::npos) {
+    EXPECT_NE(text.find("before the lanes, blocks of up to 4 rows together, whole"),
+              std::string::npos)
+        << text;
+  }
+  EXPECT_EQ(text.find("one more sweep"), std::string::npos) << text;
 }
 
 // Measured planning times its candidates with stand-ins that do nothing: the application's
@@ -1208,14 +1280,21 @@ void counting_real(void* /*user*/, const fftn::block_info& /*info*/, double* /*d
 TEST(CallbackStrategies, MeasuredPlanningCallsNoCallback) {
   using C = cd;
   planning_calls = 0;
+  // Measure's own budget, room for more than one candidate anywhere (planning_test.cpp,
+  // BudgetDefaultsAndValidationDoNotDependOnTheEffort): the stand-ins run in every candidate timed.
   const fftn::plan<C, C> p(fftn::rows_c2c<double>(2048, 4, fftn::direction::forward),
-                           {.effort = fftn::planning::measure, .measure_seconds = 0.2},
+                           {.effort = fftn::planning::measure},
                            {.in = {.call = {.fn = &counting}}, .out = {.call = {.fn = &counting}}});
   const fftn::plan<double, C> real_rows(
       fftn::rows_r2c<double>(1000, 3), {.effort = fftn::planning::quick},
       {.in = {.call = {.fn = &counting_real}}, .out = {.call = {.fn = &counting}}});
   EXPECT_EQ(planning_calls.load(), 0);
-  EXPECT_NE(p.describe().find("planning: measured"), std::string::npos) << p.describe();
+  // More than one candidate timed: the rules' plan and at least one other, all with stand-ins.
+  const std::string text = p.describe();
+  const std::string measured = "planning: measured (";
+  const std::size_t at = text.find(measured);
+  ASSERT_NE(at, std::string::npos) << text;
+  EXPECT_GE(std::stoul(text.substr(at + measured.size())), 2UL) << text;
   std::vector<C> x(2048 * 4, C(1.0, 0.0));
   std::vector<C> y(2048 * 4);
   fftn::workspace ws(p);

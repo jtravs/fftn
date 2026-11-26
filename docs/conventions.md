@@ -333,7 +333,8 @@ So far callbacks are taken by rows (c2c, r2c and c2r plans of one axis) on the s
 or measured planning choose; measured planning times its candidates with stand-ins that do
 nothing in place of the callbacks, so construction never calls one. Only a consumed output keeps
 a row from a strategy that writes the output as its working memory (the grid, the depth-first
-chains), which then runs as the chain, as `plan::describe()` says. Planes and volumes refuse
+chains, the lanes over adjacent transforms, and a real row's lanes whose input is in the
+workspace block too), which then runs as the chain, as `plan::describe()` says. Planes and volumes refuse
 callbacks at construction (task 5.3c).
 
 ## Stored runs
