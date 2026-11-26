@@ -715,7 +715,7 @@ struct depth_forced {
   std::vector<std::size_t> tops;
 };
 
-std::vector<depth_forced> forced_depths() { return {{1024, {4}}, {1536, {8}}, {2048, {8, 2}}}; }
+std::vector<depth_forced> forced_depths() { return {{1024, {8}}, {1536, {8}}, {2048, {8, 2}}}; }
 
 std::vector<runs_case> depth_sets(std::size_t n) {
   const std::size_t h = n / 2;
