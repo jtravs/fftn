@@ -3208,6 +3208,51 @@ block, the middle's between the two chains, the epilogue's before the store); it
 callback area's size to `lay_out_workspace` (0 for pipelines until then) and keeps a pipeline
 with callbacks off the batched forms that pipelines otherwise always take.
 
+As built (task 5.3b): rows of every kind (c2c, r2c, c2r) take callbacks on the strategy the rules,
+measured planning or a test choose; `core/edges.cpp` refuses them on planes and volumes only
+(5.3c). Where each strategy runs them (all in `build()`, `core/plan_core.cpp`, from two helpers,
+`callback_input_stages` and `callback_output_stages`: the copy, the callback, the vocabulary in
+place; the vocabulary, the callback, then the store, accumulation or addition to the saved prior
+values):
+- **Chain** (c2c): as 5.3a, the copy into the workspace block by default, into the output with
+  `build_settings::callback_copy_out` (X66's arm), the chain then in place there. Batch leaves
+  run one row at a time between the callback stages, as with separate edge passes; the batched
+  forms (5.2a) stay off for plans with callbacks.
+- **Grid, depth-first chain, Bluestein's depth-first convolution and the real rows' half-length
+  grid and depth-first chain**: 5.1b-2's separate-pass places, a callback stage over the row
+  before the strategy (out of place on the input's copy in the output, c2c, or in the workspace
+  block, real; in place on the input) and after it on the output, accumulation through the saved
+  prior values (vocabulary, callback, then their addition).
+- **Lanes over rows**: in each block's records, the callback over the block's rows (one call for
+  all, `block_info::lines` the block's valid rows, line k transform `transform + k`), before the
+  lanes' gathering pass on the rows where the input edge's stages left them (the output, c2c out
+  of place; the block, real; the input in place) and after the scattering pass on the output, not
+  on the tile itself: the rows are short and in L1 there, and the tile would need the lanes' first
+  and last passes split, which X66 can price. A consumed output: the lanes write the block's
+  rows into the workspace block (in place over the input's rows there, c2c).
+- **Lanes over adjacent transforms** (rows one element apart): the edge phases inside each block,
+  `lines` the block's transforms, `line_stride` 1.
+- **Real rows on the chain**: the edge phases (12.1) with the callback inside the phase: the real
+  side as `T`, the complex side as its h + 1 bins; stored runs as on c2c rows (blocks per run).
+- **A consumed output** may be null, so no strategy writes it. The grid and the depth-first chains
+  use the output as working memory and give way to the chain (describe() names the reason), as do
+  the lanes over adjacent transforms and a real row's lanes whose input is in the block too (the
+  lanes' stages have no slot offsets for two regions). These are the only strategies a callback
+  forces; a test holds that modify callbacks force none.
+- **Blocks**: `machine_profile::callback_block_bytes` (32 bits, in the struct's tail padding, so
+  that the profile's size and the plain drivers' code are unchanged), half the L1 data cache from
+  the topology (16 KiB unknown); `callback_cuts` cuts a stage of several lines (a lanes block,
+  the adjacent transforms, a row block) by lines: as many whole lines a call as fit that many
+  bytes, and only a line longer than that into element ranges, one line a call (the contract's
+  "a line whole up to a size"). describe() gives, per side, where, the block shape, and "one more
+  sweep" only where a row exceeds a block and is cut.
+- **Planning**: `callback_env::stand_in` (from `edge_state`, set by `measure.cpp`'s `time_once`)
+  makes every callback stage call a function that does nothing, at the same place with its
+  copies; the kept candidate is the plan built with the real callbacks. The wisdom key (5.3a's
+  `edges_key`) has each side's mode and scratch, not the function.
+- **Produced input in place** may be null: the strategy then reads the output's slot (the same
+  bytes; `retarget_input`).
+
 ### 12.4 Owner-computes
 
 With `completion::own` and `plan::transforms_of(team)`, an application's own pointwise
@@ -4697,6 +4742,7 @@ to change before a release.
 | 2026-11-26 | Pruned codelets (task 5.1e, section 12.1): `dif_head` and `plain_head`, halves of the even codelet radices only, for the first and last passes of c2c rows whose stored runs lie in the line's first half; one run of the half stored with stride 1 is read or written in place with no separate pass | Counted from the generator (gen/README.md): halves cost 0.77–0.89 of `dif`'s and 0.86–0.94 of `plain`'s vector operations at radices 8–64 and three quarters of the memory accesses; the gain is the separate pass that disappears. A half of an even radix is the line's first half whatever the radix, so one variant pair per radix covers the valid half of a zero-padded row and any band or crop inside it. Quarters and odd radices were counted and left out (smaller or no gains; `plain_head` of 9 and 25 would cost more than `plain`) |
 | 2026-11-26 | Phase 6 broken into steps 6.1–6.20 (PLAN), with proposed APIs for the convenience layer (5.4), the real-to-real kinds (5.7), the split-complex layout (5.8) and the C API (5.9), and their open points in 18.2, "Phase 6". Proposals, not decisions: steps marked P are built provisional with a second reader, as phase 5's were | The maintainer's priority (2026-11-25): features fully built, then the remaining performance |
 | 2026-11-26 | Block callbacks on c2c rows (task 5.3a, section 12.3): provisional `fftn/callback.hpp` (`block_info`, `block_fn`, `callback_mode`, `callback`, `callback_of`, `along_transforms`) and `edge::call`, with 18.2's proposals ("Callbacks"); the callback stage on the chain only until 5.3b, planned by the rules; blocks are stage chunks; per-member scratch at the end of each slot; the drive policies' per-task entries take the lane and slots, the plain instantiations unchanged; a plan with callbacks needs the `exec_args` overloads. Awaits the maintainer's review of the API. |
+| 2026-11-26 | Block callbacks in every row strategy (task 5.3b, section 12.3): c2c, r2c and c2r rows on the strategy chosen; the lanes' callbacks on the block's rows before the gathering and after the scattering pass rather than on the tile; the grid's and depth-first chains' input copy in the output (5.1b-1's place) and the chain's in the block, the output behind `callback_copy_out` for X66; a consumed output keeps a row off the strategies that write the output; `machine_profile::callback_block_bytes`; measured planning with stand-ins; batch leaves one row at a time (the batched forms stay off) | The design's table with the separate passes' places 5.1b built, which already work on every strategy; the tile and the row blocks are performance refinements for X66 (5.3g) to price. A consumed output may be null, which the strategies that use the output as working memory cannot take without a retargeting of their own |
 | 2026-11-26 | Packaging (task 6.1, section 14.3): an installed CMake package (`fftn::fftn`; the adapters as components `omp` and `kokkos`), a relocatable `fftn.pc`, install rules on by default only for a top-level build, version compatibility `SameMinorVersion`, the thread library in the link interface; third-party subdirectories `EXCLUDE_FROM_ALL`; a path-filtered CI workflow builds a downstream project three ways (Windows not on pull requests) | DESIGN 18.2 Q25's proposal; a minor version may still change the API before 1.0; FetchContent users decide what they install; the check builds the library twice, so it runs where packaging can change rather than on every pull request |
 | 2026-11-26 | Step 6.4 (provisional, second reader to come): `dct2`, `dct3`, `dst2` and `dst3` built in 5.7's routes on 6.3's phase builder (Makhoul's read stage and twiddled store over the r2c's half-length chain, the inverse over the c2r's; the sine kinds by exact signs and reversals), any n, kinds mixed across axes; an axis of one point of `dct2` or `dst2` folds its exact factor 2 into the scales' product instead of a phase | 5.7's routes as proposed; the factor 2 needs no phase and no rounding of its own |
 | 2026-11-26 | Step 6.3 (provisional, second reader to come): `r2r_kind`, `shape<T, T>` with `shape::kinds`, `rows_r2r`, `planes_r2r`, `volumes_r2r`, `axes_r2r`, `r2r_plan`, and the DHT as built in 5.7: a read stage, the r2c's complex chain in the member's scratch and a store stage fusing the r2c's pairing with the Hartley combination; the DCT and DST kinds refused until 6.4 and 6.5; real-to-real plans by the rules only | The 18.2 "Phase 6" proposals 9–13 taken as written; scratch rather than the block, because a phase's lines run on several members at once and the block is the task's |

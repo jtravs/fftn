@@ -61,6 +61,7 @@ struct factor_cursors {
 struct edge_state {
   factor_cursors f;
   std::array<void*, 2> user{};
+  bool stand_in = false; // measured planning's (callback_env::stand_in)
 };
 
 // The edge driver's per-task entry: the task's cursors, and what its callback stages need (the
@@ -140,8 +141,9 @@ void factor_guard_leaf(const pass_args* args, const void* src, void* dst, std::p
 // piece belongs to (the others). `tail`: the records of a lanes program's tail
 // (program::lane_tail), one per record.
 // forms: the plan's batched forms (make_edge_forms), which it runs where it has them.
-// env: the callback stages' (run_edge_transforms sets its transform for each transform it runs;
-// the others take the piece's). A plan with callback stages has no batched forms and no lanes.
+// env: the callback stages' (run_edge_transforms sets its transform for each transform it runs,
+// or each lanes block's first; the others take the piece's). A plan with callback stages has no
+// batched forms.
 void run_edge_transforms(const program& p, const std::vector<edge_record>& e,
                          const std::vector<edge_record>& tail, const edge_forms& forms,
                          std::size_t first, std::size_t count, const slot_addresses& base,

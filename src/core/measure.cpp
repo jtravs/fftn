@@ -13,6 +13,8 @@
 #include "core/measure.hpp"
 
 #include "core/candidates.hpp"
+#include "core/drive.hpp"
+#include "core/edge_driver.hpp"
 #include "core/edges.hpp"
 #include "core/plan_core.hpp"
 #include "core/wisdom_entry.hpp"
@@ -354,10 +356,19 @@ private:
 };
 
 // Times `reps` executions; seconds per execution. `f`: the scratch factor arrays of a plan with
-// edges, or null.
+// edges, or null. A plan's callbacks run as stand-ins that do nothing (callback_env::stand_in;
+// DESIGN.md 12.3, "Planning"): planning never calls the application's code.
 double time_once(const plan_core& c, scratch_data& d, std::size_t reps, const factor_scratch* f) {
   d.restore();
   const auto start = planning_clock::now();
+  if (f != nullptr && c.needs_args) {
+    edge_state state = edge_state_of(f->args(), c.factor_args);
+    state.stand_in = true;
+    for (std::size_t i = 0; i < reps; ++i) {
+      execute_core_cursors(c, 0, c.prog.transforms, d.in(), d.out(), d.ws(), state);
+    }
+    return seconds_since(start) / static_cast<double>(reps);
+  }
   if (f != nullptr) {
     for (std::size_t i = 0; i < reps; ++i) {
       execute_core(c, 0, c.prog.transforms, d.in(), d.out(), d.ws(), f->args());

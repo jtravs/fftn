@@ -164,8 +164,8 @@ void run_stage(const stage& st, const edge_record& e, const slot_addresses& at, 
     return;
   }
   if ((st.moving_factors & moving_callback) != 0) {
-    run_callback_stage(st, *e.call, static_cast<std::byte*>(destination_of(st.dst, at)), env, first,
-                       last);
+    run_callback_stage(st, *e.call, static_cast<std::byte*>(destination_of(st.dst, at)), env, 1, 0,
+                       first, last);
     return;
   }
   pass_args args = st.args;
@@ -227,9 +227,15 @@ std::pair<slot_addresses, factor_cursors> moved_in_nest(const program& p,
 }
 
 // A stage of a lanes block (driver.cpp's run_lane_stage), with the cursors in the arguments of
-// a stage that reads them and its kernel from e.
+// a stage that reads them and its kernel from e; a callback stage over the block's rows, one
+// call per chunk (task 5.3b), its transform the block's first (env).
 void run_lane_stage(const stage& st, const edge_record& e, const slot_addresses& at,
-                    factor_cursors f, std::size_t rows) noexcept {
+                    factor_cursors f, const callback_env& env, std::size_t rows) noexcept {
+  if ((st.moving_factors & moving_callback) != 0) {
+    run_callback_stage(st, *e.call, static_cast<std::byte*>(destination_of(st.dst, at)), env, rows,
+                       st.args.dst_dist, 0, st.chunks);
+    return;
+  }
   pass_args args = st.args;
   args.rows = static_cast<std::uint32_t>(rows);
   pass_fn run = st.run;
@@ -244,18 +250,18 @@ void run_lane_stage(const stage& st, const edge_record& e, const slot_addresses&
 // run_lane_records), the loops moving the cursors too.
 void run_lane_records(const std::vector<record>& records, const std::vector<edge_record>& e,
                       std::size_t begin, std::size_t end, const slot_addresses& at,
-                      factor_cursors f, std::size_t rows) noexcept {
+                      factor_cursors f, const callback_env& env, std::size_t rows) noexcept {
   for (std::size_t i = begin; i < end; ++i) {
     const record& r = records[i];
     if (const stage* st = std::get_if<stage>(&r)) {
-      run_lane_stage(*st, e[i], at, f, rows);
+      run_lane_stage(*st, e[i], at, f, env, rows);
       continue;
     }
     const loop& l = *std::get_if<loop>(&r);
     const slot_addresses from = moved(at, l.start, 1);
     for (std::size_t c = 0; c < l.count; ++c) {
       run_lane_records(records, e, i + 1, l.body_end, moved(from, l.step, c),
-                       moved(f, e[i].factor_step, c), rows);
+                       moved(f, e[i].factor_step, c), env, rows);
     }
     i = l.body_end - 1;
   }
@@ -265,7 +271,9 @@ void run_lane_records(const std::vector<record>& records, const std::vector<edge
 // cursors move with the blocks by the innermost batch loop's factor steps.
 void run_lane_blocks(const program& p, const std::vector<edge_record>& e,
                      const std::vector<edge_record>& tail, std::size_t first, std::size_t count,
-                     const slot_addresses& base, factor_cursors f) noexcept {
+                     const slot_addresses& base, factor_cursors f,
+                     const callback_env& env) noexcept {
+  callback_env block = env;
   const std::size_t inner_index = p.batch_loops - 1;
   const loop& inner = *std::get_if<loop>(&p.records[inner_index]);
   const std::size_t end = first + count;
@@ -276,17 +284,20 @@ void run_lane_blocks(const program& p, const std::vector<edge_record>& e,
     const std::size_t in_loop = inner.count - (t < inner.count ? t : t % inner.count);
     std::size_t run = end - t < in_loop ? end - t : in_loop;
     t += run;
+    std::size_t block_first = t - run;
     while (run != 0) {
       const bool whole = run >= p.lanes;
       std::size_t rows = p.lanes;
       if (!whole) {
         rows = run < p.lane_unit ? run : p.lane_unit;
       }
+      block.transform = block_first;
       if (whole) {
-        run_lane_records(p.records, e, p.batch_loops, p.records.size(), at, cursors, rows);
+        run_lane_records(p.records, e, p.batch_loops, p.records.size(), at, cursors, block, rows);
       } else {
-        run_lane_records(p.lane_tail, tail, 0, p.lane_tail.size(), at, cursors, rows);
+        run_lane_records(p.lane_tail, tail, 0, p.lane_tail.size(), at, cursors, block, rows);
       }
+      block_first += rows;
       run -= rows;
       if (run != 0) {
         at = moved(at, inner.step, rows);
@@ -708,7 +719,7 @@ factor_cursors cursors_of(const exec_args& args, std::uint8_t needed) noexcept {
 }
 
 edge_state edge_state_of(const exec_args& args, std::uint8_t needed) noexcept {
-  return {.f = cursors_of(args, needed), .user = {args.in_user, args.out_user}};
+  return {.f = cursors_of(args, needed), .user = {args.in_user, args.out_user}, .stand_in = false};
 }
 
 factor_cursors edge_transform_cursors(const program& p, const std::vector<edge_record>& e,
@@ -728,7 +739,7 @@ void run_edge_transforms(const program& p, const std::vector<edge_record>& e,
                          factor_cursors f, const callback_env& env) noexcept {
   if (p.lanes != 0) {
     if (count != 0) {
-      run_lane_blocks(p, e, tail, first, count, base, f);
+      run_lane_blocks(p, e, tail, first, count, base, f, env);
     }
     return;
   }

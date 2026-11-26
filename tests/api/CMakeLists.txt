@@ -21,6 +21,10 @@ fftn_always_optimise(edges_shapes_test.cpp)
 # Block callbacks (task 5.3a) against the reference and the user's own loops.
 fftn_add_test(fftn_callbacks_tests SOURCES callbacks_test.cpp LIBRARIES fftn_test_support)
 fftn_always_optimise(callbacks_test.cpp)
+# Block callbacks in every row strategy and on real rows (task 5.3b).
+fftn_add_test(fftn_callbacks_strategies_tests SOURCES callbacks_strategies_test.cpp
+              LIBRARIES fftn_test_support)
+fftn_always_optimise(callbacks_strategies_test.cpp)
 
 # Row pipelines (tasks 5.2b, 5.2c) against the quadruple-precision reference, optimised likewise.
 fftn_add_test(fftn_pipeline_tests SOURCES pipeline_test.cpp LIBRARIES fftn_test_support)

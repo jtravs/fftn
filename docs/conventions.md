@@ -281,7 +281,7 @@ prior values there.
 
 ## Block callbacks
 
-Provisional (task 5.3a, `fftn/callback.hpp`). An edge may also take a block callback
+Provisional (tasks 5.3a and 5.3b, `fftn/callback.hpp`). An edge may also take a block callback
 (`edge::call`): a function the application compiles, which the plan calls on blocks of the
 edge's side while they are in cache. Its type is `block_fn<T>`, `noexcept`, with `T` the side's
 element type; `callback_of<F, T>()` makes one that calls a callable object (a `noexcept` lambda)
@@ -290,16 +290,24 @@ callback `modify`s the block in place, `produce`s the input (the input is then n
 be null) or `consume`s the output (nothing is stored; the output may be null). Each call gets a
 `block_info`: the transform, the logical coordinates of the block's first element, its length,
 lines and strides, the member running it and that member's scratch (`callback::scratch_bytes`
-of it, counted by `workspace_bytes()`).
+of it, counted by `workspace_bytes()`). A block holds a row whole up to a size the plan's machine
+profile sets (half the L1 data cache by default), longer rows in element ranges; where the plan
+holds several short rows together (the lanes) one call takes them all, line k being transform
+`transform + k`. On a real side the elements are real values (`T`); on the complex side of a
+real transform they are the n/2 + 1 bins.
 
 ```cpp file=examples/callbacks.cpp region=callbacks
 // Each output bin k of transform t times exp(i g |y|^2), a phase that depends on the bin's
 // own value: pure per element, so any team or executor gives the same bits.
 const double g = 0.01;
+// A block holds info.lines rows (consecutive transforms), info.length elements of each.
 auto kerr = [g](const fftn::block_info& info, std::complex<double>* y) noexcept {
-  for (std::size_t i = 0; i < info.length; ++i) {
-    std::complex<double>& v = y[static_cast<std::ptrdiff_t>(i) * info.element_stride];
-    v *= std::polar(1.0, g * std::norm(v));
+  for (std::size_t k = 0; k < info.lines; ++k) {
+    for (std::size_t i = 0; i < info.length; ++i) {
+      std::complex<double>& v = y[static_cast<std::ptrdiff_t>(i) * info.element_stride +
+                                  static_cast<std::ptrdiff_t>(k) * info.line_stride];
+      v *= std::polar(1.0, g * std::norm(v));
+    }
   }
 };
 const fftn::c2c_plan<double> plan(
@@ -321,9 +329,13 @@ is pure per element (its result depends only on the element's value and coordina
 guarantees of "Determinism" below hold. A callback may execute another plan through a serial
 overload with a workspace of its own, such as `fftn::workspace{info.scratch}`. A plan with a
 callback is executed through the overloads that take `exec_args`; the others end the program.
-So far callbacks are taken by c2c rows only, on the chain whatever strategy the rules would
-choose and by the rules whatever `options::effort` says (`plan::describe()` says so); other
-plans refuse them at construction.
+So far callbacks are taken by rows (c2c, r2c and c2r plans of one axis) on the strategy the rules
+or measured planning choose; measured planning times its candidates with stand-ins that do
+nothing in place of the callbacks, so construction never calls one. Only a consumed output keeps
+a row from a strategy that writes the output as its working memory (the grid, the depth-first
+chains, the lanes over adjacent transforms, and a real row's lanes whose input is in the
+workspace block too), which then runs as the chain, as `plan::describe()` says. Planes and volumes refuse
+callbacks at construction (task 5.3c).
 
 ## Stored runs
 

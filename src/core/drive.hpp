@@ -95,7 +95,8 @@ struct edge_drive {
                         at, s.f,
                         {.user = s.user,
                          .member = lane,
-                         .scratch = callback_area(at.a, c.offset_callback, c.callback_bytes)});
+                         .scratch = callback_area(at.a, c.offset_callback, c.callback_bytes),
+                         .stand_in = s.stand_in});
   }
   [[nodiscard]] static task_cursors at_task(const plan_core& c, std::size_t t, const state& s,
                                             int lane, std::byte* slots) noexcept {
@@ -105,7 +106,8 @@ struct edge_drive {
             .env = {.user = s.user,
                     .transform = t,
                     .member = lane,
-                    .scratch = callback_area(slot, c.offset_callback, c.callback_bytes)}};
+                    .scratch = callback_area(slot, c.offset_callback, c.callback_bytes),
+                    .stand_in = s.stand_in}};
   }
   static void stage(const plan_core& c, const task_cursors& f, std::size_t index,
                     const slot_addresses& at, std::size_t first, std::size_t last) noexcept {
