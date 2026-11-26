@@ -25,6 +25,12 @@ namespace fftn::inline v0::detail {
 struct topology;   // platform/topology.hpp
 struct core_class; // platform/topology.hpp
 
+// Which plans whose edges have factors run whole executions in the edge driver's batched forms
+// (core/edge_driver.hpp, task 5.2a; experiment X65's P1, narrowed): none (each such plan walks
+// its program a transform at a time), plans of c2c rows whose line's transform is one leaf (a
+// leaf of radix n, a pair leaf or batch leaves), or every plan the forms can take (the tests).
+enum class edge_forms_reach : std::uint8_t { none, leaf_rows, all };
+
 // The constants the rules use, per machine. Experiments T1 (fixed costs) and T5 (split
 // thresholds) calibrated them on a Zen 3 CCX (EPYC 7763), an Apple performance cluster (M5
 // Max) and an 18-core Xeon mesh (task 3.4); each field cites its evidence. The defaults are
@@ -451,16 +457,17 @@ struct machine_profile {
   // The one instruction set whose plans c2r_packed_bytes applies to, the one it was measured on
   // (plans for another target keep the block); fftn::isa::best applies it to every target.
   fftn::isa c2r_packed_isa = fftn::isa::best;
-  // Whether a plan whose edges have factors runs its whole executions in the edge driver's
+  // Which plans whose edges have factors run their whole executions in the edge driver's
   // batched forms (core/edge_driver.hpp, task 5.2a; experiment X65's P1): the flat form, the
   // unrolled calls and rows of one leaf with the factor cursors, and a c2c plan of rows with
-  // separate edge passes in blocks of rows (edge passes and leaves once per block). Otherwise
-  // such a plan walks its program one transform at a time. Off: X65's P1 rule (a geometric mean
-  // of 0.80 of the walked form over c2c and real rows below 4096 points) was missed on the EPYC
-  // 7763 (0.868), though rows on batch leaves with a separate factor took 0.39-0.56 of their
-  // time; tests turn it on. Pipelines take these forms from task 5.2b. Last, so that every
-  // field above keeps its place.
-  bool edge_batched_forms = false;
+  // separate edge passes in blocks of rows (edge passes and leaves once per block). The others
+  // walk their program one transform at a time. none by default: P1's rule (a geometric mean of
+  // 0.80 of the walked form over c2c and real rows below 4096 points) was missed on the EPYC
+  // 7763 (0.868), but rows whose transform is one leaf took 0.39-0.94 of their time on it and on
+  // the Xeon 6240, and set_grid_sizes sets leaf_rows on those two classes (X65, P1 narrowed);
+  // chains of 256-1024 points moved 0.90-1.01. Tests set all. Last, so that every field above
+  // keeps its place.
+  edge_forms_reach edge_batched_forms = edge_forms_reach::none;
 };
 
 // The profile of a machine of topology t (its CPU count aside): the defaults above, which
