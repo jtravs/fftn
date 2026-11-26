@@ -2275,7 +2275,7 @@ factor cursor or a separate pass runs each transform through the walked program,
 plain plan's batched forms, and batch leaves one row at a time), and on c2c chains' separate
 passes; accumulation costs about what the user's loop does. Making the pass's arithmetic
 vectorise changed nothing measurable, so fused variants (a real factor, accumulation) wait
-until such plans keep the batched forms (X65's proposals). An edge that still forces another
+until such plans keep the batched forms (X65's proposals). An edge that still forces a slower
 strategy is built, not refused, and `describe()` says so (AGENTS.md section 1; task 5.1c):
 every build names its strategy in a few words (`plan_core::strategy_name`), the plan with
 edges is compared with the same shape, options and knobs built without them, and where the
@@ -2380,6 +2380,126 @@ Points that matter:
   experiment X9; the estimate from prior art (MKL's scrambled mode, djbfft, PFFFT) is 10–25 %
   for L2-resident sizes and more beyond. Callbacks always see natural order, because their
   coordinates must be affine in the block.
+
+**Plan for task 5.2** (designed 2026-11-25, nothing built yet; steps 5.2a–5.2g in PLAN phase 5,
+experiment X67; the API points the maintainer has to settle are listed in 18.2, "Pipelines").
+
+- **API** (provisional, `fftn/pipeline.hpp`), the block above built in parts:
+  - 5.2 builds `pipeline_desc` without `middle.call` and `group`. They arrive with callbacks in
+    5.3, as `edge::call` does. `first` is forward only (spectral pairs, inverse first, are 5.3),
+    and the kinds are `<C, C, C>` and `<T, C, T>`.
+  - `pipeline` holds the same type-erased core as `plan` (`detail::plan_core`). Its execute
+    forms are therefore the plan's entry points with an `exec_args`, and `workspace_bytes`,
+    `transforms_of`, `describe` and `instruction_set` are the plan's functions on that core.
+  - "Each with an exec_args" is read literally: a pipeline has no overload without one, since a
+    convolution always reads its kernel. The forms are serial `execute(in, out, ws, args)`;
+    `execute_transforms(first, count, in, out, ws, args)`; team `execute(in, out, t, ws, args)`
+    and `execute(in, out, t, ws, done, args)`; executor `execute(in, out, ex, ws, args)`.
+    `workspace` gains a constructor from a pipeline.
+  - The **kernel** is `middle.mul`, read through `exec_args::mid_factor`. Its `axis_strides`
+    holds one stride along the middle's line: n bins for `<C, C, C>`, n/2 + 1 for `<T, C, T>`.
+    Its `batch_strides` gives one stride per batch dimension: 0 or empty means one kernel for
+    every row, any other stride gives each row its own kernel. Copy k of a fan-out adds
+    `k fanout_factor_dist` elements of the array.
+  - Copy k writes at `out + k fanout_out_dist` (in `Out` elements). The epilogue's factor is
+    the same for every copy.
+  - The scales of prologue, middle and epilogue and `options::scale` are one product, applied
+    once, as with plan edges (12.1).
+  - Construction checks overlap and sets default strides by stored extent (runs), counting
+    every copy. It refuses, naming the field: anything not built yet (a value of `fanout` or
+    `runs` before its step, `first` inverse); accumulation in place; overlapping copies; runs
+    beside a prologue or epilogue factor (as PR 134 refuses them beside an edge's factor);
+    `<T, C, T>` with a complex prologue or epilogue factor.
+- **Program shape.** A pipeline is a program (8.3). Its body is one line, or one lanes block of
+  lines, made of stages over a **scratch-resident line**:
+
+  > batch loops → [read] → forward passes → [middle] → [copies loop: ] inverse passes → [store]
+
+  - **Fused or bracketed.** The forward's first pass reads the input with the prologue's
+    operation. Its last pass applies the middle's factor through the middle cursor. The
+    inverse's last pass writes the output with the epilogue's operation. A bracketed stage
+    exists only where its work cannot fuse into the neighbouring pass. Examples are input runs
+    or a strided line on a target with C > 1 (read), a real or strided middle factor (middle),
+    and output runs, accumulation or an unfused epilogue factor (store). These are 5.1's
+    `edge_pass_stage`, `edge_copy_stage` and PR 134's run stages.
+  - **No memory sweep for bracketed stages.** They run on a line already in cache. The
+    separate edge pass that X65 priced on plans costs a sweep through the workspace block;
+    these stages do not.
+  - **Three strategies** build the stages:
+    - **Chain pair.** `chain_builder::add_convolution` is generalised in four ways. Its ends
+      become endpoints (the first pass reads the input, the last writes the output) instead of
+      a scratch slot back to itself. The kernel becomes either a plan table (Bluestein, Rader)
+      or the middle cursor. Both of its placements stay: the forward's last pass when the lanes
+      share an entry, and the inverse's first pass, which a fan-out uses for copy k's kernel.
+      Finally, it gains the real routes of `chain.hpp`: the r2c pairing fused into the
+      forward's last pass, the c2r pairing into the inverse's first, and odd n by the
+      full-length route.
+    - **Depth-first pair** for long lines. `chain_builder::bluestein_depth` (X50) is
+      generalised: the chirp becomes optional; the zero tail beyond Q becomes one input run from
+      logical 0; the first Q outputs become one output run from any logical start; and the
+      kernel becomes a table or the middle cursor. Bluestein's stage is then built through the
+      general form with identical programs. The valid half of a zero-padded convolution is
+      exactly Bluestein's shape.
+    - **Lanes pair.** `lanes_body` runs twice around a middle stage on the tile, with one
+      gather and one scatter: short rows as the lanes over rows, and `<C, C, C>` strided lines
+      whose innermost batch dimension is adjacent as the lanes over adjacent lines (9.3's block
+      rule). Real strided lines stay on the chain pair, because real lanes over adjacent
+      transforms do not exist.
+  - **Shared tables.** The two chains have one length and opposite directions, so they share
+    their twiddle tables, which do not depend on the direction (18.2).
+- **The scratch-resident line and fan-out.**
+  - The workspace block is the line's movable home: one per task, shared by a team's members,
+    and moved by loops. A fan-out keeps the forward spectrum in the block.
+  - The copies are a lines loop with a block step of 0. Each iteration moves the output by
+    `fanout_out_dist`, and the middle cursor by `fanout_factor_dist`. Its body applies copy k's
+    kernel in the inverse's first pass and runs the inverse on the member's own scratch lines
+    a and b.
+  - On a depth-first pair the sub-rows use a and b, so the spectrum needs a second region.
+    Edge-driver records gain a byte offset into the block (5.2a), which only the edge driver
+    reads.
+  - This is the "loop over a scratch-resident line" that X36b asked for. Bluestein's copies one
+    at a time (a loop moving the block by a copy's M) could later use it; that is not part of
+    5.2.
+- **Kernels and stored runs attach** through the edge driver.
+  - Its cursors gain a third, the middle's (`factor_cursors`, `edge_record::factor_step`). It is
+    read from `exec_args::mid_factor` and moved by the batch loops (the kernel's batch strides)
+    and the copies loop. A missing array aborts in every build.
+  - A stage records which of its factor pointers takes the middle cursor.
+  - Runs use PR 134's `stored_run` on axis 0 (the line). A valid half is an input run
+    (logical 0, count m) of a 2m-point line plus an output run of m.
+  - On the chain pair, PR 134's run stages are the read and store stages. On the depth-first
+    pair, one run per side fuses into its first and top passes; other run sets go through the
+    read and store stages. 5.1e's pruned codelets later replace the zeros the read stage
+    writes.
+- **Batched forms from the start** (X65: plans with edges lost them, and ran 1.5–6 times a
+  plain plan on small batched rows).
+  - A pipeline with a factor runs on the edge driver, which gains the flat and unrolled forms
+    with cursors in 5.2a.
+  - A pipeline of leaf-sized rows is a flat body of two leaves (the forward with the middle
+    factor, then the inverse), batched by the slots' steps. Short rows of a batch take the
+    lanes pair.
+  - No pipeline runs one row at a time between stages of other rows.
+- **Execution.**
+  - Tasks are the batch's transforms: lines, or lanes blocks. The work graph reads them off as
+    it does for plans (13.2).
+  - Within one line, stage phases share the owner's scratch. The copies loop and the
+    depth-first sub-row loops are line phases on each member's own a and b, with the owner's
+    block: the pattern of Bluestein's depth-first convolution (13.2,
+    `bluestein_team_test.cpp`).
+  - A pipeline's team core is its program, until a measurement says otherwise. `completion::own`
+    and `transforms_of` deal lines as 12.4 does.
+  - Results are bitwise identical between serial, team and executor execution.
+  - The engine is shared through `drive.hpp`, `executor_dispatch.hpp`, `team_execute.hpp` and
+    `team_env.hpp` with `edge_drive`; no engine code is copied. Plans without edges compile to
+    exactly the code they compile to now.
+- **Planning.** Until X67 the rules decide, and `describe()` says that `options::effort` is
+  ignored (as for PR 134's runs):
+  - the chain pair by default;
+  - the depth-first pair where X50's rule would make a row of the line's length a depth-first
+    convolution;
+  - the lanes pair where the lanes rules would take the row (`lanes_up_to`, 9.3's block).
+
+  5.2g adds measured candidates and wisdom keyed by the description.
 
 ### 12.3 Block callbacks
 
@@ -3327,6 +3447,34 @@ argument. Both are additions over the current API (two plans sharing a `table_ca
 plan plus `workspace(plan)`) and stay cheap only while two properties hold: twiddle tables
 do not depend on the direction, and a workspace is plain bytes sized by
 `workspace_bytes()`, not tied to one plan. Do not break either without revisiting this.
+
+**Pipelines (task 5.2 design, 2026-11-25; for the maintainer).** These questions are open in
+12.2's API block. Each has a proposal, which is used until the maintainer settles it:
+
+1. **Names of the helpers.** A forward-first `<C, C, C>` convolution is made by
+   `spectral_pair_rows(n, count, direction::forward)`, which reads oddly. Proposal: add
+   `complex_convolution_rows<T>(n, count)`, and keep `spectral_pair_rows` for inverse first
+   (5.3).
+2. **Runs in the helpers.** The helpers return tight contiguous rows, and runs added afterwards
+   need their distances re-derived. Proposal: an optional trailing
+   `std::span<const stored_run>`, as `axes_*` has (5.1d).
+3. **Normalisation.** Proposal: the helpers leave `middle.scale` at 1, so a round trip
+   multiplies by n (FFTW's convention, section 1). The caller folds 1/n into the kernel or
+   sets the scale.
+4. **Execute overloads.** Proposal: only the `exec_args` forms, with no twins without one
+   (12.2's plan).
+5. **Fan-out units.** `fanout_out_dist` counts `Out` elements and `fanout_factor_dist` counts the
+   kernel array's elements. The epilogue's factor is shared by all copies. Overlapping copy
+   outputs (a contraction with accumulation) are refused until 5.3's `consume` callback
+   delivers the copies in order.
+6. **In place.** Proposal: `options::in_place` is allowed with `fanout` 1 and without
+   accumulation (the line lives in scratch between its read and its store).
+7. **Which `options` apply.** Proposal: `scale` (the epilogue's shortcut, with 12.1's refusal),
+   `max_lanes`, `isa` and `strict_layout`. `effort` and `use` are rules only until 5.2g.
+8. **Runs with factors.** Proposal: runs beside a prologue or epilogue factor are refused, as
+   PR 134 refuses them on plans, and both are lifted together.
+9. **When `transforms_of` arrives.** It is in the class from 5.2b, ahead of 5.5's
+   owner-computes work, since it is the plan's function on the same core.
 
 **Generator (task 1.1).** (a) A vocabulary operation that multiplies by a constant complex
 number: two `FCMLA` on NEON+FCMA, where the complex-register codelets now spend two
