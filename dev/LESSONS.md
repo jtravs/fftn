@@ -1449,3 +1449,14 @@ their whole build fell from 9306 to 2663 s of compile time, the other UBSan chec
 other units unchanged. Traps instead of handler calls (`-fsanitize-trap`) saved less (rows8_avx2 74 s),
 and dropping ASan's stack instrumentation or use-after-return nothing. GCC 16 gains less (two units
 230 to 167 s and 521 to 308 s). Time each sanitizer, and each check, before splitting units further.
+
+## A deciding re-run needs enough rounds
+
+A near-miss re-run filtered to a handful of short cases finishes its default minimum of rounds in
+seconds, and its intervals are then useless: on the EPYC 7763, seven float cases took six rounds
+in 18 s and every interval spanned 0.33–0.97; the same cases with 24 rounds gave intervals of 1–5 %
+([X84](experiments/X84-float-standing.md)). Filtered tiny cases also time differently alone than
+inside the full catalogue (Mac, r2c 32 × 30 × 2 float: 1.12 of FFTW in the catalogue, 1.37 alone),
+so a re-run judges the case in a different context. Set `--min-rounds` (24 or more) on re-runs of
+short cases, and say in the rule which context decides.
+
