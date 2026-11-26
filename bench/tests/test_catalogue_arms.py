@@ -24,6 +24,18 @@ class Standard(unittest.TestCase):
         self.assertTrue(30 <= len(tracking) <= 70)
         self.assertEqual(len(self.cat.select("full")), len(self.cat.cases))
 
+    def test_precision_override(self):
+        f64 = self.cat.select("full", r"^c2c-1024-b")
+        f32 = self.cat.select("full", r"^c2c-1024-b", "f32")
+        # The catalogue lists c2c 1024 x 2 in both precisions: it is kept once.
+        self.assertIn("c2c-1024-b2-op-f32", {c.id for c in f64})
+        self.assertEqual(len(f32), len({c.id.removesuffix("-f32") for c in f64}))
+        self.assertTrue(all(c.precision == "f32" and c.id.endswith("-f32") for c in f32))
+        only = self.cat.select("full", r"-f32$", "f32")
+        self.assertEqual(len(only), len({c.id.removesuffix("-f32") for c in self.cat.cases}))
+        with self.assertRaises(ValueError):
+            self.cat.select("full", None, "f16")
+
     def test_covers_design_16_1(self):
         cases = self.cat.cases
         pow2 = {c.dims[0] for c in cases if c.kind == "c2c" and len(c.dims) == 1}
