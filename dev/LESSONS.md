@@ -1094,6 +1094,15 @@ pass changed its cases by 0.99 on the EPYC. Before fusing a pointwise operation 
 check what the operation's presence does to the call structure around it.
 [X65](experiments/X65-edges.md).
 
+4.29 **Restoring the batched call structure recovers the batched kernel's gain, not the
+fusion's.** Giving FFTN's plans with edges back their flat, unrolled and row-block forms (X65's
+P1, task 5.2a) took rows of 16 and 64 points on batch leaves with a separate factor to 0.39–0.56
+of their time on the EPYC 7763, but rows whose factor was fused into a single-row leaf to only
+0.83–1.01, and chains of 256–1024 points to 0.98–1.01: the walk itself was a small part of their
+cost. Choosing the separate pass so as to keep the batch leaf helped 16-point rows (0.66–0.75
+on both machines) and lost on 64-point rows on the EPYC (1.14; 0.81 on the Xeon 6240). Price the kernel each
+structure reaches, not only the overhead it removes. [X65](experiments/X65-edges.md).
+
 ## 5. Threading
 
 5.1 **Synchronisation costs set the smallest row worth splitting.** Spin barrier /

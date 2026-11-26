@@ -1032,6 +1032,304 @@ TYPED_TEST(EdgeShapes, TeamsAndExecutorsAgreeWithSerial) {
                            fftn::isa::best, true, false);
 }
 
+// The edge driver's batched forms (machine_profile::edge_batched_forms, core/edge_driver.hpp;
+// task 5.2a, X65's P1): c2c rows of every kind of edge, as batch leaves, fused leaves, chains
+// and Bluestein, contiguous, padded, strided, in place and under two batch dimensions, with
+// factor strides of both signs along the line and the batch and broadcasts.
+std::vector<shape_case> batched_row_cases() {
+  using enum transform_kind;
+  constexpr const char* any = "edges: the ";
+  return {
+      {.name = "codelet rows, both factors separate",
+       .kind = c2c,
+       .dims = {16},
+       .count = 37,
+       .in = {real, {}, 1},
+       .out = {cplx, {-1}, 1},
+       .expect = any},
+      {.name = "codelet rows, output factor, padded",
+       .kind = c2c,
+       .dims = {64},
+       .count = 21,
+       .out = {real, {}, -1},
+       .gap = 3,
+       .expect = any},
+      {.name = "codelet rows, input factor broadcast along the batch",
+       .kind = c2c,
+       .dims = {32},
+       .count = 20,
+       .dir = fftn::direction::backward,
+       .in = {real, {-1}, 0},
+       .expect = any},
+      {.name = "codelet rows, accumulated with a factor and a scale",
+       .kind = c2c,
+       .dims = {8},
+       .count = 300,
+       .out_scale = 0.25,
+       .in = {cplx, {-1}, -1},
+       .accumulate = true,
+       .gap = 1,
+       .expect = any},
+      {.name = "leaf rows, fused factor per row",
+       .kind = c2c,
+       .dims = {16},
+       .count = 9,
+       .in = {cplx, {}, 1},
+       .expect = any},
+      {.name = "leaf rows, fused factor broadcast",
+       .kind = c2c,
+       .dims = {8},
+       .count = 11,
+       .out = {cplx, {}, 0},
+       .gap = 2,
+       .expect = any},
+      {.name = "leaf rows, fused factor, negative batch stride",
+       .kind = c2c,
+       .dims = {12},
+       .count = 6,
+       .out = {cplx, {}, -1},
+       .expect = any},
+      {.name = "chain rows, separate factors",
+       .kind = c2c,
+       .dims = {256},
+       .count = 9,
+       .in = {cplx, {-1}, 1},
+       .out = {real, {}, -1},
+       .expect = any},
+      {.name = "chain rows, fused factors and a scale",
+       .kind = c2c,
+       .dims = {96},
+       .count = 5,
+       .options_scale = 0.5,
+       .in = {cplx, {}, 1},
+       .out = {cplx, {}, -1},
+       .expect = any},
+      {.name = "chain rows, accumulated, output factor",
+       .kind = c2c,
+       .dims = {1024},
+       .count = 3,
+       .out = {real, {1}, 1},
+       .accumulate = true,
+       .expect = any},
+      {.name = "Bluestein rows, input factor",
+       .kind = c2c,
+       .dims = {67},
+       .count = 4,
+       .in = {real, {}, 1},
+       .expect = any},
+      {.name = "strided rows, factors",
+       .kind = c2c,
+       .dims = {16},
+       .count = 10,
+       .in = {cplx, {}, 1},
+       .out = {real, {-1}, 1},
+       .expect = any,
+       .stride = 2},
+      {.name = "rows in place, factors",
+       .kind = c2c,
+       .dims = {32},
+       .count = 6,
+       .in = {real, {}, 1},
+       .out = {cplx, {-1}, -1},
+       .in_place = true,
+       .expect = any},
+      {.name = "rows under two batch dimensions",
+       .kind = c2c,
+       .dims = {20},
+       .count = 4,
+       .out_scale = 2.0,
+       .in = {cplx, {}, -1},
+       .out = {real, {}, 1},
+       .accumulate = true,
+       .gap = 2,
+       .expect = any,
+       .outer = 3,
+       .outer_gap = 5},
+  };
+}
+
+// Which batched forms the plans of a run took (core/edge_driver.hpp, edge_forms).
+struct forms_seen {
+  std::size_t flat = 0;
+  std::size_t leaf_rows = 0;
+  std::size_t calls = 0;
+  std::size_t row_blocks = 0;
+};
+
+// The plan of a case with the batched forms against the plan without them (the walked form,
+// which the tests above check against the reference): both executed serially from the same
+// buffers, bitwise alike; the walked plan's own forms empty, the batched one's workspace at
+// least as large.
+template <class T, transform_kind K>
+void forms_agree(const shape_case& sc, fftn::isa target, forms_seen& seen) {
+  using C = std::complex<T>;
+  using In = std::conditional_t<K == transform_kind::r2c, T, C>;
+  using Out = std::conditional_t<K == transform_kind::c2r, T, C>;
+  namespace d = fftn::detail;
+  ASSERT_EQ(sc.kind, K);
+  fftn::test::input_source src(0xB47C5ULL + product(sc.dims) * 7 + sc.count);
+  const shape_run<T> run(sc, target, src);
+  d::build_settings walked;
+  walked.profile.edge_batched_forms = false;
+  d::build_settings batched;
+  batched.profile.edge_batched_forms = true;
+  const auto make = [&](const d::build_settings& s) {
+    return d::make_plan_core_with_edges(d::view_of(run.template shape<In, Out>()), run.opts,
+                                        d::view_of(run.template edges<In, Out>()), s);
+  };
+  const auto w = make(walked);
+  const auto b = make(batched);
+  const std::string what = std::string(sc.name) + ", " + fftn::isa_name(target) +
+                           (sizeof(T) == 8 ? " double" : " float");
+  EXPECT_TRUE(w->edge_batched.flat.empty() && w->edge_batched.calls.empty() &&
+              w->edge_row_block == 0)
+      << what;
+  EXPECT_GE(b->bytes, w->bytes) << what;
+  if (b->needs_args) {
+    const d::edge_forms& f = b->edge_batched;
+    seen.flat += f.flat.empty() ? 0U : 1U;
+    seen.leaf_rows += f.leaf_rows ? 1U : 0U;
+    seen.calls += f.calls.empty() ? 0U : 1U;
+    seen.row_blocks += f.row_block != 0 ? 1U : 0U;
+    // A c2c row's chain with separate passes, one batch dimension and a flat program (at most
+    // flat_stages_max stages: not a Bluestein length's line) takes the row-block form.
+    const std::string text = d::describe(*b);
+    if (K == transform_kind::c2c && sc.dims.size() == 1 && sc.outer == 1 && sc.count >= 2 &&
+        b->prog.flat && text.find("separate pass into the workspace block") != std::string::npos) {
+      EXPECT_NE(f.row_block, 0U) << what << ":\n" << text;
+      EXPECT_NE(text.find("the rows in blocks of"), std::string::npos) << what << ":\n" << text;
+    }
+  }
+  std::vector<T> xs = run.x;
+  const auto fresh = [&] { return sc.in_place ? run.x : run.init; };
+  const auto in_of = [&](std::vector<T>& y) {
+    return reinterpret_cast<const In*>(sc.in_place ? y.data() : xs.data());
+  };
+  const auto out_of = [](std::vector<T>& y) { return reinterpret_cast<Out*>(y.data()); };
+  const fftn::exec_args args = run.args();
+  fftn::workspace ws(std::max(b->bytes, w->bytes));
+  std::vector<T> one = fresh();
+  d::execute_all(*w, in_of(one), out_of(one), ws, args);
+  std::vector<T> other = fresh();
+  d::execute_all(*b, in_of(other), out_of(other), ws, args);
+  EXPECT_TRUE(same_bits(one, other)) << what << ": the batched forms differ from the walked form\n"
+                                     << d::describe(*b);
+  // Pieces of the batch that start and end inside a block of rows.
+  if (transforms(sc) > 3) {
+    std::vector<T> pieces = fresh();
+    const std::size_t n = transforms(sc);
+    for (const auto& [first, count] :
+         {std::pair{std::size_t{0}, std::size_t{1}}, std::pair{std::size_t{1}, n / 2},
+          std::pair{1 + n / 2, n - 1 - n / 2}}) {
+      d::execute_core(*b, first, count, in_of(pieces), out_of(pieces), ws, args);
+    }
+    EXPECT_TRUE(same_bits(other, pieces)) << what << ": pieces of the batch differ";
+  }
+}
+
+TYPED_TEST(EdgeShapes, BatchedFormsAgreeWithTheWalkedForm) {
+  forms_seen seen;
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    for (const shape_case& c : batched_row_cases()) {
+      forms_agree<TypeParam, transform_kind::c2c>(c, t, seen);
+    }
+    for (const shape_case& c : c2c_cases()) {
+      forms_agree<TypeParam, transform_kind::c2c>(c, t, seen);
+    }
+    for (const shape_case& c : r2c_cases()) {
+      forms_agree<TypeParam, transform_kind::r2c>(c, t, seen);
+    }
+    for (const shape_case& c : c2r_cases()) {
+      forms_agree<TypeParam, transform_kind::c2r>(c, t, seen);
+    }
+  }
+  // Every form was taken somewhere.
+  EXPECT_GT(seen.flat, 0U);
+  EXPECT_GT(seen.leaf_rows, 0U);
+  EXPECT_GT(seen.calls, 0U);
+  EXPECT_GT(seen.row_blocks, 0U);
+}
+
+// The batched forms against the reference, with canaries in the rows' gaps, and serial, pieces,
+// teams and an executor bitwise alike (run_case), on every instruction set for the rows and on
+// the best for the planes and volumes.
+TYPED_TEST(EdgeShapes, BatchedFormsAgainstTheReference) {
+  fftn::detail::build_settings batched;
+  batched.profile.edge_batched_forms = true;
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    for (const shape_case& c : batched_row_cases()) {
+      run_case<TypeParam, transform_kind::c2c>(c, t, true, true, &batched);
+    }
+  }
+  for (const shape_case& c : c2c_cases()) {
+    run_case<TypeParam, transform_kind::c2c>(c, fftn::isa::best, true, true, &batched);
+  }
+  for (const shape_case& c : r2c_cases()) {
+    run_case<TypeParam, transform_kind::r2c>(c, fftn::isa::best, true, true, &batched);
+  }
+  for (const shape_case& c : c2r_cases()) {
+    run_case<TypeParam, transform_kind::c2r>(c, fftn::isa::best, true, true, &batched);
+  }
+}
+
+// Batch leaves with separate edge passes, which the walked form runs a row at a time
+// (DescribeNamesTheStrategyAnEdgeForces): in the batched forms the plan keeps the strategy of the
+// plan without the edges, and describe() names the row blocks and no forced strategy.
+TYPED_TEST(EdgeShapes, BatchedFormsTakeBatchLeaves) {
+  namespace d = fftn::detail;
+  using C = std::complex<TypeParam>;
+  d::build_settings leaves;
+  leaves.batch_leaves = d::batch_leaf_choice::own;
+  leaves.strategy = d::strategy_choice::chain;
+  leaves.profile.edge_batched_forms = true;
+  const std::vector<shape_case> cases{
+      {.name = "batch leaves, real factors",
+       .kind = transform_kind::c2c,
+       .dims = {8},
+       .count = 40,
+       .in = {real, {}, 1},
+       .out = {real, {-1}, -1},
+       .expect = "edge row blocks: the rows in blocks of"},
+  };
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    for (const shape_case& c : cases) {
+      fftn::test::input_source src(0x5C2ULL);
+      const shape_run<TypeParam> run(c, t, src);
+      const fftn::shape<C, C> s = run.template shape<C, C>();
+      const auto plain = d::build_plan_core(d::view_of(s), run.opts, leaves);
+      if (plain->strategy_name != "the chain on batch leaves") {
+        continue; // a target without batch leaves in this precision
+      }
+      const auto core = d::make_plan_core_with_edges(
+          d::view_of(s), run.opts, d::view_of(run.template edges<C, C>()), leaves);
+      const std::string text = d::describe(*core);
+      EXPECT_EQ(core->strategy_name, plain->strategy_name) << text;
+      EXPECT_EQ(text.find("not the strategy"), std::string::npos) << text;
+      EXPECT_NE(core->edge_row_block, 0U) << text;
+      run_case<TypeParam, transform_kind::c2c>(c, t, true, true, &leaves, "batch leaf radix-8");
+    }
+  }
+}
+
+TEST(EdgeShapesDeathTest, BatchedFormsMissingFactorArraysAbort) {
+  GTEST_FLAG_SET(death_test_style, "threadsafe");
+  using C = std::complex<double>;
+  namespace d = fftn::detail;
+  d::build_settings batched;
+  batched.profile.edge_batched_forms = true;
+  const fftn::shape<C, C> rows = fftn::rows_c2c<double>(16, 8, fftn::direction::forward);
+  const fftn::plan_edges<C, C> real_out{.out = {.mul = {.kind = real, .axis_strides = {1}}}};
+  const fftn::plan_edges<C, C> fused_in{.in = {.mul = {.kind = cplx, .axis_strides = {1}}}};
+  for (const auto* e : {&real_out, &fused_in}) {
+    const auto core = d::make_plan_core_with_edges(d::view_of(rows), {}, d::view_of(*e), batched);
+    std::vector<C> x(128);
+    std::vector<C> y(128);
+    fftn::workspace ws(core->bytes);
+    EXPECT_DEATH(d::execute_all(*core, x.data(), y.data(), ws, {}), "without the factor arrays");
+    EXPECT_DEATH(d::execute_all(*core, x.data(), y.data(), ws), "without the factor arrays");
+  }
+}
+
 // The team program of a plan with edges (plan_core::team; X43): narrower column blocks, or a
 // volume's plane order, with its own edge phases and edge records. A team's results equal the
 // program's bit for bit.
@@ -1390,12 +1688,15 @@ template <class T, transform_kind K> bool forced_line_holds(const forced_line& f
   const shape_run<T> run(f.c, t, src);
   const fftn::shape<In, Out> s = run.template shape<In, Out>();
   const fftn::plan_edges<In, Out> e = run.template edges<In, Out>();
-  const auto plain = d::build_plan_core(d::view_of(s), run.opts, f.settings);
+  // The walked form's reasons: in the batched forms, batch leaves take separate passes a block
+  // of rows at a time (BatchedFormsTakeBatchLeaves).
+  d::build_settings settings = f.settings;
+  settings.profile.edge_batched_forms = false;
+  const auto plain = d::build_plan_core(d::view_of(s), run.opts, settings);
   if (!plain->strategy_name.starts_with(f.plain)) {
     return false;
   }
-  const auto core =
-      d::make_plan_core_with_edges(d::view_of(s), run.opts, d::view_of(e), f.settings);
+  const auto core = d::make_plan_core_with_edges(d::view_of(s), run.opts, d::view_of(e), settings);
   const std::string text = d::describe(*core);
   const std::string what =
       std::string(f.c.name) + ", " + fftn::isa_name(t) + (sizeof(T) == 8 ? " double" : " float");
@@ -1404,7 +1705,7 @@ template <class T, transform_kind K> bool forced_line_holds(const forced_line& f
                            " without the edges, " + core->strategy_name +
                            " with them: " + f.reason + "\n";
   EXPECT_NE(text.find(line), std::string::npos) << what << ": no '" << line << "' in\n" << text;
-  run_case<T, K>(f.c, t, false, true, &f.settings, f.reason);
+  run_case<T, K>(f.c, t, false, true, &settings, f.reason);
   return true;
 }
 
@@ -1572,10 +1873,14 @@ TYPED_TEST(EdgeShapes, DescribeCountsTheSeparatePasses) {
   using T = TypeParam;
   using enum transform_kind;
   namespace d = fftn::detail;
+  // The walked form's placements: in the batched forms, batch leaves (avx2's rules for 64-point
+  // rows) take a fusable factor as a separate pass (BatchedFormsTakeBatchLeaves).
   d::build_settings chain;
   chain.strategy = d::strategy_choice::chain;
+  chain.profile.edge_batched_forms = false;
   d::build_settings lanes;
   lanes.strategy = d::strategy_choice::lanes;
+  lanes.profile.edge_batched_forms = false;
   struct counted {
     shape_case c;
     const d::build_settings* settings;

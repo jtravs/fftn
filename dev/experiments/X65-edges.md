@@ -1,6 +1,7 @@
 # X65: plan edges against a plain plan plus the user's own loop
 
-- **Status:** done (no variant adopted; proposals P1–P5 for the maintainer)
+- **Status:** done (no variant adopted; proposals P1–P5 for the maintainer; P1 built and judged
+  in task 5.2a, 2026-11-26: not adopted, behind a profile flag that is off)
 - **Owner:** task S (5.1f), 2026-11-25 (overnight)
 - **Phase / task:** 5.1f
 
@@ -270,6 +271,84 @@ than the user's loop, so each gets a drafted rule:
   edge's phase writes the workspace block (as a real row's does out of place) and the
   depth-first chain's pairing reads the block. Drafted rule: E4 and E5 re-run on the Xeon; adopt
   when every such case's L/U is at most 1 + band and plans without edges are unchanged.
+
+### P1 as built and judged (task 5.2a; amendment written before its runs)
+
+Built (PR for task 5.2a): `machine_profile::edge_batched_forms` runs a plan whose edges have
+factors through the edge driver's batched forms: the flat form, rows of one leaf and the
+unrolled calls with the cursors moved per transform, and a c2c plan of rows of one batch
+dimension with separate edge passes in blocks of about 2048 points (edge passes and leaves,
+batch leaves included, once per block). Not built: a fused factor inside batch leaves (it needs
+batch-leaf kernels with a factor edge, a generator change; such rows take the fused leaf's rows
+form instead), and accumulation without a factor, which runs on the plain driver and keeps its
+forms (its batch leaves a row at a time).
+
+P1's drafted rule, made precise before any judging run:
+
+- **Arms:** `O` = the branch with the flag off (today's edge plans: the code is the same as
+  `main`'s for plans with edges apart from the empty-forms test), `N` = the same code with the
+  flag on (one commit apart), both with the run's edge option, plus fbench's control `O~`. The
+  plain plan's code is the same in both arms, so N/O over the plans with edges is the change of
+  L/P that the drafted rule names.
+- **Runs:** E1, E2, E4 and E5 (the factor configurations, which run on the edge driver), catalogue
+  `x65` tier `full`, one thread, on the EPYC (DMOG, shared `-c 8`) and the Xeon (`--serial`).
+  E3 (accumulation alone) is not run: its plans are on the plain driver and their code is the
+  same in both arms.
+- **Target set:** the cases of a run whose plan has edges with a factor and that are c2c rows or
+  real rows of fewer than 4096 points (c2c 16 × 1024, 64, 256 and 1024 × 64, 256 × 64 float; r2c
+  and c2r 256 × 16 where the run's edge applies).
+- **Adopt** (the flag on by default) when, on both machines, the geometric mean of N/O over the
+  target cases of the four runs together is at most 0.80, no case of any run (targets and the
+  rest of the catalogue) is slower than 1 + band, and plans without edges compile to exactly
+  `main`'s code (the probes and the disassembly in the PR). Otherwise the flag stays off and
+  the verdict is recorded. A criterion missed by less than the band gets one `--serial` re-run
+  that decides (AGENTS.md section 6).
+
+**Run 1, arm N** (`O` = e4f21b2, `N` = fe71f5e; EPYC jobs 519208, 519212–519214, Xeon 17254;
+Xeon E2–E5 cancelled once arm N2 below replaced N). Geometric mean of N/O over the target cases:
+
+| Machine | E1 | E2 | E4 | E5 | All four |
+|---|---|---|---|---|---|
+| EPYC, runs 20261126-003733-4d84, -004009-0644, -004026-2e99, -004034-29a8 (bands 1.8, 1.0, 1.7, 1.7 %) | 0.798 | 0.953 | 0.970 | 0.792 | 0.868 |
+| Xeon, run 20261126-003842-c062 (band 1.6 %) | 0.814 | | | | |
+
+Separate real factors on batch leaves moved most (c2c 16 × 1024: 0.39–0.44, 64 × 64: 0.54–0.73);
+fused complex factors little (16 × 1024: 0.83–0.86; 64 × 64: 0.94–1.01), since the fused chain
+takes no batch leaves: in N its rows took 1.1–2.0 times the time of the separate-factor rows
+in row blocks. Chains of 256 and 1024 points: 0.98–1.01 in every run. No case's interval lay
+wholly above 1 + band. By the rule, N is **not adopted** on the EPYC (0.868 > 0.80).
+
+**Arm N2, declared before its runs:** N plus (a) a plan whose separate-pass build is batch
+leaves in row blocks keeps it, rather than the fused chain, and (b) the flat and row-block forms
+copy a cursor-reading stage's arguments once per execution, not per transform (19571b83). Judged
+exactly as N above: `O` = e4f21b2 against `N2` = 19571b83, runs E1, E2, E4 and E5 on the EPYC
+and the Xeon (`--serial`), the same target set and criteria. These runs decide P1.
+
+**Run 2, arm N2** (EPYC jobs 519218, 519220, 519222, 519224; Xeon 17261, 17263, 17265, 17267).
+Geometric mean of N2/O over the target cases:
+
+| Machine | E1 | E2 | E4 | E5 | All four |
+|---|---|---|---|---|---|
+| EPYC, runs 20261126-005904-74b3, -19e7, -a3bc, -56eb (bands 1.1, 1.0, 2.7, 1.1 %) | 0.787 | 0.940 | 0.948 | 0.781 | 0.854 |
+| Xeon, runs 20261126-005943-235b, -010837-1b22, -011555-d60d, -012230-2410 (bands 1.6, 1.7, 1.0, 1.3 %) | 0.815 | 0.867 | 0.873 | 0.813 | 0.839 |
+
+N2's separate passes on batch leaves took 16-point rows with a complex factor from 0.83–0.86
+(N) to 0.71–0.75 on the EPYC (0.66 on the Xeon), but 64-point rows on the EPYC to 1.14–1.15,
+slower beyond the band (intervals [1.139, 1.156] and [1.124, 1.138]; 0.81–0.82 on the Xeon). Chains of 256 and 1024 points stayed at 0.96–1.00.
+
+### P1 verdict (task 5.2a)
+
+**Not adopted.** Both arms miss the rule on the EPYC (N 0.868, N2 0.854 against 0.80; N2 also
+has slower cases) and N2 misses it on the Xeon (0.839, and c2c 1024 × 64 with E5 at 1.029
+[1.016, 1.034], slower beyond the band). The forms
+stay in the library behind `machine_profile::edge_batched_forms`, off on every profile, with
+their tests (they are bitwise the walked form's, and 5.2b's pipelines take them); N2's choice
+of separate passes on batch leaves was removed, its single argument copy per execution kept.
+What would move the rest: the fused factor inside batch leaves (batch-leaf kernels with a factor
+edge, a generator change) for leaf-length rows, and P2's fused real factor for chains, whose
+separate pass, not the walk, is their cost. The rule's target set includes chains of 256 and
+1024 points, which P1 barely moves by its mechanism; whether P1 should be judged on the rows on
+batch leaves alone (0.39–0.56 with a separate factor) is the maintainer's decision.
 
 A real row's grid with an input edge did not occur in the catalogue's rows on these
 machines, and the lanes over adjacent transforms with accumulation were not measured
