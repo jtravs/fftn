@@ -2841,7 +2841,7 @@ Points that matter:
   for L2-resident sizes and more beyond. Callbacks always see natural order, because their
   coordinates must be affine in the block.
 
-**Plan for task 5.2** (designed 2026-11-25; 5.2a–5.2e built, "As built" below; steps 5.2a–5.2g in PLAN phase 5,
+**Plan for task 5.2** (designed 2026-11-25; 5.2a–5.2f built, "As built" below; steps 5.2a–5.2g in PLAN phase 5,
 experiment X67; the API points the maintainer has to settle are listed in 18.2, "Pipelines").
 
 - **API** (provisional, `fftn/pipeline.hpp`), the block above built in parts:
@@ -3082,6 +3082,41 @@ every pipeline of one copy are unchanged (`describe()`, `workspace_bytes()` and 
 serial and team, of 1,000 probes against `main` on the Mac and the EPYC 7763; the plain
 driver's functions disassemble the same with Clang on arm64).
 
+**As built (task 5.2f, 2026-11-26).** The lanes pair for `<C, C, C>`, forced only
+(`build_settings::strategy` lanes; experiment X67, 5.2g, decides when the rules take it, so every
+pipeline by the rules keeps its pair, and `describe()` says "forced only"). The program is a lanes
+program (8.5): blocks of B lines of the innermost batch dimension, the rest in blocks of C through
+its tail, each block `chain_builder::c2c_lanes` from the input to a tile in scratch (the forward
+chain, one gather where a run of C lines is no vector access), the middle on the tile, then
+`c2c_lanes` from that tile to the output (the backward chain, one scatter likewise); a source in
+scratch is a tile, which `c2c_lanes` now takes. Each line's chain is the one `c2c_line` gives the
+chain pair's endpoints (the block at stride 1 on the middle's side), so a line's bits are the chain
+pair's with the same placement of the vocabulary. No lanes pass takes a factor: the middle's
+(any kind and stride, one for every line or one per line through the innermost dimension's batch
+step) is the edge pass on the tile, element i of line r at i B + r, `pass_args::rows` lines; the
+scales' product goes to it, else to the backward chain's last pass. A line agrees bitwise with the
+chain pair wherever the chain pair's middle is a separate pass too (no complex kernel of stride 1
+along the line): the two then place the scale alike and choose the same chains. Where the chain
+pair fuses that kernel (into its forward chain's last pass, or with a middle callback into its
+backward chain's first), they agree only within the derived tolerance, for three reasons: the fused
+multiply is the vocabulary's `cmul`, an FMA on the SIMD targets, which the baseline edge pass does
+not make; a chain with a factor edge takes no pair leaf (`pair_for`), so the chain pair's fused
+chain may decompose n otherwise than the lanes' (radices(n) against the pair leaf's r1 x m); and
+the chain pair's scale goes on the backward chain's last pass, the lanes' on the tile's pass, which
+differ in rounding unless the scale is a power of two (1/n for n = 2^k). A tile pass in the
+vocabulary with per-lane factor reads is an arm for X67. The middle callback runs on the
+tile (the block's whole lines in one call, `element_stride` B, `line_stride` 1, line k transform
+`transform + k`), with 12.3's two products (the prologue's scale on the forward chain's last pass);
+`first = direction::backward` swaps the chains' signs. Blocks: lines one element apart on both
+sides (a strided axis of a plane, 9.3) take a lanes column phase's block (`column_block`) and
+`columns_inner`, other lines the lanes over rows' (`lanes_block`; `convolution_lanes_block`). The
+workspace block is unused. Not taken yet, the chain pair built instead with a line in `describe()`
+naming why: prologue and epilogue factors and callbacks, accumulation, stored runs, fan-out, a
+single line, and the real kinds (`<T, C, T>` short rows would need the real lanes' pairing to end
+in and start from a tile). Teams and executors share the blocks as tasks, as for plans on the
+lanes. Pipelines and plans without the forced pair keep their programs and bits (`describe()`,
+`workspace_bytes()` and output bits of 1,824 probes against `main`, the lanes plans among them).
+
 ### 12.3 Block callbacks
 
 ```cpp
@@ -3162,8 +3197,8 @@ pipelines.
     coordinates come from `transform` in the documented batch order (innermost fastest).
     `execute_transforms` numbers transforms absolutely: piece `first` starts at `first`.
   - `edge::call` arrives in 5.3a. `pipeline_desc::middle.call` arrives in 5.3d and `group` in
-    5.3f. A callback whose `fn` is null is no callback, and its other fields must keep their
-    defaults.
+    5.3f ("As built (task 5.3f)" below). A callback whose `fn` is null is no callback, and its
+    other fields must keep their defaults.
   - Modes by position: an input edge takes `modify` or `produce`, an output edge `modify` or
     `consume`, a middle `modify`. Construction refuses any other mode, naming the field, as it
     refuses `consume` with `accumulate` and `consume` on an in-place plan.
@@ -3522,10 +3557,28 @@ As built (task 5.3e; provisional, second reader pending): spectral pairs inverse
   in their order: inverse first, only the chains' names swap.
 - `spectral_pair_rows(n, count, direction::backward)` describes the first; no helper describes
   `<C, T, C>` (12.2's API block names none).
-- Not built: the lanes pair for `<C, C, C>` (5.2f has not started), in either order.
+- The lanes pair for `<C, C, C>` came with 5.2f (12.2, "As built (task 5.2f)"), in either order.
 
 Forward-first pipelines keep their programs and bits: `describe()`, `workspace_bytes()` and output
 bits of the 1,560 probes above, against `main`, unchanged by 5.3e too.
+
+As built (task 5.3f; provisional, second reader pending): `pipeline_desc::group` (an index into
+`batches`, or `no_group`) on the chain pairs of every kind. The group's dimension has no batch loop
+(`add_batch_loops`), so a task is one group; the line's stages, built as for one line, become two
+members loops of G iterations around the middle callback (`group_lines`): the stages before the
+callback in the first, the callback once, the stages after it in the second, each loop moving the
+input, the output and the three cursors by the group dimension's distances and steps and the
+workspace block by one line's block rounded up to 64 bytes, which grows G times. A team shares the
+members loops' lines on each member's scratch with the owner's block, as the depth-first pair's
+sub-row loops. The middle callback gets `block_info::group` G and `group_stride` (that rounded
+block in its elements), `lines` 1; every callback stage of a grouped pipeline numbers its block's
+line from the task and the members loop's iteration (`callback_site::group_lines`,
+`group_inner`, `callback_env::group_member`, `edge_record::group_members`), member 0's for the
+middle's. `execute_transforms` and `transforms_of` count groups, as many as the provisional
+`pipeline::transform_count()`. Refused naming `desc.group`: no such
+dimension, no `middle.call`, `fanout` above 1. The lanes and the depth-first pairs, forced, give way
+to the chain pair with a group, which `describe()` says. 18.2's "Callbacks" proposals 15 and 16 as written. Pipelines without
+a group keep their programs (the probes of 5.2f).
 
 ### 12.4 Owner-computes
 
@@ -4565,6 +4618,17 @@ names `max_lanes` and `strict_layout`, which `options` does not have; a pipeline
     taken (0 and overlapping copies included); `consume` receives each line's copies in copy
     order. The alternative is to check them as for a store, which would refuse the contraction
     over copies that `consume` exists for (18.2, "Pipelines" 5).
+15. **What a task is with a group** (task 5.3f, provisional). Proposal, as built: one group, so
+    `execute_transforms` and `transforms_of` count groups (the lines with the group's dimension
+    left out, in batch order), as many as `pipeline::transform_count()` (added for this, since
+    `transforms_of(team{0, 1}).count` was the only other way), and a team shares a group's lines
+    within its task. The alternative, tasks of lines, would let pieces split a group, which the
+    one callback per group cannot run.
+16. **A group's middle block** (task 5.3f, provisional). Proposal, as built: member 0's line at the
+    data, member k's `k * group_stride` elements further (the members' blocks in the workspace,
+    64-byte aligned), `block_info::transform` member 0's line number; a group needs `middle.call`
+    and is refused with fan-out until built. The alternative, `lines` G with `line_stride`, would
+    read as G lines of one transform's block rather than one line of each member.
 `use`. Task 5.2c added `convolution_rows` under proposals 1–3 (the name of 12.2's API block, the
 optional trailing runs, `middle.scale` 1).
 
@@ -5069,6 +5133,8 @@ to change before a release.
 | 2026-11-26 | Block callbacks on planes and volumes (task 5.3c, section 12.3): the input's inside the first phase's line bodies (a modify callback's line copied first into the phase's destination, or for r2c into the real rows' copy in the workspace block), the output's inside the last phase's, on the line, the lanes column block's columns (lines along the last axis) or the block of adjacent transforms; a side with an edge phase of its own (a factor, accumulation) takes its callback there; the edge driver moves the coordinates with the enclosing loops; a consumed c2r output's rows in the workspace block over the half spectrum; no packed c2r intermediate with callbacks; refused beside stored runs on planes and volumes | DESIGN 12.3's table: a callback phase of its own would be the extra sweep that 12.5's stage exists to save. The edge phase a factor already has costs nothing more to carry the callback. Runs' edge phases are nests per run, left for a follow-up rather than refusing the whole feature |
 | 2026-11-26 | Spectral pairs inverse first (task 5.3e, section 12.3, "As built"): `<C, C, C>` with `first = direction::backward` (the chain pair and the forced depth-first pair with their directions swapped) and the kind `<C, T, C>` (the real chain pair reversed, its sides' layout and runs those of the n/2 + 1 bins, its middle real factors only); the lanes pair left to 5.2f. Awaits the maintainer's review of the API | 12.2's three kinds complete with the existing chains; the depth-first pair's run passes exist in one direction each, so inverse first takes its read and store stages rather than new kernels |
 | 2026-11-26 | Block callbacks on pipelines (task 5.3d, section 12.3, "As built"): `middle.call` (modify only) and the prologue's and epilogue's callbacks on every pair, with 18.2's "Callbacks" proposals 6 and 7 as written (the middle callback first, then its vocabulary in the inverse's first pass; two scale products around it); the middle callback passed the whole line in one call; the epilogue's per copy with the copy in `block_info::copy`; a consumed fan-out's `fanout_out_dist` not checked; the plans' row callback helpers shared. Awaits the maintainer's review of the API | A middle callback may be pure per line, which a block of part of a line cannot serve; a nested pipeline in a middle needs the whole line. Nothing is stored for a consumed output, so the overlap refusal (18.2, "Pipelines" 5) has nothing to protect |
+| 2026-11-26 | The lanes pair (task 5.2f, section 12.2, "As built"): `<C, C, C>` rows of a batch and adjacent strided lines as a lanes program, forced only until X67; the middle as the edge pass on the tile (no lanes pass takes a factor), the middle callback on the tile, either direction first; what it does not take builds the chain pair, named in `describe()`. No public API | Fusing the kernel into the lanes' last pass needs per-lane factor reads, a kernel change X67 can price; the separate pass keeps every line's bits equal to the chain pair's with the same placement |
+| 2026-11-26 | Groups on pipelines (task 5.3f, section 12.3, "As built"): `pipeline_desc::group`, provisional; the group's dimension a task, two members loops around one middle callback over the G spectra, which `block_info::group` and `group_stride` describe; `execute_transforms` and `transforms_of` count groups; refused without a middle callback, with fan-out and for no such dimension; 18.2's "Callbacks" proposals 15 and 16. Awaits the maintainer's review of the API | A coupled middle (polarisations) needs every member's spectrum at once, and one task per group keeps the callback whole under teams and executors |
 | 2026-11-26 | The C API for plans (step 6.8, section 5.9; provisional, second reader to come): `fftn/c_api.h` and `src/c_api/` with 18.2's proposals Q17–Q22 taken as written (the header in `fftn::fftn`, one plan type and `void*` data, NULL or a status plus an optional caller-owned `fftn_error`, the opt-in shared library `fftn_c` exporting `fftn_` only, plain structs without size or version fields, plans of every built kind with workspaces, the four execution forms, wisdom and lengths); the choices where 5.9 was silent are listed in its "As built" | The maintainer's priority (2026-11-25): features fully built; the C interface serves C, Fortran, Python and Julia callers and older toolchains (decision of 2026-11-16) |
 | 2026-11-26 | Owner-computes and the fusion documents (task 5.5, section 12.4, "As built"): no library change; a test of the deal for plans with edges and callbacks and for pipelines, an OpenMP example, `docs/fusion.md`. fbench's pipeline arms (`PIPELINE=fused` and the unfused `separate`) convolve rows with a kernel that delays each row by one element, and the harness checks such backends against the delayed input (`"output":"delay"` in `describe`) instead of the DFT. `fftn/kokkos.hpp`'s `array_of` not built: section 5.5 gives it no design (the fusion proposal's one line did not reach the agreed section 12) | A pipeline computes no DFT, so the harness's check needs another reference; a delay is exact, analytic and moves every bin's phase, so a copying or wrong arm fails it. The API waits for the maintainer (AGENTS.md section 7) |
 

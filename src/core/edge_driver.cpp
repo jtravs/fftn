@@ -236,10 +236,10 @@ void run_records(const program& p, const std::vector<edge_record>& e, std::size_
         run_records(p, e, i + 1, l.body_end, moved(from, l.step, c), moved(f, e[i].factor_step, c),
                     at_iteration(env, e[i], c));
       }
-    } else if (e[i].copies) {
+    } else if (e[i].copies || e[i].group_members) {
       callback_env copy = env;
       for (std::size_t c = 0; c < l.count; ++c) {
-        copy.copy = c;
+        (e[i].copies ? copy.copy : copy.group_member) = c;
         run_records(p, e, i + 1, l.body_end, moved(from, l.step, c), moved(f, e[i].factor_step, c),
                     copy);
       }
@@ -271,6 +271,9 @@ moved_in_nest(const program& p, const std::vector<edge_record>& e, std::size_t b
     }
     if (env != nullptr && e[i - 1].copies) {
       env->copy = rest % l.count;
+    }
+    if (env != nullptr && e[i - 1].group_members) {
+      env->group_member = rest % l.count;
     }
     rest /= l.count;
   }
@@ -891,11 +894,11 @@ void run_edge_lines(const program& p, const std::vector<edge_record>& e, std::si
   bool moves = false;
   for (std::size_t i = begin; i < begin + nest; ++i) {
     from = moved(from, std::get_if<loop>(&p.records[i])->start, 1);
-    moves = moves || e[i].moves_origin || e[i].copies;
+    moves = moves || e[i].moves_origin || e[i].copies || e[i].group_members;
   }
   if (!moves) {
-    // No callback's coordinates or copy move (every plan but a multi-axis one with callbacks, and
-    // every lines loop but a pipeline's copies): no copy of env.
+    // No callback's coordinates, copy or group member move (every plan but a multi-axis one with
+    // callbacks, and every lines loop but a pipeline's copies and members): no copy of env.
     for (std::size_t line = first; line < last; ++line) {
       const auto [here, cursors] = moved_in_nest(p, e, begin, nest, line, from, f);
       run_records(p, e, begin + nest, body_end, here, cursors, env);

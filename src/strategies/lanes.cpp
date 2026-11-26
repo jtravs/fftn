@@ -213,8 +213,14 @@ std::size_t chain_builder<T>::c2c_lanes(std::size_t n, int sign, endpoint src,
   const std::size_t split =
       pair != nullptr ? rad.size()
                       : split_from(rad, false, kernels_.complex_lanes > 1 ? 1 : dst.stride);
-  lanes_body(n, rad, split, sign, {src.where, 2 * src.stride, 2 * src_dist},
-             {dst.where, 2 * dst.stride, 2 * dst_dist}, edges, block, stages, columns);
+  // A tile in scratch: element i of row r at i B + r.
+  const lane_rows from = is_scratch(src.where)
+                             ? lane_rows{.where = src.where,
+                                         .stride = static_cast<std::ptrdiff_t>(2 * block),
+                                         .dist = 2}
+                             : lane_rows{src.where, 2 * src.stride, 2 * src_dist};
+  lanes_body(n, rad, split, sign, from, {dst.where, 2 * dst.stride, 2 * dst_dist}, edges, block,
+             stages, columns);
   return n * block;
 }
 
