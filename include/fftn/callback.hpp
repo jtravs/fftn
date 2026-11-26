@@ -6,18 +6,18 @@
 /// edge's data while they are in cache (dev/DESIGN.md 12.3). An edge takes one through
 /// `edge::call` (fftn/edges.hpp); its argument arrives with each execution (`exec_args`).
 ///
-/// Provisional (tasks 5.3a, 5.3b, 2026-11-26): this API follows dev/DESIGN.md 12.3 with the
+/// Provisional (tasks 5.3a to 5.3c, 2026-11-26): this API follows dev/DESIGN.md 12.3 with the
 /// proposals of 18.2 ("Callbacks"), which the maintainer has yet to settle, and may change before
-/// the first release. So far a callback is taken by plans of one axis (rows: c2c, r2c, c2r);
-/// construction refuses one on planes and volumes, naming the field.
+/// the first release. A callback is taken by c2c, r2c and c2r plans of every rank; construction
+/// refuses one on real-to-real plans and on planes and volumes with stored runs, naming the field.
 ///
 /// The contract, for every callback:
 ///
 /// - **Coverage.** Each element of the edge's side (each stored element, with stored runs) is
 ///   passed exactly once per execution, in blocks whose shape the plan chooses: a line whole up
 ///   to a size set per machine (half the L1 data cache by default), a longer one in element
-///   ranges, and several short lines of consecutive transforms in one call where the plan holds
-///   them together. Blocks of one
+///   ranges, and several short lines in one call where the plan holds them together (consecutive
+///   transforms, or on a plane or volume adjacent lines along another axis). Blocks of one
 ///   execution may run concurrently on different members of a team or executor, and in any
 ///   order; block shapes may differ between execution forms (serial, team, executor).
 /// - **Purity and determinism.** When the callback is pure per element (its result depends only

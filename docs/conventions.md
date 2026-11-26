@@ -281,7 +281,7 @@ prior values there.
 
 ## Block callbacks
 
-Provisional (tasks 5.3a and 5.3b, `fftn/callback.hpp`). An edge may also take a block callback
+Provisional (tasks 5.3a to 5.3c, `fftn/callback.hpp`). An edge may also take a block callback
 (`edge::call`): a function the application compiles, which the plan calls on blocks of the
 edge's side while they are in cache. Its type is `block_fn<T>`, `noexcept`, with `T` the side's
 element type; `callback_of<F, T>()` makes one that calls a callable object (a `noexcept` lambda)
@@ -293,7 +293,9 @@ lines and strides, the member running it and that member's scratch (`callback::s
 of it, counted by `workspace_bytes()`). A block holds a row whole up to a size the plan's machine
 profile sets (half the L1 data cache by default), longer rows in element ranges; where the plan
 holds several short rows together (the lanes) one call takes them all, line k being transform
-`transform + k`. On a real side the elements are real values (`T`); on the complex side of a
+`transform + k`. On a plane or volume a block is lines along one axis (`element_axis`), and where
+the plan holds several together, adjacent lines along another axis (`line_axis`: a block of
+adjacent columns) or consecutive transforms (`along_transforms`). On a real side the elements are real values (`T`); on the complex side of a
 real transform they are the n/2 + 1 bins.
 
 ```cpp file=examples/callbacks.cpp region=callbacks
@@ -329,13 +331,15 @@ is pure per element (its result depends only on the element's value and coordina
 guarantees of "Determinism" below hold. A callback may execute another plan through a serial
 overload with a workspace of its own, such as `fftn::workspace{info.scratch}`. A plan with a
 callback is executed through the overloads that take `exec_args`; the others end the program.
-So far callbacks are taken by rows (c2c, r2c and c2r plans of one axis) on the strategy the rules
-or measured planning choose; measured planning times its candidates with stand-ins that do
+Callbacks are taken by c2c, r2c and c2r plans of every rank on the strategy the rules or measured
+planning choose; on a plane or volume the input's runs inside the lines of the transform's first
+phase and the output's inside those of its last, so a callback costs no pass over the array of
+its own, and a side with a factor or accumulation runs its callback in that side's own pass; measured planning times its candidates with stand-ins that do
 nothing in place of the callbacks, so construction never calls one. Only a consumed output keeps
 a row from a strategy that writes the output as its working memory (the grid, the depth-first
 chains, the lanes over adjacent transforms, and a real row's lanes whose input is in the
-workspace block too), which then runs as the chain, as `plan::describe()` says. Planes and volumes refuse
-callbacks at construction (task 5.3c).
+workspace block too), which then runs as the chain, as `plan::describe()` says. Real-to-real
+plans, and planes and volumes with stored runs, refuse callbacks at construction.
 
 ## Stored runs
 
