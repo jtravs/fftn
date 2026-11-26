@@ -82,7 +82,8 @@ struct edge_drive {
 
   static void run(const plan_core& c, std::size_t first, std::size_t count,
                   const slot_addresses& at, const state& f) noexcept {
-    run_edge_transforms(c.prog, c.edge_records, c.edge_tail_records, first, count, at, f);
+    run_edge_transforms(c.prog, c.edge_records, c.edge_tail_records, c.edge_batched, first, count,
+                        at, f);
   }
   [[nodiscard]] static task_cursors at_task(const plan_core& c, std::size_t t,
                                             const state& f) noexcept {

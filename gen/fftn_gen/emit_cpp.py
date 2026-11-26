@@ -101,6 +101,14 @@ _SIGNATURE = {
         "template <class T, int Sign, class In, class Out, class Tw>",
         "dif(const In& in, const Out& out, const Tw& twid)",
     ),
+    "dif_head": (
+        "template <class T, int Sign, class In, class Out, class Tw>",
+        "dif_head(const In& in, const Out& out, const Tw& twid)",
+    ),
+    "plain_head": (
+        "template <class T, int Sign, class In, class Out>",
+        "plain_head(const In& in, const Out& out)",
+    ),
 }
 
 
@@ -132,7 +140,14 @@ def codelet_inl(codelets: list[Codelet]) -> str:
         "// forward roots). in.get(j) returns a cv<T>, out.put(k, v) stores one and\n",
         "// twid.get(j) returns a tw<T>; all three are force-inlined members of the caller's\n",
         "// accessor types. Every output depends on every input, so in and out may address\n",
-        "// the same memory. Included inside a region after its vocabulary; no include\n",
+        "// the same memory. The even radices also hold two pruned variants (h = R/2),\n",
+        "// for the edge passes of lines with stored runs:\n",
+        "//\n",
+        "//   dif_head(in, out, twid)  dif with in_j = 0 for j >= h, which it does not read\n",
+        "//   plain_head(in, out)      plain storing out_0 .. out_{h-1} only\n",
+        "//\n",
+        "// Each loads every input it reads before its first store, so in and out may address\n",
+        "// the same memory too. Included inside a region after its vocabulary; no include\n",
         "// guard. Calling convention and operation counts: gen/README.md.\n",
         "\n",
         "namespace {\n",
@@ -153,7 +168,9 @@ def codelet_inl(codelets: list[Codelet]) -> str:
         out.append("\n")
         out.append(f"template <> struct cdft<{radix}> {{\n")
         out.append(f"  static constexpr std::size_t radix = {radix};\n")
-        for variant in ("plain", "dit", "dif"):
+        for variant in ("plain", "dit", "dif", "dif_head", "plain_head"):
+            if (variant, -1) not in variants:
+                continue  # a pruned variant of an odd radix
             fwd, bwd = variants[(variant, -1)], variants[(variant, 1)]
             tmpl, sig = _SIGNATURE[variant]
             out.append("\n")
@@ -308,16 +325,7 @@ def split_codelet_inl(codelets: list[SplitCodelet]) -> str:
     return "".join(out)
 
 
-def metadata_hpp(codelets: list[Codelet], split: list[SplitCodelet]) -> str:
-    radices = sorted({c.radix for c in codelets})
-    split_radices = sorted({c.radix for c in split})
-    split_rows = []
-    for c in split:
-        k = c.counts
-        split_rows.append(
-            f"    {{{c.radix}, variant::{c.variant}, {c.twiddles}, {k.adds}, {k.muls}, "
-            f"{k.fmas}, {k.negs}, {k.vector_ops}, {c.live}}},\n"
-        )
+def _rows(codelets: list[Codelet]) -> list[str]:
     rows = []
     for c in codelets:
         k = c.counts
@@ -326,6 +334,23 @@ def metadata_hpp(codelets: list[Codelet], split: list[SplitCodelet]) -> str:
             f"{c.twiddles}, {k.adds}, {k.muls}, {k.fmas}, {k.cmuls}, "
             f"{k.vector_ops}, {c.live}}},\n"
         )
+    return rows
+
+
+def metadata_hpp(
+    codelets: list[Codelet], split: list[SplitCodelet], pruned: list[Codelet] = ()
+) -> str:
+    radices = sorted({c.radix for c in codelets})
+    split_radices = sorted({c.radix for c in split})
+    pruned_radices = sorted({c.radix for c in pruned})
+    split_rows = []
+    for c in split:
+        k = c.counts
+        split_rows.append(
+            f"    {{{c.radix}, variant::{c.variant}, {c.twiddles}, {k.adds}, {k.muls}, "
+            f"{k.fmas}, {k.negs}, {k.vector_ops}, {c.live}}},\n"
+        )
+    rows = _rows(codelets)
     return "".join(
         [
             SPDX,
@@ -343,7 +368,8 @@ def metadata_hpp(codelets: list[Codelet], split: list[SplitCodelet]) -> str:
             "\n",
             "namespace fftn::inline v0::detail::gen {\n",
             "\n",
-            "enum class variant : std::uint8_t { plain, dit, dif };\n",
+            "// dif_head and plain_head are the pruned variants (pruned_codelets below).\n",
+            "enum class variant : std::uint8_t { plain, dit, dif, dif_head, plain_head };\n",
             "enum class lowering : std::uint8_t { complex_register, split };\n",
             "\n",
             "struct codelet_info {\n",
@@ -370,6 +396,20 @@ def metadata_hpp(codelets: list[Codelet], split: list[SplitCodelet]) -> str:
             f"inline constexpr std::size_t radix_count = {len(radices)};\n",
             "inline constexpr std::uint8_t radices[radix_count] = {",
             ", ".join(map(str, radices)),
+            "};\n",
+            "\n",
+            "// The pruned codelets (DESIGN.md 12.1, task 5.1e): one entry per even radix,\n",
+            "// pruned variant and direction, in that order. dif_head reads inputs 0 .. R/2 - 1\n",
+            "// (the others are known zero), plain_head stores outputs 0 .. R/2 - 1 (the others\n",
+            "// are not wanted); the counts are the pruned codelet's.\n",
+            f"inline constexpr std::size_t pruned_codelet_count = {len(pruned)};\n",
+            "inline constexpr codelet_info pruned_codelets[pruned_codelet_count] = {\n",
+            *_rows(list(pruned)),
+            "};\n",
+            "\n",
+            f"inline constexpr std::size_t pruned_radix_count = {len(pruned_radices)};\n",
+            "inline constexpr std::uint8_t pruned_radices[pruned_radix_count] = {",
+            ", ".join(map(str, pruned_radices)),
             "};\n",
             "\n",
             "// The split codelets (lowering::split, src/gen/split_codelets.inl): one entry per\n",

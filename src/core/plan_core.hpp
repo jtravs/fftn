@@ -255,6 +255,12 @@ public:
   // where they differ (task 5.1c).
   std::string strategy_name;
   std::string edge_fallback;
+  // The edge driver's batched forms (core/edge_driver.hpp, task 5.2a), where the profile takes
+  // them (machine_profile::edge_batched_forms); edge_row_block: the rows per block of a c2c plan
+  // of rows with separate edge passes (0: none), each with a line of its own in the workspace
+  // block.
+  edge_forms edge_batched;
+  std::size_t edge_row_block = 0;
 };
 
 // The core a team of two or more members runs: the team program where there is one.

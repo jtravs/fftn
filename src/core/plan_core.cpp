@@ -1183,6 +1183,10 @@ constexpr std::string_view c2c_fused_input_reason =
     "chain, which takes the factor fused instead";
 constexpr std::string_view batch_one_row_reason =
     "batch leaves, one row at a time between the edge passes";
+// The points of a block of rows in the edge driver's row-block form (task 5.2a): the block's
+// lines in the workspace block, 32 KiB in double, stay in L1 between the edge passes and the
+// rows' transforms; chunk_points' 2048, unmeasured otherwise.
+constexpr std::size_t edge_row_block_points = 2048;
 
 template <class T>
 void build(plan_core& c, const shape_view& s, const side& in, const side& out, const options& opts,
@@ -1590,6 +1594,9 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   const bool row_edges = edge_ops != nullptr && r == 1 && !any_fused(*edge_ops);
   // Why an edge keeps the plan from the strategy the rules would choose, for describe().
   std::string edge_fallback;
+  // How a c2c row's chain takes each side's stored runs (task 5.1e), for describe().
+  run_pruning in_pruning = run_pruning::none;
+  run_pruning out_pruning = run_pruning::none;
   const bool row_input = row_edges && edge_ops->in.separate;
   side in_eff = in;
   bool in_place_build = c.in_place;
@@ -1774,13 +1781,26 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       row_edges && (lanes != 0 || grid_plan.phases != 0 || !depth_tops.empty() ||
                     !bluestein_tops.empty() || real_grid.phases != 0 || !real_depth_tops.empty());
   const bool use_edge_phases = edge_phases && !row_strategy && adjacent == 0;
+  // The edge driver's row-block form (machine_profile::edge_batched_forms, task 5.2a): a c2c
+  // plan of rows of one batch dimension whose separate edge passes include a factor (so that it
+  // runs on the edge driver) takes its rows in blocks of about edge_row_block_points points,
+  // each row with a line of its own in the workspace block (c2c_axis), the edge passes and the
+  // leaves once per block.
+  if (row_edges && !row_strategy && adjacent == 0 && s.kind == transform_kind::c2c &&
+      s.batches.size() == 1 && settings.profile.edge_batched_forms &&
+      (edge_ops->in.kind != factor_kind::none || edge_ops->out.kind != factor_kind::none) &&
+      !edge_ops->in.runs.any() && !edge_ops->out.runs.any()) {
+    const std::size_t rows =
+        std::min(s.batches[0].count, std::max<std::size_t>(edge_row_block_points / n_in, 1));
+    c.edge_row_block = rows >= 2 ? rows : 0;
+  }
   // Batch leaves take a batch of rows in one call of the leaf (driver.hpp, run_leaf_rows),
-  // which separate edge passes between the rows break up: each row's leaf runs alone. Not
-  // over a reason already given: where the input edge's pass has moved the rows (above), the
-  // plan without the edges may have no batch leaves at all, and the move is the cause;
-  // name_forced_strategy gives this reason where that plan has them.
+  // which separate edge passes between the rows break up: each row's leaf runs alone, except
+  // in the row-block form. Not over a reason already given: where the input edge's pass has
+  // moved the rows (above), the plan without the edges may have no batch leaves at all, and
+  // the move is the cause; name_forced_strategy gives this reason where that plan has them.
   if (row_edges && !row_strategy && batch != nullptr && s.kind == transform_kind::c2c &&
-      edge_fallback.empty()) {
+      c.edge_row_block == 0 && edge_fallback.empty()) {
     edge_fallback = batch_one_row_reason;
   }
   const bool accumulate = edge_ops != nullptr && edge_ops->out.accumulate;
@@ -2208,7 +2228,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     const auto c2c_axis = [&](std::size_t d, std::size_t e, const std::vector<std::size_t>& extent,
                               const view& src, const view& dst) {
       const bool aliased = src.where == dst.where || c.in_place;
-      const line_edges line = c2c_edges(opts, settings, d + 1 == r, d == 0);
+      line_edges line = c2c_edges(opts, settings, d + 1 == r, d == 0);
       std::vector<stage> st;
       std::size_t need = 0;
       if (edge_ops != nullptr && r == 1 && (edge_ops->in.separate || edge_ops->out.separate)) {
@@ -2219,31 +2239,78 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
         const endpoint block{.where = slot::block, .stride = 1};
         endpoint from = at(src, e);
         const endpoint to = at(dst, e);
+        // Pruning by the edge passes (task 5.1e): where a side's runs lie in the line's first
+        // half and the chain's first (input) or last (output) pass has a radix with pruned
+        // codelets, that pass reads or writes the first half only. One run of exactly that
+        // half, stored with stride 1, is read or written where it is stored, with no separate
+        // pass (run_pruning::direct, unless the output accumulates); otherwise the separate
+        // pass moves the runs through the half in the workspace block (run_pruning::half).
+        const auto within_half = [n](const std::vector<line_run>& runs) {
+          return std::ranges::all_of(
+              runs, [n](const line_run& run) { return run.logical + run.count <= n / 2; });
+        };
+        const auto direct = [n](const std::vector<line_run>& runs, const endpoint& stored) {
+          return runs.size() == 1 && runs[0].logical == 0 && 2 * runs[0].count == n &&
+                 stored.stride == 1;
+        };
+        const std::size_t cb = 2 * (s.prec == precision::f64 ? sizeof(double) : sizeof(float));
         // Stored runs (task 5.1d): the input's pass reads the runs with zeros elsewhere, the
         // output's stores only the runs.
         if (edge_ops->in.runs.any()) {
-          run_line_stages(s.prec, edge_ops->in, false, n, edge_ops->in.runs.of(0),
-                          {.src = from.where, .src_stride = from.stride}, settings.chunk_points,
-                          false, st);
-          from = block;
+          const std::vector<line_run>& runs = edge_ops->in.runs.of(0);
+          line.in_head = line.in == edge_op::none && within_half(runs) && chain.head_first(n);
+          if (line.in_head && direct(runs, from)) {
+            line.in_offset = runs[0].stored * cb;
+            in_pruning = run_pruning::direct;
+          } else {
+            run_line_stages(s.prec, edge_ops->in, false, line.in_head ? n / 2 : n, runs,
+                            {.src = from.where, .src_stride = from.stride}, settings.chunk_points,
+                            false, st);
+            from = block;
+            in_pruning = line.in_head ? run_pruning::half : run_pruning::none;
+          }
         } else if (edge_ops->in.separate) {
           st.push_back(edge_pass_stage(s.prec, edge_ops->in, false, n, from.where, from.stride,
                                        slot::block, 1, settings.chunk_points, false,
                                        edge_ops->in.axis_stride));
           from = block;
         }
-        const endpoint line_to = edge_ops->out.separate ? block : to;
-        need = chain.c2c_line(n, sign, from, line_to, from.where == line_to.where, line, st);
+        endpoint line_to = edge_ops->out.separate ? block : to;
+        bool out_pass = edge_ops->out.separate;
         if (edge_ops->out.runs.any()) {
+          const std::vector<line_run>& runs = edge_ops->out.runs.of(0);
+          line.out_head = line.out != edge_op::factor && within_half(runs) && chain.head_last(n);
+          if (line.out_head && !edge_ops->out.accumulate && direct(runs, to)) {
+            line.out_offset = runs[0].stored * cb;
+            line_to = to;
+            out_pass = false;
+            out_pruning = run_pruning::direct;
+          } else {
+            out_pruning = line.out_head ? run_pruning::half : run_pruning::none;
+          }
+        }
+        need = chain.c2c_line(n, sign, from, line_to, from.where == line_to.where, line, st);
+        if (edge_ops->out.runs.any() && out_pass) {
           run_line_stages(s.prec, edge_ops->out, true, n, edge_ops->out.runs.of(0),
                           {.src = slot::block, .dst = to.where, .dst_stride = to.stride},
                           settings.chunk_points, false, st);
-        } else if (edge_ops->out.separate) {
+        } else if (out_pass) {
           st.push_back(edge_pass_stage(s.prec, edge_ops->out, true, n, slot::block, 1, to.where,
                                        to.stride, settings.chunk_points, false,
                                        edge_ops->out.axis_stride));
         }
-        c.block_elements = std::max(c.block_elements, n);
+        // The row-block form runs flat programs only (make_edge_forms): a line of more stages
+        // (a Bluestein length) runs a transform at a time, unrolled.
+        if (st.size() > flat_stages_max ||
+            std::ranges::any_of(st, [](const stage& x) { return x.moving_twiddles; })) {
+          c.edge_row_block = 0;
+        }
+        // Only where the line starts or ends in the block: a side whose runs the chain's pruned
+        // first or last pass reads or writes where they are stored needs none (task 5.1e).
+        if (from.where == slot::block || line_to.where == slot::block) {
+          c.block_elements =
+              std::max(c.block_elements, n * std::max<std::size_t>(c.edge_row_block, 1));
+        }
       } else {
         if (complex_columns(e, extent, src, dst, line, sign, "", d)) {
           return;
@@ -2538,15 +2605,23 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
             : (row_strategy ? edge_layout::row_strategy : edge_layout::phases);
     if (edge_ops->in.runs.any() || edge_ops->out.runs.any()) {
       // Stored runs (task 5.1d), with at most accumulation and scales beside them: one pass per
-      // side that has runs or accumulates.
+      // side that has runs or accumulates, except a side whose runs the chain's pruned first or
+      // last pass reads or writes where they are stored (task 5.1e).
       const bool to_out = use_edge_phases && src0.where == slot::out;
-      const std::size_t passes = (edge_ops->in.runs.any() ? 1U : 0U) +
-                                 (edge_ops->out.runs.any() || edge_ops->out.accumulate ? 1U : 0U);
+      const bool in_pass = edge_ops->in.runs.any() && in_pruning != run_pruning::direct;
+      const bool out_pass =
+          edge_ops->out.runs.any() ? out_pruning != run_pruning::direct : edge_ops->out.accumulate;
+      const std::size_t passes = (in_pass ? 1U : 0U) + (out_pass ? 1U : 0U);
       c.edges_note =
           runs_text({.in = edge_ops->in.runs, .out = edge_ops->out.runs}, edge_ops->out.accumulate,
-                    to_out ? "the output" : "the workspace block", passes);
+                    to_out ? "the output" : "the workspace block", passes, in_pruning, out_pruning);
     } else {
       c.edges_note = edges_text(*edge_ops, layout, edge_passes(p));
+      if (c.edge_row_block != 0) {
+        c.edges_note += "\nedge row blocks: the rows in blocks of " +
+                        std::to_string(c.edge_row_block) +
+                        ", each separate pass, and a leaf, once per block";
+      }
     }
     c.edge_fallback = edge_fallback;
   }
@@ -2583,7 +2658,8 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
                  : "each axis in turn";
     }
     if (batch != nullptr && s.kind == transform_kind::c2c) {
-      return std::string(row_edges ? batch_one_row_name : batch_leaves_name);
+      return std::string(row_edges && c.edge_row_block == 0 ? batch_one_row_name
+                                                            : batch_leaves_name);
     }
     return "the chain";
   }();
@@ -2865,6 +2941,18 @@ std::shared_ptr<plan_core> build_core(const shape_view& s, const options& opts,
   // Only multi-axis programs are unrolled (X41): a 1-D grid without moving twiddles would
   // otherwise change its execution path, which nothing measured.
   mark_flat(c->prog, settings.unroll_calls && r > 1);
+  // The edge driver's batched forms (task 5.2a): rows too are unrolled there, the walked form
+  // being what X65 measured them against.
+  if (c->needs_args && settings.profile.edge_batched_forms) {
+    const auto complex_bytes = static_cast<std::ptrdiff_t>(2 * real_bytes);
+    c->edge_batched =
+        make_edge_forms(c->prog, c->edge_records, settings.unroll_calls, c->edge_row_block,
+                        static_cast<std::ptrdiff_t>(c->lengths[0]) * complex_bytes, complex_bytes);
+    // describe() and the workspace layout name the row blocks that build() planned.
+    if (c->edge_batched.row_block != c->edge_row_block) {
+      throw std::logic_error("fftn: internal: the row blocks planned are not the form built");
+    }
+  }
   c->graph = build_work_graph(c->prog, points, settings.chunk_points);
   // A real row on a chain's stages likewise, where the profile says (X83: on the Xeon 6240 teams
   // of 4 and 8 ran real rows of 6400-10240 points 1.32-2.69 times slower than one thread). Not a
