@@ -434,19 +434,23 @@ check_result check_output(const layout& l, const void* in, const void* out, std:
   return r;
 }
 
-check_result check_delay(const layout& l, const void* in, const void* out) {
+check_result check_delay(const layout& l, const void* in, const void* out, std::int64_t fanout,
+                         bool valid) {
   const auto* x = static_cast<const double*>(in);
   const auto* y = static_cast<const double*>(out);
   check_result r;
   const bool real = l.kind == fbench_r2c;
-  if (l.rank != 1 || l.interleave != 1 || l.in_place || (l.kind != fbench_c2c && !real)) {
+  const std::int64_t n = l.dims.at(0);
+  if (l.rank != 1 || (real && l.interleave != 1) || l.in_place || (l.kind != fbench_c2c && !real) ||
+      fanout < 1 || l.batch % fanout != 0 || (valid && n % 4 != 0)) {
     return r; // not a layout the delayed check knows: never a pass
   }
   const double eps = l.precision == fbench_f32 ? std::numeric_limits<float>::epsilon()
                                                : std::numeric_limits<double>::epsilon();
   // Two transforms and a multiplication: twice the transform's bound.
   r.tol = 20.0 * eps * (1.0 + std::log2(static_cast<double>(l.n_total)));
-  const std::int64_t n = l.dims.at(0);
+  const std::int64_t m = n / 2;
+  const std::int64_t count = valid ? m : n; // output values per row
   // An r2c case's output rows hold n reals from the start of each row of n/2 + 1 complex values
   // (FFTW's padded in-place layout of the real side).
   const auto out_value = [&](std::int64_t b, std::int64_t j) -> value {
@@ -455,20 +459,31 @@ check_result check_delay(const layout& l, const void* in, const void* out) {
     }
     return load(l.out, y, b, j);
   };
+  // Logical position i of row b's line: the input row's value, or zero beyond the valid half.
+  const auto line_value = [&](std::int64_t b, std::int64_t i) -> value {
+    if (valid && i >= m) {
+      return {0.0, 0.0};
+    }
+    return load(l.in, x, b, i);
+  };
   std::vector<std::int64_t> rows{0};
-  if (l.batch > 1) {
-    rows.push_back(l.batch - 1);
+  for (const std::int64_t b : {fanout - 1, l.batch - 1}) {
+    if (b != rows.back()) {
+      rows.push_back(b);
+    }
   }
   r.rows = static_cast<std::int64_t>(rows.size());
-  r.samples = n;
+  r.samples = count;
   double diff2 = 0.0;
   double ref2 = 0.0;
   double diff_max = 0.0;
   for (const std::int64_t b : rows) {
+    const std::int64_t line = b / fanout * fanout;
     double e_in = 0.0;
     double e_out = 0.0;
-    for (std::int64_t j = 0; j < n; ++j) {
-      const value want = load(l.in, x, b, (j + n - 1) % n);
+    for (std::int64_t j = 0; j < count; ++j) {
+      const std::int64_t logical = valid ? m / 2 + j : j;
+      const value want = line_value(line, (logical + n - 1) % n);
       const value got = out_value(b, j);
       const double dre = got.re - want.re;
       const double dim = got.im - want.im;
@@ -484,7 +499,7 @@ check_result check_delay(const layout& l, const void* in, const void* out) {
     r.parseval = std::isnan(p) ? std::numeric_limits<double>::infinity() : std::max(r.parseval, p);
   }
   r.err_rms = std::sqrt(diff2 / ref2);
-  r.err_max = diff_max / std::sqrt(ref2 / static_cast<double>(r.rows * n));
+  r.err_max = diff_max / std::sqrt(ref2 / static_cast<double>(r.rows * count));
   r.pass = r.err_rms <= r.tol && r.err_max <= 8.0 * r.tol && r.parseval <= r.tol;
   return r;
 }
@@ -600,6 +615,38 @@ std::string check_delays() {
     if (check_delay(l, x.data(), y.data()).pass || check_delay(l, x.data(), write(0).data()).pass ||
         check_delay(l, x.data(), write(2).data()).pass) {
       return "the delayed check accepts a wrong output (kind " + std::to_string(kind) + ")";
+    }
+    // The valid halves of two copies per line (X67): 4 rows of 12, lines from rows 0 and 2.
+    const layout v = make_layout(kind, 1, {12, 1, 1}, 4, -1, false, fbench_f64);
+    std::vector<double> xv(v.reals_in());
+    fill_input(v, xv.data(), 9);
+    // Copy b's output from input row `from(b)`, its line delayed by `delay`.
+    const auto halves = [&](std::int64_t delay, bool own_row) {
+      std::vector<double> y(v.reals_out(), 0.0);
+      for (std::int64_t b = 0; b < v.batch; ++b) {
+        const std::int64_t line = own_row ? b : b / 2 * 2;
+        for (std::int64_t j = 0; j < 6; ++j) {
+          const std::int64_t i = 3 + j - delay;
+          const value w = i < 6 ? load(v.in, xv.data(), line, i) : value{0.0, 0.0};
+          if (kind == fbench_r2c) {
+            y[idx(2 * v.out.offset(b, 0) + j)] = w.re;
+          } else {
+            y[idx(2 * v.out.offset(b, j))] = w.re;
+            y[idx(2 * v.out.offset(b, j) + 1)] = w.im;
+          }
+        }
+      }
+      return y;
+    };
+    if (!check_delay(v, xv.data(), halves(1, false).data(), 2, true).pass) {
+      return "the delayed check rejects exact valid halves of copies (kind " +
+             std::to_string(kind) + ")";
+    }
+    if (check_delay(v, xv.data(), halves(1, true).data(), 2, true).pass ||
+        check_delay(v, xv.data(), halves(0, false).data(), 2, true).pass ||
+        check_delay(v, xv.data(), halves(1, false).data(), 1, false).pass) {
+      return "the delayed check accepts wrong valid halves of copies (kind " +
+             std::to_string(kind) + ")";
     }
   }
   return {};

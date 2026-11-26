@@ -104,15 +104,23 @@
 //                    (`pipeline<T, C, T>`, the output rows real, each at the start of its row
 //                    of n/2 + 1 complex values) convolved with a kernel whose spectrum, one for
 //                    every row, delays the row by one element (1/n folded in); fused is the
-//                    row pipeline (fftn/pipeline.hpp, by the rules), separate the same work as a
-//                    user writes it with plans and no buffer of their own: the forward plan into
-//                    the output, a multiply loop there (plain C++, cloned like the edge loops),
-//                    the inverse plan in place. Both arms are planned by the rules with ISA's
-//                    instruction set (PLANNING and the build settings reach neither; X67, task
-//                    5.2g, adds them). describe says "output":"delay", so fbench checks the
-//                    delayed rows instead of the DFT, and lists c2c and r2c as partial: forward
-//                    rows out of place only, other cases unsupported. Serial or on the executor
-//                    (THREADS); not with CALL=team, EDGE_* or RADICES
+//                    row pipeline (fftn/pipeline.hpp), built with the build settings above
+//                    (STRATEGY=chain|depth|lanes forces the pair, X67) and PLANNING's effort;
+//                    separate the same work as a user writes it with plans by the rules: without
+//                    runs and fan-out with no buffer of their own (the forward plan into the
+//                    output, a multiply loop there, plain C++ cloned like the edge loops, the
+//                    inverse plan in place), else with a spectrum buffer (backends/
+//                    convolution.hpp). Interleaved c2c cases are lines of a plane's strided axis.
+//                    describe says "output":"delay", so fbench checks the delayed rows instead of
+//                    the DFT, and lists c2c and r2c as partial: forward rows out of place only,
+//                    other cases unsupported. Serial or on the executor (THREADS); not with
+//                    CALL=team, EDGE_* or RADICES
+//   PIPE_RUNS=full|valid   with PIPELINE: whole lines (default), or the valid halves as stored
+//                    runs, the input's m = n/2 points from logical 0 and the output's m from
+//                    logical m/2, each at the start of its row (X67)
+//   PIPE_FANOUT=F    with PIPELINE: F inverses per forward, each with its own kernel array; the
+//                    case's batch counts the copies, line r read from input row r F and copy k
+//                    written to output row r F + k (X67)
 // ISA is a public option; the others reach the library only through the private build
 // settings, as a test's do: the library has no switch for them, so dev/KNOBS.toml does not
 // list them.
@@ -122,7 +130,9 @@
 // that they too run on the performance cores.
 
 #include "backends/common.hpp"
+#include "backends/convolution.hpp"
 #include "backends/fftn_tuning.hpp"
+#include "core/pipeline.hpp"
 #include "core/plan_core.hpp"
 #include "harness/backend.hpp"
 #include "harness/json.hpp"
@@ -157,7 +167,6 @@
 #include <cstring>
 #include <exception>
 #include <memory>
-#include <numbers>
 #include <optional>
 #include <span>
 #include <stdexcept>
@@ -276,6 +285,8 @@ struct session {
   edge_spec edge_out;                 // EDGE_OUT
   bool edge_loop = false;             // EDGE_ARM=loop: a plain plan and the user's own loops
   pipe_arm pipeline = pipe_arm::none; // PIPELINE
+  bool pipe_valid = false;            // PIPE_RUNS=valid
+  std::size_t pipe_fanout = 1;        // PIPE_FANOUT
   std::string description;
 };
 
@@ -618,14 +629,8 @@ template <class T, bool Complex>
   }
 }
 
-// On x86-64 Linux the loops are cloned for AVX2 and AVX-512, as a user building for their own
-// machine would get them (the bench is compiled for the baseline target, SSE2); elsewhere the
-// baseline is already the machine's vector set (NEON).
-#if defined(__x86_64__) && defined(__linux__)
-#define FBENCH_EDGE_CLONES [[gnu::target_clones("default", "avx2", "avx512f")]]
-#else
-#define FBENCH_EDGE_CLONES
-#endif
+// The loops are cloned for AVX2 and AVX-512 on x86-64 Linux (FBENCH_EDGE_CLONES,
+// backends/convolution.hpp), as a user building for their own machine would get them.
 
 FBENCH_EDGE_CLONES void edge_lines_f64(const side_geometry& g, double* data, const double* src,
                                        const double* factor, std::size_t first, std::size_t count) {
@@ -645,45 +650,60 @@ FBENCH_EDGE_CLONES void edge_lines_f32(const side_geometry& g, float* data, cons
   }
 }
 
-// ---- PIPELINE (task 5.5) ----------------------------------------------------------------
+// ---- PIPELINE (task 5.5; X67's options, task 5.2g) --------------------------------------
 
-// The separate arm's multiply loop over rows [first, first + count) of the spectrum, rows `dist`
-// complex values apart: each bin times the kernel's (one for every row), the complex arithmetic
-// written out so that the compiler vectorises it, as edge_line's.
+namespace conv = fbench::convolution;
+
+FBENCH_EDGE_CLONES void multiply_rows_f64(double* dst, const double* src, const double* k,
+                                          std::size_t bins, std::size_t dist, std::size_t first,
+                                          std::size_t count) {
+  conv::multiply_rows_as(dst, src, k, bins, dist, first, count);
+}
+
+FBENCH_EDGE_CLONES void multiply_rows_f32(float* dst, const float* src, const float* k,
+                                          std::size_t bins, std::size_t dist, std::size_t first,
+                                          std::size_t count) {
+  conv::multiply_rows_as(dst, src, k, bins, dist, first, count);
+}
+
+FBENCH_EDGE_CLONES void multiply_interleaved_f64(double* spectrum, const double* k,
+                                                 std::size_t bins, std::size_t lines,
+                                                 std::ptrdiff_t stride, std::size_t blocks,
+                                                 std::ptrdiff_t block_dist) {
+  conv::multiply_interleaved_as(spectrum, k, bins, lines, stride, blocks, block_dist);
+}
+
+FBENCH_EDGE_CLONES void multiply_interleaved_f32(float* spectrum, const float* k, std::size_t bins,
+                                                 std::size_t lines, std::ptrdiff_t stride,
+                                                 std::size_t blocks, std::ptrdiff_t block_dist) {
+  conv::multiply_interleaved_as(spectrum, k, bins, lines, stride, blocks, block_dist);
+}
+
+// Rows [first, first + count) of `src` times the kernel into `dst` (which may be `src`), rows
+// `dist` complex values apart.
 template <class T>
-[[gnu::always_inline]] inline void multiply_rows_as(T* __restrict spectrum, const T* __restrict k,
-                                                    std::size_t bins, std::size_t dist,
-                                                    std::size_t first, std::size_t count) {
-  for (std::size_t r = first; r < first + count; ++r) {
-    T* __restrict row = spectrum + 2 * r * dist;
-    for (std::size_t j = 0; j < bins; ++j) {
-      const T vr = row[2 * j];
-      const T vi = row[2 * j + 1];
-      row[2 * j] = vr * k[2 * j] - vi * k[2 * j + 1];
-      row[2 * j + 1] = vr * k[2 * j + 1] + vi * k[2 * j];
-    }
+void multiply_rows(std::complex<T>* dst, const std::complex<T>* src, const std::complex<T>* k,
+                   std::size_t bins, std::size_t dist, std::size_t first, std::size_t count) {
+  if constexpr (std::is_same_v<T, float>) {
+    multiply_rows_f32(reinterpret_cast<float*>(dst), reinterpret_cast<const float*>(src),
+                      reinterpret_cast<const float*>(k), bins, dist, first, count);
+  } else {
+    multiply_rows_f64(reinterpret_cast<double*>(dst), reinterpret_cast<const double*>(src),
+                      reinterpret_cast<const double*>(k), bins, dist, first, count);
   }
 }
 
-FBENCH_EDGE_CLONES void multiply_rows_f64(double* spectrum, const double* k, std::size_t bins,
-                                          std::size_t dist, std::size_t first, std::size_t count) {
-  multiply_rows_as(spectrum, k, bins, dist, first, count);
-}
-
-FBENCH_EDGE_CLONES void multiply_rows_f32(float* spectrum, const float* k, std::size_t bins,
-                                          std::size_t dist, std::size_t first, std::size_t count) {
-  multiply_rows_as(spectrum, k, bins, dist, first, count);
-}
-
+// The interleaved lines' spectrum (in the output, in place) times the kernel.
 template <class T>
-void multiply_rows(std::complex<T>* spectrum, const std::complex<T>* k, std::size_t bins,
-                   std::size_t dist, std::size_t first, std::size_t count) {
+void multiply_interleaved(std::complex<T>* spectrum, const std::complex<T>* k,
+                          const conv::layout& l) {
   if constexpr (std::is_same_v<T, float>) {
-    multiply_rows_f32(reinterpret_cast<float*>(spectrum), reinterpret_cast<const float*>(k), bins,
-                      dist, first, count);
+    multiply_interleaved_f32(reinterpret_cast<float*>(spectrum), reinterpret_cast<const float*>(k),
+                             l.bins, l.lines, l.stride, l.outer, l.outer_out_dist);
   } else {
-    multiply_rows_f64(reinterpret_cast<double*>(spectrum), reinterpret_cast<const double*>(k), bins,
-                      dist, first, count);
+    multiply_interleaved_f64(reinterpret_cast<double*>(spectrum),
+                             reinterpret_cast<const double*>(k), l.bins, l.lines, l.stride, l.outer,
+                             l.outer_out_dist);
   }
 }
 
@@ -700,18 +720,6 @@ public:
   [[nodiscard]] virtual std::string note() const = 0;
 };
 
-// The kernel's spectrum over `bins` bins of a row of n: a delay by one element, times 1/n
-// (what fbench's delayed check expects, harness/check.hpp).
-template <class T> std::vector<std::complex<T>> delay_kernel(std::size_t n, std::size_t bins) {
-  std::vector<std::complex<T>> k(bins);
-  for (std::size_t j = 0; j < bins; ++j) {
-    const double angle =
-        -2.0 * std::numbers::pi * static_cast<double>(j % n) / static_cast<double>(n);
-    k[j] = std::complex<T>(std::polar(1.0 / static_cast<double>(n), angle));
-  }
-  return k;
-}
-
 // A describe's lines joined by "; ".
 std::string one_line(const std::string& text) {
   std::string out;
@@ -725,54 +733,109 @@ std::string one_line(const std::string& text) {
   return out;
 }
 
-// The rows of a case as a pipeline, <C, C, C> (Real false) or <T, C, T> (Real true), by the
-// rules: the kernel one spectrum for every row, the rows `in_dist` and `out_dist` elements apart.
+// The stored runs of a convolution case on the line (axis 0): the input's m points from logical
+// 0 and the output's m from logical m/2, each at the start of its row; none without runs.
+std::vector<fftn::stored_run> runs_of(const conv::layout& l, bool input, bool output) {
+  std::vector<fftn::stored_run> runs;
+  if (!l.valid) {
+    return runs;
+  }
+  if (input) {
+    runs.push_back({.axis = 0, .where = fftn::side::in, .logical = 0, .stored = 0, .count = l.m});
+  }
+  if (output) {
+    runs.push_back(
+        {.axis = 0, .where = fftn::side::out, .logical = l.m / 2, .stored = 0, .count = l.m});
+  }
+  return runs;
+}
+
+// The batch dimensions of a convolution case's lines: the interleaved layout's blocks, then the
+// lines.
+std::vector<fftn::batch> line_batches(const conv::layout& l, std::ptrdiff_t outer_in,
+                                      std::ptrdiff_t outer_out, std::ptrdiff_t in_dist,
+                                      std::ptrdiff_t out_dist) {
+  std::vector<fftn::batch> b;
+  if (l.outer > 1) {
+    b.push_back({.count = l.outer, .in_dist = outer_in, .out_dist = outer_out});
+  }
+  b.push_back({.count = l.lines, .in_dist = in_dist, .out_dist = out_dist});
+  return b;
+}
+
+// The lines of a case as a pipeline, <C, C, C> (Real false) or <T, C, T> (Real true): one kernel
+// spectrum for every line, or one per fan-out copy (fanout_factor_dist one kernel's bins), with
+// the case's runs. Built through make_pipeline_core with the session's build settings, so that
+// STRATEGY, DEPTH_TOPS, LANE_BLOCK and the profile fields force the pair as they force a plan's
+// strategy (X67's C, D and L arms), and with PLANNING's effort.
 template <class T, bool Real> class fused_arm final : public pipeline_arm {
   using C = std::complex<T>;
-  using In = std::conditional_t<Real, T, C>;
 
 public:
-  fused_arm(std::size_t n, std::size_t count, std::ptrdiff_t in_dist, std::ptrdiff_t out_dist,
-            const fftn::options& o)
-      : pipe_(desc(n, count, in_dist, out_dist), o),
-        kernel_(delay_kernel<T>(n, Real ? n / 2 + 1 : n)), ws_(pipe_, state().threads) {}
+  fused_arm(const conv::layout& l, const fftn::options& o)
+      : runs_(runs_of(l, true, true)),
+        batches_(line_batches(l, l.outer_in_dist, l.outer_out_dist, l.in_dist, l.out_dist)),
+        core_(detail::make_pipeline_core(view(l), o, state().settings)),
+        kernel_(conv::delay_kernel<T>(l.n, l.bins, l.fanout)),
+        ws_(detail::workspace_bytes(*core_, state().threads)) {}
 
   void run(const void* in, void* out) const override {
     const session& s = state();
     const fftn::exec_args args{.mid_factor = kernel_.data()};
-    const auto* x = static_cast<const In*>(in);
-    auto* y = static_cast<In*>(out);
     if (s.mode == call::executor) {
-      pipe_.execute(x, y, regrouped(*s.exec, s.group_size), ws_, args);
+      detail::execute_on(*core_, in, out, regrouped(*s.exec, s.group_size), ws_, args);
     } else {
-      pipe_.execute(x, y, ws_, args);
+      detail::execute_all(*core_, in, out, ws_, args);
     }
   }
 
-  [[nodiscard]] std::string note() const override { return one_line(pipe_.describe()); }
+  [[nodiscard]] std::string note() const override {
+    std::string text = one_line(detail::describe(*core_));
+    if (state().effort != fftn::planning::rules) {
+      const detail::plan_core& k = *core_;
+      text = "chosen: " + k.program_text + "; timed " + std::to_string(k.candidates_timed) +
+             "; rules/chosen " + std::to_string(k.rules_over_chosen) + "; " + text;
+    }
+    return text;
+  }
 
 private:
-  static fftn::pipeline_desc<In, C, In> desc(std::size_t n, std::size_t count,
-                                             std::ptrdiff_t in_dist, std::ptrdiff_t out_dist) {
-    fftn::pipeline_desc<In, C, In> d;
-    if constexpr (Real) {
-      d = fftn::convolution_rows<T>(n, count);
-    } else {
-      d = fftn::complex_convolution_rows<T>(n, count);
+  // A pipeline_desc's view (fftn/pipeline.hpp, pipeline::view_of) without callbacks: what
+  // complex_convolution_rows or convolution_rows describes, with the case's layout.
+  [[nodiscard]] detail::pipeline_view view(const conv::layout& l) const {
+    detail::pipeline_view v;
+    v.kind = Real ? detail::pipeline_kind::real_convolution : detail::pipeline_kind::complex_pair;
+    v.prec = std::is_same_v<T, float> ? detail::precision::f32 : detail::precision::f64;
+    v.first = fftn::direction::forward;
+    v.line = {.n = l.n, .in_stride = l.stride, .out_stride = l.stride};
+    v.batches = batches_;
+    v.runs = runs_;
+    v.middle.kind = fftn::factor_kind::complex;
+    v.middle.axis_strides = mid_strides_;
+    v.fanout = l.fanout;
+    if (l.fanout > 1) {
+      v.fanout_out_dist = l.copy_dist;
+      v.fanout_factor_dist = static_cast<std::ptrdiff_t>(l.bins);
     }
-    d.batches.at(0).in_dist = in_dist;
-    d.batches.at(0).out_dist = out_dist;
-    return d;
+    return v;
   }
 
-  fftn::pipeline<In, C, In> pipe_;
+  std::vector<fftn::stored_run> runs_;
+  std::vector<fftn::batch> batches_;
+  std::array<std::ptrdiff_t, 1> mid_strides_{1};
+  std::shared_ptr<const detail::plan_core> core_;
   std::vector<C> kernel_;
   mutable fftn::workspace ws_;
 };
 
-// The same rows as a user writes them with plans, without a buffer of their own: the forward
-// plan into the output (an r2c case's output rows hold n/2 + 1 complex values), the multiply loop
-// in place there, the inverse plan in place (c2r in FFTW's padded layout).
+// The same lines as a user writes them with FFTN's plans (planned by the rules: a user's plans).
+// - Without runs and fan-out (task 5.5's arm), no buffer of their own: the forward plan into the
+//   output (an r2c case's output rows hold n/2 + 1 complex values), the multiply loop in place
+//   there, the inverse plan in place (c2r in FFTW's padded layout); interleaved lines likewise.
+// - With runs or fan-out (X67, amendment 4), a spectrum buffer of their own: the forward plan with
+//   the input run into it, then the multiply loop in place and the inverse plan with the output
+//   run into the output; or, for fan-out, per copy the loop into a second buffer and the inverse
+//   from there into copy k's rows.
 template <class T, bool Real> class separate_arm final : public pipeline_arm {
   using C = std::complex<T>;
   using In = std::conditional_t<Real, T, C>;
@@ -780,36 +843,63 @@ template <class T, bool Real> class separate_arm final : public pipeline_arm {
   using inverse_plan = std::conditional_t<Real, fftn::c2r_plan<T>, fftn::c2c_plan<T>>;
 
 public:
-  // `out_dist` in In elements, as the fused arm takes it.
-  separate_arm(std::size_t n, std::size_t count, std::ptrdiff_t in_dist, std::ptrdiff_t out_dist,
-               const fftn::options& o)
-      : bins_(Real ? n / 2 + 1 : n),
-        dist_(static_cast<std::size_t>(Real ? out_dist / 2 : out_dist)), count_(count),
-        forward_(forward_shape(n, count, in_dist, dist_), o),
-        inverse_(inverse_shape(n, count, dist_), in_place(o)), kernel_(delay_kernel<T>(n, bins_)),
+  separate_arm(const conv::layout& l, const fftn::options& o)
+      : l_(l), own_(l.valid || l.fanout > 1),
+        // The spectrum's rows: the buffer's (bins apart), else the output's.
+        dist_(own_ ? l.bins : static_cast<std::size_t>(Real ? l.out_dist / 2 : l.out_dist)),
+        forward_(forward_shape(l, own_, dist_), o),
+        inverse_(inverse_shape(l, own_, dist_), own_ ? o : in_place(o)),
+        kernel_(conv::delay_kernel<T>(l.n, l.bins, l.fanout)),
         ws_(std::max(forward_.workspace_bytes(state().threads),
-                     inverse_.workspace_bytes(state().threads))) {}
+                     inverse_.workspace_bytes(state().threads))) {
+    if (own_) {
+      spectrum_.resize(l.lines * l.bins);
+      if (l.fanout > 1) {
+        copy_.resize(l.lines * l.bins);
+      }
+    }
+  }
 
   void run(const void* in, void* out) const override {
     const session& s = state();
     const auto* x = static_cast<const In*>(in);
-    auto* spectrum = static_cast<C*>(out);
     auto* y = static_cast<In*>(out);
-    if (s.mode == call::executor) {
-      const regrouped e(*s.exec, s.group_size);
-      forward_.execute(x, spectrum, e, ws_);
-      multiply_on(spectrum, *s.exec, s.threads);
-      inverse_.execute(spectrum, y, e, ws_);
+    const bool threaded = s.mode == call::executor;
+    std::optional<regrouped> e;
+    if (threaded) {
+      e.emplace(*s.exec, s.group_size);
+    }
+    const int threads = threaded ? s.threads : 1;
+    C* spectrum = own_ ? spectrum_.data() : reinterpret_cast<C*>(out);
+    if (threaded) {
+      forward_.execute(x, spectrum, *e, ws_);
     } else {
       forward_.execute(x, spectrum, ws_);
-      multiply_rows(spectrum, kernel_.data(), bins_, dist_, 0, count_);
-      inverse_.execute(spectrum, y, ws_);
+    }
+    if (l_.fanout == 1) {
+      multiply(spectrum, spectrum, kernel_.data(), threads);
+      if (threaded) {
+        inverse_.execute(spectrum, y, *e, ws_);
+      } else {
+        inverse_.execute(spectrum, y, ws_);
+      }
+      return;
+    }
+    C* copy = copy_.data();
+    for (std::size_t k = 0; k < l_.fanout; ++k) {
+      multiply(copy, spectrum, kernel_.data() + k * l_.bins, threads);
+      In* to = y + static_cast<std::ptrdiff_t>(k) * l_.copy_dist;
+      if (threaded) {
+        inverse_.execute(copy, to, *e, ws_);
+      } else {
+        inverse_.execute(copy, to, ws_);
+      }
     }
   }
 
   [[nodiscard]] std::string note() const override {
-    return "forward: " + axis_lines(forward_.describe()) +
-           "; inverse in place: " + axis_lines(inverse_.describe());
+    return std::string("forward: ") + axis_lines(forward_.describe()) +
+           (own_ ? "; inverse: " : "; inverse in place: ") + axis_lines(inverse_.describe());
   }
 
 private:
@@ -818,29 +908,36 @@ private:
     return o;
   }
 
-  static fftn::shape<In, C> forward_shape(std::size_t n, std::size_t count, std::ptrdiff_t in_dist,
-                                          std::size_t dist) {
+  // From the input's lines to the spectrum: the buffer's rows (stride 1, bins apart), or the
+  // output's in its layout.
+  static fftn::shape<In, C> forward_shape(const conv::layout& l, bool own, std::size_t dist) {
     fftn::shape<In, C> sh;
     if constexpr (Real) {
-      sh = fftn::rows_r2c<T>(n, count);
+      sh = fftn::rows_r2c<T>(l.n, l.lines);
     } else {
-      sh = fftn::rows_c2c<T>(n, count, fftn::direction::forward);
+      sh = fftn::rows_c2c<T>(l.n, l.lines, fftn::direction::forward);
     }
-    sh.batches.at(0).in_dist = in_dist;
-    sh.batches.at(0).out_dist = static_cast<std::ptrdiff_t>(dist);
+    sh.axes.at(0).in_stride = l.stride;
+    sh.axes.at(0).out_stride = own ? 1 : l.stride;
+    sh.batches = line_batches(l, l.outer_in_dist, l.outer_out_dist, l.in_dist,
+                              static_cast<std::ptrdiff_t>(dist));
+    sh.runs = runs_of(l, true, false);
     return sh;
   }
 
-  // In place: rows `dist` complex values apart, the real output 2 dist reals apart.
-  static fftn::shape<C, In> inverse_shape(std::size_t n, std::size_t count, std::size_t dist) {
+  // From the spectrum to the output's lines.
+  static fftn::shape<C, In> inverse_shape(const conv::layout& l, bool own, std::size_t dist) {
     fftn::shape<C, In> sh;
     if constexpr (Real) {
-      sh = fftn::rows_c2r<T>(n, count);
+      sh = fftn::rows_c2r<T>(l.n, l.lines);
     } else {
-      sh = fftn::rows_c2c<T>(n, count, fftn::direction::backward);
+      sh = fftn::rows_c2c<T>(l.n, l.lines, fftn::direction::backward);
     }
-    sh.batches.at(0).in_dist = static_cast<std::ptrdiff_t>(dist);
-    sh.batches.at(0).out_dist = static_cast<std::ptrdiff_t>(Real ? 2 * dist : dist);
+    sh.axes.at(0).in_stride = own ? 1 : l.stride;
+    sh.axes.at(0).out_stride = l.stride;
+    sh.batches = line_batches(l, l.outer_out_dist, l.outer_out_dist,
+                              static_cast<std::ptrdiff_t>(dist), l.out_dist);
+    sh.runs = runs_of(l, false, true);
     return sh;
   }
 
@@ -848,66 +945,71 @@ private:
   // their loop out too).
   struct job {
     const separate_arm* arm;
-    C* spectrum;
+    C* dst;
+    const C* src;
+    const C* kernel;
     int tasks;
   };
 
   static void task(void* arg, int index) {
     const auto& j = *static_cast<const job*>(arg);
-    const std::size_t rows = j.arm->count_;
+    const std::size_t rows = j.arm->l_.lines;
     const auto t = static_cast<std::size_t>(j.tasks);
     const auto i = static_cast<std::size_t>(index);
     const std::size_t first = rows * i / t;
-    multiply_rows(j.spectrum, j.arm->kernel_.data(), j.arm->bins_, j.arm->dist_, first,
+    multiply_rows(j.dst, j.src, j.kernel, j.arm->l_.bins, j.arm->dist_, first,
                   rows * (i + 1) / t - first);
   }
 
-  void multiply_on(C* spectrum, const executor_type& e, int threads) const {
-    job j{this, spectrum,
-          static_cast<int>(std::min<std::size_t>(count_, static_cast<std::size_t>(threads)))};
-    if (j.tasks < 2) {
-      multiply_rows(spectrum, kernel_.data(), bins_, dist_, 0, count_);
+  void multiply(C* dst, const C* src, const C* kernel, int threads) const {
+    if (l_.stride != 1) {
+      multiply_interleaved(dst, kernel, l_); // in place: dst is src
       return;
     }
-    e.bulk(j.tasks, &task, &j);
+    job j{this, dst, src, kernel,
+          static_cast<int>(std::min<std::size_t>(l_.lines, static_cast<std::size_t>(threads)))};
+    if (j.tasks < 2) {
+      multiply_rows(dst, src, kernel, l_.bins, dist_, 0, l_.lines);
+      return;
+    }
+    state().exec->bulk(j.tasks, &task, &j);
   }
 
-  std::size_t bins_;
+  conv::layout l_;
+  bool own_;
   std::size_t dist_; // between the spectrum's rows, in complex values
-  std::size_t count_;
   forward_plan forward_;
   inverse_plan inverse_;
   std::vector<C> kernel_;
+  mutable std::vector<C> spectrum_; // with runs or fan-out
+  mutable std::vector<C> copy_;     // with fan-out: copy k's spectrum
   mutable fftn::workspace ws_;
 };
 
-// The arm of a case, or nullptr when PIPELINE does not apply to it.
+// The arm of a case, or nullptr when PIPELINE does not apply to it (why, in `why`).
 template <class T>
-std::unique_ptr<pipeline_arm> make_pipeline_arm(const fbench_case& c, const fftn::options& o) {
-  const bool rows = c.rank == 1 && c.interleave == 1 && c.outer == 1 && c.in_place == 0;
-  const bool cplx = c.kind == fbench_c2c && c.sign < 0;
-  if (!rows || (!cplx && c.kind != fbench_r2c)) {
+std::unique_ptr<pipeline_arm> make_pipeline_arm(const fbench_case& c, const fftn::options& o,
+                                                std::string& why) {
+  const session& s = state();
+  conv::layout l;
+  try {
+    l = conv::layout_of(c, s.pipe_fanout, s.pipe_valid);
+  } catch (const std::invalid_argument& e) {
+    why = e.what();
     return nullptr;
   }
-  const auto n = static_cast<std::size_t>(c.dims[0]);
-  const auto count = static_cast<std::size_t>(c.batch);
-  const auto in_dist = static_cast<std::ptrdiff_t>(c.in_dist);
-  // An r2c case's output rows of n/2 + 1 complex values hold the n reals.
-  const auto out_dist = static_cast<std::ptrdiff_t>(cplx ? c.out_dist : 2 * c.out_dist);
-  // Both arms by the rules with the session's instruction set: pipelines are planned by the rules
-  // only (until X67), so the plans are too, whatever PLANNING says.
   const fftn::options like{.force_isa = o.force_isa};
-  const bool fused = state().pipeline == pipe_arm::fused;
-  if (cplx) {
+  const bool fused = s.pipeline == pipe_arm::fused;
+  if (!l.real) {
     if (fused) {
-      return std::make_unique<fused_arm<T, false>>(n, count, in_dist, out_dist, like);
+      return std::make_unique<fused_arm<T, false>>(l, o);
     }
-    return std::make_unique<separate_arm<T, false>>(n, count, in_dist, out_dist, like);
+    return std::make_unique<separate_arm<T, false>>(l, like);
   }
   if (fused) {
-    return std::make_unique<fused_arm<T, true>>(n, count, in_dist, out_dist, like);
+    return std::make_unique<fused_arm<T, true>>(l, o);
   }
-  return std::make_unique<separate_arm<T, true>>(n, count, in_dist, out_dist, like);
+  return std::make_unique<separate_arm<T, true>>(l, like);
 }
 
 struct plan_record {
@@ -1333,6 +1435,19 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
         return fbench_error;
       }
       s.pipeline = value == "fused" ? pipe_arm::fused : pipe_arm::separate;
+    } else if (key == "PIPE_RUNS") {
+      if (value != "full" && value != "valid") {
+        say(message, message_size, "PIPE_RUNS is full or valid");
+        return fbench_error;
+      }
+      s.pipe_valid = value == "valid";
+    } else if (key == "PIPE_FANOUT") {
+      const std::optional<std::size_t> v = fbench::fftn_tuning::parse_size(value, 1, false);
+      if (!v) {
+        say(message, message_size, "PIPE_FANOUT is a whole number of at least 1");
+        return fbench_error;
+      }
+      s.pipe_fanout = *v;
     } else if (key == "RADICES") {
       try {
         s.settings.radices = parse_radices(value);
@@ -1504,6 +1619,10 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
         "PIPELINE does not combine with EDGE_IN, EDGE_OUT, CALL=team or RADICES");
     return fbench_error;
   }
+  if (s.pipeline == pipe_arm::none && (s.pipe_valid || s.pipe_fanout != 1)) {
+    say(message, message_size, "PIPE_RUNS and PIPE_FANOUT need PIPELINE");
+    return fbench_error;
+  }
   try {
     if (threaded) {
       if (s.mode == call::serial) {
@@ -1545,7 +1664,9 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
       d.raw("partial", R"(["c2c","r2c"])");
       // The harness then checks each row against its input delayed by one (backend.hpp).
       d.str("pipeline", s.pipeline == pipe_arm::fused ? "fused" : "separate")
-          .str("output", "delay");
+          .str("output", "delay")
+          .str("delay_runs", s.pipe_valid ? "valid" : "full")
+          .integer("delay_fanout", static_cast<std::int64_t>(s.pipe_fanout));
     }
     if (s.measure_seconds != 0) {
       d.str("measure_seconds", std::to_string(s.measure_seconds));
@@ -1638,11 +1759,11 @@ std::int32_t fbench_create(const fbench_case* c, void* /*in*/, void* out, void**
     };
     if (s.pipeline != pipe_arm::none) {
       record->mode = call::pipeline;
-      record->pipe = c->precision == fbench_f32 ? make_pipeline_arm<float>(*c, opts)
-                                                : make_pipeline_arm<double>(*c, opts);
+      std::string why;
+      record->pipe = c->precision == fbench_f32 ? make_pipeline_arm<float>(*c, opts, why)
+                                                : make_pipeline_arm<double>(*c, opts, why);
       if (!record->pipe) {
-        say(message, message_size,
-            "PIPELINE takes rows of c2c forward and r2c cases, out of place, only");
+        say(message, message_size, why);
         return fbench_unsupported;
       }
       say(message, message_size, record->pipe->note());
