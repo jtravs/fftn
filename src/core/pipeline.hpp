@@ -82,9 +82,10 @@ template <class T>
 
 // c's workspace layout from its scratch lines of `scratch` complex values of complex_bytes each
 // and its block (c.block_elements); stagger_b: scratch line b starts seven 64-byte lines further
-// (a grid's, X4).
-void lay_out_workspace(plan_core& c, std::size_t scratch, std::size_t complex_bytes,
-                       bool stagger_b);
+// (a grid's, X4); callback_scratch: the bytes of each slot's callback area (task 5.3a; 0: none,
+// as for pipelines until 5.3d).
+void lay_out_workspace(plan_core& c, std::size_t scratch, std::size_t complex_bytes, bool stagger_b,
+                       std::size_t callback_scratch);
 
 // make_pipeline_core (fftn/detail/core.hpp) with construction knobs (tests): the settings' chain
 // rules (radices, leaf limit, layout, Bluestein and Rader) and profile apply to both chains.

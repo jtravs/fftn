@@ -94,7 +94,7 @@ template <class In, class Mid, class Out> struct pipeline_desc {
   /// Stored runs of the line (`stored_run`, axis 0): refused until task 5.2d.
   std::vector<stored_run> runs{};
   /// The input edge: a scale and a factor applied to each input element before the first
-  /// transform (`accumulate` is refused here).
+  /// transform (`accumulate` is refused here; a block callback, `call`, until task 5.3d).
   edge<In> prologue{};
   /// The middle: what multiplies each bin of the spectrum between the two transforms.
   struct {
@@ -109,7 +109,8 @@ template <class In, class Mid, class Out> struct pipeline_desc {
     factor mul{};
   } middle{}; ///< The middle: what multiplies each bin of the spectrum between the transforms.
   /// The output edge: a scale and a factor applied to each output element after the second
-  /// transform, then stored, or added to the output's value with `accumulate`.
+  /// transform, then stored, or added to the output's value with `accumulate` (a block
+  /// callback, `call`, is refused until task 5.3d).
   edge<Out> epilogue{};
   /// How many inverse transforms run on each middle spectrum, each with its own middle factor:
   /// 1 (more is refused until task 5.2e).

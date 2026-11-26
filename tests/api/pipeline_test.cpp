@@ -783,6 +783,17 @@ TEST(Pipelines, RefusalsNameTheField) {
   expect_refused(f, {}, "desc.prologue.scale");
   f.prologue.scale = 1e300;
   expect_refused(f, {}, "desc.prologue.scale");
+  // Block callbacks on a pipeline's edges wait for task 5.3d; refused, not dropped.
+  const fftn::block_fn<C> identity = [](void*, const fftn::block_info&, C*) noexcept {};
+  d = good;
+  d.prologue.call = {.fn = identity};
+  expect_refused(d, {}, "desc.prologue.call.fn");
+  d = good;
+  d.epilogue.call = {.fn = identity, .mode = fftn::callback_mode::consume};
+  expect_refused(d, {}, "desc.epilogue.call.fn");
+  fftn::pipeline_desc<double, C, double> real_rows = fftn::convolution_rows<double>(16, 2);
+  real_rows.prologue.call = {.fn = [](void*, const fftn::block_info&, double*) noexcept {}};
+  expect_refused(real_rows, {}, "desc.prologue.call.fn");
 }
 
 // `execute(in, out, team, ws, {})` is the team form with completion::all.
@@ -1407,7 +1418,7 @@ TEST(Pipelines, RowBlocksMoveTheMiddlesFactor) {
       blocked.edge_batched =
           d::make_edge_forms(blocked.prog, blocked.edge_records, true, rows, n * cb, cb);
       blocked.block_elements = n * rows;
-      d::lay_out_workspace(blocked, blocked.scratch_line, sizeof(C), false);
+      d::lay_out_workspace(blocked, blocked.scratch_line, sizeof(C), false, 0);
       ASSERT_EQ(blocked.edge_batched.row_block, rows) << text;
       const std::size_t factor_bytes = kind == real ? sizeof(double) : sizeof(C);
       std::size_t middles = 0;

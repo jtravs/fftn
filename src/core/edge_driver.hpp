@@ -18,6 +18,7 @@
 // results not depending on the rows a call takes, so the bits are the same.
 #pragma once
 
+#include "core/callbacks.hpp"
 #include "core/driver.hpp"
 #include "core/program.hpp"
 #include "fftn/edges.hpp"
@@ -42,6 +43,9 @@ struct edge_record {
   // A loop: the bytes it moves the input's, the output's and the middle's factor cursors per
   // iteration.
   factor_steps factor_step{};
+  // A callback stage (stage::moving_factors' moving_callback; task 5.3a): what it calls, owned
+  // by the plan (plan_core::callback_sites).
+  const callback_site* call = nullptr;
 };
 
 // The cursors of the edges' factor arrays, and of a pipeline's middle factor (task 5.2b):
@@ -50,6 +54,20 @@ struct factor_cursors {
   std::uintptr_t in = 0;
   std::uintptr_t out = 0;
   std::uintptr_t mid = 0;
+};
+
+// The edge driver's state for one execution (core/drive.hpp, edge_drive): the cursors' starting
+// values and the callbacks' user pointers (exec_args).
+struct edge_state {
+  factor_cursors f;
+  std::array<void*, 2> user{};
+};
+
+// The edge driver's per-task entry: the task's cursors, and what its callback stages need (the
+// transform, the lane running it and that lane's callback area).
+struct edge_task {
+  factor_cursors f;
+  callback_env env;
 };
 
 // A stage of a flat program (program::flat) as the edge driver's batched forms run it: its
@@ -109,6 +127,9 @@ void factor_guard_leaf(const pass_args* args, const void* src, void* dst, std::p
 // in_factor, out_factor and mid_factor); a needed array that is null ends the program.
 [[nodiscard]] factor_cursors cursors_of(const exec_args& args, std::uint8_t needed) noexcept;
 
+// The edge driver's state of an execution: cursors_of's cursors and the callbacks' pointers.
+[[nodiscard]] edge_state edge_state_of(const exec_args& args, std::uint8_t needed) noexcept;
+
 // The cursors of transform t: f moved by the batch loops.
 [[nodiscard]] factor_cursors edge_transform_cursors(const program& p,
                                                     const std::vector<edge_record>& e,
@@ -119,15 +140,17 @@ void factor_guard_leaf(const pass_args* args, const void* src, void* dst, std::p
 // piece belongs to (the others). `tail`: the records of a lanes program's tail
 // (program::lane_tail), one per record.
 // forms: the plan's batched forms (make_edge_forms), which it runs where it has them.
+// env: the callback stages' (run_edge_transforms sets its transform for each transform it runs;
+// the others take the piece's). A plan with callback stages has no batched forms and no lanes.
 void run_edge_transforms(const program& p, const std::vector<edge_record>& e,
                          const std::vector<edge_record>& tail, const edge_forms& forms,
                          std::size_t first, std::size_t count, const slot_addresses& base,
-                         factor_cursors f) noexcept;
+                         factor_cursors f, const callback_env& env) noexcept;
 void run_edge_stage_chunks(const program& p, const std::vector<edge_record>& e, std::size_t index,
-                           const slot_addresses& at, factor_cursors f, std::size_t first,
-                           std::size_t last) noexcept;
+                           const slot_addresses& at, factor_cursors f, const callback_env& env,
+                           std::size_t first, std::size_t last) noexcept;
 void run_edge_lines(const program& p, const std::vector<edge_record>& e, std::size_t begin,
                     std::size_t nest, std::size_t body_end, std::size_t first, std::size_t last,
-                    const slot_addresses& at, factor_cursors f) noexcept;
+                    const slot_addresses& at, factor_cursors f, const callback_env& env) noexcept;
 
 } // namespace fftn::inline v0::detail

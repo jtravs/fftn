@@ -3119,6 +3119,39 @@ pipelines.
     `describe()` gives a line per callback: where it runs, the block shape, any copy, and any
     sweep beyond the cache level.
 
+As built (task 5.3a): `fftn/callback.hpp` and `edge::call` are public and provisional, with 18.2's
+twelve proposals ("Callbacks") as listed there; `block_info::group` is 1 and `group_stride` 0
+without a group, `line_stride` 0 for one line. Callbacks are taken by c2c plans of one axis only
+(construction refuses them elsewhere, naming `edges.in.call.fn` or `edges.out.call.fn`), on the
+chain without batch leaves whatever the rules choose (`describe()` names the plain plan's
+strategy and "callbacks take the chain until task 5.3b"), planned by the rules whatever
+`options::effort` or `options::use` says, and run on the edge driver's walked form only (no
+batched forms, not even on the profiles whose reach `leaf_rows` gives them to c2c rows on one
+leaf, X65's narrowed P1). A callback stage (`core/callbacks.cpp`) is a stage
+whose `moving_factors` has `moving_callback`, its kernel a guard for `driver.hpp` and its
+`callback_site` (the function, converted back to its own `block_fn` type before the call, the
+user pointer it takes, the logical start) in its edge record; a block is one of the stage's
+chunks (about `chunk_points` elements, a row whole up to twice that), so a team shares blocks as
+it shares any stage's chunks. On the row's chain: input `modify` out of place on the workspace
+block after a copy (or after the run read stage), in place on the array itself; `produce` into
+the block (zeros between runs) or in place into the array; output `modify` without accumulation
+or runs on the output itself, otherwise (and `consume`) on the block, the side's factor and scale
+in a pass of their own before it and the store, run store or accumulation after it. The batch
+loops do not move an input that is produced or an output that is consumed, so either may be
+null. `edge_state` carries the user pointers beside the cursors; `edge_task` the transform, the
+lane and its callback area, from the per-task entries' new lane and slots arguments
+(`plain_drive` ignores them; its instantiations disassemble identically to `main`'s, Clang 23
+arm64 and x86-64). Each slot ends with the callback area (`plan_core::offset_callback`) of the
+largest `scratch_bytes` plus 64 bytes of alignment slack (a serial slot starts on a 64-byte
+boundary). A plan with callbacks executed through an overload without `exec_args` ends the
+program, as one with factors does. Pipelines (5.2b–c) refuse a callback on the prologue or the
+epilogue, naming `desc.prologue.call.fn` or `desc.epilogue.call.fn`, until 5.3d, which places
+the same callback stages on the pipeline's scratch-resident line where `core/pipeline.cpp`
+places its edges' separate passes (the prologue's after the line's read into the workspace
+block, the middle's between the two chains, the epilogue's before the store); it passes the
+callback area's size to `lay_out_workspace` (0 for pipelines until then) and keeps a pipeline
+with callbacks off the batched forms that pipelines otherwise always take.
+
 ### 12.4 Owner-computes
 
 With `completion::own` and `plan::transforms_of(team)`, an application's own pointwise
@@ -4604,6 +4637,7 @@ to change before a release.
 | 2026-11-26 | The `<T, C, T>` real chain pair and `convolution_rows` (task 5.2c, section 12.2): `r2c_line` into the workspace block, the middle on the n/2 + 1 bins and `c2r_line` out of it, every factor an edge pass on the line in cache; the edge driver's row-block form gives a middle pass the middle cursor's step | The real lines' routes are the plans' (fused pairings, leaves, odd n, strides) with no new code; a middle fused into the pairing passes waits for X67, as the PLAN row says. The row-block fix is latent for pipelines (no row blocks yet) but was wrong for the first that would build them |
 | 2026-11-26 | Pruned codelets (task 5.1e, section 12.1): `dif_head` and `plain_head`, halves of the even codelet radices only, for the first and last passes of c2c rows whose stored runs lie in the line's first half; one run of the half stored with stride 1 is read or written in place with no separate pass | Counted from the generator (gen/README.md): halves cost 0.77–0.89 of `dif`'s and 0.86–0.94 of `plain`'s vector operations at radices 8–64 and three quarters of the memory accesses; the gain is the separate pass that disappears. A half of an even radix is the line's first half whatever the radix, so one variant pair per radix covers the valid half of a zero-padded row and any band or crop inside it. Quarters and odd radices were counted and left out (smaller or no gains; `plain_head` of 9 and 25 would cost more than `plain`) |
 | 2026-11-26 | Phase 6 broken into steps 6.1–6.20 (PLAN), with proposed APIs for the convenience layer (5.4), the real-to-real kinds (5.7), the split-complex layout (5.8) and the C API (5.9), and their open points in 18.2, "Phase 6". Proposals, not decisions: steps marked P are built provisional with a second reader, as phase 5's were | The maintainer's priority (2026-11-25): features fully built, then the remaining performance |
+| 2026-11-26 | Block callbacks on c2c rows (task 5.3a, section 12.3): provisional `fftn/callback.hpp` (`block_info`, `block_fn`, `callback_mode`, `callback`, `callback_of`, `along_transforms`) and `edge::call`, with 18.2's proposals ("Callbacks"); the callback stage on the chain only until 5.3b, planned by the rules; blocks are stage chunks; per-member scratch at the end of each slot; the drive policies' per-task entries take the lane and slots, the plain instantiations unchanged; a plan with callbacks needs the `exec_args` overloads. Awaits the maintainer's review of the API. |
 | 2026-11-26 | Packaging (task 6.1, section 14.3): an installed CMake package (`fftn::fftn`; the adapters as components `omp` and `kokkos`), a relocatable `fftn.pc`, install rules on by default only for a top-level build, version compatibility `SameMinorVersion`, the thread library in the link interface; third-party subdirectories `EXCLUDE_FROM_ALL`; a path-filtered CI workflow builds a downstream project three ways (Windows not on pull requests) | DESIGN 18.2 Q25's proposal; a minor version may still change the API before 1.0; FetchContent users decide what they install; the check builds the library twice, so it runs where packaging can change rather than on every pull request |
 
 ---

@@ -277,6 +277,52 @@ transform; the workspace may then hold one transform (or row) more: an input edg
 cannot be applied in the output, and accumulation, which keeps the result or the output's
 prior values there.
 
+## Block callbacks
+
+Provisional (task 5.3a, `fftn/callback.hpp`). An edge may also take a block callback
+(`edge::call`): a function the application compiles, which the plan calls on blocks of the
+edge's side while they are in cache. Its type is `block_fn<T>`, `noexcept`, with `T` the side's
+element type; `callback_of<F, T>()` makes one that calls a callable object (a `noexcept` lambda)
+whose address arrives as the callback's `user` pointer (`exec_args::in_user`, `out_user`). A
+callback `modify`s the block in place, `produce`s the input (the input is then not read and may
+be null) or `consume`s the output (nothing is stored; the output may be null). Each call gets a
+`block_info`: the transform, the logical coordinates of the block's first element, its length,
+lines and strides, the member running it and that member's scratch (`callback::scratch_bytes`
+of it, counted by `workspace_bytes()`).
+
+```cpp file=examples/callbacks.cpp region=callbacks
+// Each output bin k of transform t times exp(i g |y|^2), a phase that depends on the bin's
+// own value: pure per element, so any team or executor gives the same bits.
+const double g = 0.01;
+auto kerr = [g](const fftn::block_info& info, std::complex<double>* y) noexcept {
+  for (std::size_t i = 0; i < info.length; ++i) {
+    std::complex<double>& v = y[static_cast<std::ptrdiff_t>(i) * info.element_stride];
+    v *= std::polar(1.0, g * std::norm(v));
+  }
+};
+const fftn::c2c_plan<double> plan(
+    fftn::rows_c2c<double>(n, count, fftn::direction::forward), {},
+    {.out = {.call = {.fn = fftn::callback_of<decltype(kerr), std::complex<double>>()}}});
+fftn::workspace ws(plan);
+
+std::vector<std::complex<double>> y(n * count);
+// The lambda's address reaches the callback as its `user` pointer.
+plan.execute(x.data(), y.data(), ws, {.out_user = &kerr});
+```
+
+On the input edge the input is read (or produced), then a `modify` callback runs, then the
+factor and the scales; on the output edge the factor and the scales apply first, then a
+`modify` callback, then the store, the accumulation or `consume`. Each element (each stored
+element, with stored runs) is passed exactly once per execution, in blocks whose shape the plan
+chooses; blocks may run concurrently on different members and in any order. When the callback
+is pure per element (its result depends only on the element's value and coordinates), the
+guarantees of "Determinism" below hold. A callback may execute another plan through a serial
+overload with a workspace of its own, such as `fftn::workspace{info.scratch}`. A plan with a
+callback is executed through the overloads that take `exec_args`; the others end the program.
+So far callbacks are taken by c2c rows only, on the chain whatever strategy the rules would
+choose and by the rules whatever `options::effort` says (`plan::describe()` says so); other
+plans refuse them at construction.
+
 ## Stored runs
 
 Provisional (task 5.1d, `fftn::stored_run` in `fftn/shape.hpp`). An axis may be stored in
