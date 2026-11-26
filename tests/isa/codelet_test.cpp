@@ -11,7 +11,9 @@
 // variant rounds one more product per value, and its reference rounds the twiddle product
 // once in double, so it adds input_rounding<T>() twice. A wrong constant, sign, rotation,
 // leg or lane is off by O(1). (The generator has already checked each operation list
-// exactly; this checks the emitted C++ and the vocabulary under it.)
+// exactly; this checks the emitted C++ and the vocabulary under it.) The pruned codelets
+// (task 5.1e) likewise: dif_head with NaN in the legs it must not read, plain_head with the
+// outputs it must not write left as they were.
 
 #include "gen/codelets.hpp"
 #include "isa/codelet_table.hpp"
@@ -30,6 +32,8 @@
 #include <complex>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <limits>
 #include <numbers>
 #include <random>
 #include <set>
@@ -57,10 +61,14 @@ using param = std::tuple<target, precision>;
 constexpr double canary = -77.0;
 
 std::string describe(const gen::codelet_info& c) {
-  constexpr std::array<const char*, 3> kinds = {"plain", "dit", "dif"};
+  constexpr std::array<const char*, 5> kinds = {"plain", "dit", "dif", "dif_head", "plain_head"};
   return "radix " + std::to_string(c.radix) + " " + kinds.at(static_cast<std::size_t>(c.kind)) +
          (c.sign < 0 ? " forward" : " backward");
 }
+
+// Bitwise equality: the NaN placed in the legs a dif_head codelet must not read compares
+// unequal to itself.
+template <class T> bool same_bits(T a, T b) { return std::memcmp(&a, &b, sizeof(T)) == 0; }
 
 struct layout {
   std::size_t radix;
@@ -81,12 +89,16 @@ template <class T> const fftn::detail::codelet_runs<T>& runs_of(const codelet_ta
   }
 }
 
-// Runs codelet c of target table t once and checks every lane.
+// Runs codelet c through its entry point `run` once and checks every lane. index seeds the
+// data.
 template <class T>
-void check_codelet(const codelet_table& t, const kernel_table& k, std::size_t index,
-                   bool in_place) {
-  const gen::codelet_info& c = gen::codelets[index];
+void check_codelet(const gen::codelet_info& c, fftn::detail::codelet_fn<T> run,
+                   const kernel_table& k, std::size_t index, bool in_place) {
   const std::size_t r = c.radix;
+  const bool dif = c.kind == gen::variant::dif || c.kind == gen::variant::dif_head;
+  // The legs read and written: a pruned codelet's first half on one side.
+  const std::size_t reads = c.kind == gen::variant::dif_head ? r / 2 : r;
+  const std::size_t writes = c.kind == gen::variant::plain_head ? r / 2 : r;
   const std::size_t lanes = of<T>(k).complex_lanes;
   const layout in{.radix = r, .lanes = lanes, .stride = lanes + (in_place ? 0 : 1)};
   const layout out{.radix = r, .lanes = lanes, .stride = in_place ? in.stride : lanes + 3};
@@ -100,9 +112,11 @@ void check_codelet(const codelet_table& t, const kernel_table& k, std::size_t in
     for (std::size_t l = 0; l < lanes; ++l) {
       const auto re = static_cast<T>(uniform(gen));
       const auto im = static_cast<T>(uniform(gen));
-      x[in.at(j, l)] = re;
-      x[in.at(j, l) + 1] = im;
-      data[j * lanes + l] = {static_cast<double>(re), static_cast<double>(im)};
+      const bool read = j < reads;
+      x[in.at(j, l)] = read ? re : std::numeric_limits<T>::quiet_NaN();
+      x[in.at(j, l) + 1] = read ? im : std::numeric_limits<T>::quiet_NaN();
+      data[j * lanes + l] =
+          read ? cd{static_cast<double>(re), static_cast<double>(im)} : cd{0.0, 0.0};
     }
   }
   // Forward twiddles of arbitrary angle, rounded to T: leg-major, lane-minor, then packed
@@ -121,10 +135,10 @@ void check_codelet(const codelet_table& t, const kernel_table& k, std::size_t in
   std::vector<T> y_buffer(out.reals(), T(canary));
   const std::vector<T> x0 = x;
   std::vector<T>& y_all = in_place ? x : y_buffer;
-  runs_of<T>(t).run[index](x.data() + 1, in.stride, y_all.data() + 1, out.stride, storage.data());
+  run(x.data() + 1, in.stride, y_all.data() + 1, out.stride, storage.data());
 
   fftn::test::tolerance tol = fftn::test::derived_tolerance<T>(r, fftn::test::stable_fft_bound);
-  if (c.kind != gen::variant::plain) {
+  if (c.kind != gen::variant::plain && c.kind != gen::variant::plain_head) {
     tol = tol + fftn::test::input_rounding<T>() * 2.0;
   }
   for (std::size_t l = 0; l < lanes; ++l) {
@@ -142,7 +156,7 @@ void check_codelet(const codelet_table& t, const kernel_table& k, std::size_t in
       }
     }
     std::vector<exact_complex> want = fftn::test::reference::c2c(c.sign, z);
-    if (c.kind == gen::variant::dif) {
+    if (dif) {
       for (std::size_t q = 1; q < r; ++q) {
         const cd v = cd{want[q].re.hi, want[q].im.hi} * tw_of(q);
         want[q] = fftn::test::exact_from(v);
@@ -152,7 +166,7 @@ void check_codelet(const codelet_table& t, const kernel_table& k, std::size_t in
     double ref2 = 0;
     double err_max = 0;
     double ref_max = 0;
-    for (std::size_t q = 0; q < r; ++q) {
+    for (std::size_t q = 0; q < writes; ++q) {
       const double er = fftn::test::error_of(static_cast<double>(y_all[out.at(q, l)]), want[q].re);
       const double ei =
           fftn::test::error_of(static_cast<double>(y_all[out.at(q, l) + 1]), want[q].im);
@@ -165,11 +179,19 @@ void check_codelet(const codelet_table& t, const kernel_table& k, std::size_t in
     }
     EXPECT_LE(std::sqrt(err2 / ref2), tol.rms) << "relative RMS error";
     EXPECT_LE(err_max / ref_max, tol.max) << "largest error";
+    // The outputs a plain_head codelet does not compute are left as they were.
+    for (std::size_t q = writes; q < r; ++q) {
+      const std::vector<T>& before = in_place ? x0 : std::vector<T>(out.reals(), T(canary));
+      EXPECT_TRUE(same_bits(y_all[out.at(q, l)], before[out.at(q, l)]) &&
+                  same_bits(y_all[out.at(q, l) + 1], before[out.at(q, l) + 1]))
+          << "wrote output " << q;
+    }
   }
   EXPECT_EQ(y_all.front(), T(canary)) << "wrote before the output";
   EXPECT_EQ(y_all.back(), T(canary)) << "wrote after the output";
   if (!in_place) {
-    EXPECT_EQ(x, x0) << "input changed";
+    EXPECT_TRUE(std::ranges::equal(x, x0, [](T a, T b) { return same_bits(a, b); }))
+        << "input changed";
     // The gaps between legs are untouched.
     for (std::size_t q = 0; q + 1 < r; ++q) {
       for (std::size_t g = out.at(q, lanes); g < out.at(q + 1, 0); ++g) {
@@ -190,8 +212,15 @@ protected:
     EXPECT_EQ(table->id, t);
     for (std::size_t i = 0; i < gen::codelet_count; ++i) {
       SCOPED_TRACE(describe(gen::codelets[i]));
-      check_codelet<T>(*table, *kernels, i, false);
-      check_codelet<T>(*table, *kernels, i, true);
+      check_codelet<T>(gen::codelets[i], runs_of<T>(*table).run[i], *kernels, i, false);
+      check_codelet<T>(gen::codelets[i], runs_of<T>(*table).run[i], *kernels, i, true);
+    }
+    for (std::size_t i = 0; i < gen::pruned_codelet_count; ++i) {
+      SCOPED_TRACE(describe(gen::pruned_codelets[i]));
+      const std::size_t seed = gen::codelet_count + i;
+      check_codelet<T>(gen::pruned_codelets[i], runs_of<T>(*table).pruned[i], *kernels, seed,
+                       false);
+      check_codelet<T>(gen::pruned_codelets[i], runs_of<T>(*table).pruned[i], *kernels, seed, true);
     }
   }
 };
@@ -236,6 +265,35 @@ TEST(codelet_metadata, complete_and_consistent) {
     }
   }
   EXPECT_TRUE(std::ranges::is_sorted(gen::radices));
+}
+
+// The pruned table (task 5.1e) lists both pruned variants of every even codelet radix in both
+// directions once, each cheaper than its full codelet.
+TEST(codelet_metadata, pruned_complete_and_cheaper) {
+  std::set<std::tuple<int, int, int>> seen;
+  for (const gen::codelet_info& c : std::span(gen::pruned_codelets)) {
+    SCOPED_TRACE(describe(c));
+    EXPECT_TRUE(seen.insert({c.radix, static_cast<int>(c.kind), c.sign}).second) << "listed twice";
+    EXPECT_EQ(c.radix % 2, 0);
+    EXPECT_EQ(c.twiddles, c.kind == gen::variant::plain_head ? 0 : c.radix - 1);
+    const gen::variant whole =
+        c.kind == gen::variant::dif_head ? gen::variant::dif : gen::variant::plain;
+    const auto* full = std::ranges::find_if(gen::codelets, [&](const gen::codelet_info& f) {
+      return f.radix == c.radix && f.kind == whole && f.sign == c.sign;
+    });
+    ASSERT_NE(full, std::end(gen::codelets));
+    EXPECT_LT(c.vops, full->vops);
+  }
+  std::size_t even = 0;
+  for (const std::uint8_t r : std::span(gen::radices)) {
+    if (r % 2 == 0) {
+      ++even;
+      EXPECT_TRUE(std::ranges::find(gen::pruned_radices, r) != std::end(gen::pruned_radices))
+          << "radix " << int{r} << " missing";
+    }
+  }
+  EXPECT_EQ(seen.size(), even * 2 * 2);
+  EXPECT_EQ(gen::pruned_radix_count, even);
 }
 
 } // namespace

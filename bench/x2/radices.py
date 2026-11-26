@@ -82,7 +82,7 @@ def codelet_ops(path: Path = CODELETS) -> dict[tuple[int, bool], int]:
     ops: dict[tuple[int, bool], int] = {}
     for m in entry.finditer(path.read_text()):
         radix, kind, sign, vops = int(m[1]), m[2], int(m[3]), int(m[9])
-        if sign != -1 or kind == "dit":
+        if sign != -1 or kind not in ("plain", "dif"):  # not dit, nor the pruned variants
             continue
         ops[(radix, kind == "dif")] = vops
     if not ops:

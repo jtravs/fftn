@@ -55,7 +55,11 @@ def place(ops: list[Op], seq: list[int]) -> list[Op]:
     after: dict[int, list[int]] = {}
     for i, op in enumerate(ops):
         if op.kind == "store":
-            after.setdefault(max(preds[i], key=lambda p: rank[p]), []).append(i)
+            # A store of a load (output 0 of a pruned codelet of radix 2, dif_head: its one
+            # input) goes just after that load.
+            computed = [p for p in preds[i] if p in rank]
+            anchor = max(computed, key=lambda p: rank[p]) if computed else max(preds[i])
+            after.setdefault(anchor, []).append(i)
     out: list[int] = []
     placed: set[int] = set()
     for i in seq:
@@ -63,6 +67,7 @@ def place(ops: list[Op], seq: list[int]) -> list[Op]:
             if is_load[p] and p not in placed:
                 placed.add(p)
                 out.append(p)
+                out.extend(after.get(p, []))
         out.append(i)
         out.extend(after.get(i, []))
     assert sorted(out) == list(range(len(ops))), "every load has a user, every store a producer"

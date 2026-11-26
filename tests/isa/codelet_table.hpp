@@ -15,17 +15,20 @@
 
 namespace fftn::inline v0::detail {
 
-// Runs gen::codelets[i] on C transforms at once (C complex numbers per register, one
-// transform per lane). Leg j of the input is the C complex numbers at x + 2 xs j, leg k of
-// the output those at y + 2 ys k (xs, ys >= C, in complex numbers; x == y with xs == ys is
-// in place). The twiddles of leg k >= 1 are C twiddles in the target's storage form
-// (pack_twiddles of kernel_table) at w + (k - 1) C tw_reals; plain codelets ignore w.
+// Runs gen::codelets[i] (run) or gen::pruned_codelets[i] (pruned) on C transforms at once (C
+// complex numbers per register, one transform per lane). Leg j of the input is the C complex
+// numbers at x + 2 xs j, leg k of the output those at y + 2 ys k (xs, ys >= C, in complex numbers;
+// x == y with xs == ys is in place). The twiddles of leg k >= 1 are C twiddles in the target's
+// storage form (pack_twiddles of kernel_table) at w + (k - 1) C tw_reals; plain codelets ignore w.
+// A pruned codelet reads (dif_head) or writes (plain_head) legs 0 .. R/2 - 1 only.
 template <class T>
 using codelet_fn = void (*)(const T* x, std::size_t xs, T* y, std::size_t ys, const T* w);
 
 template <class T> struct codelet_runs {
   // NOLINTNEXTLINE(modernize-avoid-c-arrays): filled inside ISA regions, which use no std templates
   codelet_fn<T> run[gen::codelet_count];
+  // NOLINTNEXTLINE(modernize-avoid-c-arrays): as above
+  codelet_fn<T> pruned[gen::pruned_codelet_count];
 };
 
 struct codelet_table {

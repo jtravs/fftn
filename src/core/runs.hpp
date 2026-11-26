@@ -7,13 +7,15 @@
 // make its edge separate, and its pass (an edge phase, or a c2c row's pass through the
 // workspace block) reads the stored runs into the full logical line with zeros elsewhere
 // (input), or stores only the runs (output). The transform between them computes the whole
-// line; 5.1e adds pruned codelets.
+// line, except where a c2c row's first or last pass takes the pruned codelets (task 5.1e,
+// run_pruning).
 #pragma once
 
 #include "fftn/detail/core.hpp"
 #include "fftn/options.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -55,10 +57,18 @@ struct run_plan {
 // The runs as a wisdom key adds them (core/wisdom.cpp, shape_key): empty without runs.
 [[nodiscard]] std::string runs_key(const shape_view& s);
 
+// How a c2c row's chain takes one side's stored runs (task 5.1e): whole, between the side's
+// separate pass and the transform (none); by the chain's first or last pass on the pruned
+// codelets reading or writing the line's first half, n/2 elements, where the one run of n/2
+// is stored (direct: no separate pass); or by those passes through the workspace block, the
+// separate pass then moving the first half only (half).
+enum class run_pruning : std::uint8_t { none, direct, half };
+
 // describe()'s line for the runs: each side's axes with runs (the shape's indices), where the
 // input's are read to (`in_to`: "the output", "the workspace block"), whether the output's are
-// accumulated, and the `passes` they cost.
+// accumulated, how each side is pruned, and the `passes` they cost.
 [[nodiscard]] std::string runs_text(const run_plan& runs, bool accumulate, const char* in_to,
-                                    std::size_t passes);
+                                    std::size_t passes, run_pruning in = run_pruning::none,
+                                    run_pruning out = run_pruning::none);
 
 } // namespace fftn::inline v0::detail
