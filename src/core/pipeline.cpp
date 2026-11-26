@@ -1249,11 +1249,12 @@ std::string depth_runs_text(const run_plan& runs, bool accumulate, const run_pru
 std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, const options& opts,
                                                     const build_settings& settings) {
   // <T, C, T>: an r2c then a c2r transform, and <C, T, C> (task 5.3e) a c2r then an r2c
-  // transform, whatever `first` says (pipeline_desc). <C, C, C> runs its first transform in
-  // `first`'s direction: direction::backward is a spectral pair inverse first (task 5.3e).
+  // transform, whichever direction `first` names (pipeline_desc). <C, C, C> runs its first
+  // transform in `first`'s direction: direction::backward is a spectral pair inverse first (task
+  // 5.3e). A value that is neither is refused for every kind.
   const bool real = d.kind == pipeline_kind::real_convolution;
   const bool real_mid = d.kind == pipeline_kind::real_middle;
-  if (!real && !real_mid && d.first != direction::forward && d.first != direction::backward) {
+  if (d.first != direction::forward && d.first != direction::backward) {
     refuse("desc.first", "must be direction::forward or direction::backward");
   }
   if (d.fanout == 0) {
@@ -1514,7 +1515,7 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
                          ? "in a separate pass per copy from the workspace block's second region"
                      : fanned ? "in a separate pass per copy from the workspace block"
                               : "in a separate pass from the workspace block");
-  const auto scale_where = [depth](scale_at at) {
+  const auto scale_where = [depth, real_mid](scale_at at) {
     switch (at) {
     case scale_at::forward_in:
       return "the forward chain's first pass";
@@ -1527,7 +1528,8 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
     case scale_at::before_middle:
       return "a separate pass on the spectrum before the middle's callback";
     case scale_at::after_middle:
-      return "a separate pass on the spectrum after the middle's callback";
+      return real_mid ? "a separate pass on the middle's n reals after the middle's callback"
+                      : "a separate pass on the spectrum after the middle's callback";
     case scale_at::none:
     case scale_at::pass:
       break;
@@ -1609,7 +1611,8 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
             ", before the prologue's factor and scale",
         edge_blocks());
     add("middle", pl.mid,
-        std::string("on each line's spectrum ") +
+        std::string(real_mid ? "on each line's middle, its n reals, "
+                             : "on each line's spectrum ") +
             (depth && !fanned ? "in scratch" : "in the workspace block") +
             ", once per line before " + (fanned ? "the copies and " : "") +
             "the middle's factor and scale",
@@ -1627,13 +1630,18 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
     ops += "\n" + text;
   }
   c->edges_note = ops;
-  // A spectral pair inverse first (task 5.3e): its first chain is the backward one, so the words
-  // above, written for the forward chain first, swap (the forward-first texts unchanged).
+  // A spectral pair inverse first (task 5.3e): its first chain is the backward one, so the chains'
+  // names above, written for the forward chain first, swap; nothing else in the texts does (the
+  // forward-first texts unchanged).
   if (!real && (real_mid || d.first == direction::backward)) {
     for (std::string* text : {&c->edges_note, &c->strategy_note}) {
-      replace_all(*text, "forward", "\x01");
-      replace_all(*text, "backward", "forward");
-      replace_all(*text, "\x01", "backward");
+      for (const char* chain : {" chain", " depth-first chain"}) {
+        const std::string fwd = std::string("forward") + chain;
+        const std::string bwd = std::string("backward") + chain;
+        replace_all(*text, fwd, "\x01");
+        replace_all(*text, bwd, fwd);
+        replace_all(*text, "\x01", bwd);
+      }
     }
   }
   if (opts.effort != planning::rules || opts.use != nullptr) {

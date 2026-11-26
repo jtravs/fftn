@@ -98,7 +98,7 @@ struct pcb_case {
   std::vector<run_spec> out{};
   std::size_t scratch = 0;
   bool backward = false; // <C, C, C>: the inverse transform first (task 5.3e)
-  bool per_row = false; // a kernel per line (the middle's batch stride)
+  bool per_row = false;  // a kernel per line (the middle's batch stride)
   // With a consumed fan-out: fanout_out_dist this value, which a store would refuse (0, or copies
   // overlapping lines), where `odd_copies` is set (DESIGN.md 18.2, "Callbacks" 14).
   bool odd_copies = false;
@@ -1049,6 +1049,19 @@ std::vector<pcb_case> spectral_sets(std::size_t n, bool real_kind, std::size_t m
        .in_stride = 2,
        .out_stride = 3},
       {.name = "plain, in place", .n = n, .mid = false, .in_place = true},
+      {.name = "plain, real factors on the sides",
+       .n = n,
+       .mid = false,
+       .pro_scale = 0.5,
+       .pro_f = real,
+       .epi_f = real},
+      {.name = "real factors on the sides, all three callbacks",
+       .n = n,
+       .pro = pro_cb::modify,
+       .epi = epi_cb::modify,
+       .pro_scale = 2.0,
+       .pro_f = real,
+       .epi_f = real},
       {.name = "plain, fan-out", .n = n, .fanout = 3, .mid = false},
       {.name = "plain, fan-out, an epilogue factor, accumulated",
        .n = n,
@@ -1247,10 +1260,11 @@ TYPED_TEST(PipelineCallbacks, RealMiddleOnEveryInstructionSet) {
   }
 }
 
-// Both kinds inverse first under teams and an executor, bitwise as serial execution.
+// Both kinds inverse first under teams and an executor, bitwise as serial execution; odd n (15,
+// 257) takes <C, T, C>'s full-length route.
 TYPED_TEST(PipelineCallbacks, InverseFirstTeamsAgreeWithSerial) {
   using C = std::complex<TypeParam>;
-  for (const std::size_t n : {16U, 256U, 1000U}) {
+  for (const std::size_t n : {15U, 16U, 256U, 257U, 1000U}) {
     for (pcb_case pc : spectral_sets(n, false, n, true)) {
       pc.count = 7;
       run_case<TypeParam, C>(pc, fftn::isa::best, true, {}, n <= 16);
@@ -1297,7 +1311,7 @@ TYPED_TEST(PipelineCallbacks, DepthFirstPairInverseFirst) {
          }) {
       pcb_case back = pc;
       back.backward = true;
-      run_case<TypeParam, C>(back, t, false, s, true, "the depth-first pair");
+      run_case<TypeParam, C>(back, t, true, s, true, "the depth-first pair");
     }
   }
 }
@@ -1350,6 +1364,18 @@ TYPED_TEST(PipelineCallbacks, DescribeNamesTheCallbacks) {
                            "in a separate pass on the line's n reals"}) {
     EXPECT_NE(rm.find(want), std::string::npos) << "no '" << want << "' in\n" << rm;
   }
+  // The chains' names swap, nothing else; a real middle's callback is on its n reals.
+  EXPECT_EQ(rm.find("forward chain's first pass"), std::string::npos) << rm;
+  real_middle.middle.call = {.fn = &modify_mid<TypeParam>};
+  real_middle.middle.scale = 0.5;
+  real_middle.epilogue.mul = {.kind = cplx, .axis_strides = {1}};
+  const std::string rc = fftn::pipeline(real_middle).describe();
+  for (const char* want :
+       {"on each line's middle, its n reals", "two products around", "the r2c chain out of it"}) {
+    EXPECT_NE(rc.find(want), std::string::npos) << "no '" << want << "' in\n" << rc;
+  }
+  EXPECT_EQ(rc.find("line's spectrum"), std::string::npos) << rc;
+  EXPECT_EQ(rc.find("on the spectrum"), std::string::npos) << rc;
   // Without callbacks, nothing of them.
   const std::string plain =
       fftn::pipeline(fftn::complex_convolution_rows<TypeParam>(64, 4)).describe();

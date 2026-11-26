@@ -734,6 +734,13 @@ TEST(Pipelines, RefusalsNameTheField) {
   real_middle.middle.mul = {};
   real_middle.runs = {{.axis = 0, .where = fftn::side::in, .logical = 8, .stored = 0, .count = 2}};
   expect_refused(real_middle, {}, "desc.runs[0].logical");
+  // A `first` that is neither direction is refused for the real kinds too, which ignore it.
+  real_middle.runs = {};
+  real_middle.first = static_cast<fftn::direction>(3);
+  expect_refused(real_middle, {}, "desc.first");
+  fftn::pipeline_desc<double, C, double> real_first = fftn::convolution_rows<double>(16, 2);
+  real_first.first = static_cast<fftn::direction>(3);
+  expect_refused(real_first, {}, "desc.first");
   // The layout.
   d = good;
   d.line.n = 0;

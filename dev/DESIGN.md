@@ -3517,7 +3517,9 @@ As built (task 5.3e; provisional, second reader pending): spectral pairs inverse
   naming `desc.middle.mul.kind`); every factor is a pass on the line in the block. The sides'
   layout and stored runs are those of a c2c line of n/2 + 1 elements: runs on the half spectrum
   are bands of bins. Fan-out, accumulation, in place and 5.3d's callbacks (a real middle callback,
-  `block_fn<T>`) as on `<T, C, T>`. `first` is ignored for both real kinds.
+  `block_fn<T>`) as on `<T, C, T>`. `first` is ignored for both real kinds, but a value that is
+  neither direction is refused for every kind (naming `desc.first`). `describe()` names the chains
+  in their order: inverse first, only the chains' names swap.
 - `spectral_pair_rows(n, count, direction::backward)` describes the first; no helper describes
   `<C, T, C>` (12.2's API block names none).
 - Not built: the lanes pair for `<C, C, C>` (5.2f has not started), in either order.
