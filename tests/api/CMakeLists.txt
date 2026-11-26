@@ -44,6 +44,11 @@ fftn_add_test(fftn_pipeline_callbacks_tests SOURCES pipeline_callbacks_test.cpp
               LIBRARIES fftn_test_support)
 fftn_always_optimise(pipeline_callbacks_test.cpp)
 
+# Owner-computes (task 5.5): completion::own runs each member's transforms as transforms_of deals
+# them, for plans with edges and callbacks and for pipelines.
+find_package(Threads REQUIRED)
+fftn_add_test(fftn_owner_computes_tests SOURCES owner_computes_test.cpp LIBRARIES Threads::Threads)
+
 # Real-to-real plans (task 6.3) against the quadruple-precision reference, optimised likewise.
 fftn_add_test(fftn_r2r_tests SOURCES r2r_test.cpp LIBRARIES fftn_test_support)
 fftn_always_optimise(r2r_test.cpp)

@@ -47,6 +47,8 @@ is why results do not depend on the thread count.
   pkg-config or FetchContent.
 - [docs/easy.md](docs/easy.md): numpy's FFT functions in one call each, with cached plans
   (provisional).
+- [docs/fusion.md](docs/fusion.md): pointwise work fused with the transforms (edges, block
+  callbacks, row pipelines) and owner-computes (provisional).
 - [dev/DESIGN.md](dev/DESIGN.md): goals, evidence, architecture and design decisions.
 - [dev/PLAN.md](dev/PLAN.md): the phased implementation and experiment plan, with current
   status.
