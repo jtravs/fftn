@@ -363,7 +363,7 @@ edge's factor (accumulation and scales are taken).
 
 ## Pipelines
 
-Provisional (tasks 5.2b and 5.2c, `fftn/pipeline.hpp`). A row pipeline takes each line of one axis
+Provisional (tasks 5.2b to 5.2d, `fftn/pipeline.hpp`). A row pipeline takes each line of one axis
 through a transform, a pointwise middle and the inverse transform, reading the line once and
 storing it once: the spectrum stays in the workspace, so the work is one sweep of memory
 instead of three. A `pipeline_desc<In, Mid, Out>` describes it: the `line` (its length and the
@@ -422,17 +422,41 @@ pipe.execute(x.data(), y.data(), ws, {.mid_factor = kernel.data()});
 ```
 
 A linear (zero-padded) convolution of m values with a kernel of L taps is the circular one of a
-length n of at least m + L − 1; until stored runs are built the caller stores the zeros.
+length n of at least m + L − 1. The line's stored runs (`pipeline_desc::runs`, axis 0, as in
+"Stored runs" above; the helpers take them and set the rows' distances to their stored extents)
+keep the zeros out of memory: the input's elements outside its runs are zero and not read, and
+the output's outside its runs are not written. The valid half of such a convolution:
 
-Built so far: `pipeline<C, C, C>` with the forward transform first and `pipeline<T, C, T>`,
-lines stored whole, one inverse per forward, planned by the rules (`options::effort` is
+```cpp file=examples/pipeline.cpp region=valid-half
+// Rows of m values convolved linearly with the filter: the line of n = 2m holds a row in
+// its first half and zeros beyond, which are not stored or read, and only the first m outputs
+// are stored. The rows are m apart on both sides (the runs' stored extents).
+const std::vector<fftn::stored_run> runs{
+    {.axis = 0, .where = fftn::side::in, .logical = 0, .stored = 0, .count = m},
+    {.axis = 0, .where = fftn::side::out, .logical = 0, .stored = 0, .count = m},
+};
+fftn::pipeline_desc desc = fftn::convolution_rows<double>(n, count, runs);
+desc.middle.scale = 1.0 / static_cast<double>(n);
+const fftn::pipeline pipe(desc);
+fftn::workspace ws(pipe);
+
+std::vector<double> y(m * count);
+pipe.execute(x.data(), y.data(), ws, {.mid_factor = kernel.data()});
+```
+
+Built so far: `pipeline<C, C, C>` with the forward transform first and `pipeline<T, C, T>`, with
+stored runs on either side, one inverse per forward, planned by the rules (`options::effort` is
 ignored, and `pipeline::describe()` says so). Refused at construction, naming the field, until
 their steps: the inverse transform first (`spectral_pair_rows` with `direction::backward`), the
-kind `<C, T, C>`, stored runs (`pipeline_desc::runs`) and `fanout` above 1. On `<C, C, C>`, a
-complex factor of stride 1 along the line is applied in the neighbouring transform's pass; any
-other factor, every factor of `<T, C, T>`, and accumulation, in a pass of its own over the line
-while it is in the workspace (`describe()` counts them). Results equal the transform, the multiplications and the
-inverse done separately within two transforms' error bound plus one rounding per
+kind `<C, T, C>`, `fanout` above 1, and stored runs on an in-place pipeline or beside a prologue
+or epilogue factor. On `<C, C, C>`, a complex factor of stride 1 along the line is applied in the
+neighbouring transform's pass; any other factor, every factor of `<T, C, T>`, accumulation and
+the runs' reading and storing, in a pass of its own over the line while it is in the workspace
+(`describe()` counts them), except that runs within the line's first half are read or written by
+the transform's first or last pass where its passes allow, as for a plan. Every pipeline is
+built as the chain pair: the depth-first pair for long lines is built (task 5.2d) but taken by
+no pipeline unless forced, until experiment X67 gives the rules their choice. Results equal the
+transform, the multiplications and the inverse done separately within two transforms' error bound plus one rounding per
 multiplication and addition, not bit for bit; the guarantees of "Determinism" below hold for
 pipelines too. `pipeline::transforms_of` deals lines among a team's members as
 `plan::transforms_of` deals transforms.

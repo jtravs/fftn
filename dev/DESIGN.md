@@ -2812,7 +2812,7 @@ Points that matter:
   for L2-resident sizes and more beyond. Callbacks always see natural order, because their
   coordinates must be affine in the block.
 
-**Plan for task 5.2** (designed 2026-11-25; 5.2a–5.2c built, "As built" below; steps 5.2a–5.2g in PLAN phase 5,
+**Plan for task 5.2** (designed 2026-11-25; 5.2a–5.2d built, "As built" below; steps 5.2a–5.2g in PLAN phase 5,
 experiment X67; the API points the maintainer has to settle are listed in 18.2, "Pipelines").
 
 - **API** (provisional, `fftn/pipeline.hpp`), the block above built in parts:
@@ -2926,8 +2926,8 @@ experiment X67; the API points the maintainer has to settle are listed in 18.2, 
 - **Planning.** Until X67 the rules decide, and `describe()` says that `options::effort` is
   ignored (as for PR 134's runs):
   - the chain pair by default;
-  - the depth-first pair where X50's rule would make a row of the line's length a depth-first
-    convolution;
+  - the depth-first pair where X67 says (5.2d builds it forced only; X50's rule for a convolution
+    of the line's length is the candidate rule);
   - the lanes pair where the lanes rules would take the row (`lanes_up_to`, 9.3's block).
 
   5.2g adds measured candidates and wisdom keyed by the description.
@@ -2979,6 +2979,39 @@ middle pass as an edge pass whose factor moves by the middle cursor's step (PR 1
 finding; pipelines build no row blocks yet, a white-box test builds them). Plans, plans with edges
 and `<C, C, C>` pipelines are unchanged (`describe()`, `workspace_bytes()` and output bits of
 2832 of them; the plain driver functions disassemble the same).
+
+**As built (task 5.2d, 2026-11-26).** Stored runs on the line (`pipeline_desc::runs`, axis 0) and
+the depth-first pair. Runs are validated as a shape's (`resolve_runs` on the line's c2c shape, so
+on n logical positions for `<T, C, T>` too), set each side's default distances and reach by its
+stored extent, and are refused in place and beside a prologue or epilogue factor (18.2, proposal
+8). On the chain pairs the input's runs are PR 134's run stages into the workspace block (zeros
+elsewhere), from which the forward chain runs in place, and the output's runs make the inverse
+chain end in the block, from which the store stage writes (or accumulates) only the runs; on
+`<C, C, C>` the chain's pruned first and last passes (5.1e) take runs within the line's first
+half exactly as on a plan's c2c row (one run of the half stored with stride 1 read or written
+where it is stored, with no stage; otherwise the stage moves only the half). Real lines take no
+pruned passes yet. The depth-first pair is `chain_builder::depth_pair`, which X50's convolution
+now goes through (`bluestein_depth` passes its chirp, an input run of Q and an output run of the
+first Q; programs, names and bits unchanged): the forward depth-first chain from the input (or
+scratch b) with its blocks in the workspace block and its top pass into scratch a times the
+kernel (a table, or the middle cursor through `moving_mid_out_factor`), then the backward chain
+from a with its last top pass to the output (or in place). One input run from logical 0 is read
+by the forward first pass (`depth_first_head`, zeros beyond) and one output run from a logical
+start that C divides by the last top pass (`depth_top_part`, none or the scale), each at the run's
+stored offset; the chirp variants take the same offsets (0 for Bluestein). Other runs, prologue
+and epilogue factors and accumulation are read and store stages through scratch b and the block,
+which sweep the line once more each (`describe()` says so); a middle that cannot fuse is an edge
+pass on scratch a. The pair is taken only where forced (`build_settings::strategy` depth;
+`convolution_depth_tops`, for `<C, C, C>` lines contiguous on both sides, with tops whose product
+C divides): when the rules take it is experiment X67's to decide (5.2g; AGENTS.md section 6), with
+X50's rule for a convolution of the line's length as the candidate, so every pipeline by the rules
+keeps the chain pair. `<T, C, T>` keeps the real chain pair. Within a line a team shares the stages by chunks and the sub-row loops by lines
+on each member's scratch, the owner's block shared, as in Bluestein's case. Plans, plans with
+edges and runs, Bluestein plans and every pipeline are unchanged (`describe()`,
+`workspace_bytes()` and output bits of probes against `main` on the Mac and the EPYC 7763; the
+plain and edge driver functions disassemble the same with Clang on arm64 and x86-64).
+`make_edge_forms` still takes one `element_bytes` (PR 144's latent note): pipelines build no row
+blocks, so it waits for the first that does.
 
 ### 12.3 Block callbacks
 
@@ -4801,6 +4834,7 @@ to change before a release.
 | 2026-11-26 | Block callbacks on c2c rows (task 5.3a, section 12.3): provisional `fftn/callback.hpp` (`block_info`, `block_fn`, `callback_mode`, `callback`, `callback_of`, `along_transforms`) and `edge::call`, with 18.2's proposals ("Callbacks"); the callback stage on the chain only until 5.3b, planned by the rules; blocks are stage chunks; per-member scratch at the end of each slot; the drive policies' per-task entries take the lane and slots, the plain instantiations unchanged; a plan with callbacks needs the `exec_args` overloads. Awaits the maintainer's review of the API. |
 | 2026-11-26 | Block callbacks in every row strategy (task 5.3b, section 12.3): c2c, r2c and c2r rows on the strategy chosen; the lanes' callbacks on the block's rows before the gathering and after the scattering pass rather than on the tile; the grid's and depth-first chains' input copy in the output (5.1b-1's place) and the chain's in the block, the output behind `callback_copy_out` for X66; a consumed output keeps a row off the strategies that write the output; `machine_profile::callback_block_bytes`; measured planning with stand-ins; the batched forms (row blocks for batch leaves and short rows, the flat form) take callback stages under the profile's reach | The design's table with the separate passes' places 5.1b built, which already work on every strategy; the tile is a performance refinement for X66 (5.3g) to price. A consumed output may be null, which the strategies that use the output as working memory cannot take without a retargeting of their own |
 | 2026-11-26 | Packaging (task 6.1, section 14.3): an installed CMake package (`fftn::fftn`; the adapters as components `omp` and `kokkos`), a relocatable `fftn.pc`, install rules on by default only for a top-level build, version compatibility `SameMinorVersion`, the thread library in the link interface; third-party subdirectories `EXCLUDE_FROM_ALL`; a path-filtered CI workflow builds a downstream project three ways (Windows not on pull requests) | DESIGN 18.2 Q25's proposal; a minor version may still change the API before 1.0; FetchContent users decide what they install; the check builds the library twice, so it runs where packaging can change rather than on every pull request |
+| 2026-11-26 | Stored runs on pipelines and the depth-first pair (task 5.2d, section 12.2): runs on the line as PR 134's run stages around the chain pairs, the pruned passes on `<C, C, C>`; `chain_builder::depth_pair` generalises X50's convolution (optional chirp, one input run from 0, one output run, a table or the middle cursor), Bluestein built through it; two kernel variants per radix (`depth_first_head`, `depth_top_part`); the pair taken only where forced, every pipeline by the rules keeping the chain pair until X67 (5.2g) decides when the rules take it | The plan for 5.2 (section 12.2) read as written, except that the pair's rule is a planner rule, which needs an experiment (AGENTS.md section 6, the lead's ruling): X50's rule is X67's candidate; one fused run per side saves a sweep of the line each way, as the chirp passes did in X50 arm C |
 | 2026-11-26 | Step 6.5 (provisional, second reader to come): `dct4`, `dst4`, `dct1` and `dst1` built in 5.7's routes on the phase builder (the even `dct4` by a twiddled c2c of n/2, the odd by a zero-padded c2c of 2n without stored runs or pruned codelets, `dct1` and `dst1` by the extensions); an axis of one point of `dst1` folds its factor 2, of `dct4` or `dst4` its √2, into the scales' product | 5.7's routes as proposed and Q14's extensions; the scratch-line chain takes no stored runs, so pruning the odd `dct4` (or a cheaper route over a transform of n) is step 6.12's, with speed; a correctly rounded √2 in the scales' product rounds as a phase's own multiply would |
 | 2026-11-26 | Step 6.4 (provisional, second reader to come): `dct2`, `dct3`, `dst2` and `dst3` built in 5.7's routes on 6.3's phase builder (Makhoul's read stage and twiddled store over the r2c's half-length chain, the inverse over the c2r's; the sine kinds by exact signs and reversals), any n, kinds mixed across axes; an axis of one point of `dct2` or `dst2` folds its exact factor 2 into the scales' product instead of a phase | 5.7's routes as proposed; the factor 2 needs no phase and no rounding of its own |
 | 2026-11-26 | Step 6.3 (provisional, second reader to come): `r2r_kind`, `shape<T, T>` with `shape::kinds`, `rows_r2r`, `planes_r2r`, `volumes_r2r`, `axes_r2r`, `r2r_plan`, and the DHT as built in 5.7: a read stage, the r2c's complex chain in the member's scratch and a store stage fusing the r2c's pairing with the Hartley combination; the DCT and DST kinds refused until 6.4 and 6.5; real-to-real plans by the rules only | The 18.2 "Phase 6" proposals 9–13 taken as written; scratch rather than the block, because a phase's lines run on several members at once and the block is the task's |
