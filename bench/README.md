@@ -295,8 +295,12 @@ Case IDs are `kind-dims-bBATCH-op|ip[-bwd][-f32]`, for example `r2c-64x48-b256-i
 `c2c-1024-b1-op-f32`. A case listed by several groups is one case with the union of their
 tiers (its weight must agree).
 A backend takes single-precision cases only when its `describe` lists `"f32"` under
-`precisions` (FFTN does; the competitors do not yet); for the others the harness reports
-them unsupported, and `smoke` does not count that as a failure.
+`precisions` (FFTN does, and FFTW when its installation has `libfftw3f`; the other
+competitors do not yet); for the others the harness reports them unsupported, and `smoke`
+does not count that as a failure. `--precision f32` (on `run`, `smoke` and `list`) takes
+every selected case of a catalogue in single precision, so `--catalogue standard --precision
+f32` is the standard catalogue in float (a case the catalogue already lists in float is kept
+once); `--filter` then sees the `-f32` ids.
 Layouts follow FFTW: rows and batches contiguous, r2c output n/2+1 complex values in the
 last dimension, in-place real arrays padded to 2(n/2+1). With `layout = "interleaved"` the
 `batch` transforms lie one element apart and every element of a transform `batch` elements
@@ -568,7 +572,8 @@ stops.
 
 - Contiguous rows, planes and volumes, and the interleaved layout above. Any other strided
   layout comes with the phase that needs it.
-  Single precision is timed for FFTN only, and threaded arms exist for FFTN only
+  Single precision is timed for FFTN and FFTW (one thread) only, and threaded arms exist for
+  FFTN only
   (competitors' own threading and a team of serial plans, DESIGN.md 16.1, come with
   phase 3's exit).
 - Cold mode rotates data buffers, not the libraries' plan tables (FFTW shares twiddle

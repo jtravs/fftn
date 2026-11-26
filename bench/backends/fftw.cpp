@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: 2026 John C. Travers and contributors
 // SPDX-License-Identifier: Apache-2.0
 
-// fbench backend for FFTW 3 (double precision), built only when FFTN_BENCH_FFTW_ROOT names
-// an installation. FFTW is GPL: this executable is for our own measurements and is never
+// fbench backend for FFTW 3, built only when FFTN_BENCH_FFTW_ROOT names an installation:
+// double precision, and single precision as well when the installation has libfftw3f
+// (FBENCH_FFTW_FLOAT). FFTW is GPL: this executable is for our own measurements and is never
 // distributed (AGENTS.md section 10).
 //
 // Options (space-separated KEY=VALUE, from the arm's +OPTION=value list):
@@ -13,10 +14,11 @@
 //   THREADS=N           plan with N threads (fftw_plan_with_nthreads, FFTW's POSIX-threads
 //                       library, so no OpenMP runtime joins the process); default 1, which
 //                       never initialises FFTW's threads; N > 1 needs libfftw3_threads in
-//                       the installation (FBENCH_FFTW_THREADS)
+//                       the installation (FBENCH_FFTW_THREADS), and is double precision only
 // Wisdom is otherwise fresh in every process: stale accumulated wisdom slowed FFTW by
 // 1.3x in the prototype (DESIGN.md finding E10). The driver keeps one wisdom file per run
-// and planner setting, so a campaign starts fresh and its rounds share their plans.
+// and planner setting, so a campaign starts fresh and its rounds share their plans. Single
+// precision is a separate library with wisdom of its own, kept in <file>.f32.
 
 #include "backends/common.hpp"
 #include "harness/backend.hpp"
@@ -56,9 +58,11 @@ session& state() {
   return s;
 }
 
+// fftw_plan or fftwf_plan, by `single`.
 struct plan_record {
-  fftw_plan plan = nullptr;
+  void* plan = nullptr;
   std::int32_t kind = fbench_c2c;
+  bool single = false;
 };
 
 void say(char* message, std::size_t size, const std::string& text) {
@@ -78,17 +82,219 @@ std::string simd_of(std::string_view version) {
 // into the executable, so dladdr on either names the executable itself. dlsym with
 // RTLD_NEXT searches only the objects loaded after this one, so it finds the real
 // definition (on macOS too).
-std::string loaded_from() {
+std::string loaded_from(const char* symbol) {
 #ifdef _WIN32
+  (void)symbol;
   return "";
 #else
-  const void* const symbol = dlsym(RTLD_NEXT, "fftw_execute");
+  const void* const address = dlsym(RTLD_NEXT, symbol);
   Dl_info info{};
-  if (symbol == nullptr || dladdr(symbol, &info) == 0 || info.dli_fname == nullptr) {
+  if (address == nullptr || dladdr(address, &info) == 0 || info.dli_fname == nullptr) {
     return "";
   }
   return info.dli_fname;
 #endif
+}
+
+// One precision's FFTW functions under common names: fftw_* (double) and fftwf_* (float)
+// are two libraries with the same API.
+template <class R> struct api;
+
+template <> struct api<double> {
+  using plan = fftw_plan;
+  using complex = fftw_complex;
+  using iodim64 = fftw_iodim64;
+  static constexpr auto plan_many_dft = &fftw_plan_many_dft;
+  static constexpr auto plan_many_dft_r2c = &fftw_plan_many_dft_r2c;
+  static constexpr auto plan_many_dft_c2r = &fftw_plan_many_dft_c2r;
+  static constexpr auto plan_guru64_dft = &fftw_plan_guru64_dft;
+  static constexpr auto plan_guru64_dft_r2c = &fftw_plan_guru64_dft_r2c;
+  static constexpr auto plan_guru64_dft_c2r = &fftw_plan_guru64_dft_c2r;
+  static constexpr auto execute_dft = &fftw_execute_dft;
+  static constexpr auto execute_dft_r2c = &fftw_execute_dft_r2c;
+  static constexpr auto execute_dft_c2r = &fftw_execute_dft_c2r;
+  static constexpr auto destroy_plan = &fftw_destroy_plan;
+  static constexpr auto sprint_plan = &fftw_sprint_plan;
+  static constexpr auto forget_wisdom = &fftw_forget_wisdom;
+  static constexpr auto import_wisdom_from_file = &fftw_import_wisdom_from_file;
+  static constexpr auto export_wisdom_to_file = &fftw_export_wisdom_to_file;
+  static constexpr auto cleanup = &fftw_cleanup;
+};
+
+#ifdef FBENCH_FFTW_FLOAT
+template <> struct api<float> {
+  using plan = fftwf_plan;
+  using complex = fftwf_complex;
+  using iodim64 = fftwf_iodim64;
+  static constexpr auto plan_many_dft = &fftwf_plan_many_dft;
+  static constexpr auto plan_many_dft_r2c = &fftwf_plan_many_dft_r2c;
+  static constexpr auto plan_many_dft_c2r = &fftwf_plan_many_dft_c2r;
+  static constexpr auto plan_guru64_dft = &fftwf_plan_guru64_dft;
+  static constexpr auto plan_guru64_dft_r2c = &fftwf_plan_guru64_dft_r2c;
+  static constexpr auto plan_guru64_dft_c2r = &fftwf_plan_guru64_dft_c2r;
+  static constexpr auto execute_dft = &fftwf_execute_dft;
+  static constexpr auto execute_dft_r2c = &fftwf_execute_dft_r2c;
+  static constexpr auto execute_dft_c2r = &fftwf_execute_dft_c2r;
+  static constexpr auto destroy_plan = &fftwf_destroy_plan;
+  static constexpr auto sprint_plan = &fftwf_sprint_plan;
+  static constexpr auto forget_wisdom = &fftwf_forget_wisdom;
+  static constexpr auto import_wisdom_from_file = &fftwf_import_wisdom_from_file;
+  static constexpr auto export_wisdom_to_file = &fftwf_export_wisdom_to_file;
+  static constexpr auto cleanup = &fftwf_cleanup;
+};
+#endif
+
+// The wisdom file of a precision: single precision appends ".f32".
+template <class R> std::string wisdom_file(const std::string& file) {
+  return file.empty() || sizeof(R) == sizeof(double) ? file : file + ".f32";
+}
+
+// Forgets the process's wisdom and imports the file's when it exists; false when the file
+// exists but does not import.
+template <class R> bool import_wisdom(const std::string& file) {
+  api<R>::forget_wisdom();
+  if (file.empty()) {
+    return true;
+  }
+  std::FILE* const f = std::fopen(file.c_str(), "r");
+  if (f == nullptr) {
+    return true;
+  }
+  const int ok = api<R>::import_wisdom_from_file(f);
+  std::fclose(f);
+  return ok != 0;
+}
+
+template <class R> void export_wisdom(const std::string& file) {
+  if (file.empty()) {
+    return;
+  }
+  if (std::FILE* f = std::fopen(file.c_str(), "w"); f != nullptr) {
+    api<R>::export_wisdom_to_file(f);
+    std::fclose(f);
+  }
+}
+
+// The plan in FFTW's own notation, one line (experiment X25): which codelets, radices,
+// buffering and vector loops it chose. fftw_sprint_plan's string is malloc'ed.
+template <class R> std::string plan_line(typename api<R>::plan p) {
+  char* const text = api<R>::sprint_plan(p);
+  const std::string_view plan_text = text != nullptr ? text : "";
+  std::string line;
+  for (const char ch : plan_text) {
+    const bool blank = ch == '\n' || ch == ' ';
+    if (!blank || (!line.empty() && line.back() != ' ')) {
+      line.push_back(blank ? ' ' : ch);
+    }
+  }
+  std::free(text); // FFTW's API allocates the string with malloc
+  return line;
+}
+
+template <class R>
+typename api<R>::plan make_plan(const fbench_case* c, void* in, void* out, unsigned flags) {
+  using A = api<R>;
+  using C = typename A::complex;
+  // FFTW's guru interface takes int; the harness keeps every length below 2^31, and the
+  // embeddings and distances of the catalogue's cases fit too.
+  std::array<int, 3> n{};
+  std::array<int, 3> in_embed{};
+  std::array<int, 3> out_embed{};
+  for (int d = 0; d < c->rank; ++d) {
+    const auto i = static_cast<std::size_t>(d);
+    n.at(i) = static_cast<int>(c->dims[i]);
+    in_embed.at(i) = n.at(i);
+    out_embed.at(i) = n.at(i);
+  }
+  const auto last = static_cast<std::size_t>(c->rank - 1);
+  in_embed.at(last) = static_cast<int>(c->in_last);
+  out_embed.at(last) = static_cast<int>(c->out_last);
+  const auto batch = static_cast<int>(c->batch);
+  const auto in_dist = static_cast<int>(c->in_dist);
+  const auto out_dist = static_cast<int>(c->out_dist);
+  // No FFTW_UNALIGNED: the harness plans on buffers with the alignment of every later
+  // execute, and FFTW_UNALIGNED silently drops FFTW's aligned SIMD codelets (finding E10).
+  if (c->interleave > 1) {
+    // The interleaved layout (fbench_case::interleave) through the guru interface: strided
+    // axes, the transforms one element apart.
+    const auto in_strides = fbench::backends::element_strides(*c, c->in_last);
+    const auto out_strides = fbench::backends::element_strides(*c, c->out_last);
+    std::array<typename A::iodim64, 3> axes{};
+    for (int d = 0; d < c->rank; ++d) {
+      const auto i = static_cast<std::size_t>(d);
+      axes.at(i) = {
+          .n = c->dims[i],
+          .is = in_strides[i] * c->interleave,
+          .os = out_strides[i] * c->interleave,
+      };
+    }
+    std::array<typename A::iodim64, 2> loops{};
+    int loop_rank = 0;
+    if (c->outer > 1) {
+      loops.at(0) = {.n = c->outer, .is = c->outer_in_dist, .os = c->outer_out_dist};
+      loop_rank = 1;
+    }
+    loops.at(static_cast<std::size_t>(loop_rank)) = {
+        .n = c->batch,
+        .is = c->in_dist,
+        .os = c->out_dist,
+    };
+    ++loop_rank;
+    if (c->kind == fbench_c2c) {
+      return A::plan_guru64_dft(c->rank, axes.data(), loop_rank, loops.data(), static_cast<C*>(in),
+                                static_cast<C*>(out), c->sign, flags);
+    }
+    if (c->kind == fbench_r2c) {
+      return A::plan_guru64_dft_r2c(c->rank, axes.data(), loop_rank, loops.data(),
+                                    static_cast<R*>(in), static_cast<C*>(out), flags);
+    }
+    return A::plan_guru64_dft_c2r(c->rank, axes.data(), loop_rank, loops.data(),
+                                  static_cast<C*>(in), static_cast<R*>(out), flags);
+  }
+  if (c->kind == fbench_c2c) {
+    return A::plan_many_dft(c->rank, n.data(), batch, static_cast<C*>(in), in_embed.data(), 1,
+                            in_dist, static_cast<C*>(out), out_embed.data(), 1, out_dist, c->sign,
+                            flags);
+  }
+  if (c->kind == fbench_r2c) {
+    return A::plan_many_dft_r2c(c->rank, n.data(), batch, static_cast<R*>(in), in_embed.data(), 1,
+                                in_dist, static_cast<C*>(out), out_embed.data(), 1, out_dist,
+                                flags);
+  }
+  return A::plan_many_dft_c2r(c->rank, n.data(), batch, static_cast<C*>(in), in_embed.data(), 1,
+                              in_dist, static_cast<R*>(out), out_embed.data(), 1, out_dist, flags);
+}
+
+template <class R>
+std::int32_t create(const fbench_case* c, void* in, void* out, void** plan, char* message,
+                    std::size_t message_size) {
+  const typename api<R>::plan p = make_plan<R>(c, in, out, state().flags);
+  if (p == nullptr) {
+    say(message, message_size, "FFTW returned no plan");
+    return fbench_error;
+  }
+  if (state().plan_note) {
+    say(message, message_size, plan_line<R>(p));
+  }
+  auto record = std::make_unique<plan_record>();
+  record->plan = static_cast<void*>(p);
+  record->kind = c->kind;
+  record->single = sizeof(R) == sizeof(float);
+  *plan = record.release();
+  return fbench_ok;
+}
+
+template <class R> void execute(const plan_record& r, void* in, void* out) {
+  using A = api<R>;
+  using C = typename A::complex;
+  const auto p = static_cast<typename A::plan>(r.plan);
+  if (r.kind == fbench_c2c) {
+    A::execute_dft(p, static_cast<C*>(in), static_cast<C*>(out));
+  } else if (r.kind == fbench_r2c) {
+    A::execute_dft_r2c(p, static_cast<R*>(in), static_cast<C*>(out));
+  } else {
+    A::execute_dft_c2r(p, static_cast<C*>(in), static_cast<R*>(out));
+  }
 }
 
 } // namespace
@@ -168,29 +374,33 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
     return fbench_error;
   }
 #endif
-  fftw_forget_wisdom();
-  if (!s.wisdom_in.empty()) {
-    if (std::FILE* f = std::fopen(s.wisdom_in.c_str(), "r"); f != nullptr) {
-      const int ok = fftw_import_wisdom_from_file(f);
-      std::fclose(f);
-      if (ok == 0) {
-        say(message, message_size, "cannot import wisdom from " + s.wisdom_in);
-        return fbench_error;
-      }
-    }
+  if (!import_wisdom<double>(s.wisdom_in)) {
+    say(message, message_size, "cannot import wisdom from " + s.wisdom_in);
+    return fbench_error;
   }
   const std::string version = fftw_version;
-  s.description = fbench::json()
-                      .str("library", "fftw")
-                      .str("version", version)
-                      .str("isa", simd_of(version))
-                      .str("precision", "double")
-                      .raw("supports", R"(["c2c","r2c","c2r"])")
-                      .str("planner", s.planner)
+  fbench::json description;
+  description.str("library", "fftw")
+      .str("version", version)
+      .str("isa", simd_of(version))
+      .raw("supports", R"(["c2c","r2c","c2r"])");
+#ifdef FBENCH_FFTW_FLOAT
+  // The threaded planner is initialised for the double library only.
+  if (s.threads == 1) {
+    if (!import_wisdom<float>(wisdom_file<float>(s.wisdom_in))) {
+      say(message, message_size, "cannot import wisdom from " + wisdom_file<float>(s.wisdom_in));
+      return fbench_error;
+    }
+    description.raw("precisions", R"(["f64","f32"])")
+        .str("isa_f32", simd_of(fftwf_version))
+        .str("loaded_from_f32", loaded_from("fftwf_execute"));
+  }
+#endif
+  s.description = description.str("planner", s.planner)
                       .integer("threads", s.threads)
                       .str("cc", fftw_cc)
                       .str("codelet_optim", fftw_codelet_optim)
-                      .str("loaded_from", loaded_from())
+                      .str("loaded_from", loaded_from("fftw_execute"))
                       .str("expected_root", FBENCH_FFTW_ROOT)
                       .inner();
   return fbench_ok;
@@ -198,137 +408,56 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
 
 void fbench_end() {
   const session& s = state();
-  if (!s.wisdom_out.empty()) {
-    if (std::FILE* f = std::fopen(s.wisdom_out.c_str(), "w"); f != nullptr) {
-      fftw_export_wisdom_to_file(f);
-      std::fclose(f);
-    }
+  export_wisdom<double>(s.wisdom_out);
+#ifdef FBENCH_FFTW_FLOAT
+  if (s.threads == 1) {
+    export_wisdom<float>(wisdom_file<float>(s.wisdom_out));
+    api<float>::cleanup();
   }
+#endif
 #ifdef FBENCH_FFTW_THREADS
   if (s.threads > 1) {
     fftw_cleanup_threads();
     return;
   }
 #endif
-  fftw_cleanup();
+  api<double>::cleanup();
 }
 
 const char* fbench_describe() { return state().description.c_str(); }
 
 std::int32_t fbench_create(const fbench_case* c, void* in, void* out, void** plan, char* message,
                            std::size_t message_size) {
-  // FFTW's guru interface takes int; the harness keeps every length below 2^31, and the
-  // embeddings and distances of the catalogue's cases fit too.
-  std::array<int, 3> n{};
-  std::array<int, 3> in_embed{};
-  std::array<int, 3> out_embed{};
-  for (int d = 0; d < c->rank; ++d) {
-    const auto i = static_cast<std::size_t>(d);
-    n.at(i) = static_cast<int>(c->dims[i]);
-    in_embed.at(i) = n.at(i);
-    out_embed.at(i) = n.at(i);
+  if (c->precision == fbench_f32) {
+#ifdef FBENCH_FFTW_FLOAT
+    return create<float>(c, in, out, plan, message, message_size);
+#else
+    say(message, message_size, "this installation has no libfftw3f");
+    return fbench_unsupported;
+#endif
   }
-  const auto last = static_cast<std::size_t>(c->rank - 1);
-  in_embed.at(last) = static_cast<int>(c->in_last);
-  out_embed.at(last) = static_cast<int>(c->out_last);
-  const auto batch = static_cast<int>(c->batch);
-  const auto in_dist = static_cast<int>(c->in_dist);
-  const auto out_dist = static_cast<int>(c->out_dist);
-  const unsigned flags = state().flags;
-  // No FFTW_UNALIGNED: the harness plans on buffers with the alignment of every later
-  // execute, and FFTW_UNALIGNED silently drops FFTW's aligned SIMD codelets (finding E10).
-  fftw_plan p = nullptr;
-  if (c->interleave > 1) {
-    // The interleaved layout (fbench_case::interleave) through the guru interface: strided
-    // axes, the transforms one element apart.
-    const auto in_strides = fbench::backends::element_strides(*c, c->in_last);
-    const auto out_strides = fbench::backends::element_strides(*c, c->out_last);
-    std::array<fftw_iodim64, 3> axes{};
-    for (int d = 0; d < c->rank; ++d) {
-      const auto i = static_cast<std::size_t>(d);
-      axes.at(i) = {
-          .n = c->dims[i],
-          .is = in_strides[i] * c->interleave,
-          .os = out_strides[i] * c->interleave,
-      };
-    }
-    std::array<fftw_iodim64, 2> loops{};
-    int loop_rank = 0;
-    if (c->outer > 1) {
-      loops.at(0) = {.n = c->outer, .is = c->outer_in_dist, .os = c->outer_out_dist};
-      loop_rank = 1;
-    }
-    loops.at(static_cast<std::size_t>(loop_rank)) = {
-        .n = c->batch,
-        .is = c->in_dist,
-        .os = c->out_dist,
-    };
-    ++loop_rank;
-    if (c->kind == fbench_c2c) {
-      p = fftw_plan_guru64_dft(c->rank, axes.data(), loop_rank, loops.data(),
-                               static_cast<fftw_complex*>(in), static_cast<fftw_complex*>(out),
-                               c->sign, flags);
-    } else if (c->kind == fbench_r2c) {
-      p = fftw_plan_guru64_dft_r2c(c->rank, axes.data(), loop_rank, loops.data(),
-                                   static_cast<double*>(in), static_cast<fftw_complex*>(out),
-                                   flags);
-    } else {
-      p = fftw_plan_guru64_dft_c2r(c->rank, axes.data(), loop_rank, loops.data(),
-                                   static_cast<fftw_complex*>(in), static_cast<double*>(out),
-                                   flags);
-    }
-  } else if (c->kind == fbench_c2c) {
-    p = fftw_plan_many_dft(c->rank, n.data(), batch, static_cast<fftw_complex*>(in),
-                           in_embed.data(), 1, in_dist, static_cast<fftw_complex*>(out),
-                           out_embed.data(), 1, out_dist, c->sign, flags);
-  } else if (c->kind == fbench_r2c) {
-    p = fftw_plan_many_dft_r2c(c->rank, n.data(), batch, static_cast<double*>(in), in_embed.data(),
-                               1, in_dist, static_cast<fftw_complex*>(out), out_embed.data(), 1,
-                               out_dist, flags);
-  } else {
-    p = fftw_plan_many_dft_c2r(c->rank, n.data(), batch, static_cast<fftw_complex*>(in),
-                               in_embed.data(), 1, in_dist, static_cast<double*>(out),
-                               out_embed.data(), 1, out_dist, flags);
-  }
-  if (p == nullptr) {
-    say(message, message_size, "FFTW returned no plan");
-    return fbench_error;
-  }
-  if (state().plan_note) {
-    // The plan in FFTW's own notation, one line (experiment X25): which codelets, radices,
-    // buffering and vector loops it chose. fftw_sprint_plan's string is malloc'ed.
-    char* const text = fftw_sprint_plan(p);
-    const std::string_view plan_text = text != nullptr ? text : "";
-    std::string line;
-    for (const char ch : plan_text) {
-      const bool blank = ch == '\n' || ch == ' ';
-      if (!blank || (!line.empty() && line.back() != ' ')) {
-        line.push_back(blank ? ' ' : ch);
-      }
-    }
-    std::free(text); // FFTW's API allocates the string with malloc
-    say(message, message_size, line);
-  }
-  auto record = std::make_unique<plan_record>();
-  record->plan = p;
-  record->kind = c->kind;
-  *plan = record.release();
-  return fbench_ok;
+  return create<double>(c, in, out, plan, message, message_size);
 }
 
 void fbench_execute(const void* plan, void* in, void* out) {
   const auto* r = static_cast<const plan_record*>(plan);
-  if (r->kind == fbench_c2c) {
-    fftw_execute_dft(r->plan, static_cast<fftw_complex*>(in), static_cast<fftw_complex*>(out));
-  } else if (r->kind == fbench_r2c) {
-    fftw_execute_dft_r2c(r->plan, static_cast<double*>(in), static_cast<fftw_complex*>(out));
-  } else {
-    fftw_execute_dft_c2r(r->plan, static_cast<fftw_complex*>(in), static_cast<double*>(out));
+#ifdef FBENCH_FFTW_FLOAT
+  if (r->single) {
+    execute<float>(*r, in, out);
+    return;
   }
+#endif
+  execute<double>(*r, in, out);
 }
 
 void fbench_destroy(void* plan) {
   const std::unique_ptr<plan_record> r(static_cast<plan_record*>(plan));
-  fftw_destroy_plan(r->plan);
+#ifdef FBENCH_FFTW_FLOAT
+  if (r->single) {
+    api<float>::destroy_plan(static_cast<fftwf_plan>(r->plan));
+    return;
+  }
+#endif
+  api<double>::destroy_plan(static_cast<fftw_plan>(r->plan));
 }
 }
