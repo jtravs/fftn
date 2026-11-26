@@ -46,6 +46,11 @@ struct edge_record {
   // A callback stage (stage::moving_factors' moving_callback; task 5.3a): what it calls, owned
   // by the plan (plan_core::callback_sites).
   const callback_site* call = nullptr;
+  // A stage: the bytes added to the block slot's address where the stage reads it (src) and
+  // where it writes it (dst), so that one stage may move a line between two regions of the block
+  // (a pipeline's fan-out, DESIGN.md 12.2, task 5.2e). The edge driver alone reads them.
+  std::ptrdiff_t block_src = 0;
+  std::ptrdiff_t block_dst = 0;
 };
 
 // The cursors of the edges' factor arrays, and of a pipeline's middle factor (task 5.2b):
